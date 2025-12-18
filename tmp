@@ -1,0 +1,40 @@
+● Done. Here's a summary of all changes:
+
+  Nomad Jobs Updated to gRPC (4317)
+
+  | Job                    | Change                                    |
+  |------------------------|-------------------------------------------|
+  | traefik                | [tracing.otlp.http] → [tracing.otlp.grpc] |
+  | temporal-server        | HTTP 4318 → gRPC 4317                     |
+  | temporal-backup-worker | HTTP 4318 → gRPC 4317                     |
+  | alertmanager           | HTTP 4318 → gRPC 4317                     |
+  | trivy-dashboard        | Added protocol, 4318 → 4317               |
+  | health-checker         | HTTP 4318 → gRPC 4317                     |
+
+  Tracing Added to Jobs
+
+  | Job                     | Added                                                                       |
+  |-------------------------|-----------------------------------------------------------------------------|
+  | temporal-backup-trigger | OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_EXPORTER_OTLP_PROTOCOL, OTEL_SERVICE_NAME |
+  | temporal-trivy-trigger  | Same as above                                                               |
+
+  Go Source Code Updated
+
+  | App                    | Change                                           |
+  |------------------------|--------------------------------------------------|
+  | trivy-dashboard        | otlptracehttp → otlptracegrpc, default port 4317 |
+  | temporal-backup-worker | otlptracehttp → otlptracegrpc                    |
+  | s3-proxy               | Already using gRPC ✓                             |
+
+  Woodpecker CI
+
+  No native OTEL support yet. The https://www.cncf.io/blog/2024/11/04/opentelemetry-is-expanding-into-ci-cd-observability/ is working on tracing prototypes for CI/CD systems (ArgoCD, GitHub, GitLab, Jenkins), but Woodpecker isn't on that list yet. You'd need to wait for upstream support or contribute a PR.
+
+  ---
+  Next steps:
+  1. Enable gRPC (4317) in Tempo config
+  2. Rebuild & redeploy trivy-dashboard and temporal-backup-worker images
+  3. Redeploy the updated Nomad jobs
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+

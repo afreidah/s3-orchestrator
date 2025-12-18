@@ -1,0 +1,43 @@
+# -----------------------------------------------------------------------------
+# S3 Proxy Configuration Example
+# -----------------------------------------------------------------------------
+#
+# Copy this file to config.yaml and fill in your values.
+# Environment variables can be referenced using ${VAR_NAME} syntax.
+#
+# -----------------------------------------------------------------------------
+
+server:
+  # Address to listen on (host:port)
+  listen_addr: "0.0.0.0:9000"
+
+  # Virtual bucket name that clients will use
+  # All requests must target this bucket name
+  virtual_bucket: "unified"
+
+auth:
+  # Static auth token - clients must send this in X-Proxy-Token header
+  # Leave empty to disable authentication (not recommended)
+  token: "${S3_PROXY_TOKEN}"
+
+backend:
+  # S3-compatible endpoint URL
+  # OCI example: https://<namespace>.compat.objectstorage.<region>.oraclecloud.com
+  # AWS example: https://s3.us-east-1.amazonaws.com
+  # B2 example: https://s3.us-west-002.backblazeb2.com
+  endpoint: "${S3_ENDPOINT}"
+
+  # Region (required by SDK, some providers ignore it)
+  region: "${S3_REGION}"
+
+  # Target bucket name on the backend
+  bucket: "${S3_BUCKET}"
+
+  # S3 credentials
+  access_key_id: "${S3_ACCESS_KEY_ID}"
+  secret_access_key: "${S3_SECRET_ACCESS_KEY}"
+
+  # Use path-style URLs (required for most S3-compatible services)
+  # Set to true for OCI, MinIO, B2, etc.
+  # Set to false for AWS S3 (uses virtual-hosted style)
+  force_path_style: true
