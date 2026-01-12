@@ -26,8 +26,19 @@ import (
 type Config struct {
 	Server    ServerConfig    `yaml:"server"`
 	Auth      AuthConfig      `yaml:"auth"`
-	Backend   BackendConfig   `yaml:"backend"`
+	Database  DatabaseConfig  `yaml:"database"`
+	Backends  []BackendConfig `yaml:"backends"`
 	Telemetry TelemetryConfig `yaml:"telemetry"`
+}
+
+// DatabaseConfig holds PostgreSQL connection settings.
+type DatabaseConfig struct {
+	Host     string `yaml:"host"`
+	Port     int    `yaml:"port"`
+	Database string `yaml:"database"`
+	User     string `yaml:"user"`
+	Password string `yaml:"password"`
+	SSLMode  string `yaml:"ssl_mode"`
 }
 
 // ServerConfig holds HTTP server settings.
@@ -41,15 +52,16 @@ type AuthConfig struct {
 	Token string `yaml:"token"`
 }
 
-// BackendConfig holds the single backend configuration for Phase 0.
+// BackendConfig holds configuration for an S3-compatible storage backend.
 type BackendConfig struct {
-	Name            string `yaml:"name"` // Identifier for metrics/tracing
-	Endpoint        string `yaml:"endpoint"`
-	Region          string `yaml:"region"`
-	Bucket          string `yaml:"bucket"`
-	AccessKeyID     string `yaml:"access_key_id"`
-	SecretAccessKey string `yaml:"secret_access_key"`
-	ForcePathStyle  bool   `yaml:"force_path_style"`
+	Name            string `yaml:"name"`             // Identifier for metrics/tracing
+	Endpoint        string `yaml:"endpoint"`         // S3-compatible endpoint URL
+	Region          string `yaml:"region"`           // AWS region or equivalent
+	Bucket          string `yaml:"bucket"`           // Target bucket name
+	AccessKeyID     string `yaml:"access_key_id"`    // AWS access key ID
+	SecretAccessKey string `yaml:"secret_access_key"` // AWS secret access key
+	ForcePathStyle  bool   `yaml:"force_path_style"` // Use path-style URLs
+	QuotaBytes      int64  `yaml:"quota_bytes"`      // Maximum bytes allowed on this backend
 }
 
 // TelemetryConfig holds observability settings.
@@ -69,6 +81,7 @@ type TracingConfig struct {
 	Enabled    bool    `yaml:"enabled"`
 	Endpoint   string  `yaml:"endpoint"`
 	SampleRate float64 `yaml:"sample_rate"`
+	Insecure   bool    `yaml:"insecure"` // Use insecure connection (no TLS)
 }
 
 // -------------------------------------------------------------------------
@@ -108,29 +121,69 @@ func LoadConfig(path string) (*Config, error) {
 func (c *Config) Validate() error {
 	var errors []string
 
+	// --- Server validation ---
 	if c.Server.ListenAddr == "" {
 		errors = append(errors, "server.listen_addr is required")
 	}
 	if c.Server.VirtualBucket == "" {
 		errors = append(errors, "server.virtual_bucket is required")
 	}
-	if c.Backend.Endpoint == "" {
-		errors = append(errors, "backend.endpoint is required")
+
+	// --- Database validation ---
+	if c.Database.Host == "" {
+		errors = append(errors, "database.host is required")
 	}
-	if c.Backend.Bucket == "" {
-		errors = append(errors, "backend.bucket is required")
+	if c.Database.Database == "" {
+		errors = append(errors, "database.database is required")
 	}
-	if c.Backend.AccessKeyID == "" {
-		errors = append(errors, "backend.access_key_id is required")
-	}
-	if c.Backend.SecretAccessKey == "" {
-		errors = append(errors, "backend.secret_access_key is required")
+	if c.Database.User == "" {
+		errors = append(errors, "database.user is required")
 	}
 
-	// --- Set defaults ---
-	if c.Backend.Name == "" {
-		c.Backend.Name = "default"
+	// --- Database defaults ---
+	if c.Database.Port == 0 {
+		c.Database.Port = 5432
 	}
+	if c.Database.SSLMode == "" {
+		c.Database.SSLMode = "disable"
+	}
+
+	// --- Backends validation ---
+	if len(c.Backends) == 0 {
+		errors = append(errors, "at least one backend is required")
+	}
+
+	names := make(map[string]bool)
+	for i := range c.Backends {
+		b := &c.Backends[i]
+		prefix := fmt.Sprintf("backends[%d]", i)
+
+		if b.Name == "" {
+			b.Name = fmt.Sprintf("backend-%d", i)
+		}
+		if names[b.Name] {
+			errors = append(errors, fmt.Sprintf("%s: duplicate backend name '%s'", prefix, b.Name))
+		}
+		names[b.Name] = true
+
+		if b.Endpoint == "" {
+			errors = append(errors, fmt.Sprintf("%s: endpoint is required", prefix))
+		}
+		if b.Bucket == "" {
+			errors = append(errors, fmt.Sprintf("%s: bucket is required", prefix))
+		}
+		if b.AccessKeyID == "" {
+			errors = append(errors, fmt.Sprintf("%s: access_key_id is required", prefix))
+		}
+		if b.SecretAccessKey == "" {
+			errors = append(errors, fmt.Sprintf("%s: secret_access_key is required", prefix))
+		}
+		if b.QuotaBytes <= 0 {
+			errors = append(errors, fmt.Sprintf("%s: quota_bytes must be positive", prefix))
+		}
+	}
+
+	// --- Telemetry defaults ---
 	if c.Telemetry.Metrics.Path == "" {
 		c.Telemetry.Metrics.Path = "/metrics"
 	}
@@ -147,4 +200,12 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("%s", strings.Join(errors, "; "))
 	}
 	return nil
+}
+
+// ConnectionString returns the PostgreSQL connection string.
+func (c *DatabaseConfig) ConnectionString() string {
+	return fmt.Sprintf(
+		"host=%s port=%d dbname=%s user=%s password=%s sslmode=%s",
+		c.Host, c.Port, c.Database, c.User, c.Password, c.SSLMode,
+	)
 }
