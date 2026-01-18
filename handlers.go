@@ -12,6 +12,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -29,10 +30,9 @@ import (
 // SERVER
 // -------------------------------------------------------------------------
 
-// Server handles HTTP requests and routes them to the backend.
+// Server handles HTTP requests and routes them to the backend manager.
 type Server struct {
-	Backend       ObjectBackend
-	BackendConfig BackendConfig
+	Manager       *BackendManager
 	VirtualBucket string
 	AuthToken     string
 }
@@ -163,8 +163,12 @@ func (s *Server) handlePut(ctx context.Context, w http.ResponseWriter, r *http.R
 		AttrContentType.String(contentType),
 	)
 
-	etag, err := s.Backend.PutObject(ctx, key, r.Body, r.ContentLength, contentType)
+	etag, err := s.Manager.PutObject(ctx, key, r.Body, r.ContentLength, contentType)
 	if err != nil {
+		if errors.Is(err, ErrInsufficientStorage) {
+			writeS3Error(w, http.StatusInsufficientStorage, "InsufficientStorage", "No backend has sufficient quota")
+			return http.StatusInsufficientStorage, err
+		}
 		writeS3Error(w, http.StatusBadGateway, "InternalError", "Failed to store object")
 		return http.StatusBadGateway, err
 	}
@@ -179,10 +183,14 @@ func (s *Server) handlePut(ctx context.Context, w http.ResponseWriter, r *http.R
 // handleGet processes GET requests. Streams the response body directly to avoid
 // buffering large objects in memory.
 func (s *Server) handleGet(ctx context.Context, w http.ResponseWriter, r *http.Request, key string) (int, int64, error) {
-	body, size, contentType, etag, err := s.Backend.GetObject(ctx, key)
+	body, size, contentType, etag, err := s.Manager.GetObject(ctx, key)
 	if err != nil {
-		writeS3Error(w, http.StatusNotFound, "NoSuchKey", "Object not found")
-		return http.StatusNotFound, 0, err
+		if errors.Is(err, ErrObjectNotFound) {
+			writeS3Error(w, http.StatusNotFound, "NoSuchKey", "Object not found")
+			return http.StatusNotFound, 0, err
+		}
+		writeS3Error(w, http.StatusBadGateway, "InternalError", "Failed to retrieve object")
+		return http.StatusBadGateway, 0, err
 	}
 	defer body.Close()
 
@@ -211,10 +219,14 @@ func (s *Server) handleGet(ctx context.Context, w http.ResponseWriter, r *http.R
 
 // handleHead processes HEAD requests.
 func (s *Server) handleHead(ctx context.Context, w http.ResponseWriter, r *http.Request, key string) (int, error) {
-	size, contentType, etag, err := s.Backend.HeadObject(ctx, key)
+	size, contentType, etag, err := s.Manager.HeadObject(ctx, key)
 	if err != nil {
-		writeS3Error(w, http.StatusNotFound, "NoSuchKey", "Object not found")
-		return http.StatusNotFound, err
+		if errors.Is(err, ErrObjectNotFound) {
+			writeS3Error(w, http.StatusNotFound, "NoSuchKey", "Object not found")
+			return http.StatusNotFound, err
+		}
+		writeS3Error(w, http.StatusBadGateway, "InternalError", "Failed to retrieve object metadata")
+		return http.StatusBadGateway, err
 	}
 
 	// --- Add size to span ---
@@ -236,7 +248,7 @@ func (s *Server) handleHead(ctx context.Context, w http.ResponseWriter, r *http.
 // handleDelete processes DELETE requests. Treats missing objects as success
 // since S3 DELETE is typically idempotent.
 func (s *Server) handleDelete(ctx context.Context, w http.ResponseWriter, r *http.Request, key string) (int, error) {
-	err := s.Backend.DeleteObject(ctx, key)
+	err := s.Manager.DeleteObject(ctx, key)
 	if err != nil {
 		log.Printf("Delete error (treating as success): %v", err)
 	}

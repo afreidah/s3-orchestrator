@@ -91,6 +91,56 @@ var (
 		[]string{"operation", "backend"},
 	)
 
+	// --- Manager metrics ---
+
+	// ManagerRequestsTotal counts manager-level operations.
+	ManagerRequestsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "s3proxy_manager_requests_total",
+			Help: "Total number of manager-level storage operations",
+		},
+		[]string{"operation", "backend", "status"},
+	)
+
+	// ManagerDuration tracks manager operation latency.
+	ManagerDuration = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "s3proxy_manager_duration_seconds",
+			Help:    "Manager operation latency in seconds",
+			Buckets: []float64{.01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10, 30, 60, 120},
+		},
+		[]string{"operation", "backend"},
+	)
+
+	// --- Quota metrics ---
+
+	// QuotaBytesUsed tracks current bytes used per backend.
+	QuotaBytesUsed = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "s3proxy_quota_bytes_used",
+			Help: "Current bytes used on each backend",
+		},
+		[]string{"backend"},
+	)
+
+	// QuotaBytesLimit tracks quota limit per backend.
+	QuotaBytesLimit = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "s3proxy_quota_bytes_limit",
+			Help: "Quota limit in bytes for each backend",
+		},
+		[]string{"backend"},
+	)
+
+	// QuotaBytesAvailable tracks available bytes per backend.
+	QuotaBytesAvailable = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "s3proxy_quota_bytes_available",
+			Help: "Available bytes (limit - used) for each backend",
+		},
+		[]string{"backend"},
+	)
+
 	// --- Info metric ---
 
 	// BuildInfo exposes version information.

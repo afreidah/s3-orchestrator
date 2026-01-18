@@ -49,10 +49,13 @@ func InitTracer(ctx context.Context, cfg TracingConfig) (func(context.Context) e
 	}
 
 	// --- Create OTLP exporter ---
-	exporter, err := otlptracegrpc.New(ctx,
+	opts := []otlptracegrpc.Option{
 		otlptracegrpc.WithEndpoint(cfg.Endpoint),
-		otlptracegrpc.WithInsecure(), // TODO: Add TLS config option
-	)
+	}
+	if cfg.Insecure {
+		opts = append(opts, otlptracegrpc.WithInsecure())
+	}
+	exporter, err := otlptracegrpc.New(ctx, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create trace exporter: %w", err)
 	}
