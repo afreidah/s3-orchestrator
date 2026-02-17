@@ -97,8 +97,8 @@ func TestCompleteMultipartUpload_Success(t *testing.T) {
 
 	// Pre-store parts on the backend
 	ctx := context.Background()
-	backend.PutObject(ctx, "__multipart/upload-1/1", bytes.NewReader([]byte("AAA")), 3, "application/octet-stream")
-	backend.PutObject(ctx, "__multipart/upload-1/2", bytes.NewReader([]byte("BBB")), 3, "application/octet-stream")
+	_, _ = backend.PutObject(ctx, "__multipart/upload-1/1", bytes.NewReader([]byte("AAA")), 3, "application/octet-stream")
+	_, _ = backend.PutObject(ctx, "__multipart/upload-1/2", bytes.NewReader([]byte("BBB")), 3, "application/octet-stream")
 
 	store := &mockStore{
 		getMultipartResp: &MultipartUpload{
@@ -159,7 +159,7 @@ func TestCompleteMultipartUpload_DBUnavailable(t *testing.T) {
 func TestAbortMultipartUpload_Success(t *testing.T) {
 	backend := newMockBackend()
 	ctx := context.Background()
-	backend.PutObject(ctx, "__multipart/upload-1/1", bytes.NewReader([]byte("AAA")), 3, "application/octet-stream")
+	_, _ = backend.PutObject(ctx, "__multipart/upload-1/1", bytes.NewReader([]byte("AAA")), 3, "application/octet-stream")
 
 	store := &mockStore{
 		getMultipartResp: &MultipartUpload{

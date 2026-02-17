@@ -41,19 +41,25 @@ func TestCircuitBreaker_OpensAfterThreshold(t *testing.T) {
 
 	ctx := context.Background()
 
-	// First 3 calls should pass through and fail
-	for i := 0; i < 3; i++ {
+	// First 2 calls should pass through and return the raw DB error
+	for i := 0; i < 2; i++ {
 		_, err := cb.GetAllObjectLocations(ctx, "key")
 		if err != dbErr {
 			t.Fatalf("call %d: expected dbErr, got %v", i, err)
 		}
+	}
+
+	// 3rd call trips the threshold — circuit opens, returns ErrDBUnavailable
+	_, err := cb.GetAllObjectLocations(ctx, "key")
+	if !errors.Is(err, ErrDBUnavailable) {
+		t.Fatalf("call 2: expected ErrDBUnavailable, got %v", err)
 	}
 	if mock.callCount != 3 {
 		t.Fatalf("expected 3 calls, got %d", mock.callCount)
 	}
 
 	// 4th call should return ErrDBUnavailable without hitting mock
-	_, err := cb.GetAllObjectLocations(ctx, "key")
+	_, err = cb.GetAllObjectLocations(ctx, "key")
 	if !errors.Is(err, ErrDBUnavailable) {
 		t.Fatalf("expected ErrDBUnavailable, got %v", err)
 	}
@@ -70,7 +76,7 @@ func TestCircuitBreaker_HalfOpenAfterTimeout(t *testing.T) {
 	ctx := context.Background()
 
 	// Trip the circuit
-	cb.GetAllObjectLocations(ctx, "key")
+	_, _ = cb.GetAllObjectLocations(ctx, "key")
 
 	// Should be open
 	_, err := cb.GetAllObjectLocations(ctx, "key")
@@ -109,15 +115,15 @@ func TestCircuitBreaker_HalfOpenFailureReopens(t *testing.T) {
 	ctx := context.Background()
 
 	// Trip the circuit
-	cb.GetAllObjectLocations(ctx, "key")
+	_, _ = cb.GetAllObjectLocations(ctx, "key")
 
 	// Wait for timeout
 	time.Sleep(15 * time.Millisecond)
 
-	// Probe should fail (mock still returns error)
+	// Probe should fail — circuit reopens, returns ErrDBUnavailable
 	_, err := cb.GetAllObjectLocations(ctx, "key")
-	if err != dbErr {
-		t.Fatalf("expected dbErr on probe, got %v", err)
+	if !errors.Is(err, ErrDBUnavailable) {
+		t.Fatalf("expected ErrDBUnavailable on failed probe, got %v", err)
 	}
 
 	// Circuit should be open again
@@ -158,7 +164,7 @@ func TestCircuitBreaker_IsHealthy(t *testing.T) {
 		t.Fatal("should start healthy")
 	}
 
-	cb.GetAllObjectLocations(context.Background(), "key")
+	_, _ = cb.GetAllObjectLocations(context.Background(), "key")
 
 	if cb.IsHealthy() {
 		t.Fatal("should be unhealthy after tripping")
@@ -178,21 +184,21 @@ func TestCircuitBreaker_SuccessResetsFailures(t *testing.T) {
 	mock.mu.Lock()
 	mock.getAllLocationsErr = dbErr
 	mock.mu.Unlock()
-	cb.GetAllObjectLocations(ctx, "key")
-	cb.GetAllObjectLocations(ctx, "key")
+	_, _ = cb.GetAllObjectLocations(ctx, "key")
+	_, _ = cb.GetAllObjectLocations(ctx, "key")
 
 	// 1 success resets the counter
 	mock.mu.Lock()
 	mock.getAllLocationsErr = nil
 	mock.mu.Unlock()
-	cb.GetAllObjectLocations(ctx, "key")
+	_, _ = cb.GetAllObjectLocations(ctx, "key")
 
 	// 2 more failures should not trip (counter was reset)
 	mock.mu.Lock()
 	mock.getAllLocationsErr = dbErr
 	mock.mu.Unlock()
-	cb.GetAllObjectLocations(ctx, "key")
-	cb.GetAllObjectLocations(ctx, "key")
+	_, _ = cb.GetAllObjectLocations(ctx, "key")
+	_, _ = cb.GetAllObjectLocations(ctx, "key")
 
 	if !cb.IsHealthy() {
 		t.Fatal("circuit should still be closed after reset + 2 failures")

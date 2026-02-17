@@ -27,7 +27,7 @@ func runSync() {
 	backendName := fs.String("backend", "", "Backend name to sync (required)")
 	prefix := fs.String("prefix", "", "Only sync objects with this key prefix")
 	dryRun := fs.Bool("dry-run", false, "Preview what would be imported without writing")
-	fs.Parse(os.Args[1:])
+	_ = fs.Parse(os.Args[1:])
 
 	if *backendName == "" {
 		fmt.Fprintln(os.Stderr, "error: --backend is required")
