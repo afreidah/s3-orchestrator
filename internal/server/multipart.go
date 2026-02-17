@@ -14,7 +14,6 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -172,7 +171,7 @@ func (s *Server) handleCompleteMultipartUpload(ctx context.Context, w http.Respo
 func (s *Server) handleAbortMultipartUpload(ctx context.Context, w http.ResponseWriter, uploadID string) (int, error) {
 	err := s.Manager.AbortMultipartUpload(ctx, uploadID)
 	if err != nil {
-		slog.Error("Abort multipart upload failed", "upload_id", uploadID, "error", err)
+		return writeStorageError(w, err, "Failed to abort multipart upload"), err
 	}
 
 	w.WriteHeader(http.StatusNoContent)

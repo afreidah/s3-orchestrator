@@ -204,8 +204,13 @@ func TestGetObject_DBUnavailable_AllFail(t *testing.T) {
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": b1, "b2": b2})
 
 	_, _, _, _, _, err := mgr.GetObject(context.Background(), "nowhere", "")
-	if !errors.Is(err, ErrObjectNotFound) {
-		t.Fatalf("expected ErrObjectNotFound, got %v", err)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	// Should NOT be ErrObjectNotFound — real backend errors should propagate
+	// so the server maps them to 502 instead of a misleading 404.
+	if errors.Is(err, ErrObjectNotFound) {
+		t.Fatal("should not mask backend errors as ErrObjectNotFound")
 	}
 }
 
