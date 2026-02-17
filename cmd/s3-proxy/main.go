@@ -181,7 +181,7 @@ func runServe() {
 						slog.Error("Rebalance failed", "error", err)
 					} else if moved > 0 {
 						slog.Info("Rebalance completed", "objects_moved", moved)
-						manager.UpdateQuotaMetrics(bgCtx)
+						_ = manager.UpdateQuotaMetrics(bgCtx)
 					}
 				case <-bgCtx.Done():
 					return
@@ -206,7 +206,7 @@ func runServe() {
 				slog.Error("Replication startup run failed", "error", err)
 			} else if created > 0 {
 				slog.Info("Replication startup run completed", "copies_created", created)
-				manager.UpdateQuotaMetrics(bgCtx)
+				_ = manager.UpdateQuotaMetrics(bgCtx)
 			}
 
 			ticker := time.NewTicker(cfg.Replication.WorkerInterval)
@@ -219,7 +219,7 @@ func runServe() {
 						slog.Error("Replication failed", "error", err)
 					} else if created > 0 {
 						slog.Info("Replication completed", "copies_created", created)
-						manager.UpdateQuotaMetrics(bgCtx)
+						_ = manager.UpdateQuotaMetrics(bgCtx)
 					}
 				case <-bgCtx.Done():
 					return

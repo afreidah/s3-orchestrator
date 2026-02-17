@@ -145,7 +145,7 @@ func (s *Store) withTx(ctx context.Context, fn func(*db.Queries) error) error {
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if err := fn(s.queries.WithTx(tx)); err != nil {
 		return err
@@ -161,7 +161,7 @@ func withTxVal[T any](s *Store, ctx context.Context, fn func(*db.Queries) (T, er
 		var zero T
 		return zero, fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	val, err := fn(s.queries.WithTx(tx))
 	if err != nil {

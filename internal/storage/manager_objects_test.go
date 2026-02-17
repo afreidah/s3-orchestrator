@@ -92,7 +92,7 @@ func TestPutObject_RecordFailure_CleansUp(t *testing.T) {
 
 func TestGetObject_Success(t *testing.T) {
 	backend := newMockBackend()
-	backend.PutObject(context.Background(), "key", bytes.NewReader([]byte("hello")), 5, "text/plain")
+	_, _ = backend.PutObject(context.Background(), "key", bytes.NewReader([]byte("hello")), 5, "text/plain")
 
 	store := &mockStore{
 		getAllLocationsResp: []ObjectLocation{{ObjectKey: "key", BackendName: "b1"}},
@@ -103,7 +103,7 @@ func TestGetObject_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetObject: %v", err)
 	}
-	defer body.Close()
+	defer func() { _ = body.Close() }()
 	if size != 5 {
 		t.Errorf("size = %d, want 5", size)
 	}
@@ -130,7 +130,7 @@ func TestGetObject_FailoverToReplica(t *testing.T) {
 	primary := newMockBackend()
 	primary.getErr = errors.New("backend down") // primary fails
 	replica := newMockBackend()
-	replica.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain")
+	_, _ = replica.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain")
 
 	store := &mockStore{
 		getAllLocationsResp: []ObjectLocation{
@@ -144,7 +144,7 @@ func TestGetObject_FailoverToReplica(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetObject should failover: %v", err)
 	}
-	defer body.Close()
+	defer func() { _ = body.Close() }()
 	got, _ := io.ReadAll(body)
 	if string(got) != "data" {
 		t.Errorf("body = %q, want %q", got, "data")
@@ -153,7 +153,7 @@ func TestGetObject_FailoverToReplica(t *testing.T) {
 
 func TestGetObject_DBUnavailable_BroadcastHit(t *testing.T) {
 	backend := newMockBackend()
-	backend.PutObject(context.Background(), "key", bytes.NewReader([]byte("broadcast")), 9, "text/plain")
+	_, _ = backend.PutObject(context.Background(), "key", bytes.NewReader([]byte("broadcast")), 9, "text/plain")
 
 	store := &mockStore{getAllLocationsErr: ErrDBUnavailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
@@ -162,7 +162,7 @@ func TestGetObject_DBUnavailable_BroadcastHit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetObject broadcast should succeed: %v", err)
 	}
-	defer body.Close()
+	defer func() { _ = body.Close() }()
 	got, _ := io.ReadAll(body)
 	if string(got) != "broadcast" {
 		t.Errorf("body = %q, want %q", got, "broadcast")
@@ -172,7 +172,7 @@ func TestGetObject_DBUnavailable_BroadcastHit(t *testing.T) {
 func TestGetObject_DBUnavailable_CacheHit(t *testing.T) {
 	b1 := newMockBackend()
 	b2 := newMockBackend()
-	b2.PutObject(context.Background(), "cached-key", bytes.NewReader([]byte("cached")), 6, "text/plain")
+	_, _ = b2.PutObject(context.Background(), "cached-key", bytes.NewReader([]byte("cached")), 6, "text/plain")
 
 	store := &mockStore{getAllLocationsErr: ErrDBUnavailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": b1, "b2": b2})
@@ -182,14 +182,14 @@ func TestGetObject_DBUnavailable_CacheHit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first GetObject: %v", err)
 	}
-	body1.Close()
+	_ = body1.Close()
 
 	// Second call should use cache
 	body2, _, _, _, _, err := mgr.GetObject(context.Background(), "cached-key", "")
 	if err != nil {
 		t.Fatalf("second GetObject (cache hit): %v", err)
 	}
-	defer body2.Close()
+	defer func() { _ = body2.Close() }()
 	got, _ := io.ReadAll(body2)
 	if string(got) != "cached" {
 		t.Errorf("body = %q, want %q", got, "cached")
@@ -215,7 +215,7 @@ func TestGetObject_DBUnavailable_AllFail(t *testing.T) {
 
 func TestHeadObject_Success(t *testing.T) {
 	backend := newMockBackend()
-	backend.PutObject(context.Background(), "key", bytes.NewReader([]byte("headme")), 6, "application/json")
+	_, _ = backend.PutObject(context.Background(), "key", bytes.NewReader([]byte("headme")), 6, "application/json")
 
 	store := &mockStore{
 		getAllLocationsResp: []ObjectLocation{{ObjectKey: "key", BackendName: "b1"}},
@@ -239,7 +239,7 @@ func TestHeadObject_Success(t *testing.T) {
 
 func TestHeadObject_DBUnavailable_Broadcast(t *testing.T) {
 	backend := newMockBackend()
-	backend.PutObject(context.Background(), "key", bytes.NewReader([]byte("head")), 4, "text/plain")
+	_, _ = backend.PutObject(context.Background(), "key", bytes.NewReader([]byte("head")), 4, "text/plain")
 
 	store := &mockStore{getAllLocationsErr: ErrDBUnavailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
@@ -259,7 +259,7 @@ func TestHeadObject_DBUnavailable_Broadcast(t *testing.T) {
 
 func TestDeleteObject_Success(t *testing.T) {
 	backend := newMockBackend()
-	backend.PutObject(context.Background(), "del-key", bytes.NewReader([]byte("rm")), 2, "")
+	_, _ = backend.PutObject(context.Background(), "del-key", bytes.NewReader([]byte("rm")), 2, "")
 
 	store := &mockStore{
 		deleteObjectResp: []DeletedCopy{{BackendName: "b1", SizeBytes: 2}},
@@ -301,7 +301,7 @@ func TestDeleteObject_DBUnavailable(t *testing.T) {
 
 func TestCopyObject_Success(t *testing.T) {
 	backend := newMockBackend()
-	backend.PutObject(context.Background(), "src", bytes.NewReader([]byte("copy-me")), 7, "text/plain")
+	_, _ = backend.PutObject(context.Background(), "src", bytes.NewReader([]byte("copy-me")), 7, "text/plain")
 
 	store := &mockStore{
 		getAllLocationsResp: []ObjectLocation{{ObjectKey: "src", BackendName: "b1"}},
@@ -343,7 +343,7 @@ func TestCopyObject_DBUnavailable_SourceLookup(t *testing.T) {
 
 func TestCopyObject_DBUnavailable_DestLookup(t *testing.T) {
 	backend := newMockBackend()
-	backend.PutObject(context.Background(), "src", bytes.NewReader([]byte("data")), 4, "text/plain")
+	_, _ = backend.PutObject(context.Background(), "src", bytes.NewReader([]byte("data")), 4, "text/plain")
 
 	store := &mockStore{
 		getAllLocationsResp: []ObjectLocation{{ObjectKey: "src", BackendName: "b1"}},

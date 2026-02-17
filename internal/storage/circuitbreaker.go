@@ -113,12 +113,19 @@ func (cb *CircuitBreakerStore) preCheck() error {
 }
 
 // postCheck records the result of a real store call and transitions state.
-func (cb *CircuitBreakerStore) postCheck(err error) {
+// When a DB error causes the circuit to open (or reopen), the original error
+// is replaced with ErrDBUnavailable so the manager always sees the canonical
+// sentinel for "database down".
+func (cb *CircuitBreakerStore) postCheck(err error) error {
 	if !isDBError(err) {
 		cb.onSuccess()
-		return
+		return err
 	}
 	cb.onFailure()
+	if !cb.IsHealthy() {
+		return ErrDBUnavailable
+	}
+	return err
 }
 
 // onSuccess resets failures and transitions half-open → closed.
@@ -197,7 +204,7 @@ func (cb *CircuitBreakerStore) GetAllObjectLocations(ctx context.Context, key st
 		return nil, err
 	}
 	result, err := cb.real.GetAllObjectLocations(ctx, key)
-	cb.postCheck(err)
+	err = cb.postCheck(err)
 	return result, err
 }
 
@@ -206,7 +213,7 @@ func (cb *CircuitBreakerStore) RecordObject(ctx context.Context, key, backend st
 		return err
 	}
 	err := cb.real.RecordObject(ctx, key, backend, size)
-	cb.postCheck(err)
+	err = cb.postCheck(err)
 	return err
 }
 
@@ -215,7 +222,7 @@ func (cb *CircuitBreakerStore) DeleteObject(ctx context.Context, key string) ([]
 		return nil, err
 	}
 	result, err := cb.real.DeleteObject(ctx, key)
-	cb.postCheck(err)
+	err = cb.postCheck(err)
 	return result, err
 }
 
@@ -224,7 +231,7 @@ func (cb *CircuitBreakerStore) ListObjects(ctx context.Context, prefix, startAft
 		return nil, err
 	}
 	result, err := cb.real.ListObjects(ctx, prefix, startAfter, maxKeys)
-	cb.postCheck(err)
+	err = cb.postCheck(err)
 	return result, err
 }
 
@@ -233,7 +240,7 @@ func (cb *CircuitBreakerStore) GetBackendWithSpace(ctx context.Context, size int
 		return "", err
 	}
 	result, err := cb.real.GetBackendWithSpace(ctx, size, backendOrder)
-	cb.postCheck(err)
+	err = cb.postCheck(err)
 	return result, err
 }
 
@@ -242,7 +249,7 @@ func (cb *CircuitBreakerStore) CreateMultipartUpload(ctx context.Context, upload
 		return err
 	}
 	err := cb.real.CreateMultipartUpload(ctx, uploadID, key, backend, contentType)
-	cb.postCheck(err)
+	err = cb.postCheck(err)
 	return err
 }
 
@@ -251,7 +258,7 @@ func (cb *CircuitBreakerStore) GetMultipartUpload(ctx context.Context, uploadID 
 		return nil, err
 	}
 	result, err := cb.real.GetMultipartUpload(ctx, uploadID)
-	cb.postCheck(err)
+	err = cb.postCheck(err)
 	return result, err
 }
 
@@ -260,7 +267,7 @@ func (cb *CircuitBreakerStore) RecordPart(ctx context.Context, uploadID string, 
 		return err
 	}
 	err := cb.real.RecordPart(ctx, uploadID, partNumber, etag, size)
-	cb.postCheck(err)
+	err = cb.postCheck(err)
 	return err
 }
 
@@ -269,7 +276,7 @@ func (cb *CircuitBreakerStore) GetParts(ctx context.Context, uploadID string) ([
 		return nil, err
 	}
 	result, err := cb.real.GetParts(ctx, uploadID)
-	cb.postCheck(err)
+	err = cb.postCheck(err)
 	return result, err
 }
 
@@ -278,7 +285,7 @@ func (cb *CircuitBreakerStore) DeleteMultipartUpload(ctx context.Context, upload
 		return err
 	}
 	err := cb.real.DeleteMultipartUpload(ctx, uploadID)
-	cb.postCheck(err)
+	err = cb.postCheck(err)
 	return err
 }
 
@@ -287,7 +294,7 @@ func (cb *CircuitBreakerStore) GetQuotaStats(ctx context.Context) (map[string]Qu
 		return nil, err
 	}
 	result, err := cb.real.GetQuotaStats(ctx)
-	cb.postCheck(err)
+	err = cb.postCheck(err)
 	return result, err
 }
 
@@ -296,7 +303,7 @@ func (cb *CircuitBreakerStore) GetObjectCounts(ctx context.Context) (map[string]
 		return nil, err
 	}
 	result, err := cb.real.GetObjectCounts(ctx)
-	cb.postCheck(err)
+	err = cb.postCheck(err)
 	return result, err
 }
 
@@ -305,7 +312,7 @@ func (cb *CircuitBreakerStore) GetActiveMultipartCounts(ctx context.Context) (ma
 		return nil, err
 	}
 	result, err := cb.real.GetActiveMultipartCounts(ctx)
-	cb.postCheck(err)
+	err = cb.postCheck(err)
 	return result, err
 }
 
@@ -314,7 +321,7 @@ func (cb *CircuitBreakerStore) GetStaleMultipartUploads(ctx context.Context, old
 		return nil, err
 	}
 	result, err := cb.real.GetStaleMultipartUploads(ctx, olderThan)
-	cb.postCheck(err)
+	err = cb.postCheck(err)
 	return result, err
 }
 
@@ -323,7 +330,7 @@ func (cb *CircuitBreakerStore) ListObjectsByBackend(ctx context.Context, backend
 		return nil, err
 	}
 	result, err := cb.real.ListObjectsByBackend(ctx, backendName, limit)
-	cb.postCheck(err)
+	err = cb.postCheck(err)
 	return result, err
 }
 
@@ -332,7 +339,7 @@ func (cb *CircuitBreakerStore) MoveObjectLocation(ctx context.Context, key, from
 		return 0, err
 	}
 	result, err := cb.real.MoveObjectLocation(ctx, key, fromBackend, toBackend)
-	cb.postCheck(err)
+	err = cb.postCheck(err)
 	return result, err
 }
 
@@ -341,7 +348,7 @@ func (cb *CircuitBreakerStore) GetUnderReplicatedObjects(ctx context.Context, fa
 		return nil, err
 	}
 	result, err := cb.real.GetUnderReplicatedObjects(ctx, factor, limit)
-	cb.postCheck(err)
+	err = cb.postCheck(err)
 	return result, err
 }
 
@@ -350,6 +357,6 @@ func (cb *CircuitBreakerStore) RecordReplica(ctx context.Context, key, targetBac
 		return false, err
 	}
 	result, err := cb.real.RecordReplica(ctx, key, targetBackend, sourceBackend, size)
-	cb.postCheck(err)
+	err = cb.postCheck(err)
 	return result, err
 }
