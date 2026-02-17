@@ -190,13 +190,15 @@ func (m *BackendManager) broadcastRead(ctx context.Context, operation, key strin
 		return nil
 	}
 
-	// All backends failed
+	// All backends failed — return the actual error so the server can
+	// distinguish "object not found" (404) from "backends unreachable" (502).
 	if lastErr != nil {
 		span.SetStatus(codes.Error, lastErr.Error())
-		return ErrObjectNotFound
+		span.RecordError(lastErr)
+		return fmt.Errorf("all backends failed during degraded read: %w", lastErr)
 	}
 
-	span.SetStatus(codes.Error, "object not found on any backend")
+	span.SetStatus(codes.Error, "no backends available")
 	return ErrObjectNotFound
 }
 
