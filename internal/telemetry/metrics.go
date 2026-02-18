@@ -192,6 +192,17 @@ var (
 		[]string{"backend"},
 	)
 
+	// --- Usage limit metrics ---
+
+	// UsageLimitRejectionsTotal counts operations rejected due to monthly usage limits.
+	UsageLimitRejectionsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "s3proxy_usage_limit_rejections_total",
+			Help: "Total operations rejected due to monthly usage limits",
+		},
+		[]string{"operation", "limit_type"},
+	)
+
 	// --- Rebalancer metrics ---
 
 	// RebalanceObjectsMoved counts objects moved by the rebalancer.

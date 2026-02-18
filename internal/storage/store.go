@@ -196,13 +196,13 @@ func toObjectLocations(rows []db.ObjectLocation) []ObjectLocation {
 // SyncQuotaLimits ensures the backend_quotas table has entries for all configured
 // backends with their quota limits. Creates new entries or updates existing limits.
 func (s *Store) SyncQuotaLimits(ctx context.Context, backends []config.BackendConfig) error {
-	for _, b := range backends {
+	for i := range backends {
 		err := s.queries.UpsertQuotaLimit(ctx, db.UpsertQuotaLimitParams{
-			BackendName: b.Name,
-			BytesLimit:  b.QuotaBytes,
+			BackendName: backends[i].Name,
+			BytesLimit:  backends[i].QuotaBytes,
 		})
 		if err != nil {
-			return fmt.Errorf("failed to sync quota for backend %s: %w", b.Name, err)
+			return fmt.Errorf("failed to sync quota for backend %s: %w", backends[i].Name, err)
 		}
 	}
 	return nil

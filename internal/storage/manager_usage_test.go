@@ -18,7 +18,15 @@ func newUsageManager(backendNames []string, store *mockStore) *BackendManager {
 	for _, name := range backendNames {
 		backends[name] = newMockBackend()
 	}
-	return NewBackendManager(backends, store, backendNames, 0, 0)
+	return NewBackendManager(backends, store, backendNames, 0, 0, nil)
+}
+
+func newUsageManagerWithLimits(backendNames []string, store *mockStore, limits map[string]UsageLimits) *BackendManager {
+	backends := make(map[string]ObjectBackend, len(backendNames))
+	for _, name := range backendNames {
+		backends[name] = newMockBackend()
+	}
+	return NewBackendManager(backends, store, backendNames, 0, 0, limits)
 }
 
 // --- recordUsage tests ---
@@ -190,6 +198,82 @@ func TestFlushUsage_NoDataNoCall(t *testing.T) {
 	defer ms.mu.Unlock()
 	if len(ms.flushUsageCalls) != 0 {
 		t.Errorf("flushUsageCalls = %d, want 0", len(ms.flushUsageCalls))
+	}
+}
+
+// --- withinUsageLimits tests ---
+
+func TestWithinUsageLimits_NoLimits(t *testing.T) {
+	mgr := newUsageManager([]string{"b1"}, &mockStore{})
+
+	if !mgr.withinUsageLimits("b1", 1000, 1000, 1000) {
+		t.Error("no limits configured, should always return true")
+	}
+}
+
+func TestWithinUsageLimits_ApiExceeded(t *testing.T) {
+	limits := map[string]UsageLimits{
+		"b1": {ApiRequestLimit: 100},
+	}
+	mgr := newUsageManagerWithLimits([]string{"b1"}, &mockStore{}, limits)
+
+	// Set baseline to exactly the limit
+	mgr.usageBaselineMu.Lock()
+	mgr.usageBaseline["b1"] = UsageStat{ApiRequests: 100}
+	mgr.usageBaselineMu.Unlock()
+
+	if mgr.withinUsageLimits("b1", 1, 0, 0) {
+		t.Error("should exceed API request limit")
+	}
+}
+
+func TestWithinUsageLimits_EgressExceeded(t *testing.T) {
+	limits := map[string]UsageLimits{
+		"b1": {EgressByteLimit: 1000},
+	}
+	mgr := newUsageManagerWithLimits([]string{"b1"}, &mockStore{}, limits)
+
+	// Baseline: 500, unflushed: add 400, proposed: 200 → 1100 > 1000
+	mgr.usageBaselineMu.Lock()
+	mgr.usageBaseline["b1"] = UsageStat{EgressBytes: 500}
+	mgr.usageBaselineMu.Unlock()
+	mgr.usage["b1"].egressBytes.Store(400)
+
+	if mgr.withinUsageLimits("b1", 0, 200, 0) {
+		t.Error("should exceed egress byte limit")
+	}
+}
+
+func TestWithinUsageLimits_UnlimitedDimension(t *testing.T) {
+	limits := map[string]UsageLimits{
+		"b1": {ApiRequestLimit: 100, EgressByteLimit: 0, IngressByteLimit: 0},
+	}
+	mgr := newUsageManagerWithLimits([]string{"b1"}, &mockStore{}, limits)
+
+	// API within limit, egress/ingress unlimited (0)
+	if !mgr.withinUsageLimits("b1", 1, 999999, 999999) {
+		t.Error("zero limit means unlimited, should not be checked")
+	}
+}
+
+func TestBackendsWithinLimits_FiltersCorrectly(t *testing.T) {
+	limits := map[string]UsageLimits{
+		"b1": {ApiRequestLimit: 10},
+		"b2": {ApiRequestLimit: 100},
+	}
+	mgr := newUsageManagerWithLimits([]string{"b1", "b2"}, &mockStore{}, limits)
+
+	// Push b1 over limit
+	mgr.usageBaselineMu.Lock()
+	mgr.usageBaseline["b1"] = UsageStat{ApiRequests: 10}
+	mgr.usageBaselineMu.Unlock()
+
+	eligible := mgr.backendsWithinLimits(1, 0, 0)
+	if len(eligible) != 1 {
+		t.Fatalf("eligible = %v, want [b2]", eligible)
+	}
+	if eligible[0] != "b2" {
+		t.Errorf("eligible[0] = %q, want %q", eligible[0], "b2")
 	}
 }
 
