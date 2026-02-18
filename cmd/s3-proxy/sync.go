@@ -63,7 +63,7 @@ func runSync() {
 	ctx := context.Background()
 
 	// --- Initialize store ---
-	store, err := storage.NewStore(ctx, cfg.Database)
+	store, err := storage.NewStore(ctx, &cfg.Database)
 	if err != nil {
 		slog.Error("Failed to connect to database", "error", err)
 		os.Exit(1)
@@ -81,7 +81,7 @@ func runSync() {
 	}
 
 	// --- Initialize backend ---
-	backend, err := storage.NewS3Backend(*backendCfg)
+	backend, err := storage.NewS3Backend(backendCfg)
 	if err != nil {
 		slog.Error("Failed to initialize backend", "backend", backendCfg.Name, "error", err)
 		os.Exit(1)

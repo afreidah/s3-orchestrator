@@ -102,7 +102,7 @@ func TestMain(m *testing.M) {
 
 	ctx := context.Background()
 
-	store, err := storage.NewStore(ctx, cfg.Database)
+	store, err := storage.NewStore(ctx, &cfg.Database)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to create store: %v\n", err)
 		os.Exit(1)
@@ -121,7 +121,7 @@ func TestMain(m *testing.M) {
 	backends := make(map[string]storage.ObjectBackend)
 	var backendOrder []string
 	for _, bcfg := range cfg.Backends {
-		b, err := storage.NewS3Backend(bcfg)
+		b, err := storage.NewS3Backend(&bcfg)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "failed to create backend %s: %v\n", bcfg.Name, err)
 			os.Exit(1)
@@ -499,7 +499,7 @@ func newTestS3Backend(t *testing.T, name string) *storage.S3Backend {
 		t.Fatalf("unknown backend %q", name)
 	}
 
-	backend, err := storage.NewS3Backend(cfg)
+	backend, err := storage.NewS3Backend(&cfg)
 	if err != nil {
 		t.Fatalf("NewS3Backend(%s): %v", name, err)
 	}

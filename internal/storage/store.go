@@ -93,7 +93,7 @@ type ObjectLocation struct {
 // -------------------------------------------------------------------------
 
 // NewStore creates a new PostgreSQL store connection using pgxpool.
-func NewStore(ctx context.Context, dbCfg config.DatabaseConfig) (*Store, error) {
+func NewStore(ctx context.Context, dbCfg *config.DatabaseConfig) (*Store, error) {
 	cfg, err := pgxpool.ParseConfig(dbCfg.ConnectionString())
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse connection string: %w", err)

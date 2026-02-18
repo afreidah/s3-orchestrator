@@ -68,7 +68,7 @@ func runServe() {
 	telemetry.BuildInfo.WithLabelValues(telemetry.Version, runtime.Version()).Set(1)
 
 	// --- Initialize PostgreSQL store ---
-	store, err := storage.NewStore(ctx, cfg.Database)
+	store, err := storage.NewStore(ctx, &cfg.Database)
 	if err != nil {
 		slog.Error("Failed to connect to database", "error", err)
 		os.Exit(1)
@@ -97,7 +97,7 @@ func runServe() {
 	backendOrder := make([]string, 0, len(cfg.Backends))
 
 	for _, bcfg := range cfg.Backends {
-		backend, err := storage.NewS3Backend(bcfg)
+		backend, err := storage.NewS3Backend(&bcfg)
 		if err != nil {
 			slog.Error("Failed to initialize backend", "backend", bcfg.Name, "error", err)
 			os.Exit(1)
@@ -322,11 +322,12 @@ func runServe() {
 		"backends", len(cfg.Backends),
 	)
 
-	if !auth.NeedsAuth(cfg.Auth) {
+	switch {
+	case !auth.NeedsAuth(cfg.Auth):
 		slog.Warn("Authentication is disabled")
-	} else if cfg.Auth.AccessKeyID != "" {
+	case cfg.Auth.AccessKeyID != "":
 		slog.Info("Authentication enabled", "method", "SigV4")
-	} else {
+	default:
 		slog.Info("Authentication enabled", "method", "legacy_token")
 	}
 

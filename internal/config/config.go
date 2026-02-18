@@ -75,7 +75,7 @@ type BackendConfig struct {
 	AccessKeyID     string `yaml:"access_key_id"`     // AWS access key ID
 	SecretAccessKey string `yaml:"secret_access_key"` // AWS secret access key
 	ForcePathStyle  bool   `yaml:"force_path_style"`  // Use path-style URLs
-	QuotaBytes      int64  `yaml:"quota_bytes"`       // Maximum bytes allowed on this backend
+	QuotaBytes      int64  `yaml:"quota_bytes"`       // Maximum bytes allowed on this backend (0 = unlimited)
 }
 
 // TelemetryConfig holds observability settings.
@@ -146,9 +146,7 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	// --- Expand environment variables ---
-	expanded := os.Expand(string(data), func(key string) string {
-		return os.Getenv(key)
-	})
+	expanded := os.Expand(string(data), os.Getenv)
 
 	var cfg Config
 	if err := yaml.Unmarshal([]byte(expanded), &cfg); err != nil {
@@ -245,8 +243,8 @@ func (c *Config) SetDefaultsAndValidate() error {
 		if b.SecretAccessKey == "" {
 			errors = append(errors, fmt.Sprintf("%s: secret_access_key is required", prefix))
 		}
-		if b.QuotaBytes <= 0 {
-			errors = append(errors, fmt.Sprintf("%s: quota_bytes must be positive", prefix))
+		if b.QuotaBytes < 0 {
+			errors = append(errors, fmt.Sprintf("%s: quota_bytes must not be negative", prefix))
 		}
 	}
 
