@@ -4,12 +4,13 @@
 // Author: Alex Freidah
 //
 // Unit tests for configuration validation, default value application, duplicate
-// backend detection, and PostgreSQL connection string generation.
+// backend detection, bucket validation, and PostgreSQL connection string generation.
 // -------------------------------------------------------------------------------
 
 package config
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -17,8 +18,12 @@ import (
 func TestConfigValidation_MinimalValid(t *testing.T) {
 	cfg := Config{
 		Server: ServerConfig{
-			ListenAddr:    "0.0.0.0:9000",
-			VirtualBucket: "unified",
+			ListenAddr: "0.0.0.0:9000",
+		},
+		Buckets: []BucketConfig{
+			{Name: "unified", Credentials: []CredentialConfig{
+				{AccessKeyID: "AKID", SecretAccessKey: "secret"},
+			}},
 		},
 		Database: DatabaseConfig{
 			Host:     "localhost",
@@ -59,13 +64,10 @@ func TestConfigValidation_MissingRequired(t *testing.T) {
 }
 
 func TestConfigValidation_DuplicateBackendNames(t *testing.T) {
-	cfg := Config{
-		Server:   ServerConfig{ListenAddr: ":9000", VirtualBucket: "b"},
-		Database: DatabaseConfig{Host: "h", Database: "d", User: "u"},
-		Backends: []BackendConfig{
-			{Name: "dup", Endpoint: "e", Bucket: "b", AccessKeyID: "a", SecretAccessKey: "s", QuotaBytes: 1},
-			{Name: "dup", Endpoint: "e", Bucket: "b", AccessKeyID: "a", SecretAccessKey: "s", QuotaBytes: 1},
-		},
+	cfg := validBaseConfig()
+	cfg.Backends = []BackendConfig{
+		{Name: "dup", Endpoint: "e", Bucket: "b", AccessKeyID: "a", SecretAccessKey: "s", QuotaBytes: 1},
+		{Name: "dup", Endpoint: "e", Bucket: "b", AccessKeyID: "a", SecretAccessKey: "s", QuotaBytes: 1},
 	}
 
 	err := cfg.SetDefaultsAndValidate()
@@ -75,13 +77,8 @@ func TestConfigValidation_DuplicateBackendNames(t *testing.T) {
 }
 
 func TestConfigValidation_NegativeQuota(t *testing.T) {
-	cfg := Config{
-		Server:   ServerConfig{ListenAddr: ":9000", VirtualBucket: "b"},
-		Database: DatabaseConfig{Host: "h", Database: "d", User: "u"},
-		Backends: []BackendConfig{
-			{Name: "bad", Endpoint: "e", Bucket: "b", AccessKeyID: "a", SecretAccessKey: "s", QuotaBytes: -1},
-		},
-	}
+	cfg := validBaseConfig()
+	cfg.Backends[0].QuotaBytes = -1
 
 	err := cfg.SetDefaultsAndValidate()
 	if err == nil {
@@ -90,13 +87,8 @@ func TestConfigValidation_NegativeQuota(t *testing.T) {
 }
 
 func TestConfigValidation_ZeroQuotaMeansUnlimited(t *testing.T) {
-	cfg := Config{
-		Server:   ServerConfig{ListenAddr: ":9000", VirtualBucket: "b"},
-		Database: DatabaseConfig{Host: "h", Database: "d", User: "u"},
-		Backends: []BackendConfig{
-			{Name: "unlimited", Endpoint: "e", Bucket: "b", AccessKeyID: "a", SecretAccessKey: "s", QuotaBytes: 0},
-		},
-	}
+	cfg := validBaseConfig()
+	cfg.Backends[0].QuotaBytes = 0
 
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
 		t.Errorf("zero quota (unlimited) should pass validation: %v", err)
@@ -104,13 +96,8 @@ func TestConfigValidation_ZeroQuotaMeansUnlimited(t *testing.T) {
 }
 
 func TestConfigValidation_OmittedQuotaMeansUnlimited(t *testing.T) {
-	cfg := Config{
-		Server:   ServerConfig{ListenAddr: ":9000", VirtualBucket: "b"},
-		Database: DatabaseConfig{Host: "h", Database: "d", User: "u"},
-		Backends: []BackendConfig{
-			{Name: "noq", Endpoint: "e", Bucket: "b", AccessKeyID: "a", SecretAccessKey: "s"},
-		},
-	}
+	cfg := validBaseConfig()
+	cfg.Backends[0].QuotaBytes = 0
 
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
 		t.Errorf("omitted quota (unlimited) should pass validation: %v", err)
@@ -291,15 +278,12 @@ func TestCircuitBreakerDefaults(t *testing.T) {
 }
 
 func TestConfigValidation_MixedQuotaAndUnlimited(t *testing.T) {
-	cfg := Config{
-		Server:   ServerConfig{ListenAddr: ":9000", VirtualBucket: "b"},
-		Database: DatabaseConfig{Host: "h", Database: "d", User: "u"},
-		Backends: []BackendConfig{
-			{Name: "quota", Endpoint: "e", Bucket: "b", AccessKeyID: "a", SecretAccessKey: "s", QuotaBytes: 1024},
-			{Name: "unlimited", Endpoint: "e", Bucket: "b", AccessKeyID: "a", SecretAccessKey: "s", QuotaBytes: 0},
-		},
-		Replication: ReplicationConfig{Factor: 2},
+	cfg := validBaseConfig()
+	cfg.Backends = []BackendConfig{
+		{Name: "quota", Endpoint: "e", Bucket: "b", AccessKeyID: "a", SecretAccessKey: "s", QuotaBytes: 1024},
+		{Name: "unlimited", Endpoint: "e", Bucket: "b", AccessKeyID: "a", SecretAccessKey: "s", QuotaBytes: 0},
 	}
+	cfg.Replication = ReplicationConfig{Factor: 2}
 
 	err := cfg.SetDefaultsAndValidate()
 	if err == nil {
@@ -308,13 +292,10 @@ func TestConfigValidation_MixedQuotaAndUnlimited(t *testing.T) {
 }
 
 func TestConfigValidation_MultipleUnlimitedWithoutReplication(t *testing.T) {
-	cfg := Config{
-		Server:   ServerConfig{ListenAddr: ":9000", VirtualBucket: "b"},
-		Database: DatabaseConfig{Host: "h", Database: "d", User: "u"},
-		Backends: []BackendConfig{
-			{Name: "u1", Endpoint: "e", Bucket: "b", AccessKeyID: "a", SecretAccessKey: "s", QuotaBytes: 0},
-			{Name: "u2", Endpoint: "e", Bucket: "b", AccessKeyID: "a", SecretAccessKey: "s", QuotaBytes: 0},
-		},
+	cfg := validBaseConfig()
+	cfg.Backends = []BackendConfig{
+		{Name: "u1", Endpoint: "e", Bucket: "b", AccessKeyID: "a", SecretAccessKey: "s", QuotaBytes: 0},
+		{Name: "u2", Endpoint: "e", Bucket: "b", AccessKeyID: "a", SecretAccessKey: "s", QuotaBytes: 0},
 	}
 
 	err := cfg.SetDefaultsAndValidate()
@@ -324,15 +305,12 @@ func TestConfigValidation_MultipleUnlimitedWithoutReplication(t *testing.T) {
 }
 
 func TestConfigValidation_MultipleUnlimitedWithReplication(t *testing.T) {
-	cfg := Config{
-		Server:   ServerConfig{ListenAddr: ":9000", VirtualBucket: "b"},
-		Database: DatabaseConfig{Host: "h", Database: "d", User: "u"},
-		Backends: []BackendConfig{
-			{Name: "u1", Endpoint: "e", Bucket: "b", AccessKeyID: "a", SecretAccessKey: "s", QuotaBytes: 0},
-			{Name: "u2", Endpoint: "e", Bucket: "b", AccessKeyID: "a", SecretAccessKey: "s", QuotaBytes: 0},
-		},
-		Replication: ReplicationConfig{Factor: 2},
+	cfg := validBaseConfig()
+	cfg.Backends = []BackendConfig{
+		{Name: "u1", Endpoint: "e", Bucket: "b", AccessKeyID: "a", SecretAccessKey: "s", QuotaBytes: 0},
+		{Name: "u2", Endpoint: "e", Bucket: "b", AccessKeyID: "a", SecretAccessKey: "s", QuotaBytes: 0},
 	}
+	cfg.Replication = ReplicationConfig{Factor: 2}
 
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
 		t.Errorf("multiple unlimited backends with replication should pass: %v", err)
@@ -340,15 +318,12 @@ func TestConfigValidation_MultipleUnlimitedWithReplication(t *testing.T) {
 }
 
 func TestConfigValidation_QuotaBackendsWithReplication(t *testing.T) {
-	cfg := Config{
-		Server:   ServerConfig{ListenAddr: ":9000", VirtualBucket: "b"},
-		Database: DatabaseConfig{Host: "h", Database: "d", User: "u"},
-		Backends: []BackendConfig{
-			{Name: "q1", Endpoint: "e", Bucket: "b", AccessKeyID: "a", SecretAccessKey: "s", QuotaBytes: 1024},
-			{Name: "q2", Endpoint: "e", Bucket: "b", AccessKeyID: "a", SecretAccessKey: "s", QuotaBytes: 2048},
-		},
-		Replication: ReplicationConfig{Factor: 2},
+	cfg := validBaseConfig()
+	cfg.Backends = []BackendConfig{
+		{Name: "q1", Endpoint: "e", Bucket: "b", AccessKeyID: "a", SecretAccessKey: "s", QuotaBytes: 1024},
+		{Name: "q2", Endpoint: "e", Bucket: "b", AccessKeyID: "a", SecretAccessKey: "s", QuotaBytes: 2048},
 	}
+	cfg.Replication = ReplicationConfig{Factor: 2}
 
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
 		t.Errorf("quota'd backends with replication should pass: %v", err)
@@ -397,10 +372,155 @@ func TestConfigValidation_ZeroUsageLimitsMeansUnlimited(t *testing.T) {
 	}
 }
 
-// validBaseConfig returns a Config with all required fields populated (1 backend).
+// -------------------------------------------------------------------------
+// BUCKET VALIDATION TESTS
+// -------------------------------------------------------------------------
+
+func TestConfigValidation_NoBuckets(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Buckets = nil
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil {
+		t.Error("no buckets should fail validation")
+	}
+	if !strings.Contains(err.Error(), "at least one bucket") {
+		t.Errorf("error should mention missing buckets, got: %v", err)
+	}
+}
+
+func TestConfigValidation_DuplicateBucketNames(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Buckets = []BucketConfig{
+		{Name: "dup", Credentials: []CredentialConfig{{AccessKeyID: "A1", SecretAccessKey: "s1"}}},
+		{Name: "dup", Credentials: []CredentialConfig{{AccessKeyID: "A2", SecretAccessKey: "s2"}}},
+	}
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil {
+		t.Error("duplicate bucket names should fail validation")
+	}
+	if !strings.Contains(err.Error(), "duplicate bucket name") {
+		t.Errorf("error should mention duplicate bucket, got: %v", err)
+	}
+}
+
+func TestConfigValidation_DuplicateAccessKeysAcrossBuckets(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Buckets = []BucketConfig{
+		{Name: "b1", Credentials: []CredentialConfig{{AccessKeyID: "SAME", SecretAccessKey: "s1"}}},
+		{Name: "b2", Credentials: []CredentialConfig{{AccessKeyID: "SAME", SecretAccessKey: "s2"}}},
+	}
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil {
+		t.Error("duplicate access keys across buckets should fail validation")
+	}
+	if !strings.Contains(err.Error(), "duplicate access_key_id") {
+		t.Errorf("error should mention duplicate access key, got: %v", err)
+	}
+}
+
+func TestConfigValidation_BucketMissingCredentials(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Buckets = []BucketConfig{
+		{Name: "empty", Credentials: nil},
+	}
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil {
+		t.Error("bucket with no credentials should fail validation")
+	}
+	if !strings.Contains(err.Error(), "at least one credential") {
+		t.Errorf("error should mention missing credentials, got: %v", err)
+	}
+}
+
+func TestConfigValidation_CredentialWithNoAuthMethod(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Buckets = []BucketConfig{
+		{Name: "bad", Credentials: []CredentialConfig{{}}},
+	}
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil {
+		t.Error("credential with no auth method should fail validation")
+	}
+	if !strings.Contains(err.Error(), "must have access_key_id+secret_access_key or token") {
+		t.Errorf("error should mention missing auth, got: %v", err)
+	}
+}
+
+func TestConfigValidation_BucketNameWithSlash(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Buckets = []BucketConfig{
+		{Name: "bad/name", Credentials: []CredentialConfig{{AccessKeyID: "A", SecretAccessKey: "s"}}},
+	}
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil {
+		t.Error("bucket name with '/' should fail validation")
+	}
+	if !strings.Contains(err.Error(), "must not contain '/'") {
+		t.Errorf("error should mention slash in name, got: %v", err)
+	}
+}
+
+func TestConfigValidation_MultipleCredentialsOnSameBucket(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Buckets = []BucketConfig{
+		{Name: "shared", Credentials: []CredentialConfig{
+			{AccessKeyID: "WRITER", SecretAccessKey: "ws"},
+			{AccessKeyID: "READER", SecretAccessKey: "rs"},
+		}},
+	}
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Errorf("multiple credentials on same bucket should pass: %v", err)
+	}
+}
+
+func TestConfigValidation_TokenCredential(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Buckets = []BucketConfig{
+		{Name: "legacy", Credentials: []CredentialConfig{
+			{Token: "my-token"},
+		}},
+	}
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Errorf("token-only credential should pass: %v", err)
+	}
+}
+
+func TestConfigValidation_BucketMissingName(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Buckets = []BucketConfig{
+		{Name: "", Credentials: []CredentialConfig{{AccessKeyID: "A", SecretAccessKey: "s"}}},
+	}
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil {
+		t.Error("bucket with empty name should fail validation")
+	}
+	if !strings.Contains(err.Error(), "name is required") {
+		t.Errorf("error should mention missing name, got: %v", err)
+	}
+}
+
+// -------------------------------------------------------------------------
+// HELPERS
+// -------------------------------------------------------------------------
+
+// validBaseConfig returns a Config with all required fields populated (1 backend, 1 bucket).
 func validBaseConfig() Config {
 	return Config{
-		Server:   ServerConfig{ListenAddr: ":9000", VirtualBucket: "b"},
+		Server: ServerConfig{ListenAddr: ":9000"},
+		Buckets: []BucketConfig{
+			{Name: "b", Credentials: []CredentialConfig{
+				{AccessKeyID: "AKID", SecretAccessKey: "secret"},
+			}},
+		},
 		Database: DatabaseConfig{Host: "h", Database: "d", User: "u"},
 		Backends: []BackendConfig{
 			{Name: "b1", Endpoint: "e", Bucket: "b", AccessKeyID: "a", SecretAccessKey: "s", QuotaBytes: 1024},
@@ -411,7 +531,12 @@ func validBaseConfig() Config {
 // validBaseConfigTwoBackends returns a Config with 2 backends for replication tests.
 func validBaseConfigTwoBackends() Config {
 	return Config{
-		Server:   ServerConfig{ListenAddr: ":9000", VirtualBucket: "b"},
+		Server: ServerConfig{ListenAddr: ":9000"},
+		Buckets: []BucketConfig{
+			{Name: "b", Credentials: []CredentialConfig{
+				{AccessKeyID: "AKID", SecretAccessKey: "secret"},
+			}},
+		},
 		Database: DatabaseConfig{Host: "h", Database: "d", User: "u"},
 		Backends: []BackendConfig{
 			{Name: "b1", Endpoint: "e", Bucket: "b", AccessKeyID: "a", SecretAccessKey: "s", QuotaBytes: 1024},

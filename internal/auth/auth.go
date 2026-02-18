@@ -7,6 +7,9 @@
 // the Authorization header, reconstructs the canonical request, and verifies the
 // HMAC-SHA256 signature chain. Also supports legacy X-Proxy-Token authentication
 // for backward compatibility with simple clients.
+//
+// BucketRegistry maps client credentials to virtual buckets, enabling multi-tenant
+// access with per-bucket credential isolation.
 // -------------------------------------------------------------------------------
 
 package auth
@@ -30,11 +33,108 @@ import (
 const sigV4MaxSkew = 15 * time.Minute
 
 // -------------------------------------------------------------------------
+// BUCKET REGISTRY
+// -------------------------------------------------------------------------
+
+// bucketEntry maps an access key to its bucket and signing secret.
+type bucketEntry struct {
+	BucketName      string
+	SecretAccessKey string
+}
+
+// BucketRegistry resolves client credentials to virtual bucket names.
+type BucketRegistry struct {
+	byAccessKey map[string]bucketEntry // access_key_id -> {bucket, secret}
+	byToken     map[string]string      // token -> bucket name
+}
+
+// NewBucketRegistry builds a credential-to-bucket lookup from the config.
+func NewBucketRegistry(buckets []config.BucketConfig) *BucketRegistry {
+	br := &BucketRegistry{
+		byAccessKey: make(map[string]bucketEntry),
+		byToken:     make(map[string]string),
+	}
+
+	for _, bkt := range buckets {
+		for _, cred := range bkt.Credentials {
+			if cred.AccessKeyID != "" && cred.SecretAccessKey != "" {
+				br.byAccessKey[cred.AccessKeyID] = bucketEntry{
+					BucketName:      bkt.Name,
+					SecretAccessKey: cred.SecretAccessKey,
+				}
+			}
+			if cred.Token != "" {
+				br.byToken[cred.Token] = bkt.Name
+			}
+		}
+	}
+
+	return br
+}
+
+// AuthenticateAndResolveBucket authenticates the request and returns the
+// authorized bucket name. Returns an error if authentication fails.
+func (br *BucketRegistry) AuthenticateAndResolveBucket(r *http.Request) (string, error) {
+	authHeader := r.Header.Get("Authorization")
+
+	// SigV4 takes precedence
+	if strings.HasPrefix(authHeader, "AWS4-HMAC-SHA256 ") {
+		accessKey, err := extractAccessKey(authHeader)
+		if err != nil {
+			return "", err
+		}
+
+		entry, ok := br.byAccessKey[accessKey]
+		if !ok {
+			return "", fmt.Errorf("unknown access key")
+		}
+
+		if err := VerifySigV4(r, accessKey, entry.SecretAccessKey); err != nil {
+			return "", err
+		}
+
+		return entry.BucketName, nil
+	}
+
+	// Legacy token auth
+	proxyToken := r.Header.Get("X-Proxy-Token")
+	if proxyToken != "" {
+		for token, bucket := range br.byToken {
+			if subtle.ConstantTimeCompare([]byte(proxyToken), []byte(token)) == 1 {
+				return bucket, nil
+			}
+		}
+		return "", fmt.Errorf("invalid authentication token")
+	}
+
+	return "", fmt.Errorf("missing authentication credentials")
+}
+
+// extractAccessKey parses the access key ID from a SigV4 Authorization header.
+func extractAccessKey(authHeader string) (string, error) {
+	parts := strings.TrimPrefix(authHeader, "AWS4-HMAC-SHA256 ")
+	fields := parseSigV4Fields(parts)
+
+	credential := fields["Credential"]
+	if credential == "" {
+		return "", fmt.Errorf("malformed Authorization header")
+	}
+
+	credParts := strings.SplitN(credential, "/", 2)
+	if len(credParts) < 1 || credParts[0] == "" {
+		return "", fmt.Errorf("malformed credential scope")
+	}
+
+	return credParts[0], nil
+}
+
+// -------------------------------------------------------------------------
 // SIGV4 VERIFICATION
 // -------------------------------------------------------------------------
 
 // VerifySigV4 checks an AWS Signature Version 4 Authorization header against
-// the configured credentials. Returns nil if the signature is valid.
+// the provided credentials. The caller is responsible for resolving the correct
+// credentials via BucketRegistry. Returns nil if the signature is valid.
 func VerifySigV4(r *http.Request, accessKeyID, secretAccessKey string) error {
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
@@ -63,14 +163,9 @@ func VerifySigV4(r *http.Request, accessKeyID, secretAccessKey string) error {
 		return fmt.Errorf("malformed credential scope")
 	}
 
-	reqAccessKey := credParts[0]
 	dateStamp := credParts[1]
 	region := credParts[2]
 	service := credParts[3]
-
-	if reqAccessKey != accessKeyID {
-		return fmt.Errorf("unknown access key")
-	}
 
 	// Build canonical request
 	signedHeaders := strings.Split(signedHeadersStr, ";")
@@ -212,47 +307,4 @@ func hmacSHA256(key, data []byte) []byte {
 func hashSHA256(data []byte) string {
 	h := sha256.Sum256(data)
 	return hex.EncodeToString(h[:])
-}
-
-// -------------------------------------------------------------------------
-// AUTH DISPATCH
-// -------------------------------------------------------------------------
-
-// Authenticate checks the request against configured authentication methods.
-// Supports SigV4 (Authorization header) and legacy token (X-Proxy-Token).
-// Returns nil if auth succeeds, or an error describing the failure.
-func Authenticate(r *http.Request, cfg config.AuthConfig) error {
-	authHeader := r.Header.Get("Authorization")
-	proxyToken := r.Header.Get("X-Proxy-Token")
-
-	// SigV4 takes precedence
-	if strings.HasPrefix(authHeader, "AWS4-HMAC-SHA256 ") {
-		if cfg.AccessKeyID == "" || cfg.SecretAccessKey == "" {
-			return fmt.Errorf("SigV4 auth not configured")
-		}
-
-		// Read body for payload hash if needed, but for S3 the client usually
-		// sends X-Amz-Content-Sha256: UNSIGNED-PAYLOAD
-		return VerifySigV4(r, cfg.AccessKeyID, cfg.SecretAccessKey)
-	}
-
-	// Legacy token auth (constant-time comparison to prevent timing attacks)
-	if cfg.Token != "" {
-		if subtle.ConstantTimeCompare([]byte(proxyToken), []byte(cfg.Token)) == 1 {
-			return nil
-		}
-		return fmt.Errorf("invalid or missing authentication token")
-	}
-
-	// If any auth method is configured but nothing matched, deny the request.
-	if cfg.AccessKeyID != "" || cfg.Token != "" {
-		return fmt.Errorf("missing authentication credentials")
-	}
-
-	return nil
-}
-
-// NeedsAuth returns true if any authentication method is configured.
-func NeedsAuth(cfg config.AuthConfig) bool {
-	return cfg.Token != "" || cfg.AccessKeyID != ""
 }

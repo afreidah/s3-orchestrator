@@ -11,21 +11,31 @@ server:
   # Address to listen on (host:port)
   listen_addr: "0.0.0.0:9000"
 
-  # Virtual bucket name that clients will use
-  # All requests must target this bucket name
-  virtual_bucket: "unified"
-
   # Maximum upload size in bytes (default: 5 GB)
   # max_object_size: 5368709120
 
-auth:
-  # AWS SigV4 credentials (recommended)
-  access_key_id: "${S3_PROXY_ACCESS_KEY_ID}"
-  secret_access_key: "${S3_PROXY_SECRET_ACCESS_KEY}"
+# Virtual buckets with per-bucket credentials. Each bucket gets its own
+# namespace via internal key prefixing. Multiple services can share a bucket
+# by each having their own credentials.
+buckets:
+  - name: "app1-files"
+    credentials:
+      - access_key_id: "${APP1_ACCESS_KEY}"
+        secret_access_key: "${APP1_SECRET_KEY}"
+
+  - name: "shared-files"
+    credentials:
+      # Writer service credentials
+      - access_key_id: "${WRITER_ACCESS_KEY}"
+        secret_access_key: "${WRITER_SECRET_KEY}"
+      # Reader service credentials
+      - access_key_id: "${READER_ACCESS_KEY}"
+        secret_access_key: "${READER_SECRET_KEY}"
 
   # Legacy token auth (backward compatibility)
-  # Clients send this in X-Proxy-Token header
-  # token: "${S3_PROXY_TOKEN}"
+  # - name: "legacy-bucket"
+  #   credentials:
+  #     - token: "${LEGACY_TOKEN}"
 
 database:
   host: "${DB_HOST}"

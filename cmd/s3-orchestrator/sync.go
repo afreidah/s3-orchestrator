@@ -25,12 +25,18 @@ func runSync() {
 	fs := flag.NewFlagSet("sync", flag.ExitOnError)
 	configPath := fs.String("config", "config.yaml", "Path to configuration file")
 	backendName := fs.String("backend", "", "Backend name to sync (required)")
+	bucketName := fs.String("bucket", "", "Virtual bucket name to prefix imported keys with (required)")
 	prefix := fs.String("prefix", "", "Only sync objects with this key prefix")
 	dryRun := fs.Bool("dry-run", false, "Preview what would be imported without writing")
 	_ = fs.Parse(os.Args[1:])
 
 	if *backendName == "" {
 		fmt.Fprintln(os.Stderr, "error: --backend is required")
+		fs.Usage()
+		os.Exit(1)
+	}
+	if *bucketName == "" {
+		fmt.Fprintln(os.Stderr, "error: --bucket is required")
 		fs.Usage()
 		os.Exit(1)
 	}
@@ -99,7 +105,8 @@ func runSync() {
 
 	slog.Info("Starting sync",
 		"backend", backendCfg.Name,
-		"bucket", backendCfg.Bucket,
+		"virtual_bucket", *bucketName,
+		"backend_bucket", backendCfg.Bucket,
 		"prefix", *prefix,
 		"mode", mode,
 	)
@@ -110,14 +117,15 @@ func runSync() {
 		pageSkipped := 0
 
 		for _, obj := range objects {
+			prefixedKey := *bucketName + "/" + obj.Key
 			if *dryRun {
-				slog.Info("Would import", "key", obj.Key, "size", obj.SizeBytes)
+				slog.Info("Would import", "key", prefixedKey, "size", obj.SizeBytes)
 				pageImported++
 				totalBytes += obj.SizeBytes
 				continue
 			}
 
-			imported, err := store.ImportObject(ctx, obj.Key, backendCfg.Name, obj.SizeBytes)
+			imported, err := store.ImportObject(ctx, prefixedKey, backendCfg.Name, obj.SizeBytes)
 			if err != nil {
 				return fmt.Errorf("failed to import %s: %w", obj.Key, err)
 			}

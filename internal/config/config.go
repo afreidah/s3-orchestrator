@@ -27,7 +27,7 @@ import (
 // Config holds the complete service configuration.
 type Config struct {
 	Server         ServerConfig         `yaml:"server"`
-	Auth           AuthConfig           `yaml:"auth"`
+	Buckets        []BucketConfig       `yaml:"buckets"`
 	Database       DatabaseConfig       `yaml:"database"`
 	Backends       []BackendConfig      `yaml:"backends"`
 	Telemetry      TelemetryConfig      `yaml:"telemetry"`
@@ -53,17 +53,24 @@ type DatabaseConfig struct {
 // ServerConfig holds HTTP server settings.
 type ServerConfig struct {
 	ListenAddr     string        `yaml:"listen_addr"`
-	VirtualBucket  string        `yaml:"virtual_bucket"`
 	MaxObjectSize  int64         `yaml:"max_object_size"`  // Max upload size in bytes (default: 5GB)
 	BackendTimeout time.Duration `yaml:"backend_timeout"`  // Per-operation timeout for backend S3 calls (default: 30s)
 }
 
-// AuthConfig holds authentication settings. Supports both AWS SigV4 (for S3
-// client compatibility) and a simple token for backward compatibility.
-type AuthConfig struct {
-	Token           string `yaml:"token"`
-	AccessKeyID     string `yaml:"access_key_id"`
+// CredentialConfig holds a single set of client credentials for accessing a
+// virtual bucket. Supports SigV4 (access_key_id + secret_access_key) or legacy
+// token auth.
+type CredentialConfig struct {
+	AccessKeyID    string `yaml:"access_key_id"`
 	SecretAccessKey string `yaml:"secret_access_key"`
+	Token          string `yaml:"token"`
+}
+
+// BucketConfig defines a virtual bucket with one or more credential sets.
+// Multiple services can share a bucket by each having their own credentials.
+type BucketConfig struct {
+	Name        string             `yaml:"name"`
+	Credentials []CredentialConfig `yaml:"credentials"`
 }
 
 // BackendConfig holds configuration for an S3-compatible storage backend.
@@ -176,9 +183,6 @@ func (c *Config) SetDefaultsAndValidate() error {
 	if c.Server.ListenAddr == "" {
 		errors = append(errors, "server.listen_addr is required")
 	}
-	if c.Server.VirtualBucket == "" {
-		errors = append(errors, "server.virtual_bucket is required")
-	}
 
 	if c.Server.MaxObjectSize == 0 {
 		c.Server.MaxObjectSize = 5 * 1024 * 1024 * 1024 // 5 GB
@@ -214,6 +218,51 @@ func (c *Config) SetDefaultsAndValidate() error {
 	}
 	if c.Database.MaxConnLifetime == 0 {
 		c.Database.MaxConnLifetime = 5 * time.Minute
+	}
+
+	// --- Buckets validation ---
+	if len(c.Buckets) == 0 {
+		errors = append(errors, "at least one bucket is required")
+	}
+
+	bucketNames := make(map[string]bool)
+	accessKeys := make(map[string]bool)
+	for i := range c.Buckets {
+		bkt := &c.Buckets[i]
+		prefix := fmt.Sprintf("buckets[%d]", i)
+
+		if bkt.Name == "" {
+			errors = append(errors, fmt.Sprintf("%s: name is required", prefix))
+		}
+		if strings.Contains(bkt.Name, "/") {
+			errors = append(errors, fmt.Sprintf("%s: name must not contain '/'", prefix))
+		}
+		if bucketNames[bkt.Name] {
+			errors = append(errors, fmt.Sprintf("%s: duplicate bucket name '%s'", prefix, bkt.Name))
+		}
+		bucketNames[bkt.Name] = true
+
+		if len(bkt.Credentials) == 0 {
+			errors = append(errors, fmt.Sprintf("%s: at least one credential is required", prefix))
+		}
+
+		for j := range bkt.Credentials {
+			cred := &bkt.Credentials[j]
+			credPrefix := fmt.Sprintf("%s.credentials[%d]", prefix, j)
+
+			hasSigV4 := cred.AccessKeyID != "" && cred.SecretAccessKey != ""
+			hasToken := cred.Token != ""
+			if !hasSigV4 && !hasToken {
+				errors = append(errors, fmt.Sprintf("%s: must have access_key_id+secret_access_key or token", credPrefix))
+			}
+
+			if cred.AccessKeyID != "" {
+				if accessKeys[cred.AccessKeyID] {
+					errors = append(errors, fmt.Sprintf("%s: duplicate access_key_id '%s'", credPrefix, cred.AccessKeyID))
+				}
+				accessKeys[cred.AccessKeyID] = true
+			}
+		}
 	}
 
 	// --- Backends validation ---

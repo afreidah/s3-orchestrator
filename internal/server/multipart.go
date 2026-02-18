@@ -75,13 +75,15 @@ type partInfo struct {
 // -------------------------------------------------------------------------
 
 // handleCreateMultipartUpload handles POST /{bucket}/{key}?uploads
-func (s *Server) handleCreateMultipartUpload(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket, key string) (int, error) {
+// key is the user-facing key (for XML response), internalKey is the prefixed
+// key used for storage.
+func (s *Server) handleCreateMultipartUpload(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket, key, internalKey string) (int, error) {
 	contentType := r.Header.Get("Content-Type")
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
 
-	uploadID, _, err := s.Manager.CreateMultipartUpload(ctx, key, contentType)
+	uploadID, _, err := s.Manager.CreateMultipartUpload(ctx, internalKey, contentType)
 	if err != nil {
 		return writeStorageError(w, err, "Failed to create multipart upload"), err
 	}
@@ -179,7 +181,9 @@ func (s *Server) handleAbortMultipartUpload(ctx context.Context, w http.Response
 }
 
 // handleListParts handles GET /{bucket}/{key}?uploadId=X
-func (s *Server) handleListParts(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket, key string) (int, error) {
+// key is the user-facing key (for XML response), internalKey is the prefixed
+// key (unused here since GetParts uses uploadID, but accepted for consistency).
+func (s *Server) handleListParts(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket, key, _ string) (int, error) {
 	uploadID := r.URL.Query().Get("uploadId")
 
 	parts, err := s.Manager.GetParts(ctx, uploadID)

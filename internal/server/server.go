@@ -6,7 +6,8 @@
 // HTTP server and request router for S3-compatible operations. Implements a
 // subset of the S3 API sufficient for basic object storage: PUT, GET, HEAD,
 // DELETE. Routes requests to the appropriate handler based on method and query
-// parameters.
+// parameters. Supports multi-bucket isolation via credential-based bucket
+// resolution and internal key prefixing.
 // -------------------------------------------------------------------------------
 
 package server
@@ -19,7 +20,6 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/auth"
-	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/storage"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 	"go.opentelemetry.io/otel/attribute"
@@ -33,8 +33,7 @@ import (
 // Server handles HTTP requests and routes them to the backend manager.
 type Server struct {
 	Manager       *storage.BackendManager
-	VirtualBucket string
-	AuthConfig    config.AuthConfig
+	BucketAuth    *auth.BucketRegistry
 	MaxObjectSize int64 // Max upload body size in bytes
 }
 
@@ -47,14 +46,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	telemetry.InflightRequests.WithLabelValues(method).Inc()
 	defer telemetry.InflightRequests.WithLabelValues(method).Dec()
 
-	// --- Auth check ---
-	if auth.NeedsAuth(s.AuthConfig) {
-		if err := auth.Authenticate(r, s.AuthConfig); err != nil {
-			s.recordRequest(method, http.StatusForbidden, start, 0, 0)
-			slog.Warn("Auth failed", "method", method, "path", r.URL.Path, "remote", r.RemoteAddr, "error", err)
-			writeS3Error(w, http.StatusForbidden, "AccessDenied", "Access denied")
-			return
-		}
+	// --- Auth: resolve which bucket these credentials authorize ---
+	authorizedBucket, err := s.BucketAuth.AuthenticateAndResolveBucket(r)
+	if err != nil {
+		s.recordRequest(method, http.StatusForbidden, start, 0, 0)
+		slog.Warn("Auth failed", "method", method, "path", r.URL.Path, "remote", r.RemoteAddr, "error", err)
+		writeS3Error(w, http.StatusForbidden, "AccessDenied", "Access denied")
+		return
 	}
 
 	// --- Parse path ---
@@ -66,13 +64,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// --- Verify bucket name ---
-	if bucket != s.VirtualBucket {
-		s.recordRequest(method, http.StatusNotFound, start, 0, 0)
-		slog.Warn("Unknown bucket", "method", method, "path", r.URL.Path, "remote", r.RemoteAddr, "bucket", bucket)
-		writeS3Error(w, http.StatusNotFound, "NoSuchBucket", fmt.Sprintf("Bucket %s not found", bucket))
+	// --- Verify path bucket matches authorized bucket ---
+	if bucket != authorizedBucket {
+		s.recordRequest(method, http.StatusForbidden, start, 0, 0)
+		slog.Warn("Bucket mismatch", "method", method, "path", r.URL.Path, "remote", r.RemoteAddr,
+			"authorized_bucket", authorizedBucket, "requested_bucket", bucket)
+		writeS3Error(w, http.StatusForbidden, "AccessDenied",
+			fmt.Sprintf("Credentials are not authorized for bucket %s", bucket))
 		return
 	}
+
+	// --- Prefix key for internal storage isolation ---
+	internalKey := bucket + "/" + key
 
 	// --- Start tracing span ---
 	ctx, span := telemetry.StartSpan(r.Context(), fmt.Sprintf("HTTP %s", method),
@@ -82,7 +85,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// --- Route by method ---
 	var status int
-	var err error
 	var requestSize, responseSize int64
 
 	// --- Bucket-level operations (no key) ---
@@ -102,18 +104,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		switch {
 		case hasUploads && method == http.MethodPost:
-			status, err = s.handleCreateMultipartUpload(ctx, w, r, bucket, key)
+			status, err = s.handleCreateMultipartUpload(ctx, w, r, bucket, key, internalKey)
 		case uploadID != "":
 			switch method {
 			case http.MethodPut:
 				requestSize = r.ContentLength
-				status, err = s.handleUploadPart(ctx, w, r, key)
+				status, err = s.handleUploadPart(ctx, w, r, internalKey)
 			case http.MethodPost:
 				status, err = s.handleCompleteMultipartUpload(ctx, w, r, bucket, key)
 			case http.MethodDelete:
 				status, err = s.handleAbortMultipartUpload(ctx, w, uploadID)
 			case http.MethodGet:
-				status, err = s.handleListParts(ctx, w, r, bucket, key)
+				status, err = s.handleListParts(ctx, w, r, bucket, key, internalKey)
 			default:
 				s.recordRequest(method, http.StatusMethodNotAllowed, start, 0, 0)
 				writeS3Error(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "Method not supported")
@@ -124,17 +126,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			switch method {
 			case http.MethodPut:
 				if copySource := r.Header.Get("X-Amz-Copy-Source"); copySource != "" {
-					status, err = s.handleCopyObject(ctx, w, r, bucket, key, copySource)
+					status, err = s.handleCopyObject(ctx, w, r, bucket, internalKey, copySource)
 				} else {
 					requestSize = r.ContentLength
-					status, err = s.handlePut(ctx, w, r, key)
+					status, err = s.handlePut(ctx, w, r, internalKey)
 				}
 			case http.MethodGet:
-				status, responseSize, err = s.handleGet(ctx, w, r, key)
+				status, responseSize, err = s.handleGet(ctx, w, r, internalKey)
 			case http.MethodHead:
-				status, err = s.handleHead(ctx, w, r, key)
+				status, err = s.handleHead(ctx, w, r, internalKey)
 			case http.MethodDelete:
-				status, err = s.handleDelete(ctx, w, r, key)
+				status, err = s.handleDelete(ctx, w, r, internalKey)
 			default:
 				s.recordRequest(method, http.StatusMethodNotAllowed, start, 0, 0)
 				slog.Warn("Method not allowed", "method", method, "path", r.URL.Path, "remote", r.RemoteAddr)
@@ -157,7 +159,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// --- Log request ---
 	elapsed := time.Since(start)
-	logAttrs := []any{"method", method, "path", r.URL.Path, "remote", r.RemoteAddr, "status", status, "duration", elapsed}
+	logAttrs := []any{"method", method, "path", r.URL.Path, "remote", r.RemoteAddr, "bucket", bucket, "status", status, "duration", elapsed}
 	if err != nil {
 		slog.Error("Request failed", append(logAttrs, "error", err)...)
 	} else {

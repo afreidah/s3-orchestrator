@@ -241,11 +241,13 @@ func runServe() {
 		}()
 	}
 
+	// --- Build bucket registry ---
+	bucketAuth := auth.NewBucketRegistry(cfg.Buckets)
+
 	// --- Create server ---
 	srv := &server.Server{
 		Manager:       manager,
-		VirtualBucket: cfg.Server.VirtualBucket,
-		AuthConfig:    cfg.Auth,
+		BucketAuth:    bucketAuth,
 		MaxObjectSize: cfg.Server.MaxObjectSize,
 	}
 
@@ -333,21 +335,16 @@ func runServe() {
 	}()
 
 	// --- Log startup info ---
+	bucketNames := make([]string, len(cfg.Buckets))
+	for i, b := range cfg.Buckets {
+		bucketNames[i] = b.Name
+	}
 	slog.Info("S3 Orchestrator starting",
 		"version", telemetry.Version,
 		"listen_addr", cfg.Server.ListenAddr,
-		"virtual_bucket", cfg.Server.VirtualBucket,
+		"buckets", bucketNames,
 		"backends", len(cfg.Backends),
 	)
-
-	switch {
-	case !auth.NeedsAuth(cfg.Auth):
-		slog.Warn("Authentication is disabled")
-	case cfg.Auth.AccessKeyID != "":
-		slog.Info("Authentication enabled", "method", "SigV4")
-	default:
-		slog.Info("Authentication enabled", "method", "legacy_token")
-	}
 
 	if cfg.Telemetry.Tracing.Enabled {
 		slog.Info("Tracing enabled",

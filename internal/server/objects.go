@@ -156,8 +156,9 @@ func (s *Server) handleDelete(ctx context.Context, w http.ResponseWriter, r *htt
 
 // handleCopyObject processes PUT requests with the x-amz-copy-source header.
 // Copies an object from the source key to the destination key, potentially
-// across backends, with atomic quota tracking.
-func (s *Server) handleCopyObject(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket, destKey, copySource string) (int, error) {
+// across backends, with atomic quota tracking. Only same-bucket copies are
+// allowed (no cross-bucket copying).
+func (s *Server) handleCopyObject(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket, destInternalKey, copySource string) (int, error) {
 	// --- Parse x-amz-copy-source header ---
 	source := strings.TrimPrefix(copySource, "/")
 	sourceBucket, sourceKey, ok := parsePath("/" + source)
@@ -166,13 +167,17 @@ func (s *Server) handleCopyObject(ctx context.Context, w http.ResponseWriter, r 
 		return http.StatusBadRequest, fmt.Errorf("invalid copy source: %s", copySource)
 	}
 
-	// --- Validate source bucket ---
-	if sourceBucket != s.VirtualBucket {
-		writeS3Error(w, http.StatusNotFound, "NoSuchBucket", fmt.Sprintf("Source bucket %s not found", sourceBucket))
-		return http.StatusNotFound, fmt.Errorf("unknown source bucket: %s", sourceBucket)
+	// --- Validate source bucket matches authorized bucket (same-bucket only) ---
+	if sourceBucket != bucket {
+		writeS3Error(w, http.StatusForbidden, "AccessDenied",
+			fmt.Sprintf("Cross-bucket copy not allowed: source bucket %s does not match %s", sourceBucket, bucket))
+		return http.StatusForbidden, fmt.Errorf("cross-bucket copy denied: %s != %s", sourceBucket, bucket)
 	}
 
-	etag, err := s.Manager.CopyObject(ctx, sourceKey, destKey)
+	// Prefix source key for internal storage
+	sourceInternalKey := bucket + "/" + sourceKey
+
+	etag, err := s.Manager.CopyObject(ctx, sourceInternalKey, destInternalKey)
 	if err != nil {
 		return writeStorageError(w, err, "Failed to copy object"), err
 	}
