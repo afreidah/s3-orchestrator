@@ -100,9 +100,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, hasUploads := query["uploads"]
 		uploadID := query.Get("uploadId")
 
-		if hasUploads && method == http.MethodPost {
+		switch {
+		case hasUploads && method == http.MethodPost:
 			status, err = s.handleCreateMultipartUpload(ctx, w, r, bucket, key)
-		} else if uploadID != "" {
+		case uploadID != "":
 			switch method {
 			case http.MethodPut:
 				requestSize = r.ContentLength
@@ -119,7 +120,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				span.SetStatus(codes.Error, "method not allowed")
 				return
 			}
-		} else {
+		default:
 			switch method {
 			case http.MethodPut:
 				if copySource := r.Header.Get("X-Amz-Copy-Source"); copySource != "" {

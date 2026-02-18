@@ -60,7 +60,7 @@ type S3Backend struct {
 
 // NewS3Backend creates a new S3-compatible backend client. Uses BaseEndpoint
 // to direct requests to the configured provider instead of AWS.
-func NewS3Backend(cfg config.BackendConfig) (*S3Backend, error) {
+func NewS3Backend(cfg *config.BackendConfig) (*S3Backend, error) {
 	// --- Create S3 client with custom endpoint ---
 	client := s3.New(s3.Options{
 		Region:       cfg.Region,

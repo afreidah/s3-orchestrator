@@ -89,6 +89,34 @@ func TestConfigValidation_NegativeQuota(t *testing.T) {
 	}
 }
 
+func TestConfigValidation_ZeroQuotaMeansUnlimited(t *testing.T) {
+	cfg := Config{
+		Server:   ServerConfig{ListenAddr: ":9000", VirtualBucket: "b"},
+		Database: DatabaseConfig{Host: "h", Database: "d", User: "u"},
+		Backends: []BackendConfig{
+			{Name: "unlimited", Endpoint: "e", Bucket: "b", AccessKeyID: "a", SecretAccessKey: "s", QuotaBytes: 0},
+		},
+	}
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Errorf("zero quota (unlimited) should pass validation: %v", err)
+	}
+}
+
+func TestConfigValidation_OmittedQuotaMeansUnlimited(t *testing.T) {
+	cfg := Config{
+		Server:   ServerConfig{ListenAddr: ":9000", VirtualBucket: "b"},
+		Database: DatabaseConfig{Host: "h", Database: "d", User: "u"},
+		Backends: []BackendConfig{
+			{Name: "noq", Endpoint: "e", Bucket: "b", AccessKeyID: "a", SecretAccessKey: "s"},
+		},
+	}
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Errorf("omitted quota (unlimited) should pass validation: %v", err)
+	}
+}
+
 func TestConnectionString(t *testing.T) {
 	db := DatabaseConfig{
 		Host:     "localhost",

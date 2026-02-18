@@ -87,7 +87,10 @@ func (q *Queries) GetAllQuotaStats(ctx context.Context) ([]BackendQuota, error) 
 }
 
 const getBackendAvailableSpace = `-- name: GetBackendAvailableSpace :one
-SELECT (q.bytes_limit - q.bytes_used - COALESCE(m.inflight, 0))::bigint AS available
+SELECT CASE
+    WHEN q.bytes_limit = 0 THEN 9223372036854775807  -- max int64
+    ELSE (q.bytes_limit - q.bytes_used - COALESCE(m.inflight, 0))
+END::bigint AS available
 FROM backend_quotas q
 LEFT JOIN (
     SELECT mu.backend_name, SUM(mp.size_bytes) AS inflight
@@ -98,6 +101,7 @@ LEFT JOIN (
 WHERE q.backend_name = $1
 `
 
+// bytes_limit = 0 means unlimited (no quota enforcement)
 func (q *Queries) GetBackendAvailableSpace(ctx context.Context, backendName string) (int64, error) {
 	row := q.db.QueryRow(ctx, getBackendAvailableSpace, backendName)
 	var available int64
