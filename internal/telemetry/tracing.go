@@ -14,7 +14,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/afreidah/s3-proxy/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/config"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
@@ -35,7 +35,7 @@ const (
 )
 
 // Version of the service for trace metadata. Set at build time via
-// -ldflags "-X github.com/afreidah/s3-proxy/internal/telemetry.Version=..."
+// -ldflags "-X github.com/afreidah/s3-orchestrator/internal/telemetry.Version=..."
 var Version = "dev"
 
 // -------------------------------------------------------------------------
@@ -76,11 +76,12 @@ func InitTracer(ctx context.Context, cfg config.TracingConfig) (func(context.Con
 
 	// --- Configure sampler ---
 	var sampler sdktrace.Sampler
-	if cfg.SampleRate >= 1.0 {
+	switch {
+	case cfg.SampleRate >= 1.0:
 		sampler = sdktrace.AlwaysSample()
-	} else if cfg.SampleRate <= 0 {
+	case cfg.SampleRate <= 0:
 		sampler = sdktrace.NeverSample()
-	} else {
+	default:
 		sampler = sdktrace.TraceIDRatioBased(cfg.SampleRate)
 	}
 

@@ -22,9 +22,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	_ "github.com/jackc/pgx/v5/stdlib"
 
-	"github.com/afreidah/s3-proxy/internal/config"
-	"github.com/afreidah/s3-proxy/internal/server"
-	"github.com/afreidah/s3-proxy/internal/storage"
+	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/server"
+	"github.com/afreidah/s3-orchestrator/internal/storage"
 )
 
 const virtualBucket = "test-bucket"
@@ -102,7 +102,7 @@ func TestMain(m *testing.M) {
 
 	ctx := context.Background()
 
-	store, err := storage.NewStore(ctx, cfg.Database)
+	store, err := storage.NewStore(ctx, &cfg.Database)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to create store: %v\n", err)
 		os.Exit(1)
@@ -121,7 +121,7 @@ func TestMain(m *testing.M) {
 	backends := make(map[string]storage.ObjectBackend)
 	var backendOrder []string
 	for _, bcfg := range cfg.Backends {
-		b, err := storage.NewS3Backend(bcfg)
+		b, err := storage.NewS3Backend(&bcfg)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "failed to create backend %s: %v\n", bcfg.Name, err)
 			os.Exit(1)
@@ -139,7 +139,7 @@ func TestMain(m *testing.M) {
 	cbStore := storage.NewCircuitBreakerStore(failableStore, cfg.CircuitBreaker)
 	testCBStore = cbStore
 
-	manager := storage.NewBackendManager(backends, cbStore, backendOrder, 60*time.Second, 30*time.Second)
+	manager := storage.NewBackendManager(backends, cbStore, backendOrder, 60*time.Second, 30*time.Second, nil)
 	testManager = manager
 
 	srv := &server.Server{
@@ -499,7 +499,7 @@ func newTestS3Backend(t *testing.T, name string) *storage.S3Backend {
 		t.Fatalf("unknown backend %q", name)
 	}
 
-	backend, err := storage.NewS3Backend(cfg)
+	backend, err := storage.NewS3Backend(&cfg)
 	if err != nil {
 		t.Fatalf("NewS3Backend(%s): %v", name, err)
 	}

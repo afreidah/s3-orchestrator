@@ -17,8 +17,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/afreidah/s3-proxy/internal/config"
-	"github.com/afreidah/s3-proxy/internal/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 )
 
 // -------------------------------------------------------------------------
@@ -131,6 +131,9 @@ func (m *BackendManager) replicateObject(ctx context.Context, key string, existi
 			m.cleanupOrphan(ctx, target, key)
 			continue
 		}
+
+		m.recordUsage(source, 1, existingCopies[0].SizeBytes, 0) // source: Get + egress
+		m.recordUsage(target, 1, 0, existingCopies[0].SizeBytes) // target: Put + ingress
 
 		exclusion[target] = true
 		created++

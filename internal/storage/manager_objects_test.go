@@ -17,7 +17,7 @@ func newTestManager(store *mockStore, backends map[string]*mockBackend) *Backend
 		obs[name] = b
 		order = append(order, name)
 	}
-	return NewBackendManager(obs, store, order, 5*time.Second, 30*time.Second)
+	return NewBackendManager(obs, store, order, 5*time.Second, 30*time.Second, nil)
 }
 
 // -------------------------------------------------------------------------
@@ -536,7 +536,7 @@ func TestPutObject_BackendTimeout(t *testing.T) {
 
 	store := &mockStore{getBackendResp: "b1"}
 	obs := map[string]ObjectBackend{"b1": slowBackend}
-	mgr := NewBackendManager(obs, store, []string{"b1"}, 5*time.Second, 50*time.Millisecond)
+	mgr := NewBackendManager(obs, store, []string{"b1"}, 5*time.Second, 50*time.Millisecond, nil)
 
 	_, err := mgr.PutObject(context.Background(), "timeout-key", bytes.NewReader([]byte("data")), 4, "text/plain")
 	if err == nil {
@@ -567,7 +567,7 @@ func (s *slowMockBackend) PutObject(ctx context.Context, key string, body io.Rea
 // -------------------------------------------------------------------------
 
 func TestLocationCache_SetAndGet(t *testing.T) {
-	mgr := NewBackendManager(nil, nil, nil, 5*time.Second, 0)
+	mgr := NewBackendManager(nil, nil, nil, 5*time.Second, 0, nil)
 	mgr.cacheSet("key1", "backend-a")
 
 	got, ok := mgr.cacheGet("key1")
@@ -580,7 +580,7 @@ func TestLocationCache_SetAndGet(t *testing.T) {
 }
 
 func TestLocationCache_Expiry(t *testing.T) {
-	mgr := NewBackendManager(nil, nil, nil, 10*time.Millisecond, 0)
+	mgr := NewBackendManager(nil, nil, nil, 10*time.Millisecond, 0, nil)
 	mgr.cacheSet("key1", "backend-a")
 
 	time.Sleep(15 * time.Millisecond)
@@ -592,7 +592,7 @@ func TestLocationCache_Expiry(t *testing.T) {
 }
 
 func TestLocationCache_Overwrite(t *testing.T) {
-	mgr := NewBackendManager(nil, nil, nil, 5*time.Second, 0)
+	mgr := NewBackendManager(nil, nil, nil, 5*time.Second, 0, nil)
 	mgr.cacheSet("key1", "old-backend")
 	mgr.cacheSet("key1", "new-backend")
 
@@ -602,5 +602,136 @@ func TestLocationCache_Overwrite(t *testing.T) {
 	}
 	if got != "new-backend" {
 		t.Errorf("cached backend = %q, want %q", got, "new-backend")
+	}
+}
+
+// -------------------------------------------------------------------------
+// Usage Limit Enforcement
+// -------------------------------------------------------------------------
+
+func newTestManagerWithLimits(store *mockStore, backends map[string]*mockBackend, limits map[string]UsageLimits) *BackendManager {
+	obs := make(map[string]ObjectBackend, len(backends))
+	var order []string
+	for name, b := range backends {
+		obs[name] = b
+		order = append(order, name)
+	}
+	return NewBackendManager(obs, store, order, 5*time.Second, 30*time.Second, limits)
+}
+
+func TestPutObject_UsageLimitOverflow(t *testing.T) {
+	b1 := newMockBackend()
+	b2 := newMockBackend()
+
+	// b1 over API limit, b2 still has room
+	limits := map[string]UsageLimits{
+		"b1": {ApiRequestLimit: 10},
+		"b2": {ApiRequestLimit: 100},
+	}
+	store := &mockStore{getBackendResp: "b2"}
+	mgr := newTestManagerWithLimits(store, map[string]*mockBackend{"b1": b1, "b2": b2}, limits)
+
+	// Push b1 over limit
+	mgr.usageBaselineMu.Lock()
+	mgr.usageBaseline["b1"] = UsageStat{ApiRequests: 10}
+	mgr.usageBaselineMu.Unlock()
+
+	etag, err := mgr.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain")
+	if err != nil {
+		t.Fatalf("PutObject should overflow to b2: %v", err)
+	}
+	if etag == "" {
+		t.Error("expected non-empty etag")
+	}
+	// Object should be on b2, not b1
+	if b1.hasObject("key") {
+		t.Error("object should NOT be on b1 (over limit)")
+	}
+	if !b2.hasObject("key") {
+		t.Error("object should be on b2 (overflow)")
+	}
+}
+
+func TestGetObject_UsageLimitSkipsBackend(t *testing.T) {
+	b1 := newMockBackend()
+	b2 := newMockBackend()
+	_, _ = b1.PutObject(context.Background(), "key", bytes.NewReader([]byte("from-b1")), 7, "text/plain")
+	_, _ = b2.PutObject(context.Background(), "key", bytes.NewReader([]byte("from-b2")), 7, "text/plain")
+
+	limits := map[string]UsageLimits{
+		"b1": {ApiRequestLimit: 10},
+		"b2": {ApiRequestLimit: 100},
+	}
+	store := &mockStore{
+		getAllLocationsResp: []ObjectLocation{
+			{ObjectKey: "key", BackendName: "b1"},
+			{ObjectKey: "key", BackendName: "b2"},
+		},
+	}
+	mgr := newTestManagerWithLimits(store, map[string]*mockBackend{"b1": b1, "b2": b2}, limits)
+
+	// Push b1 over limit
+	mgr.usageBaselineMu.Lock()
+	mgr.usageBaseline["b1"] = UsageStat{ApiRequests: 10}
+	mgr.usageBaselineMu.Unlock()
+
+	result, err := mgr.GetObject(context.Background(), "key", "")
+	if err != nil {
+		t.Fatalf("GetObject should skip b1 and use b2: %v", err)
+	}
+	defer func() { _ = result.Body.Close() }()
+	got, _ := io.ReadAll(result.Body)
+	if string(got) != "from-b2" {
+		t.Errorf("body = %q, want %q (from b2)", got, "from-b2")
+	}
+}
+
+func TestGetObject_AllCopiesOverLimit(t *testing.T) {
+	b1 := newMockBackend()
+	_, _ = b1.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain")
+
+	limits := map[string]UsageLimits{
+		"b1": {ApiRequestLimit: 10},
+	}
+	store := &mockStore{
+		getAllLocationsResp: []ObjectLocation{
+			{ObjectKey: "key", BackendName: "b1"},
+		},
+	}
+	mgr := newTestManagerWithLimits(store, map[string]*mockBackend{"b1": b1}, limits)
+
+	mgr.usageBaselineMu.Lock()
+	mgr.usageBaseline["b1"] = UsageStat{ApiRequests: 10}
+	mgr.usageBaselineMu.Unlock()
+
+	_, err := mgr.GetObject(context.Background(), "key", "")
+	if !errors.Is(err, ErrUsageLimitExceeded) {
+		t.Fatalf("expected ErrUsageLimitExceeded, got %v", err)
+	}
+}
+
+func TestDeleteObject_AlwaysAllowed(t *testing.T) {
+	backend := newMockBackend()
+	_, _ = backend.PutObject(context.Background(), "del-key", bytes.NewReader([]byte("rm")), 2, "")
+
+	// All limits exceeded
+	limits := map[string]UsageLimits{
+		"b1": {ApiRequestLimit: 1, EgressByteLimit: 1, IngressByteLimit: 1},
+	}
+	store := &mockStore{
+		deleteObjectResp: []DeletedCopy{{BackendName: "b1", SizeBytes: 2}},
+	}
+	mgr := newTestManagerWithLimits(store, map[string]*mockBackend{"b1": backend}, limits)
+
+	mgr.usageBaselineMu.Lock()
+	mgr.usageBaseline["b1"] = UsageStat{ApiRequests: 100, EgressBytes: 100, IngressBytes: 100}
+	mgr.usageBaselineMu.Unlock()
+
+	err := mgr.DeleteObject(context.Background(), "del-key")
+	if err != nil {
+		t.Fatalf("DeleteObject should always succeed regardless of limits: %v", err)
+	}
+	if backend.hasObject("del-key") {
+		t.Error("object should be deleted from backend")
 	}
 }

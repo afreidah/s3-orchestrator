@@ -21,8 +21,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/afreidah/s3-proxy/internal/config"
-	db "github.com/afreidah/s3-proxy/internal/storage/sqlc"
+	"github.com/afreidah/s3-orchestrator/internal/config"
+	db "github.com/afreidah/s3-orchestrator/internal/storage/sqlc"
 )
 
 //go:embed migration.sql
@@ -93,7 +93,7 @@ type ObjectLocation struct {
 // -------------------------------------------------------------------------
 
 // NewStore creates a new PostgreSQL store connection using pgxpool.
-func NewStore(ctx context.Context, dbCfg config.DatabaseConfig) (*Store, error) {
+func NewStore(ctx context.Context, dbCfg *config.DatabaseConfig) (*Store, error) {
 	cfg, err := pgxpool.ParseConfig(dbCfg.ConnectionString())
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse connection string: %w", err)
@@ -196,13 +196,13 @@ func toObjectLocations(rows []db.ObjectLocation) []ObjectLocation {
 // SyncQuotaLimits ensures the backend_quotas table has entries for all configured
 // backends with their quota limits. Creates new entries or updates existing limits.
 func (s *Store) SyncQuotaLimits(ctx context.Context, backends []config.BackendConfig) error {
-	for _, b := range backends {
+	for i := range backends {
 		err := s.queries.UpsertQuotaLimit(ctx, db.UpsertQuotaLimitParams{
-			BackendName: b.Name,
-			BytesLimit:  b.QuotaBytes,
+			BackendName: backends[i].Name,
+			BytesLimit:  backends[i].QuotaBytes,
 		})
 		if err != nil {
-			return fmt.Errorf("failed to sync quota for backend %s: %w", b.Name, err)
+			return fmt.Errorf("failed to sync quota for backend %s: %w", backends[i].Name, err)
 		}
 	}
 	return nil
@@ -718,6 +718,40 @@ func (s *Store) ImportObject(ctx context.Context, key, backend string, size int6
 
 		return true, nil
 	})
+}
+
+// -------------------------------------------------------------------------
+// USAGE TRACKING
+// -------------------------------------------------------------------------
+
+// FlushUsageDeltas atomically adds accumulated usage deltas to the persistent
+// usage row. Creates the row if it doesn't exist for this (backend, period).
+func (s *Store) FlushUsageDeltas(ctx context.Context, backendName, period string, apiRequests, egressBytes, ingressBytes int64) error {
+	return s.queries.FlushUsageDeltas(ctx, db.FlushUsageDeltasParams{
+		BackendName:  backendName,
+		Period:       period,
+		ApiRequests:  apiRequests,
+		EgressBytes:  egressBytes,
+		IngressBytes: ingressBytes,
+	})
+}
+
+// GetUsageForPeriod returns usage statistics for all backends in the given period.
+func (s *Store) GetUsageForPeriod(ctx context.Context, period string) (map[string]UsageStat, error) {
+	rows, err := s.queries.GetUsageForPeriod(ctx, period)
+	if err != nil {
+		return nil, err
+	}
+
+	stats := make(map[string]UsageStat, len(rows))
+	for _, row := range rows {
+		stats[row.BackendName] = UsageStat{
+			ApiRequests:  row.ApiRequests,
+			EgressBytes:  row.EgressBytes,
+			IngressBytes: row.IngressBytes,
+		}
+	}
+	return stats, nil
 }
 
 // pgTimestamptz converts a time.Time to pgtype.Timestamptz for use with sqlc.

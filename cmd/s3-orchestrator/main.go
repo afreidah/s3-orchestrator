@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------
-// S3 Proxy - Unified S3 Endpoint with Quota Management
+// S3 Orchestrator - Unified S3 Endpoint with Quota Management
 //
 // Author: Alex Freidah
 //
@@ -23,11 +23,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/afreidah/s3-proxy/internal/auth"
-	"github.com/afreidah/s3-proxy/internal/config"
-	"github.com/afreidah/s3-proxy/internal/server"
-	"github.com/afreidah/s3-proxy/internal/storage"
-	"github.com/afreidah/s3-proxy/internal/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/auth"
+	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/server"
+	"github.com/afreidah/s3-orchestrator/internal/storage"
+	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -68,7 +68,7 @@ func runServe() {
 	telemetry.BuildInfo.WithLabelValues(telemetry.Version, runtime.Version()).Set(1)
 
 	// --- Initialize PostgreSQL store ---
-	store, err := storage.NewStore(ctx, cfg.Database)
+	store, err := storage.NewStore(ctx, &cfg.Database)
 	if err != nil {
 		slog.Error("Failed to connect to database", "error", err)
 		os.Exit(1)
@@ -96,7 +96,9 @@ func runServe() {
 	backends := make(map[string]storage.ObjectBackend)
 	backendOrder := make([]string, 0, len(cfg.Backends))
 
-	for _, bcfg := range cfg.Backends {
+	usageLimits := make(map[string]storage.UsageLimits, len(cfg.Backends))
+	for i := range cfg.Backends {
+		bcfg := &cfg.Backends[i]
 		backend, err := storage.NewS3Backend(bcfg)
 		if err != nil {
 			slog.Error("Failed to initialize backend", "backend", bcfg.Name, "error", err)
@@ -104,11 +106,19 @@ func runServe() {
 		}
 		backends[bcfg.Name] = backend
 		backendOrder = append(backendOrder, bcfg.Name)
+		usageLimits[bcfg.Name] = storage.UsageLimits{
+			ApiRequestLimit:  bcfg.ApiRequestLimit,
+			EgressByteLimit:  bcfg.EgressByteLimit,
+			IngressByteLimit: bcfg.IngressByteLimit,
+		}
 		slog.Info("Backend initialized",
 			"backend", bcfg.Name,
 			"endpoint", bcfg.Endpoint,
 			"bucket", bcfg.Bucket,
 			"quota_bytes", bcfg.QuotaBytes,
+			"api_request_limit", bcfg.ApiRequestLimit,
+			"egress_byte_limit", bcfg.EgressByteLimit,
+			"ingress_byte_limit", bcfg.IngressByteLimit,
 		)
 	}
 
@@ -116,7 +126,7 @@ func runServe() {
 	cbStore := storage.NewCircuitBreakerStore(store, cfg.CircuitBreaker)
 
 	// --- Create backend manager ---
-	manager := storage.NewBackendManager(backends, cbStore, backendOrder, cfg.CircuitBreaker.CacheTTL, cfg.Server.BackendTimeout)
+	manager := storage.NewBackendManager(backends, cbStore, backendOrder, cfg.CircuitBreaker.CacheTTL, cfg.Server.BackendTimeout, usageLimits)
 
 	// --- Initial quota metrics update ---
 	if err := manager.UpdateQuotaMetrics(ctx); err != nil {
@@ -136,6 +146,9 @@ func runServe() {
 		for {
 			select {
 			case <-ticker.C:
+				if err := manager.FlushUsage(bgCtx); err != nil && !errors.Is(err, storage.ErrDBUnavailable) {
+					slog.Error("Failed to flush usage counters", "error", err)
+				}
 				if err := manager.UpdateQuotaMetrics(bgCtx); err != nil && !errors.Is(err, storage.ErrDBUnavailable) {
 					slog.Error("Failed to update quota metrics", "error", err)
 				}
@@ -305,6 +318,11 @@ func runServe() {
 		// Stop cache eviction goroutine
 		manager.Close()
 
+		// Flush usage counters before closing database
+		if err := manager.FlushUsage(shutdownCtx); err != nil {
+			slog.Warn("Failed to flush usage counters on shutdown", "error", err)
+		}
+
 		// Close database connection
 		store.Close()
 
@@ -315,18 +333,19 @@ func runServe() {
 	}()
 
 	// --- Log startup info ---
-	slog.Info("S3 Proxy starting",
+	slog.Info("S3 Orchestrator starting",
 		"version", telemetry.Version,
 		"listen_addr", cfg.Server.ListenAddr,
 		"virtual_bucket", cfg.Server.VirtualBucket,
 		"backends", len(cfg.Backends),
 	)
 
-	if !auth.NeedsAuth(cfg.Auth) {
+	switch {
+	case !auth.NeedsAuth(cfg.Auth):
 		slog.Warn("Authentication is disabled")
-	} else if cfg.Auth.AccessKeyID != "" {
+	case cfg.Auth.AccessKeyID != "":
 		slog.Info("Authentication enabled", "method", "SigV4")
-	} else {
+	default:
 		slog.Info("Authentication enabled", "method", "legacy_token")
 	}
 

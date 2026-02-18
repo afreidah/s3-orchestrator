@@ -18,8 +18,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/afreidah/s3-proxy/internal/config"
-	"github.com/afreidah/s3-proxy/internal/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 )
 
 // -------------------------------------------------------------------------
@@ -405,6 +405,9 @@ func (m *BackendManager) executeMoves(ctx context.Context, plan []rebalanceMove,
 				"key", move.ObjectKey, "backend", move.FromBackend, "error", err)
 			// DB is correct, source just has a leftover copy
 		}
+
+		m.recordUsage(move.FromBackend, 2, movedSize, 0) // Get + Delete, egress
+		m.recordUsage(move.ToBackend, 1, 0, movedSize)   // Put, ingress
 
 		moved++
 		telemetry.RebalanceObjectsMoved.WithLabelValues(strategy, "success").Inc()

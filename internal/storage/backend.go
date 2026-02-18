@@ -20,8 +20,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/afreidah/s3-proxy/internal/config"
-	"github.com/afreidah/s3-proxy/internal/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 	"go.opentelemetry.io/otel/codes"
 )
 
@@ -60,7 +60,7 @@ type S3Backend struct {
 
 // NewS3Backend creates a new S3-compatible backend client. Uses BaseEndpoint
 // to direct requests to the configured provider instead of AWS.
-func NewS3Backend(cfg config.BackendConfig) (*S3Backend, error) {
+func NewS3Backend(cfg *config.BackendConfig) (*S3Backend, error) {
 	// --- Create S3 client with custom endpoint ---
 	client := s3.New(s3.Options{
 		Region:       cfg.Region,

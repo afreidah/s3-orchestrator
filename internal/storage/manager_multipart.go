@@ -8,7 +8,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/afreidah/s3-proxy/internal/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 )
@@ -28,8 +28,15 @@ func (m *BackendManager) CreateMultipartUpload(ctx context.Context, key, content
 	)
 	defer span.End()
 
+	// Filter backends within usage limits before selecting
+	eligible := m.backendsWithinLimits(1, 0, 0)
+	if len(eligible) == 0 {
+		span.SetStatus(codes.Error, "usage limits exceeded on all backends")
+		return "", "", ErrInsufficientStorage
+	}
+
 	// Pick a backend (estimate 0 bytes since final size is unknown)
-	backendName, err := m.store.GetBackendWithSpace(ctx, 0, m.order)
+	backendName, err := m.store.GetBackendWithSpace(ctx, 0, eligible)
 	if err != nil {
 		if errors.Is(err, ErrDBUnavailable) {
 			span.SetStatus(codes.Error, "database unavailable")
@@ -85,6 +92,12 @@ func (m *BackendManager) UploadPart(ctx context.Context, uploadID string, partNu
 		return "", err
 	}
 
+	// Check usage limits before uploading
+	if !m.withinUsageLimits(mu.BackendName, 1, 0, size) {
+		span.SetStatus(codes.Error, "usage limits exceeded")
+		return "", ErrInsufficientStorage
+	}
+
 	// Store part under a temp key
 	partKey := fmt.Sprintf("__multipart/%s/%d", uploadID, partNumber)
 	bctx, bcancel := m.withTimeout(ctx)
@@ -108,6 +121,7 @@ func (m *BackendManager) UploadPart(ctx context.Context, uploadID string, partNu
 	}
 
 	m.recordOperation(operation, mu.BackendName, start, nil)
+	m.recordUsage(mu.BackendName, 1, 0, size)
 	span.SetStatus(codes.Ok, "")
 	return etag, nil
 }
@@ -217,6 +231,7 @@ func (m *BackendManager) CompleteMultipartUpload(ctx context.Context, uploadID s
 	}
 
 	m.recordOperation(operation, mu.BackendName, start, nil)
+	m.recordUsage(mu.BackendName, 1, 0, 0)
 	span.SetStatus(codes.Ok, "")
 	return etag, nil
 }
@@ -274,6 +289,7 @@ func (m *BackendManager) AbortMultipartUpload(ctx context.Context, uploadID stri
 	}
 
 	m.recordOperation(operation, mu.BackendName, start, nil)
+	m.recordUsage(mu.BackendName, 1, 0, 0)
 	span.SetStatus(codes.Ok, "")
 	return nil
 }

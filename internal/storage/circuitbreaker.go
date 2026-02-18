@@ -20,8 +20,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/afreidah/s3-proxy/internal/config"
-	"github.com/afreidah/s3-proxy/internal/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 )
 
 // -------------------------------------------------------------------------
@@ -357,6 +357,24 @@ func (cb *CircuitBreakerStore) RecordReplica(ctx context.Context, key, targetBac
 		return false, err
 	}
 	result, err := cb.real.RecordReplica(ctx, key, targetBackend, sourceBackend, size)
+	err = cb.postCheck(err)
+	return result, err
+}
+
+func (cb *CircuitBreakerStore) FlushUsageDeltas(ctx context.Context, backendName, period string, apiRequests, egressBytes, ingressBytes int64) error {
+	if err := cb.preCheck(); err != nil {
+		return err
+	}
+	err := cb.real.FlushUsageDeltas(ctx, backendName, period, apiRequests, egressBytes, ingressBytes)
+	err = cb.postCheck(err)
+	return err
+}
+
+func (cb *CircuitBreakerStore) GetUsageForPeriod(ctx context.Context, period string) (map[string]UsageStat, error) {
+	if err := cb.preCheck(); err != nil {
+		return nil, err
+	}
+	result, err := cb.real.GetUsageForPeriod(ctx, period)
 	err = cb.postCheck(err)
 	return result, err
 }

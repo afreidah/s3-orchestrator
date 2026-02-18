@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------
-// Configuration - S3 Proxy Settings
+// Configuration - S3 Orchestrator Settings
 //
 // Author: Alex Freidah
 //
@@ -74,8 +74,11 @@ type BackendConfig struct {
 	Bucket          string `yaml:"bucket"`            // Target bucket name
 	AccessKeyID     string `yaml:"access_key_id"`     // AWS access key ID
 	SecretAccessKey string `yaml:"secret_access_key"` // AWS secret access key
-	ForcePathStyle  bool   `yaml:"force_path_style"`  // Use path-style URLs
-	QuotaBytes      int64  `yaml:"quota_bytes"`       // Maximum bytes allowed on this backend
+	ForcePathStyle   bool  `yaml:"force_path_style"`   // Use path-style URLs
+	QuotaBytes       int64 `yaml:"quota_bytes"`        // Maximum bytes allowed on this backend (0 = unlimited)
+	ApiRequestLimit  int64 `yaml:"api_request_limit"`  // Monthly API request limit (0 = unlimited)
+	EgressByteLimit  int64 `yaml:"egress_byte_limit"`  // Monthly egress byte limit (0 = unlimited)
+	IngressByteLimit int64 `yaml:"ingress_byte_limit"` // Monthly ingress byte limit (0 = unlimited)
 }
 
 // TelemetryConfig holds observability settings.
@@ -146,9 +149,7 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	// --- Expand environment variables ---
-	expanded := os.Expand(string(data), func(key string) string {
-		return os.Getenv(key)
-	})
+	expanded := os.Expand(string(data), os.Getenv)
 
 	var cfg Config
 	if err := yaml.Unmarshal([]byte(expanded), &cfg); err != nil {
@@ -245,8 +246,36 @@ func (c *Config) SetDefaultsAndValidate() error {
 		if b.SecretAccessKey == "" {
 			errors = append(errors, fmt.Sprintf("%s: secret_access_key is required", prefix))
 		}
-		if b.QuotaBytes <= 0 {
-			errors = append(errors, fmt.Sprintf("%s: quota_bytes must be positive", prefix))
+		if b.QuotaBytes < 0 {
+			errors = append(errors, fmt.Sprintf("%s: quota_bytes must not be negative", prefix))
+		}
+		if b.ApiRequestLimit < 0 {
+			errors = append(errors, fmt.Sprintf("%s: api_request_limit must not be negative", prefix))
+		}
+		if b.EgressByteLimit < 0 {
+			errors = append(errors, fmt.Sprintf("%s: egress_byte_limit must not be negative", prefix))
+		}
+		if b.IngressByteLimit < 0 {
+			errors = append(errors, fmt.Sprintf("%s: ingress_byte_limit must not be negative", prefix))
+		}
+	}
+
+	// --- Cross-field validation: quota and replication combinations ---
+	if len(c.Backends) > 1 {
+		unlimitedCount := 0
+		for i := range c.Backends {
+			if c.Backends[i].QuotaBytes == 0 {
+				unlimitedCount++
+			}
+		}
+		quotaCount := len(c.Backends) - unlimitedCount
+
+		if unlimitedCount > 0 && quotaCount > 0 {
+			errors = append(errors, "cannot mix unlimited (quota_bytes: 0) and quota-limited backends; either all backends must have quotas for overflow routing or all must be unlimited with replication")
+		}
+
+		if unlimitedCount > 1 && c.Replication.Factor <= 1 {
+			errors = append(errors, "multiple backends with unlimited quota (quota_bytes: 0) requires replication.factor >= 2; without quotas there is no overflow routing and only the first backend would receive writes")
 		}
 	}
 

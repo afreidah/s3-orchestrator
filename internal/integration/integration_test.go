@@ -19,9 +19,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 
-	"github.com/afreidah/s3-proxy/internal/config"
-	"github.com/afreidah/s3-proxy/internal/server"
-	"github.com/afreidah/s3-proxy/internal/storage"
+	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/server"
+	"github.com/afreidah/s3-orchestrator/internal/storage"
 )
 
 // -------------------------------------------------------------------------
@@ -1837,7 +1837,7 @@ func TestListObjectsFromBackend(t *testing.T) {
 	}
 
 	// Use S3Backend.ListObjects to scan the bucket
-	backend, err := storage.NewS3Backend(config.BackendConfig{
+	backend, err := storage.NewS3Backend(&config.BackendConfig{
 		Name:            "minio-1",
 		Endpoint:        envOrDefault("MINIO1_ENDPOINT", "http://localhost:19000"),
 		Region:          "us-east-1",
