@@ -73,6 +73,17 @@ func (m *BackendManager) UpdateQuotaMetrics(ctx context.Context) error {
 			telemetry.UsageEgressBytes.WithLabelValues(name).Set(float64(u.EgressBytes))
 			telemetry.UsageIngressBytes.WithLabelValues(name).Set(float64(u.IngressBytes))
 		}
+
+		// Cache baseline for usage limit enforcement. Reset all backends
+		// first so period rollover (new month with no rows) zeroes out.
+		m.usageBaselineMu.Lock()
+		for name := range m.backends {
+			m.usageBaseline[name] = UsageStat{}
+		}
+		for name, u := range usage {
+			m.usageBaseline[name] = u
+		}
+		m.usageBaselineMu.Unlock()
 	}
 
 	return nil

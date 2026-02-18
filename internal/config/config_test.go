@@ -355,6 +355,48 @@ func TestConfigValidation_QuotaBackendsWithReplication(t *testing.T) {
 	}
 }
 
+func TestConfigValidation_NegativeApiRequestLimit(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Backends[0].ApiRequestLimit = -1
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil {
+		t.Error("negative api_request_limit should fail validation")
+	}
+}
+
+func TestConfigValidation_NegativeEgressByteLimit(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Backends[0].EgressByteLimit = -1
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil {
+		t.Error("negative egress_byte_limit should fail validation")
+	}
+}
+
+func TestConfigValidation_NegativeIngressByteLimit(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Backends[0].IngressByteLimit = -1
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil {
+		t.Error("negative ingress_byte_limit should fail validation")
+	}
+}
+
+func TestConfigValidation_ZeroUsageLimitsMeansUnlimited(t *testing.T) {
+	cfg := validBaseConfig()
+	// All zero — should pass (unlimited)
+	cfg.Backends[0].ApiRequestLimit = 0
+	cfg.Backends[0].EgressByteLimit = 0
+	cfg.Backends[0].IngressByteLimit = 0
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Errorf("zero usage limits (unlimited) should pass validation: %v", err)
+	}
+}
+
 // validBaseConfig returns a Config with all required fields populated (1 backend).
 func validBaseConfig() Config {
 	return Config{

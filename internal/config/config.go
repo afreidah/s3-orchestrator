@@ -74,8 +74,11 @@ type BackendConfig struct {
 	Bucket          string `yaml:"bucket"`            // Target bucket name
 	AccessKeyID     string `yaml:"access_key_id"`     // AWS access key ID
 	SecretAccessKey string `yaml:"secret_access_key"` // AWS secret access key
-	ForcePathStyle  bool   `yaml:"force_path_style"`  // Use path-style URLs
-	QuotaBytes      int64  `yaml:"quota_bytes"`       // Maximum bytes allowed on this backend (0 = unlimited)
+	ForcePathStyle   bool  `yaml:"force_path_style"`   // Use path-style URLs
+	QuotaBytes       int64 `yaml:"quota_bytes"`        // Maximum bytes allowed on this backend (0 = unlimited)
+	ApiRequestLimit  int64 `yaml:"api_request_limit"`  // Monthly API request limit (0 = unlimited)
+	EgressByteLimit  int64 `yaml:"egress_byte_limit"`  // Monthly egress byte limit (0 = unlimited)
+	IngressByteLimit int64 `yaml:"ingress_byte_limit"` // Monthly ingress byte limit (0 = unlimited)
 }
 
 // TelemetryConfig holds observability settings.
@@ -246,13 +249,22 @@ func (c *Config) SetDefaultsAndValidate() error {
 		if b.QuotaBytes < 0 {
 			errors = append(errors, fmt.Sprintf("%s: quota_bytes must not be negative", prefix))
 		}
+		if b.ApiRequestLimit < 0 {
+			errors = append(errors, fmt.Sprintf("%s: api_request_limit must not be negative", prefix))
+		}
+		if b.EgressByteLimit < 0 {
+			errors = append(errors, fmt.Sprintf("%s: egress_byte_limit must not be negative", prefix))
+		}
+		if b.IngressByteLimit < 0 {
+			errors = append(errors, fmt.Sprintf("%s: ingress_byte_limit must not be negative", prefix))
+		}
 	}
 
 	// --- Cross-field validation: quota and replication combinations ---
 	if len(c.Backends) > 1 {
 		unlimitedCount := 0
-		for _, b := range c.Backends {
-			if b.QuotaBytes == 0 {
+		for i := range c.Backends {
+			if c.Backends[i].QuotaBytes == 0 {
 				unlimitedCount++
 			}
 		}

@@ -96,19 +96,29 @@ func runServe() {
 	backends := make(map[string]storage.ObjectBackend)
 	backendOrder := make([]string, 0, len(cfg.Backends))
 
-	for _, bcfg := range cfg.Backends {
-		backend, err := storage.NewS3Backend(&bcfg)
+	usageLimits := make(map[string]storage.UsageLimits, len(cfg.Backends))
+	for i := range cfg.Backends {
+		bcfg := &cfg.Backends[i]
+		backend, err := storage.NewS3Backend(bcfg)
 		if err != nil {
 			slog.Error("Failed to initialize backend", "backend", bcfg.Name, "error", err)
 			os.Exit(1)
 		}
 		backends[bcfg.Name] = backend
 		backendOrder = append(backendOrder, bcfg.Name)
+		usageLimits[bcfg.Name] = storage.UsageLimits{
+			ApiRequestLimit:  bcfg.ApiRequestLimit,
+			EgressByteLimit:  bcfg.EgressByteLimit,
+			IngressByteLimit: bcfg.IngressByteLimit,
+		}
 		slog.Info("Backend initialized",
 			"backend", bcfg.Name,
 			"endpoint", bcfg.Endpoint,
 			"bucket", bcfg.Bucket,
 			"quota_bytes", bcfg.QuotaBytes,
+			"api_request_limit", bcfg.ApiRequestLimit,
+			"egress_byte_limit", bcfg.EgressByteLimit,
+			"ingress_byte_limit", bcfg.IngressByteLimit,
 		)
 	}
 
@@ -116,7 +126,7 @@ func runServe() {
 	cbStore := storage.NewCircuitBreakerStore(store, cfg.CircuitBreaker)
 
 	// --- Create backend manager ---
-	manager := storage.NewBackendManager(backends, cbStore, backendOrder, cfg.CircuitBreaker.CacheTTL, cfg.Server.BackendTimeout)
+	manager := storage.NewBackendManager(backends, cbStore, backendOrder, cfg.CircuitBreaker.CacheTTL, cfg.Server.BackendTimeout, usageLimits)
 
 	// --- Initial quota metrics update ---
 	if err := manager.UpdateQuotaMetrics(ctx); err != nil {
