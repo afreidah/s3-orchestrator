@@ -69,6 +69,8 @@ th {
   border-bottom: 1px solid #334155;
 }
 
+th.num { text-align: right; }
+
 td {
   padding: 0.6rem 1rem;
   font-size: 0.85rem;
@@ -78,6 +80,21 @@ td {
 tr:last-child td { border-bottom: none; }
 
 td.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+td.key {
+  word-break: break-all;
+  font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
+  font-size: 0.8rem;
+  color: #93c5fd;
+}
+
+.empty {
+  color: #64748b;
+  font-size: 0.85rem;
+  padding: 1rem;
+  background: #1e293b;
+  border-radius: 0.5rem;
+}
 
 /* --- Progress bar --- */
 .bar-track {
