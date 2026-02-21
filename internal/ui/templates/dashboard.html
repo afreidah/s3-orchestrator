@@ -31,12 +31,12 @@
       <thead>
         <tr>
           <th>Name</th>
-          <th>Quota Used</th>
-          <th>Quota Limit</th>
-          <th>Usage</th>
+          <th class="num">Quota Used</th>
+          <th class="num">Quota Limit</th>
+          <th class="num">Usage</th>
           <th style="width:20%"></th>
-          <th>Objects</th>
-          <th>Multipart</th>
+          <th class="num">Objects</th>
+          <th class="num">Multipart</th>
         </tr>
       </thead>
       <tbody>
@@ -75,12 +75,12 @@
       <thead>
         <tr>
           <th>Backend</th>
-          <th>API Requests</th>
-          <th>API Limit</th>
-          <th>Egress</th>
-          <th>Egress Limit</th>
-          <th>Ingress</th>
-          <th>Ingress Limit</th>
+          <th class="num">API Requests</th>
+          <th class="num">API Limit</th>
+          <th class="num">Egress</th>
+          <th class="num">Egress Limit</th>
+          <th class="num">Ingress</th>
+          <th class="num">Ingress Limit</th>
         </tr>
       </thead>
       <tbody>
@@ -111,6 +111,37 @@
         {{end}}
       </tbody>
     </table>
+  </section>
+
+  <!-- Objects -->
+  <section>
+    <h2>Objects ({{len .Data.Objects}})</h2>
+    {{if .Data.Objects}}
+    <table>
+      <thead>
+        <tr>
+          <th>Bucket</th>
+          <th>Key</th>
+          <th>Backend</th>
+          <th class="num">Size</th>
+          <th class="num">Created</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Data.Objects}}
+          <tr>
+            <td>{{.Bucket}}</td>
+            <td class="key">{{.Key}}</td>
+            <td>{{.Backend}}</td>
+            <td class="num">{{formatBytes .SizeBytes}}</td>
+            <td class="num">{{.CreatedAt}}</td>
+          </tr>
+        {{end}}
+      </tbody>
+    </table>
+    {{else}}
+    <p class="empty">No objects stored.</p>
+    {{end}}
   </section>
 
   <!-- Configuration -->
