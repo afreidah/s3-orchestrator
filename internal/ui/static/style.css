@@ -51,35 +51,39 @@ section h2 {
 /* --- Tables --- */
 table {
   width: 100%;
+  table-layout: fixed;
   border-collapse: collapse;
   background: #1e293b;
   border-radius: 0.5rem;
   overflow: hidden;
 }
 
+th, td {
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid #334155;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 th {
   text-align: left;
-  padding: 0.6rem 1rem;
   font-size: 0.75rem;
   font-weight: 600;
   color: #64748b;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   background: #0f172a;
-  border-bottom: 1px solid #334155;
 }
 
-th.num { text-align: right; }
+td { font-size: 0.85rem; }
 
-td {
-  padding: 0.6rem 1rem;
-  font-size: 0.85rem;
-  border-bottom: 1px solid #334155;
+th.num, td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 tr:last-child td { border-bottom: none; }
-
-td.num { text-align: right; font-variant-numeric: tabular-nums; }
 
 td.key {
   word-break: break-all;
