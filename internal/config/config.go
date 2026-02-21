@@ -35,6 +35,7 @@ type Config struct {
 	Replication    ReplicationConfig    `yaml:"replication"`
 	RateLimit      RateLimitConfig      `yaml:"rate_limit"`
 	CircuitBreaker CircuitBreakerConfig `yaml:"circuit_breaker"`
+	UI             UIConfig             `yaml:"ui"`
 }
 
 // DatabaseConfig holds PostgreSQL connection settings.
@@ -141,6 +142,12 @@ type CircuitBreakerConfig struct {
 	FailureThreshold int           `yaml:"failure_threshold"` // Consecutive failures before opening (default: 3)
 	OpenTimeout      time.Duration `yaml:"open_timeout"`      // Delay before probing recovery (default: 15s)
 	CacheTTL         time.Duration `yaml:"cache_ttl"`         // TTL for key→backend cache during degraded reads (default: 60s)
+}
+
+// UIConfig holds settings for the built-in web dashboard. Disabled by default.
+type UIConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Path    string `yaml:"path"` // URL prefix for the dashboard (default: "/ui")
 }
 
 // -------------------------------------------------------------------------
@@ -425,6 +432,11 @@ func (c *Config) SetDefaultsAndValidate() error {
 	}
 	if c.CircuitBreaker.CacheTTL == 0 {
 		c.CircuitBreaker.CacheTTL = 60 * time.Second
+	}
+
+	// --- UI defaults ---
+	if c.UI.Path == "" {
+		c.UI.Path = "/ui"
 	}
 
 	if len(errors) > 0 {
