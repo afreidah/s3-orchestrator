@@ -11,7 +11,10 @@
 
 package storage
 
-import "context"
+import (
+	"context"
+	"strings"
+)
 
 // DashboardData holds a snapshot of all operational data for the dashboard.
 type DashboardData struct {
@@ -22,6 +25,16 @@ type DashboardData struct {
 	UsageStats            map[string]UsageStat
 	UsageLimits           map[string]UsageLimits
 	UsagePeriod           string
+	Objects               []DashboardObject
+}
+
+// DashboardObject is a flattened view of an object for the UI.
+type DashboardObject struct {
+	Bucket    string
+	Key       string
+	Backend   string
+	SizeBytes int64
+	CreatedAt string // formatted as "2006-01-02 15:04"
 }
 
 // GetDashboardData fetches all stats needed for the web UI in one call.
@@ -52,6 +65,23 @@ func (m *BackendManager) GetDashboardData(ctx context.Context) (*DashboardData, 
 	data.UsageStats, err = m.store.GetUsageForPeriod(ctx, data.UsagePeriod)
 	if err != nil {
 		return nil, err
+	}
+
+	// Fetch all objects (up to 1000) for the file listing.
+	listResult, err := m.store.ListObjects(ctx, "", "", 1000)
+	if err != nil {
+		return nil, err
+	}
+	data.Objects = make([]DashboardObject, len(listResult.Objects))
+	for i, obj := range listResult.Objects {
+		bucket, key, _ := strings.Cut(obj.ObjectKey, "/")
+		data.Objects[i] = DashboardObject{
+			Bucket:    bucket,
+			Key:       key,
+			Backend:   obj.BackendName,
+			SizeBytes: obj.SizeBytes,
+			CreatedAt: obj.CreatedAt.Format("2006-01-02 15:04"),
+		}
 	}
 
 	return data, nil
