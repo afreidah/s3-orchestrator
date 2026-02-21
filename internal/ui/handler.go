@@ -106,5 +106,7 @@ func (h *Handler) handleAPIDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(data)
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		slog.Error("UI: failed to encode dashboard JSON", "error", err)
+	}
 }
