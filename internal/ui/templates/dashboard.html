@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>S3 Orchestrator</title>
+  <link rel="stylesheet" href="static/style.css">
+</head>
+<body>
+<div class="container">
+
+  <!-- Header -->
+  <header>
+    <div>
+      <h1>S3 Orchestrator</h1>
+      <span class="meta">v{{.Version}}</span>
+    </div>
+    <div>
+      {{if .DBHealthy}}
+        <span class="badge badge-healthy">Healthy</span>
+      {{else}}
+        <span class="badge badge-degraded">Degraded</span>
+      {{end}}
+    </div>
+  </header>
+
+  <!-- Backends -->
+  <section>
+    <h2>Backends</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Quota Used</th>
+          <th>Quota Limit</th>
+          <th>Usage</th>
+          <th style="width:20%"></th>
+          <th>Objects</th>
+          <th>Multipart</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Data.BackendOrder}}
+          {{$stat := index $.Data.QuotaStats .}}
+          {{$objects := index $.Data.ObjectCounts .}}
+          {{$multipart := index $.Data.ActiveMultipartCounts .}}
+          <tr>
+            <td>{{.}}</td>
+            <td class="num">{{formatBytes $stat.BytesUsed}}</td>
+            <td class="num">
+              {{if eq $stat.BytesLimit 0}}unlimited
+              {{else}}{{formatBytes $stat.BytesLimit}}
+              {{end}}
+            </td>
+            <td class="num">{{pct $stat.BytesUsed $stat.BytesLimit}}</td>
+            <td>
+              {{if ne $stat.BytesLimit 0}}
+              <div class="bar-track">
+                <div class="bar-fill" style="width:{{pctFloat $stat.BytesUsed $stat.BytesLimit}}%;background:{{barColor $stat.BytesUsed $stat.BytesLimit}}"></div>
+              </div>
+              {{end}}
+            </td>
+            <td class="num">{{formatNumber $objects}}</td>
+            <td class="num">{{formatNumber $multipart}}</td>
+          </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </section>
+
+  <!-- Monthly Usage -->
+  <section>
+    <h2>Monthly Usage ({{.Data.UsagePeriod}})</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Backend</th>
+          <th>API Requests</th>
+          <th>API Limit</th>
+          <th>Egress</th>
+          <th>Egress Limit</th>
+          <th>Ingress</th>
+          <th>Ingress Limit</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Data.BackendOrder}}
+          {{$usage := index $.Data.UsageStats .}}
+          {{$limits := index $.Data.UsageLimits .}}
+          <tr>
+            <td>{{.}}</td>
+            <td class="num">{{formatNumber $usage.ApiRequests}}</td>
+            <td class="num">
+              {{if eq $limits.ApiRequestLimit 0}}unlimited
+              {{else}}{{formatNumber $limits.ApiRequestLimit}}
+              {{end}}
+            </td>
+            <td class="num">{{formatBytes $usage.EgressBytes}}</td>
+            <td class="num">
+              {{if eq $limits.EgressByteLimit 0}}unlimited
+              {{else}}{{formatBytes $limits.EgressByteLimit}}
+              {{end}}
+            </td>
+            <td class="num">{{formatBytes $usage.IngressBytes}}</td>
+            <td class="num">
+              {{if eq $limits.IngressByteLimit 0}}unlimited
+              {{else}}{{formatBytes $limits.IngressByteLimit}}
+              {{end}}
+            </td>
+          </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </section>
+
+  <!-- Configuration -->
+  <section>
+    <h2>Configuration</h2>
+    <div class="config-grid">
+      <div class="config-card">
+        <div class="label">Virtual Buckets</div>
+        <div class="value">{{range $i, $b := .Buckets}}{{if $i}}, {{end}}{{$b}}{{end}}</div>
+      </div>
+      <div class="config-card">
+        <div class="label">Replication Factor</div>
+        <div class="value">{{.Config.ReplicationFactor}}</div>
+      </div>
+      <div class="config-card">
+        <div class="label">Rebalancer</div>
+        <div class="value">
+          {{if .Config.RebalanceEnabled}}enabled ({{.Config.RebalanceStrategy}})
+          {{else}}disabled
+          {{end}}
+        </div>
+      </div>
+      <div class="config-card">
+        <div class="label">Rate Limiting</div>
+        <div class="value">
+          {{if .Config.RateLimitEnabled}}enabled
+          {{else}}disabled
+          {{end}}
+        </div>
+      </div>
+    </div>
+  </section>
+
+</div>
+</body>
+</html>

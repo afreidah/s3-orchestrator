@@ -100,3 +100,8 @@ telemetry:
 #   enabled: false
 #   requests_per_sec: 100
 #   burst: 200
+
+# Built-in web dashboard for operational visibility. Disabled by default.
+# ui:
+#   enabled: false
+#   path: "/ui"           # URL prefix for the dashboard (default: "/ui")

@@ -28,6 +28,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/server"
 	"github.com/afreidah/s3-orchestrator/internal/storage"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/ui"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -270,6 +271,13 @@ func runServe() {
 			_, _ = w.Write([]byte("degraded"))
 		}
 	})
+
+	// Web UI dashboard
+	if cfg.UI.Enabled {
+		uiHandler := ui.New(manager, cbStore.IsHealthy, cfg)
+		uiHandler.Register(mux, cfg.UI.Path)
+		slog.Info("Web UI enabled", "path", cfg.UI.Path)
+	}
 
 	// S3 proxy handler (all other paths), optionally rate-limited
 	var rl *server.RateLimiter
