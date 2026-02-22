@@ -67,9 +67,7 @@ generate: ## Generate sqlc query code
 	sqlc generate
 
 test: ## Run Go tests with coverage
-	go test -race -v -coverprofile=coverage.out ./...
-	@go tool cover -func=coverage.out | tail -1
-	@rm -f coverage.out
+	go test -race -cover ./...
 
 lint: ## Run Go linter
 	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run ./...

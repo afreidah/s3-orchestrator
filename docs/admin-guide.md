@@ -474,9 +474,9 @@ When `ui.enabled` is `true`, the dashboard at `{path}/` shows a live snapshot of
 - **Object tree** — interactive collapsible file browser. Buckets and directories are collapsed by default; click to expand. Each directory shows a rollup file count and total size.
 - **Configuration** — virtual bucket names, write routing strategy, replication factor, rebalance status, rate limiting
 
-The dashboard is server-rendered HTML with no JavaScript dependencies. The page shows data as of the last load — refresh the browser for updated stats.
+The dashboard is server-rendered HTML. The object tree uses JavaScript for lazy-loaded directory expansion — directories fetch their children on click via the `/ui/api/tree` endpoint.
 
-A JSON endpoint at `{path}/api/dashboard` returns the same data for programmatic access or integration with other tools.
+JSON endpoints at `{path}/api/dashboard` and `{path}/api/tree` return data for programmatic access or integration with other tools.
 
 ### Health endpoint
 
@@ -593,7 +593,7 @@ To perform a zero-downtime credential rotation, temporarily add both old and new
 make build
 
 # Multi-arch build and push to registry with version tag
-make push VERSION=v0.4.0
+make push VERSION=v0.5.0
 ```
 
 The `VERSION` is baked into the binary via `-ldflags` and displayed in the web UI and `/health` endpoint. Use versioned tags (not `latest`) to avoid Docker layer caching issues on orchestration platforms.

@@ -117,10 +117,25 @@
   <!-- Objects -->
   <section>
     <h2>Objects</h2>
-    {{if .Data.ObjectTree}}
-    <div class="object-tree">
-      {{range .Data.ObjectTree}}
-        {{template "treeNode" .}}
+    {{if .Data.TopLevelEntries.Entries}}
+    <div class="object-tree" id="object-tree">
+      {{range .Data.TopLevelEntries.Entries}}
+        {{if .IsDir}}
+        <details class="tree-dir" data-prefix="{{.Name}}" data-loaded="false">
+          <summary>
+            <span class="tree-name">{{.Name}}</span>
+            <span class="tree-meta">{{.FileCount}} files &middot; {{formatBytes .TotalSize}}</span>
+          </summary>
+          <div class="tree-children">
+            <div class="tree-loading">Loading&hellip;</div>
+          </div>
+        </details>
+        {{else}}
+        <div class="tree-file">
+          <span class="tree-name">{{.Name}}</span>
+          <span class="tree-meta">{{.Backend}} &middot; {{formatBytes .TotalSize}} &middot; {{.CreatedAt}}</span>
+        </div>
+        {{end}}
       {{end}}
     </div>
     {{else}}
@@ -165,26 +180,6 @@
 
 </div>
 
-{{define "treeNode"}}
-{{if .IsDir}}
-<details class="tree-dir">
-  <summary>
-    <span class="tree-name">{{.Name}}</span>
-    <span class="tree-meta">{{.Count}} files &middot; {{formatBytes .SizeBytes}}</span>
-  </summary>
-  <div class="tree-children">
-    {{range .Children}}
-      {{template "treeNode" .}}
-    {{end}}
-  </div>
-</details>
-{{else}}
-<div class="tree-file">
-  <span class="tree-name">{{.Name}}</span>
-  <span class="tree-meta">{{.Backend}} &middot; {{formatBytes .SizeBytes}} &middot; {{.CreatedAt}}</span>
-</div>
-{{end}}
-{{end}}
-
+<script src="static/tree.js?v={{.Version}}"></script>
 </body>
 </html>

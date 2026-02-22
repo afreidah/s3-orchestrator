@@ -1,0 +1,633 @@
+package server
+
+import (
+	"bytes"
+	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/afreidah/s3-orchestrator/internal/auth"
+	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/storage"
+)
+
+// serverMockStore implements storage.MetadataStore for server handler tests.
+type serverMockStore struct {
+	// Object operations
+	getAllLocationsResp []storage.ObjectLocation
+	getAllLocationsErr  error
+	getBackendResp     string
+	getBackendErr      error
+	recordObjectErr    error
+	deleteObjectResp   []storage.DeletedCopy
+	deleteObjectErr    error
+	listObjectsResp    *storage.ListObjectsResult
+	listObjectsErr     error
+
+	// Multipart (stubs)
+	createMultipartErr error
+	getMultipartResp   *storage.MultipartUpload
+	getMultipartErr    error
+	recordPartErr      error
+	getPartsResp       []storage.MultipartPart
+	getPartsErr        error
+	deleteMultipartErr error
+}
+
+func (m *serverMockStore) GetAllObjectLocations(_ context.Context, _ string) ([]storage.ObjectLocation, error) {
+	if m.getAllLocationsErr != nil {
+		return nil, m.getAllLocationsErr
+	}
+	return m.getAllLocationsResp, nil
+}
+func (m *serverMockStore) GetBackendWithSpace(_ context.Context, _ int64, _ []string) (string, error) {
+	if m.getBackendErr != nil {
+		return "", m.getBackendErr
+	}
+	return m.getBackendResp, nil
+}
+func (m *serverMockStore) GetLeastUtilizedBackend(_ context.Context, _ int64, _ []string) (string, error) {
+	if m.getBackendErr != nil {
+		return "", m.getBackendErr
+	}
+	return m.getBackendResp, nil
+}
+func (m *serverMockStore) RecordObject(_ context.Context, _, _ string, _ int64) error {
+	return m.recordObjectErr
+}
+func (m *serverMockStore) DeleteObject(_ context.Context, _ string) ([]storage.DeletedCopy, error) {
+	if m.deleteObjectErr != nil {
+		return nil, m.deleteObjectErr
+	}
+	return m.deleteObjectResp, nil
+}
+func (m *serverMockStore) ListObjects(_ context.Context, _, _ string, _ int) (*storage.ListObjectsResult, error) {
+	if m.listObjectsErr != nil {
+		return nil, m.listObjectsErr
+	}
+	return m.listObjectsResp, nil
+}
+func (m *serverMockStore) CreateMultipartUpload(_ context.Context, _, _, _, _ string) error {
+	return m.createMultipartErr
+}
+func (m *serverMockStore) GetMultipartUpload(_ context.Context, _ string) (*storage.MultipartUpload, error) {
+	if m.getMultipartErr != nil {
+		return nil, m.getMultipartErr
+	}
+	return m.getMultipartResp, nil
+}
+func (m *serverMockStore) RecordPart(_ context.Context, _ string, _ int, _ string, _ int64) error {
+	return m.recordPartErr
+}
+func (m *serverMockStore) GetParts(_ context.Context, _ string) ([]storage.MultipartPart, error) {
+	if m.getPartsErr != nil {
+		return nil, m.getPartsErr
+	}
+	return m.getPartsResp, nil
+}
+func (m *serverMockStore) DeleteMultipartUpload(_ context.Context, _ string) error {
+	return m.deleteMultipartErr
+}
+func (m *serverMockStore) ListDirectoryChildren(_ context.Context, _, _ string, _ int) (*storage.DirectoryListResult, error) {
+	return &storage.DirectoryListResult{}, nil
+}
+func (m *serverMockStore) GetQuotaStats(_ context.Context) (map[string]storage.QuotaStat, error) {
+	return map[string]storage.QuotaStat{}, nil
+}
+func (m *serverMockStore) GetObjectCounts(_ context.Context) (map[string]int64, error) {
+	return map[string]int64{}, nil
+}
+func (m *serverMockStore) GetActiveMultipartCounts(_ context.Context) (map[string]int64, error) {
+	return map[string]int64{}, nil
+}
+func (m *serverMockStore) GetStaleMultipartUploads(_ context.Context, _ time.Duration) ([]storage.MultipartUpload, error) {
+	return nil, nil
+}
+func (m *serverMockStore) ListObjectsByBackend(_ context.Context, _ string, _ int) ([]storage.ObjectLocation, error) {
+	return nil, nil
+}
+func (m *serverMockStore) MoveObjectLocation(_ context.Context, _, _, _ string) (int64, error) {
+	return 0, nil
+}
+func (m *serverMockStore) GetUnderReplicatedObjects(_ context.Context, _, _ int) ([]storage.ObjectLocation, error) {
+	return nil, nil
+}
+func (m *serverMockStore) RecordReplica(_ context.Context, _, _, _ string, _ int64) (bool, error) {
+	return false, nil
+}
+func (m *serverMockStore) FlushUsageDeltas(_ context.Context, _, _ string, _, _, _ int64) error {
+	return nil
+}
+func (m *serverMockStore) GetUsageForPeriod(_ context.Context, _ string) (map[string]storage.UsageStat, error) {
+	return map[string]storage.UsageStat{}, nil
+}
+
+// serverMockBackend implements storage.ObjectBackend for server handler tests.
+type serverMockBackend struct {
+	objects map[string]serverMockObj
+	putErr  error
+	getErr  error
+	headErr error
+	delErr  error
+}
+
+type serverMockObj struct {
+	data        []byte
+	contentType string
+	etag        string
+}
+
+func newServerMockBackend() *serverMockBackend {
+	return &serverMockBackend{objects: make(map[string]serverMockObj)}
+}
+
+func (b *serverMockBackend) PutObject(_ context.Context, key string, body io.Reader, _ int64, contentType string) (string, error) {
+	if b.putErr != nil {
+		return "", b.putErr
+	}
+	data, err := io.ReadAll(body)
+	if err != nil {
+		return "", err
+	}
+	etag := `"test-etag"`
+	b.objects[key] = serverMockObj{data: data, contentType: contentType, etag: etag}
+	return etag, nil
+}
+
+func (b *serverMockBackend) GetObject(_ context.Context, key string, _ string) (*storage.GetObjectResult, error) {
+	if b.getErr != nil {
+		return nil, b.getErr
+	}
+	obj, ok := b.objects[key]
+	if !ok {
+		return nil, storage.ErrObjectNotFound
+	}
+	return &storage.GetObjectResult{
+		Body:        io.NopCloser(bytes.NewReader(obj.data)),
+		Size:        int64(len(obj.data)),
+		ContentType: obj.contentType,
+		ETag:        obj.etag,
+	}, nil
+}
+
+func (b *serverMockBackend) HeadObject(_ context.Context, key string) (int64, string, string, error) {
+	if b.headErr != nil {
+		return 0, "", "", b.headErr
+	}
+	obj, ok := b.objects[key]
+	if !ok {
+		return 0, "", "", storage.ErrObjectNotFound
+	}
+	return int64(len(obj.data)), obj.contentType, obj.etag, nil
+}
+
+func (b *serverMockBackend) DeleteObject(_ context.Context, key string) error {
+	if b.delErr != nil {
+		return b.delErr
+	}
+	delete(b.objects, key)
+	return nil
+}
+
+// newTestServer creates an httptest.Server wired with mock backends and store.
+// Returns the server, a cleanup func, and the mock store/backend for assertions.
+func newTestServer(t *testing.T) (*httptest.Server, *serverMockStore, *serverMockBackend) {
+	t.Helper()
+
+	backend := newServerMockBackend()
+	mockStore := &serverMockStore{
+		getBackendResp: "b1",
+	}
+
+	mgr := storage.NewBackendManager(&storage.BackendManagerConfig{
+		Backends:        map[string]storage.ObjectBackend{"b1": backend},
+		Store:           mockStore,
+		Order:           []string{"b1"},
+		RoutingStrategy: "pack",
+	})
+	t.Cleanup(mgr.Close)
+
+	srv := &Server{
+		Manager:       mgr,
+		MaxObjectSize: 10 * 1024 * 1024, // 10MB
+	}
+
+	buckets := []config.BucketConfig{
+		{Name: "mybucket", Credentials: []config.CredentialConfig{
+			{Token: "test-token"},
+		}},
+	}
+	srv.SetBucketAuth(auth.NewBucketRegistry(buckets))
+
+	ts := httptest.NewServer(srv)
+	t.Cleanup(ts.Close)
+
+	return ts, mockStore, backend
+}
+
+// doReq is a helper to send requests to the test server with auth.
+func doReq(t *testing.T, method, url string, body io.Reader) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(method, url, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-Proxy-Token", "test-token")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/octet-stream")
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
+}
+
+// -------------------------------------------------------------------------
+// PUT
+// -------------------------------------------------------------------------
+
+func TestPut_Success(t *testing.T) {
+	ts, _, backend := newTestServer(t)
+	data := []byte("hello world")
+
+	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/mybucket/testkey", bytes.NewReader(data))
+	req.Header.Set("X-Proxy-Token", "test-token")
+	req.Header.Set("Content-Type", "text/plain")
+	req.ContentLength = int64(len(data))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if resp.Header.Get("ETag") == "" {
+		t.Error("expected ETag header")
+	}
+	if _, ok := backend.objects["mybucket/testkey"]; !ok {
+		t.Error("object not stored on backend")
+	}
+}
+
+func TestPut_MissingContentLength(t *testing.T) {
+	ts, _, _ := newTestServer(t)
+
+	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/mybucket/testkey", strings.NewReader("data"))
+	req.Header.Set("X-Proxy-Token", "test-token")
+	// Explicitly set ContentLength to -1 to simulate missing Content-Length
+	req.ContentLength = -1
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusLengthRequired {
+		t.Fatalf("status = %d, want 411", resp.StatusCode)
+	}
+}
+
+func TestPut_EntityTooLarge(t *testing.T) {
+	ts, _, _ := newTestServer(t)
+
+	// Create a body whose size exceeds the limit.
+	// We use a LimitReader wrapping zeros so we don't allocate 20MB.
+	bigSize := int64(20 * 1024 * 1024)
+	body := io.LimitReader(neverEndingReader{}, bigSize)
+
+	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/mybucket/testkey", body)
+	req.Header.Set("X-Proxy-Token", "test-token")
+	req.ContentLength = bigSize
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413", resp.StatusCode)
+	}
+}
+
+// neverEndingReader produces zero bytes indefinitely.
+type neverEndingReader struct{}
+
+func (neverEndingReader) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = 0
+	}
+	return len(p), nil
+}
+
+func TestPut_QuotaExhausted(t *testing.T) {
+	ts, mockStore, _ := newTestServer(t)
+	mockStore.getBackendErr = storage.ErrNoSpaceAvailable
+
+	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/mybucket/testkey", strings.NewReader("data"))
+	req.Header.Set("X-Proxy-Token", "test-token")
+	req.ContentLength = 4
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusInsufficientStorage {
+		t.Fatalf("status = %d, want 507", resp.StatusCode)
+	}
+}
+
+func TestPut_DBUnavailable(t *testing.T) {
+	ts, mockStore, _ := newTestServer(t)
+	mockStore.getBackendErr = storage.ErrDBUnavailable
+
+	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/mybucket/testkey", strings.NewReader("data"))
+	req.Header.Set("X-Proxy-Token", "test-token")
+	req.ContentLength = 4
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", resp.StatusCode)
+	}
+}
+
+// -------------------------------------------------------------------------
+// GET
+// -------------------------------------------------------------------------
+
+func TestGet_Success(t *testing.T) {
+	ts, mockStore, backend := newTestServer(t)
+
+	// Pre-store an object
+	backend.objects["mybucket/testkey"] = serverMockObj{
+		data: []byte("hello"), contentType: "text/plain", etag: `"abc"`,
+	}
+	mockStore.getAllLocationsResp = []storage.ObjectLocation{
+		{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5},
+	}
+
+	resp := doReq(t, http.MethodGet, ts.URL+"/mybucket/testkey", nil)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if string(body) != "hello" {
+		t.Errorf("body = %q, want %q", body, "hello")
+	}
+	if resp.Header.Get("ETag") == "" {
+		t.Error("expected ETag header")
+	}
+}
+
+func TestGet_NotFound(t *testing.T) {
+	ts, mockStore, _ := newTestServer(t)
+	mockStore.getAllLocationsErr = storage.ErrObjectNotFound
+
+	resp := doReq(t, http.MethodGet, ts.URL+"/mybucket/nonexistent", nil)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", resp.StatusCode)
+	}
+}
+
+// -------------------------------------------------------------------------
+// HEAD
+// -------------------------------------------------------------------------
+
+func TestHead_Success(t *testing.T) {
+	ts, mockStore, backend := newTestServer(t)
+
+	backend.objects["mybucket/testkey"] = serverMockObj{
+		data: []byte("12345"), contentType: "text/plain", etag: `"abc"`,
+	}
+	mockStore.getAllLocationsResp = []storage.ObjectLocation{
+		{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5},
+	}
+
+	resp := doReq(t, http.MethodHead, ts.URL+"/mybucket/testkey", nil)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if resp.Header.Get("Content-Length") != "5" {
+		t.Errorf("Content-Length = %q, want 5", resp.Header.Get("Content-Length"))
+	}
+	if resp.Header.Get("Content-Type") != "text/plain" {
+		t.Errorf("Content-Type = %q, want text/plain", resp.Header.Get("Content-Type"))
+	}
+	if resp.Header.Get("ETag") == "" {
+		t.Error("expected ETag header")
+	}
+}
+
+func TestHead_NotFound(t *testing.T) {
+	ts, mockStore, _ := newTestServer(t)
+	mockStore.getAllLocationsErr = storage.ErrObjectNotFound
+
+	resp := doReq(t, http.MethodHead, ts.URL+"/mybucket/nonexistent", nil)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", resp.StatusCode)
+	}
+}
+
+// -------------------------------------------------------------------------
+// DELETE
+// -------------------------------------------------------------------------
+
+func TestDelete_Success(t *testing.T) {
+	ts, mockStore, backend := newTestServer(t)
+
+	backend.objects["mybucket/testkey"] = serverMockObj{data: []byte("hi")}
+	mockStore.deleteObjectResp = []storage.DeletedCopy{
+		{BackendName: "b1", SizeBytes: 2},
+	}
+
+	resp := doReq(t, http.MethodDelete, ts.URL+"/mybucket/testkey", nil)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", resp.StatusCode)
+	}
+}
+
+func TestDelete_IdempotentForMissing(t *testing.T) {
+	ts, mockStore, _ := newTestServer(t)
+	mockStore.deleteObjectErr = storage.ErrObjectNotFound
+
+	resp := doReq(t, http.MethodDelete, ts.URL+"/mybucket/nonexistent", nil)
+	defer resp.Body.Close()
+
+	// Manager treats missing objects as success (idempotent delete)
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", resp.StatusCode)
+	}
+}
+
+// -------------------------------------------------------------------------
+// COPY
+// -------------------------------------------------------------------------
+
+func TestCopy_Success(t *testing.T) {
+	ts, mockStore, backend := newTestServer(t)
+
+	// Pre-store source object
+	backend.objects["mybucket/source-key"] = serverMockObj{
+		data: []byte("copy me"), contentType: "text/plain", etag: `"src"`,
+	}
+	mockStore.getAllLocationsResp = []storage.ObjectLocation{
+		{ObjectKey: "mybucket/source-key", BackendName: "b1", SizeBytes: 7},
+	}
+
+	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/mybucket/dest-key", nil)
+	req.Header.Set("X-Proxy-Token", "test-token")
+	req.Header.Set("X-Amz-Copy-Source", "/mybucket/source-key")
+	req.ContentLength = 0
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want 200. body: %s", resp.StatusCode, body)
+	}
+
+	// Verify the response is valid XML
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "CopyObjectResult") {
+		t.Error("response missing CopyObjectResult element")
+	}
+}
+
+func TestCopy_SourceNotFound(t *testing.T) {
+	ts, mockStore, _ := newTestServer(t)
+	mockStore.getAllLocationsErr = storage.ErrObjectNotFound
+
+	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/mybucket/dest-key", nil)
+	req.Header.Set("X-Proxy-Token", "test-token")
+	req.Header.Set("X-Amz-Copy-Source", "/mybucket/no-such-key")
+	req.ContentLength = 0
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestCopy_CrossBucketDenied(t *testing.T) {
+	ts, _, _ := newTestServer(t)
+
+	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/mybucket/dest-key", nil)
+	req.Header.Set("X-Proxy-Token", "test-token")
+	req.Header.Set("X-Amz-Copy-Source", "/otherbucket/source-key")
+	req.ContentLength = 0
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", resp.StatusCode)
+	}
+}
+
+// -------------------------------------------------------------------------
+// AUTH
+// -------------------------------------------------------------------------
+
+func TestAuth_BadCredentials(t *testing.T) {
+	ts, _, _ := newTestServer(t)
+
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/mybucket/testkey", nil)
+	req.Header.Set("X-Proxy-Token", "wrong-token")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", resp.StatusCode)
+	}
+}
+
+func TestAuth_BucketMismatch(t *testing.T) {
+	ts, _, _ := newTestServer(t)
+
+	// Token is valid for "mybucket" but request goes to "otherbucket"
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/otherbucket/testkey", nil)
+	req.Header.Set("X-Proxy-Token", "test-token")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", resp.StatusCode)
+	}
+}
+
+// -------------------------------------------------------------------------
+// ROUTING
+// -------------------------------------------------------------------------
+
+func TestUnsupportedMethod(t *testing.T) {
+	ts, _, _ := newTestServer(t)
+
+	req, _ := http.NewRequest(http.MethodPatch, ts.URL+"/mybucket/testkey", nil)
+	req.Header.Set("X-Proxy-Token", "test-token")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want 405", resp.StatusCode)
+	}
+}
+
+func TestBucketOnlyGET_RoutesToList(t *testing.T) {
+	ts, mockStore, _ := newTestServer(t)
+	mockStore.listObjectsResp = &storage.ListObjectsResult{
+		Objects: []storage.ObjectLocation{
+			{ObjectKey: "mybucket/file.txt", BackendName: "b1", SizeBytes: 100, CreatedAt: time.Now()},
+		},
+	}
+
+	resp := doReq(t, http.MethodGet, ts.URL+"/mybucket/", nil)
+	defer resp.Body.Close()
+
+	// Should route to ListObjectsV2 and return XML
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	ct := resp.Header.Get("Content-Type")
+	if !strings.Contains(ct, "application/xml") {
+		t.Errorf("Content-Type = %q, want application/xml", ct)
+	}
+}
