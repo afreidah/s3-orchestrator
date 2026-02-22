@@ -51,7 +51,6 @@ section h2 {
 /* --- Tables --- */
 table {
   width: 100%;
-  table-layout: fixed;
   border-collapse: collapse;
   background: #1e293b;
   border-radius: 0.5rem;
@@ -61,9 +60,6 @@ table {
 th, td {
   padding: 0.6rem 1rem;
   border-bottom: 1px solid #334155;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 th {
