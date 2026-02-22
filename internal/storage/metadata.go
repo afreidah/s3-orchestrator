@@ -53,6 +53,7 @@ type MetadataStore interface {
 
 	// --- Quota operations ---
 	GetBackendWithSpace(ctx context.Context, size int64, backendOrder []string) (string, error)
+	GetLeastUtilizedBackend(ctx context.Context, size int64, eligible []string) (string, error)
 
 	// --- Multipart operations ---
 	CreateMultipartUpload(ctx context.Context, uploadID, key, backend, contentType string) error

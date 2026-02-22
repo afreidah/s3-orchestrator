@@ -228,6 +228,22 @@ func (s *Store) GetBackendWithSpace(ctx context.Context, size int64, backendOrde
 	return "", ErrNoSpaceAvailable
 }
 
+// GetLeastUtilizedBackend finds the backend with the lowest utilization ratio
+// that has enough space for the given size. Used by the "spread" routing strategy.
+func (s *Store) GetLeastUtilizedBackend(ctx context.Context, size int64, eligible []string) (string, error) {
+	row, err := s.queries.GetLeastUtilizedBackend(ctx, db.GetLeastUtilizedBackendParams{
+		BackendNames: eligible,
+		MinSize:      size,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNoSpaceAvailable
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to find least utilized backend: %w", err)
+	}
+	return row.BackendName, nil
+}
+
 // GetQuotaStats returns quota statistics for all backends.
 func (s *Store) GetQuotaStats(ctx context.Context) (map[string]QuotaStat, error) {
 	rows, err := s.queries.GetAllQuotaStats(ctx)
