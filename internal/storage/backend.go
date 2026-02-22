@@ -15,11 +15,14 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	smithymiddleware "github.com/aws/smithy-go/middleware"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 	"go.opentelemetry.io/otel/codes"
@@ -52,10 +55,11 @@ type ObjectBackend interface {
 
 // S3Backend implements ObjectBackend using AWS SDK v2.
 type S3Backend struct {
-	client   *s3.Client
-	bucket   string
-	name     string
-	endpoint string
+	client          *s3.Client
+	bucket          string
+	name            string
+	endpoint        string
+	unsignedPayload bool
 }
 
 // NewS3Backend creates a new S3-compatible backend client. Uses BaseEndpoint
@@ -69,11 +73,23 @@ func NewS3Backend(cfg *config.BackendConfig) (*S3Backend, error) {
 		UsePathStyle: cfg.ForcePathStyle,
 	})
 
+	// Default to unsigned payload (streaming) unless explicitly disabled.
+	// UNSIGNED-PAYLOAD requires HTTPS — S3 servers reject the sentinel over
+	// plain HTTP because there is no TLS to protect body integrity.
+	unsignedPayload := true
+	if cfg.UnsignedPayload != nil {
+		unsignedPayload = *cfg.UnsignedPayload
+	}
+	if unsignedPayload && !strings.HasPrefix(cfg.Endpoint, "https") {
+		unsignedPayload = false
+	}
+
 	return &S3Backend{
-		client:   client,
-		bucket:   cfg.Bucket,
-		name:     cfg.Name,
-		endpoint: cfg.Endpoint,
+		client:          client,
+		bucket:          cfg.Bucket,
+		name:            cfg.Name,
+		endpoint:        cfg.Endpoint,
+		unsignedPayload: unsignedPayload,
 	}, nil
 }
 
@@ -92,24 +108,30 @@ func (b *S3Backend) PutObject(ctx context.Context, key string, body io.Reader, s
 	)
 	defer span.End()
 
-	// The AWS SDK requires a seekable body to compute the SigV4 payload hash.
-	// HTTP request bodies are not seekable, so buffer when necessary.
-	var seekableBody io.ReadSeeker
-	if rs, ok := body.(io.ReadSeeker); ok {
-		seekableBody = rs
+	// When unsigned_payload is enabled (default), the SDK skips computing
+	// a SHA-256 payload hash and accepts a non-seekable io.Reader directly,
+	// avoiding buffering the entire body in memory. Body integrity is
+	// protected by TLS at the transport layer. When disabled, the body is
+	// buffered into memory so the SDK can compute the SigV4 payload hash.
+	putBody := body
+	var opts []func(*s3.Options)
+	if b.unsignedPayload {
+		opts = append(opts, withUnsignedPayload)
 	} else {
-		data, err := io.ReadAll(body)
-		if err != nil {
-			span.SetStatus(codes.Error, err.Error())
-			return "", fmt.Errorf("failed to read body: %w", err)
+		if _, ok := body.(io.ReadSeeker); !ok {
+			data, err := io.ReadAll(body)
+			if err != nil {
+				span.SetStatus(codes.Error, err.Error())
+				return "", fmt.Errorf("failed to read body: %w", err)
+			}
+			putBody = bytes.NewReader(data)
 		}
-		seekableBody = bytes.NewReader(data)
 	}
 
 	input := &s3.PutObjectInput{
 		Bucket:        aws.String(b.bucket),
 		Key:           aws.String(key),
-		Body:          seekableBody,
+		Body:          putBody,
 		ContentLength: aws.Int64(size),
 	}
 
@@ -117,7 +139,7 @@ func (b *S3Backend) PutObject(ctx context.Context, key string, body io.Reader, s
 		input.ContentType = aws.String(contentType)
 	}
 
-	result, err := b.client.PutObject(ctx, input)
+	result, err := b.client.PutObject(ctx, input, opts...)
 
 	// --- Record metrics ---
 	b.recordOperation(operation, start, err)
@@ -315,6 +337,17 @@ func (b *S3Backend) ListObjects(ctx context.Context, prefix string, fn func([]Li
 // -------------------------------------------------------------------------
 // METRICS HELPER
 // -------------------------------------------------------------------------
+
+// withUnsignedPayload is an S3 per-request option that replaces the payload
+// SHA-256 computation with the UNSIGNED-PAYLOAD sentinel. This allows the SDK
+// to accept a non-seekable io.Reader body without buffering the entire object
+// into memory. Body integrity is still protected by TLS at the transport layer.
+func withUnsignedPayload(o *s3.Options) {
+	o.APIOptions = append(o.APIOptions, func(stack *smithymiddleware.Stack) error {
+		_ = v4.RemoveContentSHA256HeaderMiddleware(stack)
+		return v4.SwapComputePayloadSHA256ForUnsignedPayloadMiddleware(stack)
+	})
+}
 
 // recordOperation updates Prometheus metrics for a backend operation.
 func (b *S3Backend) recordOperation(operation string, start time.Time, err error) {
