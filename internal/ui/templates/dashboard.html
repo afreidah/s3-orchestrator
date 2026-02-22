@@ -115,30 +115,13 @@
 
   <!-- Objects -->
   <section>
-    <h2>Objects ({{len .Data.Objects}})</h2>
-    {{if .Data.Objects}}
-    <table>
-      <thead>
-        <tr>
-          <th>Bucket</th>
-          <th>Key</th>
-          <th>Backend</th>
-          <th class="num">Size</th>
-          <th class="num">Created</th>
-        </tr>
-      </thead>
-      <tbody>
-        {{range .Data.Objects}}
-          <tr>
-            <td>{{.Bucket}}</td>
-            <td class="key">{{.Key}}</td>
-            <td>{{.Backend}}</td>
-            <td class="num">{{formatBytes .SizeBytes}}</td>
-            <td class="num">{{.CreatedAt}}</td>
-          </tr>
-        {{end}}
-      </tbody>
-    </table>
+    <h2>Objects</h2>
+    {{if .Data.ObjectTree}}
+    <div class="object-tree">
+      {{range .Data.ObjectTree}}
+        {{template "treeNode" .}}
+      {{end}}
+    </div>
     {{else}}
     <p class="empty">No objects stored.</p>
     {{end}}
@@ -176,5 +159,27 @@
   </section>
 
 </div>
+
+{{define "treeNode"}}
+{{if .IsDir}}
+<details class="tree-dir">
+  <summary>
+    <span class="tree-name">{{.Name}}</span>
+    <span class="tree-meta">{{.Count}} files &middot; {{formatBytes .SizeBytes}}</span>
+  </summary>
+  <div class="tree-children">
+    {{range .Children}}
+      {{template "treeNode" .}}
+    {{end}}
+  </div>
+</details>
+{{else}}
+<div class="tree-file">
+  <span class="tree-name">{{.Name}}</span>
+  <span class="tree-meta">{{.Backend}} &middot; {{formatBytes .SizeBytes}} &middot; {{.CreatedAt}}</span>
+</div>
+{{end}}
+{{end}}
+
 </body>
 </html>
