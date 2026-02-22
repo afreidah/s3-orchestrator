@@ -37,6 +37,18 @@ type mockStore struct {
 	deleteMultipartErr error
 	recordPartErr      error
 
+	// Dashboard / background
+	getQuotaStatsResp          map[string]QuotaStat
+	getQuotaStatsErr           error
+	getObjectCountsResp        map[string]int64
+	getObjectCountsErr         error
+	getActiveMultipartResp     map[string]int64
+	getActiveMultipartErr      error
+	getUsageForPeriodResp      map[string]UsageStat
+	getUsageForPeriodErr       error
+	listDirChildrenResp        *DirectoryListResult
+	listDirChildrenErr         error
+
 	// Usage tracking
 	flushUsageErr   error
 	flushUsageCalls []flushUsageCall
@@ -166,18 +178,46 @@ func (m *mockStore) DeleteMultipartUpload(_ context.Context, _ string) error {
 	return m.deleteMultipartErr
 }
 
+func (m *mockStore) ListDirectoryChildren(_ context.Context, _, _ string, _ int) (*DirectoryListResult, error) {
+	if m.listDirChildrenErr != nil {
+		return nil, m.listDirChildrenErr
+	}
+	if m.listDirChildrenResp != nil {
+		return m.listDirChildrenResp, nil
+	}
+	return &DirectoryListResult{}, nil
+}
+
 // --- Background operations (stubs) ---
 
 func (m *mockStore) GetQuotaStats(_ context.Context) (map[string]QuotaStat, error) {
-	return nil, nil
+	if m.getQuotaStatsErr != nil {
+		return nil, m.getQuotaStatsErr
+	}
+	if m.getQuotaStatsResp != nil {
+		return m.getQuotaStatsResp, nil
+	}
+	return map[string]QuotaStat{}, nil
 }
 
 func (m *mockStore) GetObjectCounts(_ context.Context) (map[string]int64, error) {
-	return nil, nil
+	if m.getObjectCountsErr != nil {
+		return nil, m.getObjectCountsErr
+	}
+	if m.getObjectCountsResp != nil {
+		return m.getObjectCountsResp, nil
+	}
+	return map[string]int64{}, nil
 }
 
 func (m *mockStore) GetActiveMultipartCounts(_ context.Context) (map[string]int64, error) {
-	return nil, nil
+	if m.getActiveMultipartErr != nil {
+		return nil, m.getActiveMultipartErr
+	}
+	if m.getActiveMultipartResp != nil {
+		return m.getActiveMultipartResp, nil
+	}
+	return map[string]int64{}, nil
 }
 
 func (m *mockStore) GetStaleMultipartUploads(_ context.Context, _ time.Duration) ([]MultipartUpload, error) {
@@ -214,5 +254,11 @@ func (m *mockStore) FlushUsageDeltas(_ context.Context, backendName, period stri
 }
 
 func (m *mockStore) GetUsageForPeriod(_ context.Context, _ string) (map[string]UsageStat, error) {
-	return nil, nil
+	if m.getUsageForPeriodErr != nil {
+		return nil, m.getUsageForPeriodErr
+	}
+	if m.getUsageForPeriodResp != nil {
+		return m.getUsageForPeriodResp, nil
+	}
+	return map[string]UsageStat{}, nil
 }

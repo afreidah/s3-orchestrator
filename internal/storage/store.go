@@ -505,6 +505,103 @@ func (s *Store) ListObjects(ctx context.Context, prefix, startAfter string, maxK
 }
 
 // -------------------------------------------------------------------------
+// DIRECTORY LISTING (DASHBOARD)
+// -------------------------------------------------------------------------
+
+// DirEntry holds aggregate stats for one immediate child of a directory prefix.
+type DirEntry struct {
+	Name      string `json:"name"`      // absolute path (e.g. "bucket/photos/")
+	IsDir     bool   `json:"isDir"`     // true for directories
+	FileCount int64  `json:"fileCount"` // number of files (recursive for dirs)
+	TotalSize int64  `json:"totalSize"` // total bytes (recursive for dirs)
+	Backend   string `json:"backend"`   // backend name (files only)
+	CreatedAt string `json:"createdAt"` // formatted timestamp (files only)
+}
+
+// DirectoryListResult holds the response for a lazy-loaded directory listing.
+type DirectoryListResult struct {
+	Entries    []DirEntry `json:"entries"`
+	HasMore    bool       `json:"hasMore"`
+	NextCursor string     `json:"nextCursor"`
+}
+
+// ListDirectoryChildren returns the immediate children of a directory prefix
+// with aggregate stats for subdirectories. Files include backend and creation
+// time. Prefix must end with "/" (or be "" for root).
+func (s *Store) ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*DirectoryListResult, error) {
+	if maxKeys <= 0 {
+		maxKeys = 200
+	}
+
+	escapedPrefix := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(prefix)
+
+	// Get aggregate stats for all immediate children (dirs + files).
+	stats, err := s.queries.GetDirectoryStats(ctx, escapedPrefix)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get directory stats: %w", err)
+	}
+
+	// Get per-file detail for direct file children (paginated).
+	fileRows, err := s.queries.ListDirectChildren(ctx, db.ListDirectChildrenParams{
+		Prefix:     escapedPrefix,
+		StartAfter: startAfter,
+		MaxKeys:    int32(maxKeys + 1),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list direct children: %w", err)
+	}
+
+	// Build a lookup of file details by relative name.
+	type fileDetail struct {
+		Backend   string
+		CreatedAt string
+	}
+	fileLookup := make(map[string]fileDetail, len(fileRows))
+	hasMore := len(fileRows) > maxKeys
+	if hasMore {
+		fileRows = fileRows[:maxKeys]
+	}
+	for _, row := range fileRows {
+		relName := row.ObjectKey[len(prefix):]
+		fileLookup[relName] = fileDetail{
+			Backend:   row.BackendName,
+			CreatedAt: row.CreatedAt.Time.Format("2006-01-02 15:04"),
+		}
+	}
+
+	result := &DirectoryListResult{
+		Entries: make([]DirEntry, 0, len(stats)),
+	}
+
+	for _, s := range stats {
+		entry := DirEntry{
+			Name:      prefix + s.Name,
+			IsDir:     s.IsDir,
+			FileCount: s.FileCount,
+			TotalSize: s.TotalSize,
+		}
+		if !s.IsDir {
+			if detail, ok := fileLookup[s.Name]; ok {
+				entry.Backend = detail.Backend
+				entry.CreatedAt = detail.CreatedAt
+			} else {
+				// File is outside the current page — skip it.
+				continue
+			}
+		}
+		result.Entries = append(result.Entries, entry)
+	}
+
+	if hasMore {
+		lastKey := fileRows[len(fileRows)-1].ObjectKey
+		result.HasMore = true
+		result.NextCursor = lastKey
+	}
+
+	return result, nil
+}
+
+// -------------------------------------------------------------------------
 // REPLICATION OPERATIONS
 // -------------------------------------------------------------------------
 
