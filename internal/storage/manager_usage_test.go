@@ -18,7 +18,7 @@ func newUsageManager(backendNames []string, store *mockStore) *BackendManager {
 	for _, name := range backendNames {
 		backends[name] = newMockBackend()
 	}
-	return NewBackendManager(BackendManagerConfig{
+	return NewBackendManager(&BackendManagerConfig{
 		Backends:        backends,
 		Store:           store,
 		Order:           backendNames,
@@ -31,7 +31,7 @@ func newUsageManagerWithLimits(backendNames []string, store *mockStore, limits m
 	for _, name := range backendNames {
 		backends[name] = newMockBackend()
 	}
-	return NewBackendManager(BackendManagerConfig{
+	return NewBackendManager(&BackendManagerConfig{
 		Backends:        backends,
 		Store:           store,
 		Order:           backendNames,

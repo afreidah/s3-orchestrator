@@ -127,7 +127,7 @@ func runServe() {
 	cbStore := storage.NewCircuitBreakerStore(store, cfg.CircuitBreaker)
 
 	// --- Create backend manager ---
-	manager := storage.NewBackendManager(storage.BackendManagerConfig{
+	manager := storage.NewBackendManager(&storage.BackendManagerConfig{
 		Backends:        backends,
 		Store:           cbStore,
 		Order:           backendOrder,

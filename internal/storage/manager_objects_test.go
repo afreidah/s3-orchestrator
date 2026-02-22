@@ -17,7 +17,7 @@ func newTestManager(store *mockStore, backends map[string]*mockBackend) *Backend
 		obs[name] = b
 		order = append(order, name)
 	}
-	return NewBackendManager(BackendManagerConfig{
+	return NewBackendManager(&BackendManagerConfig{
 		Backends:        obs,
 		Store:           store,
 		Order:           order,
@@ -58,7 +58,7 @@ func TestPutObject_Success(t *testing.T) {
 func TestPutObject_PackStrategy_UsesGetBackendWithSpace(t *testing.T) {
 	backend := newMockBackend()
 	store := &mockStore{getBackendResp: "b1"}
-	mgr := NewBackendManager(BackendManagerConfig{
+	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]ObjectBackend{"b1": backend},
 		Store:           store,
 		Order:           []string{"b1"},
@@ -82,7 +82,7 @@ func TestPutObject_PackStrategy_UsesGetBackendWithSpace(t *testing.T) {
 func TestPutObject_SpreadStrategy_UsesGetLeastUtilized(t *testing.T) {
 	backend := newMockBackend()
 	store := &mockStore{getBackendResp: "b1"}
-	mgr := NewBackendManager(BackendManagerConfig{
+	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]ObjectBackend{"b1": backend},
 		Store:           store,
 		Order:           []string{"b1"},
@@ -591,7 +591,7 @@ func TestPutObject_BackendTimeout(t *testing.T) {
 
 	store := &mockStore{getBackendResp: "b1"}
 	obs := map[string]ObjectBackend{"b1": slowBackend}
-	mgr := NewBackendManager(BackendManagerConfig{
+	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        obs,
 		Store:           store,
 		Order:           []string{"b1"},
@@ -629,7 +629,7 @@ func (s *slowMockBackend) PutObject(ctx context.Context, key string, body io.Rea
 // -------------------------------------------------------------------------
 
 func TestLocationCache_SetAndGet(t *testing.T) {
-	mgr := NewBackendManager(BackendManagerConfig{CacheTTL: 5 * time.Second, RoutingStrategy: "pack"})
+	mgr := NewBackendManager(&BackendManagerConfig{CacheTTL: 5 * time.Second, RoutingStrategy: "pack"})
 	mgr.cacheSet("key1", "backend-a")
 
 	got, ok := mgr.cacheGet("key1")
@@ -642,7 +642,7 @@ func TestLocationCache_SetAndGet(t *testing.T) {
 }
 
 func TestLocationCache_Expiry(t *testing.T) {
-	mgr := NewBackendManager(BackendManagerConfig{CacheTTL: 10 * time.Millisecond, RoutingStrategy: "pack"})
+	mgr := NewBackendManager(&BackendManagerConfig{CacheTTL: 10 * time.Millisecond, RoutingStrategy: "pack"})
 	mgr.cacheSet("key1", "backend-a")
 
 	time.Sleep(15 * time.Millisecond)
@@ -654,7 +654,7 @@ func TestLocationCache_Expiry(t *testing.T) {
 }
 
 func TestLocationCache_Overwrite(t *testing.T) {
-	mgr := NewBackendManager(BackendManagerConfig{CacheTTL: 5 * time.Second, RoutingStrategy: "pack"})
+	mgr := NewBackendManager(&BackendManagerConfig{CacheTTL: 5 * time.Second, RoutingStrategy: "pack"})
 	mgr.cacheSet("key1", "old-backend")
 	mgr.cacheSet("key1", "new-backend")
 
@@ -678,7 +678,7 @@ func newTestManagerWithLimits(store *mockStore, backends map[string]*mockBackend
 		obs[name] = b
 		order = append(order, name)
 	}
-	return NewBackendManager(BackendManagerConfig{
+	return NewBackendManager(&BackendManagerConfig{
 		Backends:        obs,
 		Store:           store,
 		Order:           order,
