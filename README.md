@@ -429,7 +429,7 @@ make integration-test
 make build
 
 # Build multi-arch and push to registry
-make push VERSION=v0.5.0
+make push VERSION=v0.5.1
 ```
 
 ## Deployment
@@ -437,7 +437,7 @@ make push VERSION=v0.5.0
 Build and push a Docker image with a version tag:
 
 ```bash
-make push VERSION=v0.5.0
+make push VERSION=v0.5.1
 ```
 
 The `VERSION` is baked into the binary via `-ldflags` and displayed in the web UI header and `/health` endpoint. Defaults to `latest` if omitted.

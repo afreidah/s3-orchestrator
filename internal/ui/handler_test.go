@@ -150,6 +150,9 @@ func TestDashboard_Returns200HTML(t *testing.T) {
 	if !strings.Contains(string(body), "S3 Orchestrator") {
 		t.Error("response body missing expected title")
 	}
+	if !strings.Contains(string(body), "Storage Summary") {
+		t.Error("response body missing Storage Summary section")
+	}
 	if !strings.Contains(string(body), "Backends") {
 		t.Error("response body missing Backends section")
 	}
