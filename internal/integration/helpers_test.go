@@ -165,9 +165,9 @@ func TestMain(m *testing.M) {
 	testManager = manager
 
 	srv := &server.Server{
-		Manager:    manager,
-		BucketAuth: auth.NewBucketRegistry(cfg.Buckets),
+		Manager: manager,
 	}
+	srv.SetBucketAuth(auth.NewBucketRegistry(cfg.Buckets))
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

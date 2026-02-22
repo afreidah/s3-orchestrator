@@ -591,15 +591,15 @@ func TestSpreadWriteRouting(t *testing.T) {
 	})
 
 	spreadSrv := &server.Server{
-		Manager:    spreadManager,
-		BucketAuth: auth.NewBucketRegistry([]config.BucketConfig{{
-			Name: virtualBucket,
-			Credentials: []config.CredentialConfig{{
-				AccessKeyID:    "test",
-				SecretAccessKey: "test",
-			}},
-		}}),
+		Manager: spreadManager,
 	}
+	spreadSrv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{{
+		Name: virtualBucket,
+		Credentials: []config.CredentialConfig{{
+			AccessKeyID:    "test",
+			SecretAccessKey: "test",
+		}},
+	}}))
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -2607,18 +2607,18 @@ func TestAuthSigV4(t *testing.T) {
 	// Start an ephemeral server with SigV4 auth enabled, sharing the same manager.
 	authSrv := &server.Server{
 		Manager: testManager,
-		BucketAuth: auth.NewBucketRegistry([]config.BucketConfig{
-			{
-				Name: virtualBucket,
-				Credentials: []config.CredentialConfig{
-					{
-						AccessKeyID:    authKey,
-						SecretAccessKey: authSecret,
-					},
+	}
+	authSrv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{
+		{
+			Name: virtualBucket,
+			Credentials: []config.CredentialConfig{
+				{
+					AccessKeyID:    authKey,
+					SecretAccessKey: authSecret,
 				},
 			},
-		}),
-	}
+		},
+	}))
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
