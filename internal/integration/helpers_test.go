@@ -31,12 +31,14 @@ import (
 const virtualBucket = "test-bucket"
 
 var (
-	proxyAddr        string
-	testDB           *sql.DB
-	testManager      *storage.BackendManager
-	testStore        *storage.Store
+	proxyAddr         string
+	testDB            *sql.DB
+	testManager       *storage.BackendManager
+	testStore         *storage.Store
 	testFailableStore *FailableStore
-	testCBStore      *storage.CircuitBreakerStore
+	testCBStore       *storage.CircuitBreakerStore
+	testBackends      map[string]storage.ObjectBackend
+	testBackendOrder  []string
 )
 
 func TestMain(m *testing.M) {
@@ -142,6 +144,8 @@ func TestMain(m *testing.M) {
 	}
 
 	testStore = store
+	testBackends = backends
+	testBackendOrder = backendOrder
 
 	// Wire: store → FailableStore → CircuitBreakerStore → manager
 	failableStore := &FailableStore{MetadataStore: store}
@@ -150,7 +154,7 @@ func TestMain(m *testing.M) {
 	cbStore := storage.NewCircuitBreakerStore(failableStore, cfg.CircuitBreaker)
 	testCBStore = cbStore
 
-	manager := storage.NewBackendManager(backends, cbStore, backendOrder, 60*time.Second, 30*time.Second, nil)
+	manager := storage.NewBackendManager(backends, cbStore, backendOrder, 60*time.Second, 30*time.Second, nil, "pack")
 	testManager = manager
 
 	srv := &server.Server{
@@ -353,6 +357,13 @@ func (f *FailableStore) GetBackendWithSpace(ctx context.Context, size int64, bac
 		return "", errSimulatedDBFailure
 	}
 	return f.MetadataStore.GetBackendWithSpace(ctx, size, backendOrder)
+}
+
+func (f *FailableStore) GetLeastUtilizedBackend(ctx context.Context, size int64, eligible []string) (string, error) {
+	if f.isFailing() {
+		return "", errSimulatedDBFailure
+	}
+	return f.MetadataStore.GetLeastUtilizedBackend(ctx, size, eligible)
 }
 
 func (f *FailableStore) CreateMultipartUpload(ctx context.Context, uploadID, key, backend, contentType string) error {

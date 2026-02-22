@@ -1,3 +1,13 @@
+// -------------------------------------------------------------------------------
+// Metrics Recording - Quota and Usage Gauge Updates
+//
+// Author: Alex Freidah
+//
+// Periodic refresh of Prometheus gauge metrics from PostgreSQL. Reads quota stats,
+// object counts, multipart counts, and monthly usage from the store and updates
+// the corresponding Prometheus gauges. Called every 30 seconds by the main loop.
+// -------------------------------------------------------------------------------
+
 package storage
 
 import (

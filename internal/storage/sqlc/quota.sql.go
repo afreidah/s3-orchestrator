@@ -109,6 +109,46 @@ func (q *Queries) GetBackendAvailableSpace(ctx context.Context, backendName stri
 	return available, err
 }
 
+const getLeastUtilizedBackend = `-- name: GetLeastUtilizedBackend :one
+SELECT q.backend_name,
+       CASE WHEN q.bytes_limit = 0 THEN 9223372036854775807
+            ELSE (q.bytes_limit - q.bytes_used - COALESCE(m.inflight, 0))
+       END::bigint AS available
+FROM backend_quotas q
+LEFT JOIN (
+    SELECT mu.backend_name, SUM(mp.size_bytes) AS inflight
+    FROM multipart_uploads mu
+    JOIN multipart_parts mp ON mp.upload_id = mu.upload_id
+    GROUP BY mu.backend_name
+) m ON m.backend_name = q.backend_name
+WHERE q.backend_name = ANY($1::text[])
+  AND CASE WHEN q.bytes_limit = 0 THEN 9223372036854775807
+           ELSE (q.bytes_limit - q.bytes_used - COALESCE(m.inflight, 0))
+      END >= $2::bigint
+ORDER BY CASE WHEN q.bytes_limit = 0 THEN 0
+              ELSE q.bytes_used::float8 / q.bytes_limit::float8
+         END ASC
+LIMIT 1
+`
+
+type GetLeastUtilizedBackendParams struct {
+	BackendNames []string
+	MinSize      int64
+}
+
+type GetLeastUtilizedBackendRow struct {
+	BackendName string
+	Available   int64
+}
+
+// Finds the backend with the lowest utilization ratio that has enough space.
+func (q *Queries) GetLeastUtilizedBackend(ctx context.Context, arg GetLeastUtilizedBackendParams) (GetLeastUtilizedBackendRow, error) {
+	row := q.db.QueryRow(ctx, getLeastUtilizedBackend, arg.BackendNames, arg.MinSize)
+	var i GetLeastUtilizedBackendRow
+	err := row.Scan(&i.BackendName, &i.Available)
+	return i, err
+}
+
 const getObjectCountsByBackend = `-- name: GetObjectCountsByBackend :many
 SELECT backend_name, COUNT(*) AS object_count
 FROM object_locations

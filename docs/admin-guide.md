@@ -162,6 +162,19 @@ For production, always set `ssl_mode: require`. The default is `disable` for loc
 
 Pool settings (`max_conns`, `min_conns`, `max_conn_lifetime`) control the pgx connection pool. The defaults are fine for most deployments. Increase `max_conns` if you're seeing connection wait times under high concurrency.
 
+### routing_strategy
+
+Controls how the orchestrator selects a backend when writing new objects.
+
+```yaml
+routing_strategy: "pack"       # "pack" or "spread" (default: pack)
+```
+
+- **pack** (default) — fills the first backend in config order until its quota is full, then overflows to the next. Best for stacking free-tier allocations sequentially.
+- **spread** — places each object on the backend with the lowest utilization ratio (`bytes_used / bytes_limit`). Best for distributing storage evenly across backends.
+
+Both strategies respect quota limits and usage limits — full or over-limit backends are always skipped.
+
 ### backends
 
 Each backend is an S3-compatible storage service with its own credentials and optional quota.
@@ -303,9 +316,9 @@ backends:
     quota_bytes: 21474836480     # 20 GB
 ```
 
-### Multiple backends with quotas (overflow routing)
+### Multiple backends with quotas (pack routing)
 
-Stack multiple free-tier allocations. When one backend fills up, writes overflow to the next:
+Stack multiple free-tier allocations. With the default `routing_strategy: "pack"`, when one backend fills up, writes overflow to the next. Use `routing_strategy: "spread"` instead to distribute objects evenly by utilization ratio:
 
 ```yaml
 backends:
@@ -330,9 +343,9 @@ backends:
 
 This gives you 30 GB of combined storage across two providers.
 
-### Multiple backends without quotas (requires replication)
+### Multiple backends without quotas (requires replication or spread)
 
-When all backends are unlimited, you must set `replication.factor >= 2` so writes are distributed. Without quotas, there's no overflow routing — only the first backend would receive writes.
+When all backends are unlimited and using the default `pack` routing, only the first backend would receive writes. To distribute data, either set `replication.factor >= 2` to replicate across backends, or use `routing_strategy: "spread"` to distribute writes by utilization ratio.
 
 ```yaml
 backends:
@@ -357,7 +370,7 @@ replication:
   factor: 2
 ```
 
-**Validation rule:** You cannot mix unlimited and quota-limited backends. Either all backends have `quota_bytes` set (overflow routing) or all are unlimited (replication required).
+**Validation rule:** You cannot mix unlimited and quota-limited backends. Either all backends have `quota_bytes` set (quota routing) or all are unlimited (replication or spread routing required).
 
 ## Onboarding a New Tenant
 
@@ -451,7 +464,7 @@ When `ui.enabled` is `true`, the dashboard at `{path}/` shows a live snapshot of
 - **Backend quota** — bytes used/limit with progress bars per backend
 - **Monthly usage** — API requests, egress, and ingress per backend with limits
 - **Object tree** — interactive collapsible file browser. Buckets and directories are collapsed by default; click to expand. Each directory shows a rollup file count and total size.
-- **Configuration** — virtual bucket names, replication factor, rebalance status, rate limiting
+- **Configuration** — virtual bucket names, write routing strategy, replication factor, rebalance status, rate limiting
 
 The dashboard is server-rendered HTML with no JavaScript dependencies. The page shows data as of the last load — refresh the browser for updated stats.
 
@@ -513,7 +526,7 @@ There is no graceful rotation mechanism — changing credentials requires a rest
 make build
 
 # Multi-arch build and push to registry with version tag
-make push VERSION=v0.3.2
+make push VERSION=v0.4.0
 ```
 
 The `VERSION` is baked into the binary via `-ldflags` and displayed in the web UI and `/health` endpoint. Use versioned tags (not `latest`) to avoid Docker layer caching issues on orchestration platforms.

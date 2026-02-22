@@ -18,7 +18,7 @@ func newUsageManager(backendNames []string, store *mockStore) *BackendManager {
 	for _, name := range backendNames {
 		backends[name] = newMockBackend()
 	}
-	return NewBackendManager(backends, store, backendNames, 0, 0, nil)
+	return NewBackendManager(backends, store, backendNames, 0, 0, nil, "pack")
 }
 
 func newUsageManagerWithLimits(backendNames []string, store *mockStore, limits map[string]UsageLimits) *BackendManager {
@@ -26,7 +26,7 @@ func newUsageManagerWithLimits(backendNames []string, store *mockStore, limits m
 	for _, name := range backendNames {
 		backends[name] = newMockBackend()
 	}
-	return NewBackendManager(backends, store, backendNames, 0, 0, limits)
+	return NewBackendManager(backends, store, backendNames, 0, 0, limits, "pack")
 }
 
 // --- recordUsage tests ---
