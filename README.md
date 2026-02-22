@@ -203,6 +203,10 @@ rate_limit:
   enabled: false
   requests_per_sec: 100    # token refill rate (default: 100)
   burst: 200               # max burst size (default: 200)
+
+ui:
+  enabled: false             # enable the built-in web dashboard
+  path: "/ui"                # URL prefix (default: /ui)
 ```
 
 ## Database
@@ -272,7 +276,28 @@ Quota metrics are refreshed from PostgreSQL every 30 seconds (no backend API cal
 
 ### OpenTelemetry Tracing
 
-Spans are emitted for every HTTP request, manager operation, and backend S3 call. Traces propagate via W3C `traceparent` headers. Configured to export via gRPC OTLP to Tempo.
+Spans are emitted for every HTTP request, manager operation, and backend S3 call. The service registers as `s3-orchestrator` (`resource.service.name`). Traces propagate via W3C `traceparent` headers. Configured to export via gRPC OTLP to Tempo or any OTLP-compatible collector.
+
+## Web UI
+
+A built-in web dashboard provides operational visibility without external tooling. When enabled, it renders a server-side HTML page at the configured path (default `/ui/`).
+
+The dashboard shows:
+
+- **Backends** — quota used/limit per backend with progress bars, object counts, active multipart uploads
+- **Monthly Usage** — API requests, egress, and ingress per backend with limits
+- **Objects** — interactive collapsible tree browser; buckets and directories expand on click to reveal contents, with rollup file counts and sizes
+- **Configuration** — virtual buckets, replication factor, rebalance strategy, rate limit status
+
+No JavaScript required — uses native HTML `<details>/<summary>` for the tree. Enable it in the config:
+
+```yaml
+ui:
+  enabled: true
+  path: "/ui"      # default
+```
+
+A JSON API is also available at `{path}/api/dashboard` for programmatic access.
 
 ## Endpoints
 
@@ -280,6 +305,8 @@ Spans are emitted for every HTTP request, manager operation, and backend S3 call
 |------|---------|
 | `/health` | Health check — returns `ok` or `degraded` (always 200) |
 | `/metrics` | Prometheus metrics |
+| `/ui/` | Web dashboard (when enabled) |
+| `/ui/api/dashboard` | Dashboard data as JSON (when enabled) |
 | `/{bucket}/{key}` | S3 API |
 
 ## Background Tasks
@@ -338,16 +365,18 @@ make integration-test
 make build
 
 # Build multi-arch and push to registry
-make push
+make push VERSION=v0.3.2
 ```
 
 ## Deployment
 
-Build and push a Docker image:
+Build and push a Docker image with a version tag:
 
 ```bash
-make push
+make push VERSION=v0.3.2
 ```
+
+The `VERSION` is baked into the binary via `-ldflags` and displayed in the web UI header and `/health` endpoint. Defaults to `latest` if omitted.
 
 ### Prerequisites
 
@@ -381,12 +410,18 @@ internal/
     manager_multipart.go     Multipart upload lifecycle
     manager_usage.go         Usage tracking flush + period helpers
     manager_metrics.go       Quota metric recording
+    manager_dashboard.go     Dashboard data aggregation + object tree builder
     rebalancer.go            Object rebalancing across backends
     replicator.go            Cross-backend object replication
     sqlc/
       schema.sql             Schema for sqlc code generation
       queries/               Annotated SQL query files
       *.go                   Generated type-safe query code (do not edit)
+  ui/
+    handler.go               Web UI HTTP handler + JSON API
+    templates.go             Embedded templates + formatting helpers
+    templates/dashboard.html Dashboard HTML template
+    static/style.css         Dashboard stylesheet
   telemetry/
     metrics.go               Prometheus metric definitions
     tracing.go               OpenTelemetry tracer setup

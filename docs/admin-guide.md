@@ -6,7 +6,7 @@ This guide walks through deploying, configuring, and operating the S3 Orchestrat
 
 - **PostgreSQL** — any recent version. The orchestrator auto-applies its schema on startup.
 - **At least one S3-compatible storage backend** — OCI Object Storage, Backblaze B2, AWS S3, MinIO, Wasabi, etc. You need a bucket and access credentials on that backend.
-- **The orchestrator binary** — either a Docker image (via `make build` or `make push`) or built from source (`make run`).
+- **The orchestrator binary** — either a Docker image (via `make build` or `make push VERSION=vX.Y.Z`) or built from source (`make run`).
 
 ## Quickstart
 
@@ -271,6 +271,20 @@ rate_limit:
   burst: 200                     # max burst size (default: 200)
 ```
 
+### ui
+
+Built-in web dashboard for operational visibility. Disabled by default.
+
+```yaml
+ui:
+  enabled: true
+  path: "/ui"                # URL prefix (default: /ui)
+```
+
+When enabled, the dashboard is served at `{path}/` on the same port as the S3 API. A JSON API endpoint is also available at `{path}/api/dashboard`.
+
+The dashboard does not require authentication by default (same as `/health` and `/metrics`). If the orchestrator is publicly exposed, put it behind a reverse proxy with auth (e.g., oauth2-proxy via Traefik).
+
 ## Multi-Backend Configurations
 
 ### Single backend with quota
@@ -430,6 +444,19 @@ Objects already tracked in the database for that backend are automatically skipp
 
 ## Monitoring
 
+### Web dashboard
+
+When `ui.enabled` is `true`, the dashboard at `{path}/` shows a live snapshot of:
+
+- **Backend quota** — bytes used/limit with progress bars per backend
+- **Monthly usage** — API requests, egress, and ingress per backend with limits
+- **Object tree** — interactive collapsible file browser. Buckets and directories are collapsed by default; click to expand. Each directory shows a rollup file count and total size.
+- **Configuration** — virtual bucket names, replication factor, rebalance status, rate limiting
+
+The dashboard is server-rendered HTML with no JavaScript dependencies. The page shows data as of the last load — refresh the browser for updated stats.
+
+A JSON endpoint at `{path}/api/dashboard` returns the same data for programmatic access or integration with other tools.
+
 ### Health endpoint
 
 ```bash
@@ -485,9 +512,11 @@ There is no graceful rotation mechanism — changing credentials requires a rest
 # Local build
 make build
 
-# Multi-arch build and push to registry
-make push
+# Multi-arch build and push to registry with version tag
+make push VERSION=v0.3.2
 ```
+
+The `VERSION` is baked into the binary via `-ldflags` and displayed in the web UI and `/health` endpoint. Use versioned tags (not `latest`) to avoid Docker layer caching issues on orchestration platforms.
 
 ### Run the container
 
