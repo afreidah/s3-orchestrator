@@ -13,6 +13,7 @@ package storage
 
 import (
 	"context"
+	"sort"
 	"strings"
 )
 
@@ -25,16 +26,81 @@ type DashboardData struct {
 	UsageStats            map[string]UsageStat
 	UsageLimits           map[string]UsageLimits
 	UsagePeriod           string
-	Objects               []DashboardObject
+	ObjectTree            []*ObjectNode
 }
 
-// DashboardObject is a flattened view of an object for the UI.
-type DashboardObject struct {
-	Bucket    string
-	Key       string
-	Backend   string
-	SizeBytes int64
-	CreatedAt string // formatted as "2006-01-02 15:04"
+// ObjectNode represents a directory or file in the object tree.
+type ObjectNode struct {
+	Name      string        // directory or file name
+	IsDir     bool          // true for directories
+	Children  []*ObjectNode // subdirectories and files (sorted: dirs first, then files)
+	Backend   string        // only for files
+	SizeBytes int64         // total size (sum of descendants for dirs, own size for files)
+	Count     int           // total file count (sum of descendants for dirs, 1 for files)
+	CreatedAt string        // only for files, formatted as "2006-01-02 15:04"
+}
+
+// buildObjectTree groups flat objects into a nested tree by path segments.
+func buildObjectTree(objects []ObjectLocation) []*ObjectNode {
+	root := &ObjectNode{IsDir: true}
+
+	for _, obj := range objects {
+		parts := strings.Split(obj.ObjectKey, "/")
+		node := root
+		for i, part := range parts {
+			isLeaf := i == len(parts)-1
+			if isLeaf {
+				node.Children = append(node.Children, &ObjectNode{
+					Name:      part,
+					Backend:   obj.BackendName,
+					SizeBytes: obj.SizeBytes,
+					Count:     1,
+					CreatedAt: obj.CreatedAt.Format("2006-01-02 15:04"),
+				})
+			} else {
+				child := findChild(node, part)
+				if child == nil {
+					child = &ObjectNode{Name: part, IsDir: true}
+					node.Children = append(node.Children, child)
+				}
+				node = child
+			}
+		}
+	}
+
+	// Recursively sort and compute rollup stats.
+	computeStats(root)
+	return root.Children
+}
+
+func findChild(node *ObjectNode, name string) *ObjectNode {
+	for _, c := range node.Children {
+		if c.IsDir && c.Name == name {
+			return c
+		}
+	}
+	return nil
+}
+
+func computeStats(node *ObjectNode) {
+	if !node.IsDir {
+		return
+	}
+	node.SizeBytes = 0
+	node.Count = 0
+	for _, c := range node.Children {
+		computeStats(c)
+		node.SizeBytes += c.SizeBytes
+		node.Count += c.Count
+	}
+	// Sort: directories first (alphabetical), then files (alphabetical).
+	sort.Slice(node.Children, func(i, j int) bool {
+		a, b := node.Children[i], node.Children[j]
+		if a.IsDir != b.IsDir {
+			return a.IsDir
+		}
+		return a.Name < b.Name
+	})
 }
 
 // GetDashboardData fetches all stats needed for the web UI in one call.
@@ -67,22 +133,12 @@ func (m *BackendManager) GetDashboardData(ctx context.Context) (*DashboardData, 
 		return nil, err
 	}
 
-	// Fetch all objects (up to 1000) for the file listing.
+	// Fetch all objects (up to 1000) and build the tree for the file browser.
 	listResult, err := m.store.ListObjects(ctx, "", "", 1000)
 	if err != nil {
 		return nil, err
 	}
-	data.Objects = make([]DashboardObject, len(listResult.Objects))
-	for i, obj := range listResult.Objects {
-		bucket, key, _ := strings.Cut(obj.ObjectKey, "/")
-		data.Objects[i] = DashboardObject{
-			Bucket:    bucket,
-			Key:       key,
-			Backend:   obj.BackendName,
-			SizeBytes: obj.SizeBytes,
-			CreatedAt: obj.CreatedAt.Format("2006-01-02 15:04"),
-		}
-	}
+	data.ObjectTree = buildObjectTree(listResult.Objects)
 
 	return data, nil
 }

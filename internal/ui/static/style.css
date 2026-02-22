@@ -138,3 +138,62 @@ td.key {
   color: #f8fafc;
   margin-top: 0.15rem;
 }
+
+/* --- Object tree --- */
+.object-tree {
+  background: #1e293b;
+  border-radius: 0.5rem;
+  padding: 0.5rem 0;
+}
+
+.tree-dir > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 1rem;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.tree-dir > summary::-webkit-details-marker { display: none; }
+
+.tree-dir > summary::before {
+  content: "\25b6";
+  font-size: 0.6rem;
+  color: #64748b;
+  transition: transform 0.15s;
+  flex-shrink: 0;
+}
+
+.tree-dir[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.tree-dir > summary:hover { background: #334155; }
+
+.tree-children { padding-left: 1.25rem; }
+
+.tree-file {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 1rem 0.3rem 1.85rem;
+}
+
+.tree-file:hover { background: #334155; }
+
+.tree-name {
+  font-size: 0.85rem;
+  color: #e2e8f0;
+  font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
+}
+
+.tree-dir > summary .tree-name { color: #93c5fd; }
+
+.tree-meta {
+  font-size: 0.75rem;
+  color: #64748b;
+  margin-left: auto;
+  white-space: nowrap;
+}
