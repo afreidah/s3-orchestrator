@@ -25,6 +25,34 @@
     </div>
   </header>
 
+  <!-- Storage Summary -->
+  <section>
+    <h2>Storage Summary</h2>
+    <div class="config-grid">
+      <div class="config-card">
+        <div class="label">Total Used</div>
+        <div class="value">{{formatBytes .TotalBytesUsed}}</div>
+      </div>
+      <div class="config-card">
+        <div class="label">Total Capacity</div>
+        <div class="value">
+          {{- if eq .TotalBytesLimit 0}}unlimited
+          {{- else}}{{formatBytes .TotalBytesLimit}}
+          {{- end -}}
+        </div>
+      </div>
+      <div class="config-card">
+        <div class="label">Usage</div>
+        <div class="value">{{pct .TotalBytesUsed .TotalBytesLimit}}</div>
+      </div>
+    </div>
+    {{if ne .TotalBytesLimit 0}}
+    <div class="bar-track" style="margin-top:0.5rem">
+      <div class="bar-fill" style="width:{{pctFloat .TotalBytesUsed .TotalBytesLimit}}%;background:{{barColor .TotalBytesUsed .TotalBytesLimit}}"></div>
+    </div>
+    {{end}}
+  </section>
+
   <!-- Backends -->
   <section>
     <h2>Backends</h2>
