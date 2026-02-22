@@ -48,6 +48,46 @@ func TestPutObject_Success(t *testing.T) {
 	}
 }
 
+func TestPutObject_PackStrategy_UsesGetBackendWithSpace(t *testing.T) {
+	backend := newMockBackend()
+	store := &mockStore{getBackendResp: "b1"}
+	mgr := NewBackendManager(
+		map[string]ObjectBackend{"b1": backend},
+		store, []string{"b1"}, 5*time.Second, 30*time.Second, nil, "pack",
+	)
+
+	_, err := mgr.PutObject(context.Background(), "pack-key", bytes.NewReader([]byte("data")), 4, "text/plain")
+	if err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+	if store.getBackendWithSpaceCalls != 1 {
+		t.Errorf("expected 1 GetBackendWithSpace call, got %d", store.getBackendWithSpaceCalls)
+	}
+	if store.getLeastUtilizedCalls != 0 {
+		t.Errorf("expected 0 GetLeastUtilizedBackend calls, got %d", store.getLeastUtilizedCalls)
+	}
+}
+
+func TestPutObject_SpreadStrategy_UsesGetLeastUtilized(t *testing.T) {
+	backend := newMockBackend()
+	store := &mockStore{getBackendResp: "b1"}
+	mgr := NewBackendManager(
+		map[string]ObjectBackend{"b1": backend},
+		store, []string{"b1"}, 5*time.Second, 30*time.Second, nil, "spread",
+	)
+
+	_, err := mgr.PutObject(context.Background(), "spread-key", bytes.NewReader([]byte("data")), 4, "text/plain")
+	if err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+	if store.getLeastUtilizedCalls != 1 {
+		t.Errorf("expected 1 GetLeastUtilizedBackend call, got %d", store.getLeastUtilizedCalls)
+	}
+	if store.getBackendWithSpaceCalls != 0 {
+		t.Errorf("expected 0 GetBackendWithSpace calls, got %d", store.getBackendWithSpaceCalls)
+	}
+}
+
 func TestPutObject_QuotaExhausted(t *testing.T) {
 	store := &mockStore{getBackendErr: ErrNoSpaceAvailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})

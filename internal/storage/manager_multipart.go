@@ -1,3 +1,13 @@
+// -------------------------------------------------------------------------------
+// Multipart Upload Operations - Create, UploadPart, Complete, Abort, ListParts
+//
+// Author: Alex Freidah
+//
+// Multipart upload lifecycle on the BackendManager. Handles backend selection for
+// new uploads via routing strategy, part tracking in PostgreSQL, and final assembly
+// on the target backend. Stale uploads are cleaned up by a background task.
+// -------------------------------------------------------------------------------
+
 package storage
 
 import (

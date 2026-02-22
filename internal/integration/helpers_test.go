@@ -31,12 +31,14 @@ import (
 const virtualBucket = "test-bucket"
 
 var (
-	proxyAddr        string
-	testDB           *sql.DB
-	testManager      *storage.BackendManager
-	testStore        *storage.Store
+	proxyAddr         string
+	testDB            *sql.DB
+	testManager       *storage.BackendManager
+	testStore         *storage.Store
 	testFailableStore *FailableStore
-	testCBStore      *storage.CircuitBreakerStore
+	testCBStore       *storage.CircuitBreakerStore
+	testBackends      map[string]storage.ObjectBackend
+	testBackendOrder  []string
 )
 
 func TestMain(m *testing.M) {
@@ -142,6 +144,8 @@ func TestMain(m *testing.M) {
 	}
 
 	testStore = store
+	testBackends = backends
+	testBackendOrder = backendOrder
 
 	// Wire: store → FailableStore → CircuitBreakerStore → manager
 	failableStore := &FailableStore{MetadataStore: store}

@@ -1,3 +1,13 @@
+// -------------------------------------------------------------------------------
+// Object Operations - PUT, GET, HEAD, DELETE, COPY
+//
+// Author: Alex Freidah
+//
+// Object-level CRUD operations on the BackendManager. Handles backend selection
+// via routing strategy, read failover across replicas, broadcast reads during
+// degraded mode, and usage limit enforcement on reads and writes.
+// -------------------------------------------------------------------------------
+
 package storage
 
 import (

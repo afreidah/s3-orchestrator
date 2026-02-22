@@ -1,3 +1,13 @@
+// -------------------------------------------------------------------------------
+// Usage Tracking - Periodic Flush of In-Memory Counters
+//
+// Author: Alex Freidah
+//
+// Handles flushing accumulated in-memory usage counters (API requests, egress,
+// ingress) to PostgreSQL. Counters are keyed by calendar month for automatic
+// period rollover. On flush failure, deltas are restored to avoid data loss.
+// -------------------------------------------------------------------------------
+
 package storage
 
 import (
