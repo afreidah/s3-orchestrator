@@ -15,6 +15,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -73,9 +74,14 @@ func NewS3Backend(cfg *config.BackendConfig) (*S3Backend, error) {
 	})
 
 	// Default to unsigned payload (streaming) unless explicitly disabled.
+	// UNSIGNED-PAYLOAD requires HTTPS — S3 servers reject the sentinel over
+	// plain HTTP because there is no TLS to protect body integrity.
 	unsignedPayload := true
 	if cfg.UnsignedPayload != nil {
 		unsignedPayload = *cfg.UnsignedPayload
+	}
+	if unsignedPayload && !strings.HasPrefix(cfg.Endpoint, "https") {
+		unsignedPayload = false
 	}
 
 	return &S3Backend{
@@ -338,13 +344,8 @@ func (b *S3Backend) ListObjects(ctx context.Context, prefix string, fn func([]Li
 // into memory. Body integrity is still protected by TLS at the transport layer.
 func withUnsignedPayload(o *s3.Options) {
 	o.APIOptions = append(o.APIOptions, func(stack *smithymiddleware.Stack) error {
-		if err := v4.RemoveContentSHA256HeaderMiddleware(stack); err != nil {
-			return err
-		}
-		if err := v4.RemoveComputePayloadSHA256Middleware(stack); err != nil {
-			return err
-		}
-		return v4.AddUnsignedPayloadMiddleware(stack)
+		_ = v4.RemoveContentSHA256HeaderMiddleware(stack)
+		return v4.SwapComputePayloadSHA256ForUnsignedPayloadMiddleware(stack)
 	})
 }
 
