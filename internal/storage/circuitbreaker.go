@@ -244,6 +244,15 @@ func (cb *CircuitBreakerStore) GetBackendWithSpace(ctx context.Context, size int
 	return result, err
 }
 
+func (cb *CircuitBreakerStore) GetLeastUtilizedBackend(ctx context.Context, size int64, eligible []string) (string, error) {
+	if err := cb.preCheck(); err != nil {
+		return "", err
+	}
+	result, err := cb.real.GetLeastUtilizedBackend(ctx, size, eligible)
+	err = cb.postCheck(err)
+	return result, err
+}
+
 func (cb *CircuitBreakerStore) CreateMultipartUpload(ctx context.Context, uploadID, key, backend, contentType string) error {
 	if err := cb.preCheck(); err != nil {
 		return err

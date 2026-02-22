@@ -68,8 +68,9 @@ type BackendManager struct {
 	stopCache      chan struct{}                  // signals cache eviction goroutine to stop
 	usage          map[string]*usageCounters     // per-backend atomic usage counters
 	usageLimits    map[string]UsageLimits        // from config, immutable after init
-	usageBaseline  map[string]UsageStat          // cached DB totals, refreshed every 30s
+	usageBaseline   map[string]UsageStat          // cached DB totals, refreshed every 30s
 	usageBaselineMu sync.RWMutex
+	routingStrategy string                        // "pack" or "spread"
 }
 
 // locationCacheEntry holds a cached key-to-backend mapping with TTL.
@@ -80,7 +81,8 @@ type locationCacheEntry struct {
 
 // NewBackendManager creates a new backend manager with the given backends and store.
 // The limits parameter is optional (nil means no usage limits).
-func NewBackendManager(backends map[string]ObjectBackend, store MetadataStore, order []string, cacheTTL, backendTimeout time.Duration, limits map[string]UsageLimits) *BackendManager {
+// The routingStrategy parameter controls write placement: "pack" (first with space) or "spread" (least utilized).
+func NewBackendManager(backends map[string]ObjectBackend, store MetadataStore, order []string, cacheTTL, backendTimeout time.Duration, limits map[string]UsageLimits, routingStrategy string) *BackendManager {
 	usage := make(map[string]*usageCounters, len(backends))
 	for name := range backends {
 		usage[name] = &usageCounters{}
@@ -98,9 +100,10 @@ func NewBackendManager(backends map[string]ObjectBackend, store MetadataStore, o
 		cacheTTL:       cacheTTL,
 		backendTimeout: backendTimeout,
 		stopCache:      make(chan struct{}),
-		usage:          usage,
-		usageLimits:    limits,
-		usageBaseline:  make(map[string]UsageStat),
+		usage:           usage,
+		usageLimits:     limits,
+		usageBaseline:   make(map[string]UsageStat),
+		routingStrategy: routingStrategy,
 	}
 
 	// Periodically evict expired cache entries.
@@ -265,6 +268,16 @@ func (m *BackendManager) backendsWithinLimits(apiCalls, egress, ingress int64) [
 		}
 	}
 	return eligible
+}
+
+// selectBackendForWrite picks the target backend for a write operation using
+// the configured routing strategy. "pack" returns the first backend with space,
+// "spread" returns the least-utilized backend.
+func (m *BackendManager) selectBackendForWrite(ctx context.Context, size int64, eligible []string) (string, error) {
+	if m.routingStrategy == "spread" {
+		return m.store.GetLeastUtilizedBackend(ctx, size, eligible)
+	}
+	return m.store.GetBackendWithSpace(ctx, size, eligible)
 }
 
 // recordOperation updates Prometheus metrics for a manager operation.

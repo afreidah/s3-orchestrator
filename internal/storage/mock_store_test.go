@@ -84,6 +84,15 @@ func (m *mockStore) GetBackendWithSpace(_ context.Context, size int64, _ []strin
 	return m.getBackendResp, nil
 }
 
+func (m *mockStore) GetLeastUtilizedBackend(_ context.Context, size int64, _ []string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.getBackendErr != nil {
+		return "", m.getBackendErr
+	}
+	return m.getBackendResp, nil
+}
+
 func (m *mockStore) RecordObject(_ context.Context, key, backend string, size int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

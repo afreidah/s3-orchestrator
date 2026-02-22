@@ -36,7 +36,7 @@ func (m *BackendManager) CreateMultipartUpload(ctx context.Context, key, content
 	}
 
 	// Pick a backend (estimate 0 bytes since final size is unknown)
-	backendName, err := m.store.GetBackendWithSpace(ctx, 0, eligible)
+	backendName, err := m.selectBackendForWrite(ctx, 0, eligible)
 	if err != nil {
 		if errors.Is(err, ErrDBUnavailable) {
 			span.SetStatus(codes.Error, "database unavailable")
