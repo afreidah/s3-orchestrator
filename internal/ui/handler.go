@@ -50,11 +50,13 @@ func (h *Handler) Register(mux *http.ServeMux, prefix string) {
 
 // dashboardPage holds all data passed to the dashboard template.
 type dashboardPage struct {
-	Version   string
-	DBHealthy bool
-	Data      *storage.DashboardData
-	Buckets   []string
-	Config    configSummary
+	Version        string
+	DBHealthy      bool
+	Data           *storage.DashboardData
+	Buckets        []string
+	Config         configSummary
+	TotalBytesUsed int64
+	TotalBytesLimit int64
 }
 
 // configSummary holds non-sensitive configuration for display.
@@ -80,11 +82,26 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		bucketNames[i] = b.Name
 	}
 
+	var totalUsed, totalLimit int64
+	unlimited := false
+	for _, stat := range data.QuotaStats {
+		totalUsed += stat.BytesUsed
+		if stat.BytesLimit == 0 {
+			unlimited = true
+		}
+		totalLimit += stat.BytesLimit
+	}
+	if unlimited {
+		totalLimit = 0
+	}
+
 	page := dashboardPage{
-		Version:   telemetry.Version,
-		DBHealthy: h.dbHealthy(),
-		Data:      data,
-		Buckets:   bucketNames,
+		Version:         telemetry.Version,
+		DBHealthy:       h.dbHealthy(),
+		Data:            data,
+		Buckets:         bucketNames,
+		TotalBytesUsed:  totalUsed,
+		TotalBytesLimit: totalLimit,
 		Config: configSummary{
 			RoutingStrategy:   h.cfg.RoutingStrategy,
 			ReplicationFactor: h.cfg.Replication.Factor,
