@@ -194,218 +194,117 @@ func isDBError(err error) bool {
 }
 
 // -------------------------------------------------------------------------
+// FORWARDING HELPERS
+// -------------------------------------------------------------------------
+
+// cbCall wraps a store call that returns (T, error) with circuit breaker logic.
+func cbCall[T any](cb *CircuitBreakerStore, fn func() (T, error)) (T, error) {
+	var zero T
+	if err := cb.preCheck(); err != nil {
+		return zero, err
+	}
+	result, err := fn()
+	return result, cb.postCheck(err)
+}
+
+// cbCallNoResult wraps a store call that returns only error with circuit breaker logic.
+func cbCallNoResult(cb *CircuitBreakerStore, fn func() error) error {
+	if err := cb.preCheck(); err != nil {
+		return err
+	}
+	return cb.postCheck(fn())
+}
+
+// -------------------------------------------------------------------------
 // FORWARDING METHODS
 // -------------------------------------------------------------------------
 
 // All forwarding methods below implement the MetadataStore interface.
-// Each follows the same pattern: preCheck → real.Method → postCheck.
+// Each delegates to the real store via cbCall/cbCallNoResult for circuit
+// breaker protection (preCheck → real.Method → postCheck).
 
-// GetAllObjectLocations forwards to the underlying store with circuit breaker protection.
 func (cb *CircuitBreakerStore) GetAllObjectLocations(ctx context.Context, key string) ([]ObjectLocation, error) {
-	if err := cb.preCheck(); err != nil {
-		return nil, err
-	}
-	result, err := cb.real.GetAllObjectLocations(ctx, key)
-	err = cb.postCheck(err)
-	return result, err
+	return cbCall(cb, func() ([]ObjectLocation, error) { return cb.real.GetAllObjectLocations(ctx, key) })
 }
 
-// RecordObject forwards to the underlying store with circuit breaker protection.
 func (cb *CircuitBreakerStore) RecordObject(ctx context.Context, key, backend string, size int64) error {
-	if err := cb.preCheck(); err != nil {
-		return err
-	}
-	err := cb.real.RecordObject(ctx, key, backend, size)
-	err = cb.postCheck(err)
-	return err
+	return cbCallNoResult(cb, func() error { return cb.real.RecordObject(ctx, key, backend, size) })
 }
 
-// DeleteObject forwards to the underlying store with circuit breaker protection.
 func (cb *CircuitBreakerStore) DeleteObject(ctx context.Context, key string) ([]DeletedCopy, error) {
-	if err := cb.preCheck(); err != nil {
-		return nil, err
-	}
-	result, err := cb.real.DeleteObject(ctx, key)
-	err = cb.postCheck(err)
-	return result, err
+	return cbCall(cb, func() ([]DeletedCopy, error) { return cb.real.DeleteObject(ctx, key) })
 }
 
-// ListObjects forwards to the underlying store with circuit breaker protection.
 func (cb *CircuitBreakerStore) ListObjects(ctx context.Context, prefix, startAfter string, maxKeys int) (*ListObjectsResult, error) {
-	if err := cb.preCheck(); err != nil {
-		return nil, err
-	}
-	result, err := cb.real.ListObjects(ctx, prefix, startAfter, maxKeys)
-	err = cb.postCheck(err)
-	return result, err
+	return cbCall(cb, func() (*ListObjectsResult, error) { return cb.real.ListObjects(ctx, prefix, startAfter, maxKeys) })
 }
 
-// GetBackendWithSpace forwards to the underlying store with circuit breaker protection.
 func (cb *CircuitBreakerStore) GetBackendWithSpace(ctx context.Context, size int64, backendOrder []string) (string, error) {
-	if err := cb.preCheck(); err != nil {
-		return "", err
-	}
-	result, err := cb.real.GetBackendWithSpace(ctx, size, backendOrder)
-	err = cb.postCheck(err)
-	return result, err
+	return cbCall(cb, func() (string, error) { return cb.real.GetBackendWithSpace(ctx, size, backendOrder) })
 }
 
-// GetLeastUtilizedBackend forwards to the underlying store with circuit breaker protection.
 func (cb *CircuitBreakerStore) GetLeastUtilizedBackend(ctx context.Context, size int64, eligible []string) (string, error) {
-	if err := cb.preCheck(); err != nil {
-		return "", err
-	}
-	result, err := cb.real.GetLeastUtilizedBackend(ctx, size, eligible)
-	err = cb.postCheck(err)
-	return result, err
+	return cbCall(cb, func() (string, error) { return cb.real.GetLeastUtilizedBackend(ctx, size, eligible) })
 }
 
-// CreateMultipartUpload forwards to the underlying store with circuit breaker protection.
 func (cb *CircuitBreakerStore) CreateMultipartUpload(ctx context.Context, uploadID, key, backend, contentType string) error {
-	if err := cb.preCheck(); err != nil {
-		return err
-	}
-	err := cb.real.CreateMultipartUpload(ctx, uploadID, key, backend, contentType)
-	err = cb.postCheck(err)
-	return err
+	return cbCallNoResult(cb, func() error { return cb.real.CreateMultipartUpload(ctx, uploadID, key, backend, contentType) })
 }
 
-// GetMultipartUpload forwards to the underlying store with circuit breaker protection.
 func (cb *CircuitBreakerStore) GetMultipartUpload(ctx context.Context, uploadID string) (*MultipartUpload, error) {
-	if err := cb.preCheck(); err != nil {
-		return nil, err
-	}
-	result, err := cb.real.GetMultipartUpload(ctx, uploadID)
-	err = cb.postCheck(err)
-	return result, err
+	return cbCall(cb, func() (*MultipartUpload, error) { return cb.real.GetMultipartUpload(ctx, uploadID) })
 }
 
-// RecordPart forwards to the underlying store with circuit breaker protection.
 func (cb *CircuitBreakerStore) RecordPart(ctx context.Context, uploadID string, partNumber int, etag string, size int64) error {
-	if err := cb.preCheck(); err != nil {
-		return err
-	}
-	err := cb.real.RecordPart(ctx, uploadID, partNumber, etag, size)
-	err = cb.postCheck(err)
-	return err
+	return cbCallNoResult(cb, func() error { return cb.real.RecordPart(ctx, uploadID, partNumber, etag, size) })
 }
 
-// GetParts forwards to the underlying store with circuit breaker protection.
 func (cb *CircuitBreakerStore) GetParts(ctx context.Context, uploadID string) ([]MultipartPart, error) {
-	if err := cb.preCheck(); err != nil {
-		return nil, err
-	}
-	result, err := cb.real.GetParts(ctx, uploadID)
-	err = cb.postCheck(err)
-	return result, err
+	return cbCall(cb, func() ([]MultipartPart, error) { return cb.real.GetParts(ctx, uploadID) })
 }
 
-// DeleteMultipartUpload forwards to the underlying store with circuit breaker protection.
 func (cb *CircuitBreakerStore) DeleteMultipartUpload(ctx context.Context, uploadID string) error {
-	if err := cb.preCheck(); err != nil {
-		return err
-	}
-	err := cb.real.DeleteMultipartUpload(ctx, uploadID)
-	err = cb.postCheck(err)
-	return err
+	return cbCallNoResult(cb, func() error { return cb.real.DeleteMultipartUpload(ctx, uploadID) })
 }
 
-// GetQuotaStats forwards to the underlying store with circuit breaker protection.
 func (cb *CircuitBreakerStore) GetQuotaStats(ctx context.Context) (map[string]QuotaStat, error) {
-	if err := cb.preCheck(); err != nil {
-		return nil, err
-	}
-	result, err := cb.real.GetQuotaStats(ctx)
-	err = cb.postCheck(err)
-	return result, err
+	return cbCall(cb, func() (map[string]QuotaStat, error) { return cb.real.GetQuotaStats(ctx) })
 }
 
-// GetObjectCounts forwards to the underlying store with circuit breaker protection.
 func (cb *CircuitBreakerStore) GetObjectCounts(ctx context.Context) (map[string]int64, error) {
-	if err := cb.preCheck(); err != nil {
-		return nil, err
-	}
-	result, err := cb.real.GetObjectCounts(ctx)
-	err = cb.postCheck(err)
-	return result, err
+	return cbCall(cb, func() (map[string]int64, error) { return cb.real.GetObjectCounts(ctx) })
 }
 
-// GetActiveMultipartCounts forwards to the underlying store with circuit breaker protection.
 func (cb *CircuitBreakerStore) GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error) {
-	if err := cb.preCheck(); err != nil {
-		return nil, err
-	}
-	result, err := cb.real.GetActiveMultipartCounts(ctx)
-	err = cb.postCheck(err)
-	return result, err
+	return cbCall(cb, func() (map[string]int64, error) { return cb.real.GetActiveMultipartCounts(ctx) })
 }
 
-// GetStaleMultipartUploads forwards to the underlying store with circuit breaker protection.
 func (cb *CircuitBreakerStore) GetStaleMultipartUploads(ctx context.Context, olderThan time.Duration) ([]MultipartUpload, error) {
-	if err := cb.preCheck(); err != nil {
-		return nil, err
-	}
-	result, err := cb.real.GetStaleMultipartUploads(ctx, olderThan)
-	err = cb.postCheck(err)
-	return result, err
+	return cbCall(cb, func() ([]MultipartUpload, error) { return cb.real.GetStaleMultipartUploads(ctx, olderThan) })
 }
 
-// ListObjectsByBackend forwards to the underlying store with circuit breaker protection.
 func (cb *CircuitBreakerStore) ListObjectsByBackend(ctx context.Context, backendName string, limit int) ([]ObjectLocation, error) {
-	if err := cb.preCheck(); err != nil {
-		return nil, err
-	}
-	result, err := cb.real.ListObjectsByBackend(ctx, backendName, limit)
-	err = cb.postCheck(err)
-	return result, err
+	return cbCall(cb, func() ([]ObjectLocation, error) { return cb.real.ListObjectsByBackend(ctx, backendName, limit) })
 }
 
-// MoveObjectLocation forwards to the underlying store with circuit breaker protection.
 func (cb *CircuitBreakerStore) MoveObjectLocation(ctx context.Context, key, fromBackend, toBackend string) (int64, error) {
-	if err := cb.preCheck(); err != nil {
-		return 0, err
-	}
-	result, err := cb.real.MoveObjectLocation(ctx, key, fromBackend, toBackend)
-	err = cb.postCheck(err)
-	return result, err
+	return cbCall(cb, func() (int64, error) { return cb.real.MoveObjectLocation(ctx, key, fromBackend, toBackend) })
 }
 
-// GetUnderReplicatedObjects forwards to the underlying store with circuit breaker protection.
 func (cb *CircuitBreakerStore) GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]ObjectLocation, error) {
-	if err := cb.preCheck(); err != nil {
-		return nil, err
-	}
-	result, err := cb.real.GetUnderReplicatedObjects(ctx, factor, limit)
-	err = cb.postCheck(err)
-	return result, err
+	return cbCall(cb, func() ([]ObjectLocation, error) { return cb.real.GetUnderReplicatedObjects(ctx, factor, limit) })
 }
 
-// RecordReplica forwards to the underlying store with circuit breaker protection.
 func (cb *CircuitBreakerStore) RecordReplica(ctx context.Context, key, targetBackend, sourceBackend string, size int64) (bool, error) {
-	if err := cb.preCheck(); err != nil {
-		return false, err
-	}
-	result, err := cb.real.RecordReplica(ctx, key, targetBackend, sourceBackend, size)
-	err = cb.postCheck(err)
-	return result, err
+	return cbCall(cb, func() (bool, error) { return cb.real.RecordReplica(ctx, key, targetBackend, sourceBackend, size) })
 }
 
-// FlushUsageDeltas forwards to the underlying store with circuit breaker protection.
 func (cb *CircuitBreakerStore) FlushUsageDeltas(ctx context.Context, backendName, period string, apiRequests, egressBytes, ingressBytes int64) error {
-	if err := cb.preCheck(); err != nil {
-		return err
-	}
-	err := cb.real.FlushUsageDeltas(ctx, backendName, period, apiRequests, egressBytes, ingressBytes)
-	err = cb.postCheck(err)
-	return err
+	return cbCallNoResult(cb, func() error {
+		return cb.real.FlushUsageDeltas(ctx, backendName, period, apiRequests, egressBytes, ingressBytes)
+	})
 }
 
-// GetUsageForPeriod forwards to the underlying store with circuit breaker protection.
 func (cb *CircuitBreakerStore) GetUsageForPeriod(ctx context.Context, period string) (map[string]UsageStat, error) {
-	if err := cb.preCheck(); err != nil {
-		return nil, err
-	}
-	result, err := cb.real.GetUsageForPeriod(ctx, period)
-	err = cb.postCheck(err)
-	return result, err
+	return cbCall(cb, func() (map[string]UsageStat, error) { return cb.real.GetUsageForPeriod(ctx, period) })
 }

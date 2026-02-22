@@ -154,7 +154,7 @@ func TestMain(m *testing.M) {
 	cbStore := storage.NewCircuitBreakerStore(failableStore, cfg.CircuitBreaker)
 	testCBStore = cbStore
 
-	manager := storage.NewBackendManager(storage.BackendManagerConfig{
+	manager := storage.NewBackendManager(&storage.BackendManagerConfig{
 		Backends:        backends,
 		Store:           cbStore,
 		Order:           backendOrder,
