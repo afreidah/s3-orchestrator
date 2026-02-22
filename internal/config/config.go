@@ -454,6 +454,46 @@ func (c *Config) SetDefaultsAndValidate() error {
 	return nil
 }
 
+// NonReloadableFieldsChanged compares two configs and returns a list of
+// non-reloadable field descriptions that differ. Used by the SIGHUP handler
+// to warn about changes that require a restart.
+func NonReloadableFieldsChanged(old, new *Config) []string {
+	var changed []string
+
+	if old.Server.ListenAddr != new.Server.ListenAddr {
+		changed = append(changed, "server.listen_addr")
+	}
+	if old.Database != new.Database {
+		changed = append(changed, "database")
+	}
+	if old.Telemetry != new.Telemetry {
+		changed = append(changed, "telemetry")
+	}
+	if old.UI != new.UI {
+		changed = append(changed, "ui")
+	}
+	if old.RoutingStrategy != new.RoutingStrategy {
+		changed = append(changed, "routing_strategy")
+	}
+
+	// Backend structural changes (endpoints, S3 credentials) cannot be reloaded.
+	// Quota and usage limit changes ARE reloadable and handled separately.
+	if len(old.Backends) != len(new.Backends) {
+		changed = append(changed, "backends (count changed)")
+	} else {
+		for i := range old.Backends {
+			o, n := old.Backends[i], new.Backends[i]
+			if o.Name != n.Name || o.Endpoint != n.Endpoint || o.Region != n.Region ||
+				o.Bucket != n.Bucket || o.AccessKeyID != n.AccessKeyID ||
+				o.SecretAccessKey != n.SecretAccessKey || o.ForcePathStyle != n.ForcePathStyle {
+				changed = append(changed, fmt.Sprintf("backends[%d] (%s) structural fields", i, o.Name))
+			}
+		}
+	}
+
+	return changed
+}
+
 // ConnectionString returns a PostgreSQL connection URI with properly escaped
 // credentials, safe for passwords containing special characters.
 func (c *DatabaseConfig) ConnectionString() string {

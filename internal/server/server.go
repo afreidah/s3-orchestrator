@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/auth"
@@ -33,8 +34,19 @@ import (
 // Server handles HTTP requests and routes them to the backend manager.
 type Server struct {
 	Manager       *storage.BackendManager
-	BucketAuth    *auth.BucketRegistry
+	bucketAuth    atomic.Pointer[auth.BucketRegistry]
 	MaxObjectSize int64 // Max upload body size in bytes
+}
+
+// SetBucketAuth atomically replaces the bucket authentication registry.
+// Safe to call concurrently with request handling.
+func (s *Server) SetBucketAuth(br *auth.BucketRegistry) {
+	s.bucketAuth.Store(br)
+}
+
+// GetBucketAuth returns the current bucket authentication registry.
+func (s *Server) GetBucketAuth() *auth.BucketRegistry {
+	return s.bucketAuth.Load()
 }
 
 // ServeHTTP implements http.Handler.
@@ -47,7 +59,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer telemetry.InflightRequests.WithLabelValues(method).Dec()
 
 	// --- Auth: resolve which bucket these credentials authorize ---
-	authorizedBucket, err := s.BucketAuth.AuthenticateAndResolveBucket(r)
+	authorizedBucket, err := s.GetBucketAuth().AuthenticateAndResolveBucket(r)
 	if err != nil {
 		s.recordRequest(method, http.StatusForbidden, start, 0, 0)
 		slog.Warn("Auth failed", "method", method, "path", r.URL.Path, "remote", r.RemoteAddr, "error", err)

@@ -63,6 +63,57 @@ func TestRateLimiter_Middleware429(t *testing.T) {
 	}
 }
 
+func TestRateLimiter_UpdateLimits_NewVisitors(t *testing.T) {
+	rl := NewRateLimiter(config.RateLimitConfig{
+		Enabled:        true,
+		RequestsPerSec: 1,
+		Burst:          1,
+	})
+	defer rl.Close()
+
+	// Update to a much higher rate
+	rl.UpdateLimits(1000, 1000)
+
+	// New visitor after update should get the new rate (1000 burst)
+	for i := 0; i < 100; i++ {
+		if !rl.Allow("10.0.0.99") {
+			t.Fatalf("request %d should be allowed with new burst=1000", i+1)
+		}
+	}
+}
+
+func TestRateLimiter_UpdateLimits_ExistingVisitorsKeepOldRate(t *testing.T) {
+	rl := NewRateLimiter(config.RateLimitConfig{
+		Enabled:        true,
+		RequestsPerSec: 1,
+		Burst:          2,
+	})
+	defer rl.Close()
+
+	// Establish existing visitor with burst=2
+	if !rl.Allow("10.0.0.1") {
+		t.Fatal("first request should be allowed")
+	}
+	if !rl.Allow("10.0.0.1") {
+		t.Fatal("second request (within burst) should be allowed")
+	}
+
+	// Update limits to a higher burst — existing visitor won't benefit
+	rl.UpdateLimits(1, 1000)
+
+	// Existing visitor still has the old limiter (burst=2, exhausted)
+	if rl.Allow("10.0.0.1") {
+		t.Error("existing visitor should still be rate-limited by old burst")
+	}
+
+	// A brand new visitor should get the new limits
+	for i := 0; i < 100; i++ {
+		if !rl.Allow("10.0.0.50") {
+			t.Fatalf("new visitor request %d should be allowed with new burst=1000", i+1)
+		}
+	}
+}
+
 func TestExtractIP(t *testing.T) {
 	tests := []struct {
 		name       string
