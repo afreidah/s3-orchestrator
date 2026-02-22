@@ -560,7 +560,7 @@ func (m *BackendManager) ListObjects(ctx context.Context, prefix, delimiter, sta
 			if result.KeyCount >= maxKeys {
 				result.IsTruncated = true
 				result.NextContinuationToken = obj.ObjectKey
-				goto done
+				break
 			}
 
 			if delimiter != "" {
@@ -581,13 +581,12 @@ func (m *BackendManager) ListObjects(ctx context.Context, prefix, delimiter, sta
 			result.KeyCount++
 		}
 
-		if !storeResult.IsTruncated {
+		if result.IsTruncated || !storeResult.IsTruncated {
 			break
 		}
 		cursor = storeResult.Objects[len(storeResult.Objects)-1].ObjectKey
 	}
 
-done:
 	m.recordOperation(operation, "", start, nil)
 	span.SetStatus(codes.Ok, "")
 	span.SetAttributes(attribute.Int("s3.key_count", result.KeyCount))
