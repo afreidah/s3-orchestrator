@@ -352,7 +352,7 @@ The dashboard shows:
 - **Objects** — interactive collapsible tree browser; buckets and directories expand on click to reveal contents, with rollup file counts and sizes
 - **Configuration** — virtual buckets, write routing strategy, replication factor, rebalance strategy, rate limit status
 
-No JavaScript required — uses native HTML `<details>/<summary>` for the tree. Enable it in the config:
+The object tree uses JavaScript for lazy-loaded AJAX expansion — directories load their children on click via the `/ui/api/tree` endpoint. Enable it in the config:
 
 ```yaml
 ui:
@@ -360,7 +360,7 @@ ui:
   path: "/ui"      # default
 ```
 
-A JSON API is also available at `{path}/api/dashboard` for programmatic access.
+JSON APIs are available at `{path}/api/dashboard` and `{path}/api/tree` for programmatic access.
 
 ## Endpoints
 
@@ -370,6 +370,7 @@ A JSON API is also available at `{path}/api/dashboard` for programmatic access.
 | `/metrics` | Prometheus metrics |
 | `/ui/` | Web dashboard (when enabled) |
 | `/ui/api/dashboard` | Dashboard data as JSON (when enabled) |
+| `/ui/api/tree` | Lazy-loaded directory listing as JSON (when enabled) |
 | `/{bucket}/{key}` | S3 API |
 
 ## Background Tasks
@@ -428,7 +429,7 @@ make integration-test
 make build
 
 # Build multi-arch and push to registry
-make push VERSION=v0.4.0
+make push VERSION=v0.5.0
 ```
 
 ## Deployment
@@ -436,7 +437,7 @@ make push VERSION=v0.4.0
 Build and push a Docker image with a version tag:
 
 ```bash
-make push VERSION=v0.4.0
+make push VERSION=v0.5.0
 ```
 
 The `VERSION` is baked into the binary via `-ldflags` and displayed in the web UI header and `/health` endpoint. Defaults to `latest` if omitted.
@@ -473,7 +474,7 @@ internal/
     manager_multipart.go     Multipart upload lifecycle
     manager_usage.go         Usage tracking flush + period helpers
     manager_metrics.go       Quota metric recording
-    manager_dashboard.go     Dashboard data aggregation + object tree builder
+    manager_dashboard.go     Dashboard data aggregation + lazy directory listing
     rebalancer.go            Object rebalancing across backends
     replicator.go            Cross-backend object replication
     sqlc/
@@ -485,6 +486,7 @@ internal/
     templates.go             Embedded templates + formatting helpers
     templates/dashboard.html Dashboard HTML template
     static/style.css         Dashboard stylesheet
+    static/tree.js           Lazy-loaded directory tree (AJAX expansion)
   telemetry/
     metrics.go               Prometheus metric definitions
     tracing.go               OpenTelemetry tracer setup

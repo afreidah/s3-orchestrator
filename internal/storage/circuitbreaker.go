@@ -239,6 +239,12 @@ func (cb *CircuitBreakerStore) ListObjects(ctx context.Context, prefix, startAft
 	return cbCall(cb, func() (*ListObjectsResult, error) { return cb.real.ListObjects(ctx, prefix, startAfter, maxKeys) })
 }
 
+func (cb *CircuitBreakerStore) ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*DirectoryListResult, error) {
+	return cbCall(cb, func() (*DirectoryListResult, error) {
+		return cb.real.ListDirectoryChildren(ctx, prefix, startAfter, maxKeys)
+	})
+}
+
 func (cb *CircuitBreakerStore) GetBackendWithSpace(ctx context.Context, size int64, backendOrder []string) (string, error) {
 	return cbCall(cb, func() (string, error) { return cb.real.GetBackendWithSpace(ctx, size, backendOrder) })
 }

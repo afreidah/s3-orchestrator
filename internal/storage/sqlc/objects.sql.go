@@ -85,6 +85,59 @@ func (q *Queries) GetAllObjectLocations(ctx context.Context, objectKey string) (
 	return items, nil
 }
 
+const getDirectoryStats = `-- name: GetDirectoryStats :many
+SELECT
+    (CASE WHEN position('/' IN substring(object_key FROM length($1::text) + 1)) > 0
+         THEN substring(object_key FROM length($1::text) + 1
+              FOR position('/' IN substring(object_key FROM length($1::text) + 1)))
+         ELSE substring(object_key FROM length($1::text) + 1)
+    END)::text AS name,
+    (CASE WHEN position('/' IN substring(object_key FROM length($1::text) + 1)) > 0
+         THEN true ELSE false
+    END)::boolean AS is_dir,
+    COUNT(DISTINCT object_key)  AS file_count,
+    COALESCE(SUM(size_bytes), 0)::bigint AS total_size
+FROM object_locations
+WHERE object_key LIKE $1::text || '%' ESCAPE '\'
+  AND length(object_key) > length($1::text)
+GROUP BY name, is_dir
+ORDER BY is_dir DESC, name ASC
+`
+
+type GetDirectoryStatsRow struct {
+	Name      string
+	IsDir     bool
+	FileCount int64
+	TotalSize int64
+}
+
+// Aggregate count and size for immediate children of a directory prefix.
+// Directories (containing a '/') and files are distinguished by is_dir.
+func (q *Queries) GetDirectoryStats(ctx context.Context, prefix string) ([]GetDirectoryStatsRow, error) {
+	rows, err := q.db.Query(ctx, getDirectoryStats, prefix)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetDirectoryStatsRow{}
+	for rows.Next() {
+		var i GetDirectoryStatsRow
+		if err := rows.Scan(
+			&i.Name,
+			&i.IsDir,
+			&i.FileCount,
+			&i.TotalSize,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getExistingCopiesForUpdate = `-- name: GetExistingCopiesForUpdate :many
 SELECT backend_name, size_bytes
 FROM object_locations
@@ -151,6 +204,49 @@ func (q *Queries) InsertObjectLocationIfNotExists(ctx context.Context, arg Inser
 	var inserted bool
 	err := row.Scan(&inserted)
 	return inserted, err
+}
+
+const listDirectChildren = `-- name: ListDirectChildren :many
+SELECT DISTINCT ON (object_key) object_key, backend_name, size_bytes, created_at
+FROM object_locations
+WHERE object_key LIKE $1::text || '%' ESCAPE '\'
+  AND position('/' IN substring(object_key FROM length($1::text) + 1)) = 0
+  AND length(object_key) > length($1::text)
+  AND object_key > $2
+ORDER BY object_key, created_at ASC
+LIMIT $3
+`
+
+type ListDirectChildrenParams struct {
+	Prefix     string
+	StartAfter string
+	MaxKeys    int32
+}
+
+// Return per-file detail for non-directory children under a prefix, with pagination.
+func (q *Queries) ListDirectChildren(ctx context.Context, arg ListDirectChildrenParams) ([]ObjectLocation, error) {
+	rows, err := q.db.Query(ctx, listDirectChildren, arg.Prefix, arg.StartAfter, arg.MaxKeys)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectLocation{}
+	for rows.Next() {
+		var i ObjectLocation
+		if err := rows.Scan(
+			&i.ObjectKey,
+			&i.BackendName,
+			&i.SizeBytes,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listObjectsByBackend = `-- name: ListObjectsByBackend :many

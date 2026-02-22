@@ -197,3 +197,21 @@ td.key {
   margin-left: auto;
   white-space: nowrap;
 }
+
+.tree-loading {
+  padding: 0.3rem 1rem 0.3rem 1.85rem;
+  font-size: 0.8rem;
+  color: #64748b;
+  font-style: italic;
+}
+
+.tree-load-more {
+  padding: 0.3rem 1rem 0.3rem 1.85rem;
+  font-size: 0.8rem;
+  color: #93c5fd;
+  cursor: pointer;
+}
+
+.tree-load-more:hover {
+  background: #334155;
+}

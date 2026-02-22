@@ -3,19 +3,14 @@
 //
 // Author: Alex Freidah
 //
-// Exposes a single GetDashboardData method that fetches all operational stats
-// needed for the web dashboard in one call. Delegates to the underlying
-// MetadataStore, benefiting from the circuit breaker when wired through
-// CircuitBreakerStore.
+// Exposes GetDashboardData for the main dashboard page and GetDirectoryChildren
+// for lazy-loaded directory expansion. Delegates to the underlying MetadataStore,
+// benefiting from the circuit breaker when wired through CircuitBreakerStore.
 // -------------------------------------------------------------------------------
 
 package storage
 
-import (
-	"context"
-	"sort"
-	"strings"
-)
+import "context"
 
 // DashboardData holds a snapshot of all operational data for the dashboard.
 type DashboardData struct {
@@ -26,81 +21,7 @@ type DashboardData struct {
 	UsageStats            map[string]UsageStat
 	UsageLimits           map[string]UsageLimits
 	UsagePeriod           string
-	ObjectTree            []*ObjectNode
-}
-
-// ObjectNode represents a directory or file in the object tree.
-type ObjectNode struct {
-	Name      string        // directory or file name
-	IsDir     bool          // true for directories
-	Children  []*ObjectNode // subdirectories and files (sorted: dirs first, then files)
-	Backend   string        // only for files
-	SizeBytes int64         // total size (sum of descendants for dirs, own size for files)
-	Count     int           // total file count (sum of descendants for dirs, 1 for files)
-	CreatedAt string        // only for files, formatted as "2006-01-02 15:04"
-}
-
-// buildObjectTree groups flat objects into a nested tree by path segments.
-func buildObjectTree(objects []ObjectLocation) []*ObjectNode {
-	root := &ObjectNode{IsDir: true}
-
-	for _, obj := range objects {
-		parts := strings.Split(obj.ObjectKey, "/")
-		node := root
-		for i, part := range parts {
-			isLeaf := i == len(parts)-1
-			if isLeaf {
-				node.Children = append(node.Children, &ObjectNode{
-					Name:      part,
-					Backend:   obj.BackendName,
-					SizeBytes: obj.SizeBytes,
-					Count:     1,
-					CreatedAt: obj.CreatedAt.Format("2006-01-02 15:04"),
-				})
-			} else {
-				child := findChild(node, part)
-				if child == nil {
-					child = &ObjectNode{Name: part, IsDir: true}
-					node.Children = append(node.Children, child)
-				}
-				node = child
-			}
-		}
-	}
-
-	// Recursively sort and compute rollup stats.
-	computeStats(root)
-	return root.Children
-}
-
-func findChild(node *ObjectNode, name string) *ObjectNode {
-	for _, c := range node.Children {
-		if c.IsDir && c.Name == name {
-			return c
-		}
-	}
-	return nil
-}
-
-func computeStats(node *ObjectNode) {
-	if !node.IsDir {
-		return
-	}
-	node.SizeBytes = 0
-	node.Count = 0
-	for _, c := range node.Children {
-		computeStats(c)
-		node.SizeBytes += c.SizeBytes
-		node.Count += c.Count
-	}
-	// Sort: directories first (alphabetical), then files (alphabetical).
-	sort.Slice(node.Children, func(i, j int) bool {
-		a, b := node.Children[i], node.Children[j]
-		if a.IsDir != b.IsDir {
-			return a.IsDir
-		}
-		return a.Name < b.Name
-	})
+	TopLevelEntries       *DirectoryListResult
 }
 
 // GetDashboardData fetches all stats needed for the web UI in one call.
@@ -133,12 +54,20 @@ func (m *BackendManager) GetDashboardData(ctx context.Context) (*DashboardData, 
 		return nil, err
 	}
 
-	// Fetch all objects (up to 1000) and build the tree for the file browser.
-	listResult, err := m.store.ListObjects(ctx, "", "", 1000)
+	// Fetch top-level directory entries for the lazy-loaded file browser.
+	data.TopLevelEntries, err = m.store.ListDirectoryChildren(ctx, "", "", 200)
 	if err != nil {
 		return nil, err
 	}
-	data.ObjectTree = buildObjectTree(listResult.Objects)
 
 	return data, nil
+}
+
+// GetDirectoryChildren returns the immediate children of a directory path
+// for the lazy-loaded file browser.
+func (m *BackendManager) GetDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*DirectoryListResult, error) {
+	if maxKeys <= 0 || maxKeys > 200 {
+		maxKeys = 200
+	}
+	return m.store.ListDirectoryChildren(ctx, prefix, startAfter, maxKeys)
 }
