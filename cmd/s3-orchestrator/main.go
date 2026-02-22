@@ -127,7 +127,15 @@ func runServe() {
 	cbStore := storage.NewCircuitBreakerStore(store, cfg.CircuitBreaker)
 
 	// --- Create backend manager ---
-	manager := storage.NewBackendManager(backends, cbStore, backendOrder, cfg.CircuitBreaker.CacheTTL, cfg.Server.BackendTimeout, usageLimits, cfg.RoutingStrategy)
+	manager := storage.NewBackendManager(storage.BackendManagerConfig{
+		Backends:        backends,
+		Store:           cbStore,
+		Order:           backendOrder,
+		CacheTTL:        cfg.CircuitBreaker.CacheTTL,
+		BackendTimeout:  cfg.Server.BackendTimeout,
+		UsageLimits:     usageLimits,
+		RoutingStrategy: cfg.RoutingStrategy,
+	})
 
 	// --- Initial quota metrics update ---
 	if err := manager.UpdateQuotaMetrics(ctx); err != nil {

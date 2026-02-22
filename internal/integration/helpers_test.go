@@ -154,7 +154,14 @@ func TestMain(m *testing.M) {
 	cbStore := storage.NewCircuitBreakerStore(failableStore, cfg.CircuitBreaker)
 	testCBStore = cbStore
 
-	manager := storage.NewBackendManager(backends, cbStore, backendOrder, 60*time.Second, 30*time.Second, nil, "pack")
+	manager := storage.NewBackendManager(storage.BackendManagerConfig{
+		Backends:        backends,
+		Store:           cbStore,
+		Order:           backendOrder,
+		CacheTTL:        60 * time.Second,
+		BackendTimeout:  30 * time.Second,
+		RoutingStrategy: "pack",
+	})
 	testManager = manager
 
 	srv := &server.Server{
