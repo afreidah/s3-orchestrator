@@ -31,7 +31,7 @@ import (
 
 const (
 	// TracerName identifies spans created by this service.
-	TracerName = "s3proxy"
+	TracerName = "s3-orchestrator"
 )
 
 // Version of the service for trace metadata. Set at build time via
