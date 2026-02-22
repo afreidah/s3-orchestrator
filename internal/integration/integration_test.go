@@ -569,6 +569,216 @@ func TestListAndCopy(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
+// SPREAD WRITE ROUTING
+// -------------------------------------------------------------------------
+
+func TestSpreadWriteRouting(t *testing.T) {
+	ctx := context.Background()
+
+	// Build a spread-strategy manager sharing the same store and backends.
+	spreadCBStore := storage.NewCircuitBreakerStore(testStore, config.CircuitBreakerConfig{
+		FailureThreshold: 3,
+		OpenTimeout:      500 * time.Millisecond,
+		CacheTTL:         60 * time.Second,
+	})
+	spreadManager := storage.NewBackendManager(
+		testBackends, spreadCBStore, testBackendOrder,
+		60*time.Second, 30*time.Second, nil, "spread",
+	)
+
+	spreadSrv := &server.Server{
+		Manager:    spreadManager,
+		BucketAuth: auth.NewBucketRegistry([]config.BucketConfig{{
+			Name: virtualBucket,
+			Credentials: []config.CredentialConfig{{
+				AccessKeyID:    "test",
+				SecretAccessKey: "test",
+			}},
+		}}),
+	}
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	httpSrv := &http.Server{
+		Handler:      spreadSrv,
+		ReadTimeout:  5 * time.Minute,
+		WriteTimeout: 5 * time.Minute,
+	}
+	go httpSrv.Serve(listener)
+	defer httpSrv.Shutdown(ctx)
+
+	spreadClient := s3.New(s3.Options{
+		BaseEndpoint: aws.String("http://" + listener.Addr().String()),
+		Region:       "us-east-1",
+		Credentials:  credentials.NewStaticCredentialsProvider("test", "test", ""),
+		UsePathStyle: true,
+	})
+
+	t.Run("DistributesAcrossBackends", func(t *testing.T) {
+		resetState(t)
+		spreadManager.ClearCache()
+
+		// Put 4 objects of 200 bytes each. With spread routing the manager
+		// should pick the backend with the lowest utilization ratio each time.
+		//
+		// minio-1: quota 1024, minio-2: quota 2048
+		//
+		// obj-0: both at 0% → picks first in order (minio-1)
+		//   minio-1=200/1024 (19.5%), minio-2=0/2048 (0%)
+		// obj-1: minio-2 least utilized → picks minio-2
+		//   minio-1=200/1024 (19.5%), minio-2=200/2048 (9.8%)
+		// obj-2: minio-2 still least utilized → picks minio-2
+		//   minio-1=200/1024 (19.5%), minio-2=400/2048 (19.5%)
+		// obj-3: equal utilization → could go either way
+		keys := make([]string, 4)
+		for i := range keys {
+			keys[i] = uniqueKey(t, "spread-route")
+			_, err := spreadClient.PutObject(ctx, &s3.PutObjectInput{
+				Bucket:        aws.String(virtualBucket),
+				Key:           aws.String(keys[i]),
+				Body:          bytes.NewReader(bytes.Repeat([]byte("S"), 200)),
+				ContentLength: aws.Int64(200),
+			})
+			if err != nil {
+				t.Fatalf("PutObject %d: %v", i, err)
+			}
+		}
+
+		// Count objects per backend
+		placement := make(map[string]int)
+		for _, key := range keys {
+			placement[queryObjectBackend(t, key)]++
+		}
+
+		t.Logf("placement: %v", placement)
+
+		// With spread routing, objects should land on BOTH backends.
+		// Pack strategy would put all 4 on minio-1 (total 800 < 1024).
+		if len(placement) < 2 {
+			t.Errorf("spread routing placed all objects on %v, expected distribution across 2 backends", placement)
+		}
+
+		// minio-2 should have received at least 2 objects (it has lower utilization
+		// for obj-1 and obj-2 at minimum).
+		if placement["minio-2"] < 2 {
+			t.Errorf("minio-2 got %d objects, want >= 2", placement["minio-2"])
+		}
+
+		// All objects should be readable
+		for _, key := range keys {
+			resp, err := spreadClient.GetObject(ctx, &s3.GetObjectInput{
+				Bucket: aws.String(virtualBucket),
+				Key:    aws.String(key),
+			})
+			if err != nil {
+				t.Fatalf("GetObject(%s): %v", key, err)
+			}
+			resp.Body.Close()
+		}
+	})
+
+	t.Run("PreferLeastUtilizedAfterImbalance", func(t *testing.T) {
+		resetState(t)
+		spreadManager.ClearCache()
+
+		// Pre-fill minio-1 to 50% via the store directly.
+		if err := testStore.RecordObject(ctx, uniqueKey(t, "prefill"), "minio-1", 512); err != nil {
+			t.Fatalf("RecordObject prefill: %v", err)
+		}
+		// minio-1: 512/1024 = 50%, minio-2: 0/2048 = 0%
+
+		// Put 3 objects via spread proxy — all should land on minio-2 (least utilized).
+		keys := make([]string, 3)
+		for i := range keys {
+			keys[i] = uniqueKey(t, "spread-imbal")
+			_, err := spreadClient.PutObject(ctx, &s3.PutObjectInput{
+				Bucket:        aws.String(virtualBucket),
+				Key:           aws.String(keys[i]),
+				Body:          bytes.NewReader(bytes.Repeat([]byte("I"), 100)),
+				ContentLength: aws.Int64(100),
+			})
+			if err != nil {
+				t.Fatalf("PutObject %d: %v", i, err)
+			}
+		}
+
+		// All 3 should be on minio-2 since its utilization (0%→4.9%) stays
+		// well below minio-1 (50%) the entire time.
+		for i, key := range keys {
+			backend := queryObjectBackend(t, key)
+			if backend != "minio-2" {
+				t.Errorf("obj-%d on %q, want minio-2 (least utilized)", i, backend)
+			}
+		}
+	})
+
+	t.Run("ContrastWithPackBehavior", func(t *testing.T) {
+		resetState(t)
+		spreadManager.ClearCache()
+		testManager.ClearCache()
+
+		// Use the default pack-strategy proxy to put 4 small objects.
+		// With pack, they should all land on minio-1 (first in order, 800 < 1024 quota).
+		packClient := newS3Client(t)
+		packKeys := make([]string, 4)
+		for i := range packKeys {
+			packKeys[i] = uniqueKey(t, "pack-contrast")
+			_, err := packClient.PutObject(ctx, &s3.PutObjectInput{
+				Bucket:        aws.String(virtualBucket),
+				Key:           aws.String(packKeys[i]),
+				Body:          bytes.NewReader(bytes.Repeat([]byte("P"), 200)),
+				ContentLength: aws.Int64(200),
+			})
+			if err != nil {
+				t.Fatalf("PutObject pack %d: %v", i, err)
+			}
+		}
+
+		packPlacement := make(map[string]int)
+		for _, key := range packKeys {
+			packPlacement[queryObjectBackend(t, key)]++
+		}
+		t.Logf("pack placement: %v", packPlacement)
+
+		// Pack strategy: all 4 should be on minio-1 (800 bytes < 1024 quota)
+		if packPlacement["minio-1"] != 4 {
+			t.Errorf("pack placed %d on minio-1, want 4", packPlacement["minio-1"])
+		}
+
+		// Now reset and do the same with spread
+		resetState(t)
+		spreadManager.ClearCache()
+
+		spreadKeys := make([]string, 4)
+		for i := range spreadKeys {
+			spreadKeys[i] = uniqueKey(t, "spread-contrast")
+			_, err := spreadClient.PutObject(ctx, &s3.PutObjectInput{
+				Bucket:        aws.String(virtualBucket),
+				Key:           aws.String(spreadKeys[i]),
+				Body:          bytes.NewReader(bytes.Repeat([]byte("S"), 200)),
+				ContentLength: aws.Int64(200),
+			})
+			if err != nil {
+				t.Fatalf("PutObject spread %d: %v", i, err)
+			}
+		}
+
+		spreadPlacement := make(map[string]int)
+		for _, key := range spreadKeys {
+			spreadPlacement[queryObjectBackend(t, key)]++
+		}
+		t.Logf("spread placement: %v", spreadPlacement)
+
+		// Spread strategy: objects should be distributed across both backends
+		if len(spreadPlacement) < 2 {
+			t.Errorf("spread placed all on one backend: %v", spreadPlacement)
+		}
+	})
+}
+
+// -------------------------------------------------------------------------
 // REBALANCER
 // -------------------------------------------------------------------------
 
@@ -2139,6 +2349,52 @@ func TestStore(t *testing.T) {
 		name, err = testStore.GetBackendWithSpace(ctx, 1, []string{"minio-1", "minio-2"})
 		if err != nil {
 			t.Fatalf("GetBackendWithSpace after fill: %v", err)
+		}
+		if name != "minio-2" {
+			t.Errorf("got %q, want %q (minio-1 full)", name, "minio-2")
+		}
+	})
+
+	t.Run("GetLeastUtilizedBackend_PicksLeastFull", func(t *testing.T) {
+		resetState(t)
+
+		// Both empty — either could be returned, but with equal utilization
+		// the ORDER BY should be deterministic. Just verify no error.
+		name, err := testStore.GetLeastUtilizedBackend(ctx, 10, []string{"minio-1", "minio-2"})
+		if err != nil {
+			t.Fatalf("GetLeastUtilizedBackend empty: %v", err)
+		}
+		if name != "minio-1" && name != "minio-2" {
+			t.Errorf("unexpected backend %q", name)
+		}
+
+		// Add 500 bytes to minio-1 (quota 1024). minio-2 (quota 2048) stays empty.
+		// minio-1 utilization: 500/1024 ≈ 49%, minio-2: 0/2048 = 0%.
+		// Least utilized should be minio-2.
+		if err := testStore.RecordObject(ctx, uniqueKey(t, "fill"), "minio-1", 500); err != nil {
+			t.Fatalf("RecordObject fill: %v", err)
+		}
+		name, err = testStore.GetLeastUtilizedBackend(ctx, 10, []string{"minio-1", "minio-2"})
+		if err != nil {
+			t.Fatalf("GetLeastUtilizedBackend after fill: %v", err)
+		}
+		if name != "minio-2" {
+			t.Errorf("got %q, want %q (minio-2 is least utilized)", name, "minio-2")
+		}
+	})
+
+	t.Run("GetLeastUtilizedBackend_RespectsMinSize", func(t *testing.T) {
+		resetState(t)
+
+		// Fill minio-1 to capacity (1024 bytes).
+		if err := testStore.RecordObject(ctx, uniqueKey(t, "full"), "minio-1", 1024); err != nil {
+			t.Fatalf("RecordObject: %v", err)
+		}
+
+		// Request 1 byte — minio-1 has 0 available, should return minio-2.
+		name, err := testStore.GetLeastUtilizedBackend(ctx, 1, []string{"minio-1", "minio-2"})
+		if err != nil {
+			t.Fatalf("GetLeastUtilizedBackend: %v", err)
 		}
 		if name != "minio-2" {
 			t.Errorf("got %q, want %q (minio-1 full)", name, "minio-2")

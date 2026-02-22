@@ -42,9 +42,11 @@ type mockStore struct {
 	flushUsageCalls []flushUsageCall
 
 	// --- Call tracking ---
-	recordObjectCalls []recordObjectCall
-	deleteObjectCalls []string
-	callCount         int
+	recordObjectCalls        []recordObjectCall
+	deleteObjectCalls        []string
+	callCount                int
+	getBackendWithSpaceCalls int
+	getLeastUtilizedCalls    int
 }
 
 type recordObjectCall struct {
@@ -78,6 +80,7 @@ func (m *mockStore) GetAllObjectLocations(_ context.Context, key string) ([]Obje
 func (m *mockStore) GetBackendWithSpace(_ context.Context, size int64, _ []string) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.getBackendWithSpaceCalls++
 	if m.getBackendErr != nil {
 		return "", m.getBackendErr
 	}
@@ -87,6 +90,7 @@ func (m *mockStore) GetBackendWithSpace(_ context.Context, size int64, _ []strin
 func (m *mockStore) GetLeastUtilizedBackend(_ context.Context, size int64, _ []string) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.getLeastUtilizedCalls++
 	if m.getBackendErr != nil {
 		return "", m.getBackendErr
 	}

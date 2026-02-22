@@ -197,8 +197,10 @@ func isDBError(err error) bool {
 // FORWARDING METHODS
 // -------------------------------------------------------------------------
 
-// Each method follows the pattern: preCheck → real.Method → postCheck.
+// All forwarding methods below implement the MetadataStore interface.
+// Each follows the same pattern: preCheck → real.Method → postCheck.
 
+// GetAllObjectLocations forwards to the underlying store with circuit breaker protection.
 func (cb *CircuitBreakerStore) GetAllObjectLocations(ctx context.Context, key string) ([]ObjectLocation, error) {
 	if err := cb.preCheck(); err != nil {
 		return nil, err
@@ -208,6 +210,7 @@ func (cb *CircuitBreakerStore) GetAllObjectLocations(ctx context.Context, key st
 	return result, err
 }
 
+// RecordObject forwards to the underlying store with circuit breaker protection.
 func (cb *CircuitBreakerStore) RecordObject(ctx context.Context, key, backend string, size int64) error {
 	if err := cb.preCheck(); err != nil {
 		return err
@@ -217,6 +220,7 @@ func (cb *CircuitBreakerStore) RecordObject(ctx context.Context, key, backend st
 	return err
 }
 
+// DeleteObject forwards to the underlying store with circuit breaker protection.
 func (cb *CircuitBreakerStore) DeleteObject(ctx context.Context, key string) ([]DeletedCopy, error) {
 	if err := cb.preCheck(); err != nil {
 		return nil, err
@@ -226,6 +230,7 @@ func (cb *CircuitBreakerStore) DeleteObject(ctx context.Context, key string) ([]
 	return result, err
 }
 
+// ListObjects forwards to the underlying store with circuit breaker protection.
 func (cb *CircuitBreakerStore) ListObjects(ctx context.Context, prefix, startAfter string, maxKeys int) (*ListObjectsResult, error) {
 	if err := cb.preCheck(); err != nil {
 		return nil, err
@@ -235,6 +240,7 @@ func (cb *CircuitBreakerStore) ListObjects(ctx context.Context, prefix, startAft
 	return result, err
 }
 
+// GetBackendWithSpace forwards to the underlying store with circuit breaker protection.
 func (cb *CircuitBreakerStore) GetBackendWithSpace(ctx context.Context, size int64, backendOrder []string) (string, error) {
 	if err := cb.preCheck(); err != nil {
 		return "", err
@@ -244,6 +250,7 @@ func (cb *CircuitBreakerStore) GetBackendWithSpace(ctx context.Context, size int
 	return result, err
 }
 
+// GetLeastUtilizedBackend forwards to the underlying store with circuit breaker protection.
 func (cb *CircuitBreakerStore) GetLeastUtilizedBackend(ctx context.Context, size int64, eligible []string) (string, error) {
 	if err := cb.preCheck(); err != nil {
 		return "", err
@@ -253,6 +260,7 @@ func (cb *CircuitBreakerStore) GetLeastUtilizedBackend(ctx context.Context, size
 	return result, err
 }
 
+// CreateMultipartUpload forwards to the underlying store with circuit breaker protection.
 func (cb *CircuitBreakerStore) CreateMultipartUpload(ctx context.Context, uploadID, key, backend, contentType string) error {
 	if err := cb.preCheck(); err != nil {
 		return err
@@ -262,6 +270,7 @@ func (cb *CircuitBreakerStore) CreateMultipartUpload(ctx context.Context, upload
 	return err
 }
 
+// GetMultipartUpload forwards to the underlying store with circuit breaker protection.
 func (cb *CircuitBreakerStore) GetMultipartUpload(ctx context.Context, uploadID string) (*MultipartUpload, error) {
 	if err := cb.preCheck(); err != nil {
 		return nil, err
@@ -271,6 +280,7 @@ func (cb *CircuitBreakerStore) GetMultipartUpload(ctx context.Context, uploadID 
 	return result, err
 }
 
+// RecordPart forwards to the underlying store with circuit breaker protection.
 func (cb *CircuitBreakerStore) RecordPart(ctx context.Context, uploadID string, partNumber int, etag string, size int64) error {
 	if err := cb.preCheck(); err != nil {
 		return err
@@ -280,6 +290,7 @@ func (cb *CircuitBreakerStore) RecordPart(ctx context.Context, uploadID string, 
 	return err
 }
 
+// GetParts forwards to the underlying store with circuit breaker protection.
 func (cb *CircuitBreakerStore) GetParts(ctx context.Context, uploadID string) ([]MultipartPart, error) {
 	if err := cb.preCheck(); err != nil {
 		return nil, err
@@ -289,6 +300,7 @@ func (cb *CircuitBreakerStore) GetParts(ctx context.Context, uploadID string) ([
 	return result, err
 }
 
+// DeleteMultipartUpload forwards to the underlying store with circuit breaker protection.
 func (cb *CircuitBreakerStore) DeleteMultipartUpload(ctx context.Context, uploadID string) error {
 	if err := cb.preCheck(); err != nil {
 		return err
@@ -298,6 +310,7 @@ func (cb *CircuitBreakerStore) DeleteMultipartUpload(ctx context.Context, upload
 	return err
 }
 
+// GetQuotaStats forwards to the underlying store with circuit breaker protection.
 func (cb *CircuitBreakerStore) GetQuotaStats(ctx context.Context) (map[string]QuotaStat, error) {
 	if err := cb.preCheck(); err != nil {
 		return nil, err
@@ -307,6 +320,7 @@ func (cb *CircuitBreakerStore) GetQuotaStats(ctx context.Context) (map[string]Qu
 	return result, err
 }
 
+// GetObjectCounts forwards to the underlying store with circuit breaker protection.
 func (cb *CircuitBreakerStore) GetObjectCounts(ctx context.Context) (map[string]int64, error) {
 	if err := cb.preCheck(); err != nil {
 		return nil, err
@@ -316,6 +330,7 @@ func (cb *CircuitBreakerStore) GetObjectCounts(ctx context.Context) (map[string]
 	return result, err
 }
 
+// GetActiveMultipartCounts forwards to the underlying store with circuit breaker protection.
 func (cb *CircuitBreakerStore) GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error) {
 	if err := cb.preCheck(); err != nil {
 		return nil, err
@@ -325,6 +340,7 @@ func (cb *CircuitBreakerStore) GetActiveMultipartCounts(ctx context.Context) (ma
 	return result, err
 }
 
+// GetStaleMultipartUploads forwards to the underlying store with circuit breaker protection.
 func (cb *CircuitBreakerStore) GetStaleMultipartUploads(ctx context.Context, olderThan time.Duration) ([]MultipartUpload, error) {
 	if err := cb.preCheck(); err != nil {
 		return nil, err
@@ -334,6 +350,7 @@ func (cb *CircuitBreakerStore) GetStaleMultipartUploads(ctx context.Context, old
 	return result, err
 }
 
+// ListObjectsByBackend forwards to the underlying store with circuit breaker protection.
 func (cb *CircuitBreakerStore) ListObjectsByBackend(ctx context.Context, backendName string, limit int) ([]ObjectLocation, error) {
 	if err := cb.preCheck(); err != nil {
 		return nil, err
@@ -343,6 +360,7 @@ func (cb *CircuitBreakerStore) ListObjectsByBackend(ctx context.Context, backend
 	return result, err
 }
 
+// MoveObjectLocation forwards to the underlying store with circuit breaker protection.
 func (cb *CircuitBreakerStore) MoveObjectLocation(ctx context.Context, key, fromBackend, toBackend string) (int64, error) {
 	if err := cb.preCheck(); err != nil {
 		return 0, err
@@ -352,6 +370,7 @@ func (cb *CircuitBreakerStore) MoveObjectLocation(ctx context.Context, key, from
 	return result, err
 }
 
+// GetUnderReplicatedObjects forwards to the underlying store with circuit breaker protection.
 func (cb *CircuitBreakerStore) GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]ObjectLocation, error) {
 	if err := cb.preCheck(); err != nil {
 		return nil, err
@@ -361,6 +380,7 @@ func (cb *CircuitBreakerStore) GetUnderReplicatedObjects(ctx context.Context, fa
 	return result, err
 }
 
+// RecordReplica forwards to the underlying store with circuit breaker protection.
 func (cb *CircuitBreakerStore) RecordReplica(ctx context.Context, key, targetBackend, sourceBackend string, size int64) (bool, error) {
 	if err := cb.preCheck(); err != nil {
 		return false, err
@@ -370,6 +390,7 @@ func (cb *CircuitBreakerStore) RecordReplica(ctx context.Context, key, targetBac
 	return result, err
 }
 
+// FlushUsageDeltas forwards to the underlying store with circuit breaker protection.
 func (cb *CircuitBreakerStore) FlushUsageDeltas(ctx context.Context, backendName, period string, apiRequests, egressBytes, ingressBytes int64) error {
 	if err := cb.preCheck(); err != nil {
 		return err
@@ -379,6 +400,7 @@ func (cb *CircuitBreakerStore) FlushUsageDeltas(ctx context.Context, backendName
 	return err
 }
 
+// GetUsageForPeriod forwards to the underlying store with circuit breaker protection.
 func (cb *CircuitBreakerStore) GetUsageForPeriod(ctx context.Context, period string) (map[string]UsageStat, error) {
 	if err := cb.preCheck(); err != nil {
 		return nil, err
