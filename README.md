@@ -178,6 +178,7 @@ backends:
     access_key_id: "backend-access-key"
     secret_access_key: "backend-secret-key"
     force_path_style: true
+    unsigned_payload: true    # stream uploads without buffering (default: true)
     quota_bytes: 21474836480  # 20 GB (0 or omit for unlimited)
     api_request_limit: 0      # monthly API request limit (0 = unlimited)
     egress_byte_limit: 0      # monthly egress byte limit (0 = unlimited)
