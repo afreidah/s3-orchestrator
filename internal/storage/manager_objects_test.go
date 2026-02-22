@@ -17,7 +17,14 @@ func newTestManager(store *mockStore, backends map[string]*mockBackend) *Backend
 		obs[name] = b
 		order = append(order, name)
 	}
-	return NewBackendManager(obs, store, order, 5*time.Second, 30*time.Second, nil, "pack")
+	return NewBackendManager(BackendManagerConfig{
+		Backends:        obs,
+		Store:           store,
+		Order:           order,
+		CacheTTL:        5 * time.Second,
+		BackendTimeout:  30 * time.Second,
+		RoutingStrategy: "pack",
+	})
 }
 
 // -------------------------------------------------------------------------
@@ -51,10 +58,14 @@ func TestPutObject_Success(t *testing.T) {
 func TestPutObject_PackStrategy_UsesGetBackendWithSpace(t *testing.T) {
 	backend := newMockBackend()
 	store := &mockStore{getBackendResp: "b1"}
-	mgr := NewBackendManager(
-		map[string]ObjectBackend{"b1": backend},
-		store, []string{"b1"}, 5*time.Second, 30*time.Second, nil, "pack",
-	)
+	mgr := NewBackendManager(BackendManagerConfig{
+		Backends:        map[string]ObjectBackend{"b1": backend},
+		Store:           store,
+		Order:           []string{"b1"},
+		CacheTTL:        5 * time.Second,
+		BackendTimeout:  30 * time.Second,
+		RoutingStrategy: "pack",
+	})
 
 	_, err := mgr.PutObject(context.Background(), "pack-key", bytes.NewReader([]byte("data")), 4, "text/plain")
 	if err != nil {
@@ -71,10 +82,14 @@ func TestPutObject_PackStrategy_UsesGetBackendWithSpace(t *testing.T) {
 func TestPutObject_SpreadStrategy_UsesGetLeastUtilized(t *testing.T) {
 	backend := newMockBackend()
 	store := &mockStore{getBackendResp: "b1"}
-	mgr := NewBackendManager(
-		map[string]ObjectBackend{"b1": backend},
-		store, []string{"b1"}, 5*time.Second, 30*time.Second, nil, "spread",
-	)
+	mgr := NewBackendManager(BackendManagerConfig{
+		Backends:        map[string]ObjectBackend{"b1": backend},
+		Store:           store,
+		Order:           []string{"b1"},
+		CacheTTL:        5 * time.Second,
+		BackendTimeout:  30 * time.Second,
+		RoutingStrategy: "spread",
+	})
 
 	_, err := mgr.PutObject(context.Background(), "spread-key", bytes.NewReader([]byte("data")), 4, "text/plain")
 	if err != nil {
@@ -576,7 +591,14 @@ func TestPutObject_BackendTimeout(t *testing.T) {
 
 	store := &mockStore{getBackendResp: "b1"}
 	obs := map[string]ObjectBackend{"b1": slowBackend}
-	mgr := NewBackendManager(obs, store, []string{"b1"}, 5*time.Second, 50*time.Millisecond, nil, "pack")
+	mgr := NewBackendManager(BackendManagerConfig{
+		Backends:        obs,
+		Store:           store,
+		Order:           []string{"b1"},
+		CacheTTL:        5 * time.Second,
+		BackendTimeout:  50 * time.Millisecond,
+		RoutingStrategy: "pack",
+	})
 
 	_, err := mgr.PutObject(context.Background(), "timeout-key", bytes.NewReader([]byte("data")), 4, "text/plain")
 	if err == nil {
@@ -607,7 +629,7 @@ func (s *slowMockBackend) PutObject(ctx context.Context, key string, body io.Rea
 // -------------------------------------------------------------------------
 
 func TestLocationCache_SetAndGet(t *testing.T) {
-	mgr := NewBackendManager(nil, nil, nil, 5*time.Second, 0, nil, "pack")
+	mgr := NewBackendManager(BackendManagerConfig{CacheTTL: 5 * time.Second, RoutingStrategy: "pack"})
 	mgr.cacheSet("key1", "backend-a")
 
 	got, ok := mgr.cacheGet("key1")
@@ -620,7 +642,7 @@ func TestLocationCache_SetAndGet(t *testing.T) {
 }
 
 func TestLocationCache_Expiry(t *testing.T) {
-	mgr := NewBackendManager(nil, nil, nil, 10*time.Millisecond, 0, nil, "pack")
+	mgr := NewBackendManager(BackendManagerConfig{CacheTTL: 10 * time.Millisecond, RoutingStrategy: "pack"})
 	mgr.cacheSet("key1", "backend-a")
 
 	time.Sleep(15 * time.Millisecond)
@@ -632,7 +654,7 @@ func TestLocationCache_Expiry(t *testing.T) {
 }
 
 func TestLocationCache_Overwrite(t *testing.T) {
-	mgr := NewBackendManager(nil, nil, nil, 5*time.Second, 0, nil, "pack")
+	mgr := NewBackendManager(BackendManagerConfig{CacheTTL: 5 * time.Second, RoutingStrategy: "pack"})
 	mgr.cacheSet("key1", "old-backend")
 	mgr.cacheSet("key1", "new-backend")
 
@@ -656,7 +678,15 @@ func newTestManagerWithLimits(store *mockStore, backends map[string]*mockBackend
 		obs[name] = b
 		order = append(order, name)
 	}
-	return NewBackendManager(obs, store, order, 5*time.Second, 30*time.Second, limits, "pack")
+	return NewBackendManager(BackendManagerConfig{
+		Backends:        obs,
+		Store:           store,
+		Order:           order,
+		CacheTTL:        5 * time.Second,
+		BackendTimeout:  30 * time.Second,
+		UsageLimits:     limits,
+		RoutingStrategy: "pack",
+	})
 }
 
 func TestPutObject_UsageLimitOverflow(t *testing.T) {
