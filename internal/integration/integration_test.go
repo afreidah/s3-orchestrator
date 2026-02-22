@@ -581,10 +581,14 @@ func TestSpreadWriteRouting(t *testing.T) {
 		OpenTimeout:      500 * time.Millisecond,
 		CacheTTL:         60 * time.Second,
 	})
-	spreadManager := storage.NewBackendManager(
-		testBackends, spreadCBStore, testBackendOrder,
-		60*time.Second, 30*time.Second, nil, "spread",
-	)
+	spreadManager := storage.NewBackendManager(storage.BackendManagerConfig{
+		Backends:        testBackends,
+		Store:           spreadCBStore,
+		Order:           testBackendOrder,
+		CacheTTL:        60 * time.Second,
+		BackendTimeout:  30 * time.Second,
+		RoutingStrategy: "spread",
+	})
 
 	spreadSrv := &server.Server{
 		Manager:    spreadManager,

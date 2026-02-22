@@ -56,6 +56,17 @@ var (
 // BACKEND MANAGER
 // -------------------------------------------------------------------------
 
+// BackendManagerConfig holds the parameters for creating a BackendManager.
+type BackendManagerConfig struct {
+	Backends        map[string]ObjectBackend
+	Store           MetadataStore
+	Order           []string
+	CacheTTL        time.Duration
+	BackendTimeout  time.Duration
+	UsageLimits     map[string]UsageLimits
+	RoutingStrategy string
+}
+
 // BackendManager manages multiple storage backends with quota tracking.
 type BackendManager struct {
 	backends       map[string]ObjectBackend      // name -> backend
@@ -79,37 +90,36 @@ type locationCacheEntry struct {
 	expiry      time.Time
 }
 
-// NewBackendManager creates a new backend manager with the given backends and store.
-// The limits parameter is optional (nil means no usage limits).
-// The routingStrategy parameter controls write placement: "pack" (first with space) or "spread" (least utilized).
-func NewBackendManager(backends map[string]ObjectBackend, store MetadataStore, order []string, cacheTTL, backendTimeout time.Duration, limits map[string]UsageLimits, routingStrategy string) *BackendManager {
-	usage := make(map[string]*usageCounters, len(backends))
-	for name := range backends {
+// NewBackendManager creates a new backend manager with the given configuration.
+func NewBackendManager(cfg BackendManagerConfig) *BackendManager {
+	usage := make(map[string]*usageCounters, len(cfg.Backends))
+	for name := range cfg.Backends {
 		usage[name] = &usageCounters{}
 	}
 
+	limits := cfg.UsageLimits
 	if limits == nil {
 		limits = make(map[string]UsageLimits)
 	}
 
 	m := &BackendManager{
-		backends:       backends,
-		store:          store,
-		order:          order,
+		backends:       cfg.Backends,
+		store:          cfg.Store,
+		order:          cfg.Order,
 		locationCache:  make(map[string]locationCacheEntry),
-		cacheTTL:       cacheTTL,
-		backendTimeout: backendTimeout,
+		cacheTTL:       cfg.CacheTTL,
+		backendTimeout: cfg.BackendTimeout,
 		stopCache:      make(chan struct{}),
 		usage:           usage,
 		usageLimits:     limits,
 		usageBaseline:   make(map[string]UsageStat),
-		routingStrategy: routingStrategy,
+		routingStrategy: cfg.RoutingStrategy,
 	}
 
 	// Periodically evict expired cache entries.
-	if cacheTTL > 0 {
+	if cfg.CacheTTL > 0 {
 		go func() {
-			ticker := time.NewTicker(cacheTTL)
+			ticker := time.NewTicker(cfg.CacheTTL)
 			defer ticker.Stop()
 			for {
 				select {
