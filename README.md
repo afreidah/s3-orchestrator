@@ -220,6 +220,57 @@ ui:
   path: "/ui"                # URL prefix (default: /ui)
 ```
 
+## Configuration Hot-Reload
+
+The orchestrator supports hot-reloading a subset of configuration by sending `SIGHUP` to the running process. This lets you update credentials, quotas, rate limits, and other operational settings without restarting the service or dropping client connections.
+
+```bash
+kill -HUP $(pidof s3-orchestrator)
+```
+
+### Reloadable vs non-reloadable settings
+
+| Setting | Reloadable | Notes |
+|---------|:----------:|-------|
+| `buckets` (credentials) | Yes | New credentials take effect immediately |
+| `rate_limit` | Yes | New visitors get updated rates; existing per-IP limiters expire naturally |
+| `backends[].quota_bytes` | Yes | Synced to database on reload |
+| `backends[].api_request_limit` | Yes | |
+| `backends[].egress_byte_limit` | Yes | |
+| `backends[].ingress_byte_limit` | Yes | |
+| `rebalance` | Yes | Strategy, interval, threshold, enabled/disabled |
+| `replication` | Yes | Factor, worker interval, batch size |
+| `server.listen_addr` | No | Requires restart |
+| `database` | No | Requires restart |
+| `telemetry` | No | Requires restart |
+| `ui` | No | Requires restart |
+| `routing_strategy` | No | Requires restart |
+| `backends` (structural: endpoint, credentials, count) | No | Requires restart |
+
+On a successful reload, the orchestrator logs each reloaded section:
+
+```
+{"level":"INFO","msg":"SIGHUP received, reloading configuration","path":"config.yaml"}
+{"level":"INFO","msg":"Reloaded bucket credentials","buckets":2}
+{"level":"INFO","msg":"Reloaded rate limits","requests_per_sec":100,"burst":200}
+{"level":"INFO","msg":"Reloaded backend quota limits"}
+{"level":"INFO","msg":"Reloaded backend usage limits"}
+{"level":"INFO","msg":"Reloaded rebalance/replication config"}
+{"level":"INFO","msg":"Configuration reload complete"}
+```
+
+If the new config file is invalid, the orchestrator keeps the current configuration and logs the error:
+
+```
+{"level":"ERROR","msg":"Config reload failed, keeping current config","error":"invalid config: ..."}
+```
+
+Non-reloadable field changes are logged as warnings but do not prevent the reload of other settings:
+
+```
+{"level":"WARN","msg":"Config field changed but requires restart to take effect","field":"server.listen_addr"}
+```
+
 ## Database
 
 The orchestrator connects to PostgreSQL via pgx/v5 connection pools and auto-applies its schema on startup (all DDL uses `IF NOT EXISTS`). Four tables are created:

@@ -137,6 +137,10 @@ func runServe() {
 		RoutingStrategy: cfg.RoutingStrategy,
 	})
 
+	// --- Store initial reloadable configs ---
+	manager.SetRebalanceConfig(&cfg.Rebalance)
+	manager.SetReplicationConfig(&cfg.Replication)
+
 	// --- Initial quota metrics update ---
 	if err := manager.UpdateQuotaMetrics(ctx); err != nil {
 		slog.Warn("Failed to update initial quota metrics", "error", err)
@@ -182,7 +186,7 @@ func runServe() {
 		}
 	}()
 
-	// --- Rebalancer background task ---
+	// --- Rebalancer background task (always runs, skips when disabled) ---
 	if cfg.Rebalance.Enabled {
 		slog.Info("Rebalancer enabled",
 			"strategy", cfg.Rebalance.Strategy,
@@ -190,65 +194,77 @@ func runServe() {
 			"batch_size", cfg.Rebalance.BatchSize,
 			"threshold", cfg.Rebalance.Threshold,
 		)
-		bgWg.Add(1)
-		go func() {
-			defer bgWg.Done()
-			ticker := time.NewTicker(cfg.Rebalance.Interval)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ticker.C:
-					moved, err := manager.Rebalance(bgCtx, cfg.Rebalance)
-					if err != nil && !errors.Is(err, storage.ErrDBUnavailable) {
-						slog.Error("Rebalance failed", "error", err)
-					} else if moved > 0 {
-						slog.Info("Rebalance completed", "objects_moved", moved)
-						_ = manager.UpdateQuotaMetrics(bgCtx)
-					}
-				case <-bgCtx.Done():
-					return
-				}
-			}
-		}()
 	}
+	bgWg.Add(1)
+	go func() {
+		defer bgWg.Done()
+		ticker := time.NewTicker(1 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				rcfg := manager.RebalanceConfig()
+				if rcfg == nil || !rcfg.Enabled {
+					continue
+				}
+				moved, err := manager.Rebalance(bgCtx, *rcfg)
+				if err != nil && !errors.Is(err, storage.ErrDBUnavailable) {
+					slog.Error("Rebalance failed", "error", err)
+				} else if moved > 0 {
+					slog.Info("Rebalance completed", "objects_moved", moved)
+					_ = manager.UpdateQuotaMetrics(bgCtx)
+				}
+			case <-bgCtx.Done():
+				return
+			}
+		}
+	}()
 
-	// --- Replication worker background task ---
+	// --- Replication worker background task (always runs, skips when disabled) ---
 	if cfg.Replication.Factor > 1 {
 		slog.Info("Replication worker enabled",
 			"factor", cfg.Replication.Factor,
 			"interval", cfg.Replication.WorkerInterval,
 			"batch_size", cfg.Replication.BatchSize,
 		)
-		bgWg.Add(1)
-		go func() {
-			defer bgWg.Done()
-			// Run once at startup to catch up on pending replicas
-			created, err := manager.Replicate(bgCtx, cfg.Replication)
+	}
+	bgWg.Add(1)
+	go func() {
+		defer bgWg.Done()
+
+		// Run once at startup to catch up on pending replicas
+		rcfg := manager.ReplicationConfig()
+		if rcfg != nil && rcfg.Factor > 1 {
+			created, err := manager.Replicate(bgCtx, *rcfg)
 			if err != nil && !errors.Is(err, storage.ErrDBUnavailable) {
 				slog.Error("Replication startup run failed", "error", err)
 			} else if created > 0 {
 				slog.Info("Replication startup run completed", "copies_created", created)
 				_ = manager.UpdateQuotaMetrics(bgCtx)
 			}
+		}
 
-			ticker := time.NewTicker(cfg.Replication.WorkerInterval)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ticker.C:
-					created, err := manager.Replicate(bgCtx, cfg.Replication)
-					if err != nil && !errors.Is(err, storage.ErrDBUnavailable) {
-						slog.Error("Replication failed", "error", err)
-					} else if created > 0 {
-						slog.Info("Replication completed", "copies_created", created)
-						_ = manager.UpdateQuotaMetrics(bgCtx)
-					}
-				case <-bgCtx.Done():
-					return
+		ticker := time.NewTicker(1 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				rcfg := manager.ReplicationConfig()
+				if rcfg == nil || rcfg.Factor <= 1 {
+					continue
 				}
+				created, err := manager.Replicate(bgCtx, *rcfg)
+				if err != nil && !errors.Is(err, storage.ErrDBUnavailable) {
+					slog.Error("Replication failed", "error", err)
+				} else if created > 0 {
+					slog.Info("Replication completed", "copies_created", created)
+					_ = manager.UpdateQuotaMetrics(bgCtx)
+				}
+			case <-bgCtx.Done():
+				return
 			}
-		}()
-	}
+		}
+	}()
 
 	// --- Build bucket registry ---
 	bucketAuth := auth.NewBucketRegistry(cfg.Buckets)
@@ -256,9 +272,9 @@ func runServe() {
 	// --- Create server ---
 	srv := &server.Server{
 		Manager:       manager,
-		BucketAuth:    bucketAuth,
 		MaxObjectSize: cfg.Server.MaxObjectSize,
 	}
+	srv.SetBucketAuth(bucketAuth)
 
 	// --- Setup HTTP mux ---
 	mux := http.NewServeMux()
@@ -347,6 +363,74 @@ func runServe() {
 		// Flush traces
 		if err := shutdownTracer(shutdownCtx); err != nil {
 			slog.Error("Tracer shutdown error", "error", err)
+		}
+	}()
+
+	// --- Handle SIGHUP for config reload ---
+	go func() {
+		hupChan := make(chan os.Signal, 1)
+		signal.Notify(hupChan, syscall.SIGHUP)
+		for range hupChan {
+			slog.Info("SIGHUP received, reloading configuration", "path", *configPath)
+
+			newCfg, err := config.LoadConfig(*configPath)
+			if err != nil {
+				slog.Error("Config reload failed, keeping current config", "error", err)
+				continue
+			}
+
+			// Warn about non-reloadable changes
+			if warnings := config.NonReloadableFieldsChanged(cfg, newCfg); len(warnings) > 0 {
+				for _, w := range warnings {
+					slog.Warn("Config field changed but requires restart to take effect", "field", w)
+				}
+			}
+
+			// Reload bucket credentials
+			srv.SetBucketAuth(auth.NewBucketRegistry(newCfg.Buckets))
+			slog.Info("Reloaded bucket credentials", "buckets", len(newCfg.Buckets))
+
+			// Reload rate limiter settings
+			if rl != nil && newCfg.RateLimit.Enabled {
+				rl.UpdateLimits(newCfg.RateLimit.RequestsPerSec, newCfg.RateLimit.Burst)
+				slog.Info("Reloaded rate limits",
+					"requests_per_sec", newCfg.RateLimit.RequestsPerSec,
+					"burst", newCfg.RateLimit.Burst,
+				)
+			}
+
+			// Reload quota limits in database
+			if err := store.SyncQuotaLimits(bgCtx, newCfg.Backends); err != nil {
+				slog.Error("Failed to sync quota limits on reload", "error", err)
+			} else {
+				slog.Info("Reloaded backend quota limits")
+			}
+
+			// Reload usage limits
+			newUsageLimits := make(map[string]storage.UsageLimits, len(newCfg.Backends))
+			for i := range newCfg.Backends {
+				bcfg := &newCfg.Backends[i]
+				newUsageLimits[bcfg.Name] = storage.UsageLimits{
+					ApiRequestLimit:  bcfg.ApiRequestLimit,
+					EgressByteLimit:  bcfg.EgressByteLimit,
+					IngressByteLimit: bcfg.IngressByteLimit,
+				}
+			}
+			manager.UpdateUsageLimits(newUsageLimits)
+			slog.Info("Reloaded backend usage limits")
+
+			// Reload rebalance/replication config
+			manager.SetRebalanceConfig(&newCfg.Rebalance)
+			manager.SetReplicationConfig(&newCfg.Replication)
+			slog.Info("Reloaded rebalance/replication config")
+
+			// Update quota metrics with new limits
+			if err := manager.UpdateQuotaMetrics(bgCtx); err != nil {
+				slog.Warn("Failed to update quota metrics after reload", "error", err)
+			}
+
+			cfg = newCfg
+			slog.Info("Configuration reload complete")
 		}
 	}()
 

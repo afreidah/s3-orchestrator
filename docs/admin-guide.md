@@ -394,7 +394,7 @@ To add a new application to the orchestrator:
            secret_access_key: "${NEW_APP_SECRET_KEY}"
    ```
 
-3. **Restart the orchestrator** (or redeploy the Nomad job / Docker container).
+3. **Reload the configuration** by sending `SIGHUP` (`kill -HUP $(pidof s3-orchestrator)`) — or restart the orchestrator.
 
 4. **Hand the client** four pieces of information:
    - Endpoint URL (e.g., `http://s3-orchestrator.service.consul:9000`)
@@ -497,25 +497,84 @@ All logs are JSON to stdout. Key fields: `msg`, `level`, `error`, `backend`, `op
 
 ## Common Operations
 
+### Reloading configuration
+
+Many settings can be updated without restarting the orchestrator by sending `SIGHUP`:
+
+1. **Edit the config file** with your changes.
+2. **Send SIGHUP** to the running process:
+   ```bash
+   kill -HUP $(pidof s3-orchestrator)
+   ```
+3. **Check the logs** to confirm the reload succeeded:
+   ```
+   {"level":"INFO","msg":"SIGHUP received, reloading configuration","path":"config.yaml"}
+   {"level":"INFO","msg":"Configuration reload complete"}
+   ```
+
+**What takes effect immediately:**
+
+- Bucket credentials (add/remove/rotate credentials without downtime)
+- Rate limit settings (requests per second, burst)
+- Backend quota limits (`quota_bytes`)
+- Backend usage limits (`api_request_limit`, `egress_byte_limit`, `ingress_byte_limit`)
+- Rebalance settings (strategy, interval, batch size, threshold, enable/disable)
+- Replication settings (factor, worker interval, batch size)
+
+**What requires a restart:**
+
+- `server.listen_addr`, `database`, `telemetry`, `ui`, `routing_strategy`
+- Backend structural changes (endpoint, S3 credentials, adding/removing backends)
+
+If any of these fields change, the reload still proceeds for the reloadable settings, and warnings are logged:
+
+```
+{"level":"WARN","msg":"Config field changed but requires restart to take effect","field":"server.listen_addr"}
+```
+
+**If the config file is invalid**, the orchestrator keeps the current configuration entirely and logs the parse/validation error:
+
+```
+{"level":"ERROR","msg":"Config reload failed, keeping current config","error":"invalid config: ..."}
+```
+
+No partial reload happens — either all reloadable settings update, or none do.
+
 ### Adding a new backend
 
-Add the backend to the `backends` list in your config and restart the orchestrator. Quota limits are synced to the database on startup.
+Add the backend to the `backends` list in your config and restart the orchestrator. Backend count changes are not reloadable — a restart is required. Quota limits are synced to the database on startup.
 
 ### Adjusting quotas
 
-Change `quota_bytes` in the config and restart. The orchestrator calls `SyncQuotaLimits` on startup, which updates the database to match the config.
+Change `quota_bytes` in the config and send `SIGHUP`. Quota limits are synced to the database on reload. Alternatively, restart the orchestrator — `SyncQuotaLimits` also runs on startup.
 
 ### Enabling replication after initial setup
 
-Add a `replication` section with `factor > 1` and restart. The replication worker runs immediately at startup to begin creating copies of existing objects, then continues at the configured interval.
+Add a `replication` section with `factor > 1` and send `SIGHUP` (or restart). When restarting, the replication worker runs immediately at startup to begin creating copies of existing objects, then continues at the configured interval. With `SIGHUP`, the new factor takes effect on the next worker tick.
 
 Remember: the replication factor cannot exceed the number of backends.
 
 ### Rotating client credentials
 
-Update the credentials in the bucket config and restart. The old credentials stop working immediately. Coordinate with the tenant to update their client configuration at the same time.
+Update the credentials in the bucket config and send `SIGHUP`. The new credentials take effect immediately and old credentials stop working. Coordinate with the tenant to update their client configuration at the same time.
 
-There is no graceful rotation mechanism — changing credentials requires a restart and brief coordination with the client.
+**Example: rotating credentials without downtime**
+
+To perform a zero-downtime credential rotation, temporarily add both old and new credentials:
+
+1. Add the new credential alongside the old one:
+   ```yaml
+   buckets:
+     - name: "app1-files"
+       credentials:
+         - access_key_id: "OLD_KEY"
+           secret_access_key: "old_secret"
+         - access_key_id: "NEW_KEY"
+           secret_access_key: "new_secret"
+   ```
+2. Send `SIGHUP` — both credentials now work.
+3. Update the client to use the new credentials.
+4. Remove the old credential from the config and send `SIGHUP` again.
 
 ## Docker Deployment
 
