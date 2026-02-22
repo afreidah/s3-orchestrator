@@ -91,7 +91,7 @@ type locationCacheEntry struct {
 }
 
 // NewBackendManager creates a new backend manager with the given configuration.
-func NewBackendManager(cfg BackendManagerConfig) *BackendManager {
+func NewBackendManager(cfg *BackendManagerConfig) *BackendManager {
 	usage := make(map[string]*usageCounters, len(cfg.Backends))
 	for name := range cfg.Backends {
 		usage[name] = &usageCounters{}
