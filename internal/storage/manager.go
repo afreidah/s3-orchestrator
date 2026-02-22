@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 )
 
@@ -78,10 +79,13 @@ type BackendManager struct {
 	backendTimeout time.Duration                 // per-operation timeout for backend S3 calls
 	stopCache      chan struct{}                  // signals cache eviction goroutine to stop
 	usage          map[string]*usageCounters     // per-backend atomic usage counters
-	usageLimits    map[string]UsageLimits        // from config, immutable after init
+	usageLimits    map[string]UsageLimits        // configurable monthly limits
+	usageLimitsMu  sync.RWMutex                  // protects usageLimits
 	usageBaseline   map[string]UsageStat          // cached DB totals, refreshed every 30s
 	usageBaselineMu sync.RWMutex
 	routingStrategy string                        // "pack" or "spread"
+	rebalanceCfg    atomic.Pointer[config.RebalanceConfig]
+	replicationCfg  atomic.Pointer[config.ReplicationConfig]
 }
 
 // locationCacheEntry holds a cached key-to-backend mapping with TTL.
@@ -186,6 +190,34 @@ func (m *BackendManager) Close() {
 	close(m.stopCache)
 }
 
+// UpdateUsageLimits replaces the per-backend usage limits. Safe to call
+// concurrently with request handling.
+func (m *BackendManager) UpdateUsageLimits(limits map[string]UsageLimits) {
+	m.usageLimitsMu.Lock()
+	defer m.usageLimitsMu.Unlock()
+	m.usageLimits = limits
+}
+
+// SetRebalanceConfig atomically stores the rebalance configuration.
+func (m *BackendManager) SetRebalanceConfig(cfg *config.RebalanceConfig) {
+	m.rebalanceCfg.Store(cfg)
+}
+
+// RebalanceConfig returns the current rebalance configuration.
+func (m *BackendManager) RebalanceConfig() *config.RebalanceConfig {
+	return m.rebalanceCfg.Load()
+}
+
+// SetReplicationConfig atomically stores the replication configuration.
+func (m *BackendManager) SetReplicationConfig(cfg *config.ReplicationConfig) {
+	m.replicationCfg.Store(cfg)
+}
+
+// ReplicationConfig returns the current replication configuration.
+func (m *BackendManager) ReplicationConfig() *config.ReplicationConfig {
+	return m.replicationCfg.Load()
+}
+
 // -------------------------------------------------------------------------
 // HELPERS
 // -------------------------------------------------------------------------
@@ -230,7 +262,9 @@ func (m *BackendManager) recordUsage(backendName string, apiCalls, egress, ingre
 //
 // Returns true if no non-zero limit is exceeded.
 func (m *BackendManager) withinUsageLimits(backendName string, apiCalls, egress, ingress int64) bool {
+	m.usageLimitsMu.RLock()
 	lim, ok := m.usageLimits[backendName]
+	m.usageLimitsMu.RUnlock()
 	if !ok {
 		return true // no limits configured
 	}

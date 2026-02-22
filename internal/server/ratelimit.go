@@ -66,6 +66,15 @@ func (rl *RateLimiter) Close() {
 	close(rl.stop)
 }
 
+// UpdateLimits changes the rate and burst for new visitors. Existing per-IP
+// limiters keep their old rates until they expire and are recreated.
+func (rl *RateLimiter) UpdateLimits(requestsPerSec float64, burst int) {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	rl.rate = rate.Limit(requestsPerSec)
+	rl.burst = burst
+}
+
 // Allow checks whether a request from the given IP is allowed.
 func (rl *RateLimiter) Allow(ip string) bool {
 	rl.mu.Lock()

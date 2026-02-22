@@ -509,6 +509,150 @@ func TestConfigValidation_BucketMissingName(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
+// NON-RELOADABLE FIELDS CHANGED TESTS
+// -------------------------------------------------------------------------
+
+func TestNonReloadableFieldsChanged_IdenticalConfigs(t *testing.T) {
+	a := validBaseConfig()
+	b := validBaseConfig()
+	_ = a.SetDefaultsAndValidate()
+	_ = b.SetDefaultsAndValidate()
+
+	changed := NonReloadableFieldsChanged(&a, &b)
+	if len(changed) != 0 {
+		t.Errorf("identical configs should return empty slice, got %v", changed)
+	}
+}
+
+func TestNonReloadableFieldsChanged_ListenAddr(t *testing.T) {
+	a := validBaseConfig()
+	b := validBaseConfig()
+	_ = a.SetDefaultsAndValidate()
+	b.Server.ListenAddr = ":8080"
+	_ = b.SetDefaultsAndValidate()
+
+	changed := NonReloadableFieldsChanged(&a, &b)
+	if len(changed) != 1 || changed[0] != "server.listen_addr" {
+		t.Errorf("expected [server.listen_addr], got %v", changed)
+	}
+}
+
+func TestNonReloadableFieldsChanged_Database(t *testing.T) {
+	a := validBaseConfig()
+	b := validBaseConfig()
+	_ = a.SetDefaultsAndValidate()
+	b.Database.Host = "newhost"
+	_ = b.SetDefaultsAndValidate()
+
+	changed := NonReloadableFieldsChanged(&a, &b)
+	found := false
+	for _, c := range changed {
+		if c == "database" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected 'database' in changed list, got %v", changed)
+	}
+}
+
+func TestNonReloadableFieldsChanged_BackendStructuralFields(t *testing.T) {
+	a := validBaseConfig()
+	b := validBaseConfig()
+	_ = a.SetDefaultsAndValidate()
+	b.Backends[0].Endpoint = "https://new-endpoint.example.com"
+	_ = b.SetDefaultsAndValidate()
+
+	changed := NonReloadableFieldsChanged(&a, &b)
+	found := false
+	for _, c := range changed {
+		if strings.Contains(c, "structural fields") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected backend structural fields change, got %v", changed)
+	}
+}
+
+func TestNonReloadableFieldsChanged_BackendCredentials(t *testing.T) {
+	a := validBaseConfig()
+	b := validBaseConfig()
+	_ = a.SetDefaultsAndValidate()
+	b.Backends[0].SecretAccessKey = "new-secret"
+	_ = b.SetDefaultsAndValidate()
+
+	changed := NonReloadableFieldsChanged(&a, &b)
+	found := false
+	for _, c := range changed {
+		if strings.Contains(c, "structural fields") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected backend structural fields change for credentials, got %v", changed)
+	}
+}
+
+func TestNonReloadableFieldsChanged_BackendCountChanged(t *testing.T) {
+	a := validBaseConfig()
+	b := validBaseConfigTwoBackends()
+	_ = a.SetDefaultsAndValidate()
+	_ = b.SetDefaultsAndValidate()
+
+	changed := NonReloadableFieldsChanged(&a, &b)
+	found := false
+	for _, c := range changed {
+		if strings.Contains(c, "count changed") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected 'backends (count changed)', got %v", changed)
+	}
+}
+
+func TestNonReloadableFieldsChanged_ReloadableOnlyChanges(t *testing.T) {
+	a := validBaseConfig()
+	b := validBaseConfig()
+	_ = a.SetDefaultsAndValidate()
+	_ = b.SetDefaultsAndValidate()
+
+	// These are reloadable fields — should NOT appear in the result
+	b.Backends[0].QuotaBytes = 9999
+	b.Backends[0].ApiRequestLimit = 5000
+	b.Backends[0].EgressByteLimit = 1000
+	b.Backends[0].IngressByteLimit = 2000
+	b.RateLimit = RateLimitConfig{Enabled: true, RequestsPerSec: 50, Burst: 100}
+	b.Rebalance = RebalanceConfig{Enabled: true, Strategy: "spread", Interval: time.Hour, BatchSize: 50, Threshold: 0.2}
+	b.Replication = ReplicationConfig{Factor: 1, WorkerInterval: time.Minute, BatchSize: 25}
+	b.Buckets = []BucketConfig{
+		{Name: "new-bucket", Credentials: []CredentialConfig{{AccessKeyID: "NEW", SecretAccessKey: "newsecret"}}},
+	}
+
+	changed := NonReloadableFieldsChanged(&a, &b)
+	if len(changed) != 0 {
+		t.Errorf("reloadable-only changes should return empty slice, got %v", changed)
+	}
+}
+
+func TestNonReloadableFieldsChanged_MultipleChanges(t *testing.T) {
+	a := validBaseConfig()
+	b := validBaseConfig()
+	_ = a.SetDefaultsAndValidate()
+
+	b.Server.ListenAddr = ":8080"
+	b.Database.Host = "newhost"
+	b.RoutingStrategy = "spread"
+	_ = b.SetDefaultsAndValidate()
+
+	changed := NonReloadableFieldsChanged(&a, &b)
+	if len(changed) < 3 {
+		t.Errorf("expected at least 3 changed fields, got %v", changed)
+	}
+}
+
+// -------------------------------------------------------------------------
 // HELPERS
 // -------------------------------------------------------------------------
 
