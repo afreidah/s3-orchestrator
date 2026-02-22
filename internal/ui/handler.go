@@ -57,6 +57,7 @@ type dashboardPage struct {
 
 // configSummary holds non-sensitive configuration for display.
 type configSummary struct {
+	RoutingStrategy   string
 	ReplicationFactor int
 	RebalanceEnabled  bool
 	RebalanceStrategy string
@@ -83,6 +84,7 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		Data:      data,
 		Buckets:   bucketNames,
 		Config: configSummary{
+			RoutingStrategy:   h.cfg.RoutingStrategy,
 			ReplicationFactor: h.cfg.Replication.Factor,
 			RebalanceEnabled:  h.cfg.Rebalance.Enabled,
 			RebalanceStrategy: h.cfg.Rebalance.Strategy,

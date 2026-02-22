@@ -34,8 +34,9 @@ type Config struct {
 	Rebalance      RebalanceConfig      `yaml:"rebalance"`
 	Replication    ReplicationConfig    `yaml:"replication"`
 	RateLimit      RateLimitConfig      `yaml:"rate_limit"`
-	CircuitBreaker CircuitBreakerConfig `yaml:"circuit_breaker"`
-	UI             UIConfig             `yaml:"ui"`
+	CircuitBreaker  CircuitBreakerConfig `yaml:"circuit_breaker"`
+	UI              UIConfig             `yaml:"ui"`
+	RoutingStrategy string               `yaml:"routing_strategy"` // "pack" (default) or "spread"
 }
 
 // DatabaseConfig holds PostgreSQL connection settings.
@@ -346,6 +347,14 @@ func (c *Config) SetDefaultsAndValidate() error {
 	// --- Validate tracing config ---
 	if c.Telemetry.Tracing.Enabled && c.Telemetry.Tracing.Endpoint == "" {
 		errors = append(errors, "telemetry.tracing.endpoint is required when tracing is enabled")
+	}
+
+	// --- Routing strategy defaults ---
+	if c.RoutingStrategy == "" {
+		c.RoutingStrategy = "pack"
+	}
+	if c.RoutingStrategy != "pack" && c.RoutingStrategy != "spread" {
+		errors = append(errors, "routing_strategy must be 'pack' or 'spread'")
 	}
 
 	// --- Rebalance defaults ---

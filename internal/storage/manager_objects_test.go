@@ -17,7 +17,7 @@ func newTestManager(store *mockStore, backends map[string]*mockBackend) *Backend
 		obs[name] = b
 		order = append(order, name)
 	}
-	return NewBackendManager(obs, store, order, 5*time.Second, 30*time.Second, nil)
+	return NewBackendManager(obs, store, order, 5*time.Second, 30*time.Second, nil, "pack")
 }
 
 // -------------------------------------------------------------------------
@@ -45,6 +45,46 @@ func TestPutObject_Success(t *testing.T) {
 	call := store.recordObjectCalls[0]
 	if call.Key != "mykey" || call.Backend != "b1" || call.Size != 5 {
 		t.Errorf("RecordObject called with %+v", call)
+	}
+}
+
+func TestPutObject_PackStrategy_UsesGetBackendWithSpace(t *testing.T) {
+	backend := newMockBackend()
+	store := &mockStore{getBackendResp: "b1"}
+	mgr := NewBackendManager(
+		map[string]ObjectBackend{"b1": backend},
+		store, []string{"b1"}, 5*time.Second, 30*time.Second, nil, "pack",
+	)
+
+	_, err := mgr.PutObject(context.Background(), "pack-key", bytes.NewReader([]byte("data")), 4, "text/plain")
+	if err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+	if store.getBackendWithSpaceCalls != 1 {
+		t.Errorf("expected 1 GetBackendWithSpace call, got %d", store.getBackendWithSpaceCalls)
+	}
+	if store.getLeastUtilizedCalls != 0 {
+		t.Errorf("expected 0 GetLeastUtilizedBackend calls, got %d", store.getLeastUtilizedCalls)
+	}
+}
+
+func TestPutObject_SpreadStrategy_UsesGetLeastUtilized(t *testing.T) {
+	backend := newMockBackend()
+	store := &mockStore{getBackendResp: "b1"}
+	mgr := NewBackendManager(
+		map[string]ObjectBackend{"b1": backend},
+		store, []string{"b1"}, 5*time.Second, 30*time.Second, nil, "spread",
+	)
+
+	_, err := mgr.PutObject(context.Background(), "spread-key", bytes.NewReader([]byte("data")), 4, "text/plain")
+	if err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+	if store.getLeastUtilizedCalls != 1 {
+		t.Errorf("expected 1 GetLeastUtilizedBackend call, got %d", store.getLeastUtilizedCalls)
+	}
+	if store.getBackendWithSpaceCalls != 0 {
+		t.Errorf("expected 0 GetBackendWithSpace calls, got %d", store.getBackendWithSpaceCalls)
 	}
 }
 
@@ -536,7 +576,7 @@ func TestPutObject_BackendTimeout(t *testing.T) {
 
 	store := &mockStore{getBackendResp: "b1"}
 	obs := map[string]ObjectBackend{"b1": slowBackend}
-	mgr := NewBackendManager(obs, store, []string{"b1"}, 5*time.Second, 50*time.Millisecond, nil)
+	mgr := NewBackendManager(obs, store, []string{"b1"}, 5*time.Second, 50*time.Millisecond, nil, "pack")
 
 	_, err := mgr.PutObject(context.Background(), "timeout-key", bytes.NewReader([]byte("data")), 4, "text/plain")
 	if err == nil {
@@ -567,7 +607,7 @@ func (s *slowMockBackend) PutObject(ctx context.Context, key string, body io.Rea
 // -------------------------------------------------------------------------
 
 func TestLocationCache_SetAndGet(t *testing.T) {
-	mgr := NewBackendManager(nil, nil, nil, 5*time.Second, 0, nil)
+	mgr := NewBackendManager(nil, nil, nil, 5*time.Second, 0, nil, "pack")
 	mgr.cacheSet("key1", "backend-a")
 
 	got, ok := mgr.cacheGet("key1")
@@ -580,7 +620,7 @@ func TestLocationCache_SetAndGet(t *testing.T) {
 }
 
 func TestLocationCache_Expiry(t *testing.T) {
-	mgr := NewBackendManager(nil, nil, nil, 10*time.Millisecond, 0, nil)
+	mgr := NewBackendManager(nil, nil, nil, 10*time.Millisecond, 0, nil, "pack")
 	mgr.cacheSet("key1", "backend-a")
 
 	time.Sleep(15 * time.Millisecond)
@@ -592,7 +632,7 @@ func TestLocationCache_Expiry(t *testing.T) {
 }
 
 func TestLocationCache_Overwrite(t *testing.T) {
-	mgr := NewBackendManager(nil, nil, nil, 5*time.Second, 0, nil)
+	mgr := NewBackendManager(nil, nil, nil, 5*time.Second, 0, nil, "pack")
 	mgr.cacheSet("key1", "old-backend")
 	mgr.cacheSet("key1", "new-backend")
 
@@ -616,7 +656,7 @@ func newTestManagerWithLimits(store *mockStore, backends map[string]*mockBackend
 		obs[name] = b
 		order = append(order, name)
 	}
-	return NewBackendManager(obs, store, order, 5*time.Second, 30*time.Second, limits)
+	return NewBackendManager(obs, store, order, 5*time.Second, 30*time.Second, limits, "pack")
 }
 
 func TestPutObject_UsageLimitOverflow(t *testing.T) {

@@ -127,7 +127,7 @@ func runServe() {
 	cbStore := storage.NewCircuitBreakerStore(store, cfg.CircuitBreaker)
 
 	// --- Create backend manager ---
-	manager := storage.NewBackendManager(backends, cbStore, backendOrder, cfg.CircuitBreaker.CacheTTL, cfg.Server.BackendTimeout, usageLimits)
+	manager := storage.NewBackendManager(backends, cbStore, backendOrder, cfg.CircuitBreaker.CacheTTL, cfg.Server.BackendTimeout, usageLimits, cfg.RoutingStrategy)
 
 	// --- Initial quota metrics update ---
 	if err := manager.UpdateQuotaMetrics(ctx); err != nil {
@@ -352,6 +352,7 @@ func runServe() {
 		"listen_addr", cfg.Server.ListenAddr,
 		"buckets", bucketNames,
 		"backends", len(cfg.Backends),
+		"routing_strategy", cfg.RoutingStrategy,
 	)
 
 	if cfg.Telemetry.Tracing.Enabled {

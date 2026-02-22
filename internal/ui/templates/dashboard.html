@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>S3 Orchestrator</title>
+  <link rel="icon" type="image/svg+xml" href="static/favicon.svg">
   <link rel="stylesheet" href="static/style.css?v={{.Version}}">
 </head>
 <body>
@@ -134,6 +135,10 @@
       <div class="config-card">
         <div class="label">Virtual Buckets</div>
         <div class="value">{{range $i, $b := .Buckets}}{{if $i}}, {{end}}{{$b}}{{end}}</div>
+      </div>
+      <div class="config-card">
+        <div class="label">Write Routing</div>
+        <div class="value">{{.Config.RoutingStrategy}}</div>
       </div>
       <div class="config-card">
         <div class="label">Replication Factor</div>

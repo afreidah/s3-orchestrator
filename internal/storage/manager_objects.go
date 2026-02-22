@@ -1,3 +1,13 @@
+// -------------------------------------------------------------------------------
+// Object Operations - PUT, GET, HEAD, DELETE, COPY
+//
+// Author: Alex Freidah
+//
+// Object-level CRUD operations on the BackendManager. Handles backend selection
+// via routing strategy, read failover across replicas, broadcast reads during
+// degraded mode, and usage limit enforcement on reads and writes.
+// -------------------------------------------------------------------------------
+
 package storage
 
 import (
@@ -39,7 +49,7 @@ func (m *BackendManager) PutObject(ctx context.Context, key string, body io.Read
 	}
 
 	// --- Find backend with available quota ---
-	backendName, err := m.store.GetBackendWithSpace(ctx, size, eligible)
+	backendName, err := m.selectBackendForWrite(ctx, size, eligible)
 	if err != nil {
 		if errors.Is(err, ErrDBUnavailable) {
 			span.SetStatus(codes.Error, "database unavailable")
@@ -354,7 +364,7 @@ func (m *BackendManager) CopyObject(ctx context.Context, sourceKey, destKey stri
 		span.SetStatus(codes.Error, "usage limits exceeded on all backends")
 		return "", ErrInsufficientStorage
 	}
-	destBackendName, err := m.store.GetBackendWithSpace(ctx, size, destEligible)
+	destBackendName, err := m.selectBackendForWrite(ctx, size, destEligible)
 	if err != nil {
 		if errors.Is(err, ErrDBUnavailable) {
 			span.SetStatus(codes.Error, "database unavailable")

@@ -1,3 +1,13 @@
+// -------------------------------------------------------------------------------
+// Multipart Upload Operations - Create, UploadPart, Complete, Abort, ListParts
+//
+// Author: Alex Freidah
+//
+// Multipart upload lifecycle on the BackendManager. Handles backend selection for
+// new uploads via routing strategy, part tracking in PostgreSQL, and final assembly
+// on the target backend. Stale uploads are cleaned up by a background task.
+// -------------------------------------------------------------------------------
+
 package storage
 
 import (
@@ -36,7 +46,7 @@ func (m *BackendManager) CreateMultipartUpload(ctx context.Context, key, content
 	}
 
 	// Pick a backend (estimate 0 bytes since final size is unknown)
-	backendName, err := m.store.GetBackendWithSpace(ctx, 0, eligible)
+	backendName, err := m.selectBackendForWrite(ctx, 0, eligible)
 	if err != nil {
 		if errors.Is(err, ErrDBUnavailable) {
 			span.SetStatus(codes.Error, "database unavailable")

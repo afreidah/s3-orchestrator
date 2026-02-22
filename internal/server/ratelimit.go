@@ -1,3 +1,13 @@
+// -------------------------------------------------------------------------------
+// Rate Limiter - Per-IP Token Bucket Throttling
+//
+// Author: Alex Freidah
+//
+// Per-IP token bucket rate limiter with automatic cleanup of stale entries.
+// When enabled, requests exceeding the configured rate receive 429 SlowDown.
+// Supports X-Forwarded-For for accurate IP extraction behind reverse proxies.
+// -------------------------------------------------------------------------------
+
 package server
 
 import (

@@ -48,6 +48,10 @@ database:
   # min_conns: 5         # Min idle connections (default: 5)
   # max_conn_lifetime: "5m"
 
+# Write routing strategy for new objects.
+# "pack" (default) fills backends in config order; "spread" picks the least utilized.
+# routing_strategy: "pack"
+
 backends:
   - name: "oci"
     # S3-compatible endpoint URL
