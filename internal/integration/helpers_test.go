@@ -436,6 +436,13 @@ func (f *FailableStore) GetStaleMultipartUploads(ctx context.Context, olderThan 
 	return f.MetadataStore.GetStaleMultipartUploads(ctx, olderThan)
 }
 
+func (f *FailableStore) ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*storage.DirectoryListResult, error) {
+	if f.isFailing() {
+		return nil, errSimulatedDBFailure
+	}
+	return f.MetadataStore.ListDirectoryChildren(ctx, prefix, startAfter, maxKeys)
+}
+
 func (f *FailableStore) ListObjectsByBackend(ctx context.Context, backendName string, limit int) ([]storage.ObjectLocation, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure

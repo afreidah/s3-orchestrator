@@ -15,6 +15,7 @@ import (
 	"html/template"
 	"log/slog"
 	"net/http"
+	"strconv"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/storage"
@@ -43,6 +44,7 @@ func New(manager *storage.BackendManager, dbHealthy func() bool, cfg *config.Con
 func (h *Handler) Register(mux *http.ServeMux, prefix string) {
 	mux.HandleFunc(prefix+"/", h.handleDashboard)
 	mux.HandleFunc(prefix+"/api/dashboard", h.handleAPIDashboard)
+	mux.HandleFunc(prefix+"/api/tree", h.handleTreeAPI)
 	mux.Handle(prefix+"/static/", http.StripPrefix(prefix+"/static/", http.FileServerFS(staticFS)))
 }
 
@@ -110,5 +112,30 @@ func (h *Handler) handleAPIDashboard(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(data); err != nil {
 		slog.Error("UI: failed to encode dashboard JSON", "error", err)
+	}
+}
+
+// handleTreeAPI returns children of a directory prefix as JSON for the
+// lazy-loaded file browser.
+func (h *Handler) handleTreeAPI(w http.ResponseWriter, r *http.Request) {
+	prefix := r.URL.Query().Get("prefix")
+	startAfter := r.URL.Query().Get("startAfter")
+	maxKeys := 200
+	if mk := r.URL.Query().Get("maxKeys"); mk != "" {
+		if parsed, err := strconv.Atoi(mk); err == nil && parsed > 0 && parsed <= 200 {
+			maxKeys = parsed
+		}
+	}
+
+	result, err := h.manager.GetDirectoryChildren(r.Context(), prefix, startAfter, maxKeys)
+	if err != nil {
+		slog.Error("UI: failed to list directory children", "prefix", prefix, "error", err)
+		http.Error(w, `{"error":"failed to list children"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(result); err != nil {
+		slog.Error("UI: failed to encode tree JSON", "error", err)
 	}
 }
