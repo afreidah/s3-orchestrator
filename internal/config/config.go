@@ -84,6 +84,7 @@ type BackendConfig struct {
 	AccessKeyID     string `yaml:"access_key_id"`     // AWS access key ID
 	SecretAccessKey string `yaml:"secret_access_key"` // AWS secret access key
 	ForcePathStyle   bool  `yaml:"force_path_style"`   // Use path-style URLs
+	UnsignedPayload  *bool `yaml:"unsigned_payload"`   // Skip SigV4 payload hash to stream uploads without buffering (default: true)
 	QuotaBytes       int64 `yaml:"quota_bytes"`        // Maximum bytes allowed on this backend (0 = unlimited)
 	ApiRequestLimit  int64 `yaml:"api_request_limit"`  // Monthly API request limit (0 = unlimited)
 	EgressByteLimit  int64 `yaml:"egress_byte_limit"`  // Monthly egress byte limit (0 = unlimited)
@@ -485,13 +486,22 @@ func NonReloadableFieldsChanged(old, new *Config) []string {
 			o, n := old.Backends[i], new.Backends[i]
 			if o.Name != n.Name || o.Endpoint != n.Endpoint || o.Region != n.Region ||
 				o.Bucket != n.Bucket || o.AccessKeyID != n.AccessKeyID ||
-				o.SecretAccessKey != n.SecretAccessKey || o.ForcePathStyle != n.ForcePathStyle {
+				o.SecretAccessKey != n.SecretAccessKey || o.ForcePathStyle != n.ForcePathStyle ||
+				boolDefault(o.UnsignedPayload, true) != boolDefault(n.UnsignedPayload, true) {
 				changed = append(changed, fmt.Sprintf("backends[%d] (%s) structural fields", i, o.Name))
 			}
 		}
 	}
 
 	return changed
+}
+
+// boolDefault returns the value of a *bool, or the given default if nil.
+func boolDefault(p *bool, def bool) bool {
+	if p != nil {
+		return *p
+	}
+	return def
 }
 
 // ConnectionString returns a PostgreSQL connection URI with properly escaped

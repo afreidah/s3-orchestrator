@@ -636,6 +636,72 @@ func TestNonReloadableFieldsChanged_ReloadableOnlyChanges(t *testing.T) {
 	}
 }
 
+func TestNonReloadableFieldsChanged_UnsignedPayloadChanged(t *testing.T) {
+	a := validBaseConfig()
+	b := validBaseConfig()
+	_ = a.SetDefaultsAndValidate()
+	f := false
+	b.Backends[0].UnsignedPayload = &f
+	_ = b.SetDefaultsAndValidate()
+
+	changed := NonReloadableFieldsChanged(&a, &b)
+	found := false
+	for _, c := range changed {
+		if strings.Contains(c, "structural fields") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected backend structural fields change for unsigned_payload, got %v", changed)
+	}
+}
+
+func TestNonReloadableFieldsChanged_UnsignedPayloadBothNil(t *testing.T) {
+	a := validBaseConfig()
+	b := validBaseConfig()
+	// Both nil — should be treated as identical (both default to true)
+	_ = a.SetDefaultsAndValidate()
+	_ = b.SetDefaultsAndValidate()
+
+	changed := NonReloadableFieldsChanged(&a, &b)
+	if len(changed) != 0 {
+		t.Errorf("both nil unsigned_payload should be identical, got %v", changed)
+	}
+}
+
+func TestNonReloadableFieldsChanged_UnsignedPayloadExplicitTrue(t *testing.T) {
+	a := validBaseConfig()
+	b := validBaseConfig()
+	_ = a.SetDefaultsAndValidate()
+	// Explicitly true should match nil (default true)
+	tr := true
+	b.Backends[0].UnsignedPayload = &tr
+	_ = b.SetDefaultsAndValidate()
+
+	changed := NonReloadableFieldsChanged(&a, &b)
+	if len(changed) != 0 {
+		t.Errorf("explicit true should match nil default, got %v", changed)
+	}
+}
+
+func TestBoolDefault(t *testing.T) {
+	tr := true
+	f := false
+
+	if got := boolDefault(nil, true); got != true {
+		t.Errorf("boolDefault(nil, true) = %v, want true", got)
+	}
+	if got := boolDefault(nil, false); got != false {
+		t.Errorf("boolDefault(nil, false) = %v, want false", got)
+	}
+	if got := boolDefault(&tr, false); got != true {
+		t.Errorf("boolDefault(&true, false) = %v, want true", got)
+	}
+	if got := boolDefault(&f, true); got != false {
+		t.Errorf("boolDefault(&false, true) = %v, want false", got)
+	}
+}
+
 func TestNonReloadableFieldsChanged_MultipleChanges(t *testing.T) {
 	a := validBaseConfig()
 	b := validBaseConfig()
