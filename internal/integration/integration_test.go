@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -2701,6 +2702,64 @@ func TestAuthSigV4(t *testing.T) {
 
 		if resp.StatusCode != 403 {
 			t.Errorf("status = %d, want 403", resp.StatusCode)
+		}
+	})
+
+	// Keys containing spaces, plus signs, and nested paths require
+	// per-segment URI encoding in the SigV4 canonical request.
+	t.Run("SpecialCharKeysSigV4", func(t *testing.T) {
+		client := authClient(authKey, authSecret)
+
+		keys := []string{
+			uniqueKey(t, "auth") + "/my file.txt",
+			uniqueKey(t, "auth") + "/a+b.dat",
+			uniqueKey(t, "auth") + "/path/with spaces/and+plus",
+		}
+
+		for _, key := range keys {
+			body := []byte("content-for-" + key)
+			_, err := client.PutObject(ctx, &s3.PutObjectInput{
+				Bucket:        aws.String(virtualBucket),
+				Key:           aws.String(key),
+				Body:          bytes.NewReader(body),
+				ContentLength: aws.Int64(int64(len(body))),
+			})
+			if err != nil {
+				t.Fatalf("PutObject key=%q: %v", key, err)
+			}
+
+			resp, err := client.GetObject(ctx, &s3.GetObjectInput{
+				Bucket: aws.String(virtualBucket),
+				Key:    aws.String(key),
+			})
+			if err != nil {
+				t.Fatalf("GetObject key=%q: %v", key, err)
+			}
+			got, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+
+			if !bytes.Equal(got, body) {
+				t.Errorf("key=%q: body mismatch: got %q, want %q", key, got, body)
+			}
+		}
+	})
+
+	// The 403 error response must not reveal the target bucket name.
+	t.Run("AccessDeniedDoesNotLeakBucketName", func(t *testing.T) {
+		url := fmt.Sprintf("http://%s/%s/any-key", authAddr, virtualBucket)
+		req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("raw GET: %v", err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+
+		if resp.StatusCode != 403 {
+			t.Fatalf("status = %d, want 403", resp.StatusCode)
+		}
+		if strings.Contains(string(body), virtualBucket) {
+			t.Errorf("403 response body should not contain bucket name %q, got: %s", virtualBucket, body)
 		}
 	})
 }

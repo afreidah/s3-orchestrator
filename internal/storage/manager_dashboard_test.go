@@ -13,7 +13,7 @@ func TestGetDashboardData_Success(t *testing.T) {
 		},
 		getObjectCountsResp:    map[string]int64{"b1": 42},
 		getActiveMultipartResp: map[string]int64{"b1": 3},
-		getUsageForPeriodResp:  map[string]UsageStat{"b1": {ApiRequests: 100}},
+		getUsageForPeriodResp:  map[string]UsageStat{"b1": {APIRequests: 100}},
 		listDirChildrenResp: &DirectoryListResult{
 			Entries: []DirEntry{
 				{Name: "bucket1/", IsDir: true, FileCount: 10, TotalSize: 4096},
@@ -37,8 +37,8 @@ func TestGetDashboardData_Success(t *testing.T) {
 	if data.ActiveMultipartCounts["b1"] != 3 {
 		t.Errorf("ActiveMultipartCounts[b1] = %d, want 3", data.ActiveMultipartCounts["b1"])
 	}
-	if data.UsageStats["b1"].ApiRequests != 100 {
-		t.Errorf("UsageStats[b1].ApiRequests = %d, want 100", data.UsageStats["b1"].ApiRequests)
+	if data.UsageStats["b1"].APIRequests != 100 {
+		t.Errorf("UsageStats[b1].APIRequests = %d, want 100", data.UsageStats["b1"].APIRequests)
 	}
 	if len(data.TopLevelEntries.Entries) != 1 {
 		t.Errorf("TopLevelEntries count = %d, want 1", len(data.TopLevelEntries.Entries))

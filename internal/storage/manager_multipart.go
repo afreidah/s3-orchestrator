@@ -41,6 +41,7 @@ func (m *BackendManager) CreateMultipartUpload(ctx context.Context, key, content
 	// Filter backends within usage limits before selecting
 	eligible := m.backendsWithinLimits(1, 0, 0)
 	if len(eligible) == 0 {
+		telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation, "write").Inc()
 		span.SetStatus(codes.Error, "usage limits exceeded on all backends")
 		return "", "", ErrInsufficientStorage
 	}
@@ -203,9 +204,8 @@ func (m *BackendManager) CompleteMultipartUpload(ctx context.Context, uploadID s
 		}
 	}()
 
-	pctx, pcancel := m.withTimeout(ctx)
-	defer pcancel()
-	etag, err := backend.PutObject(pctx, mu.ObjectKey, pr, totalSize, mu.ContentType)
+	// Streamed from pipe; deadline governed by the caller's context.
+	etag, err := backend.PutObject(ctx, mu.ObjectKey, pr, totalSize, mu.ContentType)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return "", fmt.Errorf("failed to upload final object: %w", err)

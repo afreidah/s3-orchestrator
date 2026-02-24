@@ -152,13 +152,13 @@ database:
   database: "s3orchestrator"     # required
   user: "s3orchestrator"         # required
   password: "${DB_PASSWORD}"
-  ssl_mode: "require"            # default: disable — use "require" in production
+  ssl_mode: "require"            # default: require (use "disable" for local dev)
   max_conns: 10                  # default: 10
   min_conns: 5                   # default: 5
   max_conn_lifetime: "5m"        # default: 5m
 ```
 
-For production, always set `ssl_mode: require`. The default is `disable` for local development convenience.
+The default is `require`. Set `ssl_mode: disable` only for local development without TLS.
 
 Pool settings (`max_conns`, `min_conns`, `max_conn_lifetime`) control the pgx connection pool. The defaults are fine for most deployments. Increase `max_conns` if you're seeing connection wait times under high concurrency.
 
@@ -290,7 +290,12 @@ rate_limit:
   enabled: true
   requests_per_sec: 100          # token refill rate (default: 100)
   burst: 200                     # max burst size (default: 200)
+  trusted_proxies:               # CIDRs whose X-Forwarded-For is trusted
+    - "10.0.0.0/8"
+    - "172.16.0.0/12"
 ```
+
+When `trusted_proxies` is configured, the orchestrator extracts the real client IP from the `X-Forwarded-For` header using rightmost-untrusted extraction: it walks the XFF chain from right to left, skipping addresses within trusted CIDRs, and uses the first untrusted address for rate limiting. If the direct peer is not in a trusted CIDR, `X-Forwarded-For` is ignored entirely to prevent spoofing. Without `trusted_proxies`, the direct connection IP is always used.
 
 ### ui
 
@@ -304,7 +309,7 @@ ui:
 
 When enabled, the dashboard is served at `{path}/` on the same port as the S3 API. A JSON API endpoint is also available at `{path}/api/dashboard`.
 
-The dashboard does not require authentication by default (same as `/health` and `/metrics`). If the orchestrator is publicly exposed, put it behind a reverse proxy with auth (e.g., oauth2-proxy via Traefik).
+All dashboard responses include security headers (`X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Content-Security-Policy`). The dashboard does not require authentication by default (same as `/health` and `/metrics`). If the orchestrator is publicly exposed, put it behind a reverse proxy with auth (e.g., oauth2-proxy via Traefik).
 
 ## Multi-Backend Configurations
 
@@ -498,6 +503,7 @@ If `telemetry.metrics.enabled` is `true`, metrics are exposed at `/metrics`. Key
 | `s3proxy_requests_total{status_code="5xx"}` | Alert on elevated 5xx rates |
 | `s3proxy_degraded_write_rejections_total` | Writes being rejected due to degraded mode |
 | `s3proxy_usage_limit_rejections_total` | Operations rejected by usage limits |
+| `s3proxy_rate_limit_rejections_total` | Requests rejected by per-IP rate limiting |
 
 ### Structured logs
 
@@ -593,7 +599,7 @@ To perform a zero-downtime credential rotation, temporarily add both old and new
 make build
 
 # Multi-arch build and push to registry with version tag
-make push VERSION=v0.5.1
+make push VERSION=v0.5.2
 ```
 
 The `VERSION` is baked into the binary via `-ldflags` and displayed in the web UI and `/health` endpoint. Use versioned tags (not `latest`) to avoid Docker layer caching issues on orchestration platforms.

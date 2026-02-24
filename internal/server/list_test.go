@@ -15,7 +15,7 @@ func TestListObjectsV2_Success(t *testing.T) {
 	ts, mockStore, _ := newTestServer(t)
 	now := time.Now()
 
-	mockStore.listObjectsResp = &storage.ListObjectsResult{
+	mockStore.ListObjectsResp = &storage.ListObjectsResult{
 		Objects: []storage.ObjectLocation{
 			{ObjectKey: "mybucket/file1.txt", BackendName: "b1", SizeBytes: 100, CreatedAt: now},
 			{ObjectKey: "mybucket/file2.txt", BackendName: "b1", SizeBytes: 200, CreatedAt: now},
@@ -54,7 +54,7 @@ func TestListObjectsV2_WithDelimiter(t *testing.T) {
 	now := time.Now()
 
 	// Return objects with a common directory prefix
-	mockStore.listObjectsResp = &storage.ListObjectsResult{
+	mockStore.ListObjectsResp = &storage.ListObjectsResult{
 		Objects: []storage.ObjectLocation{
 			{ObjectKey: "mybucket/photos/a.jpg", BackendName: "b1", SizeBytes: 100, CreatedAt: now},
 			{ObjectKey: "mybucket/photos/b.jpg", BackendName: "b1", SizeBytes: 200, CreatedAt: now},
@@ -88,7 +88,7 @@ func TestListObjectsV2_Pagination(t *testing.T) {
 
 	// Return 3 objects when maxKeys=2. The manager will take the first 2 and
 	// set IsTruncated=true with a NextContinuationToken.
-	mockStore.listObjectsResp = &storage.ListObjectsResult{
+	mockStore.ListObjectsResp = &storage.ListObjectsResult{
 		Objects: []storage.ObjectLocation{
 			{ObjectKey: "mybucket/a.txt", BackendName: "b1", SizeBytes: 10, CreatedAt: now},
 			{ObjectKey: "mybucket/b.txt", BackendName: "b1", SizeBytes: 20, CreatedAt: now},
@@ -130,7 +130,7 @@ func TestListObjectsV2_Pagination(t *testing.T) {
 func TestListObjectsV2_Empty(t *testing.T) {
 	ts, mockStore, _ := newTestServer(t)
 
-	mockStore.listObjectsResp = &storage.ListObjectsResult{
+	mockStore.ListObjectsResp = &storage.ListObjectsResult{
 		Objects: []storage.ObjectLocation{},
 	}
 

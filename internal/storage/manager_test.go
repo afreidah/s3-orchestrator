@@ -33,12 +33,24 @@ func TestGenerateUploadID(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
+// Close (idempotent)
+// -------------------------------------------------------------------------
+
+func TestClose_Idempotent(t *testing.T) {
+	mgr := newUsageManager([]string{"b1"}, &mockStore{})
+
+	// Calling Close twice should not panic
+	mgr.Close()
+	mgr.Close()
+}
+
+// -------------------------------------------------------------------------
 // UpdateUsageLimits
 // -------------------------------------------------------------------------
 
 func TestUpdateUsageLimits_SwapsLimits(t *testing.T) {
 	limits := map[string]UsageLimits{
-		"b1": {ApiRequestLimit: 100},
+		"b1": {APIRequestLimit: 100},
 	}
 	mgr := newUsageManagerWithLimits([]string{"b1"}, &mockStore{}, limits)
 
@@ -49,7 +61,7 @@ func TestUpdateUsageLimits_SwapsLimits(t *testing.T) {
 
 	// Update to a much lower limit
 	mgr.UpdateUsageLimits(map[string]UsageLimits{
-		"b1": {ApiRequestLimit: 10},
+		"b1": {APIRequestLimit: 10},
 	})
 
 	// Now 50 should exceed the new limit
@@ -126,7 +138,7 @@ func TestReplicationConfig_RoundTrip(t *testing.T) {
 
 func TestUpdateUsageLimits_ConcurrentAccess(t *testing.T) {
 	limits := map[string]UsageLimits{
-		"b1": {ApiRequestLimit: 1000},
+		"b1": {APIRequestLimit: 1000},
 	}
 	mgr := newUsageManagerWithLimits([]string{"b1"}, &mockStore{}, limits)
 
@@ -151,7 +163,7 @@ func TestUpdateUsageLimits_ConcurrentAccess(t *testing.T) {
 			defer wg.Done()
 			for j := 0; j < 100; j++ {
 				mgr.UpdateUsageLimits(map[string]UsageLimits{
-					"b1": {ApiRequestLimit: int64(n*100 + j)},
+					"b1": {APIRequestLimit: int64(n*100 + j)},
 				})
 			}
 		}(i)

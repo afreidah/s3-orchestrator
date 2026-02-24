@@ -26,9 +26,13 @@ type DashboardData struct {
 
 // GetDashboardData fetches all stats needed for the web UI in one call.
 func (m *BackendManager) GetDashboardData(ctx context.Context) (*DashboardData, error) {
+	m.usageLimitsMu.RLock()
+	limits := m.usageLimits
+	m.usageLimitsMu.RUnlock()
+
 	data := &DashboardData{
 		BackendOrder: m.order,
-		UsageLimits:  m.usageLimits,
+		UsageLimits:  limits,
 		UsagePeriod:  currentPeriod(),
 	}
 

@@ -224,13 +224,13 @@ func TestWithinUsageLimits_NoLimits(t *testing.T) {
 
 func TestWithinUsageLimits_ApiExceeded(t *testing.T) {
 	limits := map[string]UsageLimits{
-		"b1": {ApiRequestLimit: 100},
+		"b1": {APIRequestLimit: 100},
 	}
 	mgr := newUsageManagerWithLimits([]string{"b1"}, &mockStore{}, limits)
 
 	// Set baseline to exactly the limit
 	mgr.usageBaselineMu.Lock()
-	mgr.usageBaseline["b1"] = UsageStat{ApiRequests: 100}
+	mgr.usageBaseline["b1"] = UsageStat{APIRequests: 100}
 	mgr.usageBaselineMu.Unlock()
 
 	if mgr.withinUsageLimits("b1", 1, 0, 0) {
@@ -257,7 +257,7 @@ func TestWithinUsageLimits_EgressExceeded(t *testing.T) {
 
 func TestWithinUsageLimits_UnlimitedDimension(t *testing.T) {
 	limits := map[string]UsageLimits{
-		"b1": {ApiRequestLimit: 100, EgressByteLimit: 0, IngressByteLimit: 0},
+		"b1": {APIRequestLimit: 100, EgressByteLimit: 0, IngressByteLimit: 0},
 	}
 	mgr := newUsageManagerWithLimits([]string{"b1"}, &mockStore{}, limits)
 
@@ -269,14 +269,14 @@ func TestWithinUsageLimits_UnlimitedDimension(t *testing.T) {
 
 func TestBackendsWithinLimits_FiltersCorrectly(t *testing.T) {
 	limits := map[string]UsageLimits{
-		"b1": {ApiRequestLimit: 10},
-		"b2": {ApiRequestLimit: 100},
+		"b1": {APIRequestLimit: 10},
+		"b2": {APIRequestLimit: 100},
 	}
 	mgr := newUsageManagerWithLimits([]string{"b1", "b2"}, &mockStore{}, limits)
 
 	// Push b1 over limit
 	mgr.usageBaselineMu.Lock()
-	mgr.usageBaseline["b1"] = UsageStat{ApiRequests: 10}
+	mgr.usageBaseline["b1"] = UsageStat{APIRequests: 10}
 	mgr.usageBaselineMu.Unlock()
 
 	eligible := mgr.backendsWithinLimits(1, 0, 0)
