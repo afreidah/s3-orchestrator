@@ -43,7 +43,7 @@ database:
   database: "s3proxy"
   user: "${DB_USER}"
   password: "${DB_PASSWORD}"
-  ssl_mode: "require"    # require for production
+  ssl_mode: "require"    # default: require (use "disable" for local dev)
   # max_conns: 10        # Max pool connections (default: 10)
   # min_conns: 5         # Min idle connections (default: 5)
   # max_conn_lifetime: "5m"
@@ -105,6 +105,9 @@ telemetry:
 #   enabled: false
 #   requests_per_sec: 100
 #   burst: 200
+#   trusted_proxies:          # CIDRs whose X-Forwarded-For is trusted
+#     - "10.0.0.0/8"          # Without this, XFF is ignored and RemoteAddr is
+#     - "172.16.0.0/12"       # always used. Uses rightmost-untrusted extraction.
 
 # Built-in web dashboard for operational visibility. Disabled by default.
 # ui:

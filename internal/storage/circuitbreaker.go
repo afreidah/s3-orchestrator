@@ -58,7 +58,7 @@ func (s circuitState) String() string {
 // ErrDBUnavailable instead of passing through to the real store.
 type CircuitBreakerStore struct {
 	real          MetadataStore
-	mu            sync.Mutex
+	mu            sync.RWMutex
 	state         circuitState
 	failures      int
 	lastFailure   time.Time
@@ -81,8 +81,8 @@ func NewCircuitBreakerStore(real MetadataStore, cfg config.CircuitBreakerConfig)
 
 // IsHealthy returns true when the circuit is closed (database is reachable).
 func (cb *CircuitBreakerStore) IsHealthy() bool {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
+	cb.mu.RLock()
+	defer cb.mu.RUnlock()
 	return cb.state == stateClosed
 }
 

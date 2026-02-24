@@ -114,6 +114,25 @@ func TestSigV4Encode(t *testing.T) {
 	}
 }
 
+func TestEncodePath(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{"", "/"},
+		{"/", "/"},
+		{"/bucket/key", "/bucket/key"},
+		{"/bucket/my file.txt", "/bucket/my%20file.txt"},
+		{"/bucket/a+b/c d", "/bucket/a%2Bb/c%20d"},
+		{"/bucket/path/to/special chars!@#", "/bucket/path/to/special%20chars%21%40%23"},
+	}
+	for _, tt := range tests {
+		got := encodePath(tt.in)
+		if got != tt.want {
+			t.Errorf("encodePath(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
 func TestVerifySigV4_StaleTimestamp(t *testing.T) {
 	// A request signed with a timestamp 30 minutes in the past should be rejected
 	staleDate := time.Now().UTC().Add(-30 * time.Minute).Format("20060102T150405Z")

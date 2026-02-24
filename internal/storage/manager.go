@@ -35,7 +35,7 @@ type usageCounters struct {
 // UsageLimits holds configurable monthly usage limits for a single backend.
 // Zero means unlimited for that dimension.
 type UsageLimits struct {
-	ApiRequestLimit  int64
+	APIRequestLimit  int64
 	EgressByteLimit  int64
 	IngressByteLimit int64
 }
@@ -86,6 +86,7 @@ type BackendManager struct {
 	routingStrategy string                        // "pack" or "spread"
 	rebalanceCfg    atomic.Pointer[config.RebalanceConfig]
 	replicationCfg  atomic.Pointer[config.ReplicationConfig]
+	closeOnce       sync.Once
 }
 
 // locationCacheEntry holds a cached key-to-backend mapping with TTL.
@@ -178,6 +179,13 @@ func (m *BackendManager) cacheEvict() {
 	}
 }
 
+// cacheDelete removes a single key from the location cache.
+func (m *BackendManager) cacheDelete(key string) {
+	m.cacheMu.Lock()
+	defer m.cacheMu.Unlock()
+	delete(m.locationCache, key)
+}
+
 // ClearCache removes all entries from the location cache.
 func (m *BackendManager) ClearCache() {
 	m.cacheMu.Lock()
@@ -185,9 +193,11 @@ func (m *BackendManager) ClearCache() {
 	m.locationCache = make(map[string]locationCacheEntry)
 }
 
-// Close stops the background cache eviction goroutine.
+// Close stops the background cache eviction goroutine. Safe to call multiple times.
 func (m *BackendManager) Close() {
-	close(m.stopCache)
+	m.closeOnce.Do(func() {
+		close(m.stopCache)
+	})
 }
 
 // UpdateUsageLimits replaces the per-backend usage limits. Safe to call
@@ -268,7 +278,7 @@ func (m *BackendManager) withinUsageLimits(backendName string, apiCalls, egress,
 	if !ok {
 		return true // no limits configured
 	}
-	if lim.ApiRequestLimit == 0 && lim.EgressByteLimit == 0 && lim.IngressByteLimit == 0 {
+	if lim.APIRequestLimit == 0 && lim.EgressByteLimit == 0 && lim.IngressByteLimit == 0 {
 		return true // all unlimited
 	}
 
@@ -281,9 +291,9 @@ func (m *BackendManager) withinUsageLimits(backendName string, apiCalls, egress,
 		return true
 	}
 
-	if lim.ApiRequestLimit > 0 {
-		effective := base.ApiRequests + c.apiRequests.Load() + apiCalls
-		if effective > lim.ApiRequestLimit {
+	if lim.APIRequestLimit > 0 {
+		effective := base.APIRequests + c.apiRequests.Load() + apiCalls
+		if effective > lim.APIRequestLimit {
 			return false
 		}
 	}

@@ -28,6 +28,9 @@ import (
 //go:embed migration.sql
 var migrationSQL string
 
+// likeEscaper escapes SQL LIKE wildcards in prefix strings.
+var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
 // -------------------------------------------------------------------------
 // ERRORS
 // -------------------------------------------------------------------------
@@ -195,17 +198,20 @@ func toObjectLocations(rows []db.ObjectLocation) []ObjectLocation {
 
 // SyncQuotaLimits ensures the backend_quotas table has entries for all configured
 // backends with their quota limits. Creates new entries or updates existing limits.
+// All updates happen in a single transaction for atomicity.
 func (s *Store) SyncQuotaLimits(ctx context.Context, backends []config.BackendConfig) error {
-	for i := range backends {
-		err := s.queries.UpsertQuotaLimit(ctx, db.UpsertQuotaLimitParams{
-			BackendName: backends[i].Name,
-			BytesLimit:  backends[i].QuotaBytes,
-		})
-		if err != nil {
-			return fmt.Errorf("failed to sync quota for backend %s: %w", backends[i].Name, err)
+	return s.withTx(ctx, func(qtx *db.Queries) error {
+		for i := range backends {
+			err := qtx.UpsertQuotaLimit(ctx, db.UpsertQuotaLimitParams{
+				BackendName: backends[i].Name,
+				BytesLimit:  backends[i].QuotaBytes,
+			})
+			if err != nil {
+				return fmt.Errorf("failed to sync quota for backend %s: %w", backends[i].Name, err)
+			}
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 // GetBackendWithSpace finds a backend with enough quota for the given size.
@@ -478,7 +484,7 @@ func (s *Store) ListObjects(ctx context.Context, prefix, startAfter string, maxK
 	}
 
 	// --- Escape LIKE wildcards in prefix ---
-	escapedPrefix := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(prefix)
+	escapedPrefix := likeEscaper.Replace(prefix)
 
 	// Fetch one extra to detect truncation
 	rows, err := s.queries.ListObjectsByPrefix(ctx, db.ListObjectsByPrefixParams{
@@ -533,7 +539,7 @@ func (s *Store) ListDirectoryChildren(ctx context.Context, prefix, startAfter st
 		maxKeys = 200
 	}
 
-	escapedPrefix := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(prefix)
+	escapedPrefix := likeEscaper.Replace(prefix)
 
 	// Get aggregate stats for all immediate children (dirs + files).
 	stats, err := s.queries.GetDirectoryStats(ctx, escapedPrefix)
@@ -859,7 +865,7 @@ func (s *Store) GetUsageForPeriod(ctx context.Context, period string) (map[strin
 	stats := make(map[string]UsageStat, len(rows))
 	for _, row := range rows {
 		stats[row.BackendName] = UsageStat{
-			ApiRequests:  row.ApiRequests,
+			APIRequests:  row.ApiRequests,
 			EgressBytes:  row.EgressBytes,
 			IngressBytes: row.IngressBytes,
 		}

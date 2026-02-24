@@ -224,11 +224,10 @@ func parseSigV4Fields(s string) map[string]string {
 
 // buildCanonicalRequest constructs the canonical request string per SigV4 spec.
 func buildCanonicalRequest(r *http.Request, signedHeaders []string) string {
-	// Canonical URI
-	canonicalURI := r.URL.Path
-	if canonicalURI == "" {
-		canonicalURI = "/"
-	}
+	// Canonical URI — each path segment must be URI-encoded per SigV4 spec.
+	// Go's net/http decodes percent-encoding in r.URL.Path, so we re-encode
+	// each segment to match what the client signed.
+	canonicalURI := encodePath(r.URL.Path)
 
 	// Canonical query string
 	canonicalQueryString := buildCanonicalQueryString(r.URL.Query())
@@ -285,6 +284,19 @@ func buildCanonicalQueryString(values url.Values) string {
 // else is percent-encoded. Unlike url.QueryEscape, spaces become %20 not +.
 func sigV4Encode(s string) string {
 	return strings.ReplaceAll(url.QueryEscape(s), "+", "%20")
+}
+
+// encodePath URI-encodes each path segment per the SigV4 spec. Slashes are
+// preserved as literal separators; everything else follows RFC 3986.
+func encodePath(rawPath string) string {
+	if rawPath == "" || rawPath == "/" {
+		return "/"
+	}
+	segments := strings.Split(rawPath, "/")
+	for i, seg := range segments {
+		segments[i] = sigV4Encode(seg)
+	}
+	return strings.Join(segments, "/")
 }
 
 // deriveSigningKey computes the SigV4 signing key from the secret.

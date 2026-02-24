@@ -118,10 +118,10 @@
           {{$limits := index $.Data.UsageLimits .}}
           <tr>
             <td>{{.}}</td>
-            <td class="num">{{formatNumber $usage.ApiRequests}}</td>
+            <td class="num">{{formatNumber $usage.APIRequests}}</td>
             <td class="num">
-              {{- if eq $limits.ApiRequestLimit 0}}unlimited
-              {{- else}}{{formatNumber $limits.ApiRequestLimit}}
+              {{- if eq $limits.APIRequestLimit 0}}unlimited
+              {{- else}}{{formatNumber $limits.APIRequestLimit}}
               {{- end -}}
             </td>
             <td class="num">{{formatBytes $usage.EgressBytes}}</td>
