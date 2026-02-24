@@ -108,7 +108,7 @@ func runServe() {
 		backends[bcfg.Name] = backend
 		backendOrder = append(backendOrder, bcfg.Name)
 		usageLimits[bcfg.Name] = storage.UsageLimits{
-			ApiRequestLimit:  bcfg.ApiRequestLimit,
+			APIRequestLimit:  bcfg.APIRequestLimit,
 			EgressByteLimit:  bcfg.EgressByteLimit,
 			IngressByteLimit: bcfg.IngressByteLimit,
 		}
@@ -117,7 +117,7 @@ func runServe() {
 			"endpoint", bcfg.Endpoint,
 			"bucket", bcfg.Bucket,
 			"quota_bytes", bcfg.QuotaBytes,
-			"api_request_limit", bcfg.ApiRequestLimit,
+			"api_request_limit", bcfg.APIRequestLimit,
 			"egress_byte_limit", bcfg.EgressByteLimit,
 			"ingress_byte_limit", bcfg.IngressByteLimit,
 		)
@@ -297,8 +297,9 @@ func runServe() {
 	})
 
 	// Web UI dashboard
+	var uiHandler *ui.Handler
 	if cfg.UI.Enabled {
-		uiHandler := ui.New(manager, cbStore.IsHealthy, cfg)
+		uiHandler = ui.New(manager, cbStore.IsHealthy, cfg)
 		uiHandler.Register(mux, cfg.UI.Path)
 		slog.Info("Web UI enabled", "path", cfg.UI.Path)
 	}
@@ -324,52 +325,10 @@ func runServe() {
 		IdleTimeout:  120 * time.Second,
 	}
 
-	// --- Handle graceful shutdown ---
-	go func() {
-		sigChan := make(chan os.Signal, 1)
-		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-		<-sigChan
-
-		slog.Info("Shutting down")
-
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
-		// Drain inflight HTTP requests first so clients get responses quickly
-		if err := httpServer.Shutdown(shutdownCtx); err != nil {
-			slog.Error("HTTP server shutdown error", "error", err)
-		}
-
-		// Stop rate limiter cleanup goroutine
-		if rl != nil {
-			rl.Close()
-		}
-
-		// Stop background goroutines and wait for them to finish
-		bgCancel()
-		bgWg.Wait()
-
-		// Stop cache eviction goroutine
-		manager.Close()
-
-		// Flush usage counters before closing database
-		if err := manager.FlushUsage(shutdownCtx); err != nil {
-			slog.Warn("Failed to flush usage counters on shutdown", "error", err)
-		}
-
-		// Close database connection
-		store.Close()
-
-		// Flush traces
-		if err := shutdownTracer(shutdownCtx); err != nil {
-			slog.Error("Tracer shutdown error", "error", err)
-		}
-	}()
-
 	// --- Handle SIGHUP for config reload ---
+	hupChan := make(chan os.Signal, 1)
+	signal.Notify(hupChan, syscall.SIGHUP)
 	go func() {
-		hupChan := make(chan os.Signal, 1)
-		signal.Notify(hupChan, syscall.SIGHUP)
 		for range hupChan {
 			slog.Info("SIGHUP received, reloading configuration", "path", *configPath)
 
@@ -411,7 +370,7 @@ func runServe() {
 			for i := range newCfg.Backends {
 				bcfg := &newCfg.Backends[i]
 				newUsageLimits[bcfg.Name] = storage.UsageLimits{
-					ApiRequestLimit:  bcfg.ApiRequestLimit,
+					APIRequestLimit:  bcfg.APIRequestLimit,
 					EgressByteLimit:  bcfg.EgressByteLimit,
 					IngressByteLimit: bcfg.IngressByteLimit,
 				}
@@ -429,8 +388,62 @@ func runServe() {
 				slog.Warn("Failed to update quota metrics after reload", "error", err)
 			}
 
+			// Update dashboard config
+			if uiHandler != nil {
+				uiHandler.UpdateConfig(newCfg)
+			}
+
 			cfg = newCfg
 			slog.Info("Configuration reload complete")
+		}
+	}()
+
+	// --- Handle graceful shutdown ---
+	shutdownDone := make(chan struct{})
+	go func() {
+		defer close(shutdownDone)
+
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+		<-sigChan
+
+		slog.Info("Shutting down")
+
+		// Stop SIGHUP handler so it can't race with shutdown
+		signal.Stop(hupChan)
+		close(hupChan)
+
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		// Drain inflight HTTP requests first so clients get responses quickly
+		if err := httpServer.Shutdown(shutdownCtx); err != nil {
+			slog.Error("HTTP server shutdown error", "error", err)
+		}
+
+		// Stop rate limiter cleanup goroutine
+		if rl != nil {
+			rl.Close()
+		}
+
+		// Stop background goroutines and wait for them to finish
+		bgCancel()
+		bgWg.Wait()
+
+		// Stop cache eviction goroutine
+		manager.Close()
+
+		// Flush usage counters before closing database
+		if err := manager.FlushUsage(shutdownCtx); err != nil {
+			slog.Warn("Failed to flush usage counters on shutdown", "error", err)
+		}
+
+		// Close database connection
+		store.Close()
+
+		// Flush traces
+		if err := shutdownTracer(shutdownCtx); err != nil {
+			slog.Error("Tracer shutdown error", "error", err)
 		}
 	}()
 
@@ -460,6 +473,9 @@ func runServe() {
 		slog.Error("Server error", "error", err)
 		os.Exit(1)
 	}
+
+	// Wait for shutdown goroutine to finish cleanup
+	<-shutdownDone
 
 	slog.Info("Server stopped")
 }

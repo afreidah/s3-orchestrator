@@ -44,6 +44,7 @@ func (m *BackendManager) PutObject(ctx context.Context, key string, body io.Read
 	// --- Filter backends within usage limits ---
 	eligible := m.backendsWithinLimits(1, 0, size)
 	if len(eligible) == 0 {
+		telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation, "write").Inc()
 		span.SetStatus(codes.Error, "usage limits exceeded on all backends")
 		return "", ErrInsufficientStorage
 	}
@@ -97,6 +98,9 @@ func (m *BackendManager) PutObject(ctx context.Context, key string, body io.Read
 		span.RecordError(err)
 		return "", fmt.Errorf("failed to record object: %w", err)
 	}
+
+	// --- Invalidate location cache ---
+	m.cacheDelete(key)
 
 	// --- Record metrics ---
 	m.recordOperation(operation, backendName, start, nil)
@@ -173,6 +177,7 @@ func (m *BackendManager) withReadFailover(ctx context.Context, operation, key st
 
 	// All copies were on over-limit backends — return the usage limit error
 	if limitSkips > 0 && limitSkips == len(locations) {
+		telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation, "read").Inc()
 		span.SetStatus(codes.Error, "all copies over usage limit")
 		return "", ErrUsageLimitExceeded
 	}
@@ -361,6 +366,7 @@ func (m *BackendManager) CopyObject(ctx context.Context, sourceKey, destKey stri
 	// --- Find destination backend with available quota and usage limits ---
 	destEligible := m.backendsWithinLimits(1, 0, size)
 	if len(destEligible) == 0 {
+		telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation, "write").Inc()
 		span.SetStatus(codes.Error, "usage limits exceeded on all backends")
 		return "", ErrInsufficientStorage
 	}
@@ -388,6 +394,7 @@ func (m *BackendManager) CopyObject(ctx context.Context, sourceKey, destKey stri
 
 	// --- Stream source to destination via pipe (with failover) ---
 	pr, pw := io.Pipe()
+	srcBackendCh := make(chan string, 1)
 
 	go func() {
 		defer func() { _ = pw.Close() }()
@@ -405,6 +412,7 @@ func (m *BackendManager) CopyObject(ctx context.Context, sourceKey, destKey stri
 				bcancel()
 				continue
 			}
+			srcBackendCh <- loc.BackendName
 			_, copyErr := io.Copy(pw, result.Body)
 			_ = result.Body.Close()
 			bcancel()
@@ -413,12 +421,12 @@ func (m *BackendManager) CopyObject(ctx context.Context, sourceKey, destKey stri
 			}
 			return
 		}
+		close(srcBackendCh)
 		pw.CloseWithError(fmt.Errorf("failed to read source from any copy"))
 	}()
 
-	dctx, dcancel := m.withTimeout(ctx)
-	defer dcancel()
-	etag, err := destBackend.PutObject(dctx, destKey, pr, size, contentType)
+	// Streamed from pipe; deadline governed by the caller's context.
+	etag, err := destBackend.PutObject(ctx, destKey, pr, size, contentType)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)
@@ -437,9 +445,14 @@ func (m *BackendManager) CopyObject(ctx context.Context, sourceKey, destKey stri
 		return "", fmt.Errorf("failed to record copied object: %w", err)
 	}
 
+	// --- Invalidate location cache ---
+	m.cacheDelete(destKey)
+
 	m.recordOperation(operation, destBackendName, start, nil)
-	m.recordUsage(locations[0].BackendName, 1, size, 0) // source: Get + egress
-	m.recordUsage(destBackendName, 1, 0, size)           // dest: Put + ingress
+	if srcName, ok := <-srcBackendCh; ok {
+		m.recordUsage(srcName, 1, size, 0) // source: Get + egress
+	}
+	m.recordUsage(destBackendName, 1, 0, size) // dest: Put + ingress
 
 	span.SetStatus(codes.Ok, "")
 	return etag, nil
@@ -475,6 +488,9 @@ func (m *BackendManager) DeleteObject(ctx context.Context, key string) error {
 	}
 
 	span.SetAttributes(attribute.Int("copies.deleted", len(copies)))
+
+	// --- Invalidate location cache ---
+	m.cacheDelete(key)
 
 	// --- Delete from each backend that held a copy ---
 	for _, copy := range copies {
@@ -540,7 +556,8 @@ func (m *BackendManager) ListObjects(ctx context.Context, prefix, delimiter, sta
 	cursor := startAfter
 	seen := make(map[string]bool) // tracks emitted common prefixes across fetches
 
-	for result.KeyCount < maxKeys {
+	const maxPages = 100 // cap DB round trips per request
+	for page := 0; page < maxPages && result.KeyCount < maxKeys; page++ {
 		storeResult, err := m.store.ListObjects(ctx, prefix, cursor, maxKeys)
 		if err != nil {
 			if errors.Is(err, ErrDBUnavailable) {
@@ -585,6 +602,13 @@ func (m *BackendManager) ListObjects(ctx context.Context, prefix, delimiter, sta
 			break
 		}
 		cursor = storeResult.Objects[len(storeResult.Objects)-1].ObjectKey
+
+		// If this is the last allowed page and the store has more data,
+		// mark as truncated so the client paginates back.
+		if page == maxPages-1 && storeResult.IsTruncated && !result.IsTruncated {
+			result.IsTruncated = true
+			result.NextContinuationToken = cursor
+		}
 	}
 
 	m.recordOperation(operation, "", start, nil)

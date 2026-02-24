@@ -81,8 +81,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.recordRequest(method, http.StatusForbidden, start, 0, 0)
 		slog.Warn("Bucket mismatch", "method", method, "path", r.URL.Path, "remote", r.RemoteAddr,
 			"authorized_bucket", authorizedBucket, "requested_bucket", bucket)
-		writeS3Error(w, http.StatusForbidden, "AccessDenied",
-			fmt.Sprintf("Credentials are not authorized for bucket %s", bucket))
+		writeS3Error(w, http.StatusForbidden, "AccessDenied", "Access denied")
 		return
 	}
 

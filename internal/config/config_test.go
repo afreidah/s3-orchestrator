@@ -50,8 +50,8 @@ func TestConfigValidation_MinimalValid(t *testing.T) {
 	if cfg.Database.Port != 5432 {
 		t.Errorf("database port default = %d, want 5432", cfg.Database.Port)
 	}
-	if cfg.Database.SSLMode != "disable" {
-		t.Errorf("database ssl_mode default = %q, want 'disable'", cfg.Database.SSLMode)
+	if cfg.Database.SSLMode != "require" {
+		t.Errorf("database ssl_mode default = %q, want 'require'", cfg.Database.SSLMode)
 	}
 }
 
@@ -330,9 +330,9 @@ func TestConfigValidation_QuotaBackendsWithReplication(t *testing.T) {
 	}
 }
 
-func TestConfigValidation_NegativeApiRequestLimit(t *testing.T) {
+func TestConfigValidation_NegativeAPIRequestLimit(t *testing.T) {
 	cfg := validBaseConfig()
-	cfg.Backends[0].ApiRequestLimit = -1
+	cfg.Backends[0].APIRequestLimit = -1
 
 	err := cfg.SetDefaultsAndValidate()
 	if err == nil {
@@ -363,7 +363,7 @@ func TestConfigValidation_NegativeIngressByteLimit(t *testing.T) {
 func TestConfigValidation_ZeroUsageLimitsMeansUnlimited(t *testing.T) {
 	cfg := validBaseConfig()
 	// All zero — should pass (unlimited)
-	cfg.Backends[0].ApiRequestLimit = 0
+	cfg.Backends[0].APIRequestLimit = 0
 	cfg.Backends[0].EgressByteLimit = 0
 	cfg.Backends[0].IngressByteLimit = 0
 
@@ -620,7 +620,7 @@ func TestNonReloadableFieldsChanged_ReloadableOnlyChanges(t *testing.T) {
 
 	// These are reloadable fields — should NOT appear in the result
 	b.Backends[0].QuotaBytes = 9999
-	b.Backends[0].ApiRequestLimit = 5000
+	b.Backends[0].APIRequestLimit = 5000
 	b.Backends[0].EgressByteLimit = 1000
 	b.Backends[0].IngressByteLimit = 2000
 	b.RateLimit = RateLimitConfig{Enabled: true, RequestsPerSec: 50, Burst: 100}

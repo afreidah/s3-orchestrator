@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -159,8 +160,13 @@ func (s *Server) handleDelete(ctx context.Context, w http.ResponseWriter, r *htt
 // across backends, with atomic quota tracking. Only same-bucket copies are
 // allowed (no cross-bucket copying).
 func (s *Server) handleCopyObject(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket, destInternalKey, copySource string) (int, error) {
-	// --- Parse x-amz-copy-source header ---
-	source := strings.TrimPrefix(copySource, "/")
+	// --- Parse x-amz-copy-source header (may be URL-encoded) ---
+	decoded, err := url.PathUnescape(copySource)
+	if err != nil {
+		writeS3Error(w, http.StatusBadRequest, "InvalidArgument", "Invalid x-amz-copy-source encoding")
+		return http.StatusBadRequest, fmt.Errorf("invalid copy source encoding: %w", err)
+	}
+	source := strings.TrimPrefix(decoded, "/")
 	sourceBucket, sourceKey, ok := parsePath("/" + source)
 	if !ok || sourceKey == "" {
 		writeS3Error(w, http.StatusBadRequest, "InvalidArgument", "Invalid x-amz-copy-source")

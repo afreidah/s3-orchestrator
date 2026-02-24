@@ -82,7 +82,7 @@ type MetadataStore interface {
 
 // UsageStat holds usage statistics for a single backend in a given period.
 type UsageStat struct {
-	ApiRequests  int64
+	APIRequests  int64
 	EgressBytes  int64
 	IngressBytes int64
 }

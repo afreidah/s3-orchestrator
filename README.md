@@ -116,6 +116,8 @@ The worker runs once at startup to catch up on pending replicas, then continues 
 
 Optional per-IP token bucket rate limiting. When enabled, requests exceeding the configured rate return `429 SlowDown`. Stale IP entries are cleaned up automatically.
 
+When running behind a reverse proxy (e.g., Traefik, nginx), configure `trusted_proxies` with the proxy's CIDR ranges so the orchestrator extracts the real client IP from the `X-Forwarded-For` header using rightmost-untrusted extraction. Without `trusted_proxies`, `X-Forwarded-For` is ignored and the direct connection IP is always used.
+
 ## Usage Limits
 
 Per-backend monthly limits for API requests, egress bytes, and ingress bytes. Set any limit to `0` (or omit it) for unlimited. Limits reset naturally each month — the usage tracking table is keyed by `YYYY-MM` period.
@@ -215,6 +217,9 @@ rate_limit:
   enabled: false
   requests_per_sec: 100    # token refill rate (default: 100)
   burst: 200               # max burst size (default: 200)
+  # trusted_proxies:       # CIDRs whose X-Forwarded-For is trusted
+  #   - "10.0.0.0/8"       # Uses rightmost-untrusted extraction
+  #   - "172.16.0.0/12"
 
 ui:
   enabled: false             # enable the built-in web dashboard
@@ -334,6 +339,7 @@ All metrics are prefixed with `s3proxy_`. Exposed at `/metrics` when enabled.
 | `s3proxy_usage_egress_bytes` | Gauge | backend | Current month egress bytes |
 | `s3proxy_usage_ingress_bytes` | Gauge | backend | Current month ingress bytes |
 | `s3proxy_usage_limit_rejections_total` | Counter | operation, limit_type | Operations rejected by usage limits |
+| `s3proxy_rate_limit_rejections_total` | Counter | — | Requests rejected by per-IP rate limiting |
 
 Quota metrics are refreshed from PostgreSQL every 30 seconds (no backend API calls).
 
@@ -352,7 +358,7 @@ The dashboard shows:
 - **Objects** — interactive collapsible tree browser; buckets and directories expand on click to reveal contents, with rollup file counts and sizes
 - **Configuration** — virtual buckets, write routing strategy, replication factor, rebalance strategy, rate limit status
 
-The object tree uses JavaScript for lazy-loaded AJAX expansion — directories load their children on click via the `/ui/api/tree` endpoint. Enable it in the config:
+The object tree uses JavaScript for lazy-loaded AJAX expansion — directories load their children on click via the `/ui/api/tree` endpoint. All dashboard responses include security headers (`X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Content-Security-Policy`). Enable it in the config:
 
 ```yaml
 ui:
@@ -429,7 +435,7 @@ make integration-test
 make build
 
 # Build multi-arch and push to registry
-make push VERSION=v0.5.1
+make push VERSION=v0.5.2
 ```
 
 ## Deployment
@@ -437,7 +443,7 @@ make push VERSION=v0.5.1
 Build and push a Docker image with a version tag:
 
 ```bash
-make push VERSION=v0.5.1
+make push VERSION=v0.5.2
 ```
 
 The `VERSION` is baked into the binary via `-ldflags` and displayed in the web UI header and `/health` endpoint. Defaults to `latest` if omitted.
@@ -487,6 +493,8 @@ internal/
     templates/dashboard.html Dashboard HTML template
     static/style.css         Dashboard stylesheet
     static/tree.js           Lazy-loaded directory tree (AJAX expansion)
+  testutil/
+    mock_store.go            Shared MetadataStore mock for tests
   telemetry/
     metrics.go               Prometheus metric definitions
     tracing.go               OpenTelemetry tracer setup

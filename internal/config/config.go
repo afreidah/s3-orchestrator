@@ -86,7 +86,7 @@ type BackendConfig struct {
 	ForcePathStyle   bool  `yaml:"force_path_style"`   // Use path-style URLs
 	UnsignedPayload  *bool `yaml:"unsigned_payload"`   // Skip SigV4 payload hash to stream uploads without buffering (default: true)
 	QuotaBytes       int64 `yaml:"quota_bytes"`        // Maximum bytes allowed on this backend (0 = unlimited)
-	ApiRequestLimit  int64 `yaml:"api_request_limit"`  // Monthly API request limit (0 = unlimited)
+	APIRequestLimit  int64 `yaml:"api_request_limit"`  // Monthly API request limit (0 = unlimited)
 	EgressByteLimit  int64 `yaml:"egress_byte_limit"`  // Monthly egress byte limit (0 = unlimited)
 	IngressByteLimit int64 `yaml:"ingress_byte_limit"` // Monthly ingress byte limit (0 = unlimited)
 }
@@ -132,9 +132,10 @@ type ReplicationConfig struct {
 
 // RateLimitConfig holds per-IP rate limiting settings. Disabled by default.
 type RateLimitConfig struct {
-	Enabled       bool    `yaml:"enabled"`
-	RequestsPerSec float64 `yaml:"requests_per_sec"` // Token refill rate (default: 100)
-	Burst         int     `yaml:"burst"`             // Max burst size (default: 200)
+	Enabled        bool     `yaml:"enabled"`
+	RequestsPerSec float64  `yaml:"requests_per_sec"` // Token refill rate (default: 100)
+	Burst          int      `yaml:"burst"`             // Max burst size (default: 200)
+	TrustedProxies []string `yaml:"trusted_proxies"`   // CIDRs whose X-Forwarded-For is trusted (e.g. ["10.0.0.0/8", "172.16.0.0/12"])
 }
 
 // CircuitBreakerConfig holds settings for the database circuit breaker. When
@@ -217,7 +218,7 @@ func (c *Config) SetDefaultsAndValidate() error {
 		c.Database.Port = 5432
 	}
 	if c.Database.SSLMode == "" {
-		c.Database.SSLMode = "disable"
+		c.Database.SSLMode = "require"
 	}
 	if c.Database.MaxConns == 0 {
 		c.Database.MaxConns = 10
@@ -307,7 +308,7 @@ func (c *Config) SetDefaultsAndValidate() error {
 		if b.QuotaBytes < 0 {
 			errors = append(errors, fmt.Sprintf("%s: quota_bytes must not be negative", prefix))
 		}
-		if b.ApiRequestLimit < 0 {
+		if b.APIRequestLimit < 0 {
 			errors = append(errors, fmt.Sprintf("%s: api_request_limit must not be negative", prefix))
 		}
 		if b.EgressByteLimit < 0 {
