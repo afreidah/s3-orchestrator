@@ -165,8 +165,8 @@ var (
 
 	// --- Usage tracking metrics ---
 
-	// UsageApiRequests tracks the current month's API request count per backend.
-	UsageApiRequests = promauto.NewGaugeVec(
+	// UsageAPIRequests tracks the current month's API request count per backend.
+	UsageAPIRequests = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "s3proxy_usage_api_requests",
 			Help: "Current month API request count per backend (from DB)",
@@ -201,6 +201,16 @@ var (
 			Help: "Total operations rejected due to monthly usage limits",
 		},
 		[]string{"operation", "limit_type"},
+	)
+
+	// --- Rate limit metrics ---
+
+	// RateLimitRejectionsTotal counts requests rejected by the per-IP rate limiter.
+	RateLimitRejectionsTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "s3proxy_rate_limit_rejections_total",
+			Help: "Total requests rejected due to per-IP rate limiting",
+		},
 	)
 
 	// --- Rebalancer metrics ---

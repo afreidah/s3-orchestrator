@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"sync/atomic"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/storage"
@@ -26,18 +27,33 @@ import (
 type Handler struct {
 	manager   *storage.BackendManager
 	dbHealthy func() bool
-	cfg       *config.Config
+	cfg       atomic.Pointer[config.Config]
 	templates *template.Template
 }
 
 // New creates a new UI handler.
 func New(manager *storage.BackendManager, dbHealthy func() bool, cfg *config.Config) *Handler {
-	return &Handler{
+	h := &Handler{
 		manager:   manager,
 		dbHealthy: dbHealthy,
-		cfg:       cfg,
 		templates: loadTemplates(),
 	}
+	h.cfg.Store(cfg)
+	return h
+}
+
+// UpdateConfig atomically replaces the config used by the dashboard.
+// Called on SIGHUP to keep the dashboard in sync with the running config.
+func (h *Handler) UpdateConfig(cfg *config.Config) {
+	h.cfg.Store(cfg)
+}
+
+// setSecurityHeaders adds security headers to dashboard responses.
+func setSecurityHeaders(w http.ResponseWriter) {
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'")
 }
 
 // Register mounts the UI routes on the given mux under the configured prefix.
@@ -70,6 +86,8 @@ type configSummary struct {
 
 // handleDashboard renders the HTML dashboard page.
 func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
+	setSecurityHeaders(w)
+
 	data, err := h.manager.GetDashboardData(r.Context())
 	if err != nil {
 		slog.Error("UI: failed to get dashboard data", "error", err)
@@ -77,8 +95,9 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bucketNames := make([]string, len(h.cfg.Buckets))
-	for i, b := range h.cfg.Buckets {
+	cfg := h.cfg.Load()
+	bucketNames := make([]string, len(cfg.Buckets))
+	for i, b := range cfg.Buckets {
 		bucketNames[i] = b.Name
 	}
 
@@ -103,11 +122,11 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		TotalBytesUsed:  totalUsed,
 		TotalBytesLimit: totalLimit,
 		Config: configSummary{
-			RoutingStrategy:   h.cfg.RoutingStrategy,
-			ReplicationFactor: h.cfg.Replication.Factor,
-			RebalanceEnabled:  h.cfg.Rebalance.Enabled,
-			RebalanceStrategy: h.cfg.Rebalance.Strategy,
-			RateLimitEnabled:  h.cfg.RateLimit.Enabled,
+			RoutingStrategy:   cfg.RoutingStrategy,
+			ReplicationFactor: cfg.Replication.Factor,
+			RebalanceEnabled:  cfg.Rebalance.Enabled,
+			RebalanceStrategy: cfg.Rebalance.Strategy,
+			RateLimitEnabled:  cfg.RateLimit.Enabled,
 		},
 	}
 
@@ -119,6 +138,8 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 // handleAPIDashboard returns dashboard data as JSON.
 func (h *Handler) handleAPIDashboard(w http.ResponseWriter, r *http.Request) {
+	setSecurityHeaders(w)
+
 	data, err := h.manager.GetDashboardData(r.Context())
 	if err != nil {
 		slog.Error("UI: failed to get dashboard data", "error", err)
@@ -135,6 +156,8 @@ func (h *Handler) handleAPIDashboard(w http.ResponseWriter, r *http.Request) {
 // handleTreeAPI returns children of a directory prefix as JSON for the
 // lazy-loaded file browser.
 func (h *Handler) handleTreeAPI(w http.ResponseWriter, r *http.Request) {
+	setSecurityHeaders(w)
+
 	prefix := r.URL.Query().Get("prefix")
 	startAfter := r.URL.Query().Get("startAfter")
 	maxKeys := 200

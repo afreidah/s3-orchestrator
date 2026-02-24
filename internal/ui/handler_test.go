@@ -1,104 +1,30 @@
 package ui
 
 import (
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/storage"
+	"github.com/afreidah/s3-orchestrator/internal/testutil"
 )
-
-// uiMockStore implements storage.MetadataStore for UI handler tests.
-type uiMockStore struct {
-	quotaStats      map[string]storage.QuotaStat
-	objectCounts    map[string]int64
-	multipartCounts map[string]int64
-	usageStats      map[string]storage.UsageStat
-	dirChildren     *storage.DirectoryListResult
-}
-
-func (m *uiMockStore) GetAllObjectLocations(_ context.Context, _ string) ([]storage.ObjectLocation, error) {
-	return nil, storage.ErrObjectNotFound
-}
-func (m *uiMockStore) RecordObject(_ context.Context, _, _ string, _ int64) error { return nil }
-func (m *uiMockStore) DeleteObject(_ context.Context, _ string) ([]storage.DeletedCopy, error) {
-	return nil, nil
-}
-func (m *uiMockStore) ListObjects(_ context.Context, _, _ string, _ int) (*storage.ListObjectsResult, error) {
-	return &storage.ListObjectsResult{}, nil
-}
-func (m *uiMockStore) GetBackendWithSpace(_ context.Context, _ int64, _ []string) (string, error) {
-	return "b1", nil
-}
-func (m *uiMockStore) GetLeastUtilizedBackend(_ context.Context, _ int64, _ []string) (string, error) {
-	return "b1", nil
-}
-func (m *uiMockStore) CreateMultipartUpload(_ context.Context, _, _, _, _ string) error { return nil }
-func (m *uiMockStore) GetMultipartUpload(_ context.Context, _ string) (*storage.MultipartUpload, error) {
-	return nil, nil
-}
-func (m *uiMockStore) RecordPart(_ context.Context, _ string, _ int, _ string, _ int64) error {
-	return nil
-}
-func (m *uiMockStore) GetParts(_ context.Context, _ string) ([]storage.MultipartPart, error) {
-	return nil, nil
-}
-func (m *uiMockStore) DeleteMultipartUpload(_ context.Context, _ string) error { return nil }
-func (m *uiMockStore) ListDirectoryChildren(_ context.Context, _, _ string, _ int) (*storage.DirectoryListResult, error) {
-	if m.dirChildren != nil {
-		return m.dirChildren, nil
-	}
-	return &storage.DirectoryListResult{}, nil
-}
-func (m *uiMockStore) GetQuotaStats(_ context.Context) (map[string]storage.QuotaStat, error) {
-	return m.quotaStats, nil
-}
-func (m *uiMockStore) GetObjectCounts(_ context.Context) (map[string]int64, error) {
-	return m.objectCounts, nil
-}
-func (m *uiMockStore) GetActiveMultipartCounts(_ context.Context) (map[string]int64, error) {
-	return m.multipartCounts, nil
-}
-func (m *uiMockStore) GetStaleMultipartUploads(_ context.Context, _ time.Duration) ([]storage.MultipartUpload, error) {
-	return nil, nil
-}
-func (m *uiMockStore) ListObjectsByBackend(_ context.Context, _ string, _ int) ([]storage.ObjectLocation, error) {
-	return nil, nil
-}
-func (m *uiMockStore) MoveObjectLocation(_ context.Context, _, _, _ string) (int64, error) {
-	return 0, nil
-}
-func (m *uiMockStore) GetUnderReplicatedObjects(_ context.Context, _, _ int) ([]storage.ObjectLocation, error) {
-	return nil, nil
-}
-func (m *uiMockStore) RecordReplica(_ context.Context, _, _, _ string, _ int64) (bool, error) {
-	return false, nil
-}
-func (m *uiMockStore) FlushUsageDeltas(_ context.Context, _, _ string, _, _, _ int64) error {
-	return nil
-}
-func (m *uiMockStore) GetUsageForPeriod(_ context.Context, _ string) (map[string]storage.UsageStat, error) {
-	return m.usageStats, nil
-}
 
 // newTestHandler builds a Handler wired to mock data for testing.
 func newTestHandler(t *testing.T) (*Handler, *http.ServeMux) {
 	t.Helper()
 
-	mockStore := &uiMockStore{
-		quotaStats: map[string]storage.QuotaStat{
+	mockStore := &testutil.MockStore{
+		GetQuotaStatsResp: map[string]storage.QuotaStat{
 			"b1": {BackendName: "b1", BytesUsed: 500, BytesLimit: 1000},
 		},
-		objectCounts:    map[string]int64{"b1": 42},
-		multipartCounts: map[string]int64{"b1": 0},
-		usageStats:      map[string]storage.UsageStat{"b1": {ApiRequests: 100}},
-		dirChildren: &storage.DirectoryListResult{
+		GetObjectCountsResp:    map[string]int64{"b1": 42},
+		GetActiveMultipartResp: map[string]int64{"b1": 0},
+		GetUsageForPeriodResp:  map[string]storage.UsageStat{"b1": {APIRequests: 100}},
+		ListDirChildrenResp: &storage.DirectoryListResult{
 			Entries: []storage.DirEntry{
 				{Name: "bucket1/", IsDir: true, FileCount: 10, TotalSize: 4096},
 			},
@@ -205,6 +131,62 @@ func TestTreeAPI_ReturnsJSON(t *testing.T) {
 	}
 	if len(result.Entries) == 0 {
 		t.Error("expected entries in tree response")
+	}
+}
+
+func TestSecurityHeaders_PresentOnAllEndpoints(t *testing.T) {
+	_, mux := newTestHandler(t)
+
+	endpoints := []string{"/ui/", "/ui/api/dashboard", "/ui/api/tree?prefix="}
+	for _, ep := range endpoints {
+		t.Run(ep, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, ep, nil)
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, req)
+
+			resp := w.Result()
+			checks := map[string]string{
+				"X-Frame-Options":        "DENY",
+				"X-Content-Type-Options":  "nosniff",
+				"Referrer-Policy":         "strict-origin-when-cross-origin",
+				"Content-Security-Policy": "default-src 'self'; style-src 'self' 'unsafe-inline'",
+			}
+			for header, want := range checks {
+				got := resp.Header.Get(header)
+				if got != want {
+					t.Errorf("%s = %q, want %q", header, got, want)
+				}
+			}
+		})
+	}
+}
+
+func TestUpdateConfig_ReflectsInDashboard(t *testing.T) {
+	h, mux := newTestHandler(t)
+
+	// Update config with a different routing strategy
+	newCfg := &config.Config{
+		Buckets: []config.BucketConfig{
+			{Name: "updated-bucket"},
+		},
+		RoutingStrategy: "spread",
+		Replication:     config.ReplicationConfig{Factor: 2},
+		RateLimit:       config.RateLimitConfig{Enabled: true},
+	}
+	h.UpdateConfig(newCfg)
+
+	req := httptest.NewRequest(http.MethodGet, "/ui/", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	body, _ := io.ReadAll(w.Result().Body)
+	html := string(body)
+
+	if !strings.Contains(html, "spread") {
+		t.Error("dashboard should reflect updated routing strategy 'spread'")
+	}
+	if !strings.Contains(html, "updated-bucket") {
+		t.Error("dashboard should reflect updated bucket name")
 	}
 }
 

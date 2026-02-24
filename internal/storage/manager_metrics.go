@@ -74,12 +74,12 @@ func (m *BackendManager) UpdateQuotaMetrics(ctx context.Context) error {
 		slog.Error("Failed to get usage stats", "error", err)
 	} else {
 		for name := range stats {
-			telemetry.UsageApiRequests.WithLabelValues(name).Set(0)
+			telemetry.UsageAPIRequests.WithLabelValues(name).Set(0)
 			telemetry.UsageEgressBytes.WithLabelValues(name).Set(0)
 			telemetry.UsageIngressBytes.WithLabelValues(name).Set(0)
 		}
 		for name, u := range usage {
-			telemetry.UsageApiRequests.WithLabelValues(name).Set(float64(u.ApiRequests))
+			telemetry.UsageAPIRequests.WithLabelValues(name).Set(float64(u.APIRequests))
 			telemetry.UsageEgressBytes.WithLabelValues(name).Set(float64(u.EgressBytes))
 			telemetry.UsageIngressBytes.WithLabelValues(name).Set(float64(u.IngressBytes))
 		}

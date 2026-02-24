@@ -13,118 +13,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/auth"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/storage"
+	"github.com/afreidah/s3-orchestrator/internal/testutil"
 )
-
-// serverMockStore implements storage.MetadataStore for server handler tests.
-type serverMockStore struct {
-	// Object operations
-	getAllLocationsResp []storage.ObjectLocation
-	getAllLocationsErr  error
-	getBackendResp     string
-	getBackendErr      error
-	recordObjectErr    error
-	deleteObjectResp   []storage.DeletedCopy
-	deleteObjectErr    error
-	listObjectsResp    *storage.ListObjectsResult
-	listObjectsErr     error
-
-	// Multipart (stubs)
-	createMultipartErr error
-	getMultipartResp   *storage.MultipartUpload
-	getMultipartErr    error
-	recordPartErr      error
-	getPartsResp       []storage.MultipartPart
-	getPartsErr        error
-	deleteMultipartErr error
-}
-
-func (m *serverMockStore) GetAllObjectLocations(_ context.Context, _ string) ([]storage.ObjectLocation, error) {
-	if m.getAllLocationsErr != nil {
-		return nil, m.getAllLocationsErr
-	}
-	return m.getAllLocationsResp, nil
-}
-func (m *serverMockStore) GetBackendWithSpace(_ context.Context, _ int64, _ []string) (string, error) {
-	if m.getBackendErr != nil {
-		return "", m.getBackendErr
-	}
-	return m.getBackendResp, nil
-}
-func (m *serverMockStore) GetLeastUtilizedBackend(_ context.Context, _ int64, _ []string) (string, error) {
-	if m.getBackendErr != nil {
-		return "", m.getBackendErr
-	}
-	return m.getBackendResp, nil
-}
-func (m *serverMockStore) RecordObject(_ context.Context, _, _ string, _ int64) error {
-	return m.recordObjectErr
-}
-func (m *serverMockStore) DeleteObject(_ context.Context, _ string) ([]storage.DeletedCopy, error) {
-	if m.deleteObjectErr != nil {
-		return nil, m.deleteObjectErr
-	}
-	return m.deleteObjectResp, nil
-}
-func (m *serverMockStore) ListObjects(_ context.Context, _, _ string, _ int) (*storage.ListObjectsResult, error) {
-	if m.listObjectsErr != nil {
-		return nil, m.listObjectsErr
-	}
-	return m.listObjectsResp, nil
-}
-func (m *serverMockStore) CreateMultipartUpload(_ context.Context, _, _, _, _ string) error {
-	return m.createMultipartErr
-}
-func (m *serverMockStore) GetMultipartUpload(_ context.Context, _ string) (*storage.MultipartUpload, error) {
-	if m.getMultipartErr != nil {
-		return nil, m.getMultipartErr
-	}
-	return m.getMultipartResp, nil
-}
-func (m *serverMockStore) RecordPart(_ context.Context, _ string, _ int, _ string, _ int64) error {
-	return m.recordPartErr
-}
-func (m *serverMockStore) GetParts(_ context.Context, _ string) ([]storage.MultipartPart, error) {
-	if m.getPartsErr != nil {
-		return nil, m.getPartsErr
-	}
-	return m.getPartsResp, nil
-}
-func (m *serverMockStore) DeleteMultipartUpload(_ context.Context, _ string) error {
-	return m.deleteMultipartErr
-}
-func (m *serverMockStore) ListDirectoryChildren(_ context.Context, _, _ string, _ int) (*storage.DirectoryListResult, error) {
-	return &storage.DirectoryListResult{}, nil
-}
-func (m *serverMockStore) GetQuotaStats(_ context.Context) (map[string]storage.QuotaStat, error) {
-	return map[string]storage.QuotaStat{}, nil
-}
-func (m *serverMockStore) GetObjectCounts(_ context.Context) (map[string]int64, error) {
-	return map[string]int64{}, nil
-}
-func (m *serverMockStore) GetActiveMultipartCounts(_ context.Context) (map[string]int64, error) {
-	return map[string]int64{}, nil
-}
-func (m *serverMockStore) GetStaleMultipartUploads(_ context.Context, _ time.Duration) ([]storage.MultipartUpload, error) {
-	return nil, nil
-}
-func (m *serverMockStore) ListObjectsByBackend(_ context.Context, _ string, _ int) ([]storage.ObjectLocation, error) {
-	return nil, nil
-}
-func (m *serverMockStore) MoveObjectLocation(_ context.Context, _, _, _ string) (int64, error) {
-	return 0, nil
-}
-func (m *serverMockStore) GetUnderReplicatedObjects(_ context.Context, _, _ int) ([]storage.ObjectLocation, error) {
-	return nil, nil
-}
-func (m *serverMockStore) RecordReplica(_ context.Context, _, _, _ string, _ int64) (bool, error) {
-	return false, nil
-}
-func (m *serverMockStore) FlushUsageDeltas(_ context.Context, _, _ string, _, _, _ int64) error {
-	return nil
-}
-func (m *serverMockStore) GetUsageForPeriod(_ context.Context, _ string) (map[string]storage.UsageStat, error) {
-	return map[string]storage.UsageStat{}, nil
-}
 
 // serverMockBackend implements storage.ObjectBackend for server handler tests.
 type serverMockBackend struct {
@@ -195,12 +85,12 @@ func (b *serverMockBackend) DeleteObject(_ context.Context, key string) error {
 
 // newTestServer creates an httptest.Server wired with mock backends and store.
 // Returns the server, a cleanup func, and the mock store/backend for assertions.
-func newTestServer(t *testing.T) (*httptest.Server, *serverMockStore, *serverMockBackend) {
+func newTestServer(t *testing.T) (*httptest.Server, *testutil.MockStore, *serverMockBackend) {
 	t.Helper()
 
 	backend := newServerMockBackend()
-	mockStore := &serverMockStore{
-		getBackendResp: "b1",
+	mockStore := &testutil.MockStore{
+		GetBackendResp: "b1",
 	}
 
 	mgr := storage.NewBackendManager(&storage.BackendManagerConfig{
@@ -328,7 +218,7 @@ func (neverEndingReader) Read(p []byte) (int, error) {
 
 func TestPut_QuotaExhausted(t *testing.T) {
 	ts, mockStore, _ := newTestServer(t)
-	mockStore.getBackendErr = storage.ErrNoSpaceAvailable
+	mockStore.GetBackendErr = storage.ErrNoSpaceAvailable
 
 	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/mybucket/testkey", strings.NewReader("data"))
 	req.Header.Set("X-Proxy-Token", "test-token")
@@ -346,7 +236,7 @@ func TestPut_QuotaExhausted(t *testing.T) {
 
 func TestPut_DBUnavailable(t *testing.T) {
 	ts, mockStore, _ := newTestServer(t)
-	mockStore.getBackendErr = storage.ErrDBUnavailable
+	mockStore.GetBackendErr = storage.ErrDBUnavailable
 
 	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/mybucket/testkey", strings.NewReader("data"))
 	req.Header.Set("X-Proxy-Token", "test-token")
@@ -373,7 +263,7 @@ func TestGet_Success(t *testing.T) {
 	backend.objects["mybucket/testkey"] = serverMockObj{
 		data: []byte("hello"), contentType: "text/plain", etag: `"abc"`,
 	}
-	mockStore.getAllLocationsResp = []storage.ObjectLocation{
+	mockStore.GetAllLocationsResp = []storage.ObjectLocation{
 		{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5},
 	}
 
@@ -394,7 +284,7 @@ func TestGet_Success(t *testing.T) {
 
 func TestGet_NotFound(t *testing.T) {
 	ts, mockStore, _ := newTestServer(t)
-	mockStore.getAllLocationsErr = storage.ErrObjectNotFound
+	mockStore.GetAllLocationsErr = storage.ErrObjectNotFound
 
 	resp := doReq(t, http.MethodGet, ts.URL+"/mybucket/nonexistent", nil)
 	defer resp.Body.Close()
@@ -414,7 +304,7 @@ func TestHead_Success(t *testing.T) {
 	backend.objects["mybucket/testkey"] = serverMockObj{
 		data: []byte("12345"), contentType: "text/plain", etag: `"abc"`,
 	}
-	mockStore.getAllLocationsResp = []storage.ObjectLocation{
+	mockStore.GetAllLocationsResp = []storage.ObjectLocation{
 		{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5},
 	}
 
@@ -437,7 +327,7 @@ func TestHead_Success(t *testing.T) {
 
 func TestHead_NotFound(t *testing.T) {
 	ts, mockStore, _ := newTestServer(t)
-	mockStore.getAllLocationsErr = storage.ErrObjectNotFound
+	mockStore.GetAllLocationsErr = storage.ErrObjectNotFound
 
 	resp := doReq(t, http.MethodHead, ts.URL+"/mybucket/nonexistent", nil)
 	defer resp.Body.Close()
@@ -455,7 +345,7 @@ func TestDelete_Success(t *testing.T) {
 	ts, mockStore, backend := newTestServer(t)
 
 	backend.objects["mybucket/testkey"] = serverMockObj{data: []byte("hi")}
-	mockStore.deleteObjectResp = []storage.DeletedCopy{
+	mockStore.DeleteObjectResp = []storage.DeletedCopy{
 		{BackendName: "b1", SizeBytes: 2},
 	}
 
@@ -469,7 +359,7 @@ func TestDelete_Success(t *testing.T) {
 
 func TestDelete_IdempotentForMissing(t *testing.T) {
 	ts, mockStore, _ := newTestServer(t)
-	mockStore.deleteObjectErr = storage.ErrObjectNotFound
+	mockStore.DeleteObjectErr = storage.ErrObjectNotFound
 
 	resp := doReq(t, http.MethodDelete, ts.URL+"/mybucket/nonexistent", nil)
 	defer resp.Body.Close()
@@ -491,7 +381,7 @@ func TestCopy_Success(t *testing.T) {
 	backend.objects["mybucket/source-key"] = serverMockObj{
 		data: []byte("copy me"), contentType: "text/plain", etag: `"src"`,
 	}
-	mockStore.getAllLocationsResp = []storage.ObjectLocation{
+	mockStore.GetAllLocationsResp = []storage.ObjectLocation{
 		{ObjectKey: "mybucket/source-key", BackendName: "b1", SizeBytes: 7},
 	}
 
@@ -519,7 +409,7 @@ func TestCopy_Success(t *testing.T) {
 
 func TestCopy_SourceNotFound(t *testing.T) {
 	ts, mockStore, _ := newTestServer(t)
-	mockStore.getAllLocationsErr = storage.ErrObjectNotFound
+	mockStore.GetAllLocationsErr = storage.ErrObjectNotFound
 
 	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/mybucket/dest-key", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
@@ -533,6 +423,38 @@ func TestCopy_SourceNotFound(t *testing.T) {
 
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestCopy_URLEncodedSource(t *testing.T) {
+	ts, mockStore, backend := newTestServer(t)
+
+	// Pre-store source object with a space in the key
+	backend.objects["mybucket/my file.txt"] = serverMockObj{
+		data: []byte("encoded"), contentType: "text/plain", etag: `"enc"`,
+	}
+	mockStore.GetAllLocationsResp = []storage.ObjectLocation{
+		{ObjectKey: "mybucket/my file.txt", BackendName: "b1", SizeBytes: 7},
+	}
+
+	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/mybucket/dest-key", nil)
+	req.Header.Set("X-Proxy-Token", "test-token")
+	req.Header.Set("X-Amz-Copy-Source", "/mybucket/my%20file.txt")
+	req.ContentLength = 0
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want 200. body: %s", resp.StatusCode, body)
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "CopyObjectResult") {
+		t.Error("response missing CopyObjectResult element")
 	}
 }
 
@@ -591,6 +513,23 @@ func TestAuth_BucketMismatch(t *testing.T) {
 	}
 }
 
+func TestAuth_AccessDeniedDoesNotLeakBucketName(t *testing.T) {
+	ts, _, _ := newTestServer(t)
+
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/otherbucket/testkey", nil)
+	req.Header.Set("X-Proxy-Token", "test-token")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if strings.Contains(string(body), "otherbucket") {
+		t.Error("AccessDenied response should not contain the bucket name")
+	}
+}
+
 // -------------------------------------------------------------------------
 // ROUTING
 // -------------------------------------------------------------------------
@@ -613,7 +552,7 @@ func TestUnsupportedMethod(t *testing.T) {
 
 func TestBucketOnlyGET_RoutesToList(t *testing.T) {
 	ts, mockStore, _ := newTestServer(t)
-	mockStore.listObjectsResp = &storage.ListObjectsResult{
+	mockStore.ListObjectsResp = &storage.ListObjectsResult{
 		Objects: []storage.ObjectLocation{
 			{ObjectKey: "mybucket/file.txt", BackendName: "b1", SizeBytes: 100, CreatedAt: time.Now()},
 		},
