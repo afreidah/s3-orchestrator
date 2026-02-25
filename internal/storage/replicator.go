@@ -132,8 +132,8 @@ func (m *BackendManager) replicateObject(ctx context.Context, key string, existi
 			continue
 		}
 
-		m.recordUsage(source, 1, existingCopies[0].SizeBytes, 0) // source: Get + egress
-		m.recordUsage(target, 1, 0, existingCopies[0].SizeBytes) // target: Put + ingress
+		m.usage.Record(source, 1, existingCopies[0].SizeBytes, 0) // source: Get + egress
+		m.usage.Record(target, 1, 0, existingCopies[0].SizeBytes) // target: Put + ingress
 
 		exclusion[target] = true
 		created++
@@ -171,9 +171,9 @@ func (m *BackendManager) findReplicaTarget(ctx context.Context, key string, size
 // target backend. Tries each existing copy in order for failover. Returns the
 // source backend name that was successfully read from.
 func (m *BackendManager) copyToReplica(ctx context.Context, key string, copies []ObjectLocation, target string) (string, error) {
-	targetBackend, ok := m.backends[target]
-	if !ok {
-		return "", fmt.Errorf("target backend %s not found", target)
+	targetBackend, err := m.getBackend(target)
+	if err != nil {
+		return "", err
 	}
 
 	// Try each copy in order (primary first)

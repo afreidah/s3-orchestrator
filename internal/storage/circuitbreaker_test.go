@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -202,5 +203,47 @@ func TestCircuitBreaker_SuccessResetsFailures(t *testing.T) {
 
 	if !cb.IsHealthy() {
 		t.Fatal("circuit should still be closed after reset + 2 failures")
+	}
+}
+
+func TestCircuitBreaker_ConcurrentProbeSerializedByAtomicFlag(t *testing.T) {
+	dbErr := errors.New("connection refused")
+	mock := &mockStore{getAllLocationsErr: dbErr}
+	cb := newTestCB(mock, 1, 10*time.Millisecond)
+
+	ctx := context.Background()
+
+	// Trip the circuit (1 call to mock)
+	_, _ = cb.GetAllObjectLocations(ctx, "key")
+
+	// Wait for timeout so probe is eligible
+	time.Sleep(15 * time.Millisecond)
+
+	// Record call count before the burst
+	mock.mu.Lock()
+	callsBefore := mock.callCount
+	mock.mu.Unlock()
+
+	// Fire many concurrent requests — exactly one should reach the mock (the probe)
+	const goroutines = 50
+	var wg sync.WaitGroup
+
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			_, _ = cb.GetAllObjectLocations(ctx, "key")
+		}()
+	}
+	wg.Wait()
+
+	mock.mu.Lock()
+	callsAfter := mock.callCount
+	mock.mu.Unlock()
+
+	// Exactly one probe should have reached the real store
+	probes := callsAfter - callsBefore
+	if probes != 1 {
+		t.Errorf("mock received %d calls during burst, want exactly 1 probe", probes)
 	}
 }

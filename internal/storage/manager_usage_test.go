@@ -45,9 +45,9 @@ func newUsageManagerWithLimits(backendNames []string, store *mockStore, limits m
 func TestRecordUsage_IncrementsCounters(t *testing.T) {
 	mgr := newUsageManager([]string{"b1"}, &mockStore{})
 
-	mgr.recordUsage("b1", 3, 1024, 2048)
+	mgr.usage.Record("b1", 3, 1024, 2048)
 
-	c := mgr.usage["b1"]
+	c := mgr.usage.counters["b1"]
 	if got := c.apiRequests.Load(); got != 3 {
 		t.Errorf("apiRequests = %d, want 3", got)
 	}
@@ -62,10 +62,10 @@ func TestRecordUsage_IncrementsCounters(t *testing.T) {
 func TestRecordUsage_Accumulates(t *testing.T) {
 	mgr := newUsageManager([]string{"b1"}, &mockStore{})
 
-	mgr.recordUsage("b1", 1, 100, 200)
-	mgr.recordUsage("b1", 2, 300, 400)
+	mgr.usage.Record("b1", 1, 100, 200)
+	mgr.usage.Record("b1", 2, 300, 400)
 
-	c := mgr.usage["b1"]
+	c := mgr.usage.counters["b1"]
 	if got := c.apiRequests.Load(); got != 3 {
 		t.Errorf("apiRequests = %d, want 3", got)
 	}
@@ -81,9 +81,9 @@ func TestRecordUsage_UnknownBackendNoOp(t *testing.T) {
 	mgr := newUsageManager([]string{"b1"}, &mockStore{})
 
 	// Should not panic for unknown backend
-	mgr.recordUsage("unknown", 1, 1, 1)
+	mgr.usage.Record("unknown", 1, 1, 1)
 
-	c := mgr.usage["b1"]
+	c := mgr.usage.counters["b1"]
 	if got := c.apiRequests.Load(); got != 0 {
 		t.Errorf("apiRequests = %d, want 0", got)
 	}
@@ -92,9 +92,9 @@ func TestRecordUsage_UnknownBackendNoOp(t *testing.T) {
 func TestRecordUsage_ZeroValuesSkipped(t *testing.T) {
 	mgr := newUsageManager([]string{"b1"}, &mockStore{})
 
-	mgr.recordUsage("b1", 0, 0, 0)
+	mgr.usage.Record("b1", 0, 0, 0)
 
-	c := mgr.usage["b1"]
+	c := mgr.usage.counters["b1"]
 	if got := c.apiRequests.Load(); got != 0 {
 		t.Errorf("apiRequests = %d, want 0", got)
 	}
@@ -103,13 +103,13 @@ func TestRecordUsage_ZeroValuesSkipped(t *testing.T) {
 func TestRecordUsage_MultipleBackends(t *testing.T) {
 	mgr := newUsageManager([]string{"b1", "b2"}, &mockStore{})
 
-	mgr.recordUsage("b1", 1, 100, 0)
-	mgr.recordUsage("b2", 2, 0, 200)
+	mgr.usage.Record("b1", 1, 100, 0)
+	mgr.usage.Record("b2", 2, 0, 200)
 
-	if got := mgr.usage["b1"].apiRequests.Load(); got != 1 {
+	if got := mgr.usage.counters["b1"].apiRequests.Load(); got != 1 {
 		t.Errorf("b1 apiRequests = %d, want 1", got)
 	}
-	if got := mgr.usage["b2"].ingressBytes.Load(); got != 200 {
+	if got := mgr.usage.counters["b2"].ingressBytes.Load(); got != 200 {
 		t.Errorf("b2 ingressBytes = %d, want 200", got)
 	}
 }
@@ -120,14 +120,14 @@ func TestFlushUsage_WritesToStore(t *testing.T) {
 	ms := &mockStore{}
 	mgr := newUsageManager([]string{"b1"}, ms)
 
-	mgr.recordUsage("b1", 5, 1024, 2048)
+	mgr.usage.Record("b1", 5, 1024, 2048)
 
 	if err := mgr.FlushUsage(context.Background()); err != nil {
 		t.Fatalf("FlushUsage() error = %v", err)
 	}
 
 	// Counters should be reset
-	c := mgr.usage["b1"]
+	c := mgr.usage.counters["b1"]
 	if got := c.apiRequests.Load(); got != 0 {
 		t.Errorf("apiRequests after flush = %d, want 0", got)
 	}
@@ -155,7 +155,7 @@ func TestFlushUsage_SkipsZeroDeltas(t *testing.T) {
 	mgr := newUsageManager([]string{"b1", "b2"}, ms)
 
 	// Only increment b1
-	mgr.recordUsage("b1", 1, 0, 0)
+	mgr.usage.Record("b1", 1, 0, 0)
 
 	if err := mgr.FlushUsage(context.Background()); err != nil {
 		t.Fatalf("FlushUsage() error = %v", err)
@@ -177,7 +177,7 @@ func TestFlushUsage_RestoresCountersOnError(t *testing.T) {
 	}
 	mgr := newUsageManager([]string{"b1"}, ms)
 
-	mgr.recordUsage("b1", 10, 500, 300)
+	mgr.usage.Record("b1", 10, 500, 300)
 
 	err := mgr.FlushUsage(context.Background())
 	if err == nil {
@@ -185,7 +185,7 @@ func TestFlushUsage_RestoresCountersOnError(t *testing.T) {
 	}
 
 	// Counters should be restored
-	c := mgr.usage["b1"]
+	c := mgr.usage.counters["b1"]
 	if got := c.apiRequests.Load(); got != 10 {
 		t.Errorf("apiRequests after failed flush = %d, want 10 (restored)", got)
 	}
@@ -217,7 +217,7 @@ func TestFlushUsage_NoDataNoCall(t *testing.T) {
 func TestWithinUsageLimits_NoLimits(t *testing.T) {
 	mgr := newUsageManager([]string{"b1"}, &mockStore{})
 
-	if !mgr.withinUsageLimits("b1", 1000, 1000, 1000) {
+	if !mgr.usage.WithinLimits("b1", 1000, 1000, 1000) {
 		t.Error("no limits configured, should always return true")
 	}
 }
@@ -229,11 +229,9 @@ func TestWithinUsageLimits_ApiExceeded(t *testing.T) {
 	mgr := newUsageManagerWithLimits([]string{"b1"}, &mockStore{}, limits)
 
 	// Set baseline to exactly the limit
-	mgr.usageBaselineMu.Lock()
-	mgr.usageBaseline["b1"] = UsageStat{APIRequests: 100}
-	mgr.usageBaselineMu.Unlock()
+	mgr.usage.SetBaseline("b1", UsageStat{APIRequests: 100})
 
-	if mgr.withinUsageLimits("b1", 1, 0, 0) {
+	if mgr.usage.WithinLimits("b1", 1, 0, 0) {
 		t.Error("should exceed API request limit")
 	}
 }
@@ -245,12 +243,10 @@ func TestWithinUsageLimits_EgressExceeded(t *testing.T) {
 	mgr := newUsageManagerWithLimits([]string{"b1"}, &mockStore{}, limits)
 
 	// Baseline: 500, unflushed: add 400, proposed: 200 → 1100 > 1000
-	mgr.usageBaselineMu.Lock()
-	mgr.usageBaseline["b1"] = UsageStat{EgressBytes: 500}
-	mgr.usageBaselineMu.Unlock()
-	mgr.usage["b1"].egressBytes.Store(400)
+	mgr.usage.SetBaseline("b1", UsageStat{EgressBytes: 500})
+	mgr.usage.counters["b1"].egressBytes.Store(400)
 
-	if mgr.withinUsageLimits("b1", 0, 200, 0) {
+	if mgr.usage.WithinLimits("b1", 0, 200, 0) {
 		t.Error("should exceed egress byte limit")
 	}
 }
@@ -262,7 +258,7 @@ func TestWithinUsageLimits_UnlimitedDimension(t *testing.T) {
 	mgr := newUsageManagerWithLimits([]string{"b1"}, &mockStore{}, limits)
 
 	// API within limit, egress/ingress unlimited (0)
-	if !mgr.withinUsageLimits("b1", 1, 999999, 999999) {
+	if !mgr.usage.WithinLimits("b1", 1, 999999, 999999) {
 		t.Error("zero limit means unlimited, should not be checked")
 	}
 }
@@ -275,11 +271,9 @@ func TestBackendsWithinLimits_FiltersCorrectly(t *testing.T) {
 	mgr := newUsageManagerWithLimits([]string{"b1", "b2"}, &mockStore{}, limits)
 
 	// Push b1 over limit
-	mgr.usageBaselineMu.Lock()
-	mgr.usageBaseline["b1"] = UsageStat{APIRequests: 10}
-	mgr.usageBaselineMu.Unlock()
+	mgr.usage.SetBaseline("b1", UsageStat{APIRequests: 10})
 
-	eligible := mgr.backendsWithinLimits(1, 0, 0)
+	eligible := mgr.usage.BackendsWithinLimits(mgr.order,1, 0, 0)
 	if len(eligible) != 1 {
 		t.Fatalf("eligible = %v, want [b2]", eligible)
 	}
