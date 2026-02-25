@@ -124,6 +124,7 @@ func StartSpan(ctx context.Context, name string, attrs ...attribute.KeyValue) (c
 
 // S3 proxy specific attribute keys.
 var (
+	AttrRequestID       = attribute.Key("s3proxy.request_id")
 	AttrVirtualBucket   = attribute.Key("s3proxy.bucket.virtual")
 	AttrBackendBucket   = attribute.Key("s3proxy.bucket.backend")
 	AttrObjectKey       = attribute.Key("s3proxy.key")

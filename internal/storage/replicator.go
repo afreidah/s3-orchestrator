@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/audit"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 )
@@ -29,6 +30,12 @@ import (
 // reach the target replication factor. Returns the number of copies created.
 func (m *BackendManager) Replicate(ctx context.Context, cfg config.ReplicationConfig) (int, error) {
 	start := time.Now()
+	ctx = audit.WithRequestID(ctx, audit.NewID())
+
+	audit.Log(ctx, "replication.start",
+		slog.Int("factor", cfg.Factor),
+		slog.Int("batch_size", cfg.BatchSize),
+	)
 
 	// --- Find under-replicated objects ---
 	locations, err := m.store.GetUnderReplicatedObjects(ctx, cfg.Factor, cfg.BatchSize)
@@ -68,6 +75,12 @@ func (m *BackendManager) Replicate(ctx context.Context, cfg config.ReplicationCo
 	telemetry.ReplicationPending.Set(float64(len(grouped)))
 	telemetry.ReplicationRunsTotal.WithLabelValues("success").Inc()
 	telemetry.ReplicationDuration.Observe(time.Since(start).Seconds())
+
+	audit.Log(ctx, "replication.complete",
+		slog.Int("copies_created", created),
+		slog.Int("objects_checked", len(grouped)),
+		slog.Duration("duration", time.Since(start)),
+	)
 
 	return created, nil
 }
@@ -134,6 +147,13 @@ func (m *BackendManager) replicateObject(ctx context.Context, key string, existi
 
 		m.usage.Record(source, 1, existingCopies[0].SizeBytes, 0) // source: Get + egress
 		m.usage.Record(target, 1, 0, existingCopies[0].SizeBytes) // target: Put + ingress
+
+		audit.Log(ctx, "replication.copy",
+			slog.String("key", key),
+			slog.String("source_backend", source),
+			slog.String("target_backend", target),
+			slog.Int64("size", existingCopies[0].SizeBytes),
+		)
 
 		exclusion[target] = true
 		created++

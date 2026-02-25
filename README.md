@@ -49,6 +49,8 @@ Objects are routed to backends based on the configured `routing_strategy`: **pac
 
 Each request must target a virtual bucket name that matches the credentials used to sign the request. Requests to a bucket the credentials aren't authorized for return `403 AccessDenied`.
 
+Every response includes an `X-Amz-Request-Id` header with a unique request ID for tracing. Clients can supply their own ID via `X-Request-Id`; otherwise the orchestrator generates one. The same ID appears in audit logs and OpenTelemetry spans.
+
 ## Authentication & Multi-Bucket
 
 Each virtual bucket has one or more credential sets. On every request, the orchestrator:
@@ -340,12 +342,35 @@ All metrics are prefixed with `s3proxy_`. Exposed at `/metrics` when enabled.
 | `s3proxy_usage_ingress_bytes` | Gauge | backend | Current month ingress bytes |
 | `s3proxy_usage_limit_rejections_total` | Counter | operation, limit_type | Operations rejected by usage limits |
 | `s3proxy_rate_limit_rejections_total` | Counter | — | Requests rejected by per-IP rate limiting |
+| `s3proxy_audit_events_total` | Counter | event | Audit log entries emitted |
 
 Quota metrics are refreshed from PostgreSQL every 30 seconds (no backend API calls).
 
 ### OpenTelemetry Tracing
 
 Spans are emitted for every HTTP request, manager operation, and backend S3 call. The service registers as `s3-orchestrator` (`resource.service.name`). Traces propagate via W3C `traceparent` headers. Configured to export via gRPC OTLP to Tempo or any OTLP-compatible collector.
+
+### Audit Logging
+
+Structured audit log entries are emitted as JSON via `slog` for every S3 API request and significant internal operation. Each entry includes an `"audit": true` marker for easy filtering in log pipelines.
+
+**Request ID tracing** — every S3 API request gets a unique request ID, returned in the `X-Amz-Request-Id` response header. Clients can supply their own via the `X-Request-Id` request header. The same ID flows through context to all downstream operations, appearing in both the HTTP-level audit entry and the storage-level audit entry for full request correlation. The ID is also set as a `s3proxy.request_id` attribute on OpenTelemetry spans, linking audit logs to traces.
+
+**Two-level audit entries** — each S3 request produces two audit log lines: one at the HTTP layer (`s3.PutObject`, `s3.GetObject`, etc.) with method, path, bucket, status, duration, and remote address, and one at the storage layer (`storage.PutObject`, `storage.GetObject`, etc.) with the backend name, object key, and size. Both share the same `request_id`.
+
+**Internal operation auditing** — background operations generate their own correlation IDs:
+
+| Operation | Events |
+|-----------|--------|
+| Rebalancer | `rebalance.start`, `rebalance.move`, `rebalance.complete` |
+| Replicator | `replication.start`, `replication.copy`, `replication.complete` |
+| Multipart cleanup | `storage.MultipartCleanup` |
+
+Example audit log entry:
+
+```json
+{"level":"INFO","msg":"audit","audit":true,"event":"s3.PutObject","request_id":"a1b2c3d4e5f6...","operation":"PutObject","method":"PUT","path":"/my-files/photo.jpg","bucket":"my-files","status":200,"duration":"45ms"}
+```
 
 ## Web UI
 
@@ -438,7 +463,7 @@ make integration-test
 make build
 
 # Build multi-arch and push to registry
-make push VERSION=v0.5.2
+make push VERSION=v0.6.0
 ```
 
 ## Deployment
@@ -446,7 +471,7 @@ make push VERSION=v0.5.2
 Build and push a Docker image with a version tag:
 
 ```bash
-make push VERSION=v0.5.2
+make push VERSION=v0.6.0
 ```
 
 The `VERSION` is baked into the binary via `-ldflags` and displayed in the web UI header and `/health` endpoint. Defaults to `latest` if omitted.
@@ -464,6 +489,7 @@ cmd/s3-orchestrator/
   main.go                    Entry point, subcommand dispatch, background tasks
   sync.go                    Sync subcommand (bucket import)
 internal/
+  audit/audit.go             Request ID generation, context propagation, audit logger
   auth/auth.go               BucketRegistry, SigV4 verification, legacy token auth
   config/config.go           YAML config loader with env var expansion
   server/

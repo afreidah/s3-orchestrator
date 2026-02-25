@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/audit"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -85,6 +86,12 @@ func (m *BackendManager) PutObject(ctx context.Context, key string, body io.Read
 	// --- Record metrics ---
 	m.recordOperation(operation, backendName, start, nil)
 	m.usage.Record(backendName, 1, 0, size)
+
+	audit.Log(ctx, "storage.PutObject",
+		slog.String("key", key),
+		slog.String("backend", backendName),
+		slog.Int64("size", size),
+	)
 
 	span.SetStatus(codes.Ok, "")
 	return etag, nil
@@ -252,6 +259,13 @@ func (m *BackendManager) GetObject(ctx context.Context, key string, rangeHeader 
 		return nil, err
 	}
 	m.usage.Record(backendName, 1, result.Size, 0)
+
+	audit.Log(ctx, "storage.GetObject",
+		slog.String("key", key),
+		slog.String("backend", backendName),
+		slog.Int64("size", result.Size),
+	)
+
 	return result, nil
 }
 
@@ -279,6 +293,13 @@ func (m *BackendManager) HeadObject(ctx context.Context, key string) (int64, str
 		return 0, "", "", err
 	}
 	m.usage.Record(backendName, 1, 0, 0)
+
+	audit.Log(ctx, "storage.HeadObject",
+		slog.String("key", key),
+		slog.String("backend", backendName),
+		slog.Int64("size", rSize),
+	)
+
 	return rSize, rContentType, rETag, nil
 }
 
@@ -404,10 +425,20 @@ func (m *BackendManager) CopyObject(ctx context.Context, sourceKey, destKey stri
 	m.cache.Delete(destKey)
 
 	m.recordOperation(operation, destBackendName, start, nil)
-	if srcName, ok := <-srcBackendCh; ok {
+	var srcName string
+	if sn, ok := <-srcBackendCh; ok {
+		srcName = sn
 		m.usage.Record(srcName, 1, size, 0) // source: Get + egress
 	}
 	m.usage.Record(destBackendName, 1, 0, size) // dest: Put + ingress
+
+	audit.Log(ctx, "storage.CopyObject",
+		slog.String("source_key", sourceKey),
+		slog.String("dest_key", destKey),
+		slog.String("source_backend", srcName),
+		slog.String("dest_backend", destBackendName),
+		slog.Int64("size", size),
+	)
 
 	span.SetStatus(codes.Ok, "")
 	return etag, nil
@@ -466,6 +497,11 @@ func (m *BackendManager) DeleteObject(ctx context.Context, key string) error {
 	for _, c := range copies {
 		m.usage.Record(c.BackendName, 1, 0, 0)
 	}
+
+	audit.Log(ctx, "storage.DeleteObject",
+		slog.String("key", key),
+		slog.Int("copies_deleted", len(copies)),
+	)
 
 	span.SetStatus(codes.Ok, "")
 	return nil
@@ -560,6 +596,13 @@ func (m *BackendManager) ListObjects(ctx context.Context, prefix, delimiter, sta
 	}
 
 	m.recordOperation(operation, "", start, nil)
+
+	audit.Log(ctx, "storage.ListObjects",
+		slog.String("prefix", prefix),
+		slog.Int("key_count", result.KeyCount),
+		slog.Bool("truncated", result.IsTruncated),
+	)
+
 	span.SetStatus(codes.Ok, "")
 	span.SetAttributes(attribute.Int("s3.key_count", result.KeyCount))
 	return result, nil
