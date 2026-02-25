@@ -702,6 +702,85 @@ func TestBoolDefault(t *testing.T) {
 	}
 }
 
+func TestConfigValidation_TLS_CertWithoutKey(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Server.TLS.CertFile = "/etc/cert.pem"
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil || !strings.Contains(err.Error(), "both cert_file and key_file") {
+		t.Errorf("expected cert+key pair error, got %v", err)
+	}
+}
+
+func TestConfigValidation_TLS_KeyWithoutCert(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Server.TLS.KeyFile = "/etc/key.pem"
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil || !strings.Contains(err.Error(), "both cert_file and key_file") {
+		t.Errorf("expected cert+key pair error, got %v", err)
+	}
+}
+
+func TestConfigValidation_TLS_ValidPair(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Server.TLS.CertFile = "/etc/cert.pem"
+	cfg.Server.TLS.KeyFile = "/etc/key.pem"
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Errorf("valid TLS config should pass: %v", err)
+	}
+	if cfg.Server.TLS.MinVersion != "1.2" {
+		t.Errorf("min_version default = %q, want \"1.2\"", cfg.Server.TLS.MinVersion)
+	}
+}
+
+func TestConfigValidation_TLS_InvalidMinVersion(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Server.TLS.CertFile = "/etc/cert.pem"
+	cfg.Server.TLS.KeyFile = "/etc/key.pem"
+	cfg.Server.TLS.MinVersion = "1.1"
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil || !strings.Contains(err.Error(), "min_version") {
+		t.Errorf("expected min_version error, got %v", err)
+	}
+}
+
+func TestConfigValidation_TLS_MinVersion13(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Server.TLS.CertFile = "/etc/cert.pem"
+	cfg.Server.TLS.KeyFile = "/etc/key.pem"
+	cfg.Server.TLS.MinVersion = "1.3"
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Errorf("TLS 1.3 should be valid: %v", err)
+	}
+}
+
+func TestConfigValidation_TLS_NoTLSIsValid(t *testing.T) {
+	cfg := validBaseConfig()
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Errorf("no TLS config should pass: %v", err)
+	}
+}
+
+func TestNonReloadableFieldsChanged_TLS(t *testing.T) {
+	a := validBaseConfig()
+	b := validBaseConfig()
+	_ = a.SetDefaultsAndValidate()
+
+	b.Server.TLS.CertFile = "/etc/cert.pem"
+	b.Server.TLS.KeyFile = "/etc/key.pem"
+	_ = b.SetDefaultsAndValidate()
+
+	changed := NonReloadableFieldsChanged(&a, &b)
+	found := false
+	for _, c := range changed {
+		if c == "server.tls" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected server.tls in changed fields, got %v", changed)
+	}
+}
+
 func TestNonReloadableFieldsChanged_MultipleChanges(t *testing.T) {
 	a := validBaseConfig()
 	b := validBaseConfig()

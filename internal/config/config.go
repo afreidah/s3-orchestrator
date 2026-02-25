@@ -57,6 +57,17 @@ type ServerConfig struct {
 	ListenAddr     string        `yaml:"listen_addr"`
 	MaxObjectSize  int64         `yaml:"max_object_size"`  // Max upload size in bytes (default: 5GB)
 	BackendTimeout time.Duration `yaml:"backend_timeout"`  // Per-operation timeout for backend S3 calls (default: 30s)
+	TLS            TLSConfig     `yaml:"tls"`
+}
+
+// TLSConfig holds optional TLS settings for the HTTP server. When CertFile
+// and KeyFile are both set, the server listens with TLS. When both are empty,
+// the server runs plain HTTP for backward compatibility.
+type TLSConfig struct {
+	CertFile     string `yaml:"cert_file"`      // Path to PEM-encoded certificate (or chain)
+	KeyFile      string `yaml:"key_file"`       // Path to PEM-encoded private key
+	MinVersion   string `yaml:"min_version"`    // Minimum TLS version: "1.2" (default) or "1.3"
+	ClientCAFile string `yaml:"client_ca_file"` // Path to CA bundle for client certificate verification (mTLS)
 }
 
 // CredentialConfig holds a single set of client credentials for accessing a
@@ -200,6 +211,21 @@ func (c *Config) SetDefaultsAndValidate() error {
 
 	if c.Server.BackendTimeout == 0 {
 		c.Server.BackendTimeout = 30 * time.Second
+	}
+
+	// --- TLS validation ---
+	hasCert := c.Server.TLS.CertFile != ""
+	hasKey := c.Server.TLS.KeyFile != ""
+	if hasCert != hasKey {
+		errors = append(errors, "server.tls requires both cert_file and key_file")
+	}
+	if hasCert && hasKey {
+		if c.Server.TLS.MinVersion == "" {
+			c.Server.TLS.MinVersion = "1.2"
+		}
+		if c.Server.TLS.MinVersion != "1.2" && c.Server.TLS.MinVersion != "1.3" {
+			errors = append(errors, "server.tls.min_version must be \"1.2\" or \"1.3\"")
+		}
 	}
 
 	// --- Database validation ---
@@ -464,6 +490,9 @@ func NonReloadableFieldsChanged(old, new *Config) []string {
 
 	if old.Server.ListenAddr != new.Server.ListenAddr {
 		changed = append(changed, "server.listen_addr")
+	}
+	if old.Server.TLS != new.Server.TLS {
+		changed = append(changed, "server.tls")
 	}
 	if old.Database != new.Database {
 		changed = append(changed, "database")
