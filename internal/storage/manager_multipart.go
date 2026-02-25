@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/audit"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -64,6 +65,13 @@ func (m *BackendManager) CreateMultipartUpload(ctx context.Context, key, content
 
 	span.SetAttributes(telemetry.AttrBackendName.String(backendName))
 	m.recordOperation(operation, backendName, start, nil)
+
+	audit.Log(ctx, "storage.CreateMultipartUpload",
+		slog.String("key", key),
+		slog.String("backend", backendName),
+		slog.String("upload_id", uploadID),
+	)
+
 	span.SetStatus(codes.Ok, "")
 	return uploadID, backendName, nil
 }
@@ -216,6 +224,15 @@ func (m *BackendManager) CompleteMultipartUpload(ctx context.Context, uploadID s
 
 	m.recordOperation(operation, mu.BackendName, start, nil)
 	m.usage.Record(mu.BackendName, 1, 0, 0)
+
+	audit.Log(ctx, "storage.CompleteMultipartUpload",
+		slog.String("key", mu.ObjectKey),
+		slog.String("backend", mu.BackendName),
+		slog.String("upload_id", uploadID),
+		slog.Int64("total_size", totalSize),
+		slog.Int("parts_count", len(parts)),
+	)
+
 	span.SetStatus(codes.Ok, "")
 	return etag, nil
 }
@@ -268,6 +285,14 @@ func (m *BackendManager) AbortMultipartUpload(ctx context.Context, uploadID stri
 
 	m.recordOperation(operation, mu.BackendName, start, nil)
 	m.usage.Record(mu.BackendName, 1, 0, 0)
+
+	audit.Log(ctx, "storage.AbortMultipartUpload",
+		slog.String("upload_id", uploadID),
+		slog.String("key", mu.ObjectKey),
+		slog.String("backend", mu.BackendName),
+		slog.Int("parts_cleaned", len(parts)),
+	)
+
 	span.SetStatus(codes.Ok, "")
 	return nil
 }
@@ -281,10 +306,20 @@ func (m *BackendManager) CleanupStaleMultipartUploads(ctx context.Context, older
 		return
 	}
 
+	cleaned := 0
 	for _, mu := range uploads {
 		slog.Info("Cleaning up stale multipart upload", "upload_id", mu.UploadID, "key", mu.ObjectKey)
 		if err := m.AbortMultipartUpload(ctx, mu.UploadID); err != nil {
 			slog.Error("Failed to clean up upload", "upload_id", mu.UploadID, "error", err)
+		} else {
+			cleaned++
 		}
+	}
+
+	if cleaned > 0 {
+		audit.Log(ctx, "storage.MultipartCleanup",
+			slog.Int("cleaned", cleaned),
+			slog.Int("total_stale", len(uploads)),
+		)
 	}
 }

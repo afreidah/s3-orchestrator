@@ -351,6 +351,17 @@ var (
 		[]string{"operation"},
 	)
 
+	// --- Audit metrics ---
+
+	// AuditEventsTotal counts audit log entries by event type.
+	AuditEventsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "s3proxy_audit_events_total",
+			Help: "Total number of audit log entries emitted",
+		},
+		[]string{"event"},
+	)
+
 	// --- Info metric ---
 
 	// BuildInfo exposes version information.

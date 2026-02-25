@@ -316,6 +316,22 @@ _, err := client.DeleteObject(context.Background(), &s3.DeleteObjectInput{
 })
 ```
 
+## Request Tracing
+
+Every response from the orchestrator includes an `X-Amz-Request-Id` header with a unique ID for that request. When reporting issues to your admin, include this ID so they can look up the full request trace in the audit logs.
+
+You can also supply your own correlation ID by sending an `X-Request-Id` header with your request. The orchestrator will use your ID instead of generating one and return it in the response.
+
+```bash
+# Check the request ID in a response
+s3o s3api put-object --bucket app1-files --key test.txt --body test.txt 2>&1 | grep -i request-id
+
+# Supply your own correlation ID
+curl -H "X-Request-Id: my-trace-123" \
+     http://s3-orchestrator.service.consul:9000/app1-files/test.txt
+# Response header: X-Amz-Request-Id: my-trace-123
+```
+
 ## Limitations
 
 The orchestrator implements a practical subset of the S3 API. A few things to be aware of:

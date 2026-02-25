@@ -18,6 +18,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/audit"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 )
@@ -42,6 +43,13 @@ type rebalanceMove struct {
 // Returns the number of objects successfully moved.
 func (m *BackendManager) Rebalance(ctx context.Context, cfg config.RebalanceConfig) (int, error) {
 	start := time.Now()
+	ctx = audit.WithRequestID(ctx, audit.NewID())
+
+	audit.Log(ctx, "rebalance.start",
+		slog.String("strategy", cfg.Strategy),
+		slog.Int("batch_size", cfg.BatchSize),
+		slog.Float64("threshold", cfg.Threshold),
+	)
 
 	// --- Get current quota stats ---
 	stats, err := m.store.GetQuotaStats(ctx)
@@ -84,6 +92,13 @@ func (m *BackendManager) Rebalance(ctx context.Context, cfg config.RebalanceConf
 
 	telemetry.RebalanceRunsTotal.WithLabelValues(cfg.Strategy, "success").Inc()
 	telemetry.RebalanceDuration.WithLabelValues(cfg.Strategy).Observe(time.Since(start).Seconds())
+
+	audit.Log(ctx, "rebalance.complete",
+		slog.String("strategy", cfg.Strategy),
+		slog.Int("objects_moved", moved),
+		slog.Int("planned", len(plan)),
+		slog.Duration("duration", time.Since(start)),
+	)
 
 	return moved, nil
 }
@@ -420,6 +435,13 @@ func (m *BackendManager) executeMoves(ctx context.Context, plan []rebalanceMove,
 
 		m.usage.Record(move.FromBackend, 2, movedSize, 0) // Get + Delete, egress
 		m.usage.Record(move.ToBackend, 1, 0, movedSize)   // Put, ingress
+
+		audit.Log(ctx, "rebalance.move",
+			slog.String("key", move.ObjectKey),
+			slog.String("from_backend", move.FromBackend),
+			slog.String("to_backend", move.ToBackend),
+			slog.Int64("size", movedSize),
+		)
 
 		moved++
 		telemetry.RebalanceObjectsMoved.WithLabelValues(strategy, "success").Inc()
