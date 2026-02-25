@@ -1,0 +1,38 @@
+# -------------------------------------------------------------------------------
+# S3 Orchestrator - Default Environment Variables
+#
+# Author: Alex Freidah
+#
+# Environment variables referenced by config.yaml via ${VAR} syntax. Sourced
+# automatically by the systemd service unit. Uncomment and set values as needed.
+# -------------------------------------------------------------------------------
+
+# --- Database credentials ---
+#DB_HOST=localhost
+#DB_PORT=5432
+#DB_NAME=s3_orchestrator
+#DB_USER=s3_orchestrator
+#DB_PASSWORD=changeme
+#DB_SSL_MODE=require
+
+# --- Backend credentials (example for two backends) ---
+#BACKEND1_NAME=primary
+#BACKEND1_ENDPOINT=https://s3.example.com
+#BACKEND1_REGION=us-east-1
+#BACKEND1_BUCKET=my-bucket
+#BACKEND1_ACCESS_KEY=AKIAEXAMPLE
+#BACKEND1_SECRET_KEY=changeme
+
+#BACKEND2_NAME=secondary
+#BACKEND2_ENDPOINT=https://s3.backup.example.com
+#BACKEND2_REGION=us-west-2
+#BACKEND2_BUCKET=my-bucket-backup
+#BACKEND2_ACCESS_KEY=AKIAEXAMPLE2
+#BACKEND2_SECRET_KEY=changeme
+
+# --- Bucket client credentials ---
+#BUCKET_ACCESS_KEY=client-access-key
+#BUCKET_SECRET_KEY=client-secret-key
+
+# --- Telemetry ---
+#TRACING_ENDPOINT=localhost:4317

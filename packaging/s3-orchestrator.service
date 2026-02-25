@@ -1,0 +1,41 @@
+# -------------------------------------------------------------------------------
+# S3 Orchestrator - Systemd Service Unit
+#
+# Author: Alex Freidah
+#
+# Manages the s3-orchestrator process as a systemd service. Runs as a dedicated
+# system user with filesystem and privilege hardening. Supports graceful config
+# reload via SIGHUP and optional environment variable overrides.
+# -------------------------------------------------------------------------------
+
+[Unit]
+Description=S3 Orchestrator - Unified S3 Storage Endpoint
+Documentation=https://github.com/afreidah/s3-orchestrator
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=s3-orchestrator
+Group=s3-orchestrator
+
+ExecStart=/usr/bin/s3-orchestrator -config /etc/s3-orchestrator/config.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+
+Restart=on-failure
+RestartSec=5s
+
+# --- Optional environment overrides for ${VAR} expansion in config.yaml ---
+EnvironmentFile=-/etc/default/s3-orchestrator
+
+# --- Resource limits ---
+LimitNOFILE=65536
+
+# --- Security hardening ---
+ProtectSystem=strict
+ProtectHome=yes
+NoNewPrivileges=yes
+ReadWritePaths=/var/lib/s3-orchestrator
+
+[Install]
+WantedBy=multi-user.target
