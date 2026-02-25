@@ -1,0 +1,99 @@
+# -------------------------------------------------------------------------------
+# nfpm Configuration - Debian Package Build
+#
+# Author: Alex Freidah
+#
+# Defines package metadata and contents for building .deb packages via nfpm.
+# Includes systemd service, sample config, default env file, and maintainer
+# scripts for user creation and cleanup.
+# -------------------------------------------------------------------------------
+
+name: s3-orchestrator
+arch: ${GOARCH}
+platform: linux
+version: ${VERSION}
+release: 1
+section: admin
+priority: optional
+maintainer: Alex Freidah <alex.freidah@gmail.com>
+description: |
+  Unified S3-compatible storage endpoint. Routes requests across multiple
+  S3 backends with quota management, replication, and usage tracking.
+vendor: Munchbox
+homepage: https://github.com/afreidah/s3-orchestrator
+
+# -------------------------------------------------------------------------
+# PACKAGE CONTENTS
+# -------------------------------------------------------------------------
+
+contents:
+  # --- Binary ---
+  - src: ./dist/s3-orchestrator
+    dst: /usr/bin/s3-orchestrator
+    file_info:
+      mode: 0755
+
+  # --- Systemd unit ---
+  - src: ./packaging/s3-orchestrator.service
+    dst: /usr/lib/systemd/system/s3-orchestrator.service
+    file_info:
+      mode: 0644
+
+  # --- Default environment file ---
+  - src: ./packaging/s3-orchestrator.default
+    dst: /etc/default/s3-orchestrator
+    type: config|noreplace
+    file_info:
+      mode: 0640
+
+  # --- Config directory ---
+  - dst: /etc/s3-orchestrator
+    type: dir
+    file_info:
+      mode: 0750
+
+  # --- Sample config (marked as conffile, preserved on upgrade) ---
+  - src: ./packaging/config.yaml
+    dst: /etc/s3-orchestrator/config.yaml
+    type: config|noreplace
+    file_info:
+      mode: 0640
+
+  # --- Data directory ---
+  - dst: /var/lib/s3-orchestrator
+    type: dir
+    file_info:
+      mode: 0750
+
+  # --- Documentation ---
+  - src: ./packaging/copyright
+    dst: /usr/share/doc/s3-orchestrator/copyright
+    file_info:
+      mode: 0644
+
+  - src: ./packaging/changelog.gz
+    dst: /usr/share/doc/s3-orchestrator/changelog.Debian.gz
+    file_info:
+      mode: 0644
+
+  # --- Lintian overrides ---
+  - src: ./packaging/lintian-overrides
+    dst: /usr/share/lintian/overrides/s3-orchestrator
+    file_info:
+      mode: 0644
+
+# -------------------------------------------------------------------------
+# PACKAGE SCRIPTS
+# -------------------------------------------------------------------------
+
+scripts:
+  preinstall: ./packaging/preinstall.sh
+  postinstall: ./packaging/postinstall.sh
+  postremove: ./packaging/postremove.sh
+
+# -------------------------------------------------------------------------
+# DEPENDENCIES
+# -------------------------------------------------------------------------
+
+depends:
+  - systemd

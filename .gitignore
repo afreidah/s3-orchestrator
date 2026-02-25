@@ -1,3 +1,6 @@
 /s3-orchestrator
 config.yaml
 *.test
+dist/
+*.deb
+packaging/changelog.gz
