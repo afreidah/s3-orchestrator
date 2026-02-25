@@ -1,0 +1,5 @@
+s3-orchestrator (0.6.0-1) stable; urgency=low
+
+  * Initial Debian packaging
+
+ -- Alex Freidah <alex.freidah@gmail.com>  Wed, 25 Feb 2026 00:00:00 +0000
