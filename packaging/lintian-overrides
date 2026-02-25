@@ -1,0 +1,17 @@
+# Go produces statically linked binaries by design
+s3-orchestrator: statically-linked-binary [usr/bin/s3-orchestrator]
+
+# No man page for this service
+s3-orchestrator: no-manual-page [usr/bin/s3-orchestrator]
+
+# Intentional restrictive permissions - config contains database and backend secrets
+s3-orchestrator: non-standard-dir-perm 0750 != 0755 [etc/s3-orchestrator/]
+s3-orchestrator: non-standard-dir-perm 0750 != 0755 [var/lib/s3-orchestrator/]
+s3-orchestrator: non-standard-file-perm 0640 != 0644 [etc/default/s3-orchestrator]
+s3-orchestrator: non-standard-file-perm 0640 != 0644 [etc/s3-orchestrator/config.yaml]
+
+# Private package, not uploaded to Debian archive
+s3-orchestrator: initial-upload-closes-no-bugs [usr/share/doc/s3-orchestrator/changelog.Debian.gz:1]
+
+# Private package uses direct systemctl calls rather than deb-systemd-helper
+s3-orchestrator: maintainer-script-calls-systemctl [postinst:14]
