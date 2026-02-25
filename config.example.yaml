@@ -14,6 +14,15 @@ server:
   # Maximum upload size in bytes (default: 5 GB)
   # max_object_size: 5368709120
 
+  # TLS configuration. When cert_file and key_file are both set, the server
+  # listens with TLS. Omit both for plain HTTP. Certificates are hot-reloaded
+  # on SIGHUP without dropping connections.
+  # tls:
+  #   cert_file: "/etc/s3-orchestrator/tls/cert.pem"
+  #   key_file: "/etc/s3-orchestrator/tls/key.pem"
+  #   min_version: "1.2"           # "1.2" (default) or "1.3"
+  #   client_ca_file: ""           # Path to CA bundle for mTLS client verification
+
 # Virtual buckets with per-bucket credentials. Each bucket gets its own
 # namespace via internal key prefixing. Multiple services can share a bucket
 # by each having their own credentials.
