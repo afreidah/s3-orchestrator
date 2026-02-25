@@ -1,5 +1,5 @@
 /s3-orchestrator
-config.yaml
+/config.yaml
 *.test
 dist/
 *.deb
