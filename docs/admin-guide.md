@@ -504,10 +504,27 @@ If `telemetry.metrics.enabled` is `true`, metrics are exposed at `/metrics`. Key
 | `s3proxy_degraded_write_rejections_total` | Writes being rejected due to degraded mode |
 | `s3proxy_usage_limit_rejections_total` | Operations rejected by usage limits |
 | `s3proxy_rate_limit_rejections_total` | Requests rejected by per-IP rate limiting |
+| `s3proxy_audit_events_total{event="..."}` | Audit log volume by event type — useful for detecting unusual activity |
 
 ### Structured logs
 
 All logs are JSON to stdout. Key fields: `msg`, `level`, `error`, `backend`, `operation`.
+
+**Audit logs** are a subset of structured logs with `"audit": true`. Every S3 API request and significant internal operation emits an audit entry with a `request_id` for correlation. Filter audit entries in your log pipeline with a JSON query on the `audit` field.
+
+Key audit events:
+
+| Event | Source | Description |
+|-------|--------|-------------|
+| `s3.PutObject`, `s3.GetObject`, etc. | HTTP layer | S3 API request with method, path, bucket, status, duration |
+| `storage.PutObject`, `storage.GetObject`, etc. | Storage layer | Backend operation with key, backend name, size |
+| `rebalance.start`, `rebalance.move`, `rebalance.complete` | Rebalancer | Object redistribution runs |
+| `replication.start`, `replication.copy`, `replication.complete` | Replicator | Replica creation runs |
+| `storage.MultipartCleanup` | Multipart cleanup | Stale upload cleanup |
+
+Each S3 API request produces two correlated audit entries (HTTP-level and storage-level) sharing the same `request_id`. Internal operations (rebalance, replication) generate their own correlation IDs. The `request_id` also appears as a `s3proxy.request_id` attribute on OpenTelemetry spans.
+
+Clients can supply their own correlation ID via the `X-Request-Id` request header; otherwise the orchestrator generates one. The ID is returned in the `X-Amz-Request-Id` response header.
 
 ## Common Operations
 
@@ -599,7 +616,7 @@ To perform a zero-downtime credential rotation, temporarily add both old and new
 make build
 
 # Multi-arch build and push to registry with version tag
-make push VERSION=v0.5.2
+make push VERSION=v0.6.0
 ```
 
 The `VERSION` is baked into the binary via `-ldflags` and displayed in the web UI and `/health` endpoint. Use versioned tags (not `latest`) to avoid Docker layer caching issues on orchestration platforms.

@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/audit"
 	"github.com/afreidah/s3-orchestrator/internal/storage"
 )
 
@@ -33,10 +34,11 @@ func (s *usageFlushService) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ticker.C:
-			if err := s.manager.FlushUsage(ctx); err != nil && !errors.Is(err, storage.ErrDBUnavailable) {
+			tickCtx := audit.WithRequestID(ctx, audit.NewID())
+			if err := s.manager.FlushUsage(tickCtx); err != nil && !errors.Is(err, storage.ErrDBUnavailable) {
 				slog.Error("Failed to flush usage counters", "error", err)
 			}
-			if err := s.manager.UpdateQuotaMetrics(ctx); err != nil && !errors.Is(err, storage.ErrDBUnavailable) {
+			if err := s.manager.UpdateQuotaMetrics(tickCtx); err != nil && !errors.Is(err, storage.ErrDBUnavailable) {
 				slog.Error("Failed to update quota metrics", "error", err)
 			}
 		case <-ctx.Done():
@@ -59,7 +61,8 @@ func (s *multipartCleanupService) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ticker.C:
-			s.manager.CleanupStaleMultipartUploads(ctx, 24*time.Hour)
+			tickCtx := audit.WithRequestID(ctx, audit.NewID())
+			s.manager.CleanupStaleMultipartUploads(tickCtx, 24*time.Hour)
 		case <-ctx.Done():
 			return nil
 		}
