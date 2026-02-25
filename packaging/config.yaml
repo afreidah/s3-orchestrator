@@ -1,0 +1,95 @@
+# -------------------------------------------------------------------------------
+# S3 Orchestrator - Sample Configuration
+#
+# Author: Alex Freidah
+#
+# Reference configuration with all available options. Values use ${VAR} syntax
+# for environment variable expansion. Set variables in /etc/default/s3-orchestrator
+# or export them before starting the service.
+# -------------------------------------------------------------------------------
+
+# --- HTTP server settings ---
+server:
+  listen_addr: ":9000"
+  # max_object_size: 5368709120   # 5 GB (default)
+  # backend_timeout: 30s          # Per-operation timeout for backend S3 calls
+
+# --- PostgreSQL connection ---
+database:
+  host: ${DB_HOST}
+  port: ${DB_PORT}
+  database: ${DB_NAME}
+  user: ${DB_USER}
+  password: ${DB_PASSWORD}
+  ssl_mode: ${DB_SSL_MODE}
+  # max_conns: 10
+  # min_conns: 5
+  # max_conn_lifetime: 5m
+
+# --- Virtual buckets exposed to clients ---
+buckets:
+  - name: default
+    credentials:
+      - access_key_id: ${BUCKET_ACCESS_KEY}
+        secret_access_key: ${BUCKET_SECRET_KEY}
+
+# --- Storage backends ---
+backends:
+  - name: ${BACKEND1_NAME}
+    endpoint: ${BACKEND1_ENDPOINT}
+    region: ${BACKEND1_REGION}
+    bucket: ${BACKEND1_BUCKET}
+    access_key_id: ${BACKEND1_ACCESS_KEY}
+    secret_access_key: ${BACKEND1_SECRET_KEY}
+    # force_path_style: false
+    # unsigned_payload: true       # Stream uploads without buffering
+    # quota_bytes: 0               # 0 = unlimited
+    # api_request_limit: 0         # Monthly API request cap (0 = unlimited)
+    # egress_byte_limit: 0         # Monthly egress cap (0 = unlimited)
+    # ingress_byte_limit: 0        # Monthly ingress cap (0 = unlimited)
+
+# --- Object routing ---
+# routing_strategy: pack          # "pack" fills backends sequentially, "spread" distributes evenly
+
+# --- Background rebalancer (disabled by default) ---
+# rebalance:
+#   enabled: false
+#   strategy: pack                # "pack" or "spread"
+#   interval: 6h
+#   batch_size: 100
+#   threshold: 0.1               # Min utilization spread to trigger
+
+# --- Cross-backend replication (disabled when factor=1) ---
+# replication:
+#   factor: 1                    # Number of copies per object
+#   worker_interval: 5m
+#   batch_size: 50
+
+# --- Per-IP rate limiting (disabled by default) ---
+# rate_limit:
+#   enabled: false
+#   requests_per_sec: 100
+#   burst: 200
+#   trusted_proxies: []          # CIDRs whose X-Forwarded-For is trusted
+
+# --- Circuit breaker for database failures ---
+# circuit_breaker:
+#   failure_threshold: 3         # Consecutive failures before opening
+#   open_timeout: 15s            # Delay before probing recovery
+#   cache_ttl: 60s               # TTL for degraded-mode read cache
+
+# --- Prometheus metrics ---
+# telemetry:
+#   metrics:
+#     enabled: false
+#     path: /metrics
+#   tracing:
+#     enabled: false
+#     endpoint: ${TRACING_ENDPOINT}
+#     sample_rate: 1.0
+#     insecure: false
+
+# --- Web dashboard (disabled by default) ---
+# ui:
+#   enabled: false
+#   path: /ui
