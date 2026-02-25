@@ -1,11 +1,11 @@
 // -------------------------------------------------------------------------------
-// Metrics Recording - Quota and Usage Gauge Updates
+// MetricsCollector - Prometheus Gauge and Counter Updates
 //
 // Author: Alex Freidah
 //
-// Periodic refresh of Prometheus gauge metrics from PostgreSQL. Reads quota stats,
-// object counts, multipart counts, and monthly usage from the store and updates
-// the corresponding Prometheus gauges. Called every 30 seconds by the main loop.
+// Owns Prometheus metric recording for manager operations and periodic gauge
+// refreshes from PostgreSQL. Reads quota stats, object counts, multipart counts,
+// and monthly usage from the store and updates the corresponding gauges.
 // -------------------------------------------------------------------------------
 
 package storage
@@ -13,18 +13,46 @@ package storage
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 )
 
-// -------------------------------------------------------------------------
-// QUOTA METRICS
-// -------------------------------------------------------------------------
+// MetricsCollector records Prometheus metrics for manager-level operations
+// and periodically refreshes gauge values from the metadata store.
+type MetricsCollector struct {
+	store        MetadataStore
+	usage        *UsageTracker
+	backendNames []string
+}
 
-// UpdateQuotaMetrics fetches quota stats, object counts, and active multipart
-// upload counts, then updates the corresponding Prometheus gauges.
-func (m *BackendManager) UpdateQuotaMetrics(ctx context.Context) error {
-	stats, err := m.store.GetQuotaStats(ctx)
+// NewMetricsCollector creates a MetricsCollector with references to the store
+// and usage tracker needed for gauge refreshes.
+func NewMetricsCollector(store MetadataStore, usage *UsageTracker, backendNames []string) *MetricsCollector {
+	return &MetricsCollector{
+		store:        store,
+		usage:        usage,
+		backendNames: backendNames,
+	}
+}
+
+// RecordOperation updates Prometheus request count and duration metrics
+// for a single manager operation.
+func (mc *MetricsCollector) RecordOperation(operation, backend string, start time.Time, err error) {
+	status := "success"
+	if err != nil {
+		status = "error"
+	}
+
+	telemetry.ManagerRequestsTotal.WithLabelValues(operation, backend, status).Inc()
+	telemetry.ManagerDuration.WithLabelValues(operation, backend).Observe(time.Since(start).Seconds())
+}
+
+// UpdateQuotaMetrics fetches quota stats, object counts, active multipart
+// upload counts, and monthly usage, then updates the corresponding Prometheus
+// gauges and caches usage baselines for limit enforcement.
+func (mc *MetricsCollector) UpdateQuotaMetrics(ctx context.Context) error {
+	stats, err := mc.store.GetQuotaStats(ctx)
 	if err != nil {
 		return err
 	}
@@ -32,7 +60,6 @@ func (m *BackendManager) UpdateQuotaMetrics(ctx context.Context) error {
 	for name, stat := range stats {
 		telemetry.QuotaBytesUsed.WithLabelValues(name).Set(float64(stat.BytesUsed))
 		if stat.BytesLimit == 0 {
-			// Unlimited — no meaningful limit or available metric
 			telemetry.QuotaBytesLimit.WithLabelValues(name).Set(0)
 			telemetry.QuotaBytesAvailable.WithLabelValues(name).Set(0)
 		} else {
@@ -42,11 +69,10 @@ func (m *BackendManager) UpdateQuotaMetrics(ctx context.Context) error {
 	}
 
 	// --- Object counts per backend ---
-	objCounts, err := m.store.GetObjectCounts(ctx)
+	objCounts, err := mc.store.GetObjectCounts(ctx)
 	if err != nil {
 		slog.Error("Failed to get object counts", "error", err)
 	} else {
-		// Reset to zero for backends with no objects, then set actual counts
 		for name := range stats {
 			telemetry.ObjectCount.WithLabelValues(name).Set(0)
 		}
@@ -56,7 +82,7 @@ func (m *BackendManager) UpdateQuotaMetrics(ctx context.Context) error {
 	}
 
 	// --- Active multipart uploads per backend ---
-	mpCounts, err := m.store.GetActiveMultipartCounts(ctx)
+	mpCounts, err := mc.store.GetActiveMultipartCounts(ctx)
 	if err != nil {
 		slog.Error("Failed to get multipart upload counts", "error", err)
 	} else {
@@ -69,7 +95,7 @@ func (m *BackendManager) UpdateQuotaMetrics(ctx context.Context) error {
 	}
 
 	// --- Monthly usage per backend ---
-	usage, err := m.store.GetUsageForPeriod(ctx, currentPeriod())
+	usage, err := mc.store.GetUsageForPeriod(ctx, currentPeriod())
 	if err != nil {
 		slog.Error("Failed to get usage stats", "error", err)
 	} else {
@@ -86,14 +112,10 @@ func (m *BackendManager) UpdateQuotaMetrics(ctx context.Context) error {
 
 		// Cache baseline for usage limit enforcement. Reset all backends
 		// first so period rollover (new month with no rows) zeroes out.
-		m.usageBaselineMu.Lock()
-		for name := range m.backends {
-			m.usageBaseline[name] = UsageStat{}
-		}
+		mc.usage.ResetBaselines(mc.backendNames)
 		for name, u := range usage {
-			m.usageBaseline[name] = u
+			mc.usage.SetBaseline(name, u)
 		}
-		m.usageBaselineMu.Unlock()
 	}
 
 	return nil

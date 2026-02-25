@@ -425,6 +425,9 @@ make run
 # Lint
 make lint
 
+# Static analysis
+make vet
+
 # Run unit tests
 make test
 
@@ -475,12 +478,14 @@ internal/
     metadata.go              MetadataStore interface, sentinel errors
     store.go                 PostgreSQL storage layer (pgx/v5 + sqlc)
     circuitbreaker.go        Three-state circuit breaker wrapper
-    manager.go               Multi-backend routing, quota selection, cache
+    manager.go               Multi-backend routing, quota selection, shared helpers
     manager_objects.go       Object CRUD with read failover + broadcast
     manager_multipart.go     Multipart upload lifecycle
-    manager_usage.go         Usage tracking flush + period helpers
-    manager_metrics.go       Quota metric recording
-    manager_dashboard.go     Dashboard data aggregation + lazy directory listing
+    manager_dashboard.go     DashboardData type + thin wrappers
+    location_cache.go        Key→backend cache with TTL + background eviction
+    usage_tracker.go         Atomic usage counters, limit enforcement, flush
+    metrics_collector.go     Prometheus metric recording + gauge refresh
+    dashboard_aggregator.go  Dashboard data aggregation + lazy directory listing
     rebalancer.go            Object rebalancing across backends
     replicator.go            Cross-backend object replication
     sqlc/

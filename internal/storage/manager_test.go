@@ -55,7 +55,7 @@ func TestUpdateUsageLimits_SwapsLimits(t *testing.T) {
 	mgr := newUsageManagerWithLimits([]string{"b1"}, &mockStore{}, limits)
 
 	// Initially within limits
-	if !mgr.withinUsageLimits("b1", 50, 0, 0) {
+	if !mgr.usage.WithinLimits("b1", 50, 0, 0) {
 		t.Fatal("should be within initial limits")
 	}
 
@@ -65,11 +65,11 @@ func TestUpdateUsageLimits_SwapsLimits(t *testing.T) {
 	})
 
 	// Now 50 should exceed the new limit
-	if mgr.withinUsageLimits("b1", 50, 0, 0) {
+	if mgr.usage.WithinLimits("b1", 50, 0, 0) {
 		t.Error("should exceed updated limit of 10")
 	}
 	// But 5 should still be within limits
-	if !mgr.withinUsageLimits("b1", 5, 0, 0) {
+	if !mgr.usage.WithinLimits("b1", 5, 0, 0) {
 		t.Error("should be within updated limit of 10")
 	}
 }
@@ -151,7 +151,7 @@ func TestUpdateUsageLimits_ConcurrentAccess(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 100; j++ {
-				_ = mgr.withinUsageLimits("b1", 1, 0, 0)
+				_ = mgr.usage.WithinLimits("b1", 1, 0, 0)
 			}
 		}()
 	}

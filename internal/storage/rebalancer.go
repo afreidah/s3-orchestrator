@@ -418,8 +418,8 @@ func (m *BackendManager) executeMoves(ctx context.Context, plan []rebalanceMove,
 		}
 		delcancel()
 
-		m.recordUsage(move.FromBackend, 2, movedSize, 0) // Get + Delete, egress
-		m.recordUsage(move.ToBackend, 1, 0, movedSize)   // Put, ingress
+		m.usage.Record(move.FromBackend, 2, movedSize, 0) // Get + Delete, egress
+		m.usage.Record(move.ToBackend, 1, 0, movedSize)   // Put, ingress
 
 		moved++
 		telemetry.RebalanceObjectsMoved.WithLabelValues(strategy, "success").Inc()
