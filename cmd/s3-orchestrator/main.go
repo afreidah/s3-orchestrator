@@ -12,19 +12,18 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"runtime"
-	"sync"
 	"syscall"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/auth"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/server"
 	"github.com/afreidah/s3-orchestrator/internal/storage"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
@@ -146,47 +145,13 @@ func runServe() {
 		slog.Warn("Failed to update initial quota metrics", "error", err)
 	}
 
-	// --- Start background tasks with cancellable context ---
-	bgCtx, bgCancel := context.WithCancel(context.Background())
-	defer bgCancel()
-	var bgWg sync.WaitGroup
+	// --- Start background services with lifecycle manager ---
+	sm := lifecycle.NewManager()
+	sm.Register("usage-flush", &usageFlushService{manager: manager})
+	sm.Register("multipart-cleanup", &multipartCleanupService{manager: manager})
+	sm.Register("rebalancer", &rebalancerService{manager: manager})
+	sm.Register("replicator", &replicatorService{manager: manager})
 
-	bgWg.Add(1)
-	go func() {
-		defer bgWg.Done()
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				if err := manager.FlushUsage(bgCtx); err != nil && !errors.Is(err, storage.ErrDBUnavailable) {
-					slog.Error("Failed to flush usage counters", "error", err)
-				}
-				if err := manager.UpdateQuotaMetrics(bgCtx); err != nil && !errors.Is(err, storage.ErrDBUnavailable) {
-					slog.Error("Failed to update quota metrics", "error", err)
-				}
-			case <-bgCtx.Done():
-				return
-			}
-		}
-	}()
-
-	bgWg.Add(1)
-	go func() {
-		defer bgWg.Done()
-		ticker := time.NewTicker(1 * time.Hour)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				manager.CleanupStaleMultipartUploads(bgCtx, 24*time.Hour)
-			case <-bgCtx.Done():
-				return
-			}
-		}
-	}()
-
-	// --- Rebalancer background task (always runs, skips when disabled) ---
 	if cfg.Rebalance.Enabled {
 		slog.Info("Rebalancer enabled",
 			"strategy", cfg.Rebalance.Strategy,
@@ -195,32 +160,6 @@ func runServe() {
 			"threshold", cfg.Rebalance.Threshold,
 		)
 	}
-	bgWg.Add(1)
-	go func() {
-		defer bgWg.Done()
-		ticker := time.NewTicker(1 * time.Minute)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				rcfg := manager.RebalanceConfig()
-				if rcfg == nil || !rcfg.Enabled {
-					continue
-				}
-				moved, err := manager.Rebalance(bgCtx, *rcfg)
-				if err != nil && !errors.Is(err, storage.ErrDBUnavailable) {
-					slog.Error("Rebalance failed", "error", err)
-				} else if moved > 0 {
-					slog.Info("Rebalance completed", "objects_moved", moved)
-					_ = manager.UpdateQuotaMetrics(bgCtx)
-				}
-			case <-bgCtx.Done():
-				return
-			}
-		}
-	}()
-
-	// --- Replication worker background task (always runs, skips when disabled) ---
 	if cfg.Replication.Factor > 1 {
 		slog.Info("Replication worker enabled",
 			"factor", cfg.Replication.Factor,
@@ -228,42 +167,13 @@ func runServe() {
 			"batch_size", cfg.Replication.BatchSize,
 		)
 	}
-	bgWg.Add(1)
+
+	bgCtx, bgCancel := context.WithCancel(context.Background())
+	defer bgCancel()
+	bgDone := make(chan struct{})
 	go func() {
-		defer bgWg.Done()
-
-		// Run once at startup to catch up on pending replicas
-		rcfg := manager.ReplicationConfig()
-		if rcfg != nil && rcfg.Factor > 1 {
-			created, err := manager.Replicate(bgCtx, *rcfg)
-			if err != nil && !errors.Is(err, storage.ErrDBUnavailable) {
-				slog.Error("Replication startup run failed", "error", err)
-			} else if created > 0 {
-				slog.Info("Replication startup run completed", "copies_created", created)
-				_ = manager.UpdateQuotaMetrics(bgCtx)
-			}
-		}
-
-		ticker := time.NewTicker(1 * time.Minute)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				rcfg := manager.ReplicationConfig()
-				if rcfg == nil || rcfg.Factor <= 1 {
-					continue
-				}
-				created, err := manager.Replicate(bgCtx, *rcfg)
-				if err != nil && !errors.Is(err, storage.ErrDBUnavailable) {
-					slog.Error("Replication failed", "error", err)
-				} else if created > 0 {
-					slog.Info("Replication completed", "copies_created", created)
-					_ = manager.UpdateQuotaMetrics(bgCtx)
-				}
-			case <-bgCtx.Done():
-				return
-			}
-		}
+		sm.Run(bgCtx)
+		close(bgDone)
 	}()
 
 	// --- Build bucket registry ---
@@ -426,9 +336,10 @@ func runServe() {
 			rl.Close()
 		}
 
-		// Stop background goroutines and wait for them to finish
+		// Stop background services and wait for them to finish
 		bgCancel()
-		bgWg.Wait()
+		<-bgDone
+		sm.Stop(10 * time.Second)
 
 		// Stop cache eviction goroutine
 		manager.Close()
