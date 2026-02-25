@@ -14,6 +14,14 @@ server:
   # max_object_size: 5368709120   # 5 GB (default)
   # backend_timeout: 30s          # Per-operation timeout for backend S3 calls
 
+  # --- TLS (omit both cert_file and key_file for plain HTTP) ---
+  # Certificates are hot-reloaded on SIGHUP without dropping connections.
+  # tls:
+  #   cert_file: "/etc/s3-orchestrator/tls/cert.pem"
+  #   key_file: "/etc/s3-orchestrator/tls/key.pem"
+  #   min_version: "1.2"           # "1.2" (default) or "1.3"
+  #   client_ca_file: ""           # CA bundle for mTLS client verification
+
 # --- PostgreSQL connection ---
 database:
   host: ${DB_HOST}
