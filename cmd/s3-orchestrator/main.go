@@ -12,6 +12,8 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"flag"
 	"log/slog"
 	"net/http"
@@ -235,6 +237,38 @@ func runServe() {
 		IdleTimeout:  120 * time.Second,
 	}
 
+	// --- Configure TLS if cert and key are provided ---
+	var certReloader *server.CertReloader
+	if cfg.Server.TLS.CertFile != "" {
+		certReloader, err = server.NewCertReloader(cfg.Server.TLS.CertFile, cfg.Server.TLS.KeyFile)
+		if err != nil {
+			slog.Error("Failed to load TLS certificate", "error", err)
+			os.Exit(1)
+		}
+
+		tlsCfg := &tls.Config{
+			GetCertificate: certReloader.GetCertificate,
+			MinVersion:     parseTLSVersion(cfg.Server.TLS.MinVersion),
+		}
+
+		if cfg.Server.TLS.ClientCAFile != "" {
+			caCert, err := os.ReadFile(cfg.Server.TLS.ClientCAFile)
+			if err != nil {
+				slog.Error("Failed to read client CA file", "error", err)
+				os.Exit(1)
+			}
+			caPool := x509.NewCertPool()
+			if !caPool.AppendCertsFromPEM(caCert) {
+				slog.Error("Failed to parse client CA certificate")
+				os.Exit(1)
+			}
+			tlsCfg.ClientAuth = tls.RequireAndVerifyClientCert
+			tlsCfg.ClientCAs = caPool
+		}
+
+		httpServer.TLSConfig = tlsCfg
+	}
+
 	// --- Handle SIGHUP for config reload ---
 	hupChan := make(chan os.Signal, 1)
 	signal.Notify(hupChan, syscall.SIGHUP)
@@ -252,6 +286,13 @@ func runServe() {
 			if warnings := config.NonReloadableFieldsChanged(cfg, newCfg); len(warnings) > 0 {
 				for _, w := range warnings {
 					slog.Warn("Config field changed but requires restart to take effect", "field", w)
+				}
+			}
+
+			// Reload TLS certificate from disk
+			if certReloader != nil {
+				if err := certReloader.Reload(); err != nil {
+					slog.Error("Failed to reload TLS certificate", "error", err)
 				}
 			}
 
@@ -379,8 +420,21 @@ func runServe() {
 		)
 	}
 
+	if cfg.Server.TLS.CertFile != "" {
+		slog.Info("TLS enabled",
+			"cert_file", cfg.Server.TLS.CertFile,
+			"min_version", cfg.Server.TLS.MinVersion,
+			"mtls", cfg.Server.TLS.ClientCAFile != "",
+		)
+	}
+
 	// --- Start server ---
-	if err := httpServer.ListenAndServe(); err != http.ErrServerClosed {
+	if httpServer.TLSConfig != nil {
+		err = httpServer.ListenAndServeTLS("", "") // certs provided via GetCertificate
+	} else {
+		err = httpServer.ListenAndServe()
+	}
+	if err != nil && err != http.ErrServerClosed {
 		slog.Error("Server error", "error", err)
 		os.Exit(1)
 	}
@@ -389,4 +443,14 @@ func runServe() {
 	<-shutdownDone
 
 	slog.Info("Server stopped")
+}
+
+// parseTLSVersion maps a config string to a tls.VersionTLS constant.
+func parseTLSVersion(v string) uint16 {
+	switch v {
+	case "1.3":
+		return tls.VersionTLS13
+	default:
+		return tls.VersionTLS12
+	}
 }
