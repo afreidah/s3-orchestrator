@@ -18,6 +18,7 @@ import (
 	"errors"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -64,6 +65,7 @@ type CircuitBreakerStore struct {
 	lastFailure   time.Time
 	failThreshold int
 	openTimeout   time.Duration
+	probeInFlight atomic.Bool
 }
 
 // Compile-time check.
@@ -101,12 +103,14 @@ func (cb *CircuitBreakerStore) preCheck() error {
 		return nil
 	case stateOpen:
 		if time.Since(cb.lastFailure) >= cb.openTimeout {
+			if !cb.probeInFlight.CompareAndSwap(false, true) {
+				return ErrDBUnavailable // another probe already in flight
+			}
 			cb.transition(stateHalfOpen)
 			return nil // allow this request as the probe
 		}
 		return ErrDBUnavailable
 	case stateHalfOpen:
-		// Only one probe at a time — reject concurrent requests during probe.
 		return ErrDBUnavailable
 	}
 	return nil
@@ -134,6 +138,7 @@ func (cb *CircuitBreakerStore) onSuccess() {
 	defer cb.mu.Unlock()
 
 	if cb.state == stateHalfOpen {
+		cb.probeInFlight.Store(false)
 		cb.transition(stateClosed)
 	}
 	cb.failures = 0
@@ -150,6 +155,7 @@ func (cb *CircuitBreakerStore) onFailure() {
 
 	switch cb.state {
 	case stateHalfOpen:
+		cb.probeInFlight.Store(false)
 		cb.transition(stateOpen)
 	case stateClosed:
 		if cb.failures >= cb.failThreshold {

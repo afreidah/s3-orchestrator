@@ -633,9 +633,9 @@ func (s *slowMockBackend) PutObject(ctx context.Context, key string, body io.Rea
 
 func TestLocationCache_SetAndGet(t *testing.T) {
 	mgr := NewBackendManager(&BackendManagerConfig{CacheTTL: 5 * time.Second, RoutingStrategy: "pack"})
-	mgr.cacheSet("key1", "backend-a")
+	mgr.cache.Set("key1", "backend-a")
 
-	got, ok := mgr.cacheGet("key1")
+	got, ok := mgr.cache.Get("key1")
 	if !ok {
 		t.Fatal("expected cache hit")
 	}
@@ -646,11 +646,11 @@ func TestLocationCache_SetAndGet(t *testing.T) {
 
 func TestLocationCache_Expiry(t *testing.T) {
 	mgr := NewBackendManager(&BackendManagerConfig{CacheTTL: 10 * time.Millisecond, RoutingStrategy: "pack"})
-	mgr.cacheSet("key1", "backend-a")
+	mgr.cache.Set("key1", "backend-a")
 
 	time.Sleep(15 * time.Millisecond)
 
-	_, ok := mgr.cacheGet("key1")
+	_, ok := mgr.cache.Get("key1")
 	if ok {
 		t.Fatal("expected cache miss after TTL")
 	}
@@ -658,10 +658,10 @@ func TestLocationCache_Expiry(t *testing.T) {
 
 func TestLocationCache_Overwrite(t *testing.T) {
 	mgr := NewBackendManager(&BackendManagerConfig{CacheTTL: 5 * time.Second, RoutingStrategy: "pack"})
-	mgr.cacheSet("key1", "old-backend")
-	mgr.cacheSet("key1", "new-backend")
+	mgr.cache.Set("key1", "old-backend")
+	mgr.cache.Set("key1", "new-backend")
 
-	got, ok := mgr.cacheGet("key1")
+	got, ok := mgr.cache.Get("key1")
 	if !ok {
 		t.Fatal("expected cache hit")
 	}
@@ -677,7 +677,7 @@ func TestPutObject_InvalidatesCache(t *testing.T) {
 	defer mgr.Close()
 
 	// Pre-populate cache
-	mgr.cacheSet("mykey", "old-backend")
+	mgr.cache.Set("mykey", "old-backend")
 
 	_, err := mgr.PutObject(context.Background(), "mykey", bytes.NewReader([]byte("hello")), 5, "text/plain")
 	if err != nil {
@@ -685,7 +685,7 @@ func TestPutObject_InvalidatesCache(t *testing.T) {
 	}
 
 	// Cache entry should be gone after PutObject
-	if _, ok := mgr.cacheGet("mykey"); ok {
+	if _, ok := mgr.cache.Get("mykey"); ok {
 		t.Error("cache should be invalidated after PutObject")
 	}
 }
@@ -700,7 +700,7 @@ func TestDeleteObject_InvalidatesCache(t *testing.T) {
 	defer mgr.Close()
 
 	// Pre-populate cache
-	mgr.cacheSet("del-key", "b1")
+	mgr.cache.Set("del-key", "b1")
 
 	err := mgr.DeleteObject(context.Background(), "del-key")
 	if err != nil {
@@ -708,7 +708,7 @@ func TestDeleteObject_InvalidatesCache(t *testing.T) {
 	}
 
 	// Cache entry should be gone after DeleteObject
-	if _, ok := mgr.cacheGet("del-key"); ok {
+	if _, ok := mgr.cache.Get("del-key"); ok {
 		t.Error("cache should be invalidated after DeleteObject")
 	}
 }
@@ -748,9 +748,7 @@ func TestPutObject_UsageLimitOverflow(t *testing.T) {
 	mgr := newTestManagerWithLimits(store, map[string]*mockBackend{"b1": b1, "b2": b2}, limits)
 
 	// Push b1 over limit
-	mgr.usageBaselineMu.Lock()
-	mgr.usageBaseline["b1"] = UsageStat{APIRequests: 10}
-	mgr.usageBaselineMu.Unlock()
+	mgr.usage.SetBaseline("b1", UsageStat{APIRequests: 10})
 
 	etag, err := mgr.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain")
 	if err != nil {
@@ -787,9 +785,7 @@ func TestGetObject_UsageLimitSkipsBackend(t *testing.T) {
 	mgr := newTestManagerWithLimits(store, map[string]*mockBackend{"b1": b1, "b2": b2}, limits)
 
 	// Push b1 over limit
-	mgr.usageBaselineMu.Lock()
-	mgr.usageBaseline["b1"] = UsageStat{APIRequests: 10}
-	mgr.usageBaselineMu.Unlock()
+	mgr.usage.SetBaseline("b1", UsageStat{APIRequests: 10})
 
 	result, err := mgr.GetObject(context.Background(), "key", "")
 	if err != nil {
@@ -816,9 +812,7 @@ func TestGetObject_AllCopiesOverLimit(t *testing.T) {
 	}
 	mgr := newTestManagerWithLimits(store, map[string]*mockBackend{"b1": b1}, limits)
 
-	mgr.usageBaselineMu.Lock()
-	mgr.usageBaseline["b1"] = UsageStat{APIRequests: 10}
-	mgr.usageBaselineMu.Unlock()
+	mgr.usage.SetBaseline("b1", UsageStat{APIRequests: 10})
 
 	_, err := mgr.GetObject(context.Background(), "key", "")
 	if !errors.Is(err, ErrUsageLimitExceeded) {
@@ -839,9 +833,7 @@ func TestDeleteObject_AlwaysAllowed(t *testing.T) {
 	}
 	mgr := newTestManagerWithLimits(store, map[string]*mockBackend{"b1": backend}, limits)
 
-	mgr.usageBaselineMu.Lock()
-	mgr.usageBaseline["b1"] = UsageStat{APIRequests: 100, EgressBytes: 100, IngressBytes: 100}
-	mgr.usageBaselineMu.Unlock()
+	mgr.usage.SetBaseline("b1", UsageStat{APIRequests: 100, EgressBytes: 100, IngressBytes: 100})
 
 	err := mgr.DeleteObject(context.Background(), "del-key")
 	if err != nil {
@@ -864,9 +856,7 @@ func TestPutObject_UsageLimitRejectionsMetric(t *testing.T) {
 	mgr := newTestManagerWithLimits(store, map[string]*mockBackend{"b1": newMockBackend()}, limits)
 	defer mgr.Close()
 
-	mgr.usageBaselineMu.Lock()
-	mgr.usageBaseline["b1"] = UsageStat{APIRequests: 10}
-	mgr.usageBaselineMu.Unlock()
+	mgr.usage.SetBaseline("b1", UsageStat{APIRequests: 10})
 
 	before := testutil.ToFloat64(telemetry.UsageLimitRejectionsTotal.WithLabelValues("PutObject", "write"))
 
@@ -896,9 +886,7 @@ func TestGetObject_UsageLimitRejectionsMetric(t *testing.T) {
 	mgr := newTestManagerWithLimits(store, map[string]*mockBackend{"b1": b1}, limits)
 	defer mgr.Close()
 
-	mgr.usageBaselineMu.Lock()
-	mgr.usageBaseline["b1"] = UsageStat{APIRequests: 10}
-	mgr.usageBaselineMu.Unlock()
+	mgr.usage.SetBaseline("b1", UsageStat{APIRequests: 10})
 
 	before := testutil.ToFloat64(telemetry.UsageLimitRejectionsTotal.WithLabelValues("GetObject", "read"))
 
