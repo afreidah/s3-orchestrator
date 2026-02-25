@@ -69,6 +69,9 @@ generate: ## Generate sqlc query code
 test: ## Run Go tests with coverage
 	go test -race -cover ./...
 
+vet: ## Run Go vet static analysis
+	go vet ./...
+
 lint: ## Run Go linter
 	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run ./...
 
@@ -104,5 +107,5 @@ clean: ## Remove build artifacts and local image
 	go clean
 	docker rmi $(FULL_TAG) || true
 
-.PHONY: help builder build push generate test lint run integration-deps integration-test integration-clean clean
+.PHONY: help builder build push generate test vet lint run integration-deps integration-test integration-clean clean
 .DEFAULT_GOAL := help

@@ -12,7 +12,6 @@ package storage
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -22,6 +21,11 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 )
+
+// multipartPartKey returns the temporary object key for a multipart part.
+func multipartPartKey(uploadID string, partNumber int) string {
+	return fmt.Sprintf("__multipart/%s/%d", uploadID, partNumber)
+}
 
 // -------------------------------------------------------------------------
 // MULTIPART UPLOAD OPERATIONS
@@ -39,7 +43,7 @@ func (m *BackendManager) CreateMultipartUpload(ctx context.Context, key, content
 	defer span.End()
 
 	// Filter backends within usage limits before selecting
-	eligible := m.backendsWithinLimits(1, 0, 0)
+	eligible := m.usage.BackendsWithinLimits(m.order,1, 0, 0)
 	if len(eligible) == 0 {
 		telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation, "write").Inc()
 		span.SetStatus(codes.Error, "usage limits exceeded on all backends")
@@ -49,17 +53,7 @@ func (m *BackendManager) CreateMultipartUpload(ctx context.Context, key, content
 	// Pick a backend (estimate 0 bytes since final size is unknown)
 	backendName, err := m.selectBackendForWrite(ctx, 0, eligible)
 	if err != nil {
-		if errors.Is(err, ErrDBUnavailable) {
-			span.SetStatus(codes.Error, "database unavailable")
-			telemetry.DegradedWriteRejectionsTotal.WithLabelValues(operation).Inc()
-			return "", "", ErrServiceUnavailable
-		}
-		if errors.Is(err, ErrNoSpaceAvailable) {
-			span.SetStatus(codes.Error, "insufficient storage")
-			return "", "", ErrInsufficientStorage
-		}
-		span.SetStatus(codes.Error, err.Error())
-		return "", "", fmt.Errorf("failed to find backend: %w", err)
+		return "", "", m.classifyWriteError(span, operation, err)
 	}
 
 	uploadID := GenerateUploadID()
@@ -88,29 +82,23 @@ func (m *BackendManager) UploadPart(ctx context.Context, uploadID string, partNu
 
 	mu, err := m.store.GetMultipartUpload(ctx, uploadID)
 	if err != nil {
-		if errors.Is(err, ErrDBUnavailable) {
-			telemetry.DegradedWriteRejectionsTotal.WithLabelValues(operation).Inc()
-			return "", ErrServiceUnavailable
-		}
-		span.SetStatus(codes.Error, err.Error())
-		return "", err
+		return "", m.classifyWriteError(span, operation, err)
 	}
 
-	backend, ok := m.backends[mu.BackendName]
-	if !ok {
-		err := fmt.Errorf("backend %s not found", mu.BackendName)
+	backend, err := m.getBackend(mu.BackendName)
+	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return "", err
 	}
 
 	// Check usage limits before uploading
-	if !m.withinUsageLimits(mu.BackendName, 1, 0, size) {
+	if !m.usage.WithinLimits(mu.BackendName, 1, 0, size) {
 		span.SetStatus(codes.Error, "usage limits exceeded")
 		return "", ErrInsufficientStorage
 	}
 
 	// Store part under a temp key
-	partKey := fmt.Sprintf("__multipart/%s/%d", uploadID, partNumber)
+	partKey := multipartPartKey(uploadID, partNumber)
 	bctx, bcancel := m.withTimeout(ctx)
 	defer bcancel()
 	etag, err := backend.PutObject(bctx, partKey, body, size, "application/octet-stream")
@@ -132,7 +120,7 @@ func (m *BackendManager) UploadPart(ctx context.Context, uploadID string, partNu
 	}
 
 	m.recordOperation(operation, mu.BackendName, start, nil)
-	m.recordUsage(mu.BackendName, 1, 0, size)
+	m.usage.Record(mu.BackendName, 1, 0, size)
 	span.SetStatus(codes.Ok, "")
 	return etag, nil
 }
@@ -151,17 +139,11 @@ func (m *BackendManager) CompleteMultipartUpload(ctx context.Context, uploadID s
 
 	mu, err := m.store.GetMultipartUpload(ctx, uploadID)
 	if err != nil {
-		if errors.Is(err, ErrDBUnavailable) {
-			telemetry.DegradedWriteRejectionsTotal.WithLabelValues(operation).Inc()
-			return "", ErrServiceUnavailable
-		}
-		span.SetStatus(codes.Error, err.Error())
-		return "", err
+		return "", m.classifyWriteError(span, operation, err)
 	}
 
-	backend, ok := m.backends[mu.BackendName]
-	if !ok {
-		err := fmt.Errorf("backend %s not found", mu.BackendName)
+	backend, err := m.getBackend(mu.BackendName)
+	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return "", err
 	}
@@ -186,7 +168,7 @@ func (m *BackendManager) CompleteMultipartUpload(ctx context.Context, uploadID s
 	go func() {
 		defer func() { _ = pw.Close() }()
 		for _, part := range parts {
-			partKey := fmt.Sprintf("__multipart/%s/%d", uploadID, part.PartNumber)
+			partKey := multipartPartKey(uploadID, part.PartNumber)
 			bctx, bcancel := m.withTimeout(ctx)
 			result, err := backend.GetObject(bctx, partKey, "")
 			if err != nil {
@@ -212,21 +194,13 @@ func (m *BackendManager) CompleteMultipartUpload(ctx context.Context, uploadID s
 	}
 
 	// Record the final object location and update quota
-	if err := m.store.RecordObject(ctx, mu.ObjectKey, mu.BackendName, totalSize); err != nil {
-		slog.Error("RecordObject failed after multipart complete, cleaning up",
-			"key", mu.ObjectKey, "backend", mu.BackendName, "error", err)
-		if delErr := backend.DeleteObject(ctx, mu.ObjectKey); delErr != nil {
-			slog.Error("Failed to clean up orphaned multipart object",
-				"key", mu.ObjectKey, "backend", mu.BackendName, "error", delErr)
-		}
-		span.SetStatus(codes.Error, err.Error())
-		span.RecordError(err)
-		return "", fmt.Errorf("failed to record completed object: %w", err)
+	if err := m.recordObjectOrCleanup(ctx, span, backend, mu.ObjectKey, mu.BackendName, totalSize); err != nil {
+		return "", err
 	}
 
 	// Clean up part objects from backend
 	for _, part := range parts {
-		partKey := fmt.Sprintf("__multipart/%s/%d", uploadID, part.PartNumber)
+		partKey := multipartPartKey(uploadID, part.PartNumber)
 		dctx, dcancel := m.withTimeout(ctx)
 		delErr := backend.DeleteObject(dctx, partKey)
 		dcancel()
@@ -241,7 +215,7 @@ func (m *BackendManager) CompleteMultipartUpload(ctx context.Context, uploadID s
 	}
 
 	m.recordOperation(operation, mu.BackendName, start, nil)
-	m.recordUsage(mu.BackendName, 1, 0, 0)
+	m.usage.Record(mu.BackendName, 1, 0, 0)
 	span.SetStatus(codes.Ok, "")
 	return etag, nil
 }
@@ -259,17 +233,11 @@ func (m *BackendManager) AbortMultipartUpload(ctx context.Context, uploadID stri
 
 	mu, err := m.store.GetMultipartUpload(ctx, uploadID)
 	if err != nil {
-		if errors.Is(err, ErrDBUnavailable) {
-			telemetry.DegradedWriteRejectionsTotal.WithLabelValues(operation).Inc()
-			return ErrServiceUnavailable
-		}
-		span.SetStatus(codes.Error, err.Error())
-		return err
+		return m.classifyWriteError(span, operation, err)
 	}
 
-	backend, ok := m.backends[mu.BackendName]
-	if !ok {
-		err := fmt.Errorf("backend %s not found", mu.BackendName)
+	backend, err := m.getBackend(mu.BackendName)
+	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return err
 	}
@@ -283,7 +251,7 @@ func (m *BackendManager) AbortMultipartUpload(ctx context.Context, uploadID stri
 
 	// Delete part objects from backend
 	for _, part := range parts {
-		partKey := fmt.Sprintf("__multipart/%s/%d", uploadID, part.PartNumber)
+		partKey := multipartPartKey(uploadID, part.PartNumber)
 		dctx, dcancel := m.withTimeout(ctx)
 		delErr := backend.DeleteObject(dctx, partKey)
 		dcancel()
@@ -299,7 +267,7 @@ func (m *BackendManager) AbortMultipartUpload(ctx context.Context, uploadID stri
 	}
 
 	m.recordOperation(operation, mu.BackendName, start, nil)
-	m.recordUsage(mu.BackendName, 1, 0, 0)
+	m.usage.Record(mu.BackendName, 1, 0, 0)
 	span.SetStatus(codes.Ok, "")
 	return nil
 }

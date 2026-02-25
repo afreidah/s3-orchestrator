@@ -42,7 +42,7 @@ func (m *BackendManager) PutObject(ctx context.Context, key string, body io.Read
 	defer span.End()
 
 	// --- Filter backends within usage limits ---
-	eligible := m.backendsWithinLimits(1, 0, size)
+	eligible := m.usage.BackendsWithinLimits(m.order,1, 0, size)
 	if len(eligible) == 0 {
 		telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation, "write").Inc()
 		span.SetStatus(codes.Error, "usage limits exceeded on all backends")
@@ -52,27 +52,14 @@ func (m *BackendManager) PutObject(ctx context.Context, key string, body io.Read
 	// --- Find backend with available quota ---
 	backendName, err := m.selectBackendForWrite(ctx, size, eligible)
 	if err != nil {
-		if errors.Is(err, ErrDBUnavailable) {
-			span.SetStatus(codes.Error, "database unavailable")
-			telemetry.DegradedWriteRejectionsTotal.WithLabelValues(operation).Inc()
-			return "", ErrServiceUnavailable
-		}
-		if errors.Is(err, ErrNoSpaceAvailable) {
-			span.SetStatus(codes.Error, "insufficient storage")
-			span.SetAttributes(attribute.String("error.type", "quota_exceeded"))
-			return "", ErrInsufficientStorage
-		}
-		span.SetStatus(codes.Error, err.Error())
-		span.RecordError(err)
-		return "", fmt.Errorf("failed to find backend: %w", err)
+		return "", m.classifyWriteError(span, operation, err)
 	}
 
 	span.SetAttributes(telemetry.AttrBackendName.String(backendName))
 
 	// --- Get the backend ---
-	backend, ok := m.backends[backendName]
-	if !ok {
-		err := fmt.Errorf("backend %s not found", backendName)
+	backend, err := m.getBackend(backendName)
+	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return "", err
 	}
@@ -88,23 +75,16 @@ func (m *BackendManager) PutObject(ctx context.Context, key string, body io.Read
 	}
 
 	// --- Record object location and update quota ---
-	if err := m.store.RecordObject(ctx, key, backendName, size); err != nil {
-		slog.Error("RecordObject failed, cleaning up backend object",
-			"key", key, "backend", backendName, "error", err)
-		if delErr := backend.DeleteObject(ctx, key); delErr != nil {
-			slog.Error("Failed to clean up orphaned object", "key", key, "backend", backendName, "error", delErr)
-		}
-		span.SetStatus(codes.Error, err.Error())
-		span.RecordError(err)
-		return "", fmt.Errorf("failed to record object: %w", err)
+	if err := m.recordObjectOrCleanup(ctx, span, backend, key, backendName, size); err != nil {
+		return "", err
 	}
 
 	// --- Invalidate location cache ---
-	m.cacheDelete(key)
+	m.cache.Delete(key)
 
 	// --- Record metrics ---
 	m.recordOperation(operation, backendName, start, nil)
-	m.recordUsage(backendName, 1, 0, size)
+	m.usage.Record(backendName, 1, 0, size)
 
 	span.SetStatus(codes.Ok, "")
 	return etag, nil
@@ -195,7 +175,7 @@ func (m *BackendManager) broadcastRead(ctx context.Context, operation, key strin
 	telemetry.DegradedReadsTotal.WithLabelValues(operation).Inc()
 
 	// --- Check location cache first ---
-	if cachedBackend, ok := m.cacheGet(key); ok {
+	if cachedBackend, ok := m.cache.Get(key); ok {
 		if backend, exists := m.backends[cachedBackend]; exists {
 			bctx, bcancel := m.withTimeout(ctx)
 			size, err := tryBackend(bctx, cachedBackend, backend)
@@ -228,7 +208,7 @@ func (m *BackendManager) broadcastRead(ctx context.Context, operation, key strin
 		}
 
 		// Success — cache the result for future degraded reads
-		m.cacheSet(key, name)
+		m.cache.Set(key, name)
 		m.recordOperation(operation, name, start, nil)
 		span.SetAttributes(telemetry.AttrBackendName.String(name))
 		span.SetAttributes(telemetry.AttrObjectSize.Int64(size))
@@ -254,14 +234,14 @@ func (m *BackendManager) GetObject(ctx context.Context, key string, rangeHeader 
 	var result *GetObjectResult
 
 	backendName, err := m.withReadFailover(ctx, "GetObject", key, func(ctx context.Context, beName string, backend ObjectBackend) (int64, error) {
-		if !m.withinUsageLimits(beName, 1, 0, 0) {
+		if !m.usage.WithinLimits(beName, 1, 0, 0) {
 			return 0, fmt.Errorf("backend %s: %w", beName, errUsageLimitSkip)
 		}
 		r, err := backend.GetObject(ctx, key, rangeHeader)
 		if err != nil {
 			return 0, err
 		}
-		if !m.withinUsageLimits(beName, 1, r.Size, 0) {
+		if !m.usage.WithinLimits(beName, 1, r.Size, 0) {
 			_ = r.Body.Close()
 			return 0, fmt.Errorf("backend %s egress: %w", beName, errUsageLimitSkip)
 		}
@@ -271,7 +251,7 @@ func (m *BackendManager) GetObject(ctx context.Context, key string, rangeHeader 
 	if err != nil {
 		return nil, err
 	}
-	m.recordUsage(backendName, 1, result.Size, 0)
+	m.usage.Record(backendName, 1, result.Size, 0)
 	return result, nil
 }
 
@@ -285,7 +265,7 @@ func (m *BackendManager) HeadObject(ctx context.Context, key string) (int64, str
 	)
 
 	backendName, err := m.withReadFailover(ctx, "HeadObject", key, func(ctx context.Context, beName string, backend ObjectBackend) (int64, error) {
-		if !m.withinUsageLimits(beName, 1, 0, 0) {
+		if !m.usage.WithinLimits(beName, 1, 0, 0) {
 			return 0, fmt.Errorf("backend %s: %w", beName, errUsageLimitSkip)
 		}
 		size, contentType, etag, err := backend.HeadObject(ctx, key)
@@ -298,7 +278,7 @@ func (m *BackendManager) HeadObject(ctx context.Context, key string) (int64, str
 	if err != nil {
 		return 0, "", "", err
 	}
-	m.recordUsage(backendName, 1, 0, 0)
+	m.usage.Record(backendName, 1, 0, 0)
 	return rSize, rContentType, rETag, nil
 }
 
@@ -318,18 +298,11 @@ func (m *BackendManager) CopyObject(ctx context.Context, sourceKey, destKey stri
 	// --- Find all source locations (for failover) ---
 	locations, err := m.store.GetAllObjectLocations(ctx, sourceKey)
 	if err != nil {
-		if errors.Is(err, ErrDBUnavailable) {
-			span.SetStatus(codes.Error, "database unavailable")
-			telemetry.DegradedWriteRejectionsTotal.WithLabelValues(operation).Inc()
-			return "", ErrServiceUnavailable
-		}
 		if errors.Is(err, ErrObjectNotFound) {
 			span.SetStatus(codes.Error, "source object not found")
 			return "", err
 		}
-		span.SetStatus(codes.Error, err.Error())
-		span.RecordError(err)
-		return "", fmt.Errorf("failed to find source object: %w", err)
+		return "", m.classifyWriteError(span, operation, err)
 	}
 
 	// --- Get source metadata (try each copy, skip over-limit backends) ---
@@ -337,7 +310,7 @@ func (m *BackendManager) CopyObject(ctx context.Context, sourceKey, destKey stri
 	var contentType string
 	var srcFound bool
 	for _, loc := range locations {
-		if !m.withinUsageLimits(loc.BackendName, 1, 0, 0) {
+		if !m.usage.WithinLimits(loc.BackendName, 1, 0, 0) {
 			continue
 		}
 		backend, ok := m.backends[loc.BackendName]
@@ -364,7 +337,7 @@ func (m *BackendManager) CopyObject(ctx context.Context, sourceKey, destKey stri
 	span.SetAttributes(telemetry.AttrObjectSize.Int64(size))
 
 	// --- Find destination backend with available quota and usage limits ---
-	destEligible := m.backendsWithinLimits(1, 0, size)
+	destEligible := m.usage.BackendsWithinLimits(m.order,1, 0, size)
 	if len(destEligible) == 0 {
 		telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation, "write").Inc()
 		span.SetStatus(codes.Error, "usage limits exceeded on all backends")
@@ -372,22 +345,11 @@ func (m *BackendManager) CopyObject(ctx context.Context, sourceKey, destKey stri
 	}
 	destBackendName, err := m.selectBackendForWrite(ctx, size, destEligible)
 	if err != nil {
-		if errors.Is(err, ErrDBUnavailable) {
-			span.SetStatus(codes.Error, "database unavailable")
-			telemetry.DegradedWriteRejectionsTotal.WithLabelValues(operation).Inc()
-			return "", ErrServiceUnavailable
-		}
-		if errors.Is(err, ErrNoSpaceAvailable) {
-			span.SetStatus(codes.Error, "insufficient storage")
-			return "", ErrInsufficientStorage
-		}
-		span.SetStatus(codes.Error, err.Error())
-		return "", fmt.Errorf("failed to find destination backend: %w", err)
+		return "", m.classifyWriteError(span, operation, err)
 	}
 
-	destBackend, ok := m.backends[destBackendName]
-	if !ok {
-		err := fmt.Errorf("destination backend %s not found", destBackendName)
+	destBackend, err := m.getBackend(destBackendName)
+	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return "", err
 	}
@@ -399,7 +361,7 @@ func (m *BackendManager) CopyObject(ctx context.Context, sourceKey, destKey stri
 	go func() {
 		defer func() { _ = pw.Close() }()
 		for _, loc := range locations {
-			if !m.withinUsageLimits(loc.BackendName, 1, size, 0) {
+			if !m.usage.WithinLimits(loc.BackendName, 1, size, 0) {
 				continue
 			}
 			srcBackend, ok := m.backends[loc.BackendName]
@@ -434,25 +396,18 @@ func (m *BackendManager) CopyObject(ctx context.Context, sourceKey, destKey stri
 	}
 
 	// --- Record destination location and update quota ---
-	if err := m.store.RecordObject(ctx, destKey, destBackendName, size); err != nil {
-		slog.Error("RecordObject failed after copy, cleaning up",
-			"key", destKey, "backend", destBackendName, "error", err)
-		if delErr := destBackend.DeleteObject(ctx, destKey); delErr != nil {
-			slog.Error("Failed to clean up orphaned copy", "key", destKey, "backend", destBackendName, "error", delErr)
-		}
-		span.SetStatus(codes.Error, err.Error())
-		span.RecordError(err)
-		return "", fmt.Errorf("failed to record copied object: %w", err)
+	if err := m.recordObjectOrCleanup(ctx, span, destBackend, destKey, destBackendName, size); err != nil {
+		return "", err
 	}
 
 	// --- Invalidate location cache ---
-	m.cacheDelete(destKey)
+	m.cache.Delete(destKey)
 
 	m.recordOperation(operation, destBackendName, start, nil)
 	if srcName, ok := <-srcBackendCh; ok {
-		m.recordUsage(srcName, 1, size, 0) // source: Get + egress
+		m.usage.Record(srcName, 1, size, 0) // source: Get + egress
 	}
-	m.recordUsage(destBackendName, 1, 0, size) // dest: Put + ingress
+	m.usage.Record(destBackendName, 1, 0, size) // dest: Put + ingress
 
 	span.SetStatus(codes.Ok, "")
 	return etag, nil
@@ -472,25 +427,18 @@ func (m *BackendManager) DeleteObject(ctx context.Context, key string) error {
 	// --- Delete all copies from store ---
 	copies, err := m.store.DeleteObject(ctx, key)
 	if err != nil {
-		if errors.Is(err, ErrDBUnavailable) {
-			span.SetStatus(codes.Error, "database unavailable")
-			telemetry.DegradedWriteRejectionsTotal.WithLabelValues(operation).Inc()
-			return ErrServiceUnavailable
-		}
 		if errors.Is(err, ErrObjectNotFound) {
 			// Object not in our tracking - treat as success (idempotent delete)
 			span.SetStatus(codes.Ok, "object not found - treating as success")
 			return nil
 		}
-		span.SetStatus(codes.Error, err.Error())
-		span.RecordError(err)
-		return fmt.Errorf("failed to delete object record: %w", err)
+		return m.classifyWriteError(span, operation, err)
 	}
 
 	span.SetAttributes(attribute.Int("copies.deleted", len(copies)))
 
 	// --- Invalidate location cache ---
-	m.cacheDelete(key)
+	m.cache.Delete(key)
 
 	// --- Delete from each backend that held a copy ---
 	for _, copy := range copies {
@@ -516,7 +464,7 @@ func (m *BackendManager) DeleteObject(ctx context.Context, key string) error {
 		m.recordOperation(operation, copies[0].BackendName, start, nil)
 	}
 	for _, c := range copies {
-		m.recordUsage(c.BackendName, 1, 0, 0)
+		m.usage.Record(c.BackendName, 1, 0, 0)
 	}
 
 	span.SetStatus(codes.Ok, "")
