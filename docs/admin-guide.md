@@ -6,7 +6,7 @@ This guide walks through deploying, configuring, and operating the S3 Orchestrat
 
 - **PostgreSQL** — any recent version. The orchestrator auto-applies its schema on startup.
 - **At least one S3-compatible storage backend** — OCI Object Storage, Backblaze B2, AWS S3, MinIO, Wasabi, etc. You need a bucket and access credentials on that backend.
-- **The orchestrator binary** — either a Docker image (via `make build` or `make push VERSION=vX.Y.Z`) or built from source (`make run`).
+- **The orchestrator binary** — a Docker image (via `make push VERSION=vX.Y.Z`), a `.deb` package (via `make deb VERSION=X.Y.Z`), or built from source (`make run`).
 
 ## Quickstart
 
@@ -607,9 +607,9 @@ To perform a zero-downtime credential rotation, temporarily add both old and new
 3. Update the client to use the new credentials.
 4. Remove the old credential from the config and send `SIGHUP` again.
 
-## Docker Deployment
+## Deployment
 
-### Build the image
+### Docker
 
 ```bash
 # Local build
@@ -620,8 +620,6 @@ make push VERSION=v0.6.0
 ```
 
 The `VERSION` is baked into the binary via `-ldflags` and displayed in the web UI and `/health` endpoint. Use versioned tags (not `latest`) to avoid Docker layer caching issues on orchestration platforms.
-
-### Run the container
 
 ```bash
 docker run -d \
@@ -639,3 +637,67 @@ The default entrypoint is `s3-orchestrator -config /etc/s3-orchestrator/config.y
 Environment variables referenced in the config via `${VAR}` syntax are expanded at startup, so pass secrets as `-e` flags or via your orchestration platform's secret injection.
 
 The `listen_addr` in your config determines which port the process binds to inside the container — make sure your `-p` mapping matches.
+
+### Debian Package (Systemd)
+
+Build a `.deb` package for bare-metal or VM deployments:
+
+```bash
+# Build for host architecture
+make deb VERSION=0.6.0
+
+# Build for both amd64 and arm64
+make deb-all VERSION=0.6.0
+
+# Build and validate with lintian
+make deb-lint VERSION=0.6.0
+```
+
+Install and configure:
+
+```bash
+sudo dpkg -i s3-orchestrator_0.6.0_amd64.deb
+
+# Edit the config — set database, backends, buckets
+sudo vim /etc/s3-orchestrator/config.yaml
+
+# Set secrets as environment variables (referenced via ${VAR} in config)
+sudo vim /etc/default/s3-orchestrator
+
+# Start the service
+sudo systemctl start s3-orchestrator
+
+# Check status
+sudo systemctl status s3-orchestrator
+sudo journalctl -u s3-orchestrator -f
+```
+
+The package installs:
+
+| Path | Purpose |
+|------|---------|
+| `/usr/bin/s3-orchestrator` | Binary |
+| `/etc/s3-orchestrator/config.yaml` | Configuration (conffile, preserved on upgrade) |
+| `/etc/default/s3-orchestrator` | Environment variables for `${VAR}` expansion in config |
+| `/usr/lib/systemd/system/s3-orchestrator.service` | Systemd unit |
+| `/var/lib/s3-orchestrator/` | Data directory |
+
+The systemd unit runs as a dedicated `s3-orchestrator` user with filesystem hardening (`ProtectSystem=strict`, `ProtectHome=yes`, `NoNewPrivileges=yes`). The service is enabled on install but not started automatically, allowing configuration before first start.
+
+**Config reload** works via systemd:
+
+```bash
+sudo systemctl reload s3-orchestrator
+```
+
+This sends `SIGHUP` to the process, reloading bucket credentials, quota limits, rate limits, and rebalance/replication settings without downtime. See [Reloading configuration](#reloading-configuration) for details on what is and isn't reloadable.
+
+**Uninstall:**
+
+```bash
+# Remove the package (preserves config and data)
+sudo apt remove s3-orchestrator
+
+# Remove everything including config, data, and system user
+sudo apt purge s3-orchestrator
+```

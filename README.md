@@ -441,6 +441,9 @@ Objects already tracked in the database for that backend are skipped. The comman
 ## Development
 
 ```bash
+# Install build and packaging dependencies
+make tools
+
 # Regenerate sqlc query code (after editing .sql files)
 make generate
 
@@ -464,11 +467,30 @@ make build
 
 # Build multi-arch and push to registry
 make push VERSION=v0.6.0
+
+# Build a .deb package for the host architecture
+make deb VERSION=0.6.0
+
+# Build .deb packages for both amd64 and arm64
+make deb-all VERSION=0.6.0
+
+# Build and run lintian validation
+make deb-lint VERSION=0.6.0
 ```
 
 ## Deployment
 
-Build and push a Docker image with a version tag:
+The orchestrator can run as a Docker container or as a native systemd service.
+
+### Prerequisites
+
+- PostgreSQL database (schema auto-applied on startup)
+- At least one S3-compatible storage backend
+- Configuration file with credentials
+
+### Docker
+
+Build and push a multi-arch image with a version tag:
 
 ```bash
 make push VERSION=v0.6.0
@@ -476,11 +498,34 @@ make push VERSION=v0.6.0
 
 The `VERSION` is baked into the binary via `-ldflags` and displayed in the web UI header and `/health` endpoint. Defaults to `latest` if omitted.
 
-### Prerequisites
+### Debian Package
 
-- PostgreSQL database (schema auto-applied on startup)
-- At least one S3-compatible storage backend
-- Configuration file with credentials (see `config.example.yaml`)
+Build a `.deb` package for bare-metal or VM deployments:
+
+```bash
+make deb VERSION=0.6.0
+```
+
+Install and configure:
+
+```bash
+sudo dpkg -i s3-orchestrator_0.6.0_amd64.deb
+sudo vim /etc/s3-orchestrator/config.yaml
+sudo vim /etc/default/s3-orchestrator   # set DB_PASSWORD, backend keys, etc.
+sudo systemctl start s3-orchestrator
+```
+
+The package installs:
+
+| Path | Purpose |
+|------|---------|
+| `/usr/bin/s3-orchestrator` | Binary |
+| `/etc/s3-orchestrator/config.yaml` | Configuration (conffile, preserved on upgrade) |
+| `/etc/default/s3-orchestrator` | Environment variables for `${VAR}` expansion |
+| `/usr/lib/systemd/system/s3-orchestrator.service` | Systemd unit |
+| `/var/lib/s3-orchestrator/` | Data directory |
+
+The systemd unit runs as a dedicated `s3-orchestrator` user with filesystem hardening (`ProtectSystem=strict`, `ProtectHome=yes`, `NoNewPrivileges=yes`). Config reload via `systemctl reload s3-orchestrator` sends `SIGHUP`.
 
 ## Project Structure
 
@@ -531,6 +576,17 @@ internal/
     tracing.go               OpenTelemetry tracer setup
 sqlc.yaml                    sqlc configuration
 Dockerfile                   Multi-stage build
-Makefile                     Build, test, lint, generate, push targets
+Makefile                     Build, test, lint, generate, push, deb targets
+nfpm.yaml                    Debian package definition (nfpm)
+packaging/
+  s3-orchestrator.service    Systemd unit file
+  config.yaml                Sample config installed to /etc/s3-orchestrator/
+  s3-orchestrator.default    Default env file installed to /etc/default/
+  preinstall.sh              Creates system user and directories
+  postinstall.sh             Enables systemd service
+  postremove.sh              Purge cleanup (removes user and data)
+  changelog                  Debian changelog
+  copyright                  Debian copyright file
+  lintian-overrides          Lintian override rules
 config.example.yaml          Configuration reference
 ```
