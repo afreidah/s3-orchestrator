@@ -1015,3 +1015,217 @@ func TestGetObject_UsageLimitRejectionsMetric(t *testing.T) {
 		t.Errorf("UsageLimitRejectionsTotal[GetObject,read] did not increment: before=%v, after=%v", before, after)
 	}
 }
+
+// -------------------------------------------------------------------------
+// Parallel Broadcast Reads
+// -------------------------------------------------------------------------
+
+// newTestManagerParallel creates a BackendManager with parallel broadcast enabled
+// and explicit backend ordering.
+func newTestManagerParallel(store *mockStore, orderedBackends []struct {
+	name    string
+	backend ObjectBackend
+}) *BackendManager {
+	obs := make(map[string]ObjectBackend, len(orderedBackends))
+	order := make([]string, 0, len(orderedBackends))
+	for _, b := range orderedBackends {
+		obs[b.name] = b.backend
+		order = append(order, b.name)
+	}
+	return NewBackendManager(&BackendManagerConfig{
+		Backends:          obs,
+		Store:             store,
+		Order:             order,
+		CacheTTL:          5 * time.Second,
+		BackendTimeout:    30 * time.Second,
+		RoutingStrategy:   "pack",
+		ParallelBroadcast: true,
+	})
+}
+
+// slowGetBackend wraps a mockBackend and adds a delay to GetObject and HeadObject.
+type slowGetBackend struct {
+	*mockBackend
+	delay time.Duration
+}
+
+func (s *slowGetBackend) GetObject(ctx context.Context, key string, rangeHeader string) (*GetObjectResult, error) {
+	select {
+	case <-time.After(s.delay):
+		return s.mockBackend.GetObject(ctx, key, rangeHeader)
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (s *slowGetBackend) HeadObject(ctx context.Context, key string) (int64, string, string, error) {
+	select {
+	case <-time.After(s.delay):
+		return s.mockBackend.HeadObject(ctx, key)
+	case <-ctx.Done():
+		return 0, "", "", ctx.Err()
+	}
+}
+
+func TestGetObject_ParallelBroadcast_FirstSuccessWins(t *testing.T) {
+	slow := newMockBackend()
+	fast := newMockBackend()
+	_, _ = slow.PutObject(context.Background(), "key", bytes.NewReader([]byte("slow-data")), 9, "text/plain")
+	_, _ = fast.PutObject(context.Background(), "key", bytes.NewReader([]byte("fast-data")), 9, "text/plain")
+
+	store := &mockStore{getAllLocationsErr: ErrDBUnavailable}
+	// slow backend is first in order, but fast backend should win
+	mgr := newTestManagerParallel(store, []struct {
+		name    string
+		backend ObjectBackend
+	}{
+		{"slow", &slowGetBackend{mockBackend: slow, delay: 200 * time.Millisecond}},
+		{"fast", fast},
+	})
+	defer mgr.Close()
+
+	start := time.Now()
+	result, err := mgr.GetObject(context.Background(), "key", "")
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("parallel broadcast should succeed: %v", err)
+	}
+	defer func() { _ = result.Body.Close() }()
+
+	got, _ := io.ReadAll(result.Body)
+	if string(got) != "fast-data" {
+		t.Errorf("body = %q, want %q (fast backend should win)", got, "fast-data")
+	}
+
+	// Should be much faster than 200ms (the slow backend's delay)
+	if elapsed > 150*time.Millisecond {
+		t.Errorf("parallel broadcast took %v, expected < 150ms", elapsed)
+	}
+}
+
+func TestGetObject_ParallelBroadcast_AllFail(t *testing.T) {
+	b1 := newMockBackend() // empty — no object
+	b2 := newMockBackend() // empty — no object
+
+	store := &mockStore{getAllLocationsErr: ErrDBUnavailable}
+	mgr := newTestManagerParallel(store, []struct {
+		name    string
+		backend ObjectBackend
+	}{
+		{"b1", b1},
+		{"b2", b2},
+	})
+	defer mgr.Close()
+
+	_, err := mgr.GetObject(context.Background(), "nowhere", "")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if errors.Is(err, ErrObjectNotFound) {
+		t.Fatal("should not mask backend errors as ErrObjectNotFound")
+	}
+}
+
+func TestGetObject_ParallelBroadcast_CacheHitSkipsParallel(t *testing.T) {
+	b1 := newMockBackend()
+	b2 := newMockBackend()
+	_, _ = b2.PutObject(context.Background(), "cached-key", bytes.NewReader([]byte("cached")), 6, "text/plain")
+
+	store := &mockStore{getAllLocationsErr: ErrDBUnavailable}
+	mgr := newTestManagerParallel(store, []struct {
+		name    string
+		backend ObjectBackend
+	}{
+		{"b1", b1},
+		{"b2", b2},
+	})
+	defer mgr.Close()
+
+	// First call populates cache via parallel broadcast
+	r1, err := mgr.GetObject(context.Background(), "cached-key", "")
+	if err != nil {
+		t.Fatalf("first GetObject: %v", err)
+	}
+	_ = r1.Body.Close()
+
+	// Second call should use cache (not broadcast again)
+	r2, err := mgr.GetObject(context.Background(), "cached-key", "")
+	if err != nil {
+		t.Fatalf("second GetObject (cache hit): %v", err)
+	}
+	defer func() { _ = r2.Body.Close() }()
+	got, _ := io.ReadAll(r2.Body)
+	if string(got) != "cached" {
+		t.Errorf("body = %q, want %q", got, "cached")
+	}
+}
+
+func TestGetObject_SequentialBroadcast_WhenDisabled(t *testing.T) {
+	slow := newMockBackend()
+	fast := newMockBackend()
+	_, _ = slow.PutObject(context.Background(), "key", bytes.NewReader([]byte("slow-data")), 9, "text/plain")
+	_, _ = fast.PutObject(context.Background(), "key", bytes.NewReader([]byte("fast-data")), 9, "text/plain")
+
+	store := &mockStore{getAllLocationsErr: ErrDBUnavailable}
+	// ParallelBroadcast=false (default), slow is first in order
+	obs := map[string]ObjectBackend{
+		"slow": &slowGetBackend{mockBackend: slow, delay: 100 * time.Millisecond},
+		"fast": fast,
+	}
+	mgr := NewBackendManager(&BackendManagerConfig{
+		Backends:          obs,
+		Store:             store,
+		Order:             []string{"slow", "fast"},
+		CacheTTL:          5 * time.Second,
+		BackendTimeout:    30 * time.Second,
+		RoutingStrategy:   "pack",
+		ParallelBroadcast: false,
+	})
+	defer mgr.Close()
+
+	start := time.Now()
+	result, err := mgr.GetObject(context.Background(), "key", "")
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("sequential broadcast should succeed: %v", err)
+	}
+	defer func() { _ = result.Body.Close() }()
+
+	got, _ := io.ReadAll(result.Body)
+	// Sequential: slow backend is tried first and succeeds (just slowly)
+	if string(got) != "slow-data" {
+		t.Errorf("body = %q, want %q (slow backend tried first sequentially)", got, "slow-data")
+	}
+
+	// Sequential should take at least 100ms (the slow backend's delay)
+	if elapsed < 100*time.Millisecond {
+		t.Errorf("sequential broadcast took %v, expected >= 100ms", elapsed)
+	}
+}
+
+func TestHeadObject_ParallelBroadcast(t *testing.T) {
+	slow := newMockBackend()
+	fast := newMockBackend()
+	_, _ = slow.PutObject(context.Background(), "key", bytes.NewReader([]byte("head")), 4, "text/plain")
+	_, _ = fast.PutObject(context.Background(), "key", bytes.NewReader([]byte("head")), 4, "text/plain")
+
+	store := &mockStore{getAllLocationsErr: ErrDBUnavailable}
+	mgr := newTestManagerParallel(store, []struct {
+		name    string
+		backend ObjectBackend
+	}{
+		{"slow", &slowGetBackend{mockBackend: slow, delay: 200 * time.Millisecond}},
+		{"fast", fast},
+	})
+	defer mgr.Close()
+
+	size, _, _, err := mgr.HeadObject(context.Background(), "key")
+	if err != nil {
+		t.Fatalf("HeadObject parallel broadcast should succeed: %v", err)
+	}
+	if size != 4 {
+		t.Errorf("size = %d, want 4", size)
+	}
+}
