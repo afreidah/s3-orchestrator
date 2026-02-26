@@ -1,3 +1,12 @@
+s3-orchestrator (0.6.4-1) stable; urgency=low
+
+  * PostgreSQL advisory locks for multi-instance background task coordination
+  * Configurable usage flush interval (usage_flush.interval, default: 30s)
+  * Adaptive flushing shortens interval when backends approach usage limits
+  * New config section: usage_flush (interval, adaptive_enabled, adaptive_threshold, fast_interval)
+
+ -- Alex Freidah <alex.freidah@gmail.com>  Tue, 25 Feb 2026 20:00:00 +0000
+
 s3-orchestrator (0.6.3-1) stable; urgency=low
 
   * Parallel rebalance move execution with bounded concurrency

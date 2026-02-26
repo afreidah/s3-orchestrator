@@ -36,6 +36,7 @@ type Config struct {
 	RateLimit      RateLimitConfig      `yaml:"rate_limit"`
 	CircuitBreaker  CircuitBreakerConfig `yaml:"circuit_breaker"`
 	UI              UIConfig             `yaml:"ui"`
+	UsageFlush      UsageFlushConfig     `yaml:"usage_flush"`
 	RoutingStrategy string               `yaml:"routing_strategy"` // "pack" (default) or "spread"
 }
 
@@ -163,6 +164,16 @@ type CircuitBreakerConfig struct {
 type UIConfig struct {
 	Enabled bool   `yaml:"enabled"`
 	Path    string `yaml:"path"` // URL prefix for the dashboard (default: "/ui")
+}
+
+// UsageFlushConfig holds settings for the periodic usage counter flush to the
+// database. When adaptive flushing is enabled, the flush interval shortens
+// automatically when any backend approaches a usage limit.
+type UsageFlushConfig struct {
+	Interval          time.Duration `yaml:"interval"`           // Base flush interval (default: 30s)
+	AdaptiveEnabled   bool          `yaml:"adaptive_enabled"`   // Shorten interval near limits
+	AdaptiveThreshold float64       `yaml:"adaptive_threshold"` // Ratio to trigger fast flush (default: 0.8)
+	FastInterval      time.Duration `yaml:"fast_interval"`      // Interval when near limits (default: 5s)
 }
 
 // -------------------------------------------------------------------------
@@ -481,6 +492,31 @@ func (c *Config) SetDefaultsAndValidate() error {
 	// --- UI defaults ---
 	if c.UI.Path == "" {
 		c.UI.Path = "/ui"
+	}
+
+	// --- Usage flush defaults ---
+	if c.UsageFlush.Interval == 0 {
+		c.UsageFlush.Interval = 30 * time.Second
+	}
+	if c.UsageFlush.AdaptiveThreshold == 0 {
+		c.UsageFlush.AdaptiveThreshold = 0.8
+	}
+	if c.UsageFlush.FastInterval == 0 {
+		c.UsageFlush.FastInterval = 5 * time.Second
+	}
+
+	// --- Usage flush validation ---
+	if c.UsageFlush.Interval <= 0 {
+		errors = append(errors, "usage_flush.interval must be positive")
+	}
+	if c.UsageFlush.AdaptiveThreshold <= 0 || c.UsageFlush.AdaptiveThreshold >= 1 {
+		errors = append(errors, "usage_flush.adaptive_threshold must be between 0 and 1 (exclusive)")
+	}
+	if c.UsageFlush.FastInterval <= 0 {
+		errors = append(errors, "usage_flush.fast_interval must be positive")
+	}
+	if c.UsageFlush.FastInterval >= c.UsageFlush.Interval {
+		errors = append(errors, "usage_flush.fast_interval must be less than usage_flush.interval")
 	}
 
 	if len(errors) > 0 {

@@ -334,6 +334,23 @@ ui:
   path: "/ui"                # URL prefix (default: /ui)
 ```
 
+### usage_flush
+
+Controls how often in-memory usage counters are flushed to the database. When adaptive flushing is enabled, the interval shortens automatically when any backend approaches a usage limit, improving enforcement accuracy.
+
+```yaml
+usage_flush:
+  interval: "30s"            # base flush interval (default: 30s)
+  adaptive_enabled: true     # shorten interval when near limits (default: false)
+  adaptive_threshold: 0.8    # usage ratio to trigger fast flush (default: 0.8)
+  fast_interval: "5s"        # interval when near limits (default: 5s)
+```
+
+- `interval` — how often counters are flushed under normal conditions. Lower values reduce staleness but increase database writes.
+- `adaptive_enabled` — when `true`, the flush interval drops to `fast_interval` whenever any backend's effective usage exceeds `adaptive_threshold` of its configured limit.
+- `adaptive_threshold` — the ratio (0–1 exclusive) at which fast flushing kicks in. At `0.8`, a backend at 80% of any usage limit triggers the fast interval.
+- `fast_interval` — must be less than `interval`. Used when adaptive flushing detects a backend near its limits.
+
 When enabled, the dashboard is served at `{path}/` on the same port as the S3 API. A JSON API endpoint is also available at `{path}/api/dashboard`.
 
 All dashboard responses include security headers (`X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Content-Security-Policy`). The dashboard does not require authentication by default (same as `/health` and `/metrics`). If the orchestrator is publicly exposed, put it behind a reverse proxy with auth (e.g., oauth2-proxy via Traefik).
@@ -581,6 +598,7 @@ Many settings can be updated without restarting the orchestrator by sending `SIG
 - Backend usage limits (`api_request_limit`, `egress_byte_limit`, `ingress_byte_limit`)
 - Rebalance settings (strategy, interval, batch size, threshold, enable/disable)
 - Replication settings (factor, worker interval, batch size)
+- Usage flush settings (interval, adaptive enabled/threshold/fast interval)
 
 **What requires a restart:**
 
@@ -646,7 +664,7 @@ To perform a zero-downtime credential rotation, temporarily add both old and new
 make build
 
 # Multi-arch build and push to registry with version tag
-make push VERSION=v0.6.3
+make push VERSION=v0.6.4
 ```
 
 The `VERSION` is baked into the binary via `-ldflags` and displayed in the web UI and `/health` endpoint. Use versioned tags (not `latest`) to avoid Docker layer caching issues on orchestration platforms.
@@ -674,19 +692,19 @@ Build a `.deb` package for bare-metal or VM deployments:
 
 ```bash
 # Build for host architecture
-make deb VERSION=0.6.3
+make deb VERSION=0.6.4
 
 # Build for both amd64 and arm64
-make deb-all VERSION=0.6.3
+make deb-all VERSION=0.6.4
 
 # Build and validate with lintian
-make deb-lint VERSION=0.6.3
+make deb-lint VERSION=0.6.4
 ```
 
 Install and configure:
 
 ```bash
-sudo dpkg -i s3-orchestrator_0.6.3_amd64.deb
+sudo dpkg -i s3-orchestrator_0.6.4_amd64.deb
 
 # Edit the config — set database, backends, buckets
 sudo vim /etc/s3-orchestrator/config.yaml
