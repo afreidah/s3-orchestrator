@@ -85,7 +85,7 @@ closed (healthy) → open (DB down) → half-open (probing) → closed
 
 When the database becomes unreachable (consecutive failures exceed `failure_threshold`), the orchestrator enters **degraded mode**:
 
-- **Reads** broadcast to all backends in order. A location cache (TTL configurable via `cache_ttl`) stores successful lookups to avoid repeated broadcasts for the same key.
+- **Reads** broadcast to all backends in order (or in parallel if `parallel_broadcast` is enabled). A location cache (TTL configurable via `cache_ttl`) stores successful lookups to avoid repeated broadcasts for the same key.
 - **Writes** (PUT, DELETE, COPY, multipart) return `503 ServiceUnavailable`.
 - **Health endpoint** returns `degraded` instead of `ok`.
 
@@ -228,6 +228,7 @@ circuit_breaker:
   failure_threshold: 3     # consecutive DB failures before opening (default: 3)
   open_timeout: "15s"      # delay before probing recovery (default: 15s)
   cache_ttl: "60s"         # key→backend cache TTL during degraded reads (default: 60s)
+  parallel_broadcast: false # fan-out reads to all backends in parallel during degraded mode (default: false)
 
 rebalance:
   enabled: false
@@ -285,6 +286,7 @@ kill -HUP $(pidof s3-orchestrator)
 | `server.listen_addr` | No | Requires restart |
 | `database` | No | Requires restart |
 | `telemetry` | No | Requires restart |
+| `circuit_breaker` | No | Requires restart |
 | `ui` | No | Requires restart |
 | `routing_strategy` | No | Requires restart |
 | `backends` (structural: endpoint, credentials, count) | No | Requires restart |

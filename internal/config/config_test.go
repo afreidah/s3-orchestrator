@@ -278,6 +278,40 @@ func TestCircuitBreakerDefaults(t *testing.T) {
 	if cfg.CircuitBreaker.CacheTTL != 60*time.Second {
 		t.Errorf("cache_ttl default = %v, want 60s", cfg.CircuitBreaker.CacheTTL)
 	}
+	if cfg.CircuitBreaker.ParallelBroadcast {
+		t.Error("parallel_broadcast default should be false")
+	}
+}
+
+func TestCircuitBreakerConfig_ParallelBroadcastSet(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.CircuitBreaker.ParallelBroadcast = true
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("parallel_broadcast=true should pass: %v", err)
+	}
+	if !cfg.CircuitBreaker.ParallelBroadcast {
+		t.Error("parallel_broadcast should be true when set")
+	}
+}
+
+func TestNonReloadableFieldsChanged_CircuitBreaker(t *testing.T) {
+	a := validBaseConfig()
+	b := validBaseConfig()
+	_ = a.SetDefaultsAndValidate()
+	b.CircuitBreaker.ParallelBroadcast = true
+	_ = b.SetDefaultsAndValidate()
+
+	changed := NonReloadableFieldsChanged(&a, &b)
+	found := false
+	for _, c := range changed {
+		if c == "circuit_breaker" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected circuit_breaker in changed fields, got %v", changed)
+	}
 }
 
 func TestConfigValidation_MixedQuotaAndUnlimited(t *testing.T) {
