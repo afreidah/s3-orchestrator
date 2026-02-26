@@ -23,6 +23,7 @@ type mockStore struct {
 
 	deleteObjectResp []DeletedCopy
 	deleteObjectErr  error
+	deleteObjectFunc func(key string) ([]DeletedCopy, error)
 
 	listObjectsResp  *ListObjectsResult
 	listObjectsPages []ListObjectsResult // for paginated tests
@@ -144,6 +145,9 @@ func (m *mockStore) DeleteObject(_ context.Context, key string) ([]DeletedCopy, 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.deleteObjectCalls = append(m.deleteObjectCalls, key)
+	if m.deleteObjectFunc != nil {
+		return m.deleteObjectFunc(key)
+	}
 	if m.deleteObjectErr != nil {
 		return nil, m.deleteObjectErr
 	}

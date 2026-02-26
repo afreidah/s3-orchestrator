@@ -66,6 +66,9 @@ s3o s3api list-objects-v2 --bucket app1-files --prefix "photos/"
 
 ```bash
 s3o s3 rm s3://app1-files/path/to/myfile.txt
+
+# Delete all files under a prefix (uses batch DeleteObjects internally)
+s3o s3 rm s3://app1-files/old-backups/ --recursive
 ```
 
 ### Copy within the bucket

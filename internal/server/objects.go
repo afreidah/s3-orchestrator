@@ -1,10 +1,11 @@
 // -------------------------------------------------------------------------------
-// Object Handlers - PUT, GET, HEAD, DELETE, CopyObject
+// Object Handlers - PUT, GET, HEAD, DELETE, COPY, DeleteObjects
 //
 // Author: Alex Freidah
 //
 // HTTP handlers for standard S3 object operations. Streams response bodies
-// directly to avoid buffering large objects in memory.
+// directly to avoid buffering large objects in memory. DeleteObjects handles
+// batch deletion of up to 1000 keys per request with concurrent backend I/O.
 // -------------------------------------------------------------------------------
 
 package server
@@ -34,6 +35,34 @@ type copyObjectResult struct {
 	Xmlns        string   `xml:"xmlns,attr"`
 	ETag         string   `xml:"ETag"`
 	LastModified string   `xml:"LastModified"`
+}
+
+// deleteObjectsRequest is the XML request body for DeleteObjects.
+type deleteObjectsRequest struct {
+	Quiet   bool                `xml:"Quiet"`
+	Objects []deleteObjectEntry `xml:"Object"`
+}
+
+type deleteObjectEntry struct {
+	Key string `xml:"Key"`
+}
+
+// deleteObjectsResult is the XML response for DeleteObjects.
+type deleteObjectsResult struct {
+	XMLName xml.Name            `xml:"DeleteResult"`
+	Xmlns   string              `xml:"xmlns,attr"`
+	Deleted []deletedObject     `xml:"Deleted,omitempty"`
+	Errors  []deleteObjectError `xml:"Error,omitempty"`
+}
+
+type deletedObject struct {
+	Key string `xml:"Key"`
+}
+
+type deleteObjectError struct {
+	Key     string `xml:"Key"`
+	Code    string `xml:"Code"`
+	Message string `xml:"Message"`
 }
 
 // handlePut processes PUT requests. Requires Content-Length header to enforce
@@ -196,6 +225,58 @@ func (s *Server) handleCopyObject(ctx context.Context, w http.ResponseWriter, r 
 
 	if err := writeXML(w, http.StatusOK, result); err != nil {
 		return http.StatusOK, fmt.Errorf("failed to encode copy response: %w", err)
+	}
+	return http.StatusOK, nil
+}
+
+// handleDeleteObjects processes POST /{bucket}?delete requests. Deletes up to
+// 1000 objects per request and returns per-key results in an XML response.
+// Per the S3 spec, HTTP 200 is always returned even when individual keys fail.
+func (s *Server) handleDeleteObjects(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket string) (int, error) {
+	// Parse XML request body
+	var req deleteObjectsRequest
+	if err := xml.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		writeS3Error(w, http.StatusBadRequest, "MalformedXML", "Failed to parse request body")
+		return http.StatusBadRequest, fmt.Errorf("failed to decode delete request: %w", err)
+	}
+
+	if len(req.Objects) == 0 {
+		writeS3Error(w, http.StatusBadRequest, "MalformedXML", "No objects specified for deletion")
+		return http.StatusBadRequest, fmt.Errorf("empty delete request")
+	}
+	if len(req.Objects) > 1000 {
+		writeS3Error(w, http.StatusBadRequest, "MalformedXML",
+			"DeleteObjects request may contain a maximum of 1000 objects")
+		return http.StatusBadRequest, fmt.Errorf("too many objects: %d", len(req.Objects))
+	}
+
+	// Prefix each key with the bucket for internal storage
+	keys := make([]string, len(req.Objects))
+	for i, obj := range req.Objects {
+		keys[i] = bucket + "/" + obj.Key
+	}
+
+	results := s.Manager.DeleteObjects(ctx, keys)
+
+	// Build XML response with per-key outcomes
+	resp := deleteObjectsResult{
+		Xmlns: "http://s3.amazonaws.com/doc/2006-03-01/",
+	}
+	for i, res := range results {
+		userKey := req.Objects[i].Key
+		if res.Err != nil {
+			resp.Errors = append(resp.Errors, deleteObjectError{
+				Key:     userKey,
+				Code:    "InternalError",
+				Message: "Failed to delete object",
+			})
+		} else if !req.Quiet {
+			resp.Deleted = append(resp.Deleted, deletedObject{Key: userKey})
+		}
+	}
+
+	if err := writeXML(w, http.StatusOK, resp); err != nil {
+		return http.StatusOK, fmt.Errorf("failed to encode delete objects response: %w", err)
 	}
 	return http.StatusOK, nil
 }

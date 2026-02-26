@@ -359,6 +359,121 @@ func TestDeleteObject_DBUnavailable(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
+// DeleteObjects (batch)
+// -------------------------------------------------------------------------
+
+func TestDeleteObjects_AllSuccess(t *testing.T) {
+	backend := newMockBackend()
+	for _, k := range []string{"a", "b", "c"} {
+		_, _ = backend.PutObject(context.Background(), k, bytes.NewReader([]byte("x")), 1, "")
+	}
+
+	store := &mockStore{
+		deleteObjectFunc: func(key string) ([]DeletedCopy, error) {
+			return []DeletedCopy{{BackendName: "b1", SizeBytes: 1}}, nil
+		},
+	}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
+
+	results := mgr.DeleteObjects(context.Background(), []string{"a", "b", "c"})
+
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(results))
+	}
+	for i, r := range results {
+		if r.Err != nil {
+			t.Errorf("results[%d]: unexpected error: %v", i, r.Err)
+		}
+	}
+	for _, k := range []string{"a", "b", "c"} {
+		if backend.hasObject(k) {
+			t.Errorf("object %q should be deleted from backend", k)
+		}
+	}
+}
+
+func TestDeleteObjects_PartialDBFailure(t *testing.T) {
+	backend := newMockBackend()
+	store := &mockStore{
+		deleteObjectFunc: func(key string) ([]DeletedCopy, error) {
+			if key == "bad" {
+				return nil, errors.New("db error")
+			}
+			return []DeletedCopy{{BackendName: "b1", SizeBytes: 1}}, nil
+		},
+	}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
+
+	results := mgr.DeleteObjects(context.Background(), []string{"ok1", "bad", "ok2"})
+
+	if results[0].Err != nil {
+		t.Errorf("results[0]: unexpected error: %v", results[0].Err)
+	}
+	if results[1].Err == nil {
+		t.Error("results[1]: expected error for 'bad' key")
+	}
+	if results[2].Err != nil {
+		t.Errorf("results[2]: unexpected error: %v", results[2].Err)
+	}
+}
+
+func TestDeleteObjects_NotFoundIsSuccess(t *testing.T) {
+	store := &mockStore{deleteObjectErr: ErrObjectNotFound}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+
+	results := mgr.DeleteObjects(context.Background(), []string{"gone1", "gone2"})
+
+	for i, r := range results {
+		if r.Err != nil {
+			t.Errorf("results[%d]: not-found should be success, got %v", i, r.Err)
+		}
+	}
+}
+
+func TestDeleteObjects_BackendFailureEnqueuesCleanup(t *testing.T) {
+	backend := newMockBackend()
+	backend.delErr = errors.New("backend down")
+
+	store := &mockStore{
+		deleteObjectFunc: func(key string) ([]DeletedCopy, error) {
+			return []DeletedCopy{{BackendName: "b1", SizeBytes: 1}}, nil
+		},
+	}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
+
+	results := mgr.DeleteObjects(context.Background(), []string{"k1", "k2"})
+
+	// Results should still show success (backend failure is best-effort)
+	for i, r := range results {
+		if r.Err != nil {
+			t.Errorf("results[%d]: unexpected error: %v", i, r.Err)
+		}
+	}
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.enqueueCleanupCalls) != 2 {
+		t.Fatalf("expected 2 enqueue calls, got %d", len(store.enqueueCleanupCalls))
+	}
+	for _, c := range store.enqueueCleanupCalls {
+		if c.reason != "batch_delete_failed" {
+			t.Errorf("expected reason=batch_delete_failed, got %q", c.reason)
+		}
+	}
+}
+
+func TestDeleteObjects_EmptyKeys(t *testing.T) {
+	store := &mockStore{}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+
+	results := mgr.DeleteObjects(context.Background(), []string{})
+
+	if len(results) != 0 {
+		t.Errorf("expected 0 results, got %d", len(results))
+	}
+}
+
+// -------------------------------------------------------------------------
 // CopyObject
 // -------------------------------------------------------------------------
 
