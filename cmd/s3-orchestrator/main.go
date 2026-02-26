@@ -151,6 +151,7 @@ func runServe() {
 	sm := lifecycle.NewManager()
 	sm.Register("usage-flush", &usageFlushService{manager: manager})
 	sm.Register("multipart-cleanup", &multipartCleanupService{manager: manager})
+	sm.Register("cleanup-queue", &cleanupQueueService{manager: manager})
 	sm.Register("rebalancer", &rebalancerService{manager: manager})
 	sm.Register("replicator", &replicatorService{manager: manager})
 

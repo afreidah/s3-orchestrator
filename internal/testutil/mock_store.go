@@ -264,3 +264,25 @@ func (m *MockStore) GetUsageForPeriod(_ context.Context, _ string) (map[string]s
 	}
 	return map[string]storage.UsageStat{}, nil
 }
+
+// --- Cleanup queue stubs ---
+
+func (m *MockStore) EnqueueCleanup(_ context.Context, _, _, _ string) error {
+	return nil
+}
+
+func (m *MockStore) GetPendingCleanups(_ context.Context, _ int) ([]storage.CleanupItem, error) {
+	return nil, nil
+}
+
+func (m *MockStore) CompleteCleanupItem(_ context.Context, _ int64) error {
+	return nil
+}
+
+func (m *MockStore) RetryCleanupItem(_ context.Context, _ int64, _ time.Duration, _ string) error {
+	return nil
+}
+
+func (m *MockStore) CleanupQueueDepth(_ context.Context) (int64, error) {
+	return 0, nil
+}

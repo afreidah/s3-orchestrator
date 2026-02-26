@@ -179,6 +179,7 @@ func (m *BackendManager) recordObjectOrCleanup(ctx context.Context, span trace.S
 		if delErr := backend.DeleteObject(ctx, key); delErr != nil {
 			slog.Error("Failed to clean up orphaned object",
 				"key", key, "backend", backendName, "error", delErr)
+			m.enqueueCleanup(ctx, backendName, key, "orphan_record_failed")
 		}
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)
