@@ -121,6 +121,7 @@ func (m *BackendManager) UploadPart(ctx context.Context, uploadID string, partNu
 		if delErr := backend.DeleteObject(ctx, partKey); delErr != nil {
 			slog.Error("Failed to clean up orphaned part object",
 				"key", partKey, "error", delErr)
+			m.enqueueCleanup(ctx, mu.BackendName, partKey, "orphan_part_record_failed")
 		}
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)
@@ -214,6 +215,7 @@ func (m *BackendManager) CompleteMultipartUpload(ctx context.Context, uploadID s
 		dcancel()
 		if delErr != nil {
 			slog.Warn("Failed to delete part key", "key", partKey, "error", delErr)
+			m.enqueueCleanup(ctx, mu.BackendName, partKey, "complete_part_cleanup")
 		}
 	}
 
@@ -274,6 +276,7 @@ func (m *BackendManager) AbortMultipartUpload(ctx context.Context, uploadID stri
 		dcancel()
 		if delErr != nil {
 			slog.Warn("Failed to delete part key", "key", partKey, "error", delErr)
+			m.enqueueCleanup(ctx, mu.BackendName, partKey, "abort_part_cleanup")
 		}
 	}
 

@@ -281,6 +281,30 @@ replication:
 
 The replication factor must be `<= number of backends`. The worker runs once at startup to catch up on any pending replicas, then continues at the configured interval. Reads automatically fail over to replicas if the primary copy is unavailable.
 
+### Cleanup Queue
+
+The cleanup queue requires no configuration — it is always active. When any backend object deletion fails during normal operations (PutObject orphan cleanup, DeleteObject, multipart part cleanup, rebalancer, replicator), the failed deletion is automatically enqueued for retry.
+
+The background worker runs every minute and retries with exponential backoff (1 minute to 24 hours). After 10 failed attempts, the item stops being retried but remains in the database for manual investigation.
+
+**Monitoring:** Alert on `s3proxy_cleanup_queue_depth` staying elevated — this means orphaned objects are accumulating. Alert on `s3proxy_cleanup_queue_processed_total{status="exhausted"}` — these items need manual attention.
+
+**Manual cleanup:** Inspect exhausted items and resolve manually:
+
+```sql
+-- View items that exceeded max retries
+SELECT id, backend_name, object_key, reason, attempts, last_error, created_at
+FROM cleanup_queue
+WHERE attempts >= 10
+ORDER BY created_at;
+
+-- Reset an item for retry (e.g., after fixing the backend)
+UPDATE cleanup_queue SET attempts = 0, next_retry = NOW() WHERE id = 123;
+
+-- Remove an item you've resolved manually
+DELETE FROM cleanup_queue WHERE id = 123;
+```
+
 ### rate_limit
 
 Per-IP token bucket rate limiting. Requests exceeding the limit receive `429 SlowDown`.
@@ -504,6 +528,8 @@ If `telemetry.metrics.enabled` is `true`, metrics are exposed at `/metrics`. Key
 | `s3proxy_degraded_write_rejections_total` | Writes being rejected due to degraded mode |
 | `s3proxy_usage_limit_rejections_total` | Operations rejected by usage limits |
 | `s3proxy_rate_limit_rejections_total` | Requests rejected by per-IP rate limiting |
+| `s3proxy_cleanup_queue_depth` | Alert when consistently > 0 — orphaned objects are failing cleanup |
+| `s3proxy_cleanup_queue_processed_total{status="exhausted"}` | Items that exceeded max retries — manual intervention needed |
 | `s3proxy_audit_events_total{event="..."}` | Audit log volume by event type — useful for detecting unusual activity |
 
 ### Structured logs
@@ -521,6 +547,7 @@ Key audit events:
 | `rebalance.start`, `rebalance.move`, `rebalance.complete` | Rebalancer | Object redistribution runs |
 | `replication.start`, `replication.copy`, `replication.complete` | Replicator | Replica creation runs |
 | `storage.MultipartCleanup` | Multipart cleanup | Stale upload cleanup |
+| `cleanup_queue.processed` | Cleanup queue | Orphaned object successfully deleted on retry |
 
 Each S3 API request produces two correlated audit entries (HTTP-level and storage-level) sharing the same `request_id`. Internal operations (rebalance, replication) generate their own correlation IDs. The `request_id` also appears as a `s3proxy.request_id` attribute on OpenTelemetry spans.
 
@@ -616,7 +643,7 @@ To perform a zero-downtime credential rotation, temporarily add both old and new
 make build
 
 # Multi-arch build and push to registry with version tag
-make push VERSION=v0.6.0
+make push VERSION=v0.6.1
 ```
 
 The `VERSION` is baked into the binary via `-ldflags` and displayed in the web UI and `/health` endpoint. Use versioned tags (not `latest`) to avoid Docker layer caching issues on orchestration platforms.
@@ -644,19 +671,19 @@ Build a `.deb` package for bare-metal or VM deployments:
 
 ```bash
 # Build for host architecture
-make deb VERSION=0.6.0
+make deb VERSION=0.6.1
 
 # Build for both amd64 and arm64
-make deb-all VERSION=0.6.0
+make deb-all VERSION=0.6.1
 
 # Build and validate with lintian
-make deb-lint VERSION=0.6.0
+make deb-lint VERSION=0.6.1
 ```
 
 Install and configure:
 
 ```bash
-sudo dpkg -i s3-orchestrator_0.6.0_amd64.deb
+sudo dpkg -i s3-orchestrator_0.6.1_amd64.deb
 
 # Edit the config — set database, backends, buckets
 sudo vim /etc/s3-orchestrator/config.yaml

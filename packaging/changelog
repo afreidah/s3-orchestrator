@@ -1,3 +1,11 @@
+s3-orchestrator (0.6.1-1) stable; urgency=low
+
+  * Add cleanup retry queue for failed backend deletions
+  * Background worker retries orphaned object cleanups with exponential backoff
+  * New Prometheus metrics: cleanup_queue_enqueued_total, cleanup_queue_processed_total, cleanup_queue_depth
+
+ -- Alex Freidah <alex.freidah@gmail.com>  Tue, 25 Feb 2026 00:00:00 +0000
+
 s3-orchestrator (0.6.0-1) stable; urgency=low
 
   * Initial Debian packaging

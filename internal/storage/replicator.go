@@ -238,5 +238,6 @@ func (m *BackendManager) cleanupOrphan(ctx context.Context, backendName, key str
 	if err := backend.DeleteObject(dctx, key); err != nil {
 		slog.Warn("Replication: failed to clean up orphan",
 			"key", key, "backend", backendName, "error", err)
+		m.enqueueCleanup(ctx, backendName, key, "replication_orphan")
 	}
 }
