@@ -542,8 +542,8 @@ Key audit events:
 
 | Event | Source | Description |
 |-------|--------|-------------|
-| `s3.PutObject`, `s3.GetObject`, etc. | HTTP layer | S3 API request with method, path, bucket, status, duration |
-| `storage.PutObject`, `storage.GetObject`, etc. | Storage layer | Backend operation with key, backend name, size |
+| `s3.PutObject`, `s3.GetObject`, `s3.DeleteObjects`, etc. | HTTP layer | S3 API request with method, path, bucket, status, duration |
+| `storage.PutObject`, `storage.GetObject`, `storage.DeleteObjects`, etc. | Storage layer | Backend operation with key, backend name, size |
 | `rebalance.start`, `rebalance.move`, `rebalance.complete` | Rebalancer | Object redistribution runs |
 | `replication.start`, `replication.copy`, `replication.complete` | Replicator | Replica creation runs |
 | `storage.MultipartCleanup` | Multipart cleanup | Stale upload cleanup |
@@ -643,7 +643,7 @@ To perform a zero-downtime credential rotation, temporarily add both old and new
 make build
 
 # Multi-arch build and push to registry with version tag
-make push VERSION=v0.6.1
+make push VERSION=v0.6.2
 ```
 
 The `VERSION` is baked into the binary via `-ldflags` and displayed in the web UI and `/health` endpoint. Use versioned tags (not `latest`) to avoid Docker layer caching issues on orchestration platforms.
@@ -671,19 +671,19 @@ Build a `.deb` package for bare-metal or VM deployments:
 
 ```bash
 # Build for host architecture
-make deb VERSION=0.6.1
+make deb VERSION=0.6.2
 
 # Build for both amd64 and arm64
-make deb-all VERSION=0.6.1
+make deb-all VERSION=0.6.2
 
 # Build and validate with lintian
-make deb-lint VERSION=0.6.1
+make deb-lint VERSION=0.6.2
 ```
 
 Install and configure:
 
 ```bash
-sudo dpkg -i s3-orchestrator_0.6.1_amd64.deb
+sudo dpkg -i s3-orchestrator_0.6.2_amd64.deb
 
 # Edit the config — set database, backends, buckets
 sudo vim /etc/s3-orchestrator/config.yaml

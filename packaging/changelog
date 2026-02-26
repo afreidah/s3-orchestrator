@@ -1,10 +1,19 @@
+s3-orchestrator (0.6.2-1) stable; urgency=low
+
+  * Add S3 DeleteObjects batch API (up to 1000 keys)
+  * Concurrent backend deletes with bounded parallelism
+  * Quiet mode suppresses success elements in response
+  * Failed backend deletes enqueue to cleanup queue
+
+ -- Alex Freidah <alex.freidah@gmail.com>  Wed, 25 Feb 2026 12:00:00 +0000
+
 s3-orchestrator (0.6.1-1) stable; urgency=low
 
   * Add cleanup retry queue for failed backend deletions
-  * Background worker retries orphaned object cleanups with exponential backoff
-  * New Prometheus metrics: cleanup_queue_enqueued_total, cleanup_queue_processed_total, cleanup_queue_depth
+  * Background worker retries orphaned object cleanups
+  * New metrics: cleanup_queue_enqueued, processed, depth
 
- -- Alex Freidah <alex.freidah@gmail.com>  Tue, 25 Feb 2026 00:00:00 +0000
+ -- Alex Freidah <alex.freidah@gmail.com>  Wed, 25 Feb 2026 00:00:00 +0000
 
 s3-orchestrator (0.6.0-1) stable; urgency=low
 

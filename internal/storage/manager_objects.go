@@ -1,11 +1,12 @@
 // -------------------------------------------------------------------------------
-// Object Operations - PUT, GET, HEAD, DELETE, COPY
+// Object Operations - PUT, GET, HEAD, DELETE, COPY, DeleteObjects
 //
 // Author: Alex Freidah
 //
 // Object-level CRUD operations on the BackendManager. Handles backend selection
 // via routing strategy, read failover across replicas, broadcast reads during
-// degraded mode, and usage limit enforcement on reads and writes.
+// degraded mode, and usage limit enforcement on reads and writes. DeleteObjects
+// provides batch deletion with concurrent backend I/O.
 // -------------------------------------------------------------------------------
 
 package storage
@@ -17,6 +18,7 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/audit"
@@ -505,6 +507,125 @@ func (m *BackendManager) DeleteObject(ctx context.Context, key string) error {
 
 	span.SetStatus(codes.Ok, "")
 	return nil
+}
+
+// -------------------------------------------------------------------------
+// BATCH DELETE
+// -------------------------------------------------------------------------
+
+// DeleteObjectResult holds the outcome of a single key within a batch delete.
+type DeleteObjectResult struct {
+	Key string
+	Err error
+}
+
+// DeleteObjects deletes multiple objects in a single request. Metadata removal
+// happens sequentially (each key is its own transaction via the existing
+// store.DeleteObject path), while backend S3 deletes run concurrently with
+// bounded parallelism to avoid overwhelming backends.
+func (m *BackendManager) DeleteObjects(ctx context.Context, keys []string) []DeleteObjectResult {
+	const operation = "DeleteObjects"
+	start := time.Now()
+
+	ctx, span := telemetry.StartSpan(ctx, "Manager "+operation,
+		attribute.Int("s3.batch_size", len(keys)),
+	)
+	defer span.End()
+
+	results := make([]DeleteObjectResult, len(keys))
+
+	// Remove each key from the DB and collect backend copies that need
+	// physical deletion afterwards.
+	type pendingBackendDelete struct {
+		key    string
+		copies []DeletedCopy
+	}
+	var pending []pendingBackendDelete
+
+	for i, key := range keys {
+		results[i].Key = key
+
+		copies, err := m.store.DeleteObject(ctx, key)
+		if err != nil {
+			if errors.Is(err, ErrObjectNotFound) {
+				continue // not-found treated as success
+			}
+			results[i].Err = m.classifyWriteError(span, operation, err)
+			continue
+		}
+
+		m.cache.Delete(key)
+
+		if len(copies) > 0 {
+			pending = append(pending, pendingBackendDelete{key: key, copies: copies})
+		}
+	}
+
+	// Delete from backends concurrently, capped at 10 in-flight calls.
+	const maxConcurrency = 10
+	sem := make(chan struct{}, maxConcurrency)
+	var wg sync.WaitGroup
+
+	for _, pd := range pending {
+		for _, cp := range pd.copies {
+			backend, ok := m.backends[cp.BackendName]
+			if !ok {
+				slog.Warn("Backend not found for batch delete",
+					"backend", cp.BackendName, "key", pd.key)
+				continue
+			}
+
+			wg.Add(1)
+			sem <- struct{}{}
+
+			go func(beName, key string, be ObjectBackend) {
+				defer wg.Done()
+				defer func() { <-sem }()
+
+				bctx, bcancel := m.withTimeout(ctx)
+				err := be.DeleteObject(bctx, key)
+				bcancel()
+				if err != nil {
+					slog.Warn("Failed to delete object from backend (batch)",
+						"backend", beName, "key", key, "error", err)
+					m.enqueueCleanup(ctx, beName, key, "batch_delete_failed")
+					span.RecordError(err)
+				}
+			}(cp.BackendName, pd.key, backend)
+		}
+
+		for _, cp := range pd.copies {
+			m.usage.Record(cp.BackendName, 1, 0, 0)
+		}
+	}
+
+	wg.Wait()
+
+	// Tally outcomes for metrics and audit
+	var successCount, errorCount int
+	for _, r := range results {
+		if r.Err != nil {
+			errorCount++
+		} else {
+			successCount++
+		}
+	}
+
+	m.recordOperation(operation, "", start, nil)
+
+	audit.Log(ctx, "storage.DeleteObjects",
+		slog.Int("total_keys", len(keys)),
+		slog.Int("deleted", successCount),
+		slog.Int("errors", errorCount),
+	)
+
+	span.SetAttributes(
+		attribute.Int("s3.deleted_count", successCount),
+		attribute.Int("s3.error_count", errorCount),
+	)
+	span.SetStatus(codes.Ok, "")
+
+	return results
 }
 
 // -------------------------------------------------------------------------
