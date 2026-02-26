@@ -1,3 +1,11 @@
+s3-orchestrator (0.6.5-1) stable; urgency=low
+
+  * Optional parallel broadcast reads in degraded mode (circuit_breaker.parallel_broadcast)
+  * Reduces worst-case degraded read latency from N*timeout to single backend response time
+  * circuit_breaker section added to non-reloadable fields check
+
+ -- Alex Freidah <alex.freidah@gmail.com>  Tue, 25 Feb 2026 22:00:00 +0000
+
 s3-orchestrator (0.6.4-1) stable; urgency=low
 
   * PostgreSQL advisory locks for multi-instance background task coordination

@@ -155,9 +155,10 @@ type RateLimitConfig struct {
 // the database becomes unreachable, the proxy enters degraded mode: reads
 // broadcast to all backends, writes return 503.
 type CircuitBreakerConfig struct {
-	FailureThreshold int           `yaml:"failure_threshold"` // Consecutive failures before opening (default: 3)
-	OpenTimeout      time.Duration `yaml:"open_timeout"`      // Delay before probing recovery (default: 15s)
-	CacheTTL         time.Duration `yaml:"cache_ttl"`         // TTL for key→backend cache during degraded reads (default: 60s)
+	FailureThreshold  int           `yaml:"failure_threshold"`  // Consecutive failures before opening (default: 3)
+	OpenTimeout       time.Duration `yaml:"open_timeout"`       // Delay before probing recovery (default: 15s)
+	CacheTTL          time.Duration `yaml:"cache_ttl"`          // TTL for key→backend cache during degraded reads (default: 60s)
+	ParallelBroadcast bool          `yaml:"parallel_broadcast"` // Fan-out reads to all backends in parallel during degraded mode (default: false)
 }
 
 // UIConfig holds settings for the built-in web dashboard. Disabled by default.
@@ -545,6 +546,9 @@ func NonReloadableFieldsChanged(old, new *Config) []string {
 	}
 	if old.UI != new.UI {
 		changed = append(changed, "ui")
+	}
+	if old.CircuitBreaker != new.CircuitBreaker {
+		changed = append(changed, "circuit_breaker")
 	}
 	if old.RoutingStrategy != new.RoutingStrategy {
 		changed = append(changed, "routing_strategy")
