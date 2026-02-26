@@ -510,6 +510,22 @@ func (s *Store) ListObjects(ctx context.Context, prefix, startAfter string, maxK
 	return result, nil
 }
 
+// ListExpiredObjects returns one row per unique key matching the given prefix
+// whose created_at is older than cutoff, up to limit rows. Used by lifecycle
+// expiration to find objects eligible for deletion.
+func (s *Store) ListExpiredObjects(ctx context.Context, prefix string, cutoff time.Time, limit int) ([]ObjectLocation, error) {
+	escapedPrefix := likeEscaper.Replace(prefix)
+	rows, err := s.queries.ListExpiredObjects(ctx, db.ListExpiredObjectsParams{
+		Prefix:  escapedPrefix,
+		Cutoff:  pgTimestamptz(cutoff),
+		MaxKeys: int32(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list expired objects: %w", err)
+	}
+	return toObjectLocations(rows), nil
+}
+
 // -------------------------------------------------------------------------
 // DIRECTORY LISTING (DASHBOARD)
 // -------------------------------------------------------------------------
@@ -884,6 +900,7 @@ const (
 	LockReplicator       int64 = 1002
 	LockCleanupQueue     int64 = 1003
 	LockMultipartCleanup int64 = 1004
+	LockLifecycle        int64 = 1005
 )
 
 // WithAdvisoryLock acquires a PostgreSQL session-level advisory lock on a

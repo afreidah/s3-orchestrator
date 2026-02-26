@@ -379,6 +379,33 @@ var (
 		},
 	)
 
+	// --- Lifecycle metrics ---
+
+	// LifecycleDeletedTotal counts objects deleted by lifecycle expiration rules.
+	LifecycleDeletedTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "s3proxy_lifecycle_deleted_total",
+			Help: "Objects deleted by lifecycle expiration rules",
+		},
+	)
+
+	// LifecycleFailedTotal counts objects that failed lifecycle deletion.
+	LifecycleFailedTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "s3proxy_lifecycle_failed_total",
+			Help: "Objects that failed lifecycle deletion",
+		},
+	)
+
+	// LifecycleRunsTotal counts lifecycle worker executions.
+	LifecycleRunsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "s3proxy_lifecycle_runs_total",
+			Help: "Lifecycle worker executions",
+		},
+		[]string{"status"},
+	)
+
 	// --- Audit metrics ---
 
 	// AuditEventsTotal counts audit log entries by event type.

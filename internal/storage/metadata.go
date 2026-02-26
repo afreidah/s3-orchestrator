@@ -65,6 +65,9 @@ type MetadataStore interface {
 	// --- Directory listing (dashboard) ---
 	ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*DirectoryListResult, error)
 
+	// --- Lifecycle operations ---
+	ListExpiredObjects(ctx context.Context, prefix string, cutoff time.Time, limit int) ([]ObjectLocation, error)
+
 	// --- Background operations (metrics, cleanup, rebalance, replication) ---
 	GetQuotaStats(ctx context.Context) (map[string]QuotaStat, error)
 	GetObjectCounts(ctx context.Context) (map[string]int64, error)
