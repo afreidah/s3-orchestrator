@@ -350,3 +350,7 @@ func (m *mockStore) RetryCleanupItem(_ context.Context, id int64, backoff time.D
 func (m *mockStore) CleanupQueueDepth(_ context.Context) (int64, error) {
 	return m.cleanupQueueDepthVal, m.cleanupQueueDepthErr
 }
+
+func (m *mockStore) WithAdvisoryLock(_ context.Context, _ int64, fn func(ctx context.Context) error) (bool, error) {
+	return true, fn(context.Background())
+}

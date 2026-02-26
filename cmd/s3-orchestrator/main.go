@@ -141,6 +141,7 @@ func runServe() {
 	// --- Store initial reloadable configs ---
 	manager.SetRebalanceConfig(&cfg.Rebalance)
 	manager.SetReplicationConfig(&cfg.Replication)
+	manager.SetUsageFlushConfig(&cfg.UsageFlush)
 
 	// --- Initial quota metrics update ---
 	if err := manager.UpdateQuotaMetrics(ctx); err != nil {
@@ -150,10 +151,10 @@ func runServe() {
 	// --- Start background services with lifecycle manager ---
 	sm := lifecycle.NewManager()
 	sm.Register("usage-flush", &usageFlushService{manager: manager})
-	sm.Register("multipart-cleanup", &multipartCleanupService{manager: manager})
-	sm.Register("cleanup-queue", &cleanupQueueService{manager: manager})
-	sm.Register("rebalancer", &rebalancerService{manager: manager})
-	sm.Register("replicator", &replicatorService{manager: manager})
+	sm.Register("multipart-cleanup", &multipartCleanupService{manager: manager, store: cbStore})
+	sm.Register("cleanup-queue", &cleanupQueueService{manager: manager, store: cbStore})
+	sm.Register("rebalancer", &rebalancerService{manager: manager, store: cbStore})
+	sm.Register("replicator", &replicatorService{manager: manager, store: cbStore})
 
 	if cfg.Rebalance.Enabled {
 		slog.Info("Rebalancer enabled",
@@ -330,10 +331,11 @@ func runServe() {
 			manager.UpdateUsageLimits(newUsageLimits)
 			slog.Info("Reloaded backend usage limits")
 
-			// Reload rebalance/replication config
+			// Reload rebalance/replication/usage-flush config
 			manager.SetRebalanceConfig(&newCfg.Rebalance)
 			manager.SetReplicationConfig(&newCfg.Replication)
-			slog.Info("Reloaded rebalance/replication config")
+			manager.SetUsageFlushConfig(&newCfg.UsageFlush)
+			slog.Info("Reloaded rebalance/replication/usage-flush config")
 
 			// Update quota metrics with new limits
 			if err := manager.UpdateQuotaMetrics(bgCtx); err != nil {

@@ -76,6 +76,7 @@ type BackendManager struct {
 	routingStrategy string                        // "pack" or "spread"
 	rebalanceCfg    atomic.Pointer[config.RebalanceConfig]
 	replicationCfg  atomic.Pointer[config.ReplicationConfig]
+	usageFlushCfg   atomic.Pointer[config.UsageFlushConfig]
 }
 
 // NewBackendManager creates a new backend manager with the given configuration.
@@ -145,6 +146,21 @@ func (m *BackendManager) SetReplicationConfig(cfg *config.ReplicationConfig) {
 // ReplicationConfig returns the current replication configuration.
 func (m *BackendManager) ReplicationConfig() *config.ReplicationConfig {
 	return m.replicationCfg.Load()
+}
+
+// SetUsageFlushConfig atomically stores the usage flush configuration.
+func (m *BackendManager) SetUsageFlushConfig(cfg *config.UsageFlushConfig) {
+	m.usageFlushCfg.Store(cfg)
+}
+
+// UsageFlushConfig returns the current usage flush configuration.
+func (m *BackendManager) UsageFlushConfig() *config.UsageFlushConfig {
+	return m.usageFlushCfg.Load()
+}
+
+// NearUsageLimit returns true if any backend is approaching its usage limits.
+func (m *BackendManager) NearUsageLimit(threshold float64) bool {
+	return m.usage.NearLimit(threshold)
 }
 
 // -------------------------------------------------------------------------

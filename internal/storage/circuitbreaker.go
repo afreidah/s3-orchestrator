@@ -340,3 +340,10 @@ func (cb *CircuitBreakerStore) RetryCleanupItem(ctx context.Context, id int64, b
 func (cb *CircuitBreakerStore) CleanupQueueDepth(ctx context.Context) (int64, error) {
 	return cbCall(cb, func() (int64, error) { return cb.real.CleanupQueueDepth(ctx) })
 }
+
+// WithAdvisoryLock delegates directly to the underlying store without circuit
+// breaker wrapping. Advisory locks are coordination-only; if the DB is down
+// the lock attempt fails naturally and the task is skipped.
+func (cb *CircuitBreakerStore) WithAdvisoryLock(ctx context.Context, lockID int64, fn func(ctx context.Context) error) (bool, error) {
+	return cb.real.WithAdvisoryLock(ctx, lockID, fn)
+}

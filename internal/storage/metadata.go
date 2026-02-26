@@ -85,6 +85,9 @@ type MetadataStore interface {
 	CompleteCleanupItem(ctx context.Context, id int64) error
 	RetryCleanupItem(ctx context.Context, id int64, backoff time.Duration, lastError string) error
 	CleanupQueueDepth(ctx context.Context) (int64, error)
+
+	// --- Advisory lock (multi-instance coordination) ---
+	WithAdvisoryLock(ctx context.Context, lockID int64, fn func(ctx context.Context) error) (bool, error)
 }
 
 // UsageStat holds usage statistics for a single backend in a given period.
