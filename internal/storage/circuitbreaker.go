@@ -320,3 +320,23 @@ func (cb *CircuitBreakerStore) FlushUsageDeltas(ctx context.Context, backendName
 func (cb *CircuitBreakerStore) GetUsageForPeriod(ctx context.Context, period string) (map[string]UsageStat, error) {
 	return cbCall(cb, func() (map[string]UsageStat, error) { return cb.real.GetUsageForPeriod(ctx, period) })
 }
+
+func (cb *CircuitBreakerStore) EnqueueCleanup(ctx context.Context, backendName, objectKey, reason string) error {
+	return cbCallNoResult(cb, func() error { return cb.real.EnqueueCleanup(ctx, backendName, objectKey, reason) })
+}
+
+func (cb *CircuitBreakerStore) GetPendingCleanups(ctx context.Context, limit int) ([]CleanupItem, error) {
+	return cbCall(cb, func() ([]CleanupItem, error) { return cb.real.GetPendingCleanups(ctx, limit) })
+}
+
+func (cb *CircuitBreakerStore) CompleteCleanupItem(ctx context.Context, id int64) error {
+	return cbCallNoResult(cb, func() error { return cb.real.CompleteCleanupItem(ctx, id) })
+}
+
+func (cb *CircuitBreakerStore) RetryCleanupItem(ctx context.Context, id int64, backoff time.Duration, lastError string) error {
+	return cbCallNoResult(cb, func() error { return cb.real.RetryCleanupItem(ctx, id, backoff, lastError) })
+}
+
+func (cb *CircuitBreakerStore) CleanupQueueDepth(ctx context.Context) (int64, error) {
+	return cbCall(cb, func() (int64, error) { return cb.real.CleanupQueueDepth(ctx) })
+}

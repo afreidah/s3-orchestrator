@@ -24,6 +24,17 @@ type BackendUsage struct {
 	UpdatedAt    pgtype.Timestamptz
 }
 
+type CleanupQueue struct {
+	ID          int64
+	BackendName string
+	ObjectKey   string
+	Reason      string
+	CreatedAt   pgtype.Timestamptz
+	NextRetry   pgtype.Timestamptz
+	Attempts    int32
+	LastError   *string
+}
+
 type MultipartPart struct {
 	UploadID   string
 	PartNumber int32

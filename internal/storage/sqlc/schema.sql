@@ -53,3 +53,17 @@ CREATE TABLE backend_usage (
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (backend_name, period)
 );
+
+CREATE TABLE cleanup_queue (
+    id           BIGSERIAL PRIMARY KEY,
+    backend_name TEXT NOT NULL REFERENCES backend_quotas(backend_name),
+    object_key   TEXT NOT NULL,
+    reason       TEXT NOT NULL,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    next_retry   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    attempts     INT NOT NULL DEFAULT 0,
+    last_error   TEXT
+);
+
+CREATE INDEX idx_cleanup_queue_next_retry
+    ON cleanup_queue(next_retry) WHERE attempts < 10;

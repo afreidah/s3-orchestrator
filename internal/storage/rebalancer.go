@@ -406,6 +406,7 @@ func (m *BackendManager) executeMoves(ctx context.Context, plan []rebalanceMove,
 			dcancel()
 			if delErr != nil {
 				slog.Warn("Rebalance: failed to clean up orphan", "key", move.ObjectKey, "error", delErr)
+				m.enqueueCleanup(ctx, move.ToBackend, move.ObjectKey, "rebalance_orphan")
 			}
 			telemetry.RebalanceObjectsMoved.WithLabelValues(strategy, "error").Inc()
 			continue
@@ -420,6 +421,7 @@ func (m *BackendManager) executeMoves(ctx context.Context, plan []rebalanceMove,
 			dcancel()
 			if delErr != nil {
 				slog.Warn("Rebalance: failed to clean up orphan", "key", move.ObjectKey, "error", delErr)
+				m.enqueueCleanup(ctx, move.ToBackend, move.ObjectKey, "rebalance_stale_orphan")
 			}
 			continue
 		}
@@ -429,7 +431,7 @@ func (m *BackendManager) executeMoves(ctx context.Context, plan []rebalanceMove,
 		if err := srcBackend.DeleteObject(delctx, move.ObjectKey); err != nil {
 			slog.Warn("Rebalance: failed to delete source object (orphan)",
 				"key", move.ObjectKey, "backend", move.FromBackend, "error", err)
-			// DB is correct, source just has a leftover copy
+			m.enqueueCleanup(ctx, move.FromBackend, move.ObjectKey, "rebalance_source_delete")
 		}
 		delcancel()
 

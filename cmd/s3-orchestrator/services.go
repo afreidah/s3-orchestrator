@@ -70,6 +70,31 @@ func (s *multipartCleanupService) Run(ctx context.Context) error {
 }
 
 // -------------------------------------------------------------------------
+// CLEANUP QUEUE
+// -------------------------------------------------------------------------
+
+type cleanupQueueService struct {
+	manager *storage.BackendManager
+}
+
+func (s *cleanupQueueService) Run(ctx context.Context) error {
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			tickCtx := audit.WithRequestID(ctx, audit.NewID())
+			processed, failed := s.manager.ProcessCleanupQueue(tickCtx)
+			if processed > 0 || failed > 0 {
+				slog.Info("Cleanup queue processed", "processed", processed, "failed", failed)
+			}
+		case <-ctx.Done():
+			return nil
+		}
+	}
+}
+
+// -------------------------------------------------------------------------
 // REBALANCER
 // -------------------------------------------------------------------------
 
