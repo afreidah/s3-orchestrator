@@ -37,6 +37,7 @@ type Config struct {
 	CircuitBreaker  CircuitBreakerConfig `yaml:"circuit_breaker"`
 	UI              UIConfig             `yaml:"ui"`
 	UsageFlush      UsageFlushConfig     `yaml:"usage_flush"`
+	Lifecycle       LifecycleConfig      `yaml:"lifecycle"`
 	RoutingStrategy string               `yaml:"routing_strategy"` // "pack" (default) or "spread"
 }
 
@@ -165,6 +166,19 @@ type CircuitBreakerConfig struct {
 type UIConfig struct {
 	Enabled bool   `yaml:"enabled"`
 	Path    string `yaml:"path"` // URL prefix for the dashboard (default: "/ui")
+}
+
+// LifecycleConfig holds rules for automatic object expiration. Objects matching
+// a rule's prefix that are older than expiration_days are deleted by a background
+// worker. Empty rules list disables lifecycle processing.
+type LifecycleConfig struct {
+	Rules []LifecycleRule `yaml:"rules"`
+}
+
+// LifecycleRule defines a single object expiration rule.
+type LifecycleRule struct {
+	Prefix         string `yaml:"prefix"`
+	ExpirationDays int    `yaml:"expiration_days"`
 }
 
 // UsageFlushConfig holds settings for the periodic usage counter flush to the
@@ -518,6 +532,24 @@ func (c *Config) SetDefaultsAndValidate() error {
 	}
 	if c.UsageFlush.FastInterval >= c.UsageFlush.Interval {
 		errors = append(errors, "usage_flush.fast_interval must be less than usage_flush.interval")
+	}
+
+	// --- Lifecycle validation ---
+	lifecyclePrefixes := make(map[string]bool)
+	for i := range c.Lifecycle.Rules {
+		r := &c.Lifecycle.Rules[i]
+		prefix := fmt.Sprintf("lifecycle.rules[%d]", i)
+
+		if r.Prefix == "" {
+			errors = append(errors, fmt.Sprintf("%s: prefix is required", prefix))
+		}
+		if r.ExpirationDays <= 0 {
+			errors = append(errors, fmt.Sprintf("%s: expiration_days must be positive", prefix))
+		}
+		if lifecyclePrefixes[r.Prefix] {
+			errors = append(errors, fmt.Sprintf("%s: duplicate prefix '%s'", prefix, r.Prefix))
+		}
+		lifecyclePrefixes[r.Prefix] = true
 	}
 
 	if len(errors) > 0 {

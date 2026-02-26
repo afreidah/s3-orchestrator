@@ -279,6 +279,10 @@ func (cb *CircuitBreakerStore) DeleteMultipartUpload(ctx context.Context, upload
 	return cbCallNoResult(cb, func() error { return cb.real.DeleteMultipartUpload(ctx, uploadID) })
 }
 
+func (cb *CircuitBreakerStore) ListExpiredObjects(ctx context.Context, prefix string, cutoff time.Time, limit int) ([]ObjectLocation, error) {
+	return cbCall(cb, func() ([]ObjectLocation, error) { return cb.real.ListExpiredObjects(ctx, prefix, cutoff, limit) })
+}
+
 func (cb *CircuitBreakerStore) GetQuotaStats(ctx context.Context) (map[string]QuotaStat, error) {
 	return cbCall(cb, func() (map[string]QuotaStat, error) { return cb.real.GetQuotaStats(ctx) })
 }

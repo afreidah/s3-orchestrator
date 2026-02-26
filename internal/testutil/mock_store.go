@@ -291,6 +291,10 @@ func (m *MockStore) CleanupQueueDepth(_ context.Context) (int64, error) {
 	return 0, nil
 }
 
+func (m *MockStore) ListExpiredObjects(_ context.Context, _ string, _ time.Time, _ int) ([]storage.ObjectLocation, error) {
+	return nil, nil
+}
+
 func (m *MockStore) WithAdvisoryLock(_ context.Context, _ int64, fn func(ctx context.Context) error) (bool, error) {
 	return true, fn(context.Background())
 }
