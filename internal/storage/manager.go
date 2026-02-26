@@ -54,13 +54,14 @@ var (
 
 // BackendManagerConfig holds the parameters for creating a BackendManager.
 type BackendManagerConfig struct {
-	Backends        map[string]ObjectBackend
-	Store           MetadataStore
-	Order           []string
-	CacheTTL        time.Duration
-	BackendTimeout  time.Duration
-	UsageLimits     map[string]UsageLimits
-	RoutingStrategy string
+	Backends          map[string]ObjectBackend
+	Store             MetadataStore
+	Order             []string
+	CacheTTL          time.Duration
+	BackendTimeout    time.Duration
+	UsageLimits       map[string]UsageLimits
+	RoutingStrategy   string
+	ParallelBroadcast bool // fan-out reads in parallel during degraded mode
 }
 
 // BackendManager manages multiple storage backends with quota tracking.
@@ -73,8 +74,9 @@ type BackendManager struct {
 	usage          *UsageTracker                 // per-backend usage counters and limits
 	metrics        *MetricsCollector             // Prometheus metric recording and gauge refresh
 	dashboard      *DashboardAggregator          // web UI data aggregation
-	routingStrategy string                        // "pack" or "spread"
-	rebalanceCfg    atomic.Pointer[config.RebalanceConfig]
+	routingStrategy   string                        // "pack" or "spread"
+	parallelBroadcast bool                          // fan-out reads in parallel during degraded mode
+	rebalanceCfg      atomic.Pointer[config.RebalanceConfig]
 	replicationCfg  atomic.Pointer[config.ReplicationConfig]
 	usageFlushCfg   atomic.Pointer[config.UsageFlushConfig]
 }
@@ -97,7 +99,8 @@ func NewBackendManager(cfg *BackendManagerConfig) *BackendManager {
 		usage:           usage,
 		metrics:         NewMetricsCollector(cfg.Store, usage, backendNames),
 		dashboard:       NewDashboardAggregator(cfg.Store, usage, cfg.Order),
-		routingStrategy: cfg.RoutingStrategy,
+		routingStrategy:   cfg.RoutingStrategy,
+		parallelBroadcast: cfg.ParallelBroadcast,
 	}
 }
 

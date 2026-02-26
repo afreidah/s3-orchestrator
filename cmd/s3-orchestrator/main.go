@@ -129,13 +129,14 @@ func runServe() {
 
 	// --- Create backend manager ---
 	manager := storage.NewBackendManager(&storage.BackendManagerConfig{
-		Backends:        backends,
-		Store:           cbStore,
-		Order:           backendOrder,
-		CacheTTL:        cfg.CircuitBreaker.CacheTTL,
-		BackendTimeout:  cfg.Server.BackendTimeout,
-		UsageLimits:     usageLimits,
-		RoutingStrategy: cfg.RoutingStrategy,
+		Backends:          backends,
+		Store:             cbStore,
+		Order:             backendOrder,
+		CacheTTL:          cfg.CircuitBreaker.CacheTTL,
+		BackendTimeout:    cfg.Server.BackendTimeout,
+		UsageLimits:       usageLimits,
+		RoutingStrategy:   cfg.RoutingStrategy,
+		ParallelBroadcast: cfg.CircuitBreaker.ParallelBroadcast,
 	})
 
 	// --- Store initial reloadable configs ---
@@ -429,6 +430,10 @@ func runServe() {
 			"min_version", cfg.Server.TLS.MinVersion,
 			"mtls", cfg.Server.TLS.ClientCAFile != "",
 		)
+	}
+
+	if cfg.CircuitBreaker.ParallelBroadcast {
+		slog.Info("Parallel broadcast reads enabled for degraded mode")
 	}
 
 	// --- Start server ---

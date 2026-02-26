@@ -177,8 +177,8 @@ func (m *BackendManager) withReadFailover(ctx context.Context, operation, key st
 }
 
 // broadcastRead tries all backends when the DB is unavailable. Checks the
-// location cache first for a known-good backend, then falls back to trying
-// every backend in order.
+// location cache first for a known-good backend, then dispatches to either
+// parallel or sequential broadcast based on configuration.
 func (m *BackendManager) broadcastRead(ctx context.Context, operation, key string, start time.Time, span trace.Span, tryBackend func(ctx context.Context, backendName string, backend ObjectBackend) (int64, error)) (string, error) {
 	span.SetAttributes(attribute.Bool("s3proxy.degraded_mode", true))
 	telemetry.DegradedReadsTotal.WithLabelValues(operation).Inc()
@@ -201,7 +201,14 @@ func (m *BackendManager) broadcastRead(ctx context.Context, operation, key strin
 		}
 	}
 
-	// --- Broadcast to all backends ---
+	if m.parallelBroadcast {
+		return m.parallelBroadcastRead(ctx, operation, key, start, span, tryBackend)
+	}
+	return m.sequentialBroadcastRead(ctx, operation, key, start, span, tryBackend)
+}
+
+// sequentialBroadcastRead tries each backend in order until one succeeds.
+func (m *BackendManager) sequentialBroadcastRead(ctx context.Context, operation, key string, start time.Time, span trace.Span, tryBackend func(ctx context.Context, backendName string, backend ObjectBackend) (int64, error)) (string, error) {
 	var lastErr error
 	for _, name := range m.order {
 		backend, ok := m.backends[name]
@@ -237,10 +244,69 @@ func (m *BackendManager) broadcastRead(ctx context.Context, operation, key strin
 	return "", ErrObjectNotFound
 }
 
+// parallelBroadcastRead fans out to all backends concurrently and returns
+// the first successful result. Remaining goroutines are cancelled via context.
+func (m *BackendManager) parallelBroadcastRead(ctx context.Context, operation, key string, start time.Time, span trace.Span, tryBackend func(ctx context.Context, backendName string, backend ObjectBackend) (int64, error)) (string, error) {
+	type broadcastResult struct {
+		name string
+		size int64
+		err  error
+	}
+
+	bctx, bcancel := context.WithCancel(ctx)
+	defer bcancel()
+
+	launched := 0
+	ch := make(chan broadcastResult, len(m.order))
+
+	for _, name := range m.order {
+		backend, ok := m.backends[name]
+		if !ok {
+			continue
+		}
+		launched++
+		go func(beName string, be ObjectBackend) {
+			tctx, tcancel := m.withTimeout(bctx)
+			defer tcancel()
+			size, err := tryBackend(tctx, beName, be)
+			ch <- broadcastResult{name: beName, size: size, err: err}
+		}(name, backend)
+	}
+
+	var lastErr error
+	for range launched {
+		r := <-ch
+		if r.err != nil {
+			lastErr = r.err
+			continue
+		}
+
+		// First success — cancel remaining goroutines
+		bcancel()
+		m.cache.Set(key, r.name)
+		m.recordOperation(operation, r.name, start, nil)
+		span.SetAttributes(telemetry.AttrBackendName.String(r.name))
+		span.SetAttributes(telemetry.AttrObjectSize.Int64(r.size))
+		span.SetAttributes(attribute.Bool("s3proxy.parallel_broadcast", true))
+		span.SetStatus(codes.Ok, "")
+		return r.name, nil
+	}
+
+	if lastErr != nil {
+		span.SetStatus(codes.Error, lastErr.Error())
+		span.RecordError(lastErr)
+		return "", fmt.Errorf("all backends failed during degraded read: %w", lastErr)
+	}
+
+	span.SetStatus(codes.Error, "no backends available")
+	return "", ErrObjectNotFound
+}
+
 // GetObject retrieves an object from the backend where it's stored. Tries the
 // primary copy first, then falls back to replicas if the primary fails.
 func (m *BackendManager) GetObject(ctx context.Context, key string, rangeHeader string) (*GetObjectResult, error) {
 	var result *GetObjectResult
+	var once sync.Once // protects result write when parallel broadcast is enabled
 
 	backendName, err := m.withReadFailover(ctx, "GetObject", key, func(ctx context.Context, beName string, backend ObjectBackend) (int64, error) {
 		if !m.usage.WithinLimits(beName, 1, 0, 0) {
@@ -254,7 +320,10 @@ func (m *BackendManager) GetObject(ctx context.Context, key string, rangeHeader 
 			_ = r.Body.Close()
 			return 0, fmt.Errorf("backend %s egress: %w", beName, errUsageLimitSkip)
 		}
-		result = r
+		once.Do(func() { result = r })
+		if result != r {
+			_ = r.Body.Close() // lost the race — close our copy
+		}
 		return r.Size, nil
 	})
 	if err != nil {
