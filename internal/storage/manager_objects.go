@@ -483,9 +483,9 @@ func (m *BackendManager) DeleteObject(ctx context.Context, key string) error {
 		err := backend.DeleteObject(bctx, key)
 		bcancel()
 		if err != nil {
-			// Log error but don't fail - quota is already updated
 			slog.Warn("Failed to delete object from backend",
 				"backend", copy.BackendName, "key", key, "error", err)
+			m.enqueueCleanup(ctx, copy.BackendName, key, "delete_failed")
 			span.RecordError(err)
 		}
 	}

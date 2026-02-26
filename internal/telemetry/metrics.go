@@ -351,6 +351,34 @@ var (
 		[]string{"operation"},
 	)
 
+	// --- Cleanup queue metrics ---
+
+	// CleanupQueueEnqueuedTotal counts items added to the cleanup retry queue.
+	CleanupQueueEnqueuedTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "s3proxy_cleanup_queue_enqueued_total",
+			Help: "Total items added to the cleanup retry queue",
+		},
+		[]string{"reason"},
+	)
+
+	// CleanupQueueProcessedTotal counts items processed from the cleanup queue.
+	CleanupQueueProcessedTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "s3proxy_cleanup_queue_processed_total",
+			Help: "Total items processed from the cleanup retry queue",
+		},
+		[]string{"status"},
+	)
+
+	// CleanupQueueDepth tracks the current number of pending cleanup items.
+	CleanupQueueDepth = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "s3proxy_cleanup_queue_depth",
+			Help: "Current number of pending items in the cleanup retry queue",
+		},
+	)
+
 	// --- Audit metrics ---
 
 	// AuditEventsTotal counts audit log entries by event type.

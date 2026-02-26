@@ -53,9 +53,21 @@ type mockStore struct {
 	flushUsageErr   error
 	flushUsageCalls []flushUsageCall
 
+	// Cleanup queue
+	enqueueCleanupErr   error
+	pendingCleanups     []CleanupItem
+	getPendingErr       error
+	completeCleanupErr  error
+	retryCleanupErr     error
+	cleanupQueueDepthVal int64
+	cleanupQueueDepthErr error
+
 	// --- Call tracking ---
 	recordObjectCalls        []recordObjectCall
 	deleteObjectCalls        []string
+	enqueueCleanupCalls      []enqueueCleanupCall
+	completeCleanupCalls     []int64
+	retryCleanupCalls        []retryCleanupCall
 	callCount                int
 	getBackendWithSpaceCalls int
 	getLeastUtilizedCalls    int
@@ -64,6 +76,18 @@ type mockStore struct {
 type recordObjectCall struct {
 	Key, Backend string
 	Size         int64
+}
+
+type enqueueCleanupCall struct {
+	backendName string
+	objectKey   string
+	reason      string
+}
+
+type retryCleanupCall struct {
+	id        int64
+	backoff   time.Duration
+	lastError string
 }
 
 type flushUsageCall struct {
@@ -261,4 +285,48 @@ func (m *mockStore) GetUsageForPeriod(_ context.Context, _ string) (map[string]U
 		return m.getUsageForPeriodResp, nil
 	}
 	return map[string]UsageStat{}, nil
+}
+
+// --- Cleanup queue operations ---
+
+func (m *mockStore) EnqueueCleanup(_ context.Context, backendName, objectKey, reason string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.enqueueCleanupCalls = append(m.enqueueCleanupCalls, enqueueCleanupCall{
+		backendName: backendName,
+		objectKey:   objectKey,
+		reason:      reason,
+	})
+	return m.enqueueCleanupErr
+}
+
+func (m *mockStore) GetPendingCleanups(_ context.Context, _ int) ([]CleanupItem, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.getPendingErr != nil {
+		return nil, m.getPendingErr
+	}
+	return m.pendingCleanups, nil
+}
+
+func (m *mockStore) CompleteCleanupItem(_ context.Context, id int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.completeCleanupCalls = append(m.completeCleanupCalls, id)
+	return m.completeCleanupErr
+}
+
+func (m *mockStore) RetryCleanupItem(_ context.Context, id int64, backoff time.Duration, lastError string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.retryCleanupCalls = append(m.retryCleanupCalls, retryCleanupCall{
+		id:        id,
+		backoff:   backoff,
+		lastError: lastError,
+	})
+	return m.retryCleanupErr
+}
+
+func (m *mockStore) CleanupQueueDepth(_ context.Context) (int64, error) {
+	return m.cleanupQueueDepthVal, m.cleanupQueueDepthErr
 }

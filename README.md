@@ -114,6 +114,29 @@ When `replication.factor` is greater than 1, a background worker creates additio
 
 The worker runs once at startup to catch up on pending replicas, then continues at the configured interval.
 
+## Cleanup Queue
+
+When a backend S3 operation succeeds but the subsequent metadata update or cleanup deletion fails, an orphaned object is left on the backend — invisible to the system, consuming storage but not tracked by quotas. Rather than silently logging these failures, the orchestrator enqueues them in a persistent `cleanup_queue` table in PostgreSQL for automatic retry.
+
+A background worker runs every minute, fetching pending items and attempting to delete them from their respective backends. Failed attempts are rescheduled with exponential backoff (`1m × 2^attempts`, capped at 24h). After 10 failed attempts, the item is left in the table for manual inspection — the worker query filters it out automatically via a partial index.
+
+Enqueue points cover all failure sites across the codebase:
+
+- **PutObject / CopyObject / CompleteMultipartUpload** — orphaned object when `RecordObject` fails and the immediate cleanup delete also fails
+- **DeleteObject** — metadata removed but backend delete fails (storage leak)
+- **UploadPart** — part uploaded but `RecordPart` fails and cleanup delete fails
+- **CompleteMultipartUpload / AbortMultipartUpload** — temporary `__multipart/` part objects not deleted
+- **Rebalancer** — orphaned copy on destination when `MoveObjectLocation` fails, or stale source copy after a successful move
+- **Replicator** — orphaned replica when `RecordReplica` fails or source is deleted during replication
+
+Enqueue is best-effort: if the database is down (circuit breaker open), the failure is logged and the orphan is not enqueued. This avoids cascading failures — if the DB recovers, the next operation that fails will be enqueued normally.
+
+Operators can inspect exhausted items directly:
+
+```sql
+SELECT * FROM cleanup_queue WHERE attempts >= 10;
+```
+
 ## Rate Limiting
 
 Optional per-IP token bucket rate limiting. When enabled, requests exceeding the configured rate return `429 SlowDown`. Stale IP entries are cleaned up automatically.
@@ -289,7 +312,8 @@ The orchestrator connects to PostgreSQL via pgx/v5 connection pools and auto-app
 | `object_locations` | Maps object keys to backends with size tracking |
 | `multipart_uploads` | In-progress multipart upload metadata |
 | `multipart_parts` | Individual parts for active multipart uploads |
-| `usage_deltas` | Monthly per-backend API request and data transfer counters |
+| `backend_usage` | Monthly per-backend API request and data transfer counters |
+| `cleanup_queue` | Retry queue for failed backend object deletions |
 
 Quota updates are transactional: object location inserts/deletes and quota counter changes happen atomically.
 
@@ -341,6 +365,9 @@ All metrics are prefixed with `s3proxy_`. Exposed at `/metrics` when enabled.
 | `s3proxy_usage_egress_bytes` | Gauge | backend | Current month egress bytes |
 | `s3proxy_usage_ingress_bytes` | Gauge | backend | Current month ingress bytes |
 | `s3proxy_usage_limit_rejections_total` | Counter | operation, limit_type | Operations rejected by usage limits |
+| `s3proxy_cleanup_queue_enqueued_total` | Counter | reason | Items added to the cleanup retry queue |
+| `s3proxy_cleanup_queue_processed_total` | Counter | status | Items processed from the cleanup queue (success/retry/exhausted) |
+| `s3proxy_cleanup_queue_depth` | Gauge | — | Current pending items in the cleanup queue |
 | `s3proxy_rate_limit_rejections_total` | Counter | — | Requests rejected by per-IP rate limiting |
 | `s3proxy_audit_events_total` | Counter | event | Audit log entries emitted |
 
@@ -365,6 +392,7 @@ Structured audit log entries are emitted as JSON via `slog` for every S3 API req
 | Rebalancer | `rebalance.start`, `rebalance.move`, `rebalance.complete` |
 | Replicator | `replication.start`, `replication.copy`, `replication.complete` |
 | Multipart cleanup | `storage.MultipartCleanup` |
+| Cleanup queue | `cleanup_queue.processed` |
 
 Example audit log entry:
 
@@ -410,6 +438,7 @@ JSON APIs are available at `{path}/api/dashboard` and `{path}/api/tree` for prog
 |------|----------|-------------|
 | Usage flush + metrics | 30s | Flushes in-memory usage counters to PostgreSQL, then refreshes quota stats, usage baselines, object counts, and multipart counts. Updates Prometheus gauges. |
 | Stale multipart cleanup | 1h | Aborts multipart uploads older than 24h and deletes their temporary part objects. |
+| Cleanup queue | 1m | Retries failed backend object deletions with exponential backoff (1m to 24h, max 10 attempts). |
 | Rebalancer | configurable (default 6h) | Moves objects between backends per strategy. Only runs when enabled. |
 | Replicator | configurable (default 5m) | Creates copies of under-replicated objects. Only runs when factor > 1. Runs once at startup. |
 
@@ -466,16 +495,16 @@ make integration-test
 make build
 
 # Build multi-arch and push to registry
-make push VERSION=v0.6.0
+make push VERSION=v0.6.1
 
 # Build a .deb package for the host architecture
-make deb VERSION=0.6.0
+make deb VERSION=0.6.1
 
 # Build .deb packages for both amd64 and arm64
-make deb-all VERSION=0.6.0
+make deb-all VERSION=0.6.1
 
 # Build and run lintian validation
-make deb-lint VERSION=0.6.0
+make deb-lint VERSION=0.6.1
 ```
 
 ## Deployment
@@ -493,7 +522,7 @@ The orchestrator can run as a Docker container or as a native systemd service.
 Build and push a multi-arch image with a version tag:
 
 ```bash
-make push VERSION=v0.6.0
+make push VERSION=v0.6.1
 ```
 
 The `VERSION` is baked into the binary via `-ldflags` and displayed in the web UI header and `/health` endpoint. Defaults to `latest` if omitted.
@@ -503,13 +532,13 @@ The `VERSION` is baked into the binary via `-ldflags` and displayed in the web U
 Build a `.deb` package for bare-metal or VM deployments:
 
 ```bash
-make deb VERSION=0.6.0
+make deb VERSION=0.6.1
 ```
 
 Install and configure:
 
 ```bash
-sudo dpkg -i s3-orchestrator_0.6.0_amd64.deb
+sudo dpkg -i s3-orchestrator_0.6.1_amd64.deb
 sudo vim /etc/s3-orchestrator/config.yaml
 sudo vim /etc/default/s3-orchestrator   # set DB_PASSWORD, backend keys, etc.
 sudo systemctl start s3-orchestrator
@@ -548,10 +577,12 @@ internal/
     backend.go               S3 client (AWS SDK v2)
     metadata.go              MetadataStore interface, sentinel errors
     store.go                 PostgreSQL storage layer (pgx/v5 + sqlc)
+    cleanup_queue.go         Cleanup queue Store methods (enqueue, retry, complete)
     circuitbreaker.go        Three-state circuit breaker wrapper
     manager.go               Multi-backend routing, quota selection, shared helpers
     manager_objects.go       Object CRUD with read failover + broadcast
     manager_multipart.go     Multipart upload lifecycle
+    manager_cleanup.go       Cleanup queue processing and enqueue helper
     manager_dashboard.go     DashboardData type + thin wrappers
     location_cache.go        Key→backend cache with TTL + background eviction
     usage_tracker.go         Atomic usage counters, limit enforcement, flush
