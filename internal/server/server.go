@@ -131,7 +131,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// --- Bucket-level operations (no key) ---
 	if key == "" {
-		if method != http.MethodGet {
+		query := r.URL.Query()
+		_, hasDelete := query["delete"]
+
+		switch {
+		case method == http.MethodGet:
+			operation = "ListObjectsV2"
+			status, err = s.handleListObjectsV2(ctx, w, r, bucket)
+		case method == http.MethodPost && hasDelete:
+			operation = "DeleteObjects"
+			status, err = s.handleDeleteObjects(ctx, w, r, bucket)
+		default:
 			s.recordRequest(method, http.StatusMethodNotAllowed, start, 0, 0)
 			audit.Log(ctx, "s3.MethodNotAllowed",
 				slog.String("method", method),
@@ -145,8 +155,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			span.SetStatus(codes.Error, "method not allowed for bucket")
 			return
 		}
-		operation = "ListObjectsV2"
-		status, err = s.handleListObjectsV2(ctx, w, r, bucket)
 	} else {
 		// --- Multipart upload routing ---
 		query := r.URL.Query()

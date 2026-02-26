@@ -39,6 +39,7 @@ Objects are routed to backends based on the configured `routing_strategy`: **pac
 | GetObject | `GET` | `/{bucket}/{key}` | Supports `Range` header (206 Partial Content) |
 | HeadObject | `HEAD` | `/{bucket}/{key}` | |
 | DeleteObject | `DELETE` | `/{bucket}/{key}` | Idempotent (404 from store treated as success) |
+| DeleteObjects | `POST` | `/{bucket}?delete` | Batch delete up to 1000 keys per request |
 | CopyObject | `PUT` | `/{bucket}/{key}` | Uses `X-Amz-Copy-Source` header |
 | ListObjectsV2 | `GET` | `/{bucket}?list-type=2` | Supports `delimiter` for virtual directories |
 | CreateMultipartUpload | `POST` | `/{bucket}/{key}?uploads` | |
@@ -46,6 +47,8 @@ Objects are routed to backends based on the configured `routing_strategy`: **pac
 | CompleteMultipartUpload | `POST` | `/{bucket}/{key}?uploadId=X` | |
 | AbortMultipartUpload | `DELETE` | `/{bucket}/{key}?uploadId=X` | |
 | ListParts | `GET` | `/{bucket}/{key}?uploadId=X` | |
+
+**Batch delete** (`DeleteObjects`) accepts an XML request body listing up to 1000 keys and returns per-key success/error results. Metadata removal is sequential (each key is its own DB transaction), while backend S3 deletes run concurrently with bounded parallelism for throughput. Failed backend deletes are enqueued to the cleanup queue for automatic retry. The response always returns HTTP 200, even when individual keys fail -- errors are reported per-key in the XML body. Quiet mode (`<Quiet>true</Quiet>`) suppresses the `<Deleted>` elements and only returns errors.
 
 Each request must target a virtual bucket name that matches the credentials used to sign the request. Requests to a bucket the credentials aren't authorized for return `403 AccessDenied`.
 
@@ -151,7 +154,7 @@ Per-backend monthly limits for API requests, egress bytes, and ingress bytes. Se
 
 - **Writes** (PutObject, CopyObject, CreateMultipartUpload, UploadPart) — backends over their limits are excluded from selection; writes overflow to the next eligible backend. If all backends are over-limit, the orchestrator returns `507 InsufficientStorage`.
 - **Reads** (GetObject, HeadObject) — over-limit backends are skipped; the orchestrator tries replicas. Returns `429 SlowDown` only when *all* copies of the object are on over-limit backends.
-- **Deletes** (DeleteObject, AbortMultipartUpload) — always allowed regardless of limits.
+- **Deletes** (DeleteObject, DeleteObjects, AbortMultipartUpload) — always allowed regardless of limits.
 
 Effective usage is computed as `DB baseline + unflushed in-memory counters + proposed operation`, so enforcement stays accurate between the 30-second flush/refresh cycles without double-counting.
 
@@ -495,16 +498,16 @@ make integration-test
 make build
 
 # Build multi-arch and push to registry
-make push VERSION=v0.6.1
+make push VERSION=v0.6.2
 
 # Build a .deb package for the host architecture
-make deb VERSION=0.6.1
+make deb VERSION=0.6.2
 
 # Build .deb packages for both amd64 and arm64
-make deb-all VERSION=0.6.1
+make deb-all VERSION=0.6.2
 
 # Build and run lintian validation
-make deb-lint VERSION=0.6.1
+make deb-lint VERSION=0.6.2
 ```
 
 ## Deployment
@@ -522,7 +525,7 @@ The orchestrator can run as a Docker container or as a native systemd service.
 Build and push a multi-arch image with a version tag:
 
 ```bash
-make push VERSION=v0.6.1
+make push VERSION=v0.6.2
 ```
 
 The `VERSION` is baked into the binary via `-ldflags` and displayed in the web UI header and `/health` endpoint. Defaults to `latest` if omitted.
@@ -532,13 +535,13 @@ The `VERSION` is baked into the binary via `-ldflags` and displayed in the web U
 Build a `.deb` package for bare-metal or VM deployments:
 
 ```bash
-make deb VERSION=0.6.1
+make deb VERSION=0.6.2
 ```
 
 Install and configure:
 
 ```bash
-sudo dpkg -i s3-orchestrator_0.6.1_amd64.deb
+sudo dpkg -i s3-orchestrator_0.6.2_amd64.deb
 sudo vim /etc/s3-orchestrator/config.yaml
 sudo vim /etc/default/s3-orchestrator   # set DB_PASSWORD, backend keys, etc.
 sudo systemctl start s3-orchestrator
@@ -568,7 +571,7 @@ internal/
   config/config.go           YAML config loader with env var expansion
   server/
     server.go                HTTP router, bucket resolution, key prefixing, metrics
-    objects.go               PUT, GET, HEAD, DELETE, COPY handlers
+    objects.go               PUT, GET, HEAD, DELETE, COPY, DeleteObjects handlers
     list.go                  ListObjectsV2 handler (XML response)
     multipart.go             Multipart upload handlers
     helpers.go               Path parsing, S3 XML error responses
@@ -580,7 +583,7 @@ internal/
     cleanup_queue.go         Cleanup queue Store methods (enqueue, retry, complete)
     circuitbreaker.go        Three-state circuit breaker wrapper
     manager.go               Multi-backend routing, quota selection, shared helpers
-    manager_objects.go       Object CRUD with read failover + broadcast
+    manager_objects.go       Object CRUD with read failover, broadcast, batch delete
     manager_multipart.go     Multipart upload lifecycle
     manager_cleanup.go       Cleanup queue processing and enqueue helper
     manager_dashboard.go     DashboardData type + thin wrappers
