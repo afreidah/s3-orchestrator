@@ -914,6 +914,98 @@ func TestUsageFlushConfig_InvalidThreshold(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
+// LIFECYCLE CONFIG TESTS
+// -------------------------------------------------------------------------
+
+func TestLifecycleConfig_EmptyRulesValid(t *testing.T) {
+	cfg := validBaseConfig()
+	// No lifecycle rules — should be valid (disabled)
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Errorf("empty lifecycle rules should pass: %v", err)
+	}
+}
+
+func TestLifecycleConfig_ValidRules(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Lifecycle = LifecycleConfig{
+		Rules: []LifecycleRule{
+			{Prefix: "tmp/", ExpirationDays: 7},
+			{Prefix: "uploads/staging/", ExpirationDays: 1},
+		},
+	}
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Errorf("valid lifecycle rules should pass: %v", err)
+	}
+}
+
+func TestLifecycleConfig_MissingPrefix(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Lifecycle = LifecycleConfig{
+		Rules: []LifecycleRule{
+			{Prefix: "", ExpirationDays: 7},
+		},
+	}
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil {
+		t.Error("empty prefix should fail validation")
+	}
+	if !strings.Contains(err.Error(), "prefix is required") {
+		t.Errorf("error should mention prefix, got: %v", err)
+	}
+}
+
+func TestLifecycleConfig_ZeroExpirationDays(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Lifecycle = LifecycleConfig{
+		Rules: []LifecycleRule{
+			{Prefix: "tmp/", ExpirationDays: 0},
+		},
+	}
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil {
+		t.Error("zero expiration_days should fail validation")
+	}
+	if !strings.Contains(err.Error(), "expiration_days must be positive") {
+		t.Errorf("error should mention expiration_days, got: %v", err)
+	}
+}
+
+func TestLifecycleConfig_NegativeExpirationDays(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Lifecycle = LifecycleConfig{
+		Rules: []LifecycleRule{
+			{Prefix: "tmp/", ExpirationDays: -1},
+		},
+	}
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil {
+		t.Error("negative expiration_days should fail validation")
+	}
+}
+
+func TestLifecycleConfig_DuplicatePrefix(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Lifecycle = LifecycleConfig{
+		Rules: []LifecycleRule{
+			{Prefix: "tmp/", ExpirationDays: 7},
+			{Prefix: "tmp/", ExpirationDays: 3},
+		},
+	}
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil {
+		t.Error("duplicate prefix should fail validation")
+	}
+	if !strings.Contains(err.Error(), "duplicate prefix") {
+		t.Errorf("error should mention duplicate prefix, got: %v", err)
+	}
+}
+
+// -------------------------------------------------------------------------
 // HELPERS
 // -------------------------------------------------------------------------
 

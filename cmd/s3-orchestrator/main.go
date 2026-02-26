@@ -143,6 +143,7 @@ func runServe() {
 	manager.SetRebalanceConfig(&cfg.Rebalance)
 	manager.SetReplicationConfig(&cfg.Replication)
 	manager.SetUsageFlushConfig(&cfg.UsageFlush)
+	manager.SetLifecycleConfig(&cfg.Lifecycle)
 
 	// --- Initial quota metrics update ---
 	if err := manager.UpdateQuotaMetrics(ctx); err != nil {
@@ -156,6 +157,7 @@ func runServe() {
 	sm.Register("cleanup-queue", &cleanupQueueService{manager: manager, store: cbStore})
 	sm.Register("rebalancer", &rebalancerService{manager: manager, store: cbStore})
 	sm.Register("replicator", &replicatorService{manager: manager, store: cbStore})
+	sm.Register("lifecycle", &lifecycleService{manager: manager, store: cbStore})
 
 	if cfg.Rebalance.Enabled {
 		slog.Info("Rebalancer enabled",
@@ -332,11 +334,12 @@ func runServe() {
 			manager.UpdateUsageLimits(newUsageLimits)
 			slog.Info("Reloaded backend usage limits")
 
-			// Reload rebalance/replication/usage-flush config
+			// Reload rebalance/replication/usage-flush/lifecycle config
 			manager.SetRebalanceConfig(&newCfg.Rebalance)
 			manager.SetReplicationConfig(&newCfg.Replication)
 			manager.SetUsageFlushConfig(&newCfg.UsageFlush)
-			slog.Info("Reloaded rebalance/replication/usage-flush config")
+			manager.SetLifecycleConfig(&newCfg.Lifecycle)
+			slog.Info("Reloaded rebalance/replication/usage-flush/lifecycle config")
 
 			// Update quota metrics with new limits
 			if err := manager.UpdateQuotaMetrics(bgCtx); err != nil {
@@ -434,6 +437,10 @@ func runServe() {
 
 	if cfg.CircuitBreaker.ParallelBroadcast {
 		slog.Info("Parallel broadcast reads enabled for degraded mode")
+	}
+
+	if len(cfg.Lifecycle.Rules) > 0 {
+		slog.Info("Lifecycle rules enabled", "rules", len(cfg.Lifecycle.Rules))
 	}
 
 	// --- Start server ---

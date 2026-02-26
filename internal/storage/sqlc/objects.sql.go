@@ -7,6 +7,8 @@ package db
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const checkObjectExistsOnBackend = `-- name: CheckObjectExistsOnBackend :one
@@ -226,6 +228,46 @@ type ListDirectChildrenParams struct {
 // Return per-file detail for non-directory children under a prefix, with pagination.
 func (q *Queries) ListDirectChildren(ctx context.Context, arg ListDirectChildrenParams) ([]ObjectLocation, error) {
 	rows, err := q.db.Query(ctx, listDirectChildren, arg.Prefix, arg.StartAfter, arg.MaxKeys)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectLocation{}
+	for rows.Next() {
+		var i ObjectLocation
+		if err := rows.Scan(
+			&i.ObjectKey,
+			&i.BackendName,
+			&i.SizeBytes,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listExpiredObjects = `-- name: ListExpiredObjects :many
+SELECT DISTINCT ON (object_key) object_key, backend_name, size_bytes, created_at
+FROM object_locations
+WHERE object_key LIKE $1::text || '%' ESCAPE '\'
+  AND created_at < $2
+ORDER BY object_key, created_at ASC
+LIMIT $3
+`
+
+type ListExpiredObjectsParams struct {
+	Prefix  string
+	Cutoff  pgtype.Timestamptz
+	MaxKeys int32
+}
+
+func (q *Queries) ListExpiredObjects(ctx context.Context, arg ListExpiredObjectsParams) ([]ObjectLocation, error) {
+	rows, err := q.db.Query(ctx, listExpiredObjects, arg.Prefix, arg.Cutoff, arg.MaxKeys)
 	if err != nil {
 		return nil, err
 	}

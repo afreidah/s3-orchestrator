@@ -69,6 +69,11 @@ type mockStore struct {
 	cleanupQueueDepthVal int64
 	cleanupQueueDepthErr error
 
+	// Lifecycle
+	listExpiredObjectsResp  []ObjectLocation
+	listExpiredObjectsPages [][]ObjectLocation // for paginated lifecycle tests
+	listExpiredObjectsErr   error
+
 	// --- Call tracking ---
 	recordObjectCalls        []recordObjectCall
 	deleteObjectCalls        []string
@@ -349,6 +354,20 @@ func (m *mockStore) RetryCleanupItem(_ context.Context, id int64, backoff time.D
 
 func (m *mockStore) CleanupQueueDepth(_ context.Context) (int64, error) {
 	return m.cleanupQueueDepthVal, m.cleanupQueueDepthErr
+}
+
+func (m *mockStore) ListExpiredObjects(_ context.Context, _ string, _ time.Time, _ int) ([]ObjectLocation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.listExpiredObjectsErr != nil {
+		return nil, m.listExpiredObjectsErr
+	}
+	if len(m.listExpiredObjectsPages) > 0 {
+		page := m.listExpiredObjectsPages[0]
+		m.listExpiredObjectsPages = m.listExpiredObjectsPages[1:]
+		return page, nil
+	}
+	return m.listExpiredObjectsResp, nil
 }
 
 func (m *mockStore) WithAdvisoryLock(_ context.Context, _ int64, fn func(ctx context.Context) error) (bool, error) {

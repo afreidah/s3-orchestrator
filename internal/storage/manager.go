@@ -79,6 +79,7 @@ type BackendManager struct {
 	rebalanceCfg      atomic.Pointer[config.RebalanceConfig]
 	replicationCfg  atomic.Pointer[config.ReplicationConfig]
 	usageFlushCfg   atomic.Pointer[config.UsageFlushConfig]
+	lifecycleCfg    atomic.Pointer[config.LifecycleConfig]
 }
 
 // NewBackendManager creates a new backend manager with the given configuration.
@@ -159,6 +160,16 @@ func (m *BackendManager) SetUsageFlushConfig(cfg *config.UsageFlushConfig) {
 // UsageFlushConfig returns the current usage flush configuration.
 func (m *BackendManager) UsageFlushConfig() *config.UsageFlushConfig {
 	return m.usageFlushCfg.Load()
+}
+
+// SetLifecycleConfig atomically stores the lifecycle configuration.
+func (m *BackendManager) SetLifecycleConfig(cfg *config.LifecycleConfig) {
+	m.lifecycleCfg.Store(cfg)
+}
+
+// LifecycleConfig returns the current lifecycle configuration.
+func (m *BackendManager) LifecycleConfig() *config.LifecycleConfig {
+	return m.lifecycleCfg.Load()
 }
 
 // NearUsageLimit returns true if any backend is approaching its usage limits.
