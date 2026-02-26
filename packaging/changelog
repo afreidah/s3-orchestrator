@@ -1,3 +1,10 @@
+s3-orchestrator (0.6.3-1) stable; urgency=low
+
+  * Parallel rebalance move execution with bounded concurrency
+  * New config: rebalance.concurrency (default: 5)
+
+ -- Alex Freidah <alex.freidah@gmail.com>  Wed, 25 Feb 2026 18:00:00 +0000
+
 s3-orchestrator (0.6.2-1) stable; urgency=low
 
   * Add S3 DeleteObjects batch API (up to 1000 keys)

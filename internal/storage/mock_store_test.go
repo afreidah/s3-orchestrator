@@ -54,6 +54,12 @@ type mockStore struct {
 	flushUsageErr   error
 	flushUsageCalls []flushUsageCall
 
+	// Rebalance
+	listObjectsByBackendResp []ObjectLocation
+	listObjectsByBackendErr  error
+	moveObjectLocationSize   int64
+	moveObjectLocationErr    error
+
 	// Cleanup queue
 	enqueueCleanupErr   error
 	pendingCleanups     []CleanupItem
@@ -253,11 +259,21 @@ func (m *mockStore) GetStaleMultipartUploads(_ context.Context, _ time.Duration)
 }
 
 func (m *mockStore) ListObjectsByBackend(_ context.Context, _ string, _ int) ([]ObjectLocation, error) {
-	return nil, nil
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.listObjectsByBackendErr != nil {
+		return nil, m.listObjectsByBackendErr
+	}
+	return m.listObjectsByBackendResp, nil
 }
 
 func (m *mockStore) MoveObjectLocation(_ context.Context, _, _, _ string) (int64, error) {
-	return 0, nil
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.moveObjectLocationErr != nil {
+		return 0, m.moveObjectLocationErr
+	}
+	return m.moveObjectLocationSize, nil
 }
 
 func (m *mockStore) GetUnderReplicatedObjects(_ context.Context, _, _ int) ([]ObjectLocation, error) {
