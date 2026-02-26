@@ -801,6 +801,85 @@ func TestNonReloadableFieldsChanged_MultipleChanges(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
+// USAGE FLUSH CONFIG TESTS
+// -------------------------------------------------------------------------
+
+func TestUsageFlushConfig_Defaults(t *testing.T) {
+	cfg := validBaseConfig()
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("valid config should pass: %v", err)
+	}
+
+	if cfg.UsageFlush.Interval != 30*time.Second {
+		t.Errorf("interval default = %v, want 30s", cfg.UsageFlush.Interval)
+	}
+	if cfg.UsageFlush.AdaptiveThreshold != 0.8 {
+		t.Errorf("adaptive_threshold default = %f, want 0.8", cfg.UsageFlush.AdaptiveThreshold)
+	}
+	if cfg.UsageFlush.FastInterval != 5*time.Second {
+		t.Errorf("fast_interval default = %v, want 5s", cfg.UsageFlush.FastInterval)
+	}
+	if cfg.UsageFlush.AdaptiveEnabled {
+		t.Error("adaptive_enabled default should be false")
+	}
+}
+
+func TestUsageFlushConfig_CustomValues(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.UsageFlush = UsageFlushConfig{
+		Interval:          15 * time.Second,
+		AdaptiveEnabled:   true,
+		AdaptiveThreshold: 0.9,
+		FastInterval:      2 * time.Second,
+	}
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("valid custom usage flush config should pass: %v", err)
+	}
+
+	if cfg.UsageFlush.Interval != 15*time.Second {
+		t.Errorf("interval = %v, want 15s", cfg.UsageFlush.Interval)
+	}
+	if cfg.UsageFlush.AdaptiveThreshold != 0.9 {
+		t.Errorf("adaptive_threshold = %f, want 0.9", cfg.UsageFlush.AdaptiveThreshold)
+	}
+}
+
+func TestUsageFlushConfig_FastIntervalExceedsInterval(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.UsageFlush = UsageFlushConfig{
+		Interval:          10 * time.Second,
+		AdaptiveThreshold: 0.8,
+		FastInterval:      20 * time.Second, // bigger than interval
+	}
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil {
+		t.Error("fast_interval >= interval should fail validation")
+	}
+	if !strings.Contains(err.Error(), "fast_interval must be less than") {
+		t.Errorf("error should mention fast_interval, got: %v", err)
+	}
+}
+
+func TestUsageFlushConfig_InvalidThreshold(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.UsageFlush = UsageFlushConfig{
+		Interval:          30 * time.Second,
+		AdaptiveThreshold: 1.5, // out of range
+		FastInterval:      5 * time.Second,
+	}
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil {
+		t.Error("threshold > 1 should fail validation")
+	}
+	if !strings.Contains(err.Error(), "adaptive_threshold must be between") {
+		t.Errorf("error should mention adaptive_threshold, got: %v", err)
+	}
+}
+
+// -------------------------------------------------------------------------
 // HELPERS
 // -------------------------------------------------------------------------
 

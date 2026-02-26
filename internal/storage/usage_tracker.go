@@ -160,6 +160,49 @@ func (u *UsageTracker) ResetBaselines(names []string) {
 	}
 }
 
+// NearLimit returns true if any backend's effective usage (baseline + unflushed)
+// exceeds the given threshold ratio for any non-zero limit dimension. Used by
+// adaptive flushing to shorten the flush interval when enforcement accuracy matters.
+func (u *UsageTracker) NearLimit(threshold float64) bool {
+	u.limitsMu.RLock()
+	defer u.limitsMu.RUnlock()
+
+	u.baselineMu.RLock()
+	defer u.baselineMu.RUnlock()
+
+	for name, lim := range u.limits {
+		if lim.APIRequestLimit == 0 && lim.EgressByteLimit == 0 && lim.IngressByteLimit == 0 {
+			continue
+		}
+
+		base := u.baseline[name]
+		c := u.counters[name]
+		if c == nil {
+			continue
+		}
+
+		if lim.APIRequestLimit > 0 {
+			effective := float64(base.APIRequests+c.apiRequests.Load()) / float64(lim.APIRequestLimit)
+			if effective >= threshold {
+				return true
+			}
+		}
+		if lim.EgressByteLimit > 0 {
+			effective := float64(base.EgressBytes+c.egressBytes.Load()) / float64(lim.EgressByteLimit)
+			if effective >= threshold {
+				return true
+			}
+		}
+		if lim.IngressByteLimit > 0 {
+			effective := float64(base.IngressBytes+c.ingressBytes.Load()) / float64(lim.IngressByteLimit)
+			if effective >= threshold {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // currentPeriod returns the current month as "YYYY-MM" for usage aggregation.
 func currentPeriod() string {
 	return time.Now().UTC().Format("2006-01")
