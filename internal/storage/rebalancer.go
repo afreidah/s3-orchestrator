@@ -16,6 +16,8 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/audit"
@@ -88,7 +90,7 @@ func (m *BackendManager) Rebalance(ctx context.Context, cfg config.RebalanceConf
 	}
 
 	// --- Execute moves ---
-	moved := m.executeMoves(ctx, plan, cfg.Strategy)
+	moved := m.executeMoves(ctx, plan, cfg.Strategy, cfg.Concurrency)
 
 	telemetry.RebalanceRunsTotal.WithLabelValues(cfg.Strategy, "success").Inc()
 	telemetry.RebalanceDuration.WithLabelValues(cfg.Strategy).Observe(time.Since(start).Seconds())
@@ -354,101 +356,123 @@ func (m *BackendManager) planSpreadEven(ctx context.Context, stats map[string]Qu
 // MOVE EXECUTION
 // -------------------------------------------------------------------------
 
-// executeMoves performs the planned object moves sequentially. Skips individual
-// moves that fail and continues with the rest.
-func (m *BackendManager) executeMoves(ctx context.Context, plan []rebalanceMove, strategy string) int {
-	moved := 0
+// executeMoves runs the planned object moves with bounded concurrency.
+// Skips individual moves that fail and continues with the rest.
+func (m *BackendManager) executeMoves(ctx context.Context, plan []rebalanceMove, strategy string, concurrency int) int {
+	if concurrency <= 0 {
+		concurrency = 1
+	}
+	var moved atomic.Int32
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
 
 	for _, move := range plan {
-		srcBackend, ok := m.backends[move.FromBackend]
-		if !ok {
-			slog.Error("Rebalance: source backend not found", "backend", move.FromBackend)
-			continue
-		}
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(mv rebalanceMove) {
+			defer wg.Done()
+			defer func() { <-sem }()
 
-		destBackend, ok := m.backends[move.ToBackend]
-		if !ok {
-			slog.Error("Rebalance: destination backend not found", "backend", move.ToBackend)
-			continue
-		}
-
-		// --- Read from source ---
-		rctx, rcancel := m.withTimeout(ctx)
-		result, err := srcBackend.GetObject(rctx, move.ObjectKey, "")
-		rcancel()
-		if err != nil {
-			slog.Warn("Rebalance: failed to read source object",
-				"key", move.ObjectKey, "backend", move.FromBackend, "error", err)
-			telemetry.RebalanceObjectsMoved.WithLabelValues(strategy, "error").Inc()
-			continue
-		}
-
-		// --- Write to destination ---
-		wctx, wcancel := m.withTimeout(ctx)
-		_, err = destBackend.PutObject(wctx, move.ObjectKey, result.Body, result.Size, result.ContentType)
-		_ = result.Body.Close()
-		wcancel()
-		if err != nil {
-			slog.Warn("Rebalance: failed to write destination object",
-				"key", move.ObjectKey, "backend", move.ToBackend, "error", err)
-			telemetry.RebalanceObjectsMoved.WithLabelValues(strategy, "error").Inc()
-			continue
-		}
-
-		// --- Atomic DB update (compare-and-swap) ---
-		movedSize, err := m.store.MoveObjectLocation(ctx, move.ObjectKey, move.FromBackend, move.ToBackend)
-		if err != nil {
-			slog.Error("Rebalance: failed to update object location",
-				"key", move.ObjectKey, "error", err)
-			// Clean up orphan on destination
-			dctx, dcancel := m.withTimeout(ctx)
-			delErr := destBackend.DeleteObject(dctx, move.ObjectKey)
-			dcancel()
-			if delErr != nil {
-				slog.Warn("Rebalance: failed to clean up orphan", "key", move.ObjectKey, "error", delErr)
-				m.enqueueCleanup(ctx, move.ToBackend, move.ObjectKey, "rebalance_orphan")
+			if m.executeOneMove(ctx, mv, strategy) {
+				moved.Add(1)
 			}
-			telemetry.RebalanceObjectsMoved.WithLabelValues(strategy, "error").Inc()
-			continue
-		}
-
-		if movedSize == 0 {
-			// Object was deleted or already moved by another process
-			slog.Info("Rebalance: object already moved or deleted, cleaning up",
-				"key", move.ObjectKey)
-			dctx, dcancel := m.withTimeout(ctx)
-			delErr := destBackend.DeleteObject(dctx, move.ObjectKey)
-			dcancel()
-			if delErr != nil {
-				slog.Warn("Rebalance: failed to clean up orphan", "key", move.ObjectKey, "error", delErr)
-				m.enqueueCleanup(ctx, move.ToBackend, move.ObjectKey, "rebalance_stale_orphan")
-			}
-			continue
-		}
-
-		// --- Delete from source ---
-		delctx, delcancel := m.withTimeout(ctx)
-		if err := srcBackend.DeleteObject(delctx, move.ObjectKey); err != nil {
-			slog.Warn("Rebalance: failed to delete source object (orphan)",
-				"key", move.ObjectKey, "backend", move.FromBackend, "error", err)
-			m.enqueueCleanup(ctx, move.FromBackend, move.ObjectKey, "rebalance_source_delete")
-		}
-		delcancel()
-
-		m.usage.Record(move.FromBackend, 2, movedSize, 0) // Get + Delete, egress
-		m.usage.Record(move.ToBackend, 1, 0, movedSize)   // Put, ingress
-
-		audit.Log(ctx, "rebalance.move",
-			slog.String("key", move.ObjectKey),
-			slog.String("from_backend", move.FromBackend),
-			slog.String("to_backend", move.ToBackend),
-			slog.Int64("size", movedSize),
-		)
-
-		moved++
-		telemetry.RebalanceObjectsMoved.WithLabelValues(strategy, "success").Inc()
-		telemetry.RebalanceBytesMoved.WithLabelValues(strategy).Add(float64(movedSize))
+		}(move)
 	}
 
-	return moved
+	wg.Wait()
+	return int(moved.Load())
+}
+
+// executeOneMove performs a single object move: read from source, write to
+// destination, swap the DB location, and delete the source copy. Returns
+// true on success.
+func (m *BackendManager) executeOneMove(ctx context.Context, move rebalanceMove, strategy string) bool {
+	srcBackend, ok := m.backends[move.FromBackend]
+	if !ok {
+		slog.Error("Rebalance: source backend not found", "backend", move.FromBackend)
+		return false
+	}
+
+	destBackend, ok := m.backends[move.ToBackend]
+	if !ok {
+		slog.Error("Rebalance: destination backend not found", "backend", move.ToBackend)
+		return false
+	}
+
+	// --- Read from source ---
+	rctx, rcancel := m.withTimeout(ctx)
+	result, err := srcBackend.GetObject(rctx, move.ObjectKey, "")
+	rcancel()
+	if err != nil {
+		slog.Warn("Rebalance: failed to read source object",
+			"key", move.ObjectKey, "backend", move.FromBackend, "error", err)
+		telemetry.RebalanceObjectsMoved.WithLabelValues(strategy, "error").Inc()
+		return false
+	}
+
+	// --- Write to destination ---
+	wctx, wcancel := m.withTimeout(ctx)
+	_, err = destBackend.PutObject(wctx, move.ObjectKey, result.Body, result.Size, result.ContentType)
+	_ = result.Body.Close()
+	wcancel()
+	if err != nil {
+		slog.Warn("Rebalance: failed to write destination object",
+			"key", move.ObjectKey, "backend", move.ToBackend, "error", err)
+		telemetry.RebalanceObjectsMoved.WithLabelValues(strategy, "error").Inc()
+		return false
+	}
+
+	// --- Atomic DB update (compare-and-swap) ---
+	movedSize, err := m.store.MoveObjectLocation(ctx, move.ObjectKey, move.FromBackend, move.ToBackend)
+	if err != nil {
+		slog.Error("Rebalance: failed to update object location",
+			"key", move.ObjectKey, "error", err)
+		// Clean up orphan on destination
+		dctx, dcancel := m.withTimeout(ctx)
+		delErr := destBackend.DeleteObject(dctx, move.ObjectKey)
+		dcancel()
+		if delErr != nil {
+			slog.Warn("Rebalance: failed to clean up orphan", "key", move.ObjectKey, "error", delErr)
+			m.enqueueCleanup(ctx, move.ToBackend, move.ObjectKey, "rebalance_orphan")
+		}
+		telemetry.RebalanceObjectsMoved.WithLabelValues(strategy, "error").Inc()
+		return false
+	}
+
+	if movedSize == 0 {
+		// Object was deleted or already moved by another process
+		slog.Info("Rebalance: object already moved or deleted, cleaning up",
+			"key", move.ObjectKey)
+		dctx, dcancel := m.withTimeout(ctx)
+		delErr := destBackend.DeleteObject(dctx, move.ObjectKey)
+		dcancel()
+		if delErr != nil {
+			slog.Warn("Rebalance: failed to clean up orphan", "key", move.ObjectKey, "error", delErr)
+			m.enqueueCleanup(ctx, move.ToBackend, move.ObjectKey, "rebalance_stale_orphan")
+		}
+		return false
+	}
+
+	// --- Delete from source ---
+	delctx, delcancel := m.withTimeout(ctx)
+	if err := srcBackend.DeleteObject(delctx, move.ObjectKey); err != nil {
+		slog.Warn("Rebalance: failed to delete source object (orphan)",
+			"key", move.ObjectKey, "backend", move.FromBackend, "error", err)
+		m.enqueueCleanup(ctx, move.FromBackend, move.ObjectKey, "rebalance_source_delete")
+	}
+	delcancel()
+
+	m.usage.Record(move.FromBackend, 2, movedSize, 0) // Get + Delete, egress
+	m.usage.Record(move.ToBackend, 1, 0, movedSize)   // Put, ingress
+
+	audit.Log(ctx, "rebalance.move",
+		slog.String("key", move.ObjectKey),
+		slog.String("from_backend", move.FromBackend),
+		slog.String("to_backend", move.ToBackend),
+		slog.Int64("size", movedSize),
+	)
+
+	telemetry.RebalanceObjectsMoved.WithLabelValues(strategy, "success").Inc()
+	telemetry.RebalanceBytesMoved.WithLabelValues(strategy).Add(float64(movedSize))
+	return true
 }

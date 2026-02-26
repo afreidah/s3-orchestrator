@@ -263,10 +263,13 @@ rebalance:
   interval: "6h"                 # default: 6h
   batch_size: 100                # objects per run (default: 100)
   threshold: 0.1                 # min utilization spread to trigger (default: 0.1)
+  concurrency: 5                 # parallel moves per run (default: 5)
 ```
 
 - **pack** — fills backends in config order, consolidating free space onto the last backend. Good for maximizing free-tier allocations.
 - **spread** — equalizes utilization ratios across all backends. Good for distributing load.
+
+Object moves run concurrently within each batch, bounded by `concurrency`. Increase for faster rebalancing; decrease to reduce backend load.
 
 ### replication
 
@@ -643,7 +646,7 @@ To perform a zero-downtime credential rotation, temporarily add both old and new
 make build
 
 # Multi-arch build and push to registry with version tag
-make push VERSION=v0.6.2
+make push VERSION=v0.6.3
 ```
 
 The `VERSION` is baked into the binary via `-ldflags` and displayed in the web UI and `/health` endpoint. Use versioned tags (not `latest`) to avoid Docker layer caching issues on orchestration platforms.
@@ -671,19 +674,19 @@ Build a `.deb` package for bare-metal or VM deployments:
 
 ```bash
 # Build for host architecture
-make deb VERSION=0.6.2
+make deb VERSION=0.6.3
 
 # Build for both amd64 and arm64
-make deb-all VERSION=0.6.2
+make deb-all VERSION=0.6.3
 
 # Build and validate with lintian
-make deb-lint VERSION=0.6.2
+make deb-lint VERSION=0.6.3
 ```
 
 Install and configure:
 
 ```bash
-sudo dpkg -i s3-orchestrator_0.6.2_amd64.deb
+sudo dpkg -i s3-orchestrator_0.6.3_amd64.deb
 
 # Edit the config — set database, backends, buckets
 sudo vim /etc/s3-orchestrator/config.yaml

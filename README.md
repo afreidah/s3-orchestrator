@@ -109,7 +109,7 @@ Two strategies:
 - **pack** - Fills backends in configuration order, consolidating free space on the last backend. Good for maximizing usable capacity on free-tier providers.
 - **spread** - Equalizes utilization ratios across all backends. Good for distributing load evenly.
 
-The `threshold` parameter (0–1) sets the minimum utilization spread required to trigger a rebalance run. Objects are moved in configurable batch sizes.
+The `threshold` parameter (0–1) sets the minimum utilization spread required to trigger a rebalance run. Objects are moved in configurable batch sizes with bounded concurrency (`concurrency` setting, default 5) for throughput.
 
 ## Replication
 
@@ -235,6 +235,7 @@ rebalance:
   interval: "6h"           # run interval (default: 6h)
   batch_size: 100          # max objects per run (default: 100)
   threshold: 0.1           # min utilization spread to trigger (default: 0.1)
+  concurrency: 5           # parallel moves per run (default: 5)
 
 replication:
   factor: 1                # copies per object; 1 = no replication (default: 1)
@@ -272,7 +273,7 @@ kill -HUP $(pidof s3-orchestrator)
 | `backends[].api_request_limit` | Yes | |
 | `backends[].egress_byte_limit` | Yes | |
 | `backends[].ingress_byte_limit` | Yes | |
-| `rebalance` | Yes | Strategy, interval, threshold, enabled/disabled |
+| `rebalance` | Yes | Strategy, interval, threshold, concurrency, enabled/disabled |
 | `replication` | Yes | Factor, worker interval, batch size |
 | `server.listen_addr` | No | Requires restart |
 | `database` | No | Requires restart |
@@ -498,16 +499,16 @@ make integration-test
 make build
 
 # Build multi-arch and push to registry
-make push VERSION=v0.6.2
+make push VERSION=v0.6.3
 
 # Build a .deb package for the host architecture
-make deb VERSION=0.6.2
+make deb VERSION=0.6.3
 
 # Build .deb packages for both amd64 and arm64
-make deb-all VERSION=0.6.2
+make deb-all VERSION=0.6.3
 
 # Build and run lintian validation
-make deb-lint VERSION=0.6.2
+make deb-lint VERSION=0.6.3
 ```
 
 ## Deployment
@@ -525,7 +526,7 @@ The orchestrator can run as a Docker container or as a native systemd service.
 Build and push a multi-arch image with a version tag:
 
 ```bash
-make push VERSION=v0.6.2
+make push VERSION=v0.6.3
 ```
 
 The `VERSION` is baked into the binary via `-ldflags` and displayed in the web UI header and `/health` endpoint. Defaults to `latest` if omitted.
@@ -535,13 +536,13 @@ The `VERSION` is baked into the binary via `-ldflags` and displayed in the web U
 Build a `.deb` package for bare-metal or VM deployments:
 
 ```bash
-make deb VERSION=0.6.2
+make deb VERSION=0.6.3
 ```
 
 Install and configure:
 
 ```bash
-sudo dpkg -i s3-orchestrator_0.6.2_amd64.deb
+sudo dpkg -i s3-orchestrator_0.6.3_amd64.deb
 sudo vim /etc/s3-orchestrator/config.yaml
 sudo vim /etc/default/s3-orchestrator   # set DB_PASSWORD, backend keys, etc.
 sudo systemctl start s3-orchestrator

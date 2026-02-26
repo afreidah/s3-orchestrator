@@ -125,11 +125,12 @@ type TracingConfig struct {
 // RebalanceConfig holds settings for the periodic backend rebalancer.
 // Disabled by default to avoid unexpected API calls and egress charges.
 type RebalanceConfig struct {
-	Enabled   bool          `yaml:"enabled"`
-	Strategy  string        `yaml:"strategy"`   // "pack" or "spread"
-	Interval  time.Duration `yaml:"interval"`
-	BatchSize int           `yaml:"batch_size"`
-	Threshold float64       `yaml:"threshold"`  // min utilization spread to trigger
+	Enabled     bool          `yaml:"enabled"`
+	Strategy    string        `yaml:"strategy"`    // "pack" or "spread"
+	Interval    time.Duration `yaml:"interval"`
+	BatchSize   int           `yaml:"batch_size"`
+	Threshold   float64       `yaml:"threshold"`   // min utilization spread to trigger
+	Concurrency int           `yaml:"concurrency"` // parallel moves (default: 5)
 }
 
 // ReplicationConfig holds settings for the background replication worker.
@@ -399,6 +400,9 @@ func (c *Config) SetDefaultsAndValidate() error {
 		if c.Rebalance.Threshold == 0 {
 			c.Rebalance.Threshold = 0.1
 		}
+		if c.Rebalance.Concurrency == 0 {
+			c.Rebalance.Concurrency = 5
+		}
 
 		// --- Rebalance validation ---
 		if c.Rebalance.Strategy != "pack" && c.Rebalance.Strategy != "spread" {
@@ -412,6 +416,9 @@ func (c *Config) SetDefaultsAndValidate() error {
 		}
 		if c.Rebalance.Threshold < 0 || c.Rebalance.Threshold > 1 {
 			errors = append(errors, "rebalance.threshold must be between 0 and 1")
+		}
+		if c.Rebalance.Concurrency <= 0 {
+			errors = append(errors, "rebalance.concurrency must be positive")
 		}
 	}
 
