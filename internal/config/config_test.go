@@ -159,6 +159,9 @@ func TestRebalanceConfig_Defaults(t *testing.T) {
 	if cfg.Rebalance.Threshold != 0.1 {
 		t.Errorf("threshold default = %f, want 0.1", cfg.Rebalance.Threshold)
 	}
+	if cfg.Rebalance.Concurrency != 5 {
+		t.Errorf("concurrency default = %d, want 5", cfg.Rebalance.Concurrency)
+	}
 }
 
 func TestRebalanceConfig_InvalidStrategy(t *testing.T) {
