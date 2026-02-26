@@ -873,6 +873,47 @@ func (s *Store) GetUsageForPeriod(ctx context.Context, period string) (map[strin
 	return stats, nil
 }
 
+// -------------------------------------------------------------------------
+// ADVISORY LOCKS
+// -------------------------------------------------------------------------
+
+// Lock IDs for PostgreSQL advisory locks. Each background task uses a unique
+// lock ID to prevent concurrent execution across multiple instances.
+const (
+	LockRebalancer       int64 = 1001
+	LockReplicator       int64 = 1002
+	LockCleanupQueue     int64 = 1003
+	LockMultipartCleanup int64 = 1004
+)
+
+// WithAdvisoryLock acquires a PostgreSQL session-level advisory lock on a
+// dedicated connection from the pool. If the lock is acquired, fn runs and
+// the connection is released (which releases the lock). If another session
+// holds the lock, returns (false, nil). On DB error, returns (false, err).
+func (s *Store) WithAdvisoryLock(ctx context.Context, lockID int64, fn func(ctx context.Context) error) (bool, error) {
+	conn, err := s.pool.Acquire(ctx)
+	if err != nil {
+		return false, fmt.Errorf("failed to acquire connection for advisory lock: %w", err)
+	}
+	defer conn.Release()
+
+	var acquired bool
+	if err := conn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", lockID).Scan(&acquired); err != nil {
+		return false, fmt.Errorf("failed to attempt advisory lock: %w", err)
+	}
+
+	if !acquired {
+		return false, nil
+	}
+
+	// Ensure the lock is released even if fn panics.
+	defer func() {
+		_, _ = conn.Exec(ctx, "SELECT pg_advisory_unlock($1)", lockID)
+	}()
+
+	return true, fn(ctx)
+}
+
 // pgTimestamptz converts a time.Time to pgtype.Timestamptz for use with sqlc.
 func pgTimestamptz(t time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: t, Valid: true}
