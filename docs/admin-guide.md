@@ -354,6 +354,26 @@ usage_flush:
 - `adaptive_threshold` — the ratio (0–1 exclusive) at which fast flushing kicks in. At `0.8`, a backend at 80% of any usage limit triggers the fast interval.
 - `fast_interval` — must be less than `interval`. Used when adaptive flushing detects a backend near its limits.
 
+### lifecycle
+
+Automatically deletes objects whose key matches a prefix and whose age exceeds the configured expiration. Useful for temporary uploads, staging artifacts, or anything with a known retention period.
+
+```yaml
+lifecycle:
+  rules:
+    - prefix: "tmp/"
+      expiration_days: 7
+    - prefix: "uploads/staging/"
+      expiration_days: 1
+```
+
+- `prefix` — key prefix to match (required, must be non-empty).
+- `expiration_days` — delete objects older than this many days (required, must be > 0).
+- Omit the `lifecycle` section or leave `rules` empty to disable lifecycle entirely.
+- Rules are evaluated every hour by a background worker with an advisory lock.
+- Deletions go through the standard `DeleteObject` path — all copies removed, quotas decremented, failed deletes enqueued to the cleanup queue.
+- Hot-reloadable via `SIGHUP`.
+
 When enabled, the dashboard is served at `{path}/` on the same port as the S3 API. A JSON API endpoint is also available at `{path}/api/dashboard`.
 
 All dashboard responses include security headers (`X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Content-Security-Policy`). The dashboard does not require authentication by default (same as `/health` and `/metrics`). If the orchestrator is publicly exposed, put it behind a reverse proxy with auth (e.g., oauth2-proxy via Traefik).

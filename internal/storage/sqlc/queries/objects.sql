@@ -75,6 +75,14 @@ WHERE object_key LIKE @prefix::text || '%' ESCAPE '\'
 GROUP BY name, is_dir
 ORDER BY is_dir DESC, name ASC;
 
+-- name: ListExpiredObjects :many
+SELECT DISTINCT ON (object_key) object_key, backend_name, size_bytes, created_at
+FROM object_locations
+WHERE object_key LIKE @prefix::text || '%' ESCAPE '\'
+  AND created_at < @cutoff
+ORDER BY object_key, created_at ASC
+LIMIT @max_keys;
+
 -- name: ListDirectChildren :many
 -- Return per-file detail for non-directory children under a prefix, with pagination.
 SELECT DISTINCT ON (object_key) object_key, backend_name, size_bytes, created_at

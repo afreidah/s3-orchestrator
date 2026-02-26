@@ -19,6 +19,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/audit"
 	"github.com/afreidah/s3-orchestrator/internal/storage"
+	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 )
 
 // -------------------------------------------------------------------------
@@ -177,6 +178,53 @@ func (s *rebalancerService) Run(ctx context.Context) error {
 			}
 			if !acquired {
 				slog.Debug("Rebalance skipped, another instance holds the lock")
+			}
+		case <-ctx.Done():
+			return nil
+		}
+	}
+}
+
+// -------------------------------------------------------------------------
+// LIFECYCLE
+// -------------------------------------------------------------------------
+
+type lifecycleService struct {
+	manager *storage.BackendManager
+	store   storage.MetadataStore
+}
+
+func (s *lifecycleService) Run(ctx context.Context) error {
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			cfg := s.manager.LifecycleConfig()
+			if cfg == nil || len(cfg.Rules) == 0 {
+				continue
+			}
+			tickCtx := audit.WithRequestID(ctx, audit.NewID())
+			acquired, err := s.store.WithAdvisoryLock(tickCtx, storage.LockLifecycle,
+				func(lockCtx context.Context) error {
+					deleted, failed := s.manager.ProcessLifecycleRules(lockCtx, cfg.Rules)
+					if deleted > 0 || failed > 0 {
+						slog.Info("Lifecycle expiration completed",
+							"deleted", deleted, "failed", failed)
+					}
+					if failed > 0 {
+						telemetry.LifecycleRunsTotal.WithLabelValues("partial").Inc()
+					} else {
+						telemetry.LifecycleRunsTotal.WithLabelValues("success").Inc()
+					}
+					return nil
+				})
+			if err != nil && !errors.Is(err, storage.ErrDBUnavailable) {
+				slog.Error("Lifecycle expiration failed", "error", err)
+				telemetry.LifecycleRunsTotal.WithLabelValues("error").Inc()
+			}
+			if !acquired {
+				slog.Debug("Lifecycle skipped, another instance holds the lock")
 			}
 		case <-ctx.Done():
 			return nil

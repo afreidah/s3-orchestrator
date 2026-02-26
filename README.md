@@ -140,6 +140,23 @@ Operators can inspect exhausted items directly:
 SELECT * FROM cleanup_queue WHERE attempts >= 10;
 ```
 
+## Lifecycle (Object Expiration)
+
+Config-driven lifecycle rules automatically delete objects matching a key prefix after a configurable number of days. Useful for expiring temporary uploads, staging artifacts, or any objects with a known retention period.
+
+```yaml
+lifecycle:
+  rules:
+    - prefix: "tmp/"
+      expiration_days: 7
+    - prefix: "uploads/staging/"
+      expiration_days: 1
+```
+
+A background worker runs hourly and evaluates each rule against `created_at` timestamps in the `object_locations` table (uses an existing index — no schema changes needed). Deletions go through the standard `DeleteObject` path, so all copies are removed, quotas are decremented, and failed backend deletes are enqueued to the cleanup queue.
+
+Rules are hot-reloadable via `SIGHUP`. An empty rules list (or omitting the section entirely) disables lifecycle — no advisory lock is acquired and no DB queries are executed.
+
 ## Rate Limiting
 
 Optional per-IP token bucket rate limiting. When enabled, requests exceeding the configured rate return `429 SlowDown`. Stale IP entries are cleaned up automatically.
@@ -260,6 +277,13 @@ usage_flush:
   adaptive_enabled: false    # shorten interval when near usage limits (default: false)
   adaptive_threshold: 0.8    # usage ratio to trigger fast flush (default: 0.8)
   fast_interval: "5s"        # interval when near limits (default: 5s)
+
+lifecycle:
+  rules:                       # empty or omitted = lifecycle disabled
+    - prefix: "tmp/"           # key prefix to match
+      expiration_days: 7       # delete objects older than this
+    - prefix: "uploads/staging/"
+      expiration_days: 1
 ```
 
 ## Configuration Hot-Reload
@@ -283,6 +307,7 @@ kill -HUP $(pidof s3-orchestrator)
 | `rebalance` | Yes | Strategy, interval, threshold, concurrency, enabled/disabled |
 | `replication` | Yes | Factor, worker interval, batch size |
 | `usage_flush` | Yes | Interval, adaptive enabled/threshold/fast interval |
+| `lifecycle` | Yes | Rules (prefix, expiration_days) |
 | `server.listen_addr` | No | Requires restart |
 | `database` | No | Requires restart |
 | `telemetry` | No | Requires restart |
@@ -382,6 +407,9 @@ All metrics are prefixed with `s3proxy_`. Exposed at `/metrics` when enabled.
 | `s3proxy_cleanup_queue_processed_total` | Counter | status | Items processed from the cleanup queue (success/retry/exhausted) |
 | `s3proxy_cleanup_queue_depth` | Gauge | — | Current pending items in the cleanup queue |
 | `s3proxy_rate_limit_rejections_total` | Counter | — | Requests rejected by per-IP rate limiting |
+| `s3proxy_lifecycle_deleted_total` | Counter | — | Objects deleted by lifecycle expiration |
+| `s3proxy_lifecycle_failed_total` | Counter | — | Objects that failed lifecycle deletion |
+| `s3proxy_lifecycle_runs_total` | Counter | status | Lifecycle worker executions |
 | `s3proxy_audit_events_total` | Counter | event | Audit log entries emitted |
 
 Quota metrics are refreshed from PostgreSQL every 30 seconds (no backend API calls).
@@ -454,6 +482,7 @@ JSON APIs are available at `{path}/api/dashboard` and `{path}/api/tree` for prog
 | Cleanup queue | 1m | Yes | Retries failed backend object deletions with exponential backoff (1m to 24h, max 10 attempts). |
 | Rebalancer | configurable (default 6h) | Yes | Moves objects between backends per strategy. Only runs when enabled. |
 | Replicator | configurable (default 5m) | Yes | Creates copies of under-replicated objects. Only runs when factor > 1. Runs once at startup. |
+| Lifecycle | 1h | Yes | Deletes objects matching lifecycle rules whose `created_at` exceeds `expiration_days`. Only runs when rules are configured. |
 
 ## Multi-Instance Deployment
 
@@ -603,6 +632,7 @@ internal/
     manager.go               Multi-backend routing, quota selection, shared helpers
     manager_objects.go       Object CRUD with read failover, broadcast, batch delete
     manager_multipart.go     Multipart upload lifecycle
+    manager_lifecycle.go     Lifecycle expiration rule processing
     manager_cleanup.go       Cleanup queue processing and enqueue helper
     manager_dashboard.go     DashboardData type + thin wrappers
     location_cache.go        Key→backend cache with TTL + background eviction
