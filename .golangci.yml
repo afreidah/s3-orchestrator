@@ -1,3 +1,12 @@
+# -------------------------------------------------------------------------------
+# golangci-lint Configuration
+#
+# Author: Alex Freidah
+#
+# Linter settings for static analysis. Enables gocritic (diagnostic + performance
+# tags) and misspell. Excludes generated sqlc code from analysis.
+# -------------------------------------------------------------------------------
+
 version: "2"
 linters:
   enable:

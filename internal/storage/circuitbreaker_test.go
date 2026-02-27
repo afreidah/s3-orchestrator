@@ -1,3 +1,13 @@
+// -------------------------------------------------------------------------------
+// Circuit Breaker Tests
+//
+// Author: Alex Freidah
+//
+// Tests for database circuit breaker state transitions: closed to open on
+// consecutive failures, half-open probe after timeout, and recovery back to
+// closed. Validates degraded-mode read cache behavior during open state.
+// -------------------------------------------------------------------------------
+
 package storage
 
 import (

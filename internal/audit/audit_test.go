@@ -1,3 +1,12 @@
+// -------------------------------------------------------------------------------
+// Audit Package Tests
+//
+// Author: Alex Freidah
+//
+// Validates request ID generation, context propagation, and structured audit log
+// output. Ensures audit entries carry the correct request ID and event fields.
+// -------------------------------------------------------------------------------
+
 package audit
 
 import (

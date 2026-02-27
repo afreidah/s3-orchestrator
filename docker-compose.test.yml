@@ -1,5 +1,12 @@
-# Integration test dependencies: MinIO x2 + PostgreSQL
+# -------------------------------------------------------------------------------
+# Integration Test Services - Docker Compose
+#
+# Author: Alex Freidah
+#
+# Provides MinIO (x2) and PostgreSQL containers for integration testing. The
+# minio-setup service creates test buckets after both MinIO instances are healthy.
 # Usage: docker compose -f docker-compose.test.yml up -d --wait
+# -------------------------------------------------------------------------------
 
 services:
   minio-1:

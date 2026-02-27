@@ -1,3 +1,13 @@
+// -------------------------------------------------------------------------------
+// Multipart Upload Tests
+//
+// Author: Alex Freidah
+//
+// Tests for BackendManager multipart upload operations: CreateMultipartUpload,
+// UploadPart, CompleteMultipartUpload, and AbortMultipartUpload. Validates
+// backend delegation, metadata recording, and error handling.
+// -------------------------------------------------------------------------------
+
 package storage
 
 import (

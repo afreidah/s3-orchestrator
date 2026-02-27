@@ -1,11 +1,12 @@
-# -----------------------------------------------------------------------------
-# S3 Orchestrator Configuration Example
-# -----------------------------------------------------------------------------
+# -------------------------------------------------------------------------------
+# S3 Orchestrator - Configuration Example
 #
-# Copy this file to config.yaml and fill in your values.
-# Environment variables can be referenced using ${VAR_NAME} syntax.
+# Author: Alex Freidah
 #
-# -----------------------------------------------------------------------------
+# Reference configuration with all available options and inline documentation.
+# Copy to config.yaml and fill in values. Environment variables use ${VAR_NAME}
+# syntax for expansion.
+# -------------------------------------------------------------------------------
 
 server:
   # Address to listen on (host:port)
