@@ -28,7 +28,12 @@ jobs:
           go-version-file: go.mod
 
       - name: Unit tests
-        run: make test
+        run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.out
 
   integration:
     runs-on: ubuntu-latest
