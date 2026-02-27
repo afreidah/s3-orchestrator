@@ -1,0 +1,111 @@
+# -------------------------------------------------------------------------------
+# GoReleaser Configuration
+#
+# Produces GitHub Release artifacts on tag push: statically linked binaries,
+# Debian packages (via nfpm), and SHA256 checksums. Docker images are NOT
+# built here — the private registry is unreachable from GitHub Actions.
+# -------------------------------------------------------------------------------
+
+version: 2
+
+builds:
+  - main: ./cmd/s3-orchestrator
+    binary: s3-orchestrator
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X github.com/afreidah/s3-orchestrator/internal/telemetry.Version={{.Version}}
+
+archives:
+  - formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+
+nfpms:
+  - id: deb
+    package_name: s3-orchestrator
+    vendor: Munchbox
+    homepage: https://github.com/afreidah/s3-orchestrator
+    maintainer: Alex Freidah <alex.freidah@gmail.com>
+    description: |
+      Unified S3-compatible storage endpoint. Routes requests across multiple
+      S3 backends with quota management, replication, and usage tracking.
+    section: admin
+    priority: optional
+    formats:
+      - deb
+    dependencies:
+      - systemd
+    contents:
+      - src: ./packaging/s3-orchestrator.service
+        dst: /usr/lib/systemd/system/s3-orchestrator.service
+        file_info:
+          mode: 0644
+
+      - src: ./packaging/s3-orchestrator.default
+        dst: /etc/default/s3-orchestrator
+        type: config|noreplace
+        file_info:
+          mode: 0640
+
+      - dst: /etc/s3-orchestrator
+        type: dir
+        file_info:
+          mode: 0750
+
+      - src: ./packaging/config.yaml
+        dst: /etc/s3-orchestrator/config.yaml
+        type: config|noreplace
+        file_info:
+          mode: 0640
+
+      - dst: /var/lib/s3-orchestrator
+        type: dir
+        file_info:
+          mode: 0750
+
+      - src: ./packaging/copyright
+        dst: /usr/share/doc/s3-orchestrator/copyright
+        file_info:
+          mode: 0644
+
+      - src: ./packaging/changelog.gz
+        dst: /usr/share/doc/s3-orchestrator/changelog.Debian.gz
+        file_info:
+          mode: 0644
+
+      - src: ./packaging/lintian-overrides
+        dst: /usr/share/lintian/overrides/s3-orchestrator
+        file_info:
+          mode: 0644
+
+    scripts:
+      preinstall: ./packaging/preinstall.sh
+      postinstall: ./packaging/postinstall.sh
+      postremove: ./packaging/postremove.sh
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\(.+\))?\!?:.+$'
+      order: 0
+    - title: Bug Fixes
+      regexp: '^.*?fix(\(.+\))?\!?:.+$'
+      order: 1
+    - title: Other
+      order: 999
+
+release:
+  github:
+    owner: afreidah
+    name: s3-orchestrator

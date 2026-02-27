@@ -143,6 +143,13 @@ deb-all: ## Build .deb packages for amd64 and arm64
 	$(MAKE) deb DEB_ARCH=arm64
 
 # -------------------------------------------------------------------------
+# RELEASE
+# -------------------------------------------------------------------------
+
+release-local: prep-changelog ## Dry-run GoReleaser locally (no publish)
+	goreleaser release --snapshot --clean
+
+# -------------------------------------------------------------------------
 # CLEANUP
 # -------------------------------------------------------------------------
 
@@ -151,5 +158,5 @@ clean: ## Remove build artifacts and local image
 	rm -rf dist/ *.deb packaging/changelog.gz
 	docker rmi $(FULL_TAG) || true
 
-.PHONY: help builder build push generate test vet lint run integration-deps integration-test integration-clean tools prep-changelog deb deb-lint deb-all clean
+.PHONY: help builder build push generate test vet lint run integration-deps integration-test integration-clean tools prep-changelog deb deb-lint deb-all release-local clean
 .DEFAULT_GOAL := help

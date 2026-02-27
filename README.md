@@ -1,5 +1,8 @@
 # S3 Orchestrator
 
+[![CI](https://github.com/afreidah/s3-orchestrator/actions/workflows/ci.yml/badge.svg)](https://github.com/afreidah/s3-orchestrator/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/afreidah/s3-orchestrator/branch/main/graph/badge.svg)](https://codecov.io/gh/afreidah/s3-orchestrator)
+
 An S3-compatible orchestrator that combines multiple storage backends into a single unified endpoint. Add as many S3-compatible backends as you want — OCI Object Storage, Backblaze B2, AWS S3, MinIO, whatever — and the orchestrator presents them to clients as one or more virtual buckets. Per-backend quota enforcement lets you cap each backend at exactly the byte limit you choose, so you can stack multiple free-tier allocations from different providers into a single, larger storage target for backups, media, or anything else without worrying about surprise bills.
 
 Multiple virtual buckets let different applications share the same orchestrator with isolated file namespaces and independent credentials. Each bucket's objects are stored with an internal key prefix (`{bucket}/{key}`), so bucket isolation requires zero changes to the storage layer or database schema.
@@ -555,6 +558,9 @@ make deb-all VERSION=0.6.4
 
 # Build and run lintian validation
 make deb-lint VERSION=0.6.4
+
+# Dry-run GoReleaser locally (builds everything without publishing)
+make release-local
 ```
 
 ## Deployment
@@ -605,6 +611,29 @@ The package installs:
 | `/var/lib/s3-orchestrator/` | Data directory |
 
 The systemd unit runs as a dedicated `s3-orchestrator` user with filesystem hardening (`ProtectSystem=strict`, `ProtectHome=yes`, `NoNewPrivileges=yes`). Config reload via `systemctl reload s3-orchestrator` sends `SIGHUP`.
+
+### Releasing
+
+Tag a version and push to trigger an automated GitHub Release via GoReleaser:
+
+```bash
+git tag v0.7.0
+git push origin v0.7.0
+```
+
+This builds Linux binaries (amd64 + arm64), Debian packages, and SHA256 checksums — all attached to the GitHub Release with an auto-generated changelog.
+
+Docker images are still built manually since the private registry isn't reachable from GitHub Actions:
+
+```bash
+make push VERSION=v0.7.0
+```
+
+To dry-run the release locally (builds everything without publishing):
+
+```bash
+make release-local
+```
 
 ## Project Structure
 
