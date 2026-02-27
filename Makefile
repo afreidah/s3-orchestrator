@@ -9,7 +9,7 @@
 
 REGISTRY   ?= registry.munchbox.cc
 IMAGE      := s3-orchestrator
-VERSION    ?= latest
+VERSION    ?= $(shell cat .version)
 
 FULL_TAG   := $(REGISTRY)/$(IMAGE):$(VERSION)
 CACHE_TAG  := $(REGISTRY)/$(IMAGE):cache
@@ -149,10 +149,9 @@ deb-all: ## Build .deb packages for amd64 and arm64
 # RELEASE
 # -------------------------------------------------------------------------
 
-release: ## Tag and push to trigger a GitHub Release (VERSION=vX.Y.Z)
-	@if [ "$(VERSION)" = "latest" ]; then echo "VERSION is required (e.g., make release VERSION=v0.7.0)"; exit 1; fi
-	git tag $(VERSION)
-	git push origin $(VERSION)
+release: ## Tag and push to trigger a GitHub Release (reads .version)
+	git tag v$(VERSION)
+	git push origin v$(VERSION)
 
 release-local: prep-changelog ## Dry-run GoReleaser locally (no publish)
 	goreleaser release --snapshot --clean

@@ -687,7 +687,7 @@ To perform a zero-downtime credential rotation, temporarily add both old and new
 make build
 
 # Multi-arch build and push to registry with version tag
-make push VERSION=v0.6.4
+make push VERSION=vX.Y.Z
 ```
 
 The `VERSION` is baked into the binary via `-ldflags` and displayed in the web UI and `/health` endpoint. Use versioned tags (not `latest`) to avoid Docker layer caching issues on orchestration platforms.
@@ -715,19 +715,19 @@ Build a `.deb` package for bare-metal or VM deployments:
 
 ```bash
 # Build for host architecture
-make deb VERSION=0.6.4
+make deb VERSION=X.Y.Z
 
 # Build for both amd64 and arm64
-make deb-all VERSION=0.6.4
+make deb-all VERSION=X.Y.Z
 
 # Build and validate with lintian
-make deb-lint VERSION=0.6.4
+make deb-lint VERSION=X.Y.Z
 ```
 
 Install and configure:
 
 ```bash
-sudo dpkg -i s3-orchestrator_0.6.4_amd64.deb
+sudo dpkg -i s3-orchestrator_X.Y.Z_amd64.deb
 
 # Edit the config — set database, backends, buckets
 sudo vim /etc/s3-orchestrator/config.yaml
