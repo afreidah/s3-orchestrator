@@ -146,6 +146,11 @@ deb-all: ## Build .deb packages for amd64 and arm64
 # RELEASE
 # -------------------------------------------------------------------------
 
+release: ## Tag and push to trigger a GitHub Release (VERSION=vX.Y.Z)
+	@if [ "$(VERSION)" = "latest" ]; then echo "VERSION is required (e.g., make release VERSION=v0.7.0)"; exit 1; fi
+	git tag $(VERSION)
+	git push origin $(VERSION)
+
 release-local: prep-changelog ## Dry-run GoReleaser locally (no publish)
 	goreleaser release --snapshot --clean
 
@@ -158,5 +163,5 @@ clean: ## Remove build artifacts and local image
 	rm -rf dist/ *.deb packaging/changelog.gz
 	docker rmi $(FULL_TAG) || true
 
-.PHONY: help builder build push generate test vet lint run integration-deps integration-test integration-clean tools prep-changelog deb deb-lint deb-all release-local clean
+.PHONY: help builder build push generate test vet lint run integration-deps integration-test integration-clean tools prep-changelog deb deb-lint deb-all release release-local clean
 .DEFAULT_GOAL := help
