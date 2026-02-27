@@ -548,16 +548,16 @@ make integration-test
 make build
 
 # Build multi-arch and push to registry
-make push VERSION=v0.6.4
+make push VERSION=vX.Y.Z
 
 # Build a .deb package for the host architecture
-make deb VERSION=0.6.4
+make deb VERSION=X.Y.Z
 
 # Build .deb packages for both amd64 and arm64
-make deb-all VERSION=0.6.4
+make deb-all VERSION=X.Y.Z
 
 # Build and run lintian validation
-make deb-lint VERSION=0.6.4
+make deb-lint VERSION=X.Y.Z
 
 # Dry-run GoReleaser locally (builds everything without publishing)
 make release-local
@@ -578,23 +578,23 @@ The orchestrator can run as a Docker container or as a native systemd service.
 Build and push a multi-arch image with a version tag:
 
 ```bash
-make push VERSION=v0.6.4
+make push VERSION=vX.Y.Z
 ```
 
-The `VERSION` is baked into the binary via `-ldflags` and displayed in the web UI header and `/health` endpoint. Defaults to `latest` if omitted.
+The `VERSION` is baked into the binary via `-ldflags` and displayed in the web UI header and `/health` endpoint. Defaults to the value in `.version` if omitted.
 
 ### Debian Package
 
 Build a `.deb` package for bare-metal or VM deployments:
 
 ```bash
-make deb VERSION=0.6.4
+make deb VERSION=X.Y.Z
 ```
 
 Install and configure:
 
 ```bash
-sudo dpkg -i s3-orchestrator_0.6.4_amd64.deb
+sudo dpkg -i s3-orchestrator_X.Y.Z_amd64.deb
 sudo vim /etc/s3-orchestrator/config.yaml
 sudo vim /etc/default/s3-orchestrator   # set DB_PASSWORD, backend keys, etc.
 sudo systemctl start s3-orchestrator
@@ -617,16 +617,15 @@ The systemd unit runs as a dedicated `s3-orchestrator` user with filesystem hard
 Tag a version and push to trigger an automated GitHub Release via GoReleaser:
 
 ```bash
-git tag v0.7.0
-git push origin v0.7.0
+make release
 ```
 
-This builds Linux binaries (amd64 + arm64), Debian packages, and SHA256 checksums — all attached to the GitHub Release with an auto-generated changelog.
+This tags the current `.version` value and pushes the tag, which triggers GoReleaser to build Linux binaries (amd64 + arm64), Debian packages, and SHA256 checksums — all attached to the GitHub Release with an auto-generated changelog.
 
 Docker images are still built manually since the private registry isn't reachable from GitHub Actions:
 
 ```bash
-make push VERSION=v0.7.0
+make push VERSION=vX.Y.Z
 ```
 
 To dry-run the release locally (builds everything without publishing):
