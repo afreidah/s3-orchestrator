@@ -1,3 +1,13 @@
+// -------------------------------------------------------------------------------
+// Usage Tracking Tests
+//
+// Author: Alex Freidah
+//
+// Tests for BackendManager usage limit enforcement. Validates API request limits,
+// egress and ingress byte caps, near-limit detection thresholds, and monthly
+// counter reset behavior.
+// -------------------------------------------------------------------------------
+
 package storage
 
 import (

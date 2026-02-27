@@ -1,3 +1,12 @@
+// -------------------------------------------------------------------------------
+// Mock Backend - Test Double for ObjectBackend
+//
+// Author: Alex Freidah
+//
+// Configurable in-memory ObjectBackend implementation for unit testing. Supports
+// pre-set responses, injectable errors, and call tracking for assertion.
+// -------------------------------------------------------------------------------
+
 package storage
 
 import (

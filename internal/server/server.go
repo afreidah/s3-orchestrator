@@ -10,6 +10,8 @@
 // resolution and internal key prefixing.
 // -------------------------------------------------------------------------------
 
+// Package server implements the S3-compatible HTTP API, routing requests to the
+// storage backend manager with authentication, rate limiting, and tracing.
 package server
 
 import (
@@ -266,6 +268,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	audit.Log(ctx, "s3."+operation, auditAttrs...)
 }
+
+// -------------------------------------------------------------------------
+// METRICS
+// -------------------------------------------------------------------------
 
 // recordRequest updates Prometheus metrics for a completed request.
 func (s *Server) recordRequest(method string, status int, start time.Time, reqSize, respSize int64) {

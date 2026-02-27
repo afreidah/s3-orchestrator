@@ -1,3 +1,12 @@
+// -------------------------------------------------------------------------------
+// Usage Tracker Tests
+//
+// Author: Alex Freidah
+//
+// Tests for the atomic usage counter and periodic flush mechanism. Validates
+// near-limit threshold calculations and counter accumulation behavior.
+// -------------------------------------------------------------------------------
+
 package storage
 
 import "testing"

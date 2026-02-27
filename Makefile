@@ -86,6 +86,9 @@ lint: ## Run Go linter
 run: ## Run locally (requires config.yaml)
 	go run ./cmd/s3-orchestrator -config config.yaml
 
+docs: ## Serve godoc locally at http://localhost:8080
+	go run golang.org/x/pkgsite/cmd/pkgsite@latest -http=localhost:8080
+
 # -------------------------------------------------------------------------
 # INTEGRATION TESTS
 # -------------------------------------------------------------------------
@@ -163,5 +166,5 @@ clean: ## Remove build artifacts and local image
 	rm -rf dist/ *.deb packaging/changelog.gz
 	docker rmi $(FULL_TAG) || true
 
-.PHONY: help builder build push generate test vet lint run integration-deps integration-test integration-clean tools prep-changelog deb deb-lint deb-all release release-local clean
+.PHONY: help builder build push generate test vet lint run docs integration-deps integration-test integration-clean tools prep-changelog deb deb-lint deb-all release release-local clean
 .DEFAULT_GOAL := help

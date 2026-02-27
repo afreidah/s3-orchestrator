@@ -1,3 +1,12 @@
+// -------------------------------------------------------------------------------
+// HTTP Server Tests
+//
+// Author: Alex Freidah
+//
+// Tests for S3-compatible HTTP server setup, routing, middleware chain, and
+// graceful shutdown behavior.
+// -------------------------------------------------------------------------------
+
 package server
 
 import (

@@ -1,3 +1,13 @@
+// -------------------------------------------------------------------------------
+// Integration Tests - End-to-End S3 Operations
+//
+// Author: Alex Freidah
+//
+// Full-stack integration tests running against real MinIO and PostgreSQL
+// containers. Covers CRUD, multipart uploads, quota enforcement, replication,
+// circuit breaker failover, and cross-backend object operations.
+// -------------------------------------------------------------------------------
+
 //go:build integration
 
 package integration

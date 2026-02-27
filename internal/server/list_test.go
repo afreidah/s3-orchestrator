@@ -1,3 +1,12 @@
+// -------------------------------------------------------------------------------
+// List Handler Tests
+//
+// Author: Alex Freidah
+//
+// Tests for S3 ListObjectsV2 handler. Validates XML response formatting, prefix
+// filtering, continuation tokens, and delimiter-based common prefix grouping.
+// -------------------------------------------------------------------------------
+
 package server
 
 import (

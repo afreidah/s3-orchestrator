@@ -30,6 +30,7 @@ type usageFlushService struct {
 	manager *storage.BackendManager
 }
 
+// Run periodically flushes in-memory usage counters to the database.
 func (s *usageFlushService) Run(ctx context.Context) error {
 	cfg := s.manager.UsageFlushConfig()
 	interval := 30 * time.Second
@@ -80,6 +81,7 @@ type multipartCleanupService struct {
 	store   storage.MetadataStore
 }
 
+// Run periodically aborts stale multipart uploads older than 24 hours.
 func (s *multipartCleanupService) Run(ctx context.Context) error {
 	ticker := time.NewTicker(1 * time.Hour)
 	defer ticker.Stop()
@@ -113,6 +115,7 @@ type cleanupQueueService struct {
 	store   storage.MetadataStore
 }
 
+// Run processes the cleanup retry queue, deleting orphaned backend objects.
 func (s *cleanupQueueService) Run(ctx context.Context) error {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
@@ -149,6 +152,7 @@ type rebalancerService struct {
 	store   storage.MetadataStore
 }
 
+// Run periodically rebalances objects across backends using the configured strategy.
 func (s *rebalancerService) Run(ctx context.Context) error {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
@@ -194,6 +198,7 @@ type lifecycleService struct {
 	store   storage.MetadataStore
 }
 
+// Run periodically deletes objects that have exceeded their lifecycle expiration.
 func (s *lifecycleService) Run(ctx context.Context) error {
 	ticker := time.NewTicker(1 * time.Hour)
 	defer ticker.Stop()
@@ -241,8 +246,11 @@ type replicatorService struct {
 	store   storage.MetadataStore
 }
 
+// Run creates replica copies of under-replicated objects across backends.
 func (s *replicatorService) Run(ctx context.Context) error {
-	// Run once at startup to catch up on pending replicas
+	// --- Startup catch-up: replicate any objects that fell behind while stopped ---
+	// Only runs when replication is configured with factor > 1. Acquires an
+	// advisory lock so only one instance performs the catch-up pass.
 	rcfg := s.manager.ReplicationConfig()
 	if rcfg != nil && rcfg.Factor > 1 {
 		startCtx := audit.WithRequestID(ctx, audit.NewID())
@@ -267,11 +275,17 @@ func (s *replicatorService) Run(ctx context.Context) error {
 		}
 	}
 
+	// --- Periodic replication loop ---
+	// Polls every minute, re-reading config each tick so replication can be
+	// enabled or disabled via SIGHUP without restarting. Skips the tick when
+	// factor <= 1 (replication disabled) or when another instance holds the
+	// advisory lock.
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
+			// Re-read config each tick to pick up SIGHUP changes
 			rcfg := s.manager.ReplicationConfig()
 			if rcfg == nil || rcfg.Factor <= 1 {
 				continue
@@ -284,6 +298,7 @@ func (s *replicatorService) Run(ctx context.Context) error {
 						slog.Error("Replication failed", "error", err)
 					} else if created > 0 {
 						slog.Info("Replication completed", "copies_created", created)
+						// Refresh quota gauges so Prometheus reflects moved bytes
 						if err := s.manager.UpdateQuotaMetrics(lockCtx); err != nil {
 							slog.Warn("Failed to update quota metrics after replication", "error", err)
 						}

@@ -1,3 +1,13 @@
+// -------------------------------------------------------------------------------
+// Cleanup Queue Manager Tests
+//
+// Author: Alex Freidah
+//
+// Tests for the cleanup retry worker: exponential backoff calculation, queue
+// processing with successful and failed retries, maximum attempt enforcement,
+// and best-effort enqueue behavior during database outages.
+// -------------------------------------------------------------------------------
+
 package storage
 
 import (

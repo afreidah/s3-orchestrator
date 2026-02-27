@@ -1,3 +1,12 @@
+# -------------------------------------------------------------------------------
+# sqlc Configuration - SQL Code Generation
+#
+# Author: Alex Freidah
+#
+# Generates type-safe Go code from SQL queries using pgx/v5. Output goes to
+# internal/storage/sqlc/ with nullable fields emitted as pointers.
+# -------------------------------------------------------------------------------
+
 version: "2"
 sql:
   - engine: "postgresql"

@@ -70,6 +70,10 @@ func (u *UsageTracker) Record(backendName string, apiCalls, egress, ingress int6
 	}
 }
 
+// -------------------------------------------------------------------------
+// LIMIT ENFORCEMENT
+// -------------------------------------------------------------------------
+
 // WithinLimits checks whether the proposed operation would keep the given
 // backend within its configured monthly usage limits. It computes:
 //
@@ -129,6 +133,10 @@ func (u *UsageTracker) BackendsWithinLimits(order []string, apiCalls, egress, in
 	return eligible
 }
 
+// -------------------------------------------------------------------------
+// CONFIGURATION
+// -------------------------------------------------------------------------
+
 // UpdateLimits replaces the per-backend usage limits. Safe to call concurrently
 // with request handling.
 func (u *UsageTracker) UpdateLimits(limits map[string]UsageLimits) {
@@ -143,6 +151,10 @@ func (u *UsageTracker) GetLimits() map[string]UsageLimits {
 	defer u.limitsMu.RUnlock()
 	return u.limits
 }
+
+// -------------------------------------------------------------------------
+// BASELINE MANAGEMENT
+// -------------------------------------------------------------------------
 
 // SetBaseline updates the cached DB usage baseline for a single backend.
 func (u *UsageTracker) SetBaseline(name string, stat UsageStat) {
@@ -202,6 +214,10 @@ func (u *UsageTracker) NearLimit(threshold float64) bool {
 	}
 	return false
 }
+
+// -------------------------------------------------------------------------
+// FLUSH
+// -------------------------------------------------------------------------
 
 // currentPeriod returns the current month as "YYYY-MM" for usage aggregation.
 func currentPeriod() string {

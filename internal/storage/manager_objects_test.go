@@ -1,3 +1,13 @@
+// -------------------------------------------------------------------------------
+// Object Operations Tests
+//
+// Author: Alex Freidah
+//
+// Tests for BackendManager object CRUD: PutObject routing and quota enforcement,
+// GetObject failover across replicas, HeadObject, DeleteObject broadcast, and
+// CopyObject. Uses mock backends and stores to verify routing strategy behavior.
+// -------------------------------------------------------------------------------
+
 package storage
 
 import (
