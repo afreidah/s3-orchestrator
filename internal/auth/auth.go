@@ -12,6 +12,8 @@
 // access with per-bucket credential isolation.
 // -------------------------------------------------------------------------------
 
+// Package auth provides S3 SigV4 and token-based request authentication with
+// multi-bucket credential resolution.
 package auth
 
 import (

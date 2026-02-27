@@ -1,3 +1,13 @@
+// -------------------------------------------------------------------------------
+// UI Handler Tests
+//
+// Author: Alex Freidah
+//
+// Tests for the web dashboard HTTP handlers. Validates dashboard HTML rendering,
+// JSON API endpoints for dashboard data and directory tree, and static asset
+// serving.
+// -------------------------------------------------------------------------------
+
 package ui
 
 import (

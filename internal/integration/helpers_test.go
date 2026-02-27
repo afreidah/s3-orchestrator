@@ -1,3 +1,13 @@
+// -------------------------------------------------------------------------------
+// Integration Test Helpers
+//
+// Author: Alex Freidah
+//
+// Shared setup and teardown utilities for integration tests. Provides MinIO
+// client construction, PostgreSQL connection helpers, test bucket provisioning,
+// and environment variable parsing.
+// -------------------------------------------------------------------------------
+
 //go:build integration
 
 package integration

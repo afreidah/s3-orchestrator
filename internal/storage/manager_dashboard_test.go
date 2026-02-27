@@ -1,3 +1,12 @@
+// -------------------------------------------------------------------------------
+// Dashboard Aggregator Tests
+//
+// Author: Alex Freidah
+//
+// Tests for BackendManager dashboard data aggregation. Validates storage summary
+// computation, backend status reporting, and monthly usage statistics collection.
+// -------------------------------------------------------------------------------
+
 package storage
 
 import (

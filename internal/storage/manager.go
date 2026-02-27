@@ -132,6 +132,10 @@ func (m *BackendManager) FlushUsage(ctx context.Context) error {
 	return m.usage.FlushUsage(ctx, m.store)
 }
 
+// -------------------------------------------------------------------------
+// CONFIG ACCESSORS
+// -------------------------------------------------------------------------
+
 // SetRebalanceConfig atomically stores the rebalance configuration.
 func (m *BackendManager) SetRebalanceConfig(cfg *config.RebalanceConfig) {
 	m.rebalanceCfg.Store(cfg)

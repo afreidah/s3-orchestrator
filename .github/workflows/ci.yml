@@ -1,3 +1,13 @@
+# -------------------------------------------------------------------------------
+# CI Workflow - GitHub Actions
+#
+# Author: Alex Freidah
+#
+# Runs on push to main and pull requests. Executes linting, unit tests with
+# coverage upload, integration tests against real MinIO and PostgreSQL containers,
+# and Debian package build verification for both amd64 and arm64.
+# -------------------------------------------------------------------------------
+
 name: CI
 
 on:

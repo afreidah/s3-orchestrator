@@ -1,3 +1,12 @@
+// -------------------------------------------------------------------------------
+// Template Helper Tests
+//
+// Author: Alex Freidah
+//
+// Tests for dashboard template utility functions. Validates byte formatting,
+// percentage calculations, and other display helper outputs.
+// -------------------------------------------------------------------------------
+
 package ui
 
 import "testing"
