@@ -1,3 +1,13 @@
+// -------------------------------------------------------------------------------
+// Cleanup Queue Store - Database Operations
+//
+// Author: Alex Freidah
+//
+// Provides MetadataStore methods for the cleanup retry queue: enqueue failed
+// operations, fetch pending items with backoff-aware scheduling, and update
+// attempt counts or mark items as completed.
+// -------------------------------------------------------------------------------
+
 package storage
 
 import (

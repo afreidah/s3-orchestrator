@@ -65,6 +65,10 @@ type deleteObjectError struct {
 	Message string `xml:"Message"`
 }
 
+// -------------------------------------------------------------------------
+// OBJECT HANDLERS
+// -------------------------------------------------------------------------
+
 // handlePut processes PUT requests. Requires Content-Length header to enforce
 // size-based policies in later phases.
 func (s *Server) handlePut(ctx context.Context, w http.ResponseWriter, r *http.Request, key string) (int, error) {

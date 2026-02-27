@@ -1,3 +1,13 @@
+// -------------------------------------------------------------------------------
+// Lifecycle Operations Tests
+//
+// Author: Alex Freidah
+//
+// Tests for BackendManager lifecycle operations: expired object cleanup, stale
+// multipart upload abortion, and temporary object deletion. Validates store
+// queries and backend interaction for each lifecycle phase.
+// -------------------------------------------------------------------------------
+
 package storage
 
 import (

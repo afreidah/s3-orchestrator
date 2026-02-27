@@ -99,6 +99,10 @@ func (m *BackendManager) PutObject(ctx context.Context, key string, body io.Read
 	return etag, nil
 }
 
+// -------------------------------------------------------------------------
+// READ FAILOVER
+// -------------------------------------------------------------------------
+
 // errUsageLimitSkip is an internal sentinel indicating a backend was skipped
 // because it exceeded its monthly usage limits. Not exposed to callers.
 var errUsageLimitSkip = errors.New("backend skipped: usage limits exceeded")
@@ -302,6 +306,10 @@ func (m *BackendManager) parallelBroadcastRead(ctx context.Context, operation, k
 	return "", ErrObjectNotFound
 }
 
+// -------------------------------------------------------------------------
+// READ OPERATIONS
+// -------------------------------------------------------------------------
+
 // GetObject retrieves an object from the backend where it's stored. Tries the
 // primary copy first, then falls back to replicas if the primary fails.
 func (m *BackendManager) GetObject(ctx context.Context, key string, rangeHeader string) (*GetObjectResult, error) {
@@ -373,6 +381,10 @@ func (m *BackendManager) HeadObject(ctx context.Context, key string) (int64, str
 
 	return rSize, rContentType, rETag, nil
 }
+
+// -------------------------------------------------------------------------
+// COPY
+// -------------------------------------------------------------------------
 
 // CopyObject copies an object from sourceKey to destKey. Streams the source
 // through a pipe to avoid buffering the entire object. Supports cross-backend
@@ -514,6 +526,10 @@ func (m *BackendManager) CopyObject(ctx context.Context, sourceKey, destKey stri
 	span.SetStatus(codes.Ok, "")
 	return etag, nil
 }
+
+// -------------------------------------------------------------------------
+// DELETE
+// -------------------------------------------------------------------------
 
 // DeleteObject removes an object from the backend where it's stored.
 func (m *BackendManager) DeleteObject(ctx context.Context, key string) error {

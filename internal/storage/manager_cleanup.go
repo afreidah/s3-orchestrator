@@ -1,3 +1,13 @@
+// -------------------------------------------------------------------------------
+// Cleanup Queue Manager - Background Retry Worker
+//
+// Author: Alex Freidah
+//
+// Processes failed object cleanup operations from the retry queue. Uses
+// exponential backoff (1 minute to 24 hours) with a maximum of 10 attempts.
+// Enqueue is best-effort to avoid cascading failures when the database is down.
+// -------------------------------------------------------------------------------
+
 package storage
 
 import (

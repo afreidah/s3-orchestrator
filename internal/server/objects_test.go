@@ -1,3 +1,12 @@
+// -------------------------------------------------------------------------------
+// Object Handler Tests
+//
+// Author: Alex Freidah
+//
+// Tests for S3 object operation handlers: PUT, GET, HEAD, DELETE, and COPY.
+// Validates request parsing, error responses, and storage layer interaction.
+// -------------------------------------------------------------------------------
+
 package server
 
 import (

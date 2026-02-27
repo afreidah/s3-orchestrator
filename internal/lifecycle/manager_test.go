@@ -1,3 +1,12 @@
+// -------------------------------------------------------------------------------
+// Lifecycle Manager Tests
+//
+// Author: Alex Freidah
+//
+// Tests for the background service lifecycle manager. Covers service registration,
+// graceful shutdown propagation, and concurrent service orchestration.
+// -------------------------------------------------------------------------------
+
 package lifecycle
 
 import (

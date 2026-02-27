@@ -1,3 +1,12 @@
+// -------------------------------------------------------------------------------
+// Rate Limiter Tests
+//
+// Author: Alex Freidah
+//
+// Tests for per-IP rate limiting middleware. Validates token bucket enforcement,
+// burst allowance, trusted proxy header extraction, and 429 responses.
+// -------------------------------------------------------------------------------
+
 package server
 
 import (

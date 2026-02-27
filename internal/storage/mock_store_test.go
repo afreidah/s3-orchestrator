@@ -1,3 +1,13 @@
+// -------------------------------------------------------------------------------
+// Mock Store - Test Double for MetadataStore
+//
+// Author: Alex Freidah
+//
+// Configurable MetadataStore implementation for storage package unit tests.
+// Provides pre-set responses and call counters for verifying store interactions
+// without a database.
+// -------------------------------------------------------------------------------
+
 package storage
 
 import (

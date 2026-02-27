@@ -8,6 +8,9 @@
 // atomic operations to ensure quota limits are respected.
 // -------------------------------------------------------------------------------
 
+// Package storage provides multi-backend S3 object management with PostgreSQL
+// metadata tracking, quota enforcement, circuit breaker protection, replication,
+// and rebalancing.
 package storage
 
 import (
@@ -44,6 +47,7 @@ type S3Error struct {
 	Message    string // Human-readable message
 }
 
+// Error returns the human-readable error message.
 func (e *S3Error) Error() string {
 	return e.Message
 }
