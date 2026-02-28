@@ -13,6 +13,7 @@ package storage
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -535,6 +536,294 @@ func TestPlanSpreadEven_AlreadyBalanced(t *testing.T) {
 	}
 	if len(plan) != 0 {
 		t.Errorf("expected 0 moves for balanced backends, got %d", len(plan))
+	}
+}
+
+func TestPlanSpreadEven_ListObjectsByBackendError(t *testing.T) {
+	store := &mockStore{
+		listObjectsByBackendErr: errors.New("db error"),
+	}
+	mgr := newRebalanceManager(store, []string{"b1", "b2"})
+
+	stats := map[string]QuotaStat{
+		"b1": {BytesUsed: 800, BytesLimit: 1000},
+		"b2": {BytesUsed: 200, BytesLimit: 1000},
+	}
+
+	_, err := mgr.planSpreadEven(context.Background(), stats, 10)
+	if err == nil {
+		t.Fatal("expected error from ListObjectsByBackend failure")
+	}
+}
+
+func TestPlanPackTight_ListObjectsByBackendError(t *testing.T) {
+	store := &mockStore{
+		listObjectsByBackendErr: errors.New("db error"),
+	}
+	mgr := newRebalanceManager(store, []string{"b1", "b2"})
+
+	stats := map[string]QuotaStat{
+		"b1": {BytesUsed: 800, BytesLimit: 1000},
+		"b2": {BytesUsed: 200, BytesLimit: 1000},
+	}
+
+	_, err := mgr.planPackTight(context.Background(), stats, 10)
+	if err == nil {
+		t.Fatal("expected error from ListObjectsByBackend failure")
+	}
+}
+
+// -------------------------------------------------------------------------
+// executeOneMove error paths
+// -------------------------------------------------------------------------
+
+func TestExecuteOneMove_SourceBackendNotFound(t *testing.T) {
+	store := &mockStore{}
+	mgr := newRebalanceManager(store, []string{"b1"})
+
+	move := rebalanceMove{
+		ObjectKey:   "key",
+		FromBackend: "nonexistent",
+		ToBackend:   "b1",
+		SizeBytes:   100,
+	}
+
+	result := mgr.executeOneMove(context.Background(), move, "spread")
+	if result {
+		t.Error("expected false when source backend not found")
+	}
+}
+
+func TestExecuteOneMove_DestBackendNotFound(t *testing.T) {
+	src := newMockBackend()
+	_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain")
+
+	store := &mockStore{}
+	obs := map[string]ObjectBackend{"src": src}
+	mgr := NewBackendManager(&BackendManagerConfig{
+		Backends:        obs,
+		Store:           store,
+		Order:           []string{"src"},
+		CacheTTL:        5 * time.Second,
+		BackendTimeout:  30 * time.Second,
+		RoutingStrategy: "pack",
+	})
+
+	move := rebalanceMove{
+		ObjectKey:   "key",
+		FromBackend: "src",
+		ToBackend:   "nonexistent",
+		SizeBytes:   4,
+	}
+
+	result := mgr.executeOneMove(context.Background(), move, "spread")
+	if result {
+		t.Error("expected false when dest backend not found")
+	}
+}
+
+func TestExecuteOneMove_SourceGetFails(t *testing.T) {
+	src := newMockBackend()
+	src.getErr = errors.New("read error")
+	dest := newMockBackend()
+
+	store := &mockStore{}
+	obs := map[string]ObjectBackend{"src": src, "dest": dest}
+	mgr := NewBackendManager(&BackendManagerConfig{
+		Backends:        obs,
+		Store:           store,
+		Order:           []string{"src", "dest"},
+		CacheTTL:        5 * time.Second,
+		BackendTimeout:  30 * time.Second,
+		RoutingStrategy: "pack",
+	})
+
+	move := rebalanceMove{
+		ObjectKey:   "key",
+		FromBackend: "src",
+		ToBackend:   "dest",
+		SizeBytes:   4,
+	}
+
+	result := mgr.executeOneMove(context.Background(), move, "spread")
+	if result {
+		t.Error("expected false when source get fails")
+	}
+}
+
+func TestExecuteOneMove_DestPutFails(t *testing.T) {
+	src := newMockBackend()
+	_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain")
+	dest := newMockBackend()
+	dest.putErr = errors.New("write error")
+
+	store := &mockStore{}
+	obs := map[string]ObjectBackend{"src": src, "dest": dest}
+	mgr := NewBackendManager(&BackendManagerConfig{
+		Backends:        obs,
+		Store:           store,
+		Order:           []string{"src", "dest"},
+		CacheTTL:        5 * time.Second,
+		BackendTimeout:  30 * time.Second,
+		RoutingStrategy: "pack",
+	})
+
+	move := rebalanceMove{
+		ObjectKey:   "key",
+		FromBackend: "src",
+		ToBackend:   "dest",
+		SizeBytes:   4,
+	}
+
+	result := mgr.executeOneMove(context.Background(), move, "spread")
+	if result {
+		t.Error("expected false when dest put fails")
+	}
+}
+
+func TestExecuteOneMove_MoveLocationError_CleansUpOrphan(t *testing.T) {
+	src := newMockBackend()
+	_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain")
+	dest := newMockBackend()
+
+	store := &mockStore{moveObjectLocationErr: errors.New("db error")}
+	obs := map[string]ObjectBackend{"src": src, "dest": dest}
+	mgr := NewBackendManager(&BackendManagerConfig{
+		Backends:        obs,
+		Store:           store,
+		Order:           []string{"src", "dest"},
+		CacheTTL:        5 * time.Second,
+		BackendTimeout:  30 * time.Second,
+		RoutingStrategy: "pack",
+	})
+
+	move := rebalanceMove{
+		ObjectKey:   "key",
+		FromBackend: "src",
+		ToBackend:   "dest",
+		SizeBytes:   4,
+	}
+
+	result := mgr.executeOneMove(context.Background(), move, "spread")
+	if result {
+		t.Error("expected false when MoveObjectLocation fails")
+	}
+
+	// Orphan should be cleaned up from destination
+	if dest.hasObject("key") {
+		t.Error("orphan should be cleaned up from destination")
+	}
+}
+
+func TestExecuteOneMove_MoveLocationError_CleanupFails_EnqueuesCleanup(t *testing.T) {
+	src := newMockBackend()
+	_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain")
+	dest := newMockBackend()
+	dest.delErr = errors.New("delete failed")
+
+	store := &mockStore{moveObjectLocationErr: errors.New("db error")}
+	obs := map[string]ObjectBackend{"src": src, "dest": dest}
+	mgr := NewBackendManager(&BackendManagerConfig{
+		Backends:        obs,
+		Store:           store,
+		Order:           []string{"src", "dest"},
+		CacheTTL:        5 * time.Second,
+		BackendTimeout:  30 * time.Second,
+		RoutingStrategy: "pack",
+	})
+
+	move := rebalanceMove{
+		ObjectKey:   "key",
+		FromBackend: "src",
+		ToBackend:   "dest",
+		SizeBytes:   4,
+	}
+
+	result := mgr.executeOneMove(context.Background(), move, "spread")
+	if result {
+		t.Error("expected false")
+	}
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.enqueueCleanupCalls) != 1 {
+		t.Fatalf("expected 1 enqueue call, got %d", len(store.enqueueCleanupCalls))
+	}
+	if store.enqueueCleanupCalls[0].reason != "rebalance_orphan" {
+		t.Errorf("expected reason=rebalance_orphan, got %q", store.enqueueCleanupCalls[0].reason)
+	}
+}
+
+func TestExecuteOneMove_MovedSizeZero_CleansUpOrphan(t *testing.T) {
+	src := newMockBackend()
+	_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain")
+	dest := newMockBackend()
+
+	store := &mockStore{moveObjectLocationSize: 0} // object was deleted during move
+	obs := map[string]ObjectBackend{"src": src, "dest": dest}
+	mgr := NewBackendManager(&BackendManagerConfig{
+		Backends:        obs,
+		Store:           store,
+		Order:           []string{"src", "dest"},
+		CacheTTL:        5 * time.Second,
+		BackendTimeout:  30 * time.Second,
+		RoutingStrategy: "pack",
+	})
+
+	move := rebalanceMove{
+		ObjectKey:   "key",
+		FromBackend: "src",
+		ToBackend:   "dest",
+		SizeBytes:   4,
+	}
+
+	result := mgr.executeOneMove(context.Background(), move, "spread")
+	if result {
+		t.Error("expected false when movedSize is 0")
+	}
+
+	// Orphan should be cleaned up from destination
+	if dest.hasObject("key") {
+		t.Error("orphan should be cleaned up from destination")
+	}
+}
+
+func TestExecuteOneMove_SourceDeleteFails_EnqueuesCleanup(t *testing.T) {
+	src := newMockBackend()
+	_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain")
+	src.delErr = errors.New("delete failed")
+	dest := newMockBackend()
+
+	store := &mockStore{moveObjectLocationSize: 4}
+	obs := map[string]ObjectBackend{"src": src, "dest": dest}
+	mgr := NewBackendManager(&BackendManagerConfig{
+		Backends:        obs,
+		Store:           store,
+		Order:           []string{"src", "dest"},
+		CacheTTL:        5 * time.Second,
+		BackendTimeout:  30 * time.Second,
+		RoutingStrategy: "pack",
+	})
+
+	move := rebalanceMove{
+		ObjectKey:   "key",
+		FromBackend: "src",
+		ToBackend:   "dest",
+		SizeBytes:   4,
+	}
+
+	result := mgr.executeOneMove(context.Background(), move, "spread")
+	if !result {
+		t.Error("expected true (move succeeded, source delete failure is non-fatal)")
+	}
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.enqueueCleanupCalls) != 1 {
+		t.Fatalf("expected 1 enqueue call, got %d", len(store.enqueueCleanupCalls))
+	}
+	if store.enqueueCleanupCalls[0].reason != "rebalance_source_delete" {
+		t.Errorf("expected reason=rebalance_source_delete, got %q", store.enqueueCleanupCalls[0].reason)
 	}
 }
 

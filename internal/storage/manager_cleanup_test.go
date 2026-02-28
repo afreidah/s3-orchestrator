@@ -200,6 +200,109 @@ func TestProcessCleanupQueue_FetchError(t *testing.T) {
 	}
 }
 
+func TestProcessCleanupQueue_MaxAttemptsReached(t *testing.T) {
+	backend := newMockBackend()
+	backend.delErr = errors.New("backend timeout")
+
+	store := &mockStore{
+		pendingCleanups: []CleanupItem{
+			{ID: 5, BackendName: "b1", ObjectKey: "stuck.txt", Reason: "delete_failed", Attempts: 9},
+		},
+	}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
+
+	processed, failed := mgr.ProcessCleanupQueue(context.Background())
+
+	if processed != 0 {
+		t.Errorf("expected processed=0, got %d", processed)
+	}
+	if failed != 1 {
+		t.Errorf("expected failed=1, got %d", failed)
+	}
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.retryCleanupCalls) != 1 {
+		t.Fatalf("expected 1 retry call, got %d", len(store.retryCleanupCalls))
+	}
+}
+
+func TestProcessCleanupQueue_CompleteItemError(t *testing.T) {
+	backend := newMockBackend()
+	_, _ = backend.PutObject(context.Background(), "orphan.txt", bytes.NewReader([]byte("data")), 4, "text/plain")
+
+	store := &mockStore{
+		pendingCleanups: []CleanupItem{
+			{ID: 6, BackendName: "b1", ObjectKey: "orphan.txt", Reason: "orphan_put", Attempts: 0},
+		},
+		completeCleanupErr: errors.New("db error"),
+	}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
+
+	// Should not panic despite CompleteCleanupItem error
+	processed, failed := mgr.ProcessCleanupQueue(context.Background())
+	if processed != 1 {
+		t.Errorf("expected processed=1 (delete succeeded), got %d", processed)
+	}
+	if failed != 0 {
+		t.Errorf("expected failed=0, got %d", failed)
+	}
+}
+
+func TestProcessCleanupQueue_RetryItemError(t *testing.T) {
+	backend := newMockBackend()
+	backend.delErr = errors.New("backend down")
+
+	store := &mockStore{
+		pendingCleanups: []CleanupItem{
+			{ID: 7, BackendName: "b1", ObjectKey: "stuck.txt", Reason: "delete_failed", Attempts: 1},
+		},
+		retryCleanupErr: errors.New("db error on retry"),
+	}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
+
+	// Should not panic despite RetryCleanupItem error
+	processed, failed := mgr.ProcessCleanupQueue(context.Background())
+	if processed != 0 {
+		t.Errorf("expected processed=0, got %d", processed)
+	}
+	if failed != 1 {
+		t.Errorf("expected failed=1, got %d", failed)
+	}
+}
+
+func TestProcessCleanupQueue_QueueDepthError(t *testing.T) {
+	store := &mockStore{
+		cleanupQueueDepthErr: errors.New("db error"),
+	}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+
+	// Should not panic — depth error is silently ignored
+	processed, failed := mgr.ProcessCleanupQueue(context.Background())
+	if processed != 0 || failed != 0 {
+		t.Errorf("expected 0/0, got %d/%d", processed, failed)
+	}
+}
+
+func TestProcessCleanupQueue_BackendNotFound_CompleteItemError(t *testing.T) {
+	store := &mockStore{
+		pendingCleanups: []CleanupItem{
+			{ID: 8, BackendName: "gone-backend", ObjectKey: "orphan.txt", Reason: "orphan_put", Attempts: 0},
+		},
+		completeCleanupErr: errors.New("db error"),
+	}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+
+	// Should not panic — completion error is logged only
+	processed, failed := mgr.ProcessCleanupQueue(context.Background())
+	if processed != 1 {
+		t.Errorf("expected processed=1, got %d", processed)
+	}
+	if failed != 0 {
+		t.Errorf("expected failed=0, got %d", failed)
+	}
+}
+
 // -------------------------------------------------------------------------
 // Enqueue wiring at failure sites
 // -------------------------------------------------------------------------
