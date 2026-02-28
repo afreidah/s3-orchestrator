@@ -85,6 +85,32 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// --- ListBuckets: GET / ---
+	if r.URL.Path == "/" && method == http.MethodGet {
+		ctx, span := telemetry.StartSpan(ctx, "HTTP GET",
+			append(telemetry.RequestAttributes(method, "/", "", "", r.RemoteAddr),
+				telemetry.AttrRequestID.String(requestID))...,
+		)
+		defer span.End()
+
+		status, err := s.handleListBuckets(w, authorizedBucket)
+		s.recordRequest(method, status, start, 0, 0)
+		if err != nil {
+			span.SetStatus(codes.Error, err.Error())
+			span.RecordError(err)
+		}
+		span.SetAttributes(attribute.Int("http.status_code", status))
+		audit.Log(ctx, "s3.ListBuckets",
+			slog.String("operation", "ListBuckets"),
+			slog.String("method", method),
+			slog.String("path", r.URL.Path),
+			slog.String("remote", r.RemoteAddr),
+			slog.Int("status", status),
+			slog.Duration("duration", time.Since(start)),
+		)
+		return
+	}
+
 	// --- Parse path ---
 	bucket, key, ok := parsePath(r.URL.Path)
 	if !ok {
@@ -135,8 +161,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if key == "" {
 		query := r.URL.Query()
 		_, hasDelete := query["delete"]
+		_, hasLocation := query["location"]
 
 		switch {
+		case method == http.MethodHead:
+			operation = "HeadBucket"
+			status, err = s.handleHeadBucket(w)
+		case method == http.MethodGet && hasLocation:
+			operation = "GetBucketLocation"
+			status, err = s.handleGetBucketLocation(w)
 		case method == http.MethodGet:
 			operation = "ListObjectsV2"
 			status, err = s.handleListObjectsV2(ctx, w, r, bucket)

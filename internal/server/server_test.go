@@ -135,8 +135,9 @@ func TestMultipartUpload_UnsupportedMethod(t *testing.T) {
 func TestInvalidPath_Returns400(t *testing.T) {
 	ts, _, _ := newTestServer(t)
 
-	// Request to "/" — parsePath returns false for empty path
-	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/", nil)
+	// POST to "/" — not intercepted as ListBuckets, so parsePath returns
+	// false for the empty path and the server returns 400.
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

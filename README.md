@@ -69,6 +69,9 @@ Objects are routed to backends based on the configured `routing_strategy`: **pac
 
 | Operation | Method | Path | Notes |
 |-----------|--------|------|-------|
+| ListBuckets | `GET` | `/` | Returns buckets the credential has access to |
+| HeadBucket | `HEAD` | `/{bucket}` | Confirms bucket exists (200 if authorized) |
+| GetBucketLocation | `GET` | `/{bucket}?location` | Returns empty `LocationConstraint` |
 | PutObject | `PUT` | `/{bucket}/{key}` | |
 | GetObject | `GET` | `/{bucket}/{key}` | Supports `Range` header (206 Partial Content) |
 | HeadObject | `HEAD` | `/{bucket}/{key}` | |
@@ -735,6 +738,7 @@ internal/
   config/config.go           YAML config loader with env var expansion
   server/
     server.go                HTTP router, bucket resolution, key prefixing, metrics
+    buckets.go               HeadBucket, GetBucketLocation, ListBuckets stubs
     objects.go               PUT, GET, HEAD, DELETE, COPY, DeleteObjects handlers
     list.go                  ListObjectsV2 handler (XML response)
     multipart.go             Multipart upload handlers
