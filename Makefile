@@ -19,7 +19,7 @@ PLATFORMS  := linux/amd64,linux/arm64
 GO_LDFLAGS := -s -w -X github.com/afreidah/s3-orchestrator/internal/telemetry.Version=$(VERSION)
 
 # --- Debian packaging ---
-DEB_VERSION ?= $(shell v="$(VERSION)"; if echo "$$v" | grep -qE '^[0-9]'; then echo "$$v"; else echo "0.0.0+$$v"; fi)
+DEB_VERSION ?= $(shell echo "$(VERSION)" | sed 's/^v//')
 DEB_ARCH    ?= $(shell dpkg --print-architecture 2>/dev/null || echo amd64)
 DEB_OUT      = s3-orchestrator_$(DEB_VERSION)_$(DEB_ARCH).deb
 
@@ -150,8 +150,8 @@ deb-all: ## Build .deb packages for amd64 and arm64
 # -------------------------------------------------------------------------
 
 release: ## Tag and push to trigger a GitHub Release (reads .version)
-	git tag v$(VERSION)
-	git push origin v$(VERSION)
+	git tag $(VERSION)
+	git push origin $(VERSION)
 
 release-local: prep-changelog ## Dry-run GoReleaser locally (no publish)
 	goreleaser release --snapshot --clean

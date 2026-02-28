@@ -22,7 +22,6 @@ import (
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	smithymiddleware "github.com/aws/smithy-go/middleware"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 	"go.opentelemetry.io/otel/codes"
@@ -343,10 +342,7 @@ func (b *S3Backend) ListObjects(ctx context.Context, prefix string, fn func([]Li
 // to accept a non-seekable io.Reader body without buffering the entire object
 // into memory. Body integrity is still protected by TLS at the transport layer.
 func withUnsignedPayload(o *s3.Options) {
-	o.APIOptions = append(o.APIOptions, func(stack *smithymiddleware.Stack) error {
-		_ = v4.RemoveContentSHA256HeaderMiddleware(stack)
-		return v4.SwapComputePayloadSHA256ForUnsignedPayloadMiddleware(stack)
-	})
+	o.APIOptions = append(o.APIOptions, v4.SwapComputePayloadSHA256ForUnsignedPayloadMiddleware)
 }
 
 // recordOperation updates Prometheus metrics for a backend operation.
