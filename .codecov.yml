@@ -8,3 +8,4 @@
 
 ignore:
   - "internal/testutil/"
+  - "internal/storage/sqlc/"  # generated code (sqlc)

@@ -4,8 +4,9 @@
 // Author: Alex Freidah
 //
 // HTTP handlers for S3 multipart upload operations. Supports creating uploads,
-// uploading parts, completing uploads (reassembly), aborting uploads, and listing
-// parts. Parts are stored under temporary keys and concatenated on completion.
+// uploading parts, completing uploads (reassembly), aborting uploads, listing
+// parts, and listing active multipart uploads. Parts are stored under temporary
+// keys and concatenated on completion.
 // -------------------------------------------------------------------------------
 
 package server
@@ -17,6 +18,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -180,6 +182,69 @@ func (s *Server) handleAbortMultipartUpload(ctx context.Context, w http.Response
 
 	w.WriteHeader(http.StatusNoContent)
 	return http.StatusNoContent, nil
+}
+
+// xmlListMultipartUploadsResult is the XML response for ListMultipartUploads.
+type xmlListMultipartUploadsResult struct {
+	XMLName     xml.Name    `xml:"ListMultipartUploadsResult"`
+	Xmlns       string      `xml:"xmlns,attr"`
+	Bucket      string      `xml:"Bucket"`
+	MaxUploads  int         `xml:"MaxUploads"`
+	IsTruncated bool        `xml:"IsTruncated"`
+	Upload      []xmlUpload `xml:"Upload"`
+}
+
+// xmlUpload holds a single multipart upload entry for the list response.
+type xmlUpload struct {
+	Key       string `xml:"Key"`
+	UploadId  string `xml:"UploadId"`
+	Initiated string `xml:"Initiated"`
+}
+
+// handleListMultipartUploads handles GET /{bucket}?uploads, returning active
+// multipart uploads scoped to the bucket. Strips the internal bucket prefix
+// from keys before returning to clients.
+func (s *Server) handleListMultipartUploads(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket string) (int, error) {
+	bucketPrefix := bucket + "/"
+
+	maxUploadsStr := r.URL.Query().Get("max-uploads")
+	maxUploads := 1000
+	if maxUploadsStr != "" {
+		if mu, err := strconv.Atoi(maxUploadsStr); err == nil && mu > 0 && mu <= 1000 {
+			maxUploads = mu
+		}
+	}
+
+	// Fetch one extra to detect truncation
+	uploads, err := s.Manager.ListMultipartUploads(ctx, bucketPrefix, maxUploads+1)
+	if err != nil {
+		return writeStorageError(w, err, "Failed to list multipart uploads"), err
+	}
+
+	truncated := len(uploads) > maxUploads
+	if truncated {
+		uploads = uploads[:maxUploads]
+	}
+
+	result := xmlListMultipartUploadsResult{
+		Xmlns:       "http://s3.amazonaws.com/doc/2006-03-01/",
+		Bucket:      bucket,
+		MaxUploads:  maxUploads,
+		IsTruncated: truncated,
+	}
+
+	for _, u := range uploads {
+		result.Upload = append(result.Upload, xmlUpload{
+			Key:       strings.TrimPrefix(u.ObjectKey, bucketPrefix),
+			UploadId:  u.UploadID,
+			Initiated: u.CreatedAt.UTC().Format(time.RFC3339),
+		})
+	}
+
+	if err := writeXML(w, http.StatusOK, result); err != nil {
+		return http.StatusOK, fmt.Errorf("failed to encode list multipart uploads response: %w", err)
+	}
+	return http.StatusOK, nil
 }
 
 // handleListParts handles GET /{bucket}/{key}?uploadId=X

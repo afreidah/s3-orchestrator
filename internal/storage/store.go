@@ -822,6 +822,35 @@ func (s *Store) GetStaleMultipartUploads(ctx context.Context, olderThan time.Dur
 	return uploads, nil
 }
 
+// ListMultipartUploads returns in-progress multipart uploads whose key matches
+// the given prefix, up to maxUploads entries.
+func (s *Store) ListMultipartUploads(ctx context.Context, prefix string, maxUploads int) ([]MultipartUpload, error) { // codecov:ignore -- requires live PostgreSQL, covered by integration tests
+	escapedPrefix := likeEscaper.Replace(prefix)
+
+	rows, err := s.queries.ListMultipartUploadsByPrefix(ctx, db.ListMultipartUploadsByPrefixParams{
+		Prefix:     &escapedPrefix,
+		MaxUploads: int32(maxUploads),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list multipart uploads: %w", err)
+	}
+
+	uploads := make([]MultipartUpload, len(rows))
+	for i, row := range rows {
+		ct := ""
+		if row.ContentType != nil {
+			ct = *row.ContentType
+		}
+		uploads[i] = MultipartUpload{
+			UploadID:    row.UploadID,
+			ObjectKey:   row.ObjectKey,
+			ContentType: ct,
+			CreatedAt:   row.CreatedAt.Time,
+		}
+	}
+	return uploads, nil
+}
+
 // -------------------------------------------------------------------------
 // SYNC OPERATIONS
 // -------------------------------------------------------------------------

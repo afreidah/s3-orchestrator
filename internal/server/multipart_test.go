@@ -4,8 +4,9 @@
 // Author: Alex Freidah
 //
 // Tests for S3 multipart upload HTTP handlers: create upload, upload part,
-// complete upload, abort upload, and list parts. Validates request parsing,
-// error responses, and storage layer interaction via the test server harness.
+// complete upload, abort upload, list parts, and list multipart uploads.
+// Validates request parsing, error responses, and storage layer interaction
+// via the test server harness.
 // -------------------------------------------------------------------------------
 
 package server
@@ -401,5 +402,131 @@ func TestListParts_EmptyParts(t *testing.T) {
 	}
 	if len(result.Parts) != 0 {
 		t.Errorf("expected 0 parts, got %d", len(result.Parts))
+	}
+}
+
+// -------------------------------------------------------------------------
+// ListMultipartUploads
+// -------------------------------------------------------------------------
+
+func TestListMultipartUploads_Success(t *testing.T) {
+	ts, mockStore, _ := newTestServer(t)
+	now := time.Now().UTC()
+
+	mockStore.ListMultipartUploadsResp = []storage.MultipartUpload{
+		{UploadID: "upload-1", ObjectKey: "mybucket/file1.txt", ContentType: "text/plain", CreatedAt: now},
+		{UploadID: "upload-2", ObjectKey: "mybucket/file2.txt", ContentType: "text/plain", CreatedAt: now},
+	}
+
+	resp := doReq(t, http.MethodGet, ts.URL+"/mybucket/?uploads", nil)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want 200. body: %s", resp.StatusCode, body)
+	}
+
+	var result xmlListMultipartUploadsResult
+	if err := xml.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode XML: %v", err)
+	}
+	if result.Bucket != "mybucket" {
+		t.Errorf("Bucket = %q, want %q", result.Bucket, "mybucket")
+	}
+	if len(result.Upload) != 2 {
+		t.Fatalf("expected 2 uploads, got %d", len(result.Upload))
+	}
+	if result.Upload[0].Key != "file1.txt" {
+		t.Errorf("Upload[0].Key = %q, want %q", result.Upload[0].Key, "file1.txt")
+	}
+	if result.Upload[0].UploadId != "upload-1" {
+		t.Errorf("Upload[0].UploadId = %q, want %q", result.Upload[0].UploadId, "upload-1")
+	}
+	if result.IsTruncated {
+		t.Error("expected IsTruncated=false")
+	}
+}
+
+func TestListMultipartUploads_Empty(t *testing.T) {
+	ts, mockStore, _ := newTestServer(t)
+	mockStore.ListMultipartUploadsResp = nil
+
+	resp := doReq(t, http.MethodGet, ts.URL+"/mybucket/?uploads", nil)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var result xmlListMultipartUploadsResult
+	if err := xml.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode XML: %v", err)
+	}
+	if len(result.Upload) != 0 {
+		t.Errorf("expected 0 uploads, got %d", len(result.Upload))
+	}
+}
+
+func TestListMultipartUploads_Truncated(t *testing.T) {
+	ts, mockStore, _ := newTestServer(t)
+	now := time.Now().UTC()
+
+	// Return 3 uploads when max-uploads=2; handler fetches maxUploads+1 to
+	// detect truncation, so the mock needs to return 3.
+	mockStore.ListMultipartUploadsResp = []storage.MultipartUpload{
+		{UploadID: "u1", ObjectKey: "mybucket/a.txt", ContentType: "text/plain", CreatedAt: now},
+		{UploadID: "u2", ObjectKey: "mybucket/b.txt", ContentType: "text/plain", CreatedAt: now},
+		{UploadID: "u3", ObjectKey: "mybucket/c.txt", ContentType: "text/plain", CreatedAt: now},
+	}
+
+	resp := doReq(t, http.MethodGet, ts.URL+"/mybucket/?uploads&max-uploads=2", nil)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var result xmlListMultipartUploadsResult
+	if err := xml.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode XML: %v", err)
+	}
+	if !result.IsTruncated {
+		t.Error("expected IsTruncated=true")
+	}
+	if len(result.Upload) != 2 {
+		t.Errorf("expected 2 uploads, got %d", len(result.Upload))
+	}
+	if result.MaxUploads != 2 {
+		t.Errorf("MaxUploads = %d, want 2", result.MaxUploads)
+	}
+}
+
+func TestListMultipartUploads_StoreError(t *testing.T) {
+	ts, mockStore, _ := newTestServer(t)
+	mockStore.ListMultipartUploadsErr = &storage.S3Error{
+		StatusCode: 500,
+		Code:       "InternalError",
+		Message:    "db error",
+	}
+
+	resp := doReq(t, http.MethodGet, ts.URL+"/mybucket/?uploads", nil)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", resp.StatusCode)
+	}
+}
+
+func TestListMultipartUploads_NoAuth(t *testing.T) {
+	ts, _, _ := newTestServer(t)
+
+	resp, err := http.Get(ts.URL + "/mybucket/?uploads")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", resp.StatusCode)
 	}
 }

@@ -44,6 +44,9 @@ CREATE TABLE multipart_parts (
 CREATE INDEX idx_multipart_uploads_created
     ON multipart_uploads(created_at);
 
+CREATE INDEX idx_multipart_uploads_key_pattern
+    ON multipart_uploads(object_key text_pattern_ops);
+
 CREATE TABLE backend_usage (
     backend_name  TEXT NOT NULL REFERENCES backend_quotas(backend_name),
     period        TEXT NOT NULL,

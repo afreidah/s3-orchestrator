@@ -27,3 +27,10 @@ WHERE upload_id = $1;
 SELECT upload_id, object_key, backend_name, content_type, created_at
 FROM multipart_uploads
 WHERE created_at < $1;
+
+-- name: ListMultipartUploadsByPrefix :many
+SELECT upload_id, object_key, content_type, created_at
+FROM multipart_uploads
+WHERE object_key LIKE @prefix || '%'
+ORDER BY object_key, created_at
+LIMIT @max_uploads;

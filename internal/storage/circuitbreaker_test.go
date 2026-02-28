@@ -344,6 +344,37 @@ func TestCircuitBreaker_RecordObject_CircuitOpen(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
+// ListMultipartUploads
+// -------------------------------------------------------------------------
+
+func TestCircuitBreaker_ListMultipartUploads_Success(t *testing.T) {
+	mock := &mockStore{}
+	cb := newTestCB(mock, 3, time.Minute)
+
+	uploads, err := cb.ListMultipartUploads(context.Background(), "prefix/", 100)
+	if err != nil {
+		t.Fatalf("ListMultipartUploads: %v", err)
+	}
+	if uploads != nil {
+		t.Fatalf("expected nil uploads from empty mock, got %v", uploads)
+	}
+}
+
+func TestCircuitBreaker_ListMultipartUploads_CircuitOpen(t *testing.T) {
+	dbErr := errors.New("connection refused")
+	mock := &mockStore{getAllLocationsErr: dbErr}
+	cb := newTestCB(mock, 1, time.Minute)
+
+	// Trip the circuit
+	_, _ = cb.GetAllObjectLocations(context.Background(), "key")
+
+	_, err := cb.ListMultipartUploads(context.Background(), "prefix/", 100)
+	if !errors.Is(err, ErrDBUnavailable) {
+		t.Fatalf("expected ErrDBUnavailable, got %v", err)
+	}
+}
+
+// -------------------------------------------------------------------------
 // WithAdvisoryLock (bypasses circuit breaker)
 // -------------------------------------------------------------------------
 
