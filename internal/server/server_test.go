@@ -10,6 +10,9 @@
 package server
 
 import (
+	"io"
+	"net/http"
+	"strings"
 	"sync"
 	"testing"
 
@@ -81,4 +84,71 @@ func TestSetBucketAuth_ConcurrentAccess(t *testing.T) {
 
 	wg.Wait()
 	// Test passes if no race detector violations
+}
+
+// -------------------------------------------------------------------------
+// Routing: untested code paths in ServeHTTP
+// -------------------------------------------------------------------------
+
+func TestBucketOnlyPUT_MethodNotAllowed(t *testing.T) {
+	ts, _, _ := newTestServer(t)
+
+	// PUT to a bucket-only path (no key) should hit the default case
+	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/mybucket/", nil)
+	req.Header.Set("X-Proxy-Token", "test-token")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want 405", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "MethodNotAllowed") {
+		t.Error("response should contain MethodNotAllowed error code")
+	}
+}
+
+func TestMultipartUpload_UnsupportedMethod(t *testing.T) {
+	ts, _, _ := newTestServer(t)
+
+	// PATCH to a key path with uploadId should hit the multipart default case
+	req, _ := http.NewRequest(http.MethodPatch, ts.URL+"/mybucket/testkey?uploadId=upload-1", nil)
+	req.Header.Set("X-Proxy-Token", "test-token")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want 405", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "MethodNotAllowed") {
+		t.Error("response should contain MethodNotAllowed error code")
+	}
+}
+
+func TestInvalidPath_Returns400(t *testing.T) {
+	ts, _, _ := newTestServer(t)
+
+	// Request to "/" — parsePath returns false for empty path
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/", nil)
+	req.Header.Set("X-Proxy-Token", "test-token")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "InvalidRequest") {
+		t.Error("response should contain InvalidRequest error code")
+	}
 }
