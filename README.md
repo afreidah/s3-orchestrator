@@ -16,6 +16,32 @@ Objects are routed to backends based on the configured `routing_strategy`: **pac
 
 ![Dashboard](docs/images/dashboard.png?v=2)
 
+## Table of Contents
+
+- [Architecture](#architecture)
+- [S3 API Coverage](#s3-api-coverage)
+- [Authentication & Multi-Bucket](#authentication--multi-bucket)
+- [Degraded Mode (Circuit Breaker)](#degraded-mode-circuit-breaker)
+- [Write Routing](#write-routing)
+- [Rebalancing](#rebalancing)
+- [Replication](#replication)
+- [Cleanup Queue](#cleanup-queue)
+- [Lifecycle (Object Expiration)](#lifecycle-object-expiration)
+- [Rate Limiting](#rate-limiting)
+- [Usage Limits](#usage-limits)
+- [Configuration](#configuration)
+- [Configuration Hot-Reload](#configuration-hot-reload)
+- [Database](#database)
+- [Telemetry](#telemetry)
+- [Web UI](#web-ui)
+- [Endpoints](#endpoints)
+- [Background Tasks](#background-tasks)
+- [Multi-Instance Deployment](#multi-instance-deployment)
+- [CLI Subcommands](#cli-subcommands)
+- [Development](#development)
+- [Deployment](#deployment)
+- [Project Structure](#project-structure)
+
 ## Architecture
 
 ```
