@@ -11,9 +11,12 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -369,6 +372,154 @@ func TestCircuitBreaker_WithAdvisoryLock_BypassesCircuit(t *testing.T) {
 	}
 	if !called {
 		t.Fatal("expected fn to be called")
+	}
+}
+
+// captureLogs redirects slog output to a buffer for the duration of f,
+// then restores the original default logger.
+func captureLogs(f func()) string {
+	var buf bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer slog.SetDefault(old)
+	f()
+	return buf.String()
+}
+
+func TestCircuitBreaker_TransitionLogs_ClosedToOpen(t *testing.T) {
+	dbErr := errors.New("connection refused")
+	mock := &mockStore{getAllLocationsErr: dbErr}
+	cb := newTestCB(mock, 2, time.Minute)
+
+	ctx := context.Background()
+
+	output := captureLogs(func() {
+		_, _ = cb.GetAllObjectLocations(ctx, "key") // failure 1
+		_, _ = cb.GetAllObjectLocations(ctx, "key") // failure 2, trips circuit
+	})
+
+	for _, want := range []string{
+		"failure threshold reached",
+		"from=closed",
+		"to=open",
+		"failures=2",
+		"threshold=2",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("closed->open log missing %q\nlog output: %s", want, output)
+		}
+	}
+}
+
+func TestCircuitBreaker_TransitionLogs_OpenToHalfOpen(t *testing.T) {
+	dbErr := errors.New("connection refused")
+	mock := &mockStore{getAllLocationsErr: dbErr}
+	cb := newTestCB(mock, 1, 10*time.Millisecond)
+
+	ctx := context.Background()
+	_, _ = cb.GetAllObjectLocations(ctx, "key") // trip circuit
+	time.Sleep(15 * time.Millisecond)
+
+	output := captureLogs(func() {
+		_, _ = cb.GetAllObjectLocations(ctx, "key") // triggers half-open probe
+	})
+
+	for _, want := range []string{
+		"probing database",
+		"from=open",
+		"to=half-open",
+		"open_duration=",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("open->half-open log missing %q\nlog output: %s", want, output)
+		}
+	}
+}
+
+func TestCircuitBreaker_TransitionLogs_HalfOpenToClosed(t *testing.T) {
+	dbErr := errors.New("connection refused")
+	mock := &mockStore{getAllLocationsErr: dbErr}
+	cb := newTestCB(mock, 1, 10*time.Millisecond)
+
+	ctx := context.Background()
+	_, _ = cb.GetAllObjectLocations(ctx, "key") // trip circuit
+	time.Sleep(15 * time.Millisecond)
+
+	// Fix the mock so the probe succeeds
+	mock.mu.Lock()
+	mock.getAllLocationsErr = nil
+	mock.getAllLocationsResp = []ObjectLocation{{ObjectKey: "test", BackendName: "b1"}}
+	mock.mu.Unlock()
+
+	output := captureLogs(func() {
+		_, _ = cb.GetAllObjectLocations(ctx, "key") // probe succeeds, closes circuit
+	})
+
+	for _, want := range []string{
+		"database recovered",
+		"from=half-open",
+		"to=closed",
+		"degraded_duration=",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("half-open->closed log missing %q\nlog output: %s", want, output)
+		}
+	}
+}
+
+func TestCircuitBreaker_TransitionLogs_HalfOpenToOpen(t *testing.T) {
+	dbErr := errors.New("connection refused")
+	mock := &mockStore{getAllLocationsErr: dbErr}
+	cb := newTestCB(mock, 1, 10*time.Millisecond)
+
+	ctx := context.Background()
+	_, _ = cb.GetAllObjectLocations(ctx, "key") // trip circuit
+	time.Sleep(15 * time.Millisecond)
+
+	output := captureLogs(func() {
+		_, _ = cb.GetAllObjectLocations(ctx, "key") // probe fails, reopens
+	})
+
+	for _, want := range []string{
+		"probe failed",
+		"from=half-open",
+		"to=open",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("half-open->open log missing %q\nlog output: %s", want, output)
+		}
+	}
+}
+
+func TestCircuitBreaker_DegradedDurationIsPositive(t *testing.T) {
+	dbErr := errors.New("connection refused")
+	mock := &mockStore{getAllLocationsErr: dbErr}
+	cb := newTestCB(mock, 1, 10*time.Millisecond)
+
+	ctx := context.Background()
+	_, _ = cb.GetAllObjectLocations(ctx, "key") // trip circuit
+
+	// Record openedAt timestamp
+	cb.mu.RLock()
+	openedAt := cb.openedAt
+	cb.mu.RUnlock()
+
+	if openedAt.IsZero() {
+		t.Fatal("openedAt should be set when circuit opens")
+	}
+
+	time.Sleep(15 * time.Millisecond)
+
+	// Fix mock, recover
+	mock.mu.Lock()
+	mock.getAllLocationsErr = nil
+	mock.getAllLocationsResp = []ObjectLocation{{ObjectKey: "test", BackendName: "b1"}}
+	mock.mu.Unlock()
+
+	_, _ = cb.GetAllObjectLocations(ctx, "key") // probe + close
+
+	if !cb.IsHealthy() {
+		t.Fatal("circuit should be closed after recovery")
 	}
 }
 

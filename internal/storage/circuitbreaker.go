@@ -64,6 +64,7 @@ type CircuitBreakerStore struct {
 	state         circuitState
 	failures      int
 	lastFailure   time.Time
+	openedAt      time.Time // tracks when the circuit opened for degraded_duration
 	failThreshold int
 	openTimeout   time.Duration
 	probeInFlight atomic.Bool
@@ -165,22 +166,41 @@ func (cb *CircuitBreakerStore) onFailure() {
 	}
 }
 
-// transition changes the circuit state and emits metrics + logs.
-// Caller must hold cb.mu.
+// transition changes the circuit state and emits metrics + structured logs.
+// Logs include from/to state, failure counts, and degraded_duration when the
+// circuit recovers. Caller must hold cb.mu.
 func (cb *CircuitBreakerStore) transition(to circuitState) {
 	from := cb.state
 	cb.state = to
 	telemetry.CircuitBreakerState.Set(float64(to))
 	telemetry.CircuitBreakerTransitionsTotal.WithLabelValues(from.String(), to.String()).Inc()
 
-	switch to {
-	case stateClosed:
-		slog.Info("Circuit breaker: database recovered, circuit closed")
-	case stateOpen:
-		slog.Warn("Circuit breaker: database unreachable, circuit opened",
+	switch {
+	case to == stateOpen && from == stateClosed:
+		cb.openedAt = time.Now()
+		slog.Warn("Circuit breaker opened: failure threshold reached",
+			"from", from.String(),
+			"to", to.String(),
+			"failures", cb.failures,
+			"threshold", cb.failThreshold)
+
+	case to == stateOpen && from == stateHalfOpen:
+		slog.Warn("Circuit breaker reopened: probe failed",
+			"from", from.String(),
+			"to", to.String(),
 			"failures", cb.failures)
-	case stateHalfOpen:
-		slog.Warn("Circuit breaker: probing database")
+
+	case to == stateHalfOpen:
+		slog.Info("Circuit breaker half-open: probing database",
+			"from", from.String(),
+			"to", to.String(),
+			"open_duration", time.Since(cb.openedAt).Round(time.Millisecond).String())
+
+	case to == stateClosed:
+		slog.Info("Circuit breaker closed: database recovered",
+			"from", from.String(),
+			"to", to.String(),
+			"degraded_duration", time.Since(cb.openedAt).Round(time.Millisecond).String())
 	}
 }
 

@@ -1,0 +1,10 @@
+# -------------------------------------------------------------------------------
+# Codecov Configuration
+#
+# Author: Alex Freidah
+#
+# Excludes test utilities and other non-application code from coverage reports.
+# -------------------------------------------------------------------------------
+
+ignore:
+  - "internal/testutil/"
