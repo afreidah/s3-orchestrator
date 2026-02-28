@@ -45,10 +45,17 @@ builder: ## Ensure the Buildx builder exists
 	@docker buildx inspect --bootstrap
 
 # -------------------------------------------------------------------------
-# BUILD (LOCAL)
+# BUILD
 # -------------------------------------------------------------------------
 
-build: ## Build for local architecture
+build: ## Build the Go binary for the local platform
+	go build -ldflags="$(GO_LDFLAGS)" -o s3-orchestrator ./cmd/s3-orchestrator
+
+# -------------------------------------------------------------------------
+# DOCKER
+# -------------------------------------------------------------------------
+
+docker: ## Build Docker image for local architecture
 	@echo "Building $(FULL_TAG) for local architecture"
 	docker build --build-arg VERSION=$(VERSION) -t $(FULL_TAG) .
 
@@ -160,10 +167,11 @@ release-local: prep-changelog ## Dry-run GoReleaser locally (no publish)
 # CLEANUP
 # -------------------------------------------------------------------------
 
-clean: ## Remove build artifacts and local image
+clean: integration-clean ## Remove build artifacts, local image, and test containers
 	go clean
+	rm -f s3-orchestrator
 	rm -rf dist/ *.deb packaging/changelog.gz
 	docker rmi $(FULL_TAG) || true
 
-.PHONY: help builder build push generate test vet lint run docs integration-deps integration-test integration-clean tools prep-changelog deb deb-lint deb-all release release-local clean
+.PHONY: help builder build docker push generate test vet lint run docs integration-deps integration-test integration-clean tools prep-changelog deb deb-lint deb-all release release-local clean
 .DEFAULT_GOAL := help

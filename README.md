@@ -12,6 +12,8 @@ Built-in cross-backend replication also makes this an easy way to keep your data
 
 Objects are routed to backends based on the configured `routing_strategy`: **pack** (default) fills backends in config order, while **spread** places each write on the least-utilized backend by ratio. Metadata and quota tracking live in PostgreSQL; the backends only see standard S3 API calls. The orchestrator is fully S3-compatible and works with any standard S3 client.
 
+**Get started in under a minute:** `git clone`, `make run`, done. See the [Quickstart](docs/quickstart.md).
+
 ![Dashboard](docs/images/dashboard.png?v=2)
 
 ## Architecture
@@ -517,7 +519,30 @@ Request-serving paths (PutObject, GetObject, etc.) are stateless and work correc
 
 Usage flush counters are tracked in-memory per instance and flushed to the database at the configured interval. The adaptive flushing feature shortens the interval when any backend approaches a usage limit, improving enforcement accuracy in multi-instance setups.
 
-## Sync Subcommand
+## CLI Subcommands
+
+### version
+
+Prints the binary version, Go version, and platform:
+
+```bash
+s3-orchestrator version
+# s3-orchestrator v0.8.0 go1.26.0 linux/amd64
+```
+
+### validate
+
+Validates a configuration file without starting the server. Exits 0 on success with a brief summary, or exits 1 with error details:
+
+```bash
+s3-orchestrator validate -config config.yaml
+# config config.yaml: valid
+#   backends: 2
+#   buckets:  1
+#   routing:  spread
+```
+
+### sync
 
 Imports pre-existing objects from a backend S3 bucket into the orchestrator's metadata database. Useful when bringing an existing bucket under orchestrator management. The `--bucket` flag specifies which virtual bucket the imported objects belong to — keys are stored with a `{bucket}/` prefix for namespace isolation.
 
@@ -551,7 +576,7 @@ make tools
 # Regenerate sqlc query code (after editing .sql files)
 make generate
 
-# Run locally (requires PostgreSQL and config.yaml)
+# Run locally (starts MinIO + PostgreSQL via Docker, then runs the server)
 make run
 
 # Lint
@@ -662,6 +687,8 @@ make release-local
 cmd/s3-orchestrator/
   main.go                    Entry point, subcommand dispatch, background tasks
   sync.go                    Sync subcommand (bucket import)
+  validate.go                Validate subcommand (config check)
+  version.go                 Version subcommand (build info)
 internal/
   audit/audit.go             Request ID generation, context propagation, audit logger
   auth/auth.go               BucketRegistry, SigV4 verification, legacy token auth
