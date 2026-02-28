@@ -493,6 +493,25 @@ To add a new application to the orchestrator:
 
 5. **Point them to the [User Guide](user-guide.md)** for client setup instructions.
 
+## CLI Subcommands
+
+### version
+
+Prints the binary version, Go version, and platform:
+
+```bash
+s3-orchestrator version
+# s3-orchestrator v0.8.0 go1.26.0 linux/amd64
+```
+
+### validate
+
+Validates a configuration file without starting the server. Exits 0 on success with a brief summary, or exits 1 with error details. Useful for CI pipelines or pre-deploy checks:
+
+```bash
+s3-orchestrator validate -config config.yaml
+```
+
 ## Importing Existing Data
 
 The `sync` subcommand imports objects from an existing backend bucket into the orchestrator's metadata database. Use this when bringing a bucket that already has data under orchestrator management.

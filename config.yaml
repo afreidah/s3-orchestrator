@@ -1,0 +1,72 @@
+# -------------------------------------------------------------------------------
+# S3 Orchestrator - Local Development Configuration
+#
+# Author: Alex Freidah
+#
+# Pre-configured for the docker-compose environment started by "make run".
+# Connects to the local MinIO and PostgreSQL containers with no additional setup.
+# -------------------------------------------------------------------------------
+
+# --- HTTP server settings ---
+server:
+  listen_addr: "0.0.0.0:9000"
+
+# --- PostgreSQL connection ---
+database:
+  host: "localhost"
+  port: 15432
+  database: "s3proxy_test"
+  user: "s3proxy"
+  password: "s3proxy"
+  ssl_mode: "disable"
+
+# --- Virtual buckets exposed to clients ---
+buckets:
+  - name: "photos"
+    credentials:
+      - access_key_id: "photoskey"
+        secret_access_key: "photossecret"
+
+  - name: "documents"
+    credentials:
+      - access_key_id: "docskey"
+        secret_access_key: "docssecret"
+
+  - name: "backups"
+    credentials:
+      - access_key_id: "backupskey"
+        secret_access_key: "backupssecret"
+
+# --- Storage backends ---
+backends:
+  - name: "minio-1"
+    endpoint: "http://localhost:19000"
+    region: "us-east-1"
+    bucket: "backend1"
+    access_key_id: "minioadmin"
+    secret_access_key: "minioadmin"
+    force_path_style: true
+    quota_bytes: 10737418240  # 10 GB
+
+  - name: "minio-2"
+    endpoint: "http://localhost:19002"
+    region: "us-east-1"
+    bucket: "backend2"
+    access_key_id: "minioadmin"
+    secret_access_key: "minioadmin"
+    force_path_style: true
+    quota_bytes: 10737418240  # 10 GB
+
+# --- Object routing ---
+routing_strategy: "spread"
+
+# --- Prometheus metrics ---
+telemetry:
+  metrics:
+    enabled: true
+
+# --- Web dashboard ---
+ui:
+  enabled: true
+  admin_key: "admin"
+  admin_secret: "admin"

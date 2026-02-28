@@ -315,6 +315,24 @@ Request IDs flow through context via `audit.WithRequestID` / `audit.RequestID`:
 - **FailableStore** wraps a mock to inject errors for circuit breaker testing
 - Test assertions use standard `testing.T` methods, not external assertion libraries
 
+### Coverage Exclusions
+
+Go has no built-in coverage ignore directive. Use the Codecov `// codecov:ignore` inline comment to exclude untestable code (process entry points, `os.Exit` wrappers) from coverage reports. Always include a reason after the directive:
+
+```go
+func runValidate() { // codecov:ignore -- os.Exit wrapper, logic tested via validateConfig
+    // ...
+    os.Exit(1)
+}
+```
+
+Use this sparingly and only for code that genuinely cannot be unit tested:
+- `main()` and subcommand entry points that call `os.Exit`
+- Trivial wrappers with no branching logic
+- Signal handlers and process lifecycle glue
+
+Extract testable logic into separate functions that return errors instead of calling `os.Exit` directly.
+
 ---
 
 ## Code Style
