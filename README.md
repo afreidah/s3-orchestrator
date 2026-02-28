@@ -12,6 +12,8 @@ Built-in cross-backend replication also makes this an easy way to keep your data
 
 Objects are routed to backends based on the configured `routing_strategy`: **pack** (default) fills backends in config order, while **spread** places each write on the least-utilized backend by ratio. Metadata and quota tracking live in PostgreSQL; the backends only see standard S3 API calls. The orchestrator is fully S3-compatible and works with any standard S3 client.
 
+![Dashboard](docs/images/dashboard.png)
+
 ## Architecture
 
 ```
