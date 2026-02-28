@@ -79,6 +79,13 @@ type mockStore struct {
 	cleanupQueueDepthVal int64
 	cleanupQueueDepthErr error
 
+	// Replication
+	getUnderReplicatedResp []ObjectLocation
+	getUnderReplicatedErr  error
+	recordReplicaInserted  bool
+	recordReplicaErr       error
+	recordReplicaCalls     []recordReplicaCall
+
 	// Lifecycle
 	listExpiredObjectsResp  []ObjectLocation
 	listExpiredObjectsPages [][]ObjectLocation // for paginated lifecycle tests
@@ -110,6 +117,11 @@ type retryCleanupCall struct {
 	id        int64
 	backoff   time.Duration
 	lastError string
+}
+
+type recordReplicaCall struct {
+	key, targetBackend, sourceBackend string
+	size                              int64
 }
 
 type flushUsageCall struct {
@@ -292,11 +304,27 @@ func (m *mockStore) MoveObjectLocation(_ context.Context, _, _, _ string) (int64
 }
 
 func (m *mockStore) GetUnderReplicatedObjects(_ context.Context, _, _ int) ([]ObjectLocation, error) {
-	return nil, nil
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.getUnderReplicatedErr != nil {
+		return nil, m.getUnderReplicatedErr
+	}
+	return m.getUnderReplicatedResp, nil
 }
 
-func (m *mockStore) RecordReplica(_ context.Context, _, _, _ string, _ int64) (bool, error) {
-	return false, nil
+func (m *mockStore) RecordReplica(_ context.Context, key, targetBackend, sourceBackend string, size int64) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.recordReplicaCalls = append(m.recordReplicaCalls, recordReplicaCall{
+		key:           key,
+		targetBackend: targetBackend,
+		sourceBackend: sourceBackend,
+		size:          size,
+	})
+	if m.recordReplicaErr != nil {
+		return false, m.recordReplicaErr
+	}
+	return m.recordReplicaInserted, nil
 }
 
 func (m *mockStore) FlushUsageDeltas(_ context.Context, backendName, period string, apiRequests, egressBytes, ingressBytes int64) error {

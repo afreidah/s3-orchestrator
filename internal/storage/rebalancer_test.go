@@ -18,6 +18,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
 // -------------------------------------------------------------------------
@@ -236,5 +238,328 @@ func TestExecuteMoves_SequentialFallback(t *testing.T) {
 
 	if !dest.hasObject("a") || !dest.hasObject("b") {
 		t.Error("expected both objects on destination")
+	}
+}
+
+// -------------------------------------------------------------------------
+// exceedsThreshold
+// -------------------------------------------------------------------------
+
+func TestExceedsThreshold_BelowThreshold(t *testing.T) {
+	stats := map[string]QuotaStat{
+		"b1": {BytesUsed: 500, BytesLimit: 1000},
+		"b2": {BytesUsed: 400, BytesLimit: 1000},
+	}
+	// 50% vs 40% = 10% spread, threshold is 20%
+	if exceedsThreshold(stats, []string{"b1", "b2"}, 0.20) {
+		t.Error("10% spread should not exceed 20% threshold")
+	}
+}
+
+func TestExceedsThreshold_AtThreshold(t *testing.T) {
+	stats := map[string]QuotaStat{
+		"b1": {BytesUsed: 800, BytesLimit: 1000},
+		"b2": {BytesUsed: 200, BytesLimit: 1000},
+	}
+	// 80% vs 20% = 60% spread, threshold is 50%
+	if !exceedsThreshold(stats, []string{"b1", "b2"}, 0.50) {
+		t.Error("60% spread should exceed 50% threshold")
+	}
+}
+
+func TestExceedsThreshold_SingleBackend(t *testing.T) {
+	stats := map[string]QuotaStat{
+		"b1": {BytesUsed: 900, BytesLimit: 1000},
+	}
+	if exceedsThreshold(stats, []string{"b1"}, 0.10) {
+		t.Error("single backend should never exceed threshold")
+	}
+}
+
+func TestExceedsThreshold_ZeroLimitSkipped(t *testing.T) {
+	stats := map[string]QuotaStat{
+		"b1": {BytesUsed: 800, BytesLimit: 1000},
+		"b2": {BytesUsed: 0, BytesLimit: 0}, // unlimited, skipped
+	}
+	if exceedsThreshold(stats, []string{"b1", "b2"}, 0.10) {
+		t.Error("zero-limit backends should be skipped")
+	}
+}
+
+func TestExceedsThreshold_MissingStatsSkipped(t *testing.T) {
+	stats := map[string]QuotaStat{
+		"b1": {BytesUsed: 800, BytesLimit: 1000},
+	}
+	if exceedsThreshold(stats, []string{"b1", "b2"}, 0.10) {
+		t.Error("missing stats should be skipped, leaving single backend")
+	}
+}
+
+// -------------------------------------------------------------------------
+// Rebalance (top-level)
+// -------------------------------------------------------------------------
+
+func TestRebalance_QuotaStatsError(t *testing.T) {
+	store := &mockStore{getQuotaStatsErr: fmt.Errorf("db down")}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+
+	_, err := mgr.Rebalance(context.Background(), config.RebalanceConfig{
+		Strategy:  "spread",
+		BatchSize: 10,
+		Threshold: 0.10,
+	})
+	if err == nil {
+		t.Fatal("expected error from GetQuotaStats failure")
+	}
+}
+
+func TestRebalance_BelowThreshold_Skips(t *testing.T) {
+	store := &mockStore{
+		getQuotaStatsResp: map[string]QuotaStat{
+			"b1": {BytesUsed: 500, BytesLimit: 1000},
+			"b2": {BytesUsed: 490, BytesLimit: 1000},
+		},
+	}
+	mgr := newTestManager(store, map[string]*mockBackend{
+		"b1": newMockBackend(),
+		"b2": newMockBackend(),
+	})
+
+	moved, err := mgr.Rebalance(context.Background(), config.RebalanceConfig{
+		Strategy:  "spread",
+		BatchSize: 10,
+		Threshold: 0.20,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if moved != 0 {
+		t.Errorf("expected 0 moved (below threshold), got %d", moved)
+	}
+}
+
+func TestRebalance_UnknownStrategy(t *testing.T) {
+	store := &mockStore{
+		getQuotaStatsResp: map[string]QuotaStat{
+			"b1": {BytesUsed: 900, BytesLimit: 1000},
+			"b2": {BytesUsed: 100, BytesLimit: 1000},
+		},
+	}
+	mgr := newTestManager(store, map[string]*mockBackend{
+		"b1": newMockBackend(),
+		"b2": newMockBackend(),
+	})
+
+	_, err := mgr.Rebalance(context.Background(), config.RebalanceConfig{
+		Strategy:  "invalid",
+		BatchSize: 10,
+		Threshold: 0.10,
+	})
+	if err == nil {
+		t.Fatal("expected error for unknown strategy")
+	}
+}
+
+// -------------------------------------------------------------------------
+// planPackTight
+// -------------------------------------------------------------------------
+
+func newRebalanceManager(store *mockStore, names []string) *BackendManager {
+	backends := make(map[string]ObjectBackend, len(names))
+	for _, name := range names {
+		backends[name] = newMockBackend()
+	}
+	return NewBackendManager(&BackendManagerConfig{
+		Backends:        backends,
+		Store:           store,
+		Order:           names,
+		CacheTTL:        5 * time.Second,
+		BackendTimeout:  30 * time.Second,
+		RoutingStrategy: "pack",
+	})
+}
+
+func TestPlanPackTight_MovesFromLeastToMostFull(t *testing.T) {
+	store := &mockStore{
+		listObjectsByBackendResp: []ObjectLocation{
+			{ObjectKey: "small.txt", BackendName: "b2", SizeBytes: 100},
+		},
+	}
+	mgr := newRebalanceManager(store, []string{"b1", "b2"})
+
+	stats := map[string]QuotaStat{
+		"b1": {BytesUsed: 800, BytesLimit: 1000}, // 80% full, 200 free
+		"b2": {BytesUsed: 200, BytesLimit: 1000}, // 20% full
+	}
+
+	plan, err := mgr.planPackTight(context.Background(), stats, 10)
+	if err != nil {
+		t.Fatalf("planPackTight: %v", err)
+	}
+	if len(plan) == 0 {
+		t.Fatal("expected at least one move")
+	}
+	if plan[0].FromBackend != "b2" || plan[0].ToBackend != "b1" {
+		t.Errorf("expected move from b2 to b1, got %s -> %s", plan[0].FromBackend, plan[0].ToBackend)
+	}
+}
+
+func TestPlanPackTight_RespectsBatchSize(t *testing.T) {
+	objects := make([]ObjectLocation, 10)
+	for i := range objects {
+		objects[i] = ObjectLocation{
+			ObjectKey:   fmt.Sprintf("obj%d", i),
+			BackendName: "b2",
+			SizeBytes:   10,
+		}
+	}
+	store := &mockStore{listObjectsByBackendResp: objects}
+	mgr := newRebalanceManager(store, []string{"b1", "b2"})
+
+	stats := map[string]QuotaStat{
+		"b1": {BytesUsed: 100, BytesLimit: 1000}, // 10% full
+		"b2": {BytesUsed: 900, BytesLimit: 1000}, // 90% full
+	}
+
+	plan, err := mgr.planPackTight(context.Background(), stats, 3)
+	if err != nil {
+		t.Fatalf("planPackTight: %v", err)
+	}
+	if len(plan) > 3 {
+		t.Errorf("plan has %d moves, batch limit is 3", len(plan))
+	}
+}
+
+func TestPlanPackTight_SkipsLargeObjects(t *testing.T) {
+	store := &mockStore{
+		listObjectsByBackendResp: []ObjectLocation{
+			{ObjectKey: "huge.bin", BackendName: "b2", SizeBytes: 500},
+		},
+	}
+	mgr := newRebalanceManager(store, []string{"b1", "b2"})
+
+	stats := map[string]QuotaStat{
+		"b1": {BytesUsed: 900, BytesLimit: 1000}, // only 100 bytes free
+		"b2": {BytesUsed: 200, BytesLimit: 1000},
+	}
+
+	plan, err := mgr.planPackTight(context.Background(), stats, 10)
+	if err != nil {
+		t.Fatalf("planPackTight: %v", err)
+	}
+	if len(plan) != 0 {
+		t.Errorf("expected 0 moves (object too large), got %d", len(plan))
+	}
+}
+
+func TestPlanPackTight_ZeroLimitBackendsSkipped(t *testing.T) {
+	store := &mockStore{}
+	mgr := newRebalanceManager(store, []string{"b1", "b2"})
+
+	stats := map[string]QuotaStat{
+		"b1": {BytesUsed: 0, BytesLimit: 0}, // unlimited, skip
+		"b2": {BytesUsed: 500, BytesLimit: 1000},
+	}
+
+	plan, err := mgr.planPackTight(context.Background(), stats, 10)
+	if err != nil {
+		t.Fatalf("planPackTight: %v", err)
+	}
+	if len(plan) != 0 {
+		t.Errorf("expected 0 moves with single quotad backend, got %d", len(plan))
+	}
+}
+
+// -------------------------------------------------------------------------
+// planSpreadEven
+// -------------------------------------------------------------------------
+
+func TestPlanSpreadEven_EqualizesUtilization(t *testing.T) {
+	store := &mockStore{
+		listObjectsByBackendResp: []ObjectLocation{
+			{ObjectKey: "obj1", BackendName: "b1", SizeBytes: 100},
+			{ObjectKey: "obj2", BackendName: "b1", SizeBytes: 100},
+		},
+	}
+	mgr := newRebalanceManager(store, []string{"b1", "b2"})
+
+	stats := map[string]QuotaStat{
+		"b1": {BytesUsed: 800, BytesLimit: 1000}, // 80%
+		"b2": {BytesUsed: 200, BytesLimit: 1000}, // 20%
+	}
+	// Target ratio = 1000/2000 = 50%
+	// b1 excess = 800 - 500 = 300
+	// b2 deficit = 200 - 500 = -300
+
+	plan, err := mgr.planSpreadEven(context.Background(), stats, 10)
+	if err != nil {
+		t.Fatalf("planSpreadEven: %v", err)
+	}
+	if len(plan) == 0 {
+		t.Fatal("expected at least one move")
+	}
+	for _, mv := range plan {
+		if mv.FromBackend != "b1" || mv.ToBackend != "b2" {
+			t.Errorf("expected move from b1 to b2, got %s -> %s", mv.FromBackend, mv.ToBackend)
+		}
+	}
+}
+
+func TestPlanSpreadEven_ZeroTotalLimit(t *testing.T) {
+	store := &mockStore{}
+	mgr := newRebalanceManager(store, []string{"b1"})
+
+	stats := map[string]QuotaStat{} // no stats at all
+
+	plan, err := mgr.planSpreadEven(context.Background(), stats, 10)
+	if err != nil {
+		t.Fatalf("planSpreadEven: %v", err)
+	}
+	if plan != nil {
+		t.Errorf("expected nil plan for zero total limit, got %d moves", len(plan))
+	}
+}
+
+func TestPlanSpreadEven_AlreadyBalanced(t *testing.T) {
+	store := &mockStore{}
+	mgr := newRebalanceManager(store, []string{"b1", "b2"})
+
+	stats := map[string]QuotaStat{
+		"b1": {BytesUsed: 500, BytesLimit: 1000},
+		"b2": {BytesUsed: 500, BytesLimit: 1000},
+	}
+
+	plan, err := mgr.planSpreadEven(context.Background(), stats, 10)
+	if err != nil {
+		t.Fatalf("planSpreadEven: %v", err)
+	}
+	if len(plan) != 0 {
+		t.Errorf("expected 0 moves for balanced backends, got %d", len(plan))
+	}
+}
+
+func TestPlanSpreadEven_RespectsBatchSize(t *testing.T) {
+	objects := make([]ObjectLocation, 20)
+	for i := range objects {
+		objects[i] = ObjectLocation{
+			ObjectKey:   fmt.Sprintf("obj%d", i),
+			BackendName: "b1",
+			SizeBytes:   10,
+		}
+	}
+	store := &mockStore{listObjectsByBackendResp: objects}
+	mgr := newRebalanceManager(store, []string{"b1", "b2"})
+
+	stats := map[string]QuotaStat{
+		"b1": {BytesUsed: 900, BytesLimit: 1000},
+		"b2": {BytesUsed: 100, BytesLimit: 1000},
+	}
+
+	plan, err := mgr.planSpreadEven(context.Background(), stats, 5)
+	if err != nil {
+		t.Fatalf("planSpreadEven: %v", err)
+	}
+	if len(plan) > 5 {
+		t.Errorf("plan has %d moves, batch limit is 5", len(plan))
 	}
 }
