@@ -1,0 +1,77 @@
+# -------------------------------------------------------------------------------
+# S3 Orchestrator - Local Dev ConfigMap (k3d + docker-compose)
+#
+# Author: Alex Freidah
+#
+# Points at the docker-compose.test.yml services on the host via the k3d Docker
+# network gateway IP. The __HOST_IP__ placeholder is replaced by demo.sh at
+# apply time. Two MinIO backends with replication factor 2 to validate
+# multi-backend routing and replica creation.
+# -------------------------------------------------------------------------------
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: s3-orchestrator
+  namespace: s3-orchestrator
+  labels:
+    app.kubernetes.io/name: s3-orchestrator
+data:
+  config.yaml: |
+    server:
+      listen_addr: "0.0.0.0:9000"
+      backend_timeout: "30s"
+
+    database:
+      host: "__HOST_IP__"
+      port: 15432
+      database: "s3proxy_test"
+      user: "s3proxy"
+      password: "${DB_PASSWORD}"
+      ssl_mode: "disable"
+
+    buckets:
+      - name: "photos"
+        credentials:
+          - access_key_id: "${BUCKET_ACCESS_KEY}"
+            secret_access_key: "${BUCKET_SECRET_KEY}"
+
+    backends:
+      - name: "minio-1"
+        endpoint: "http://__HOST_IP__:19000"
+        region: "us-east-1"
+        bucket: "backend1"
+        access_key_id: "${MINIO1_ACCESS_KEY}"
+        secret_access_key: "${MINIO1_SECRET_KEY}"
+        force_path_style: true
+        quota_bytes: 10737418240
+
+      - name: "minio-2"
+        endpoint: "http://__HOST_IP__:19002"
+        region: "us-east-1"
+        bucket: "backend2"
+        access_key_id: "${MINIO2_ACCESS_KEY}"
+        secret_access_key: "${MINIO2_SECRET_KEY}"
+        force_path_style: true
+        quota_bytes: 10737418240
+
+    routing_strategy: "spread"
+
+    replication:
+      factor: 2
+      worker_interval: "1m"
+      batch_size: 50
+
+    circuit_breaker:
+      failure_threshold: 3
+      open_timeout: "15s"
+      cache_ttl: "60s"
+
+    telemetry:
+      metrics:
+        enabled: true
+
+    ui:
+      enabled: true
+      admin_key: "${UI_ADMIN_KEY}"
+      admin_secret: "${UI_ADMIN_SECRET}"

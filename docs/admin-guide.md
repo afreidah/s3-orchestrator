@@ -724,6 +724,17 @@ To perform a zero-downtime credential rotation, temporarily add both old and new
 
 ## Deployment
 
+### Nomad and Kubernetes
+
+Production-ready manifests for both platforms are in [`deploy/`](../deploy/). Each includes a local demo script that stands up a complete environment in one command:
+
+```bash
+make kubernetes-demo   # k3d cluster with docker-compose backing services
+make nomad-demo        # Nomad dev agent with docker-compose backing services
+```
+
+See [`deploy/README.md`](../deploy/README.md) for production deployment instructions, Vault integration, TLS/mTLS configuration, and Ingress setup.
+
 ### Docker
 
 ```bash

@@ -1,0 +1,57 @@
+# -------------------------------------------------------------------------------
+# S3 Orchestrator - Local Dev Deployment (k3d + docker-compose)
+#
+# Author: Alex Freidah
+#
+# Simplified deployment for local testing. Uses a locally-built image imported
+# into k3d instead of pulling from ghcr.io.
+# -------------------------------------------------------------------------------
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: s3-orchestrator
+  namespace: s3-orchestrator
+  labels:
+    app.kubernetes.io/name: s3-orchestrator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: s3-orchestrator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: s3-orchestrator
+    spec:
+      containers:
+        - name: s3-orchestrator
+          image: s3-orchestrator:local
+          imagePullPolicy: Never
+          args: ["-config", "/etc/s3-orchestrator/config.yaml"]
+          ports:
+            - name: http
+              containerPort: 9000
+          envFrom:
+            - secretRef:
+                name: s3-orchestrator
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          volumeMounts:
+            - name: config
+              mountPath: /etc/s3-orchestrator
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: s3-orchestrator
