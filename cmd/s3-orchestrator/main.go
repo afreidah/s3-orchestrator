@@ -5,7 +5,8 @@
 //
 // Entry point for the S3 proxy service. Dispatches to subcommands: "serve"
 // (default) starts the HTTP server, "sync" imports pre-existing bucket objects
-// into the proxy's metadata database.
+// into the proxy's metadata database, "version" prints build info, and
+// "validate" checks a configuration file without starting the server.
 // -------------------------------------------------------------------------------
 
 package main
@@ -33,11 +34,21 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-func main() {
-	if len(os.Args) > 1 && os.Args[1] == "sync" {
-		os.Args = os.Args[1:]
-		runSync()
-		return
+func main() { // codecov:ignore -- process entry point, delegates to tested functions
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "sync":
+			os.Args = os.Args[1:]
+			runSync()
+			return
+		case "version":
+			runVersion()
+			return
+		case "validate":
+			os.Args = os.Args[1:]
+			runValidate()
+			return
+		}
 	}
 	runServe()
 }
