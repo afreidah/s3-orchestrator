@@ -164,6 +164,16 @@ release-local: prep-changelog ## Dry-run GoReleaser locally (no publish)
 	goreleaser release --snapshot --clean
 
 # -------------------------------------------------------------------------
+# DEPLOYMENT DEMOS
+# -------------------------------------------------------------------------
+
+kubernetes-demo: ## Run the s3-orchestrator in k3d (requires docker, k3d, kubectl)
+	./deploy/kubernetes/local/demo.sh
+
+nomad-demo: ## Run the s3-orchestrator in Nomad dev mode (requires docker, nomad)
+	./deploy/nomad/local/demo.sh
+
+# -------------------------------------------------------------------------
 # CLEANUP
 # -------------------------------------------------------------------------
 
@@ -171,7 +181,14 @@ clean: integration-clean ## Remove build artifacts, local image, and test contai
 	go clean
 	rm -f s3-orchestrator
 	rm -rf dist/ *.deb packaging/changelog.gz
-	docker rmi $(FULL_TAG) || true
+	docker rmi $(FULL_TAG) 2>/dev/null || true
+	docker rmi s3-orchestrator:local 2>/dev/null || true
+	k3d cluster delete s3-orchestrator-demo 2>/dev/null || true
+	@if [ -f /tmp/nomad-demo.pid ]; then \
+		NOMAD_ADDR=http://127.0.0.1:4646 nomad job stop -purge s3-orchestrator 2>/dev/null || true; \
+		kill $$(cat /tmp/nomad-demo.pid) 2>/dev/null || true; \
+		rm -f /tmp/nomad-demo.pid; \
+	fi
 
-.PHONY: help builder build docker push generate test vet lint run docs integration-deps integration-test integration-clean tools prep-changelog deb deb-lint deb-all release release-local clean
+.PHONY: help builder build docker push generate test vet lint run docs integration-deps integration-test integration-clean tools prep-changelog deb deb-lint deb-all release release-local kubernetes-demo nomad-demo clean
 .DEFAULT_GOAL := help

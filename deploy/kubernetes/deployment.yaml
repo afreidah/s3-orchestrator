@@ -1,0 +1,113 @@
+# -------------------------------------------------------------------------------
+# S3 Orchestrator - Kubernetes Deployment
+#
+# Author: Alex Freidah
+#
+# Runs the s3-orchestrator as a single-replica Deployment with health checks,
+# resource limits, security hardening, and Prometheus scrape annotations.
+# Secrets are injected as environment variables and expanded by the orchestrator
+# at startup via ${VAR} syntax in the config.
+# -------------------------------------------------------------------------------
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: s3-orchestrator
+  namespace: s3-orchestrator
+  labels:
+    app.kubernetes.io/name: s3-orchestrator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: s3-orchestrator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: s3-orchestrator
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9000"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: s3-orchestrator
+
+      # --- Security context ---
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+
+      containers:
+        - name: s3-orchestrator
+          image: ghcr.io/afreidah/s3-orchestrator:v1.0.0
+          args: ["-config", "/etc/s3-orchestrator/config.yaml"]
+
+          ports:
+            - name: http
+              containerPort: 9000
+              protocol: TCP
+
+          # --- Secret injection ---
+          # All values referenced by ${VAR} in config.yaml are expanded at
+          # startup from these environment variables.
+          envFrom:
+            - secretRef:
+                name: s3-orchestrator
+
+          # --- Health checks ---
+          # /health returns "ok" when healthy, "degraded" when the circuit
+          # breaker is open. Both return HTTP 200 so the pod stays in rotation
+          # during temporary database outages.
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 2
+
+          # --- Resources ---
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+
+          # --- Container security ---
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+
+          # --- Volume mounts ---
+          volumeMounts:
+            - name: config
+              mountPath: /etc/s3-orchestrator
+              readOnly: true
+            # Uncomment to mount TLS certificates for direct TLS termination.
+            # Most deployments terminate TLS at the Ingress instead.
+            # - name: tls
+            #   mountPath: /tls
+            #   readOnly: true
+
+      volumes:
+        - name: config
+          configMap:
+            name: s3-orchestrator
+        # Uncomment for TLS termination at the pod level.
+        # - name: tls
+        #   secret:
+        #     secretName: s3-orchestrator-tls

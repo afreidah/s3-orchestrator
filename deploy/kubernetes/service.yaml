@@ -1,0 +1,26 @@
+# -------------------------------------------------------------------------------
+# S3 Orchestrator - Kubernetes Service
+#
+# Author: Alex Freidah
+#
+# Exposes the s3-orchestrator within the cluster on port 9000. Clients connect
+# via s3-orchestrator.s3-orchestrator.svc.cluster.local:9000. For external
+# access, add an Ingress resource (see ingress.yaml).
+# -------------------------------------------------------------------------------
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: s3-orchestrator
+  namespace: s3-orchestrator
+  labels:
+    app.kubernetes.io/name: s3-orchestrator
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: s3-orchestrator
+  ports:
+    - name: http
+      port: 9000
+      targetPort: http
+      protocol: TCP
