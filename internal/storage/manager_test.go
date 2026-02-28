@@ -133,6 +133,108 @@ func TestReplicationConfig_RoundTrip(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
+// SetUsageFlushConfig / UsageFlushConfig
+// -------------------------------------------------------------------------
+
+func TestUsageFlushConfig_RoundTrip(t *testing.T) {
+	mgr := newUsageManager([]string{"b1"}, &mockStore{})
+
+	if mgr.UsageFlushConfig() != nil {
+		t.Error("expected nil initial usage flush config")
+	}
+
+	cfg := &config.UsageFlushConfig{
+		Interval: 5 * time.Minute,
+	}
+	mgr.SetUsageFlushConfig(cfg)
+
+	got := mgr.UsageFlushConfig()
+	if got == nil {
+		t.Fatal("expected non-nil usage flush config")
+	}
+	if got.Interval != 5*time.Minute {
+		t.Errorf("interval = %v, want 5m", got.Interval)
+	}
+}
+
+// -------------------------------------------------------------------------
+// SetLifecycleConfig / LifecycleConfig
+// -------------------------------------------------------------------------
+
+func TestLifecycleConfig_RoundTrip(t *testing.T) {
+	mgr := newUsageManager([]string{"b1"}, &mockStore{})
+
+	if mgr.LifecycleConfig() != nil {
+		t.Error("expected nil initial lifecycle config")
+	}
+
+	cfg := &config.LifecycleConfig{
+		Rules: []config.LifecycleRule{
+			{Prefix: "tmp/", ExpirationDays: 7},
+		},
+	}
+	mgr.SetLifecycleConfig(cfg)
+
+	got := mgr.LifecycleConfig()
+	if got == nil {
+		t.Fatal("expected non-nil lifecycle config")
+	}
+	if len(got.Rules) != 1 || got.Rules[0].Prefix != "tmp/" {
+		t.Errorf("lifecycle config mismatch: %+v", got)
+	}
+}
+
+// -------------------------------------------------------------------------
+// NearUsageLimit
+// -------------------------------------------------------------------------
+
+func TestNearUsageLimit_BelowThreshold(t *testing.T) {
+	limits := map[string]UsageLimits{
+		"b1": {APIRequestLimit: 1000},
+	}
+	mgr := newUsageManagerWithLimits([]string{"b1"}, &mockStore{}, limits)
+
+	// No usage baseline set — should be well below threshold
+	if mgr.NearUsageLimit(0.8) {
+		t.Error("should not be near limit with zero usage")
+	}
+}
+
+func TestNearUsageLimit_AboveThreshold(t *testing.T) {
+	limits := map[string]UsageLimits{
+		"b1": {APIRequestLimit: 100},
+	}
+	mgr := newUsageManagerWithLimits([]string{"b1"}, &mockStore{}, limits)
+
+	// Set baseline at 90% of limit
+	mgr.usage.SetBaseline("b1", UsageStat{APIRequests: 90})
+
+	if !mgr.NearUsageLimit(0.8) {
+		t.Error("should be near limit at 90% usage with 80% threshold")
+	}
+}
+
+// -------------------------------------------------------------------------
+// ClearCache
+// -------------------------------------------------------------------------
+
+func TestClearCache_RemovesAllEntries(t *testing.T) {
+	mgr := newUsageManager([]string{"b1"}, &mockStore{})
+
+	mgr.cache.Set("key1", "b1")
+	mgr.cache.Set("key2", "b1")
+
+	mgr.ClearCache()
+
+	if _, ok := mgr.cache.Get("key1"); ok {
+		t.Error("expected key1 cache miss after ClearCache")
+	}
+	if _, ok := mgr.cache.Get("key2"); ok {
+		t.Error("expected key2 cache miss after ClearCache")
+	}
+}
+
+// -------------------------------------------------------------------------
 // Concurrent Safety
 // -------------------------------------------------------------------------
 

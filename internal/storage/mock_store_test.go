@@ -40,13 +40,15 @@ type mockStore struct {
 	listObjectsErr   error
 
 	// Multipart
-	createMultipartErr error
-	getMultipartResp   *MultipartUpload
-	getMultipartErr    error
-	getPartsResp       []MultipartPart
-	getPartsErr        error
-	deleteMultipartErr error
-	recordPartErr      error
+	createMultipartErr    error
+	getMultipartResp      *MultipartUpload
+	getMultipartErr       error
+	getPartsResp          []MultipartPart
+	getPartsErr           error
+	deleteMultipartErr    error
+	recordPartErr         error
+	getStaleMultipartResp []MultipartUpload
+	getStaleMultipartErr  error
 
 	// Dashboard / background
 	getQuotaStatsResp          map[string]QuotaStat
@@ -282,7 +284,12 @@ func (m *mockStore) GetActiveMultipartCounts(_ context.Context) (map[string]int6
 }
 
 func (m *mockStore) GetStaleMultipartUploads(_ context.Context, _ time.Duration) ([]MultipartUpload, error) {
-	return nil, nil
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.getStaleMultipartErr != nil {
+		return nil, m.getStaleMultipartErr
+	}
+	return m.getStaleMultipartResp, nil
 }
 
 func (m *mockStore) ListObjectsByBackend(_ context.Context, _ string, _ int) ([]ObjectLocation, error) {
