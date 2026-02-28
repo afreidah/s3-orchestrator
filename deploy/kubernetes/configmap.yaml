@@ -1,0 +1,176 @@
+# -------------------------------------------------------------------------------
+# S3 Orchestrator - Kubernetes ConfigMap
+#
+# Author: Alex Freidah
+#
+# Production-ready configuration with three storage backends (OCI, Backblaze B2,
+# MinIO) and replication factor 2. Every object is written to one backend and
+# asynchronously replicated to a second, spreading copies across the pool like
+# a storage mesh. Sensitive values use ${VAR} syntax and are expanded at startup
+# from environment variables injected by the Secret.
+# -------------------------------------------------------------------------------
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: s3-orchestrator
+  namespace: s3-orchestrator
+  labels:
+    app.kubernetes.io/name: s3-orchestrator
+data:
+  config.yaml: |
+    # --- HTTP server ---
+    server:
+      listen_addr: "0.0.0.0:9000"
+      max_object_size: 5368709120      # 5 GB
+      backend_timeout: "2m"
+
+      # --- TLS termination (optional) ---
+      # Uncomment to enable TLS on the S3 endpoint. Mount a TLS Secret into the
+      # pod at /tls and reference the cert/key paths here. Most Kubernetes
+      # deployments terminate TLS at the Ingress instead.
+      # tls:
+      #   cert_file: "/tls/tls.crt"
+      #   key_file: "/tls/tls.key"
+      #   min_version: "1.2"
+      #
+      #   # Mutual TLS (mTLS) -- require client certificates signed by a trusted
+      #   # CA. Clients must present a valid certificate to connect. Useful for
+      #   # service-to-service authentication without S3 SigV4 credentials.
+      #   # client_ca_file: "/tls/client-ca.crt"
+
+    # --- PostgreSQL metadata store ---
+    database:
+      host: "postgres.s3-orchestrator.svc.cluster.local"
+      port: 5432
+      database: "s3orchestrator"
+      user: "s3orchestrator"
+      password: "${DB_PASSWORD}"
+      ssl_mode: "require"
+      max_conns: 10
+      min_conns: 5
+      max_conn_lifetime: "5m"
+
+    # --- Virtual buckets ---
+    # Each bucket is an isolated namespace with its own credentials.
+    # Multiple credential sets per bucket support reader/writer separation.
+    buckets:
+      - name: "app-data"
+        credentials:
+          - access_key_id: "${BUCKET_ACCESS_KEY}"
+            secret_access_key: "${BUCKET_SECRET_KEY}"
+
+    # --- Storage backends ---
+    # Three backends across different providers give 40 GB combined capacity.
+    # With replication factor 2, every object exists on two of the three
+    # backends -- the replicator picks the best target each cycle, spreading
+    # copies across the pool like a storage mesh.
+    backends:
+      - name: "oci"
+        endpoint: "${OCI_ENDPOINT}"
+        region: "${OCI_REGION}"
+        bucket: "${OCI_BUCKET}"
+        access_key_id: "${OCI_ACCESS_KEY}"
+        secret_access_key: "${OCI_SECRET_KEY}"
+        force_path_style: true
+        quota_bytes: 21474836480       # 20 GB
+        api_request_limit: 50000       # monthly API call cap
+        egress_byte_limit: 10737418240 # 10 GB monthly egress
+
+      - name: "b2"
+        endpoint: "${B2_ENDPOINT}"
+        region: "${B2_REGION}"
+        bucket: "${B2_BUCKET}"
+        access_key_id: "${B2_ACCESS_KEY}"
+        secret_access_key: "${B2_SECRET_KEY}"
+        force_path_style: true
+        quota_bytes: 10737418240       # 10 GB
+        api_request_limit: 1000000
+
+      - name: "minio"
+        endpoint: "${MINIO_ENDPOINT}"
+        region: "us-east-1"
+        bucket: "${MINIO_BUCKET}"
+        access_key_id: "${MINIO_ACCESS_KEY}"
+        secret_access_key: "${MINIO_SECRET_KEY}"
+        force_path_style: true
+        quota_bytes: 10737418240       # 10 GB
+
+    # --- Write routing ---
+    # "spread" distributes writes by lowest utilization ratio across backends.
+    # "pack" fills backends sequentially until quota is reached.
+    routing_strategy: "spread"
+
+    # --- Replication ---
+    # With 3 backends and factor 2, every object is written to one backend
+    # then asynchronously replicated to a second. The replicator selects a
+    # different backend each time, so copies spread across the pool rather
+    # than always landing on the same pair. Reads automatically fail over
+    # to the replica if the primary copy is unavailable.
+    replication:
+      factor: 2
+      worker_interval: "5m"
+      batch_size: 50
+
+    # --- Rebalancer ---
+    # Periodically redistributes objects to equalize utilization across
+    # backends. Generates egress/ingress traffic on your backends.
+    rebalance:
+      enabled: true
+      strategy: "spread"
+      interval: "6h"
+      batch_size: 100
+      threshold: 0.1
+      concurrency: 5
+
+    # --- Circuit breaker ---
+    # Detects database outages and enters degraded mode: reads broadcast
+    # to all backends, writes return 503 until the database recovers.
+    circuit_breaker:
+      failure_threshold: 3
+      open_timeout: "15s"
+      cache_ttl: "60s"
+
+    # --- Per-IP rate limiting ---
+    rate_limit:
+      enabled: true
+      requests_per_sec: 100
+      burst: 200
+      # Trust X-Forwarded-For from cluster ingress controllers
+      trusted_proxies:
+        - "10.0.0.0/8"
+        - "172.16.0.0/12"
+
+    # --- Web dashboard ---
+    ui:
+      enabled: true
+      admin_key: "${UI_ADMIN_KEY}"
+      admin_secret: "${UI_ADMIN_SECRET}"
+
+    # --- Object lifecycle ---
+    # Auto-delete objects matching a prefix after the configured retention.
+    lifecycle:
+      rules:
+        - prefix: "tmp/"
+          expiration_days: 7
+
+    # --- Usage counter flush ---
+    # Adaptive flushing shortens the interval when any backend approaches
+    # a usage limit, improving enforcement accuracy.
+    usage_flush:
+      interval: "30s"
+      adaptive_enabled: true
+      adaptive_threshold: 0.8
+      fast_interval: "5s"
+
+    # --- Observability ---
+    telemetry:
+      metrics:
+        enabled: true
+        path: "/metrics"
+      # Uncomment to enable distributed tracing via OTLP gRPC.
+      # tracing:
+      #   enabled: true
+      #   endpoint: "tempo.monitoring.svc.cluster.local:4317"
+      #   insecure: true
+      #   sample_rate: 0.1

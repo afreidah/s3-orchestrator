@@ -638,7 +638,21 @@ make release-local
 
 ## Deployment
 
-The orchestrator can run as a Docker container or as a native systemd service.
+The orchestrator can run as a Docker container, a native systemd service, or on container orchestration platforms. Production-ready manifests for Nomad and Kubernetes are in [`deploy/`](deploy/), with local demo scripts that stand up a complete environment in one command.
+
+### Container Orchestration (Nomad / Kubernetes)
+
+Example manifests in `deploy/` demonstrate a three-backend setup with replication factor 2, spread routing, and full observability. Local demo scripts build from source and deploy against docker-compose backing services:
+
+```bash
+# Kubernetes via k3d (requires: docker, k3d, kubectl)
+make kubernetes-demo
+
+# Nomad in dev mode (requires: docker, nomad)
+make nomad-demo
+```
+
+See [`deploy/README.md`](deploy/README.md) for production deployment instructions and customization options (TLS, mTLS, Vault integration, Ingress).
 
 ### Prerequisites
 
@@ -777,4 +791,23 @@ packaging/
   copyright                  Debian copyright file
   lintian-overrides          Lintian override rules
 config.example.yaml          Configuration reference
+deploy/
+  nomad/
+    s3-orchestrator.nomad.hcl  Production Nomad job (Vault integration)
+    local/
+      s3-orchestrator.nomad.hcl  Local dev job (docker-compose backing services)
+      demo.sh                  One-command Nomad dev demo
+  kubernetes/
+    namespace.yaml             Namespace
+    secret.yaml                Secret (credential placeholders)
+    serviceaccount.yaml        ServiceAccount (Vault annotations commented)
+    configmap.yaml             Full production config
+    deployment.yaml            Deployment with health probes and security hardening
+    service.yaml               ClusterIP service
+    ingress.yaml               Ingress with TLS (nginx/cert-manager)
+    local/
+      configmap.yaml           Local dev config (docker-compose backing services)
+      deployment.yaml          Local dev deployment (locally-built image)
+      secret.yaml              Local dev secret (docker-compose credentials)
+      demo.sh                  One-command k3d demo
 ```

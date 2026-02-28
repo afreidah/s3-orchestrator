@@ -1,0 +1,41 @@
+# -------------------------------------------------------------------------------
+# S3 Orchestrator - Kubernetes Ingress (Optional)
+#
+# Author: Alex Freidah
+#
+# Exposes the s3-orchestrator externally with TLS termination via an Ingress
+# controller. Adjust the host, TLS secret name, and annotations for your
+# environment. This example uses nginx-ingress with cert-manager.
+# -------------------------------------------------------------------------------
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: s3-orchestrator
+  namespace: s3-orchestrator
+  labels:
+    app.kubernetes.io/name: s3-orchestrator
+  annotations:
+    # Adjust for your ingress controller (nginx, traefik, etc.)
+    nginx.ingress.kubernetes.io/proxy-body-size: "5g"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+    # Uncomment for cert-manager automatic TLS provisioning:
+    # cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - s3.example.com
+      secretName: s3-orchestrator-tls
+  rules:
+    - host: s3.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: s3-orchestrator
+                port:
+                  name: http

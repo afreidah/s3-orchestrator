@@ -1,0 +1,15 @@
+# -------------------------------------------------------------------------------
+# S3 Orchestrator - Kubernetes Namespace
+#
+# Author: Alex Freidah
+#
+# Isolates the s3-orchestrator and its PostgreSQL dependency in a dedicated
+# namespace. Apply first: kubectl apply -f namespace.yaml
+# -------------------------------------------------------------------------------
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: s3-orchestrator
+  labels:
+    app.kubernetes.io/name: s3-orchestrator
