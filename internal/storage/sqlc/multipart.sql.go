@@ -133,6 +133,51 @@ func (q *Queries) GetStaleMultipartUploads(ctx context.Context, createdAt pgtype
 	return items, nil
 }
 
+const listMultipartUploadsByPrefix = `-- name: ListMultipartUploadsByPrefix :many
+SELECT upload_id, object_key, content_type, created_at
+FROM multipart_uploads
+WHERE object_key LIKE $1 || '%'
+ORDER BY object_key, created_at
+LIMIT $2
+`
+
+type ListMultipartUploadsByPrefixParams struct {
+	Prefix     *string
+	MaxUploads int32
+}
+
+type ListMultipartUploadsByPrefixRow struct {
+	UploadID    string
+	ObjectKey   string
+	ContentType *string
+	CreatedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) ListMultipartUploadsByPrefix(ctx context.Context, arg ListMultipartUploadsByPrefixParams) ([]ListMultipartUploadsByPrefixRow, error) {
+	rows, err := q.db.Query(ctx, listMultipartUploadsByPrefix, arg.Prefix, arg.MaxUploads)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListMultipartUploadsByPrefixRow{}
+	for rows.Next() {
+		var i ListMultipartUploadsByPrefixRow
+		if err := rows.Scan(
+			&i.UploadID,
+			&i.ObjectKey,
+			&i.ContentType,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const upsertPart = `-- name: UpsertPart :exec
 INSERT INTO multipart_parts (upload_id, part_number, etag, size_bytes, created_at)
 VALUES ($1, $2, $3, $4, NOW())

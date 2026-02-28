@@ -292,6 +292,11 @@ func (m *mockStore) GetStaleMultipartUploads(_ context.Context, _ time.Duration)
 	return m.getStaleMultipartResp, nil
 }
 
+// ListMultipartUploads returns nil (stub).
+func (m *mockStore) ListMultipartUploads(_ context.Context, _ string, _ int) ([]MultipartUpload, error) {
+	return nil, nil
+}
+
 func (m *mockStore) ListObjectsByBackend(_ context.Context, _ string, _ int) ([]ObjectLocation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

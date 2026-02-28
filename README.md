@@ -78,7 +78,9 @@ Objects are routed to backends based on the configured `routing_strategy`: **pac
 | DeleteObject | `DELETE` | `/{bucket}/{key}` | Idempotent (404 from store treated as success) |
 | DeleteObjects | `POST` | `/{bucket}?delete` | Batch delete up to 1000 keys per request |
 | CopyObject | `PUT` | `/{bucket}/{key}` | Uses `X-Amz-Copy-Source` header |
+| ListObjectsV1 | `GET` | `/{bucket}` | Original list API, uses `marker` pagination |
 | ListObjectsV2 | `GET` | `/{bucket}?list-type=2` | Supports `delimiter` for virtual directories |
+| ListMultipartUploads | `GET` | `/{bucket}?uploads` | Lists in-progress multipart uploads |
 | CreateMultipartUpload | `POST` | `/{bucket}/{key}?uploads` | |
 | UploadPart | `PUT` | `/{bucket}/{key}?partNumber=N&uploadId=X` | |
 | CompleteMultipartUpload | `POST` | `/{bucket}/{key}?uploadId=X` | |
@@ -740,7 +742,7 @@ internal/
     server.go                HTTP router, bucket resolution, key prefixing, metrics
     buckets.go               HeadBucket, GetBucketLocation, ListBuckets stubs
     objects.go               PUT, GET, HEAD, DELETE, COPY, DeleteObjects handlers
-    list.go                  ListObjectsV2 handler (XML response)
+    list.go                  ListObjectsV1 and ListObjectsV2 handlers (XML response)
     multipart.go             Multipart upload handlers
     helpers.go               Path parsing, S3 XML error responses
     ratelimit.go             Per-IP token bucket rate limiter

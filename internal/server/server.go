@@ -162,17 +162,24 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query()
 		_, hasDelete := query["delete"]
 		_, hasLocation := query["location"]
+		_, hasUploads := query["uploads"]
 
 		switch {
 		case method == http.MethodHead:
 			operation = "HeadBucket"
 			status, err = s.handleHeadBucket(w)
+		case method == http.MethodGet && hasUploads:
+			operation = "ListMultipartUploads"
+			status, err = s.handleListMultipartUploads(ctx, w, r, bucket)
 		case method == http.MethodGet && hasLocation:
 			operation = "GetBucketLocation"
 			status, err = s.handleGetBucketLocation(w)
-		case method == http.MethodGet:
+		case method == http.MethodGet && query.Get("list-type") == "2":
 			operation = "ListObjectsV2"
 			status, err = s.handleListObjectsV2(ctx, w, r, bucket)
+		case method == http.MethodGet:
+			operation = "ListObjectsV1"
+			status, err = s.handleListObjectsV1(ctx, w, r, bucket)
 		case method == http.MethodPost && hasDelete:
 			operation = "DeleteObjects"
 			status, err = s.handleDeleteObjects(ctx, w, r, bucket)

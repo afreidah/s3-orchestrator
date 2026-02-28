@@ -59,6 +59,10 @@ CREATE TABLE IF NOT EXISTS multipart_parts (
 CREATE INDEX IF NOT EXISTS idx_multipart_uploads_created
     ON multipart_uploads(created_at);
 
+-- Index for efficient LIKE prefix queries on multipart upload keys
+CREATE INDEX IF NOT EXISTS idx_multipart_uploads_key_pattern
+    ON multipart_uploads(object_key text_pattern_ops);
+
 -- Track per-backend API requests and data transfer by month
 CREATE TABLE IF NOT EXISTS backend_usage (
     backend_name  TEXT NOT NULL REFERENCES backend_quotas(backend_name),
