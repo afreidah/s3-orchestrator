@@ -300,6 +300,12 @@ func (m *BackendManager) AbortMultipartUpload(ctx context.Context, uploadID stri
 	return nil
 }
 
+// ListMultipartUploads returns active multipart uploads matching the given
+// prefix, up to maxUploads results. Pass-through to the metadata store.
+func (m *BackendManager) ListMultipartUploads(ctx context.Context, prefix string, maxUploads int) ([]MultipartUpload, error) {
+	return m.store.ListMultipartUploads(ctx, prefix, maxUploads)
+}
+
 // CleanupStaleMultipartUploads aborts multipart uploads older than the given
 // duration. Run periodically to prevent quota leaks from abandoned uploads.
 func (m *BackendManager) CleanupStaleMultipartUploads(ctx context.Context, olderThan time.Duration) {
