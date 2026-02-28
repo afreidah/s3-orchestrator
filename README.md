@@ -277,6 +277,8 @@ rate_limit:
 ui:
   enabled: false             # enable the built-in web dashboard
   path: "/ui"                # URL prefix (default: /ui)
+  admin_key: "${UI_ADMIN_KEY}"       # access key for dashboard login
+  admin_secret: "${UI_ADMIN_SECRET}" # secret key for dashboard login
 
 usage_flush:
   interval: "30s"            # base flush interval (default: 30s)
@@ -451,24 +453,34 @@ Example audit log entry:
 
 ## Web UI
 
-A built-in web dashboard provides operational visibility without external tooling. When enabled, it renders a server-side HTML page at the configured path (default `/ui/`).
+A built-in web dashboard provides operational visibility and management without external tooling. When enabled, it renders a server-side HTML page at the configured path (default `/ui/`). All routes require authentication via HMAC-signed session cookies — users log in with an admin key/secret pair configured in the YAML config.
 
 The dashboard shows:
 
+- **Storage Summary** — total bytes used/capacity across all backends with a progress bar
 - **Backends** — quota used/limit per backend with progress bars, object counts, active multipart uploads
 - **Monthly Usage** — API requests, egress, and ingress per backend with limits
 - **Objects** — interactive collapsible tree browser; buckets and directories expand on click to reveal contents, with rollup file counts and sizes
 - **Configuration** — virtual buckets, write routing strategy, replication factor, rebalance strategy, rate limit status
+
+The dashboard also provides management actions:
+
+- **Upload** — upload files to any virtual bucket via the browser
+- **Delete** — delete individual objects from the file tree
+- **Rebalance** — trigger an on-demand rebalance across backends
+- **Sync** — import pre-existing objects from a backend's S3 bucket into the proxy database, scoped to a selected virtual bucket
 
 The object tree uses JavaScript for lazy-loaded AJAX expansion — directories load their children on click via the `/ui/api/tree` endpoint. All dashboard responses include security headers (`X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Content-Security-Policy`). Enable it in the config:
 
 ```yaml
 ui:
   enabled: true
-  path: "/ui"      # default
+  path: "/ui"                # default
+  admin_key: "${UI_ADMIN_KEY}"
+  admin_secret: "${UI_ADMIN_SECRET}"
 ```
 
-JSON APIs are available at `{path}/api/dashboard` and `{path}/api/tree` for programmatic access.
+JSON APIs are available at `{path}/api/dashboard` and `{path}/api/tree` for programmatic access. Management endpoints (`{path}/api/delete`, `{path}/api/upload`, `{path}/api/rebalance`, `{path}/api/sync`) accept POST requests and return JSON responses.
 
 ## Endpoints
 
@@ -477,8 +489,13 @@ JSON APIs are available at `{path}/api/dashboard` and `{path}/api/tree` for prog
 | `/health` | Health check — returns `ok` or `degraded` (always 200) |
 | `/metrics` | Prometheus metrics |
 | `/ui/` | Web dashboard (when enabled) |
-| `/ui/api/dashboard` | Dashboard data as JSON (when enabled) |
-| `/ui/api/tree` | Lazy-loaded directory listing as JSON (when enabled) |
+| `/ui/login` | Dashboard login page |
+| `/ui/api/dashboard` | Dashboard data as JSON |
+| `/ui/api/tree` | Lazy-loaded directory listing as JSON |
+| `/ui/api/delete` | Delete an object (POST, JSON body) |
+| `/ui/api/upload` | Upload a file (POST, multipart form) |
+| `/ui/api/rebalance` | Trigger on-demand rebalance (POST) |
+| `/ui/api/sync` | Import objects from a backend (POST, JSON body) |
 | `/{bucket}/{key}` | S3 API |
 
 ## Background Tasks
@@ -679,11 +696,12 @@ internal/
       queries/               Annotated SQL query files
       *.go                   Generated type-safe query code (do not edit)
   ui/
-    handler.go               Web UI HTTP handler + JSON API
+    handler.go               Web UI HTTP handler, session auth + JSON APIs
     templates.go             Embedded templates + formatting helpers
     templates/dashboard.html Dashboard HTML template
+    templates/login.html     Login page HTML template
     static/style.css         Dashboard stylesheet
-    static/tree.js           Lazy-loaded directory tree (AJAX expansion)
+    static/tree.js           Lazy-loaded directory tree, file management, sync/rebalance
   testutil/
     mock_store.go            Shared MetadataStore mock for tests
   telemetry/

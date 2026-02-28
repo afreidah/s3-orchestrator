@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -255,6 +256,105 @@ func (m *BackendManager) selectBackendForWrite(ctx context.Context, size int64, 
 		return m.store.GetLeastUtilizedBackend(ctx, size, eligible)
 	}
 	return m.store.GetBackendWithSpace(ctx, size, eligible)
+}
+
+// SyncBackend scans a backend's S3 bucket and imports pre-existing objects into
+// the proxy database. Objects already tracked for the backend are skipped.
+// knownBuckets is the full list of configured virtual bucket names, used to
+// distinguish objects belonging to other buckets from externally-uploaded
+// objects that need the bucket prefix prepended.
+// Returns counts of imported vs skipped objects.
+func (m *BackendManager) SyncBackend(ctx context.Context, backendName, bucket string, knownBuckets []string) (imported, skipped int, err error) {
+	backend, err := m.getBackend(backendName)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	s3b, ok := backend.(*S3Backend)
+	if !ok {
+		return 0, 0, fmt.Errorf("backend %s does not support listing", backendName)
+	}
+
+	// Unwrap the concrete *Store from the MetadataStore interface (may be
+	// wrapped with CircuitBreakerStore).
+	var store *Store
+	switch v := m.store.(type) {
+	case *Store:
+		store = v
+	case *CircuitBreakerStore:
+		store, ok = v.real.(*Store)
+		if !ok {
+			return 0, 0, fmt.Errorf("unexpected inner store type")
+		}
+	default:
+		return 0, 0, fmt.Errorf("unexpected store type")
+	}
+
+	slog.Info("Starting backend sync", "backend", backendName, "bucket", bucket)
+
+	bucketPrefix := bucket + "/"
+
+	// Build a set of other bucket prefixes so we can skip objects that belong
+	// to a different virtual bucket.
+	otherPrefixes := make([]string, 0, len(knownBuckets))
+	for _, b := range knownBuckets {
+		if b != bucket {
+			otherPrefixes = append(otherPrefixes, b+"/")
+		}
+	}
+
+	var apiPages int64
+
+	err = s3b.ListObjects(ctx, "", func(objects []ListedObject) error {
+		apiPages++
+		for _, obj := range objects {
+			key := obj.Key
+
+			// Already belongs to this bucket — use as-is.
+			if strings.HasPrefix(key, bucketPrefix) {
+				// good, keep key
+			} else {
+				// Check if it belongs to a different virtual bucket — skip.
+				belongsToOther := false
+				for _, p := range otherPrefixes {
+					if strings.HasPrefix(key, p) {
+						belongsToOther = true
+						break
+					}
+				}
+				if belongsToOther {
+					continue
+				}
+				// Externally-uploaded object without a bucket prefix — prepend.
+				key = bucketPrefix + key
+			}
+
+			ok, importErr := store.ImportObject(ctx, key, backendName, obj.SizeBytes)
+			if importErr != nil {
+				return fmt.Errorf("failed to import %s: %w", obj.Key, importErr)
+			}
+			if ok {
+				imported++
+			} else {
+				skipped++
+			}
+		}
+		return nil
+	})
+
+	// Record ListObjectsV2 API calls against the backend's usage quota.
+	// Each page is one API request to the backend provider.
+	if apiPages > 0 {
+		m.usage.Record(backendName, apiPages, 0, 0)
+	}
+
+	if err != nil {
+		return imported, skipped, err
+	}
+
+	slog.Info("Backend sync complete", "backend", backendName, "bucket", bucket,
+		"imported", imported, "skipped", skipped)
+	return imported, skipped, nil
 }
 
 // recordOperation delegates to the MetricsCollector.

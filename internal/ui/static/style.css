@@ -9,6 +9,81 @@ body {
 
 .container { max-width: 1200px; margin: 0 auto; padding: 1.5rem; }
 
+/* --- Login page --- */
+.login-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+}
+
+.login-card {
+  background: #1e293b;
+  border-radius: 0.5rem;
+  padding: 2rem;
+  width: 100%;
+  max-width: 360px;
+}
+
+.login-card h1 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: #f8fafc;
+  margin-bottom: 0.15rem;
+}
+
+.login-card .meta { margin-bottom: 1.25rem; }
+
+.login-card label {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.25rem;
+}
+
+.login-card input {
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 0.35rem;
+  color: #e2e8f0;
+  font-size: 0.9rem;
+  margin-bottom: 0.75rem;
+}
+
+.login-card input:focus {
+  outline: none;
+  border-color: #93c5fd;
+}
+
+.login-card button {
+  width: 100%;
+  padding: 0.5rem;
+  border: none;
+  border-radius: 0.35rem;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 500;
+  background: #93c5fd;
+  color: #0f172a;
+  margin-top: 0.25rem;
+}
+
+.login-card button:hover { background: #7dd3fc; }
+
+.login-error {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.35rem;
+  font-size: 0.85rem;
+  margin-bottom: 0.75rem;
+}
+
 /* --- Header --- */
 header {
   display: flex;
@@ -35,6 +110,39 @@ header h1 { font-size: 1.25rem; font-weight: 600; color: #f8fafc; }
 .badge-degraded { background: #92400e; color: #fde68a; }
 
 .meta { font-size: 0.8rem; color: #94a3b8; }
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.logout-link {
+  font-size: 0.8rem;
+  color: #94a3b8;
+  text-decoration: none;
+}
+
+.logout-link:hover { color: #e2e8f0; }
+
+/* --- Inline action button (sits next to section headers) --- */
+.btn-action {
+  padding: 0.2rem 0.6rem;
+  border: none;
+  border-radius: 0.35rem;
+  cursor: pointer;
+  font-size: 0.7rem;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: normal;
+  background: #334155;
+  color: #93c5fd;
+  vertical-align: middle;
+  margin-left: 0.5rem;
+}
+
+.btn-action:hover { background: #475569; }
+.btn-action:disabled { opacity: 0.6; cursor: default; }
 
 /* --- Sections --- */
 section { margin-bottom: 2rem; }
@@ -214,4 +322,163 @@ td.key {
 
 .tree-load-more:hover {
   background: #334155;
+}
+
+/* --- Delete button --- */
+.tree-action {
+  flex-shrink: 0;
+  cursor: pointer;
+  font-size: 0.75rem;
+  line-height: 1;
+  padding: 0.15rem 0.35rem;
+  border-radius: 3px;
+  color: #64748b;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+}
+
+.tree-file:hover .tree-action { opacity: 1; }
+.tree-delete:hover { color: #ef4444; background: rgba(239, 68, 68, 0.1); }
+
+/* --- Confirm delete dialog --- */
+dialog#confirm-delete {
+  background: #1e293b;
+  color: #e2e8f0;
+  border: 1px solid #334155;
+  border-radius: 0.5rem;
+  padding: 1.25rem 1.5rem;
+  max-width: 360px;
+  font-size: 0.9rem;
+}
+
+dialog#confirm-delete::backdrop {
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.dialog-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  margin-top: 1rem;
+}
+
+.dialog-actions button {
+  padding: 0.4rem 1rem;
+  border: none;
+  border-radius: 0.35rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 500;
+  background: #334155;
+  color: #e2e8f0;
+}
+
+.dialog-actions button:hover { background: #475569; }
+
+.btn-danger { background: #ef4444 !important; color: #fff !important; }
+.btn-danger:hover { background: #dc2626 !important; }
+.btn-danger:disabled { opacity: 0.6; cursor: default; }
+
+/* --- Upload bar --- */
+.upload-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.btn-upload {
+  padding: 0.4rem 1rem;
+  border: none;
+  border-radius: 0.35rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 500;
+  background: #93c5fd;
+  color: #0f172a;
+}
+
+.btn-upload:hover { background: #7dd3fc; }
+
+#upload-status {
+  font-size: 0.8rem;
+}
+
+.upload-success { color: #4ade80; }
+.upload-error { color: #ef4444; }
+
+/* --- Upload dialog --- */
+dialog#upload-dialog {
+  background: #1e293b;
+  color: #e2e8f0;
+  border: 1px solid #334155;
+  border-radius: 0.5rem;
+  padding: 1.25rem 1.5rem;
+  max-width: 420px;
+  width: 100%;
+  font-size: 0.9rem;
+}
+
+dialog#upload-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.6);
+}
+
+dialog#upload-dialog input[type="text"] {
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 0.35rem;
+  color: #e2e8f0;
+  font-size: 0.85rem;
+  font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
+  margin-top: 0.5rem;
+}
+
+dialog#upload-dialog input[type="text"]:focus {
+  outline: none;
+  border-color: #93c5fd;
+}
+
+/* --- Sync dialog --- */
+dialog#sync-dialog {
+  background: #1e293b;
+  color: #e2e8f0;
+  border: 1px solid #334155;
+  border-radius: 0.5rem;
+  padding: 1.25rem 1.5rem;
+  max-width: 380px;
+  width: 100%;
+  font-size: 0.9rem;
+}
+
+dialog#sync-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.sync-label {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-top: 0.75rem;
+  margin-bottom: 0.25rem;
+}
+
+dialog#sync-dialog select {
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 0.35rem;
+  color: #e2e8f0;
+  font-size: 0.85rem;
+  appearance: auto;
+}
+
+dialog#sync-dialog select:focus {
+  outline: none;
+  border-color: #93c5fd;
 }

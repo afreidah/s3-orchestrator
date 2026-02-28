@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>S3 Orchestrator - Login</title>
+  <link rel="icon" type="image/svg+xml" href="static/favicon.svg">
+  <link rel="stylesheet" href="static/style.css?v={{.Version}}">
+</head>
+<body>
+<div class="login-wrapper">
+  <div class="login-card">
+    <h1>S3 Orchestrator</h1>
+    <span class="meta">{{.Version}}</span>
+    {{if .Error}}
+    <div class="login-error">{{.Error}}</div>
+    {{end}}
+    <form method="post" action="login">
+      <label for="access_key">Access Key</label>
+      <input type="text" id="access_key" name="access_key" required autocomplete="username">
+      <label for="secret_key">Secret Key</label>
+      <input type="password" id="secret_key" name="secret_key" required autocomplete="current-password">
+      <button type="submit">Sign In</button>
+    </form>
+  </div>
+</div>
+</body>
+</html>

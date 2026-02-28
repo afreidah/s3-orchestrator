@@ -119,7 +119,10 @@ telemetry:
 #     - "10.0.0.0/8"          # Without this, XFF is ignored and RemoteAddr is
 #     - "172.16.0.0/12"       # always used. Uses rightmost-untrusted extraction.
 
-# Built-in web dashboard for operational visibility. Disabled by default.
+# Built-in web dashboard for operational visibility and management. Disabled by default.
+# Requires admin_key and admin_secret for login when enabled.
 # ui:
 #   enabled: false
-#   path: "/ui"           # URL prefix for the dashboard (default: "/ui")
+#   path: "/ui"                          # URL prefix for the dashboard (default: "/ui")
+#   admin_key: "${UI_ADMIN_KEY}"         # access key for dashboard login
+#   admin_secret: "${UI_ADMIN_SECRET}"   # secret key for dashboard login

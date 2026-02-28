@@ -166,8 +166,10 @@ type CircuitBreakerConfig struct {
 
 // UIConfig holds settings for the built-in web dashboard. Disabled by default.
 type UIConfig struct {
-	Enabled bool   `yaml:"enabled"`
-	Path    string `yaml:"path"` // URL prefix for the dashboard (default: "/ui")
+	Enabled     bool   `yaml:"enabled"`
+	Path        string `yaml:"path"`         // URL prefix for the dashboard (default: "/ui")
+	AdminKey    string `yaml:"admin_key"`    // Access key for dashboard login
+	AdminSecret string `yaml:"admin_secret"` // Secret key for dashboard login
 }
 
 // LifecycleConfig holds rules for automatic object expiration. Objects matching
@@ -506,9 +508,14 @@ func (c *Config) SetDefaultsAndValidate() error {
 		c.CircuitBreaker.CacheTTL = 60 * time.Second
 	}
 
-	// --- UI defaults ---
+	// --- UI defaults and validation ---
 	if c.UI.Path == "" {
 		c.UI.Path = "/ui"
+	}
+	if c.UI.Enabled {
+		if c.UI.AdminKey == "" || c.UI.AdminSecret == "" {
+			errors = append(errors, "ui.admin_key and ui.admin_secret are required when ui is enabled")
+		}
 	}
 
 	// --- Usage flush defaults ---
