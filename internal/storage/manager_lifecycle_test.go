@@ -163,6 +163,25 @@ func TestProcessLifecycleRules_DeleteFailureContinues(t *testing.T) {
 	}
 }
 
+func TestProcessLifecycleRules_ListExpiredObjectsError(t *testing.T) {
+	store := &mockStore{
+		listExpiredObjectsErr: errors.New("db error"),
+	}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+
+	rules := []config.LifecycleRule{
+		{Prefix: "tmp/", ExpirationDays: 7},
+	}
+
+	deleted, failed := mgr.ProcessLifecycleRules(context.Background(), rules)
+	if deleted != 0 {
+		t.Errorf("expected 0 deleted, got %d", deleted)
+	}
+	if failed != 1 {
+		t.Errorf("expected 1 failed, got %d", failed)
+	}
+}
+
 func TestProcessLifecycleRules_EmptyRulesNoOp(t *testing.T) {
 	store := &mockStore{}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})

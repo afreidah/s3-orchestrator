@@ -351,6 +351,76 @@ func TestReplicate_RecordReplicaFails_CleansUpOrphan(t *testing.T) {
 	}
 }
 
+func TestCopyToReplica_TargetBackendNotFound(t *testing.T) {
+	b1 := newMockBackend()
+	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain")
+
+	mgr := newTestManager(&mockStore{}, map[string]*mockBackend{"b1": b1})
+
+	copies := []ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}
+	_, err := mgr.copyToReplica(context.Background(), "key1", copies, "nonexistent")
+	if err == nil {
+		t.Fatal("expected error when target backend not found")
+	}
+}
+
+func TestCopyToReplica_TargetWriteFails(t *testing.T) {
+	b1 := newMockBackend()
+	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain")
+	b2 := newMockBackend()
+	b2.putErr = errors.New("write failed")
+
+	mgr := NewBackendManager(&BackendManagerConfig{
+		Backends:        map[string]ObjectBackend{"b1": b1, "b2": b2},
+		Store:           &mockStore{},
+		Order:           []string{"b1", "b2"},
+		CacheTTL:        5 * time.Second,
+		BackendTimeout:  30 * time.Second,
+		RoutingStrategy: "pack",
+	})
+
+	copies := []ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}
+	_, err := mgr.copyToReplica(context.Background(), "key1", copies, "b2")
+	if err == nil {
+		t.Fatal("expected error when target PutObject fails")
+	}
+}
+
+func TestReplicateObject_NoTargetAvailable(t *testing.T) {
+	b1 := newMockBackend()
+	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain")
+
+	store := &mockStore{
+		getUnderReplicatedResp: []ObjectLocation{
+			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
+		},
+		getQuotaStatsResp: map[string]QuotaStat{
+			// Only b1 has space, but it already holds the copy
+			"b1": {BytesUsed: 100, BytesLimit: 1000},
+		},
+		recordReplicaInserted: true,
+	}
+	mgr := NewBackendManager(&BackendManagerConfig{
+		Backends:        map[string]ObjectBackend{"b1": b1},
+		Store:           store,
+		Order:           []string{"b1"},
+		CacheTTL:        5 * time.Second,
+		BackendTimeout:  30 * time.Second,
+		RoutingStrategy: "pack",
+	})
+
+	created, err := mgr.Replicate(context.Background(), config.ReplicationConfig{
+		Factor:    2,
+		BatchSize: 10,
+	})
+	if err != nil {
+		t.Fatalf("Replicate: %v", err)
+	}
+	if created != 0 {
+		t.Errorf("expected 0 created (no target), got %d", created)
+	}
+}
+
 func TestReplicate_SourceGoneDuringReplication(t *testing.T) {
 	b1 := newMockBackend()
 	b2 := newMockBackend()

@@ -13,6 +13,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -213,6 +214,161 @@ func TestCircuitBreaker_SuccessResetsFailures(t *testing.T) {
 
 	if !cb.IsHealthy() {
 		t.Fatal("circuit should still be closed after reset + 2 failures")
+	}
+}
+
+// -------------------------------------------------------------------------
+// circuitState.String
+// -------------------------------------------------------------------------
+
+func TestCircuitState_String(t *testing.T) {
+	tests := []struct {
+		state circuitState
+		want  string
+	}{
+		{stateClosed, "closed"},
+		{stateOpen, "open"},
+		{stateHalfOpen, "half-open"},
+		{circuitState(99), "unknown"},
+	}
+	for _, tt := range tests {
+		got := tt.state.String()
+		if got != tt.want {
+			t.Errorf("circuitState(%d).String() = %q, want %q", tt.state, got, tt.want)
+		}
+	}
+}
+
+// -------------------------------------------------------------------------
+// isDBError
+// -------------------------------------------------------------------------
+
+func TestIsDBError_NilIsNotDBError(t *testing.T) {
+	if isDBError(nil) {
+		t.Error("nil should not be a DB error")
+	}
+}
+
+func TestIsDBError_S3ErrorIsNotDBError(t *testing.T) {
+	err := &S3Error{StatusCode: 404, Code: "NoSuchKey", Message: "not found"}
+	if isDBError(err) {
+		t.Error("S3Error should not be a DB error")
+	}
+}
+
+func TestIsDBError_ErrNoSpaceIsNotDBError(t *testing.T) {
+	if isDBError(ErrNoSpaceAvailable) {
+		t.Error("ErrNoSpaceAvailable should not be a DB error")
+	}
+}
+
+func TestIsDBError_GenericErrorIsDBError(t *testing.T) {
+	if !isDBError(errors.New("connection refused")) {
+		t.Error("generic error should be a DB error")
+	}
+}
+
+func TestIsDBError_WrappedS3Error(t *testing.T) {
+	inner := &S3Error{StatusCode: 507, Code: "InsufficientStorage", Message: "full"}
+	wrapped := fmt.Errorf("wrapped: %w", inner)
+	if isDBError(wrapped) {
+		t.Error("wrapped S3Error should not be a DB error")
+	}
+}
+
+// -------------------------------------------------------------------------
+// postCheck edge cases
+// -------------------------------------------------------------------------
+
+func TestCircuitBreaker_PostCheck_NonDBErrorPassesThrough(t *testing.T) {
+	mock := &mockStore{getAllLocationsErr: ErrObjectNotFound}
+	cb := newTestCB(mock, 3, time.Minute)
+
+	// ErrObjectNotFound is not a DB error, so it should pass through unchanged
+	_, err := cb.GetAllObjectLocations(context.Background(), "key")
+	if !errors.Is(err, ErrObjectNotFound) {
+		t.Fatalf("expected ErrObjectNotFound passthrough, got %v", err)
+	}
+
+	// Should still be healthy
+	if !cb.IsHealthy() {
+		t.Fatal("circuit should remain closed for non-DB errors")
+	}
+}
+
+func TestCircuitBreaker_PostCheck_DBErrorBelowThresholdPassesRawError(t *testing.T) {
+	dbErr := errors.New("connection refused")
+	mock := &mockStore{getAllLocationsErr: dbErr}
+	cb := newTestCB(mock, 3, time.Minute)
+
+	// First failure (below threshold): raw error returned, circuit stays closed
+	_, err := cb.GetAllObjectLocations(context.Background(), "key")
+	if err != dbErr {
+		t.Fatalf("expected raw DB error below threshold, got %v", err)
+	}
+	if !cb.IsHealthy() {
+		t.Fatal("circuit should remain closed below threshold")
+	}
+}
+
+// -------------------------------------------------------------------------
+// cbCallNoResult
+// -------------------------------------------------------------------------
+
+func TestCircuitBreaker_RecordObject_Success(t *testing.T) {
+	mock := &mockStore{}
+	cb := newTestCB(mock, 3, time.Minute)
+
+	err := cb.RecordObject(context.Background(), "key", "b1", 100)
+	if err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+}
+
+func TestCircuitBreaker_RecordObject_CircuitOpen(t *testing.T) {
+	dbErr := errors.New("connection refused")
+	mock := &mockStore{getAllLocationsErr: dbErr, recordObjectErr: dbErr}
+	cb := newTestCB(mock, 1, time.Minute)
+
+	// Trip the circuit
+	_, _ = cb.GetAllObjectLocations(context.Background(), "key")
+
+	// RecordObject should return ErrDBUnavailable
+	err := cb.RecordObject(context.Background(), "key", "b1", 100)
+	if !errors.Is(err, ErrDBUnavailable) {
+		t.Fatalf("expected ErrDBUnavailable, got %v", err)
+	}
+}
+
+// -------------------------------------------------------------------------
+// WithAdvisoryLock (bypasses circuit breaker)
+// -------------------------------------------------------------------------
+
+func TestCircuitBreaker_WithAdvisoryLock_BypassesCircuit(t *testing.T) {
+	dbErr := errors.New("connection refused")
+	mock := &mockStore{getAllLocationsErr: dbErr}
+	cb := newTestCB(mock, 1, time.Minute)
+
+	// Trip the circuit
+	_, _ = cb.GetAllObjectLocations(context.Background(), "key")
+	if cb.IsHealthy() {
+		t.Fatal("circuit should be open")
+	}
+
+	// WithAdvisoryLock should still work (bypasses circuit)
+	called := false
+	acquired, err := cb.WithAdvisoryLock(context.Background(), 1, func(ctx context.Context) error {
+		called = true
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("WithAdvisoryLock: %v", err)
+	}
+	if !acquired {
+		t.Fatal("expected lock to be acquired")
+	}
+	if !called {
+		t.Fatal("expected fn to be called")
 	}
 }
 

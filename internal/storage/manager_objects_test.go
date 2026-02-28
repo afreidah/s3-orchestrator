@@ -1215,6 +1215,161 @@ func TestGetObject_SequentialBroadcast_WhenDisabled(t *testing.T) {
 	}
 }
 
+// -------------------------------------------------------------------------
+// withReadFailover edge cases
+// -------------------------------------------------------------------------
+
+func TestGetObject_BackendNotFound_FailsOverToNext(t *testing.T) {
+	b2 := newMockBackend()
+	_, _ = b2.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain")
+
+	// Location references "gone-backend" which doesn't exist in backends map
+	store := &mockStore{
+		getAllLocationsResp: []ObjectLocation{
+			{ObjectKey: "key", BackendName: "gone-backend"},
+			{ObjectKey: "key", BackendName: "b2"},
+		},
+	}
+	mgr := newTestManager(store, map[string]*mockBackend{"b2": b2})
+
+	result, err := mgr.GetObject(context.Background(), "key", "")
+	if err != nil {
+		t.Fatalf("GetObject should failover past missing backend: %v", err)
+	}
+	defer func() { _ = result.Body.Close() }()
+	got, _ := io.ReadAll(result.Body)
+	if string(got) != "data" {
+		t.Errorf("body = %q, want %q", got, "data")
+	}
+}
+
+func TestGetObject_GenericStoreError(t *testing.T) {
+	store := &mockStore{getAllLocationsErr: errors.New("unexpected db error")}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+
+	_, err := mgr.GetObject(context.Background(), "key", "")
+	if err == nil {
+		t.Fatal("expected error from generic store failure")
+	}
+	// Should NOT be ErrObjectNotFound or ErrServiceUnavailable
+	if errors.Is(err, ErrObjectNotFound) {
+		t.Error("should not be ErrObjectNotFound")
+	}
+}
+
+func TestGetObject_DBUnavailable_CacheHitFails_FallsThrough(t *testing.T) {
+	b1 := newMockBackend()
+	b2 := newMockBackend()
+	_, _ = b2.PutObject(context.Background(), "key", bytes.NewReader([]byte("from-b2")), 7, "text/plain")
+
+	store := &mockStore{getAllLocationsErr: ErrDBUnavailable}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": b1, "b2": b2})
+
+	// Pre-populate cache pointing to b1 (which does NOT have the object)
+	mgr.cache.Set("key", "b1")
+
+	// Cache hit on b1 should fail, then broadcast should find it on b2
+	result, err := mgr.GetObject(context.Background(), "key", "")
+	if err != nil {
+		t.Fatalf("should fall through to broadcast after cache hit failure: %v", err)
+	}
+	defer func() { _ = result.Body.Close() }()
+	got, _ := io.ReadAll(result.Body)
+	if string(got) != "from-b2" {
+		t.Errorf("body = %q, want %q", got, "from-b2")
+	}
+}
+
+// -------------------------------------------------------------------------
+// DeleteObject edge cases
+// -------------------------------------------------------------------------
+
+func TestDeleteObject_BackendNotFound_ContinuesOtherCopies(t *testing.T) {
+	b1 := newMockBackend()
+	_, _ = b1.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "")
+
+	store := &mockStore{
+		deleteObjectResp: []DeletedCopy{
+			{BackendName: "gone-backend", SizeBytes: 4},
+			{BackendName: "b1", SizeBytes: 4},
+		},
+	}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": b1})
+
+	err := mgr.DeleteObject(context.Background(), "key")
+	if err != nil {
+		t.Fatalf("DeleteObject should succeed even with missing backend: %v", err)
+	}
+	// b1 copy should still be deleted
+	if b1.hasObject("key") {
+		t.Error("expected b1 copy to be deleted")
+	}
+}
+
+// -------------------------------------------------------------------------
+// CopyObject edge cases
+// -------------------------------------------------------------------------
+
+func TestCopyObject_AllSourceHeadsFail(t *testing.T) {
+	b1 := newMockBackend()
+	b1.headErr = errors.New("head failed")
+
+	store := &mockStore{
+		getAllLocationsResp: []ObjectLocation{{ObjectKey: "src", BackendName: "b1"}},
+		getBackendResp:     "b1",
+	}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": b1})
+
+	_, err := mgr.CopyObject(context.Background(), "src", "dst")
+	if err == nil {
+		t.Fatal("expected error when all source HeadObjects fail")
+	}
+}
+
+func TestCopyObject_DestWriteFails(t *testing.T) {
+	src := newMockBackend()
+	_, _ = src.PutObject(context.Background(), "src", bytes.NewReader([]byte("data")), 4, "text/plain")
+	dst := newMockBackend()
+	dst.putErr = errors.New("write failed")
+
+	store := &mockStore{
+		getAllLocationsResp: []ObjectLocation{{ObjectKey: "src", BackendName: "src-be"}},
+		getBackendResp:     "dst-be",
+	}
+	mgr := NewBackendManager(&BackendManagerConfig{
+		Backends:        map[string]ObjectBackend{"src-be": src, "dst-be": dst},
+		Store:           store,
+		Order:           []string{"src-be", "dst-be"},
+		CacheTTL:        5 * time.Second,
+		BackendTimeout:  30 * time.Second,
+		RoutingStrategy: "pack",
+	})
+
+	_, err := mgr.CopyObject(context.Background(), "src", "dst")
+	if err == nil {
+		t.Fatal("expected error when dest PutObject fails")
+	}
+}
+
+// -------------------------------------------------------------------------
+// ListObjects edge cases
+// -------------------------------------------------------------------------
+
+func TestListObjects_GenericError(t *testing.T) {
+	store := &mockStore{listObjectsErr: errors.New("unexpected query error")}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+
+	_, err := mgr.ListObjects(context.Background(), "", "", "", 1000)
+	if err == nil {
+		t.Fatal("expected error from generic store failure")
+	}
+	// Should NOT be an S3Error with 503 (that's for DB unavailable)
+	var s3err *S3Error
+	if errors.As(err, &s3err) {
+		t.Errorf("generic error should not be S3Error, got %+v", s3err)
+	}
+}
+
 func TestHeadObject_ParallelBroadcast(t *testing.T) {
 	slow := newMockBackend()
 	fast := newMockBackend()
