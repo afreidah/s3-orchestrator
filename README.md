@@ -420,6 +420,8 @@ All metrics are prefixed with `s3proxy_`. Exposed at `/metrics` when enabled.
 
 Quota metrics are refreshed from PostgreSQL every 30 seconds (no backend API calls).
 
+A ready-to-import Grafana dashboard covering all metrics is included at `grafana/s3-orchestrator.json`.
+
 ### OpenTelemetry Tracing
 
 Spans are emitted for every HTTP request, manager operation, and backend S3 call. The service registers as `s3-orchestrator` (`resource.service.name`). Traces propagate via W3C `traceparent` headers. Configured to export via gRPC OTLP to Tempo or any OTLP-compatible collector.
@@ -687,6 +689,8 @@ internal/
   telemetry/
     metrics.go               Prometheus metric definitions
     tracing.go               OpenTelemetry tracer setup
+grafana/
+  s3-orchestrator.json       Grafana dashboard (all Prometheus metrics)
 sqlc.yaml                    sqlc configuration
 Dockerfile                   Multi-stage build
 Makefile                     Build, test, lint, generate, push, deb targets
