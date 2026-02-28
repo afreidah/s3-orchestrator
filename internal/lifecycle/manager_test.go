@@ -51,6 +51,33 @@ func (s *panicOnceService) Run(ctx context.Context) error {
 	return nil
 }
 
+type errorOnceService struct {
+	calls atomic.Int64
+}
+
+func (s *errorOnceService) Run(ctx context.Context) error {
+	n := s.calls.Add(1)
+	if n == 1 {
+		return context.DeadlineExceeded
+	}
+	<-ctx.Done()
+	return nil
+}
+
+type stopErrorService struct {
+	ran chan struct{}
+}
+
+func (s *stopErrorService) Run(ctx context.Context) error {
+	close(s.ran)
+	<-ctx.Done()
+	return nil
+}
+
+func (s *stopErrorService) Stop(_ context.Context) error {
+	return context.DeadlineExceeded
+}
+
 type stoppableService struct {
 	stopped chan string
 	name    string
@@ -203,4 +230,73 @@ func TestManager_StopReverseOrder(t *testing.T) {
 			break
 		}
 	}
+}
+
+func TestManager_ErrorRestart(t *testing.T) {
+	mgr := NewManager()
+	svc := &errorOnceService{}
+	mgr.Register("error-once", svc)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		mgr.Run(ctx)
+		close(done)
+	}()
+
+	// Wait long enough for the error + restart delay + second call
+	time.Sleep(2 * time.Second)
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Manager.Run did not return after context cancellation")
+	}
+
+	if n := svc.calls.Load(); n < 2 {
+		t.Errorf("Expected at least 2 calls (error + restart), got %d", n)
+	}
+}
+
+func TestManager_StopErrorDoesNotPanic(t *testing.T) {
+	mgr := NewManager()
+	svc := &stopErrorService{ran: make(chan struct{})}
+	mgr.Register("stop-err", svc)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		mgr.Run(ctx)
+		close(done)
+	}()
+
+	<-svc.ran
+	cancel()
+	<-done
+
+	// Stop should not panic even when Stop() returns an error
+	mgr.Stop(5 * time.Second)
+}
+
+func TestManager_NoServicesRunsCleanly(t *testing.T) {
+	mgr := NewManager()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already cancelled
+
+	done := make(chan struct{})
+	go func() {
+		mgr.Run(ctx)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Run with no services should return immediately")
+	}
+
+	// Stop with no services should not panic
+	mgr.Stop(time.Second)
 }
