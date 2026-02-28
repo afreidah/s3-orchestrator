@@ -344,7 +344,6 @@ func (b *S3Backend) ListObjects(ctx context.Context, prefix string, fn func([]Li
 // into memory. Body integrity is still protected by TLS at the transport layer.
 func withUnsignedPayload(o *s3.Options) {
 	o.APIOptions = append(o.APIOptions, func(stack *smithymiddleware.Stack) error {
-		_ = v4.RemoveContentSHA256HeaderMiddleware(stack)
 		return v4.SwapComputePayloadSHA256ForUnsignedPayloadMiddleware(stack)
 	})
 }

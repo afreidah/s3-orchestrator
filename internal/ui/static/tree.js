@@ -70,8 +70,10 @@
       details.dataset.loaded = 'false';
 
       var summary = document.createElement('summary');
+      var parts = entry.name.replace(/\/$/, '').split('/');
+      var displayName = parts[parts.length - 1] + '/';
       summary.innerHTML =
-        '<span class="tree-name">' + escapeHtml(entry.name) + '</span>' +
+        '<span class="tree-name">' + escapeHtml(displayName) + '</span>' +
         '<span class="tree-meta">' + entry.fileCount + ' files &middot; ' + formatBytes(entry.totalSize) + '</span>';
       details.appendChild(summary);
 
