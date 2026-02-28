@@ -329,12 +329,21 @@ When `trusted_proxies` is configured, the orchestrator extracts the real client 
 
 ### ui
 
-Built-in web dashboard for operational visibility. Disabled by default.
+Built-in web dashboard for operational visibility and management. Disabled by default. Requires authentication via an admin key/secret pair — sessions are HMAC-signed cookies with a 24-hour TTL.
 
 ```yaml
 ui:
   enabled: true
-  path: "/ui"                # URL prefix (default: /ui)
+  path: "/ui"                          # URL prefix (default: /ui)
+  admin_key: "${UI_ADMIN_KEY}"         # access key for dashboard login
+  admin_secret: "${UI_ADMIN_SECRET}"   # secret key for dashboard login
+```
+
+Both `admin_key` and `admin_secret` are required when `enabled` is `true`. Generate them the same way as bucket credentials:
+
+```bash
+echo "Admin Key: $(openssl rand -hex 10 | tr '[:lower:]' '[:upper:]')"
+echo "Admin Secret: $(openssl rand -base64 30)"
 ```
 
 ### usage_flush
@@ -374,9 +383,9 @@ lifecycle:
 - Deletions go through the standard `DeleteObject` path — all copies removed, quotas decremented, failed deletes enqueued to the cleanup queue.
 - Hot-reloadable via `SIGHUP`.
 
-When enabled, the dashboard is served at `{path}/` on the same port as the S3 API. A JSON API endpoint is also available at `{path}/api/dashboard`.
+When enabled, the dashboard is served at `{path}/` on the same port as the S3 API.
 
-All dashboard responses include security headers (`X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Content-Security-Policy`). The dashboard does not require authentication by default (same as `/health` and `/metrics`). If the orchestrator is publicly exposed, put it behind a reverse proxy with auth (e.g., oauth2-proxy via Traefik).
+All dashboard responses include security headers (`X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Content-Security-Policy`). The dashboard requires authentication via the configured `admin_key`/`admin_secret` — unauthenticated requests are redirected to the login page (HTML) or receive `401` (API).
 
 ## Multi-Backend Configurations
 
@@ -541,14 +550,24 @@ Objects already tracked in the database for that backend are automatically skipp
 
 When `ui.enabled` is `true`, the dashboard at `{path}/` shows a live snapshot of:
 
-- **Backend quota** — bytes used/limit with progress bars per backend
+- **Storage summary** — total bytes used/capacity across all backends
+- **Backend quota** — bytes used/limit with progress bars per backend, object counts, active multipart uploads
 - **Monthly usage** — API requests, egress, and ingress per backend with limits
 - **Object tree** — interactive collapsible file browser. Buckets and directories are collapsed by default; click to expand. Each directory shows a rollup file count and total size.
 - **Configuration** — virtual bucket names, write routing strategy, replication factor, rebalance status, rate limiting
 
+The dashboard also provides management actions:
+
+- **Upload** — upload files to any virtual bucket directly from the browser (up to 512 MiB per file)
+- **Delete** — delete individual objects by clicking the delete icon on any file in the tree
+- **Rebalance** — trigger an on-demand rebalance using the configured strategy and settings
+- **Sync** — import pre-existing objects from a backend's S3 bucket into the proxy database. Select a backend and a virtual bucket — objects already in the database are skipped, and objects belonging to other virtual buckets are excluded.
+
+The dashboard requires authentication. Users log in at `{path}/login` with the `admin_key` and `admin_secret` configured in the `ui` section. Sessions last 24 hours.
+
 The dashboard is server-rendered HTML. The object tree uses JavaScript for lazy-loaded directory expansion — directories fetch their children on click via the `/ui/api/tree` endpoint.
 
-JSON endpoints at `{path}/api/dashboard` and `{path}/api/tree` return data for programmatic access or integration with other tools.
+JSON endpoints at `{path}/api/dashboard` and `{path}/api/tree` return data for programmatic access or integration with other tools. Management endpoints (`{path}/api/delete`, `{path}/api/upload`, `{path}/api/rebalance`, `{path}/api/sync`) accept POST requests and require authentication.
 
 ### Health endpoint
 

@@ -16,12 +16,13 @@
       <h1>S3 Orchestrator</h1>
       <span class="meta">{{.Version}}</span>
     </div>
-    <div>
+    <div class="header-right">
       {{if .DBHealthy}}
         <span class="badge badge-healthy">Healthy</span>
       {{else}}
         <span class="badge badge-degraded">Degraded</span>
       {{end}}
+      <a href="logout" class="logout-link">Logout</a>
     </div>
   </header>
 
@@ -55,7 +56,10 @@
 
   <!-- Backends -->
   <section>
-    <h2>Backends</h2>
+    <h2>Backends
+      <button id="rebalance-btn" class="btn-action">Rebalance</button>
+      <button id="sync-btn" class="btn-action">Sync</button>
+    </h2>
     <table>
       <thead>
         <tr>
@@ -145,6 +149,11 @@
   <!-- Objects -->
   <section>
     <h2>Objects</h2>
+    <div class="upload-bar">
+      <button id="upload-btn" class="btn-upload">Upload</button>
+      <span id="upload-status"></span>
+    </div>
+    <input type="file" id="upload-file" hidden>
     {{if .Data.TopLevelEntries.Entries}}
     <div class="object-tree" id="object-tree">
       {{range .Data.TopLevelEntries.Entries}}
@@ -159,9 +168,10 @@
           </div>
         </details>
         {{else}}
-        <div class="tree-file">
+        <div class="tree-file" data-key="{{.Name}}">
           <span class="tree-name">{{.Name}}</span>
           <span class="tree-meta">{{.Backend}} &middot; {{formatBytes .TotalSize}} &middot; {{.CreatedAt}}</span>
+          <span class="tree-action tree-delete" title="Delete">&#x2715;</span>
         </div>
         {{end}}
       {{end}}
@@ -208,6 +218,42 @@
 
 </div>
 
+<dialog id="confirm-delete">
+  <p>Delete <strong id="confirm-delete-name"></strong>?</p>
+  <div class="dialog-actions">
+    <button id="confirm-delete-cancel">Cancel</button>
+    <button id="confirm-delete-ok" class="btn-danger">Delete</button>
+  </div>
+</dialog>
+
+<dialog id="upload-dialog">
+  <p>Upload to:</p>
+  <input type="text" id="upload-key" required>
+  <div class="dialog-actions">
+    <button id="upload-cancel">Cancel</button>
+    <button id="upload-ok">Upload</button>
+  </div>
+</dialog>
+
+<dialog id="sync-dialog">
+  <p>Sync backend objects into a virtual bucket:</p>
+  <label class="sync-label" for="sync-backend">Backend</label>
+  <select id="sync-backend">
+    {{range .Data.BackendOrder}}<option value="{{.}}">{{.}}</option>{{end}}
+  </select>
+  <label class="sync-label" for="sync-bucket">Bucket</label>
+  <select id="sync-bucket">
+    {{range .Buckets}}<option value="{{.}}">{{.}}</option>{{end}}
+  </select>
+  <div class="dialog-actions">
+    <button id="sync-cancel">Cancel</button>
+    <button id="sync-ok">Sync</button>
+  </div>
+</dialog>
+
+<script>
+  window.__buckets = [{{range $i, $b := .Buckets}}{{if $i}},{{end}}"{{$b}}"{{end}}];
+</script>
 <script src="static/tree.js?v={{.Version}}"></script>
 </body>
 </html>
