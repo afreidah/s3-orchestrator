@@ -27,7 +27,7 @@
       "targets": [
         {
           "expr": "s3proxy_build_info",
-          "legendFormat": "{{ `{{` }}version{{ `}}` }}",
+          "legendFormat": "{{version}}",
           "instant": true
         }
       ],
@@ -231,7 +231,7 @@
       "targets": [
         {
           "expr": "max by (backend) (s3proxy_quota_bytes_used) / max by (backend) (s3proxy_quota_bytes_limit) * 100",
-          "legendFormat": "{{ `{{` }}backend{{ `}}` }}"
+          "legendFormat": "{{backend}}"
         }
       ],
       "options": {
@@ -257,7 +257,7 @@
       }
     },
     {
-      "type": "stat",
+      "type": "table",
       "id": 10,
       "title": "Object Count",
       "gridPos": { "x": 6, "y": 6, "w": 6, "h": 6 },
@@ -265,26 +265,46 @@
       "targets": [
         {
           "expr": "max by (backend) (s3proxy_objects_count)",
-          "legendFormat": "{{ `{{` }}backend{{ `}}` }}"
+          "format": "table",
+          "instant": true
         }
       ],
       "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "textMode": "auto",
-        "reduceOptions": { "calcs": ["lastNotNull"] }
+        "showHeader": true,
+        "sortBy": [{ "displayName": "backend", "desc": false }]
       },
-      "fieldConfig": {
-        "defaults": {
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [{ "color": "blue", "value": null }]
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true, "__name__": true },
+            "renameByName": { "Value": "Objects" }
           }
         }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Objects" },
+            "properties": [
+              { "id": "unit", "value": "short" },
+              { "id": "custom.displayMode", "value": "color-text" },
+              { "id": "color", "value": { "mode": "thresholds" } },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [{ "color": "blue", "value": null }]
+                }
+              }
+            ]
+          }
+        ]
       }
     },
     {
-      "type": "stat",
+      "type": "table",
       "id": 11,
       "title": "Available Space",
       "gridPos": { "x": 12, "y": 6, "w": 6, "h": 6 },
@@ -292,27 +312,46 @@
       "targets": [
         {
           "expr": "max by (backend) (s3proxy_quota_bytes_available)",
-          "legendFormat": "{{ `{{` }}backend{{ `}}` }}"
+          "format": "table",
+          "instant": true
         }
       ],
       "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "textMode": "auto",
-        "reduceOptions": { "calcs": ["lastNotNull"] }
+        "showHeader": true,
+        "sortBy": [{ "displayName": "backend", "desc": false }]
       },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "bytes",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "red", "value": null },
-              { "color": "yellow", "value": 536870912 },
-              { "color": "green", "value": 1073741824 }
-            ]
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true, "__name__": true },
+            "renameByName": { "Value": "Available" }
           }
         }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Available" },
+            "properties": [
+              { "id": "unit", "value": "bytes" },
+              { "id": "color", "value": { "mode": "thresholds" } },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "red", "value": null },
+                    { "color": "yellow", "value": 536870912 },
+                    { "color": "green", "value": 1073741824 }
+                  ]
+                }
+              },
+              { "id": "custom.displayMode", "value": "color-text" }
+            ]
+          }
+        ]
       }
     },
     {
@@ -324,7 +363,7 @@
       "targets": [
         {
           "expr": "max by (backend) (s3proxy_quota_bytes_used)",
-          "legendFormat": "{{ `{{` }}backend{{ `}}` }}"
+          "legendFormat": "{{backend}}"
         }
       ],
       "options": {
@@ -359,7 +398,7 @@
       "targets": [
         {
           "expr": "max by (backend) (s3proxy_usage_api_requests)",
-          "legendFormat": "{{ `{{` }}backend{{ `}}` }}"
+          "legendFormat": "{{backend}}"
         }
       ],
       "options": {
@@ -386,7 +425,7 @@
       "targets": [
         {
           "expr": "max by (backend) (s3proxy_usage_egress_bytes)",
-          "legendFormat": "{{ `{{` }}backend{{ `}}` }}"
+          "legendFormat": "{{backend}}"
         }
       ],
       "options": {
@@ -414,7 +453,7 @@
       "targets": [
         {
           "expr": "max by (backend) (s3proxy_usage_ingress_bytes)",
-          "legendFormat": "{{ `{{` }}backend{{ `}}` }}"
+          "legendFormat": "{{backend}}"
         }
       ],
       "options": {
@@ -449,7 +488,7 @@
       "targets": [
         {
           "expr": "sum by (method, status_code) (rate(s3proxy_requests_total[5m]))",
-          "legendFormat": "{{ `{{` }}method{{ `}}` }} {{ `{{` }}status_code{{ `}}` }}"
+          "legendFormat": "{{method}} {{status_code}}"
         }
       ],
       "options": {
@@ -551,7 +590,7 @@
       "targets": [
         {
           "expr": "sum by (operation, backend, status) (rate(s3proxy_backend_requests_total[5m]))",
-          "legendFormat": "{{ `{{` }}backend{{ `}}` }} {{ `{{` }}operation{{ `}}` }} ({{ `{{` }}status{{ `}}` }})"
+          "legendFormat": "{{backend}} {{operation}} ({{status}})"
         }
       ],
       "options": {
@@ -578,7 +617,7 @@
       "targets": [
         {
           "expr": "histogram_quantile(0.95, sum by (le, operation, backend) (rate(s3proxy_backend_duration_seconds_bucket[5m])))",
-          "legendFormat": "{{ `{{` }}backend{{ `}}` }} {{ `{{` }}operation{{ `}}` }}"
+          "legendFormat": "{{backend}} {{operation}}"
         }
       ],
       "options": {
@@ -597,7 +636,7 @@
       }
     },
     {
-      "type": "stat",
+      "type": "table",
       "id": 24,
       "title": "Active Multipart Uploads",
       "gridPos": { "x": 16, "y": 31, "w": 8, "h": 8 },
@@ -605,26 +644,45 @@
       "targets": [
         {
           "expr": "max by (backend) (s3proxy_active_multipart_uploads)",
-          "legendFormat": "{{ `{{` }}backend{{ `}}` }}"
+          "format": "table",
+          "instant": true
         }
       ],
       "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "textMode": "auto",
-        "reduceOptions": { "calcs": ["lastNotNull"] }
+        "showHeader": true,
+        "sortBy": [{ "displayName": "backend", "desc": false }]
       },
-      "fieldConfig": {
-        "defaults": {
-          "noValue": "0",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 10 }
-            ]
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true, "__name__": true },
+            "renameByName": { "Value": "Uploads" }
           }
         }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Uploads" },
+            "properties": [
+              { "id": "unit", "value": "short" },
+              { "id": "custom.displayMode", "value": "color-text" },
+              { "id": "color", "value": { "mode": "thresholds" } },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "green", "value": null },
+                    { "color": "yellow", "value": 10 }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
       }
     },
     {
@@ -681,7 +739,7 @@
       "targets": [
         {
           "expr": "sum by (operation) (rate(s3proxy_degraded_reads_total[5m]))",
-          "legendFormat": "reads: {{ `{{` }}operation{{ `}}` }}"
+          "legendFormat": "reads: {{operation}}"
         },
         {
           "expr": "rate(s3proxy_degraded_cache_hits_total[5m])",
@@ -689,7 +747,7 @@
         },
         {
           "expr": "sum by (operation) (rate(s3proxy_degraded_write_rejections_total[5m]))",
-          "legendFormat": "write rejected: {{ `{{` }}operation{{ `}}` }}"
+          "legendFormat": "write rejected: {{operation}}"
         }
       ],
       "options": {
@@ -722,11 +780,11 @@
         },
         {
           "expr": "sum by (reason) (rate(s3proxy_cleanup_queue_enqueued_total[5m]))",
-          "legendFormat": "enqueued: {{ `{{` }}reason{{ `}}` }}"
+          "legendFormat": "enqueued: {{reason}}"
         },
         {
           "expr": "sum by (status) (rate(s3proxy_cleanup_queue_processed_total[5m]))",
-          "legendFormat": "processed: {{ `{{` }}status{{ `}}` }}"
+          "legendFormat": "processed: {{status}}"
         },
         {
           "expr": "rate(s3proxy_rate_limit_rejections_total[5m])",
@@ -734,7 +792,7 @@
         },
         {
           "expr": "sum by (limit_type) (rate(s3proxy_usage_limit_rejections_total[5m]))",
-          "legendFormat": "usage limit: {{ `{{` }}limit_type{{ `}}` }}"
+          "legendFormat": "usage limit: {{limit_type}}"
         }
       ],
       "options": {
@@ -781,7 +839,7 @@
             },
             {
               "expr": "sum by (status) (rate(s3proxy_replication_runs_total[5m]))",
-              "legendFormat": "runs: {{ `{{` }}status{{ `}}` }}"
+              "legendFormat": "runs: {{status}}"
             }
           ],
           "options": {
@@ -808,19 +866,19 @@
           "targets": [
             {
               "expr": "sum by (strategy, status) (rate(s3proxy_rebalance_objects_moved_total[5m]))",
-              "legendFormat": "moved: {{ `{{` }}strategy{{ `}}` }} ({{ `{{` }}status{{ `}}` }})"
+              "legendFormat": "moved: {{strategy}} ({{status}})"
             },
             {
               "expr": "sum by (strategy) (rate(s3proxy_rebalance_bytes_moved_total[5m]))",
-              "legendFormat": "bytes: {{ `{{` }}strategy{{ `}}` }}"
+              "legendFormat": "bytes: {{strategy}}"
             },
             {
               "expr": "sum by (strategy, status) (rate(s3proxy_rebalance_runs_total[5m]))",
-              "legendFormat": "runs: {{ `{{` }}strategy{{ `}}` }} ({{ `{{` }}status{{ `}}` }})"
+              "legendFormat": "runs: {{strategy}} ({{status}})"
             },
             {
               "expr": "sum by (reason) (rate(s3proxy_rebalance_skipped_total[5m]))",
-              "legendFormat": "skipped: {{ `{{` }}reason{{ `}}` }}"
+              "legendFormat": "skipped: {{reason}}"
             }
           ],
           "options": {
@@ -855,11 +913,11 @@
             },
             {
               "expr": "sum by (status) (rate(s3proxy_lifecycle_runs_total[5m]))",
-              "legendFormat": "lifecycle runs: {{ `{{` }}status{{ `}}` }}"
+              "legendFormat": "lifecycle runs: {{status}}"
             },
             {
               "expr": "sum by (event) (rate(s3proxy_audit_events_total[5m]))",
-              "legendFormat": "audit: {{ `{{` }}event{{ `}}` }}"
+              "legendFormat": "audit: {{event}}"
             }
           ],
           "options": {

@@ -558,6 +558,12 @@ curl http://localhost:9000/health
 
 Returns `ok` when the database is reachable, `degraded` when the circuit breaker is open. Always returns HTTP 200 (so the service stays in load balancer rotation during degraded mode).
 
+### Grafana dashboard
+
+A comprehensive Grafana dashboard is included at `grafana/s3-orchestrator.json`. Import it via Grafana's UI (Dashboards → Import → Upload JSON file) or provision it from disk. It expects a Prometheus datasource with UID `prometheus`.
+
+The dashboard covers all emitted metrics across seven rows: overview stats, storage quotas, monthly usage, request performance, backend operations, health/reliability (circuit breaker, degraded mode, cleanup queue, rate limits), and background workers (replication, rebalancer, lifecycle, audit). The background workers row is collapsed by default.
+
 ### Key Prometheus metrics
 
 If `telemetry.metrics.enabled` is `true`, metrics are exposed at `/metrics`. Key metrics to alert on:
