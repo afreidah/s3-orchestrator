@@ -101,3 +101,5 @@ backends:
 # ui:
 #   enabled: false
 #   path: /ui
+#   admin_key: "${UI_ADMIN_KEY}"
+#   admin_secret: "${UI_ADMIN_SECRET}"

@@ -83,7 +83,7 @@ vet: ## Run Go vet static analysis
 lint: ## Run Go linter
 	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run ./...
 
-run: ## Run locally (requires config.yaml)
+run: integration-deps ## Run locally (requires config.yaml)
 	go run ./cmd/s3-orchestrator -config config.yaml
 
 docs: ## Serve godoc locally at http://localhost:8080

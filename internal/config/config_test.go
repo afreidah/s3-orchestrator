@@ -1237,6 +1237,44 @@ backends:
 }
 
 // -------------------------------------------------------------------------
+// UI CONFIG TESTS
+// -------------------------------------------------------------------------
+
+func TestUIConfig_EnabledMissingCredentials(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.UI = UIConfig{Enabled: true}
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil {
+		t.Fatal("expected validation error for UI enabled without credentials")
+	}
+	if !strings.Contains(err.Error(), "admin_key") || !strings.Contains(err.Error(), "admin_secret") {
+		t.Errorf("error = %q, want mention of admin_key and admin_secret", err)
+	}
+}
+
+func TestUIConfig_EnabledWithCredentials(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.UI = UIConfig{Enabled: true, AdminKey: "key", AdminSecret: "secret"}
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Errorf("valid UI config should pass: %v", err)
+	}
+	if cfg.UI.Path != "/ui" {
+		t.Errorf("UI.Path = %q, want /ui (default)", cfg.UI.Path)
+	}
+}
+
+func TestUIConfig_DisabledSkipsValidation(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.UI = UIConfig{Enabled: false}
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Errorf("disabled UI should skip credential validation: %v", err)
+	}
+}
+
+// -------------------------------------------------------------------------
 // HELPERS
 // -------------------------------------------------------------------------
 
