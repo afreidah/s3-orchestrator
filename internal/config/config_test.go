@@ -10,6 +10,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -1006,8 +1008,247 @@ func TestLifecycleConfig_DuplicatePrefix(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
+// RATE LIMIT CONFIG TESTS
+// -------------------------------------------------------------------------
+
+func TestRateLimitConfig_Defaults(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.RateLimit = RateLimitConfig{Enabled: true}
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("valid rate limit config should pass: %v", err)
+	}
+
+	if cfg.RateLimit.RequestsPerSec != 100 {
+		t.Errorf("requests_per_sec default = %f, want 100", cfg.RateLimit.RequestsPerSec)
+	}
+	if cfg.RateLimit.Burst != 200 {
+		t.Errorf("burst default = %d, want 200", cfg.RateLimit.Burst)
+	}
+}
+
+func TestRateLimitConfig_DisabledSkipsValidation(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.RateLimit = RateLimitConfig{Enabled: false, RequestsPerSec: -1, Burst: -1}
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Errorf("disabled rate limit should skip validation: %v", err)
+	}
+}
+
+// -------------------------------------------------------------------------
+// ROUTING STRATEGY TESTS
+// -------------------------------------------------------------------------
+
+func TestRoutingStrategy_DefaultsPack(t *testing.T) {
+	cfg := validBaseConfig()
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("valid config should pass: %v", err)
+	}
+
+	if cfg.RoutingStrategy != "pack" {
+		t.Errorf("routing_strategy default = %q, want \"pack\"", cfg.RoutingStrategy)
+	}
+}
+
+func TestRoutingStrategy_InvalidValue(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.RoutingStrategy = "invalid"
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil {
+		t.Error("invalid routing_strategy should fail validation")
+	}
+	if !strings.Contains(err.Error(), "routing_strategy") {
+		t.Errorf("error should mention routing_strategy, got: %v", err)
+	}
+}
+
+// -------------------------------------------------------------------------
+// TRACING CONFIG TESTS
+// -------------------------------------------------------------------------
+
+func TestTracingConfig_EnabledWithoutEndpoint(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Telemetry.Tracing = TracingConfig{
+		Enabled: true,
+	}
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil {
+		t.Error("tracing enabled without endpoint should fail validation")
+	}
+	if !strings.Contains(err.Error(), "tracing.endpoint is required") {
+		t.Errorf("error should mention tracing endpoint, got: %v", err)
+	}
+}
+
+func TestTracingConfig_EnabledWithEndpoint(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Telemetry.Tracing = TracingConfig{
+		Enabled:  true,
+		Endpoint: "localhost:4317",
+	}
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Errorf("tracing with endpoint should pass: %v", err)
+	}
+
+	if cfg.Telemetry.Tracing.SampleRate != 1.0 {
+		t.Errorf("sample_rate default = %f, want 1.0", cfg.Telemetry.Tracing.SampleRate)
+	}
+}
+
+func TestTracingConfig_DisabledSkipsEndpointValidation(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Telemetry.Tracing = TracingConfig{
+		Enabled: false,
+	}
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Errorf("disabled tracing should skip endpoint validation: %v", err)
+	}
+}
+
+func TestMetricsConfig_DefaultPath(t *testing.T) {
+	cfg := validBaseConfig()
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("valid config should pass: %v", err)
+	}
+
+	if cfg.Telemetry.Metrics.Path != "/metrics" {
+		t.Errorf("metrics path default = %q, want \"/metrics\"", cfg.Telemetry.Metrics.Path)
+	}
+}
+
+// -------------------------------------------------------------------------
+// LOADCONFIG TESTS
+// -------------------------------------------------------------------------
+
+func TestLoadConfig_ValidFile(t *testing.T) {
+	yaml := `
+server:
+  listen_addr: ":9000"
+buckets:
+  - name: test
+    credentials:
+      - access_key_id: AKID
+        secret_access_key: secret
+database:
+  host: localhost
+  database: s3proxy
+  user: s3proxy
+backends:
+  - name: b1
+    endpoint: https://s3.example.com
+    bucket: mybucket
+    access_key_id: AKID
+    secret_access_key: secret
+    quota_bytes: 1024
+`
+	path := writeTempConfig(t, yaml)
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.Server.ListenAddr != ":9000" {
+		t.Errorf("listen_addr = %q, want \":9000\"", cfg.Server.ListenAddr)
+	}
+	if cfg.Backends[0].Name != "b1" {
+		t.Errorf("backend name = %q, want \"b1\"", cfg.Backends[0].Name)
+	}
+}
+
+func TestLoadConfig_NonexistentFile(t *testing.T) {
+	_, err := LoadConfig("/tmp/nonexistent-config-file-abc123.yaml")
+	if err == nil {
+		t.Fatal("expected error for nonexistent file")
+	}
+	if !strings.Contains(err.Error(), "read config file") {
+		t.Errorf("error should mention reading file, got: %v", err)
+	}
+}
+
+func TestLoadConfig_InvalidYAML(t *testing.T) {
+	path := writeTempConfig(t, "{{invalid yaml")
+
+	_, err := LoadConfig(path)
+	if err == nil {
+		t.Fatal("expected error for invalid YAML")
+	}
+	if !strings.Contains(err.Error(), "parse config") {
+		t.Errorf("error should mention parsing, got: %v", err)
+	}
+}
+
+func TestLoadConfig_ValidationFailure(t *testing.T) {
+	// Valid YAML but fails validation (missing required fields)
+	path := writeTempConfig(t, "server:\n  listen_addr: \"\"\n")
+
+	_, err := LoadConfig(path)
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if !strings.Contains(err.Error(), "invalid config") {
+		t.Errorf("error should mention invalid config, got: %v", err)
+	}
+}
+
+func TestLoadConfig_EnvVarExpansion(t *testing.T) {
+	t.Setenv("TEST_S3O_HOST", "envhost.example.com")
+	t.Setenv("TEST_S3O_PASS", "envpass123")
+
+	yaml := `
+server:
+  listen_addr: ":9000"
+buckets:
+  - name: test
+    credentials:
+      - access_key_id: AKID
+        secret_access_key: secret
+database:
+  host: ${TEST_S3O_HOST}
+  database: s3proxy
+  user: s3proxy
+  password: ${TEST_S3O_PASS}
+backends:
+  - name: b1
+    endpoint: https://s3.example.com
+    bucket: mybucket
+    access_key_id: AKID
+    secret_access_key: secret
+    quota_bytes: 1024
+`
+	path := writeTempConfig(t, yaml)
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.Database.Host != "envhost.example.com" {
+		t.Errorf("host = %q, want \"envhost.example.com\"", cfg.Database.Host)
+	}
+	if cfg.Database.Password != "envpass123" {
+		t.Errorf("password = %q, want \"envpass123\"", cfg.Database.Password)
+	}
+}
+
+// -------------------------------------------------------------------------
 // HELPERS
 // -------------------------------------------------------------------------
+
+// writeTempConfig writes content to a temporary YAML file and returns its path.
+func writeTempConfig(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("writing temp config: %v", err)
+	}
+	return path
+}
 
 // validBaseConfig returns a Config with all required fields populated (1 backend, 1 bucket).
 func validBaseConfig() Config {
