@@ -771,29 +771,48 @@ func (m *BackendManager) ListObjects(ctx context.Context, prefix, delimiter, sta
 			break
 		}
 
+		// lastKey tracks the most recently consumed object key so the
+		// continuation token lands after the entire prefix group, not
+		// in the middle of one.
+		var lastKey string
 		for _, obj := range storeResult.Objects {
-			if result.KeyCount >= maxKeys {
-				result.IsTruncated = true
-				result.NextContinuationToken = obj.ObjectKey
-				break
-			}
-
+			// Check CommonPrefix membership before the limit check so
+			// objects that collapse into an already-counted prefix are
+			// skipped without triggering premature truncation.
 			if delimiter != "" {
 				rest := obj.ObjectKey[len(prefix):]
 				idx := strings.Index(rest, delimiter)
 				if idx >= 0 {
 					cp := obj.ObjectKey[:len(prefix)+idx+len(delimiter)]
-					if !seen[cp] {
-						seen[cp] = true
-						result.CommonPrefixes = append(result.CommonPrefixes, cp)
-						result.KeyCount++
+					if seen[cp] {
+						// Same prefix already counted — skip silently
+						lastKey = obj.ObjectKey
+						continue
 					}
+					// New prefix would add an entry — enforce limit
+					if result.KeyCount >= maxKeys {
+						result.IsTruncated = true
+						result.NextContinuationToken = lastKey
+						break
+					}
+					seen[cp] = true
+					result.CommonPrefixes = append(result.CommonPrefixes, cp)
+					result.KeyCount++
+					lastKey = obj.ObjectKey
 					continue
 				}
 			}
 
+			// Regular object — enforce limit before adding
+			if result.KeyCount >= maxKeys {
+				result.IsTruncated = true
+				result.NextContinuationToken = lastKey
+				break
+			}
+
 			result.Objects = append(result.Objects, obj)
 			result.KeyCount++
+			lastKey = obj.ObjectKey
 		}
 
 		if result.IsTruncated || !storeResult.IsTruncated {
