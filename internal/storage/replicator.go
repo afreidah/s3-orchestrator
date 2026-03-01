@@ -205,16 +205,19 @@ func (m *BackendManager) copyToReplica(ctx context.Context, key string, copies [
 
 		rctx, rcancel := m.withTimeout(ctx)
 		result, err := srcBackend.GetObject(rctx, key, "")
-		rcancel()
 		if err != nil {
+			rcancel()
 			slog.Warn("Replication: source read failed, trying next copy",
 				"key", key, "source", copy.BackendName, "error", err)
 			continue
 		}
 
+		// rcancel is deferred until after the body is fully consumed by PutObject,
+		// since result.Body is backed by the HTTP connection tied to rctx.
 		wctx, wcancel := m.withTimeout(ctx)
 		_, err = targetBackend.PutObject(wctx, key, result.Body, result.Size, result.ContentType)
 		_ = result.Body.Close()
+		rcancel()
 		wcancel()
 		if err != nil {
 			return "", fmt.Errorf("failed to write to target %s: %w", target, err)
