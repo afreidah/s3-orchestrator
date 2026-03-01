@@ -4,8 +4,10 @@
 // Author: Alex Freidah
 //
 // Full-stack integration tests running against real MinIO and PostgreSQL
-// containers. Covers CRUD, multipart uploads, quota enforcement, replication,
-// circuit breaker failover, and cross-backend object operations.
+// containers. Covers CRUD, bucket operations, batch delete, multipart uploads
+// (create, upload, complete, abort, list uploads, list parts), list objects
+// (V1 and V2), quota enforcement, replication, circuit breaker failover, and
+// cross-backend object operations.
 // -------------------------------------------------------------------------------
 
 //go:build integration
@@ -2911,5 +2913,337 @@ func TestCircuitBreakerDegradedMode(t *testing.T) {
 		if err != nil {
 			t.Fatalf("PutObject after recovery should succeed: %v", err)
 		}
+	})
+}
+
+// -------------------------------------------------------------------------
+// BUCKET OPERATIONS
+// -------------------------------------------------------------------------
+
+func TestBucketOperations(t *testing.T) {
+	client := newS3Client(t)
+	ctx := context.Background()
+
+	t.Run("HeadBucket", func(t *testing.T) {
+		_, err := client.HeadBucket(ctx, &s3.HeadBucketInput{
+			Bucket: aws.String(virtualBucket),
+		})
+		if err != nil {
+			t.Fatalf("HeadBucket: %v", err)
+		}
+	})
+
+	t.Run("GetBucketLocation", func(t *testing.T) {
+		resp, err := client.GetBucketLocation(ctx, &s3.GetBucketLocationInput{
+			Bucket: aws.String(virtualBucket),
+		})
+		if err != nil {
+			t.Fatalf("GetBucketLocation: %v", err)
+		}
+		// Orchestrator returns empty LocationConstraint (us-east-1 equivalent)
+		if resp.LocationConstraint != "" {
+			t.Errorf("LocationConstraint = %q, want empty", resp.LocationConstraint)
+		}
+	})
+
+	t.Run("ListBuckets", func(t *testing.T) {
+		resp, err := client.ListBuckets(ctx, &s3.ListBucketsInput{})
+		if err != nil {
+			t.Fatalf("ListBuckets: %v", err)
+		}
+		if len(resp.Buckets) == 0 {
+			t.Fatal("expected at least one bucket")
+		}
+		found := false
+		for _, b := range resp.Buckets {
+			if aws.ToString(b.Name) == virtualBucket {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("ListBuckets did not include %q", virtualBucket)
+		}
+	})
+}
+
+// -------------------------------------------------------------------------
+// LIST OBJECTS V1
+// -------------------------------------------------------------------------
+
+func TestListObjectsV1(t *testing.T) {
+	client := newS3Client(t)
+	ctx := context.Background()
+
+	prefix := fmt.Sprintf("listv1/%d/", time.Now().UnixNano())
+	keys := []string{prefix + "a", prefix + "b", prefix + "c"}
+
+	for _, k := range keys {
+		_, err := client.PutObject(ctx, &s3.PutObjectInput{
+			Bucket:        aws.String(virtualBucket),
+			Key:           aws.String(k),
+			Body:          bytes.NewReader([]byte("data")),
+			ContentLength: aws.Int64(4),
+		})
+		if err != nil {
+			t.Fatalf("PutObject(%s): %v", k, err)
+		}
+	}
+
+	t.Run("BasicList", func(t *testing.T) {
+		resp, err := client.ListObjects(ctx, &s3.ListObjectsInput{
+			Bucket: aws.String(virtualBucket),
+			Prefix: aws.String(prefix),
+		})
+		if err != nil {
+			t.Fatalf("ListObjects: %v", err)
+		}
+		if len(resp.Contents) != 3 {
+			t.Errorf("got %d objects, want 3", len(resp.Contents))
+		}
+	})
+
+	t.Run("WithMarker", func(t *testing.T) {
+		// Use the first key as a marker to skip it and get the remaining two
+		resp, err := client.ListObjects(ctx, &s3.ListObjectsInput{
+			Bucket: aws.String(virtualBucket),
+			Prefix: aws.String(prefix),
+			Marker: aws.String(keys[0]),
+		})
+		if err != nil {
+			t.Fatalf("ListObjects with marker: %v", err)
+		}
+		if len(resp.Contents) != 2 {
+			t.Fatalf("got %d objects, want 2", len(resp.Contents))
+		}
+		// The returned keys should be "b" and "c" (sorted after marker "a")
+		for _, obj := range resp.Contents {
+			k := aws.ToString(obj.Key)
+			if k == keys[0] {
+				t.Errorf("marker key %q should not appear in results", k)
+			}
+		}
+	})
+}
+
+// -------------------------------------------------------------------------
+// DELETE OBJECTS (BATCH)
+// -------------------------------------------------------------------------
+
+func TestDeleteObjects(t *testing.T) {
+	client := newS3Client(t)
+	ctx := context.Background()
+
+	keys := make([]string, 3)
+	for i := range keys {
+		keys[i] = uniqueKey(t, "batch-del")
+		_, err := client.PutObject(ctx, &s3.PutObjectInput{
+			Bucket:        aws.String(virtualBucket),
+			Key:           aws.String(keys[i]),
+			Body:          bytes.NewReader([]byte("data")),
+			ContentLength: aws.Int64(4),
+		})
+		if err != nil {
+			t.Fatalf("PutObject(%s): %v", keys[i], err)
+		}
+	}
+
+	deleteObjects := make([]types.ObjectIdentifier, len(keys))
+	for i, k := range keys {
+		deleteObjects[i] = types.ObjectIdentifier{Key: aws.String(k)}
+	}
+
+	resp, err := client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
+		Bucket: aws.String(virtualBucket),
+		Delete: &types.Delete{
+			Objects: deleteObjects,
+			Quiet:   aws.Bool(false),
+		},
+	})
+	if err != nil {
+		t.Fatalf("DeleteObjects: %v", err)
+	}
+	if len(resp.Deleted) != 3 {
+		t.Errorf("deleted %d objects, want 3", len(resp.Deleted))
+	}
+	if len(resp.Errors) != 0 {
+		t.Errorf("got %d errors, want 0", len(resp.Errors))
+	}
+
+	// Verify all are gone
+	for _, k := range keys {
+		_, err := client.HeadObject(ctx, &s3.HeadObjectInput{
+			Bucket: aws.String(virtualBucket),
+			Key:    aws.String(k),
+		})
+		if err == nil {
+			t.Errorf("expected 404 for %q after batch delete", k)
+		}
+	}
+}
+
+// -------------------------------------------------------------------------
+// LIST MULTIPART UPLOADS
+// -------------------------------------------------------------------------
+
+func TestListMultipartUploads(t *testing.T) {
+	client := newS3Client(t)
+	ctx := context.Background()
+
+	key := uniqueKey(t, "list-mpu")
+
+	create, err := client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
+		Bucket: aws.String(virtualBucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		t.Fatalf("CreateMultipartUpload: %v", err)
+	}
+	uploadID := create.UploadId
+
+	list, err := client.ListMultipartUploads(ctx, &s3.ListMultipartUploadsInput{
+		Bucket: aws.String(virtualBucket),
+	})
+	if err != nil {
+		t.Fatalf("ListMultipartUploads: %v", err)
+	}
+
+	found := false
+	for _, u := range list.Uploads {
+		if aws.ToString(u.UploadId) == aws.ToString(uploadID) {
+			found = true
+			if aws.ToString(u.Key) != key {
+				t.Errorf("upload key = %q, want %q", aws.ToString(u.Key), key)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("ListMultipartUploads did not include upload %s", aws.ToString(uploadID))
+	}
+
+	// Clean up
+	_, err = client.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{
+		Bucket:   aws.String(virtualBucket),
+		Key:      aws.String(key),
+		UploadId: uploadID,
+	})
+	if err != nil {
+		t.Fatalf("AbortMultipartUpload cleanup: %v", err)
+	}
+}
+
+// -------------------------------------------------------------------------
+// ABORT MULTIPART UPLOAD
+// -------------------------------------------------------------------------
+
+func TestAbortMultipartUpload(t *testing.T) {
+	client := newS3Client(t)
+	ctx := context.Background()
+
+	key := uniqueKey(t, "abort-mpu")
+
+	create, err := client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
+		Bucket: aws.String(virtualBucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		t.Fatalf("CreateMultipartUpload: %v", err)
+	}
+	uploadID := create.UploadId
+
+	_, err = client.UploadPart(ctx, &s3.UploadPartInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(key),
+		UploadId:      uploadID,
+		PartNumber:    aws.Int32(1),
+		Body:          bytes.NewReader(bytes.Repeat([]byte("A"), 100)),
+		ContentLength: aws.Int64(100),
+	})
+	if err != nil {
+		t.Fatalf("UploadPart: %v", err)
+	}
+
+	_, err = client.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{
+		Bucket:   aws.String(virtualBucket),
+		Key:      aws.String(key),
+		UploadId: uploadID,
+	})
+	if err != nil {
+		t.Fatalf("AbortMultipartUpload: %v", err)
+	}
+
+	// Verify the upload is gone by listing parts (should return empty)
+	partsResp, err := client.ListParts(ctx, &s3.ListPartsInput{
+		Bucket:   aws.String(virtualBucket),
+		Key:      aws.String(key),
+		UploadId: uploadID,
+	})
+	if err != nil {
+		t.Fatalf("ListParts after abort: %v", err)
+	}
+	if len(partsResp.Parts) != 0 {
+		t.Errorf("expected 0 parts after abort, got %d", len(partsResp.Parts))
+	}
+}
+
+// -------------------------------------------------------------------------
+// LIST PARTS
+// -------------------------------------------------------------------------
+
+func TestListParts(t *testing.T) {
+	client := newS3Client(t)
+	ctx := context.Background()
+
+	key := uniqueKey(t, "list-parts")
+
+	create, err := client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
+		Bucket: aws.String(virtualBucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		t.Fatalf("CreateMultipartUpload: %v", err)
+	}
+	uploadID := create.UploadId
+
+	for i := int32(1); i <= 2; i++ {
+		_, err := client.UploadPart(ctx, &s3.UploadPartInput{
+			Bucket:        aws.String(virtualBucket),
+			Key:           aws.String(key),
+			UploadId:      uploadID,
+			PartNumber:    aws.Int32(i),
+			Body:          bytes.NewReader(bytes.Repeat([]byte{byte(i)}, 100)),
+			ContentLength: aws.Int64(100),
+		})
+		if err != nil {
+			t.Fatalf("UploadPart %d: %v", i, err)
+		}
+	}
+
+	resp, err := client.ListParts(ctx, &s3.ListPartsInput{
+		Bucket:   aws.String(virtualBucket),
+		Key:      aws.String(key),
+		UploadId: uploadID,
+	})
+	if err != nil {
+		t.Fatalf("ListParts: %v", err)
+	}
+
+	if len(resp.Parts) != 2 {
+		t.Errorf("got %d parts, want 2", len(resp.Parts))
+	}
+	for i, p := range resp.Parts {
+		wantNum := int32(i + 1)
+		if aws.ToInt32(p.PartNumber) != wantNum {
+			t.Errorf("part[%d].PartNumber = %d, want %d", i, aws.ToInt32(p.PartNumber), wantNum)
+		}
+		if aws.ToInt64(p.Size) != 100 {
+			t.Errorf("part[%d].Size = %d, want 100", i, aws.ToInt64(p.Size))
+		}
+	}
+
+	// Clean up
+	_, _ = client.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{
+		Bucket:   aws.String(virtualBucket),
+		Key:      aws.String(key),
+		UploadId: uploadID,
 	})
 }
