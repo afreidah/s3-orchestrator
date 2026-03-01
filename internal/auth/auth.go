@@ -98,13 +98,22 @@ func (br *BucketRegistry) AuthenticateAndResolveBucket(r *http.Request) (string,
 		return entry.BucketName, nil
 	}
 
-	// Legacy token auth
+	// Legacy token auth — iterate all tokens to avoid timing side-channels.
+	// ConstantTimeCompare requires equal-length inputs, so skip mismatched
+	// lengths without leaking which token matched.
 	proxyToken := r.Header.Get("X-Proxy-Token")
 	if proxyToken != "" {
+		var matchedBucket string
+		found := 0
 		for token, bucket := range br.byToken {
-			if subtle.ConstantTimeCompare([]byte(proxyToken), []byte(token)) == 1 {
-				return bucket, nil
+			if len(token) == len(proxyToken) &&
+				subtle.ConstantTimeCompare([]byte(proxyToken), []byte(token)) == 1 {
+				matchedBucket = bucket
+				found = 1
 			}
+		}
+		if found == 1 {
+			return matchedBucket, nil
 		}
 		return "", fmt.Errorf("invalid authentication token")
 	}
@@ -171,6 +180,20 @@ func VerifySigV4(r *http.Request, accessKeyID, secretAccessKey string) error {
 
 	// Build canonical request
 	signedHeaders := strings.Split(signedHeadersStr, ";")
+
+	// The host header must always be signed per the SigV4 spec to prevent
+	// replay attacks against different endpoints.
+	hostSigned := false
+	for _, h := range signedHeaders {
+		if h == "host" {
+			hostSigned = true
+			break
+		}
+	}
+	if !hostSigned {
+		return fmt.Errorf("host header must be signed")
+	}
+
 	canonicalRequest := buildCanonicalRequest(r, signedHeaders)
 
 	// Validate request timestamp to prevent replay attacks

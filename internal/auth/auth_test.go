@@ -164,6 +164,90 @@ func TestVerifySigV4_StaleTimestamp(t *testing.T) {
 	}
 }
 
+func TestVerifySigV4_HostHeaderMustBeSigned(t *testing.T) {
+	secret := "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"
+	accessKey := "AKIDEXAMPLE"
+	amzDate := time.Now().UTC().Format("20060102T150405Z")
+	dateStamp := amzDate[:8]
+
+	r, _ := http.NewRequest("GET", "/bucket/key", nil)
+	r.Header.Set("X-Amz-Date", amzDate)
+	r.Header.Set("X-Amz-Content-Sha256", "UNSIGNED-PAYLOAD")
+	r.Host = "localhost"
+
+	// Sign with only x-amz-date and x-amz-content-sha256, deliberately omitting host
+	signedHeaders := []string{"x-amz-content-sha256", "x-amz-date"}
+	canonicalRequest := buildCanonicalRequest(r, signedHeaders)
+	credentialScope := dateStamp + "/us-east-1/s3/aws4_request"
+	stringToSign := "AWS4-HMAC-SHA256\n" + amzDate + "\n" + credentialScope + "\n" + hashSHA256([]byte(canonicalRequest))
+	signingKey := deriveSigningKey(secret, dateStamp, "us-east-1", "s3")
+	signature := hex.EncodeToString(hmacSHA256(signingKey, []byte(stringToSign)))
+
+	r.Header.Set("Authorization",
+		"AWS4-HMAC-SHA256 Credential="+accessKey+"/"+credentialScope+
+			", SignedHeaders=x-amz-content-sha256;x-amz-date"+
+			", Signature="+signature)
+
+	err := VerifySigV4(r, accessKey, secret)
+	if err == nil {
+		t.Error("request without host in SignedHeaders should be rejected")
+	}
+}
+
+func TestBucketRegistry_TokenAuthIteratesAllTokens(t *testing.T) {
+	// Verify that token auth works correctly with multiple tokens of varying lengths
+	buckets := []config.BucketConfig{
+		{Name: "bucket-a", Credentials: []config.CredentialConfig{
+			{Token: "short"},
+		}},
+		{Name: "bucket-b", Credentials: []config.CredentialConfig{
+			{Token: "medium-token"},
+		}},
+		{Name: "bucket-c", Credentials: []config.CredentialConfig{
+			{Token: "a-very-long-token-value"},
+		}},
+	}
+
+	br := NewBucketRegistry(buckets)
+
+	// Each token should resolve to the correct bucket
+	for _, tt := range []struct {
+		token, wantBucket string
+	}{
+		{"short", "bucket-a"},
+		{"medium-token", "bucket-b"},
+		{"a-very-long-token-value", "bucket-c"},
+	} {
+		r, _ := http.NewRequest("GET", "/"+tt.wantBucket+"/key", nil)
+		r.Header.Set("X-Proxy-Token", tt.token)
+
+		bucket, err := br.AuthenticateAndResolveBucket(r)
+		if err != nil {
+			t.Errorf("token %q should succeed: %v", tt.token, err)
+			continue
+		}
+		if bucket != tt.wantBucket {
+			t.Errorf("token %q: bucket = %q, want %q", tt.token, bucket, tt.wantBucket)
+		}
+	}
+
+	// Wrong token should fail
+	r, _ := http.NewRequest("GET", "/bucket-a/key", nil)
+	r.Header.Set("X-Proxy-Token", "wrong")
+	_, err := br.AuthenticateAndResolveBucket(r)
+	if err == nil {
+		t.Error("wrong token should be denied")
+	}
+
+	// Token with same length as a valid token but different content should fail
+	r2, _ := http.NewRequest("GET", "/bucket-a/key", nil)
+	r2.Header.Set("X-Proxy-Token", "SHORT") // same length as "short"
+	_, err = br.AuthenticateAndResolveBucket(r2)
+	if err == nil {
+		t.Error("wrong token (same length) should be denied")
+	}
+}
+
 // -------------------------------------------------------------------------
 // BUCKET REGISTRY TESTS
 // -------------------------------------------------------------------------
