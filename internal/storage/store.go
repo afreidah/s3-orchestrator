@@ -375,11 +375,15 @@ func (s *Store) RecordObject(ctx context.Context, key, backend string, size int6
 		}
 
 		// --- Increment quota for new backend ---
-		if err := qtx.IncrementQuota(ctx, db.IncrementQuotaParams{
+		n, err := qtx.IncrementQuota(ctx, db.IncrementQuotaParams{
 			Amount:      size,
 			BackendName: backend,
-		}); err != nil {
+		})
+		if err != nil {
 			return fmt.Errorf("failed to update quota: %w", err)
+		}
+		if n == 0 {
+			return ErrNoSpaceAvailable
 		}
 
 		return nil
@@ -492,11 +496,15 @@ func (s *Store) MoveObjectLocation(ctx context.Context, key, fromBackend, toBack
 		}
 
 		// --- Increment destination quota ---
-		if err := qtx.IncrementQuota(ctx, db.IncrementQuotaParams{
+		n, err := qtx.IncrementQuota(ctx, db.IncrementQuotaParams{
 			Amount:      sizeBytes,
 			BackendName: toBackend,
-		}); err != nil {
+		})
+		if err != nil {
 			return 0, fmt.Errorf("failed to increment destination quota: %w", err)
+		}
+		if n == 0 {
+			return 0, ErrNoSpaceAvailable
 		}
 
 		return sizeBytes, nil
@@ -716,11 +724,15 @@ func (s *Store) RecordReplica(ctx context.Context, key, targetBackend, sourceBac
 		}
 
 		// --- Increment quota for target backend ---
-		if err := qtx.IncrementQuota(ctx, db.IncrementQuotaParams{
+		n, err := qtx.IncrementQuota(ctx, db.IncrementQuotaParams{
 			Amount:      size,
 			BackendName: targetBackend,
-		}); err != nil {
+		})
+		if err != nil {
 			return false, fmt.Errorf("failed to update quota: %w", err)
+		}
+		if n == 0 {
+			return false, ErrNoSpaceAvailable
 		}
 
 		return true, nil
@@ -908,11 +920,15 @@ func (s *Store) ImportObject(ctx context.Context, key, backend string, size int6
 			return false, nil
 		}
 
-		if err := qtx.IncrementQuota(ctx, db.IncrementQuotaParams{
+		n, err := qtx.IncrementQuota(ctx, db.IncrementQuotaParams{
 			Amount:      size,
 			BackendName: backend,
-		}); err != nil {
+		})
+		if err != nil {
 			return false, fmt.Errorf("failed to increment quota for %s: %w", backend, err)
+		}
+		if n == 0 {
+			return false, ErrNoSpaceAvailable
 		}
 
 		return true, nil

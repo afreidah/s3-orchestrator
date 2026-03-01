@@ -180,10 +180,11 @@ func (q *Queries) GetObjectCountsByBackend(ctx context.Context) ([]GetObjectCoun
 	return items, nil
 }
 
-const incrementQuota = `-- name: IncrementQuota :exec
+const incrementQuota = `-- name: IncrementQuota :execrows
 UPDATE backend_quotas
 SET bytes_used = bytes_used + $1, updated_at = NOW()
 WHERE backend_name = $2
+  AND (bytes_limit = 0 OR bytes_used + $1 <= bytes_limit)
 `
 
 type IncrementQuotaParams struct {
@@ -191,9 +192,12 @@ type IncrementQuotaParams struct {
 	BackendName string
 }
 
-func (q *Queries) IncrementQuota(ctx context.Context, arg IncrementQuotaParams) error {
-	_, err := q.db.Exec(ctx, incrementQuota, arg.Amount, arg.BackendName)
-	return err
+func (q *Queries) IncrementQuota(ctx context.Context, arg IncrementQuotaParams) (int64, error) {
+	result, err := q.db.Exec(ctx, incrementQuota, arg.Amount, arg.BackendName)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const upsertQuotaLimit = `-- name: UpsertQuotaLimit :exec
