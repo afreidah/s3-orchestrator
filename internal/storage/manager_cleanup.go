@@ -25,6 +25,10 @@ const maxCleanupAttempts = 10
 // cleanupBackoff returns the backoff duration for the given attempt number.
 // Uses exponential backoff: min(1m * 2^attempts, 24h).
 func cleanupBackoff(attempts int32) time.Duration {
+	// Clamp before shifting to prevent int64 overflow at attempts >= 33
+	if attempts > 20 {
+		return 24 * time.Hour
+	}
 	d := time.Minute * (1 << attempts)
 	if d > 24*time.Hour {
 		d = 24 * time.Hour
