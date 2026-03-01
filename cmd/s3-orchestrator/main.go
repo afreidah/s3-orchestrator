@@ -404,7 +404,9 @@ func runServe() {
 		manager.Close()
 
 		// Flush usage counters before closing database
-		if err := manager.FlushUsage(shutdownCtx); err != nil {
+		flushCtx, flushCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer flushCancel()
+		if err := manager.FlushUsage(flushCtx); err != nil {
 			slog.Warn("Failed to flush usage counters on shutdown", "error", err)
 		}
 
@@ -412,7 +414,9 @@ func runServe() {
 		store.Close()
 
 		// Flush traces
-		if err := shutdownTracer(shutdownCtx); err != nil {
+		traceCtx, traceCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer traceCancel()
+		if err := shutdownTracer(traceCtx); err != nil {
 			slog.Error("Tracer shutdown error", "error", err)
 		}
 	}()

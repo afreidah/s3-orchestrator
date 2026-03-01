@@ -18,10 +18,6 @@ PLATFORMS  := linux/amd64,linux/arm64
 # --- Go build flags ---
 GO_LDFLAGS := -s -w -X github.com/afreidah/s3-orchestrator/internal/telemetry.Version=$(VERSION)
 
-# --- Debian packaging ---
-DEB_VERSION ?= $(shell echo "$(VERSION)" | sed 's/^v//')
-DEB_ARCH    ?= $(shell dpkg --print-architecture 2>/dev/null || echo amd64)
-DEB_OUT      = s3-orchestrator_$(DEB_VERSION)_$(DEB_ARCH).deb
 
 # -------------------------------------------------------------------------
 # DEFAULT TARGET
@@ -133,7 +129,6 @@ integration-clean: ## Stop and remove integration test containers
 
 tools: ## Install build and packaging dependencies
 	go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0
-	go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.45.0
 	sudo apt-get update && sudo apt-get install -y lintian
 	curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
 
@@ -141,27 +136,14 @@ tools: ## Install build and packaging dependencies
 # DEBIAN PACKAGING
 # -------------------------------------------------------------------------
 
-# --- Map dpkg architecture names to GOARCH ---
-GOARCH_amd64 := amd64
-GOARCH_arm64 := arm64
-GOARCH       := $(GOARCH_$(DEB_ARCH))
-
 prep-changelog: ## Compress changelog for Debian packaging
 	@gzip -9 -n -c packaging/changelog > packaging/changelog.gz
 
-deb: prep-changelog ## Build a .deb package for DEB_ARCH (default: host arch)
-	mkdir -p dist
-	CGO_ENABLED=0 GOOS=linux GOARCH=$(GOARCH) go build \
-	  -ldflags="$(GO_LDFLAGS)" \
-	  -o dist/s3-orchestrator ./cmd/s3-orchestrator
-	VERSION=$(DEB_VERSION) GOARCH=$(GOARCH) nfpm package --packager deb --target $(DEB_OUT)
+deb: prep-changelog ## Build .deb packages via GoReleaser snapshot
+	goreleaser release --snapshot --clean --skip=publish
 
-deb-lint: deb ## Run lintian on the .deb package
-	lintian --tag-display-limit 0 $(DEB_OUT)
-
-deb-all: ## Build .deb packages for amd64 and arm64
-	$(MAKE) deb DEB_ARCH=amd64
-	$(MAKE) deb DEB_ARCH=arm64
+deb-lint: deb ## Run lintian on the .deb packages
+	@for f in dist/*.deb; do echo "--- $$f ---"; lintian --tag-display-limit 0 "$$f"; done
 
 # -------------------------------------------------------------------------
 # RELEASE
