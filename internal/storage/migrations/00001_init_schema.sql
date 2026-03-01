@@ -1,11 +1,14 @@
 -- -------------------------------------------------------------------------------
--- S3 Proxy Database Schema
+-- Initial Schema - S3 Orchestrator Database
 --
 -- Author: Alex Freidah
 --
--- PostgreSQL schema for quota tracking, object location storage, and multipart
--- uploads. Applied automatically on startup via go:embed.
+-- PostgreSQL schema for quota tracking, object location storage, multipart
+-- uploads, usage tracking, and cleanup queue. IF NOT EXISTS guards ensure safe
+-- application on databases with pre-existing schema.
 -- -------------------------------------------------------------------------------
+
+-- +goose Up
 
 -- Track quota usage per backend
 CREATE TABLE IF NOT EXISTS backend_quotas (
@@ -88,3 +91,12 @@ CREATE TABLE IF NOT EXISTS cleanup_queue (
 
 CREATE INDEX IF NOT EXISTS idx_cleanup_queue_next_retry
     ON cleanup_queue(next_retry) WHERE attempts < 10;
+
+-- +goose Down
+
+DROP TABLE IF EXISTS cleanup_queue;
+DROP TABLE IF EXISTS backend_usage;
+DROP TABLE IF EXISTS multipart_parts;
+DROP TABLE IF EXISTS multipart_uploads;
+DROP TABLE IF EXISTS object_locations;
+DROP TABLE IF EXISTS backend_quotas;
