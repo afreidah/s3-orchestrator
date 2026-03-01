@@ -658,6 +658,8 @@ func (m *BackendManager) DeleteObjects(ctx context.Context, keys []string) []Del
 	const maxConcurrency = 10
 	sem := make(chan struct{}, maxConcurrency)
 	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var backendErrors []error
 
 	for _, pd := range pending {
 		for _, cp := range pd.copies {
@@ -682,7 +684,9 @@ func (m *BackendManager) DeleteObjects(ctx context.Context, keys []string) []Del
 					slog.Warn("Failed to delete object from backend (batch)",
 						"backend", beName, "key", key, "error", err)
 					m.enqueueCleanup(ctx, beName, key, "batch_delete_failed")
-					span.RecordError(err)
+					mu.Lock()
+					backendErrors = append(backendErrors, err)
+					mu.Unlock()
 				}
 			}(cp.BackendName, pd.key, backend)
 		}
@@ -693,6 +697,11 @@ func (m *BackendManager) DeleteObjects(ctx context.Context, keys []string) []Del
 	}
 
 	wg.Wait()
+
+	// Record backend errors on the span after all goroutines have finished.
+	for _, err := range backendErrors {
+		span.RecordError(err)
+	}
 
 	// Tally outcomes for metrics and audit
 	var successCount, errorCount int
