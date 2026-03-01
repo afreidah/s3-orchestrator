@@ -32,7 +32,7 @@ help: ## Display available Make targets
 	@echo "Available targets:"
 	@echo ""
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## ' Makefile | \
-		awk 'BEGIN {FS = ":.*?## "} {printf "  %-15s %s\n", $$1, $$2}'
+		awk 'BEGIN {FS = ":.*?## "} {printf "  %-20s %s\n", $$1, $$2}'
 	@echo ""
 
 # -------------------------------------------------------------------------
@@ -95,6 +95,13 @@ run: integration-deps ## Run locally (requires config.yaml)
 
 docs: ## Serve godoc locally at http://localhost:8080
 	go run golang.org/x/pkgsite/cmd/pkgsite@latest -http=localhost:8080
+
+migration: ## Create a new database migration file
+	@read -p "Migration name: " name; \
+	ts=$$(date +%Y%m%d%H%M%S); \
+	file="internal/storage/migrations/$${ts}_$${name}.sql"; \
+	printf -- '-- +goose Up\n\n-- +goose Down\n' > "$$file"; \
+	echo "Created $$file"
 
 # -------------------------------------------------------------------------
 # INTEGRATION TESTS
@@ -190,5 +197,5 @@ clean: integration-clean ## Remove build artifacts, local image, and test contai
 		rm -f /tmp/nomad-demo.pid; \
 	fi
 
-.PHONY: help builder build docker push generate test vet lint run docs integration-deps integration-test integration-clean tools prep-changelog deb deb-lint deb-all release release-local kubernetes-demo nomad-demo clean
+.PHONY: help builder build docker push generate test vet lint run docs migration integration-deps integration-test integration-clean tools prep-changelog deb deb-lint deb-all release release-local kubernetes-demo nomad-demo clean
 .DEFAULT_GOAL := help

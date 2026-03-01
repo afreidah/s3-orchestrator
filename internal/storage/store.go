@@ -15,21 +15,27 @@ package storage
 
 import (
 	"context"
-	_ "embed"
+	"database/sql"
+	"embed"
 	"errors"
 	"fmt"
+	"io/fs"
+	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/pressly/goose/v3"
+
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	db "github.com/afreidah/s3-orchestrator/internal/storage/sqlc"
 )
 
-//go:embed migration.sql
-var migrationSQL string
+//go:embed migrations/*.sql
+var migrationFS embed.FS
 
 // likeEscaper escapes SQL LIKE wildcards in prefix strings.
 var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
@@ -71,6 +77,7 @@ var (
 type Store struct {
 	pool    *pgxpool.Pool
 	queries *db.Queries
+	connStr string
 }
 
 // QuotaStat holds quota statistics for a single backend.
@@ -101,7 +108,8 @@ type ObjectLocation struct {
 
 // NewStore creates a new PostgreSQL store connection using pgxpool.
 func NewStore(ctx context.Context, dbCfg *config.DatabaseConfig) (*Store, error) {
-	cfg, err := pgxpool.ParseConfig(dbCfg.ConnectionString())
+	connStr := dbCfg.ConnectionString()
+	cfg, err := pgxpool.ParseConfig(connStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse connection string: %w", err)
 	}
@@ -123,6 +131,7 @@ func NewStore(ctx context.Context, dbCfg *config.DatabaseConfig) (*Store, error)
 	return &Store{
 		pool:    pool,
 		queries: db.New(pool),
+		connStr: connStr,
 	}, nil
 }
 
@@ -131,12 +140,34 @@ func (s *Store) Close() {
 	s.pool.Close()
 }
 
-// RunMigrations applies the embedded schema DDL. All statements use IF NOT
-// EXISTS so this is safe to call on every startup.
-func (s *Store) RunMigrations(ctx context.Context) error {
-	_, err := s.pool.Exec(ctx, migrationSQL)
+// RunMigrations applies versioned database migrations using goose. Migrations
+// are embedded in the binary and applied in order. Already-applied migrations
+// are skipped automatically via the goose_db_version tracking table.
+func (s *Store) RunMigrations(ctx context.Context) error { // codecov:ignore -- requires live PostgreSQL, covered by integration tests
+	stdDB, err := sql.Open("pgx", s.connStr)
 	if err != nil {
-		return fmt.Errorf("failed to run migrations: %w", err)
+		return fmt.Errorf("open migration connection: %w", err)
+	}
+	defer stdDB.Close()
+
+	migrations, err := fs.Sub(migrationFS, "migrations")
+	if err != nil {
+		return fmt.Errorf("migration filesystem: %w", err)
+	}
+
+	provider, err := goose.NewProvider(goose.DialectPostgres, stdDB, migrations)
+	if err != nil {
+		return fmt.Errorf("create migration provider: %w", err)
+	}
+
+	results, err := provider.Up(ctx)
+	if err != nil {
+		return fmt.Errorf("apply migrations: %w", err)
+	}
+	for _, r := range results {
+		slog.Info("migration applied",
+			"version", r.Source.Version,
+			"duration", r.Duration)
 	}
 	return nil
 }
