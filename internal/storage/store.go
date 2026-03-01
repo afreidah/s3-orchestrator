@@ -1003,9 +1003,12 @@ func (s *Store) WithAdvisoryLock(ctx context.Context, lockID int64, fn func(ctx 
 		return false, nil
 	}
 
-	// Ensure the lock is released even if fn panics.
+	// Ensure the lock is released even if fn panics. Use a detached
+	// context so the unlock succeeds even if the caller's ctx is cancelled.
 	defer func() {
-		_, _ = conn.Exec(ctx, "SELECT pg_advisory_unlock($1)", lockID)
+		unlockCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, _ = conn.Exec(unlockCtx, "SELECT pg_advisory_unlock($1)", lockID)
 	}()
 
 	return true, fn(ctx)
