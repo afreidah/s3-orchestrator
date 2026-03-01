@@ -136,6 +136,28 @@ func TestPutObject_DBUnavailable(t *testing.T) {
 	}
 }
 
+func TestPutObject_BackendFailure_StillRecordsUsage(t *testing.T) {
+	backend := newMockBackend()
+	backend.putErr = errors.New("backend timeout")
+	store := &mockStore{getBackendResp: "b1"}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
+
+	_, err := mgr.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain")
+	if err == nil {
+		t.Fatal("expected error from backend failure")
+	}
+
+	// Even on failure, 1 API call should be recorded (the attempt was made)
+	c := mgr.usage.counters["b1"]
+	if got := c.apiRequests.Load(); got != 1 {
+		t.Errorf("apiRequests = %d, want 1 (failed call still counts)", got)
+	}
+	// No ingress should be recorded since the upload failed
+	if got := c.ingressBytes.Load(); got != 0 {
+		t.Errorf("ingressBytes = %d, want 0 (upload failed)", got)
+	}
+}
+
 func TestPutObject_RecordFailure_CleansUp(t *testing.T) {
 	backend := newMockBackend()
 	store := &mockStore{

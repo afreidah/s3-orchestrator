@@ -514,6 +514,75 @@ func TestCleanupStaleMultipartUploads_AbortsStaleUploads(t *testing.T) {
 // CreateMultipartUpload edge cases
 // -------------------------------------------------------------------------
 
+func TestCompleteMultipartUpload_UsageRecords2NPlus1APICalls(t *testing.T) {
+	backend := newMockBackend()
+	ctx := context.Background()
+	// Pre-store 3 parts on the backend
+	_, _ = backend.PutObject(ctx, "__multipart/upload-1/1", bytes.NewReader([]byte("AAA")), 3, "application/octet-stream")
+	_, _ = backend.PutObject(ctx, "__multipart/upload-1/2", bytes.NewReader([]byte("BBB")), 3, "application/octet-stream")
+	_, _ = backend.PutObject(ctx, "__multipart/upload-1/3", bytes.NewReader([]byte("CCC")), 3, "application/octet-stream")
+
+	store := &mockStore{
+		getMultipartResp: &MultipartUpload{
+			UploadID:    "upload-1",
+			ObjectKey:   "multi/key",
+			BackendName: "b1",
+			ContentType: "application/zip",
+		},
+		getPartsResp: []MultipartPart{
+			{PartNumber: 1, ETag: "e1", SizeBytes: 3},
+			{PartNumber: 2, ETag: "e2", SizeBytes: 3},
+			{PartNumber: 3, ETag: "e3", SizeBytes: 3},
+		},
+	}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
+
+	_, err := mgr.CompleteMultipartUpload(ctx, "upload-1", []int{1, 2, 3})
+	if err != nil {
+		t.Fatalf("CompleteMultipartUpload: %v", err)
+	}
+
+	// 3 parts → 3 GetObject + 1 PutObject + 3 DeleteObject = 7 API calls (2N+1)
+	c := mgr.usage.counters["b1"]
+	wantAPICalls := int64(2*3 + 1)
+	if got := c.apiRequests.Load(); got != wantAPICalls {
+		t.Errorf("apiRequests = %d, want %d (2*N+1 where N=3)", got, wantAPICalls)
+	}
+	// Total ingress should equal sum of all parts (9 bytes)
+	if got := c.ingressBytes.Load(); got != 9 {
+		t.Errorf("ingressBytes = %d, want 9", got)
+	}
+}
+
+func TestUploadPart_BackendFailure_StillRecordsUsage(t *testing.T) {
+	backend := newMockBackend()
+	backend.putErr = errors.New("backend timeout")
+
+	store := &mockStore{
+		getMultipartResp: &MultipartUpload{
+			UploadID:    "upload-1",
+			ObjectKey:   "multi/key",
+			BackendName: "b1",
+		},
+	}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
+
+	_, err := mgr.UploadPart(context.Background(), "upload-1", 1, bytes.NewReader([]byte("data")), 4)
+	if err == nil {
+		t.Fatal("expected error from backend failure")
+	}
+
+	// Even on failure, 1 API call should be recorded (the attempt was made)
+	c := mgr.usage.counters["b1"]
+	if got := c.apiRequests.Load(); got != 1 {
+		t.Errorf("apiRequests = %d, want 1 (failed call still counts)", got)
+	}
+	// No ingress should be recorded since the upload failed
+	if got := c.ingressBytes.Load(); got != 0 {
+		t.Errorf("ingressBytes = %d, want 0 (upload failed)", got)
+	}
+}
+
 func TestCreateMultipartUpload_CreateStoreError(t *testing.T) {
 	store := &mockStore{
 		getBackendResp:     "b1",
