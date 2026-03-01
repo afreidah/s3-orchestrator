@@ -145,11 +145,15 @@ func (u *UsageTracker) UpdateLimits(limits map[string]UsageLimits) {
 	u.limits = limits
 }
 
-// GetLimits returns the current per-backend usage limits.
+// GetLimits returns a shallow copy of the current per-backend usage limits.
 func (u *UsageTracker) GetLimits() map[string]UsageLimits {
 	u.limitsMu.RLock()
 	defer u.limitsMu.RUnlock()
-	return u.limits
+	cp := make(map[string]UsageLimits, len(u.limits))
+	for k, v := range u.limits {
+		cp[k] = v
+	}
+	return cp
 }
 
 // -------------------------------------------------------------------------

@@ -208,8 +208,7 @@ func (s *Server) handleCopyObject(ctx context.Context, w http.ResponseWriter, r 
 
 	// --- Validate source bucket matches authorized bucket (same-bucket only) ---
 	if sourceBucket != bucket {
-		writeS3Error(w, http.StatusForbidden, "AccessDenied",
-			fmt.Sprintf("Cross-bucket copy not allowed: source bucket %s does not match %s", sourceBucket, bucket))
+		writeS3Error(w, http.StatusForbidden, "AccessDenied", "Cross-bucket copy is not allowed")
 		return http.StatusForbidden, fmt.Errorf("cross-bucket copy denied: %s != %s", sourceBucket, bucket)
 	}
 
