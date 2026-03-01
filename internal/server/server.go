@@ -59,7 +59,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// --- Generate or adopt request ID ---
 	requestID := r.Header.Get("X-Request-Id")
-	if requestID == "" {
+	if !isValidRequestID(requestID) {
 		requestID = audit.NewID()
 	}
 	ctx := audit.WithRequestID(r.Context(), requestID)
@@ -312,6 +312,20 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // -------------------------------------------------------------------------
 // METRICS
 // -------------------------------------------------------------------------
+
+// isValidRequestID checks that a client-supplied request ID is safe to
+// propagate into logs and response headers (hex chars only, max 64 chars).
+func isValidRequestID(id string) bool {
+	if id == "" || len(id) > 64 {
+		return false
+	}
+	for _, c := range id {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
+			return false
+		}
+	}
+	return true
+}
 
 // recordRequest updates Prometheus metrics for a completed request.
 func (s *Server) recordRequest(method string, status int, start time.Time, reqSize, respSize int64) {

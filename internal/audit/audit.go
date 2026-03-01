@@ -83,10 +83,5 @@ func Log(ctx context.Context, event string, attrs ...slog.Attr) {
 
 	base = append(base, attrs...)
 
-	args := make([]any, len(base))
-	for i, a := range base {
-		args[i] = a
-	}
-
 	slog.LogAttrs(ctx, slog.LevelInfo, "audit", base...)
 }
