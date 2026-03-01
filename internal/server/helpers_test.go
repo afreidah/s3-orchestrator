@@ -86,6 +86,39 @@ func TestParsePath(t *testing.T) {
 	}
 }
 
+func TestIsValidRequestID(t *testing.T) {
+	tests := []struct {
+		name string
+		id   string
+		want bool
+	}{
+		{"empty", "", false},
+		{"valid hex lowercase", "abcdef0123456789", true},
+		{"valid hex uppercase", "ABCDEF0123456789", true},
+		{"valid hex mixed", "aB12cD34eF56", true},
+		{"32-char hex (typical)", "abcdef0123456789abcdef0123456789", true},
+		{"64-char hex (max)", "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789", true},
+		{"65 chars (too long)", "abcdef0123456789abcdef0123456789abcdef0123456789abcdef01234567890", false},
+		{"contains newline", "abc\ndef", false},
+		{"contains carriage return", "abc\rdef", false},
+		{"contains space", "abc def", false},
+		{"contains dash", "abc-def", false},
+		{"contains slash", "abc/def", false},
+		{"non-hex letter g", "abcdefg", false},
+		{"log injection attempt", "abc\n{\"audit\":true,\"event\":\"fake\"}", false},
+		{"header injection", "abc\r\nX-Evil: true", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isValidRequestID(tt.id)
+			if got != tt.want {
+				t.Errorf("isValidRequestID(%q) = %v, want %v", tt.id, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestXmlEscape(t *testing.T) {
 	tests := []struct {
 		input string
