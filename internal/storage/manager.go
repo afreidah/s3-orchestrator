@@ -275,21 +275,6 @@ func (m *BackendManager) SyncBackend(ctx context.Context, backendName, bucket st
 		return 0, 0, fmt.Errorf("backend %s does not support listing", backendName)
 	}
 
-	// Unwrap the concrete *Store from the MetadataStore interface (may be
-	// wrapped with CircuitBreakerStore).
-	var store *Store
-	switch v := m.store.(type) {
-	case *Store:
-		store = v
-	case *CircuitBreakerStore:
-		store, ok = v.real.(*Store)
-		if !ok {
-			return 0, 0, fmt.Errorf("unexpected inner store type")
-		}
-	default:
-		return 0, 0, fmt.Errorf("unexpected store type")
-	}
-
 	slog.Info("Starting backend sync", "backend", backendName, "bucket", bucket)
 
 	bucketPrefix := bucket + "/"
@@ -329,7 +314,7 @@ func (m *BackendManager) SyncBackend(ctx context.Context, backendName, bucket st
 				key = bucketPrefix + key
 			}
 
-			ok, importErr := store.ImportObject(ctx, key, backendName, obj.SizeBytes)
+			ok, importErr := m.store.ImportObject(ctx, key, backendName, obj.SizeBytes)
 			if importErr != nil {
 				return fmt.Errorf("failed to import %s: %w", obj.Key, importErr)
 			}

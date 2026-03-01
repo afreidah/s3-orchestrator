@@ -65,7 +65,7 @@ func (s *Server) handleListBuckets(w http.ResponseWriter, bucket string) (int, e
 			Bucket: []xmlBucket{
 				{
 					Name:         bucket,
-					CreationDate: time.Now().UTC().Format(time.RFC3339),
+					CreationDate: s.startedAt.UTC().Format(time.RFC3339),
 				},
 			},
 		},

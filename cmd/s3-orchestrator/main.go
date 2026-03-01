@@ -198,10 +198,7 @@ func runServe() {
 	bucketAuth := auth.NewBucketRegistry(cfg.Buckets)
 
 	// --- Create server ---
-	srv := &server.Server{
-		Manager:       manager,
-		MaxObjectSize: cfg.Server.MaxObjectSize,
-	}
+	srv := server.NewServer(manager, cfg.Server.MaxObjectSize)
 	srv.SetBucketAuth(bucketAuth)
 
 	// --- Setup HTTP mux ---

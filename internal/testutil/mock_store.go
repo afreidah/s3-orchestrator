@@ -352,3 +352,8 @@ func (m *MockStore) ListExpiredObjects(_ context.Context, _ string, _ time.Time,
 func (m *MockStore) WithAdvisoryLock(_ context.Context, _ int64, fn func(ctx context.Context) error) (bool, error) {
 	return true, fn(context.Background())
 }
+
+// ImportObject returns true (stub).
+func (m *MockStore) ImportObject(_ context.Context, _, _ string, _ int64) (bool, error) {
+	return true, nil
+}
