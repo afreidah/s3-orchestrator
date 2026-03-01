@@ -155,6 +155,29 @@ func (s *Server) handleCompleteMultipartUpload(ctx context.Context, w http.Respo
 		partNumbers = append(partNumbers, p.PartNumber)
 	}
 
+	// Validate total assembled size against MaxObjectSize before the
+	// expensive reassembly (read all parts + re-upload combined object).
+	if s.MaxObjectSize > 0 {
+		parts, err := s.Manager.GetParts(ctx, uploadID)
+		if err != nil {
+			return writeStorageError(w, err, "Failed to get parts"), err
+		}
+		requested := make(map[int]bool, len(partNumbers))
+		for _, pn := range partNumbers {
+			requested[pn] = true
+		}
+		var totalSize int64
+		for _, p := range parts {
+			if requested[p.PartNumber] {
+				totalSize += p.SizeBytes
+			}
+		}
+		if totalSize > s.MaxObjectSize {
+			writeS3Error(w, http.StatusRequestEntityTooLarge, "EntityTooLarge", "Combined object size exceeds the maximum allowed size")
+			return http.StatusRequestEntityTooLarge, fmt.Errorf("combined size %d exceeds max %d", totalSize, s.MaxObjectSize)
+		}
+	}
+
 	etag, err := s.Manager.CompleteMultipartUpload(ctx, uploadID, partNumbers)
 	if err != nil {
 		return writeStorageError(w, err, "Failed to complete multipart upload"), err
