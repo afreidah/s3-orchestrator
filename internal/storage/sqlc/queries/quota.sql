@@ -56,10 +56,11 @@ SELECT backend_name, COUNT(*) AS upload_count
 FROM multipart_uploads
 GROUP BY backend_name;
 
--- name: IncrementQuota :exec
+-- name: IncrementQuota :execrows
 UPDATE backend_quotas
 SET bytes_used = bytes_used + @amount, updated_at = NOW()
-WHERE backend_name = @backend_name;
+WHERE backend_name = @backend_name
+  AND (bytes_limit = 0 OR bytes_used + @amount <= bytes_limit);
 
 -- name: DecrementQuota :exec
 UPDATE backend_quotas

@@ -31,6 +31,6 @@ WHERE created_at < $1;
 -- name: ListMultipartUploadsByPrefix :many
 SELECT upload_id, object_key, content_type, created_at
 FROM multipart_uploads
-WHERE object_key LIKE @prefix || '%'
+WHERE object_key LIKE @prefix || '%' ESCAPE '\'
 ORDER BY object_key, created_at
 LIMIT @max_uploads;
