@@ -72,6 +72,7 @@ func (m *BackendManager) PutObject(ctx context.Context, key string, body io.Read
 	defer bcancel()
 	etag, err := backend.PutObject(bctx, key, body, size, contentType)
 	if err != nil {
+		m.usage.Record(backendName, 1, 0, 0) // API call was made even on failure
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)
 		return "", err
@@ -322,10 +323,12 @@ func (m *BackendManager) GetObject(ctx context.Context, key string, rangeHeader 
 		}
 		r, err := backend.GetObject(ctx, key, rangeHeader)
 		if err != nil {
+			m.usage.Record(beName, 1, 0, 0) // API call was made even on failure
 			return 0, err
 		}
 		if !m.usage.WithinLimits(beName, 1, r.Size, 0) {
 			_ = r.Body.Close()
+			m.usage.Record(beName, 1, 0, 0) // API call was made, egress rejected
 			return 0, fmt.Errorf("backend %s egress: %w", beName, errUsageLimitSkip)
 		}
 		once.Do(func() { result = r })
@@ -365,6 +368,7 @@ func (m *BackendManager) HeadObject(ctx context.Context, key string) (int64, str
 		}
 		size, contentType, etag, err := backend.HeadObject(ctx, key)
 		if err != nil {
+			m.usage.Record(beName, 1, 0, 0) // API call was made even on failure
 			return 0, err
 		}
 		once.Do(func() {

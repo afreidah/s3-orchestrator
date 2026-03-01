@@ -112,6 +112,7 @@ func (m *BackendManager) UploadPart(ctx context.Context, uploadID string, partNu
 	defer bcancel()
 	etag, err := backend.PutObject(bctx, partKey, body, size, "application/octet-stream")
 	if err != nil {
+		m.usage.Record(mu.BackendName, 1, 0, 0) // API call was made even on failure
 		span.SetStatus(codes.Error, err.Error())
 		return "", fmt.Errorf("failed to upload part: %w", err)
 	}
@@ -248,7 +249,8 @@ func (m *BackendManager) CompleteMultipartUpload(ctx context.Context, uploadID s
 	}
 
 	m.recordOperation(operation, mu.BackendName, start, nil)
-	m.usage.Record(mu.BackendName, 1, 0, 0)
+	// API calls: N GetObject (read parts) + 1 PutObject (assembled) + N DeleteObject (cleanup)
+	m.usage.Record(mu.BackendName, int64(2*len(parts)+1), 0, totalSize)
 
 	audit.Log(ctx, "storage.CompleteMultipartUpload",
 		slog.String("key", mu.ObjectKey),
