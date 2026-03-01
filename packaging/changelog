@@ -1,3 +1,43 @@
+s3-orchestrator (0.8.6-1) stable; urgency=low
+
+  * Additional integration tests
+
+ -- Alex Freidah <alex.freidah@gmail.com>  Thu, 27 Feb 2026 12:00:00 +0000
+
+s3-orchestrator (0.8.5-1) stable; urgency=low
+
+  * Adopt goose for versioned database migrations
+  * Add ListObjectsV1 and ListMultipartUploads endpoints
+  * Add HeadBucket, GetBucketLocation, and ListBuckets stubs
+  * Add Nomad and Kubernetes deployment examples with local demo scripts
+  * Add structured circuit breaker transition logging
+  * Add validate and version subcommands
+
+ -- Alex Freidah <alex.freidah@gmail.com>  Thu, 27 Feb 2026 00:00:00 +0000
+
+s3-orchestrator (0.8.0-1) stable; urgency=low
+
+  * Add web UI dashboard with auth, file management, rebalance, and sync
+  * Add comprehensive Grafana dashboard covering all emitted metrics
+
+ -- Alex Freidah <alex.freidah@gmail.com>  Wed, 26 Feb 2026 18:00:00 +0000
+
+s3-orchestrator (0.7.2-1) stable; urgency=low
+
+  * Improve test coverage across storage layer
+  * Add MIT license
+  * Push Docker image to ghcr.io on merge to main
+  * Bump dependency versions (AWS SDK, OpenTelemetry, GitHub Actions)
+  * Set version via .version file instead of Go ldflags constant
+
+ -- Alex Freidah <alex.freidah@gmail.com>  Wed, 26 Feb 2026 14:00:00 +0000
+
+s3-orchestrator (0.7.0-1) stable; urgency=low
+
+  * Update all source files for style guide compliance and godoc formatting
+
+ -- Alex Freidah <alex.freidah@gmail.com>  Wed, 26 Feb 2026 10:00:00 +0000
+
 s3-orchestrator (0.6.6-1) stable; urgency=low
 
   * Config-driven lifecycle rules for automatic object expiration

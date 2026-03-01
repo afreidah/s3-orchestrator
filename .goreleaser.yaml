@@ -88,6 +88,7 @@ nfpms:
     scripts:
       preinstall: ./packaging/preinstall.sh
       postinstall: ./packaging/postinstall.sh
+      preremove: ./packaging/preremove.sh
       postremove: ./packaging/postremove.sh
 
 checksum:

@@ -37,6 +37,14 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
 
 FROM alpine:3.21
 
+ARG VERSION=dev
+
+LABEL org.opencontainers.image.title="s3-orchestrator" \
+      org.opencontainers.image.description="Unified S3-compatible storage endpoint with multi-backend routing, quota management, and usage tracking" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.source="https://github.com/afreidah/s3-orchestrator" \
+      org.opencontainers.image.licenses="MIT"
+
 RUN apk add --no-cache ca-certificates && \
     adduser -D -u 10001 appuser
 
