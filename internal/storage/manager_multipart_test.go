@@ -260,6 +260,78 @@ func TestAbortMultipartUpload_PartDeleteFails_EnqueuesCleanup(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
+// CompleteMultipartUpload part filtering
+// -------------------------------------------------------------------------
+
+func TestCompleteMultipartUpload_PartSubset(t *testing.T) {
+	backend := newMockBackend()
+	ctx := context.Background()
+	// Upload 3 parts but only complete with parts 1 and 3
+	_, _ = backend.PutObject(ctx, "__multipart/upload-1/1", bytes.NewReader([]byte("AAA")), 3, "application/octet-stream")
+	_, _ = backend.PutObject(ctx, "__multipart/upload-1/2", bytes.NewReader([]byte("BBB")), 3, "application/octet-stream")
+	_, _ = backend.PutObject(ctx, "__multipart/upload-1/3", bytes.NewReader([]byte("CCC")), 3, "application/octet-stream")
+
+	store := &mockStore{
+		getMultipartResp: &MultipartUpload{
+			UploadID:    "upload-1",
+			ObjectKey:   "multi/key",
+			BackendName: "b1",
+			ContentType: "application/zip",
+		},
+		getPartsResp: []MultipartPart{
+			{PartNumber: 1, ETag: "e1", SizeBytes: 3},
+			{PartNumber: 2, ETag: "e2", SizeBytes: 3},
+			{PartNumber: 3, ETag: "e3", SizeBytes: 3},
+		},
+	}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
+
+	etag, err := mgr.CompleteMultipartUpload(ctx, "upload-1", []int{1, 3})
+	if err != nil {
+		t.Fatalf("CompleteMultipartUpload: %v", err)
+	}
+	if etag == "" {
+		t.Error("expected non-empty etag")
+	}
+	// Final object should contain only parts 1+3 (6 bytes: "AAACCC")
+	if !backend.hasObject("multi/key") {
+		t.Fatal("final object not found on backend")
+	}
+	// RecordObject should reflect the subset size (6 bytes, not 9)
+	if len(store.recordObjectCalls) != 1 {
+		t.Fatalf("expected 1 RecordObject call, got %d", len(store.recordObjectCalls))
+	}
+	if store.recordObjectCalls[0].Size != 6 {
+		t.Errorf("expected recorded size=6, got %d", store.recordObjectCalls[0].Size)
+	}
+}
+
+func TestCompleteMultipartUpload_InvalidPart(t *testing.T) {
+	store := &mockStore{
+		getMultipartResp: &MultipartUpload{
+			UploadID:    "upload-1",
+			ObjectKey:   "multi/key",
+			BackendName: "b1",
+			ContentType: "text/plain",
+		},
+		getPartsResp: []MultipartPart{
+			{PartNumber: 1, ETag: "e1", SizeBytes: 3},
+		},
+	}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+
+	// Request part 2 which was never uploaded
+	_, err := mgr.CompleteMultipartUpload(context.Background(), "upload-1", []int{1, 2})
+	if err == nil {
+		t.Fatal("expected error for missing part")
+	}
+	var s3err *S3Error
+	if !errors.As(err, &s3err) || s3err.Code != "InvalidPart" {
+		t.Errorf("expected S3Error with Code=InvalidPart, got %v", err)
+	}
+}
+
+// -------------------------------------------------------------------------
 // CompleteMultipartUpload error paths
 // -------------------------------------------------------------------------
 

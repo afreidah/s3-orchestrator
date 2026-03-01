@@ -222,8 +222,12 @@ func TestProcessCleanupQueue_MaxAttemptsReached(t *testing.T) {
 
 	store.mu.Lock()
 	defer store.mu.Unlock()
-	if len(store.retryCleanupCalls) != 1 {
-		t.Fatalf("expected 1 retry call, got %d", len(store.retryCleanupCalls))
+	// Exhausted items should be removed via CompleteCleanupItem, not retried
+	if len(store.retryCleanupCalls) != 0 {
+		t.Errorf("expected 0 retry calls for exhausted item, got %d", len(store.retryCleanupCalls))
+	}
+	if len(store.completeCleanupCalls) != 1 || store.completeCleanupCalls[0] != 5 {
+		t.Errorf("expected CompleteCleanupItem(5), got %v", store.completeCleanupCalls)
 	}
 }
 

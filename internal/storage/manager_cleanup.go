@@ -90,14 +90,18 @@ func (m *BackendManager) ProcessCleanupQueue(ctx context.Context) (processed, fa
 		// Retry or exhaust
 		newAttempts := item.Attempts + 1
 		if newAttempts >= maxCleanupAttempts {
-			slog.Error("Cleanup queue: max attempts reached",
+			slog.Error("Cleanup queue: max attempts reached, removing item",
 				"key", item.ObjectKey, "backend", item.BackendName,
 				"attempts", newAttempts, "error", delErr)
+			if err := m.store.CompleteCleanupItem(ctx, item.ID); err != nil {
+				slog.Error("Failed to remove exhausted cleanup item", "id", item.ID, "error", err)
+			}
 			telemetry.CleanupQueueProcessedTotal.WithLabelValues("exhausted").Inc()
-		} else {
-			telemetry.CleanupQueueProcessedTotal.WithLabelValues("retry").Inc()
+			failed++
+			continue
 		}
 
+		telemetry.CleanupQueueProcessedTotal.WithLabelValues("retry").Inc()
 		backoff := cleanupBackoff(item.Attempts)
 		if err := m.store.RetryCleanupItem(ctx, item.ID, backoff, delErr.Error()); err != nil {
 			slog.Error("Failed to update cleanup retry", "id", item.ID, "error", err)
