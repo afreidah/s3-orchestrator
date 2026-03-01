@@ -710,6 +710,44 @@ func TestListObjects_DelimiterDedup(t *testing.T) {
 	}
 }
 
+func TestListObjects_DelimiterTruncationSkipsSeen(t *testing.T) {
+	// Regression: when maxKeys is reached and remaining objects belong to
+	// an already-counted CommonPrefix, the continuation token must land
+	// past the entire prefix group so the next page doesn't re-emit it.
+	store := &mockStore{
+		listObjectsResp: &ListObjectsResult{
+			Objects: []ObjectLocation{
+				{ObjectKey: "a/1", BackendName: "b1"},
+				{ObjectKey: "a/2", BackendName: "b1"},
+				{ObjectKey: "a/3", BackendName: "b1"},
+				{ObjectKey: "b/1", BackendName: "b1"},
+			},
+			IsTruncated: false,
+		},
+	}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+
+	// maxKeys=1 with delimiter: should emit one CommonPrefix ("a/") and
+	// set the token past a/3 so the next page starts at b/1.
+	result, err := mgr.ListObjects(context.Background(), "", "/", "", 1)
+	if err != nil {
+		t.Fatalf("ListObjects: %v", err)
+	}
+	if result.KeyCount != 1 {
+		t.Errorf("KeyCount = %d, want 1", result.KeyCount)
+	}
+	if len(result.CommonPrefixes) != 1 || result.CommonPrefixes[0] != "a/" {
+		t.Errorf("CommonPrefixes = %v, want [a/]", result.CommonPrefixes)
+	}
+	if !result.IsTruncated {
+		t.Fatal("expected IsTruncated=true")
+	}
+	// Token must be past the last object in the "a/" group
+	if result.NextContinuationToken != "a/3" {
+		t.Errorf("NextContinuationToken = %q, want %q", result.NextContinuationToken, "a/3")
+	}
+}
+
 func TestListObjects_DBUnavailable(t *testing.T) {
 	store := &mockStore{listObjectsErr: ErrDBUnavailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
