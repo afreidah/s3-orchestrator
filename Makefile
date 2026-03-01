@@ -97,8 +97,9 @@ docs: ## Serve godoc locally at http://localhost:8080
 
 migration: ## Create a new database migration file
 	@read -p "Migration name: " name; \
-	ts=$$(date +%Y%m%d%H%M%S); \
-	file="internal/storage/migrations/$${ts}_$${name}.sql"; \
+	last=$$(ls internal/storage/migrations/*.sql 2>/dev/null | sed 's/.*\///' | sort -n | tail -1 | grep -oE '^[0-9]+'); \
+	next=$$(printf '%05d' $$(( $${last:-0} + 1 ))); \
+	file="internal/storage/migrations/$${next}_$${name}.sql"; \
 	printf -- '-- +goose Up\n\n-- +goose Down\n' > "$$file"; \
 	echo "Created $$file"
 

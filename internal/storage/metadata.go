@@ -5,8 +5,8 @@
 //
 // Defines the contract between the BackendManager and its metadata store.
 // Implemented by Store (real PostgreSQL) and CircuitBreakerStore (degraded
-// wrapper). Startup-only methods (RunMigrations, SyncQuotaLimits, Close) and
-// CLI-only methods (ImportObject) live on the concrete Store, not the interface.
+// wrapper). Startup-only methods (RunMigrations, SyncQuotaLimits, Close) live
+// on the concrete Store, not the interface.
 // -------------------------------------------------------------------------------
 
 package storage
@@ -92,6 +92,9 @@ type MetadataStore interface {
 
 	// --- Advisory lock (multi-instance coordination) ---
 	WithAdvisoryLock(ctx context.Context, lockID int64, fn func(ctx context.Context) error) (bool, error)
+
+	// --- Import (sync CLI) ---
+	ImportObject(ctx context.Context, key, backend string, size int64) (bool, error)
 }
 
 // UsageStat holds usage statistics for a single backend in a given period.

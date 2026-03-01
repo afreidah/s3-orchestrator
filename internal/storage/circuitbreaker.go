@@ -401,3 +401,8 @@ func (cb *CircuitBreakerStore) CleanupQueueDepth(ctx context.Context) (int64, er
 func (cb *CircuitBreakerStore) WithAdvisoryLock(ctx context.Context, lockID int64, fn func(ctx context.Context) error) (bool, error) {
 	return cb.real.WithAdvisoryLock(ctx, lockID, fn)
 }
+
+// ImportObject delegates to the real store with circuit breaker protection.
+func (cb *CircuitBreakerStore) ImportObject(ctx context.Context, key, backend string, size int64) (bool, error) {
+	return cbCall(cb, func() (bool, error) { return cb.real.ImportObject(ctx, key, backend, size) })
+}

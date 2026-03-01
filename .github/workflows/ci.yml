@@ -89,7 +89,10 @@ jobs:
       - name: Install lintian
         run: sudo apt-get update && sudo apt-get install -y lintian
 
-      - name: Build and lint debs
+      - name: Prep changelog
+        run: make prep-changelog
+
+      - name: Build debs
         uses: goreleaser/goreleaser-action@v7
         with:
           version: "~> v2"
