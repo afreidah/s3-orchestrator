@@ -402,8 +402,8 @@ func (m *BackendManager) executeOneMove(ctx context.Context, move rebalanceMove,
 	// --- Read from source ---
 	rctx, rcancel := m.withTimeout(ctx)
 	result, err := srcBackend.GetObject(rctx, move.ObjectKey, "")
-	rcancel()
 	if err != nil {
+		rcancel()
 		slog.Warn("Rebalance: failed to read source object",
 			"key", move.ObjectKey, "backend", move.FromBackend, "error", err)
 		telemetry.RebalanceObjectsMoved.WithLabelValues(strategy, "error").Inc()
@@ -411,9 +411,12 @@ func (m *BackendManager) executeOneMove(ctx context.Context, move rebalanceMove,
 	}
 
 	// --- Write to destination ---
+	// rcancel is deferred until after the body is fully consumed by PutObject,
+	// since result.Body is backed by the HTTP connection tied to rctx.
 	wctx, wcancel := m.withTimeout(ctx)
 	_, err = destBackend.PutObject(wctx, move.ObjectKey, result.Body, result.Size, result.ContentType)
 	_ = result.Body.Close()
+	rcancel()
 	wcancel()
 	if err != nil {
 		slog.Warn("Rebalance: failed to write destination object",
