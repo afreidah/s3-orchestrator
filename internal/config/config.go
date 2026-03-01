@@ -14,6 +14,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"strings"
@@ -494,6 +495,11 @@ func (c *Config) SetDefaultsAndValidate() error {
 		}
 		if c.RateLimit.Burst <= 0 {
 			errors = append(errors, "rate_limit.burst must be positive")
+		}
+		for _, cidr := range c.RateLimit.TrustedProxies {
+			if _, _, err := net.ParseCIDR(cidr); err != nil {
+				errors = append(errors, fmt.Sprintf("rate_limit.trusted_proxies: invalid CIDR %q: %v", cidr, err))
+			}
 		}
 	}
 
