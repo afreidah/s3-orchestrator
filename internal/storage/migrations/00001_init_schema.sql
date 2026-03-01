@@ -93,10 +93,5 @@ CREATE INDEX IF NOT EXISTS idx_cleanup_queue_next_retry
     ON cleanup_queue(next_retry) WHERE attempts < 10;
 
 -- +goose Down
-
-DROP TABLE IF EXISTS cleanup_queue;
-DROP TABLE IF EXISTS backend_usage;
-DROP TABLE IF EXISTS multipart_parts;
-DROP TABLE IF EXISTS multipart_uploads;
-DROP TABLE IF EXISTS object_locations;
-DROP TABLE IF EXISTS backend_quotas;
+-- No-op: dropping the metadata schema would orphan all objects on backends.
+SELECT 1;
