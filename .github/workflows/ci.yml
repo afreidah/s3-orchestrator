@@ -25,6 +25,11 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Verify sqlc generated code
+        run: |
+          go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0
+          sqlc diff
+
       - name: Lint
         run: make lint
 
@@ -83,7 +88,7 @@ jobs:
 
       - name: Install nfpm and lintian
         run: |
-          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.45.0
           sudo apt-get update && sudo apt-get install -y lintian
 
       - name: Build and lint deb (amd64)
@@ -127,3 +132,11 @@ jobs:
             ghcr.io/afreidah/s3-orchestrator:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ghcr.io/afreidah/s3-orchestrator:${{ steps.version.outputs.version }}
+          format: table
+          exit-code: "1"
+          severity: CRITICAL,HIGH

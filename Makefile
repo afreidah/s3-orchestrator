@@ -59,6 +59,9 @@ docker: ## Build Docker image for local architecture
 	@echo "Building $(FULL_TAG) for local architecture"
 	docker build --build-arg VERSION=$(VERSION) -t $(FULL_TAG) .
 
+scan: docker ## Scan Docker image for vulnerabilities with Trivy
+	trivy image --severity CRITICAL,HIGH $(FULL_TAG)
+
 # -------------------------------------------------------------------------
 # BUILD AND PUSH (MULTI-ARCH)
 # -------------------------------------------------------------------------
@@ -88,7 +91,7 @@ vet: ## Run Go vet static analysis
 	go vet ./...
 
 lint: ## Run Go linter
-	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run ./...
+	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.10.1 run ./...
 
 run: integration-deps ## Run locally (requires config.yaml)
 	go run ./cmd/s3-orchestrator -config config.yaml
@@ -129,9 +132,10 @@ integration-clean: ## Stop and remove integration test containers
 # -------------------------------------------------------------------------
 
 tools: ## Install build and packaging dependencies
-	go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
-	go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+	go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0
+	go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.45.0
 	sudo apt-get update && sudo apt-get install -y lintian
+	curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
 
 # -------------------------------------------------------------------------
 # DEBIAN PACKAGING
