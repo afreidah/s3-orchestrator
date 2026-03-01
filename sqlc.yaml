@@ -11,7 +11,7 @@ version: "2"
 sql:
   - engine: "postgresql"
     queries: "internal/storage/sqlc/queries"
-    schema: "internal/storage/sqlc/schema.sql"
+    schema: "internal/storage/migrations"
     gen:
       go:
         package: "db"

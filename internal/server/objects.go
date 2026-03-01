@@ -154,7 +154,7 @@ func (s *Server) handleGet(ctx context.Context, w http.ResponseWriter, r *http.R
 }
 
 // handleHead processes HEAD requests.
-func (s *Server) handleHead(ctx context.Context, w http.ResponseWriter, r *http.Request, key string) (int, error) {
+func (s *Server) handleHead(ctx context.Context, w http.ResponseWriter, _ *http.Request, key string) (int, error) {
 	size, contentType, etag, err := s.Manager.HeadObject(ctx, key)
 	if err != nil {
 		return writeStorageError(w, err, "Failed to retrieve object metadata"), err
@@ -179,7 +179,7 @@ func (s *Server) handleHead(ctx context.Context, w http.ResponseWriter, r *http.
 
 // handleDelete processes DELETE requests. The manager treats missing objects as
 // success (S3 idempotent delete), so any error returned is a real backend failure.
-func (s *Server) handleDelete(ctx context.Context, w http.ResponseWriter, r *http.Request, key string) (int, error) {
+func (s *Server) handleDelete(ctx context.Context, w http.ResponseWriter, _ *http.Request, key string) (int, error) {
 	if err := s.Manager.DeleteObject(ctx, key); err != nil {
 		return writeStorageError(w, err, "Failed to delete object"), err
 	}

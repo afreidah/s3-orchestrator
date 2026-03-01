@@ -38,7 +38,17 @@ import (
 type Server struct {
 	Manager       *storage.BackendManager
 	bucketAuth    atomic.Pointer[auth.BucketRegistry]
-	MaxObjectSize int64 // Max upload body size in bytes
+	MaxObjectSize int64     // Max upload body size in bytes
+	startedAt     time.Time // Stable timestamp for ListBuckets CreationDate
+}
+
+// NewServer creates a Server with a stable start timestamp.
+func NewServer(manager *storage.BackendManager, maxObjectSize int64) *Server {
+	return &Server{
+		Manager:       manager,
+		MaxObjectSize: maxObjectSize,
+		startedAt:     time.Now(),
+	}
 }
 
 // SetBucketAuth atomically replaces the bucket authentication registry.

@@ -15,7 +15,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"sort"
+	"cmp"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -169,10 +170,10 @@ func (m *BackendManager) planPackTight(ctx context.Context, stats map[string]Quo
 		backends = append(backends, backendUtil{Name: name, Limit: stat.BytesLimit})
 	}
 
-	sort.Slice(backends, func(i, j int) bool {
-		ri := float64(simUsed[backends[i].Name]) / float64(backends[i].Limit)
-		rj := float64(simUsed[backends[j].Name]) / float64(backends[j].Limit)
-		return ri > rj
+	slices.SortFunc(backends, func(a, b backendUtil) int {
+		ra := float64(simUsed[a.Name]) / float64(a.Limit)
+		rb := float64(simUsed[b.Name]) / float64(b.Limit)
+		return cmp.Compare(rb, ra) // descending
 	})
 
 	var plan []rebalanceMove
@@ -284,11 +285,11 @@ func (m *BackendManager) planSpreadEven(ctx context.Context, stats map[string]Qu
 	}
 
 	// Sort: most over-target sources first, most under-target destinations first
-	sort.Slice(sources, func(i, j int) bool {
-		return sources[i].Balance > sources[j].Balance
+	slices.SortFunc(sources, func(a, b backendBalance) int {
+		return cmp.Compare(b.Balance, a.Balance) // descending
 	})
-	sort.Slice(destinations, func(i, j int) bool {
-		return destinations[i].Balance < destinations[j].Balance
+	slices.SortFunc(destinations, func(a, b backendBalance) int {
+		return cmp.Compare(a.Balance, b.Balance) // ascending (most negative first)
 	})
 
 	var plan []rebalanceMove
