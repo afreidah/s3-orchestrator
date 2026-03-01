@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/audit"
@@ -157,11 +158,33 @@ func (m *BackendManager) CompleteMultipartUpload(ctx context.Context, uploadID s
 		return "", err
 	}
 
-	parts, err := m.store.GetParts(ctx, uploadID)
+	allParts, err := m.store.GetParts(ctx, uploadID)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return "", err
 	}
+
+	// Filter to only the parts specified by the client
+	requested := make(map[int]bool, len(partNumbers))
+	for _, pn := range partNumbers {
+		requested[pn] = true
+	}
+	var parts []MultipartPart
+	for _, p := range allParts {
+		if requested[p.PartNumber] {
+			parts = append(parts, p)
+		}
+	}
+	if len(parts) != len(partNumbers) {
+		err := &S3Error{StatusCode: 400, Code: "InvalidPart", Message: "one or more specified parts were not uploaded"}
+		span.SetStatus(codes.Error, err.Message)
+		return "", err
+	}
+
+	// Sort parts by part number for correct assembly order
+	slices.SortFunc(parts, func(a, b MultipartPart) int {
+		return a.PartNumber - b.PartNumber
+	})
 
 	// Calculate total size for the combined upload
 	var totalSize int64
