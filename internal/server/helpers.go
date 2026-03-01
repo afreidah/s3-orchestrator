@@ -10,6 +10,7 @@
 package server
 
 import (
+	"bytes"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -78,9 +79,16 @@ func writeStorageError(w http.ResponseWriter, err error, fallbackMsg string) int
 }
 
 // writeXML writes an S3-compatible XML response with the standard XML header.
+// Encodes to a buffer first so a serialization error doesn't commit a success
+// status to the client.
 func writeXML(w http.ResponseWriter, status int, v any) error {
+	var buf bytes.Buffer
+	buf.WriteString(xml.Header)
+	if err := xml.NewEncoder(&buf).Encode(v); err != nil {
+		return err
+	}
 	w.Header().Set("Content-Type", "application/xml")
 	w.WriteHeader(status)
-	_, _ = fmt.Fprint(w, xml.Header)
-	return xml.NewEncoder(w).Encode(v)
+	_, err := w.Write(buf.Bytes())
+	return err
 }
