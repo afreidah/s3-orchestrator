@@ -136,7 +136,7 @@ func (q *Queries) GetStaleMultipartUploads(ctx context.Context, createdAt pgtype
 const listMultipartUploadsByPrefix = `-- name: ListMultipartUploadsByPrefix :many
 SELECT upload_id, object_key, content_type, created_at
 FROM multipart_uploads
-WHERE object_key LIKE $1 || '%'
+WHERE object_key LIKE $1 || '%' ESCAPE '\'
 ORDER BY object_key, created_at
 LIMIT $2
 `
