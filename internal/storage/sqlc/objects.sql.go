@@ -97,11 +97,15 @@ SELECT
     (CASE WHEN position('/' IN substring(object_key FROM length($1::text) + 1)) > 0
          THEN true ELSE false
     END)::boolean AS is_dir,
-    COUNT(DISTINCT object_key)  AS file_count,
+    COUNT(*)  AS file_count,
     COALESCE(SUM(size_bytes), 0)::bigint AS total_size
-FROM object_locations
-WHERE object_key LIKE $1::text || '%' ESCAPE '\'
-  AND length(object_key) > length($1::text)
+FROM (
+    SELECT DISTINCT ON (object_key) object_key, size_bytes
+    FROM object_locations
+    WHERE object_key LIKE $1::text || '%' ESCAPE '\'
+      AND length(object_key) > length($1::text)
+    ORDER BY object_key, created_at ASC
+) deduped
 GROUP BY name, is_dir
 ORDER BY is_dir DESC, name ASC
 `
@@ -115,6 +119,7 @@ type GetDirectoryStatsRow struct {
 
 // Aggregate count and size for immediate children of a directory prefix.
 // Directories (containing a '/') and files are distinguished by is_dir.
+// Uses a subquery to deduplicate replicated objects before summing sizes.
 func (q *Queries) GetDirectoryStats(ctx context.Context, prefix string) ([]GetDirectoryStatsRow, error) {
 	rows, err := q.db.Query(ctx, getDirectoryStats, prefix)
 	if err != nil {

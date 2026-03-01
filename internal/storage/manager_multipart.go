@@ -196,13 +196,17 @@ func (m *BackendManager) CompleteMultipartUpload(ctx context.Context, uploadID s
 	// Stream parts sequentially through a pipe to avoid opening all backend
 	// connections simultaneously. The goroutine reads one part at a time and
 	// writes it to the pipe; the PutObject call reads from the other end.
+	// pipeCtx is cancelled when PutObject returns so an early failure doesn't
+	// leave the goroutine blocked on remaining GetObject calls.
 	pr, pw := io.Pipe()
+	pipeCtx, pipeCancel := context.WithCancel(ctx)
+	defer pipeCancel()
 
 	go func() {
 		defer func() { _ = pw.Close() }()
 		for _, part := range parts {
 			partKey := multipartPartKey(uploadID, part.PartNumber)
-			bctx, bcancel := m.withTimeout(ctx)
+			bctx, bcancel := m.withTimeout(pipeCtx)
 			result, err := backend.GetObject(bctx, partKey, "")
 			if err != nil {
 				bcancel()

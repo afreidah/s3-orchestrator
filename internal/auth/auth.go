@@ -237,7 +237,7 @@ func VerifySigV4(r *http.Request, accessKeyID, secretAccessKey string) error {
 // parseSigV4Fields extracts key=value pairs from the SigV4 auth header.
 func parseSigV4Fields(s string) map[string]string {
 	fields := make(map[string]string)
-	for _, part := range strings.Split(s, ", ") {
+	for _, part := range strings.Split(s, ",") {
 		part = strings.TrimSpace(part)
 		idx := strings.IndexByte(part, '=')
 		if idx > 0 {
