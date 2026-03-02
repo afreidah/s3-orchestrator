@@ -89,6 +89,12 @@ func (m *BackendManager) UploadPart(ctx context.Context, uploadID string, partNu
 	)
 	defer span.End()
 
+	if partNumber < 1 || partNumber > 10000 {
+		err := &S3Error{StatusCode: 400, Code: "InvalidArgument", Message: "Part number must be between 1 and 10000"}
+		span.SetStatus(codes.Error, err.Message)
+		return "", err
+	}
+
 	mu, err := m.store.GetMultipartUpload(ctx, uploadID)
 	if err != nil {
 		return "", m.classifyWriteError(span, operation, err)

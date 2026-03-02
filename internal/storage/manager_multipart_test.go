@@ -88,6 +88,22 @@ func TestUploadPart_Success(t *testing.T) {
 	}
 }
 
+func TestUploadPart_InvalidPartNumber(t *testing.T) {
+	mgr := newTestManager(&mockStore{}, map[string]*mockBackend{"b1": newMockBackend()})
+
+	for _, pn := range []int{0, -1, 10001, 1 << 20} {
+		_, err := mgr.UploadPart(context.Background(), "upload-1", pn, bytes.NewReader([]byte("x")), 1)
+		if err == nil {
+			t.Errorf("UploadPart(partNumber=%d) should fail", pn)
+			continue
+		}
+		var s3Err *S3Error
+		if !errors.As(err, &s3Err) || s3Err.Code != "InvalidArgument" {
+			t.Errorf("UploadPart(partNumber=%d) = %v, want S3Error InvalidArgument", pn, err)
+		}
+	}
+}
+
 func TestUploadPart_DBUnavailable(t *testing.T) {
 	store := &mockStore{getMultipartErr: ErrDBUnavailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
