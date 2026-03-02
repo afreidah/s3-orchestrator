@@ -26,11 +26,22 @@ job "s3-orchestrator" {
       name = "s3-orchestrator"
       port = "http"
 
+      # Liveness — always 200, keeps the allocation alive during DB outages.
       check {
         type     = "http"
         path     = "/health"
         interval = "10s"
         timeout  = "3s"
+      }
+
+      # Readiness — returns 503 until startup completes and during shutdown
+      # drain. Gates rolling deploys so traffic only routes to ready instances.
+      check {
+        type      = "http"
+        path      = "/health/ready"
+        interval  = "5s"
+        timeout   = "2s"
+        on_update = "require_healthy"
       }
     }
 

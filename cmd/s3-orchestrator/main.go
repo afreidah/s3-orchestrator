@@ -16,11 +16,13 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"runtime"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -56,6 +58,15 @@ func main() { // codecov:ignore -- process entry point, delegates to tested func
 func runServe() {
 	configPath := flag.String("config", "config.yaml", "Path to configuration file")
 	flag.Parse()
+
+	// --- Readiness gate ---
+	var ready atomic.Bool
+
+	// --- Instance ID for health responses ---
+	instanceID, _ := os.Hostname()
+	if instanceID == "" {
+		instanceID = "unknown"
+	}
 
 	// --- Initialize structured logger ---
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
@@ -210,15 +221,28 @@ func runServe() {
 		slog.Info("Metrics endpoint enabled", "path", cfg.Telemetry.Metrics.Path)
 	}
 
-	// Health check endpoint — always 200 so service stays in Consul rotation.
-	// Body reflects DB state for monitoring.
+	// Liveness endpoint — always 200 so the service stays in Consul/K8s rotation.
+	// Body reflects DB state for monitoring; instance ID aids multi-instance debugging.
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		if cbStore.IsHealthy() {
-			_, _ = w.Write([]byte("ok"))
-		} else {
-			_, _ = w.Write([]byte("degraded"))
+		status := "ok"
+		if !cbStore.IsHealthy() {
+			status = "degraded"
 		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = fmt.Fprintf(w, `{"status":%q,"instance":%q}`, status, instanceID)
+	})
+
+	// Readiness endpoint — returns 503 until startup completes and during shutdown drain.
+	mux.HandleFunc("/health/ready", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if !ready.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = fmt.Fprintf(w, `{"status":"not ready","instance":%q}`, instanceID)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = fmt.Fprintf(w, `{"status":"ready","instance":%q}`, instanceID)
 	})
 
 	// Web UI dashboard
@@ -376,6 +400,15 @@ func runServe() {
 
 		slog.Info("Shutting down")
 
+		// Toggle readiness off so load balancers stop routing new traffic
+		ready.Store(false)
+
+		// Optional pre-stop delay for async LB deregistration (Consul, K8s)
+		if cfg.Server.ShutdownDelay > 0 {
+			slog.Info("Waiting for load balancer deregistration", "delay", cfg.Server.ShutdownDelay)
+			time.Sleep(cfg.Server.ShutdownDelay)
+		}
+
 		// Stop SIGHUP handler so it can't race with shutdown
 		signal.Stop(hupChan)
 		close(hupChan)
@@ -418,6 +451,9 @@ func runServe() {
 			slog.Error("Tracer shutdown error", "error", err)
 		}
 	}()
+
+	// --- Mark service as ready ---
+	ready.Store(true)
 
 	// --- Log startup info ---
 	bucketNames := make([]string, len(cfg.Buckets))
