@@ -499,6 +499,7 @@ The dashboard shows:
 - **Monthly Usage** — API requests, egress, and ingress per backend with limits
 - **Objects** — interactive collapsible tree browser; buckets and directories expand on click to reveal contents, with rollup file counts and sizes
 - **Configuration** — virtual buckets, write routing strategy, replication factor, rebalance strategy, rate limit status
+- **Logs** — recent structured log output from an in-memory ring buffer (last 5,000 entries), filterable by severity level with client-side text search and optional auto-refresh
 
 The dashboard also provides management actions:
 
@@ -517,7 +518,7 @@ ui:
   admin_secret: "${UI_ADMIN_SECRET}"
 ```
 
-JSON APIs are available at `{path}/api/dashboard` and `{path}/api/tree` for programmatic access. Management endpoints (`{path}/api/delete`, `{path}/api/upload`, `{path}/api/rebalance`, `{path}/api/sync`) accept POST requests and return JSON responses.
+JSON APIs are available at `{path}/api/dashboard`, `{path}/api/tree`, and `{path}/api/logs` for programmatic access. The logs endpoint accepts optional query parameters: `level`, `since`, `component`, and `limit`. Management endpoints (`{path}/api/delete`, `{path}/api/upload`, `{path}/api/rebalance`, `{path}/api/sync`) accept POST requests and return JSON responses.
 
 ## Endpoints
 
@@ -532,6 +533,7 @@ JSON APIs are available at `{path}/api/dashboard` and `{path}/api/tree` for prog
 | `/ui/api/delete` | Delete an object (POST, JSON body) |
 | `/ui/api/upload` | Upload a file (POST, multipart form) |
 | `/ui/api/rebalance` | Trigger on-demand rebalance (POST) |
+| `/ui/api/logs` | Buffered log entries as JSON (query params: level, since, component, limit) |
 | `/ui/api/sync` | Import objects from a backend (POST, JSON body) |
 | `/{bucket}/{key}` | S3 API |
 
@@ -785,11 +787,13 @@ internal/
     templates/login.html     Login page HTML template
     static/style.css         Dashboard stylesheet
     static/tree.js           Lazy-loaded directory tree, file management, sync/rebalance
+    static/logs.js           Log viewer with level filtering, search, auto-refresh
   testutil/
     mock_store.go            Shared MetadataStore mock for tests
   telemetry/
     metrics.go               Prometheus metric definitions
     tracing.go               OpenTelemetry tracer setup
+    logbuffer.go             In-memory ring buffer + slog TeeHandler
 grafana/
   s3-orchestrator.json       Grafana dashboard (all Prometheus metrics)
 sqlc.yaml                    sqlc configuration

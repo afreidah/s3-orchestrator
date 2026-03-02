@@ -482,3 +482,111 @@ dialog#sync-dialog select:focus {
   outline: none;
   border-color: #93c5fd;
 }
+
+/* --- Logs --- */
+.logs-level-select {
+  padding: 0.15rem 0.4rem;
+  border: none;
+  border-radius: 0.35rem;
+  cursor: pointer;
+  font-size: 0.7rem;
+  font-weight: 500;
+  background: #334155;
+  color: #93c5fd;
+  vertical-align: middle;
+  margin-left: 0.5rem;
+  appearance: auto;
+}
+
+.logs-auto-label {
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: #93c5fd;
+  vertical-align: middle;
+  margin-left: 0.5rem;
+  cursor: pointer;
+}
+
+.logs-auto-label input { vertical-align: middle; cursor: pointer; }
+
+.logs-search {
+  width: 100%;
+  padding: 0.45rem 0.75rem;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 0.35rem;
+  color: #e2e8f0;
+  font-size: 0.85rem;
+  font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
+  margin-bottom: 0.5rem;
+}
+
+.logs-search:focus {
+  outline: none;
+  border-color: #93c5fd;
+}
+
+.logs-container {
+  background: #1e293b;
+  border-radius: 0.5rem;
+  padding: 0.5rem 0;
+  max-height: 500px;
+  overflow-y: auto;
+  font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.6;
+}
+
+.logs-empty {
+  padding: 1rem;
+  color: #64748b;
+  font-style: italic;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+.log-entry {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.15rem 1rem;
+  border-left: 3px solid transparent;
+}
+
+.log-entry:hover { background: #334155; }
+
+.log-time {
+  color: #64748b;
+  flex-shrink: 0;
+}
+
+.log-lvl {
+  flex-shrink: 0;
+  width: 3.5em;
+  font-weight: 600;
+}
+
+.log-msg {
+  color: #e2e8f0;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.log-attrs {
+  color: #64748b;
+  margin-left: auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 40%;
+  flex-shrink: 0;
+}
+
+.log-level-error { border-left-color: #ef4444; }
+.log-level-error .log-lvl { color: #ef4444; }
+
+.log-level-warn { border-left-color: #f59e0b; }
+.log-level-warn .log-lvl { color: #f59e0b; }
+
+.log-level-info .log-lvl { color: #22c55e; }
+
+.log-level-debug .log-lvl { color: #64748b; }
+.log-level-debug .log-msg { color: #94a3b8; }
