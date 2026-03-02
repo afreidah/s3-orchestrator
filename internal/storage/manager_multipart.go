@@ -244,13 +244,7 @@ func (m *BackendManager) CompleteMultipartUpload(ctx context.Context, uploadID s
 	// Clean up part objects from backend
 	for _, part := range parts {
 		partKey := multipartPartKey(uploadID, part.PartNumber)
-		dctx, dcancel := m.withTimeout(ctx)
-		delErr := backend.DeleteObject(dctx, partKey)
-		dcancel()
-		if delErr != nil {
-			slog.Warn("Failed to delete part key", "key", partKey, "error", delErr)
-			m.enqueueCleanup(ctx, mu.BackendName, partKey, "complete_part_cleanup")
-		}
+		m.deleteOrEnqueue(ctx, backend, mu.BackendName, partKey, "complete_part_cleanup")
 	}
 
 	// Clean up multipart records from database
@@ -306,13 +300,7 @@ func (m *BackendManager) AbortMultipartUpload(ctx context.Context, uploadID stri
 	// Delete part objects from backend
 	for _, part := range parts {
 		partKey := multipartPartKey(uploadID, part.PartNumber)
-		dctx, dcancel := m.withTimeout(ctx)
-		delErr := backend.DeleteObject(dctx, partKey)
-		dcancel()
-		if delErr != nil {
-			slog.Warn("Failed to delete part key", "key", partKey, "error", delErr)
-			m.enqueueCleanup(ctx, mu.BackendName, partKey, "abort_part_cleanup")
-		}
+		m.deleteOrEnqueue(ctx, backend, mu.BackendName, partKey, "abort_part_cleanup")
 	}
 
 	// Delete multipart records from database

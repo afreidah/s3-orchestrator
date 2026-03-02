@@ -432,13 +432,7 @@ func (m *BackendManager) executeOneMove(ctx context.Context, move rebalanceMove,
 		slog.Error("Rebalance: failed to update object location",
 			"key", move.ObjectKey, "error", err)
 		// Clean up orphan on destination
-		dctx, dcancel := m.withTimeout(ctx)
-		delErr := destBackend.DeleteObject(dctx, move.ObjectKey)
-		dcancel()
-		if delErr != nil {
-			slog.Warn("Rebalance: failed to clean up orphan", "key", move.ObjectKey, "error", delErr)
-			m.enqueueCleanup(ctx, move.ToBackend, move.ObjectKey, "rebalance_orphan")
-		}
+		m.deleteOrEnqueue(ctx, destBackend, move.ToBackend, move.ObjectKey, "rebalance_orphan")
 		telemetry.RebalanceObjectsMoved.WithLabelValues(strategy, "error").Inc()
 		return false
 	}
@@ -447,24 +441,12 @@ func (m *BackendManager) executeOneMove(ctx context.Context, move rebalanceMove,
 		// Object was deleted or already moved by another process
 		slog.Info("Rebalance: object already moved or deleted, cleaning up",
 			"key", move.ObjectKey)
-		dctx, dcancel := m.withTimeout(ctx)
-		delErr := destBackend.DeleteObject(dctx, move.ObjectKey)
-		dcancel()
-		if delErr != nil {
-			slog.Warn("Rebalance: failed to clean up orphan", "key", move.ObjectKey, "error", delErr)
-			m.enqueueCleanup(ctx, move.ToBackend, move.ObjectKey, "rebalance_stale_orphan")
-		}
+		m.deleteOrEnqueue(ctx, destBackend, move.ToBackend, move.ObjectKey, "rebalance_stale_orphan")
 		return false
 	}
 
 	// --- Delete from source ---
-	delctx, delcancel := m.withTimeout(ctx)
-	if err := srcBackend.DeleteObject(delctx, move.ObjectKey); err != nil {
-		slog.Warn("Rebalance: failed to delete source object (orphan)",
-			"key", move.ObjectKey, "backend", move.FromBackend, "error", err)
-		m.enqueueCleanup(ctx, move.FromBackend, move.ObjectKey, "rebalance_source_delete")
-	}
-	delcancel()
+	m.deleteOrEnqueue(ctx, srcBackend, move.FromBackend, move.ObjectKey, "rebalance_source_delete")
 
 	m.usage.Record(move.FromBackend, 2, movedSize, 0) // Get + Delete, egress
 	m.usage.Record(move.ToBackend, 1, 0, movedSize)   // Put, ingress

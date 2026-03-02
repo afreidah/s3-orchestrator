@@ -230,13 +230,7 @@ type xmlUpload struct {
 func (s *Server) handleListMultipartUploads(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket string) (int, error) {
 	bucketPrefix := bucket + "/"
 
-	maxUploadsStr := r.URL.Query().Get("max-uploads")
-	maxUploads := 1000
-	if maxUploadsStr != "" {
-		if mu, err := strconv.Atoi(maxUploadsStr); err == nil && mu > 0 && mu <= 1000 {
-			maxUploads = mu
-		}
-	}
+	maxUploads := parseQueryInt(r, "max-uploads", 1000, 1000)
 
 	// Fetch one extra to detect truncation
 	uploads, err := s.Manager.ListMultipartUploads(ctx, bucketPrefix, maxUploads+1)

@@ -167,6 +167,21 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var requestSize, responseSize int64
 	var operation string
 
+	// rejectMethod handles the common 405 response for unsupported methods.
+	rejectMethod := func(msg string) {
+		s.recordRequest(method, http.StatusMethodNotAllowed, start, 0, 0)
+		audit.Log(ctx, "s3.MethodNotAllowed",
+			slog.String("method", method),
+			slog.String("path", r.URL.Path),
+			slog.String("remote", r.RemoteAddr),
+			slog.String("bucket", bucket),
+			slog.Int("status", http.StatusMethodNotAllowed),
+			slog.Duration("duration", time.Since(start)),
+		)
+		writeS3Error(w, http.StatusMethodNotAllowed, "MethodNotAllowed", msg)
+		span.SetStatus(codes.Error, msg)
+	}
+
 	// --- Bucket-level operations (no key) ---
 	if key == "" {
 		query := r.URL.Query()
@@ -198,17 +213,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			operation = "DeleteObjects"
 			status, err = s.handleDeleteObjects(ctx, w, r, bucket)
 		default:
-			s.recordRequest(method, http.StatusMethodNotAllowed, start, 0, 0)
-			audit.Log(ctx, "s3.MethodNotAllowed",
-				slog.String("method", method),
-				slog.String("path", r.URL.Path),
-				slog.String("remote", r.RemoteAddr),
-				slog.String("bucket", bucket),
-				slog.Int("status", http.StatusMethodNotAllowed),
-				slog.Duration("duration", time.Since(start)),
-			)
-			writeS3Error(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "Method not supported for bucket")
-			span.SetStatus(codes.Error, "method not allowed for bucket")
+			rejectMethod("Method not supported for bucket")
 			return
 		}
 	} else {
@@ -237,17 +242,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				operation = "ListParts"
 				status, err = s.handleListParts(ctx, w, r, bucket, key, internalKey)
 			default:
-				s.recordRequest(method, http.StatusMethodNotAllowed, start, 0, 0)
-				audit.Log(ctx, "s3.MethodNotAllowed",
-					slog.String("method", method),
-					slog.String("path", r.URL.Path),
-					slog.String("remote", r.RemoteAddr),
-					slog.String("bucket", bucket),
-					slog.Int("status", http.StatusMethodNotAllowed),
-					slog.Duration("duration", time.Since(start)),
-				)
-				writeS3Error(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "Method not supported")
-				span.SetStatus(codes.Error, "method not allowed")
+				rejectMethod("Method not supported")
 				return
 			}
 		default:
@@ -271,17 +266,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				operation = "DeleteObject"
 				status, err = s.handleDelete(ctx, w, r, internalKey)
 			default:
-				s.recordRequest(method, http.StatusMethodNotAllowed, start, 0, 0)
-				audit.Log(ctx, "s3.MethodNotAllowed",
-					slog.String("method", method),
-					slog.String("path", r.URL.Path),
-					slog.String("remote", r.RemoteAddr),
-					slog.String("bucket", bucket),
-					slog.Int("status", http.StatusMethodNotAllowed),
-					slog.Duration("duration", time.Since(start)),
-				)
-				writeS3Error(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "Method not supported")
-				span.SetStatus(codes.Error, "method not allowed")
+				rejectMethod("Method not supported")
 				return
 			}
 		}

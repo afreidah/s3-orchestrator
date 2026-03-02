@@ -17,10 +17,44 @@ import (
 	"encoding/xml"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
+
+	"github.com/afreidah/s3-orchestrator/internal/storage"
 )
+
+// xmlContent represents a single object in an S3 ListBucketResult response.
+type xmlContent struct {
+	Key          string `xml:"Key"`
+	Size         int64  `xml:"Size"`
+	LastModified string `xml:"LastModified"`
+}
+
+// xmlCommonPrefix represents a common prefix (directory) entry in a
+// ListBucketResult response.
+type xmlCommonPrefix struct {
+	Prefix string `xml:"Prefix"`
+}
+
+// buildListContents converts storage objects and common prefixes to their XML
+// representations, stripping the internal bucket prefix from each key.
+func buildListContents(objects []storage.ObjectLocation, prefixes []string, bucketPrefix string) ([]xmlContent, []xmlCommonPrefix) {
+	contents := make([]xmlContent, 0, len(objects))
+	for _, obj := range objects {
+		contents = append(contents, xmlContent{
+			Key:          strings.TrimPrefix(obj.ObjectKey, bucketPrefix),
+			Size:         obj.SizeBytes,
+			LastModified: obj.CreatedAt.UTC().Format(time.RFC3339),
+		})
+	}
+	commonPrefixes := make([]xmlCommonPrefix, 0, len(prefixes))
+	for _, cp := range prefixes {
+		commonPrefixes = append(commonPrefixes, xmlCommonPrefix{
+			Prefix: strings.TrimPrefix(cp, bucketPrefix),
+		})
+	}
+	return contents, commonPrefixes
+}
 
 // handleListObjectsV1 processes GET requests at the bucket level without
 // list-type=2, returning an S3-compatible ListBucketResult XML response using
@@ -32,14 +66,7 @@ func (s *Server) handleListObjectsV1(ctx context.Context, w http.ResponseWriter,
 	userPrefix := r.URL.Query().Get("prefix")
 	delimiter := r.URL.Query().Get("delimiter")
 	marker := r.URL.Query().Get("marker")
-	maxKeysStr := r.URL.Query().Get("max-keys")
-
-	maxKeys := 1000
-	if maxKeysStr != "" {
-		if mk, err := strconv.Atoi(maxKeysStr); err == nil && mk > 0 && mk <= 1000 {
-			maxKeys = mk
-		}
-	}
+	maxKeys := parseQueryInt(r, "max-keys", 1000, 1000)
 
 	internalPrefix := bucketPrefix + userPrefix
 
@@ -53,17 +80,7 @@ func (s *Server) handleListObjectsV1(ctx context.Context, w http.ResponseWriter,
 		return writeStorageError(w, err, "Failed to list objects"), err
 	}
 
-	type xmlContent struct {
-		Key          string `xml:"Key"`
-		Size         int64  `xml:"Size"`
-		LastModified string `xml:"LastModified"`
-	}
-
-	type xmlCommonPrefix struct {
-		Prefix string `xml:"Prefix"`
-	}
-
-	type xmlListResult struct {
+	type xmlListResultV1 struct {
 		XMLName        xml.Name          `xml:"ListBucketResult"`
 		Xmlns          string            `xml:"xmlns,attr"`
 		Name           string            `xml:"Name"`
@@ -82,29 +99,19 @@ func (s *Server) handleListObjectsV1(ctx context.Context, w http.ResponseWriter,
 		nextMarker = strings.TrimPrefix(result.NextContinuationToken, bucketPrefix)
 	}
 
-	xmlResult := xmlListResult{
-		Xmlns:       "http://s3.amazonaws.com/doc/2006-03-01/",
-		Name:        bucket,
-		Prefix:      userPrefix,
-		Marker:      marker,
-		NextMarker:  nextMarker,
-		Delimiter:   delimiter,
-		MaxKeys:     maxKeys,
-		IsTruncated: result.IsTruncated,
-	}
+	contents, commonPrefixes := buildListContents(result.Objects, result.CommonPrefixes, bucketPrefix)
 
-	for _, obj := range result.Objects {
-		xmlResult.Contents = append(xmlResult.Contents, xmlContent{
-			Key:          strings.TrimPrefix(obj.ObjectKey, bucketPrefix),
-			Size:         obj.SizeBytes,
-			LastModified: obj.CreatedAt.UTC().Format(time.RFC3339),
-		})
-	}
-
-	for _, cp := range result.CommonPrefixes {
-		xmlResult.CommonPrefixes = append(xmlResult.CommonPrefixes, xmlCommonPrefix{
-			Prefix: strings.TrimPrefix(cp, bucketPrefix),
-		})
+	xmlResult := xmlListResultV1{
+		Xmlns:          "http://s3.amazonaws.com/doc/2006-03-01/",
+		Name:           bucket,
+		Prefix:         userPrefix,
+		Marker:         marker,
+		NextMarker:     nextMarker,
+		Delimiter:      delimiter,
+		MaxKeys:        maxKeys,
+		IsTruncated:    result.IsTruncated,
+		Contents:       contents,
+		CommonPrefixes: commonPrefixes,
 	}
 
 	if err := writeXML(w, http.StatusOK, xmlResult); err != nil {
@@ -123,14 +130,7 @@ func (s *Server) handleListObjectsV2(ctx context.Context, w http.ResponseWriter,
 	userPrefix := r.URL.Query().Get("prefix")
 	delimiter := r.URL.Query().Get("delimiter")
 	continuationToken := r.URL.Query().Get("continuation-token")
-	maxKeysStr := r.URL.Query().Get("max-keys")
-
-	maxKeys := 1000
-	if maxKeysStr != "" {
-		if mk, err := strconv.Atoi(maxKeysStr); err == nil && mk > 0 && mk <= 1000 {
-			maxKeys = mk
-		}
-	}
+	maxKeys := parseQueryInt(r, "max-keys", 1000, 1000)
 
 	// Prepend bucket prefix to internal query parameters
 	internalPrefix := bucketPrefix + userPrefix
@@ -148,17 +148,7 @@ func (s *Server) handleListObjectsV2(ctx context.Context, w http.ResponseWriter,
 		return writeStorageError(w, err, "Failed to list objects"), err
 	}
 
-	type xmlContent struct {
-		Key          string `xml:"Key"`
-		Size         int64  `xml:"Size"`
-		LastModified string `xml:"LastModified"`
-	}
-
-	type xmlCommonPrefix struct {
-		Prefix string `xml:"Prefix"`
-	}
-
-	type xmlListResult struct {
+	type xmlListResultV2 struct {
 		XMLName               xml.Name          `xml:"ListBucketResult"`
 		Xmlns                 string            `xml:"xmlns,attr"`
 		Name                  string            `xml:"Name"`
@@ -179,7 +169,9 @@ func (s *Server) handleListObjectsV2(ctx context.Context, w http.ResponseWriter,
 		nextToken = strings.TrimPrefix(nextToken, bucketPrefix)
 	}
 
-	xmlResult := xmlListResult{
+	contents, commonPrefixes := buildListContents(result.Objects, result.CommonPrefixes, bucketPrefix)
+
+	xmlResult := xmlListResultV2{
 		Xmlns:                 "http://s3.amazonaws.com/doc/2006-03-01/",
 		Name:                  bucket,
 		Prefix:                userPrefix,
@@ -188,26 +180,12 @@ func (s *Server) handleListObjectsV2(ctx context.Context, w http.ResponseWriter,
 		KeyCount:              result.KeyCount,
 		IsTruncated:           result.IsTruncated,
 		NextContinuationToken: nextToken,
+		Contents:              contents,
+		CommonPrefixes:        commonPrefixes,
 	}
 
 	if continuationToken != "" {
 		xmlResult.ContinuationToken = continuationToken
-	}
-
-	// Strip bucket prefix from each returned key
-	for _, obj := range result.Objects {
-		xmlResult.Contents = append(xmlResult.Contents, xmlContent{
-			Key:          strings.TrimPrefix(obj.ObjectKey, bucketPrefix),
-			Size:         obj.SizeBytes,
-			LastModified: obj.CreatedAt.UTC().Format(time.RFC3339),
-		})
-	}
-
-	// Strip bucket prefix from common prefixes
-	for _, cp := range result.CommonPrefixes {
-		xmlResult.CommonPrefixes = append(xmlResult.CommonPrefixes, xmlCommonPrefix{
-			Prefix: strings.TrimPrefix(cp, bucketPrefix),
-		})
 	}
 
 	if err := writeXML(w, http.StatusOK, xmlResult); err != nil {

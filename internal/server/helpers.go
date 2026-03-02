@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/storage"
@@ -37,6 +38,20 @@ func parsePath(path string) (bucket string, key string, ok bool) {
 		return parts[0], "", true
 	}
 	return parts[0], parts[1], true
+}
+
+// parseQueryInt parses an integer query parameter, clamping it to [1, max].
+// Returns defaultVal when the parameter is absent or invalid.
+func parseQueryInt(r *http.Request, param string, defaultVal, max int) int {
+	s := r.URL.Query().Get(param)
+	if s == "" {
+		return defaultVal
+	}
+	v, err := strconv.Atoi(s)
+	if err != nil || v < 1 || v > max {
+		return defaultVal
+	}
+	return v
 }
 
 // writeS3Error sends an S3-style XML error response.
