@@ -645,6 +645,7 @@ When `ui.enabled` is `true`, the dashboard at `{path}/` shows a live snapshot of
 - **Monthly usage** — API requests, egress, and ingress per backend with limits
 - **Object tree** — interactive collapsible file browser. Buckets and directories are collapsed by default; click to expand. Each directory shows a rollup file count and total size.
 - **Configuration** — virtual bucket names, write routing strategy, replication factor, rebalance status, rate limiting
+- **Logs** — recent structured log output from an in-memory ring buffer (last 5,000 entries). Filter by severity level and search by text. Logs are available immediately on page load — no need to SSH into the host.
 
 The dashboard also provides management actions:
 
@@ -657,7 +658,7 @@ The dashboard requires authentication. Users log in at `{path}/login` with the `
 
 The dashboard is server-rendered HTML. The object tree uses JavaScript for lazy-loaded directory expansion — directories fetch their children on click via the `/ui/api/tree` endpoint.
 
-JSON endpoints at `{path}/api/dashboard` and `{path}/api/tree` return data for programmatic access or integration with other tools. Management endpoints (`{path}/api/delete`, `{path}/api/upload`, `{path}/api/rebalance`, `{path}/api/sync`) accept POST requests and require authentication.
+JSON endpoints at `{path}/api/dashboard`, `{path}/api/tree`, and `{path}/api/logs` return data for programmatic access or integration with other tools. The logs endpoint accepts optional query parameters: `level` (minimum severity: DEBUG, INFO, WARN, ERROR), `since` (RFC3339 timestamp), `component`, and `limit`. Management endpoints (`{path}/api/delete`, `{path}/api/upload`, `{path}/api/rebalance`, `{path}/api/sync`) accept POST requests. All API endpoints require authentication.
 
 ### Health endpoints
 

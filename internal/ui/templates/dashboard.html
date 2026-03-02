@@ -216,6 +216,25 @@
     </div>
   </section>
 
+  <!-- Logs -->
+  <section>
+    <h2>Logs
+      <button id="logs-refresh" class="btn-action">Refresh</button>
+      <label class="logs-auto-label"><input type="checkbox" id="logs-auto"> Auto</label>
+      <select id="logs-level" class="logs-level-select">
+        <option value="">All</option>
+        <option value="DEBUG">Debug</option>
+        <option value="INFO" selected>Info</option>
+        <option value="WARN">Warn</option>
+        <option value="ERROR">Error</option>
+      </select>
+    </h2>
+    <input type="text" id="logs-search" class="logs-search" placeholder="Filter logs...">
+    <div id="logs-container" class="logs-container">
+      <div class="tree-loading">Loading&hellip;</div>
+    </div>
+  </section>
+
 </div>
 
 <dialog id="confirm-delete">
@@ -255,5 +274,6 @@
   window.__buckets = [{{range $i, $b := .Buckets}}{{if $i}},{{end}}"{{$b}}"{{end}}];
 </script>
 <script src="static/tree.js?v={{.Version}}"></script>
+<script src="static/logs.js?v={{.Version}}"></script>
 </body>
 </html>
