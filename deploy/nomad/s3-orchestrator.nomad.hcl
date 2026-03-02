@@ -75,6 +75,9 @@ job "s3-orchestrator" {
       config {
         image = "ghcr.io/afreidah/s3-orchestrator:${var.version}"
         ports = ["http"]
+        # For multi-instance deployments, add -mode to split API and worker roles:
+        #   API group:    args = ["-config", "/etc/s3-orchestrator/config.yaml", "-mode", "api"]
+        #   Worker group: args = ["-config", "/etc/s3-orchestrator/config.yaml", "-mode", "worker"]
 
         volumes = [
           "secrets/config.yaml:/etc/s3-orchestrator/config.yaml",

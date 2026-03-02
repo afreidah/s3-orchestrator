@@ -57,7 +57,16 @@ func main() { // codecov:ignore -- process entry point, delegates to tested func
 
 func runServe() {
 	configPath := flag.String("config", "config.yaml", "Path to configuration file")
+	mode := flag.String("mode", "all", "Operating mode: api, worker, or all")
 	flag.Parse()
+
+	// --- Validate mode ---
+	switch *mode {
+	case "api", "worker", "all":
+	default:
+		fmt.Fprintf(os.Stderr, "invalid mode %q: must be api, worker, or all\n", *mode)
+		os.Exit(1)
+	}
 
 	// --- Readiness gate ---
 	var ready atomic.Bool
@@ -174,12 +183,15 @@ func runServe() {
 
 	// --- Start background services with lifecycle manager ---
 	sm := lifecycle.NewManager()
-	sm.Register("usage-flush", &usageFlushService{manager: manager})
-	sm.Register("multipart-cleanup", &multipartCleanupService{manager: manager, store: cbStore})
-	sm.Register("cleanup-queue", &cleanupQueueService{manager: manager, store: cbStore})
-	sm.Register("rebalancer", &rebalancerService{manager: manager, store: cbStore})
-	sm.Register("replicator", &replicatorService{manager: manager, store: cbStore})
-	sm.Register("lifecycle", &lifecycleService{manager: manager, store: cbStore})
+	sm.Register("usage-flush", &usageFlushService{manager: manager}) // all modes — data safety
+
+	if *mode == "worker" || *mode == "all" {
+		sm.Register("multipart-cleanup", &multipartCleanupService{manager: manager, store: cbStore})
+		sm.Register("cleanup-queue", &cleanupQueueService{manager: manager, store: cbStore})
+		sm.Register("rebalancer", &rebalancerService{manager: manager, store: cbStore})
+		sm.Register("replicator", &replicatorService{manager: manager, store: cbStore})
+		sm.Register("lifecycle", &lifecycleService{manager: manager, store: cbStore})
+	}
 
 	if cfg.Rebalance.Enabled {
 		slog.Info("Rebalancer enabled",
@@ -245,26 +257,30 @@ func runServe() {
 		_, _ = fmt.Fprintf(w, `{"status":"ready","instance":%q}`, instanceID)
 	})
 
-	// Web UI dashboard
+	// --- API-mode handlers: UI, rate limiter, S3 proxy ---
 	var uiHandler *ui.Handler
-	if cfg.UI.Enabled {
-		uiHandler = ui.New(manager, cbStore.IsHealthy, cfg)
-		uiHandler.Register(mux, cfg.UI.Path)
-		slog.Info("Web UI enabled", "path", cfg.UI.Path)
-	}
-
-	// S3 proxy handler (all other paths), optionally rate-limited
 	var rl *server.RateLimiter
-	var s3Handler http.Handler = srv
-	if cfg.RateLimit.Enabled {
-		rl = server.NewRateLimiter(cfg.RateLimit)
-		s3Handler = rl.Middleware(srv)
-		slog.Info("Rate limiting enabled",
-			"requests_per_sec", cfg.RateLimit.RequestsPerSec,
-			"burst", cfg.RateLimit.Burst,
-		)
+
+	if *mode == "api" || *mode == "all" {
+		// Web UI dashboard
+		if cfg.UI.Enabled {
+			uiHandler = ui.New(manager, cbStore.IsHealthy, cfg)
+			uiHandler.Register(mux, cfg.UI.Path)
+			slog.Info("Web UI enabled", "path", cfg.UI.Path)
+		}
+
+		// S3 proxy handler (all other paths), optionally rate-limited
+		var s3Handler http.Handler = srv
+		if cfg.RateLimit.Enabled {
+			rl = server.NewRateLimiter(cfg.RateLimit)
+			s3Handler = rl.Middleware(srv)
+			slog.Info("Rate limiting enabled",
+				"requests_per_sec", cfg.RateLimit.RequestsPerSec,
+				"burst", cfg.RateLimit.Burst,
+			)
+		}
+		mux.Handle("/", s3Handler)
 	}
-	mux.Handle("/", s3Handler)
 
 	httpServer := &http.Server{
 		Addr:              cfg.Server.ListenAddr,
@@ -462,6 +478,7 @@ func runServe() {
 	}
 	slog.Info("S3 Orchestrator starting",
 		"version", telemetry.Version,
+		"mode", *mode,
 		"listen_addr", cfg.Server.ListenAddr,
 		"buckets", bucketNames,
 		"backends", len(cfg.Backends),

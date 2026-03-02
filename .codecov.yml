@@ -7,5 +7,6 @@
 # -------------------------------------------------------------------------------
 
 ignore:
+  - "cmd/"                    # process entry points, not unit-testable
   - "internal/testutil/"
   - "internal/storage/sqlc/"  # generated code (sqlc)
