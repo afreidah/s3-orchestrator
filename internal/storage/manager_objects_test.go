@@ -317,17 +317,17 @@ func TestHeadObject_Success(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	size, ct, etag, err := mgr.HeadObject(context.Background(), "key")
+	result, err := mgr.HeadObject(context.Background(), "key")
 	if err != nil {
 		t.Fatalf("HeadObject: %v", err)
 	}
-	if size != 6 {
-		t.Errorf("size = %d, want 6", size)
+	if result.Size != 6 {
+		t.Errorf("size = %d, want 6", result.Size)
 	}
-	if ct != "application/json" {
-		t.Errorf("content-type = %q", ct)
+	if result.ContentType != "application/json" {
+		t.Errorf("content-type = %q", result.ContentType)
 	}
-	if etag == "" {
+	if result.ETag == "" {
 		t.Error("expected non-empty etag")
 	}
 }
@@ -339,12 +339,12 @@ func TestHeadObject_DBUnavailable_Broadcast(t *testing.T) {
 	store := &mockStore{getAllLocationsErr: ErrDBUnavailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	size, _, _, err := mgr.HeadObject(context.Background(), "key")
+	result, err := mgr.HeadObject(context.Background(), "key")
 	if err != nil {
 		t.Fatalf("HeadObject broadcast should succeed: %v", err)
 	}
-	if size != 4 {
-		t.Errorf("size = %d, want 4", size)
+	if result.Size != 4 {
+		t.Errorf("size = %d, want 4", result.Size)
 	}
 }
 
@@ -1128,12 +1128,12 @@ func (s *slowGetBackend) GetObject(ctx context.Context, key string, rangeHeader 
 	}
 }
 
-func (s *slowGetBackend) HeadObject(ctx context.Context, key string) (int64, string, string, error) {
+func (s *slowGetBackend) HeadObject(ctx context.Context, key string) (*HeadObjectResult, error) {
 	select {
 	case <-time.After(s.delay):
 		return s.mockBackend.HeadObject(ctx, key)
 	case <-ctx.Done():
-		return 0, "", "", ctx.Err()
+		return nil, ctx.Err()
 	}
 }
 
@@ -1446,11 +1446,11 @@ func TestHeadObject_ParallelBroadcast(t *testing.T) {
 	})
 	defer mgr.Close()
 
-	size, _, _, err := mgr.HeadObject(context.Background(), "key")
+	result, err := mgr.HeadObject(context.Background(), "key")
 	if err != nil {
 		t.Fatalf("HeadObject parallel broadcast should succeed: %v", err)
 	}
-	if size != 4 {
-		t.Errorf("size = %d, want 4", size)
+	if result.Size != 4 {
+		t.Errorf("size = %d, want 4", result.Size)
 	}
 }

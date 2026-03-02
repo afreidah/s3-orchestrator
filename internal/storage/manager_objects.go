@@ -353,41 +353,34 @@ func (m *BackendManager) GetObject(ctx context.Context, key string, rangeHeader 
 
 // HeadObject retrieves object metadata. Tries the primary copy first, then
 // falls back to replicas if the primary fails.
-func (m *BackendManager) HeadObject(ctx context.Context, key string) (int64, string, string, error) {
-	type headResult struct {
-		size        int64
-		contentType string
-		etag        string
-	}
-	var result headResult
+func (m *BackendManager) HeadObject(ctx context.Context, key string) (*HeadObjectResult, error) {
+	var result *HeadObjectResult
 	var once sync.Once // protects result write when parallel broadcast is enabled
 
 	backendName, err := m.withReadFailover(ctx, "HeadObject", key, func(ctx context.Context, beName string, backend ObjectBackend) (int64, error) {
 		if !m.usage.WithinLimits(beName, 1, 0, 0) {
 			return 0, fmt.Errorf("backend %s: %w", beName, errUsageLimitSkip)
 		}
-		size, contentType, etag, err := backend.HeadObject(ctx, key)
+		r, err := backend.HeadObject(ctx, key)
 		if err != nil {
 			m.usage.Record(beName, 1, 0, 0) // API call was made even on failure
 			return 0, err
 		}
-		once.Do(func() {
-			result = headResult{size: size, contentType: contentType, etag: etag}
-		})
-		return size, nil
+		once.Do(func() { result = r })
+		return r.Size, nil
 	})
 	if err != nil {
-		return 0, "", "", err
+		return nil, err
 	}
 	m.usage.Record(backendName, 1, 0, 0)
 
 	audit.Log(ctx, "storage.HeadObject",
 		slog.String("key", key),
 		slog.String("backend", backendName),
-		slog.Int64("size", result.size),
+		slog.Int64("size", result.Size),
 	)
 
-	return result.size, result.contentType, result.etag, nil
+	return result, nil
 }
 
 // -------------------------------------------------------------------------
@@ -430,13 +423,13 @@ func (m *BackendManager) CopyObject(ctx context.Context, sourceKey, destKey stri
 			continue
 		}
 		bctx, bcancel := m.withTimeout(ctx)
-		s, ct, _, err := backend.HeadObject(bctx, sourceKey)
+		headResult, err := backend.HeadObject(bctx, sourceKey)
 		bcancel()
 		if err != nil {
 			continue
 		}
-		size = s
-		contentType = ct
+		size = headResult.Size
+		contentType = headResult.ContentType
 		srcFound = true
 		break
 	}

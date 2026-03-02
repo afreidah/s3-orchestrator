@@ -77,7 +77,7 @@ Objects are routed to backends based on the configured `routing_strategy`: **pac
 | HeadObject | `HEAD` | `/{bucket}/{key}` | |
 | DeleteObject | `DELETE` | `/{bucket}/{key}` | Idempotent (404 from store treated as success) |
 | DeleteObjects | `POST` | `/{bucket}?delete` | Batch delete up to 1000 keys per request |
-| CopyObject | `PUT` | `/{bucket}/{key}` | Uses `X-Amz-Copy-Source` header |
+| CopyObject | `PUT` | `/{bucket}/{key}` | Uses `X-Amz-Copy-Source` header (same-bucket only) |
 | ListObjectsV1 | `GET` | `/{bucket}` | Original list API, uses `marker` pagination |
 | ListObjectsV2 | `GET` | `/{bucket}?list-type=2` | Supports `delimiter` for virtual directories |
 | ListMultipartUploads | `GET` | `/{bucket}?uploads` | Lists in-progress multipart uploads |

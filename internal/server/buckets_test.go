@@ -118,3 +118,25 @@ func TestGetBucketLocationNoAuth(t *testing.T) {
 		t.Fatalf("expected 403, got %d", resp.StatusCode)
 	}
 }
+
+func TestGetBucketVersioning(t *testing.T) {
+	ts, _, _ := newTestServer(t)
+
+	resp := doReq(t, http.MethodGet, ts.URL+"/mybucket?versioning", nil)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	xml := string(body)
+
+	if !strings.Contains(xml, "<VersioningConfiguration") {
+		t.Errorf("missing VersioningConfiguration element: %s", xml)
+	}
+	// Empty VersioningConfiguration means versioning is not enabled
+	if strings.Contains(xml, "<Status>") {
+		t.Errorf("expected empty VersioningConfiguration (no Status element): %s", xml)
+	}
+}
