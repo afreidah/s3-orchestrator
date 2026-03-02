@@ -108,6 +108,17 @@ header h1 { font-size: 1.25rem; font-weight: 600; color: #f8fafc; }
 
 .badge-healthy { background: #166534; color: #bbf7d0; }
 .badge-degraded { background: #92400e; color: #fde68a; }
+.badge-draining { background: #1e40af; color: #bfdbfe; animation: pulse-badge 2s ease-in-out infinite; }
+
+@keyframes pulse-badge {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.badge-drained { background: #374151; color: #9ca3af; }
+
+.row-draining { background: rgba(30, 64, 175, 0.08); }
+.row-drained { opacity: 0.6; }
 
 .meta { font-size: 0.8rem; color: #94a3b8; }
 

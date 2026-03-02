@@ -43,6 +43,15 @@ func (q *Queries) DeleteMultipartUpload(ctx context.Context, uploadID string) er
 	return err
 }
 
+const deleteMultipartUploadsByBackend = `-- name: DeleteMultipartUploadsByBackend :exec
+DELETE FROM multipart_uploads WHERE backend_name = $1
+`
+
+func (q *Queries) DeleteMultipartUploadsByBackend(ctx context.Context, backendName string) error {
+	_, err := q.db.Exec(ctx, deleteMultipartUploadsByBackend, backendName)
+	return err
+}
+
 const getMultipartUpload = `-- name: GetMultipartUpload :one
 SELECT upload_id, object_key, backend_name, content_type, created_at
 FROM multipart_uploads

@@ -36,6 +36,10 @@ Commands:
   usage-flush         Force flush usage counters to database
   replicate           Trigger one replication cycle
   log-level           View or set the runtime log level (use -set to change)
+  drain               Start draining a backend (requires backend name arg)
+  drain-status        Check drain progress (requires backend name arg)
+  drain-cancel        Cancel an active drain (requires backend name arg)
+  remove-backend      Remove a backend and its data (requires backend name arg, --purge to delete S3 objects)
 
 Flags:
 `)
@@ -113,6 +117,44 @@ func adminCommand(cmd string, args []string, baseAddr, token string, stdout, std
 		}
 		return doGet(baseAddr+"/admin/api/log-level", token, stdout, stderr)
 
+	case "drain":
+		if len(args) == 0 {
+			fmt.Fprintln(stderr, "error: backend name is required")
+			return 1
+		}
+		return doPost(baseAddr+"/admin/api/backends/"+args[0]+"/drain", "", token, stdout, stderr)
+
+	case "drain-status":
+		if len(args) == 0 {
+			fmt.Fprintln(stderr, "error: backend name is required")
+			return 1
+		}
+		return doGet(baseAddr+"/admin/api/backends/"+args[0]+"/drain", token, stdout, stderr)
+
+	case "drain-cancel":
+		if len(args) == 0 {
+			fmt.Fprintln(stderr, "error: backend name is required")
+			return 1
+		}
+		return doDelete(baseAddr+"/admin/api/backends/"+args[0]+"/drain", token, stdout, stderr)
+
+	case "remove-backend":
+		fs := flag.NewFlagSet("remove-backend", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		purge := fs.Bool("purge", false, "Also delete objects from the backend's S3 storage")
+		if err := fs.Parse(args); err != nil {
+			return 1
+		}
+		if fs.NArg() == 0 {
+			fmt.Fprintln(stderr, "error: backend name is required")
+			return 1
+		}
+		url := baseAddr + "/admin/api/backends/" + fs.Arg(0)
+		if *purge {
+			url += "?purge=true"
+		}
+		return doDelete(url, token, stdout, stderr)
+
 	default:
 		fmt.Fprintf(stderr, "unknown admin command: %s\n", cmd)
 		return 1
@@ -133,6 +175,10 @@ func doPost(url, body, token string, stdout, stderr io.Writer) int {
 
 func doPut(url, body, token string, stdout, stderr io.Writer) int {
 	return doRequest(http.MethodPut, url, body, token, stdout, stderr)
+}
+
+func doDelete(url, token string, stdout, stderr io.Writer) int {
+	return doRequest(http.MethodDelete, url, "", token, stdout, stderr)
 }
 
 func doRequest(method, url, body, token string, stdout, stderr io.Writer) int {

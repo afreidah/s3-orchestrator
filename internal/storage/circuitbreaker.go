@@ -406,3 +406,22 @@ func (cb *CircuitBreakerStore) WithAdvisoryLock(ctx context.Context, lockID int6
 func (cb *CircuitBreakerStore) ImportObject(ctx context.Context, key, backend string, size int64) (bool, error) {
 	return cbCall(cb, func() (bool, error) { return cb.real.ImportObject(ctx, key, backend, size) })
 }
+
+// BackendObjectStats delegates to the real store with circuit breaker protection.
+func (cb *CircuitBreakerStore) BackendObjectStats(ctx context.Context, backendName string) (int64, int64, error) {
+	if err := cb.preCheck(); err != nil {
+		return 0, 0, err
+	}
+	count, bytes, err := cb.real.BackendObjectStats(ctx, backendName)
+	return count, bytes, cb.postCheck(err)
+}
+
+// DeleteBackendData delegates to the real store with circuit breaker protection.
+func (cb *CircuitBreakerStore) DeleteBackendData(ctx context.Context, backendName string) error {
+	return cbCallNoResult(cb, func() error { return cb.real.DeleteBackendData(ctx, backendName) })
+}
+
+// DeleteObjectLocation delegates to the real store with circuit breaker protection.
+func (cb *CircuitBreakerStore) DeleteObjectLocation(ctx context.Context, key, backendName string) error {
+	return cbCallNoResult(cb, func() error { return cb.real.DeleteObjectLocation(ctx, key, backendName) })
+}

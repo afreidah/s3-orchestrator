@@ -456,6 +456,9 @@ All metrics are prefixed with `s3proxy_`. Exposed at `/metrics` when enabled.
 | `s3proxy_lifecycle_failed_total` | Counter | — | Objects that failed lifecycle deletion |
 | `s3proxy_lifecycle_runs_total` | Counter | status | Lifecycle worker executions |
 | `s3proxy_audit_events_total` | Counter | event | Audit log entries emitted |
+| `s3proxy_drain_active` | Gauge | — | `1` while a backend drain is in progress |
+| `s3proxy_drain_objects_moved_total` | Counter | — | Objects migrated during drain |
+| `s3proxy_drain_bytes_moved_total` | Counter | — | Bytes migrated during drain |
 
 Quota metrics are refreshed from PostgreSQL every 30 seconds (no backend API calls).
 
@@ -603,6 +606,25 @@ s3-orchestrator sync --config config.yaml --backend oci --bucket unified --prefi
 | `--dry-run` | `false` | Preview what would be imported without writing |
 
 Objects already tracked in the database for that backend are skipped. The command logs per-page progress and a final summary with imported count, skipped count, and total bytes imported.
+
+### admin
+
+Operational CLI for a running instance. Reads `config.yaml` to discover the server address and admin token. See the [Admin Guide](docs/admin-guide.md) for full details.
+
+```bash
+s3-orchestrator admin status                       # backend health and usage
+s3-orchestrator admin object-locations -key "..."  # find all copies of an object
+s3-orchestrator admin cleanup-queue                # cleanup queue depth
+s3-orchestrator admin usage-flush                  # force flush usage counters
+s3-orchestrator admin replicate                    # trigger replication cycle
+s3-orchestrator admin log-level                    # view current log level
+s3-orchestrator admin log-level -set debug         # change log level at runtime
+s3-orchestrator admin drain <backend>              # start draining a backend
+s3-orchestrator admin drain-status <backend>       # check drain progress
+s3-orchestrator admin drain-cancel <backend>       # cancel an active drain
+s3-orchestrator admin remove-backend <backend>     # remove backend DB records
+s3-orchestrator admin remove-backend <backend> --purge  # also delete S3 objects
+```
 
 ## Development
 
@@ -767,6 +789,7 @@ internal/
     manager.go               Multi-backend routing, quota selection, shared helpers
     manager_objects.go       Object CRUD with read failover, broadcast, batch delete
     manager_multipart.go     Multipart upload lifecycle
+    manager_drain.go         Backend drain and remove operations
     manager_lifecycle.go     Lifecycle expiration rule processing
     manager_cleanup.go       Cleanup queue processing and enqueue helper
     manager_dashboard.go     DashboardData type + thin wrappers

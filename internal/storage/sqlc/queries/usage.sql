@@ -14,3 +14,6 @@ ON CONFLICT (backend_name, period) DO UPDATE SET
 SELECT backend_name, api_requests, egress_bytes, ingress_bytes
 FROM backend_usage
 WHERE period = @period;
+
+-- name: DeleteUsageByBackend :exec
+DELETE FROM backend_usage WHERE backend_name = $1;

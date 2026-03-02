@@ -262,6 +262,7 @@ func resetState(t *testing.T) {
 		}
 	}
 	testManager.ClearCache()
+	testManager.ClearDrainState()
 }
 
 // uniqueKey generates a collision-free object key.

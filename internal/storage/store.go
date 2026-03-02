@@ -940,6 +940,58 @@ func (s *Store) ImportObject(ctx context.Context, key, backend string, size int6
 }
 
 // -------------------------------------------------------------------------
+// BACKEND LIFECYCLE
+// -------------------------------------------------------------------------
+
+// BackendObjectStats returns the object count and total bytes stored on a backend.
+func (s *Store) BackendObjectStats(ctx context.Context, backendName string) (int64, int64, error) {
+	row, err := s.queries.BackendObjectStats(ctx, backendName)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to get backend object stats: %w", err)
+	}
+	return row.ObjectCount, row.TotalBytes, nil
+}
+
+// DeleteBackendData removes all database records for a backend in FK-safe order.
+// Runs in a single transaction.
+func (s *Store) DeleteBackendData(ctx context.Context, backendName string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	qtx := s.queries.WithTx(tx)
+
+	if err := qtx.DeleteCleanupQueueByBackend(ctx, backendName); err != nil {
+		return fmt.Errorf("failed to delete cleanup queue: %w", err)
+	}
+	if err := qtx.DeleteMultipartUploadsByBackend(ctx, backendName); err != nil {
+		return fmt.Errorf("failed to delete multipart uploads: %w", err)
+	}
+	if err := qtx.DeleteObjectLocationsByBackend(ctx, backendName); err != nil {
+		return fmt.Errorf("failed to delete object locations: %w", err)
+	}
+	if err := qtx.DeleteUsageByBackend(ctx, backendName); err != nil {
+		return fmt.Errorf("failed to delete usage records: %w", err)
+	}
+	if err := qtx.DeleteQuota(ctx, backendName); err != nil {
+		return fmt.Errorf("failed to delete quota: %w", err)
+	}
+
+	return tx.Commit(ctx)
+}
+
+// DeleteObjectLocation removes a single object_locations row for the given key
+// and backend. Used by drain to remove source copies when a replica exists.
+func (s *Store) DeleteObjectLocation(ctx context.Context, key, backendName string) error {
+	return s.queries.DeleteObjectFromBackend(ctx, db.DeleteObjectFromBackendParams{
+		ObjectKey:   key,
+		BackendName: backendName,
+	})
+}
+
+// -------------------------------------------------------------------------
 // USAGE TRACKING
 // -------------------------------------------------------------------------
 
@@ -985,6 +1037,7 @@ const (
 	LockCleanupQueue     int64 = 1003
 	LockMultipartCleanup int64 = 1004
 	LockLifecycle        int64 = 1005
+	LockDrain            int64 = 1006
 )
 
 // WithAdvisoryLock acquires a PostgreSQL session-level advisory lock on a

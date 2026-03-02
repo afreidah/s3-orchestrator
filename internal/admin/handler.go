@@ -48,6 +48,10 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/admin/api/usage-flush", h.requireToken(h.handleUsageFlush))
 	mux.HandleFunc("/admin/api/replicate", h.requireToken(h.handleReplicate))
 	mux.HandleFunc("/admin/api/log-level", h.requireToken(h.handleLogLevel))
+	mux.HandleFunc("POST /admin/api/backends/{name}/drain", h.requireToken(h.handleStartDrain))
+	mux.HandleFunc("GET /admin/api/backends/{name}/drain", h.requireToken(h.handleDrainProgress))
+	mux.HandleFunc("DELETE /admin/api/backends/{name}/drain", h.requireToken(h.handleCancelDrain))
+	mux.HandleFunc("DELETE /admin/api/backends/{name}", h.requireToken(h.handleRemoveBackend))
 }
 
 // -------------------------------------------------------------------------
@@ -229,6 +233,53 @@ func (h *Handler) handleLogLevel(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
+}
+
+// -------------------------------------------------------------------------
+// BACKEND LIFECYCLE HANDLERS
+// -------------------------------------------------------------------------
+
+// handleStartDrain begins draining a backend.
+func (h *Handler) handleStartDrain(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if err := h.manager.StartDrain(r.Context(), name); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": "drain started", "backend": name})
+}
+
+// handleDrainProgress returns the current state of a drain operation.
+func (h *Handler) handleDrainProgress(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	progress, err := h.manager.GetDrainProgress(r.Context(), name)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, progress)
+}
+
+// handleCancelDrain cancels an active drain operation.
+func (h *Handler) handleCancelDrain(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if err := h.manager.CancelDrain(name); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "drain cancelled", "backend": name})
+}
+
+// handleRemoveBackend deletes all DB records for a backend.
+func (h *Handler) handleRemoveBackend(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	purge := r.URL.Query().Get("purge") == "true"
+
+	if err := h.manager.RemoveBackend(r.Context(), name, purge); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "backend removed", "backend": name})
 }
 
 // -------------------------------------------------------------------------

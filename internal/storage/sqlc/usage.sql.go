@@ -9,6 +9,15 @@ import (
 	"context"
 )
 
+const deleteUsageByBackend = `-- name: DeleteUsageByBackend :exec
+DELETE FROM backend_usage WHERE backend_name = $1
+`
+
+func (q *Queries) DeleteUsageByBackend(ctx context.Context, backendName string) error {
+	_, err := q.db.Exec(ctx, deleteUsageByBackend, backendName)
+	return err
+}
+
 const flushUsageDeltas = `-- name: FlushUsageDeltas :exec
 INSERT INTO backend_usage (backend_name, period, api_requests, egress_bytes, ingress_bytes, updated_at)
 VALUES ($1, $2, $3, $4, $5, NOW())

@@ -21,3 +21,6 @@ WHERE id = @id;
 
 -- name: CountPendingCleanups :one
 SELECT COUNT(*) FROM cleanup_queue WHERE attempts < 10;
+
+-- name: DeleteCleanupQueueByBackend :exec
+DELETE FROM cleanup_queue WHERE backend_name = $1;

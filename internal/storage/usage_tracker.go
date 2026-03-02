@@ -230,8 +230,10 @@ func currentPeriod() string {
 
 // FlushUsage reads and resets the in-memory atomic counters, then writes the
 // accumulated deltas to the database. Called periodically (every 30s). On DB
-// error, deltas are added back to avoid data loss.
-func (u *UsageTracker) FlushUsage(ctx context.Context, store MetadataStore) error {
+// error, deltas are added back to avoid data loss. Backends in the skip set
+// have their counters discarded (used for drained backends whose DB records
+// have been removed).
+func (u *UsageTracker) FlushUsage(ctx context.Context, store MetadataStore, skip map[string]bool) error {
 	period := currentPeriod()
 	var lastErr error
 
@@ -242,6 +244,10 @@ func (u *UsageTracker) FlushUsage(ctx context.Context, store MetadataStore) erro
 
 		if apiReqs == 0 && egress == 0 && ingress == 0 {
 			continue
+		}
+
+		if skip[name] {
+			continue // discard — DB records for this backend are gone
 		}
 
 		if err := store.FlushUsageDeltas(ctx, name, period, apiReqs, egress, ingress); err != nil {

@@ -31,6 +31,15 @@ func (q *Queries) DeleteCleanupItem(ctx context.Context, id int64) error {
 	return err
 }
 
+const deleteCleanupQueueByBackend = `-- name: DeleteCleanupQueueByBackend :exec
+DELETE FROM cleanup_queue WHERE backend_name = $1
+`
+
+func (q *Queries) DeleteCleanupQueueByBackend(ctx context.Context, backendName string) error {
+	_, err := q.db.Exec(ctx, deleteCleanupQueueByBackend, backendName)
+	return err
+}
+
 const enqueueCleanup = `-- name: EnqueueCleanup :exec
 INSERT INTO cleanup_queue (backend_name, object_key, reason)
 VALUES ($1, $2, $3)

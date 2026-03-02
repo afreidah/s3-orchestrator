@@ -3258,3 +3258,207 @@ func TestListParts(t *testing.T) {
 		UploadId: uploadID,
 	})
 }
+
+// -------------------------------------------------------------------------
+// DRAIN & REMOVE
+// -------------------------------------------------------------------------
+
+func TestDrainBackend(t *testing.T) {
+	resetState(t)
+	client := newS3Client(t)
+	ctx := context.Background()
+
+	// Upload several small objects — pack routing puts them on minio-1 first (quota 1024).
+	keys := make([]string, 5)
+	for i := range keys {
+		keys[i] = uniqueKey(t, "drain")
+		body := bytes.Repeat([]byte("D"), 50)
+		_, err := client.PutObject(ctx, &s3.PutObjectInput{
+			Bucket:        aws.String(virtualBucket),
+			Key:           aws.String(keys[i]),
+			Body:          bytes.NewReader(body),
+			ContentLength: aws.Int64(50),
+		})
+		if err != nil {
+			t.Fatalf("PutObject[%d]: %v", i, err)
+		}
+	}
+
+	// Verify all objects landed on minio-1 (pack routing, plenty of quota).
+	for _, key := range keys {
+		if b := queryObjectBackend(t, key); b != "minio-1" {
+			t.Fatalf("expected object on minio-1, got %s", b)
+		}
+	}
+
+	// Start drain of minio-1.
+	if err := testManager.StartDrain(ctx, "minio-1"); err != nil {
+		t.Fatalf("StartDrain: %v", err)
+	}
+
+	// Wait for the drain to finish (poll progress).
+	deadline := time.After(30 * time.Second)
+	for {
+		select {
+		case <-deadline:
+			t.Fatal("drain did not complete within 30s")
+		default:
+		}
+
+		progress, err := testManager.GetDrainProgress(ctx, "minio-1")
+		if err != nil {
+			t.Fatalf("GetDrainProgress: %v", err)
+		}
+		if !progress.Active {
+			if progress.Error != "" {
+				t.Fatalf("drain failed: %s", progress.Error)
+			}
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	// All objects should now be on minio-2.
+	for _, key := range keys {
+		if b := queryObjectBackend(t, key); b != "minio-2" {
+			t.Errorf("after drain: object %s on %s, want minio-2", key, b)
+		}
+	}
+
+	// Objects should still be readable through the proxy.
+	for _, key := range keys {
+		resp, err := client.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String(virtualBucket),
+			Key:    aws.String(key),
+		})
+		if err != nil {
+			t.Errorf("GetObject(%s) after drain: %v", key, err)
+			continue
+		}
+		data, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if len(data) != 50 {
+			t.Errorf("GetObject(%s) body = %d bytes, want 50", key, len(data))
+		}
+	}
+
+	// minio-1 should have no object_locations rows.
+	var count int
+	if err := testDB.QueryRow("SELECT COUNT(*) FROM object_locations WHERE backend_name = 'minio-1'").Scan(&count); err != nil {
+		t.Fatalf("count query: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("minio-1 still has %d object_locations rows after drain", count)
+	}
+}
+
+func TestDrainBackend_WriteExclusion(t *testing.T) {
+	resetState(t)
+	client := newS3Client(t)
+	ctx := context.Background()
+
+	// Put one object so the drain has something to work on.
+	seedKey := uniqueKey(t, "drain-excl-seed")
+	_, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(seedKey),
+		Body:          bytes.NewReader(bytes.Repeat([]byte("S"), 50)),
+		ContentLength: aws.Int64(50),
+	})
+	if err != nil {
+		t.Fatalf("PutObject seed: %v", err)
+	}
+
+	// Start drain of minio-1.
+	if err := testManager.StartDrain(ctx, "minio-1"); err != nil {
+		t.Fatalf("StartDrain: %v", err)
+	}
+
+	// While draining, new writes should go to minio-2 only.
+	newKey := uniqueKey(t, "drain-excl-new")
+	_, err = client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(newKey),
+		Body:          bytes.NewReader(bytes.Repeat([]byte("N"), 50)),
+		ContentLength: aws.Int64(50),
+	})
+	if err != nil {
+		t.Fatalf("PutObject during drain: %v", err)
+	}
+
+	if b := queryObjectBackend(t, newKey); b != "minio-2" {
+		t.Errorf("new object during drain on %s, want minio-2", b)
+	}
+
+	// Wait for drain to finish.
+	deadline := time.After(30 * time.Second)
+	for {
+		select {
+		case <-deadline:
+			t.Fatal("drain did not complete within 30s")
+		default:
+		}
+		progress, err := testManager.GetDrainProgress(ctx, "minio-1")
+		if err != nil {
+			t.Fatalf("GetDrainProgress: %v", err)
+		}
+		if !progress.Active {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+func TestRemoveBackend(t *testing.T) {
+	resetState(t)
+	ctx := context.Background()
+
+	// Directly record objects on minio-2 via the store so we can test
+	// remove without affecting minio-1 (which other tests depend on).
+	for i := 0; i < 3; i++ {
+		key := fmt.Sprintf("%s/remove-test-%d-%d", virtualBucket, i, time.Now().UnixNano())
+		if err := testStore.RecordObject(ctx, key, "minio-2", 100); err != nil {
+			t.Fatalf("RecordObject: %v", err)
+		}
+	}
+
+	// Verify records exist.
+	var before int
+	if err := testDB.QueryRow("SELECT COUNT(*) FROM object_locations WHERE backend_name = 'minio-2'").Scan(&before); err != nil {
+		t.Fatalf("count query: %v", err)
+	}
+	if before < 3 {
+		t.Fatalf("expected >= 3 object_locations for minio-2, got %d", before)
+	}
+
+	// Remove without purge (just DB records).
+	if err := testManager.RemoveBackend(ctx, "minio-2", false); err != nil {
+		t.Fatalf("RemoveBackend: %v", err)
+	}
+
+	// object_locations should be gone.
+	var after int
+	if err := testDB.QueryRow("SELECT COUNT(*) FROM object_locations WHERE backend_name = 'minio-2'").Scan(&after); err != nil {
+		t.Fatalf("count query: %v", err)
+	}
+	if after != 0 {
+		t.Errorf("minio-2 still has %d object_locations after remove", after)
+	}
+
+	// Quota row should be gone.
+	var quotaCount int
+	if err := testDB.QueryRow("SELECT COUNT(*) FROM backend_quotas WHERE backend_name = 'minio-2'").Scan(&quotaCount); err != nil {
+		t.Fatalf("quota count query: %v", err)
+	}
+	if quotaCount != 0 {
+		t.Errorf("minio-2 still has %d backend_quotas rows after remove", quotaCount)
+	}
+
+	// Re-sync quota so other tests aren't broken.
+	if err := testStore.SyncQuotaLimits(ctx, []config.BackendConfig{
+		{Name: "minio-1", QuotaBytes: 1024},
+		{Name: "minio-2", QuotaBytes: 2048},
+	}); err != nil {
+		t.Fatalf("SyncQuotaLimits: %v", err)
+	}
+}

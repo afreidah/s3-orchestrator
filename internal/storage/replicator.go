@@ -171,7 +171,7 @@ func (m *BackendManager) findReplicaTarget(ctx context.Context, key string, size
 		return ""
 	}
 
-	for _, name := range m.order {
+	for _, name := range m.excludeDraining(m.order) {
 		if exclusion[name] {
 			continue
 		}

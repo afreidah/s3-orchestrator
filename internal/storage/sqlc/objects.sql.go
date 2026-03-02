@@ -11,6 +11,24 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const backendObjectStats = `-- name: BackendObjectStats :one
+SELECT COUNT(*) AS object_count, COALESCE(SUM(size_bytes), 0)::bigint AS total_bytes
+FROM object_locations
+WHERE backend_name = $1
+`
+
+type BackendObjectStatsRow struct {
+	ObjectCount int64
+	TotalBytes  int64
+}
+
+func (q *Queries) BackendObjectStats(ctx context.Context, backendName string) (BackendObjectStatsRow, error) {
+	row := q.db.QueryRow(ctx, backendObjectStats, backendName)
+	var i BackendObjectStatsRow
+	err := row.Scan(&i.ObjectCount, &i.TotalBytes)
+	return i, err
+}
+
 const checkObjectExistsOnBackend = `-- name: CheckObjectExistsOnBackend :one
 SELECT EXISTS(
     SELECT 1 FROM object_locations
@@ -52,6 +70,15 @@ type DeleteObjectFromBackendParams struct {
 
 func (q *Queries) DeleteObjectFromBackend(ctx context.Context, arg DeleteObjectFromBackendParams) error {
 	_, err := q.db.Exec(ctx, deleteObjectFromBackend, arg.ObjectKey, arg.BackendName)
+	return err
+}
+
+const deleteObjectLocationsByBackend = `-- name: DeleteObjectLocationsByBackend :exec
+DELETE FROM object_locations WHERE backend_name = $1
+`
+
+func (q *Queries) DeleteObjectLocationsByBackend(ctx context.Context, backendName string) error {
+	_, err := q.db.Exec(ctx, deleteObjectLocationsByBackend, backendName)
 	return err
 }
 

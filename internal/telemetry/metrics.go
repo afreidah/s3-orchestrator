@@ -427,6 +427,32 @@ var (
 		[]string{"event"},
 	)
 
+	// --- Drain metrics ---
+
+	// DrainObjectsMoved counts objects moved during backend drain operations.
+	DrainObjectsMoved = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "s3proxy_drain_objects_moved_total",
+			Help: "Total number of objects moved during backend drain operations",
+		},
+	)
+
+	// DrainBytesMoved counts bytes moved during backend drain operations.
+	DrainBytesMoved = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "s3proxy_drain_bytes_moved_total",
+			Help: "Total bytes moved during backend drain operations",
+		},
+	)
+
+	// DrainActive is 1 when a drain operation is in progress, 0 otherwise.
+	DrainActive = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "s3proxy_drain_active",
+			Help: "Whether a backend drain operation is currently in progress",
+		},
+	)
+
 	// --- Info metric ---
 
 	// BuildInfo exposes version information.
