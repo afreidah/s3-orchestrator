@@ -24,6 +24,7 @@ data:
       listen_addr: "0.0.0.0:9000"
       max_object_size: 5368709120      # 5 GB
       backend_timeout: "2m"
+      shutdown_delay: "5s"             # wait for K8s endpoint removal before draining
 
       # --- TLS termination (optional) ---
       # Uncomment to enable TLS on the S3 endpoint. Mount a TLS Secret into the

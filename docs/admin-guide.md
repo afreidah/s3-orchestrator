@@ -68,7 +68,7 @@ docker run -v $(pwd)/config.yaml:/etc/s3-orchestrator/config.yaml -p 9000:9000 s
 
 ```bash
 curl http://localhost:9000/health
-# ok
+# {"status":"ok","instance":"hostname"}
 ```
 
 ### 5. Test with a quick upload/download
@@ -103,6 +103,7 @@ server:
   read_timeout: "5m"              # max time to read entire request including body (default: 5m)
   write_timeout: "5m"             # max time to write response (default: 5m)
   idle_timeout: "120s"            # max time to wait for next request on keep-alive (default: 120s)
+  shutdown_delay: "5s"            # delay before HTTP drain on SIGTERM (default: 0, no delay)
 ```
 
 - `listen_addr` is the only required field.
@@ -111,6 +112,7 @@ server:
 - `read_header_timeout` protects against slow-read attacks that hold connections open by sending headers slowly. The 10-second default is generous for any legitimate client.
 - `read_timeout` and `write_timeout` bound the total time for reading/writing entire requests and responses. The 5-minute defaults accommodate large object transfers.
 - `idle_timeout` controls how long keep-alive connections stay open waiting for the next request.
+- `shutdown_delay` adds a pause between marking the instance as not-ready and starting the HTTP drain on SIGTERM. Set this to ~5s in environments where service deregistration is asynchronous (Consul, Kubernetes) so load balancers stop routing before connections are closed. Default `0` means no delay.
 
 ### buckets
 
@@ -595,13 +597,27 @@ The dashboard is server-rendered HTML. The object tree uses JavaScript for lazy-
 
 JSON endpoints at `{path}/api/dashboard` and `{path}/api/tree` return data for programmatic access or integration with other tools. Management endpoints (`{path}/api/delete`, `{path}/api/upload`, `{path}/api/rebalance`, `{path}/api/sync`) accept POST requests and require authentication.
 
-### Health endpoint
+### Health endpoints
+
+Two health endpoints serve different purposes:
+
+**Liveness** (`/health`) — always returns HTTP 200. Use this for liveness probes (Consul checks, K8s livenessProbe). The service stays in rotation during temporary database outages.
 
 ```bash
 curl http://localhost:9000/health
+# {"status":"ok","instance":"hostname"}
+# or {"status":"degraded","instance":"hostname"} when circuit breaker is open
 ```
 
-Returns `ok` when the database is reachable, `degraded` when the circuit breaker is open. Always returns HTTP 200 (so the service stays in load balancer rotation during degraded mode).
+**Readiness** (`/health/ready`) — returns HTTP 200 when the service is ready to handle traffic, HTTP 503 during startup (before migrations and backend initialization complete) and during shutdown drain. Use this for readiness probes (K8s readinessProbe, Nomad `on_update = "require_healthy"`).
+
+```bash
+curl http://localhost:9000/health/ready
+# {"status":"ready","instance":"hostname"}      — 200
+# {"status":"not ready","instance":"hostname"}  — 503
+```
+
+Both endpoints include an `instance` field with the hostname for identifying which instance responded in multi-instance deployments.
 
 ### Grafana dashboard
 
@@ -676,7 +692,7 @@ Many settings can be updated without restarting the orchestrator by sending `SIG
 
 **What requires a restart:**
 
-- `server.listen_addr`, server timeouts, `database`, `telemetry`, `ui`, `routing_strategy`
+- `server.listen_addr`, server timeouts, `server.shutdown_delay`, `database`, `telemetry`, `ui`, `routing_strategy`
 - Backend structural changes (endpoint, S3 credentials, adding/removing backends)
 
 If any of these fields change, the reload still proceeds for the reloadable settings, and warnings are logged:

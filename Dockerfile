@@ -54,5 +54,8 @@ USER appuser
 
 EXPOSE 9000
 
+HEALTHCHECK --interval=10s --timeout=3s --start-period=15s --retries=3 \
+  CMD wget -qO- http://localhost:9000/health/ready || exit 1
+
 ENTRYPOINT ["s3-orchestrator"]
 CMD ["-config", "/etc/s3-orchestrator/config.yaml"]

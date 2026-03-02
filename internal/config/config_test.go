@@ -426,6 +426,53 @@ func TestNonReloadableFieldsChanged_ServerTimeouts(t *testing.T) {
 	}
 }
 
+func TestShutdownDelayDefault(t *testing.T) {
+	cfg := validBaseConfig()
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("valid config should pass: %v", err)
+	}
+
+	if cfg.Server.ShutdownDelay != 0 {
+		t.Errorf("shutdown_delay default = %v, want 0", cfg.Server.ShutdownDelay)
+	}
+}
+
+func TestShutdownDelayCustomValue(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Server.ShutdownDelay = 5 * time.Second
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("custom shutdown_delay should pass: %v", err)
+	}
+
+	if cfg.Server.ShutdownDelay != 5*time.Second {
+		t.Errorf("shutdown_delay = %v, want 5s", cfg.Server.ShutdownDelay)
+	}
+}
+
+func TestNonReloadableFieldsChanged_ShutdownDelay(t *testing.T) {
+	a := validBaseConfig()
+	b := validBaseConfig()
+	_ = a.SetDefaultsAndValidate()
+	b.Server.ShutdownDelay = 5 * time.Second
+	_ = b.SetDefaultsAndValidate()
+
+	changed := NonReloadableFieldsChanged(&a, &b)
+	if len(changed) == 0 {
+		t.Fatal("expected non-reloadable change for shutdown_delay")
+	}
+	found := false
+	for _, c := range changed {
+		if c == "server.shutdown_delay" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected server.shutdown_delay in changed list, got %v", changed)
+	}
+}
+
 func TestNonReloadableFieldsChanged_CircuitBreaker(t *testing.T) {
 	a := validBaseConfig()
 	b := validBaseConfig()
