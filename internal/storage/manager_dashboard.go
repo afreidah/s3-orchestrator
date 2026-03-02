@@ -21,11 +21,29 @@ type DashboardData struct {
 	UsageLimits           map[string]UsageLimits
 	UsagePeriod           string
 	TopLevelEntries       *DirectoryListResult
+	DrainingBackends      map[string]DrainProgress
 }
 
-// GetDashboardData delegates to the DashboardAggregator.
+// GetDashboardData delegates to the DashboardAggregator and enriches the
+// result with drain status from the BackendManager's in-memory state.
 func (m *BackendManager) GetDashboardData(ctx context.Context) (*DashboardData, error) {
-	return m.dashboard.GetDashboardData(ctx)
+	data, err := m.dashboard.GetDashboardData(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	data.DrainingBackends = make(map[string]DrainProgress)
+	for _, name := range m.order {
+		if !m.IsDraining(name) {
+			continue
+		}
+		progress, err := m.GetDrainProgress(ctx, name)
+		if err == nil {
+			data.DrainingBackends[name] = *progress
+		}
+	}
+
+	return data, nil
 }
 
 // GetDirectoryChildren delegates to the DashboardAggregator.

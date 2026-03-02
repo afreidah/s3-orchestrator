@@ -427,3 +427,15 @@ func (m *mockStore) WithAdvisoryLock(_ context.Context, _ int64, fn func(ctx con
 func (m *mockStore) ImportObject(_ context.Context, _, _ string, _ int64) (bool, error) {
 	return true, nil
 }
+
+func (m *mockStore) BackendObjectStats(_ context.Context, _ string) (int64, int64, error) {
+	return 0, 0, nil
+}
+
+func (m *mockStore) DeleteBackendData(_ context.Context, _ string) error {
+	return nil
+}
+
+func (m *mockStore) DeleteObjectLocation(_ context.Context, _, _ string) error {
+	return nil
+}

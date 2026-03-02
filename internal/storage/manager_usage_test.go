@@ -222,6 +222,42 @@ func TestFlushUsage_NoDataNoCall(t *testing.T) {
 	}
 }
 
+func TestFlushUsage_SkipsDrainedBackend(t *testing.T) {
+	ms := &mockStore{}
+	mgr := newUsageManager([]string{"b1", "b2"}, ms)
+
+	mgr.usage.Record("b1", 5, 100, 200)
+	mgr.usage.Record("b2", 3, 50, 75)
+
+	// Simulate b2 having completed a drain: store a drainState with closed done channel.
+	state := &drainState{
+		cancel: func() {},
+		done:   make(chan struct{}),
+	}
+	close(state.done)
+	mgr.draining.Store("b2", state)
+
+	if err := mgr.FlushUsage(context.Background()); err != nil {
+		t.Fatalf("FlushUsage() error = %v", err)
+	}
+
+	// b1 should have been flushed
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+	if len(ms.flushUsageCalls) != 1 {
+		t.Fatalf("flushUsageCalls = %d, want 1 (b2 should be skipped)", len(ms.flushUsageCalls))
+	}
+	if ms.flushUsageCalls[0].backendName != "b1" {
+		t.Errorf("flushed backend = %s, want b1", ms.flushUsageCalls[0].backendName)
+	}
+
+	// b2 counters should have been discarded (reset to 0), not restored
+	c := mgr.usage.counters["b2"]
+	if got := c.apiRequests.Load(); got != 0 {
+		t.Errorf("b2 apiRequests = %d, want 0 (discarded)", got)
+	}
+}
+
 // --- withinUsageLimits tests ---
 
 func TestWithinUsageLimits_NoLimits(t *testing.T) {

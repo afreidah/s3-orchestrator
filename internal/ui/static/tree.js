@@ -247,6 +247,12 @@
     });
   }
 
+  // --- Refresh button ---
+  var refreshBtn = document.getElementById('refresh-btn');
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', function () { location.reload(); });
+  }
+
   // --- Rebalance flow ---
   var rebalanceBtn = document.getElementById('rebalance-btn');
 

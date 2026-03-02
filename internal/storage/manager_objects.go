@@ -44,8 +44,8 @@ func (m *BackendManager) PutObject(ctx context.Context, key string, body io.Read
 	)
 	defer span.End()
 
-	// --- Filter backends within usage limits ---
-	eligible := m.usage.BackendsWithinLimits(m.order,1, 0, size)
+	// --- Filter backends within usage limits and exclude draining ---
+	eligible := m.excludeDraining(m.usage.BackendsWithinLimits(m.order, 1, 0, size))
 	if len(eligible) == 0 {
 		telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation, "write").Inc()
 		span.SetStatus(codes.Error, "usage limits exceeded on all backends")

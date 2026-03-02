@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -77,6 +78,7 @@ type BackendManager struct {
 	dashboard      *DashboardAggregator          // web UI data aggregation
 	routingStrategy   string                        // "pack" or "spread"
 	parallelBroadcast bool                          // fan-out reads in parallel during degraded mode
+	draining          sync.Map                      // map[string]*drainState — backends being drained
 	rebalanceCfg      atomic.Pointer[config.RebalanceConfig]
 	replicationCfg  atomic.Pointer[config.ReplicationConfig]
 	usageFlushCfg   atomic.Pointer[config.UsageFlushConfig]
@@ -117,6 +119,15 @@ func (m *BackendManager) ClearCache() {
 	m.cache.Clear()
 }
 
+// ClearDrainState removes all entries from the draining map. Used by tests
+// to reset state between runs.
+func (m *BackendManager) ClearDrainState() {
+	m.draining.Range(func(key, _ any) bool {
+		m.draining.Delete(key)
+		return true
+	})
+}
+
 // Close stops the background cache eviction goroutine. Safe to call multiple times.
 func (m *BackendManager) Close() {
 	m.cache.Close()
@@ -129,8 +140,41 @@ func (m *BackendManager) UpdateUsageLimits(limits map[string]UsageLimits) {
 }
 
 // FlushUsage flushes accumulated in-memory usage counters to the database.
+// Backends that have completed draining are skipped because their DB records
+// (including backend_usage) have been removed.
 func (m *BackendManager) FlushUsage(ctx context.Context) error {
-	return m.usage.FlushUsage(ctx, m.store)
+	skip := make(map[string]bool)
+	m.draining.Range(func(key, val any) bool {
+		state := val.(*drainState)
+		select {
+		case <-state.done:
+			skip[key.(string)] = true
+		default:
+		}
+		return true
+	})
+	return m.usage.FlushUsage(ctx, m.store, skip)
+}
+
+// -------------------------------------------------------------------------
+// DRAIN STATE
+// -------------------------------------------------------------------------
+
+// IsDraining returns true if the named backend is currently being drained.
+func (m *BackendManager) IsDraining(name string) bool {
+	_, ok := m.draining.Load(name)
+	return ok
+}
+
+// excludeDraining filters out backends that are currently draining.
+func (m *BackendManager) excludeDraining(eligible []string) []string {
+	filtered := make([]string, 0, len(eligible))
+	for _, name := range eligible {
+		if !m.IsDraining(name) {
+			filtered = append(filtered, name)
+		}
+	}
+	return filtered
 }
 
 // -------------------------------------------------------------------------

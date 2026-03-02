@@ -25,6 +25,15 @@ func (q *Queries) DecrementQuota(ctx context.Context, arg DecrementQuotaParams) 
 	return err
 }
 
+const deleteQuota = `-- name: DeleteQuota :exec
+DELETE FROM backend_quotas WHERE backend_name = $1
+`
+
+func (q *Queries) DeleteQuota(ctx context.Context, backendName string) error {
+	_, err := q.db.Exec(ctx, deleteQuota, backendName)
+	return err
+}
+
 const getActiveMultipartCountsByBackend = `-- name: GetActiveMultipartCountsByBackend :many
 SELECT backend_name, COUNT(*) AS upload_count
 FROM multipart_uploads

@@ -22,6 +22,7 @@
       {{else}}
         <span class="badge badge-degraded">Degraded</span>
       {{end}}
+      <button class="btn-action" id="refresh-btn">Refresh</button>
       <a href="logout" class="logout-link">Logout</a>
     </div>
   </header>
@@ -77,8 +78,9 @@
           {{$stat := index $.Data.QuotaStats .}}
           {{$objects := index $.Data.ObjectCounts .}}
           {{$multipart := index $.Data.ActiveMultipartCounts .}}
-          <tr>
-            <td>{{.}}</td>
+          {{$drain := index $.Data.DrainingBackends .}}
+          <tr{{if $drain.Active}} class="row-draining"{{else if $drain.ObjectsMoved}} class="row-drained"{{end}}>
+            <td>{{.}}{{if $drain.Active}} <span class="badge badge-draining">Draining</span>{{else if $drain.ObjectsMoved}} <span class="badge badge-drained">Drained</span>{{end}}</td>
             <td class="num">{{formatBytes $stat.BytesUsed}}</td>
             <td class="num">
               {{- if eq $stat.BytesLimit 0}}unlimited
