@@ -336,6 +336,8 @@ rate_limit:
 
 When `trusted_proxies` is configured, the orchestrator extracts the real client IP from the `X-Forwarded-For` header using rightmost-untrusted extraction: it walks the XFF chain from right to left, skipping addresses within trusted CIDRs, and uses the first untrusted address for rate limiting. If the direct peer is not in a trusted CIDR, `X-Forwarded-For` is ignored entirely to prevent spoofing. Without `trusted_proxies`, the direct connection IP is always used.
 
+> **Multi-instance note:** Rate limits are enforced per-instance. Behind a load balancer with round-robin routing, the effective rate for a given client is `requests_per_sec * instance_count`. Divide your desired aggregate rate by the number of API instances when configuring.
+
 ### ui
 
 Built-in web dashboard for operational visibility and management. Disabled by default. Requires authentication via an admin key/secret pair — sessions are HMAC-signed cookies with a 24-hour TTL.
@@ -371,6 +373,8 @@ usage_flush:
 - `adaptive_enabled` — when `true`, the flush interval drops to `fast_interval` whenever any backend's effective usage exceeds `adaptive_threshold` of its configured limit.
 - `adaptive_threshold` — the ratio (0–1 exclusive) at which fast flushing kicks in. At `0.8`, a backend at 80% of any usage limit triggers the fast interval.
 - `fast_interval` — must be less than `interval`. Used when adaptive flushing detects a backend near its limits.
+
+> **Multi-instance note:** Each instance accumulates usage counters in memory between flushes. With N instances, the enforcement margin near limits is up to `N * interval` worth of unaccounted operations. Adaptive flushing reduces this near limits but doesn't eliminate it. For tighter enforcement, reduce `interval` or run fewer API instances.
 
 ### lifecycle
 
@@ -757,6 +761,32 @@ make nomad-demo        # Nomad dev agent with docker-compose backing services
 ```
 
 See [`deploy/README.md`](../deploy/README.md) for production deployment instructions, Vault integration, TLS/mTLS configuration, and Ingress setup.
+
+### Multi-instance deployment
+
+By default, every instance runs both the HTTP API and all background workers (`--mode=all`). For larger deployments, the `--mode` flag separates these roles:
+
+| Mode | HTTP API | Background workers | Use case |
+|------|----------|-------------------|----------|
+| `all` (default) | Yes | All 6 services | Single-instance or small deployments |
+| `api` | Yes | Usage flush only | Scale-out API instances behind a load balancer |
+| `worker` | Health + metrics only | All 6 services | Dedicated background processing |
+
+```bash
+# API instance — serves S3 requests, no background workers
+s3-orchestrator -config config.yaml -mode api
+
+# Worker instance — runs rebalancer, replicator, cleanup, lifecycle
+s3-orchestrator -config config.yaml -mode worker
+```
+
+**How it works:**
+
+- **API instances** serve S3 requests, the web UI, and rate limiting. They run the usage-flush service to avoid losing in-memory counters on restart, but skip all advisory-locked background tasks.
+- **Worker instances** run all 6 background services and expose `/health`, `/health/ready`, and `/metrics` for monitoring, but don't serve S3 traffic or the web UI.
+- Background tasks that modify state (rebalancer, replicator, cleanup, lifecycle, multipart cleanup) use **PostgreSQL advisory locks** — only one instance cluster-wide executes each task per cycle. Running multiple worker instances is safe; extra instances simply skip cycles when the lock is held.
+
+**Recommended topology:** N `api` instances behind a load balancer + 1–2 `worker` instances for redundancy. All instances share the same config file and PostgreSQL database.
 
 ### Docker
 

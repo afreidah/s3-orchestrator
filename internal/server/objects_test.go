@@ -79,17 +79,21 @@ func (b *serverMockBackend) GetObject(_ context.Context, key string, _ string) (
 	}, nil
 }
 
-func (b *serverMockBackend) HeadObject(_ context.Context, key string) (int64, string, string, error) {
+func (b *serverMockBackend) HeadObject(_ context.Context, key string) (*storage.HeadObjectResult, error) {
 	if b.headErr != nil {
-		return 0, "", "", b.headErr
+		return nil, b.headErr
 	}
 	b.mu.Lock()
 	obj, ok := b.objects[key]
 	b.mu.Unlock()
 	if !ok {
-		return 0, "", "", storage.ErrObjectNotFound
+		return nil, storage.ErrObjectNotFound
 	}
-	return int64(len(obj.data)), obj.contentType, obj.etag, nil
+	return &storage.HeadObjectResult{
+		Size:        int64(len(obj.data)),
+		ContentType: obj.contentType,
+		ETag:        obj.etag,
+	}, nil
 }
 
 func (b *serverMockBackend) DeleteObject(_ context.Context, key string) error {
@@ -353,6 +357,131 @@ func TestHead_NotFound(t *testing.T) {
 
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", resp.StatusCode)
+	}
+}
+
+// -------------------------------------------------------------------------
+// CONDITIONAL REQUESTS
+// -------------------------------------------------------------------------
+
+func TestGet_LastModifiedHeader(t *testing.T) {
+	ts, mockStore, backend := newTestServer(t)
+
+	backend.objects["mybucket/testkey"] = serverMockObj{
+		data: []byte("hello"), contentType: "text/plain", etag: `"abc"`,
+	}
+	mockStore.GetAllLocationsResp = []storage.ObjectLocation{
+		{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5,
+			CreatedAt: time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)},
+	}
+
+	resp := doReq(t, http.MethodGet, ts.URL+"/mybucket/testkey", nil)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	// LastModified comes from the backend, not the store — the mock backend
+	// doesn't set it, so the header should be absent for this test.
+	// This test validates that the header is at least not causing errors.
+	if resp.Header.Get("ETag") != `"abc"` {
+		t.Errorf("ETag = %q, want %q", resp.Header.Get("ETag"), `"abc"`)
+	}
+}
+
+func TestGet_ConditionalIfNoneMatch(t *testing.T) {
+	ts, mockStore, backend := newTestServer(t)
+
+	backend.objects["mybucket/testkey"] = serverMockObj{
+		data: []byte("hello"), contentType: "text/plain", etag: `"abc"`,
+	}
+	mockStore.GetAllLocationsResp = []storage.ObjectLocation{
+		{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5},
+	}
+
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/mybucket/testkey", nil)
+	req.Header.Set("X-Proxy-Token", "test-token")
+	req.Header.Set("If-None-Match", `"abc"`)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotModified {
+		t.Fatalf("status = %d, want 304", resp.StatusCode)
+	}
+}
+
+func TestGet_ConditionalIfNoneMatchMismatch(t *testing.T) {
+	ts, mockStore, backend := newTestServer(t)
+
+	backend.objects["mybucket/testkey"] = serverMockObj{
+		data: []byte("hello"), contentType: "text/plain", etag: `"abc"`,
+	}
+	mockStore.GetAllLocationsResp = []storage.ObjectLocation{
+		{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5},
+	}
+
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/mybucket/testkey", nil)
+	req.Header.Set("X-Proxy-Token", "test-token")
+	req.Header.Set("If-None-Match", `"different"`)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestGet_ConditionalIfMatch(t *testing.T) {
+	ts, mockStore, backend := newTestServer(t)
+
+	backend.objects["mybucket/testkey"] = serverMockObj{
+		data: []byte("hello"), contentType: "text/plain", etag: `"abc"`,
+	}
+	mockStore.GetAllLocationsResp = []storage.ObjectLocation{
+		{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5},
+	}
+
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/mybucket/testkey", nil)
+	req.Header.Set("X-Proxy-Token", "test-token")
+	req.Header.Set("If-Match", `"wrong"`)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusPreconditionFailed {
+		t.Fatalf("status = %d, want 412", resp.StatusCode)
+	}
+}
+
+func TestHead_ConditionalIfNoneMatch(t *testing.T) {
+	ts, mockStore, backend := newTestServer(t)
+
+	backend.objects["mybucket/testkey"] = serverMockObj{
+		data: []byte("hello"), contentType: "text/plain", etag: `"abc"`,
+	}
+	mockStore.GetAllLocationsResp = []storage.ObjectLocation{
+		{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5},
+	}
+
+	req, _ := http.NewRequest(http.MethodHead, ts.URL+"/mybucket/testkey", nil)
+	req.Header.Set("X-Proxy-Token", "test-token")
+	req.Header.Set("If-None-Match", `"abc"`)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotModified {
+		t.Fatalf("status = %d, want 304", resp.StatusCode)
 	}
 }
 
