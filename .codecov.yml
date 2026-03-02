@@ -10,3 +10,4 @@ ignore:
   - "cmd/"                    # process entry points, not unit-testable
   - "internal/testutil/"
   - "internal/storage/sqlc/"  # generated code (sqlc)
+  - "internal/storage/backend.go" # real S3 SDK wrapper, integration-tested only

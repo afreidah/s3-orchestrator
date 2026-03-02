@@ -87,17 +87,21 @@ func (m *delayedGetBackend) GetObject(_ context.Context, key string, _ string) (
 	}, nil
 }
 
-func (m *delayedGetBackend) HeadObject(_ context.Context, key string) (int64, string, string, error) {
+func (m *delayedGetBackend) HeadObject(_ context.Context, key string) (*HeadObjectResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.headErr != nil {
-		return 0, "", "", m.headErr
+		return nil, m.headErr
 	}
 	obj, ok := m.objects[key]
 	if !ok {
-		return 0, "", "", fmt.Errorf("object %q not found", key)
+		return nil, fmt.Errorf("object %q not found", key)
 	}
-	return int64(len(obj.data)), obj.contentType, obj.etag, nil
+	return &HeadObjectResult{
+		Size:        int64(len(obj.data)),
+		ContentType: obj.contentType,
+		ETag:        obj.etag,
+	}, nil
 }
 
 func (m *delayedGetBackend) DeleteObject(_ context.Context, key string) error {

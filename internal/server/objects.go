@@ -136,7 +136,18 @@ func (s *Server) handleGet(ctx context.Context, w http.ResponseWriter, r *http.R
 	if result.ETag != "" {
 		w.Header().Set("ETag", result.ETag)
 	}
+	if !result.LastModified.IsZero() {
+		w.Header().Set("Last-Modified", result.LastModified.UTC().Format(http.TimeFormat))
+	}
 	w.Header().Set("Accept-Ranges", "bytes")
+
+	// --- Conditional request evaluation (skip for range requests) ---
+	if rangeHeader == "" {
+		if status, done := checkConditionals(r, result.ETag, result.LastModified); done {
+			w.WriteHeader(status)
+			return status, 0, nil
+		}
+	}
 
 	status := http.StatusOK
 	if result.ContentRange != "" {
@@ -154,8 +165,8 @@ func (s *Server) handleGet(ctx context.Context, w http.ResponseWriter, r *http.R
 }
 
 // handleHead processes HEAD requests.
-func (s *Server) handleHead(ctx context.Context, w http.ResponseWriter, _ *http.Request, key string) (int, error) {
-	size, contentType, etag, err := s.Manager.HeadObject(ctx, key)
+func (s *Server) handleHead(ctx context.Context, w http.ResponseWriter, r *http.Request, key string) (int, error) {
+	result, err := s.Manager.HeadObject(ctx, key)
 	if err != nil {
 		return writeStorageError(w, err, "Failed to retrieve object metadata"), err
 	}
@@ -163,16 +174,26 @@ func (s *Server) handleHead(ctx context.Context, w http.ResponseWriter, _ *http.
 	// --- Add size to span ---
 	span := trace.SpanFromContext(ctx)
 	span.SetAttributes(
-		telemetry.AttrObjectSize.Int64(size),
-		telemetry.AttrContentType.String(contentType),
+		telemetry.AttrObjectSize.Int64(result.Size),
+		telemetry.AttrContentType.String(result.ContentType),
 	)
 
-	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
-	if etag != "" {
-		w.Header().Set("ETag", etag)
+	w.Header().Set("Content-Type", result.ContentType)
+	w.Header().Set("Content-Length", strconv.FormatInt(result.Size, 10))
+	if result.ETag != "" {
+		w.Header().Set("ETag", result.ETag)
+	}
+	if !result.LastModified.IsZero() {
+		w.Header().Set("Last-Modified", result.LastModified.UTC().Format(http.TimeFormat))
 	}
 	w.Header().Set("Accept-Ranges", "bytes")
+
+	// --- Conditional request evaluation ---
+	if status, done := checkConditionals(r, result.ETag, result.LastModified); done {
+		w.WriteHeader(status)
+		return status, nil
+	}
+
 	w.WriteHeader(http.StatusOK)
 	return http.StatusOK, nil
 }
@@ -282,4 +303,49 @@ func (s *Server) handleDeleteObjects(ctx context.Context, w http.ResponseWriter,
 		return http.StatusOK, fmt.Errorf("failed to encode delete objects response: %w", err)
 	}
 	return http.StatusOK, nil
+}
+
+// -------------------------------------------------------------------------
+// CONDITIONAL REQUEST HELPERS
+// -------------------------------------------------------------------------
+
+// checkConditionals evaluates conditional request headers per RFC 7232.
+// Returns the HTTP status to send and whether the caller should short-circuit.
+// Evaluation order follows the spec: If-Match → If-Unmodified-Since →
+// If-None-Match → If-Modified-Since.
+func checkConditionals(r *http.Request, etag string, lastModified time.Time) (int, bool) {
+	// --- If-Match (precondition for safe updates) ---
+	if im := r.Header.Get("If-Match"); im != "" && etag != "" {
+		if im != etag && im != "*" {
+			return http.StatusPreconditionFailed, true
+		}
+	}
+
+	// --- If-Unmodified-Since ---
+	if ius := r.Header.Get("If-Unmodified-Since"); ius != "" && r.Header.Get("If-Match") == "" {
+		if t, err := http.ParseTime(ius); err == nil {
+			if !lastModified.IsZero() && lastModified.After(t) {
+				return http.StatusPreconditionFailed, true
+			}
+		}
+	}
+
+	// --- If-None-Match (ETag-based conditional GET) ---
+	inm := r.Header.Get("If-None-Match")
+	if inm != "" && etag != "" {
+		if inm == etag || inm == "*" {
+			return http.StatusNotModified, true
+		}
+	}
+
+	// --- If-Modified-Since (time-based, only when If-None-Match is absent) ---
+	if ims := r.Header.Get("If-Modified-Since"); ims != "" && inm == "" {
+		if t, err := http.ParseTime(ims); err == nil {
+			if !lastModified.IsZero() && !lastModified.After(t) {
+				return http.StatusNotModified, true
+			}
+		}
+	}
+
+	return 0, false
 }

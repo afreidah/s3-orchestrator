@@ -38,13 +38,22 @@ type GetObjectResult struct {
 	ContentType  string
 	ETag         string
 	ContentRange string
+	LastModified time.Time
+}
+
+// HeadObjectResult holds the response from a HeadObject call.
+type HeadObjectResult struct {
+	Size         int64
+	ContentType  string
+	ETag         string
+	LastModified time.Time
 }
 
 // ObjectBackend defines the interface for object storage operations.
 type ObjectBackend interface {
 	PutObject(ctx context.Context, key string, body io.Reader, size int64, contentType string) (etag string, err error)
 	GetObject(ctx context.Context, key string, rangeHeader string) (*GetObjectResult, error)
-	HeadObject(ctx context.Context, key string) (size int64, contentType string, etag string, err error)
+	HeadObject(ctx context.Context, key string) (*HeadObjectResult, error)
 	DeleteObject(ctx context.Context, key string) error
 }
 
@@ -204,12 +213,15 @@ func (b *S3Backend) GetObject(ctx context.Context, key string, rangeHeader strin
 	if result.ContentRange != nil {
 		out.ContentRange = *result.ContentRange
 	}
+	if result.LastModified != nil {
+		out.LastModified = *result.LastModified
+	}
 
 	return out, nil
 }
 
 // HeadObject retrieves object metadata without the body.
-func (b *S3Backend) HeadObject(ctx context.Context, key string) (int64, string, string, error) {
+func (b *S3Backend) HeadObject(ctx context.Context, key string) (*HeadObjectResult, error) {
 	const operation = "HeadObject"
 	start := time.Now()
 
@@ -230,25 +242,26 @@ func (b *S3Backend) HeadObject(ctx context.Context, key string) (int64, string, 
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)
-		return 0, "", "", fmt.Errorf("head object failed: %w", err)
+		return nil, fmt.Errorf("head object failed: %w", err)
 	}
 
-	size := int64(0)
+	out := &HeadObjectResult{
+		ContentType: "application/octet-stream",
+	}
 	if result.ContentLength != nil {
-		size = *result.ContentLength
+		out.Size = *result.ContentLength
 	}
-
-	contentType := "application/octet-stream"
 	if result.ContentType != nil {
-		contentType = *result.ContentType
+		out.ContentType = *result.ContentType
 	}
-
-	etag := ""
 	if result.ETag != nil {
-		etag = *result.ETag
+		out.ETag = *result.ETag
+	}
+	if result.LastModified != nil {
+		out.LastModified = *result.LastModified
 	}
 
-	return size, contentType, etag, nil
+	return out, nil
 }
 
 // DeleteObject removes an object from the backend.

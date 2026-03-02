@@ -173,11 +173,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, hasDelete := query["delete"]
 		_, hasLocation := query["location"]
 		_, hasUploads := query["uploads"]
+		_, hasVersioning := query["versioning"]
 
 		switch {
 		case method == http.MethodHead:
 			operation = "HeadBucket"
 			status, err = s.handleHeadBucket(w)
+		case method == http.MethodGet && hasVersioning:
+			operation = "GetBucketVersioning"
+			status, err = s.handleGetBucketVersioning(w)
 		case method == http.MethodGet && hasUploads:
 			operation = "ListMultipartUploads"
 			status, err = s.handleListMultipartUploads(ctx, w, r, bucket)
