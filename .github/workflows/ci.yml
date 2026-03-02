@@ -4,8 +4,9 @@
 # Author: Alex Freidah
 #
 # Runs on push to main and pull requests. Executes linting, unit tests with
-# coverage upload, integration tests against real MinIO and PostgreSQL containers,
-# and Debian package build verification for both amd64 and arm64.
+# coverage upload, fuzz smoke tests, integration tests against real MinIO and
+# PostgreSQL containers, and Debian package build verification for both amd64
+# and arm64.
 # -------------------------------------------------------------------------------
 
 name: CI
@@ -50,6 +51,24 @@ jobs:
         with:
           files: coverage.out
           token: ${{ secrets.CODECOV_TOKEN }}
+
+  fuzz:
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Fuzz smoke test
+        run: |
+          go test -fuzz=FuzzParseSigV4Fields -fuzztime=5s ./internal/auth/
+          go test -fuzz=FuzzParsePath -fuzztime=5s ./internal/server/
+          go test -fuzz=FuzzDeleteObjectsXML -fuzztime=5s ./internal/server/
+          go test -fuzz=FuzzCompleteMultipartXML -fuzztime=5s ./internal/server/
+          go test -fuzz=FuzzIsValidRequestID -fuzztime=5s ./internal/server/
 
   integration:
     runs-on: ubuntu-latest
