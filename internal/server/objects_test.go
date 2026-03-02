@@ -37,9 +37,10 @@ type serverMockBackend struct {
 }
 
 type serverMockObj struct {
-	data        []byte
-	contentType string
-	etag        string
+	data         []byte
+	contentType  string
+	etag         string
+	lastModified time.Time
 }
 
 func newServerMockBackend() *serverMockBackend {
@@ -72,10 +73,11 @@ func (b *serverMockBackend) GetObject(_ context.Context, key string, _ string) (
 		return nil, storage.ErrObjectNotFound
 	}
 	return &storage.GetObjectResult{
-		Body:        io.NopCloser(bytes.NewReader(obj.data)),
-		Size:        int64(len(obj.data)),
-		ContentType: obj.contentType,
-		ETag:        obj.etag,
+		Body:         io.NopCloser(bytes.NewReader(obj.data)),
+		Size:         int64(len(obj.data)),
+		ContentType:  obj.contentType,
+		ETag:         obj.etag,
+		LastModified: obj.lastModified,
 	}, nil
 }
 
@@ -90,9 +92,10 @@ func (b *serverMockBackend) HeadObject(_ context.Context, key string) (*storage.
 		return nil, storage.ErrObjectNotFound
 	}
 	return &storage.HeadObjectResult{
-		Size:        int64(len(obj.data)),
-		ContentType: obj.contentType,
-		ETag:        obj.etag,
+		Size:         int64(len(obj.data)),
+		ContentType:  obj.contentType,
+		ETag:         obj.etag,
+		LastModified: obj.lastModified,
 	}, nil
 }
 
@@ -482,6 +485,145 @@ func TestHead_ConditionalIfNoneMatch(t *testing.T) {
 
 	if resp.StatusCode != http.StatusNotModified {
 		t.Fatalf("status = %d, want 304", resp.StatusCode)
+	}
+}
+
+func TestGet_ConditionalIfModifiedSince(t *testing.T) {
+	ts, mockStore, backend := newTestServer(t)
+
+	objTime := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+	backend.objects["mybucket/testkey"] = serverMockObj{
+		data: []byte("hello"), contentType: "text/plain", etag: `"abc"`,
+		lastModified: objTime,
+	}
+	mockStore.GetAllLocationsResp = []storage.ObjectLocation{
+		{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5},
+	}
+
+	// Request with a time after the object's last modification → 304
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/mybucket/testkey", nil)
+	req.Header.Set("X-Proxy-Token", "test-token")
+	req.Header.Set("If-Modified-Since", objTime.Add(time.Hour).UTC().Format(http.TimeFormat))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotModified {
+		t.Fatalf("status = %d, want 304", resp.StatusCode)
+	}
+}
+
+func TestGet_ConditionalIfModifiedSinceNewer(t *testing.T) {
+	ts, mockStore, backend := newTestServer(t)
+
+	objTime := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+	backend.objects["mybucket/testkey"] = serverMockObj{
+		data: []byte("hello"), contentType: "text/plain", etag: `"abc"`,
+		lastModified: objTime,
+	}
+	mockStore.GetAllLocationsResp = []storage.ObjectLocation{
+		{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5},
+	}
+
+	// Request with a time before the object's last modification → 200
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/mybucket/testkey", nil)
+	req.Header.Set("X-Proxy-Token", "test-token")
+	req.Header.Set("If-Modified-Since", objTime.Add(-time.Hour).UTC().Format(http.TimeFormat))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestGet_ConditionalIfUnmodifiedSince(t *testing.T) {
+	ts, mockStore, backend := newTestServer(t)
+
+	objTime := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+	backend.objects["mybucket/testkey"] = serverMockObj{
+		data: []byte("hello"), contentType: "text/plain", etag: `"abc"`,
+		lastModified: objTime,
+	}
+	mockStore.GetAllLocationsResp = []storage.ObjectLocation{
+		{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5},
+	}
+
+	// Object was modified after the given time → 412
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/mybucket/testkey", nil)
+	req.Header.Set("X-Proxy-Token", "test-token")
+	req.Header.Set("If-Unmodified-Since", objTime.Add(-time.Hour).UTC().Format(http.TimeFormat))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusPreconditionFailed {
+		t.Fatalf("status = %d, want 412", resp.StatusCode)
+	}
+}
+
+func TestGet_LastModifiedHeaderSet(t *testing.T) {
+	ts, mockStore, backend := newTestServer(t)
+
+	objTime := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+	backend.objects["mybucket/testkey"] = serverMockObj{
+		data: []byte("hello"), contentType: "text/plain", etag: `"abc"`,
+		lastModified: objTime,
+	}
+	mockStore.GetAllLocationsResp = []storage.ObjectLocation{
+		{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5},
+	}
+
+	resp := doReq(t, http.MethodGet, ts.URL+"/mybucket/testkey", nil)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	lm := resp.Header.Get("Last-Modified")
+	if lm == "" {
+		t.Fatal("expected Last-Modified header to be set")
+	}
+	expected := objTime.UTC().Format(http.TimeFormat)
+	if lm != expected {
+		t.Errorf("Last-Modified = %q, want %q", lm, expected)
+	}
+}
+
+func TestHead_LastModifiedHeaderSet(t *testing.T) {
+	ts, mockStore, backend := newTestServer(t)
+
+	objTime := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+	backend.objects["mybucket/testkey"] = serverMockObj{
+		data: []byte("hello"), contentType: "text/plain", etag: `"abc"`,
+		lastModified: objTime,
+	}
+	mockStore.GetAllLocationsResp = []storage.ObjectLocation{
+		{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5},
+	}
+
+	resp := doReq(t, http.MethodHead, ts.URL+"/mybucket/testkey", nil)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	lm := resp.Header.Get("Last-Modified")
+	if lm == "" {
+		t.Fatal("expected Last-Modified header to be set")
+	}
+	expected := objTime.UTC().Format(http.TimeFormat)
+	if lm != expected {
+		t.Errorf("Last-Modified = %q, want %q", lm, expected)
 	}
 }
 
