@@ -25,6 +25,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/storage"
 	"github.com/afreidah/s3-orchestrator/internal/testutil"
+	"golang.org/x/crypto/bcrypt"
 )
 
 const (
@@ -271,6 +272,146 @@ func TestLogout_ClearsCookie(t *testing.T) {
 		}
 	}
 	t.Error("logout should clear session cookie")
+}
+
+func TestCheckSecret_Plaintext(t *testing.T) {
+	if !checkSecret("mysecret", "mysecret") {
+		t.Error("identical plaintext should match")
+	}
+	if checkSecret("mysecret", "wrong") {
+		t.Error("different plaintext should not match")
+	}
+}
+
+func TestCheckSecret_Bcrypt(t *testing.T) {
+	hash, err := bcrypt.GenerateFromPassword([]byte("bcrypt-pass"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !checkSecret(string(hash), "bcrypt-pass") {
+		t.Error("correct password should match bcrypt hash")
+	}
+	if checkSecret(string(hash), "wrong") {
+		t.Error("wrong password should not match bcrypt hash")
+	}
+}
+
+func TestLogin_BcryptSecret(t *testing.T) {
+	hash, err := bcrypt.GenerateFromPassword([]byte(testAdminSecret), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mockStore := &testutil.MockStore{
+		GetQuotaStatsResp:      map[string]storage.QuotaStat{},
+		GetObjectCountsResp:    map[string]int64{},
+		GetActiveMultipartResp: map[string]int64{},
+		GetUsageForPeriodResp:  map[string]storage.UsageStat{},
+		ListDirChildrenResp:    &storage.DirectoryListResult{},
+	}
+	mgr := storage.NewBackendManager(&storage.BackendManagerConfig{
+		Backends: map[string]storage.ObjectBackend{},
+		Store:    mockStore,
+		Order:    []string{},
+	})
+	t.Cleanup(mgr.Close)
+
+	cfg := &config.Config{
+		Buckets:  []config.BucketConfig{{Name: "b"}},
+		Backends: []config.BackendConfig{{Name: "b1", Endpoint: "e", Bucket: "b", AccessKeyID: "a", SecretAccessKey: "s"}},
+		UI: config.UIConfig{
+			Enabled:     true,
+			AdminKey:    testAdminKey,
+			AdminSecret: string(hash),
+		},
+	}
+
+	h := New(mgr, func() bool { return true }, cfg)
+	mux := http.NewServeMux()
+	h.Register(mux, "/ui")
+
+	form := url.Values{
+		"access_key": {testAdminKey},
+		"secret_key": {testAdminSecret},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/ui/login", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Result().StatusCode != http.StatusSeeOther {
+		t.Fatalf("bcrypt login: status = %d, want 303", w.Result().StatusCode)
+	}
+}
+
+func TestDeriveSessionKey_Deterministic(t *testing.T) {
+	ui := config.UIConfig{AdminSecret: "shared-secret"}
+	key1 := deriveSessionKey(ui)
+	key2 := deriveSessionKey(ui)
+
+	if !bytes.Equal(key1, key2) {
+		t.Error("same config should produce identical session keys")
+	}
+}
+
+func TestDeriveSessionKey_SessionSecretTakesPrecedence(t *testing.T) {
+	withAdmin := config.UIConfig{AdminSecret: "admin-secret"}
+	withSession := config.UIConfig{AdminSecret: "admin-secret", SessionSecret: "session-secret"}
+
+	key1 := deriveSessionKey(withAdmin)
+	key2 := deriveSessionKey(withSession)
+
+	if bytes.Equal(key1, key2) {
+		t.Error("session_secret should produce a different key than admin_secret alone")
+	}
+}
+
+func TestCrossInstanceSession(t *testing.T) {
+	// Two handlers with the same config should accept each other's sessions.
+	mockStore := &testutil.MockStore{
+		GetQuotaStatsResp:      map[string]storage.QuotaStat{},
+		GetObjectCountsResp:    map[string]int64{},
+		GetActiveMultipartResp: map[string]int64{},
+		GetUsageForPeriodResp:  map[string]storage.UsageStat{},
+		ListDirChildrenResp:    &storage.DirectoryListResult{},
+	}
+	mgr := storage.NewBackendManager(&storage.BackendManagerConfig{
+		Backends: map[string]storage.ObjectBackend{},
+		Store:    mockStore,
+		Order:    []string{},
+	})
+	t.Cleanup(mgr.Close)
+
+	cfg := &config.Config{
+		Buckets:  []config.BucketConfig{{Name: "b"}},
+		Backends: []config.BackendConfig{{Name: "b1", Endpoint: "e", Bucket: "b", AccessKeyID: "a", SecretAccessKey: "s"}},
+		UI: config.UIConfig{
+			Enabled:     true,
+			AdminKey:    testAdminKey,
+			AdminSecret: testAdminSecret,
+		},
+	}
+
+	h1 := New(mgr, func() bool { return true }, cfg)
+	h2 := New(mgr, func() bool { return true }, cfg)
+	mux1 := http.NewServeMux()
+	mux2 := http.NewServeMux()
+	h1.Register(mux1, "/ui")
+	h2.Register(mux2, "/ui")
+
+	// Login on instance 1.
+	cookie := getSessionCookie(t, h1, mux1)
+
+	// Use that session on instance 2.
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/dashboard", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	mux2.ServeHTTP(w, req)
+
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("cross-instance session: status = %d, want 200", w.Result().StatusCode)
+	}
 }
 
 func TestStaticAssets_NoAuthRequired(t *testing.T) {

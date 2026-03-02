@@ -16,7 +16,6 @@ package ui
 
 import (
 	"crypto/hmac"
-	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
@@ -35,6 +34,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/storage"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
+	"golang.org/x/crypto/bcrypt"
 )
 
 const (
@@ -56,21 +56,30 @@ type Handler struct {
 
 // New creates a new UI handler.
 func New(manager *storage.BackendManager, dbHealthy func() bool, cfg *config.Config) *Handler {
-	sessionKey := make([]byte, 32)
-	if _, err := rand.Read(sessionKey); err != nil {
-		panic("failed to generate session key: " + err.Error())
-	}
-
 	h := &Handler{
 		manager:     manager,
 		dbHealthy:   dbHealthy,
 		templates:   loadTemplates(),
 		adminKey:    cfg.UI.AdminKey,
 		adminSecret: cfg.UI.AdminSecret,
-		sessionKey:  sessionKey,
+		sessionKey:  deriveSessionKey(cfg.UI),
 	}
 	h.cfg.Store(cfg)
 	return h
+}
+
+// deriveSessionKey produces a deterministic 32-byte HMAC key from the config
+// so that sessions survive restarts and are portable across instances sharing
+// the same config. If session_secret is set it takes precedence; otherwise
+// admin_secret is used as the key material.
+func deriveSessionKey(ui config.UIConfig) []byte {
+	secret := ui.SessionSecret
+	if secret == "" {
+		secret = ui.AdminSecret
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte("s3orch-session-key"))
+	return mac.Sum(nil)
 }
 
 // UpdateConfig atomically replaces the config used by the dashboard.
@@ -105,6 +114,15 @@ func (h *Handler) Register(mux *http.ServeMux, prefix string) {
 // -------------------------------------------------------------------------
 // SESSION AUTH
 // -------------------------------------------------------------------------
+
+// checkSecret compares a provided secret against the configured value.
+// Supports both bcrypt hashes (prefix "$2") and plaintext comparison.
+func checkSecret(configured, provided string) bool {
+	if strings.HasPrefix(configured, "$2") {
+		return bcrypt.CompareHashAndPassword([]byte(configured), []byte(provided)) == nil
+	}
+	return subtle.ConstantTimeCompare([]byte(configured), []byte(provided)) == 1
+}
 
 // requireAuth wraps a handler and enforces session authentication.
 // HTML requests are redirected to the login page; API requests get 401.
@@ -218,9 +236,8 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	secret := r.FormValue("secret_key")
 
 	keyMatch := subtle.ConstantTimeCompare([]byte(key), []byte(h.adminKey)) == 1
-	secretMatch := subtle.ConstantTimeCompare([]byte(secret), []byte(h.adminSecret)) == 1
 
-	if !keyMatch || !secretMatch {
+	if !keyMatch || !checkSecret(h.adminSecret, secret) {
 		slog.Warn("UI: failed login attempt", "remote_addr", r.RemoteAddr)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusUnauthorized)

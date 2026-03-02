@@ -174,10 +174,11 @@ type CircuitBreakerConfig struct {
 
 // UIConfig holds settings for the built-in web dashboard. Disabled by default.
 type UIConfig struct {
-	Enabled     bool   `yaml:"enabled"`
-	Path        string `yaml:"path"`         // URL prefix for the dashboard (default: "/ui")
-	AdminKey    string `yaml:"admin_key"`    // Access key for dashboard login
-	AdminSecret string `yaml:"admin_secret"` // Secret key for dashboard login
+	Enabled       bool   `yaml:"enabled"`
+	Path          string `yaml:"path"`           // URL prefix for the dashboard (default: "/ui")
+	AdminKey      string `yaml:"admin_key"`      // Access key for dashboard login
+	AdminSecret   string `yaml:"admin_secret"`   // Secret key for dashboard login (plaintext or bcrypt hash)
+	SessionSecret string `yaml:"session_secret"` // Optional secret for HMAC session key derivation (enables multi-instance sessions)
 }
 
 // LifecycleConfig holds rules for automatic object expiration. Objects matching
