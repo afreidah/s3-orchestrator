@@ -41,6 +41,7 @@ Objects are routed to backends based on the configured `routing_strategy`: **pac
 - [Development](#development)
 - [Deployment](#deployment)
 - [Project Structure](#project-structure)
+- [Additional Documentation](#additional-documentation)
 
 ## Architecture
 
@@ -734,10 +735,12 @@ make release-local
 ```
 cmd/s3-orchestrator/
   main.go                    Entry point, subcommand dispatch, background tasks
+  admin.go                   Admin subcommand (operational CLI)
   sync.go                    Sync subcommand (bucket import)
   validate.go                Validate subcommand (config check)
   version.go                 Version subcommand (build info)
 internal/
+  admin/handler.go           Admin API handler (status, cleanup queue, log level, etc.)
   audit/audit.go             Request ID generation, context propagation, audit logger
   auth/auth.go               BucketRegistry, SigV4 verification, legacy token auth
   config/config.go           YAML config loader with env var expansion
@@ -821,3 +824,18 @@ deploy/
       secret.yaml              Local dev secret (docker-compose credentials)
       demo.sh                  One-command k3d demo
 ```
+
+## Additional Documentation
+
+| Guide | Description |
+|-------|-------------|
+| [Quickstart](docs/quickstart.md) | Get running in under a minute |
+| [User Guide](docs/user-guide.md) | S3 client configuration and usage |
+| [Admin Guide](docs/admin-guide.md) | Configuration, operations, monitoring, deployment |
+| [API Reference](docs/api-reference.md) | UI and Admin API JSON endpoint documentation |
+| [Security Hardening](docs/security-hardening.md) | TLS, mTLS, config security, network segmentation |
+| [Performance Tuning](docs/performance-tuning.md) | Connection pools, timeouts, routing, rebalancer tuning |
+| [Disaster Recovery](docs/disaster-recovery.md) | Failure scenarios and recovery procedures |
+| [Version Migration](docs/version-migration.md) | Upgrade guide, config changes by version |
+| [Style Guide](docs/style-guide.md) | Coding conventions for contributors |
+| [Contributing](CONTRIBUTING.md) | How to build, test, and submit changes |
