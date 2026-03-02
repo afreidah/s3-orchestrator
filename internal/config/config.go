@@ -60,16 +60,17 @@ type DatabaseConfig struct {
 
 // ServerConfig holds HTTP server settings.
 type ServerConfig struct {
-	ListenAddr        string        `yaml:"listen_addr"`
-	LogLevel          string        `yaml:"log_level"`            // Log level: debug, info, warn, error (default: info)
-	MaxObjectSize     int64         `yaml:"max_object_size"`      // Max upload size in bytes (default: 5GB)
-	BackendTimeout    time.Duration `yaml:"backend_timeout"`      // Per-operation timeout for backend S3 calls (default: 30s)
-	ReadHeaderTimeout time.Duration `yaml:"read_header_timeout"`  // Max time to read request headers (default: 10s)
-	ReadTimeout       time.Duration `yaml:"read_timeout"`         // Max time to read entire request including body (default: 5m)
-	WriteTimeout      time.Duration `yaml:"write_timeout"`        // Max time to write response (default: 5m)
-	IdleTimeout       time.Duration `yaml:"idle_timeout"`         // Max time to wait for next request on keep-alive (default: 120s)
-	ShutdownDelay     time.Duration `yaml:"shutdown_delay"`       // Delay before HTTP drain on SIGTERM for LB deregistration (default: 0)
-	TLS               TLSConfig     `yaml:"tls"`
+	ListenAddr           string        `yaml:"listen_addr"`
+	LogLevel             string        `yaml:"log_level"`                // Log level: debug, info, warn, error (default: info)
+	MaxObjectSize        int64         `yaml:"max_object_size"`          // Max upload size in bytes (default: 5GB)
+	MaxConcurrentRequests int          `yaml:"max_concurrent_requests"`  // Max concurrent S3 requests (0 = unlimited)
+	BackendTimeout       time.Duration `yaml:"backend_timeout"`          // Per-operation timeout for backend S3 calls (default: 30s)
+	ReadHeaderTimeout    time.Duration `yaml:"read_header_timeout"`      // Max time to read request headers (default: 10s)
+	ReadTimeout          time.Duration `yaml:"read_timeout"`             // Max time to read entire request including body (default: 5m)
+	WriteTimeout         time.Duration `yaml:"write_timeout"`            // Max time to write response (default: 5m)
+	IdleTimeout          time.Duration `yaml:"idle_timeout"`             // Max time to wait for next request on keep-alive (default: 120s)
+	ShutdownDelay        time.Duration `yaml:"shutdown_delay"`           // Delay before HTTP drain on SIGTERM for LB deregistration (default: 0)
+	TLS                  TLSConfig     `yaml:"tls"`
 }
 
 // TLSConfig holds optional TLS settings for the HTTP server. When CertFile
@@ -256,6 +257,10 @@ func (c *Config) SetDefaultsAndValidate() error {
 
 	if c.Server.MaxObjectSize == 0 {
 		c.Server.MaxObjectSize = 5 * 1024 * 1024 * 1024 // 5 GB
+	}
+
+	if c.Server.MaxConcurrentRequests < 0 {
+		errors = append(errors, "server.max_concurrent_requests must not be negative")
 	}
 
 	if c.Server.BackendTimeout == 0 {
@@ -619,6 +624,9 @@ func NonReloadableFieldsChanged(old, new *Config) []string {
 
 	if old.Server.ListenAddr != new.Server.ListenAddr {
 		changed = append(changed, "server.listen_addr")
+	}
+	if old.Server.MaxConcurrentRequests != new.Server.MaxConcurrentRequests {
+		changed = append(changed, "server.max_concurrent_requests")
 	}
 	if old.Server.ReadHeaderTimeout != new.Server.ReadHeaderTimeout ||
 		old.Server.ReadTimeout != new.Server.ReadTimeout ||
