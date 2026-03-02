@@ -66,6 +66,7 @@ type ServerConfig struct {
 	ReadTimeout       time.Duration `yaml:"read_timeout"`         // Max time to read entire request including body (default: 5m)
 	WriteTimeout      time.Duration `yaml:"write_timeout"`        // Max time to write response (default: 5m)
 	IdleTimeout       time.Duration `yaml:"idle_timeout"`         // Max time to wait for next request on keep-alive (default: 120s)
+	ShutdownDelay     time.Duration `yaml:"shutdown_delay"`       // Delay before HTTP drain on SIGTERM for LB deregistration (default: 0)
 	TLS               TLSConfig     `yaml:"tls"`
 }
 
@@ -612,6 +613,9 @@ func NonReloadableFieldsChanged(old, new *Config) []string {
 		old.Server.WriteTimeout != new.Server.WriteTimeout ||
 		old.Server.IdleTimeout != new.Server.IdleTimeout {
 		changed = append(changed, "server timeouts (read_header_timeout, read_timeout, write_timeout, idle_timeout)")
+	}
+	if old.Server.ShutdownDelay != new.Server.ShutdownDelay {
+		changed = append(changed, "server.shutdown_delay")
 	}
 	if old.Server.TLS != new.Server.TLS {
 		changed = append(changed, "server.tls")
