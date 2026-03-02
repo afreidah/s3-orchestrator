@@ -223,6 +223,7 @@ YAML config file specified via `-config` flag (default: `config.yaml`). Supports
 server:
   listen_addr: "0.0.0.0:9000"
   max_object_size: 5368709120  # 5 GB (default)
+  # max_concurrent_requests: 0  # 0 = unlimited (default)
 
 # Virtual buckets with per-bucket credentials
 buckets:
@@ -351,6 +352,7 @@ kill -HUP $(pidof s3-orchestrator)
 | `usage_flush` | Yes | Interval, adaptive enabled/threshold/fast interval |
 | `lifecycle` | Yes | Rules (prefix, expiration_days) |
 | `server.listen_addr` | No | Requires restart |
+| `server.max_concurrent_requests` | No | Requires restart |
 | `database` | No | Requires restart |
 | `telemetry` | No | Requires restart |
 | `circuit_breaker` | No | Requires restart |
@@ -449,6 +451,7 @@ All metrics are prefixed with `s3proxy_`. Exposed at `/metrics` when enabled.
 | `s3proxy_cleanup_queue_processed_total` | Counter | status | Items processed from the cleanup queue (success/retry/exhausted) |
 | `s3proxy_cleanup_queue_depth` | Gauge | — | Current pending items in the cleanup queue |
 | `s3proxy_rate_limit_rejections_total` | Counter | — | Requests rejected by per-IP rate limiting |
+| `s3proxy_admission_rejections_total` | Counter | — | Requests rejected by server-level admission control |
 | `s3proxy_lifecycle_deleted_total` | Counter | — | Objects deleted by lifecycle expiration |
 | `s3proxy_lifecycle_failed_total` | Counter | — | Objects that failed lifecycle deletion |
 | `s3proxy_lifecycle_runs_total` | Counter | status | Lifecycle worker executions |

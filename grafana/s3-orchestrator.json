@@ -791,6 +791,10 @@
           "legendFormat": "rate limit rejections"
         },
         {
+          "expr": "rate(s3proxy_admission_rejections_total[5m])",
+          "legendFormat": "admission rejections"
+        },
+        {
           "expr": "sum by (limit_type) (rate(s3proxy_usage_limit_rejections_total[5m]))",
           "legendFormat": "usage limit: {{limit_type}}"
         }

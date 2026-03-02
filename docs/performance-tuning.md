@@ -20,6 +20,26 @@ database:
 - `min_conns` keeps idle connections warm. Set it to roughly half of `max_conns` to avoid connection setup latency on traffic spikes.
 - `max_conn_lifetime` rotates connections to pick up DNS changes and distribute load across replicas. The 5-minute default works well in most environments.
 
+## Admission Control
+
+```yaml
+server:
+  max_concurrent_requests: 0  # 0 = unlimited (default)
+```
+
+Limits the total number of S3 requests being processed concurrently. When the limit is reached, new requests are rejected immediately with `503 SlowDown` instead of queueing and potentially exhausting backend connections and goroutines.
+
+### When to set this
+
+- **Default (0)**: no limit. Fine for low-traffic single-instance deployments.
+- **Recommended starting point**: set to 2-3x your `database.max_conns` value. Every S3 operation needs at least one database query, so there's no benefit admitting more requests than the connection pool can serve.
+- **High-traffic environments**: set based on your observed peak concurrency from `s3proxy_inflight_requests` metrics. Start with a value 50% above observed peak and adjust downward if you want tighter load shedding.
+
+### Monitoring
+
+- `s3proxy_admission_rejections_total` — counter of rejected requests. If this is consistently non-zero, either increase the limit or investigate why the server is saturated.
+- `s3proxy_inflight_requests` — gauge of currently processing requests by method. Use this to find the right limit value.
+
 ## Backend Timeout
 
 ```yaml
