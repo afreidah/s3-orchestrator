@@ -567,15 +567,7 @@ func (m *BackendManager) DeleteObject(ctx context.Context, key string) error {
 				"backend", copy.BackendName, "key", key)
 			continue
 		}
-		bctx, bcancel := m.withTimeout(ctx)
-		err := backend.DeleteObject(bctx, key)
-		bcancel()
-		if err != nil {
-			slog.Warn("Failed to delete object from backend",
-				"backend", copy.BackendName, "key", key, "error", err)
-			m.enqueueCleanup(ctx, copy.BackendName, key, "delete_failed")
-			span.RecordError(err)
-		}
+		m.deleteOrEnqueue(ctx, backend, copy.BackendName, key, "delete_failed")
 	}
 
 	// --- Record metrics (use first copy's backend for primary) ---

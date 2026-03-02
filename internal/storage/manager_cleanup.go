@@ -36,6 +36,21 @@ func cleanupBackoff(attempts int32) time.Duration {
 	return d
 }
 
+// deleteOrEnqueue attempts to delete an object from a backend. If the delete
+// fails, it logs a warning and enqueues the key for background retry. This is
+// the standard "best-effort orphan cleanup" primitive used throughout the
+// manager: rebalancer, replicator, multipart cleanup, and delete paths.
+func (m *BackendManager) deleteOrEnqueue(ctx context.Context, backend ObjectBackend, backendName, key, reason string) {
+	dctx, dcancel := m.withTimeout(ctx)
+	err := backend.DeleteObject(dctx, key)
+	dcancel()
+	if err != nil {
+		slog.Warn("Failed to delete object, enqueuing cleanup",
+			"backend", backendName, "key", key, "reason", reason, "error", err)
+		m.enqueueCleanup(ctx, backendName, key, reason)
+	}
+}
+
 // enqueueCleanup adds a failed cleanup operation to the retry queue.
 // Best-effort: if the enqueue itself fails (e.g. DB down), logs the error
 // and moves on since the circuit breaker is already handling DB outages.
