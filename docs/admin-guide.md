@@ -348,7 +348,8 @@ ui:
   enabled: true
   path: "/ui"                          # URL prefix (default: /ui)
   admin_key: "${UI_ADMIN_KEY}"         # access key for dashboard login
-  admin_secret: "${UI_ADMIN_SECRET}"   # secret key for dashboard login
+  admin_secret: "${UI_ADMIN_SECRET}"   # secret key — plaintext or bcrypt hash
+  session_secret: "${UI_SESSION_SECRET}" # optional — for multi-instance session portability
 ```
 
 Both `admin_key` and `admin_secret` are required when `enabled` is `true`. Generate them the same way as bucket credentials:
@@ -357,6 +358,18 @@ Both `admin_key` and `admin_secret` are required when `enabled` is `true`. Gener
 echo "Admin Key: $(openssl rand -hex 10 | tr '[:lower:]' '[:upper:]')"
 echo "Admin Secret: $(openssl rand -base64 30)"
 ```
+
+**Bcrypt-hashed secrets:** For bare-metal deployments where the config file is at rest on disk, you can store `admin_secret` as a bcrypt hash instead of plaintext. The orchestrator detects bcrypt hashes automatically (they start with `$2`). Generate one with:
+
+```bash
+htpasswd -nbBC 10 "" 'your-secret' | cut -d: -f2
+```
+
+Both plaintext and bcrypt secrets are fully supported — no config migration needed.
+
+**Session secret:** By default, session keys are derived deterministically from `admin_secret` using HMAC-SHA256, so sessions survive restarts. For multi-instance deployments behind a load balancer, all instances sharing the same `admin_secret` will accept each other's sessions automatically.
+
+Set `session_secret` to use a separate key for session derivation — useful when you want to rotate the session key independently of `admin_secret`, or when different instances need different admin secrets but shared sessions.
 
 ### usage_flush
 

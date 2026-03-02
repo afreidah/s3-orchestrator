@@ -179,6 +179,34 @@ rate_limit:
 
 Without this, all requests appear to come from the proxy IP and share a single rate limit bucket.
 
+## Web UI Authentication
+
+### Bcrypt-Hashed Admin Secret
+
+For bare-metal deployments where the config file is stored on disk without external secret injection, use a bcrypt hash for `admin_secret` instead of plaintext:
+
+```bash
+# Generate a bcrypt hash
+htpasswd -nbBC 10 "" 'your-secret' | cut -d: -f2
+```
+
+```yaml
+ui:
+  enabled: true
+  admin_key: "ADMIN_ACCESS_KEY"
+  admin_secret: "$2y$10$..."   # bcrypt hash
+```
+
+The orchestrator detects bcrypt hashes automatically (any value starting with `$2`). Plaintext secrets continue to work — no migration is required.
+
+**Recommendation:** Use bcrypt for bare-metal and `.deb` installations. For container deployments with Vault, Nomad templates, or Kubernetes secrets, plaintext with `${ENV_VAR}` expansion is equally secure since the secret never touches disk.
+
+### Session Portability
+
+Session keys are derived deterministically from the config (via HMAC-SHA256), so sessions survive restarts and are portable across instances sharing the same config. No session storage or shared state is required beyond the config file itself.
+
+For multi-instance deployments behind a load balancer, ensure all instances use the same `admin_secret` (or the same `session_secret` if set). A session created on one instance will be accepted by any other instance with matching config.
+
 ## Credential Rotation
 
 S3 client credentials can be rotated without downtime using the SIGHUP reload mechanism. See the [admin guide](admin-guide.md#rotating-client-credentials) for the zero-downtime rotation procedure.
