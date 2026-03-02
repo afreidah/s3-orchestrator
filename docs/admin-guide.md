@@ -97,6 +97,7 @@ database:
 ```yaml
 server:
   listen_addr: "0.0.0.0:9000"    # required
+  log_level: "info"               # debug, info, warn, error (default: info, reloadable via SIGHUP)
   max_object_size: 5368709120     # 5 GB default
   backend_timeout: "30s"          # per-operation timeout for backend S3 calls
   read_header_timeout: "10s"      # max time to read request headers (default: 10s)
@@ -525,6 +526,48 @@ Validates a configuration file without starting the server. Exits 0 on success w
 s3-orchestrator validate -config config.yaml
 ```
 
+### admin
+
+Operational CLI for inspecting and controlling a running instance. Reads `config.yaml` to discover the server address and admin token (`ui.admin_key`), then makes HTTP requests to the admin API.
+
+```bash
+s3-orchestrator admin [flags] <command>
+```
+
+**Flags:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-config` | `config.yaml` | Path to configuration file |
+| `-addr` | from config | Override server address |
+
+**Commands:**
+
+```bash
+# Show backend health, usage, and circuit breaker state
+s3-orchestrator admin status
+
+# List all copies of an object across backends
+s3-orchestrator admin object-locations -key "my-bucket/path/to/file.txt"
+
+# Show cleanup queue depth and pending items
+s3-orchestrator admin cleanup-queue
+
+# Force flush in-memory usage counters to the database
+s3-orchestrator admin usage-flush
+
+# Trigger one replication cycle (creates missing replicas)
+s3-orchestrator admin replicate
+
+# View the current log level
+s3-orchestrator admin log-level
+
+# Change log level at runtime (no restart or SIGHUP needed)
+s3-orchestrator admin log-level -set debug
+```
+
+The admin API requires `ui.admin_key` to be set in the configuration. All requests are authenticated via the `X-Admin-Token` header.
+
 ## Importing Existing Data
 
 The `sync` subcommand imports objects from an existing backend bucket into the orchestrator's metadata database. Use this when bringing a bucket that already has data under orchestrator management.
@@ -686,6 +729,7 @@ Many settings can be updated without restarting the orchestrator by sending `SIG
 
 **What takes effect immediately:**
 
+- Log level (`server.log_level`) — can also be changed at runtime via `s3-orchestrator admin log-level -set debug`
 - Bucket credentials (add/remove/rotate credentials without downtime)
 - Rate limit settings (requests per second, burst)
 - Backend quota limits (`quota_bytes`)
