@@ -48,6 +48,7 @@ type Handler struct {
 	dbHealthy   func() bool
 	cfg         atomic.Pointer[config.Config]
 	templates   *template.Template
+	logBuffer   *telemetry.LogBuffer
 	prefix      string
 	adminKey    string
 	adminSecret string
@@ -55,11 +56,12 @@ type Handler struct {
 }
 
 // New creates a new UI handler.
-func New(manager *storage.BackendManager, dbHealthy func() bool, cfg *config.Config) *Handler {
+func New(manager *storage.BackendManager, dbHealthy func() bool, cfg *config.Config, logBuffer *telemetry.LogBuffer) *Handler {
 	h := &Handler{
 		manager:     manager,
 		dbHealthy:   dbHealthy,
 		templates:   loadTemplates(),
+		logBuffer:   logBuffer,
 		adminKey:    cfg.UI.AdminKey,
 		adminSecret: cfg.UI.AdminSecret,
 		sessionKey:  deriveSessionKey(cfg.UI),
@@ -108,6 +110,7 @@ func (h *Handler) Register(mux *http.ServeMux, prefix string) {
 	mux.HandleFunc(prefix+"/api/upload", h.requireAuth(h.handleAPIUpload))
 	mux.HandleFunc(prefix+"/api/rebalance", h.requireAuth(h.handleAPIRebalance))
 	mux.HandleFunc(prefix+"/api/sync", h.requireAuth(h.handleAPISync))
+	mux.HandleFunc(prefix+"/api/logs", h.requireAuth(h.handleAPILogs))
 	mux.Handle(prefix+"/static/", http.StripPrefix(prefix+"/static/", http.FileServerFS(staticFS)))
 }
 
@@ -622,4 +625,54 @@ func (h *Handler) handleAPISync(w http.ResponseWriter, r *http.Request) {
 		"imported", imported, "skipped", skipped)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "imported": imported, "skipped": skipped})
+}
+
+// -------------------------------------------------------------------------
+// LOGS API
+// -------------------------------------------------------------------------
+
+// handleAPILogs returns buffered log entries as JSON. Supports query
+// parameters for filtering: level (minimum severity), since (RFC3339
+// timestamp), component, and limit.
+func (h *Handler) handleAPILogs(w http.ResponseWriter, r *http.Request) {
+	setSecurityHeaders(w)
+
+	opts := telemetry.LogQueryOpts{}
+
+	if lvl := r.URL.Query().Get("level"); lvl != "" {
+		switch strings.ToUpper(lvl) {
+		case "DEBUG":
+			opts.MinLevel = slog.LevelDebug
+		case "INFO":
+			opts.MinLevel = slog.LevelInfo
+		case "WARN":
+			opts.MinLevel = slog.LevelWarn
+		case "ERROR":
+			opts.MinLevel = slog.LevelError
+		}
+	}
+
+	if since := r.URL.Query().Get("since"); since != "" {
+		if t, err := time.Parse(time.RFC3339, since); err == nil {
+			opts.Since = t
+		}
+	}
+
+	if limit := r.URL.Query().Get("limit"); limit != "" {
+		if n, err := strconv.Atoi(limit); err == nil && n > 0 {
+			opts.Limit = n
+		}
+	}
+
+	opts.Component = r.URL.Query().Get("component")
+
+	entries := h.logBuffer.Entries(opts)
+	if entries == nil {
+		entries = []telemetry.LogEntry{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(entries); err != nil {
+		slog.Error("UI: failed to encode logs JSON", "error", err)
+	}
 }

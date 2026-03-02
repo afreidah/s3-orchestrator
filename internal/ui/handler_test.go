@@ -21,9 +21,11 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/storage"
+	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/testutil"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -85,7 +87,7 @@ func newTestHandlerWithMock(t *testing.T) (*Handler, *http.ServeMux, *testutil.M
 		},
 	}
 
-	h := New(mgr, func() bool { return true }, cfg)
+	h := New(mgr, func() bool { return true }, cfg, telemetry.NewLogBuffer())
 
 	mux := http.NewServeMux()
 	h.Register(mux, "/ui")
@@ -327,7 +329,7 @@ func TestLogin_BcryptSecret(t *testing.T) {
 		},
 	}
 
-	h := New(mgr, func() bool { return true }, cfg)
+	h := New(mgr, func() bool { return true }, cfg, telemetry.NewLogBuffer())
 	mux := http.NewServeMux()
 	h.Register(mux, "/ui")
 
@@ -393,8 +395,8 @@ func TestCrossInstanceSession(t *testing.T) {
 		},
 	}
 
-	h1 := New(mgr, func() bool { return true }, cfg)
-	h2 := New(mgr, func() bool { return true }, cfg)
+	h1 := New(mgr, func() bool { return true }, cfg, telemetry.NewLogBuffer())
+	h2 := New(mgr, func() bool { return true }, cfg, telemetry.NewLogBuffer())
 	mux1 := http.NewServeMux()
 	mux2 := http.NewServeMux()
 	h1.Register(mux1, "/ui")
@@ -1032,5 +1034,184 @@ func TestTreeAPI_DataError(t *testing.T) {
 
 	if w.Result().StatusCode != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500", w.Result().StatusCode)
+	}
+}
+
+// -------------------------------------------------------------------------
+// LOGS API TESTS
+// -------------------------------------------------------------------------
+
+func TestAPILogs_RequiresAuth(t *testing.T) {
+	_, mux := newTestHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/logs", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Result().StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", w.Result().StatusCode)
+	}
+}
+
+func TestAPILogs_ReturnsJSON(t *testing.T) {
+	h, mux := newTestHandler(t)
+
+	req := authedRequest(t, h, mux, http.MethodGet, "/ui/api/logs", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	ct := resp.Header.Get("Content-Type")
+	if !strings.Contains(ct, "application/json") {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+
+	var entries []telemetry.LogEntry
+	if err := json.NewDecoder(resp.Body).Decode(&entries); err != nil {
+		t.Fatalf("failed to decode JSON: %v", err)
+	}
+}
+
+func TestAPILogs_LevelFilter(t *testing.T) {
+	h, mux := newTestHandler(t)
+
+	// Add known entries to the handler's log buffer.
+	h.logBuffer.Add(telemetry.LogEntry{Level: "INFO", Message: "info msg"})
+	h.logBuffer.Add(telemetry.LogEntry{Level: "ERROR", Message: "error msg"})
+
+	req := authedRequest(t, h, mux, http.MethodGet, "/ui/api/logs?level=ERROR", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var entries []telemetry.LogEntry
+	if err := json.NewDecoder(resp.Body).Decode(&entries); err != nil {
+		t.Fatalf("failed to decode JSON: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("got %d entries, want 1", len(entries))
+	}
+	if entries[0].Message != "error msg" {
+		t.Errorf("message = %q, want 'error msg'", entries[0].Message)
+	}
+}
+
+func TestAPILogs_AllLevelFilters(t *testing.T) {
+	h, mux := newTestHandler(t)
+
+	h.logBuffer.Add(telemetry.LogEntry{Level: "DEBUG", Message: "d"})
+	h.logBuffer.Add(telemetry.LogEntry{Level: "INFO", Message: "i"})
+	h.logBuffer.Add(telemetry.LogEntry{Level: "WARN", Message: "w"})
+	h.logBuffer.Add(telemetry.LogEntry{Level: "ERROR", Message: "e"})
+
+	tests := []struct {
+		level string
+		want  int
+	}{
+		{"DEBUG", 4},
+		{"INFO", 3},
+		{"WARN", 2},
+		{"ERROR", 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.level, func(t *testing.T) {
+			req := authedRequest(t, h, mux, http.MethodGet, "/ui/api/logs?level="+tt.level, nil)
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, req)
+
+			if w.Result().StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, want 200", w.Result().StatusCode)
+			}
+			var entries []telemetry.LogEntry
+			if err := json.NewDecoder(w.Result().Body).Decode(&entries); err != nil {
+				t.Fatalf("failed to decode: %v", err)
+			}
+			if len(entries) != tt.want {
+				t.Errorf("level=%s: got %d entries, want %d", tt.level, len(entries), tt.want)
+			}
+		})
+	}
+}
+
+func TestAPILogs_SinceFilter(t *testing.T) {
+	h, mux := newTestHandler(t)
+
+	old := time.Now().Add(-1 * time.Hour)
+	recent := time.Now()
+	h.logBuffer.Add(telemetry.LogEntry{Time: old, Level: "INFO", Message: "old"})
+	h.logBuffer.Add(telemetry.LogEntry{Time: recent, Level: "INFO", Message: "new"})
+
+	since := time.Now().Add(-10 * time.Minute).Format(time.RFC3339)
+	req := authedRequest(t, h, mux, http.MethodGet, "/ui/api/logs?since="+since, nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Result().StatusCode)
+	}
+	var entries []telemetry.LogEntry
+	if err := json.NewDecoder(w.Result().Body).Decode(&entries); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("got %d entries, want 1", len(entries))
+	}
+	if entries[0].Message != "new" {
+		t.Errorf("message = %q, want 'new'", entries[0].Message)
+	}
+}
+
+func TestAPILogs_LimitFilter(t *testing.T) {
+	h, mux := newTestHandler(t)
+
+	for i := range 20 {
+		h.logBuffer.Add(telemetry.LogEntry{Level: "INFO", Message: "msg", Attrs: map[string]any{"i": i}})
+	}
+
+	req := authedRequest(t, h, mux, http.MethodGet, "/ui/api/logs?limit=5", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Result().StatusCode)
+	}
+	var entries []telemetry.LogEntry
+	if err := json.NewDecoder(w.Result().Body).Decode(&entries); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
+	if len(entries) != 5 {
+		t.Fatalf("got %d entries, want 5", len(entries))
+	}
+}
+
+func TestAPILogs_ComponentFilter(t *testing.T) {
+	h, mux := newTestHandler(t)
+
+	h.logBuffer.Add(telemetry.LogEntry{Level: "INFO", Message: "a", Attrs: map[string]any{"component": "server"}})
+	h.logBuffer.Add(telemetry.LogEntry{Level: "INFO", Message: "b", Attrs: map[string]any{"component": "storage"}})
+
+	req := authedRequest(t, h, mux, http.MethodGet, "/ui/api/logs?component=server", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Result().StatusCode)
+	}
+	var entries []telemetry.LogEntry
+	if err := json.NewDecoder(w.Result().Body).Decode(&entries); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("got %d entries, want 1", len(entries))
+	}
+	if entries[0].Message != "a" {
+		t.Errorf("message = %q, want 'a'", entries[0].Message)
 	}
 }

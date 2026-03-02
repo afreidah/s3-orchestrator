@@ -110,9 +110,9 @@ func runServe() {
 	// --- Initialize structured logger with configurable level ---
 	var logLevel slog.LevelVar
 	logLevel.Set(config.ParseLogLevel(cfg.Server.LogLevel))
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: &logLevel,
-	})))
+	logBuffer := telemetry.NewLogBuffer()
+	jsonHandler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: &logLevel})
+	slog.SetDefault(slog.New(telemetry.NewTeeHandler(jsonHandler, logBuffer)))
 
 	// --- Initialize tracing ---
 	ctx := context.Background()
@@ -296,7 +296,7 @@ func runServe() {
 	if *mode == "api" || *mode == "all" {
 		// Web UI dashboard
 		if cfg.UI.Enabled {
-			uiHandler = ui.New(manager, cbStore.IsHealthy, cfg)
+			uiHandler = ui.New(manager, cbStore.IsHealthy, cfg, logBuffer)
 			uiHandler.Register(mux, cfg.UI.Path)
 			slog.Info("Web UI enabled", "path", cfg.UI.Path)
 		}

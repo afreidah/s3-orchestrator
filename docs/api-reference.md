@@ -89,6 +89,32 @@ Returns children of a directory prefix for the lazy-loaded file browser.
 }
 ```
 
+### GET /ui/api/logs
+
+Returns buffered log entries from the in-memory ring buffer (last 5,000 entries).
+
+**Query parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `level` | No | Minimum severity: `DEBUG`, `INFO`, `WARN`, `ERROR` (default: all levels) |
+| `since` | No | RFC3339 timestamp — only return entries after this time |
+| `component` | No | Filter by `component` attribute value |
+| `limit` | No | Maximum entries to return (default: all). When applied, returns the most recent N matching entries. |
+
+**Response:**
+
+```json
+[
+  {
+    "time": "2026-03-02T14:30:00Z",
+    "level": "INFO",
+    "message": "Connected to PostgreSQL",
+    "attrs": {"host": "db.example.com", "port": 5432, "component": "main"}
+  }
+]
+```
+
 ### POST /ui/api/delete
 
 Deletes a single object by key.
