@@ -59,10 +59,14 @@ type DatabaseConfig struct {
 
 // ServerConfig holds HTTP server settings.
 type ServerConfig struct {
-	ListenAddr     string        `yaml:"listen_addr"`
-	MaxObjectSize  int64         `yaml:"max_object_size"`  // Max upload size in bytes (default: 5GB)
-	BackendTimeout time.Duration `yaml:"backend_timeout"`  // Per-operation timeout for backend S3 calls (default: 30s)
-	TLS            TLSConfig     `yaml:"tls"`
+	ListenAddr        string        `yaml:"listen_addr"`
+	MaxObjectSize     int64         `yaml:"max_object_size"`      // Max upload size in bytes (default: 5GB)
+	BackendTimeout    time.Duration `yaml:"backend_timeout"`      // Per-operation timeout for backend S3 calls (default: 30s)
+	ReadHeaderTimeout time.Duration `yaml:"read_header_timeout"`  // Max time to read request headers (default: 10s)
+	ReadTimeout       time.Duration `yaml:"read_timeout"`         // Max time to read entire request including body (default: 5m)
+	WriteTimeout      time.Duration `yaml:"write_timeout"`        // Max time to write response (default: 5m)
+	IdleTimeout       time.Duration `yaml:"idle_timeout"`         // Max time to wait for next request on keep-alive (default: 120s)
+	TLS               TLSConfig     `yaml:"tls"`
 }
 
 // TLSConfig holds optional TLS settings for the HTTP server. When CertFile
@@ -243,6 +247,27 @@ func (c *Config) SetDefaultsAndValidate() error {
 
 	if c.Server.BackendTimeout == 0 {
 		c.Server.BackendTimeout = 30 * time.Second
+	}
+
+	if c.Server.ReadHeaderTimeout == 0 {
+		c.Server.ReadHeaderTimeout = 10 * time.Second
+	}
+	if c.Server.ReadTimeout == 0 {
+		c.Server.ReadTimeout = 5 * time.Minute
+	}
+	if c.Server.WriteTimeout == 0 {
+		c.Server.WriteTimeout = 5 * time.Minute
+	}
+	if c.Server.IdleTimeout == 0 {
+		c.Server.IdleTimeout = 120 * time.Second
+	}
+
+	// --- Server timeout cross-validation ---
+	if c.Server.ReadHeaderTimeout > c.Server.ReadTimeout {
+		errors = append(errors, "server.read_header_timeout must not exceed server.read_timeout")
+	}
+	if c.Server.BackendTimeout > c.Server.WriteTimeout {
+		errors = append(errors, "server.backend_timeout must not exceed server.write_timeout")
 	}
 
 	// --- TLS validation ---
@@ -581,6 +606,12 @@ func NonReloadableFieldsChanged(old, new *Config) []string {
 
 	if old.Server.ListenAddr != new.Server.ListenAddr {
 		changed = append(changed, "server.listen_addr")
+	}
+	if old.Server.ReadHeaderTimeout != new.Server.ReadHeaderTimeout ||
+		old.Server.ReadTimeout != new.Server.ReadTimeout ||
+		old.Server.WriteTimeout != new.Server.WriteTimeout ||
+		old.Server.IdleTimeout != new.Server.IdleTimeout {
+		changed = append(changed, "server timeouts (read_header_timeout, read_timeout, write_timeout, idle_timeout)")
 	}
 	if old.Server.TLS != new.Server.TLS {
 		changed = append(changed, "server.tls")
