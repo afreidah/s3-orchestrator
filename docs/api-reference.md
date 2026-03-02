@@ -311,6 +311,100 @@ Valid levels: `debug`, `info`, `warn`, `error`.
 {"level": "debug"}
 ```
 
+### POST /admin/api/backends/{name}/drain
+
+Starts draining a backend. All objects are migrated to other backends in the background. The backend is immediately excluded from new writes.
+
+**Response (202 Accepted):**
+
+```json
+{"status": "drain started", "backend": "oci"}
+```
+
+**Error responses:**
+
+```json
+{"error": "backend \"oci\" not found"}
+{"error": "backend \"oci\" is already draining"}
+```
+
+### GET /admin/api/backends/{name}/drain
+
+Returns the current state of a drain operation.
+
+**Response (active drain):**
+
+```json
+{
+  "active": true,
+  "objects_remaining": 150,
+  "bytes_remaining": 52428800,
+  "objects_moved": 42
+}
+```
+
+**Response (no drain active):**
+
+```json
+{
+  "active": false,
+  "objects_remaining": 0,
+  "bytes_remaining": 0,
+  "objects_moved": 0
+}
+```
+
+**Response (completed with error):**
+
+```json
+{
+  "active": false,
+  "objects_remaining": 0,
+  "bytes_remaining": 0,
+  "objects_moved": 100,
+  "error": "context canceled"
+}
+```
+
+### DELETE /admin/api/backends/{name}/drain
+
+Cancels an active drain. Objects already moved are not rolled back.
+
+**Response:**
+
+```json
+{"status": "drain cancelled", "backend": "oci"}
+```
+
+**Error response:**
+
+```json
+{"error": "backend \"oci\" is not draining"}
+```
+
+### DELETE /admin/api/backends/{name}
+
+Removes all database records for a backend. This is destructive.
+
+**Query parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `purge` | No | Set to `true` to also delete objects from the backend's S3 storage |
+
+**Response:**
+
+```json
+{"status": "backend removed", "backend": "oci"}
+```
+
+**Error responses:**
+
+```json
+{"error": "backend \"oci\" is currently draining, cancel the drain first"}
+{"error": "failed to delete backend data: ..."}
+```
+
 ## Error Responses
 
 All endpoints return errors as JSON:

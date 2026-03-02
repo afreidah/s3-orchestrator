@@ -65,21 +65,41 @@ If a storage backend is permanently lost (provider shutdown, account deleted, et
 
 Objects that have replicas on other backends continue to be served transparently. The orchestrator tries the failed backend, gets an error, and falls through to the next copy.
 
-To clean up:
+To clean up, remove the backend's database records:
 
-1. Remove the backend from the config file.
-2. Restart the orchestrator (backend count changes require a restart).
-3. Objects with their only copy on the removed backend will return errors on access. The database still holds their location records.
+```bash
+s3-orchestrator admin remove-backend <backend-name>
+```
+
+Then remove the backend from the config file and restart.
 
 ### Without replication (factor = 1)
 
 Objects stored exclusively on the lost backend are unrecoverable from the orchestrator's perspective. The database records remain but point to a backend that no longer exists.
 
-To clean up:
+To clean up, remove the orphaned database records:
 
-1. Remove the backend from the config file.
-2. Restart the orchestrator.
-3. Delete orphaned database records manually or let the cleanup queue process them as failures accumulate.
+```bash
+s3-orchestrator admin remove-backend <backend-name>
+```
+
+Then remove the backend from the config file and restart.
+
+### Planned decommission
+
+If a backend is still reachable but you want to decommission it, use the drain operation to migrate all objects to other backends first (no data loss):
+
+```bash
+# Start the drain — objects are migrated in the background
+s3-orchestrator admin drain <backend-name>
+
+# Monitor progress
+s3-orchestrator admin drain-status <backend-name>
+
+# Once complete, remove from config and restart
+```
+
+See the [Admin Guide](admin-guide.md#draining-a-backend) for the full drain workflow.
 
 ### Preventing data loss
 

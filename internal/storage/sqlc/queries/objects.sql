@@ -88,6 +88,14 @@ WHERE object_key LIKE @prefix::text || '%' ESCAPE '\'
 ORDER BY object_key, created_at ASC
 LIMIT @max_keys;
 
+-- name: BackendObjectStats :one
+SELECT COUNT(*) AS object_count, COALESCE(SUM(size_bytes), 0)::bigint AS total_bytes
+FROM object_locations
+WHERE backend_name = $1;
+
+-- name: DeleteObjectLocationsByBackend :exec
+DELETE FROM object_locations WHERE backend_name = $1;
+
 -- name: ListDirectChildren :many
 -- Return per-file detail for non-directory children under a prefix, with pagination.
 SELECT DISTINCT ON (object_key) object_key, backend_name, size_bytes, created_at

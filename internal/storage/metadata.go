@@ -95,6 +95,11 @@ type MetadataStore interface {
 
 	// --- Import (sync CLI) ---
 	ImportObject(ctx context.Context, key, backend string, size int64) (bool, error)
+
+	// --- Backend lifecycle ---
+	BackendObjectStats(ctx context.Context, backendName string) (int64, int64, error)
+	DeleteBackendData(ctx context.Context, backendName string) error
+	DeleteObjectLocation(ctx context.Context, key, backendName string) error
 }
 
 // UsageStat holds usage statistics for a single backend in a given period.

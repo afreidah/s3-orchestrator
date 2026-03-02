@@ -66,3 +66,6 @@ WHERE backend_name = @backend_name
 UPDATE backend_quotas
 SET bytes_used = GREATEST(0, bytes_used - @amount), updated_at = NOW()
 WHERE backend_name = @backend_name;
+
+-- name: DeleteQuota :exec
+DELETE FROM backend_quotas WHERE backend_name = $1;

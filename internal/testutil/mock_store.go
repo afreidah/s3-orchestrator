@@ -357,3 +357,16 @@ func (m *MockStore) WithAdvisoryLock(_ context.Context, _ int64, fn func(ctx con
 func (m *MockStore) ImportObject(_ context.Context, _, _ string, _ int64) (bool, error) {
 	return true, nil
 }
+
+func (m *MockStore) BackendObjectStats(_ context.Context, _ string) (int64, int64, error) {
+	return 0, 0, nil
+}
+
+func (m *MockStore) DeleteBackendData(_ context.Context, _ string) error {
+	return nil
+}
+
+// DeleteObjectLocation removes a single object location (stub).
+func (m *MockStore) DeleteObjectLocation(_ context.Context, _, _ string) error {
+	return nil
+}
