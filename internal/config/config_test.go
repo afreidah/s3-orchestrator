@@ -297,6 +297,135 @@ func TestCircuitBreakerConfig_ParallelBroadcastSet(t *testing.T) {
 	}
 }
 
+func TestServerTimeoutDefaults(t *testing.T) {
+	cfg := validBaseConfig()
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("valid config should pass: %v", err)
+	}
+
+	if cfg.Server.ReadHeaderTimeout != 10*time.Second {
+		t.Errorf("read_header_timeout default = %v, want 10s", cfg.Server.ReadHeaderTimeout)
+	}
+	if cfg.Server.ReadTimeout != 5*time.Minute {
+		t.Errorf("read_timeout default = %v, want 5m", cfg.Server.ReadTimeout)
+	}
+	if cfg.Server.WriteTimeout != 5*time.Minute {
+		t.Errorf("write_timeout default = %v, want 5m", cfg.Server.WriteTimeout)
+	}
+	if cfg.Server.IdleTimeout != 120*time.Second {
+		t.Errorf("idle_timeout default = %v, want 120s", cfg.Server.IdleTimeout)
+	}
+}
+
+func TestServerTimeoutCustomValues(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Server.ReadHeaderTimeout = 5 * time.Second
+	cfg.Server.ReadTimeout = 2 * time.Minute
+	cfg.Server.WriteTimeout = 3 * time.Minute
+	cfg.Server.IdleTimeout = 60 * time.Second
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("custom timeouts should pass: %v", err)
+	}
+
+	if cfg.Server.ReadHeaderTimeout != 5*time.Second {
+		t.Errorf("read_header_timeout = %v, want 5s", cfg.Server.ReadHeaderTimeout)
+	}
+	if cfg.Server.ReadTimeout != 2*time.Minute {
+		t.Errorf("read_timeout = %v, want 2m", cfg.Server.ReadTimeout)
+	}
+	if cfg.Server.WriteTimeout != 3*time.Minute {
+		t.Errorf("write_timeout = %v, want 3m", cfg.Server.WriteTimeout)
+	}
+	if cfg.Server.IdleTimeout != 60*time.Second {
+		t.Errorf("idle_timeout = %v, want 60s", cfg.Server.IdleTimeout)
+	}
+}
+
+func TestServerTimeoutCrossValidation(t *testing.T) {
+	tests := []struct {
+		name              string
+		readHeaderTimeout time.Duration
+		readTimeout       time.Duration
+		backendTimeout    time.Duration
+		writeTimeout      time.Duration
+		wantErr           string
+	}{
+		{
+			name:              "read_header_timeout exceeds read_timeout",
+			readHeaderTimeout: 10 * time.Minute,
+			readTimeout:       1 * time.Minute,
+			wantErr:           "read_header_timeout must not exceed server.read_timeout",
+		},
+		{
+			name:           "backend_timeout exceeds write_timeout",
+			backendTimeout: 10 * time.Minute,
+			writeTimeout:   1 * time.Minute,
+			wantErr:        "backend_timeout must not exceed server.write_timeout",
+		},
+		{
+			name:              "equal values are valid",
+			readHeaderTimeout: 5 * time.Minute,
+			readTimeout:       5 * time.Minute,
+			backendTimeout:    5 * time.Minute,
+			writeTimeout:      5 * time.Minute,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validBaseConfig()
+			if tt.readHeaderTimeout != 0 {
+				cfg.Server.ReadHeaderTimeout = tt.readHeaderTimeout
+			}
+			if tt.readTimeout != 0 {
+				cfg.Server.ReadTimeout = tt.readTimeout
+			}
+			if tt.backendTimeout != 0 {
+				cfg.Server.BackendTimeout = tt.backendTimeout
+			}
+			if tt.writeTimeout != 0 {
+				cfg.Server.WriteTimeout = tt.writeTimeout
+			}
+
+			err := cfg.SetDefaultsAndValidate()
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Errorf("error = %q, want substring %q", err.Error(), tt.wantErr)
+				}
+			} else if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestNonReloadableFieldsChanged_ServerTimeouts(t *testing.T) {
+	a := validBaseConfig()
+	b := validBaseConfig()
+	_ = a.SetDefaultsAndValidate()
+	b.Server.ReadHeaderTimeout = 20 * time.Second
+	_ = b.SetDefaultsAndValidate()
+
+	changed := NonReloadableFieldsChanged(&a, &b)
+	if len(changed) == 0 {
+		t.Fatal("expected non-reloadable change for server timeouts")
+	}
+	found := false
+	for _, c := range changed {
+		if c == "server timeouts (read_header_timeout, read_timeout, write_timeout, idle_timeout)" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected server timeouts in changed list, got %v", changed)
+	}
+}
+
 func TestNonReloadableFieldsChanged_CircuitBreaker(t *testing.T) {
 	a := validBaseConfig()
 	b := validBaseConfig()

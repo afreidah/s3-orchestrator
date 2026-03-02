@@ -243,11 +243,12 @@ func runServe() {
 	mux.Handle("/", s3Handler)
 
 	httpServer := &http.Server{
-		Addr:         cfg.Server.ListenAddr,
-		Handler:      mux,
-		ReadTimeout:  5 * time.Minute,
-		WriteTimeout: 5 * time.Minute,
-		IdleTimeout:  120 * time.Second,
+		Addr:              cfg.Server.ListenAddr,
+		Handler:           mux,
+		ReadHeaderTimeout: cfg.Server.ReadHeaderTimeout,
+		ReadTimeout:       cfg.Server.ReadTimeout,
+		WriteTimeout:      cfg.Server.WriteTimeout,
+		IdleTimeout:       cfg.Server.IdleTimeout,
 	}
 
 	// --- Configure TLS if cert and key are provided ---

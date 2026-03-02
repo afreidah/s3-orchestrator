@@ -99,11 +99,18 @@ server:
   listen_addr: "0.0.0.0:9000"    # required
   max_object_size: 5368709120     # 5 GB default
   backend_timeout: "30s"          # per-operation timeout for backend S3 calls
+  read_header_timeout: "10s"      # max time to read request headers (default: 10s)
+  read_timeout: "5m"              # max time to read entire request including body (default: 5m)
+  write_timeout: "5m"             # max time to write response (default: 5m)
+  idle_timeout: "120s"            # max time to wait for next request on keep-alive (default: 120s)
 ```
 
 - `listen_addr` is the only required field.
 - `max_object_size` caps single-PUT uploads. Larger objects should use multipart upload (most clients do this automatically).
 - `backend_timeout` bounds individual S3 API calls to backends. Increase if you have slow backends or large objects.
+- `read_header_timeout` protects against slow-read attacks that hold connections open by sending headers slowly. The 10-second default is generous for any legitimate client.
+- `read_timeout` and `write_timeout` bound the total time for reading/writing entire requests and responses. The 5-minute defaults accommodate large object transfers.
+- `idle_timeout` controls how long keep-alive connections stay open waiting for the next request.
 
 ### buckets
 
@@ -669,7 +676,7 @@ Many settings can be updated without restarting the orchestrator by sending `SIG
 
 **What requires a restart:**
 
-- `server.listen_addr`, `database`, `telemetry`, `ui`, `routing_strategy`
+- `server.listen_addr`, server timeouts, `database`, `telemetry`, `ui`, `routing_strategy`
 - Backend structural changes (endpoint, S3 credentials, adding/removing backends)
 
 If any of these fields change, the reload still proceeds for the reloadable settings, and warnings are logged:
