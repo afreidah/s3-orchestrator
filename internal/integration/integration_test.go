@@ -2460,6 +2460,17 @@ func TestStore(t *testing.T) {
 			t.Error("stale RecordReplica = true, want false (source doesn't exist)")
 		}
 	})
+
+	t.Run("RecordPart_InvalidPartNumber", func(t *testing.T) {
+		resetState(t)
+
+		for _, pn := range []int{0, -1, 10001, 1 << 20} {
+			err := testStore.RecordPart(ctx, "upload-invalid", pn, "\"etag\"", 100)
+			if err == nil {
+				t.Errorf("RecordPart(%d) should fail, got nil", pn)
+			}
+		}
+	})
 }
 
 // -------------------------------------------------------------------------
