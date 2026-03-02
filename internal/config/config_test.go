@@ -1451,6 +1451,23 @@ func TestUIConfig_DisabledSkipsValidation(t *testing.T) {
 	}
 }
 
+func TestUIConfig_SessionSecret(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.UI = UIConfig{
+		Enabled:       true,
+		AdminKey:      "key",
+		AdminSecret:   "secret",
+		SessionSecret: "my-session-secret",
+	}
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Errorf("UI config with session_secret should pass: %v", err)
+	}
+	if cfg.UI.SessionSecret != "my-session-secret" {
+		t.Errorf("SessionSecret = %q, want %q", cfg.UI.SessionSecret, "my-session-secret")
+	}
+}
+
 func TestLogLevel_DefaultsToInfo(t *testing.T) {
 	cfg := validBaseConfig()
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
