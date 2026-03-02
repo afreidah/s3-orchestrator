@@ -215,6 +215,14 @@ var (
 		},
 	)
 
+	// AdmissionRejectionsTotal counts requests rejected by server-level admission control.
+	AdmissionRejectionsTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "s3proxy_admission_rejections_total",
+			Help: "Total requests rejected due to server-level admission control",
+		},
+	)
+
 	// --- Rebalancer metrics ---
 
 	// RebalanceObjectsMoved counts objects moved by the rebalancer.

@@ -152,6 +152,17 @@ jq 'select(.request_id == "abc123...")'
 
 The `s3proxy_audit_events_total` Prometheus counter with `event` label tracks audit event volume for alerting.
 
+## Admission Control
+
+Limit the total number of concurrent S3 requests to prevent backend and database saturation under load:
+
+```yaml
+server:
+  max_concurrent_requests: 30    # 0 = unlimited (default)
+```
+
+When the limit is reached, new requests receive `503 SlowDown` immediately instead of queueing and consuming resources. A good starting point is 2-3x your `database.max_conns` value, since every S3 operation requires at least one database query. Monitor `s3proxy_admission_rejections_total` and `s3proxy_inflight_requests` to tune the value.
+
 ## Rate Limiting
 
 Protect against abuse and accidental overload:

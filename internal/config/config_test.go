@@ -89,6 +89,25 @@ func TestConfigValidation_NegativeQuota(t *testing.T) {
 	}
 }
 
+func TestConfigValidation_NegativeMaxConcurrentRequests(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Server.MaxConcurrentRequests = -1
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil {
+		t.Error("negative max_concurrent_requests should fail validation")
+	}
+}
+
+func TestConfigValidation_ZeroMaxConcurrentRequestsMeansUnlimited(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Server.MaxConcurrentRequests = 0
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Errorf("zero max_concurrent_requests (unlimited) should pass validation: %v", err)
+	}
+}
+
 func TestConfigValidation_ZeroQuotaMeansUnlimited(t *testing.T) {
 	cfg := validBaseConfig()
 	cfg.Backends[0].QuotaBytes = 0
@@ -750,6 +769,19 @@ func TestNonReloadableFieldsChanged_ListenAddr(t *testing.T) {
 	changed := NonReloadableFieldsChanged(&a, &b)
 	if len(changed) != 1 || changed[0] != "server.listen_addr" {
 		t.Errorf("expected [server.listen_addr], got %v", changed)
+	}
+}
+
+func TestNonReloadableFieldsChanged_MaxConcurrentRequests(t *testing.T) {
+	a := validBaseConfig()
+	b := validBaseConfig()
+	_ = a.SetDefaultsAndValidate()
+	b.Server.MaxConcurrentRequests = 100
+	_ = b.SetDefaultsAndValidate()
+
+	changed := NonReloadableFieldsChanged(&a, &b)
+	if len(changed) != 1 || changed[0] != "server.max_concurrent_requests" {
+		t.Errorf("expected [server.max_concurrent_requests], got %v", changed)
 	}
 }
 

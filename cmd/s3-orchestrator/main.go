@@ -301,14 +301,21 @@ func runServe() {
 			slog.Info("Web UI enabled", "path", cfg.UI.Path)
 		}
 
-		// S3 proxy handler (all other paths), optionally rate-limited
+		// S3 proxy handler (all other paths), optionally rate-limited and admission-controlled
 		var s3Handler http.Handler = srv
 		if cfg.RateLimit.Enabled {
 			rl = server.NewRateLimiter(cfg.RateLimit)
-			s3Handler = rl.Middleware(srv)
+			s3Handler = rl.Middleware(s3Handler)
 			slog.Info("Rate limiting enabled",
 				"requests_per_sec", cfg.RateLimit.RequestsPerSec,
 				"burst", cfg.RateLimit.Burst,
+			)
+		}
+		if cfg.Server.MaxConcurrentRequests > 0 {
+			ac := server.NewAdmissionController(cfg.Server.MaxConcurrentRequests)
+			s3Handler = ac.Middleware(s3Handler)
+			slog.Info("Admission control enabled",
+				"max_concurrent_requests", cfg.Server.MaxConcurrentRequests,
 			)
 		}
 		mux.Handle("/", s3Handler)

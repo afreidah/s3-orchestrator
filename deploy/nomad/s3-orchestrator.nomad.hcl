@@ -109,6 +109,7 @@ job "s3-orchestrator" {
           server:
             listen_addr: "0.0.0.0:9000"
             max_object_size: 5368709120      # 5 GB
+            # max_concurrent_requests: 0     # 0 = unlimited; set to 2-3x database.max_conns for load shedding
             backend_timeout: "2m"
             shutdown_delay: "5s"             # wait for Consul deregistration before draining
 
