@@ -42,6 +42,9 @@ spec:
         - name: s3-orchestrator
           image: ghcr.io/afreidah/s3-orchestrator:v1.0.0
           args: ["-config", "/etc/s3-orchestrator/config.yaml"]
+          # For multi-instance deployments, set -mode to split API and worker roles:
+          #   API:    args: ["-config", "/etc/s3-orchestrator/config.yaml", "-mode", "api"]
+          #   Worker: args: ["-config", "/etc/s3-orchestrator/config.yaml", "-mode", "worker"]
 
           ports:
             - name: http
