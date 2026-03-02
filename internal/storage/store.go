@@ -799,7 +799,11 @@ func (s *Store) GetMultipartUpload(ctx context.Context, uploadID string) (*Multi
 }
 
 // RecordPart records a completed part for a multipart upload.
+// S3 spec requires part numbers between 1 and 10000.
 func (s *Store) RecordPart(ctx context.Context, uploadID string, partNumber int, etag string, size int64) error {
+	if partNumber < 1 || partNumber > 10000 {
+		return fmt.Errorf("invalid part number %d: must be between 1 and 10000", partNumber)
+	}
 	err := s.queries.UpsertPart(ctx, db.UpsertPartParams{
 		UploadID:   uploadID,
 		PartNumber: int32(partNumber),
