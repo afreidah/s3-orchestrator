@@ -89,6 +89,16 @@ vet: ## Run Go vet static analysis
 lint: ## Run Go linter
 	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.10.1 run ./...
 
+bench: ## Run benchmark tests
+	go test -bench=. -benchmem -run='^$$' ./...
+
+fuzz: ## Run fuzz tests for 30s per target
+	go test -fuzz=FuzzParseSigV4Fields -fuzztime=30s ./internal/auth/
+	go test -fuzz=FuzzParsePath -fuzztime=30s ./internal/server/
+	go test -fuzz=FuzzDeleteObjectsXML -fuzztime=30s ./internal/server/
+	go test -fuzz=FuzzCompleteMultipartXML -fuzztime=30s ./internal/server/
+	go test -fuzz=FuzzIsValidRequestID -fuzztime=30s ./internal/server/
+
 run: integration-deps ## Run locally (requires config.yaml)
 	go run ./cmd/s3-orchestrator -config config.yaml
 
