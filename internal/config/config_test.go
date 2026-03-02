@@ -10,6 +10,7 @@
 package config
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1447,6 +1448,57 @@ func TestUIConfig_DisabledSkipsValidation(t *testing.T) {
 
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
 		t.Errorf("disabled UI should skip credential validation: %v", err)
+	}
+}
+
+func TestLogLevel_DefaultsToInfo(t *testing.T) {
+	cfg := validBaseConfig()
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Server.LogLevel != "info" {
+		t.Errorf("log_level default = %q, want %q", cfg.Server.LogLevel, "info")
+	}
+}
+
+func TestLogLevel_CustomValue(t *testing.T) {
+	for _, level := range []string{"debug", "info", "warn", "error"} {
+		cfg := validBaseConfig()
+		cfg.Server.LogLevel = level
+		if err := cfg.SetDefaultsAndValidate(); err != nil {
+			t.Errorf("log_level %q should be valid: %v", level, err)
+		}
+	}
+}
+
+func TestLogLevel_InvalidValue(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Server.LogLevel = "trace"
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil {
+		t.Fatal("expected error for invalid log_level")
+	}
+	if !strings.Contains(err.Error(), "log_level") {
+		t.Errorf("error should mention log_level: %v", err)
+	}
+}
+
+func TestParseLogLevel(t *testing.T) {
+	tests := []struct {
+		input string
+		want  slog.Level
+	}{
+		{"debug", slog.LevelDebug},
+		{"info", slog.LevelInfo},
+		{"warn", slog.LevelWarn},
+		{"error", slog.LevelError},
+		{"unknown", slog.LevelInfo},
+	}
+	for _, tt := range tests {
+		got := ParseLogLevel(tt.input)
+		if got != tt.want {
+			t.Errorf("ParseLogLevel(%q) = %v, want %v", tt.input, got, tt.want)
+		}
 	}
 }
 

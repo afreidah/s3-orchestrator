@@ -26,6 +26,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/admin"
 	"github.com/afreidah/s3-orchestrator/internal/auth"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
@@ -50,9 +51,31 @@ func main() { // codecov:ignore -- process entry point, delegates to tested func
 			os.Args = os.Args[1:]
 			runValidate()
 			return
+		case "admin":
+			os.Args = os.Args[1:]
+			runAdmin()
+			return
+		case "help", "--help", "-h":
+			printUsage()
+			return
 		}
 	}
 	runServe()
+}
+
+func printUsage() {
+	fmt.Fprintf(os.Stderr, `Usage: s3-orchestrator [command]
+
+Commands:
+  (default)   Start the S3 proxy server
+  admin       Operational CLI for a running instance
+  sync        Import pre-existing bucket objects into the database
+  validate    Check a configuration file without starting the server
+  version     Print version and build info
+  help        Show this help message
+
+Run 's3-orchestrator <command> --help' for command-specific flags.
+`)
 }
 
 func runServe() {
@@ -77,17 +100,19 @@ func runServe() {
 		instanceID = "unknown"
 	}
 
-	// --- Initialize structured logger ---
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	})))
-
 	// --- Load configuration ---
 	cfg, err := config.LoadConfig(*configPath)
 	if err != nil {
-		slog.Error("Failed to load config", "error", err)
+		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
 		os.Exit(1)
 	}
+
+	// --- Initialize structured logger with configurable level ---
+	var logLevel slog.LevelVar
+	logLevel.Set(config.ParseLogLevel(cfg.Server.LogLevel))
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: &logLevel,
+	})))
 
 	// --- Initialize tracing ---
 	ctx := context.Background()
@@ -257,6 +282,13 @@ func runServe() {
 		_, _ = fmt.Fprintf(w, `{"status":"ready","instance":%q}`, instanceID)
 	})
 
+	// --- Admin API (all modes — operators need it everywhere) ---
+	if cfg.UI.AdminKey != "" {
+		adminHandler := admin.New(manager, cbStore, cfg.UI.AdminKey, &logLevel)
+		adminHandler.Register(mux)
+		slog.Info("Admin API enabled", "path", "/admin/api/")
+	}
+
 	// --- API-mode handlers: UI, rate limiter, S3 proxy ---
 	var uiHandler *ui.Handler
 	var rl *server.RateLimiter
@@ -383,6 +415,10 @@ func runServe() {
 			manager.UpdateUsageLimits(newUsageLimits)
 			slog.Info("Reloaded backend usage limits")
 
+			// Reload log level
+			logLevel.Set(config.ParseLogLevel(newCfg.Server.LogLevel))
+			slog.Info("Reloaded log level", "level", newCfg.Server.LogLevel)
+
 			// Reload rebalance/replication/usage-flush/lifecycle config
 			manager.SetRebalanceConfig(&newCfg.Rebalance)
 			manager.SetReplicationConfig(&newCfg.Replication)
@@ -480,6 +516,7 @@ func runServe() {
 		"version", telemetry.Version,
 		"mode", *mode,
 		"listen_addr", cfg.Server.ListenAddr,
+		"log_level", cfg.Server.LogLevel,
 		"buckets", bucketNames,
 		"backends", len(cfg.Backends),
 		"routing_strategy", cfg.RoutingStrategy,
