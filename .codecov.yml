@@ -11,3 +11,4 @@ ignore:
   - "internal/testutil/"
   - "internal/storage/sqlc/"  # generated code (sqlc)
   - "internal/storage/backend.go" # real S3 SDK wrapper, integration-tested only
+  - "internal/admin/"         # thin delegation layer over tested storage methods

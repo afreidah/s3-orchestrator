@@ -14,6 +14,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"net"
 	"net/url"
 	"os"
@@ -60,6 +61,7 @@ type DatabaseConfig struct {
 // ServerConfig holds HTTP server settings.
 type ServerConfig struct {
 	ListenAddr        string        `yaml:"listen_addr"`
+	LogLevel          string        `yaml:"log_level"`            // Log level: debug, info, warn, error (default: info)
 	MaxObjectSize     int64         `yaml:"max_object_size"`      // Max upload size in bytes (default: 5GB)
 	BackendTimeout    time.Duration `yaml:"backend_timeout"`      // Per-operation timeout for backend S3 calls (default: 30s)
 	ReadHeaderTimeout time.Duration `yaml:"read_header_timeout"`  // Max time to read request headers (default: 10s)
@@ -240,6 +242,15 @@ func (c *Config) SetDefaultsAndValidate() error {
 	// --- Server validation ---
 	if c.Server.ListenAddr == "" {
 		errors = append(errors, "server.listen_addr is required")
+	}
+
+	if c.Server.LogLevel == "" {
+		c.Server.LogLevel = "info"
+	}
+	switch c.Server.LogLevel {
+	case "debug", "info", "warn", "error":
+	default:
+		errors = append(errors, "server.log_level must be one of: debug, info, warn, error")
 	}
 
 	if c.Server.MaxObjectSize == 0 {
@@ -661,6 +672,22 @@ func boolDefault(p *bool, def bool) bool {
 		return *p
 	}
 	return def
+}
+
+// ParseLogLevel maps a log level string to a slog.Level. Returns slog.LevelInfo
+// for unrecognized values. Callers should validate via SetDefaultsAndValidate
+// before calling this function.
+func ParseLogLevel(s string) slog.Level {
+	switch s {
+	case "debug":
+		return slog.LevelDebug
+	case "warn":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
 }
 
 // ConnectionString returns a PostgreSQL connection URI with properly escaped
