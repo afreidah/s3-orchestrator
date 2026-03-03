@@ -23,8 +23,9 @@ job "s3-orchestrator" {
     }
 
     service {
-      name = "s3-orchestrator"
-      port = "http"
+      name     = "s3-orchestrator"
+      port     = "http"
+      provider = "nomad"
 
       # Liveness — always 200, keeps the allocation alive during DB outages.
       check {

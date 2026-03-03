@@ -45,6 +45,7 @@ func (m *BackendManager) Replicate(ctx context.Context, cfg config.ReplicationCo
 	}
 
 	if len(locations) == 0 {
+		telemetry.ReplicationPending.Set(0)
 		telemetry.ReplicationRunsTotal.WithLabelValues("success").Inc()
 		telemetry.ReplicationDuration.Observe(time.Since(start).Seconds())
 		return 0, nil
@@ -61,18 +62,11 @@ func (m *BackendManager) Replicate(ctx context.Context, cfg config.ReplicationCo
 			continue
 		}
 
-		n, err := m.replicateObject(ctx, key, copies, needed)
-		if err != nil {
-			slog.Warn("Replication: failed to replicate object",
-				"key", key, "error", err)
-			telemetry.ReplicationErrorsTotal.Inc()
-			continue
-		}
+		n, _ := m.replicateObject(ctx, key, copies, needed)
 		created += n
 	}
 
 	telemetry.ReplicationCopiesCreatedTotal.Add(float64(created))
-	telemetry.ReplicationPending.Set(float64(len(grouped)))
 	telemetry.ReplicationRunsTotal.WithLabelValues("success").Inc()
 	telemetry.ReplicationDuration.Observe(time.Since(start).Seconds())
 

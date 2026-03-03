@@ -58,6 +58,10 @@ Requires: `docker`, `nomad`
 
 Both scripts print connection details on success -- S3 API endpoint, dashboard URL, and a test upload command.
 
+### Monitoring
+
+The demo scripts automatically start Prometheus (port 19090) and Grafana (port 13000) alongside the backing services. Grafana is pre-configured with an anonymous admin session, the Prometheus datasource, and the s3-orchestrator dashboard from `grafana/s3-orchestrator.json`. No login required -- just open `http://localhost:13000` after the demo is running.
+
 ## Customization
 
 Both examples include commented-out sections for:
