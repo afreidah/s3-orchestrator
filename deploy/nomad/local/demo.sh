@@ -53,6 +53,9 @@ echo "Starting PostgreSQL and MinIO via docker-compose..."
 docker compose -f docker-compose.test.yml up -d --wait postgres minio-1 minio-2
 docker compose -f docker-compose.test.yml up -d minio-setup
 
+# --- Start monitoring ---
+echo "Starting Prometheus and Grafana..."
+
 # --- Start Nomad dev agent ---
 if nomad status &>/dev/null; then
     echo "Nomad agent already running, reusing it."
@@ -83,6 +86,8 @@ docker build -t "$IMAGE" .
 HOST_IP=$(docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}')
 echo "Host gateway IP: $HOST_IP"
 
+docker compose -f docker-compose.test.yml up -d prometheus grafana
+
 # --- Submit job ---
 echo "Submitting Nomad job..."
 sed "s/__HOST_IP__/$HOST_IP/g" "$SCRIPT_DIR/s3-orchestrator.nomad.hcl" | nomad job run -detach -
@@ -93,7 +98,7 @@ for i in $(seq 1 60); do
     STATUS=$(nomad job status -short s3-orchestrator 2>/dev/null | grep -c "running" || true)
     if [[ "$STATUS" -ge 1 ]]; then
         HEALTH=$(curl -s "http://localhost:$PORT/health" 2>/dev/null || true)
-        if [[ "$HEALTH" == "ok" ]]; then
+        if echo "$HEALTH" | grep -q '"status":"ok"'; then
             break
         fi
     fi
@@ -101,7 +106,7 @@ for i in $(seq 1 60); do
 done
 
 HEALTH=$(curl -s "http://localhost:$PORT/health" 2>/dev/null || true)
-if [[ "$HEALTH" == "ok" ]]; then
+if echo "$HEALTH" | grep -q '"status":"ok"'; then
     echo ""
     echo "========================================"
     echo "  S3 Orchestrator is running in Nomad"
@@ -111,6 +116,7 @@ if [[ "$HEALTH" == "ok" ]]; then
     echo "  Dashboard:  http://localhost:$PORT/ui/"
     echo "  Metrics:    http://localhost:$PORT/metrics"
     echo "  Health:     http://localhost:$PORT/health"
+    echo "  Grafana:    http://localhost:13000"
     echo "  Nomad UI:   http://localhost:4646"
     echo ""
     echo "  Dashboard login: admin / admin"

@@ -21,18 +21,20 @@ import (
 // MetricsCollector records Prometheus metrics for manager-level operations
 // and periodically refreshes gauge values from the metadata store.
 type MetricsCollector struct {
-	store        MetadataStore
-	usage        *UsageTracker
-	backendNames []string
+	store             MetadataStore
+	usage             *UsageTracker
+	backendNames      []string
+	replicationFactor func() int // returns 0 when replication is disabled
 }
 
 // NewMetricsCollector creates a MetricsCollector with references to the store
 // and usage tracker needed for gauge refreshes.
-func NewMetricsCollector(store MetadataStore, usage *UsageTracker, backendNames []string) *MetricsCollector {
+func NewMetricsCollector(store MetadataStore, usage *UsageTracker, backendNames []string, replicationFactor func() int) *MetricsCollector {
 	return &MetricsCollector{
-		store:        store,
-		usage:        usage,
-		backendNames: backendNames,
+		store:             store,
+		usage:             usage,
+		backendNames:      backendNames,
+		replicationFactor: replicationFactor,
 	}
 }
 
@@ -115,6 +117,16 @@ func (mc *MetricsCollector) UpdateQuotaMetrics(ctx context.Context) error {
 		mc.usage.ResetBaselines(mc.backendNames)
 		for name, u := range usage {
 			mc.usage.SetBaseline(name, u)
+		}
+	}
+
+	// --- Under-replicated object count ---
+	if factor := mc.replicationFactor(); factor > 1 {
+		locations, err := mc.store.GetUnderReplicatedObjects(ctx, factor, 10000)
+		if err != nil {
+			slog.Error("Failed to get under-replicated objects", "error", err)
+		} else {
+			telemetry.ReplicationPending.Set(float64(len(groupByKey(locations))))
 		}
 	}
 

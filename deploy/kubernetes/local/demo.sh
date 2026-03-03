@@ -46,6 +46,9 @@ echo "Starting PostgreSQL and MinIO via docker-compose..."
 docker compose -f docker-compose.test.yml up -d --wait postgres minio-1 minio-2
 docker compose -f docker-compose.test.yml up -d minio-setup
 
+# --- Start monitoring ---
+echo "Starting Prometheus and Grafana..."
+
 # --- Create k3d cluster ---
 if k3d cluster list | grep -q "$CLUSTER_NAME"; then
     echo "Cluster $CLUSTER_NAME already exists, reusing it."
@@ -66,6 +69,8 @@ k3d image import "$IMAGE" -c "$CLUSTER_NAME"
 HOST_IP=$(docker network inspect "k3d-${CLUSTER_NAME}" \
     -f '{{(index .IPAM.Config 0).Gateway}}')
 echo "Host gateway IP: $HOST_IP"
+
+docker compose -f docker-compose.test.yml up -d prometheus grafana
 
 # --- Apply manifests ---
 echo "Applying Kubernetes manifests..."
@@ -88,7 +93,7 @@ trap "kill $PF_PID 2>/dev/null" EXIT
 sleep 2
 
 HEALTH=$(curl -s "http://localhost:$PORT/health")
-if [[ "$HEALTH" == "ok" ]]; then
+if echo "$HEALTH" | grep -q '"status":"ok"'; then
     echo ""
     echo "========================================"
     echo "  S3 Orchestrator is running in k3d"
@@ -98,6 +103,7 @@ if [[ "$HEALTH" == "ok" ]]; then
     echo "  Dashboard:  http://localhost:$PORT/ui/"
     echo "  Metrics:    http://localhost:$PORT/metrics"
     echo "  Health:     http://localhost:$PORT/health"
+    echo "  Grafana:    http://localhost:13000"
     echo ""
     echo "  Dashboard login: admin / admin"
     echo ""

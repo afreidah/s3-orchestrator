@@ -65,3 +65,31 @@ services:
         mc alias set minio2 http://minio-2:9000 minioadmin minioadmin &&
         mc mb --ignore-existing minio1/backend1 &&
         mc mb --ignore-existing minio2/backend2
+
+  prometheus:
+    image: prom/prometheus:latest
+    network_mode: host
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--web.listen-address=:19090"
+    volumes:
+      - ./deploy/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      minio-setup:
+        condition: service_completed_successfully
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "13000:3000"
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./deploy/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/s3-orchestrator.json:/var/lib/grafana/dashboards/s3-orchestrator.json:ro
+    depends_on:
+      - prometheus

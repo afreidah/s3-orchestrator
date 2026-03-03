@@ -94,18 +94,26 @@ func NewBackendManager(cfg *BackendManagerConfig) *BackendManager {
 
 	usage := NewUsageTracker(backendNames, cfg.UsageLimits)
 
-	return &BackendManager{
-		backends:        cfg.Backends,
-		store:           cfg.Store,
-		order:           cfg.Order,
-		cache:           NewLocationCache(cfg.CacheTTL),
-		backendTimeout:  cfg.BackendTimeout,
-		usage:           usage,
-		metrics:         NewMetricsCollector(cfg.Store, usage, backendNames),
-		dashboard:       NewDashboardAggregator(cfg.Store, usage, cfg.Order),
+	m := &BackendManager{
+		backends:          cfg.Backends,
+		store:             cfg.Store,
+		order:             cfg.Order,
+		cache:             NewLocationCache(cfg.CacheTTL),
+		backendTimeout:    cfg.BackendTimeout,
+		usage:             usage,
+		dashboard:         NewDashboardAggregator(cfg.Store, usage, cfg.Order),
 		routingStrategy:   cfg.RoutingStrategy,
 		parallelBroadcast: cfg.ParallelBroadcast,
 	}
+
+	m.metrics = NewMetricsCollector(cfg.Store, usage, backendNames, func() int {
+		if rc := m.replicationCfg.Load(); rc != nil {
+			return rc.Factor
+		}
+		return 0
+	})
+
+	return m
 }
 
 // GetParts returns all parts for a multipart upload. Delegates to the metadata

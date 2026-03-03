@@ -21,7 +21,7 @@
     {
       "type": "stat",
       "id": 2,
-      "title": "Version",
+      "title": "Build Info",
       "gridPos": { "x": 0, "y": 1, "w": 4, "h": 4 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
@@ -49,12 +49,39 @@
     {
       "type": "stat",
       "id": 3,
-      "title": "Request Rate",
-      "gridPos": { "x": 4, "y": 1, "w": 4, "h": 4 },
+      "title": "Total Requests",
+      "gridPos": { "x": 4, "y": 1, "w": 5, "h": 4 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "sum(rate(s3proxy_requests_total[5m]))",
+          "expr": "sum(s3proxy_manager_requests_total)",
+          "legendFormat": "Total"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "blue", "value": null }]
+          }
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "id": 4,
+      "title": "Request Rate",
+      "gridPos": { "x": 9, "y": 1, "w": 5, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(rate(s3proxy_manager_requests_total[5m]))",
           "legendFormat": "req/s"
         }
       ],
@@ -76,14 +103,14 @@
     },
     {
       "type": "stat",
-      "id": 4,
-      "title": "Error Rate %",
-      "gridPos": { "x": 8, "y": 1, "w": 4, "h": 4 },
+      "id": 5,
+      "title": "Error Rate",
+      "gridPos": { "x": 14, "y": 1, "w": 5, "h": 4 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "sum(rate(s3proxy_requests_total{status_code=~\"4..|5..\"}[5m])) / sum(rate(s3proxy_requests_total[5m])) * 100",
-          "legendFormat": "errors"
+          "expr": "sum(rate(s3proxy_manager_requests_total{status=\"error\"}[5m]))",
+          "legendFormat": "errors/s"
         }
       ],
       "options": {
@@ -94,14 +121,14 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "percent",
+          "unit": "reqps",
           "noValue": "0",
           "thresholds": {
             "mode": "absolute",
             "steps": [
               { "color": "green", "value": null },
-              { "color": "yellow", "value": 1 },
-              { "color": "red", "value": 5 }
+              { "color": "yellow", "value": 0.1 },
+              { "color": "red", "value": 1 }
             ]
           }
         }
@@ -109,9 +136,9 @@
     },
     {
       "type": "stat",
-      "id": 5,
-      "title": "Inflight",
-      "gridPos": { "x": 12, "y": 1, "w": 4, "h": 4 },
+      "id": 6,
+      "title": "Inflight Requests",
+      "gridPos": { "x": 19, "y": 1, "w": 5, "h": 4 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -140,91 +167,15 @@
       }
     },
     {
-      "type": "stat",
-      "id": 6,
-      "title": "Circuit Breaker",
-      "gridPos": { "x": 16, "y": 1, "w": 4, "h": 4 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "targets": [
-        {
-          "expr": "s3proxy_circuit_breaker_state",
-          "legendFormat": "state",
-          "instant": true
-        }
-      ],
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "textMode": "value",
-        "reduceOptions": { "calcs": ["lastNotNull"] }
-      },
-      "fieldConfig": {
-        "defaults": {
-          "noValue": "0",
-          "mappings": [
-            {
-              "type": "value",
-              "options": {
-                "0": { "text": "Healthy", "color": "green", "index": 0 },
-                "1": { "text": "Open", "color": "red", "index": 1 },
-                "2": { "text": "Half-Open", "color": "yellow", "index": 2 }
-              }
-            }
-          ],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "red", "value": 1 },
-              { "color": "yellow", "value": 2 }
-            ]
-          }
-        }
-      }
-    },
-    {
-      "type": "stat",
-      "id": 7,
-      "title": "Cleanup Queue",
-      "gridPos": { "x": 20, "y": 1, "w": 4, "h": 4 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "targets": [
-        {
-          "expr": "s3proxy_cleanup_queue_depth",
-          "legendFormat": "pending",
-          "instant": true
-        }
-      ],
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "textMode": "value",
-        "reduceOptions": { "calcs": ["lastNotNull"] }
-      },
-      "fieldConfig": {
-        "defaults": {
-          "noValue": "0",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 5 },
-              { "color": "red", "value": 20 }
-            ]
-          }
-        }
-      }
-    },
-    {
       "type": "row",
-      "id": 8,
-      "title": "Storage & Quotas",
+      "id": 7,
+      "title": "Quota & Storage",
       "gridPos": { "x": 0, "y": 5, "w": 24, "h": 1 },
       "collapsed": false
     },
     {
       "type": "gauge",
-      "id": 9,
+      "id": 8,
       "title": "Quota Usage",
       "gridPos": { "x": 0, "y": 6, "w": 6, "h": 6 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
@@ -258,8 +209,8 @@
     },
     {
       "type": "table",
-      "id": 10,
-      "title": "Object Count",
+      "id": 9,
+      "title": "Total Objects",
       "gridPos": { "x": 6, "y": 6, "w": 6, "h": 6 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
@@ -305,7 +256,7 @@
     },
     {
       "type": "table",
-      "id": 11,
+      "id": 10,
       "title": "Available Space",
       "gridPos": { "x": 12, "y": 6, "w": 6, "h": 6 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
@@ -336,6 +287,7 @@
             "matcher": { "id": "byName", "options": "Available" },
             "properties": [
               { "id": "unit", "value": "bytes" },
+              { "id": "custom.displayMode", "value": "color-text" },
               { "id": "color", "value": { "mode": "thresholds" } },
               {
                 "id": "thresholds",
@@ -347,8 +299,7 @@
                     { "color": "green", "value": 1073741824 }
                   ]
                 }
-              },
-              { "id": "custom.displayMode", "value": "color-text" }
+              }
             ]
           }
         ]
@@ -356,8 +307,8 @@
     },
     {
       "type": "timeseries",
-      "id": 12,
-      "title": "Storage Over Time",
+      "id": 11,
+      "title": "Quota Usage Over Time",
       "gridPos": { "x": 18, "y": 6, "w": 6, "h": 6 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
@@ -384,111 +335,21 @@
     },
     {
       "type": "row",
-      "id": 13,
-      "title": "Monthly Usage",
+      "id": 12,
+      "title": "Request Performance",
       "gridPos": { "x": 0, "y": 12, "w": 24, "h": 1 },
       "collapsed": false
     },
     {
       "type": "timeseries",
-      "id": 14,
-      "title": "API Requests",
+      "id": 13,
+      "title": "Request Rate by Method",
       "gridPos": { "x": 0, "y": 13, "w": 8, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "max by (backend) (s3proxy_usage_api_requests)",
-          "legendFormat": "{{backend}}"
-        }
-      ],
-      "options": {
-        "tooltip": { "mode": "multi" },
-        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] }
-      },
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "lineWidth": 2,
-            "fillOpacity": 20,
-            "gradientMode": "scheme",
-            "showPoints": "never"
-          }
-        }
-      }
-    },
-    {
-      "type": "timeseries",
-      "id": 15,
-      "title": "Egress Bytes",
-      "gridPos": { "x": 8, "y": 13, "w": 8, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "targets": [
-        {
-          "expr": "max by (backend) (s3proxy_usage_egress_bytes)",
-          "legendFormat": "{{backend}}"
-        }
-      ],
-      "options": {
-        "tooltip": { "mode": "multi" },
-        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] }
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "bytes",
-          "custom": {
-            "lineWidth": 2,
-            "fillOpacity": 20,
-            "gradientMode": "scheme",
-            "showPoints": "never"
-          }
-        }
-      }
-    },
-    {
-      "type": "timeseries",
-      "id": 16,
-      "title": "Ingress Bytes",
-      "gridPos": { "x": 16, "y": 13, "w": 8, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "targets": [
-        {
-          "expr": "max by (backend) (s3proxy_usage_ingress_bytes)",
-          "legendFormat": "{{backend}}"
-        }
-      ],
-      "options": {
-        "tooltip": { "mode": "multi" },
-        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] }
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "bytes",
-          "custom": {
-            "lineWidth": 2,
-            "fillOpacity": 20,
-            "gradientMode": "scheme",
-            "showPoints": "never"
-          }
-        }
-      }
-    },
-    {
-      "type": "row",
-      "id": 17,
-      "title": "Request Performance",
-      "gridPos": { "x": 0, "y": 21, "w": 24, "h": 1 },
-      "collapsed": false
-    },
-    {
-      "type": "timeseries",
-      "id": 18,
-      "title": "Request Rate by Method",
-      "gridPos": { "x": 0, "y": 22, "w": 8, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "targets": [
-        {
-          "expr": "sum by (method, status_code) (rate(s3proxy_requests_total[5m]))",
-          "legendFormat": "{{method}} {{status_code}}"
+          "expr": "sum by (operation, status) (rate(s3proxy_manager_requests_total[5m]))",
+          "legendFormat": "{{operation}} {{status}}"
         }
       ],
       "options": {
@@ -509,9 +370,9 @@
     },
     {
       "type": "timeseries",
-      "id": 19,
-      "title": "Latency Percentiles",
-      "gridPos": { "x": 8, "y": 22, "w": 8, "h": 8 },
+      "id": 14,
+      "title": "Request Duration (p50 / p95 / p99)",
+      "gridPos": { "x": 8, "y": 13, "w": 8, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -544,18 +405,18 @@
     },
     {
       "type": "timeseries",
-      "id": 20,
-      "title": "Throughput",
-      "gridPos": { "x": 16, "y": 22, "w": 8, "h": 8 },
+      "id": 15,
+      "title": "Request / Response Size",
+      "gridPos": { "x": 16, "y": 13, "w": 8, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
           "expr": "sum(rate(s3proxy_request_size_bytes_sum[5m]))",
-          "legendFormat": "Upload"
+          "legendFormat": "Request (upload)"
         },
         {
           "expr": "sum(rate(s3proxy_response_size_bytes_sum[5m]))",
-          "legendFormat": "Download"
+          "legendFormat": "Response (download)"
         }
       ],
       "options": {
@@ -576,16 +437,16 @@
     },
     {
       "type": "row",
-      "id": 21,
+      "id": 16,
       "title": "Backend Operations",
-      "gridPos": { "x": 0, "y": 30, "w": 24, "h": 1 },
+      "gridPos": { "x": 0, "y": 21, "w": 24, "h": 1 },
       "collapsed": false
     },
     {
       "type": "timeseries",
-      "id": 22,
+      "id": 17,
       "title": "Backend Request Rate",
-      "gridPos": { "x": 0, "y": 31, "w": 8, "h": 8 },
+      "gridPos": { "x": 0, "y": 22, "w": 8, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -610,9 +471,9 @@
     },
     {
       "type": "timeseries",
-      "id": 23,
-      "title": "Backend Latency p95",
-      "gridPos": { "x": 8, "y": 31, "w": 8, "h": 8 },
+      "id": 18,
+      "title": "Backend Duration (p95)",
+      "gridPos": { "x": 8, "y": 22, "w": 8, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -637,9 +498,9 @@
     },
     {
       "type": "table",
-      "id": 24,
+      "id": 19,
       "title": "Active Multipart Uploads",
-      "gridPos": { "x": 16, "y": 31, "w": 8, "h": 8 },
+      "gridPos": { "x": 16, "y": 22, "w": 8, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -687,126 +548,57 @@
     },
     {
       "type": "row",
-      "id": 25,
-      "title": "Health & Reliability",
-      "gridPos": { "x": 0, "y": 39, "w": 24, "h": 1 },
+      "id": 20,
+      "title": "Manager Operations",
+      "gridPos": { "x": 0, "y": 30, "w": 24, "h": 1 },
       "collapsed": false
     },
     {
-      "type": "state-timeline",
-      "id": 26,
-      "title": "Circuit Breaker Timeline",
-      "gridPos": { "x": 0, "y": 40, "w": 8, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "targets": [
-        {
-          "expr": "s3proxy_circuit_breaker_state",
-          "legendFormat": "state"
-        }
-      ],
-      "options": {
-        "showValue": "always",
-        "mergeValues": true,
-        "alignValue": "center",
-        "legend": { "displayMode": "hidden" },
-        "tooltip": { "mode": "single" }
-      },
-      "fieldConfig": {
-        "defaults": {
-          "mappings": [
-            {
-              "type": "value",
-              "options": {
-                "0": { "text": "Healthy", "color": "green", "index": 0 },
-                "1": { "text": "Open", "color": "red", "index": 1 },
-                "2": { "text": "Half-Open", "color": "yellow", "index": 2 }
-              }
-            }
-          ],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [{ "color": "green", "value": null }]
-          }
-        }
-      }
-    },
-    {
       "type": "timeseries",
-      "id": 27,
-      "title": "Degraded Mode",
-      "gridPos": { "x": 8, "y": 40, "w": 8, "h": 8 },
+      "id": 21,
+      "title": "Manager Request Rate",
+      "gridPos": { "x": 0, "y": 31, "w": 12, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "sum by (operation) (rate(s3proxy_degraded_reads_total[5m]))",
-          "legendFormat": "reads: {{operation}}"
-        },
-        {
-          "expr": "rate(s3proxy_degraded_cache_hits_total[5m])",
-          "legendFormat": "cache hits"
-        },
-        {
-          "expr": "sum by (operation) (rate(s3proxy_degraded_write_rejections_total[5m]))",
-          "legendFormat": "write rejected: {{operation}}"
+          "expr": "sum by (operation, status) (rate(s3proxy_manager_requests_total[5m]))",
+          "legendFormat": "{{operation}} ({{status}})"
         }
       ],
       "options": {
         "tooltip": { "mode": "multi" },
-        "legend": { "displayMode": "list", "placement": "bottom" }
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "ops",
-          "noValue": "0",
+          "unit": "reqps",
           "custom": {
             "lineWidth": 2,
             "fillOpacity": 10,
-            "showPoints": "never",
-            "stacking": { "mode": "normal" }
+            "showPoints": "never"
           }
         }
       }
     },
     {
       "type": "timeseries",
-      "id": 28,
-      "title": "Cleanup Queue & Rate Limits",
-      "gridPos": { "x": 16, "y": 40, "w": 8, "h": 8 },
+      "id": 22,
+      "title": "Manager Duration (p95)",
+      "gridPos": { "x": 12, "y": 31, "w": 12, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "s3proxy_cleanup_queue_depth",
-          "legendFormat": "queue depth"
-        },
-        {
-          "expr": "sum by (reason) (rate(s3proxy_cleanup_queue_enqueued_total[5m]))",
-          "legendFormat": "enqueued: {{reason}}"
-        },
-        {
-          "expr": "sum by (status) (rate(s3proxy_cleanup_queue_processed_total[5m]))",
-          "legendFormat": "processed: {{status}}"
-        },
-        {
-          "expr": "rate(s3proxy_rate_limit_rejections_total[5m])",
-          "legendFormat": "rate limit rejections"
-        },
-        {
-          "expr": "rate(s3proxy_admission_rejections_total[5m])",
-          "legendFormat": "admission rejections"
-        },
-        {
-          "expr": "sum by (limit_type) (rate(s3proxy_usage_limit_rejections_total[5m]))",
-          "legendFormat": "usage limit: {{limit_type}}"
+          "expr": "histogram_quantile(0.95, sum by (le, operation, backend) (rate(s3proxy_manager_duration_seconds_bucket[5m])))",
+          "legendFormat": "{{backend}} {{operation}}"
         }
       ],
       "options": {
         "tooltip": { "mode": "multi" },
-        "legend": { "displayMode": "list", "placement": "bottom" }
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "ops",
-          "noValue": "0",
+          "unit": "s",
           "custom": {
             "lineWidth": 2,
             "fillOpacity": 10,
@@ -817,130 +609,786 @@
     },
     {
       "type": "row",
-      "id": 29,
-      "title": "Background Workers",
-      "gridPos": { "x": 0, "y": 48, "w": 24, "h": 1 },
-      "collapsed": true,
-      "panels": [
+      "id": 23,
+      "title": "Circuit Breaker & Degraded Mode",
+      "gridPos": { "x": 0, "y": 39, "w": 24, "h": 1 },
+      "collapsed": false
+    },
+    {
+      "type": "stat",
+      "id": 24,
+      "title": "Circuit Breaker State",
+      "gridPos": { "x": 0, "y": 40, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
         {
-          "type": "timeseries",
-          "id": 30,
-          "title": "Replication Status",
-          "gridPos": { "x": 0, "y": 49, "w": 8, "h": 8 },
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "targets": [
-            {
-              "expr": "s3proxy_replication_pending",
-              "legendFormat": "pending"
-            },
-            {
-              "expr": "rate(s3proxy_replication_copies_created_total[5m])",
-              "legendFormat": "copies created/s"
-            },
-            {
-              "expr": "rate(s3proxy_replication_errors_total[5m])",
-              "legendFormat": "errors/s"
-            },
-            {
-              "expr": "sum by (status) (rate(s3proxy_replication_runs_total[5m]))",
-              "legendFormat": "runs: {{status}}"
-            }
+          "expr": "s3proxy_circuit_breaker_state",
+          "legendFormat": "state",
+          "instant": true
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "Closed", "color": "green" } } },
+            { "type": "value", "options": { "1": { "text": "Open", "color": "red" } } },
+            { "type": "value", "options": { "2": { "text": "Half-Open", "color": "yellow" } } }
           ],
-          "options": {
-            "tooltip": { "mode": "multi" },
-            "legend": { "displayMode": "list", "placement": "bottom" }
-          },
-          "fieldConfig": {
-            "defaults": {
-              "noValue": "0",
-              "custom": {
-                "lineWidth": 2,
-                "fillOpacity": 10,
-                "showPoints": "never"
-              }
-            }
-          }
-        },
-        {
-          "type": "timeseries",
-          "id": 31,
-          "title": "Rebalancer Activity",
-          "gridPos": { "x": 8, "y": 49, "w": 8, "h": 8 },
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "targets": [
-            {
-              "expr": "sum by (strategy, status) (rate(s3proxy_rebalance_objects_moved_total[5m]))",
-              "legendFormat": "moved: {{strategy}} ({{status}})"
-            },
-            {
-              "expr": "sum by (strategy) (rate(s3proxy_rebalance_bytes_moved_total[5m]))",
-              "legendFormat": "bytes: {{strategy}}"
-            },
-            {
-              "expr": "sum by (strategy, status) (rate(s3proxy_rebalance_runs_total[5m]))",
-              "legendFormat": "runs: {{strategy}} ({{status}})"
-            },
-            {
-              "expr": "sum by (reason) (rate(s3proxy_rebalance_skipped_total[5m]))",
-              "legendFormat": "skipped: {{reason}}"
-            }
-          ],
-          "options": {
-            "tooltip": { "mode": "multi" },
-            "legend": { "displayMode": "list", "placement": "bottom" }
-          },
-          "fieldConfig": {
-            "defaults": {
-              "noValue": "0",
-              "custom": {
-                "lineWidth": 2,
-                "fillOpacity": 10,
-                "showPoints": "never"
-              }
-            }
-          }
-        },
-        {
-          "type": "timeseries",
-          "id": 32,
-          "title": "Lifecycle & Audit",
-          "gridPos": { "x": 16, "y": 49, "w": 8, "h": 8 },
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "targets": [
-            {
-              "expr": "rate(s3proxy_lifecycle_deleted_total[5m])",
-              "legendFormat": "lifecycle deleted/s"
-            },
-            {
-              "expr": "rate(s3proxy_lifecycle_failed_total[5m])",
-              "legendFormat": "lifecycle failed/s"
-            },
-            {
-              "expr": "sum by (status) (rate(s3proxy_lifecycle_runs_total[5m]))",
-              "legendFormat": "lifecycle runs: {{status}}"
-            },
-            {
-              "expr": "sum by (event) (rate(s3proxy_audit_events_total[5m]))",
-              "legendFormat": "audit: {{event}}"
-            }
-          ],
-          "options": {
-            "tooltip": { "mode": "multi" },
-            "legend": { "displayMode": "list", "placement": "bottom" }
-          },
-          "fieldConfig": {
-            "defaults": {
-              "unit": "ops",
-              "noValue": "0",
-              "custom": {
-                "lineWidth": 2,
-                "fillOpacity": 10,
-                "showPoints": "never"
-              }
-            }
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 },
+              { "color": "yellow", "value": 2 }
+            ]
           }
         }
-      ]
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 25,
+      "title": "CB Transitions",
+      "gridPos": { "x": 8, "y": 40, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (from, to) (rate(s3proxy_circuit_breaker_transitions_total[5m]))",
+          "legendFormat": "{{from}} → {{to}}"
+        }
+      ],
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 26,
+      "title": "Degraded Mode Ops",
+      "gridPos": { "x": 16, "y": 40, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (op) (rate(s3proxy_degraded_reads_total[5m]))",
+          "legendFormat": "reads {{op}}"
+        },
+        {
+          "expr": "rate(s3proxy_degraded_cache_hits_total[5m])",
+          "legendFormat": "cache hits"
+        },
+        {
+          "expr": "sum by (op) (rate(s3proxy_degraded_write_rejections_total[5m]))",
+          "legendFormat": "write rejections {{op}}"
+        }
+      ],
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        }
+      }
+    },
+    {
+      "type": "row",
+      "id": 27,
+      "title": "Replication",
+      "gridPos": { "x": 0, "y": 48, "w": 24, "h": 1 },
+      "collapsed": false
+    },
+    {
+      "type": "stat",
+      "id": 28,
+      "title": "Replication Pending",
+      "gridPos": { "x": 0, "y": 49, "w": 6, "h": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "s3proxy_replication_pending",
+          "legendFormat": "pending"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 10 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 29,
+      "title": "Copies Created",
+      "gridPos": { "x": 6, "y": 49, "w": 6, "h": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "rate(s3proxy_replication_copies_created_total[5m])",
+          "legendFormat": "copies/s"
+        }
+      ],
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 20,
+            "gradientMode": "scheme",
+            "showPoints": "never"
+          }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 30,
+      "title": "Replication Errors",
+      "gridPos": { "x": 12, "y": 49, "w": 6, "h": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "rate(s3proxy_replication_errors_total[5m])",
+          "legendFormat": "errors/s"
+        }
+      ],
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 31,
+      "title": "Replication Duration (p95)",
+      "gridPos": { "x": 18, "y": 49, "w": 6, "h": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(s3proxy_replication_duration_seconds_bucket[5m])))",
+          "legendFormat": "p95"
+        }
+      ],
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        }
+      }
+    },
+    {
+      "type": "row",
+      "id": 32,
+      "title": "Usage Tracking",
+      "gridPos": { "x": 0, "y": 55, "w": 24, "h": 1 },
+      "collapsed": false
+    },
+    {
+      "type": "table",
+      "id": 33,
+      "title": "Monthly API Requests",
+      "gridPos": { "x": 0, "y": 56, "w": 8, "h": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "max by (backend) (s3proxy_usage_api_requests)",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "sortBy": [{ "displayName": "backend", "desc": false }]
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true, "__name__": true },
+            "renameByName": { "Value": "Requests" }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Requests" },
+            "properties": [
+              { "id": "unit", "value": "short" },
+              { "id": "custom.displayMode", "value": "color-text" },
+              { "id": "color", "value": { "mode": "thresholds" } },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [{ "color": "blue", "value": null }]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "table",
+      "id": 34,
+      "title": "Monthly Egress",
+      "gridPos": { "x": 8, "y": 56, "w": 8, "h": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "max by (backend) (s3proxy_usage_egress_bytes)",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "sortBy": [{ "displayName": "backend", "desc": false }]
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true, "__name__": true },
+            "renameByName": { "Value": "Egress" }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Egress" },
+            "properties": [
+              { "id": "unit", "value": "bytes" },
+              { "id": "custom.displayMode", "value": "color-text" },
+              { "id": "color", "value": { "mode": "thresholds" } },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [{ "color": "blue", "value": null }]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "table",
+      "id": 35,
+      "title": "Monthly Ingress",
+      "gridPos": { "x": 16, "y": 56, "w": 8, "h": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "max by (backend) (s3proxy_usage_ingress_bytes)",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "sortBy": [{ "displayName": "backend", "desc": false }]
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true, "__name__": true },
+            "renameByName": { "Value": "Ingress" }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Ingress" },
+            "properties": [
+              { "id": "unit", "value": "bytes" },
+              { "id": "custom.displayMode", "value": "color-text" },
+              { "id": "color", "value": { "mode": "thresholds" } },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [{ "color": "blue", "value": null }]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "row",
+      "id": 36,
+      "title": "Rate Limiting & Rejections",
+      "gridPos": { "x": 0, "y": 62, "w": 24, "h": 1 },
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "id": 37,
+      "title": "Usage Limit Rejections",
+      "gridPos": { "x": 0, "y": 63, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (operation, limit_type) (rate(s3proxy_usage_limit_rejections_total[5m]))",
+          "legendFormat": "{{operation}} ({{limit_type}})"
+        }
+      ],
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 38,
+      "title": "Rate Limit Rejections",
+      "gridPos": { "x": 8, "y": 63, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "rate(s3proxy_rate_limit_rejections_total[5m])",
+          "legendFormat": "rejections/s"
+        }
+      ],
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 39,
+      "title": "Admission Rejections",
+      "gridPos": { "x": 16, "y": 63, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "rate(s3proxy_admission_rejections_total[5m])",
+          "legendFormat": "rejections/s"
+        }
+      ],
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        }
+      }
+    },
+    {
+      "type": "row",
+      "id": 40,
+      "title": "Rebalancer",
+      "gridPos": { "x": 0, "y": 71, "w": 24, "h": 1 },
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "id": 41,
+      "title": "Rebalance Runs",
+      "gridPos": { "x": 0, "y": 72, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (strategy, status) (rate(s3proxy_rebalance_runs_total[5m]))",
+          "legendFormat": "{{strategy}} ({{status}})"
+        }
+      ],
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 42,
+      "title": "Objects / Bytes Moved",
+      "gridPos": { "x": 8, "y": 72, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "rate(s3proxy_rebalance_objects_moved_total[5m])",
+          "legendFormat": "objects/s"
+        },
+        {
+          "expr": "rate(s3proxy_rebalance_bytes_moved_total[5m])",
+          "legendFormat": "bytes/s"
+        }
+      ],
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 20,
+            "gradientMode": "scheme",
+            "showPoints": "never"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "bytes/s" },
+            "properties": [
+              { "id": "unit", "value": "Bps" },
+              { "id": "custom.axisPlacement", "value": "right" }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 43,
+      "title": "Rebalance Duration (p95)",
+      "gridPos": { "x": 16, "y": 72, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, strategy) (rate(s3proxy_rebalance_duration_seconds_bucket[5m])))",
+          "legendFormat": "{{strategy}}"
+        }
+      ],
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        }
+      }
+    },
+    {
+      "type": "row",
+      "id": 44,
+      "title": "Drain & Lifecycle",
+      "gridPos": { "x": 0, "y": 80, "w": 24, "h": 1 },
+      "collapsed": false
+    },
+    {
+      "type": "stat",
+      "id": 45,
+      "title": "Drain Active",
+      "gridPos": { "x": 0, "y": 81, "w": 6, "h": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "s3proxy_drain_active",
+          "legendFormat": "drain",
+          "instant": true
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "0",
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "Idle", "color": "green" } } },
+            { "type": "value", "options": { "1": { "text": "Draining", "color": "blue" } } }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "blue", "value": 1 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 46,
+      "title": "Drain Objects / Bytes",
+      "gridPos": { "x": 6, "y": 81, "w": 6, "h": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "rate(s3proxy_drain_objects_moved_total[5m])",
+          "legendFormat": "objects/s"
+        },
+        {
+          "expr": "rate(s3proxy_drain_bytes_moved_total[5m])",
+          "legendFormat": "bytes/s"
+        }
+      ],
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 20,
+            "gradientMode": "scheme",
+            "showPoints": "never"
+          }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 47,
+      "title": "Lifecycle Deleted / Failed",
+      "gridPos": { "x": 12, "y": 81, "w": 6, "h": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "rate(s3proxy_lifecycle_objects_deleted_total[5m])",
+          "legendFormat": "deleted/s"
+        },
+        {
+          "expr": "rate(s3proxy_lifecycle_errors_total[5m])",
+          "legendFormat": "failed/s"
+        }
+      ],
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 48,
+      "title": "Lifecycle Runs",
+      "gridPos": { "x": 18, "y": 81, "w": 6, "h": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (status) (rate(s3proxy_lifecycle_runs_total[5m]))",
+          "legendFormat": "{{status}}"
+        }
+      ],
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        }
+      }
+    },
+    {
+      "type": "row",
+      "id": 49,
+      "title": "Cleanup Queue & Audit",
+      "gridPos": { "x": 0, "y": 87, "w": 24, "h": 1 },
+      "collapsed": false
+    },
+    {
+      "type": "stat",
+      "id": 50,
+      "title": "Cleanup Queue Depth",
+      "gridPos": { "x": 0, "y": 88, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "s3proxy_cleanup_queue_depth",
+          "legendFormat": "depth"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 5 },
+              { "color": "red", "value": 20 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 51,
+      "title": "Cleanup Throughput",
+      "gridPos": { "x": 8, "y": 88, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (reason) (rate(s3proxy_cleanup_queue_enqueued_total[5m]))",
+          "legendFormat": "enqueued {{reason}}"
+        },
+        {
+          "expr": "sum by (status) (rate(s3proxy_cleanup_queue_processed_total[5m]))",
+          "legendFormat": "processed {{status}}"
+        }
+      ],
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 52,
+      "title": "Audit Events",
+      "gridPos": { "x": 16, "y": 88, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (event) (rate(s3proxy_audit_events_total[5m]))",
+          "legendFormat": "{{event}}"
+        }
+      ],
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 20,
+            "gradientMode": "scheme",
+            "showPoints": "never",
+            "stacking": { "mode": "normal" }
+          }
+        }
+      }
     }
   ]
 }
