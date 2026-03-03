@@ -694,6 +694,173 @@ func TestAPIDelete_ManagerError(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
+// DELETE PREFIX API TESTS
+// -------------------------------------------------------------------------
+
+func TestAPIDeletePrefix_RequiresAuth(t *testing.T) {
+	_, mux := newTestHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/ui/api/delete-prefix",
+		strings.NewReader(`{"prefix":"test-bucket/"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Result().StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", w.Result().StatusCode)
+	}
+}
+
+func TestAPIDeletePrefix_WrongMethod(t *testing.T) {
+	h, mux := newTestHandler(t)
+
+	req := authedRequest(t, h, mux, http.MethodGet, "/ui/api/delete-prefix", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Result().StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want 405", w.Result().StatusCode)
+	}
+}
+
+func TestAPIDeletePrefix_BadJSON(t *testing.T) {
+	h, mux := newTestHandler(t)
+
+	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/delete-prefix", strings.NewReader("{bad"))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Result().StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Result().StatusCode)
+	}
+}
+
+func TestAPIDeletePrefix_EmptyPrefix(t *testing.T) {
+	h, mux := newTestHandler(t)
+
+	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/delete-prefix",
+		strings.NewReader(`{"prefix":""}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Result().StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Result().StatusCode)
+	}
+}
+
+func TestAPIDeletePrefix_Success(t *testing.T) {
+	h, mux, mock := newTestHandlerWithMock(t)
+	mock.ListObjectsResp = &storage.ListObjectsResult{
+		Objects: []storage.ObjectLocation{
+			{ObjectKey: "test-bucket/a.txt", BackendName: "b1", SizeBytes: 100},
+			{ObjectKey: "test-bucket/b.txt", BackendName: "b1", SizeBytes: 200},
+		},
+		IsTruncated: false,
+	}
+
+	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/delete-prefix",
+		strings.NewReader(`{"prefix":"test-bucket/"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want 200; body = %s", resp.StatusCode, body)
+	}
+
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if result["ok"] != true {
+		t.Errorf("expected ok=true, got %v", result)
+	}
+	if int(result["deleted"].(float64)) != 2 {
+		t.Errorf("expected deleted=2, got %v", result["deleted"])
+	}
+}
+
+func TestAPIDeletePrefix_EmptyResult(t *testing.T) {
+	h, mux, mock := newTestHandlerWithMock(t)
+	mock.ListObjectsResp = &storage.ListObjectsResult{
+		Objects:     nil,
+		IsTruncated: false,
+	}
+
+	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/delete-prefix",
+		strings.NewReader(`{"prefix":"empty-prefix/"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want 200; body = %s", resp.StatusCode, body)
+	}
+
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if result["ok"] != true {
+		t.Errorf("expected ok=true, got %v", result)
+	}
+	if int(result["deleted"].(float64)) != 0 {
+		t.Errorf("expected deleted=0, got %v", result["deleted"])
+	}
+}
+
+func TestAPIDeletePrefix_ListObjectsError(t *testing.T) {
+	h, mux, mock := newTestHandlerWithMock(t)
+	mock.ListObjectsErr = errors.New("db down")
+
+	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/delete-prefix",
+		strings.NewReader(`{"prefix":"test-bucket/"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Result().StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", w.Result().StatusCode)
+	}
+}
+
+func TestAPIDeletePrefix_DeleteError(t *testing.T) {
+	h, mux, mock := newTestHandlerWithMock(t)
+	mock.ListObjectsResp = &storage.ListObjectsResult{
+		Objects: []storage.ObjectLocation{
+			{ObjectKey: "test-bucket/a.txt", BackendName: "b1", SizeBytes: 100},
+		},
+		IsTruncated: false,
+	}
+	mock.DeleteObjectErr = errors.New("delete failed")
+
+	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/delete-prefix",
+		strings.NewReader(`{"prefix":"test-bucket/"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", resp.StatusCode)
+	}
+
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if result["error"] == nil {
+		t.Error("expected error field in response")
+	}
+}
+
+// -------------------------------------------------------------------------
 // UPLOAD API TESTS
 // -------------------------------------------------------------------------
 

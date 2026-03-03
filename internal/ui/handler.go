@@ -107,6 +107,7 @@ func (h *Handler) Register(mux *http.ServeMux, prefix string) {
 	mux.HandleFunc(prefix+"/api/dashboard", h.requireAuth(h.handleAPIDashboard))
 	mux.HandleFunc(prefix+"/api/tree", h.requireAuth(h.handleTreeAPI))
 	mux.HandleFunc(prefix+"/api/delete", h.requireAuth(h.handleAPIDelete))
+	mux.HandleFunc(prefix+"/api/delete-prefix", h.requireAuth(h.handleAPIDeletePrefix))
 	mux.HandleFunc(prefix+"/api/upload", h.requireAuth(h.handleAPIUpload))
 	mux.HandleFunc(prefix+"/api/rebalance", h.requireAuth(h.handleAPIRebalance))
 	mux.HandleFunc(prefix+"/api/sync", h.requireAuth(h.handleAPISync))
@@ -433,6 +434,11 @@ func (h *Handler) handleAPIDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	opStart := time.Now()
+	defer func() {
+		telemetry.RequestDuration.WithLabelValues("DELETE").Observe(time.Since(opStart).Seconds())
+	}()
+
 	if err := h.manager.DeleteObject(r.Context(), req.Key); err != nil {
 		slog.Error("UI: failed to delete object", "key", req.Key, "error", err)
 		w.Header().Set("Content-Type", "application/json")
@@ -444,6 +450,82 @@ func (h *Handler) handleAPIDelete(w http.ResponseWriter, r *http.Request) {
 	slog.Info("UI: deleted object", "key", req.Key)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+}
+
+// handleAPIDeletePrefix deletes all objects under a given key prefix.
+func (h *Handler) handleAPIDeletePrefix(w http.ResponseWriter, r *http.Request) {
+	setSecurityHeaders(w)
+
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Prefix string `json:"prefix"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+	if req.Prefix == "" {
+		http.Error(w, `{"error":"prefix is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	opStart := time.Now()
+	defer func() {
+		telemetry.RequestDuration.WithLabelValues("DELETE").Observe(time.Since(opStart).Seconds())
+	}()
+
+	// Collect all object keys under the prefix via pagination.
+	var keys []string
+	startAfter := ""
+	for {
+		result, err := h.manager.ListObjects(r.Context(), req.Prefix, "", startAfter, 1000)
+		if err != nil {
+			slog.Error("UI: failed to list objects for prefix delete", "prefix", req.Prefix, "error", err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		for _, obj := range result.Objects {
+			keys = append(keys, obj.ObjectKey)
+		}
+		if !result.IsTruncated {
+			break
+		}
+		startAfter = result.NextContinuationToken
+	}
+
+	if len(keys) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "deleted": 0})
+		return
+	}
+
+	results := h.manager.DeleteObjects(r.Context(), keys)
+	var errCount int
+	for _, res := range results {
+		if res.Err != nil {
+			errCount++
+		}
+	}
+
+	deleted := len(keys) - errCount
+	slog.Info("UI: prefix delete completed", "prefix", req.Prefix, "deleted", deleted, "errors", errCount)
+
+	w.Header().Set("Content-Type", "application/json")
+	if errCount > 0 {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error":   fmt.Sprintf("%d of %d deletes failed", errCount, len(keys)),
+			"deleted": deleted,
+		})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "deleted": deleted})
 }
 
 // handleAPIUpload uploads a file via multipart form data.
@@ -496,6 +578,11 @@ func (h *Handler) handleAPIUpload(w http.ResponseWriter, r *http.Request) {
 			contentType = ct
 		}
 	}
+
+	opStart := time.Now()
+	defer func() {
+		telemetry.RequestDuration.WithLabelValues("PUT").Observe(time.Since(opStart).Seconds())
+	}()
 
 	etag, err := h.manager.PutObject(r.Context(), key, file, header.Size, contentType)
 	if err != nil {

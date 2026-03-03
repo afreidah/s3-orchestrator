@@ -40,7 +40,8 @@
       var displayName = parts[parts.length - 1] + '/';
       summary.innerHTML =
         '<span class="tree-name">' + escapeHtml(displayName) + '</span>' +
-        '<span class="tree-meta">' + entry.fileCount + ' files &middot; ' + formatBytes(entry.totalSize) + '</span>';
+        '<span class="tree-meta">' + entry.fileCount + ' files &middot; ' + formatBytes(entry.totalSize) + '</span>' +
+        '<span class="tree-action tree-delete" title="Delete">&#x2715;</span>';
       details.appendChild(summary);
 
       var children = document.createElement('div');
@@ -127,6 +128,7 @@
   var deleteOkBtn = document.getElementById('confirm-delete-ok');
   var pendingDeleteKey = '';
   var pendingDeleteEl = null;
+  var pendingDeleteIsDir = false;
 
   if (dialog && tree) {
     tree.addEventListener('click', function (e) {
@@ -134,11 +136,25 @@
       if (!btn) return;
 
       var fileEl = btn.closest('.tree-file');
-      if (!fileEl || !fileEl.dataset.key) return;
+      var dirEl = btn.closest('.tree-dir');
 
-      pendingDeleteKey = fileEl.dataset.key;
-      pendingDeleteEl = fileEl;
-      deleteNameEl.textContent = pendingDeleteKey.split('/').pop();
+      if (fileEl && fileEl.dataset.key) {
+        pendingDeleteKey = fileEl.dataset.key;
+        pendingDeleteEl = fileEl;
+        pendingDeleteIsDir = false;
+        deleteNameEl.textContent = pendingDeleteKey.split('/').pop();
+      } else if (dirEl && dirEl.dataset.prefix) {
+        e.preventDefault();
+        pendingDeleteKey = dirEl.dataset.prefix;
+        pendingDeleteEl = dirEl;
+        pendingDeleteIsDir = true;
+        var metaEl = dirEl.querySelector('summary .tree-meta');
+        var metaText = metaEl ? ' (' + metaEl.textContent.trim() + ')' : '';
+        deleteNameEl.textContent = pendingDeleteKey + metaText;
+      } else {
+        return;
+      }
+
       deleteOkBtn.disabled = false;
       deleteOkBtn.textContent = 'Delete';
       dialog.showModal();
@@ -152,10 +168,15 @@
       deleteOkBtn.disabled = true;
       deleteOkBtn.textContent = 'Deleting\u2026';
 
-      fetch('api/delete', {
+      var endpoint = pendingDeleteIsDir ? 'api/delete-prefix' : 'api/delete';
+      var payload = pendingDeleteIsDir
+        ? JSON.stringify({ prefix: pendingDeleteKey })
+        : JSON.stringify({ key: pendingDeleteKey });
+
+      fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: pendingDeleteKey })
+        body: payload
       })
         .then(function (resp) {
           if (resp.status === 401) { location.href = 'login'; return; }
@@ -178,72 +199,146 @@
 
   // --- Upload flow ---
   var uploadBtn = document.getElementById('upload-btn');
-  var uploadFileInput = document.getElementById('upload-file');
+  var uploadFilesInput = document.getElementById('upload-files-input');
+  var uploadFolderInput = document.getElementById('upload-folder-input');
   var uploadDialog = document.getElementById('upload-dialog');
-  var uploadKeyInput = document.getElementById('upload-key');
+  var uploadBucketSelect = document.getElementById('upload-bucket');
+  var uploadPathInput = document.getElementById('upload-path');
+  var uploadAddFilesBtn = document.getElementById('upload-add-files');
+  var uploadAddFolderBtn = document.getElementById('upload-add-folder');
+  var uploadFileList = document.getElementById('upload-file-list');
+  var uploadProgressEl = document.getElementById('upload-progress');
   var uploadCancelBtn = document.getElementById('upload-cancel');
   var uploadOkBtn = document.getElementById('upload-ok');
-  var uploadStatus = document.getElementById('upload-status');
-  var buckets = window.__buckets || [];
-  var defaultPrefix = buckets.length ? buckets[0] + '/' : '';
+
+  var pendingFiles = [];
+
+  function renderFileList() {
+    uploadFileList.innerHTML = '';
+    for (var i = 0; i < pendingFiles.length; i++) {
+      var row = document.createElement('div');
+      row.className = 'upload-file-row';
+      var nameSpan = document.createElement('span');
+      nameSpan.textContent = pendingFiles[i].displayName;
+      var sizeSpan = document.createElement('span');
+      sizeSpan.className = 'upload-file-size';
+      sizeSpan.textContent = formatBytes(pendingFiles[i].file.size);
+      row.appendChild(nameSpan);
+      row.appendChild(sizeSpan);
+      uploadFileList.appendChild(row);
+    }
+    uploadOkBtn.disabled = pendingFiles.length === 0;
+  }
+
+  function buildKey(displayName) {
+    var bucket = uploadBucketSelect.value;
+    var path = uploadPathInput.value.replace(/^\/+|\/+$/g, '');
+    if (path) {
+      return bucket + '/' + path + '/' + displayName;
+    }
+    return bucket + '/' + displayName;
+  }
+
+  function setUploadControlsDisabled(disabled) {
+    uploadAddFilesBtn.disabled = disabled;
+    uploadAddFolderBtn.disabled = disabled;
+    uploadBucketSelect.disabled = disabled;
+    uploadPathInput.disabled = disabled;
+    uploadCancelBtn.disabled = disabled;
+    uploadOkBtn.disabled = disabled;
+  }
+
+  function uploadNext(index, successCount, failCount) {
+    if (index >= pendingFiles.length) {
+      if (failCount === 0) {
+        uploadDialog.close();
+        location.reload();
+      } else {
+        uploadProgressEl.textContent = successCount + ' uploaded, ' + failCount + ' failed';
+        uploadCancelBtn.disabled = false;
+      }
+      return;
+    }
+
+    var entry = pendingFiles[index];
+    var key = buildKey(entry.displayName);
+    uploadProgressEl.hidden = false;
+    uploadProgressEl.textContent = 'Uploading ' + (index + 1) + ' of ' + pendingFiles.length + ': ' + entry.displayName;
+
+    var formData = new FormData();
+    formData.append('key', key);
+    formData.append('file', entry.file);
+
+    fetch('api/upload', { method: 'POST', body: formData })
+      .then(function (resp) {
+        if (resp.status === 401) { location.href = 'login'; return; }
+        return resp.json();
+      })
+      .then(function (data) {
+        if (!data) return;
+        if (data.ok) {
+          uploadNext(index + 1, successCount + 1, failCount);
+        } else {
+          var rows = uploadFileList.querySelectorAll('.upload-file-row');
+          if (rows[index]) rows[index].classList.add('upload-failed');
+          uploadNext(index + 1, successCount, failCount + 1);
+        }
+      })
+      .catch(function () {
+        var rows = uploadFileList.querySelectorAll('.upload-file-row');
+        if (rows[index]) rows[index].classList.add('upload-failed');
+        uploadNext(index + 1, successCount, failCount + 1);
+      });
+  }
 
   if (uploadBtn && uploadDialog) {
-    // Step 1: Click Upload button → open native file picker
     uploadBtn.addEventListener('click', function () {
-      uploadFileInput.value = '';
-      uploadFileInput.click();
+      pendingFiles = [];
+      uploadFileList.innerHTML = '';
+      uploadProgressEl.hidden = true;
+      uploadProgressEl.textContent = '';
+      uploadPathInput.value = '';
+      uploadOkBtn.disabled = true;
+      uploadOkBtn.textContent = 'Upload';
+      setUploadControlsDisabled(false);
+      uploadOkBtn.disabled = true;
+      uploadDialog.showModal();
     });
 
-    // Step 2: File selected → show dialog with pre-filled path
-    uploadFileInput.addEventListener('change', function () {
-      if (!uploadFileInput.files.length) return;
-      var filename = uploadFileInput.files[0].name;
-      uploadKeyInput.value = defaultPrefix + filename;
-      uploadOkBtn.disabled = false;
-      uploadOkBtn.textContent = 'Upload';
-      uploadDialog.showModal();
+    uploadAddFilesBtn.addEventListener('click', function () {
+      uploadFilesInput.value = '';
+      uploadFilesInput.click();
+    });
+
+    uploadFilesInput.addEventListener('change', function () {
+      var files = uploadFilesInput.files;
+      for (var i = 0; i < files.length; i++) {
+        pendingFiles.push({ file: files[i], displayName: files[i].name });
+      }
+      renderFileList();
+    });
+
+    uploadAddFolderBtn.addEventListener('click', function () {
+      uploadFolderInput.value = '';
+      uploadFolderInput.click();
+    });
+
+    uploadFolderInput.addEventListener('change', function () {
+      var files = uploadFolderInput.files;
+      for (var i = 0; i < files.length; i++) {
+        pendingFiles.push({ file: files[i], displayName: files[i].webkitRelativePath });
+      }
+      renderFileList();
     });
 
     uploadCancelBtn.addEventListener('click', function () {
       uploadDialog.close();
     });
 
-    // Step 3: Confirm → upload
     uploadOkBtn.addEventListener('click', function () {
-      if (!uploadKeyInput.value || !uploadFileInput.files.length) return;
-
-      uploadOkBtn.disabled = true;
-      uploadOkBtn.textContent = 'Uploading\u2026';
-
-      var formData = new FormData();
-      formData.append('key', uploadKeyInput.value);
-      formData.append('file', uploadFileInput.files[0]);
-
-      fetch('api/upload', { method: 'POST', body: formData })
-        .then(function (resp) {
-          if (resp.status === 401) { location.href = 'login'; return; }
-          return resp.json();
-        })
-        .then(function (data) {
-          if (!data) return;
-          if (data.ok) {
-            uploadDialog.close();
-            location.reload();
-          } else {
-            uploadOkBtn.textContent = data.error || 'Failed';
-            setTimeout(function () {
-              uploadOkBtn.disabled = false;
-              uploadOkBtn.textContent = 'Upload';
-            }, 3000);
-          }
-        })
-        .catch(function () {
-          uploadOkBtn.textContent = 'Network error';
-          setTimeout(function () {
-            uploadOkBtn.disabled = false;
-            uploadOkBtn.textContent = 'Upload';
-          }, 3000);
-        });
+      if (pendingFiles.length === 0) return;
+      setUploadControlsDisabled(true);
+      uploadNext(0, 0, 0);
     });
   }
 
