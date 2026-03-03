@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/server"
 	"github.com/afreidah/s3-orchestrator/internal/storage"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/testutil"
@@ -87,7 +88,7 @@ func newTestHandlerWithMock(t *testing.T) (*Handler, *http.ServeMux, *testutil.M
 		},
 	}
 
-	h := New(mgr, func() bool { return true }, cfg, telemetry.NewLogBuffer())
+	h := New(mgr, func() bool { return true }, cfg, telemetry.NewLogBuffer(), nil)
 
 	mux := http.NewServeMux()
 	h.Register(mux, "/ui")
@@ -329,7 +330,7 @@ func TestLogin_BcryptSecret(t *testing.T) {
 		},
 	}
 
-	h := New(mgr, func() bool { return true }, cfg, telemetry.NewLogBuffer())
+	h := New(mgr, func() bool { return true }, cfg, telemetry.NewLogBuffer(), nil)
 	mux := http.NewServeMux()
 	h.Register(mux, "/ui")
 
@@ -395,8 +396,8 @@ func TestCrossInstanceSession(t *testing.T) {
 		},
 	}
 
-	h1 := New(mgr, func() bool { return true }, cfg, telemetry.NewLogBuffer())
-	h2 := New(mgr, func() bool { return true }, cfg, telemetry.NewLogBuffer())
+	h1 := New(mgr, func() bool { return true }, cfg, telemetry.NewLogBuffer(), nil)
+	h2 := New(mgr, func() bool { return true }, cfg, telemetry.NewLogBuffer(), nil)
 	mux1 := http.NewServeMux()
 	mux2 := http.NewServeMux()
 	h1.Register(mux1, "/ui")
@@ -1380,5 +1381,83 @@ func TestAPILogs_ComponentFilter(t *testing.T) {
 	}
 	if entries[0].Message != "a" {
 		t.Errorf("message = %q, want 'a'", entries[0].Message)
+	}
+}
+
+// -------------------------------------------------------------------------
+// BRUTE-FORCE PROTECTION
+// -------------------------------------------------------------------------
+
+func TestLogin_BruteForceProtection(t *testing.T) {
+	h, mux := newTestHandler(t)
+	lt := server.NewLoginThrottle(3, 5*time.Minute)
+	defer lt.Close()
+	h.loginThrottle = lt
+
+	// 3 bad attempts
+	for range 3 {
+		form := url.Values{"access_key": {"wrong"}, "secret_key": {"wrong"}}
+		req := httptest.NewRequest(http.MethodPost, "/ui/login", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.RemoteAddr = "10.0.0.1:12345"
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+	}
+
+	// 4th attempt should be 429
+	form := url.Values{"access_key": {"wrong"}, "secret_key": {"wrong"}}
+	req := httptest.NewRequest(http.MethodPost, "/ui/login", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.RemoteAddr = "10.0.0.1:12345"
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusTooManyRequests {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusTooManyRequests)
+	}
+}
+
+func TestLogin_BruteForceReset(t *testing.T) {
+	h, mux := newTestHandler(t)
+	lt := server.NewLoginThrottle(3, 5*time.Minute)
+	defer lt.Close()
+	h.loginThrottle = lt
+
+	addr := "10.0.0.1:12345"
+
+	// 2 bad attempts
+	for range 2 {
+		form := url.Values{"access_key": {"wrong"}, "secret_key": {"wrong"}}
+		req := httptest.NewRequest(http.MethodPost, "/ui/login", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.RemoteAddr = addr
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+	}
+
+	// Successful login resets counter
+	form := url.Values{"access_key": {testAdminKey}, "secret_key": {testAdminSecret}}
+	req := httptest.NewRequest(http.MethodPost, "/ui/login", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.RemoteAddr = addr
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("login status = %d, want %d", w.Code, http.StatusSeeOther)
+	}
+
+	// 2 more bad attempts should not trigger lockout (counter was reset)
+	for range 2 {
+		form := url.Values{"access_key": {"wrong"}, "secret_key": {"wrong"}}
+		req := httptest.NewRequest(http.MethodPost, "/ui/login", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.RemoteAddr = addr
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+
+		if w.Code == http.StatusTooManyRequests {
+			t.Error("should not be locked out after success reset and 2 new failures")
+		}
 	}
 }

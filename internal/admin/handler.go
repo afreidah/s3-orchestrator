@@ -13,6 +13,7 @@
 package admin
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -62,7 +63,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 func (h *Handler) requireToken(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := r.Header.Get("X-Admin-Token")
-		if token == "" || token != h.token {
+		if token == "" || subtle.ConstantTimeCompare([]byte(token), []byte(h.token)) != 1 {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 			return
 		}
@@ -83,7 +84,8 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 	data, err := h.manager.GetDashboardData(r.Context())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		slog.Error("Admin: failed to fetch status", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch status"})
 		return
 	}
 
@@ -137,7 +139,8 @@ func (h *Handler) handleObjectLocations(w http.ResponseWriter, r *http.Request) 
 
 	locations, err := h.store.GetAllObjectLocations(r.Context(), key)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		slog.Error("Admin: failed to fetch object locations", "key", key, "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch locations"})
 		return
 	}
 
@@ -153,13 +156,15 @@ func (h *Handler) handleCleanupQueue(w http.ResponseWriter, r *http.Request) {
 
 	depth, err := h.store.CleanupQueueDepth(r.Context())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		slog.Error("Admin: failed to fetch cleanup queue depth", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch cleanup queue"})
 		return
 	}
 
 	items, err := h.store.GetPendingCleanups(r.Context(), 50)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		slog.Error("Admin: failed to fetch pending cleanups", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch cleanup queue"})
 		return
 	}
 
@@ -174,7 +179,8 @@ func (h *Handler) handleUsageFlush(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.manager.FlushUsage(r.Context()); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		slog.Error("Admin: usage flush failed", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "flush failed"})
 		return
 	}
 
@@ -200,7 +206,8 @@ func (h *Handler) handleReplicate(w http.ResponseWriter, r *http.Request) {
 
 	created, err := h.manager.Replicate(r.Context(), *rcfg)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		slog.Error("Admin: replication failed", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "replication failed"})
 		return
 	}
 
@@ -243,7 +250,8 @@ func (h *Handler) handleLogLevel(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleStartDrain(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if err := h.manager.StartDrain(r.Context(), name); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		slog.Error("Admin: drain start failed", "backend", name, "error", err)
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "drain operation failed"})
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "drain started", "backend": name})
@@ -254,7 +262,8 @@ func (h *Handler) handleDrainProgress(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	progress, err := h.manager.GetDrainProgress(r.Context(), name)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		slog.Error("Admin: drain progress failed", "backend", name, "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "drain operation failed"})
 		return
 	}
 	writeJSON(w, http.StatusOK, progress)
@@ -264,7 +273,8 @@ func (h *Handler) handleDrainProgress(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleCancelDrain(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if err := h.manager.CancelDrain(name); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		slog.Error("Admin: drain cancel failed", "backend", name, "error", err)
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "drain operation failed"})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "drain cancelled", "backend": name})
@@ -276,7 +286,8 @@ func (h *Handler) handleRemoveBackend(w http.ResponseWriter, r *http.Request) {
 	purge := r.URL.Query().Get("purge") == "true"
 
 	if err := h.manager.RemoveBackend(r.Context(), name, purge); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		slog.Error("Admin: remove backend failed", "backend", name, "error", err)
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "remove failed"})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "backend removed", "backend": name})
