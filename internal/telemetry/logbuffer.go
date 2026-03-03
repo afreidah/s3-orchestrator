@@ -44,6 +44,7 @@ type LogEntry struct {
 type LogQueryOpts struct {
 	MinLevel  slog.Level // minimum severity (default 0 = DEBUG)
 	Since     time.Time  // only entries after this time
+	Before    time.Time  // only entries before this time
 	Limit     int        // max entries to return (0 = all)
 	Component string     // filter by "component" attribute value
 }
@@ -83,7 +84,7 @@ func (b *LogBuffer) Add(entry LogEntry) {
 
 // Entries returns buffered log entries matching the query options.
 // Results are returned in chronological order (oldest first).
-func (b *LogBuffer) Entries(opts LogQueryOpts) []LogEntry {
+func (b *LogBuffer) Entries(opts *LogQueryOpts) []LogEntry {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -113,6 +114,9 @@ func (b *LogBuffer) Entries(opts LogQueryOpts) []LogEntry {
 
 		// Apply filters.
 		if !opts.Since.IsZero() && e.Time.Before(opts.Since) {
+			continue
+		}
+		if !opts.Before.IsZero() && !e.Time.Before(opts.Before) {
 			continue
 		}
 		if levelToSlog(e.Level) < minLevel {
