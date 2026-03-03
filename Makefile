@@ -98,6 +98,7 @@ fuzz: ## Run fuzz tests for 30s per target
 	go test -fuzz=FuzzDeleteObjectsXML -fuzztime=30s ./internal/server/
 	go test -fuzz=FuzzCompleteMultipartXML -fuzztime=30s ./internal/server/
 	go test -fuzz=FuzzIsValidRequestID -fuzztime=30s ./internal/server/
+	go test -fuzz=FuzzLoginThrottle_RemoteAddr -fuzztime=30s ./internal/server/
 
 run: integration-deps ## Run locally (requires config.yaml)
 	go run ./cmd/s3-orchestrator -config config.yaml

@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/server"
 	"github.com/afreidah/s3-orchestrator/internal/storage"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 	"golang.org/x/crypto/bcrypt"
@@ -44,27 +45,29 @@ const (
 
 // Handler serves the web UI dashboard.
 type Handler struct {
-	manager     *storage.BackendManager
-	dbHealthy   func() bool
-	cfg         atomic.Pointer[config.Config]
-	templates   *template.Template
-	logBuffer   *telemetry.LogBuffer
-	prefix      string
-	adminKey    string
-	adminSecret string
-	sessionKey  []byte
+	manager        *storage.BackendManager
+	dbHealthy      func() bool
+	cfg            atomic.Pointer[config.Config]
+	templates      *template.Template
+	logBuffer      *telemetry.LogBuffer
+	loginThrottle  *server.LoginThrottle
+	prefix         string
+	adminKey       string
+	adminSecret    string
+	sessionKey     []byte
 }
 
 // New creates a new UI handler.
-func New(manager *storage.BackendManager, dbHealthy func() bool, cfg *config.Config, logBuffer *telemetry.LogBuffer) *Handler {
+func New(manager *storage.BackendManager, dbHealthy func() bool, cfg *config.Config, logBuffer *telemetry.LogBuffer, loginThrottle *server.LoginThrottle) *Handler {
 	h := &Handler{
-		manager:     manager,
-		dbHealthy:   dbHealthy,
-		templates:   loadTemplates(),
-		logBuffer:   logBuffer,
-		adminKey:    cfg.UI.AdminKey,
-		adminSecret: cfg.UI.AdminSecret,
-		sessionKey:  deriveSessionKey(cfg.UI),
+		manager:       manager,
+		dbHealthy:     dbHealthy,
+		templates:     loadTemplates(),
+		logBuffer:     logBuffer,
+		loginThrottle: loginThrottle,
+		adminKey:      cfg.UI.AdminKey,
+		adminSecret:   cfg.UI.AdminSecret,
+		sessionKey:    deriveSessionKey(cfg.UI),
 	}
 	h.cfg.Store(cfg)
 	return h
@@ -236,12 +239,28 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.loginThrottle != nil && h.loginThrottle.IsLockedOut(r.RemoteAddr) {
+		slog.Warn("UI: login attempt while locked out", "remote_addr", r.RemoteAddr)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusTooManyRequests)
+		if err := h.templates.ExecuteTemplate(w, "login.html", loginPage{
+			Version: telemetry.Version,
+			Error:   "Too many attempts. Try again later.",
+		}); err != nil {
+			slog.Error("UI: failed to render login page", "error", err)
+		}
+		return
+	}
+
 	key := r.FormValue("access_key")
 	secret := r.FormValue("secret_key")
 
 	keyMatch := subtle.ConstantTimeCompare([]byte(key), []byte(h.adminKey)) == 1
 
 	if !keyMatch || !checkSecret(h.adminSecret, secret) {
+		if h.loginThrottle != nil {
+			h.loginThrottle.RecordFailure(r.RemoteAddr)
+		}
 		slog.Warn("UI: failed login attempt", "remote_addr", r.RemoteAddr)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusUnauthorized)
@@ -254,6 +273,9 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.loginThrottle != nil {
+		h.loginThrottle.RecordSuccess(r.RemoteAddr)
+	}
 	slog.Info("UI: admin login", "remote_addr", r.RemoteAddr)
 	h.createSession(w, r, key)
 	http.Redirect(w, r, h.prefix+"/", http.StatusSeeOther)
@@ -443,7 +465,7 @@ func (h *Handler) handleAPIDelete(w http.ResponseWriter, r *http.Request) {
 		slog.Error("UI: failed to delete object", "key", req.Key, "error", err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "delete failed"})
 		return
 	}
 
@@ -487,7 +509,7 @@ func (h *Handler) handleAPIDeletePrefix(w http.ResponseWriter, r *http.Request) 
 			slog.Error("UI: failed to list objects for prefix delete", "prefix", req.Prefix, "error", err)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to list objects"})
 			return
 		}
 		for _, obj := range result.Objects {
@@ -589,7 +611,7 @@ func (h *Handler) handleAPIUpload(w http.ResponseWriter, r *http.Request) {
 		slog.Error("UI: failed to upload object", "key", key, "error", err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "upload failed"})
 		return
 	}
 
@@ -631,7 +653,7 @@ func (h *Handler) handleAPIRebalance(w http.ResponseWriter, r *http.Request) {
 		slog.Error("UI: rebalance failed", "error", err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "rebalance failed"})
 		return
 	}
 
@@ -704,7 +726,7 @@ func (h *Handler) handleAPISync(w http.ResponseWriter, r *http.Request) {
 		slog.Error("UI: sync failed", "backend", req.Backend, "bucket", req.Bucket, "error", err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "sync failed"})
 		return
 	}
 

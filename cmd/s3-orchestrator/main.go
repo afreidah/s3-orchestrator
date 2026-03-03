@@ -292,11 +292,13 @@ func runServe() {
 	// --- API-mode handlers: UI, rate limiter, S3 proxy ---
 	var uiHandler *ui.Handler
 	var rl *server.RateLimiter
+	var loginThrottle *server.LoginThrottle
 
 	if *mode == "api" || *mode == "all" {
 		// Web UI dashboard
 		if cfg.UI.Enabled {
-			uiHandler = ui.New(manager, cbStore.IsHealthy, cfg, logBuffer)
+			loginThrottle = server.NewLoginThrottle(5, 5*time.Minute)
+			uiHandler = ui.New(manager, cbStore.IsHealthy, cfg, logBuffer, loginThrottle)
 			uiHandler.Register(mux, cfg.UI.Path)
 			slog.Info("Web UI enabled", "path", cfg.UI.Path)
 		}
@@ -480,9 +482,12 @@ func runServe() {
 			slog.Error("HTTP server shutdown error", "error", err)
 		}
 
-		// Stop rate limiter cleanup goroutine
+		// Stop rate limiter and login throttle cleanup goroutines
 		if rl != nil {
 			rl.Close()
+		}
+		if loginThrottle != nil {
+			loginThrottle.Close()
 		}
 
 		// Stop background services and wait for them to finish

@@ -100,6 +100,7 @@ jobs:
           go test -fuzz=FuzzDeleteObjectsXML -fuzztime=5s ./internal/server/
           go test -fuzz=FuzzCompleteMultipartXML -fuzztime=5s ./internal/server/
           go test -fuzz=FuzzIsValidRequestID -fuzztime=5s ./internal/server/
+          go test -fuzz=FuzzLoginThrottle_RemoteAddr -fuzztime=5s ./internal/server/
 
   integration:
     runs-on: ubuntu-latest
