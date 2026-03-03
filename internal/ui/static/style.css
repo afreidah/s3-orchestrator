@@ -349,7 +349,13 @@ td.key {
 }
 
 .tree-file:hover .tree-action { opacity: 1; }
+.tree-dir > summary:hover .tree-action { opacity: 1; }
 .tree-delete:hover { color: #ef4444; background: rgba(239, 68, 68, 0.1); }
+
+/* --- Dialog centering (all dialogs) --- */
+dialog {
+  margin: auto;
+}
 
 /* --- Confirm delete dialog --- */
 dialog#confirm-delete {
@@ -425,7 +431,7 @@ dialog#upload-dialog {
   border: 1px solid #334155;
   border-radius: 0.5rem;
   padding: 1.25rem 1.5rem;
-  max-width: 420px;
+  max-width: 480px;
   width: 100%;
   font-size: 0.9rem;
 }
@@ -443,12 +449,87 @@ dialog#upload-dialog input[type="text"] {
   color: #e2e8f0;
   font-size: 0.85rem;
   font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
-  margin-top: 0.5rem;
 }
 
 dialog#upload-dialog input[type="text"]:focus {
   outline: none;
   border-color: #93c5fd;
+}
+
+.upload-label {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-top: 0.75rem;
+  margin-bottom: 0.25rem;
+}
+
+dialog#upload-dialog select {
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 0.35rem;
+  color: #e2e8f0;
+  font-size: 0.85rem;
+  appearance: auto;
+}
+
+dialog#upload-dialog select:focus {
+  outline: none;
+  border-color: #93c5fd;
+}
+
+.upload-add-btns {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.upload-file-list {
+  max-height: 200px;
+  overflow-y: auto;
+  margin-top: 0.5rem;
+  border: 1px solid #334155;
+  border-radius: 0.35rem;
+  background: #0f172a;
+}
+
+.upload-file-list:empty {
+  display: none;
+}
+
+.upload-file-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.3rem 0.6rem;
+  border-bottom: 1px solid #1e293b;
+  font-size: 0.8rem;
+  font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
+  color: #e2e8f0;
+}
+
+.upload-file-row:last-child { border-bottom: none; }
+
+.upload-file-size {
+  color: #64748b;
+  font-size: 0.75rem;
+  white-space: nowrap;
+  margin-left: 0.5rem;
+}
+
+.upload-file-row.upload-failed {
+  color: #ef4444;
+}
+
+.upload-progress {
+  font-size: 0.8rem;
+  color: #93c5fd;
+  margin-top: 0.5rem;
 }
 
 /* --- Sync dialog --- */
