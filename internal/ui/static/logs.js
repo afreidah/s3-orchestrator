@@ -5,7 +5,8 @@
 //
 // Fetches /ui/api/logs with level filtering, renders entries with color-coded
 // severity, and provides client-side text search. Optional auto-refresh polls
-// every 3 seconds when the toggle is enabled.
+// every 3 seconds when the toggle is enabled. Supports server-side pagination
+// via "Load more" button using the `before` parameter.
 // -------------------------------------------------------------------------------
 
 (function () {
@@ -20,13 +21,17 @@
   if (!container) return;
 
   var allEntries = [];
+  var hasMore = false;
+  var oldestTimestamp = '';
   var autoInterval = null;
+  var defaultLimit = 100;
 
-  function escapeHtml(s) {
-    if (!s) return '';
-    var d = document.createElement('div');
-    d.textContent = s;
-    return d.innerHTML;
+  function fetchWithTimeout(url, opts, ms) {
+    var c = new AbortController();
+    var id = setTimeout(function () { c.abort(); }, ms);
+    opts = opts || {};
+    opts.signal = c.signal;
+    return fetch(url, opts).finally(function () { clearTimeout(id); });
   }
 
   function levelClass(level) {
@@ -53,30 +58,65 @@
     var parts = [];
     for (var key in attrs) {
       if (Object.prototype.hasOwnProperty.call(attrs, key)) {
-        parts.push(escapeHtml(key) + '=' + escapeHtml(String(attrs[key])));
+        parts.push(key + '=' + String(attrs[key]));
       }
     }
     return parts.join(' ');
   }
 
   function renderEntries(entries) {
+    container.replaceChildren();
+
     if (entries.length === 0) {
-      container.innerHTML = '<div class="logs-empty">No log entries.</div>';
+      var empty = document.createElement('div');
+      empty.className = 'logs-empty';
+      empty.textContent = 'No log entries.';
+      container.appendChild(empty);
       return;
     }
 
-    var html = '';
     for (var i = entries.length - 1; i >= 0; i--) {
       var e = entries[i];
+      var row = document.createElement('div');
+      row.className = 'log-entry ' + levelClass(e.level);
+
+      var timeSpan = document.createElement('span');
+      timeSpan.className = 'log-time';
+      timeSpan.textContent = formatTime(e.time);
+      row.appendChild(timeSpan);
+
+      var lvlSpan = document.createElement('span');
+      lvlSpan.className = 'log-lvl';
+      lvlSpan.textContent = e.level;
+      row.appendChild(lvlSpan);
+
+      var msgSpan = document.createElement('span');
+      msgSpan.className = 'log-msg';
+      msgSpan.textContent = e.message;
+      row.appendChild(msgSpan);
+
       var attrStr = formatAttrs(e.attrs);
-      html += '<div class="log-entry ' + levelClass(e.level) + '">' +
-        '<span class="log-time">' + escapeHtml(formatTime(e.time)) + '</span>' +
-        '<span class="log-lvl">' + escapeHtml(e.level) + '</span>' +
-        '<span class="log-msg">' + escapeHtml(e.message) + '</span>' +
-        (attrStr ? '<span class="log-attrs">' + attrStr + '</span>' : '') +
-        '</div>';
+      if (attrStr) {
+        var attrSpan = document.createElement('span');
+        attrSpan.className = 'log-attrs';
+        attrSpan.textContent = attrStr;
+        row.appendChild(attrSpan);
+      }
+
+      container.appendChild(row);
     }
-    container.innerHTML = html;
+
+    if (hasMore) {
+      var btn = document.createElement('button');
+      btn.className = 'btn-action logs-load-more';
+      btn.textContent = 'Load more\u2026';
+      btn.addEventListener('click', function () {
+        btn.disabled = true;
+        btn.textContent = 'Loading\u2026';
+        loadMore();
+      });
+      container.appendChild(btn);
+    }
   }
 
   function applySearch() {
@@ -101,14 +141,25 @@
     renderEntries(filtered);
   }
 
-  function fetchLogs() {
+  function buildURL(before) {
     var level = levelSelect.value;
-    var url = 'api/logs?limit=500';
+    var url = 'api/logs?limit=' + defaultLimit;
     if (level) url += '&level=' + encodeURIComponent(level);
+    if (before) url += '&before=' + encodeURIComponent(before);
+    return url;
+  }
 
-    container.innerHTML = '<div class="tree-loading">Loading\u2026</div>';
+  function fetchLogs() {
+    allEntries = [];
+    hasMore = false;
+    oldestTimestamp = '';
 
-    fetch(url)
+    var loadingDiv = document.createElement('div');
+    loadingDiv.className = 'tree-loading';
+    loadingDiv.textContent = 'Loading\u2026';
+    container.replaceChildren(loadingDiv);
+
+    fetchWithTimeout(buildURL(''), null, 10000)
       .then(function (resp) {
         if (resp.status === 401) { location.href = 'login'; return; }
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
@@ -116,12 +167,49 @@
       })
       .then(function (data) {
         if (!data) return;
-        allEntries = data;
+        allEntries = data.entries || [];
+        hasMore = data.hasMore || false;
+        if (allEntries.length > 0) {
+          oldestTimestamp = allEntries[0].time;
+        }
         applySearch();
       })
       .catch(function (err) {
-        container.innerHTML = '<div class="logs-empty">Failed to load logs: ' +
-          escapeHtml(err.message) + '</div>';
+        container.replaceChildren();
+        var errDiv = document.createElement('div');
+        errDiv.className = 'logs-empty';
+        errDiv.textContent = err.name === 'AbortError'
+          ? 'Request timed out'
+          : 'Failed to load logs: ' + err.message;
+        container.appendChild(errDiv);
+      });
+  }
+
+  function loadMore() {
+    if (!oldestTimestamp) return;
+
+    fetchWithTimeout(buildURL(oldestTimestamp), null, 10000)
+      .then(function (resp) {
+        if (resp.status === 401) { location.href = 'login'; return; }
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        return resp.json();
+      })
+      .then(function (data) {
+        if (!data) return;
+        var newEntries = data.entries || [];
+        hasMore = data.hasMore || false;
+        if (newEntries.length > 0) {
+          allEntries = newEntries.concat(allEntries);
+          oldestTimestamp = newEntries[0].time;
+        }
+        applySearch();
+      })
+      .catch(function (err) {
+        var btn = container.querySelector('.logs-load-more');
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = err.name === 'AbortError' ? 'Request timed out' : 'Failed to load';
+        }
       });
   }
 

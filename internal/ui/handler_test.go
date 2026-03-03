@@ -1237,8 +1237,8 @@ func TestAPILogs_ReturnsJSON(t *testing.T) {
 		t.Errorf("Content-Type = %q, want application/json", ct)
 	}
 
-	var entries []telemetry.LogEntry
-	if err := json.NewDecoder(resp.Body).Decode(&entries); err != nil {
+	var lr logsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&lr); err != nil {
 		t.Fatalf("failed to decode JSON: %v", err)
 	}
 }
@@ -1259,15 +1259,15 @@ func TestAPILogs_LevelFilter(t *testing.T) {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
 
-	var entries []telemetry.LogEntry
-	if err := json.NewDecoder(resp.Body).Decode(&entries); err != nil {
+	var lr logsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&lr); err != nil {
 		t.Fatalf("failed to decode JSON: %v", err)
 	}
-	if len(entries) != 1 {
-		t.Fatalf("got %d entries, want 1", len(entries))
+	if len(lr.Entries) != 1 {
+		t.Fatalf("got %d entries, want 1", len(lr.Entries))
 	}
-	if entries[0].Message != "error msg" {
-		t.Errorf("message = %q, want 'error msg'", entries[0].Message)
+	if lr.Entries[0].Message != "error msg" {
+		t.Errorf("message = %q, want 'error msg'", lr.Entries[0].Message)
 	}
 }
 
@@ -1297,12 +1297,12 @@ func TestAPILogs_AllLevelFilters(t *testing.T) {
 			if w.Result().StatusCode != http.StatusOK {
 				t.Fatalf("status = %d, want 200", w.Result().StatusCode)
 			}
-			var entries []telemetry.LogEntry
-			if err := json.NewDecoder(w.Result().Body).Decode(&entries); err != nil {
+			var lr logsResponse
+			if err := json.NewDecoder(w.Result().Body).Decode(&lr); err != nil {
 				t.Fatalf("failed to decode: %v", err)
 			}
-			if len(entries) != tt.want {
-				t.Errorf("level=%s: got %d entries, want %d", tt.level, len(entries), tt.want)
+			if len(lr.Entries) != tt.want {
+				t.Errorf("level=%s: got %d entries, want %d", tt.level, len(lr.Entries), tt.want)
 			}
 		})
 	}
@@ -1324,15 +1324,15 @@ func TestAPILogs_SinceFilter(t *testing.T) {
 	if w.Result().StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", w.Result().StatusCode)
 	}
-	var entries []telemetry.LogEntry
-	if err := json.NewDecoder(w.Result().Body).Decode(&entries); err != nil {
+	var lr logsResponse
+	if err := json.NewDecoder(w.Result().Body).Decode(&lr); err != nil {
 		t.Fatalf("failed to decode: %v", err)
 	}
-	if len(entries) != 1 {
-		t.Fatalf("got %d entries, want 1", len(entries))
+	if len(lr.Entries) != 1 {
+		t.Fatalf("got %d entries, want 1", len(lr.Entries))
 	}
-	if entries[0].Message != "new" {
-		t.Errorf("message = %q, want 'new'", entries[0].Message)
+	if lr.Entries[0].Message != "new" {
+		t.Errorf("message = %q, want 'new'", lr.Entries[0].Message)
 	}
 }
 
@@ -1350,12 +1350,12 @@ func TestAPILogs_LimitFilter(t *testing.T) {
 	if w.Result().StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", w.Result().StatusCode)
 	}
-	var entries []telemetry.LogEntry
-	if err := json.NewDecoder(w.Result().Body).Decode(&entries); err != nil {
+	var lr logsResponse
+	if err := json.NewDecoder(w.Result().Body).Decode(&lr); err != nil {
 		t.Fatalf("failed to decode: %v", err)
 	}
-	if len(entries) != 5 {
-		t.Fatalf("got %d entries, want 5", len(entries))
+	if len(lr.Entries) != 5 {
+		t.Fatalf("got %d entries, want 5", len(lr.Entries))
 	}
 }
 
@@ -1372,15 +1372,91 @@ func TestAPILogs_ComponentFilter(t *testing.T) {
 	if w.Result().StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", w.Result().StatusCode)
 	}
-	var entries []telemetry.LogEntry
-	if err := json.NewDecoder(w.Result().Body).Decode(&entries); err != nil {
+	var lr logsResponse
+	if err := json.NewDecoder(w.Result().Body).Decode(&lr); err != nil {
 		t.Fatalf("failed to decode: %v", err)
 	}
-	if len(entries) != 1 {
-		t.Fatalf("got %d entries, want 1", len(entries))
+	if len(lr.Entries) != 1 {
+		t.Fatalf("got %d entries, want 1", len(lr.Entries))
 	}
-	if entries[0].Message != "a" {
-		t.Errorf("message = %q, want 'a'", entries[0].Message)
+	if lr.Entries[0].Message != "a" {
+		t.Errorf("message = %q, want 'a'", lr.Entries[0].Message)
+	}
+}
+
+func TestAPILogs_BeforeFilter(t *testing.T) {
+	h, mux := newTestHandler(t)
+
+	old := time.Now().Add(-1 * time.Hour)
+	recent := time.Now()
+	h.logBuffer.Add(telemetry.LogEntry{Time: old, Level: "INFO", Message: "old"})
+	h.logBuffer.Add(telemetry.LogEntry{Time: recent, Level: "INFO", Message: "new"})
+
+	before := time.Now().Add(-10 * time.Minute).Format(time.RFC3339)
+	req := authedRequest(t, h, mux, http.MethodGet, "/ui/api/logs?before="+before, nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Result().StatusCode)
+	}
+	var lr logsResponse
+	if err := json.NewDecoder(w.Result().Body).Decode(&lr); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
+	if len(lr.Entries) != 1 {
+		t.Fatalf("got %d entries, want 1", len(lr.Entries))
+	}
+	if lr.Entries[0].Message != "old" {
+		t.Errorf("message = %q, want 'old'", lr.Entries[0].Message)
+	}
+}
+
+func TestAPILogs_HasMore(t *testing.T) {
+	h, mux := newTestHandler(t)
+
+	for i := range 10 {
+		h.logBuffer.Add(telemetry.LogEntry{
+			Time:    time.Now().Add(time.Duration(i) * time.Second),
+			Level:   "INFO",
+			Message: "msg",
+			Attrs:   map[string]any{"i": i},
+		})
+	}
+
+	// Request limit=5 with 10 entries available — should get hasMore=true.
+	req := authedRequest(t, h, mux, http.MethodGet, "/ui/api/logs?limit=5", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Result().StatusCode)
+	}
+	var lr logsResponse
+	if err := json.NewDecoder(w.Result().Body).Decode(&lr); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
+	if len(lr.Entries) != 5 {
+		t.Fatalf("got %d entries, want 5", len(lr.Entries))
+	}
+	if !lr.HasMore {
+		t.Error("hasMore = false, want true")
+	}
+
+	// Request limit=20 with 10 entries — should get hasMore=false.
+	req2 := authedRequest(t, h, mux, http.MethodGet, "/ui/api/logs?limit=20", nil)
+	w2 := httptest.NewRecorder()
+	mux.ServeHTTP(w2, req2)
+
+	var lr2 logsResponse
+	if err := json.NewDecoder(w2.Result().Body).Decode(&lr2); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
+	if len(lr2.Entries) != 10 {
+		t.Fatalf("got %d entries, want 10", len(lr2.Entries))
+	}
+	if lr2.HasMore {
+		t.Error("hasMore = true, want false")
 	}
 }
 

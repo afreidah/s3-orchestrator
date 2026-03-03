@@ -21,11 +21,12 @@
     return (i === 0 ? b : b.toFixed(1)) + ' ' + units[i];
   }
 
-  function escapeHtml(s) {
-    if (!s) return '';
-    var d = document.createElement('div');
-    d.textContent = s;
-    return d.innerHTML;
+  function fetchWithTimeout(url, opts, ms) {
+    var c = new AbortController();
+    var id = setTimeout(function () { c.abort(); }, ms);
+    opts = opts || {};
+    opts.signal = c.signal;
+    return fetch(url, opts).finally(function () { clearTimeout(id); });
   }
 
   function renderEntry(entry) {
@@ -38,10 +39,19 @@
       var summary = document.createElement('summary');
       var parts = entry.name.replace(/\/$/, '').split('/');
       var displayName = parts[parts.length - 1] + '/';
-      summary.innerHTML =
-        '<span class="tree-name">' + escapeHtml(displayName) + '</span>' +
-        '<span class="tree-meta">' + entry.fileCount + ' files &middot; ' + formatBytes(entry.totalSize) + '</span>' +
-        '<span class="tree-action tree-delete" title="Delete">&#x2715;</span>';
+      var nameSpan = document.createElement('span');
+      nameSpan.className = 'tree-name';
+      nameSpan.textContent = displayName;
+      var metaSpan = document.createElement('span');
+      metaSpan.className = 'tree-meta';
+      metaSpan.textContent = entry.fileCount + ' files \u00B7 ' + formatBytes(entry.totalSize);
+      var delSpan = document.createElement('span');
+      delSpan.className = 'tree-action tree-delete';
+      delSpan.title = 'Delete';
+      delSpan.textContent = '\u2715';
+      summary.appendChild(nameSpan);
+      summary.appendChild(metaSpan);
+      summary.appendChild(delSpan);
       details.appendChild(summary);
 
       var children = document.createElement('div');
@@ -58,11 +68,19 @@
     var div = document.createElement('div');
     div.className = 'tree-file';
     div.dataset.key = entry.name;
-    div.innerHTML =
-      '<span class="tree-name">' + escapeHtml(entry.name.split('/').pop()) + '</span>' +
-      '<span class="tree-meta">' + escapeHtml(entry.backend) + ' &middot; ' +
-      formatBytes(entry.totalSize) + ' &middot; ' + escapeHtml(entry.createdAt) + '</span>' +
-      '<span class="tree-action tree-delete" title="Delete">&#x2715;</span>';
+    var fNameSpan = document.createElement('span');
+    fNameSpan.className = 'tree-name';
+    fNameSpan.textContent = entry.name.split('/').pop();
+    var fMetaSpan = document.createElement('span');
+    fMetaSpan.className = 'tree-meta';
+    fMetaSpan.textContent = entry.backend + ' \u00B7 ' + formatBytes(entry.totalSize) + ' \u00B7 ' + entry.createdAt;
+    var fDelSpan = document.createElement('span');
+    fDelSpan.className = 'tree-action tree-delete';
+    fDelSpan.title = 'Delete';
+    fDelSpan.textContent = '\u2715';
+    div.appendChild(fNameSpan);
+    div.appendChild(fMetaSpan);
+    div.appendChild(fDelSpan);
     return div;
   }
 
@@ -84,7 +102,7 @@
     var url = 'api/tree?prefix=' + encodeURIComponent(prefix);
     if (startAfter) url += '&startAfter=' + encodeURIComponent(startAfter);
 
-    fetch(url)
+    fetchWithTimeout(url, null, 10000)
       .then(function (resp) {
         if (resp.status === 401) { location.href = 'login'; return; }
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
@@ -116,7 +134,7 @@
       })
       .catch(function (err) {
         var loading = container.querySelector('.tree-loading');
-        if (loading) loading.textContent = 'Failed to load';
+        if (loading) loading.textContent = err.name === 'AbortError' ? 'Request timed out' : 'Failed to load';
         console.error('Tree load error:', err);
       });
   }
@@ -173,11 +191,11 @@
         ? JSON.stringify({ prefix: pendingDeleteKey })
         : JSON.stringify({ key: pendingDeleteKey });
 
-      fetch(endpoint, {
+      fetchWithTimeout(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: payload
-      })
+      }, 30000)
         .then(function (resp) {
           if (resp.status === 401) { location.href = 'login'; return; }
           return resp.json();
@@ -191,8 +209,8 @@
             deleteOkBtn.textContent = data.error || 'Failed';
           }
         })
-        .catch(function () {
-          deleteOkBtn.textContent = 'Network error';
+        .catch(function (err) {
+          deleteOkBtn.textContent = err.name === 'AbortError' ? 'Request timed out' : 'Network error';
         });
     });
   }
@@ -214,7 +232,7 @@
   var pendingFiles = [];
 
   function renderFileList() {
-    uploadFileList.innerHTML = '';
+    uploadFileList.replaceChildren();
     for (var i = 0; i < pendingFiles.length; i++) {
       var row = document.createElement('div');
       row.className = 'upload-file-row';
@@ -269,7 +287,7 @@
     formData.append('key', key);
     formData.append('file', entry.file);
 
-    fetch('api/upload', { method: 'POST', body: formData })
+    fetchWithTimeout('api/upload', { method: 'POST', body: formData }, 120000)
       .then(function (resp) {
         if (resp.status === 401) { location.href = 'login'; return; }
         return resp.json();
@@ -294,7 +312,7 @@
   if (uploadBtn && uploadDialog) {
     uploadBtn.addEventListener('click', function () {
       pendingFiles = [];
-      uploadFileList.innerHTML = '';
+      uploadFileList.replaceChildren();
       uploadProgressEl.hidden = true;
       uploadProgressEl.textContent = '';
       uploadPathInput.value = '';
@@ -356,7 +374,7 @@
       rebalanceBtn.disabled = true;
       rebalanceBtn.textContent = 'Rebalancing\u2026';
 
-      fetch('api/rebalance', { method: 'POST' })
+      fetchWithTimeout('api/rebalance', { method: 'POST' }, 60000)
         .then(function (resp) {
           if (resp.status === 401) { location.href = 'login'; return; }
           return resp.json();
@@ -374,8 +392,8 @@
             }, 3000);
           }
         })
-        .catch(function () {
-          rebalanceBtn.textContent = 'Network error';
+        .catch(function (err) {
+          rebalanceBtn.textContent = err.name === 'AbortError' ? 'Request timed out' : 'Network error';
           setTimeout(function () {
             rebalanceBtn.disabled = false;
             rebalanceBtn.textContent = 'Rebalance';
@@ -409,11 +427,11 @@
       syncOkBtn.disabled = true;
       syncOkBtn.textContent = 'Syncing\u2026';
 
-      fetch('api/sync', {
+      fetchWithTimeout('api/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ backend: backend, bucket: bucket })
-      })
+      }, 60000)
         .then(function (resp) {
           if (resp.status === 401) { location.href = 'login'; return; }
           return resp.json();
@@ -434,8 +452,8 @@
             }, 3000);
           }
         })
-        .catch(function () {
-          syncOkBtn.textContent = 'Network error';
+        .catch(function (err) {
+          syncOkBtn.textContent = err.name === 'AbortError' ? 'Request timed out' : 'Network error';
           setTimeout(function () {
             syncOkBtn.disabled = false;
             syncOkBtn.textContent = 'Sync';

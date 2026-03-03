@@ -740,9 +740,16 @@ func (h *Handler) handleAPISync(w http.ResponseWriter, r *http.Request) {
 // LOGS API
 // -------------------------------------------------------------------------
 
+// logsResponse wraps log entries with pagination metadata.
+type logsResponse struct {
+	Entries []telemetry.LogEntry `json:"entries"`
+	HasMore bool                 `json:"hasMore"`
+}
+
 // handleAPILogs returns buffered log entries as JSON. Supports query
 // parameters for filtering: level (minimum severity), since (RFC3339
-// timestamp), component, and limit.
+// timestamp), before (RFC3339 timestamp for pagination), component,
+// and limit.
 func (h *Handler) handleAPILogs(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
 
@@ -767,21 +774,39 @@ func (h *Handler) handleAPILogs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if before := r.URL.Query().Get("before"); before != "" {
+		if t, err := time.Parse(time.RFC3339, before); err == nil {
+			opts.Before = t
+		}
+	}
+
+	requestedLimit := 0
 	if limit := r.URL.Query().Get("limit"); limit != "" {
 		if n, err := strconv.Atoi(limit); err == nil && n > 0 {
-			opts.Limit = n
+			requestedLimit = n
 		}
+	}
+
+	// Over-fetch by 1 to detect whether more entries exist.
+	if requestedLimit > 0 {
+		opts.Limit = requestedLimit + 1
 	}
 
 	opts.Component = r.URL.Query().Get("component")
 
-	entries := h.logBuffer.Entries(opts)
+	entries := h.logBuffer.Entries(&opts)
 	if entries == nil {
 		entries = []telemetry.LogEntry{}
 	}
 
+	resp := logsResponse{Entries: entries}
+	if requestedLimit > 0 && len(entries) > requestedLimit {
+		resp.Entries = entries[:requestedLimit]
+		resp.HasMore = true
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(entries); err != nil {
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		slog.Error("UI: failed to encode logs JSON", "error", err)
 	}
 }
