@@ -218,9 +218,13 @@
     for (var i = 0; i < pendingFiles.length; i++) {
       var row = document.createElement('div');
       row.className = 'upload-file-row';
-      row.innerHTML =
-        '<span>' + escapeHtml(pendingFiles[i].displayName) + '</span>' +
-        '<span class="upload-file-size">' + formatBytes(pendingFiles[i].file.size) + '</span>';
+      var nameSpan = document.createElement('span');
+      nameSpan.textContent = pendingFiles[i].displayName;
+      var sizeSpan = document.createElement('span');
+      sizeSpan.className = 'upload-file-size';
+      sizeSpan.textContent = formatBytes(pendingFiles[i].file.size);
+      row.appendChild(nameSpan);
+      row.appendChild(sizeSpan);
       uploadFileList.appendChild(row);
     }
     uploadOkBtn.disabled = pendingFiles.length === 0;
