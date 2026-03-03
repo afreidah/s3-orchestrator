@@ -1,0 +1,8 @@
+global:
+  scrape_interval: 10s
+
+scrape_configs:
+  - job_name: s3-orchestrator
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["localhost:9000"]
