@@ -29,7 +29,7 @@ func TestLogBuffer_AddAndRetrieve(t *testing.T) {
 	buf.Add(LogEntry{Time: time.Now(), Level: "INFO", Message: "hello"})
 	buf.Add(LogEntry{Time: time.Now(), Level: "WARN", Message: "world"})
 
-	entries := buf.Entries(LogQueryOpts{})
+	entries := buf.Entries(&LogQueryOpts{})
 	if len(entries) != 2 {
 		t.Fatalf("got %d entries, want 2", len(entries))
 	}
@@ -54,7 +54,7 @@ func TestLogBuffer_Wraps(t *testing.T) {
 		})
 	}
 
-	entries := buf.Entries(LogQueryOpts{})
+	entries := buf.Entries(&LogQueryOpts{})
 	if len(entries) != logBufferCapacity {
 		t.Fatalf("got %d entries, want %d", len(entries), logBufferCapacity)
 	}
@@ -74,7 +74,7 @@ func TestLogBuffer_Wraps(t *testing.T) {
 func TestLogBuffer_Empty(t *testing.T) {
 	buf := NewLogBuffer()
 
-	entries := buf.Entries(LogQueryOpts{})
+	entries := buf.Entries(&LogQueryOpts{})
 	if entries != nil {
 		t.Fatalf("got %d entries from empty buffer, want nil", len(entries))
 	}
@@ -88,7 +88,7 @@ func TestLogBuffer_FilterByLevel(t *testing.T) {
 	buf.Add(LogEntry{Time: time.Now(), Level: "WARN", Message: "warn"})
 	buf.Add(LogEntry{Time: time.Now(), Level: "ERROR", Message: "error"})
 
-	entries := buf.Entries(LogQueryOpts{MinLevel: slog.LevelWarn})
+	entries := buf.Entries(&LogQueryOpts{MinLevel: slog.LevelWarn})
 	if len(entries) != 2 {
 		t.Fatalf("got %d entries, want 2", len(entries))
 	}
@@ -109,12 +109,51 @@ func TestLogBuffer_FilterBySince(t *testing.T) {
 	buf.Add(LogEntry{Time: old, Level: "INFO", Message: "old"})
 	buf.Add(LogEntry{Time: recent, Level: "INFO", Message: "new"})
 
-	entries := buf.Entries(LogQueryOpts{Since: time.Now().Add(-1 * time.Minute)})
+	entries := buf.Entries(&LogQueryOpts{Since: time.Now().Add(-1 * time.Minute)})
 	if len(entries) != 1 {
 		t.Fatalf("got %d entries, want 1", len(entries))
 	}
 	if entries[0].Message != "new" {
 		t.Errorf("entry = %q, want new", entries[0].Message)
+	}
+}
+
+func TestLogBuffer_Before(t *testing.T) {
+	buf := NewLogBuffer()
+
+	old := time.Now().Add(-10 * time.Minute)
+	mid := time.Now().Add(-5 * time.Minute)
+	recent := time.Now()
+
+	buf.Add(LogEntry{Time: old, Level: "INFO", Message: "old"})
+	buf.Add(LogEntry{Time: mid, Level: "INFO", Message: "mid"})
+	buf.Add(LogEntry{Time: recent, Level: "INFO", Message: "new"})
+
+	// Before mid should return only the old entry.
+	entries := buf.Entries(&LogQueryOpts{Before: mid})
+	if len(entries) != 1 {
+		t.Fatalf("got %d entries, want 1", len(entries))
+	}
+	if entries[0].Message != "old" {
+		t.Errorf("entry = %q, want old", entries[0].Message)
+	}
+
+	// Before recent should return old and mid.
+	entries = buf.Entries(&LogQueryOpts{Before: recent})
+	if len(entries) != 2 {
+		t.Fatalf("got %d entries, want 2", len(entries))
+	}
+	if entries[0].Message != "old" {
+		t.Errorf("first = %q, want old", entries[0].Message)
+	}
+	if entries[1].Message != "mid" {
+		t.Errorf("second = %q, want mid", entries[1].Message)
+	}
+
+	// Zero Before should return all.
+	entries = buf.Entries(&LogQueryOpts{})
+	if len(entries) != 3 {
+		t.Fatalf("got %d entries, want 3", len(entries))
 	}
 }
 
@@ -125,7 +164,7 @@ func TestLogBuffer_FilterByComponent(t *testing.T) {
 	buf.Add(LogEntry{Time: time.Now(), Level: "INFO", Message: "b", Attrs: map[string]any{"component": "storage"}})
 	buf.Add(LogEntry{Time: time.Now(), Level: "INFO", Message: "c"})
 
-	entries := buf.Entries(LogQueryOpts{Component: "server"})
+	entries := buf.Entries(&LogQueryOpts{Component: "server"})
 	if len(entries) != 1 {
 		t.Fatalf("got %d entries, want 1", len(entries))
 	}
@@ -146,7 +185,7 @@ func TestLogBuffer_Limit(t *testing.T) {
 		})
 	}
 
-	entries := buf.Entries(LogQueryOpts{Limit: 10})
+	entries := buf.Entries(&LogQueryOpts{Limit: 10})
 	if len(entries) != 10 {
 		t.Fatalf("got %d entries, want 10", len(entries))
 	}
@@ -178,7 +217,7 @@ func TestLogBuffer_ConcurrentAccess(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for range 100 {
-				_ = buf.Entries(LogQueryOpts{})
+				_ = buf.Entries(&LogQueryOpts{})
 			}
 		}()
 	}
@@ -186,7 +225,7 @@ func TestLogBuffer_ConcurrentAccess(t *testing.T) {
 	wg.Wait()
 
 	// Just verify no panic or deadlock occurred.
-	entries := buf.Entries(LogQueryOpts{})
+	entries := buf.Entries(&LogQueryOpts{})
 	if len(entries) == 0 {
 		t.Error("expected entries after concurrent writes")
 	}
@@ -210,7 +249,7 @@ func TestTeeHandler_WritesToBoth(t *testing.T) {
 	}
 
 	// Check buffer got the record.
-	entries := buf.Entries(LogQueryOpts{})
+	entries := buf.Entries(&LogQueryOpts{})
 	if len(entries) != 1 {
 		t.Fatalf("buffer has %d entries, want 1", len(entries))
 	}
@@ -233,7 +272,7 @@ func TestTeeHandler_WithAttrs(t *testing.T) {
 	logger := slog.New(NewTeeHandler(jsonHandler, buf)).With("component", "test")
 	logger.Info("with attrs")
 
-	entries := buf.Entries(LogQueryOpts{})
+	entries := buf.Entries(&LogQueryOpts{})
 	if len(entries) != 1 {
 		t.Fatalf("buffer has %d entries, want 1", len(entries))
 	}
@@ -250,7 +289,7 @@ func TestTeeHandler_WithGroup(t *testing.T) {
 	logger := slog.New(NewTeeHandler(jsonHandler, buf)).WithGroup("db")
 	logger.Info("grouped", "host", "localhost")
 
-	entries := buf.Entries(LogQueryOpts{})
+	entries := buf.Entries(&LogQueryOpts{})
 	if len(entries) != 1 {
 		t.Fatalf("buffer has %d entries, want 1", len(entries))
 	}
@@ -309,7 +348,7 @@ func TestTeeHandler_FilterByComponent(t *testing.T) {
 	serverLog.Info("from server")
 	storageLog.Info("from storage")
 
-	entries := buf.Entries(LogQueryOpts{Component: "server"})
+	entries := buf.Entries(&LogQueryOpts{Component: "server"})
 	if len(entries) != 1 {
 		t.Fatalf("got %d entries, want 1", len(entries))
 	}
