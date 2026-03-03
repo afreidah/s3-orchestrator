@@ -137,6 +137,28 @@ Deletes a single object by key.
 {"error": "failed to delete object: ..."}
 ```
 
+### POST /ui/api/delete-prefix
+
+Deletes all objects under a given key prefix.
+
+**Request body:**
+
+```json
+{"prefix": "my-bucket/photos/vacation/"}
+```
+
+**Response (success):**
+
+```json
+{"ok": true, "deleted": 42}
+```
+
+**Response (partial failure):**
+
+```json
+{"error": "5 of 47 deletes failed", "deleted": 42}
+```
+
 ### POST /ui/api/upload
 
 Uploads a file via multipart form data. Maximum upload size is 512 MiB.

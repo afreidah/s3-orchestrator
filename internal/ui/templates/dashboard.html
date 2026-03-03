@@ -155,7 +155,8 @@
       <button id="upload-btn" class="btn-upload">Upload</button>
       <span id="upload-status"></span>
     </div>
-    <input type="file" id="upload-file" hidden>
+    <input type="file" id="upload-files-input" multiple hidden>
+    <input type="file" id="upload-folder-input" webkitdirectory hidden>
     {{if .Data.TopLevelEntries.Entries}}
     <div class="object-tree" id="object-tree">
       {{range .Data.TopLevelEntries.Entries}}
@@ -164,6 +165,7 @@
           <summary>
             <span class="tree-name">{{.Name}}</span>
             <span class="tree-meta">{{.FileCount}} files &middot; {{formatBytes .TotalSize}}</span>
+            <span class="tree-action tree-delete" title="Delete">&#x2715;</span>
           </summary>
           <div class="tree-children">
             <div class="tree-loading">Loading&hellip;</div>
@@ -248,11 +250,27 @@
 </dialog>
 
 <dialog id="upload-dialog">
-  <p>Upload to:</p>
-  <input type="text" id="upload-key" required>
+  <p>Upload files</p>
+
+  <label class="upload-label" for="upload-bucket">Bucket</label>
+  <select id="upload-bucket">
+    {{range .Buckets}}<option value="{{.}}">{{.}}</option>{{end}}
+  </select>
+
+  <label class="upload-label" for="upload-path">Path (optional)</label>
+  <input type="text" id="upload-path" placeholder="e.g. stuff/nested/">
+
+  <div class="upload-add-btns">
+    <button id="upload-add-files" class="btn-action" type="button">Add Files</button>
+    <button id="upload-add-folder" class="btn-action" type="button">Add Folder</button>
+  </div>
+
+  <div id="upload-file-list" class="upload-file-list"></div>
+  <div id="upload-progress" class="upload-progress" hidden></div>
+
   <div class="dialog-actions">
     <button id="upload-cancel">Cancel</button>
-    <button id="upload-ok">Upload</button>
+    <button id="upload-ok" disabled>Upload</button>
   </div>
 </dialog>
 
