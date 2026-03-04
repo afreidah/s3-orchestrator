@@ -623,7 +623,7 @@
       "targets": [
         {
           "expr": "s3proxy_circuit_breaker_state",
-          "legendFormat": "state",
+          "legendFormat": "{{name}}",
           "instant": true
         }
       ],
@@ -659,8 +659,8 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "sum by (from, to) (rate(s3proxy_circuit_breaker_transitions_total[5m]))",
-          "legendFormat": "{{from}} → {{to}}"
+          "expr": "sum by (name, from, to) (rate(s3proxy_circuit_breaker_transitions_total[5m]))",
+          "legendFormat": "{{name}}: {{from}} → {{to}}"
         }
       ],
       "options": {

@@ -1532,6 +1532,74 @@ func TestLogLevel_InvalidValue(t *testing.T) {
 	}
 }
 
+// -------------------------------------------------------------------------
+// BackendCircuitBreakerConfig
+// -------------------------------------------------------------------------
+
+func TestBackendCircuitBreakerDefaults(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.BackendCircuitBreaker = BackendCircuitBreakerConfig{Enabled: true}
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.BackendCircuitBreaker.FailureThreshold != 5 {
+		t.Errorf("FailureThreshold = %d, want 5", cfg.BackendCircuitBreaker.FailureThreshold)
+	}
+	if cfg.BackendCircuitBreaker.OpenTimeout != 5*time.Minute {
+		t.Errorf("OpenTimeout = %v, want 5m", cfg.BackendCircuitBreaker.OpenTimeout)
+	}
+}
+
+func TestBackendCircuitBreakerDefaults_Disabled(t *testing.T) {
+	cfg := validBaseConfig()
+	// Disabled (default) — defaults should NOT be applied
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.BackendCircuitBreaker.FailureThreshold != 0 {
+		t.Errorf("FailureThreshold should stay 0 when disabled, got %d", cfg.BackendCircuitBreaker.FailureThreshold)
+	}
+}
+
+func TestBackendCircuitBreakerDefaults_CustomValues(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.BackendCircuitBreaker = BackendCircuitBreakerConfig{
+		Enabled:          true,
+		FailureThreshold: 10,
+		OpenTimeout:      30 * time.Second,
+	}
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.BackendCircuitBreaker.FailureThreshold != 10 {
+		t.Errorf("FailureThreshold = %d, want 10 (custom)", cfg.BackendCircuitBreaker.FailureThreshold)
+	}
+	if cfg.BackendCircuitBreaker.OpenTimeout != 30*time.Second {
+		t.Errorf("OpenTimeout = %v, want 30s (custom)", cfg.BackendCircuitBreaker.OpenTimeout)
+	}
+}
+
+func TestNonReloadableFieldsChanged_BackendCircuitBreaker(t *testing.T) {
+	a := validBaseConfig()
+	b := validBaseConfig()
+	_ = a.SetDefaultsAndValidate()
+	b.BackendCircuitBreaker = BackendCircuitBreakerConfig{Enabled: true, FailureThreshold: 5, OpenTimeout: 5 * time.Minute}
+	_ = b.SetDefaultsAndValidate()
+
+	changed := NonReloadableFieldsChanged(&a, &b)
+	found := false
+	for _, c := range changed {
+		if c == "backend_circuit_breaker" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected backend_circuit_breaker in changed list, got %v", changed)
+	}
+}
+
 func TestParseLogLevel(t *testing.T) {
 	tests := []struct {
 		input string

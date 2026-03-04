@@ -38,8 +38,9 @@ type Config struct {
 	Rebalance      RebalanceConfig      `yaml:"rebalance"`
 	Replication    ReplicationConfig    `yaml:"replication"`
 	RateLimit      RateLimitConfig      `yaml:"rate_limit"`
-	CircuitBreaker  CircuitBreakerConfig `yaml:"circuit_breaker"`
-	UI              UIConfig             `yaml:"ui"`
+	CircuitBreaker        CircuitBreakerConfig        `yaml:"circuit_breaker"`
+	BackendCircuitBreaker BackendCircuitBreakerConfig `yaml:"backend_circuit_breaker"`
+	UI                    UIConfig                    `yaml:"ui"`
 	UsageFlush      UsageFlushConfig     `yaml:"usage_flush"`
 	Lifecycle       LifecycleConfig      `yaml:"lifecycle"`
 	RoutingStrategy string               `yaml:"routing_strategy"` // "pack" (default) or "spread"
@@ -173,6 +174,16 @@ type CircuitBreakerConfig struct {
 	OpenTimeout       time.Duration `yaml:"open_timeout"`       // Delay before probing recovery (default: 15s)
 	CacheTTL          time.Duration `yaml:"cache_ttl"`          // TTL for key→backend cache during degraded reads (default: 60s)
 	ParallelBroadcast bool          `yaml:"parallel_broadcast"` // Fan-out reads to all backends in parallel during degraded mode (default: false)
+}
+
+// BackendCircuitBreakerConfig holds settings for per-backend circuit breakers.
+// When a backend is unreachable or returns errors (e.g. expired credentials),
+// the circuit opens and the backend is excluded from request routing until
+// recovery is detected via a probe request.
+type BackendCircuitBreakerConfig struct {
+	Enabled          bool          `yaml:"enabled"`           // Enable per-backend circuit breakers (default: false)
+	FailureThreshold int           `yaml:"failure_threshold"` // Consecutive failures before opening (default: 5)
+	OpenTimeout      time.Duration `yaml:"open_timeout"`      // Delay before probing recovery (default: 5m)
 }
 
 // UIConfig holds settings for the built-in web dashboard. Disabled by default.
@@ -565,6 +576,16 @@ func (c *Config) SetDefaultsAndValidate() error {
 		c.CircuitBreaker.CacheTTL = 60 * time.Second
 	}
 
+	// --- Backend circuit breaker defaults ---
+	if c.BackendCircuitBreaker.Enabled {
+		if c.BackendCircuitBreaker.FailureThreshold == 0 {
+			c.BackendCircuitBreaker.FailureThreshold = 5
+		}
+		if c.BackendCircuitBreaker.OpenTimeout == 0 {
+			c.BackendCircuitBreaker.OpenTimeout = 5 * time.Minute
+		}
+	}
+
 	// --- UI defaults and validation ---
 	if c.UI.Path == "" {
 		c.UI.Path = "/ui"
@@ -659,6 +680,9 @@ func NonReloadableFieldsChanged(old, new *Config) []string {
 	}
 	if old.CircuitBreaker != new.CircuitBreaker {
 		changed = append(changed, "circuit_breaker")
+	}
+	if old.BackendCircuitBreaker != new.BackendCircuitBreaker {
+		changed = append(changed, "backend_circuit_breaker")
 	}
 	if old.RoutingStrategy != new.RoutingStrategy {
 		changed = append(changed, "routing_strategy")

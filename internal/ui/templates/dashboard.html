@@ -79,8 +79,9 @@
           {{$objects := index $.Data.ObjectCounts .}}
           {{$multipart := index $.Data.ActiveMultipartCounts .}}
           {{$drain := index $.Data.DrainingBackends .}}
-          <tr{{if $drain.Active}} class="row-draining"{{else if $drain.ObjectsMoved}} class="row-drained"{{end}}>
-            <td>{{.}}{{if $drain.Active}} <span class="badge badge-draining">Draining</span>{{else if $drain.ObjectsMoved}} <span class="badge badge-drained">Drained</span>{{end}}</td>
+          {{$unhealthy := index $.Data.UnhealthyBackends .}}
+          <tr{{if $drain.Active}} class="row-draining"{{else if $drain.ObjectsMoved}} class="row-drained"{{else if $unhealthy}} class="row-degraded"{{end}}>
+            <td>{{.}}{{if $drain.Active}} <span class="badge badge-draining">Draining</span>{{else if $drain.ObjectsMoved}} <span class="badge badge-drained">Drained</span>{{else if $unhealthy}} <span class="badge badge-degraded">Degraded</span>{{end}}</td>
             <td class="num">{{formatBytes $stat.BytesUsed}}</td>
             <td class="num">
               {{- if eq $stat.BytesLimit 0}}unlimited

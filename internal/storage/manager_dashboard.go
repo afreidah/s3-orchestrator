@@ -22,6 +22,7 @@ type DashboardData struct {
 	UsagePeriod           string
 	TopLevelEntries       *DirectoryListResult
 	DrainingBackends      map[string]DrainProgress
+	UnhealthyBackends     map[string]bool
 }
 
 // GetDashboardData delegates to the DashboardAggregator and enriches the
@@ -40,6 +41,13 @@ func (m *BackendManager) GetDashboardData(ctx context.Context) (*DashboardData, 
 		progress, err := m.GetDrainProgress(ctx, name)
 		if err == nil {
 			data.DrainingBackends[name] = *progress
+		}
+	}
+
+	data.UnhealthyBackends = make(map[string]bool)
+	for name, backend := range m.backends {
+		if cb, ok := backend.(*CircuitBreakerBackend); ok && !cb.IsHealthy() {
+			data.UnhealthyBackends[name] = true
 		}
 	}
 

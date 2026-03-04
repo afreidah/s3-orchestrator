@@ -119,6 +119,7 @@ header h1 { font-size: 1.25rem; font-weight: 600; color: #f8fafc; }
 
 .row-draining { background: rgba(30, 64, 175, 0.08); }
 .row-drained { opacity: 0.6; }
+.row-degraded { background: rgba(146, 64, 14, 0.08); }
 
 .meta { font-size: 0.8rem; color: #94a3b8; }
 

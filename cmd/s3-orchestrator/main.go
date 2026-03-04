@@ -157,10 +157,16 @@ func runServe() {
 	usageLimits := make(map[string]storage.UsageLimits, len(cfg.Backends))
 	for i := range cfg.Backends {
 		bcfg := &cfg.Backends[i]
-		backend, err := storage.NewS3Backend(bcfg)
+		s3Backend, err := storage.NewS3Backend(bcfg)
 		if err != nil {
 			slog.Error("Failed to initialize backend", "backend", bcfg.Name, "error", err)
 			os.Exit(1)
+		}
+		var backend storage.ObjectBackend = s3Backend
+		if cfg.BackendCircuitBreaker.Enabled {
+			backend = storage.NewCircuitBreakerBackend(s3Backend, bcfg.Name,
+				cfg.BackendCircuitBreaker.FailureThreshold,
+				cfg.BackendCircuitBreaker.OpenTimeout)
 		}
 		backends[bcfg.Name] = backend
 		backendOrder = append(backendOrder, bcfg.Name)
@@ -282,18 +288,33 @@ func runServe() {
 		_, _ = fmt.Fprintf(w, `{"status":"ready","instance":%q}`, instanceID)
 	})
 
-	// --- Admin API (all modes — operators need it everywhere) ---
-	if cfg.UI.AdminKey != "" {
-		adminHandler := admin.New(manager, cbStore, cfg.UI.AdminKey, &logLevel)
-		adminHandler.Register(mux)
-		slog.Info("Admin API enabled", "path", "/admin/api/")
-	}
-
-	// --- API-mode handlers: UI, rate limiter, S3 proxy ---
+	// --- Rate limiter (shared by S3 proxy and admin API) ---
 	var uiHandler *ui.Handler
 	var rl *server.RateLimiter
 	var loginThrottle *server.LoginThrottle
 
+	if cfg.RateLimit.Enabled {
+		rl = server.NewRateLimiter(cfg.RateLimit)
+		slog.Info("Rate limiting enabled",
+			"requests_per_sec", cfg.RateLimit.RequestsPerSec,
+			"burst", cfg.RateLimit.Burst,
+		)
+	}
+
+	// --- Admin API (all modes — operators need it everywhere) ---
+	if cfg.UI.AdminKey != "" {
+		adminMux := http.NewServeMux()
+		adminHandler := admin.New(manager, cbStore, cfg.UI.AdminKey, &logLevel)
+		adminHandler.Register(adminMux)
+		var adminHTTP http.Handler = adminMux
+		if rl != nil {
+			adminHTTP = rl.Middleware(adminHTTP)
+		}
+		mux.Handle("/admin/", adminHTTP)
+		slog.Info("Admin API enabled", "path", "/admin/api/")
+	}
+
+	// --- API-mode handlers: UI, S3 proxy ---
 	if *mode == "api" || *mode == "all" {
 		// Web UI dashboard
 		if cfg.UI.Enabled {
@@ -305,13 +326,8 @@ func runServe() {
 
 		// S3 proxy handler (all other paths), optionally rate-limited and admission-controlled
 		var s3Handler http.Handler = srv
-		if cfg.RateLimit.Enabled {
-			rl = server.NewRateLimiter(cfg.RateLimit)
+		if rl != nil {
 			s3Handler = rl.Middleware(s3Handler)
-			slog.Info("Rate limiting enabled",
-				"requests_per_sec", cfg.RateLimit.RequestsPerSec,
-				"burst", cfg.RateLimit.Burst,
-			)
 		}
 		if cfg.Server.MaxConcurrentRequests > 0 {
 			ac := server.NewAdmissionController(cfg.Server.MaxConcurrentRequests)
@@ -547,6 +563,13 @@ func runServe() {
 			"cert_file", cfg.Server.TLS.CertFile,
 			"min_version", cfg.Server.TLS.MinVersion,
 			"mtls", cfg.Server.TLS.ClientCAFile != "",
+		)
+	}
+
+	if cfg.BackendCircuitBreaker.Enabled {
+		slog.Info("Backend circuit breakers enabled",
+			"failure_threshold", cfg.BackendCircuitBreaker.FailureThreshold,
+			"open_timeout", cfg.BackendCircuitBreaker.OpenTimeout,
 		)
 	}
 

@@ -459,6 +459,7 @@ func TestCircuitBreaker_TransitionLogs_ClosedToOpen(t *testing.T) {
 
 	for _, want := range []string{
 		"failure threshold reached",
+		"name=database",
 		"from=closed",
 		"to=open",
 		"failures=2",
@@ -484,7 +485,8 @@ func TestCircuitBreaker_TransitionLogs_OpenToHalfOpen(t *testing.T) {
 	})
 
 	for _, want := range []string{
-		"probing database",
+		"probing",
+		"name=database",
 		"from=open",
 		"to=half-open",
 		"open_duration=",
@@ -515,7 +517,8 @@ func TestCircuitBreaker_TransitionLogs_HalfOpenToClosed(t *testing.T) {
 	})
 
 	for _, want := range []string{
-		"database recovered",
+		"recovered",
+		"name=database",
 		"from=half-open",
 		"to=closed",
 		"degraded_duration=",
@@ -541,6 +544,7 @@ func TestCircuitBreaker_TransitionLogs_HalfOpenToOpen(t *testing.T) {
 
 	for _, want := range []string{
 		"probe failed",
+		"name=database",
 		"from=half-open",
 		"to=open",
 	} {
@@ -579,6 +583,175 @@ func TestCircuitBreaker_DegradedDurationIsPositive(t *testing.T) {
 
 	if !cb.IsHealthy() {
 		t.Fatal("circuit should be closed after recovery")
+	}
+}
+
+// -------------------------------------------------------------------------
+// Forwarding method coverage — exercises untested CBCall/CBCallNoResult
+// wrappers to ensure each method delegates correctly through the circuit.
+// -------------------------------------------------------------------------
+
+func TestCircuitBreaker_ForwardingMethods_Closed(t *testing.T) {
+	mock := &mockStore{
+		getQuotaStatsResp:      map[string]QuotaStat{"b1": {BackendName: "b1", BytesUsed: 100}},
+		getObjectCountsResp:    map[string]int64{"b1": 42},
+		getActiveMultipartResp: map[string]int64{"b1": 5},
+		getUsageForPeriodResp:  map[string]UsageStat{"b1": {APIRequests: 10}},
+		listObjectsByBackendResp: []ObjectLocation{{ObjectKey: "k", BackendName: "b1"}},
+		getUnderReplicatedResp:   []ObjectLocation{{ObjectKey: "k", BackendName: "b1"}},
+		recordReplicaInserted:    true,
+		cleanupQueueDepthVal:     7,
+		listDirChildrenResp:      &DirectoryListResult{},
+	}
+	cb := newTestCB(mock, 3, time.Minute)
+	ctx := context.Background()
+
+	// --- CBCall wrappers ---
+
+	if _, err := cb.DeleteObject(ctx, "key"); err != nil {
+		t.Errorf("DeleteObject: %v", err)
+	}
+	if _, err := cb.ListObjects(ctx, "p/", "", 100); err != nil {
+		t.Errorf("ListObjects: %v", err)
+	}
+	if _, err := cb.ListDirectoryChildren(ctx, "p/", "", 100); err != nil {
+		t.Errorf("ListDirectoryChildren: %v", err)
+	}
+	if _, err := cb.GetBackendWithSpace(ctx, 100, []string{"b1"}); err != nil {
+		t.Errorf("GetBackendWithSpace: %v", err)
+	}
+	if _, err := cb.GetLeastUtilizedBackend(ctx, 100, []string{"b1"}); err != nil {
+		t.Errorf("GetLeastUtilizedBackend: %v", err)
+	}
+	if _, err := cb.GetMultipartUpload(ctx, "u1"); err != nil {
+		t.Errorf("GetMultipartUpload: %v", err)
+	}
+	if _, err := cb.GetParts(ctx, "u1"); err != nil {
+		t.Errorf("GetParts: %v", err)
+	}
+	if _, err := cb.ListExpiredObjects(ctx, "", time.Now(), 100); err != nil {
+		t.Errorf("ListExpiredObjects: %v", err)
+	}
+	if _, err := cb.GetQuotaStats(ctx); err != nil {
+		t.Errorf("GetQuotaStats: %v", err)
+	}
+	if _, err := cb.GetObjectCounts(ctx); err != nil {
+		t.Errorf("GetObjectCounts: %v", err)
+	}
+	if _, err := cb.GetActiveMultipartCounts(ctx); err != nil {
+		t.Errorf("GetActiveMultipartCounts: %v", err)
+	}
+	if _, err := cb.GetStaleMultipartUploads(ctx, time.Hour); err != nil {
+		t.Errorf("GetStaleMultipartUploads: %v", err)
+	}
+	if _, err := cb.ListMultipartUploads(ctx, "", 100); err != nil {
+		t.Errorf("ListMultipartUploads: %v", err)
+	}
+	if _, err := cb.ListObjectsByBackend(ctx, "b1", 100); err != nil {
+		t.Errorf("ListObjectsByBackend: %v", err)
+	}
+	if _, err := cb.MoveObjectLocation(ctx, "k", "b1", "b2"); err != nil {
+		t.Errorf("MoveObjectLocation: %v", err)
+	}
+	if _, err := cb.GetUnderReplicatedObjects(ctx, 2, 100); err != nil {
+		t.Errorf("GetUnderReplicatedObjects: %v", err)
+	}
+	if _, err := cb.RecordReplica(ctx, "k", "b2", "b1", 100); err != nil {
+		t.Errorf("RecordReplica: %v", err)
+	}
+	if _, err := cb.GetUsageForPeriod(ctx, "2024-01"); err != nil {
+		t.Errorf("GetUsageForPeriod: %v", err)
+	}
+	if _, err := cb.GetPendingCleanups(ctx, 10); err != nil {
+		t.Errorf("GetPendingCleanups: %v", err)
+	}
+	if _, err := cb.CleanupQueueDepth(ctx); err != nil {
+		t.Errorf("CleanupQueueDepth: %v", err)
+	}
+	if _, err := cb.ImportObject(ctx, "k", "b1", 100); err != nil {
+		t.Errorf("ImportObject: %v", err)
+	}
+
+	// --- CBCallNoResult wrappers ---
+
+	if err := cb.DeleteMultipartUpload(ctx, "u1"); err != nil {
+		t.Errorf("DeleteMultipartUpload: %v", err)
+	}
+	if err := cb.RecordPart(ctx, "u1", 1, "etag", 100); err != nil {
+		t.Errorf("RecordPart: %v", err)
+	}
+	if err := cb.FlushUsageDeltas(ctx, "b1", "2024-01", 1, 2, 3); err != nil {
+		t.Errorf("FlushUsageDeltas: %v", err)
+	}
+	if err := cb.EnqueueCleanup(ctx, "b1", "k", "test"); err != nil {
+		t.Errorf("EnqueueCleanup: %v", err)
+	}
+	if err := cb.CompleteCleanupItem(ctx, 1); err != nil {
+		t.Errorf("CompleteCleanupItem: %v", err)
+	}
+	if err := cb.RetryCleanupItem(ctx, 1, time.Minute, "err"); err != nil {
+		t.Errorf("RetryCleanupItem: %v", err)
+	}
+	if err := cb.DeleteBackendData(ctx, "b1"); err != nil {
+		t.Errorf("DeleteBackendData: %v", err)
+	}
+	if err := cb.DeleteObjectLocation(ctx, "k", "b1"); err != nil {
+		t.Errorf("DeleteObjectLocation: %v", err)
+	}
+}
+
+func TestCircuitBreaker_ForwardingMethods_Open(t *testing.T) {
+	dbErr := errors.New("connection refused")
+	mock := &mockStore{getAllLocationsErr: dbErr}
+	cb := newTestCB(mock, 1, time.Minute)
+	ctx := context.Background()
+
+	// Trip the circuit
+	_, _ = cb.GetAllObjectLocations(ctx, "key")
+
+	// Verify a sample of forwarding methods return ErrDBUnavailable
+	if _, err := cb.GetQuotaStats(ctx); !errors.Is(err, ErrDBUnavailable) {
+		t.Errorf("GetQuotaStats: got %v, want ErrDBUnavailable", err)
+	}
+	if _, err := cb.ListObjectsByBackend(ctx, "b1", 100); !errors.Is(err, ErrDBUnavailable) {
+		t.Errorf("ListObjectsByBackend: got %v, want ErrDBUnavailable", err)
+	}
+	if err := cb.FlushUsageDeltas(ctx, "b1", "2024-01", 1, 2, 3); !errors.Is(err, ErrDBUnavailable) {
+		t.Errorf("FlushUsageDeltas: got %v, want ErrDBUnavailable", err)
+	}
+	if err := cb.DeleteBackendData(ctx, "b1"); !errors.Is(err, ErrDBUnavailable) {
+		t.Errorf("DeleteBackendData: got %v, want ErrDBUnavailable", err)
+	}
+}
+
+func TestCircuitBreaker_BackendObjectStats_PreCheckBlocks(t *testing.T) {
+	dbErr := errors.New("connection refused")
+	mock := &mockStore{getAllLocationsErr: dbErr}
+	cb := newTestCB(mock, 1, time.Minute)
+	ctx := context.Background()
+
+	// Trip the circuit
+	_, _ = cb.GetAllObjectLocations(ctx, "key")
+
+	count, bytes, err := cb.BackendObjectStats(ctx, "b1")
+	if !errors.Is(err, ErrDBUnavailable) {
+		t.Errorf("BackendObjectStats: got %v, want ErrDBUnavailable", err)
+	}
+	if count != 0 || bytes != 0 {
+		t.Errorf("expected zero values, got count=%d bytes=%d", count, bytes)
+	}
+}
+
+func TestCircuitBreaker_BackendObjectStats_Success(t *testing.T) {
+	mock := &mockStore{}
+	cb := newTestCB(mock, 3, time.Minute)
+
+	count, bytes, err := cb.BackendObjectStats(context.Background(), "b1")
+	if err != nil {
+		t.Fatalf("BackendObjectStats: %v", err)
+	}
+	if count != 0 || bytes != 0 {
+		t.Errorf("expected zero values from mock, got count=%d bytes=%d", count, bytes)
 	}
 }
 
