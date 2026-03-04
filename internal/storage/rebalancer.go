@@ -415,7 +415,7 @@ func (m *BackendManager) executeOneMove(ctx context.Context, move rebalanceMove,
 	// rcancel is deferred until after the body is fully consumed by PutObject,
 	// since result.Body is backed by the HTTP connection tied to rctx.
 	wctx, wcancel := m.withTimeout(ctx)
-	_, err = destBackend.PutObject(wctx, move.ObjectKey, result.Body, result.Size, result.ContentType)
+	_, err = destBackend.PutObject(wctx, move.ObjectKey, result.Body, result.Size, result.ContentType, result.Metadata)
 	_ = result.Body.Close()
 	rcancel()
 	wcancel()

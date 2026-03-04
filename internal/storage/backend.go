@@ -39,6 +39,7 @@ type GetObjectResult struct {
 	ETag         string
 	ContentRange string
 	LastModified time.Time
+	Metadata     map[string]string
 }
 
 // HeadObjectResult holds the response from a HeadObject call.
@@ -47,11 +48,12 @@ type HeadObjectResult struct {
 	ContentType  string
 	ETag         string
 	LastModified time.Time
+	Metadata     map[string]string
 }
 
 // ObjectBackend defines the interface for object storage operations.
 type ObjectBackend interface {
-	PutObject(ctx context.Context, key string, body io.Reader, size int64, contentType string) (etag string, err error)
+	PutObject(ctx context.Context, key string, body io.Reader, size int64, contentType string, metadata map[string]string) (etag string, err error)
 	GetObject(ctx context.Context, key string, rangeHeader string) (*GetObjectResult, error)
 	HeadObject(ctx context.Context, key string) (*HeadObjectResult, error)
 	DeleteObject(ctx context.Context, key string) error
@@ -106,7 +108,7 @@ func NewS3Backend(cfg *config.BackendConfig) (*S3Backend, error) {
 // -------------------------------------------------------------------------
 
 // PutObject uploads an object to the backend.
-func (b *S3Backend) PutObject(ctx context.Context, key string, body io.Reader, size int64, contentType string) (string, error) {
+func (b *S3Backend) PutObject(ctx context.Context, key string, body io.Reader, size int64, contentType string, metadata map[string]string) (string, error) {
 	const operation = "PutObject"
 	start := time.Now()
 
@@ -145,6 +147,9 @@ func (b *S3Backend) PutObject(ctx context.Context, key string, body io.Reader, s
 
 	if contentType != "" {
 		input.ContentType = aws.String(contentType)
+	}
+	if len(metadata) > 0 {
+		input.Metadata = metadata
 	}
 
 	result, err := b.client.PutObject(ctx, input, opts...)
@@ -216,6 +221,9 @@ func (b *S3Backend) GetObject(ctx context.Context, key string, rangeHeader strin
 	if result.LastModified != nil {
 		out.LastModified = *result.LastModified
 	}
+	if len(result.Metadata) > 0 {
+		out.Metadata = result.Metadata
+	}
 
 	return out, nil
 }
@@ -259,6 +267,9 @@ func (b *S3Backend) HeadObject(ctx context.Context, key string) (*HeadObjectResu
 	}
 	if result.LastModified != nil {
 		out.LastModified = *result.LastModified
+	}
+	if len(result.Metadata) > 0 {
+		out.Metadata = result.Metadata
 	}
 
 	return out, nil

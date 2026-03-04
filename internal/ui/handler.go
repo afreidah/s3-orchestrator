@@ -606,7 +606,7 @@ func (h *Handler) handleAPIUpload(w http.ResponseWriter, r *http.Request) {
 		telemetry.RequestDuration.WithLabelValues("PUT").Observe(time.Since(opStart).Seconds())
 	}()
 
-	etag, err := h.manager.PutObject(r.Context(), key, file, header.Size, contentType)
+	etag, err := h.manager.PutObject(r.Context(), key, file, header.Size, contentType, nil)
 	if err != nil {
 		slog.Error("UI: failed to upload object", "key", key, "error", err)
 		w.Header().Set("Content-Type", "application/json")

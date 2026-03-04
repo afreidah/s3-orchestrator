@@ -209,7 +209,7 @@ func (m *BackendManager) copyToReplica(ctx context.Context, key string, copies [
 		// rcancel is deferred until after the body is fully consumed by PutObject,
 		// since result.Body is backed by the HTTP connection tied to rctx.
 		wctx, wcancel := m.withTimeout(ctx)
-		_, err = targetBackend.PutObject(wctx, key, result.Body, result.Size, result.ContentType)
+		_, err = targetBackend.PutObject(wctx, key, result.Body, result.Size, result.ContentType, result.Metadata)
 		_ = result.Body.Close()
 		rcancel()
 		wcancel()

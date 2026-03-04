@@ -21,6 +21,41 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/storage"
 )
 
+// maxUserMetadataBytes is the S3-specified limit for total user metadata size.
+const maxUserMetadataBytes = 2048
+
+// extractUserMetadata extracts x-amz-meta-* headers from the request,
+// lowercasing the metadata key names. Returns nil when no metadata is present.
+func extractUserMetadata(h http.Header) map[string]string {
+	var meta map[string]string
+	for key, values := range h {
+		lower := strings.ToLower(key)
+		if strings.HasPrefix(lower, "x-amz-meta-") {
+			name := lower[len("x-amz-meta-"):]
+			if name != "" && len(values) > 0 {
+				if meta == nil {
+					meta = make(map[string]string)
+				}
+				meta[name] = values[0]
+			}
+		}
+	}
+	return meta
+}
+
+// validateUserMetadata checks that total user metadata does not exceed
+// the S3-specified 2 KB limit.
+func validateUserMetadata(meta map[string]string) error {
+	var total int
+	for k, v := range meta {
+		total += len(k) + len(v)
+	}
+	if total > maxUserMetadataBytes {
+		return fmt.Errorf("metadata size %d exceeds limit %d", total, maxUserMetadataBytes)
+	}
+	return nil
+}
+
 // parsePath extracts bucket and key from the URL path.
 // Expected format: /{bucket} or /{bucket}/{key...}
 // When no key is present, key is empty (used for bucket-level operations like

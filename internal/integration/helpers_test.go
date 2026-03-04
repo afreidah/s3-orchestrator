@@ -384,11 +384,11 @@ func (f *FailableStore) GetLeastUtilizedBackend(ctx context.Context, size int64,
 	return f.MetadataStore.GetLeastUtilizedBackend(ctx, size, eligible)
 }
 
-func (f *FailableStore) CreateMultipartUpload(ctx context.Context, uploadID, key, backend, contentType string) error {
+func (f *FailableStore) CreateMultipartUpload(ctx context.Context, uploadID, key, backend, contentType string, metadata map[string]string) error {
 	if f.isFailing() {
 		return errSimulatedDBFailure
 	}
-	return f.MetadataStore.CreateMultipartUpload(ctx, uploadID, key, backend, contentType)
+	return f.MetadataStore.CreateMultipartUpload(ctx, uploadID, key, backend, contentType, metadata)
 }
 
 func (f *FailableStore) GetMultipartUpload(ctx context.Context, uploadID string) (*storage.MultipartUpload, error) {

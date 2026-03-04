@@ -41,13 +41,14 @@ type serverMockObj struct {
 	contentType  string
 	etag         string
 	lastModified time.Time
+	metadata     map[string]string
 }
 
 func newServerMockBackend() *serverMockBackend {
 	return &serverMockBackend{objects: make(map[string]serverMockObj)}
 }
 
-func (b *serverMockBackend) PutObject(_ context.Context, key string, body io.Reader, _ int64, contentType string) (string, error) {
+func (b *serverMockBackend) PutObject(_ context.Context, key string, body io.Reader, _ int64, contentType string, metadata map[string]string) (string, error) {
 	if b.putErr != nil {
 		return "", b.putErr
 	}
@@ -57,7 +58,7 @@ func (b *serverMockBackend) PutObject(_ context.Context, key string, body io.Rea
 	}
 	etag := `"test-etag"`
 	b.mu.Lock()
-	b.objects[key] = serverMockObj{data: data, contentType: contentType, etag: etag}
+	b.objects[key] = serverMockObj{data: data, contentType: contentType, etag: etag, metadata: metadata}
 	b.mu.Unlock()
 	return etag, nil
 }
@@ -78,6 +79,7 @@ func (b *serverMockBackend) GetObject(_ context.Context, key string, _ string) (
 		ContentType:  obj.contentType,
 		ETag:         obj.etag,
 		LastModified: obj.lastModified,
+		Metadata:     obj.metadata,
 	}, nil
 }
 
@@ -96,6 +98,7 @@ func (b *serverMockBackend) HeadObject(_ context.Context, key string) (*storage.
 		ContentType:  obj.contentType,
 		ETag:         obj.etag,
 		LastModified: obj.lastModified,
+		Metadata:     obj.metadata,
 	}, nil
 }
 
@@ -624,6 +627,105 @@ func TestHead_LastModifiedHeaderSet(t *testing.T) {
 	expected := objTime.UTC().Format(http.TimeFormat)
 	if lm != expected {
 		t.Errorf("Last-Modified = %q, want %q", lm, expected)
+	}
+}
+
+// -------------------------------------------------------------------------
+// METADATA ROUND-TRIP
+// -------------------------------------------------------------------------
+
+func TestPut_MetadataStored(t *testing.T) {
+	ts, _, backend := newTestServer(t)
+	data := []byte("hello")
+
+	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/mybucket/metakey", bytes.NewReader(data))
+	req.Header.Set("X-Proxy-Token", "test-token")
+	req.Header.Set("Content-Type", "text/plain")
+	req.Header.Set("X-Amz-Meta-Project", "acme")
+	req.Header.Set("X-Amz-Meta-Env", "prod")
+	req.ContentLength = int64(len(data))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	obj, ok := backend.objects["mybucket/metakey"]
+	if !ok {
+		t.Fatal("object not stored")
+	}
+	if obj.metadata["project"] != "acme" || obj.metadata["env"] != "prod" {
+		t.Errorf("metadata = %v, want project=acme env=prod", obj.metadata)
+	}
+}
+
+func TestGet_MetadataReturned(t *testing.T) {
+	ts, mockStore, backend := newTestServer(t)
+
+	backend.objects["mybucket/metakey"] = serverMockObj{
+		data: []byte("hello"), contentType: "text/plain", etag: `"abc"`,
+		metadata: map[string]string{"project": "acme", "env": "prod"},
+	}
+	mockStore.GetAllLocationsResp = []storage.ObjectLocation{
+		{ObjectKey: "mybucket/metakey", BackendName: "b1", SizeBytes: 5},
+	}
+
+	resp := doReq(t, http.MethodGet, ts.URL+"/mybucket/metakey", nil)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if resp.Header.Get("X-Amz-Meta-Project") != "acme" {
+		t.Errorf("x-amz-meta-project = %q, want acme", resp.Header.Get("X-Amz-Meta-Project"))
+	}
+	if resp.Header.Get("X-Amz-Meta-Env") != "prod" {
+		t.Errorf("x-amz-meta-env = %q, want prod", resp.Header.Get("X-Amz-Meta-Env"))
+	}
+}
+
+func TestHead_MetadataReturned(t *testing.T) {
+	ts, mockStore, backend := newTestServer(t)
+
+	backend.objects["mybucket/metakey"] = serverMockObj{
+		data: []byte("hello"), contentType: "text/plain", etag: `"abc"`,
+		metadata: map[string]string{"project": "acme"},
+	}
+	mockStore.GetAllLocationsResp = []storage.ObjectLocation{
+		{ObjectKey: "mybucket/metakey", BackendName: "b1", SizeBytes: 5},
+	}
+
+	resp := doReq(t, http.MethodHead, ts.URL+"/mybucket/metakey", nil)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if resp.Header.Get("X-Amz-Meta-Project") != "acme" {
+		t.Errorf("x-amz-meta-project = %q, want acme", resp.Header.Get("X-Amz-Meta-Project"))
+	}
+}
+
+func TestPut_MetadataTooLarge(t *testing.T) {
+	ts, _, _ := newTestServer(t)
+	data := []byte("hello")
+
+	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/mybucket/metakey", bytes.NewReader(data))
+	req.Header.Set("X-Proxy-Token", "test-token")
+	req.Header.Set("Content-Type", "text/plain")
+	req.Header.Set("X-Amz-Meta-Big", strings.Repeat("x", maxUserMetadataBytes+1))
+	req.ContentLength = int64(len(data))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
 	}
 }
 

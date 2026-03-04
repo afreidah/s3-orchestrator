@@ -79,6 +79,8 @@ backends:
 #   enabled: false
 #   requests_per_sec: 100
 #   burst: 200
+#   cleanup_interval: "1m"       # How often stale per-IP entries are evicted
+#   cleanup_max_age: "5m"        # Entries not seen within this window are evicted
 #   trusted_proxies: []          # CIDRs whose X-Forwarded-For is trusted
 
 # --- Circuit breaker for database failures ---
