@@ -170,7 +170,7 @@ func (m *MockStore) ListObjects(_ context.Context, _, startAfter string, _ int) 
 }
 
 // CreateMultipartUpload returns the pre-configured error.
-func (m *MockStore) CreateMultipartUpload(_ context.Context, _, _, _, _ string) error {
+func (m *MockStore) CreateMultipartUpload(_ context.Context, _, _, _, _ string, _ map[string]string) error {
 	m.Mu.Lock()
 	defer m.Mu.Unlock()
 	return m.CreateMultipartErr

@@ -27,7 +27,7 @@ func TestCreateMultipartUpload_Success(t *testing.T) {
 	store := &mockStore{getBackendResp: "b1"}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	uploadID, backendName, err := mgr.CreateMultipartUpload(context.Background(), "multi/key", "application/zip")
+	uploadID, backendName, err := mgr.CreateMultipartUpload(context.Background(), "multi/key", "application/zip", nil)
 	if err != nil {
 		t.Fatalf("CreateMultipartUpload: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestCreateMultipartUpload_DBUnavailable(t *testing.T) {
 	store := &mockStore{getBackendErr: ErrDBUnavailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	_, _, err := mgr.CreateMultipartUpload(context.Background(), "key", "")
+	_, _, err := mgr.CreateMultipartUpload(context.Background(), "key", "", nil)
 	if !errors.Is(err, ErrServiceUnavailable) {
 		t.Fatalf("expected ErrServiceUnavailable, got %v", err)
 	}
@@ -53,7 +53,7 @@ func TestCreateMultipartUpload_NoSpace(t *testing.T) {
 	store := &mockStore{getBackendErr: ErrNoSpaceAvailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	_, _, err := mgr.CreateMultipartUpload(context.Background(), "key", "")
+	_, _, err := mgr.CreateMultipartUpload(context.Background(), "key", "", nil)
 	if !errors.Is(err, ErrInsufficientStorage) {
 		t.Fatalf("expected ErrInsufficientStorage, got %v", err)
 	}
@@ -123,8 +123,8 @@ func TestCompleteMultipartUpload_Success(t *testing.T) {
 
 	// Pre-store parts on the backend
 	ctx := context.Background()
-	_, _ = backend.PutObject(ctx, "__multipart/upload-1/1", bytes.NewReader([]byte("AAA")), 3, "application/octet-stream")
-	_, _ = backend.PutObject(ctx, "__multipart/upload-1/2", bytes.NewReader([]byte("BBB")), 3, "application/octet-stream")
+	_, _ = backend.PutObject(ctx, "__multipart/upload-1/1", bytes.NewReader([]byte("AAA")), 3, "application/octet-stream", nil)
+	_, _ = backend.PutObject(ctx, "__multipart/upload-1/2", bytes.NewReader([]byte("BBB")), 3, "application/octet-stream", nil)
 
 	store := &mockStore{
 		getMultipartResp: &MultipartUpload{
@@ -185,7 +185,7 @@ func TestCompleteMultipartUpload_DBUnavailable(t *testing.T) {
 func TestAbortMultipartUpload_Success(t *testing.T) {
 	backend := newMockBackend()
 	ctx := context.Background()
-	_, _ = backend.PutObject(ctx, "__multipart/upload-1/1", bytes.NewReader([]byte("AAA")), 3, "application/octet-stream")
+	_, _ = backend.PutObject(ctx, "__multipart/upload-1/1", bytes.NewReader([]byte("AAA")), 3, "application/octet-stream", nil)
 
 	store := &mockStore{
 		getMultipartResp: &MultipartUpload{
@@ -240,7 +240,7 @@ func TestAbortMultipartUpload_PartDeleteFails_EnqueuesCleanup(t *testing.T) {
 	backend := newMockBackend()
 	backend.delErr = errors.New("backend timeout")
 	ctx := context.Background()
-	_, _ = backend.PutObject(ctx, "__multipart/upload-1/1", bytes.NewReader([]byte("AAA")), 3, "application/octet-stream")
+	_, _ = backend.PutObject(ctx, "__multipart/upload-1/1", bytes.NewReader([]byte("AAA")), 3, "application/octet-stream", nil)
 	// Reset delErr after seeding (PutObject doesn't check it, but just in case)
 	backend.mu.Lock()
 	backend.delErr = errors.New("backend timeout")
@@ -283,9 +283,9 @@ func TestCompleteMultipartUpload_PartSubset(t *testing.T) {
 	backend := newMockBackend()
 	ctx := context.Background()
 	// Upload 3 parts but only complete with parts 1 and 3
-	_, _ = backend.PutObject(ctx, "__multipart/upload-1/1", bytes.NewReader([]byte("AAA")), 3, "application/octet-stream")
-	_, _ = backend.PutObject(ctx, "__multipart/upload-1/2", bytes.NewReader([]byte("BBB")), 3, "application/octet-stream")
-	_, _ = backend.PutObject(ctx, "__multipart/upload-1/3", bytes.NewReader([]byte("CCC")), 3, "application/octet-stream")
+	_, _ = backend.PutObject(ctx, "__multipart/upload-1/1", bytes.NewReader([]byte("AAA")), 3, "application/octet-stream", nil)
+	_, _ = backend.PutObject(ctx, "__multipart/upload-1/2", bytes.NewReader([]byte("BBB")), 3, "application/octet-stream", nil)
+	_, _ = backend.PutObject(ctx, "__multipart/upload-1/3", bytes.NewReader([]byte("CCC")), 3, "application/octet-stream", nil)
 
 	store := &mockStore{
 		getMultipartResp: &MultipartUpload{
@@ -371,7 +371,7 @@ func TestCompleteMultipartUpload_GetPartsError(t *testing.T) {
 func TestCompleteMultipartUpload_PartDeleteFails_EnqueuesCleanup(t *testing.T) {
 	backend := newMockBackend()
 	ctx := context.Background()
-	_, _ = backend.PutObject(ctx, "__multipart/upload-1/1", bytes.NewReader([]byte("AAA")), 3, "application/octet-stream")
+	_, _ = backend.PutObject(ctx, "__multipart/upload-1/1", bytes.NewReader([]byte("AAA")), 3, "application/octet-stream", nil)
 
 	store := &mockStore{
 		getMultipartResp: &MultipartUpload{
@@ -501,7 +501,7 @@ func TestCleanupStaleMultipartUploads_QueryError(t *testing.T) {
 func TestCleanupStaleMultipartUploads_AbortsStaleUploads(t *testing.T) {
 	backend := newMockBackend()
 	ctx := context.Background()
-	_, _ = backend.PutObject(ctx, "__multipart/stale-1/1", bytes.NewReader([]byte("x")), 1, "")
+	_, _ = backend.PutObject(ctx, "__multipart/stale-1/1", bytes.NewReader([]byte("x")), 1, "", nil)
 
 	store := &mockStore{
 		getStaleMultipartResp: []MultipartUpload{
@@ -534,9 +534,9 @@ func TestCompleteMultipartUpload_UsageRecords2NPlus1APICalls(t *testing.T) {
 	backend := newMockBackend()
 	ctx := context.Background()
 	// Pre-store 3 parts on the backend
-	_, _ = backend.PutObject(ctx, "__multipart/upload-1/1", bytes.NewReader([]byte("AAA")), 3, "application/octet-stream")
-	_, _ = backend.PutObject(ctx, "__multipart/upload-1/2", bytes.NewReader([]byte("BBB")), 3, "application/octet-stream")
-	_, _ = backend.PutObject(ctx, "__multipart/upload-1/3", bytes.NewReader([]byte("CCC")), 3, "application/octet-stream")
+	_, _ = backend.PutObject(ctx, "__multipart/upload-1/1", bytes.NewReader([]byte("AAA")), 3, "application/octet-stream", nil)
+	_, _ = backend.PutObject(ctx, "__multipart/upload-1/2", bytes.NewReader([]byte("BBB")), 3, "application/octet-stream", nil)
+	_, _ = backend.PutObject(ctx, "__multipart/upload-1/3", bytes.NewReader([]byte("CCC")), 3, "application/octet-stream", nil)
 
 	store := &mockStore{
 		getMultipartResp: &MultipartUpload{
@@ -606,7 +606,7 @@ func TestCreateMultipartUpload_CreateStoreError(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	_, _, err := mgr.CreateMultipartUpload(context.Background(), "key", "")
+	_, _, err := mgr.CreateMultipartUpload(context.Background(), "key", "", nil)
 	if err == nil {
 		t.Fatal("expected error from CreateMultipartUpload store failure")
 	}

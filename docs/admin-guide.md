@@ -332,10 +332,14 @@ rate_limit:
   enabled: true
   requests_per_sec: 100          # token refill rate (default: 100)
   burst: 200                     # max burst size (default: 200)
+  cleanup_interval: "1m"         # stale entry eviction interval (default: 1m)
+  cleanup_max_age: "5m"          # evict entries not seen within this window (default: 5m)
   trusted_proxies:               # CIDRs whose X-Forwarded-For is trusted
     - "10.0.0.0/8"
     - "172.16.0.0/12"
 ```
+
+A background goroutine evicts per-IP entries not seen within `cleanup_max_age` every `cleanup_interval`. Under high source-IP cardinality (e.g., DDoS), the map can hold up to `cleanup_max_age` worth of unique IPs — tune both values down if memory pressure is a concern.
 
 When `trusted_proxies` is configured, the orchestrator extracts the real client IP from the `X-Forwarded-For` header using rightmost-untrusted extraction: it walks the XFF chain from right to left, skipping addresses within trusted CIDRs, and uses the first untrusted address for rate limiting. If the direct peer is not in a trusted CIDR, `X-Forwarded-For` is ignored entirely to prevent spoofing. Without `trusted_proxies`, the direct connection IP is always used.
 

@@ -89,6 +89,9 @@ vet: ## Run Go vet static analysis
 lint: ## Run Go linter
 	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.10.1 run ./...
 
+govulncheck: ## Scan Go dependencies for known vulnerabilities
+	govulncheck ./...
+
 bench: ## Run benchmark tests
 	go test -bench=. -benchmem -run='^$$' ./...
 
@@ -141,6 +144,7 @@ integration-clean: ## Stop and remove integration test containers
 
 tools: ## Install build and packaging dependencies
 	go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0
+	go install golang.org/x/vuln/cmd/govulncheck@latest
 	sudo apt-get update && sudo apt-get install -y lintian
 	curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
 
@@ -195,5 +199,5 @@ clean: integration-clean ## Remove build artifacts, local image, and test contai
 		rm -f /tmp/nomad-demo.pid; \
 	fi
 
-.PHONY: help builder build docker push generate test vet lint run docs migration integration-deps integration-test integration-clean tools prep-changelog deb deb-lint deb-all release release-local kubernetes-demo nomad-demo clean
+.PHONY: help builder build docker push generate test vet lint govulncheck run docs migration integration-deps integration-test integration-clean tools prep-changelog deb deb-lint deb-all release release-local kubernetes-demo nomad-demo clean
 .DEFAULT_GOAL := help

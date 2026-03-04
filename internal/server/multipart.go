@@ -86,7 +86,15 @@ func (s *Server) handleCreateMultipartUpload(ctx context.Context, w http.Respons
 		contentType = "application/octet-stream"
 	}
 
-	uploadID, _, err := s.Manager.CreateMultipartUpload(ctx, internalKey, contentType)
+	metadata := extractUserMetadata(r.Header)
+	if len(metadata) > 0 {
+		if err := validateUserMetadata(metadata); err != nil {
+			writeS3Error(w, http.StatusBadRequest, "MetadataTooLarge", err.Error())
+			return http.StatusBadRequest, err
+		}
+	}
+
+	uploadID, _, err := s.Manager.CreateMultipartUpload(ctx, internalKey, contentType, metadata)
 	if err != nil {
 		return writeStorageError(w, err, "Failed to create multipart upload"), err
 	}

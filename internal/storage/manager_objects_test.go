@@ -49,7 +49,7 @@ func TestPutObject_Success(t *testing.T) {
 	store := &mockStore{getBackendResp: "b1"}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	etag, err := mgr.PutObject(context.Background(), "mykey", bytes.NewReader([]byte("hello")), 5, "text/plain")
+	etag, err := mgr.PutObject(context.Background(), "mykey", bytes.NewReader([]byte("hello")), 5, "text/plain", nil)
 	if err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestPutObject_PackStrategy_UsesGetBackendWithSpace(t *testing.T) {
 		RoutingStrategy: "pack",
 	})
 
-	_, err := mgr.PutObject(context.Background(), "pack-key", bytes.NewReader([]byte("data")), 4, "text/plain")
+	_, err := mgr.PutObject(context.Background(), "pack-key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 	if err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestPutObject_SpreadStrategy_UsesGetLeastUtilized(t *testing.T) {
 		RoutingStrategy: "spread",
 	})
 
-	_, err := mgr.PutObject(context.Background(), "spread-key", bytes.NewReader([]byte("data")), 4, "text/plain")
+	_, err := mgr.PutObject(context.Background(), "spread-key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 	if err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestPutObject_QuotaExhausted(t *testing.T) {
 	store := &mockStore{getBackendErr: ErrNoSpaceAvailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	_, err := mgr.PutObject(context.Background(), "key", bytes.NewReader([]byte("x")), 1, "")
+	_, err := mgr.PutObject(context.Background(), "key", bytes.NewReader([]byte("x")), 1, "", nil)
 	if !errors.Is(err, ErrInsufficientStorage) {
 		t.Fatalf("expected ErrInsufficientStorage, got %v", err)
 	}
@@ -130,7 +130,7 @@ func TestPutObject_DBUnavailable(t *testing.T) {
 	store := &mockStore{getBackendErr: ErrDBUnavailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	_, err := mgr.PutObject(context.Background(), "key", bytes.NewReader([]byte("x")), 1, "")
+	_, err := mgr.PutObject(context.Background(), "key", bytes.NewReader([]byte("x")), 1, "", nil)
 	if !errors.Is(err, ErrServiceUnavailable) {
 		t.Fatalf("expected ErrServiceUnavailable, got %v", err)
 	}
@@ -142,7 +142,7 @@ func TestPutObject_BackendFailure_StillRecordsUsage(t *testing.T) {
 	store := &mockStore{getBackendResp: "b1"}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	_, err := mgr.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain")
+	_, err := mgr.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 	if err == nil {
 		t.Fatal("expected error from backend failure")
 	}
@@ -166,7 +166,7 @@ func TestPutObject_RecordFailure_CleansUp(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	_, err := mgr.PutObject(context.Background(), "cleanup-key", bytes.NewReader([]byte("data")), 4, "")
+	_, err := mgr.PutObject(context.Background(), "cleanup-key", bytes.NewReader([]byte("data")), 4, "", nil)
 	if err == nil {
 		t.Fatal("expected error from RecordObject failure")
 	}
@@ -182,7 +182,7 @@ func TestPutObject_RecordFailure_CleansUp(t *testing.T) {
 
 func TestGetObject_Success(t *testing.T) {
 	backend := newMockBackend()
-	_, _ = backend.PutObject(context.Background(), "key", bytes.NewReader([]byte("hello")), 5, "text/plain")
+	_, _ = backend.PutObject(context.Background(), "key", bytes.NewReader([]byte("hello")), 5, "text/plain", nil)
 
 	store := &mockStore{
 		getAllLocationsResp: []ObjectLocation{{ObjectKey: "key", BackendName: "b1"}},
@@ -220,7 +220,7 @@ func TestGetObject_FailoverToReplica(t *testing.T) {
 	primary := newMockBackend()
 	primary.getErr = errors.New("backend down") // primary fails
 	replica := newMockBackend()
-	_, _ = replica.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain")
+	_, _ = replica.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
 	store := &mockStore{
 		getAllLocationsResp: []ObjectLocation{
@@ -243,7 +243,7 @@ func TestGetObject_FailoverToReplica(t *testing.T) {
 
 func TestGetObject_DBUnavailable_BroadcastHit(t *testing.T) {
 	backend := newMockBackend()
-	_, _ = backend.PutObject(context.Background(), "key", bytes.NewReader([]byte("broadcast")), 9, "text/plain")
+	_, _ = backend.PutObject(context.Background(), "key", bytes.NewReader([]byte("broadcast")), 9, "text/plain", nil)
 
 	store := &mockStore{getAllLocationsErr: ErrDBUnavailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
@@ -262,7 +262,7 @@ func TestGetObject_DBUnavailable_BroadcastHit(t *testing.T) {
 func TestGetObject_DBUnavailable_CacheHit(t *testing.T) {
 	b1 := newMockBackend()
 	b2 := newMockBackend()
-	_, _ = b2.PutObject(context.Background(), "cached-key", bytes.NewReader([]byte("cached")), 6, "text/plain")
+	_, _ = b2.PutObject(context.Background(), "cached-key", bytes.NewReader([]byte("cached")), 6, "text/plain", nil)
 
 	store := &mockStore{getAllLocationsErr: ErrDBUnavailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": b1, "b2": b2})
@@ -310,7 +310,7 @@ func TestGetObject_DBUnavailable_AllFail(t *testing.T) {
 
 func TestHeadObject_Success(t *testing.T) {
 	backend := newMockBackend()
-	_, _ = backend.PutObject(context.Background(), "key", bytes.NewReader([]byte("headme")), 6, "application/json")
+	_, _ = backend.PutObject(context.Background(), "key", bytes.NewReader([]byte("headme")), 6, "application/json", nil)
 
 	store := &mockStore{
 		getAllLocationsResp: []ObjectLocation{{ObjectKey: "key", BackendName: "b1"}},
@@ -334,7 +334,7 @@ func TestHeadObject_Success(t *testing.T) {
 
 func TestHeadObject_DBUnavailable_Broadcast(t *testing.T) {
 	backend := newMockBackend()
-	_, _ = backend.PutObject(context.Background(), "key", bytes.NewReader([]byte("head")), 4, "text/plain")
+	_, _ = backend.PutObject(context.Background(), "key", bytes.NewReader([]byte("head")), 4, "text/plain", nil)
 
 	store := &mockStore{getAllLocationsErr: ErrDBUnavailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
@@ -354,7 +354,7 @@ func TestHeadObject_DBUnavailable_Broadcast(t *testing.T) {
 
 func TestDeleteObject_Success(t *testing.T) {
 	backend := newMockBackend()
-	_, _ = backend.PutObject(context.Background(), "del-key", bytes.NewReader([]byte("rm")), 2, "")
+	_, _ = backend.PutObject(context.Background(), "del-key", bytes.NewReader([]byte("rm")), 2, "", nil)
 
 	store := &mockStore{
 		deleteObjectResp: []DeletedCopy{{BackendName: "b1", SizeBytes: 2}},
@@ -397,7 +397,7 @@ func TestDeleteObject_DBUnavailable(t *testing.T) {
 func TestDeleteObjects_AllSuccess(t *testing.T) {
 	backend := newMockBackend()
 	for _, k := range []string{"a", "b", "c"} {
-		_, _ = backend.PutObject(context.Background(), k, bytes.NewReader([]byte("x")), 1, "")
+		_, _ = backend.PutObject(context.Background(), k, bytes.NewReader([]byte("x")), 1, "", nil)
 	}
 
 	store := &mockStore{
@@ -511,7 +511,7 @@ func TestDeleteObjects_EmptyKeys(t *testing.T) {
 
 func TestCopyObject_Success(t *testing.T) {
 	backend := newMockBackend()
-	_, _ = backend.PutObject(context.Background(), "src", bytes.NewReader([]byte("copy-me")), 7, "text/plain")
+	_, _ = backend.PutObject(context.Background(), "src", bytes.NewReader([]byte("copy-me")), 7, "text/plain", nil)
 
 	store := &mockStore{
 		getAllLocationsResp: []ObjectLocation{{ObjectKey: "src", BackendName: "b1"}},
@@ -553,7 +553,7 @@ func TestCopyObject_DBUnavailable_SourceLookup(t *testing.T) {
 
 func TestCopyObject_DBUnavailable_DestLookup(t *testing.T) {
 	backend := newMockBackend()
-	_, _ = backend.PutObject(context.Background(), "src", bytes.NewReader([]byte("data")), 4, "text/plain")
+	_, _ = backend.PutObject(context.Background(), "src", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
 	store := &mockStore{
 		getAllLocationsResp: []ObjectLocation{{ObjectKey: "src", BackendName: "b1"}},
@@ -788,7 +788,7 @@ func TestPutObject_BackendTimeout(t *testing.T) {
 		RoutingStrategy: "pack",
 	})
 
-	_, err := mgr.PutObject(context.Background(), "timeout-key", bytes.NewReader([]byte("data")), 4, "text/plain")
+	_, err := mgr.PutObject(context.Background(), "timeout-key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 	if err == nil {
 		t.Fatal("expected timeout error, got nil")
 	}
@@ -803,10 +803,10 @@ type slowMockBackend struct {
 	delay time.Duration
 }
 
-func (s *slowMockBackend) PutObject(ctx context.Context, key string, body io.Reader, size int64, contentType string) (string, error) {
+func (s *slowMockBackend) PutObject(ctx context.Context, key string, body io.Reader, size int64, contentType string, metadata map[string]string) (string, error) {
 	select {
 	case <-time.After(s.delay):
-		return s.mockBackend.PutObject(ctx, key, body, size, contentType)
+		return s.mockBackend.PutObject(ctx, key, body, size, contentType, metadata)
 	case <-ctx.Done():
 		return "", ctx.Err()
 	}
@@ -864,7 +864,7 @@ func TestPutObject_InvalidatesCache(t *testing.T) {
 	// Pre-populate cache
 	mgr.cache.Set("mykey", "old-backend")
 
-	_, err := mgr.PutObject(context.Background(), "mykey", bytes.NewReader([]byte("hello")), 5, "text/plain")
+	_, err := mgr.PutObject(context.Background(), "mykey", bytes.NewReader([]byte("hello")), 5, "text/plain", nil)
 	if err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
@@ -877,7 +877,7 @@ func TestPutObject_InvalidatesCache(t *testing.T) {
 
 func TestDeleteObject_InvalidatesCache(t *testing.T) {
 	backend := newMockBackend()
-	_, _ = backend.PutObject(context.Background(), "del-key", bytes.NewReader([]byte("rm")), 2, "")
+	_, _ = backend.PutObject(context.Background(), "del-key", bytes.NewReader([]byte("rm")), 2, "", nil)
 	store := &mockStore{
 		deleteObjectResp: []DeletedCopy{{BackendName: "b1", SizeBytes: 2}},
 	}
@@ -935,7 +935,7 @@ func TestPutObject_UsageLimitOverflow(t *testing.T) {
 	// Push b1 over limit
 	mgr.usage.SetBaseline("b1", UsageStat{APIRequests: 10})
 
-	etag, err := mgr.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain")
+	etag, err := mgr.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 	if err != nil {
 		t.Fatalf("PutObject should overflow to b2: %v", err)
 	}
@@ -954,8 +954,8 @@ func TestPutObject_UsageLimitOverflow(t *testing.T) {
 func TestGetObject_UsageLimitSkipsBackend(t *testing.T) {
 	b1 := newMockBackend()
 	b2 := newMockBackend()
-	_, _ = b1.PutObject(context.Background(), "key", bytes.NewReader([]byte("from-b1")), 7, "text/plain")
-	_, _ = b2.PutObject(context.Background(), "key", bytes.NewReader([]byte("from-b2")), 7, "text/plain")
+	_, _ = b1.PutObject(context.Background(), "key", bytes.NewReader([]byte("from-b1")), 7, "text/plain", nil)
+	_, _ = b2.PutObject(context.Background(), "key", bytes.NewReader([]byte("from-b2")), 7, "text/plain", nil)
 
 	limits := map[string]UsageLimits{
 		"b1": {APIRequestLimit: 10},
@@ -985,7 +985,7 @@ func TestGetObject_UsageLimitSkipsBackend(t *testing.T) {
 
 func TestGetObject_AllCopiesOverLimit(t *testing.T) {
 	b1 := newMockBackend()
-	_, _ = b1.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain")
+	_, _ = b1.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
 	limits := map[string]UsageLimits{
 		"b1": {APIRequestLimit: 10},
@@ -1007,7 +1007,7 @@ func TestGetObject_AllCopiesOverLimit(t *testing.T) {
 
 func TestDeleteObject_AlwaysAllowed(t *testing.T) {
 	backend := newMockBackend()
-	_, _ = backend.PutObject(context.Background(), "del-key", bytes.NewReader([]byte("rm")), 2, "")
+	_, _ = backend.PutObject(context.Background(), "del-key", bytes.NewReader([]byte("rm")), 2, "", nil)
 
 	// All limits exceeded
 	limits := map[string]UsageLimits{
@@ -1045,7 +1045,7 @@ func TestPutObject_UsageLimitRejectionsMetric(t *testing.T) {
 
 	before := testutil.ToFloat64(telemetry.UsageLimitRejectionsTotal.WithLabelValues("PutObject", "write"))
 
-	_, err := mgr.PutObject(context.Background(), "key", bytes.NewReader([]byte("x")), 1, "text/plain")
+	_, err := mgr.PutObject(context.Background(), "key", bytes.NewReader([]byte("x")), 1, "text/plain", nil)
 	if err == nil {
 		t.Fatal("expected error from PutObject with all backends over limit")
 	}
@@ -1058,7 +1058,7 @@ func TestPutObject_UsageLimitRejectionsMetric(t *testing.T) {
 
 func TestGetObject_UsageLimitRejectionsMetric(t *testing.T) {
 	b1 := newMockBackend()
-	_, _ = b1.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain")
+	_, _ = b1.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
 	limits := map[string]UsageLimits{
 		"b1": {APIRequestLimit: 10},
@@ -1140,8 +1140,8 @@ func (s *slowGetBackend) HeadObject(ctx context.Context, key string) (*HeadObjec
 func TestGetObject_ParallelBroadcast_FirstSuccessWins(t *testing.T) {
 	slow := newMockBackend()
 	fast := newMockBackend()
-	_, _ = slow.PutObject(context.Background(), "key", bytes.NewReader([]byte("slow-data")), 9, "text/plain")
-	_, _ = fast.PutObject(context.Background(), "key", bytes.NewReader([]byte("fast-data")), 9, "text/plain")
+	_, _ = slow.PutObject(context.Background(), "key", bytes.NewReader([]byte("slow-data")), 9, "text/plain", nil)
+	_, _ = fast.PutObject(context.Background(), "key", bytes.NewReader([]byte("fast-data")), 9, "text/plain", nil)
 
 	store := &mockStore{getAllLocationsErr: ErrDBUnavailable}
 	// slow backend is first in order, but fast backend should win
@@ -1200,7 +1200,7 @@ func TestGetObject_ParallelBroadcast_AllFail(t *testing.T) {
 func TestGetObject_ParallelBroadcast_CacheHitSkipsParallel(t *testing.T) {
 	b1 := newMockBackend()
 	b2 := newMockBackend()
-	_, _ = b2.PutObject(context.Background(), "cached-key", bytes.NewReader([]byte("cached")), 6, "text/plain")
+	_, _ = b2.PutObject(context.Background(), "cached-key", bytes.NewReader([]byte("cached")), 6, "text/plain", nil)
 
 	store := &mockStore{getAllLocationsErr: ErrDBUnavailable}
 	mgr := newTestManagerParallel(store, []struct {
@@ -1234,8 +1234,8 @@ func TestGetObject_ParallelBroadcast_CacheHitSkipsParallel(t *testing.T) {
 func TestGetObject_SequentialBroadcast_WhenDisabled(t *testing.T) {
 	slow := newMockBackend()
 	fast := newMockBackend()
-	_, _ = slow.PutObject(context.Background(), "key", bytes.NewReader([]byte("slow-data")), 9, "text/plain")
-	_, _ = fast.PutObject(context.Background(), "key", bytes.NewReader([]byte("fast-data")), 9, "text/plain")
+	_, _ = slow.PutObject(context.Background(), "key", bytes.NewReader([]byte("slow-data")), 9, "text/plain", nil)
+	_, _ = fast.PutObject(context.Background(), "key", bytes.NewReader([]byte("fast-data")), 9, "text/plain", nil)
 
 	store := &mockStore{getAllLocationsErr: ErrDBUnavailable}
 	// ParallelBroadcast=false (default), slow is first in order
@@ -1281,7 +1281,7 @@ func TestGetObject_SequentialBroadcast_WhenDisabled(t *testing.T) {
 
 func TestGetObject_BackendNotFound_FailsOverToNext(t *testing.T) {
 	b2 := newMockBackend()
-	_, _ = b2.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain")
+	_, _ = b2.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
 	// Location references "gone-backend" which doesn't exist in backends map
 	store := &mockStore{
@@ -1320,7 +1320,7 @@ func TestGetObject_GenericStoreError(t *testing.T) {
 func TestGetObject_DBUnavailable_CacheHitFails_FallsThrough(t *testing.T) {
 	b1 := newMockBackend()
 	b2 := newMockBackend()
-	_, _ = b2.PutObject(context.Background(), "key", bytes.NewReader([]byte("from-b2")), 7, "text/plain")
+	_, _ = b2.PutObject(context.Background(), "key", bytes.NewReader([]byte("from-b2")), 7, "text/plain", nil)
 
 	store := &mockStore{getAllLocationsErr: ErrDBUnavailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": b1, "b2": b2})
@@ -1346,7 +1346,7 @@ func TestGetObject_DBUnavailable_CacheHitFails_FallsThrough(t *testing.T) {
 
 func TestDeleteObject_BackendNotFound_ContinuesOtherCopies(t *testing.T) {
 	b1 := newMockBackend()
-	_, _ = b1.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "")
+	_, _ = b1.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "", nil)
 
 	store := &mockStore{
 		deleteObjectResp: []DeletedCopy{
@@ -1388,7 +1388,7 @@ func TestCopyObject_AllSourceHeadsFail(t *testing.T) {
 
 func TestCopyObject_DestWriteFails(t *testing.T) {
 	src := newMockBackend()
-	_, _ = src.PutObject(context.Background(), "src", bytes.NewReader([]byte("data")), 4, "text/plain")
+	_, _ = src.PutObject(context.Background(), "src", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 	dst := newMockBackend()
 	dst.putErr = errors.New("write failed")
 
@@ -1433,8 +1433,8 @@ func TestListObjects_GenericError(t *testing.T) {
 func TestHeadObject_ParallelBroadcast(t *testing.T) {
 	slow := newMockBackend()
 	fast := newMockBackend()
-	_, _ = slow.PutObject(context.Background(), "key", bytes.NewReader([]byte("head")), 4, "text/plain")
-	_, _ = fast.PutObject(context.Background(), "key", bytes.NewReader([]byte("head")), 4, "text/plain")
+	_, _ = slow.PutObject(context.Background(), "key", bytes.NewReader([]byte("head")), 4, "text/plain", nil)
+	_, _ = fast.PutObject(context.Background(), "key", bytes.NewReader([]byte("head")), 4, "text/plain", nil)
 
 	store := &mockStore{getAllLocationsErr: ErrDBUnavailable}
 	mgr := newTestManagerParallel(store, []struct {

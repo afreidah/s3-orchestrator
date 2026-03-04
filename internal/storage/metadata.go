@@ -56,7 +56,7 @@ type MetadataStore interface {
 	GetLeastUtilizedBackend(ctx context.Context, size int64, eligible []string) (string, error)
 
 	// --- Multipart operations ---
-	CreateMultipartUpload(ctx context.Context, uploadID, key, backend, contentType string) error
+	CreateMultipartUpload(ctx context.Context, uploadID, key, backend, contentType string, metadata map[string]string) error
 	GetMultipartUpload(ctx context.Context, uploadID string) (*MultipartUpload, error)
 	RecordPart(ctx context.Context, uploadID string, partNumber int, etag string, size int64) error
 	GetParts(ctx context.Context, uploadID string) ([]MultipartPart, error)

@@ -284,8 +284,10 @@ func (cb *CircuitBreakerStore) GetLeastUtilizedBackend(ctx context.Context, size
 }
 
 // CreateMultipartUpload delegates to the real store with circuit breaker protection.
-func (cb *CircuitBreakerStore) CreateMultipartUpload(ctx context.Context, uploadID, key, backend, contentType string) error {
-	return cbCallNoResult(cb, func() error { return cb.real.CreateMultipartUpload(ctx, uploadID, key, backend, contentType) })
+func (cb *CircuitBreakerStore) CreateMultipartUpload(ctx context.Context, uploadID, key, backend, contentType string, metadata map[string]string) error {
+	return cbCallNoResult(cb, func() error {
+		return cb.real.CreateMultipartUpload(ctx, uploadID, key, backend, contentType, metadata)
+	})
 }
 
 // GetMultipartUpload delegates to the real store with circuit breaker protection.

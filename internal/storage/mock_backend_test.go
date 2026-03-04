@@ -31,6 +31,7 @@ type mockObject struct {
 	data        []byte
 	contentType string
 	etag        string
+	metadata    map[string]string
 }
 
 func newMockBackend() *mockBackend {
@@ -39,7 +40,7 @@ func newMockBackend() *mockBackend {
 
 var _ ObjectBackend = (*mockBackend)(nil)
 
-func (m *mockBackend) PutObject(_ context.Context, key string, body io.Reader, _ int64, contentType string) (string, error) {
+func (m *mockBackend) PutObject(_ context.Context, key string, body io.Reader, _ int64, contentType string, metadata map[string]string) (string, error) {
 	m.mu.Lock()
 	err := m.putErr
 	m.mu.Unlock()
@@ -56,7 +57,7 @@ func (m *mockBackend) PutObject(_ context.Context, key string, body io.Reader, _
 	etag := fmt.Sprintf(`"%x"`, len(data))
 
 	m.mu.Lock()
-	m.objects[key] = mockObject{data: data, contentType: contentType, etag: etag}
+	m.objects[key] = mockObject{data: data, contentType: contentType, etag: etag, metadata: metadata}
 	m.mu.Unlock()
 
 	return etag, nil
@@ -80,6 +81,7 @@ func (m *mockBackend) GetObject(_ context.Context, key string, _ string) (*GetOb
 		Size:        int64(len(cp)),
 		ContentType: obj.contentType,
 		ETag:        obj.etag,
+		Metadata:    obj.metadata,
 	}, nil
 }
 
@@ -97,6 +99,7 @@ func (m *mockBackend) HeadObject(_ context.Context, key string) (*HeadObjectResu
 		Size:        int64(len(obj.data)),
 		ContentType: obj.contentType,
 		ETag:        obj.etag,
+		Metadata:    obj.metadata,
 	}, nil
 }
 

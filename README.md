@@ -73,9 +73,9 @@ Objects are routed to backends based on the configured `routing_strategy`: **pac
 | ListBuckets | `GET` | `/` | Returns buckets the credential has access to |
 | HeadBucket | `HEAD` | `/{bucket}` | Confirms bucket exists (200 if authorized) |
 | GetBucketLocation | `GET` | `/{bucket}?location` | Returns empty `LocationConstraint` |
-| PutObject | `PUT` | `/{bucket}/{key}` | |
-| GetObject | `GET` | `/{bucket}/{key}` | Supports `Range` header (206 Partial Content) |
-| HeadObject | `HEAD` | `/{bucket}/{key}` | |
+| PutObject | `PUT` | `/{bucket}/{key}` | Preserves `x-amz-meta-*` user metadata |
+| GetObject | `GET` | `/{bucket}/{key}` | Supports `Range` header; returns `x-amz-meta-*` |
+| HeadObject | `HEAD` | `/{bucket}/{key}` | Returns `x-amz-meta-*` user metadata |
 | DeleteObject | `DELETE` | `/{bucket}/{key}` | Idempotent (404 from store treated as success) |
 | DeleteObjects | `POST` | `/{bucket}?delete` | Batch delete up to 1000 keys per request |
 | CopyObject | `PUT` | `/{bucket}/{key}` | Uses `X-Amz-Copy-Source` header (same-bucket only) |
@@ -199,7 +199,7 @@ Rules are hot-reloadable via `SIGHUP`. An empty rules list (or omitting the sect
 
 ## Rate Limiting
 
-Optional per-IP token bucket rate limiting. When enabled, requests exceeding the configured rate return `429 SlowDown`. Stale IP entries are cleaned up automatically.
+Optional per-IP token bucket rate limiting. When enabled, requests exceeding the configured rate return `429 SlowDown`. Stale IP entries are evicted by a background goroutine every `cleanup_interval` (default 1m); entries not seen within `cleanup_max_age` (default 5m) are removed. Under high source-IP cardinality (e.g., DDoS), the map can accumulate up to `cleanup_max_age` worth of unique IPs before eviction runs — tune these values if memory pressure is a concern.
 
 When running behind a reverse proxy (e.g., Traefik, nginx), configure `trusted_proxies` with the proxy's CIDR ranges so the orchestrator extracts the real client IP from the `X-Forwarded-For` header using rightmost-untrusted extraction. Without `trusted_proxies`, `X-Forwarded-For` is ignored and the direct connection IP is always used.
 
@@ -305,6 +305,8 @@ rate_limit:
   enabled: false
   requests_per_sec: 100    # token refill rate (default: 100)
   burst: 200               # max burst size (default: 200)
+  cleanup_interval: "1m"   # stale entry eviction interval (default: 1m)
+  cleanup_max_age: "5m"    # evict entries not seen within this window (default: 5m)
   # trusted_proxies:       # CIDRs whose X-Forwarded-For is trusted
   #   - "10.0.0.0/8"       # Uses rightmost-untrusted extraction
   #   - "172.16.0.0/12"
@@ -644,6 +646,9 @@ make lint
 # Static analysis
 make vet
 
+# Scan Go dependencies for known vulnerabilities
+make govulncheck
+
 # Run unit tests
 make test
 
@@ -695,6 +700,7 @@ See [`deploy/README.md`](deploy/README.md) for production deployment instruction
 - PostgreSQL database (schema auto-applied on startup)
 - At least one S3-compatible storage backend
 - Configuration file with credentials
+- **TLS termination** — either via the built-in `server.tls` config or a reverse proxy (Traefik, nginx, Ingress). Plain HTTP exposes SigV4 signatures and object data on the wire, and the `UNSIGNED-PAYLOAD` streaming mode means body integrity depends entirely on transport security. See the [Security Hardening](docs/security-hardening.md) guide for TLS and mTLS setup.
 
 ### Docker
 

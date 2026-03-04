@@ -35,7 +35,7 @@ func multipartPartKey(uploadID string, partNumber int) string {
 
 // CreateMultipartUpload initiates a multipart upload by selecting a backend
 // with available quota and recording the upload in the database.
-func (m *BackendManager) CreateMultipartUpload(ctx context.Context, key, contentType string) (string, string, error) {
+func (m *BackendManager) CreateMultipartUpload(ctx context.Context, key, contentType string, metadata map[string]string) (string, string, error) {
 	const operation = "CreateMultipartUpload"
 	start := time.Now()
 
@@ -59,7 +59,7 @@ func (m *BackendManager) CreateMultipartUpload(ctx context.Context, key, content
 	}
 
 	uploadID := GenerateUploadID()
-	if err := m.store.CreateMultipartUpload(ctx, uploadID, key, backendName, contentType); err != nil {
+	if err := m.store.CreateMultipartUpload(ctx, uploadID, key, backendName, contentType, metadata); err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return "", "", err
 	}
@@ -116,7 +116,7 @@ func (m *BackendManager) UploadPart(ctx context.Context, uploadID string, partNu
 	partKey := multipartPartKey(uploadID, partNumber)
 	bctx, bcancel := m.withTimeout(ctx)
 	defer bcancel()
-	etag, err := backend.PutObject(bctx, partKey, body, size, "application/octet-stream")
+	etag, err := backend.PutObject(bctx, partKey, body, size, "application/octet-stream", nil)
 	if err != nil {
 		m.usage.Record(mu.BackendName, 1, 0, 0) // API call was made even on failure
 		span.SetStatus(codes.Error, err.Error())
@@ -230,7 +230,7 @@ func (m *BackendManager) CompleteMultipartUpload(ctx context.Context, uploadID s
 	}()
 
 	// Streamed from pipe; deadline governed by the caller's context.
-	etag, err := backend.PutObject(ctx, mu.ObjectKey, pr, totalSize, mu.ContentType)
+	etag, err := backend.PutObject(ctx, mu.ObjectKey, pr, totalSize, mu.ContentType, mu.Metadata)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return "", fmt.Errorf("failed to upload final object: %w", err)

@@ -157,10 +157,12 @@ type ReplicationConfig struct {
 
 // RateLimitConfig holds per-IP rate limiting settings. Disabled by default.
 type RateLimitConfig struct {
-	Enabled        bool     `yaml:"enabled"`
-	RequestsPerSec float64  `yaml:"requests_per_sec"` // Token refill rate (default: 100)
-	Burst          int      `yaml:"burst"`             // Max burst size (default: 200)
-	TrustedProxies []string `yaml:"trusted_proxies"`   // CIDRs whose X-Forwarded-For is trusted (e.g. ["10.0.0.0/8", "172.16.0.0/12"])
+	Enabled         bool          `yaml:"enabled"`
+	RequestsPerSec  float64       `yaml:"requests_per_sec"`  // Token refill rate (default: 100)
+	Burst           int           `yaml:"burst"`              // Max burst size (default: 200)
+	TrustedProxies  []string      `yaml:"trusted_proxies"`    // CIDRs whose X-Forwarded-For is trusted (e.g. ["10.0.0.0/8", "172.16.0.0/12"])
+	CleanupInterval time.Duration `yaml:"cleanup_interval"`   // How often stale entries are evicted (default: 1m)
+	CleanupMaxAge   time.Duration `yaml:"cleanup_max_age"`    // Entries older than this are evicted (default: 5m)
 }
 
 // CircuitBreakerConfig holds settings for the database circuit breaker. When
@@ -532,6 +534,12 @@ func (c *Config) SetDefaultsAndValidate() error {
 		}
 		if c.RateLimit.Burst == 0 {
 			c.RateLimit.Burst = 200
+		}
+		if c.RateLimit.CleanupInterval == 0 {
+			c.RateLimit.CleanupInterval = 1 * time.Minute
+		}
+		if c.RateLimit.CleanupMaxAge == 0 {
+			c.RateLimit.CleanupMaxAge = 5 * time.Minute
 		}
 		if c.RateLimit.RequestsPerSec <= 0 {
 			errors = append(errors, "rate_limit.requests_per_sec must be positive")

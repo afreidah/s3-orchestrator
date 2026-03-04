@@ -41,6 +41,10 @@ alias s3o='aws --profile orchestrator --endpoint-url http://s3-orchestrator.serv
 
 ```bash
 s3o s3 cp myfile.txt s3://app1-files/path/to/myfile.txt
+
+# With custom metadata
+s3o s3api put-object --bucket app1-files --key path/to/myfile.txt \
+    --body myfile.txt --metadata '{"project":"acme","env":"prod"}'
 ```
 
 ### Download a file
@@ -188,6 +192,7 @@ s3.put_object(
     Key="path/to/data.json",
     Body=b'{"key": "value"}',
     ContentType="application/json",
+    Metadata={"project": "acme", "env": "prod"},
 )
 ```
 
@@ -275,6 +280,7 @@ _, err := client.PutObject(context.Background(), &s3.PutObjectInput{
     Key:         aws.String("path/to/data.txt"),
     Body:        strings.NewReader("hello world"),
     ContentType: aws.String("text/plain"),
+    Metadata:    map[string]string{"project": "acme", "env": "prod"},
 })
 if err != nil {
     fmt.Printf("upload failed: %v\n", err)
@@ -293,6 +299,7 @@ if err != nil {
 }
 defer result.Body.Close()
 // read result.Body
+// user metadata is in result.Metadata (map[string]string)
 ```
 
 ### List objects

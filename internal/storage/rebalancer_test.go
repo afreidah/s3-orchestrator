@@ -48,7 +48,7 @@ func newDelayedGetBackend(delay time.Duration) *delayedGetBackend {
 
 var _ ObjectBackend = (*delayedGetBackend)(nil)
 
-func (m *delayedGetBackend) PutObject(_ context.Context, key string, body io.Reader, _ int64, contentType string) (string, error) {
+func (m *delayedGetBackend) PutObject(_ context.Context, key string, body io.Reader, _ int64, contentType string, metadata map[string]string) (string, error) {
 	m.mu.Lock()
 	err := m.putErr
 	m.mu.Unlock()
@@ -61,7 +61,7 @@ func (m *delayedGetBackend) PutObject(_ context.Context, key string, body io.Rea
 	}
 	etag := fmt.Sprintf(`"%x"`, len(data))
 	m.mu.Lock()
-	m.objects[key] = mockObject{data: data, contentType: contentType, etag: etag}
+	m.objects[key] = mockObject{data: data, contentType: contentType, etag: etag, metadata: metadata}
 	m.mu.Unlock()
 	return etag, nil
 }
@@ -84,6 +84,7 @@ func (m *delayedGetBackend) GetObject(_ context.Context, key string, _ string) (
 		Size:        int64(len(cp)),
 		ContentType: obj.contentType,
 		ETag:        obj.etag,
+		Metadata:    obj.metadata,
 	}, nil
 }
 
@@ -101,6 +102,7 @@ func (m *delayedGetBackend) HeadObject(_ context.Context, key string) (*HeadObje
 		Size:        int64(len(obj.data)),
 		ContentType: obj.contentType,
 		ETag:        obj.etag,
+		Metadata:    obj.metadata,
 	}, nil
 }
 
@@ -600,7 +602,7 @@ func TestExecuteOneMove_SourceBackendNotFound(t *testing.T) {
 
 func TestExecuteOneMove_DestBackendNotFound(t *testing.T) {
 	src := newMockBackend()
-	_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain")
+	_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
 	store := &mockStore{}
 	obs := map[string]ObjectBackend{"src": src}
@@ -657,7 +659,7 @@ func TestExecuteOneMove_SourceGetFails(t *testing.T) {
 
 func TestExecuteOneMove_DestPutFails(t *testing.T) {
 	src := newMockBackend()
-	_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain")
+	_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 	dest := newMockBackend()
 	dest.putErr = errors.New("write error")
 
@@ -687,7 +689,7 @@ func TestExecuteOneMove_DestPutFails(t *testing.T) {
 
 func TestExecuteOneMove_MoveLocationError_CleansUpOrphan(t *testing.T) {
 	src := newMockBackend()
-	_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain")
+	_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 	dest := newMockBackend()
 
 	store := &mockStore{moveObjectLocationErr: errors.New("db error")}
@@ -721,7 +723,7 @@ func TestExecuteOneMove_MoveLocationError_CleansUpOrphan(t *testing.T) {
 
 func TestExecuteOneMove_MoveLocationError_CleanupFails_EnqueuesCleanup(t *testing.T) {
 	src := newMockBackend()
-	_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain")
+	_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 	dest := newMockBackend()
 	dest.delErr = errors.New("delete failed")
 
@@ -760,7 +762,7 @@ func TestExecuteOneMove_MoveLocationError_CleanupFails_EnqueuesCleanup(t *testin
 
 func TestExecuteOneMove_MovedSizeZero_CleansUpOrphan(t *testing.T) {
 	src := newMockBackend()
-	_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain")
+	_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 	dest := newMockBackend()
 
 	store := &mockStore{moveObjectLocationSize: 0} // object was deleted during move
@@ -794,7 +796,7 @@ func TestExecuteOneMove_MovedSizeZero_CleansUpOrphan(t *testing.T) {
 
 func TestExecuteOneMove_SourceDeleteFails_EnqueuesCleanup(t *testing.T) {
 	src := newMockBackend()
-	_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain")
+	_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 	src.delErr = errors.New("delete failed")
 	dest := newMockBackend()
 

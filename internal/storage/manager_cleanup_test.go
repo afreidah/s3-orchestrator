@@ -91,7 +91,7 @@ func TestEnqueueCleanup_DBError_LogsOnly(t *testing.T) {
 func TestProcessCleanupQueue_DeleteSuccess(t *testing.T) {
 	backend := newMockBackend()
 	// Pre-populate orphan on the backend
-	_, _ = backend.PutObject(context.Background(), "orphan.txt", bytes.NewReader([]byte("data")), 4, "text/plain")
+	_, _ = backend.PutObject(context.Background(), "orphan.txt", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
 	store := &mockStore{
 		pendingCleanups: []CleanupItem{
@@ -233,7 +233,7 @@ func TestProcessCleanupQueue_MaxAttemptsReached(t *testing.T) {
 
 func TestProcessCleanupQueue_CompleteItemError(t *testing.T) {
 	backend := newMockBackend()
-	_, _ = backend.PutObject(context.Background(), "orphan.txt", bytes.NewReader([]byte("data")), 4, "text/plain")
+	_, _ = backend.PutObject(context.Background(), "orphan.txt", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
 	store := &mockStore{
 		pendingCleanups: []CleanupItem{
@@ -348,7 +348,7 @@ func TestPutObject_RecordFails_OrphanDeleteFails_EnqueuesCleanup(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	_, err := mgr.PutObject(context.Background(), "mykey", bytes.NewReader([]byte("data")), 4, "text/plain")
+	_, err := mgr.PutObject(context.Background(), "mykey", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 	if err == nil {
 		t.Fatal("expected error from PutObject")
 	}

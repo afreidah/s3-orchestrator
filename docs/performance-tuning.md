@@ -180,3 +180,29 @@ The orchestrator tracks API requests, egress, and ingress in memory and periodic
 - **Adaptive flushing** automatically switches to `fast_interval` when any backend exceeds `adaptive_threshold` of its limits. This keeps enforcement tight near limits without paying the cost of frequent flushes during normal operation.
 
 For environments without usage limits, the flush still runs (it powers the dashboard and metrics) but accuracy is less critical. The 30-second default is fine.
+
+## Rate Limiter Memory
+
+```yaml
+rate_limit:
+  enabled: true
+  requests_per_sec: 100
+  burst: 200
+  cleanup_interval: "1m"   # how often stale entries are evicted (default: 1m)
+  cleanup_max_age: "5m"    # entries not seen within this window are evicted (default: 5m)
+```
+
+The per-IP rate limiter stores a token bucket for every unique client IP. A background goroutine sweeps the map every `cleanup_interval` and removes entries not seen within `cleanup_max_age`.
+
+### Memory under attack
+
+Under sustained high-cardinality traffic (e.g., DDoS with spoofed source IPs), the map can accumulate up to `cleanup_max_age / cleanup_interval` sweeps' worth of unique IPs before eviction catches up. Each entry is roughly 100 bytes, so 1 million unique IPs ≈ 100 MB.
+
+To limit memory growth under attack:
+
+- Lower `cleanup_max_age` to `1m` or `2m` — entries are evicted faster at the cost of re-creating limiters for legitimate clients who pause briefly.
+- Lower `cleanup_interval` to `30s` — sweeps run more frequently, keeping the high-water mark lower.
+
+### Monitoring
+
+- `s3proxy_rate_limit_rejections_total` — counter of rejected requests. A sustained non-zero rate means the limiter is actively throttling traffic.

@@ -269,7 +269,7 @@ func (m *BackendManager) drainOneObject(ctx context.Context, srcBackend ObjectBa
 
 	// Write to destination
 	wctx, wcancel := m.withTimeout(ctx)
-	_, err = destBackend.PutObject(wctx, obj.ObjectKey, result.Body, result.Size, result.ContentType)
+	_, err = destBackend.PutObject(wctx, obj.ObjectKey, result.Body, result.Size, result.ContentType, result.Metadata)
 	_ = result.Body.Close()
 	rcancel()
 	wcancel()

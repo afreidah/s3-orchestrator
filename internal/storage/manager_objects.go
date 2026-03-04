@@ -33,7 +33,7 @@ import (
 // -------------------------------------------------------------------------
 
 // PutObject uploads an object to the first backend with available quota.
-func (m *BackendManager) PutObject(ctx context.Context, key string, body io.Reader, size int64, contentType string) (string, error) {
+func (m *BackendManager) PutObject(ctx context.Context, key string, body io.Reader, size int64, contentType string, metadata map[string]string) (string, error) {
 	const operation = "PutObject"
 	start := time.Now()
 
@@ -70,7 +70,7 @@ func (m *BackendManager) PutObject(ctx context.Context, key string, body io.Read
 	// --- Upload to backend ---
 	bctx, bcancel := m.withTimeout(ctx)
 	defer bcancel()
-	etag, err := backend.PutObject(bctx, key, body, size, contentType)
+	etag, err := backend.PutObject(bctx, key, body, size, contentType, metadata)
 	if err != nil {
 		m.usage.Record(backendName, 1, 0, 0) // API call was made even on failure
 		span.SetStatus(codes.Error, err.Error())
@@ -413,6 +413,7 @@ func (m *BackendManager) CopyObject(ctx context.Context, sourceKey, destKey stri
 	// --- Get source metadata (try each copy, skip over-limit backends) ---
 	var size int64
 	var contentType string
+	var metadata map[string]string
 	var srcFound bool
 	for _, loc := range locations {
 		if !m.usage.WithinLimits(loc.BackendName, 1, 0, 0) {
@@ -430,6 +431,7 @@ func (m *BackendManager) CopyObject(ctx context.Context, sourceKey, destKey stri
 		}
 		size = headResult.Size
 		contentType = headResult.ContentType
+		metadata = headResult.Metadata
 		srcFound = true
 		break
 	}
@@ -493,7 +495,7 @@ func (m *BackendManager) CopyObject(ctx context.Context, sourceKey, destKey stri
 	}()
 
 	// Streamed from pipe; deadline governed by the caller's context.
-	etag, err := destBackend.PutObject(ctx, destKey, pr, size, contentType)
+	etag, err := destBackend.PutObject(ctx, destKey, pr, size, contentType, metadata)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)

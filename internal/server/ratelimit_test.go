@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
@@ -245,6 +246,24 @@ func TestExtractIP_WithTrustedProxies(t *testing.T) {
 				t.Errorf("extractIP() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestRateLimiter_CustomCleanupIntervals(t *testing.T) {
+	rl := NewRateLimiter(config.RateLimitConfig{
+		Enabled:         true,
+		RequestsPerSec:  100,
+		Burst:           100,
+		CleanupInterval: 2 * time.Second,
+		CleanupMaxAge:   10 * time.Second,
+	})
+	defer rl.Close()
+
+	if rl.cleanupInterval != 2*time.Second {
+		t.Errorf("cleanupInterval = %v, want 2s", rl.cleanupInterval)
+	}
+	if rl.cleanupMaxAge != 10*time.Second {
+		t.Errorf("cleanupMaxAge = %v, want 10s", rl.cleanupMaxAge)
 	}
 }
 
