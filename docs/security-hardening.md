@@ -111,7 +111,7 @@ Provide the environment variables via systemd `EnvironmentFile`, Vault agent inj
 - **PostgreSQL** should only be reachable from orchestrator instances. It does not need public access.
 - **Storage backends** (if self-hosted like MinIO) should only be reachable from orchestrator instances.
 - **The orchestrator** is the only component that needs to be exposed to clients.
-- **Admin API** (`/admin/api/`) is protected by token auth but consider restricting access at the network level (firewall rules or reverse proxy ACLs) for defense in depth.
+- **Admin API** (`/admin/api/`) is protected by token auth and per-IP rate limiting (when enabled). Consider additionally restricting access at the network level (firewall rules or reverse proxy ACLs) for defense in depth.
 
 ```
 Internet --> Reverse Proxy --> S3 Orchestrator --> PostgreSQL (private)

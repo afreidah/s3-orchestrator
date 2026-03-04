@@ -21,7 +21,8 @@ Objects are routed to backends based on the configured `routing_strategy`: **pac
 - [Architecture](#architecture)
 - [S3 API Coverage](#s3-api-coverage)
 - [Authentication & Multi-Bucket](#authentication--multi-bucket)
-- [Degraded Mode (Circuit Breaker)](#degraded-mode-circuit-breaker)
+- [Degraded Mode (Database Circuit Breaker)](#degraded-mode-database-circuit-breaker)
+- [Backend Circuit Breaker](#backend-circuit-breaker)
 - [Write Routing](#write-routing)
 - [Rebalancing](#rebalancing)
 - [Replication](#replication)
@@ -115,7 +116,7 @@ Authentication is always required — every bucket must have at least one creden
 For client usage examples (AWS CLI, rclone, boto3, Go SDK), see the [User Guide](docs/user-guide.md).
 For deployment and operations, see the [Admin Guide](docs/admin-guide.md).
 
-## Degraded Mode (Circuit Breaker)
+## Degraded Mode (Database Circuit Breaker)
 
 A three-state circuit breaker wraps all database access:
 
@@ -130,6 +131,33 @@ When the database becomes unreachable (consecutive failures exceed `failure_thre
 - **Health endpoint** returns `degraded` instead of `ok`.
 
 After `open_timeout` elapses, the circuit enters half-open state and sends a single probe request. If the database responds, the circuit closes and normal operation resumes automatically.
+
+## Backend Circuit Breaker
+
+Optional per-backend circuit breakers detect when individual S3 backends become unreachable (expired credentials, provider outage, network failure) and stop sending traffic to them until recovery is detected.
+
+```
+closed (healthy) → open (backend down) → half-open (probing) → closed
+```
+
+When a backend accumulates `failure_threshold` consecutive failures, the circuit opens:
+
+- **Writes** skip the unhealthy backend and route to other backends with available quota.
+- **Reads** fail over to replicas on healthy backends (requires `replication.factor >= 2`).
+- All calls to the backend return `ErrBackendUnavailable` immediately — no timeout waiting.
+
+After `open_timeout` elapses, the next organic request to the backend is allowed through as a probe. If it succeeds, the circuit closes. If it fails, the circuit reopens for another timeout period.
+
+Unlike the database circuit breaker, backend circuit breakers treat **all** errors as failures (no error filtering). This is a per-backend wrapper — each backend has its own independent circuit breaker state.
+
+```yaml
+backend_circuit_breaker:
+  enabled: true
+  failure_threshold: 5   # consecutive failures before opening (default: 5)
+  open_timeout: "5m"     # delay before probing recovery (default: 5m)
+```
+
+Disabled by default. Requires a restart to enable/disable (non-reloadable).
 
 ## Write Routing
 
@@ -224,6 +252,17 @@ server:
   listen_addr: "0.0.0.0:9000"
   max_object_size: 5368709120  # 5 GB (default)
   # max_concurrent_requests: 0  # 0 = unlimited (default)
+  # backend_timeout: "30s"       # per-operation timeout for backend S3 calls (default: 30s)
+  # read_header_timeout: "10s"   # max time to read request headers (default: 10s)
+  # read_timeout: "5m"           # max time to read entire request including body (default: 5m)
+  # write_timeout: "5m"          # max time to write response (default: 5m)
+  # idle_timeout: "120s"         # max time to wait for next request on keep-alive (default: 120s)
+  # shutdown_delay: "0s"         # delay before HTTP drain on SIGTERM for LB deregistration (default: 0)
+  # tls:
+  #   cert_file: "/path/to/cert.pem"
+  #   key_file: "/path/to/key.pem"
+  #   min_version: "1.2"           # "1.2" (default) or "1.3"
+  #   client_ca_file: ""           # CA bundle for mTLS client verification
 
 # Virtual buckets with per-bucket credentials
 buckets:
@@ -288,6 +327,11 @@ circuit_breaker:
   cache_ttl: "60s"         # key→backend cache TTL during degraded reads (default: 60s)
   parallel_broadcast: false # fan-out reads to all backends in parallel during degraded mode (default: false)
 
+# backend_circuit_breaker:   # per-backend circuit breakers (disabled by default)
+#   enabled: false
+#   failure_threshold: 5     # consecutive failures before opening (default: 5)
+#   open_timeout: "5m"       # delay before probing recovery (default: 5m)
+
 rebalance:
   enabled: false
   strategy: "pack"         # "pack" or "spread" (default: pack)
@@ -315,7 +359,8 @@ ui:
   enabled: false             # enable the built-in web dashboard
   path: "/ui"                # URL prefix (default: /ui)
   admin_key: "${UI_ADMIN_KEY}"       # access key for dashboard login
-  admin_secret: "${UI_ADMIN_SECRET}" # secret key for dashboard login
+  admin_secret: "${UI_ADMIN_SECRET}" # secret key (plaintext or bcrypt hash)
+  # session_secret: ""       # optional HMAC key for multi-instance session sharing
 
 usage_flush:
   interval: "30s"            # base flush interval (default: 30s)
@@ -355,9 +400,12 @@ kill -HUP $(pidof s3-orchestrator)
 | `lifecycle` | Yes | Rules (prefix, expiration_days) |
 | `server.listen_addr` | No | Requires restart |
 | `server.max_concurrent_requests` | No | Requires restart |
+| `server` timeouts | No | `read_header_timeout`, `read_timeout`, `write_timeout`, `idle_timeout`, `shutdown_delay` |
+| `server.tls` | No | Requires restart |
 | `database` | No | Requires restart |
 | `telemetry` | No | Requires restart |
 | `circuit_breaker` | No | Requires restart |
+| `backend_circuit_breaker` | No | Requires restart |
 | `ui` | No | Requires restart |
 | `routing_strategy` | No | Requires restart |
 | `backends` (structural: endpoint, credentials, count) | No | Requires restart |
@@ -440,8 +488,8 @@ All metrics are prefixed with `s3proxy_`. Exposed at `/metrics` when enabled.
 | `s3proxy_replication_errors_total` | Counter | — | Replication errors |
 | `s3proxy_replication_duration_seconds` | Histogram | — | Replication cycle time |
 | `s3proxy_replication_runs_total` | Counter | status | Replication worker executions |
-| `s3proxy_circuit_breaker_state` | Gauge | — | 0=closed, 1=open, 2=half-open |
-| `s3proxy_circuit_breaker_transitions_total` | Counter | from, to | State transitions |
+| `s3proxy_circuit_breaker_state` | Gauge | name | 0=closed, 1=open, 2=half-open (name: "database" or backend name) |
+| `s3proxy_circuit_breaker_transitions_total` | Counter | name, from, to | State transitions per component |
 | `s3proxy_degraded_reads_total` | Counter | operation | Broadcast reads in degraded mode |
 | `s3proxy_degraded_cache_hits_total` | Counter | — | Cache hits during degraded reads |
 | `s3proxy_degraded_write_rejections_total` | Counter | operation | Writes rejected in degraded mode |
@@ -523,7 +571,7 @@ ui:
   admin_secret: "${UI_ADMIN_SECRET}"
 ```
 
-JSON APIs are available at `{path}/api/dashboard`, `{path}/api/tree`, and `{path}/api/logs` for programmatic access. The logs endpoint accepts optional query parameters: `level`, `since`, `component`, and `limit`. Management endpoints (`{path}/api/delete`, `{path}/api/upload`, `{path}/api/rebalance`, `{path}/api/sync`) accept POST requests and return JSON responses.
+JSON APIs are available at `{path}/api/dashboard`, `{path}/api/tree`, and `{path}/api/logs` for programmatic access. The logs endpoint accepts optional query parameters: `level`, `since`, `component`, and `limit`. Management endpoints (`{path}/api/delete`, `{path}/api/delete-prefix`, `{path}/api/upload`, `{path}/api/rebalance`, `{path}/api/sync`) accept POST requests and return JSON responses.
 
 ## Endpoints
 
@@ -536,6 +584,7 @@ JSON APIs are available at `{path}/api/dashboard`, `{path}/api/tree`, and `{path
 | `/ui/api/dashboard` | Dashboard data as JSON |
 | `/ui/api/tree` | Lazy-loaded directory listing as JSON |
 | `/ui/api/delete` | Delete an object (POST, JSON body) |
+| `/ui/api/delete-prefix` | Delete all objects under a prefix (POST, JSON body) |
 | `/ui/api/upload` | Upload a file (POST, multipart form) |
 | `/ui/api/rebalance` | Trigger on-demand rebalance (POST) |
 | `/ui/api/logs` | Buffered log entries as JSON (query params: level, since, component, limit) |
@@ -767,7 +816,8 @@ make release-local
 
 ```
 cmd/s3-orchestrator/
-  main.go                    Entry point, subcommand dispatch, background tasks
+  main.go                    Entry point, subcommand dispatch, backend init
+  services.go                Background task lifecycle (tickers, advisory locks)
   admin.go                   Admin subcommand (operational CLI)
   sync.go                    Sync subcommand (bucket import)
   validate.go                Validate subcommand (config check)
@@ -791,7 +841,9 @@ internal/
     store.go                 PostgreSQL storage layer (pgx/v5 + sqlc)
     migrations/              Versioned goose migration files (embedded in binary)
     cleanup_queue.go         Cleanup queue Store methods (enqueue, retry, complete)
-    circuitbreaker.go        Three-state circuit breaker wrapper
+    circuitbreaker_core.go   Generic three-state circuit breaker state machine
+    circuitbreaker.go        Database circuit breaker wrapper (embeds core)
+    circuitbreaker_backend.go Per-backend circuit breaker wrapper (embeds core)
     manager.go               Multi-backend routing, quota selection, shared helpers
     manager_objects.go       Object CRUD with read failover, broadcast, batch delete
     manager_multipart.go     Multipart upload lifecycle

@@ -174,9 +174,13 @@ func newCleanupQueueService(manager *storage.BackendManager, store storage.Metad
 }
 
 func newRebalancerService(manager *storage.BackendManager, store storage.MetadataStore) *lockedTickerService {
+	interval := 6 * time.Hour
+	if rcfg := manager.RebalanceConfig(); rcfg != nil && rcfg.Interval > 0 {
+		interval = rcfg.Interval
+	}
 	return &lockedTickerService{
 		store:    store,
-		interval: 1 * time.Minute,
+		interval: interval,
 		lockID:   storage.LockRebalancer,
 		name:     "Rebalance",
 		shouldRun: func() bool {
@@ -251,9 +255,13 @@ func newReplicatorService(manager *storage.BackendManager, store storage.Metadat
 		}
 	}
 
+	interval := 5 * time.Minute
+	if rcfg := manager.ReplicationConfig(); rcfg != nil {
+		interval = rcfg.WorkerInterval
+	}
 	return &lockedTickerService{
 		store:    store,
-		interval: 1 * time.Minute,
+		interval: interval,
 		lockID:   storage.LockReplicator,
 		name:     "Replication",
 		shouldRun: func() bool {

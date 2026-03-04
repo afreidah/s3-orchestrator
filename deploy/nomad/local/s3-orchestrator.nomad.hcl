@@ -110,6 +110,11 @@ job "s3-orchestrator" {
             open_timeout: "15s"
             cache_ttl: "60s"
 
+          # backend_circuit_breaker:
+          #   enabled: true
+          #   failure_threshold: 5
+          #   open_timeout: "5m"
+
           telemetry:
             metrics:
               enabled: true

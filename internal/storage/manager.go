@@ -322,7 +322,16 @@ func (m *BackendManager) SyncBackend(ctx context.Context, backendName, bucket st
 		return 0, 0, err
 	}
 
-	s3b, ok := backend.(*S3Backend)
+	// Unwrap any circuit breaker wrappers to get the concrete *S3Backend.
+	inner := backend
+	for {
+		if u, ok := inner.(interface{ Unwrap() ObjectBackend }); ok {
+			inner = u.Unwrap()
+		} else {
+			break
+		}
+	}
+	s3b, ok := inner.(*S3Backend)
 	if !ok {
 		return 0, 0, fmt.Errorf("backend %s does not support listing", backendName)
 	}

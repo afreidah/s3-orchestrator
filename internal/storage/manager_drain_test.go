@@ -1,0 +1,205 @@
+// -------------------------------------------------------------------------------
+// Drain Tests - Backend Purge and Drain Operations
+//
+// Author: Alex Freidah
+//
+// Unit tests for backend drain and remove operations. Validates that purge
+// deletes DB records during iteration to avoid infinite loops, and that
+// S3 objects are cleaned up.
+// -------------------------------------------------------------------------------
+
+package storage
+
+import (
+	"context"
+	"testing"
+	"time"
+)
+
+func newDrainTestManager(store *mockStore, backends map[string]*mockBackend) *BackendManager {
+	obs := make(map[string]ObjectBackend, len(backends))
+	var order []string
+	for name, b := range backends {
+		obs[name] = b
+		order = append(order, name)
+	}
+	return NewBackendManager(&BackendManagerConfig{
+		Backends:        obs,
+		Store:           store,
+		Order:           order,
+		CacheTTL:        5 * time.Second,
+		BackendTimeout:  30 * time.Second,
+		RoutingStrategy: "pack",
+	})
+}
+
+func TestPurgeBackendObjects_DeletesDBRecords(t *testing.T) {
+	backend := newMockBackend()
+	// Pre-populate backend with objects
+	backend.objects["obj1"] = mockObject{data: []byte("data1")}
+	backend.objects["obj2"] = mockObject{data: []byte("data2")}
+
+	store := &mockStore{
+		// First call returns two objects, second call returns empty (records deleted)
+		listObjectsByBackendPages: [][]ObjectLocation{
+			{
+				{ObjectKey: "obj1", BackendName: "b1", SizeBytes: 5},
+				{ObjectKey: "obj2", BackendName: "b1", SizeBytes: 5},
+			},
+			{}, // empty = loop terminates
+		},
+	}
+
+	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": backend})
+
+	mgr.purgeBackendObjects(context.Background(), backend, "b1")
+
+	// Verify DB records were deleted for both objects
+	store.mu.Lock()
+	calls := store.deleteObjectLocationCalls
+	store.mu.Unlock()
+
+	if len(calls) != 2 {
+		t.Fatalf("expected 2 DeleteObjectLocation calls, got %d", len(calls))
+	}
+
+	keys := map[string]bool{}
+	for _, c := range calls {
+		keys[c.key] = true
+		if c.backend != "b1" {
+			t.Errorf("DeleteObjectLocation backend = %q, want b1", c.backend)
+		}
+	}
+	if !keys["obj1"] || !keys["obj2"] {
+		t.Errorf("expected obj1 and obj2 to be deleted, got %v", keys)
+	}
+
+	// Verify S3 objects were also deleted
+	if backend.hasObject("obj1") {
+		t.Error("obj1 should have been deleted from S3 backend")
+	}
+	if backend.hasObject("obj2") {
+		t.Error("obj2 should have been deleted from S3 backend")
+	}
+}
+
+func TestPurgeBackendObjects_ContinuesOnS3DeleteFailure(t *testing.T) {
+	backend := newMockBackend()
+	// Don't pre-populate — S3 deletes will "fail" (object not found)
+
+	store := &mockStore{
+		listObjectsByBackendPages: [][]ObjectLocation{
+			{{ObjectKey: "missing", BackendName: "b1", SizeBytes: 5}},
+			{},
+		},
+	}
+
+	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": backend})
+
+	mgr.purgeBackendObjects(context.Background(), backend, "b1")
+
+	// DB record should still be deleted even though S3 delete failed
+	store.mu.Lock()
+	calls := store.deleteObjectLocationCalls
+	store.mu.Unlock()
+
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 DeleteObjectLocation call, got %d", len(calls))
+	}
+	if calls[0].key != "missing" {
+		t.Errorf("DeleteObjectLocation key = %q, want missing", calls[0].key)
+	}
+}
+
+// TestRemoveBackend_PurgeTerminates verifies that RemoveBackend with purge=true
+// terminates and doesn't loop infinitely. This is a regression test for the bug
+// where purgeBackendObjects never deleted DB records, causing ListObjectsByBackend
+// to return the same rows forever.
+func TestRemoveBackend_PurgeTerminates(t *testing.T) {
+	backend := newMockBackend()
+	backend.objects["k1"] = mockObject{data: []byte("x")}
+
+	store := &mockStore{
+		listObjectsByBackendPages: [][]ObjectLocation{
+			{{ObjectKey: "k1", BackendName: "b1", SizeBytes: 1}},
+			{}, // purge loop exits
+		},
+	}
+
+	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": backend})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- mgr.RemoveBackend(context.Background(), "b1", true)
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("RemoveBackend: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("RemoveBackend did not terminate within 5 seconds (infinite loop?)")
+	}
+}
+
+// TestStartDrain_FlushesCleanupQueueBeforeDeleteBackendData verifies that
+// runDrain processes pending cleanup queue items before calling DeleteBackendData,
+// which would otherwise silently drop them.
+func TestStartDrain_FlushesCleanupQueueBeforeDeleteBackendData(t *testing.T) {
+	backend := newMockBackend()
+	// Pre-populate an orphaned object that the cleanup queue should process
+	backend.objects["orphan"] = mockObject{data: []byte("stale")}
+
+	store := &mockStore{
+		// No objects to migrate (drain completes immediately)
+		listObjectsByBackendResp: nil,
+		// Pending cleanup item for the draining backend
+		pendingCleanups: []CleanupItem{
+			{ID: 42, BackendName: "b1", ObjectKey: "orphan", Attempts: 0},
+		},
+	}
+
+	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": backend})
+
+	if err := mgr.StartDrain(context.Background(), "b1"); err != nil {
+		t.Fatalf("StartDrain: %v", err)
+	}
+
+	// Wait for drain to complete
+	progress, err := mgr.GetDrainProgress(context.Background(), "b1")
+	for i := 0; i < 50 && (err != nil || progress.Active); i++ {
+		time.Sleep(50 * time.Millisecond)
+		progress, err = mgr.GetDrainProgress(context.Background(), "b1")
+	}
+	if err != nil {
+		t.Fatalf("GetDrainProgress: %v", err)
+	}
+	if progress.Active {
+		t.Fatal("drain did not complete within timeout")
+	}
+	if progress.Error != "" {
+		t.Fatalf("drain completed with error: %s", progress.Error)
+	}
+
+	// Verify the cleanup item was processed (completed)
+	store.mu.Lock()
+	completedIDs := store.completeCleanupCalls
+	store.mu.Unlock()
+
+	found := false
+	for _, id := range completedIDs {
+		if id == 42 {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected cleanup item 42 to be completed during drain, but it was not")
+	}
+
+	// Verify the orphaned S3 object was deleted
+	if backend.hasObject("orphan") {
+		t.Error("orphaned object should have been deleted from S3 backend")
+	}
+}

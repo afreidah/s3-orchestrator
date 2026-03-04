@@ -317,22 +317,23 @@ var (
 
 	// --- Circuit breaker metrics ---
 
-	// CircuitBreakerState tracks the current circuit breaker state.
-	// 0=closed (healthy), 1=open (DB down), 2=half-open (probing).
-	CircuitBreakerState = promauto.NewGauge(
+	// CircuitBreakerState tracks the current circuit breaker state per component.
+	// 0=closed (healthy), 1=open (down), 2=half-open (probing).
+	CircuitBreakerState = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "s3proxy_circuit_breaker_state",
 			Help: "Current circuit breaker state: 0=closed, 1=open, 2=half-open",
 		},
+		[]string{"name"},
 	)
 
-	// CircuitBreakerTransitionsTotal counts state transitions.
+	// CircuitBreakerTransitionsTotal counts state transitions per component.
 	CircuitBreakerTransitionsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "s3proxy_circuit_breaker_transitions_total",
 			Help: "Total number of circuit breaker state transitions",
 		},
-		[]string{"from", "to"},
+		[]string{"name", "from", "to"},
 	)
 
 	// DegradedReadsTotal counts reads served via broadcast during degraded mode.

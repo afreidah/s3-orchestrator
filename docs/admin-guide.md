@@ -213,7 +213,7 @@ backends:
 | MinIO | `http://<host>:9000` | `true` |
 | Wasabi | `https://s3.<region>.wasabisys.com` | `true` |
 
-**Quota:** Set `quota_bytes` to limit how much data a backend can hold. Set to `0` or omit for unlimited. Quota is tracked in PostgreSQL and updated atomically with every write/delete.
+**Quota:** Set `quota_bytes` to limit how much data a backend can hold. Set to `0` or omit for unlimited. Quota is tracked in PostgreSQL and updated atomically with every write/delete. Note that multipart uploads do not reserve quota upfront — temporary parts consume backend storage without being counted against the quota until `CompleteMultipartUpload` records the final object size. A client uploading many large parts could temporarily exceed a backend's quota before completion.
 
 **Usage limits:** Optional monthly caps on API requests, egress, and ingress per backend:
 
@@ -267,6 +267,21 @@ By default, degraded reads try each backend sequentially. When `parallel_broadca
 
 The other defaults are sensible for most deployments. Increase `cache_ttl` if you have many read-heavy clients and want fewer backend round-trips during outages.
 
+### backend_circuit_breaker
+
+Per-backend circuit breakers isolate failures at the individual backend level. When a backend's credentials expire or the provider becomes unreachable, the circuit opens after consecutive failures and the backend is excluded from request routing. A single probe request tests recovery after the timeout elapses. Disabled by default.
+
+```yaml
+backend_circuit_breaker:
+  enabled: true
+  failure_threshold: 5             # consecutive failures before opening (default: 5)
+  open_timeout: "5m"               # delay before probing recovery (default: 5m)
+```
+
+Unlike the database circuit breaker, which triggers degraded mode for the entire system, backend circuit breakers affect only the individual backend. Reads fall back to other replicas, and writes route to other backends with available quota. No extra API calls are made — the breaker trips purely on organic traffic failures.
+
+The `s3proxy_circuit_breaker_state{name="<backend>"}` metric tracks each backend's circuit state (0=closed, 1=open, 2=half-open). Alert on `> 0` for individual backends to detect credential or provider issues. Requires a restart to change (not hot-reloadable).
+
 ### rebalance
 
 Moves objects between backends to optimize storage distribution. Disabled by default — enabling it will generate egress/ingress traffic on your backends.
@@ -299,6 +314,8 @@ replication:
 
 The replication factor must be `<= number of backends`. The worker runs once at startup to catch up on any pending replicas, then continues at the configured interval. Reads automatically fail over to replicas if the primary copy is unavailable.
 
+Replication is **asynchronous** — writes go to a single backend and the replicator creates additional copies in the background. When a client overwrites an existing key, all old copies (including replicas) are removed and a single new copy is written. The replication factor drops to 1 until the next replicator cycle creates the additional copies. If the single backend holding the new copy fails before replication runs, the new version of the object is at risk. For most workloads this window (up to `worker_interval`) is acceptable. Lowering `worker_interval` reduces the exposure at the cost of more frequent DB queries and backend I/O.
+
 ### Cleanup Queue
 
 The cleanup queue requires no configuration — it is always active. When any backend object deletion fails during normal operations (PutObject orphan cleanup, DeleteObject, multipart part cleanup, rebalancer, replicator), the failed deletion is automatically enqueued for retry.
@@ -325,7 +342,7 @@ DELETE FROM cleanup_queue WHERE id = 123;
 
 ### rate_limit
 
-Per-IP token bucket rate limiting. Requests exceeding the limit receive `429 SlowDown`.
+Per-IP token bucket rate limiting. When enabled, rate limiting applies to both the S3 proxy and the admin API. Requests exceeding the limit receive `429 SlowDown`.
 
 ```yaml
 rate_limit:
@@ -714,7 +731,8 @@ If `telemetry.metrics.enabled` is `true`, metrics are exposed at `/metrics`. Key
 | Metric | What to watch |
 |--------|---------------|
 | `s3proxy_quota_bytes_available{backend="..."}` | Alert when approaching 0 — backend is almost full |
-| `s3proxy_circuit_breaker_state` | Alert when > 0 — database is unreachable (1=open, 2=half-open) |
+| `s3proxy_circuit_breaker_state{name="database"}` | Alert when > 0 — database is unreachable (1=open, 2=half-open) |
+| `s3proxy_circuit_breaker_state{name="<backend>"}` | Alert when > 0 — backend is unreachable or credentials expired |
 | `s3proxy_replication_pending` | Alert when consistently > 0 — replicas are falling behind |
 | `s3proxy_requests_total{status_code="5xx"}` | Alert on elevated 5xx rates |
 | `s3proxy_degraded_write_rejections_total` | Writes being rejected due to degraded mode |

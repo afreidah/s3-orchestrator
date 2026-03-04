@@ -49,16 +49,15 @@ func (m *BackendManager) StartDrain(ctx context.Context, name string) error {
 	if _, ok := m.backends[name]; !ok {
 		return fmt.Errorf("backend %q not found", name)
 	}
-	if _, loaded := m.draining.LoadOrStore(name, nil); loaded {
-		return fmt.Errorf("backend %q is already draining", name)
-	}
-
 	drainCtx, cancel := context.WithCancel(context.Background())
 	state := &drainState{
 		cancel: cancel,
 		done:   make(chan struct{}),
 	}
-	m.draining.Store(name, state)
+	if _, loaded := m.draining.LoadOrStore(name, state); loaded {
+		cancel()
+		return fmt.Errorf("backend %q is already draining", name)
+	}
 
 	telemetry.DrainActive.Set(1)
 	slog.Info("Starting backend drain", "backend", name)
@@ -183,6 +182,14 @@ func (m *BackendManager) runDrain(ctx context.Context, name string, state *drain
 				telemetry.DrainBytesMoved.Add(float64(obj.SizeBytes))
 			}
 		}
+	}
+
+	// Flush any pending cleanup queue items for this backend before
+	// deleting all DB records (which would silently drop pending items).
+	processed, failed := m.ProcessCleanupQueue(ctx)
+	if processed > 0 || failed > 0 {
+		slog.Info("Drain: flushed cleanup queue before removing backend data",
+			"backend", name, "processed", processed, "failed", failed)
 	}
 
 	// Drain complete — clean up DB records
@@ -387,6 +394,11 @@ func (m *BackendManager) purgeBackendObjects(ctx context.Context, backend Object
 					"backend", name, "key", obj.ObjectKey, "error", err)
 			}
 			dcancel()
+
+			if err := m.store.DeleteObjectLocation(ctx, obj.ObjectKey, name); err != nil {
+				slog.Warn("Remove: failed to delete DB record during purge",
+					"backend", name, "key", obj.ObjectKey, "error", err)
+			}
 		}
 	}
 }

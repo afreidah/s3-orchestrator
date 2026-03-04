@@ -444,7 +444,7 @@ func (m *BackendManager) CopyObject(ctx context.Context, sourceKey, destKey stri
 	span.SetAttributes(telemetry.AttrObjectSize.Int64(size))
 
 	// --- Find destination backend with available quota and usage limits ---
-	destEligible := m.usage.BackendsWithinLimits(m.order,1, 0, size)
+	destEligible := m.excludeDraining(m.usage.BackendsWithinLimits(m.order, 1, 0, size))
 	if len(destEligible) == 0 {
 		telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation, "write").Inc()
 		span.SetStatus(codes.Error, "usage limits exceeded on all backends")

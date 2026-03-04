@@ -181,6 +181,46 @@ The orchestrator tracks API requests, egress, and ingress in memory and periodic
 
 For environments without usage limits, the flush still runs (it powers the dashboard and metrics) but accuracy is less critical. The 30-second default is fine.
 
+## Backend Circuit Breaker
+
+```yaml
+backend_circuit_breaker:
+  enabled: true
+  failure_threshold: 5   # consecutive failures before opening (default: 5)
+  open_timeout: "5m"     # delay before probing recovery (default: 5m)
+```
+
+Per-backend circuit breakers stop sending traffic to a backend after `failure_threshold` consecutive errors (expired credentials, network failures, provider outages). The circuit opens immediately — no timeout waiting — and all subsequent requests route around the failed backend. After `open_timeout`, the next organic request is allowed through as a probe.
+
+### Tuning Guidelines
+
+| Setting | Higher Value | Lower Value |
+|---------|-------------|-------------|
+| `failure_threshold` | More tolerant of transient errors, slower to open | Faster detection, but may trip on brief hiccups |
+| `open_timeout` | Less probing traffic, slower recovery detection | Faster recovery, more probe requests to a potentially broken backend |
+
+### Provider-Specific Recommendations
+
+| Provider | Threshold | Timeout | Notes |
+|----------|-----------|---------|-------|
+| AWS S3 / R2 | `5` | `5m` | Defaults work well; outages are rare |
+| OCI Object Storage | `3` | `5m` | OCI can return auth errors in bursts during credential rotation |
+| Backblaze B2 | `5` | `5m` | B2 maintenance windows are short |
+| MinIO (local) | `3` | `30s` | Local failures are usually configuration issues — probe quickly |
+
+### When to Enable
+
+- **Multi-backend with replication** — highly recommended. Reads fail over to replicas on healthy backends, writes route to other backends. A single backend failure becomes invisible to clients.
+- **Single backend** — less useful. The circuit opens but there's nowhere to fail over to. Requests return `ErrBackendUnavailable` instead of timing out, which is still an improvement (faster failure).
+- **Cost-sensitive environments** — the probe request after `open_timeout` is a real S3 API call. With a 5-minute timeout, that's at most 12 probes/hour to a down backend.
+
+### Monitoring
+
+- `s3proxy_circuit_breaker_state{name="<backend>"}` — 0=closed, 1=open, 2=half-open
+- `s3proxy_circuit_breaker_transitions_total{name="<backend>"}` — state change counter
+
+A sustained `state=1` for a backend means it's been unreachable. Check the backend's credentials and connectivity.
+
 ## Rate Limiter Memory
 
 ```yaml

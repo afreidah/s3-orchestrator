@@ -66,9 +66,11 @@ type mockStore struct {
 	flushUsageErr   error
 	flushUsageCalls []flushUsageCall
 
-	// Rebalance
-	listObjectsByBackendResp []ObjectLocation
-	listObjectsByBackendErr  error
+	// Rebalance / Drain
+	listObjectsByBackendResp  []ObjectLocation
+	listObjectsByBackendPages [][]ObjectLocation // for paginated tests
+	listObjectsByBackendErr   error
+	deleteObjectLocationCalls []deleteObjectLocationCall
 	moveObjectLocationSize   int64
 	moveObjectLocationErr    error
 
@@ -119,6 +121,10 @@ type retryCleanupCall struct {
 	id        int64
 	backoff   time.Duration
 	lastError string
+}
+
+type deleteObjectLocationCall struct {
+	key, backend string
 }
 
 type recordReplicaCall struct {
@@ -303,6 +309,11 @@ func (m *mockStore) ListObjectsByBackend(_ context.Context, _ string, _ int) ([]
 	if m.listObjectsByBackendErr != nil {
 		return nil, m.listObjectsByBackendErr
 	}
+	if len(m.listObjectsByBackendPages) > 0 {
+		page := m.listObjectsByBackendPages[0]
+		m.listObjectsByBackendPages = m.listObjectsByBackendPages[1:]
+		return page, nil
+	}
 	return m.listObjectsByBackendResp, nil
 }
 
@@ -436,6 +447,9 @@ func (m *mockStore) DeleteBackendData(_ context.Context, _ string) error {
 	return nil
 }
 
-func (m *mockStore) DeleteObjectLocation(_ context.Context, _, _ string) error {
+func (m *mockStore) DeleteObjectLocation(_ context.Context, key, backend string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.deleteObjectLocationCalls = append(m.deleteObjectLocationCalls, deleteObjectLocationCall{key: key, backend: backend})
 	return nil
 }

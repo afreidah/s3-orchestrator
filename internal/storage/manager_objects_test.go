@@ -1411,6 +1411,40 @@ func TestCopyObject_DestWriteFails(t *testing.T) {
 	}
 }
 
+func TestCopyObject_ExcludesDrainingBackend(t *testing.T) {
+	src := newMockBackend()
+	_, _ = src.PutObject(context.Background(), "src", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
+	dst := newMockBackend()
+
+	store := &mockStore{
+		getAllLocationsResp: []ObjectLocation{{ObjectKey: "src", BackendName: "src-be"}},
+		getBackendResp:     "dst-be",
+	}
+	mgr := NewBackendManager(&BackendManagerConfig{
+		Backends:        map[string]ObjectBackend{"src-be": src, "dst-be": dst},
+		Store:           store,
+		Order:           []string{"src-be", "dst-be"},
+		CacheTTL:        5 * time.Second,
+		BackendTimeout:  30 * time.Second,
+		RoutingStrategy: "pack",
+	})
+
+	// Mark both backends as draining so no eligible destination remains
+	mgr.draining.Store("src-be", &drainState{done: make(chan struct{})})
+	mgr.draining.Store("dst-be", &drainState{done: make(chan struct{})})
+
+	// CopyObject should fail — all backends are draining
+	_, err := mgr.CopyObject(context.Background(), "src", "dst")
+	if !errors.Is(err, ErrInsufficientStorage) {
+		t.Fatalf("expected ErrInsufficientStorage when all backends are draining, got %v", err)
+	}
+
+	// dst should NOT have the object
+	if dst.hasObject("dst") {
+		t.Error("object should not have been copied to draining backend")
+	}
+}
+
 // -------------------------------------------------------------------------
 // ListObjects edge cases
 // -------------------------------------------------------------------------

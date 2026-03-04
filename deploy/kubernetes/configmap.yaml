@@ -125,13 +125,22 @@ data:
       threshold: 0.1
       concurrency: 5
 
-    # --- Circuit breaker ---
+    # --- Database circuit breaker ---
     # Detects database outages and enters degraded mode: reads broadcast
     # to all backends, writes return 503 until the database recovers.
     circuit_breaker:
       failure_threshold: 3
       open_timeout: "15s"
       cache_ttl: "60s"
+
+    # --- Per-backend circuit breakers ---
+    # Detects individual backend failures (expired credentials, provider
+    # outage) and stops routing traffic to the unhealthy backend until a
+    # probe request succeeds. Requires restart to enable/disable.
+    # backend_circuit_breaker:
+    #   enabled: true
+    #   failure_threshold: 5    # consecutive failures before opening
+    #   open_timeout: "5m"      # delay before probing recovery
 
     # --- Per-IP rate limiting ---
     rate_limit:
