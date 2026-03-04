@@ -360,7 +360,9 @@ ui:
   path: "/ui"                # URL prefix (default: /ui)
   admin_key: "${UI_ADMIN_KEY}"       # access key for dashboard login
   admin_secret: "${UI_ADMIN_SECRET}" # secret key (plaintext or bcrypt hash)
+  # admin_token: ""          # separate token for admin API (defaults to admin_key)
   # session_secret: ""       # optional HMAC key for multi-instance session sharing
+  # force_secure_cookies: false # always set Secure flag on cookies (for behind TLS proxy)
 
 usage_flush:
   interval: "30s"            # base flush interval (default: 30s)

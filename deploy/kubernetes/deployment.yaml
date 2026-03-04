@@ -31,12 +31,15 @@ spec:
         prometheus.io/path: "/metrics"
     spec:
       serviceAccountName: s3-orchestrator
+      automountServiceAccountToken: false
 
       # --- Security context ---
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
         fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
 
       containers:
         - name: s3-orchestrator

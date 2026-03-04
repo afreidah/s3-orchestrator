@@ -615,7 +615,7 @@
       "collapsed": false
     },
     {
-      "type": "stat",
+      "type": "table",
       "id": 24,
       "title": "Circuit Breaker State",
       "gridPos": { "x": 0, "y": 40, "w": 8, "h": 8 },
@@ -623,32 +623,51 @@
       "targets": [
         {
           "expr": "s3proxy_circuit_breaker_state",
-          "legendFormat": "{{name}}",
+          "format": "table",
           "instant": true
         }
       ],
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "textMode": "value",
-        "reduceOptions": { "calcs": ["lastNotNull"] }
-      },
-      "fieldConfig": {
-        "defaults": {
-          "mappings": [
-            { "type": "value", "options": { "0": { "text": "Closed", "color": "green" } } },
-            { "type": "value", "options": { "1": { "text": "Open", "color": "red" } } },
-            { "type": "value", "options": { "2": { "text": "Half-Open", "color": "yellow" } } }
-          ],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "red", "value": 1 },
-              { "color": "yellow", "value": 2 }
-            ]
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "instance": true,
+              "job": true
+            },
+            "renameByName": {
+              "name": "Name",
+              "Value": "State"
+            },
+            "indexByName": {
+              "name": 0,
+              "Value": 1
+            }
           }
         }
+      ],
+      "fieldConfig": {
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "State" },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  { "type": "value", "options": { "0": { "text": "Closed", "color": "green" } } },
+                  { "type": "value", "options": { "1": { "text": "Open", "color": "red" } } },
+                  { "type": "value", "options": { "2": { "text": "Half-Open", "color": "yellow" } } }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": { "type": "color-background" }
+              }
+            ]
+          }
+        ]
       }
     },
     {

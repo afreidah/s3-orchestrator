@@ -225,6 +225,7 @@ func (h *Handler) handleLogLevel(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"level": strings.ToLower(h.logLevel.Level().String())})
 
 	case http.MethodPut:
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		var req struct {
 			Level string `json:"level"`
 		}
