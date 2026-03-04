@@ -85,6 +85,10 @@ type CircuitBreaker struct {
 //   - isError: filter that returns true for errors that should count as failures
 //   - sentinel: the error returned when the circuit is open (e.g. ErrDBUnavailable)
 func NewCircuitBreaker(name string, threshold int, timeout time.Duration, isError func(error) bool, sentinel error) *CircuitBreaker {
+	// Initialize the state gauge so Prometheus reports "closed" immediately
+	// rather than showing "No Data" until the first transition.
+	telemetry.CircuitBreakerState.WithLabelValues(name).Set(float64(stateClosed))
+
 	return &CircuitBreaker{
 		state:         stateClosed,
 		failThreshold: threshold,

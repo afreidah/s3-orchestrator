@@ -350,8 +350,8 @@ func TestLogin_BcryptSecret(t *testing.T) {
 
 func TestDeriveSessionKey_Deterministic(t *testing.T) {
 	ui := config.UIConfig{AdminSecret: "shared-secret"}
-	key1 := deriveSessionKey(ui)
-	key2 := deriveSessionKey(ui)
+	key1 := deriveSessionKey(&ui)
+	key2 := deriveSessionKey(&ui)
 
 	if !bytes.Equal(key1, key2) {
 		t.Error("same config should produce identical session keys")
@@ -362,8 +362,8 @@ func TestDeriveSessionKey_SessionSecretTakesPrecedence(t *testing.T) {
 	withAdmin := config.UIConfig{AdminSecret: "admin-secret"}
 	withSession := config.UIConfig{AdminSecret: "admin-secret", SessionSecret: "session-secret"}
 
-	key1 := deriveSessionKey(withAdmin)
-	key2 := deriveSessionKey(withSession)
+	key1 := deriveSessionKey(&withAdmin)
+	key2 := deriveSessionKey(&withSession)
 
 	if bytes.Equal(key1, key2) {
 		t.Error("session_secret should produce a different key than admin_secret alone")
