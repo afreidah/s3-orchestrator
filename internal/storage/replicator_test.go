@@ -85,7 +85,7 @@ func TestReplicate_QueryError(t *testing.T) {
 func TestReplicate_Success(t *testing.T) {
 	b1 := newMockBackend()
 	b2 := newMockBackend()
-	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain")
+	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
 	store := &mockStore{
 		getUnderReplicatedResp: []ObjectLocation{
@@ -189,7 +189,7 @@ func TestFindReplicaTarget_QuotaStatsError(t *testing.T) {
 func TestCopyToReplica_Success(t *testing.T) {
 	b1 := newMockBackend()
 	b2 := newMockBackend()
-	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain")
+	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]ObjectBackend{"b1": b1, "b2": b2},
@@ -217,7 +217,7 @@ func TestCopyToReplica_FailoverToSecondCopy(t *testing.T) {
 	b1 := newMockBackend()
 	b1.getErr = errors.New("backend down")
 	b2 := newMockBackend()
-	_, _ = b2.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain")
+	_, _ = b2.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 	b3 := newMockBackend()
 
 	mgr := NewBackendManager(&BackendManagerConfig{
@@ -272,7 +272,7 @@ func TestCopyToReplica_AllSourcesFail(t *testing.T) {
 
 func TestCleanupOrphan_Success(t *testing.T) {
 	b1 := newMockBackend()
-	_, _ = b1.PutObject(context.Background(), "orphan", bytes.NewReader([]byte("x")), 1, "")
+	_, _ = b1.PutObject(context.Background(), "orphan", bytes.NewReader([]byte("x")), 1, "", nil)
 
 	mgr := newTestManager(&mockStore{}, map[string]*mockBackend{"b1": b1})
 
@@ -314,7 +314,7 @@ func TestCleanupOrphan_DeleteFailure_EnqueuesCleanup(t *testing.T) {
 func TestReplicate_RecordReplicaFails_CleansUpOrphan(t *testing.T) {
 	b1 := newMockBackend()
 	b2 := newMockBackend()
-	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain")
+	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
 	store := &mockStore{
 		getUnderReplicatedResp: []ObjectLocation{
@@ -353,7 +353,7 @@ func TestReplicate_RecordReplicaFails_CleansUpOrphan(t *testing.T) {
 
 func TestCopyToReplica_TargetBackendNotFound(t *testing.T) {
 	b1 := newMockBackend()
-	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain")
+	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
 	mgr := newTestManager(&mockStore{}, map[string]*mockBackend{"b1": b1})
 
@@ -366,7 +366,7 @@ func TestCopyToReplica_TargetBackendNotFound(t *testing.T) {
 
 func TestCopyToReplica_TargetWriteFails(t *testing.T) {
 	b1 := newMockBackend()
-	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain")
+	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 	b2 := newMockBackend()
 	b2.putErr = errors.New("write failed")
 
@@ -388,7 +388,7 @@ func TestCopyToReplica_TargetWriteFails(t *testing.T) {
 
 func TestReplicateObject_NoTargetAvailable(t *testing.T) {
 	b1 := newMockBackend()
-	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain")
+	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
 	store := &mockStore{
 		getUnderReplicatedResp: []ObjectLocation{
@@ -424,7 +424,7 @@ func TestReplicateObject_NoTargetAvailable(t *testing.T) {
 func TestReplicate_SourceGoneDuringReplication(t *testing.T) {
 	b1 := newMockBackend()
 	b2 := newMockBackend()
-	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain")
+	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
 	store := &mockStore{
 		getUnderReplicatedResp: []ObjectLocation{

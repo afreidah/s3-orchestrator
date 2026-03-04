@@ -91,6 +91,14 @@ func (s *Server) handlePut(ctx context.Context, w http.ResponseWriter, r *http.R
 		contentType = "application/octet-stream"
 	}
 
+	metadata := extractUserMetadata(r.Header)
+	if len(metadata) > 0 {
+		if err := validateUserMetadata(metadata); err != nil {
+			writeS3Error(w, http.StatusBadRequest, "MetadataTooLarge", err.Error())
+			return http.StatusBadRequest, err
+		}
+	}
+
 	// --- Add size to span ---
 	span := trace.SpanFromContext(ctx)
 	span.SetAttributes(
@@ -98,7 +106,7 @@ func (s *Server) handlePut(ctx context.Context, w http.ResponseWriter, r *http.R
 		telemetry.AttrContentType.String(contentType),
 	)
 
-	etag, err := s.Manager.PutObject(ctx, key, r.Body, r.ContentLength, contentType)
+	etag, err := s.Manager.PutObject(ctx, key, r.Body, r.ContentLength, contentType, metadata)
 	if err != nil {
 		return writeStorageError(w, err, "Failed to store object"), err
 	}
@@ -140,6 +148,9 @@ func (s *Server) handleGet(ctx context.Context, w http.ResponseWriter, r *http.R
 		w.Header().Set("Last-Modified", result.LastModified.UTC().Format(http.TimeFormat))
 	}
 	w.Header().Set("Accept-Ranges", "bytes")
+	for k, v := range result.Metadata {
+		w.Header().Set("x-amz-meta-"+k, v)
+	}
 
 	// --- Conditional request evaluation (skip for range requests) ---
 	if rangeHeader == "" {
@@ -187,6 +198,9 @@ func (s *Server) handleHead(ctx context.Context, w http.ResponseWriter, r *http.
 		w.Header().Set("Last-Modified", result.LastModified.UTC().Format(http.TimeFormat))
 	}
 	w.Header().Set("Accept-Ranges", "bytes")
+	for k, v := range result.Metadata {
+		w.Header().Set("x-amz-meta-"+k, v)
+	}
 
 	// --- Conditional request evaluation ---
 	if status, done := checkConditionals(r, result.ETag, result.LastModified); done {

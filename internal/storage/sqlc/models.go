@@ -49,6 +49,7 @@ type MultipartUpload struct {
 	BackendName string
 	ContentType *string
 	CreatedAt   pgtype.Timestamptz
+	Metadata    []byte
 }
 
 type ObjectLocation struct {

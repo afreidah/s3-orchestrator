@@ -1,15 +1,17 @@
 // -------------------------------------------------------------------------------
-// Helper Tests - Path Parsing and XML Escaping
+// Helper Tests - Path Parsing, XML Escaping, and Metadata Extraction
 //
 // Author: Alex Freidah
 //
-// Unit tests for URL path parsing (bucket/key extraction) and XML special
-// character escaping used in S3-compatible error responses.
+// Unit tests for URL path parsing (bucket/key extraction), XML special
+// character escaping, and x-amz-meta-* header extraction/validation.
 // -------------------------------------------------------------------------------
 
 package server
 
 import (
+	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -137,5 +139,83 @@ func TestXmlEscape(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("xmlEscape(%q) = %q, want %q", tt.input, got, tt.want)
 		}
+	}
+}
+
+// -------------------------------------------------------------------------
+// extractUserMetadata
+// -------------------------------------------------------------------------
+
+func TestExtractUserMetadata_Basic(t *testing.T) {
+	h := http.Header{}
+	h.Set("X-Amz-Meta-Project", "acme")
+	h.Set("X-Amz-Meta-Env", "prod")
+	h.Set("Content-Type", "text/plain")
+
+	meta := extractUserMetadata(h)
+	if len(meta) != 2 {
+		t.Fatalf("got %d keys, want 2", len(meta))
+	}
+	if meta["project"] != "acme" {
+		t.Errorf("project = %q, want acme", meta["project"])
+	}
+	if meta["env"] != "prod" {
+		t.Errorf("env = %q, want prod", meta["env"])
+	}
+}
+
+func TestExtractUserMetadata_Empty(t *testing.T) {
+	h := http.Header{}
+	h.Set("Content-Type", "text/plain")
+
+	meta := extractUserMetadata(h)
+	if meta != nil {
+		t.Errorf("expected nil, got %v", meta)
+	}
+}
+
+func TestExtractUserMetadata_BarePrefix(t *testing.T) {
+	h := http.Header{}
+	h.Set("X-Amz-Meta-", "value")
+
+	meta := extractUserMetadata(h)
+	if meta != nil {
+		t.Errorf("expected nil for bare x-amz-meta- prefix, got %v", meta)
+	}
+}
+
+func TestExtractUserMetadata_CaseInsensitive(t *testing.T) {
+	h := http.Header{}
+	h.Set("x-amz-meta-UPPER", "val")
+
+	meta := extractUserMetadata(h)
+	if meta["upper"] != "val" {
+		t.Errorf("upper = %q, want val", meta["upper"])
+	}
+}
+
+// -------------------------------------------------------------------------
+// validateUserMetadata
+// -------------------------------------------------------------------------
+
+func TestValidateUserMetadata_WithinLimit(t *testing.T) {
+	meta := map[string]string{"key": "value"}
+	if err := validateUserMetadata(meta); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateUserMetadata_ExceedsLimit(t *testing.T) {
+	meta := map[string]string{"k": strings.Repeat("x", maxUserMetadataBytes+1)}
+	err := validateUserMetadata(meta)
+	if err == nil {
+		t.Fatal("expected error for oversized metadata")
+	}
+}
+
+func TestValidateUserMetadata_ExactLimit(t *testing.T) {
+	meta := map[string]string{"k": strings.Repeat("x", maxUserMetadataBytes-1)}
+	if err := validateUserMetadata(meta); err != nil {
+		t.Errorf("unexpected error at exact limit: %v", err)
 	}
 }

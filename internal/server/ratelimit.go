@@ -30,12 +30,14 @@ import (
 
 // RateLimiter provides per-IP token-bucket rate limiting.
 type RateLimiter struct {
-	mu             sync.Mutex
-	limiters       map[string]*visitorLimiter
-	rate           rate.Limit
-	burst          int
-	trustedProxies []*net.IPNet
-	stop           chan struct{}
+	mu              sync.Mutex
+	limiters        map[string]*visitorLimiter
+	rate            rate.Limit
+	burst           int
+	trustedProxies  []*net.IPNet
+	cleanupInterval time.Duration
+	cleanupMaxAge   time.Duration
+	stop            chan struct{}
 }
 
 type visitorLimiter struct {
@@ -45,22 +47,32 @@ type visitorLimiter struct {
 
 // NewRateLimiter creates a rate limiter with the given configuration.
 func NewRateLimiter(cfg config.RateLimitConfig) *RateLimiter {
-	rl := &RateLimiter{
-		limiters:       make(map[string]*visitorLimiter),
-		rate:           rate.Limit(cfg.RequestsPerSec),
-		burst:          cfg.Burst,
-		trustedProxies: parseCIDRs(cfg.TrustedProxies),
-		stop:           make(chan struct{}),
+	cleanupInterval := cfg.CleanupInterval
+	if cleanupInterval == 0 {
+		cleanupInterval = 1 * time.Minute
+	}
+	cleanupMaxAge := cfg.CleanupMaxAge
+	if cleanupMaxAge == 0 {
+		cleanupMaxAge = 5 * time.Minute
 	}
 
-	// Background cleanup of stale entries every 3 minutes
+	rl := &RateLimiter{
+		limiters:        make(map[string]*visitorLimiter),
+		rate:            rate.Limit(cfg.RequestsPerSec),
+		burst:           cfg.Burst,
+		trustedProxies:  parseCIDRs(cfg.TrustedProxies),
+		cleanupInterval: cleanupInterval,
+		cleanupMaxAge:   cleanupMaxAge,
+		stop:            make(chan struct{}),
+	}
+
 	go func() {
-		ticker := time.NewTicker(3 * time.Minute)
+		ticker := time.NewTicker(rl.cleanupInterval)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
-				rl.cleanup(10 * time.Minute)
+				rl.cleanup(rl.cleanupMaxAge)
 			case <-rl.stop:
 				return
 			}

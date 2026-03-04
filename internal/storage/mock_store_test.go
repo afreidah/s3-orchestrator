@@ -205,7 +205,7 @@ func (m *mockStore) ListObjects(_ context.Context, _, startAfter string, _ int) 
 	return m.listObjectsResp, nil
 }
 
-func (m *mockStore) CreateMultipartUpload(_ context.Context, _, _, _, _ string) error {
+func (m *mockStore) CreateMultipartUpload(_ context.Context, _, _, _, _ string, _ map[string]string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.createMultipartErr

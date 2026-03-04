@@ -344,6 +344,34 @@ func TestCircuitBreaker_RecordObject_CircuitOpen(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
+// CreateMultipartUpload
+// -------------------------------------------------------------------------
+
+func TestCircuitBreaker_CreateMultipartUpload_Success(t *testing.T) {
+	mock := &mockStore{}
+	cb := newTestCB(mock, 3, time.Minute)
+
+	err := cb.CreateMultipartUpload(context.Background(), "upload-1", "key", "b1", "application/octet-stream", map[string]string{"project": "acme"})
+	if err != nil {
+		t.Fatalf("CreateMultipartUpload: %v", err)
+	}
+}
+
+func TestCircuitBreaker_CreateMultipartUpload_CircuitOpen(t *testing.T) {
+	dbErr := errors.New("connection refused")
+	mock := &mockStore{getAllLocationsErr: dbErr}
+	cb := newTestCB(mock, 1, time.Minute)
+
+	// Trip the circuit
+	_, _ = cb.GetAllObjectLocations(context.Background(), "key")
+
+	err := cb.CreateMultipartUpload(context.Background(), "upload-1", "key", "b1", "application/octet-stream", nil)
+	if !errors.Is(err, ErrDBUnavailable) {
+		t.Fatalf("expected ErrDBUnavailable, got %v", err)
+	}
+}
+
+// -------------------------------------------------------------------------
 // ListMultipartUploads
 // -------------------------------------------------------------------------
 

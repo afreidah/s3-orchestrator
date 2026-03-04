@@ -35,7 +35,23 @@ s3-orchestrator version
 
 ## Version History
 
-### v0.8.x (current)
+### v0.11.x (current)
+
+**New configuration fields:**
+
+- `rate_limit.cleanup_interval` -- stale entry eviction interval (default: 1m)
+- `rate_limit.cleanup_max_age` -- entries not seen within this window are evicted (default: 5m)
+
+**New features:**
+
+- `x-amz-meta-*` user metadata passthrough on PutObject, GetObject, HeadObject, CopyObject, and multipart uploads
+- `govulncheck` CI job for Go dependency vulnerability scanning
+
+**Database migrations:**
+
+- `00002_multipart_metadata.sql` -- adds `metadata` JSONB column to `multipart_uploads` table (auto-applied on startup)
+
+### v0.8.x
 
 **New configuration fields:**
 

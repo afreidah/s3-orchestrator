@@ -12,8 +12,8 @@ import (
 )
 
 const createMultipartUpload = `-- name: CreateMultipartUpload :exec
-INSERT INTO multipart_uploads (upload_id, object_key, backend_name, content_type, created_at)
-VALUES ($1, $2, $3, $4, NOW())
+INSERT INTO multipart_uploads (upload_id, object_key, backend_name, content_type, metadata, created_at)
+VALUES ($1, $2, $3, $4, $5, NOW())
 `
 
 type CreateMultipartUploadParams struct {
@@ -21,6 +21,7 @@ type CreateMultipartUploadParams struct {
 	ObjectKey   string
 	BackendName string
 	ContentType *string
+	Metadata    []byte
 }
 
 func (q *Queries) CreateMultipartUpload(ctx context.Context, arg CreateMultipartUploadParams) error {
@@ -29,6 +30,7 @@ func (q *Queries) CreateMultipartUpload(ctx context.Context, arg CreateMultipart
 		arg.ObjectKey,
 		arg.BackendName,
 		arg.ContentType,
+		arg.Metadata,
 	)
 	return err
 }
@@ -53,19 +55,29 @@ func (q *Queries) DeleteMultipartUploadsByBackend(ctx context.Context, backendNa
 }
 
 const getMultipartUpload = `-- name: GetMultipartUpload :one
-SELECT upload_id, object_key, backend_name, content_type, created_at
+SELECT upload_id, object_key, backend_name, content_type, metadata, created_at
 FROM multipart_uploads
 WHERE upload_id = $1
 `
 
-func (q *Queries) GetMultipartUpload(ctx context.Context, uploadID string) (MultipartUpload, error) {
+type GetMultipartUploadRow struct {
+	UploadID    string
+	ObjectKey   string
+	BackendName string
+	ContentType *string
+	Metadata    []byte
+	CreatedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) GetMultipartUpload(ctx context.Context, uploadID string) (GetMultipartUploadRow, error) {
 	row := q.db.QueryRow(ctx, getMultipartUpload, uploadID)
-	var i MultipartUpload
+	var i GetMultipartUploadRow
 	err := row.Scan(
 		&i.UploadID,
 		&i.ObjectKey,
 		&i.BackendName,
 		&i.ContentType,
+		&i.Metadata,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -111,25 +123,35 @@ func (q *Queries) GetParts(ctx context.Context, uploadID string) ([]GetPartsRow,
 }
 
 const getStaleMultipartUploads = `-- name: GetStaleMultipartUploads :many
-SELECT upload_id, object_key, backend_name, content_type, created_at
+SELECT upload_id, object_key, backend_name, content_type, metadata, created_at
 FROM multipart_uploads
 WHERE created_at < $1
 `
 
-func (q *Queries) GetStaleMultipartUploads(ctx context.Context, createdAt pgtype.Timestamptz) ([]MultipartUpload, error) {
+type GetStaleMultipartUploadsRow struct {
+	UploadID    string
+	ObjectKey   string
+	BackendName string
+	ContentType *string
+	Metadata    []byte
+	CreatedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) GetStaleMultipartUploads(ctx context.Context, createdAt pgtype.Timestamptz) ([]GetStaleMultipartUploadsRow, error) {
 	rows, err := q.db.Query(ctx, getStaleMultipartUploads, createdAt)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []MultipartUpload{}
+	items := []GetStaleMultipartUploadsRow{}
 	for rows.Next() {
-		var i MultipartUpload
+		var i GetStaleMultipartUploadsRow
 		if err := rows.Scan(
 			&i.UploadID,
 			&i.ObjectKey,
 			&i.BackendName,
 			&i.ContentType,
+			&i.Metadata,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err

@@ -172,7 +172,11 @@ rate_limit:
   enabled: true
   requests_per_sec: 100   # token refill rate
   burst: 200              # max burst size
+  cleanup_interval: "1m"  # eviction sweep interval (default: 1m)
+  cleanup_max_age: "5m"   # evict entries not seen within this window (default: 5m)
 ```
+
+A background goroutine evicts per-IP entries not seen within `cleanup_max_age` every `cleanup_interval`. Under sustained attack with high source-IP cardinality, the map can hold up to `cleanup_max_age` worth of unique IPs. Lower both values for tighter memory bounds.
 
 ### Behind a Reverse Proxy
 

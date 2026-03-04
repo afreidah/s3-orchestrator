@@ -17,6 +17,7 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -749,6 +750,7 @@ type MultipartUpload struct {
 	ObjectKey   string
 	BackendName string
 	ContentType string
+	Metadata    map[string]string
 	CreatedAt   time.Time
 }
 
@@ -761,12 +763,21 @@ type MultipartPart struct {
 }
 
 // CreateMultipartUpload records a new multipart upload in the database.
-func (s *Store) CreateMultipartUpload(ctx context.Context, uploadID, key, backend, contentType string) error {
+func (s *Store) CreateMultipartUpload(ctx context.Context, uploadID, key, backend, contentType string, metadata map[string]string) error {
+	var metaJSON []byte
+	if len(metadata) > 0 {
+		var err error
+		metaJSON, err = json.Marshal(metadata)
+		if err != nil {
+			return fmt.Errorf("failed to marshal metadata: %w", err)
+		}
+	}
 	err := s.queries.CreateMultipartUpload(ctx, db.CreateMultipartUploadParams{
 		UploadID:    uploadID,
 		ObjectKey:   key,
 		BackendName: backend,
 		ContentType: &contentType,
+		Metadata:    metaJSON,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create multipart upload: %w", err)
@@ -789,13 +800,19 @@ func (s *Store) GetMultipartUpload(ctx context.Context, uploadID string) (*Multi
 		ct = *row.ContentType
 	}
 
-	return &MultipartUpload{
+	mu := &MultipartUpload{
 		UploadID:    row.UploadID,
 		ObjectKey:   row.ObjectKey,
 		BackendName: row.BackendName,
 		ContentType: ct,
 		CreatedAt:   row.CreatedAt.Time,
-	}, nil
+	}
+	if len(row.Metadata) > 0 {
+		if err := json.Unmarshal(row.Metadata, &mu.Metadata); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
+		}
+	}
+	return mu, nil
 }
 
 // RecordPart records a completed part for a multipart upload.
@@ -858,13 +875,19 @@ func (s *Store) GetStaleMultipartUploads(ctx context.Context, olderThan time.Dur
 		if row.ContentType != nil {
 			ct = *row.ContentType
 		}
-		uploads[i] = MultipartUpload{
+		mu := MultipartUpload{
 			UploadID:    row.UploadID,
 			ObjectKey:   row.ObjectKey,
 			BackendName: row.BackendName,
 			ContentType: ct,
 			CreatedAt:   row.CreatedAt.Time,
 		}
+		if len(row.Metadata) > 0 {
+			if err := json.Unmarshal(row.Metadata, &mu.Metadata); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
+			}
+		}
+		uploads[i] = mu
 	}
 	return uploads, nil
 }
