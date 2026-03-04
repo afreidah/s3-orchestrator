@@ -66,9 +66,12 @@ Flags:
 		baseAddr = "http://" + baseAddr
 	}
 
-	token := cfg.UI.AdminKey
+	token := cfg.UI.AdminToken
 	if token == "" {
-		fmt.Fprintln(os.Stderr, "error: ui.admin_key is required in config for admin commands")
+		token = cfg.UI.AdminKey
+	}
+	if token == "" {
+		fmt.Fprintln(os.Stderr, "error: ui.admin_token or ui.admin_key is required in config for admin commands")
 		os.Exit(1)
 	}
 

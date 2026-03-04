@@ -24,11 +24,13 @@ Sessions are HMAC-SHA256 signed cookies with a 24-hour TTL.
 Admin API endpoints use token authentication via the `X-Admin-Token` header:
 
 ```bash
-curl -H "X-Admin-Token: YOUR_ADMIN_KEY" \
+curl -H "X-Admin-Token: YOUR_ADMIN_TOKEN" \
   http://localhost:9000/admin/api/status
 ```
 
-The token is the `ui.admin_key` value from the configuration file. The CLI subcommand (`s3-orchestrator admin`) handles this automatically.
+The token is the `ui.admin_token` value from the configuration file. If `admin_token` is not set, it falls back to `ui.admin_key`. The CLI subcommand (`s3-orchestrator admin`) handles this automatically.
+
+All JSON request bodies on admin and UI endpoints are limited to 1 MB.
 
 ## UI API Endpoints
 

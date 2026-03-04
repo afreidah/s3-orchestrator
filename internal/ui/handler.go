@@ -24,6 +24,7 @@ import (
 	"html/template"
 	"log/slog"
 	"mime"
+	"net"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -55,19 +56,23 @@ type Handler struct {
 	adminKey       string
 	adminSecret    string
 	sessionKey     []byte
+	forceSecure    bool
+	trustedProxies []*net.IPNet
 }
 
 // New creates a new UI handler.
 func New(manager *storage.BackendManager, dbHealthy func() bool, cfg *config.Config, logBuffer *telemetry.LogBuffer, loginThrottle *server.LoginThrottle) *Handler {
 	h := &Handler{
-		manager:       manager,
-		dbHealthy:     dbHealthy,
-		templates:     loadTemplates(),
-		logBuffer:     logBuffer,
-		loginThrottle: loginThrottle,
-		adminKey:      cfg.UI.AdminKey,
-		adminSecret:   cfg.UI.AdminSecret,
-		sessionKey:    deriveSessionKey(cfg.UI),
+		manager:        manager,
+		dbHealthy:      dbHealthy,
+		templates:      loadTemplates(),
+		logBuffer:      logBuffer,
+		loginThrottle:  loginThrottle,
+		adminKey:       cfg.UI.AdminKey,
+		adminSecret:    cfg.UI.AdminSecret,
+		sessionKey:     deriveSessionKey(&cfg.UI),
+		forceSecure:    cfg.UI.ForceSecureCookies,
+		trustedProxies: server.ParseTrustedProxies(cfg.RateLimit.TrustedProxies),
 	}
 	h.cfg.Store(cfg)
 	return h
@@ -77,7 +82,7 @@ func New(manager *storage.BackendManager, dbHealthy func() bool, cfg *config.Con
 // so that sessions survive restarts and are portable across instances sharing
 // the same config. If session_secret is set it takes precedence; otherwise
 // admin_secret is used as the key material.
-func deriveSessionKey(ui config.UIConfig) []byte {
+func deriveSessionKey(ui *config.UIConfig) []byte {
 	secret := ui.SessionSecret
 	if secret == "" {
 		secret = ui.AdminSecret
@@ -91,6 +96,12 @@ func deriveSessionKey(ui config.UIConfig) []byte {
 // Called on SIGHUP to keep the dashboard in sync with the running config.
 func (h *Handler) UpdateConfig(cfg *config.Config) {
 	h.cfg.Store(cfg)
+}
+
+// clientIP extracts the real client IP from the request, respecting
+// X-Forwarded-For when the peer is a trusted proxy.
+func (h *Handler) clientIP(r *http.Request) string {
+	return server.ExtractClientIP(r, h.trustedProxies)
 }
 
 // setSecurityHeaders adds security headers to dashboard responses.
@@ -166,7 +177,7 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request, accessKe
 		Path:     h.prefix + "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
-		Secure:   r.TLS != nil,
+		Secure:   h.forceSecure || r.TLS != nil,
 		MaxAge:   int(sessionTTL.Seconds()),
 	})
 }
@@ -239,8 +250,10 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if h.loginThrottle != nil && h.loginThrottle.IsLockedOut(r.RemoteAddr) {
-		slog.Warn("UI: login attempt while locked out", "remote_addr", r.RemoteAddr)
+	clientIP := h.clientIP(r)
+
+	if h.loginThrottle != nil && h.loginThrottle.IsLockedOut(clientIP) {
+		slog.Warn("UI: login attempt while locked out", "remote_addr", clientIP)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusTooManyRequests)
 		if err := h.templates.ExecuteTemplate(w, "login.html", loginPage{
@@ -259,9 +272,9 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	if !keyMatch || !checkSecret(h.adminSecret, secret) {
 		if h.loginThrottle != nil {
-			h.loginThrottle.RecordFailure(r.RemoteAddr)
+			h.loginThrottle.RecordFailure(clientIP)
 		}
-		slog.Warn("UI: failed login attempt", "remote_addr", r.RemoteAddr)
+		slog.Warn("UI: failed login attempt", "remote_addr", clientIP)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusUnauthorized)
 		if err := h.templates.ExecuteTemplate(w, "login.html", loginPage{
@@ -274,9 +287,9 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.loginThrottle != nil {
-		h.loginThrottle.RecordSuccess(r.RemoteAddr)
+		h.loginThrottle.RecordSuccess(clientIP)
 	}
-	slog.Info("UI: admin login", "remote_addr", r.RemoteAddr)
+	slog.Info("UI: admin login", "remote_addr", clientIP)
 	h.createSession(w, r, key)
 	http.Redirect(w, r, h.prefix+"/", http.StatusSeeOther)
 }
@@ -444,6 +457,8 @@ func (h *Handler) handleAPIDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+
 	var req struct {
 		Key string `json:"key"`
 	}
@@ -482,6 +497,8 @@ func (h *Handler) handleAPIDeletePrefix(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 		return
 	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 
 	var req struct {
 		Prefix string `json:"prefix"`
@@ -670,6 +687,8 @@ func (h *Handler) handleAPISync(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 		return
 	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 
 	var req struct {
 		Backend string `json:"backend"`

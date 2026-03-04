@@ -303,8 +303,12 @@ func runServe() {
 
 	// --- Admin API (all modes — operators need it everywhere) ---
 	if cfg.UI.AdminKey != "" {
+		adminToken := cfg.UI.AdminToken
+		if adminToken == "" {
+			adminToken = cfg.UI.AdminKey
+		}
 		adminMux := http.NewServeMux()
-		adminHandler := admin.New(manager, cbStore, cfg.UI.AdminKey, &logLevel)
+		adminHandler := admin.New(manager, cbStore, adminToken, &logLevel)
 		adminHandler.Register(adminMux)
 		var adminHTTP http.Handler = adminMux
 		if rl != nil {

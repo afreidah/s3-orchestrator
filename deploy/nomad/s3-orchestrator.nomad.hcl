@@ -242,6 +242,8 @@ job "s3-orchestrator" {
             enabled: true
             admin_key: "{{ .Data.data.ui_admin_key }}"
             admin_secret: "{{ .Data.data.ui_admin_secret }}"
+            admin_token: "{{ .Data.data.ui_admin_token }}"
+            force_secure_cookies: true
 
           # --- Object lifecycle ---
           # Auto-delete objects matching a prefix after the configured retention.
@@ -274,8 +276,8 @@ job "s3-orchestrator" {
       }
 
       resources {
-        cpu    = 256
-        memory = 256
+        cpu    = 1024
+        memory = 1024
       }
     }
   }

@@ -372,7 +372,9 @@ ui:
   path: "/ui"                          # URL prefix (default: /ui)
   admin_key: "${UI_ADMIN_KEY}"         # access key for dashboard login
   admin_secret: "${UI_ADMIN_SECRET}"   # secret key — plaintext or bcrypt hash
+  admin_token: "${UI_ADMIN_TOKEN}"     # separate token for admin API (defaults to admin_key)
   session_secret: "${UI_SESSION_SECRET}" # optional — for multi-instance session portability
+  force_secure_cookies: true           # always set Secure flag on cookies (for behind TLS proxy)
 ```
 
 Both `admin_key` and `admin_secret` are required when `enabled` is `true`. Generate them the same way as bucket credentials:
@@ -564,7 +566,7 @@ s3-orchestrator validate -config config.yaml
 
 ### admin
 
-Operational CLI for inspecting and controlling a running instance. Reads `config.yaml` to discover the server address and admin token (`ui.admin_key`), then makes HTTP requests to the admin API.
+Operational CLI for inspecting and controlling a running instance. Reads `config.yaml` to discover the server address and admin token (`ui.admin_token`, falling back to `ui.admin_key`), then makes HTTP requests to the admin API.
 
 ```bash
 s3-orchestrator admin [flags] <command>
@@ -617,7 +619,7 @@ s3-orchestrator admin remove-backend <backend-name>
 s3-orchestrator admin remove-backend <backend-name> --purge
 ```
 
-The admin API requires `ui.admin_key` to be set in the configuration. All requests are authenticated via the `X-Admin-Token` header.
+The admin API requires `ui.admin_token` (or `ui.admin_key` as fallback) to be set in the configuration. All requests are authenticated via the `X-Admin-Token` header.
 
 ## Importing Existing Data
 

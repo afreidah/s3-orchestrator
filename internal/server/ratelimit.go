@@ -138,18 +138,30 @@ func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 	})
 }
 
-// extractIP gets the client IP from the request. When trusted_proxies is
-// configured and the direct peer matches a trusted CIDR, the rightmost
-// untrusted IP in the X-Forwarded-For chain is used. Otherwise, RemoteAddr
-// is used directly.
+// extractIP gets the client IP from the request, delegating to ExtractClientIP.
 func (rl *RateLimiter) extractIP(r *http.Request) string {
+	return ExtractClientIP(r, rl.trustedProxies)
+}
+
+// ExtractClientIP returns the real client IP from a request. When
+// trustedProxies is non-empty and the direct peer matches a trusted CIDR,
+// the rightmost untrusted IP in the X-Forwarded-For chain is returned.
+// Otherwise, RemoteAddr is used directly. This is exported so that other
+// components (e.g. the login throttle) can share the same extraction logic.
+func ExtractClientIP(r *http.Request, trustedProxies []*net.IPNet) string {
 	peerIP := stripPort(r.RemoteAddr)
 
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" && len(rl.trustedProxies) > 0 && rl.isTrusted(peerIP) {
-		return rightmostUntrusted(xff, rl.trustedProxies)
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" && len(trustedProxies) > 0 && ipInNets(peerIP, trustedProxies) {
+		return rightmostUntrusted(xff, trustedProxies)
 	}
 
 	return peerIP
+}
+
+// ParseTrustedProxies parses CIDR strings into net.IPNet values for use with
+// ExtractClientIP. Invalid CIDRs are silently skipped.
+func ParseTrustedProxies(cidrs []string) []*net.IPNet {
+	return parseCIDRs(cidrs)
 }
 
 // rightmostUntrusted walks the XFF chain from right to left and returns the
@@ -170,11 +182,6 @@ func rightmostUntrusted(xff string, trusted []*net.IPNet) string {
 
 	// All IPs in the chain are trusted; use the leftmost as a fallback
 	return strings.TrimSpace(parts[0])
-}
-
-// isTrusted checks whether the given IP falls within any trusted CIDR.
-func (rl *RateLimiter) isTrusted(ip string) bool {
-	return ipInNets(ip, rl.trustedProxies)
 }
 
 // ipInNets checks whether the given IP string falls within any of the

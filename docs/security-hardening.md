@@ -79,7 +79,7 @@ The config file contains sensitive credentials:
 
 - Database password (`database.password`)
 - Backend S3 credentials (`backends[].access_key_id`, `backends[].secret_access_key`)
-- UI admin credentials (`ui.admin_key`, `ui.admin_secret`)
+- UI admin credentials (`ui.admin_key`, `ui.admin_secret`, `ui.admin_token`)
 - Client S3 credentials (`buckets[].credentials[]`)
 
 ### Recommendations
@@ -112,6 +112,15 @@ Provide the environment variables via systemd `EnvironmentFile`, Vault agent inj
 - **Storage backends** (if self-hosted like MinIO) should only be reachable from orchestrator instances.
 - **The orchestrator** is the only component that needs to be exposed to clients.
 - **Admin API** (`/admin/api/`) is protected by token auth and per-IP rate limiting (when enabled). Consider additionally restricting access at the network level (firewall rules or reverse proxy ACLs) for defense in depth.
+
+### Kubernetes Hardening
+
+The provided Kubernetes manifests include several security measures:
+
+- **seccompProfile: RuntimeDefault** — applies the default seccomp profile to restrict syscalls
+- **automountServiceAccountToken: false** — the orchestrator does not need Kubernetes API access
+- **NetworkPolicy** — restricts ingress to port 9000 only; egress is permissive since backend endpoints are config-driven
+- **readOnlyRootFilesystem**, **runAsNonRoot**, **capabilities.drop: ALL** — standard container hardening (see `deploy/kubernetes/deployment.yaml`)
 
 ```
 Internet --> Reverse Proxy --> S3 Orchestrator --> PostgreSQL (private)
@@ -194,7 +203,35 @@ rate_limit:
 
 Without this, all requests appear to come from the proxy IP and share a single rate limit bucket.
 
+The login throttle (brute-force protection on the dashboard login) also uses the same `trusted_proxies` configuration and IP extraction logic, so it correctly identifies real client IPs behind a reverse proxy.
+
+## Request Body Limits
+
+All admin and UI JSON endpoints enforce a 1 MB request body limit via `http.MaxBytesReader`. This prevents memory exhaustion from oversized payloads. File uploads use the configured `max_object_size` limit instead. These limits are built-in and not user-configurable.
+
 ## Web UI Authentication
+
+### Admin Token Separation
+
+By default, the admin API (`/admin/api/`) uses the same `admin_key` as the dashboard login. For production deployments, set a separate `admin_token` so the dashboard login credential and the API token can be managed independently:
+
+```yaml
+ui:
+  admin_key: "dashboard-login-key"
+  admin_secret: "dashboard-login-secret"
+  admin_token: "separate-api-token"    # falls back to admin_key if not set
+```
+
+### Secure Cookies Behind TLS Proxies
+
+When the orchestrator sits behind a TLS-terminating reverse proxy (Traefik, nginx, ALB), the connection to the container is plaintext HTTP, so `r.TLS` is nil and the `Secure` flag is not set on session cookies by default. Set `force_secure_cookies` to always set the `Secure` flag:
+
+```yaml
+ui:
+  force_secure_cookies: true
+```
+
+This ensures browsers only send the session cookie over HTTPS, even though the orchestrator itself sees HTTP.
 
 ### Bcrypt-Hashed Admin Secret
 
@@ -226,4 +263,4 @@ For multi-instance deployments behind a load balancer, ensure all instances use 
 
 S3 client credentials can be rotated without downtime using the SIGHUP reload mechanism. See the [admin guide](admin-guide.md#rotating-client-credentials) for the zero-downtime rotation procedure.
 
-The admin API token (`ui.admin_key`) requires a restart to change since the UI config section is not reloadable.
+The admin API token (`ui.admin_token`, or `ui.admin_key` if `admin_token` is not set) requires a restart to change since the UI config section is not reloadable.

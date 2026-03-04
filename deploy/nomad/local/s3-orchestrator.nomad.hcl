@@ -110,10 +110,10 @@ job "s3-orchestrator" {
             open_timeout: "15s"
             cache_ttl: "60s"
 
-          # backend_circuit_breaker:
-          #   enabled: true
-          #   failure_threshold: 5
-          #   open_timeout: "5m"
+          backend_circuit_breaker:
+            enabled: true
+            failure_threshold: 3
+            open_timeout: "15s"
 
           telemetry:
             metrics:
@@ -123,6 +123,8 @@ job "s3-orchestrator" {
             enabled: true
             admin_key: "admin"
             admin_secret: "admin"
+            # admin_token: "separate-token"     # Separate token for admin API (defaults to admin_key)
+            # force_secure_cookies: false        # Local dev — no TLS proxy
         YAML
       }
 
