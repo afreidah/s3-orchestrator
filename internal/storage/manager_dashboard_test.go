@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
 func TestGetDashboardData_Success(t *testing.T) {
@@ -129,6 +130,68 @@ func TestGetDashboardData_ListDirChildrenError(t *testing.T) {
 	_, err := mgr.GetDashboardData(context.Background())
 	if err == nil {
 		t.Fatal("expected error from GetDashboardData")
+	}
+}
+
+func TestGetDashboardData_UnhealthyBackends(t *testing.T) {
+	store := &mockStore{
+		getQuotaStatsResp:      map[string]QuotaStat{"b1": {}},
+		getObjectCountsResp:    map[string]int64{"b1": 0},
+		getActiveMultipartResp: map[string]int64{"b1": 0},
+		getUsageForPeriodResp:  map[string]UsageStat{},
+		listDirChildrenResp:    &DirectoryListResult{},
+	}
+
+	// Create a manager with a CircuitBreakerBackend in open state
+	mock := newMockBackend()
+	mock.putErr = errors.New("down")
+	cbBackend := NewCircuitBreakerBackend(mock, "b1", 1, time.Minute)
+	// Trip the circuit
+	_, _ = cbBackend.PutObject(context.Background(), "k", nil, 0, "", nil)
+
+	mgr := NewBackendManager(&BackendManagerConfig{
+		Backends:        map[string]ObjectBackend{"b1": cbBackend},
+		Store:           store,
+		Order:           []string{"b1"},
+		RoutingStrategy: "pack",
+	})
+	defer mgr.Close()
+
+	data, err := mgr.GetDashboardData(context.Background())
+	if err != nil {
+		t.Fatalf("GetDashboardData: %v", err)
+	}
+	if !data.UnhealthyBackends["b1"] {
+		t.Error("expected b1 to be marked unhealthy")
+	}
+}
+
+func TestGetDashboardData_HealthyBackendsNotMarked(t *testing.T) {
+	store := &mockStore{
+		getQuotaStatsResp:      map[string]QuotaStat{"b1": {}},
+		getObjectCountsResp:    map[string]int64{"b1": 0},
+		getActiveMultipartResp: map[string]int64{"b1": 0},
+		getUsageForPeriodResp:  map[string]UsageStat{},
+		listDirChildrenResp:    &DirectoryListResult{},
+	}
+
+	// Healthy CB backend — circuit is closed
+	cbBackend := NewCircuitBreakerBackend(newMockBackend(), "b1", 5, time.Minute)
+
+	mgr := NewBackendManager(&BackendManagerConfig{
+		Backends:        map[string]ObjectBackend{"b1": cbBackend},
+		Store:           store,
+		Order:           []string{"b1"},
+		RoutingStrategy: "pack",
+	})
+	defer mgr.Close()
+
+	data, err := mgr.GetDashboardData(context.Background())
+	if err != nil {
+		t.Fatalf("GetDashboardData: %v", err)
+	}
+	if data.UnhealthyBackends["b1"] {
+		t.Error("healthy backend should not be marked unhealthy")
 	}
 }
 
