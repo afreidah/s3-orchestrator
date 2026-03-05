@@ -1,5 +1,3 @@
-# Security Hardening
-
 This guide covers recommended security practices for production deployments of the S3 Orchestrator.
 
 ## TLS Configuration

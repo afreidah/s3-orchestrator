@@ -1,5 +1,3 @@
-# Style Guide
-
 **Author:** Alex Freidah
 
 ---

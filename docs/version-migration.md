@@ -1,5 +1,3 @@
-# Version Migration
-
 This document covers upgrading between versions of the S3 Orchestrator, including database migrations, configuration changes, and breaking changes.
 
 ## How Upgrades Work

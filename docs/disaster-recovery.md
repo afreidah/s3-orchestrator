@@ -1,5 +1,3 @@
-# Disaster Recovery
-
 This guide covers failure scenarios and recovery procedures for the S3 Orchestrator.
 
 ## Architecture Context
