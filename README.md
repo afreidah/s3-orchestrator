@@ -235,9 +235,11 @@ Objects are encrypted in fixed-size chunks (default 64 KB), so range requests (`
 **Key features:**
 - **Chunked AES-256-GCM** — each chunk has an independent nonce derived from a base nonce XORed with the chunk index, enabling random-access decryption
 - **Envelope encryption** — per-object DEKs mean rotating the master key only requires re-wrapping DEKs, not re-encrypting data
-- **Key rotation** — add the new master key, move the old one to `previous_keys`, and call the `rotate-encryption-key` admin API to re-wrap all DEKs
+- **Key rotation** — add the new master key, move the old one to `previous_keys`, and call the `rotate-encryption-key` admin API to re-wrap DEKs still using the old key
 - **Encrypt existing data** — the `encrypt-existing` admin API encrypts all unencrypted objects in-place without downtime
 - **Vault Transit support** — delegate key management to HashiCorp Vault for HSM-backed key storage
+
+**Compatibility with backend-side encryption:** If your backend already has its own server-side encryption (e.g., AWS SSE-S3 or SSE-KMS), both layers work independently. The orchestrator encrypts before uploading and the backend encrypts the ciphertext again at rest. On read, the backend decrypts its layer and returns the orchestrator's ciphertext, which the orchestrator then decrypts. This is harmless but redundant — you can safely disable the backend's encryption to avoid unnecessary KMS costs.
 
 See the [Admin Guide](docs/admin-guide.md#encryption) for setup, key rotation, and encrypting existing data.
 
