@@ -4,9 +4,6 @@ linkTitle: "Version Migration"
 weight: 8
 ---
 
-<div style="text-align: center; margin-bottom: 1.5rem;">
-  <img src="/images/logo.png" alt="s3-orchestrator" style="max-width: 200px; height: auto;">
-</div>
 
 This document covers upgrading between versions of the S3 Orchestrator, including database migrations, configuration changes, and breaking changes.
 

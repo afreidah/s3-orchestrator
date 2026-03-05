@@ -5,9 +5,6 @@ chapter: true
 weight: 20
 ---
 
-<div style="text-align: center; margin-bottom: 1.5rem;">
-  <img src="/images/logo.png" alt="s3-orchestrator" style="max-width: 200px; height: auto;">
-</div>
 
 <div class="landing-subheader">Comprehensive documentation for deploying, configuring, and operating the S3 Orchestrator.</div>
 

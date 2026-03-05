@@ -198,11 +198,11 @@ web-tools: ## Install Hugo and gomarkdoc for local website development
 
 web-godoc: ## Generate Go API reference markdown for the website
 	@mkdir -p web/content/godoc
-	@printf -- '---\ntitle: "Go API Reference"\nchapter: true\nweight: 40\n---\n\nGenerated documentation for the Go packages in this project.\n' > web/content/godoc/_index.md
 	@for pkg in $(GODOC_PKGS); do \
 		echo "  godoc: internal/$$pkg"; \
 		printf -- '---\ntitle: "%s"\n---\n\n' "$$pkg" > web/content/godoc/$$pkg.md; \
 		gomarkdoc ./internal/$$pkg >> web/content/godoc/$$pkg.md; \
+		sed -i '/^# '"$$pkg"'$$/d' web/content/godoc/$$pkg.md; \
 	done
 
 web-serve: web-godoc ## Serve the project website locally

@@ -4,9 +4,6 @@ linkTitle: "Security Hardening"
 weight: 5
 ---
 
-<div style="text-align: center; margin-bottom: 1.5rem;">
-  <img src="/images/logo.png" alt="s3-orchestrator" style="max-width: 200px; height: auto;">
-</div>
 
 This guide covers recommended security practices for production deployments of the S3 Orchestrator.
 

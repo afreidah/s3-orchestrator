@@ -3,9 +3,6 @@ title: "Encrypting Existing Data"
 weight: 1
 ---
 
-<div style="text-align: center; margin-bottom: 1.5rem;">
-  <img src="/images/logo.png" alt="s3-orchestrator" style="max-width: 200px; height: auto;">
-</div>
 
 This guide walks through enabling server-side encryption on an S3 Orchestrator instance that already has unencrypted objects stored across its backends.
 

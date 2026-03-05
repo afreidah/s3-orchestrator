@@ -3,9 +3,6 @@ title: "Maximizing Free Tiers"
 weight: 3
 ---
 
-<div style="text-align: center; margin-bottom: 1.5rem;">
-  <img src="/images/logo.png" alt="s3-orchestrator" style="max-width: 200px; height: auto;">
-</div>
 
 This guide walks through combining free-tier object storage from multiple cloud providers into a single, larger storage pool using S3 Orchestrator, from creating provider accounts to connecting your first application.
 

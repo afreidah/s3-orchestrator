@@ -3,9 +3,6 @@ title: "Key Rotation"
 weight: 2
 ---
 
-<div style="text-align: center; margin-bottom: 1.5rem;">
-  <img src="/images/logo.png" alt="s3-orchestrator" style="max-width: 200px; height: auto;">
-</div>
 
 This guide walks through rotating the encryption master key on a running S3 Orchestrator. Key rotation re-wraps data encryption keys (DEKs) with a new master key - it's a metadata-only operation and is fast regardless of object sizes.
 
