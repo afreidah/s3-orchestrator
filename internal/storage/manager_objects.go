@@ -30,6 +30,17 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+// wrapReader returns an io.ReadCloser that reads from r but closes c.
+// Used to replace io.NopCloser when the decrypt reader wraps a backend
+// response body — Close must still reach the original body so the
+// underlying HTTP connection is released.
+func wrapReader(r io.Reader, c io.Closer) io.ReadCloser {
+	return struct {
+		io.Reader
+		io.Closer
+	}{Reader: r, Closer: c}
+}
+
 // -------------------------------------------------------------------------
 // OBJECT CRUD
 // -------------------------------------------------------------------------
@@ -76,9 +87,11 @@ func (m *BackendManager) PutObject(ctx context.Context, key string, body io.Read
 	if m.encryptor != nil {
 		encResult, err := m.encryptor.Encrypt(ctx, body, size)
 		if err != nil {
+			telemetry.EncryptionErrorsTotal.WithLabelValues("encrypt", "encrypt_failed").Inc()
 			span.SetStatus(codes.Error, err.Error())
 			return "", fmt.Errorf("encrypt: %w", err)
 		}
+		telemetry.EncryptionOpsTotal.WithLabelValues("encrypt").Inc()
 		uploadBody = encResult.Body
 		uploadSize = encResult.CiphertextSize
 		enc = &EncryptionMeta{
@@ -169,8 +182,8 @@ func (m *BackendManager) withReadFailover(ctx context.Context, operation, key st
 
 		bctx, bcancel := m.withTimeout(ctx)
 		size, err := tryBackend(bctx, loc.BackendName, backend)
-		bcancel()
 		if err != nil {
+			bcancel()
 			lastErr = err
 			if errors.Is(err, errUsageLimitSkip) {
 				limitSkips++
@@ -215,7 +228,6 @@ func (m *BackendManager) broadcastRead(ctx context.Context, operation, key strin
 		if backend, exists := m.backends[cachedBackend]; exists {
 			bctx, bcancel := m.withTimeout(ctx)
 			size, err := tryBackend(bctx, cachedBackend, backend)
-			bcancel()
 			if err == nil {
 				m.recordOperation(operation, cachedBackend, start, nil)
 				span.SetAttributes(attribute.Bool("s3proxy.cache_hit", true))
@@ -224,6 +236,7 @@ func (m *BackendManager) broadcastRead(ctx context.Context, operation, key strin
 				telemetry.DegradedCacheHitsTotal.Inc()
 				return cachedBackend, nil
 			}
+			bcancel()
 			// Cache hit but backend failed — fall through to broadcast
 		}
 	}
@@ -244,8 +257,8 @@ func (m *BackendManager) sequentialBroadcastRead(ctx context.Context, operation,
 		}
 		bctx, bcancel := m.withTimeout(ctx)
 		size, err := tryBackend(bctx, name, backend)
-		bcancel()
 		if err != nil {
+			bcancel()
 			lastErr = err
 			continue
 		}
@@ -280,9 +293,6 @@ func (m *BackendManager) parallelBroadcastRead(ctx context.Context, operation, k
 		err  error
 	}
 
-	bctx, bcancel := context.WithCancel(ctx)
-	defer bcancel()
-
 	launched := 0
 	ch := make(chan broadcastResult, len(m.order))
 
@@ -293,9 +303,14 @@ func (m *BackendManager) parallelBroadcastRead(ctx context.Context, operation, k
 		}
 		launched++
 		go func(beName string, be ObjectBackend) {
-			tctx, tcancel := m.withTimeout(bctx)
-			defer tcancel()
+			tctx, tcancel := m.withTimeout(ctx)
 			size, err := tryBackend(tctx, beName, be)
+			if err != nil {
+				tcancel()
+			}
+			// On success, don't cancel — the body may still be streaming.
+			// The timeout context expires naturally; losing goroutines'
+			// bodies are closed by the once.Do guard in the callback.
 			ch <- broadcastResult{name: beName, size: size, err: err}
 		}(name, backend)
 	}
@@ -308,8 +323,7 @@ func (m *BackendManager) parallelBroadcastRead(ctx context.Context, operation, k
 			continue
 		}
 
-		// First success — cancel remaining goroutines
-		bcancel()
+		// First success — don't cancel the winning context
 		m.cache.Set(key, r.name)
 		m.recordOperation(operation, r.name, start, nil)
 		span.SetAttributes(telemetry.AttrBackendName.String(r.name))
@@ -390,6 +404,7 @@ func (m *BackendManager) GetObject(ctx context.Context, key string, rangeHeader 
 		if loc != nil && loc.Encrypted && m.encryptor != nil {
 			baseNonce, wrappedDEK, unpackErr := encryption.UnpackKeyData(loc.EncryptionKey)
 			if unpackErr != nil {
+				telemetry.EncryptionErrorsTotal.WithLabelValues("decrypt", "unpack_failed").Inc()
 				_ = r.Body.Close()
 				return 0, fmt.Errorf("unpack key data: %w", unpackErr)
 			}
@@ -398,20 +413,24 @@ func (m *BackendManager) GetObject(ctx context.Context, key string, rangeHeader 
 				// Range request: decrypt only the fetched chunks
 				plainReader, plainLen, decErr := m.encryptor.DecryptRange(ctx, r.Body, wrappedDEK, loc.KeyID, rng, baseNonce)
 				if decErr != nil {
+					telemetry.EncryptionErrorsTotal.WithLabelValues("decrypt_range", "decrypt_failed").Inc()
 					_ = r.Body.Close()
 					return 0, fmt.Errorf("decrypt range: %w", decErr)
 				}
-				r.Body = io.NopCloser(plainReader)
+				telemetry.EncryptionOpsTotal.WithLabelValues("decrypt_range").Inc()
+				r.Body = wrapReader(plainReader, r.Body)
 				r.Size = plainLen
 				r.ContentRange = fmt.Sprintf("bytes %d-%d/%d", ptStart, ptEnd, loc.PlaintextSize)
 			} else {
 				// Full read: decrypt the entire ciphertext stream
 				decrypted, decErr := m.encryptor.Decrypt(ctx, r.Body, wrappedDEK, loc.KeyID)
 				if decErr != nil {
+					telemetry.EncryptionErrorsTotal.WithLabelValues("decrypt", "decrypt_failed").Inc()
 					_ = r.Body.Close()
 					return 0, fmt.Errorf("decrypt: %w", decErr)
 				}
-				r.Body = io.NopCloser(decrypted)
+				telemetry.EncryptionOpsTotal.WithLabelValues("decrypt").Inc()
+				r.Body = wrapReader(decrypted, r.Body)
 				r.Size = loc.PlaintextSize
 			}
 		}

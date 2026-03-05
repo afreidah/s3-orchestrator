@@ -494,9 +494,9 @@ func runServe() {
 
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-		<-sigChan
+		sig := <-sigChan
 
-		slog.Info("Shutting down")
+		slog.Info("Shutting down", "signal", sig.String())
 
 		// Toggle readiness off so load balancers stop routing new traffic
 		ready.Store(false)

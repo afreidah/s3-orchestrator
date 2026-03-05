@@ -120,9 +120,11 @@ func (m *BackendManager) UploadPart(ctx context.Context, uploadID string, partNu
 	if m.encryptor != nil {
 		encResult, encErr := m.encryptor.Encrypt(ctx, body, size)
 		if encErr != nil {
+			telemetry.EncryptionErrorsTotal.WithLabelValues("encrypt", "encrypt_failed").Inc()
 			span.SetStatus(codes.Error, encErr.Error())
 			return "", fmt.Errorf("encrypt part: %w", encErr)
 		}
+		telemetry.EncryptionOpsTotal.WithLabelValues("encrypt").Inc()
 		uploadBody = encResult.Body
 		uploadSize = encResult.CiphertextSize
 		enc = &EncryptionMeta{
@@ -250,6 +252,7 @@ func (m *BackendManager) CompleteMultipartUpload(ctx context.Context, uploadID s
 			if part.Encrypted && m.encryptor != nil {
 				_, wrappedDEK, unpackErr := encryption.UnpackKeyData(part.EncryptionKey)
 				if unpackErr != nil {
+					telemetry.EncryptionErrorsTotal.WithLabelValues("decrypt", "unpack_failed").Inc()
 					_ = result.Body.Close()
 					bcancel()
 					pw.CloseWithError(fmt.Errorf("unpack part %d key: %w", part.PartNumber, unpackErr))
@@ -257,11 +260,13 @@ func (m *BackendManager) CompleteMultipartUpload(ctx context.Context, uploadID s
 				}
 				decrypted, decErr := m.encryptor.Decrypt(pipeCtx, result.Body, wrappedDEK, part.KeyID)
 				if decErr != nil {
+					telemetry.EncryptionErrorsTotal.WithLabelValues("decrypt", "decrypt_failed").Inc()
 					_ = result.Body.Close()
 					bcancel()
 					pw.CloseWithError(fmt.Errorf("decrypt part %d: %w", part.PartNumber, decErr))
 					return
 				}
+				telemetry.EncryptionOpsTotal.WithLabelValues("decrypt").Inc()
 				src = decrypted
 			}
 
@@ -283,9 +288,11 @@ func (m *BackendManager) CompleteMultipartUpload(ctx context.Context, uploadID s
 	if m.encryptor != nil {
 		encResult, encErr := m.encryptor.Encrypt(ctx, pr, totalPlaintextSize)
 		if encErr != nil {
+			telemetry.EncryptionErrorsTotal.WithLabelValues("encrypt", "encrypt_failed").Inc()
 			span.SetStatus(codes.Error, encErr.Error())
 			return "", fmt.Errorf("encrypt final object: %w", encErr)
 		}
+		telemetry.EncryptionOpsTotal.WithLabelValues("encrypt").Inc()
 		uploadBody = encResult.Body
 		uploadSize = encResult.CiphertextSize
 		enc = &EncryptionMeta{

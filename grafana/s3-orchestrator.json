@@ -741,7 +741,7 @@
       "type": "stat",
       "id": 28,
       "title": "Replication Pending",
-      "gridPos": { "x": 0, "y": 49, "w": 6, "h": 6 },
+      "gridPos": { "x": 0, "y": 49, "w": 5, "h": 6 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -773,7 +773,7 @@
       "type": "timeseries",
       "id": 29,
       "title": "Copies Created",
-      "gridPos": { "x": 6, "y": 49, "w": 6, "h": 6 },
+      "gridPos": { "x": 5, "y": 49, "w": 5, "h": 6 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -800,7 +800,7 @@
       "type": "timeseries",
       "id": 30,
       "title": "Replication Errors",
-      "gridPos": { "x": 12, "y": 49, "w": 6, "h": 6 },
+      "gridPos": { "x": 10, "y": 49, "w": 5, "h": 6 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -826,7 +826,7 @@
       "type": "timeseries",
       "id": 31,
       "title": "Replication Duration (p95)",
-      "gridPos": { "x": 18, "y": 49, "w": 6, "h": 6 },
+      "gridPos": { "x": 15, "y": 49, "w": 5, "h": 6 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -841,6 +841,32 @@
       "fieldConfig": {
         "defaults": {
           "unit": "s",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 57,
+      "title": "Replication Runs",
+      "gridPos": { "x": 20, "y": 49, "w": 4, "h": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (status) (rate(s3proxy_replication_runs_total[5m]))",
+          "legendFormat": "{{status}}"
+        }
+      ],
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
           "custom": {
             "lineWidth": 2,
             "fillOpacity": 10,
@@ -1093,7 +1119,7 @@
       "type": "timeseries",
       "id": 41,
       "title": "Rebalance Runs",
-      "gridPos": { "x": 0, "y": 72, "w": 8, "h": 8 },
+      "gridPos": { "x": 0, "y": 72, "w": 6, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -1119,7 +1145,7 @@
       "type": "timeseries",
       "id": 42,
       "title": "Objects / Bytes Moved",
-      "gridPos": { "x": 8, "y": 72, "w": 8, "h": 8 },
+      "gridPos": { "x": 6, "y": 72, "w": 6, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -1159,7 +1185,7 @@
       "type": "timeseries",
       "id": 43,
       "title": "Rebalance Duration (p95)",
-      "gridPos": { "x": 16, "y": 72, "w": 8, "h": 8 },
+      "gridPos": { "x": 12, "y": 72, "w": 6, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -1174,6 +1200,32 @@
       "fieldConfig": {
         "defaults": {
           "unit": "s",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 58,
+      "title": "Rebalance Skipped",
+      "gridPos": { "x": 18, "y": 72, "w": 6, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (reason) (rate(s3proxy_rebalance_skipped_total[5m]))",
+          "legendFormat": "{{reason}}"
+        }
+      ],
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
           "custom": {
             "lineWidth": 2,
             "fillOpacity": 10,
@@ -1405,6 +1457,95 @@
             "gradientMode": "scheme",
             "showPoints": "never",
             "stacking": { "mode": "normal" }
+          }
+        }
+      }
+    },
+    {
+      "type": "row",
+      "id": 53,
+      "title": "Encryption",
+      "gridPos": { "x": 0, "y": 96, "w": 24, "h": 1 },
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "id": 54,
+      "title": "Encryption Operations",
+      "gridPos": { "x": 0, "y": 97, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (op) (rate(s3proxy_encryption_operations_total[5m]))",
+          "legendFormat": "{{op}}"
+        }
+      ],
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 55,
+      "title": "Encryption Errors",
+      "gridPos": { "x": 8, "y": 97, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (op, error_type) (rate(s3proxy_encryption_errors_total[5m]))",
+          "legendFormat": "{{op}} ({{error_type}})"
+        }
+      ],
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 56,
+      "title": "Encrypt Existing / Key Rotation",
+      "gridPos": { "x": 16, "y": 97, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (status) (rate(s3proxy_encrypt_existing_objects_total[5m]))",
+          "legendFormat": "encrypt-existing {{status}}"
+        },
+        {
+          "expr": "sum by (status) (rate(s3proxy_key_rotation_objects_total[5m]))",
+          "legendFormat": "key-rotation {{status}}"
+        }
+      ],
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
           }
         }
       }

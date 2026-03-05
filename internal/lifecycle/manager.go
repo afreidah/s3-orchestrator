@@ -16,6 +16,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"runtime/debug"
 	"sync"
 	"time"
 )
@@ -95,6 +96,7 @@ func (m *Manager) supervise(ctx context.Context, e entry) {
 					slog.Error("Service panicked, restarting",
 						"service", e.name,
 						"panic", fmt.Sprint(r),
+						"stack", string(debug.Stack()),
 					)
 				}
 			}()

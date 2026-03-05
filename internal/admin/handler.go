@@ -72,6 +72,7 @@ func (h *Handler) requireToken(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := r.Header.Get("X-Admin-Token")
 		if token == "" || subtle.ConstantTimeCompare([]byte(token), []byte(h.token)) != 1 {
+			slog.Warn("Admin: unauthorized request", "path", r.URL.Path, "remote", r.RemoteAddr)
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 			return
 		}
