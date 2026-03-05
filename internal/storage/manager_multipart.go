@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/audit"
+	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -112,18 +113,40 @@ func (m *BackendManager) UploadPart(ctx context.Context, uploadID string, partNu
 		return "", ErrInsufficientStorage
 	}
 
+	// Encrypt if enabled
+	var enc *EncryptionMeta
+	uploadBody := body
+	uploadSize := size
+	if m.encryptor != nil {
+		encResult, encErr := m.encryptor.Encrypt(ctx, body, size)
+		if encErr != nil {
+			telemetry.EncryptionErrorsTotal.WithLabelValues("encrypt", "encrypt_failed").Inc()
+			span.SetStatus(codes.Error, encErr.Error())
+			return "", fmt.Errorf("encrypt part: %w", encErr)
+		}
+		telemetry.EncryptionOpsTotal.WithLabelValues("encrypt").Inc()
+		uploadBody = encResult.Body
+		uploadSize = encResult.CiphertextSize
+		enc = &EncryptionMeta{
+			Encrypted:     true,
+			EncryptionKey: encryption.PackKeyData(encResult.BaseNonce, encResult.WrappedDEK),
+			KeyID:         encResult.KeyID,
+			PlaintextSize: size,
+		}
+	}
+
 	// Store part under a temp key
 	partKey := multipartPartKey(uploadID, partNumber)
 	bctx, bcancel := m.withTimeout(ctx)
 	defer bcancel()
-	etag, err := backend.PutObject(bctx, partKey, body, size, "application/octet-stream", nil)
+	etag, err := backend.PutObject(bctx, partKey, uploadBody, uploadSize, "application/octet-stream", nil)
 	if err != nil {
 		m.usage.Record(mu.BackendName, 1, 0, 0) // API call was made even on failure
 		span.SetStatus(codes.Error, err.Error())
 		return "", fmt.Errorf("failed to upload part: %w", err)
 	}
 
-	if err := m.store.RecordPart(ctx, uploadID, partNumber, etag, size); err != nil {
+	if err := m.store.RecordPart(ctx, uploadID, partNumber, etag, uploadSize, enc); err != nil {
 		slog.Error("RecordPart failed, cleaning up part object",
 			"upload_id", uploadID, "part", partNumber, "error", err)
 		if delErr := backend.DeleteObject(ctx, partKey); delErr != nil {
@@ -193,17 +216,22 @@ func (m *BackendManager) CompleteMultipartUpload(ctx context.Context, uploadID s
 		return a.PartNumber - b.PartNumber
 	})
 
-	// Calculate total size for the combined upload
-	var totalSize int64
+	// Calculate total plaintext size for the combined upload. When parts are
+	// encrypted, PlaintextSize holds the original size; otherwise SizeBytes.
+	var totalPlaintextSize int64
+	anyEncrypted := false
 	for _, part := range parts {
-		totalSize += part.SizeBytes
+		if part.Encrypted {
+			totalPlaintextSize += part.PlaintextSize
+			anyEncrypted = true
+		} else {
+			totalPlaintextSize += part.SizeBytes
+		}
 	}
 
-	// Stream parts sequentially through a pipe to avoid opening all backend
-	// connections simultaneously. The goroutine reads one part at a time and
-	// writes it to the pipe; the PutObject call reads from the other end.
-	// pipeCtx is cancelled when PutObject returns so an early failure doesn't
-	// leave the goroutine blocked on remaining GetObject calls.
+	// Stream parts sequentially through a pipe. When parts are encrypted,
+	// each part is decrypted inline so the pipe carries plaintext. The main
+	// goroutine then optionally re-encrypts as a single final object.
 	pr, pw := io.Pipe()
 	pipeCtx, pipeCancel := context.WithCancel(ctx)
 	defer pipeCancel()
@@ -219,7 +247,30 @@ func (m *BackendManager) CompleteMultipartUpload(ctx context.Context, uploadID s
 				pw.CloseWithError(fmt.Errorf("failed to read part %d: %w", part.PartNumber, err))
 				return
 			}
-			_, err = io.Copy(pw, result.Body)
+
+			var src io.Reader = result.Body
+			if part.Encrypted && m.encryptor != nil {
+				_, wrappedDEK, unpackErr := encryption.UnpackKeyData(part.EncryptionKey)
+				if unpackErr != nil {
+					telemetry.EncryptionErrorsTotal.WithLabelValues("decrypt", "unpack_failed").Inc()
+					_ = result.Body.Close()
+					bcancel()
+					pw.CloseWithError(fmt.Errorf("unpack part %d key: %w", part.PartNumber, unpackErr))
+					return
+				}
+				decrypted, decErr := m.encryptor.Decrypt(pipeCtx, result.Body, wrappedDEK, part.KeyID)
+				if decErr != nil {
+					telemetry.EncryptionErrorsTotal.WithLabelValues("decrypt", "decrypt_failed").Inc()
+					_ = result.Body.Close()
+					bcancel()
+					pw.CloseWithError(fmt.Errorf("decrypt part %d: %w", part.PartNumber, decErr))
+					return
+				}
+				telemetry.EncryptionOpsTotal.WithLabelValues("decrypt").Inc()
+				src = decrypted
+			}
+
+			_, err = io.Copy(pw, src)
 			_ = result.Body.Close()
 			bcancel()
 			if err != nil {
@@ -229,15 +280,42 @@ func (m *BackendManager) CompleteMultipartUpload(ctx context.Context, uploadID s
 		}
 	}()
 
+	// When encryption is enabled, re-encrypt the combined plaintext as a
+	// single object with unified chunk boundaries. Otherwise upload as-is.
+	var enc *EncryptionMeta
+	var uploadBody io.Reader = pr
+	uploadSize := totalPlaintextSize
+	if m.encryptor != nil {
+		encResult, encErr := m.encryptor.Encrypt(ctx, pr, totalPlaintextSize)
+		if encErr != nil {
+			telemetry.EncryptionErrorsTotal.WithLabelValues("encrypt", "encrypt_failed").Inc()
+			span.SetStatus(codes.Error, encErr.Error())
+			return "", fmt.Errorf("encrypt final object: %w", encErr)
+		}
+		telemetry.EncryptionOpsTotal.WithLabelValues("encrypt").Inc()
+		uploadBody = encResult.Body
+		uploadSize = encResult.CiphertextSize
+		enc = &EncryptionMeta{
+			Encrypted:     true,
+			EncryptionKey: encryption.PackKeyData(encResult.BaseNonce, encResult.WrappedDEK),
+			KeyID:         encResult.KeyID,
+			PlaintextSize: totalPlaintextSize,
+		}
+	} else if anyEncrypted {
+		// Parts were encrypted but encryptor is now nil (disabled). The pipe
+		// carries decrypted plaintext; upload without encryption metadata.
+		uploadSize = totalPlaintextSize
+	}
+
 	// Streamed from pipe; deadline governed by the caller's context.
-	etag, err := backend.PutObject(ctx, mu.ObjectKey, pr, totalSize, mu.ContentType, mu.Metadata)
+	etag, err := backend.PutObject(ctx, mu.ObjectKey, uploadBody, uploadSize, mu.ContentType, mu.Metadata)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return "", fmt.Errorf("failed to upload final object: %w", err)
 	}
 
 	// Record the final object location and update quota
-	if err := m.recordObjectOrCleanup(ctx, span, backend, mu.ObjectKey, mu.BackendName, totalSize); err != nil {
+	if err := m.recordObjectOrCleanup(ctx, span, backend, mu.ObjectKey, mu.BackendName, uploadSize, enc); err != nil {
 		return "", err
 	}
 
@@ -254,13 +332,13 @@ func (m *BackendManager) CompleteMultipartUpload(ctx context.Context, uploadID s
 
 	m.recordOperation(operation, mu.BackendName, start, nil)
 	// API calls: N GetObject (read parts) + 1 PutObject (assembled) + N DeleteObject (cleanup)
-	m.usage.Record(mu.BackendName, int64(2*len(parts)+1), 0, totalSize)
+	m.usage.Record(mu.BackendName, int64(2*len(parts)+1), 0, uploadSize)
 
 	audit.Log(ctx, "storage.CompleteMultipartUpload",
 		slog.String("key", mu.ObjectKey),
 		slog.String("backend", mu.BackendName),
 		slog.String("upload_id", uploadID),
-		slog.Int64("total_size", totalSize),
+		slog.Int64("total_size", totalPlaintextSize),
 		slog.Int("parts_count", len(parts)),
 	)
 

@@ -60,6 +60,30 @@ backends:
 # --- Object routing ---
 # routing_strategy: pack          # "pack" fills backends sequentially, "spread" distributes evenly
 
+# --- Server-side encryption (disabled by default) ---
+# Envelope encryption with chunked AES-256-GCM. Each object gets a random
+# 256-bit DEK wrapped by the master key. Exactly one key source is required.
+# encryption:
+#   enabled: true
+#   chunk_size: 65536              # 4KB–1MB, power of 2 (default: 64KB)
+#
+#   # Option 1: inline key (base64-encoded 32-byte key)
+#   master_key: "${ENCRYPTION_KEY}"
+#
+#   # Option 2: key file (raw 32 bytes)
+#   # master_key_file: "/etc/s3-orchestrator/encryption.key"
+#
+#   # Option 3: Vault Transit
+#   # vault:
+#   #   address: "https://vault.service.consul:8200"
+#   #   token: "${VAULT_TOKEN}"
+#   #   key_name: "s3-orchestrator"
+#   #   mount_path: "transit"
+#
+#   # Previous keys for rotation (unwrap only)
+#   # previous_keys:
+#   #   - "${OLD_ENCRYPTION_KEY}"
+
 # --- Background rebalancer (disabled by default) ---
 # rebalance:
 #   enabled: false

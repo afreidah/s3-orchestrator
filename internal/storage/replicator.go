@@ -62,7 +62,10 @@ func (m *BackendManager) Replicate(ctx context.Context, cfg config.ReplicationCo
 			continue
 		}
 
-		n, _ := m.replicateObject(ctx, key, copies, needed)
+		n, replicateErr := m.replicateObject(ctx, key, copies, needed)
+		if replicateErr != nil {
+			slog.Warn("Replication: object failed", "key", key, "error", replicateErr)
+		}
 		created += n
 	}
 

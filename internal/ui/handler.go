@@ -151,6 +151,7 @@ func (h *Handler) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		if strings.HasPrefix(r.URL.Path, h.prefix+"/api/") {
+			slog.Warn("UI: unauthorized API request", "path", r.URL.Path, "remote", r.RemoteAddr)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
@@ -330,6 +331,7 @@ type configSummary struct {
 	RebalanceEnabled  bool
 	RebalanceStrategy string
 	RateLimitEnabled  bool
+	EncryptionEnabled bool
 }
 
 // handleDashboard renders the HTML dashboard page.
@@ -391,6 +393,7 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			RebalanceEnabled:  cfg.Rebalance.Enabled,
 			RebalanceStrategy: cfg.Rebalance.Strategy,
 			RateLimitEnabled:  cfg.RateLimit.Enabled,
+			EncryptionEnabled: cfg.Encryption.Enabled,
 		},
 	}
 

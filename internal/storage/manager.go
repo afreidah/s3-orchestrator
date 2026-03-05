@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -63,7 +64,8 @@ type BackendManagerConfig struct {
 	BackendTimeout    time.Duration
 	UsageLimits       map[string]UsageLimits
 	RoutingStrategy   string
-	ParallelBroadcast bool // fan-out reads in parallel during degraded mode
+	ParallelBroadcast bool                  // fan-out reads in parallel during degraded mode
+	Encryptor         *encryption.Encryptor // nil when encryption is disabled
 }
 
 // BackendManager manages multiple storage backends with quota tracking.
@@ -78,7 +80,8 @@ type BackendManager struct {
 	dashboard      *DashboardAggregator          // web UI data aggregation
 	routingStrategy   string                        // "pack" or "spread"
 	parallelBroadcast bool                          // fan-out reads in parallel during degraded mode
-	draining          sync.Map                      // map[string]*drainState — backends being drained
+	encryptor         *encryption.Encryptor            // nil when encryption is disabled
+	draining          sync.Map                        // map[string]*drainState — backends being drained
 	rebalanceCfg      atomic.Pointer[config.RebalanceConfig]
 	replicationCfg  atomic.Pointer[config.ReplicationConfig]
 	usageFlushCfg   atomic.Pointer[config.UsageFlushConfig]
@@ -104,6 +107,7 @@ func NewBackendManager(cfg *BackendManagerConfig) *BackendManager {
 		dashboard:         NewDashboardAggregator(cfg.Store, usage, cfg.Order),
 		routingStrategy:   cfg.RoutingStrategy,
 		parallelBroadcast: cfg.ParallelBroadcast,
+		encryptor:         cfg.Encryptor,
 	}
 
 	m.metrics = NewMetricsCollector(cfg.Store, usage, backendNames, func() int {
@@ -259,8 +263,8 @@ func (m *BackendManager) classifyWriteError(span trace.Span, operation string, e
 
 // recordObjectOrCleanup calls RecordObject and, on failure, deletes the orphaned
 // object from the backend. Updates the tracing span on error.
-func (m *BackendManager) recordObjectOrCleanup(ctx context.Context, span trace.Span, backend ObjectBackend, key, backendName string, size int64) error {
-	if err := m.store.RecordObject(ctx, key, backendName, size); err != nil {
+func (m *BackendManager) recordObjectOrCleanup(ctx context.Context, span trace.Span, backend ObjectBackend, key, backendName string, size int64, enc *EncryptionMeta) error {
+	if err := m.store.RecordObject(ctx, key, backendName, size, enc); err != nil {
 		slog.Error("RecordObject failed, cleaning up orphan",
 			"key", key, "backend", backendName, "error", err)
 		if delErr := backend.DeleteObject(ctx, key); delErr != nil {
@@ -273,6 +277,12 @@ func (m *BackendManager) recordObjectOrCleanup(ctx context.Context, span trace.S
 		return fmt.Errorf("failed to record object: %w", err)
 	}
 	return nil
+}
+
+// GetBackend returns the named backend, or an error if it doesn't exist.
+// Exported for use by the admin handler (encrypt-existing endpoint).
+func (m *BackendManager) GetBackend(name string) (ObjectBackend, error) {
+	return m.getBackend(name)
 }
 
 // getBackend returns the named backend, or an error if it doesn't exist.

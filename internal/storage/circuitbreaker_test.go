@@ -322,7 +322,7 @@ func TestCircuitBreaker_RecordObject_Success(t *testing.T) {
 	mock := &mockStore{}
 	cb := newTestCB(mock, 3, time.Minute)
 
-	err := cb.RecordObject(context.Background(), "key", "b1", 100)
+	err := cb.RecordObject(context.Background(), "key", "b1", 100, nil)
 	if err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
@@ -337,7 +337,7 @@ func TestCircuitBreaker_RecordObject_CircuitOpen(t *testing.T) {
 	_, _ = cb.GetAllObjectLocations(context.Background(), "key")
 
 	// RecordObject should return ErrDBUnavailable
-	err := cb.RecordObject(context.Background(), "key", "b1", 100)
+	err := cb.RecordObject(context.Background(), "key", "b1", 100, nil)
 	if !errors.Is(err, ErrDBUnavailable) {
 		t.Fatalf("expected ErrDBUnavailable, got %v", err)
 	}
@@ -677,7 +677,7 @@ func TestCircuitBreaker_ForwardingMethods_Closed(t *testing.T) {
 	if err := cb.DeleteMultipartUpload(ctx, "u1"); err != nil {
 		t.Errorf("DeleteMultipartUpload: %v", err)
 	}
-	if err := cb.RecordPart(ctx, "u1", 1, "etag", 100); err != nil {
+	if err := cb.RecordPart(ctx, "u1", 1, "etag", 100, nil); err != nil {
 		t.Errorf("RecordPart: %v", err)
 	}
 	if err := cb.FlushUsageDeltas(ctx, "b1", "2024-01", 1, 2, 3); err != nil {

@@ -47,6 +47,13 @@ spec:
               port: http
             initialDelaySeconds: 2
             periodSeconds: 5
+          resources:
+            requests:
+              cpu: "1024m"
+              memory: "1024Mi"
+            limits:
+              cpu: "1024m"
+              memory: "1024Mi"
           volumeMounts:
             - name: config
               mountPath: /etc/s3-orchestrator

@@ -65,6 +65,7 @@
   }
 
   function renderEntries(entries) {
+    container.style.minHeight = container.offsetHeight + 'px';
     container.replaceChildren();
 
     if (entries.length === 0) {
@@ -72,6 +73,7 @@
       empty.className = 'logs-empty';
       empty.textContent = 'No log entries.';
       container.appendChild(empty);
+      container.style.minHeight = '';
       return;
     }
 
@@ -117,12 +119,15 @@
       });
       container.appendChild(btn);
     }
+    container.style.minHeight = '';
   }
 
   function applySearch() {
+    var scrollY = window.scrollY;
     var term = (searchInput.value || '').toLowerCase();
     if (!term) {
       renderEntries(allEntries);
+      window.scrollTo(0, scrollY);
       return;
     }
     var filtered = allEntries.filter(function (e) {
@@ -139,6 +144,7 @@
       return false;
     });
     renderEntries(filtered);
+    window.scrollTo(0, scrollY);
   }
 
   function buildURL(before) {
@@ -150,6 +156,7 @@
   }
 
   function fetchLogs() {
+    var scrollY = window.scrollY;
     allEntries = [];
     hasMore = false;
     oldestTimestamp = '';
@@ -158,6 +165,7 @@
     loadingDiv.className = 'tree-loading';
     loadingDiv.textContent = 'Loading\u2026';
     container.replaceChildren(loadingDiv);
+    window.scrollTo(0, scrollY);
 
     fetchWithTimeout(buildURL(''), null, 10000)
       .then(function (resp) {
@@ -182,6 +190,7 @@
           ? 'Request timed out'
           : 'Failed to load logs: ' + err.message;
         container.appendChild(errDiv);
+        window.scrollTo(0, scrollY);
       });
   }
 

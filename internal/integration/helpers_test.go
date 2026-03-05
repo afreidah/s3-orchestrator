@@ -349,11 +349,11 @@ func (f *FailableStore) GetAllObjectLocations(ctx context.Context, key string) (
 	return f.MetadataStore.GetAllObjectLocations(ctx, key)
 }
 
-func (f *FailableStore) RecordObject(ctx context.Context, key, backend string, size int64) error {
+func (f *FailableStore) RecordObject(ctx context.Context, key, backend string, size int64, enc *storage.EncryptionMeta) error {
 	if f.isFailing() {
 		return errSimulatedDBFailure
 	}
-	return f.MetadataStore.RecordObject(ctx, key, backend, size)
+	return f.MetadataStore.RecordObject(ctx, key, backend, size, enc)
 }
 
 func (f *FailableStore) DeleteObject(ctx context.Context, key string) ([]storage.DeletedCopy, error) {
@@ -398,11 +398,11 @@ func (f *FailableStore) GetMultipartUpload(ctx context.Context, uploadID string)
 	return f.MetadataStore.GetMultipartUpload(ctx, uploadID)
 }
 
-func (f *FailableStore) RecordPart(ctx context.Context, uploadID string, partNumber int, etag string, size int64) error {
+func (f *FailableStore) RecordPart(ctx context.Context, uploadID string, partNumber int, etag string, size int64, enc *storage.EncryptionMeta) error {
 	if f.isFailing() {
 		return errSimulatedDBFailure
 	}
-	return f.MetadataStore.RecordPart(ctx, uploadID, partNumber, etag, size)
+	return f.MetadataStore.RecordPart(ctx, uploadID, partNumber, etag, size, enc)
 }
 
 func (f *FailableStore) GetParts(ctx context.Context, uploadID string) ([]storage.MultipartPart, error) {

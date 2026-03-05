@@ -360,10 +360,50 @@
     });
   }
 
-  // --- Refresh button ---
+  // --- Refresh button (partial update, preserves tree + logs + scroll) ---
   var refreshBtn = document.getElementById('refresh-btn');
   if (refreshBtn) {
-    refreshBtn.addEventListener('click', function () { location.reload(); });
+    refreshBtn.addEventListener('click', function () {
+      refreshBtn.disabled = true;
+      refreshBtn.textContent = 'Refreshing\u2026';
+
+      fetchWithTimeout(location.href, null, 10000)
+        .then(function (resp) {
+          if (resp.status === 401) { location.href = 'login'; return; }
+          if (!resp.ok) throw new Error('HTTP ' + resp.status);
+          return resp.text();
+        })
+        .then(function (html) {
+          if (!html) return;
+          var doc = new DOMParser().parseFromString(html, 'text/html');
+          var sections = document.querySelectorAll('.container > section');
+          var newSections = doc.querySelectorAll('.container > section');
+
+          // Replace storage summary, backends, and monthly usage (first 3 sections)
+          for (var i = 0; i < 3 && i < sections.length && i < newSections.length; i++) {
+            sections[i].innerHTML = newSections[i].innerHTML;
+          }
+
+          // Update header badges (healthy/degraded)
+          var headerRight = document.querySelector('.header-right');
+          var newHeaderRight = doc.querySelector('.header-right');
+          if (headerRight && newHeaderRight) {
+            var badge = headerRight.querySelector('.badge');
+            var newBadge = newHeaderRight.querySelector('.badge');
+            if (badge && newBadge) {
+              badge.className = newBadge.className;
+              badge.textContent = newBadge.textContent;
+            }
+          }
+
+          refreshBtn.disabled = false;
+          refreshBtn.textContent = 'Refresh';
+        })
+        .catch(function () {
+          refreshBtn.disabled = false;
+          refreshBtn.textContent = 'Refresh';
+        });
+    });
   }
 
   // --- Rebalance flow ---
