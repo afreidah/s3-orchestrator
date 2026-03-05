@@ -207,6 +207,12 @@ func TestAbortMultipartUpload_Success(t *testing.T) {
 	if backend.hasObject("__multipart/upload-1/1") {
 		t.Error("part temp key should be deleted")
 	}
+
+	// Usage: 1 part delete + 1 abort = 2 API calls
+	c := mgr.usage.counters["b1"]
+	if got := c.apiRequests.Load(); got != 2 {
+		t.Errorf("apiRequests = %d, want 2 (1 part delete + 1 abort)", got)
+	}
 }
 
 func TestAbortMultipartUpload_DBUnavailable(t *testing.T) {
@@ -454,6 +460,12 @@ func TestUploadPart_RecordPartFails_CleansUpPartObject(t *testing.T) {
 	// Part object should be cleaned up from backend
 	if backend.hasObject("__multipart/upload-1/1") {
 		t.Error("orphaned part should be deleted from backend")
+	}
+
+	// Usage: 1 API call for the orphan cleanup delete (put usage only recorded on success path)
+	c := mgr.usage.counters["b1"]
+	if got := c.apiRequests.Load(); got != 1 {
+		t.Errorf("apiRequests = %d, want 1 (orphan delete)", got)
 	}
 }
 

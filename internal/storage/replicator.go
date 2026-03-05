@@ -234,4 +234,5 @@ func (m *BackendManager) cleanupOrphan(ctx context.Context, backendName, key str
 		return
 	}
 	m.deleteOrEnqueue(ctx, backend, backendName, key, "replication_orphan")
+	m.usage.Record(backendName, 1, 0, 0)
 }

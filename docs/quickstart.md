@@ -1,4 +1,12 @@
-# Quickstart
+---
+title: "S3-Orchestrator Quickstart"
+linkTitle: "Quickstart"
+weight: 1
+---
+
+<div style="text-align: center; margin-bottom: 1.5rem;">
+  <img src="/images/logo.png" alt="s3-orchestrator" style="max-width: 200px; height: auto;">
+</div>
 
 Get the S3 Orchestrator running locally in under a minute. The only prerequisites are **Go**, **Docker**, and **Make**.
 

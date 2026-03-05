@@ -194,7 +194,7 @@ func NewKeyProviderFromConfig(cfg *config.EncryptionConfig) (KeyProvider, error)
 	case cfg.MasterKeyFile != "":
 		primary, err = NewFileKeyProvider(cfg.MasterKeyFile, "file-0")
 	case cfg.Vault != nil:
-		primary = NewVaultKeyProvider(cfg.Vault.Address, cfg.Vault.Token, cfg.Vault.KeyName, cfg.Vault.MountPath)
+		primary, err = NewVaultKeyProvider(cfg.Vault.Address, cfg.Vault.Token, cfg.Vault.KeyName, cfg.Vault.MountPath, cfg.Vault.CACert)
 	default:
 		return nil, fmt.Errorf("no encryption key source configured")
 	}
