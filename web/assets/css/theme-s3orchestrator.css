@@ -15,7 +15,7 @@
   --MENU-HOME-LINK-color: #f8fafc;
   --MENU-HOME-LINK-HOVER-color: #7dd3fc;
 
-  --MENU-SECTIONS-BG-color: #1e293b;
+  --MENU-SECTIONS-BG-color: #0f172a;
   --MENU-SECTIONS-LINK-color: #e2e8f0;
   --MENU-SECTIONS-LINK-HOVER-color: #7dd3fc;
   --MENU-SECTIONS-ACTIVE-BG-color: #334155;
@@ -33,7 +33,7 @@
   --CODE-INLINE-BG-color: #1e293b;
   --CODE-INLINE-color: #93c5fd;
   --CODE-INLINE-BORDER-color: #334155;
-  --MENU-WIDTH-L: 15rem;
+  --MENU-WIDTH-L: 21rem;
 }
 
 article img.lightbox {
