@@ -435,6 +435,64 @@ lifecycle:
 - Deletions go through the standard `DeleteObject` path — all copies removed, quotas decremented, failed deletes enqueued to the cleanup queue.
 - Hot-reloadable via `SIGHUP`.
 
+### encryption
+
+Server-side envelope encryption with chunked AES-256-GCM. When enabled, objects are encrypted before being stored on backends and decrypted transparently on read. Exactly one key source is required.
+
+```yaml
+encryption:
+  enabled: true
+  chunk_size: 65536                    # default: 64KB (range: 4KB–1MB, must be power of 2)
+  master_key: "${ENCRYPTION_KEY}"      # base64-encoded 256-bit key
+```
+
+**Generating a master key:**
+
+```bash
+openssl rand -base64 32
+```
+
+**Key source options** — exactly one of the following must be set:
+
+| Source | Config field | When to use |
+|--------|-------------|-------------|
+| Inline | `master_key` | Base64-encoded 256-bit key in config or env var. Simplest option. |
+| File | `master_key_file` | Path to a file containing exactly 32 raw bytes. Good for bare-metal with config management. |
+| Vault Transit | `vault` | Delegate key wrapping/unwrapping to HashiCorp Vault. Best for production with HSM-backed key management. |
+
+**Vault Transit configuration:**
+
+```yaml
+encryption:
+  enabled: true
+  vault:
+    address: "http://vault.service.consul:8200"
+    token: "${VAULT_TOKEN}"
+    key_name: "s3-orchestrator"
+    mount_path: "transit"     # default: transit
+```
+
+The Vault Transit engine handles wrapping and unwrapping DEKs — the orchestrator never sees the master key material. The `key_name` must reference an existing key in the Transit engine.
+
+**Key rotation support:**
+
+When rotating to a new master key, move the old key to `previous_keys` so existing objects can still be decrypted:
+
+```yaml
+encryption:
+  enabled: true
+  master_key: "${NEW_ENCRYPTION_KEY}"         # new primary key
+  previous_keys:
+    - "${OLD_ENCRYPTION_KEY}"                 # old key, kept for unwrapping
+```
+
+After updating the config, call the `rotate-encryption-key` admin API to re-wrap all DEKs with the new key. See [Rotating encryption keys](#rotating-encryption-keys) below.
+
+**Important notes:**
+- Encryption is **not reloadable** — changing encryption settings requires a restart.
+- The `chunk_size` must stay the same for the lifetime of the data. Changing it after objects are encrypted will make those objects unreadable.
+- Encrypted objects are slightly larger than their plaintext (header + per-chunk overhead). The exact overhead is: 32 bytes (header) + 28 bytes per chunk (nonce + auth tag).
+
 When enabled, the dashboard is served at `{path}/` on the same port as the S3 API.
 
 All dashboard responses include security headers (`X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Content-Security-Policy`). The dashboard requires authentication via the configured `admin_key`/`admin_secret` — unauthenticated requests are redirected to the login page (HTML) or receive `401` (API).
@@ -617,6 +675,12 @@ s3-orchestrator admin remove-backend <backend-name>
 
 # Remove a backend AND delete its S3 objects
 s3-orchestrator admin remove-backend <backend-name> --purge
+
+# Encrypt all unencrypted objects in-place (requires encryption enabled)
+s3-orchestrator admin encrypt-existing
+
+# Re-wrap all DEKs encrypted with a specific key ID (key rotation)
+s3-orchestrator admin rotate-encryption-key --old-key-id config-0
 ```
 
 The admin API requires `ui.admin_token` (or `ui.admin_key` as fallback) to be set in the configuration. All requests are authenticated via the `X-Admin-Token` header.
@@ -682,7 +746,7 @@ When `ui.enabled` is `true`, the dashboard at `{path}/` shows a live snapshot of
 - **Backend quota** — bytes used/limit with progress bars per backend, object counts, active multipart uploads
 - **Monthly usage** — API requests, egress, and ingress per backend with limits
 - **Object tree** — interactive collapsible file browser. Buckets and directories are collapsed by default; click to expand. Each directory shows a rollup file count and total size.
-- **Configuration** — virtual bucket names, write routing strategy, replication factor, rebalance status, rate limiting
+- **Configuration** — virtual bucket names, write routing strategy, replication factor, rebalance status, rate limiting, encryption status
 - **Logs** — recent structured log output from an in-memory ring buffer (last 5,000 entries). Filter by severity level and search by text. Logs are available immediately on page load — no need to SSH into the host.
 
 The dashboard also provides management actions:
@@ -724,7 +788,7 @@ Both endpoints include an `instance` field with the hostname for identifying whi
 
 A comprehensive Grafana dashboard is included at `grafana/s3-orchestrator.json`. Import it via Grafana's UI (Dashboards → Import → Upload JSON file) or provision it from disk. It expects a Prometheus datasource with UID `prometheus`.
 
-The dashboard covers all emitted metrics across seven rows: overview stats, storage quotas, monthly usage, request performance, backend operations, health/reliability (circuit breaker, degraded mode, cleanup queue, rate limits), and background workers (replication, rebalancer, lifecycle, audit). The background workers row is collapsed by default.
+The dashboard covers all emitted metrics across eight rows: overview stats, storage quotas, monthly usage, request performance, backend operations, health/reliability (circuit breaker, degraded mode, cleanup queue, rate limits), background workers (replication, rebalancer, lifecycle, audit), and encryption (operations, errors, encrypt-existing, key rotation). The background workers and encryption rows are collapsed by default.
 
 ### Key Prometheus metrics
 
@@ -744,6 +808,9 @@ If `telemetry.metrics.enabled` is `true`, metrics are exposed at `/metrics`. Key
 | `s3proxy_cleanup_queue_depth` | Alert when consistently > 0 — orphaned objects are failing cleanup |
 | `s3proxy_cleanup_queue_processed_total{status="exhausted"}` | Items that exceeded max retries — manual intervention needed |
 | `s3proxy_audit_events_total{event="..."}` | Audit log volume by event type — useful for detecting unusual activity |
+| `s3proxy_encryption_errors_total` | Any non-zero rate indicates encryption/decryption failures |
+| `s3proxy_encrypt_existing_objects_total{status="error"}` | Failures during bulk encryption of existing data |
+| `s3proxy_key_rotation_objects_total{status="error"}` | Failures during key rotation |
 
 ### Structured logs
 
@@ -796,7 +863,7 @@ Many settings can be updated without restarting the orchestrator by sending `SIG
 
 **What requires a restart:**
 
-- `server.listen_addr`, server timeouts, `server.shutdown_delay`, `database`, `telemetry`, `ui`, `routing_strategy`
+- `server.listen_addr`, server timeouts, `server.shutdown_delay`, `database`, `telemetry`, `ui`, `routing_strategy`, `encryption`
 - Backend structural changes (endpoint, S3 credentials, adding/removing backends)
 
 If any of these fields change, the reload still proceeds for the reloadable settings, and warnings are logged:
@@ -905,6 +972,73 @@ Change `quota_bytes` in the config and send `SIGHUP`. Quota limits are synced to
 Add a `replication` section with `factor > 1` and send `SIGHUP` (or restart). When restarting, the replication worker runs immediately at startup to begin creating copies of existing objects, then continues at the configured interval. With `SIGHUP`, the new factor takes effect on the next worker tick.
 
 Remember: the replication factor cannot exceed the number of backends.
+
+### Enabling encryption on existing data
+
+If you enable encryption on an orchestrator that already has unencrypted objects, those objects remain unencrypted until you explicitly encrypt them. New objects are encrypted automatically; existing ones need the `encrypt-existing` admin API.
+
+1. **Enable encryption** in the config and restart the orchestrator.
+
+2. **Encrypt existing objects:**
+
+   ```bash
+   s3-orchestrator admin encrypt-existing
+   ```
+
+   This processes all unencrypted objects in batches of 100: downloads from the backend, encrypts, re-uploads the ciphertext (overwriting the plaintext), and updates the database record. The response shows progress:
+
+   ```json
+   {"status": "complete", "encrypted": 1423, "failed": 0, "total": 1423}
+   ```
+
+3. **Monitor** via the `s3proxy_encrypt_existing_objects_total` metric (labels: `success`, `error`).
+
+Failed objects are logged individually and can be retried by calling `encrypt-existing` again — it only processes objects without encryption metadata.
+
+### Rotating encryption keys
+
+Key rotation re-wraps DEKs with a new master key without re-encrypting object data. This is a metadata-only operation and is fast regardless of object sizes.
+
+1. **Generate a new master key:**
+
+   ```bash
+   openssl rand -base64 32
+   ```
+
+2. **Update the config** — set the new key as `master_key` and move the old key to `previous_keys`:
+
+   ```yaml
+   encryption:
+     enabled: true
+     master_key: "${NEW_ENCRYPTION_KEY}"
+     previous_keys:
+       - "${OLD_ENCRYPTION_KEY}"
+   ```
+
+3. **Restart the orchestrator** (encryption config is not reloadable).
+
+4. **Re-wrap all DEKs:**
+
+   ```bash
+   s3-orchestrator admin rotate-encryption-key --old-key-id config-0
+   ```
+
+   The `old-key-id` identifies which key's DEKs to re-wrap. For inline config keys, the ID is `config-0` for the primary and `config-1`, `config-2`, etc. for previous keys in order. For file-based keys, the ID is `file-0`. For Vault Transit, it's the key name.
+
+   The response shows progress:
+
+   ```json
+   {"status": "complete", "rotated": 1423, "failed": 0, "total": 1423}
+   ```
+
+5. **After all DEKs are re-wrapped**, you can optionally remove the old key from `previous_keys` and restart. Objects that were rotated no longer need the old key.
+
+**Metrics to watch during rotation:**
+
+| Metric | Description |
+|--------|-------------|
+| `s3proxy_key_rotation_objects_total{status="success"}` | DEKs successfully re-wrapped |
+| `s3proxy_key_rotation_objects_total{status="error"}` | DEKs that failed re-wrapping |
 
 ### Rotating client credentials
 

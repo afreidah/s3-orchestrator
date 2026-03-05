@@ -73,6 +73,56 @@ mTLS requires clients to present a certificate signed by a trusted CA. This rest
 
 Clients without a valid certificate receive a TLS handshake error and cannot connect.
 
+## Server-Side Encryption
+
+When encryption is enabled, all objects are encrypted with AES-256-GCM before being stored on backends. Backends never see plaintext — they only store ciphertext. This protects against data exposure if a backend is compromised or if storage media is improperly decommissioned.
+
+### Key Management
+
+The master key wraps per-object DEKs using envelope encryption. Choose the key source based on your security requirements:
+
+| Source | Security level | Use case |
+|--------|---------------|----------|
+| `master_key` (inline/env var) | Good | Dev, staging, simple deployments with env var injection |
+| `master_key_file` | Better | Bare-metal with config management (Ansible, Puppet) provisioning the key file |
+| Vault Transit | Best | Production with HSM-backed key management, audit logging, automatic key versioning |
+
+**Recommendations:**
+
+- **Never commit encryption keys** to version control. Use `${ENV_VAR}` expansion or `master_key_file`.
+- **Restrict key file permissions:** `chmod 600 /path/to/keyfile && chown root:root /path/to/keyfile`
+- **Rotate keys periodically** using the `rotate-encryption-key` admin API. See the [Admin Guide](admin-guide.md#rotating-encryption-keys).
+- **Keep previous keys** in the config until all DEKs have been re-wrapped. Removing an old key before rotation completes makes objects encrypted with that key unrecoverable.
+- **Back up your encryption keys** separately from your data backups. Without the key, encrypted data is unrecoverable.
+
+### Vault Transit Integration
+
+For production deployments, Vault Transit provides the strongest key management:
+
+```yaml
+encryption:
+  enabled: true
+  vault:
+    address: "https://vault.example.com:8200"
+    token: "${VAULT_TOKEN}"
+    key_name: "s3-orchestrator"
+    mount_path: "transit"
+```
+
+- The orchestrator calls Vault to wrap/unwrap DEKs — the master key never leaves Vault.
+- Vault provides audit logging of all key operations.
+- Key rotation in Vault automatically versions the key; the orchestrator's `rotate-encryption-key` API re-wraps DEKs to the latest version.
+
+### Encryption Metrics
+
+Monitor encryption health with these Prometheus metrics:
+
+| Metric | What to watch |
+|--------|---------------|
+| `s3proxy_encryption_errors_total` | Any non-zero rate indicates encryption/decryption failures |
+| `s3proxy_encrypt_existing_objects_total{status="error"}` | Failures during bulk encryption of existing data |
+| `s3proxy_key_rotation_objects_total{status="error"}` | Failures during key rotation |
+
 ## Configuration File Security
 
 The config file contains sensitive credentials:
@@ -81,6 +131,8 @@ The config file contains sensitive credentials:
 - Backend S3 credentials (`backends[].access_key_id`, `backends[].secret_access_key`)
 - UI admin credentials (`ui.admin_key`, `ui.admin_secret`, `ui.admin_token`)
 - Client S3 credentials (`buckets[].credentials[]`)
+- Encryption master key (`encryption.master_key`, `encryption.previous_keys[]`)
+- Vault token (`encryption.vault.token`)
 
 ### Recommendations
 

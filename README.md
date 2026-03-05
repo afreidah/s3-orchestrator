@@ -28,6 +28,7 @@ Objects are routed to backends based on the configured `routing_strategy`: **pac
 - [Replication](#replication)
 - [Cleanup Queue](#cleanup-queue)
 - [Lifecycle (Object Expiration)](#lifecycle-object-expiration)
+- [Encryption](#encryption)
 - [Rate Limiting](#rate-limiting)
 - [Usage Limits](#usage-limits)
 - [Configuration](#configuration)
@@ -225,6 +226,21 @@ A background worker runs hourly and evaluates each rule against `created_at` tim
 
 Rules are hot-reloadable via `SIGHUP`. An empty rules list (or omitting the section entirely) disables lifecycle — no advisory lock is acquired and no DB queries are executed.
 
+## Encryption
+
+Optional server-side envelope encryption with AES-256-GCM. When enabled, every object is encrypted before it leaves the orchestrator — backends only ever see ciphertext. Each object gets a random 256-bit Data Encryption Key (DEK) that is wrapped by a master key before storage. The master key can come from an inline config value, a file on disk, or HashiCorp Vault Transit.
+
+Objects are encrypted in fixed-size chunks (default 64 KB), so range requests (`Range` header) work without downloading the entire object — the orchestrator calculates which ciphertext chunks to fetch and decrypts only those. Clients see standard S3 behavior; encryption is fully transparent.
+
+**Key features:**
+- **Chunked AES-256-GCM** — each chunk has an independent nonce derived from a base nonce XORed with the chunk index, enabling random-access decryption
+- **Envelope encryption** — per-object DEKs mean rotating the master key only requires re-wrapping DEKs, not re-encrypting data
+- **Key rotation** — add the new master key, move the old one to `previous_keys`, and call the `rotate-encryption-key` admin API to re-wrap all DEKs
+- **Encrypt existing data** — the `encrypt-existing` admin API encrypts all unencrypted objects in-place without downtime
+- **Vault Transit support** — delegate key management to HashiCorp Vault for HSM-backed key storage
+
+See the [Admin Guide](docs/admin-guide.md#encryption) for setup, key rotation, and encrypting existing data.
+
 ## Rate Limiting
 
 Optional per-IP token bucket rate limiting. When enabled, requests exceeding the configured rate return `429 SlowDown`. Stale IP entries are evicted by a background goroutine every `cleanup_interval` (default 1m); entries not seen within `cleanup_max_age` (default 5m) are removed. Under high source-IP cardinality (e.g., DDoS), the map can accumulate up to `cleanup_max_age` worth of unique IPs before eviction runs — tune these values if memory pressure is a concern.
@@ -355,6 +371,19 @@ rate_limit:
   #   - "10.0.0.0/8"       # Uses rightmost-untrusted extraction
   #   - "172.16.0.0/12"
 
+encryption:
+  enabled: false
+  # chunk_size: 65536           # plaintext bytes per chunk (default: 64KB, range: 4KB–1MB, power of 2)
+  # master_key: "${ENCRYPTION_KEY}"  # base64-encoded 256-bit key (exactly one key source required)
+  # master_key_file: "/path/to/key"  # alternative: raw 32-byte key file
+  # vault:                           # alternative: Vault Transit
+  #   address: "http://vault:8200"
+  #   token: "${VAULT_TOKEN}"
+  #   key_name: "s3-orchestrator"
+  #   mount_path: "transit"          # default: transit
+  # previous_keys:                   # old master keys for rotation (unwrap only)
+  #   - "base64-encoded-old-key"
+
 ui:
   enabled: false             # enable the built-in web dashboard
   path: "/ui"                # URL prefix (default: /ui)
@@ -409,6 +438,7 @@ kill -HUP $(pidof s3-orchestrator)
 | `circuit_breaker` | No | Requires restart |
 | `backend_circuit_breaker` | No | Requires restart |
 | `ui` | No | Requires restart |
+| `encryption` | No | Requires restart |
 | `routing_strategy` | No | Requires restart |
 | `backends` (structural: endpoint, credentials, count) | No | Requires restart |
 
@@ -511,6 +541,10 @@ All metrics are prefixed with `s3proxy_`. Exposed at `/metrics` when enabled.
 | `s3proxy_drain_active` | Gauge | — | `1` while a backend drain is in progress |
 | `s3proxy_drain_objects_moved_total` | Counter | — | Objects migrated during drain |
 | `s3proxy_drain_bytes_moved_total` | Counter | — | Bytes migrated during drain |
+| `s3proxy_encryption_operations_total` | Counter | op | Encrypt/decrypt operations (encrypt, decrypt, decrypt_range) |
+| `s3proxy_encryption_errors_total` | Counter | op, error_type | Encryption/decryption failures |
+| `s3proxy_encrypt_existing_objects_total` | Counter | status | Objects processed by encrypt-existing (success/error) |
+| `s3proxy_key_rotation_objects_total` | Counter | status | DEKs re-wrapped by key rotation (success/error) |
 
 Quota metrics are refreshed from PostgreSQL every 30 seconds (no backend API calls).
 
