@@ -1,5 +1,3 @@
-# Performance Tuning
-
 This guide covers configuration knobs that affect throughput, latency, and resource usage.
 
 ## Connection Pool Sizing
