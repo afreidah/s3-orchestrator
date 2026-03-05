@@ -47,7 +47,7 @@ var (
 type MetadataStore interface {
 	// --- Object location operations ---
 	GetAllObjectLocations(ctx context.Context, key string) ([]ObjectLocation, error)
-	RecordObject(ctx context.Context, key, backend string, size int64) error
+	RecordObject(ctx context.Context, key, backend string, size int64, enc *EncryptionMeta) error
 	DeleteObject(ctx context.Context, key string) ([]DeletedCopy, error)
 	ListObjects(ctx context.Context, prefix, startAfter string, maxKeys int) (*ListObjectsResult, error)
 
@@ -58,7 +58,7 @@ type MetadataStore interface {
 	// --- Multipart operations ---
 	CreateMultipartUpload(ctx context.Context, uploadID, key, backend, contentType string, metadata map[string]string) error
 	GetMultipartUpload(ctx context.Context, uploadID string) (*MultipartUpload, error)
-	RecordPart(ctx context.Context, uploadID string, partNumber int, etag string, size int64) error
+	RecordPart(ctx context.Context, uploadID string, partNumber int, etag string, size int64, enc *EncryptionMeta) error
 	GetParts(ctx context.Context, uploadID string) ([]MultipartPart, error)
 	DeleteMultipartUpload(ctx context.Context, uploadID string) error
 	ListMultipartUploads(ctx context.Context, prefix string, maxUploads int) ([]MultipartUpload, error)

@@ -1600,6 +1600,208 @@ func TestNonReloadableFieldsChanged_BackendCircuitBreaker(t *testing.T) {
 	}
 }
 
+// -------------------------------------------------------------------------
+// ENCRYPTION VALIDATION
+// -------------------------------------------------------------------------
+
+func TestEncryptionConfig_ValidMasterKey(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Encryption = EncryptionConfig{
+		Enabled:   true,
+		MasterKey: "F2rpnHM7TmwJ4/DalNfk0cvCCPmHTfvB9LyhBLPoCVc=",
+	}
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Errorf("valid encryption config should pass: %v", err)
+	}
+	if cfg.Encryption.ChunkSize != 65536 {
+		t.Errorf("ChunkSize default = %d, want 65536", cfg.Encryption.ChunkSize)
+	}
+}
+
+func TestEncryptionConfig_CustomChunkSize(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Encryption = EncryptionConfig{
+		Enabled:   true,
+		MasterKey: "F2rpnHM7TmwJ4/DalNfk0cvCCPmHTfvB9LyhBLPoCVc=",
+		ChunkSize: 16384,
+	}
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Errorf("16KB chunk size should pass: %v", err)
+	}
+}
+
+func TestEncryptionConfig_ChunkSizeTooSmall(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Encryption = EncryptionConfig{
+		Enabled:   true,
+		MasterKey: "F2rpnHM7TmwJ4/DalNfk0cvCCPmHTfvB9LyhBLPoCVc=",
+		ChunkSize: 1024,
+	}
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil || !strings.Contains(err.Error(), "chunk_size must be between") {
+		t.Errorf("chunk size below 4096 should fail, got: %v", err)
+	}
+}
+
+func TestEncryptionConfig_ChunkSizeTooLarge(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Encryption = EncryptionConfig{
+		Enabled:   true,
+		MasterKey: "F2rpnHM7TmwJ4/DalNfk0cvCCPmHTfvB9LyhBLPoCVc=",
+		ChunkSize: 2097152,
+	}
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil || !strings.Contains(err.Error(), "chunk_size must be between") {
+		t.Errorf("chunk size above 1MB should fail, got: %v", err)
+	}
+}
+
+func TestEncryptionConfig_ChunkSizeNotPowerOf2(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Encryption = EncryptionConfig{
+		Enabled:   true,
+		MasterKey: "F2rpnHM7TmwJ4/DalNfk0cvCCPmHTfvB9LyhBLPoCVc=",
+		ChunkSize: 5000,
+	}
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil || !strings.Contains(err.Error(), "power of 2") {
+		t.Errorf("non-power-of-2 chunk size should fail, got: %v", err)
+	}
+}
+
+func TestEncryptionConfig_NoKeySource(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Encryption = EncryptionConfig{Enabled: true}
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil || !strings.Contains(err.Error(), "exactly one of master_key") {
+		t.Errorf("missing key source should fail, got: %v", err)
+	}
+}
+
+func TestEncryptionConfig_MultipleKeySources(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Encryption = EncryptionConfig{
+		Enabled:       true,
+		MasterKey:     "F2rpnHM7TmwJ4/DalNfk0cvCCPmHTfvB9LyhBLPoCVc=",
+		MasterKeyFile: "/some/path",
+	}
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil || !strings.Contains(err.Error(), "only one of") {
+		t.Errorf("multiple key sources should fail, got: %v", err)
+	}
+}
+
+func TestEncryptionConfig_InvalidBase64MasterKey(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Encryption = EncryptionConfig{
+		Enabled:   true,
+		MasterKey: "not-valid-base64!!!",
+	}
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil || !strings.Contains(err.Error(), "invalid base64") {
+		t.Errorf("invalid base64 should fail, got: %v", err)
+	}
+}
+
+func TestEncryptionConfig_WrongKeyLength(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Encryption = EncryptionConfig{
+		Enabled:   true,
+		MasterKey: "dG9vc2hvcnQ=", // "tooshort" = 8 bytes
+	}
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil || !strings.Contains(err.Error(), "must be 256 bits") {
+		t.Errorf("wrong key length should fail, got: %v", err)
+	}
+}
+
+func TestEncryptionConfig_InvalidPreviousKey(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Encryption = EncryptionConfig{
+		Enabled:      true,
+		MasterKey:    "F2rpnHM7TmwJ4/DalNfk0cvCCPmHTfvB9LyhBLPoCVc=",
+		PreviousKeys: []string{"not-valid!!!"},
+	}
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil || !strings.Contains(err.Error(), "previous_keys[0]") {
+		t.Errorf("invalid previous key should fail, got: %v", err)
+	}
+}
+
+func TestEncryptionConfig_PreviousKeyWrongLength(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Encryption = EncryptionConfig{
+		Enabled:      true,
+		MasterKey:    "F2rpnHM7TmwJ4/DalNfk0cvCCPmHTfvB9LyhBLPoCVc=",
+		PreviousKeys: []string{"dG9vc2hvcnQ="}, // 8 bytes
+	}
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil || !strings.Contains(err.Error(), "previous_keys[0]") {
+		t.Errorf("previous key wrong length should fail, got: %v", err)
+	}
+}
+
+func TestEncryptionConfig_VaultMissingFields(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Encryption = EncryptionConfig{
+		Enabled: true,
+		Vault:   &VaultTransitConfig{},
+	}
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil {
+		t.Error("vault with missing fields should fail")
+	}
+	errStr := err.Error()
+	for _, want := range []string{"vault.address", "vault.token", "vault.key_name"} {
+		if !strings.Contains(errStr, want) {
+			t.Errorf("error should mention %q, got: %v", want, err)
+		}
+	}
+}
+
+func TestEncryptionConfig_VaultDefaultMountPath(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Encryption = EncryptionConfig{
+		Enabled: true,
+		Vault: &VaultTransitConfig{
+			Address: "http://vault:8200",
+			Token:   "token",
+			KeyName: "mykey",
+		},
+	}
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Errorf("valid vault config should pass: %v", err)
+	}
+	if cfg.Encryption.Vault.MountPath != "transit" {
+		t.Errorf("MountPath default = %q, want 'transit'", cfg.Encryption.Vault.MountPath)
+	}
+}
+
+func TestEncryptionConfig_DisabledSkipsValidation(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Encryption = EncryptionConfig{
+		Enabled:   false,
+		MasterKey: "garbage",
+	}
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Errorf("disabled encryption should skip validation: %v", err)
+	}
+}
+
 func TestParseLogLevel(t *testing.T) {
 	tests := []struct {
 		input string

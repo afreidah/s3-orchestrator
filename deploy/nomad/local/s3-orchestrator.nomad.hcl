@@ -102,8 +102,12 @@ job "s3-orchestrator" {
 
           replication:
             factor: 2
-            worker_interval: "1m"
-            batch_size: 50
+            worker_interval: "30s"
+            batch_size: 100
+
+          encryption:
+            enabled: true
+            master_key: "F2rpnHM7TmwJ4/DalNfk0cvCCPmHTfvB9LyhBLPoCVc="
 
           circuit_breaker:
             failure_threshold: 3
@@ -123,14 +127,14 @@ job "s3-orchestrator" {
             enabled: true
             admin_key: "admin"
             admin_secret: "admin"
-            # admin_token: "separate-token"     # Separate token for admin API (defaults to admin_key)
+            admin_token: "admin"     # Separate token for admin API (defaults to admin_key)
             # force_secure_cookies: false        # Local dev — no TLS proxy
         YAML
       }
 
       resources {
-        cpu    = 256
-        memory = 256
+        cpu    = 1024
+        memory = 1024
       }
     }
   }

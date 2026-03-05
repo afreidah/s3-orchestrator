@@ -95,12 +95,17 @@ type DeletedCopy struct {
 	SizeBytes   int64
 }
 
-// ObjectLocation holds information about where an object is stored.
+// ObjectLocation holds information about where an object is stored, including
+// optional encryption metadata for objects encrypted with envelope encryption.
 type ObjectLocation struct {
-	ObjectKey   string
-	BackendName string
-	SizeBytes   int64
-	CreatedAt   time.Time
+	ObjectKey     string
+	BackendName   string
+	SizeBytes     int64
+	CreatedAt     time.Time
+	Encrypted     bool
+	EncryptionKey []byte
+	KeyID         string
+	PlaintextSize int64
 }
 
 // -------------------------------------------------------------------------
@@ -214,18 +219,69 @@ func withTxVal[T any](s *Store, ctx context.Context, fn func(*db.Queries) (T, er
 	return val, nil
 }
 
-// toObjectLocations converts sqlc ObjectLocation rows to storage ObjectLocations.
-func toObjectLocations(rows []db.ObjectLocation) []ObjectLocation {
+// objectLocationRow is a type constraint matching all sqlc row types that
+// carry the core object location columns.
+type objectLocationRow interface {
+	db.ListObjectsByBackendRow |
+		db.ListObjectsByPrefixRow |
+		db.ListExpiredObjectsRow |
+		db.ListDirectChildrenRow |
+		db.GetAllObjectLocationsRow |
+		db.GetUnderReplicatedObjectsRow
+}
+
+// toObjectLocations converts any sqlc row type containing object location
+// columns into storage ObjectLocations via the common conversion helper.
+func toObjectLocations[T objectLocationRow](rows []T) []ObjectLocation {
 	out := make([]ObjectLocation, len(rows))
-	for i, row := range rows {
-		out[i] = ObjectLocation{
-			ObjectKey:   row.ObjectKey,
-			BackendName: row.BackendName,
-			SizeBytes:   row.SizeBytes,
-			CreatedAt:   row.CreatedAt.Time,
-		}
+	for i := range rows {
+		out[i] = toObjectLocation(any(rows[i]))
 	}
 	return out
+}
+
+// toObjectLocation converts a single sqlc row (passed as any) into an
+// ObjectLocation. Row types that include encryption columns populate those
+// fields; simpler row types leave them at zero values.
+func toObjectLocation(row any) ObjectLocation {
+	switch r := row.(type) {
+	case db.GetAllObjectLocationsRow:
+		return objectLocationFromDB(r.ObjectKey, r.BackendName, r.SizeBytes,
+			r.Encrypted, r.EncryptionKey, r.KeyID, r.PlaintextSize, r.CreatedAt.Time)
+	case db.GetUnderReplicatedObjectsRow:
+		return objectLocationFromDB(r.ObjectKey, r.BackendName, r.SizeBytes,
+			r.Encrypted, r.EncryptionKey, r.KeyID, r.PlaintextSize, r.CreatedAt.Time)
+	case db.ListObjectsByBackendRow:
+		return ObjectLocation{ObjectKey: r.ObjectKey, BackendName: r.BackendName, SizeBytes: r.SizeBytes, CreatedAt: r.CreatedAt.Time}
+	case db.ListObjectsByPrefixRow:
+		return ObjectLocation{ObjectKey: r.ObjectKey, BackendName: r.BackendName, SizeBytes: r.SizeBytes, CreatedAt: r.CreatedAt.Time}
+	case db.ListExpiredObjectsRow:
+		return ObjectLocation{ObjectKey: r.ObjectKey, BackendName: r.BackendName, SizeBytes: r.SizeBytes, CreatedAt: r.CreatedAt.Time}
+	case db.ListDirectChildrenRow:
+		return ObjectLocation{ObjectKey: r.ObjectKey, BackendName: r.BackendName, SizeBytes: r.SizeBytes, CreatedAt: r.CreatedAt.Time}
+	default:
+		return ObjectLocation{}
+	}
+}
+
+// objectLocationFromDB builds an ObjectLocation from database column values,
+// safely dereferencing nullable pointer fields.
+func objectLocationFromDB(key, backend string, size int64, encrypted bool, encKey []byte, keyID *string, ptSize *int64, created time.Time) ObjectLocation {
+	loc := ObjectLocation{
+		ObjectKey:     key,
+		BackendName:   backend,
+		SizeBytes:     size,
+		CreatedAt:     created,
+		Encrypted:     encrypted,
+		EncryptionKey: encKey,
+	}
+	if keyID != nil {
+		loc.KeyID = *keyID
+	}
+	if ptSize != nil {
+		loc.PlaintextSize = *ptSize
+	}
+	return loc
 }
 
 // -------------------------------------------------------------------------
@@ -342,7 +398,16 @@ func (s *Store) GetActiveMultipartCounts(ctx context.Context) (map[string]int64,
 // RecordObject records an object's location and updates the backend quota.
 // On overwrite, all existing copies (including replicas) are removed and their
 // quotas decremented before inserting the new primary copy.
-func (s *Store) RecordObject(ctx context.Context, key, backend string, size int64) error {
+// EncryptionMeta holds encryption metadata to store alongside an object
+// location. Zero value represents an unencrypted object.
+type EncryptionMeta struct {
+	Encrypted     bool
+	EncryptionKey []byte
+	KeyID         string
+	PlaintextSize int64
+}
+
+func (s *Store) RecordObject(ctx context.Context, key, backend string, size int64, enc *EncryptionMeta) error {
 	return s.withTx(ctx, func(qtx *db.Queries) error {
 		// --- Collect all existing copies for this key ---
 		existing, err := qtx.GetExistingCopiesForUpdate(ctx, key)
@@ -366,12 +431,21 @@ func (s *Store) RecordObject(ctx context.Context, key, backend string, size int6
 			}
 		}
 
-		// --- Insert new primary copy ---
-		if err := qtx.InsertObjectLocation(ctx, db.InsertObjectLocationParams{
+		// --- Build insert params with optional encryption metadata ---
+		params := db.InsertObjectLocationParams{
 			ObjectKey:   key,
 			BackendName: backend,
 			SizeBytes:   size,
-		}); err != nil {
+		}
+		if enc != nil && enc.Encrypted {
+			params.Encrypted = true
+			params.EncryptionKey = enc.EncryptionKey
+			params.KeyID = &enc.KeyID
+			params.PlaintextSize = &enc.PlaintextSize
+		}
+
+		// --- Insert new primary copy ---
+		if err := qtx.InsertObjectLocation(ctx, params); err != nil {
 			return fmt.Errorf("failed to insert object location: %w", err)
 		}
 
@@ -460,7 +534,7 @@ func (s *Store) MoveObjectLocation(ctx context.Context, key, fromBackend, toBack
 		}
 
 		// --- Lock the source row and verify it still belongs to the source ---
-		sizeBytes, err := qtx.LockObjectOnBackend(ctx, db.LockObjectOnBackendParams{
+		locked, err := qtx.LockObjectOnBackend(ctx, db.LockObjectOnBackendParams{
 			ObjectKey:   key,
 			BackendName: fromBackend,
 		})
@@ -479,18 +553,22 @@ func (s *Store) MoveObjectLocation(ctx context.Context, key, fromBackend, toBack
 			return 0, fmt.Errorf("failed to delete source location: %w", err)
 		}
 
-		// --- Insert destination row ---
+		// --- Insert destination row preserving encryption metadata ---
 		if err := qtx.InsertObjectLocation(ctx, db.InsertObjectLocationParams{
-			ObjectKey:   key,
-			BackendName: toBackend,
-			SizeBytes:   sizeBytes,
+			ObjectKey:     key,
+			BackendName:   toBackend,
+			SizeBytes:     locked.SizeBytes,
+			Encrypted:     locked.Encrypted,
+			EncryptionKey: locked.EncryptionKey,
+			KeyID:         locked.KeyID,
+			PlaintextSize: locked.PlaintextSize,
 		}); err != nil {
 			return 0, fmt.Errorf("failed to insert destination location: %w", err)
 		}
 
 		// --- Decrement source quota ---
 		if err := qtx.DecrementQuota(ctx, db.DecrementQuotaParams{
-			Amount:      sizeBytes,
+			Amount:      locked.SizeBytes,
 			BackendName: fromBackend,
 		}); err != nil {
 			return 0, fmt.Errorf("failed to decrement source quota: %w", err)
@@ -498,7 +576,7 @@ func (s *Store) MoveObjectLocation(ctx context.Context, key, fromBackend, toBack
 
 		// --- Increment destination quota ---
 		n, err := qtx.IncrementQuota(ctx, db.IncrementQuotaParams{
-			Amount:      sizeBytes,
+			Amount:      locked.SizeBytes,
 			BackendName: toBackend,
 		})
 		if err != nil {
@@ -508,7 +586,7 @@ func (s *Store) MoveObjectLocation(ctx context.Context, key, fromBackend, toBack
 			return 0, ErrNoSpaceAvailable
 		}
 
-		return sizeBytes, nil
+		return locked.SizeBytes, nil
 	})
 }
 
@@ -755,11 +833,17 @@ type MultipartUpload struct {
 }
 
 // MultipartPart holds metadata for a single uploaded part.
+// MultipartPart holds metadata for a single completed part of a multipart
+// upload, including optional encryption metadata when encryption is enabled.
 type MultipartPart struct {
-	PartNumber int
-	ETag       string
-	SizeBytes  int64
-	CreatedAt  time.Time
+	PartNumber    int
+	ETag          string
+	SizeBytes     int64
+	CreatedAt     time.Time
+	Encrypted     bool
+	EncryptionKey []byte
+	KeyID         string
+	PlaintextSize int64
 }
 
 // CreateMultipartUpload records a new multipart upload in the database.
@@ -817,17 +901,23 @@ func (s *Store) GetMultipartUpload(ctx context.Context, uploadID string) (*Multi
 
 // RecordPart records a completed part for a multipart upload.
 // S3 spec requires part numbers between 1 and 10000.
-func (s *Store) RecordPart(ctx context.Context, uploadID string, partNumber int, etag string, size int64) error {
+func (s *Store) RecordPart(ctx context.Context, uploadID string, partNumber int, etag string, size int64, enc *EncryptionMeta) error {
 	if partNumber < 1 || partNumber > 10000 {
 		return fmt.Errorf("invalid part number %d: must be between 1 and 10000", partNumber)
 	}
-	err := s.queries.UpsertPart(ctx, db.UpsertPartParams{
+	params := db.UpsertPartParams{
 		UploadID:   uploadID,
 		PartNumber: int32(partNumber),
 		Etag:       etag,
 		SizeBytes:  size,
-	})
-	if err != nil {
+	}
+	if enc != nil && enc.Encrypted {
+		params.Encrypted = true
+		params.EncryptionKey = enc.EncryptionKey
+		params.KeyID = &enc.KeyID
+		params.PlaintextSize = &enc.PlaintextSize
+	}
+	if err := s.queries.UpsertPart(ctx, params); err != nil {
 		return fmt.Errorf("failed to record part: %w", err)
 	}
 	return nil
@@ -842,12 +932,21 @@ func (s *Store) GetParts(ctx context.Context, uploadID string) ([]MultipartPart,
 
 	parts := make([]MultipartPart, len(rows))
 	for i, row := range rows {
-		parts[i] = MultipartPart{
+		p := MultipartPart{
 			PartNumber: int(row.PartNumber),
 			ETag:       row.Etag,
 			SizeBytes:  row.SizeBytes,
 			CreatedAt:  row.CreatedAt.Time,
+			Encrypted:  row.Encrypted,
+			EncryptionKey: row.EncryptionKey,
 		}
+		if row.KeyID != nil {
+			p.KeyID = *row.KeyID
+		}
+		if row.PlaintextSize != nil {
+			p.PlaintextSize = *row.PlaintextSize
+		}
+		parts[i] = p
 	}
 	return parts, nil
 }
@@ -1092,6 +1191,97 @@ func (s *Store) WithAdvisoryLock(ctx context.Context, lockID int64, fn func(ctx 
 	}()
 
 	return true, fn(ctx)
+}
+
+// -------------------------------------------------------------------------
+// KEY ROTATION (admin-only, not on MetadataStore interface)
+// -------------------------------------------------------------------------
+
+// EncryptedLocation holds a single encrypted object's key data for rotation.
+type EncryptedLocation struct {
+	ObjectKey     string
+	BackendName   string
+	EncryptionKey []byte
+	KeyID         string
+}
+
+// ListEncryptedLocations returns a page of encrypted object locations filtered
+// by key ID. Used during key rotation to find objects wrapped with the old key.
+func (s *Store) ListEncryptedLocations(ctx context.Context, keyID string, limit, offset int) ([]EncryptedLocation, error) {
+	rows, err := s.queries.ListEncryptedLocations(ctx, db.ListEncryptedLocationsParams{
+		KeyID:  &keyID,
+		Limit:  int32(limit),
+		Offset: int32(offset),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list encrypted locations: %w", err)
+	}
+	result := make([]EncryptedLocation, len(rows))
+	for i, r := range rows {
+		result[i] = EncryptedLocation{
+			ObjectKey:     r.ObjectKey,
+			BackendName:   r.BackendName,
+			EncryptionKey: r.EncryptionKey,
+		}
+		if r.KeyID != nil {
+			result[i].KeyID = *r.KeyID
+		}
+	}
+	return result, nil
+}
+
+// UpdateEncryptionKey re-wraps a single object's encryption key. Used during
+// key rotation to replace the old wrapped DEK with one wrapped by the new key.
+func (s *Store) UpdateEncryptionKey(ctx context.Context, objectKey, backendName string, newEncryptionKey []byte, newKeyID string) error {
+	return s.queries.UpdateEncryptionKey(ctx, db.UpdateEncryptionKeyParams{
+		ObjectKey:     objectKey,
+		BackendName:   backendName,
+		EncryptionKey: newEncryptionKey,
+		KeyID:         &newKeyID,
+	})
+}
+
+// UnencryptedLocation holds a single unencrypted object's metadata for the
+// encrypt-existing admin operation.
+type UnencryptedLocation struct {
+	ObjectKey   string
+	BackendName string
+	SizeBytes   int64
+}
+
+// ListUnencryptedLocations returns a page of unencrypted object locations.
+// Used by the encrypt-existing admin endpoint to find objects that need encryption.
+func (s *Store) ListUnencryptedLocations(ctx context.Context, limit, offset int) ([]UnencryptedLocation, error) {
+	rows, err := s.queries.ListUnencryptedLocations(ctx, db.ListUnencryptedLocationsParams{
+		Limit:  int32(limit),
+		Offset: int32(offset),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list unencrypted locations: %w", err)
+	}
+	result := make([]UnencryptedLocation, len(rows))
+	for i, r := range rows {
+		result[i] = UnencryptedLocation{
+			ObjectKey:   r.ObjectKey,
+			BackendName: r.BackendName,
+			SizeBytes:   r.SizeBytes,
+		}
+	}
+	return result, nil
+}
+
+// MarkObjectEncrypted updates a single object location to record that it has
+// been encrypted. Sets the encryption flag, wrapped DEK, key ID, plaintext
+// size, and updates size_bytes to the ciphertext size.
+func (s *Store) MarkObjectEncrypted(ctx context.Context, objectKey, backendName string, encryptionKey []byte, keyID string, plaintextSize, ciphertextSize int64) error {
+	return s.queries.MarkObjectEncrypted(ctx, db.MarkObjectEncryptedParams{
+		ObjectKey:     objectKey,
+		BackendName:   backendName,
+		EncryptionKey: encryptionKey,
+		KeyID:         &keyID,
+		PlaintextSize: &plaintextSize,
+		SizeBytes:     ciphertextSize,
+	})
 }
 
 // pgTimestamptz converts a time.Time to pgtype.Timestamptz for use with sqlc.

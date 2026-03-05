@@ -175,7 +175,7 @@ func (m *mockStore) GetLeastUtilizedBackend(_ context.Context, size int64, _ []s
 	return m.getBackendResp, nil
 }
 
-func (m *mockStore) RecordObject(_ context.Context, key, backend string, size int64) error {
+func (m *mockStore) RecordObject(_ context.Context, key, backend string, size int64, _ *EncryptionMeta) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.recordObjectCalls = append(m.recordObjectCalls, recordObjectCall{Key: key, Backend: backend, Size: size})
@@ -226,7 +226,7 @@ func (m *mockStore) GetMultipartUpload(_ context.Context, _ string) (*MultipartU
 	return m.getMultipartResp, nil
 }
 
-func (m *mockStore) RecordPart(_ context.Context, _ string, _ int, _ string, _ int64) error {
+func (m *mockStore) RecordPart(_ context.Context, _ string, _ int, _ string, _ int64, _ *EncryptionMeta) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.recordPartErr

@@ -13,6 +13,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"net"
@@ -40,6 +41,7 @@ type Config struct {
 	RateLimit      RateLimitConfig      `yaml:"rate_limit"`
 	CircuitBreaker        CircuitBreakerConfig        `yaml:"circuit_breaker"`
 	BackendCircuitBreaker BackendCircuitBreakerConfig `yaml:"backend_circuit_breaker"`
+	Encryption            EncryptionConfig            `yaml:"encryption"`
 	UI                    UIConfig                    `yaml:"ui"`
 	UsageFlush      UsageFlushConfig     `yaml:"usage_flush"`
 	Lifecycle       LifecycleConfig      `yaml:"lifecycle"`
@@ -195,6 +197,27 @@ type UIConfig struct {
 	AdminToken         string `yaml:"admin_token"`         // Separate token for admin API (defaults to admin_key if empty)
 	SessionSecret      string `yaml:"session_secret"`      // Optional secret for HMAC session key derivation (enables multi-instance sessions)
 	ForceSecureCookies bool   `yaml:"force_secure_cookies"` // Always set Secure flag on session cookies (use behind TLS-terminating proxy)
+}
+
+// EncryptionConfig holds settings for server-side envelope encryption.
+// When enabled, objects are encrypted with per-object DEKs using chunked
+// AES-256-GCM before being stored on backends. Exactly one key source
+// (master_key, master_key_file, or vault) must be configured.
+type EncryptionConfig struct {
+	Enabled       bool              `yaml:"enabled"`
+	ChunkSize     int               `yaml:"chunk_size"`      // Plaintext bytes per chunk (default: 65536, range: 4KB–1MB, must be power of 2)
+	MasterKey     string            `yaml:"master_key"`      // Base64-encoded 256-bit key (inline or via env var)
+	MasterKeyFile string            `yaml:"master_key_file"` // Path to file containing raw 32-byte key
+	Vault         *VaultTransitConfig `yaml:"vault"`          // Vault Transit key management
+	PreviousKeys  []string          `yaml:"previous_keys"`   // Base64-encoded previous master keys for rotation (unwrap only)
+}
+
+// VaultTransitConfig holds settings for HashiCorp Vault Transit key management.
+type VaultTransitConfig struct {
+	Address   string `yaml:"address"`    // Vault server URL
+	Token     string `yaml:"token"`      // Vault token (or via env var)
+	KeyName   string `yaml:"key_name"`   // Transit key name
+	MountPath string `yaml:"mount_path"` // Transit mount path (default: "transit")
 }
 
 // LifecycleConfig holds rules for automatic object expiration. Objects matching
@@ -598,6 +621,69 @@ func (c *Config) SetDefaultsAndValidate() error {
 		}
 	}
 
+	// --- Encryption defaults and validation ---
+	if c.Encryption.Enabled {
+		if c.Encryption.ChunkSize == 0 {
+			c.Encryption.ChunkSize = 65536 // 64KB
+		}
+		cs := c.Encryption.ChunkSize
+		if cs < 4096 || cs > 1048576 {
+			errors = append(errors, "encryption.chunk_size must be between 4096 (4KB) and 1048576 (1MB)")
+		} else if cs&(cs-1) != 0 {
+			errors = append(errors, "encryption.chunk_size must be a power of 2")
+		}
+
+		sources := 0
+		if c.Encryption.MasterKey != "" {
+			sources++
+		}
+		if c.Encryption.MasterKeyFile != "" {
+			sources++
+		}
+		if c.Encryption.Vault != nil {
+			sources++
+		}
+		if sources == 0 {
+			errors = append(errors, "encryption: exactly one of master_key, master_key_file, or vault is required")
+		} else if sources > 1 {
+			errors = append(errors, "encryption: only one of master_key, master_key_file, or vault may be set")
+		}
+
+		if c.Encryption.MasterKey != "" {
+			keyBytes, err := base64.StdEncoding.DecodeString(c.Encryption.MasterKey)
+			if err != nil {
+				errors = append(errors, fmt.Sprintf("encryption.master_key: invalid base64: %v", err))
+			} else if len(keyBytes) != 32 {
+				errors = append(errors, fmt.Sprintf("encryption.master_key: must be 256 bits (32 bytes), got %d bytes", len(keyBytes)))
+			}
+		}
+
+		for i, pk := range c.Encryption.PreviousKeys {
+			keyBytes, err := base64.StdEncoding.DecodeString(pk)
+			if err != nil {
+				errors = append(errors, fmt.Sprintf("encryption.previous_keys[%d]: invalid base64: %v", i, err))
+			} else if len(keyBytes) != 32 {
+				errors = append(errors, fmt.Sprintf("encryption.previous_keys[%d]: must be 256 bits (32 bytes), got %d bytes", i, len(keyBytes)))
+			}
+		}
+
+		if c.Encryption.Vault != nil {
+			v := c.Encryption.Vault
+			if v.Address == "" {
+				errors = append(errors, "encryption.vault.address is required")
+			}
+			if v.Token == "" {
+				errors = append(errors, "encryption.vault.token is required")
+			}
+			if v.KeyName == "" {
+				errors = append(errors, "encryption.vault.key_name is required")
+			}
+			if v.MountPath == "" {
+				v.MountPath = "transit"
+			}
+		}
+	}
+
 	// --- Usage flush defaults ---
 	if c.UsageFlush.Interval == 0 {
 		c.UsageFlush.Interval = 30 * time.Second
@@ -685,6 +771,12 @@ func NonReloadableFieldsChanged(old, new *Config) []string {
 	}
 	if old.BackendCircuitBreaker != new.BackendCircuitBreaker {
 		changed = append(changed, "backend_circuit_breaker")
+	}
+	if old.Encryption.Enabled != new.Encryption.Enabled ||
+		old.Encryption.MasterKey != new.Encryption.MasterKey ||
+		old.Encryption.MasterKeyFile != new.Encryption.MasterKeyFile ||
+		old.Encryption.ChunkSize != new.Encryption.ChunkSize {
+		changed = append(changed, "encryption")
 	}
 	if old.RoutingStrategy != new.RoutingStrategy {
 		changed = append(changed, "routing_strategy")

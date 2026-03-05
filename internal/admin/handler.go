@@ -20,24 +20,30 @@ import (
 	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/storage"
+	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 )
 
 // Handler serves the admin API endpoints.
 type Handler struct {
-	manager  *storage.BackendManager
-	store    *storage.CircuitBreakerStore
-	token    string
-	logLevel *slog.LevelVar
+	manager   *storage.BackendManager
+	store     *storage.CircuitBreakerStore
+	rawStore  *storage.Store
+	encryptor *encryption.Encryptor
+	token     string
+	logLevel  *slog.LevelVar
 }
 
 // New creates a new admin API handler.
-func New(manager *storage.BackendManager, store *storage.CircuitBreakerStore, token string, logLevel *slog.LevelVar) *Handler {
+func New(manager *storage.BackendManager, store *storage.CircuitBreakerStore, rawStore *storage.Store, encryptor *encryption.Encryptor, token string, logLevel *slog.LevelVar) *Handler {
 	return &Handler{
-		manager:  manager,
-		store:    store,
-		token:    token,
-		logLevel: logLevel,
+		manager:   manager,
+		store:     store,
+		rawStore:  rawStore,
+		encryptor: encryptor,
+		token:     token,
+		logLevel:  logLevel,
 	}
 }
 
@@ -53,6 +59,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /admin/api/backends/{name}/drain", h.requireToken(h.handleDrainProgress))
 	mux.HandleFunc("DELETE /admin/api/backends/{name}/drain", h.requireToken(h.handleCancelDrain))
 	mux.HandleFunc("DELETE /admin/api/backends/{name}", h.requireToken(h.handleRemoveBackend))
+	mux.HandleFunc("POST /admin/api/rotate-encryption-key", h.requireToken(h.handleRotateEncryptionKey))
+	mux.HandleFunc("POST /admin/api/encrypt-existing", h.requireToken(h.handleEncryptExisting))
 }
 
 // -------------------------------------------------------------------------
@@ -64,6 +72,7 @@ func (h *Handler) requireToken(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := r.Header.Get("X-Admin-Token")
 		if token == "" || subtle.ConstantTimeCompare([]byte(token), []byte(h.token)) != 1 {
+			slog.Warn("Admin: unauthorized request", "path", r.URL.Path, "remote", r.RemoteAddr)
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 			return
 		}
@@ -292,6 +301,193 @@ func (h *Handler) handleRemoveBackend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "backend removed", "backend": name})
+}
+
+// -------------------------------------------------------------------------
+// ENCRYPTION KEY ROTATION
+// -------------------------------------------------------------------------
+
+// handleRotateEncryptionKey re-wraps all encrypted objects' DEKs with the
+// current primary key. Objects are processed in batches to avoid holding long
+// transactions. The old key must remain in previous_keys for unwrapping.
+func (h *Handler) handleRotateEncryptionKey(w http.ResponseWriter, r *http.Request) {
+	if h.encryptor == nil || h.rawStore == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "encryption not enabled"})
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req struct {
+		OldKeyID string `json:"old_key_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.OldKeyID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "old_key_id is required"})
+		return
+	}
+
+	ctx := r.Context()
+	const batchSize = 500
+	var rotated, failed, total int
+
+	for offset := 0; ; offset += batchSize {
+		locs, err := h.rawStore.ListEncryptedLocations(ctx, req.OldKeyID, batchSize, offset)
+		if err != nil {
+			slog.Error("Admin: key rotation list failed", "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list encrypted objects"})
+			return
+		}
+		if len(locs) == 0 {
+			break
+		}
+
+		for _, loc := range locs {
+			total++
+			// Unpack old nonce + wrapped DEK
+			baseNonce, wrappedDEK, unpackErr := encryption.UnpackKeyData(loc.EncryptionKey)
+			if unpackErr != nil {
+				slog.Warn("Key rotation: unpack failed", "key", loc.ObjectKey, "error", unpackErr)
+				telemetry.KeyRotationObjectsTotal.WithLabelValues("error").Inc()
+				failed++
+				continue
+			}
+
+			// Unwrap with old key, re-wrap with new key
+			dek, unwrapErr := h.encryptor.Provider().UnwrapDEK(ctx, wrappedDEK, loc.KeyID)
+			if unwrapErr != nil {
+				slog.Warn("Key rotation: unwrap failed", "key", loc.ObjectKey, "error", unwrapErr)
+				telemetry.KeyRotationObjectsTotal.WithLabelValues("error").Inc()
+				failed++
+				continue
+			}
+
+			newWrapped, newKeyID, wrapErr := h.encryptor.Provider().WrapDEK(ctx, dek)
+			if wrapErr != nil {
+				slog.Warn("Key rotation: wrap failed", "key", loc.ObjectKey, "error", wrapErr)
+				telemetry.KeyRotationObjectsTotal.WithLabelValues("error").Inc()
+				failed++
+				continue
+			}
+
+			newKeyData := encryption.PackKeyData(baseNonce, newWrapped)
+			if err := h.rawStore.UpdateEncryptionKey(ctx, loc.ObjectKey, loc.BackendName, newKeyData, newKeyID); err != nil {
+				slog.Warn("Key rotation: update failed", "key", loc.ObjectKey, "error", err)
+				telemetry.KeyRotationObjectsTotal.WithLabelValues("error").Inc()
+				failed++
+				continue
+			}
+
+			telemetry.KeyRotationObjectsTotal.WithLabelValues("success").Inc()
+			rotated++
+		}
+
+		// If we got fewer than batchSize, we've reached the end
+		if len(locs) < batchSize {
+			break
+		}
+	}
+
+	slog.Info("Admin: key rotation complete", "rotated", rotated, "failed", failed, "total", total)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":  "complete",
+		"rotated": rotated,
+		"failed":  failed,
+		"total":   total,
+	})
+}
+
+// -------------------------------------------------------------------------
+// ENCRYPT EXISTING OBJECTS
+// -------------------------------------------------------------------------
+
+// handleEncryptExisting downloads each unencrypted object from its backend,
+// encrypts it, re-uploads the ciphertext, and updates the DB record. Objects
+// are processed in batches to avoid holding long transactions.
+func (h *Handler) handleEncryptExisting(w http.ResponseWriter, r *http.Request) {
+	if h.encryptor == nil || h.rawStore == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "encryption not enabled"})
+		return
+	}
+
+	ctx := r.Context()
+	const batchSize = 100
+	var encrypted, failed, total int
+
+	for offset := 0; ; offset += batchSize {
+		locs, err := h.rawStore.ListUnencryptedLocations(ctx, batchSize, offset)
+		if err != nil {
+			slog.Error("Admin: encrypt-existing list failed", "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list unencrypted objects"})
+			return
+		}
+		if len(locs) == 0 {
+			break
+		}
+
+		for _, loc := range locs {
+			total++
+
+			backend, err := h.manager.GetBackend(loc.BackendName)
+			if err != nil {
+				slog.Warn("Encrypt-existing: backend not found", "key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
+				telemetry.EncryptExistingObjectsTotal.WithLabelValues("error").Inc()
+				failed++
+				continue
+			}
+
+			// Download plaintext from backend
+			result, err := backend.GetObject(ctx, loc.ObjectKey, "")
+			if err != nil {
+				slog.Warn("Encrypt-existing: download failed", "key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
+				telemetry.EncryptExistingObjectsTotal.WithLabelValues("error").Inc()
+				failed++
+				continue
+			}
+
+			// Encrypt
+			encResult, err := h.encryptor.Encrypt(ctx, result.Body, loc.SizeBytes)
+			if err != nil {
+				result.Body.Close()
+				slog.Warn("Encrypt-existing: encrypt failed", "key", loc.ObjectKey, "error", err)
+				telemetry.EncryptExistingObjectsTotal.WithLabelValues("error").Inc()
+				failed++
+				continue
+			}
+
+			// Re-upload ciphertext (overwrites plaintext on backend)
+			_, err = backend.PutObject(ctx, loc.ObjectKey, encResult.Body, encResult.CiphertextSize, result.ContentType, result.Metadata)
+			result.Body.Close()
+			if err != nil {
+				slog.Warn("Encrypt-existing: re-upload failed", "key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
+				telemetry.EncryptExistingObjectsTotal.WithLabelValues("error").Inc()
+				failed++
+				continue
+			}
+
+			// Update DB record
+			keyData := encryption.PackKeyData(encResult.BaseNonce, encResult.WrappedDEK)
+			if err := h.rawStore.MarkObjectEncrypted(ctx, loc.ObjectKey, loc.BackendName, keyData, encResult.KeyID, loc.SizeBytes, encResult.CiphertextSize); err != nil {
+				slog.Warn("Encrypt-existing: DB update failed", "key", loc.ObjectKey, "error", err)
+				telemetry.EncryptExistingObjectsTotal.WithLabelValues("error").Inc()
+				failed++
+				continue
+			}
+
+			telemetry.EncryptExistingObjectsTotal.WithLabelValues("success").Inc()
+			encrypted++
+		}
+
+		if len(locs) < batchSize {
+			break
+		}
+	}
+
+	slog.Info("Admin: encrypt-existing complete", "encrypted", encrypted, "failed", failed, "total", total)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":    "complete",
+		"encrypted": encrypted,
+		"failed":    failed,
+		"total":     total,
+	})
 }
 
 // -------------------------------------------------------------------------

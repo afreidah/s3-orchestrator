@@ -7,6 +7,8 @@ package db
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const getUnderReplicatedObjects = `-- name: GetUnderReplicatedObjects :many
@@ -17,7 +19,7 @@ WITH under_replicated AS (
     HAVING COUNT(*) < $1::bigint
     LIMIT $2
 )
-SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.created_at
+SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.created_at
 FROM object_locations ol
 JOIN under_replicated ur ON ol.object_key = ur.object_key
 ORDER BY ol.object_key, ol.created_at ASC
@@ -28,19 +30,34 @@ type GetUnderReplicatedObjectsParams struct {
 	MaxKeys int32
 }
 
-func (q *Queries) GetUnderReplicatedObjects(ctx context.Context, arg GetUnderReplicatedObjectsParams) ([]ObjectLocation, error) {
+type GetUnderReplicatedObjectsRow struct {
+	ObjectKey     string
+	BackendName   string
+	SizeBytes     int64
+	Encrypted     bool
+	EncryptionKey []byte
+	KeyID         *string
+	PlaintextSize *int64
+	CreatedAt     pgtype.Timestamptz
+}
+
+func (q *Queries) GetUnderReplicatedObjects(ctx context.Context, arg GetUnderReplicatedObjectsParams) ([]GetUnderReplicatedObjectsRow, error) {
 	rows, err := q.db.Query(ctx, getUnderReplicatedObjects, arg.Factor, arg.MaxKeys)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []ObjectLocation{}
+	items := []GetUnderReplicatedObjectsRow{}
 	for rows.Next() {
-		var i ObjectLocation
+		var i GetUnderReplicatedObjectsRow
 		if err := rows.Scan(
 			&i.ObjectKey,
 			&i.BackendName,
 			&i.SizeBytes,
+			&i.Encrypted,
+			&i.EncryptionKey,
+			&i.KeyID,
+			&i.PlaintextSize,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -54,8 +71,8 @@ func (q *Queries) GetUnderReplicatedObjects(ctx context.Context, arg GetUnderRep
 }
 
 const insertReplicaConditional = `-- name: InsertReplicaConditional :one
-INSERT INTO object_locations (object_key, backend_name, size_bytes, created_at)
-SELECT $1, $2, ol.size_bytes, NOW()
+INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, created_at)
+SELECT $1, $2, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, NOW()
 FROM object_locations ol
 WHERE ol.object_key = $1 AND ol.backend_name = $3
 ON CONFLICT (object_key, backend_name) DO NOTHING

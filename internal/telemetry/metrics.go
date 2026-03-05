@@ -454,6 +454,44 @@ var (
 		},
 	)
 
+	// --- Encryption metrics ---
+
+	// EncryptionOpsTotal counts encryption operations by type.
+	EncryptionOpsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "s3proxy_encryption_operations_total",
+			Help: "Total encryption operations",
+		},
+		[]string{"op"},
+	)
+
+	// EncryptionErrorsTotal counts encryption errors by operation and type.
+	EncryptionErrorsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "s3proxy_encryption_errors_total",
+			Help: "Total encryption errors",
+		},
+		[]string{"op", "error_type"},
+	)
+
+	// KeyRotationObjectsTotal counts objects processed during key rotation.
+	KeyRotationObjectsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "s3proxy_key_rotation_objects_total",
+			Help: "Total objects processed during key rotation",
+		},
+		[]string{"status"},
+	)
+
+	// EncryptExistingObjectsTotal counts objects processed during encrypt-existing.
+	EncryptExistingObjectsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "s3proxy_encrypt_existing_objects_total",
+			Help: "Total objects processed during encrypt-existing operation",
+		},
+		[]string{"status"},
+	)
+
 	// --- Info metric ---
 
 	// BuildInfo exposes version information.

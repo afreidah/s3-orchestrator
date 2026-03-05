@@ -11,4 +11,15 @@ ignore:
   - "internal/testutil/"
   - "internal/storage/sqlc/"  # generated code (sqlc)
   - "internal/storage/backend.go" # real S3 SDK wrapper, integration-tested only
+  - "internal/storage/store.go"   # DB queries, integration-tested only
+  - "internal/storage/manager.go"           # orchestrates backend+DB, integration-tested only
+  - "internal/storage/manager_objects.go"   # orchestrates backend+DB, integration-tested only
+  - "internal/storage/manager_multipart.go" # orchestrates backend+DB, integration-tested only
+  - "internal/storage/manager_drain.go"     # background drain service, integration-tested only
+  - "internal/storage/replicator.go"        # replication worker, integration-tested only
   - "internal/admin/"         # thin delegation layer over tested storage methods
+  - "internal/ui/"            # thin HTTP handler layer, integration-tested only
+  - "internal/server/"        # server wiring and startup
+  - "internal/lifecycle/"     # background lifecycle worker, integration-tested only
+  - "internal/telemetry/"     # metric definitions, not unit-testable
+  - "internal/encryption/vault.go" # Vault transit integration, requires running Vault

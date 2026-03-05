@@ -76,8 +76,8 @@ func (cb *CircuitBreakerStore) GetAllObjectLocations(ctx context.Context, key st
 }
 
 // RecordObject delegates to the real store with circuit breaker protection.
-func (cb *CircuitBreakerStore) RecordObject(ctx context.Context, key, backend string, size int64) error {
-	return CBCallNoResult(cb.CircuitBreaker, func() error { return cb.real.RecordObject(ctx, key, backend, size) })
+func (cb *CircuitBreakerStore) RecordObject(ctx context.Context, key, backend string, size int64, enc *EncryptionMeta) error {
+	return CBCallNoResult(cb.CircuitBreaker, func() error { return cb.real.RecordObject(ctx, key, backend, size, enc) })
 }
 
 // DeleteObject delegates to the real store with circuit breaker protection.
@@ -120,8 +120,8 @@ func (cb *CircuitBreakerStore) GetMultipartUpload(ctx context.Context, uploadID 
 }
 
 // RecordPart delegates to the real store with circuit breaker protection.
-func (cb *CircuitBreakerStore) RecordPart(ctx context.Context, uploadID string, partNumber int, etag string, size int64) error {
-	return CBCallNoResult(cb.CircuitBreaker, func() error { return cb.real.RecordPart(ctx, uploadID, partNumber, etag, size) })
+func (cb *CircuitBreakerStore) RecordPart(ctx context.Context, uploadID string, partNumber int, etag string, size int64, enc *EncryptionMeta) error {
+	return CBCallNoResult(cb.CircuitBreaker, func() error { return cb.real.RecordPart(ctx, uploadID, partNumber, etag, size, enc) })
 }
 
 // GetParts delegates to the real store with circuit breaker protection.

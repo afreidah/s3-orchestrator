@@ -36,11 +36,15 @@ type CleanupQueue struct {
 }
 
 type MultipartPart struct {
-	UploadID   string
-	PartNumber int32
-	Etag       string
-	SizeBytes  int64
-	CreatedAt  pgtype.Timestamptz
+	UploadID      string
+	PartNumber    int32
+	Etag          string
+	SizeBytes     int64
+	CreatedAt     pgtype.Timestamptz
+	Encrypted     bool
+	EncryptionKey []byte
+	KeyID         *string
+	PlaintextSize *int64
 }
 
 type MultipartUpload struct {
@@ -53,8 +57,12 @@ type MultipartUpload struct {
 }
 
 type ObjectLocation struct {
-	ObjectKey   string
-	BackendName string
-	SizeBytes   int64
-	CreatedAt   pgtype.Timestamptz
+	ObjectKey     string
+	BackendName   string
+	SizeBytes     int64
+	CreatedAt     pgtype.Timestamptz
+	Encrypted     bool
+	EncryptionKey []byte
+	KeyID         *string
+	PlaintextSize *int64
 }

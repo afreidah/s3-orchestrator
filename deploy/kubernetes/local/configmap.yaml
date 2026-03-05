@@ -59,8 +59,12 @@ data:
 
     replication:
       factor: 2
-      worker_interval: "1m"
-      batch_size: 50
+      worker_interval: "30s"
+      batch_size: 100
+
+    encryption:
+      enabled: true
+      master_key: "F2rpnHM7TmwJ4/DalNfk0cvCCPmHTfvB9LyhBLPoCVc="
 
     circuit_breaker:
       failure_threshold: 3
@@ -80,5 +84,5 @@ data:
       enabled: true
       admin_key: "${UI_ADMIN_KEY}"
       admin_secret: "${UI_ADMIN_SECRET}"
-      # admin_token: "${UI_ADMIN_TOKEN}"     # Separate token for admin API (defaults to admin_key)
+      admin_token: "${UI_ADMIN_TOKEN}"       # Separate token for admin API (defaults to admin_key)
       # force_secure_cookies: false          # Local dev — no TLS proxy
