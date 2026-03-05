@@ -30,6 +30,20 @@ weight: 30
       <p>Transparent multi-cloud replication with automatic failover - no application changes required.</p>
     </div>
   </a>
+  <a class="landing-card" href="systemd-deployment/">
+    <i class="fas fa-terminal landing-card-icon" style="color: #f9a8d4;"></i>
+    <div>
+      <strong>Deploying with systemd</strong>
+      <p>Install the Debian package and run as a systemd service with security hardening and hot reload.</p>
+    </div>
+  </a>
+  <a class="landing-card" href="nomad-vault-deployment/">
+    <i class="fas fa-server landing-card-icon" style="color: #a78bfa;"></i>
+    <div>
+      <strong>Deploying on Nomad with Vault</strong>
+      <p>Run the orchestrator as a Nomad job with Vault-managed secrets and Transit encryption.</p>
+    </div>
+  </a>
   <a class="landing-card" href="encrypting-existing-data/">
     <i class="fas fa-lock landing-card-icon" style="color: #fca5a5;"></i>
     <div>
