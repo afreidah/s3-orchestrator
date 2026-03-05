@@ -84,17 +84,21 @@ func (q *Queries) GetMultipartUpload(ctx context.Context, uploadID string) (GetM
 }
 
 const getParts = `-- name: GetParts :many
-SELECT part_number, etag, size_bytes, created_at
+SELECT part_number, etag, size_bytes, encrypted, encryption_key, key_id, plaintext_size, created_at
 FROM multipart_parts
 WHERE upload_id = $1
 ORDER BY part_number
 `
 
 type GetPartsRow struct {
-	PartNumber int32
-	Etag       string
-	SizeBytes  int64
-	CreatedAt  pgtype.Timestamptz
+	PartNumber    int32
+	Etag          string
+	SizeBytes     int64
+	Encrypted     bool
+	EncryptionKey []byte
+	KeyID         *string
+	PlaintextSize *int64
+	CreatedAt     pgtype.Timestamptz
 }
 
 func (q *Queries) GetParts(ctx context.Context, uploadID string) ([]GetPartsRow, error) {
@@ -110,6 +114,10 @@ func (q *Queries) GetParts(ctx context.Context, uploadID string) ([]GetPartsRow,
 			&i.PartNumber,
 			&i.Etag,
 			&i.SizeBytes,
+			&i.Encrypted,
+			&i.EncryptionKey,
+			&i.KeyID,
+			&i.PlaintextSize,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -210,17 +218,21 @@ func (q *Queries) ListMultipartUploadsByPrefix(ctx context.Context, arg ListMult
 }
 
 const upsertPart = `-- name: UpsertPart :exec
-INSERT INTO multipart_parts (upload_id, part_number, etag, size_bytes, created_at)
-VALUES ($1, $2, $3, $4, NOW())
+INSERT INTO multipart_parts (upload_id, part_number, etag, size_bytes, encrypted, encryption_key, key_id, plaintext_size, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
 ON CONFLICT (upload_id, part_number) DO UPDATE SET
-    etag = $3, size_bytes = $4, created_at = NOW()
+    etag = $3, size_bytes = $4, encrypted = $5, encryption_key = $6, key_id = $7, plaintext_size = $8, created_at = NOW()
 `
 
 type UpsertPartParams struct {
-	UploadID   string
-	PartNumber int32
-	Etag       string
-	SizeBytes  int64
+	UploadID      string
+	PartNumber    int32
+	Etag          string
+	SizeBytes     int64
+	Encrypted     bool
+	EncryptionKey []byte
+	KeyID         *string
+	PlaintextSize *int64
 }
 
 func (q *Queries) UpsertPart(ctx context.Context, arg UpsertPartParams) error {
@@ -229,6 +241,10 @@ func (q *Queries) UpsertPart(ctx context.Context, arg UpsertPartParams) error {
 		arg.PartNumber,
 		arg.Etag,
 		arg.SizeBytes,
+		arg.Encrypted,
+		arg.EncryptionKey,
+		arg.KeyID,
+		arg.PlaintextSize,
 	)
 	return err
 }

@@ -9,8 +9,8 @@ DELETE FROM object_locations
 WHERE object_key = $1;
 
 -- name: InsertObjectLocation :exec
-INSERT INTO object_locations (object_key, backend_name, size_bytes, created_at)
-VALUES ($1, $2, $3, NOW());
+INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, NOW());
 
 -- name: ListObjectsByBackend :many
 SELECT object_key, backend_name, size_bytes, created_at
@@ -26,7 +26,7 @@ SELECT EXISTS(
 ) AS exists;
 
 -- name: LockObjectOnBackend :one
-SELECT size_bytes
+SELECT size_bytes, encrypted, encryption_key, key_id, plaintext_size
 FROM object_locations
 WHERE object_key = $1 AND backend_name = $2
 FOR UPDATE;
@@ -44,14 +44,14 @@ ORDER BY object_key, created_at ASC
 LIMIT @max_keys;
 
 -- name: GetAllObjectLocations :many
-SELECT object_key, backend_name, size_bytes, created_at
+SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, created_at
 FROM object_locations
 WHERE object_key = $1
 ORDER BY created_at ASC;
 
 -- name: InsertObjectLocationIfNotExists :one
-INSERT INTO object_locations (object_key, backend_name, size_bytes, created_at)
-VALUES ($1, $2, $3, NOW())
+INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
 ON CONFLICT (object_key, backend_name) DO NOTHING
 RETURNING true AS inserted;
 
@@ -95,6 +95,34 @@ WHERE backend_name = $1;
 
 -- name: DeleteObjectLocationsByBackend :exec
 DELETE FROM object_locations WHERE backend_name = $1;
+
+-- name: ListEncryptedLocations :many
+SELECT object_key, backend_name, encryption_key, key_id
+FROM object_locations
+WHERE encrypted = TRUE AND key_id = $1
+ORDER BY object_key, backend_name
+LIMIT $2 OFFSET $3;
+
+-- name: UpdateEncryptionKey :exec
+UPDATE object_locations
+SET encryption_key = $3, key_id = $4
+WHERE object_key = $1 AND backend_name = $2;
+
+-- name: ListUnencryptedLocations :many
+SELECT object_key, backend_name, size_bytes
+FROM object_locations
+WHERE encrypted = FALSE
+ORDER BY object_key, backend_name
+LIMIT $1 OFFSET $2;
+
+-- name: MarkObjectEncrypted :exec
+UPDATE object_locations
+SET encrypted = TRUE,
+    encryption_key = $3,
+    key_id = $4,
+    plaintext_size = $5,
+    size_bytes = $6
+WHERE object_key = $1 AND backend_name = $2;
 
 -- name: ListDirectChildren :many
 -- Return per-file detail for non-directory children under a prefix, with pagination.

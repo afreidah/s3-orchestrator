@@ -83,25 +83,40 @@ func (q *Queries) DeleteObjectLocationsByBackend(ctx context.Context, backendNam
 }
 
 const getAllObjectLocations = `-- name: GetAllObjectLocations :many
-SELECT object_key, backend_name, size_bytes, created_at
+SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, created_at
 FROM object_locations
 WHERE object_key = $1
 ORDER BY created_at ASC
 `
 
-func (q *Queries) GetAllObjectLocations(ctx context.Context, objectKey string) ([]ObjectLocation, error) {
+type GetAllObjectLocationsRow struct {
+	ObjectKey     string
+	BackendName   string
+	SizeBytes     int64
+	Encrypted     bool
+	EncryptionKey []byte
+	KeyID         *string
+	PlaintextSize *int64
+	CreatedAt     pgtype.Timestamptz
+}
+
+func (q *Queries) GetAllObjectLocations(ctx context.Context, objectKey string) ([]GetAllObjectLocationsRow, error) {
 	rows, err := q.db.Query(ctx, getAllObjectLocations, objectKey)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []ObjectLocation{}
+	items := []GetAllObjectLocationsRow{}
 	for rows.Next() {
-		var i ObjectLocation
+		var i GetAllObjectLocationsRow
 		if err := rows.Scan(
 			&i.ObjectKey,
 			&i.BackendName,
 			&i.SizeBytes,
+			&i.Encrypted,
+			&i.EncryptionKey,
+			&i.KeyID,
+			&i.PlaintextSize,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -205,36 +220,60 @@ func (q *Queries) GetExistingCopiesForUpdate(ctx context.Context, objectKey stri
 }
 
 const insertObjectLocation = `-- name: InsertObjectLocation :exec
-INSERT INTO object_locations (object_key, backend_name, size_bytes, created_at)
-VALUES ($1, $2, $3, NOW())
+INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
 `
 
 type InsertObjectLocationParams struct {
-	ObjectKey   string
-	BackendName string
-	SizeBytes   int64
+	ObjectKey     string
+	BackendName   string
+	SizeBytes     int64
+	Encrypted     bool
+	EncryptionKey []byte
+	KeyID         *string
+	PlaintextSize *int64
 }
 
 func (q *Queries) InsertObjectLocation(ctx context.Context, arg InsertObjectLocationParams) error {
-	_, err := q.db.Exec(ctx, insertObjectLocation, arg.ObjectKey, arg.BackendName, arg.SizeBytes)
+	_, err := q.db.Exec(ctx, insertObjectLocation,
+		arg.ObjectKey,
+		arg.BackendName,
+		arg.SizeBytes,
+		arg.Encrypted,
+		arg.EncryptionKey,
+		arg.KeyID,
+		arg.PlaintextSize,
+	)
 	return err
 }
 
 const insertObjectLocationIfNotExists = `-- name: InsertObjectLocationIfNotExists :one
-INSERT INTO object_locations (object_key, backend_name, size_bytes, created_at)
-VALUES ($1, $2, $3, NOW())
+INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
 ON CONFLICT (object_key, backend_name) DO NOTHING
 RETURNING true AS inserted
 `
 
 type InsertObjectLocationIfNotExistsParams struct {
-	ObjectKey   string
-	BackendName string
-	SizeBytes   int64
+	ObjectKey     string
+	BackendName   string
+	SizeBytes     int64
+	Encrypted     bool
+	EncryptionKey []byte
+	KeyID         *string
+	PlaintextSize *int64
 }
 
 func (q *Queries) InsertObjectLocationIfNotExists(ctx context.Context, arg InsertObjectLocationIfNotExistsParams) (bool, error) {
-	row := q.db.QueryRow(ctx, insertObjectLocationIfNotExists, arg.ObjectKey, arg.BackendName, arg.SizeBytes)
+	row := q.db.QueryRow(ctx, insertObjectLocationIfNotExists,
+		arg.ObjectKey,
+		arg.BackendName,
+		arg.SizeBytes,
+		arg.Encrypted,
+		arg.EncryptionKey,
+		arg.KeyID,
+		arg.PlaintextSize,
+	)
 	var inserted bool
 	err := row.Scan(&inserted)
 	return inserted, err
@@ -257,21 +296,74 @@ type ListDirectChildrenParams struct {
 	MaxKeys    int32
 }
 
+type ListDirectChildrenRow struct {
+	ObjectKey   string
+	BackendName string
+	SizeBytes   int64
+	CreatedAt   pgtype.Timestamptz
+}
+
 // Return per-file detail for non-directory children under a prefix, with pagination.
-func (q *Queries) ListDirectChildren(ctx context.Context, arg ListDirectChildrenParams) ([]ObjectLocation, error) {
+func (q *Queries) ListDirectChildren(ctx context.Context, arg ListDirectChildrenParams) ([]ListDirectChildrenRow, error) {
 	rows, err := q.db.Query(ctx, listDirectChildren, arg.Prefix, arg.StartAfter, arg.MaxKeys)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []ObjectLocation{}
+	items := []ListDirectChildrenRow{}
 	for rows.Next() {
-		var i ObjectLocation
+		var i ListDirectChildrenRow
 		if err := rows.Scan(
 			&i.ObjectKey,
 			&i.BackendName,
 			&i.SizeBytes,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEncryptedLocations = `-- name: ListEncryptedLocations :many
+SELECT object_key, backend_name, encryption_key, key_id
+FROM object_locations
+WHERE encrypted = TRUE AND key_id = $1
+ORDER BY object_key, backend_name
+LIMIT $2 OFFSET $3
+`
+
+type ListEncryptedLocationsParams struct {
+	KeyID  *string
+	Limit  int32
+	Offset int32
+}
+
+type ListEncryptedLocationsRow struct {
+	ObjectKey     string
+	BackendName   string
+	EncryptionKey []byte
+	KeyID         *string
+}
+
+func (q *Queries) ListEncryptedLocations(ctx context.Context, arg ListEncryptedLocationsParams) ([]ListEncryptedLocationsRow, error) {
+	rows, err := q.db.Query(ctx, listEncryptedLocations, arg.KeyID, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListEncryptedLocationsRow{}
+	for rows.Next() {
+		var i ListEncryptedLocationsRow
+		if err := rows.Scan(
+			&i.ObjectKey,
+			&i.BackendName,
+			&i.EncryptionKey,
+			&i.KeyID,
 		); err != nil {
 			return nil, err
 		}
@@ -298,15 +390,22 @@ type ListExpiredObjectsParams struct {
 	MaxKeys int32
 }
 
-func (q *Queries) ListExpiredObjects(ctx context.Context, arg ListExpiredObjectsParams) ([]ObjectLocation, error) {
+type ListExpiredObjectsRow struct {
+	ObjectKey   string
+	BackendName string
+	SizeBytes   int64
+	CreatedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) ListExpiredObjects(ctx context.Context, arg ListExpiredObjectsParams) ([]ListExpiredObjectsRow, error) {
 	rows, err := q.db.Query(ctx, listExpiredObjects, arg.Prefix, arg.Cutoff, arg.MaxKeys)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []ObjectLocation{}
+	items := []ListExpiredObjectsRow{}
 	for rows.Next() {
-		var i ObjectLocation
+		var i ListExpiredObjectsRow
 		if err := rows.Scan(
 			&i.ObjectKey,
 			&i.BackendName,
@@ -336,15 +435,22 @@ type ListObjectsByBackendParams struct {
 	Limit       int32
 }
 
-func (q *Queries) ListObjectsByBackend(ctx context.Context, arg ListObjectsByBackendParams) ([]ObjectLocation, error) {
+type ListObjectsByBackendRow struct {
+	ObjectKey   string
+	BackendName string
+	SizeBytes   int64
+	CreatedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) ListObjectsByBackend(ctx context.Context, arg ListObjectsByBackendParams) ([]ListObjectsByBackendRow, error) {
 	rows, err := q.db.Query(ctx, listObjectsByBackend, arg.BackendName, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []ObjectLocation{}
+	items := []ListObjectsByBackendRow{}
 	for rows.Next() {
-		var i ObjectLocation
+		var i ListObjectsByBackendRow
 		if err := rows.Scan(
 			&i.ObjectKey,
 			&i.BackendName,
@@ -376,15 +482,22 @@ type ListObjectsByPrefixParams struct {
 	MaxKeys    int32
 }
 
-func (q *Queries) ListObjectsByPrefix(ctx context.Context, arg ListObjectsByPrefixParams) ([]ObjectLocation, error) {
+type ListObjectsByPrefixRow struct {
+	ObjectKey   string
+	BackendName string
+	SizeBytes   int64
+	CreatedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) ListObjectsByPrefix(ctx context.Context, arg ListObjectsByPrefixParams) ([]ListObjectsByPrefixRow, error) {
 	rows, err := q.db.Query(ctx, listObjectsByPrefix, arg.Prefix, arg.StartAfter, arg.MaxKeys)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []ObjectLocation{}
+	items := []ListObjectsByPrefixRow{}
 	for rows.Next() {
-		var i ObjectLocation
+		var i ListObjectsByPrefixRow
 		if err := rows.Scan(
 			&i.ObjectKey,
 			&i.BackendName,
@@ -401,8 +514,47 @@ func (q *Queries) ListObjectsByPrefix(ctx context.Context, arg ListObjectsByPref
 	return items, nil
 }
 
+const listUnencryptedLocations = `-- name: ListUnencryptedLocations :many
+SELECT object_key, backend_name, size_bytes
+FROM object_locations
+WHERE encrypted = FALSE
+ORDER BY object_key, backend_name
+LIMIT $1 OFFSET $2
+`
+
+type ListUnencryptedLocationsParams struct {
+	Limit  int32
+	Offset int32
+}
+
+type ListUnencryptedLocationsRow struct {
+	ObjectKey   string
+	BackendName string
+	SizeBytes   int64
+}
+
+func (q *Queries) ListUnencryptedLocations(ctx context.Context, arg ListUnencryptedLocationsParams) ([]ListUnencryptedLocationsRow, error) {
+	rows, err := q.db.Query(ctx, listUnencryptedLocations, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUnencryptedLocationsRow{}
+	for rows.Next() {
+		var i ListUnencryptedLocationsRow
+		if err := rows.Scan(&i.ObjectKey, &i.BackendName, &i.SizeBytes); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockObjectOnBackend = `-- name: LockObjectOnBackend :one
-SELECT size_bytes
+SELECT size_bytes, encrypted, encryption_key, key_id, plaintext_size
 FROM object_locations
 WHERE object_key = $1 AND backend_name = $2
 FOR UPDATE
@@ -413,9 +565,77 @@ type LockObjectOnBackendParams struct {
 	BackendName string
 }
 
-func (q *Queries) LockObjectOnBackend(ctx context.Context, arg LockObjectOnBackendParams) (int64, error) {
+type LockObjectOnBackendRow struct {
+	SizeBytes     int64
+	Encrypted     bool
+	EncryptionKey []byte
+	KeyID         *string
+	PlaintextSize *int64
+}
+
+func (q *Queries) LockObjectOnBackend(ctx context.Context, arg LockObjectOnBackendParams) (LockObjectOnBackendRow, error) {
 	row := q.db.QueryRow(ctx, lockObjectOnBackend, arg.ObjectKey, arg.BackendName)
-	var size_bytes int64
-	err := row.Scan(&size_bytes)
-	return size_bytes, err
+	var i LockObjectOnBackendRow
+	err := row.Scan(
+		&i.SizeBytes,
+		&i.Encrypted,
+		&i.EncryptionKey,
+		&i.KeyID,
+		&i.PlaintextSize,
+	)
+	return i, err
+}
+
+const markObjectEncrypted = `-- name: MarkObjectEncrypted :exec
+UPDATE object_locations
+SET encrypted = TRUE,
+    encryption_key = $3,
+    key_id = $4,
+    plaintext_size = $5,
+    size_bytes = $6
+WHERE object_key = $1 AND backend_name = $2
+`
+
+type MarkObjectEncryptedParams struct {
+	ObjectKey     string
+	BackendName   string
+	EncryptionKey []byte
+	KeyID         *string
+	PlaintextSize *int64
+	SizeBytes     int64
+}
+
+func (q *Queries) MarkObjectEncrypted(ctx context.Context, arg MarkObjectEncryptedParams) error {
+	_, err := q.db.Exec(ctx, markObjectEncrypted,
+		arg.ObjectKey,
+		arg.BackendName,
+		arg.EncryptionKey,
+		arg.KeyID,
+		arg.PlaintextSize,
+		arg.SizeBytes,
+	)
+	return err
+}
+
+const updateEncryptionKey = `-- name: UpdateEncryptionKey :exec
+UPDATE object_locations
+SET encryption_key = $3, key_id = $4
+WHERE object_key = $1 AND backend_name = $2
+`
+
+type UpdateEncryptionKeyParams struct {
+	ObjectKey     string
+	BackendName   string
+	EncryptionKey []byte
+	KeyID         *string
+}
+
+func (q *Queries) UpdateEncryptionKey(ctx context.Context, arg UpdateEncryptionKeyParams) error {
+	_, err := q.db.Exec(ctx, updateEncryptionKey,
+		arg.ObjectKey,
+		arg.BackendName,
+		arg.EncryptionKey,
+		arg.KeyID,
+	)
+	return err
 }

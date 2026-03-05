@@ -176,7 +176,7 @@ func (m *BackendManager) runDrain(ctx context.Context, name string, state *drain
 			default:
 			}
 
-			if m.drainOneObject(ctx, srcBackend, name, obj) {
+			if m.drainOneObject(ctx, srcBackend, name, &obj) {
 				state.moved.Add(1)
 				telemetry.DrainObjectsMoved.Inc()
 				telemetry.DrainBytesMoved.Add(float64(obj.SizeBytes))
@@ -212,7 +212,7 @@ func (m *BackendManager) runDrain(ctx context.Context, name string, state *drain
 // drainOneObject moves a single object from the draining backend to another.
 // If the object already has a replica on another backend, the source copy is
 // simply removed (no data transfer needed). Returns true on success.
-func (m *BackendManager) drainOneObject(ctx context.Context, srcBackend ObjectBackend, srcName string, obj ObjectLocation) bool {
+func (m *BackendManager) drainOneObject(ctx context.Context, srcBackend ObjectBackend, srcName string, obj *ObjectLocation) bool {
 	// Check if the object already has a copy on another backend.
 	// If so, just delete the source — no need to copy data.
 	locations, err := m.store.GetAllObjectLocations(ctx, obj.ObjectKey)

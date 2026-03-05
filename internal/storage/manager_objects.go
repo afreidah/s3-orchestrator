@@ -17,11 +17,13 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/audit"
+	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -67,10 +69,30 @@ func (m *BackendManager) PutObject(ctx context.Context, key string, body io.Read
 		return "", err
 	}
 
+	// --- Encrypt if enabled ---
+	var enc *EncryptionMeta
+	uploadBody := body
+	uploadSize := size
+	if m.encryptor != nil {
+		encResult, err := m.encryptor.Encrypt(ctx, body, size)
+		if err != nil {
+			span.SetStatus(codes.Error, err.Error())
+			return "", fmt.Errorf("encrypt: %w", err)
+		}
+		uploadBody = encResult.Body
+		uploadSize = encResult.CiphertextSize
+		enc = &EncryptionMeta{
+			Encrypted:     true,
+			EncryptionKey: encryption.PackKeyData(encResult.BaseNonce, encResult.WrappedDEK),
+			KeyID:         encResult.KeyID,
+			PlaintextSize: size,
+		}
+	}
+
 	// --- Upload to backend ---
 	bctx, bcancel := m.withTimeout(ctx)
 	defer bcancel()
-	etag, err := backend.PutObject(bctx, key, body, size, contentType, metadata)
+	etag, err := backend.PutObject(bctx, key, uploadBody, uploadSize, contentType, metadata)
 	if err != nil {
 		m.usage.Record(backendName, 1, 0, 0) // API call was made even on failure
 		span.SetStatus(codes.Error, err.Error())
@@ -79,7 +101,7 @@ func (m *BackendManager) PutObject(ctx context.Context, key string, body io.Read
 	}
 
 	// --- Record object location and update quota ---
-	if err := m.recordObjectOrCleanup(ctx, span, backend, key, backendName, size); err != nil {
+	if err := m.recordObjectOrCleanup(ctx, span, backend, key, backendName, uploadSize, enc); err != nil {
 		return "", err
 	}
 
@@ -312,28 +334,91 @@ func (m *BackendManager) parallelBroadcastRead(ctx context.Context, operation, k
 // -------------------------------------------------------------------------
 
 // GetObject retrieves an object from the backend where it's stored. Tries the
-// primary copy first, then falls back to replicas if the primary fails.
+// primary copy first, then falls back to replicas if the primary fails. When
+// the object is encrypted, the response body is transparently decrypted and
+// the reported size reflects the original plaintext size.
 func (m *BackendManager) GetObject(ctx context.Context, key string, rangeHeader string) (*GetObjectResult, error) {
 	var result *GetObjectResult
 	var once sync.Once // protects result write when parallel broadcast is enabled
+
+	// Resolve locations upfront so encryption metadata is available after read.
+	locations, locErr := m.store.GetAllObjectLocations(ctx, key)
 
 	backendName, err := m.withReadFailover(ctx, "GetObject", key, func(ctx context.Context, beName string, backend ObjectBackend) (int64, error) {
 		if !m.usage.WithinLimits(beName, 1, 0, 0) {
 			return 0, fmt.Errorf("backend %s: %w", beName, errUsageLimitSkip)
 		}
-		r, err := backend.GetObject(ctx, key, rangeHeader)
+
+		// Find encryption metadata for this backend's copy
+		var loc *ObjectLocation
+		if m.encryptor != nil && locErr == nil {
+			for i := range locations {
+				if locations[i].BackendName == beName {
+					loc = &locations[i]
+					break
+				}
+			}
+		}
+
+		// Translate plaintext range to ciphertext range for encrypted objects
+		actualRange := rangeHeader
+		var rng *encryption.RangeResult
+		var ptStart, ptEnd int64
+		if loc != nil && loc.Encrypted && rangeHeader != "" {
+			var ok bool
+			ptStart, ptEnd, ok = parsePlaintextRange(rangeHeader, loc.PlaintextSize)
+			if ok {
+				rng, _ = encryption.CiphertextRange(ptStart, ptEnd, m.encryptor.ChunkSize())
+				if rng != nil {
+					actualRange = rng.BackendRange
+				}
+			}
+		}
+
+		r, err := backend.GetObject(ctx, key, actualRange)
 		if err != nil {
-			m.usage.Record(beName, 1, 0, 0) // API call was made even on failure
+			m.usage.Record(beName, 1, 0, 0)
 			return 0, err
 		}
 		if !m.usage.WithinLimits(beName, 1, r.Size, 0) {
 			_ = r.Body.Close()
-			m.usage.Record(beName, 1, 0, 0) // API call was made, egress rejected
+			m.usage.Record(beName, 1, 0, 0)
 			return 0, fmt.Errorf("backend %s egress: %w", beName, errUsageLimitSkip)
 		}
+
+		// Decrypt the response body if the object is encrypted
+		if loc != nil && loc.Encrypted && m.encryptor != nil {
+			baseNonce, wrappedDEK, unpackErr := encryption.UnpackKeyData(loc.EncryptionKey)
+			if unpackErr != nil {
+				_ = r.Body.Close()
+				return 0, fmt.Errorf("unpack key data: %w", unpackErr)
+			}
+
+			if rng != nil {
+				// Range request: decrypt only the fetched chunks
+				plainReader, plainLen, decErr := m.encryptor.DecryptRange(ctx, r.Body, wrappedDEK, loc.KeyID, rng, baseNonce)
+				if decErr != nil {
+					_ = r.Body.Close()
+					return 0, fmt.Errorf("decrypt range: %w", decErr)
+				}
+				r.Body = io.NopCloser(plainReader)
+				r.Size = plainLen
+				r.ContentRange = fmt.Sprintf("bytes %d-%d/%d", ptStart, ptEnd, loc.PlaintextSize)
+			} else {
+				// Full read: decrypt the entire ciphertext stream
+				decrypted, decErr := m.encryptor.Decrypt(ctx, r.Body, wrappedDEK, loc.KeyID)
+				if decErr != nil {
+					_ = r.Body.Close()
+					return 0, fmt.Errorf("decrypt: %w", decErr)
+				}
+				r.Body = io.NopCloser(decrypted)
+				r.Size = loc.PlaintextSize
+			}
+		}
+
 		once.Do(func() { result = r })
 		if result != r {
-			_ = r.Body.Close() // lost the race — close our copy
+			_ = r.Body.Close()
 		}
 		return r.Size, nil
 	})
@@ -352,10 +437,14 @@ func (m *BackendManager) GetObject(ctx context.Context, key string, rangeHeader 
 }
 
 // HeadObject retrieves object metadata. Tries the primary copy first, then
-// falls back to replicas if the primary fails.
+// falls back to replicas if the primary fails. When the object is encrypted,
+// the reported size reflects the original plaintext size.
 func (m *BackendManager) HeadObject(ctx context.Context, key string) (*HeadObjectResult, error) {
 	var result *HeadObjectResult
 	var once sync.Once // protects result write when parallel broadcast is enabled
+
+	// Resolve locations upfront so encryption metadata is available.
+	locations, locErr := m.store.GetAllObjectLocations(ctx, key)
 
 	backendName, err := m.withReadFailover(ctx, "HeadObject", key, func(ctx context.Context, beName string, backend ObjectBackend) (int64, error) {
 		if !m.usage.WithinLimits(beName, 1, 0, 0) {
@@ -366,6 +455,17 @@ func (m *BackendManager) HeadObject(ctx context.Context, key string) (*HeadObjec
 			m.usage.Record(beName, 1, 0, 0) // API call was made even on failure
 			return 0, err
 		}
+
+		// Return plaintext size for encrypted objects
+		if m.encryptor != nil && locErr == nil {
+			for i := range locations {
+				if locations[i].BackendName == beName && locations[i].Encrypted {
+					r.Size = locations[i].PlaintextSize
+					break
+				}
+			}
+		}
+
 		once.Do(func() { result = r })
 		return r.Size, nil
 	})
@@ -415,6 +515,7 @@ func (m *BackendManager) CopyObject(ctx context.Context, sourceKey, destKey stri
 	var contentType string
 	var metadata map[string]string
 	var srcFound bool
+	var srcEnc *EncryptionMeta
 	for _, loc := range locations {
 		if !m.usage.WithinLimits(loc.BackendName, 1, 0, 0) {
 			continue
@@ -433,6 +534,14 @@ func (m *BackendManager) CopyObject(ctx context.Context, sourceKey, destKey stri
 		contentType = headResult.ContentType
 		metadata = headResult.Metadata
 		srcFound = true
+		if loc.Encrypted {
+			srcEnc = &EncryptionMeta{
+				Encrypted:     true,
+				EncryptionKey: loc.EncryptionKey,
+				KeyID:         loc.KeyID,
+				PlaintextSize: loc.PlaintextSize,
+			}
+		}
 		break
 	}
 	if !srcFound {
@@ -503,7 +612,9 @@ func (m *BackendManager) CopyObject(ctx context.Context, sourceKey, destKey stri
 	}
 
 	// --- Record destination location and update quota ---
-	if err := m.recordObjectOrCleanup(ctx, span, destBackend, destKey, destBackendName, size); err != nil {
+	// Preserve encryption metadata: ciphertext is copied as-is so the
+	// destination keeps the same wrapped DEK and key ID.
+	if err := m.recordObjectOrCleanup(ctx, span, destBackend, destKey, destBackendName, size, srcEnc); err != nil {
 		return "", err
 	}
 
@@ -835,4 +946,52 @@ func (m *BackendManager) ListObjects(ctx context.Context, prefix, delimiter, sta
 	span.SetStatus(codes.Ok, "")
 	span.SetAttributes(attribute.Int("s3.key_count", result.KeyCount))
 	return result, nil
+}
+
+// -------------------------------------------------------------------------
+// RANGE PARSING
+// -------------------------------------------------------------------------
+
+// parsePlaintextRange extracts the start and end byte offsets from an HTTP
+// Range header value (e.g., "bytes=0-99"). Suffix ranges and open-ended
+// ranges are resolved against plaintextSize.
+func parsePlaintextRange(rangeHeader string, plaintextSize int64) (start, end int64, ok bool) {
+	if !strings.HasPrefix(rangeHeader, "bytes=") {
+		return 0, 0, false
+	}
+	spec := rangeHeader[len("bytes="):]
+	parts := strings.SplitN(spec, "-", 2)
+	if len(parts) != 2 {
+		return 0, 0, false
+	}
+
+	if parts[0] == "" {
+		// Suffix range: bytes=-N
+		n, err := strconv.ParseInt(parts[1], 10, 64)
+		if err != nil || n <= 0 {
+			return 0, 0, false
+		}
+		start = plaintextSize - n
+		if start < 0 {
+			start = 0
+		}
+		return start, plaintextSize - 1, true
+	}
+
+	start, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return 0, 0, false
+	}
+
+	if parts[1] == "" {
+		// Open-ended: bytes=N-
+		return start, plaintextSize - 1, true
+	}
+
+	end, err = strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		return 0, 0, false
+	}
+
+	return start, end, true
 }

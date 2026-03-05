@@ -29,6 +29,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/admin"
 	"github.com/afreidah/s3-orchestrator/internal/auth"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/server"
 	"github.com/afreidah/s3-orchestrator/internal/storage"
@@ -189,6 +190,21 @@ func runServe() {
 	// --- Wrap store with circuit breaker for runtime ---
 	cbStore := storage.NewCircuitBreakerStore(store, cfg.CircuitBreaker)
 
+	// --- Initialize encryption (if enabled) ---
+	var encryptor *encryption.Encryptor
+	if cfg.Encryption.Enabled {
+		provider, err := encryption.NewKeyProviderFromConfig(&cfg.Encryption)
+		if err != nil {
+			slog.Error("Failed to initialize encryption key provider", "error", err)
+			os.Exit(1)
+		}
+		encryptor = encryption.NewEncryptor(provider, cfg.Encryption.ChunkSize)
+		slog.Info("Server-side encryption enabled",
+			"chunk_size", cfg.Encryption.ChunkSize,
+			"key_id", provider.KeyID(),
+		)
+	}
+
 	// --- Create backend manager ---
 	manager := storage.NewBackendManager(&storage.BackendManagerConfig{
 		Backends:          backends,
@@ -199,6 +215,7 @@ func runServe() {
 		UsageLimits:       usageLimits,
 		RoutingStrategy:   cfg.RoutingStrategy,
 		ParallelBroadcast: cfg.CircuitBreaker.ParallelBroadcast,
+		Encryptor:         encryptor,
 	})
 
 	// --- Store initial reloadable configs ---
@@ -308,7 +325,7 @@ func runServe() {
 			adminToken = cfg.UI.AdminKey
 		}
 		adminMux := http.NewServeMux()
-		adminHandler := admin.New(manager, cbStore, adminToken, &logLevel)
+		adminHandler := admin.New(manager, cbStore, store, encryptor, adminToken, &logLevel)
 		adminHandler.Register(adminMux)
 		var adminHTTP http.Handler = adminMux
 		if rl != nil {
@@ -574,6 +591,12 @@ func runServe() {
 		slog.Info("Backend circuit breakers enabled",
 			"failure_threshold", cfg.BackendCircuitBreaker.FailureThreshold,
 			"open_timeout", cfg.BackendCircuitBreaker.OpenTimeout,
+		)
+	}
+
+	if cfg.Encryption.Enabled {
+		slog.Info("Server-side encryption active",
+			"chunk_size", cfg.Encryption.ChunkSize,
 		)
 	}
 

@@ -133,7 +133,7 @@ func (m *MockStore) GetLeastUtilizedBackend(_ context.Context, size int64, _ []s
 }
 
 // RecordObject records the call arguments and returns the pre-configured error.
-func (m *MockStore) RecordObject(_ context.Context, key, backend string, size int64) error {
+func (m *MockStore) RecordObject(_ context.Context, key, backend string, size int64, _ *storage.EncryptionMeta) error {
 	m.Mu.Lock()
 	defer m.Mu.Unlock()
 	m.RecordObjectCalls = append(m.RecordObjectCalls, RecordObjectCall{Key: key, Backend: backend, Size: size})
@@ -187,7 +187,7 @@ func (m *MockStore) GetMultipartUpload(_ context.Context, _ string) (*storage.Mu
 }
 
 // RecordPart returns the pre-configured error.
-func (m *MockStore) RecordPart(_ context.Context, _ string, _ int, _ string, _ int64) error {
+func (m *MockStore) RecordPart(_ context.Context, _ string, _ int, _ string, _ int64, _ *storage.EncryptionMeta) error {
 	m.Mu.Lock()
 	defer m.Mu.Unlock()
 	return m.RecordPartErr
