@@ -1,9 +1,4 @@
----
-title: "S3-Orchestrator Quickstart"
-linkTitle: "Quickstart"
-weight: 1
----
-
+# Quickstart
 
 Get the S3 Orchestrator running locally in under a minute. The only prerequisites are **Go**, **Docker**, and **Make**.
 

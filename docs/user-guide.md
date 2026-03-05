@@ -1,9 +1,4 @@
----
-title: "S3-Orchestrator User Guide"
-linkTitle: "User Guide"
-weight: 2
----
-
+# User Guide
 
 This guide shows how to use the S3 Orchestrator from common S3 clients and SDKs. The orchestrator is a standard S3-compatible endpoint — any tool that speaks the S3 protocol will work.
 

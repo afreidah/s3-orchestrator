@@ -3,6 +3,52 @@ title: "S3-Orchestrator Documentation"
 linkTitle: "Documentation"
 chapter: true
 weight: 20
+cascade:
+  - title: "S3-Orchestrator Quickstart"
+    linkTitle: "Quickstart"
+    weight: 1
+    _target:
+      path: "/docs/quickstart"
+  - title: "S3-Orchestrator User Guide"
+    linkTitle: "User Guide"
+    weight: 2
+    _target:
+      path: "/docs/user-guide"
+  - title: "S3-Orchestrator Admin Guide"
+    linkTitle: "Admin Guide"
+    weight: 3
+    _target:
+      path: "/docs/admin-guide"
+  - title: "S3-Orchestrator API Reference"
+    linkTitle: "API Reference"
+    weight: 4
+    _target:
+      path: "/docs/api-reference"
+  - title: "S3-Orchestrator Security Hardening"
+    linkTitle: "Security Hardening"
+    weight: 5
+    _target:
+      path: "/docs/security-hardening"
+  - title: "S3-Orchestrator Performance Tuning"
+    linkTitle: "Performance Tuning"
+    weight: 6
+    _target:
+      path: "/docs/performance-tuning"
+  - title: "S3-Orchestrator Disaster Recovery"
+    linkTitle: "Disaster Recovery"
+    weight: 7
+    _target:
+      path: "/docs/disaster-recovery"
+  - title: "S3-Orchestrator Version Migration"
+    linkTitle: "Version Migration"
+    weight: 8
+    _target:
+      path: "/docs/version-migration"
+  - title: "Style Guide"
+    weight: 9
+    hidden: true
+    _target:
+      path: "/docs/style-guide"
 ---
 
 

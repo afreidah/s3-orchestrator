@@ -1,9 +1,4 @@
----
-title: "S3-Orchestrator Version Migration"
-linkTitle: "Version Migration"
-weight: 8
----
-
+# Version Migration
 
 This document covers upgrading between versions of the S3 Orchestrator, including database migrations, configuration changes, and breaking changes.
 

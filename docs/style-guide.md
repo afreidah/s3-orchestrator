@@ -1,8 +1,4 @@
----
-title: "Style Guide"
-weight: 9
-hidden: true
----
+# Style Guide
 
 **Author:** Alex Freidah
 

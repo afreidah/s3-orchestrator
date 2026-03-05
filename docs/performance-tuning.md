@@ -1,9 +1,4 @@
----
-title: "S3-Orchestrator Performance Tuning"
-linkTitle: "Performance Tuning"
-weight: 6
----
-
+# Performance Tuning
 
 This guide covers configuration knobs that affect throughput, latency, and resource usage.
 

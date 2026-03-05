@@ -1,9 +1,4 @@
----
-title: "S3-Orchestrator Security Hardening"
-linkTitle: "Security Hardening"
-weight: 5
----
-
+# Security Hardening
 
 This guide covers recommended security practices for production deployments of the S3 Orchestrator.
 
