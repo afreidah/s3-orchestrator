@@ -116,6 +116,12 @@ func TestProcessCleanupQueue_DeleteSuccess(t *testing.T) {
 	if backend.hasObject("orphan.txt") {
 		t.Error("expected orphan to be deleted from backend")
 	}
+
+	// Verify usage tracking: 1 API call for the delete
+	c := mgr.usage.counters["b1"]
+	if got := c.apiRequests.Load(); got != 1 {
+		t.Errorf("apiRequests = %d, want 1 (cleanup delete)", got)
+	}
 }
 
 func TestProcessCleanupQueue_DeleteFails_SchedulesRetry(t *testing.T) {

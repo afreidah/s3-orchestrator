@@ -437,11 +437,13 @@ func (h *Handler) handleEncryptExisting(w http.ResponseWriter, r *http.Request) 
 			// Download plaintext from backend
 			result, err := backend.GetObject(ctx, loc.ObjectKey, "")
 			if err != nil {
+				h.manager.RecordUsage(loc.BackendName, 1, 0, 0)
 				slog.Warn("Encrypt-existing: download failed", "key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
 				telemetry.EncryptExistingObjectsTotal.WithLabelValues("error").Inc()
 				failed++
 				continue
 			}
+			h.manager.RecordUsage(loc.BackendName, 1, loc.SizeBytes, 0)
 
 			// Encrypt
 			encResult, err := h.encryptor.Encrypt(ctx, result.Body, loc.SizeBytes)
@@ -457,11 +459,13 @@ func (h *Handler) handleEncryptExisting(w http.ResponseWriter, r *http.Request) 
 			_, err = backend.PutObject(ctx, loc.ObjectKey, encResult.Body, encResult.CiphertextSize, result.ContentType, result.Metadata)
 			result.Body.Close()
 			if err != nil {
+				h.manager.RecordUsage(loc.BackendName, 1, 0, 0)
 				slog.Warn("Encrypt-existing: re-upload failed", "key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
 				telemetry.EncryptExistingObjectsTotal.WithLabelValues("error").Inc()
 				failed++
 				continue
 			}
+			h.manager.RecordUsage(loc.BackendName, 1, 0, encResult.CiphertextSize)
 
 			// Update DB record
 			keyData := encryption.PackKeyData(encResult.BaseNonce, encResult.WrappedDEK)

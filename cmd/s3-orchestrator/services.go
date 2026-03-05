@@ -256,7 +256,7 @@ func newReplicatorService(manager *storage.BackendManager, store storage.Metadat
 	}
 
 	interval := 5 * time.Minute
-	if rcfg := manager.ReplicationConfig(); rcfg != nil {
+	if rcfg := manager.ReplicationConfig(); rcfg != nil && rcfg.WorkerInterval > 0 {
 		interval = rcfg.WorkerInterval
 	}
 	return &lockedTickerService{

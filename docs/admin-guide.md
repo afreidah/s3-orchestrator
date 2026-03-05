@@ -1,4 +1,12 @@
-# S3 Orchestrator Admin Guide
+---
+title: "S3-Orchestrator Admin Guide"
+linkTitle: "Admin Guide"
+weight: 3
+---
+
+<div style="text-align: center; margin-bottom: 1.5rem;">
+  <img src="/images/logo.png" alt="s3-orchestrator" style="max-width: 200px; height: auto;">
+</div>
 
 This guide walks through deploying, configuring, and operating the S3 Orchestrator from scratch. For architecture and feature details, see the [README](../README.md). For client-side usage (AWS CLI, rclone, SDKs), see the [User Guide](user-guide.md).
 

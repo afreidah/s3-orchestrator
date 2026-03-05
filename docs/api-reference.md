@@ -1,4 +1,12 @@
-# API Reference
+---
+title: "S3-Orchestrator API Reference"
+linkTitle: "API Reference"
+weight: 4
+---
+
+<div style="text-align: center; margin-bottom: 1.5rem;">
+  <img src="/images/logo.png" alt="s3-orchestrator" style="max-width: 200px; height: auto;">
+</div>
 
 This document covers the JSON APIs provided by the orchestrator for programmatic access. For the S3-compatible API, see the [S3 API Coverage](../README.md#s3-api-coverage) section of the README.
 

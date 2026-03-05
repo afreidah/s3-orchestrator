@@ -1,4 +1,8 @@
-# S3 Orchestrator Coding Style Guide
+---
+title: "Style Guide"
+weight: 9
+hidden: true
+---
 
 **Author:** Alex Freidah
 
