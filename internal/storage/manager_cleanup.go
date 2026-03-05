@@ -89,6 +89,7 @@ func (m *BackendManager) ProcessCleanupQueue(ctx context.Context) (processed, fa
 		dctx, dcancel := m.withTimeout(ctx)
 		delErr := backend.DeleteObject(dctx, item.ObjectKey)
 		dcancel()
+		m.usage.Record(item.BackendName, 1, 0, 0)
 
 		if delErr == nil {
 			if err := m.store.CompleteCleanupItem(ctx, item.ID); err != nil {

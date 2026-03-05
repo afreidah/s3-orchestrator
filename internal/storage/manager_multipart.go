@@ -149,6 +149,7 @@ func (m *BackendManager) UploadPart(ctx context.Context, uploadID string, partNu
 	if err := m.store.RecordPart(ctx, uploadID, partNumber, etag, uploadSize, enc); err != nil {
 		slog.Error("RecordPart failed, cleaning up part object",
 			"upload_id", uploadID, "part", partNumber, "error", err)
+		m.usage.Record(mu.BackendName, 1, 0, 0)
 		if delErr := backend.DeleteObject(ctx, partKey); delErr != nil {
 			slog.Error("Failed to clean up orphaned part object",
 				"key", partKey, "error", delErr)
@@ -388,7 +389,7 @@ func (m *BackendManager) AbortMultipartUpload(ctx context.Context, uploadID stri
 	}
 
 	m.recordOperation(operation, mu.BackendName, start, nil)
-	m.usage.Record(mu.BackendName, 1, 0, 0)
+	m.usage.Record(mu.BackendName, int64(len(parts)+1), 0, 0) // N deletes + 1 abort
 
 	audit.Log(ctx, "storage.AbortMultipartUpload",
 		slog.String("upload_id", uploadID),

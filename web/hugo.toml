@@ -1,0 +1,31 @@
+baseURL = "https://s3-orchestrator.munchbox.cc/"
+languageCode = "en-us"
+title = "s3-orchestrator"
+theme = "hugo-theme-relearn"
+
+[params]
+  themeVariant = ["s3orchestrator"]
+  description = "Unified S3-compatible storage across multiple backends"
+  editURL = "https://github.com/afreidah/s3-orchestrator/edit/main/docs/"
+  showVisitedLinks = false
+  disableLandingPageButton = false
+  alwaysopen = true
+  collapsibleMenu = true
+  disableSearch = true
+  [params.topbar]
+    showTableOfContents = false
+    showBreadcrumbs = false
+    showEditLink = false
+
+[markup]
+  [markup.goldmark]
+    [markup.goldmark.renderer]
+      unsafe = true
+
+[module]
+  [[module.mounts]]
+    source = "content"
+    target = "content"
+  [[module.mounts]]
+    source = "../docs"
+    target = "content/docs"

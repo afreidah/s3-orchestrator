@@ -292,12 +292,14 @@ func (m *BackendManager) drainOneObject(ctx context.Context, srcBackend ObjectBa
 		slog.Error("Drain: failed to update object location",
 			"key", obj.ObjectKey, "error", err)
 		m.deleteOrEnqueue(ctx, destBackend, destName, obj.ObjectKey, "drain_orphan")
+		m.usage.Record(destName, 1, 0, 0)
 		return false
 	}
 
 	if movedSize == 0 {
 		// Object was deleted or already moved
 		m.deleteOrEnqueue(ctx, destBackend, destName, obj.ObjectKey, "drain_stale_orphan")
+		m.usage.Record(destName, 1, 0, 0)
 		return false
 	}
 
@@ -394,6 +396,7 @@ func (m *BackendManager) purgeBackendObjects(ctx context.Context, backend Object
 					"backend", name, "key", obj.ObjectKey, "error", err)
 			}
 			dcancel()
+			m.usage.Record(name, 1, 0, 0)
 
 			if err := m.store.DeleteObjectLocation(ctx, obj.ObjectKey, name); err != nil {
 				slog.Warn("Remove: failed to delete DB record during purge",

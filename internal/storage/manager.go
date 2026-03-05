@@ -145,6 +145,12 @@ func (m *BackendManager) Close() {
 	m.cache.Close()
 }
 
+// RecordUsage increments the in-memory usage counters for a backend.
+// Exposed for admin operations that bypass the normal manager request path.
+func (m *BackendManager) RecordUsage(backendName string, apiCalls, egress, ingress int64) {
+	m.usage.Record(backendName, apiCalls, egress, ingress)
+}
+
 // UpdateUsageLimits replaces the per-backend usage limits. Safe to call
 // concurrently with request handling.
 func (m *BackendManager) UpdateUsageLimits(limits map[string]UsageLimits) {
@@ -267,6 +273,7 @@ func (m *BackendManager) recordObjectOrCleanup(ctx context.Context, span trace.S
 	if err := m.store.RecordObject(ctx, key, backendName, size, enc); err != nil {
 		slog.Error("RecordObject failed, cleaning up orphan",
 			"key", key, "backend", backendName, "error", err)
+		m.usage.Record(backendName, 1, 0, 0)
 		if delErr := backend.DeleteObject(ctx, key); delErr != nil {
 			slog.Error("Failed to clean up orphaned object",
 				"key", key, "backend", backendName, "error", delErr)

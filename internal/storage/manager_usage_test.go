@@ -124,6 +124,25 @@ func TestRecordUsage_MultipleBackends(t *testing.T) {
 	}
 }
 
+// --- RecordUsage public method ---
+
+func TestRecordUsage_PublicMethod(t *testing.T) {
+	mgr := newUsageManager([]string{"b1"}, &mockStore{})
+
+	mgr.RecordUsage("b1", 5, 1024, 2048)
+
+	c := mgr.usage.counters["b1"]
+	if got := c.apiRequests.Load(); got != 5 {
+		t.Errorf("apiRequests = %d, want 5", got)
+	}
+	if got := c.egressBytes.Load(); got != 1024 {
+		t.Errorf("egressBytes = %d, want 1024", got)
+	}
+	if got := c.ingressBytes.Load(); got != 2048 {
+		t.Errorf("ingressBytes = %d, want 2048", got)
+	}
+}
+
 // --- FlushUsage tests ---
 
 func TestFlushUsage_WritesToStore(t *testing.T) {

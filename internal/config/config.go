@@ -218,6 +218,7 @@ type VaultTransitConfig struct {
 	Token     string `yaml:"token"`      // Vault token (or via env var)
 	KeyName   string `yaml:"key_name"`   // Transit key name
 	MountPath string `yaml:"mount_path"` // Transit mount path (default: "transit")
+	CACert    string `yaml:"ca_cert"`    // Path to PEM CA certificate for TLS verification
 }
 
 // LifecycleConfig holds rules for automatic object expiration. Objects matching

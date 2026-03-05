@@ -433,6 +433,7 @@ func (m *BackendManager) executeOneMove(ctx context.Context, move rebalanceMove,
 			"key", move.ObjectKey, "error", err)
 		// Clean up orphan on destination
 		m.deleteOrEnqueue(ctx, destBackend, move.ToBackend, move.ObjectKey, "rebalance_orphan")
+		m.usage.Record(move.ToBackend, 1, 0, 0)
 		telemetry.RebalanceObjectsMoved.WithLabelValues(strategy, "error").Inc()
 		return false
 	}
@@ -442,6 +443,7 @@ func (m *BackendManager) executeOneMove(ctx context.Context, move rebalanceMove,
 		slog.Info("Rebalance: object already moved or deleted, cleaning up",
 			"key", move.ObjectKey)
 		m.deleteOrEnqueue(ctx, destBackend, move.ToBackend, move.ObjectKey, "rebalance_stale_orphan")
+		m.usage.Record(move.ToBackend, 1, 0, 0)
 		return false
 	}
 

@@ -145,6 +145,7 @@ integration-clean: ## Stop and remove integration test containers
 tools: ## Install build and packaging dependencies
 	go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0
 	go install golang.org/x/vuln/cmd/govulncheck@latest
+	go install github.com/princjef/gomarkdoc/cmd/gomarkdoc@latest
 	sudo apt-get update && sudo apt-get install -y lintian
 	curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
 
@@ -183,6 +184,45 @@ nomad-demo: ## Run the s3-orchestrator in Nomad dev mode (requires docker, nomad
 	./deploy/nomad/local/demo.sh
 
 # -------------------------------------------------------------------------
+# WEBSITE
+# -------------------------------------------------------------------------
+
+WEB_IMAGE  := $(REGISTRY)/s3-orchestrator-web
+WEB_TAG    ?= latest
+
+GODOC_PKGS := admin audit auth config encryption lifecycle server storage telemetry ui
+
+web-tools: ## Install Hugo and gomarkdoc for local website development
+	go install github.com/gohugoio/hugo@latest
+	go install github.com/princjef/gomarkdoc/cmd/gomarkdoc@latest
+
+web-godoc: ## Generate Go API reference markdown for the website
+	@mkdir -p web/content/godoc
+	@printf -- '---\ntitle: "Go API Reference"\nchapter: true\nweight: 40\n---\n\nGenerated documentation for the Go packages in this project.\n' > web/content/godoc/_index.md
+	@for pkg in $(GODOC_PKGS); do \
+		echo "  godoc: internal/$$pkg"; \
+		printf -- '---\ntitle: "%s"\n---\n\n' "$$pkg" > web/content/godoc/$$pkg.md; \
+		gomarkdoc ./internal/$$pkg >> web/content/godoc/$$pkg.md; \
+	done
+
+web-serve: web-godoc ## Serve the project website locally
+	cd web && hugo serve
+
+web-build: web-godoc ## Build the project website
+	cd web && hugo --minify
+
+web-docker: ## Build website Docker image for local architecture
+	docker build -f web/Dockerfile -t $(WEB_IMAGE):$(WEB_TAG) .
+
+web-push: builder ## Build and push multi-arch website image to registry
+	docker buildx build \
+	  --platform $(PLATFORMS) \
+	  -f web/Dockerfile \
+	  -t $(WEB_IMAGE):$(WEB_TAG) \
+	  --output type=image,push=true \
+	  .
+
+# -------------------------------------------------------------------------
 # CLEANUP
 # -------------------------------------------------------------------------
 
@@ -199,5 +239,5 @@ clean: integration-clean ## Remove build artifacts, local image, and test contai
 		rm -f /tmp/nomad-demo.pid; \
 	fi
 
-.PHONY: help builder build docker push generate test vet lint govulncheck run docs migration integration-deps integration-test integration-clean tools prep-changelog deb deb-lint deb-all release release-local kubernetes-demo nomad-demo clean
+.PHONY: help builder build docker push generate test vet lint govulncheck run docs migration integration-deps integration-test integration-clean tools prep-changelog deb deb-lint deb-all release release-local kubernetes-demo nomad-demo web-tools web-godoc web-serve web-build web-docker web-push clean
 .DEFAULT_GOAL := help

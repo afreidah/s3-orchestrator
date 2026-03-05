@@ -1,4 +1,12 @@
-# Disaster Recovery
+---
+title: "S3-Orchestrator Disaster Recovery"
+linkTitle: "Disaster Recovery"
+weight: 7
+---
+
+<div style="text-align: center; margin-bottom: 1.5rem;">
+  <img src="/images/logo.png" alt="s3-orchestrator" style="max-width: 200px; height: auto;">
+</div>
 
 This guide covers failure scenarios and recovery procedures for the S3 Orchestrator.
 

@@ -1,0 +1,344 @@
+@import "theme-relearn-dark.css";
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@600;800&display=swap');
+
+:root {
+  --MAIN-BG-color: #0f172a;
+  --MAIN-TEXT-color: #e2e8f0;
+  --MAIN-TITLES-TEXT-color: #f8fafc;
+  --MAIN-LINK-color: #93c5fd;
+  --MAIN-LINK-HOVER-color: #7dd3fc;
+  --MAIN-ANCHOR-color: #93c5fd;
+
+  --MENU-HEADER-BG-color: #0f172a;
+  --MENU-HEADER-BORDER-color: #0f172a;
+  --MENU-HOME-BOTTOM-SEPARATOR-color: #334155;
+  --MENU-HOME-LINK-color: #f8fafc;
+  --MENU-HOME-LINK-HOVER-color: #7dd3fc;
+
+  --MENU-SECTIONS-BG-color: #1e293b;
+  --MENU-SECTIONS-LINK-color: #e2e8f0;
+  --MENU-SECTIONS-LINK-HOVER-color: #7dd3fc;
+  --MENU-SECTIONS-ACTIVE-BG-color: #334155;
+  --MENU-SECTION-ACTIVE-CATEGORY-color: #93c5fd;
+  --MENU-SECTION-ACTIVE-CATEGORY-BG-color: #334155;
+  --MENU-VISITED-color: #94a3b8;
+
+  --BOX-BG-color: #1e293b;
+  --BOX-TEXT-color: #e2e8f0;
+  --BOX-CAPTION-color: #f8fafc;
+
+  --CODE-BLOCK-BG-color: #0f172a;
+  --CODE-BLOCK-color: #e2e8f0;
+  --CODE-BLOCK-BORDER-color: #334155;
+  --CODE-INLINE-BG-color: #1e293b;
+  --CODE-INLINE-color: #93c5fd;
+  --CODE-INLINE-BORDER-color: #334155;
+  --MENU-WIDTH-L: 15rem;
+}
+
+article img.lightbox {
+  border: 1px solid #334155;
+  border-radius: 8px;
+  background-color: #1e293b;
+  padding: 8px;
+}
+
+.badge.cstyle.primary .badge-content,
+.badge.cstyle.primary .badge-title {
+  background-color: #1e3a5f !important;
+  color: #93c5fd !important;
+}
+
+.badge.cstyle.info .badge-content,
+.badge.cstyle.info .badge-title {
+  background-color: #1a2636 !important;
+  color: #7dd3fc !important;
+}
+
+.badge.cstyle.danger .badge-content,
+.badge.cstyle.danger .badge-title {
+  background-color: #2d1b1b !important;
+  color: #fca5a5 !important;
+}
+
+.feature-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+  margin: 1.5rem 0;
+}
+
+.feature-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 1rem;
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  position: relative;
+  cursor: default;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.feature-item strong {
+  color: #e2b07a;
+}
+
+.feature-item p {
+  margin: 0.25rem 0 0 0;
+  color: #e2e8f0;
+  font-size: 0.9rem;
+}
+
+.feature-icon {
+  font-size: 1.25rem;
+  margin-top: 0.15rem;
+  flex-shrink: 0;
+}
+
+.feature-item:hover {
+  background: #263548;
+  border-color: #475569;
+  z-index: 10;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.feature-detail {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: -1px;
+  right: -1px;
+  background: #263548;
+  border: 1px solid #475569;
+  border-top: 1px solid #334155;
+  border-radius: 0 0 8px 8px;
+  padding: 1.25rem 1.5rem;
+  color: #e2e8f0;
+  font-size: 1.05rem;
+  line-height: 1.7;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+}
+
+.feature-item:hover {
+  border-radius: 8px 8px 0 0;
+}
+
+.feature-item:hover .feature-detail {
+  display: block;
+}
+
+#R-body h1 {
+  font-family: 'Outfit', sans-serif !important;
+  font-weight: 800 !important;
+  color: #93c5fd !important;
+  font-size: 2.5rem !important;
+  text-align: center;
+  letter-spacing: -0.02em;
+}
+
+article.home {
+  text-align: center;
+}
+
+article.home .feature-grid {
+  text-align: left;
+}
+
+#R-topbar {
+  display: none;
+}
+
+
+/* Chapter landing page subheader */
+.landing-subheader {
+  text-align: center;
+  font-size: 1.2rem;
+  color: #94a3b8;
+  margin-bottom: 2rem;
+  margin-top: 0.5rem;
+}
+
+/* Landing page card grids (docs, guides, godoc index pages) */
+.landing-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+  margin: 1.5rem 0;
+}
+
+a.landing-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 1rem;
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  text-decoration: none;
+  color: #e2e8f0;
+  transition: background 0.2s, border-color 0.2s, box-shadow 0.2s;
+}
+
+a.landing-card:hover {
+  background: #263548;
+  border-color: #475569;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  text-decoration: none;
+  color: #e2e8f0;
+}
+
+a.landing-card strong {
+  color: #e2b07a;
+  font-size: 1rem;
+}
+
+a.landing-card p {
+  margin: 0.25rem 0 0 0;
+  color: #94a3b8;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+a.landing-card:hover p {
+  color: #cbd5e1;
+}
+
+.landing-card-icon {
+  font-size: 1.25rem;
+  margin-top: 0.15rem;
+  flex-shrink: 0;
+}
+
+/* Hide the home entry in sidebar - logo links home */
+#R-homelinks {
+  display: none;
+}
+
+/* Sidebar navigation polish */
+
+/* Top-level sections: bold, accent color, uppercase */
+#R-sidebar ul.enlarge > li > a,
+#R-sidebar ul.enlarge > li > span {
+  font-weight: 700 !important;
+  color: #93c5fd !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.04em !important;
+}
+
+#R-sidebar ul.enlarge > li > a:hover {
+  color: #7dd3fc !important;
+}
+
+/* Top-level collapse arrows match section color */
+#R-sidebar ul.collapsible-menu > li > label {
+  color: #93c5fd !important;
+}
+
+/* Sub-items: normal weight, softer color */
+#R-sidebar ul ul li > a {
+  color: #94a3b8 !important;
+  font-weight: 400 !important;
+  transition: color 0.15s, background 0.15s;
+}
+
+#R-sidebar ul ul li > a:hover {
+  color: #f8fafc !important;
+  background: #263548 !important;
+  border-radius: 4px;
+}
+
+/* Active top-level section */
+#R-sidebar ul.enlarge > li.active > a,
+#R-sidebar ul.enlarge > li.active > span {
+  color: #e2b07a !important;
+}
+
+/* Active sub-item */
+#R-sidebar ul ul li.active > a {
+  color: #e2b07a !important;
+  border-inline-start: 2px solid #e2b07a !important;
+  padding-inline-start: calc(1rem - 2px) !important;
+}
+
+/* Indent border on nested lists */
+#R-sidebar ul ul {
+  border-inline-start: 1px solid #334155 !important;
+  margin-inline-start: 0.5rem !important;
+}
+
+/* Badge grid on landing page */
+.badge-grid {
+  text-align: center;
+}
+
+/* Hugo wraps shortcodes in <p> — collapse the wrapper */
+.badge-grid p {
+  display: inline;
+}
+
+/* Hero bullet points on landing page */
+.hero-bullets {
+  max-width: 700px;
+  margin: 1.5rem auto 0 auto;
+  text-align: left;
+}
+
+.hero-bullets ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.hero-bullets li {
+  position: relative;
+  padding-left: 1.5rem;
+  margin-bottom: 0.75rem;
+  font-size: 1.05rem;
+  line-height: 1.6;
+  color: #e2e8f0;
+}
+
+.hero-bullets li::before {
+  content: "\f00c";
+  font-family: "Font Awesome 5 Free";
+  font-weight: 900;
+  position: absolute;
+  left: 0;
+  color: #6ee7b7;
+  font-size: 0.85rem;
+  top: 0.2rem;
+}
+
+/* Navbar bullets for sub-items */
+#R-sidebar ul ul li > a::before {
+  content: "\2022";
+  margin-right: 0.4rem;
+  color: #475569;
+}
+
+/* Green and warning badge variants */
+.badge.cstyle.green .badge-content,
+.badge.cstyle.green .badge-title {
+  background-color: #132a1f !important;
+  color: #6ee7b7 !important;
+}
+
+.badge.cstyle.warning .badge-content,
+.badge.cstyle.warning .badge-title {
+  background-color: #2d2513 !important;
+  color: #e2b07a !important;
+}
+
+.btn.cstyle.button.primary a {
+  background-color: #1e3a5f !important;
+  color: #93c5fd !important;
+  border-color: #334155 !important;
+}
+
+.btn.cstyle.button.primary a:hover {
+  background-color: #264b7a !important;
+  color: #bfdbfe !important;
+}

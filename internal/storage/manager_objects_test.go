@@ -174,6 +174,12 @@ func TestPutObject_RecordFailure_CleansUp(t *testing.T) {
 	if backend.hasObject("cleanup-key") {
 		t.Error("orphaned object should have been deleted from backend")
 	}
+
+	// Usage: 1 API call for the orphan cleanup delete (put usage only recorded on success path)
+	c := mgr.usage.counters["b1"]
+	if got := c.apiRequests.Load(); got != 1 {
+		t.Errorf("apiRequests = %d, want 1 (orphan delete)", got)
+	}
 }
 
 // -------------------------------------------------------------------------

@@ -1316,11 +1316,11 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "rate(s3proxy_lifecycle_objects_deleted_total[5m])",
+          "expr": "rate(s3proxy_lifecycle_deleted_total[5m])",
           "legendFormat": "deleted/s"
         },
         {
-          "expr": "rate(s3proxy_lifecycle_errors_total[5m])",
+          "expr": "rate(s3proxy_lifecycle_failed_total[5m])",
           "legendFormat": "failed/s"
         }
       ],

@@ -14,11 +14,14 @@ package encryption
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"time"
 )
 
@@ -35,10 +38,25 @@ type VaultKeyProvider struct {
 }
 
 // NewVaultKeyProvider creates a provider backed by Vault Transit. The
-// mountPath defaults to "transit" if empty.
-func NewVaultKeyProvider(address, token, keyName, mountPath string) *VaultKeyProvider {
+// mountPath defaults to "transit" if empty. If caCertPath is non-empty,
+// the file is loaded as a PEM CA certificate for TLS verification.
+func NewVaultKeyProvider(address, token, keyName, mountPath, caCertPath string) (*VaultKeyProvider, error) {
 	if mountPath == "" {
 		mountPath = "transit"
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	if caCertPath != "" {
+		pem, err := os.ReadFile(caCertPath)
+		if err != nil {
+			return nil, fmt.Errorf("read vault CA cert: %w", err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("vault CA cert contains no valid certificates")
+		}
+		client.Transport = &http.Transport{
+			TLSClientConfig: &tls.Config{RootCAs: pool},
+		}
 	}
 	return &VaultKeyProvider{
 		address:   address,
@@ -46,8 +64,8 @@ func NewVaultKeyProvider(address, token, keyName, mountPath string) *VaultKeyPro
 		keyName:   keyName,
 		mountPath: mountPath,
 		keyID:     fmt.Sprintf("vault:%s/%s", mountPath, keyName),
-		client:    &http.Client{Timeout: 10 * time.Second},
-	}
+		client:    client,
+	}, nil
 }
 
 // KeyID returns a composite identifier of the form "vault:{mount}/{key}".

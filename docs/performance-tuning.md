@@ -1,4 +1,12 @@
-# Performance Tuning
+---
+title: "S3-Orchestrator Performance Tuning"
+linkTitle: "Performance Tuning"
+weight: 6
+---
+
+<div style="text-align: center; margin-bottom: 1.5rem;">
+  <img src="/images/logo.png" alt="s3-orchestrator" style="max-width: 200px; height: auto;">
+</div>
 
 This guide covers configuration knobs that affect throughput, latency, and resource usage.
 
