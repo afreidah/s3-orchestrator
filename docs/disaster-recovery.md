@@ -1,9 +1,4 @@
----
-title: "S3-Orchestrator Disaster Recovery"
-linkTitle: "Disaster Recovery"
-weight: 7
----
-
+# Disaster Recovery
 
 This guide covers failure scenarios and recovery procedures for the S3 Orchestrator.
 
