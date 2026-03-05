@@ -3,9 +3,6 @@ title: "Cloud Replication for Local MinIO"
 weight: 4
 ---
 
-<div style="text-align: center; margin-bottom: 1.5rem;">
-  <img src="/images/logo.png" alt="s3-orchestrator" style="max-width: 200px; height: auto;">
-</div>
 
 This guide shows how to automatically replicate objects from a local MinIO instance to a cloud backend using S3 Orchestrator, with no additional tooling or sync scripts required.
 

@@ -3,9 +3,6 @@ title: "Simple Multi-Cloud Redundancy"
 weight: 5
 ---
 
-<div style="text-align: center; margin-bottom: 1.5rem;">
-  <img src="/images/logo.png" alt="s3-orchestrator" style="max-width: 200px; height: auto;">
-</div>
 
 This guide shows how to set up transparent multi-cloud redundancy so that every object is stored across multiple providers, with no changes required to your applications or S3 clients.
 

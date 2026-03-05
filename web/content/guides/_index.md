@@ -5,9 +5,6 @@ chapter: true
 weight: 30
 ---
 
-<div style="text-align: center; margin-bottom: 1.5rem;">
-  <img src="/images/logo.png" alt="s3-orchestrator" style="max-width: 200px; height: auto;">
-</div>
 
 <div class="landing-subheader">Step-by-step tutorials for common operations and deployment patterns.</div>
 

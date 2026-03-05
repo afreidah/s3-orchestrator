@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/images/logo.png" alt="s3-orchestrator" width="350">
+</p>
+
 # S3 Orchestrator
 
 [![CI](https://github.com/afreidah/s3-orchestrator/actions/workflows/ci.yml/badge.svg)](https://github.com/afreidah/s3-orchestrator/actions/workflows/ci.yml)
