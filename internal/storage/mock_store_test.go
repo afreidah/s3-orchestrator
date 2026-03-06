@@ -84,8 +84,10 @@ type mockStore struct {
 	cleanupQueueDepthErr error
 
 	// Replication
-	getUnderReplicatedResp []ObjectLocation
-	getUnderReplicatedErr  error
+	getUnderReplicatedResp          []ObjectLocation
+	getUnderReplicatedErr           error
+	getUnderReplicatedExcludingResp []ObjectLocation
+	getUnderReplicatedExcludingErr  error
 	recordReplicaInserted  bool
 	recordReplicaErr       error
 	recordReplicaCalls     []recordReplicaCall
@@ -333,6 +335,15 @@ func (m *mockStore) GetUnderReplicatedObjects(_ context.Context, _, _ int) ([]Ob
 		return nil, m.getUnderReplicatedErr
 	}
 	return m.getUnderReplicatedResp, nil
+}
+
+func (m *mockStore) GetUnderReplicatedObjectsExcluding(_ context.Context, _, _ int, _ []string) ([]ObjectLocation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.getUnderReplicatedExcludingErr != nil {
+		return nil, m.getUnderReplicatedExcludingErr
+	}
+	return m.getUnderReplicatedExcludingResp, nil
 }
 
 func (m *mockStore) RecordReplica(_ context.Context, key, targetBackend, sourceBackend string, size int64) (bool, error) {
