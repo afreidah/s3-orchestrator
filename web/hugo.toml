@@ -29,3 +29,9 @@ theme = "hugo-theme-relearn"
   [[module.mounts]]
     source = "../docs"
     target = "content/docs"
+  [[module.mounts]]
+    source = "assets"
+    target = "assets"
+  [[module.mounts]]
+    source = "../README.md"
+    target = "assets/README.md"
