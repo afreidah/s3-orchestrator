@@ -63,6 +63,8 @@ If a storage backend is permanently lost (provider shutdown, account deleted, et
 
 Objects that have replicas on other backends continue to be served transparently. The orchestrator tries the failed backend, gets an error, and falls through to the next copy.
 
+If backend circuit breakers are enabled and the outage lasts longer than `replication.unhealthy_threshold` (default: 10 minutes), the replication worker automatically creates replacement copies on healthy backends to maintain the configured replication factor. This restores full redundancy without manual intervention while the failed backend remains down.
+
 To clean up, remove the backend's database records:
 
 ```bash

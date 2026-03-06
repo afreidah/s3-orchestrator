@@ -15,6 +15,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/audit"
@@ -37,8 +38,17 @@ func (m *BackendManager) Replicate(ctx context.Context, cfg config.ReplicationCo
 		slog.Int("batch_size", cfg.BatchSize),
 	)
 
+	// --- Identify sustained-unhealthy backends ---
+	excluded := m.unhealthyBackends(cfg.UnhealthyThreshold)
+
 	// --- Find under-replicated objects ---
-	locations, err := m.store.GetUnderReplicatedObjects(ctx, cfg.Factor, cfg.BatchSize)
+	var locations []ObjectLocation
+	var err error
+	if len(excluded) > 0 {
+		locations, err = m.store.GetUnderReplicatedObjectsExcluding(ctx, cfg.Factor, cfg.BatchSize, excluded)
+	} else {
+		locations, err = m.store.GetUnderReplicatedObjects(ctx, cfg.Factor, cfg.BatchSize)
+	}
 	if err != nil {
 		telemetry.ReplicationRunsTotal.WithLabelValues("error").Inc()
 		return 0, fmt.Errorf("failed to query under-replicated objects: %w", err)
@@ -70,6 +80,9 @@ func (m *BackendManager) Replicate(ctx context.Context, cfg config.ReplicationCo
 	}
 
 	telemetry.ReplicationCopiesCreatedTotal.Add(float64(created))
+	if len(excluded) > 0 && created > 0 {
+		telemetry.ReplicationHealthCopiesTotal.Add(float64(created))
+	}
 	telemetry.ReplicationRunsTotal.WithLabelValues("success").Inc()
 	telemetry.ReplicationDuration.Observe(time.Since(start).Seconds())
 
@@ -172,6 +185,9 @@ func (m *BackendManager) findReplicaTarget(ctx context.Context, key string, size
 		if exclusion[name] {
 			continue
 		}
+		if !m.isBackendHealthy(name) {
+			continue
+		}
 		stat, ok := stats[name]
 		if !ok {
 			continue
@@ -193,7 +209,19 @@ func (m *BackendManager) copyToReplica(ctx context.Context, key string, copies [
 		return "", err
 	}
 
-	// Try each copy in order (primary first)
+	// Prefer healthy sources to avoid circuit breaker latency/failures.
+	slices.SortStableFunc(copies, func(a, b ObjectLocation) int {
+		aOK := m.isBackendHealthy(a.BackendName)
+		bOK := m.isBackendHealthy(b.BackendName)
+		if aOK == bOK {
+			return 0
+		}
+		if aOK {
+			return -1
+		}
+		return 1
+	})
+
 	for _, copy := range copies {
 		srcBackend, ok := m.backends[copy.BackendName]
 		if !ok {
@@ -235,4 +263,38 @@ func (m *BackendManager) cleanupOrphan(ctx context.Context, backendName, key str
 	}
 	m.deleteOrEnqueue(ctx, backend, backendName, key, "replication_orphan")
 	m.usage.Record(backendName, 1, 0, 0)
+}
+
+// unhealthyBackends returns backend names whose circuit breakers have been
+// open longer than the given threshold. Returns nil when all backends are
+// healthy or circuit breakers are not enabled.
+func (m *BackendManager) unhealthyBackends(threshold time.Duration) []string {
+	var names []string
+	for name, backend := range m.backends {
+		cbb, ok := backend.(*CircuitBreakerBackend)
+		if !ok {
+			continue
+		}
+		if d := cbb.OpenDuration(); d >= threshold {
+			names = append(names, name)
+			slog.Info("Replication: backend unhealthy, excluding from replica count",
+				"backend", name,
+				"open_duration", d.Round(time.Second))
+		}
+	}
+	return names
+}
+
+// isBackendHealthy returns true if the backend has a closed circuit breaker
+// or has no circuit breaker wrapper.
+func (m *BackendManager) isBackendHealthy(name string) bool {
+	backend, ok := m.backends[name]
+	if !ok {
+		return false
+	}
+	cbb, ok := backend.(*CircuitBreakerBackend)
+	if !ok {
+		return true
+	}
+	return cbb.IsHealthy()
 }

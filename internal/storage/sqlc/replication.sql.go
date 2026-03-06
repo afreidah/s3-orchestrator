@@ -70,6 +70,67 @@ func (q *Queries) GetUnderReplicatedObjects(ctx context.Context, arg GetUnderRep
 	return items, nil
 }
 
+const getUnderReplicatedObjectsExcluding = `-- name: GetUnderReplicatedObjectsExcluding :many
+WITH under_replicated AS (
+    SELECT object_key
+    FROM object_locations
+    WHERE backend_name != ALL($1::text[])
+    GROUP BY object_key
+    HAVING COUNT(*) < $2::bigint
+    LIMIT $3
+)
+SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.created_at
+FROM object_locations ol
+JOIN under_replicated ur ON ol.object_key = ur.object_key
+ORDER BY ol.object_key, ol.created_at ASC
+`
+
+type GetUnderReplicatedObjectsExcludingParams struct {
+	Excluded []string
+	Factor   int64
+	MaxKeys  int32
+}
+
+type GetUnderReplicatedObjectsExcludingRow struct {
+	ObjectKey     string
+	BackendName   string
+	SizeBytes     int64
+	Encrypted     bool
+	EncryptionKey []byte
+	KeyID         *string
+	PlaintextSize *int64
+	CreatedAt     pgtype.Timestamptz
+}
+
+func (q *Queries) GetUnderReplicatedObjectsExcluding(ctx context.Context, arg GetUnderReplicatedObjectsExcludingParams) ([]GetUnderReplicatedObjectsExcludingRow, error) {
+	rows, err := q.db.Query(ctx, getUnderReplicatedObjectsExcluding, arg.Excluded, arg.Factor, arg.MaxKeys)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetUnderReplicatedObjectsExcludingRow{}
+	for rows.Next() {
+		var i GetUnderReplicatedObjectsExcludingRow
+		if err := rows.Scan(
+			&i.ObjectKey,
+			&i.BackendName,
+			&i.SizeBytes,
+			&i.Encrypted,
+			&i.EncryptionKey,
+			&i.KeyID,
+			&i.PlaintextSize,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const insertReplicaConditional = `-- name: InsertReplicaConditional :one
 INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, created_at)
 SELECT $1, $2, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, NOW()

@@ -315,6 +315,15 @@ var (
 		[]string{"status"},
 	)
 
+	// ReplicationHealthCopiesTotal counts copies created to replace copies on
+	// circuit-broken backends.
+	ReplicationHealthCopiesTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "s3proxy_replication_health_copies_total",
+			Help: "Replica copies created to replace copies on circuit-broken backends",
+		},
+	)
+
 	// --- Circuit breaker metrics ---
 
 	// CircuitBreakerState tracks the current circuit breaker state per component.
