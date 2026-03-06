@@ -97,6 +97,7 @@ backends:
 #   factor: 1                    # Number of copies per object
 #   worker_interval: 5m
 #   batch_size: 50
+#   unhealthy_threshold: 10m     # Grace period before replacing copies on circuit-broken backends
 
 # --- Per-IP rate limiting (disabled by default) ---
 # rate_limit:
