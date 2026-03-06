@@ -53,7 +53,7 @@ build: ## Build the Go binary for the local platform
 
 docker: ## Build Docker image for local architecture
 	@echo "Building $(FULL_TAG) for local architecture"
-	docker build --build-arg VERSION=$(VERSION) -t $(FULL_TAG) .
+	docker build --pull --build-arg VERSION=$(VERSION) -t $(FULL_TAG) .
 
 scan: docker ## Scan Docker image for vulnerabilities with Trivy
 	trivy image --severity CRITICAL,HIGH $(FULL_TAG)
@@ -65,6 +65,7 @@ scan: docker ## Scan Docker image for vulnerabilities with Trivy
 push: builder ## Build and push multi-arch images to registry
 	@echo "Building and pushing $(FULL_TAG) for $(PLATFORMS)"
 	docker buildx build \
+	  --pull \
 	  --platform $(PLATFORMS) \
 	  --build-arg VERSION=$(VERSION) \
 	  -t $(FULL_TAG) \
@@ -213,10 +214,11 @@ web-build: web-godoc ## Build the project website
 	cd web && hugo --minify
 
 web-docker: ## Build website Docker image for local architecture
-	docker build -f web/Dockerfile -t $(WEB_IMAGE):$(WEB_TAG) .
+	docker build --pull -f web/Dockerfile -t $(WEB_IMAGE):$(WEB_TAG) .
 
 web-push: builder ## Build and push multi-arch website image to registry
 	docker buildx build \
+	  --pull \
 	  --platform $(PLATFORMS) \
 	  -f web/Dockerfile \
 	  -t $(WEB_IMAGE):$(WEB_TAG) \
