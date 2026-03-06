@@ -5,3 +5,4 @@ dist/
 packaging/changelog.gz
 web/public/
 web/content/godoc/
+!web/content/godoc/_index.md

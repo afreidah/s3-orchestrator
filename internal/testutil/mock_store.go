@@ -284,6 +284,11 @@ func (m *MockStore) GetUnderReplicatedObjects(_ context.Context, _, _ int) ([]st
 	return nil, nil
 }
 
+// GetUnderReplicatedObjectsExcluding returns nil (stub).
+func (m *MockStore) GetUnderReplicatedObjectsExcluding(_ context.Context, _, _ int, _ []string) ([]storage.ObjectLocation, error) {
+	return nil, nil
+}
+
 // RecordReplica returns false (stub).
 func (m *MockStore) RecordReplica(_ context.Context, _, _, _ string, _ int64) (bool, error) {
 	return false, nil
