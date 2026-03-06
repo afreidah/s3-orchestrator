@@ -77,6 +77,7 @@ type MetadataStore interface {
 	ListObjectsByBackend(ctx context.Context, backendName string, limit int) ([]ObjectLocation, error)
 	MoveObjectLocation(ctx context.Context, key, fromBackend, toBackend string) (int64, error)
 	GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]ObjectLocation, error)
+	GetUnderReplicatedObjectsExcluding(ctx context.Context, factor, limit int, excludedBackends []string) ([]ObjectLocation, error)
 	RecordReplica(ctx context.Context, key, targetBackend, sourceBackend string, size int64) (bool, error)
 
 	// --- Usage tracking operations ---

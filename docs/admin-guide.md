@@ -308,11 +308,14 @@ replication:
   factor: 2                      # copies per object (default: 1 = no replication)
   worker_interval: "5m"          # replication cycle (default: 5m)
   batch_size: 50                 # objects per cycle (default: 50)
+  unhealthy_threshold: "10m"     # grace period before replacing copies on circuit-broken backends (default: 10m)
 ```
 
 The replication factor must be `<= number of backends`. The worker runs once at startup to catch up on any pending replicas, then continues at the configured interval. Reads automatically fail over to replicas if the primary copy is unavailable.
 
 Replication is **asynchronous** — writes go to a single backend and the replicator creates additional copies in the background. When a client overwrites an existing key, all old copies (including replicas) are removed and a single new copy is written. The replication factor drops to 1 until the next replicator cycle creates the additional copies. If the single backend holding the new copy fails before replication runs, the new version of the object is at risk. For most workloads this window (up to `worker_interval`) is acceptable. Lowering `worker_interval` reduces the exposure at the cost of more frequent DB queries and backend I/O.
+
+**Health-aware replication:** When backend circuit breakers are enabled, the replicator monitors backend health. If a backend's circuit breaker has been open longer than `unhealthy_threshold`, copies on that backend are treated as unavailable and replacement copies are created on healthy backends. This prevents sustained outages from silently reducing redundancy. The threshold prevents churn during brief transient failures. Set to `0` to disable health-aware replication (copies on down backends are still counted).
 
 ### Cleanup Queue
 
@@ -798,6 +801,7 @@ If `telemetry.metrics.enabled` is `true`, metrics are exposed at `/metrics`. Key
 | `s3proxy_circuit_breaker_state{name="database"}` | Alert when > 0 — database is unreachable (1=open, 2=half-open) |
 | `s3proxy_circuit_breaker_state{name="<backend>"}` | Alert when > 0 — backend is unreachable or credentials expired |
 | `s3proxy_replication_pending` | Alert when consistently > 0 — replicas are falling behind |
+| `s3proxy_replication_health_copies_total` | Non-zero means health-aware replication is creating replacement copies for circuit-broken backends |
 | `s3proxy_requests_total{status_code="5xx"}` | Alert on elevated 5xx rates |
 | `s3proxy_degraded_write_rejections_total` | Writes being rejected due to degraded mode |
 | `s3proxy_usage_limit_rejections_total` | Operations rejected by usage limits |
@@ -856,7 +860,7 @@ Many settings can be updated without restarting the orchestrator by sending `SIG
 - Backend quota limits (`quota_bytes`)
 - Backend usage limits (`api_request_limit`, `egress_byte_limit`, `ingress_byte_limit`)
 - Rebalance settings (strategy, interval, batch size, threshold, enable/disable)
-- Replication settings (factor, worker interval, batch size)
+- Replication settings (factor, worker interval, batch size, unhealthy threshold)
 - Usage flush settings (interval, adaptive enabled/threshold/fast interval)
 
 **What requires a restart:**

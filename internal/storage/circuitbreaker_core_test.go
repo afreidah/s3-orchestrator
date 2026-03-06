@@ -133,6 +133,55 @@ func TestCB_SuccessResetsFailureCount(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
+// OpenDuration
+// -------------------------------------------------------------------------
+
+func TestCB_OpenDuration_ZeroWhenClosed(t *testing.T) {
+	cb := newTestBreaker(3, time.Minute)
+	if d := cb.OpenDuration(); d != 0 {
+		t.Fatalf("expected 0 when closed, got %v", d)
+	}
+}
+
+func TestCB_OpenDuration_PositiveWhenOpen(t *testing.T) {
+	cb := newTestBreaker(1, time.Minute)
+	_ = cb.PostCheck(errTest) // trip
+
+	time.Sleep(5 * time.Millisecond)
+	d := cb.OpenDuration()
+	if d < 5*time.Millisecond {
+		t.Fatalf("expected >= 5ms, got %v", d)
+	}
+}
+
+func TestCB_OpenDuration_PositiveWhenHalfOpen(t *testing.T) {
+	cb := newTestBreaker(1, 10*time.Millisecond)
+	_ = cb.PostCheck(errTest) // trip
+	time.Sleep(15 * time.Millisecond)
+	_ = cb.PreCheck() // transition to half-open
+
+	if cb.State() != stateHalfOpen {
+		t.Fatalf("expected half-open, got %v", cb.State())
+	}
+	if d := cb.OpenDuration(); d == 0 {
+		t.Fatal("expected positive duration in half-open state")
+	}
+}
+
+func TestCB_OpenDuration_ZeroAfterRecovery(t *testing.T) {
+	cb := newTestBreaker(1, 10*time.Millisecond)
+	_ = cb.PostCheck(errTest) // trip
+	time.Sleep(15 * time.Millisecond)
+
+	_ = cb.PreCheck()     // half-open
+	_ = cb.PostCheck(nil) // recover
+
+	if d := cb.OpenDuration(); d != 0 {
+		t.Fatalf("expected 0 after recovery, got %v", d)
+	}
+}
+
+// -------------------------------------------------------------------------
 // Pluggable error filter
 // -------------------------------------------------------------------------
 

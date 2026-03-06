@@ -153,9 +153,10 @@ type RebalanceConfig struct {
 // When factor is 1, replication is disabled and behavior is identical to
 // the single-copy default.
 type ReplicationConfig struct {
-	Factor         int           `yaml:"factor"`
-	WorkerInterval time.Duration `yaml:"worker_interval"`
-	BatchSize      int           `yaml:"batch_size"`
+	Factor             int           `yaml:"factor"`
+	WorkerInterval     time.Duration `yaml:"worker_interval"`
+	BatchSize          int           `yaml:"batch_size"`
+	UnhealthyThreshold time.Duration `yaml:"unhealthy_threshold"` // Grace period before replacing copies on circuit-broken backends (default: 10m)
 }
 
 // RateLimitConfig holds per-IP rate limiting settings. Disabled by default.
@@ -545,6 +546,9 @@ func (c *Config) SetDefaultsAndValidate() error {
 		}
 		if c.Replication.BatchSize == 0 {
 			c.Replication.BatchSize = 50
+		}
+		if c.Replication.UnhealthyThreshold == 0 {
+			c.Replication.UnhealthyThreshold = 10 * time.Minute
 		}
 
 		// --- Replication validation ---

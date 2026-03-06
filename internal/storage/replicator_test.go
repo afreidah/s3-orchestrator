@@ -460,3 +460,201 @@ func TestReplicate_SourceGoneDuringReplication(t *testing.T) {
 		t.Error("orphan should have been cleaned up from b2")
 	}
 }
+
+// -------------------------------------------------------------------------
+// Health-aware replication
+// -------------------------------------------------------------------------
+
+// newTrippedCBBackend wraps a mock backend in a CircuitBreakerBackend and
+// immediately trips the circuit breaker.
+func newTrippedCBBackend(b *mockBackend, name string) *CircuitBreakerBackend {
+	cbb := NewCircuitBreakerBackend(b, name, 1, time.Hour)
+	_ = cbb.PostCheck(errors.New("forced failure"))
+	return cbb
+}
+
+func TestReplicate_HealthAware_SkipsUnhealthyTarget(t *testing.T) {
+	b1 := newMockBackend()
+	b2 := newMockBackend()
+	b3 := newMockBackend()
+	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
+
+	// b2 is circuit-broken — should not be selected as target
+	cbb2 := newTrippedCBBackend(b2, "b2")
+
+	store := &mockStore{
+		getUnderReplicatedExcludingResp: []ObjectLocation{
+			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
+		},
+		getQuotaStatsResp: map[string]QuotaStat{
+			"b1": {BytesUsed: 100, BytesLimit: 1000},
+			"b2": {BytesUsed: 100, BytesLimit: 1000},
+			"b3": {BytesUsed: 100, BytesLimit: 1000},
+		},
+		recordReplicaInserted: true,
+	}
+	mgr := NewBackendManager(&BackendManagerConfig{
+		Backends:        map[string]ObjectBackend{"b1": b1, "b2": cbb2, "b3": b3},
+		Store:           store,
+		Order:           []string{"b1", "b2", "b3"},
+		CacheTTL:        5 * time.Second,
+		BackendTimeout:  30 * time.Second,
+		RoutingStrategy: "pack",
+	})
+
+	created, err := mgr.Replicate(context.Background(), config.ReplicationConfig{
+		Factor:             2,
+		BatchSize:          10,
+		UnhealthyThreshold: 0, // immediate — any open CB counts
+	})
+	if err != nil {
+		t.Fatalf("Replicate: %v", err)
+	}
+	if created != 1 {
+		t.Errorf("expected 1 created, got %d", created)
+	}
+	if b2.hasObject("key1") {
+		t.Error("unhealthy b2 should not have received a replica")
+	}
+	if !b3.hasObject("key1") {
+		t.Error("expected key1 on healthy b3")
+	}
+}
+
+func TestReplicate_HealthAware_PrefersHealthySource(t *testing.T) {
+	b1 := newMockBackend()
+	b2 := newMockBackend()
+	b3 := newMockBackend()
+	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
+	_, _ = b2.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
+
+	// b1 is circuit-broken — b2 should be preferred as source
+	cbb1 := newTrippedCBBackend(b1, "b1")
+
+	store := &mockStore{
+		getUnderReplicatedExcludingResp: []ObjectLocation{
+			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
+			{ObjectKey: "key1", BackendName: "b2", SizeBytes: 4},
+		},
+		getQuotaStatsResp: map[string]QuotaStat{
+			"b1": {BytesUsed: 100, BytesLimit: 1000},
+			"b2": {BytesUsed: 100, BytesLimit: 1000},
+			"b3": {BytesUsed: 100, BytesLimit: 1000},
+		},
+		recordReplicaInserted: true,
+	}
+	mgr := NewBackendManager(&BackendManagerConfig{
+		Backends:        map[string]ObjectBackend{"b1": cbb1, "b2": b2, "b3": b3},
+		Store:           store,
+		Order:           []string{"b1", "b2", "b3"},
+		CacheTTL:        5 * time.Second,
+		BackendTimeout:  30 * time.Second,
+		RoutingStrategy: "pack",
+	})
+
+	created, err := mgr.Replicate(context.Background(), config.ReplicationConfig{
+		Factor:             3,
+		BatchSize:          10,
+		UnhealthyThreshold: 0,
+	})
+	if err != nil {
+		t.Fatalf("Replicate: %v", err)
+	}
+	if created != 1 {
+		t.Errorf("expected 1 created, got %d", created)
+	}
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.recordReplicaCalls) != 1 {
+		t.Fatalf("expected 1 RecordReplica call, got %d", len(store.recordReplicaCalls))
+	}
+	if store.recordReplicaCalls[0].sourceBackend != "b2" {
+		t.Errorf("expected source=b2 (healthy), got %q", store.recordReplicaCalls[0].sourceBackend)
+	}
+}
+
+func TestReplicate_HealthAware_BelowThreshold(t *testing.T) {
+	b1 := newMockBackend()
+	b2 := newMockBackend()
+
+	// b2 is circuit-broken but threshold is very high — should use normal query
+	cbb2 := newTrippedCBBackend(b2, "b2")
+
+	store := &mockStore{
+		getUnderReplicatedResp: nil, // normal query: fully replicated
+	}
+	mgr := NewBackendManager(&BackendManagerConfig{
+		Backends:        map[string]ObjectBackend{"b1": b1, "b2": cbb2},
+		Store:           store,
+		Order:           []string{"b1", "b2"},
+		CacheTTL:        5 * time.Second,
+		BackendTimeout:  30 * time.Second,
+		RoutingStrategy: "pack",
+	})
+
+	created, err := mgr.Replicate(context.Background(), config.ReplicationConfig{
+		Factor:             2,
+		BatchSize:          10,
+		UnhealthyThreshold: time.Hour, // CB just opened — below threshold
+	})
+	if err != nil {
+		t.Fatalf("Replicate: %v", err)
+	}
+	if created != 0 {
+		t.Errorf("expected 0 created (below threshold), got %d", created)
+	}
+}
+
+func TestUnhealthyBackends_NoCB(t *testing.T) {
+	mgr := newTestManager(&mockStore{}, map[string]*mockBackend{
+		"b1": newMockBackend(),
+		"b2": newMockBackend(),
+	})
+	names := mgr.unhealthyBackends(0)
+	if len(names) != 0 {
+		t.Errorf("expected empty, got %v", names)
+	}
+}
+
+func TestIsBackendHealthy_NoCB(t *testing.T) {
+	mgr := newTestManager(&mockStore{}, map[string]*mockBackend{"b1": newMockBackend()})
+	if !mgr.isBackendHealthy("b1") {
+		t.Error("backend without CB wrapper should be healthy")
+	}
+}
+
+func TestIsBackendHealthy_UnknownBackend(t *testing.T) {
+	mgr := newTestManager(&mockStore{}, map[string]*mockBackend{"b1": newMockBackend()})
+	if mgr.isBackendHealthy("nonexistent") {
+		t.Error("unknown backend should not be healthy")
+	}
+}
+
+func TestIsBackendHealthy_CBHealthy(t *testing.T) {
+	cbb := NewCircuitBreakerBackend(newMockBackend(), "b1", 3, time.Minute)
+	mgr := NewBackendManager(&BackendManagerConfig{
+		Backends:        map[string]ObjectBackend{"b1": cbb},
+		Store:           &mockStore{},
+		Order:           []string{"b1"},
+		CacheTTL:        5 * time.Second,
+		RoutingStrategy: "pack",
+	})
+	if !mgr.isBackendHealthy("b1") {
+		t.Error("healthy CB backend should report healthy")
+	}
+}
+
+func TestIsBackendHealthy_CBUnhealthy(t *testing.T) {
+	cbb := newTrippedCBBackend(newMockBackend(), "b1")
+	mgr := NewBackendManager(&BackendManagerConfig{
+		Backends:        map[string]ObjectBackend{"b1": cbb},
+		Store:           &mockStore{},
+		Order:           []string{"b1"},
+		CacheTTL:        5 * time.Second,
+		RoutingStrategy: "pack",
+	})
+	if mgr.isBackendHealthy("b1") {
+		t.Error("tripped CB backend should report unhealthy")
+	}
+}

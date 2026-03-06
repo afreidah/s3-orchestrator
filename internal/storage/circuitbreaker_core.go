@@ -113,6 +113,17 @@ func (cb *CircuitBreaker) State() circuitState {
 	return cb.state
 }
 
+// OpenDuration returns how long the circuit has been open or half-open.
+// Returns 0 when the circuit is closed (healthy).
+func (cb *CircuitBreaker) OpenDuration() time.Duration {
+	cb.mu.RLock()
+	defer cb.mu.RUnlock()
+	if cb.state == stateClosed {
+		return 0
+	}
+	return time.Since(cb.openedAt)
+}
+
 // -------------------------------------------------------------------------
 // STATE MACHINE
 // -------------------------------------------------------------------------

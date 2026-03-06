@@ -140,6 +140,7 @@ replication:
   factor: 2
   worker_interval: "5m"
   batch_size: 50
+  unhealthy_threshold: "10m"
 
 circuit_breaker:
   failure_threshold: 3

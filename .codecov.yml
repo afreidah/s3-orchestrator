@@ -17,6 +17,7 @@ ignore:
   - "internal/storage/manager_multipart.go" # orchestrates backend+DB, integration-tested only
   - "internal/storage/manager_drain.go"     # background drain service, integration-tested only
   - "internal/storage/replicator.go"        # replication worker, integration-tested only
+  - "internal/storage/circuitbreaker.go"   # DB circuit breaker wrapper, thin delegation layer
   - "internal/admin/"         # thin delegation layer over tested storage methods
   - "internal/ui/"            # thin HTTP handler layer, integration-tested only
   - "internal/server/"        # server wiring and startup

@@ -249,6 +249,7 @@ replication:
   factor: 2
   worker_interval: "5m"
   batch_size: 50
+  unhealthy_threshold: "10m"
 
 encryption:
   enabled: true

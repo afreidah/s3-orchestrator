@@ -179,6 +179,13 @@ func (cb *CircuitBreakerStore) GetUnderReplicatedObjects(ctx context.Context, fa
 	return CBCall(cb.CircuitBreaker, func() ([]ObjectLocation, error) { return cb.real.GetUnderReplicatedObjects(ctx, factor, limit) })
 }
 
+// GetUnderReplicatedObjectsExcluding delegates to the real store with circuit breaker protection.
+func (cb *CircuitBreakerStore) GetUnderReplicatedObjectsExcluding(ctx context.Context, factor, limit int, excludedBackends []string) ([]ObjectLocation, error) {
+	return CBCall(cb.CircuitBreaker, func() ([]ObjectLocation, error) {
+		return cb.real.GetUnderReplicatedObjectsExcluding(ctx, factor, limit, excludedBackends)
+	})
+}
+
 // RecordReplica delegates to the real store with circuit breaker protection.
 func (cb *CircuitBreakerStore) RecordReplica(ctx context.Context, key, targetBackend, sourceBackend string, size int64) (bool, error) {
 	return CBCall(cb.CircuitBreaker, func() (bool, error) { return cb.real.RecordReplica(ctx, key, targetBackend, sourceBackend, size) })

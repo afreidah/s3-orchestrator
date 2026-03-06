@@ -149,6 +149,7 @@ When a backend accumulates `failure_threshold` consecutive failures, the circuit
 
 - **Writes** skip the unhealthy backend and route to other backends with available quota.
 - **Reads** fail over to replicas on healthy backends (requires `replication.factor >= 2`).
+- **Replication** creates replacement copies on healthy backends after a sustained outage (see [Health-Aware Replication](#health-aware-replication)).
 - All calls to the backend return `ErrBackendUnavailable` immediately — no timeout waiting.
 
 After `open_timeout` elapses, the next organic request to the backend is allowed through as a probe. If it succeeds, the circuit closes. If it fails, the circuit reopens for another timeout period.
@@ -189,6 +190,16 @@ The `threshold` parameter (0–1) sets the minimum utilization spread required t
 When `replication.factor` is greater than 1, a background worker creates additional copies of objects on different backends to reach the target factor. Read operations automatically fail over to replicas if the primary copy is unavailable.
 
 The worker runs once at startup to catch up on pending replicas, then continues at the configured interval.
+
+### Health-Aware Replication
+
+When backend circuit breakers are enabled, the replication worker is aware of backend health. If a backend's circuit breaker has been open longer than `unhealthy_threshold` (default: 10 minutes), the replicator treats copies on that backend as unavailable and creates replacement copies on healthy backends to maintain the target replication factor.
+
+This prevents a sustained backend outage from silently reducing effective redundancy. For example, with `factor: 2` and an object on backends A and B, if B goes down and stays down past the threshold, the replicator creates a third copy on backend C — restoring two accessible copies.
+
+The threshold prevents replacement copies from being created during brief transient failures. The replicator also prefers healthy backends as copy sources and never selects a circuit-broken backend as a replication target.
+
+Over-replication cleanup when a backend recovers is not automatic — the extra copy remains until the object is overwritten or manually removed.
 
 ## Cleanup Queue
 
@@ -366,6 +377,7 @@ replication:
   factor: 1                # copies per object; 1 = no replication (default: 1)
   worker_interval: "5m"    # replication worker cycle (default: 5m)
   batch_size: 50           # objects per cycle (default: 50)
+  unhealthy_threshold: "10m" # grace period before replacing copies on circuit-broken backends (default: 10m)
 
 rate_limit:
   enabled: false
@@ -526,6 +538,7 @@ All metrics are prefixed with `s3proxy_`. Exposed at `/metrics` when enabled.
 | `s3proxy_replication_errors_total` | Counter | — | Replication errors |
 | `s3proxy_replication_duration_seconds` | Histogram | — | Replication cycle time |
 | `s3proxy_replication_runs_total` | Counter | status | Replication worker executions |
+| `s3proxy_replication_health_copies_total` | Counter | — | Copies created to replace copies on circuit-broken backends |
 | `s3proxy_circuit_breaker_state` | Gauge | name | 0=closed, 1=open, 2=half-open (name: "database" or backend name) |
 | `s3proxy_circuit_breaker_transitions_total` | Counter | name, from, to | State transitions per component |
 | `s3proxy_degraded_reads_total` | Counter | operation | Broadcast reads in degraded mode |

@@ -227,7 +227,8 @@ type objectLocationRow interface {
 		db.ListExpiredObjectsRow |
 		db.ListDirectChildrenRow |
 		db.GetAllObjectLocationsRow |
-		db.GetUnderReplicatedObjectsRow
+		db.GetUnderReplicatedObjectsRow |
+		db.GetUnderReplicatedObjectsExcludingRow
 }
 
 // toObjectLocations converts any sqlc row type containing object location
@@ -249,6 +250,9 @@ func toObjectLocation(row any) ObjectLocation {
 		return objectLocationFromDB(r.ObjectKey, r.BackendName, r.SizeBytes,
 			r.Encrypted, r.EncryptionKey, r.KeyID, r.PlaintextSize, r.CreatedAt.Time)
 	case db.GetUnderReplicatedObjectsRow:
+		return objectLocationFromDB(r.ObjectKey, r.BackendName, r.SizeBytes,
+			r.Encrypted, r.EncryptionKey, r.KeyID, r.PlaintextSize, r.CreatedAt.Time)
+	case db.GetUnderReplicatedObjectsExcludingRow:
 		return objectLocationFromDB(r.ObjectKey, r.BackendName, r.SizeBytes,
 			r.Encrypted, r.EncryptionKey, r.KeyID, r.PlaintextSize, r.CreatedAt.Time)
 	case db.ListObjectsByBackendRow:
@@ -774,6 +778,22 @@ func (s *Store) GetUnderReplicatedObjects(ctx context.Context, factor, limit int
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to query under-replicated objects: %w", err)
+	}
+
+	return toObjectLocations(rows), nil
+}
+
+// GetUnderReplicatedObjectsExcluding finds objects with fewer copies than the
+// target factor, ignoring copies on the excluded backends. Returns all rows
+// for those objects so callers know the full picture.
+func (s *Store) GetUnderReplicatedObjectsExcluding(ctx context.Context, factor, limit int, excludedBackends []string) ([]ObjectLocation, error) {
+	rows, err := s.queries.GetUnderReplicatedObjectsExcluding(ctx, db.GetUnderReplicatedObjectsExcludingParams{
+		Excluded: excludedBackends,
+		Factor:   int64(factor),
+		MaxKeys:  int32(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to query under-replicated objects (excluding): %w", err)
 	}
 
 	return toObjectLocations(rows), nil
