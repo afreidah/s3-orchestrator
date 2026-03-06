@@ -153,10 +153,12 @@ replication:
   factor: 2
   worker_interval: "5m"
   batch_size: 50
+  unhealthy_threshold: "10m"
 ```
 
 - `worker_interval` controls how often the worker checks for under-replicated objects. Lower intervals mean faster catch-up after writes but more database queries.
 - `batch_size` limits objects processed per worker tick. Higher values catch up faster but create more backend I/O.
+- `unhealthy_threshold` sets the grace period before the replicator treats copies on a circuit-broken backend as unavailable and creates replacements on healthy backends. Set higher to avoid churn during brief outages; set lower for faster redundancy recovery. Requires `backend_circuit_breaker.enabled: true`.
 - The worker runs a catch-up pass on startup, so initial replication doesn't wait for the first interval.
 
 For large backlogs (e.g., enabling replication on an existing dataset), temporarily increase `batch_size` to `500` and lower `worker_interval` to `"30s"`, then revert after catch-up.
@@ -208,9 +210,9 @@ Per-backend circuit breakers stop sending traffic to a backend after `failure_th
 
 ### When to Enable
 
-- **Multi-backend with replication** — highly recommended. Reads fail over to replicas on healthy backends, writes route to other backends. A single backend failure becomes invisible to clients.
+- **Multi-backend with replication** — highly recommended. Reads fail over to replicas on healthy backends, writes route to other backends, and the replication worker creates replacement copies after a sustained outage (`replication.unhealthy_threshold`). A single backend failure becomes invisible to clients.
 - **Single backend** — less useful. The circuit opens but there's nowhere to fail over to. Requests return `ErrBackendUnavailable` instead of timing out, which is still an improvement (faster failure).
-- **Cost-sensitive environments** — the probe request after `open_timeout` is a real S3 API call. With a 5-minute timeout, that's at most 12 probes/hour to a down backend.
+- **Cost-sensitive environments** — the probe request after `open_timeout` is a real S3 API call. With a 5-minute timeout, that's at most 12 probes/hour to a down backend. Health-aware replication also creates additional copies during sustained outages, which consume backend I/O and storage.
 
 ### Monitoring
 
