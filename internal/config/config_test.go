@@ -1604,6 +1604,150 @@ func TestNonReloadableFieldsChanged_BackendCircuitBreaker(t *testing.T) {
 // ENCRYPTION VALIDATION
 // -------------------------------------------------------------------------
 
+// -------------------------------------------------------------------------
+// REDIS VALIDATION
+// -------------------------------------------------------------------------
+
+func TestRedisConfig_MissingAddress(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Redis = &RedisConfig{}
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil || !strings.Contains(err.Error(), "redis.address is required") {
+		t.Errorf("missing redis address should fail, got: %v", err)
+	}
+}
+
+func TestRedisConfig_Defaults(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Redis = &RedisConfig{Address: "localhost:6379"}
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Errorf("valid redis config should pass: %v", err)
+	}
+	if cfg.Redis.KeyPrefix != "s3orch" {
+		t.Errorf("KeyPrefix = %q, want 's3orch'", cfg.Redis.KeyPrefix)
+	}
+	if cfg.Redis.FailureThreshold != 3 {
+		t.Errorf("FailureThreshold = %d, want 3", cfg.Redis.FailureThreshold)
+	}
+	if cfg.Redis.OpenTimeout != 15*time.Second {
+		t.Errorf("OpenTimeout = %v, want 15s", cfg.Redis.OpenTimeout)
+	}
+}
+
+func TestRedisConfig_CustomValues(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Redis = &RedisConfig{
+		Address:          "redis:6379",
+		KeyPrefix:        "myapp",
+		FailureThreshold: 5,
+		OpenTimeout:      30 * time.Second,
+	}
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Errorf("custom redis config should pass: %v", err)
+	}
+	if cfg.Redis.KeyPrefix != "myapp" {
+		t.Errorf("KeyPrefix = %q, want 'myapp'", cfg.Redis.KeyPrefix)
+	}
+	if cfg.Redis.FailureThreshold != 5 {
+		t.Errorf("FailureThreshold = %d, want 5", cfg.Redis.FailureThreshold)
+	}
+}
+
+func TestNonReloadableFieldsChanged_RedisAdded(t *testing.T) {
+	a := validBaseConfig()
+	b := validBaseConfig()
+	_ = a.SetDefaultsAndValidate()
+	b.Redis = &RedisConfig{Address: "localhost:6379"}
+	_ = b.SetDefaultsAndValidate()
+
+	changed := NonReloadableFieldsChanged(&a, &b)
+	found := false
+	for _, c := range changed {
+		if c == "redis" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected redis in changed list, got %v", changed)
+	}
+}
+
+func TestNonReloadableFieldsChanged_RedisRemoved(t *testing.T) {
+	a := validBaseConfig()
+	b := validBaseConfig()
+	a.Redis = &RedisConfig{Address: "localhost:6379"}
+	_ = a.SetDefaultsAndValidate()
+	_ = b.SetDefaultsAndValidate()
+
+	changed := NonReloadableFieldsChanged(&a, &b)
+	found := false
+	for _, c := range changed {
+		if c == "redis" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected redis in changed list, got %v", changed)
+	}
+}
+
+func TestNonReloadableFieldsChanged_RedisModified(t *testing.T) {
+	a := validBaseConfig()
+	b := validBaseConfig()
+	a.Redis = &RedisConfig{Address: "localhost:6379"}
+	b.Redis = &RedisConfig{Address: "redis:6379"}
+	_ = a.SetDefaultsAndValidate()
+	_ = b.SetDefaultsAndValidate()
+
+	changed := NonReloadableFieldsChanged(&a, &b)
+	found := false
+	for _, c := range changed {
+		if c == "redis" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected redis in changed list, got %v", changed)
+	}
+}
+
+func TestNonReloadableFieldsChanged_RedisBothNil(t *testing.T) {
+	a := validBaseConfig()
+	b := validBaseConfig()
+	_ = a.SetDefaultsAndValidate()
+	_ = b.SetDefaultsAndValidate()
+
+	changed := NonReloadableFieldsChanged(&a, &b)
+	for _, c := range changed {
+		if c == "redis" {
+			t.Errorf("both nil redis should not appear in changed list")
+		}
+	}
+}
+
+func TestNonReloadableFieldsChanged_RedisIdentical(t *testing.T) {
+	a := validBaseConfig()
+	b := validBaseConfig()
+	a.Redis = &RedisConfig{Address: "localhost:6379"}
+	b.Redis = &RedisConfig{Address: "localhost:6379"}
+	_ = a.SetDefaultsAndValidate()
+	_ = b.SetDefaultsAndValidate()
+
+	changed := NonReloadableFieldsChanged(&a, &b)
+	for _, c := range changed {
+		if c == "redis" {
+			t.Errorf("identical redis configs should not appear in changed list")
+		}
+	}
+}
+
+// -------------------------------------------------------------------------
+// ENCRYPTION VALIDATION
+// -------------------------------------------------------------------------
+
 func TestEncryptionConfig_ValidMasterKey(t *testing.T) {
 	cfg := validBaseConfig()
 	cfg.Encryption = EncryptionConfig{

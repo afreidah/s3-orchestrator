@@ -98,9 +98,13 @@ func (s *lockedTickerService) runOnce(ctx context.Context, fn func(ctx context.C
 
 type usageFlushService struct {
 	manager *storage.BackendManager
+	store   storage.MetadataStore
 }
 
 // Run periodically flushes in-memory usage counters to the database.
+// When Redis counters are active, only one instance should flush (GETSET is a
+// destructive read), so the flush is wrapped in an advisory lock. When Redis
+// is in fallback or not configured, each instance flushes independently.
 func (s *usageFlushService) Run(ctx context.Context) error {
 	cfg := s.manager.UsageFlushConfig()
 	interval := 30 * time.Second
@@ -116,12 +120,7 @@ func (s *usageFlushService) Run(ctx context.Context) error {
 		select {
 		case <-ticker.C:
 			tickCtx := audit.WithRequestID(ctx, audit.NewID())
-			if err := s.manager.FlushUsage(tickCtx); err != nil && !errors.Is(err, storage.ErrDBUnavailable) {
-				slog.Error("Failed to flush usage counters", "error", err)
-			}
-			if err := s.manager.UpdateQuotaMetrics(tickCtx); err != nil && !errors.Is(err, storage.ErrDBUnavailable) {
-				slog.Error("Failed to update quota metrics", "error", err)
-			}
+			s.flushTick(tickCtx)
 
 			// Adaptive interval adjustment
 			cfg = s.manager.UsageFlushConfig()
@@ -139,6 +138,38 @@ func (s *usageFlushService) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		}
+	}
+}
+
+// flushTick runs a single flush+metrics cycle. When Redis counters are active,
+// wraps the flush in an advisory lock so only one instance performs GETSET.
+func (s *usageFlushService) flushTick(ctx context.Context) {
+	if s.manager.RedisCounterActive() {
+		acquired, err := s.store.WithAdvisoryLock(ctx, storage.LockUsageFlush,
+			func(lockCtx context.Context) error {
+				s.doFlush(lockCtx)
+				return nil
+			})
+		if err != nil && !errors.Is(err, storage.ErrDBUnavailable) {
+			slog.Error("Usage flush failed", "error", err)
+		}
+		if !acquired {
+			slog.Debug("Usage flush skipped, another instance holds the lock")
+		}
+		return
+	}
+
+	// No Redis or Redis in fallback — flush locally without lock.
+	s.doFlush(ctx)
+}
+
+// doFlush performs the actual flush and quota metric update.
+func (s *usageFlushService) doFlush(ctx context.Context) {
+	if err := s.manager.FlushUsage(ctx); err != nil && !errors.Is(err, storage.ErrDBUnavailable) {
+		slog.Error("Failed to flush usage counters", "error", err)
+	}
+	if err := s.manager.UpdateQuotaMetrics(ctx); err != nil && !errors.Is(err, storage.ErrDBUnavailable) {
+		slog.Error("Failed to update quota metrics", "error", err)
 	}
 }
 

@@ -14,60 +14,37 @@ import (
 	"context"
 	"log/slog"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
-// usageCounters holds atomic counters for a single backend's usage deltas.
-// Incremented on the hot path (each request) and periodically flushed to the
-// database.
-type usageCounters struct {
-	apiRequests  atomic.Int64
-	egressBytes  atomic.Int64
-	ingressBytes atomic.Int64
-}
-
 // UsageTracker tracks per-backend usage counters, enforces monthly usage limits,
-// and flushes accumulated deltas to the database.
+// and flushes accumulated deltas to the database. Counter storage is delegated
+// to a CounterBackend, allowing local atomics or shared Redis counters.
 type UsageTracker struct {
-	counters   map[string]*usageCounters
+	backend    CounterBackend
 	limits     map[string]UsageLimits
 	limitsMu   sync.RWMutex
 	baseline   map[string]UsageStat
 	baselineMu sync.RWMutex
 }
 
-// NewUsageTracker creates a usage tracker for the given backend names and limits.
-func NewUsageTracker(backendNames []string, limits map[string]UsageLimits) *UsageTracker {
-	counters := make(map[string]*usageCounters, len(backendNames))
-	for _, name := range backendNames {
-		counters[name] = &usageCounters{}
-	}
+// NewUsageTracker creates a usage tracker with the given counter backend and
+// per-backend limits. The counter backend determines whether deltas are stored
+// locally (default) or in a shared store like Redis.
+func NewUsageTracker(backend CounterBackend, limits map[string]UsageLimits) *UsageTracker {
 	if limits == nil {
 		limits = make(map[string]UsageLimits)
 	}
 	return &UsageTracker{
-		counters: counters,
+		backend:  backend,
 		limits:   limits,
 		baseline: make(map[string]UsageStat),
 	}
 }
 
-// Record increments the in-memory usage counters for a backend.
+// Record increments the usage counters for a backend.
 func (u *UsageTracker) Record(backendName string, apiCalls, egress, ingress int64) {
-	c, ok := u.counters[backendName]
-	if !ok {
-		return
-	}
-	if apiCalls > 0 {
-		c.apiRequests.Add(apiCalls)
-	}
-	if egress > 0 {
-		c.egressBytes.Add(egress)
-	}
-	if ingress > 0 {
-		c.ingressBytes.Add(ingress)
-	}
+	u.backend.AddAll(backendName, apiCalls, egress, ingress)
 }
 
 // -------------------------------------------------------------------------
@@ -95,26 +72,20 @@ func (u *UsageTracker) WithinLimits(backendName string, apiCalls, egress, ingres
 	base := u.baseline[backendName]
 	u.baselineMu.RUnlock()
 
-	c := u.counters[backendName]
-	if c == nil {
-		return true
-	}
+	cur := u.backend.LoadAll(backendName)
 
 	if lim.APIRequestLimit > 0 {
-		effective := base.APIRequests + c.apiRequests.Load() + apiCalls
-		if effective > lim.APIRequestLimit {
+		if base.APIRequests+cur.APIRequests+apiCalls > lim.APIRequestLimit {
 			return false
 		}
 	}
 	if lim.EgressByteLimit > 0 {
-		effective := base.EgressBytes + c.egressBytes.Load() + egress
-		if effective > lim.EgressByteLimit {
+		if base.EgressBytes+cur.EgressBytes+egress > lim.EgressByteLimit {
 			return false
 		}
 	}
 	if lim.IngressByteLimit > 0 {
-		effective := base.IngressBytes + c.ingressBytes.Load() + ingress
-		if effective > lim.IngressByteLimit {
+		if base.IngressBytes+cur.IngressBytes+ingress > lim.IngressByteLimit {
 			return false
 		}
 	}
@@ -192,25 +163,22 @@ func (u *UsageTracker) NearLimit(threshold float64) bool {
 		}
 
 		base := u.baseline[name]
-		c := u.counters[name]
-		if c == nil {
-			continue
-		}
+		cur := u.backend.LoadAll(name)
 
 		if lim.APIRequestLimit > 0 {
-			effective := float64(base.APIRequests+c.apiRequests.Load()) / float64(lim.APIRequestLimit)
+			effective := float64(base.APIRequests+cur.APIRequests) / float64(lim.APIRequestLimit)
 			if effective >= threshold {
 				return true
 			}
 		}
 		if lim.EgressByteLimit > 0 {
-			effective := float64(base.EgressBytes+c.egressBytes.Load()) / float64(lim.EgressByteLimit)
+			effective := float64(base.EgressBytes+cur.EgressBytes) / float64(lim.EgressByteLimit)
 			if effective >= threshold {
 				return true
 			}
 		}
 		if lim.IngressByteLimit > 0 {
-			effective := float64(base.IngressBytes+c.ingressBytes.Load()) / float64(lim.IngressByteLimit)
+			effective := float64(base.IngressBytes+cur.IngressBytes) / float64(lim.IngressByteLimit)
 			if effective >= threshold {
 				return true
 			}
@@ -228,33 +196,32 @@ func currentPeriod() string {
 	return time.Now().UTC().Format("2006-01")
 }
 
-// FlushUsage reads and resets the in-memory atomic counters, then writes the
-// accumulated deltas to the database. Called periodically (every 30s). On DB
-// error, deltas are added back to avoid data loss. Backends in the skip set
-// have their counters discarded (used for drained backends whose DB records
-// have been removed).
+// FlushUsage reads and resets the counter backend, then writes the accumulated
+// deltas to the database. Called periodically (every 30s). On DB error, deltas
+// are added back to avoid data loss. Backends in the skip set have their
+// counters discarded (used for drained backends whose DB records are gone).
 func (u *UsageTracker) FlushUsage(ctx context.Context, store MetadataStore, skip map[string]bool) error {
 	period := currentPeriod()
 	var lastErr error
 
-	for name, counters := range u.counters {
-		apiReqs := counters.apiRequests.Swap(0)
-		egress := counters.egressBytes.Swap(0)
-		ingress := counters.ingressBytes.Swap(0)
+	for _, name := range u.backend.Backends() {
+		apiReqs := u.backend.Swap(name, FieldAPIRequests)
+		egress := u.backend.Swap(name, FieldEgressBytes)
+		ingress := u.backend.Swap(name, FieldIngressBytes)
 
 		if apiReqs == 0 && egress == 0 && ingress == 0 {
 			continue
 		}
 
 		if skip[name] {
-			continue // discard — DB records for this backend are gone
+			continue // discard -- DB records for this backend are gone
 		}
 
 		if err := store.FlushUsageDeltas(ctx, name, period, apiReqs, egress, ingress); err != nil {
 			// Restore deltas so they aren't lost
-			counters.apiRequests.Add(apiReqs)
-			counters.egressBytes.Add(egress)
-			counters.ingressBytes.Add(ingress)
+			u.backend.Add(name, FieldAPIRequests, apiReqs)
+			u.backend.Add(name, FieldEgressBytes, egress)
+			u.backend.Add(name, FieldIngressBytes, ingress)
 			slog.Error("Failed to flush usage deltas", "backend", name, "error", err)
 			lastErr = err
 		}

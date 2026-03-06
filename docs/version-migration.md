@@ -39,11 +39,24 @@ s3-orchestrator version
 
 - `rate_limit.cleanup_interval` -- stale entry eviction interval (default: 1m)
 - `rate_limit.cleanup_max_age` -- entries not seen within this window are evicted (default: 5m)
+- `redis` section -- optional shared usage counters via Redis for multi-instance deployments
+  - `redis.address` -- Redis host:port (required when section is present)
+  - `redis.password` -- AUTH password (optional)
+  - `redis.db` -- Redis database number (default: 0)
+  - `redis.tls` -- enable TLS (default: false)
+  - `redis.key_prefix` -- key namespace (default: "s3orch")
+  - `redis.failure_threshold` -- circuit breaker threshold (default: 3)
+  - `redis.open_timeout` -- circuit breaker probe delay (default: 15s)
 
 **New features:**
 
 - `x-amz-meta-*` user metadata passthrough on PutObject, GetObject, HeadObject, CopyObject, and multipart uploads
 - `govulncheck` CI job for Go dependency vulnerability scanning
+- Optional Redis shared counters for multi-instance usage tracking with circuit breaker fallback to local counters
+
+**New dependencies:**
+
+- `github.com/redis/go-redis/v9`
 
 **Database migrations:**
 

@@ -501,6 +501,26 @@ var (
 		[]string{"status"},
 	)
 
+	// --- Redis metrics ---
+
+	// RedisOperationsTotal counts Redis counter backend operations.
+	RedisOperationsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "s3proxy_redis_operations_total",
+			Help: "Total Redis counter backend operations",
+		},
+		[]string{"operation", "status"},
+	)
+
+	// RedisFallbackActive is 1 when the Redis counter backend is in local
+	// fallback mode due to circuit breaker, 0 during normal operation.
+	RedisFallbackActive = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "s3proxy_redis_fallback_active",
+			Help: "Whether Redis counter backend is in local fallback mode",
+		},
+	)
+
 	// --- Info metric ---
 
 	// BuildInfo exposes version information.

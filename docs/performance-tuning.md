@@ -181,6 +181,29 @@ The orchestrator tracks API requests, egress, and ingress in memory and periodic
 
 For environments without usage limits, the flush still runs (it powers the dashboard and metrics) but accuracy is less critical. The 30-second default is fine.
 
+### Redis Shared Counters
+
+In multi-instance deployments, each instance maintains independent counters by default. Redis replaces per-instance atomics with shared counters, eliminating the cross-instance blind spot:
+
+```yaml
+redis:
+  address: "redis.example.com:6379"
+  key_prefix: "s3orch"
+  failure_threshold: 3
+  open_timeout: "15s"
+```
+
+Redis adds ~0.2ms per write operation (pipelined `INCRBY`) and ~0.2ms per read (`GET` pipeline). For most workloads the latency is negligible compared to backend S3 calls. If Redis becomes unavailable, the circuit breaker falls back to local counters automatically — no manual intervention needed.
+
+**When to use Redis:**
+- Running 2+ instances with usage limits enabled
+- High write throughput where the 30s flush gap could cause meaningful overshoot
+
+**When Redis is unnecessary:**
+- Single instance deployments
+- No usage limits configured
+- Low throughput where the flush interval provides sufficient accuracy
+
 ## Backend Circuit Breaker
 
 ```yaml

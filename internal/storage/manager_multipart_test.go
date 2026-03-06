@@ -209,8 +209,7 @@ func TestAbortMultipartUpload_Success(t *testing.T) {
 	}
 
 	// Usage: 1 part delete + 1 abort = 2 API calls
-	c := mgr.usage.counters["b1"]
-	if got := c.apiRequests.Load(); got != 2 {
+	if got := mgr.usage.backend.Load("b1", FieldAPIRequests); got != 2 {
 		t.Errorf("apiRequests = %d, want 2 (1 part delete + 1 abort)", got)
 	}
 }
@@ -463,8 +462,7 @@ func TestUploadPart_RecordPartFails_CleansUpPartObject(t *testing.T) {
 	}
 
 	// Usage: 1 API call for the orphan cleanup delete (put usage only recorded on success path)
-	c := mgr.usage.counters["b1"]
-	if got := c.apiRequests.Load(); got != 1 {
+	if got := mgr.usage.backend.Load("b1", FieldAPIRequests); got != 1 {
 		t.Errorf("apiRequests = %d, want 1 (orphan delete)", got)
 	}
 }
@@ -570,14 +568,13 @@ func TestCompleteMultipartUpload_UsageRecords2NPlus1APICalls(t *testing.T) {
 		t.Fatalf("CompleteMultipartUpload: %v", err)
 	}
 
-	// 3 parts → 3 GetObject + 1 PutObject + 3 DeleteObject = 7 API calls (2N+1)
-	c := mgr.usage.counters["b1"]
+	// 3 parts -- 3 GetObject + 1 PutObject + 3 DeleteObject = 7 API calls (2N+1)
 	wantAPICalls := int64(2*3 + 1)
-	if got := c.apiRequests.Load(); got != wantAPICalls {
+	if got := mgr.usage.backend.Load("b1", FieldAPIRequests); got != wantAPICalls {
 		t.Errorf("apiRequests = %d, want %d (2*N+1 where N=3)", got, wantAPICalls)
 	}
 	// Total ingress should equal sum of all parts (9 bytes)
-	if got := c.ingressBytes.Load(); got != 9 {
+	if got := mgr.usage.backend.Load("b1", FieldIngressBytes); got != 9 {
 		t.Errorf("ingressBytes = %d, want 9", got)
 	}
 }
@@ -601,12 +598,11 @@ func TestUploadPart_BackendFailure_StillRecordsUsage(t *testing.T) {
 	}
 
 	// Even on failure, 1 API call should be recorded (the attempt was made)
-	c := mgr.usage.counters["b1"]
-	if got := c.apiRequests.Load(); got != 1 {
+	if got := mgr.usage.backend.Load("b1", FieldAPIRequests); got != 1 {
 		t.Errorf("apiRequests = %d, want 1 (failed call still counts)", got)
 	}
 	// No ingress should be recorded since the upload failed
-	if got := c.ingressBytes.Load(); got != 0 {
+	if got := mgr.usage.backend.Load("b1", FieldIngressBytes); got != 0 {
 		t.Errorf("ingressBytes = %d, want 0 (upload failed)", got)
 	}
 }

@@ -83,8 +83,7 @@ func TestPurgeBackendObjects_DeletesDBRecords(t *testing.T) {
 	}
 
 	// Verify usage tracking: 2 API calls (one delete per object)
-	c := mgr.usage.counters["b1"]
-	if got := c.apiRequests.Load(); got != 2 {
+	if got := mgr.usage.backend.Load("b1", FieldAPIRequests); got != 2 {
 		t.Errorf("apiRequests = %d, want 2 (purge deletes)", got)
 	}
 }

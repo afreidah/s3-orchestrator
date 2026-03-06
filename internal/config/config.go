@@ -45,6 +45,7 @@ type Config struct {
 	UI                    UIConfig                    `yaml:"ui"`
 	UsageFlush      UsageFlushConfig     `yaml:"usage_flush"`
 	Lifecycle       LifecycleConfig      `yaml:"lifecycle"`
+	Redis           *RedisConfig         `yaml:"redis"`
 	RoutingStrategy string               `yaml:"routing_strategy"` // "pack" (default) or "spread"
 }
 
@@ -243,6 +244,19 @@ type UsageFlushConfig struct {
 	AdaptiveEnabled   bool          `yaml:"adaptive_enabled"`   // Shorten interval near limits
 	AdaptiveThreshold float64       `yaml:"adaptive_threshold"` // Ratio to trigger fast flush (default: 0.8)
 	FastInterval      time.Duration `yaml:"fast_interval"`      // Interval when near limits (default: 5s)
+}
+
+// RedisConfig holds optional Redis connection settings for shared usage
+// counters in multi-instance deployments. When omitted, counters are stored
+// in local memory (single-instance default).
+type RedisConfig struct {
+	Address          string        `yaml:"address"`           // Redis address (host:port)
+	Password         string        `yaml:"password"`          // Redis password (optional)
+	DB               int           `yaml:"db"`                // Redis database number (default: 0)
+	TLS              bool          `yaml:"tls"`               // Use TLS for Redis connection
+	KeyPrefix        string        `yaml:"key_prefix"`        // Key prefix for namespacing (default: "s3orch")
+	FailureThreshold int           `yaml:"failure_threshold"` // Consecutive failures before circuit opens (default: 3)
+	OpenTimeout      time.Duration `yaml:"open_timeout"`      // Delay before probing recovery (default: 15s)
 }
 
 // -------------------------------------------------------------------------
@@ -714,6 +728,22 @@ func (c *Config) SetDefaultsAndValidate() error {
 		errors = append(errors, "usage_flush.fast_interval must be less than usage_flush.interval")
 	}
 
+	// --- Redis defaults and validation ---
+	if c.Redis != nil {
+		if c.Redis.Address == "" {
+			errors = append(errors, "redis.address is required when redis section is present")
+		}
+		if c.Redis.KeyPrefix == "" {
+			c.Redis.KeyPrefix = "s3orch"
+		}
+		if c.Redis.FailureThreshold == 0 {
+			c.Redis.FailureThreshold = 3
+		}
+		if c.Redis.OpenTimeout == 0 {
+			c.Redis.OpenTimeout = 15 * time.Second
+		}
+	}
+
 	// --- Lifecycle validation ---
 	lifecyclePrefixes := make(map[string]bool)
 	for i := range c.Lifecycle.Rules {
@@ -785,6 +815,13 @@ func NonReloadableFieldsChanged(old, new *Config) []string {
 	}
 	if old.RoutingStrategy != new.RoutingStrategy {
 		changed = append(changed, "routing_strategy")
+	}
+	oldHasRedis := old.Redis != nil
+	newHasRedis := new.Redis != nil
+	if oldHasRedis != newHasRedis {
+		changed = append(changed, "redis")
+	} else if oldHasRedis && newHasRedis && *old.Redis != *new.Redis {
+		changed = append(changed, "redis")
 	}
 
 	// Backend structural changes (endpoints, S3 credentials) cannot be reloaded.
