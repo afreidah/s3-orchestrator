@@ -9,43 +9,48 @@ cascade:
     weight: 1
     _target:
       path: "/docs/quickstart"
+  - title: "S3-Orchestrator README"
+    linkTitle: "README"
+    weight: 2
+    _target:
+      path: "/docs/readme"
   - title: "S3-Orchestrator User Guide"
     linkTitle: "User Guide"
-    weight: 2
+    weight: 3
     _target:
       path: "/docs/user-guide"
   - title: "S3-Orchestrator Admin Guide"
     linkTitle: "Admin Guide"
-    weight: 3
+    weight: 4
     _target:
       path: "/docs/admin-guide"
   - title: "S3-Orchestrator API Reference"
     linkTitle: "API Reference"
-    weight: 4
+    weight: 5
     _target:
       path: "/docs/api-reference"
   - title: "S3-Orchestrator Security Hardening"
     linkTitle: "Security Hardening"
-    weight: 5
+    weight: 6
     _target:
       path: "/docs/security-hardening"
   - title: "S3-Orchestrator Performance Tuning"
     linkTitle: "Performance Tuning"
-    weight: 6
+    weight: 7
     _target:
       path: "/docs/performance-tuning"
   - title: "S3-Orchestrator Disaster Recovery"
     linkTitle: "Disaster Recovery"
-    weight: 7
+    weight: 8
     _target:
       path: "/docs/disaster-recovery"
   - title: "S3-Orchestrator Version Migration"
     linkTitle: "Version Migration"
-    weight: 8
+    weight: 9
     _target:
       path: "/docs/version-migration"
   - title: "Style Guide"
-    weight: 9
+    weight: 10
     hidden: true
     _target:
       path: "/docs/style-guide"
@@ -60,6 +65,13 @@ cascade:
     <div>
       <strong>Quickstart</strong>
       <p>Get running locally in under a minute.</p>
+    </div>
+  </a>
+  <a class="landing-card" href="readme/">
+    <i class="fab fa-github landing-card-icon" style="color: #e2e8f0;"></i>
+    <div>
+      <strong>README</strong>
+      <p>Project overview, features, configuration reference, and metrics.</p>
     </div>
   </a>
   <a class="landing-card" href="user-guide/">
