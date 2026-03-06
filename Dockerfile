@@ -45,7 +45,8 @@ LABEL org.opencontainers.image.title="s3-orchestrator" \
       org.opencontainers.image.source="https://github.com/afreidah/s3-orchestrator" \
       org.opencontainers.image.licenses="MIT"
 
-RUN apk add --no-cache ca-certificates && \
+RUN apk upgrade --no-cache && \
+    apk add --no-cache ca-certificates && \
     adduser -D -u 10001 appuser
 
 COPY --from=builder /build/s3-orchestrator /usr/local/bin/
