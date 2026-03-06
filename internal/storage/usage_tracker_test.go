@@ -11,8 +11,16 @@ package storage
 
 import "testing"
 
+func TestNewUsageTracker_NilLimits(t *testing.T) {
+	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), nil)
+	// Should not panic; nil limits treated as empty map.
+	if tracker.NearLimit(0.8) {
+		t.Error("nil limits should never be near limit")
+	}
+}
+
 func TestNearLimit_BelowThreshold(t *testing.T) {
-	tracker := NewUsageTracker([]string{"b1"}, map[string]UsageLimits{
+	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), map[string]UsageLimits{
 		"b1": {APIRequestLimit: 1000, EgressByteLimit: 1000},
 	})
 	tracker.SetBaseline("b1", UsageStat{APIRequests: 100, EgressBytes: 100})
@@ -23,7 +31,7 @@ func TestNearLimit_BelowThreshold(t *testing.T) {
 }
 
 func TestNearLimit_AboveThreshold(t *testing.T) {
-	tracker := NewUsageTracker([]string{"b1"}, map[string]UsageLimits{
+	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), map[string]UsageLimits{
 		"b1": {APIRequestLimit: 1000},
 	})
 	tracker.SetBaseline("b1", UsageStat{APIRequests: 850})
@@ -34,7 +42,7 @@ func TestNearLimit_AboveThreshold(t *testing.T) {
 }
 
 func TestNearLimit_NoLimitsConfigured(t *testing.T) {
-	tracker := NewUsageTracker([]string{"b1"}, map[string]UsageLimits{
+	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), map[string]UsageLimits{
 		"b1": {}, // all zero = unlimited
 	})
 	tracker.SetBaseline("b1", UsageStat{APIRequests: 999999})
@@ -45,7 +53,7 @@ func TestNearLimit_NoLimitsConfigured(t *testing.T) {
 }
 
 func TestNearLimit_ZeroLimitDimension(t *testing.T) {
-	tracker := NewUsageTracker([]string{"b1"}, map[string]UsageLimits{
+	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), map[string]UsageLimits{
 		"b1": {APIRequestLimit: 0, EgressByteLimit: 1000}, // API unlimited, egress limited
 	})
 	tracker.SetBaseline("b1", UsageStat{APIRequests: 999999, EgressBytes: 100})
@@ -56,7 +64,7 @@ func TestNearLimit_ZeroLimitDimension(t *testing.T) {
 }
 
 func TestNearLimit_UnflushedCounters(t *testing.T) {
-	tracker := NewUsageTracker([]string{"b1"}, map[string]UsageLimits{
+	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), map[string]UsageLimits{
 		"b1": {EgressByteLimit: 1000},
 	})
 	tracker.SetBaseline("b1", UsageStat{EgressBytes: 700})
@@ -68,7 +76,7 @@ func TestNearLimit_UnflushedCounters(t *testing.T) {
 }
 
 func TestNearLimit_MultipleBackends(t *testing.T) {
-	tracker := NewUsageTracker([]string{"b1", "b2"}, map[string]UsageLimits{
+	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1", "b2"}), map[string]UsageLimits{
 		"b1": {APIRequestLimit: 1000},
 		"b2": {APIRequestLimit: 1000},
 	})

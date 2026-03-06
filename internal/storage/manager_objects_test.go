@@ -148,12 +148,11 @@ func TestPutObject_BackendFailure_StillRecordsUsage(t *testing.T) {
 	}
 
 	// Even on failure, 1 API call should be recorded (the attempt was made)
-	c := mgr.usage.counters["b1"]
-	if got := c.apiRequests.Load(); got != 1 {
+	if got := mgr.usage.backend.Load("b1", FieldAPIRequests); got != 1 {
 		t.Errorf("apiRequests = %d, want 1 (failed call still counts)", got)
 	}
 	// No ingress should be recorded since the upload failed
-	if got := c.ingressBytes.Load(); got != 0 {
+	if got := mgr.usage.backend.Load("b1", FieldIngressBytes); got != 0 {
 		t.Errorf("ingressBytes = %d, want 0 (upload failed)", got)
 	}
 }
@@ -176,8 +175,7 @@ func TestPutObject_RecordFailure_CleansUp(t *testing.T) {
 	}
 
 	// Usage: 1 API call for the orphan cleanup delete (put usage only recorded on success path)
-	c := mgr.usage.counters["b1"]
-	if got := c.apiRequests.Load(); got != 1 {
+	if got := mgr.usage.backend.Load("b1", FieldAPIRequests); got != 1 {
 		t.Errorf("apiRequests = %d, want 1 (orphan delete)", got)
 	}
 }

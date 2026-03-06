@@ -188,6 +188,16 @@ job "s3-orchestrator" {
           # "pack" fills backends sequentially until quota is reached.
           routing_strategy: "spread"
 
+          # --- Redis shared counters (multi-instance) ---
+          # When running multiple instances, Redis provides shared usage
+          # counters so all instances see the same deltas between PG flushes.
+          # redis:
+          #   address: "redis.service.consul:6379"
+          #   password: "{{ .Data.data.redis_password }}"
+          #   key_prefix: "s3orch"
+          #   failure_threshold: 3
+          #   open_timeout: "15s"
+
           # --- Replication ---
           # With 3 backends and factor 2, every object is written to one backend
           # then asynchronously replicated to a second. The replicator selects a
