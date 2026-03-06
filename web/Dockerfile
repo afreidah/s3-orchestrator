@@ -15,6 +15,7 @@ FROM hugomods/hugo:latest AS build
 WORKDIR /src/web
 COPY web/ /src/web/
 COPY docs/ /src/docs/
+COPY README.md /src/README.md
 COPY --from=godoc /godoc/ /src/web/content/godoc/
 # Restore our custom _index.md (godoc stage doesn't generate one anymore)
 COPY web/content/godoc/_index.md /src/web/content/godoc/_index.md
