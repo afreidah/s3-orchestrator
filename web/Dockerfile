@@ -1,4 +1,4 @@
-FROM golang:1.26 AS godoc
+FROM golang:1.26.1 AS godoc
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
