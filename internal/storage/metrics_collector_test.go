@@ -24,7 +24,7 @@ import (
 
 func TestRecordOperation_Success(t *testing.T) {
 	store := &mockStore{}
-	usage := NewUsageTracker(nil, nil)
+	usage := NewUsageTracker(NewLocalCounterBackend(nil), nil)
 	mc := NewMetricsCollector(store, usage, []string{"b1"}, func() int { return 0 })
 
 	// Should not panic
@@ -33,7 +33,7 @@ func TestRecordOperation_Success(t *testing.T) {
 
 func TestRecordOperation_Error(t *testing.T) {
 	store := &mockStore{}
-	usage := NewUsageTracker(nil, nil)
+	usage := NewUsageTracker(NewLocalCounterBackend(nil), nil)
 	mc := NewMetricsCollector(store, usage, []string{"b1"}, func() int { return 0 })
 
 	// Should not panic with error status
@@ -60,7 +60,7 @@ func TestUpdateQuotaMetrics_Success(t *testing.T) {
 			"b1": {APIRequests: 100, EgressBytes: 5000, IngressBytes: 2000},
 		},
 	}
-	usage := NewUsageTracker([]string{"b1", "b2"}, nil)
+	usage := NewUsageTracker(NewLocalCounterBackend([]string{"b1", "b2"}), nil)
 	mc := NewMetricsCollector(store, usage, []string{"b1", "b2"}, func() int { return 0 })
 
 	err := mc.UpdateQuotaMetrics(context.Background())
@@ -73,7 +73,7 @@ func TestUpdateQuotaMetrics_QuotaStatsError(t *testing.T) {
 	store := &mockStore{
 		getQuotaStatsErr: errors.New("db down"),
 	}
-	usage := NewUsageTracker(nil, nil)
+	usage := NewUsageTracker(NewLocalCounterBackend(nil), nil)
 	mc := NewMetricsCollector(store, usage, []string{"b1"}, func() int { return 0 })
 
 	err := mc.UpdateQuotaMetrics(context.Background())
@@ -88,7 +88,7 @@ func TestUpdateQuotaMetrics_ObjectCountsError(t *testing.T) {
 		getObjectCountsErr: errors.New("db error"),
 		getUsageForPeriodResp: map[string]UsageStat{},
 	}
-	usage := NewUsageTracker([]string{"b1"}, nil)
+	usage := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), nil)
 	mc := NewMetricsCollector(store, usage, []string{"b1"}, func() int { return 0 })
 
 	// Should not return error — object counts error is logged only
@@ -105,7 +105,7 @@ func TestUpdateQuotaMetrics_MultipartCountsError(t *testing.T) {
 		getActiveMultipartErr: errors.New("db error"),
 		getUsageForPeriodResp: map[string]UsageStat{},
 	}
-	usage := NewUsageTracker([]string{"b1"}, nil)
+	usage := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), nil)
 	mc := NewMetricsCollector(store, usage, []string{"b1"}, func() int { return 0 })
 
 	err := mc.UpdateQuotaMetrics(context.Background())
@@ -121,7 +121,7 @@ func TestUpdateQuotaMetrics_UsageForPeriodError(t *testing.T) {
 		getActiveMultipartResp: map[string]int64{},
 		getUsageForPeriodErr: errors.New("db error"),
 	}
-	usage := NewUsageTracker([]string{"b1"}, nil)
+	usage := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), nil)
 	mc := NewMetricsCollector(store, usage, []string{"b1"}, func() int { return 0 })
 
 	err := mc.UpdateQuotaMetrics(context.Background())
@@ -144,7 +144,7 @@ func TestUpdateQuotaMetrics_ReplicationPending(t *testing.T) {
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
 		},
 	}
-	usage := NewUsageTracker([]string{"b1"}, nil)
+	usage := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), nil)
 	mc := NewMetricsCollector(store, usage, []string{"b1"}, func() int { return 2 })
 
 	err := mc.UpdateQuotaMetrics(context.Background())
@@ -160,7 +160,7 @@ func TestUpdateQuotaMetrics_ReplicationPendingSkippedWhenDisabled(t *testing.T) 
 		getActiveMultipartResp: map[string]int64{},
 		getUsageForPeriodResp:  map[string]UsageStat{},
 	}
-	usage := NewUsageTracker([]string{"b1"}, nil)
+	usage := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), nil)
 	mc := NewMetricsCollector(store, usage, []string{"b1"}, func() int { return 0 })
 
 	err := mc.UpdateQuotaMetrics(context.Background())
@@ -177,7 +177,7 @@ func TestUpdateQuotaMetrics_ReplicationPendingQueryError(t *testing.T) {
 		getUsageForPeriodResp:  map[string]UsageStat{},
 		getUnderReplicatedErr:  errors.New("db error"),
 	}
-	usage := NewUsageTracker([]string{"b1"}, nil)
+	usage := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), nil)
 	mc := NewMetricsCollector(store, usage, []string{"b1"}, func() int { return 2 })
 
 	// Should not return error — under-replicated query error is non-fatal

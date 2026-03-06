@@ -5,6 +5,7 @@ This guide walks through deploying, configuring, and operating the S3 Orchestrat
 - **PostgreSQL** — any recent version. The orchestrator auto-applies its schema on startup.
 - **At least one S3-compatible storage backend** — OCI Object Storage, Backblaze B2, AWS S3, MinIO, Wasabi, etc. You need a bucket and access credentials on that backend.
 - **The orchestrator binary** — a Docker image (via `make push VERSION=vX.Y.Z`), a `.deb` package (via `make deb VERSION=X.Y.Z`), or built from source (`make run`).
+- **Redis** (optional) — for shared usage counters in multi-instance deployments. See [usage_flush](#usage_flush) for details.
 
 ## Quickstart
 
@@ -81,7 +82,7 @@ aws --endpoint-url http://localhost:9000 \
 
 ## Configuration Walkthrough
 
-This section covers each config section in detail. See `config.example.yaml` for a complete template.
+This section covers each config section in detail. See `packaging/config.yaml` for a complete template.
 
 All config values support `${ENV_VAR}` expansion — the orchestrator calls `os.Expand` on the entire YAML file before parsing. Use this for secrets:
 
@@ -399,7 +400,7 @@ Set `session_secret` to use a separate key for session derivation — useful whe
 
 ### usage_flush
 
-Controls how often in-memory usage counters are flushed to the database. When adaptive flushing is enabled, the interval shortens automatically when any backend approaches a usage limit, improving enforcement accuracy.
+Controls how often usage counters are flushed to the database. When adaptive flushing is enabled, the interval shortens automatically when any backend approaches a usage limit, improving enforcement accuracy.
 
 ```yaml
 usage_flush:
@@ -414,7 +415,30 @@ usage_flush:
 - `adaptive_threshold` — the ratio (0–1 exclusive) at which fast flushing kicks in. At `0.8`, a backend at 80% of any usage limit triggers the fast interval.
 - `fast_interval` — must be less than `interval`. Used when adaptive flushing detects a backend near its limits.
 
-> **Multi-instance note:** Each instance accumulates usage counters in memory between flushes. With N instances, the enforcement margin near limits is up to `N * interval` worth of unaccounted operations. Adaptive flushing reduces this near limits but doesn't eliminate it. For tighter enforcement, reduce `interval` or run fewer API instances.
+> **Multi-instance note:** Without Redis, each instance accumulates usage counters in memory between flushes. With N instances, the enforcement margin near limits is up to `N * interval` worth of unaccounted operations. Adaptive flushing reduces this near limits but doesn't eliminate it. For tighter enforcement, configure [Redis shared counters](#redis) to eliminate the cross-instance blind spot entirely, or reduce `interval` and run fewer API instances.
+
+### redis
+
+Optional shared usage counters for multi-instance deployments. When configured, all instances share usage counters via Redis instead of tracking them independently in memory. This eliminates the cross-instance blind spot between PostgreSQL flushes.
+
+```yaml
+redis:
+  address: "redis.example.com:6379"  # host:port (required when section is present)
+  password: "${REDIS_PASSWORD}"       # AUTH password (omit for no auth)
+  db: 0                               # Redis database number (default: 0)
+  tls: false                          # enable TLS (default: false)
+  key_prefix: "s3orch"                # namespace for multi-tenant Redis (default: s3orch)
+  failure_threshold: 3                # consecutive failures before local fallback (default: 3)
+  open_timeout: "15s"                 # delay before probing Redis recovery (default: 15s)
+```
+
+- `address` — required when the `redis` section is present. The orchestrator PINGs Redis on startup and fails hard if unreachable.
+- `key_prefix` — namespaces all Redis keys. Use different prefixes if multiple orchestrator deployments share one Redis instance.
+- `failure_threshold` and `open_timeout` — control the circuit breaker that falls back to local counters when Redis is unavailable.
+
+When Redis is active, the usage flush service acquires a PostgreSQL advisory lock so only one instance performs the destructive `GETSET` + flush-to-PG operation. When Redis is in fallback (or not configured), each instance flushes independently without a lock.
+
+Redis is not reloadable — changing Redis settings requires a restart.
 
 ### lifecycle
 
@@ -650,7 +674,7 @@ s3-orchestrator admin object-locations -key "my-bucket/path/to/file.txt"
 # Show cleanup queue depth and pending items
 s3-orchestrator admin cleanup-queue
 
-# Force flush in-memory usage counters to the database
+# Force flush usage counters to the database
 s3-orchestrator admin usage-flush
 
 # Trigger one replication cycle (creates missing replicas)
@@ -813,6 +837,8 @@ If `telemetry.metrics.enabled` is `true`, metrics are exposed at `/metrics`. Key
 | `s3proxy_encryption_errors_total` | Any non-zero rate indicates encryption/decryption failures |
 | `s3proxy_encrypt_existing_objects_total{status="error"}` | Failures during bulk encryption of existing data |
 | `s3proxy_key_rotation_objects_total{status="error"}` | Failures during key rotation |
+| `s3proxy_redis_fallback_active` | Alert when 1 — Redis is unavailable, using local counters |
+| `s3proxy_redis_operations_total{operation,status}` | Track Redis operation success/error rates |
 
 ### Structured logs
 
@@ -865,7 +891,7 @@ Many settings can be updated without restarting the orchestrator by sending `SIG
 
 **What requires a restart:**
 
-- `server.listen_addr`, server timeouts, `server.shutdown_delay`, `database`, `telemetry`, `ui`, `routing_strategy`, `encryption`
+- `server.listen_addr`, server timeouts, `server.shutdown_delay`, `database`, `telemetry`, `ui`, `routing_strategy`, `encryption`, `redis`
 - Backend structural changes (endpoint, S3 credentials, adding/removing backends)
 
 If any of these fields change, the reload still proceeds for the reloadable settings, and warnings are logged:
@@ -1097,7 +1123,7 @@ s3-orchestrator -config config.yaml -mode worker
 
 **How it works:**
 
-- **API instances** serve S3 requests, the web UI, and rate limiting. They run the usage-flush service to avoid losing in-memory counters on restart, but skip all advisory-locked background tasks.
+- **API instances** serve S3 requests, the web UI, and rate limiting. They run the usage-flush service to avoid losing counters on restart, but skip all advisory-locked background tasks.
 - **Worker instances** run all 6 background services and expose `/health`, `/health/ready`, and `/metrics` for monitoring, but don't serve S3 traffic or the web UI.
 - Background tasks that modify state (rebalancer, replicator, cleanup, lifecycle, multipart cleanup) use **PostgreSQL advisory locks** — only one instance cluster-wide executes each task per cycle. Running multiple worker instances is safe; extra instances simply skip cycles when the lock is held.
 

@@ -2,10 +2,11 @@ This guide covers failure scenarios and recovery procedures for the S3 Orchestra
 
 ## Architecture Context
 
-The orchestrator has two stateful components:
+The orchestrator has two required stateful components and one optional:
 
 - **PostgreSQL** stores object locations, quota counters, usage stats, multipart state, and the cleanup queue. This is the source of truth for "which object lives on which backend."
 - **Storage backends** (OCI, R2, S3, MinIO, etc.) hold the actual object data. These are independent and unaware of each other.
+- **Redis** (optional) provides shared usage counters across instances. Not a data dependency — all authoritative data lives in PostgreSQL. See [Redis Failure](#redis-failure) below.
 
 The orchestrator binary itself is stateless. Any instance with access to the database and backends can serve requests.
 
@@ -126,6 +127,39 @@ When running multiple orchestrator instances:
 - **Advisory locks** in PostgreSQL ensure only one instance runs each background worker (rebalancer, replicator, cleanup queue, lifecycle). If an instance crashes, the lock is released and another instance picks up the work.
 - **No split-brain risk** for writes because PostgreSQL transactions serialize object location records. Two instances writing the same key will both succeed, but only one location record wins (the database is the arbiter).
 - **Startup catch-up**: the replication worker runs an immediate reconciliation pass on startup before entering its periodic loop. This handles any objects that fell behind while instances were down.
+
+## Redis Failure
+
+When Redis is configured for shared usage counters:
+
+### What happens
+
+The circuit breaker opens after consecutive failures (default: 3). Each instance falls back to local in-memory counters — identical behavior to running without Redis. Usage enforcement continues but with the per-instance blind spot restored. The `s3proxy_redis_fallback_active` gauge transitions to `1`.
+
+A background health probe PINGs Redis every 5 seconds while the circuit is open. This requires no manual intervention.
+
+### Recovery sequence
+
+When the health probe detects Redis is reachable again:
+
+1. Stale Redis keys for the current period are deleted (PG already absorbed those values via flushes during the outage)
+2. Each instance INCRBYs its unflushed local deltas to Redis (additive — safe even if instances recover at different times)
+3. Local counters are zeroed
+4. Circuit breaker closes, shared operation resumes
+
+### Monitoring
+
+- `s3proxy_redis_fallback_active` — `1` when using local counters, `0` when Redis is healthy
+- `s3proxy_redis_operations_total{operation,status}` — track Redis operation success/error rates
+- `s3proxy_circuit_breaker_state{name="redis"}` — circuit breaker state (closed/open)
+
+### Impact
+
+Redis is a performance optimization, not a data dependency. All authoritative usage data lives in PostgreSQL. A Redis outage causes:
+
+- **Temporary accuracy reduction** — same as running without Redis (per-instance counters with flush-gap)
+- **No data loss** — PG flush continues via local counters, one instance per tick
+- **Automatic recovery** — no operator action required
 
 ## Recovery Checklist
 

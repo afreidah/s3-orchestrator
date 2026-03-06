@@ -36,6 +36,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/ui"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/redis/go-redis/v9"
 )
 
 func main() { // codecov:ignore -- process entry point, delegates to tested functions
@@ -205,6 +206,29 @@ func runServe() {
 		)
 	}
 
+	// --- Initialize shared counter backend (Redis or local) ---
+	var counterBackend storage.CounterBackend
+	var redisBackend *storage.RedisCounterBackend
+	if cfg.Redis != nil {
+		redisOpts := &redis.Options{
+			Addr:     cfg.Redis.Address,
+			Password: cfg.Redis.Password,
+			DB:       cfg.Redis.DB,
+		}
+		if cfg.Redis.TLS {
+			redisOpts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+		}
+		redisClient := redis.NewClient(redisOpts)
+		var err error
+		redisBackend, err = storage.NewRedisCounterBackend(redisClient, cfg.Redis, backendOrder)
+		if err != nil {
+			slog.Error("Failed to connect to Redis", "error", err)
+			os.Exit(1)
+		}
+		counterBackend = redisBackend
+		slog.Info("Redis shared counters enabled", "address", cfg.Redis.Address)
+	}
+
 	// --- Create backend manager ---
 	manager := storage.NewBackendManager(&storage.BackendManagerConfig{
 		Backends:          backends,
@@ -216,6 +240,7 @@ func runServe() {
 		RoutingStrategy:   cfg.RoutingStrategy,
 		ParallelBroadcast: cfg.CircuitBreaker.ParallelBroadcast,
 		Encryptor:         encryptor,
+		CounterBackend:    counterBackend,
 	})
 
 	// --- Store initial reloadable configs ---
@@ -231,7 +256,7 @@ func runServe() {
 
 	// --- Start background services with lifecycle manager ---
 	sm := lifecycle.NewManager()
-	sm.Register("usage-flush", &usageFlushService{manager: manager}) // all modes — data safety
+	sm.Register("usage-flush", &usageFlushService{manager: manager, store: store}) // all modes — data safety
 
 	if *mode == "worker" || *mode == "all" {
 		sm.Register("multipart-cleanup", newMultipartCleanupService(manager, cbStore))
@@ -540,6 +565,13 @@ func runServe() {
 		defer flushCancel()
 		if err := manager.FlushUsage(flushCtx); err != nil {
 			slog.Warn("Failed to flush usage counters on shutdown", "error", err)
+		}
+
+		// Close Redis client (after flush so counters are flushed to PG first)
+		if redisBackend != nil {
+			if err := redisBackend.Close(); err != nil {
+				slog.Warn("Failed to close Redis client", "error", err)
+			}
 		}
 
 		// Close database connection

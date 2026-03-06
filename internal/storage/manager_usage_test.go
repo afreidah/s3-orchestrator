@@ -57,15 +57,15 @@ func TestRecordUsage_IncrementsCounters(t *testing.T) {
 
 	mgr.usage.Record("b1", 3, 1024, 2048)
 
-	c := mgr.usage.counters["b1"]
-	if got := c.apiRequests.Load(); got != 3 {
-		t.Errorf("apiRequests = %d, want 3", got)
+	c := mgr.usage.backend.LoadAll("b1")
+	if c.APIRequests != 3 {
+		t.Errorf("apiRequests = %d, want 3", c.APIRequests)
 	}
-	if got := c.egressBytes.Load(); got != 1024 {
-		t.Errorf("egressBytes = %d, want 1024", got)
+	if c.EgressBytes != 1024 {
+		t.Errorf("egressBytes = %d, want 1024", c.EgressBytes)
 	}
-	if got := c.ingressBytes.Load(); got != 2048 {
-		t.Errorf("ingressBytes = %d, want 2048", got)
+	if c.IngressBytes != 2048 {
+		t.Errorf("ingressBytes = %d, want 2048", c.IngressBytes)
 	}
 }
 
@@ -75,15 +75,15 @@ func TestRecordUsage_Accumulates(t *testing.T) {
 	mgr.usage.Record("b1", 1, 100, 200)
 	mgr.usage.Record("b1", 2, 300, 400)
 
-	c := mgr.usage.counters["b1"]
-	if got := c.apiRequests.Load(); got != 3 {
-		t.Errorf("apiRequests = %d, want 3", got)
+	c := mgr.usage.backend.LoadAll("b1")
+	if c.APIRequests != 3 {
+		t.Errorf("apiRequests = %d, want 3", c.APIRequests)
 	}
-	if got := c.egressBytes.Load(); got != 400 {
-		t.Errorf("egressBytes = %d, want 400", got)
+	if c.EgressBytes != 400 {
+		t.Errorf("egressBytes = %d, want 400", c.EgressBytes)
 	}
-	if got := c.ingressBytes.Load(); got != 600 {
-		t.Errorf("ingressBytes = %d, want 600", got)
+	if c.IngressBytes != 600 {
+		t.Errorf("ingressBytes = %d, want 600", c.IngressBytes)
 	}
 }
 
@@ -93,8 +93,7 @@ func TestRecordUsage_UnknownBackendNoOp(t *testing.T) {
 	// Should not panic for unknown backend
 	mgr.usage.Record("unknown", 1, 1, 1)
 
-	c := mgr.usage.counters["b1"]
-	if got := c.apiRequests.Load(); got != 0 {
+	if got := mgr.usage.backend.Load("b1", FieldAPIRequests); got != 0 {
 		t.Errorf("apiRequests = %d, want 0", got)
 	}
 }
@@ -104,8 +103,7 @@ func TestRecordUsage_ZeroValuesSkipped(t *testing.T) {
 
 	mgr.usage.Record("b1", 0, 0, 0)
 
-	c := mgr.usage.counters["b1"]
-	if got := c.apiRequests.Load(); got != 0 {
+	if got := mgr.usage.backend.Load("b1", FieldAPIRequests); got != 0 {
 		t.Errorf("apiRequests = %d, want 0", got)
 	}
 }
@@ -116,10 +114,10 @@ func TestRecordUsage_MultipleBackends(t *testing.T) {
 	mgr.usage.Record("b1", 1, 100, 0)
 	mgr.usage.Record("b2", 2, 0, 200)
 
-	if got := mgr.usage.counters["b1"].apiRequests.Load(); got != 1 {
+	if got := mgr.usage.backend.Load("b1", FieldAPIRequests); got != 1 {
 		t.Errorf("b1 apiRequests = %d, want 1", got)
 	}
-	if got := mgr.usage.counters["b2"].ingressBytes.Load(); got != 200 {
+	if got := mgr.usage.backend.Load("b2", FieldIngressBytes); got != 200 {
 		t.Errorf("b2 ingressBytes = %d, want 200", got)
 	}
 }
@@ -131,15 +129,15 @@ func TestRecordUsage_PublicMethod(t *testing.T) {
 
 	mgr.RecordUsage("b1", 5, 1024, 2048)
 
-	c := mgr.usage.counters["b1"]
-	if got := c.apiRequests.Load(); got != 5 {
-		t.Errorf("apiRequests = %d, want 5", got)
+	c := mgr.usage.backend.LoadAll("b1")
+	if c.APIRequests != 5 {
+		t.Errorf("apiRequests = %d, want 5", c.APIRequests)
 	}
-	if got := c.egressBytes.Load(); got != 1024 {
-		t.Errorf("egressBytes = %d, want 1024", got)
+	if c.EgressBytes != 1024 {
+		t.Errorf("egressBytes = %d, want 1024", c.EgressBytes)
 	}
-	if got := c.ingressBytes.Load(); got != 2048 {
-		t.Errorf("ingressBytes = %d, want 2048", got)
+	if c.IngressBytes != 2048 {
+		t.Errorf("ingressBytes = %d, want 2048", c.IngressBytes)
 	}
 }
 
@@ -156,15 +154,15 @@ func TestFlushUsage_WritesToStore(t *testing.T) {
 	}
 
 	// Counters should be reset
-	c := mgr.usage.counters["b1"]
-	if got := c.apiRequests.Load(); got != 0 {
-		t.Errorf("apiRequests after flush = %d, want 0", got)
+	c := mgr.usage.backend.LoadAll("b1")
+	if c.APIRequests != 0 {
+		t.Errorf("apiRequests after flush = %d, want 0", c.APIRequests)
 	}
-	if got := c.egressBytes.Load(); got != 0 {
-		t.Errorf("egressBytes after flush = %d, want 0", got)
+	if c.EgressBytes != 0 {
+		t.Errorf("egressBytes after flush = %d, want 0", c.EgressBytes)
 	}
-	if got := c.ingressBytes.Load(); got != 0 {
-		t.Errorf("ingressBytes after flush = %d, want 0", got)
+	if c.IngressBytes != 0 {
+		t.Errorf("ingressBytes after flush = %d, want 0", c.IngressBytes)
 	}
 
 	// Mock should have received the call
@@ -214,15 +212,15 @@ func TestFlushUsage_RestoresCountersOnError(t *testing.T) {
 	}
 
 	// Counters should be restored
-	c := mgr.usage.counters["b1"]
-	if got := c.apiRequests.Load(); got != 10 {
-		t.Errorf("apiRequests after failed flush = %d, want 10 (restored)", got)
+	c := mgr.usage.backend.LoadAll("b1")
+	if c.APIRequests != 10 {
+		t.Errorf("apiRequests after failed flush = %d, want 10 (restored)", c.APIRequests)
 	}
-	if got := c.egressBytes.Load(); got != 500 {
-		t.Errorf("egressBytes after failed flush = %d, want 500 (restored)", got)
+	if c.EgressBytes != 500 {
+		t.Errorf("egressBytes after failed flush = %d, want 500 (restored)", c.EgressBytes)
 	}
-	if got := c.ingressBytes.Load(); got != 300 {
-		t.Errorf("ingressBytes after failed flush = %d, want 300 (restored)", got)
+	if c.IngressBytes != 300 {
+		t.Errorf("ingressBytes after failed flush = %d, want 300 (restored)", c.IngressBytes)
 	}
 }
 
@@ -271,8 +269,7 @@ func TestFlushUsage_SkipsDrainedBackend(t *testing.T) {
 	}
 
 	// b2 counters should have been discarded (reset to 0), not restored
-	c := mgr.usage.counters["b2"]
-	if got := c.apiRequests.Load(); got != 0 {
+	if got := mgr.usage.backend.Load("b2", FieldAPIRequests); got != 0 {
 		t.Errorf("b2 apiRequests = %d, want 0 (discarded)", got)
 	}
 }
@@ -307,9 +304,9 @@ func TestWithinUsageLimits_EgressExceeded(t *testing.T) {
 	}
 	mgr := newUsageManagerWithLimits([]string{"b1"}, &mockStore{}, limits)
 
-	// Baseline: 500, unflushed: add 400, proposed: 200 → 1100 > 1000
+	// Baseline: 500, unflushed: add 400, proposed: 200 -- 1100 > 1000
 	mgr.usage.SetBaseline("b1", UsageStat{EgressBytes: 500})
-	mgr.usage.counters["b1"].egressBytes.Store(400)
+	mgr.usage.backend.Add("b1", FieldEgressBytes, 400)
 
 	if mgr.usage.WithinLimits("b1", 0, 200, 0) {
 		t.Error("should exceed egress byte limit")

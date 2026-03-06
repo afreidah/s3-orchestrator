@@ -1180,6 +1180,7 @@ const (
 	LockMultipartCleanup int64 = 1004
 	LockLifecycle        int64 = 1005
 	LockDrain            int64 = 1006
+	LockUsageFlush       int64 = 1007
 )
 
 // WithAdvisoryLock acquires a PostgreSQL session-level advisory lock on a

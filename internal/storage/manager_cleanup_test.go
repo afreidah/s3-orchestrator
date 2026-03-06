@@ -118,8 +118,7 @@ func TestProcessCleanupQueue_DeleteSuccess(t *testing.T) {
 	}
 
 	// Verify usage tracking: 1 API call for the delete
-	c := mgr.usage.counters["b1"]
-	if got := c.apiRequests.Load(); got != 1 {
+	if got := mgr.usage.backend.Load("b1", FieldAPIRequests); got != 1 {
 		t.Errorf("apiRequests = %d, want 1 (cleanup delete)", got)
 	}
 }

@@ -277,7 +277,7 @@ Returns the cleanup queue depth and pending items (up to 50).
 
 ### POST /admin/api/usage-flush
 
-Forces an immediate flush of in-memory usage counters to the database.
+Forces an immediate flush of usage counters to the database. Flushes from Redis when active, otherwise from local in-memory counters.
 
 **Request:** No body required.
 

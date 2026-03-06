@@ -98,6 +98,16 @@ data:
         force_path_style: true
         quota_bytes: 10737418240       # 10 GB
 
+    # --- Redis shared counters (multi-instance) ---
+    # When running multiple replicas, Redis provides shared usage counters
+    # so all instances see the same deltas between PG flushes.
+    # redis:
+    #   address: "redis.s3-orchestrator.svc.cluster.local:6379"
+    #   password: "${REDIS_PASSWORD}"
+    #   key_prefix: "s3orch"
+    #   failure_threshold: 3
+    #   open_timeout: "15s"
+
     # --- Write routing ---
     # "spread" distributes writes by lowest utilization ratio across backends.
     # "pack" fills backends sequentially until quota is reached.

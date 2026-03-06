@@ -84,6 +84,19 @@ backends:
 #   # previous_keys:
 #   #   - "${OLD_ENCRYPTION_KEY}"
 
+# --- Redis shared counters (disabled by default) ---
+# When multiple instances share a PostgreSQL database, Redis provides shared
+# usage counters so all instances see the same accumulated deltas between
+# PG flushes. Without Redis each instance tracks its own counters independently.
+# redis:
+#   address: ${REDIS_ADDRESS}       # host:port (required when section is present)
+#   password: ${REDIS_PASSWORD}     # AUTH password (omit for no auth)
+#   db: 0
+#   tls: false
+#   key_prefix: "s3orch"            # Namespace for Redis keys
+#   failure_threshold: 3            # Consecutive failures before fallback to local counters
+#   open_timeout: 15s               # Delay before probing Redis recovery
+
 # --- Background rebalancer (disabled by default) ---
 # rebalance:
 #   enabled: false

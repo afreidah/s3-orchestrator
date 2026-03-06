@@ -66,6 +66,7 @@ type BackendManagerConfig struct {
 	RoutingStrategy   string
 	ParallelBroadcast bool                  // fan-out reads in parallel during degraded mode
 	Encryptor         *encryption.Encryptor // nil when encryption is disabled
+	CounterBackend    CounterBackend        // nil uses LocalCounterBackend
 }
 
 // BackendManager manages multiple storage backends with quota tracking.
@@ -95,7 +96,11 @@ func NewBackendManager(cfg *BackendManagerConfig) *BackendManager {
 		backendNames = append(backendNames, name)
 	}
 
-	usage := NewUsageTracker(backendNames, cfg.UsageLimits)
+	counters := cfg.CounterBackend
+	if counters == nil {
+		counters = NewLocalCounterBackend(backendNames)
+	}
+	usage := NewUsageTracker(counters, cfg.UsageLimits)
 
 	m := &BackendManager{
 		backends:          cfg.Backends,
@@ -172,6 +177,15 @@ func (m *BackendManager) FlushUsage(ctx context.Context) error {
 		return true
 	})
 	return m.usage.FlushUsage(ctx, m.store, skip)
+}
+
+// RedisCounterActive returns true when the counter backend is a Redis
+// backend that is currently healthy (not in fallback). Used by the flush
+// service to decide whether to acquire an advisory lock (only one instance
+// should flush Redis->PG via GETSET).
+func (m *BackendManager) RedisCounterActive() bool {
+	rb, ok := m.usage.backend.(*RedisCounterBackend)
+	return ok && rb.IsHealthy()
 }
 
 // -------------------------------------------------------------------------
