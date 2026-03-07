@@ -777,6 +777,7 @@ When `ui.enabled` is `true`, the dashboard at `{path}/` shows a live snapshot of
 The dashboard also provides management actions:
 
 - **Upload** — upload files to any virtual bucket directly from the browser (up to 512 MiB per file)
+- **Download** — download individual objects by clicking the download icon on any file in the tree
 - **Delete** — delete individual objects by clicking the delete icon on any file in the tree
 - **Rebalance** — trigger an on-demand rebalance using the configured strategy and settings
 - **Sync** — import pre-existing objects from a backend's S3 bucket into the proxy database. Select a backend and a virtual bucket — objects already in the database are skipped, and objects belonging to other virtual buckets are excluded.
@@ -785,7 +786,7 @@ The dashboard requires authentication. Users log in at `{path}/login` with the `
 
 The dashboard is server-rendered HTML. The object tree uses JavaScript for lazy-loaded directory expansion — directories fetch their children on click via the `/ui/api/tree` endpoint.
 
-JSON endpoints at `{path}/api/dashboard`, `{path}/api/tree`, and `{path}/api/logs` return data for programmatic access or integration with other tools. The logs endpoint accepts optional query parameters: `level` (minimum severity: DEBUG, INFO, WARN, ERROR), `since` (RFC3339 timestamp), `component`, and `limit`. Management endpoints (`{path}/api/delete`, `{path}/api/upload`, `{path}/api/rebalance`, `{path}/api/sync`) accept POST requests. All API endpoints require authentication.
+JSON endpoints at `{path}/api/dashboard`, `{path}/api/tree`, and `{path}/api/logs` return data for programmatic access or integration with other tools. The logs endpoint accepts optional query parameters: `level` (minimum severity: DEBUG, INFO, WARN, ERROR), `since` (RFC3339 timestamp), `component`, and `limit`. Management endpoints (`{path}/api/delete`, `{path}/api/upload`, `{path}/api/rebalance`, `{path}/api/sync`) accept POST requests. The download endpoint (`{path}/api/download?key=...`) accepts GET requests. All API endpoints require authentication.
 
 ### Health endpoints
 

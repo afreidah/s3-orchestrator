@@ -20,7 +20,9 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"html/template"
 	"log/slog"
 	"mime"
@@ -123,6 +125,7 @@ func (h *Handler) Register(mux *http.ServeMux, prefix string) {
 	mux.HandleFunc(prefix+"/api/delete", h.requireAuth(h.handleAPIDelete))
 	mux.HandleFunc(prefix+"/api/delete-prefix", h.requireAuth(h.handleAPIDeletePrefix))
 	mux.HandleFunc(prefix+"/api/upload", h.requireAuth(h.handleAPIUpload))
+	mux.HandleFunc(prefix+"/api/download", h.requireAuth(h.handleAPIDownload))
 	mux.HandleFunc(prefix+"/api/rebalance", h.requireAuth(h.handleAPIRebalance))
 	mux.HandleFunc(prefix+"/api/sync", h.requireAuth(h.handleAPISync))
 	mux.HandleFunc(prefix+"/api/logs", h.requireAuth(h.handleAPILogs))
@@ -638,6 +641,55 @@ func (h *Handler) handleAPIUpload(w http.ResponseWriter, r *http.Request) {
 	slog.Info("UI: uploaded object", "key", key, "size", header.Size)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "etag": etag})
+}
+
+// handleAPIDownload streams an object to the browser as a file download.
+func (h *Handler) handleAPIDownload(w http.ResponseWriter, r *http.Request) {
+	setSecurityHeaders(w)
+
+	if r.Method != http.MethodGet {
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	key := r.URL.Query().Get("key")
+	if key == "" {
+		http.Error(w, `{"error":"key is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	cfg := h.cfg.Load()
+	validBucket := false
+	for _, b := range cfg.Buckets {
+		if strings.HasPrefix(key, b.Name+"/") {
+			validBucket = true
+			break
+		}
+	}
+	if !validBucket {
+		http.Error(w, `{"error":"key must start with a configured bucket name"}`, http.StatusBadRequest)
+		return
+	}
+
+	result, err := h.manager.GetObject(r.Context(), key, "")
+	if err != nil {
+		if errors.Is(err, storage.ErrObjectNotFound) {
+			http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
+			return
+		}
+		slog.Error("UI: failed to download object", "key", key, "error", err)
+		http.Error(w, `{"error":"download failed"}`, http.StatusInternalServerError)
+		return
+	}
+	defer result.Body.Close()
+
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filepath.Base(key)))
+	w.Header().Set("Content-Type", result.ContentType)
+	if result.Size > 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(result.Size, 10))
+	}
+
+	_, _ = io.Copy(w, result.Body)
 }
 
 // handleAPIRebalance triggers an on-demand rebalance across backends.
