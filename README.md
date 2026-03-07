@@ -8,7 +8,7 @@
 [![codecov](https://codecov.io/gh/afreidah/s3-orchestrator/branch/main/graph/badge.svg)](https://codecov.io/gh/afreidah/s3-orchestrator)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**[Documentation](https://s3-orchestrator.munchbox.cc)**
+**[s3-orchestrator.munchbox.cc project website](https://s3-orchestrator.munchbox.cc)**
 
 An S3-compatible orchestrator that combines multiple storage backends into a single unified endpoint. Add as many S3-compatible backends as you want — OCI Object Storage, Backblaze B2, AWS S3, MinIO, whatever — and the orchestrator presents them to clients as one or more virtual buckets. Per-backend quota enforcement lets you cap each backend at exactly the byte limit you choose, so you can stack multiple free-tier or cost-limited allocations from different providers into a single, larger storage target for backups, media, etc without worrying about surprise bills.
 
