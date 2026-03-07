@@ -51,7 +51,7 @@ backends:
     access_key_id: ${BACKEND1_ACCESS_KEY}
     secret_access_key: ${BACKEND1_SECRET_KEY}
     # force_path_style: false
-    # unsigned_payload: true       # Stream uploads without buffering
+    # unsigned_payload: true       # Stream uploads without buffering (auto-enabled for HTTPS, set explicitly for HTTP)
     # quota_bytes: 0               # 0 = unlimited
     # api_request_limit: 0         # Monthly API request cap (0 = unlimited)
     # egress_byte_limit: 0         # Monthly egress cap (0 = unlimited)

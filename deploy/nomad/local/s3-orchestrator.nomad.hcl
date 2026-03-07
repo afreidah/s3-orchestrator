@@ -87,6 +87,7 @@ job "s3-orchestrator" {
               access_key_id: "minioadmin"
               secret_access_key: "minioadmin"
               force_path_style: true
+              unsigned_payload: true
               quota_bytes: 10737418240
 
             - name: "minio-2"
@@ -96,6 +97,7 @@ job "s3-orchestrator" {
               access_key_id: "minioadmin"
               secret_access_key: "minioadmin"
               force_path_style: true
+              unsigned_payload: true
               quota_bytes: 10737418240
 
           routing_strategy: "spread"
@@ -134,7 +136,7 @@ job "s3-orchestrator" {
 
       resources {
         cpu    = 1024
-        memory = 1024
+        memory = 2048
       }
     }
   }

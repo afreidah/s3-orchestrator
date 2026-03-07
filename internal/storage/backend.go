@@ -83,14 +83,16 @@ func NewS3Backend(cfg *config.BackendConfig) (*S3Backend, error) {
 		UsePathStyle: cfg.ForcePathStyle,
 	})
 
-	// Default to unsigned payload (streaming) unless explicitly disabled.
-	// UNSIGNED-PAYLOAD requires HTTPS — S3 servers reject the sentinel over
-	// plain HTTP because there is no TLS to protect body integrity.
+	// Default to unsigned payload (streaming) to avoid buffering entire
+	// objects in memory for SigV4 payload hashing. When the user has not
+	// set the option explicitly, auto-disable over plain HTTP since AWS S3
+	// rejects the UNSIGNED-PAYLOAD sentinel without TLS. An explicit
+	// unsigned_payload: true in config is always respected (MinIO and most
+	// S3-compatible backends accept it over HTTP).
 	unsignedPayload := true
 	if cfg.UnsignedPayload != nil {
 		unsignedPayload = *cfg.UnsignedPayload
-	}
-	if unsignedPayload && !strings.HasPrefix(cfg.Endpoint, "https") {
+	} else if !strings.HasPrefix(cfg.Endpoint, "https") {
 		unsignedPayload = false
 	}
 
