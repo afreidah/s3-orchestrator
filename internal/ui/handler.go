@@ -683,6 +683,8 @@ func (h *Handler) handleAPIDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer result.Body.Close()
 
+	slog.Info("UI: downloaded object", "key", key, "size", result.Size)
+
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filepath.Base(key)))
 	w.Header().Set("Content-Type", result.ContentType)
 	if result.Size > 0 {
