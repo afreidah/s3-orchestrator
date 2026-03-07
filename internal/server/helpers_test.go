@@ -11,6 +11,8 @@ package server
 
 import (
 	"net/http"
+	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -217,5 +219,83 @@ func TestValidateUserMetadata_ExactLimit(t *testing.T) {
 	meta := map[string]string{"k": strings.Repeat("x", maxUserMetadataBytes-1)}
 	if err := validateUserMetadata(meta); err != nil {
 		t.Errorf("unexpected error at exact limit: %v", err)
+	}
+}
+
+func TestValidateUserMetadata_RejectsCRLFInKey(t *testing.T) {
+	meta := map[string]string{"bad\r\nkey": "value"}
+	if err := validateUserMetadata(meta); err == nil {
+		t.Fatal("expected error for key containing CRLF")
+	}
+}
+
+func TestValidateUserMetadata_RejectsCRLFInValue(t *testing.T) {
+	meta := map[string]string{"key": "bad\nvalue"}
+	if err := validateUserMetadata(meta); err == nil {
+		t.Fatal("expected error for value containing newline")
+	}
+}
+
+func TestValidateUserMetadata_RejectsNullByte(t *testing.T) {
+	meta := map[string]string{"key": "val\x00ue"}
+	if err := validateUserMetadata(meta); err == nil {
+		t.Fatal("expected error for value containing null byte")
+	}
+}
+
+func TestValidMetadataToken(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{"valid-key", true},
+		{"hello world", true},
+		{"has\nnewline", false},
+		{"has\rreturn", false},
+		{"has\x00null", false},
+		{"has\ttab", false},
+		{"über", false}, // non-ASCII
+		{"", true},
+	}
+	for _, tc := range tests {
+		if got := validMetadataToken(tc.input); got != tc.want {
+			t.Errorf("validMetadataToken(%q) = %v, want %v", tc.input, got, tc.want)
+		}
+	}
+}
+
+// -------------------------------------------------------------------------
+// writeS3Error
+// -------------------------------------------------------------------------
+
+func TestWriteS3Error_SetsContentLength(t *testing.T) {
+	w := httptest.NewRecorder()
+	writeS3Error(w, http.StatusNotFound, "NoSuchKey", "The specified key does not exist.")
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusNotFound)
+	}
+
+	cl := resp.Header.Get("Content-Length")
+	if cl == "" {
+		t.Fatal("expected Content-Length header")
+	}
+	length, err := strconv.Atoi(cl)
+	if err != nil {
+		t.Fatalf("invalid Content-Length: %v", err)
+	}
+	if length != w.Body.Len() {
+		t.Errorf("Content-Length %d != body length %d", length, w.Body.Len())
+	}
+}
+
+func TestWriteS3Error_EscapesXML(t *testing.T) {
+	w := httptest.NewRecorder()
+	writeS3Error(w, http.StatusBadRequest, "Test", "<script>alert('xss')</script>")
+
+	body := w.Body.String()
+	if strings.Contains(body, "<script>") {
+		t.Error("XML special characters not escaped in error body")
 	}
 }

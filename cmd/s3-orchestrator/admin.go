@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 )
@@ -200,7 +201,8 @@ func doRequest(method, url, body, token string, stdout, stderr io.Writer) int {
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
 	if err != nil {
 		fmt.Fprintf(stderr, "error: %v\n", err)
 		return 1
