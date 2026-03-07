@@ -27,7 +27,7 @@ func TestCreateMultipartUpload_Success(t *testing.T) {
 	store := &mockStore{getBackendResp: "b1"}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	uploadID, backendName, err := mgr.CreateMultipartUpload(context.Background(), "multi/key", "application/zip", nil)
+	uploadID, backendName, err := mgr.MultipartManager.CreateMultipartUpload(context.Background(), "multi/key", "application/zip", nil)
 	if err != nil {
 		t.Fatalf("CreateMultipartUpload: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestCreateMultipartUpload_DBUnavailable(t *testing.T) {
 	store := &mockStore{getBackendErr: ErrDBUnavailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	_, _, err := mgr.CreateMultipartUpload(context.Background(), "key", "", nil)
+	_, _, err := mgr.MultipartManager.CreateMultipartUpload(context.Background(), "key", "", nil)
 	if !errors.Is(err, ErrServiceUnavailable) {
 		t.Fatalf("expected ErrServiceUnavailable, got %v", err)
 	}
@@ -53,7 +53,7 @@ func TestCreateMultipartUpload_NoSpace(t *testing.T) {
 	store := &mockStore{getBackendErr: ErrNoSpaceAvailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	_, _, err := mgr.CreateMultipartUpload(context.Background(), "key", "", nil)
+	_, _, err := mgr.MultipartManager.CreateMultipartUpload(context.Background(), "key", "", nil)
 	if !errors.Is(err, ErrInsufficientStorage) {
 		t.Fatalf("expected ErrInsufficientStorage, got %v", err)
 	}
@@ -75,7 +75,7 @@ func TestUploadPart_Success(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	etag, err := mgr.UploadPart(context.Background(), "upload-1", 1, bytes.NewReader([]byte("part-data")), 9)
+	etag, err := mgr.MultipartManager.UploadPart(context.Background(), "upload-1", 1, bytes.NewReader([]byte("part-data")), 9)
 	if err != nil {
 		t.Fatalf("UploadPart: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestUploadPart_InvalidPartNumber(t *testing.T) {
 	mgr := newTestManager(&mockStore{}, map[string]*mockBackend{"b1": newMockBackend()})
 
 	for _, pn := range []int{0, -1, 10001, 1 << 20} {
-		_, err := mgr.UploadPart(context.Background(), "upload-1", pn, bytes.NewReader([]byte("x")), 1)
+		_, err := mgr.MultipartManager.UploadPart(context.Background(), "upload-1", pn, bytes.NewReader([]byte("x")), 1)
 		if err == nil {
 			t.Errorf("UploadPart(partNumber=%d) should fail", pn)
 			continue
@@ -108,7 +108,7 @@ func TestUploadPart_DBUnavailable(t *testing.T) {
 	store := &mockStore{getMultipartErr: ErrDBUnavailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	_, err := mgr.UploadPart(context.Background(), "upload-1", 1, bytes.NewReader([]byte("x")), 1)
+	_, err := mgr.MultipartManager.UploadPart(context.Background(), "upload-1", 1, bytes.NewReader([]byte("x")), 1)
 	if !errors.Is(err, ErrServiceUnavailable) {
 		t.Fatalf("expected ErrServiceUnavailable, got %v", err)
 	}
@@ -140,7 +140,7 @@ func TestCompleteMultipartUpload_Success(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	etag, err := mgr.CompleteMultipartUpload(ctx, "upload-1", []int{1, 2})
+	etag, err := mgr.MultipartManager.CompleteMultipartUpload(ctx, "upload-1", []int{1, 2})
 	if err != nil {
 		t.Fatalf("CompleteMultipartUpload: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestCompleteMultipartUpload_DBUnavailable(t *testing.T) {
 	store := &mockStore{getMultipartErr: ErrDBUnavailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	_, err := mgr.CompleteMultipartUpload(context.Background(), "upload-1", []int{1})
+	_, err := mgr.MultipartManager.CompleteMultipartUpload(context.Background(), "upload-1", []int{1})
 	if !errors.Is(err, ErrServiceUnavailable) {
 		t.Fatalf("expected ErrServiceUnavailable, got %v", err)
 	}
@@ -199,7 +199,7 @@ func TestAbortMultipartUpload_Success(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	err := mgr.AbortMultipartUpload(ctx, "upload-1")
+	err := mgr.MultipartManager.AbortMultipartUpload(ctx, "upload-1")
 	if err != nil {
 		t.Fatalf("AbortMultipartUpload: %v", err)
 	}
@@ -218,7 +218,7 @@ func TestAbortMultipartUpload_DBUnavailable(t *testing.T) {
 	store := &mockStore{getMultipartErr: ErrDBUnavailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	err := mgr.AbortMultipartUpload(context.Background(), "upload-1")
+	err := mgr.MultipartManager.AbortMultipartUpload(context.Background(), "upload-1")
 	if !errors.Is(err, ErrServiceUnavailable) {
 		t.Fatalf("expected ErrServiceUnavailable, got %v", err)
 	}
@@ -235,7 +235,7 @@ func TestAbortMultipartUpload_GetPartsError(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	err := mgr.AbortMultipartUpload(context.Background(), "upload-1")
+	err := mgr.MultipartManager.AbortMultipartUpload(context.Background(), "upload-1")
 	if err == nil {
 		t.Fatal("expected error from GetParts failure")
 	}
@@ -265,7 +265,7 @@ func TestAbortMultipartUpload_PartDeleteFails_EnqueuesCleanup(t *testing.T) {
 
 	// Abort should still succeed (delete failure on backend just enqueues cleanup)
 	// but DeleteMultipartUpload will also run
-	err := mgr.AbortMultipartUpload(ctx, "upload-1")
+	err := mgr.MultipartManager.AbortMultipartUpload(ctx, "upload-1")
 	if err != nil {
 		t.Fatalf("AbortMultipartUpload: %v", err)
 	}
@@ -307,7 +307,7 @@ func TestCompleteMultipartUpload_PartSubset(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	etag, err := mgr.CompleteMultipartUpload(ctx, "upload-1", []int{1, 3})
+	etag, err := mgr.MultipartManager.CompleteMultipartUpload(ctx, "upload-1", []int{1, 3})
 	if err != nil {
 		t.Fatalf("CompleteMultipartUpload: %v", err)
 	}
@@ -342,7 +342,7 @@ func TestCompleteMultipartUpload_InvalidPart(t *testing.T) {
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	// Request part 2 which was never uploaded
-	_, err := mgr.CompleteMultipartUpload(context.Background(), "upload-1", []int{1, 2})
+	_, err := mgr.MultipartManager.CompleteMultipartUpload(context.Background(), "upload-1", []int{1, 2})
 	if err == nil {
 		t.Fatal("expected error for missing part")
 	}
@@ -367,7 +367,7 @@ func TestCompleteMultipartUpload_GetPartsError(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	_, err := mgr.CompleteMultipartUpload(context.Background(), "upload-1", []int{1})
+	_, err := mgr.MultipartManager.CompleteMultipartUpload(context.Background(), "upload-1", []int{1})
 	if err == nil {
 		t.Fatal("expected error from GetParts failure")
 	}
@@ -396,7 +396,7 @@ func TestCompleteMultipartUpload_PartDeleteFails_EnqueuesCleanup(t *testing.T) {
 	backend.delErr = errors.New("backend timeout")
 	backend.mu.Unlock()
 
-	etag, err := mgr.CompleteMultipartUpload(ctx, "upload-1", []int{1})
+	etag, err := mgr.MultipartManager.CompleteMultipartUpload(ctx, "upload-1", []int{1})
 	if err != nil {
 		t.Fatalf("CompleteMultipartUpload: %v", err)
 	}
@@ -433,7 +433,7 @@ func TestUploadPart_UsageLimitExceeded(t *testing.T) {
 		"b1": {IngressByteLimit: 1}, // only 1 byte allowed
 	})
 
-	_, err := mgr.UploadPart(context.Background(), "upload-1", 1, bytes.NewReader([]byte("large-data")), 10)
+	_, err := mgr.MultipartManager.UploadPart(context.Background(), "upload-1", 1, bytes.NewReader([]byte("large-data")), 10)
 	if !errors.Is(err, ErrInsufficientStorage) {
 		t.Fatalf("expected ErrInsufficientStorage, got %v", err)
 	}
@@ -451,7 +451,7 @@ func TestUploadPart_RecordPartFails_CleansUpPartObject(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	_, err := mgr.UploadPart(context.Background(), "upload-1", 1, bytes.NewReader([]byte("data")), 4)
+	_, err := mgr.MultipartManager.UploadPart(context.Background(), "upload-1", 1, bytes.NewReader([]byte("data")), 4)
 	if err == nil {
 		t.Fatal("expected error from RecordPart failure")
 	}
@@ -480,7 +480,7 @@ func TestUploadPart_RecordPartFails_DeleteFails_EnqueuesCleanup(t *testing.T) {
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
 	// Put will succeed, then set delErr so cleanup fails
-	_, err := mgr.UploadPart(context.Background(), "upload-1", 1, bytes.NewReader([]byte("data")), 4)
+	_, err := mgr.MultipartManager.UploadPart(context.Background(), "upload-1", 1, bytes.NewReader([]byte("data")), 4)
 	// This test is tricky — delErr is set on the backend struct, but the upload succeeds
 	// before we can set it. Let me instead pre-set delErr and rely on putErr being nil.
 	if err == nil {
@@ -497,7 +497,7 @@ func TestCleanupStaleMultipartUploads_NoStaleUploads(t *testing.T) {
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	// Should not panic
-	mgr.CleanupStaleMultipartUploads(context.Background(), time.Hour)
+	mgr.MultipartManager.CleanupStaleMultipartUploads(context.Background(), time.Hour)
 }
 
 func TestCleanupStaleMultipartUploads_QueryError(t *testing.T) {
@@ -505,7 +505,7 @@ func TestCleanupStaleMultipartUploads_QueryError(t *testing.T) {
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	// Should not panic
-	mgr.CleanupStaleMultipartUploads(context.Background(), time.Hour)
+	mgr.MultipartManager.CleanupStaleMultipartUploads(context.Background(), time.Hour)
 }
 
 func TestCleanupStaleMultipartUploads_AbortsStaleUploads(t *testing.T) {
@@ -528,7 +528,7 @@ func TestCleanupStaleMultipartUploads_AbortsStaleUploads(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	mgr.CleanupStaleMultipartUploads(ctx, time.Hour)
+	mgr.MultipartManager.CleanupStaleMultipartUploads(ctx, time.Hour)
 
 	// Part should be cleaned up
 	if backend.hasObject("__multipart/stale-1/1") {
@@ -563,7 +563,7 @@ func TestCompleteMultipartUpload_UsageRecords2NPlus1APICalls(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	_, err := mgr.CompleteMultipartUpload(ctx, "upload-1", []int{1, 2, 3})
+	_, err := mgr.MultipartManager.CompleteMultipartUpload(ctx, "upload-1", []int{1, 2, 3})
 	if err != nil {
 		t.Fatalf("CompleteMultipartUpload: %v", err)
 	}
@@ -592,7 +592,7 @@ func TestUploadPart_BackendFailure_StillRecordsUsage(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	_, err := mgr.UploadPart(context.Background(), "upload-1", 1, bytes.NewReader([]byte("data")), 4)
+	_, err := mgr.MultipartManager.UploadPart(context.Background(), "upload-1", 1, bytes.NewReader([]byte("data")), 4)
 	if err == nil {
 		t.Fatal("expected error from backend failure")
 	}
@@ -614,7 +614,7 @@ func TestCreateMultipartUpload_CreateStoreError(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	_, _, err := mgr.CreateMultipartUpload(context.Background(), "key", "", nil)
+	_, _, err := mgr.MultipartManager.CreateMultipartUpload(context.Background(), "key", "", nil)
 	if err == nil {
 		t.Fatal("expected error from CreateMultipartUpload store failure")
 	}

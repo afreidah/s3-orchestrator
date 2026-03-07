@@ -184,7 +184,7 @@ func newMultipartCleanupService(manager *storage.BackendManager, store storage.M
 		lockID:   storage.LockMultipartCleanup,
 		name:     "Multipart cleanup",
 		work: func(ctx context.Context) {
-			manager.CleanupStaleMultipartUploads(ctx, 24*time.Hour)
+			manager.MultipartManager.CleanupStaleMultipartUploads(ctx, 24*time.Hour)
 		},
 	}
 }
@@ -196,7 +196,7 @@ func newCleanupQueueService(manager *storage.BackendManager, store storage.Metad
 		lockID:   storage.LockCleanupQueue,
 		name:     "Cleanup queue",
 		work: func(ctx context.Context) {
-			processed, failed := manager.ProcessCleanupQueue(ctx)
+			processed, failed := manager.CleanupWorker.ProcessCleanupQueue(ctx)
 			if processed > 0 || failed > 0 {
 				slog.Info("Cleanup queue processed", "processed", processed, "failed", failed)
 			}
@@ -206,7 +206,7 @@ func newCleanupQueueService(manager *storage.BackendManager, store storage.Metad
 
 func newRebalancerService(manager *storage.BackendManager, store storage.MetadataStore) *lockedTickerService {
 	interval := 6 * time.Hour
-	if rcfg := manager.RebalanceConfig(); rcfg != nil && rcfg.Interval > 0 {
+	if rcfg := manager.Rebalancer.Config(); rcfg != nil && rcfg.Interval > 0 {
 		interval = rcfg.Interval
 	}
 	return &lockedTickerService{
@@ -215,15 +215,15 @@ func newRebalancerService(manager *storage.BackendManager, store storage.Metadat
 		lockID:   storage.LockRebalancer,
 		name:     "Rebalance",
 		shouldRun: func() bool {
-			rcfg := manager.RebalanceConfig()
+			rcfg := manager.Rebalancer.Config()
 			return rcfg != nil && rcfg.Enabled
 		},
 		work: func(ctx context.Context) {
-			rcfg := manager.RebalanceConfig()
+			rcfg := manager.Rebalancer.Config()
 			if rcfg == nil {
 				return
 			}
-			moved, err := manager.Rebalance(ctx, *rcfg)
+			moved, err := manager.Rebalancer.Rebalance(ctx, *rcfg)
 			if err != nil && !errors.Is(err, storage.ErrDBUnavailable) {
 				slog.Error("Rebalance failed", "error", err)
 			} else if moved > 0 {
@@ -271,11 +271,11 @@ func newLifecycleService(manager *storage.BackendManager, store storage.Metadata
 
 func newReplicatorService(manager *storage.BackendManager, store storage.MetadataStore) *lockedTickerService {
 	replicateWork := func(ctx context.Context) {
-		rcfg := manager.ReplicationConfig()
+		rcfg := manager.Replicator.Config()
 		if rcfg == nil {
 			return
 		}
-		created, err := manager.Replicate(ctx, *rcfg)
+		created, err := manager.Replicator.Replicate(ctx, *rcfg)
 		if err != nil && !errors.Is(err, storage.ErrDBUnavailable) {
 			slog.Error("Replication failed", "error", err)
 		} else if created > 0 {
@@ -287,7 +287,7 @@ func newReplicatorService(manager *storage.BackendManager, store storage.Metadat
 	}
 
 	interval := 5 * time.Minute
-	if rcfg := manager.ReplicationConfig(); rcfg != nil && rcfg.WorkerInterval > 0 {
+	if rcfg := manager.Replicator.Config(); rcfg != nil && rcfg.WorkerInterval > 0 {
 		interval = rcfg.WorkerInterval
 	}
 	return &lockedTickerService{
@@ -296,7 +296,7 @@ func newReplicatorService(manager *storage.BackendManager, store storage.Metadat
 		lockID:   storage.LockReplicator,
 		name:     "Replication",
 		shouldRun: func() bool {
-			rcfg := manager.ReplicationConfig()
+			rcfg := manager.Replicator.Config()
 			return rcfg != nil && rcfg.Factor > 1
 		},
 		startup:  replicateWork,

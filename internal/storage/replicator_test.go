@@ -57,7 +57,7 @@ func TestReplicate_NoUnderReplicatedObjects(t *testing.T) {
 	store := &mockStore{getUnderReplicatedResp: nil}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	created, err := mgr.Replicate(context.Background(), config.ReplicationConfig{
+	created, err := mgr.Replicator.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:    2,
 		BatchSize: 10,
 	})
@@ -73,7 +73,7 @@ func TestReplicate_QueryError(t *testing.T) {
 	store := &mockStore{getUnderReplicatedErr: errors.New("db down")}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	_, err := mgr.Replicate(context.Background(), config.ReplicationConfig{
+	_, err := mgr.Replicator.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:    2,
 		BatchSize: 10,
 	})
@@ -106,7 +106,7 @@ func TestReplicate_Success(t *testing.T) {
 		RoutingStrategy: "pack",
 	})
 
-	created, err := mgr.Replicate(context.Background(), config.ReplicationConfig{
+	created, err := mgr.Replicator.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:    2,
 		BatchSize: 10,
 	})
@@ -144,7 +144,7 @@ func TestFindReplicaTarget_ExcludesExistingCopies(t *testing.T) {
 
 	// b1 and b2 already have copies
 	exclusion := map[string]bool{"b1": true, "b2": true}
-	target := mgr.findReplicaTarget(context.Background(), "key1", 50, exclusion)
+	target := mgr.Replicator.findReplicaTarget(context.Background(), "key1", 50, exclusion)
 	if target != "b3" {
 		t.Errorf("expected b3, got %q", target)
 	}
@@ -166,7 +166,7 @@ func TestFindReplicaTarget_SkipsFullBackends(t *testing.T) {
 	})
 
 	exclusion := map[string]bool{"b1": true}
-	target := mgr.findReplicaTarget(context.Background(), "key1", 50, exclusion)
+	target := mgr.Replicator.findReplicaTarget(context.Background(), "key1", 50, exclusion)
 	if target != "" {
 		t.Errorf("expected empty (no space), got %q", target)
 	}
@@ -176,7 +176,7 @@ func TestFindReplicaTarget_QuotaStatsError(t *testing.T) {
 	store := &mockStore{getQuotaStatsErr: errors.New("db down")}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	target := mgr.findReplicaTarget(context.Background(), "key1", 50, map[string]bool{})
+	target := mgr.Replicator.findReplicaTarget(context.Background(), "key1", 50, map[string]bool{})
 	if target != "" {
 		t.Errorf("expected empty on quota stats error, got %q", target)
 	}
@@ -201,7 +201,7 @@ func TestCopyToReplica_Success(t *testing.T) {
 	})
 
 	copies := []ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}
-	source, err := mgr.copyToReplica(context.Background(), "key1", copies, "b2")
+	source, err := mgr.Replicator.copyToReplica(context.Background(), "key1", copies, "b2")
 	if err != nil {
 		t.Fatalf("copyToReplica: %v", err)
 	}
@@ -233,7 +233,7 @@ func TestCopyToReplica_FailoverToSecondCopy(t *testing.T) {
 		{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
 		{ObjectKey: "key1", BackendName: "b2", SizeBytes: 4},
 	}
-	source, err := mgr.copyToReplica(context.Background(), "key1", copies, "b3")
+	source, err := mgr.Replicator.copyToReplica(context.Background(), "key1", copies, "b3")
 	if err != nil {
 		t.Fatalf("copyToReplica should failover: %v", err)
 	}
@@ -260,7 +260,7 @@ func TestCopyToReplica_AllSourcesFail(t *testing.T) {
 	})
 
 	copies := []ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}
-	_, err := mgr.copyToReplica(context.Background(), "key1", copies, "b2")
+	_, err := mgr.Replicator.copyToReplica(context.Background(), "key1", copies, "b2")
 	if err == nil {
 		t.Fatal("expected error when all source copies fail")
 	}
@@ -276,7 +276,7 @@ func TestCleanupOrphan_Success(t *testing.T) {
 
 	mgr := newTestManager(&mockStore{}, map[string]*mockBackend{"b1": b1})
 
-	mgr.cleanupOrphan(context.Background(), "b1", "orphan")
+	mgr.Replicator.cleanupOrphan(context.Background(), "b1", "orphan")
 	if b1.hasObject("orphan") {
 		t.Error("expected orphan to be deleted")
 	}
@@ -286,7 +286,7 @@ func TestCleanupOrphan_BackendNotFound(t *testing.T) {
 	mgr := newTestManager(&mockStore{}, map[string]*mockBackend{"b1": newMockBackend()})
 
 	// Should not panic for unknown backend
-	mgr.cleanupOrphan(context.Background(), "unknown", "orphan")
+	mgr.Replicator.cleanupOrphan(context.Background(), "unknown", "orphan")
 }
 
 func TestCleanupOrphan_DeleteFailure_EnqueuesCleanup(t *testing.T) {
@@ -295,7 +295,7 @@ func TestCleanupOrphan_DeleteFailure_EnqueuesCleanup(t *testing.T) {
 	store := &mockStore{}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": b1})
 
-	mgr.cleanupOrphan(context.Background(), "b1", "orphan")
+	mgr.Replicator.cleanupOrphan(context.Background(), "b1", "orphan")
 
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -335,7 +335,7 @@ func TestReplicate_RecordReplicaFails_CleansUpOrphan(t *testing.T) {
 		RoutingStrategy: "pack",
 	})
 
-	created, err := mgr.Replicate(context.Background(), config.ReplicationConfig{
+	created, err := mgr.Replicator.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:    2,
 		BatchSize: 10,
 	})
@@ -358,7 +358,7 @@ func TestCopyToReplica_TargetBackendNotFound(t *testing.T) {
 	mgr := newTestManager(&mockStore{}, map[string]*mockBackend{"b1": b1})
 
 	copies := []ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}
-	_, err := mgr.copyToReplica(context.Background(), "key1", copies, "nonexistent")
+	_, err := mgr.Replicator.copyToReplica(context.Background(), "key1", copies, "nonexistent")
 	if err == nil {
 		t.Fatal("expected error when target backend not found")
 	}
@@ -380,7 +380,7 @@ func TestCopyToReplica_TargetWriteFails(t *testing.T) {
 	})
 
 	copies := []ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}
-	_, err := mgr.copyToReplica(context.Background(), "key1", copies, "b2")
+	_, err := mgr.Replicator.copyToReplica(context.Background(), "key1", copies, "b2")
 	if err == nil {
 		t.Fatal("expected error when target PutObject fails")
 	}
@@ -409,7 +409,7 @@ func TestReplicateObject_NoTargetAvailable(t *testing.T) {
 		RoutingStrategy: "pack",
 	})
 
-	created, err := mgr.Replicate(context.Background(), config.ReplicationConfig{
+	created, err := mgr.Replicator.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:    2,
 		BatchSize: 10,
 	})
@@ -445,7 +445,7 @@ func TestReplicate_SourceGoneDuringReplication(t *testing.T) {
 		RoutingStrategy: "pack",
 	})
 
-	created, err := mgr.Replicate(context.Background(), config.ReplicationConfig{
+	created, err := mgr.Replicator.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:    2,
 		BatchSize: 10,
 	})
@@ -502,7 +502,7 @@ func TestReplicate_HealthAware_SkipsUnhealthyTarget(t *testing.T) {
 		RoutingStrategy: "pack",
 	})
 
-	created, err := mgr.Replicate(context.Background(), config.ReplicationConfig{
+	created, err := mgr.Replicator.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:             2,
 		BatchSize:          10,
 		UnhealthyThreshold: 0, // immediate — any open CB counts
@@ -552,7 +552,7 @@ func TestReplicate_HealthAware_PrefersHealthySource(t *testing.T) {
 		RoutingStrategy: "pack",
 	})
 
-	created, err := mgr.Replicate(context.Background(), config.ReplicationConfig{
+	created, err := mgr.Replicator.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:             3,
 		BatchSize:          10,
 		UnhealthyThreshold: 0,
@@ -593,7 +593,7 @@ func TestReplicate_HealthAware_BelowThreshold(t *testing.T) {
 		RoutingStrategy: "pack",
 	})
 
-	created, err := mgr.Replicate(context.Background(), config.ReplicationConfig{
+	created, err := mgr.Replicator.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:             2,
 		BatchSize:          10,
 		UnhealthyThreshold: time.Hour, // CB just opened — below threshold
@@ -611,7 +611,7 @@ func TestUnhealthyBackends_NoCB(t *testing.T) {
 		"b1": newMockBackend(),
 		"b2": newMockBackend(),
 	})
-	names := mgr.unhealthyBackends(0)
+	names := mgr.Replicator.unhealthyBackends(0)
 	if len(names) != 0 {
 		t.Errorf("expected empty, got %v", names)
 	}
@@ -619,14 +619,14 @@ func TestUnhealthyBackends_NoCB(t *testing.T) {
 
 func TestIsBackendHealthy_NoCB(t *testing.T) {
 	mgr := newTestManager(&mockStore{}, map[string]*mockBackend{"b1": newMockBackend()})
-	if !mgr.isBackendHealthy("b1") {
+	if !mgr.Replicator.isBackendHealthy("b1") {
 		t.Error("backend without CB wrapper should be healthy")
 	}
 }
 
 func TestIsBackendHealthy_UnknownBackend(t *testing.T) {
 	mgr := newTestManager(&mockStore{}, map[string]*mockBackend{"b1": newMockBackend()})
-	if mgr.isBackendHealthy("nonexistent") {
+	if mgr.Replicator.isBackendHealthy("nonexistent") {
 		t.Error("unknown backend should not be healthy")
 	}
 }
@@ -640,7 +640,7 @@ func TestIsBackendHealthy_CBHealthy(t *testing.T) {
 		CacheTTL:        5 * time.Second,
 		RoutingStrategy: "pack",
 	})
-	if !mgr.isBackendHealthy("b1") {
+	if !mgr.Replicator.isBackendHealthy("b1") {
 		t.Error("healthy CB backend should report healthy")
 	}
 }
@@ -654,7 +654,7 @@ func TestIsBackendHealthy_CBUnhealthy(t *testing.T) {
 		CacheTTL:        5 * time.Second,
 		RoutingStrategy: "pack",
 	})
-	if mgr.isBackendHealthy("b1") {
+	if mgr.Replicator.isBackendHealthy("b1") {
 		t.Error("tripped CB backend should report unhealthy")
 	}
 }

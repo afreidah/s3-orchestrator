@@ -41,7 +41,7 @@ func (m *BackendManager) ProcessLifecycleRules(ctx context.Context, rules []conf
 			}
 
 			for _, obj := range objects {
-				if err := m.DeleteObject(ctx, obj.ObjectKey); err != nil {
+				if err := m.ObjectManager.DeleteObject(ctx, obj.ObjectKey); err != nil {
 					slog.Warn("Lifecycle: failed to delete expired object",
 						"key", obj.ObjectKey, "error", err)
 					telemetry.LifecycleFailedTotal.Inc()
