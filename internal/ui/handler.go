@@ -330,7 +330,7 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
 		MaxAge:   -1,
-		Secure:   true,
+		Secure:   h.forceSecure || r.TLS != nil,
 	})
 	http.Redirect(w, r, h.prefix+"/login", http.StatusSeeOther)
 }
