@@ -626,6 +626,7 @@ The dashboard shows:
 The dashboard also provides management actions:
 
 - **Upload** — upload files to any virtual bucket via the browser
+- **Download** — download individual objects from the file tree
 - **Delete** — delete individual objects from the file tree
 - **Rebalance** — trigger an on-demand rebalance across backends
 - **Sync** — import pre-existing objects from a backend's S3 bucket into the proxy database, scoped to a selected virtual bucket
@@ -640,7 +641,7 @@ ui:
   admin_secret: "${UI_ADMIN_SECRET}"
 ```
 
-JSON APIs are available at `{path}/api/dashboard`, `{path}/api/tree`, and `{path}/api/logs` for programmatic access. The logs endpoint accepts optional query parameters: `level`, `since`, `component`, and `limit`. Management endpoints (`{path}/api/delete`, `{path}/api/delete-prefix`, `{path}/api/upload`, `{path}/api/rebalance`, `{path}/api/sync`) accept POST requests and return JSON responses.
+JSON APIs are available at `{path}/api/dashboard`, `{path}/api/tree`, and `{path}/api/logs` for programmatic access. The logs endpoint accepts optional query parameters: `level`, `since`, `component`, and `limit`. Management endpoints (`{path}/api/delete`, `{path}/api/delete-prefix`, `{path}/api/upload`, `{path}/api/rebalance`, `{path}/api/sync`) accept POST requests and return JSON responses. The download endpoint (`{path}/api/download?key=...`) accepts GET requests.
 
 ## Endpoints
 
@@ -655,6 +656,7 @@ JSON APIs are available at `{path}/api/dashboard`, `{path}/api/tree`, and `{path
 | `/ui/api/delete` | Delete an object (POST, JSON body) |
 | `/ui/api/delete-prefix` | Delete all objects under a prefix (POST, JSON body) |
 | `/ui/api/upload` | Upload a file (POST, multipart form) |
+| `/ui/api/download` | Download a file (GET, query param: key) |
 | `/ui/api/rebalance` | Trigger on-demand rebalance (POST) |
 | `/ui/api/logs` | Buffered log entries as JSON (query params: level, since, component, limit) |
 | `/ui/api/sync` | Import objects from a backend (POST, JSON body) |

@@ -180,6 +180,21 @@ The `key` must start with a configured virtual bucket name (e.g., `my-bucket/`).
 {"ok": true, "etag": "\"abc123...\""}
 ```
 
+### GET /ui/api/download
+
+Downloads a single object by key. The response streams the object body with appropriate headers for the browser to trigger a save dialog.
+
+**Request:**
+
+```bash
+curl -b cookies.txt -OJ \
+  "http://localhost:9000/ui/api/download?key=my-bucket/path/to/file.txt"
+```
+
+The `key` must start with a configured virtual bucket name.
+
+**Response:** Binary object content with `Content-Disposition: attachment`, `Content-Type`, and `Content-Length` headers.
+
 ### POST /ui/api/rebalance
 
 Triggers an on-demand rebalance across backends.

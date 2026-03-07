@@ -53,6 +53,7 @@ s3-orchestrator version
 - `x-amz-meta-*` user metadata passthrough on PutObject, GetObject, HeadObject, CopyObject, and multipart uploads
 - `govulncheck` CI job for Go dependency vulnerability scanning
 - Optional Redis shared counters for multi-instance usage tracking with circuit breaker fallback to local counters
+- Dashboard file download — download individual objects directly from the file tree in the admin UI
 
 **New dependencies:**
 
