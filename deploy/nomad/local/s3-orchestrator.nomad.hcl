@@ -102,8 +102,8 @@ job "s3-orchestrator" {
 
           replication:
             factor: 2
-            worker_interval: "30s"
-            batch_size: 100
+            worker_interval: "10s"
+            batch_size: 400
 
           encryption:
             enabled: true

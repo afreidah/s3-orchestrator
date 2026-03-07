@@ -879,6 +879,7 @@ func (m *BackendManager) ListObjects(ctx context.Context, prefix, delimiter, sta
 	result := &ListObjectsV2Result{}
 	cursor := startAfter
 	seen := make(map[string]bool) // tracks emitted common prefixes across fetches
+	lastStoreTruncated := false   // whether the most recent store page had more data
 
 	const maxPages = 100 // cap DB round trips per request
 	for page := 0; page < maxPages && result.KeyCount < maxKeys; page++ {
@@ -896,6 +897,7 @@ func (m *BackendManager) ListObjects(ctx context.Context, prefix, delimiter, sta
 		if len(storeResult.Objects) == 0 {
 			break
 		}
+		lastStoreTruncated = storeResult.IsTruncated
 
 		// lastKey tracks the most recently consumed object key so the
 		// continuation token lands after the entire prefix group, not
@@ -952,6 +954,15 @@ func (m *BackendManager) ListObjects(ctx context.Context, prefix, delimiter, sta
 			result.IsTruncated = true
 			result.NextContinuationToken = cursor
 		}
+	}
+
+	// When we consumed exactly maxKeys entries from a single store page
+	// and the store reported more data, the inner loop never tried to add
+	// a (maxKeys+1)th entry so IsTruncated was never set. Detect this and
+	// mark the result as truncated so the client paginates correctly.
+	if !result.IsTruncated && lastStoreTruncated && result.KeyCount >= maxKeys {
+		result.IsTruncated = true
+		result.NextContinuationToken = cursor
 	}
 
 	m.recordOperation(operation, "", start, nil)
