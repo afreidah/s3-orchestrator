@@ -351,6 +351,7 @@ td.key {
 
 .tree-file:hover .tree-action { opacity: 1; }
 .tree-dir > summary:hover .tree-action { opacity: 1; }
+.tree-download:hover { color: #3b82f6; background: rgba(59, 130, 246, 0.1); }
 .tree-delete:hover { color: #ef4444; background: rgba(239, 68, 68, 0.1); }
 
 /* --- Dialog centering (all dialogs) --- */

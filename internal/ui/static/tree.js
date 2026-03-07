@@ -74,12 +74,17 @@
     var fMetaSpan = document.createElement('span');
     fMetaSpan.className = 'tree-meta';
     fMetaSpan.textContent = entry.backend + ' \u00B7 ' + formatBytes(entry.totalSize) + ' \u00B7 ' + entry.createdAt;
+    var fDlSpan = document.createElement('span');
+    fDlSpan.className = 'tree-action tree-download';
+    fDlSpan.title = 'Download';
+    fDlSpan.textContent = '\u2193';
     var fDelSpan = document.createElement('span');
     fDelSpan.className = 'tree-action tree-delete';
     fDelSpan.title = 'Delete';
     fDelSpan.textContent = '\u2715';
     div.appendChild(fNameSpan);
     div.appendChild(fMetaSpan);
+    div.appendChild(fDlSpan);
     div.appendChild(fDelSpan);
     return div;
   }
@@ -212,6 +217,17 @@
         .catch(function (err) {
           deleteOkBtn.textContent = err.name === 'AbortError' ? 'Request timed out' : 'Network error';
         });
+    });
+  }
+
+  // --- Download ---
+  if (tree) {
+    tree.addEventListener('click', function (e) {
+      var btn = e.target.closest('.tree-download');
+      if (!btn) return;
+      var fileEl = btn.closest('.tree-file');
+      if (!fileEl || !fileEl.dataset.key) return;
+      window.location = 'api/download?key=' + encodeURIComponent(fileEl.dataset.key);
     });
   }
 
