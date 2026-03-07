@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"testing"
 	"time"
@@ -749,6 +750,42 @@ func TestListObjects_DelimiterTruncationSkipsSeen(t *testing.T) {
 	// Token must be past the last object in the "a/" group
 	if result.NextContinuationToken != "a/3" {
 		t.Errorf("NextContinuationToken = %q, want %q", result.NextContinuationToken, "a/3")
+	}
+}
+
+func TestListObjects_ExactPageTruncation(t *testing.T) {
+	// Regression: when the store returns exactly maxKeys objects with
+	// IsTruncated=true, the manager must propagate truncation. Previously
+	// the outer loop exited (KeyCount == maxKeys) without marking
+	// IsTruncated, so clients never fetched subsequent pages.
+	objs := make([]ObjectLocation, 3)
+	for i := range objs {
+		objs[i] = ObjectLocation{
+			ObjectKey:   fmt.Sprintf("pfx/%03d", i),
+			BackendName: "b1",
+			SizeBytes:   100,
+		}
+	}
+	store := &mockStore{
+		listObjectsResp: &ListObjectsResult{
+			Objects:     objs,
+			IsTruncated: true,
+		},
+	}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+
+	result, err := mgr.ListObjects(context.Background(), "pfx/", "", "", 3)
+	if err != nil {
+		t.Fatalf("ListObjects: %v", err)
+	}
+	if result.KeyCount != 3 {
+		t.Errorf("KeyCount = %d, want 3", result.KeyCount)
+	}
+	if !result.IsTruncated {
+		t.Error("expected IsTruncated=true when store has more data")
+	}
+	if result.NextContinuationToken != "pfx/002" {
+		t.Errorf("NextContinuationToken = %q, want %q", result.NextContinuationToken, "pfx/002")
 	}
 }
 
