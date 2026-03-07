@@ -14,6 +14,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -43,11 +44,28 @@ func extractUserMetadata(h http.Header) map[string]string {
 	return meta
 }
 
-// validateUserMetadata checks that total user metadata does not exceed
-// the S3-specified 2 KB limit.
+// validMetadataToken reports whether s contains only printable ASCII
+// characters suitable for use in an HTTP header field (no CR, LF, or
+// other control characters). This prevents HTTP header injection via
+// user-supplied metadata keys and values.
+func validMetadataToken(s string) bool {
+	for _, c := range s {
+		if c < 0x20 || c > 0x7E {
+			return false
+		}
+	}
+	return true
+}
+
+// validateUserMetadata checks that metadata keys and values contain only
+// safe characters (no CR/LF/control bytes) and that total size does not
+// exceed the S3-specified 2 KB limit.
 func validateUserMetadata(meta map[string]string) error {
 	var total int
 	for k, v := range meta {
+		if !validMetadataToken(k) || !validMetadataToken(v) {
+			return fmt.Errorf("metadata contains invalid characters")
+		}
 		total += len(k) + len(v)
 	}
 	if total > maxUserMetadataBytes {
@@ -89,15 +107,17 @@ func parseQueryInt(r *http.Request, param string, defaultVal, max int) int {
 	return v
 }
 
-// writeS3Error sends an S3-style XML error response.
+// writeS3Error sends an S3-style XML error response with Content-Length.
 func writeS3Error(w http.ResponseWriter, code int, errCode, message string) {
-	w.Header().Set("Content-Type", "application/xml")
-	w.WriteHeader(code)
-	_, _ = fmt.Fprintf(w, `<?xml version="1.0" encoding="UTF-8"?>
+	body := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <Error>
   <Code>%s</Code>
   <Message>%s</Message>
 </Error>`, xmlEscape(errCode), xmlEscape(message))
+	w.Header().Set("Content-Type", "application/xml")
+	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+	w.WriteHeader(code)
+	_, _ = io.WriteString(w, body)
 }
 
 // xmlReplacer escapes special XML characters. Allocated once at package level

@@ -18,7 +18,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"log/slog"
-	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 )
@@ -38,13 +37,11 @@ const (
 // -------------------------------------------------------------------------
 
 // NewID generates a hex-encoded 16-byte random ID suitable for request
-// correlation. Falls back to a timestamp-based ID if crypto/rand fails.
+// correlation. crypto/rand.Read always returns len(b) and nil error on
+// all supported platforms (see Go docs), so no error handling is needed.
 func NewID() string {
 	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		// Fallback: should never happen with a healthy OS
-		return hex.EncodeToString([]byte(time.Now().Format("20060102150405.000000000")))
-	}
+	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
 }
 
