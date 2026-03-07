@@ -38,7 +38,7 @@ func (m *BackendManager) GetDashboardData(ctx context.Context) (*DashboardData, 
 		if !m.IsDraining(name) {
 			continue
 		}
-		progress, err := m.GetDrainProgress(ctx, name)
+		progress, err := m.DrainManager.GetDrainProgress(ctx, name)
 		if err == nil {
 			data.DrainingBackends[name] = *progress
 		}

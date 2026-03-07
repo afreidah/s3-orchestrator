@@ -1,11 +1,11 @@
 // -------------------------------------------------------------------------------
-// Multipart Upload Operations - Create, UploadPart, Complete, Abort, ListParts
+// Multipart Manager - Multipart Upload Lifecycle
 //
 // Author: Alex Freidah
 //
-// Multipart upload lifecycle on the BackendManager. Handles backend selection for
-// new uploads via routing strategy, part tracking in PostgreSQL, and final assembly
-// on the target backend. Stale uploads are cleaned up by a background task.
+// Handles multipart upload operations: create, upload part, complete, abort,
+// list, and stale upload cleanup. Backend selection for new uploads uses the
+// configured routing strategy via backendCore.
 // -------------------------------------------------------------------------------
 
 package storage
@@ -25,6 +25,18 @@ import (
 	"go.opentelemetry.io/otel/codes"
 )
 
+// MultipartManager handles the multipart upload lifecycle.
+type MultipartManager struct {
+	*backendCore
+	encryptor *encryption.Encryptor
+}
+
+// NewMultipartManager creates a MultipartManager sharing the given core
+// infrastructure and optional encryptor.
+func NewMultipartManager(core *backendCore, encryptor *encryption.Encryptor) *MultipartManager {
+	return &MultipartManager{backendCore: core, encryptor: encryptor}
+}
+
 // multipartPartKey returns the temporary object key for a multipart part.
 func multipartPartKey(uploadID string, partNumber int) string {
 	return fmt.Sprintf("__multipart/%s/%d", uploadID, partNumber)
@@ -36,7 +48,7 @@ func multipartPartKey(uploadID string, partNumber int) string {
 
 // CreateMultipartUpload initiates a multipart upload by selecting a backend
 // with available quota and recording the upload in the database.
-func (m *BackendManager) CreateMultipartUpload(ctx context.Context, key, contentType string, metadata map[string]string) (string, string, error) {
+func (mp *MultipartManager) CreateMultipartUpload(ctx context.Context, key, contentType string, metadata map[string]string) (string, string, error) {
 	const operation = "CreateMultipartUpload"
 	start := time.Now()
 
@@ -46,7 +58,7 @@ func (m *BackendManager) CreateMultipartUpload(ctx context.Context, key, content
 	defer span.End()
 
 	// Filter backends within usage limits and exclude draining
-	eligible := m.excludeDraining(m.usage.BackendsWithinLimits(m.order, 1, 0, 0))
+	eligible := mp.excludeDraining(mp.usage.BackendsWithinLimits(mp.order, 1, 0, 0))
 	if len(eligible) == 0 {
 		telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation, "write").Inc()
 		span.SetStatus(codes.Error, "usage limits exceeded on all backends")
@@ -54,19 +66,19 @@ func (m *BackendManager) CreateMultipartUpload(ctx context.Context, key, content
 	}
 
 	// Pick a backend (estimate 0 bytes since final size is unknown)
-	backendName, err := m.selectBackendForWrite(ctx, 0, eligible)
+	backendName, err := mp.selectBackendForWrite(ctx, 0, eligible)
 	if err != nil {
-		return "", "", m.classifyWriteError(span, operation, err)
+		return "", "", mp.classifyWriteError(span, operation, err)
 	}
 
 	uploadID := GenerateUploadID()
-	if err := m.store.CreateMultipartUpload(ctx, uploadID, key, backendName, contentType, metadata); err != nil {
+	if err := mp.store.CreateMultipartUpload(ctx, uploadID, key, backendName, contentType, metadata); err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return "", "", err
 	}
 
 	span.SetAttributes(telemetry.AttrBackendName.String(backendName))
-	m.recordOperation(operation, backendName, start, nil)
+	mp.recordOperation(operation, backendName, start, nil)
 
 	audit.Log(ctx, "storage.CreateMultipartUpload",
 		slog.String("key", key),
@@ -80,7 +92,7 @@ func (m *BackendManager) CreateMultipartUpload(ctx context.Context, key, content
 
 // UploadPart uploads a single part to the backend. Parts are stored under a
 // temporary key prefix and reassembled on completion.
-func (m *BackendManager) UploadPart(ctx context.Context, uploadID string, partNumber int, body io.Reader, size int64) (string, error) {
+func (mp *MultipartManager) UploadPart(ctx context.Context, uploadID string, partNumber int, body io.Reader, size int64) (string, error) {
 	const operation = "UploadPart"
 	start := time.Now()
 
@@ -96,19 +108,19 @@ func (m *BackendManager) UploadPart(ctx context.Context, uploadID string, partNu
 		return "", err
 	}
 
-	mu, err := m.store.GetMultipartUpload(ctx, uploadID)
+	mu, err := mp.store.GetMultipartUpload(ctx, uploadID)
 	if err != nil {
-		return "", m.classifyWriteError(span, operation, err)
+		return "", mp.classifyWriteError(span, operation, err)
 	}
 
-	backend, err := m.getBackend(mu.BackendName)
+	backend, err := mp.getBackend(mu.BackendName)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return "", err
 	}
 
 	// Check usage limits before uploading
-	if !m.usage.WithinLimits(mu.BackendName, 1, 0, size) {
+	if !mp.usage.WithinLimits(mu.BackendName, 1, 0, size) {
 		span.SetStatus(codes.Error, "usage limits exceeded")
 		return "", ErrInsufficientStorage
 	}
@@ -117,8 +129,8 @@ func (m *BackendManager) UploadPart(ctx context.Context, uploadID string, partNu
 	var enc *EncryptionMeta
 	uploadBody := body
 	uploadSize := size
-	if m.encryptor != nil {
-		encResult, encErr := m.encryptor.Encrypt(ctx, body, size)
+	if mp.encryptor != nil {
+		encResult, encErr := mp.encryptor.Encrypt(ctx, body, size)
 		if encErr != nil {
 			telemetry.EncryptionErrorsTotal.WithLabelValues("encrypt", "encrypt_failed").Inc()
 			span.SetStatus(codes.Error, encErr.Error())
@@ -137,31 +149,31 @@ func (m *BackendManager) UploadPart(ctx context.Context, uploadID string, partNu
 
 	// Store part under a temp key
 	partKey := multipartPartKey(uploadID, partNumber)
-	bctx, bcancel := m.withTimeout(ctx)
+	bctx, bcancel := mp.withTimeout(ctx)
 	defer bcancel()
 	etag, err := backend.PutObject(bctx, partKey, uploadBody, uploadSize, "application/octet-stream", nil)
 	if err != nil {
-		m.usage.Record(mu.BackendName, 1, 0, 0) // API call was made even on failure
+		mp.usage.Record(mu.BackendName, 1, 0, 0) // API call was made even on failure
 		span.SetStatus(codes.Error, err.Error())
 		return "", fmt.Errorf("failed to upload part: %w", err)
 	}
 
-	if err := m.store.RecordPart(ctx, uploadID, partNumber, etag, uploadSize, enc); err != nil {
+	if err := mp.store.RecordPart(ctx, uploadID, partNumber, etag, uploadSize, enc); err != nil {
 		slog.Error("RecordPart failed, cleaning up part object",
 			"upload_id", uploadID, "part", partNumber, "error", err)
-		m.usage.Record(mu.BackendName, 1, 0, 0)
+		mp.usage.Record(mu.BackendName, 1, 0, 0)
 		if delErr := backend.DeleteObject(ctx, partKey); delErr != nil {
 			slog.Error("Failed to clean up orphaned part object",
 				"key", partKey, "error", delErr)
-			m.enqueueCleanup(ctx, mu.BackendName, partKey, "orphan_part_record_failed")
+			mp.enqueueCleanup(ctx, mu.BackendName, partKey, "orphan_part_record_failed")
 		}
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)
 		return "", fmt.Errorf("failed to record part: %w", err)
 	}
 
-	m.recordOperation(operation, mu.BackendName, start, nil)
-	m.usage.Record(mu.BackendName, 1, 0, size)
+	mp.recordOperation(operation, mu.BackendName, start, nil)
+	mp.usage.Record(mu.BackendName, 1, 0, size)
 	span.SetStatus(codes.Ok, "")
 	return etag, nil
 }
@@ -169,7 +181,7 @@ func (m *BackendManager) UploadPart(ctx context.Context, uploadID string, partNu
 // CompleteMultipartUpload reassembles parts into the final object. Downloads
 // each part, concatenates them into a single upload, then cleans up temp keys
 // and records the final object location with quota tracking.
-func (m *BackendManager) CompleteMultipartUpload(ctx context.Context, uploadID string, partNumbers []int) (string, error) {
+func (mp *MultipartManager) CompleteMultipartUpload(ctx context.Context, uploadID string, partNumbers []int) (string, error) {
 	const operation = "CompleteMultipartUpload"
 	start := time.Now()
 
@@ -178,18 +190,18 @@ func (m *BackendManager) CompleteMultipartUpload(ctx context.Context, uploadID s
 	)
 	defer span.End()
 
-	mu, err := m.store.GetMultipartUpload(ctx, uploadID)
+	mu, err := mp.store.GetMultipartUpload(ctx, uploadID)
 	if err != nil {
-		return "", m.classifyWriteError(span, operation, err)
+		return "", mp.classifyWriteError(span, operation, err)
 	}
 
-	backend, err := m.getBackend(mu.BackendName)
+	backend, err := mp.getBackend(mu.BackendName)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return "", err
 	}
 
-	allParts, err := m.store.GetParts(ctx, uploadID)
+	allParts, err := mp.store.GetParts(ctx, uploadID)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return "", err
@@ -241,7 +253,7 @@ func (m *BackendManager) CompleteMultipartUpload(ctx context.Context, uploadID s
 		defer func() { _ = pw.Close() }()
 		for _, part := range parts {
 			partKey := multipartPartKey(uploadID, part.PartNumber)
-			bctx, bcancel := m.withTimeout(pipeCtx)
+			bctx, bcancel := mp.withTimeout(pipeCtx)
 			result, err := backend.GetObject(bctx, partKey, "")
 			if err != nil {
 				bcancel()
@@ -250,7 +262,7 @@ func (m *BackendManager) CompleteMultipartUpload(ctx context.Context, uploadID s
 			}
 
 			var src io.Reader = result.Body
-			if part.Encrypted && m.encryptor != nil {
+			if part.Encrypted && mp.encryptor != nil {
 				_, wrappedDEK, unpackErr := encryption.UnpackKeyData(part.EncryptionKey)
 				if unpackErr != nil {
 					telemetry.EncryptionErrorsTotal.WithLabelValues("decrypt", "unpack_failed").Inc()
@@ -259,7 +271,7 @@ func (m *BackendManager) CompleteMultipartUpload(ctx context.Context, uploadID s
 					pw.CloseWithError(fmt.Errorf("unpack part %d key: %w", part.PartNumber, unpackErr))
 					return
 				}
-				decrypted, decErr := m.encryptor.Decrypt(pipeCtx, result.Body, wrappedDEK, part.KeyID)
+				decrypted, decErr := mp.encryptor.Decrypt(pipeCtx, result.Body, wrappedDEK, part.KeyID)
 				if decErr != nil {
 					telemetry.EncryptionErrorsTotal.WithLabelValues("decrypt", "decrypt_failed").Inc()
 					_ = result.Body.Close()
@@ -286,8 +298,8 @@ func (m *BackendManager) CompleteMultipartUpload(ctx context.Context, uploadID s
 	var enc *EncryptionMeta
 	var uploadBody io.Reader = pr
 	uploadSize := totalPlaintextSize
-	if m.encryptor != nil {
-		encResult, encErr := m.encryptor.Encrypt(ctx, pr, totalPlaintextSize)
+	if mp.encryptor != nil {
+		encResult, encErr := mp.encryptor.Encrypt(ctx, pr, totalPlaintextSize)
 		if encErr != nil {
 			telemetry.EncryptionErrorsTotal.WithLabelValues("encrypt", "encrypt_failed").Inc()
 			span.SetStatus(codes.Error, encErr.Error())
@@ -316,24 +328,24 @@ func (m *BackendManager) CompleteMultipartUpload(ctx context.Context, uploadID s
 	}
 
 	// Record the final object location and update quota
-	if err := m.recordObjectOrCleanup(ctx, span, backend, mu.ObjectKey, mu.BackendName, uploadSize, enc); err != nil {
+	if err := mp.recordObjectOrCleanup(ctx, span, backend, mu.ObjectKey, mu.BackendName, uploadSize, enc); err != nil {
 		return "", err
 	}
 
 	// Clean up part objects from backend
 	for _, part := range parts {
 		partKey := multipartPartKey(uploadID, part.PartNumber)
-		m.deleteOrEnqueue(ctx, backend, mu.BackendName, partKey, "complete_part_cleanup")
+		mp.deleteOrEnqueue(ctx, backend, mu.BackendName, partKey, "complete_part_cleanup")
 	}
 
 	// Clean up multipart records from database
-	if err := m.store.DeleteMultipartUpload(ctx, uploadID); err != nil {
+	if err := mp.store.DeleteMultipartUpload(ctx, uploadID); err != nil {
 		span.RecordError(err)
 	}
 
-	m.recordOperation(operation, mu.BackendName, start, nil)
+	mp.recordOperation(operation, mu.BackendName, start, nil)
 	// API calls: N GetObject (read parts) + 1 PutObject (assembled) + N DeleteObject (cleanup)
-	m.usage.Record(mu.BackendName, int64(2*len(parts)+1), 0, uploadSize)
+	mp.usage.Record(mu.BackendName, int64(2*len(parts)+1), 0, uploadSize)
 
 	audit.Log(ctx, "storage.CompleteMultipartUpload",
 		slog.String("key", mu.ObjectKey),
@@ -349,7 +361,7 @@ func (m *BackendManager) CompleteMultipartUpload(ctx context.Context, uploadID s
 
 // AbortMultipartUpload cleans up an in-progress multipart upload, removing
 // all part objects from the backend and the upload records from the database.
-func (m *BackendManager) AbortMultipartUpload(ctx context.Context, uploadID string) error {
+func (mp *MultipartManager) AbortMultipartUpload(ctx context.Context, uploadID string) error {
 	const operation = "AbortMultipartUpload"
 	start := time.Now()
 
@@ -358,18 +370,18 @@ func (m *BackendManager) AbortMultipartUpload(ctx context.Context, uploadID stri
 	)
 	defer span.End()
 
-	mu, err := m.store.GetMultipartUpload(ctx, uploadID)
+	mu, err := mp.store.GetMultipartUpload(ctx, uploadID)
 	if err != nil {
-		return m.classifyWriteError(span, operation, err)
+		return mp.classifyWriteError(span, operation, err)
 	}
 
-	backend, err := m.getBackend(mu.BackendName)
+	backend, err := mp.getBackend(mu.BackendName)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return err
 	}
 
-	parts, err := m.store.GetParts(ctx, uploadID)
+	parts, err := mp.store.GetParts(ctx, uploadID)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)
@@ -379,17 +391,17 @@ func (m *BackendManager) AbortMultipartUpload(ctx context.Context, uploadID stri
 	// Delete part objects from backend
 	for _, part := range parts {
 		partKey := multipartPartKey(uploadID, part.PartNumber)
-		m.deleteOrEnqueue(ctx, backend, mu.BackendName, partKey, "abort_part_cleanup")
+		mp.deleteOrEnqueue(ctx, backend, mu.BackendName, partKey, "abort_part_cleanup")
 	}
 
 	// Delete multipart records from database
-	if err := m.store.DeleteMultipartUpload(ctx, uploadID); err != nil {
+	if err := mp.store.DeleteMultipartUpload(ctx, uploadID); err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return err
 	}
 
-	m.recordOperation(operation, mu.BackendName, start, nil)
-	m.usage.Record(mu.BackendName, int64(len(parts)+1), 0, 0) // N deletes + 1 abort
+	mp.recordOperation(operation, mu.BackendName, start, nil)
+	mp.usage.Record(mu.BackendName, int64(len(parts)+1), 0, 0) // N deletes + 1 abort
 
 	audit.Log(ctx, "storage.AbortMultipartUpload",
 		slog.String("upload_id", uploadID),
@@ -404,14 +416,19 @@ func (m *BackendManager) AbortMultipartUpload(ctx context.Context, uploadID stri
 
 // ListMultipartUploads returns active multipart uploads matching the given
 // prefix, up to maxUploads results. Pass-through to the metadata store.
-func (m *BackendManager) ListMultipartUploads(ctx context.Context, prefix string, maxUploads int) ([]MultipartUpload, error) {
-	return m.store.ListMultipartUploads(ctx, prefix, maxUploads)
+func (mp *MultipartManager) ListMultipartUploads(ctx context.Context, prefix string, maxUploads int) ([]MultipartUpload, error) {
+	return mp.store.ListMultipartUploads(ctx, prefix, maxUploads)
+}
+
+// GetParts returns all parts for a multipart upload.
+func (mp *MultipartManager) GetParts(ctx context.Context, uploadID string) ([]MultipartPart, error) {
+	return mp.store.GetParts(ctx, uploadID)
 }
 
 // CleanupStaleMultipartUploads aborts multipart uploads older than the given
 // duration. Run periodically to prevent quota leaks from abandoned uploads.
-func (m *BackendManager) CleanupStaleMultipartUploads(ctx context.Context, olderThan time.Duration) {
-	uploads, err := m.store.GetStaleMultipartUploads(ctx, olderThan)
+func (mp *MultipartManager) CleanupStaleMultipartUploads(ctx context.Context, olderThan time.Duration) {
+	uploads, err := mp.store.GetStaleMultipartUploads(ctx, olderThan)
 	if err != nil {
 		slog.Error("Failed to get stale multipart uploads", "error", err)
 		return
@@ -420,7 +437,7 @@ func (m *BackendManager) CleanupStaleMultipartUploads(ctx context.Context, older
 	cleaned := 0
 	for _, mu := range uploads {
 		slog.Info("Cleaning up stale multipart upload", "upload_id", mu.UploadID, "key", mu.ObjectKey)
-		if err := m.AbortMultipartUpload(ctx, mu.UploadID); err != nil {
+		if err := mp.AbortMultipartUpload(ctx, mu.UploadID); err != nil {
 			slog.Error("Failed to clean up upload", "upload_id", mu.UploadID, "error", err)
 		} else {
 			cleaned++
@@ -432,5 +449,26 @@ func (m *BackendManager) CleanupStaleMultipartUploads(ctx context.Context, older
 			slog.Int("cleaned", cleaned),
 			slog.Int("total_stale", len(uploads)),
 		)
+	}
+}
+
+// abortMultipartUploadsOnBackend aborts all in-progress multipart uploads
+// on the given backend.
+func (mp *MultipartManager) abortMultipartUploadsOnBackend(ctx context.Context, backendName string) {
+	uploads, err := mp.store.GetStaleMultipartUploads(ctx, 0)
+	if err != nil {
+		slog.Error("Drain: failed to list multipart uploads", "error", err)
+		return
+	}
+
+	for _, mu := range uploads {
+		if mu.BackendName != backendName {
+			continue
+		}
+		slog.Info("Drain: aborting multipart upload", "upload_id", mu.UploadID, "key", mu.ObjectKey)
+		if err := mp.AbortMultipartUpload(ctx, mu.UploadID); err != nil {
+			slog.Error("Drain: failed to abort multipart upload",
+				"upload_id", mu.UploadID, "error", err)
+		}
 	}
 }
