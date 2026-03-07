@@ -179,7 +179,7 @@ func (h *Handler) handleUsageFlush(w http.ResponseWriter, r *http.Request) {
 
 // handleReplicate triggers one replication cycle.
 func (h *Handler) handleReplicate(w http.ResponseWriter, r *http.Request) {
-	rcfg := h.manager.ReplicationConfig()
+	rcfg := h.manager.Replicator.Config()
 	if rcfg == nil || rcfg.Factor <= 1 {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"status":         "skipped",
@@ -189,7 +189,7 @@ func (h *Handler) handleReplicate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	created, err := h.manager.Replicate(r.Context(), *rcfg)
+	created, err := h.manager.Replicator.Replicate(r.Context(), *rcfg)
 	if err != nil {
 		slog.Error("Admin: replication failed", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "replication failed"})
@@ -231,7 +231,7 @@ func (h *Handler) handleLogLevel(w http.ResponseWriter, r *http.Request) {
 // handleStartDrain begins draining a backend.
 func (h *Handler) handleStartDrain(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if err := h.manager.StartDrain(r.Context(), name); err != nil {
+	if err := h.manager.DrainManager.StartDrain(r.Context(), name); err != nil {
 		slog.Error("Admin: drain start failed", "backend", name, "error", err)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "drain operation failed"})
 		return
@@ -242,7 +242,7 @@ func (h *Handler) handleStartDrain(w http.ResponseWriter, r *http.Request) {
 // handleDrainProgress returns the current state of a drain operation.
 func (h *Handler) handleDrainProgress(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	progress, err := h.manager.GetDrainProgress(r.Context(), name)
+	progress, err := h.manager.DrainManager.GetDrainProgress(r.Context(), name)
 	if err != nil {
 		slog.Error("Admin: drain progress failed", "backend", name, "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "drain operation failed"})
@@ -254,7 +254,7 @@ func (h *Handler) handleDrainProgress(w http.ResponseWriter, r *http.Request) {
 // handleCancelDrain cancels an active drain operation.
 func (h *Handler) handleCancelDrain(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if err := h.manager.CancelDrain(name); err != nil {
+	if err := h.manager.DrainManager.CancelDrain(name); err != nil {
 		slog.Error("Admin: drain cancel failed", "backend", name, "error", err)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "drain operation failed"})
 		return
@@ -267,7 +267,7 @@ func (h *Handler) handleRemoveBackend(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	purge := r.URL.Query().Get("purge") == "true"
 
-	if err := h.manager.RemoveBackend(r.Context(), name, purge); err != nil {
+	if err := h.manager.DrainManager.RemoveBackend(r.Context(), name, purge); err != nil {
 		slog.Error("Admin: remove backend failed", "backend", name, "error", err)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "remove failed"})
 		return

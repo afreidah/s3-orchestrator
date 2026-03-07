@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/audit"
@@ -25,12 +26,38 @@ import (
 )
 
 // -------------------------------------------------------------------------
+// REPLICATOR TYPE
+// -------------------------------------------------------------------------
+
+// Replicator creates additional copies of under-replicated objects across
+// backends. Embeds *backendCore for access to shared infrastructure.
+type Replicator struct {
+	*backendCore
+	cfg atomic.Pointer[config.ReplicationConfig]
+}
+
+// NewReplicator creates a Replicator that shares the given core infrastructure.
+func NewReplicator(core *backendCore) *Replicator {
+	return &Replicator{backendCore: core}
+}
+
+// SetConfig atomically stores the replication configuration.
+func (r *Replicator) SetConfig(cfg *config.ReplicationConfig) {
+	r.cfg.Store(cfg)
+}
+
+// Config returns the current replication configuration.
+func (r *Replicator) Config() *config.ReplicationConfig {
+	return r.cfg.Load()
+}
+
+// -------------------------------------------------------------------------
 // PUBLIC API
 // -------------------------------------------------------------------------
 
 // Replicate finds under-replicated objects and creates additional copies to
 // reach the target replication factor. Returns the number of copies created.
-func (m *BackendManager) Replicate(ctx context.Context, cfg config.ReplicationConfig) (int, error) {
+func (r *Replicator) Replicate(ctx context.Context, cfg config.ReplicationConfig) (int, error) {
 	start := time.Now()
 	ctx = audit.WithRequestID(ctx, audit.NewID())
 
@@ -44,15 +71,15 @@ func (m *BackendManager) Replicate(ctx context.Context, cfg config.ReplicationCo
 	)
 
 	// --- Identify sustained-unhealthy backends ---
-	excluded := m.unhealthyBackends(cfg.UnhealthyThreshold)
+	excluded := r.unhealthyBackends(cfg.UnhealthyThreshold)
 
 	// --- Find under-replicated objects ---
 	var locations []ObjectLocation
 	var err error
 	if len(excluded) > 0 {
-		locations, err = m.store.GetUnderReplicatedObjectsExcluding(ctx, cfg.Factor, cfg.BatchSize, excluded)
+		locations, err = r.store.GetUnderReplicatedObjectsExcluding(ctx, cfg.Factor, cfg.BatchSize, excluded)
 	} else {
-		locations, err = m.store.GetUnderReplicatedObjects(ctx, cfg.Factor, cfg.BatchSize)
+		locations, err = r.store.GetUnderReplicatedObjects(ctx, cfg.Factor, cfg.BatchSize)
 	}
 	if err != nil {
 		telemetry.ReplicationRunsTotal.WithLabelValues("error").Inc()
@@ -77,7 +104,7 @@ func (m *BackendManager) Replicate(ctx context.Context, cfg config.ReplicationCo
 			continue
 		}
 
-		n, replicateErr := m.replicateObject(ctx, key, copies, needed)
+		n, replicateErr := r.replicateObject(ctx, key, copies, needed)
 		if replicateErr != nil {
 			slog.Warn("Replication: object failed", "key", key, "error", replicateErr)
 		}
@@ -115,7 +142,7 @@ func groupByKey(locations []ObjectLocation) map[string][]ObjectLocation {
 
 // replicateObject creates up to `needed` additional copies of a single object.
 // Returns the number of copies successfully created.
-func (m *BackendManager) replicateObject(ctx context.Context, key string, existingCopies []ObjectLocation, needed int) (int, error) {
+func (r *Replicator) replicateObject(ctx context.Context, key string, existingCopies []ObjectLocation, needed int) (int, error) {
 	// Build exclusion set of backends that already hold a copy
 	exclusion := make(map[string]bool, len(existingCopies))
 	for _, c := range existingCopies {
@@ -125,7 +152,7 @@ func (m *BackendManager) replicateObject(ctx context.Context, key string, existi
 	created := 0
 	for i := 0; i < needed; i++ {
 		// --- Find a target backend with space ---
-		target := m.findReplicaTarget(ctx, key, existingCopies[0].SizeBytes, exclusion)
+		target := r.findReplicaTarget(ctx, key, existingCopies[0].SizeBytes, exclusion)
 		if target == "" {
 			slog.Warn("Replication: no target backend with space",
 				"key", key, "needed", needed-i)
@@ -133,7 +160,7 @@ func (m *BackendManager) replicateObject(ctx context.Context, key string, existi
 		}
 
 		// --- Copy data from an existing copy to the target ---
-		source, err := m.copyToReplica(ctx, key, existingCopies, target)
+		source, err := r.copyToReplica(ctx, key, existingCopies, target)
 		if err != nil {
 			slog.Warn("Replication: failed to copy object data",
 				"key", key, "target", target, "error", err)
@@ -142,12 +169,12 @@ func (m *BackendManager) replicateObject(ctx context.Context, key string, existi
 		}
 
 		// --- Record the replica in the database (conditional insert) ---
-		inserted, err := m.store.RecordReplica(ctx, key, target, source, existingCopies[0].SizeBytes)
+		inserted, err := r.store.RecordReplica(ctx, key, target, source, existingCopies[0].SizeBytes)
 		if err != nil {
 			slog.Error("Replication: failed to record replica",
 				"key", key, "target", target, "error", err)
 			// Clean up orphan on target
-			m.cleanupOrphan(ctx, target, key)
+			r.cleanupOrphan(ctx, target, key)
 			telemetry.ReplicationErrorsTotal.Inc()
 			continue
 		}
@@ -156,12 +183,12 @@ func (m *BackendManager) replicateObject(ctx context.Context, key string, existi
 			// Source copy was deleted/overwritten during replication
 			slog.Info("Replication: source copy gone, cleaning up orphan",
 				"key", key, "target", target)
-			m.cleanupOrphan(ctx, target, key)
+			r.cleanupOrphan(ctx, target, key)
 			continue
 		}
 
-		m.usage.Record(source, 1, existingCopies[0].SizeBytes, 0) // source: Get + egress
-		m.usage.Record(target, 1, 0, existingCopies[0].SizeBytes) // target: Put + ingress
+		r.usage.Record(source, 1, existingCopies[0].SizeBytes, 0) // source: Get + egress
+		r.usage.Record(target, 1, 0, existingCopies[0].SizeBytes) // target: Put + ingress
 
 		audit.Log(ctx, "replication.copy",
 			slog.String("key", key),
@@ -179,18 +206,18 @@ func (m *BackendManager) replicateObject(ctx context.Context, key string, existi
 
 // findReplicaTarget selects a backend that has enough space and doesn't already
 // hold a copy. Returns empty string if no suitable target exists.
-func (m *BackendManager) findReplicaTarget(ctx context.Context, key string, size int64, exclusion map[string]bool) string {
-	stats, err := m.store.GetQuotaStats(ctx)
+func (r *Replicator) findReplicaTarget(ctx context.Context, key string, size int64, exclusion map[string]bool) string {
+	stats, err := r.store.GetQuotaStats(ctx)
 	if err != nil {
 		slog.Warn("Replication: failed to get quota stats", "error", err)
 		return ""
 	}
 
-	for _, name := range m.excludeDraining(m.order) {
+	for _, name := range r.excludeDraining(r.order) {
 		if exclusion[name] {
 			continue
 		}
-		if !m.isBackendHealthy(name) {
+		if !r.isBackendHealthy(name) {
 			continue
 		}
 		stat, ok := stats[name]
@@ -208,16 +235,16 @@ func (m *BackendManager) findReplicaTarget(ctx context.Context, key string, size
 // copyToReplica reads the object from an existing copy and writes it to the
 // target backend. Tries each existing copy in order for failover. Returns the
 // source backend name that was successfully read from.
-func (m *BackendManager) copyToReplica(ctx context.Context, key string, copies []ObjectLocation, target string) (string, error) {
-	targetBackend, err := m.getBackend(target)
+func (r *Replicator) copyToReplica(ctx context.Context, key string, copies []ObjectLocation, target string) (string, error) {
+	targetBackend, err := r.getBackend(target)
 	if err != nil {
 		return "", err
 	}
 
 	// Prefer healthy sources to avoid circuit breaker latency/failures.
 	slices.SortStableFunc(copies, func(a, b ObjectLocation) int {
-		aOK := m.isBackendHealthy(a.BackendName)
-		bOK := m.isBackendHealthy(b.BackendName)
+		aOK := r.isBackendHealthy(a.BackendName)
+		bOK := r.isBackendHealthy(b.BackendName)
 		if aOK == bOK {
 			return 0
 		}
@@ -228,12 +255,12 @@ func (m *BackendManager) copyToReplica(ctx context.Context, key string, copies [
 	})
 
 	for _, cp := range copies {
-		srcBackend, ok := m.backends[cp.BackendName]
+		srcBackend, ok := r.backends[cp.BackendName]
 		if !ok {
 			continue
 		}
 
-		err := m.streamCopy(ctx, srcBackend, targetBackend, key)
+		err := r.streamCopy(ctx, srcBackend, targetBackend, key)
 		if err == nil {
 			return cp.BackendName, nil
 		}
@@ -252,21 +279,21 @@ func (m *BackendManager) copyToReplica(ctx context.Context, key string, copies [
 
 // cleanupOrphan deletes an object from a backend when the DB record was not
 // created (e.g. source was deleted during replication).
-func (m *BackendManager) cleanupOrphan(ctx context.Context, backendName, key string) {
-	backend, ok := m.backends[backendName]
+func (r *Replicator) cleanupOrphan(ctx context.Context, backendName, key string) {
+	backend, ok := r.backends[backendName]
 	if !ok {
 		return
 	}
-	m.deleteOrEnqueue(ctx, backend, backendName, key, "replication_orphan")
-	m.usage.Record(backendName, 1, 0, 0)
+	r.deleteOrEnqueue(ctx, backend, backendName, key, "replication_orphan")
+	r.usage.Record(backendName, 1, 0, 0)
 }
 
 // unhealthyBackends returns backend names whose circuit breakers have been
 // open longer than the given threshold. Returns nil when all backends are
 // healthy or circuit breakers are not enabled.
-func (m *BackendManager) unhealthyBackends(threshold time.Duration) []string {
+func (r *Replicator) unhealthyBackends(threshold time.Duration) []string {
 	var names []string
-	for name, backend := range m.backends {
+	for name, backend := range r.backends {
 		cbb, ok := backend.(*CircuitBreakerBackend)
 		if !ok {
 			continue
@@ -283,8 +310,8 @@ func (m *BackendManager) unhealthyBackends(threshold time.Duration) []string {
 
 // isBackendHealthy returns true if the backend has a closed circuit breaker
 // or has no circuit breaker wrapper.
-func (m *BackendManager) isBackendHealthy(name string) bool {
-	backend, ok := m.backends[name]
+func (r *Replicator) isBackendHealthy(name string) bool {
+	backend, ok := r.backends[name]
 	if !ok {
 		return false
 	}

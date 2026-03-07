@@ -861,7 +861,7 @@ func TestRebalancePackTight(t *testing.T) {
 		Threshold: 0,
 	}
 
-	moved, err := testManager.Rebalance(ctx, packCfg)
+	moved, err := testManager.Rebalancer.Rebalance(ctx, packCfg)
 	if err != nil {
 		t.Fatalf("Rebalance: %v", err)
 	}
@@ -901,7 +901,7 @@ func TestRebalancePackTight(t *testing.T) {
 	}
 
 	// minio-1 is 97.6% (1000/1024), minio-2 is 0% — nothing to consolidate
-	moved, err = testManager.Rebalance(ctx, packCfg)
+	moved, err = testManager.Rebalancer.Rebalance(ctx, packCfg)
 	if err != nil {
 		t.Fatalf("Rebalance noop: %v", err)
 	}
@@ -971,7 +971,7 @@ func TestRebalancePackTinyToFuller(t *testing.T) {
 		t.Logf("before: minio-1=%d (%.1f%%) minio-2=%d (%.1f%%)",
 			m1Before, float64(m1Before)/1024*100, m2Before, float64(m2Before)/2048*100)
 
-		moved, err := testManager.Rebalance(ctx, packCfg)
+		moved, err := testManager.Rebalancer.Rebalance(ctx, packCfg)
 		if err != nil {
 			t.Fatalf("Rebalance: %v", err)
 		}
@@ -1049,7 +1049,7 @@ func TestRebalancePackTinyToFuller(t *testing.T) {
 		t.Logf("before: minio-1=%d minio-2=%d",
 			queryQuotaUsed(t, "minio-1"), queryQuotaUsed(t, "minio-2"))
 
-		moved, err := testManager.Rebalance(ctx, packCfg)
+		moved, err := testManager.Rebalancer.Rebalance(ctx, packCfg)
 		if err != nil {
 			t.Fatalf("Rebalance: %v", err)
 		}
@@ -1103,7 +1103,7 @@ func TestRebalanceSpreadEven(t *testing.T) {
 		Threshold: 0,
 	}
 
-	moved, err := testManager.Rebalance(ctx, spreadCfg)
+	moved, err := testManager.Rebalancer.Rebalance(ctx, spreadCfg)
 	if err != nil {
 		t.Fatalf("Rebalance: %v", err)
 	}
@@ -1214,7 +1214,7 @@ func TestRebalanceSpreadAlreadyBalanced(t *testing.T) {
 		Threshold: 0,
 	}
 
-	moved, err := testManager.Rebalance(ctx, spreadCfg)
+	moved, err := testManager.Rebalancer.Rebalance(ctx, spreadCfg)
 	if err != nil {
 		t.Fatalf("Rebalance: %v", err)
 	}
@@ -1261,7 +1261,7 @@ func TestRebalanceSpreadOversizedObject(t *testing.T) {
 		Threshold: 0,
 	}
 
-	moved, err := testManager.Rebalance(ctx, spreadCfg)
+	moved, err := testManager.Rebalancer.Rebalance(ctx, spreadCfg)
 	if err != nil {
 		t.Fatalf("Rebalance: %v", err)
 	}
@@ -1309,7 +1309,7 @@ func TestRebalanceSpreadStableAcrossCycles(t *testing.T) {
 	}
 
 	// Cycle 1
-	moved1, err := testManager.Rebalance(ctx, spreadCfg)
+	moved1, err := testManager.Rebalancer.Rebalance(ctx, spreadCfg)
 	if err != nil {
 		t.Fatalf("Cycle 1: %v", err)
 	}
@@ -1318,7 +1318,7 @@ func TestRebalanceSpreadStableAcrossCycles(t *testing.T) {
 	t.Logf("cycle 1: moved %d, minio-1=%d minio-2=%d", moved1, m1After1, m2After1)
 
 	// Cycle 2 — should be a no-op, nothing bounces
-	moved2, err := testManager.Rebalance(ctx, spreadCfg)
+	moved2, err := testManager.Rebalancer.Rebalance(ctx, spreadCfg)
 	if err != nil {
 		t.Fatalf("Cycle 2: %v", err)
 	}
@@ -1365,7 +1365,7 @@ func TestRebalanceSpreadBatchLimited(t *testing.T) {
 	}
 
 	// Cycle 1: moves 2
-	moved1, err := testManager.Rebalance(ctx, smallBatchCfg)
+	moved1, err := testManager.Rebalancer.Rebalance(ctx, smallBatchCfg)
 	if err != nil {
 		t.Fatalf("Cycle 1: %v", err)
 	}
@@ -1378,7 +1378,7 @@ func TestRebalanceSpreadBatchLimited(t *testing.T) {
 	}
 
 	// Cycle 2: moves remaining needed
-	moved2, err := testManager.Rebalance(ctx, smallBatchCfg)
+	moved2, err := testManager.Rebalancer.Rebalance(ctx, smallBatchCfg)
 	if err != nil {
 		t.Fatalf("Cycle 2: %v", err)
 	}
@@ -1392,7 +1392,7 @@ func TestRebalanceSpreadBatchLimited(t *testing.T) {
 	}
 
 	// Cycle 3: should stabilize
-	moved3, err := testManager.Rebalance(ctx, smallBatchCfg)
+	moved3, err := testManager.Rebalancer.Rebalance(ctx, smallBatchCfg)
 	if err != nil {
 		t.Fatalf("Cycle 3: %v", err)
 	}
@@ -1458,7 +1458,7 @@ func TestRebalanceThresholdSkip(t *testing.T) {
 		Threshold: 0.99, // extremely high threshold
 	}
 
-	moved, err := testManager.Rebalance(ctx, skipCfg)
+	moved, err := testManager.Rebalancer.Rebalance(ctx, skipCfg)
 	if err != nil {
 		t.Fatalf("Rebalance: %v", err)
 	}
@@ -1847,7 +1847,7 @@ func TestRebalancerWithReplicas(t *testing.T) {
 		BatchSize: 10,
 		Threshold: 0,
 	}
-	_, err = testManager.Rebalance(ctx, rebalCfg)
+	_, err = testManager.Rebalancer.Rebalance(ctx, rebalCfg)
 	if err != nil {
 		t.Fatalf("Rebalance: %v", err)
 	}
@@ -3292,7 +3292,7 @@ func TestDrainBackend(t *testing.T) {
 	}
 
 	// Start drain of minio-1.
-	if err := testManager.StartDrain(ctx, "minio-1"); err != nil {
+	if err := testManager.DrainManager.StartDrain(ctx, "minio-1"); err != nil {
 		t.Fatalf("StartDrain: %v", err)
 	}
 
@@ -3305,7 +3305,7 @@ func TestDrainBackend(t *testing.T) {
 		default:
 		}
 
-		progress, err := testManager.GetDrainProgress(ctx, "minio-1")
+		progress, err := testManager.DrainManager.GetDrainProgress(ctx, "minio-1")
 		if err != nil {
 			t.Fatalf("GetDrainProgress: %v", err)
 		}
@@ -3370,7 +3370,7 @@ func TestDrainBackend_WriteExclusion(t *testing.T) {
 	}
 
 	// Start drain of minio-1.
-	if err := testManager.StartDrain(ctx, "minio-1"); err != nil {
+	if err := testManager.DrainManager.StartDrain(ctx, "minio-1"); err != nil {
 		t.Fatalf("StartDrain: %v", err)
 	}
 
@@ -3398,7 +3398,7 @@ func TestDrainBackend_WriteExclusion(t *testing.T) {
 			t.Fatal("drain did not complete within 30s")
 		default:
 		}
-		progress, err := testManager.GetDrainProgress(ctx, "minio-1")
+		progress, err := testManager.DrainManager.GetDrainProgress(ctx, "minio-1")
 		if err != nil {
 			t.Fatalf("GetDrainProgress: %v", err)
 		}
@@ -3432,7 +3432,7 @@ func TestRemoveBackend(t *testing.T) {
 	}
 
 	// Remove without purge (just DB records).
-	if err := testManager.RemoveBackend(ctx, "minio-2", false); err != nil {
+	if err := testManager.DrainManager.RemoveBackend(ctx, "minio-2", false); err != nil {
 		t.Fatalf("RemoveBackend: %v", err)
 	}
 

@@ -1,12 +1,12 @@
 // -------------------------------------------------------------------------------
-// Object Operations - PUT, GET, HEAD, DELETE, COPY, DeleteObjects
+// Object Manager - PUT, GET, HEAD, DELETE, COPY, DeleteObjects, ListObjects
 //
 // Author: Alex Freidah
 //
-// Object-level CRUD operations on the BackendManager. Handles backend selection
-// via routing strategy, read failover across replicas, broadcast reads during
-// degraded mode, and usage limit enforcement on reads and writes. DeleteObjects
-// provides batch deletion with concurrent backend I/O.
+// Object-level CRUD operations. Handles backend selection via routing strategy,
+// read failover across replicas, broadcast reads during degraded mode, and
+// usage limit enforcement on reads and writes. DeleteObjects provides batch
+// deletion with concurrent backend I/O.
 // -------------------------------------------------------------------------------
 
 package storage
@@ -30,6 +30,25 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+// ObjectManager handles object-level CRUD operations with read failover,
+// broadcast reads during degraded mode, and location caching.
+type ObjectManager struct {
+	*backendCore
+	encryptor         *encryption.Encryptor
+	cache             *LocationCache
+	parallelBroadcast bool
+}
+
+// NewObjectManager creates an ObjectManager sharing the given core infrastructure.
+func NewObjectManager(core *backendCore, encryptor *encryption.Encryptor, cache *LocationCache, parallelBroadcast bool) *ObjectManager {
+	return &ObjectManager{
+		backendCore:       core,
+		encryptor:         encryptor,
+		cache:             cache,
+		parallelBroadcast: parallelBroadcast,
+	}
+}
+
 // wrapReader returns an io.ReadCloser that reads from r but closes c.
 // Used to replace io.NopCloser when the decrypt reader wraps a backend
 // response body — Close must still reach the original body so the
@@ -46,7 +65,7 @@ func wrapReader(r io.Reader, c io.Closer) io.ReadCloser {
 // -------------------------------------------------------------------------
 
 // PutObject uploads an object to the first backend with available quota.
-func (m *BackendManager) PutObject(ctx context.Context, key string, body io.Reader, size int64, contentType string, metadata map[string]string) (string, error) {
+func (o *ObjectManager) PutObject(ctx context.Context, key string, body io.Reader, size int64, contentType string, metadata map[string]string) (string, error) {
 	const operation = "PutObject"
 	start := time.Now()
 
@@ -58,7 +77,7 @@ func (m *BackendManager) PutObject(ctx context.Context, key string, body io.Read
 	defer span.End()
 
 	// --- Filter backends within usage limits and exclude draining ---
-	eligible := m.excludeDraining(m.usage.BackendsWithinLimits(m.order, 1, 0, size))
+	eligible := o.excludeDraining(o.usage.BackendsWithinLimits(o.order, 1, 0, size))
 	if len(eligible) == 0 {
 		telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation, "write").Inc()
 		span.SetStatus(codes.Error, "usage limits exceeded on all backends")
@@ -66,15 +85,15 @@ func (m *BackendManager) PutObject(ctx context.Context, key string, body io.Read
 	}
 
 	// --- Find backend with available quota ---
-	backendName, err := m.selectBackendForWrite(ctx, size, eligible)
+	backendName, err := o.selectBackendForWrite(ctx, size, eligible)
 	if err != nil {
-		return "", m.classifyWriteError(span, operation, err)
+		return "", o.classifyWriteError(span, operation, err)
 	}
 
 	span.SetAttributes(telemetry.AttrBackendName.String(backendName))
 
 	// --- Get the backend ---
-	backend, err := m.getBackend(backendName)
+	backend, err := o.getBackend(backendName)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return "", err
@@ -84,8 +103,8 @@ func (m *BackendManager) PutObject(ctx context.Context, key string, body io.Read
 	var enc *EncryptionMeta
 	uploadBody := body
 	uploadSize := size
-	if m.encryptor != nil {
-		encResult, err := m.encryptor.Encrypt(ctx, body, size)
+	if o.encryptor != nil {
+		encResult, err := o.encryptor.Encrypt(ctx, body, size)
 		if err != nil {
 			telemetry.EncryptionErrorsTotal.WithLabelValues("encrypt", "encrypt_failed").Inc()
 			span.SetStatus(codes.Error, err.Error())
@@ -103,27 +122,27 @@ func (m *BackendManager) PutObject(ctx context.Context, key string, body io.Read
 	}
 
 	// --- Upload to backend ---
-	bctx, bcancel := m.withTimeout(ctx)
+	bctx, bcancel := o.withTimeout(ctx)
 	defer bcancel()
 	etag, err := backend.PutObject(bctx, key, uploadBody, uploadSize, contentType, metadata)
 	if err != nil {
-		m.usage.Record(backendName, 1, 0, 0) // API call was made even on failure
+		o.usage.Record(backendName, 1, 0, 0) // API call was made even on failure
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)
 		return "", err
 	}
 
 	// --- Record object location and update quota ---
-	if err := m.recordObjectOrCleanup(ctx, span, backend, key, backendName, uploadSize, enc); err != nil {
+	if err := o.recordObjectOrCleanup(ctx, span, backend, key, backendName, uploadSize, enc); err != nil {
 		return "", err
 	}
 
 	// --- Invalidate location cache ---
-	m.cache.Delete(key)
+	o.cache.Delete(key)
 
 	// --- Record metrics ---
-	m.recordOperation(operation, backendName, start, nil)
-	m.usage.Record(backendName, 1, 0, size)
+	o.recordOperation(operation, backendName, start, nil)
+	o.usage.Record(backendName, 1, 0, size)
 
 	audit.Log(ctx, "storage.PutObject",
 		slog.String("key", key),
@@ -147,7 +166,7 @@ var errUsageLimitSkip = errors.New("backend skipped: usage limits exceeded")
 // order until one succeeds. The tryBackend callback should attempt the operation
 // and return the object size (for span attributes) or an error to try the next copy.
 // Returns the name of the backend that succeeded alongside any error.
-func (m *BackendManager) withReadFailover(ctx context.Context, operation, key string, tryBackend func(ctx context.Context, backendName string, backend ObjectBackend) (int64, error)) (string, error) {
+func (o *ObjectManager) withReadFailover(ctx context.Context, operation, key string, tryBackend func(ctx context.Context, backendName string, backend ObjectBackend) (int64, error)) (string, error) {
 	start := time.Now()
 
 	ctx, span := telemetry.StartSpan(ctx, "Manager "+operation,
@@ -155,14 +174,14 @@ func (m *BackendManager) withReadFailover(ctx context.Context, operation, key st
 	)
 	defer span.End()
 
-	locations, err := m.store.GetAllObjectLocations(ctx, key)
+	locations, err := o.store.GetAllObjectLocations(ctx, key)
 	if err != nil {
 		if errors.Is(err, ErrObjectNotFound) {
 			span.SetStatus(codes.Error, "object not found")
 			return "", err
 		}
 		if errors.Is(err, ErrDBUnavailable) {
-			return m.broadcastRead(ctx, operation, key, start, span, tryBackend)
+			return o.broadcastRead(ctx, operation, key, start, span, tryBackend)
 		}
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)
@@ -174,13 +193,13 @@ func (m *BackendManager) withReadFailover(ctx context.Context, operation, key st
 	for i, loc := range locations {
 		span.SetAttributes(telemetry.AttrBackendName.String(loc.BackendName))
 
-		backend, ok := m.backends[loc.BackendName]
+		backend, ok := o.backends[loc.BackendName]
 		if !ok {
 			lastErr = fmt.Errorf("backend %s not found", loc.BackendName)
 			continue
 		}
 
-		bctx, bcancel := m.withTimeout(ctx)
+		bctx, bcancel := o.withTimeout(ctx)
 		size, err := tryBackend(bctx, loc.BackendName, backend)
 		if err != nil {
 			bcancel()
@@ -195,7 +214,7 @@ func (m *BackendManager) withReadFailover(ctx context.Context, operation, key st
 			continue
 		}
 
-		m.recordOperation(operation, loc.BackendName, start, nil)
+		o.recordOperation(operation, loc.BackendName, start, nil)
 		if i > 0 {
 			span.SetAttributes(attribute.Bool("s3proxy.failover", true))
 		}
@@ -219,17 +238,17 @@ func (m *BackendManager) withReadFailover(ctx context.Context, operation, key st
 // broadcastRead tries all backends when the DB is unavailable. Checks the
 // location cache first for a known-good backend, then dispatches to either
 // parallel or sequential broadcast based on configuration.
-func (m *BackendManager) broadcastRead(ctx context.Context, operation, key string, start time.Time, span trace.Span, tryBackend func(ctx context.Context, backendName string, backend ObjectBackend) (int64, error)) (string, error) {
+func (o *ObjectManager) broadcastRead(ctx context.Context, operation, key string, start time.Time, span trace.Span, tryBackend func(ctx context.Context, backendName string, backend ObjectBackend) (int64, error)) (string, error) {
 	span.SetAttributes(attribute.Bool("s3proxy.degraded_mode", true))
 	telemetry.DegradedReadsTotal.WithLabelValues(operation).Inc()
 
 	// --- Check location cache first ---
-	if cachedBackend, ok := m.cache.Get(key); ok {
-		if backend, exists := m.backends[cachedBackend]; exists {
-			bctx, bcancel := m.withTimeout(ctx)
+	if cachedBackend, ok := o.cache.Get(key); ok {
+		if backend, exists := o.backends[cachedBackend]; exists {
+			bctx, bcancel := o.withTimeout(ctx)
 			size, err := tryBackend(bctx, cachedBackend, backend)
 			if err == nil {
-				m.recordOperation(operation, cachedBackend, start, nil)
+				o.recordOperation(operation, cachedBackend, start, nil)
 				span.SetAttributes(attribute.Bool("s3proxy.cache_hit", true))
 				span.SetAttributes(telemetry.AttrObjectSize.Int64(size))
 				span.SetStatus(codes.Ok, "")
@@ -241,21 +260,21 @@ func (m *BackendManager) broadcastRead(ctx context.Context, operation, key strin
 		}
 	}
 
-	if m.parallelBroadcast {
-		return m.parallelBroadcastRead(ctx, operation, key, start, span, tryBackend)
+	if o.parallelBroadcast {
+		return o.parallelBroadcastRead(ctx, operation, key, start, span, tryBackend)
 	}
-	return m.sequentialBroadcastRead(ctx, operation, key, start, span, tryBackend)
+	return o.sequentialBroadcastRead(ctx, operation, key, start, span, tryBackend)
 }
 
 // sequentialBroadcastRead tries each backend in order until one succeeds.
-func (m *BackendManager) sequentialBroadcastRead(ctx context.Context, operation, key string, start time.Time, span trace.Span, tryBackend func(ctx context.Context, backendName string, backend ObjectBackend) (int64, error)) (string, error) {
+func (o *ObjectManager) sequentialBroadcastRead(ctx context.Context, operation, key string, start time.Time, span trace.Span, tryBackend func(ctx context.Context, backendName string, backend ObjectBackend) (int64, error)) (string, error) {
 	var lastErr error
-	for _, name := range m.order {
-		backend, ok := m.backends[name]
+	for _, name := range o.order {
+		backend, ok := o.backends[name]
 		if !ok {
 			continue
 		}
-		bctx, bcancel := m.withTimeout(ctx)
+		bctx, bcancel := o.withTimeout(ctx)
 		size, err := tryBackend(bctx, name, backend)
 		if err != nil {
 			bcancel()
@@ -264,8 +283,8 @@ func (m *BackendManager) sequentialBroadcastRead(ctx context.Context, operation,
 		}
 
 		// Success — cache the result for future degraded reads
-		m.cache.Set(key, name)
-		m.recordOperation(operation, name, start, nil)
+		o.cache.Set(key, name)
+		o.recordOperation(operation, name, start, nil)
 		span.SetAttributes(telemetry.AttrBackendName.String(name))
 		span.SetAttributes(telemetry.AttrObjectSize.Int64(size))
 		span.SetStatus(codes.Ok, "")
@@ -286,7 +305,7 @@ func (m *BackendManager) sequentialBroadcastRead(ctx context.Context, operation,
 
 // parallelBroadcastRead fans out to all backends concurrently and returns
 // the first successful result. Remaining goroutines are cancelled via context.
-func (m *BackendManager) parallelBroadcastRead(ctx context.Context, operation, key string, start time.Time, span trace.Span, tryBackend func(ctx context.Context, backendName string, backend ObjectBackend) (int64, error)) (string, error) {
+func (o *ObjectManager) parallelBroadcastRead(ctx context.Context, operation, key string, start time.Time, span trace.Span, tryBackend func(ctx context.Context, backendName string, backend ObjectBackend) (int64, error)) (string, error) {
 	type broadcastResult struct {
 		name string
 		size int64
@@ -294,16 +313,16 @@ func (m *BackendManager) parallelBroadcastRead(ctx context.Context, operation, k
 	}
 
 	launched := 0
-	ch := make(chan broadcastResult, len(m.order))
+	ch := make(chan broadcastResult, len(o.order))
 
-	for _, name := range m.order {
-		backend, ok := m.backends[name]
+	for _, name := range o.order {
+		backend, ok := o.backends[name]
 		if !ok {
 			continue
 		}
 		launched++
 		go func(beName string, be ObjectBackend) {
-			tctx, tcancel := m.withTimeout(ctx)
+			tctx, tcancel := o.withTimeout(ctx)
 			size, err := tryBackend(tctx, beName, be)
 			if err != nil {
 				tcancel()
@@ -324,8 +343,8 @@ func (m *BackendManager) parallelBroadcastRead(ctx context.Context, operation, k
 		}
 
 		// First success — don't cancel the winning context
-		m.cache.Set(key, r.name)
-		m.recordOperation(operation, r.name, start, nil)
+		o.cache.Set(key, r.name)
+		o.recordOperation(operation, r.name, start, nil)
 		span.SetAttributes(telemetry.AttrBackendName.String(r.name))
 		span.SetAttributes(telemetry.AttrObjectSize.Int64(r.size))
 		span.SetAttributes(attribute.Bool("s3proxy.parallel_broadcast", true))
@@ -351,21 +370,21 @@ func (m *BackendManager) parallelBroadcastRead(ctx context.Context, operation, k
 // primary copy first, then falls back to replicas if the primary fails. When
 // the object is encrypted, the response body is transparently decrypted and
 // the reported size reflects the original plaintext size.
-func (m *BackendManager) GetObject(ctx context.Context, key string, rangeHeader string) (*GetObjectResult, error) {
+func (o *ObjectManager) GetObject(ctx context.Context, key string, rangeHeader string) (*GetObjectResult, error) {
 	var result *GetObjectResult
 	var once sync.Once // protects result write when parallel broadcast is enabled
 
 	// Resolve locations upfront so encryption metadata is available after read.
-	locations, locErr := m.store.GetAllObjectLocations(ctx, key)
+	locations, locErr := o.store.GetAllObjectLocations(ctx, key)
 
-	backendName, err := m.withReadFailover(ctx, "GetObject", key, func(ctx context.Context, beName string, backend ObjectBackend) (int64, error) {
-		if !m.usage.WithinLimits(beName, 1, 0, 0) {
+	backendName, err := o.withReadFailover(ctx, "GetObject", key, func(ctx context.Context, beName string, backend ObjectBackend) (int64, error) {
+		if !o.usage.WithinLimits(beName, 1, 0, 0) {
 			return 0, fmt.Errorf("backend %s: %w", beName, errUsageLimitSkip)
 		}
 
 		// Find encryption metadata for this backend's copy
 		var loc *ObjectLocation
-		if m.encryptor != nil && locErr == nil {
+		if o.encryptor != nil && locErr == nil {
 			for i := range locations {
 				if locations[i].BackendName == beName {
 					loc = &locations[i]
@@ -382,7 +401,7 @@ func (m *BackendManager) GetObject(ctx context.Context, key string, rangeHeader 
 			var ok bool
 			ptStart, ptEnd, ok = parsePlaintextRange(rangeHeader, loc.PlaintextSize)
 			if ok {
-				rng, _ = encryption.CiphertextRange(ptStart, ptEnd, m.encryptor.ChunkSize())
+				rng, _ = encryption.CiphertextRange(ptStart, ptEnd, o.encryptor.ChunkSize())
 				if rng != nil {
 					actualRange = rng.BackendRange
 				}
@@ -391,17 +410,17 @@ func (m *BackendManager) GetObject(ctx context.Context, key string, rangeHeader 
 
 		r, err := backend.GetObject(ctx, key, actualRange)
 		if err != nil {
-			m.usage.Record(beName, 1, 0, 0)
+			o.usage.Record(beName, 1, 0, 0)
 			return 0, err
 		}
-		if !m.usage.WithinLimits(beName, 1, r.Size, 0) {
+		if !o.usage.WithinLimits(beName, 1, r.Size, 0) {
 			_ = r.Body.Close()
-			m.usage.Record(beName, 1, 0, 0)
+			o.usage.Record(beName, 1, 0, 0)
 			return 0, fmt.Errorf("backend %s egress: %w", beName, errUsageLimitSkip)
 		}
 
 		// Decrypt the response body if the object is encrypted
-		if loc != nil && loc.Encrypted && m.encryptor != nil {
+		if loc != nil && loc.Encrypted && o.encryptor != nil {
 			baseNonce, wrappedDEK, unpackErr := encryption.UnpackKeyData(loc.EncryptionKey)
 			if unpackErr != nil {
 				telemetry.EncryptionErrorsTotal.WithLabelValues("decrypt", "unpack_failed").Inc()
@@ -411,7 +430,7 @@ func (m *BackendManager) GetObject(ctx context.Context, key string, rangeHeader 
 
 			if rng != nil {
 				// Range request: decrypt only the fetched chunks
-				plainReader, plainLen, decErr := m.encryptor.DecryptRange(ctx, r.Body, wrappedDEK, loc.KeyID, rng, baseNonce)
+				plainReader, plainLen, decErr := o.encryptor.DecryptRange(ctx, r.Body, wrappedDEK, loc.KeyID, rng, baseNonce)
 				if decErr != nil {
 					telemetry.EncryptionErrorsTotal.WithLabelValues("decrypt_range", "decrypt_failed").Inc()
 					_ = r.Body.Close()
@@ -423,7 +442,7 @@ func (m *BackendManager) GetObject(ctx context.Context, key string, rangeHeader 
 				r.ContentRange = fmt.Sprintf("bytes %d-%d/%d", ptStart, ptEnd, loc.PlaintextSize)
 			} else {
 				// Full read: decrypt the entire ciphertext stream
-				decrypted, decErr := m.encryptor.Decrypt(ctx, r.Body, wrappedDEK, loc.KeyID)
+				decrypted, decErr := o.encryptor.Decrypt(ctx, r.Body, wrappedDEK, loc.KeyID)
 				if decErr != nil {
 					telemetry.EncryptionErrorsTotal.WithLabelValues("decrypt", "decrypt_failed").Inc()
 					_ = r.Body.Close()
@@ -444,7 +463,7 @@ func (m *BackendManager) GetObject(ctx context.Context, key string, rangeHeader 
 	if err != nil {
 		return nil, err
 	}
-	m.usage.Record(backendName, 1, result.Size, 0)
+	o.usage.Record(backendName, 1, result.Size, 0)
 
 	audit.Log(ctx, "storage.GetObject",
 		slog.String("key", key),
@@ -458,25 +477,25 @@ func (m *BackendManager) GetObject(ctx context.Context, key string, rangeHeader 
 // HeadObject retrieves object metadata. Tries the primary copy first, then
 // falls back to replicas if the primary fails. When the object is encrypted,
 // the reported size reflects the original plaintext size.
-func (m *BackendManager) HeadObject(ctx context.Context, key string) (*HeadObjectResult, error) {
+func (o *ObjectManager) HeadObject(ctx context.Context, key string) (*HeadObjectResult, error) {
 	var result *HeadObjectResult
 	var once sync.Once // protects result write when parallel broadcast is enabled
 
 	// Resolve locations upfront so encryption metadata is available.
-	locations, locErr := m.store.GetAllObjectLocations(ctx, key)
+	locations, locErr := o.store.GetAllObjectLocations(ctx, key)
 
-	backendName, err := m.withReadFailover(ctx, "HeadObject", key, func(ctx context.Context, beName string, backend ObjectBackend) (int64, error) {
-		if !m.usage.WithinLimits(beName, 1, 0, 0) {
+	backendName, err := o.withReadFailover(ctx, "HeadObject", key, func(ctx context.Context, beName string, backend ObjectBackend) (int64, error) {
+		if !o.usage.WithinLimits(beName, 1, 0, 0) {
 			return 0, fmt.Errorf("backend %s: %w", beName, errUsageLimitSkip)
 		}
 		r, err := backend.HeadObject(ctx, key)
 		if err != nil {
-			m.usage.Record(beName, 1, 0, 0) // API call was made even on failure
+			o.usage.Record(beName, 1, 0, 0) // API call was made even on failure
 			return 0, err
 		}
 
 		// Return plaintext size for encrypted objects
-		if m.encryptor != nil && locErr == nil {
+		if o.encryptor != nil && locErr == nil {
 			for i := range locations {
 				if locations[i].BackendName == beName && locations[i].Encrypted {
 					r.Size = locations[i].PlaintextSize
@@ -491,7 +510,7 @@ func (m *BackendManager) HeadObject(ctx context.Context, key string) (*HeadObjec
 	if err != nil {
 		return nil, err
 	}
-	m.usage.Record(backendName, 1, 0, 0)
+	o.usage.Record(backendName, 1, 0, 0)
 
 	audit.Log(ctx, "storage.HeadObject",
 		slog.String("key", key),
@@ -509,7 +528,7 @@ func (m *BackendManager) HeadObject(ctx context.Context, key string) (*HeadObjec
 // CopyObject copies an object from sourceKey to destKey. Streams the source
 // through a pipe to avoid buffering the entire object. Supports cross-backend
 // copies and read failover from replicas.
-func (m *BackendManager) CopyObject(ctx context.Context, sourceKey, destKey string) (string, error) {
+func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey string) (string, error) {
 	const operation = "CopyObject"
 	start := time.Now()
 
@@ -520,13 +539,13 @@ func (m *BackendManager) CopyObject(ctx context.Context, sourceKey, destKey stri
 	defer span.End()
 
 	// --- Find all source locations (for failover) ---
-	locations, err := m.store.GetAllObjectLocations(ctx, sourceKey)
+	locations, err := o.store.GetAllObjectLocations(ctx, sourceKey)
 	if err != nil {
 		if errors.Is(err, ErrObjectNotFound) {
 			span.SetStatus(codes.Error, "source object not found")
 			return "", err
 		}
-		return "", m.classifyWriteError(span, operation, err)
+		return "", o.classifyWriteError(span, operation, err)
 	}
 
 	// --- Get source metadata (try each copy, skip over-limit backends) ---
@@ -536,14 +555,14 @@ func (m *BackendManager) CopyObject(ctx context.Context, sourceKey, destKey stri
 	var srcFound bool
 	var srcEnc *EncryptionMeta
 	for _, loc := range locations {
-		if !m.usage.WithinLimits(loc.BackendName, 1, 0, 0) {
+		if !o.usage.WithinLimits(loc.BackendName, 1, 0, 0) {
 			continue
 		}
-		backend, ok := m.backends[loc.BackendName]
+		backend, ok := o.backends[loc.BackendName]
 		if !ok {
 			continue
 		}
-		bctx, bcancel := m.withTimeout(ctx)
+		bctx, bcancel := o.withTimeout(ctx)
 		headResult, err := backend.HeadObject(bctx, sourceKey)
 		bcancel()
 		if err != nil {
@@ -572,18 +591,18 @@ func (m *BackendManager) CopyObject(ctx context.Context, sourceKey, destKey stri
 	span.SetAttributes(telemetry.AttrObjectSize.Int64(size))
 
 	// --- Find destination backend with available quota and usage limits ---
-	destEligible := m.excludeDraining(m.usage.BackendsWithinLimits(m.order, 1, 0, size))
+	destEligible := o.excludeDraining(o.usage.BackendsWithinLimits(o.order, 1, 0, size))
 	if len(destEligible) == 0 {
 		telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation, "write").Inc()
 		span.SetStatus(codes.Error, "usage limits exceeded on all backends")
 		return "", ErrInsufficientStorage
 	}
-	destBackendName, err := m.selectBackendForWrite(ctx, size, destEligible)
+	destBackendName, err := o.selectBackendForWrite(ctx, size, destEligible)
 	if err != nil {
-		return "", m.classifyWriteError(span, operation, err)
+		return "", o.classifyWriteError(span, operation, err)
 	}
 
-	destBackend, err := m.getBackend(destBackendName)
+	destBackend, err := o.getBackend(destBackendName)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return "", err
@@ -596,14 +615,14 @@ func (m *BackendManager) CopyObject(ctx context.Context, sourceKey, destKey stri
 	go func() {
 		defer func() { _ = pw.Close() }()
 		for _, loc := range locations {
-			if !m.usage.WithinLimits(loc.BackendName, 1, size, 0) {
+			if !o.usage.WithinLimits(loc.BackendName, 1, size, 0) {
 				continue
 			}
-			srcBackend, ok := m.backends[loc.BackendName]
+			srcBackend, ok := o.backends[loc.BackendName]
 			if !ok {
 				continue
 			}
-			bctx, bcancel := m.withTimeout(ctx)
+			bctx, bcancel := o.withTimeout(ctx)
 			result, err := srcBackend.GetObject(bctx, sourceKey, "")
 			if err != nil {
 				bcancel()
@@ -633,20 +652,20 @@ func (m *BackendManager) CopyObject(ctx context.Context, sourceKey, destKey stri
 	// --- Record destination location and update quota ---
 	// Preserve encryption metadata: ciphertext is copied as-is so the
 	// destination keeps the same wrapped DEK and key ID.
-	if err := m.recordObjectOrCleanup(ctx, span, destBackend, destKey, destBackendName, size, srcEnc); err != nil {
+	if err := o.recordObjectOrCleanup(ctx, span, destBackend, destKey, destBackendName, size, srcEnc); err != nil {
 		return "", err
 	}
 
 	// --- Invalidate location cache ---
-	m.cache.Delete(destKey)
+	o.cache.Delete(destKey)
 
-	m.recordOperation(operation, destBackendName, start, nil)
+	o.recordOperation(operation, destBackendName, start, nil)
 	var srcName string
 	if sn, ok := <-srcBackendCh; ok {
 		srcName = sn
-		m.usage.Record(srcName, 1, size, 0) // source: Get + egress
+		o.usage.Record(srcName, 1, size, 0) // source: Get + egress
 	}
-	m.usage.Record(destBackendName, 1, 0, size) // dest: Put + ingress
+	o.usage.Record(destBackendName, 1, 0, size) // dest: Put + ingress
 
 	audit.Log(ctx, "storage.CopyObject",
 		slog.String("source_key", sourceKey),
@@ -665,7 +684,7 @@ func (m *BackendManager) CopyObject(ctx context.Context, sourceKey, destKey stri
 // -------------------------------------------------------------------------
 
 // DeleteObject removes an object from the backend where it's stored.
-func (m *BackendManager) DeleteObject(ctx context.Context, key string) error {
+func (o *ObjectManager) DeleteObject(ctx context.Context, key string) error {
 	const operation = "DeleteObject"
 	start := time.Now()
 
@@ -676,38 +695,38 @@ func (m *BackendManager) DeleteObject(ctx context.Context, key string) error {
 	defer span.End()
 
 	// --- Delete all copies from store ---
-	copies, err := m.store.DeleteObject(ctx, key)
+	copies, err := o.store.DeleteObject(ctx, key)
 	if err != nil {
 		if errors.Is(err, ErrObjectNotFound) {
 			// Object not in our tracking - treat as success (idempotent delete)
 			span.SetStatus(codes.Ok, "object not found - treating as success")
 			return nil
 		}
-		return m.classifyWriteError(span, operation, err)
+		return o.classifyWriteError(span, operation, err)
 	}
 
 	span.SetAttributes(attribute.Int("copies.deleted", len(copies)))
 
 	// --- Invalidate location cache ---
-	m.cache.Delete(key)
+	o.cache.Delete(key)
 
 	// --- Delete from each backend that held a copy ---
 	for _, copy := range copies {
-		backend, ok := m.backends[copy.BackendName]
+		backend, ok := o.backends[copy.BackendName]
 		if !ok {
 			slog.Warn("Backend not found for delete",
 				"backend", copy.BackendName, "key", key)
 			continue
 		}
-		m.deleteOrEnqueue(ctx, backend, copy.BackendName, key, "delete_failed")
+		o.deleteOrEnqueue(ctx, backend, copy.BackendName, key, "delete_failed")
 	}
 
 	// --- Record metrics (use first copy's backend for primary) ---
 	if len(copies) > 0 {
-		m.recordOperation(operation, copies[0].BackendName, start, nil)
+		o.recordOperation(operation, copies[0].BackendName, start, nil)
 	}
 	for _, c := range copies {
-		m.usage.Record(c.BackendName, 1, 0, 0)
+		o.usage.Record(c.BackendName, 1, 0, 0)
 	}
 
 	audit.Log(ctx, "storage.DeleteObject",
@@ -733,7 +752,7 @@ type DeleteObjectResult struct {
 // happens sequentially (each key is its own transaction via the existing
 // store.DeleteObject path), while backend S3 deletes run concurrently with
 // bounded parallelism to avoid overwhelming backends.
-func (m *BackendManager) DeleteObjects(ctx context.Context, keys []string) []DeleteObjectResult {
+func (o *ObjectManager) DeleteObjects(ctx context.Context, keys []string) []DeleteObjectResult {
 	const operation = "DeleteObjects"
 	start := time.Now()
 
@@ -755,16 +774,16 @@ func (m *BackendManager) DeleteObjects(ctx context.Context, keys []string) []Del
 	for i, key := range keys {
 		results[i].Key = key
 
-		copies, err := m.store.DeleteObject(ctx, key)
+		copies, err := o.store.DeleteObject(ctx, key)
 		if err != nil {
 			if errors.Is(err, ErrObjectNotFound) {
 				continue // not-found treated as success
 			}
-			results[i].Err = m.classifyWriteError(span, operation, err)
+			results[i].Err = o.classifyWriteError(span, operation, err)
 			continue
 		}
 
-		m.cache.Delete(key)
+		o.cache.Delete(key)
 
 		if len(copies) > 0 {
 			pending = append(pending, pendingBackendDelete{key: key, copies: copies})
@@ -780,7 +799,7 @@ func (m *BackendManager) DeleteObjects(ctx context.Context, keys []string) []Del
 
 	for _, pd := range pending {
 		for _, cp := range pd.copies {
-			backend, ok := m.backends[cp.BackendName]
+			backend, ok := o.backends[cp.BackendName]
 			if !ok {
 				slog.Warn("Backend not found for batch delete",
 					"backend", cp.BackendName, "key", pd.key)
@@ -794,11 +813,11 @@ func (m *BackendManager) DeleteObjects(ctx context.Context, keys []string) []Del
 				defer wg.Done()
 				defer func() { <-sem }()
 
-				err := m.deleteWithTimeout(ctx, be, key)
+				err := o.deleteWithTimeout(ctx, be, key)
 				if err != nil {
 					slog.Warn("Failed to delete object from backend (batch)",
 						"backend", beName, "key", key, "error", err)
-					m.enqueueCleanup(ctx, beName, key, "batch_delete_failed")
+					o.enqueueCleanup(ctx, beName, key, "batch_delete_failed")
 					mu.Lock()
 					backendErrors = append(backendErrors, err)
 					mu.Unlock()
@@ -807,7 +826,7 @@ func (m *BackendManager) DeleteObjects(ctx context.Context, keys []string) []Del
 		}
 
 		for _, cp := range pd.copies {
-			m.usage.Record(cp.BackendName, 1, 0, 0)
+			o.usage.Record(cp.BackendName, 1, 0, 0)
 		}
 	}
 
@@ -828,7 +847,7 @@ func (m *BackendManager) DeleteObjects(ctx context.Context, keys []string) []Del
 		}
 	}
 
-	m.recordOperation(operation, "", start, nil)
+	o.recordOperation(operation, "", start, nil)
 
 	audit.Log(ctx, "storage.DeleteObjects",
 		slog.Int("total_keys", len(keys)),
@@ -863,7 +882,7 @@ type ListObjectsV2Result struct {
 // objects may collapse into a single CommonPrefix, so we loop-fetch from the
 // store until maxKeys post-grouping items are collected or the store is
 // exhausted.
-func (m *BackendManager) ListObjects(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*ListObjectsV2Result, error) {
+func (o *ObjectManager) ListObjects(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*ListObjectsV2Result, error) {
 	const operation = "ListObjects"
 	start := time.Now()
 
@@ -881,7 +900,7 @@ func (m *BackendManager) ListObjects(ctx context.Context, prefix, delimiter, sta
 
 	const maxPages = 100 // cap DB round trips per request
 	for page := 0; page < maxPages && result.KeyCount < maxKeys; page++ {
-		storeResult, err := m.store.ListObjects(ctx, prefix, cursor, maxKeys)
+		storeResult, err := o.store.ListObjects(ctx, prefix, cursor, maxKeys)
 		if err != nil {
 			if errors.Is(err, ErrDBUnavailable) {
 				span.SetStatus(codes.Error, "database unavailable")
@@ -963,7 +982,7 @@ func (m *BackendManager) ListObjects(ctx context.Context, prefix, delimiter, sta
 		result.NextContinuationToken = cursor
 	}
 
-	m.recordOperation(operation, "", start, nil)
+	o.recordOperation(operation, "", start, nil)
 
 	audit.Log(ctx, "storage.ListObjects",
 		slog.String("prefix", prefix),

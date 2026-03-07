@@ -30,6 +30,28 @@ import (
 // TYPES
 // -------------------------------------------------------------------------
 
+// Rebalancer moves objects between backends to optimize space distribution.
+// Embeds *backendCore for access to shared infrastructure.
+type Rebalancer struct {
+	*backendCore
+	cfg atomic.Pointer[config.RebalanceConfig]
+}
+
+// NewRebalancer creates a Rebalancer that shares the given core infrastructure.
+func NewRebalancer(core *backendCore) *Rebalancer {
+	return &Rebalancer{backendCore: core}
+}
+
+// SetConfig atomically stores the rebalance configuration.
+func (r *Rebalancer) SetConfig(cfg *config.RebalanceConfig) {
+	r.cfg.Store(cfg)
+}
+
+// Config returns the current rebalance configuration.
+func (r *Rebalancer) Config() *config.RebalanceConfig {
+	return r.cfg.Load()
+}
+
 // rebalanceMove describes a single object move from one backend to another.
 type rebalanceMove struct {
 	ObjectKey   string
@@ -44,7 +66,7 @@ type rebalanceMove struct {
 
 // Rebalance moves objects between backends to optimize space distribution.
 // Returns the number of objects successfully moved.
-func (m *BackendManager) Rebalance(ctx context.Context, cfg config.RebalanceConfig) (int, error) {
+func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig) (int, error) {
 	start := time.Now()
 	ctx = audit.WithRequestID(ctx, audit.NewID())
 
@@ -55,14 +77,14 @@ func (m *BackendManager) Rebalance(ctx context.Context, cfg config.RebalanceConf
 	)
 
 	// --- Get current quota stats ---
-	stats, err := m.store.GetQuotaStats(ctx)
+	stats, err := r.store.GetQuotaStats(ctx)
 	if err != nil {
 		telemetry.RebalanceRunsTotal.WithLabelValues(cfg.Strategy, "error").Inc()
 		return 0, fmt.Errorf("failed to get quota stats: %w", err)
 	}
 
 	// --- Check threshold ---
-	if !exceedsThreshold(stats, m.order, cfg.Threshold) {
+	if !exceedsThreshold(stats, r.order, cfg.Threshold) {
 		slog.Info("Rebalance skipping, within threshold",
 			"threshold", cfg.Threshold, "strategy", cfg.Strategy)
 		telemetry.RebalanceSkipped.WithLabelValues("threshold").Inc()
@@ -73,9 +95,9 @@ func (m *BackendManager) Rebalance(ctx context.Context, cfg config.RebalanceConf
 	var plan []rebalanceMove
 	switch cfg.Strategy {
 	case "pack":
-		plan, err = m.planPackTight(ctx, stats, cfg.BatchSize)
+		plan, err = r.planPackTight(ctx, stats, cfg.BatchSize)
 	case "spread":
-		plan, err = m.planSpreadEven(ctx, stats, cfg.BatchSize)
+		plan, err = r.planSpreadEven(ctx, stats, cfg.BatchSize)
 	default:
 		return 0, fmt.Errorf("unknown rebalance strategy: %s", cfg.Strategy)
 	}
@@ -91,7 +113,7 @@ func (m *BackendManager) Rebalance(ctx context.Context, cfg config.RebalanceConf
 	}
 
 	// --- Execute moves ---
-	moved := m.executeMoves(ctx, plan, cfg.Strategy, cfg.Concurrency)
+	moved := r.executeMoves(ctx, plan, cfg.Strategy, cfg.Concurrency)
 
 	telemetry.RebalanceRunsTotal.WithLabelValues(cfg.Strategy, "success").Inc()
 	telemetry.RebalanceDuration.WithLabelValues(cfg.Strategy).Observe(time.Since(start).Seconds())
@@ -151,7 +173,7 @@ func exceedsThreshold(stats map[string]QuotaStat, order []string, threshold floa
 // from the least-utilized. Sorts by percent full descending and only moves
 // objects from a less-full source to a more-full destination. Skips moves
 // that would not increase the destination's packing ratio.
-func (m *BackendManager) planPackTight(ctx context.Context, stats map[string]QuotaStat, batchSize int) ([]rebalanceMove, error) {
+func (r *Rebalancer) planPackTight(ctx context.Context, stats map[string]QuotaStat, batchSize int) ([]rebalanceMove, error) {
 	type backendUtil struct {
 		Name  string
 		Limit int64
@@ -161,7 +183,7 @@ func (m *BackendManager) planPackTight(ctx context.Context, stats map[string]Quo
 	simUsed := make(map[string]int64)
 	var backends []backendUtil
 
-	for _, name := range m.order {
+	for _, name := range r.order {
 		stat, ok := stats[name]
 		if !ok || stat.BytesLimit == 0 {
 			continue
@@ -197,7 +219,7 @@ func (m *BackendManager) planPackTight(ctx context.Context, stats map[string]Quo
 				continue
 			}
 
-			objects, err := m.store.ListObjectsByBackend(ctx, src.Name, remaining)
+			objects, err := r.store.ListObjectsByBackend(ctx, src.Name, remaining)
 			if err != nil {
 				return nil, fmt.Errorf("failed to list objects on %s: %w", src.Name, err)
 			}
@@ -247,9 +269,9 @@ type backendBalance struct {
 
 // planSpreadEven equalizes utilization ratios across backends. Moves objects
 // from over-utilized backends to under-utilized ones.
-func (m *BackendManager) planSpreadEven(ctx context.Context, stats map[string]QuotaStat, batchSize int) ([]rebalanceMove, error) {
+func (r *Rebalancer) planSpreadEven(ctx context.Context, stats map[string]QuotaStat, batchSize int) ([]rebalanceMove, error) {
 	var totalUsed, totalLimit int64
-	for _, name := range m.order {
+	for _, name := range r.order {
 		stat, ok := stats[name]
 		if !ok {
 			continue
@@ -268,7 +290,7 @@ func (m *BackendManager) planSpreadEven(ctx context.Context, stats map[string]Qu
 	var sources, destinations []backendBalance
 	simUsed := make(map[string]int64)
 
-	for _, name := range m.order {
+	for _, name := range r.order {
 		stat, ok := stats[name]
 		if !ok {
 			continue
@@ -301,7 +323,7 @@ func (m *BackendManager) planSpreadEven(ctx context.Context, stats map[string]Qu
 		}
 
 		src := &sources[si]
-		objects, err := m.store.ListObjectsByBackend(ctx, src.Name, remaining)
+		objects, err := r.store.ListObjectsByBackend(ctx, src.Name, remaining)
 		if err != nil {
 			return nil, fmt.Errorf("failed to list objects on %s: %w", src.Name, err)
 		}
@@ -359,7 +381,7 @@ func (m *BackendManager) planSpreadEven(ctx context.Context, stats map[string]Qu
 
 // executeMoves runs the planned object moves with bounded concurrency.
 // Skips individual moves that fail and continues with the rest.
-func (m *BackendManager) executeMoves(ctx context.Context, plan []rebalanceMove, strategy string, concurrency int) int {
+func (r *Rebalancer) executeMoves(ctx context.Context, plan []rebalanceMove, strategy string, concurrency int) int {
 	if concurrency <= 0 {
 		concurrency = 1
 	}
@@ -374,7 +396,7 @@ func (m *BackendManager) executeMoves(ctx context.Context, plan []rebalanceMove,
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			if m.executeOneMove(ctx, mv, strategy) {
+			if r.executeOneMove(ctx, mv, strategy) {
 				moved.Add(1)
 			}
 		}(move)
@@ -387,21 +409,21 @@ func (m *BackendManager) executeMoves(ctx context.Context, plan []rebalanceMove,
 // executeOneMove performs a single object move: read from source, write to
 // destination, swap the DB location, and delete the source copy. Returns
 // true on success.
-func (m *BackendManager) executeOneMove(ctx context.Context, move rebalanceMove, strategy string) bool {
-	srcBackend, ok := m.backends[move.FromBackend]
+func (r *Rebalancer) executeOneMove(ctx context.Context, move rebalanceMove, strategy string) bool {
+	srcBackend, ok := r.backends[move.FromBackend]
 	if !ok {
 		slog.Error("Rebalance: source backend not found", "backend", move.FromBackend)
 		return false
 	}
 
-	destBackend, ok := m.backends[move.ToBackend]
+	destBackend, ok := r.backends[move.ToBackend]
 	if !ok {
 		slog.Error("Rebalance: destination backend not found", "backend", move.ToBackend)
 		return false
 	}
 
 	// --- Stream source to destination ---
-	if err := m.streamCopy(ctx, srcBackend, destBackend, move.ObjectKey); err != nil {
+	if err := r.streamCopy(ctx, srcBackend, destBackend, move.ObjectKey); err != nil {
 		slog.Warn("Rebalance: stream copy failed",
 			"key", move.ObjectKey, "from", move.FromBackend, "to", move.ToBackend, "error", err)
 		telemetry.RebalanceObjectsMoved.WithLabelValues(strategy, "error").Inc()
@@ -409,13 +431,13 @@ func (m *BackendManager) executeOneMove(ctx context.Context, move rebalanceMove,
 	}
 
 	// --- Atomic DB update (compare-and-swap) ---
-	movedSize, err := m.store.MoveObjectLocation(ctx, move.ObjectKey, move.FromBackend, move.ToBackend)
+	movedSize, err := r.store.MoveObjectLocation(ctx, move.ObjectKey, move.FromBackend, move.ToBackend)
 	if err != nil {
 		slog.Error("Rebalance: failed to update object location",
 			"key", move.ObjectKey, "error", err)
 		// Clean up orphan on destination
-		m.deleteOrEnqueue(ctx, destBackend, move.ToBackend, move.ObjectKey, "rebalance_orphan")
-		m.usage.Record(move.ToBackend, 1, 0, 0)
+		r.deleteOrEnqueue(ctx, destBackend, move.ToBackend, move.ObjectKey, "rebalance_orphan")
+		r.usage.Record(move.ToBackend, 1, 0, 0)
 		telemetry.RebalanceObjectsMoved.WithLabelValues(strategy, "error").Inc()
 		return false
 	}
@@ -424,16 +446,16 @@ func (m *BackendManager) executeOneMove(ctx context.Context, move rebalanceMove,
 		// Object was deleted or already moved by another process
 		slog.Info("Rebalance: object already moved or deleted, cleaning up",
 			"key", move.ObjectKey)
-		m.deleteOrEnqueue(ctx, destBackend, move.ToBackend, move.ObjectKey, "rebalance_stale_orphan")
-		m.usage.Record(move.ToBackend, 1, 0, 0)
+		r.deleteOrEnqueue(ctx, destBackend, move.ToBackend, move.ObjectKey, "rebalance_stale_orphan")
+		r.usage.Record(move.ToBackend, 1, 0, 0)
 		return false
 	}
 
 	// --- Delete from source ---
-	m.deleteOrEnqueue(ctx, srcBackend, move.FromBackend, move.ObjectKey, "rebalance_source_delete")
+	r.deleteOrEnqueue(ctx, srcBackend, move.FromBackend, move.ObjectKey, "rebalance_source_delete")
 
-	m.usage.Record(move.FromBackend, 2, movedSize, 0) // Get + Delete, egress
-	m.usage.Record(move.ToBackend, 1, 0, movedSize)   // Put, ingress
+	r.usage.Record(move.FromBackend, 2, movedSize, 0) // Get + Delete, egress
+	r.usage.Record(move.ToBackend, 1, 0, movedSize)   // Put, ingress
 
 	audit.Log(ctx, "rebalance.move",
 		slog.String("key", move.ObjectKey),
