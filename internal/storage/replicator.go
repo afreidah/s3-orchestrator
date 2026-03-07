@@ -33,6 +33,10 @@ func (m *BackendManager) Replicate(ctx context.Context, cfg config.ReplicationCo
 	start := time.Now()
 	ctx = audit.WithRequestID(ctx, audit.NewID())
 
+	if cfg.Factor <= 1 {
+		return 0, nil
+	}
+
 	audit.Log(ctx, "replication.start",
 		slog.Int("factor", cfg.Factor),
 		slog.Int("batch_size", cfg.BatchSize),
