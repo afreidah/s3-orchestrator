@@ -936,19 +936,20 @@ internal/
     circuitbreaker_core.go   Generic three-state circuit breaker state machine
     circuitbreaker.go        Database circuit breaker wrapper (embeds core)
     circuitbreaker_backend.go Per-backend circuit breaker wrapper (embeds core)
-    manager.go               Multi-backend routing, quota selection, shared helpers
-    manager_objects.go       Object CRUD with read failover, broadcast, batch delete
-    manager_multipart.go     Multipart upload lifecycle
-    manager_drain.go         Backend drain and remove operations
+    backend_core.go          Shared infrastructure embedded by all components
+    manager.go               Composition root, config accessors, usage management
+    object_manager.go        Object CRUD with read failover, broadcast, batch delete
+    multipart_manager.go     Multipart upload lifecycle
+    drain_manager.go         Backend drain and remove operations
+    cleanup_worker.go        Cleanup queue retry worker
+    rebalancer.go            Object rebalancing across backends
+    replicator.go            Cross-backend object replication
     manager_lifecycle.go     Lifecycle expiration rule processing
-    manager_cleanup.go       Cleanup queue processing and enqueue helper
     manager_dashboard.go     DashboardData type + thin wrappers
     location_cache.go        Key→backend cache with TTL + background eviction
     usage_tracker.go         Usage limit enforcement, baseline management, flush
     metrics_collector.go     Prometheus metric recording + gauge refresh
     dashboard_aggregator.go  Dashboard data aggregation + lazy directory listing
-    rebalancer.go            Object rebalancing across backends
-    replicator.go            Cross-backend object replication
     sqlc/
       schema.sql             Schema for sqlc code generation
       queries/               Annotated SQL query files

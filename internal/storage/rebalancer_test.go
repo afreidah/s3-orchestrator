@@ -163,7 +163,7 @@ func TestExecuteMoves_Concurrent(t *testing.T) {
 	}
 
 	start := time.Now()
-	moved := mgr.executeMoves(context.Background(), plan, "spread", 3)
+	moved := mgr.Rebalancer.executeMoves(context.Background(), plan, "spread", 3)
 	elapsed := time.Since(start)
 
 	if moved != 5 {
@@ -209,7 +209,7 @@ func TestExecuteMoves_PartialFailure(t *testing.T) {
 		{ObjectKey: "ok2", FromBackend: "src", ToBackend: "dest", SizeBytes: 4},
 	}
 
-	moved := mgr.executeMoves(context.Background(), plan, "spread", 3)
+	moved := mgr.Rebalancer.executeMoves(context.Background(), plan, "spread", 3)
 	if moved != 2 {
 		t.Errorf("moved = %d, want 2 (one should fail)", moved)
 	}
@@ -238,7 +238,7 @@ func TestExecuteMoves_SequentialFallback(t *testing.T) {
 		{ObjectKey: "b", FromBackend: "src", ToBackend: "dest", SizeBytes: 5},
 	}
 
-	moved := mgr.executeMoves(context.Background(), plan, "pack", 1)
+	moved := mgr.Rebalancer.executeMoves(context.Background(), plan, "pack", 1)
 	if moved != 2 {
 		t.Errorf("moved = %d, want 2", moved)
 	}
@@ -310,7 +310,7 @@ func TestRebalance_QuotaStatsError(t *testing.T) {
 	store := &mockStore{getQuotaStatsErr: fmt.Errorf("db down")}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	_, err := mgr.Rebalance(context.Background(), config.RebalanceConfig{
+	_, err := mgr.Rebalancer.Rebalance(context.Background(), config.RebalanceConfig{
 		Strategy:  "spread",
 		BatchSize: 10,
 		Threshold: 0.10,
@@ -332,7 +332,7 @@ func TestRebalance_BelowThreshold_Skips(t *testing.T) {
 		"b2": newMockBackend(),
 	})
 
-	moved, err := mgr.Rebalance(context.Background(), config.RebalanceConfig{
+	moved, err := mgr.Rebalancer.Rebalance(context.Background(), config.RebalanceConfig{
 		Strategy:  "spread",
 		BatchSize: 10,
 		Threshold: 0.20,
@@ -357,7 +357,7 @@ func TestRebalance_UnknownStrategy(t *testing.T) {
 		"b2": newMockBackend(),
 	})
 
-	_, err := mgr.Rebalance(context.Background(), config.RebalanceConfig{
+	_, err := mgr.Rebalancer.Rebalance(context.Background(), config.RebalanceConfig{
 		Strategy:  "invalid",
 		BatchSize: 10,
 		Threshold: 0.10,
@@ -399,7 +399,7 @@ func TestPlanPackTight_MovesFromLeastToMostFull(t *testing.T) {
 		"b2": {BytesUsed: 200, BytesLimit: 1000}, // 20% full
 	}
 
-	plan, err := mgr.planPackTight(context.Background(), stats, 10)
+	plan, err := mgr.Rebalancer.planPackTight(context.Background(), stats, 10)
 	if err != nil {
 		t.Fatalf("planPackTight: %v", err)
 	}
@@ -428,7 +428,7 @@ func TestPlanPackTight_RespectsBatchSize(t *testing.T) {
 		"b2": {BytesUsed: 900, BytesLimit: 1000}, // 90% full
 	}
 
-	plan, err := mgr.planPackTight(context.Background(), stats, 3)
+	plan, err := mgr.Rebalancer.planPackTight(context.Background(), stats, 3)
 	if err != nil {
 		t.Fatalf("planPackTight: %v", err)
 	}
@@ -450,7 +450,7 @@ func TestPlanPackTight_SkipsLargeObjects(t *testing.T) {
 		"b2": {BytesUsed: 200, BytesLimit: 1000},
 	}
 
-	plan, err := mgr.planPackTight(context.Background(), stats, 10)
+	plan, err := mgr.Rebalancer.planPackTight(context.Background(), stats, 10)
 	if err != nil {
 		t.Fatalf("planPackTight: %v", err)
 	}
@@ -468,7 +468,7 @@ func TestPlanPackTight_ZeroLimitBackendsSkipped(t *testing.T) {
 		"b2": {BytesUsed: 500, BytesLimit: 1000},
 	}
 
-	plan, err := mgr.planPackTight(context.Background(), stats, 10)
+	plan, err := mgr.Rebalancer.planPackTight(context.Background(), stats, 10)
 	if err != nil {
 		t.Fatalf("planPackTight: %v", err)
 	}
@@ -498,7 +498,7 @@ func TestPlanSpreadEven_EqualizesUtilization(t *testing.T) {
 	// b1 excess = 800 - 500 = 300
 	// b2 deficit = 200 - 500 = -300
 
-	plan, err := mgr.planSpreadEven(context.Background(), stats, 10)
+	plan, err := mgr.Rebalancer.planSpreadEven(context.Background(), stats, 10)
 	if err != nil {
 		t.Fatalf("planSpreadEven: %v", err)
 	}
@@ -518,7 +518,7 @@ func TestPlanSpreadEven_ZeroTotalLimit(t *testing.T) {
 
 	stats := map[string]QuotaStat{} // no stats at all
 
-	plan, err := mgr.planSpreadEven(context.Background(), stats, 10)
+	plan, err := mgr.Rebalancer.planSpreadEven(context.Background(), stats, 10)
 	if err != nil {
 		t.Fatalf("planSpreadEven: %v", err)
 	}
@@ -536,7 +536,7 @@ func TestPlanSpreadEven_AlreadyBalanced(t *testing.T) {
 		"b2": {BytesUsed: 500, BytesLimit: 1000},
 	}
 
-	plan, err := mgr.planSpreadEven(context.Background(), stats, 10)
+	plan, err := mgr.Rebalancer.planSpreadEven(context.Background(), stats, 10)
 	if err != nil {
 		t.Fatalf("planSpreadEven: %v", err)
 	}
@@ -556,7 +556,7 @@ func TestPlanSpreadEven_ListObjectsByBackendError(t *testing.T) {
 		"b2": {BytesUsed: 200, BytesLimit: 1000},
 	}
 
-	_, err := mgr.planSpreadEven(context.Background(), stats, 10)
+	_, err := mgr.Rebalancer.planSpreadEven(context.Background(), stats, 10)
 	if err == nil {
 		t.Fatal("expected error from ListObjectsByBackend failure")
 	}
@@ -573,7 +573,7 @@ func TestPlanPackTight_ListObjectsByBackendError(t *testing.T) {
 		"b2": {BytesUsed: 200, BytesLimit: 1000},
 	}
 
-	_, err := mgr.planPackTight(context.Background(), stats, 10)
+	_, err := mgr.Rebalancer.planPackTight(context.Background(), stats, 10)
 	if err == nil {
 		t.Fatal("expected error from ListObjectsByBackend failure")
 	}
@@ -594,7 +594,7 @@ func TestExecuteOneMove_SourceBackendNotFound(t *testing.T) {
 		SizeBytes:   100,
 	}
 
-	result := mgr.executeOneMove(context.Background(), move, "spread")
+	result := mgr.Rebalancer.executeOneMove(context.Background(), move, "spread")
 	if result {
 		t.Error("expected false when source backend not found")
 	}
@@ -622,7 +622,7 @@ func TestExecuteOneMove_DestBackendNotFound(t *testing.T) {
 		SizeBytes:   4,
 	}
 
-	result := mgr.executeOneMove(context.Background(), move, "spread")
+	result := mgr.Rebalancer.executeOneMove(context.Background(), move, "spread")
 	if result {
 		t.Error("expected false when dest backend not found")
 	}
@@ -651,7 +651,7 @@ func TestExecuteOneMove_SourceGetFails(t *testing.T) {
 		SizeBytes:   4,
 	}
 
-	result := mgr.executeOneMove(context.Background(), move, "spread")
+	result := mgr.Rebalancer.executeOneMove(context.Background(), move, "spread")
 	if result {
 		t.Error("expected false when source get fails")
 	}
@@ -681,7 +681,7 @@ func TestExecuteOneMove_DestPutFails(t *testing.T) {
 		SizeBytes:   4,
 	}
 
-	result := mgr.executeOneMove(context.Background(), move, "spread")
+	result := mgr.Rebalancer.executeOneMove(context.Background(), move, "spread")
 	if result {
 		t.Error("expected false when dest put fails")
 	}
@@ -710,7 +710,7 @@ func TestExecuteOneMove_MoveLocationError_CleansUpOrphan(t *testing.T) {
 		SizeBytes:   4,
 	}
 
-	result := mgr.executeOneMove(context.Background(), move, "spread")
+	result := mgr.Rebalancer.executeOneMove(context.Background(), move, "spread")
 	if result {
 		t.Error("expected false when MoveObjectLocation fails")
 	}
@@ -745,7 +745,7 @@ func TestExecuteOneMove_MoveLocationError_CleanupFails_EnqueuesCleanup(t *testin
 		SizeBytes:   4,
 	}
 
-	result := mgr.executeOneMove(context.Background(), move, "spread")
+	result := mgr.Rebalancer.executeOneMove(context.Background(), move, "spread")
 	if result {
 		t.Error("expected false")
 	}
@@ -783,7 +783,7 @@ func TestExecuteOneMove_MovedSizeZero_CleansUpOrphan(t *testing.T) {
 		SizeBytes:   4,
 	}
 
-	result := mgr.executeOneMove(context.Background(), move, "spread")
+	result := mgr.Rebalancer.executeOneMove(context.Background(), move, "spread")
 	if result {
 		t.Error("expected false when movedSize is 0")
 	}
@@ -818,7 +818,7 @@ func TestExecuteOneMove_SourceDeleteFails_EnqueuesCleanup(t *testing.T) {
 		SizeBytes:   4,
 	}
 
-	result := mgr.executeOneMove(context.Background(), move, "spread")
+	result := mgr.Rebalancer.executeOneMove(context.Background(), move, "spread")
 	if !result {
 		t.Error("expected true (move succeeded, source delete failure is non-fatal)")
 	}
@@ -850,7 +850,7 @@ func TestPlanSpreadEven_RespectsBatchSize(t *testing.T) {
 		"b2": {BytesUsed: 100, BytesLimit: 1000},
 	}
 
-	plan, err := mgr.planSpreadEven(context.Background(), stats, 5)
+	plan, err := mgr.Rebalancer.planSpreadEven(context.Background(), stats, 5)
 	if err != nil {
 		t.Fatalf("planSpreadEven: %v", err)
 	}

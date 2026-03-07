@@ -106,7 +106,7 @@ func (s *Server) handleListObjectsV1(ctx context.Context, w http.ResponseWriter,
 		startAfter = bucketPrefix + marker
 	}
 
-	result, err := s.Manager.ListObjects(ctx, internalPrefix, delimiter, startAfter, maxKeys)
+	result, err := s.Manager.ObjectManager.ListObjects(ctx, internalPrefix, delimiter, startAfter, maxKeys)
 	if err != nil {
 		return writeStorageError(w, err, "Failed to list objects"), err
 	}
@@ -160,7 +160,7 @@ func (s *Server) handleListObjectsV2(ctx context.Context, w http.ResponseWriter,
 		startAfter = bucketPrefix + startAfter
 	}
 
-	result, err := s.Manager.ListObjects(ctx, internalPrefix, delimiter, startAfter, maxKeys)
+	result, err := s.Manager.ObjectManager.ListObjects(ctx, internalPrefix, delimiter, startAfter, maxKeys)
 	if err != nil {
 		return writeStorageError(w, err, "Failed to list objects"), err
 	}

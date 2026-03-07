@@ -244,8 +244,8 @@ func runServe() {
 	})
 
 	// --- Store initial reloadable configs ---
-	manager.SetRebalanceConfig(&cfg.Rebalance)
-	manager.SetReplicationConfig(&cfg.Replication)
+	manager.Rebalancer.SetConfig(&cfg.Rebalance)
+	manager.Replicator.SetConfig(&cfg.Replication)
 	manager.SetUsageFlushConfig(&cfg.UsageFlush)
 	manager.SetLifecycleConfig(&cfg.Lifecycle)
 
@@ -491,8 +491,8 @@ func runServe() {
 			slog.Info("Reloaded log level", "level", newCfg.Server.LogLevel)
 
 			// Reload rebalance/replication/usage-flush/lifecycle config
-			manager.SetRebalanceConfig(&newCfg.Rebalance)
-			manager.SetReplicationConfig(&newCfg.Replication)
+			manager.Rebalancer.SetConfig(&newCfg.Rebalance)
+			manager.Replicator.SetConfig(&newCfg.Replication)
 			manager.SetUsageFlushConfig(&newCfg.UsageFlush)
 			manager.SetLifecycleConfig(&newCfg.Lifecycle)
 			slog.Info("Reloaded rebalance/replication/usage-flush/lifecycle config")

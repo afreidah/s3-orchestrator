@@ -504,7 +504,7 @@ func (h *Handler) handleAPIDelete(w http.ResponseWriter, r *http.Request) {
 		telemetry.RequestDuration.WithLabelValues("DELETE").Observe(time.Since(opStart).Seconds())
 	}()
 
-	if err := h.manager.DeleteObject(r.Context(), req.Key); err != nil {
+	if err := h.manager.ObjectManager.DeleteObject(r.Context(), req.Key); err != nil {
 		slog.Error("UI: failed to delete object", "key", req.Key, "error", err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
@@ -549,7 +549,7 @@ func (h *Handler) handleAPIDeletePrefix(w http.ResponseWriter, r *http.Request) 
 	var keys []string
 	startAfter := ""
 	for {
-		result, err := h.manager.ListObjects(r.Context(), req.Prefix, "", startAfter, 1000)
+		result, err := h.manager.ObjectManager.ListObjects(r.Context(), req.Prefix, "", startAfter, 1000)
 		if err != nil {
 			slog.Error("UI: failed to list objects for prefix delete", "prefix", req.Prefix, "error", err)
 			w.Header().Set("Content-Type", "application/json")
@@ -572,7 +572,7 @@ func (h *Handler) handleAPIDeletePrefix(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	results := h.manager.DeleteObjects(r.Context(), keys)
+	results := h.manager.ObjectManager.DeleteObjects(r.Context(), keys)
 	var errCount int
 	for _, res := range results {
 		if res.Err != nil {
@@ -642,7 +642,7 @@ func (h *Handler) handleAPIUpload(w http.ResponseWriter, r *http.Request) {
 		telemetry.RequestDuration.WithLabelValues("PUT").Observe(time.Since(opStart).Seconds())
 	}()
 
-	etag, err := h.manager.PutObject(r.Context(), key, file, header.Size, contentType, nil)
+	etag, err := h.manager.ObjectManager.PutObject(r.Context(), key, file, header.Size, contentType, nil)
 	if err != nil {
 		slog.Error("UI: failed to upload object", "key", key, "error", err)
 		w.Header().Set("Content-Type", "application/json")
@@ -676,7 +676,7 @@ func (h *Handler) handleAPIDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.manager.GetObject(r.Context(), key, "")
+	result, err := h.manager.ObjectManager.GetObject(r.Context(), key, "")
 	if err != nil {
 		if errors.Is(err, storage.ErrObjectNotFound) {
 			http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
@@ -708,7 +708,7 @@ func (h *Handler) handleAPIRebalance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rebalCfg := h.manager.RebalanceConfig()
+	rebalCfg := h.manager.Rebalancer.Config()
 	if rebalCfg == nil {
 		rebalCfg = &h.cfg.Load().Rebalance
 	}
@@ -727,7 +727,7 @@ func (h *Handler) handleAPIRebalance(w http.ResponseWriter, r *http.Request) {
 		runCfg.Concurrency = 5
 	}
 
-	moved, err := h.manager.Rebalance(r.Context(), runCfg)
+	moved, err := h.manager.Rebalancer.Rebalance(r.Context(), runCfg)
 	if err != nil {
 		slog.Error("UI: rebalance failed", "error", err)
 		w.Header().Set("Content-Type", "application/json")

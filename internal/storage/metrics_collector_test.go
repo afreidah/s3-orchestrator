@@ -213,7 +213,7 @@ func TestUpdateQuotaMetrics_ReplicationFactorFromManager(t *testing.T) {
 	}
 
 	// With replication config — closure returns factor, queries DB
-	mgr.SetReplicationConfig(&config.ReplicationConfig{Factor: 2, BatchSize: 50})
+	mgr.Replicator.SetConfig(&config.ReplicationConfig{Factor: 2, BatchSize: 50})
 	err = mgr.metrics.UpdateQuotaMetrics(context.Background())
 	if err != nil {
 		t.Fatalf("UpdateQuotaMetrics (with repl config): %v", err)

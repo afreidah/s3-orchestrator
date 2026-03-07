@@ -50,7 +50,7 @@ func TestPutObject_Success(t *testing.T) {
 	store := &mockStore{getBackendResp: "b1"}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	etag, err := mgr.PutObject(context.Background(), "mykey", bytes.NewReader([]byte("hello")), 5, "text/plain", nil)
+	etag, err := mgr.ObjectManager.PutObject(context.Background(), "mykey", bytes.NewReader([]byte("hello")), 5, "text/plain", nil)
 	if err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestPutObject_PackStrategy_UsesGetBackendWithSpace(t *testing.T) {
 		RoutingStrategy: "pack",
 	})
 
-	_, err := mgr.PutObject(context.Background(), "pack-key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
+	_, err := mgr.ObjectManager.PutObject(context.Background(), "pack-key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 	if err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestPutObject_SpreadStrategy_UsesGetLeastUtilized(t *testing.T) {
 		RoutingStrategy: "spread",
 	})
 
-	_, err := mgr.PutObject(context.Background(), "spread-key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
+	_, err := mgr.ObjectManager.PutObject(context.Background(), "spread-key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 	if err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestPutObject_QuotaExhausted(t *testing.T) {
 	store := &mockStore{getBackendErr: ErrNoSpaceAvailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	_, err := mgr.PutObject(context.Background(), "key", bytes.NewReader([]byte("x")), 1, "", nil)
+	_, err := mgr.ObjectManager.PutObject(context.Background(), "key", bytes.NewReader([]byte("x")), 1, "", nil)
 	if !errors.Is(err, ErrInsufficientStorage) {
 		t.Fatalf("expected ErrInsufficientStorage, got %v", err)
 	}
@@ -131,7 +131,7 @@ func TestPutObject_DBUnavailable(t *testing.T) {
 	store := &mockStore{getBackendErr: ErrDBUnavailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	_, err := mgr.PutObject(context.Background(), "key", bytes.NewReader([]byte("x")), 1, "", nil)
+	_, err := mgr.ObjectManager.PutObject(context.Background(), "key", bytes.NewReader([]byte("x")), 1, "", nil)
 	if !errors.Is(err, ErrServiceUnavailable) {
 		t.Fatalf("expected ErrServiceUnavailable, got %v", err)
 	}
@@ -143,7 +143,7 @@ func TestPutObject_BackendFailure_StillRecordsUsage(t *testing.T) {
 	store := &mockStore{getBackendResp: "b1"}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	_, err := mgr.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
+	_, err := mgr.ObjectManager.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 	if err == nil {
 		t.Fatal("expected error from backend failure")
 	}
@@ -166,7 +166,7 @@ func TestPutObject_RecordFailure_CleansUp(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	_, err := mgr.PutObject(context.Background(), "cleanup-key", bytes.NewReader([]byte("data")), 4, "", nil)
+	_, err := mgr.ObjectManager.PutObject(context.Background(), "cleanup-key", bytes.NewReader([]byte("data")), 4, "", nil)
 	if err == nil {
 		t.Fatal("expected error from RecordObject failure")
 	}
@@ -194,7 +194,7 @@ func TestGetObject_Success(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	result, err := mgr.GetObject(context.Background(), "key", "")
+	result, err := mgr.ObjectManager.GetObject(context.Background(), "key", "")
 	if err != nil {
 		t.Fatalf("GetObject: %v", err)
 	}
@@ -215,7 +215,7 @@ func TestGetObject_NotFound(t *testing.T) {
 	store := &mockStore{getAllLocationsErr: ErrObjectNotFound}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	_, err := mgr.GetObject(context.Background(), "missing", "")
+	_, err := mgr.ObjectManager.GetObject(context.Background(), "missing", "")
 	if !errors.Is(err, ErrObjectNotFound) {
 		t.Fatalf("expected ErrObjectNotFound, got %v", err)
 	}
@@ -235,7 +235,7 @@ func TestGetObject_FailoverToReplica(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"primary": primary, "replica": replica})
 
-	result, err := mgr.GetObject(context.Background(), "key", "")
+	result, err := mgr.ObjectManager.GetObject(context.Background(), "key", "")
 	if err != nil {
 		t.Fatalf("GetObject should failover: %v", err)
 	}
@@ -253,7 +253,7 @@ func TestGetObject_DBUnavailable_BroadcastHit(t *testing.T) {
 	store := &mockStore{getAllLocationsErr: ErrDBUnavailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	result, err := mgr.GetObject(context.Background(), "key", "")
+	result, err := mgr.ObjectManager.GetObject(context.Background(), "key", "")
 	if err != nil {
 		t.Fatalf("GetObject broadcast should succeed: %v", err)
 	}
@@ -273,14 +273,14 @@ func TestGetObject_DBUnavailable_CacheHit(t *testing.T) {
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": b1, "b2": b2})
 
 	// First call populates cache via broadcast
-	r1, err := mgr.GetObject(context.Background(), "cached-key", "")
+	r1, err := mgr.ObjectManager.GetObject(context.Background(), "cached-key", "")
 	if err != nil {
 		t.Fatalf("first GetObject: %v", err)
 	}
 	_ = r1.Body.Close()
 
 	// Second call should use cache
-	r2, err := mgr.GetObject(context.Background(), "cached-key", "")
+	r2, err := mgr.ObjectManager.GetObject(context.Background(), "cached-key", "")
 	if err != nil {
 		t.Fatalf("second GetObject (cache hit): %v", err)
 	}
@@ -298,7 +298,7 @@ func TestGetObject_DBUnavailable_AllFail(t *testing.T) {
 	store := &mockStore{getAllLocationsErr: ErrDBUnavailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": b1, "b2": b2})
 
-	_, err := mgr.GetObject(context.Background(), "nowhere", "")
+	_, err := mgr.ObjectManager.GetObject(context.Background(), "nowhere", "")
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -322,7 +322,7 @@ func TestHeadObject_Success(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	result, err := mgr.HeadObject(context.Background(), "key")
+	result, err := mgr.ObjectManager.HeadObject(context.Background(), "key")
 	if err != nil {
 		t.Fatalf("HeadObject: %v", err)
 	}
@@ -344,7 +344,7 @@ func TestHeadObject_DBUnavailable_Broadcast(t *testing.T) {
 	store := &mockStore{getAllLocationsErr: ErrDBUnavailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	result, err := mgr.HeadObject(context.Background(), "key")
+	result, err := mgr.ObjectManager.HeadObject(context.Background(), "key")
 	if err != nil {
 		t.Fatalf("HeadObject broadcast should succeed: %v", err)
 	}
@@ -366,7 +366,7 @@ func TestDeleteObject_Success(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	err := mgr.DeleteObject(context.Background(), "del-key")
+	err := mgr.ObjectManager.DeleteObject(context.Background(), "del-key")
 	if err != nil {
 		t.Fatalf("DeleteObject: %v", err)
 	}
@@ -379,7 +379,7 @@ func TestDeleteObject_NotFound_Idempotent(t *testing.T) {
 	store := &mockStore{deleteObjectErr: ErrObjectNotFound}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	err := mgr.DeleteObject(context.Background(), "nonexistent")
+	err := mgr.ObjectManager.DeleteObject(context.Background(), "nonexistent")
 	if err != nil {
 		t.Fatalf("DeleteObject of nonexistent key should succeed (idempotent): %v", err)
 	}
@@ -389,7 +389,7 @@ func TestDeleteObject_DBUnavailable(t *testing.T) {
 	store := &mockStore{deleteObjectErr: ErrDBUnavailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	err := mgr.DeleteObject(context.Background(), "key")
+	err := mgr.ObjectManager.DeleteObject(context.Background(), "key")
 	if !errors.Is(err, ErrServiceUnavailable) {
 		t.Fatalf("expected ErrServiceUnavailable, got %v", err)
 	}
@@ -412,7 +412,7 @@ func TestDeleteObjects_AllSuccess(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	results := mgr.DeleteObjects(context.Background(), []string{"a", "b", "c"})
+	results := mgr.ObjectManager.DeleteObjects(context.Background(), []string{"a", "b", "c"})
 
 	if len(results) != 3 {
 		t.Fatalf("expected 3 results, got %d", len(results))
@@ -441,7 +441,7 @@ func TestDeleteObjects_PartialDBFailure(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	results := mgr.DeleteObjects(context.Background(), []string{"ok1", "bad", "ok2"})
+	results := mgr.ObjectManager.DeleteObjects(context.Background(), []string{"ok1", "bad", "ok2"})
 
 	if results[0].Err != nil {
 		t.Errorf("results[0]: unexpected error: %v", results[0].Err)
@@ -458,7 +458,7 @@ func TestDeleteObjects_NotFoundIsSuccess(t *testing.T) {
 	store := &mockStore{deleteObjectErr: ErrObjectNotFound}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	results := mgr.DeleteObjects(context.Background(), []string{"gone1", "gone2"})
+	results := mgr.ObjectManager.DeleteObjects(context.Background(), []string{"gone1", "gone2"})
 
 	for i, r := range results {
 		if r.Err != nil {
@@ -478,7 +478,7 @@ func TestDeleteObjects_BackendFailureEnqueuesCleanup(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	results := mgr.DeleteObjects(context.Background(), []string{"k1", "k2"})
+	results := mgr.ObjectManager.DeleteObjects(context.Background(), []string{"k1", "k2"})
 
 	// Results should still show success (backend failure is best-effort)
 	for i, r := range results {
@@ -503,7 +503,7 @@ func TestDeleteObjects_EmptyKeys(t *testing.T) {
 	store := &mockStore{}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	results := mgr.DeleteObjects(context.Background(), []string{})
+	results := mgr.ObjectManager.DeleteObjects(context.Background(), []string{})
 
 	if len(results) != 0 {
 		t.Errorf("expected 0 results, got %d", len(results))
@@ -524,7 +524,7 @@ func TestCopyObject_Success(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	etag, err := mgr.CopyObject(context.Background(), "src", "dst")
+	etag, err := mgr.ObjectManager.CopyObject(context.Background(), "src", "dst")
 	if err != nil {
 		t.Fatalf("CopyObject: %v", err)
 	}
@@ -540,7 +540,7 @@ func TestCopyObject_SourceNotFound(t *testing.T) {
 	store := &mockStore{getAllLocationsErr: ErrObjectNotFound}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	_, err := mgr.CopyObject(context.Background(), "missing", "dst")
+	_, err := mgr.ObjectManager.CopyObject(context.Background(), "missing", "dst")
 	if !errors.Is(err, ErrObjectNotFound) {
 		t.Fatalf("expected ErrObjectNotFound, got %v", err)
 	}
@@ -550,7 +550,7 @@ func TestCopyObject_DBUnavailable_SourceLookup(t *testing.T) {
 	store := &mockStore{getAllLocationsErr: ErrDBUnavailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	_, err := mgr.CopyObject(context.Background(), "src", "dst")
+	_, err := mgr.ObjectManager.CopyObject(context.Background(), "src", "dst")
 	if !errors.Is(err, ErrServiceUnavailable) {
 		t.Fatalf("expected ErrServiceUnavailable, got %v", err)
 	}
@@ -566,7 +566,7 @@ func TestCopyObject_DBUnavailable_DestLookup(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	_, err := mgr.CopyObject(context.Background(), "src", "dst")
+	_, err := mgr.ObjectManager.CopyObject(context.Background(), "src", "dst")
 	if !errors.Is(err, ErrServiceUnavailable) {
 		t.Fatalf("expected ErrServiceUnavailable, got %v", err)
 	}
@@ -587,7 +587,7 @@ func TestListObjects_Success(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	result, err := mgr.ListObjects(context.Background(), "a/", "", "", 1000)
+	result, err := mgr.ObjectManager.ListObjects(context.Background(), "a/", "", "", 1000)
 	if err != nil {
 		t.Fatalf("ListObjects: %v", err)
 	}
@@ -612,7 +612,7 @@ func TestListObjects_WithDelimiter(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	result, err := mgr.ListObjects(context.Background(), "photos/", "/", "", 1000)
+	result, err := mgr.ObjectManager.ListObjects(context.Background(), "photos/", "/", "", 1000)
 	if err != nil {
 		t.Fatalf("ListObjects: %v", err)
 	}
@@ -663,7 +663,7 @@ func TestListObjects_DelimiterPagination(t *testing.T) {
 	// Request maxKeys=3 with delimiter "/". The first page produces 1 prefix
 	// ("dir/a/"), the second produces 1 ("dir/b/"), the third produces
 	// 1 prefix ("dir/c/") which fills 3.
-	result, err := mgr.ListObjects(context.Background(), "dir/", "/", "", 3)
+	result, err := mgr.ObjectManager.ListObjects(context.Background(), "dir/", "/", "", 3)
 	if err != nil {
 		t.Fatalf("ListObjects: %v", err)
 	}
@@ -703,7 +703,7 @@ func TestListObjects_DelimiterDedup(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	result, err := mgr.ListObjects(context.Background(), "p/", "/", "", 1000)
+	result, err := mgr.ObjectManager.ListObjects(context.Background(), "p/", "/", "", 1000)
 	if err != nil {
 		t.Fatalf("ListObjects: %v", err)
 	}
@@ -734,7 +734,7 @@ func TestListObjects_DelimiterTruncationSkipsSeen(t *testing.T) {
 
 	// maxKeys=1 with delimiter: should emit one CommonPrefix ("a/") and
 	// set the token past a/3 so the next page starts at b/1.
-	result, err := mgr.ListObjects(context.Background(), "", "/", "", 1)
+	result, err := mgr.ObjectManager.ListObjects(context.Background(), "", "/", "", 1)
 	if err != nil {
 		t.Fatalf("ListObjects: %v", err)
 	}
@@ -774,7 +774,7 @@ func TestListObjects_ExactPageTruncation(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	result, err := mgr.ListObjects(context.Background(), "pfx/", "", "", 3)
+	result, err := mgr.ObjectManager.ListObjects(context.Background(), "pfx/", "", "", 3)
 	if err != nil {
 		t.Fatalf("ListObjects: %v", err)
 	}
@@ -793,7 +793,7 @@ func TestListObjects_DBUnavailable(t *testing.T) {
 	store := &mockStore{listObjectsErr: ErrDBUnavailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	_, err := mgr.ListObjects(context.Background(), "", "", "", 1000)
+	_, err := mgr.ObjectManager.ListObjects(context.Background(), "", "", "", 1000)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -829,7 +829,7 @@ func TestPutObject_BackendTimeout(t *testing.T) {
 		RoutingStrategy: "pack",
 	})
 
-	_, err := mgr.PutObject(context.Background(), "timeout-key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
+	_, err := mgr.ObjectManager.PutObject(context.Background(), "timeout-key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 	if err == nil {
 		t.Fatal("expected timeout error, got nil")
 	}
@@ -859,9 +859,9 @@ func (s *slowMockBackend) PutObject(ctx context.Context, key string, body io.Rea
 
 func TestLocationCache_SetAndGet(t *testing.T) {
 	mgr := NewBackendManager(&BackendManagerConfig{CacheTTL: 5 * time.Second, RoutingStrategy: "pack"})
-	mgr.cache.Set("key1", "backend-a")
+	mgr.ObjectManager.cache.Set("key1", "backend-a")
 
-	got, ok := mgr.cache.Get("key1")
+	got, ok := mgr.ObjectManager.cache.Get("key1")
 	if !ok {
 		t.Fatal("expected cache hit")
 	}
@@ -872,11 +872,11 @@ func TestLocationCache_SetAndGet(t *testing.T) {
 
 func TestLocationCache_Expiry(t *testing.T) {
 	mgr := NewBackendManager(&BackendManagerConfig{CacheTTL: 10 * time.Millisecond, RoutingStrategy: "pack"})
-	mgr.cache.Set("key1", "backend-a")
+	mgr.ObjectManager.cache.Set("key1", "backend-a")
 
 	time.Sleep(15 * time.Millisecond)
 
-	_, ok := mgr.cache.Get("key1")
+	_, ok := mgr.ObjectManager.cache.Get("key1")
 	if ok {
 		t.Fatal("expected cache miss after TTL")
 	}
@@ -884,10 +884,10 @@ func TestLocationCache_Expiry(t *testing.T) {
 
 func TestLocationCache_Overwrite(t *testing.T) {
 	mgr := NewBackendManager(&BackendManagerConfig{CacheTTL: 5 * time.Second, RoutingStrategy: "pack"})
-	mgr.cache.Set("key1", "old-backend")
-	mgr.cache.Set("key1", "new-backend")
+	mgr.ObjectManager.cache.Set("key1", "old-backend")
+	mgr.ObjectManager.cache.Set("key1", "new-backend")
 
-	got, ok := mgr.cache.Get("key1")
+	got, ok := mgr.ObjectManager.cache.Get("key1")
 	if !ok {
 		t.Fatal("expected cache hit")
 	}
@@ -903,15 +903,15 @@ func TestPutObject_InvalidatesCache(t *testing.T) {
 	defer mgr.Close()
 
 	// Pre-populate cache
-	mgr.cache.Set("mykey", "old-backend")
+	mgr.ObjectManager.cache.Set("mykey", "old-backend")
 
-	_, err := mgr.PutObject(context.Background(), "mykey", bytes.NewReader([]byte("hello")), 5, "text/plain", nil)
+	_, err := mgr.ObjectManager.PutObject(context.Background(), "mykey", bytes.NewReader([]byte("hello")), 5, "text/plain", nil)
 	if err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
 
 	// Cache entry should be gone after PutObject
-	if _, ok := mgr.cache.Get("mykey"); ok {
+	if _, ok := mgr.ObjectManager.cache.Get("mykey"); ok {
 		t.Error("cache should be invalidated after PutObject")
 	}
 }
@@ -926,15 +926,15 @@ func TestDeleteObject_InvalidatesCache(t *testing.T) {
 	defer mgr.Close()
 
 	// Pre-populate cache
-	mgr.cache.Set("del-key", "b1")
+	mgr.ObjectManager.cache.Set("del-key", "b1")
 
-	err := mgr.DeleteObject(context.Background(), "del-key")
+	err := mgr.ObjectManager.DeleteObject(context.Background(), "del-key")
 	if err != nil {
 		t.Fatalf("DeleteObject: %v", err)
 	}
 
 	// Cache entry should be gone after DeleteObject
-	if _, ok := mgr.cache.Get("del-key"); ok {
+	if _, ok := mgr.ObjectManager.cache.Get("del-key"); ok {
 		t.Error("cache should be invalidated after DeleteObject")
 	}
 }
@@ -976,7 +976,7 @@ func TestPutObject_UsageLimitOverflow(t *testing.T) {
 	// Push b1 over limit
 	mgr.usage.SetBaseline("b1", UsageStat{APIRequests: 10})
 
-	etag, err := mgr.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
+	etag, err := mgr.ObjectManager.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 	if err != nil {
 		t.Fatalf("PutObject should overflow to b2: %v", err)
 	}
@@ -1013,7 +1013,7 @@ func TestGetObject_UsageLimitSkipsBackend(t *testing.T) {
 	// Push b1 over limit
 	mgr.usage.SetBaseline("b1", UsageStat{APIRequests: 10})
 
-	result, err := mgr.GetObject(context.Background(), "key", "")
+	result, err := mgr.ObjectManager.GetObject(context.Background(), "key", "")
 	if err != nil {
 		t.Fatalf("GetObject should skip b1 and use b2: %v", err)
 	}
@@ -1040,7 +1040,7 @@ func TestGetObject_AllCopiesOverLimit(t *testing.T) {
 
 	mgr.usage.SetBaseline("b1", UsageStat{APIRequests: 10})
 
-	_, err := mgr.GetObject(context.Background(), "key", "")
+	_, err := mgr.ObjectManager.GetObject(context.Background(), "key", "")
 	if !errors.Is(err, ErrUsageLimitExceeded) {
 		t.Fatalf("expected ErrUsageLimitExceeded, got %v", err)
 	}
@@ -1061,7 +1061,7 @@ func TestDeleteObject_AlwaysAllowed(t *testing.T) {
 
 	mgr.usage.SetBaseline("b1", UsageStat{APIRequests: 100, EgressBytes: 100, IngressBytes: 100})
 
-	err := mgr.DeleteObject(context.Background(), "del-key")
+	err := mgr.ObjectManager.DeleteObject(context.Background(), "del-key")
 	if err != nil {
 		t.Fatalf("DeleteObject should always succeed regardless of limits: %v", err)
 	}
@@ -1086,7 +1086,7 @@ func TestPutObject_UsageLimitRejectionsMetric(t *testing.T) {
 
 	before := testutil.ToFloat64(telemetry.UsageLimitRejectionsTotal.WithLabelValues("PutObject", "write"))
 
-	_, err := mgr.PutObject(context.Background(), "key", bytes.NewReader([]byte("x")), 1, "text/plain", nil)
+	_, err := mgr.ObjectManager.PutObject(context.Background(), "key", bytes.NewReader([]byte("x")), 1, "text/plain", nil)
 	if err == nil {
 		t.Fatal("expected error from PutObject with all backends over limit")
 	}
@@ -1116,7 +1116,7 @@ func TestGetObject_UsageLimitRejectionsMetric(t *testing.T) {
 
 	before := testutil.ToFloat64(telemetry.UsageLimitRejectionsTotal.WithLabelValues("GetObject", "read"))
 
-	_, err := mgr.GetObject(context.Background(), "key", "")
+	_, err := mgr.ObjectManager.GetObject(context.Background(), "key", "")
 	if !errors.Is(err, ErrUsageLimitExceeded) {
 		t.Fatalf("expected ErrUsageLimitExceeded, got %v", err)
 	}
@@ -1196,7 +1196,7 @@ func TestGetObject_ParallelBroadcast_FirstSuccessWins(t *testing.T) {
 	defer mgr.Close()
 
 	start := time.Now()
-	result, err := mgr.GetObject(context.Background(), "key", "")
+	result, err := mgr.ObjectManager.GetObject(context.Background(), "key", "")
 	elapsed := time.Since(start)
 
 	if err != nil {
@@ -1229,7 +1229,7 @@ func TestGetObject_ParallelBroadcast_AllFail(t *testing.T) {
 	})
 	defer mgr.Close()
 
-	_, err := mgr.GetObject(context.Background(), "nowhere", "")
+	_, err := mgr.ObjectManager.GetObject(context.Background(), "nowhere", "")
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -1254,14 +1254,14 @@ func TestGetObject_ParallelBroadcast_CacheHitSkipsParallel(t *testing.T) {
 	defer mgr.Close()
 
 	// First call populates cache via parallel broadcast
-	r1, err := mgr.GetObject(context.Background(), "cached-key", "")
+	r1, err := mgr.ObjectManager.GetObject(context.Background(), "cached-key", "")
 	if err != nil {
 		t.Fatalf("first GetObject: %v", err)
 	}
 	_ = r1.Body.Close()
 
 	// Second call should use cache (not broadcast again)
-	r2, err := mgr.GetObject(context.Background(), "cached-key", "")
+	r2, err := mgr.ObjectManager.GetObject(context.Background(), "cached-key", "")
 	if err != nil {
 		t.Fatalf("second GetObject (cache hit): %v", err)
 	}
@@ -1296,7 +1296,7 @@ func TestGetObject_SequentialBroadcast_WhenDisabled(t *testing.T) {
 	defer mgr.Close()
 
 	start := time.Now()
-	result, err := mgr.GetObject(context.Background(), "key", "")
+	result, err := mgr.ObjectManager.GetObject(context.Background(), "key", "")
 	elapsed := time.Since(start)
 
 	if err != nil {
@@ -1333,7 +1333,7 @@ func TestGetObject_BackendNotFound_FailsOverToNext(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b2": b2})
 
-	result, err := mgr.GetObject(context.Background(), "key", "")
+	result, err := mgr.ObjectManager.GetObject(context.Background(), "key", "")
 	if err != nil {
 		t.Fatalf("GetObject should failover past missing backend: %v", err)
 	}
@@ -1348,7 +1348,7 @@ func TestGetObject_GenericStoreError(t *testing.T) {
 	store := &mockStore{getAllLocationsErr: errors.New("unexpected db error")}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	_, err := mgr.GetObject(context.Background(), "key", "")
+	_, err := mgr.ObjectManager.GetObject(context.Background(), "key", "")
 	if err == nil {
 		t.Fatal("expected error from generic store failure")
 	}
@@ -1367,10 +1367,10 @@ func TestGetObject_DBUnavailable_CacheHitFails_FallsThrough(t *testing.T) {
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": b1, "b2": b2})
 
 	// Pre-populate cache pointing to b1 (which does NOT have the object)
-	mgr.cache.Set("key", "b1")
+	mgr.ObjectManager.cache.Set("key", "b1")
 
 	// Cache hit on b1 should fail, then broadcast should find it on b2
-	result, err := mgr.GetObject(context.Background(), "key", "")
+	result, err := mgr.ObjectManager.GetObject(context.Background(), "key", "")
 	if err != nil {
 		t.Fatalf("should fall through to broadcast after cache hit failure: %v", err)
 	}
@@ -1397,7 +1397,7 @@ func TestDeleteObject_BackendNotFound_ContinuesOtherCopies(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": b1})
 
-	err := mgr.DeleteObject(context.Background(), "key")
+	err := mgr.ObjectManager.DeleteObject(context.Background(), "key")
 	if err != nil {
 		t.Fatalf("DeleteObject should succeed even with missing backend: %v", err)
 	}
@@ -1421,7 +1421,7 @@ func TestCopyObject_AllSourceHeadsFail(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": b1})
 
-	_, err := mgr.CopyObject(context.Background(), "src", "dst")
+	_, err := mgr.ObjectManager.CopyObject(context.Background(), "src", "dst")
 	if err == nil {
 		t.Fatal("expected error when all source HeadObjects fail")
 	}
@@ -1446,7 +1446,7 @@ func TestCopyObject_DestWriteFails(t *testing.T) {
 		RoutingStrategy: "pack",
 	})
 
-	_, err := mgr.CopyObject(context.Background(), "src", "dst")
+	_, err := mgr.ObjectManager.CopyObject(context.Background(), "src", "dst")
 	if err == nil {
 		t.Fatal("expected error when dest PutObject fails")
 	}
@@ -1475,7 +1475,7 @@ func TestCopyObject_ExcludesDrainingBackend(t *testing.T) {
 	mgr.draining.Store("dst-be", &drainState{done: make(chan struct{})})
 
 	// CopyObject should fail — all backends are draining
-	_, err := mgr.CopyObject(context.Background(), "src", "dst")
+	_, err := mgr.ObjectManager.CopyObject(context.Background(), "src", "dst")
 	if !errors.Is(err, ErrInsufficientStorage) {
 		t.Fatalf("expected ErrInsufficientStorage when all backends are draining, got %v", err)
 	}
@@ -1494,7 +1494,7 @@ func TestListObjects_GenericError(t *testing.T) {
 	store := &mockStore{listObjectsErr: errors.New("unexpected query error")}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	_, err := mgr.ListObjects(context.Background(), "", "", "", 1000)
+	_, err := mgr.ObjectManager.ListObjects(context.Background(), "", "", "", 1000)
 	if err == nil {
 		t.Fatal("expected error from generic store failure")
 	}
@@ -1521,7 +1521,7 @@ func TestHeadObject_ParallelBroadcast(t *testing.T) {
 	})
 	defer mgr.Close()
 
-	result, err := mgr.HeadObject(context.Background(), "key")
+	result, err := mgr.ObjectManager.HeadObject(context.Background(), "key")
 	if err != nil {
 		t.Fatalf("HeadObject parallel broadcast should succeed: %v", err)
 	}

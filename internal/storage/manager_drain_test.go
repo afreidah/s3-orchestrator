@@ -52,7 +52,7 @@ func TestPurgeBackendObjects_DeletesDBRecords(t *testing.T) {
 
 	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	mgr.purgeBackendObjects(context.Background(), backend, "b1")
+	mgr.DrainManager.purgeBackendObjects(context.Background(), backend, "b1")
 
 	// Verify DB records were deleted for both objects
 	store.mu.Lock()
@@ -101,7 +101,7 @@ func TestPurgeBackendObjects_ContinuesOnS3DeleteFailure(t *testing.T) {
 
 	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	mgr.purgeBackendObjects(context.Background(), backend, "b1")
+	mgr.DrainManager.purgeBackendObjects(context.Background(), backend, "b1")
 
 	// DB record should still be deleted even though S3 delete failed
 	store.mu.Lock()
@@ -135,7 +135,7 @@ func TestRemoveBackend_PurgeTerminates(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- mgr.RemoveBackend(context.Background(), "b1", true)
+		done <- mgr.DrainManager.RemoveBackend(context.Background(), "b1", true)
 	}()
 
 	select {
@@ -167,15 +167,15 @@ func TestStartDrain_FlushesCleanupQueueBeforeDeleteBackendData(t *testing.T) {
 
 	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	if err := mgr.StartDrain(context.Background(), "b1"); err != nil {
+	if err := mgr.DrainManager.StartDrain(context.Background(), "b1"); err != nil {
 		t.Fatalf("StartDrain: %v", err)
 	}
 
 	// Wait for drain to complete
-	progress, err := mgr.GetDrainProgress(context.Background(), "b1")
+	progress, err := mgr.DrainManager.GetDrainProgress(context.Background(), "b1")
 	for i := 0; i < 50 && (err != nil || progress.Active); i++ {
 		time.Sleep(50 * time.Millisecond)
-		progress, err = mgr.GetDrainProgress(context.Background(), "b1")
+		progress, err = mgr.DrainManager.GetDrainProgress(context.Background(), "b1")
 	}
 	if err != nil {
 		t.Fatalf("GetDrainProgress: %v", err)

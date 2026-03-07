@@ -100,7 +100,7 @@ func TestProcessCleanupQueue_DeleteSuccess(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	processed, failed := mgr.ProcessCleanupQueue(context.Background())
+	processed, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
 
 	if processed != 1 {
 		t.Errorf("expected processed=1, got %d", processed)
@@ -134,7 +134,7 @@ func TestProcessCleanupQueue_DeleteFails_SchedulesRetry(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	processed, failed := mgr.ProcessCleanupQueue(context.Background())
+	processed, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
 
 	if processed != 0 {
 		t.Errorf("expected processed=0, got %d", processed)
@@ -168,7 +168,7 @@ func TestProcessCleanupQueue_BackendNotFound_RemovesItem(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	processed, failed := mgr.ProcessCleanupQueue(context.Background())
+	processed, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
 
 	if processed != 1 {
 		t.Errorf("expected processed=1, got %d", processed)
@@ -187,7 +187,7 @@ func TestProcessCleanupQueue_EmptyQueue(t *testing.T) {
 	store := &mockStore{}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	processed, failed := mgr.ProcessCleanupQueue(context.Background())
+	processed, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
 
 	if processed != 0 || failed != 0 {
 		t.Errorf("expected 0/0, got %d/%d", processed, failed)
@@ -198,7 +198,7 @@ func TestProcessCleanupQueue_FetchError(t *testing.T) {
 	store := &mockStore{getPendingErr: errors.New("db error")}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	processed, failed := mgr.ProcessCleanupQueue(context.Background())
+	processed, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
 
 	if processed != 0 || failed != 0 {
 		t.Errorf("expected 0/0 on fetch error, got %d/%d", processed, failed)
@@ -216,7 +216,7 @@ func TestProcessCleanupQueue_MaxAttemptsReached(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	processed, failed := mgr.ProcessCleanupQueue(context.Background())
+	processed, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
 
 	if processed != 0 {
 		t.Errorf("expected processed=0, got %d", processed)
@@ -249,7 +249,7 @@ func TestProcessCleanupQueue_CompleteItemError(t *testing.T) {
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
 	// Should not panic despite CompleteCleanupItem error
-	processed, failed := mgr.ProcessCleanupQueue(context.Background())
+	processed, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
 	if processed != 1 {
 		t.Errorf("expected processed=1 (delete succeeded), got %d", processed)
 	}
@@ -271,7 +271,7 @@ func TestProcessCleanupQueue_RetryItemError(t *testing.T) {
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
 	// Should not panic despite RetryCleanupItem error
-	processed, failed := mgr.ProcessCleanupQueue(context.Background())
+	processed, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
 	if processed != 0 {
 		t.Errorf("expected processed=0, got %d", processed)
 	}
@@ -287,7 +287,7 @@ func TestProcessCleanupQueue_QueueDepthError(t *testing.T) {
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	// Should not panic — depth error is silently ignored
-	processed, failed := mgr.ProcessCleanupQueue(context.Background())
+	processed, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
 	if processed != 0 || failed != 0 {
 		t.Errorf("expected 0/0, got %d/%d", processed, failed)
 	}
@@ -303,7 +303,7 @@ func TestProcessCleanupQueue_BackendNotFound_CompleteItemError(t *testing.T) {
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	// Should not panic — completion error is logged only
-	processed, failed := mgr.ProcessCleanupQueue(context.Background())
+	processed, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
 	if processed != 1 {
 		t.Errorf("expected processed=1, got %d", processed)
 	}
@@ -328,7 +328,7 @@ func TestDeleteObject_BackendDeleteFails_EnqueuesCleanup(t *testing.T) {
 	backend.delErr = errors.New("backend timeout")
 	backend.mu.Unlock()
 
-	err := mgr.DeleteObject(context.Background(), "mykey")
+	err := mgr.ObjectManager.DeleteObject(context.Background(), "mykey")
 	if err != nil {
 		t.Fatalf("DeleteObject should succeed even if backend delete fails: %v", err)
 	}
@@ -353,7 +353,7 @@ func TestPutObject_RecordFails_OrphanDeleteFails_EnqueuesCleanup(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	_, err := mgr.PutObject(context.Background(), "mykey", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
+	_, err := mgr.ObjectManager.PutObject(context.Background(), "mykey", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 	if err == nil {
 		t.Fatal("expected error from PutObject")
 	}

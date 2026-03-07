@@ -75,14 +75,14 @@ func TestUpdateUsageLimits_SwapsLimits(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
-// SetRebalanceConfig / RebalanceConfig
+// Rebalancer.SetConfig / Rebalancer.Config
 // -------------------------------------------------------------------------
 
 func TestRebalanceConfig_RoundTrip(t *testing.T) {
 	mgr := newUsageManager([]string{"b1"}, &mockStore{})
 
 	// Initially nil
-	if mgr.RebalanceConfig() != nil {
+	if mgr.Rebalancer.Config() != nil {
 		t.Error("expected nil initial rebalance config")
 	}
 
@@ -93,9 +93,9 @@ func TestRebalanceConfig_RoundTrip(t *testing.T) {
 		BatchSize: 50,
 		Threshold: 0.2,
 	}
-	mgr.SetRebalanceConfig(cfg)
+	mgr.Rebalancer.SetConfig(cfg)
 
-	got := mgr.RebalanceConfig()
+	got := mgr.Rebalancer.Config()
 	if got == nil {
 		t.Fatal("expected non-nil rebalance config")
 	}
@@ -105,14 +105,14 @@ func TestRebalanceConfig_RoundTrip(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
-// SetReplicationConfig / ReplicationConfig
+// Replicator.SetConfig / Replicator.Config
 // -------------------------------------------------------------------------
 
 func TestReplicationConfig_RoundTrip(t *testing.T) {
 	mgr := newUsageManager([]string{"b1"}, &mockStore{})
 
 	// Initially nil
-	if mgr.ReplicationConfig() != nil {
+	if mgr.Replicator.Config() != nil {
 		t.Error("expected nil initial replication config")
 	}
 
@@ -121,9 +121,9 @@ func TestReplicationConfig_RoundTrip(t *testing.T) {
 		WorkerInterval: 10 * time.Minute,
 		BatchSize:      25,
 	}
-	mgr.SetReplicationConfig(cfg)
+	mgr.Replicator.SetConfig(cfg)
 
-	got := mgr.ReplicationConfig()
+	got := mgr.Replicator.Config()
 	if got == nil {
 		t.Fatal("expected non-nil replication config")
 	}
@@ -221,15 +221,15 @@ func TestNearUsageLimit_AboveThreshold(t *testing.T) {
 func TestClearCache_RemovesAllEntries(t *testing.T) {
 	mgr := newUsageManager([]string{"b1"}, &mockStore{})
 
-	mgr.cache.Set("key1", "b1")
-	mgr.cache.Set("key2", "b1")
+	mgr.ObjectManager.cache.Set("key1", "b1")
+	mgr.ObjectManager.cache.Set("key2", "b1")
 
 	mgr.ClearCache()
 
-	if _, ok := mgr.cache.Get("key1"); ok {
+	if _, ok := mgr.ObjectManager.cache.Get("key1"); ok {
 		t.Error("expected key1 cache miss after ClearCache")
 	}
-	if _, ok := mgr.cache.Get("key2"); ok {
+	if _, ok := mgr.ObjectManager.cache.Get("key2"); ok {
 		t.Error("expected key2 cache miss after ClearCache")
 	}
 }
