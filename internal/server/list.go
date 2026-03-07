@@ -36,6 +36,37 @@ type xmlCommonPrefix struct {
 	Prefix string `xml:"Prefix"`
 }
 
+// xmlListResultV1 is the XML response for ListObjectsV1.
+type xmlListResultV1 struct {
+	XMLName        xml.Name          `xml:"ListBucketResult"`
+	Xmlns          string            `xml:"xmlns,attr"`
+	Name           string            `xml:"Name"`
+	Prefix         string            `xml:"Prefix"`
+	Marker         string            `xml:"Marker"`
+	NextMarker     string            `xml:"NextMarker,omitempty"`
+	Delimiter      string            `xml:"Delimiter,omitempty"`
+	MaxKeys        int               `xml:"MaxKeys"`
+	IsTruncated    bool              `xml:"IsTruncated"`
+	Contents       []xmlContent      `xml:"Contents"`
+	CommonPrefixes []xmlCommonPrefix `xml:"CommonPrefixes,omitempty"`
+}
+
+// xmlListResultV2 is the XML response for ListObjectsV2.
+type xmlListResultV2 struct {
+	XMLName               xml.Name          `xml:"ListBucketResult"`
+	Xmlns                 string            `xml:"xmlns,attr"`
+	Name                  string            `xml:"Name"`
+	Prefix                string            `xml:"Prefix"`
+	Delimiter             string            `xml:"Delimiter,omitempty"`
+	MaxKeys               int               `xml:"MaxKeys"`
+	KeyCount              int               `xml:"KeyCount"`
+	IsTruncated           bool              `xml:"IsTruncated"`
+	ContinuationToken     string            `xml:"ContinuationToken,omitempty"`
+	NextContinuationToken string            `xml:"NextContinuationToken,omitempty"`
+	Contents              []xmlContent      `xml:"Contents"`
+	CommonPrefixes        []xmlCommonPrefix `xml:"CommonPrefixes,omitempty"`
+}
+
 // buildListContents converts storage objects and common prefixes to their XML
 // representations, stripping the internal bucket prefix from each key.
 func buildListContents(objects []storage.ObjectLocation, prefixes []string, bucketPrefix string) ([]xmlContent, []xmlCommonPrefix) {
@@ -78,20 +109,6 @@ func (s *Server) handleListObjectsV1(ctx context.Context, w http.ResponseWriter,
 	result, err := s.Manager.ListObjects(ctx, internalPrefix, delimiter, startAfter, maxKeys)
 	if err != nil {
 		return writeStorageError(w, err, "Failed to list objects"), err
-	}
-
-	type xmlListResultV1 struct {
-		XMLName        xml.Name          `xml:"ListBucketResult"`
-		Xmlns          string            `xml:"xmlns,attr"`
-		Name           string            `xml:"Name"`
-		Prefix         string            `xml:"Prefix"`
-		Marker         string            `xml:"Marker"`
-		NextMarker     string            `xml:"NextMarker,omitempty"`
-		Delimiter      string            `xml:"Delimiter,omitempty"`
-		MaxKeys        int               `xml:"MaxKeys"`
-		IsTruncated    bool              `xml:"IsTruncated"`
-		Contents       []xmlContent      `xml:"Contents"`
-		CommonPrefixes []xmlCommonPrefix `xml:"CommonPrefixes,omitempty"`
 	}
 
 	nextMarker := ""
@@ -146,21 +163,6 @@ func (s *Server) handleListObjectsV2(ctx context.Context, w http.ResponseWriter,
 	result, err := s.Manager.ListObjects(ctx, internalPrefix, delimiter, startAfter, maxKeys)
 	if err != nil {
 		return writeStorageError(w, err, "Failed to list objects"), err
-	}
-
-	type xmlListResultV2 struct {
-		XMLName               xml.Name          `xml:"ListBucketResult"`
-		Xmlns                 string            `xml:"xmlns,attr"`
-		Name                  string            `xml:"Name"`
-		Prefix                string            `xml:"Prefix"`
-		Delimiter             string            `xml:"Delimiter,omitempty"`
-		MaxKeys               int               `xml:"MaxKeys"`
-		KeyCount              int               `xml:"KeyCount"`
-		IsTruncated           bool              `xml:"IsTruncated"`
-		ContinuationToken     string            `xml:"ContinuationToken,omitempty"`
-		NextContinuationToken string            `xml:"NextContinuationToken,omitempty"`
-		Contents              []xmlContent      `xml:"Contents"`
-		CommonPrefixes        []xmlCommonPrefix `xml:"CommonPrefixes,omitempty"`
 	}
 
 	// Strip bucket prefix from NextContinuationToken

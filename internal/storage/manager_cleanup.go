@@ -12,6 +12,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -36,15 +37,42 @@ func cleanupBackoff(attempts int32) time.Duration {
 	return d
 }
 
+// deleteWithTimeout deletes an object from a backend using the configured
+// backend timeout. Returns the backend error directly.
+func (m *BackendManager) deleteWithTimeout(ctx context.Context, backend ObjectBackend, key string) error {
+	dctx, dcancel := m.withTimeout(ctx)
+	defer dcancel()
+	return backend.DeleteObject(dctx, key)
+}
+
+// streamCopy reads an object from src and writes it to dst using the configured
+// backend timeout for each operation. Returns an error tagged with "read:" or
+// "write:" to indicate which leg failed.
+func (m *BackendManager) streamCopy(ctx context.Context, src, dst ObjectBackend, key string) error {
+	rctx, rcancel := m.withTimeout(ctx)
+	result, err := src.GetObject(rctx, key, "")
+	if err != nil {
+		rcancel()
+		return fmt.Errorf("read: %w", err)
+	}
+
+	wctx, wcancel := m.withTimeout(ctx)
+	_, err = dst.PutObject(wctx, key, result.Body, result.Size, result.ContentType, result.Metadata)
+	_ = result.Body.Close()
+	rcancel()
+	wcancel()
+	if err != nil {
+		return fmt.Errorf("write: %w", err)
+	}
+	return nil
+}
+
 // deleteOrEnqueue attempts to delete an object from a backend. If the delete
 // fails, it logs a warning and enqueues the key for background retry. This is
 // the standard "best-effort orphan cleanup" primitive used throughout the
 // manager: rebalancer, replicator, multipart cleanup, and delete paths.
 func (m *BackendManager) deleteOrEnqueue(ctx context.Context, backend ObjectBackend, backendName, key, reason string) {
-	dctx, dcancel := m.withTimeout(ctx)
-	err := backend.DeleteObject(dctx, key)
-	dcancel()
-	if err != nil {
+	if err := m.deleteWithTimeout(ctx, backend, key); err != nil {
 		slog.Warn("Failed to delete object, enqueuing cleanup",
 			"backend", backendName, "key", key, "reason", reason, "error", err)
 		m.enqueueCleanup(ctx, backendName, key, reason)
@@ -86,9 +114,7 @@ func (m *BackendManager) ProcessCleanupQueue(ctx context.Context) (processed, fa
 			continue
 		}
 
-		dctx, dcancel := m.withTimeout(ctx)
-		delErr := backend.DeleteObject(dctx, item.ObjectKey)
-		dcancel()
+		delErr := m.deleteWithTimeout(ctx, backend, item.ObjectKey)
 		m.usage.Record(item.BackendName, 1, 0, 0)
 
 		if delErr == nil {

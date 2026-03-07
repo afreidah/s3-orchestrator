@@ -17,6 +17,8 @@ package telemetry
 import (
 	"context"
 	"log/slog"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 )
@@ -222,8 +224,8 @@ func (h *TeeHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	return &TeeHandler{
 		primary: h.primary.WithAttrs(attrs),
 		buf:     h.buf,
-		attrs:   append(slicesClone(h.attrs), attrs...),
-		groups:  slicesClone(h.groups),
+		attrs:   append(slices.Clone(h.attrs), attrs...),
+		groups:  slices.Clone(h.groups),
 	}
 }
 
@@ -235,8 +237,8 @@ func (h *TeeHandler) WithGroup(name string) slog.Handler {
 	return &TeeHandler{
 		primary: h.primary.WithGroup(name),
 		buf:     h.buf,
-		attrs:   slicesClone(h.attrs),
-		groups:  append(slicesClone(h.groups), name),
+		attrs:   slices.Clone(h.attrs),
+		groups:  append(slices.Clone(h.groups), name),
 	}
 }
 
@@ -245,19 +247,5 @@ func groupPrefix(groups []string) string {
 	if len(groups) == 0 {
 		return ""
 	}
-	var s string
-	for _, g := range groups {
-		s += g + "."
-	}
-	return s
-}
-
-// slicesClone returns a copy of the slice (avoids shared backing array).
-func slicesClone[T any](s []T) []T {
-	if s == nil {
-		return nil
-	}
-	c := make([]T, len(s))
-	copy(c, s)
-	return c
+	return strings.Join(groups, ".") + "."
 }

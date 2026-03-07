@@ -106,6 +106,28 @@ func (h *Handler) clientIP(r *http.Request) string {
 	return server.ExtractClientIP(r, h.trustedProxies)
 }
 
+// validBucketPrefix checks whether the key starts with a configured virtual bucket name.
+func (h *Handler) validBucketPrefix(key string) bool {
+	cfg := h.cfg.Load()
+	for _, b := range cfg.Buckets {
+		if strings.HasPrefix(key, b.Name+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// validBackend checks whether the backend name exists in config.
+func (h *Handler) validBackend(name string) bool {
+	cfg := h.cfg.Load()
+	for i := range cfg.Backends {
+		if cfg.Backends[i].Name == name {
+			return true
+		}
+	}
+	return false
+}
+
 // setSecurityHeaders adds security headers to dashboard responses.
 func setSecurityHeaders(w http.ResponseWriter) {
 	w.Header().Set("X-Frame-Options", "DENY")
@@ -596,16 +618,7 @@ func (h *Handler) handleAPIUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate the key starts with a configured virtual bucket name.
-	cfg := h.cfg.Load()
-	validBucket := false
-	for _, b := range cfg.Buckets {
-		if strings.HasPrefix(key, b.Name+"/") {
-			validBucket = true
-			break
-		}
-	}
-	if !validBucket {
+	if !h.validBucketPrefix(key) {
 		http.Error(w, `{"error":"key must start with a configured bucket name"}`, http.StatusBadRequest)
 		return
 	}
@@ -658,15 +671,7 @@ func (h *Handler) handleAPIDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg := h.cfg.Load()
-	validBucket := false
-	for _, b := range cfg.Buckets {
-		if strings.HasPrefix(key, b.Name+"/") {
-			validBucket = true
-			break
-		}
-	}
-	if !validBucket {
+	if !h.validBucketPrefix(key) {
 		http.Error(w, `{"error":"key must start with a configured bucket name"}`, http.StatusBadRequest)
 		return
 	}
@@ -760,38 +765,21 @@ func (h *Handler) handleAPISync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg := h.cfg.Load()
-
-	// Validate backend name exists in config.
-	validBackend := false
-	for i := range cfg.Backends {
-		if cfg.Backends[i].Name == req.Backend {
-			validBackend = true
-			break
-		}
-	}
-	if !validBackend {
+	if !h.validBackend(req.Backend) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "unknown backend: " + req.Backend})
 		return
 	}
 
-	// Validate bucket name is a configured virtual bucket.
-	validBucket := false
-	for _, b := range cfg.Buckets {
-		if b.Name == req.Bucket {
-			validBucket = true
-			break
-		}
-	}
-	if !validBucket {
+	if !h.validBucketPrefix(req.Bucket + "/") {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "unknown bucket: " + req.Bucket})
 		return
 	}
 
+	cfg := h.cfg.Load()
 	bucketNames := make([]string, len(cfg.Buckets))
 	for i, b := range cfg.Buckets {
 		bucketNames[i] = b.Name
