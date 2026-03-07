@@ -15,6 +15,7 @@
 package ui
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -422,10 +423,14 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := h.templates.ExecuteTemplate(w, "dashboard.html", page); err != nil {
+	var buf bytes.Buffer
+	if err := h.templates.ExecuteTemplate(&buf, "dashboard.html", page); err != nil {
 		slog.Error("UI: failed to render dashboard", "error", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
 	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = buf.WriteTo(w)
 }
 
 // -------------------------------------------------------------------------
