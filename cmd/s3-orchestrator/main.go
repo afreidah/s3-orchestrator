@@ -243,6 +243,10 @@ func runServe() {
 		CounterBackend:    counterBackend,
 	})
 
+	// --- Store config in atomic pointer for safe SIGHUP access ---
+	var cfgPtr atomic.Pointer[config.Config]
+	cfgPtr.Store(cfg)
+
 	// --- Store initial reloadable configs ---
 	manager.Rebalancer.SetConfig(&cfg.Rebalance)
 	manager.Replicator.SetConfig(&cfg.Replication)
@@ -428,8 +432,10 @@ func runServe() {
 
 	// --- Handle SIGHUP for config reload ---
 	hupChan := make(chan os.Signal, 1)
+	hupDone := make(chan struct{})
 	signal.Notify(hupChan, syscall.SIGHUP)
 	go func() {
+		defer close(hupDone)
 		for range hupChan {
 			slog.Info("SIGHUP received, reloading configuration", "path", *configPath)
 
@@ -440,7 +446,8 @@ func runServe() {
 			}
 
 			// Warn about non-reloadable changes
-			if warnings := config.NonReloadableFieldsChanged(cfg, newCfg); len(warnings) > 0 {
+			currentCfg := cfgPtr.Load()
+			if warnings := config.NonReloadableFieldsChanged(currentCfg, newCfg); len(warnings) > 0 {
 				for _, w := range warnings {
 					slog.Warn("Config field changed but requires restart to take effect", "field", w)
 				}
@@ -466,8 +473,9 @@ func runServe() {
 				)
 			}
 
-			// Reload quota limits in database
-			if err := store.SyncQuotaLimits(bgCtx, newCfg.Backends); err != nil {
+			// Reload quota limits in database (dedicated timeout, not bgCtx)
+			reloadCtx, reloadCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			if err := store.SyncQuotaLimits(reloadCtx, newCfg.Backends); err != nil {
 				slog.Error("Failed to sync quota limits on reload", "error", err)
 			} else {
 				slog.Info("Reloaded backend quota limits")
@@ -498,16 +506,17 @@ func runServe() {
 			slog.Info("Reloaded rebalance/replication/usage-flush/lifecycle config")
 
 			// Update quota metrics with new limits
-			if err := manager.UpdateQuotaMetrics(bgCtx); err != nil {
+			if err := manager.UpdateQuotaMetrics(reloadCtx); err != nil {
 				slog.Warn("Failed to update quota metrics after reload", "error", err)
 			}
+			reloadCancel()
 
 			// Update dashboard config
 			if uiHandler != nil {
 				uiHandler.UpdateConfig(newCfg)
 			}
 
-			cfg = newCfg
+			cfgPtr.Store(newCfg)
 			slog.Info("Configuration reload complete")
 		}
 	}()
@@ -527,14 +536,15 @@ func runServe() {
 		ready.Store(false)
 
 		// Optional pre-stop delay for async LB deregistration (Consul, K8s)
-		if cfg.Server.ShutdownDelay > 0 {
-			slog.Info("Waiting for load balancer deregistration", "delay", cfg.Server.ShutdownDelay)
-			time.Sleep(cfg.Server.ShutdownDelay)
+		if delay := cfgPtr.Load().Server.ShutdownDelay; delay > 0 {
+			slog.Info("Waiting for load balancer deregistration", "delay", delay)
+			time.Sleep(delay)
 		}
 
 		// Stop SIGHUP handler so it can't race with shutdown
 		signal.Stop(hupChan)
 		close(hupChan)
+		<-hupDone
 
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()

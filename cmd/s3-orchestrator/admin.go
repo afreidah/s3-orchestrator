@@ -46,7 +46,9 @@ Flags:
 `)
 		fs.PrintDefaults()
 	}
-	_ = fs.Parse(os.Args[1:])
+	if err := fs.Parse(os.Args[1:]); err != nil {
+		os.Exit(1)
+	}
 
 	if fs.NArg() == 0 || fs.Arg(0) == "help" {
 		fs.Usage()
