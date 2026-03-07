@@ -48,6 +48,10 @@ s3-orchestrator version
   - `redis.failure_threshold` -- circuit breaker threshold (default: 3)
   - `redis.open_timeout` -- circuit breaker probe delay (default: 15s)
 
+**Behavioral changes:**
+
+- `unsigned_payload` on HTTP backends is no longer force-disabled when explicitly set to `true`. Previously, the orchestrator always forced signed (buffered) payloads over HTTP regardless of config. Now an explicit `unsigned_payload: true` is respected, which is required for large uploads to HTTP backends (MinIO, etc.) to avoid buffering the entire object in memory. HTTPS backends continue to default to unsigned payload automatically.
+
 **New features:**
 
 - `x-amz-meta-*` user metadata passthrough on PutObject, GetObject, HeadObject, CopyObject, and multipart uploads

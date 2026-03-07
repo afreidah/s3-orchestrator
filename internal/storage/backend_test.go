@@ -48,10 +48,10 @@ func TestNewS3Backend_UnsignedPayloadDefaults(t *testing.T) {
 			wantUnsigned:    false,
 		},
 		{
-			name:            "explicit true with http still forces signed",
+			name:            "explicit true with http is respected",
 			endpoint:        "http://example.com",
 			unsignedPayload: boolPtr(true),
-			wantUnsigned:    false,
+			wantUnsigned:    true,
 		},
 	}
 

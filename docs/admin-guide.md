@@ -224,13 +224,15 @@ backends:
 
 When a backend exceeds a usage limit, writes overflow to the next eligible backend. Limits reset each month automatically.
 
-**Unsigned payload:** By default, uploads stream directly to backends without buffering the entire body in memory. The AWS SDK normally buffers the request body to compute a SigV4 payload hash (SHA-256), but the orchestrator uses `UNSIGNED-PAYLOAD` to skip this. Body integrity is protected by TLS at the transport layer.
+**Unsigned payload:** By default, uploads stream directly to backends without buffering the entire body in memory. The AWS SDK normally buffers the request body to compute a SigV4 payload hash (SHA-256), but the orchestrator uses `UNSIGNED-PAYLOAD` to skip this. Without streaming, large uploads (multipart completion, replication) can cause out-of-memory kills.
 
-Set `unsigned_payload: false` on a backend to restore the buffering behavior, which computes the full payload hash before uploading. This is only useful if you have a specific compliance requirement for end-to-end payload integrity independent of TLS — in practice, all S3-compatible providers use HTTPS and the TLS layer provides equivalent protection.
+For HTTPS endpoints, unsigned payload is enabled by default. For plain HTTP endpoints, it is auto-disabled unless explicitly set — AWS S3 rejects unsigned payloads over HTTP, but most S3-compatible backends (MinIO, R2, etc.) accept them. Set `unsigned_payload: true` on HTTP backends to enable streaming:
 
 ```yaml
-    unsigned_payload: false  # buffer uploads to compute SigV4 payload hash (default: true)
+    unsigned_payload: true   # stream uploads without buffering (auto-enabled for HTTPS)
 ```
+
+Set `unsigned_payload: false` to force payload hashing. This buffers the entire object in memory before uploading — only use this if you have a specific compliance requirement for end-to-end payload integrity independent of TLS.
 
 ### telemetry
 
