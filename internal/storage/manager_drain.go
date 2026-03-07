@@ -264,25 +264,10 @@ func (m *BackendManager) drainOneObject(ctx context.Context, srcBackend ObjectBa
 		return false
 	}
 
-	// Read from source
-	rctx, rcancel := m.withTimeout(ctx)
-	result, err := srcBackend.GetObject(rctx, obj.ObjectKey, "")
-	if err != nil {
-		rcancel()
-		slog.Warn("Drain: failed to read source object",
-			"key", obj.ObjectKey, "backend", srcName, "error", err)
-		return false
-	}
-
-	// Write to destination
-	wctx, wcancel := m.withTimeout(ctx)
-	_, err = destBackend.PutObject(wctx, obj.ObjectKey, result.Body, result.Size, result.ContentType, result.Metadata)
-	_ = result.Body.Close()
-	rcancel()
-	wcancel()
-	if err != nil {
-		slog.Warn("Drain: failed to write destination object",
-			"key", obj.ObjectKey, "backend", destName, "error", err)
+	// Stream source to destination
+	if err := m.streamCopy(ctx, srcBackend, destBackend, obj.ObjectKey); err != nil {
+		slog.Warn("Drain: stream copy failed",
+			"key", obj.ObjectKey, "from", srcName, "to", destName, "error", err)
 		return false
 	}
 
@@ -390,12 +375,10 @@ func (m *BackendManager) purgeBackendObjects(ctx context.Context, backend Object
 		}
 
 		for _, obj := range objects {
-			dctx, dcancel := m.withTimeout(ctx)
-			if err := backend.DeleteObject(dctx, obj.ObjectKey); err != nil {
+			if err := m.deleteWithTimeout(ctx, backend, obj.ObjectKey); err != nil {
 				slog.Warn("Remove: failed to delete object from backend",
 					"backend", name, "key", obj.ObjectKey, "error", err)
 			}
-			dcancel()
 			m.usage.Record(name, 1, 0, 0)
 
 			if err := m.store.DeleteObjectLocation(ctx, obj.ObjectKey, name); err != nil {

@@ -49,12 +49,13 @@ func New(manager *storage.BackendManager, store *storage.CircuitBreakerStore, ra
 
 // Register mounts the admin API routes on the given mux.
 func (h *Handler) Register(mux *http.ServeMux) {
-	mux.HandleFunc("/admin/api/status", h.requireToken(h.handleStatus))
-	mux.HandleFunc("/admin/api/object-locations", h.requireToken(h.handleObjectLocations))
-	mux.HandleFunc("/admin/api/cleanup-queue", h.requireToken(h.handleCleanupQueue))
-	mux.HandleFunc("/admin/api/usage-flush", h.requireToken(h.handleUsageFlush))
-	mux.HandleFunc("/admin/api/replicate", h.requireToken(h.handleReplicate))
-	mux.HandleFunc("/admin/api/log-level", h.requireToken(h.handleLogLevel))
+	mux.HandleFunc("GET /admin/api/status", h.requireToken(h.handleStatus))
+	mux.HandleFunc("GET /admin/api/object-locations", h.requireToken(h.handleObjectLocations))
+	mux.HandleFunc("GET /admin/api/cleanup-queue", h.requireToken(h.handleCleanupQueue))
+	mux.HandleFunc("POST /admin/api/usage-flush", h.requireToken(h.handleUsageFlush))
+	mux.HandleFunc("POST /admin/api/replicate", h.requireToken(h.handleReplicate))
+	mux.HandleFunc("GET /admin/api/log-level", h.requireToken(h.handleLogLevel))
+	mux.HandleFunc("PUT /admin/api/log-level", h.requireToken(h.handleLogLevel))
 	mux.HandleFunc("POST /admin/api/backends/{name}/drain", h.requireToken(h.handleStartDrain))
 	mux.HandleFunc("GET /admin/api/backends/{name}/drain", h.requireToken(h.handleDrainProgress))
 	mux.HandleFunc("DELETE /admin/api/backends/{name}/drain", h.requireToken(h.handleCancelDrain))
@@ -86,11 +87,6 @@ func (h *Handler) requireToken(next http.HandlerFunc) http.HandlerFunc {
 
 // handleStatus returns backend health and circuit breaker state.
 func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-		return
-	}
-
 	data, err := h.manager.GetDashboardData(r.Context())
 	if err != nil {
 		slog.Error("Admin: failed to fetch status", "error", err)
@@ -135,11 +131,6 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 // handleObjectLocations returns all copies of an object across backends.
 func (h *Handler) handleObjectLocations(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-		return
-	}
-
 	key := r.URL.Query().Get("key")
 	if key == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "key parameter is required"})
@@ -158,11 +149,6 @@ func (h *Handler) handleObjectLocations(w http.ResponseWriter, r *http.Request) 
 
 // handleCleanupQueue returns cleanup queue depth and pending items.
 func (h *Handler) handleCleanupQueue(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-		return
-	}
-
 	depth, err := h.store.CleanupQueueDepth(r.Context())
 	if err != nil {
 		slog.Error("Admin: failed to fetch cleanup queue depth", "error", err)
@@ -182,11 +168,6 @@ func (h *Handler) handleCleanupQueue(w http.ResponseWriter, r *http.Request) {
 
 // handleUsageFlush forces a flush of usage counters to the database.
 func (h *Handler) handleUsageFlush(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-		return
-	}
-
 	if err := h.manager.FlushUsage(r.Context()); err != nil {
 		slog.Error("Admin: usage flush failed", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "flush failed"})
@@ -198,11 +179,6 @@ func (h *Handler) handleUsageFlush(w http.ResponseWriter, r *http.Request) {
 
 // handleReplicate triggers one replication cycle.
 func (h *Handler) handleReplicate(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-		return
-	}
-
 	rcfg := h.manager.ReplicationConfig()
 	if rcfg == nil || rcfg.Factor <= 1 {
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -229,27 +205,23 @@ func (h *Handler) handleReplicate(w http.ResponseWriter, r *http.Request) {
 
 // handleLogLevel gets or sets the runtime log level.
 func (h *Handler) handleLogLevel(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
+	if r.Method == http.MethodGet {
 		writeJSON(w, http.StatusOK, map[string]string{"level": strings.ToLower(h.logLevel.Level().String())})
-
-	case http.MethodPut:
-		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-		var req struct {
-			Level string `json:"level"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
-			return
-		}
-		parsed := config.ParseLogLevel(req.Level)
-		h.logLevel.Set(parsed)
-		slog.Info("Log level changed via admin API", "level", req.Level)
-		writeJSON(w, http.StatusOK, map[string]string{"level": strings.ToLower(parsed.String())})
-
-	default:
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
 	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req struct {
+		Level string `json:"level"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+		return
+	}
+	parsed := config.ParseLogLevel(req.Level)
+	h.logLevel.Set(parsed)
+	slog.Info("Log level changed via admin API", "level", req.Level)
+	writeJSON(w, http.StatusOK, map[string]string{"level": strings.ToLower(parsed.String())})
 }
 
 // -------------------------------------------------------------------------

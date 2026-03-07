@@ -794,9 +794,7 @@ func (m *BackendManager) DeleteObjects(ctx context.Context, keys []string) []Del
 				defer wg.Done()
 				defer func() { <-sem }()
 
-				bctx, bcancel := m.withTimeout(ctx)
-				err := be.DeleteObject(bctx, key)
-				bcancel()
+				err := m.deleteWithTimeout(ctx, be, key)
 				if err != nil {
 					slog.Warn("Failed to delete object from backend (batch)",
 						"backend", beName, "key", key, "error", err)

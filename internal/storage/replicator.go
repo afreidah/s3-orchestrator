@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/audit"
@@ -226,33 +227,24 @@ func (m *BackendManager) copyToReplica(ctx context.Context, key string, copies [
 		return 1
 	})
 
-	for _, copy := range copies {
-		srcBackend, ok := m.backends[copy.BackendName]
+	for _, cp := range copies {
+		srcBackend, ok := m.backends[cp.BackendName]
 		if !ok {
 			continue
 		}
 
-		rctx, rcancel := m.withTimeout(ctx)
-		result, err := srcBackend.GetObject(rctx, key, "")
-		if err != nil {
-			rcancel()
-			slog.Warn("Replication: source read failed, trying next copy",
-				"key", key, "source", copy.BackendName, "error", err)
-			continue
+		err := m.streamCopy(ctx, srcBackend, targetBackend, key)
+		if err == nil {
+			return cp.BackendName, nil
 		}
 
-		// rcancel is deferred until after the body is fully consumed by PutObject,
-		// since result.Body is backed by the HTTP connection tied to rctx.
-		wctx, wcancel := m.withTimeout(ctx)
-		_, err = targetBackend.PutObject(wctx, key, result.Body, result.Size, result.ContentType, result.Metadata)
-		_ = result.Body.Close()
-		rcancel()
-		wcancel()
-		if err != nil {
+		// Write failures won't improve with a different source — fail immediately.
+		if strings.HasPrefix(err.Error(), "write:") {
 			return "", fmt.Errorf("failed to write to target %s: %w", target, err)
 		}
 
-		return copy.BackendName, nil
+		slog.Warn("Replication: source read failed, trying next copy",
+			"key", key, "source", cp.BackendName, "error", err)
 	}
 
 	return "", fmt.Errorf("all source copies failed for key %s", key)
