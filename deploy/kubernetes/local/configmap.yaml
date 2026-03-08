@@ -79,6 +79,10 @@ data:
     telemetry:
       metrics:
         enabled: true
+      tracing:
+        enabled: true
+        endpoint: "__HOST_IP__:4317"
+        insecure: true
 
     ui:
       enabled: true

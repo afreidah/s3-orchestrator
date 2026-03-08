@@ -100,7 +100,7 @@ job "s3-orchestrator" {
               unsigned_payload: true
               quota_bytes: 10737418240
 
-          routing_strategy: "spread"
+          routing_strategy: "pack"
 
           replication:
             factor: 2
@@ -124,6 +124,10 @@ job "s3-orchestrator" {
           telemetry:
             metrics:
               enabled: true
+            tracing:
+              enabled: true
+              endpoint: "__HOST_IP__:4317"
+              insecure: true
 
           ui:
             enabled: true
@@ -135,7 +139,7 @@ job "s3-orchestrator" {
       }
 
       resources {
-        cpu    = 1024
+        cpu    = 2048
         memory = 2048
       }
     }

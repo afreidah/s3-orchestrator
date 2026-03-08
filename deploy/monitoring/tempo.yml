@@ -1,0 +1,50 @@
+stream_over_http_enabled: true
+
+server:
+  http_listen_address: "0.0.0.0"
+  http_listen_port: 3200
+  grpc_listen_address: "0.0.0.0"
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: "0.0.0.0:4317"
+
+ingester:
+  max_block_duration: 5m
+
+metrics_generator:
+  ring:
+    kvstore:
+      store: inmemory
+  processor:
+    service_graphs:
+    span_metrics:
+    local_blocks:
+      flush_to_storage: true
+  storage:
+    path: /var/tempo/generator/wal
+    remote_write:
+      - url: http://localhost:19090/api/v1/write
+  traces_storage:
+    path: /var/tempo/traces
+    wal:
+      path: /var/tempo/wal
+
+overrides:
+  defaults:
+    metrics_generator:
+      processors:
+        - service-graphs
+        - span-metrics
+        - local-blocks
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /var/tempo/traces
+    wal:
+      path: /var/tempo/wal

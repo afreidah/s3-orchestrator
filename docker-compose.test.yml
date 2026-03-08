@@ -76,12 +76,25 @@ services:
         mc mb --ignore-existing minio1/backend1 &&
         mc mb --ignore-existing minio2/backend2
 
+  tempo:
+    image: grafana/tempo:2.6.1
+    network_mode: host
+    volumes:
+      - ./deploy/monitoring/tempo.yml:/etc/tempo.yml:ro
+    command: ["-config.file=/etc/tempo.yml"]
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3200/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   prometheus:
     image: prom/prometheus:latest
     network_mode: host
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--web.listen-address=:19090"
+      - "--web.enable-remote-write-receiver"
     volumes:
       - ./deploy/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     depends_on:
@@ -102,4 +115,7 @@ services:
       - ./deploy/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/s3-orchestrator.json:/var/lib/grafana/dashboards/s3-orchestrator.json:ro
     depends_on:
-      - prometheus
+      prometheus:
+        condition: service_started
+      tempo:
+        condition: service_healthy
