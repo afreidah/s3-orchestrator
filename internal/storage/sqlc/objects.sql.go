@@ -553,6 +553,15 @@ func (q *Queries) ListUnencryptedLocations(ctx context.Context, arg ListUnencryp
 	return items, nil
 }
 
+const lockObjectKeyForWrite = `-- name: LockObjectKeyForWrite :exec
+SELECT pg_advisory_xact_lock(hashtext($1))
+`
+
+func (q *Queries) LockObjectKeyForWrite(ctx context.Context, hashtext string) error {
+	_, err := q.db.Exec(ctx, lockObjectKeyForWrite, hashtext)
+	return err
+}
+
 const lockObjectOnBackend = `-- name: LockObjectOnBackend :one
 SELECT size_bytes, encrypted, encryption_key, key_id, plaintext_size
 FROM object_locations
