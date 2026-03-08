@@ -11,6 +11,7 @@
 package storage
 
 import (
+	"math/rand/v2"
 	"sync"
 	"time"
 )
@@ -68,13 +69,15 @@ func (c *LocationCache) Get(key string) (string, bool) {
 	return entry.backendName, true
 }
 
-// Set stores a key-to-backend mapping with the configured TTL.
+// Set stores a key-to-backend mapping with the configured TTL. A random
+// jitter of +/-20% is applied to prevent synchronized cache expiry storms.
 func (c *LocationCache) Set(key, backend string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	jitter := 0.8 + rand.Float64()*0.4 // [0.8, 1.2)
 	c.entries[key] = locationCacheEntry{
 		backendName: backend,
-		expiry:      time.Now().Add(c.ttl),
+		expiry:      time.Now().Add(time.Duration(float64(c.ttl) * jitter)),
 	}
 }
 
