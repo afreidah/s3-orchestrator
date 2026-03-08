@@ -1,0 +1,105 @@
+# -------------------------------------------------------------------------------
+# git-cliff Configuration - Changelog Generation
+#
+# Author: Alex Freidah
+#
+# Generates CHANGELOG.md from git commit history. Commits are grouped by type
+# using regex matching against commit messages. Run: git cliff -o CHANGELOG.md
+# -------------------------------------------------------------------------------
+
+[changelog]
+header = """
+# Changelog\n
+All notable changes to this project are documented in this file.\n
+"""
+body = """
+{%- if version %}
+## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
+{%- else %}
+## [unreleased]
+{%- endif %}
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | striptags | trim | upper_first }}
+{%- for commit in commits %}
+- {{ commit.message | split(pat="\n") | first | trim }}
+{%- endfor %}
+{% endfor %}
+"""
+trim = true
+
+[git]
+conventional_commits = false
+filter_unconventional = false
+split_commits = false
+protect_breaking_commits = false
+filter_commits = false
+topo_order = false
+sort_commits = "newest"
+commit_preprocessors = [
+    # Strip conventional commit prefixes for cleaner output
+    { pattern = "^feat\\([^)]*\\): ", replace = "" },
+    { pattern = "^feat: ", replace = "" },
+    { pattern = "^fix: ", replace = "" },
+    { pattern = "^docs: ", replace = "" },
+    { pattern = "^test: ", replace = "" },
+    { pattern = "^ci: ", replace = "" },
+    { pattern = "^refactor: ", replace = "" },
+    # Strip leading "- " or "1. " from poorly formatted commit messages
+    { pattern = "^\\d+\\. ", replace = "" },
+    { pattern = "^\\s*- ", replace = "" },
+    # Capitalize first letter after stripping
+    { pattern = "^([a-z])", replace = "${1}" },
+]
+commit_parsers = [
+    # Skip noise
+    { message = "^Merge pull request", skip = true },
+    { message = "^Merge branch", skip = true },
+    { message = "^Gh issue", skip = true },
+    { message = "^chore\\(deps\\)", group = "<!-- 7 -->Dependencies" },
+    { message = "^chore", skip = true },
+    { message = "^[Bb]ump", skip = true },
+    { message = "^version bump", skip = true },
+    { message = "^tweak", skip = true },
+    { message = "^more ", skip = true },
+    { message = "^link ", skip = true },
+    { message = "^trigger ", skip = true },
+    { message = "^updating dashboard image", skip = true },
+
+    # Features
+    { message = "^[Aa]dd ", group = "<!-- 0 -->Added" },
+    { message = "^feat:", group = "<!-- 0 -->Added" },
+    { message = "^feat\\(", group = "<!-- 0 -->Added" },
+
+    # Bug fixes
+    { message = "^[Ff]ix", group = "<!-- 1 -->Fixed" },
+    { message = "^fix:", group = "<!-- 1 -->Fixed" },
+    { message = "^[Pp]revent", group = "<!-- 1 -->Fixed" },
+    { message = "^[Ss]erialize", group = "<!-- 1 -->Fixed" },
+    { message = "^forgot", group = "<!-- 1 -->Fixed" },
+
+    # Security / hardening
+    { message = "^[Hh]arden", group = "<!-- 2 -->Hardened" },
+    { message = "^[Ss]ecur", group = "<!-- 2 -->Hardened" },
+
+    # Refactoring
+    { message = "^[Rr]efactor", group = "<!-- 3 -->Refactored" },
+    { message = "^[Dd]ecompose", group = "<!-- 3 -->Refactored" },
+    { message = "^[Rr]ename", group = "<!-- 3 -->Refactored" },
+
+    # Improvements
+    { message = "^[Ee]xpand", group = "<!-- 4 -->Improved" },
+    { message = "^[Uu]pdate", group = "<!-- 4 -->Improved" },
+    { message = "^[Rr]eplace", group = "<!-- 4 -->Improved" },
+    { message = "^[Ii]mprove", group = "<!-- 4 -->Improved" },
+
+    # Docs
+    { message = "^docs:", group = "<!-- 5 -->Documentation" },
+    { message = "^[Dd]ocument", group = "<!-- 5 -->Documentation" },
+
+    # Testing / CI
+    { message = "^test:", group = "<!-- 6 -->Testing" },
+    { message = "^ci:", group = "<!-- 6 -->Testing" },
+
+    # Catch-all
+    { message = ".*", group = "<!-- 8 -->Other" },
+]
