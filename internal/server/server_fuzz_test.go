@@ -1,3 +1,13 @@
+// -------------------------------------------------------------------------------
+// Server Fuzz Tests - Request ID Validation
+//
+// Author: Alex Freidah
+//
+// Fuzz tests for request ID validation. Ensures isValidRequestID enforces
+// length bounds and hex-only characters for all inputs, preventing log
+// injection and header injection via client-supplied request IDs.
+// -------------------------------------------------------------------------------
+
 package server
 
 import "testing"

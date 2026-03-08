@@ -1,3 +1,13 @@
+// -------------------------------------------------------------------------------
+// XML Fuzz Tests - S3 Request Body Parsing
+//
+// Author: Alex Freidah
+//
+// Fuzz tests for XML unmarshaling of S3 request bodies. Ensures the delete
+// objects and multipart upload completion parsers handle malformed, truncated,
+// and adversarial XML without panicking.
+// -------------------------------------------------------------------------------
+
 package server
 
 import (
