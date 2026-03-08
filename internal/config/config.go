@@ -113,6 +113,7 @@ type BackendConfig struct {
 	SecretAccessKey string `yaml:"secret_access_key"` // AWS secret access key
 	ForcePathStyle   bool  `yaml:"force_path_style"`   // Use path-style URLs
 	UnsignedPayload  *bool `yaml:"unsigned_payload"`   // Skip SigV4 payload hash to stream uploads without buffering (default: true)
+	DisableChecksum  bool  `yaml:"disable_checksum"`   // Disable SDK default checksums for GCS and other providers that reject them (default: false)
 	QuotaBytes       int64 `yaml:"quota_bytes"`        // Maximum bytes allowed on this backend (0 = unlimited)
 	APIRequestLimit  int64 `yaml:"api_request_limit"`  // Monthly API request limit (0 = unlimited)
 	EgressByteLimit  int64 `yaml:"egress_byte_limit"`  // Monthly egress byte limit (0 = unlimited)
@@ -834,7 +835,8 @@ func NonReloadableFieldsChanged(old, new *Config) []string {
 			if o.Name != n.Name || o.Endpoint != n.Endpoint || o.Region != n.Region ||
 				o.Bucket != n.Bucket || o.AccessKeyID != n.AccessKeyID ||
 				o.SecretAccessKey != n.SecretAccessKey || o.ForcePathStyle != n.ForcePathStyle ||
-				boolDefault(o.UnsignedPayload, true) != boolDefault(n.UnsignedPayload, true) {
+				boolDefault(o.UnsignedPayload, true) != boolDefault(n.UnsignedPayload, true) ||
+				o.DisableChecksum != n.DisableChecksum {
 				changed = append(changed, fmt.Sprintf("backends[%d] (%s) structural fields", i, o.Name))
 			}
 		}
