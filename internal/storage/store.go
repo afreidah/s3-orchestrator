@@ -413,6 +413,11 @@ type EncryptionMeta struct {
 
 func (s *Store) RecordObject(ctx context.Context, key, backend string, size int64, enc *EncryptionMeta) error {
 	return s.withTx(ctx, func(qtx *db.Queries) error {
+		// Serialize concurrent writes for the same key to prevent orphans
+		if err := qtx.LockObjectKeyForWrite(ctx, key); err != nil {
+			return fmt.Errorf("failed to acquire object key lock: %w", err)
+		}
+
 		// --- Collect all existing copies for this key ---
 		existing, err := qtx.GetExistingCopiesForUpdate(ctx, key)
 		if err != nil {
