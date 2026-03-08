@@ -156,6 +156,11 @@ func (d *DrainManager) runDrain(ctx context.Context, name string, state *drainSt
 	defer close(state.done)
 
 	ctx = audit.WithRequestID(ctx, audit.NewID())
+	ctx, span := telemetry.StartSpan(ctx, "Drain",
+		telemetry.AttrOperation.String("drain"),
+		telemetry.AttrBackendName.String(name),
+	)
+	defer span.End()
 
 	// Abort in-progress multipart uploads on this backend
 	d.abortMultipartUploads(ctx, name)

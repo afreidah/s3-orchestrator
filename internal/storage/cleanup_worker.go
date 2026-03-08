@@ -50,6 +50,11 @@ func cleanupBackoff(attempts int32) time.Duration {
 // orphaned objects from their respective backends. Returns the number of items
 // successfully processed and the number that failed.
 func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) (processed, failed int) {
+	ctx, span := telemetry.StartSpan(ctx, "ProcessCleanupQueue",
+		telemetry.AttrOperation.String("cleanup_queue"),
+	)
+	defer span.End()
+
 	items, err := w.store.GetPendingCleanups(ctx, 50)
 	if err != nil {
 		slog.Error("Failed to fetch pending cleanups", "error", err)

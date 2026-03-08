@@ -60,6 +60,10 @@ func (r *Replicator) Config() *config.ReplicationConfig {
 func (r *Replicator) Replicate(ctx context.Context, cfg config.ReplicationConfig) (int, error) {
 	start := time.Now()
 	ctx = audit.WithRequestID(ctx, audit.NewID())
+	ctx, span := telemetry.StartSpan(ctx, "Replicate",
+		telemetry.AttrOperation.String("replicate"),
+	)
+	defer span.End()
 
 	if cfg.Factor <= 1 {
 		return 0, nil

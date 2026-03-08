@@ -436,10 +436,38 @@
       }
     },
     {
+      "type": "timeseries",
+      "id": 59,
+      "title": "HTTP Requests by Status Code",
+      "gridPos": { "x": 0, "y": 21, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (status_code) (rate(s3proxy_requests_total[5m]))",
+          "legendFormat": "{{status_code}}"
+        }
+      ],
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "stacking": { "mode": "normal" }
+          }
+        }
+      }
+    },
+    {
       "type": "row",
       "id": 16,
       "title": "Backend Operations",
-      "gridPos": { "x": 0, "y": 21, "w": 24, "h": 1 },
+      "gridPos": { "x": 0, "y": 29, "w": 24, "h": 1 },
       "collapsed": false
     },
     {
@@ -870,6 +898,33 @@
           "custom": {
             "lineWidth": 2,
             "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 60,
+      "title": "Health-Triggered Replica Copies",
+      "gridPos": { "x": 0, "y": 55, "w": 8, "h": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "rate(s3proxy_replication_health_copies_total[5m])",
+          "legendFormat": "health copies/s"
+        }
+      ],
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "cps",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 20,
             "showPoints": "never"
           }
         }
@@ -1542,6 +1597,75 @@
       },
       "fieldConfig": {
         "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        }
+      }
+    },
+    {
+      "type": "row",
+      "id": 61,
+      "title": "Redis",
+      "gridPos": { "x": 0, "y": 120, "w": 24, "h": 1 },
+      "collapsed": false
+    },
+    {
+      "type": "stat",
+      "id": 62,
+      "title": "Redis Fallback Active",
+      "gridPos": { "x": 0, "y": 121, "w": 4, "h": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "s3proxy_redis_fallback_active",
+          "legendFormat": "fallback",
+          "instant": true
+        }
+      ],
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "0",
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "Normal", "color": "green" }, "1": { "text": "Fallback", "color": "red" } } }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 63,
+      "title": "Redis Operations",
+      "gridPos": { "x": 4, "y": 121, "w": 10, "h": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (operation, status) (rate(s3proxy_redis_operations_total[5m]))",
+          "legendFormat": "{{operation}} {{status}}"
+        }
+      ],
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
           "custom": {
             "lineWidth": 2,
             "fillOpacity": 10,

@@ -69,6 +69,10 @@ type rebalanceMove struct {
 func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig) (int, error) {
 	start := time.Now()
 	ctx = audit.WithRequestID(ctx, audit.NewID())
+	ctx, span := telemetry.StartSpan(ctx, "Rebalance",
+		telemetry.AttrOperation.String("rebalance"),
+	)
+	defer span.End()
 
 	audit.Log(ctx, "rebalance.start",
 		slog.String("strategy", cfg.Strategy),

@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/exaring/otelpgx"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -123,6 +124,7 @@ func NewStore(ctx context.Context, dbCfg *config.DatabaseConfig) (*Store, error)
 	cfg.MaxConns = dbCfg.MaxConns
 	cfg.MinConns = dbCfg.MinConns
 	cfg.MaxConnLifetime = dbCfg.MaxConnLifetime
+	cfg.ConnConfig.Tracer = otelpgx.NewTracer()
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
