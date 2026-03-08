@@ -148,6 +148,7 @@ tools: ## Install build and packaging dependencies
 	go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0
 	go install golang.org/x/vuln/cmd/govulncheck@latest
 	go install github.com/princjef/gomarkdoc/cmd/gomarkdoc@latest
+	go install golang.org/x/perf/cmd/benchstat@latest
 	sudo apt-get update && sudo apt-get install -y lintian
 	curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
 
