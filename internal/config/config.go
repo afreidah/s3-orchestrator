@@ -376,10 +376,10 @@ func (c *Config) SetDefaultsAndValidate() error {
 		c.Database.SSLMode = "require"
 	}
 	if c.Database.MaxConns == 0 {
-		c.Database.MaxConns = 10
+		c.Database.MaxConns = 50
 	}
 	if c.Database.MinConns == 0 {
-		c.Database.MinConns = 5
+		c.Database.MinConns = 10
 	}
 	if c.Database.MaxConnLifetime == 0 {
 		c.Database.MaxConnLifetime = 5 * time.Minute
