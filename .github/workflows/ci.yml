@@ -157,12 +157,14 @@ jobs:
 
       - name: Fuzz smoke test
         run: |
-          go test -fuzz=FuzzParseSigV4Fields -fuzztime=5s ./internal/auth/
-          go test -fuzz=FuzzParsePath -fuzztime=5s ./internal/server/
-          go test -fuzz=FuzzDeleteObjectsXML -fuzztime=5s ./internal/server/
-          go test -fuzz=FuzzCompleteMultipartXML -fuzztime=5s ./internal/server/
-          go test -fuzz=FuzzIsValidRequestID -fuzztime=5s ./internal/server/
-          go test -fuzz=FuzzLoginThrottle_RemoteAddr -fuzztime=5s ./internal/server/
+          go test -fuzz=FuzzParseSigV4Fields -fuzztime=10s ./internal/auth/
+          go test -fuzz=FuzzBuildCanonicalRequest -fuzztime=10s ./internal/auth/
+          go test -fuzz=FuzzParsePath -fuzztime=10s ./internal/server/
+          go test -fuzz=FuzzDeleteObjectsXML -fuzztime=10s ./internal/server/
+          go test -fuzz=FuzzCompleteMultipartXML -fuzztime=10s ./internal/server/
+          go test -fuzz=FuzzIsValidRequestID -fuzztime=10s ./internal/server/
+          go test -fuzz=FuzzLoginThrottle_RemoteAddr -fuzztime=10s ./internal/server/
+          go test -fuzz=FuzzExtractClientIP -fuzztime=10s ./internal/server/
 
   integration:
     runs-on: ubuntu-latest

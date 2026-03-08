@@ -1,3 +1,12 @@
+// -------------------------------------------------------------------------------
+// Helpers Fuzz Tests - URL Path Parsing
+//
+// Author: Alex Freidah
+//
+// Fuzz tests for HTTP request path parsing. Validates that parsePath never
+// returns ok=true with an empty bucket name, regardless of input.
+// -------------------------------------------------------------------------------
+
 package server
 
 import "testing"

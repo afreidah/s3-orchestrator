@@ -320,7 +320,7 @@ Request IDs flow through context via `audit.WithRequestID` / `audit.RequestID`:
 
 - Fuzz test files use the `_fuzz_test.go` suffix: `auth_fuzz_test.go`, `xml_fuzz_test.go`
 - Run all fuzz targets: `make fuzz` (30s per target)
-- CI runs a 5s smoke test per target to catch regressions
+- CI runs a 10s smoke test per target to catch regressions
 - Seed the corpus with valid inputs, edge cases, and adversarial inputs via `f.Add()`
 - Fuzz callbacks must never panic — verify invariants with `t.Errorf` instead
 - For XML/string parsers, verify no panics on arbitrary input and check returned values satisfy documented invariants
