@@ -6,12 +6,18 @@ All notable changes to this project are documented in this file.
 ## [unreleased]
 
 ### Added
-- add per-backend disable_checksum option for GCS compatibility
+- add per-backend disable_checksum option for GCS compatibility (#225)
 - Add DB query tracing, background worker spans, audit logging gaps, and Grafana dashboard coverage (#222)
 - Add git-cliff changelog generation with commit categorization (#219)
 
 ### Hardened
 - Harden defaults: increase DB pool size and add location cache TTL jitter (#215)
+
+### Documentation
+- documentation update I forgot
+
+### Other
+- exclude circuit-broken backends from write routing
 
 ## [0.16.4] - 2026-03-08
 

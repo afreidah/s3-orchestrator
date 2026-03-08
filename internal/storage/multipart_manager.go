@@ -57,8 +57,8 @@ func (mp *MultipartManager) CreateMultipartUpload(ctx context.Context, key, cont
 	)
 	defer span.End()
 
-	// Filter backends within usage limits and exclude draining
-	eligible := mp.excludeDraining(mp.usage.BackendsWithinLimits(mp.order, 1, 0, 0))
+	// Filter backends within usage limits, exclude draining and unhealthy
+	eligible := mp.excludeUnhealthy(mp.excludeDraining(mp.usage.BackendsWithinLimits(mp.order, 1, 0, 0)))
 	if len(eligible) == 0 {
 		telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation, "write").Inc()
 		span.SetStatus(codes.Error, "usage limits exceeded on all backends")
