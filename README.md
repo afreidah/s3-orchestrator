@@ -887,7 +887,15 @@ Tag a version and push to trigger an automated GitHub Release via GoReleaser:
 make release
 ```
 
-This tags the current `.version` value and pushes the tag, which triggers GoReleaser to build Linux binaries (amd64 + arm64), Debian packages, and SHA256 checksums — all attached to the GitHub Release with an auto-generated changelog.
+This regenerates `CHANGELOG.md` via [git-cliff](https://git-cliff.org), tags the current `.version` value, and pushes the tag. The tag triggers GoReleaser to build Linux binaries (amd64 + arm64), Debian packages, and SHA256 checksums — all attached to the GitHub Release.
+
+To regenerate the changelog without releasing:
+
+```bash
+make changelog
+```
+
+Commit categorization is configured in `cliff.toml`. Commit messages starting with `Add`, `Fix`, `Harden`, `Refactor`, `Improve`, `docs:`, `test:`, or `chore(deps):` are automatically grouped into the appropriate section.
 
 Docker images are still built manually since the private registry isn't reachable from GitHub Actions:
 
@@ -984,6 +992,8 @@ packaging/
   changelog                  Debian changelog
   copyright                  Debian copyright file
   lintian-overrides          Lintian override rules
+cliff.toml                   git-cliff changelog generation config
+CHANGELOG.md                 Auto-generated changelog (make changelog)
 config.example.yaml          Configuration reference
 deploy/
   nomad/
