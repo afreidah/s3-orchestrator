@@ -168,10 +168,17 @@ deb-lint: deb ## Run lintian on the .deb packages
 	@for f in dist/*.deb; do echo "--- $$f ---"; lintian --tag-display-limit 0 "$$f"; done
 
 # -------------------------------------------------------------------------
+# CHANGELOG
+# -------------------------------------------------------------------------
+
+changelog: ## Generate CHANGELOG.md from git history
+	git cliff -o CHANGELOG.md
+
+# -------------------------------------------------------------------------
 # RELEASE
 # -------------------------------------------------------------------------
 
-release: ## Tag and push to trigger a GitHub Release (reads .version)
+release: changelog ## Tag and push to trigger a GitHub Release (reads .version)
 	git tag $(VERSION)
 	git push origin $(VERSION)
 
@@ -245,5 +252,5 @@ clean: integration-clean ## Remove build artifacts, local image, and test contai
 		rm -f /tmp/nomad-demo.pid; \
 	fi
 
-.PHONY: help builder build docker push generate test vet lint govulncheck run docs migration integration-deps integration-test integration-clean tools prep-changelog deb deb-lint deb-all release release-local kubernetes-demo nomad-demo web-tools web-godoc web-serve web-build web-docker web-push clean
+.PHONY: help builder build docker push generate test vet lint govulncheck run docs migration integration-deps integration-test integration-clean tools prep-changelog deb deb-lint deb-all changelog release release-local kubernetes-demo nomad-demo web-tools web-godoc web-serve web-build web-docker web-push clean
 .DEFAULT_GOAL := help
