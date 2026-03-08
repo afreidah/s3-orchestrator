@@ -6,7 +6,8 @@ All notable changes to this project are documented in this file.
 ## [unreleased]
 
 ### Added
-- Add DB query tracing, background worker spans, audit logging gaps, and Grafana dashboard coverage
+- add per-backend disable_checksum option for GCS compatibility
+- Add DB query tracing, background worker spans, audit logging gaps, and Grafana dashboard coverage (#222)
 - Add git-cliff changelog generation with commit categorization (#219)
 
 ### Hardened

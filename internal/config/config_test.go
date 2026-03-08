@@ -932,6 +932,51 @@ func TestNonReloadableFieldsChanged_UnsignedPayloadExplicitTrue(t *testing.T) {
 	}
 }
 
+func TestNonReloadableFieldsChanged_DisableChecksumChanged(t *testing.T) {
+	a := validBaseConfig()
+	b := validBaseConfig()
+	_ = a.SetDefaultsAndValidate()
+	b.Backends[0].DisableChecksum = true
+	_ = b.SetDefaultsAndValidate()
+
+	changed := NonReloadableFieldsChanged(&a, &b)
+	found := false
+	for _, c := range changed {
+		if strings.Contains(c, "structural fields") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected backend structural fields change for disable_checksum, got %v", changed)
+	}
+}
+
+func TestNonReloadableFieldsChanged_DisableChecksumBothTrue(t *testing.T) {
+	a := validBaseConfig()
+	b := validBaseConfig()
+	a.Backends[0].DisableChecksum = true
+	b.Backends[0].DisableChecksum = true
+	_ = a.SetDefaultsAndValidate()
+	_ = b.SetDefaultsAndValidate()
+
+	changed := NonReloadableFieldsChanged(&a, &b)
+	if len(changed) != 0 {
+		t.Errorf("both disable_checksum=true should be identical, got %v", changed)
+	}
+}
+
+func TestNonReloadableFieldsChanged_DisableChecksumBothFalse(t *testing.T) {
+	a := validBaseConfig()
+	b := validBaseConfig()
+	_ = a.SetDefaultsAndValidate()
+	_ = b.SetDefaultsAndValidate()
+
+	changed := NonReloadableFieldsChanged(&a, &b)
+	if len(changed) != 0 {
+		t.Errorf("both disable_checksum=false (default) should be identical, got %v", changed)
+	}
+}
+
 func TestBoolDefault(t *testing.T) {
 	tr := true
 	f := false
@@ -1368,6 +1413,71 @@ backends:
 	}
 	if cfg.Backends[0].Name != "b1" {
 		t.Errorf("backend name = %q, want \"b1\"", cfg.Backends[0].Name)
+	}
+}
+
+func TestLoadConfig_DisableChecksum(t *testing.T) {
+	yaml := `
+server:
+  listen_addr: ":9000"
+buckets:
+  - name: test
+    credentials:
+      - access_key_id: AKID
+        secret_access_key: secret
+database:
+  host: localhost
+  database: s3proxy
+  user: s3proxy
+backends:
+  - name: gcp
+    endpoint: https://storage.googleapis.com
+    bucket: mybucket
+    access_key_id: AKID
+    secret_access_key: secret
+    disable_checksum: true
+    quota_bytes: 1024
+`
+	path := writeTempConfig(t, yaml)
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if !cfg.Backends[0].DisableChecksum {
+		t.Errorf("DisableChecksum = false, want true")
+	}
+}
+
+func TestLoadConfig_DisableChecksumDefaultFalse(t *testing.T) {
+	yaml := `
+server:
+  listen_addr: ":9000"
+buckets:
+  - name: test
+    credentials:
+      - access_key_id: AKID
+        secret_access_key: secret
+database:
+  host: localhost
+  database: s3proxy
+  user: s3proxy
+backends:
+  - name: b1
+    endpoint: https://s3.example.com
+    bucket: mybucket
+    access_key_id: AKID
+    secret_access_key: secret
+    quota_bytes: 1024
+`
+	path := writeTempConfig(t, yaml)
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.Backends[0].DisableChecksum {
+		t.Errorf("DisableChecksum = true, want false (default)")
 	}
 }
 
