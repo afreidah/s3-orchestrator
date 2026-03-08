@@ -76,12 +76,17 @@ type S3Backend struct {
 // to direct requests to the configured provider instead of AWS.
 func NewS3Backend(cfg *config.BackendConfig) (*S3Backend, error) {
 	// --- Create S3 client with custom endpoint ---
-	client := s3.New(s3.Options{
+	opts := s3.Options{
 		Region:       cfg.Region,
 		Credentials:  credentials.NewStaticCredentialsProvider(cfg.AccessKeyID, cfg.SecretAccessKey, ""),
 		BaseEndpoint: aws.String(cfg.Endpoint),
 		UsePathStyle: cfg.ForcePathStyle,
-	})
+	}
+	if cfg.DisableChecksum {
+		opts.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
+		opts.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenRequired
+	}
+	client := s3.New(opts)
 
 	// Default to unsigned payload (streaming) to avoid buffering entire
 	// objects in memory for SigV4 payload hashing. When the user has not
