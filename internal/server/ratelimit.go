@@ -22,8 +22,11 @@ import (
 	"sync"
 	"time"
 
+	"log/slog"
+
 	"golang.org/x/time/rate"
 
+	"github.com/afreidah/s3-orchestrator/internal/audit"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 )
@@ -131,6 +134,11 @@ func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 		ip := rl.extractIP(r)
 		if !rl.Allow(ip) {
 			telemetry.RateLimitRejectionsTotal.Inc()
+			audit.Log(r.Context(), "s3.RateLimitRejected",
+				slog.String("client_ip", ip),
+				slog.String("method", r.Method),
+				slog.String("path", r.URL.Path),
+			)
 			writeS3Error(w, http.StatusTooManyRequests, "SlowDown", "Rate limit exceeded")
 			return
 		}
