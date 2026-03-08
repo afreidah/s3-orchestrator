@@ -21,7 +21,7 @@ This installs `benchstat` along with other dev dependencies.
 ### 1. Capture baseline on main (or before your changes)
 
 ```bash
-go test -bench=. -benchmem -count=6 -run='^$' ./... | tee bench-before.txt
+go test -bench=. -benchmem -count=6 -run='^$' ./... 2>/dev/null | tee bench-before.txt
 ```
 
 The `-count=6` flag gives `benchstat` enough samples for statistical
@@ -41,7 +41,7 @@ a `*_bench_test.go` file next to the code under test. See existing examples:
 ### 3. Run benchmarks again
 
 ```bash
-go test -bench=. -benchmem -count=6 -run='^$' ./... | tee bench-after.txt
+go test -bench=. -benchmem -count=6 -run='^$' ./... 2>/dev/null | tee bench-after.txt
 ```
 
 ### 4. Compare
@@ -107,5 +107,5 @@ func BenchmarkMyFeature(b *testing.B) {
 | Command | Purpose |
 |---------|---------|
 | `make bench` | Run all benchmarks once (quick sanity check) |
-| `go test -bench=. -benchmem -count=6 -run='^$' ./... \| tee out.txt` | Run with enough samples for benchstat |
+| `go test -bench=. -benchmem -count=6 -run='^$' ./... 2>/dev/null \| tee out.txt` | Run with enough samples for benchstat |
 | `benchstat before.txt after.txt` | Compare two runs |
