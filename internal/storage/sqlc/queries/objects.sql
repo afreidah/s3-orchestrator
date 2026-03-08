@@ -1,3 +1,6 @@
+-- name: LockObjectKeyForWrite :exec
+SELECT pg_advisory_xact_lock(hashtext($1));
+
 -- name: GetExistingCopiesForUpdate :many
 SELECT backend_name, size_bytes
 FROM object_locations
