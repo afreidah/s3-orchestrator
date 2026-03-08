@@ -6,7 +6,8 @@ All notable changes to this project are documented in this file.
 ## [unreleased]
 
 ### Added
-- Add git-cliff changelog generation with commit categorization
+- Add DB query tracing, background worker spans, audit logging gaps, and Grafana dashboard coverage
+- Add git-cliff changelog generation with commit categorization (#219)
 
 ### Hardened
 - Harden defaults: increase DB pool size and add location cache TTL jitter (#215)

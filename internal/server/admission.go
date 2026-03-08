@@ -12,8 +12,10 @@
 package server
 
 import (
+	"log/slog"
 	"net/http"
 
+	"github.com/afreidah/s3-orchestrator/internal/audit"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 )
 
@@ -40,6 +42,10 @@ func (ac *AdmissionController) Middleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		default:
 			telemetry.AdmissionRejectionsTotal.Inc()
+			audit.Log(r.Context(), "s3.AdmissionRejected",
+				slog.String("method", r.Method),
+				slog.String("path", r.URL.Path),
+			)
 			writeS3Error(w, http.StatusServiceUnavailable, "SlowDown", "Server at capacity")
 		}
 	})
