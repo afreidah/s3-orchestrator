@@ -234,6 +234,14 @@ For HTTPS endpoints, unsigned payload is enabled by default. For plain HTTP endp
 
 Set `unsigned_payload: false` to force payload hashing. This buffers the entire object in memory before uploading — only use this if you have a specific compliance requirement for end-to-end payload integrity independent of TLS.
 
+**Disable checksum:** AWS SDK v2 defaults to sending streaming checksums (CRC64NVME) on uploads. Some S3-compatible providers — notably Google Cloud Storage — reject these with `SignatureDoesNotMatch`. Set `disable_checksum: true` on backends that don't support the AWS checksum headers:
+
+```yaml
+    disable_checksum: true   # required for GCS HMAC interoperability
+```
+
+This sets the SDK's `RequestChecksumCalculation` and `ResponseChecksumValidation` to `WhenRequired`, disabling automatic checksum injection without affecting SigV4 request signing.
+
 ### telemetry
 
 ```yaml
