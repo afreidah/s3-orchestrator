@@ -47,6 +47,7 @@ s3-orchestrator version
   - `redis.key_prefix` -- key namespace (default: "s3orch")
   - `redis.failure_threshold` -- circuit breaker threshold (default: 3)
   - `redis.open_timeout` -- circuit breaker probe delay (default: 15s)
+- `backends[].disable_checksum` -- disable AWS SDK default checksums (default: false). Required for Google Cloud Storage HMAC interoperability, where the SDK's streaming CRC64NVME checksums cause `SignatureDoesNotMatch` errors.
 
 **Behavioral changes:**
 
