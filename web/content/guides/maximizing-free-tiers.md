@@ -12,6 +12,159 @@ Most S3-compatible providers offer a free tier with a limited amount of storage 
 
 The key tools for staying within free tiers are **per-backend quotas** and **usage limits**. Quotas cap stored bytes so you never exceed a provider's free storage allowance. Usage limits cap monthly API requests, egress, and ingress so you avoid overage charges on metered dimensions.
 
+![Five cloud backends with a free-tier configuration](/docs/images/free-tier-5-cloud-setup.png?classes=lightbox)
+
+Below is the configuration used to run the setup shown above. Credentials are injected via Vault templates, but you can substitute environment variables or literal values.
+
+```yaml
+server:
+  listen_addr: "0.0.0.0:9000"
+  backend_timeout: "5m"
+  shutdown_delay: "5s"
+
+routing_strategy: "spread"
+
+buckets:
+  - name: "unified"
+    credentials:
+      - access_key_id: "{{ .Data.data.access_key }}"
+        secret_access_key: "{{ .Data.data.secret_key }}"
+
+database:
+  host: "haproxy-postgres.service.consul"
+  port: 5433
+  database: "s3_orchestrator"
+  user: "{{ .Data.data.db_username }}"
+  password: "{{ .Data.data.db_password }}"
+  ssl_mode: "require"
+  max_conns: 10
+  min_conns: 5
+  max_conn_lifetime: "5m"
+
+backends:
+  - name: "oci"
+    endpoint: "{{ .Data.data.oci_s3_endpoint }}"
+    region: "{{ .Data.data.oci_s3_region }}"
+    bucket: "{{ .Data.data.oci_s3_bucket }}"
+    access_key_id: "{{ .Data.data.oci_s3_access_key }}"
+    secret_access_key: "{{ .Data.data.oci_s3_secret_key }}"
+    force_path_style: true
+    quota_bytes: 10737418240
+    api_request_limit: 50000
+    egress_byte_limit: 10737418240
+
+  - name: "r2"
+    endpoint: "{{ .Data.data.r2_s3_endpoint }}"
+    region: "auto"
+    bucket: "{{ .Data.data.r2_s3_bucket }}"
+    access_key_id: "{{ .Data.data.r2_s3_access_key }}"
+    secret_access_key: "{{ .Data.data.r2_s3_secret_key }}"
+    force_path_style: true
+    quota_bytes: 10737418240
+    api_request_limit: 1000000
+
+  - name: "e2"
+    endpoint: "{{ .Data.data.e2_s3_endpoint }}"
+    region: "{{ .Data.data.e2_s3_region }}"
+    bucket: "{{ .Data.data.e2_s3_bucket }}"
+    access_key_id: "{{ .Data.data.e2_s3_access_key }}"
+    secret_access_key: "{{ .Data.data.e2_s3_secret_key }}"
+    force_path_style: true
+    disable_checksum: true
+    quota_bytes: 10737418240
+    egress_byte_limit: 32212254720
+    ingress_byte_limit: 10737418240
+
+  - name: "ibm"
+    endpoint: "{{ .Data.data.ibm_s3_endpoint }}"
+    region: "{{ .Data.data.ibm_s3_region }}"
+    bucket: "{{ .Data.data.ibm_s3_bucket }}"
+    access_key_id: "{{ .Data.data.ibm_s3_access_key }}"
+    secret_access_key: "{{ .Data.data.ibm_s3_secret_key }}"
+    force_path_style: true
+    quota_bytes: 5368709120
+    egress_byte_limit: 5368709120
+    ingress_byte_limit: 5368709120
+
+  # GCS requires three extra settings to work with SigV4 signing.
+  # See the note below for details.
+  - name: "gcp"
+    endpoint: "{{ .Data.data.gcp_s3_endpoint }}"
+    region: "{{ .Data.data.gcp_s3_region }}"
+    bucket: "{{ .Data.data.gcp_s3_bucket }}"
+    access_key_id: "{{ .Data.data.gcp_s3_access_key }}"
+    secret_access_key: "{{ .Data.data.gcp_s3_secret_key }}"
+    force_path_style: true
+    disable_checksum: true
+    unsigned_payload: true
+    strip_sdk_headers: true
+    quota_bytes: 5368709120
+    egress_byte_limit: 1073741824
+    ingress_byte_limit: 5368709120
+    api_request_limit: 5000
+
+circuit_breaker:
+  failure_threshold: 3
+  open_timeout: 15s
+  cache_ttl: 60s
+
+backend_circuit_breaker:
+  enabled: true
+  failure_threshold: 3
+  open_timeout: 15s
+
+encryption:
+  enabled: true
+  vault:
+    address: "https://vault.service.consul:8200"
+    token: "${VAULT_TOKEN}"
+    key_name: "s3-orchestrator"
+    mount_path: "transit"
+    ca_cert: "/secrets/vault-ca.pem"
+
+rate_limit:
+  enabled: true
+  requests_per_sec: 100
+  burst: 200
+  trusted_proxies:
+    - "10.0.0.0/8"
+    - "172.16.0.0/12"
+    - "192.168.0.0/16"
+    - "127.0.0.1/32"
+
+ui:
+  enabled: true
+  admin_key: "{{ .Data.data.ui_admin_key }}"
+  admin_secret: "{{ .Data.data.ui_admin_secret }}"
+  force_secure_cookies: true
+
+usage_flush:
+  interval: "30s"
+  adaptive_enabled: true
+  adaptive_threshold: 0.8
+  fast_interval: "5s"
+
+telemetry:
+  metrics:
+    enabled: true
+    path: "/metrics"
+  tracing:
+    enabled: true
+    endpoint: "tempo.service.consul:4317"
+    insecure: true
+    sample_rate: 1.0
+```
+
+{{% notice note %}}
+**Google Cloud Storage** requires three backend-level settings to work correctly:
+
+- **`disable_checksum: true`** — GCS does not support the `x-amz-checksum-*` headers that the AWS SDK sends by default.
+- **`unsigned_payload: true`** — GCS does not support `STREAMING-AWS4-HMAC-SHA256-PAYLOAD` chunked signing.
+- **`strip_sdk_headers: true`** — AWS SDK v2 adds headers (`amz-sdk-invocation-id`, `amz-sdk-request`, `accept-encoding`) and a query parameter (`x-id`) that GCS does not include when verifying the SigV4 signature, causing `SignatureDoesNotMatch` errors.
+
+See the [Admin Guide](../../docs/admin-guide/#strip-sdk-headers) for more details.
+{{% /notice %}}
+
 ## Prerequisites
 
 - S3 Orchestrator installed and running (see the [Quickstart](../../docs/quickstart/))
@@ -25,10 +178,12 @@ Check each provider's free-tier limits. Common examples:
 | Provider | Free Storage | Free API Requests | Free Egress |
 |----------|-------------|-------------------|-------------|
 | Oracle Cloud (OCI) | 10 GB | 50,000/mo | 10 GB/mo |
-| Backblaze B2 | 10 GB | 2,500/day | 1 GB/day |
 | Cloudflare R2 | 10 GB | 1,000,000/mo | Unlimited |
+| iDrive e2 | 10 GB | Unlimited | 30 GB/mo |
+| IBM Cloud | 5 GB | Unlimited | 5 GB/mo |
+| Google Cloud (GCS) | 5 GB | 5,000/mo | 1 GB/mo |
 
-With just these three providers you get 30 GB of combined storage behind a single S3 endpoint.
+With all five providers you get 40 GB of combined storage behind a single S3 endpoint.
 
 ## Step 2: Get Credentials from Each Provider
 
@@ -44,15 +199,6 @@ Each provider gives you an **access key** and **secret key** for their S3-compat
 6. Your S3 endpoint is `https://<namespace>.compat.objectstorage.<region>.oraclecloud.com` (find your namespace under **Tenancy Details**)
 7. Create a bucket in **Object Storage** -> **Buckets**
 
-### Backblaze B2
-
-1. Log in to the B2 Console
-2. Go to **Application Keys** -> **Add a New Application Key**
-3. Set the key type to **Read and Write**, scope it to a specific bucket or all buckets
-4. Copy the **keyID** (this is your access key) and **applicationKey** (this is your secret key)
-5. Your S3 endpoint is `https://s3.<region>.backblazeb2.com` (the region is shown on your bucket page)
-6. Create a bucket under **Buckets** -> **Create a Bucket**
-
 ### Cloudflare R2
 
 1. Log in to the Cloudflare Dashboard
@@ -62,69 +208,101 @@ Each provider gives you an **access key** and **secret key** for their S3-compat
 5. Your S3 endpoint is `https://<account-id>.r2.cloudflarestorage.com` (the account ID is on the R2 overview page)
 6. Create a bucket under **R2** -> **Create bucket**
 
+### iDrive e2
+
+1. Log in to the iDrive e2 Console
+2. Go to **Access Keys** -> **Create Access Key**
+3. Copy the **Access Key** and **Secret Key**
+4. Your S3 endpoint is `https://<endpoint>.e2.cloudstorage.com` (shown on the dashboard)
+5. Create a bucket under **Buckets** -> **Create Bucket**
+
+### IBM Cloud Object Storage
+
+1. Log in to the IBM Cloud Console
+2. Create a **Cloud Object Storage** instance (the Lite plan is free)
+3. Go to **Service credentials** -> **New credential**, enable **Include HMAC Credential**
+4. Expand the credential to find `cos_hmac_keys.access_key_id` and `cos_hmac_keys.secret_access_key`
+5. Your S3 endpoint is `https://s3.<region>.cloud-object-storage.appdomain.cloud` (find available regions under **Endpoints**)
+6. Create a bucket under **Buckets** -> **Create bucket**, choose a **Standard** storage class
+
+### Google Cloud Storage (GCS)
+
+1. Log in to the Google Cloud Console
+2. Go to **Cloud Storage** -> **Settings** -> **Interoperability**
+3. If prompted, enable interoperability access for the project
+4. Under **Access keys for service accounts**, click **Create a key for a service account** (or use the default)
+5. Copy the **Access Key** and **Secret**
+6. Your S3 endpoint is `https://storage.googleapis.com`
+7. Create a bucket under **Cloud Storage** -> **Buckets** -> **Create**
+
 {{% notice tip %}}
 Never commit provider credentials to version control. Use environment variables in your config file with the `${VAR}` syntax, and inject them via systemd `EnvironmentFile`, container secrets, or a secrets manager.
 {{% /notice %}}
 
-## Step 3: Configure Backends with Quotas
+## Step 3: Configure Backends with Quotas and Usage Limits
 
-Add each provider as a backend in your `config.yaml`. Set each backend's `quota` to match the provider's free storage limit in bytes. This prevents writes from exceeding the allowance.
+Add each provider as a backend in your `config.yaml`. Set `quota_bytes` to match the provider's free storage allowance, and use the usage limit fields to cap API requests, egress, and ingress per billing period.
 
 ```yaml
 backends:
-  - name: oci
-    endpoint: https://<namespace>.compat.objectstorage.us-ashburn-1.oraclecloud.com
-    region: us-ashburn-1
-    bucket: my-bucket
+  - name: "oci"
+    endpoint: "https://<namespace>.compat.objectstorage.<region>.oraclecloud.com"
+    region: "us-ashburn-1"
+    bucket: "my-bucket"
     access_key_id: "${OCI_ACCESS_KEY}"
     secret_access_key: "${OCI_SECRET_KEY}"
     force_path_style: true
-    quota: 10737418240  # 10 GB in bytes
+    quota_bytes: 10737418240
+    api_request_limit: 50000
+    egress_byte_limit: 10737418240
 
-  - name: b2
-    endpoint: https://s3.us-west-004.backblazeb2.com
-    region: us-west-004
-    bucket: my-bucket
-    access_key_id: "${B2_ACCESS_KEY}"
-    secret_access_key: "${B2_SECRET_KEY}"
-    quota: 10737418240  # 10 GB
-
-  - name: r2
-    endpoint: https://<account-id>.r2.cloudflarestorage.com
-    region: auto
-    bucket: my-bucket
+  - name: "r2"
+    endpoint: "https://<account-id>.r2.cloudflarestorage.com"
+    region: "auto"
+    bucket: "my-bucket"
     access_key_id: "${R2_ACCESS_KEY}"
     secret_access_key: "${R2_SECRET_KEY}"
-    quota: 10737418240  # 10 GB
-```
+    force_path_style: true
+    quota_bytes: 10737418240
+    api_request_limit: 1000000
 
-When OCI fills up, writes automatically overflow to B2, then to R2.
+  - name: "e2"
+    endpoint: "https://<endpoint>.e2.cloudstorage.com"
+    region: "us-east-005"
+    bucket: "my-bucket"
+    access_key_id: "${E2_ACCESS_KEY}"
+    secret_access_key: "${E2_SECRET_KEY}"
+    force_path_style: true
+    disable_checksum: true
+    quota_bytes: 10737418240
+    egress_byte_limit: 32212254720
+    ingress_byte_limit: 10737418240
 
-## Step 4: Set Usage Limits
+  - name: "ibm"
+    endpoint: "https://s3.<region>.cloud-object-storage.appdomain.cloud"
+    region: "us-south"
+    bucket: "my-bucket"
+    access_key_id: "${IBM_ACCESS_KEY}"
+    secret_access_key: "${IBM_SECRET_KEY}"
+    force_path_style: true
+    quota_bytes: 5368709120
+    egress_byte_limit: 5368709120
+    ingress_byte_limit: 5368709120
 
-Usage limits prevent you from exceeding free-tier API request and bandwidth allowances.
-
-```yaml
-backends:
-  - name: oci
-    # ... endpoint, credentials, quota as above
-    usage_limits:
-      max_api_requests: 50000
-      max_egress_bytes: 10737418240   # 10 GB
-      max_ingress_bytes: 10737418240  # 10 GB
-
-  - name: b2
-    # ... endpoint, credentials, quota as above
-    usage_limits:
-      max_api_requests: 75000         # ~2500/day * 30 days
-      max_egress_bytes: 1073741824    # 1 GB (conservative)
-      max_ingress_bytes: 10737418240  # 10 GB
-
-  - name: r2
-    # ... endpoint, credentials, quota as above
-    usage_limits:
-      max_api_requests: 1000000
-      # R2 has no egress fees, but you can still set limits
+  - name: "gcp"
+    endpoint: "https://storage.googleapis.com"
+    region: "auto"
+    bucket: "my-bucket"
+    access_key_id: "${GCP_ACCESS_KEY}"
+    secret_access_key: "${GCP_SECRET_KEY}"
+    force_path_style: true
+    disable_checksum: true
+    unsigned_payload: true
+    strip_sdk_headers: true
+    quota_bytes: 5368709120
+    egress_byte_limit: 1073741824
+    ingress_byte_limit: 5368709120
+    api_request_limit: 5000
 ```
 
 When a backend hits a usage limit, reads fail over to replicas on other backends and writes overflow to backends that still have headroom.

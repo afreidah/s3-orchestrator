@@ -3,8 +3,6 @@ title: Benchmarking
 weight: 80
 ---
 
-# Benchmarking
-
 The project includes micro-benchmarks for hot-path operations. Use them to
 catch performance regressions before merging a branch.
 

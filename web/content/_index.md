@@ -10,13 +10,13 @@ archetype: "home"
 <div class="badge-grid">
 
 {{% badge style="primary" icon="fas fa-cloud" %}}S3-Compatible{{% /badge %}}
-{{% badge style="info" icon="fas fa-shield-alt" %}}Envelope Encryption{{% /badge %}}
+{{% badge style="info" title=" " icon="fas fa-shield-alt" %}}Envelope Encryption{{% /badge %}}
 {{% badge style="danger" icon="fas fa-sync" %}}Multi-Cloud Replication{{% /badge %}}
 {{% badge style="green" icon="fas fa-coins" %}}Free-Tier Stacking{{% /badge %}}
 {{% badge style="warning" title=" " icon="fas fa-chart-bar" %}}Built-in Dashboard{{% /badge %}}
 {{% badge style="primary" icon="fas fa-tachometer-alt" %}}Quota Enforcement{{% /badge %}}
 {{% badge style="danger" icon="fas fa-fire" %}}Prometheus Metrics{{% /badge %}}
-{{% badge style="info" icon="fas fa-project-diagram" %}}Tempo Tracing{{% /badge %}}
+{{% badge style="info" title=" " icon="fas fa-project-diagram" %}}Tempo Tracing{{% /badge %}}
 {{% badge style="green" title=" " icon="fas fa-cubes" %}}Nomad HCL{{% /badge %}}
 {{% badge style="warning" title=" " icon="fas fa-dharmachakra" %}}Kubernetes Manifests{{% /badge %}}
 
@@ -31,23 +31,23 @@ archetype: "home"
 
 </div>
 
----
+<hr style="margin-top: 3rem;">
 
-## Unified S3 storage across multiple backends
+<h2 style="text-align: center; color: #93c5fd;">Unified S3 storage across multiple backends</h2>
 
 Combine free-tier and cost-limited object storage from any number of S3-compatible providers into a single endpoint. Per-backend quotas prevent surprise bills, cross-backend replication provides multi-cloud redundancy, and clients connect with any standard S3 tool - no code changes required.
 
 <div class="hero-bullets">
 
-- **Stack free-tier storage from multiple providers** into a single, larger pool - no enterprise plan required
+- **Combine free-tier storage from multiple providers** into a single, larger pool - no cloud payment plans needed!
 - **Transparent multi-cloud replication** keeps copies across providers with automatic failover on read
 - **Drop-in S3 replacement** - any tool that speaks S3 (aws cli, rclone, SDKs) works with zero code changes
 
 </div>
 
----
+<hr style="margin-top: 3rem;">
 
-## Key Features
+<h2 style="text-align: center; color: #93c5fd;">Key Features</h2>
 
 <div class="feature-grid">
   <div class="feature-item">
@@ -132,9 +132,9 @@ Combine free-tier and cost-limited object storage from any number of S3-compatib
   </div>
 </div>
 
----
+<hr style="margin-top: 3rem;">
 
-## Who Is This For?
+<h2 style="text-align: center; color: #93c5fd;">Who Is This For?</h2>
 
 <div class="feature-grid">
   <div class="feature-item">
@@ -167,17 +167,17 @@ Combine free-tier and cost-limited object storage from any number of S3-compatib
   </div>
 </div>
 
----
+<hr style="margin-top: 3rem;">
 
-## Admin Web Interface
+<h2 style="text-align: center; color: #93c5fd;">Admin Web Interface</h2>
 
 A built-in web dashboard provides real-time storage summaries, per-backend quota and usage bars, monthly traffic charts, a lazy-loaded directory tree for browsing and managing objects, and admin controls for rebalancing, syncing, uploading, and deleting files and folders.
 
 ![Admin Web Interface](docs/images/dashboard.png?v=2)
 
----
+<hr style="margin-top: 3rem;">
 
-## Built-in Monitoring
+<h2 style="text-align: center; color: #93c5fd;">Built-in Monitoring</h2>
 
 s3-orchestrator ships with a pre-built Grafana dashboard and Prometheus metrics out of the box. Track request rates, latency percentiles, backend health, quota usage, replication progress, and background task performance - all without writing a single query.
 

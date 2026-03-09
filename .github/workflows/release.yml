@@ -50,6 +50,16 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Install git-cliff
+        uses: orhun/git-cliff-action@v4
+        with:
+          args: --version
+
+      - name: Generate CHANGELOG.md
+        uses: orhun/git-cliff-action@v4
+        with:
+          args: -o CHANGELOG.md
+
       - name: Prep changelog
         run: make prep-changelog
 
@@ -60,3 +70,13 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Commit CHANGELOG.md to main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout main
+          git add CHANGELOG.md
+          git diff --cached --quiet && exit 0
+          git commit -m "docs: update CHANGELOG.md for ${GITHUB_REF_NAME}"
+          git push origin main

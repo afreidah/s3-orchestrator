@@ -1,5 +1,5 @@
 ---
-title: "S3-Orchestrator Go API Reference"
+title: "s3-orchestrator go api reference"
 linkTitle: "Go API Reference"
 chapter: true
 weight: 40

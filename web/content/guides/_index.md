@@ -1,5 +1,5 @@
 ---
-title: "S3-Orchestrator Guides"
+title: "s3-orchestrator guides"
 linkTitle: "Guides"
 chapter: true
 weight: 30

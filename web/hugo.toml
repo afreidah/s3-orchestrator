@@ -34,4 +34,7 @@ theme = "hugo-theme-relearn"
     target = "assets"
   [[module.mounts]]
     source = "../README.md"
-    target = "assets/README.md"
+    target = "assets/repo/README.md"
+  [[module.mounts]]
+    source = "../CHANGELOG.md"
+    target = "assets/repo/CHANGELOG.md"

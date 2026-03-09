@@ -242,6 +242,26 @@ Set `unsigned_payload: false` to force payload hashing. This buffers the entire 
 
 This sets the SDK's `RequestChecksumCalculation` and `ResponseChecksumValidation` to `WhenRequired`, disabling automatic checksum injection without affecting SigV4 request signing.
 
+**Strip SDK headers:** AWS SDK v2 adds headers (`amz-sdk-invocation-id`, `amz-sdk-request`, `accept-encoding`) and a query parameter (`x-id`) that are included in the SigV4 signed header set. Google Cloud Storage does not include these when verifying the signature, causing `SignatureDoesNotMatch` errors. Set `strip_sdk_headers: true` to remove them before request signing:
+
+```yaml
+    strip_sdk_headers: true   # required for GCS HMAC interoperability
+```
+
+For GCS backends, you typically need both `disable_checksum: true` and `strip_sdk_headers: true`:
+
+```yaml
+  - name: "gcs"
+    endpoint: "https://storage.googleapis.com"
+    region: "auto"
+    bucket: "my-bucket"
+    access_key_id: "GOOG..."
+    secret_access_key: "..."
+    force_path_style: true
+    disable_checksum: true
+    strip_sdk_headers: true
+```
+
 ### telemetry
 
 ```yaml

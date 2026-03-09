@@ -1,56 +1,66 @@
 ---
-title: "S3-Orchestrator Documentation"
+title: "s3-orchestrator documentation"
 linkTitle: "Documentation"
 chapter: true
 weight: 20
 cascade:
-  - title: "S3-Orchestrator Quickstart"
+  - title: "s3-orchestrator Quickstart"
     linkTitle: "Quickstart"
     weight: 1
     _target:
       path: "/docs/quickstart"
-  - title: "S3-Orchestrator README"
+  - title: "s3-orchestrator README"
     linkTitle: "README"
     weight: 2
     _target:
       path: "/docs/readme"
-  - title: "S3-Orchestrator User Guide"
+  - title: "s3-orchestrator User Guide"
     linkTitle: "User Guide"
     weight: 3
     _target:
       path: "/docs/user-guide"
-  - title: "S3-Orchestrator Admin Guide"
+  - title: "s3-orchestrator Admin Guide"
     linkTitle: "Admin Guide"
     weight: 4
     _target:
       path: "/docs/admin-guide"
-  - title: "S3-Orchestrator API Reference"
+  - title: "s3-orchestrator API Reference"
     linkTitle: "API Reference"
     weight: 5
     _target:
       path: "/docs/api-reference"
-  - title: "S3-Orchestrator Security Hardening"
+  - title: "s3-orchestrator Security Hardening"
     linkTitle: "Security Hardening"
     weight: 6
     _target:
       path: "/docs/security-hardening"
-  - title: "S3-Orchestrator Performance Tuning"
+  - title: "s3-orchestrator Performance Tuning"
     linkTitle: "Performance Tuning"
     weight: 7
     _target:
       path: "/docs/performance-tuning"
-  - title: "S3-Orchestrator Disaster Recovery"
+  - title: "s3-orchestrator Disaster Recovery"
     linkTitle: "Disaster Recovery"
     weight: 8
     _target:
       path: "/docs/disaster-recovery"
-  - title: "S3-Orchestrator Version Migration"
+  - title: "s3-orchestrator Version Migration"
     linkTitle: "Version Migration"
     weight: 9
     _target:
       path: "/docs/version-migration"
-  - title: "Style Guide"
+  - title: "Benchmarking"
+    linkTitle: "Benchmarking"
     weight: 10
+    _target:
+      path: "/docs/benchmarking"
+  - title: "Changelog"
+    linkTitle: "Changelog"
+    weight: 11
+    _target:
+      path: "/docs/changelog"
+  - title: "Style Guide"
+    weight: 12
     hidden: true
     _target:
       path: "/docs/style-guide"
@@ -121,6 +131,20 @@ cascade:
     <div>
       <strong>Version Migration</strong>
       <p>Upgrade paths, breaking changes, and database migrations.</p>
+    </div>
+  </a>
+  <a class="landing-card" href="benchmarking/">
+    <i class="fas fa-stopwatch landing-card-icon" style="color: #7dd3fc;"></i>
+    <div>
+      <strong>Benchmarking</strong>
+      <p>Micro-benchmarks for hot-path performance regression testing.</p>
+    </div>
+  </a>
+  <a class="landing-card" href="changelog/">
+    <i class="fas fa-scroll landing-card-icon" style="color: #e2b07a;"></i>
+    <div>
+      <strong>Changelog</strong>
+      <p>Release history and notable changes by version.</p>
     </div>
   </a>
 </div>

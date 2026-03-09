@@ -178,7 +178,7 @@ changelog: ## Generate CHANGELOG.md from git history
 # RELEASE
 # -------------------------------------------------------------------------
 
-release: changelog ## Tag and push to trigger a GitHub Release (reads .version)
+release: ## Tag and push to trigger a GitHub Release (reads .version)
 	git tag $(VERSION)
 	git push origin $(VERSION)
 
@@ -200,7 +200,7 @@ nomad-demo: ## Run the s3-orchestrator in Nomad dev mode (requires docker, nomad
 # -------------------------------------------------------------------------
 
 WEB_IMAGE  := $(REGISTRY)/s3-orchestrator-web
-WEB_TAG    ?= latest
+WEB_TAG    ?= $(VERSION)
 
 GODOC_PKGS := admin audit auth config encryption lifecycle server storage telemetry ui
 
