@@ -86,7 +86,7 @@ docker build -t "$IMAGE" .
 HOST_IP=$(docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}')
 echo "Host gateway IP: $HOST_IP"
 
-docker compose -f docker-compose.test.yml up -d prometheus grafana
+docker compose -f docker-compose.test.yml up -d tempo loki alloy prometheus grafana
 
 # --- Submit job ---
 echo "Submitting Nomad job..."
@@ -117,6 +117,7 @@ if echo "$HEALTH" | grep -q '"status":"ok"'; then
     echo "  Metrics:    http://localhost:$PORT/metrics"
     echo "  Health:     http://localhost:$PORT/health"
     echo "  Grafana:    http://localhost:13000"
+    echo "  Tempo:      http://localhost:3200"
     echo "  Nomad UI:   http://localhost:4646"
     echo ""
     echo "  Dashboard login: admin / admin"

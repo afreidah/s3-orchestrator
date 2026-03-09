@@ -6,7 +6,8 @@ All notable changes to this project are documented in this file.
 ## [unreleased]
 
 ### Added
-- add strip_sdk_headers option for GCS S3 compatibility
+- add Tempo, Loki, and Alloy to demo environments for full observability
+- add strip_sdk_headers option for GCS S3 compatibility (#229)
 - add per-backend disable_checksum option for GCS compatibility (#225)
 - Add DB query tracing, background worker spans, audit logging gaps, and Grafana dashboard coverage (#222)
 - Add git-cliff changelog generation with commit categorization (#219)
@@ -21,6 +22,7 @@ All notable changes to this project are documented in this file.
 - documentation update I forgot
 
 ### Other
+- temp commit
 - exclude circuit-broken backends from write routing (#226)
 
 ## [0.16.4] - 2026-03-08

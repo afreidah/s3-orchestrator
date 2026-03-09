@@ -706,7 +706,7 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "sum by (name, from, to) (rate(s3proxy_circuit_breaker_transitions_total[5m]))",
+          "expr": "sum by (name, from, to) (increase(s3proxy_circuit_breaker_transitions_total[5m]))",
           "legendFormat": "{{name}}: {{from}} → {{to}}"
         }
       ],
@@ -732,15 +732,15 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "sum by (op) (rate(s3proxy_degraded_reads_total[5m]))",
+          "expr": "sum by (op) (increase(s3proxy_degraded_reads_total[5m]))",
           "legendFormat": "reads {{op}}"
         },
         {
-          "expr": "rate(s3proxy_degraded_cache_hits_total[5m])",
+          "expr": "increase(s3proxy_degraded_cache_hits_total[5m])",
           "legendFormat": "cache hits"
         },
         {
-          "expr": "sum by (op) (rate(s3proxy_degraded_write_rejections_total[5m]))",
+          "expr": "sum by (op) (increase(s3proxy_degraded_write_rejections_total[5m]))",
           "legendFormat": "write rejections {{op}}"
         }
       ],
@@ -805,7 +805,7 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "rate(s3proxy_replication_copies_created_total[5m])",
+          "expr": "increase(s3proxy_replication_copies_created_total[5m])",
           "legendFormat": "copies/s"
         }
       ],
@@ -832,7 +832,7 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "rate(s3proxy_replication_errors_total[5m])",
+          "expr": "increase(s3proxy_replication_errors_total[5m])",
           "legendFormat": "errors/s"
         }
       ],
@@ -885,7 +885,7 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "sum by (status) (rate(s3proxy_replication_runs_total[5m]))",
+          "expr": "sum by (status) (increase(s3proxy_replication_runs_total[5m]))",
           "legendFormat": "{{status}}"
         }
       ],
@@ -911,7 +911,7 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "rate(s3proxy_replication_health_copies_total[5m])",
+          "expr": "increase(s3proxy_replication_health_copies_total[5m])",
           "legendFormat": "health copies/s"
         }
       ],
@@ -1093,7 +1093,7 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "sum by (operation, limit_type) (rate(s3proxy_usage_limit_rejections_total[5m]))",
+          "expr": "sum by (operation, limit_type) (increase(s3proxy_usage_limit_rejections_total[5m]))",
           "legendFormat": "{{operation}} ({{limit_type}})"
         }
       ],
@@ -1119,7 +1119,7 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "rate(s3proxy_rate_limit_rejections_total[5m])",
+          "expr": "increase(s3proxy_rate_limit_rejections_total[5m])",
           "legendFormat": "rejections/s"
         }
       ],
@@ -1145,7 +1145,7 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "rate(s3proxy_admission_rejections_total[5m])",
+          "expr": "increase(s3proxy_admission_rejections_total[5m])",
           "legendFormat": "rejections/s"
         }
       ],
@@ -1178,7 +1178,7 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "sum by (strategy, status) (rate(s3proxy_rebalance_runs_total[5m]))",
+          "expr": "sum by (strategy, status) (increase(s3proxy_rebalance_runs_total[5m]))",
           "legendFormat": "{{strategy}} ({{status}})"
         }
       ],
@@ -1204,11 +1204,11 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "rate(s3proxy_rebalance_objects_moved_total[5m])",
-          "legendFormat": "objects/s"
+          "expr": "increase(s3proxy_rebalance_objects_moved_total[5m])",
+          "legendFormat": "objects"
         },
         {
-          "expr": "rate(s3proxy_rebalance_bytes_moved_total[5m])",
+          "expr": "increase(s3proxy_rebalance_bytes_moved_total[5m])",
           "legendFormat": "bytes/s"
         }
       ],

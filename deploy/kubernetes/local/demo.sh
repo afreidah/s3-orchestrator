@@ -70,7 +70,7 @@ HOST_IP=$(docker network inspect "k3d-${CLUSTER_NAME}" \
     -f '{{(index .IPAM.Config 0).Gateway}}')
 echo "Host gateway IP: $HOST_IP"
 
-docker compose -f docker-compose.test.yml up -d prometheus grafana
+docker compose -f docker-compose.test.yml up -d tempo prometheus grafana
 
 # --- Apply manifests ---
 echo "Applying Kubernetes manifests..."
@@ -104,6 +104,7 @@ if echo "$HEALTH" | grep -q '"status":"ok"'; then
     echo "  Metrics:    http://localhost:$PORT/metrics"
     echo "  Health:     http://localhost:$PORT/health"
     echo "  Grafana:    http://localhost:13000"
+    echo "  Tempo:      http://localhost:3200"
     echo ""
     echo "  Dashboard login: admin / admin"
     echo ""
