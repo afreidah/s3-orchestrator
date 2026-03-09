@@ -50,6 +50,14 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Install git-cliff
         uses: orhun/git-cliff-action@v4
         with:
@@ -62,14 +70,6 @@ jobs:
 
       - name: Prep changelog
         run: make prep-changelog
-
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v7
-        with:
-          version: "~> v2"
-          args: release --clean
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Commit CHANGELOG.md to main
         run: |
