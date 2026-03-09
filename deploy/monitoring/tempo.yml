@@ -21,6 +21,7 @@ metrics_generator:
       store: inmemory
   processor:
     service_graphs:
+      max_items: 10000
     span_metrics:
     local_blocks:
       flush_to_storage: true
@@ -30,8 +31,6 @@ metrics_generator:
       - url: http://localhost:19090/api/v1/write
   traces_storage:
     path: /var/tempo/traces
-    wal:
-      path: /var/tempo/wal
 
 overrides:
   defaults:

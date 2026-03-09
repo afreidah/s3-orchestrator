@@ -88,6 +88,32 @@ services:
       timeout: 3s
       retries: 5
 
+  loki:
+    image: grafana/loki:3.4.2
+    user: "0"
+    network_mode: host
+    volumes:
+      - ./deploy/monitoring/loki.yml:/etc/loki/config.yml:ro
+      - loki-data:/var/loki
+    command: ["-config.file=/etc/loki/config.yml"]
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3100/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  alloy:
+    image: grafana/alloy:latest
+    volumes:
+      - ./deploy/monitoring/alloy.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: ["run", "/etc/alloy/config.alloy"]
+    depends_on:
+      loki:
+        condition: service_healthy
+
   prometheus:
     image: prom/prometheus:latest
     network_mode: host
@@ -119,3 +145,8 @@ services:
         condition: service_started
       tempo:
         condition: service_healthy
+      loki:
+        condition: service_healthy
+
+volumes:
+  loki-data:

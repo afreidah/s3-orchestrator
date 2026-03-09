@@ -86,7 +86,7 @@ docker build -t "$IMAGE" .
 HOST_IP=$(docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}')
 echo "Host gateway IP: $HOST_IP"
 
-docker compose -f docker-compose.test.yml up -d tempo prometheus grafana
+docker compose -f docker-compose.test.yml up -d tempo loki alloy prometheus grafana
 
 # --- Submit job ---
 echo "Submitting Nomad job..."
