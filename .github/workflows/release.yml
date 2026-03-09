@@ -16,6 +16,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   preflight:
@@ -71,12 +72,21 @@ jobs:
         with:
           args: -o CHANGELOG.md
 
-      - name: Commit CHANGELOG.md to main
+      - name: Open CHANGELOG PR
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout main
+          BRANCH="changelog/${GITHUB_REF_NAME}"
+          git checkout -b "$BRANCH"
           git add CHANGELOG.md
-          git diff --cached --quiet && exit 0
+          git diff --cached --quiet && echo "No changelog changes" && exit 0
           git commit -m "docs: update CHANGELOG.md for ${GITHUB_REF_NAME}"
-          git push origin main
+          git push origin "$BRANCH"
+          PR_URL=$(gh pr create \
+            --base main \
+            --head "$BRANCH" \
+            --title "docs: update CHANGELOG.md for ${GITHUB_REF_NAME}" \
+            --body "Auto-generated changelog update from release ${GITHUB_REF_NAME}.")
+          gh pr merge "$PR_URL" --auto --squash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
