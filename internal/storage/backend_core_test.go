@@ -86,6 +86,37 @@ func TestExcludeUnhealthy_AllUnhealthy(t *testing.T) {
 	}
 }
 
+func TestExcludeUnhealthy_HalfOpenAllowedForProbe(t *testing.T) {
+	failingMock := newMockBackend()
+	failingMock.putErr = errors.New("backend down")
+	// Use a tiny open timeout so we can transition to half-open immediately
+	b := NewCircuitBreakerBackend(failingMock, "probe", 1, 1*time.Millisecond)
+
+	// Trip the circuit breaker
+	_, _ = b.PutObject(context.TODO(), "key", strings.NewReader("x"), 1, "", nil)
+	if b.State() != stateOpen {
+		t.Fatalf("expected open state, got %s", b.State())
+	}
+
+	// Wait for the open timeout to elapse so PreCheck transitions to half-open
+	time.Sleep(5 * time.Millisecond)
+	_ = b.PreCheck()
+	if b.State() != stateHalfOpen {
+		t.Fatalf("expected half-open state, got %s", b.State())
+	}
+
+	core := &backendCore{
+		backends: map[string]ObjectBackend{
+			"probe": b,
+		},
+	}
+
+	eligible := core.excludeUnhealthy([]string{"probe"})
+	if len(eligible) != 1 {
+		t.Fatalf("expected half-open backend to be eligible for probe, got %d", len(eligible))
+	}
+}
+
 func TestExcludeUnhealthy_NonCBBackendsAlwaysEligible(t *testing.T) {
 	core := &backendCore{
 		backends: map[string]ObjectBackend{

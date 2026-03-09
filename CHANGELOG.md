@@ -10,6 +10,9 @@ All notable changes to this project are documented in this file.
 - Add DB query tracing, background worker spans, audit logging gaps, and Grafana dashboard coverage (#222)
 - Add git-cliff changelog generation with commit categorization (#219)
 
+### Fixed
+- Fix: when a backend is unhealthy, routing still needs to allow half-open through so probes can heal the backend
+
 ### Hardened
 - Harden defaults: increase DB pool size and add location cache TTL jitter (#215)
 
@@ -17,7 +20,7 @@ All notable changes to this project are documented in this file.
 - documentation update I forgot
 
 ### Other
-- exclude circuit-broken backends from write routing
+- exclude circuit-broken backends from write routing (#226)
 
 ## [0.16.4] - 2026-03-08
 
