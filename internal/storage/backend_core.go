@@ -90,7 +90,9 @@ func (c *backendCore) excludeDraining(eligible []string) []string {
 	return filtered
 }
 
-// excludeUnhealthy filters out backends whose circuit breaker is open or half-open.
+// excludeUnhealthy filters out backends whose circuit breaker is open.
+// Half-open backends are allowed through so the circuit breaker's probe
+// mechanism can test recovery via organic traffic.
 func (c *backendCore) excludeUnhealthy(eligible []string) []string {
 	filtered := make([]string, 0, len(eligible))
 	for _, name := range eligible {
@@ -98,7 +100,7 @@ func (c *backendCore) excludeUnhealthy(eligible []string) []string {
 		if !ok {
 			continue
 		}
-		if cb, ok := b.(*CircuitBreakerBackend); ok && !cb.IsHealthy() {
+		if cb, ok := b.(*CircuitBreakerBackend); ok && cb.State() == stateOpen {
 			continue
 		}
 		filtered = append(filtered, name)
