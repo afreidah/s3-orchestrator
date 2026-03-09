@@ -76,8 +76,8 @@ func (o *ObjectManager) PutObject(ctx context.Context, key string, body io.Reade
 	)
 	defer span.End()
 
-	// --- Filter backends within usage limits and exclude draining ---
-	eligible := o.excludeDraining(o.usage.BackendsWithinLimits(o.order, 1, 0, size))
+	// --- Filter backends within usage limits, exclude draining and unhealthy ---
+	eligible := o.excludeUnhealthy(o.excludeDraining(o.usage.BackendsWithinLimits(o.order, 1, 0, size)))
 	if len(eligible) == 0 {
 		telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation, "write").Inc()
 		span.SetStatus(codes.Error, "usage limits exceeded on all backends")
@@ -590,8 +590,8 @@ func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey strin
 
 	span.SetAttributes(telemetry.AttrObjectSize.Int64(size))
 
-	// --- Find destination backend with available quota and usage limits ---
-	destEligible := o.excludeDraining(o.usage.BackendsWithinLimits(o.order, 1, 0, size))
+	// --- Find destination backend with available quota, usage limits, exclude unhealthy ---
+	destEligible := o.excludeUnhealthy(o.excludeDraining(o.usage.BackendsWithinLimits(o.order, 1, 0, size)))
 	if len(destEligible) == 0 {
 		telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation, "write").Inc()
 		span.SetStatus(codes.Error, "usage limits exceeded on all backends")
