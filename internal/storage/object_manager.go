@@ -12,6 +12,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -65,6 +66,8 @@ func wrapReader(r io.Reader, c io.Closer) io.ReadCloser {
 // -------------------------------------------------------------------------
 
 // PutObject uploads an object to the first backend with available quota.
+// If the upload fails, it retries on remaining eligible backends before
+// returning an error to the caller (write failover).
 func (o *ObjectManager) PutObject(ctx context.Context, key string, body io.Reader, size int64, contentType string, metadata map[string]string) (string, error) {
 	const operation = "PutObject"
 	start := time.Now()
@@ -84,74 +87,112 @@ func (o *ObjectManager) PutObject(ctx context.Context, key string, body io.Reade
 		return "", ErrInsufficientStorage
 	}
 
-	// --- Find backend with available quota ---
-	backendName, err := o.selectBackendForWrite(ctx, size, eligible)
-	if err != nil {
-		return "", o.classifyWriteError(span, operation, err)
-	}
-
-	span.SetAttributes(telemetry.AttrBackendName.String(backendName))
-
-	// --- Get the backend ---
-	backend, err := o.getBackend(backendName)
-	if err != nil {
+	// --- Buffer body for retry ---
+	// io.Reader is single-use; buffer the plaintext so we can replay on failover.
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, body); err != nil {
 		span.SetStatus(codes.Error, err.Error())
-		return "", err
+		return "", fmt.Errorf("buffer request body: %w", err)
 	}
+	bodyBytes := buf.Bytes()
 
-	// --- Encrypt if enabled ---
-	var enc *EncryptionMeta
-	uploadBody := body
-	uploadSize := size
-	if o.encryptor != nil {
-		encResult, err := o.encryptor.Encrypt(ctx, body, size)
+	// --- Try eligible backends with failover ---
+	var failedBackends []string
+	var lastErr error
+	for len(eligible) > 0 {
+		backendName, err := o.selectBackendForWrite(ctx, size, eligible)
 		if err != nil {
-			telemetry.EncryptionErrorsTotal.WithLabelValues("encrypt", "encrypt_failed").Inc()
+			return "", o.classifyWriteError(span, operation, err)
+		}
+
+		span.SetAttributes(telemetry.AttrBackendName.String(backendName))
+
+		backend, err := o.getBackend(backendName)
+		if err != nil {
 			span.SetStatus(codes.Error, err.Error())
-			return "", fmt.Errorf("encrypt: %w", err)
+			return "", err
 		}
-		telemetry.EncryptionOpsTotal.WithLabelValues("encrypt").Inc()
-		uploadBody = encResult.Body
-		uploadSize = encResult.CiphertextSize
-		enc = &EncryptionMeta{
-			Encrypted:     true,
-			EncryptionKey: encryption.PackKeyData(encResult.BaseNonce, encResult.WrappedDEK),
-			KeyID:         encResult.KeyID,
-			PlaintextSize: size,
+
+		// --- Encrypt if enabled (re-encrypt per attempt — unique nonce each time) ---
+		var enc *EncryptionMeta
+		uploadBody := io.Reader(bytes.NewReader(bodyBytes))
+		uploadSize := size
+		if o.encryptor != nil {
+			encResult, err := o.encryptor.Encrypt(ctx, bytes.NewReader(bodyBytes), size)
+			if err != nil {
+				telemetry.EncryptionErrorsTotal.WithLabelValues("encrypt", "encrypt_failed").Inc()
+				span.SetStatus(codes.Error, err.Error())
+				return "", fmt.Errorf("encrypt: %w", err)
+			}
+			telemetry.EncryptionOpsTotal.WithLabelValues("encrypt").Inc()
+			uploadBody = encResult.Body
+			uploadSize = encResult.CiphertextSize
+			enc = &EncryptionMeta{
+				Encrypted:     true,
+				EncryptionKey: encryption.PackKeyData(encResult.BaseNonce, encResult.WrappedDEK),
+				KeyID:         encResult.KeyID,
+				PlaintextSize: size,
+			}
 		}
+
+		// --- Upload to backend ---
+		bctx, bcancel := o.withTimeout(ctx)
+		etag, err := backend.PutObject(bctx, key, uploadBody, uploadSize, contentType, metadata)
+		bcancel()
+		if err != nil {
+			o.usage.Record(backendName, 1, 0, 0) // API call was made even on failure
+			lastErr = err
+			failedBackends = append(failedBackends, backendName)
+
+			// Remove failed backend from eligible list and retry
+			remaining := make([]string, 0, len(eligible)-1)
+			for _, name := range eligible {
+				if name != backendName {
+					remaining = append(remaining, name)
+				}
+			}
+			eligible = remaining
+
+			slog.Warn("PutObject: backend write failed, trying next",
+				"key", key, "failed_backend", backendName, "error", err,
+				"remaining_backends", len(eligible))
+			continue
+		}
+
+		// --- Record object location and update quota ---
+		if err := o.recordObjectOrCleanup(ctx, span, backend, key, backendName, uploadSize, enc); err != nil {
+			return "", err
+		}
+
+		// --- Invalidate location cache ---
+		o.cache.Delete(key)
+
+		// --- Record metrics ---
+		o.recordOperation(operation, backendName, start, nil)
+		o.usage.Record(backendName, 1, 0, size)
+
+		if len(failedBackends) > 0 {
+			for _, fb := range failedBackends {
+				telemetry.WriteFailoverTotal.WithLabelValues(operation, fb, backendName).Inc()
+			}
+			span.SetAttributes(attribute.Bool("s3proxy.write_failover", true))
+			span.SetAttributes(attribute.Int("s3proxy.write_failover_attempts", len(failedBackends)))
+		}
+
+		audit.Log(ctx, "storage.PutObject",
+			slog.String("key", key),
+			slog.String("backend", backendName),
+			slog.Int64("size", size),
+		)
+
+		span.SetStatus(codes.Ok, "")
+		return etag, nil
 	}
 
-	// --- Upload to backend ---
-	bctx, bcancel := o.withTimeout(ctx)
-	defer bcancel()
-	etag, err := backend.PutObject(bctx, key, uploadBody, uploadSize, contentType, metadata)
-	if err != nil {
-		o.usage.Record(backendName, 1, 0, 0) // API call was made even on failure
-		span.SetStatus(codes.Error, err.Error())
-		span.RecordError(err)
-		return "", err
-	}
-
-	// --- Record object location and update quota ---
-	if err := o.recordObjectOrCleanup(ctx, span, backend, key, backendName, uploadSize, enc); err != nil {
-		return "", err
-	}
-
-	// --- Invalidate location cache ---
-	o.cache.Delete(key)
-
-	// --- Record metrics ---
-	o.recordOperation(operation, backendName, start, nil)
-	o.usage.Record(backendName, 1, 0, size)
-
-	audit.Log(ctx, "storage.PutObject",
-		slog.String("key", key),
-		slog.String("backend", backendName),
-		slog.Int64("size", size),
-	)
-
-	span.SetStatus(codes.Ok, "")
-	return etag, nil
+	// All eligible backends exhausted
+	span.SetStatus(codes.Error, lastErr.Error())
+	span.RecordError(lastErr)
+	return "", lastErr
 }
 
 // -------------------------------------------------------------------------

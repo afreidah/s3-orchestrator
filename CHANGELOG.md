@@ -5,12 +5,8 @@ All notable changes to this project are documented in this file.
 
 ## [unreleased]
 
-### Fixed
-- fix Hugo website README/CHANGELOG rendering, redesign theme, update free-tier guide
-- forgot CHANGELOG.md
-
 ### Other
-- updating docs to show the strip headers config option required for google cloud buckets to work
+- write failover for PutObject across eligible backends
 
 ## [0.16.15] - 2026-03-09
 

@@ -371,6 +371,16 @@ var (
 		[]string{"operation"},
 	)
 
+	// WriteFailoverTotal counts writes that failed on one backend and were
+	// retried on another. Labels: operation, failed_backend, success_backend.
+	WriteFailoverTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "s3proxy_write_failover_total",
+			Help: "Total number of write operations that failed over to a different backend",
+		},
+		[]string{"operation", "failed_backend", "success_backend"},
+	)
+
 	// --- Cleanup queue metrics ---
 
 	// CleanupQueueEnqueuedTotal counts items added to the cleanup retry queue.

@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
@@ -178,6 +179,325 @@ func TestPutObject_RecordFailure_CleansUp(t *testing.T) {
 	// Usage: 1 API call for the orphan cleanup delete (put usage only recorded on success path)
 	if got := mgr.usage.backend.Load("b1", FieldAPIRequests); got != 1 {
 		t.Errorf("apiRequests = %d, want 1 (orphan delete)", got)
+	}
+}
+
+// errReader is an io.Reader that always returns the configured error.
+type errReader struct{ err error }
+
+func (r *errReader) Read([]byte) (int, error) { return 0, r.err }
+
+// newTestManagerWithOrder creates a BackendManager with an explicit backend order
+// (deterministic, unlike newTestManager which iterates a map).
+func newTestManagerWithOrder(store *mockStore, backends map[string]*mockBackend, order []string) *BackendManager {
+	obs := make(map[string]ObjectBackend, len(backends))
+	for name, b := range backends {
+		obs[name] = b
+	}
+	return NewBackendManager(&BackendManagerConfig{
+		Backends:        obs,
+		Store:           store,
+		Order:           order,
+		CacheTTL:        5 * time.Second,
+		BackendTimeout:  30 * time.Second,
+		RoutingStrategy: "pack",
+	})
+}
+
+// -------------------------------------------------------------------------
+// PutObject Write Failover
+// -------------------------------------------------------------------------
+
+func TestPutObject_WriteFailover_Success(t *testing.T) {
+	b1 := newMockBackend()
+	b1.putErr = errors.New("connection refused")
+	b2 := newMockBackend()
+
+	store := &mockStore{getBackendFromEligible: true}
+	mgr := newTestManagerWithOrder(store, map[string]*mockBackend{"b1": b1, "b2": b2}, []string{"b1", "b2"})
+
+	etag, err := mgr.ObjectManager.PutObject(context.Background(), "failover-key", bytes.NewReader([]byte("hello")), 5, "text/plain", nil)
+	if err != nil {
+		t.Fatalf("PutObject should succeed via failover: %v", err)
+	}
+	if etag == "" {
+		t.Error("expected non-empty etag")
+	}
+
+	// Object should be on b2, not b1
+	if b1.hasObject("failover-key") {
+		t.Error("object should NOT be on failed backend b1")
+	}
+	if !b2.hasObject("failover-key") {
+		t.Error("object should be on failover backend b2")
+	}
+
+	// RecordObject should be called once for the successful backend
+	if len(store.recordObjectCalls) != 1 {
+		t.Fatalf("expected 1 RecordObject call, got %d", len(store.recordObjectCalls))
+	}
+	if store.recordObjectCalls[0].Backend != "b2" {
+		t.Errorf("RecordObject backend = %s, want b2", store.recordObjectCalls[0].Backend)
+	}
+}
+
+func TestPutObject_WriteFailover_AllBackendsFail(t *testing.T) {
+	b1 := newMockBackend()
+	b1.putErr = errors.New("b1 down")
+	b2 := newMockBackend()
+	b2.putErr = errors.New("b2 down")
+	b3 := newMockBackend()
+	b3.putErr = errors.New("b3 down")
+
+	store := &mockStore{getBackendFromEligible: true}
+	mgr := newTestManagerWithOrder(store, map[string]*mockBackend{"b1": b1, "b2": b2, "b3": b3}, []string{"b1", "b2", "b3"})
+
+	_, err := mgr.ObjectManager.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
+	if err == nil {
+		t.Fatal("expected error when all backends fail")
+	}
+
+	// All three backends should have been tried (3 API call records)
+	total := mgr.usage.backend.Load("b1", FieldAPIRequests) +
+		mgr.usage.backend.Load("b2", FieldAPIRequests) +
+		mgr.usage.backend.Load("b3", FieldAPIRequests)
+	if total != 3 {
+		t.Errorf("total API requests = %d, want 3 (one per failed backend)", total)
+	}
+}
+
+func TestPutObject_WriteFailover_SkipsMultipleFailedBackends(t *testing.T) {
+	b1 := newMockBackend()
+	b1.putErr = errors.New("b1 down")
+	b2 := newMockBackend()
+	b2.putErr = errors.New("b2 down")
+	b3 := newMockBackend()
+
+	store := &mockStore{getBackendFromEligible: true}
+	mgr := newTestManagerWithOrder(store, map[string]*mockBackend{"b1": b1, "b2": b2, "b3": b3}, []string{"b1", "b2", "b3"})
+
+	etag, err := mgr.ObjectManager.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
+	if err != nil {
+		t.Fatalf("PutObject should succeed on b3: %v", err)
+	}
+	if etag == "" {
+		t.Error("expected non-empty etag")
+	}
+	if !b3.hasObject("key") {
+		t.Error("object should be on b3")
+	}
+	// 2 failed attempts + 1 success = 3 total GetBackendWithSpace calls
+	if store.getBackendWithSpaceCalls != 3 {
+		t.Errorf("GetBackendWithSpace calls = %d, want 3", store.getBackendWithSpaceCalls)
+	}
+}
+
+func TestPutObject_WriteFailover_Metrics(t *testing.T) {
+	telemetry.WriteFailoverTotal.Reset()
+
+	b1 := newMockBackend()
+	b1.putErr = errors.New("b1 down")
+	b2 := newMockBackend()
+
+	store := &mockStore{getBackendFromEligible: true}
+	mgr := newTestManagerWithOrder(store, map[string]*mockBackend{"b1": b1, "b2": b2}, []string{"b1", "b2"})
+
+	_, err := mgr.ObjectManager.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
+	if err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+
+	got := testutil.ToFloat64(telemetry.WriteFailoverTotal.WithLabelValues("PutObject", "b1", "b2"))
+	if got != 1 {
+		t.Errorf("WriteFailoverTotal{PutObject,b1,b2} = %v, want 1", got)
+	}
+}
+
+func TestPutObject_WriteFailover_UsageTracking(t *testing.T) {
+	b1 := newMockBackend()
+	b1.putErr = errors.New("b1 timeout")
+	b2 := newMockBackend()
+
+	store := &mockStore{getBackendFromEligible: true}
+	mgr := newTestManagerWithOrder(store, map[string]*mockBackend{"b1": b1, "b2": b2}, []string{"b1", "b2"})
+
+	_, err := mgr.ObjectManager.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
+	if err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+
+	// b1: 1 API call (failed attempt), 0 ingress
+	if got := mgr.usage.backend.Load("b1", FieldAPIRequests); got != 1 {
+		t.Errorf("b1 apiRequests = %d, want 1", got)
+	}
+	if got := mgr.usage.backend.Load("b1", FieldIngressBytes); got != 0 {
+		t.Errorf("b1 ingressBytes = %d, want 0", got)
+	}
+
+	// b2: 1 API call (success) + 4 bytes ingress
+	if got := mgr.usage.backend.Load("b2", FieldAPIRequests); got != 1 {
+		t.Errorf("b2 apiRequests = %d, want 1", got)
+	}
+	if got := mgr.usage.backend.Load("b2", FieldIngressBytes); got != 4 {
+		t.Errorf("b2 ingressBytes = %d, want 4", got)
+	}
+}
+
+func TestPutObject_WriteFailover_DataIntegrity(t *testing.T) {
+	b1 := newMockBackend()
+	b1.putErr = errors.New("b1 down")
+	b2 := newMockBackend()
+
+	store := &mockStore{getBackendFromEligible: true}
+	mgr := newTestManagerWithOrder(store, map[string]*mockBackend{"b1": b1, "b2": b2}, []string{"b1", "b2"})
+
+	payload := []byte("the quick brown fox jumps over the lazy dog")
+	_, err := mgr.ObjectManager.PutObject(context.Background(), "key", bytes.NewReader(payload), int64(len(payload)), "text/plain", map[string]string{"x-custom": "value"})
+	if err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+
+	// Verify the data written to b2 matches the original payload
+	b2.mu.Lock()
+	obj := b2.objects["key"]
+	b2.mu.Unlock()
+
+	if !bytes.Equal(obj.data, payload) {
+		t.Errorf("data mismatch: got %d bytes, want %d bytes", len(obj.data), len(payload))
+	}
+	if obj.contentType != "text/plain" {
+		t.Errorf("contentType = %s, want text/plain", obj.contentType)
+	}
+	if obj.metadata["x-custom"] != "value" {
+		t.Errorf("metadata[x-custom] = %s, want value", obj.metadata["x-custom"])
+	}
+}
+
+func TestPutObject_WriteFailover_BufferBodyError(t *testing.T) {
+	store := &mockStore{getBackendFromEligible: true}
+	mgr := newTestManagerWithOrder(store, map[string]*mockBackend{"b1": newMockBackend()}, []string{"b1"})
+
+	// errReader returns an error on Read, triggering the body buffer failure path
+	_, err := mgr.ObjectManager.PutObject(context.Background(), "key", &errReader{err: errors.New("read failed")}, 4, "text/plain", nil)
+	if err == nil {
+		t.Fatal("expected error from body buffer failure")
+	}
+	if !errors.Is(err, fmt.Errorf("buffer request body: %w", errors.New("read failed"))) {
+		// Just check the error message contains the expected text
+		if got := err.Error(); got != "buffer request body: read failed" {
+			t.Errorf("error = %q, want %q", got, "buffer request body: read failed")
+		}
+	}
+}
+
+func TestPutObject_WriteFailover_SelectBackendErrorDuringRetry(t *testing.T) {
+	b1 := newMockBackend()
+	b1.putErr = errors.New("b1 down")
+
+	callCount := 0
+	store := &mockStore{
+		getBackendFunc: func(_ int64, eligible []string) (string, error) {
+			callCount++
+			if callCount == 1 {
+				return eligible[0], nil // first call succeeds, returns b1
+			}
+			return "", ErrDBUnavailable // second call fails (DB went down mid-retry)
+		},
+	}
+	mgr := newTestManagerWithOrder(store, map[string]*mockBackend{"b1": b1, "b2": newMockBackend()}, []string{"b1", "b2"})
+
+	_, err := mgr.ObjectManager.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
+	if !errors.Is(err, ErrServiceUnavailable) {
+		t.Fatalf("expected ErrServiceUnavailable, got %v", err)
+	}
+}
+
+func TestPutObject_WriteFailover_BackendNotInMap(t *testing.T) {
+	// Store returns a backend name that doesn't exist in the backends map
+	store := &mockStore{getBackendResp: "ghost"}
+	mgr := newTestManagerWithOrder(store, map[string]*mockBackend{"b1": newMockBackend()}, []string{"b1"})
+
+	_, err := mgr.ObjectManager.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
+	if err == nil {
+		t.Fatal("expected error when backend not in map")
+	}
+}
+
+func TestPutObject_WriteFailover_WithEncryption(t *testing.T) {
+	b1 := newMockBackend()
+	b1.putErr = errors.New("b1 down")
+	b2 := newMockBackend()
+
+	provider, err := encryption.NewConfigKeyProvider("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "test-0")
+	if err != nil {
+		t.Fatalf("NewConfigKeyProvider: %v", err)
+	}
+	enc := encryption.NewEncryptor(provider, 64*1024)
+
+	store := &mockStore{getBackendFromEligible: true}
+	obs := map[string]ObjectBackend{"b1": b1, "b2": b2}
+	mgr := NewBackendManager(&BackendManagerConfig{
+		Backends:        obs,
+		Store:           store,
+		Order:           []string{"b1", "b2"},
+		CacheTTL:        5 * time.Second,
+		BackendTimeout:  30 * time.Second,
+		RoutingStrategy: "pack",
+		Encryptor:       enc,
+	})
+
+	payload := []byte("encrypt-failover-test-data")
+	etag, err := mgr.ObjectManager.PutObject(context.Background(), "enc-key", bytes.NewReader(payload), int64(len(payload)), "text/plain", nil)
+	if err != nil {
+		t.Fatalf("PutObject with encryption failover: %v", err)
+	}
+	if etag == "" {
+		t.Error("expected non-empty etag")
+	}
+
+	// Object should be on b2, not b1
+	if b1.hasObject("enc-key") {
+		t.Error("object should NOT be on failed backend b1")
+	}
+	if !b2.hasObject("enc-key") {
+		t.Error("object should be on failover backend b2")
+	}
+
+	// Verify the recorded object has encryption metadata
+	if len(store.recordObjectCalls) != 1 {
+		t.Fatalf("expected 1 RecordObject call, got %d", len(store.recordObjectCalls))
+	}
+	if store.recordObjectCalls[0].Backend != "b2" {
+		t.Errorf("RecordObject backend = %s, want b2", store.recordObjectCalls[0].Backend)
+	}
+
+	// Ciphertext should be larger than plaintext (envelope overhead)
+	b2.mu.Lock()
+	ciphertextLen := len(b2.objects["enc-key"].data)
+	b2.mu.Unlock()
+	if ciphertextLen <= len(payload) {
+		t.Errorf("ciphertext len %d should be > plaintext len %d", ciphertextLen, len(payload))
+	}
+}
+
+func TestPutObject_WriteFailover_NoFailoverMetricOnFirstSuccess(t *testing.T) {
+	telemetry.WriteFailoverTotal.Reset()
+
+	b1 := newMockBackend()
+	b2 := newMockBackend()
+
+	store := &mockStore{getBackendFromEligible: true}
+	mgr := newTestManagerWithOrder(store, map[string]*mockBackend{"b1": b1, "b2": b2}, []string{"b1", "b2"})
+
+	_, err := mgr.ObjectManager.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
+	if err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+
+	// No failover occurred — metric should be 0
+	got := testutil.ToFloat64(telemetry.WriteFailoverTotal.WithLabelValues("PutObject", "b1", "b2"))
+	if got != 0 {
+		t.Errorf("WriteFailoverTotal should be 0 when no failover occurs, got %v", got)
 	}
 }
 
