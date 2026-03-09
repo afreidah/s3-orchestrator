@@ -8,7 +8,9 @@
 [![codecov](https://codecov.io/gh/afreidah/s3-orchestrator/branch/main/graph/badge.svg)](https://codecov.io/gh/afreidah/s3-orchestrator)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**[project website](https://s3-orchestrator.munchbox.cc)**
+<p align="center">
+  <strong><a href="https://s3-orchestrator.munchbox.cc">Project Website</a></strong> · <strong><a href="https://s3-orchestrator.munchbox.cc/docs/">Documentation</a></strong> · <strong><a href="https://s3-orchestrator.munchbox.cc/guides/maximizing-free-tiers/">Maximizing Free-Tier Storage</a></strong>
+</p>
 
 An S3-compatible orchestrator that combines multiple storage backends into a single unified endpoint. Add as many S3-compatible backends as you want — OCI Object Storage, Backblaze B2, AWS S3, MinIO, whatever — and the orchestrator presents them to clients as one or more virtual buckets. Per-backend quota enforcement lets you cap each backend at exactly the byte limit you choose, so you can stack multiple free-tier or cost-limited allocations from different providers into a single, larger storage target for backups, media, etc without worrying about surprise bills.
 
@@ -342,6 +344,7 @@ backends:
     force_path_style: true
     unsigned_payload: true    # stream uploads without buffering (auto-enabled for HTTPS, set explicitly for HTTP)
     disable_checksum: false   # disable SDK default checksums for GCS and other providers that reject them
+    strip_sdk_headers: false  # strip AWS SDK v2 headers before signing for GCS compatibility
     quota_bytes: 21474836480  # 20 GB (0 or omit for unlimited)
     api_request_limit: 0      # monthly API request limit (0 = unlimited)
     egress_byte_limit: 0      # monthly egress byte limit (0 = unlimited)

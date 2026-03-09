@@ -48,6 +48,7 @@ s3-orchestrator version
   - `redis.failure_threshold` -- circuit breaker threshold (default: 3)
   - `redis.open_timeout` -- circuit breaker probe delay (default: 15s)
 - `backends[].disable_checksum` -- disable AWS SDK default checksums (default: false). Required for Google Cloud Storage HMAC interoperability, where the SDK's streaming CRC64NVME checksums cause `SignatureDoesNotMatch` errors.
+- `backends[].strip_sdk_headers` -- strip AWS SDK v2 headers (`amz-sdk-invocation-id`, `amz-sdk-request`, `accept-encoding`) and the `x-id` query parameter before request signing (default: false). Required for Google Cloud Storage, where the SDK-added headers cause `SignatureDoesNotMatch` because GCS does not include them in signature verification.
 
 **Behavioral changes:**
 
