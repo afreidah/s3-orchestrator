@@ -5,8 +5,33 @@ All notable changes to this project are documented in this file.
 
 ## [unreleased]
 
+### Added
+- Add trace-to-log correlation via slog TraceHandler
+
+## [0.16.21] - 2026-03-09
+
 ### Other
-- write failover for PutObject across eligible backends
+- Test: bumping version to test release functionality
+
+## [0.16.20] - 2026-03-09
+
+### Fixed
+- Fix: let release pipeline create a PR at the end and auto-merge it to have the changelog update (#238)
+
+## [0.16.19] - 2026-03-09
+
+### Fixed
+- Fix: re-order pre-changelog, goreleaser, and git-cliff (#237)
+
+## [0.16.18] - 2026-03-09
+
+### Fixed
+- Fix: the changelog step was breaking goreleaser on 'make release' (#236)
+
+## [0.16.17] - 2026-03-09
+
+### Other
+- write failover for PutObject across eligible backends (#234)
 
 ## [0.16.15] - 2026-03-09
 
