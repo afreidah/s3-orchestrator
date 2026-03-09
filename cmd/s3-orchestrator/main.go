@@ -114,7 +114,8 @@ func runServe() {
 	logLevel.Set(config.ParseLogLevel(cfg.Server.LogLevel))
 	logBuffer := telemetry.NewLogBuffer()
 	jsonHandler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: &logLevel})
-	slog.SetDefault(slog.New(telemetry.NewTeeHandler(jsonHandler, logBuffer)))
+	traceHandler := telemetry.NewTraceHandler(jsonHandler)
+	slog.SetDefault(slog.New(telemetry.NewTeeHandler(traceHandler, logBuffer)))
 
 	// --- Initialize tracing ---
 	ctx := context.Background()

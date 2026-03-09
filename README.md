@@ -591,6 +591,8 @@ A ready-to-import Grafana dashboard covering all metrics is included at `grafana
 
 Spans are emitted for every HTTP request, manager operation, and backend S3 call. The service registers as `s3-orchestrator` (`resource.service.name`). Traces propagate via W3C `traceparent` headers. Configured to export via gRPC OTLP to Tempo or any OTLP-compatible collector.
 
+**Trace-to-log correlation** — every JSON log line emitted within an active span automatically includes `trace_id` and `span_id` fields. Log aggregators (Loki, etc.) can use these fields to link logs to their corresponding traces in Tempo or any OpenTelemetry-compatible tracing backend. Only log calls that receive a `context.Context` with an active span include trace context; application-level logs without a span context are unaffected.
+
 ### Audit Logging
 
 Structured audit log entries are emitted as JSON via `slog` for every S3 API request and significant internal operation. Each entry includes an `"audit": true` marker for easy filtering in log pipelines.
@@ -979,6 +981,7 @@ internal/
   telemetry/
     metrics.go               Prometheus metric definitions
     tracing.go               OpenTelemetry tracer setup
+    tracehandler.go          slog handler that injects trace_id/span_id from OTel context
     logbuffer.go             In-memory ring buffer + slog TeeHandler
 grafana/
   s3-orchestrator.json       Grafana dashboard (all Prometheus metrics)
