@@ -3,10 +3,25 @@
 All notable changes to this project are documented in this file.
 
 
-## [unreleased]
+## [0.16.20] - 2026-03-09
+
+### Fixed
+- Fix: let release pipeline create a PR at the end and auto-merge it to have the changelog update (#238)
+
+## [0.16.19] - 2026-03-09
+
+### Fixed
+- Fix: re-order pre-changelog, goreleaser, and git-cliff (#237)
+
+## [0.16.18] - 2026-03-09
+
+### Fixed
+- Fix: the changelog step was breaking goreleaser on 'make release' (#236)
+
+## [0.16.17] - 2026-03-09
 
 ### Other
-- write failover for PutObject across eligible backends
+- write failover for PutObject across eligible backends (#234)
 
 ## [0.16.15] - 2026-03-09
 
@@ -232,36 +247,6 @@ All notable changes to this project are documented in this file.
 - add spread routing tests, update docs, fix godoc compliance
 - add spread write routing strategy and dashboard favicon
 - add web UI documentation, fix OTel service name
-
-### Hardened
-- harden security, correctness, and observability for v0.5.2
-
-### Improved
-- replace NewBackendManager positional params with config struct
-- replace goto with structured control flow in ListObjects
-
-### Other
-- optional parallel broadcast reads in degraded mode
-- parallel rebalance move execution
-- updating docs for .deb packaging info
-- extract concerns from BackendManager and harden circuit breaker
-- disable unsigned payload over plain HTTP, use Swap middleware
-- stream uploads with unsigned payload, skip full-body buffering
-- reduce circuit breaker boilerplate with generic helpers, fix hugeParam lint
-
-## [0.3.2] - 2026-02-22
-
-### Other
-- interactive collapsible object tree in dashboard
-
-## [0.3.1] - 2026-02-22
-
-### Other
-- cache-bust CSS, fix double-v version, simplify table layout
-
-## [0.3.0] - 2026-02-21
-
-### Added
 - add object listing to dashboard and fix table alignment
 - add operator/admin guide for deploying and operating the orchestrator
 - add per-backend monthly usage limit enforcement
@@ -271,17 +256,31 @@ All notable changes to this project are documented in this file.
 - add comprehensive unit tests for manager business logic and fix integration tests
 - add database circuit breaker with self-healing degraded mode
 
+### Hardened
+- harden security, correctness, and observability for v0.5.2
+
 ### Refactored
 - rename s3-proxy to s3-orchestrator
 - rename Go module to github.com/afreidah/s3-proxy
 
 ### Improved
+- replace NewBackendManager positional params with config struct
+- replace goto with structured control flow in ListObjects
 - update README and config example to reflect current features
 
 ### Documentation
 - document usage limits, new metrics, and usage_deltas table
 
 ### Other
+- optional parallel broadcast reads in degraded mode
+- parallel rebalance move execution
+- updating docs for .deb packaging info
+- extract concerns from BackendManager and harden circuit breaker
+- disable unsigned payload over plain HTTP, use Swap middleware
+- stream uploads with unsigned payload, skip full-body buffering
+- reduce circuit breaker boilerplate with generic helpers, fix hugeParam lint
+- interactive collapsible object tree in dashboard
+- cache-bust CSS, fix double-v version, simplify table layout
 - table alignment with fixed layout and explicit column widths
 - check json.Encode error return to satisfy errcheck lint
 - built-in web UI dashboard for operational visibility
