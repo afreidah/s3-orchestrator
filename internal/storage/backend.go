@@ -22,6 +22,8 @@ import (
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	smithymiddleware "github.com/aws/smithy-go/middleware"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 	"go.opentelemetry.io/otel/codes"
@@ -85,6 +87,9 @@ func NewS3Backend(cfg *config.BackendConfig) (*S3Backend, error) {
 	if cfg.DisableChecksum {
 		opts.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
 		opts.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenRequired
+	}
+	if cfg.StripSDKHeaders {
+		opts.APIOptions = append(opts.APIOptions, stripSDKHeadersMiddleware)
 	}
 	client := s3.New(opts)
 
@@ -367,6 +372,29 @@ func (b *S3Backend) ListObjects(ctx context.Context, prefix string, fn func([]Li
 // -------------------------------------------------------------------------
 // METRICS HELPER
 // -------------------------------------------------------------------------
+
+// stripSDKHeadersMiddleware removes AWS SDK v2-specific headers and query
+// parameters before request signing. GCS (and potentially other S3-compatible
+// backends) fail signature verification when these non-standard headers are
+// included in the signed header set.
+func stripSDKHeadersMiddleware(stack *smithymiddleware.Stack) error {
+	return stack.Finalize.Insert(smithymiddleware.FinalizeMiddlewareFunc(
+		"StripSDKHeaders",
+		func(ctx context.Context, in smithymiddleware.FinalizeInput, next smithymiddleware.FinalizeHandler) (smithymiddleware.FinalizeOutput, smithymiddleware.Metadata, error) {
+			req, ok := in.Request.(*smithyhttp.Request)
+			if ok {
+				q := req.URL.Query()
+				q.Del("x-id")
+				req.URL.RawQuery = q.Encode()
+
+				req.Header.Del("Amz-Sdk-Invocation-Id")
+				req.Header.Del("Amz-Sdk-Request")
+				req.Header.Del("Accept-Encoding")
+			}
+			return next.HandleFinalize(ctx, in)
+		},
+	), "Signing", smithymiddleware.Before)
+}
 
 // withUnsignedPayload is an S3 per-request option that replaces the payload
 // SHA-256 computation with the UNSIGNED-PAYLOAD sentinel. This allows the SDK
