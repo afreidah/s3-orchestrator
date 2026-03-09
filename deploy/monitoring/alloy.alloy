@@ -1,0 +1,55 @@
+// ---------------------------------------------------------------------------
+// Alloy config — scrape Docker container logs and ship to Loki
+// ---------------------------------------------------------------------------
+
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    target_label  = "container"
+  }
+}
+
+loki.source.docker "containers" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.containers.output
+  labels     = { "job" = "docker" }
+  forward_to = [loki.process.json.receiver]
+}
+
+loki.process "json" {
+  // Try to parse JSON logs; non-JSON lines pass through unchanged.
+  stage.json {
+    expressions = {
+      level   = "level",
+      msg     = "msg",
+      traceID = "trace_id",
+    }
+  }
+
+  stage.labels {
+    values = {
+      level = "",
+    }
+  }
+
+  // Attach trace_id as structured metadata so Grafana can link logs ↔ traces.
+  stage.structured_metadata {
+    values = {
+      trace_id = "traceID",
+    }
+  }
+
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://host.docker.internal:3100/loki/api/v1/push"
+  }
+}
