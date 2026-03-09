@@ -6,12 +6,13 @@ All notable changes to this project are documented in this file.
 ## [unreleased]
 
 ### Added
+- add strip_sdk_headers option for GCS S3 compatibility
 - add per-backend disable_checksum option for GCS compatibility (#225)
 - Add DB query tracing, background worker spans, audit logging gaps, and Grafana dashboard coverage (#222)
 - Add git-cliff changelog generation with commit categorization (#219)
 
 ### Fixed
-- Fix: when a backend is unhealthy, routing still needs to allow half-open through so probes can heal the backend
+- Fix: when a backend is unhealthy, routing still needs to allow half-open through so probes can heal the backend (#227)
 
 ### Hardened
 - Harden defaults: increase DB pool size and add location cache TTL jitter (#215)
