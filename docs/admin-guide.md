@@ -892,6 +892,8 @@ Each S3 API request produces two correlated audit entries (HTTP-level and storag
 
 Clients can supply their own correlation ID via the `X-Request-Id` request header; otherwise the orchestrator generates one. The ID is returned in the `X-Amz-Request-Id` response header.
 
+**Trace-to-log correlation** — JSON log output includes `trace_id` and `span_id` fields on every line emitted within an active OpenTelemetry span. Log aggregators like Grafana Loki can extract these fields to link directly from a log entry to the corresponding trace in Tempo, and vice versa.
+
 ## Common Operations
 
 ### Reloading configuration
