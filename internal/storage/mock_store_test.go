@@ -26,8 +26,10 @@ type mockStore struct {
 	getAllLocationsResp []ObjectLocation
 	getAllLocationsErr  error
 
-	getBackendResp string
-	getBackendErr  error
+	getBackendResp          string
+	getBackendErr           error
+	getBackendFromEligible  bool                                       // when true, returns eligible[0] instead of getBackendResp
+	getBackendFunc          func(size int64, eligible []string) (string, error) // overrides all other getBackend fields when set
 
 	recordObjectErr error
 
@@ -157,22 +159,34 @@ func (m *mockStore) GetAllObjectLocations(_ context.Context, key string) ([]Obje
 	return nil, ErrObjectNotFound
 }
 
-func (m *mockStore) GetBackendWithSpace(_ context.Context, size int64, _ []string) (string, error) {
+func (m *mockStore) GetBackendWithSpace(_ context.Context, size int64, eligible []string) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.getBackendWithSpaceCalls++
+	if m.getBackendFunc != nil {
+		return m.getBackendFunc(size, eligible)
+	}
 	if m.getBackendErr != nil {
 		return "", m.getBackendErr
+	}
+	if m.getBackendFromEligible && len(eligible) > 0 {
+		return eligible[0], nil
 	}
 	return m.getBackendResp, nil
 }
 
-func (m *mockStore) GetLeastUtilizedBackend(_ context.Context, size int64, _ []string) (string, error) {
+func (m *mockStore) GetLeastUtilizedBackend(_ context.Context, size int64, eligible []string) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.getLeastUtilizedCalls++
+	if m.getBackendFunc != nil {
+		return m.getBackendFunc(size, eligible)
+	}
 	if m.getBackendErr != nil {
 		return "", m.getBackendErr
+	}
+	if m.getBackendFromEligible && len(eligible) > 0 {
+		return eligible[0], nil
 	}
 	return m.getBackendResp, nil
 }
