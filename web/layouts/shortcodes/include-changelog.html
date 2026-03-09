@@ -1,0 +1,7 @@
+{{/* Reads CHANGELOG.md from repo root (mounted as asset) and renders as markdown. */}}
+{{ $changelog := resources.Get "repo/CHANGELOG.md" }}
+{{ if $changelog }}
+{{ $content := $changelog.Content }}
+{{ $content = replaceRE `(?m)^# [^\n]+\n` "" $content }}
+{{ .Page.RenderString $content }}
+{{ end }}

@@ -1,6 +1,6 @@
 {{/* Reads README.md from repo root (mounted as asset), strips the
      logo/H1/badges header, fixes image paths, and renders as markdown. */}}
-{{ $readme := resources.Get "README.md" }}
+{{ $readme := resources.Get "repo/README.md" }}
 {{ if $readme }}
 {{ $content := $readme.Content }}
 {{ $content = replaceRE `(?s)\A<p[^>]*>.*?</p>\s*` "" $content }}
