@@ -109,4 +109,37 @@ func TestNewS3Backend_DisableChecksum(t *testing.T) {
 	}
 }
 
+func TestNewS3Backend_StripSDKHeaders(t *testing.T) {
+	tests := []struct {
+		name            string
+		stripSDKHeaders bool
+	}{
+		{
+			name:            "strip enabled",
+			stripSDKHeaders: true,
+		},
+		{
+			name:            "strip disabled (default)",
+			stripSDKHeaders: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := NewS3Backend(&config.BackendConfig{
+				Name:            "test",
+				Endpoint:        "https://storage.googleapis.com",
+				Region:          "auto",
+				Bucket:          "test-bucket",
+				AccessKeyID:     "AKID",
+				SecretAccessKey: "secret",
+				StripSDKHeaders: tt.stripSDKHeaders,
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
 func boolPtr(b bool) *bool { return &b }
