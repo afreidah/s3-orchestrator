@@ -50,6 +50,9 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Prep Debian changelog
+        run: make prep-changelog
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v7
         with:
@@ -67,9 +70,6 @@ jobs:
         uses: orhun/git-cliff-action@v4
         with:
           args: -o CHANGELOG.md
-
-      - name: Prep changelog
-        run: make prep-changelog
 
       - name: Commit CHANGELOG.md to main
         run: |
