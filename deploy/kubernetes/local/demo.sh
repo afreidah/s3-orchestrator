@@ -70,7 +70,7 @@ HOST_IP=$(docker network inspect "k3d-${CLUSTER_NAME}" \
     -f '{{(index .IPAM.Config 0).Gateway}}')
 echo "Host gateway IP: $HOST_IP"
 
-docker compose -f docker-compose.test.yml up -d tempo prometheus grafana
+docker compose -f docker-compose.test.yml up -d tempo loki prometheus grafana
 
 # --- Apply manifests ---
 echo "Applying Kubernetes manifests..."
@@ -78,6 +78,8 @@ kubectl apply -f deploy/kubernetes/namespace.yaml
 kubectl apply -f deploy/kubernetes/service.yaml
 kubectl apply -f deploy/kubernetes/local/secret.yaml
 sed "s/__HOST_IP__/$HOST_IP/g" deploy/kubernetes/local/configmap.yaml | kubectl apply -f -
+sed "s/__HOST_IP__/$HOST_IP/g" deploy/kubernetes/local/alloy-config.yaml | kubectl apply -f -
+kubectl apply -f deploy/kubernetes/local/alloy-daemonset.yaml
 kubectl apply -f deploy/kubernetes/local/deployment.yaml
 
 # --- Wait for rollout ---
@@ -94,6 +96,11 @@ sleep 2
 
 HEALTH=$(curl -s "http://localhost:$PORT/health")
 if echo "$HEALTH" | grep -q '"status":"ok"'; then
+    # --- Create Grafana trace→log correlation ---
+    curl -s -X POST http://localhost:13000/api/datasources/uid/tempo/correlations \
+        -H "Content-Type: application/json" \
+        -d @deploy/monitoring/grafana/correlation.json >/dev/null 2>&1 || true
+
     echo ""
     echo "========================================"
     echo "  S3 Orchestrator is running in k3d"

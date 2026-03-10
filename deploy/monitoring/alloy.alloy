@@ -13,6 +13,21 @@ discovery.relabel "containers" {
     source_labels = ["__meta_docker_container_name"]
     target_label  = "container"
   }
+
+  // Extract clean service name from container names with UUID suffixes
+  // e.g. /s3-orchestrator-07c8db72-a55f-d9db-06d0-f6cff721902a → s3-orchestrator
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/?(.+)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+    target_label  = "service_name"
+  }
+
+  // Override with compose service name when available (cleaner than container name).
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    regex         = "(.+)"
+    target_label  = "service_name"
+  }
 }
 
 loki.source.docker "containers" {

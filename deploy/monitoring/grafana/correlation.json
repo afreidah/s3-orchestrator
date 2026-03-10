@@ -1,0 +1,14 @@
+{
+  "targetUID": "loki",
+  "label": "View logs",
+  "description": "Trace to logs correlation",
+  "type": "query",
+  "config": {
+    "field": "traceID",
+    "target": {
+      "expr": "{service_name=\"s3-orchestrator\"} | trace_id=\"${__value.raw}\"",
+      "queryType": "range",
+      "refId": "A"
+    }
+  }
+}
