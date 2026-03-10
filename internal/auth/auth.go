@@ -258,7 +258,7 @@ func buildCanonicalRequest(r *http.Request, signedHeaders []string) string {
 	canonicalQueryString := buildCanonicalQueryString(r.URL.Query())
 
 	// Canonical headers
-	var headerLines []string
+	headerLines := make([]string, 0, len(signedHeaders))
 	for _, h := range signedHeaders {
 		h = strings.ToLower(strings.TrimSpace(h))
 		val := strings.TrimSpace(r.Header.Get(h))
