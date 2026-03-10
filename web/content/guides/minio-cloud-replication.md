@@ -1,5 +1,5 @@
 ---
-title: "Cloud Replication for Local MinIO"
+title: "Local to Cloud Replication"
 weight: 4
 ---
 

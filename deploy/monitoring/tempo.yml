@@ -24,6 +24,7 @@ metrics_generator:
       max_items: 10000
     span_metrics:
     local_blocks:
+      max_live_traces: 10000
       flush_to_storage: true
   storage:
     path: /var/tempo/generator/wal

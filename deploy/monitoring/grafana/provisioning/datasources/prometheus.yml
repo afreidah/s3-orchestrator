@@ -41,3 +41,5 @@ datasources:
         datasourceUid: prometheus
       nodeGraph:
         enabled: true
+      lokiSearch:
+        datasourceUid: loki

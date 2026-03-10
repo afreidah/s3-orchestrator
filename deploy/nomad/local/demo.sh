@@ -107,6 +107,11 @@ done
 
 HEALTH=$(curl -s "http://localhost:$PORT/health" 2>/dev/null || true)
 if echo "$HEALTH" | grep -q '"status":"ok"'; then
+    # --- Create Grafana trace→log correlation ---
+    curl -s -X POST http://localhost:13000/api/datasources/uid/tempo/correlations \
+        -H "Content-Type: application/json" \
+        -d @deploy/monitoring/grafana/correlation.json >/dev/null 2>&1 || true
+
     echo ""
     echo "========================================"
     echo "  S3 Orchestrator is running in Nomad"

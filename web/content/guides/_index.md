@@ -9,6 +9,13 @@ weight: 30
 <div class="landing-subheader">Step-by-step tutorials for common operations and deployment patterns.</div>
 
 <div class="landing-grid">
+  <a class="landing-card" href="local-demo/">
+    <i class="fas fa-play-circle landing-card-icon" style="color: #86efac;"></i>
+    <div>
+      <strong>Nomad/k8s Full Stack Demo</strong>
+      <p>Stand up a complete environment with Nomad or Kubernetes, two MinIO backends, and full observability in minutes.</p>
+    </div>
+  </a>
   <a class="landing-card" href="maximizing-free-tiers/">
     <i class="fas fa-coins landing-card-icon" style="color: #6ee7b7;"></i>
     <div>
@@ -19,7 +26,7 @@ weight: 30
   <a class="landing-card" href="minio-cloud-replication/">
     <i class="fas fa-cloud-upload-alt landing-card-icon" style="color: #93c5fd;"></i>
     <div>
-      <strong>Cloud Replication for Local MinIO</strong>
+      <strong>Local to Cloud Replication</strong>
       <p>Automatically back up a local MinIO instance to the cloud with no sync scripts or additional tooling.</p>
     </div>
   </a>

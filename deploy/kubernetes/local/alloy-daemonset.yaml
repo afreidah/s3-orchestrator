@@ -1,0 +1,66 @@
+# -------------------------------------------------------------------------------
+# Alloy DaemonSet - Kubernetes Pod Log Collection
+#
+# Author: Alex Freidah
+#
+# Runs Alloy on every node to scrape pod logs from /var/log/pods and ship
+# them to Loki. Positions are stored on a hostPath so Alloy survives restarts
+# without re-reading old logs.
+# -------------------------------------------------------------------------------
+
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: alloy
+  namespace: s3-orchestrator
+  labels:
+    app.kubernetes.io/name: alloy
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: alloy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: alloy
+    spec:
+      serviceAccountName: default
+      containers:
+        - name: alloy
+          image: grafana/alloy:latest
+          args: ["run", "--server.http.listen-addr=0.0.0.0:12345", "/etc/alloy/config.alloy"]
+          ports:
+            - name: http
+              containerPort: 12345
+          livenessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alloy
+              readOnly: true
+            - name: pod-logs
+              mountPath: /var/log/pods
+              readOnly: true
+            - name: positions
+              mountPath: /tmp/alloy
+      volumes:
+        - name: config
+          configMap:
+            name: alloy
+        - name: pod-logs
+          hostPath:
+            path: /var/log/pods
+        - name: positions
+          hostPath:
+            path: /tmp/alloy

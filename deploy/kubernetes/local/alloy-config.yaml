@@ -1,0 +1,68 @@
+# -------------------------------------------------------------------------------
+# Alloy ConfigMap - Kubernetes Pod Log Collection
+#
+# Author: Alex Freidah
+#
+# Scrapes s3-orchestrator pod logs from the node filesystem, parses JSON,
+# extracts trace_id as structured metadata for Grafana trace-to-log
+# correlation, and ships to Loki on the host. The __HOST_IP__ placeholder
+# is replaced by demo.sh at apply time.
+# -------------------------------------------------------------------------------
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alloy
+  namespace: s3-orchestrator
+  labels:
+    app.kubernetes.io/name: alloy
+data:
+  config.alloy: |
+    // Scrape s3-orchestrator pod logs from the node filesystem.
+    local.file_match "pods" {
+      path_targets = [{
+        __path__     = "/var/log/pods/s3-orchestrator_*/*/*.log",
+        job          = "kubernetes",
+        service_name = "s3-orchestrator",
+      }]
+    }
+
+    loki.source.file "pods" {
+      targets    = local.file_match.pods.targets
+      forward_to = [loki.process.json.receiver]
+    }
+
+    loki.process "json" {
+      // Parse CRI log wrapper (timestamp stream flags content).
+      stage.cri {}
+
+      // Extract fields from s3-orchestrator JSON logs.
+      stage.json {
+        expressions = {
+          level   = "level",
+          msg     = "msg",
+          traceID = "trace_id",
+        }
+      }
+
+      stage.labels {
+        values = {
+          level = "",
+        }
+      }
+
+      // Attach trace_id as structured metadata for trace ↔ log linking.
+      stage.structured_metadata {
+        values = {
+          trace_id = "traceID",
+        }
+      }
+
+      forward_to = [loki.write.loki.receiver]
+    }
+
+    loki.write "loki" {
+      endpoint {
+        url = "http://__HOST_IP__:3100/loki/api/v1/push"
+      }
+    }
