@@ -61,12 +61,13 @@ func (mc *MetricsCollector) UpdateQuotaMetrics(ctx context.Context) error {
 
 	for name, stat := range stats {
 		telemetry.QuotaBytesUsed.WithLabelValues(name).Set(float64(stat.BytesUsed))
+		telemetry.QuotaOrphanBytes.WithLabelValues(name).Set(float64(stat.OrphanBytes))
 		if stat.BytesLimit == 0 {
 			telemetry.QuotaBytesLimit.WithLabelValues(name).Set(0)
 			telemetry.QuotaBytesAvailable.WithLabelValues(name).Set(0)
 		} else {
 			telemetry.QuotaBytesLimit.WithLabelValues(name).Set(float64(stat.BytesLimit))
-			telemetry.QuotaBytesAvailable.WithLabelValues(name).Set(float64(stat.BytesLimit - stat.BytesUsed))
+			telemetry.QuotaBytesAvailable.WithLabelValues(name).Set(float64(stat.BytesLimit - stat.BytesUsed - stat.OrphanBytes))
 		}
 	}
 

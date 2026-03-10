@@ -108,7 +108,7 @@ Enable replication with `replication.factor: 2` or higher so every object exists
 
 ## Cleanup Queue Recovery
 
-The cleanup queue tracks failed delete operations with exponential backoff (1 minute to 24 hours, max 10 attempts). If items get stuck:
+The cleanup queue tracks failed delete operations with exponential backoff (1 minute to 24 hours, max 10 attempts). Each item tracks `size_bytes`, and the corresponding backend's `orphan_bytes` counter is incremented on enqueue and decremented on successful cleanup. This ensures the write path never overcommits storage on a backend with pending cleanups. If items get stuck:
 
 ```bash
 # Check the queue
@@ -118,7 +118,12 @@ s3-orchestrator admin cleanup-queue
 # If the queue is backed up, check the logs for persistent errors.
 ```
 
-Items that exhaust all 10 retry attempts are logged and left in the queue for manual review.
+Items that exhaust all 10 retry attempts remain in the queue with `orphan_bytes` still reserved — the write path continues to account for the unreleased space. Monitor `s3proxy_quota_orphan_bytes` for backends with elevated values. After manually resolving an exhausted item (deleting the orphan from the backend), decrement `orphan_bytes` and remove the item:
+
+```sql
+UPDATE backend_quotas SET orphan_bytes = orphan_bytes - (SELECT size_bytes FROM cleanup_queue WHERE id = 123) WHERE backend_name = (SELECT backend_name FROM cleanup_queue WHERE id = 123);
+DELETE FROM cleanup_queue WHERE id = 123;
+```
 
 ## Multi-Instance Recovery
 

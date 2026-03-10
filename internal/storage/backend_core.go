@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/audit"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -150,21 +151,43 @@ func (c *backendCore) classifyWriteError(span trace.Span, operation string, err 
 // -------------------------------------------------------------------------
 
 // recordObjectOrCleanup calls RecordObject and, on failure, deletes the orphaned
-// object from the backend. Updates the tracing span on error.
+// object from the backend. On success, enqueues cleanup for any displaced copies
+// on other backends (from overwrites). Updates the tracing span on error.
 func (c *backendCore) recordObjectOrCleanup(ctx context.Context, span trace.Span, backend ObjectBackend, key, backendName string, size int64, enc *EncryptionMeta) error {
-	if err := c.store.RecordObject(ctx, key, backendName, size, enc); err != nil {
+	displaced, err := c.store.RecordObject(ctx, key, backendName, size, enc)
+	if err != nil {
 		slog.Error("RecordObject failed, cleaning up orphan",
 			"key", key, "backend", backendName, "error", err)
 		c.usage.Record(backendName, 1, 0, 0)
 		if delErr := backend.DeleteObject(ctx, key); delErr != nil {
 			slog.Error("Failed to clean up orphaned object",
 				"key", key, "backend", backendName, "error", delErr)
-			c.enqueueCleanup(ctx, backendName, key, "orphan_record_failed")
+			c.enqueueCleanup(ctx, backendName, key, "orphan_record_failed", size)
 		}
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)
 		return fmt.Errorf("failed to record object: %w", err)
 	}
+
+	// Clean up stale copies on other backends displaced by this overwrite.
+	for _, dc := range displaced {
+		dcBackend, ok := c.backends[dc.BackendName]
+		if !ok {
+			slog.Warn("Displaced copy backend not found",
+				"backend", dc.BackendName, "key", key)
+			continue
+		}
+		c.deleteOrEnqueue(ctx, dcBackend, dc.BackendName, key, "overwrite_displaced", dc.SizeBytes)
+	}
+
+	if len(displaced) > 0 {
+		audit.Log(ctx, "storage.overwrite_displaced",
+			slog.String("key", key),
+			slog.String("new_backend", backendName),
+			slog.Int("displaced_copies", len(displaced)),
+		)
+	}
+
 	return nil
 }
 
@@ -202,11 +225,12 @@ func (c *backendCore) streamCopy(ctx context.Context, src, dst ObjectBackend, ke
 // fails, it logs a warning and enqueues the key for background retry. This is
 // the standard "best-effort orphan cleanup" primitive used throughout the
 // manager: rebalancer, replicator, multipart cleanup, and delete paths.
-func (c *backendCore) deleteOrEnqueue(ctx context.Context, backend ObjectBackend, backendName, key, reason string) {
+// sizeBytes is tracked as orphan bytes when the delete is enqueued.
+func (c *backendCore) deleteOrEnqueue(ctx context.Context, backend ObjectBackend, backendName, key, reason string, sizeBytes int64) {
 	if err := c.deleteWithTimeout(ctx, backend, key); err != nil {
 		slog.Warn("Failed to delete object, enqueuing cleanup",
 			"backend", backendName, "key", key, "reason", reason, "error", err)
-		c.enqueueCleanup(ctx, backendName, key, reason)
+		c.enqueueCleanup(ctx, backendName, key, reason, sizeBytes)
 	}
 }
 
@@ -224,14 +248,22 @@ func (c *backendCore) UpdateQuotaMetrics(ctx context.Context) error {
 	return c.metrics.UpdateQuotaMetrics(ctx)
 }
 
-// enqueueCleanup adds a failed cleanup operation to the retry queue.
-// Best-effort: if the enqueue itself fails (e.g. DB down), logs the error
-// and moves on since the circuit breaker is already handling DB outages.
-func (c *backendCore) enqueueCleanup(ctx context.Context, backendName, objectKey, reason string) {
-	if err := c.store.EnqueueCleanup(ctx, backendName, objectKey, reason); err != nil {
+// enqueueCleanup adds a failed cleanup operation to the retry queue and
+// increments orphan_bytes so the write path accounts for the physically
+// unreleased space. Best-effort: if the enqueue or orphan update fails
+// (e.g. DB down), logs the error and moves on since the circuit breaker
+// is already handling DB outages.
+func (c *backendCore) enqueueCleanup(ctx context.Context, backendName, objectKey, reason string, sizeBytes int64) {
+	if err := c.store.EnqueueCleanup(ctx, backendName, objectKey, reason, sizeBytes); err != nil {
 		slog.Error("Failed to enqueue cleanup (best-effort)",
 			"backend", backendName, "key", objectKey, "reason", reason, "error", err)
 		return
+	}
+	if sizeBytes > 0 {
+		if err := c.store.IncrementOrphanBytes(ctx, backendName, sizeBytes); err != nil {
+			slog.Error("Failed to increment orphan bytes (best-effort)",
+				"backend", backendName, "key", objectKey, "size", sizeBytes, "error", err)
+		}
 	}
 	telemetry.CleanupQueueEnqueuedTotal.WithLabelValues(reason).Inc()
 }

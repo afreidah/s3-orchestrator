@@ -276,7 +276,7 @@ func TestCleanupOrphan_Success(t *testing.T) {
 
 	mgr := newTestManager(&mockStore{}, map[string]*mockBackend{"b1": b1})
 
-	mgr.Replicator.cleanupOrphan(context.Background(), "b1", "orphan")
+	mgr.Replicator.cleanupOrphan(context.Background(), "b1", "orphan", 1)
 	if b1.hasObject("orphan") {
 		t.Error("expected orphan to be deleted")
 	}
@@ -286,7 +286,7 @@ func TestCleanupOrphan_BackendNotFound(t *testing.T) {
 	mgr := newTestManager(&mockStore{}, map[string]*mockBackend{"b1": newMockBackend()})
 
 	// Should not panic for unknown backend
-	mgr.Replicator.cleanupOrphan(context.Background(), "unknown", "orphan")
+	mgr.Replicator.cleanupOrphan(context.Background(), "unknown", "orphan", 1)
 }
 
 func TestCleanupOrphan_DeleteFailure_EnqueuesCleanup(t *testing.T) {
@@ -295,7 +295,7 @@ func TestCleanupOrphan_DeleteFailure_EnqueuesCleanup(t *testing.T) {
 	store := &mockStore{}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": b1})
 
-	mgr.Replicator.cleanupOrphan(context.Background(), "b1", "orphan")
+	mgr.Replicator.cleanupOrphan(context.Background(), "b1", "orphan", 1)
 
 	store.mu.Lock()
 	defer store.mu.Unlock()

@@ -440,7 +440,7 @@ func (r *Rebalancer) executeOneMove(ctx context.Context, move rebalanceMove, str
 		slog.Error("Rebalance: failed to update object location",
 			"key", move.ObjectKey, "error", err)
 		// Clean up orphan on destination
-		r.deleteOrEnqueue(ctx, destBackend, move.ToBackend, move.ObjectKey, "rebalance_orphan")
+		r.deleteOrEnqueue(ctx, destBackend, move.ToBackend, move.ObjectKey, "rebalance_orphan", move.SizeBytes)
 		r.usage.Record(move.ToBackend, 1, 0, 0)
 		telemetry.RebalanceObjectsMoved.WithLabelValues(strategy, "error").Inc()
 		return false
@@ -450,13 +450,13 @@ func (r *Rebalancer) executeOneMove(ctx context.Context, move rebalanceMove, str
 		// Object was deleted or already moved by another process
 		slog.Info("Rebalance: object already moved or deleted, cleaning up",
 			"key", move.ObjectKey)
-		r.deleteOrEnqueue(ctx, destBackend, move.ToBackend, move.ObjectKey, "rebalance_stale_orphan")
+		r.deleteOrEnqueue(ctx, destBackend, move.ToBackend, move.ObjectKey, "rebalance_stale_orphan", move.SizeBytes)
 		r.usage.Record(move.ToBackend, 1, 0, 0)
 		return false
 	}
 
 	// --- Delete from source ---
-	r.deleteOrEnqueue(ctx, srcBackend, move.FromBackend, move.ObjectKey, "rebalance_source_delete")
+	r.deleteOrEnqueue(ctx, srcBackend, move.FromBackend, move.ObjectKey, "rebalance_source_delete", movedSize)
 
 	r.usage.Record(move.FromBackend, 2, movedSize, 0) // Get + Delete, egress
 	r.usage.Record(move.ToBackend, 1, 0, movedSize)   // Put, ingress

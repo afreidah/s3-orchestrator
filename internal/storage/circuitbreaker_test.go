@@ -322,7 +322,7 @@ func TestCircuitBreaker_RecordObject_Success(t *testing.T) {
 	mock := &mockStore{}
 	cb := newTestCB(mock, 3, time.Minute)
 
-	err := cb.RecordObject(context.Background(), "key", "b1", 100, nil)
+	_, err := cb.RecordObject(context.Background(), "key", "b1", 100, nil)
 	if err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
@@ -337,7 +337,7 @@ func TestCircuitBreaker_RecordObject_CircuitOpen(t *testing.T) {
 	_, _ = cb.GetAllObjectLocations(context.Background(), "key")
 
 	// RecordObject should return ErrDBUnavailable
-	err := cb.RecordObject(context.Background(), "key", "b1", 100, nil)
+	_, err := cb.RecordObject(context.Background(), "key", "b1", 100, nil)
 	if !errors.Is(err, ErrDBUnavailable) {
 		t.Fatalf("expected ErrDBUnavailable, got %v", err)
 	}
@@ -683,7 +683,7 @@ func TestCircuitBreaker_ForwardingMethods_Closed(t *testing.T) {
 	if err := cb.FlushUsageDeltas(ctx, "b1", "2024-01", 1, 2, 3); err != nil {
 		t.Errorf("FlushUsageDeltas: %v", err)
 	}
-	if err := cb.EnqueueCleanup(ctx, "b1", "k", "test"); err != nil {
+	if err := cb.EnqueueCleanup(ctx, "b1", "k", "test", 1024); err != nil {
 		t.Errorf("EnqueueCleanup: %v", err)
 	}
 	if err := cb.CompleteCleanupItem(ctx, 1); err != nil {

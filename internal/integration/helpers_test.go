@@ -252,10 +252,11 @@ func queryQuotaUsed(t *testing.T, backendName string) int64 {
 func resetState(t *testing.T) {
 	t.Helper()
 	for _, q := range []string{
+		"DELETE FROM cleanup_queue",
 		"DELETE FROM multipart_parts",
 		"DELETE FROM multipart_uploads",
 		"DELETE FROM object_locations",
-		"UPDATE backend_quotas SET bytes_used = 0, updated_at = NOW()",
+		"UPDATE backend_quotas SET bytes_used = 0, orphan_bytes = 0, updated_at = NOW()",
 	} {
 		if _, err := testDB.Exec(q); err != nil {
 			t.Fatalf("resetState: %v", err)
@@ -308,6 +309,50 @@ func queryObjectBackends(t *testing.T, key string) []string {
 	return backends
 }
 
+// queryOrphanBytes returns the orphan_bytes value for a backend.
+func queryOrphanBytes(t *testing.T, backendName string) int64 {
+	t.Helper()
+	var orphanBytes int64
+	err := testDB.QueryRow("SELECT orphan_bytes FROM backend_quotas WHERE backend_name = $1", backendName).Scan(&orphanBytes)
+	if err != nil {
+		t.Fatalf("queryOrphanBytes(%q): %v", backendName, err)
+	}
+	return orphanBytes
+}
+
+// queryCleanupQueueCount returns the number of items in cleanup_queue for a backend.
+func queryCleanupQueueCount(t *testing.T, backendName string) int {
+	t.Helper()
+	var count int
+	err := testDB.QueryRow("SELECT COUNT(*) FROM cleanup_queue WHERE backend_name = $1", backendName).Scan(&count)
+	if err != nil {
+		t.Fatalf("queryCleanupQueueCount(%q): %v", backendName, err)
+	}
+	return count
+}
+
+// queryCleanupQueueItem returns the first cleanup_queue item for a backend.
+func queryCleanupQueueItem(t *testing.T, backendName string) (objectKey string, sizeBytes int64, attempts int32) {
+	t.Helper()
+	err := testDB.QueryRow(
+		"SELECT object_key, size_bytes, attempts FROM cleanup_queue WHERE backend_name = $1 ORDER BY created_at LIMIT 1",
+		backendName,
+	).Scan(&objectKey, &sizeBytes, &attempts)
+	if err != nil {
+		t.Fatalf("queryCleanupQueueItem(%q): %v", backendName, err)
+	}
+	return
+}
+
+// setOrphanBytes directly sets orphan_bytes for a backend via SQL (for test setup).
+func setOrphanBytes(t *testing.T, backendName string, amount int64) {
+	t.Helper()
+	_, err := testDB.Exec("UPDATE backend_quotas SET orphan_bytes = $1, updated_at = NOW() WHERE backend_name = $2", amount, backendName)
+	if err != nil {
+		t.Fatalf("setOrphanBytes(%q, %d): %v", backendName, amount, err)
+	}
+}
+
 func envOrDefault(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -349,9 +394,9 @@ func (f *FailableStore) GetAllObjectLocations(ctx context.Context, key string) (
 	return f.MetadataStore.GetAllObjectLocations(ctx, key)
 }
 
-func (f *FailableStore) RecordObject(ctx context.Context, key, backend string, size int64, enc *storage.EncryptionMeta) error {
+func (f *FailableStore) RecordObject(ctx context.Context, key, backend string, size int64, enc *storage.EncryptionMeta) ([]storage.DeletedCopy, error) {
 	if f.isFailing() {
-		return errSimulatedDBFailure
+		return nil, errSimulatedDBFailure
 	}
 	return f.MetadataStore.RecordObject(ctx, key, backend, size, enc)
 }

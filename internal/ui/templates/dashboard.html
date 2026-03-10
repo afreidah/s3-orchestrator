@@ -47,10 +47,19 @@
         <div class="label">Usage</div>
         <div class="value">{{pct .TotalBytesUsed .TotalBytesLimit}}</div>
       </div>
+      {{if ne .TotalOrphanBytes 0}}
+      <div class="config-card">
+        <div class="label">Orphan Bytes</div>
+        <div class="value orphan-value">{{formatBytes .TotalOrphanBytes}}</div>
+      </div>
+      {{end}}
     </div>
     {{if ne .TotalBytesLimit 0}}
     <div class="bar-track" style="margin-top:0.5rem">
       <div class="bar-fill" style="width:{{pctFloat .TotalBytesUsed .TotalBytesLimit}}%;background:{{barColor .TotalBytesUsed .TotalBytesLimit}}"></div>
+      {{if ne .TotalOrphanBytes 0}}
+      <div class="bar-fill bar-orphan" style="width:{{pctFloat .TotalOrphanBytes .TotalBytesLimit}}%"></div>
+      {{end}}
     </div>
     {{end}}
   </section>
@@ -66,6 +75,7 @@
         <tr>
           <th>Name</th>
           <th class="num">Quota Used</th>
+          <th class="num">Orphan</th>
           <th class="num">Quota Limit</th>
           <th class="num">Usage</th>
           <th style="width:20%"></th>
@@ -83,6 +93,7 @@
           <tr{{if $drain.Active}} class="row-draining"{{else if $drain.ObjectsMoved}} class="row-drained"{{else if $unhealthy}} class="row-degraded"{{end}}>
             <td>{{.}}{{if $drain.Active}} <span class="badge badge-draining">Draining</span>{{else if $drain.ObjectsMoved}} <span class="badge badge-drained">Drained</span>{{else if $unhealthy}} <span class="badge badge-degraded">Degraded</span>{{end}}</td>
             <td class="num">{{formatBytes $stat.BytesUsed}}</td>
+            <td class="num">{{if ne $stat.OrphanBytes 0}}<span class="orphan-value">{{formatBytes $stat.OrphanBytes}}</span>{{else}}&mdash;{{end}}</td>
             <td class="num">
               {{- if eq $stat.BytesLimit 0}}unlimited
               {{- else}}{{formatBytes $stat.BytesLimit}}
@@ -93,6 +104,9 @@
               {{if ne $stat.BytesLimit 0}}
               <div class="bar-track">
                 <div class="bar-fill" style="width:{{pctFloat $stat.BytesUsed $stat.BytesLimit}}%;background:{{barColor $stat.BytesUsed $stat.BytesLimit}}"></div>
+                {{if ne $stat.OrphanBytes 0}}
+                <div class="bar-fill bar-orphan" style="width:{{pctFloat $stat.OrphanBytes $stat.BytesLimit}}%"></div>
+                {{end}}
               </div>
               {{end}}
             </td>

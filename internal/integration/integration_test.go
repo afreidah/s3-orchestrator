@@ -701,7 +701,7 @@ func TestSpreadWriteRouting(t *testing.T) {
 		spreadManager.ClearCache()
 
 		// Pre-fill minio-1 to 50% via the store directly.
-		if err := testStore.RecordObject(ctx, uniqueKey(t, "prefill"), "minio-1", 512, nil); err != nil {
+		if _, err := testStore.RecordObject(ctx, uniqueKey(t, "prefill"), "minio-1", 512, nil); err != nil {
 			t.Fatalf("RecordObject prefill: %v", err)
 		}
 		// minio-1: 512/1024 = 50%, minio-2: 0/2048 = 0%
@@ -2184,7 +2184,7 @@ func TestStore(t *testing.T) {
 		key := uniqueKey(t, "store-overwrite")
 
 		// Record on backend A with 100 bytes (using internal key format).
-		if err := testStore.RecordObject(ctx, internalKey(key), "minio-1", 100, nil); err != nil {
+		if _, err := testStore.RecordObject(ctx, internalKey(key), "minio-1", 100, nil); err != nil {
 			t.Fatalf("RecordObject A: %v", err)
 		}
 		if used := queryQuotaUsed(t, "minio-1"); used != 100 {
@@ -2192,7 +2192,7 @@ func TestStore(t *testing.T) {
 		}
 
 		// Overwrite to backend B with 200 bytes.
-		if err := testStore.RecordObject(ctx, internalKey(key), "minio-2", 200, nil); err != nil {
+		if _, err := testStore.RecordObject(ctx, internalKey(key), "minio-2", 200, nil); err != nil {
 			t.Fatalf("RecordObject B: %v", err)
 		}
 
@@ -2239,7 +2239,7 @@ func TestStore(t *testing.T) {
 		key := uniqueKey(t, "store-move")
 
 		// Put on minio-1.
-		if err := testStore.RecordObject(ctx, key, "minio-1", 100, nil); err != nil {
+		if _, err := testStore.RecordObject(ctx, key, "minio-1", 100, nil); err != nil {
 			t.Fatalf("RecordObject: %v", err)
 		}
 
@@ -2289,7 +2289,7 @@ func TestStore(t *testing.T) {
 			prefix + "has_underscore",
 		}
 		for _, key := range wildcardKeys {
-			if err := testStore.RecordObject(ctx, key, "minio-1", 10, nil); err != nil {
+			if _, err := testStore.RecordObject(ctx, key, "minio-1", 10, nil); err != nil {
 				t.Fatalf("RecordObject(%q): %v", key, err)
 			}
 		}
@@ -2360,7 +2360,7 @@ func TestStore(t *testing.T) {
 		}
 
 		// Fill minio-1 completely, then first-in-order should skip to minio-2.
-		if err := testStore.RecordObject(ctx, uniqueKey(t, "fill"), "minio-1", 1024, nil); err != nil {
+		if _, err := testStore.RecordObject(ctx, uniqueKey(t, "fill"), "minio-1", 1024, nil); err != nil {
 			t.Fatalf("RecordObject fill: %v", err)
 		}
 		name, err = testStore.GetBackendWithSpace(ctx, 1, []string{"minio-1", "minio-2"})
@@ -2388,7 +2388,7 @@ func TestStore(t *testing.T) {
 		// Add 500 bytes to minio-1 (quota 1024). minio-2 (quota 2048) stays empty.
 		// minio-1 utilization: 500/1024 ≈ 49%, minio-2: 0/2048 = 0%.
 		// Least utilized should be minio-2.
-		if err := testStore.RecordObject(ctx, uniqueKey(t, "fill"), "minio-1", 500, nil); err != nil {
+		if _, err := testStore.RecordObject(ctx, uniqueKey(t, "fill"), "minio-1", 500, nil); err != nil {
 			t.Fatalf("RecordObject fill: %v", err)
 		}
 		name, err = testStore.GetLeastUtilizedBackend(ctx, 10, []string{"minio-1", "minio-2"})
@@ -2404,7 +2404,7 @@ func TestStore(t *testing.T) {
 		resetState(t)
 
 		// Fill minio-1 to capacity (1024 bytes).
-		if err := testStore.RecordObject(ctx, uniqueKey(t, "full"), "minio-1", 1024, nil); err != nil {
+		if _, err := testStore.RecordObject(ctx, uniqueKey(t, "full"), "minio-1", 1024, nil); err != nil {
 			t.Fatalf("RecordObject: %v", err)
 		}
 
@@ -2424,7 +2424,7 @@ func TestStore(t *testing.T) {
 		key := uniqueKey(t, "store-replica")
 
 		// Record on minio-1.
-		if err := testStore.RecordObject(ctx, key, "minio-1", 100, nil); err != nil {
+		if _, err := testStore.RecordObject(ctx, key, "minio-1", 100, nil); err != nil {
 			t.Fatalf("RecordObject: %v", err)
 		}
 
@@ -2446,7 +2446,7 @@ func TestStore(t *testing.T) {
 		}
 
 		// Record the key fresh on minio-2 (different lifecycle).
-		if err := testStore.RecordObject(ctx, key, "minio-2", 50, nil); err != nil {
+		if _, err := testStore.RecordObject(ctx, key, "minio-2", 50, nil); err != nil {
 			t.Fatalf("RecordObject fresh: %v", err)
 		}
 
@@ -3417,7 +3417,7 @@ func TestRemoveBackend(t *testing.T) {
 	// remove without affecting minio-1 (which other tests depend on).
 	for i := 0; i < 3; i++ {
 		key := fmt.Sprintf("%s/remove-test-%d-%d", virtualBucket, i, time.Now().UnixNano())
-		if err := testStore.RecordObject(ctx, key, "minio-2", 100, nil); err != nil {
+		if _, err := testStore.RecordObject(ctx, key, "minio-2", 100, nil); err != nil {
 			t.Fatalf("RecordObject: %v", err)
 		}
 	}

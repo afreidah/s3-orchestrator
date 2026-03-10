@@ -7,7 +7,25 @@ package db
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const decrementOrphanBytes = `-- name: DecrementOrphanBytes :exec
+UPDATE backend_quotas
+SET orphan_bytes = GREATEST(0, orphan_bytes - $1), updated_at = NOW()
+WHERE backend_name = $2
+`
+
+type DecrementOrphanBytesParams struct {
+	Amount      int64
+	BackendName string
+}
+
+func (q *Queries) DecrementOrphanBytes(ctx context.Context, arg DecrementOrphanBytesParams) error {
+	_, err := q.db.Exec(ctx, decrementOrphanBytes, arg.Amount, arg.BackendName)
+	return err
+}
 
 const decrementQuota = `-- name: DecrementQuota :exec
 UPDATE backend_quotas
@@ -66,23 +84,32 @@ func (q *Queries) GetActiveMultipartCountsByBackend(ctx context.Context) ([]GetA
 }
 
 const getAllQuotaStats = `-- name: GetAllQuotaStats :many
-SELECT backend_name, bytes_used, bytes_limit, updated_at
+SELECT backend_name, bytes_used, bytes_limit, orphan_bytes, updated_at
 FROM backend_quotas
 `
 
-func (q *Queries) GetAllQuotaStats(ctx context.Context) ([]BackendQuota, error) {
+type GetAllQuotaStatsRow struct {
+	BackendName string
+	BytesUsed   int64
+	BytesLimit  int64
+	OrphanBytes int64
+	UpdatedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) GetAllQuotaStats(ctx context.Context) ([]GetAllQuotaStatsRow, error) {
 	rows, err := q.db.Query(ctx, getAllQuotaStats)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []BackendQuota{}
+	items := []GetAllQuotaStatsRow{}
 	for rows.Next() {
-		var i BackendQuota
+		var i GetAllQuotaStatsRow
 		if err := rows.Scan(
 			&i.BackendName,
 			&i.BytesUsed,
 			&i.BytesLimit,
+			&i.OrphanBytes,
 			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -98,7 +125,7 @@ func (q *Queries) GetAllQuotaStats(ctx context.Context) ([]BackendQuota, error) 
 const getBackendAvailableSpace = `-- name: GetBackendAvailableSpace :one
 SELECT CASE
     WHEN q.bytes_limit = 0 THEN 9223372036854775807  -- max int64
-    ELSE (q.bytes_limit - q.bytes_used - COALESCE(m.inflight, 0))
+    ELSE (q.bytes_limit - q.bytes_used - q.orphan_bytes - COALESCE(m.inflight, 0))
 END::bigint AS available
 FROM backend_quotas q
 LEFT JOIN (
@@ -121,7 +148,7 @@ func (q *Queries) GetBackendAvailableSpace(ctx context.Context, backendName stri
 const getLeastUtilizedBackend = `-- name: GetLeastUtilizedBackend :one
 SELECT q.backend_name,
        CASE WHEN q.bytes_limit = 0 THEN 9223372036854775807
-            ELSE (q.bytes_limit - q.bytes_used - COALESCE(m.inflight, 0))
+            ELSE (q.bytes_limit - q.bytes_used - q.orphan_bytes - COALESCE(m.inflight, 0))
        END::bigint AS available
 FROM backend_quotas q
 LEFT JOIN (
@@ -132,10 +159,10 @@ LEFT JOIN (
 ) m ON m.backend_name = q.backend_name
 WHERE q.backend_name = ANY($1::text[])
   AND CASE WHEN q.bytes_limit = 0 THEN 9223372036854775807
-           ELSE (q.bytes_limit - q.bytes_used - COALESCE(m.inflight, 0))
+           ELSE (q.bytes_limit - q.bytes_used - q.orphan_bytes - COALESCE(m.inflight, 0))
       END >= $2::bigint
 ORDER BY CASE WHEN q.bytes_limit = 0 THEN 0
-              ELSE q.bytes_used::float8 / q.bytes_limit::float8
+              ELSE (q.bytes_used + q.orphan_bytes)::float8 / q.bytes_limit::float8
          END ASC
 LIMIT 1
 `
@@ -189,11 +216,27 @@ func (q *Queries) GetObjectCountsByBackend(ctx context.Context) ([]GetObjectCoun
 	return items, nil
 }
 
+const incrementOrphanBytes = `-- name: IncrementOrphanBytes :exec
+UPDATE backend_quotas
+SET orphan_bytes = orphan_bytes + $1, updated_at = NOW()
+WHERE backend_name = $2
+`
+
+type IncrementOrphanBytesParams struct {
+	Amount      int64
+	BackendName string
+}
+
+func (q *Queries) IncrementOrphanBytes(ctx context.Context, arg IncrementOrphanBytesParams) error {
+	_, err := q.db.Exec(ctx, incrementOrphanBytes, arg.Amount, arg.BackendName)
+	return err
+}
+
 const incrementQuota = `-- name: IncrementQuota :execrows
 UPDATE backend_quotas
 SET bytes_used = bytes_used + $1, updated_at = NOW()
 WHERE backend_name = $2
-  AND (bytes_limit = 0 OR bytes_used + $1 <= bytes_limit)
+  AND (bytes_limit = 0 OR bytes_used + orphan_bytes + $1 <= bytes_limit)
 `
 
 type IncrementQuotaParams struct {

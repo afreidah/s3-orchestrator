@@ -57,7 +57,7 @@ func TestEnqueueCleanup_Success(t *testing.T) {
 	store := &mockStore{}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	mgr.enqueueCleanup(context.Background(), "b1", "orphan.txt", "orphan_put")
+	mgr.enqueueCleanup(context.Background(), "b1", "orphan.txt", "orphan_put", 1024)
 
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -75,7 +75,7 @@ func TestEnqueueCleanup_DBError_LogsOnly(t *testing.T) {
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	// Should not panic
-	mgr.enqueueCleanup(context.Background(), "b1", "orphan.txt", "orphan_put")
+	mgr.enqueueCleanup(context.Background(), "b1", "orphan.txt", "orphan_put", 1024)
 
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -227,12 +227,15 @@ func TestProcessCleanupQueue_MaxAttemptsReached(t *testing.T) {
 
 	store.mu.Lock()
 	defer store.mu.Unlock()
-	// Exhausted items should be removed via CompleteCleanupItem, not retried
-	if len(store.retryCleanupCalls) != 0 {
-		t.Errorf("expected 0 retry calls for exhausted item, got %d", len(store.retryCleanupCalls))
+	// Exhausted items stay in queue with orphan_bytes preserved — RetryCleanupItem
+	// is called to persist the final attempt count/error for operator review.
+	if len(store.retryCleanupCalls) != 1 {
+		t.Errorf("expected 1 retry call for exhausted item, got %d", len(store.retryCleanupCalls))
+	} else if store.retryCleanupCalls[0].id != 5 {
+		t.Errorf("expected RetryCleanupItem(5), got id=%d", store.retryCleanupCalls[0].id)
 	}
-	if len(store.completeCleanupCalls) != 1 || store.completeCleanupCalls[0] != 5 {
-		t.Errorf("expected CompleteCleanupItem(5), got %v", store.completeCleanupCalls)
+	if len(store.completeCleanupCalls) != 0 {
+		t.Errorf("expected 0 CompleteCleanupItem calls, got %v", store.completeCleanupCalls)
 	}
 }
 

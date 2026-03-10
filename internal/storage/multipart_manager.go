@@ -165,7 +165,7 @@ func (mp *MultipartManager) UploadPart(ctx context.Context, uploadID string, par
 		if delErr := backend.DeleteObject(ctx, partKey); delErr != nil {
 			slog.Error("Failed to clean up orphaned part object",
 				"key", partKey, "error", delErr)
-			mp.enqueueCleanup(ctx, mu.BackendName, partKey, "orphan_part_record_failed")
+			mp.enqueueCleanup(ctx, mu.BackendName, partKey, "orphan_part_record_failed", uploadSize)
 		}
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)
@@ -335,7 +335,7 @@ func (mp *MultipartManager) CompleteMultipartUpload(ctx context.Context, uploadI
 	// Clean up part objects from backend
 	for _, part := range parts {
 		partKey := multipartPartKey(uploadID, part.PartNumber)
-		mp.deleteOrEnqueue(ctx, backend, mu.BackendName, partKey, "complete_part_cleanup")
+		mp.deleteOrEnqueue(ctx, backend, mu.BackendName, partKey, "complete_part_cleanup", part.SizeBytes)
 	}
 
 	// Clean up multipart records from database
@@ -391,7 +391,7 @@ func (mp *MultipartManager) AbortMultipartUpload(ctx context.Context, uploadID s
 	// Delete part objects from backend
 	for _, part := range parts {
 		partKey := multipartPartKey(uploadID, part.PartNumber)
-		mp.deleteOrEnqueue(ctx, backend, mu.BackendName, partKey, "abort_part_cleanup")
+		mp.deleteOrEnqueue(ctx, backend, mu.BackendName, partKey, "abort_part_cleanup", part.SizeBytes)
 	}
 
 	// Delete multipart records from database

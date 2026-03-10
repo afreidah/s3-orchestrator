@@ -243,6 +243,7 @@ Returns backend health, quota usage, object counts, and monthly usage stats.
       "name": "oci",
       "bytes_used": 5242880,
       "bytes_limit": 10737418240,
+      "orphan_bytes": 0,
       "object_count": 42,
       "api_requests": 1234,
       "egress_bytes": 5242880,
@@ -285,7 +286,7 @@ Returns the cleanup queue depth and pending items (up to 50).
 {
   "depth": 3,
   "items": [
-    {"ID": 1, "BackendName": "oci", "ObjectKey": "my-bucket/old-file.txt", "Reason": "delete_failed", "Attempts": 2}
+    {"ID": 1, "BackendName": "oci", "ObjectKey": "my-bucket/old-file.txt", "Reason": "delete_failed", "Attempts": 2, "SizeBytes": 51200}
   ]
 }
 ```

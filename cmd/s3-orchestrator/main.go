@@ -26,6 +26,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/redis/go-redis/v9"
+
 	"github.com/afreidah/s3-orchestrator/internal/admin"
 	"github.com/afreidah/s3-orchestrator/internal/auth"
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -35,11 +38,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/storage"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/ui"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/redis/go-redis/v9"
 )
 
 func main() { // codecov:ignore -- process entry point, delegates to tested functions
+
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "sync":

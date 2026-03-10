@@ -87,6 +87,7 @@ type QuotaStat struct {
 	BackendName string
 	BytesUsed   int64
 	BytesLimit  int64
+	OrphanBytes int64
 	UpdatedAt   time.Time
 }
 
@@ -361,6 +362,7 @@ func (s *Store) GetQuotaStats(ctx context.Context) (map[string]QuotaStat, error)
 			BackendName: row.BackendName,
 			BytesUsed:   row.BytesUsed,
 			BytesLimit:  row.BytesLimit,
+			OrphanBytes: row.OrphanBytes,
 			UpdatedAt:   row.UpdatedAt.Time,
 		}
 	}
@@ -413,23 +415,25 @@ type EncryptionMeta struct {
 	PlaintextSize int64
 }
 
-func (s *Store) RecordObject(ctx context.Context, key, backend string, size int64, enc *EncryptionMeta) error {
-	return s.withTx(ctx, func(qtx *db.Queries) error {
+func (s *Store) RecordObject(ctx context.Context, key, backend string, size int64, enc *EncryptionMeta) ([]DeletedCopy, error) {
+	return withTxVal(s, ctx, func(qtx *db.Queries) ([]DeletedCopy, error) {
 		// Serialize concurrent writes for the same key to prevent orphans
 		if err := qtx.LockObjectKeyForWrite(ctx, key); err != nil {
-			return fmt.Errorf("failed to acquire object key lock: %w", err)
+			return nil, fmt.Errorf("failed to acquire object key lock: %w", err)
 		}
 
 		// --- Collect all existing copies for this key ---
 		existing, err := qtx.GetExistingCopiesForUpdate(ctx, key)
 		if err != nil {
-			return fmt.Errorf("failed to query existing copies: %w", err)
+			return nil, fmt.Errorf("failed to query existing copies: %w", err)
 		}
 
 		// --- Delete all existing copies and decrement their quotas ---
+		// Collect displaced copies on OTHER backends for orphan cleanup.
+		var displaced []DeletedCopy
 		if len(existing) > 0 {
 			if err := qtx.DeleteObjectCopies(ctx, key); err != nil {
-				return fmt.Errorf("failed to delete existing copies: %w", err)
+				return nil, fmt.Errorf("failed to delete existing copies: %w", err)
 			}
 
 			for _, ec := range existing {
@@ -437,7 +441,17 @@ func (s *Store) RecordObject(ctx context.Context, key, backend string, size int6
 					Amount:      ec.SizeBytes,
 					BackendName: ec.BackendName,
 				}); err != nil {
-					return fmt.Errorf("failed to decrement quota for %s: %w", ec.BackendName, err)
+					return nil, fmt.Errorf("failed to decrement quota for %s: %w", ec.BackendName, err)
+				}
+				// The new write goes to `backend`. Copies on OTHER backends
+				// need physical cleanup — the new PutObject overwrites
+				// in-place on the target backend, but stale copies on other
+				// backends become orphans.
+				if ec.BackendName != backend {
+					displaced = append(displaced, DeletedCopy{
+						BackendName: ec.BackendName,
+						SizeBytes:   ec.SizeBytes,
+					})
 				}
 			}
 		}
@@ -457,7 +471,7 @@ func (s *Store) RecordObject(ctx context.Context, key, backend string, size int6
 
 		// --- Insert new primary copy ---
 		if err := qtx.InsertObjectLocation(ctx, params); err != nil {
-			return fmt.Errorf("failed to insert object location: %w", err)
+			return nil, fmt.Errorf("failed to insert object location: %w", err)
 		}
 
 		// --- Increment quota for new backend ---
@@ -466,13 +480,13 @@ func (s *Store) RecordObject(ctx context.Context, key, backend string, size int6
 			BackendName: backend,
 		})
 		if err != nil {
-			return fmt.Errorf("failed to update quota: %w", err)
+			return nil, fmt.Errorf("failed to update quota: %w", err)
 		}
 		if n == 0 {
-			return ErrNoSpaceAvailable
+			return nil, ErrNoSpaceAvailable
 		}
 
-		return nil
+		return displaced, nil
 	})
 }
 

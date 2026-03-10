@@ -257,7 +257,7 @@ func (d *DrainManager) drainOneObject(ctx context.Context, srcBackend ObjectBack
 					"key", obj.ObjectKey, "backend", srcName, "error", err)
 				return false
 			}
-			d.deleteOrEnqueue(ctx, srcBackend, srcName, obj.ObjectKey, "drain_source_delete")
+			d.deleteOrEnqueue(ctx, srcBackend, srcName, obj.ObjectKey, "drain_source_delete", obj.SizeBytes)
 			d.usage.Record(srcName, 1, 0, 0) // Delete
 
 			audit.Log(ctx, "storage.DrainRemoveReplica",
@@ -303,20 +303,20 @@ func (d *DrainManager) drainOneObject(ctx context.Context, srcBackend ObjectBack
 	if err != nil {
 		slog.Error("Drain: failed to update object location",
 			"key", obj.ObjectKey, "error", err)
-		d.deleteOrEnqueue(ctx, destBackend, destName, obj.ObjectKey, "drain_orphan")
+		d.deleteOrEnqueue(ctx, destBackend, destName, obj.ObjectKey, "drain_orphan", obj.SizeBytes)
 		d.usage.Record(destName, 1, 0, 0)
 		return false
 	}
 
 	if movedSize == 0 {
 		// Object was deleted or already moved
-		d.deleteOrEnqueue(ctx, destBackend, destName, obj.ObjectKey, "drain_stale_orphan")
+		d.deleteOrEnqueue(ctx, destBackend, destName, obj.ObjectKey, "drain_stale_orphan", obj.SizeBytes)
 		d.usage.Record(destName, 1, 0, 0)
 		return false
 	}
 
 	// Delete from source
-	d.deleteOrEnqueue(ctx, srcBackend, srcName, obj.ObjectKey, "drain_source_delete")
+	d.deleteOrEnqueue(ctx, srcBackend, srcName, obj.ObjectKey, "drain_source_delete", movedSize)
 
 	d.usage.Record(srcName, 2, movedSize, 0) // Get + Delete, egress
 	d.usage.Record(destName, 1, 0, movedSize) // Put, ingress

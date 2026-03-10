@@ -76,8 +76,8 @@ func (cb *CircuitBreakerStore) GetAllObjectLocations(ctx context.Context, key st
 }
 
 // RecordObject delegates to the real store with circuit breaker protection.
-func (cb *CircuitBreakerStore) RecordObject(ctx context.Context, key, backend string, size int64, enc *EncryptionMeta) error {
-	return CBCallNoResult(cb.CircuitBreaker, func() error { return cb.real.RecordObject(ctx, key, backend, size, enc) })
+func (cb *CircuitBreakerStore) RecordObject(ctx context.Context, key, backend string, size int64, enc *EncryptionMeta) ([]DeletedCopy, error) {
+	return CBCall(cb.CircuitBreaker, func() ([]DeletedCopy, error) { return cb.real.RecordObject(ctx, key, backend, size, enc) })
 }
 
 // DeleteObject delegates to the real store with circuit breaker protection.
@@ -204,8 +204,20 @@ func (cb *CircuitBreakerStore) GetUsageForPeriod(ctx context.Context, period str
 }
 
 // EnqueueCleanup delegates to the real store with circuit breaker protection.
-func (cb *CircuitBreakerStore) EnqueueCleanup(ctx context.Context, backendName, objectKey, reason string) error {
-	return CBCallNoResult(cb.CircuitBreaker, func() error { return cb.real.EnqueueCleanup(ctx, backendName, objectKey, reason) })
+func (cb *CircuitBreakerStore) EnqueueCleanup(ctx context.Context, backendName, objectKey, reason string, sizeBytes int64) error {
+	return CBCallNoResult(cb.CircuitBreaker, func() error {
+		return cb.real.EnqueueCleanup(ctx, backendName, objectKey, reason, sizeBytes)
+	})
+}
+
+// IncrementOrphanBytes delegates to the real store with circuit breaker protection.
+func (cb *CircuitBreakerStore) IncrementOrphanBytes(ctx context.Context, backendName string, amount int64) error {
+	return CBCallNoResult(cb.CircuitBreaker, func() error { return cb.real.IncrementOrphanBytes(ctx, backendName, amount) })
+}
+
+// DecrementOrphanBytes delegates to the real store with circuit breaker protection.
+func (cb *CircuitBreakerStore) DecrementOrphanBytes(ctx context.Context, backendName string, amount int64) error {
+	return CBCallNoResult(cb.CircuitBreaker, func() error { return cb.real.DecrementOrphanBytes(ctx, backendName, amount) })
 }
 
 // GetPendingCleanups delegates to the real store with circuit breaker protection.

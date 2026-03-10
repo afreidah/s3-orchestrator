@@ -346,8 +346,9 @@ type dashboardPage struct {
 	Data            *storage.DashboardData
 	Buckets         []string
 	Config          configSummary
-	TotalBytesUsed  int64
-	TotalBytesLimit int64
+	TotalBytesUsed   int64
+	TotalBytesLimit  int64
+	TotalOrphanBytes int64
 }
 
 // configSummary holds non-sensitive configuration for display.
@@ -393,10 +394,11 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var totalUsed, totalLimit int64
+	var totalUsed, totalLimit, totalOrphan int64
 	unlimited := false
 	for _, stat := range data.QuotaStats {
 		totalUsed += stat.BytesUsed
+		totalOrphan += stat.OrphanBytes
 		if stat.BytesLimit == 0 {
 			unlimited = true
 		}
@@ -411,8 +413,9 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		DBHealthy:       h.dbHealthy(),
 		Data:            data,
 		Buckets:         bucketNames,
-		TotalBytesUsed:  totalUsed,
-		TotalBytesLimit: totalLimit,
+		TotalBytesUsed:   totalUsed,
+		TotalBytesLimit:  totalLimit,
+		TotalOrphanBytes: totalOrphan,
 		Config: configSummary{
 			RoutingStrategy:   cfg.RoutingStrategy,
 			ReplicationFactor: cfg.Replication.Factor,

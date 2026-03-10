@@ -31,7 +31,8 @@ type mockStore struct {
 	getBackendFromEligible  bool                                       // when true, returns eligible[0] instead of getBackendResp
 	getBackendFunc          func(size int64, eligible []string) (string, error) // overrides all other getBackend fields when set
 
-	recordObjectErr error
+	recordObjectResp []DeletedCopy
+	recordObjectErr  error
 
 	deleteObjectResp []DeletedCopy
 	deleteObjectErr  error
@@ -85,6 +86,12 @@ type mockStore struct {
 	cleanupQueueDepthVal int64
 	cleanupQueueDepthErr error
 
+	// Orphan bytes tracking
+	incrementOrphanBytesCalls []orphanBytesCall
+	decrementOrphanBytesCalls []orphanBytesCall
+	incrementOrphanBytesErr   error
+	decrementOrphanBytesErr   error
+
 	// Replication
 	getUnderReplicatedResp          []ObjectLocation
 	getUnderReplicatedErr           error
@@ -134,6 +141,11 @@ type deleteObjectLocationCall struct {
 type recordReplicaCall struct {
 	key, targetBackend, sourceBackend string
 	size                              int64
+}
+
+type orphanBytesCall struct {
+	backendName string
+	sizeBytes   int64
 }
 
 type flushUsageCall struct {
@@ -191,11 +203,11 @@ func (m *mockStore) GetLeastUtilizedBackend(_ context.Context, size int64, eligi
 	return m.getBackendResp, nil
 }
 
-func (m *mockStore) RecordObject(_ context.Context, key, backend string, size int64, _ *EncryptionMeta) error {
+func (m *mockStore) RecordObject(_ context.Context, key, backend string, size int64, _ *EncryptionMeta) ([]DeletedCopy, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.recordObjectCalls = append(m.recordObjectCalls, recordObjectCall{Key: key, Backend: backend, Size: size})
-	return m.recordObjectErr
+	return m.recordObjectResp, m.recordObjectErr
 }
 
 func (m *mockStore) DeleteObject(_ context.Context, key string) ([]DeletedCopy, error) {
@@ -400,7 +412,7 @@ func (m *mockStore) GetUsageForPeriod(_ context.Context, _ string) (map[string]U
 
 // --- Cleanup queue operations ---
 
-func (m *mockStore) EnqueueCleanup(_ context.Context, backendName, objectKey, reason string) error {
+func (m *mockStore) EnqueueCleanup(_ context.Context, backendName, objectKey, reason string, _ int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.enqueueCleanupCalls = append(m.enqueueCleanupCalls, enqueueCleanupCall{
@@ -409,6 +421,20 @@ func (m *mockStore) EnqueueCleanup(_ context.Context, backendName, objectKey, re
 		reason:      reason,
 	})
 	return m.enqueueCleanupErr
+}
+
+func (m *mockStore) IncrementOrphanBytes(_ context.Context, backendName string, sizeBytes int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.incrementOrphanBytesCalls = append(m.incrementOrphanBytesCalls, orphanBytesCall{backendName: backendName, sizeBytes: sizeBytes})
+	return m.incrementOrphanBytesErr
+}
+
+func (m *mockStore) DecrementOrphanBytes(_ context.Context, backendName string, sizeBytes int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.decrementOrphanBytesCalls = append(m.decrementOrphanBytesCalls, orphanBytesCall{backendName: backendName, sizeBytes: sizeBytes})
+	return m.decrementOrphanBytesErr
 }
 
 func (m *mockStore) GetPendingCleanups(_ context.Context, _ int) ([]CleanupItem, error) {
