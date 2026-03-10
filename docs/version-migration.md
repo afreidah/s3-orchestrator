@@ -39,8 +39,14 @@ s3-orchestrator version
 
 - `00004_add_orphan_bytes.sql` -- adds `orphan_bytes` column to `backend_quotas` and `size_bytes` column to `cleanup_queue` (auto-applied on startup)
 
+**New configuration fields:**
+
+- `replication.concurrency` -- parallel object replications per cycle (default: 5)
+- `cleanup_queue.concurrency` -- parallel cleanup deletions per worker tick (default: 10)
+
 **Behavioral changes:**
 
+- **Worker pool parallelism** — the cleanup worker, replicator, single-key DeleteObject, batch DeleteObjects, and rebalancer now use a shared bounded-concurrency worker pool. The cleanup worker and replicator concurrency are configurable; the rebalancer retains its existing `rebalance.concurrency` field.
 - **Orphan bytes tracking** — the cleanup queue now tracks the size of each enqueued item. On enqueue, the backend's `orphan_bytes` counter is incremented; on successful cleanup, it is decremented. All capacity checks (write routing, replication target selection, spread utilization ratio) subtract `orphan_bytes` from available space to prevent quota overcommitment during backend outages.
 - **Exhausted cleanup items preserved** — items that exceed 10 retry attempts remain in the queue with `orphan_bytes` still reserved, rather than being removed. This prevents the write path from overcommitting storage. Operators must manually resolve these items.
 - **Overwrite displaced copies** — when a PutObject overwrites an existing key, stale copies on other backends are now enqueued for cleanup with their size tracked, rather than being silently abandoned if the immediate delete fails.

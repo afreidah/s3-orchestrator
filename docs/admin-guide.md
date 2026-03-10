@@ -339,6 +339,7 @@ replication:
   factor: 2                      # copies per object (default: 1 = no replication)
   worker_interval: "5m"          # replication cycle (default: 5m)
   batch_size: 50                 # objects per cycle (default: 50)
+  concurrency: 5                 # parallel object replications per cycle (default: 5)
   unhealthy_threshold: "10m"     # grace period before replacing copies on circuit-broken backends (default: 10m)
 ```
 
@@ -350,7 +351,14 @@ Replication is **asynchronous** — writes go to a single backend and the replic
 
 ### Cleanup Queue
 
-The cleanup queue requires no configuration — it is always active. When any backend object deletion fails during normal operations (PutObject orphan cleanup, DeleteObject, overwrite displaced copies, multipart part cleanup, rebalancer, replicator), the failed deletion is automatically enqueued for retry.
+The cleanup queue is always active. The only tunable is the number of parallel deletions per worker tick:
+
+```yaml
+cleanup_queue:
+  concurrency: 10                # parallel cleanup deletions per tick (default: 10)
+```
+
+When any backend object deletion fails during normal operations (PutObject orphan cleanup, DeleteObject, overwrite displaced copies, multipart part cleanup, rebalancer, replicator), the failed deletion is automatically enqueued for retry.
 
 Each enqueued item tracks the object's `size_bytes`. On enqueue, the backend's `orphan_bytes` counter is incremented so that write routing and replication target selection account for the physically unreleased space. On successful cleanup, `orphan_bytes` is decremented. This prevents quota overcommitment during sustained backend outages.
 

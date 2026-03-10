@@ -15,16 +15,18 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"time"
 )
 
 // mockBackend is an in-memory ObjectBackend for unit testing.
 type mockBackend struct {
-	mu      sync.Mutex
-	objects map[string]mockObject
-	putErr  error
-	getErr  error
-	headErr error
-	delErr  error
+	mu       sync.Mutex
+	objects  map[string]mockObject
+	putErr   error
+	getErr   error
+	headErr  error
+	delErr   error
+	delDelay time.Duration
 }
 
 type mockObject struct {
@@ -104,6 +106,12 @@ func (m *mockBackend) HeadObject(_ context.Context, key string) (*HeadObjectResu
 }
 
 func (m *mockBackend) DeleteObject(_ context.Context, key string) error {
+	m.mu.Lock()
+	delay := m.delDelay
+	m.mu.Unlock()
+	if delay > 0 {
+		time.Sleep(delay)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.delErr != nil {
