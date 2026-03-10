@@ -52,16 +52,17 @@ var (
 
 // BackendManagerConfig holds the parameters for creating a BackendManager.
 type BackendManagerConfig struct {
-	Backends          map[string]ObjectBackend
-	Store             MetadataStore
-	Order             []string
-	CacheTTL          time.Duration
-	BackendTimeout    time.Duration
-	UsageLimits       map[string]UsageLimits
-	RoutingStrategy   string
-	ParallelBroadcast bool                  // fan-out reads in parallel during degraded mode
-	Encryptor         *encryption.Encryptor // nil when encryption is disabled
-	CounterBackend    CounterBackend        // nil uses LocalCounterBackend
+	Backends            map[string]ObjectBackend
+	Store               MetadataStore
+	Order               []string
+	CacheTTL            time.Duration
+	BackendTimeout      time.Duration
+	UsageLimits         map[string]UsageLimits
+	RoutingStrategy     string
+	ParallelBroadcast   bool                  // fan-out reads in parallel during degraded mode
+	Encryptor           *encryption.Encryptor // nil when encryption is disabled
+	CounterBackend      CounterBackend        // nil uses LocalCounterBackend
+	CleanupConcurrency  int                   // parallel cleanup deletions (default: 10)
 }
 
 // BackendManager manages multiple storage backends with quota tracking.
@@ -103,7 +104,11 @@ func NewBackendManager(cfg *BackendManagerConfig) *BackendManager {
 		routingStrategy: cfg.RoutingStrategy,
 	}
 
-	cleanupWorker := NewCleanupWorker(core)
+	cleanupConcurrency := cfg.CleanupConcurrency
+	if cleanupConcurrency <= 0 {
+		cleanupConcurrency = 10
+	}
+	cleanupWorker := NewCleanupWorker(core, cleanupConcurrency)
 	multipartManager := NewMultipartManager(core, cfg.Encryptor)
 	cache := NewLocationCache(cfg.CacheTTL)
 	objectManager := NewObjectManager(core, cfg.Encryptor, cache, cfg.ParallelBroadcast)

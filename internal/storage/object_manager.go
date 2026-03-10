@@ -26,6 +26,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/audit"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/workerpool"
+
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -751,16 +753,16 @@ func (o *ObjectManager) DeleteObject(ctx context.Context, key string) error {
 	// --- Invalidate location cache ---
 	o.cache.Delete(key)
 
-	// --- Delete from each backend that held a copy ---
-	for _, copy := range copies {
-		backend, ok := o.backends[copy.BackendName]
+	// --- Delete from each backend that held a copy (fan out concurrently) ---
+	workerpool.Run(ctx, len(copies), copies, func(ctx context.Context, cp DeletedCopy) {
+		backend, ok := o.backends[cp.BackendName]
 		if !ok {
 			slog.Warn("Backend not found for delete",
-				"backend", copy.BackendName, "key", key)
-			continue
+				"backend", cp.BackendName, "key", key)
+			return
 		}
-		o.deleteOrEnqueue(ctx, backend, copy.BackendName, key, "delete_failed", copy.SizeBytes)
-	}
+		o.deleteOrEnqueue(ctx, backend, cp.BackendName, key, "delete_failed", cp.SizeBytes)
+	})
 
 	// --- Record metrics (use first copy's backend for primary) ---
 	if len(copies) > 0 {
@@ -831,13 +833,14 @@ func (o *ObjectManager) DeleteObjects(ctx context.Context, keys []string) []Dele
 		}
 	}
 
-	// Delete from backends concurrently, capped at 10 in-flight calls.
-	const maxConcurrency = 10
-	sem := make(chan struct{}, maxConcurrency)
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-	var backendErrors []error
-
+	// Flatten pending deletes into a single work slice for the pool
+	type batchDeleteItem struct {
+		key       string
+		backend   ObjectBackend
+		beName    string
+		sizeBytes int64
+	}
+	var deleteItems []batchDeleteItem
 	for _, pd := range pending {
 		for _, cp := range pd.copies {
 			backend, ok := o.backends[cp.BackendName]
@@ -846,32 +849,30 @@ func (o *ObjectManager) DeleteObjects(ctx context.Context, keys []string) []Dele
 					"backend", cp.BackendName, "key", pd.key)
 				continue
 			}
-
-			wg.Add(1)
-			sem <- struct{}{}
-
-			go func(beName, key string, be ObjectBackend, sizeBytes int64) {
-				defer wg.Done()
-				defer func() { <-sem }()
-
-				err := o.deleteWithTimeout(ctx, be, key)
-				if err != nil {
-					slog.Warn("Failed to delete object from backend (batch)",
-						"backend", beName, "key", key, "error", err)
-					o.enqueueCleanup(ctx, beName, key, "batch_delete_failed", sizeBytes)
-					mu.Lock()
-					backendErrors = append(backendErrors, err)
-					mu.Unlock()
-				}
-			}(cp.BackendName, pd.key, backend, cp.SizeBytes)
+			deleteItems = append(deleteItems, batchDeleteItem{
+				key: pd.key, backend: backend, beName: cp.BackendName, sizeBytes: cp.SizeBytes,
+			})
 		}
-
 		for _, cp := range pd.copies {
 			o.usage.Record(cp.BackendName, 1, 0, 0)
 		}
 	}
 
-	wg.Wait()
+	// Delete from backends concurrently, capped at 10 in-flight calls.
+	var mu sync.Mutex
+	var backendErrors []error
+
+	workerpool.Run(ctx, 10, deleteItems, func(ctx context.Context, item batchDeleteItem) {
+		err := o.deleteWithTimeout(ctx, item.backend, item.key)
+		if err != nil {
+			slog.Warn("Failed to delete object from backend (batch)",
+				"backend", item.beName, "key", item.key, "error", err)
+			o.enqueueCleanup(ctx, item.beName, item.key, "batch_delete_failed", item.sizeBytes)
+			mu.Lock()
+			backendErrors = append(backendErrors, err)
+			mu.Unlock()
+		}
+	})
 
 	// Record backend errors on the span after all goroutines have finished.
 	for _, err := range backendErrors {

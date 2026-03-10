@@ -242,8 +242,9 @@ func runServe() {
 		UsageLimits:       usageLimits,
 		RoutingStrategy:   cfg.RoutingStrategy,
 		ParallelBroadcast: cfg.CircuitBreaker.ParallelBroadcast,
-		Encryptor:         encryptor,
-		CounterBackend:    counterBackend,
+		Encryptor:          encryptor,
+		CounterBackend:     counterBackend,
+		CleanupConcurrency: cfg.CleanupQueue.Concurrency,
 	})
 
 	// --- Store config in atomic pointer for safe SIGHUP access ---

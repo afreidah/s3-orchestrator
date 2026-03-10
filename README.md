@@ -390,7 +390,11 @@ replication:
   factor: 1                # copies per object; 1 = no replication (default: 1)
   worker_interval: "5m"    # replication worker cycle (default: 5m)
   batch_size: 50           # objects per cycle (default: 50)
+  concurrency: 5           # parallel replications per cycle (default: 5)
   unhealthy_threshold: "10m" # grace period before replacing copies on circuit-broken backends (default: 10m)
+
+cleanup_queue:
+  concurrency: 10          # parallel cleanup deletions per tick (default: 10)
 
 rate_limit:
   enabled: false

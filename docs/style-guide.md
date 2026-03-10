@@ -12,6 +12,7 @@
 - [Logging and Audit](#logging-and-audit)
 - [Testing](#testing)
 - [Code Style](#code-style)
+- [Branch Naming](#branch-naming)
 
 ---
 
@@ -379,6 +380,22 @@ Use:
 - Declarative statements: "Service runs on port 9000"
 - Technical precision: "Uses SigV4 for request authentication"
 - Impersonal voice: "The manager selects...", "The circuit breaker wraps..."
+
+---
+
+## Branch Naming
+
+When a branch corresponds to a GitHub issue, use this format:
+
+```
+GH_ISSUE_<issue number>-<description of topic>
+```
+
+Examples:
+- `GH_ISSUE_251-worker-pool-parallelism`
+- `GH_ISSUE_42-multipart-upload-cleanup`
+
+For branches without a linked issue, use a short kebab-case description of the topic.
 
 ---
 

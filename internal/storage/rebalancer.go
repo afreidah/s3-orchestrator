@@ -17,13 +17,13 @@ import (
 	"log/slog"
 	"cmp"
 	"slices"
-	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/audit"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/workerpool"
 )
 
 // -------------------------------------------------------------------------
@@ -386,27 +386,12 @@ func (r *Rebalancer) planSpreadEven(ctx context.Context, stats map[string]QuotaS
 // executeMoves runs the planned object moves with bounded concurrency.
 // Skips individual moves that fail and continues with the rest.
 func (r *Rebalancer) executeMoves(ctx context.Context, plan []rebalanceMove, strategy string, concurrency int) int {
-	if concurrency <= 0 {
-		concurrency = 1
-	}
 	var moved atomic.Int32
-	sem := make(chan struct{}, concurrency)
-	var wg sync.WaitGroup
-
-	for _, move := range plan {
-		wg.Add(1)
-		sem <- struct{}{}
-		go func(mv rebalanceMove) {
-			defer wg.Done()
-			defer func() { <-sem }()
-
-			if r.executeOneMove(ctx, mv, strategy) {
-				moved.Add(1)
-			}
-		}(move)
-	}
-
-	wg.Wait()
+	workerpool.Run(ctx, concurrency, plan, func(ctx context.Context, mv rebalanceMove) {
+		if r.executeOneMove(ctx, mv, strategy) {
+			moved.Add(1)
+		}
+	})
 	return int(moved.Load())
 }
 

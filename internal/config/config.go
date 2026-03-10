@@ -43,6 +43,7 @@ type Config struct {
 	BackendCircuitBreaker BackendCircuitBreakerConfig `yaml:"backend_circuit_breaker"`
 	Encryption            EncryptionConfig            `yaml:"encryption"`
 	UI                    UIConfig                    `yaml:"ui"`
+	CleanupQueue    CleanupQueueConfig   `yaml:"cleanup_queue"`
 	UsageFlush      UsageFlushConfig     `yaml:"usage_flush"`
 	Lifecycle       LifecycleConfig      `yaml:"lifecycle"`
 	Redis           *RedisConfig         `yaml:"redis"`
@@ -159,7 +160,13 @@ type ReplicationConfig struct {
 	Factor             int           `yaml:"factor"`
 	WorkerInterval     time.Duration `yaml:"worker_interval"`
 	BatchSize          int           `yaml:"batch_size"`
-	UnhealthyThreshold time.Duration `yaml:"unhealthy_threshold"` // Grace period before replacing copies on circuit-broken backends (default: 10m)
+	Concurrency        int           `yaml:"concurrency"`          // Parallel object replications (default: 5)
+	UnhealthyThreshold time.Duration `yaml:"unhealthy_threshold"`  // Grace period before replacing copies on circuit-broken backends (default: 10m)
+}
+
+// CleanupQueueConfig holds settings for the background orphan cleanup worker.
+type CleanupQueueConfig struct {
+	Concurrency int `yaml:"concurrency"` // Parallel cleanup deletions (default: 10)
 }
 
 // RateLimitConfig holds per-IP rate limiting settings. Disabled by default.
@@ -576,12 +583,20 @@ func (c *Config) SetDefaultsAndValidate() error {
 		if c.Replication.WorkerInterval <= 0 {
 			errors = append(errors, "replication.worker_interval must be positive")
 		}
+		if c.Replication.Concurrency <= 0 {
+			c.Replication.Concurrency = 5
+		}
 		if c.Replication.BatchSize <= 0 {
 			errors = append(errors, "replication.batch_size must be positive")
 		}
 	}
 	if c.Replication.Factor < 1 {
 		errors = append(errors, "replication.factor must be at least 1")
+	}
+
+	// --- Cleanup queue defaults ---
+	if c.CleanupQueue.Concurrency <= 0 {
+		c.CleanupQueue.Concurrency = 10
 	}
 
 	// --- Rate limit defaults ---

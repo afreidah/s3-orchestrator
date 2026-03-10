@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -312,6 +313,41 @@ func TestProcessCleanupQueue_BackendNotFound_CompleteItemError(t *testing.T) {
 	}
 	if failed != 0 {
 		t.Errorf("expected failed=0, got %d", failed)
+	}
+}
+
+func TestProcessCleanupQueue_Concurrent(t *testing.T) {
+	backend := newMockBackend()
+	backend.delDelay = 50 * time.Millisecond
+
+	// Create 10 cleanup items, each with a pre-populated object
+	var items []CleanupItem
+	for i := range 10 {
+		key := fmt.Sprintf("orphan-%d", i)
+		backend.objects[key] = mockObject{data: []byte("data")}
+		items = append(items, CleanupItem{
+			ID: int64(i + 1), BackendName: "b1", ObjectKey: key, Reason: "test", Attempts: 0,
+		})
+	}
+
+	store := &mockStore{pendingCleanups: items}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
+
+	start := time.Now()
+	processed, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
+	elapsed := time.Since(start)
+
+	if processed != 10 {
+		t.Errorf("processed = %d, want 10", processed)
+	}
+	if failed != 0 {
+		t.Errorf("failed = %d, want 0", failed)
+	}
+
+	// 10 items at 50ms each with concurrency 10 should take ~50ms (1 batch),
+	// not 500ms (sequential). Allow generous margin for CI.
+	if elapsed > 200*time.Millisecond {
+		t.Errorf("elapsed = %v, expected < 200ms with concurrency 10", elapsed)
 	}
 }
 
