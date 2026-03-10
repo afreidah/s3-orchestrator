@@ -12,7 +12,7 @@ Most S3-compatible providers offer a free tier with a limited amount of storage 
 
 The key tools for staying within free tiers are **per-backend quotas** and **usage limits**. Quotas cap stored bytes so you never exceed a provider's free storage allowance. Usage limits cap monthly API requests, egress, and ingress so you avoid overage charges on metered dimensions.
 
-![Five cloud backends with a free-tier configuration](/docs/images/free-tier-5-cloud-setup.png?classes=lightbox)
+![Six cloud backends with a free-tier configuration](/docs/images/free-tier-5-cloud-setup.png?classes=lightbox)
 
 Below is the configuration used to run the setup shown above. Credentials are injected via Vault templates, but you can substitute environment variables or literal values.
 
@@ -62,6 +62,17 @@ backends:
     force_path_style: true
     quota_bytes: 10737418240
     api_request_limit: 1000000
+
+  - name: "b2"
+    endpoint: "{{ .Data.data.b2_s3_endpoint }}"
+    region: "{{ .Data.data.b2_s3_region }}"
+    bucket: "{{ .Data.data.b2_s3_bucket }}"
+    access_key_id: "{{ .Data.data.b2_s3_access_key }}"
+    secret_access_key: "{{ .Data.data.b2_s3_secret_key }}"
+    force_path_style: true
+    quota_bytes: 10737418240
+    egress_byte_limit: 32212254720
+    api_request_limit: 75000
 
   - name: "e2"
     endpoint: "{{ .Data.data.e2_s3_endpoint }}"
@@ -179,11 +190,16 @@ Check each provider's free-tier limits. Common examples:
 |----------|-------------|-------------------|-------------|
 | Oracle Cloud (OCI) | 10 GB | 50,000/mo | 10 GB/mo |
 | Cloudflare R2 | 10 GB | 1,000,000/mo | Unlimited |
+| Backblaze B2 | 10 GB | 75,000/mo | 30 GB/mo |
 | iDrive e2 | 10 GB | Unlimited | 30 GB/mo |
 | IBM Cloud | 5 GB | Unlimited | 5 GB/mo |
 | Google Cloud (GCS) | 5 GB | 5,000/mo | 1 GB/mo |
 
-With all five providers you get 40 GB of combined storage behind a single S3 endpoint.
+With all six providers you get 50 GB of combined storage behind a single S3 endpoint.
+
+{{% notice warning %}}
+Free-tier limits change without notice. Always verify current allowances on each provider's pricing page before configuring quotas and usage limits. The numbers listed here are a starting point, not a guarantee.
+{{% /notice %}}
 
 ## Step 2: Get Credentials from Each Provider
 
@@ -207,6 +223,15 @@ Each provider gives you an **access key** and **secret key** for their S3-compat
 4. Copy the **Access Key ID** and **Secret Access Key**
 5. Your S3 endpoint is `https://<account-id>.r2.cloudflarestorage.com` (the account ID is on the R2 overview page)
 6. Create a bucket under **R2** -> **Create bucket**
+
+### Backblaze B2
+
+1. Log in to the Backblaze Console
+2. Go to **App Keys** -> **Add a New Application Key**
+3. Select the bucket (or **All**) and grant **Read and Write** access
+4. Copy the **keyID** (this is your access key) and **applicationKey** (this is your secret key)
+5. Your S3 endpoint is `https://s3.<region>.backblazeb2.com` (the region is shown on your bucket details page, e.g. `us-west-004`)
+6. Create a bucket under **Buckets** -> **Create a Bucket**
 
 ### iDrive e2
 
@@ -265,6 +290,17 @@ backends:
     force_path_style: true
     quota_bytes: 10737418240
     api_request_limit: 1000000
+
+  - name: "b2"
+    endpoint: "https://s3.<region>.backblazeb2.com"
+    region: "us-west-004"
+    bucket: "my-bucket"
+    access_key_id: "${B2_ACCESS_KEY}"
+    secret_access_key: "${B2_SECRET_KEY}"
+    force_path_style: true
+    quota_bytes: 10737418240
+    egress_byte_limit: 32212254720
+    api_request_limit: 75000
 
   - name: "e2"
     endpoint: "https://<endpoint>.e2.cloudstorage.com"
