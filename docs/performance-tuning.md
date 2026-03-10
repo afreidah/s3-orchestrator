@@ -101,7 +101,7 @@ Fills backends in config order. When the first backend reaches its quota, writes
 
 ### spread
 
-Places each write on the backend with the lowest utilization ratio (`bytes_used / bytes_limit`).
+Places each write on the backend with the lowest utilization ratio (`(bytes_used + orphan_bytes) / bytes_limit`).
 
 **Best for:**
 - Distributing read load across backends (objects spread evenly)

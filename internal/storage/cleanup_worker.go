@@ -81,6 +81,12 @@ func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) (processed, fai
 			if err := w.store.CompleteCleanupItem(ctx, item.ID); err != nil {
 				slog.Error("Failed to complete cleanup item", "id", item.ID, "error", err)
 			}
+			if item.SizeBytes > 0 {
+				if err := w.store.DecrementOrphanBytes(ctx, item.BackendName, item.SizeBytes); err != nil {
+					slog.Error("Failed to decrement orphan bytes",
+						"backend", item.BackendName, "size", item.SizeBytes, "error", err)
+				}
+			}
 			telemetry.CleanupQueueProcessedTotal.WithLabelValues("success").Inc()
 			processed++
 
@@ -96,11 +102,16 @@ func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) (processed, fai
 		// Retry or exhaust
 		newAttempts := item.Attempts + 1
 		if newAttempts >= maxCleanupAttempts {
-			slog.Error("Cleanup queue: max attempts reached, removing item",
+			// Leave the item in the queue — the SQL filter (attempts < 10)
+			// prevents it from being re-fetched, but orphan_bytes stays
+			// incremented so the write path won't overcommit. The item
+			// remains visible for operator intervention.
+			slog.Error("Cleanup queue: max attempts reached, item remains for operator review",
 				"key", item.ObjectKey, "backend", item.BackendName,
-				"attempts", newAttempts, "error", delErr)
-			if err := w.store.CompleteCleanupItem(ctx, item.ID); err != nil {
-				slog.Error("Failed to remove exhausted cleanup item", "id", item.ID, "error", err)
+				"attempts", newAttempts, "size", item.SizeBytes, "error", delErr)
+			// Persist the final attempt count and error
+			if err := w.store.RetryCleanupItem(ctx, item.ID, 0, delErr.Error()); err != nil {
+				slog.Error("Failed to update exhausted cleanup item", "id", item.ID, "error", err)
 			}
 			telemetry.CleanupQueueProcessedTotal.WithLabelValues("exhausted").Inc()
 			failed++

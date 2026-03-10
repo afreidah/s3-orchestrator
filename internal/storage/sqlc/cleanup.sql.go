@@ -41,23 +41,29 @@ func (q *Queries) DeleteCleanupQueueByBackend(ctx context.Context, backendName s
 }
 
 const enqueueCleanup = `-- name: EnqueueCleanup :exec
-INSERT INTO cleanup_queue (backend_name, object_key, reason)
-VALUES ($1, $2, $3)
+INSERT INTO cleanup_queue (backend_name, object_key, reason, size_bytes)
+VALUES ($1, $2, $3, $4)
 `
 
 type EnqueueCleanupParams struct {
 	BackendName string
 	ObjectKey   string
 	Reason      string
+	SizeBytes   int64
 }
 
 func (q *Queries) EnqueueCleanup(ctx context.Context, arg EnqueueCleanupParams) error {
-	_, err := q.db.Exec(ctx, enqueueCleanup, arg.BackendName, arg.ObjectKey, arg.Reason)
+	_, err := q.db.Exec(ctx, enqueueCleanup,
+		arg.BackendName,
+		arg.ObjectKey,
+		arg.Reason,
+		arg.SizeBytes,
+	)
 	return err
 }
 
 const getPendingCleanups = `-- name: GetPendingCleanups :many
-SELECT id, backend_name, object_key, reason, attempts
+SELECT id, backend_name, object_key, reason, attempts, size_bytes
 FROM cleanup_queue
 WHERE next_retry <= NOW() AND attempts < 10
 ORDER BY created_at ASC
@@ -70,6 +76,7 @@ type GetPendingCleanupsRow struct {
 	ObjectKey   string
 	Reason      string
 	Attempts    int32
+	SizeBytes   int64
 }
 
 func (q *Queries) GetPendingCleanups(ctx context.Context, limit int32) ([]GetPendingCleanupsRow, error) {
@@ -87,6 +94,7 @@ func (q *Queries) GetPendingCleanups(ctx context.Context, limit int32) ([]GetPen
 			&i.ObjectKey,
 			&i.Reason,
 			&i.Attempts,
+			&i.SizeBytes,
 		); err != nil {
 			return nil, err
 		}

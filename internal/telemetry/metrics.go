@@ -138,7 +138,16 @@ var (
 	QuotaBytesAvailable = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "s3proxy_quota_bytes_available",
-			Help: "Available bytes (limit - used) for each backend",
+			Help: "Available bytes (limit - used - orphan) for each backend",
+		},
+		[]string{"backend"},
+	)
+
+	// QuotaOrphanBytes tracks bytes pending physical deletion per backend.
+	QuotaOrphanBytes = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "s3proxy_quota_orphan_bytes",
+			Help: "Bytes pending physical deletion (logically freed but not yet removed from backend)",
 		},
 		[]string{"backend"},
 	)

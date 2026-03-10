@@ -469,6 +469,11 @@ func TestUploadPart_RecordPartFails_CleansUpPartObject(t *testing.T) {
 
 func TestUploadPart_RecordPartFails_DeleteFails_EnqueuesCleanup(t *testing.T) {
 	backend := newMockBackend()
+	// Use putThenFailDelete: put succeeds, but subsequent deletes fail.
+	// The mock backend's PutObject always works; set delErr before the call
+	// so that when RecordPart fails and the cleanup delete runs, it also fails.
+	backend.delErr = errors.New("backend timeout")
+
 	store := &mockStore{
 		getMultipartResp: &MultipartUpload{
 			UploadID:    "upload-1",
@@ -479,12 +484,26 @@ func TestUploadPart_RecordPartFails_DeleteFails_EnqueuesCleanup(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	// Put will succeed, then set delErr so cleanup fails
 	_, err := mgr.MultipartManager.UploadPart(context.Background(), "upload-1", 1, bytes.NewReader([]byte("data")), 4)
-	// This test is tricky — delErr is set on the backend struct, but the upload succeeds
-	// before we can set it. Let me instead pre-set delErr and rely on putErr being nil.
 	if err == nil {
 		t.Fatal("expected error from RecordPart failure")
+	}
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	// The cleanup delete failed, so the orphan should be enqueued
+	if len(store.enqueueCleanupCalls) != 1 {
+		t.Fatalf("expected 1 enqueue call, got %d", len(store.enqueueCleanupCalls))
+	}
+	if store.enqueueCleanupCalls[0].reason != "orphan_part_record_failed" {
+		t.Errorf("reason = %q, want orphan_part_record_failed", store.enqueueCleanupCalls[0].reason)
+	}
+	// Orphan bytes should be incremented
+	if len(store.incrementOrphanBytesCalls) != 1 {
+		t.Fatalf("expected 1 IncrementOrphanBytes call, got %d", len(store.incrementOrphanBytesCalls))
+	}
+	if store.incrementOrphanBytesCalls[0].sizeBytes != 4 {
+		t.Errorf("orphan bytes = %d, want 4", store.incrementOrphanBytesCalls[0].sizeBytes)
 	}
 }
 
