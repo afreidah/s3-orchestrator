@@ -3,6 +3,17 @@
 All notable changes to this project are documented in this file.
 
 
+## [0.16.25] - 2026-03-10
+
+### Added
+- Add Tempo, Loki, and Alloy integration for Nomad and Kubernetes demos (#247)
+
+### Fixed
+- Fix - expand free tier page with images and more detailed content
+
+### Improved
+- update CHANGELOG.md for v0.16.23 (#245)
+
 ## [0.16.23] - 2026-03-09
 
 ### Fixed
