@@ -3,6 +3,14 @@
 All notable changes to this project are documented in this file.
 
 
+## [0.17.00] - 2026-03-10
+
+### Added
+- Add orphan_bytes tracking to prevent quota drift on failed deletes (#250)
+
+### Improved
+- update CHANGELOG.md for v0.16.25 (#248)
+
 ## [0.16.25] - 2026-03-10
 
 ### Added
