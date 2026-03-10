@@ -13,6 +13,7 @@ type BackendQuota struct {
 	BytesUsed   int64
 	BytesLimit  int64
 	UpdatedAt   pgtype.Timestamptz
+	OrphanBytes int64
 }
 
 type BackendUsage struct {
@@ -33,6 +34,7 @@ type CleanupQueue struct {
 	NextRetry   pgtype.Timestamptz
 	Attempts    int32
 	LastError   *string
+	SizeBytes   int64
 }
 
 type MultipartPart struct {

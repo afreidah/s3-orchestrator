@@ -33,7 +33,23 @@ s3-orchestrator version
 
 ## Version History
 
-### v0.11.x (current)
+### v0.12.x (current)
+
+**Database migrations:**
+
+- `00004_add_orphan_bytes.sql` -- adds `orphan_bytes` column to `backend_quotas` and `size_bytes` column to `cleanup_queue` (auto-applied on startup)
+
+**Behavioral changes:**
+
+- **Orphan bytes tracking** — the cleanup queue now tracks the size of each enqueued item. On enqueue, the backend's `orphan_bytes` counter is incremented; on successful cleanup, it is decremented. All capacity checks (write routing, replication target selection, spread utilization ratio) subtract `orphan_bytes` from available space to prevent quota overcommitment during backend outages.
+- **Exhausted cleanup items preserved** — items that exceed 10 retry attempts remain in the queue with `orphan_bytes` still reserved, rather than being removed. This prevents the write path from overcommitting storage. Operators must manually resolve these items.
+- **Overwrite displaced copies** — when a PutObject overwrites an existing key, stale copies on other backends are now enqueued for cleanup with their size tracked, rather than being silently abandoned if the immediate delete fails.
+
+**New metrics:**
+
+- `s3proxy_quota_orphan_bytes` (gauge, `backend` label) — bytes reserved by pending cleanup items per backend
+
+### v0.11.x
 
 **New configuration fields:**
 

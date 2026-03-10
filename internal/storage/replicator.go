@@ -178,7 +178,7 @@ func (r *Replicator) replicateObject(ctx context.Context, key string, existingCo
 			slog.Error("Replication: failed to record replica",
 				"key", key, "target", target, "error", err)
 			// Clean up orphan on target
-			r.cleanupOrphan(ctx, target, key)
+			r.cleanupOrphan(ctx, target, key, existingCopies[0].SizeBytes)
 			telemetry.ReplicationErrorsTotal.Inc()
 			continue
 		}
@@ -187,7 +187,7 @@ func (r *Replicator) replicateObject(ctx context.Context, key string, existingCo
 			// Source copy was deleted/overwritten during replication
 			slog.Info("Replication: source copy gone, cleaning up orphan",
 				"key", key, "target", target)
-			r.cleanupOrphan(ctx, target, key)
+			r.cleanupOrphan(ctx, target, key, existingCopies[0].SizeBytes)
 			continue
 		}
 
@@ -228,7 +228,7 @@ func (r *Replicator) findReplicaTarget(ctx context.Context, key string, size int
 		if !ok {
 			continue
 		}
-		if stat.BytesLimit-stat.BytesUsed >= size {
+		if stat.BytesLimit-stat.BytesUsed-stat.OrphanBytes >= size {
 			return name
 		}
 	}
@@ -283,12 +283,12 @@ func (r *Replicator) copyToReplica(ctx context.Context, key string, copies []Obj
 
 // cleanupOrphan deletes an object from a backend when the DB record was not
 // created (e.g. source was deleted during replication).
-func (r *Replicator) cleanupOrphan(ctx context.Context, backendName, key string) {
+func (r *Replicator) cleanupOrphan(ctx context.Context, backendName, key string, sizeBytes int64) {
 	backend, ok := r.backends[backendName]
 	if !ok {
 		return
 	}
-	r.deleteOrEnqueue(ctx, backend, backendName, key, "replication_orphan")
+	r.deleteOrEnqueue(ctx, backend, backendName, key, "replication_orphan", sizeBytes)
 	r.usage.Record(backendName, 1, 0, 0)
 }
 

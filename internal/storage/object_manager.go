@@ -759,7 +759,7 @@ func (o *ObjectManager) DeleteObject(ctx context.Context, key string) error {
 				"backend", copy.BackendName, "key", key)
 			continue
 		}
-		o.deleteOrEnqueue(ctx, backend, copy.BackendName, key, "delete_failed")
+		o.deleteOrEnqueue(ctx, backend, copy.BackendName, key, "delete_failed", copy.SizeBytes)
 	}
 
 	// --- Record metrics (use first copy's backend for primary) ---
@@ -850,7 +850,7 @@ func (o *ObjectManager) DeleteObjects(ctx context.Context, keys []string) []Dele
 			wg.Add(1)
 			sem <- struct{}{}
 
-			go func(beName, key string, be ObjectBackend) {
+			go func(beName, key string, be ObjectBackend, sizeBytes int64) {
 				defer wg.Done()
 				defer func() { <-sem }()
 
@@ -858,12 +858,12 @@ func (o *ObjectManager) DeleteObjects(ctx context.Context, keys []string) []Dele
 				if err != nil {
 					slog.Warn("Failed to delete object from backend (batch)",
 						"backend", beName, "key", key, "error", err)
-					o.enqueueCleanup(ctx, beName, key, "batch_delete_failed")
+					o.enqueueCleanup(ctx, beName, key, "batch_delete_failed", sizeBytes)
 					mu.Lock()
 					backendErrors = append(backendErrors, err)
 					mu.Unlock()
 				}
-			}(cp.BackendName, pd.key, backend)
+			}(cp.BackendName, pd.key, backend, cp.SizeBytes)
 		}
 
 		for _, cp := range pd.copies {

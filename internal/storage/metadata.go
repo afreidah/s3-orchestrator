@@ -47,7 +47,7 @@ var (
 type MetadataStore interface {
 	// --- Object location operations ---
 	GetAllObjectLocations(ctx context.Context, key string) ([]ObjectLocation, error)
-	RecordObject(ctx context.Context, key, backend string, size int64, enc *EncryptionMeta) error
+	RecordObject(ctx context.Context, key, backend string, size int64, enc *EncryptionMeta) ([]DeletedCopy, error)
 	DeleteObject(ctx context.Context, key string) ([]DeletedCopy, error)
 	ListObjects(ctx context.Context, prefix, startAfter string, maxKeys int) (*ListObjectsResult, error)
 
@@ -85,11 +85,15 @@ type MetadataStore interface {
 	GetUsageForPeriod(ctx context.Context, period string) (map[string]UsageStat, error)
 
 	// --- Cleanup queue operations ---
-	EnqueueCleanup(ctx context.Context, backendName, objectKey, reason string) error
+	EnqueueCleanup(ctx context.Context, backendName, objectKey, reason string, sizeBytes int64) error
 	GetPendingCleanups(ctx context.Context, limit int) ([]CleanupItem, error)
 	CompleteCleanupItem(ctx context.Context, id int64) error
 	RetryCleanupItem(ctx context.Context, id int64, backoff time.Duration, lastError string) error
 	CleanupQueueDepth(ctx context.Context) (int64, error)
+
+	// --- Orphan bytes tracking ---
+	IncrementOrphanBytes(ctx context.Context, backendName string, amount int64) error
+	DecrementOrphanBytes(ctx context.Context, backendName string, amount int64) error
 
 	// --- Advisory lock (multi-instance coordination) ---
 	WithAdvisoryLock(ctx context.Context, lockID int64, fn func(ctx context.Context) error) (bool, error)
@@ -117,6 +121,7 @@ type CleanupItem struct {
 	ObjectKey   string
 	Reason      string
 	Attempts    int32
+	SizeBytes   int64
 }
 
 // Compile-time check: *Store satisfies MetadataStore.

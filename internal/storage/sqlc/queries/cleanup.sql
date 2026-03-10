@@ -1,9 +1,9 @@
 -- name: EnqueueCleanup :exec
-INSERT INTO cleanup_queue (backend_name, object_key, reason)
-VALUES ($1, $2, $3);
+INSERT INTO cleanup_queue (backend_name, object_key, reason, size_bytes)
+VALUES ($1, $2, $3, $4);
 
 -- name: GetPendingCleanups :many
-SELECT id, backend_name, object_key, reason, attempts
+SELECT id, backend_name, object_key, reason, attempts, size_bytes
 FROM cleanup_queue
 WHERE next_retry <= NOW() AND attempts < 10
 ORDER BY created_at ASC

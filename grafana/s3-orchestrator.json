@@ -181,7 +181,7 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "max by (backend) (s3proxy_quota_bytes_used) / max by (backend) (s3proxy_quota_bytes_limit) * 100",
+          "expr": "(max by (backend) (s3proxy_quota_bytes_used) + max by (backend) (s3proxy_quota_orphan_bytes)) / max by (backend) (s3proxy_quota_bytes_limit) * 100",
           "legendFormat": "{{backend}}"
         }
       ],
@@ -1430,7 +1430,7 @@
       "type": "stat",
       "id": 50,
       "title": "Cleanup Queue Depth",
-      "gridPos": { "x": 0, "y": 88, "w": 8, "h": 8 },
+      "gridPos": { "x": 0, "y": 88, "w": 6, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -1462,7 +1462,7 @@
       "type": "timeseries",
       "id": 51,
       "title": "Cleanup Throughput",
-      "gridPos": { "x": 8, "y": 88, "w": 8, "h": 8 },
+      "gridPos": { "x": 6, "y": 88, "w": 6, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -1490,9 +1490,46 @@
     },
     {
       "type": "timeseries",
+      "id": 64,
+      "title": "Orphan Bytes per Backend",
+      "gridPos": { "x": 12, "y": 88, "w": 6, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "max by (backend) (s3proxy_quota_orphan_bytes)",
+          "legendFormat": "{{backend}}"
+        }
+      ],
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 20,
+            "gradientMode": "scheme",
+            "showPoints": "never"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 536870912 },
+              { "color": "red", "value": 2147483648 }
+            ]
+          },
+          "color": { "mode": "thresholds" }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
       "id": 52,
       "title": "Audit Events",
-      "gridPos": { "x": 16, "y": 88, "w": 8, "h": 8 },
+      "gridPos": { "x": 18, "y": 88, "w": 6, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {

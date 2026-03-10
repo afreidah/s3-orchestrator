@@ -133,11 +133,11 @@ func (m *MockStore) GetLeastUtilizedBackend(_ context.Context, size int64, _ []s
 }
 
 // RecordObject records the call arguments and returns the pre-configured error.
-func (m *MockStore) RecordObject(_ context.Context, key, backend string, size int64, _ *storage.EncryptionMeta) error {
+func (m *MockStore) RecordObject(_ context.Context, key, backend string, size int64, _ *storage.EncryptionMeta) ([]storage.DeletedCopy, error) {
 	m.Mu.Lock()
 	defer m.Mu.Unlock()
 	m.RecordObjectCalls = append(m.RecordObjectCalls, RecordObjectCall{Key: key, Backend: backend, Size: size})
-	return m.RecordObjectErr
+	return nil, m.RecordObjectErr
 }
 
 // DeleteObject records the call and returns the pre-configured response or error.
@@ -324,7 +324,17 @@ func (m *MockStore) GetUsageForPeriod(_ context.Context, _ string) (map[string]s
 // -------------------------------------------------------------------------
 
 // EnqueueCleanup returns nil (stub).
-func (m *MockStore) EnqueueCleanup(_ context.Context, _, _, _ string) error {
+func (m *MockStore) EnqueueCleanup(_ context.Context, _, _, _ string, _ int64) error {
+	return nil
+}
+
+// IncrementOrphanBytes returns nil (stub).
+func (m *MockStore) IncrementOrphanBytes(_ context.Context, _ string, _ int64) error {
+	return nil
+}
+
+// DecrementOrphanBytes returns nil (stub).
+func (m *MockStore) DecrementOrphanBytes(_ context.Context, _ string, _ int64) error {
 	return nil
 }
 

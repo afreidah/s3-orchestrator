@@ -9,7 +9,7 @@ ON CONFLICT (backend_name) DO UPDATE SET
 -- bytes_limit = 0 means unlimited (no quota enforcement)
 SELECT CASE
     WHEN q.bytes_limit = 0 THEN 9223372036854775807  -- max int64
-    ELSE (q.bytes_limit - q.bytes_used - COALESCE(m.inflight, 0))
+    ELSE (q.bytes_limit - q.bytes_used - q.orphan_bytes - COALESCE(m.inflight, 0))
 END::bigint AS available
 FROM backend_quotas q
 LEFT JOIN (
@@ -24,7 +24,7 @@ WHERE q.backend_name = $1;
 -- Finds the backend with the lowest utilization ratio that has enough space.
 SELECT q.backend_name,
        CASE WHEN q.bytes_limit = 0 THEN 9223372036854775807
-            ELSE (q.bytes_limit - q.bytes_used - COALESCE(m.inflight, 0))
+            ELSE (q.bytes_limit - q.bytes_used - q.orphan_bytes - COALESCE(m.inflight, 0))
        END::bigint AS available
 FROM backend_quotas q
 LEFT JOIN (
@@ -35,15 +35,15 @@ LEFT JOIN (
 ) m ON m.backend_name = q.backend_name
 WHERE q.backend_name = ANY(@backend_names::text[])
   AND CASE WHEN q.bytes_limit = 0 THEN 9223372036854775807
-           ELSE (q.bytes_limit - q.bytes_used - COALESCE(m.inflight, 0))
+           ELSE (q.bytes_limit - q.bytes_used - q.orphan_bytes - COALESCE(m.inflight, 0))
       END >= @min_size::bigint
 ORDER BY CASE WHEN q.bytes_limit = 0 THEN 0
-              ELSE q.bytes_used::float8 / q.bytes_limit::float8
+              ELSE (q.bytes_used + q.orphan_bytes)::float8 / q.bytes_limit::float8
          END ASC
 LIMIT 1;
 
 -- name: GetAllQuotaStats :many
-SELECT backend_name, bytes_used, bytes_limit, updated_at
+SELECT backend_name, bytes_used, bytes_limit, orphan_bytes, updated_at
 FROM backend_quotas;
 
 -- name: GetObjectCountsByBackend :many
@@ -60,11 +60,21 @@ GROUP BY backend_name;
 UPDATE backend_quotas
 SET bytes_used = bytes_used + @amount, updated_at = NOW()
 WHERE backend_name = @backend_name
-  AND (bytes_limit = 0 OR bytes_used + @amount <= bytes_limit);
+  AND (bytes_limit = 0 OR bytes_used + orphan_bytes + @amount <= bytes_limit);
 
 -- name: DecrementQuota :exec
 UPDATE backend_quotas
 SET bytes_used = GREATEST(0, bytes_used - @amount), updated_at = NOW()
+WHERE backend_name = @backend_name;
+
+-- name: IncrementOrphanBytes :exec
+UPDATE backend_quotas
+SET orphan_bytes = orphan_bytes + @amount, updated_at = NOW()
+WHERE backend_name = @backend_name;
+
+-- name: DecrementOrphanBytes :exec
+UPDATE backend_quotas
+SET orphan_bytes = GREATEST(0, orphan_bytes - @amount), updated_at = NOW()
 WHERE backend_name = @backend_name;
 
 -- name: DeleteQuota :exec

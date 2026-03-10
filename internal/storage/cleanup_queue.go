@@ -5,7 +5,8 @@
 //
 // Provides MetadataStore methods for the cleanup retry queue: enqueue failed
 // operations, fetch pending items with backoff-aware scheduling, and update
-// attempt counts or mark items as completed.
+// attempt counts or mark items as completed. Also manages orphan_bytes tracking
+// on backend_quotas for bytes pending physical deletion.
 // -------------------------------------------------------------------------------
 
 package storage
@@ -21,11 +22,12 @@ import (
 )
 
 // EnqueueCleanup adds a failed cleanup operation to the retry queue.
-func (s *Store) EnqueueCleanup(ctx context.Context, backendName, objectKey, reason string) error {
+func (s *Store) EnqueueCleanup(ctx context.Context, backendName, objectKey, reason string, sizeBytes int64) error {
 	err := s.queries.EnqueueCleanup(ctx, db.EnqueueCleanupParams{
 		BackendName: backendName,
 		ObjectKey:   objectKey,
 		Reason:      reason,
+		SizeBytes:   sizeBytes,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to enqueue cleanup: %w", err)
@@ -48,6 +50,7 @@ func (s *Store) GetPendingCleanups(ctx context.Context, limit int) ([]CleanupIte
 			ObjectKey:   row.ObjectKey,
 			Reason:      row.Reason,
 			Attempts:    row.Attempts,
+			SizeBytes:   row.SizeBytes,
 		}
 	}
 	return items, nil
@@ -82,6 +85,33 @@ func (s *Store) CleanupQueueDepth(ctx context.Context) (int64, error) {
 		return 0, fmt.Errorf("failed to count pending cleanups: %w", err)
 	}
 	return count, nil
+}
+
+// IncrementOrphanBytes adds bytes to the orphan_bytes counter for a backend.
+// Called when a physical delete fails and is enqueued for retry.
+func (s *Store) IncrementOrphanBytes(ctx context.Context, backendName string, amount int64) error {
+	err := s.queries.IncrementOrphanBytes(ctx, db.IncrementOrphanBytesParams{
+		Amount:      amount,
+		BackendName: backendName,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to increment orphan bytes: %w", err)
+	}
+	return nil
+}
+
+// DecrementOrphanBytes subtracts bytes from the orphan_bytes counter for a
+// backend. Called when a cleanup queue item is successfully processed or
+// exhausted (written off).
+func (s *Store) DecrementOrphanBytes(ctx context.Context, backendName string, amount int64) error {
+	err := s.queries.DecrementOrphanBytes(ctx, db.DecrementOrphanBytesParams{
+		Amount:      amount,
+		BackendName: backendName,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to decrement orphan bytes: %w", err)
+	}
+	return nil
 }
 
 // durationToInterval converts a Go time.Duration to a pgtype.Interval.

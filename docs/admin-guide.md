@@ -182,7 +182,7 @@ routing_strategy: "pack"       # "pack" or "spread" (default: pack)
 ```
 
 - **pack** (default) — fills the first backend in config order until its quota is full, then overflows to the next. Best for stacking free-tier allocations sequentially.
-- **spread** — places each object on the backend with the lowest utilization ratio (`bytes_used / bytes_limit`). Best for distributing storage evenly across backends.
+- **spread** — places each object on the backend with the lowest utilization ratio (`(bytes_used + orphan_bytes) / bytes_limit`). Best for distributing storage evenly across backends.
 
 Both strategies respect quota limits and usage limits — full or over-limit backends are always skipped.
 
@@ -350,17 +350,19 @@ Replication is **asynchronous** — writes go to a single backend and the replic
 
 ### Cleanup Queue
 
-The cleanup queue requires no configuration — it is always active. When any backend object deletion fails during normal operations (PutObject orphan cleanup, DeleteObject, multipart part cleanup, rebalancer, replicator), the failed deletion is automatically enqueued for retry.
+The cleanup queue requires no configuration — it is always active. When any backend object deletion fails during normal operations (PutObject orphan cleanup, DeleteObject, overwrite displaced copies, multipart part cleanup, rebalancer, replicator), the failed deletion is automatically enqueued for retry.
 
-The background worker runs every minute and retries with exponential backoff (1 minute to 24 hours). After 10 failed attempts, the item stops being retried but remains in the database for manual investigation.
+Each enqueued item tracks the object's `size_bytes`. On enqueue, the backend's `orphan_bytes` counter is incremented so that write routing and replication target selection account for the physically unreleased space. On successful cleanup, `orphan_bytes` is decremented. This prevents quota overcommitment during sustained backend outages.
 
-**Monitoring:** Alert on `s3proxy_cleanup_queue_depth` staying elevated — this means orphaned objects are accumulating. Alert on `s3proxy_cleanup_queue_processed_total{status="exhausted"}` — these items need manual attention.
+The background worker runs every minute and retries with exponential backoff (1 minute to 24 hours). After 10 failed attempts, the item remains in the queue and `orphan_bytes` stays incremented — the space stays reserved until an operator resolves it. The worker query filters exhausted items automatically via a partial index.
+
+**Monitoring:** Alert on `s3proxy_cleanup_queue_depth` staying elevated — this means orphaned objects are accumulating. Alert on `s3proxy_cleanup_queue_processed_total{status="exhausted"}` — these items need manual attention. Alert on `s3proxy_quota_orphan_bytes` — elevated values mean backends have significant physically unreleased space.
 
 **Manual cleanup:** Inspect exhausted items and resolve manually:
 
 ```sql
 -- View items that exceeded max retries
-SELECT id, backend_name, object_key, reason, attempts, last_error, created_at
+SELECT id, backend_name, object_key, reason, attempts, size_bytes, last_error, created_at
 FROM cleanup_queue
 WHERE attempts >= 10
 ORDER BY created_at;
@@ -368,7 +370,8 @@ ORDER BY created_at;
 -- Reset an item for retry (e.g., after fixing the backend)
 UPDATE cleanup_queue SET attempts = 0, next_retry = NOW() WHERE id = 123;
 
--- Remove an item you've resolved manually
+-- After manually deleting the orphaned object from the backend, decrement orphan_bytes and remove the item:
+UPDATE backend_quotas SET orphan_bytes = orphan_bytes - (SELECT size_bytes FROM cleanup_queue WHERE id = 123) WHERE backend_name = (SELECT backend_name FROM cleanup_queue WHERE id = 123);
 DELETE FROM cleanup_queue WHERE id = 123;
 ```
 
@@ -852,7 +855,8 @@ If `telemetry.metrics.enabled` is `true`, metrics are exposed at `/metrics`. Key
 
 | Metric | What to watch |
 |--------|---------------|
-| `s3proxy_quota_bytes_available{backend="..."}` | Alert when approaching 0 — backend is almost full |
+| `s3proxy_quota_bytes_available{backend="..."}` | Alert when approaching 0 — backend is almost full (accounts for orphan bytes) |
+| `s3proxy_quota_orphan_bytes{backend="..."}` | Elevated values mean backends have physically unreleased space from pending cleanups |
 | `s3proxy_circuit_breaker_state{name="database"}` | Alert when > 0 — database is unreachable (1=open, 2=half-open) |
 | `s3proxy_circuit_breaker_state{name="<backend>"}` | Alert when > 0 — backend is unreachable or credentials expired |
 | `s3proxy_replication_pending` | Alert when consistently > 0 — replicas are falling behind |

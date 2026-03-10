@@ -11,7 +11,8 @@ ignore:
   - "internal/testutil/"
   - "internal/storage/sqlc/"  # generated code (sqlc)
   - "internal/storage/backend.go" # real S3 SDK wrapper, integration-tested only
-  - "internal/storage/store.go"   # DB queries, integration-tested only
+  - "internal/storage/store.go"          # DB queries, integration-tested only
+  - "internal/storage/cleanup_queue.go"  # DB queries, integration-tested only
   - "internal/storage/manager.go"           # orchestrates backend+DB, integration-tested only
   - "internal/storage/manager_objects.go"   # orchestrates backend+DB, integration-tested only
   - "internal/storage/manager_multipart.go" # orchestrates backend+DB, integration-tested only

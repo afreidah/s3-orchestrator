@@ -12,6 +12,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -145,6 +146,146 @@ func TestRemoveBackend_PurgeTerminates(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("RemoveBackend did not terminate within 5 seconds (infinite loop?)")
+	}
+}
+
+// -------------------------------------------------------------------------
+// drainOneObject — object already has replica elsewhere
+// -------------------------------------------------------------------------
+
+func TestDrainOneObject_ReplicaExists_DeletesSourceWithSize(t *testing.T) {
+	srcBackend := newMockBackend()
+	srcBackend.objects["key1"] = mockObject{data: []byte("data")}
+
+	store := &mockStore{
+		// GetAllObjectLocations returns copies on both b1 (source) and b2 (replica)
+		getAllLocationsResp: []ObjectLocation{
+			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
+			{ObjectKey: "key1", BackendName: "b2", SizeBytes: 4},
+		},
+	}
+
+	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": srcBackend, "b2": newMockBackend()})
+
+	obj := &ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
+	ok := mgr.DrainManager.drainOneObject(context.Background(), srcBackend, "b1", obj)
+	if !ok {
+		t.Fatal("drainOneObject should succeed when replica exists")
+	}
+
+	// Source object should be deleted from S3
+	if srcBackend.hasObject("key1") {
+		t.Error("source object should have been deleted")
+	}
+}
+
+// -------------------------------------------------------------------------
+// drainOneObject — no replica, must copy then delete source
+// -------------------------------------------------------------------------
+
+func TestDrainOneObject_NoCopy_MovesObjectWithSize(t *testing.T) {
+	srcBackend := newMockBackend()
+	srcBackend.objects["key1"] = mockObject{data: []byte("abcd"), contentType: "text/plain"}
+
+	dstBackend := newMockBackend()
+
+	store := &mockStore{
+		// Only on b1 (no replica)
+		getAllLocationsResp: []ObjectLocation{
+			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
+		},
+		getBackendResp:      "b2",
+		moveObjectLocationSize: 4,
+	}
+
+	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": srcBackend, "b2": dstBackend})
+
+	obj := &ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
+	ok := mgr.DrainManager.drainOneObject(context.Background(), srcBackend, "b1", obj)
+	if !ok {
+		t.Fatal("drainOneObject should succeed")
+	}
+
+	// Object should now exist on destination
+	if !dstBackend.hasObject("key1") {
+		t.Error("destination backend should have the object")
+	}
+}
+
+// -------------------------------------------------------------------------
+// drainOneObject — MoveObjectLocation fails, orphan enqueued with size
+// -------------------------------------------------------------------------
+
+func TestDrainOneObject_MoveLocationFails_EnqueuesOrphanWithSize(t *testing.T) {
+	srcBackend := newMockBackend()
+	srcBackend.objects["key1"] = mockObject{data: []byte("abcd"), contentType: "text/plain"}
+
+	dstBackend := newMockBackend()
+
+	store := &mockStore{
+		getAllLocationsResp: []ObjectLocation{
+			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
+		},
+		getBackendResp:        "b2",
+		moveObjectLocationErr: errors.New("serialization failure"),
+	}
+
+	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": srcBackend, "b2": dstBackend})
+
+	// Make dstBackend.DeleteObject fail so enqueueCleanup is triggered
+	dstBackend.delErr = errors.New("backend down")
+
+	obj := &ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
+	ok := mgr.DrainManager.drainOneObject(context.Background(), srcBackend, "b1", obj)
+	if ok {
+		t.Fatal("drainOneObject should fail when MoveObjectLocation fails")
+	}
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	// The orphan on the destination should have been enqueued with the object size
+	if len(store.enqueueCleanupCalls) != 1 {
+		t.Fatalf("expected 1 enqueue call (drain_orphan), got %d", len(store.enqueueCleanupCalls))
+	}
+	if store.enqueueCleanupCalls[0].reason != "drain_orphan" {
+		t.Errorf("reason = %q, want drain_orphan", store.enqueueCleanupCalls[0].reason)
+	}
+}
+
+// -------------------------------------------------------------------------
+// drainOneObject — MoveObjectLocation returns 0 (stale), enqueues orphan
+// -------------------------------------------------------------------------
+
+func TestDrainOneObject_StaleObject_EnqueuesOrphanWithSize(t *testing.T) {
+	srcBackend := newMockBackend()
+	srcBackend.objects["key1"] = mockObject{data: []byte("abcd"), contentType: "text/plain"}
+
+	dstBackend := newMockBackend()
+	dstBackend.delErr = errors.New("backend down") // force enqueue
+
+	store := &mockStore{
+		getAllLocationsResp: []ObjectLocation{
+			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
+		},
+		getBackendResp:         "b2",
+		moveObjectLocationSize: 0, // 0 means stale/already moved
+	}
+
+	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": srcBackend, "b2": dstBackend})
+
+	obj := &ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
+	ok := mgr.DrainManager.drainOneObject(context.Background(), srcBackend, "b1", obj)
+	if ok {
+		t.Fatal("drainOneObject should return false for stale object")
+	}
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.enqueueCleanupCalls) != 1 {
+		t.Fatalf("expected 1 enqueue call (drain_stale_orphan), got %d", len(store.enqueueCleanupCalls))
+	}
+	if store.enqueueCleanupCalls[0].reason != "drain_stale_orphan" {
+		t.Errorf("reason = %q, want drain_stale_orphan", store.enqueueCleanupCalls[0].reason)
 	}
 }
 
