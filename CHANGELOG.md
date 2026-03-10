@@ -3,6 +3,14 @@
 All notable changes to this project are documented in this file.
 
 
+## [0.17.01] - 2026-03-10
+
+### Added
+- Add generic worker pool and parallelize sequential hot paths (#253)
+
+### Improved
+- update CHANGELOG.md for v0.17.00 (#252)
+
 ## [0.17.00] - 2026-03-10
 
 ### Added
