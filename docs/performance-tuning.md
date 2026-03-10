@@ -153,15 +153,26 @@ replication:
   factor: 2
   worker_interval: "5m"
   batch_size: 50
+  concurrency: 5
   unhealthy_threshold: "10m"
 ```
 
 - `worker_interval` controls how often the worker checks for under-replicated objects. Lower intervals mean faster catch-up after writes but more database queries.
 - `batch_size` limits objects processed per worker tick. Higher values catch up faster but create more backend I/O.
+- `concurrency` controls how many objects are replicated in parallel within each tick. Higher values speed up convergence but increase backend load.
 - `unhealthy_threshold` sets the grace period before the replicator treats copies on a circuit-broken backend as unavailable and creates replacements on healthy backends. Set higher to avoid churn during brief outages; set lower for faster redundancy recovery. Requires `backend_circuit_breaker.enabled: true`.
 - The worker runs a catch-up pass on startup, so initial replication doesn't wait for the first interval.
 
-For large backlogs (e.g., enabling replication on an existing dataset), temporarily increase `batch_size` to `500` and lower `worker_interval` to `"30s"`, then revert after catch-up.
+For large backlogs (e.g., enabling replication on an existing dataset), temporarily increase `batch_size` to `500`, set `concurrency: 10`, and lower `worker_interval` to `"30s"`, then revert after catch-up.
+
+## Cleanup Worker
+
+```yaml
+cleanup_queue:
+  concurrency: 10
+```
+
+- `concurrency` controls how many orphaned objects are deleted in parallel per worker tick (default: 10). Higher values clear the queue faster during drain operations or sustained backend recovery, but increase backend load.
 
 ## Usage Flush
 

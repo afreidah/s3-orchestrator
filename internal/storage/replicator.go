@@ -23,6 +23,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/audit"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/workerpool"
 )
 
 // -------------------------------------------------------------------------
@@ -100,35 +101,45 @@ func (r *Replicator) Replicate(ctx context.Context, cfg config.ReplicationConfig
 	// --- Group locations by object key ---
 	grouped := groupByKey(locations)
 
-	// --- Replicate each under-replicated object ---
-	created := 0
+	// Flatten map into a slice for the worker pool
+	type replicaTask struct {
+		key    string
+		copies []ObjectLocation
+		needed int
+	}
+	var tasks []replicaTask
 	for key, copies := range grouped {
 		needed := cfg.Factor - len(copies)
-		if needed <= 0 {
-			continue
+		if needed > 0 {
+			tasks = append(tasks, replicaTask{key: key, copies: copies, needed: needed})
 		}
-
-		n, replicateErr := r.replicateObject(ctx, key, copies, needed)
-		if replicateErr != nil {
-			slog.Warn("Replication: object failed", "key", key, "error", replicateErr)
-		}
-		created += n
 	}
 
-	telemetry.ReplicationCopiesCreatedTotal.Add(float64(created))
-	if len(excluded) > 0 && created > 0 {
-		telemetry.ReplicationHealthCopiesTotal.Add(float64(created))
+	// --- Replicate under-replicated objects concurrently ---
+	var created atomic.Int32
+	workerpool.Run(ctx, cfg.Concurrency, tasks, func(ctx context.Context, task replicaTask) {
+		n, replicateErr := r.replicateObject(ctx, task.key, task.copies, task.needed)
+		if replicateErr != nil {
+			slog.Warn("Replication: object failed", "key", task.key, "error", replicateErr)
+		}
+		created.Add(int32(n))
+	})
+
+	copiesCreated := int(created.Load())
+	telemetry.ReplicationCopiesCreatedTotal.Add(float64(copiesCreated))
+	if len(excluded) > 0 && copiesCreated > 0 {
+		telemetry.ReplicationHealthCopiesTotal.Add(float64(copiesCreated))
 	}
 	telemetry.ReplicationRunsTotal.WithLabelValues("success").Inc()
 	telemetry.ReplicationDuration.Observe(time.Since(start).Seconds())
 
 	audit.Log(ctx, "replication.complete",
-		slog.Int("copies_created", created),
+		slog.Int("copies_created", copiesCreated),
 		slog.Int("objects_checked", len(grouped)),
 		slog.Duration("duration", time.Since(start)),
 	)
 
-	return created, nil
+	return copiesCreated, nil
 }
 
 // -------------------------------------------------------------------------

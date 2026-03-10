@@ -13,20 +13,23 @@ package storage
 import (
 	"context"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/audit"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/workerpool"
 )
 
 // CleanupWorker processes the retry queue for failed object deletions.
 type CleanupWorker struct {
 	*backendCore
+	concurrency int
 }
 
 // NewCleanupWorker creates a CleanupWorker sharing the given core infrastructure.
-func NewCleanupWorker(core *backendCore) *CleanupWorker {
-	return &CleanupWorker{backendCore: core}
+func NewCleanupWorker(core *backendCore, concurrency int) *CleanupWorker {
+	return &CleanupWorker{backendCore: core, concurrency: concurrency}
 }
 
 // maxCleanupAttempts is the maximum number of retries before giving up.
@@ -61,7 +64,9 @@ func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) (processed, fai
 		return 0, 0
 	}
 
-	for _, item := range items {
+	var processedCount, failedCount atomic.Int32
+
+	workerpool.Run(ctx, w.concurrency, items, func(ctx context.Context, item CleanupItem) {
 		backend, ok := w.backends[item.BackendName]
 		if !ok {
 			slog.Warn("Cleanup queue: backend not found, removing item",
@@ -70,8 +75,8 @@ func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) (processed, fai
 				slog.Error("Failed to complete cleanup item", "id", item.ID, "error", err)
 			}
 			telemetry.CleanupQueueProcessedTotal.WithLabelValues("success").Inc()
-			processed++
-			continue
+			processedCount.Add(1)
+			return
 		}
 
 		delErr := w.deleteWithTimeout(ctx, backend, item.ObjectKey)
@@ -88,7 +93,7 @@ func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) (processed, fai
 				}
 			}
 			telemetry.CleanupQueueProcessedTotal.WithLabelValues("success").Inc()
-			processed++
+			processedCount.Add(1)
 
 			audit.Log(ctx, "cleanup_queue.processed",
 				slog.String("key", item.ObjectKey),
@@ -96,7 +101,7 @@ func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) (processed, fai
 				slog.String("reason", item.Reason),
 				slog.Int("attempt", int(item.Attempts+1)),
 			)
-			continue
+			return
 		}
 
 		// Retry or exhaust
@@ -114,8 +119,8 @@ func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) (processed, fai
 				slog.Error("Failed to update exhausted cleanup item", "id", item.ID, "error", err)
 			}
 			telemetry.CleanupQueueProcessedTotal.WithLabelValues("exhausted").Inc()
-			failed++
-			continue
+			failedCount.Add(1)
+			return
 		}
 
 		telemetry.CleanupQueueProcessedTotal.WithLabelValues("retry").Inc()
@@ -123,8 +128,8 @@ func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) (processed, fai
 		if err := w.store.RetryCleanupItem(ctx, item.ID, backoff, delErr.Error()); err != nil {
 			slog.Error("Failed to update cleanup retry", "id", item.ID, "error", err)
 		}
-		failed++
-	}
+		failedCount.Add(1)
+	})
 
 	// Update queue depth gauge
 	depth, err := w.store.CleanupQueueDepth(ctx)
@@ -132,5 +137,5 @@ func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) (processed, fai
 		telemetry.CleanupQueueDepth.Set(float64(depth))
 	}
 
-	return processed, failed
+	return int(processedCount.Load()), int(failedCount.Load())
 }
