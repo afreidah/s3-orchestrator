@@ -24,6 +24,7 @@
 - **Professional tone** - No personal references, no numbered lists, no casual language
 - **Self-documenting** - Code explains *why*, not just *what*
 - **Streaming over buffering** - Use `io.Pipe` and streaming patterns for object data; never buffer entire objects in memory
+- **Buffer pooling** - Use `bufpool.Copy` instead of `io.Copy` for all streaming I/O to reuse buffers and reduce GC pressure
 - **Context propagation** - Pass `context.Context` through all function chains for cancellation, tracing, and audit correlation
 
 ---

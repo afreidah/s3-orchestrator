@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/audit"
+	"github.com/afreidah/s3-orchestrator/internal/bufpool"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 	"go.opentelemetry.io/otel/attribute"
@@ -283,7 +284,7 @@ func (mp *MultipartManager) CompleteMultipartUpload(ctx context.Context, uploadI
 				src = decrypted
 			}
 
-			_, err = io.Copy(pw, src)
+			_, err = bufpool.Copy(pw, src)
 			_ = result.Body.Close()
 			bcancel()
 			if err != nil {

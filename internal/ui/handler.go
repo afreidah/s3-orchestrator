@@ -23,7 +23,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"html/template"
 	"log/slog"
 	"mime"
@@ -35,6 +34,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/bufpool"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/server"
 	"github.com/afreidah/s3-orchestrator/internal/storage"
@@ -704,7 +704,7 @@ func (h *Handler) handleAPIDownload(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", strconv.FormatInt(result.Size, 10))
 	}
 
-	_, _ = io.Copy(w, result.Body)
+	_, _ = bufpool.Copy(w, result.Body)
 }
 
 // handleAPIRebalance triggers an on-demand rebalance across backends.

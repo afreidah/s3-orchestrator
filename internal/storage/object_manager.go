@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/audit"
+	"github.com/afreidah/s3-orchestrator/internal/bufpool"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/workerpool"
@@ -92,7 +93,7 @@ func (o *ObjectManager) PutObject(ctx context.Context, key string, body io.Reade
 	// --- Buffer body for retry ---
 	// io.Reader is single-use; buffer the plaintext so we can replay on failover.
 	var buf bytes.Buffer
-	if _, err := io.Copy(&buf, body); err != nil {
+	if _, err := bufpool.Copy(&buf, body); err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return "", fmt.Errorf("buffer request body: %w", err)
 	}
@@ -672,7 +673,7 @@ func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey strin
 				continue
 			}
 			srcBackendCh <- loc.BackendName
-			_, copyErr := io.Copy(pw, result.Body)
+			_, copyErr := bufpool.Copy(pw, result.Body)
 			_ = result.Body.Close()
 			bcancel()
 			if copyErr != nil {

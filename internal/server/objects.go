@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/bufpool"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -167,7 +168,7 @@ func (s *Server) handleGet(ctx context.Context, w http.ResponseWriter, r *http.R
 	}
 	w.WriteHeader(status)
 
-	written, copyErr := io.Copy(w, result.Body)
+	written, copyErr := bufpool.Copy(w, result.Body)
 	if copyErr != nil {
 		return status, written, fmt.Errorf("error streaming body: %w", copyErr)
 	}

@@ -84,6 +84,28 @@ If you serve thousands of concurrent clients:
 - Lower `idle_timeout` to `30-60s` to reduce connection count.
 - Monitor open file descriptors and increase ulimits if needed.
 
+## Backend HTTP Transport
+
+Each S3 backend gets a dedicated `http.Transport` with tuned connection pool settings. These are not configurable via YAML -- they are compiled defaults sized for the orchestrator's concurrent workload (rebalancer, replicator, parallel PUTs/GETs).
+
+| Setting | Value | Purpose |
+|---------|-------|---------|
+| `MaxIdleConns` | 100 | Connection pool size per backend |
+| `MaxIdleConnsPerHost` | 100 | Matches MaxIdleConns since each transport talks to one host |
+| `IdleConnTimeout` | 90s | Recycles idle connections, forcing fresh DNS on reconnect |
+| `KeepAlive` | 30s | TCP keepalive probes to detect stale connections |
+| `DialTimeout` | 10s | Connection establishment timeout |
+| `TLSHandshakeTimeout` | 10s | TLS negotiation timeout |
+| `ResponseHeaderTimeout` | 30s | Time to read response headers from a backend |
+
+### DNS Freshness
+
+The 90-second `IdleConnTimeout` addresses DNS staleness for endpoints resolved via Consul DNS or load balancers. When an idle connection is discarded, the next request triggers a fresh DNS lookup, allowing the orchestrator to follow backend endpoint changes without restarts.
+
+### Buffer Pool
+
+All streaming operations (GET proxy, PUT body buffering, CopyObject, multipart assembly, UI downloads) use a shared `sync.Pool` of 32 KB byte buffers via `io.CopyBuffer` instead of `io.Copy`. This eliminates per-call buffer allocations that create GC pressure under high concurrency. The pool is sized automatically and requires no configuration.
+
 ## Routing Strategy
 
 ```yaml
