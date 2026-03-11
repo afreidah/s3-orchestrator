@@ -99,6 +99,10 @@ server:
   log_level: "info"               # debug, info, warn, error (default: info, reloadable via SIGHUP)
   max_object_size: 5368709120     # 5 GB default
   max_concurrent_requests: 0      # max concurrent S3 requests (0 = unlimited, default)
+  # max_concurrent_reads: 0       # separate limit for GET/HEAD (0 = use global limit)
+  # max_concurrent_writes: 0      # separate limit for PUT/POST/DELETE (0 = use global limit)
+  # load_shed_threshold: 0        # active shedding threshold (0.0-1.0, 0 = disabled)
+  # admission_wait: "0s"          # brief wait before rejection (0 = instant)
   backend_timeout: "30s"          # per-operation timeout for backend S3 calls
   read_header_timeout: "10s"      # max time to read request headers (default: 10s)
   read_timeout: "5m"              # max time to read entire request including body (default: 5m)
@@ -109,7 +113,10 @@ server:
 
 - `listen_addr` is the only required field.
 - `max_object_size` caps single-PUT uploads. Larger objects should use multipart upload (most clients do this automatically).
-- `max_concurrent_requests` limits the number of S3 requests processed simultaneously. When the limit is reached, new requests are rejected with `503 SlowDown`. Set to 2-3x `database.max_conns` for load shedding. `0` disables the limit.
+- `max_concurrent_requests` limits the number of S3 requests processed simultaneously. When the limit is reached, new requests are rejected with `503 SlowDown` and `Retry-After: 1`. Set to 2-3x `database.max_conns` for load shedding. `0` disables the limit.
+- `max_concurrent_reads` and `max_concurrent_writes` provide separate concurrency limits for reads (GET, HEAD) and writes (PUT, POST, DELETE). When both are set, they replace `max_concurrent_requests` with independent pools so write storms cannot starve reads.
+- `load_shed_threshold` enables active load shedding. When in-flight requests exceed this fraction of pool capacity (e.g. `0.8`), new requests are probabilistically rejected before the hard limit, providing smooth degradation instead of a cliff.
+- `admission_wait` adds a brief wait before rejecting when the semaphore is full (e.g. `50ms`). Smooths micro-bursts without adding latency during sustained overload. Default `0` means instant rejection.
 - `backend_timeout` bounds individual S3 API calls to backends. Increase if you have slow backends or large objects.
 - `read_header_timeout` protects against slow-read attacks that hold connections open by sending headers slowly. The 10-second default is generous for any legitimate client.
 - `read_timeout` and `write_timeout` bound the total time for reading/writing entire requests and responses. The 5-minute defaults accommodate large object transfers.
@@ -873,7 +880,9 @@ If `telemetry.metrics.enabled` is `true`, metrics are exposed at `/metrics`. Key
 | `s3proxy_degraded_write_rejections_total` | Writes being rejected due to degraded mode |
 | `s3proxy_usage_limit_rejections_total` | Operations rejected by usage limits |
 | `s3proxy_rate_limit_rejections_total` | Requests rejected by per-IP rate limiting |
-| `s3proxy_admission_rejections_total` | Requests rejected by server-level admission control |
+| `s3proxy_admission_rejections_total` | Requests rejected at the hard admission limit |
+| `s3proxy_load_shed_total` | Requests probabilistically shed before the hard admission limit |
+| `s3proxy_early_rejections_total` | Uploads rejected before body transmission (no backend capacity) |
 | `s3proxy_cleanup_queue_depth` | Alert when consistently > 0 — orphaned objects are failing cleanup |
 | `s3proxy_cleanup_queue_processed_total{status="exhausted"}` | Items that exceeded max retries — manual intervention needed |
 | `s3proxy_audit_events_total{event="..."}` | Audit log volume by event type — useful for detecting unusual activity |

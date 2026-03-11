@@ -22,20 +22,40 @@ database:
 
 ```yaml
 server:
-  max_concurrent_requests: 0  # 0 = unlimited (default)
+  max_concurrent_requests: 0    # 0 = unlimited (default)
+  # max_concurrent_reads: 0     # separate limit for GET/HEAD (0 = use global)
+  # max_concurrent_writes: 0    # separate limit for PUT/POST/DELETE (0 = use global)
+  # load_shed_threshold: 0      # 0.0-1.0, start shedding at this capacity ratio (0 = disabled)
+  # admission_wait: "0s"        # brief wait before rejection (0 = instant)
 ```
 
-Limits the total number of S3 requests being processed concurrently. When the limit is reached, new requests are rejected immediately with `503 SlowDown` instead of queueing and potentially exhausting backend connections and goroutines.
+Limits the number of S3 requests being processed concurrently. When the limit is reached, new requests are rejected with `503 SlowDown` and a `Retry-After: 1` header instead of queueing and potentially exhausting backend connections and goroutines.
+
+### Global vs split pools
+
+By default, `max_concurrent_requests` applies a single limit to all operations. For workloads where write storms should not starve reads, set `max_concurrent_reads` and `max_concurrent_writes` instead. When both are set, reads (GET, HEAD) and writes (PUT, POST, DELETE) get independent semaphores and cannot block each other.
+
+### Active load shedding
+
+When `load_shed_threshold` is set (e.g. `0.8`), the server begins probabilistically rejecting requests before the hard limit. The rejection probability ramps linearly from 0% at the threshold to 100% at full capacity. This provides a smooth degradation curve instead of a cliff at the admission limit.
+
+### Admission wait
+
+When `admission_wait` is set (e.g. `50ms`), requests briefly wait for a slot to free up before being rejected. This smooths micro-bursts where a slot opens up within milliseconds. The request's context deadline is also respected — whichever fires first wins. Set to `0` (default) for instant rejection.
 
 ### When to set this
 
 - **Default (0)**: no limit. Fine for low-traffic single-instance deployments.
 - **Recommended starting point**: set to 2-3x your `database.max_conns` value. Every S3 operation needs at least one database query, so there's no benefit admitting more requests than the connection pool can serve.
-- **High-traffic environments**: set based on your observed peak concurrency from `s3proxy_inflight_requests` metrics. Start with a value 50% above observed peak and adjust downward if you want tighter load shedding.
+- **Split pools**: if your workload is read-heavy, set `max_concurrent_reads` higher than `max_concurrent_writes` to protect read availability during upload bursts.
+- **Load shedding**: start with `load_shed_threshold: 0.8` and adjust based on `s3proxy_load_shed_total` rates.
+- **Admission wait**: `50ms` to `100ms` is a good starting point for smoothing bursts without adding noticeable latency.
 
 ### Monitoring
 
-- `s3proxy_admission_rejections_total` — counter of rejected requests. If this is consistently non-zero, either increase the limit or investigate why the server is saturated.
+- `s3proxy_admission_rejections_total` — requests rejected at the hard admission limit
+- `s3proxy_load_shed_total` — requests probabilistically shed before the hard limit
+- `s3proxy_early_rejections_total` — uploads rejected before body transmission (no backend capacity)
 - `s3proxy_inflight_requests` — gauge of currently processing requests by method. Use this to find the right limit value.
 
 ## Backend Timeout

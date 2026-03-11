@@ -1164,17 +1164,95 @@
       }
     },
     {
+      "type": "timeseries",
+      "id": 65,
+      "title": "Load Shedding",
+      "gridPos": { "x": 0, "y": 71, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "increase(s3proxy_load_shed_total[5m])",
+          "legendFormat": "shed"
+        }
+      ],
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 66,
+      "title": "Early Upload Rejections",
+      "gridPos": { "x": 8, "y": 71, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "increase(s3proxy_early_rejections_total[5m])",
+          "legendFormat": "rejected"
+        }
+      ],
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 67,
+      "title": "Write Failovers",
+      "gridPos": { "x": 16, "y": 71, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "increase(s3proxy_write_failover_total[5m])",
+          "legendFormat": "failovers"
+        }
+      ],
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        }
+      }
+    },
+    {
       "type": "row",
       "id": 40,
       "title": "Rebalancer",
-      "gridPos": { "x": 0, "y": 71, "w": 24, "h": 1 },
+      "gridPos": { "x": 0, "y": 79, "w": 24, "h": 1 },
       "collapsed": false
     },
     {
       "type": "timeseries",
       "id": 41,
       "title": "Rebalance Runs",
-      "gridPos": { "x": 0, "y": 72, "w": 6, "h": 8 },
+      "gridPos": { "x": 0, "y": 80, "w": 6, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -1200,7 +1278,7 @@
       "type": "timeseries",
       "id": 42,
       "title": "Objects / Bytes Moved",
-      "gridPos": { "x": 6, "y": 72, "w": 6, "h": 8 },
+      "gridPos": { "x": 6, "y": 80, "w": 6, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -1240,7 +1318,7 @@
       "type": "timeseries",
       "id": 43,
       "title": "Rebalance Duration (p95)",
-      "gridPos": { "x": 12, "y": 72, "w": 6, "h": 8 },
+      "gridPos": { "x": 12, "y": 80, "w": 6, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -1267,7 +1345,7 @@
       "type": "timeseries",
       "id": 58,
       "title": "Rebalance Skipped",
-      "gridPos": { "x": 18, "y": 72, "w": 6, "h": 8 },
+      "gridPos": { "x": 18, "y": 80, "w": 6, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -1293,14 +1371,14 @@
       "type": "row",
       "id": 44,
       "title": "Drain & Lifecycle",
-      "gridPos": { "x": 0, "y": 80, "w": 24, "h": 1 },
+      "gridPos": { "x": 0, "y": 88, "w": 24, "h": 1 },
       "collapsed": false
     },
     {
       "type": "stat",
       "id": 45,
       "title": "Drain Active",
-      "gridPos": { "x": 0, "y": 81, "w": 6, "h": 6 },
+      "gridPos": { "x": 0, "y": 89, "w": 6, "h": 6 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -1336,7 +1414,7 @@
       "type": "timeseries",
       "id": 46,
       "title": "Drain Objects / Bytes",
-      "gridPos": { "x": 6, "y": 81, "w": 6, "h": 6 },
+      "gridPos": { "x": 6, "y": 89, "w": 6, "h": 6 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -1367,7 +1445,7 @@
       "type": "timeseries",
       "id": 47,
       "title": "Lifecycle Deleted / Failed",
-      "gridPos": { "x": 12, "y": 81, "w": 6, "h": 6 },
+      "gridPos": { "x": 12, "y": 89, "w": 6, "h": 6 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -1397,7 +1475,7 @@
       "type": "timeseries",
       "id": 48,
       "title": "Lifecycle Runs",
-      "gridPos": { "x": 18, "y": 81, "w": 6, "h": 6 },
+      "gridPos": { "x": 18, "y": 89, "w": 6, "h": 6 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -1423,14 +1501,14 @@
       "type": "row",
       "id": 49,
       "title": "Cleanup Queue & Audit",
-      "gridPos": { "x": 0, "y": 87, "w": 24, "h": 1 },
+      "gridPos": { "x": 0, "y": 95, "w": 24, "h": 1 },
       "collapsed": false
     },
     {
       "type": "stat",
       "id": 50,
       "title": "Cleanup Queue Depth",
-      "gridPos": { "x": 0, "y": 88, "w": 6, "h": 8 },
+      "gridPos": { "x": 0, "y": 96, "w": 6, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -1462,7 +1540,7 @@
       "type": "timeseries",
       "id": 51,
       "title": "Cleanup Throughput",
-      "gridPos": { "x": 6, "y": 88, "w": 6, "h": 8 },
+      "gridPos": { "x": 6, "y": 96, "w": 6, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -1492,7 +1570,7 @@
       "type": "timeseries",
       "id": 64,
       "title": "Orphan Bytes per Backend",
-      "gridPos": { "x": 12, "y": 88, "w": 6, "h": 8 },
+      "gridPos": { "x": 12, "y": 96, "w": 6, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -1529,7 +1607,7 @@
       "type": "timeseries",
       "id": 52,
       "title": "Audit Events",
-      "gridPos": { "x": 18, "y": 88, "w": 6, "h": 8 },
+      "gridPos": { "x": 18, "y": 96, "w": 6, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -1557,14 +1635,14 @@
       "type": "row",
       "id": 53,
       "title": "Encryption",
-      "gridPos": { "x": 0, "y": 96, "w": 24, "h": 1 },
+      "gridPos": { "x": 0, "y": 104, "w": 24, "h": 1 },
       "collapsed": false
     },
     {
       "type": "timeseries",
       "id": 54,
       "title": "Encryption Operations",
-      "gridPos": { "x": 0, "y": 97, "w": 8, "h": 8 },
+      "gridPos": { "x": 0, "y": 105, "w": 8, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -1590,7 +1668,7 @@
       "type": "timeseries",
       "id": 55,
       "title": "Encryption Errors",
-      "gridPos": { "x": 8, "y": 97, "w": 8, "h": 8 },
+      "gridPos": { "x": 8, "y": 105, "w": 8, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -1616,7 +1694,7 @@
       "type": "timeseries",
       "id": 56,
       "title": "Encrypt Existing / Key Rotation",
-      "gridPos": { "x": 16, "y": 97, "w": 8, "h": 8 },
+      "gridPos": { "x": 16, "y": 105, "w": 8, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -1646,14 +1724,14 @@
       "type": "row",
       "id": 61,
       "title": "Redis",
-      "gridPos": { "x": 0, "y": 120, "w": 24, "h": 1 },
+      "gridPos": { "x": 0, "y": 128, "w": 24, "h": 1 },
       "collapsed": false
     },
     {
       "type": "stat",
       "id": 62,
       "title": "Redis Fallback Active",
-      "gridPos": { "x": 0, "y": 121, "w": 4, "h": 6 },
+      "gridPos": { "x": 0, "y": 129, "w": 4, "h": 6 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -1688,7 +1766,7 @@
       "type": "timeseries",
       "id": 63,
       "title": "Redis Operations",
-      "gridPos": { "x": 4, "y": 121, "w": 10, "h": 6 },
+      "gridPos": { "x": 4, "y": 129, "w": 10, "h": 6 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {

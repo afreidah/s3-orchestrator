@@ -271,7 +271,7 @@ See the [Admin Guide](docs/admin-guide.md#encryption) for setup, key rotation, a
 
 ## Rate Limiting
 
-Optional per-IP token bucket rate limiting. When enabled, requests exceeding the configured rate return `429 SlowDown`. Stale IP entries are evicted by a background goroutine every `cleanup_interval` (default 1m); entries not seen within `cleanup_max_age` (default 5m) are removed. Under high source-IP cardinality (e.g., DDoS), the map can accumulate up to `cleanup_max_age` worth of unique IPs before eviction runs — tune these values if memory pressure is a concern.
+Optional per-IP token bucket rate limiting. When enabled, requests exceeding the configured rate return `429 SlowDown` with a `Retry-After: 1` header. Stale IP entries are evicted by a background goroutine every `cleanup_interval` (default 1m); entries not seen within `cleanup_max_age` (default 5m) are removed. Under high source-IP cardinality (e.g., DDoS), the map can accumulate up to `cleanup_max_age` worth of unique IPs before eviction runs — tune these values if memory pressure is a concern.
 
 When running behind a reverse proxy (e.g., Traefik, nginx), configure `trusted_proxies` with the proxy's CIDR ranges so the orchestrator extracts the real client IP from the `X-Forwarded-For` header using rightmost-untrusted extraction. Without `trusted_proxies`, `X-Forwarded-For` is ignored and the direct connection IP is always used.
 
@@ -296,6 +296,10 @@ server:
   listen_addr: "0.0.0.0:9000"
   max_object_size: 5368709120  # 5 GB (default)
   # max_concurrent_requests: 0  # 0 = unlimited (default)
+  # max_concurrent_reads: 0     # separate read concurrency limit (0 = use global)
+  # max_concurrent_writes: 0    # separate write concurrency limit (0 = use global)
+  # load_shed_threshold: 0      # active shedding at this capacity ratio (0 = disabled)
+  # admission_wait: "0s"        # brief wait before rejection (0 = instant)
   # backend_timeout: "30s"       # per-operation timeout for backend S3 calls (default: 30s)
   # read_header_timeout: "10s"   # max time to read request headers (default: 10s)
   # read_timeout: "5m"           # max time to read entire request including body (default: 5m)
@@ -475,6 +479,10 @@ kill -HUP $(pidof s3-orchestrator)
 | `lifecycle` | Yes | Rules (prefix, expiration_days) |
 | `server.listen_addr` | No | Requires restart |
 | `server.max_concurrent_requests` | No | Requires restart |
+| `server.max_concurrent_reads` | No | Requires restart |
+| `server.max_concurrent_writes` | No | Requires restart |
+| `server.load_shed_threshold` | No | Requires restart |
+| `server.admission_wait` | No | Requires restart |
 | `server` timeouts | No | `read_header_timeout`, `read_timeout`, `write_timeout`, `idle_timeout`, `shutdown_delay` |
 | `server.tls` | No | Requires restart |
 | `database` | No | Requires restart |

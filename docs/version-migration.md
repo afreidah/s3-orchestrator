@@ -33,7 +33,29 @@ s3-orchestrator version
 
 ## Version History
 
-### v0.13.x (current)
+### v0.14.x (current)
+
+**New configuration fields:**
+
+- `server.max_concurrent_reads` -- separate concurrency limit for read operations (GET, HEAD). Default: 0 (uses global limit).
+- `server.max_concurrent_writes` -- separate concurrency limit for write operations (PUT, POST, DELETE). Default: 0 (uses global limit).
+- `server.load_shed_threshold` -- active load shedding threshold as a fraction of pool capacity (0.0--1.0). When in-flight requests exceed this ratio, new requests are probabilistically rejected with probability ramping linearly to 100% at full capacity. Default: 0 (disabled).
+- `server.admission_wait` -- brief wait duration before rejecting when the admission semaphore is full (e.g. `50ms`, `100ms`). Smooths micro-bursts without adding latency during sustained overload. Default: 0 (instant rejection).
+
+**Behavioral changes:**
+
+- **Retry-After headers** -- 503 (admission control) and 429 (rate limit) responses now include a `Retry-After: 1` header. AWS S3 SDKs and well-behaved HTTP clients use this for backoff timing instead of retrying immediately.
+- **Early upload rejection** -- PUT requests are pre-checked for backend capacity before the request body is read. When clients send `Expect: 100-continue`, uploads to full backends are rejected without transmitting the body, saving bandwidth.
+- **Separate read/write admission pools** -- when `max_concurrent_reads` and `max_concurrent_writes` are both set, reads and writes get independent concurrency limits. A burst of large uploads no longer starves GETs and HEADs.
+- **Active load shedding** -- when `load_shed_threshold` is set, requests are probabilistically rejected before the hard admission limit. This provides smooth degradation instead of a cliff at the concurrency limit.
+- **Admission queue timeout** -- when `admission_wait` is set, requests briefly wait for a slot before being rejected, smoothing short traffic spikes.
+
+**New metrics:**
+
+- `s3proxy_load_shed_total` (counter) -- requests probabilistically shed before the hard admission limit
+- `s3proxy_early_rejections_total` (counter) -- uploads rejected before body transmission due to no backend capacity
+
+### v0.13.x
 
 **Performance improvements:**
 
