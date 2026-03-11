@@ -213,14 +213,18 @@ The `s3proxy_audit_events_total` Prometheus counter with `event` label tracks au
 
 ## Admission Control
 
-Limit the total number of concurrent S3 requests to prevent backend and database saturation under load:
+Limit the number of concurrent S3 requests to prevent backend and database saturation under load:
 
 ```yaml
 server:
   max_concurrent_requests: 30    # 0 = unlimited (default)
+  # max_concurrent_reads: 20     # separate read limit (optional)
+  # max_concurrent_writes: 10    # separate write limit (optional)
+  # load_shed_threshold: 0.8     # probabilistic shedding at 80% capacity (optional)
+  # admission_wait: "50ms"       # brief wait before rejection (optional)
 ```
 
-When the limit is reached, new requests receive `503 SlowDown` immediately instead of queueing and consuming resources. A good starting point is 2-3x your `database.max_conns` value, since every S3 operation requires at least one database query. Monitor `s3proxy_admission_rejections_total` and `s3proxy_inflight_requests` to tune the value.
+When the limit is reached, new requests receive `503 SlowDown` with a `Retry-After: 1` header. Split read/write pools prevent write storms from starving reads. Active load shedding provides smooth degradation before the hard limit. A good starting point for the global limit is 2-3x your `database.max_conns` value. See [Performance Tuning](performance-tuning.md#admission-control) for detailed guidance.
 
 ## Rate Limiting
 
