@@ -33,7 +33,15 @@ s3-orchestrator version
 
 ## Version History
 
-### v0.12.x (current)
+### v0.13.x (current)
+
+**Performance improvements:**
+
+- **Dedicated HTTP transport per backend** -- each S3 backend now gets its own `http.Transport` with tuned connection pool settings (100 max idle, 90s idle timeout, 30s keepalive, 10s dial/TLS timeouts). Improves throughput by reducing connection setup latency and provides per-backend resource isolation.
+- **DNS freshness via idle connection recycling** -- the 90-second `IdleConnTimeout` forces fresh DNS resolution on reconnection, allowing the orchestrator to follow backend endpoint changes without restarts.
+- **Shared buffer pool for streaming** -- a `sync.Pool` of reusable 32 KB buffers replaces per-call `io.Copy` allocations at all streaming sites (GET proxy, PUT body buffering, CopyObject, multipart assembly, UI downloads), reducing GC pressure under high concurrency.
+
+### v0.12.x
 
 **Database migrations:**
 

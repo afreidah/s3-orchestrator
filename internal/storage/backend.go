@@ -15,6 +15,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"strings"
 	"time"
 
@@ -74,15 +76,37 @@ type S3Backend struct {
 	unsignedPayload bool
 }
 
+// newBackendTransport creates a tuned HTTP transport for a single S3 backend.
+// Each backend gets its own transport so connection pools are isolated and
+// sized for the proxy's concurrent workload (rebalancer, replicator, parallel
+// PUTs/GETs). IdleConnTimeout bounds DNS staleness: idle connections are
+// recycled within 90 s, forcing a fresh DNS resolution on the next dial.
+func newBackendTransport() *http.Transport {
+	return &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   10 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
+		ForceAttemptHTTP2:      true,
+	}
+}
+
 // NewS3Backend creates a new S3-compatible backend client. Uses BaseEndpoint
-// to direct requests to the configured provider instead of AWS.
+// to direct requests to the configured provider instead of AWS. Each backend
+// gets a dedicated HTTP transport with tuned connection pool settings.
 func NewS3Backend(cfg *config.BackendConfig) (*S3Backend, error) {
-	// --- Create S3 client with custom endpoint ---
+	// --- Create S3 client with custom endpoint and transport ---
 	opts := s3.Options{
 		Region:       cfg.Region,
 		Credentials:  credentials.NewStaticCredentialsProvider(cfg.AccessKeyID, cfg.SecretAccessKey, ""),
 		BaseEndpoint: aws.String(cfg.Endpoint),
 		UsePathStyle: cfg.ForcePathStyle,
+		HTTPClient:   &http.Client{Transport: newBackendTransport()},
 	}
 	if cfg.DisableChecksum {
 		opts.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
