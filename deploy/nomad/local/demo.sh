@@ -22,8 +22,8 @@ PORT=9000
 
 # Force all Nomad commands to target the local dev agent, not any remote
 # cluster that may be configured in the user's shell environment.
-export NOMAD_ADDR="http://127.0.0.1:4646"
 unset NOMAD_TOKEN NOMAD_CACERT NOMAD_CLIENT_CERT NOMAD_CLIENT_KEY NOMAD_TLS_SERVER_NAME NOMAD_NAMESPACE NOMAD_REGION
+nomad() { NOMAD_ADDR="http://127.0.0.1:4646" command nomad "$@"; }
 
 cd "$REPO_ROOT"
 
