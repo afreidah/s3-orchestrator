@@ -118,6 +118,34 @@ func TestPutObject_SpreadStrategy_UsesGetLeastUtilized(t *testing.T) {
 	}
 }
 
+// -------------------------------------------------------------------------
+// CanAcceptWrite
+// -------------------------------------------------------------------------
+
+func TestCanAcceptWrite_HasCapacity(t *testing.T) {
+	store := &mockStore{getBackendResp: "b1"}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+
+	if !mgr.ObjectManager.CanAcceptWrite(100) {
+		t.Error("CanAcceptWrite should return true when backend has capacity")
+	}
+}
+
+func TestCanAcceptWrite_NoCapacity(t *testing.T) {
+	limits := map[string]UsageLimits{
+		"b1": {APIRequestLimit: 1},
+	}
+	store := &mockStore{}
+	mgr := newTestManagerWithLimits(store, map[string]*mockBackend{"b1": newMockBackend()}, limits)
+
+	// Push b1 over its API request limit
+	mgr.ObjectManager.usage.SetBaseline("b1", UsageStat{APIRequests: 1})
+
+	if mgr.ObjectManager.CanAcceptWrite(100) {
+		t.Error("CanAcceptWrite should return false when no backend has capacity")
+	}
+}
+
 func TestPutObject_QuotaExhausted(t *testing.T) {
 	store := &mockStore{getBackendErr: ErrNoSpaceAvailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})

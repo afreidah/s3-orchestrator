@@ -73,6 +73,9 @@ func TestRateLimiter_Middleware429(t *testing.T) {
 	if rec2.Code != http.StatusTooManyRequests {
 		t.Errorf("second request: got %d, want 429", rec2.Code)
 	}
+	if ra := rec2.Header().Get("Retry-After"); ra != "1" {
+		t.Errorf("Retry-After = %q, want %q", ra, "1")
+	}
 }
 
 func TestRateLimiter_Middleware429_IncrementsMetric(t *testing.T) {
