@@ -22,6 +22,10 @@ NAMESPACE="s3-orchestrator"
 IMAGE="s3-orchestrator:local"
 PORT=9000
 
+# Force all kubectl commands to target the local k3d cluster, not any remote
+# cluster that may be configured in the user's kubeconfig.
+kubectl() { command kubectl --context "k3d-${CLUSTER_NAME}" "$@"; }
+
 cd "$REPO_ROOT"
 
 # --- Teardown ---

@@ -64,6 +64,10 @@ job "s3-orchestrator" {
           server:
             listen_addr: "0.0.0.0:9000"
             backend_timeout: "30s"
+            max_concurrent_reads: 10
+            max_concurrent_writes: 20
+            load_shed_threshold: 0.8
+            admission_wait: "50ms"
 
           database:
             host: "__HOST_IP__"
@@ -128,6 +132,11 @@ job "s3-orchestrator" {
               enabled: true
               endpoint: "__HOST_IP__:4317"
               insecure: true
+
+          rate_limit:
+            enabled: true
+            requests_per_sec: 100
+            burst: 200
 
           ui:
             enabled: true
