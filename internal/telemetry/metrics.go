@@ -232,6 +232,24 @@ var (
 		},
 	)
 
+	// LoadShedTotal counts requests probabilistically rejected by active
+	// load shedding before reaching the hard admission limit.
+	LoadShedTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "s3proxy_load_shed_total",
+			Help: "Requests shed by active load shedding before hard admission limit",
+		},
+	)
+
+	// EarlyRejectionsTotal counts uploads rejected before body transmission
+	// via Expect: 100-Continue pre-flight capacity checks.
+	EarlyRejectionsTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "s3proxy_early_rejections_total",
+			Help: "Uploads rejected before body transmission (no backend capacity)",
+		},
+	)
+
 	// --- Rebalancer metrics ---
 
 	// RebalanceObjectsMoved counts objects moved by the rebalancer.

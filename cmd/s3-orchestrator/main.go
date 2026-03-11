@@ -383,11 +383,37 @@ func runServe() {
 		if rl != nil {
 			s3Handler = rl.Middleware(s3Handler)
 		}
-		if cfg.Server.MaxConcurrentRequests > 0 {
+		if cfg.Server.MaxConcurrentReads > 0 && cfg.Server.MaxConcurrentWrites > 0 {
+			ac := server.NewSplitAdmissionController(
+				cfg.Server.MaxConcurrentReads,
+				cfg.Server.MaxConcurrentWrites,
+			)
+			if cfg.Server.LoadShedThreshold > 0 {
+				ac.SetShedThreshold(cfg.Server.LoadShedThreshold)
+			}
+			if cfg.Server.AdmissionWait > 0 {
+				ac.SetAdmissionWait(cfg.Server.AdmissionWait)
+			}
+			s3Handler = ac.Middleware(s3Handler)
+			slog.Info("Split admission control enabled",
+				"max_concurrent_reads", cfg.Server.MaxConcurrentReads,
+				"max_concurrent_writes", cfg.Server.MaxConcurrentWrites,
+				"load_shed_threshold", cfg.Server.LoadShedThreshold,
+				"admission_wait", cfg.Server.AdmissionWait,
+			)
+		} else if cfg.Server.MaxConcurrentRequests > 0 {
 			ac := server.NewAdmissionController(cfg.Server.MaxConcurrentRequests)
+			if cfg.Server.LoadShedThreshold > 0 {
+				ac.SetShedThreshold(cfg.Server.LoadShedThreshold)
+			}
+			if cfg.Server.AdmissionWait > 0 {
+				ac.SetAdmissionWait(cfg.Server.AdmissionWait)
+			}
 			s3Handler = ac.Middleware(s3Handler)
 			slog.Info("Admission control enabled",
 				"max_concurrent_requests", cfg.Server.MaxConcurrentRequests,
+				"load_shed_threshold", cfg.Server.LoadShedThreshold,
+				"admission_wait", cfg.Server.AdmissionWait,
 			)
 		}
 		mux.Handle("/", s3Handler)

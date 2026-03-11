@@ -65,6 +65,19 @@ func wrapReader(r io.Reader, c io.Closer) io.ReadCloser {
 }
 
 // -------------------------------------------------------------------------
+// PRE-FLIGHT CHECKS
+// -------------------------------------------------------------------------
+
+// CanAcceptWrite reports whether any backend can accept a write of the given
+// size. Used by the HTTP handler to reject uploads before the request body
+// is transmitted (Expect: 100-Continue support).
+func (o *ObjectManager) CanAcceptWrite(size int64) bool {
+	eligible := o.excludeUnhealthy(o.excludeDraining(
+		o.usage.BackendsWithinLimits(o.order, 1, 0, size)))
+	return len(eligible) > 0
+}
+
+// -------------------------------------------------------------------------
 // OBJECT CRUD
 // -------------------------------------------------------------------------
 
