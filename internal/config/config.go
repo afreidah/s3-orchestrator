@@ -69,6 +69,10 @@ type ServerConfig struct {
 	LogLevel             string        `yaml:"log_level"`                // Log level: debug, info, warn, error (default: info)
 	MaxObjectSize        int64         `yaml:"max_object_size"`          // Max upload size in bytes (default: 5GB)
 	MaxConcurrentRequests int          `yaml:"max_concurrent_requests"`  // Max concurrent S3 requests (0 = unlimited)
+	MaxConcurrentReads    int          `yaml:"max_concurrent_reads"`     // Max concurrent read requests (0 = use global limit)
+	MaxConcurrentWrites   int          `yaml:"max_concurrent_writes"`    // Max concurrent write requests (0 = use global limit)
+	LoadShedThreshold     float64      `yaml:"load_shed_threshold"`      // Active shedding threshold (0.0-1.0, 0 = disabled)
+	AdmissionWait         time.Duration `yaml:"admission_wait"`           // Brief wait before rejection (0 = instant reject)
 	BackendTimeout       time.Duration `yaml:"backend_timeout"`          // Per-operation timeout for backend S3 calls (default: 30s)
 	ReadHeaderTimeout    time.Duration `yaml:"read_header_timeout"`      // Max time to read request headers (default: 10s)
 	ReadTimeout          time.Duration `yaml:"read_timeout"`             // Max time to read entire request including body (default: 5m)
@@ -324,6 +328,20 @@ func (c *Config) SetDefaultsAndValidate() error {
 
 	if c.Server.MaxConcurrentRequests < 0 {
 		errors = append(errors, "server.max_concurrent_requests must not be negative")
+	}
+	if c.Server.MaxConcurrentReads < 0 {
+		errors = append(errors, "server.max_concurrent_reads must not be negative")
+	}
+	if c.Server.MaxConcurrentWrites < 0 {
+		errors = append(errors, "server.max_concurrent_writes must not be negative")
+	}
+	if c.Server.LoadShedThreshold < 0 || c.Server.LoadShedThreshold >= 1 {
+		if c.Server.LoadShedThreshold != 0 {
+			errors = append(errors, "server.load_shed_threshold must be between 0.0 and 1.0 (exclusive)")
+		}
+	}
+	if c.Server.AdmissionWait < 0 {
+		errors = append(errors, "server.admission_wait must not be negative")
 	}
 
 	if c.Server.BackendTimeout == 0 {
@@ -796,6 +814,18 @@ func NonReloadableFieldsChanged(old, new *Config) []string {
 	}
 	if old.Server.MaxConcurrentRequests != new.Server.MaxConcurrentRequests {
 		changed = append(changed, "server.max_concurrent_requests")
+	}
+	if old.Server.MaxConcurrentReads != new.Server.MaxConcurrentReads {
+		changed = append(changed, "server.max_concurrent_reads")
+	}
+	if old.Server.MaxConcurrentWrites != new.Server.MaxConcurrentWrites {
+		changed = append(changed, "server.max_concurrent_writes")
+	}
+	if old.Server.LoadShedThreshold != new.Server.LoadShedThreshold {
+		changed = append(changed, "server.load_shed_threshold")
+	}
+	if old.Server.AdmissionWait != new.Server.AdmissionWait {
+		changed = append(changed, "server.admission_wait")
 	}
 	if old.Server.ReadHeaderTimeout != new.Server.ReadHeaderTimeout ||
 		old.Server.ReadTimeout != new.Server.ReadTimeout ||

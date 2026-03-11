@@ -100,6 +100,17 @@ func (s *Server) handlePut(ctx context.Context, w http.ResponseWriter, r *http.R
 		}
 	}
 
+	// --- Early rejection before body transmission (Expect: 100-Continue) ---
+	// Check backend capacity before reading the request body. When the
+	// client sends Expect: 100-continue, Go's net/http delays the 100
+	// Continue response until the first r.Body.Read(). Rejecting here
+	// avoids transmitting the entire upload body for a doomed request.
+	if !s.Manager.ObjectManager.CanAcceptWrite(r.ContentLength) {
+		telemetry.EarlyRejectionsTotal.Inc()
+		writeS3Error(w, http.StatusInsufficientStorage, "InsufficientStorage", "No backend has capacity for this upload")
+		return http.StatusInsufficientStorage, fmt.Errorf("no backend capacity for %d bytes", r.ContentLength)
+	}
+
 	// --- Add size to span ---
 	span := trace.SpanFromContext(ctx)
 	span.SetAttributes(

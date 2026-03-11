@@ -99,6 +99,65 @@ func TestConfigValidation_NegativeMaxConcurrentRequests(t *testing.T) {
 	}
 }
 
+func TestConfigValidation_NegativeMaxConcurrentReads(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Server.MaxConcurrentReads = -1
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil {
+		t.Error("negative max_concurrent_reads should fail validation")
+	}
+}
+
+func TestConfigValidation_NegativeMaxConcurrentWrites(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Server.MaxConcurrentWrites = -1
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil {
+		t.Error("negative max_concurrent_writes should fail validation")
+	}
+}
+
+func TestConfigValidation_InvalidLoadShedThreshold(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Server.LoadShedThreshold = 1.5
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil {
+		t.Error("load_shed_threshold >= 1.0 should fail validation")
+	}
+}
+
+func TestConfigValidation_NegativeLoadShedThreshold(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Server.LoadShedThreshold = -0.5
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil {
+		t.Error("negative load_shed_threshold should fail validation")
+	}
+}
+
+func TestConfigValidation_ValidLoadShedThreshold(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Server.LoadShedThreshold = 0.8
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Errorf("valid load_shed_threshold 0.8 should pass: %v", err)
+	}
+}
+
+func TestConfigValidation_NegativeAdmissionWait(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Server.AdmissionWait = -1 * time.Second
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil {
+		t.Error("negative admission_wait should fail validation")
+	}
+}
+
 func TestConfigValidation_ZeroMaxConcurrentRequestsMeansUnlimited(t *testing.T) {
 	cfg := validBaseConfig()
 	cfg.Server.MaxConcurrentRequests = 0
@@ -782,6 +841,58 @@ func TestNonReloadableFieldsChanged_MaxConcurrentRequests(t *testing.T) {
 	changed := NonReloadableFieldsChanged(&a, &b)
 	if len(changed) != 1 || changed[0] != "server.max_concurrent_requests" {
 		t.Errorf("expected [server.max_concurrent_requests], got %v", changed)
+	}
+}
+
+func TestNonReloadableFieldsChanged_MaxConcurrentReads(t *testing.T) {
+	a := validBaseConfig()
+	b := validBaseConfig()
+	_ = a.SetDefaultsAndValidate()
+	b.Server.MaxConcurrentReads = 50
+	_ = b.SetDefaultsAndValidate()
+
+	changed := NonReloadableFieldsChanged(&a, &b)
+	if len(changed) != 1 || changed[0] != "server.max_concurrent_reads" {
+		t.Errorf("expected [server.max_concurrent_reads], got %v", changed)
+	}
+}
+
+func TestNonReloadableFieldsChanged_MaxConcurrentWrites(t *testing.T) {
+	a := validBaseConfig()
+	b := validBaseConfig()
+	_ = a.SetDefaultsAndValidate()
+	b.Server.MaxConcurrentWrites = 25
+	_ = b.SetDefaultsAndValidate()
+
+	changed := NonReloadableFieldsChanged(&a, &b)
+	if len(changed) != 1 || changed[0] != "server.max_concurrent_writes" {
+		t.Errorf("expected [server.max_concurrent_writes], got %v", changed)
+	}
+}
+
+func TestNonReloadableFieldsChanged_LoadShedThreshold(t *testing.T) {
+	a := validBaseConfig()
+	b := validBaseConfig()
+	_ = a.SetDefaultsAndValidate()
+	b.Server.LoadShedThreshold = 0.8
+	_ = b.SetDefaultsAndValidate()
+
+	changed := NonReloadableFieldsChanged(&a, &b)
+	if len(changed) != 1 || changed[0] != "server.load_shed_threshold" {
+		t.Errorf("expected [server.load_shed_threshold], got %v", changed)
+	}
+}
+
+func TestNonReloadableFieldsChanged_AdmissionWait(t *testing.T) {
+	a := validBaseConfig()
+	b := validBaseConfig()
+	_ = a.SetDefaultsAndValidate()
+	b.Server.AdmissionWait = 100 * time.Millisecond
+	_ = b.SetDefaultsAndValidate()
+
+	changed := NonReloadableFieldsChanged(&a, &b)
+	if len(changed) != 1 || changed[0] != "server.admission_wait" {
+		t.Errorf("expected [server.admission_wait], got %v", changed)
 	}
 }
 

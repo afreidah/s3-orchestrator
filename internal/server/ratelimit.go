@@ -139,6 +139,7 @@ func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 				slog.String("method", r.Method),
 				slog.String("path", r.URL.Path),
 			)
+			w.Header().Set("Retry-After", "1")
 			writeS3Error(w, http.StatusTooManyRequests, "SlowDown", "Rate limit exceeded")
 			return
 		}
