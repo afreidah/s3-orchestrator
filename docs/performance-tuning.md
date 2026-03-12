@@ -124,7 +124,9 @@ The 90-second `IdleConnTimeout` addresses DNS staleness for endpoints resolved v
 
 ### Buffer Pool
 
-All streaming operations (GET proxy, PUT body buffering, CopyObject, multipart assembly, UI downloads) use a shared `sync.Pool` of 32 KB byte buffers via `io.CopyBuffer` instead of `io.Copy`. This eliminates per-call buffer allocations that create GC pressure under high concurrency. The pool is sized automatically and requires no configuration.
+All streaming operations (GET proxy, PUT body buffering, CopyObject, multipart assembly, UI downloads) use a shared `sync.Pool` of 32 KB byte buffers via `io.CopyBuffer` instead of `io.Copy`. This eliminates per-call buffer allocations that create GC pressure under high concurrency.
+
+The CopyObject and multipart assembly streaming paths additionally wrap `io.PipeWriter` in pooled 64 KB `bufio.Writer` buffers, batching small writes to reduce syscall frequency on these background operations. Both pools are sized automatically and require no configuration.
 
 ## Routing Strategy
 
@@ -322,3 +324,103 @@ To limit memory growth under attack:
 ### Monitoring
 
 - `s3proxy_rate_limit_rejections_total` — counter of rejected requests. A sustained non-zero rate means the limiter is actively throttling traffic.
+
+## Load Testing
+
+The `loadtest/` directory contains tools for benchmarking the orchestrator under realistic S3 traffic. All tools handle SigV4 authentication automatically.
+
+### Tools
+
+**vegeta (Go)** — constant-rate latency profiling. Best for answering "what is P99 latency at N requests/second?"
+
+**k6** — scenario-based workflow simulation. Best for answering "how does the system behave under realistic mixed traffic patterns?"
+
+### Quick Start
+
+Start the demo environment, then run the Make targets:
+
+```bash
+make nomad-demo   # or make kubernetes-demo
+
+# Constant-rate PUT throughput
+make loadtest-put LOADTEST_RATE=200 LOADTEST_SIZE=4096
+
+# Constant-rate GET latency (pre-seeds objects first)
+make loadtest-get LOADTEST_RATE=500 LOADTEST_SEED=1000
+
+# Mixed PUT/GET workload
+make loadtest-mixed LOADTEST_RATE=300 LOADTEST_DURATION=2m
+
+# k6 burst test (admission control / load shedding)
+make loadtest-burst
+
+# k6 mixed CRUD workflow
+make loadtest-k6
+```
+
+The vegeta targets accept these variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LOADTEST_RATE` | `100` | Requests per second |
+| `LOADTEST_DURATION` | `30s` | Test duration |
+| `LOADTEST_SIZE` | `1024` | Object size in bytes |
+| `LOADTEST_SEED` | `100` | Objects to pre-upload for GET/mixed |
+| `LOADTEST_WORKERS` | `10` | Concurrent workers |
+| `LOADTEST_ENDPOINT` | `http://localhost:9000` | S3 endpoint |
+| `LOADTEST_BUCKET` | `photos` | Target bucket |
+
+### Interpreting Results
+
+**vegeta output:**
+
+```
+Requests      [total, rate, throughput]         3000, 100.03, 100.02
+Latencies     [min, mean, 50, 90, 95, 99, max]  3.2ms, 4.2ms, 4.1ms, 4.8ms, 5.1ms, 6.6ms, 12.3ms
+Success       [ratio]                           100.00%
+Status Codes  [code:count]                      200:3000
+```
+
+- **P99 latency** is the most important number for production sizing. If P99 exceeds your SLA target, reduce the request rate or add instances.
+- **Success ratio** below 100% means requests were rejected (429 rate limit or 503 admission control). Check `Status Codes` to see which.
+- **Throughput** vs **rate**: if throughput is significantly lower than the configured rate, the server cannot keep up.
+
+**k6 output:**
+
+- `put_success` / `get_success` — per-operation success rates
+- `shed_503` (burst test) — number of requests rejected by admission control
+- `http_req_duration` — latency percentiles across all operations
+
+### What to Watch in Grafana
+
+While load tests run, the Grafana dashboard shows system behavior in real time:
+
+- **Quota & Storage** — per-backend utilization during writes
+- **Request Performance** — latency percentiles, status code distribution, request rate
+- **Circuit Breaker** — backend health state transitions under load
+- **Replication** — pending replica count and copy duration after write bursts
+- **Cleanup Queue** — orphaned objects queued for cleanup after failures
+
+### Baseline Workflow
+
+To compare before/after a code change:
+
+1. Start clean: `make clean && make nomad-demo`
+2. Run the baseline: `make loadtest-put LOADTEST_RATE=500 LOADTEST_DURATION=1m`
+3. Save the output (latencies, throughput, success ratio)
+4. Apply the code change, rebuild: `make clean && make nomad-demo`
+5. Run the same test with identical parameters
+6. Compare P50/P95/P99 latencies and throughput
+
+### Sizing Guidelines
+
+These reference numbers were measured on a single instance with three local MinIO backends, replication factor 2, and AES encryption enabled:
+
+| Workload | Rate | P99 Latency | CPU | Notes |
+|----------|------|-------------|-----|-------|
+| PUT 1KB | 100/s | ~7ms | ~50% | Steady with replication spikes |
+| GET 1KB | 100/s | ~3ms | ~50% | Includes decryption |
+| Mixed 1KB | 300/s | ~8ms | ~140% | 50/50 PUT/GET |
+| Burst (100 VUs) | ~280/s | ~96ms | 150-200% spikes | k6 scenario, all PUTs |
+
+CPU percentages are relative to the container's CPU allocation. Memory remained flat across all tests at 1KB object sizes — the streaming architecture avoids buffering objects in memory. Larger objects (1MB+) will increase memory usage proportionally to concurrency.

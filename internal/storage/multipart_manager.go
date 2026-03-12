@@ -251,7 +251,11 @@ func (mp *MultipartManager) CompleteMultipartUpload(ctx context.Context, uploadI
 	defer pipeCancel()
 
 	go func() {
-		defer func() { _ = pw.Close() }()
+		bw := bufpool.GetWriter(pw)
+		defer func() {
+			bufpool.PutWriter(bw)
+			_ = pw.Close()
+		}()
 		for _, part := range parts {
 			partKey := multipartPartKey(uploadID, part.PartNumber)
 			bctx, bcancel := mp.withTimeout(pipeCtx)
@@ -284,13 +288,16 @@ func (mp *MultipartManager) CompleteMultipartUpload(ctx context.Context, uploadI
 				src = decrypted
 			}
 
-			_, err = bufpool.Copy(pw, src)
+			_, err = bufpool.Copy(bw, src)
 			_ = result.Body.Close()
 			bcancel()
 			if err != nil {
 				pw.CloseWithError(fmt.Errorf("failed to stream part %d: %w", part.PartNumber, err))
 				return
 			}
+		}
+		if err := bw.Flush(); err != nil {
+			pw.CloseWithError(fmt.Errorf("failed to flush multipart stream: %w", err))
 		}
 	}()
 

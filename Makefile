@@ -187,6 +187,49 @@ release-local: prep-changelog ## Dry-run GoReleaser locally (no publish)
 	goreleaser release --snapshot --clean
 
 # -------------------------------------------------------------------------
+# LOAD TESTING
+# -------------------------------------------------------------------------
+
+LOADTEST_RATE     ?= 100
+LOADTEST_DURATION ?= 30s
+LOADTEST_SIZE     ?= 1024
+LOADTEST_SEED     ?= 100
+LOADTEST_WORKERS  ?= 10
+LOADTEST_ENDPOINT ?= http://localhost:9000
+LOADTEST_BUCKET   ?= photos
+
+loadtest-build: ## Build the vegeta load test binary
+	cd loadtest && go build -o s3-loadtest .
+
+loadtest-put: loadtest-build ## Run PUT-only load test (use LOADTEST_RATE, LOADTEST_DURATION, LOADTEST_SIZE)
+	./loadtest/s3-loadtest \
+		-endpoint $(LOADTEST_ENDPOINT) -bucket $(LOADTEST_BUCKET) \
+		-op put -rate $(LOADTEST_RATE) -duration $(LOADTEST_DURATION) \
+		-size $(LOADTEST_SIZE) -workers $(LOADTEST_WORKERS)
+
+loadtest-get: loadtest-build ## Run GET-only load test (use LOADTEST_SEED for pre-seeded object count)
+	./loadtest/s3-loadtest \
+		-endpoint $(LOADTEST_ENDPOINT) -bucket $(LOADTEST_BUCKET) \
+		-op get -rate $(LOADTEST_RATE) -duration $(LOADTEST_DURATION) \
+		-size $(LOADTEST_SIZE) -seed $(LOADTEST_SEED) -workers $(LOADTEST_WORKERS)
+
+loadtest-mixed: loadtest-build ## Run mixed PUT/GET load test
+	./loadtest/s3-loadtest \
+		-endpoint $(LOADTEST_ENDPOINT) -bucket $(LOADTEST_BUCKET) \
+		-op mixed -rate $(LOADTEST_RATE) -duration $(LOADTEST_DURATION) \
+		-size $(LOADTEST_SIZE) -seed $(LOADTEST_SEED) -workers $(LOADTEST_WORKERS)
+
+loadtest-burst: ## Run k6 burst/admission-control test (requires k6)
+	@command -v k6 >/dev/null 2>&1 || { echo "Error: k6 is not installed. Install it from https://grafana.com/docs/k6/latest/set-up/install-k6/"; exit 1; }
+	k6 run loadtest/k6/burst.js \
+		--env S3_ENDPOINT=$(LOADTEST_ENDPOINT) --env S3_BUCKET=$(LOADTEST_BUCKET)
+
+loadtest-k6: ## Run k6 mixed CRUD workflow test (requires k6)
+	@command -v k6 >/dev/null 2>&1 || { echo "Error: k6 is not installed. Install it from https://grafana.com/docs/k6/latest/set-up/install-k6/"; exit 1; }
+	k6 run loadtest/k6/mixed.js \
+		--env S3_ENDPOINT=$(LOADTEST_ENDPOINT) --env S3_BUCKET=$(LOADTEST_BUCKET)
+
+# -------------------------------------------------------------------------
 # DEPLOYMENT DEMOS
 # -------------------------------------------------------------------------
 
@@ -240,18 +283,23 @@ web-push: builder ## Build and push multi-arch website image to registry
 # CLEANUP
 # -------------------------------------------------------------------------
 
-clean: integration-clean ## Remove build artifacts, local image, and test containers
+clean: ## Remove build artifacts, demo environments, containers, and volumes
+	# --- Stop Nomad job and agent ---
+	NOMAD_ADDR=http://127.0.0.1:4646 nomad job stop -purge s3-orchestrator 2>/dev/null || true
+	pkill -f '[n]omad agent -dev' 2>/dev/null || true
+	rm -f /tmp/nomad-demo.pid
+	# --- Delete k3d cluster ---
+	k3d cluster delete s3-orchestrator-demo 2>/dev/null || true
+	# --- Tear down compose services and volumes ---
+	docker compose -f $(COMPOSE_FILE) down -v --remove-orphans 2>/dev/null || true
+	# --- Remove orphaned volumes from previous runs ---
+	docker volume prune -f 2>/dev/null || true
+	# --- Build artifacts ---
 	go clean
-	rm -f s3-orchestrator
+	rm -f s3-orchestrator loadtest/s3-loadtest
 	rm -rf dist/ *.deb packaging/changelog.gz
 	docker rmi $(FULL_TAG) 2>/dev/null || true
 	docker rmi s3-orchestrator:local 2>/dev/null || true
-	k3d cluster delete s3-orchestrator-demo 2>/dev/null || true
-	@if [ -f /tmp/nomad-demo.pid ]; then \
-		NOMAD_ADDR=http://127.0.0.1:4646 nomad job stop -purge s3-orchestrator 2>/dev/null || true; \
-		kill $$(cat /tmp/nomad-demo.pid) 2>/dev/null || true; \
-		rm -f /tmp/nomad-demo.pid; \
-	fi
 
-.PHONY: help builder build docker push generate test vet lint govulncheck run docs migration integration-deps integration-test integration-clean tools prep-changelog deb deb-lint deb-all changelog release release-local kubernetes-demo nomad-demo web-tools web-godoc web-serve web-build web-docker web-push clean
+.PHONY: help builder build docker push generate test vet lint govulncheck run docs migration integration-deps integration-test integration-clean tools prep-changelog deb deb-lint deb-all changelog release release-local loadtest-build loadtest-put loadtest-get loadtest-mixed loadtest-burst loadtest-k6 kubernetes-demo nomad-demo web-tools web-godoc web-serve web-build web-docker web-push clean
 .DEFAULT_GOAL := help

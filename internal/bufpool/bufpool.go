@@ -15,6 +15,7 @@
 package bufpool
 
 import (
+	"bufio"
 	"io"
 	"sync"
 )
@@ -23,10 +24,20 @@ import (
 // same size ensures identical copy behavior while enabling buffer reuse.
 const bufSize = 32 * 1024
 
+// writerBufSize is the buffer size for pooled bufio.Writers wrapping
+// io.PipeWriters. 64 KB batches pipe writes to reduce syscall frequency.
+const writerBufSize = 64 * 1024
+
 var pool = sync.Pool{
 	New: func() any {
 		b := make([]byte, bufSize)
 		return &b
+	},
+}
+
+var writerPool = sync.Pool{
+	New: func() any {
+		return bufio.NewWriterSize(nil, writerBufSize)
 	},
 }
 
@@ -42,4 +53,20 @@ func Copy(dst io.Writer, src io.Reader) (int64, error) {
 	buf := Get()
 	defer Put(buf)
 	return io.CopyBuffer(dst, src, *buf)
+}
+
+// GetWriter returns a pooled bufio.Writer reset to write to w.
+// The caller must call PutWriter when done. Flush before returning
+// the writer to ensure all buffered data reaches the underlying writer.
+func GetWriter(w io.Writer) *bufio.Writer {
+	bw := writerPool.Get().(*bufio.Writer)
+	bw.Reset(w)
+	return bw
+}
+
+// PutWriter resets the writer (discarding any reference to the underlying
+// writer) and returns it to the pool.
+func PutWriter(bw *bufio.Writer) {
+	bw.Reset(nil)
+	writerPool.Put(bw)
 }
