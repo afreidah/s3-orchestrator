@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"math"
 	"strings"
 	"time"
 
@@ -231,7 +232,9 @@ type objectLocationRow interface {
 		db.ListDirectChildrenRow |
 		db.GetAllObjectLocationsRow |
 		db.GetUnderReplicatedObjectsRow |
-		db.GetUnderReplicatedObjectsExcludingRow
+		db.GetUnderReplicatedObjectsExcludingRow |
+		db.GetOverReplicatedObjectsRow |
+		db.GetObjectCopiesForUpdateRow
 }
 
 // toObjectLocations converts any sqlc row type containing object location
@@ -256,6 +259,12 @@ func toObjectLocation(row any) ObjectLocation {
 		return objectLocationFromDB(r.ObjectKey, r.BackendName, r.SizeBytes,
 			r.Encrypted, r.EncryptionKey, r.KeyID, r.PlaintextSize, r.CreatedAt.Time)
 	case db.GetUnderReplicatedObjectsExcludingRow:
+		return objectLocationFromDB(r.ObjectKey, r.BackendName, r.SizeBytes,
+			r.Encrypted, r.EncryptionKey, r.KeyID, r.PlaintextSize, r.CreatedAt.Time)
+	case db.GetOverReplicatedObjectsRow:
+		return objectLocationFromDB(r.ObjectKey, r.BackendName, r.SizeBytes,
+			r.Encrypted, r.EncryptionKey, r.KeyID, r.PlaintextSize, r.CreatedAt.Time)
+	case db.GetObjectCopiesForUpdateRow:
 		return objectLocationFromDB(r.ObjectKey, r.BackendName, r.SizeBytes,
 			r.Encrypted, r.EncryptionKey, r.KeyID, r.PlaintextSize, r.CreatedAt.Time)
 	case db.ListObjectsByBackendRow:
@@ -859,6 +868,73 @@ func (s *Store) RecordReplica(ctx context.Context, key, targetBackend, sourceBac
 	})
 }
 
+// GetOverReplicatedObjects finds objects with more copies than the target
+// replication factor. Returns all rows for those objects so callers can
+// score each copy and decide which to remove.
+func (s *Store) GetOverReplicatedObjects(ctx context.Context, factor, limit int) ([]ObjectLocation, error) {
+	var maxKeys int32
+	switch {
+	case limit <= 0:
+		maxKeys = 0
+	case limit > math.MaxInt32:
+		maxKeys = math.MaxInt32
+	default:
+		maxKeys = int32(limit)
+	}
+
+	rows, err := s.queries.GetOverReplicatedObjects(ctx, db.GetOverReplicatedObjectsParams{
+		Factor:  int64(factor),
+		MaxKeys: maxKeys,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to query over-replicated objects: %w", err)
+	}
+
+	return toObjectLocations(rows), nil
+}
+
+// CountOverReplicatedObjects returns the total number of objects with more
+// copies than the target replication factor.
+func (s *Store) CountOverReplicatedObjects(ctx context.Context, factor int) (int64, error) {
+	count, err := s.queries.CountOverReplicatedObjects(ctx, int64(factor))
+	if err != nil {
+		return 0, fmt.Errorf("failed to count over-replicated objects: %w", err)
+	}
+	return count, nil
+}
+
+// RemoveExcessCopy deletes one copy of an object from the given backend inside
+// a transaction, decrementing the backend quota atomically. The caller must
+// have already performed FOR UPDATE locking and copy-count validation.
+func (s *Store) RemoveExcessCopy(ctx context.Context, key, backendName string, size int64) error {
+	return s.withTx(ctx, func(qtx *db.Queries) error {
+		if err := qtx.DeleteObjectFromBackend(ctx, db.DeleteObjectFromBackendParams{
+			ObjectKey:   key,
+			BackendName: backendName,
+		}); err != nil {
+			return fmt.Errorf("failed to delete excess copy: %w", err)
+		}
+		if err := qtx.DecrementQuota(ctx, db.DecrementQuotaParams{
+			Amount:      size,
+			BackendName: backendName,
+		}); err != nil {
+			return fmt.Errorf("failed to decrement quota: %w", err)
+		}
+		return nil
+	})
+}
+
+// GetObjectCopiesForUpdate retrieves all copies of an object under a FOR
+// UPDATE lock, suitable for use inside a transaction to prevent concurrent
+// modification during over-replication cleanup.
+func (s *Store) GetObjectCopiesForUpdate(ctx context.Context, key string) ([]ObjectLocation, error) {
+	rows, err := s.queries.GetObjectCopiesForUpdate(ctx, key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get copies for update: %w", err)
+	}
+	return toObjectLocations(rows), nil
+}
+
 // -------------------------------------------------------------------------
 // MULTIPART UPLOAD OPERATIONS
 // -------------------------------------------------------------------------
@@ -1202,6 +1278,7 @@ const (
 	LockLifecycle        int64 = 1005
 	LockDrain            int64 = 1006
 	LockUsageFlush       int64 = 1007
+	LockOverReplication  int64 = 1008
 )
 
 // WithAdvisoryLock acquires a PostgreSQL session-level advisory lock on a

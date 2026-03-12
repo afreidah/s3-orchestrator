@@ -385,3 +385,23 @@ func (m *MockStore) DeleteBackendData(_ context.Context, _ string) error {
 func (m *MockStore) DeleteObjectLocation(_ context.Context, _, _ string) error {
 	return nil
 }
+
+// GetOverReplicatedObjects returns nil (stub).
+func (m *MockStore) GetOverReplicatedObjects(_ context.Context, _, _ int) ([]storage.ObjectLocation, error) {
+	return nil, nil
+}
+
+// CountOverReplicatedObjects returns zero (stub).
+func (m *MockStore) CountOverReplicatedObjects(_ context.Context, _ int) (int64, error) {
+	return 0, nil
+}
+
+// RemoveExcessCopy returns nil (stub).
+func (m *MockStore) RemoveExcessCopy(_ context.Context, _, _ string, _ int64) error {
+	return nil
+}
+
+// GetObjectCopiesForUpdate returns nil (stub).
+func (m *MockStore) GetObjectCopiesForUpdate(_ context.Context, _ string) ([]storage.ObjectLocation, error) {
+	return nil, nil
+}

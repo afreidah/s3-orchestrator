@@ -191,6 +191,26 @@ func (cb *CircuitBreakerStore) RecordReplica(ctx context.Context, key, targetBac
 	return CBCall(cb.CircuitBreaker, func() (bool, error) { return cb.real.RecordReplica(ctx, key, targetBackend, sourceBackend, size) })
 }
 
+// GetOverReplicatedObjects delegates to the real store with circuit breaker protection.
+func (cb *CircuitBreakerStore) GetOverReplicatedObjects(ctx context.Context, factor, limit int) ([]ObjectLocation, error) {
+	return CBCall(cb.CircuitBreaker, func() ([]ObjectLocation, error) { return cb.real.GetOverReplicatedObjects(ctx, factor, limit) })
+}
+
+// CountOverReplicatedObjects delegates to the real store with circuit breaker protection.
+func (cb *CircuitBreakerStore) CountOverReplicatedObjects(ctx context.Context, factor int) (int64, error) {
+	return CBCall(cb.CircuitBreaker, func() (int64, error) { return cb.real.CountOverReplicatedObjects(ctx, factor) })
+}
+
+// RemoveExcessCopy delegates to the real store with circuit breaker protection.
+func (cb *CircuitBreakerStore) RemoveExcessCopy(ctx context.Context, key, backendName string, size int64) error {
+	return CBCallNoResult(cb.CircuitBreaker, func() error { return cb.real.RemoveExcessCopy(ctx, key, backendName, size) })
+}
+
+// GetObjectCopiesForUpdate delegates to the real store with circuit breaker protection.
+func (cb *CircuitBreakerStore) GetObjectCopiesForUpdate(ctx context.Context, key string) ([]ObjectLocation, error) {
+	return CBCall(cb.CircuitBreaker, func() ([]ObjectLocation, error) { return cb.real.GetObjectCopiesForUpdate(ctx, key) })
+}
+
 // FlushUsageDeltas delegates to the real store with circuit breaker protection.
 func (cb *CircuitBreakerStore) FlushUsageDeltas(ctx context.Context, backendName, period string, apiRequests, egressBytes, ingressBytes int64) error {
 	return CBCallNoResult(cb.CircuitBreaker, func() error {

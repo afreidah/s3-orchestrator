@@ -13,7 +13,7 @@ weight: 30
     <i class="fas fa-play-circle landing-card-icon" style="color: #86efac;"></i>
     <div>
       <strong>Nomad/k8s Full Stack Demo</strong>
-      <p>Stand up a complete environment with Nomad or Kubernetes, two MinIO backends, and full observability in minutes.</p>
+      <p>Stand up a complete environment with Nomad or Kubernetes, three MinIO backends, and full observability in minutes.</p>
     </div>
   </a>
   <a class="landing-card" href="maximizing-free-tiers/">

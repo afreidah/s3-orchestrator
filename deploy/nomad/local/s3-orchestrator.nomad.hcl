@@ -104,6 +104,16 @@ job "s3-orchestrator" {
               unsigned_payload: true
               quota_bytes: 10737418240
 
+            - name: "minio-3"
+              endpoint: "http://__HOST_IP__:19004"
+              region: "us-east-1"
+              bucket: "backend3"
+              access_key_id: "minioadmin"
+              secret_access_key: "minioadmin"
+              force_path_style: true
+              unsigned_payload: true
+              quota_bytes: 10737418240
+
           routing_strategy: "pack"
 
           replication:

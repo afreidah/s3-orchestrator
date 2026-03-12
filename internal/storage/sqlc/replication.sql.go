@@ -11,6 +11,129 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countOverReplicatedObjects = `-- name: CountOverReplicatedObjects :one
+SELECT COUNT(*)::bigint AS count
+FROM (
+    SELECT object_key
+    FROM object_locations
+    GROUP BY object_key
+    HAVING COUNT(*) > $1::bigint
+) over_replicated
+`
+
+func (q *Queries) CountOverReplicatedObjects(ctx context.Context, factor int64) (int64, error) {
+	row := q.db.QueryRow(ctx, countOverReplicatedObjects, factor)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const getObjectCopiesForUpdate = `-- name: GetObjectCopiesForUpdate :many
+SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, created_at
+FROM object_locations
+WHERE object_key = $1
+FOR UPDATE
+`
+
+type GetObjectCopiesForUpdateRow struct {
+	ObjectKey     string
+	BackendName   string
+	SizeBytes     int64
+	Encrypted     bool
+	EncryptionKey []byte
+	KeyID         *string
+	PlaintextSize *int64
+	CreatedAt     pgtype.Timestamptz
+}
+
+func (q *Queries) GetObjectCopiesForUpdate(ctx context.Context, objectKey string) ([]GetObjectCopiesForUpdateRow, error) {
+	rows, err := q.db.Query(ctx, getObjectCopiesForUpdate, objectKey)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetObjectCopiesForUpdateRow{}
+	for rows.Next() {
+		var i GetObjectCopiesForUpdateRow
+		if err := rows.Scan(
+			&i.ObjectKey,
+			&i.BackendName,
+			&i.SizeBytes,
+			&i.Encrypted,
+			&i.EncryptionKey,
+			&i.KeyID,
+			&i.PlaintextSize,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getOverReplicatedObjects = `-- name: GetOverReplicatedObjects :many
+WITH over_replicated AS (
+    SELECT object_key
+    FROM object_locations
+    GROUP BY object_key
+    HAVING COUNT(*) > $1::bigint
+    LIMIT $2
+)
+SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.created_at
+FROM object_locations ol
+JOIN over_replicated orep ON ol.object_key = orep.object_key
+ORDER BY ol.object_key, ol.created_at ASC
+`
+
+type GetOverReplicatedObjectsParams struct {
+	Factor  int64
+	MaxKeys int32
+}
+
+type GetOverReplicatedObjectsRow struct {
+	ObjectKey     string
+	BackendName   string
+	SizeBytes     int64
+	Encrypted     bool
+	EncryptionKey []byte
+	KeyID         *string
+	PlaintextSize *int64
+	CreatedAt     pgtype.Timestamptz
+}
+
+func (q *Queries) GetOverReplicatedObjects(ctx context.Context, arg GetOverReplicatedObjectsParams) ([]GetOverReplicatedObjectsRow, error) {
+	rows, err := q.db.Query(ctx, getOverReplicatedObjects, arg.Factor, arg.MaxKeys)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetOverReplicatedObjectsRow{}
+	for rows.Next() {
+		var i GetOverReplicatedObjectsRow
+		if err := rows.Scan(
+			&i.ObjectKey,
+			&i.BackendName,
+			&i.SizeBytes,
+			&i.Encrypted,
+			&i.EncryptionKey,
+			&i.KeyID,
+			&i.PlaintextSize,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getUnderReplicatedObjects = `-- name: GetUnderReplicatedObjects :many
 WITH under_replicated AS (
     SELECT object_key

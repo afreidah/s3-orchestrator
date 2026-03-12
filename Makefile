@@ -127,12 +127,13 @@ migration: ## Create a new database migration file
 COMPOSE_FILE := docker-compose.test.yml
 
 integration-deps: ## Start integration test dependencies (MinIO + PostgreSQL + Redis)
-	docker compose -f $(COMPOSE_FILE) up -d minio-1 minio-2 postgres redis --wait
+	docker compose -f $(COMPOSE_FILE) up -d minio-1 minio-2 minio-3 postgres redis --wait
 	docker compose -f $(COMPOSE_FILE) run --rm minio-setup
 
 integration-test: integration-deps ## Run integration tests
 	MINIO1_ENDPOINT=http://localhost:19000 \
 	MINIO2_ENDPOINT=http://localhost:19002 \
+	MINIO3_ENDPOINT=http://localhost:19004 \
 	POSTGRES_HOST=localhost \
 	POSTGRES_PORT=15432 \
 	REDIS_ADDR=localhost:16379 \

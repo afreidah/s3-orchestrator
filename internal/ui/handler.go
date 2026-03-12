@@ -150,6 +150,7 @@ func (h *Handler) Register(mux *http.ServeMux, prefix string) {
 	mux.HandleFunc(prefix+"/api/upload", h.requireAuth(h.handleAPIUpload))
 	mux.HandleFunc(prefix+"/api/download", h.requireAuth(h.handleAPIDownload))
 	mux.HandleFunc(prefix+"/api/rebalance", h.requireAuth(h.handleAPIRebalance))
+	mux.HandleFunc(prefix+"/api/clean-excess", h.requireAuth(h.handleAPICleanExcess))
 	mux.HandleFunc(prefix+"/api/sync", h.requireAuth(h.handleAPISync))
 	mux.HandleFunc(prefix+"/api/logs", h.requireAuth(h.handleAPILogs))
 	mux.Handle(prefix+"/static/", http.StripPrefix(prefix+"/static/", http.FileServerFS(staticFS)))
@@ -747,6 +748,47 @@ func (h *Handler) handleAPIRebalance(w http.ResponseWriter, r *http.Request) {
 	slog.Info("UI: manual rebalance completed", "moved", moved)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "moved": moved})
+}
+
+// handleAPICleanExcess triggers an on-demand over-replication cleanup.
+func (h *Handler) handleAPICleanExcess(w http.ResponseWriter, r *http.Request) {
+	setSecurityHeaders(w)
+
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	rcfg := h.manager.OverReplicationCleaner.Config()
+	if rcfg == nil {
+		rcfg = &h.cfg.Load().Replication
+	}
+	if rcfg.Factor <= 1 {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "removed": 0, "reason": "replication factor <= 1"})
+		return
+	}
+
+	cfg := *rcfg
+	if cfg.BatchSize == 0 {
+		cfg.BatchSize = 100
+	}
+	if cfg.Concurrency == 0 {
+		cfg.Concurrency = 5
+	}
+
+	removed, err := h.manager.OverReplicationCleaner.Clean(r.Context(), cfg)
+	if err != nil {
+		slog.Error("UI: over-replication cleanup failed", "error", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "cleanup failed"})
+		return
+	}
+
+	slog.Info("UI: manual over-replication cleanup completed", "removed", removed)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "removed": removed})
 }
 
 // handleAPISync triggers a backend sync to import pre-existing objects.
