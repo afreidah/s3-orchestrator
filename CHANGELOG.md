@@ -3,6 +3,24 @@
 All notable changes to this project are documented in this file.
 
 
+## [0.17.5] - 2026-03-12
+
+### Added
+- Add over-replication detection and cleanup with integration tests (#260) (#263)
+- Add burst resilience: Retry-After, early rejection, split admission, load shedding, admission wait (#262)
+
+### Fixed
+- Fix: updated nomad/kubernetes demos to protect the nomad and kubectl commands to protect if the user has en environment already pointing at real clusters
+- Fix: accidentally committed benchmark test results
+- Fix: pre-allocate headerlines slice (#259)
+
+### Improved
+- update CHANGELOG.md for v0.17.01 (#256)
+
+### Other
+- adding documentation for previous graceful degradation branch
+- Tune HTTP transport, DNS resolution, and buffer pooling for backend clients (#254) (#261)
+
 ## [0.17.01] - 2026-03-10
 
 ### Added
