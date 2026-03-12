@@ -11,8 +11,8 @@ package storage
 import (
 	"testing"
 
-	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
 func TestWithUnsignedPayload_AddsAPIOption(t *testing.T) {
@@ -44,13 +44,13 @@ func TestNewS3Backend_UnsignedPayloadDefaults(t *testing.T) {
 		{
 			name:            "explicit false overrides https",
 			endpoint:        "https://example.com",
-			unsignedPayload: boolPtr(false),
+			unsignedPayload: func() *bool { b := false; return &b }(),
 			wantUnsigned:    false,
 		},
 		{
 			name:            "explicit true with http is respected",
 			endpoint:        "http://example.com",
-			unsignedPayload: boolPtr(true),
+			unsignedPayload: func() *bool { b := true; return &b }(),
 			wantUnsigned:    true,
 		},
 	}
@@ -141,5 +141,3 @@ func TestNewS3Backend_StripSDKHeaders(t *testing.T) {
 		})
 	}
 }
-
-func boolPtr(b bool) *bool { return &b }

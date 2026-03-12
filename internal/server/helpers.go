@@ -18,9 +18,16 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/afreidah/s3-orchestrator/internal/storage"
 )
+
+// xmlBufPool reuses bytes.Buffer instances for XML response encoding,
+// avoiding a fresh allocation per response.
+var xmlBufPool = sync.Pool{
+	New: func() any { return new(bytes.Buffer) },
+}
 
 // maxUserMetadataBytes is the S3-specified limit for total user metadata size.
 const maxUserMetadataBytes = 2048
@@ -149,12 +156,15 @@ func writeStorageError(w http.ResponseWriter, err error, fallbackMsg string) int
 }
 
 // writeXML writes an S3-compatible XML response with the standard XML header.
-// Encodes to a buffer first so a serialization error doesn't commit a success
-// status to the client.
+// Encodes to a pooled buffer first so a serialization error doesn't commit a
+// success status to the client.
 func writeXML(w http.ResponseWriter, status int, v any) error {
-	var buf bytes.Buffer
+	buf := xmlBufPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer xmlBufPool.Put(buf)
+
 	buf.WriteString(xml.Header)
-	if err := xml.NewEncoder(&buf).Encode(v); err != nil {
+	if err := xml.NewEncoder(buf).Encode(v); err != nil {
 		return err
 	}
 	w.Header().Set("Content-Type", "application/xml")

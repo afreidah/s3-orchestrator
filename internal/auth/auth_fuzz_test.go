@@ -73,7 +73,7 @@ func FuzzBuildCanonicalRequest(f *testing.F) {
 
 		// Split signed headers, skip empty entries.
 		var headers []string
-		for _, h := range strings.Split(signedHeadersStr, ";") {
+		for h := range strings.SplitSeq(signedHeadersStr, ";") {
 			if h != "" {
 				headers = append(headers, h)
 			}
