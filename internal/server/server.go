@@ -15,7 +15,6 @@
 package server
 
 import (
-	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -33,6 +32,16 @@ import (
 // -------------------------------------------------------------------------
 // SERVER
 // -------------------------------------------------------------------------
+
+// httpSpanName maps HTTP methods to pre-computed span names, avoiding
+// fmt.Sprintf allocation on every request.
+var httpSpanName = map[string]string{
+	http.MethodGet:    "HTTP GET",
+	http.MethodPut:    "HTTP PUT",
+	http.MethodHead:   "HTTP HEAD",
+	http.MethodDelete: "HTTP DELETE",
+	http.MethodPost:   "HTTP POST",
+}
 
 // Server handles HTTP requests and routes them to the backend manager.
 type Server struct {
@@ -158,7 +167,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	internalKey := bucket + "/" + key
 
 	// --- Start tracing span ---
-	ctx, span := telemetry.StartSpan(ctx, fmt.Sprintf("HTTP %s", method),
+	spanName := httpSpanName[method]
+	if spanName == "" {
+		spanName = "HTTP " + method
+	}
+	ctx, span := telemetry.StartSpan(ctx, spanName,
 		append(telemetry.RequestAttributes(method, r.URL.Path, bucket, key, r.RemoteAddr),
 			telemetry.AttrRequestID.String(requestID))...,
 	)
@@ -285,30 +298,30 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	span.SetAttributes(attribute.Int("http.status_code", status))
 
-	// --- Audit log ---
+	// --- Audit log (fixed-size backing array avoids heap allocation) ---
 	elapsed := time.Since(start)
-	auditAttrs := []slog.Attr{
-		slog.String("operation", operation),
-		slog.String("method", method),
-		slog.String("path", r.URL.Path),
-		slog.String("remote", r.RemoteAddr),
-		slog.String("bucket", bucket),
-		slog.Int("status", status),
-		slog.Duration("duration", elapsed),
-	}
+	var attrBuf [11]slog.Attr
+	n := 0
+	attrBuf[n] = slog.String("operation", operation); n++
+	attrBuf[n] = slog.String("method", method); n++
+	attrBuf[n] = slog.String("path", r.URL.Path); n++
+	attrBuf[n] = slog.String("remote", r.RemoteAddr); n++
+	attrBuf[n] = slog.String("bucket", bucket); n++
+	attrBuf[n] = slog.Int("status", status); n++
+	attrBuf[n] = slog.Duration("duration", elapsed); n++
 	if key != "" {
-		auditAttrs = append(auditAttrs, slog.String("key", key))
+		attrBuf[n] = slog.String("key", key); n++
 	}
 	if requestSize > 0 {
-		auditAttrs = append(auditAttrs, slog.Int64("request_size", requestSize))
+		attrBuf[n] = slog.Int64("request_size", requestSize); n++
 	}
 	if responseSize > 0 {
-		auditAttrs = append(auditAttrs, slog.Int64("response_size", responseSize))
+		attrBuf[n] = slog.Int64("response_size", responseSize); n++
 	}
 	if err != nil {
-		auditAttrs = append(auditAttrs, slog.String("error", err.Error()))
+		attrBuf[n] = slog.String("error", err.Error()); n++
 	}
-	audit.Log(ctx, "s3."+operation, auditAttrs...)
+	audit.Log(ctx, "s3."+operation, attrBuf[:n]...)
 }
 
 // -------------------------------------------------------------------------
@@ -329,9 +342,21 @@ func isValidRequestID(id string) bool {
 	return true
 }
 
+// statusStrings maps common HTTP status codes to pre-computed strings,
+// avoiding strconv.Itoa allocation per request.
+var statusStrings = map[int]string{
+	200: "200", 204: "204", 206: "206",
+	304: "304",
+	400: "400", 403: "403", 404: "404", 405: "405", 411: "411", 413: "413", 429: "429",
+	500: "500", 502: "502", 503: "503", 507: "507",
+}
+
 // recordRequest updates Prometheus metrics for a completed request.
 func (s *Server) recordRequest(method string, status int, start time.Time, reqSize, respSize int64) {
-	statusStr := strconv.Itoa(status)
+	statusStr, ok := statusStrings[status]
+	if !ok {
+		statusStr = strconv.Itoa(status)
+	}
 	telemetry.RequestsTotal.WithLabelValues(method, statusStr).Inc()
 	telemetry.RequestDuration.WithLabelValues(method).Observe(time.Since(start).Seconds())
 

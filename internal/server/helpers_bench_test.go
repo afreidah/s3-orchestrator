@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -176,4 +177,26 @@ func BenchmarkBuildListContents(b *testing.B) {
 			buildListContents(objects, prefixes, "mybucket/")
 		}
 	})
+}
+
+// -------------------------------------------------------------------------
+// Span name and status string allocation
+// -------------------------------------------------------------------------
+
+func BenchmarkSpanNameSprintf(b *testing.B) {
+	methods := []string{"GET", "PUT", "HEAD", "DELETE", "POST"}
+	for b.Loop() {
+		for _, m := range methods {
+			_ = fmt.Sprintf("HTTP %s", m)
+		}
+	}
+}
+
+func BenchmarkRecordRequestStatusItoa(b *testing.B) {
+	codes := []int{200, 204, 400, 403, 404, 502, 503}
+	for b.Loop() {
+		for _, c := range codes {
+			_ = strconv.Itoa(c)
+		}
+	}
 }

@@ -96,6 +96,8 @@ header {
 
 header h1 { font-size: 1.25rem; font-weight: 600; color: #f8fafc; }
 
+.header-logo { height: 2.5rem; }
+
 .badge {
   display: inline-block;
   padding: 0.2rem 0.6rem;

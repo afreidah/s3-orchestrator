@@ -126,7 +126,7 @@ func TestRateLimiter_UpdateLimits_NewVisitors(t *testing.T) {
 	rl.UpdateLimits(1000, 1000)
 
 	// New visitor after update should get the new rate (1000 burst)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		if !rl.Allow("10.0.0.99") {
 			t.Fatalf("request %d should be allowed with new burst=1000", i+1)
 		}
@@ -153,7 +153,7 @@ func TestRateLimiter_UpdateLimits_ClearsExistingVisitors(t *testing.T) {
 	rl.UpdateLimits(1, 1000)
 
 	// Existing visitor gets a fresh limiter with new burst=1000
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		if !rl.Allow("10.0.0.1") {
 			t.Fatalf("existing visitor request %d should be allowed with new burst=1000", i+1)
 		}

@@ -249,10 +249,10 @@ func TestUpdateUsageLimits_ConcurrentAccess(t *testing.T) {
 
 	// Concurrent readers
 	wg.Add(goroutines)
-	for i := 0; i < goroutines; i++ {
+	for range goroutines {
 		go func() {
 			defer wg.Done()
-			for j := 0; j < 100; j++ {
+			for range 100 {
 				_ = mgr.usage.WithinLimits("b1", 1, 0, 0)
 			}
 		}()
@@ -260,10 +260,10 @@ func TestUpdateUsageLimits_ConcurrentAccess(t *testing.T) {
 
 	// Concurrent writers
 	wg.Add(goroutines)
-	for i := 0; i < goroutines; i++ {
+	for i := range goroutines {
 		go func(n int) {
 			defer wg.Done()
-			for j := 0; j < 100; j++ {
+			for j := range 100 {
 				mgr.UpdateUsageLimits(map[string]UsageLimits{
 					"b1": {APIRequestLimit: int64(n*100 + j)},
 				})

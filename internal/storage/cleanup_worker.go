@@ -42,10 +42,7 @@ func cleanupBackoff(attempts int32) time.Duration {
 	if attempts > 20 {
 		return 24 * time.Hour
 	}
-	d := time.Minute * (1 << attempts)
-	if d > 24*time.Hour {
-		d = 24 * time.Hour
-	}
+	d := min(time.Minute*(1<<attempts), 24*time.Hour)
 	return d
 }
 

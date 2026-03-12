@@ -97,6 +97,29 @@ func TestHashSHA256(t *testing.T) {
 	}
 }
 
+func TestSigningKeyCache(t *testing.T) {
+	secret := "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"
+	accessKey := "CACHE_TEST_KEY"
+
+	// First call: cache miss — derives and stores
+	key1 := getCachedSigningKey(accessKey, secret, "20260312", "us-east-1", "s3")
+	if len(key1) != 32 {
+		t.Fatalf("signing key length = %d, want 32", len(key1))
+	}
+
+	// Second call: cache hit — same params
+	key2 := getCachedSigningKey(accessKey, secret, "20260312", "us-east-1", "s3")
+	if hex.EncodeToString(key1) != hex.EncodeToString(key2) {
+		t.Error("cache hit should return identical key")
+	}
+
+	// Third call: stale cache — different dateStamp forces re-derive
+	key3 := getCachedSigningKey(accessKey, secret, "20260313", "us-east-1", "s3")
+	if hex.EncodeToString(key1) == hex.EncodeToString(key3) {
+		t.Error("different dateStamp should produce a different key")
+	}
+}
+
 func TestSigV4Encode(t *testing.T) {
 	tests := []struct {
 		in, want string

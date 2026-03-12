@@ -13,6 +13,7 @@ package storage
 import (
 	"context"
 	"log/slog"
+	"maps"
 	"sync"
 	"time"
 )
@@ -121,9 +122,7 @@ func (u *UsageTracker) GetLimits() map[string]UsageLimits {
 	u.limitsMu.RLock()
 	defer u.limitsMu.RUnlock()
 	cp := make(map[string]UsageLimits, len(u.limits))
-	for k, v := range u.limits {
-		cp[k] = v
-	}
+	maps.Copy(cp, u.limits)
 	return cp
 }
 

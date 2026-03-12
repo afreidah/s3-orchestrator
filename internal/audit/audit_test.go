@@ -19,7 +19,7 @@ import (
 
 func TestNewID_UniqueAndCorrectLength(t *testing.T) {
 	ids := make(map[string]bool, 100)
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		id := NewID()
 		if len(id) != 32 { // 16 bytes hex-encoded = 32 chars
 			t.Fatalf("expected 32-char ID, got %d: %q", len(id), id)

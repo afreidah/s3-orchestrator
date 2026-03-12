@@ -165,7 +165,7 @@ func (r *Replicator) replicateObject(ctx context.Context, key string, existingCo
 	}
 
 	created := 0
-	for i := 0; i < needed; i++ {
+	for i := range needed {
 		// --- Find a target backend with space ---
 		target := r.findReplicaTarget(ctx, key, existingCopies[0].SizeBytes, exclusion)
 		if target == "" {

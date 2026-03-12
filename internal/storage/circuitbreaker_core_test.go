@@ -46,7 +46,7 @@ func TestCB_StartsHealthy(t *testing.T) {
 func TestCB_OpensAfterThreshold(t *testing.T) {
 	cb := newTestBreaker(3, time.Minute)
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		err := cb.PostCheck(errTest)
 		if errors.Is(err, errSentinel) {
 			t.Fatalf("call %d: should return raw error below threshold", i)
@@ -94,8 +94,8 @@ func TestCB_HalfOpenSuccess_Closes(t *testing.T) {
 	_ = cb.PostCheck(errTest) // trip
 	time.Sleep(15 * time.Millisecond)
 
-	_ = cb.PreCheck()          // allow probe
-	_ = cb.PostCheck(nil)      // success
+	_ = cb.PreCheck()     // allow probe
+	_ = cb.PostCheck(nil) // success
 
 	if !cb.IsHealthy() {
 		t.Fatal("should be healthy after successful probe")
@@ -107,8 +107,8 @@ func TestCB_HalfOpenFailure_Reopens(t *testing.T) {
 	_ = cb.PostCheck(errTest) // trip
 	time.Sleep(15 * time.Millisecond)
 
-	_ = cb.PreCheck()             // allow probe
-	_ = cb.PostCheck(errTest)     // probe fails
+	_ = cb.PreCheck()         // allow probe
+	_ = cb.PostCheck(errTest) // probe fails
 
 	if cb.IsHealthy() {
 		t.Fatal("should be unhealthy after failed probe")
@@ -188,7 +188,7 @@ func TestCB_OpenDuration_ZeroAfterRecovery(t *testing.T) {
 func TestCB_FilteredErrorsDontTrip(t *testing.T) {
 	cb := NewCircuitBreaker("test", 1, time.Minute, neverError, errSentinel)
 
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		_ = cb.PostCheck(errTest)
 	}
 	if !cb.IsHealthy() {
@@ -269,7 +269,7 @@ func TestCB_OnlyOneProbeAllowed(t *testing.T) {
 	var mu sync.Mutex
 
 	wg.Add(goroutines)
-	for i := 0; i < goroutines; i++ {
+	for range goroutines {
 		go func() {
 			defer wg.Done()
 			if err := cb.PreCheck(); err == nil {

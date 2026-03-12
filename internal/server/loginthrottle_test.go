@@ -112,14 +112,12 @@ func TestLoginThrottle_ConcurrentAccess(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for i := range 50 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			addr := fmt.Sprintf("10.0.0.%d:12345", i%10)
 			lt.RecordFailure(addr)
 			lt.IsLockedOut(addr)
 			lt.RecordSuccess(addr)
-		}()
+		})
 	}
 	wg.Wait()
 }

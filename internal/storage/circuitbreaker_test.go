@@ -57,7 +57,7 @@ func TestCircuitBreaker_OpensAfterThreshold(t *testing.T) {
 	ctx := context.Background()
 
 	// First 2 calls should pass through and return the raw DB error
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		_, err := cb.GetAllObjectLocations(ctx, "key")
 		if err != dbErr {
 			t.Fatalf("call %d: expected dbErr, got %v", i, err)
@@ -155,7 +155,7 @@ func TestCircuitBreaker_AppErrorsDontTrip(t *testing.T) {
 	ctx := context.Background()
 
 	// Application errors should not trip the circuit
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		_, err := cb.GetAllObjectLocations(ctx, "key")
 		if !errors.Is(err, ErrObjectNotFound) {
 			t.Fatalf("expected ErrObjectNotFound, got %v", err)
@@ -593,10 +593,10 @@ func TestCircuitBreaker_DegradedDurationIsPositive(t *testing.T) {
 
 func TestCircuitBreaker_ForwardingMethods_Closed(t *testing.T) {
 	mock := &mockStore{
-		getQuotaStatsResp:      map[string]QuotaStat{"b1": {BackendName: "b1", BytesUsed: 100}},
-		getObjectCountsResp:    map[string]int64{"b1": 42},
-		getActiveMultipartResp: map[string]int64{"b1": 5},
-		getUsageForPeriodResp:  map[string]UsageStat{"b1": {APIRequests: 10}},
+		getQuotaStatsResp:        map[string]QuotaStat{"b1": {BackendName: "b1", BytesUsed: 100}},
+		getObjectCountsResp:      map[string]int64{"b1": 42},
+		getActiveMultipartResp:   map[string]int64{"b1": 5},
+		getUsageForPeriodResp:    map[string]UsageStat{"b1": {APIRequests: 10}},
 		listObjectsByBackendResp: []ObjectLocation{{ObjectKey: "k", BackendName: "b1"}},
 		getUnderReplicatedResp:   []ObjectLocation{{ObjectKey: "k", BackendName: "b1"}},
 		recordReplicaInserted:    true,
@@ -778,7 +778,7 @@ func TestCircuitBreaker_ConcurrentProbeSerializedByAtomicFlag(t *testing.T) {
 	var wg sync.WaitGroup
 
 	wg.Add(goroutines)
-	for i := 0; i < goroutines; i++ {
+	for range goroutines {
 		go func() {
 			defer wg.Done()
 			_, _ = cb.GetAllObjectLocations(ctx, "key")

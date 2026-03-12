@@ -24,8 +24,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -140,6 +142,39 @@ func extractAccessKey(authHeader string) (string, error) {
 }
 
 // -------------------------------------------------------------------------
+// SIGNING KEY CACHE
+// -------------------------------------------------------------------------
+
+// signingKeyCache avoids re-deriving the HMAC signing key on every request.
+// The key only changes when the dateStamp rolls over (once per day), so
+// caching eliminates 4 HMAC-SHA256 operations per request under steady load.
+var signingKeyCache sync.Map // accessKeyID → *cachedSigningKey
+
+type cachedSigningKey struct {
+	dateStamp string
+	region    string
+	service   string
+	key       []byte
+}
+
+func getCachedSigningKey(accessKeyID, secret, dateStamp, region, service string) []byte {
+	if v, ok := signingKeyCache.Load(accessKeyID); ok {
+		c := v.(*cachedSigningKey)
+		if c.dateStamp == dateStamp && c.region == region && c.service == service {
+			return c.key
+		}
+	}
+	key := deriveSigningKey(secret, dateStamp, region, service)
+	signingKeyCache.Store(accessKeyID, &cachedSigningKey{
+		dateStamp: dateStamp,
+		region:    region,
+		service:   service,
+		key:       key,
+	})
+	return key
+}
+
+// -------------------------------------------------------------------------
 // SIGV4 VERIFICATION
 // -------------------------------------------------------------------------
 
@@ -158,12 +193,7 @@ func VerifySigV4(r *http.Request, accessKeyID, secretAccessKey string) error {
 	}
 
 	parts := strings.TrimPrefix(authHeader, "AWS4-HMAC-SHA256 ")
-	fields := parseSigV4Fields(parts)
-
-	credential := fields["Credential"]
-	signedHeadersStr := fields["SignedHeaders"]
-	signature := fields["Signature"]
-
+	credential, signedHeadersStr, signature := parseSigV4FieldsDirect(parts)
 	if credential == "" || signedHeadersStr == "" || signature == "" {
 		return fmt.Errorf("malformed Authorization header")
 	}
@@ -183,13 +213,7 @@ func VerifySigV4(r *http.Request, accessKeyID, secretAccessKey string) error {
 
 	// The host header must always be signed per the SigV4 spec to prevent
 	// replay attacks against different endpoints.
-	hostSigned := false
-	for _, h := range signedHeaders {
-		if h == "host" {
-			hostSigned = true
-			break
-		}
-	}
+	hostSigned := slices.Contains(signedHeaders, "host")
 	if !hostSigned {
 		return fmt.Errorf("host header must be signed")
 	}
@@ -217,8 +241,8 @@ func VerifySigV4(r *http.Request, accessKeyID, secretAccessKey string) error {
 		hashSHA256([]byte(canonicalRequest)),
 	)
 
-	// Derive signing key
-	signingKey := deriveSigningKey(secretAccessKey, dateStamp, region, service)
+	// Derive signing key (cached — changes only when dateStamp rolls over)
+	signingKey := getCachedSigningKey(accessKeyID, secretAccessKey, dateStamp, region, service)
 
 	// Calculate expected signature
 	expectedSig := hex.EncodeToString(hmacSHA256(signingKey, []byte(stringToSign)))
@@ -235,9 +259,10 @@ func VerifySigV4(r *http.Request, accessKeyID, secretAccessKey string) error {
 // -------------------------------------------------------------------------
 
 // parseSigV4Fields extracts key=value pairs from the SigV4 auth header.
+// Retained for use by extractAccessKey which only needs the Credential field.
 func parseSigV4Fields(s string) map[string]string {
 	fields := make(map[string]string)
-	for _, part := range strings.Split(s, ",") {
+	for part := range strings.SplitSeq(s, ",") {
 		part = strings.TrimSpace(part)
 		idx := strings.IndexByte(part, '=')
 		if idx > 0 {
@@ -245,6 +270,32 @@ func parseSigV4Fields(s string) map[string]string {
 		}
 	}
 	return fields
+}
+
+// parseSigV4FieldsDirect extracts Credential, SignedHeaders, and Signature
+// from the SigV4 auth header without allocating a map.
+func parseSigV4FieldsDirect(s string) (credential, signedHeaders, signature string) {
+	for s != "" {
+		part := s
+		if i := strings.IndexByte(s, ','); i >= 0 {
+			part = s[:i]
+			s = s[i+1:]
+		} else {
+			s = ""
+		}
+		part = strings.TrimSpace(part)
+		if i := strings.IndexByte(part, '='); i > 0 {
+			switch part[:i] {
+			case "Credential":
+				credential = part[i+1:]
+			case "SignedHeaders":
+				signedHeaders = part[i+1:]
+			case "Signature":
+				signature = part[i+1:]
+			}
+		}
+	}
+	return
 }
 
 // buildCanonicalRequest constructs the canonical request string per SigV4 spec.

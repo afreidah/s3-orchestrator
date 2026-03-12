@@ -253,7 +253,7 @@ func chunkNonce(base []byte, idx uint64) []byte {
 	// XOR chunk index into the last 8 bytes
 	var idxBytes [8]byte
 	binary.BigEndian.PutUint64(idxBytes[:], idx)
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		nonce[NonceSize-8+i] ^= idxBytes[i]
 	}
 	return nonce
