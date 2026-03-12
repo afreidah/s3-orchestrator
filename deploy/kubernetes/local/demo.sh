@@ -32,7 +32,7 @@ cd "$REPO_ROOT"
 if [[ "${1:-}" == "down" ]]; then
     echo "Tearing down demo environment..."
     k3d cluster delete "$CLUSTER_NAME" 2>/dev/null || true
-    docker compose -f docker-compose.test.yml down 2>/dev/null || true
+    docker compose -f docker-compose.test.yml down -v 2>/dev/null || true
     echo "Done."
     exit 0
 fi

@@ -670,7 +670,11 @@ func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey strin
 	srcBackendCh := make(chan string, 1)
 
 	go func() {
-		defer func() { _ = pw.Close() }()
+		bw := bufpool.GetWriter(pw)
+		defer func() {
+			bufpool.PutWriter(bw)
+			_ = pw.Close()
+		}()
 		for _, loc := range locations {
 			if !o.usage.WithinLimits(loc.BackendName, 1, size, 0) {
 				continue
@@ -686,11 +690,16 @@ func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey strin
 				continue
 			}
 			srcBackendCh <- loc.BackendName
-			_, copyErr := bufpool.Copy(pw, result.Body)
+			_, copyErr := bufpool.Copy(bw, result.Body)
 			_ = result.Body.Close()
 			bcancel()
 			if copyErr != nil {
 				pw.CloseWithError(fmt.Errorf("failed to stream source: %w", copyErr))
+				return
+			}
+			if flushErr := bw.Flush(); flushErr != nil {
+				pw.CloseWithError(fmt.Errorf("failed to flush source stream: %w", flushErr))
+				return
 			}
 			return
 		}
@@ -700,6 +709,7 @@ func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey strin
 
 	// Streamed from pipe; deadline governed by the caller's context.
 	etag, err := destBackend.PutObject(ctx, destKey, pr, size, contentType, metadata)
+	pr.Close() // unblock goroutine if PutObject returned without draining the pipe
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)

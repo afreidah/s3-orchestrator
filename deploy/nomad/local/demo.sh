@@ -31,11 +31,9 @@ cd "$REPO_ROOT"
 if [[ "${1:-}" == "down" ]]; then
     echo "Tearing down demo environment..."
     nomad job stop -purge s3-orchestrator 2>/dev/null || true
-    if [[ -f /tmp/nomad-demo.pid ]]; then
-        kill "$(cat /tmp/nomad-demo.pid)" 2>/dev/null || true
-        rm -f /tmp/nomad-demo.pid
-    fi
-    docker compose -f docker-compose.test.yml down 2>/dev/null || true
+    pkill -f '[n]omad agent -dev' 2>/dev/null || true
+    rm -f /tmp/nomad-demo.pid
+    docker compose -f docker-compose.test.yml down -v 2>/dev/null || true
     echo "Done."
     exit 0
 fi
@@ -95,12 +93,9 @@ sed "s/__HOST_IP__/$HOST_IP/g" "$SCRIPT_DIR/s3-orchestrator.nomad.hcl" | nomad j
 # --- Wait for healthy allocation ---
 echo "Waiting for allocation to become healthy..."
 for i in $(seq 1 60); do
-    STATUS=$(nomad job status -short s3-orchestrator 2>/dev/null | grep -c "running" || true)
-    if [[ "$STATUS" -ge 1 ]]; then
-        HEALTH=$(curl -s "http://localhost:$PORT/health" 2>/dev/null || true)
-        if echo "$HEALTH" | grep -q '"status":"ok"'; then
-            break
-        fi
+    HEALTH=$(curl -s "http://localhost:$PORT/health" 2>/dev/null || true)
+    if echo "$HEALTH" | grep -q '"status":"ok"'; then
+        break
     fi
     sleep 1
 done

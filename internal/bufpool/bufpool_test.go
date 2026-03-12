@@ -28,6 +28,28 @@ func TestCopy(t *testing.T) {
 	}
 }
 
+func TestWriterPool(t *testing.T) {
+	data := []byte("buffered writer pool test data")
+	var dst bytes.Buffer
+
+	bw := GetWriter(&dst)
+	n, err := Copy(bw, bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bw.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	PutWriter(bw)
+
+	if n != int64(len(data)) {
+		t.Fatalf("copied %d bytes, want %d", n, len(data))
+	}
+	if !bytes.Equal(dst.Bytes(), data) {
+		t.Fatalf("got %q, want %q", dst.Bytes(), data)
+	}
+}
+
 func TestGetPutRoundtrip(t *testing.T) {
 	b := Get()
 	if len(*b) != bufSize {

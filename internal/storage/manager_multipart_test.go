@@ -414,6 +414,56 @@ func TestCompleteMultipartUpload_PartDeleteFails_EnqueuesCleanup(t *testing.T) {
 	}
 }
 
+func TestCompleteMultipartUpload_FinalPutFails(t *testing.T) {
+	backend := newMockBackend()
+	ctx := context.Background()
+	_, _ = backend.PutObject(ctx, "__multipart/upload-1/1", bytes.NewReader([]byte("AAA")), 3, "application/octet-stream", nil)
+	backend.putErr = errors.New("write failed")
+
+	store := &mockStore{
+		getMultipartResp: &MultipartUpload{
+			UploadID:    "upload-1",
+			ObjectKey:   "multi/key",
+			BackendName: "b1",
+			ContentType: "application/zip",
+		},
+		getPartsResp: []MultipartPart{
+			{PartNumber: 1, ETag: "e1", SizeBytes: 3},
+		},
+	}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
+
+	_, err := mgr.MultipartManager.CompleteMultipartUpload(ctx, "upload-1", []int{1})
+	if err == nil {
+		t.Fatal("expected error when final PutObject fails")
+	}
+}
+
+func TestCompleteMultipartUpload_PartReadFails(t *testing.T) {
+	backend := newMockBackend()
+	ctx := context.Background()
+	_, _ = backend.PutObject(ctx, "__multipart/upload-1/1", bytes.NewReader([]byte("AAA")), 3, "application/octet-stream", nil)
+	backend.getReadErr = errors.New("disk I/O error")
+
+	store := &mockStore{
+		getMultipartResp: &MultipartUpload{
+			UploadID:    "upload-1",
+			ObjectKey:   "multi/key",
+			BackendName: "b1",
+			ContentType: "application/zip",
+		},
+		getPartsResp: []MultipartPart{
+			{PartNumber: 1, ETag: "e1", SizeBytes: 3},
+		},
+	}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
+
+	_, err := mgr.MultipartManager.CompleteMultipartUpload(ctx, "upload-1", []int{1})
+	if err == nil {
+		t.Fatal("expected error when part body read fails")
+	}
+}
+
 // -------------------------------------------------------------------------
 // UploadPart error paths
 // -------------------------------------------------------------------------
