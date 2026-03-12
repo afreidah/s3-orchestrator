@@ -3,6 +3,20 @@
 All notable changes to this project are documented in this file.
 
 
+## [0.17.8] - 2026-03-12
+
+### Fixed
+- Fix circuit breaker deadlock when all backends trip simultaneously (#271)
+
+### Improved
+- update CHANGELOG.md for v0.17.5 (#264)
+
+### Dependencies
+- chore(deps): bump golang.org/x/net (#267)
+
+### Other
+- Reduce per-request CPU and allocation overhead in hot path (#269)
+
 ## [0.17.5] - 2026-03-12
 
 ### Added
