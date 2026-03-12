@@ -60,7 +60,7 @@ func TestExcludeUnhealthy_AllHealthy(t *testing.T) {
 	}
 }
 
-func TestExcludeUnhealthy_AllUnhealthy(t *testing.T) {
+func TestExcludeUnhealthy_AllUnhealthy_TimeoutNotElapsed(t *testing.T) {
 	failingMock1 := newMockBackend()
 	failingMock1.putErr = errors.New("backend down")
 	b1 := NewCircuitBreakerBackend(failingMock1, "b1", 1, 15*time.Second)
@@ -80,9 +80,40 @@ func TestExcludeUnhealthy_AllUnhealthy(t *testing.T) {
 		},
 	}
 
+	// Before timeout elapses, all should be filtered out
 	eligible := core.excludeUnhealthy([]string{"b1", "b2"})
 	if len(eligible) != 0 {
-		t.Fatalf("expected 0 eligible backends, got %d", len(eligible))
+		t.Fatalf("expected 0 eligible backends before timeout, got %d", len(eligible))
+	}
+}
+
+func TestExcludeUnhealthy_AllUnhealthy_ProbeEligible(t *testing.T) {
+	failingMock1 := newMockBackend()
+	failingMock1.putErr = errors.New("backend down")
+	b1 := NewCircuitBreakerBackend(failingMock1, "b1", 1, 1*time.Millisecond)
+
+	failingMock2 := newMockBackend()
+	failingMock2.putErr = errors.New("backend down")
+	b2 := NewCircuitBreakerBackend(failingMock2, "b2", 1, 1*time.Millisecond)
+
+	// Trip both
+	_, _ = b1.PutObject(context.TODO(), "key", strings.NewReader("x"), 1, "", nil)
+	_, _ = b2.PutObject(context.TODO(), "key", strings.NewReader("x"), 1, "", nil)
+
+	// Wait for open timeout to elapse
+	time.Sleep(5 * time.Millisecond)
+
+	core := &backendCore{
+		backends: map[string]ObjectBackend{
+			"b1": b1,
+			"b2": b2,
+		},
+	}
+
+	// After timeout elapses, probe-eligible backends should be allowed through
+	eligible := core.excludeUnhealthy([]string{"b1", "b2"})
+	if len(eligible) != 2 {
+		t.Fatalf("expected 2 probe-eligible backends after timeout, got %d", len(eligible))
 	}
 }
 
