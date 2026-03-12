@@ -101,6 +101,16 @@ type mockStore struct {
 	recordReplicaErr       error
 	recordReplicaCalls     []recordReplicaCall
 
+	// Over-replication
+	getOverReplicatedResp          []ObjectLocation
+	getOverReplicatedErr           error
+	countOverReplicatedResp        int64
+	countOverReplicatedErr         error
+	removeExcessCopyErr            error
+	removeExcessCopyCalls          []removeExcessCopyCall
+	getObjectCopiesForUpdateResp   []ObjectLocation
+	getObjectCopiesForUpdateErr    error
+
 	// Lifecycle
 	listExpiredObjectsResp  []ObjectLocation
 	listExpiredObjectsPages [][]ObjectLocation // for paginated lifecycle tests
@@ -141,6 +151,11 @@ type deleteObjectLocationCall struct {
 type recordReplicaCall struct {
 	key, targetBackend, sourceBackend string
 	size                              int64
+}
+
+type removeExcessCopyCall struct {
+	key, backend string
+	size         int64
 }
 
 type orphanBytesCall struct {
@@ -503,4 +518,38 @@ func (m *mockStore) DeleteObjectLocation(_ context.Context, key, backend string)
 	defer m.mu.Unlock()
 	m.deleteObjectLocationCalls = append(m.deleteObjectLocationCalls, deleteObjectLocationCall{key: key, backend: backend})
 	return nil
+}
+
+func (m *mockStore) GetOverReplicatedObjects(_ context.Context, _, _ int) ([]ObjectLocation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.getOverReplicatedErr != nil {
+		return nil, m.getOverReplicatedErr
+	}
+	return m.getOverReplicatedResp, nil
+}
+
+func (m *mockStore) CountOverReplicatedObjects(_ context.Context, _ int) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.countOverReplicatedErr != nil {
+		return 0, m.countOverReplicatedErr
+	}
+	return m.countOverReplicatedResp, nil
+}
+
+func (m *mockStore) RemoveExcessCopy(_ context.Context, key, backend string, size int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.removeExcessCopyCalls = append(m.removeExcessCopyCalls, removeExcessCopyCall{key: key, backend: backend, size: size})
+	return m.removeExcessCopyErr
+}
+
+func (m *mockStore) GetObjectCopiesForUpdate(_ context.Context, _ string) ([]ObjectLocation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.getObjectCopiesForUpdateErr != nil {
+		return nil, m.getObjectCopiesForUpdateErr
+	}
+	return m.getObjectCopiesForUpdateResp, nil
 }

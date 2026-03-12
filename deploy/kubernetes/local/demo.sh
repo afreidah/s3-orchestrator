@@ -47,7 +47,7 @@ done
 
 # --- Start backing services ---
 echo "Starting PostgreSQL and MinIO via docker-compose..."
-docker compose -f docker-compose.test.yml up -d --wait postgres minio-1 minio-2
+docker compose -f docker-compose.test.yml up -d --wait postgres minio-1 minio-2 minio-3
 docker compose -f docker-compose.test.yml up -d minio-setup
 
 # --- Start monitoring ---

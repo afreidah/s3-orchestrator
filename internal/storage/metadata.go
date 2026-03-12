@@ -79,6 +79,10 @@ type MetadataStore interface {
 	GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]ObjectLocation, error)
 	GetUnderReplicatedObjectsExcluding(ctx context.Context, factor, limit int, excludedBackends []string) ([]ObjectLocation, error)
 	RecordReplica(ctx context.Context, key, targetBackend, sourceBackend string, size int64) (bool, error)
+	GetOverReplicatedObjects(ctx context.Context, factor, limit int) ([]ObjectLocation, error)
+	CountOverReplicatedObjects(ctx context.Context, factor int) (int64, error)
+	RemoveExcessCopy(ctx context.Context, key, backendName string, size int64) error
+	GetObjectCopiesForUpdate(ctx context.Context, key string) ([]ObjectLocation, error)
 
 	// --- Usage tracking operations ---
 	FlushUsageDeltas(ctx context.Context, backendName, period string, apiRequests, egressBytes, ingressBytes int64) error

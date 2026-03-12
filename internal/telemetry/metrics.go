@@ -351,6 +351,50 @@ var (
 		},
 	)
 
+	// --- Over-replication cleanup metrics ---
+
+	// OverReplicationPending tracks objects currently above the target replication factor.
+	OverReplicationPending = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "s3proxy_over_replication_pending",
+			Help: "Number of objects above the target replication factor",
+		},
+	)
+
+	// OverReplicationRemovedTotal counts excess copies removed by the cleaner.
+	OverReplicationRemovedTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "s3proxy_over_replication_removed_total",
+			Help: "Total excess copies removed by over-replication cleanup",
+		},
+	)
+
+	// OverReplicationErrorsTotal counts over-replication cleanup errors.
+	OverReplicationErrorsTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "s3proxy_over_replication_errors_total",
+			Help: "Total number of over-replication cleanup errors",
+		},
+	)
+
+	// OverReplicationRunsTotal counts over-replication cleanup worker executions.
+	OverReplicationRunsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "s3proxy_over_replication_runs_total",
+			Help: "Total number of over-replication cleanup worker runs",
+		},
+		[]string{"status"},
+	)
+
+	// OverReplicationDuration tracks over-replication cleanup worker cycle time.
+	OverReplicationDuration = promauto.NewHistogram(
+		prometheus.HistogramOpts{
+			Name:    "s3proxy_over_replication_duration_seconds",
+			Help:    "Over-replication cleanup worker cycle time in seconds",
+			Buckets: []float64{1, 5, 10, 30, 60, 120, 300, 600},
+		},
+	)
+
 	// --- Circuit breaker metrics ---
 
 	// CircuitBreakerState tracks the current circuit breaker state per component.

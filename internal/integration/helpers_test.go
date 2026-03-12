@@ -49,6 +49,8 @@ var (
 	testCBStore       *storage.CircuitBreakerStore
 	testBackends      map[string]storage.ObjectBackend
 	testBackendOrder  []string
+	allBackends       map[string]storage.ObjectBackend
+	allBackendOrder   []string
 )
 
 func TestMain(m *testing.M) {
@@ -57,6 +59,7 @@ func TestMain(m *testing.M) {
 
 	minio1Endpoint := envOrDefault("MINIO1_ENDPOINT", "http://localhost:19000")
 	minio2Endpoint := envOrDefault("MINIO2_ENDPOINT", "http://localhost:19002")
+	minio3Endpoint := envOrDefault("MINIO3_ENDPOINT", "http://localhost:19004")
 	pgHost := envOrDefault("POSTGRES_HOST", "localhost")
 	pgPort := envOrDefault("POSTGRES_PORT", "15432")
 
@@ -115,6 +118,16 @@ func TestMain(m *testing.M) {
 				ForcePathStyle:  true,
 				QuotaBytes:      2048,
 			},
+			{
+				Name:            "minio-3",
+				Endpoint:        minio3Endpoint,
+				Region:          "us-east-1",
+				Bucket:          "backend3",
+				AccessKeyID:     "minioadmin",
+				SecretAccessKey: "minioadmin",
+				ForcePathStyle:  true,
+				QuotaBytes:      2048,
+			},
 		},
 	}
 
@@ -154,8 +167,16 @@ func TestMain(m *testing.M) {
 	}
 
 	testStore = store
-	testBackends = backends
-	testBackendOrder = backendOrder
+	// Keep all backends available for tests that need 3+ backends.
+	allBackends = backends
+	allBackendOrder = backendOrder
+	// Default test manager uses only the first 2 backends to preserve
+	// existing spread/rebalance test math.
+	testBackends = make(map[string]storage.ObjectBackend)
+	for _, name := range backendOrder[:2] {
+		testBackends[name] = backends[name]
+	}
+	testBackendOrder = backendOrder[:2]
 
 	// Wire: store → FailableStore → CircuitBreakerStore → manager
 	failableStore := &FailableStore{MetadataStore: store}
@@ -165,9 +186,9 @@ func TestMain(m *testing.M) {
 	testCBStore = cbStore
 
 	manager := storage.NewBackendManager(&storage.BackendManagerConfig{
-		Backends:        backends,
+		Backends:        testBackends,
 		Store:           cbStore,
-		Order:           backendOrder,
+		Order:           testBackendOrder,
 		CacheTTL:        60 * time.Second,
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: "pack",
@@ -353,6 +374,25 @@ func setOrphanBytes(t *testing.T, backendName string, amount int64) {
 	}
 }
 
+// newThreeBackendManager creates a BackendManager with all 3 backends for
+// tests that need more than 2 backends (e.g., over-replication with factor=3).
+func newThreeBackendManager(t *testing.T) *storage.BackendManager {
+	t.Helper()
+	cbStore := storage.NewCircuitBreakerStore(testFailableStore, config.CircuitBreakerConfig{
+		FailureThreshold: 3,
+		OpenTimeout:      500 * time.Millisecond,
+		CacheTTL:         60 * time.Second,
+	})
+	return storage.NewBackendManager(&storage.BackendManagerConfig{
+		Backends:        allBackends,
+		Store:           cbStore,
+		Order:           allBackendOrder,
+		CacheTTL:        60 * time.Second,
+		BackendTimeout:  30 * time.Second,
+		RoutingStrategy: "pack",
+	})
+}
+
 func envOrDefault(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -527,6 +567,34 @@ func (f *FailableStore) RecordReplica(ctx context.Context, key, targetBackend, s
 	return f.MetadataStore.RecordReplica(ctx, key, targetBackend, sourceBackend, size)
 }
 
+func (f *FailableStore) GetOverReplicatedObjects(ctx context.Context, factor, limit int) ([]storage.ObjectLocation, error) {
+	if f.isFailing() {
+		return nil, errSimulatedDBFailure
+	}
+	return f.MetadataStore.GetOverReplicatedObjects(ctx, factor, limit)
+}
+
+func (f *FailableStore) CountOverReplicatedObjects(ctx context.Context, factor int) (int64, error) {
+	if f.isFailing() {
+		return 0, errSimulatedDBFailure
+	}
+	return f.MetadataStore.CountOverReplicatedObjects(ctx, factor)
+}
+
+func (f *FailableStore) RemoveExcessCopy(ctx context.Context, key, backendName string, size int64) error {
+	if f.isFailing() {
+		return errSimulatedDBFailure
+	}
+	return f.MetadataStore.RemoveExcessCopy(ctx, key, backendName, size)
+}
+
+func (f *FailableStore) GetObjectCopiesForUpdate(ctx context.Context, key string) ([]storage.ObjectLocation, error) {
+	if f.isFailing() {
+		return nil, errSimulatedDBFailure
+	}
+	return f.MetadataStore.GetObjectCopiesForUpdate(ctx, key)
+}
+
 // tripCircuitBreaker makes enough failing requests to trip the circuit breaker open.
 func tripCircuitBreaker(t *testing.T) {
 	t.Helper()
@@ -587,6 +655,15 @@ func newTestS3Backend(t *testing.T, name string) *storage.S3Backend {
 			Endpoint:        envOrDefault("MINIO2_ENDPOINT", "http://localhost:19002"),
 			Region:          "us-east-1",
 			Bucket:          "backend2",
+			AccessKeyID:     "minioadmin",
+			SecretAccessKey: "minioadmin",
+			ForcePathStyle:  true,
+		},
+		"minio-3": {
+			Name:            "minio-3",
+			Endpoint:        envOrDefault("MINIO3_ENDPOINT", "http://localhost:19004"),
+			Region:          "us-east-1",
+			Bucket:          "backend3",
 			AccessKeyID:     "minioadmin",
 			SecretAccessKey: "minioadmin",
 			ForcePathStyle:  true,

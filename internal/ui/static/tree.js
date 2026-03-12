@@ -458,6 +458,42 @@
     });
   }
 
+  // --- Clean excess flow ---
+  var cleanExcessBtn = document.getElementById('clean-excess-btn');
+
+  if (cleanExcessBtn) {
+    cleanExcessBtn.addEventListener('click', function () {
+      cleanExcessBtn.disabled = true;
+      cleanExcessBtn.textContent = 'Cleaning\u2026';
+
+      fetchWithTimeout('api/clean-excess', { method: 'POST' }, 60000)
+        .then(function (resp) {
+          if (resp.status === 401) { location.href = 'login'; return; }
+          return resp.json();
+        })
+        .then(function (data) {
+          if (!data) return;
+          if (data.ok) {
+            cleanExcessBtn.textContent = data.removed + ' removed';
+            setTimeout(function () { location.reload(); }, 1500);
+          } else {
+            cleanExcessBtn.textContent = data.error || 'Failed';
+            setTimeout(function () {
+              cleanExcessBtn.disabled = false;
+              cleanExcessBtn.textContent = 'Clean Excess';
+            }, 3000);
+          }
+        })
+        .catch(function (err) {
+          cleanExcessBtn.textContent = err.name === 'AbortError' ? 'Request timed out' : 'Network error';
+          setTimeout(function () {
+            cleanExcessBtn.disabled = false;
+            cleanExcessBtn.textContent = 'Clean Excess';
+          }, 3000);
+        });
+    });
+  }
+
   // --- Sync flow ---
   var syncBtn = document.getElementById('sync-btn');
   var syncDialog = document.getElementById('sync-dialog');

@@ -71,8 +71,9 @@ type BackendManagerConfig struct {
 // dashboard, and hot-reloadable configuration.
 type BackendManager struct {
 	*backendCore
-	Rebalancer        *Rebalancer                     // periodic object distribution
-	Replicator        *Replicator                     // background replica creation
+	Rebalancer              *Rebalancer              // periodic object distribution
+	Replicator              *Replicator              // background replica creation
+	OverReplicationCleaner  *OverReplicationCleaner  // excess copy removal
 	CleanupWorker     *CleanupWorker                  // retry queue for failed deletions
 	DrainManager      *DrainManager                   // backend drain and remove operations
 	MultipartManager  *MultipartManager               // multipart upload lifecycle
@@ -115,8 +116,9 @@ func NewBackendManager(cfg *BackendManagerConfig) *BackendManager {
 
 	m := &BackendManager{
 		backendCore:      core,
-		Rebalancer:       NewRebalancer(core),
-		Replicator:       NewReplicator(core),
+		Rebalancer:             NewRebalancer(core),
+		Replicator:             NewReplicator(core),
+		OverReplicationCleaner: NewOverReplicationCleaner(core),
 		CleanupWorker:    cleanupWorker,
 		MultipartManager: multipartManager,
 		ObjectManager:    objectManager,

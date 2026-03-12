@@ -36,6 +36,7 @@ Commands:
   cleanup-queue       Show cleanup queue depth and pending items
   usage-flush         Force flush usage counters to database
   replicate           Trigger one replication cycle
+  over-replication    Show or clean over-replicated objects (use --execute to clean)
   log-level           View or set the runtime log level (use -set to change)
   drain               Start draining a backend (requires backend name arg)
   drain-status        Check drain progress (requires backend name arg)
@@ -109,6 +110,23 @@ func adminCommand(cmd string, args []string, baseAddr, token string, stdout, std
 
 	case "replicate":
 		return doPost(baseAddr+"/admin/api/replicate", "", token, stdout, stderr)
+
+	case "over-replication":
+		fs := flag.NewFlagSet("over-replication", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		execute := fs.Bool("execute", false, "Run cleanup (default: show status only)")
+		batchSize := fs.Int("batch-size", 0, "Override batch size for cleanup")
+		if err := fs.Parse(args); err != nil {
+			return 1
+		}
+		if *execute {
+			url := baseAddr + "/admin/api/over-replication"
+			if *batchSize > 0 {
+				url += fmt.Sprintf("?batch_size=%d", *batchSize)
+			}
+			return doPost(url, "", token, stdout, stderr)
+		}
+		return doGet(baseAddr+"/admin/api/over-replication", token, stdout, stderr)
 
 	case "log-level":
 		fs := flag.NewFlagSet("log-level", flag.ContinueOnError)

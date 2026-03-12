@@ -269,6 +269,38 @@ func newLifecycleService(manager *storage.BackendManager, store storage.Metadata
 	}
 }
 
+func newOverReplicationService(manager *storage.BackendManager, store storage.MetadataStore) *lockedTickerService {
+	interval := 5 * time.Minute
+	if rcfg := manager.OverReplicationCleaner.Config(); rcfg != nil && rcfg.WorkerInterval > 0 {
+		interval = rcfg.WorkerInterval
+	}
+	return &lockedTickerService{
+		store:    store,
+		interval: interval,
+		lockID:   storage.LockOverReplication,
+		name:     "Over-replication cleanup",
+		shouldRun: func() bool {
+			rcfg := manager.OverReplicationCleaner.Config()
+			return rcfg != nil && rcfg.Factor > 1
+		},
+		work: func(ctx context.Context) {
+			rcfg := manager.OverReplicationCleaner.Config()
+			if rcfg == nil {
+				return
+			}
+			removed, err := manager.OverReplicationCleaner.Clean(ctx, *rcfg)
+			if err != nil && !errors.Is(err, storage.ErrDBUnavailable) {
+				slog.Error("Over-replication cleanup failed", "error", err)
+			} else if removed > 0 {
+				slog.Info("Over-replication cleanup completed", "copies_removed", removed)
+				if err := manager.UpdateQuotaMetrics(ctx); err != nil {
+					slog.Warn("Failed to update quota metrics after over-replication cleanup", "error", err)
+				}
+			}
+		},
+	}
+}
+
 func newReplicatorService(manager *storage.BackendManager, store storage.MetadataStore) *lockedTickerService {
 	replicateWork := func(ctx context.Context) {
 		rcfg := manager.Replicator.Config()

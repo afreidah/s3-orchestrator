@@ -254,6 +254,7 @@ func runServe() {
 	// --- Store initial reloadable configs ---
 	manager.Rebalancer.SetConfig(&cfg.Rebalance)
 	manager.Replicator.SetConfig(&cfg.Replication)
+	manager.OverReplicationCleaner.SetConfig(&cfg.Replication)
 	manager.SetUsageFlushConfig(&cfg.UsageFlush)
 	manager.SetLifecycleConfig(&cfg.Lifecycle)
 
@@ -271,6 +272,7 @@ func runServe() {
 		sm.Register("cleanup-queue", newCleanupQueueService(manager, cbStore))
 		sm.Register("rebalancer", newRebalancerService(manager, cbStore))
 		sm.Register("replicator", newReplicatorService(manager, cbStore))
+		sm.Register("over-replication", newOverReplicationService(manager, cbStore))
 		sm.Register("lifecycle", newLifecycleService(manager, cbStore))
 	}
 
@@ -531,6 +533,7 @@ func runServe() {
 			// Reload rebalance/replication/usage-flush/lifecycle config
 			manager.Rebalancer.SetConfig(&newCfg.Rebalance)
 			manager.Replicator.SetConfig(&newCfg.Replication)
+			manager.OverReplicationCleaner.SetConfig(&newCfg.Replication)
 			manager.SetUsageFlushConfig(&newCfg.UsageFlush)
 			manager.SetLifecycleConfig(&newCfg.Lifecycle)
 			slog.Info("Reloaded rebalance/replication/usage-flush/lifecycle config")

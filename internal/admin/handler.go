@@ -16,7 +16,9 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"log/slog"
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -60,6 +62,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /admin/api/backends/{name}/drain", h.requireToken(h.handleDrainProgress))
 	mux.HandleFunc("DELETE /admin/api/backends/{name}/drain", h.requireToken(h.handleCancelDrain))
 	mux.HandleFunc("DELETE /admin/api/backends/{name}", h.requireToken(h.handleRemoveBackend))
+	mux.HandleFunc("GET /admin/api/over-replication", h.requireToken(h.handleOverReplicationStatus))
+	mux.HandleFunc("POST /admin/api/over-replication", h.requireToken(h.handleOverReplicationClean))
 	mux.HandleFunc("POST /admin/api/rotate-encryption-key", h.requireToken(h.handleRotateEncryptionKey))
 	mux.HandleFunc("POST /admin/api/encrypt-existing", h.requireToken(h.handleEncryptExisting))
 }
@@ -201,6 +205,69 @@ func (h *Handler) handleReplicate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "copies_created": created})
+}
+
+// handleOverReplicationStatus returns the count of over-replicated objects.
+func (h *Handler) handleOverReplicationStatus(w http.ResponseWriter, r *http.Request) {
+	rcfg := h.manager.OverReplicationCleaner.Config()
+	if rcfg == nil || rcfg.Factor <= 1 {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"factor":  0,
+			"pending": 0,
+			"status":  "replication not configured",
+		})
+		return
+	}
+
+	count, err := h.manager.OverReplicationCleaner.CountPending(r.Context(), rcfg.Factor)
+	if err != nil {
+		slog.Error("Admin: failed to count over-replicated objects", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to count over-replicated objects"})
+		return
+	}
+
+	telemetry.OverReplicationPending.Set(float64(count))
+	writeJSON(w, http.StatusOK, map[string]any{
+		"factor":  rcfg.Factor,
+		"pending": count,
+	})
+}
+
+// handleOverReplicationClean triggers an immediate over-replication cleanup pass.
+func (h *Handler) handleOverReplicationClean(w http.ResponseWriter, r *http.Request) {
+	rcfg := h.manager.OverReplicationCleaner.Config()
+	if rcfg == nil || rcfg.Factor <= 1 {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":         "skipped",
+			"copies_removed": 0,
+			"reason":         "replication not configured or factor <= 1",
+		})
+		return
+	}
+
+	// Allow callers to override batch size via query parameter.
+	cfg := *rcfg
+	if bs := r.URL.Query().Get("batch_size"); bs != "" {
+		if n, err := strconv.Atoi(bs); err == nil && n > 0 {
+			if n > math.MaxInt32 {
+				n = math.MaxInt32
+			}
+			cfg.BatchSize = n
+		}
+	}
+
+	removed, err := h.manager.OverReplicationCleaner.Clean(r.Context(), cfg)
+	if err != nil {
+		slog.Error("Admin: over-replication cleanup failed", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "over-replication cleanup failed"})
+		return
+	}
+
+	if err := h.manager.UpdateQuotaMetrics(r.Context()); err != nil {
+		slog.Warn("Failed to update quota metrics after admin over-replication cleanup", "error", err)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "copies_removed": removed})
 }
 
 // handleLogLevel gets or sets the runtime log level.

@@ -207,6 +207,18 @@ Triggers an on-demand rebalance across backends.
 {"ok": true, "moved": 5}
 ```
 
+### POST /ui/api/clean-excess
+
+Removes over-replicated copies that exceed the configured replication factor.
+
+**Request:** No body required.
+
+**Response:**
+
+```json
+{"ok": true, "removed": 3}
+```
+
 ### POST /ui/api/sync
 
 Imports pre-existing objects from a backend's S3 bucket into the database.
@@ -319,6 +331,40 @@ Or if replication is not configured:
 
 ```json
 {"status": "skipped", "copies_created": 0, "reason": "replication not configured or factor <= 1"}
+```
+
+### GET /admin/api/over-replication
+
+Returns the current replication factor and count of over-replicated objects.
+
+**Response:**
+
+```json
+{"factor": 2, "pending": 15}
+```
+
+### POST /admin/api/over-replication
+
+Triggers an immediate over-replication cleanup pass.
+
+**Query parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `batch_size` | No | Override the configured batch size for this run |
+
+**Request:** No body required.
+
+**Response:**
+
+```json
+{"status": "ok", "copies_removed": 5}
+```
+
+Or if replication is not configured:
+
+```json
+{"status": "skipped", "copies_removed": 0, "reason": "replication not configured or factor <= 1"}
 ```
 
 ### GET /admin/api/log-level

@@ -34,6 +34,7 @@ Objects are routed to backends based on the configured `routing_strategy`: **pac
 - [Write Routing](#write-routing)
 - [Rebalancing](#rebalancing)
 - [Replication](#replication)
+- [Over-Replication Cleanup](#over-replication-cleanup)
 - [Cleanup Queue](#cleanup-queue)
 - [Lifecycle (Object Expiration)](#lifecycle-object-expiration)
 - [Encryption](#encryption)
@@ -203,7 +204,23 @@ This prevents a sustained backend outage from silently reducing effective redund
 
 The threshold prevents replacement copies from being created during brief transient failures. The replicator also prefers healthy backends as copy sources and never selects a circuit-broken backend as a replication target.
 
-Over-replication cleanup when a backend recovers is not automatic — the extra copy remains until the object is overwritten or manually removed.
+When a backend recovers, the extra copies it created are cleaned up automatically by the over-replication cleaner (see [Over-Replication Cleanup](#over-replication-cleanup)).
+
+## Over-Replication Cleanup
+
+When a backend recovers after the replicator has already created replacement copies on other backends, objects end up with more copies than the replication factor. A background worker detects and removes the excess.
+
+The cleaner scores each copy by its backend's health and storage utilization, then removes the lowest-scoring copies until the object reaches the target factor:
+
+- **Draining backend**: score 0 (always removed first)
+- **Circuit-broken backend**: score 1 (removed next)
+- **Healthy backend**: score 2 + (1 − utilization ratio), range [2..3]
+
+Among healthy backends, the most utilized backend gets the lowest score — freeing space where it is scarcest. Each object's copies are locked with `FOR UPDATE` to prevent races with concurrent replicator or rebalancer activity.
+
+The worker runs at the `replication.worker_interval` and shares the same `batch_size` and `concurrency` settings. It only runs when `replication.factor > 1`. Like the replicator, it uses a PostgreSQL advisory lock for multi-instance coordination.
+
+Cleanup can also be triggered on demand via the admin API (`POST /admin/api/over-replication`), the CLI (`s3-orchestrator admin over-replication --execute`), or the web dashboard's **Clean Excess** button.
 
 ## Cleanup Queue
 
@@ -575,6 +592,11 @@ All metrics are prefixed with `s3proxy_`. Exposed at `/metrics` when enabled.
 | `s3proxy_replication_duration_seconds` | Histogram | — | Replication cycle time |
 | `s3proxy_replication_runs_total` | Counter | status | Replication worker executions |
 | `s3proxy_replication_health_copies_total` | Counter | — | Copies created to replace copies on circuit-broken backends |
+| `s3proxy_over_replication_pending` | Gauge | — | Objects exceeding the replication factor |
+| `s3proxy_over_replication_removed_total` | Counter | — | Excess copies removed |
+| `s3proxy_over_replication_errors_total` | Counter | — | Over-replication cleanup errors |
+| `s3proxy_over_replication_runs_total` | Counter | status | Over-replication worker executions |
+| `s3proxy_over_replication_duration_seconds` | Histogram | — | Over-replication cleanup cycle time |
 | `s3proxy_circuit_breaker_state` | Gauge | name | 0=closed, 1=open, 2=half-open (name: "database" or backend name) |
 | `s3proxy_circuit_breaker_transitions_total` | Counter | name, from, to | State transitions per component |
 | `s3proxy_degraded_reads_total` | Counter | operation | Broadcast reads in degraded mode |
@@ -627,6 +649,7 @@ Structured audit log entries are emitted as JSON via `slog` for every S3 API req
 |-----------|--------|
 | Rebalancer | `rebalance.start`, `rebalance.move`, `rebalance.complete` |
 | Replicator | `replication.start`, `replication.copy`, `replication.complete` |
+| Over-replication cleaner | `over_replication.start`, `over_replication.remove`, `over_replication.complete` |
 | Multipart cleanup | `storage.MultipartCleanup` |
 | Overwrite (displaced) | `storage.overwrite_displaced` |
 | Cleanup queue | `cleanup_queue.processed` |
@@ -656,6 +679,7 @@ The dashboard also provides management actions:
 - **Download** — download individual objects from the file tree
 - **Delete** — delete individual objects from the file tree
 - **Rebalance** — trigger an on-demand rebalance across backends
+- **Clean Excess** — remove over-replicated copies that exceed the replication factor
 - **Sync** — import pre-existing objects from a backend's S3 bucket into the proxy database, scoped to a selected virtual bucket
 
 The object tree uses JavaScript for lazy-loaded AJAX expansion — directories load their children on click via the `/ui/api/tree` endpoint. All dashboard responses include security headers (`X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Content-Security-Policy`). Enable it in the config:
@@ -668,7 +692,7 @@ ui:
   admin_secret: "${UI_ADMIN_SECRET}"
 ```
 
-JSON APIs are available at `{path}/api/dashboard`, `{path}/api/tree`, and `{path}/api/logs` for programmatic access. The logs endpoint accepts optional query parameters: `level`, `since`, `component`, and `limit`. Management endpoints (`{path}/api/delete`, `{path}/api/delete-prefix`, `{path}/api/upload`, `{path}/api/rebalance`, `{path}/api/sync`) accept POST requests and return JSON responses. The download endpoint (`{path}/api/download?key=...`) accepts GET requests.
+JSON APIs are available at `{path}/api/dashboard`, `{path}/api/tree`, and `{path}/api/logs` for programmatic access. The logs endpoint accepts optional query parameters: `level`, `since`, `component`, and `limit`. Management endpoints (`{path}/api/delete`, `{path}/api/delete-prefix`, `{path}/api/upload`, `{path}/api/rebalance`, `{path}/api/clean-excess`, `{path}/api/sync`) accept POST requests and return JSON responses. The download endpoint (`{path}/api/download?key=...`) accepts GET requests.
 
 ## Endpoints
 
@@ -685,6 +709,7 @@ JSON APIs are available at `{path}/api/dashboard`, `{path}/api/tree`, and `{path
 | `/ui/api/upload` | Upload a file (POST, multipart form) |
 | `/ui/api/download` | Download a file (GET, query param: key) |
 | `/ui/api/rebalance` | Trigger on-demand rebalance (POST) |
+| `/ui/api/clean-excess` | Remove over-replicated copies (POST) |
 | `/ui/api/logs` | Buffered log entries as JSON (query params: level, since, component, limit) |
 | `/ui/api/sync` | Import objects from a backend (POST, JSON body) |
 | `/{bucket}/{key}` | S3 API |
@@ -698,6 +723,7 @@ JSON APIs are available at `{path}/api/dashboard`, `{path}/api/tree`, and `{path
 | Cleanup queue | 1m | Yes | Retries failed backend object deletions with exponential backoff (1m to 24h, max 10 attempts). |
 | Rebalancer | configurable (default 6h) | Yes | Moves objects between backends per strategy. Only runs when enabled. |
 | Replicator | configurable (default 5m) | Yes | Creates copies of under-replicated objects. Only runs when factor > 1. Runs once at startup. |
+| Over-replication cleaner | configurable (default 5m) | Yes | Removes excess copies of objects that exceed the replication factor. Only runs when factor > 1. |
 | Lifecycle | 1h | Yes | Deletes objects matching lifecycle rules whose `created_at` exceeds `expiration_days`. Only runs when rules are configured. |
 
 ## Multi-Instance Deployment
@@ -783,6 +809,9 @@ s3-orchestrator admin object-locations -key "..."  # find all copies of an objec
 s3-orchestrator admin cleanup-queue                # cleanup queue depth
 s3-orchestrator admin usage-flush                  # force flush usage counters
 s3-orchestrator admin replicate                    # trigger replication cycle
+s3-orchestrator admin over-replication             # show over-replicated object count
+s3-orchestrator admin over-replication --execute   # clean excess copies
+s3-orchestrator admin over-replication --execute --batch-size 200  # with custom batch
 s3-orchestrator admin log-level                    # view current log level
 s3-orchestrator admin log-level -set debug         # change log level at runtime
 s3-orchestrator admin drain <backend>              # start draining a backend
@@ -980,6 +1009,7 @@ internal/
     cleanup_worker.go        Cleanup queue retry worker
     rebalancer.go            Object rebalancing across backends
     replicator.go            Cross-backend object replication
+    overreplication.go       Over-replication detection and excess copy cleanup
     manager_lifecycle.go     Lifecycle expiration rule processing
     manager_dashboard.go     DashboardData type + thin wrappers
     location_cache.go        Key→backend cache with TTL + background eviction

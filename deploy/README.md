@@ -36,7 +36,7 @@ kubectl apply -f deploy/kubernetes/ingress.yaml
 
 ## Local Demo Scripts
 
-Both platforms include a `local/demo.sh` script that stands up a fully working environment on your machine with zero configuration. Each script starts PostgreSQL and MinIO via docker-compose, builds the image from source, and deploys the orchestrator with two backends and replication factor 2.
+Both platforms include a `local/demo.sh` script that stands up a fully working environment on your machine with zero configuration. Each script starts PostgreSQL and MinIO via docker-compose, builds the image from source, and deploys the orchestrator with three backends and replication factor 2.
 
 ### Kubernetes (k3d)
 
