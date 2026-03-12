@@ -828,7 +828,7 @@ func TestDeleteObjects_TooManyObjects(t *testing.T) {
 
 	var sb strings.Builder
 	sb.WriteString("<Delete>")
-	for i := 0; i < 1001; i++ {
+	for range 1001 {
 		sb.WriteString("<Object><Key>k</Key></Object>")
 	}
 	sb.WriteString("</Delete>")

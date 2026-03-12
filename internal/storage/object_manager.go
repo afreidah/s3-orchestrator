@@ -1084,10 +1084,7 @@ func parsePlaintextRange(rangeHeader string, plaintextSize int64) (start, end in
 		if err != nil || n <= 0 {
 			return 0, 0, false
 		}
-		start = plaintextSize - n
-		if start < 0 {
-			start = 0
-		}
+		start = max(plaintextSize-n, 0)
 		return start, plaintextSize - 1, true
 	}
 

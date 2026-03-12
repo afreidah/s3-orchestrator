@@ -53,10 +53,10 @@ func TestSetBucketAuth_ConcurrentAccess(t *testing.T) {
 
 	// Concurrent readers
 	wg.Add(goroutines)
-	for i := 0; i < goroutines; i++ {
+	for range goroutines {
 		go func() {
 			defer wg.Done()
-			for j := 0; j < 100; j++ {
+			for range 100 {
 				br := srv.GetBucketAuth()
 				if br == nil {
 					t.Error("GetBucketAuth returned nil during concurrent access")
@@ -68,10 +68,10 @@ func TestSetBucketAuth_ConcurrentAccess(t *testing.T) {
 
 	// Concurrent writers
 	wg.Add(goroutines)
-	for i := 0; i < goroutines; i++ {
+	for i := range goroutines {
 		go func(n int) {
 			defer wg.Done()
-			for j := 0; j < 100; j++ {
+			for range 100 {
 				br := auth.NewBucketRegistry([]config.BucketConfig{
 					{Name: "b", Credentials: []config.CredentialConfig{
 						{AccessKeyID: "AKID", SecretAccessKey: "secret"},

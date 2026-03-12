@@ -203,23 +203,19 @@ func TestLogBuffer_ConcurrentAccess(t *testing.T) {
 	var wg sync.WaitGroup
 	// Concurrent writers.
 	for range 10 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for range 500 {
 				buf.Add(LogEntry{Time: time.Now(), Level: "INFO", Message: "concurrent"})
 			}
-		}()
+		})
 	}
 	// Concurrent readers.
 	for range 5 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for range 100 {
 				_ = buf.Entries(&LogQueryOpts{})
 			}
-		}()
+		})
 	}
 
 	wg.Wait()

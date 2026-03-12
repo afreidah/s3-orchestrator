@@ -13,6 +13,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 )
@@ -194,7 +195,7 @@ func TestDrainOneObject_NoCopy_MovesObjectWithSize(t *testing.T) {
 		getAllLocationsResp: []ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
 		},
-		getBackendResp:      "b2",
+		getBackendResp:         "b2",
 		moveObjectLocationSize: 4,
 	}
 
@@ -333,13 +334,7 @@ func TestStartDrain_FlushesCleanupQueueBeforeDeleteBackendData(t *testing.T) {
 	completedIDs := store.completeCleanupCalls
 	store.mu.Unlock()
 
-	found := false
-	for _, id := range completedIDs {
-		if id == 42 {
-			found = true
-			break
-		}
-	}
+	found := slices.Contains(completedIDs, 42)
 	if !found {
 		t.Error("expected cleanup item 42 to be completed during drain, but it was not")
 	}

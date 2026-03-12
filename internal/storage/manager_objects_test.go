@@ -1925,3 +1925,21 @@ func TestHeadObject_ParallelBroadcast(t *testing.T) {
 		t.Errorf("size = %d, want 4", result.Size)
 	}
 }
+
+// -------------------------------------------------------------------------
+// parsePlaintextRange
+// -------------------------------------------------------------------------
+
+func TestParsePlaintextRange_SuffixLargerThanFile(t *testing.T) {
+	// bytes=-1000 on a 100-byte file should clamp start to 0
+	start, end, ok := parsePlaintextRange("bytes=-1000", 100)
+	if !ok {
+		t.Fatal("expected ok=true for valid suffix range")
+	}
+	if start != 0 {
+		t.Errorf("start = %d, want 0 (clamped)", start)
+	}
+	if end != 99 {
+		t.Errorf("end = %d, want 99", end)
+	}
+}

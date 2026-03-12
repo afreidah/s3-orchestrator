@@ -134,13 +134,11 @@ func TestAdmissionController_IncrementsMetric(t *testing.T) {
 
 	// Start blocking request
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest("GET", "/test-bucket/key", nil)
 		handler.ServeHTTP(rec, req)
-	}()
+	})
 
 	// Wait for the request to enter the handler
 	<-entered
@@ -179,13 +177,11 @@ func TestSplitAdmission_WriteFull_ReadAllowed(t *testing.T) {
 
 	// Fill the write pool (capacity 1)
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest("PUT", "/test-bucket/key", nil)
 		handler.ServeHTTP(rec, req)
-	}()
+	})
 	<-entered
 
 	// Another write should be rejected
@@ -198,14 +194,12 @@ func TestSplitAdmission_WriteFull_ReadAllowed(t *testing.T) {
 
 	// A read should still succeed — separate pool
 	readDone := make(chan int, 1)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest("GET", "/test-bucket/key", nil)
 		handler.ServeHTTP(rec, req)
 		readDone <- rec.Code
-	}()
+	})
 	<-entered
 
 	close(hold)
@@ -232,13 +226,11 @@ func TestSplitAdmission_ReadFull_WriteAllowed(t *testing.T) {
 
 	// Fill the read pool (capacity 1)
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest("GET", "/test-bucket/key", nil)
 		handler.ServeHTTP(rec, req)
-	}()
+	})
 	<-entered
 
 	// Another read should be rejected
@@ -251,14 +243,12 @@ func TestSplitAdmission_ReadFull_WriteAllowed(t *testing.T) {
 
 	// A write should still succeed — separate pool
 	writeDone := make(chan int, 1)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest("PUT", "/test-bucket/key", nil)
 		handler.ServeHTTP(rec, req)
 		writeDone <- rec.Code
-	}()
+	})
 	<-entered
 
 	close(hold)
@@ -325,13 +315,11 @@ func TestSplitAdmission_DeleteUsesWritePool(t *testing.T) {
 
 	// Fill the write pool with a DELETE
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest("DELETE", "/test-bucket/key", nil)
 		handler.ServeHTTP(rec, req)
-	}()
+	})
 	<-entered
 
 	// A PUT should be rejected — same pool
@@ -363,25 +351,21 @@ func TestAdmissionController_WaitAcquiresSlot(t *testing.T) {
 
 	// Fill the slot
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest("GET", "/test-bucket/key", nil)
 		handler.ServeHTTP(rec, req)
-	}()
+	})
 	<-entered
 
 	// Release the slot after 50ms — well within the 200ms wait window
 	secondDone := make(chan int, 1)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest("GET", "/test-bucket/key2", nil)
 		handler.ServeHTTP(rec, req)
 		secondDone <- rec.Code
-	}()
+	})
 
 	time.Sleep(50 * time.Millisecond)
 	close(hold)
@@ -409,13 +393,11 @@ func TestAdmissionController_WaitTimesOut(t *testing.T) {
 
 	// Fill the slot
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest("GET", "/test-bucket/key", nil)
 		handler.ServeHTTP(rec, req)
-	}()
+	})
 	<-entered
 
 	// Second request — slot never frees, should timeout after 20ms
