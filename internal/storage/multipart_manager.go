@@ -251,7 +251,11 @@ func (mp *MultipartManager) CompleteMultipartUpload(ctx context.Context, uploadI
 	defer pipeCancel()
 
 	go func() {
-		defer func() { _ = pw.Close() }()
+		bw := bufpool.GetWriter(pw)
+		defer func() {
+			bufpool.PutWriter(bw)
+			_ = pw.Close()
+		}()
 		for _, part := range parts {
 			partKey := multipartPartKey(uploadID, part.PartNumber)
 			bctx, bcancel := mp.withTimeout(pipeCtx)
@@ -284,13 +288,16 @@ func (mp *MultipartManager) CompleteMultipartUpload(ctx context.Context, uploadI
 				src = decrypted
 			}
 
-			_, err = bufpool.Copy(pw, src)
+			_, err = bufpool.Copy(bw, src)
 			_ = result.Body.Close()
 			bcancel()
 			if err != nil {
 				pw.CloseWithError(fmt.Errorf("failed to stream part %d: %w", part.PartNumber, err))
 				return
 			}
+		}
+		if err := bw.Flush(); err != nil {
+			pw.CloseWithError(fmt.Errorf("failed to flush multipart stream: %w", err))
 		}
 	}()
 
@@ -323,6 +330,7 @@ func (mp *MultipartManager) CompleteMultipartUpload(ctx context.Context, uploadI
 
 	// Streamed from pipe; deadline governed by the caller's context.
 	etag, err := backend.PutObject(ctx, mu.ObjectKey, uploadBody, uploadSize, mu.ContentType, mu.Metadata)
+	pr.Close() // unblock goroutine if PutObject returned without draining the pipe
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return "", fmt.Errorf("failed to upload final object: %w", err)

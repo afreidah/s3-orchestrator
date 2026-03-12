@@ -1834,6 +1834,54 @@ func TestCopyObject_ExcludesDrainingBackend(t *testing.T) {
 	}
 }
 
+func TestCopyObject_SourceReadFails(t *testing.T) {
+	src := newMockBackend()
+	_, _ = src.PutObject(context.Background(), "src", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
+	src.getReadErr = errors.New("disk I/O error")
+
+	store := &mockStore{
+		getAllLocationsResp: []ObjectLocation{{ObjectKey: "src", BackendName: "src-be"}},
+		getBackendResp:     "dst-be",
+	}
+	mgr := NewBackendManager(&BackendManagerConfig{
+		Backends:        map[string]ObjectBackend{"src-be": src, "dst-be": newMockBackend()},
+		Store:           store,
+		Order:           []string{"src-be", "dst-be"},
+		CacheTTL:        5 * time.Second,
+		BackendTimeout:  30 * time.Second,
+		RoutingStrategy: "pack",
+	})
+
+	_, err := mgr.ObjectManager.CopyObject(context.Background(), "src", "dst")
+	if err == nil {
+		t.Fatal("expected error when source body read fails")
+	}
+}
+
+func TestCopyObject_AllSourceGetObjectsFail(t *testing.T) {
+	src := newMockBackend()
+	_, _ = src.PutObject(context.Background(), "src", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
+	src.getErr = errors.New("get unavailable")
+
+	store := &mockStore{
+		getAllLocationsResp: []ObjectLocation{{ObjectKey: "src", BackendName: "src-be"}},
+		getBackendResp:     "dst-be",
+	}
+	mgr := NewBackendManager(&BackendManagerConfig{
+		Backends:        map[string]ObjectBackend{"src-be": src, "dst-be": newMockBackend()},
+		Store:           store,
+		Order:           []string{"src-be", "dst-be"},
+		CacheTTL:        5 * time.Second,
+		BackendTimeout:  30 * time.Second,
+		RoutingStrategy: "pack",
+	})
+
+	_, err := mgr.ObjectManager.CopyObject(context.Background(), "src", "dst")
+	if err == nil {
+		t.Fatal("expected error when all source GetObjects fail")
+	}
+}
+
 // -------------------------------------------------------------------------
 // ListObjects edge cases
 // -------------------------------------------------------------------------

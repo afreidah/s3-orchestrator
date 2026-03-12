@@ -20,13 +20,14 @@ import (
 
 // mockBackend is an in-memory ObjectBackend for unit testing.
 type mockBackend struct {
-	mu       sync.Mutex
-	objects  map[string]mockObject
-	putErr   error
-	getErr   error
-	headErr  error
-	delErr   error
-	delDelay time.Duration
+	mu         sync.Mutex
+	objects    map[string]mockObject
+	putErr     error
+	getErr     error
+	getReadErr error // injected into the Body reader so reads fail mid-stream
+	headErr    error
+	delErr     error
+	delDelay   time.Duration
 }
 
 type mockObject struct {
@@ -78,14 +79,19 @@ func (m *mockBackend) GetObject(_ context.Context, key string, _ string) (*GetOb
 	// Return a copy of the data so the caller can read it after the lock is released
 	cp := make([]byte, len(obj.data))
 	copy(cp, obj.data)
+	body := io.NopCloser(bytes.NewReader(cp))
+	if m.getReadErr != nil {
+		body = io.NopCloser(&errReader{err: m.getReadErr})
+	}
 	return &GetObjectResult{
-		Body:        io.NopCloser(bytes.NewReader(cp)),
+		Body:        body,
 		Size:        int64(len(cp)),
 		ContentType: obj.contentType,
 		ETag:        obj.etag,
 		Metadata:    obj.metadata,
 	}, nil
 }
+
 
 func (m *mockBackend) HeadObject(_ context.Context, key string) (*HeadObjectResult, error) {
 	m.mu.Lock()
