@@ -287,3 +287,30 @@ func TestCB_OnlyOneProbeAllowed(t *testing.T) {
 		t.Errorf("expected exactly 1 probe, got %d", probes)
 	}
 }
+
+func TestCB_ProbeEligible(t *testing.T) {
+	cb := newTestBreaker(1, 5*time.Millisecond)
+
+	// Closed — not probe-eligible
+	if cb.ProbeEligible() {
+		t.Error("closed circuit should not be probe-eligible")
+	}
+
+	// Trip it open
+	_ = cb.PostCheck(errTest)
+	if cb.ProbeEligible() {
+		t.Error("freshly opened circuit should not be probe-eligible (timeout not elapsed)")
+	}
+
+	// Wait for timeout
+	time.Sleep(10 * time.Millisecond)
+	if !cb.ProbeEligible() {
+		t.Error("open circuit with elapsed timeout should be probe-eligible")
+	}
+
+	// Transition to half-open via PreCheck — no longer probe-eligible
+	_ = cb.PreCheck()
+	if cb.ProbeEligible() {
+		t.Error("half-open circuit should not be probe-eligible")
+	}
+}
