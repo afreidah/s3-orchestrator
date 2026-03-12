@@ -728,6 +728,15 @@ s3-orchestrator admin usage-flush
 # Trigger one replication cycle (creates missing replicas)
 s3-orchestrator admin replicate
 
+# Show count of over-replicated objects
+s3-orchestrator admin over-replication
+
+# Clean over-replicated objects (remove excess copies)
+s3-orchestrator admin over-replication --execute
+
+# Clean with a custom batch size
+s3-orchestrator admin over-replication --execute --batch-size 200
+
 # View the current log level
 s3-orchestrator admin log-level
 
@@ -828,13 +837,14 @@ The dashboard also provides management actions:
 - **Download** — download individual objects by clicking the download icon on any file in the tree
 - **Delete** — delete individual objects by clicking the delete icon on any file in the tree
 - **Rebalance** — trigger an on-demand rebalance using the configured strategy and settings
+- **Clean Excess** — remove over-replicated copies that exceed the replication factor
 - **Sync** — import pre-existing objects from a backend's S3 bucket into the proxy database. Select a backend and a virtual bucket — objects already in the database are skipped, and objects belonging to other virtual buckets are excluded.
 
 The dashboard requires authentication. Users log in at `{path}/login` with the `admin_key` and `admin_secret` configured in the `ui` section. Sessions last 24 hours.
 
 The dashboard is server-rendered HTML. The object tree uses JavaScript for lazy-loaded directory expansion — directories fetch their children on click via the `/ui/api/tree` endpoint.
 
-JSON endpoints at `{path}/api/dashboard`, `{path}/api/tree`, and `{path}/api/logs` return data for programmatic access or integration with other tools. The logs endpoint accepts optional query parameters: `level` (minimum severity: DEBUG, INFO, WARN, ERROR), `since` (RFC3339 timestamp), `component`, and `limit`. Management endpoints (`{path}/api/delete`, `{path}/api/upload`, `{path}/api/rebalance`, `{path}/api/sync`) accept POST requests. The download endpoint (`{path}/api/download?key=...`) accepts GET requests. All API endpoints require authentication.
+JSON endpoints at `{path}/api/dashboard`, `{path}/api/tree`, and `{path}/api/logs` return data for programmatic access or integration with other tools. The logs endpoint accepts optional query parameters: `level` (minimum severity: DEBUG, INFO, WARN, ERROR), `since` (RFC3339 timestamp), `component`, and `limit`. Management endpoints (`{path}/api/delete`, `{path}/api/upload`, `{path}/api/rebalance`, `{path}/api/clean-excess`, `{path}/api/sync`) accept POST requests. The download endpoint (`{path}/api/download?key=...`) accepts GET requests. All API endpoints require authentication.
 
 ### Health endpoints
 
@@ -862,7 +872,7 @@ Both endpoints include an `instance` field with the hostname for identifying whi
 
 A comprehensive Grafana dashboard is included at `grafana/s3-orchestrator.json`. Import it via Grafana's UI (Dashboards → Import → Upload JSON file) or provision it from disk. It expects a Prometheus datasource with UID `prometheus`.
 
-The dashboard covers all emitted metrics across eight rows: overview stats, storage quotas, monthly usage, request performance, backend operations, health/reliability (circuit breaker, degraded mode, cleanup queue, rate limits), background workers (replication, rebalancer, lifecycle, audit), and encryption (operations, errors, encrypt-existing, key rotation). The background workers and encryption rows are collapsed by default.
+The dashboard covers all emitted metrics across nine rows: overview stats, storage quotas, monthly usage, request performance, backend operations, health/reliability (circuit breaker, degraded mode, cleanup queue, rate limits), background workers (replication, rebalancer, lifecycle, audit), over-replication cleanup (pending count, excess copies removed, errors, duration), and encryption (operations, errors, encrypt-existing, key rotation). The background workers, over-replication cleanup, and encryption rows are collapsed by default.
 
 ### Key Prometheus metrics
 
@@ -876,6 +886,8 @@ If `telemetry.metrics.enabled` is `true`, metrics are exposed at `/metrics`. Key
 | `s3proxy_circuit_breaker_state{name="<backend>"}` | Alert when > 0 — backend is unreachable or credentials expired |
 | `s3proxy_replication_pending` | Alert when consistently > 0 — replicas are falling behind |
 | `s3proxy_replication_health_copies_total` | Non-zero means health-aware replication is creating replacement copies for circuit-broken backends |
+| `s3proxy_over_replication_pending` | Objects with more copies than the replication factor — should return to 0 after cleanup runs |
+| `s3proxy_over_replication_errors_total` | Cleanup errors — indicates backends or metadata issues preventing excess copy removal |
 | `s3proxy_requests_total{status_code="5xx"}` | Alert on elevated 5xx rates |
 | `s3proxy_degraded_write_rejections_total` | Writes being rejected due to degraded mode |
 | `s3proxy_usage_limit_rejections_total` | Operations rejected by usage limits |

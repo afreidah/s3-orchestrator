@@ -1878,6 +1878,388 @@ func TestRebalancerWithReplicas(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
+// OVER-REPLICATION CLEANUP
+// -------------------------------------------------------------------------
+
+func TestOverReplicationBasic(t *testing.T) {
+	client := newS3Client(t)
+	ctx := context.Background()
+	resetState(t)
+
+	mgr := newThreeBackendManager(t)
+
+	key := uniqueKey(t, "overrepl-basic")
+	body := bytes.Repeat([]byte("O"), 100)
+
+	// PUT object → 1 copy
+	_, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(key),
+		Body:          bytes.NewReader(body),
+		ContentLength: aws.Int64(100),
+	})
+	if err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+
+	// Replicate to factor=3 → 3 copies across 3 backends
+	replCfg := config.ReplicationConfig{
+		Factor:         3,
+		WorkerInterval: time.Minute,
+		BatchSize:      50,
+	}
+	_, err = mgr.Replicator.Replicate(ctx, replCfg)
+	if err != nil {
+		t.Fatalf("Replicate to factor 3: %v", err)
+	}
+	if copies := queryObjectCopies(t, key); copies != 3 {
+		t.Fatalf("expected 3 copies after replication, got %d", copies)
+	}
+
+	// Over-replication cleanup with factor=3 should be a no-op
+	removed, err := mgr.OverReplicationCleaner.Clean(ctx, config.ReplicationConfig{
+		Factor:      3,
+		BatchSize:   50,
+		Concurrency: 1,
+	})
+	if err != nil {
+		t.Fatalf("Clean (at factor): %v", err)
+	}
+	if removed != 0 {
+		t.Errorf("expected 0 removed when at factor, got %d", removed)
+	}
+
+	// Now lower the factor to 2 → object is over-replicated
+	removed, err = mgr.OverReplicationCleaner.Clean(ctx, config.ReplicationConfig{
+		Factor:      2,
+		BatchSize:   50,
+		Concurrency: 1,
+	})
+	if err != nil {
+		t.Fatalf("Clean (over factor): %v", err)
+	}
+	if removed != 1 {
+		t.Errorf("expected 1 removed, got %d", removed)
+	}
+
+	// Should have exactly 2 copies remaining
+	if copies := queryObjectCopies(t, key); copies != 2 {
+		t.Errorf("expected 2 copies after cleanup, got %d", copies)
+	}
+
+	// GET still returns correct content
+	resp, err := client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(virtualBucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		t.Fatalf("GetObject after cleanup: %v", err)
+	}
+	defer resp.Body.Close()
+	got, _ := io.ReadAll(resp.Body)
+	if !bytes.Equal(got, body) {
+		t.Errorf("body mismatch after over-replication cleanup")
+	}
+}
+
+func TestOverReplicationMultipleObjects(t *testing.T) {
+	client := newS3Client(t)
+	ctx := context.Background()
+	resetState(t)
+
+	mgr := newThreeBackendManager(t)
+
+	keys := make([]string, 3)
+	for i := range keys {
+		keys[i] = uniqueKey(t, fmt.Sprintf("overrepl-multi-%d", i))
+		_, err := client.PutObject(ctx, &s3.PutObjectInput{
+			Bucket:        aws.String(virtualBucket),
+			Key:           aws.String(keys[i]),
+			Body:          bytes.NewReader(bytes.Repeat([]byte("M"), 50)),
+			ContentLength: aws.Int64(50),
+		})
+		if err != nil {
+			t.Fatalf("PutObject %d: %v", i, err)
+		}
+	}
+
+	// Replicate all to factor=3
+	replCfg := config.ReplicationConfig{
+		Factor:         3,
+		WorkerInterval: time.Minute,
+		BatchSize:      50,
+	}
+	_, err := mgr.Replicator.Replicate(ctx, replCfg)
+	if err != nil {
+		t.Fatalf("Replicate: %v", err)
+	}
+	for i, key := range keys {
+		if c := queryObjectCopies(t, key); c != 3 {
+			t.Fatalf("key %d: expected 3 copies, got %d", i, c)
+		}
+	}
+
+	// Clean with factor=2 → each object loses 1 copy
+	removed, err := mgr.OverReplicationCleaner.Clean(ctx, config.ReplicationConfig{
+		Factor:      2,
+		BatchSize:   50,
+		Concurrency: 2,
+	})
+	if err != nil {
+		t.Fatalf("Clean: %v", err)
+	}
+	if removed != 3 {
+		t.Errorf("expected 3 removed, got %d", removed)
+	}
+
+	for i, key := range keys {
+		if c := queryObjectCopies(t, key); c != 2 {
+			t.Errorf("key %d: expected 2 copies after cleanup, got %d", i, c)
+		}
+	}
+}
+
+func TestOverReplicationDrainingBackendRemovedFirst(t *testing.T) {
+	client := newS3Client(t)
+	ctx := context.Background()
+	resetState(t)
+
+	mgr := newThreeBackendManager(t)
+
+	key := uniqueKey(t, "overrepl-drain")
+	body := bytes.Repeat([]byte("D"), 100)
+
+	_, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(key),
+		Body:          bytes.NewReader(body),
+		ContentLength: aws.Int64(100),
+	})
+	if err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+
+	// Replicate to factor=3 → copies on all 3 backends
+	replCfg := config.ReplicationConfig{
+		Factor:         3,
+		WorkerInterval: time.Minute,
+		BatchSize:      50,
+	}
+	_, err = mgr.Replicator.Replicate(ctx, replCfg)
+	if err != nil {
+		t.Fatalf("Replicate: %v", err)
+	}
+
+	backends := queryObjectBackends(t, key)
+	if len(backends) != 3 {
+		t.Fatalf("expected 3 backends, got %v", backends)
+	}
+
+	// Start draining the first backend where the object was placed
+	drainTarget := backends[0]
+
+	if err := mgr.DrainManager.StartDrain(ctx, drainTarget); err != nil {
+		t.Fatalf("StartDrain: %v", err)
+	}
+	defer mgr.DrainManager.CancelDrain(drainTarget)
+
+	// Clean with factor=2 → should remove 1 copy, preferring the draining backend (score 0)
+	removed, err := mgr.OverReplicationCleaner.Clean(ctx, config.ReplicationConfig{
+		Factor:      2,
+		BatchSize:   50,
+		Concurrency: 1,
+	})
+	if err != nil {
+		t.Fatalf("Clean: %v", err)
+	}
+	if removed != 1 {
+		t.Errorf("expected 1 removed, got %d", removed)
+	}
+
+	// The draining backend's copy should have been removed
+	remaining := queryObjectBackends(t, key)
+	if len(remaining) != 2 {
+		t.Fatalf("expected 2 copies, got %v", remaining)
+	}
+	for _, b := range remaining {
+		if b == drainTarget {
+			t.Errorf("draining backend %s should have been removed, but it still has a copy", drainTarget)
+		}
+	}
+
+	// Data integrity check
+	resp, err := client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(virtualBucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		t.Fatalf("GetObject after drain cleanup: %v", err)
+	}
+	defer resp.Body.Close()
+	got, _ := io.ReadAll(resp.Body)
+	if !bytes.Equal(got, body) {
+		t.Errorf("body mismatch after drain cleanup")
+	}
+}
+
+func TestOverReplicationQuotaFreed(t *testing.T) {
+	client := newS3Client(t)
+	ctx := context.Background()
+	resetState(t)
+
+	mgr := newThreeBackendManager(t)
+
+	key := uniqueKey(t, "overrepl-quota")
+	size := int64(100)
+
+	_, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(key),
+		Body:          bytes.NewReader(bytes.Repeat([]byte("Q"), int(size))),
+		ContentLength: aws.Int64(size),
+	})
+	if err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+
+	// Replicate to factor=3
+	replCfg := config.ReplicationConfig{
+		Factor:         3,
+		WorkerInterval: time.Minute,
+		BatchSize:      50,
+	}
+	_, err = mgr.Replicator.Replicate(ctx, replCfg)
+	if err != nil {
+		t.Fatalf("Replicate: %v", err)
+	}
+
+	backends := queryObjectBackends(t, key)
+	if len(backends) != 3 {
+		t.Fatalf("expected 3 backends, got %v", backends)
+	}
+
+	// Record quota before cleanup
+	quotaBefore := make(map[string]int64)
+	for _, b := range backends {
+		quotaBefore[b] = queryQuotaUsed(t, b)
+	}
+
+	// Clean with factor=2 → remove 1 excess copy
+	removed, err := mgr.OverReplicationCleaner.Clean(ctx, config.ReplicationConfig{
+		Factor:      2,
+		BatchSize:   50,
+		Concurrency: 1,
+	})
+	if err != nil {
+		t.Fatalf("Clean: %v", err)
+	}
+	if removed != 1 {
+		t.Errorf("expected 1 removed, got %d", removed)
+	}
+
+	// Find which backend lost its copy
+	remaining := queryObjectBackends(t, key)
+	if len(remaining) != 2 {
+		t.Fatalf("expected 2 copies remaining, got %v", remaining)
+	}
+
+	remainingSet := make(map[string]bool)
+	for _, b := range remaining {
+		remainingSet[b] = true
+	}
+	var removedBackend string
+	for _, b := range backends {
+		if !remainingSet[b] {
+			removedBackend = b
+			break
+		}
+	}
+
+	// Quota on the removed backend should have decreased
+	quotaAfter := queryQuotaUsed(t, removedBackend)
+	if quotaAfter >= quotaBefore[removedBackend] {
+		t.Errorf("expected quota to decrease on %s: before=%d, after=%d",
+			removedBackend, quotaBefore[removedBackend], quotaAfter)
+	}
+}
+
+func TestOverReplicationCountPending(t *testing.T) {
+	client := newS3Client(t)
+	ctx := context.Background()
+	resetState(t)
+
+	mgr := newThreeBackendManager(t)
+
+	key := uniqueKey(t, "overrepl-count")
+
+	_, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(key),
+		Body:          bytes.NewReader(bytes.Repeat([]byte("C"), 100)),
+		ContentLength: aws.Int64(100),
+	})
+	if err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+
+	// No over-replication with factor=3
+	count, err := mgr.OverReplicationCleaner.CountPending(ctx, 3)
+	if err != nil {
+		t.Fatalf("CountPending: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("expected 0 pending with 1 copy and factor 3, got %d", count)
+	}
+
+	// Replicate to 3 copies
+	replCfg := config.ReplicationConfig{
+		Factor:         3,
+		WorkerInterval: time.Minute,
+		BatchSize:      50,
+	}
+	_, err = mgr.Replicator.Replicate(ctx, replCfg)
+	if err != nil {
+		t.Fatalf("Replicate: %v", err)
+	}
+
+	// 3 copies with factor=3 → not over-replicated
+	count, err = mgr.OverReplicationCleaner.CountPending(ctx, 3)
+	if err != nil {
+		t.Fatalf("CountPending factor=3: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("expected 0 pending at factor, got %d", count)
+	}
+
+	// 3 copies with factor=2 → over-replicated
+	count, err = mgr.OverReplicationCleaner.CountPending(ctx, 2)
+	if err != nil {
+		t.Fatalf("CountPending factor=2: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("expected 1 pending when over factor, got %d", count)
+	}
+
+	// Clean it and verify count drops
+	_, err = mgr.OverReplicationCleaner.Clean(ctx, config.ReplicationConfig{
+		Factor:      2,
+		BatchSize:   50,
+		Concurrency: 1,
+	})
+	if err != nil {
+		t.Fatalf("Clean: %v", err)
+	}
+
+	count, err = mgr.OverReplicationCleaner.CountPending(ctx, 2)
+	if err != nil {
+		t.Fatalf("CountPending after clean: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("expected 0 pending after cleanup, got %d", count)
+	}
+}
+
+// -------------------------------------------------------------------------
 // IMPORT (Sync)
 // -------------------------------------------------------------------------
 

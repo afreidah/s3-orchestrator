@@ -5,7 +5,7 @@
 #
 # Points at the docker-compose.test.yml services on the host via the k3d Docker
 # network gateway IP. The __HOST_IP__ placeholder is replaced by demo.sh at
-# apply time. Two MinIO backends with replication factor 2 to validate
+# apply time. Three MinIO backends with replication factor 2 to validate
 # multi-backend routing and replica creation.
 # -------------------------------------------------------------------------------
 
@@ -56,6 +56,15 @@ data:
         bucket: "backend2"
         access_key_id: "${MINIO2_ACCESS_KEY}"
         secret_access_key: "${MINIO2_SECRET_KEY}"
+        force_path_style: true
+        quota_bytes: 10737418240
+
+      - name: "minio-3"
+        endpoint: "http://__HOST_IP__:19004"
+        region: "us-east-1"
+        bucket: "backend3"
+        access_key_id: "${MINIO3_ACCESS_KEY}"
+        secret_access_key: "${MINIO3_SECRET_KEY}"
         force_path_style: true
         quota_bytes: 10737418240
 

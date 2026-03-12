@@ -8,13 +8,14 @@ cd s3-orchestrator
 make run
 ```
 
-This starts two MinIO instances and a PostgreSQL database via Docker Compose, then launches the orchestrator pointing at them. The included `config.yaml` is pre-configured for this environment — no manual setup required.
+This starts three MinIO instances and a PostgreSQL database via Docker Compose, then launches the orchestrator pointing at them. The included `config.yaml` is pre-configured for this environment — no manual setup required.
 
 ## What `make run` does
 
 1. **`make integration-deps`** — runs `docker compose -f docker-compose.test.yml up -d` to start:
    - MinIO 1 on `localhost:19000` (bucket: `backend1`)
    - MinIO 2 on `localhost:19002` (bucket: `backend2`)
+   - MinIO 3 on `localhost:19004` (bucket: `backend3`)
    - PostgreSQL on `localhost:15432` (database: `s3proxy_test`)
    - A setup container that creates the MinIO buckets
 2. **`go run ./cmd/s3-orchestrator -config config.yaml`** — compiles and starts the server on port 9000

@@ -57,6 +57,15 @@ backends:
     force_path_style: true
     quota_bytes: 10737418240  # 10 GB
 
+  - name: "minio-3"
+    endpoint: "http://localhost:19004"
+    region: "us-east-1"
+    bucket: "backend3"
+    access_key_id: "minioadmin"
+    secret_access_key: "minioadmin"
+    force_path_style: true
+    quota_bytes: 10737418240  # 10 GB
+
 # --- Object routing ---
 routing_strategy: "spread"
 

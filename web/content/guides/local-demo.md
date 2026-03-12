@@ -4,7 +4,7 @@ weight: 1
 ---
 
 
-This guide walks through running the S3 Orchestrator demo environment on your local machine. The demo stands up a fully functional instance with two MinIO backends, PostgreSQL, and a complete observability stack (Prometheus, Grafana, Tempo, Loki). Two orchestrators are available: **Nomad** and **Kubernetes** (via k3d). Both expose the same functionality — pick whichever you prefer.
+This guide walks through running the S3 Orchestrator demo environment on your local machine. The demo stands up a fully functional instance with three MinIO backends, PostgreSQL, and a complete observability stack (Prometheus, Grafana, Tempo, Loki). Two orchestrators are available: **Nomad** and **Kubernetes** (via k3d). Both expose the same functionality — pick whichever you prefer.
 
 ## Prerequisites
 
@@ -63,6 +63,7 @@ The demo starts several services behind the scenes:
 | **S3 Orchestrator** | 9000 | S3 API, admin dashboard, Prometheus metrics |
 | **MinIO 1** | 19000 | First storage backend (10 GB quota) |
 | **MinIO 2** | 19002 | Second storage backend (10 GB quota) |
+| **MinIO 3** | 19004 | Third storage backend (10 GB quota) |
 | **PostgreSQL** | 15432 | Metadata database |
 | **Prometheus** | 19090 | Metrics collection (10 s scrape interval) |
 | **Grafana** | 13000 | Dashboard, log exploration, trace viewer |
@@ -76,8 +77,8 @@ The Nomad demo also starts a **Nomad dev agent** on port 4646. The Kubernetes de
 
 Both demos are pre-configured with:
 
-- **Two backends** — `minio-1` and `minio-2`, each with a 10 GB quota
-- **Replication factor 2** — every object is automatically copied to both backends
+- **Three backends** — `minio-1`, `minio-2`, and `minio-3`, each with a 10 GB quota
+- **Replication factor 2** — every object is automatically copied to a second backend
 - **Encryption enabled** — all objects are AES-encrypted at rest
 - **Circuit breaker** — backends are automatically taken out of rotation after 3 consecutive failures
 - **Full telemetry** — 100% trace sampling, structured JSON logging with trace correlation
@@ -221,7 +222,7 @@ Upload a file and check the Backends Table in the admin dashboard. You will see 
 
 ### Observe routing strategies
 
-Upload several files and compare the storage distribution. The Nomad demo uses `pack` (fills `minio-1` first), while the Kubernetes demo uses `spread` (distributes evenly). The Grafana dashboard's **Quota & Storage** section shows the difference clearly.
+Upload several files and compare the storage distribution. The Nomad demo uses `pack` (fills `minio-1` first, then `minio-2`, then `minio-3`), while the Kubernetes demo uses `spread` (distributes evenly across all three backends). The Grafana dashboard's **Quota & Storage** section shows the difference clearly.
 
 ### Trigger a rebalance
 
@@ -232,7 +233,7 @@ To see it in action with the Nomad demo:
 1. Upload several files — `pack` routing places them all on `minio-1` first
 2. Edit the Nomad job to change the routing strategy to `spread` and redeploy
 3. Click **Rebalance** in the admin dashboard
-4. Objects migrate from `minio-1` to `minio-2` until both backends are balanced
+4. Objects migrate from `minio-1` to `minio-2` and `minio-3` until all backends are balanced
 5. Watch the **Rebalancer** section in the Grafana dashboard to see objects and bytes moving
 
 ### Test circuit breaker behavior
