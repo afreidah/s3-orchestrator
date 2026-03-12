@@ -124,6 +124,16 @@ func (cb *CircuitBreaker) OpenDuration() time.Duration {
 	return time.Since(cb.openedAt)
 }
 
+// ProbeEligible returns true when the circuit is open and the open timeout
+// has elapsed, meaning the next request should be allowed through as a probe.
+// This is a read-only check with no side effects — the actual state transition
+// happens in PreCheck when the request is dispatched.
+func (cb *CircuitBreaker) ProbeEligible() bool {
+	cb.mu.RLock()
+	defer cb.mu.RUnlock()
+	return cb.state == stateOpen && time.Since(cb.lastFailure) >= cb.openTimeout
+}
+
 // -------------------------------------------------------------------------
 // STATE MACHINE
 // -------------------------------------------------------------------------

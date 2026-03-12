@@ -92,8 +92,10 @@ func (c *backendCore) excludeDraining(eligible []string) []string {
 }
 
 // excludeUnhealthy filters out backends whose circuit breaker is open.
-// Half-open backends are allowed through so the circuit breaker's probe
-// mechanism can test recovery via organic traffic.
+// Half-open and probe-eligible backends are allowed through so the circuit
+// breaker's probe mechanism can test recovery via organic traffic. Without
+// this, all backends tripping simultaneously would deadlock — no request
+// would ever reach PreCheck to trigger the open → half-open transition.
 func (c *backendCore) excludeUnhealthy(eligible []string) []string {
 	filtered := make([]string, 0, len(eligible))
 	for _, name := range eligible {
@@ -101,7 +103,7 @@ func (c *backendCore) excludeUnhealthy(eligible []string) []string {
 		if !ok {
 			continue
 		}
-		if cb, ok := b.(*CircuitBreakerBackend); ok && cb.State() == stateOpen {
+		if cb, ok := b.(*CircuitBreakerBackend); ok && cb.State() == stateOpen && !cb.ProbeEligible() {
 			continue
 		}
 		filtered = append(filtered, name)
