@@ -709,6 +709,7 @@ func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey strin
 
 	// Streamed from pipe; deadline governed by the caller's context.
 	etag, err := destBackend.PutObject(ctx, destKey, pr, size, contentType, metadata)
+	pr.Close() // unblock goroutine if PutObject returned without draining the pipe
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)

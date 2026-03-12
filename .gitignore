@@ -6,6 +6,7 @@ dist/
 *.deb
 packaging/changelog.gz
 loadtest/s3-loadtest
+loadtest/loadtest
 web/public/
 web/content/godoc/
 !web/content/godoc/_index.md
