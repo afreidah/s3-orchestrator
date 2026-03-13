@@ -10,7 +10,7 @@ Envelope encryption and decryption paths for S3 objects using chunked AES-256-GC
 
 ### How it works
 
-Every object stored through the S3 Orchestrator is encrypted before it leaves the server. The system uses **envelope encryption** — a two-layer key scheme where each object gets its own throwaway key, and that key is itself encrypted by a master key.
+When encryption is enabled, every object stored through the S3 Orchestrator is encrypted before it leaves the server. The system uses **envelope encryption** — a two-layer key scheme where each object gets its own throwaway key, and that key is itself encrypted by a master key. Encryption is optional — see the [configuration reference](../../docs/user-guide/) for how to enable it.
 
 #### Key concepts
 

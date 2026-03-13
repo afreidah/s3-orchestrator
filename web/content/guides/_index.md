@@ -23,6 +23,13 @@ weight: 30
       <p>Combine free-tier storage from multiple cloud providers into a single pool without exceeding any provider's limits.</p>
     </div>
   </a>
+  <a class="landing-card" href="replication-guide/">
+    <i class="fas fa-copy landing-card-icon" style="color: #67e8f9;"></i>
+    <div>
+      <strong>Understanding Replication</strong>
+      <p>How the replicator works, target selection, side-effects, over-replication cleanup, and monitoring.</p>
+    </div>
+  </a>
   <a class="landing-card" href="minio-cloud-replication/">
     <i class="fas fa-cloud-upload-alt landing-card-icon" style="color: #93c5fd;"></i>
     <div>

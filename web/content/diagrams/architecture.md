@@ -240,12 +240,12 @@ High-level architecture of the S3 Orchestrator showing the request path, storage
     REPL: {
       title: 'Replicator',
       badge: 'background', badgeText: 'background worker',
-      body: '<p>Creates additional copies of under-replicated objects. Runs every 5 minutes under advisory lock (<code>LockReplicator</code>).</p><p>Queries DB for objects with fewer copies than <code>replication.factor</code>. Copies to backends with available quota, re-encrypting with fresh nonce. Skips backends that have been unhealthy longer than <code>unhealthy_threshold</code>.</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a></p>'
+      body: '<p>Creates additional copies of under-replicated objects. Runs every 5 minutes under advisory lock (<code>LockReplicator</code>).</p><p>Queries DB for objects with fewer copies than <code>replication.factor</code>. Stream-copies to backends with available quota (binary copy, no re-encryption). Skips backends that have been unhealthy longer than <code>unhealthy_threshold</code>.</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a></p>'
     },
     REBAL: {
       title: 'Rebalancer',
       badge: 'background', badgeText: 'background worker',
-      body: '<p>Redistributes objects across backends to optimize storage utilization. Runs every 6 hours under advisory lock.</p><p><b>spread:</b> equalizes utilization ratios across backends.<br><b>pack:</b> consolidates objects into fewer backends, freeing up others.</p><p>Moves objects: GET from source &rarr; decrypt &rarr; re-encrypt &rarr; PUT to target &rarr; delete from source &rarr; update DB.</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a></p>'
+      body: '<p>Redistributes objects across backends to optimize storage utilization. Runs every 6 hours under advisory lock.</p><p><b>spread:</b> equalizes utilization ratios across backends.<br><b>pack:</b> consolidates objects into fewer backends, freeing up others.</p><p>Moves objects: GET from source &rarr; PUT to target (binary stream copy, no re-encryption) &rarr; delete from source &rarr; update DB.</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a></p>'
     },
     CLEAN: {
       title: 'Cleanup Queue',
