@@ -3,6 +3,7 @@ title: "s3-orchestrator documentation"
 linkTitle: "Documentation"
 chapter: true
 weight: 20
+alwaysopen: false
 cascade:
   - title: "s3-orchestrator Quickstart"
     linkTitle: "Quickstart"
