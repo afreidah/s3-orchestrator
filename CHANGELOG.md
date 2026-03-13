@@ -3,6 +3,14 @@
 All notable changes to this project are documented in this file.
 
 
+## [0.17.9] - 2026-03-13
+
+### Added
+- Add interactive Mermaid.js architecture and flow diagrams to documentation site (#273)
+
+### Improved
+- update CHANGELOG.md for v0.17.8 (#272)
+
 ## [0.17.8] - 2026-03-12
 
 ### Fixed
