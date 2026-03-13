@@ -82,6 +82,27 @@ job "s3-orchestrator" {
         volumes = [
           "secrets/config.yaml:/etc/s3-orchestrator/config.yaml",
         ]
+
+        # --- File descriptor limits ---
+        # The orchestrator holds many concurrent connections (client requests +
+        # backend S3 calls + DB pool + background workers). Raise the default
+        # container limit to avoid fd exhaustion under load.
+        ulimit {
+          nofile = "65535:65535"
+        }
+      }
+
+      # --- Runtime tuning ---
+      # GOMEMLIMIT tells the Go GC the container's memory ceiling so it can
+      # make informed collection decisions. Set to ~90% of the memory limit
+      # to leave headroom for non-heap allocations (goroutine stacks, cgo).
+      # Recommended host-level sysctls for high-concurrency proxying:
+      #   net.core.somaxconn=65535        — pending connection queue size
+      #   net.ipv4.ip_local_port_range="10000 65535" — ephemeral port range
+      #   net.ipv4.tcp_tw_reuse=1         — reuse TIME_WAIT sockets
+      #   net.ipv4.tcp_fin_timeout=15     — faster socket reclamation
+      env {
+        GOMEMLIMIT = "922MiB"
       }
 
       # --- Vault integration for secret injection ---
@@ -109,7 +130,7 @@ job "s3-orchestrator" {
           server:
             listen_addr: "0.0.0.0:9000"
             max_object_size: 5368709120      # 5 GB
-            # max_concurrent_requests: 0     # 0 = unlimited; set to 2-3x database.max_conns for load shedding
+            # max_concurrent_requests: 1000   # default: 1000; set to 2-3x database.max_conns for production
             backend_timeout: "2m"
             shutdown_delay: "5s"             # wait for Consul deregistration before draining
 

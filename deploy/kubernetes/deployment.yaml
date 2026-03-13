@@ -54,6 +54,19 @@ spec:
               containerPort: 9000
               protocol: TCP
 
+          # --- Runtime tuning ---
+          # GOMEMLIMIT tells the Go GC the container's memory ceiling so it
+          # can make informed collection decisions. Set to ~90% of the memory
+          # limit to leave headroom for non-heap allocations.
+          # Recommended node-level sysctls for high-concurrency proxying:
+          #   net.core.somaxconn=65535
+          #   net.ipv4.ip_local_port_range="10000 65535"
+          #   net.ipv4.tcp_tw_reuse=1
+          #   net.ipv4.tcp_fin_timeout=15
+          env:
+            - name: GOMEMLIMIT
+              value: "230MiB"
+
           # --- Secret injection ---
           # All values referenced by ${VAR} in config.yaml are expanded at
           # startup from these environment variables.
