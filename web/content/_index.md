@@ -173,7 +173,7 @@ Combine free-tier and cost-limited object storage from any number of S3-compatib
 
 A built-in web dashboard provides real-time storage summaries, per-backend quota and usage bars, monthly traffic charts, a lazy-loaded directory tree for browsing and managing objects, and admin controls for rebalancing, syncing, uploading, and deleting files and folders.
 
-![Admin Web Interface](docs/images/dashboard.png?v=2)
+![Admin Web Interface](/docs/images/free-tier-5-cloud-setup.png)
 
 <hr style="margin-top: 3rem;">
 

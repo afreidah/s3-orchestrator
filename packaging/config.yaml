@@ -12,7 +12,7 @@
 server:
   listen_addr: ":9000"
   # max_object_size: 5368709120   # 5 GB (default)
-  # max_concurrent_requests: 0    # Max concurrent S3 requests (0 = unlimited)
+  # max_concurrent_requests: 1000 # Max concurrent S3 requests (default: 1000)
   # backend_timeout: 30s          # Per-operation timeout for backend S3 calls
 
   # --- TLS (omit both cert_file and key_file for plain HTTP) ---
