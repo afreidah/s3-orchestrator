@@ -22,7 +22,7 @@ database:
 
 ```yaml
 server:
-  max_concurrent_requests: 0    # 0 = unlimited (default)
+  max_concurrent_requests: 1000  # default: 1000 (applied when split pools are not configured)
   # max_concurrent_reads: 0     # separate limit for GET/HEAD (0 = use global)
   # max_concurrent_writes: 0    # separate limit for PUT/POST/DELETE (0 = use global)
   # load_shed_threshold: 0      # 0.0-1.0, start shedding at this capacity ratio (0 = disabled)
@@ -103,6 +103,45 @@ If you serve thousands of concurrent clients:
 
 - Lower `idle_timeout` to `30-60s` to reduce connection count.
 - Monitor open file descriptors and increase ulimits if needed.
+
+## OS and Container Tuning
+
+### File descriptor limits
+
+The orchestrator holds many concurrent connections: client requests, backend S3 calls, database pool, and background workers (replicator, rebalancer, cleanup). Set the container's nofile ulimit to at least `65535` to avoid fd exhaustion under load.
+
+**Nomad:**
+```hcl
+config {
+  ulimit {
+    nofile = "65535:65535"
+  }
+}
+```
+
+**Kubernetes:** Set at the node level or via an init container — pod-level ulimits are not directly configurable in the pod spec.
+
+### Recommended host sysctls
+
+For hosts running the orchestrator under high concurrency, tune these kernel parameters:
+
+| Sysctl | Value | Purpose |
+|--------|-------|---------|
+| `net.core.somaxconn` | `65535` | Pending connection queue size |
+| `net.ipv4.ip_local_port_range` | `10000 65535` | Ephemeral port range for outbound S3 connections |
+| `net.ipv4.tcp_tw_reuse` | `1` | Reuse TIME_WAIT sockets during connection churn |
+| `net.ipv4.tcp_fin_timeout` | `15` | Faster socket reclamation after close |
+
+### Go runtime: GOMEMLIMIT
+
+Set `GOMEMLIMIT` to ~90% of the container's memory allocation so the Go garbage collector can make informed collection decisions. Without it, the runtime has no awareness of the container's memory ceiling, which can lead to excessive GC (wasted CPU) or insufficient GC (OOM kill).
+
+```bash
+# Example for a 1024 MB container
+GOMEMLIMIT=922MiB
+```
+
+The default `GOGC=100` provides smooth GC behavior with `GOMEMLIMIT` set. Setting `GOGC=off` minimizes GC CPU overhead but risks latency spikes from large collections — only use it after profiling your workload.
 
 ## Backend HTTP Transport
 

@@ -68,7 +68,7 @@ type ServerConfig struct {
 	ListenAddr           string        `yaml:"listen_addr"`
 	LogLevel             string        `yaml:"log_level"`                // Log level: debug, info, warn, error (default: info)
 	MaxObjectSize        int64         `yaml:"max_object_size"`          // Max upload size in bytes (default: 5GB)
-	MaxConcurrentRequests int          `yaml:"max_concurrent_requests"`  // Max concurrent S3 requests (0 = unlimited)
+	MaxConcurrentRequests int          `yaml:"max_concurrent_requests"`  // Max concurrent S3 requests (default: 1000)
 	MaxConcurrentReads    int          `yaml:"max_concurrent_reads"`     // Max concurrent read requests (0 = use global limit)
 	MaxConcurrentWrites   int          `yaml:"max_concurrent_writes"`    // Max concurrent write requests (0 = use global limit)
 	LoadShedThreshold     float64      `yaml:"load_shed_threshold"`      // Active shedding threshold (0.0-1.0, 0 = disabled)
@@ -328,6 +328,9 @@ func (c *Config) SetDefaultsAndValidate() error {
 
 	if c.Server.MaxConcurrentRequests < 0 {
 		errors = append(errors, "server.max_concurrent_requests must not be negative")
+	}
+	if c.Server.MaxConcurrentRequests == 0 && c.Server.MaxConcurrentReads == 0 && c.Server.MaxConcurrentWrites == 0 {
+		c.Server.MaxConcurrentRequests = 1000
 	}
 	if c.Server.MaxConcurrentReads < 0 {
 		errors = append(errors, "server.max_concurrent_reads must not be negative")

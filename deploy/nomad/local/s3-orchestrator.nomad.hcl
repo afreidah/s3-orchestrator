@@ -56,6 +56,14 @@ job "s3-orchestrator" {
         volumes = [
           "local/config.yaml:/etc/s3-orchestrator/config.yaml",
         ]
+
+        ulimit {
+          nofile = "65535:65535"
+        }
+      }
+
+      env {
+        GOMEMLIMIT = "1843MiB"
       }
 
       template {
@@ -114,12 +122,20 @@ job "s3-orchestrator" {
               unsigned_payload: true
               quota_bytes: 10737418240
 
-          routing_strategy: "pack"
+          routing_strategy: "spread"
 
           replication:
             factor: 2
             worker_interval: "10s"
             batch_size: 400
+
+          rebalance:
+            enabled: true
+            strategy: "spread"
+            interval: "6h"
+            batch_size: 300
+            threshold: 0.7
+            concurrency: 5
 
           encryption:
             enabled: true
