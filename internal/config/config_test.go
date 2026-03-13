@@ -158,12 +158,28 @@ func TestConfigValidation_NegativeAdmissionWait(t *testing.T) {
 	}
 }
 
-func TestConfigValidation_ZeroMaxConcurrentRequestsMeansUnlimited(t *testing.T) {
+func TestConfigValidation_ZeroMaxConcurrentRequestsDefaultsTo1000(t *testing.T) {
 	cfg := validBaseConfig()
 	cfg.Server.MaxConcurrentRequests = 0
 
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
-		t.Errorf("zero max_concurrent_requests (unlimited) should pass validation: %v", err)
+		t.Errorf("zero max_concurrent_requests should pass validation: %v", err)
+	}
+	if cfg.Server.MaxConcurrentRequests != 1000 {
+		t.Errorf("expected default 1000, got %d", cfg.Server.MaxConcurrentRequests)
+	}
+}
+
+func TestConfigValidation_SplitPoolsSkipGlobalDefault(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Server.MaxConcurrentReads = 200
+	cfg.Server.MaxConcurrentWrites = 200
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Errorf("split pools should pass validation: %v", err)
+	}
+	if cfg.Server.MaxConcurrentRequests != 0 {
+		t.Errorf("global limit should stay 0 when split pools are set, got %d", cfg.Server.MaxConcurrentRequests)
 	}
 }
 
@@ -848,6 +864,7 @@ func TestNonReloadableFieldsChanged_MaxConcurrentReads(t *testing.T) {
 	a := validBaseConfig()
 	b := validBaseConfig()
 	_ = a.SetDefaultsAndValidate()
+	b.Server.MaxConcurrentRequests = a.Server.MaxConcurrentRequests // preserve defaulted global
 	b.Server.MaxConcurrentReads = 50
 	_ = b.SetDefaultsAndValidate()
 
@@ -861,6 +878,7 @@ func TestNonReloadableFieldsChanged_MaxConcurrentWrites(t *testing.T) {
 	a := validBaseConfig()
 	b := validBaseConfig()
 	_ = a.SetDefaultsAndValidate()
+	b.Server.MaxConcurrentRequests = a.Server.MaxConcurrentRequests // preserve defaulted global
 	b.Server.MaxConcurrentWrites = 25
 	_ = b.SetDefaultsAndValidate()
 
