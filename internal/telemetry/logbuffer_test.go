@@ -237,7 +237,7 @@ func TestTeeHandler_WritesToBoth(t *testing.T) {
 	buf := NewLogBuffer()
 
 	logger := slog.New(NewTeeHandler(jsonHandler, buf))
-	logger.Info("test message", "key", "value")
+	logger.InfoContext(context.Background(), "test message", "key", "value")
 
 	// Check stdout got the record.
 	if stdout.Len() == 0 {
@@ -266,7 +266,7 @@ func TestTeeHandler_WithAttrs(t *testing.T) {
 	buf := NewLogBuffer()
 
 	logger := slog.New(NewTeeHandler(jsonHandler, buf)).With("component", "test")
-	logger.Info("with attrs")
+	logger.InfoContext(context.Background(), "with attrs")
 
 	entries := buf.Entries(&LogQueryOpts{})
 	if len(entries) != 1 {
@@ -283,7 +283,7 @@ func TestTeeHandler_WithGroup(t *testing.T) {
 	buf := NewLogBuffer()
 
 	logger := slog.New(NewTeeHandler(jsonHandler, buf)).WithGroup("db")
-	logger.Info("grouped", "host", "localhost")
+	logger.InfoContext(context.Background(), "grouped", "host", "localhost")
 
 	entries := buf.Entries(&LogQueryOpts{})
 	if len(entries) != 1 {
@@ -341,8 +341,8 @@ func TestTeeHandler_FilterByComponent(t *testing.T) {
 	serverLog := slog.New(NewTeeHandler(jsonHandler, buf)).With("component", "server")
 	storageLog := slog.New(NewTeeHandler(jsonHandler, buf)).With("component", "storage")
 
-	serverLog.Info("from server")
-	storageLog.Info("from storage")
+	serverLog.InfoContext(context.Background(), "from server")
+	storageLog.InfoContext(context.Background(), "from storage")
 
 	entries := buf.Entries(&LogQueryOpts{Component: "server"})
 	if len(entries) != 1 {

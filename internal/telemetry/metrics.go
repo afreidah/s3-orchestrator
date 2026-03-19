@@ -3,9 +3,9 @@
 //
 // Author: Alex Freidah
 //
-// Prometheus metric definitions for the S3 proxy. Tracks request counts, latencies,
-// sizes, and backend health. All metrics are prefixed with 's3proxy_' for easy
-// identification in dashboards and alerting rules.
+// Prometheus metric definitions for the S3 orchestrator. Tracks request counts,
+// latencies, sizes, and backend health. All metrics are prefixed with 's3o_' for
+// easy identification in dashboards and alerting rules.
 // -------------------------------------------------------------------------------
 
 // Package telemetry provides Prometheus metrics registration and OpenTelemetry
@@ -27,7 +27,7 @@ var (
 	// RequestsTotal counts all HTTP requests by method and status code.
 	RequestsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "s3proxy_requests_total",
+			Name: "s3o_requests_total",
 			Help: "Total number of HTTP requests processed",
 		},
 		[]string{"method", "status_code"},
@@ -36,7 +36,7 @@ var (
 	// RequestDuration tracks request latency distribution by method.
 	RequestDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:    "s3proxy_request_duration_seconds",
+			Name:    "s3o_request_duration_seconds",
 			Help:    "HTTP request latency in seconds",
 			Buckets: []float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10, 30, 60},
 		},
@@ -46,7 +46,7 @@ var (
 	// RequestSize tracks upload sizes.
 	RequestSize = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:    "s3proxy_request_size_bytes",
+			Name:    "s3o_request_size_bytes",
 			Help:    "HTTP request body size in bytes",
 			Buckets: prometheus.ExponentialBuckets(1024, 4, 10), // 1KB to 256GB
 		},
@@ -56,7 +56,7 @@ var (
 	// ResponseSize tracks download sizes.
 	ResponseSize = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:    "s3proxy_response_size_bytes",
+			Name:    "s3o_response_size_bytes",
 			Help:    "HTTP response body size in bytes",
 			Buckets: prometheus.ExponentialBuckets(1024, 4, 10), // 1KB to 256GB
 		},
@@ -66,7 +66,7 @@ var (
 	// InflightRequests tracks currently processing requests.
 	InflightRequests = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "s3proxy_inflight_requests",
+			Name: "s3o_inflight_requests",
 			Help: "Number of requests currently being processed",
 		},
 		[]string{"method"},
@@ -77,7 +77,7 @@ var (
 	// BackendRequestsTotal counts backend operations by operation type and status.
 	BackendRequestsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "s3proxy_backend_requests_total",
+			Name: "s3o_backend_requests_total",
 			Help: "Total number of backend storage operations",
 		},
 		[]string{"operation", "backend", "status"},
@@ -86,7 +86,7 @@ var (
 	// BackendDuration tracks backend operation latency.
 	BackendDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:    "s3proxy_backend_duration_seconds",
+			Name:    "s3o_backend_duration_seconds",
 			Help:    "Backend operation latency in seconds",
 			Buckets: []float64{.01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10, 30, 60, 120},
 		},
@@ -98,7 +98,7 @@ var (
 	// ManagerRequestsTotal counts manager-level operations.
 	ManagerRequestsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "s3proxy_manager_requests_total",
+			Name: "s3o_manager_requests_total",
 			Help: "Total number of manager-level storage operations",
 		},
 		[]string{"operation", "backend", "status"},
@@ -107,7 +107,7 @@ var (
 	// ManagerDuration tracks manager operation latency.
 	ManagerDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:    "s3proxy_manager_duration_seconds",
+			Name:    "s3o_manager_duration_seconds",
 			Help:    "Manager operation latency in seconds",
 			Buckets: []float64{.01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10, 30, 60, 120},
 		},
@@ -119,7 +119,7 @@ var (
 	// QuotaBytesUsed tracks current bytes used per backend.
 	QuotaBytesUsed = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "s3proxy_quota_bytes_used",
+			Name: "s3o_quota_bytes_used",
 			Help: "Current bytes used on each backend",
 		},
 		[]string{"backend"},
@@ -128,7 +128,7 @@ var (
 	// QuotaBytesLimit tracks quota limit per backend.
 	QuotaBytesLimit = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "s3proxy_quota_bytes_limit",
+			Name: "s3o_quota_bytes_limit",
 			Help: "Quota limit in bytes for each backend",
 		},
 		[]string{"backend"},
@@ -137,7 +137,7 @@ var (
 	// QuotaBytesAvailable tracks available bytes per backend.
 	QuotaBytesAvailable = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "s3proxy_quota_bytes_available",
+			Name: "s3o_quota_bytes_available",
 			Help: "Available bytes (limit - used - orphan) for each backend",
 		},
 		[]string{"backend"},
@@ -146,7 +146,7 @@ var (
 	// QuotaOrphanBytes tracks bytes pending physical deletion per backend.
 	QuotaOrphanBytes = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "s3proxy_quota_orphan_bytes",
+			Name: "s3o_quota_orphan_bytes",
 			Help: "Bytes pending physical deletion (logically freed but not yet removed from backend)",
 		},
 		[]string{"backend"},
@@ -157,7 +157,7 @@ var (
 	// ObjectCount tracks the number of objects stored per backend.
 	ObjectCount = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "s3proxy_objects_count",
+			Name: "s3o_objects_count",
 			Help: "Number of objects stored on each backend",
 		},
 		[]string{"backend"},
@@ -168,7 +168,7 @@ var (
 	// ActiveMultipartUploads tracks in-progress multipart uploads per backend.
 	ActiveMultipartUploads = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "s3proxy_active_multipart_uploads",
+			Name: "s3o_active_multipart_uploads",
 			Help: "Number of in-progress multipart uploads per backend",
 		},
 		[]string{"backend"},
@@ -179,7 +179,7 @@ var (
 	// UsageAPIRequests tracks the current month's API request count per backend.
 	UsageAPIRequests = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "s3proxy_usage_api_requests",
+			Name: "s3o_usage_api_requests",
 			Help: "Current month API request count per backend (from DB)",
 		},
 		[]string{"backend"},
@@ -188,7 +188,7 @@ var (
 	// UsageEgressBytes tracks the current month's egress bytes per backend.
 	UsageEgressBytes = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "s3proxy_usage_egress_bytes",
+			Name: "s3o_usage_egress_bytes",
 			Help: "Current month egress bytes per backend (from DB)",
 		},
 		[]string{"backend"},
@@ -197,7 +197,7 @@ var (
 	// UsageIngressBytes tracks the current month's ingress bytes per backend.
 	UsageIngressBytes = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "s3proxy_usage_ingress_bytes",
+			Name: "s3o_usage_ingress_bytes",
 			Help: "Current month ingress bytes per backend (from DB)",
 		},
 		[]string{"backend"},
@@ -208,7 +208,7 @@ var (
 	// UsageLimitRejectionsTotal counts operations rejected due to monthly usage limits.
 	UsageLimitRejectionsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "s3proxy_usage_limit_rejections_total",
+			Name: "s3o_usage_limit_rejections_total",
 			Help: "Total operations rejected due to monthly usage limits",
 		},
 		[]string{"operation", "limit_type"},
@@ -219,7 +219,7 @@ var (
 	// RateLimitRejectionsTotal counts requests rejected by the per-IP rate limiter.
 	RateLimitRejectionsTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
-			Name: "s3proxy_rate_limit_rejections_total",
+			Name: "s3o_rate_limit_rejections_total",
 			Help: "Total requests rejected due to per-IP rate limiting",
 		},
 	)
@@ -227,7 +227,7 @@ var (
 	// AdmissionRejectionsTotal counts requests rejected by server-level admission control.
 	AdmissionRejectionsTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
-			Name: "s3proxy_admission_rejections_total",
+			Name: "s3o_admission_rejections_total",
 			Help: "Total requests rejected due to server-level admission control",
 		},
 	)
@@ -236,7 +236,7 @@ var (
 	// load shedding before reaching the hard admission limit.
 	LoadShedTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
-			Name: "s3proxy_load_shed_total",
+			Name: "s3o_load_shed_total",
 			Help: "Requests shed by active load shedding before hard admission limit",
 		},
 	)
@@ -245,7 +245,7 @@ var (
 	// via Expect: 100-Continue pre-flight capacity checks.
 	EarlyRejectionsTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
-			Name: "s3proxy_early_rejections_total",
+			Name: "s3o_early_rejections_total",
 			Help: "Uploads rejected before body transmission (no backend capacity)",
 		},
 	)
@@ -255,7 +255,7 @@ var (
 	// RebalanceObjectsMoved counts objects moved by the rebalancer.
 	RebalanceObjectsMoved = promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "s3proxy_rebalance_objects_moved_total",
+			Name: "s3o_rebalance_objects_moved_total",
 			Help: "Total number of objects moved by the rebalancer",
 		},
 		[]string{"strategy", "status"},
@@ -264,7 +264,7 @@ var (
 	// RebalanceBytesMoved counts bytes moved by the rebalancer.
 	RebalanceBytesMoved = promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "s3proxy_rebalance_bytes_moved_total",
+			Name: "s3o_rebalance_bytes_moved_total",
 			Help: "Total bytes moved by the rebalancer",
 		},
 		[]string{"strategy"},
@@ -273,7 +273,7 @@ var (
 	// RebalanceRunsTotal counts rebalancer executions.
 	RebalanceRunsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "s3proxy_rebalance_runs_total",
+			Name: "s3o_rebalance_runs_total",
 			Help: "Total number of rebalancer runs",
 		},
 		[]string{"strategy", "status"},
@@ -282,7 +282,7 @@ var (
 	// RebalanceDuration tracks rebalancer execution time.
 	RebalanceDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:    "s3proxy_rebalance_duration_seconds",
+			Name:    "s3o_rebalance_duration_seconds",
 			Help:    "Rebalancer execution time in seconds",
 			Buckets: []float64{1, 5, 10, 30, 60, 120, 300, 600},
 		},
@@ -292,7 +292,7 @@ var (
 	// RebalanceSkipped counts rebalancer runs that were skipped.
 	RebalanceSkipped = promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "s3proxy_rebalance_skipped_total",
+			Name: "s3o_rebalance_skipped_total",
 			Help: "Total number of rebalancer runs skipped",
 		},
 		[]string{"reason"},
@@ -303,7 +303,7 @@ var (
 	// ReplicationPending tracks objects currently below the target replication factor.
 	ReplicationPending = promauto.NewGauge(
 		prometheus.GaugeOpts{
-			Name: "s3proxy_replication_pending",
+			Name: "s3o_replication_pending",
 			Help: "Number of objects below the target replication factor",
 		},
 	)
@@ -311,7 +311,7 @@ var (
 	// ReplicationCopiesCreatedTotal counts replica copies created.
 	ReplicationCopiesCreatedTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
-			Name: "s3proxy_replication_copies_created_total",
+			Name: "s3o_replication_copies_created_total",
 			Help: "Total number of replica copies created",
 		},
 	)
@@ -319,7 +319,7 @@ var (
 	// ReplicationErrorsTotal counts replication errors.
 	ReplicationErrorsTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
-			Name: "s3proxy_replication_errors_total",
+			Name: "s3o_replication_errors_total",
 			Help: "Total number of replication errors",
 		},
 	)
@@ -327,7 +327,7 @@ var (
 	// ReplicationDuration tracks replication worker cycle time.
 	ReplicationDuration = promauto.NewHistogram(
 		prometheus.HistogramOpts{
-			Name:    "s3proxy_replication_duration_seconds",
+			Name:    "s3o_replication_duration_seconds",
 			Help:    "Replication worker cycle time in seconds",
 			Buckets: []float64{1, 5, 10, 30, 60, 120, 300, 600},
 		},
@@ -336,7 +336,7 @@ var (
 	// ReplicationRunsTotal counts replication worker executions.
 	ReplicationRunsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "s3proxy_replication_runs_total",
+			Name: "s3o_replication_runs_total",
 			Help: "Total number of replication worker runs",
 		},
 		[]string{"status"},
@@ -346,7 +346,7 @@ var (
 	// circuit-broken backends.
 	ReplicationHealthCopiesTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
-			Name: "s3proxy_replication_health_copies_total",
+			Name: "s3o_replication_health_copies_total",
 			Help: "Replica copies created to replace copies on circuit-broken backends",
 		},
 	)
@@ -356,7 +356,7 @@ var (
 	// OverReplicationPending tracks objects currently above the target replication factor.
 	OverReplicationPending = promauto.NewGauge(
 		prometheus.GaugeOpts{
-			Name: "s3proxy_over_replication_pending",
+			Name: "s3o_over_replication_pending",
 			Help: "Number of objects above the target replication factor",
 		},
 	)
@@ -364,7 +364,7 @@ var (
 	// OverReplicationRemovedTotal counts excess copies removed by the cleaner.
 	OverReplicationRemovedTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
-			Name: "s3proxy_over_replication_removed_total",
+			Name: "s3o_over_replication_removed_total",
 			Help: "Total excess copies removed by over-replication cleanup",
 		},
 	)
@@ -372,7 +372,7 @@ var (
 	// OverReplicationErrorsTotal counts over-replication cleanup errors.
 	OverReplicationErrorsTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
-			Name: "s3proxy_over_replication_errors_total",
+			Name: "s3o_over_replication_errors_total",
 			Help: "Total number of over-replication cleanup errors",
 		},
 	)
@@ -380,7 +380,7 @@ var (
 	// OverReplicationRunsTotal counts over-replication cleanup worker executions.
 	OverReplicationRunsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "s3proxy_over_replication_runs_total",
+			Name: "s3o_over_replication_runs_total",
 			Help: "Total number of over-replication cleanup worker runs",
 		},
 		[]string{"status"},
@@ -389,7 +389,7 @@ var (
 	// OverReplicationDuration tracks over-replication cleanup worker cycle time.
 	OverReplicationDuration = promauto.NewHistogram(
 		prometheus.HistogramOpts{
-			Name:    "s3proxy_over_replication_duration_seconds",
+			Name:    "s3o_over_replication_duration_seconds",
 			Help:    "Over-replication cleanup worker cycle time in seconds",
 			Buckets: []float64{1, 5, 10, 30, 60, 120, 300, 600},
 		},
@@ -401,7 +401,7 @@ var (
 	// 0=closed (healthy), 1=open (down), 2=half-open (probing).
 	CircuitBreakerState = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "s3proxy_circuit_breaker_state",
+			Name: "s3o_circuit_breaker_state",
 			Help: "Current circuit breaker state: 0=closed, 1=open, 2=half-open",
 		},
 		[]string{"name"},
@@ -410,7 +410,7 @@ var (
 	// CircuitBreakerTransitionsTotal counts state transitions per component.
 	CircuitBreakerTransitionsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "s3proxy_circuit_breaker_transitions_total",
+			Name: "s3o_circuit_breaker_transitions_total",
 			Help: "Total number of circuit breaker state transitions",
 		},
 		[]string{"name", "from", "to"},
@@ -419,7 +419,7 @@ var (
 	// DegradedReadsTotal counts reads served via broadcast during degraded mode.
 	DegradedReadsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "s3proxy_degraded_reads_total",
+			Name: "s3o_degraded_reads_total",
 			Help: "Total number of read operations served via broadcast during degraded mode",
 		},
 		[]string{"operation"},
@@ -428,7 +428,7 @@ var (
 	// DegradedCacheHitsTotal counts location cache hits during degraded reads.
 	DegradedCacheHitsTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
-			Name: "s3proxy_degraded_cache_hits_total",
+			Name: "s3o_degraded_cache_hits_total",
 			Help: "Total number of location cache hits during degraded reads",
 		},
 	)
@@ -436,7 +436,7 @@ var (
 	// DegradedWriteRejectionsTotal counts writes rejected during degraded mode.
 	DegradedWriteRejectionsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "s3proxy_degraded_write_rejections_total",
+			Name: "s3o_degraded_write_rejections_total",
 			Help: "Total number of write operations rejected during degraded mode",
 		},
 		[]string{"operation"},
@@ -446,7 +446,7 @@ var (
 	// retried on another. Labels: operation, failed_backend, success_backend.
 	WriteFailoverTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "s3proxy_write_failover_total",
+			Name: "s3o_write_failover_total",
 			Help: "Total number of write operations that failed over to a different backend",
 		},
 		[]string{"operation", "failed_backend", "success_backend"},
@@ -457,7 +457,7 @@ var (
 	// CleanupQueueEnqueuedTotal counts items added to the cleanup retry queue.
 	CleanupQueueEnqueuedTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "s3proxy_cleanup_queue_enqueued_total",
+			Name: "s3o_cleanup_queue_enqueued_total",
 			Help: "Total items added to the cleanup retry queue",
 		},
 		[]string{"reason"},
@@ -466,7 +466,7 @@ var (
 	// CleanupQueueProcessedTotal counts items processed from the cleanup queue.
 	CleanupQueueProcessedTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "s3proxy_cleanup_queue_processed_total",
+			Name: "s3o_cleanup_queue_processed_total",
 			Help: "Total items processed from the cleanup retry queue",
 		},
 		[]string{"status"},
@@ -475,7 +475,7 @@ var (
 	// CleanupQueueDepth tracks the current number of pending cleanup items.
 	CleanupQueueDepth = promauto.NewGauge(
 		prometheus.GaugeOpts{
-			Name: "s3proxy_cleanup_queue_depth",
+			Name: "s3o_cleanup_queue_depth",
 			Help: "Current number of pending items in the cleanup retry queue",
 		},
 	)
@@ -485,7 +485,7 @@ var (
 	// LifecycleDeletedTotal counts objects deleted by lifecycle expiration rules.
 	LifecycleDeletedTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
-			Name: "s3proxy_lifecycle_deleted_total",
+			Name: "s3o_lifecycle_deleted_total",
 			Help: "Objects deleted by lifecycle expiration rules",
 		},
 	)
@@ -493,7 +493,7 @@ var (
 	// LifecycleFailedTotal counts objects that failed lifecycle deletion.
 	LifecycleFailedTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
-			Name: "s3proxy_lifecycle_failed_total",
+			Name: "s3o_lifecycle_failed_total",
 			Help: "Objects that failed lifecycle deletion",
 		},
 	)
@@ -501,7 +501,7 @@ var (
 	// LifecycleRunsTotal counts lifecycle worker executions.
 	LifecycleRunsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "s3proxy_lifecycle_runs_total",
+			Name: "s3o_lifecycle_runs_total",
 			Help: "Lifecycle worker executions",
 		},
 		[]string{"status"},
@@ -512,7 +512,7 @@ var (
 	// AuditEventsTotal counts audit log entries by event type.
 	AuditEventsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "s3proxy_audit_events_total",
+			Name: "s3o_audit_events_total",
 			Help: "Total number of audit log entries emitted",
 		},
 		[]string{"event"},
@@ -523,7 +523,7 @@ var (
 	// DrainObjectsMoved counts objects moved during backend drain operations.
 	DrainObjectsMoved = promauto.NewCounter(
 		prometheus.CounterOpts{
-			Name: "s3proxy_drain_objects_moved_total",
+			Name: "s3o_drain_objects_moved_total",
 			Help: "Total number of objects moved during backend drain operations",
 		},
 	)
@@ -531,7 +531,7 @@ var (
 	// DrainBytesMoved counts bytes moved during backend drain operations.
 	DrainBytesMoved = promauto.NewCounter(
 		prometheus.CounterOpts{
-			Name: "s3proxy_drain_bytes_moved_total",
+			Name: "s3o_drain_bytes_moved_total",
 			Help: "Total bytes moved during backend drain operations",
 		},
 	)
@@ -539,7 +539,7 @@ var (
 	// DrainActive is 1 when a drain operation is in progress, 0 otherwise.
 	DrainActive = promauto.NewGauge(
 		prometheus.GaugeOpts{
-			Name: "s3proxy_drain_active",
+			Name: "s3o_drain_active",
 			Help: "Whether a backend drain operation is currently in progress",
 		},
 	)
@@ -549,7 +549,7 @@ var (
 	// EncryptionOpsTotal counts encryption operations by type.
 	EncryptionOpsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "s3proxy_encryption_operations_total",
+			Name: "s3o_encryption_operations_total",
 			Help: "Total encryption operations",
 		},
 		[]string{"op"},
@@ -558,7 +558,7 @@ var (
 	// EncryptionErrorsTotal counts encryption errors by operation and type.
 	EncryptionErrorsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "s3proxy_encryption_errors_total",
+			Name: "s3o_encryption_errors_total",
 			Help: "Total encryption errors",
 		},
 		[]string{"op", "error_type"},
@@ -567,7 +567,7 @@ var (
 	// KeyRotationObjectsTotal counts objects processed during key rotation.
 	KeyRotationObjectsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "s3proxy_key_rotation_objects_total",
+			Name: "s3o_key_rotation_objects_total",
 			Help: "Total objects processed during key rotation",
 		},
 		[]string{"status"},
@@ -576,7 +576,7 @@ var (
 	// EncryptExistingObjectsTotal counts objects processed during encrypt-existing.
 	EncryptExistingObjectsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "s3proxy_encrypt_existing_objects_total",
+			Name: "s3o_encrypt_existing_objects_total",
 			Help: "Total objects processed during encrypt-existing operation",
 		},
 		[]string{"status"},
@@ -587,7 +587,7 @@ var (
 	// RedisOperationsTotal counts Redis counter backend operations.
 	RedisOperationsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "s3proxy_redis_operations_total",
+			Name: "s3o_redis_operations_total",
 			Help: "Total Redis counter backend operations",
 		},
 		[]string{"operation", "status"},
@@ -597,7 +597,7 @@ var (
 	// fallback mode due to circuit breaker, 0 during normal operation.
 	RedisFallbackActive = promauto.NewGauge(
 		prometheus.GaugeOpts{
-			Name: "s3proxy_redis_fallback_active",
+			Name: "s3o_redis_fallback_active",
 			Help: "Whether Redis counter backend is in local fallback mode",
 		},
 	)
@@ -607,7 +607,7 @@ var (
 	// BuildInfo exposes version information.
 	BuildInfo = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "s3proxy_build_info",
+			Name: "s3o_build_info",
 			Help: "Build information for the S3 proxy",
 		},
 		[]string{"version", "go_version"},

@@ -73,7 +73,10 @@ type mockStore struct {
 	listObjectsByBackendResp  []ObjectLocation
 	listObjectsByBackendPages [][]ObjectLocation // for paginated tests
 	listObjectsByBackendErr   error
+	listObjectsByBackendGate  chan struct{} // if set, blocks until closed
 	deleteObjectLocationCalls []deleteObjectLocationCall
+	deleteObjectLocationErr   error
+	deleteBackendDataErr      error
 	moveObjectLocationSize   int64
 	moveObjectLocationErr    error
 
@@ -346,7 +349,17 @@ func (m *mockStore) ListMultipartUploads(_ context.Context, _ string, _ int) ([]
 	return nil, nil
 }
 
-func (m *mockStore) ListObjectsByBackend(_ context.Context, _ string, _ int) ([]ObjectLocation, error) {
+func (m *mockStore) ListObjectsByBackend(ctx context.Context, _ string, _ int) ([]ObjectLocation, error) {
+	m.mu.Lock()
+	gate := m.listObjectsByBackendGate
+	m.mu.Unlock()
+	if gate != nil {
+		select {
+		case <-gate:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.listObjectsByBackendErr != nil {
@@ -510,14 +523,16 @@ func (m *mockStore) BackendObjectStats(_ context.Context, _ string) (int64, int6
 }
 
 func (m *mockStore) DeleteBackendData(_ context.Context, _ string) error {
-	return nil
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.deleteBackendDataErr
 }
 
 func (m *mockStore) DeleteObjectLocation(_ context.Context, key, backend string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.deleteObjectLocationCalls = append(m.deleteObjectLocationCalls, deleteObjectLocationCall{key: key, backend: backend})
-	return nil
+	return m.deleteObjectLocationErr
 }
 
 func (m *mockStore) GetOverReplicatedObjects(_ context.Context, _, _ int) ([]ObjectLocation, error) {

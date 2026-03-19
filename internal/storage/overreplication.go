@@ -94,7 +94,7 @@ func (c *OverReplicationCleaner) Clean(ctx context.Context, cfg config.Replicati
 	// Pre-fetch quota stats for copy scoring (utilization ratio).
 	quotaStats, qErr := c.store.GetQuotaStats(ctx)
 	if qErr != nil {
-		slog.Warn("Over-replication: failed to get quota stats, scoring without utilization",
+		slog.WarnContext(ctx, "Over-replication: failed to get quota stats, scoring without utilization",
 			"error", qErr)
 	}
 
@@ -203,7 +203,7 @@ func (c *OverReplicationCleaner) cleanObject(ctx context.Context, key string, co
 		// Delete from backend
 		backend, err := c.getBackend(victim.BackendName)
 		if err != nil {
-			slog.Warn("Over-replication: backend not found",
+			slog.WarnContext(ctx, "Over-replication: backend not found",
 				"key", key, "backend", victim.BackendName)
 			telemetry.OverReplicationErrorsTotal.Inc()
 			continue
@@ -213,7 +213,7 @@ func (c *OverReplicationCleaner) cleanObject(ctx context.Context, key string, co
 
 		// Remove from metadata
 		if err := c.store.RemoveExcessCopy(ctx, key, victim.BackendName, victim.SizeBytes); err != nil {
-			slog.Warn("Over-replication: failed to remove metadata",
+			slog.WarnContext(ctx, "Over-replication: failed to remove metadata",
 				"key", key, "backend", victim.BackendName, "error", err)
 			telemetry.OverReplicationErrorsTotal.Inc()
 			continue

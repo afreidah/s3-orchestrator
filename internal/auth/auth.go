@@ -81,7 +81,10 @@ func NewBucketRegistry(buckets []config.BucketConfig) *BucketRegistry {
 func (br *BucketRegistry) AuthenticateAndResolveBucket(r *http.Request) (string, error) {
 	authHeader := r.Header.Get("Authorization")
 
-	// SigV4 takes precedence
+	// SigV4 takes precedence. To prevent timing side-channels that could
+	// enumerate valid access keys, we always compute the signature — using
+	// a dummy secret when the key is unknown — so both paths take the same
+	// time.
 	if strings.HasPrefix(authHeader, "AWS4-HMAC-SHA256 ") {
 		accessKey, err := extractAccessKey(authHeader)
 		if err != nil {
@@ -89,12 +92,13 @@ func (br *BucketRegistry) AuthenticateAndResolveBucket(r *http.Request) (string,
 		}
 
 		entry, ok := br.byAccessKey[accessKey]
-		if !ok {
-			return "", fmt.Errorf("unknown access key")
+		secret := "dummy-secret-for-constant-time-auth"
+		if ok {
+			secret = entry.SecretAccessKey
 		}
 
-		if err := VerifySigV4(r, accessKey, entry.SecretAccessKey); err != nil {
-			return "", err
+		if err := VerifySigV4(r, accessKey, secret); err != nil || !ok {
+			return "", fmt.Errorf("authentication failed")
 		}
 
 		return entry.BucketName, nil

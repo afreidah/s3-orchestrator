@@ -167,7 +167,7 @@ The bottom of the dashboard covers drain operations (active drains, objects and 
 
 ## Prometheus Metrics
 
-The orchestrator exposes a Prometheus-compatible metrics endpoint at [http://localhost:9000/metrics](http://localhost:9000/metrics). Prometheus scrapes it every 10 seconds in the demo. To explore raw metrics, go to **Explore** in Grafana, select the **Prometheus** datasource, and browse the available metrics. All metrics are prefixed with `s3proxy_` (a rename to `s3_orchestrator_` is planned).
+The orchestrator exposes a Prometheus-compatible metrics endpoint at [http://localhost:9000/metrics](http://localhost:9000/metrics). Prometheus scrapes it every 10 seconds in the demo. To explore raw metrics, go to **Explore** in Grafana, select the **Prometheus** datasource, and browse the available metrics. All metrics are prefixed with `s3o_` (a rename to `s3_orchestrator_` is planned).
 
 ![Prometheus Metrics](/images/demo-prometheus.png)
 

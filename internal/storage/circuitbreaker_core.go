@@ -212,6 +212,8 @@ func (cb *CircuitBreaker) onFailure() {
 // transition changes the circuit state and emits metrics + structured logs.
 // Logs include from/to state, failure counts, and degraded_duration when the
 // circuit recovers. Caller must hold cb.mu.
+//
+//nolint:sloglint // State machine has no request context; transitions are system-level events.
 func (cb *CircuitBreaker) transition(to circuitState) {
 	from := cb.state
 	cb.state = to

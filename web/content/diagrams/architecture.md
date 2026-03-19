@@ -190,7 +190,7 @@ High-level architecture of the S3 Orchestrator showing the request path, storage
     CB1: {
       title: 'Backend Circuit Breakers',
       badge: 'storage', badgeText: 'resilience',
-      body: '<p>Per-backend three-state circuit breaker: <b>closed</b> (healthy) &rarr; <b>open</b> (after N consecutive failures) &rarr; <b>half-open</b> (probe after timeout) &rarr; <b>closed</b>.</p><p>When open, returns <code>ErrBackendUnavailable</code> immediately without I/O. Probe-eligible backends (open + timeout elapsed) allowed through to prevent deadlock when all backends trip.</p><p>Config: <code>circuit_breaker.failure_threshold</code>, <code>circuit_breaker.open_timeout</code>.</p><p class="ac-metric">Metrics: s3proxy_circuit_breaker_state, s3proxy_circuit_breaker_transitions_total</p><p><a href="../circuit-breaker/">Circuit breaker state machine diagram &rarr;</a></p>'
+      body: '<p>Per-backend three-state circuit breaker: <b>closed</b> (healthy) &rarr; <b>open</b> (after N consecutive failures) &rarr; <b>half-open</b> (probe after timeout) &rarr; <b>closed</b>.</p><p>When open, returns <code>ErrBackendUnavailable</code> immediately without I/O. Probe-eligible backends (open + timeout elapsed) allowed through to prevent deadlock when all backends trip.</p><p>Config: <code>circuit_breaker.failure_threshold</code>, <code>circuit_breaker.open_timeout</code>.</p><p class="ac-metric">Metrics: s3o_circuit_breaker_state, s3o_circuit_breaker_transitions_total</p><p><a href="../circuit-breaker/">Circuit breaker state machine diagram &rarr;</a></p>'
     },
     BE1: {
       title: 'S3 Backend',
@@ -250,7 +250,7 @@ High-level architecture of the S3 Orchestrator showing the request path, storage
     CLEAN: {
       title: 'Cleanup Queue',
       badge: 'background', badgeText: 'background worker',
-      body: '<p>Retries failed backend deletions with exponential backoff (1 minute to 24 hours, max 10 attempts). Runs every minute, processes up to 50 items with 10 concurrent goroutines.</p><p>Enqueued at all failure sites: PutObject rollback, DeleteObject, multipart abort/complete, rebalancer, replicator.</p><p class="ac-metric">Metrics: s3proxy_cleanup_queue_depth, s3proxy_cleanup_queue_processed_total</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a></p>'
+      body: '<p>Retries failed backend deletions with exponential backoff (1 minute to 24 hours, max 10 attempts). Runs every minute, processes up to 50 items with 10 concurrent goroutines.</p><p>Enqueued at all failure sites: PutObject rollback, DeleteObject, multipart abort/complete, rebalancer, replicator.</p><p class="ac-metric">Metrics: s3o_cleanup_queue_depth, s3o_cleanup_queue_processed_total</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a></p>'
     },
     LIFE: {
       title: 'Lifecycle Expiration',
@@ -275,12 +275,12 @@ High-level architecture of the S3 Orchestrator showing the request path, storage
     TEMPO: {
       title: 'OpenTelemetry Tracing',
       badge: 'observability', badgeText: 'observability',
-      body: '<p>Distributed tracing exported to Tempo (or any OTLP-compatible collector). Configurable sample rate (0&ndash;1.0).</p><p>Spans: HTTP request (root) &rarr; auth &rarr; manager operation &rarr; backend I/O. Attributes include operation name, bucket, key, request ID, backend name, status code, object size.</p><p>Request ID (<code>s3proxy.request_id</code>) links traces to audit logs.</p>'
+      body: '<p>Distributed tracing exported to Tempo (or any OTLP-compatible collector). Configurable sample rate (0&ndash;1.0).</p><p>Spans: HTTP request (root) &rarr; auth &rarr; manager operation &rarr; backend I/O. Attributes include operation name, bucket, key, request ID, backend name, status code, object size.</p><p>Request ID (<code>s3o.request_id</code>) links traces to audit logs.</p>'
     },
     AUDIT: {
       title: 'Structured Audit Logs',
       badge: 'observability', badgeText: 'observability',
-      body: '<p>Structured <code>slog</code> entries with <code>audit=true</code> marker. Two-level audit: HTTP envelope (method, path, status, duration) + storage operation (backend, key, outcome).</p><p>Request IDs flow through context from HTTP layer to storage layer. Background services get auto-generated correlation IDs per tick.</p><p>JSON output to stdout for log collectors. Recent entries buffered in-memory for the Web UI log viewer.</p><p class="ac-metric">Metric: s3proxy_audit_events_total</p>'
+      body: '<p>Structured <code>slog</code> entries with <code>audit=true</code> marker. Two-level audit: HTTP envelope (method, path, status, duration) + storage operation (backend, key, outcome).</p><p>Request IDs flow through context from HTTP layer to storage layer. Background services get auto-generated correlation IDs per tick.</p><p>JSON output to stdout for log collectors. Recent entries buffered in-memory for the Web UI log viewer.</p><p class="ac-metric">Metric: s3o_audit_events_total</p>'
     }
   };
 

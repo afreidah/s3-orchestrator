@@ -5,156 +5,218 @@
 //
 // Delegates DEK wrap/unwrap to HashiCorp Vault Transit secrets engine. The
 // master key never leaves Vault -- only wrapped DEKs are stored in the
-// database. Suitable for Nomad and Kubernetes deployments where Vault is
-// available as a cluster service.
+// database. Supports automatic token renewal and token file reloading for
+// Nomad workload identity deployments.
 // -------------------------------------------------------------------------------
 
 package encryption
 
 import (
-	"bytes"
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
+	"log/slog"
 	"os"
+	"strings"
+	"sync"
 	"time"
+
+	"github.com/afreidah/s3-orchestrator/internal/config"
+	vault "github.com/hashicorp/vault/api"
 )
 
 // VaultKeyProvider wraps and unwraps DEKs via the Vault Transit encrypt and
-// decrypt endpoints. The Vault token must have permissions for the configured
-// transit key.
+// decrypt endpoints. A background goroutine renews the token before expiry
+// (static token mode) or re-reads it from a file (Nomad workload identity
+// mode). The provider is safe for concurrent use.
 type VaultKeyProvider struct {
-	address   string
-	token     string
-	keyName   string
-	mountPath string
-	keyID     string
-	client    *http.Client
+	client        *vault.Client
+	keyName       string
+	mountPath     string
+	keyID         string
+	tokenFile     string
+	renewInterval time.Duration
+	mu            sync.RWMutex
+	cancel        context.CancelFunc
 }
 
-// NewVaultKeyProvider creates a provider backed by Vault Transit. The
-// mountPath defaults to "transit" if empty. If caCertPath is non-empty,
-// the file is loaded as a PEM CA certificate for TLS verification.
-func NewVaultKeyProvider(address, token, keyName, mountPath, caCertPath string) (*VaultKeyProvider, error) {
-	if mountPath == "" {
-		mountPath = "transit"
+// NewVaultKeyProvider creates a provider backed by Vault Transit. A background
+// goroutine manages token lifecycle: for token_file configs it re-reads the
+// file each tick; for static tokens it calls RenewSelf. Call Close to stop
+// the renewal goroutine.
+func NewVaultKeyProvider(cfg *config.VaultTransitConfig) (*VaultKeyProvider, error) {
+	vaultCfg := vault.DefaultConfig()
+	vaultCfg.Address = cfg.Address
+	vaultCfg.Timeout = 10 * time.Second
+
+	if cfg.CACert != "" {
+		if err := vaultCfg.ConfigureTLS(&vault.TLSConfig{CACert: cfg.CACert}); err != nil {
+			return nil, fmt.Errorf("vault TLS config: %w", err)
+		}
 	}
-	client := &http.Client{Timeout: 10 * time.Second}
-	if caCertPath != "" {
-		pem, err := os.ReadFile(caCertPath)
+
+	client, err := vault.NewClient(vaultCfg)
+	if err != nil {
+		return nil, fmt.Errorf("vault client: %w", err)
+	}
+
+	// Set the initial token from config or file.
+	if cfg.TokenFile != "" {
+		token, err := readTokenFile(cfg.TokenFile)
 		if err != nil {
-			return nil, fmt.Errorf("read vault CA cert: %w", err)
+			return nil, fmt.Errorf("initial token load: %w", err)
 		}
-		pool := x509.NewCertPool()
-		if !pool.AppendCertsFromPEM(pem) {
-			return nil, fmt.Errorf("vault CA cert contains no valid certificates")
-		}
-		client.Transport = &http.Transport{
-			TLSClientConfig: &tls.Config{RootCAs: pool},
-		}
+		client.SetToken(token)
+	} else {
+		client.SetToken(cfg.Token)
 	}
-	return &VaultKeyProvider{
-		address:   address,
-		token:     token,
-		keyName:   keyName,
-		mountPath: mountPath,
-		keyID:     fmt.Sprintf("vault:%s/%s", mountPath, keyName),
-		client:    client,
-	}, nil
+
+	renewInterval := cfg.RenewInterval
+	if renewInterval <= 0 {
+		renewInterval = 5 * time.Minute
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	p := &VaultKeyProvider{
+		client:        client,
+		keyName:       cfg.KeyName,
+		mountPath:     cfg.MountPath,
+		keyID:         fmt.Sprintf("vault:%s/%s", cfg.MountPath, cfg.KeyName),
+		tokenFile:     cfg.TokenFile,
+		renewInterval: renewInterval,
+		cancel:        cancel,
+	}
+
+	go p.tokenRenewalLoop(ctx)
+	return p, nil
 }
 
 // KeyID returns a composite identifier of the form "vault:{mount}/{key}".
 func (p *VaultKeyProvider) KeyID() string { return p.keyID }
 
+// Close stops the background token renewal goroutine.
+func (p *VaultKeyProvider) Close() { p.cancel() }
+
 // WrapDEK sends the plaintext DEK to Vault Transit for encryption and returns
 // the Vault ciphertext blob as the wrapped DEK.
 func (p *VaultKeyProvider) WrapDEK(ctx context.Context, dek []byte) ([]byte, string, error) {
-	payload := map[string]string{
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	path := fmt.Sprintf("%s/encrypt/%s", p.mountPath, p.keyName)
+	secret, err := p.client.Logical().WriteWithContext(ctx, path, map[string]interface{}{
 		"plaintext": base64.StdEncoding.EncodeToString(dek),
-	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return nil, "", fmt.Errorf("marshal: %w", err)
-	}
-
-	url := fmt.Sprintf("%s/v1/%s/encrypt/%s", p.address, p.mountPath, p.keyName)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, "", fmt.Errorf("request: %w", err)
-	}
-	req.Header.Set("X-Vault-Token", p.token)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := p.client.Do(req)
+	})
 	if err != nil {
 		return nil, "", fmt.Errorf("vault encrypt: %w", err)
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return nil, "", fmt.Errorf("vault encrypt: status %d: %s", resp.StatusCode, respBody)
+	if secret == nil || secret.Data == nil {
+		return nil, "", fmt.Errorf("vault encrypt: empty response")
 	}
 
-	var result struct {
-		Data struct {
-			Ciphertext string `json:"ciphertext"`
-		} `json:"data"`
+	ciphertext, ok := secret.Data["ciphertext"].(string)
+	if !ok || ciphertext == "" {
+		return nil, "", fmt.Errorf("vault encrypt: ciphertext not found in response")
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, "", fmt.Errorf("decode: %w", err)
-	}
-
-	return []byte(result.Data.Ciphertext), p.keyID, nil
+	return []byte(ciphertext), p.keyID, nil
 }
 
 // UnwrapDEK sends a Vault Transit ciphertext blob for decryption and returns
 // the recovered plaintext DEK.
 func (p *VaultKeyProvider) UnwrapDEK(ctx context.Context, wrappedDEK []byte, _ string) ([]byte, error) {
-	payload := map[string]string{
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	path := fmt.Sprintf("%s/decrypt/%s", p.mountPath, p.keyName)
+	secret, err := p.client.Logical().WriteWithContext(ctx, path, map[string]interface{}{
 		"ciphertext": string(wrappedDEK),
-	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("marshal: %w", err)
-	}
-
-	url := fmt.Sprintf("%s/v1/%s/decrypt/%s", p.address, p.mountPath, p.keyName)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("request: %w", err)
-	}
-	req.Header.Set("X-Vault-Token", p.token)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := p.client.Do(req)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("vault decrypt: %w", err)
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("vault decrypt: status %d: %s", resp.StatusCode, respBody)
+	if secret == nil || secret.Data == nil {
+		return nil, fmt.Errorf("vault decrypt: empty response")
 	}
 
-	var result struct {
-		Data struct {
-			Plaintext string `json:"plaintext"`
-		} `json:"data"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decode: %w", err)
+	plaintext, ok := secret.Data["plaintext"].(string)
+	if !ok || plaintext == "" {
+		return nil, fmt.Errorf("vault decrypt: plaintext not found in response")
 	}
 
-	dek, err := base64.StdEncoding.DecodeString(result.Data.Plaintext)
+	dek, err := base64.StdEncoding.DecodeString(plaintext)
 	if err != nil {
-		return nil, fmt.Errorf("decode plaintext: %w", err)
+		return nil, fmt.Errorf("vault decrypt: decode plaintext: %w", err)
 	}
 	return dek, nil
+}
+
+// tokenRenewalLoop runs in a background goroutine and keeps the Vault token
+// alive. For token_file configs it re-reads the file; for static tokens it
+// calls RenewSelf. Modeled on vault-cert-manager's renewal loop.
+func (p *VaultKeyProvider) tokenRenewalLoop(ctx context.Context) {
+	ticker := time.NewTicker(p.renewInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if p.tokenFile != "" {
+				if err := p.reloadTokenFile(ctx); err != nil {
+					slog.ErrorContext(ctx, "Failed to reload Vault token file",
+						"error", err, "path", p.tokenFile)
+				}
+			} else {
+				if err := p.renewToken(ctx); err != nil {
+					slog.ErrorContext(ctx, "Failed to renew Vault token", "error", err)
+				}
+			}
+		}
+	}
+}
+
+// renewToken attempts to extend the current token's TTL via Vault's
+// token/renew-self endpoint.
+func (p *VaultKeyProvider) renewToken(ctx context.Context) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	secret, err := p.client.Auth().Token().RenewSelf(0)
+	if err != nil {
+		return fmt.Errorf("token renewal failed: %w", err)
+	}
+	if secret == nil || secret.Auth == nil {
+		return fmt.Errorf("empty response from token renewal")
+	}
+	slog.InfoContext(ctx, "Vault token renewed", "ttl", secret.Auth.LeaseDuration)
+	return nil
+}
+
+// reloadTokenFile reads a fresh token from the configured file path and
+// updates the Vault client. Nomad keeps this file current when using
+// workload identity.
+func (p *VaultKeyProvider) reloadTokenFile(ctx context.Context) error {
+	token, err := readTokenFile(p.tokenFile)
+	if err != nil {
+		return err
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.client.SetToken(token)
+	slog.DebugContext(ctx, "Vault token reloaded from file", "path", p.tokenFile)
+	return nil
+}
+
+// readTokenFile reads and trims a token from a file path.
+func readTokenFile(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read token file %s: %w", path, err)
+	}
+	token := strings.TrimSpace(string(data))
+	if token == "" {
+		return "", fmt.Errorf("token file %s is empty", path)
+	}
+	return token, nil
 }
