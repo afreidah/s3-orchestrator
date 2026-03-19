@@ -2257,10 +2257,50 @@ func TestEncryptionConfig_VaultMissingFields(t *testing.T) {
 		t.Error("vault with missing fields should fail")
 	}
 	errStr := err.Error()
-	for _, want := range []string{"vault.address", "vault.token", "vault.key_name"} {
+	for _, want := range []string{"vault.address", "token or token_file", "vault.key_name"} {
 		if !strings.Contains(errStr, want) {
 			t.Errorf("error should mention %q, got: %v", want, err)
 		}
+	}
+}
+
+func TestEncryptionConfig_VaultBothTokenAndTokenFile(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Encryption = EncryptionConfig{
+		Enabled: true,
+		Vault: &VaultTransitConfig{
+			Address:   "https://vault.example.com",
+			Token:     "static-token",
+			TokenFile: "/path/to/token",
+			KeyName:   "my-key",
+		},
+	}
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil {
+		t.Error("setting both token and token_file should fail")
+	}
+	if !strings.Contains(err.Error(), "only one of token or token_file") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestEncryptionConfig_VaultRenewIntervalDefault(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Encryption = EncryptionConfig{
+		Enabled: true,
+		Vault: &VaultTransitConfig{
+			Address: "https://vault.example.com",
+			Token:   "test-token",
+			KeyName: "my-key",
+		},
+	}
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Encryption.Vault.RenewInterval != 5*time.Minute {
+		t.Errorf("RenewInterval = %v, want 5m", cfg.Encryption.Vault.RenewInterval)
 	}
 }
 

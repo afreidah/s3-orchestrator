@@ -108,6 +108,34 @@ func TestCertReloader_ReloadBadCert_KeepsOld(t *testing.T) {
 	}
 }
 
+func TestCertReloader_ReloadWarnsOnExpiringSoon(t *testing.T) {
+	// Generate a cert that expires in 30 minutes (within the 24h threshold)
+	certFile, keyFile := generateTestCertWithExpiry(t, 30*time.Minute)
+	cr, err := NewCertReloader(certFile, keyFile)
+	if err != nil {
+		t.Fatalf("NewCertReloader: %v", err)
+	}
+
+	// Reload should succeed (warning is logged but not an error)
+	if err := cr.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+}
+
+func TestCheckCertExpiry_LongLived(t *testing.T) {
+	// A cert with 30 days remaining should not trigger a warning.
+	// We just verify it doesn't panic; the warning is only logged, not returned.
+	certFile, keyFile := generateTestCertWithExpiry(t, 30*24*time.Hour)
+	cr, err := NewCertReloader(certFile, keyFile)
+	if err != nil {
+		t.Fatalf("NewCertReloader: %v", err)
+	}
+	// Reload parses and checks; no warning expected
+	if err := cr.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+}
+
 // -------------------------------------------------------------------------
 // HELPERS
 // -------------------------------------------------------------------------
@@ -120,6 +148,48 @@ func generateTestCert(t *testing.T) (certFile, keyFile string) {
 	certFile = filepath.Join(dir, "cert.pem")
 	keyFile = filepath.Join(dir, "key.pem")
 	writeTestCert(t, certFile, keyFile)
+	return certFile, keyFile
+}
+
+// generateTestCertWithExpiry creates a self-signed cert that expires after
+// the given duration.
+func generateTestCertWithExpiry(t *testing.T, validity time.Duration) (certFile, keyFile string) {
+	t.Helper()
+	dir := t.TempDir()
+	certFile = filepath.Join(dir, "cert.pem")
+	keyFile = filepath.Join(dir, "key.pem")
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(time.Now().UnixNano()),
+		Subject:      pkix.Name{CommonName: "test"},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(validity),
+		DNSNames:     []string{"localhost"},
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("failed to create certificate: %v", err)
+	}
+
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatalf("failed to marshal key: %v", err)
+	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+
+	if err := os.WriteFile(certFile, certPEM, 0644); err != nil {
+		t.Fatalf("failed to write cert: %v", err)
+	}
+	if err := os.WriteFile(keyFile, keyPEM, 0600); err != nil {
+		t.Fatalf("failed to write key: %v", err)
+	}
 	return certFile, keyFile
 }
 

@@ -196,12 +196,14 @@ func runServe() {
 
 	// --- Initialize encryption (if enabled) ---
 	var encryptor *encryption.Encryptor
+	var encryptionProvider encryption.KeyProvider
 	if cfg.Encryption.Enabled {
 		provider, err := encryption.NewKeyProviderFromConfig(&cfg.Encryption)
 		if err != nil {
 			slog.ErrorContext(ctx,"Failed to initialize encryption key provider", "error", err)
 			os.Exit(1)
 		}
+		encryptionProvider = provider
 		encryptor = encryption.NewEncryptor(provider, cfg.Encryption.ChunkSize)
 		slog.InfoContext(ctx,"Server-side encryption enabled",
 			"chunk_size", cfg.Encryption.ChunkSize,
@@ -599,6 +601,11 @@ func runServe() {
 		bgCancel()
 		<-bgDone
 		sm.Stop(10 * time.Second)
+
+		// Stop Vault token renewal goroutine (if active)
+		if closer, ok := encryptionProvider.(interface{ Close() }); ok {
+			closer.Close()
+		}
 
 		// Stop cache eviction goroutine
 		manager.Close()

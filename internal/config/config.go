@@ -229,11 +229,13 @@ type EncryptionConfig struct {
 
 // VaultTransitConfig holds settings for HashiCorp Vault Transit key management.
 type VaultTransitConfig struct {
-	Address   string `yaml:"address"`    // Vault server URL
-	Token     string `yaml:"token"`      // Vault token (or via env var)
-	KeyName   string `yaml:"key_name"`   // Transit key name
-	MountPath string `yaml:"mount_path"` // Transit mount path (default: "transit")
-	CACert    string `yaml:"ca_cert"`    // Path to PEM CA certificate for TLS verification
+	Address       string        `yaml:"address"`        // Vault server URL
+	Token         string        `yaml:"token"`          // Vault token (or via env var)
+	TokenFile     string        `yaml:"token_file"`     // Path to file containing Vault token (re-read on each renewal tick; for Nomad workload identity)
+	KeyName       string        `yaml:"key_name"`       // Transit key name
+	MountPath     string        `yaml:"mount_path"`     // Transit mount path (default: "transit")
+	CACert        string        `yaml:"ca_cert"`        // Path to PEM CA certificate for TLS verification
+	RenewInterval time.Duration `yaml:"renew_interval"` // Token renewal check interval (default: 5m)
 }
 
 // LifecycleConfig holds rules for automatic object expiration. Objects matching
@@ -729,14 +731,20 @@ func (c *Config) SetDefaultsAndValidate() error {
 			if v.Address == "" {
 				errors = append(errors, "encryption.vault.address is required")
 			}
-			if v.Token == "" {
-				errors = append(errors, "encryption.vault.token is required")
+			if v.Token == "" && v.TokenFile == "" {
+				errors = append(errors, "encryption.vault: one of token or token_file is required")
+			}
+			if v.Token != "" && v.TokenFile != "" {
+				errors = append(errors, "encryption.vault: only one of token or token_file may be set")
 			}
 			if v.KeyName == "" {
 				errors = append(errors, "encryption.vault.key_name is required")
 			}
 			if v.MountPath == "" {
 				v.MountPath = "transit"
+			}
+			if v.RenewInterval == 0 {
+				v.RenewInterval = 5 * time.Minute
 			}
 		}
 	}

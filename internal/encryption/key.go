@@ -18,6 +18,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"log/slog"
 	"os"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -165,7 +166,8 @@ func (p *MultiKeyProvider) WrapDEK(ctx context.Context, dek []byte) ([]byte, str
 
 // UnwrapDEK decrypts a wrapped DEK by resolving the provider for the given
 // keyID. Falls back to the primary provider if the keyID is not found in the
-// previous keys map.
+// previous keys map, logging a warning so operators can investigate potential
+// metadata corruption or missing rotation keys.
 func (p *MultiKeyProvider) UnwrapDEK(ctx context.Context, wrappedDEK []byte, keyID string) ([]byte, error) {
 	if keyID == p.primary.KeyID() {
 		return p.primary.UnwrapDEK(ctx, wrappedDEK, keyID)
@@ -173,7 +175,11 @@ func (p *MultiKeyProvider) UnwrapDEK(ctx context.Context, wrappedDEK []byte, key
 	if prev, ok := p.previous[keyID]; ok {
 		return prev.UnwrapDEK(ctx, wrappedDEK, keyID)
 	}
-	// Unknown keyID -- attempt with primary as best-effort fallback.
+	// Unknown keyID — likely metadata corruption or a rotation key that was
+	// removed from config. Log a warning and attempt with the primary key;
+	// GCM will reject the tag if it's truly the wrong key.
+	slog.WarnContext(ctx, "Unknown encryption keyID, falling back to primary",
+		"unknown_key_id", keyID, "primary_key_id", p.primary.KeyID())
 	return p.primary.UnwrapDEK(ctx, wrappedDEK, keyID)
 }
 
@@ -194,7 +200,7 @@ func NewKeyProviderFromConfig(cfg *config.EncryptionConfig) (KeyProvider, error)
 	case cfg.MasterKeyFile != "":
 		primary, err = NewFileKeyProvider(cfg.MasterKeyFile, "file-0")
 	case cfg.Vault != nil:
-		primary, err = NewVaultKeyProvider(cfg.Vault.Address, cfg.Vault.Token, cfg.Vault.KeyName, cfg.Vault.MountPath, cfg.Vault.CACert)
+		primary, err = NewVaultKeyProvider(cfg.Vault)
 	default:
 		return nil, fmt.Errorf("no encryption key source configured")
 	}
