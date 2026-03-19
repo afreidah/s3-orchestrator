@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"math/rand/v2"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/audit"
@@ -50,11 +51,22 @@ type lockedTickerService struct {
 	onError func(err error)
 }
 
-// Run implements lifecycle.Service.
+// Run implements lifecycle.Service. A random jitter of up to half the tick
+// interval is applied before the first tick to prevent thundering herd on
+// the advisory lock when multiple instances start simultaneously.
 func (s *lockedTickerService) Run(ctx context.Context) error {
 	// Optional one-time startup pass (e.g. replicator catch-up).
 	if s.startup != nil {
 		s.runOnce(ctx, s.startup)
+	}
+
+	// Stagger the first tick to avoid all instances contending for the
+	// advisory lock at the same instant.
+	jitter := rand.N(s.interval / 2)
+	select {
+	case <-time.After(jitter):
+	case <-ctx.Done():
+		return nil
 	}
 
 	ticker := time.NewTicker(s.interval)

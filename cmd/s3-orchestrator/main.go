@@ -567,14 +567,16 @@ func runServe() {
 
 		slog.InfoContext(ctx,"Shutting down", "signal", sig.String())
 
-		// Toggle readiness off so load balancers stop routing new traffic
-		ready.Store(false)
-
-		// Optional pre-stop delay for async LB deregistration (Consul, K8s)
+		// Optional pre-stop delay for async LB deregistration (Consul, K8s).
+		// The delay runs before toggling readiness off so the LB continues to
+		// see the service as healthy while it finishes deregistering.
 		if delay := cfgPtr.Load().Server.ShutdownDelay; delay > 0 {
 			slog.InfoContext(ctx,"Waiting for load balancer deregistration", "delay", delay)
 			time.Sleep(delay)
 		}
+
+		// Toggle readiness off so load balancers stop routing new traffic
+		ready.Store(false)
 
 		// Stop SIGHUP handler so it can't race with shutdown
 		signal.Stop(hupChan)
