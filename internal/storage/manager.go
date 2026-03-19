@@ -63,6 +63,7 @@ type BackendManagerConfig struct {
 	Encryptor           *encryption.Encryptor // nil when encryption is disabled
 	CounterBackend      CounterBackend        // nil uses LocalCounterBackend
 	CleanupConcurrency  int                   // parallel cleanup deletions (default: 10)
+	AdmissionSem        chan struct{}          // shared concurrency semaphore for HTTP + background ops (nil = unlimited)
 }
 
 // BackendManager manages multiple storage backends with quota tracking.
@@ -103,6 +104,7 @@ func NewBackendManager(cfg *BackendManagerConfig) *BackendManager {
 		backendTimeout:  cfg.BackendTimeout,
 		usage:           usage,
 		routingStrategy: cfg.RoutingStrategy,
+		admissionSem:    cfg.AdmissionSem,
 	}
 
 	cleanupConcurrency := cfg.CleanupConcurrency
@@ -153,6 +155,13 @@ func (m *BackendManager) ClearDrainState() {
 	})
 }
 
+// AdmissionSem returns the shared admission semaphore, or nil if none is
+// configured. The HTTP admission controller should use this channel so that
+// HTTP requests and background services share one concurrency budget.
+func (m *BackendManager) AdmissionSem() chan struct{} {
+	return m.admissionSem
+}
+
 // Close stops the background cache eviction goroutine. Safe to call multiple times.
 func (m *BackendManager) Close() {
 	m.ObjectManager.cache.Close()
@@ -194,6 +203,15 @@ func (m *BackendManager) FlushUsage(ctx context.Context) error {
 func (m *BackendManager) RedisCounterActive() bool {
 	rb, ok := m.usage.backend.(*RedisCounterBackend)
 	return ok && rb.IsHealthy()
+}
+
+// RedisCounterConfigured returns true when the counter backend is a Redis
+// backend, regardless of health status. Used by the flush service to decide
+// whether an advisory lock is needed — the lock must be held even during
+// fallback to prevent double-counting when Redis recovers mid-flush.
+func (m *BackendManager) RedisCounterConfigured() bool {
+	_, ok := m.usage.backend.(*RedisCounterBackend)
+	return ok
 }
 
 // -------------------------------------------------------------------------

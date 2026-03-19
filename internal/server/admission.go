@@ -42,6 +42,13 @@ func NewAdmissionController(maxConcurrent int) *AdmissionController {
 	}
 }
 
+// NewAdmissionControllerFromSem creates an admission controller backed by
+// an externally owned semaphore. Use this when background services should
+// share the same concurrency budget as HTTP requests.
+func NewAdmissionControllerFromSem(sem chan struct{}) *AdmissionController {
+	return &AdmissionController{sem: sem}
+}
+
 // NewSplitAdmissionController creates an admission controller with separate
 // concurrency limits for reads and writes. Both limits must be positive.
 func NewSplitAdmissionController(maxReads, maxWrites int) *AdmissionController {
@@ -49,6 +56,12 @@ func NewSplitAdmissionController(maxReads, maxWrites int) *AdmissionController {
 		readSem:  make(chan struct{}, maxReads),
 		writeSem: make(chan struct{}, maxWrites),
 	}
+}
+
+// NewSplitAdmissionControllerFromSem creates an admission controller backed
+// by externally owned read and write semaphores.
+func NewSplitAdmissionControllerFromSem(readSem, writeSem chan struct{}) *AdmissionController {
+	return &AdmissionController{readSem: readSem, writeSem: writeSem}
 }
 
 // SetShedThreshold configures the pressure threshold at which active load

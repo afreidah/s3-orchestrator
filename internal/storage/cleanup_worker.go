@@ -64,6 +64,10 @@ func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) (processed, fai
 	var processedCount, failedCount atomic.Int32
 
 	workerpool.Run(ctx, w.concurrency, items, func(ctx context.Context, item CleanupItem) {
+		if !w.acquireAdmission(ctx) {
+			return
+		}
+		defer w.releaseAdmission()
 		backend, ok := w.backends[item.BackendName]
 		if !ok {
 			slog.WarnContext(ctx, "Cleanup queue: backend not found, removing item",

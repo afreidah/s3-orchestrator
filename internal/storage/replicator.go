@@ -118,6 +118,10 @@ func (r *Replicator) Replicate(ctx context.Context, cfg config.ReplicationConfig
 	// --- Replicate under-replicated objects concurrently ---
 	var created atomic.Int32
 	workerpool.Run(ctx, cfg.Concurrency, tasks, func(ctx context.Context, task replicaTask) {
+		if !r.acquireAdmission(ctx) {
+			return
+		}
+		defer r.releaseAdmission()
 		n, replicateErr := r.replicateObject(ctx, task.key, task.copies, task.needed)
 		if replicateErr != nil {
 			slog.WarnContext(ctx, "Replication: object failed", "key", task.key, "error", replicateErr)

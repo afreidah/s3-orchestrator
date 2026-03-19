@@ -36,6 +36,35 @@ type backendCore struct {
 	routingStrategy string                   // "pack" or "spread"
 	draining        sync.Map                 // map[string]*drainState — backends being drained
 	metrics         *MetricsCollector        // Prometheus metric recording and gauge refresh
+	admissionSem    chan struct{}             // shared concurrency semaphore (nil = unlimited)
+}
+
+// -------------------------------------------------------------------------
+// ADMISSION
+// -------------------------------------------------------------------------
+
+// acquireAdmission blocks until a slot is available in the shared admission
+// semaphore, or returns false if ctx is cancelled. Returns true immediately
+// when no semaphore is configured.
+func (c *backendCore) acquireAdmission(ctx context.Context) bool {
+	if c.admissionSem == nil {
+		return true
+	}
+	select {
+	case c.admissionSem <- struct{}{}:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// releaseAdmission returns a slot to the admission semaphore. No-op when
+// no semaphore is configured.
+func (c *backendCore) releaseAdmission() {
+	if c.admissionSem == nil {
+		return
+	}
+	<-c.admissionSem
 }
 
 // -------------------------------------------------------------------------

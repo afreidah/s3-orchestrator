@@ -886,3 +886,36 @@ func TestPlanSpreadEven_RespectsBatchSize(t *testing.T) {
 		t.Errorf("plan has %d moves, batch limit is 5", len(plan))
 	}
 }
+
+func TestExecuteMoves_AdmissionBlocked(t *testing.T) {
+	// Fill the admission semaphore and cancel the context so the
+	// rebalancer's acquireAdmission returns false and skips the move.
+	sem := make(chan struct{}, 1)
+	sem <- struct{}{} // fill
+
+	src := newMockBackend()
+	src.objects["key1"] = mockObject{data: []byte("data")}
+	dst := newMockBackend()
+
+	store := &mockStore{}
+	mgr := NewBackendManager(&BackendManagerConfig{
+		Backends:        map[string]ObjectBackend{"b1": src, "b2": dst},
+		Store:           store,
+		Order:           []string{"b1", "b2"},
+		CacheTTL:        5 * time.Second,
+		BackendTimeout:  30 * time.Second,
+		RoutingStrategy: "pack",
+		AdmissionSem:    sem,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately so acquireAdmission returns false
+
+	moved := mgr.Rebalancer.executeMoves(ctx, []rebalanceMove{
+		{ObjectKey: "key1", FromBackend: "b1", ToBackend: "b2", SizeBytes: 4},
+	}, "pack", 1)
+
+	if moved != 0 {
+		t.Errorf("expected 0 moves when admission blocked, got %d", moved)
+	}
+}

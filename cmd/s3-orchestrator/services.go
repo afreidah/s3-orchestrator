@@ -153,10 +153,12 @@ func (s *usageFlushService) Run(ctx context.Context) error {
 	}
 }
 
-// flushTick runs a single flush+metrics cycle. When Redis counters are active,
-// wraps the flush in an advisory lock so only one instance performs GETSET.
+// flushTick runs a single flush+metrics cycle. When Redis counters are
+// configured, wraps the flush in an advisory lock so only one instance
+// performs GETSET. The lock is acquired regardless of Redis health to
+// prevent double-counting when Redis recovers mid-flush.
 func (s *usageFlushService) flushTick(ctx context.Context) {
-	if s.manager.RedisCounterActive() {
+	if s.manager.RedisCounterConfigured() {
 		acquired, err := s.store.WithAdvisoryLock(ctx, storage.LockUsageFlush,
 			func(lockCtx context.Context) error {
 				s.doFlush(lockCtx)
@@ -171,7 +173,7 @@ func (s *usageFlushService) flushTick(ctx context.Context) {
 		return
 	}
 
-	// No Redis or Redis in fallback — flush locally without lock.
+	// No Redis configured — flush locally without lock.
 	s.doFlush(ctx)
 }
 
