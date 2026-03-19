@@ -171,3 +171,72 @@ func TestExcludeUnhealthy_UnknownBackendSkipped(t *testing.T) {
 		t.Fatalf("expected 0 eligible backends, got %d", len(eligible))
 	}
 }
+
+// -------------------------------------------------------------------------
+// withTimeout — deadline cascading
+// -------------------------------------------------------------------------
+
+func TestWithTimeout_NoParentDeadline(t *testing.T) {
+	core := &backendCore{backendTimeout: 5 * time.Second}
+	ctx, cancel := core.withTimeout(context.Background())
+	defer cancel()
+
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		t.Fatal("expected deadline to be set")
+	}
+	remaining := time.Until(deadline)
+	if remaining < 4*time.Second || remaining > 6*time.Second {
+		t.Errorf("expected ~5s deadline, got %v", remaining)
+	}
+}
+
+func TestWithTimeout_ParentTighter(t *testing.T) {
+	// Parent has a 1s deadline; backend timeout is 30s.
+	// The tighter parent deadline should be preserved.
+	parent, parentCancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer parentCancel()
+
+	core := &backendCore{backendTimeout: 30 * time.Second}
+	ctx, cancel := core.withTimeout(parent)
+	defer cancel()
+
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		t.Fatal("expected deadline to be set")
+	}
+	remaining := time.Until(deadline)
+	if remaining > 2*time.Second {
+		t.Errorf("expected parent's ~1s deadline to be preserved, got %v", remaining)
+	}
+}
+
+func TestWithTimeout_BackendTighter(t *testing.T) {
+	// Parent has a 30s deadline; backend timeout is 1s.
+	// The tighter backend timeout should be applied.
+	parent, parentCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer parentCancel()
+
+	core := &backendCore{backendTimeout: 1 * time.Second}
+	ctx, cancel := core.withTimeout(parent)
+	defer cancel()
+
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		t.Fatal("expected deadline to be set")
+	}
+	remaining := time.Until(deadline)
+	if remaining > 2*time.Second {
+		t.Errorf("expected backend's ~1s timeout to be applied, got %v", remaining)
+	}
+}
+
+func TestWithTimeout_ZeroTimeout(t *testing.T) {
+	core := &backendCore{backendTimeout: 0}
+	ctx, cancel := core.withTimeout(context.Background())
+	defer cancel()
+
+	if _, ok := ctx.Deadline(); ok {
+		t.Error("expected no deadline when backendTimeout is 0")
+	}
+}

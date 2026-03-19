@@ -16,6 +16,7 @@ package storage
 import (
 	"errors"
 	"log/slog"
+	"math/rand/v2"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -71,6 +72,7 @@ type CircuitBreaker struct {
 	openedAt      time.Time
 	failThreshold int
 	openTimeout   time.Duration
+	probeJitter   time.Duration     // randomized delay added to openTimeout; recomputed each time the circuit opens
 	probeInFlight atomic.Bool
 	name          string            // for logging and metrics labels
 	isError       func(error) bool  // returns true if the error should trip the breaker
@@ -131,7 +133,7 @@ func (cb *CircuitBreaker) OpenDuration() time.Duration {
 func (cb *CircuitBreaker) ProbeEligible() bool {
 	cb.mu.RLock()
 	defer cb.mu.RUnlock()
-	return cb.state == stateOpen && time.Since(cb.lastFailure) >= cb.openTimeout
+	return cb.state == stateOpen && time.Since(cb.lastFailure) >= cb.openTimeout+cb.probeJitter
 }
 
 // -------------------------------------------------------------------------
@@ -148,7 +150,7 @@ func (cb *CircuitBreaker) PreCheck() error {
 	case stateClosed:
 		return nil
 	case stateOpen:
-		if time.Since(cb.lastFailure) >= cb.openTimeout {
+		if time.Since(cb.lastFailure) >= cb.openTimeout+cb.probeJitter {
 			if !cb.probeInFlight.CompareAndSwap(false, true) {
 				return cb.sentinel // another probe already in flight
 			}
@@ -223,6 +225,7 @@ func (cb *CircuitBreaker) transition(to circuitState) {
 	switch {
 	case to == stateOpen && from == stateClosed:
 		cb.openedAt = time.Now()
+		cb.probeJitter = rand.N(cb.openTimeout / 4)
 		slog.Warn("Circuit breaker opened: failure threshold reached",
 			"name", cb.name,
 			"from", from.String(),
@@ -231,6 +234,7 @@ func (cb *CircuitBreaker) transition(to circuitState) {
 			"threshold", cb.failThreshold)
 
 	case to == stateOpen && from == stateHalfOpen:
+		cb.probeJitter = rand.N(cb.openTimeout / 4)
 		slog.Warn("Circuit breaker reopened: probe failed",
 			"name", cb.name,
 			"from", from.String(),
