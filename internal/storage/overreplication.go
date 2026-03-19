@@ -117,6 +117,10 @@ func (c *OverReplicationCleaner) Clean(ctx context.Context, cfg config.Replicati
 	// --- Remove excess copies concurrently ---
 	var removed atomic.Int64
 	workerpool.Run(ctx, cfg.Concurrency, tasks, func(ctx context.Context, task cleanupTask) {
+		if !c.acquireAdmission(ctx) {
+			return
+		}
+		defer c.releaseAdmission()
 		n := c.cleanObject(ctx, task.key, task.copies, task.excess, quotaStats)
 		removed.Add(int64(n))
 	})

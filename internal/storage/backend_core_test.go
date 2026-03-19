@@ -240,3 +240,39 @@ func TestWithTimeout_ZeroTimeout(t *testing.T) {
 		t.Error("expected no deadline when backendTimeout is 0")
 	}
 }
+
+// -------------------------------------------------------------------------
+// acquireAdmission / releaseAdmission
+// -------------------------------------------------------------------------
+
+func TestAcquireAdmission_NilSem(t *testing.T) {
+	core := &backendCore{}
+	if !core.acquireAdmission(context.Background()) {
+		t.Error("nil semaphore should always succeed")
+	}
+	core.releaseAdmission() // should not panic
+}
+
+func TestAcquireAdmission_Bounded(t *testing.T) {
+	sem := make(chan struct{}, 1)
+	core := &backendCore{admissionSem: sem}
+
+	// First acquire succeeds
+	if !core.acquireAdmission(context.Background()) {
+		t.Fatal("first acquire should succeed")
+	}
+
+	// Second acquire should block; use a cancelled context to prove it
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if core.acquireAdmission(ctx) {
+		t.Error("acquire on full semaphore with cancelled context should return false")
+	}
+
+	// Release and re-acquire
+	core.releaseAdmission()
+	if !core.acquireAdmission(context.Background()) {
+		t.Error("acquire after release should succeed")
+	}
+	core.releaseAdmission()
+}

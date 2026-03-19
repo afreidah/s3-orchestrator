@@ -388,6 +388,10 @@ func (r *Rebalancer) planSpreadEven(ctx context.Context, stats map[string]QuotaS
 func (r *Rebalancer) executeMoves(ctx context.Context, plan []rebalanceMove, strategy string, concurrency int) int {
 	var moved atomic.Int32
 	workerpool.Run(ctx, concurrency, plan, func(ctx context.Context, mv rebalanceMove) {
+		if !r.acquireAdmission(ctx) {
+			return
+		}
+		defer r.releaseAdmission()
 		if r.executeOneMove(ctx, mv, strategy) {
 			moved.Add(1)
 		}

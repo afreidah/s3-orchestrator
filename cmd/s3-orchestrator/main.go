@@ -234,6 +234,19 @@ func runServe() {
 		slog.InfoContext(ctx,"Redis shared counters enabled", "address", cfg.Redis.Address)
 	}
 
+	// --- Create admission semaphore ---
+	// Shared between the HTTP admission controller and background services
+	// so both draw from one concurrency budget.
+	var admissionSem chan struct{}
+	if cfg.Server.MaxConcurrentReads > 0 && cfg.Server.MaxConcurrentWrites > 0 {
+		// Split pools are handled at the HTTP layer; background services use
+		// the write pool. Create combined for the manager; the admission
+		// controller will use split semaphores from main.
+		admissionSem = make(chan struct{}, cfg.Server.MaxConcurrentWrites)
+	} else if cfg.Server.MaxConcurrentRequests > 0 {
+		admissionSem = make(chan struct{}, cfg.Server.MaxConcurrentRequests)
+	}
+
 	// --- Create backend manager ---
 	manager := storage.NewBackendManager(&storage.BackendManagerConfig{
 		Backends:          backends,
@@ -247,6 +260,7 @@ func runServe() {
 		Encryptor:          encryptor,
 		CounterBackend:     counterBackend,
 		CleanupConcurrency: cfg.CleanupQueue.Concurrency,
+		AdmissionSem:       admissionSem,
 	})
 
 	// --- Store config in atomic pointer for safe SIGHUP access ---
@@ -388,10 +402,8 @@ func runServe() {
 			s3Handler = rl.Middleware(s3Handler)
 		}
 		if cfg.Server.MaxConcurrentReads > 0 && cfg.Server.MaxConcurrentWrites > 0 {
-			ac := server.NewSplitAdmissionController(
-				cfg.Server.MaxConcurrentReads,
-				cfg.Server.MaxConcurrentWrites,
-			)
+			readSem := make(chan struct{}, cfg.Server.MaxConcurrentReads)
+			ac := server.NewSplitAdmissionControllerFromSem(readSem, admissionSem)
 			if cfg.Server.LoadShedThreshold > 0 {
 				ac.SetShedThreshold(cfg.Server.LoadShedThreshold)
 			}
@@ -406,7 +418,7 @@ func runServe() {
 				"admission_wait", cfg.Server.AdmissionWait,
 			)
 		} else if cfg.Server.MaxConcurrentRequests > 0 {
-			ac := server.NewAdmissionController(cfg.Server.MaxConcurrentRequests)
+			ac := server.NewAdmissionControllerFromSem(admissionSem)
 			if cfg.Server.LoadShedThreshold > 0 {
 				ac.SetShedThreshold(cfg.Server.LoadShedThreshold)
 			}
@@ -599,6 +611,14 @@ func runServe() {
 			loginThrottle.Close()
 		}
 
+		// Flush usage counters while services are still running so in-flight
+		// increments are captured.
+		preFlushCtx, preFlushCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := manager.FlushUsage(preFlushCtx); err != nil {
+			slog.WarnContext(preFlushCtx, "Pre-shutdown usage flush failed", "error", err)
+		}
+		preFlushCancel()
+
 		// Stop background services and wait for them to finish
 		bgCancel()
 		<-bgDone
@@ -612,11 +632,11 @@ func runServe() {
 		// Stop cache eviction goroutine
 		manager.Close()
 
-		// Flush usage counters before closing database
+		// Final flush captures any deltas from the bgCancel→bgDone window.
 		flushCtx, flushCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer flushCancel()
 		if err := manager.FlushUsage(flushCtx); err != nil {
-			slog.WarnContext(flushCtx, "Failed to flush usage counters on shutdown", "error", err)
+			slog.WarnContext(flushCtx, "Final usage flush failed", "error", err)
 		}
 
 		// Close Redis client (after flush so counters are flushed to PG first)

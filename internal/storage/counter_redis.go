@@ -284,8 +284,11 @@ func (r *RedisCounterBackend) healthProbe() {
 	}
 }
 
-// tryRecover PINGs Redis and, on success, syncs local deltas and closes
-// the circuit breaker.
+// tryRecover PINGs Redis and, on success, atomically deletes stale keys
+// and syncs local deltas in a single pipeline, then closes the circuit
+// breaker.
+//
+//nolint:sloglint // health probe has no request context
 func (r *RedisCounterBackend) tryRecover() {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -295,48 +298,70 @@ func (r *RedisCounterBackend) tryRecover() {
 	}
 
 	period := currentPeriod()
+	fields := []string{FieldAPIRequests, FieldEgressBytes, FieldIngressBytes}
 
-	// Delete stale Redis keys for the current period -- they contain
-	// pre-outage values that PG has already absorbed via flushes during
-	// the outage.
+	// Collect local deltas before building the pipeline so we snapshot
+	// a consistent view of what needs to be synced.
+	type backendDeltas struct {
+		name    string
+		api     int64
+		egress  int64
+		ingress int64
+	}
+	deltas := make([]backendDeltas, 0, len(r.backends))
 	for _, backend := range r.backends {
-		for _, field := range []string{FieldAPIRequests, FieldEgressBytes, FieldIngressBytes} {
-			key := r.keyForPeriod(backend, field, period)
-			r.client.Del(ctx, key)
+		cur := r.local.LoadAll(backend)
+		deltas = append(deltas, backendDeltas{
+			name:    backend,
+			api:     cur.APIRequests,
+			egress:  cur.EgressBytes,
+			ingress: cur.IngressBytes,
+		})
+	}
+
+	// Build a single pipeline: delete stale keys then INCRBY local deltas.
+	// If the pipeline fails, nothing is committed — no counter loss.
+	pipe := r.client.Pipeline()
+	for _, backend := range r.backends {
+		for _, field := range fields {
+			pipe.Del(ctx, r.keyForPeriod(backend, field, period))
+		}
+	}
+	for _, d := range deltas {
+		if d.api > 0 {
+			k := r.keyForPeriod(d.name, FieldAPIRequests, period)
+			pipe.IncrBy(ctx, k, d.api)
+			pipe.Expire(ctx, k, keyTTL)
+		}
+		if d.egress > 0 {
+			k := r.keyForPeriod(d.name, FieldEgressBytes, period)
+			pipe.IncrBy(ctx, k, d.egress)
+			pipe.Expire(ctx, k, keyTTL)
+		}
+		if d.ingress > 0 {
+			k := r.keyForPeriod(d.name, FieldIngressBytes, period)
+			pipe.IncrBy(ctx, k, d.ingress)
+			pipe.Expire(ctx, k, keyTTL)
 		}
 	}
 
-	// Sync unflushed local deltas to Redis. INCRBY on a zeroed key is
-	// correct -- safe even if instances recover at different times.
-	for _, backend := range r.backends {
-		cur := r.local.LoadAll(backend)
-		if cur.APIRequests > 0 {
-			k := r.keyForPeriod(backend, FieldAPIRequests, period)
-			r.client.IncrBy(ctx, k, cur.APIRequests)
-			r.client.Expire(ctx, k, keyTTL)
-		}
-		if cur.EgressBytes > 0 {
-			k := r.keyForPeriod(backend, FieldEgressBytes, period)
-			r.client.IncrBy(ctx, k, cur.EgressBytes)
-			r.client.Expire(ctx, k, keyTTL)
-		}
-		if cur.IngressBytes > 0 {
-			k := r.keyForPeriod(backend, FieldIngressBytes, period)
-			r.client.IncrBy(ctx, k, cur.IngressBytes)
-			r.client.Expire(ctx, k, keyTTL)
-		}
+	if _, err := pipe.Exec(ctx); err != nil {
+		slog.Warn("Redis recovery pipeline failed, will retry", "error", err)
+		return
+	}
 
-		// Zero local counters
-		r.local.Swap(backend, FieldAPIRequests)
-		r.local.Swap(backend, FieldEgressBytes)
-		r.local.Swap(backend, FieldIngressBytes)
+	// Pipeline committed — safe to zero local counters now.
+	for _, backend := range r.backends {
+		for _, field := range fields {
+			r.local.Swap(backend, field)
+		}
 	}
 
 	// Clear fallback state and close circuit breaker
 	r.setFallback(false)
 	_ = r.cb.PostCheck(nil)
 
-	slog.Info("Redis counter backend recovered, local deltas synced") //nolint:sloglint // health probe has no request context
+	slog.Info("Redis counter backend recovered, local deltas synced")
 }
 
 // -------------------------------------------------------------------------

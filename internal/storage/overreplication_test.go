@@ -366,3 +366,40 @@ func TestCountPending_Error(t *testing.T) {
 		t.Fatal("expected error from CountPending")
 	}
 }
+
+func TestClean_AdmissionBlocked(t *testing.T) {
+	sem := make(chan struct{}, 1)
+	sem <- struct{}{} // fill
+
+	store := &mockStore{
+		getOverReplicatedResp: []ObjectLocation{
+			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
+			{ObjectKey: "key1", BackendName: "b2", SizeBytes: 100},
+			{ObjectKey: "key1", BackendName: "b3", SizeBytes: 100},
+		},
+	}
+	mgr := NewBackendManager(&BackendManagerConfig{
+		Backends:        map[string]ObjectBackend{"b1": newMockBackend(), "b2": newMockBackend(), "b3": newMockBackend()},
+		Store:           store,
+		Order:           []string{"b1", "b2", "b3"},
+		CacheTTL:        5 * time.Second,
+		BackendTimeout:  30 * time.Second,
+		RoutingStrategy: "pack",
+		AdmissionSem:    sem,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	removed, err := mgr.OverReplicationCleaner.Clean(ctx, config.ReplicationConfig{
+		Factor:      2,
+		BatchSize:   10,
+		Concurrency: 1,
+	})
+	if err != nil {
+		t.Fatalf("Clean: %v", err)
+	}
+	if removed != 0 {
+		t.Errorf("expected 0 removed when admission blocked, got %d", removed)
+	}
+}
