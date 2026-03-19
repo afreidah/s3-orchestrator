@@ -858,6 +858,26 @@ func TestDeleteObjects_EmptyKeys(t *testing.T) {
 	}
 }
 
+func TestDeleteObjects_BackendNotInMap(t *testing.T) {
+	// DB returns a deleted copy pointing to a backend that doesn't exist
+	store := &mockStore{
+		deleteObjectFunc: func(key string) ([]DeletedCopy, error) {
+			return []DeletedCopy{{BackendName: "ghost", SizeBytes: 1}}, nil
+		},
+	}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+
+	results := mgr.ObjectManager.DeleteObjects(context.Background(), []string{"k1"})
+
+	// Should still succeed (backend not found is non-fatal for deletes)
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Err != nil {
+		t.Errorf("expected no error (missing backend is non-fatal), got %v", results[0].Err)
+	}
+}
+
 // -------------------------------------------------------------------------
 // CopyObject
 // -------------------------------------------------------------------------

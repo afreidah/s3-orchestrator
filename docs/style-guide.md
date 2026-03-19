@@ -281,7 +281,7 @@ Request IDs flow through context via `audit.WithRequestID` / `audit.RequestID`:
 
 - S3 API requests: extracted from `X-Request-Id` header or generated, set on context before auth
 - Internal operations: generated at the start of each background task tick or batch run
-- The ID is also set as a `s3proxy.request_id` attribute on OpenTelemetry spans
+- The ID is also set as a `s3o.request_id` attribute on OpenTelemetry spans
 - `trace_id` and `span_id` are automatically injected into JSON log output by `telemetry.TraceHandler` for any log call with an active span in context — use `slog.InfoContext(ctx, ...)` rather than `slog.Info(...)` to ensure trace correlation
 
 ### Log Levels

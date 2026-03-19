@@ -64,6 +64,6 @@ func (cr *CertReloader) Reload() error {
 	cr.mu.Lock()
 	cr.cert = &cert
 	cr.mu.Unlock()
-	slog.Info("TLS certificate reloaded", "cert_file", cr.certFile)
+	slog.Info("TLS certificate reloaded", "cert_file", cr.certFile) //nolint:sloglint // Reload() has no context
 	return nil
 }

@@ -149,7 +149,7 @@ func (b *S3Backend) PutObject(ctx context.Context, key string, body io.Reader, s
 	start := time.Now()
 
 	// --- Start tracing span ---
-	ctx, span := telemetry.StartSpan(ctx, "Backend "+operation,
+	ctx, span := telemetry.StartClientSpan(ctx, "Backend "+operation,
 		telemetry.BackendAttributes(operation, b.name, b.endpoint, b.bucket, key)...,
 	)
 	defer span.End()
@@ -214,7 +214,7 @@ func (b *S3Backend) GetObject(ctx context.Context, key string, rangeHeader strin
 	start := time.Now()
 
 	// --- Start tracing span ---
-	ctx, span := telemetry.StartSpan(ctx, "Backend "+operation,
+	ctx, span := telemetry.StartClientSpan(ctx, "Backend "+operation,
 		telemetry.BackendAttributes(operation, b.name, b.endpoint, b.bucket, key)...,
 	)
 	defer span.End()
@@ -270,7 +270,7 @@ func (b *S3Backend) HeadObject(ctx context.Context, key string) (*HeadObjectResu
 	start := time.Now()
 
 	// --- Start tracing span ---
-	ctx, span := telemetry.StartSpan(ctx, "Backend "+operation,
+	ctx, span := telemetry.StartClientSpan(ctx, "Backend "+operation,
 		telemetry.BackendAttributes(operation, b.name, b.endpoint, b.bucket, key)...,
 	)
 	defer span.End()
@@ -317,7 +317,7 @@ func (b *S3Backend) DeleteObject(ctx context.Context, key string) error {
 	start := time.Now()
 
 	// --- Start tracing span ---
-	ctx, span := telemetry.StartSpan(ctx, "Backend "+operation,
+	ctx, span := telemetry.StartClientSpan(ctx, "Backend "+operation,
 		telemetry.BackendAttributes(operation, b.name, b.endpoint, b.bucket, key)...,
 	)
 	defer span.End()
@@ -353,6 +353,12 @@ type ListedObject struct {
 func (b *S3Backend) ListObjects(ctx context.Context, prefix string, fn func([]ListedObject) error) error {
 	const operation = "ListObjectsV2"
 
+	// --- Start tracing span ---
+	ctx, span := telemetry.StartClientSpan(ctx, "Backend "+operation,
+		telemetry.BackendAttributes(operation, b.name, b.endpoint, b.bucket, prefix)...,
+	)
+	defer span.End()
+
 	input := &s3.ListObjectsV2Input{
 		Bucket: aws.String(b.bucket),
 	}
@@ -367,6 +373,8 @@ func (b *S3Backend) ListObjects(ctx context.Context, prefix string, fn func([]Li
 		b.recordOperation(operation, start, err)
 
 		if err != nil {
+			span.SetStatus(codes.Error, err.Error())
+			span.RecordError(err)
 			return fmt.Errorf("list objects failed: %w", err)
 		}
 

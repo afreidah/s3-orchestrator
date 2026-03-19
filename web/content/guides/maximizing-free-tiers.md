@@ -427,9 +427,9 @@ Alternatively, `pack` fills one backend before moving to the next, which can be 
 
 Use the web dashboard or Prometheus metrics to track how close each backend is to its limits:
 
-- **Storage quota**: `s3proxy_backend_used_bytes` vs `s3proxy_backend_quota_bytes`
-- **API requests**: `s3proxy_backend_api_requests_total`
-- **Egress/Ingress**: `s3proxy_backend_egress_bytes_total` / `s3proxy_backend_ingress_bytes_total`
+- **Storage quota**: `s3o_backend_used_bytes` vs `s3o_backend_quota_bytes`
+- **API requests**: `s3o_backend_api_requests_total`
+- **Egress/Ingress**: `s3o_backend_egress_bytes_total` / `s3o_backend_ingress_bytes_total`
 
 The dashboard shows per-backend quota bars and monthly usage charts so you can see at a glance how much headroom remains.
 

@@ -175,7 +175,7 @@ func (s *Store) RunMigrations(ctx context.Context) error { // codecov:ignore -- 
 		return fmt.Errorf("apply migrations: %w", err)
 	}
 	for _, r := range results {
-		slog.Info("migration applied",
+		slog.InfoContext(ctx, "migration applied",
 			"version", r.Source.Version,
 			"duration", r.Duration)
 	}

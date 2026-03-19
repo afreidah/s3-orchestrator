@@ -29,7 +29,7 @@ func TestTraceHandler_NoSpan(t *testing.T) {
 	handler := NewTraceHandler(inner)
 	logger := slog.New(handler)
 
-	logger.Info("no span")
+	logger.InfoContext(context.Background(), "no span")
 
 	var entry map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
@@ -115,7 +115,7 @@ func TestTraceHandler_WithGroup(t *testing.T) {
 	handler := NewTraceHandler(inner)
 	logger := slog.New(handler).WithGroup("db")
 
-	logger.Info("group test", "query", "SELECT 1")
+	logger.InfoContext(context.Background(), "group test", "query", "SELECT 1")
 
 	var entry map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {

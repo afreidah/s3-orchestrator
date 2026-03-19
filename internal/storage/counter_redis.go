@@ -103,7 +103,7 @@ func NewRedisCounterBackend(client RedisClient, cfg *config.RedisConfig, backend
 
 	go r.healthProbe()
 
-	slog.Info("Redis counter backend initialized",
+	slog.Info("Redis counter backend initialized", //nolint:sloglint // constructor has no request context
 		"address", cfg.Address,
 		"prefix", cfg.KeyPrefix,
 	)
@@ -336,7 +336,7 @@ func (r *RedisCounterBackend) tryRecover() {
 	r.setFallback(false)
 	_ = r.cb.PostCheck(nil)
 
-	slog.Info("Redis counter backend recovered, local deltas synced")
+	slog.Info("Redis counter backend recovered, local deltas synced") //nolint:sloglint // health probe has no request context
 }
 
 // -------------------------------------------------------------------------
@@ -362,6 +362,8 @@ func (r *RedisCounterBackend) setFallback(v bool) {
 
 // recordFailure feeds the error to the circuit breaker. If the breaker
 // opens, transitions to fallback mode.
+//
+//nolint:sloglint // Counter interface has no request context; fallback is a system-level event.
 func (r *RedisCounterBackend) recordFailure(err error) {
 	_ = r.cb.PostCheck(err)
 	if !r.cb.IsHealthy() && !r.inFallback() {

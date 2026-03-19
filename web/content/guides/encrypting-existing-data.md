@@ -78,7 +78,7 @@ This operation downloads and re-uploads every unencrypted object. The re-uploads
 
 ## Step 5: Verify
 
-Monitor the `s3proxy_encrypt_existing_objects_total` metric:
+Monitor the `s3o_encrypt_existing_objects_total` metric:
 
 | Label | Meaning |
 |-------|---------|

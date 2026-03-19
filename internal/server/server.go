@@ -92,7 +92,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	authorizedBucket, err := s.GetBucketAuth().AuthenticateAndResolveBucket(r)
 	if err != nil {
 		s.recordRequest(method, http.StatusForbidden, start, 0, 0)
-		slog.Warn("S3 auth failure", "method", method, "path", r.URL.Path, "remote", r.RemoteAddr, "error", err)
+		slog.WarnContext(ctx, "S3 auth failure", "method", method, "path", r.URL.Path, "remote", r.RemoteAddr, "error", err)
 		audit.Log(ctx, "s3.AuthFailure",
 			slog.String("method", method),
 			slog.String("path", r.URL.Path),
@@ -107,7 +107,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// --- ListBuckets: GET / ---
 	if r.URL.Path == "/" && method == http.MethodGet {
-		ctx, span := telemetry.StartSpan(ctx, "HTTP GET",
+		ctx, span := telemetry.StartServerSpan(ctx, "HTTP GET",
 			append(telemetry.RequestAttributes(method, "/", "", "", r.RemoteAddr),
 				telemetry.AttrRequestID.String(requestID))...,
 		)
@@ -149,7 +149,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// --- Verify path bucket matches authorized bucket ---
 	if bucket != authorizedBucket {
 		s.recordRequest(method, http.StatusForbidden, start, 0, 0)
-		slog.Warn("S3 bucket mismatch", "method", method, "path", r.URL.Path, "remote", r.RemoteAddr, "authorized", authorizedBucket, "requested", bucket)
+		slog.WarnContext(ctx, "S3 bucket mismatch", "method", method, "path", r.URL.Path, "remote", r.RemoteAddr, "authorized", authorizedBucket, "requested", bucket)
 		audit.Log(ctx, "s3.BucketMismatch",
 			slog.String("method", method),
 			slog.String("path", r.URL.Path),
@@ -171,7 +171,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if spanName == "" {
 		spanName = "HTTP " + method
 	}
-	ctx, span := telemetry.StartSpan(ctx, spanName,
+	ctx, span := telemetry.StartServerSpan(ctx, spanName,
 		append(telemetry.RequestAttributes(method, r.URL.Path, bucket, key, r.RemoteAddr),
 			telemetry.AttrRequestID.String(requestID))...,
 	)
@@ -294,7 +294,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)
-		slog.Warn("S3 request failed", "operation", operation, "key", key, "status", status, "remote", r.RemoteAddr, "error", err)
+		slog.WarnContext(ctx, "S3 request failed", "operation", operation, "key", key, "status", status, "remote", r.RemoteAddr, "error", err)
 	}
 	span.SetAttributes(attribute.Int("http.status_code", status))
 
