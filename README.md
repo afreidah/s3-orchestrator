@@ -561,69 +561,69 @@ make generate
 
 ### Prometheus Metrics
 
-All metrics are prefixed with `s3proxy_`. Exposed at `/metrics` when enabled.
+All metrics are prefixed with `s3o_`. Exposed at `/metrics` when enabled.
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `s3proxy_build_info` | Gauge | version, go_version | Build metadata |
-| `s3proxy_requests_total` | Counter | method, status_code | HTTP request count |
-| `s3proxy_request_duration_seconds` | Histogram | method | Request latency |
-| `s3proxy_request_size_bytes` | Histogram | method | Upload sizes |
-| `s3proxy_response_size_bytes` | Histogram | method | Download sizes |
-| `s3proxy_inflight_requests` | Gauge | method | Currently processing |
-| `s3proxy_backend_requests_total` | Counter | operation, backend, status | Backend S3 API calls |
-| `s3proxy_backend_duration_seconds` | Histogram | operation, backend | Backend latency |
-| `s3proxy_manager_requests_total` | Counter | operation, backend, status | Manager-level operations |
-| `s3proxy_manager_duration_seconds` | Histogram | operation, backend | Manager latency |
-| `s3proxy_quota_bytes_used` | Gauge | backend | Current bytes used |
-| `s3proxy_quota_bytes_limit` | Gauge | backend | Quota limit |
-| `s3proxy_quota_orphan_bytes` | Gauge | backend | Bytes reserved by pending cleanup items |
-| `s3proxy_quota_bytes_available` | Gauge | backend | Remaining space (limit − used − orphan) |
-| `s3proxy_objects_count` | Gauge | backend | Stored object count |
-| `s3proxy_active_multipart_uploads` | Gauge | backend | In-progress uploads |
-| `s3proxy_rebalance_objects_moved_total` | Counter | strategy, status | Objects moved by rebalancer |
-| `s3proxy_rebalance_bytes_moved_total` | Counter | strategy | Bytes moved by rebalancer |
-| `s3proxy_rebalance_runs_total` | Counter | strategy, status | Rebalancer executions |
-| `s3proxy_rebalance_duration_seconds` | Histogram | strategy | Rebalancer execution time |
-| `s3proxy_rebalance_skipped_total` | Counter | reason | Rebalancer runs skipped |
-| `s3proxy_replication_pending` | Gauge | — | Objects below replication factor |
-| `s3proxy_replication_copies_created_total` | Counter | — | Replica copies created |
-| `s3proxy_replication_errors_total` | Counter | — | Replication errors |
-| `s3proxy_replication_duration_seconds` | Histogram | — | Replication cycle time |
-| `s3proxy_replication_runs_total` | Counter | status | Replication worker executions |
-| `s3proxy_replication_health_copies_total` | Counter | — | Copies created to replace copies on circuit-broken backends |
-| `s3proxy_over_replication_pending` | Gauge | — | Objects exceeding the replication factor |
-| `s3proxy_over_replication_removed_total` | Counter | — | Excess copies removed |
-| `s3proxy_over_replication_errors_total` | Counter | — | Over-replication cleanup errors |
-| `s3proxy_over_replication_runs_total` | Counter | status | Over-replication worker executions |
-| `s3proxy_over_replication_duration_seconds` | Histogram | — | Over-replication cleanup cycle time |
-| `s3proxy_circuit_breaker_state` | Gauge | name | 0=closed, 1=open, 2=half-open (name: "database" or backend name) |
-| `s3proxy_circuit_breaker_transitions_total` | Counter | name, from, to | State transitions per component |
-| `s3proxy_degraded_reads_total` | Counter | operation | Broadcast reads in degraded mode |
-| `s3proxy_degraded_cache_hits_total` | Counter | — | Cache hits during degraded reads |
-| `s3proxy_degraded_write_rejections_total` | Counter | operation | Writes rejected in degraded mode |
-| `s3proxy_usage_api_requests` | Gauge | backend | Current month API request count |
-| `s3proxy_usage_egress_bytes` | Gauge | backend | Current month egress bytes |
-| `s3proxy_usage_ingress_bytes` | Gauge | backend | Current month ingress bytes |
-| `s3proxy_usage_limit_rejections_total` | Counter | operation, limit_type | Operations rejected by usage limits |
-| `s3proxy_cleanup_queue_enqueued_total` | Counter | reason | Items added to the cleanup retry queue |
-| `s3proxy_cleanup_queue_processed_total` | Counter | status | Items processed from the cleanup queue (success/retry/exhausted) |
-| `s3proxy_cleanup_queue_depth` | Gauge | — | Current pending items in the cleanup queue |
-| `s3proxy_rate_limit_rejections_total` | Counter | — | Requests rejected by per-IP rate limiting |
-| `s3proxy_admission_rejections_total` | Counter | — | Requests rejected by server-level admission control |
-| `s3proxy_lifecycle_deleted_total` | Counter | — | Objects deleted by lifecycle expiration |
-| `s3proxy_lifecycle_failed_total` | Counter | — | Objects that failed lifecycle deletion |
-| `s3proxy_lifecycle_runs_total` | Counter | status | Lifecycle worker executions |
-| `s3proxy_audit_events_total` | Counter | event | Audit log entries emitted |
-| `s3proxy_drain_active` | Gauge | — | `1` while a backend drain is in progress |
-| `s3proxy_drain_objects_moved_total` | Counter | — | Objects migrated during drain |
-| `s3proxy_drain_bytes_moved_total` | Counter | — | Bytes migrated during drain |
-| `s3proxy_encryption_operations_total` | Counter | op | Encrypt/decrypt operations (encrypt, decrypt, decrypt_range) |
-| `s3proxy_encryption_errors_total` | Counter | op, error_type | Encryption/decryption failures |
-| `s3proxy_encrypt_existing_objects_total` | Counter | status | Objects processed by encrypt-existing (success/error) |
-| `s3proxy_key_rotation_objects_total` | Counter | status | DEKs re-wrapped by key rotation (success/error) |
-| `s3proxy_redis_operations_total` | Counter | operation, status | Redis command outcomes (incrby, get, getset, pipeline_add, pipeline_load) |
-| `s3proxy_redis_fallback_active` | Gauge | — | `1` when Redis is unavailable and using local counters |
+| `s3o_build_info` | Gauge | version, go_version | Build metadata |
+| `s3o_requests_total` | Counter | method, status_code | HTTP request count |
+| `s3o_request_duration_seconds` | Histogram | method | Request latency |
+| `s3o_request_size_bytes` | Histogram | method | Upload sizes |
+| `s3o_response_size_bytes` | Histogram | method | Download sizes |
+| `s3o_inflight_requests` | Gauge | method | Currently processing |
+| `s3o_backend_requests_total` | Counter | operation, backend, status | Backend S3 API calls |
+| `s3o_backend_duration_seconds` | Histogram | operation, backend | Backend latency |
+| `s3o_manager_requests_total` | Counter | operation, backend, status | Manager-level operations |
+| `s3o_manager_duration_seconds` | Histogram | operation, backend | Manager latency |
+| `s3o_quota_bytes_used` | Gauge | backend | Current bytes used |
+| `s3o_quota_bytes_limit` | Gauge | backend | Quota limit |
+| `s3o_quota_orphan_bytes` | Gauge | backend | Bytes reserved by pending cleanup items |
+| `s3o_quota_bytes_available` | Gauge | backend | Remaining space (limit − used − orphan) |
+| `s3o_objects_count` | Gauge | backend | Stored object count |
+| `s3o_active_multipart_uploads` | Gauge | backend | In-progress uploads |
+| `s3o_rebalance_objects_moved_total` | Counter | strategy, status | Objects moved by rebalancer |
+| `s3o_rebalance_bytes_moved_total` | Counter | strategy | Bytes moved by rebalancer |
+| `s3o_rebalance_runs_total` | Counter | strategy, status | Rebalancer executions |
+| `s3o_rebalance_duration_seconds` | Histogram | strategy | Rebalancer execution time |
+| `s3o_rebalance_skipped_total` | Counter | reason | Rebalancer runs skipped |
+| `s3o_replication_pending` | Gauge | — | Objects below replication factor |
+| `s3o_replication_copies_created_total` | Counter | — | Replica copies created |
+| `s3o_replication_errors_total` | Counter | — | Replication errors |
+| `s3o_replication_duration_seconds` | Histogram | — | Replication cycle time |
+| `s3o_replication_runs_total` | Counter | status | Replication worker executions |
+| `s3o_replication_health_copies_total` | Counter | — | Copies created to replace copies on circuit-broken backends |
+| `s3o_over_replication_pending` | Gauge | — | Objects exceeding the replication factor |
+| `s3o_over_replication_removed_total` | Counter | — | Excess copies removed |
+| `s3o_over_replication_errors_total` | Counter | — | Over-replication cleanup errors |
+| `s3o_over_replication_runs_total` | Counter | status | Over-replication worker executions |
+| `s3o_over_replication_duration_seconds` | Histogram | — | Over-replication cleanup cycle time |
+| `s3o_circuit_breaker_state` | Gauge | name | 0=closed, 1=open, 2=half-open (name: "database" or backend name) |
+| `s3o_circuit_breaker_transitions_total` | Counter | name, from, to | State transitions per component |
+| `s3o_degraded_reads_total` | Counter | operation | Broadcast reads in degraded mode |
+| `s3o_degraded_cache_hits_total` | Counter | — | Cache hits during degraded reads |
+| `s3o_degraded_write_rejections_total` | Counter | operation | Writes rejected in degraded mode |
+| `s3o_usage_api_requests` | Gauge | backend | Current month API request count |
+| `s3o_usage_egress_bytes` | Gauge | backend | Current month egress bytes |
+| `s3o_usage_ingress_bytes` | Gauge | backend | Current month ingress bytes |
+| `s3o_usage_limit_rejections_total` | Counter | operation, limit_type | Operations rejected by usage limits |
+| `s3o_cleanup_queue_enqueued_total` | Counter | reason | Items added to the cleanup retry queue |
+| `s3o_cleanup_queue_processed_total` | Counter | status | Items processed from the cleanup queue (success/retry/exhausted) |
+| `s3o_cleanup_queue_depth` | Gauge | — | Current pending items in the cleanup queue |
+| `s3o_rate_limit_rejections_total` | Counter | — | Requests rejected by per-IP rate limiting |
+| `s3o_admission_rejections_total` | Counter | — | Requests rejected by server-level admission control |
+| `s3o_lifecycle_deleted_total` | Counter | — | Objects deleted by lifecycle expiration |
+| `s3o_lifecycle_failed_total` | Counter | — | Objects that failed lifecycle deletion |
+| `s3o_lifecycle_runs_total` | Counter | status | Lifecycle worker executions |
+| `s3o_audit_events_total` | Counter | event | Audit log entries emitted |
+| `s3o_drain_active` | Gauge | — | `1` while a backend drain is in progress |
+| `s3o_drain_objects_moved_total` | Counter | — | Objects migrated during drain |
+| `s3o_drain_bytes_moved_total` | Counter | — | Bytes migrated during drain |
+| `s3o_encryption_operations_total` | Counter | op | Encrypt/decrypt operations (encrypt, decrypt, decrypt_range) |
+| `s3o_encryption_errors_total` | Counter | op, error_type | Encryption/decryption failures |
+| `s3o_encrypt_existing_objects_total` | Counter | status | Objects processed by encrypt-existing (success/error) |
+| `s3o_key_rotation_objects_total` | Counter | status | DEKs re-wrapped by key rotation (success/error) |
+| `s3o_redis_operations_total` | Counter | operation, status | Redis command outcomes (incrby, get, getset, pipeline_add, pipeline_load) |
+| `s3o_redis_fallback_active` | Gauge | — | `1` when Redis is unavailable and using local counters |
 
 Quota metrics are refreshed from PostgreSQL every 30 seconds (no backend API calls).
 
@@ -639,7 +639,7 @@ Spans are emitted for every HTTP request, manager operation, and backend S3 call
 
 Structured audit log entries are emitted as JSON via `slog` for every S3 API request and significant internal operation. Each entry includes an `"audit": true` marker for easy filtering in log pipelines.
 
-**Request ID tracing** — every S3 API request gets a unique request ID, returned in the `X-Amz-Request-Id` response header. Clients can supply their own via the `X-Request-Id` request header. The same ID flows through context to all downstream operations, appearing in both the HTTP-level audit entry and the storage-level audit entry for full request correlation. The ID is also set as a `s3proxy.request_id` attribute on OpenTelemetry spans, linking audit logs to traces.
+**Request ID tracing** — every S3 API request gets a unique request ID, returned in the `X-Amz-Request-Id` response header. Clients can supply their own via the `X-Request-Id` request header. The same ID flows through context to all downstream operations, appearing in both the HTTP-level audit entry and the storage-level audit entry for full request correlation. The ID is also set as a `s3o.request_id` attribute on OpenTelemetry spans, linking audit logs to traces.
 
 **Two-level audit entries** — each S3 request produces two audit log lines: one at the HTTP layer (`s3.PutObject`, `s3.GetObject`, etc.) with method, path, bucket, status, duration, and remote address, and one at the storage layer (`storage.PutObject`, `storage.GetObject`, etc.) with the backend name, object key, and size. Both share the same `request_id`.
 

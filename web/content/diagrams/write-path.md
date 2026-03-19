@@ -115,7 +115,7 @@ Detailed flow of a PutObject request through backend selection, encryption, fail
     PREFLIGHT: {
       title: 'CanAcceptWrite Pre-flight',
       badge: 'filter', badgeText: 'early rejection',
-      body: '<p><code>CanAcceptWrite(contentLength)</code> runs the full three-stage filter chain to check if <b>any</b> backend can accept this upload.</p><p>Called <b>before</b> reading the request body. With <code>Expect: 100-Continue</code>, Go\'s net/http delays the 100 Continue response until the first <code>Body.Read()</code>, so the client never transmits bytes for a doomed upload.</p><p class="ac-metric">Metric: s3proxy_early_rejections_total</p>'
+      body: '<p><code>CanAcceptWrite(contentLength)</code> runs the full three-stage filter chain to check if <b>any</b> backend can accept this upload.</p><p>Called <b>before</b> reading the request body. With <code>Expect: 100-Continue</code>, Go\'s net/http delays the 100 Continue response until the first <code>Body.Read()</code>, so the client never transmits bytes for a doomed upload.</p><p class="ac-metric">Metric: s3o_early_rejections_total</p>'
     },
     R507: {
       title: '507 Insufficient Storage',
@@ -145,7 +145,7 @@ Detailed flow of a PutObject request through backend selection, encryption, fail
     R507B: {
       title: '507 Insufficient Storage',
       badge: 'reject', badgeText: 'rejection',
-      body: '<p>After full filtering, no backends remain eligible. Returns <code>ErrInsufficientStorage</code>.</p><p class="ac-metric">Metric: s3proxy_usage_limit_rejections_total{operation="PutObject"}</p>'
+      body: '<p>After full filtering, no backends remain eligible. Returns <code>ErrInsufficientStorage</code>.</p><p class="ac-metric">Metric: s3o_usage_limit_rejections_total{operation="PutObject"}</p>'
     },
     BUFFER: {
       title: 'Buffer Request Body',
@@ -175,7 +175,7 @@ Detailed flow of a PutObject request through backend selection, encryption, fail
     ENCRYPT: {
       title: 'Generate DEK, Wrap + Encrypt',
       badge: 'process', badgeText: 'encryption',
-      body: '<p>Envelope encryption pipeline:</p><p>1. Generate random 32-byte DEK (Data Encryption Key)<br>2. Wrap DEK with master key via <code>provider.WrapDEK(ctx, dek)</code> (Vault Transit or KMS)<br>3. Tee plaintext through MD5 hash (for ETag)<br>4. Stream encrypt with AES-256-GCM in chunks (default 1MB)</p><p>Produces <code>EncryptionMeta</code>: packed <code>baseNonce || wrappedDEK</code>, <code>keyID</code>, and <code>plaintextSize</code> stored in DB alongside the object record.</p><p class="ac-metric">Metric: s3proxy_encryption_ops_total{operation="encrypt"}</p>'
+      body: '<p>Envelope encryption pipeline:</p><p>1. Generate random 32-byte DEK (Data Encryption Key)<br>2. Wrap DEK with master key via <code>provider.WrapDEK(ctx, dek)</code> (Vault Transit or KMS)<br>3. Tee plaintext through MD5 hash (for ETag)<br>4. Stream encrypt with AES-256-GCM in chunks (default 1MB)</p><p>Produces <code>EncryptionMeta</code>: packed <code>baseNonce || wrappedDEK</code>, <code>keyID</code>, and <code>plaintextSize</code> stored in DB alongside the object record.</p><p class="ac-metric">Metric: s3o_encryption_ops_total{operation="encrypt"}</p>'
     },
     UPLOAD: {
       title: 'Upload to Backend',
@@ -190,12 +190,12 @@ Detailed flow of a PutObject request through backend selection, encryption, fail
     S3: {
       title: 'S3 Backend PutObject',
       badge: 'storage', badgeText: 'S3 API call',
-      body: '<p>AWS SDK v2 <code>s3.PutObject()</code> call to the backend endpoint. Builds <code>PutObjectInput</code> with bucket, key, body, content-length, content-type, and user metadata.</p><p>Supports <code>unsignedPayload</code> mode for backends that accept unsigned streaming uploads (avoids buffering for SigV4 signing). Returns ETag on success.</p><p class="ac-metric">Metrics: s3proxy_backend_requests_total, s3proxy_backend_latency_seconds</p>'
+      body: '<p>AWS SDK v2 <code>s3.PutObject()</code> call to the backend endpoint. Builds <code>PutObjectInput</code> with bucket, key, body, content-length, content-type, and user metadata.</p><p>Supports <code>unsignedPayload</code> mode for backends that accept unsigned streaming uploads (avoids buffering for SigV4 signing). Returns ETag on success.</p><p class="ac-metric">Metrics: s3o_backend_requests_total, s3o_backend_latency_seconds</p>'
     },
     FAIL: {
       title: 'Upload Failed?',
       badge: 'decision', badgeText: 'failover',
-      body: '<p>On any backend error (network timeout, S3 error, circuit breaker rejection), the failed backend is recorded and removed from the eligible list.</p><p>Usage is still recorded for the failed API call (counts against monthly limits). The loop retries with the next eligible backend using a fresh <code>bytes.NewReader</code> from the buffered body.</p><p class="ac-metric">Metric: s3proxy_write_failover_total{operation, from_backend, to_backend}</p>'
+      body: '<p>On any backend error (network timeout, S3 error, circuit breaker rejection), the failed backend is recorded and removed from the eligible list.</p><p>Usage is still recorded for the failed API call (counts against monthly limits). The loop retries with the next eligible backend using a fresh <code>bytes.NewReader</code> from the buffered body.</p><p class="ac-metric">Metric: s3o_write_failover_total{operation, from_backend, to_backend}</p>'
     },
     RETRY: {
       title: 'Remove Backend from Eligible',
@@ -220,7 +220,7 @@ Detailed flow of a PutObject request through backend selection, encryption, fail
     CLEANUP: {
       title: 'Delete Old Copies or Enqueue Cleanup',
       badge: 'cleanup', badgeText: 'cleanup',
-      body: '<p>For each displaced copy on another backend:</p><p>1. Attempt immediate <code>backend.DeleteObject(ctx, key)</code><br>2. If delete fails: <code>enqueueCleanup()</code> &mdash; insert into <code>cleanup_queue</code> table with exponential backoff (1m to 24h, max 10 attempts)<br>3. <code>IncrementOrphanBytes()</code> on the backend\'s quota to prevent over-allocation while orphans exist</p><p>Audit event: <code>storage.overwrite_displaced</code> with count of displaced copies.</p><p class="ac-metric">Metric: s3proxy_cleanup_queue_enqueued_total{reason="overwrite_displaced"}</p>'
+      body: '<p>For each displaced copy on another backend:</p><p>1. Attempt immediate <code>backend.DeleteObject(ctx, key)</code><br>2. If delete fails: <code>enqueueCleanup()</code> &mdash; insert into <code>cleanup_queue</code> table with exponential backoff (1m to 24h, max 10 attempts)<br>3. <code>IncrementOrphanBytes()</code> on the backend\'s quota to prevent over-allocation while orphans exist</p><p>Audit event: <code>storage.overwrite_displaced</code> with count of displaced copies.</p><p class="ac-metric">Metric: s3o_cleanup_queue_enqueued_total{reason="overwrite_displaced"}</p>'
     },
     CACHE: {
       title: 'Invalidate Location Cache',

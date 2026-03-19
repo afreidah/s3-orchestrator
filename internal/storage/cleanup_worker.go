@@ -57,7 +57,7 @@ func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) (processed, fai
 
 	items, err := w.store.GetPendingCleanups(ctx, 50)
 	if err != nil {
-		slog.Error("Failed to fetch pending cleanups", "error", err)
+		slog.ErrorContext(ctx, "Failed to fetch pending cleanups", "error", err)
 		return 0, 0
 	}
 
@@ -66,10 +66,10 @@ func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) (processed, fai
 	workerpool.Run(ctx, w.concurrency, items, func(ctx context.Context, item CleanupItem) {
 		backend, ok := w.backends[item.BackendName]
 		if !ok {
-			slog.Warn("Cleanup queue: backend not found, removing item",
+			slog.WarnContext(ctx, "Cleanup queue: backend not found, removing item",
 				"backend", item.BackendName, "key", item.ObjectKey)
 			if err := w.store.CompleteCleanupItem(ctx, item.ID); err != nil {
-				slog.Error("Failed to complete cleanup item", "id", item.ID, "error", err)
+				slog.ErrorContext(ctx, "Failed to complete cleanup item", "id", item.ID, "error", err)
 			}
 			telemetry.CleanupQueueProcessedTotal.WithLabelValues("success").Inc()
 			processedCount.Add(1)
@@ -81,11 +81,11 @@ func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) (processed, fai
 
 		if delErr == nil {
 			if err := w.store.CompleteCleanupItem(ctx, item.ID); err != nil {
-				slog.Error("Failed to complete cleanup item", "id", item.ID, "error", err)
+				slog.ErrorContext(ctx, "Failed to complete cleanup item", "id", item.ID, "error", err)
 			}
 			if item.SizeBytes > 0 {
 				if err := w.store.DecrementOrphanBytes(ctx, item.BackendName, item.SizeBytes); err != nil {
-					slog.Error("Failed to decrement orphan bytes",
+					slog.ErrorContext(ctx, "Failed to decrement orphan bytes",
 						"backend", item.BackendName, "size", item.SizeBytes, "error", err)
 				}
 			}
@@ -108,12 +108,12 @@ func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) (processed, fai
 			// prevents it from being re-fetched, but orphan_bytes stays
 			// incremented so the write path won't overcommit. The item
 			// remains visible for operator intervention.
-			slog.Error("Cleanup queue: max attempts reached, item remains for operator review",
+			slog.ErrorContext(ctx, "Cleanup queue: max attempts reached, item remains for operator review",
 				"key", item.ObjectKey, "backend", item.BackendName,
 				"attempts", newAttempts, "size", item.SizeBytes, "error", delErr)
 			// Persist the final attempt count and error
 			if err := w.store.RetryCleanupItem(ctx, item.ID, 0, delErr.Error()); err != nil {
-				slog.Error("Failed to update exhausted cleanup item", "id", item.ID, "error", err)
+				slog.ErrorContext(ctx, "Failed to update exhausted cleanup item", "id", item.ID, "error", err)
 			}
 			telemetry.CleanupQueueProcessedTotal.WithLabelValues("exhausted").Inc()
 			failedCount.Add(1)
@@ -123,7 +123,7 @@ func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) (processed, fai
 		telemetry.CleanupQueueProcessedTotal.WithLabelValues("retry").Inc()
 		backoff := cleanupBackoff(item.Attempts)
 		if err := w.store.RetryCleanupItem(ctx, item.ID, backoff, delErr.Error()); err != nil {
-			slog.Error("Failed to update cleanup retry", "id", item.ID, "error", err)
+			slog.ErrorContext(ctx, "Failed to update cleanup retry", "id", item.ID, "error", err)
 		}
 		failedCount.Add(1)
 	})

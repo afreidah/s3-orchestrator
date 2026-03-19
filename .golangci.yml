@@ -12,6 +12,7 @@ linters:
   enable:
     - gocritic
     - misspell
+    - sloglint
   settings:
     gocritic:
       disabled-checks:
@@ -19,6 +20,8 @@ linters:
       enabled-tags:
         - diagnostic
         - performance
+    sloglint:
+      context: "all"
   exclusions:
     generated: lax
     presets:

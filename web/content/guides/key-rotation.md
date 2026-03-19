@@ -78,8 +78,8 @@ Watch these metrics during and after rotation:
 
 | Metric | Description |
 |--------|-------------|
-| `s3proxy_key_rotation_objects_total{status="success"}` | DEKs successfully re-wrapped |
-| `s3proxy_key_rotation_objects_total{status="error"}` | DEKs that failed re-wrapping |
+| `s3o_key_rotation_objects_total{status="success"}` | DEKs successfully re-wrapped |
+| `s3o_key_rotation_objects_total{status="error"}` | DEKs that failed re-wrapping |
 
 If any DEKs failed, check the logs and retry - the command only processes DEKs still wrapped with the old key.
 

@@ -117,9 +117,9 @@ Monitor encryption health with these Prometheus metrics:
 
 | Metric | What to watch |
 |--------|---------------|
-| `s3proxy_encryption_errors_total` | Any non-zero rate indicates encryption/decryption failures |
-| `s3proxy_encrypt_existing_objects_total{status="error"}` | Failures during bulk encryption of existing data |
-| `s3proxy_key_rotation_objects_total{status="error"}` | Failures during key rotation |
+| `s3o_encryption_errors_total` | Any non-zero rate indicates encryption/decryption failures |
+| `s3o_encrypt_existing_objects_total{status="error"}` | Failures during bulk encryption of existing data |
+| `s3o_key_rotation_objects_total{status="error"}` | Failures during key rotation |
 
 ## Configuration File Security
 
@@ -209,7 +209,7 @@ jq 'select(.audit == true and .event == "s3.PutObject")'
 jq 'select(.request_id == "abc123...")'
 ```
 
-The `s3proxy_audit_events_total` Prometheus counter with `event` label tracks audit event volume for alerting.
+The `s3o_audit_events_total` Prometheus counter with `event` label tracks audit event volume for alerting.
 
 ## Admission Control
 

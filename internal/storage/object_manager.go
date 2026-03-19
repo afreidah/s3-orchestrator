@@ -169,7 +169,7 @@ func (o *ObjectManager) PutObject(ctx context.Context, key string, body io.Reade
 			}
 			eligible = remaining
 
-			slog.Warn("PutObject: backend write failed, trying next",
+			slog.WarnContext(ctx, "PutObject: backend write failed, trying next",
 				"key", key, "failed_backend", backendName, "error", err,
 				"remaining_backends", len(eligible))
 			continue
@@ -191,8 +191,8 @@ func (o *ObjectManager) PutObject(ctx context.Context, key string, body io.Reade
 			for _, fb := range failedBackends {
 				telemetry.WriteFailoverTotal.WithLabelValues(operation, fb, backendName).Inc()
 			}
-			span.SetAttributes(attribute.Bool("s3proxy.write_failover", true))
-			span.SetAttributes(attribute.Int("s3proxy.write_failover_attempts", len(failedBackends)))
+			span.SetAttributes(telemetry.AttrWriteFailover.Bool(true))
+			span.SetAttributes(telemetry.AttrFailoverAttempts.Int(len(failedBackends)))
 		}
 
 		audit.Log(ctx, "storage.PutObject",
@@ -265,7 +265,7 @@ func (o *ObjectManager) withReadFailover(ctx context.Context, operation, key str
 				limitSkips++
 			}
 			if i < len(locations)-1 {
-				slog.Warn(operation+": copy failed, trying next",
+				slog.WarnContext(ctx, operation+": copy failed, trying next",
 					"key", key, "failed_backend", loc.BackendName, "error", err)
 			}
 			continue
@@ -273,7 +273,7 @@ func (o *ObjectManager) withReadFailover(ctx context.Context, operation, key str
 
 		o.recordOperation(operation, loc.BackendName, start, nil)
 		if i > 0 {
-			span.SetAttributes(attribute.Bool("s3proxy.failover", true))
+			span.SetAttributes(telemetry.AttrFailover.Bool(true))
 		}
 		span.SetAttributes(telemetry.AttrObjectSize.Int64(size))
 		span.SetStatus(codes.Ok, "")
@@ -296,7 +296,7 @@ func (o *ObjectManager) withReadFailover(ctx context.Context, operation, key str
 // location cache first for a known-good backend, then dispatches to either
 // parallel or sequential broadcast based on configuration.
 func (o *ObjectManager) broadcastRead(ctx context.Context, operation, key string, start time.Time, span trace.Span, tryBackend func(ctx context.Context, backendName string, backend ObjectBackend) (int64, error)) (string, error) {
-	span.SetAttributes(attribute.Bool("s3proxy.degraded_mode", true))
+	span.SetAttributes(telemetry.AttrDegradedMode.Bool(true))
 	telemetry.DegradedReadsTotal.WithLabelValues(operation).Inc()
 
 	// --- Check location cache first ---
@@ -306,7 +306,7 @@ func (o *ObjectManager) broadcastRead(ctx context.Context, operation, key string
 			size, err := tryBackend(bctx, cachedBackend, backend)
 			if err == nil {
 				o.recordOperation(operation, cachedBackend, start, nil)
-				span.SetAttributes(attribute.Bool("s3proxy.cache_hit", true))
+				span.SetAttributes(telemetry.AttrCacheHit.Bool(true))
 				span.SetAttributes(telemetry.AttrObjectSize.Int64(size))
 				span.SetStatus(codes.Ok, "")
 				telemetry.DegradedCacheHitsTotal.Inc()
@@ -404,7 +404,7 @@ func (o *ObjectManager) parallelBroadcastRead(ctx context.Context, operation, ke
 		o.recordOperation(operation, r.name, start, nil)
 		span.SetAttributes(telemetry.AttrBackendName.String(r.name))
 		span.SetAttributes(telemetry.AttrObjectSize.Int64(r.size))
-		span.SetAttributes(attribute.Bool("s3proxy.parallel_broadcast", true))
+		span.SetAttributes(telemetry.AttrParallelBroadcast.Bool(true))
 		span.SetStatus(codes.Ok, "")
 		return r.name, nil
 	}
@@ -590,8 +590,8 @@ func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey strin
 	start := time.Now()
 
 	ctx, span := telemetry.StartSpan(ctx, "Manager "+operation,
-		attribute.String("s3.source_key", sourceKey),
-		attribute.String("s3.dest_key", destKey),
+		attribute.String("s3o.source_key", sourceKey),
+		attribute.String("s3o.dest_key", destKey),
 	)
 	defer span.End()
 
@@ -781,7 +781,7 @@ func (o *ObjectManager) DeleteObject(ctx context.Context, key string) error {
 	workerpool.Run(ctx, len(copies), copies, func(ctx context.Context, cp DeletedCopy) {
 		backend, ok := o.backends[cp.BackendName]
 		if !ok {
-			slog.Warn("Backend not found for delete",
+			slog.WarnContext(ctx, "Backend not found for delete",
 				"backend", cp.BackendName, "key", key)
 			return
 		}
@@ -824,7 +824,7 @@ func (o *ObjectManager) DeleteObjects(ctx context.Context, keys []string) []Dele
 	start := time.Now()
 
 	ctx, span := telemetry.StartSpan(ctx, "Manager "+operation,
-		attribute.Int("s3.batch_size", len(keys)),
+		attribute.Int("s3o.batch_size", len(keys)),
 	)
 	defer span.End()
 
@@ -869,7 +869,7 @@ func (o *ObjectManager) DeleteObjects(ctx context.Context, keys []string) []Dele
 		for _, cp := range pd.copies {
 			backend, ok := o.backends[cp.BackendName]
 			if !ok {
-				slog.Warn("Backend not found for batch delete",
+				slog.WarnContext(ctx, "Backend not found for batch delete",
 					"backend", cp.BackendName, "key", pd.key)
 				continue
 			}
@@ -889,7 +889,7 @@ func (o *ObjectManager) DeleteObjects(ctx context.Context, keys []string) []Dele
 	workerpool.Run(ctx, 10, deleteItems, func(ctx context.Context, item batchDeleteItem) {
 		err := o.deleteWithTimeout(ctx, item.backend, item.key)
 		if err != nil {
-			slog.Warn("Failed to delete object from backend (batch)",
+			slog.WarnContext(ctx, "Failed to delete object from backend (batch)",
 				"backend", item.beName, "key", item.key, "error", err)
 			o.enqueueCleanup(ctx, item.beName, item.key, "batch_delete_failed", item.sizeBytes)
 			mu.Lock()
@@ -922,8 +922,8 @@ func (o *ObjectManager) DeleteObjects(ctx context.Context, keys []string) []Dele
 	)
 
 	span.SetAttributes(
-		attribute.Int("s3.deleted_count", successCount),
-		attribute.Int("s3.error_count", errorCount),
+		attribute.Int("s3o.deleted_count", successCount),
+		attribute.Int("s3o.error_count", errorCount),
 	)
 	span.SetStatus(codes.Ok, "")
 
@@ -953,9 +953,9 @@ func (o *ObjectManager) ListObjects(ctx context.Context, prefix, delimiter, star
 	start := time.Now()
 
 	ctx, span := telemetry.StartSpan(ctx, "Manager "+operation,
-		attribute.String("s3.prefix", prefix),
-		attribute.String("s3.delimiter", delimiter),
-		attribute.Int("s3.max_keys", maxKeys),
+		attribute.String("s3o.prefix", prefix),
+		attribute.String("s3o.delimiter", delimiter),
+		attribute.Int("s3o.max_keys", maxKeys),
 	)
 	defer span.End()
 
@@ -1057,7 +1057,7 @@ func (o *ObjectManager) ListObjects(ctx context.Context, prefix, delimiter, star
 	)
 
 	span.SetStatus(codes.Ok, "")
-	span.SetAttributes(attribute.Int("s3.key_count", result.KeyCount))
+	span.SetAttributes(attribute.Int("s3o.key_count", result.KeyCount))
 	return result, nil
 }
 

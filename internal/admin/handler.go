@@ -77,7 +77,7 @@ func (h *Handler) requireToken(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := r.Header.Get("X-Admin-Token")
 		if token == "" || subtle.ConstantTimeCompare([]byte(token), []byte(h.token)) != 1 {
-			slog.Warn("Admin: unauthorized request", "path", r.URL.Path, "remote", r.RemoteAddr)
+			slog.WarnContext(r.Context(), "Admin: unauthorized request", "path", r.URL.Path, "remote", r.RemoteAddr)
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 			return
 		}
@@ -93,7 +93,7 @@ func (h *Handler) requireToken(next http.HandlerFunc) http.HandlerFunc {
 func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 	data, err := h.manager.GetDashboardData(r.Context())
 	if err != nil {
-		slog.Error("Admin: failed to fetch status", "error", err)
+		slog.ErrorContext(r.Context(), "Admin: failed to fetch status", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch status"})
 		return
 	}
@@ -143,7 +143,7 @@ func (h *Handler) handleObjectLocations(w http.ResponseWriter, r *http.Request) 
 
 	locations, err := h.store.GetAllObjectLocations(r.Context(), key)
 	if err != nil {
-		slog.Error("Admin: failed to fetch object locations", "key", key, "error", err)
+		slog.ErrorContext(r.Context(), "Admin: failed to fetch object locations", "key", key, "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch locations"})
 		return
 	}
@@ -155,14 +155,14 @@ func (h *Handler) handleObjectLocations(w http.ResponseWriter, r *http.Request) 
 func (h *Handler) handleCleanupQueue(w http.ResponseWriter, r *http.Request) {
 	depth, err := h.store.CleanupQueueDepth(r.Context())
 	if err != nil {
-		slog.Error("Admin: failed to fetch cleanup queue depth", "error", err)
+		slog.ErrorContext(r.Context(), "Admin: failed to fetch cleanup queue depth", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch cleanup queue"})
 		return
 	}
 
 	items, err := h.store.GetPendingCleanups(r.Context(), 50)
 	if err != nil {
-		slog.Error("Admin: failed to fetch pending cleanups", "error", err)
+		slog.ErrorContext(r.Context(), "Admin: failed to fetch pending cleanups", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch cleanup queue"})
 		return
 	}
@@ -173,7 +173,7 @@ func (h *Handler) handleCleanupQueue(w http.ResponseWriter, r *http.Request) {
 // handleUsageFlush forces a flush of usage counters to the database.
 func (h *Handler) handleUsageFlush(w http.ResponseWriter, r *http.Request) {
 	if err := h.manager.FlushUsage(r.Context()); err != nil {
-		slog.Error("Admin: usage flush failed", "error", err)
+		slog.ErrorContext(r.Context(), "Admin: usage flush failed", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "flush failed"})
 		return
 	}
@@ -195,13 +195,13 @@ func (h *Handler) handleReplicate(w http.ResponseWriter, r *http.Request) {
 
 	created, err := h.manager.Replicator.Replicate(r.Context(), *rcfg)
 	if err != nil {
-		slog.Error("Admin: replication failed", "error", err)
+		slog.ErrorContext(r.Context(), "Admin: replication failed", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "replication failed"})
 		return
 	}
 
 	if err := h.manager.UpdateQuotaMetrics(r.Context()); err != nil {
-		slog.Warn("Failed to update quota metrics after admin replicate", "error", err)
+		slog.WarnContext(r.Context(), "Failed to update quota metrics after admin replicate", "error", err)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "copies_created": created})
@@ -221,7 +221,7 @@ func (h *Handler) handleOverReplicationStatus(w http.ResponseWriter, r *http.Req
 
 	count, err := h.manager.OverReplicationCleaner.CountPending(r.Context(), rcfg.Factor)
 	if err != nil {
-		slog.Error("Admin: failed to count over-replicated objects", "error", err)
+		slog.ErrorContext(r.Context(), "Admin: failed to count over-replicated objects", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to count over-replicated objects"})
 		return
 	}
@@ -258,13 +258,13 @@ func (h *Handler) handleOverReplicationClean(w http.ResponseWriter, r *http.Requ
 
 	removed, err := h.manager.OverReplicationCleaner.Clean(r.Context(), cfg)
 	if err != nil {
-		slog.Error("Admin: over-replication cleanup failed", "error", err)
+		slog.ErrorContext(r.Context(), "Admin: over-replication cleanup failed", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "over-replication cleanup failed"})
 		return
 	}
 
 	if err := h.manager.UpdateQuotaMetrics(r.Context()); err != nil {
-		slog.Warn("Failed to update quota metrics after admin over-replication cleanup", "error", err)
+		slog.WarnContext(r.Context(), "Failed to update quota metrics after admin over-replication cleanup", "error", err)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "copies_removed": removed})
@@ -287,7 +287,7 @@ func (h *Handler) handleLogLevel(w http.ResponseWriter, r *http.Request) {
 	}
 	parsed := config.ParseLogLevel(req.Level)
 	h.logLevel.Set(parsed)
-	slog.Info("Log level changed via admin API", "level", req.Level)
+	slog.InfoContext(r.Context(), "Log level changed via admin API", "level", req.Level)
 	writeJSON(w, http.StatusOK, map[string]string{"level": strings.ToLower(parsed.String())})
 }
 
@@ -299,7 +299,7 @@ func (h *Handler) handleLogLevel(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleStartDrain(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if err := h.manager.DrainManager.StartDrain(r.Context(), name); err != nil {
-		slog.Error("Admin: drain start failed", "backend", name, "error", err)
+		slog.ErrorContext(r.Context(), "Admin: drain start failed", "backend", name, "error", err)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "drain operation failed"})
 		return
 	}
@@ -311,7 +311,7 @@ func (h *Handler) handleDrainProgress(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	progress, err := h.manager.DrainManager.GetDrainProgress(r.Context(), name)
 	if err != nil {
-		slog.Error("Admin: drain progress failed", "backend", name, "error", err)
+		slog.ErrorContext(r.Context(), "Admin: drain progress failed", "backend", name, "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "drain operation failed"})
 		return
 	}
@@ -322,7 +322,7 @@ func (h *Handler) handleDrainProgress(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleCancelDrain(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if err := h.manager.DrainManager.CancelDrain(name); err != nil {
-		slog.Error("Admin: drain cancel failed", "backend", name, "error", err)
+		slog.ErrorContext(r.Context(), "Admin: drain cancel failed", "backend", name, "error", err)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "drain operation failed"})
 		return
 	}
@@ -335,7 +335,7 @@ func (h *Handler) handleRemoveBackend(w http.ResponseWriter, r *http.Request) {
 	purge := r.URL.Query().Get("purge") == "true"
 
 	if err := h.manager.DrainManager.RemoveBackend(r.Context(), name, purge); err != nil {
-		slog.Error("Admin: remove backend failed", "backend", name, "error", err)
+		slog.ErrorContext(r.Context(), "Admin: remove backend failed", "backend", name, "error", err)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "remove failed"})
 		return
 	}
@@ -371,7 +371,7 @@ func (h *Handler) handleRotateEncryptionKey(w http.ResponseWriter, r *http.Reque
 	for offset := 0; ; offset += batchSize {
 		locs, err := h.rawStore.ListEncryptedLocations(ctx, req.OldKeyID, batchSize, offset)
 		if err != nil {
-			slog.Error("Admin: key rotation list failed", "error", err)
+			slog.ErrorContext(ctx, "Admin: key rotation list failed", "error", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list encrypted objects"})
 			return
 		}
@@ -384,7 +384,7 @@ func (h *Handler) handleRotateEncryptionKey(w http.ResponseWriter, r *http.Reque
 			// Unpack old nonce + wrapped DEK
 			baseNonce, wrappedDEK, unpackErr := encryption.UnpackKeyData(loc.EncryptionKey)
 			if unpackErr != nil {
-				slog.Warn("Key rotation: unpack failed", "key", loc.ObjectKey, "error", unpackErr)
+				slog.WarnContext(ctx, "Key rotation: unpack failed", "key", loc.ObjectKey, "error", unpackErr)
 				telemetry.KeyRotationObjectsTotal.WithLabelValues("error").Inc()
 				failed++
 				continue
@@ -393,7 +393,7 @@ func (h *Handler) handleRotateEncryptionKey(w http.ResponseWriter, r *http.Reque
 			// Unwrap with old key, re-wrap with new key
 			dek, unwrapErr := h.encryptor.Provider().UnwrapDEK(ctx, wrappedDEK, loc.KeyID)
 			if unwrapErr != nil {
-				slog.Warn("Key rotation: unwrap failed", "key", loc.ObjectKey, "error", unwrapErr)
+				slog.WarnContext(ctx, "Key rotation: unwrap failed", "key", loc.ObjectKey, "error", unwrapErr)
 				telemetry.KeyRotationObjectsTotal.WithLabelValues("error").Inc()
 				failed++
 				continue
@@ -401,7 +401,7 @@ func (h *Handler) handleRotateEncryptionKey(w http.ResponseWriter, r *http.Reque
 
 			newWrapped, newKeyID, wrapErr := h.encryptor.Provider().WrapDEK(ctx, dek)
 			if wrapErr != nil {
-				slog.Warn("Key rotation: wrap failed", "key", loc.ObjectKey, "error", wrapErr)
+				slog.WarnContext(ctx, "Key rotation: wrap failed", "key", loc.ObjectKey, "error", wrapErr)
 				telemetry.KeyRotationObjectsTotal.WithLabelValues("error").Inc()
 				failed++
 				continue
@@ -409,7 +409,7 @@ func (h *Handler) handleRotateEncryptionKey(w http.ResponseWriter, r *http.Reque
 
 			newKeyData := encryption.PackKeyData(baseNonce, newWrapped)
 			if err := h.rawStore.UpdateEncryptionKey(ctx, loc.ObjectKey, loc.BackendName, newKeyData, newKeyID); err != nil {
-				slog.Warn("Key rotation: update failed", "key", loc.ObjectKey, "error", err)
+				slog.WarnContext(ctx, "Key rotation: update failed", "key", loc.ObjectKey, "error", err)
 				telemetry.KeyRotationObjectsTotal.WithLabelValues("error").Inc()
 				failed++
 				continue
@@ -425,7 +425,7 @@ func (h *Handler) handleRotateEncryptionKey(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	slog.Info("Admin: key rotation complete", "rotated", rotated, "failed", failed, "total", total)
+	slog.InfoContext(ctx, "Admin: key rotation complete", "rotated", rotated, "failed", failed, "total", total)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":  "complete",
 		"rotated": rotated,
@@ -454,7 +454,7 @@ func (h *Handler) handleEncryptExisting(w http.ResponseWriter, r *http.Request) 
 	for offset := 0; ; offset += batchSize {
 		locs, err := h.rawStore.ListUnencryptedLocations(ctx, batchSize, offset)
 		if err != nil {
-			slog.Error("Admin: encrypt-existing list failed", "error", err)
+			slog.ErrorContext(ctx, "Admin: encrypt-existing list failed", "error", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list unencrypted objects"})
 			return
 		}
@@ -467,7 +467,7 @@ func (h *Handler) handleEncryptExisting(w http.ResponseWriter, r *http.Request) 
 
 			backend, err := h.manager.GetBackend(loc.BackendName)
 			if err != nil {
-				slog.Warn("Encrypt-existing: backend not found", "key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
+				slog.WarnContext(ctx, "Encrypt-existing: backend not found", "key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
 				telemetry.EncryptExistingObjectsTotal.WithLabelValues("error").Inc()
 				failed++
 				continue
@@ -477,7 +477,7 @@ func (h *Handler) handleEncryptExisting(w http.ResponseWriter, r *http.Request) 
 			result, err := backend.GetObject(ctx, loc.ObjectKey, "")
 			if err != nil {
 				h.manager.RecordUsage(loc.BackendName, 1, 0, 0)
-				slog.Warn("Encrypt-existing: download failed", "key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
+				slog.WarnContext(ctx, "Encrypt-existing: download failed", "key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
 				telemetry.EncryptExistingObjectsTotal.WithLabelValues("error").Inc()
 				failed++
 				continue
@@ -488,7 +488,7 @@ func (h *Handler) handleEncryptExisting(w http.ResponseWriter, r *http.Request) 
 			encResult, err := h.encryptor.Encrypt(ctx, result.Body, loc.SizeBytes)
 			if err != nil {
 				result.Body.Close()
-				slog.Warn("Encrypt-existing: encrypt failed", "key", loc.ObjectKey, "error", err)
+				slog.WarnContext(ctx, "Encrypt-existing: encrypt failed", "key", loc.ObjectKey, "error", err)
 				telemetry.EncryptExistingObjectsTotal.WithLabelValues("error").Inc()
 				failed++
 				continue
@@ -499,7 +499,7 @@ func (h *Handler) handleEncryptExisting(w http.ResponseWriter, r *http.Request) 
 			result.Body.Close()
 			if err != nil {
 				h.manager.RecordUsage(loc.BackendName, 1, 0, 0)
-				slog.Warn("Encrypt-existing: re-upload failed", "key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
+				slog.WarnContext(ctx, "Encrypt-existing: re-upload failed", "key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
 				telemetry.EncryptExistingObjectsTotal.WithLabelValues("error").Inc()
 				failed++
 				continue
@@ -509,7 +509,7 @@ func (h *Handler) handleEncryptExisting(w http.ResponseWriter, r *http.Request) 
 			// Update DB record
 			keyData := encryption.PackKeyData(encResult.BaseNonce, encResult.WrappedDEK)
 			if err := h.rawStore.MarkObjectEncrypted(ctx, loc.ObjectKey, loc.BackendName, keyData, encResult.KeyID, loc.SizeBytes, encResult.CiphertextSize); err != nil {
-				slog.Warn("Encrypt-existing: DB update failed", "key", loc.ObjectKey, "error", err)
+				slog.WarnContext(ctx, "Encrypt-existing: DB update failed", "key", loc.ObjectKey, "error", err)
 				telemetry.EncryptExistingObjectsTotal.WithLabelValues("error").Inc()
 				failed++
 				continue
@@ -524,7 +524,7 @@ func (h *Handler) handleEncryptExisting(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	slog.Info("Admin: encrypt-existing complete", "encrypted", encrypted, "failed", failed, "total", total)
+	slog.InfoContext(ctx, "Admin: encrypt-existing complete", "encrypted", encrypted, "failed", failed, "total", total)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":    "complete",
 		"encrypted": encrypted,
@@ -542,7 +542,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(v); err != nil {
-		slog.Error("Admin: failed to encode JSON response", "error", err)
+		slog.Error("Admin: failed to encode JSON response", "error", err) //nolint:sloglint // standalone helper, no request context
 	}
 }
 

@@ -52,8 +52,8 @@ s3-orchestrator version
 
 **New metrics:**
 
-- `s3proxy_load_shed_total` (counter) -- requests probabilistically shed before the hard admission limit
-- `s3proxy_early_rejections_total` (counter) -- uploads rejected before body transmission due to no backend capacity
+- `s3o_load_shed_total` (counter) -- requests probabilistically shed before the hard admission limit
+- `s3o_early_rejections_total` (counter) -- uploads rejected before body transmission due to no backend capacity
 
 ### v0.13.x
 
@@ -83,7 +83,7 @@ s3-orchestrator version
 
 **New metrics:**
 
-- `s3proxy_quota_orphan_bytes` (gauge, `backend` label) — bytes reserved by pending cleanup items per backend
+- `s3o_quota_orphan_bytes` (gauge, `backend` label) — bytes reserved by pending cleanup items per backend
 
 ### v0.11.x
 

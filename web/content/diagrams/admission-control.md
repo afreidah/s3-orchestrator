@@ -148,7 +148,7 @@ This interactive diagram shows the complete request lifecycle through the S3 Orc
     R503S: {
       title: '503 SlowDown (Shed)',
       badge: 'reject', badgeText: 'rejection',
-      body: '<p>Active load shedding rejection. The probabilistic ramp decided to shed this request before the hard limit.</p><p>Response: <code>503 Service Unavailable</code> with <code>Retry-After: 1</code> and S3-formatted XML error body (<code>SlowDown</code>).</p><p class="ac-metric">Metric: s3proxy_load_shed_total</p>'
+      body: '<p>Active load shedding rejection. The probabilistic ramp decided to shed this request before the hard limit.</p><p>Response: <code>503 Service Unavailable</code> with <code>Retry-After: 1</code> and S3-formatted XML error body (<code>SlowDown</code>).</p><p class="ac-metric">Metric: s3o_load_shed_total</p>'
     },
     TRY: {
       title: 'Acquire Slot',
@@ -163,7 +163,7 @@ This interactive diagram shows the complete request lifecycle through the S3 Orc
     R503H: {
       title: '503 SlowDown (Hard)',
       badge: 'reject', badgeText: 'rejection',
-      body: '<p>Hard admission rejection: the wait timer expired without acquiring a semaphore slot, or the client disconnected.</p><p>Response: <code>503 Service Unavailable</code> with <code>Retry-After: 1</code>.</p><p class="ac-metric">Metric: s3proxy_admission_rejections_total</p>'
+      body: '<p>Hard admission rejection: the wait timer expired without acquiring a semaphore slot, or the client disconnected.</p><p>Response: <code>503 Service Unavailable</code> with <code>Retry-After: 1</code>.</p><p class="ac-metric">Metric: s3o_admission_rejections_total</p>'
     },
     RL: {
       title: 'Rate Limiter',
@@ -173,7 +173,7 @@ This interactive diagram shows the complete request lifecycle through the S3 Orc
     R429: {
       title: '429 SlowDown',
       badge: 'reject', badgeText: 'rejection',
-      body: '<p>Per-IP rate limit exceeded. The token bucket for this client IP is empty.</p><p>Response: <code>429 Too Many Requests</code> with <code>Retry-After: 1</code>.</p><p class="ac-metric">Metric: s3proxy_rate_limit_rejections_total</p>'
+      body: '<p>Per-IP rate limit exceeded. The token bucket for this client IP is empty.</p><p>Response: <code>429 Too Many Requests</code> with <code>Retry-After: 1</code>.</p><p class="ac-metric">Metric: s3o_rate_limit_rejections_total</p>'
     },
     AUTH: {
       title: 'SigV4 / Token Auth',
@@ -213,7 +213,7 @@ This interactive diagram shows the complete request lifecycle through the S3 Orc
     CAP: {
       title: 'Backend Capacity Check',
       badge: 'decision', badgeText: 'early rejection',
-      body: '<p><code>CanAcceptWrite(contentLength)</code> &mdash; checks if <b>any</b> backend has enough free quota for this upload.</p><p>Runs <b>before</b> reading the request body. With <code>Expect: 100-Continue</code>, Go\'s net/http delays the 100 Continue until the first <code>Body.Read()</code>, so the client never transmits bytes for a doomed upload.</p><p class="ac-metric">Metric: s3proxy_early_rejections_total</p>'
+      body: '<p><code>CanAcceptWrite(contentLength)</code> &mdash; checks if <b>any</b> backend has enough free quota for this upload.</p><p>Runs <b>before</b> reading the request body. With <code>Expect: 100-Continue</code>, Go\'s net/http delays the 100 Continue until the first <code>Body.Read()</code>, so the client never transmits bytes for a doomed upload.</p><p class="ac-metric">Metric: s3o_early_rejections_total</p>'
     },
     R507: {
       title: '507 Insufficient Storage',
@@ -238,7 +238,7 @@ This interactive diagram shows the complete request lifecycle through the S3 Orc
     CBW: {
       title: 'Circuit Breaker (Write)',
       badge: 'cb', badgeText: 'circuit breaker',
-      body: '<p>Three-state circuit breaker wrapping each backend: <b>closed</b> (healthy) &rarr; <b>open</b> (after N consecutive failures) &rarr; <b>half-open</b> (probe after timeout) &rarr; <b>closed</b>.</p><p>When open, returns <code>ErrBackendUnavailable</code> immediately without hitting the backend. Probe-eligible backends (open + timeout elapsed) are allowed through <code>excludeUnhealthy()</code> to prevent deadlock when all backends trip simultaneously.</p><p>Config: <code>circuit_breaker.failure_threshold</code>, <code>circuit_breaker.open_timeout</code>.</p><p class="ac-metric">Metric: s3proxy_circuit_breaker_state, s3proxy_circuit_breaker_transitions_total</p>'
+      body: '<p>Three-state circuit breaker wrapping each backend: <b>closed</b> (healthy) &rarr; <b>open</b> (after N consecutive failures) &rarr; <b>half-open</b> (probe after timeout) &rarr; <b>closed</b>.</p><p>When open, returns <code>ErrBackendUnavailable</code> immediately without hitting the backend. Probe-eligible backends (open + timeout elapsed) are allowed through <code>excludeUnhealthy()</code> to prevent deadlock when all backends trip simultaneously.</p><p>Config: <code>circuit_breaker.failure_threshold</code>, <code>circuit_breaker.open_timeout</code>.</p><p class="ac-metric">Metric: s3o_circuit_breaker_state, s3o_circuit_breaker_transitions_total</p>'
     },
     CBR: {
       title: 'Circuit Breaker (Read)',

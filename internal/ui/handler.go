@@ -178,7 +178,7 @@ func (h *Handler) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		if strings.HasPrefix(r.URL.Path, h.prefix+"/api/") {
-			slog.Warn("UI: unauthorized API request", "path", r.URL.Path, "remote", r.RemoteAddr)
+			slog.WarnContext(r.Context(), "UI: unauthorized API request", "path", r.URL.Path, "remote", r.RemoteAddr)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
@@ -268,7 +268,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := h.templates.ExecuteTemplate(w, "login.html", loginPage{Version: telemetry.Version}); err != nil {
-			slog.Error("UI: failed to render login page", "error", err)
+			slog.ErrorContext(r.Context(), "UI: failed to render login page", "error", err)
 		}
 		return
 	}
@@ -281,14 +281,14 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	clientIP := h.clientIP(r)
 
 	if h.loginThrottle != nil && h.loginThrottle.IsLockedOut(clientIP) {
-		slog.Warn("UI: login attempt while locked out", "remote_addr", clientIP)
+		slog.WarnContext(r.Context(), "UI: login attempt while locked out", "remote_addr", clientIP)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusTooManyRequests)
 		if err := h.templates.ExecuteTemplate(w, "login.html", loginPage{
 			Version: telemetry.Version,
 			Error:   "Too many attempts. Try again later.",
 		}); err != nil {
-			slog.Error("UI: failed to render login page", "error", err)
+			slog.ErrorContext(r.Context(), "UI: failed to render login page", "error", err)
 		}
 		return
 	}
@@ -302,14 +302,14 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		if h.loginThrottle != nil {
 			h.loginThrottle.RecordFailure(clientIP)
 		}
-		slog.Warn("UI: failed login attempt", "remote_addr", clientIP)
+		slog.WarnContext(r.Context(), "UI: failed login attempt", "remote_addr", clientIP)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusUnauthorized)
 		if err := h.templates.ExecuteTemplate(w, "login.html", loginPage{
 			Version: telemetry.Version,
 			Error:   "Invalid credentials.",
 		}); err != nil {
-			slog.Error("UI: failed to render login page", "error", err)
+			slog.ErrorContext(r.Context(), "UI: failed to render login page", "error", err)
 		}
 		return
 	}
@@ -317,7 +317,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if h.loginThrottle != nil {
 		h.loginThrottle.RecordSuccess(clientIP)
 	}
-	slog.Info("UI: admin login", "remote_addr", clientIP)
+	slog.InfoContext(r.Context(), "UI: admin login", "remote_addr", clientIP)
 	h.createSession(w, r, key)
 	http.Redirect(w, r, h.prefix+"/", http.StatusSeeOther)
 }
@@ -368,7 +368,7 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 	data, err := h.manager.GetDashboardData(r.Context())
 	if err != nil {
-		slog.Error("UI: failed to get dashboard data", "error", err)
+		slog.ErrorContext(r.Context(), "UI: failed to get dashboard data", "error", err)
 		http.Error(w, "Failed to load dashboard data", http.StatusInternalServerError)
 		return
 	}
@@ -429,7 +429,7 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 	var buf bytes.Buffer
 	if err := h.templates.ExecuteTemplate(&buf, "dashboard.html", page); err != nil {
-		slog.Error("UI: failed to render dashboard", "error", err)
+		slog.ErrorContext(r.Context(), "UI: failed to render dashboard", "error", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -447,14 +447,14 @@ func (h *Handler) handleAPIDashboard(w http.ResponseWriter, r *http.Request) {
 
 	data, err := h.manager.GetDashboardData(r.Context())
 	if err != nil {
-		slog.Error("UI: failed to get dashboard data", "error", err)
+		slog.ErrorContext(r.Context(), "UI: failed to get dashboard data", "error", err)
 		http.Error(w, `{"error":"failed to load data"}`, http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(data); err != nil {
-		slog.Error("UI: failed to encode dashboard JSON", "error", err)
+		slog.ErrorContext(r.Context(), "UI: failed to encode dashboard JSON", "error", err)
 	}
 }
 
@@ -474,14 +474,14 @@ func (h *Handler) handleTreeAPI(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.manager.GetDirectoryChildren(r.Context(), prefix, startAfter, maxKeys)
 	if err != nil {
-		slog.Error("UI: failed to list directory children", "prefix", prefix, "error", err)
+		slog.ErrorContext(r.Context(), "UI: failed to list directory children", "prefix", prefix, "error", err)
 		http.Error(w, `{"error":"failed to list children"}`, http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(result); err != nil {
-		slog.Error("UI: failed to encode tree JSON", "error", err)
+		slog.ErrorContext(r.Context(), "UI: failed to encode tree JSON", "error", err)
 	}
 }
 
@@ -514,14 +514,14 @@ func (h *Handler) handleAPIDelete(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	if err := h.manager.ObjectManager.DeleteObject(r.Context(), req.Key); err != nil {
-		slog.Error("UI: failed to delete object", "key", req.Key, "error", err)
+		slog.ErrorContext(r.Context(), "UI: failed to delete object", "key", req.Key, "error", err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "delete failed"})
 		return
 	}
 
-	slog.Info("UI: deleted object", "key", req.Key)
+	slog.InfoContext(r.Context(), "UI: deleted object", "key", req.Key)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 }
@@ -560,7 +560,7 @@ func (h *Handler) handleAPIDeletePrefix(w http.ResponseWriter, r *http.Request) 
 	for {
 		result, err := h.manager.ObjectManager.ListObjects(r.Context(), req.Prefix, "", startAfter, 1000)
 		if err != nil {
-			slog.Error("UI: failed to list objects for prefix delete", "prefix", req.Prefix, "error", err)
+			slog.ErrorContext(r.Context(), "UI: failed to list objects for prefix delete", "prefix", req.Prefix, "error", err)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to list objects"})
@@ -590,7 +590,7 @@ func (h *Handler) handleAPIDeletePrefix(w http.ResponseWriter, r *http.Request) 
 	}
 
 	deleted := len(keys) - errCount
-	slog.Info("UI: prefix delete completed", "prefix", req.Prefix, "deleted", deleted, "errors", errCount)
+	slog.InfoContext(r.Context(), "UI: prefix delete completed", "prefix", req.Prefix, "deleted", deleted, "errors", errCount)
 
 	w.Header().Set("Content-Type", "application/json")
 	if errCount > 0 {
@@ -653,14 +653,14 @@ func (h *Handler) handleAPIUpload(w http.ResponseWriter, r *http.Request) {
 
 	etag, err := h.manager.ObjectManager.PutObject(r.Context(), key, file, header.Size, contentType, nil)
 	if err != nil {
-		slog.Error("UI: failed to upload object", "key", key, "error", err)
+		slog.ErrorContext(r.Context(), "UI: failed to upload object", "key", key, "error", err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "upload failed"})
 		return
 	}
 
-	slog.Info("UI: uploaded object", "key", key, "size", header.Size)
+	slog.InfoContext(r.Context(), "UI: uploaded object", "key", key, "size", header.Size)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "etag": etag})
 }
@@ -691,13 +691,13 @@ func (h *Handler) handleAPIDownload(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
 			return
 		}
-		slog.Error("UI: failed to download object", "key", key, "error", err)
+		slog.ErrorContext(r.Context(), "UI: failed to download object", "key", key, "error", err)
 		http.Error(w, `{"error":"download failed"}`, http.StatusInternalServerError)
 		return
 	}
 	defer result.Body.Close()
 
-	slog.Info("UI: downloaded object", "key", key, "size", result.Size)
+	slog.InfoContext(r.Context(), "UI: downloaded object", "key", key, "size", result.Size)
 
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filepath.Base(key)))
 	w.Header().Set("Content-Type", result.ContentType)
@@ -738,14 +738,14 @@ func (h *Handler) handleAPIRebalance(w http.ResponseWriter, r *http.Request) {
 
 	moved, err := h.manager.Rebalancer.Rebalance(r.Context(), runCfg)
 	if err != nil {
-		slog.Error("UI: rebalance failed", "error", err)
+		slog.ErrorContext(r.Context(), "UI: rebalance failed", "error", err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "rebalance failed"})
 		return
 	}
 
-	slog.Info("UI: manual rebalance completed", "moved", moved)
+	slog.InfoContext(r.Context(), "UI: manual rebalance completed", "moved", moved)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "moved": moved})
 }
@@ -779,14 +779,14 @@ func (h *Handler) handleAPICleanExcess(w http.ResponseWriter, r *http.Request) {
 
 	removed, err := h.manager.OverReplicationCleaner.Clean(r.Context(), cfg)
 	if err != nil {
-		slog.Error("UI: over-replication cleanup failed", "error", err)
+		slog.ErrorContext(r.Context(), "UI: over-replication cleanup failed", "error", err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "cleanup failed"})
 		return
 	}
 
-	slog.Info("UI: manual over-replication cleanup completed", "removed", removed)
+	slog.InfoContext(r.Context(), "UI: manual over-replication cleanup completed", "removed", removed)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "removed": removed})
 }
@@ -837,14 +837,14 @@ func (h *Handler) handleAPISync(w http.ResponseWriter, r *http.Request) {
 
 	imported, skipped, err := h.manager.SyncBackend(r.Context(), req.Backend, req.Bucket, bucketNames)
 	if err != nil {
-		slog.Error("UI: sync failed", "backend", req.Backend, "bucket", req.Bucket, "error", err)
+		slog.ErrorContext(r.Context(), "UI: sync failed", "backend", req.Backend, "bucket", req.Bucket, "error", err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "sync failed"})
 		return
 	}
 
-	slog.Info("UI: manual sync completed", "backend", req.Backend, "bucket", req.Bucket,
+	slog.InfoContext(r.Context(), "UI: manual sync completed", "backend", req.Backend, "bucket", req.Bucket,
 		"imported", imported, "skipped", skipped)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "imported": imported, "skipped": skipped})
@@ -921,6 +921,6 @@ func (h *Handler) handleAPILogs(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		slog.Error("UI: failed to encode logs JSON", "error", err)
+		slog.ErrorContext(r.Context(), "UI: failed to encode logs JSON", "error", err)
 	}
 }

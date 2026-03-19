@@ -316,7 +316,7 @@ backend_circuit_breaker:
 
 Unlike the database circuit breaker, which triggers degraded mode for the entire system, backend circuit breakers affect only the individual backend. Reads fall back to other replicas, and writes route to other backends with available quota. No extra API calls are made — the breaker trips purely on organic traffic failures.
 
-The `s3proxy_circuit_breaker_state{name="<backend>"}` metric tracks each backend's circuit state (0=closed, 1=open, 2=half-open). Alert on `> 0` for individual backends to detect credential or provider issues. Requires a restart to change (not hot-reloadable).
+The `s3o_circuit_breaker_state{name="<backend>"}` metric tracks each backend's circuit state (0=closed, 1=open, 2=half-open). Alert on `> 0` for individual backends to detect credential or provider issues. Requires a restart to change (not hot-reloadable).
 
 ### rebalance
 
@@ -371,7 +371,7 @@ Each enqueued item tracks the object's `size_bytes`. On enqueue, the backend's `
 
 The background worker runs every minute and retries with exponential backoff (1 minute to 24 hours). After 10 failed attempts, the item remains in the queue and `orphan_bytes` stays incremented — the space stays reserved until an operator resolves it. The worker query filters exhausted items automatically via a partial index.
 
-**Monitoring:** Alert on `s3proxy_cleanup_queue_depth` staying elevated — this means orphaned objects are accumulating. Alert on `s3proxy_cleanup_queue_processed_total{status="exhausted"}` — these items need manual attention. Alert on `s3proxy_quota_orphan_bytes` — elevated values mean backends have significant physically unreleased space.
+**Monitoring:** Alert on `s3o_cleanup_queue_depth` staying elevated — this means orphaned objects are accumulating. Alert on `s3o_cleanup_queue_processed_total{status="exhausted"}` — these items need manual attention. Alert on `s3o_quota_orphan_bytes` — elevated values mean backends have significant physically unreleased space.
 
 **Manual cleanup:** Inspect exhausted items and resolve manually:
 
@@ -880,29 +880,29 @@ If `telemetry.metrics.enabled` is `true`, metrics are exposed at `/metrics`. Key
 
 | Metric | What to watch |
 |--------|---------------|
-| `s3proxy_quota_bytes_available{backend="..."}` | Alert when approaching 0 — backend is almost full (accounts for orphan bytes) |
-| `s3proxy_quota_orphan_bytes{backend="..."}` | Elevated values mean backends have physically unreleased space from pending cleanups |
-| `s3proxy_circuit_breaker_state{name="database"}` | Alert when > 0 — database is unreachable (1=open, 2=half-open) |
-| `s3proxy_circuit_breaker_state{name="<backend>"}` | Alert when > 0 — backend is unreachable or credentials expired |
-| `s3proxy_replication_pending` | Alert when consistently > 0 — replicas are falling behind |
-| `s3proxy_replication_health_copies_total` | Non-zero means health-aware replication is creating replacement copies for circuit-broken backends |
-| `s3proxy_over_replication_pending` | Objects with more copies than the replication factor — should return to 0 after cleanup runs |
-| `s3proxy_over_replication_errors_total` | Cleanup errors — indicates backends or metadata issues preventing excess copy removal |
-| `s3proxy_requests_total{status_code="5xx"}` | Alert on elevated 5xx rates |
-| `s3proxy_degraded_write_rejections_total` | Writes being rejected due to degraded mode |
-| `s3proxy_usage_limit_rejections_total` | Operations rejected by usage limits |
-| `s3proxy_rate_limit_rejections_total` | Requests rejected by per-IP rate limiting |
-| `s3proxy_admission_rejections_total` | Requests rejected at the hard admission limit |
-| `s3proxy_load_shed_total` | Requests probabilistically shed before the hard admission limit |
-| `s3proxy_early_rejections_total` | Uploads rejected before body transmission (no backend capacity) |
-| `s3proxy_cleanup_queue_depth` | Alert when consistently > 0 — orphaned objects are failing cleanup |
-| `s3proxy_cleanup_queue_processed_total{status="exhausted"}` | Items that exceeded max retries — manual intervention needed |
-| `s3proxy_audit_events_total{event="..."}` | Audit log volume by event type — useful for detecting unusual activity |
-| `s3proxy_encryption_errors_total` | Any non-zero rate indicates encryption/decryption failures |
-| `s3proxy_encrypt_existing_objects_total{status="error"}` | Failures during bulk encryption of existing data |
-| `s3proxy_key_rotation_objects_total{status="error"}` | Failures during key rotation |
-| `s3proxy_redis_fallback_active` | Alert when 1 — Redis is unavailable, using local counters |
-| `s3proxy_redis_operations_total{operation,status}` | Track Redis operation success/error rates |
+| `s3o_quota_bytes_available{backend="..."}` | Alert when approaching 0 — backend is almost full (accounts for orphan bytes) |
+| `s3o_quota_orphan_bytes{backend="..."}` | Elevated values mean backends have physically unreleased space from pending cleanups |
+| `s3o_circuit_breaker_state{name="database"}` | Alert when > 0 — database is unreachable (1=open, 2=half-open) |
+| `s3o_circuit_breaker_state{name="<backend>"}` | Alert when > 0 — backend is unreachable or credentials expired |
+| `s3o_replication_pending` | Alert when consistently > 0 — replicas are falling behind |
+| `s3o_replication_health_copies_total` | Non-zero means health-aware replication is creating replacement copies for circuit-broken backends |
+| `s3o_over_replication_pending` | Objects with more copies than the replication factor — should return to 0 after cleanup runs |
+| `s3o_over_replication_errors_total` | Cleanup errors — indicates backends or metadata issues preventing excess copy removal |
+| `s3o_requests_total{status_code="5xx"}` | Alert on elevated 5xx rates |
+| `s3o_degraded_write_rejections_total` | Writes being rejected due to degraded mode |
+| `s3o_usage_limit_rejections_total` | Operations rejected by usage limits |
+| `s3o_rate_limit_rejections_total` | Requests rejected by per-IP rate limiting |
+| `s3o_admission_rejections_total` | Requests rejected at the hard admission limit |
+| `s3o_load_shed_total` | Requests probabilistically shed before the hard admission limit |
+| `s3o_early_rejections_total` | Uploads rejected before body transmission (no backend capacity) |
+| `s3o_cleanup_queue_depth` | Alert when consistently > 0 — orphaned objects are failing cleanup |
+| `s3o_cleanup_queue_processed_total{status="exhausted"}` | Items that exceeded max retries — manual intervention needed |
+| `s3o_audit_events_total{event="..."}` | Audit log volume by event type — useful for detecting unusual activity |
+| `s3o_encryption_errors_total` | Any non-zero rate indicates encryption/decryption failures |
+| `s3o_encrypt_existing_objects_total{status="error"}` | Failures during bulk encryption of existing data |
+| `s3o_key_rotation_objects_total{status="error"}` | Failures during key rotation |
+| `s3o_redis_fallback_active` | Alert when 1 — Redis is unavailable, using local counters |
+| `s3o_redis_operations_total{operation,status}` | Track Redis operation success/error rates |
 
 ### Structured logs
 
@@ -921,7 +921,7 @@ Key audit events:
 | `storage.MultipartCleanup` | Multipart cleanup | Stale upload cleanup |
 | `cleanup_queue.processed` | Cleanup queue | Orphaned object successfully deleted on retry |
 
-Each S3 API request produces two correlated audit entries (HTTP-level and storage-level) sharing the same `request_id`. Internal operations (rebalance, replication) generate their own correlation IDs. The `request_id` also appears as a `s3proxy.request_id` attribute on OpenTelemetry spans.
+Each S3 API request produces two correlated audit entries (HTTP-level and storage-level) sharing the same `request_id`. Internal operations (rebalance, replication) generate their own correlation IDs. The `request_id` also appears as a `s3o.request_id` attribute on OpenTelemetry spans.
 
 Clients can supply their own correlation ID via the `X-Request-Id` request header; otherwise the orchestrator generates one. The ID is returned in the `X-Amz-Request-Id` response header.
 
@@ -1021,9 +1021,9 @@ Objects already moved are not rolled back. The backend becomes eligible for new 
 
 | Metric | Description |
 |--------|-------------|
-| `s3proxy_drain_active` | `1` while a drain is in progress |
-| `s3proxy_drain_objects_moved_total` | Objects successfully migrated |
-| `s3proxy_drain_bytes_moved_total` | Bytes migrated |
+| `s3o_drain_active` | `1` while a drain is in progress |
+| `s3o_drain_objects_moved_total` | Objects successfully migrated |
+| `s3o_drain_bytes_moved_total` | Bytes migrated |
 
 ### Removing a backend
 
@@ -1085,7 +1085,7 @@ If you enable encryption on an orchestrator that already has unencrypted objects
    {"status": "complete", "encrypted": 1423, "failed": 0, "total": 1423}
    ```
 
-3. **Monitor** via the `s3proxy_encrypt_existing_objects_total` metric (labels: `success`, `error`).
+3. **Monitor** via the `s3o_encrypt_existing_objects_total` metric (labels: `success`, `error`).
 
 Failed objects are logged individually and can be retried by calling `encrypt-existing` again — it only processes objects without encryption metadata.
 
@@ -1131,8 +1131,8 @@ Key rotation re-wraps DEKs with a new master key without re-encrypting object da
 
 | Metric | Description |
 |--------|-------------|
-| `s3proxy_key_rotation_objects_total{status="success"}` | DEKs successfully re-wrapped |
-| `s3proxy_key_rotation_objects_total{status="error"}` | DEKs that failed re-wrapping |
+| `s3o_key_rotation_objects_total{status="success"}` | DEKs successfully re-wrapped |
+| `s3o_key_rotation_objects_total{status="error"}` | DEKs that failed re-wrapping |
 
 ### Rotating client credentials
 

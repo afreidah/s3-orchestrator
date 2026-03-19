@@ -49,7 +49,7 @@ func runSync() {
 	// --- Load configuration ---
 	cfg, err := config.LoadConfig(*configPath)
 	if err != nil {
-		slog.Error("Failed to load config", "error", err)
+		slog.Error("Failed to load config", "error", err) //nolint:sloglint // no context before DB init
 		os.Exit(1)
 	}
 
@@ -62,7 +62,7 @@ func runSync() {
 		}
 	}
 	if backendCfg == nil {
-		slog.Error("Backend not found in config", "backend", *backendName)
+		slog.Error("Backend not found in config", "backend", *backendName) //nolint:sloglint // no context before DB init
 		os.Exit(1)
 	}
 
@@ -71,25 +71,25 @@ func runSync() {
 	// --- Initialize store ---
 	store, err := storage.NewStore(ctx, &cfg.Database)
 	if err != nil {
-		slog.Error("Failed to connect to database", "error", err)
+		slog.ErrorContext(ctx, "Failed to connect to database", "error", err)
 		os.Exit(1)
 	}
 	defer store.Close()
 
 	if err := store.RunMigrations(ctx); err != nil {
-		slog.Error("Failed to run migrations", "error", err)
+		slog.ErrorContext(ctx, "Failed to run migrations", "error", err)
 		os.Exit(1)
 	}
 
 	if err := store.SyncQuotaLimits(ctx, cfg.Backends); err != nil {
-		slog.Error("Failed to sync quota limits", "error", err)
+		slog.ErrorContext(ctx, "Failed to sync quota limits", "error", err)
 		os.Exit(1)
 	}
 
 	// --- Initialize backend ---
 	backend, err := storage.NewS3Backend(backendCfg)
 	if err != nil {
-		slog.Error("Failed to initialize backend", "backend", backendCfg.Name, "error", err)
+		slog.ErrorContext(ctx, "Failed to initialize backend", "backend", backendCfg.Name, "error", err)
 		os.Exit(1)
 	}
 
@@ -103,7 +103,7 @@ func runSync() {
 		mode = "dry-run"
 	}
 
-	slog.Info("Starting sync",
+	slog.InfoContext(ctx, "Starting sync",
 		"backend", backendCfg.Name,
 		"virtual_bucket", *bucketName,
 		"backend_bucket", backendCfg.Bucket,
@@ -119,7 +119,7 @@ func runSync() {
 		for _, obj := range objects {
 			prefixedKey := *bucketName + "/" + obj.Key
 			if *dryRun {
-				slog.Info("Would import", "key", prefixedKey, "size", obj.SizeBytes)
+				slog.InfoContext(ctx, "Would import", "key", prefixedKey, "size", obj.SizeBytes)
 				pageImported++
 				totalBytes += obj.SizeBytes
 				continue
@@ -141,7 +141,7 @@ func runSync() {
 		totalImported += pageImported
 		totalSkipped += pageSkipped
 
-		slog.Info("Synced page",
+		slog.InfoContext(ctx, "Synced page",
 			"page", pageNum,
 			"imported", pageImported,
 			"skipped", pageSkipped,
@@ -152,11 +152,11 @@ func runSync() {
 		return nil
 	})
 	if err != nil {
-		slog.Error("Sync failed", "error", err)
+		slog.ErrorContext(ctx, "Sync failed", "error", err)
 		os.Exit(1)
 	}
 
-	slog.Info("Sync complete",
+	slog.InfoContext(ctx, "Sync complete",
 		"backend", backendCfg.Name,
 		"imported", totalImported,
 		"skipped", totalSkipped,

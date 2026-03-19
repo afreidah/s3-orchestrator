@@ -125,7 +125,7 @@ Three-state circuit breaker state machine shared by the database wrapper (`Circu
     HALFOPEN: {
       title: 'Transition to Half-Open',
       badge: 'process', badgeText: 'state transition',
-      body: '<p><code>cb.transition(stateHalfOpen)</code> &mdash; allows exactly one probe request through to test whether the backend or database has recovered.</p><p>Logs: <code>"Circuit breaker half-open: probing"</code> with <code>open_duration</code> showing how long the circuit was open.</p><p class="ac-metric">Metric: s3proxy_circuit_breaker_transitions_total{name, from="open", to="half-open"}<br>Gauge: s3proxy_circuit_breaker_state{name} = 2</p>'
+      body: '<p><code>cb.transition(stateHalfOpen)</code> &mdash; allows exactly one probe request through to test whether the backend or database has recovered.</p><p>Logs: <code>"Circuit breaker half-open: probing"</code> with <code>open_duration</code> showing how long the circuit was open.</p><p class="ac-metric">Metric: s3o_circuit_breaker_transitions_total{name, from="open", to="half-open"}<br>Gauge: s3o_circuit_breaker_state{name} = 2</p>'
     },
     POST: {
       title: 'PostCheck / Error Filter',
@@ -150,7 +150,7 @@ Three-state circuit breaker state machine shared by the database wrapper (`Circu
     REOPEN: {
       title: 'Transition to Open (probe failed)',
       badge: 'reject', badgeText: 'state transition',
-      body: '<p><code>cb.transition(stateOpen)</code> &mdash; probe failed, circuit re-opens. The <code>lastFailure</code> timestamp resets the open timeout window.</p><p>Logs: <code>"Circuit breaker reopened: probe failed"</code> with current failure count.</p><p>The cycle repeats: after <code>openTimeout</code> elapses, another single probe will be attempted.</p><p class="ac-metric">Metric: s3proxy_circuit_breaker_transitions_total{name, from="half-open", to="open"}<br>Gauge: s3proxy_circuit_breaker_state{name} = 1</p>'
+      body: '<p><code>cb.transition(stateOpen)</code> &mdash; probe failed, circuit re-opens. The <code>lastFailure</code> timestamp resets the open timeout window.</p><p>Logs: <code>"Circuit breaker reopened: probe failed"</code> with current failure count.</p><p>The cycle repeats: after <code>openTimeout</code> elapses, another single probe will be attempted.</p><p class="ac-metric">Metric: s3o_circuit_breaker_transitions_total{name, from="half-open", to="open"}<br>Gauge: s3o_circuit_breaker_state{name} = 1</p>'
     },
     THRESH: {
       title: 'Failures >= Threshold?',
@@ -165,12 +165,12 @@ Three-state circuit breaker state machine shared by the database wrapper (`Circu
     TRIP: {
       title: 'Transition to Open (threshold reached)',
       badge: 'reject', badgeText: 'state transition',
-      body: '<p><code>cb.transition(stateOpen)</code> &mdash; consecutive failure threshold reached. The circuit opens, and <code>cb.openedAt</code> is recorded for duration tracking.</p><p>Logs: <code>"Circuit breaker opened: failure threshold reached"</code> with failure count and threshold.</p><p>The original error is replaced with the sentinel error (<code>ErrBackendUnavailable</code> or <code>ErrDBUnavailable</code>) so callers always see the canonical error type.</p><p class="ac-metric">Metric: s3proxy_circuit_breaker_transitions_total{name, from="closed", to="open"}<br>Gauge: s3proxy_circuit_breaker_state{name} = 1</p>'
+      body: '<p><code>cb.transition(stateOpen)</code> &mdash; consecutive failure threshold reached. The circuit opens, and <code>cb.openedAt</code> is recorded for duration tracking.</p><p>Logs: <code>"Circuit breaker opened: failure threshold reached"</code> with failure count and threshold.</p><p>The original error is replaced with the sentinel error (<code>ErrBackendUnavailable</code> or <code>ErrDBUnavailable</code>) so callers always see the canonical error type.</p><p class="ac-metric">Metric: s3o_circuit_breaker_transitions_total{name, from="closed", to="open"}<br>Gauge: s3o_circuit_breaker_state{name} = 1</p>'
     },
     RECOVER: {
       title: 'Transition to Closed (recovered)',
       badge: 'success', badgeText: 'state transition',
-      body: '<p><code>cb.transition(stateClosed)</code> &mdash; probe succeeded, the backend or database is healthy again.</p><p>Logs: <code>"Circuit breaker closed: recovered"</code> with <code>degraded_duration</code> showing total time spent in open + half-open states.</p><p>The <code>probeInFlight</code> flag is cleared and all subsequent requests pass through normally.</p><p class="ac-metric">Metric: s3proxy_circuit_breaker_transitions_total{name, from="half-open", to="closed"}<br>Gauge: s3proxy_circuit_breaker_state{name} = 0</p>'
+      body: '<p><code>cb.transition(stateClosed)</code> &mdash; probe succeeded, the backend or database is healthy again.</p><p>Logs: <code>"Circuit breaker closed: recovered"</code> with <code>degraded_duration</code> showing total time spent in open + half-open states.</p><p>The <code>probeInFlight</code> flag is cleared and all subsequent requests pass through normally.</p><p class="ac-metric">Metric: s3o_circuit_breaker_transitions_total{name, from="half-open", to="closed"}<br>Gauge: s3o_circuit_breaker_state{name} = 0</p>'
     },
     RESET: {
       title: 'Reset Failure Counter',

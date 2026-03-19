@@ -155,6 +155,35 @@ func TestClean_QueryError(t *testing.T) {
 	}
 }
 
+func TestClean_QuotaStatsError_StillCleansUp(t *testing.T) {
+	// GetQuotaStats fails, but Clean should still proceed (scores without utilization).
+	store := &mockStore{
+		getOverReplicatedResp: []ObjectLocation{
+			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
+			{ObjectKey: "key1", BackendName: "b2", SizeBytes: 100},
+			{ObjectKey: "key1", BackendName: "b3", SizeBytes: 100},
+		},
+		getQuotaStatsErr: errors.New("db timeout"),
+	}
+	b1 := newMockBackend()
+	b2 := newMockBackend()
+	b3 := newMockBackend()
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": b1, "b2": b2, "b3": b3})
+
+	removed, err := mgr.OverReplicationCleaner.Clean(context.Background(), config.ReplicationConfig{
+		Factor:      2,
+		BatchSize:   10,
+		Concurrency: 1,
+	})
+	if err != nil {
+		t.Fatalf("Clean: %v", err)
+	}
+	// Should still remove 1 excess copy even without quota data
+	if removed != 1 {
+		t.Errorf("expected 1 removed, got %d", removed)
+	}
+}
+
 func TestClean_RemovesExcessCopies(t *testing.T) {
 	// Object "key1" has 3 copies but factor=2, so 1 should be removed.
 	store := &mockStore{

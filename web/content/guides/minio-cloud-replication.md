@@ -123,9 +123,9 @@ No changes are needed on the MinIO side. It does not need to know about the orch
 
 Track replication progress through the web dashboard or Prometheus metrics:
 
-- **Replication queue depth**: `s3proxy_replication_queue_depth` - objects waiting to be replicated
-- **Replication operations**: `s3proxy_replication_operations_total` - completed copies
-- **Per-backend storage**: `s3proxy_backend_used_bytes` - confirms objects are landing on R2
+- **Replication queue depth**: `s3o_replication_queue_depth` - objects waiting to be replicated
+- **Replication operations**: `s3o_replication_operations_total` - completed copies
+- **Per-backend storage**: `s3o_backend_used_bytes` - confirms objects are landing on R2
 
 {{% notice warning %}}
 Replication copies count against the cloud backend's quota and usage limits. If you set a 10 GB quota on R2, that 10 GB is shared between direct writes and replicated objects. Size your quota to accommodate the full contents of your MinIO instance.

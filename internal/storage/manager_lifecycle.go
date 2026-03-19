@@ -36,7 +36,7 @@ func (m *BackendManager) ProcessLifecycleRules(ctx context.Context, rules []conf
 		for {
 			objects, err := m.store.ListExpiredObjects(ctx, rule.Prefix, cutoff, lifecycleBatchSize)
 			if err != nil {
-				slog.Error("Lifecycle: failed to list expired objects",
+				slog.ErrorContext(ctx, "Lifecycle: failed to list expired objects",
 					"prefix", rule.Prefix, "error", err)
 				failed++
 				break
@@ -48,7 +48,7 @@ func (m *BackendManager) ProcessLifecycleRules(ctx context.Context, rules []conf
 
 			for _, obj := range objects {
 				if err := m.ObjectManager.DeleteObject(ctx, obj.ObjectKey); err != nil {
-					slog.Warn("Lifecycle: failed to delete expired object",
+					slog.WarnContext(ctx, "Lifecycle: failed to delete expired object",
 						"key", obj.ObjectKey, "error", err)
 					telemetry.LifecycleFailedTotal.Inc()
 					failed++

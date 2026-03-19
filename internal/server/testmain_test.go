@@ -10,13 +10,12 @@
 package server
 
 import (
-	"io"
 	"log/slog"
 	"os"
 	"testing"
 )
 
 func TestMain(m *testing.M) {
-	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	slog.SetDefault(slog.New(slog.DiscardHandler))
 	os.Exit(m.Run())
 }

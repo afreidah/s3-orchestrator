@@ -22,7 +22,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/bufpool"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
-	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 )
 
@@ -98,8 +97,8 @@ func (mp *MultipartManager) UploadPart(ctx context.Context, uploadID string, par
 	start := time.Now()
 
 	ctx, span := telemetry.StartSpan(ctx, "Manager "+operation,
-		attribute.String("s3.upload_id", uploadID),
-		attribute.Int("s3.part_number", partNumber),
+		telemetry.AttrUploadID.String( uploadID),
+		telemetry.AttrPartNumber.Int( partNumber),
 	)
 	defer span.End()
 
@@ -160,11 +159,11 @@ func (mp *MultipartManager) UploadPart(ctx context.Context, uploadID string, par
 	}
 
 	if err := mp.store.RecordPart(ctx, uploadID, partNumber, etag, uploadSize, enc); err != nil {
-		slog.Error("RecordPart failed, cleaning up part object",
+		slog.ErrorContext(ctx, "RecordPart failed, cleaning up part object",
 			"upload_id", uploadID, "part", partNumber, "error", err)
 		mp.usage.Record(mu.BackendName, 1, 0, 0)
 		if delErr := backend.DeleteObject(ctx, partKey); delErr != nil {
-			slog.Error("Failed to clean up orphaned part object",
+			slog.ErrorContext(ctx, "Failed to clean up orphaned part object",
 				"key", partKey, "error", delErr)
 			mp.enqueueCleanup(ctx, mu.BackendName, partKey, "orphan_part_record_failed", uploadSize)
 		}
@@ -187,7 +186,7 @@ func (mp *MultipartManager) CompleteMultipartUpload(ctx context.Context, uploadI
 	start := time.Now()
 
 	ctx, span := telemetry.StartSpan(ctx, "Manager "+operation,
-		attribute.String("s3.upload_id", uploadID),
+		telemetry.AttrUploadID.String( uploadID),
 	)
 	defer span.End()
 
@@ -375,7 +374,7 @@ func (mp *MultipartManager) AbortMultipartUpload(ctx context.Context, uploadID s
 	start := time.Now()
 
 	ctx, span := telemetry.StartSpan(ctx, "Manager "+operation,
-		attribute.String("s3.upload_id", uploadID),
+		telemetry.AttrUploadID.String( uploadID),
 	)
 	defer span.End()
 
@@ -439,15 +438,15 @@ func (mp *MultipartManager) GetParts(ctx context.Context, uploadID string) ([]Mu
 func (mp *MultipartManager) CleanupStaleMultipartUploads(ctx context.Context, olderThan time.Duration) {
 	uploads, err := mp.store.GetStaleMultipartUploads(ctx, olderThan)
 	if err != nil {
-		slog.Error("Failed to get stale multipart uploads", "error", err)
+		slog.ErrorContext(ctx, "Failed to get stale multipart uploads", "error", err)
 		return
 	}
 
 	cleaned := 0
 	for _, mu := range uploads {
-		slog.Info("Cleaning up stale multipart upload", "upload_id", mu.UploadID, "key", mu.ObjectKey)
+		slog.InfoContext(ctx, "Cleaning up stale multipart upload", "upload_id", mu.UploadID, "key", mu.ObjectKey)
 		if err := mp.AbortMultipartUpload(ctx, mu.UploadID); err != nil {
-			slog.Error("Failed to clean up upload", "upload_id", mu.UploadID, "error", err)
+			slog.ErrorContext(ctx, "Failed to clean up upload", "upload_id", mu.UploadID, "error", err)
 		} else {
 			cleaned++
 		}
@@ -466,7 +465,7 @@ func (mp *MultipartManager) CleanupStaleMultipartUploads(ctx context.Context, ol
 func (mp *MultipartManager) abortMultipartUploadsOnBackend(ctx context.Context, backendName string) {
 	uploads, err := mp.store.GetStaleMultipartUploads(ctx, 0)
 	if err != nil {
-		slog.Error("Drain: failed to list multipart uploads", "error", err)
+		slog.ErrorContext(ctx, "Drain: failed to list multipart uploads", "error", err)
 		return
 	}
 
@@ -474,9 +473,9 @@ func (mp *MultipartManager) abortMultipartUploadsOnBackend(ctx context.Context, 
 		if mu.BackendName != backendName {
 			continue
 		}
-		slog.Info("Drain: aborting multipart upload", "upload_id", mu.UploadID, "key", mu.ObjectKey)
+		slog.InfoContext(ctx, "Drain: aborting multipart upload", "upload_id", mu.UploadID, "key", mu.ObjectKey)
 		if err := mp.AbortMultipartUpload(ctx, mu.UploadID); err != nil {
-			slog.Error("Drain: failed to abort multipart upload",
+			slog.ErrorContext(ctx, "Drain: failed to abort multipart upload",
 				"upload_id", mu.UploadID, "error", err)
 		}
 	}

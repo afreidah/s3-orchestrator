@@ -123,7 +123,7 @@ func runServe() {
 	ctx := context.Background()
 	shutdownTracer, err := telemetry.InitTracer(ctx, cfg.Telemetry.Tracing)
 	if err != nil {
-		slog.Error("Failed to initialize tracer", "error", err)
+		slog.ErrorContext(ctx, "Failed to initialize tracer", "error", err)
 		os.Exit(1)
 	}
 
@@ -133,10 +133,10 @@ func runServe() {
 	// --- Initialize PostgreSQL store ---
 	store, err := storage.NewStore(ctx, &cfg.Database)
 	if err != nil {
-		slog.Error("Failed to connect to database", "error", err)
+		slog.ErrorContext(ctx, "Failed to connect to database", "error", err)
 		os.Exit(1)
 	}
-	slog.Info("Connected to PostgreSQL",
+	slog.InfoContext(ctx, "Connected to PostgreSQL",
 		"host", cfg.Database.Host,
 		"port", cfg.Database.Port,
 		"database", cfg.Database.Database,
@@ -144,14 +144,14 @@ func runServe() {
 
 	// --- Run database migrations ---
 	if err := store.RunMigrations(ctx); err != nil {
-		slog.Error("Failed to run migrations", "error", err)
+		slog.ErrorContext(ctx, "Failed to run migrations", "error", err)
 		os.Exit(1)
 	}
-	slog.Info("Database migrations applied")
+	slog.InfoContext(ctx, "Database migrations applied")
 
 	// --- Sync quota limits from config to database ---
 	if err := store.SyncQuotaLimits(ctx, cfg.Backends); err != nil {
-		slog.Error("Failed to sync quota limits", "error", err)
+		slog.ErrorContext(ctx, "Failed to sync quota limits", "error", err)
 		os.Exit(1)
 	}
 
@@ -164,7 +164,7 @@ func runServe() {
 		bcfg := &cfg.Backends[i]
 		s3Backend, err := storage.NewS3Backend(bcfg)
 		if err != nil {
-			slog.Error("Failed to initialize backend", "backend", bcfg.Name, "error", err)
+			slog.ErrorContext(ctx, "Failed to initialize backend", "backend", bcfg.Name, "error", err)
 			os.Exit(1)
 		}
 		var backend storage.ObjectBackend = s3Backend
@@ -180,7 +180,7 @@ func runServe() {
 			EgressByteLimit:  bcfg.EgressByteLimit,
 			IngressByteLimit: bcfg.IngressByteLimit,
 		}
-		slog.Info("Backend initialized",
+		slog.InfoContext(ctx, "Backend initialized",
 			"backend", bcfg.Name,
 			"endpoint", bcfg.Endpoint,
 			"bucket", bcfg.Bucket,
@@ -199,11 +199,11 @@ func runServe() {
 	if cfg.Encryption.Enabled {
 		provider, err := encryption.NewKeyProviderFromConfig(&cfg.Encryption)
 		if err != nil {
-			slog.Error("Failed to initialize encryption key provider", "error", err)
+			slog.ErrorContext(ctx,"Failed to initialize encryption key provider", "error", err)
 			os.Exit(1)
 		}
 		encryptor = encryption.NewEncryptor(provider, cfg.Encryption.ChunkSize)
-		slog.Info("Server-side encryption enabled",
+		slog.InfoContext(ctx,"Server-side encryption enabled",
 			"chunk_size", cfg.Encryption.ChunkSize,
 			"key_id", provider.KeyID(),
 		)
@@ -225,11 +225,11 @@ func runServe() {
 		var err error
 		redisBackend, err = storage.NewRedisCounterBackend(redisClient, cfg.Redis, backendOrder)
 		if err != nil {
-			slog.Error("Failed to connect to Redis", "error", err)
+			slog.ErrorContext(ctx,"Failed to connect to Redis", "error", err)
 			os.Exit(1)
 		}
 		counterBackend = redisBackend
-		slog.Info("Redis shared counters enabled", "address", cfg.Redis.Address)
+		slog.InfoContext(ctx,"Redis shared counters enabled", "address", cfg.Redis.Address)
 	}
 
 	// --- Create backend manager ---
@@ -260,7 +260,7 @@ func runServe() {
 
 	// --- Initial quota metrics update ---
 	if err := manager.UpdateQuotaMetrics(ctx); err != nil {
-		slog.Warn("Failed to update initial quota metrics", "error", err)
+		slog.WarnContext(ctx, "Failed to update initial quota metrics", "error", err)
 	}
 
 	// --- Start background services with lifecycle manager ---
@@ -277,7 +277,7 @@ func runServe() {
 	}
 
 	if cfg.Rebalance.Enabled {
-		slog.Info("Rebalancer enabled",
+		slog.InfoContext(ctx,"Rebalancer enabled",
 			"strategy", cfg.Rebalance.Strategy,
 			"interval", cfg.Rebalance.Interval,
 			"batch_size", cfg.Rebalance.BatchSize,
@@ -285,7 +285,7 @@ func runServe() {
 		)
 	}
 	if cfg.Replication.Factor > 1 {
-		slog.Info("Replication worker enabled",
+		slog.InfoContext(ctx,"Replication worker enabled",
 			"factor", cfg.Replication.Factor,
 			"interval", cfg.Replication.WorkerInterval,
 			"batch_size", cfg.Replication.BatchSize,
@@ -313,7 +313,7 @@ func runServe() {
 	// Metrics endpoint
 	if cfg.Telemetry.Metrics.Enabled {
 		mux.Handle(cfg.Telemetry.Metrics.Path, promhttp.Handler())
-		slog.Info("Metrics endpoint enabled", "path", cfg.Telemetry.Metrics.Path)
+		slog.InfoContext(ctx,"Metrics endpoint enabled", "path", cfg.Telemetry.Metrics.Path)
 	}
 
 	// Liveness endpoint — always 200 so the service stays in Consul/K8s rotation.
@@ -347,7 +347,7 @@ func runServe() {
 
 	if cfg.RateLimit.Enabled {
 		rl = server.NewRateLimiter(cfg.RateLimit)
-		slog.Info("Rate limiting enabled",
+		slog.InfoContext(ctx,"Rate limiting enabled",
 			"requests_per_sec", cfg.RateLimit.RequestsPerSec,
 			"burst", cfg.RateLimit.Burst,
 		)
@@ -367,7 +367,7 @@ func runServe() {
 			adminHTTP = rl.Middleware(adminHTTP)
 		}
 		mux.Handle("/admin/", adminHTTP)
-		slog.Info("Admin API enabled", "path", "/admin/api/")
+		slog.InfoContext(ctx,"Admin API enabled", "path", "/admin/api/")
 	}
 
 	// --- API-mode handlers: UI, S3 proxy ---
@@ -377,7 +377,7 @@ func runServe() {
 			loginThrottle = server.NewLoginThrottle(5, 5*time.Minute)
 			uiHandler = ui.New(manager, cbStore.IsHealthy, cfg, logBuffer, loginThrottle)
 			uiHandler.Register(mux, cfg.UI.Path)
-			slog.Info("Web UI enabled", "path", cfg.UI.Path)
+			slog.InfoContext(ctx,"Web UI enabled", "path", cfg.UI.Path)
 		}
 
 		// S3 proxy handler (all other paths), optionally rate-limited and admission-controlled
@@ -397,7 +397,7 @@ func runServe() {
 				ac.SetAdmissionWait(cfg.Server.AdmissionWait)
 			}
 			s3Handler = ac.Middleware(s3Handler)
-			slog.Info("Split admission control enabled",
+			slog.InfoContext(ctx,"Split admission control enabled",
 				"max_concurrent_reads", cfg.Server.MaxConcurrentReads,
 				"max_concurrent_writes", cfg.Server.MaxConcurrentWrites,
 				"load_shed_threshold", cfg.Server.LoadShedThreshold,
@@ -412,7 +412,7 @@ func runServe() {
 				ac.SetAdmissionWait(cfg.Server.AdmissionWait)
 			}
 			s3Handler = ac.Middleware(s3Handler)
-			slog.Info("Admission control enabled",
+			slog.InfoContext(ctx,"Admission control enabled",
 				"max_concurrent_requests", cfg.Server.MaxConcurrentRequests,
 				"load_shed_threshold", cfg.Server.LoadShedThreshold,
 				"admission_wait", cfg.Server.AdmissionWait,
@@ -435,7 +435,7 @@ func runServe() {
 	if cfg.Server.TLS.CertFile != "" {
 		certReloader, err = server.NewCertReloader(cfg.Server.TLS.CertFile, cfg.Server.TLS.KeyFile)
 		if err != nil {
-			slog.Error("Failed to load TLS certificate", "error", err)
+			slog.ErrorContext(ctx,"Failed to load TLS certificate", "error", err)
 			os.Exit(1)
 		}
 
@@ -447,12 +447,12 @@ func runServe() {
 		if cfg.Server.TLS.ClientCAFile != "" {
 			caCert, err := os.ReadFile(cfg.Server.TLS.ClientCAFile)
 			if err != nil {
-				slog.Error("Failed to read client CA file", "error", err)
+				slog.ErrorContext(ctx,"Failed to read client CA file", "error", err)
 				os.Exit(1)
 			}
 			caPool := x509.NewCertPool()
 			if !caPool.AppendCertsFromPEM(caCert) {
-				slog.Error("Failed to parse client CA certificate")
+				slog.ErrorContext(ctx,"Failed to parse client CA certificate")
 				os.Exit(1)
 			}
 			tlsCfg.ClientAuth = tls.RequireAndVerifyClientCert
@@ -469,11 +469,11 @@ func runServe() {
 	go func() {
 		defer close(hupDone)
 		for range hupChan {
-			slog.Info("SIGHUP received, reloading configuration", "path", *configPath)
+			slog.InfoContext(bgCtx, "SIGHUP received, reloading configuration", "path", *configPath)
 
 			newCfg, err := config.LoadConfig(*configPath)
 			if err != nil {
-				slog.Error("Config reload failed, keeping current config", "error", err)
+				slog.ErrorContext(bgCtx, "Config reload failed, keeping current config", "error", err)
 				continue
 			}
 
@@ -481,25 +481,25 @@ func runServe() {
 			currentCfg := cfgPtr.Load()
 			if warnings := config.NonReloadableFieldsChanged(currentCfg, newCfg); len(warnings) > 0 {
 				for _, w := range warnings {
-					slog.Warn("Config field changed but requires restart to take effect", "field", w)
+					slog.WarnContext(bgCtx, "Config field changed but requires restart to take effect", "field", w)
 				}
 			}
 
 			// Reload TLS certificate from disk
 			if certReloader != nil {
 				if err := certReloader.Reload(); err != nil {
-					slog.Error("Failed to reload TLS certificate", "error", err)
+					slog.ErrorContext(bgCtx, "Failed to reload TLS certificate", "error", err)
 				}
 			}
 
 			// Reload bucket credentials
 			srv.SetBucketAuth(auth.NewBucketRegistry(newCfg.Buckets))
-			slog.Info("Reloaded bucket credentials", "buckets", len(newCfg.Buckets))
+			slog.InfoContext(bgCtx, "Reloaded bucket credentials", "buckets", len(newCfg.Buckets))
 
 			// Reload rate limiter settings
 			if rl != nil && newCfg.RateLimit.Enabled {
 				rl.UpdateLimits(newCfg.RateLimit.RequestsPerSec, newCfg.RateLimit.Burst)
-				slog.Info("Reloaded rate limits",
+				slog.InfoContext(bgCtx, "Reloaded rate limits",
 					"requests_per_sec", newCfg.RateLimit.RequestsPerSec,
 					"burst", newCfg.RateLimit.Burst,
 				)
@@ -508,9 +508,9 @@ func runServe() {
 			// Reload quota limits in database (dedicated timeout, not bgCtx)
 			reloadCtx, reloadCancel := context.WithTimeout(context.Background(), 10*time.Second)
 			if err := store.SyncQuotaLimits(reloadCtx, newCfg.Backends); err != nil {
-				slog.Error("Failed to sync quota limits on reload", "error", err)
+				slog.ErrorContext(reloadCtx, "Failed to sync quota limits on reload", "error", err)
 			} else {
-				slog.Info("Reloaded backend quota limits")
+				slog.InfoContext(reloadCtx, "Reloaded backend quota limits")
 			}
 
 			// Reload usage limits
@@ -524,11 +524,11 @@ func runServe() {
 				}
 			}
 			manager.UpdateUsageLimits(newUsageLimits)
-			slog.Info("Reloaded backend usage limits")
+			slog.InfoContext(reloadCtx, "Reloaded backend usage limits")
 
 			// Reload log level
 			logLevel.Set(config.ParseLogLevel(newCfg.Server.LogLevel))
-			slog.Info("Reloaded log level", "level", newCfg.Server.LogLevel)
+			slog.InfoContext(reloadCtx, "Reloaded log level", "level", newCfg.Server.LogLevel)
 
 			// Reload rebalance/replication/usage-flush/lifecycle config
 			manager.Rebalancer.SetConfig(&newCfg.Rebalance)
@@ -536,11 +536,11 @@ func runServe() {
 			manager.OverReplicationCleaner.SetConfig(&newCfg.Replication)
 			manager.SetUsageFlushConfig(&newCfg.UsageFlush)
 			manager.SetLifecycleConfig(&newCfg.Lifecycle)
-			slog.Info("Reloaded rebalance/replication/usage-flush/lifecycle config")
+			slog.InfoContext(reloadCtx, "Reloaded rebalance/replication/usage-flush/lifecycle config")
 
 			// Update quota metrics with new limits
 			if err := manager.UpdateQuotaMetrics(reloadCtx); err != nil {
-				slog.Warn("Failed to update quota metrics after reload", "error", err)
+				slog.WarnContext(reloadCtx, "Failed to update quota metrics after reload", "error", err)
 			}
 			reloadCancel()
 
@@ -550,7 +550,7 @@ func runServe() {
 			}
 
 			cfgPtr.Store(newCfg)
-			slog.Info("Configuration reload complete")
+			slog.InfoContext(bgCtx, "Configuration reload complete")
 		}
 	}()
 
@@ -563,14 +563,14 @@ func runServe() {
 		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 		sig := <-sigChan
 
-		slog.Info("Shutting down", "signal", sig.String())
+		slog.InfoContext(ctx,"Shutting down", "signal", sig.String())
 
 		// Toggle readiness off so load balancers stop routing new traffic
 		ready.Store(false)
 
 		// Optional pre-stop delay for async LB deregistration (Consul, K8s)
 		if delay := cfgPtr.Load().Server.ShutdownDelay; delay > 0 {
-			slog.Info("Waiting for load balancer deregistration", "delay", delay)
+			slog.InfoContext(ctx,"Waiting for load balancer deregistration", "delay", delay)
 			time.Sleep(delay)
 		}
 
@@ -584,7 +584,7 @@ func runServe() {
 
 		// Drain inflight HTTP requests first so clients get responses quickly
 		if err := httpServer.Shutdown(shutdownCtx); err != nil {
-			slog.Error("HTTP server shutdown error", "error", err)
+			slog.ErrorContext(ctx,"HTTP server shutdown error", "error", err)
 		}
 
 		// Stop rate limiter and login throttle cleanup goroutines
@@ -607,13 +607,13 @@ func runServe() {
 		flushCtx, flushCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer flushCancel()
 		if err := manager.FlushUsage(flushCtx); err != nil {
-			slog.Warn("Failed to flush usage counters on shutdown", "error", err)
+			slog.WarnContext(flushCtx, "Failed to flush usage counters on shutdown", "error", err)
 		}
 
 		// Close Redis client (after flush so counters are flushed to PG first)
 		if redisBackend != nil {
 			if err := redisBackend.Close(); err != nil {
-				slog.Warn("Failed to close Redis client", "error", err)
+				slog.WarnContext(flushCtx, "Failed to close Redis client", "error", err)
 			}
 		}
 
@@ -624,7 +624,7 @@ func runServe() {
 		traceCtx, traceCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer traceCancel()
 		if err := shutdownTracer(traceCtx); err != nil {
-			slog.Error("Tracer shutdown error", "error", err)
+			slog.ErrorContext(ctx,"Tracer shutdown error", "error", err)
 		}
 	}()
 
@@ -636,7 +636,7 @@ func runServe() {
 	for i, b := range cfg.Buckets {
 		bucketNames[i] = b.Name
 	}
-	slog.Info("S3 Orchestrator starting",
+	slog.InfoContext(ctx,"S3 Orchestrator starting",
 		"version", telemetry.Version,
 		"mode", *mode,
 		"listen_addr", cfg.Server.ListenAddr,
@@ -647,7 +647,7 @@ func runServe() {
 	)
 
 	if cfg.Telemetry.Tracing.Enabled {
-		slog.Info("Tracing enabled",
+		slog.InfoContext(ctx,"Tracing enabled",
 			"endpoint", cfg.Telemetry.Tracing.Endpoint,
 			"sample_rate", cfg.Telemetry.Tracing.SampleRate,
 			"insecure", cfg.Telemetry.Tracing.Insecure,
@@ -655,7 +655,7 @@ func runServe() {
 	}
 
 	if cfg.Server.TLS.CertFile != "" {
-		slog.Info("TLS enabled",
+		slog.InfoContext(ctx,"TLS enabled",
 			"cert_file", cfg.Server.TLS.CertFile,
 			"min_version", cfg.Server.TLS.MinVersion,
 			"mtls", cfg.Server.TLS.ClientCAFile != "",
@@ -663,24 +663,24 @@ func runServe() {
 	}
 
 	if cfg.BackendCircuitBreaker.Enabled {
-		slog.Info("Backend circuit breakers enabled",
+		slog.InfoContext(ctx,"Backend circuit breakers enabled",
 			"failure_threshold", cfg.BackendCircuitBreaker.FailureThreshold,
 			"open_timeout", cfg.BackendCircuitBreaker.OpenTimeout,
 		)
 	}
 
 	if cfg.Encryption.Enabled {
-		slog.Info("Server-side encryption active",
+		slog.InfoContext(ctx,"Server-side encryption active",
 			"chunk_size", cfg.Encryption.ChunkSize,
 		)
 	}
 
 	if cfg.CircuitBreaker.ParallelBroadcast {
-		slog.Info("Parallel broadcast reads enabled for degraded mode")
+		slog.InfoContext(ctx,"Parallel broadcast reads enabled for degraded mode")
 	}
 
 	if len(cfg.Lifecycle.Rules) > 0 {
-		slog.Info("Lifecycle rules enabled", "rules", len(cfg.Lifecycle.Rules))
+		slog.InfoContext(ctx,"Lifecycle rules enabled", "rules", len(cfg.Lifecycle.Rules))
 	}
 
 	// --- Start server ---
@@ -690,14 +690,14 @@ func runServe() {
 		err = httpServer.ListenAndServe()
 	}
 	if err != nil && err != http.ErrServerClosed {
-		slog.Error("Server error", "error", err)
+		slog.ErrorContext(ctx,"Server error", "error", err)
 		os.Exit(1)
 	}
 
 	// Wait for shutdown goroutine to finish cleanup
 	<-shutdownDone
 
-	slog.Info("Server stopped")
+	slog.InfoContext(ctx,"Server stopped")
 }
 
 // parseTLSVersion maps a config string to a tls.VersionTLS constant.

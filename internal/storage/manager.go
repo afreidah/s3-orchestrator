@@ -262,7 +262,7 @@ func (m *BackendManager) SyncBackend(ctx context.Context, backendName, bucket st
 		return 0, 0, fmt.Errorf("backend %s does not support listing", backendName)
 	}
 
-	slog.Info("Starting backend sync", "backend", backendName, "bucket", bucket)
+	slog.InfoContext(ctx, "Starting backend sync", "backend", backendName, "bucket", bucket)
 
 	bucketPrefix := bucket + "/"
 
@@ -324,7 +324,7 @@ func (m *BackendManager) SyncBackend(ctx context.Context, backendName, bucket st
 		return imported, skipped, err
 	}
 
-	slog.Info("Backend sync complete", "backend", backendName, "bucket", bucket,
+	slog.InfoContext(ctx, "Backend sync complete", "backend", backendName, "bucket", bucket,
 		"imported", imported, "skipped", skipped)
 	return imported, skipped, nil
 }

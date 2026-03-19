@@ -74,7 +74,7 @@ func (mc *MetricsCollector) UpdateQuotaMetrics(ctx context.Context) error {
 	// --- Object counts per backend ---
 	objCounts, err := mc.store.GetObjectCounts(ctx)
 	if err != nil {
-		slog.Error("Failed to get object counts", "error", err)
+		slog.ErrorContext(ctx, "Failed to get object counts", "error", err)
 	} else {
 		for name := range stats {
 			telemetry.ObjectCount.WithLabelValues(name).Set(0)
@@ -87,7 +87,7 @@ func (mc *MetricsCollector) UpdateQuotaMetrics(ctx context.Context) error {
 	// --- Active multipart uploads per backend ---
 	mpCounts, err := mc.store.GetActiveMultipartCounts(ctx)
 	if err != nil {
-		slog.Error("Failed to get multipart upload counts", "error", err)
+		slog.ErrorContext(ctx, "Failed to get multipart upload counts", "error", err)
 	} else {
 		for name := range stats {
 			telemetry.ActiveMultipartUploads.WithLabelValues(name).Set(0)
@@ -100,7 +100,7 @@ func (mc *MetricsCollector) UpdateQuotaMetrics(ctx context.Context) error {
 	// --- Monthly usage per backend ---
 	usage, err := mc.store.GetUsageForPeriod(ctx, currentPeriod())
 	if err != nil {
-		slog.Error("Failed to get usage stats", "error", err)
+		slog.ErrorContext(ctx, "Failed to get usage stats", "error", err)
 	} else {
 		for name := range stats {
 			telemetry.UsageAPIRequests.WithLabelValues(name).Set(0)
@@ -125,7 +125,7 @@ func (mc *MetricsCollector) UpdateQuotaMetrics(ctx context.Context) error {
 	if factor := mc.replicationFactor(); factor > 1 {
 		locations, err := mc.store.GetUnderReplicatedObjects(ctx, factor, 10000)
 		if err != nil {
-			slog.Error("Failed to get under-replicated objects", "error", err)
+			slog.ErrorContext(ctx, "Failed to get under-replicated objects", "error", err)
 		} else {
 			telemetry.ReplicationPending.Set(float64(len(groupByKey(locations))))
 		}

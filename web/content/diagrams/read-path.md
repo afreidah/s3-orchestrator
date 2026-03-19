@@ -121,12 +121,12 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     CACHE: {
       title: 'Location Cache Lookup',
       badge: 'decision', badgeText: 'degraded mode',
-      body: '<p>When the DB is unavailable, the system enters degraded mode and checks the in-memory location cache first.</p><p>The cache maps object keys to backend names with a TTL (+/-20% random jitter to prevent expiry storms). Populated by previous successful broadcast reads.</p><p>On <b>cache hit</b>: tries the cached backend directly. If that succeeds, the read completes without broadcasting. If the cached backend fails, falls through to broadcast.</p><p>On <b>cache miss</b>: proceeds directly to broadcast.</p><p class="ac-metric">Metrics: s3proxy_degraded_reads_total, s3proxy_degraded_cache_hits_total</p>'
+      body: '<p>When the DB is unavailable, the system enters degraded mode and checks the in-memory location cache first.</p><p>The cache maps object keys to backend names with a TTL (+/-20% random jitter to prevent expiry storms). Populated by previous successful broadcast reads.</p><p>On <b>cache hit</b>: tries the cached backend directly. If that succeeds, the read completes without broadcasting. If the cached backend fails, falls through to broadcast.</p><p>On <b>cache miss</b>: proceeds directly to broadcast.</p><p class="ac-metric">Metrics: s3o_degraded_reads_total, s3o_degraded_cache_hits_total</p>'
     },
     FANOUT: {
       title: 'Broadcast to All Backends',
       badge: 'process', badgeText: 'broadcast',
-      body: '<p>Tries every configured backend to find the object without DB guidance. Two strategies (configured via <code>parallel_broadcast</code>):</p><p><b>Sequential</b>: iterates backends in order, stops at first success. Lower resource usage but higher latency.</p><p><b>Parallel</b>: launches a goroutine per backend, returns the first success via buffered channel. Losing goroutines\' bodies are closed via <code>sync.Once</code>. Lower latency but more API calls.</p><p>On success, caches the backend mapping (<code>cache.Set(key, name)</code>) so future degraded reads skip the broadcast.</p><p class="ac-metric">Span attribute: s3proxy.parallel_broadcast=true</p>'
+      body: '<p>Tries every configured backend to find the object without DB guidance. Two strategies (configured via <code>parallel_broadcast</code>):</p><p><b>Sequential</b>: iterates backends in order, stops at first success. Lower resource usage but higher latency.</p><p><b>Parallel</b>: launches a goroutine per backend, returns the first success via buffered channel. Losing goroutines\' bodies are closed via <code>sync.Once</code>. Lower latency but more API calls.</p><p>On success, caches the backend mapping (<code>cache.Set(key, name)</code>) so future degraded reads skip the broadcast.</p><p class="ac-metric">Span attribute: s3o.parallel_broadcast=true</p>'
     },
     BFAIL: {
       title: 'Return Last Error (Broadcast)',
@@ -136,12 +136,12 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     COPIES: {
       title: 'Iterate Copies with Failover',
       badge: 'process', badgeText: 'failover loop',
-      body: '<p><code>withReadFailover()</code> iterates through all copies returned by the DB lookup. Each copy is tried in order (primary first, then replicas).</p><p>On failure, logs a warning and moves to the next copy. If all copies fail, returns the last error. If all copies were skipped due to usage limits, returns <code>ErrUsageLimitExceeded</code> specifically.</p><p class="ac-metric">Span attribute: s3proxy.failover=true (when primary fails)</p>'
+      body: '<p><code>withReadFailover()</code> iterates through all copies returned by the DB lookup. Each copy is tried in order (primary first, then replicas).</p><p>On failure, logs a warning and moves to the next copy. If all copies fail, returns the last error. If all copies were skipped due to usage limits, returns <code>ErrUsageLimitExceeded</code> specifically.</p><p class="ac-metric">Span attribute: s3o.failover=true (when primary fails)</p>'
     },
     ULIMIT: {
       title: 'Usage Limit Check (Pre-fetch)',
       badge: 'filter', badgeText: 'quota check',
-      body: '<p><code>usage.WithinLimits(backendName, apiCalls=1, egress=0, ingress=0)</code></p><p>Checks if this backend can accept one more API call without exceeding its monthly limits. This is a <b>pre-fetch</b> check &mdash; egress is checked again after the response size is known.</p><p>Skipping over-limit backends avoids wasting API calls on backends that can\'t serve the egress anyway. If copies remain on other backends, the loop continues. If all copies were on over-limit backends, returns <code>ErrUsageLimitExceeded</code>.</p><p class="ac-metric">Metric: s3proxy_usage_limit_rejections_total{operation="GetObject", direction="read"}</p>'
+      body: '<p><code>usage.WithinLimits(backendName, apiCalls=1, egress=0, ingress=0)</code></p><p>Checks if this backend can accept one more API call without exceeding its monthly limits. This is a <b>pre-fetch</b> check &mdash; egress is checked again after the response size is known.</p><p>Skipping over-limit backends avoids wasting API calls on backends that can\'t serve the egress anyway. If copies remain on other backends, the loop continues. If all copies were on over-limit backends, returns <code>ErrUsageLimitExceeded</code>.</p><p class="ac-metric">Metric: s3o_usage_limit_rejections_total{operation="GetObject", direction="read"}</p>'
     },
     RLIMIT: {
       title: '429 Usage Limit Exceeded',
@@ -161,7 +161,7 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     S3: {
       title: 'S3 Backend GetObject',
       badge: 'storage', badgeText: 'S3 API call',
-      body: '<p>AWS SDK v2 <code>s3.GetObject()</code> call to the backend endpoint. Returns <code>GetObjectResult</code> with Body (io.ReadCloser), Size, ContentType, ETag, LastModified, and Metadata.</p><p>For range requests, the backend returns HTTP 206 Partial Content with only the requested byte range.</p><p class="ac-metric">Metrics: s3proxy_backend_requests_total, s3proxy_backend_latency_seconds</p>'
+      body: '<p>AWS SDK v2 <code>s3.GetObject()</code> call to the backend endpoint. Returns <code>GetObjectResult</code> with Body (io.ReadCloser), Size, ContentType, ETag, LastModified, and Metadata.</p><p>For range requests, the backend returns HTTP 206 Partial Content with only the requested byte range.</p><p class="ac-metric">Metrics: s3o_backend_requests_total, s3o_backend_latency_seconds</p>'
     },
     FETCHFAIL: {
       title: 'Fetch Failed?',
@@ -186,12 +186,12 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     DECRANGE: {
       title: 'DecryptRange: Chunk Slice',
       badge: 'process', badgeText: 'range decryption',
-      body: '<p>Envelope decryption for range requests:</p><p>1. <code>UnpackKeyData(loc.EncryptionKey)</code> &mdash; extract <code>baseNonce</code> and <code>wrappedDEK</code><br>2. <code>encryptor.DecryptRange(ctx, body, wrappedDEK, keyID, rangeResult, baseNonce)</code></p><p>Decrypts only the fetched ciphertext chunks, then slices to the exact requested plaintext bytes. Sets <code>Content-Range</code> header using the original plaintext offsets.</p><p>Response size is set to the plaintext range length. The body is wrapped with <code>wrapReader()</code> so Close reaches the original HTTP body.</p><p class="ac-metric">Metric: s3proxy_encryption_ops_total{operation="decrypt_range"}</p>'
+      body: '<p>Envelope decryption for range requests:</p><p>1. <code>UnpackKeyData(loc.EncryptionKey)</code> &mdash; extract <code>baseNonce</code> and <code>wrappedDEK</code><br>2. <code>encryptor.DecryptRange(ctx, body, wrappedDEK, keyID, rangeResult, baseNonce)</code></p><p>Decrypts only the fetched ciphertext chunks, then slices to the exact requested plaintext bytes. Sets <code>Content-Range</code> header using the original plaintext offsets.</p><p>Response size is set to the plaintext range length. The body is wrapped with <code>wrapReader()</code> so Close reaches the original HTTP body.</p><p class="ac-metric">Metric: s3o_encryption_ops_total{operation="decrypt_range"}</p>'
     },
     DECFULL: {
       title: 'Decrypt: Full Stream',
       badge: 'process', badgeText: 'full decryption',
-      body: '<p>Envelope decryption for full reads:</p><p>1. <code>UnpackKeyData(loc.EncryptionKey)</code> &mdash; extract <code>baseNonce</code> and <code>wrappedDEK</code><br>2. <code>encryptor.Decrypt(ctx, body, wrappedDEK, keyID)</code></p><p>Streams AES-256-GCM decryption chunk by chunk. Each chunk\'s authentication tag is verified independently. Response size is set to <code>loc.PlaintextSize</code> from the DB record.</p><p class="ac-metric">Metric: s3proxy_encryption_ops_total{operation="decrypt"}</p>'
+      body: '<p>Envelope decryption for full reads:</p><p>1. <code>UnpackKeyData(loc.EncryptionKey)</code> &mdash; extract <code>baseNonce</code> and <code>wrappedDEK</code><br>2. <code>encryptor.Decrypt(ctx, body, wrappedDEK, keyID)</code></p><p>Streams AES-256-GCM decryption chunk by chunk. Each chunk\'s authentication tag is verified independently. Response size is set to <code>loc.PlaintextSize</code> from the DB record.</p><p class="ac-metric">Metric: s3o_encryption_ops_total{operation="decrypt"}</p>'
     },
     STREAM: {
       title: 'Stream Body to Client',
@@ -201,7 +201,7 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     METRICS: {
       title: 'Record Usage & Metrics',
       badge: 'process', badgeText: 'telemetry',
-      body: '<p><code>Record(backendName, apiCalls=1, egress=result.Size, ingress=0)</code> increments the monthly usage counters in the counter backend.</p><p>Operation duration is recorded via <code>MetricsCollector</code>. If failover occurred (primary copy failed), the span includes <code>s3proxy.failover=true</code>.</p><p>Audit event: <code>storage.GetObject</code> with key, backend name, and size.</p>'
+      body: '<p><code>Record(backendName, apiCalls=1, egress=result.Size, ingress=0)</code> increments the monthly usage counters in the counter backend.</p><p>Operation duration is recorded via <code>MetricsCollector</code>. If failover occurred (primary copy failed), the span includes <code>s3o.failover=true</code>.</p><p>Audit event: <code>storage.GetObject</code> with key, backend name, and size.</p>'
     },
     OK: {
       title: 'Return GetObjectResult',

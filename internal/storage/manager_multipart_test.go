@@ -688,3 +688,77 @@ func TestCreateMultipartUpload_CreateStoreError(t *testing.T) {
 		t.Fatal("expected error from CreateMultipartUpload store failure")
 	}
 }
+
+// -------------------------------------------------------------------------
+// CleanupStaleMultipartUploads — abort failure path
+// -------------------------------------------------------------------------
+
+func TestCleanupStaleMultipartUploads_AbortFails(t *testing.T) {
+	store := &mockStore{
+		getStaleMultipartResp: []MultipartUpload{
+			{UploadID: "stale-1", ObjectKey: "stale/key", BackendName: "b1"},
+		},
+		// GetMultipartUpload will fail, causing AbortMultipartUpload to fail
+		getMultipartErr: errors.New("db error"),
+	}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+
+	// Should not panic — logs the error and continues
+	mgr.MultipartManager.CleanupStaleMultipartUploads(context.Background(), time.Hour)
+}
+
+// -------------------------------------------------------------------------
+// abortMultipartUploadsOnBackend
+// -------------------------------------------------------------------------
+
+func TestAbortMultipartUploadsOnBackend_ListError(t *testing.T) {
+	store := &mockStore{
+		getStaleMultipartErr: errors.New("db error"),
+	}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+
+	// Should not panic — logs error and returns early
+	mgr.MultipartManager.abortMultipartUploadsOnBackend(context.Background(), "b1")
+}
+
+func TestAbortMultipartUploadsOnBackend_AbortsMatchingBackend(t *testing.T) {
+	backend := newMockBackend()
+	ctx := context.Background()
+	_, _ = backend.PutObject(ctx, "__multipart/up-1/1", bytes.NewReader([]byte("x")), 1, "", nil)
+
+	store := &mockStore{
+		getStaleMultipartResp: []MultipartUpload{
+			{UploadID: "up-1", ObjectKey: "key1", BackendName: "b1"},
+			{UploadID: "up-2", ObjectKey: "key2", BackendName: "b2"}, // different backend — skipped
+		},
+		getMultipartResp: &MultipartUpload{
+			UploadID:    "up-1",
+			ObjectKey:   "key1",
+			BackendName: "b1",
+		},
+		getPartsResp: []MultipartPart{
+			{PartNumber: 1, ETag: "e1", SizeBytes: 1},
+		},
+	}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
+
+	mgr.MultipartManager.abortMultipartUploadsOnBackend(ctx, "b1")
+
+	// Part should be cleaned up
+	if backend.hasObject("__multipart/up-1/1") {
+		t.Error("stale part should be cleaned up")
+	}
+}
+
+func TestAbortMultipartUploadsOnBackend_AbortFails(t *testing.T) {
+	store := &mockStore{
+		getStaleMultipartResp: []MultipartUpload{
+			{UploadID: "up-1", ObjectKey: "key1", BackendName: "b1"},
+		},
+		getMultipartErr: errors.New("db error"), // causes AbortMultipartUpload to fail
+	}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+
+	// Should not panic — logs error and continues
+	mgr.MultipartManager.abortMultipartUploadsOnBackend(context.Background(), "b1")
+}

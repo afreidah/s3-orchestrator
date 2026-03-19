@@ -158,11 +158,11 @@ func (c *backendCore) classifyWriteError(span trace.Span, operation string, err 
 func (c *backendCore) recordObjectOrCleanup(ctx context.Context, span trace.Span, backend ObjectBackend, key, backendName string, size int64, enc *EncryptionMeta) error {
 	displaced, err := c.store.RecordObject(ctx, key, backendName, size, enc)
 	if err != nil {
-		slog.Error("RecordObject failed, cleaning up orphan",
+		slog.ErrorContext(ctx, "RecordObject failed, cleaning up orphan",
 			"key", key, "backend", backendName, "error", err)
 		c.usage.Record(backendName, 1, 0, 0)
 		if delErr := backend.DeleteObject(ctx, key); delErr != nil {
-			slog.Error("Failed to clean up orphaned object",
+			slog.ErrorContext(ctx, "Failed to clean up orphaned object",
 				"key", key, "backend", backendName, "error", delErr)
 			c.enqueueCleanup(ctx, backendName, key, "orphan_record_failed", size)
 		}
@@ -175,7 +175,7 @@ func (c *backendCore) recordObjectOrCleanup(ctx context.Context, span trace.Span
 	for _, dc := range displaced {
 		dcBackend, ok := c.backends[dc.BackendName]
 		if !ok {
-			slog.Warn("Displaced copy backend not found",
+			slog.WarnContext(ctx, "Displaced copy backend not found",
 				"backend", dc.BackendName, "key", key)
 			continue
 		}
@@ -230,7 +230,7 @@ func (c *backendCore) streamCopy(ctx context.Context, src, dst ObjectBackend, ke
 // sizeBytes is tracked as orphan bytes when the delete is enqueued.
 func (c *backendCore) deleteOrEnqueue(ctx context.Context, backend ObjectBackend, backendName, key, reason string, sizeBytes int64) {
 	if err := c.deleteWithTimeout(ctx, backend, key); err != nil {
-		slog.Warn("Failed to delete object, enqueuing cleanup",
+		slog.WarnContext(ctx, "Failed to delete object, enqueuing cleanup",
 			"backend", backendName, "key", key, "reason", reason, "error", err)
 		c.enqueueCleanup(ctx, backendName, key, reason, sizeBytes)
 	}
@@ -257,13 +257,13 @@ func (c *backendCore) UpdateQuotaMetrics(ctx context.Context) error {
 // is already handling DB outages.
 func (c *backendCore) enqueueCleanup(ctx context.Context, backendName, objectKey, reason string, sizeBytes int64) {
 	if err := c.store.EnqueueCleanup(ctx, backendName, objectKey, reason, sizeBytes); err != nil {
-		slog.Error("Failed to enqueue cleanup (best-effort)",
+		slog.ErrorContext(ctx, "Failed to enqueue cleanup (best-effort)",
 			"backend", backendName, "key", objectKey, "reason", reason, "error", err)
 		return
 	}
 	if sizeBytes > 0 {
 		if err := c.store.IncrementOrphanBytes(ctx, backendName, sizeBytes); err != nil {
-			slog.Error("Failed to increment orphan bytes (best-effort)",
+			slog.ErrorContext(ctx, "Failed to increment orphan bytes (best-effort)",
 				"backend", backendName, "key", objectKey, "size", sizeBytes, "error", err)
 		}
 	}

@@ -132,9 +132,9 @@ Your application speaks standard S3. Everything else is the orchestrator's respo
 Use the web dashboard to see replication status at a glance, or query Prometheus metrics:
 
 - **Replica count per object**: verify objects meet the target factor
-- **Backend health**: `s3proxy_circuit_breaker_state{name="<backend>"}` - 0=healthy, 1=down, 2=probing
+- **Backend health**: `s3o_circuit_breaker_state{name="<backend>"}` - 0=healthy, 1=down, 2=probing
 - **Failover events**: check structured logs for reads served from non-primary backends
-- **Health-aware copies**: `s3proxy_replication_health_copies_total` - non-zero means the replicator is creating replacement copies for down backends
+- **Health-aware copies**: `s3o_replication_health_copies_total` - non-zero means the replicator is creating replacement copies for down backends
 
 {{% notice warning %}}
 Replication is asynchronous. There is a brief window after a write where the object exists on only one backend. For most workloads this window is seconds. If you need stronger guarantees, increase the replication factor so copies are distributed faster.

@@ -166,7 +166,7 @@ The base nonce is stored in the database specifically so range decryption can de
     WRAP: {
       title: 'WrapDEK via KeyProvider',
       badge: 'storage', badgeText: 'key wrapping',
-      body: '<p><code>provider.WrapDEK(ctx, dek)</code> encrypts the plaintext DEK with the master key. Returns <code>(wrappedDEK, keyID, error)</code>.</p><p>The <code>keyID</code> identifies which master key was used, enabling key rotation via <code>MultiKeyProvider</code>. The wrapped DEK and keyID are stored in PostgreSQL alongside the object record.</p><p class="ac-metric">Metric: s3proxy_encryption_ops_total{operation="encrypt"}</p>'
+      body: '<p><code>provider.WrapDEK(ctx, dek)</code> encrypts the plaintext DEK with the master key. Returns <code>(wrappedDEK, keyID, error)</code>.</p><p>The <code>keyID</code> identifies which master key was used, enabling key rotation via <code>MultiKeyProvider</code>. The wrapped DEK and keyID are stored in PostgreSQL alongside the object record.</p><p class="ac-metric">Metric: s3o_encryption_ops_total{operation="encrypt"}</p>'
     },
     PROVIDER: {
       title: 'Key Provider Type',
@@ -221,7 +221,7 @@ The base nonce is stored in the database specifically so range decryption can de
     UNWRAP: {
       title: 'UnwrapDEK via KeyProvider',
       badge: 'storage', badgeText: 'key unwrapping',
-      body: '<p><code>provider.UnwrapDEK(ctx, wrappedDEK, keyID)</code> recovers the plaintext 32-byte DEK.</p><p>For <code>MultiKeyProvider</code>: if <code>keyID</code> matches the primary key, uses primary; otherwise looks up in the <code>previous</code> map by keyID. Falls back to primary as best-effort for unknown keyIDs.</p><p>Vault Transit: POST to <code>{vault}/v1/{mount}/decrypt/{keyName}</code>, returns base64-decoded plaintext DEK.</p><p class="ac-metric">Metric: s3proxy_encryption_ops_total{operation="decrypt"}</p>'
+      body: '<p><code>provider.UnwrapDEK(ctx, wrappedDEK, keyID)</code> recovers the plaintext 32-byte DEK.</p><p>For <code>MultiKeyProvider</code>: if <code>keyID</code> matches the primary key, uses primary; otherwise looks up in the <code>previous</code> map by keyID. Falls back to primary as best-effort for unknown keyIDs.</p><p>Vault Transit: POST to <code>{vault}/v1/{mount}/decrypt/{keyName}</code>, returns base64-decoded plaintext DEK.</p><p class="ac-metric">Metric: s3o_encryption_ops_total{operation="decrypt"}</p>'
     },
     PARSE: {
       title: 'Parse 32-Byte Header',

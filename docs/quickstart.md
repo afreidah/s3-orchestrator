@@ -16,7 +16,7 @@ This starts three MinIO instances and a PostgreSQL database via Docker Compose, 
    - MinIO 1 on `localhost:19000` (bucket: `backend1`)
    - MinIO 2 on `localhost:19002` (bucket: `backend2`)
    - MinIO 3 on `localhost:19004` (bucket: `backend3`)
-   - PostgreSQL on `localhost:15432` (database: `s3proxy_test`)
+   - PostgreSQL on `localhost:15432` (database: `s3o_test`)
    - A setup container that creates the MinIO buckets
 2. **`go run ./cmd/s3-orchestrator -config config.yaml`** — compiles and starts the server on port 9000
 
