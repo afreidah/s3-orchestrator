@@ -43,12 +43,19 @@ type backendCore struct {
 // -------------------------------------------------------------------------
 
 // withTimeout returns a context with the configured backend timeout applied.
+// If the parent context already has a tighter deadline, the parent deadline
+// is preserved to avoid masking upstream timeouts (e.g. HTTP WriteTimeout).
 // If no timeout is configured, the original context is returned unchanged.
 func (c *backendCore) withTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
-	if c.backendTimeout > 0 {
-		return context.WithTimeout(ctx, c.backendTimeout)
+	if c.backendTimeout <= 0 {
+		return ctx, func() {}
 	}
-	return ctx, func() {}
+	if deadline, ok := ctx.Deadline(); ok {
+		if remaining := time.Until(deadline); remaining < c.backendTimeout {
+			return context.WithTimeout(ctx, remaining)
+		}
+	}
+	return context.WithTimeout(ctx, c.backendTimeout)
 }
 
 // -------------------------------------------------------------------------
