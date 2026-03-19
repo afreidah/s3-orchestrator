@@ -383,6 +383,45 @@ func TestDeleteObject_BackendDeleteFails_EnqueuesCleanup(t *testing.T) {
 	}
 }
 
+func TestProcessCleanupQueue_AdmissionBlocked(t *testing.T) {
+	sem := make(chan struct{}, 1)
+	sem <- struct{}{} // fill
+
+	backend := newMockBackend()
+	backend.objects["orphan.txt"] = mockObject{data: []byte("data")}
+
+	store := &mockStore{
+		pendingCleanups: []CleanupItem{
+			{ID: 1, BackendName: "b1", ObjectKey: "orphan.txt", Reason: "orphan_put", Attempts: 0},
+		},
+	}
+	mgr := NewBackendManager(&BackendManagerConfig{
+		Backends:        map[string]ObjectBackend{"b1": backend},
+		Store:           store,
+		Order:           []string{"b1"},
+		CacheTTL:        5 * time.Second,
+		BackendTimeout:  30 * time.Second,
+		RoutingStrategy: "pack",
+		AdmissionSem:    sem,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	processed, failed := mgr.CleanupWorker.ProcessCleanupQueue(ctx)
+	if processed != 0 {
+		t.Errorf("expected processed=0 when admission blocked, got %d", processed)
+	}
+	if failed != 0 {
+		t.Errorf("expected failed=0 when admission blocked (item skipped), got %d", failed)
+	}
+
+	// Object should NOT have been deleted
+	if !backend.hasObject("orphan.txt") {
+		t.Error("object should not be deleted when admission is blocked")
+	}
+}
+
 func TestPutObject_RecordFails_OrphanDeleteFails_EnqueuesCleanup(t *testing.T) {
 	backend := newMockBackend()
 	backend.delErr = errors.New("delete failed too")
