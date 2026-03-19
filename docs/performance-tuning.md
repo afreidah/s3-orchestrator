@@ -48,15 +48,15 @@ When `admission_wait` is set (e.g. `50ms`), requests briefly wait for a slot to 
 - **Default (0)**: no limit. Fine for low-traffic single-instance deployments.
 - **Recommended starting point**: set to 2-3x your `database.max_conns` value. Every S3 operation needs at least one database query, so there's no benefit admitting more requests than the connection pool can serve.
 - **Split pools**: if your workload is read-heavy, set `max_concurrent_reads` higher than `max_concurrent_writes` to protect read availability during upload bursts.
-- **Load shedding**: start with `load_shed_threshold: 0.8` and adjust based on `s3proxy_load_shed_total` rates.
+- **Load shedding**: start with `load_shed_threshold: 0.8` and adjust based on `s3o_load_shed_total` rates.
 - **Admission wait**: `50ms` to `100ms` is a good starting point for smoothing bursts without adding noticeable latency.
 
 ### Monitoring
 
-- `s3proxy_admission_rejections_total` — requests rejected at the hard admission limit
-- `s3proxy_load_shed_total` — requests probabilistically shed before the hard limit
-- `s3proxy_early_rejections_total` — uploads rejected before body transmission (no backend capacity)
-- `s3proxy_inflight_requests` — gauge of currently processing requests by method. Use this to find the right limit value.
+- `s3o_admission_rejections_total` — requests rejected at the hard admission limit
+- `s3o_load_shed_total` — requests probabilistically shed before the hard limit
+- `s3o_early_rejections_total` — uploads rejected before body transmission (no backend capacity)
+- `s3o_inflight_requests` — gauge of currently processing requests by method. Use this to find the right limit value.
 
 ## Backend Timeout
 
@@ -333,8 +333,8 @@ Per-backend circuit breakers stop sending traffic to a backend after `failure_th
 
 ### Monitoring
 
-- `s3proxy_circuit_breaker_state{name="<backend>"}` — 0=closed, 1=open, 2=half-open
-- `s3proxy_circuit_breaker_transitions_total{name="<backend>"}` — state change counter
+- `s3o_circuit_breaker_state{name="<backend>"}` — 0=closed, 1=open, 2=half-open
+- `s3o_circuit_breaker_transitions_total{name="<backend>"}` — state change counter
 
 A sustained `state=1` for a backend means it's been unreachable. Check the backend's credentials and connectivity.
 
@@ -362,7 +362,7 @@ To limit memory growth under attack:
 
 ### Monitoring
 
-- `s3proxy_rate_limit_rejections_total` — counter of rejected requests. A sustained non-zero rate means the limiter is actively throttling traffic.
+- `s3o_rate_limit_rejections_total` — counter of rejected requests. A sustained non-zero rate means the limiter is actively throttling traffic.
 
 ## Load Testing
 

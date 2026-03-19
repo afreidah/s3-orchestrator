@@ -84,11 +84,11 @@ func (s *lockedTickerService) runOnce(ctx context.Context, fn func(ctx context.C
 		if s.onError != nil {
 			s.onError(err)
 		} else {
-			slog.Error(s.name+" failed", "error", err)
+			slog.ErrorContext(ctx, s.name+" failed", "error", err)
 		}
 	}
 	if !acquired {
-		slog.Debug(s.name + " skipped, another instance holds the lock")
+		slog.DebugContext(ctx, s.name + " skipped, another instance holds the lock")
 	}
 }
 
@@ -132,7 +132,7 @@ func (s *usageFlushService) Run(ctx context.Context) error {
 				if targetInterval != currentInterval {
 					ticker.Reset(targetInterval)
 					currentInterval = targetInterval
-					slog.Info("Usage flush interval adjusted", "interval", targetInterval)
+					slog.InfoContext(ctx, "Usage flush interval adjusted", "interval", targetInterval)
 				}
 			}
 		case <-ctx.Done():
@@ -151,10 +151,10 @@ func (s *usageFlushService) flushTick(ctx context.Context) {
 				return nil
 			})
 		if err != nil && !errors.Is(err, storage.ErrDBUnavailable) {
-			slog.Error("Usage flush failed", "error", err)
+			slog.ErrorContext(ctx, "Usage flush failed", "error", err)
 		}
 		if !acquired {
-			slog.Debug("Usage flush skipped, another instance holds the lock")
+			slog.DebugContext(ctx, "Usage flush skipped, another instance holds the lock")
 		}
 		return
 	}
@@ -166,10 +166,10 @@ func (s *usageFlushService) flushTick(ctx context.Context) {
 // doFlush performs the actual flush and quota metric update.
 func (s *usageFlushService) doFlush(ctx context.Context) {
 	if err := s.manager.FlushUsage(ctx); err != nil && !errors.Is(err, storage.ErrDBUnavailable) {
-		slog.Error("Failed to flush usage counters", "error", err)
+		slog.ErrorContext(ctx, "Failed to flush usage counters", "error", err)
 	}
 	if err := s.manager.UpdateQuotaMetrics(ctx); err != nil && !errors.Is(err, storage.ErrDBUnavailable) {
-		slog.Error("Failed to update quota metrics", "error", err)
+		slog.ErrorContext(ctx, "Failed to update quota metrics", "error", err)
 	}
 }
 
@@ -198,7 +198,7 @@ func newCleanupQueueService(manager *storage.BackendManager, store storage.Metad
 		work: func(ctx context.Context) {
 			processed, failed := manager.CleanupWorker.ProcessCleanupQueue(ctx)
 			if processed > 0 || failed > 0 {
-				slog.Info("Cleanup queue processed", "processed", processed, "failed", failed)
+				slog.InfoContext(ctx, "Cleanup queue processed", "processed", processed, "failed", failed)
 			}
 		},
 	}
@@ -225,11 +225,11 @@ func newRebalancerService(manager *storage.BackendManager, store storage.Metadat
 			}
 			moved, err := manager.Rebalancer.Rebalance(ctx, *rcfg)
 			if err != nil && !errors.Is(err, storage.ErrDBUnavailable) {
-				slog.Error("Rebalance failed", "error", err)
+				slog.ErrorContext(ctx, "Rebalance failed", "error", err)
 			} else if moved > 0 {
-				slog.Info("Rebalance completed", "objects_moved", moved)
+				slog.InfoContext(ctx, "Rebalance completed", "objects_moved", moved)
 				if err := manager.UpdateQuotaMetrics(ctx); err != nil {
-					slog.Warn("Failed to update quota metrics after rebalance", "error", err)
+					slog.WarnContext(ctx, "Failed to update quota metrics after rebalance", "error", err)
 				}
 			}
 		},
@@ -253,7 +253,7 @@ func newLifecycleService(manager *storage.BackendManager, store storage.Metadata
 			}
 			deleted, failed := manager.ProcessLifecycleRules(ctx, cfg.Rules)
 			if deleted > 0 || failed > 0 {
-				slog.Info("Lifecycle expiration completed",
+				slog.InfoContext(ctx, "Lifecycle expiration completed",
 					"deleted", deleted, "failed", failed)
 			}
 			if failed > 0 {
@@ -263,7 +263,7 @@ func newLifecycleService(manager *storage.BackendManager, store storage.Metadata
 			}
 		},
 		onError: func(err error) {
-			slog.Error("Lifecycle expiration failed", "error", err)
+			slog.Error("Lifecycle expiration failed", "error", err) //nolint:sloglint // callback has no context
 			telemetry.LifecycleRunsTotal.WithLabelValues("error").Inc()
 		},
 	}
@@ -290,11 +290,11 @@ func newOverReplicationService(manager *storage.BackendManager, store storage.Me
 			}
 			removed, err := manager.OverReplicationCleaner.Clean(ctx, *rcfg)
 			if err != nil && !errors.Is(err, storage.ErrDBUnavailable) {
-				slog.Error("Over-replication cleanup failed", "error", err)
+				slog.ErrorContext(ctx, "Over-replication cleanup failed", "error", err)
 			} else if removed > 0 {
-				slog.Info("Over-replication cleanup completed", "copies_removed", removed)
+				slog.InfoContext(ctx, "Over-replication cleanup completed", "copies_removed", removed)
 				if err := manager.UpdateQuotaMetrics(ctx); err != nil {
-					slog.Warn("Failed to update quota metrics after over-replication cleanup", "error", err)
+					slog.WarnContext(ctx, "Failed to update quota metrics after over-replication cleanup", "error", err)
 				}
 			}
 		},
@@ -309,11 +309,11 @@ func newReplicatorService(manager *storage.BackendManager, store storage.Metadat
 		}
 		created, err := manager.Replicator.Replicate(ctx, *rcfg)
 		if err != nil && !errors.Is(err, storage.ErrDBUnavailable) {
-			slog.Error("Replication failed", "error", err)
+			slog.ErrorContext(ctx, "Replication failed", "error", err)
 		} else if created > 0 {
-			slog.Info("Replication completed", "copies_created", created)
+			slog.InfoContext(ctx, "Replication completed", "copies_created", created)
 			if err := manager.UpdateQuotaMetrics(ctx); err != nil {
-				slog.Warn("Failed to update quota metrics after replication", "error", err)
+				slog.WarnContext(ctx, "Failed to update quota metrics after replication", "error", err)
 			}
 		}
 	}

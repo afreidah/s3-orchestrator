@@ -345,6 +345,34 @@ func TestRebalance_BelowThreshold_Skips(t *testing.T) {
 	}
 }
 
+func TestRebalance_EmptyPlan_Skips(t *testing.T) {
+	// Utilization exceeds threshold (90% vs 10%) but ListObjectsByBackend
+	// returns no moveable objects, so the plan is empty.
+	store := &mockStore{
+		getQuotaStatsResp: map[string]QuotaStat{
+			"b1": {BytesUsed: 900, BytesLimit: 1000},
+			"b2": {BytesUsed: 100, BytesLimit: 1000},
+		},
+		listObjectsByBackendResp: nil, // no objects to move
+	}
+	mgr := newTestManager(store, map[string]*mockBackend{
+		"b1": newMockBackend(),
+		"b2": newMockBackend(),
+	})
+
+	moved, err := mgr.Rebalancer.Rebalance(context.Background(), config.RebalanceConfig{
+		Strategy:  "pack",
+		BatchSize: 10,
+		Threshold: 0.10,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if moved != 0 {
+		t.Errorf("expected 0 moved (empty plan), got %d", moved)
+	}
+}
+
 func TestRebalance_UnknownStrategy(t *testing.T) {
 	store := &mockStore{
 		getQuotaStatsResp: map[string]QuotaStat{

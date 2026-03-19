@@ -113,26 +113,44 @@ func Tracer() trace.Tracer {
 	return otel.Tracer(TracerName)
 }
 
-// StartSpan creates a new span with the given name and attributes.
+// StartSpan creates a new internal span with the given name and attributes.
 func StartSpan(ctx context.Context, name string, attrs ...attribute.KeyValue) (context.Context, trace.Span) {
 	return Tracer().Start(ctx, name, trace.WithAttributes(attrs...))
+}
+
+// StartServerSpan creates a span for inbound requests (HTTP handler entry points).
+func StartServerSpan(ctx context.Context, name string, attrs ...attribute.KeyValue) (context.Context, trace.Span) {
+	return Tracer().Start(ctx, name, trace.WithAttributes(attrs...), trace.WithSpanKind(trace.SpanKindServer))
+}
+
+// StartClientSpan creates a span for outbound calls (backend S3 operations).
+func StartClientSpan(ctx context.Context, name string, attrs ...attribute.KeyValue) (context.Context, trace.Span) {
+	return Tracer().Start(ctx, name, trace.WithAttributes(attrs...), trace.WithSpanKind(trace.SpanKindClient))
 }
 
 // -------------------------------------------------------------------------
 // COMMON ATTRIBUTES
 // -------------------------------------------------------------------------
 
-// S3 proxy specific attribute keys.
+// S3 orchestrator specific attribute keys.
 var (
-	AttrRequestID       = attribute.Key("s3proxy.request_id")
-	AttrVirtualBucket   = attribute.Key("s3proxy.bucket.virtual")
-	AttrBackendBucket   = attribute.Key("s3proxy.bucket.backend")
-	AttrObjectKey       = attribute.Key("s3proxy.key")
-	AttrBackendName     = attribute.Key("s3proxy.backend.name")
-	AttrBackendEndpoint = attribute.Key("s3proxy.backend.endpoint")
-	AttrObjectSize      = attribute.Key("s3proxy.object.size")
-	AttrContentType     = attribute.Key("s3proxy.object.content_type")
-	AttrOperation       = attribute.Key("s3proxy.operation")
+	AttrRequestID          = attribute.Key("s3o.request_id")
+	AttrVirtualBucket      = attribute.Key("s3o.bucket.virtual")
+	AttrBackendBucket      = attribute.Key("s3o.bucket.backend")
+	AttrObjectKey          = attribute.Key("s3o.key")
+	AttrBackendName        = attribute.Key("s3o.backend.name")
+	AttrBackendEndpoint    = attribute.Key("s3o.backend.endpoint")
+	AttrObjectSize         = attribute.Key("s3o.object.size")
+	AttrContentType        = attribute.Key("s3o.object.content_type")
+	AttrOperation          = attribute.Key("s3o.operation")
+	AttrUploadID           = attribute.Key("s3o.upload_id")
+	AttrPartNumber         = attribute.Key("s3o.part_number")
+	AttrWriteFailover      = attribute.Key("s3o.write_failover")
+	AttrFailoverAttempts   = attribute.Key("s3o.write_failover_attempts")
+	AttrFailover           = attribute.Key("s3o.failover")
+	AttrDegradedMode       = attribute.Key("s3o.degraded_mode")
+	AttrCacheHit           = attribute.Key("s3o.cache_hit")
+	AttrParallelBroadcast  = attribute.Key("s3o.parallel_broadcast")
 )
 
 // RequestAttributes returns common attributes for HTTP request spans.

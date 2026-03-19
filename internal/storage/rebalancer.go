@@ -89,7 +89,7 @@ func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig) 
 
 	// --- Check threshold ---
 	if !exceedsThreshold(stats, r.order, cfg.Threshold) {
-		slog.Info("Rebalance skipping, within threshold",
+		slog.InfoContext(ctx, "Rebalance skipping, within threshold",
 			"threshold", cfg.Threshold, "strategy", cfg.Strategy)
 		telemetry.RebalanceSkipped.WithLabelValues("threshold").Inc()
 		return 0, nil
@@ -111,7 +111,7 @@ func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig) 
 	}
 
 	if len(plan) == 0 {
-		slog.Info("Rebalance skipping, empty plan", "strategy", cfg.Strategy)
+		slog.InfoContext(ctx, "Rebalance skipping, empty plan", "strategy", cfg.Strategy)
 		telemetry.RebalanceSkipped.WithLabelValues("empty_plan").Inc()
 		return 0, nil
 	}
@@ -401,19 +401,19 @@ func (r *Rebalancer) executeMoves(ctx context.Context, plan []rebalanceMove, str
 func (r *Rebalancer) executeOneMove(ctx context.Context, move rebalanceMove, strategy string) bool {
 	srcBackend, ok := r.backends[move.FromBackend]
 	if !ok {
-		slog.Error("Rebalance: source backend not found", "backend", move.FromBackend)
+		slog.ErrorContext(ctx, "Rebalance: source backend not found", "backend", move.FromBackend)
 		return false
 	}
 
 	destBackend, ok := r.backends[move.ToBackend]
 	if !ok {
-		slog.Error("Rebalance: destination backend not found", "backend", move.ToBackend)
+		slog.ErrorContext(ctx, "Rebalance: destination backend not found", "backend", move.ToBackend)
 		return false
 	}
 
 	// --- Stream source to destination ---
 	if err := r.streamCopy(ctx, srcBackend, destBackend, move.ObjectKey); err != nil {
-		slog.Warn("Rebalance: stream copy failed",
+		slog.WarnContext(ctx, "Rebalance: stream copy failed",
 			"key", move.ObjectKey, "from", move.FromBackend, "to", move.ToBackend, "error", err)
 		telemetry.RebalanceObjectsMoved.WithLabelValues(strategy, "error").Inc()
 		return false
@@ -422,7 +422,7 @@ func (r *Rebalancer) executeOneMove(ctx context.Context, move rebalanceMove, str
 	// --- Atomic DB update (compare-and-swap) ---
 	movedSize, err := r.store.MoveObjectLocation(ctx, move.ObjectKey, move.FromBackend, move.ToBackend)
 	if err != nil {
-		slog.Error("Rebalance: failed to update object location",
+		slog.ErrorContext(ctx, "Rebalance: failed to update object location",
 			"key", move.ObjectKey, "error", err)
 		// Clean up orphan on destination
 		r.deleteOrEnqueue(ctx, destBackend, move.ToBackend, move.ObjectKey, "rebalance_orphan", move.SizeBytes)
@@ -433,7 +433,7 @@ func (r *Rebalancer) executeOneMove(ctx context.Context, move rebalanceMove, str
 
 	if movedSize == 0 {
 		// Object was deleted or already moved by another process
-		slog.Info("Rebalance: object already moved or deleted, cleaning up",
+		slog.InfoContext(ctx, "Rebalance: object already moved or deleted, cleaning up",
 			"key", move.ObjectKey)
 		r.deleteOrEnqueue(ctx, destBackend, move.ToBackend, move.ObjectKey, "rebalance_stale_orphan", move.SizeBytes)
 		r.usage.Record(move.ToBackend, 1, 0, 0)

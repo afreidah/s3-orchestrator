@@ -120,7 +120,7 @@ func (r *Replicator) Replicate(ctx context.Context, cfg config.ReplicationConfig
 	workerpool.Run(ctx, cfg.Concurrency, tasks, func(ctx context.Context, task replicaTask) {
 		n, replicateErr := r.replicateObject(ctx, task.key, task.copies, task.needed)
 		if replicateErr != nil {
-			slog.Warn("Replication: object failed", "key", task.key, "error", replicateErr)
+			slog.WarnContext(ctx, "Replication: object failed", "key", task.key, "error", replicateErr)
 		}
 		created.Add(int32(n))
 	})
@@ -169,7 +169,7 @@ func (r *Replicator) replicateObject(ctx context.Context, key string, existingCo
 		// --- Find a target backend with space ---
 		target := r.findReplicaTarget(ctx, key, existingCopies[0].SizeBytes, exclusion)
 		if target == "" {
-			slog.Warn("Replication: no target backend with space",
+			slog.WarnContext(ctx, "Replication: no target backend with space",
 				"key", key, "needed", needed-i)
 			break
 		}
@@ -177,7 +177,7 @@ func (r *Replicator) replicateObject(ctx context.Context, key string, existingCo
 		// --- Copy data from an existing copy to the target ---
 		source, err := r.copyToReplica(ctx, key, existingCopies, target)
 		if err != nil {
-			slog.Warn("Replication: failed to copy object data",
+			slog.WarnContext(ctx, "Replication: failed to copy object data",
 				"key", key, "target", target, "error", err)
 			telemetry.ReplicationErrorsTotal.Inc()
 			continue
@@ -186,7 +186,7 @@ func (r *Replicator) replicateObject(ctx context.Context, key string, existingCo
 		// --- Record the replica in the database (conditional insert) ---
 		inserted, err := r.store.RecordReplica(ctx, key, target, source, existingCopies[0].SizeBytes)
 		if err != nil {
-			slog.Error("Replication: failed to record replica",
+			slog.ErrorContext(ctx, "Replication: failed to record replica",
 				"key", key, "target", target, "error", err)
 			// Clean up orphan on target
 			r.cleanupOrphan(ctx, target, key, existingCopies[0].SizeBytes)
@@ -196,7 +196,7 @@ func (r *Replicator) replicateObject(ctx context.Context, key string, existingCo
 
 		if !inserted {
 			// Source copy was deleted/overwritten during replication
-			slog.Info("Replication: source copy gone, cleaning up orphan",
+			slog.InfoContext(ctx, "Replication: source copy gone, cleaning up orphan",
 				"key", key, "target", target)
 			r.cleanupOrphan(ctx, target, key, existingCopies[0].SizeBytes)
 			continue
@@ -224,7 +224,7 @@ func (r *Replicator) replicateObject(ctx context.Context, key string, existingCo
 func (r *Replicator) findReplicaTarget(ctx context.Context, key string, size int64, exclusion map[string]bool) string {
 	stats, err := r.store.GetQuotaStats(ctx)
 	if err != nil {
-		slog.Warn("Replication: failed to get quota stats", "error", err)
+		slog.WarnContext(ctx, "Replication: failed to get quota stats", "error", err)
 		return ""
 	}
 
@@ -285,7 +285,7 @@ func (r *Replicator) copyToReplica(ctx context.Context, key string, copies []Obj
 			return "", fmt.Errorf("failed to write to target %s: %w", target, err)
 		}
 
-		slog.Warn("Replication: source read failed, trying next copy",
+		slog.WarnContext(ctx, "Replication: source read failed, trying next copy",
 			"key", key, "source", cp.BackendName, "error", err)
 	}
 
@@ -315,7 +315,7 @@ func (r *Replicator) unhealthyBackends(threshold time.Duration) []string {
 		}
 		if d := cbb.OpenDuration(); d >= threshold {
 			names = append(names, name)
-			slog.Info("Replication: backend unhealthy, excluding from replica count",
+			slog.Info("Replication: backend unhealthy, excluding from replica count", //nolint:sloglint // unhealthyBackends has no context
 				"backend", name,
 				"open_duration", d.Round(time.Second))
 		}

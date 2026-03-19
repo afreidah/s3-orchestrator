@@ -118,7 +118,7 @@ s3-orchestrator admin cleanup-queue
 # If the queue is backed up, check the logs for persistent errors.
 ```
 
-Items that exhaust all 10 retry attempts remain in the queue with `orphan_bytes` still reserved — the write path continues to account for the unreleased space. Monitor `s3proxy_quota_orphan_bytes` for backends with elevated values. After manually resolving an exhausted item (deleting the orphan from the backend), decrement `orphan_bytes` and remove the item:
+Items that exhaust all 10 retry attempts remain in the queue with `orphan_bytes` still reserved — the write path continues to account for the unreleased space. Monitor `s3o_quota_orphan_bytes` for backends with elevated values. After manually resolving an exhausted item (deleting the orphan from the backend), decrement `orphan_bytes` and remove the item:
 
 ```sql
 UPDATE backend_quotas SET orphan_bytes = orphan_bytes - (SELECT size_bytes FROM cleanup_queue WHERE id = 123) WHERE backend_name = (SELECT backend_name FROM cleanup_queue WHERE id = 123);
@@ -139,7 +139,7 @@ When Redis is configured for shared usage counters:
 
 ### What happens
 
-The circuit breaker opens after consecutive failures (default: 3). Each instance falls back to local in-memory counters — identical behavior to running without Redis. Usage enforcement continues but with the per-instance blind spot restored. The `s3proxy_redis_fallback_active` gauge transitions to `1`.
+The circuit breaker opens after consecutive failures (default: 3). Each instance falls back to local in-memory counters — identical behavior to running without Redis. Usage enforcement continues but with the per-instance blind spot restored. The `s3o_redis_fallback_active` gauge transitions to `1`.
 
 A background health probe PINGs Redis every 5 seconds while the circuit is open. This requires no manual intervention.
 
@@ -154,9 +154,9 @@ When the health probe detects Redis is reachable again:
 
 ### Monitoring
 
-- `s3proxy_redis_fallback_active` — `1` when using local counters, `0` when Redis is healthy
-- `s3proxy_redis_operations_total{operation,status}` — track Redis operation success/error rates
-- `s3proxy_circuit_breaker_state{name="redis"}` — circuit breaker state (closed/open)
+- `s3o_redis_fallback_active` — `1` when using local counters, `0` when Redis is healthy
+- `s3o_redis_operations_total{operation,status}` — track Redis operation success/error rates
+- `s3o_circuit_breaker_state{name="redis"}` — circuit breaker state (closed/open)
 
 ### Impact
 
