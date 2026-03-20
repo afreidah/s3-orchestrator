@@ -30,7 +30,7 @@ import (
 // lock. It handles audit context creation, lock acquisition, skip/error
 // logging, and context cancellation. Most background workers use this.
 type lockedTickerService struct {
-	store    storage.MetadataStore
+	store    storage.AdvisoryLocker
 	interval time.Duration
 	lockID   int64
 	name     string
@@ -110,7 +110,7 @@ func (s *lockedTickerService) runOnce(ctx context.Context, fn func(ctx context.C
 
 type usageFlushService struct {
 	manager *storage.BackendManager
-	store   storage.MetadataStore
+	store   storage.AdvisoryLocker
 }
 
 // Run periodically flushes in-memory usage counters to the database.
@@ -191,7 +191,7 @@ func (s *usageFlushService) doFlush(ctx context.Context) {
 // SERVICE CONSTRUCTORS
 // -------------------------------------------------------------------------
 
-func newMultipartCleanupService(manager *storage.BackendManager, store storage.MetadataStore) *lockedTickerService {
+func newMultipartCleanupService(manager *storage.BackendManager, store storage.AdvisoryLocker) *lockedTickerService {
 	return &lockedTickerService{
 		store:    store,
 		interval: 1 * time.Hour,
@@ -203,7 +203,7 @@ func newMultipartCleanupService(manager *storage.BackendManager, store storage.M
 	}
 }
 
-func newCleanupQueueService(manager *storage.BackendManager, store storage.MetadataStore) *lockedTickerService {
+func newCleanupQueueService(manager *storage.BackendManager, store storage.AdvisoryLocker) *lockedTickerService {
 	return &lockedTickerService{
 		store:    store,
 		interval: 1 * time.Minute,
@@ -218,7 +218,7 @@ func newCleanupQueueService(manager *storage.BackendManager, store storage.Metad
 	}
 }
 
-func newRebalancerService(manager *storage.BackendManager, store storage.MetadataStore) *lockedTickerService {
+func newRebalancerService(manager *storage.BackendManager, store storage.AdvisoryLocker) *lockedTickerService {
 	interval := 6 * time.Hour
 	if rcfg := manager.Rebalancer.Config(); rcfg != nil && rcfg.Interval > 0 {
 		interval = rcfg.Interval
@@ -250,7 +250,7 @@ func newRebalancerService(manager *storage.BackendManager, store storage.Metadat
 	}
 }
 
-func newLifecycleService(manager *storage.BackendManager, store storage.MetadataStore) *lockedTickerService {
+func newLifecycleService(manager *storage.BackendManager, store storage.AdvisoryLocker) *lockedTickerService {
 	return &lockedTickerService{
 		store:    store,
 		interval: 1 * time.Hour,
@@ -283,7 +283,7 @@ func newLifecycleService(manager *storage.BackendManager, store storage.Metadata
 	}
 }
 
-func newOverReplicationService(manager *storage.BackendManager, store storage.MetadataStore) *lockedTickerService {
+func newOverReplicationService(manager *storage.BackendManager, store storage.AdvisoryLocker) *lockedTickerService {
 	interval := 5 * time.Minute
 	if rcfg := manager.OverReplicationCleaner.Config(); rcfg != nil && rcfg.WorkerInterval > 0 {
 		interval = rcfg.WorkerInterval
@@ -315,7 +315,7 @@ func newOverReplicationService(manager *storage.BackendManager, store storage.Me
 	}
 }
 
-func newReplicatorService(manager *storage.BackendManager, store storage.MetadataStore) *lockedTickerService {
+func newReplicatorService(manager *storage.BackendManager, store storage.AdvisoryLocker) *lockedTickerService {
 	replicateWork := func(ctx context.Context) {
 		rcfg := manager.Replicator.Config()
 		if rcfg == nil {
@@ -350,7 +350,7 @@ func newReplicatorService(manager *storage.BackendManager, store storage.Metadat
 	}
 }
 
-func newReconcileService(reconciler *storage.Reconciler, store storage.MetadataStore, interval time.Duration) *lockedTickerService {
+func newReconcileService(reconciler *storage.Reconciler, store storage.AdvisoryLocker, interval time.Duration) *lockedTickerService {
 	return &lockedTickerService{
 		store:    store,
 		interval: interval,

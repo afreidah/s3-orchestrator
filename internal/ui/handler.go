@@ -36,7 +36,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/bufpool"
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/server"
+	"github.com/afreidah/s3-orchestrator/internal/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/storage"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 	"golang.org/x/crypto/bcrypt"
@@ -54,7 +54,7 @@ type Handler struct {
 	cfg            atomic.Pointer[config.Config]
 	templates      *template.Template
 	logBuffer      *telemetry.LogBuffer
-	loginThrottle  *server.LoginThrottle
+	loginThrottle  *httputil.LoginThrottle
 	prefix         string
 	adminKey       string
 	adminSecret    string
@@ -64,7 +64,7 @@ type Handler struct {
 }
 
 // New creates a new UI handler.
-func New(manager *storage.BackendManager, dbHealthy func() bool, cfg *config.Config, logBuffer *telemetry.LogBuffer, loginThrottle *server.LoginThrottle) *Handler {
+func New(manager *storage.BackendManager, dbHealthy func() bool, cfg *config.Config, logBuffer *telemetry.LogBuffer, loginThrottle *httputil.LoginThrottle) *Handler {
 	h := &Handler{
 		manager:        manager,
 		dbHealthy:      dbHealthy,
@@ -75,7 +75,7 @@ func New(manager *storage.BackendManager, dbHealthy func() bool, cfg *config.Con
 		adminSecret:    cfg.UI.AdminSecret,
 		sessionKey:     deriveSessionKey(&cfg.UI),
 		forceSecure:    cfg.UI.ForceSecureCookies,
-		trustedProxies: server.ParseTrustedProxies(cfg.RateLimit.TrustedProxies),
+		trustedProxies: httputil.ParseTrustedProxies(cfg.RateLimit.TrustedProxies),
 	}
 	h.cfg.Store(cfg)
 	return h
@@ -104,7 +104,7 @@ func (h *Handler) UpdateConfig(cfg *config.Config) {
 // clientIP extracts the real client IP from the request, respecting
 // X-Forwarded-For when the peer is a trusted proxy.
 func (h *Handler) clientIP(r *http.Request) string {
-	return server.ExtractClientIP(r, h.trustedProxies)
+	return httputil.ExtractClientIP(r, h.trustedProxies)
 }
 
 // validBucketPrefix checks whether the key starts with a configured virtual bucket name.

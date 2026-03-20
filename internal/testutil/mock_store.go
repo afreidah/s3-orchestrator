@@ -401,7 +401,3 @@ func (m *MockStore) RemoveExcessCopy(_ context.Context, _, _ string, _ int64) er
 	return nil
 }
 
-// GetObjectCopiesForUpdate returns nil (stub).
-func (m *MockStore) GetObjectCopiesForUpdate(_ context.Context, _ string) ([]storage.ObjectLocation, error) {
-	return nil, nil
-}

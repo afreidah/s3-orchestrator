@@ -206,11 +206,6 @@ func (cb *CircuitBreakerStore) RemoveExcessCopy(ctx context.Context, key, backen
 	return CBCallNoResult(cb.CircuitBreaker, func() error { return cb.real.RemoveExcessCopy(ctx, key, backendName, size) })
 }
 
-// GetObjectCopiesForUpdate delegates to the real store with circuit breaker protection.
-func (cb *CircuitBreakerStore) GetObjectCopiesForUpdate(ctx context.Context, key string) ([]ObjectLocation, error) {
-	return CBCall(cb.CircuitBreaker, func() ([]ObjectLocation, error) { return cb.real.GetObjectCopiesForUpdate(ctx, key) })
-}
-
 // FlushUsageDeltas delegates to the real store with circuit breaker protection.
 func (cb *CircuitBreakerStore) FlushUsageDeltas(ctx context.Context, backendName, period string, apiRequests, egressBytes, ingressBytes int64) error {
 	return CBCallNoResult(cb.CircuitBreaker, func() error {
