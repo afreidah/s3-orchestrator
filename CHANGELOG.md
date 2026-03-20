@@ -3,6 +3,12 @@
 All notable changes to this project are documented in this file.
 
 
+## [0.19.1] - 2026-03-20
+
+### Improved
+- updates to meet style guide
+- update CHANGELOG.md for v0.19.0 (#306)
+
 ## [0.19.0] - 2026-03-20
 
 ### Improved
