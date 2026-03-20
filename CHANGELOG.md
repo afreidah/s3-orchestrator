@@ -3,6 +3,21 @@
 All notable changes to this project are documented in this file.
 
 
+## [0.19.0] - 2026-03-20
+
+### Improved
+- update CHANGELOG.md for v0.18.3 (#296)
+
+### Dependencies
+- chore(deps): bump github.com/aws/aws-sdk-go-v2/service/s3 (#297)
+- chore(deps): bump github.com/aws/aws-sdk-go-v2 from 1.41.3 to 1.41.4 (#298)
+- chore(deps): bump github.com/aws/aws-sdk-go-v2/credentials (#299)
+
+### Other
+- restructure storage/ into breaker/, backend/, store/, counter/, proxy/, worker/ (#304) (#305)
+- invert audit→telemetry dependency and narrow MetadataStore interfaces (#301) (#303)
+- split config validation into domain files and extract server middleware (#300) (#302)
+
 ## [0.18.3] - 2026-03-20
 
 ### Added
