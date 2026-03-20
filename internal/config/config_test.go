@@ -2400,3 +2400,86 @@ func validBaseConfigTwoBackends() Config {
 		},
 	}
 }
+
+// -------------------------------------------------------------------------
+// Sub-validator direct tests — cover negative-value guards that are
+// reachable via explicit YAML (e.g. interval: -5m) but not via the
+// validBaseConfig() helper which always uses valid values.
+// -------------------------------------------------------------------------
+
+func TestBackendValidation_MissingFields(t *testing.T) {
+	errs := validateBackends([]BackendConfig{{}})
+	for _, want := range []string{"endpoint", "bucket", "access_key_id", "secret_access_key"} {
+		found := false
+		for _, e := range errs {
+			if strings.Contains(e, want) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected error mentioning %q", want)
+		}
+	}
+}
+
+func TestRebalanceValidation_NegativeValues(t *testing.T) {
+	cfg := RebalanceConfig{Enabled: true, Strategy: "pack", Interval: -1, BatchSize: -1, Threshold: 2.0, Concurrency: -1}
+	errs := cfg.setDefaultsAndValidate()
+	if len(errs) < 3 {
+		t.Errorf("expected multiple errors, got %d: %v", len(errs), errs)
+	}
+}
+
+func TestReplicationValidation_NegativeValues(t *testing.T) {
+	cfg := ReplicationConfig{Factor: 3, WorkerInterval: -1, BatchSize: -1}
+	errs := cfg.setDefaultsAndValidate(2)
+	for _, want := range []string{"factor", "worker_interval", "batch_size"} {
+		found := false
+		for _, e := range errs {
+			if strings.Contains(e, want) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected error mentioning %q", want)
+		}
+	}
+}
+
+func TestRateLimitValidation_NegativeValues(t *testing.T) {
+	cfg := RateLimitConfig{Enabled: true, RequestsPerSec: -1, Burst: -1, TrustedProxies: []string{"invalid"}}
+	errs := cfg.setDefaultsAndValidate()
+	for _, want := range []string{"requests_per_sec", "burst", "CIDR"} {
+		found := false
+		for _, e := range errs {
+			if strings.Contains(e, want) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected error mentioning %q", want)
+		}
+	}
+}
+
+func TestUsageFlushValidation_NegativeValues(t *testing.T) {
+	cfg := UsageFlushConfig{Interval: -1, AdaptiveThreshold: 2.0, FastInterval: -1}
+	errs := cfg.setDefaultsAndValidate()
+	if len(errs) < 3 {
+		t.Errorf("expected multiple errors, got %d: %v", len(errs), errs)
+	}
+}
+
+func TestReconcileDefaultInterval(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Reconcile = ReconcileConfig{Enabled: true}
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Reconcile.Interval != 24*time.Hour {
+		t.Errorf("Reconcile.Interval = %v, want 24h", cfg.Reconcile.Interval)
+	}
+}
