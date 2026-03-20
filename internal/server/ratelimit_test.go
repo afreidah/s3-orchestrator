@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
@@ -191,7 +192,7 @@ func TestExtractIP_NoTrustedProxies(t *testing.T) {
 
 func TestExtractIP_WithTrustedProxies(t *testing.T) {
 	rl := &RateLimiter{
-		trustedProxies: parseCIDRs([]string{"10.0.0.0/8", "172.16.0.0/12"}),
+		trustedProxies: httputil.ParseTrustedProxies([]string{"10.0.0.0/8", "172.16.0.0/12"}),
 	}
 
 	tests := []struct {
@@ -271,7 +272,7 @@ func TestRateLimiter_CustomCleanupIntervals(t *testing.T) {
 }
 
 func TestParseCIDRs(t *testing.T) {
-	nets := parseCIDRs([]string{"10.0.0.0/8", "invalid", "192.168.0.0/16"})
+	nets := httputil.ParseTrustedProxies([]string{"10.0.0.0/8", "invalid", "192.168.0.0/16"})
 	if len(nets) != 2 {
 		t.Fatalf("got %d nets, want 2 (invalid should be skipped)", len(nets))
 	}

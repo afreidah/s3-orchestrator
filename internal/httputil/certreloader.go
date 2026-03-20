@@ -8,7 +8,7 @@
 // connections pick up rotated certificates without restarting the server.
 // -------------------------------------------------------------------------------
 
-package server
+package httputil
 
 import (
 	"crypto/tls"

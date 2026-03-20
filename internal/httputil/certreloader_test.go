@@ -7,7 +7,7 @@
 // callback, successful reload, and error handling when cert files are invalid.
 // -------------------------------------------------------------------------------
 
-package server
+package httputil
 
 import (
 	"crypto/ecdsa"
