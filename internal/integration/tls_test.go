@@ -37,6 +37,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/auth"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/server"
 )
 
@@ -141,7 +142,7 @@ func TestTLS(t *testing.T) {
 		certs := generateTLSCerts(t)
 
 		// Start proxy using CertReloader (same code path as production main.go)
-		reloader, err := server.NewCertReloader(certs.ServerCertFile, certs.ServerKeyFile)
+		reloader, err := httputil.NewCertReloader(certs.ServerCertFile, certs.ServerKeyFile)
 		if err != nil {
 			t.Fatalf("NewCertReloader: %v", err)
 		}

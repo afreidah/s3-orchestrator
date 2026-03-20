@@ -30,6 +30,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/afreidah/s3-orchestrator/internal/admin"
+	"github.com/afreidah/s3-orchestrator/internal/audit"
 	"github.com/afreidah/s3-orchestrator/internal/auth"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
@@ -130,6 +131,11 @@ func runServe() {
 
 	// --- Set build info metric ---
 	telemetry.BuildInfo.WithLabelValues(telemetry.Version, runtime.Version()).Set(1)
+
+	// --- Wire audit event counter ---
+	audit.OnEvent = func(event string) {
+		telemetry.AuditEventsTotal.WithLabelValues(event).Inc()
+	}
 
 	// --- Initialize PostgreSQL store ---
 	store, err := storage.NewStore(ctx, &cfg.Database)

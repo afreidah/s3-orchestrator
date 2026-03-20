@@ -21,7 +21,7 @@ import (
 // MetricsCollector records Prometheus metrics for manager-level operations
 // and periodically refreshes gauge values from the metadata store.
 type MetricsCollector struct {
-	store             MetadataStore
+	store             MetricsStore
 	usage             *UsageTracker
 	backendNames      []string
 	replicationFactor func() int // returns 0 when replication is disabled
@@ -29,7 +29,7 @@ type MetricsCollector struct {
 
 // NewMetricsCollector creates a MetricsCollector with references to the store
 // and usage tracker needed for gauge refreshes.
-func NewMetricsCollector(store MetadataStore, usage *UsageTracker, backendNames []string, replicationFactor func() int) *MetricsCollector {
+func NewMetricsCollector(store MetricsStore, usage *UsageTracker, backendNames []string, replicationFactor func() int) *MetricsCollector {
 	return &MetricsCollector{
 		store:             store,
 		usage:             usage,

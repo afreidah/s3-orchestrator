@@ -199,7 +199,7 @@ func currentPeriod() string {
 // deltas to the database. Called periodically (every 30s). On DB error, deltas
 // are added back to avoid data loss. Backends in the skip set have their
 // counters discarded (used for drained backends whose DB records are gone).
-func (u *UsageTracker) FlushUsage(ctx context.Context, store MetadataStore, skip map[string]bool) error {
+func (u *UsageTracker) FlushUsage(ctx context.Context, store UsageFlusher, skip map[string]bool) error {
 	period := currentPeriod()
 	var lastErr error
 
