@@ -31,6 +31,7 @@ import (
 // STATE
 // -------------------------------------------------------------------------
 
+// State represents the current circuit breaker state.
 type State int
 
 const (

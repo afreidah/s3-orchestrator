@@ -424,6 +424,8 @@ type EncryptionMeta struct {
 	PlaintextSize int64
 }
 
+// RecordObject atomically inserts or updates an object location, handling
+// overwrites by returning displaced copies for cleanup.
 func (s *Store) RecordObject(ctx context.Context, key, backend string, size int64, enc *EncryptionMeta) ([]DeletedCopy, error) {
 	return withTxVal(s, ctx, func(qtx *db.Queries) ([]DeletedCopy, error) {
 		// Serialize concurrent writes for the same key to prevent orphans

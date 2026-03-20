@@ -34,6 +34,8 @@ func NewCleanupWorker(ops Ops, concurrency int) *CleanupWorker {
 
 const maxCleanupAttempts = 10
 
+// CleanupBackoff returns the backoff duration for the given attempt number.
+// Uses exponential backoff: min(1m * 2^attempts, 24h).
 func CleanupBackoff(attempts int32) time.Duration {
 	if attempts > 20 {
 		return 24 * time.Hour
