@@ -290,6 +290,16 @@ func runServe() {
 		sm.Register("replicator", newReplicatorService(manager, cbStore))
 		sm.Register("over-replication", newOverReplicationService(manager, cbStore))
 		sm.Register("lifecycle", newLifecycleService(manager, cbStore))
+
+		if cfg.Reconcile.Enabled {
+			bktNames := make([]string, len(cfg.Buckets))
+			for i, b := range cfg.Buckets {
+				bktNames[i] = b.Name
+			}
+			reconciler := storage.NewReconciler(manager, bktNames)
+			sm.Register("reconcile", newReconcileService(reconciler, cbStore, cfg.Reconcile.Interval))
+			slog.InfoContext(ctx, "Reconciler enabled", "interval", cfg.Reconcile.Interval)
+		}
 	}
 
 	if cfg.Rebalance.Enabled {

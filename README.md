@@ -37,6 +37,7 @@ Objects are routed to backends based on the configured `routing_strategy`: **pac
 - [Over-Replication Cleanup](#over-replication-cleanup)
 - [Cleanup Queue](#cleanup-queue)
 - [Lifecycle (Object Expiration)](#lifecycle-object-expiration)
+- [Orphan Reconciliation](#orphan-reconciliation)
 - [Encryption](#encryption)
 - [Rate Limiting](#rate-limiting)
 - [Usage Limits](#usage-limits)
@@ -116,7 +117,7 @@ Each virtual bucket has one or more credential sets. On every request, the orche
 
 Two auth methods are supported, checked in order:
 
-1. **AWS SigV4** (recommended) - Standard AWS Signature Version 4 via the `Authorization` header. Compatible with `aws cli`, SDKs, and any S3 client.
+1. **AWS SigV4** (recommended) - Standard AWS Signature Version 4 via the `Authorization` header. Compatible with `aws cli`, SDKs, and any S3 client. Signature verification is constant-time: unknown access keys still compute a full HMAC to prevent timing side-channel enumeration.
 2. **Legacy token** - Simple `X-Proxy-Token` header for backward compatibility.
 
 Multiple services can share a bucket by each having their own credentials that all map to the same bucket name. Access key IDs must be globally unique across all buckets.
@@ -157,7 +158,7 @@ When a backend accumulates `failure_threshold` consecutive failures, the circuit
 - **Replication** creates replacement copies on healthy backends after a sustained outage (see [Health-Aware Replication](#health-aware-replication)).
 - All calls to the backend return `ErrBackendUnavailable` immediately — no timeout waiting.
 
-After `open_timeout` elapses, the next organic request to the backend is allowed through as a probe. If it succeeds, the circuit closes. If it fails, the circuit reopens for another timeout period.
+After `open_timeout` elapses (plus randomized jitter of up to `open_timeout/4`), the next organic request to the backend is allowed through as a probe. If it succeeds, the circuit closes. If it fails, the circuit reopens for another timeout period. The jitter is recomputed on each open transition to prevent multiple backends from probing simultaneously after a shared failure event.
 
 Unlike the database circuit breaker, backend circuit breakers treat **all** errors as failures (no error filtering). This is a per-backend wrapper — each backend has its own independent circuit breaker state.
 
@@ -269,6 +270,20 @@ A background worker runs hourly and evaluates each rule against `created_at` tim
 
 Rules are hot-reloadable via `SIGHUP`. An empty rules list (or omitting the section entirely) disables lifecycle — no advisory lock is acquired and no DB queries are executed.
 
+## Orphan Reconciliation
+
+Optional background service that periodically scans each backend's S3 bucket and imports untracked objects into the metadata database. Objects the proxy doesn't know about — orphans from failed writes where both the DB record and cleanup queue entry were lost, manually uploaded objects, or artifacts from a database restore — are automatically brought under management so quota accounting stays accurate.
+
+The reconciler uses the same `SyncBackend` path as the `sync` CLI subcommand: for each backend, it calls `ListObjects`, checks each key against the database, and calls `ImportObject` for any that aren't tracked. Already-managed objects are skipped. The first configured virtual bucket is used as the prefix for objects that don't already have a bucket prefix.
+
+```yaml
+reconcile:
+  enabled: true       # disabled by default
+  interval: "24h"     # how often to run (default: 24h)
+```
+
+Disabled by default. Requires a restart to enable/disable (non-reloadable). Runs under advisory lock `1009` to prevent concurrent scans across instances.
+
 ## Encryption
 
 Optional server-side envelope encryption with AES-256-GCM. When enabled, every object is encrypted before it leaves the orchestrator — backends only ever see ciphertext. Each object gets a random 256-bit Data Encryption Key (DEK) that is wrapped by a master key before storage. The master key can come from an inline config value, a file on disk, or HashiCorp Vault Transit.
@@ -280,7 +295,8 @@ Objects are encrypted in fixed-size chunks (default 64 KB), so range requests (`
 - **Envelope encryption** — per-object DEKs mean rotating the master key only requires re-wrapping DEKs, not re-encrypting data
 - **Key rotation** — add the new master key, move the old one to `previous_keys`, and call the `rotate-encryption-key` admin API to re-wrap DEKs still using the old key
 - **Encrypt existing data** — the `encrypt-existing` admin API encrypts all unencrypted objects in-place without downtime
-- **Vault Transit support** — delegate key management to HashiCorp Vault for HSM-backed key storage
+- **Vault Transit support** — delegate key management to HashiCorp Vault for HSM-backed key storage. The Vault token is automatically renewed in the background; for Nomad workload identity deployments, use `token_file` to point at the Nomad-managed token file instead of a static `token` string
+- **Unknown key ID detection** — when a wrapped DEK references a key ID that isn't the current primary or any configured previous key, a warning is logged before falling back to the primary key (signals potential metadata corruption or missing rotation key)
 
 **Compatibility with backend-side encryption:** If your backend already has its own server-side encryption (e.g., AWS SSE-S3 or SSE-KMS), both layers work independently. The orchestrator encrypts before uploading and the backend encrypts the ciphertext again at rest. On read, the backend decrypts its layer and returns the orchestrator's ciphertext, which the orchestrator then decrypts. This is harmless but redundant — you can safely disable the backend's encryption to avoid unnecessary KMS costs.
 
@@ -312,19 +328,19 @@ YAML config file specified via `-config` flag (default: `config.yaml`). Supports
 server:
   listen_addr: "0.0.0.0:9000"
   max_object_size: 5368709120  # 5 GB (default)
-  # max_concurrent_requests: 0  # 0 = unlimited (default)
+  # max_concurrent_requests: 0  # total concurrent operations — HTTP + background services (0 = unlimited, default: 1000)
   # max_concurrent_reads: 0     # separate read concurrency limit (0 = use global)
-  # max_concurrent_writes: 0    # separate write concurrency limit (0 = use global)
+  # max_concurrent_writes: 0    # separate write concurrency limit (0 = use global; background services share this budget)
   # load_shed_threshold: 0      # active shedding at this capacity ratio (0 = disabled)
   # admission_wait: "0s"        # brief wait before rejection (0 = instant)
-  # backend_timeout: "30s"       # per-operation timeout for backend S3 calls (default: 30s)
+  # backend_timeout: "30s"       # per-operation timeout for backend S3 calls (default: 30s; uses tighter of this or parent context deadline)
   # read_header_timeout: "10s"   # max time to read request headers (default: 10s)
   # read_timeout: "5m"           # max time to read entire request including body (default: 5m)
   # write_timeout: "5m"          # max time to write response (default: 5m)
   # idle_timeout: "120s"         # max time to wait for next request on keep-alive (default: 120s)
-  # shutdown_delay: "0s"         # delay before HTTP drain on SIGTERM for LB deregistration (default: 0)
+  # shutdown_delay: "0s"         # delay before toggling readiness off and draining HTTP (default: 0; LB continues routing during delay)
   # tls:
-  #   cert_file: "/path/to/cert.pem"
+  #   cert_file: "/path/to/cert.pem"  # hot-reloaded on SIGHUP; warns if cert expires within 24h
   #   key_file: "/path/to/key.pem"
   #   min_version: "1.2"           # "1.2" (default) or "1.3"
   #   client_ca_file: ""           # CA bundle for mTLS client verification
@@ -434,9 +450,12 @@ encryption:
   # master_key_file: "/path/to/key"  # alternative: raw 32-byte key file
   # vault:                           # alternative: Vault Transit
   #   address: "http://vault:8200"
-  #   token: "${VAULT_TOKEN}"
+  #   token: "${VAULT_TOKEN}"        # static token (auto-renewed via RenewSelf)
+  #   # token_file: "/secrets/vault-token"  # OR file-based (for Nomad workload identity; re-read periodically)
   #   key_name: "s3-orchestrator"
   #   mount_path: "transit"          # default: transit
+  #   # ca_cert: "/path/to/ca.pem"  # Vault CA certificate for TLS verification
+  #   # renew_interval: "5m"        # token renewal check interval (default: 5m)
   # previous_keys:                   # old master keys for rotation (unwrap only)
   #   - "base64-encoded-old-key"
 
@@ -454,6 +473,10 @@ usage_flush:
   adaptive_enabled: false    # shorten interval when near usage limits (default: false)
   adaptive_threshold: 0.8    # usage ratio to trigger fast flush (default: 0.8)
   fast_interval: "5s"        # interval when near limits (default: 5s)
+
+# reconcile:                   # optional: periodic orphan reconciliation
+#   enabled: false             # scan backends for untracked objects (default: false)
+#   interval: "24h"            # how often to run (default: 24h)
 
 # redis:                       # optional: shared usage counters for multi-instance deployments
 #   address: "redis:6379"      # host:port (required when section is present)
@@ -510,6 +533,7 @@ kill -HUP $(pidof s3-orchestrator)
 | `encryption` | No | Requires restart |
 | `redis` | No | Requires restart |
 | `routing_strategy` | No | Requires restart |
+| `reconcile` | No | Requires restart |
 | `backends` (structural: endpoint, credentials, count) | No | Requires restart |
 
 On a successful reload, the orchestrator logs each reloaded section:
@@ -716,15 +740,20 @@ JSON APIs are available at `{path}/api/dashboard`, `{path}/api/tree`, and `{path
 
 ## Background Tasks
 
+All locked background tasks apply a random startup jitter of up to half the tick interval before the first tick, preventing thundering herd on the advisory lock when multiple instances start simultaneously.
+
 | Task | Interval | Advisory Lock | Description |
 |------|----------|:-------------:|-------------|
-| Usage flush + metrics | configurable (default 30s) | When Redis active | Flushes usage counters to PostgreSQL, then refreshes quota stats, usage baselines, object counts, and multipart counts. Updates Prometheus gauges. Adaptive mode shortens interval near limits. Advisory lock prevents concurrent GETSET when Redis is active; without Redis each instance flushes independently. |
+| Usage flush + metrics | configurable (default 30s) | When Redis configured | Flushes usage counters to PostgreSQL, then refreshes quota stats, usage baselines, object counts, and multipart counts. Updates Prometheus gauges. Adaptive mode shortens interval near limits. Advisory lock is acquired whenever Redis is configured (regardless of health) to prevent double-counting during recovery. |
 | Stale multipart cleanup | 1h | Yes | Aborts multipart uploads older than 24h and deletes their temporary part objects. |
 | Cleanup queue | 1m | Yes | Retries failed backend object deletions with exponential backoff (1m to 24h, max 10 attempts). |
 | Rebalancer | configurable (default 6h) | Yes | Moves objects between backends per strategy. Only runs when enabled. |
 | Replicator | configurable (default 5m) | Yes | Creates copies of under-replicated objects. Only runs when factor > 1. Runs once at startup. |
 | Over-replication cleaner | configurable (default 5m) | Yes | Removes excess copies of objects that exceed the replication factor. Only runs when factor > 1. |
 | Lifecycle | 1h | Yes | Deletes objects matching lifecycle rules whose `created_at` exceeds `expiration_days`. Only runs when rules are configured. |
+| Reconciler | configurable (default 24h) | Yes | Scans each backend for untracked objects and imports them into the metadata database via `SyncBackend`. Only runs when `reconcile.enabled: true`. |
+
+Background services (rebalancer, replicator, over-replication cleaner, cleanup queue) share the admission semaphore with HTTP requests, so `max_concurrent_requests` is the total budget for both HTTP and background backend operations.
 
 ## Multi-Instance Deployment
 
@@ -738,7 +767,7 @@ Without Redis, each instance tracks usage counters independently in memory and f
 
 With Redis configured, all instances share the same usage counters via Redis `INCRBY`/`GET` operations. The baseline+delta formula stays the same (`DB baseline + counter + proposed`), but the counter lives in Redis instead of local memory, eliminating the cross-instance blind spot. When Redis is active, only one instance flushes counters to PostgreSQL (coordinated via advisory lock) since `GETSET` is a destructive read.
 
-A circuit breaker monitors Redis health. If Redis becomes unavailable, the backend falls back to local in-memory counters automatically — same behavior as running without Redis. A background health probe PINGs Redis periodically and, on recovery, syncs local deltas back to Redis before resuming shared operation.
+A circuit breaker monitors Redis health. If Redis becomes unavailable, the backend falls back to local in-memory counters automatically — same behavior as running without Redis. A background health probe PINGs Redis periodically and, on recovery, syncs local deltas back to Redis in a single atomic pipeline (delete stale keys + INCRBY local deltas) before resuming shared operation. Local counters are zeroed only after the pipeline commits, so a crash mid-recovery cannot lose deltas.
 
 ```yaml
 redis:

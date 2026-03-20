@@ -51,6 +51,7 @@ Coordination of periodic background workers that maintain storage health, enforc
     '    SCHED --> MPCLEAN[Multipart\\nCleanup]:::process',
     '    SCHED --> FLUSH[Usage\\nFlusher]:::filter',
     '    SCHED --> CQWORKER[Cleanup Queue\\nWorker]:::cleanup',
+    '    SCHED --> RECONCILE[Orphan\\nReconciler]:::process',
     '',
     '    REPL -->|copy to| S3[S3\\nBackends]:::storage',
     '    REBAL -->|move between| S3',
@@ -58,6 +59,7 @@ Coordination of periodic background workers that maintain storage health, enforc
     '    LIFECYCLE -->|delete from| S3',
     '    MPCLEAN -->|abort on| S3',
     '    CQWORKER -->|retry on| S3',
+    '    RECONCILE -->|list + import| S3',
     '',
     '    REPL -->|on failure| CQ{{Cleanup\\nQueue}}:::cleanup',
     '    REBAL -->|on failure| CQ',
@@ -120,17 +122,22 @@ Coordination of periodic background workers that maintain storage health, enforc
     FLUSH: {
       title: 'Usage Flusher',
       badge: 'filter', badgeText: 'every 30s (adaptive)',
-      body: '<p><code>UsageTracker.FlushUsage()</code> reads and resets in-memory atomic counters, then writes accumulated deltas (API requests, egress, ingress) to PostgreSQL.</p><p><b>Interval</b>: default 30 seconds (configurable via <code>usage_flush.interval</code>).<br><b>Adaptive mode</b>: when any backend exceeds <code>adaptive_threshold</code> ratio of its usage limit, interval shortens to <code>fast_interval</code> for higher enforcement accuracy.<br><b>Advisory lock</b>: <code>LockUsageFlush = 1007</code> (only when Redis counters are active).</p><p>Counters keyed by calendar month (<code>YYYY-MM</code>) for automatic period rollover. On DB error, deltas are added back to avoid data loss. Drained backends have counters discarded. Also refreshes <code>UpdateQuotaMetrics()</code> each tick.</p><p class="ac-metric">Metric: s3o_quota_used_bytes, s3o_quota_limit_bytes (per-backend gauges)</p>'
+      body: '<p><code>UsageTracker.FlushUsage()</code> reads and resets in-memory atomic counters, then writes accumulated deltas (API requests, egress, ingress) to PostgreSQL.</p><p><b>Interval</b>: default 30 seconds (configurable via <code>usage_flush.interval</code>).<br><b>Adaptive mode</b>: when any backend exceeds <code>adaptive_threshold</code> ratio of its usage limit, interval shortens to <code>fast_interval</code> for higher enforcement accuracy.<br><b>Advisory lock</b>: <code>LockUsageFlush = 1007</code> (always acquired when Redis is configured, regardless of health, to prevent double-counting during recovery).</p><p>Counters keyed by calendar month (<code>YYYY-MM</code>) for automatic period rollover. On DB error, deltas are added back to avoid data loss. Drained backends have counters discarded. Also refreshes <code>UpdateQuotaMetrics()</code> each tick.</p><p class="ac-metric">Metric: s3o_quota_used_bytes, s3o_quota_limit_bytes (per-backend gauges)</p>'
     },
     CQWORKER: {
       title: 'Cleanup Queue Worker',
       badge: 'cleanup', badgeText: 'every 1 min',
       body: '<p><code>CleanupWorker.ProcessCleanupQueue()</code> retries failed object deletions from the <code>cleanup_queue</code> table.</p><p><b>Interval</b>: 1 minute.<br><b>Advisory lock</b>: <code>LockCleanupQueue = 1003</code>.<br><b>Batch size</b>: 50 items per tick.<br><b>Concurrency</b>: configurable (default 10).</p><p><b>Backoff</b>: exponential <code>min(1m * 2^attempts, 24h)</code>.<br><b>Max attempts</b>: 10. Exhausted items remain in the table with <code>orphan_bytes</code> preserved for operator review.</p><p>Items are fed from all failure sites: <code>recordObjectOrCleanup</code>, <code>DeleteObject</code>, <code>UploadPart</code>, <code>CompleteMultipartUpload</code>, <code>AbortMultipartUpload</code>, rebalancer (3 sites), replicator. On success, <code>DecrementOrphanBytes()</code> frees the reserved quota.</p><p class="ac-metric">Metrics: cleanup_queue_enqueued_total{reason}, cleanup_queue_processed_total{status=success|retry|exhausted}, cleanup_queue_depth</p>'
     },
+    RECONCILE: {
+      title: 'Orphan Reconciler',
+      badge: 'process', badgeText: 'configurable (default 24h)',
+      body: '<p><code>Reconciler.Run()</code> scans each backend via <code>SyncBackend()</code> and imports untracked objects into the metadata database.</p><p><b>Interval</b>: configurable (default 24 hours).<br><b>Advisory lock</b>: <code>LockReconcile = 1009</code>.<br><b>Guard</b>: only runs when <code>reconcile.enabled: true</code>.</p><p>For each backend, calls <code>ListObjects</code> and checks each key against <code>object_locations</code>. Objects not in the database are imported via <code>ImportObject()</code>, which inserts the location record and increments <code>bytes_used</code>.</p><p>After importing, refreshes quota metrics to reflect newly tracked objects.</p><p>Audit event: <code>storage.ReconcileComplete</code> with imported count, skipped count, duration.</p>'
+    },
     PG: {
       title: 'PostgreSQL',
       badge: 'storage', badgeText: 'shared state',
-      body: '<p>Central metadata store shared by all background services. Hosts object locations, quota stats, usage counters, multipart upload state, cleanup queue, and advisory locks.</p><p><b>Advisory locks</b> provide leader election: <code>pg_try_advisory_lock(lockID)</code> ensures only one instance runs each service. Lock IDs: Rebalancer=1001, Replicator=1002, CleanupQueue=1003, MultipartCleanup=1004, Lifecycle=1005, UsageFlush=1007, OverReplication=1008.</p><p>Key tables: <code>object_locations</code>, <code>backend_quotas</code>, <code>backend_usage</code>, <code>cleanup_queue</code>, <code>multipart_uploads</code>, <code>multipart_parts</code>.</p>'
+      body: '<p>Central metadata store shared by all background services. Hosts object locations, quota stats, usage counters, multipart upload state, cleanup queue, and advisory locks.</p><p><b>Advisory locks</b> provide leader election: <code>pg_try_advisory_lock(lockID)</code> ensures only one instance runs each service. Lock IDs: Rebalancer=1001, Replicator=1002, CleanupQueue=1003, MultipartCleanup=1004, Lifecycle=1005, UsageFlush=1007, OverReplication=1008, Reconcile=1009.</p><p>Key tables: <code>object_locations</code>, <code>backend_quotas</code>, <code>backend_usage</code>, <code>cleanup_queue</code>, <code>multipart_uploads</code>, <code>multipart_parts</code>.</p>'
     },
     S3: {
       title: 'S3 Backends',

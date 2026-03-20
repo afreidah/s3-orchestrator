@@ -349,3 +349,15 @@ func newReplicatorService(manager *storage.BackendManager, store storage.Metadat
 		work:     replicateWork,
 	}
 }
+
+func newReconcileService(reconciler *storage.Reconciler, store storage.MetadataStore, interval time.Duration) *lockedTickerService {
+	return &lockedTickerService{
+		store:    store,
+		interval: interval,
+		lockID:   storage.LockReconcile,
+		name:     "Reconcile",
+		work: func(ctx context.Context) {
+			reconciler.Run(ctx)
+		},
+	}
+}

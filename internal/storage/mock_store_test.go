@@ -119,6 +119,9 @@ type mockStore struct {
 	listExpiredObjectsPages [][]ObjectLocation // for paginated lifecycle tests
 	listExpiredObjectsErr   error
 
+	// Import / Reconcile
+	importObjectErr error
+
 	// --- Call tracking ---
 	recordObjectCalls        []recordObjectCall
 	deleteObjectCalls        []string
@@ -515,6 +518,9 @@ func (m *mockStore) WithAdvisoryLock(_ context.Context, _ int64, fn func(ctx con
 }
 
 func (m *mockStore) ImportObject(_ context.Context, _, _ string, _ int64) (bool, error) {
+	if m.importObjectErr != nil {
+		return false, m.importObjectErr
+	}
 	return true, nil
 }
 

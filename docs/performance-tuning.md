@@ -149,9 +149,10 @@ Each S3 backend gets a dedicated `http.Transport` with tuned connection pool set
 
 | Setting | Value | Purpose |
 |---------|-------|---------|
-| `MaxIdleConns` | 100 | Connection pool size per backend |
+| `MaxIdleConns` | 100 | Idle connection pool size per backend |
 | `MaxIdleConnsPerHost` | 100 | Matches MaxIdleConns since each transport talks to one host |
-| `IdleConnTimeout` | 90s | Recycles idle connections, forcing fresh DNS on reconnect |
+| `MaxConnsPerHost` | 200 | Hard cap on active connections per backend (prevents unbounded growth during outages) |
+| `IdleConnTimeout` | 60s | Recycles idle connections, forcing fresh DNS on reconnect |
 | `KeepAlive` | 30s | TCP keepalive probes to detect stale connections |
 | `DialTimeout` | 10s | Connection establishment timeout |
 | `TLSHandshakeTimeout` | 10s | TLS negotiation timeout |
@@ -159,7 +160,7 @@ Each S3 backend gets a dedicated `http.Transport` with tuned connection pool set
 
 ### DNS Freshness
 
-The 90-second `IdleConnTimeout` addresses DNS staleness for endpoints resolved via Consul DNS or load balancers. When an idle connection is discarded, the next request triggers a fresh DNS lookup, allowing the orchestrator to follow backend endpoint changes without restarts.
+The 60-second `IdleConnTimeout` addresses DNS staleness for endpoints resolved via Consul DNS or load balancers. When an idle connection is discarded, the next request triggers a fresh DNS lookup, allowing the orchestrator to follow backend endpoint changes without restarts.
 
 ### Buffer Pool
 
