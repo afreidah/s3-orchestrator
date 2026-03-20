@@ -117,10 +117,12 @@ func NewRedisCounterBackend(client RedisClient, cfg *config.RedisConfig, backend
 // COUNTER BACKEND IMPLEMENTATION
 // -------------------------------------------------------------------------
 
+// Backends returns the list of backend names this counter tracks.
 func (r *RedisCounterBackend) Backends() []string {
 	return r.backends
 }
 
+// Add increments a single counter field in Redis, falling back to local on error.
 func (r *RedisCounterBackend) Add(backend, field string, delta int64) {
 	if r.inFallback() {
 		r.local.Add(backend, field, delta)
@@ -145,6 +147,7 @@ func (r *RedisCounterBackend) Add(backend, field string, delta int64) {
 	r.client.Expire(ctx, key, keyTTL)
 }
 
+// Load reads a counter field from Redis, falling back to local on error.
 func (r *RedisCounterBackend) Load(backend, field string) int64 {
 	if r.inFallback() {
 		return r.local.Load(backend, field)
@@ -165,6 +168,7 @@ func (r *RedisCounterBackend) Load(backend, field string) int64 {
 	return val
 }
 
+// Swap atomically reads and resets a counter field via Redis GETSET.
 func (r *RedisCounterBackend) Swap(backend, field string) int64 {
 	if r.inFallback() {
 		return r.local.Swap(backend, field)
@@ -185,6 +189,7 @@ func (r *RedisCounterBackend) Swap(backend, field string) int64 {
 	return val
 }
 
+// AddAll increments all three counter fields in a Redis pipeline.
 func (r *RedisCounterBackend) AddAll(backend string, apiReqs, egress, ingress int64) {
 	if r.inFallback() {
 		r.local.AddAll(backend, apiReqs, egress, ingress)
@@ -232,6 +237,7 @@ func (r *RedisCounterBackend) AddAll(backend string, apiReqs, egress, ingress in
 	}
 }
 
+// LoadAll reads all three counter values from Redis in a pipeline.
 func (r *RedisCounterBackend) LoadAll(backend string) LoadAllResult {
 	if r.inFallback() {
 		return r.local.LoadAll(backend)
@@ -370,12 +376,14 @@ func (r *RedisCounterBackend) tryRecover() {
 // FALLBACK MANAGEMENT
 // -------------------------------------------------------------------------
 
+// inFallback returns true when using local counters due to Redis unavailability.
 func (r *RedisCounterBackend) inFallback() bool {
 	r.fallbackMu.RLock()
 	defer r.fallbackMu.RUnlock()
 	return r.fallback
 }
 
+// setFallback toggles fallback mode and updates the Prometheus gauge.
 func (r *RedisCounterBackend) setFallback(v bool) {
 	r.fallbackMu.Lock()
 	r.fallback = v
@@ -403,10 +411,12 @@ func (r *RedisCounterBackend) recordFailure(err error) {
 // KEY HELPERS
 // -------------------------------------------------------------------------
 
+// key returns the Redis key for a backend field in the current period.
 func (r *RedisCounterBackend) key(backend, field string) string {
 	return r.keyForPeriod(backend, field, CurrentPeriod())
 }
 
+// keyForPeriod returns the Redis key for a backend field in a specific period.
 func (r *RedisCounterBackend) keyForPeriod(backend, field, period string) string {
 	return fmt.Sprintf("%s:usage:%s:%s:%s", r.prefix, period, backend, field)
 }

@@ -311,27 +311,52 @@ func (c *backendCore) enqueueCleanup(ctx context.Context, backendName, objectKey
 	telemetry.CleanupQueueEnqueuedTotal.WithLabelValues(reason).Inc()
 }
 
-// --- worker.Ops implementation (exported wrappers for unexported methods) ---
+// -------------------------------------------------------------------------
+// worker.Ops IMPLEMENTATION
+// -------------------------------------------------------------------------
 
+// AcquireAdmission blocks until a slot is available in the shared admission semaphore.
 func (c *backendCore) AcquireAdmission(ctx context.Context) bool { return c.acquireAdmission(ctx) }
-func (c *backendCore) ReleaseAdmission()                         { c.releaseAdmission() }
+
+// ReleaseAdmission returns a slot to the admission semaphore.
+func (c *backendCore) ReleaseAdmission() { c.releaseAdmission() }
+
+// WithTimeout returns a context with the configured backend timeout applied.
 func (c *backendCore) WithTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
 	return c.withTimeout(ctx)
 }
+
+// Backends returns the backend map.
 func (c *backendCore) Backends() map[string]backend.ObjectBackend { return c.backends }
-func (c *backendCore) BackendOrder() []string                     { return c.order }
-func (c *backendCore) Store() store.MetadataStore                 { return c.store }
-func (c *backendCore) Usage() *counter.UsageTracker               { return c.usage }
+
+// BackendOrder returns the configured backend ordering.
+func (c *backendCore) BackendOrder() []string { return c.order }
+
+// Store returns the metadata store.
+func (c *backendCore) Store() store.MetadataStore { return c.store }
+
+// Usage returns the usage tracker.
+func (c *backendCore) Usage() *counter.UsageTracker { return c.usage }
+
+// StreamCopy pipes a GetObject→PutObject between two backends.
 func (c *backendCore) StreamCopy(ctx context.Context, src, dst backend.ObjectBackend, key string) error {
 	return c.streamCopy(ctx, src, dst, key)
 }
+
+// DeleteWithTimeout deletes an object from a backend with the configured timeout.
 func (c *backendCore) DeleteWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) error {
 	return c.deleteWithTimeout(ctx, be, key)
 }
+
+// DeleteOrEnqueue deletes an object, enqueueing for retry on failure.
 func (c *backendCore) DeleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, backendName, key, reason string, sizeBytes int64) {
 	c.deleteOrEnqueue(ctx, be, backendName, key, reason, sizeBytes)
 }
+
+// RecordOperation records a backend operation for metrics.
 func (c *backendCore) RecordOperation(operation, backendName string, start time.Time, err error) {
 	c.recordOperation(operation, backendName, start, err)
 }
+
+// ExcludeDraining filters out backends that are being drained.
 func (c *backendCore) ExcludeDraining(eligible []string) []string { return c.excludeDraining(eligible) }

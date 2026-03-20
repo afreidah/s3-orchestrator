@@ -44,6 +44,7 @@ func NewLocalCounterBackend(backendNames []string) *LocalCounterBackend {
 // COUNTER BACKEND IMPLEMENTATION
 // -------------------------------------------------------------------------
 
+// Backends returns the list of backend names this counter tracks.
 func (l *LocalCounterBackend) Backends() []string {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
@@ -54,6 +55,7 @@ func (l *LocalCounterBackend) Backends() []string {
 	return names
 }
 
+// Add increments a single counter field for a backend.
 func (l *LocalCounterBackend) Add(backend, field string, delta int64) {
 	c := l.get(backend)
 	if c == nil {
@@ -69,6 +71,7 @@ func (l *LocalCounterBackend) Add(backend, field string, delta int64) {
 	}
 }
 
+// Load returns the current value of a counter field.
 func (l *LocalCounterBackend) Load(backend, field string) int64 {
 	c := l.get(backend)
 	if c == nil {
@@ -85,6 +88,7 @@ func (l *LocalCounterBackend) Load(backend, field string) int64 {
 	return 0
 }
 
+// Swap atomically reads and resets a counter field, returning the old value.
 func (l *LocalCounterBackend) Swap(backend, field string) int64 {
 	c := l.get(backend)
 	if c == nil {
@@ -101,6 +105,8 @@ func (l *LocalCounterBackend) Swap(backend, field string) int64 {
 	return 0
 }
 
+// Add increments a single counter field for a backend.
+// AddAll increments all three counter fields (API requests, egress, ingress) atomically.
 func (l *LocalCounterBackend) AddAll(backend string, apiReqs, egress, ingress int64) {
 	c := l.get(backend)
 	if c == nil {
@@ -117,6 +123,8 @@ func (l *LocalCounterBackend) AddAll(backend string, apiReqs, egress, ingress in
 	}
 }
 
+// Load returns the current value of a counter field.
+// LoadAll returns all three counter values for a backend.
 func (l *LocalCounterBackend) LoadAll(backend string) LoadAllResult {
 	c := l.get(backend)
 	if c == nil {
