@@ -82,8 +82,6 @@ type MetadataStore interface {
 	GetOverReplicatedObjects(ctx context.Context, factor, limit int) ([]ObjectLocation, error)
 	CountOverReplicatedObjects(ctx context.Context, factor int) (int64, error)
 	RemoveExcessCopy(ctx context.Context, key, backendName string, size int64) error
-	GetObjectCopiesForUpdate(ctx context.Context, key string) ([]ObjectLocation, error)
-
 	// --- Usage tracking operations ---
 	FlushUsageDeltas(ctx context.Context, backendName, period string, apiRequests, egressBytes, ingressBytes int64) error
 	GetUsageForPeriod(ctx context.Context, period string) (map[string]UsageStat, error)
@@ -128,5 +126,50 @@ type CleanupItem struct {
 	SizeBytes   int64
 }
 
-// Compile-time check: *Store satisfies MetadataStore.
+// -------------------------------------------------------------------------
+// NARROW ROLE INTERFACES
+// -------------------------------------------------------------------------
+
+// MetricsStore defines the store methods used by MetricsCollector.
+type MetricsStore interface {
+	GetQuotaStats(ctx context.Context) (map[string]QuotaStat, error)
+	GetObjectCounts(ctx context.Context) (map[string]int64, error)
+	GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error)
+	GetUsageForPeriod(ctx context.Context, period string) (map[string]UsageStat, error)
+	GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]ObjectLocation, error)
+}
+
+// DashboardStore defines the store methods used by DashboardAggregator.
+type DashboardStore interface {
+	GetQuotaStats(ctx context.Context) (map[string]QuotaStat, error)
+	GetObjectCounts(ctx context.Context) (map[string]int64, error)
+	GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error)
+	GetUsageForPeriod(ctx context.Context, period string) (map[string]UsageStat, error)
+	ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*DirectoryListResult, error)
+}
+
+// UsageFlusher defines the store method used by UsageTracker.FlushUsage.
+type UsageFlusher interface {
+	FlushUsageDeltas(ctx context.Context, backendName, period string, apiRequests, egressBytes, ingressBytes int64) error
+}
+
+// AdvisoryLocker defines the store method used by background services for
+// leader election across instances.
+type AdvisoryLocker interface {
+	WithAdvisoryLock(ctx context.Context, lockID int64, fn func(ctx context.Context) error) (bool, error)
+}
+
+// -------------------------------------------------------------------------
+// COMPILE-TIME CHECKS
+// -------------------------------------------------------------------------
+
+// Verify *Store satisfies MetadataStore.
 var _ MetadataStore = (*Store)(nil)
+
+// Verify MetadataStore satisfies all narrow interfaces.
+var (
+	_ MetricsStore   = (MetadataStore)(nil)
+	_ DashboardStore = (MetadataStore)(nil)
+	_ UsageFlusher   = (MetadataStore)(nil)
+	_ AdvisoryLocker = (MetadataStore)(nil)
+)
