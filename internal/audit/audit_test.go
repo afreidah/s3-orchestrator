@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"sync/atomic"
 	"testing"
 )
 
@@ -85,6 +86,31 @@ func TestLog_StructuredOutput(t *testing.T) {
 	if size, ok := entry["size"].(float64); !ok || int64(size) != 12345 {
 		t.Errorf("expected size=12345, got %v", entry["size"])
 	}
+}
+
+func TestLog_OnEventCallback(t *testing.T) {
+	var called atomic.Int32
+	var lastEvent string
+	OnEvent = func(event string) {
+		called.Add(1)
+		lastEvent = event
+	}
+	defer func() { OnEvent = nil }()
+
+	Log(context.Background(), "test.event")
+
+	if called.Load() != 1 {
+		t.Errorf("expected OnEvent called once, got %d", called.Load())
+	}
+	if lastEvent != "test.event" {
+		t.Errorf("expected event=test.event, got %q", lastEvent)
+	}
+}
+
+func TestLog_NilOnEvent(t *testing.T) {
+	OnEvent = nil
+	// Should not panic when OnEvent is nil
+	Log(context.Background(), "safe.event")
 }
 
 func TestLog_WithoutRequestID(t *testing.T) {

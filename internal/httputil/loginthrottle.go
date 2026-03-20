@@ -9,7 +9,7 @@
 // cleaned up by a background goroutine.
 // -------------------------------------------------------------------------------
 
-package server
+package httputil
 
 import (
 	"sync"

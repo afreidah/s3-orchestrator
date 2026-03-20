@@ -588,13 +588,6 @@ func (f *FailableStore) RemoveExcessCopy(ctx context.Context, key, backendName s
 	return f.MetadataStore.RemoveExcessCopy(ctx, key, backendName, size)
 }
 
-func (f *FailableStore) GetObjectCopiesForUpdate(ctx context.Context, key string) ([]storage.ObjectLocation, error) {
-	if f.isFailing() {
-		return nil, errSimulatedDBFailure
-	}
-	return f.MetadataStore.GetObjectCopiesForUpdate(ctx, key)
-}
-
 // tripCircuitBreaker makes enough failing requests to trip the circuit breaker open.
 func tripCircuitBreaker(t *testing.T) {
 	t.Helper()

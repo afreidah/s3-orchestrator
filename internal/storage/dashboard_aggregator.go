@@ -16,13 +16,13 @@ import "context"
 // DashboardAggregator queries the metadata store and usage tracker to build
 // snapshots for the web UI.
 type DashboardAggregator struct {
-	store MetadataStore
+	store DashboardStore
 	usage *UsageTracker
 	order []string
 }
 
 // NewDashboardAggregator creates a DashboardAggregator.
-func NewDashboardAggregator(store MetadataStore, usage *UsageTracker, order []string) *DashboardAggregator {
+func NewDashboardAggregator(store DashboardStore, usage *UsageTracker, order []string) *DashboardAggregator {
 	return &DashboardAggregator{
 		store: store,
 		usage: usage,

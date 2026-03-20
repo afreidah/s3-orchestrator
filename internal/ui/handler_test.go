@@ -24,7 +24,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/server"
+	"github.com/afreidah/s3-orchestrator/internal/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/storage"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/testutil"
@@ -1466,7 +1466,7 @@ func TestAPILogs_HasMore(t *testing.T) {
 
 func TestLogin_BruteForceProtection(t *testing.T) {
 	h, mux := newTestHandler(t)
-	lt := server.NewLoginThrottle(3, 5*time.Minute)
+	lt := httputil.NewLoginThrottle(3, 5*time.Minute)
 	defer lt.Close()
 	h.loginThrottle = lt
 
@@ -1495,7 +1495,7 @@ func TestLogin_BruteForceProtection(t *testing.T) {
 
 func TestLogin_BruteForceReset(t *testing.T) {
 	h, mux := newTestHandler(t)
-	lt := server.NewLoginThrottle(3, 5*time.Minute)
+	lt := httputil.NewLoginThrottle(3, 5*time.Minute)
 	defer lt.Close()
 	h.loginThrottle = lt
 
