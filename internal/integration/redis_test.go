@@ -21,7 +21,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/storage"
+	"github.com/afreidah/s3-orchestrator/internal/counter"
 )
 
 // redisAddr returns the Redis address from the environment or the default.
@@ -43,7 +43,7 @@ func newRedisClient(t *testing.T) *redis.Client {
 
 // newTestRedisBackend creates a RedisCounterBackend with a unique key prefix
 // to isolate test runs.
-func newTestRedisBackend(t *testing.T, backends []string) (*storage.RedisCounterBackend, *redis.Client) {
+func newTestRedisBackend(t *testing.T, backends []string) (*counter.RedisCounterBackend, *redis.Client) {
 	t.Helper()
 	client := newRedisClient(t)
 
@@ -55,7 +55,7 @@ func newTestRedisBackend(t *testing.T, backends []string) (*storage.RedisCounter
 		OpenTimeout:      500 * time.Millisecond,
 	}
 
-	rb, err := storage.NewRedisCounterBackend(client, cfg, backends)
+	rb, err := counter.NewRedisCounterBackend(client, cfg, backends)
 	if err != nil {
 		t.Fatalf("NewRedisCounterBackend: %v", err)
 	}
@@ -72,17 +72,17 @@ func TestRedis_AddAndLoad(t *testing.T) {
 	backends := []string{"b1", "b2"}
 	rb, _ := newTestRedisBackend(t, backends)
 
-	rb.Add("b1", storage.FieldAPIRequests, 10)
-	rb.Add("b1", storage.FieldEgressBytes, 200)
-	rb.Add("b2", storage.FieldIngressBytes, 300)
+	rb.Add("b1", counter.FieldAPIRequests, 10)
+	rb.Add("b1", counter.FieldEgressBytes, 200)
+	rb.Add("b2", counter.FieldIngressBytes, 300)
 
-	if got := rb.Load("b1", storage.FieldAPIRequests); got != 10 {
+	if got := rb.Load("b1", counter.FieldAPIRequests); got != 10 {
 		t.Errorf("b1 api_requests = %d, want 10", got)
 	}
-	if got := rb.Load("b1", storage.FieldEgressBytes); got != 200 {
+	if got := rb.Load("b1", counter.FieldEgressBytes); got != 200 {
 		t.Errorf("b1 egress_bytes = %d, want 200", got)
 	}
-	if got := rb.Load("b2", storage.FieldIngressBytes); got != 300 {
+	if got := rb.Load("b2", counter.FieldIngressBytes); got != 300 {
 		t.Errorf("b2 ingress_bytes = %d, want 300", got)
 	}
 }
@@ -110,15 +110,15 @@ func TestRedis_Swap(t *testing.T) {
 	backends := []string{"b1"}
 	rb, _ := newTestRedisBackend(t, backends)
 
-	rb.Add("b1", storage.FieldAPIRequests, 42)
+	rb.Add("b1", counter.FieldAPIRequests, 42)
 
-	got := rb.Swap("b1", storage.FieldAPIRequests)
+	got := rb.Swap("b1", counter.FieldAPIRequests)
 	if got != 42 {
 		t.Errorf("Swap returned %d, want 42", got)
 	}
 
 	// After swap, counter should be 0
-	if v := rb.Load("b1", storage.FieldAPIRequests); v != 0 {
+	if v := rb.Load("b1", counter.FieldAPIRequests); v != 0 {
 		t.Errorf("after Swap, Load = %d, want 0", v)
 	}
 }
@@ -136,7 +136,7 @@ func TestRedis_SharedVisibility(t *testing.T) {
 		OpenTimeout:      500 * time.Millisecond,
 	}
 
-	rb1, err := storage.NewRedisCounterBackend(client, cfg, backends)
+	rb1, err := counter.NewRedisCounterBackend(client, cfg, backends)
 	if err != nil {
 		t.Fatalf("rb1: %v", err)
 	}
@@ -145,22 +145,22 @@ func TestRedis_SharedVisibility(t *testing.T) {
 	// Second instance needs its own client to simulate a separate process,
 	// but shares the same prefix.
 	client2 := newRedisClient(t)
-	rb2, err := storage.NewRedisCounterBackend(client2, cfg, backends)
+	rb2, err := counter.NewRedisCounterBackend(client2, cfg, backends)
 	if err != nil {
 		t.Fatalf("rb2: %v", err)
 	}
 	defer rb2.Close()
 
 	// Instance 1 writes
-	rb1.Add("b1", storage.FieldAPIRequests, 10)
+	rb1.Add("b1", counter.FieldAPIRequests, 10)
 	// Instance 2 writes
-	rb2.Add("b1", storage.FieldAPIRequests, 20)
+	rb2.Add("b1", counter.FieldAPIRequests, 20)
 
 	// Both should see the combined value
-	if got := rb1.Load("b1", storage.FieldAPIRequests); got != 30 {
+	if got := rb1.Load("b1", counter.FieldAPIRequests); got != 30 {
 		t.Errorf("rb1.Load = %d, want 30", got)
 	}
-	if got := rb2.Load("b1", storage.FieldAPIRequests); got != 30 {
+	if got := rb2.Load("b1", counter.FieldAPIRequests); got != 30 {
 		t.Errorf("rb2.Load = %d, want 30", got)
 	}
 }

@@ -12,21 +12,20 @@ package server
 
 import (
 	"encoding/xml"
+	"github.com/afreidah/s3-orchestrator/internal/store"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/afreidah/s3-orchestrator/internal/storage"
 )
 
 func TestListObjectsV2_Success(t *testing.T) {
 	ts, mockStore, _ := newTestServer(t)
 	now := time.Now()
 
-	mockStore.ListObjectsResp = &storage.ListObjectsResult{
-		Objects: []storage.ObjectLocation{
+	mockStore.ListObjectsResp = &store.ListObjectsResult{
+		Objects: []store.ObjectLocation{
 			{ObjectKey: "mybucket/file1.txt", BackendName: "b1", SizeBytes: 100, CreatedAt: now},
 			{ObjectKey: "mybucket/file2.txt", BackendName: "b1", SizeBytes: 200, CreatedAt: now},
 		},
@@ -64,8 +63,8 @@ func TestListObjectsV2_WithDelimiter(t *testing.T) {
 	now := time.Now()
 
 	// Return objects with a common directory prefix
-	mockStore.ListObjectsResp = &storage.ListObjectsResult{
-		Objects: []storage.ObjectLocation{
+	mockStore.ListObjectsResp = &store.ListObjectsResult{
+		Objects: []store.ObjectLocation{
 			{ObjectKey: "mybucket/photos/a.jpg", BackendName: "b1", SizeBytes: 100, CreatedAt: now},
 			{ObjectKey: "mybucket/photos/b.jpg", BackendName: "b1", SizeBytes: 200, CreatedAt: now},
 			{ObjectKey: "mybucket/readme.txt", BackendName: "b1", SizeBytes: 50, CreatedAt: now},
@@ -98,8 +97,8 @@ func TestListObjectsV2_Pagination(t *testing.T) {
 
 	// Return 3 objects when maxKeys=2. The manager will take the first 2 and
 	// set IsTruncated=true with a NextContinuationToken.
-	mockStore.ListObjectsResp = &storage.ListObjectsResult{
-		Objects: []storage.ObjectLocation{
+	mockStore.ListObjectsResp = &store.ListObjectsResult{
+		Objects: []store.ObjectLocation{
 			{ObjectKey: "mybucket/a.txt", BackendName: "b1", SizeBytes: 10, CreatedAt: now},
 			{ObjectKey: "mybucket/b.txt", BackendName: "b1", SizeBytes: 20, CreatedAt: now},
 			{ObjectKey: "mybucket/c.txt", BackendName: "b1", SizeBytes: 30, CreatedAt: now},
@@ -140,8 +139,8 @@ func TestListObjectsV2_Pagination(t *testing.T) {
 func TestListObjectsV2_Empty(t *testing.T) {
 	ts, mockStore, _ := newTestServer(t)
 
-	mockStore.ListObjectsResp = &storage.ListObjectsResult{
-		Objects: []storage.ObjectLocation{},
+	mockStore.ListObjectsResp = &store.ListObjectsResult{
+		Objects: []store.ObjectLocation{},
 	}
 
 	resp := doReq(t, http.MethodGet, ts.URL+"/mybucket/?list-type=2", nil)
@@ -178,8 +177,8 @@ func TestListObjectsV1_Success(t *testing.T) {
 	ts, mockStore, _ := newTestServer(t)
 	now := time.Now()
 
-	mockStore.ListObjectsResp = &storage.ListObjectsResult{
-		Objects: []storage.ObjectLocation{
+	mockStore.ListObjectsResp = &store.ListObjectsResult{
+		Objects: []store.ObjectLocation{
 			{ObjectKey: "mybucket/file1.txt", BackendName: "b1", SizeBytes: 100, CreatedAt: now},
 			{ObjectKey: "mybucket/file2.txt", BackendName: "b1", SizeBytes: 200, CreatedAt: now},
 		},
@@ -218,8 +217,8 @@ func TestListObjectsV1_WithMarker(t *testing.T) {
 	ts, mockStore, _ := newTestServer(t)
 	now := time.Now()
 
-	mockStore.ListObjectsResp = &storage.ListObjectsResult{
-		Objects: []storage.ObjectLocation{
+	mockStore.ListObjectsResp = &store.ListObjectsResult{
+		Objects: []store.ObjectLocation{
 			{ObjectKey: "mybucket/c.txt", BackendName: "b1", SizeBytes: 30, CreatedAt: now},
 		},
 	}
@@ -244,7 +243,7 @@ func TestListObjectsV1_WithMarker(t *testing.T) {
 
 func TestListObjectsV1_StoreError(t *testing.T) {
 	ts, mockStore, _ := newTestServer(t)
-	mockStore.ListObjectsErr = &storage.S3Error{
+	mockStore.ListObjectsErr = &store.S3Error{
 		StatusCode: 500,
 		Code:       "InternalError",
 		Message:    "db error",
@@ -264,8 +263,8 @@ func TestListObjectsV1_Pagination(t *testing.T) {
 
 	// Return 3 objects when maxKeys=2. The manager will take the first 2 and
 	// set IsTruncated=true with a NextContinuationToken (mapped to NextMarker).
-	mockStore.ListObjectsResp = &storage.ListObjectsResult{
-		Objects: []storage.ObjectLocation{
+	mockStore.ListObjectsResp = &store.ListObjectsResult{
+		Objects: []store.ObjectLocation{
 			{ObjectKey: "mybucket/a.txt", BackendName: "b1", SizeBytes: 10, CreatedAt: now},
 			{ObjectKey: "mybucket/b.txt", BackendName: "b1", SizeBytes: 20, CreatedAt: now},
 			{ObjectKey: "mybucket/c.txt", BackendName: "b1", SizeBytes: 30, CreatedAt: now},

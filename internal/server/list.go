@@ -16,11 +16,10 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
+	"github.com/afreidah/s3-orchestrator/internal/store"
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/afreidah/s3-orchestrator/internal/storage"
 )
 
 // xmlContent represents a single object in an S3 ListBucketResult response.
@@ -69,7 +68,7 @@ type xmlListResultV2 struct {
 
 // buildListContents converts storage objects and common prefixes to their XML
 // representations, stripping the internal bucket prefix from each key.
-func buildListContents(objects []storage.ObjectLocation, prefixes []string, bucketPrefix string) ([]xmlContent, []xmlCommonPrefix) {
+func buildListContents(objects []store.ObjectLocation, prefixes []string, bucketPrefix string) ([]xmlContent, []xmlCommonPrefix) {
 	contents := make([]xmlContent, 0, len(objects))
 	for _, obj := range objects {
 		contents = append(contents, xmlContent{

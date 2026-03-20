@@ -6,7 +6,7 @@ COPY cmd/ cmd/
 COPY internal/ internal/
 RUN go install github.com/princjef/gomarkdoc/cmd/gomarkdoc@latest
 RUN mkdir -p /godoc && \
-    for pkg in admin audit auth config encryption lifecycle server storage telemetry ui; do \
+    for pkg in admin audit auth backend breaker config counter encryption httputil lifecycle proxy server store telemetry ui worker; do \
         printf -- '---\ntitle: "%s"\n---\n\n' "$pkg" > /godoc/$pkg.md && \
         gomarkdoc ./internal/$pkg >> /godoc/$pkg.md && \
         sed -i '/^# '"$pkg"'$/d' /godoc/$pkg.md; \
