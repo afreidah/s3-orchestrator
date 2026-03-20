@@ -13,13 +13,12 @@ package server
 
 import (
 	"encoding/xml"
+	"github.com/afreidah/s3-orchestrator/internal/store"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/afreidah/s3-orchestrator/internal/storage"
 )
 
 // -------------------------------------------------------------------------
@@ -29,7 +28,7 @@ import (
 func TestCreateMultipartUpload_Success(t *testing.T) {
 	ts, mockStore, _ := newTestServer(t)
 
-	mockStore.GetMultipartResp = &storage.MultipartUpload{
+	mockStore.GetMultipartResp = &store.MultipartUpload{
 		UploadID:    "test-upload-id",
 		ObjectKey:   "mybucket/testkey",
 		BackendName: "b1",
@@ -67,7 +66,7 @@ func TestCreateMultipartUpload_Success(t *testing.T) {
 
 func TestCreateMultipartUpload_StoreError(t *testing.T) {
 	ts, mockStore, _ := newTestServer(t)
-	mockStore.CreateMultipartErr = &storage.S3Error{
+	mockStore.CreateMultipartErr = &store.S3Error{
 		StatusCode: 500,
 		Code:       "InternalError",
 		Message:    "db error",
@@ -89,7 +88,7 @@ func TestCreateMultipartUpload_StoreError(t *testing.T) {
 func TestCreateMultipartUpload_DefaultContentType(t *testing.T) {
 	ts, mockStore, _ := newTestServer(t)
 
-	mockStore.GetMultipartResp = &storage.MultipartUpload{
+	mockStore.GetMultipartResp = &store.MultipartUpload{
 		UploadID:    "test-upload-id",
 		ObjectKey:   "mybucket/testkey",
 		BackendName: "b1",
@@ -134,7 +133,7 @@ func TestCreateMultipartUpload_MetadataTooLarge(t *testing.T) {
 func TestUploadPart_Success(t *testing.T) {
 	ts, mockStore, _ := newTestServer(t)
 
-	mockStore.GetMultipartResp = &storage.MultipartUpload{
+	mockStore.GetMultipartResp = &store.MultipartUpload{
 		UploadID:    "upload-1",
 		ObjectKey:   "mybucket/testkey",
 		BackendName: "b1",
@@ -237,13 +236,13 @@ func TestCompleteMultipartUpload_Success(t *testing.T) {
 	ts, mockStore, backend := newTestServer(t)
 
 	// Store has a multipart upload with one part
-	mockStore.GetMultipartResp = &storage.MultipartUpload{
+	mockStore.GetMultipartResp = &store.MultipartUpload{
 		UploadID:    "upload-1",
 		ObjectKey:   "mybucket/testkey",
 		BackendName: "b1",
 		ContentType: "text/plain",
 	}
-	mockStore.GetPartsResp = []storage.MultipartPart{
+	mockStore.GetPartsResp = []store.MultipartPart{
 		{PartNumber: 1, ETag: `"part1"`, SizeBytes: 4},
 	}
 	// Pre-store the part object on the backend at the internal part key
@@ -302,7 +301,7 @@ func TestCompleteMultipartUpload_MalformedXML(t *testing.T) {
 func TestAbortMultipartUpload_Success(t *testing.T) {
 	ts, mockStore, _ := newTestServer(t)
 
-	mockStore.GetMultipartResp = &storage.MultipartUpload{
+	mockStore.GetMultipartResp = &store.MultipartUpload{
 		UploadID:    "upload-1",
 		ObjectKey:   "mybucket/testkey",
 		BackendName: "b1",
@@ -326,7 +325,7 @@ func TestAbortMultipartUpload_Success(t *testing.T) {
 
 func TestAbortMultipartUpload_NotFound(t *testing.T) {
 	ts, mockStore, _ := newTestServer(t)
-	mockStore.GetMultipartErr = storage.ErrObjectNotFound
+	mockStore.GetMultipartErr = store.ErrObjectNotFound
 
 	req, _ := http.NewRequest(http.MethodDelete, ts.URL+"/mybucket/testkey?uploadId=nonexistent", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
@@ -349,7 +348,7 @@ func TestListParts_Success(t *testing.T) {
 	ts, mockStore, _ := newTestServer(t)
 
 	now := time.Now().UTC()
-	mockStore.GetPartsResp = []storage.MultipartPart{
+	mockStore.GetPartsResp = []store.MultipartPart{
 		{PartNumber: 1, ETag: `"aaa"`, SizeBytes: 100, CreatedAt: now},
 		{PartNumber: 2, ETag: `"bbb"`, SizeBytes: 200, CreatedAt: now},
 	}
@@ -388,7 +387,7 @@ func TestListParts_Success(t *testing.T) {
 
 func TestListParts_StoreError(t *testing.T) {
 	ts, mockStore, _ := newTestServer(t)
-	mockStore.GetPartsErr = &storage.S3Error{
+	mockStore.GetPartsErr = &store.S3Error{
 		StatusCode: 500,
 		Code:       "InternalError",
 		Message:    "db error",
@@ -430,7 +429,7 @@ func TestListMultipartUploads_Success(t *testing.T) {
 	ts, mockStore, _ := newTestServer(t)
 	now := time.Now().UTC()
 
-	mockStore.ListMultipartUploadsResp = []storage.MultipartUpload{
+	mockStore.ListMultipartUploadsResp = []store.MultipartUpload{
 		{UploadID: "upload-1", ObjectKey: "mybucket/file1.txt", ContentType: "text/plain", CreatedAt: now},
 		{UploadID: "upload-2", ObjectKey: "mybucket/file2.txt", ContentType: "text/plain", CreatedAt: now},
 	}
@@ -490,7 +489,7 @@ func TestListMultipartUploads_Truncated(t *testing.T) {
 
 	// Return 3 uploads when max-uploads=2; handler fetches maxUploads+1 to
 	// detect truncation, so the mock needs to return 3.
-	mockStore.ListMultipartUploadsResp = []storage.MultipartUpload{
+	mockStore.ListMultipartUploadsResp = []store.MultipartUpload{
 		{UploadID: "u1", ObjectKey: "mybucket/a.txt", ContentType: "text/plain", CreatedAt: now},
 		{UploadID: "u2", ObjectKey: "mybucket/b.txt", ContentType: "text/plain", CreatedAt: now},
 		{UploadID: "u3", ObjectKey: "mybucket/c.txt", ContentType: "text/plain", CreatedAt: now},
@@ -520,7 +519,7 @@ func TestListMultipartUploads_Truncated(t *testing.T) {
 
 func TestListMultipartUploads_StoreError(t *testing.T) {
 	ts, mockStore, _ := newTestServer(t)
-	mockStore.ListMultipartUploadsErr = &storage.S3Error{
+	mockStore.ListMultipartUploadsErr = &store.S3Error{
 		StatusCode: 500,
 		Code:       "InternalError",
 		Message:    "db error",

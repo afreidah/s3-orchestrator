@@ -78,8 +78,9 @@ push: builder ## Build and push multi-arch images to registry
 # DEVELOPMENT
 # -------------------------------------------------------------------------
 
-generate: ## Generate sqlc query code
+generate: ## Generate sqlc query code and interface mocks
 	sqlc generate
+	go generate ./...
 
 test: ## Run Go tests with coverage
 	go test -race -cover ./...
@@ -114,9 +115,9 @@ docs: ## Serve godoc locally at http://localhost:8080
 
 migration: ## Create a new database migration file
 	@read -p "Migration name: " name; \
-	last=$$(ls internal/storage/migrations/*.sql 2>/dev/null | sed 's/.*\///' | sort -n | tail -1 | grep -oE '^[0-9]+'); \
+	last=$$(ls internal/store/migrations/*.sql 2>/dev/null | sed 's/.*\///' | sort -n | tail -1 | grep -oE '^[0-9]+'); \
 	next=$$(printf '%05d' $$(( $${last:-0} + 1 ))); \
-	file="internal/storage/migrations/$${next}_$${name}.sql"; \
+	file="internal/store/migrations/$${next}_$${name}.sql"; \
 	printf -- '-- +goose Up\n\n-- +goose Down\n' > "$$file"; \
 	echo "Created $$file"
 
@@ -246,7 +247,7 @@ nomad-demo: ## Run the s3-orchestrator in Nomad dev mode (requires docker, nomad
 WEB_IMAGE  := $(REGISTRY)/s3-orchestrator-web
 WEB_TAG    ?= $(VERSION)
 
-GODOC_PKGS := admin audit auth config encryption lifecycle server storage telemetry ui
+GODOC_PKGS := admin audit auth backend breaker config counter encryption httputil lifecycle proxy server store telemetry ui worker
 
 web-tools: ## Install Hugo and gomarkdoc for local website development
 	go install github.com/gohugoio/hugo@latest

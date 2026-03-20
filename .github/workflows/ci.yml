@@ -43,7 +43,7 @@ jobs:
               - 'go.mod'
               - 'go.sum'
               - 'sqlc.yaml'
-              - 'internal/storage/sqlc/queries/**'
+              - 'internal/store/sqlc/queries/**'
               - 'Makefile'
               - '.golangci.yml'
             web:
@@ -119,7 +119,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Unit tests
-        run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
+        run: go test -race -coverprofile=coverage.out -covermode=atomic -coverpkg=./... ./...
 
       - name: Upload coverage
         uses: codecov/codecov-action@v5

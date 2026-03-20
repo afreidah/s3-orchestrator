@@ -33,9 +33,11 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/afreidah/s3-orchestrator/internal/auth"
+	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/server"
-	"github.com/afreidah/s3-orchestrator/internal/storage"
+	"github.com/afreidah/s3-orchestrator/internal/store"
 )
 
 const virtualBucket = "test-bucket"
@@ -43,13 +45,13 @@ const virtualBucket = "test-bucket"
 var (
 	proxyAddr         string
 	testDB            *sql.DB
-	testManager       *storage.BackendManager
-	testStore         *storage.Store
+	testManager       *proxy.BackendManager
+	testStore         *store.Store
 	testFailableStore *FailableStore
-	testCBStore       *storage.CircuitBreakerStore
-	testBackends      map[string]storage.ObjectBackend
+	testCBStore       *store.CircuitBreakerStore
+	testBackends      map[string]s3be.ObjectBackend
 	testBackendOrder  []string
-	allBackends       map[string]storage.ObjectBackend
+	allBackends       map[string]s3be.ObjectBackend
 	allBackendOrder   []string
 )
 
@@ -78,7 +80,7 @@ func TestMain(m *testing.M) {
 				Name: virtualBucket,
 				Credentials: []config.CredentialConfig{
 					{
-						AccessKeyID:    "test",
+						AccessKeyID:     "test",
 						SecretAccessKey: "test",
 					},
 				},
@@ -138,26 +140,26 @@ func TestMain(m *testing.M) {
 
 	ctx := context.Background()
 
-	store, err := storage.NewStore(ctx, &cfg.Database)
+	db, err := store.NewStore(ctx, &cfg.Database)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to create store: %v\n", err)
 		os.Exit(1)
 	}
 
-	if err := store.RunMigrations(ctx); err != nil {
+	if err := db.RunMigrations(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to run migrations: %v\n", err)
 		os.Exit(1)
 	}
 
-	if err := store.SyncQuotaLimits(ctx, cfg.Backends); err != nil {
+	if err := db.SyncQuotaLimits(ctx, cfg.Backends); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to sync quota limits: %v\n", err)
 		os.Exit(1)
 	}
 
-	backends := make(map[string]storage.ObjectBackend)
+	backends := make(map[string]s3be.ObjectBackend)
 	var backendOrder []string
 	for _, bcfg := range cfg.Backends {
-		b, err := storage.NewS3Backend(&bcfg)
+		b, err := s3be.NewS3Backend(&bcfg)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "failed to create backend %s: %v\n", bcfg.Name, err)
 			os.Exit(1)
@@ -166,26 +168,26 @@ func TestMain(m *testing.M) {
 		backendOrder = append(backendOrder, bcfg.Name)
 	}
 
-	testStore = store
+	testStore = db
 	// Keep all backends available for tests that need 3+ backends.
 	allBackends = backends
 	allBackendOrder = backendOrder
 	// Default test manager uses only the first 2 backends to preserve
 	// existing spread/rebalance test math.
-	testBackends = make(map[string]storage.ObjectBackend)
+	testBackends = make(map[string]s3be.ObjectBackend)
 	for _, name := range backendOrder[:2] {
 		testBackends[name] = backends[name]
 	}
 	testBackendOrder = backendOrder[:2]
 
 	// Wire: store → FailableStore → CircuitBreakerStore → manager
-	failableStore := &FailableStore{MetadataStore: store}
+	failableStore := &FailableStore{MetadataStore: db}
 	testFailableStore = failableStore
 
-	cbStore := storage.NewCircuitBreakerStore(failableStore, cfg.CircuitBreaker)
+	cbStore := store.NewCircuitBreakerStore(failableStore, cfg.CircuitBreaker)
 	testCBStore = cbStore
 
-	manager := storage.NewBackendManager(&storage.BackendManagerConfig{
+	manager := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        testBackends,
 		Store:           cbStore,
 		Order:           testBackendOrder,
@@ -225,7 +227,7 @@ func TestMain(m *testing.M) {
 
 	httpServer.Shutdown(ctx)
 	testDB.Close()
-	store.Close()
+	db.Close()
 
 	os.Exit(code)
 }
@@ -376,14 +378,14 @@ func setOrphanBytes(t *testing.T, backendName string, amount int64) {
 
 // newThreeBackendManager creates a BackendManager with all 3 backends for
 // tests that need more than 2 backends (e.g., over-replication with factor=3).
-func newThreeBackendManager(t *testing.T) *storage.BackendManager {
+func newThreeBackendManager(t *testing.T) *proxy.BackendManager {
 	t.Helper()
-	cbStore := storage.NewCircuitBreakerStore(testFailableStore, config.CircuitBreakerConfig{
+	cbStore := store.NewCircuitBreakerStore(testFailableStore, config.CircuitBreakerConfig{
 		FailureThreshold: 3,
 		OpenTimeout:      500 * time.Millisecond,
 		CacheTTL:         60 * time.Second,
 	})
-	return storage.NewBackendManager(&storage.BackendManagerConfig{
+	return proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        allBackends,
 		Store:           cbStore,
 		Order:           allBackendOrder,
@@ -410,7 +412,7 @@ var errSimulatedDBFailure = errors.New("simulated database connection failure")
 // FailableStore wraps a MetadataStore and can be toggled to return connection
 // errors, simulating a database outage for circuit breaker integration tests.
 type FailableStore struct {
-	storage.MetadataStore
+	store.MetadataStore
 	mu      sync.Mutex
 	failing bool
 }
@@ -427,28 +429,28 @@ func (f *FailableStore) isFailing() bool {
 	return f.failing
 }
 
-func (f *FailableStore) GetAllObjectLocations(ctx context.Context, key string) ([]storage.ObjectLocation, error) {
+func (f *FailableStore) GetAllObjectLocations(ctx context.Context, key string) ([]store.ObjectLocation, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
 	}
 	return f.MetadataStore.GetAllObjectLocations(ctx, key)
 }
 
-func (f *FailableStore) RecordObject(ctx context.Context, key, backend string, size int64, enc *storage.EncryptionMeta) ([]storage.DeletedCopy, error) {
+func (f *FailableStore) RecordObject(ctx context.Context, key, backend string, size int64, enc *store.EncryptionMeta) ([]store.DeletedCopy, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
 	}
 	return f.MetadataStore.RecordObject(ctx, key, backend, size, enc)
 }
 
-func (f *FailableStore) DeleteObject(ctx context.Context, key string) ([]storage.DeletedCopy, error) {
+func (f *FailableStore) DeleteObject(ctx context.Context, key string) ([]store.DeletedCopy, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
 	}
 	return f.MetadataStore.DeleteObject(ctx, key)
 }
 
-func (f *FailableStore) ListObjects(ctx context.Context, prefix, startAfter string, maxKeys int) (*storage.ListObjectsResult, error) {
+func (f *FailableStore) ListObjects(ctx context.Context, prefix, startAfter string, maxKeys int) (*store.ListObjectsResult, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
 	}
@@ -476,21 +478,21 @@ func (f *FailableStore) CreateMultipartUpload(ctx context.Context, uploadID, key
 	return f.MetadataStore.CreateMultipartUpload(ctx, uploadID, key, backend, contentType, metadata)
 }
 
-func (f *FailableStore) GetMultipartUpload(ctx context.Context, uploadID string) (*storage.MultipartUpload, error) {
+func (f *FailableStore) GetMultipartUpload(ctx context.Context, uploadID string) (*store.MultipartUpload, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
 	}
 	return f.MetadataStore.GetMultipartUpload(ctx, uploadID)
 }
 
-func (f *FailableStore) RecordPart(ctx context.Context, uploadID string, partNumber int, etag string, size int64, enc *storage.EncryptionMeta) error {
+func (f *FailableStore) RecordPart(ctx context.Context, uploadID string, partNumber int, etag string, size int64, enc *store.EncryptionMeta) error {
 	if f.isFailing() {
 		return errSimulatedDBFailure
 	}
 	return f.MetadataStore.RecordPart(ctx, uploadID, partNumber, etag, size, enc)
 }
 
-func (f *FailableStore) GetParts(ctx context.Context, uploadID string) ([]storage.MultipartPart, error) {
+func (f *FailableStore) GetParts(ctx context.Context, uploadID string) ([]store.MultipartPart, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
 	}
@@ -504,7 +506,7 @@ func (f *FailableStore) DeleteMultipartUpload(ctx context.Context, uploadID stri
 	return f.MetadataStore.DeleteMultipartUpload(ctx, uploadID)
 }
 
-func (f *FailableStore) GetQuotaStats(ctx context.Context) (map[string]storage.QuotaStat, error) {
+func (f *FailableStore) GetQuotaStats(ctx context.Context) (map[string]store.QuotaStat, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
 	}
@@ -525,21 +527,21 @@ func (f *FailableStore) GetActiveMultipartCounts(ctx context.Context) (map[strin
 	return f.MetadataStore.GetActiveMultipartCounts(ctx)
 }
 
-func (f *FailableStore) GetStaleMultipartUploads(ctx context.Context, olderThan time.Duration) ([]storage.MultipartUpload, error) {
+func (f *FailableStore) GetStaleMultipartUploads(ctx context.Context, olderThan time.Duration) ([]store.MultipartUpload, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
 	}
 	return f.MetadataStore.GetStaleMultipartUploads(ctx, olderThan)
 }
 
-func (f *FailableStore) ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*storage.DirectoryListResult, error) {
+func (f *FailableStore) ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*store.DirectoryListResult, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
 	}
 	return f.MetadataStore.ListDirectoryChildren(ctx, prefix, startAfter, maxKeys)
 }
 
-func (f *FailableStore) ListObjectsByBackend(ctx context.Context, backendName string, limit int) ([]storage.ObjectLocation, error) {
+func (f *FailableStore) ListObjectsByBackend(ctx context.Context, backendName string, limit int) ([]store.ObjectLocation, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
 	}
@@ -553,7 +555,7 @@ func (f *FailableStore) MoveObjectLocation(ctx context.Context, key, fromBackend
 	return f.MetadataStore.MoveObjectLocation(ctx, key, fromBackend, toBackend)
 }
 
-func (f *FailableStore) GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]storage.ObjectLocation, error) {
+func (f *FailableStore) GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]store.ObjectLocation, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
 	}
@@ -567,7 +569,7 @@ func (f *FailableStore) RecordReplica(ctx context.Context, key, targetBackend, s
 	return f.MetadataStore.RecordReplica(ctx, key, targetBackend, sourceBackend, size)
 }
 
-func (f *FailableStore) GetOverReplicatedObjects(ctx context.Context, factor, limit int) ([]storage.ObjectLocation, error) {
+func (f *FailableStore) GetOverReplicatedObjects(ctx context.Context, factor, limit int) ([]store.ObjectLocation, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
 	}
@@ -630,7 +632,7 @@ func waitForRecovery(t *testing.T) {
 
 // newTestS3Backend creates an S3Backend for a test MinIO instance, avoiding
 // duplicate endpoint/credential wiring across tests.
-func newTestS3Backend(t *testing.T, name string) *storage.S3Backend {
+func newTestS3Backend(t *testing.T, name string) *s3be.S3Backend {
 	t.Helper()
 
 	cfgs := map[string]config.BackendConfig{
@@ -668,7 +670,7 @@ func newTestS3Backend(t *testing.T, name string) *storage.S3Backend {
 		t.Fatalf("unknown backend %q", name)
 	}
 
-	backend, err := storage.NewS3Backend(&cfg)
+	backend, err := s3be.NewS3Backend(&cfg)
 	if err != nil {
 		t.Fatalf("NewS3Backend(%s): %v", name, err)
 	}

@@ -2,13 +2,12 @@ package server
 
 import (
 	"fmt"
+	"github.com/afreidah/s3-orchestrator/internal/store"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"testing"
 	"time"
-
-	"github.com/afreidah/s3-orchestrator/internal/storage"
 )
 
 // -------------------------------------------------------------------------
@@ -127,10 +126,10 @@ func BenchmarkWriteXML_ListV2(b *testing.B) {
 	sizes := []int{10, 100, 1000}
 
 	for _, n := range sizes {
-		objects := make([]storage.ObjectLocation, n)
+		objects := make([]store.ObjectLocation, n)
 		now := time.Now()
 		for i := range n {
-			objects[i] = storage.ObjectLocation{
+			objects[i] = store.ObjectLocation{
 				ObjectKey: fmt.Sprintf("mybucket/photos/image-%04d.jpg", i),
 				SizeBytes: int64(1024 + i),
 				CreatedAt: now,
@@ -158,9 +157,9 @@ func BenchmarkWriteXML_ListV2(b *testing.B) {
 
 func BenchmarkBuildListContents(b *testing.B) {
 	now := time.Now()
-	objects := make([]storage.ObjectLocation, 1000)
+	objects := make([]store.ObjectLocation, 1000)
 	for i := range 1000 {
-		objects[i] = storage.ObjectLocation{
+		objects[i] = store.ObjectLocation{
 			ObjectKey: fmt.Sprintf("mybucket/dir/subdir/file-%04d.txt", i),
 			SizeBytes: int64(i * 100),
 			CreatedAt: now,

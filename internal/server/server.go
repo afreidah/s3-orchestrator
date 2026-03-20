@@ -23,7 +23,8 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/audit"
 	"github.com/afreidah/s3-orchestrator/internal/auth"
-	"github.com/afreidah/s3-orchestrator/internal/storage"
+
+	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -45,14 +46,14 @@ var httpSpanName = map[string]string{
 
 // Server handles HTTP requests and routes them to the backend manager.
 type Server struct {
-	Manager       *storage.BackendManager
+	Manager       *proxy.BackendManager
 	bucketAuth    atomic.Pointer[auth.BucketRegistry]
 	MaxObjectSize int64     // Max upload body size in bytes
 	startedAt     time.Time // Stable timestamp for ListBuckets CreationDate
 }
 
 // NewServer creates a Server with a stable start timestamp.
-func NewServer(manager *storage.BackendManager, maxObjectSize int64) *Server {
+func NewServer(manager *proxy.BackendManager, maxObjectSize int64) *Server {
 	return &Server{
 		Manager:       manager,
 		MaxObjectSize: maxObjectSize,
@@ -302,24 +303,35 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	elapsed := time.Since(start)
 	var attrBuf [11]slog.Attr
 	n := 0
-	attrBuf[n] = slog.String("operation", operation); n++
-	attrBuf[n] = slog.String("method", method); n++
-	attrBuf[n] = slog.String("path", r.URL.Path); n++
-	attrBuf[n] = slog.String("remote", r.RemoteAddr); n++
-	attrBuf[n] = slog.String("bucket", bucket); n++
-	attrBuf[n] = slog.Int("status", status); n++
-	attrBuf[n] = slog.Duration("duration", elapsed); n++
+	attrBuf[n] = slog.String("operation", operation)
+	n++
+	attrBuf[n] = slog.String("method", method)
+	n++
+	attrBuf[n] = slog.String("path", r.URL.Path)
+	n++
+	attrBuf[n] = slog.String("remote", r.RemoteAddr)
+	n++
+	attrBuf[n] = slog.String("bucket", bucket)
+	n++
+	attrBuf[n] = slog.Int("status", status)
+	n++
+	attrBuf[n] = slog.Duration("duration", elapsed)
+	n++
 	if key != "" {
-		attrBuf[n] = slog.String("key", key); n++
+		attrBuf[n] = slog.String("key", key)
+		n++
 	}
 	if requestSize > 0 {
-		attrBuf[n] = slog.Int64("request_size", requestSize); n++
+		attrBuf[n] = slog.Int64("request_size", requestSize)
+		n++
 	}
 	if responseSize > 0 {
-		attrBuf[n] = slog.Int64("response_size", responseSize); n++
+		attrBuf[n] = slog.Int64("response_size", responseSize)
+		n++
 	}
 	if err != nil {
-		attrBuf[n] = slog.String("error", err.Error()); n++
+		attrBuf[n] = slog.String("error", err.Error())
+		n++
 	}
 	audit.Log(ctx, "s3."+operation, attrBuf[:n]...)
 }

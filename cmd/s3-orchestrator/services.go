@@ -18,19 +18,22 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/audit"
-	"github.com/afreidah/s3-orchestrator/internal/storage"
-	"github.com/afreidah/s3-orchestrator/internal/telemetry"
-)
 
-// -------------------------------------------------------------------------
-// LOCKED TICKER SERVICE
-// -------------------------------------------------------------------------
+	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/telemetry"
+
+	// -------------------------------------------------------------------------
+	// LOCKED TICKER SERVICE
+	// -------------------------------------------------------------------------
+	"github.com/afreidah/s3-orchestrator/internal/proxy"
+	"github.com/afreidah/s3-orchestrator/internal/worker"
+)
 
 // lockedTickerService runs a function on a fixed interval under an advisory
 // lock. It handles audit context creation, lock acquisition, skip/error
 // logging, and context cancellation. Most background workers use this.
 type lockedTickerService struct {
-	store    storage.AdvisoryLocker
+	locker   store.AdvisoryLocker
 	interval time.Duration
 	lockID   int64
 	name     string
@@ -87,12 +90,12 @@ func (s *lockedTickerService) Run(ctx context.Context) error {
 // runOnce creates an audit context, acquires the advisory lock, and runs fn.
 func (s *lockedTickerService) runOnce(ctx context.Context, fn func(ctx context.Context)) {
 	tickCtx := audit.WithRequestID(ctx, audit.NewID())
-	acquired, err := s.store.WithAdvisoryLock(tickCtx, s.lockID,
+	acquired, err := s.locker.WithAdvisoryLock(tickCtx, s.lockID,
 		func(lockCtx context.Context) error {
 			fn(lockCtx)
 			return nil
 		})
-	if err != nil && !errors.Is(err, storage.ErrDBUnavailable) {
+	if err != nil && !errors.Is(err, store.ErrDBUnavailable) {
 		if s.onError != nil {
 			s.onError(err)
 		} else {
@@ -100,7 +103,7 @@ func (s *lockedTickerService) runOnce(ctx context.Context, fn func(ctx context.C
 		}
 	}
 	if !acquired {
-		slog.DebugContext(ctx, s.name + " skipped, another instance holds the lock")
+		slog.DebugContext(ctx, s.name+" skipped, another instance holds the lock")
 	}
 }
 
@@ -109,8 +112,8 @@ func (s *lockedTickerService) runOnce(ctx context.Context, fn func(ctx context.C
 // -------------------------------------------------------------------------
 
 type usageFlushService struct {
-	manager *storage.BackendManager
-	store   storage.AdvisoryLocker
+	manager *proxy.BackendManager
+	locker  store.AdvisoryLocker
 }
 
 // Run periodically flushes in-memory usage counters to the database.
@@ -159,12 +162,12 @@ func (s *usageFlushService) Run(ctx context.Context) error {
 // prevent double-counting when Redis recovers mid-flush.
 func (s *usageFlushService) flushTick(ctx context.Context) {
 	if s.manager.RedisCounterConfigured() {
-		acquired, err := s.store.WithAdvisoryLock(ctx, storage.LockUsageFlush,
+		acquired, err := s.locker.WithAdvisoryLock(ctx, store.LockUsageFlush,
 			func(lockCtx context.Context) error {
 				s.doFlush(lockCtx)
 				return nil
 			})
-		if err != nil && !errors.Is(err, storage.ErrDBUnavailable) {
+		if err != nil && !errors.Is(err, store.ErrDBUnavailable) {
 			slog.ErrorContext(ctx, "Usage flush failed", "error", err)
 		}
 		if !acquired {
@@ -179,10 +182,10 @@ func (s *usageFlushService) flushTick(ctx context.Context) {
 
 // doFlush performs the actual flush and quota metric update.
 func (s *usageFlushService) doFlush(ctx context.Context) {
-	if err := s.manager.FlushUsage(ctx); err != nil && !errors.Is(err, storage.ErrDBUnavailable) {
+	if err := s.manager.FlushUsage(ctx); err != nil && !errors.Is(err, store.ErrDBUnavailable) {
 		slog.ErrorContext(ctx, "Failed to flush usage counters", "error", err)
 	}
-	if err := s.manager.UpdateQuotaMetrics(ctx); err != nil && !errors.Is(err, storage.ErrDBUnavailable) {
+	if err := s.manager.UpdateQuotaMetrics(ctx); err != nil && !errors.Is(err, store.ErrDBUnavailable) {
 		slog.ErrorContext(ctx, "Failed to update quota metrics", "error", err)
 	}
 }
@@ -191,11 +194,11 @@ func (s *usageFlushService) doFlush(ctx context.Context) {
 // SERVICE CONSTRUCTORS
 // -------------------------------------------------------------------------
 
-func newMultipartCleanupService(manager *storage.BackendManager, store storage.AdvisoryLocker) *lockedTickerService {
+func newMultipartCleanupService(manager *proxy.BackendManager, locker store.AdvisoryLocker) *lockedTickerService {
 	return &lockedTickerService{
-		store:    store,
+		locker:   locker,
 		interval: 1 * time.Hour,
-		lockID:   storage.LockMultipartCleanup,
+		lockID:   store.LockMultipartCleanup,
 		name:     "Multipart cleanup",
 		work: func(ctx context.Context) {
 			manager.MultipartManager.CleanupStaleMultipartUploads(ctx, 24*time.Hour)
@@ -203,11 +206,11 @@ func newMultipartCleanupService(manager *storage.BackendManager, store storage.A
 	}
 }
 
-func newCleanupQueueService(manager *storage.BackendManager, store storage.AdvisoryLocker) *lockedTickerService {
+func newCleanupQueueService(manager *proxy.BackendManager, locker store.AdvisoryLocker) *lockedTickerService {
 	return &lockedTickerService{
-		store:    store,
+		locker:   locker,
 		interval: 1 * time.Minute,
-		lockID:   storage.LockCleanupQueue,
+		lockID:   store.LockCleanupQueue,
 		name:     "Cleanup queue",
 		work: func(ctx context.Context) {
 			processed, failed := manager.CleanupWorker.ProcessCleanupQueue(ctx)
@@ -218,15 +221,15 @@ func newCleanupQueueService(manager *storage.BackendManager, store storage.Advis
 	}
 }
 
-func newRebalancerService(manager *storage.BackendManager, store storage.AdvisoryLocker) *lockedTickerService {
+func newRebalancerService(manager *proxy.BackendManager, locker store.AdvisoryLocker) *lockedTickerService {
 	interval := 6 * time.Hour
 	if rcfg := manager.Rebalancer.Config(); rcfg != nil && rcfg.Interval > 0 {
 		interval = rcfg.Interval
 	}
 	return &lockedTickerService{
-		store:    store,
+		locker:   locker,
 		interval: interval,
-		lockID:   storage.LockRebalancer,
+		lockID:   store.LockRebalancer,
 		name:     "Rebalance",
 		shouldRun: func() bool {
 			rcfg := manager.Rebalancer.Config()
@@ -238,7 +241,7 @@ func newRebalancerService(manager *storage.BackendManager, store storage.Advisor
 				return
 			}
 			moved, err := manager.Rebalancer.Rebalance(ctx, *rcfg)
-			if err != nil && !errors.Is(err, storage.ErrDBUnavailable) {
+			if err != nil && !errors.Is(err, store.ErrDBUnavailable) {
 				slog.ErrorContext(ctx, "Rebalance failed", "error", err)
 			} else if moved > 0 {
 				slog.InfoContext(ctx, "Rebalance completed", "objects_moved", moved)
@@ -250,11 +253,11 @@ func newRebalancerService(manager *storage.BackendManager, store storage.Advisor
 	}
 }
 
-func newLifecycleService(manager *storage.BackendManager, store storage.AdvisoryLocker) *lockedTickerService {
+func newLifecycleService(manager *proxy.BackendManager, locker store.AdvisoryLocker) *lockedTickerService {
 	return &lockedTickerService{
-		store:    store,
+		locker:   locker,
 		interval: 1 * time.Hour,
-		lockID:   storage.LockLifecycle,
+		lockID:   store.LockLifecycle,
 		name:     "Lifecycle",
 		shouldRun: func() bool {
 			cfg := manager.LifecycleConfig()
@@ -283,15 +286,15 @@ func newLifecycleService(manager *storage.BackendManager, store storage.Advisory
 	}
 }
 
-func newOverReplicationService(manager *storage.BackendManager, store storage.AdvisoryLocker) *lockedTickerService {
+func newOverReplicationService(manager *proxy.BackendManager, locker store.AdvisoryLocker) *lockedTickerService {
 	interval := 5 * time.Minute
 	if rcfg := manager.OverReplicationCleaner.Config(); rcfg != nil && rcfg.WorkerInterval > 0 {
 		interval = rcfg.WorkerInterval
 	}
 	return &lockedTickerService{
-		store:    store,
+		locker:   locker,
 		interval: interval,
-		lockID:   storage.LockOverReplication,
+		lockID:   store.LockOverReplication,
 		name:     "Over-replication cleanup",
 		shouldRun: func() bool {
 			rcfg := manager.OverReplicationCleaner.Config()
@@ -303,7 +306,7 @@ func newOverReplicationService(manager *storage.BackendManager, store storage.Ad
 				return
 			}
 			removed, err := manager.OverReplicationCleaner.Clean(ctx, *rcfg)
-			if err != nil && !errors.Is(err, storage.ErrDBUnavailable) {
+			if err != nil && !errors.Is(err, store.ErrDBUnavailable) {
 				slog.ErrorContext(ctx, "Over-replication cleanup failed", "error", err)
 			} else if removed > 0 {
 				slog.InfoContext(ctx, "Over-replication cleanup completed", "copies_removed", removed)
@@ -315,14 +318,14 @@ func newOverReplicationService(manager *storage.BackendManager, store storage.Ad
 	}
 }
 
-func newReplicatorService(manager *storage.BackendManager, store storage.AdvisoryLocker) *lockedTickerService {
+func newReplicatorService(manager *proxy.BackendManager, locker store.AdvisoryLocker) *lockedTickerService {
 	replicateWork := func(ctx context.Context) {
 		rcfg := manager.Replicator.Config()
 		if rcfg == nil {
 			return
 		}
 		created, err := manager.Replicator.Replicate(ctx, *rcfg)
-		if err != nil && !errors.Is(err, storage.ErrDBUnavailable) {
+		if err != nil && !errors.Is(err, store.ErrDBUnavailable) {
 			slog.ErrorContext(ctx, "Replication failed", "error", err)
 		} else if created > 0 {
 			slog.InfoContext(ctx, "Replication completed", "copies_created", created)
@@ -337,24 +340,24 @@ func newReplicatorService(manager *storage.BackendManager, store storage.Advisor
 		interval = rcfg.WorkerInterval
 	}
 	return &lockedTickerService{
-		store:    store,
+		locker:   locker,
 		interval: interval,
-		lockID:   storage.LockReplicator,
+		lockID:   store.LockReplicator,
 		name:     "Replication",
 		shouldRun: func() bool {
 			rcfg := manager.Replicator.Config()
 			return rcfg != nil && rcfg.Factor > 1
 		},
-		startup:  replicateWork,
-		work:     replicateWork,
+		startup: replicateWork,
+		work:    replicateWork,
 	}
 }
 
-func newReconcileService(reconciler *storage.Reconciler, store storage.AdvisoryLocker, interval time.Duration) *lockedTickerService {
+func newReconcileService(reconciler *worker.Reconciler, locker store.AdvisoryLocker, interval time.Duration) *lockedTickerService {
 	return &lockedTickerService{
-		store:    store,
+		locker:   locker,
 		interval: interval,
-		lockID:   storage.LockReconcile,
+		lockID:   store.LockReconcile,
 		name:     "Reconcile",
 		work: func(ctx context.Context) {
 			reconciler.Run(ctx)

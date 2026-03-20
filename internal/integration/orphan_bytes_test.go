@@ -26,8 +26,9 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/auth"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/server"
-	"github.com/afreidah/s3-orchestrator/internal/storage"
+	"github.com/afreidah/s3-orchestrator/internal/store"
 )
 
 // -------------------------------------------------------------------------
@@ -442,12 +443,12 @@ func TestOrphanBytesSpreadRouting(t *testing.T) {
 	ctx := context.Background()
 
 	// Build a spread-strategy manager sharing the same store and backends.
-	spreadCBStore := storage.NewCircuitBreakerStore(testStore, config.CircuitBreakerConfig{
+	spreadCBStore := store.NewCircuitBreakerStore(testStore, config.CircuitBreakerConfig{
 		FailureThreshold: 3,
 		OpenTimeout:      500 * time.Millisecond,
 		CacheTTL:         60 * time.Second,
 	})
-	spreadManager := storage.NewBackendManager(&storage.BackendManagerConfig{
+	spreadManager := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        testBackends,
 		Store:           spreadCBStore,
 		Order:           testBackendOrder,
@@ -462,7 +463,7 @@ func TestOrphanBytesSpreadRouting(t *testing.T) {
 	spreadSrv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{{
 		Name: virtualBucket,
 		Credentials: []config.CredentialConfig{{
-			AccessKeyID:    "test",
+			AccessKeyID:     "test",
 			SecretAccessKey: "test",
 		}},
 	}}))

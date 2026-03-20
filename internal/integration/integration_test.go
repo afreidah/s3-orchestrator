@@ -34,13 +34,15 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/auth"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/server"
-	"github.com/afreidah/s3-orchestrator/internal/storage"
-)
+	"github.com/afreidah/s3-orchestrator/internal/store"
 
-// -------------------------------------------------------------------------
-// CRUD
-// -------------------------------------------------------------------------
+	// -------------------------------------------------------------------------
+	// CRUD
+	// -------------------------------------------------------------------------
+	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
+)
 
 func TestCRUD(t *testing.T) {
 	client := newS3Client(t)
@@ -589,12 +591,12 @@ func TestSpreadWriteRouting(t *testing.T) {
 	ctx := context.Background()
 
 	// Build a spread-strategy manager sharing the same store and backends.
-	spreadCBStore := storage.NewCircuitBreakerStore(testStore, config.CircuitBreakerConfig{
+	spreadCBStore := store.NewCircuitBreakerStore(testStore, config.CircuitBreakerConfig{
 		FailureThreshold: 3,
 		OpenTimeout:      500 * time.Millisecond,
 		CacheTTL:         60 * time.Second,
 	})
-	spreadManager := storage.NewBackendManager(&storage.BackendManagerConfig{
+	spreadManager := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        testBackends,
 		Store:           spreadCBStore,
 		Order:           testBackendOrder,
@@ -609,7 +611,7 @@ func TestSpreadWriteRouting(t *testing.T) {
 	spreadSrv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{{
 		Name: virtualBucket,
 		Credentials: []config.CredentialConfig{{
-			AccessKeyID:    "test",
+			AccessKeyID:     "test",
 			SecretAccessKey: "test",
 		}},
 	}}))
@@ -2452,7 +2454,7 @@ func TestListObjectsFromBackend(t *testing.T) {
 	}
 
 	// Use S3Backend.ListObjects to scan the bucket
-	backend, err := storage.NewS3Backend(&config.BackendConfig{
+	backend, err := s3be.NewS3Backend(&config.BackendConfig{
 		Name:            "minio-1",
 		Endpoint:        envOrDefault("MINIO1_ENDPOINT", "http://localhost:19000"),
 		Region:          "us-east-1",
@@ -2465,8 +2467,8 @@ func TestListObjectsFromBackend(t *testing.T) {
 		t.Fatalf("NewS3Backend: %v", err)
 	}
 
-	var listed []storage.ListedObject
-	err = backend.ListObjects(ctx, prefix, func(page []storage.ListedObject) error {
+	var listed []s3be.ListedObject
+	err = backend.ListObjects(ctx, prefix, func(page []s3be.ListedObject) error {
 		listed = append(listed, page...)
 		return nil
 	})
@@ -2606,7 +2608,7 @@ func TestStore(t *testing.T) {
 			t.Fatal("expected error, got nil")
 		}
 
-		var s3Err *storage.S3Error
+		var s3Err *store.S3Error
 		if !errors.As(err, &s3Err) {
 			t.Fatalf("expected *S3Error, got %T: %v", err, err)
 		}
@@ -2889,7 +2891,7 @@ func TestSyncPipeline(t *testing.T) {
 		backend := newTestS3Backend(t, "minio-1")
 		var imported, skipped int
 
-		err := backend.ListObjects(ctx, internalKey(prefix), func(objects []storage.ListedObject) error {
+		err := backend.ListObjects(ctx, internalKey(prefix), func(objects []s3be.ListedObject) error {
 			for _, obj := range objects {
 				ok, err := testStore.ImportObject(ctx, obj.Key, "minio-1", obj.SizeBytes)
 				if err != nil {
@@ -2960,7 +2962,7 @@ func TestSyncPipeline(t *testing.T) {
 
 		// Run sync pipeline twice.
 		syncOnce := func() (imported, skipped int) {
-			err := backend.ListObjects(ctx, internalKey(prefix), func(objects []storage.ListedObject) error {
+			err := backend.ListObjects(ctx, internalKey(prefix), func(objects []s3be.ListedObject) error {
 				for _, obj := range objects {
 					ok, err := testStore.ImportObject(ctx, obj.Key, "minio-1", obj.SizeBytes)
 					if err != nil {
@@ -3019,7 +3021,7 @@ func TestAuthSigV4(t *testing.T) {
 			Name: virtualBucket,
 			Credentials: []config.CredentialConfig{
 				{
-					AccessKeyID:    authKey,
+					AccessKeyID:     authKey,
 					SecretAccessKey: authSecret,
 				},
 			},

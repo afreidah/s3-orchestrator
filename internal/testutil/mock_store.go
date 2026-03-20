@@ -14,10 +14,9 @@ package testutil
 
 import (
 	"context"
+	"github.com/afreidah/s3-orchestrator/internal/store"
 	"sync"
 	"time"
-
-	"github.com/afreidah/s3-orchestrator/internal/storage"
 )
 
 // MockStore is a configurable MetadataStore mock for unit testing.
@@ -27,7 +26,7 @@ type MockStore struct {
 	Mu sync.Mutex
 
 	// --- Configurable responses ---
-	GetAllLocationsResp []storage.ObjectLocation
+	GetAllLocationsResp []store.ObjectLocation
 	GetAllLocationsErr  error
 
 	GetBackendResp string
@@ -35,35 +34,35 @@ type MockStore struct {
 
 	RecordObjectErr error
 
-	DeleteObjectResp []storage.DeletedCopy
+	DeleteObjectResp []store.DeletedCopy
 	DeleteObjectErr  error
-	DeleteObjectFunc func(key string) ([]storage.DeletedCopy, error)
+	DeleteObjectFunc func(key string) ([]store.DeletedCopy, error)
 
-	ListObjectsResp  *storage.ListObjectsResult
-	ListObjectsPages []storage.ListObjectsResult // for paginated tests
+	ListObjectsResp  *store.ListObjectsResult
+	ListObjectsPages []store.ListObjectsResult // for paginated tests
 	ListObjectsErr   error
 
 	// Multipart
 	CreateMultipartErr       error
-	GetMultipartResp         *storage.MultipartUpload
+	GetMultipartResp         *store.MultipartUpload
 	GetMultipartErr          error
-	GetPartsResp             []storage.MultipartPart
+	GetPartsResp             []store.MultipartPart
 	GetPartsErr              error
 	DeleteMultipartErr       error
 	RecordPartErr            error
-	ListMultipartUploadsResp []storage.MultipartUpload
+	ListMultipartUploadsResp []store.MultipartUpload
 	ListMultipartUploadsErr  error
 
 	// Dashboard / background
-	GetQuotaStatsResp      map[string]storage.QuotaStat
+	GetQuotaStatsResp      map[string]store.QuotaStat
 	GetQuotaStatsErr       error
 	GetObjectCountsResp    map[string]int64
 	GetObjectCountsErr     error
 	GetActiveMultipartResp map[string]int64
 	GetActiveMultipartErr  error
-	GetUsageForPeriodResp  map[string]storage.UsageStat
+	GetUsageForPeriodResp  map[string]store.UsageStat
 	GetUsageForPeriodErr   error
-	ListDirChildrenResp    *storage.DirectoryListResult
+	ListDirChildrenResp    *store.DirectoryListResult
 	ListDirChildrenErr     error
 
 	// Usage tracking
@@ -94,10 +93,10 @@ type FlushUsageCall struct {
 }
 
 // Compile-time check.
-var _ storage.MetadataStore = (*MockStore)(nil)
+var _ store.MetadataStore = (*MockStore)(nil)
 
 // GetAllObjectLocations returns the pre-configured locations or ErrObjectNotFound.
-func (m *MockStore) GetAllObjectLocations(_ context.Context, key string) ([]storage.ObjectLocation, error) {
+func (m *MockStore) GetAllObjectLocations(_ context.Context, key string) ([]store.ObjectLocation, error) {
 	m.Mu.Lock()
 	defer m.Mu.Unlock()
 	m.CallCount++
@@ -107,7 +106,7 @@ func (m *MockStore) GetAllObjectLocations(_ context.Context, key string) ([]stor
 	if m.GetAllLocationsResp != nil {
 		return m.GetAllLocationsResp, nil
 	}
-	return nil, storage.ErrObjectNotFound
+	return nil, store.ErrObjectNotFound
 }
 
 // GetBackendWithSpace returns the pre-configured backend name or error.
@@ -133,7 +132,7 @@ func (m *MockStore) GetLeastUtilizedBackend(_ context.Context, size int64, _ []s
 }
 
 // RecordObject records the call arguments and returns the pre-configured error.
-func (m *MockStore) RecordObject(_ context.Context, key, backend string, size int64, _ *storage.EncryptionMeta) ([]storage.DeletedCopy, error) {
+func (m *MockStore) RecordObject(_ context.Context, key, backend string, size int64, _ *store.EncryptionMeta) ([]store.DeletedCopy, error) {
 	m.Mu.Lock()
 	defer m.Mu.Unlock()
 	m.RecordObjectCalls = append(m.RecordObjectCalls, RecordObjectCall{Key: key, Backend: backend, Size: size})
@@ -141,7 +140,7 @@ func (m *MockStore) RecordObject(_ context.Context, key, backend string, size in
 }
 
 // DeleteObject records the call and returns the pre-configured response or error.
-func (m *MockStore) DeleteObject(_ context.Context, key string) ([]storage.DeletedCopy, error) {
+func (m *MockStore) DeleteObject(_ context.Context, key string) ([]store.DeletedCopy, error) {
 	m.Mu.Lock()
 	defer m.Mu.Unlock()
 	m.DeleteObjectCalls = append(m.DeleteObjectCalls, key)
@@ -155,7 +154,7 @@ func (m *MockStore) DeleteObject(_ context.Context, key string) ([]storage.Delet
 }
 
 // ListObjects returns the next pre-configured page or the static response.
-func (m *MockStore) ListObjects(_ context.Context, _, startAfter string, _ int) (*storage.ListObjectsResult, error) {
+func (m *MockStore) ListObjects(_ context.Context, _, startAfter string, _ int) (*store.ListObjectsResult, error) {
 	m.Mu.Lock()
 	defer m.Mu.Unlock()
 	if m.ListObjectsErr != nil {
@@ -177,7 +176,7 @@ func (m *MockStore) CreateMultipartUpload(_ context.Context, _, _, _, _ string, 
 }
 
 // GetMultipartUpload returns the pre-configured upload or error.
-func (m *MockStore) GetMultipartUpload(_ context.Context, _ string) (*storage.MultipartUpload, error) {
+func (m *MockStore) GetMultipartUpload(_ context.Context, _ string) (*store.MultipartUpload, error) {
 	m.Mu.Lock()
 	defer m.Mu.Unlock()
 	if m.GetMultipartErr != nil {
@@ -187,14 +186,14 @@ func (m *MockStore) GetMultipartUpload(_ context.Context, _ string) (*storage.Mu
 }
 
 // RecordPart returns the pre-configured error.
-func (m *MockStore) RecordPart(_ context.Context, _ string, _ int, _ string, _ int64, _ *storage.EncryptionMeta) error {
+func (m *MockStore) RecordPart(_ context.Context, _ string, _ int, _ string, _ int64, _ *store.EncryptionMeta) error {
 	m.Mu.Lock()
 	defer m.Mu.Unlock()
 	return m.RecordPartErr
 }
 
 // GetParts returns the pre-configured parts or error.
-func (m *MockStore) GetParts(_ context.Context, _ string) ([]storage.MultipartPart, error) {
+func (m *MockStore) GetParts(_ context.Context, _ string) ([]store.MultipartPart, error) {
 	m.Mu.Lock()
 	defer m.Mu.Unlock()
 	if m.GetPartsErr != nil {
@@ -211,25 +210,25 @@ func (m *MockStore) DeleteMultipartUpload(_ context.Context, _ string) error {
 }
 
 // ListDirectoryChildren returns the pre-configured directory listing or error.
-func (m *MockStore) ListDirectoryChildren(_ context.Context, _, _ string, _ int) (*storage.DirectoryListResult, error) {
+func (m *MockStore) ListDirectoryChildren(_ context.Context, _, _ string, _ int) (*store.DirectoryListResult, error) {
 	if m.ListDirChildrenErr != nil {
 		return nil, m.ListDirChildrenErr
 	}
 	if m.ListDirChildrenResp != nil {
 		return m.ListDirChildrenResp, nil
 	}
-	return &storage.DirectoryListResult{}, nil
+	return &store.DirectoryListResult{}, nil
 }
 
 // GetQuotaStats returns the pre-configured quota stats or error.
-func (m *MockStore) GetQuotaStats(_ context.Context) (map[string]storage.QuotaStat, error) {
+func (m *MockStore) GetQuotaStats(_ context.Context) (map[string]store.QuotaStat, error) {
 	if m.GetQuotaStatsErr != nil {
 		return nil, m.GetQuotaStatsErr
 	}
 	if m.GetQuotaStatsResp != nil {
 		return m.GetQuotaStatsResp, nil
 	}
-	return map[string]storage.QuotaStat{}, nil
+	return map[string]store.QuotaStat{}, nil
 }
 
 // GetObjectCounts returns the pre-configured object counts or error.
@@ -255,12 +254,12 @@ func (m *MockStore) GetActiveMultipartCounts(_ context.Context) (map[string]int6
 }
 
 // GetStaleMultipartUploads returns nil (stub).
-func (m *MockStore) GetStaleMultipartUploads(_ context.Context, _ time.Duration) ([]storage.MultipartUpload, error) {
+func (m *MockStore) GetStaleMultipartUploads(_ context.Context, _ time.Duration) ([]store.MultipartUpload, error) {
 	return nil, nil
 }
 
 // ListMultipartUploads returns the pre-configured uploads or error.
-func (m *MockStore) ListMultipartUploads(_ context.Context, _ string, _ int) ([]storage.MultipartUpload, error) {
+func (m *MockStore) ListMultipartUploads(_ context.Context, _ string, _ int) ([]store.MultipartUpload, error) {
 	m.Mu.Lock()
 	defer m.Mu.Unlock()
 	if m.ListMultipartUploadsErr != nil {
@@ -270,7 +269,7 @@ func (m *MockStore) ListMultipartUploads(_ context.Context, _ string, _ int) ([]
 }
 
 // ListObjectsByBackend returns nil (stub).
-func (m *MockStore) ListObjectsByBackend(_ context.Context, _ string, _ int) ([]storage.ObjectLocation, error) {
+func (m *MockStore) ListObjectsByBackend(_ context.Context, _ string, _ int) ([]store.ObjectLocation, error) {
 	return nil, nil
 }
 
@@ -280,12 +279,12 @@ func (m *MockStore) MoveObjectLocation(_ context.Context, _, _, _ string) (int64
 }
 
 // GetUnderReplicatedObjects returns nil (stub).
-func (m *MockStore) GetUnderReplicatedObjects(_ context.Context, _, _ int) ([]storage.ObjectLocation, error) {
+func (m *MockStore) GetUnderReplicatedObjects(_ context.Context, _, _ int) ([]store.ObjectLocation, error) {
 	return nil, nil
 }
 
 // GetUnderReplicatedObjectsExcluding returns nil (stub).
-func (m *MockStore) GetUnderReplicatedObjectsExcluding(_ context.Context, _, _ int, _ []string) ([]storage.ObjectLocation, error) {
+func (m *MockStore) GetUnderReplicatedObjectsExcluding(_ context.Context, _, _ int, _ []string) ([]store.ObjectLocation, error) {
 	return nil, nil
 }
 
@@ -309,14 +308,14 @@ func (m *MockStore) FlushUsageDeltas(_ context.Context, backendName, period stri
 }
 
 // GetUsageForPeriod returns the pre-configured usage stats or error.
-func (m *MockStore) GetUsageForPeriod(_ context.Context, _ string) (map[string]storage.UsageStat, error) {
+func (m *MockStore) GetUsageForPeriod(_ context.Context, _ string) (map[string]store.UsageStat, error) {
 	if m.GetUsageForPeriodErr != nil {
 		return nil, m.GetUsageForPeriodErr
 	}
 	if m.GetUsageForPeriodResp != nil {
 		return m.GetUsageForPeriodResp, nil
 	}
-	return map[string]storage.UsageStat{}, nil
+	return map[string]store.UsageStat{}, nil
 }
 
 // -------------------------------------------------------------------------
@@ -339,7 +338,7 @@ func (m *MockStore) DecrementOrphanBytes(_ context.Context, _ string, _ int64) e
 }
 
 // GetPendingCleanups returns nil (stub).
-func (m *MockStore) GetPendingCleanups(_ context.Context, _ int) ([]storage.CleanupItem, error) {
+func (m *MockStore) GetPendingCleanups(_ context.Context, _ int) ([]store.CleanupItem, error) {
 	return nil, nil
 }
 
@@ -359,7 +358,7 @@ func (m *MockStore) CleanupQueueDepth(_ context.Context) (int64, error) {
 }
 
 // ListExpiredObjects returns nil (stub).
-func (m *MockStore) ListExpiredObjects(_ context.Context, _ string, _ time.Time, _ int) ([]storage.ObjectLocation, error) {
+func (m *MockStore) ListExpiredObjects(_ context.Context, _ string, _ time.Time, _ int) ([]store.ObjectLocation, error) {
 	return nil, nil
 }
 
@@ -387,7 +386,7 @@ func (m *MockStore) DeleteObjectLocation(_ context.Context, _, _ string) error {
 }
 
 // GetOverReplicatedObjects returns nil (stub).
-func (m *MockStore) GetOverReplicatedObjects(_ context.Context, _, _ int) ([]storage.ObjectLocation, error) {
+func (m *MockStore) GetOverReplicatedObjects(_ context.Context, _, _ int) ([]store.ObjectLocation, error) {
 	return nil, nil
 }
 
@@ -400,4 +399,3 @@ func (m *MockStore) CountOverReplicatedObjects(_ context.Context, _ int) (int64,
 func (m *MockStore) RemoveExcessCopy(_ context.Context, _, _ string, _ int64) error {
 	return nil
 }
-

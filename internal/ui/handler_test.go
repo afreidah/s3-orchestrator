@@ -25,10 +25,15 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/httputil"
-	"github.com/afreidah/s3-orchestrator/internal/storage"
+
+	"github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/testutil"
 	"golang.org/x/crypto/bcrypt"
+
+	// newTestHandler builds a Handler wired to mock data for testing.
+	"github.com/afreidah/s3-orchestrator/internal/store"
 )
 
 const (
@@ -36,7 +41,6 @@ const (
 	testAdminSecret = "test-secret-key"
 )
 
-// newTestHandler builds a Handler wired to mock data for testing.
 func newTestHandler(t *testing.T) (*Handler, *http.ServeMux) {
 	t.Helper()
 	h, mux, _ := newTestHandlerWithMock(t)
@@ -49,21 +53,21 @@ func newTestHandlerWithMock(t *testing.T) (*Handler, *http.ServeMux, *testutil.M
 	t.Helper()
 
 	mockStore := &testutil.MockStore{
-		GetQuotaStatsResp: map[string]storage.QuotaStat{
+		GetQuotaStatsResp: map[string]store.QuotaStat{
 			"b1": {BackendName: "b1", BytesUsed: 500, BytesLimit: 1000},
 		},
 		GetObjectCountsResp:    map[string]int64{"b1": 42},
 		GetActiveMultipartResp: map[string]int64{"b1": 0},
-		GetUsageForPeriodResp:  map[string]storage.UsageStat{"b1": {APIRequests: 100}},
-		ListDirChildrenResp: &storage.DirectoryListResult{
-			Entries: []storage.DirEntry{
+		GetUsageForPeriodResp:  map[string]store.UsageStat{"b1": {APIRequests: 100}},
+		ListDirChildrenResp: &store.DirectoryListResult{
+			Entries: []store.DirEntry{
 				{Name: "bucket1/", IsDir: true, FileCount: 10, TotalSize: 4096},
 			},
 		},
 	}
 
-	mgr := storage.NewBackendManager(&storage.BackendManagerConfig{
-		Backends:        map[string]storage.ObjectBackend{},
+	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
+		Backends:        map[string]backend.ObjectBackend{},
 		Store:           mockStore,
 		Order:           []string{"b1"},
 		RoutingStrategy: "pack",
@@ -307,14 +311,14 @@ func TestLogin_BcryptSecret(t *testing.T) {
 	}
 
 	mockStore := &testutil.MockStore{
-		GetQuotaStatsResp:      map[string]storage.QuotaStat{},
+		GetQuotaStatsResp:      map[string]store.QuotaStat{},
 		GetObjectCountsResp:    map[string]int64{},
 		GetActiveMultipartResp: map[string]int64{},
-		GetUsageForPeriodResp:  map[string]storage.UsageStat{},
-		ListDirChildrenResp:    &storage.DirectoryListResult{},
+		GetUsageForPeriodResp:  map[string]store.UsageStat{},
+		ListDirChildrenResp:    &store.DirectoryListResult{},
 	}
-	mgr := storage.NewBackendManager(&storage.BackendManagerConfig{
-		Backends: map[string]storage.ObjectBackend{},
+	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
+		Backends: map[string]backend.ObjectBackend{},
 		Store:    mockStore,
 		Order:    []string{},
 	})
@@ -373,14 +377,14 @@ func TestDeriveSessionKey_SessionSecretTakesPrecedence(t *testing.T) {
 func TestCrossInstanceSession(t *testing.T) {
 	// Two handlers with the same config should accept each other's sessions.
 	mockStore := &testutil.MockStore{
-		GetQuotaStatsResp:      map[string]storage.QuotaStat{},
+		GetQuotaStatsResp:      map[string]store.QuotaStat{},
 		GetObjectCountsResp:    map[string]int64{},
 		GetActiveMultipartResp: map[string]int64{},
-		GetUsageForPeriodResp:  map[string]storage.UsageStat{},
-		ListDirChildrenResp:    &storage.DirectoryListResult{},
+		GetUsageForPeriodResp:  map[string]store.UsageStat{},
+		ListDirChildrenResp:    &store.DirectoryListResult{},
 	}
-	mgr := storage.NewBackendManager(&storage.BackendManagerConfig{
-		Backends: map[string]storage.ObjectBackend{},
+	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
+		Backends: map[string]backend.ObjectBackend{},
 		Store:    mockStore,
 		Order:    []string{},
 	})
@@ -480,7 +484,7 @@ func TestAPIDashboard_ReturnsJSON(t *testing.T) {
 		t.Errorf("Content-Type = %q, want application/json", ct)
 	}
 
-	var data storage.DashboardData
+	var data proxy.DashboardData
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		t.Fatalf("failed to decode JSON: %v", err)
 	}
@@ -505,7 +509,7 @@ func TestTreeAPI_ReturnsJSON(t *testing.T) {
 		t.Errorf("Content-Type = %q, want application/json", ct)
 	}
 
-	var result storage.DirectoryListResult
+	var result store.DirectoryListResult
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		t.Fatalf("failed to decode JSON: %v", err)
 	}
@@ -519,8 +523,8 @@ func TestSecurityHeaders_PresentOnAllEndpoints(t *testing.T) {
 
 	// Login page (no auth needed) and authenticated endpoints
 	endpoints := []struct {
-		path    string
-		authed  bool
+		path   string
+		authed bool
 	}{
 		{"/ui/login", false},
 		{"/ui/", true},
@@ -540,7 +544,7 @@ func TestSecurityHeaders_PresentOnAllEndpoints(t *testing.T) {
 
 			resp := w.Result()
 			checks := map[string]string{
-				"X-Frame-Options":        "DENY",
+				"X-Frame-Options":         "DENY",
 				"X-Content-Type-Options":  "nosniff",
 				"Referrer-Policy":         "strict-origin-when-cross-origin",
 				"Content-Security-Policy": "default-src 'self'; style-src 'self' 'unsafe-inline'",
@@ -753,8 +757,8 @@ func TestAPIDeletePrefix_EmptyPrefix(t *testing.T) {
 
 func TestAPIDeletePrefix_Success(t *testing.T) {
 	h, mux, mock := newTestHandlerWithMock(t)
-	mock.ListObjectsResp = &storage.ListObjectsResult{
-		Objects: []storage.ObjectLocation{
+	mock.ListObjectsResp = &store.ListObjectsResult{
+		Objects: []store.ObjectLocation{
 			{ObjectKey: "test-bucket/a.txt", BackendName: "b1", SizeBytes: 100},
 			{ObjectKey: "test-bucket/b.txt", BackendName: "b1", SizeBytes: 200},
 		},
@@ -787,7 +791,7 @@ func TestAPIDeletePrefix_Success(t *testing.T) {
 
 func TestAPIDeletePrefix_EmptyResult(t *testing.T) {
 	h, mux, mock := newTestHandlerWithMock(t)
-	mock.ListObjectsResp = &storage.ListObjectsResult{
+	mock.ListObjectsResp = &store.ListObjectsResult{
 		Objects:     nil,
 		IsTruncated: false,
 	}
@@ -833,8 +837,8 @@ func TestAPIDeletePrefix_ListObjectsError(t *testing.T) {
 
 func TestAPIDeletePrefix_DeleteError(t *testing.T) {
 	h, mux, mock := newTestHandlerWithMock(t)
-	mock.ListObjectsResp = &storage.ListObjectsResult{
-		Objects: []storage.ObjectLocation{
+	mock.ListObjectsResp = &store.ListObjectsResult{
+		Objects: []store.ObjectLocation{
 			{ObjectKey: "test-bucket/a.txt", BackendName: "b1", SizeBytes: 100},
 		},
 		IsTruncated: false,

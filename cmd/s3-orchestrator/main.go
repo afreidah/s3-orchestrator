@@ -37,12 +37,19 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/server"
-	"github.com/afreidah/s3-orchestrator/internal/storage"
+
+	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/ui"
+
+	// codecov:ignore -- process entry point, delegates to tested functions
+	"github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/proxy"
+	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
-func main() { // codecov:ignore -- process entry point, delegates to tested functions
+func main() {
 
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
@@ -138,7 +145,7 @@ func runServe() {
 	}
 
 	// --- Initialize PostgreSQL store ---
-	store, err := storage.NewStore(ctx, &cfg.Database)
+	db, err := store.NewStore(ctx, &cfg.Database)
 	if err != nil {
 		slog.ErrorContext(ctx, "Failed to connect to database", "error", err)
 		os.Exit(1)
@@ -150,39 +157,39 @@ func runServe() {
 	)
 
 	// --- Run database migrations ---
-	if err := store.RunMigrations(ctx); err != nil {
+	if err := db.RunMigrations(ctx); err != nil {
 		slog.ErrorContext(ctx, "Failed to run migrations", "error", err)
 		os.Exit(1)
 	}
 	slog.InfoContext(ctx, "Database migrations applied")
 
 	// --- Sync quota limits from config to database ---
-	if err := store.SyncQuotaLimits(ctx, cfg.Backends); err != nil {
+	if err := db.SyncQuotaLimits(ctx, cfg.Backends); err != nil {
 		slog.ErrorContext(ctx, "Failed to sync quota limits", "error", err)
 		os.Exit(1)
 	}
 
 	// --- Initialize backends ---
-	backends := make(map[string]storage.ObjectBackend)
+	backends := make(map[string]backend.ObjectBackend)
 	backendOrder := make([]string, 0, len(cfg.Backends))
 
-	usageLimits := make(map[string]storage.UsageLimits, len(cfg.Backends))
+	usageLimits := make(map[string]store.UsageLimits, len(cfg.Backends))
 	for i := range cfg.Backends {
 		bcfg := &cfg.Backends[i]
-		s3Backend, err := storage.NewS3Backend(bcfg)
+		s3Backend, err := backend.NewS3Backend(bcfg)
 		if err != nil {
 			slog.ErrorContext(ctx, "Failed to initialize backend", "backend", bcfg.Name, "error", err)
 			os.Exit(1)
 		}
-		var backend storage.ObjectBackend = s3Backend
+		var be backend.ObjectBackend = s3Backend
 		if cfg.BackendCircuitBreaker.Enabled {
-			backend = storage.NewCircuitBreakerBackend(s3Backend, bcfg.Name,
+			be = backend.NewCircuitBreakerBackend(s3Backend, bcfg.Name,
 				cfg.BackendCircuitBreaker.FailureThreshold,
 				cfg.BackendCircuitBreaker.OpenTimeout)
 		}
-		backends[bcfg.Name] = backend
+		backends[bcfg.Name] = be
 		backendOrder = append(backendOrder, bcfg.Name)
-		usageLimits[bcfg.Name] = storage.UsageLimits{
+		usageLimits[bcfg.Name] = store.UsageLimits{
 			APIRequestLimit:  bcfg.APIRequestLimit,
 			EgressByteLimit:  bcfg.EgressByteLimit,
 			IngressByteLimit: bcfg.IngressByteLimit,
@@ -199,7 +206,7 @@ func runServe() {
 	}
 
 	// --- Wrap store with circuit breaker for runtime ---
-	cbStore := storage.NewCircuitBreakerStore(store, cfg.CircuitBreaker)
+	cbStore := store.NewCircuitBreakerStore(db, cfg.CircuitBreaker)
 
 	// --- Initialize encryption (if enabled) ---
 	var encryptor *encryption.Encryptor
@@ -207,20 +214,20 @@ func runServe() {
 	if cfg.Encryption.Enabled {
 		provider, err := encryption.NewKeyProviderFromConfig(&cfg.Encryption)
 		if err != nil {
-			slog.ErrorContext(ctx,"Failed to initialize encryption key provider", "error", err)
+			slog.ErrorContext(ctx, "Failed to initialize encryption key provider", "error", err)
 			os.Exit(1)
 		}
 		encryptionProvider = provider
 		encryptor = encryption.NewEncryptor(provider, cfg.Encryption.ChunkSize)
-		slog.InfoContext(ctx,"Server-side encryption enabled",
+		slog.InfoContext(ctx, "Server-side encryption enabled",
 			"chunk_size", cfg.Encryption.ChunkSize,
 			"key_id", provider.KeyID(),
 		)
 	}
 
 	// --- Initialize shared counter backend (Redis or local) ---
-	var counterBackend storage.CounterBackend
-	var redisBackend *storage.RedisCounterBackend
+	var counterBackend counter.CounterBackend
+	var redisBackend *counter.RedisCounterBackend
 	if cfg.Redis != nil {
 		redisOpts := &redis.Options{
 			Addr:     cfg.Redis.Address,
@@ -232,13 +239,13 @@ func runServe() {
 		}
 		redisClient := redis.NewClient(redisOpts)
 		var err error
-		redisBackend, err = storage.NewRedisCounterBackend(redisClient, cfg.Redis, backendOrder)
+		redisBackend, err = counter.NewRedisCounterBackend(redisClient, cfg.Redis, backendOrder)
 		if err != nil {
-			slog.ErrorContext(ctx,"Failed to connect to Redis", "error", err)
+			slog.ErrorContext(ctx, "Failed to connect to Redis", "error", err)
 			os.Exit(1)
 		}
 		counterBackend = redisBackend
-		slog.InfoContext(ctx,"Redis shared counters enabled", "address", cfg.Redis.Address)
+		slog.InfoContext(ctx, "Redis shared counters enabled", "address", cfg.Redis.Address)
 	}
 
 	// --- Create admission semaphore ---
@@ -255,15 +262,15 @@ func runServe() {
 	}
 
 	// --- Create backend manager ---
-	manager := storage.NewBackendManager(&storage.BackendManagerConfig{
-		Backends:          backends,
-		Store:             cbStore,
-		Order:             backendOrder,
-		CacheTTL:          cfg.CircuitBreaker.CacheTTL,
-		BackendTimeout:    cfg.Server.BackendTimeout,
-		UsageLimits:       usageLimits,
-		RoutingStrategy:   cfg.RoutingStrategy,
-		ParallelBroadcast: cfg.CircuitBreaker.ParallelBroadcast,
+	manager := proxy.NewBackendManager(&proxy.BackendManagerConfig{
+		Backends:           backends,
+		Store:              cbStore,
+		Order:              backendOrder,
+		CacheTTL:           cfg.CircuitBreaker.CacheTTL,
+		BackendTimeout:     cfg.Server.BackendTimeout,
+		UsageLimits:        usageLimits,
+		RoutingStrategy:    cfg.RoutingStrategy,
+		ParallelBroadcast:  cfg.CircuitBreaker.ParallelBroadcast,
 		Encryptor:          encryptor,
 		CounterBackend:     counterBackend,
 		CleanupConcurrency: cfg.CleanupQueue.Concurrency,
@@ -288,7 +295,7 @@ func runServe() {
 
 	// --- Start background services with lifecycle manager ---
 	sm := lifecycle.NewManager()
-	sm.Register("usage-flush", &usageFlushService{manager: manager, store: store}) // all modes — data safety
+	sm.Register("usage-flush", &usageFlushService{manager: manager, locker: cbStore}) // all modes — data safety
 
 	if *mode == "worker" || *mode == "all" {
 		sm.Register("multipart-cleanup", newMultipartCleanupService(manager, cbStore))
@@ -303,14 +310,14 @@ func runServe() {
 			for i, b := range cfg.Buckets {
 				bktNames[i] = b.Name
 			}
-			reconciler := storage.NewReconciler(manager, bktNames)
+			reconciler := worker.NewReconciler(manager, bktNames)
 			sm.Register("reconcile", newReconcileService(reconciler, cbStore, cfg.Reconcile.Interval))
 			slog.InfoContext(ctx, "Reconciler enabled", "interval", cfg.Reconcile.Interval)
 		}
 	}
 
 	if cfg.Rebalance.Enabled {
-		slog.InfoContext(ctx,"Rebalancer enabled",
+		slog.InfoContext(ctx, "Rebalancer enabled",
 			"strategy", cfg.Rebalance.Strategy,
 			"interval", cfg.Rebalance.Interval,
 			"batch_size", cfg.Rebalance.BatchSize,
@@ -318,7 +325,7 @@ func runServe() {
 		)
 	}
 	if cfg.Replication.Factor > 1 {
-		slog.InfoContext(ctx,"Replication worker enabled",
+		slog.InfoContext(ctx, "Replication worker enabled",
 			"factor", cfg.Replication.Factor,
 			"interval", cfg.Replication.WorkerInterval,
 			"batch_size", cfg.Replication.BatchSize,
@@ -346,7 +353,7 @@ func runServe() {
 	// Metrics endpoint
 	if cfg.Telemetry.Metrics.Enabled {
 		mux.Handle(cfg.Telemetry.Metrics.Path, promhttp.Handler())
-		slog.InfoContext(ctx,"Metrics endpoint enabled", "path", cfg.Telemetry.Metrics.Path)
+		slog.InfoContext(ctx, "Metrics endpoint enabled", "path", cfg.Telemetry.Metrics.Path)
 	}
 
 	// Liveness endpoint — always 200 so the service stays in Consul/K8s rotation.
@@ -380,7 +387,7 @@ func runServe() {
 
 	if cfg.RateLimit.Enabled {
 		rl = server.NewRateLimiter(cfg.RateLimit)
-		slog.InfoContext(ctx,"Rate limiting enabled",
+		slog.InfoContext(ctx, "Rate limiting enabled",
 			"requests_per_sec", cfg.RateLimit.RequestsPerSec,
 			"burst", cfg.RateLimit.Burst,
 		)
@@ -393,14 +400,14 @@ func runServe() {
 			adminToken = cfg.UI.AdminKey
 		}
 		adminMux := http.NewServeMux()
-		adminHandler := admin.New(manager, cbStore, store, encryptor, adminToken, &logLevel)
+		adminHandler := admin.New(manager, cbStore, db, encryptor, adminToken, &logLevel)
 		adminHandler.Register(adminMux)
 		var adminHTTP http.Handler = adminMux
 		if rl != nil {
 			adminHTTP = rl.Middleware(adminHTTP)
 		}
 		mux.Handle("/admin/", adminHTTP)
-		slog.InfoContext(ctx,"Admin API enabled", "path", "/admin/api/")
+		slog.InfoContext(ctx, "Admin API enabled", "path", "/admin/api/")
 	}
 
 	// --- API-mode handlers: UI, S3 proxy ---
@@ -410,7 +417,7 @@ func runServe() {
 			loginThrottle = httputil.NewLoginThrottle(5, 5*time.Minute)
 			uiHandler = ui.New(manager, cbStore.IsHealthy, cfg, logBuffer, loginThrottle)
 			uiHandler.Register(mux, cfg.UI.Path)
-			slog.InfoContext(ctx,"Web UI enabled", "path", cfg.UI.Path)
+			slog.InfoContext(ctx, "Web UI enabled", "path", cfg.UI.Path)
 		}
 
 		// S3 proxy handler (all other paths), optionally rate-limited and admission-controlled
@@ -428,7 +435,7 @@ func runServe() {
 				ac.SetAdmissionWait(cfg.Server.AdmissionWait)
 			}
 			s3Handler = ac.Middleware(s3Handler)
-			slog.InfoContext(ctx,"Split admission control enabled",
+			slog.InfoContext(ctx, "Split admission control enabled",
 				"max_concurrent_reads", cfg.Server.MaxConcurrentReads,
 				"max_concurrent_writes", cfg.Server.MaxConcurrentWrites,
 				"load_shed_threshold", cfg.Server.LoadShedThreshold,
@@ -443,7 +450,7 @@ func runServe() {
 				ac.SetAdmissionWait(cfg.Server.AdmissionWait)
 			}
 			s3Handler = ac.Middleware(s3Handler)
-			slog.InfoContext(ctx,"Admission control enabled",
+			slog.InfoContext(ctx, "Admission control enabled",
 				"max_concurrent_requests", cfg.Server.MaxConcurrentRequests,
 				"load_shed_threshold", cfg.Server.LoadShedThreshold,
 				"admission_wait", cfg.Server.AdmissionWait,
@@ -466,7 +473,7 @@ func runServe() {
 	if cfg.Server.TLS.CertFile != "" {
 		certReloader, err = httputil.NewCertReloader(cfg.Server.TLS.CertFile, cfg.Server.TLS.KeyFile)
 		if err != nil {
-			slog.ErrorContext(ctx,"Failed to load TLS certificate", "error", err)
+			slog.ErrorContext(ctx, "Failed to load TLS certificate", "error", err)
 			os.Exit(1)
 		}
 
@@ -478,12 +485,12 @@ func runServe() {
 		if cfg.Server.TLS.ClientCAFile != "" {
 			caCert, err := os.ReadFile(cfg.Server.TLS.ClientCAFile)
 			if err != nil {
-				slog.ErrorContext(ctx,"Failed to read client CA file", "error", err)
+				slog.ErrorContext(ctx, "Failed to read client CA file", "error", err)
 				os.Exit(1)
 			}
 			caPool := x509.NewCertPool()
 			if !caPool.AppendCertsFromPEM(caCert) {
-				slog.ErrorContext(ctx,"Failed to parse client CA certificate")
+				slog.ErrorContext(ctx, "Failed to parse client CA certificate")
 				os.Exit(1)
 			}
 			tlsCfg.ClientAuth = tls.RequireAndVerifyClientCert
@@ -538,17 +545,17 @@ func runServe() {
 
 			// Reload quota limits in database (dedicated timeout, not bgCtx)
 			reloadCtx, reloadCancel := context.WithTimeout(context.Background(), 10*time.Second)
-			if err := store.SyncQuotaLimits(reloadCtx, newCfg.Backends); err != nil {
+			if err := db.SyncQuotaLimits(reloadCtx, newCfg.Backends); err != nil {
 				slog.ErrorContext(reloadCtx, "Failed to sync quota limits on reload", "error", err)
 			} else {
 				slog.InfoContext(reloadCtx, "Reloaded backend quota limits")
 			}
 
 			// Reload usage limits
-			newUsageLimits := make(map[string]storage.UsageLimits, len(newCfg.Backends))
+			newUsageLimits := make(map[string]store.UsageLimits, len(newCfg.Backends))
 			for i := range newCfg.Backends {
 				bcfg := &newCfg.Backends[i]
-				newUsageLimits[bcfg.Name] = storage.UsageLimits{
+				newUsageLimits[bcfg.Name] = store.UsageLimits{
 					APIRequestLimit:  bcfg.APIRequestLimit,
 					EgressByteLimit:  bcfg.EgressByteLimit,
 					IngressByteLimit: bcfg.IngressByteLimit,
@@ -594,13 +601,13 @@ func runServe() {
 		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 		sig := <-sigChan
 
-		slog.InfoContext(ctx,"Shutting down", "signal", sig.String())
+		slog.InfoContext(ctx, "Shutting down", "signal", sig.String())
 
 		// Optional pre-stop delay for async LB deregistration (Consul, K8s).
 		// The delay runs before toggling readiness off so the LB continues to
 		// see the service as healthy while it finishes deregistering.
 		if delay := cfgPtr.Load().Server.ShutdownDelay; delay > 0 {
-			slog.InfoContext(ctx,"Waiting for load balancer deregistration", "delay", delay)
+			slog.InfoContext(ctx, "Waiting for load balancer deregistration", "delay", delay)
 			time.Sleep(delay)
 		}
 
@@ -617,7 +624,7 @@ func runServe() {
 
 		// Drain inflight HTTP requests first so clients get responses quickly
 		if err := httpServer.Shutdown(shutdownCtx); err != nil {
-			slog.ErrorContext(ctx,"HTTP server shutdown error", "error", err)
+			slog.ErrorContext(ctx, "HTTP server shutdown error", "error", err)
 		}
 
 		// Stop rate limiter and login throttle cleanup goroutines
@@ -664,13 +671,13 @@ func runServe() {
 		}
 
 		// Close database connection
-		store.Close()
+		db.Close()
 
 		// Flush traces
 		traceCtx, traceCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer traceCancel()
 		if err := shutdownTracer(traceCtx); err != nil {
-			slog.ErrorContext(ctx,"Tracer shutdown error", "error", err)
+			slog.ErrorContext(ctx, "Tracer shutdown error", "error", err)
 		}
 	}()
 
@@ -682,7 +689,7 @@ func runServe() {
 	for i, b := range cfg.Buckets {
 		bucketNames[i] = b.Name
 	}
-	slog.InfoContext(ctx,"S3 Orchestrator starting",
+	slog.InfoContext(ctx, "S3 Orchestrator starting",
 		"version", telemetry.Version,
 		"mode", *mode,
 		"listen_addr", cfg.Server.ListenAddr,
@@ -693,7 +700,7 @@ func runServe() {
 	)
 
 	if cfg.Telemetry.Tracing.Enabled {
-		slog.InfoContext(ctx,"Tracing enabled",
+		slog.InfoContext(ctx, "Tracing enabled",
 			"endpoint", cfg.Telemetry.Tracing.Endpoint,
 			"sample_rate", cfg.Telemetry.Tracing.SampleRate,
 			"insecure", cfg.Telemetry.Tracing.Insecure,
@@ -701,7 +708,7 @@ func runServe() {
 	}
 
 	if cfg.Server.TLS.CertFile != "" {
-		slog.InfoContext(ctx,"TLS enabled",
+		slog.InfoContext(ctx, "TLS enabled",
 			"cert_file", cfg.Server.TLS.CertFile,
 			"min_version", cfg.Server.TLS.MinVersion,
 			"mtls", cfg.Server.TLS.ClientCAFile != "",
@@ -709,24 +716,24 @@ func runServe() {
 	}
 
 	if cfg.BackendCircuitBreaker.Enabled {
-		slog.InfoContext(ctx,"Backend circuit breakers enabled",
+		slog.InfoContext(ctx, "Backend circuit breakers enabled",
 			"failure_threshold", cfg.BackendCircuitBreaker.FailureThreshold,
 			"open_timeout", cfg.BackendCircuitBreaker.OpenTimeout,
 		)
 	}
 
 	if cfg.Encryption.Enabled {
-		slog.InfoContext(ctx,"Server-side encryption active",
+		slog.InfoContext(ctx, "Server-side encryption active",
 			"chunk_size", cfg.Encryption.ChunkSize,
 		)
 	}
 
 	if cfg.CircuitBreaker.ParallelBroadcast {
-		slog.InfoContext(ctx,"Parallel broadcast reads enabled for degraded mode")
+		slog.InfoContext(ctx, "Parallel broadcast reads enabled for degraded mode")
 	}
 
 	if len(cfg.Lifecycle.Rules) > 0 {
-		slog.InfoContext(ctx,"Lifecycle rules enabled", "rules", len(cfg.Lifecycle.Rules))
+		slog.InfoContext(ctx, "Lifecycle rules enabled", "rules", len(cfg.Lifecycle.Rules))
 	}
 
 	// --- Start server ---
@@ -736,14 +743,14 @@ func runServe() {
 		err = httpServer.ListenAndServe()
 	}
 	if err != nil && err != http.ErrServerClosed {
-		slog.ErrorContext(ctx,"Server error", "error", err)
+		slog.ErrorContext(ctx, "Server error", "error", err)
 		os.Exit(1)
 	}
 
 	// Wait for shutdown goroutine to finish cleanup
 	<-shutdownDone
 
-	slog.InfoContext(ctx,"Server stopped")
+	slog.InfoContext(ctx, "Server stopped")
 }
 
 // parseTLSVersion maps a config string to a tls.VersionTLS constant.

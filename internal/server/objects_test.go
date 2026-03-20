@@ -22,11 +22,15 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/auth"
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/storage"
+
+	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/testutil"
+
+	// serverMockBackend implements storage.ObjectBackend for server handler tests.
+	"github.com/afreidah/s3-orchestrator/internal/proxy"
+	"github.com/afreidah/s3-orchestrator/internal/store"
 )
 
-// serverMockBackend implements storage.ObjectBackend for server handler tests.
 type serverMockBackend struct {
 	mu      sync.Mutex
 	objects map[string]serverMockObj
@@ -63,7 +67,7 @@ func (b *serverMockBackend) PutObject(_ context.Context, key string, body io.Rea
 	return etag, nil
 }
 
-func (b *serverMockBackend) GetObject(_ context.Context, key string, _ string) (*storage.GetObjectResult, error) {
+func (b *serverMockBackend) GetObject(_ context.Context, key string, _ string) (*s3be.GetObjectResult, error) {
 	if b.getErr != nil {
 		return nil, b.getErr
 	}
@@ -71,9 +75,9 @@ func (b *serverMockBackend) GetObject(_ context.Context, key string, _ string) (
 	obj, ok := b.objects[key]
 	b.mu.Unlock()
 	if !ok {
-		return nil, storage.ErrObjectNotFound
+		return nil, store.ErrObjectNotFound
 	}
-	return &storage.GetObjectResult{
+	return &s3be.GetObjectResult{
 		Body:         io.NopCloser(bytes.NewReader(obj.data)),
 		Size:         int64(len(obj.data)),
 		ContentType:  obj.contentType,
@@ -83,7 +87,7 @@ func (b *serverMockBackend) GetObject(_ context.Context, key string, _ string) (
 	}, nil
 }
 
-func (b *serverMockBackend) HeadObject(_ context.Context, key string) (*storage.HeadObjectResult, error) {
+func (b *serverMockBackend) HeadObject(_ context.Context, key string) (*s3be.HeadObjectResult, error) {
 	if b.headErr != nil {
 		return nil, b.headErr
 	}
@@ -91,9 +95,9 @@ func (b *serverMockBackend) HeadObject(_ context.Context, key string) (*storage.
 	obj, ok := b.objects[key]
 	b.mu.Unlock()
 	if !ok {
-		return nil, storage.ErrObjectNotFound
+		return nil, store.ErrObjectNotFound
 	}
-	return &storage.HeadObjectResult{
+	return &s3be.HeadObjectResult{
 		Size:         int64(len(obj.data)),
 		ContentType:  obj.contentType,
 		ETag:         obj.etag,
@@ -122,8 +126,8 @@ func newTestServer(t *testing.T) (*httptest.Server, *testutil.MockStore, *server
 		GetBackendResp: "b1",
 	}
 
-	mgr := storage.NewBackendManager(&storage.BackendManagerConfig{
-		Backends:        map[string]storage.ObjectBackend{"b1": backend},
+	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
+		Backends:        map[string]s3be.ObjectBackend{"b1": backend},
 		Store:           mockStore,
 		Order:           []string{"b1"},
 		RoutingStrategy: "pack",
@@ -247,7 +251,7 @@ func (neverEndingReader) Read(p []byte) (int, error) {
 
 func TestPut_QuotaExhausted(t *testing.T) {
 	ts, mockStore, _ := newTestServer(t)
-	mockStore.GetBackendErr = storage.ErrNoSpaceAvailable
+	mockStore.GetBackendErr = store.ErrNoSpaceAvailable
 
 	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/mybucket/testkey", strings.NewReader("data"))
 	req.Header.Set("X-Proxy-Token", "test-token")
@@ -265,7 +269,7 @@ func TestPut_QuotaExhausted(t *testing.T) {
 
 func TestPut_DBUnavailable(t *testing.T) {
 	ts, mockStore, _ := newTestServer(t)
-	mockStore.GetBackendErr = storage.ErrDBUnavailable
+	mockStore.GetBackendErr = store.ErrDBUnavailable
 
 	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/mybucket/testkey", strings.NewReader("data"))
 	req.Header.Set("X-Proxy-Token", "test-token")
@@ -292,7 +296,7 @@ func TestGet_Success(t *testing.T) {
 	backend.objects["mybucket/testkey"] = serverMockObj{
 		data: []byte("hello"), contentType: "text/plain", etag: `"abc"`,
 	}
-	mockStore.GetAllLocationsResp = []storage.ObjectLocation{
+	mockStore.GetAllLocationsResp = []store.ObjectLocation{
 		{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5},
 	}
 
@@ -313,7 +317,7 @@ func TestGet_Success(t *testing.T) {
 
 func TestGet_NotFound(t *testing.T) {
 	ts, mockStore, _ := newTestServer(t)
-	mockStore.GetAllLocationsErr = storage.ErrObjectNotFound
+	mockStore.GetAllLocationsErr = store.ErrObjectNotFound
 
 	resp := doReq(t, http.MethodGet, ts.URL+"/mybucket/nonexistent", nil)
 	defer resp.Body.Close()
@@ -333,7 +337,7 @@ func TestHead_Success(t *testing.T) {
 	backend.objects["mybucket/testkey"] = serverMockObj{
 		data: []byte("12345"), contentType: "text/plain", etag: `"abc"`,
 	}
-	mockStore.GetAllLocationsResp = []storage.ObjectLocation{
+	mockStore.GetAllLocationsResp = []store.ObjectLocation{
 		{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5},
 	}
 
@@ -356,7 +360,7 @@ func TestHead_Success(t *testing.T) {
 
 func TestHead_NotFound(t *testing.T) {
 	ts, mockStore, _ := newTestServer(t)
-	mockStore.GetAllLocationsErr = storage.ErrObjectNotFound
+	mockStore.GetAllLocationsErr = store.ErrObjectNotFound
 
 	resp := doReq(t, http.MethodHead, ts.URL+"/mybucket/nonexistent", nil)
 	defer resp.Body.Close()
@@ -376,7 +380,7 @@ func TestGet_LastModifiedHeader(t *testing.T) {
 	backend.objects["mybucket/testkey"] = serverMockObj{
 		data: []byte("hello"), contentType: "text/plain", etag: `"abc"`,
 	}
-	mockStore.GetAllLocationsResp = []storage.ObjectLocation{
+	mockStore.GetAllLocationsResp = []store.ObjectLocation{
 		{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5,
 			CreatedAt: time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)},
 	}
@@ -401,7 +405,7 @@ func TestGet_ConditionalIfNoneMatch(t *testing.T) {
 	backend.objects["mybucket/testkey"] = serverMockObj{
 		data: []byte("hello"), contentType: "text/plain", etag: `"abc"`,
 	}
-	mockStore.GetAllLocationsResp = []storage.ObjectLocation{
+	mockStore.GetAllLocationsResp = []store.ObjectLocation{
 		{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5},
 	}
 
@@ -425,7 +429,7 @@ func TestGet_ConditionalIfNoneMatchMismatch(t *testing.T) {
 	backend.objects["mybucket/testkey"] = serverMockObj{
 		data: []byte("hello"), contentType: "text/plain", etag: `"abc"`,
 	}
-	mockStore.GetAllLocationsResp = []storage.ObjectLocation{
+	mockStore.GetAllLocationsResp = []store.ObjectLocation{
 		{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5},
 	}
 
@@ -449,7 +453,7 @@ func TestGet_ConditionalIfMatch(t *testing.T) {
 	backend.objects["mybucket/testkey"] = serverMockObj{
 		data: []byte("hello"), contentType: "text/plain", etag: `"abc"`,
 	}
-	mockStore.GetAllLocationsResp = []storage.ObjectLocation{
+	mockStore.GetAllLocationsResp = []store.ObjectLocation{
 		{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5},
 	}
 
@@ -473,7 +477,7 @@ func TestHead_ConditionalIfNoneMatch(t *testing.T) {
 	backend.objects["mybucket/testkey"] = serverMockObj{
 		data: []byte("hello"), contentType: "text/plain", etag: `"abc"`,
 	}
-	mockStore.GetAllLocationsResp = []storage.ObjectLocation{
+	mockStore.GetAllLocationsResp = []store.ObjectLocation{
 		{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5},
 	}
 
@@ -499,7 +503,7 @@ func TestGet_ConditionalIfModifiedSince(t *testing.T) {
 		data: []byte("hello"), contentType: "text/plain", etag: `"abc"`,
 		lastModified: objTime,
 	}
-	mockStore.GetAllLocationsResp = []storage.ObjectLocation{
+	mockStore.GetAllLocationsResp = []store.ObjectLocation{
 		{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5},
 	}
 
@@ -526,7 +530,7 @@ func TestGet_ConditionalIfModifiedSinceNewer(t *testing.T) {
 		data: []byte("hello"), contentType: "text/plain", etag: `"abc"`,
 		lastModified: objTime,
 	}
-	mockStore.GetAllLocationsResp = []storage.ObjectLocation{
+	mockStore.GetAllLocationsResp = []store.ObjectLocation{
 		{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5},
 	}
 
@@ -553,7 +557,7 @@ func TestGet_ConditionalIfUnmodifiedSince(t *testing.T) {
 		data: []byte("hello"), contentType: "text/plain", etag: `"abc"`,
 		lastModified: objTime,
 	}
-	mockStore.GetAllLocationsResp = []storage.ObjectLocation{
+	mockStore.GetAllLocationsResp = []store.ObjectLocation{
 		{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5},
 	}
 
@@ -580,7 +584,7 @@ func TestGet_LastModifiedHeaderSet(t *testing.T) {
 		data: []byte("hello"), contentType: "text/plain", etag: `"abc"`,
 		lastModified: objTime,
 	}
-	mockStore.GetAllLocationsResp = []storage.ObjectLocation{
+	mockStore.GetAllLocationsResp = []store.ObjectLocation{
 		{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5},
 	}
 
@@ -609,7 +613,7 @@ func TestHead_LastModifiedHeaderSet(t *testing.T) {
 		data: []byte("hello"), contentType: "text/plain", etag: `"abc"`,
 		lastModified: objTime,
 	}
-	mockStore.GetAllLocationsResp = []storage.ObjectLocation{
+	mockStore.GetAllLocationsResp = []store.ObjectLocation{
 		{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5},
 	}
 
@@ -669,7 +673,7 @@ func TestGet_MetadataReturned(t *testing.T) {
 		data: []byte("hello"), contentType: "text/plain", etag: `"abc"`,
 		metadata: map[string]string{"project": "acme", "env": "prod"},
 	}
-	mockStore.GetAllLocationsResp = []storage.ObjectLocation{
+	mockStore.GetAllLocationsResp = []store.ObjectLocation{
 		{ObjectKey: "mybucket/metakey", BackendName: "b1", SizeBytes: 5},
 	}
 
@@ -694,7 +698,7 @@ func TestHead_MetadataReturned(t *testing.T) {
 		data: []byte("hello"), contentType: "text/plain", etag: `"abc"`,
 		metadata: map[string]string{"project": "acme"},
 	}
-	mockStore.GetAllLocationsResp = []storage.ObjectLocation{
+	mockStore.GetAllLocationsResp = []store.ObjectLocation{
 		{ObjectKey: "mybucket/metakey", BackendName: "b1", SizeBytes: 5},
 	}
 
@@ -737,7 +741,7 @@ func TestDelete_Success(t *testing.T) {
 	ts, mockStore, backend := newTestServer(t)
 
 	backend.objects["mybucket/testkey"] = serverMockObj{data: []byte("hi")}
-	mockStore.DeleteObjectResp = []storage.DeletedCopy{
+	mockStore.DeleteObjectResp = []store.DeletedCopy{
 		{BackendName: "b1", SizeBytes: 2},
 	}
 
@@ -751,7 +755,7 @@ func TestDelete_Success(t *testing.T) {
 
 func TestDelete_IdempotentForMissing(t *testing.T) {
 	ts, mockStore, _ := newTestServer(t)
-	mockStore.DeleteObjectErr = storage.ErrObjectNotFound
+	mockStore.DeleteObjectErr = store.ErrObjectNotFound
 
 	resp := doReq(t, http.MethodDelete, ts.URL+"/mybucket/nonexistent", nil)
 	defer resp.Body.Close()
@@ -771,8 +775,8 @@ func TestDeleteObjects_Success(t *testing.T) {
 
 	backend.objects["mybucket/key1"] = serverMockObj{data: []byte("a")}
 	backend.objects["mybucket/key2"] = serverMockObj{data: []byte("b")}
-	mockStore.DeleteObjectFunc = func(key string) ([]storage.DeletedCopy, error) {
-		return []storage.DeletedCopy{{BackendName: "b1", SizeBytes: 1}}, nil
+	mockStore.DeleteObjectFunc = func(key string) ([]store.DeletedCopy, error) {
+		return []store.DeletedCopy{{BackendName: "b1", SizeBytes: 1}}, nil
 	}
 
 	body := strings.NewReader(`<Delete><Object><Key>key1</Key></Object><Object><Key>key2</Key></Object></Delete>`)
@@ -794,8 +798,8 @@ func TestDeleteObjects_Success(t *testing.T) {
 
 func TestDeleteObjects_QuietMode(t *testing.T) {
 	ts, mockStore, _ := newTestServer(t)
-	mockStore.DeleteObjectFunc = func(key string) ([]storage.DeletedCopy, error) {
-		return []storage.DeletedCopy{{BackendName: "b1", SizeBytes: 1}}, nil
+	mockStore.DeleteObjectFunc = func(key string) ([]store.DeletedCopy, error) {
+		return []store.DeletedCopy{{BackendName: "b1", SizeBytes: 1}}, nil
 	}
 
 	body := strings.NewReader(`<Delete><Quiet>true</Quiet><Object><Key>key1</Key></Object></Delete>`)
@@ -855,11 +859,11 @@ func TestDeleteObjects_EmptyRequest(t *testing.T) {
 
 func TestDeleteObjects_PartialFailure(t *testing.T) {
 	ts, mockStore, _ := newTestServer(t)
-	mockStore.DeleteObjectFunc = func(key string) ([]storage.DeletedCopy, error) {
+	mockStore.DeleteObjectFunc = func(key string) ([]store.DeletedCopy, error) {
 		if key == "mybucket/bad" {
-			return nil, &storage.S3Error{StatusCode: 500, Code: "InternalError", Message: "db error"}
+			return nil, &store.S3Error{StatusCode: 500, Code: "InternalError", Message: "db error"}
 		}
-		return []storage.DeletedCopy{{BackendName: "b1", SizeBytes: 1}}, nil
+		return []store.DeletedCopy{{BackendName: "b1", SizeBytes: 1}}, nil
 	}
 
 	body := strings.NewReader(`<Delete><Object><Key>good</Key></Object><Object><Key>bad</Key></Object></Delete>`)
@@ -890,7 +894,7 @@ func TestCopy_Success(t *testing.T) {
 	backend.objects["mybucket/source-key"] = serverMockObj{
 		data: []byte("copy me"), contentType: "text/plain", etag: `"src"`,
 	}
-	mockStore.GetAllLocationsResp = []storage.ObjectLocation{
+	mockStore.GetAllLocationsResp = []store.ObjectLocation{
 		{ObjectKey: "mybucket/source-key", BackendName: "b1", SizeBytes: 7},
 	}
 
@@ -918,7 +922,7 @@ func TestCopy_Success(t *testing.T) {
 
 func TestCopy_SourceNotFound(t *testing.T) {
 	ts, mockStore, _ := newTestServer(t)
-	mockStore.GetAllLocationsErr = storage.ErrObjectNotFound
+	mockStore.GetAllLocationsErr = store.ErrObjectNotFound
 
 	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/mybucket/dest-key", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
@@ -942,7 +946,7 @@ func TestCopy_URLEncodedSource(t *testing.T) {
 	backend.objects["mybucket/my file.txt"] = serverMockObj{
 		data: []byte("encoded"), contentType: "text/plain", etag: `"enc"`,
 	}
-	mockStore.GetAllLocationsResp = []storage.ObjectLocation{
+	mockStore.GetAllLocationsResp = []store.ObjectLocation{
 		{ObjectKey: "mybucket/my file.txt", BackendName: "b1", SizeBytes: 7},
 	}
 
@@ -1061,8 +1065,8 @@ func TestUnsupportedMethod(t *testing.T) {
 
 func TestBucketOnlyGET_RoutesToList(t *testing.T) {
 	ts, mockStore, _ := newTestServer(t)
-	mockStore.ListObjectsResp = &storage.ListObjectsResult{
-		Objects: []storage.ObjectLocation{
+	mockStore.ListObjectsResp = &store.ListObjectsResult{
+		Objects: []store.ObjectLocation{
 			{ObjectKey: "mybucket/file.txt", BackendName: "b1", SizeBytes: 100, CreatedAt: time.Now()},
 		},
 	}

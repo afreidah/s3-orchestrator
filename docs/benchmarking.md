@@ -33,8 +33,8 @@ a `*_bench_test.go` file next to the code under test. See existing examples:
 | File | What it covers |
 |------|---------------|
 | `internal/auth/auth_bench_test.go` | SigV4 verification, token auth, canonical request building |
-| `internal/storage/location_cache_bench_test.go` | Cache get/set/delete, concurrent contention, eviction |
-| `internal/storage/streaming_bench_test.go` | Raw io.Copy throughput, streamCopy end-to-end with mock backends |
+| `internal/proxy/location_cache_bench_test.go` | Cache get/set/delete, concurrent contention, eviction |
+| `internal/proxy/streaming_bench_test.go` | Raw io.Copy throughput, streamCopy end-to-end with mock backends |
 | `internal/server/helpers_bench_test.go` | Path parsing, metadata extraction, XML encoding, error responses |
 
 ### 3. Run benchmarks again
@@ -54,7 +54,7 @@ Sample output:
 ```
 goos: linux
 goarch: amd64
-pkg: github.com/afreidah/s3-orchestrator/internal/storage
+pkg: github.com/afreidah/s3-orchestrator/internal/proxy
                               │ bench-before │          bench-after          │
                               │    sec/op    │   sec/op    vs base           │
 LocationCache_Get_Hit-8          45.2ns ± 1%   44.8ns ± 2%  ~ (p=0.35 n=6)
@@ -79,7 +79,7 @@ Use judgement based on the operation:
 ## Running a subset
 
 ```bash
-go test -bench=BenchmarkLocationCache -benchmem -count=6 -run='^$' ./internal/storage/ | tee bench.txt
+go test -bench=BenchmarkLocationCache -benchmem -count=6 -run='^$' ./internal/proxy/ | tee bench.txt
 ```
 
 ## Writing new benchmarks

@@ -135,7 +135,7 @@ Every `.go` file starts with a 79-char header block:
 // degraded mode, and usage limit enforcement on reads and writes.
 // -------------------------------------------------------------------------------
 
-package storage
+package proxy
 ```
 
 **Rules:**
@@ -298,9 +298,10 @@ Request IDs flow through context via `audit.WithRequestID` / `audit.RequestID`:
 
 ### Unit Tests
 
-- Test files live alongside the code they test: `server_test.go`, `manager_objects_test.go`
+- Test files live alongside the code they test: `server_test.go`, `objects_test.go`
 - Use table-driven tests for operations with multiple input/output combinations
-- Mock interfaces (`MetadataStore`, `ObjectBackend`) live in `internal/testutil/`
+- Use `go.uber.org/mock/mockgen` for generating mocks from interfaces. Add `//go:generate mockgen` directives and run `make generate`. Generated mocks live alongside the interface they mock.
+- Legacy hand-written mocks exist in `internal/testutil/` and some packages; prefer generated mocks for new tests
 - Test names follow `TestFunctionName_Scenario` convention
 
 ### Integration Tests
@@ -330,8 +331,8 @@ Request IDs flow through context via `audit.WithRequestID` / `audit.RequestID`:
 
 ### Test Patterns
 
-- **Mock stores** implement the full `MetadataStore` interface with configurable responses
-- **FailableStore** wraps a mock to inject errors for circuit breaker testing
+- **Generated mocks** (`mockgen`) are the preferred approach for new tests — they stay in sync with interfaces automatically
+- **FailableStore** wraps a store to inject errors for circuit breaker testing
 - Test assertions use standard `testing.T` methods, not external assertion libraries
 
 ### Coverage Exclusions
@@ -427,7 +428,7 @@ For branches without a linked issue, use a short kebab-case description of the t
 // to safely handle concurrent overwrites and deletes.
 // -------------------------------------------------------------------------------
 
-package storage
+package proxy
 
 // -------------------------------------------------------------------------
 // PUBLIC API
@@ -461,7 +462,7 @@ func (m *BackendManager) Replicate(ctx context.Context, cfg config.ReplicationCo
 // 3. Finally we record the results
 // ==================================
 
-package storage
+package proxy
 
 // Let's create the replicate function
 func (m *BackendManager) Replicate(ctx context.Context, cfg config.ReplicationConfig) (int, error) {
