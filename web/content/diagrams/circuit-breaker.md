@@ -110,7 +110,7 @@ Three-state circuit breaker state machine shared by the database wrapper (`Circu
     TIMEOUT: {
       title: 'Open Timeout Elapsed?',
       badge: 'decision', badgeText: 'recovery timer',
-      body: '<p>Checks <code>time.Since(cb.lastFailure) >= cb.openTimeout</code>.</p><p>Configurable per circuit breaker type:<br><b>Database</b>: <code>circuit_breaker.open_timeout</code> (default: 15s)<br><b>Backend</b>: <code>backend_circuit_breaker.open_timeout</code> (default: 5m)<br><b>Redis</b>: <code>counters.redis.open_timeout</code> (default: 15s)</p><p>Until the timeout elapses, all requests receive the sentinel error without any I/O. This protects a failing backend from being hammered with retries.</p>'
+      body: '<p>Checks <code>time.Since(cb.lastFailure) >= cb.openTimeout + cb.probeJitter</code>.</p><p>Configurable per circuit breaker type:<br><b>Database</b>: <code>circuit_breaker.open_timeout</code> (default: 15s)<br><b>Backend</b>: <code>backend_circuit_breaker.open_timeout</code> (default: 5m)<br><b>Redis</b>: <code>counters.redis.open_timeout</code> (default: 15s)</p><p>A random <code>probeJitter</code> of up to <code>openTimeout/4</code> is added on each open transition to prevent multiple circuit breakers from probing simultaneously after a shared failure event.</p><p>Until the timeout + jitter elapses, all requests receive the sentinel error without any I/O.</p>'
     },
     SENTINEL: {
       title: 'Return Sentinel Error',
