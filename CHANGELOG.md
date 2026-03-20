@@ -3,6 +3,37 @@
 All notable changes to this project are documented in this file.
 
 
+## [0.18.3] - 2026-03-20
+
+### Added
+- add orphan reconciler and update documentation for v0.18.x changes (#289) (#295)
+- add replication internals guide and fix encryption claims in architecture diagram (#284)
+- Add container tuning, GOMEMLIMIT, and default max_concurrent_requests (#255) (#282)
+
+### Fixed
+- fix multi-instance usage accounting and shared admission control (#289) (#294)
+- fix log-trace correlation, add span kinds, rename s3proxy telemetry namespace (#286) (#288)
+
+### Hardened
+- security: add Vault token renewal, fix SigV4 timing leak, warn on cert/key expiry (#290) (#292)
+
+### Improved
+- update CHANGELOG.md for v0.17.9 (#274)
+
+### Dependencies
+- chore(deps): bump google.golang.org/grpc (#287)
+- chore(deps): bump golang.org/x/time from 0.14.0 to 0.15.0 (#279)
+- chore(deps): bump golangci/golangci-lint-action from 7 to 9 (#275)
+- chore(deps): bump dorny/paths-filter from 3 to 4 (#276)
+- chore(deps): bump go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc (#277)
+- chore(deps): bump go.opentelemetry.io/otel/sdk from 1.40.0 to 1.42.0 (#278)
+- chore(deps): bump github.com/aws/aws-sdk-go-v2/service/s3 (#280)
+- chore(deps): bump golang.org/x/crypto from 0.48.0 to 0.49.0 (#281)
+
+### Other
+- resilience: fix timeout cascading, bound connection pools, add jitter, reorder readiness (#291) (#293)
+- have sitemap setup (#285)
+
 ## [0.17.9] - 2026-03-13
 
 ### Added
