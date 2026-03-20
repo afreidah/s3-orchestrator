@@ -118,7 +118,7 @@ This interactive diagram shows the complete request lifecycle through the S3 Orc
     AC: {
       title: 'Admission Controller',
       badge: 'decision', badgeText: 'middleware',
-      body: '<p>Channel-based semaphore that caps concurrent in-flight requests. Prevents backend overload under burst traffic.</p><p>Three modes: <b>disabled</b> (passthrough), <b>global pool</b> (single <code>chan struct{}</code> for all ops), or <b>split pools</b> (separate read/write channels).</p><p>Config: <code>admission.max_concurrent</code> (global) or <code>admission.max_reads</code> / <code>admission.max_writes</code> (split).</p>'
+      body: '<p>Channel-based semaphore that caps concurrent in-flight operations. Prevents backend overload under burst traffic.</p><p>Three modes: <b>disabled</b> (passthrough), <b>global pool</b> (single <code>chan struct{}</code> for all ops), or <b>split pools</b> (separate read/write channels).</p><p>The semaphore is shared between HTTP requests and background services (rebalancer, replicator, over-replication cleaner, cleanup worker), so <code>max_concurrent_requests</code> is the total budget for all backend operations.</p><p>Config: <code>admission.max_concurrent</code> (global) or <code>admission.max_reads</code> / <code>admission.max_writes</code> (split).</p>'
     },
     GSEM: {
       title: 'Global Semaphore',

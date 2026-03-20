@@ -1279,6 +1279,7 @@ const (
 	LockDrain            int64 = 1006
 	LockUsageFlush       int64 = 1007
 	LockOverReplication  int64 = 1008
+	LockReconcile       int64 = 1009
 )
 
 // WithAdvisoryLock acquires a PostgreSQL session-level advisory lock on a

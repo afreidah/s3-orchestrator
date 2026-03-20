@@ -46,6 +46,7 @@ type Config struct {
 	CleanupQueue    CleanupQueueConfig   `yaml:"cleanup_queue"`
 	UsageFlush      UsageFlushConfig     `yaml:"usage_flush"`
 	Lifecycle       LifecycleConfig      `yaml:"lifecycle"`
+	Reconcile       ReconcileConfig      `yaml:"reconcile"`
 	Redis           *RedisConfig         `yaml:"redis"`
 	RoutingStrategy string               `yaml:"routing_strategy"` // "pack" (default) or "spread"
 }
@@ -236,6 +237,14 @@ type VaultTransitConfig struct {
 	MountPath     string        `yaml:"mount_path"`     // Transit mount path (default: "transit")
 	CACert        string        `yaml:"ca_cert"`        // Path to PEM CA certificate for TLS verification
 	RenewInterval time.Duration `yaml:"renew_interval"` // Token renewal check interval (default: 5m)
+}
+
+// ReconcileConfig controls the background orphan reconciler that periodically
+// scans backends and imports untracked objects into the metadata database.
+// Disabled by default.
+type ReconcileConfig struct {
+	Enabled  bool          `yaml:"enabled"`
+	Interval time.Duration `yaml:"interval"` // How often to run (default: 24h)
 }
 
 // LifecycleConfig holds rules for automatic object expiration. Objects matching
@@ -620,6 +629,11 @@ func (c *Config) SetDefaultsAndValidate() error {
 	// --- Cleanup queue defaults ---
 	if c.CleanupQueue.Concurrency <= 0 {
 		c.CleanupQueue.Concurrency = 10
+	}
+
+	// --- Reconcile defaults ---
+	if c.Reconcile.Enabled && c.Reconcile.Interval <= 0 {
+		c.Reconcile.Interval = 24 * time.Hour
 	}
 
 	// --- Rate limit defaults ---

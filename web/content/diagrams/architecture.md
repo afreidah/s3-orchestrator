@@ -195,7 +195,7 @@ High-level architecture of the S3 Orchestrator showing the request path, storage
     BE1: {
       title: 'S3 Backend',
       badge: 'data', badgeText: 'storage',
-      body: '<p>AWS SDK v2 S3 client wrapping any S3-compatible endpoint: AWS S3, OCI Object Storage, Cloudflare R2, MinIO, Backblaze B2, GCS (with header stripping).</p><p>HTTP transport: 100 idle connections per host, 30s keep-alive, 90s idle timeout (forces DNS refresh), HTTP/2 support.</p><p>Each backend has configurable quota, API request limits, and egress/ingress byte limits (monthly rolling).</p>'
+      body: '<p>AWS SDK v2 S3 client wrapping any S3-compatible endpoint: AWS S3, OCI Object Storage, Cloudflare R2, MinIO, Backblaze B2, GCS (with header stripping).</p><p>HTTP transport: 100 idle / 200 max connections per host, 30s keep-alive, 60s idle timeout (forces DNS refresh), HTTP/2 support.</p><p>Each backend has configurable quota, API request limits, and egress/ingress byte limits (monthly rolling).</p>'
     },
     BE2: {
       title: 'S3 Backend',
