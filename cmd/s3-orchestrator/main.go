@@ -33,6 +33,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/auth"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
+	"github.com/afreidah/s3-orchestrator/internal/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/server"
 	"github.com/afreidah/s3-orchestrator/internal/storage"
@@ -369,7 +370,7 @@ func runServe() {
 	// --- Rate limiter (shared by S3 proxy and admin API) ---
 	var uiHandler *ui.Handler
 	var rl *server.RateLimiter
-	var loginThrottle *server.LoginThrottle
+	var loginThrottle *httputil.LoginThrottle
 
 	if cfg.RateLimit.Enabled {
 		rl = server.NewRateLimiter(cfg.RateLimit)
@@ -400,7 +401,7 @@ func runServe() {
 	if *mode == "api" || *mode == "all" {
 		// Web UI dashboard
 		if cfg.UI.Enabled {
-			loginThrottle = server.NewLoginThrottle(5, 5*time.Minute)
+			loginThrottle = httputil.NewLoginThrottle(5, 5*time.Minute)
 			uiHandler = ui.New(manager, cbStore.IsHealthy, cfg, logBuffer, loginThrottle)
 			uiHandler.Register(mux, cfg.UI.Path)
 			slog.InfoContext(ctx,"Web UI enabled", "path", cfg.UI.Path)
@@ -455,9 +456,9 @@ func runServe() {
 	}
 
 	// --- Configure TLS if cert and key are provided ---
-	var certReloader *server.CertReloader
+	var certReloader *httputil.CertReloader
 	if cfg.Server.TLS.CertFile != "" {
-		certReloader, err = server.NewCertReloader(cfg.Server.TLS.CertFile, cfg.Server.TLS.KeyFile)
+		certReloader, err = httputil.NewCertReloader(cfg.Server.TLS.CertFile, cfg.Server.TLS.KeyFile)
 		if err != nil {
 			slog.ErrorContext(ctx,"Failed to load TLS certificate", "error", err)
 			os.Exit(1)

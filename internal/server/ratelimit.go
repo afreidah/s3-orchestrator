@@ -16,18 +16,18 @@
 package server
 
 import (
+	"log/slog"
 	"net"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
-	"log/slog"
 
 	"golang.org/x/time/rate"
 
 	"github.com/afreidah/s3-orchestrator/internal/audit"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 )
 
@@ -63,7 +63,7 @@ func NewRateLimiter(cfg config.RateLimitConfig) *RateLimiter {
 		limiters:        make(map[string]*visitorLimiter),
 		rate:            rate.Limit(cfg.RequestsPerSec),
 		burst:           cfg.Burst,
-		trustedProxies:  parseCIDRs(cfg.TrustedProxies),
+		trustedProxies:  httputil.ParseTrustedProxies(cfg.TrustedProxies),
 		cleanupInterval: cleanupInterval,
 		cleanupMaxAge:   cleanupMaxAge,
 		stop:            make(chan struct{}),
@@ -152,81 +152,12 @@ func (rl *RateLimiter) extractIP(r *http.Request) string {
 	return ExtractClientIP(r, rl.trustedProxies)
 }
 
-// ExtractClientIP returns the real client IP from a request. When
-// trustedProxies is non-empty and the direct peer matches a trusted CIDR,
-// the rightmost untrusted IP in the X-Forwarded-For chain is returned.
-// Otherwise, RemoteAddr is used directly. This is exported so that other
-// components (e.g. the login throttle) can share the same extraction logic.
+// ExtractClientIP delegates to httputil.ExtractClientIP.
 func ExtractClientIP(r *http.Request, trustedProxies []*net.IPNet) string {
-	peerIP := stripPort(r.RemoteAddr)
-
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" && len(trustedProxies) > 0 && ipInNets(peerIP, trustedProxies) {
-		return rightmostUntrusted(xff, trustedProxies)
-	}
-
-	return peerIP
+	return httputil.ExtractClientIP(r, trustedProxies)
 }
 
-// ParseTrustedProxies parses CIDR strings into net.IPNet values for use with
-// ExtractClientIP. Invalid CIDRs are silently skipped.
+// ParseTrustedProxies delegates to httputil.ParseTrustedProxies.
 func ParseTrustedProxies(cidrs []string) []*net.IPNet {
-	return parseCIDRs(cidrs)
-}
-
-// rightmostUntrusted walks the XFF chain from right to left and returns the
-// first IP that is not in the trusted set. This is the standard secure
-// extraction: proxies append to the right, so the rightmost untrusted entry
-// is the actual client IP as seen by the first trusted hop.
-func rightmostUntrusted(xff string, trusted []*net.IPNet) string {
-	parts := strings.Split(xff, ",")
-	for i := len(parts) - 1; i >= 0; i-- {
-		ip := strings.TrimSpace(parts[i])
-		if ip == "" {
-			continue
-		}
-		if !ipInNets(ip, trusted) {
-			return ip
-		}
-	}
-
-	// All IPs in the chain are trusted; use the leftmost as a fallback
-	return strings.TrimSpace(parts[0])
-}
-
-// ipInNets checks whether the given IP string falls within any of the
-// provided CIDR networks.
-func ipInNets(ipStr string, nets []*net.IPNet) bool {
-	ip := net.ParseIP(ipStr)
-	if ip == nil {
-		return false
-	}
-	for _, n := range nets {
-		if n.Contains(ip) {
-			return true
-		}
-	}
-	return false
-}
-
-// parseCIDRs parses a list of CIDR strings into net.IPNet values, skipping
-// any that fail to parse.
-func parseCIDRs(cidrs []string) []*net.IPNet {
-	var nets []*net.IPNet
-	for _, s := range cidrs {
-		_, n, err := net.ParseCIDR(s)
-		if err != nil {
-			continue
-		}
-		nets = append(nets, n)
-	}
-	return nets
-}
-
-// stripPort removes the port from a host:port address.
-func stripPort(addr string) string {
-	ip, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		return addr
-	}
-	return ip
+	return httputil.ParseTrustedProxies(cidrs)
 }

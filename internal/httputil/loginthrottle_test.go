@@ -7,7 +7,7 @@
 // repeated failures, reset on success, lockout expiry, and IP isolation.
 // -------------------------------------------------------------------------------
 
-package server
+package httputil
 
 import (
 	"fmt"
