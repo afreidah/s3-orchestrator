@@ -92,7 +92,7 @@ Coordination of periodic background workers that maintain storage health, enforc
     SCHED: {
       title: 'Lifecycle Manager (Scheduler)',
       badge: 'entry', badgeText: 'scheduler',
-      body: '<p>Central service orchestrator from <code>internal/lifecycle</code>. Launches all background workers as supervised goroutines.</p><p>Each service implements <code>lifecycle.Service</code> with a <code>Run(ctx)</code> method. Most workers use <code>lockedTickerService</code> which wraps periodic execution behind PostgreSQL advisory locks (<code>pg_try_advisory_lock</code>) for leader election across instances.</p><p>Services are defined in <code>cmd/s3-orchestrator/services.go</code>. Hot-reloadable configs are stored as <code>atomic.Pointer</code> on the <code>BackendManager</code>.</p>'
+      body: '<p>Central service orchestrator from <code>internal/lifecycle</code>. Launches all background workers as supervised goroutines.</p><p>Each service implements <code>lifecycle.Service</code> with a <code>Run(ctx)</code> method. Most workers use <code>lockedTickerService</code> which wraps periodic execution behind PostgreSQL advisory locks (<code>pg_try_advisory_lock</code>) for leader election across instances.</p><p>Services are defined in <code>cmd/s3-orchestrator/services.go</code>. Hot-reloadable configs are stored as <code>atomic.Pointer</code> on the <code>proxy.BackendManager</code>.</p>'
     },
     REPL: {
       title: 'Replicator',
@@ -112,7 +112,7 @@ Coordination of periodic background workers that maintain storage health, enforc
     LIFECYCLE: {
       title: 'Lifecycle Expiration',
       badge: 'process', badgeText: 'every 1 hr',
-      body: '<p><code>BackendManager.ProcessLifecycleRules()</code> evaluates TTL-based lifecycle rules and deletes expired objects.</p><p><b>Interval</b>: 1 hour.<br><b>Advisory lock</b>: <code>LockLifecycle = 1005</code>.<br><b>Guard</b>: only runs when lifecycle rules are configured.<br><b>Batch size</b>: <code>lifecycleBatchSize = 100</code> per rule.</p><p>For each rule: computes <code>cutoff = now - expiration_days * 24h</code>, queries <code>ListExpiredObjects(ctx, prefix, cutoff, 100)</code>, then calls the standard <code>DeleteObject()</code> path (quota decrement, cache invalidation, cleanup queue on failure).</p><p>Audit event: <code>lifecycle.delete</code> with key, prefix, expiration_days.</p><p class="ac-metric">Metrics: lifecycle_deleted_total, lifecycle_failed_total, lifecycle_runs_total{status=success|partial|error}</p>'
+      body: '<p><code>proxy.BackendManager.ProcessLifecycleRules()</code> evaluates TTL-based lifecycle rules and deletes expired objects.</p><p><b>Interval</b>: 1 hour.<br><b>Advisory lock</b>: <code>LockLifecycle = 1005</code>.<br><b>Guard</b>: only runs when lifecycle rules are configured.<br><b>Batch size</b>: <code>lifecycleBatchSize = 100</code> per rule.</p><p>For each rule: computes <code>cutoff = now - expiration_days * 24h</code>, queries <code>ListExpiredObjects(ctx, prefix, cutoff, 100)</code>, then calls the standard <code>DeleteObject()</code> path (quota decrement, cache invalidation, cleanup queue on failure).</p><p>Audit event: <code>lifecycle.delete</code> with key, prefix, expiration_days.</p><p class="ac-metric">Metrics: lifecycle_deleted_total, lifecycle_failed_total, lifecycle_runs_total{status=success|partial|error}</p>'
     },
     MPCLEAN: {
       title: 'Multipart Cleanup',

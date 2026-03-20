@@ -23,22 +23,25 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
-	"github.com/afreidah/s3-orchestrator/internal/storage"
+
+	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
+
+	// Handler serves the admin API endpoints.
+	"github.com/afreidah/s3-orchestrator/internal/store"
 )
 
-// Handler serves the admin API endpoints.
 type Handler struct {
-	manager   *storage.BackendManager
-	store     *storage.CircuitBreakerStore
-	rawStore  *storage.Store
+	manager   *proxy.BackendManager
+	store     *store.CircuitBreakerStore
+	rawStore  *store.Store
 	encryptor *encryption.Encryptor
 	token     string
 	logLevel  *slog.LevelVar
 }
 
 // New creates a new admin API handler.
-func New(manager *storage.BackendManager, store *storage.CircuitBreakerStore, rawStore *storage.Store, encryptor *encryption.Encryptor, token string, logLevel *slog.LevelVar) *Handler {
+func New(manager *proxy.BackendManager, store *store.CircuitBreakerStore, rawStore *store.Store, encryptor *encryption.Encryptor, token string, logLevel *slog.LevelVar) *Handler {
 	return &Handler{
 		manager:   manager,
 		store:     store,
@@ -545,4 +548,3 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 		slog.Error("Admin: failed to encode JSON response", "error", err) //nolint:sloglint // standalone helper, no request context
 	}
 }
-

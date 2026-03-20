@@ -17,8 +17,9 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/storage"
+	"github.com/afreidah/s3-orchestrator/internal/store"
 )
 
 func runSync() {
@@ -69,25 +70,25 @@ func runSync() {
 	ctx := context.Background()
 
 	// --- Initialize store ---
-	store, err := storage.NewStore(ctx, &cfg.Database)
+	db, err := store.NewStore(ctx, &cfg.Database)
 	if err != nil {
 		slog.ErrorContext(ctx, "Failed to connect to database", "error", err)
 		os.Exit(1)
 	}
-	defer store.Close()
+	defer db.Close()
 
-	if err := store.RunMigrations(ctx); err != nil {
+	if err := db.RunMigrations(ctx); err != nil {
 		slog.ErrorContext(ctx, "Failed to run migrations", "error", err)
 		os.Exit(1)
 	}
 
-	if err := store.SyncQuotaLimits(ctx, cfg.Backends); err != nil {
+	if err := db.SyncQuotaLimits(ctx, cfg.Backends); err != nil {
 		slog.ErrorContext(ctx, "Failed to sync quota limits", "error", err)
 		os.Exit(1)
 	}
 
 	// --- Initialize backend ---
-	backend, err := storage.NewS3Backend(backendCfg)
+	s3b, err := backend.NewS3Backend(backendCfg)
 	if err != nil {
 		slog.ErrorContext(ctx, "Failed to initialize backend", "backend", backendCfg.Name, "error", err)
 		os.Exit(1)
@@ -111,7 +112,7 @@ func runSync() {
 		"mode", mode,
 	)
 
-	err = backend.ListObjects(ctx, *prefix, func(objects []storage.ListedObject) error {
+	err = s3b.ListObjects(ctx, *prefix, func(objects []backend.ListedObject) error {
 		pageNum++
 		pageImported := 0
 		pageSkipped := 0
@@ -125,7 +126,7 @@ func runSync() {
 				continue
 			}
 
-			imported, err := store.ImportObject(ctx, prefixedKey, backendCfg.Name, obj.SizeBytes)
+			imported, err := db.ImportObject(ctx, prefixedKey, backendCfg.Name, obj.SizeBytes)
 			if err != nil {
 				return fmt.Errorf("failed to import %s: %w", obj.Key, err)
 			}

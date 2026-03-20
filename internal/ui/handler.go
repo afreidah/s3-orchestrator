@@ -37,7 +37,9 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/bufpool"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/httputil"
-	"github.com/afreidah/s3-orchestrator/internal/storage"
+
+	"github.com/afreidah/s3-orchestrator/internal/proxy"
+	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -49,7 +51,7 @@ const (
 
 // Handler serves the web UI dashboard.
 type Handler struct {
-	manager        *storage.BackendManager
+	manager        *proxy.BackendManager
 	dbHealthy      func() bool
 	cfg            atomic.Pointer[config.Config]
 	templates      *template.Template
@@ -64,7 +66,7 @@ type Handler struct {
 }
 
 // New creates a new UI handler.
-func New(manager *storage.BackendManager, dbHealthy func() bool, cfg *config.Config, logBuffer *telemetry.LogBuffer, loginThrottle *httputil.LoginThrottle) *Handler {
+func New(manager *proxy.BackendManager, dbHealthy func() bool, cfg *config.Config, logBuffer *telemetry.LogBuffer, loginThrottle *httputil.LoginThrottle) *Handler {
 	h := &Handler{
 		manager:        manager,
 		dbHealthy:      dbHealthy,
@@ -342,11 +344,11 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 // dashboardPage holds all data passed to the dashboard template.
 type dashboardPage struct {
-	Version         string
-	DBHealthy       bool
-	Data            *storage.DashboardData
-	Buckets         []string
-	Config          configSummary
+	Version          string
+	DBHealthy        bool
+	Data             *proxy.DashboardData
+	Buckets          []string
+	Config           configSummary
 	TotalBytesUsed   int64
 	TotalBytesLimit  int64
 	TotalOrphanBytes int64
@@ -388,7 +390,7 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	for _, name := range bucketNames {
 		dirName := name + "/"
 		if !existing[dirName] {
-			data.TopLevelEntries.Entries = append(data.TopLevelEntries.Entries, storage.DirEntry{
+			data.TopLevelEntries.Entries = append(data.TopLevelEntries.Entries, store.DirEntry{
 				Name:  dirName,
 				IsDir: true,
 			})
@@ -410,10 +412,10 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	page := dashboardPage{
-		Version:         telemetry.Version,
-		DBHealthy:       h.dbHealthy(),
-		Data:            data,
-		Buckets:         bucketNames,
+		Version:          telemetry.Version,
+		DBHealthy:        h.dbHealthy(),
+		Data:             data,
+		Buckets:          bucketNames,
 		TotalBytesUsed:   totalUsed,
 		TotalBytesLimit:  totalLimit,
 		TotalOrphanBytes: totalOrphan,
@@ -687,7 +689,7 @@ func (h *Handler) handleAPIDownload(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.manager.ObjectManager.GetObject(r.Context(), key, "")
 	if err != nil {
-		if errors.Is(err, storage.ErrObjectNotFound) {
+		if errors.Is(err, store.ErrObjectNotFound) {
 			http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
 			return
 		}
