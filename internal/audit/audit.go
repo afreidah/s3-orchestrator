@@ -18,9 +18,13 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"log/slog"
-
-	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 )
+
+// OnEvent is an optional callback invoked for each audit event with the event
+// name. Set this at startup to integrate audit logging with metrics (e.g.
+// Prometheus counters). When nil, audit logging still works — events are
+// emitted via slog but no counter is incremented.
+var OnEvent func(event string)
 
 // -------------------------------------------------------------------------
 // CONTEXT KEYS
@@ -64,10 +68,12 @@ func RequestID(ctx context.Context) string {
 // -------------------------------------------------------------------------
 
 // Log emits a structured audit log entry at Info level. Automatically
-// includes the request ID from context and increments the audit event
-// counter.
+// includes the request ID from context. If OnEvent is set, it is called
+// with the event name for metrics integration.
 func Log(ctx context.Context, event string, attrs ...slog.Attr) {
-	telemetry.AuditEventsTotal.WithLabelValues(event).Inc()
+	if OnEvent != nil {
+		OnEvent(event)
+	}
 
 	base := []slog.Attr{
 		slog.Bool("audit", true),

@@ -111,8 +111,6 @@ type mockStore struct {
 	countOverReplicatedErr         error
 	removeExcessCopyErr            error
 	removeExcessCopyCalls          []removeExcessCopyCall
-	getObjectCopiesForUpdateResp   []ObjectLocation
-	getObjectCopiesForUpdateErr    error
 
 	// Lifecycle
 	listExpiredObjectsResp  []ObjectLocation
@@ -566,11 +564,3 @@ func (m *mockStore) RemoveExcessCopy(_ context.Context, key, backend string, siz
 	return m.removeExcessCopyErr
 }
 
-func (m *mockStore) GetObjectCopiesForUpdate(_ context.Context, _ string) ([]ObjectLocation, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.getObjectCopiesForUpdateErr != nil {
-		return nil, m.getObjectCopiesForUpdateErr
-	}
-	return m.getObjectCopiesForUpdateResp, nil
-}
