@@ -16,10 +16,10 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
-	"github.com/afreidah/s3-orchestrator/internal/store"
 	"net/http"
-	"strings"
 	"time"
+
+	"github.com/afreidah/s3-orchestrator/internal/store"
 )
 
 // xmlContent represents a single object in an S3 ListBucketResult response.
@@ -68,11 +68,12 @@ type xmlListResultV2 struct {
 
 // buildListContents converts storage objects and common prefixes to their XML
 // representations, stripping the internal bucket prefix from each key.
-func buildListContents(objects []store.ObjectLocation, prefixes []string, bucketPrefix string) ([]xmlContent, []xmlCommonPrefix) {
+// prefixLen is len(bucket + "/") — used for zero-copy string slicing.
+func buildListContents(objects []store.ObjectLocation, prefixes []string, prefixLen int) ([]xmlContent, []xmlCommonPrefix) {
 	contents := make([]xmlContent, 0, len(objects))
 	for _, obj := range objects {
 		contents = append(contents, xmlContent{
-			Key:          strings.TrimPrefix(obj.ObjectKey, bucketPrefix),
+			Key:          obj.ObjectKey[prefixLen:],
 			Size:         obj.SizeBytes,
 			LastModified: obj.CreatedAt.UTC().Format(time.RFC3339),
 		})
@@ -80,7 +81,7 @@ func buildListContents(objects []store.ObjectLocation, prefixes []string, bucket
 	commonPrefixes := make([]xmlCommonPrefix, 0, len(prefixes))
 	for _, cp := range prefixes {
 		commonPrefixes = append(commonPrefixes, xmlCommonPrefix{
-			Prefix: strings.TrimPrefix(cp, bucketPrefix),
+			Prefix: cp[prefixLen:],
 		})
 	}
 	return contents, commonPrefixes
@@ -110,12 +111,13 @@ func (s *Server) handleListObjectsV1(ctx context.Context, w http.ResponseWriter,
 		return writeStorageError(w, err, "Failed to list objects"), err
 	}
 
+	prefixLen := len(bucketPrefix)
 	nextMarker := ""
 	if result.NextContinuationToken != "" {
-		nextMarker = strings.TrimPrefix(result.NextContinuationToken, bucketPrefix)
+		nextMarker = result.NextContinuationToken[prefixLen:]
 	}
 
-	contents, commonPrefixes := buildListContents(result.Objects, result.CommonPrefixes, bucketPrefix)
+	contents, commonPrefixes := buildListContents(result.Objects, result.CommonPrefixes, prefixLen)
 
 	xmlResult := xmlListResultV1{
 		Xmlns:          "http://s3.amazonaws.com/doc/2006-03-01/",
@@ -165,12 +167,13 @@ func (s *Server) handleListObjectsV2(ctx context.Context, w http.ResponseWriter,
 	}
 
 	// Strip bucket prefix from NextContinuationToken
+	prefixLen := len(bucketPrefix)
 	nextToken := result.NextContinuationToken
 	if nextToken != "" {
-		nextToken = strings.TrimPrefix(nextToken, bucketPrefix)
+		nextToken = result.NextContinuationToken[prefixLen:]
 	}
 
-	contents, commonPrefixes := buildListContents(result.Objects, result.CommonPrefixes, bucketPrefix)
+	contents, commonPrefixes := buildListContents(result.Objects, result.CommonPrefixes, prefixLen)
 
 	xmlResult := xmlListResultV2{
 		Xmlns:                 "http://s3.amazonaws.com/doc/2006-03-01/",
