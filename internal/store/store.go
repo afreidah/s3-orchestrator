@@ -1110,6 +1110,40 @@ func (s *Store) GetStaleMultipartUploads(ctx context.Context, olderThan time.Dur
 	return uploads, nil
 }
 
+// GetMultipartUploadsByBackend returns all in-progress multipart uploads on
+// the given backend. Used by drain to abort uploads before migrating objects.
+// Requires live PostgreSQL — covered by integration tests.
+func (s *Store) GetMultipartUploadsByBackend(ctx context.Context, backendName string) ([]MultipartUpload, error) { //nolint:dupl // intentional parallel to GetStaleMultipartUploads
+	// codecov:ignore:start -- requires live PostgreSQL
+	rows, err := s.queries.GetMultipartUploadsByBackend(ctx, backendName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get multipart uploads by backend: %w", err)
+	}
+
+	uploads := make([]MultipartUpload, len(rows))
+	for i, row := range rows {
+		ct := ""
+		if row.ContentType != nil {
+			ct = *row.ContentType
+		}
+		mu := MultipartUpload{
+			UploadID:    row.UploadID,
+			ObjectKey:   row.ObjectKey,
+			BackendName: row.BackendName,
+			ContentType: ct,
+			CreatedAt:   row.CreatedAt.Time,
+		}
+		if len(row.Metadata) > 0 {
+			if err := json.Unmarshal(row.Metadata, &mu.Metadata); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
+			}
+		}
+		uploads[i] = mu
+	}
+	return uploads, nil
+	// codecov:ignore:end
+}
+
 // ListMultipartUploads returns in-progress multipart uploads whose key matches
 // the given prefix, up to maxUploads entries.
 func (s *Store) ListMultipartUploads(ctx context.Context, prefix string, maxUploads int) ([]MultipartUpload, error) { // codecov:ignore -- requires live PostgreSQL, covered by integration tests

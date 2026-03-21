@@ -132,6 +132,25 @@ func authedRequest(t *testing.T, h *Handler, mux *http.ServeMux, method, path st
 }
 
 // -------------------------------------------------------------------------
+// HELPER TESTS
+// -------------------------------------------------------------------------
+
+func TestWriteJSONError(t *testing.T) {
+	w := httptest.NewRecorder()
+	writeJSONError(w, http.StatusBadRequest, "something broke")
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+	if body := w.Body.String(); body != `{"error":"something broke"}` {
+		t.Errorf("body = %q, want %q", body, `{"error":"something broke"}`)
+	}
+}
+
+// -------------------------------------------------------------------------
 // AUTH TESTS
 // -------------------------------------------------------------------------
 
@@ -1576,6 +1595,113 @@ func benchLoginHandler(b *testing.B) (*Handler, *http.ServeMux) {
 
 	return h, mux
 }
+
+// -------------------------------------------------------------------------
+// DOWNLOAD API TESTS
+// -------------------------------------------------------------------------
+
+func TestDownload_MethodNotAllowed(t *testing.T) {
+	h, mux := newTestHandler(t)
+	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/download?key=test-bucket/file.txt", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusMethodNotAllowed)
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+}
+
+func TestDownload_MissingKey(t *testing.T) {
+	h, mux := newTestHandler(t)
+	req := authedRequest(t, h, mux, http.MethodGet, "/ui/api/download", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+}
+
+func TestDownload_InvalidBucketPrefix(t *testing.T) {
+	h, mux := newTestHandler(t)
+	req := authedRequest(t, h, mux, http.MethodGet, "/ui/api/download?key=no-such-bucket/file.txt", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+}
+
+func TestDownload_NotFound(t *testing.T) {
+	h, mux := newTestHandler(t)
+	// Default mock store returns ErrObjectNotFound for GetAllObjectLocations
+	req := authedRequest(t, h, mux, http.MethodGet, "/ui/api/download?key=test-bucket/missing.txt", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusNotFound)
+	}
+}
+
+func TestDownload_StoreError(t *testing.T) {
+	h, mux, mock := newTestHandlerWithMock(t)
+	mock.GetAllLocationsErr = errors.New("db down")
+
+	req := authedRequest(t, h, mux, http.MethodGet, "/ui/api/download?key=test-bucket/file.txt", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusInternalServerError)
+	}
+}
+
+// -------------------------------------------------------------------------
+// CLEAN EXCESS API TESTS
+// -------------------------------------------------------------------------
+
+func TestCleanExcess_MethodNotAllowed(t *testing.T) {
+	h, mux := newTestHandler(t)
+	req := authedRequest(t, h, mux, http.MethodGet, "/ui/api/clean-excess", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusMethodNotAllowed)
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+}
+
+// -------------------------------------------------------------------------
+// UPLOAD API ERROR PATHS
+// -------------------------------------------------------------------------
+
+func TestUpload_InvalidMultipartForm(t *testing.T) {
+	h, mux := newTestHandler(t)
+	// Send a POST with a non-multipart body to trigger ParseMultipartForm failure
+	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/upload", strings.NewReader("not-a-form"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+}
+
+// -------------------------------------------------------------------------
+// BRUTE FORCE TESTS
+// -------------------------------------------------------------------------
 
 func TestLogin_BruteForceReset(t *testing.T) {
 	h, mux := newTestHandler(t)

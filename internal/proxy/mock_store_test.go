@@ -347,6 +347,16 @@ func (m *mockStore) GetStaleMultipartUploads(_ context.Context, _ time.Duration)
 	return m.getStaleMultipartResp, nil
 }
 
+// GetMultipartUploadsByBackend returns the pre-configured response.
+func (m *mockStore) GetMultipartUploadsByBackend(_ context.Context, _ string) ([]st.MultipartUpload, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.getStaleMultipartErr != nil {
+		return nil, m.getStaleMultipartErr
+	}
+	return m.getStaleMultipartResp, nil
+}
+
 // ListMultipartUploads returns nil (stub).
 func (m *mockStore) ListMultipartUploads(_ context.Context, _ string, _ int) ([]st.MultipartUpload, error) {
 	return nil, nil

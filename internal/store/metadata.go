@@ -83,6 +83,7 @@ type MetadataStore interface {
 	GetObjectCounts(ctx context.Context) (map[string]int64, error)
 	GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error)
 	GetStaleMultipartUploads(ctx context.Context, olderThan time.Duration) ([]MultipartUpload, error)
+	GetMultipartUploadsByBackend(ctx context.Context, backendName string) ([]MultipartUpload, error)
 	ListObjectsByBackend(ctx context.Context, backendName string, limit int) ([]ObjectLocation, error)
 	MoveObjectLocation(ctx context.Context, key, fromBackend, toBackend string) (int64, error)
 	GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]ObjectLocation, error)
