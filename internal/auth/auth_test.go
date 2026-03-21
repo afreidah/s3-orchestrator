@@ -14,6 +14,7 @@ import (
 	"encoding/hex"
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -65,7 +66,9 @@ func TestBuildCanonicalQueryString(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := buildCanonicalQueryString(tt.values)
+			var b strings.Builder
+			buildCanonicalQueryString(&b, tt.values)
+			got := b.String()
 			if got != tt.want {
 				t.Errorf("buildCanonicalQueryString() = %q, want %q", got, tt.want)
 			}
@@ -149,7 +152,9 @@ func TestEncodePath(t *testing.T) {
 		{"/bucket/path/to/special chars!@#", "/bucket/path/to/special%20chars%21%40%23"},
 	}
 	for _, tt := range tests {
-		got := encodePath(tt.in)
+		var b strings.Builder
+		encodePath(&b, tt.in)
+		got := b.String()
 		if got != tt.want {
 			t.Errorf("encodePath(%q) = %q, want %q", tt.in, got, tt.want)
 		}
