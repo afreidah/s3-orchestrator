@@ -117,6 +117,13 @@ func (r *Replicator) Replicate(ctx context.Context, cfg config.ReplicationConfig
 		}
 	}
 
+	// --- Fetch quota stats once for the entire cycle ---
+	quotaStats, err := r.ops.Store().GetQuotaStats(ctx)
+	if err != nil {
+		telemetry.ReplicationRunsTotal.WithLabelValues("error").Inc()
+		return 0, fmt.Errorf("failed to get quota stats: %w", err)
+	}
+
 	// --- Replicate under-replicated objects concurrently ---
 	var created atomic.Int32
 	workerpool.Run(ctx, cfg.Concurrency, tasks, func(ctx context.Context, task replicaTask) {
@@ -124,7 +131,7 @@ func (r *Replicator) Replicate(ctx context.Context, cfg config.ReplicationConfig
 			return
 		}
 		defer r.ops.ReleaseAdmission()
-		n, replicateErr := r.ReplicateObject(ctx, task.key, task.copies, task.needed)
+		n, replicateErr := r.ReplicateObject(ctx, quotaStats, task.key, task.copies, task.needed)
 		if replicateErr != nil {
 			slog.WarnContext(ctx, "Replication: object failed", "key", task.key, "error", replicateErr)
 		}
@@ -153,9 +160,10 @@ func (r *Replicator) Replicate(ctx context.Context, cfg config.ReplicationConfig
 // -------------------------------------------------------------------------
 
 
-// replicateObject creates up to `needed` additional copies of a single object.
+// ReplicateObject creates up to `needed` additional copies of a single object.
+// quotaStats is pre-fetched once per replication cycle to avoid redundant DB queries.
 // Returns the number of copies successfully created.
-func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCopies []store.ObjectLocation, needed int) (int, error) {
+func (r *Replicator) ReplicateObject(ctx context.Context, quotaStats map[string]store.QuotaStat, key string, existingCopies []store.ObjectLocation, needed int) (int, error) {
 	// Build exclusion set of backends that already hold a copy
 	exclusion := make(map[string]bool, len(existingCopies))
 	for _, c := range existingCopies {
@@ -165,7 +173,7 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 	created := 0
 	for i := range needed {
 		// --- Find a target backend with space ---
-		target := r.FindReplicaTarget(ctx, key, existingCopies[0].SizeBytes, exclusion)
+		target := r.FindReplicaTarget(ctx, quotaStats, key, existingCopies[0].SizeBytes, exclusion)
 		if target == "" {
 			slog.WarnContext(ctx, "Replication: no target backend with space",
 				"key", key, "needed", needed-i)
@@ -217,15 +225,10 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 	return created, nil
 }
 
-// findReplicaTarget selects a backend that has enough space and doesn't already
-// hold a copy. Returns empty string if no suitable target exists.
-func (r *Replicator) FindReplicaTarget(ctx context.Context, key string, size int64, exclusion map[string]bool) string {
-	stats, err := r.ops.Store().GetQuotaStats(ctx)
-	if err != nil {
-		slog.WarnContext(ctx, "Replication: failed to get quota stats", "error", err)
-		return ""
-	}
-
+// FindReplicaTarget selects a backend that has enough space and doesn't already
+// hold a copy. quotaStats is pre-fetched once per replication cycle.
+// Returns empty string if no suitable target exists.
+func (r *Replicator) FindReplicaTarget(ctx context.Context, quotaStats map[string]store.QuotaStat, key string, size int64, exclusion map[string]bool) string {
 	for _, name := range r.ops.ExcludeDraining(r.ops.BackendOrder()) {
 		if exclusion[name] {
 			continue
@@ -233,7 +236,7 @@ func (r *Replicator) FindReplicaTarget(ctx context.Context, key string, size int
 		if !r.IsBackendHealthy(name) {
 			continue
 		}
-		stat, ok := stats[name]
+		stat, ok := quotaStats[name]
 		if !ok {
 			continue
 		}

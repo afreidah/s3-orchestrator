@@ -264,13 +264,7 @@ func TestDeleteObject_BackendFails_EnqueuesWithSize(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestFindReplicaTarget_RespectsOrphanBytes(t *testing.T) {
-	store := &mockStore{
-		getQuotaStatsResp: map[string]st.QuotaStat{
-			"b1": {BytesUsed: 100, BytesLimit: 1000},
-			// b2 has 800 used + 150 orphan = 950 effective, only 50 bytes free
-			"b2": {BytesUsed: 800, BytesLimit: 1000, OrphanBytes: 150},
-		},
-	}
+	store := &mockStore{}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": newMockBackend(), "b2": newMockBackend()},
 		Store:           store,
@@ -279,22 +273,22 @@ func TestFindReplicaTarget_RespectsOrphanBytes(t *testing.T) {
 		RoutingStrategy: "pack",
 	})
 
+	stats := map[string]st.QuotaStat{
+		"b1": {BytesUsed: 100, BytesLimit: 1000},
+		// b2 has 800 used + 150 orphan = 950 effective, only 50 bytes free
+		"b2": {BytesUsed: 800, BytesLimit: 1000, OrphanBytes: 150},
+	}
+
 	// b1 already has a copy; b2 has only 50 bytes free after orphans — should reject 100-byte object
 	exclusion := map[string]bool{"b1": true}
-	target := mgr.Replicator.FindReplicaTarget(context.Background(), "key1", 100, exclusion)
+	target := mgr.Replicator.FindReplicaTarget(context.Background(), stats, "key1", 100, exclusion)
 	if target != "" {
 		t.Errorf("expected no target (orphan bytes eat available space), got %q", target)
 	}
 }
 
 func TestFindReplicaTarget_OrphanBytesStillFits(t *testing.T) {
-	store := &mockStore{
-		getQuotaStatsResp: map[string]st.QuotaStat{
-			"b1": {BytesUsed: 100, BytesLimit: 1000},
-			// b2 has 800 used + 100 orphan = 900 effective, 100 bytes free
-			"b2": {BytesUsed: 800, BytesLimit: 1000, OrphanBytes: 100},
-		},
-	}
+	store := &mockStore{}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": newMockBackend(), "b2": newMockBackend()},
 		Store:           store,
@@ -303,8 +297,14 @@ func TestFindReplicaTarget_OrphanBytesStillFits(t *testing.T) {
 		RoutingStrategy: "pack",
 	})
 
+	stats := map[string]st.QuotaStat{
+		"b1": {BytesUsed: 100, BytesLimit: 1000},
+		// b2 has 800 used + 100 orphan = 900 effective, 100 bytes free
+		"b2": {BytesUsed: 800, BytesLimit: 1000, OrphanBytes: 100},
+	}
+
 	exclusion := map[string]bool{"b1": true}
-	target := mgr.Replicator.FindReplicaTarget(context.Background(), "key1", 50, exclusion)
+	target := mgr.Replicator.FindReplicaTarget(context.Background(), stats, "key1", 50, exclusion)
 	if target != "b2" {
 		t.Errorf("expected b2 (50 bytes fits in 100 free), got %q", target)
 	}
