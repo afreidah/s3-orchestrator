@@ -86,9 +86,17 @@ func (br *BucketRegistry) AuthenticateAndResolveBucket(r *http.Request) (string,
 	// a dummy secret when the key is unknown — so both paths take the same
 	// time.
 	if strings.HasPrefix(authHeader, "AWS4-HMAC-SHA256 ") {
-		accessKey, err := extractAccessKey(authHeader)
-		if err != nil {
-			return "", err
+		// Parse the header once to extract all three fields.
+		parts := authHeader[len("AWS4-HMAC-SHA256 "):]
+		credential, signedHeaders, signature := parseSigV4FieldsDirect(parts)
+		if credential == "" {
+			return "", fmt.Errorf("authentication failed")
+		}
+
+		// Extract access key from the credential scope (accessKey/date/region/service/aws4_request).
+		accessKey, _, _ := strings.Cut(credential, "/")
+		if accessKey == "" {
+			return "", fmt.Errorf("authentication failed")
 		}
 
 		entry, ok := br.byAccessKey[accessKey]
@@ -97,7 +105,7 @@ func (br *BucketRegistry) AuthenticateAndResolveBucket(r *http.Request) (string,
 			secret = entry.SecretAccessKey
 		}
 
-		if err := VerifySigV4(r, accessKey, secret); err != nil || !ok {
+		if err := verifySigV4Parsed(r, accessKey, secret, credential, signedHeaders, signature); err != nil || !ok {
 			return "", fmt.Errorf("authentication failed")
 		}
 
@@ -127,23 +135,6 @@ func (br *BucketRegistry) AuthenticateAndResolveBucket(r *http.Request) (string,
 	return "", fmt.Errorf("missing authentication credentials")
 }
 
-// extractAccessKey parses the access key ID from a SigV4 Authorization header.
-func extractAccessKey(authHeader string) (string, error) {
-	parts := strings.TrimPrefix(authHeader, "AWS4-HMAC-SHA256 ")
-	fields := parseSigV4Fields(parts)
-
-	credential := fields["Credential"]
-	if credential == "" {
-		return "", fmt.Errorf("malformed Authorization header")
-	}
-
-	credParts := strings.SplitN(credential, "/", 2)
-	if len(credParts) < 1 || credParts[0] == "" {
-		return "", fmt.Errorf("malformed credential scope")
-	}
-
-	return credParts[0], nil
-}
 
 // -------------------------------------------------------------------------
 // SIGNING KEY CACHE
@@ -191,17 +182,23 @@ func VerifySigV4(r *http.Request, accessKeyID, secretAccessKey string) error {
 		return fmt.Errorf("missing Authorization header")
 	}
 
-	// Parse: AWS4-HMAC-SHA256 Credential=.../date/region/service/aws4_request, SignedHeaders=..., Signature=...
 	if !strings.HasPrefix(authHeader, "AWS4-HMAC-SHA256 ") {
 		return fmt.Errorf("unsupported auth scheme")
 	}
 
-	parts := strings.TrimPrefix(authHeader, "AWS4-HMAC-SHA256 ")
+	parts := authHeader[len("AWS4-HMAC-SHA256 "):]
 	credential, signedHeadersStr, signature := parseSigV4FieldsDirect(parts)
 	if credential == "" || signedHeadersStr == "" || signature == "" {
 		return fmt.Errorf("malformed Authorization header")
 	}
 
+	return verifySigV4Parsed(r, accessKeyID, secretAccessKey, credential, signedHeadersStr, signature)
+}
+
+// verifySigV4Parsed verifies the signature using pre-parsed Authorization
+// header fields, avoiding a redundant parse when called from
+// AuthenticateAndResolveBucket.
+func verifySigV4Parsed(r *http.Request, accessKeyID, secretAccessKey, credential, signedHeadersStr, signature string) error {
 	// Parse credential: accessKeyID/date/region/service/aws4_request
 	credParts := strings.SplitN(credential, "/", 5)
 	if len(credParts) != 5 {
@@ -217,8 +214,7 @@ func VerifySigV4(r *http.Request, accessKeyID, secretAccessKey string) error {
 
 	// The host header must always be signed per the SigV4 spec to prevent
 	// replay attacks against different endpoints.
-	hostSigned := slices.Contains(signedHeaders, "host")
-	if !hostSigned {
+	if !slices.Contains(signedHeaders, "host") {
 		return fmt.Errorf("host header must be signed")
 	}
 
@@ -238,12 +234,8 @@ func VerifySigV4(r *http.Request, accessKeyID, secretAccessKey string) error {
 		return fmt.Errorf("request timestamp too skewed (%s)", skew.Truncate(time.Second))
 	}
 
-	credentialScope := fmt.Sprintf("%s/%s/%s/aws4_request", dateStamp, region, service)
-	stringToSign := fmt.Sprintf("AWS4-HMAC-SHA256\n%s\n%s\n%s",
-		amzDate,
-		credentialScope,
-		hashSHA256([]byte(canonicalRequest)),
-	)
+	credentialScope := dateStamp + "/" + region + "/" + service + "/aws4_request"
+	stringToSign := "AWS4-HMAC-SHA256\n" + amzDate + "\n" + credentialScope + "\n" + hashSHA256([]byte(canonicalRequest))
 
 	// Derive signing key (cached — changes only when dateStamp rolls over)
 	signingKey := getCachedSigningKey(accessKeyID, secretAccessKey, dateStamp, region, service)
@@ -304,59 +296,74 @@ func parseSigV4FieldsDirect(s string) (credential, signedHeaders, signature stri
 
 // buildCanonicalRequest constructs the canonical request string per SigV4 spec.
 func buildCanonicalRequest(r *http.Request, signedHeaders []string) string {
-	// Canonical URI — each path segment must be URI-encoded per SigV4 spec.
-	// Go's net/http decodes percent-encoding in r.URL.Path, so we re-encode
-	// each segment to match what the client signed.
-	canonicalURI := encodePath(r.URL.Path)
+	var b strings.Builder
+	b.Grow(256) // typical canonical request fits in 256 bytes
+
+	// Method
+	b.WriteString(r.Method)
+	b.WriteByte('\n')
+
+	// Canonical URI
+	encodePath(&b, r.URL.Path)
+	b.WriteByte('\n')
 
 	// Canonical query string
-	canonicalQueryString := buildCanonicalQueryString(r.URL.Query())
+	buildCanonicalQueryString(&b, r.URL.Query())
+	b.WriteByte('\n')
 
 	// Canonical headers
-	headerLines := make([]string, 0, len(signedHeaders))
 	for _, h := range signedHeaders {
 		h = strings.ToLower(strings.TrimSpace(h))
 		val := strings.TrimSpace(r.Header.Get(h))
 		if h == "host" && val == "" {
 			val = r.Host
 		}
-		headerLines = append(headerLines, h+":"+val+"\n")
+		b.WriteString(h)
+		b.WriteByte(':')
+		b.WriteString(val)
+		b.WriteByte('\n')
 	}
+	b.WriteByte('\n')
 
-	canonicalHeaders := strings.Join(headerLines, "")
-	signedHeadersJoined := strings.Join(signedHeaders, ";")
+	// Signed headers
+	for i, h := range signedHeaders {
+		if i > 0 {
+			b.WriteByte(';')
+		}
+		b.WriteString(h)
+	}
+	b.WriteByte('\n')
 
 	// Payload hash
 	payloadHash := r.Header.Get("X-Amz-Content-Sha256")
 	if payloadHash == "" {
 		payloadHash = "UNSIGNED-PAYLOAD"
 	}
+	b.WriteString(payloadHash)
 
-	return fmt.Sprintf("%s\n%s\n%s\n%s\n%s\n%s",
-		r.Method,
-		canonicalURI,
-		canonicalQueryString,
-		canonicalHeaders,
-		signedHeadersJoined,
-		payloadHash,
-	)
+	return b.String()
 }
 
-// buildCanonicalQueryString sorts query parameters and URI-encodes them per
+// buildCanonicalQueryString writes sorted, URI-encoded query parameters per
 // the SigV4 spec (RFC 3986 encoding where spaces become %20, not +).
-func buildCanonicalQueryString(values url.Values) string {
+func buildCanonicalQueryString(b *strings.Builder, values url.Values) {
 	if len(values) == 0 {
-		return ""
+		return
 	}
 
-	var params []string
+	params := make([]string, 0, len(values))
 	for k, vs := range values {
 		for _, v := range vs {
 			params = append(params, sigV4Encode(k)+"="+sigV4Encode(v))
 		}
 	}
 	sort.Strings(params)
-	return strings.Join(params, "&")
+	for i, p := range params {
+		if i > 0 {
+			b.WriteByte('&')
+		}
+		b.WriteString(p)
+	}
 }
 
 // sigV4Encode performs URI encoding per the SigV4 spec: RFC 3986 unreserved
@@ -366,17 +373,19 @@ func sigV4Encode(s string) string {
 	return strings.ReplaceAll(url.QueryEscape(s), "+", "%20")
 }
 
-// encodePath URI-encodes each path segment per the SigV4 spec. Slashes are
-// preserved as literal separators; everything else follows RFC 3986.
-func encodePath(rawPath string) string {
+// encodePath URI-encodes each path segment per the SigV4 spec directly into
+// the builder. Slashes are preserved as literal separators.
+func encodePath(b *strings.Builder, rawPath string) {
 	if rawPath == "" || rawPath == "/" {
-		return "/"
+		b.WriteByte('/')
+		return
 	}
-	segments := strings.Split(rawPath, "/")
-	for i, seg := range segments {
-		segments[i] = sigV4Encode(seg)
+	for i, seg := range strings.Split(rawPath, "/") {
+		if i > 0 {
+			b.WriteByte('/')
+		}
+		b.WriteString(sigV4Encode(seg))
 	}
-	return strings.Join(segments, "/")
 }
 
 // deriveSigningKey computes the SigV4 signing key from the secret.
