@@ -19,6 +19,8 @@ import (
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/telemetry"
+	promtest "github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 // -------------------------------------------------------------------------
@@ -284,6 +286,7 @@ func TestMultiKeyProvider_UnknownKeyIDFallsToPrimary(t *testing.T) {
 	wrapped, _, _ := primary.WrapDEK(ctx, dek)
 
 	// Unwrap with an unknown keyID — should fall back to primary
+	before := promtest.ToFloat64(telemetry.EncryptionUnknownKeyIDTotal)
 	unwrapped, err := multi.UnwrapDEK(ctx, wrapped, "unknown-key-id")
 	if err != nil {
 		t.Fatalf("UnwrapDEK fallback: %v", err)
@@ -293,6 +296,11 @@ func TestMultiKeyProvider_UnknownKeyIDFallsToPrimary(t *testing.T) {
 		if unwrapped[i] != dek[i] {
 			t.Fatalf("unwrapped[%d] mismatch", i)
 		}
+	}
+
+	after := promtest.ToFloat64(telemetry.EncryptionUnknownKeyIDTotal)
+	if after != before+1 {
+		t.Errorf("EncryptionUnknownKeyIDTotal = %v, want %v", after, before+1)
 	}
 }
 

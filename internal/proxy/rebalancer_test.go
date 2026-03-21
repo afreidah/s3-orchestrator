@@ -25,6 +25,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/telemetry"
+	promtest "github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 // -------------------------------------------------------------------------
@@ -374,6 +376,11 @@ func TestRebalance_EmptyPlan_Skips(t *testing.T) {
 	}
 	if moved != 0 {
 		t.Errorf("expected 0 moved (empty plan), got %d", moved)
+	}
+
+	pending := promtest.ToFloat64(telemetry.RebalancePending)
+	if pending != 0 {
+		t.Errorf("RebalancePending = %v, want 0 (empty plan)", pending)
 	}
 }
 
