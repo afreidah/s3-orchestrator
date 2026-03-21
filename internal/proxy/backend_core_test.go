@@ -18,6 +18,8 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
+	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/store"
 )
 
 func TestExcludeUnhealthy_FiltersOpenCircuitBreaker(t *testing.T) {
@@ -288,4 +290,47 @@ func TestAcquireAdmission_Bounded(t *testing.T) {
 		t.Error("acquire after release should succeed")
 	}
 	core.releaseAdmission()
+}
+
+func TestEligibleForWrite_CombinesAllFilters(t *testing.T) {
+	// healthy: passes all checks
+	healthy := newMockBackend()
+
+	// draining: excluded by drain check
+	draining := newMockBackend()
+
+	// unhealthy: circuit breaker is open
+	failingMock := newMockBackend()
+	failingMock.putErr = errors.New("down")
+	unhealthy := backend.NewCircuitBreakerBackend(failingMock, "unhealthy", 1, 30*time.Second)
+	_, _ = unhealthy.PutObject(context.TODO(), "k", strings.NewReader("x"), 1, "", nil) // trip breaker
+
+	// over-limit: within limits check fails
+	overLimit := newMockBackend()
+
+	limits := map[string]store.UsageLimits{
+		"over-limit": {APIRequestLimit: 1},
+	}
+	usage := counter.NewUsageTracker(
+		counter.NewLocalCounterBackend([]string{"healthy", "draining", "unhealthy", "over-limit"}),
+		limits,
+	)
+	usage.SetBaseline("over-limit", store.UsageStat{APIRequests: 1})
+
+	core := &backendCore{
+		backends: map[string]backend.ObjectBackend{
+			"healthy":    healthy,
+			"draining":   draining,
+			"unhealthy":  unhealthy,
+			"over-limit": overLimit,
+		},
+		order: []string{"healthy", "draining", "unhealthy", "over-limit"},
+		usage: usage,
+	}
+	core.draining.Store("draining", &drainState{done: make(chan struct{})})
+
+	eligible := core.eligibleForWrite(1, 0, 0)
+	if len(eligible) != 1 || eligible[0] != "healthy" {
+		t.Errorf("eligibleForWrite = %v, want [healthy]", eligible)
+	}
 }

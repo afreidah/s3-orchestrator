@@ -152,6 +152,31 @@ func (c *backendCore) excludeUnhealthy(eligible []string) []string {
 	return filtered
 }
 
+// eligibleForWrite returns backends that are not draining, not circuit-broken,
+// and within usage limits for the given operation. Combines excludeDraining,
+// excludeUnhealthy, and BackendsWithinLimits into a single pass to avoid
+// intermediate slice allocations.
+func (c *backendCore) eligibleForWrite(apiCalls, egress, ingress int64) []string {
+	eligible := make([]string, 0, len(c.order))
+	for _, name := range c.order {
+		if c.IsDraining(name) {
+			continue
+		}
+		b, ok := c.backends[name]
+		if !ok {
+			continue
+		}
+		if cb, ok := b.(*backend.CircuitBreakerBackend); ok && cb.State() == breaker.StateOpen && !cb.ProbeEligible() {
+			continue
+		}
+		if !c.usage.WithinLimits(name, apiCalls, egress, ingress) {
+			continue
+		}
+		eligible = append(eligible, name)
+	}
+	return eligible
+}
+
 // -------------------------------------------------------------------------
 // ROUTING
 // -------------------------------------------------------------------------
