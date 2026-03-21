@@ -452,11 +452,6 @@ func (r *RedisCounterBackend) IsHealthy() bool {
 	return r.cb.IsHealthy()
 }
 
-// InFallbackMode returns true when the backend is using local counters
-// due to Redis unavailability.
-func (r *RedisCounterBackend) InFallbackMode() bool {
-	return r.inFallback()
-}
 
 // Close stops the health probe goroutine and closes the Redis client.
 // Safe to call multiple times.
