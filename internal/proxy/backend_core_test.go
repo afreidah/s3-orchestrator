@@ -103,9 +103,6 @@ func TestExcludeUnhealthy_AllUnhealthy_ProbeEligible(t *testing.T) {
 	_, _ = b1.PutObject(context.TODO(), "key", strings.NewReader("x"), 1, "", nil)
 	_, _ = b2.PutObject(context.TODO(), "key", strings.NewReader("x"), 1, "", nil)
 
-	// Wait for open timeout to elapse
-	time.Sleep(5 * time.Millisecond)
-
 	core := &backendCore{
 		backends: map[string]backend.ObjectBackend{
 			"b1": b1,
@@ -113,10 +110,17 @@ func TestExcludeUnhealthy_AllUnhealthy_ProbeEligible(t *testing.T) {
 		},
 	}
 
-	// After timeout elapses, probe-eligible backends should be allowed through
-	eligible := core.excludeUnhealthy([]string{"b1", "b2"})
-	if len(eligible) != 2 {
-		t.Fatalf("expected 2 probe-eligible backends after timeout, got %d", len(eligible))
+	// Poll until the open timeout elapses and backends become probe-eligible.
+	deadline := time.Now().Add(time.Second)
+	for {
+		eligible := core.excludeUnhealthy([]string{"b1", "b2"})
+		if len(eligible) == 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected 2 probe-eligible backends after timeout, got %d", len(eligible))
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 
@@ -132,11 +136,17 @@ func TestExcludeUnhealthy_HalfOpenAllowedForProbe(t *testing.T) {
 		t.Fatalf("expected open state, got %s", b.State())
 	}
 
-	// Wait for the open timeout to elapse so PreCheck transitions to half-open
-	time.Sleep(5 * time.Millisecond)
-	_ = b.PreCheck()
-	if b.State() != breaker.StateHalfOpen {
-		t.Fatalf("expected half-open state, got %s", b.State())
+	// Poll until the open timeout elapses and PreCheck transitions to half-open.
+	deadline := time.Now().Add(time.Second)
+	for {
+		_ = b.PreCheck()
+		if b.State() == breaker.StateHalfOpen {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected half-open state, got %s", b.State())
+		}
+		time.Sleep(time.Millisecond)
 	}
 
 	core := &backendCore{
