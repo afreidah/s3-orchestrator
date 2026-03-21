@@ -130,13 +130,7 @@ func TestReplicate_Success(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestFindReplicaTarget_ExcludesExistingCopies(t *testing.T) {
-	store := &mockStore{
-		getQuotaStatsResp: map[string]st.QuotaStat{
-			"b1": {BytesUsed: 100, BytesLimit: 1000},
-			"b2": {BytesUsed: 100, BytesLimit: 1000},
-			"b3": {BytesUsed: 100, BytesLimit: 1000},
-		},
-	}
+	store := &mockStore{}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": newMockBackend(), "b2": newMockBackend(), "b3": newMockBackend()},
 		Store:           store,
@@ -145,21 +139,22 @@ func TestFindReplicaTarget_ExcludesExistingCopies(t *testing.T) {
 		RoutingStrategy: "pack",
 	})
 
+	stats := map[string]st.QuotaStat{
+		"b1": {BytesUsed: 100, BytesLimit: 1000},
+		"b2": {BytesUsed: 100, BytesLimit: 1000},
+		"b3": {BytesUsed: 100, BytesLimit: 1000},
+	}
+
 	// b1 and b2 already have copies
 	exclusion := map[string]bool{"b1": true, "b2": true}
-	target := mgr.Replicator.FindReplicaTarget(context.Background(), "key1", 50, exclusion)
+	target := mgr.Replicator.FindReplicaTarget(context.Background(), stats, "key1", 50, exclusion)
 	if target != "b3" {
 		t.Errorf("expected b3, got %q", target)
 	}
 }
 
 func TestFindReplicaTarget_SkipsFullBackends(t *testing.T) {
-	store := &mockStore{
-		getQuotaStatsResp: map[string]st.QuotaStat{
-			"b1": {BytesUsed: 100, BytesLimit: 1000},
-			"b2": {BytesUsed: 999, BytesLimit: 1000}, // only 1 byte free
-		},
-	}
+	store := &mockStore{}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": newMockBackend(), "b2": newMockBackend()},
 		Store:           store,
@@ -168,20 +163,25 @@ func TestFindReplicaTarget_SkipsFullBackends(t *testing.T) {
 		RoutingStrategy: "pack",
 	})
 
+	stats := map[string]st.QuotaStat{
+		"b1": {BytesUsed: 100, BytesLimit: 1000},
+		"b2": {BytesUsed: 999, BytesLimit: 1000}, // only 1 byte free
+	}
+
 	exclusion := map[string]bool{"b1": true}
-	target := mgr.Replicator.FindReplicaTarget(context.Background(), "key1", 50, exclusion)
+	target := mgr.Replicator.FindReplicaTarget(context.Background(), stats, "key1", 50, exclusion)
 	if target != "" {
 		t.Errorf("expected empty (no space), got %q", target)
 	}
 }
 
-func TestFindReplicaTarget_QuotaStatsError(t *testing.T) {
-	store := &mockStore{getQuotaStatsErr: errors.New("db down")}
+func TestFindReplicaTarget_EmptyStats(t *testing.T) {
+	store := &mockStore{}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	target := mgr.Replicator.FindReplicaTarget(context.Background(), "key1", 50, map[string]bool{})
+	target := mgr.Replicator.FindReplicaTarget(context.Background(), map[string]st.QuotaStat{}, "key1", 50, map[string]bool{})
 	if target != "" {
-		t.Errorf("expected empty on quota stats error, got %q", target)
+		t.Errorf("expected empty with no quota stats, got %q", target)
 	}
 }
 
