@@ -179,7 +179,7 @@ APTLY_USER ?= admin
 DEB_DIR    ?= dist
 SNAPSHOT_NAME ?= $(IMAGE)-$(shell date +%Y%m%d-%H%M%S)
 
-publish-deb: deb ## Publish .deb packages to Aptly repository
+publish-deb: ## Publish .deb packages to Aptly repository
 	@if [ -z "$(APTLY_PASS)" ]; then echo "Error: APTLY_PASS not set (source munchbox-env.sh)"; exit 1; fi
 	@echo "Publishing packages to $(APTLY_URL)..."
 	@for deb in $(DEB_DIR)/*.deb; do \
@@ -199,8 +199,8 @@ publish-deb: deb ## Publish .deb packages to Aptly repository
 	@echo "Updating published repo..."
 	@curl -fsS -u "$(APTLY_USER):$(APTLY_PASS)" \
 		-X PUT -H 'Content-Type: application/json' \
-		-d '{"Snapshots":[{"Component":"main","Name":"$(SNAPSHOT_NAME)"}],"ForceOverwrite":true,"Signing":{"Skip":true}}' \
-		'$(APTLY_URL)/api/publish/s3:munchbox:/stable' || exit 1
+		-d '{"Snapshots":[{"Component":"main","Name":"$(SNAPSHOT_NAME)"}],"ForceOverwrite":true}' \
+		'$(APTLY_URL)/api/publish/:./stable' || exit 1
 	@echo "Cleaning up uploaded files..."
 	@curl -fsS -u "$(APTLY_USER):$(APTLY_PASS)" \
 		-X DELETE "$(APTLY_URL)/api/files/$(IMAGE)" || true
