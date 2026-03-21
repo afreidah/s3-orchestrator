@@ -160,6 +160,11 @@ func (cb *CircuitBreakerStore) GetStaleMultipartUploads(ctx context.Context, old
 	return breaker.CBCall(cb.CircuitBreaker, func() ([]MultipartUpload, error) { return cb.real.GetStaleMultipartUploads(ctx, olderThan) })
 }
 
+// GetMultipartUploadsByBackend delegates to the real store with circuit breaker protection.
+func (cb *CircuitBreakerStore) GetMultipartUploadsByBackend(ctx context.Context, backendName string) ([]MultipartUpload, error) {
+	return breaker.CBCall(cb.CircuitBreaker, func() ([]MultipartUpload, error) { return cb.real.GetMultipartUploadsByBackend(ctx, backendName) })
+}
+
 // ListMultipartUploads delegates to the real store with circuit breaker protection.
 func (cb *CircuitBreakerStore) ListMultipartUploads(ctx context.Context, prefix string, maxUploads int) ([]MultipartUpload, error) {
 	return breaker.CBCall(cb.CircuitBreaker, func() ([]MultipartUpload, error) { return cb.real.ListMultipartUploads(ctx, prefix, maxUploads) })

@@ -132,6 +132,25 @@ func authedRequest(t *testing.T, h *Handler, mux *http.ServeMux, method, path st
 }
 
 // -------------------------------------------------------------------------
+// HELPER TESTS
+// -------------------------------------------------------------------------
+
+func TestWriteJSONError(t *testing.T) {
+	w := httptest.NewRecorder()
+	writeJSONError(w, http.StatusBadRequest, "something broke")
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+	if body := w.Body.String(); body != `{"error":"something broke"}` {
+		t.Errorf("body = %q, want %q", body, `{"error":"something broke"}`)
+	}
+}
+
+// -------------------------------------------------------------------------
 // AUTH TESTS
 // -------------------------------------------------------------------------
 

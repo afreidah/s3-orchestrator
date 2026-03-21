@@ -83,6 +83,48 @@ func (q *Queries) GetMultipartUpload(ctx context.Context, uploadID string) (GetM
 	return i, err
 }
 
+const getMultipartUploadsByBackend = `-- name: GetMultipartUploadsByBackend :many
+SELECT upload_id, object_key, backend_name, content_type, metadata, created_at
+FROM multipart_uploads
+WHERE backend_name = $1
+`
+
+type GetMultipartUploadsByBackendRow struct {
+	UploadID    string
+	ObjectKey   string
+	BackendName string
+	ContentType *string
+	Metadata    []byte
+	CreatedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) GetMultipartUploadsByBackend(ctx context.Context, backendName string) ([]GetMultipartUploadsByBackendRow, error) {
+	rows, err := q.db.Query(ctx, getMultipartUploadsByBackend, backendName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetMultipartUploadsByBackendRow{}
+	for rows.Next() {
+		var i GetMultipartUploadsByBackendRow
+		if err := rows.Scan(
+			&i.UploadID,
+			&i.ObjectKey,
+			&i.BackendName,
+			&i.ContentType,
+			&i.Metadata,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getParts = `-- name: GetParts :many
 SELECT part_number, etag, size_bytes, encrypted, encryption_key, key_id, plaintext_size, created_at
 FROM multipart_parts
