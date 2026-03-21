@@ -16,6 +16,7 @@ import (
 	"io"
 	"log/slog"
 	"slices"
+	"strconv"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/store"
@@ -41,7 +42,7 @@ func NewMultipartManager(core *backendCore, encryptor *encryption.Encryptor) *Mu
 
 // multipartPartKey returns the temporary object key for a multipart part.
 func multipartPartKey(uploadID string, partNumber int) string {
-	return fmt.Sprintf("__multipart/%s/%d", uploadID, partNumber)
+	return "__multipart/" + uploadID + "/" + strconv.Itoa(partNumber)
 }
 
 // -------------------------------------------------------------------------
