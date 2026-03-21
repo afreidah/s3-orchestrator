@@ -62,8 +62,9 @@ func (lt *LoginThrottle) Close() {
 }
 
 // IsLockedOut returns true if the given IP is currently locked out.
-func (lt *LoginThrottle) IsLockedOut(remoteAddr string) bool {
-	ip := stripPort(remoteAddr)
+// Callers must pass a resolved client IP (e.g. from ExtractClientIP),
+// not a raw remoteAddr.
+func (lt *LoginThrottle) IsLockedOut(ip string) bool {
 	lt.mu.Lock()
 	defer lt.mu.Unlock()
 
@@ -76,8 +77,9 @@ func (lt *LoginThrottle) IsLockedOut(remoteAddr string) bool {
 
 // RecordFailure increments the failure count for the given IP. If the count
 // reaches MaxFailures, the IP is locked out for LockoutDuration.
-func (lt *LoginThrottle) RecordFailure(remoteAddr string) {
-	ip := stripPort(remoteAddr)
+// Callers must pass a resolved client IP (e.g. from ExtractClientIP),
+// not a raw remoteAddr.
+func (lt *LoginThrottle) RecordFailure(ip string) {
 	lt.mu.Lock()
 	defer lt.mu.Unlock()
 
@@ -93,8 +95,9 @@ func (lt *LoginThrottle) RecordFailure(remoteAddr string) {
 }
 
 // RecordSuccess resets the failure counter for the given IP.
-func (lt *LoginThrottle) RecordSuccess(remoteAddr string) {
-	ip := stripPort(remoteAddr)
+// Callers must pass a resolved client IP (e.g. from ExtractClientIP),
+// not a raw remoteAddr.
+func (lt *LoginThrottle) RecordSuccess(ip string) {
 	lt.mu.Lock()
 	defer lt.mu.Unlock()
 	delete(lt.attempts, ip)
