@@ -135,7 +135,7 @@ func BenchmarkWriteXML_ListV2(b *testing.B) {
 				CreatedAt: now,
 			}
 		}
-		contents, _ := buildListContents(objects, nil, "mybucket/")
+		contents, _ := buildListContents(objects, nil, len("mybucket/"))
 
 		result := xmlListResultV2{
 			Xmlns:    "http://s3.amazonaws.com/doc/2006-03-01/",
@@ -173,7 +173,7 @@ func BenchmarkBuildListContents(b *testing.B) {
 
 	b.Run("1000_objects_3_prefixes", func(b *testing.B) {
 		for b.Loop() {
-			buildListContents(objects, prefixes, "mybucket/")
+			buildListContents(objects, prefixes, len("mybucket/"))
 		}
 	})
 }
