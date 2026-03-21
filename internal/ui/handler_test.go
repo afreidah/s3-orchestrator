@@ -1648,6 +1648,19 @@ func TestDownload_NotFound(t *testing.T) {
 	}
 }
 
+func TestDownload_StoreError(t *testing.T) {
+	h, mux, mock := newTestHandlerWithMock(t)
+	mock.GetAllLocationsErr = errors.New("db down")
+
+	req := authedRequest(t, h, mux, http.MethodGet, "/ui/api/download?key=test-bucket/file.txt", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusInternalServerError)
+	}
+}
+
 // -------------------------------------------------------------------------
 // CLEAN EXCESS API TESTS
 // -------------------------------------------------------------------------

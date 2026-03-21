@@ -1112,7 +1112,9 @@ func (s *Store) GetStaleMultipartUploads(ctx context.Context, olderThan time.Dur
 
 // GetMultipartUploadsByBackend returns all in-progress multipart uploads on
 // the given backend. Used by drain to abort uploads before migrating objects.
-func (s *Store) GetMultipartUploadsByBackend(ctx context.Context, backendName string) ([]MultipartUpload, error) { // codecov:ignore -- requires live PostgreSQL, covered by integration tests
+// Requires live PostgreSQL — covered by integration tests.
+func (s *Store) GetMultipartUploadsByBackend(ctx context.Context, backendName string) ([]MultipartUpload, error) { //nolint:dupl // intentional parallel to GetStaleMultipartUploads
+	// codecov:ignore:start -- requires live PostgreSQL
 	rows, err := s.queries.GetMultipartUploadsByBackend(ctx, backendName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get multipart uploads by backend: %w", err)
@@ -1139,6 +1141,7 @@ func (s *Store) GetMultipartUploadsByBackend(ctx context.Context, backendName st
 		uploads[i] = mu
 	}
 	return uploads, nil
+	// codecov:ignore:end
 }
 
 // ListMultipartUploads returns in-progress multipart uploads whose key matches
