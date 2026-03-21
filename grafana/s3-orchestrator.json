@@ -2032,8 +2032,8 @@
       "gridPos": {
         "x": 0,
         "y": 102,
-        "w": 5,
-        "h": 6
+        "w": 4,
+        "h": 8
       },
       "datasource": {
         "type": "prometheus",
@@ -2083,9 +2083,9 @@
       "id": 41,
       "title": "Rebalance Runs",
       "gridPos": {
-        "x": 5,
+        "x": 4,
         "y": 102,
-        "w": 6,
+        "w": 5,
         "h": 8
       },
       "datasource": {
@@ -2126,9 +2126,9 @@
       "id": 42,
       "title": "Objects / Bytes Moved",
       "gridPos": {
-        "x": 6,
+        "x": 9,
         "y": 102,
-        "w": 6,
+        "w": 5,
         "h": 8
       },
       "datasource": {
@@ -2188,9 +2188,9 @@
       "id": 43,
       "title": "Rebalance Duration (p95)",
       "gridPos": {
-        "x": 12,
+        "x": 14,
         "y": 102,
-        "w": 6,
+        "w": 5,
         "h": 8
       },
       "datasource": {
@@ -2228,9 +2228,9 @@
       "id": 58,
       "title": "Rebalance Skipped",
       "gridPos": {
-        "x": 18,
+        "x": 19,
         "y": 102,
-        "w": 6,
+        "w": 5,
         "h": 8
       },
       "datasource": {

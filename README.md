@@ -610,6 +610,7 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when enabled.
 | `s3o_rebalance_runs_total` | Counter | strategy, status | Rebalancer executions |
 | `s3o_rebalance_duration_seconds` | Histogram | strategy | Rebalancer execution time |
 | `s3o_rebalance_skipped_total` | Counter | reason | Rebalancer runs skipped |
+| `s3o_rebalance_pending` | Gauge | — | Objects planned for rebalance |
 | `s3o_replication_pending` | Gauge | — | Objects below replication factor |
 | `s3o_replication_copies_created_total` | Counter | — | Replica copies created |
 | `s3o_replication_errors_total` | Counter | — | Replication errors |
@@ -644,6 +645,7 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when enabled.
 | `s3o_drain_bytes_moved_total` | Counter | — | Bytes migrated during drain |
 | `s3o_encryption_operations_total` | Counter | op | Encrypt/decrypt operations (encrypt, decrypt, decrypt_range) |
 | `s3o_encryption_errors_total` | Counter | op, error_type | Encryption/decryption failures |
+| `s3o_encryption_unknown_key_id_total` | Counter | — | Decryption attempts with unknown keyID (primary key fallback) |
 | `s3o_encrypt_existing_objects_total` | Counter | status | Objects processed by encrypt-existing (success/error) |
 | `s3o_key_rotation_objects_total` | Counter | status | DEKs re-wrapped by key rotation (success/error) |
 | `s3o_redis_operations_total` | Counter | operation, status | Redis command outcomes (incrby, get, getset, pipeline_add, pipeline_load) |
@@ -894,6 +896,9 @@ make deb-all VERSION=X.Y.Z
 
 # Build and run lintian validation
 make deb-lint VERSION=X.Y.Z
+
+# Publish .deb packages to an Aptly repository
+make publish-deb
 
 # Dry-run GoReleaser locally (builds everything without publishing)
 make release-local
