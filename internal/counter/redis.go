@@ -205,21 +205,20 @@ func (r *RedisCounterBackend) AddAll(backend string, apiReqs, egress, ingress in
 	defer cancel()
 
 	pipe := r.client.Pipeline()
-	keys := make([]string, 0, 3)
 	if apiReqs > 0 {
 		k := r.key(backend, FieldAPIRequests)
 		pipe.IncrBy(ctx, k, apiReqs)
-		keys = append(keys, k)
+		pipe.Expire(ctx, k, keyTTL)
 	}
 	if egress > 0 {
 		k := r.key(backend, FieldEgressBytes)
 		pipe.IncrBy(ctx, k, egress)
-		keys = append(keys, k)
+		pipe.Expire(ctx, k, keyTTL)
 	}
 	if ingress > 0 {
 		k := r.key(backend, FieldIngressBytes)
 		pipe.IncrBy(ctx, k, ingress)
-		keys = append(keys, k)
+		pipe.Expire(ctx, k, keyTTL)
 	}
 
 	_, err := pipe.Exec(ctx)
@@ -231,11 +230,6 @@ func (r *RedisCounterBackend) AddAll(backend string, apiReqs, egress, ingress in
 	}
 	telemetry.RedisOperationsTotal.WithLabelValues("pipeline_add", "success").Inc()
 	_ = r.cb.PostCheck(nil)
-
-	// Set TTL on written keys (best-effort)
-	for _, k := range keys {
-		r.client.Expire(ctx, k, keyTTL)
-	}
 }
 
 // LoadAll reads all three counter values from Redis in a pipeline.
