@@ -464,7 +464,10 @@ func TestPutObject_WriteFailover_WithEncryption(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewConfigKeyProvider: %v", err)
 	}
-	enc := encryption.NewEncryptor(provider, 64*1024)
+	enc, err := encryption.NewEncryptor(provider, 64*1024)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	store := &mockStore{getBackendFromEligible: true}
 	obs := map[string]s3be.ObjectBackend{"b1": b1, "b2": b2}

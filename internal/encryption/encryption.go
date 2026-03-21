@@ -62,13 +62,16 @@ type EncryptResult struct {
 // -------------------------------------------------------------------------
 
 // NewEncryptor creates an Encryptor with the given key provider and chunk
-// size. The chunk size must match the value used during encryption for
-// correct decryption.
-func NewEncryptor(provider KeyProvider, chunkSize int) *Encryptor {
+// size. The chunk size must be positive. Config validation enforces stricter
+// bounds (4KB–1MB, power of 2); this guard catches programming errors.
+func NewEncryptor(provider KeyProvider, chunkSize int) (*Encryptor, error) {
+	if chunkSize <= 0 {
+		return nil, fmt.Errorf("encryption chunk size must be positive, got %d", chunkSize)
+	}
 	return &Encryptor{
 		provider:  provider,
 		chunkSize: chunkSize,
-	}
+	}, nil
 }
 
 // ChunkSize returns the configured plaintext chunk size.

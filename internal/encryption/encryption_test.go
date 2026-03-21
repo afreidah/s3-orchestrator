@@ -34,7 +34,11 @@ func testKeyProvider(t *testing.T) *ConfigKeyProvider {
 
 func testEncryptor(t *testing.T, chunkSize int) *Encryptor {
 	t.Helper()
-	return NewEncryptor(testKeyProvider(t), chunkSize)
+	enc, err := NewEncryptor(testKeyProvider(t), chunkSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return enc
 }
 
 // -------------------------------------------------------------------------
@@ -517,9 +521,21 @@ func TestEncryptor_ChunkSize(t *testing.T) {
 	}
 }
 
+func TestNewEncryptor_InvalidChunkSize(t *testing.T) {
+	for _, cs := range []int{0, -1, -100} {
+		_, err := NewEncryptor(testKeyProvider(t), cs)
+		if err == nil {
+			t.Errorf("NewEncryptor(chunkSize=%d) should return error", cs)
+		}
+	}
+}
+
 func TestEncryptor_Provider(t *testing.T) {
 	p := testKeyProvider(t)
-	enc := NewEncryptor(p, 64)
+	enc, err := NewEncryptor(p, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if enc.Provider() != p {
 		t.Error("Provider() should return the same provider")
 	}
