@@ -85,6 +85,33 @@ func TestReplicate_QueryError(t *testing.T) {
 	}
 }
 
+func TestReplicate_QuotaStatsError(t *testing.T) {
+	b1 := newMockBackend()
+	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
+
+	store := &mockStore{
+		getUnderReplicatedResp: []st.ObjectLocation{
+			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
+		},
+		getQuotaStatsErr: errors.New("db down"),
+	}
+	mgr := NewBackendManager(&BackendManagerConfig{
+		Backends:        map[string]backend.ObjectBackend{"b1": b1, "b2": newMockBackend()},
+		Store:           store,
+		Order:           []string{"b1", "b2"},
+		CacheTTL:        5 * time.Second,
+		RoutingStrategy: "pack",
+	})
+
+	_, err := mgr.Replicator.Replicate(context.Background(), config.ReplicationConfig{
+		Factor:    2,
+		BatchSize: 10,
+	})
+	if err == nil {
+		t.Fatal("expected error from GetQuotaStats failure")
+	}
+}
+
 func TestReplicate_Success(t *testing.T) {
 	b1 := newMockBackend()
 	b2 := newMockBackend()
