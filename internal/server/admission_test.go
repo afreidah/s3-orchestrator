@@ -164,13 +164,10 @@ func TestAdmissionController_IncrementsMetric(t *testing.T) {
 func TestSplitAdmission_WriteFull_ReadAllowed(t *testing.T) {
 	ac := NewSplitAdmissionController(2, 1)
 
-	entered := make(chan struct{})
+	entered := make(chan struct{}, 2)
 	hold := make(chan struct{})
 	handler := ac.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		select {
-		case entered <- struct{}{}:
-		default:
-		}
+		entered <- struct{}{}
 		<-hold
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -213,13 +210,10 @@ func TestSplitAdmission_WriteFull_ReadAllowed(t *testing.T) {
 func TestSplitAdmission_ReadFull_WriteAllowed(t *testing.T) {
 	ac := NewSplitAdmissionController(1, 2)
 
-	entered := make(chan struct{})
+	entered := make(chan struct{}, 2)
 	hold := make(chan struct{})
 	handler := ac.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		select {
-		case entered <- struct{}{}:
-		default:
-		}
+		entered <- struct{}{}
 		<-hold
 		w.WriteHeader(http.StatusOK)
 	}))

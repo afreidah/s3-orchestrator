@@ -364,12 +364,15 @@ func (o *ObjectManager) sequentialBroadcastRead(ctx context.Context, operation, 
 }
 
 // parallelBroadcastRead fans out to all backends concurrently and returns
-// the first successful result. Remaining goroutines are cancelled via context.
+// the first successful result. A background goroutine drains remaining
+// results and cancels losing contexts so backend connections are released
+// promptly rather than lingering until their timeout expires.
 func (o *ObjectManager) parallelBroadcastRead(ctx context.Context, operation, key string, start time.Time, span trace.Span, tryBackend func(ctx context.Context, backendName string, backend s3be.ObjectBackend) (int64, error)) (string, error) {
 	type broadcastResult struct {
-		name string
-		size int64
-		err  error
+		name   string
+		size   int64
+		err    error
+		cancel context.CancelFunc
 	}
 
 	launched := 0
@@ -386,23 +389,36 @@ func (o *ObjectManager) parallelBroadcastRead(ctx context.Context, operation, ke
 			size, err := tryBackend(tctx, beName, be)
 			if err != nil {
 				tcancel()
+				ch <- broadcastResult{name: beName, err: err}
+				return
 			}
-			// On success, don't cancel — the body may still be streaming.
-			// The timeout context expires naturally; losing goroutines'
-			// bodies are closed by the once.Do guard in the callback.
-			ch <- broadcastResult{name: beName, size: size, err: err}
+			// On success, send the cancel func so the caller can decide
+			// whether to keep the context alive (winner) or cancel it (loser).
+			ch <- broadcastResult{name: beName, size: size, cancel: tcancel}
 		}(name, backend)
 	}
 
 	var lastErr error
-	for range launched {
+	for received := 0; received < launched; received++ {
 		r := <-ch
 		if r.err != nil {
 			lastErr = r.err
 			continue
 		}
 
-		// First success — don't cancel the winning context
+		// First success — drain remaining results in the background
+		// to cancel loser contexts promptly.
+		remaining := launched - received - 1
+		if remaining > 0 {
+			go func() {
+				for range remaining {
+					if lr := <-ch; lr.cancel != nil {
+						lr.cancel()
+					}
+				}
+			}()
+		}
+
 		o.cache.Set(key, r.name)
 		o.recordOperation(operation, r.name, start, nil)
 		span.SetAttributes(telemetry.AttrBackendName.String(r.name))
