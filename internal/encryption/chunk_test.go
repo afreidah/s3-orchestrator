@@ -212,3 +212,111 @@ func TestCiphertextSize(t *testing.T) {
 		t.Errorf("ciphertext len = %d, want %d", len(ct), expected)
 	}
 }
+
+func TestDecryptReader_ChunkTooShort(t *testing.T) {
+	dek := testDEK()
+	// Feed a truncated chunk (just a few bytes, less than NonceSize+TagSize)
+	short := make([]byte, 5)
+	dr, err := newDecryptReader(bytes.NewReader(short), dek, make([]byte, NonceSize), 1024, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = io.ReadAll(dr)
+	if err == nil {
+		t.Fatal("expected error for chunk too short")
+	}
+}
+
+func TestDecryptReader_NonceMismatch(t *testing.T) {
+	dek := testDEK()
+	chunkSize := 64
+
+	// Encrypt a small payload
+	er, err := newEncryptReader(bytes.NewReader(make([]byte, chunkSize)), dek, chunkSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ct, err := io.ReadAll(er)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Parse header, then decrypt starting at wrong chunk index
+	r := bytes.NewReader(ct)
+	cs, baseNonce, err := ParseHeader(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dr, err := newDecryptReader(r, dek, baseNonce, cs, 99) // wrong start chunk
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = io.ReadAll(dr)
+	if err == nil {
+		t.Fatal("expected nonce mismatch error")
+	}
+}
+
+func BenchmarkEncryptReader(b *testing.B) {
+	dek := testDEK()
+	data := make([]byte, 1<<20) // 1 MiB
+
+	b.SetBytes(int64(len(data)))
+	b.ResetTimer()
+	for b.Loop() {
+		er, err := newEncryptReader(bytes.NewReader(data), dek, 64*1024)
+		if err != nil {
+			b.Fatal(err)
+		}
+		_, _ = io.Copy(io.Discard, er)
+	}
+}
+
+func BenchmarkDecryptReader(b *testing.B) {
+	dek := testDEK()
+	chunkSize := 64 * 1024
+	data := make([]byte, 1<<20) // 1 MiB
+
+	// Pre-encrypt
+	er, err := newEncryptReader(bytes.NewReader(data), dek, chunkSize)
+	if err != nil {
+		b.Fatal(err)
+	}
+	ct, err := io.ReadAll(er)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.SetBytes(int64(len(data)))
+	b.ResetTimer()
+	for b.Loop() {
+		r := bytes.NewReader(ct)
+		cs, baseNonce, err := ParseHeader(r)
+		if err != nil {
+			b.Fatal(err)
+		}
+		dr, err := newDecryptReader(r, dek, baseNonce, cs, 0)
+		if err != nil {
+			b.Fatal(err)
+		}
+		_, _ = io.Copy(io.Discard, dr)
+	}
+}
+
+func BenchmarkRoundTrip(b *testing.B) {
+	dek := testDEK()
+	chunkSize := 64 * 1024
+	data := make([]byte, 1<<20) // 1 MiB
+
+	b.SetBytes(int64(len(data)))
+	b.ResetTimer()
+	for b.Loop() {
+		er, _ := newEncryptReader(bytes.NewReader(data), dek, chunkSize)
+		ct, _ := io.ReadAll(er)
+
+		r := bytes.NewReader(ct)
+		cs, baseNonce, _ := ParseHeader(r)
+		dr, _ := newDecryptReader(r, dek, baseNonce, cs, 0)
+		_, _ = io.Copy(io.Discard, dr)
+	}
+}
