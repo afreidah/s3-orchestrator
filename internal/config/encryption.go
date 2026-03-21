@@ -9,6 +9,7 @@ package config
 import (
 	"encoding/base64"
 	"fmt"
+	"os"
 	"time"
 )
 
@@ -75,6 +76,15 @@ func (e *EncryptionConfig) setDefaultsAndValidate() []string {
 			errs = append(errs, fmt.Sprintf("encryption.master_key: invalid base64: %v", err))
 		} else if len(keyBytes) != 32 {
 			errs = append(errs, fmt.Sprintf("encryption.master_key: must be 256 bits (32 bytes), got %d bytes", len(keyBytes)))
+		}
+	}
+
+	if e.MasterKeyFile != "" {
+		info, err := os.Stat(e.MasterKeyFile)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("encryption.master_key_file: %v", err))
+		} else if info.Size() != 32 {
+			errs = append(errs, fmt.Sprintf("encryption.master_key_file: must be 32 bytes, got %d", info.Size()))
 		}
 	}
 
