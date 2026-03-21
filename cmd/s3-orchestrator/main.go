@@ -218,7 +218,11 @@ func runServe() {
 			os.Exit(1)
 		}
 		encryptionProvider = provider
-		encryptor = encryption.NewEncryptor(provider, cfg.Encryption.ChunkSize)
+		encryptor, err = encryption.NewEncryptor(provider, cfg.Encryption.ChunkSize)
+		if err != nil {
+			slog.ErrorContext(ctx, "Failed to create encryptor", "error", err)
+			os.Exit(1)
+		}
 		slog.InfoContext(ctx, "Server-side encryption enabled",
 			"chunk_size", cfg.Encryption.ChunkSize,
 			"key_id", provider.KeyID(),
