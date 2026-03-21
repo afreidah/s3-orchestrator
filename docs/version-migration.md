@@ -33,7 +33,33 @@ s3-orchestrator version
 
 ## Version History
 
-### v0.14.x (current)
+### v0.19.x (current)
+
+**Breaking changes:**
+
+- `encryption.NewEncryptor` now returns `(*Encryptor, error)` instead of `*Encryptor`. Callers must handle the error.
+- `LoginThrottle.IsLockedOut`, `RecordFailure`, and `RecordSuccess` accept a resolved client IP string instead of a raw `remoteAddr`. Callers are responsible for IP extraction via `ExtractClientIP`.
+
+**Config validation:**
+
+- `encryption.master_key_file` must exist and be exactly 32 bytes at startup. Previously validated only at first use.
+- Invalid worker pool concurrency (≤ 0) logs a warning when clamped to 1.
+
+**Metrics:**
+
+- `s3o_rebalance_pending` (gauge) — objects planned for rebalance in the current cycle.
+- `s3o_encryption_unknown_key_id_total` (counter) — decryption attempts with an unrecognized keyID.
+
+**Behavioral changes:**
+
+- `Close()` is idempotent on `RedisCounterBackend`, `RateLimiter`, and `LoginThrottle`.
+- Parallel broadcast reads cancel losing goroutine contexts on first success.
+- Backend drain queries only the target backend's multipart uploads (`GetMultipartUploadsByBackend`).
+- UI API error responses return `Content-Type: application/json`.
+- UI login evaluates `checkSecret` unconditionally to prevent timing side-channel on access key validity.
+- Admin token check no longer short-circuits on empty token.
+
+### v0.14.x
 
 **New configuration fields:**
 

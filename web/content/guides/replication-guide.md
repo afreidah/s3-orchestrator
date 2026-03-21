@@ -189,6 +189,16 @@ Both the rebalancer and replicator use separate advisory locks (1001 and 1002), 
 | `s3o_over_replication_runs_total` | Counter | Total cleanup runs, labeled by `status` (`success` or `error`). |
 | `s3o_over_replication_duration_seconds` | Histogram | Time taken for each cleanup cycle. |
 
+### Rebalancer metrics
+
+| Metric | Type | Description |
+|---|---|---|
+| `s3o_rebalance_pending` | Gauge | Objects planned for rebalance in the current cycle. |
+| `s3o_rebalance_objects_moved_total` | Counter | Total objects moved, labeled by `strategy`. |
+| `s3o_rebalance_runs_total` | Counter | Total rebalancer runs, labeled by `strategy` and `status`. |
+| `s3o_rebalance_duration_seconds` | Histogram | Rebalancer execution time. |
+| `s3o_rebalance_skipped_total` | Counter | Runs skipped, labeled by `reason` (threshold, empty_plan). |
+
 ### What to alert on
 
 - **`s3o_replication_pending > 0` for extended periods** — objects are stuck under-replicated. Check backend health, available quota, and circuit breaker state.

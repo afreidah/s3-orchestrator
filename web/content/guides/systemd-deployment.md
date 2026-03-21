@@ -305,6 +305,10 @@ encryption:
   master_key_file: "/etc/s3-orchestrator/encryption.key"
 ```
 
+{{% notice note %}}
+The `master_key_file` is validated at startup — the service will refuse to start if the file does not exist or is not exactly 32 bytes. Ensure the key file is in place before starting the service.
+{{% /notice %}}
+
 For Vault Transit encryption, see the [Deploying on Nomad with Vault](../nomad-vault-deployment/) guide — the encryption config is the same regardless of deployment method.
 
 ## Upgrades

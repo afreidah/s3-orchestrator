@@ -80,6 +80,7 @@ Watch these metrics during and after rotation:
 |--------|-------------|
 | `s3o_key_rotation_objects_total{status="success"}` | DEKs successfully re-wrapped |
 | `s3o_key_rotation_objects_total{status="error"}` | DEKs that failed re-wrapping |
+| `s3o_encryption_unknown_key_id_total` | Decryption attempts where the keyID was not found in configured keys. Any non-zero value after rotation completes indicates objects wrapped with a key that is no longer in `previous_keys`. |
 
 If any DEKs failed, check the logs and retry - the command only processes DEKs still wrapped with the old key.
 

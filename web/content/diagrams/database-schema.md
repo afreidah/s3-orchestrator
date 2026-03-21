@@ -170,8 +170,8 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
         '<tr><td>metadata</td><td>JSONB</td><td>User metadata (x-amz-meta-*)</td></tr>' +
         '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>Upload initiation time</td></tr></table>' +
         '<p class="ac-idx"><b>Indexes:</b> PK on upload_id &bull; idx_multipart_uploads_created (created_at) &bull; idx_multipart_uploads_key_pattern (object_key text_pattern_ops)</p>' +
-        '<p>Used by: CreateMultipartUpload, UploadPart, CompleteMultipartUpload, AbortMultipartUpload, <a href="../background-services/">stale upload cleanup</a> (GetStaleMultipartUploads), quota available-space calculation (inflight parts JOIN).</p>' +
-        '<p class="ac-metric">Key queries: CreateMultipartUpload, GetMultipartUpload, GetStaleMultipartUploads, ListMultipartUploadsByPrefix</p>'
+        '<p>Used by: CreateMultipartUpload, UploadPart, CompleteMultipartUpload, AbortMultipartUpload, <a href="../background-services/">stale upload cleanup</a> (GetStaleMultipartUploads), drain (GetMultipartUploadsByBackend), quota available-space calculation (inflight parts JOIN).</p>' +
+        '<p class="ac-metric">Key queries: CreateMultipartUpload, GetMultipartUpload, GetStaleMultipartUploads, GetMultipartUploadsByBackend, ListMultipartUploadsByPrefix</p>'
     },
     multipart_parts: {
       title: 'multipart_parts',
