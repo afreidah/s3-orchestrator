@@ -75,9 +75,7 @@ func wrapReader(r io.Reader, c io.Closer) io.ReadCloser {
 // size. Used by the HTTP handler to reject uploads before the request body
 // is transmitted (Expect: 100-Continue support).
 func (o *ObjectManager) CanAcceptWrite(size int64) bool {
-	eligible := o.excludeUnhealthy(o.excludeDraining(
-		o.usage.BackendsWithinLimits(o.order, 1, 0, size)))
-	return len(eligible) > 0
+	return len(o.eligibleForWrite(1, 0, size)) > 0
 }
 
 // -------------------------------------------------------------------------
@@ -99,7 +97,7 @@ func (o *ObjectManager) PutObject(ctx context.Context, key string, body io.Reade
 	defer span.End()
 
 	// --- Filter backends within usage limits, exclude draining and unhealthy ---
-	eligible := o.excludeUnhealthy(o.excludeDraining(o.usage.BackendsWithinLimits(o.order, 1, 0, size)))
+	eligible := o.eligibleForWrite(1, 0, size)
 	if len(eligible) == 0 {
 		telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation, "write").Inc()
 		span.SetStatus(codes.Error, "usage limits exceeded on all backends")
@@ -667,7 +665,7 @@ func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey strin
 	span.SetAttributes(telemetry.AttrObjectSize.Int64(size))
 
 	// --- Find destination backend with available quota, usage limits, exclude unhealthy ---
-	destEligible := o.excludeUnhealthy(o.excludeDraining(o.usage.BackendsWithinLimits(o.order, 1, 0, size)))
+	destEligible := o.eligibleForWrite(1, 0, size)
 	if len(destEligible) == 0 {
 		telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation, "write").Inc()
 		span.SetStatus(codes.Error, "usage limits exceeded on all backends")
