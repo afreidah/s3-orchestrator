@@ -41,6 +41,7 @@ type RateLimiter struct {
 	cleanupInterval time.Duration
 	cleanupMaxAge   time.Duration
 	stop            chan struct{}
+	closeOnce       sync.Once
 }
 
 type visitorLimiter struct {
@@ -85,9 +86,11 @@ func NewRateLimiter(cfg config.RateLimitConfig) *RateLimiter {
 	return rl
 }
 
-// Close stops the background cleanup goroutine.
+// Close stops the background cleanup goroutine. Safe to call multiple times.
 func (rl *RateLimiter) Close() {
-	close(rl.stop)
+	rl.closeOnce.Do(func() {
+		close(rl.stop)
+	})
 }
 
 // UpdateLimits changes the rate and burst and resets all existing per-IP
