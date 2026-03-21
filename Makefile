@@ -94,8 +94,16 @@ lint: ## Run Go linter
 govulncheck: ## Scan Go dependencies for known vulnerabilities
 	govulncheck ./...
 
-bench: ## Run benchmark tests
-	go test -bench=. -benchmem -run='^$$' ./...
+BENCH_COUNT ?= 5
+BENCH_FILE  := benchmarks/$(shell date +%Y-%m-%d)-$(shell git rev-parse --short HEAD).txt
+
+bench: ## Run benchmark tests and save results to benchmarks/
+	go test -bench=. -benchmem -count=$(BENCH_COUNT) -run='^$$' -timeout=10m ./... | tee $(BENCH_FILE)
+	@echo ""
+	@echo "Results saved to $(BENCH_FILE)"
+
+bench-compare: ## Compare two benchmark files (usage: make bench-compare OLD=benchmarks/old.txt NEW=benchmarks/new.txt)
+	benchstat $(OLD) $(NEW)
 
 fuzz: ## Run fuzz tests for 30s per target
 	go test -fuzz=FuzzParseSigV4Fields -fuzztime=30s ./internal/auth/
@@ -339,5 +347,5 @@ clean: ## Remove build artifacts, demo environments, containers, and volumes
 	docker rmi $(FULL_TAG) 2>/dev/null || true
 	docker rmi s3-orchestrator:local 2>/dev/null || true
 
-.PHONY: help builder build docker push generate test vet lint govulncheck run docs migration integration-deps integration-test integration-clean tools prep-changelog deb deb-lint deb-all publish-deb changelog release release-local loadtest-build loadtest-put loadtest-get loadtest-mixed loadtest-burst loadtest-k6 kubernetes-demo nomad-demo web-tools web-godoc web-serve web-build web-docker web-push clean
+.PHONY: help builder build docker push generate test vet lint govulncheck bench bench-compare run docs migration integration-deps integration-test integration-clean tools prep-changelog deb deb-lint deb-all publish-deb changelog release release-local loadtest-build loadtest-put loadtest-get loadtest-mixed loadtest-burst loadtest-k6 kubernetes-demo nomad-demo web-tools web-godoc web-serve web-build web-docker web-push clean
 .DEFAULT_GOAL := help
