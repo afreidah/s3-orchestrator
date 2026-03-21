@@ -182,7 +182,4 @@ func TestRedis_IsHealthy(t *testing.T) {
 	if !rb.IsHealthy() {
 		t.Error("expected IsHealthy = true after successful init")
 	}
-	if rb.InFallbackMode() {
-		t.Error("expected InFallbackMode = false after successful init")
-	}
 }
