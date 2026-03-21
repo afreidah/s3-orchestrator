@@ -1497,6 +1497,86 @@ func TestLogin_BruteForceProtection(t *testing.T) {
 	}
 }
 
+// BenchmarkLogin_TimingParity verifies that login attempts with an invalid
+// access key take approximately the same time as attempts with a valid key
+// but wrong secret. Both should be dominated by checkSecret (bcrypt when
+// configured). A large disparity would indicate a timing side-channel.
+func BenchmarkLogin_InvalidKey(b *testing.B) {
+	h, mux := benchLoginHandler(b)
+	_ = h
+
+	form := url.Values{"access_key": {"wrong-key"}, "secret_key": {"wrong-secret"}}
+	body := form.Encode()
+
+	b.ResetTimer()
+	for b.Loop() {
+		req := httptest.NewRequest(http.MethodPost, "/ui/login", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+	}
+}
+
+func BenchmarkLogin_ValidKeyWrongSecret(b *testing.B) {
+	h, mux := benchLoginHandler(b)
+	_ = h
+
+	form := url.Values{"access_key": {testAdminKey}, "secret_key": {"wrong-secret"}}
+	body := form.Encode()
+
+	b.ResetTimer()
+	for b.Loop() {
+		req := httptest.NewRequest(http.MethodPost, "/ui/login", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+	}
+}
+
+// benchLoginHandler builds a handler with a bcrypt-hashed admin secret for
+// login timing benchmarks.
+func benchLoginHandler(b *testing.B) (*Handler, *http.ServeMux) {
+	b.Helper()
+
+	bcryptHash, err := bcrypt.GenerateFromPassword([]byte(testAdminSecret), bcrypt.DefaultCost)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	mockStore := &testutil.MockStore{
+		GetQuotaStatsResp:      map[string]store.QuotaStat{},
+		GetObjectCountsResp:    map[string]int64{},
+		GetActiveMultipartResp: map[string]int64{},
+		GetUsageForPeriodResp:  map[string]store.UsageStat{},
+		ListDirChildrenResp:    &store.DirectoryListResult{},
+	}
+
+	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
+		Backends:        map[string]backend.ObjectBackend{},
+		Store:           mockStore,
+		Order:           []string{},
+		RoutingStrategy: "pack",
+	})
+	b.Cleanup(mgr.Close)
+
+	cfg := &config.Config{
+		RoutingStrategy: "pack",
+		Replication:     config.ReplicationConfig{Factor: 1},
+		RateLimit:       config.RateLimitConfig{Enabled: false},
+		UI: config.UIConfig{
+			Enabled:     true,
+			AdminKey:    testAdminKey,
+			AdminSecret: string(bcryptHash),
+		},
+	}
+
+	h := New(mgr, func() bool { return true }, cfg, telemetry.NewLogBuffer(), nil)
+	mux := http.NewServeMux()
+	h.Register(mux, "/ui")
+
+	return h, mux
+}
+
 func TestLogin_BruteForceReset(t *testing.T) {
 	h, mux := newTestHandler(t)
 	lt := httputil.NewLoginThrottle(3, 5*time.Minute)

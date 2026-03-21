@@ -299,8 +299,9 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	secret := r.FormValue("secret_key")
 
 	keyMatch := subtle.ConstantTimeCompare([]byte(key), []byte(h.adminKey)) == 1
+	secretMatch := checkSecret(h.adminSecret, secret)
 
-	if !keyMatch || !checkSecret(h.adminSecret, secret) {
+	if !keyMatch || !secretMatch {
 		if h.loginThrottle != nil {
 			h.loginThrottle.RecordFailure(clientIP)
 		}
