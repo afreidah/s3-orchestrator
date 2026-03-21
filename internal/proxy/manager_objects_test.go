@@ -1231,6 +1231,7 @@ func (s *slowMockBackend) PutObject(ctx context.Context, key string, body io.Rea
 
 func TestLocationCache_SetAndGet(t *testing.T) {
 	mgr := NewBackendManager(&BackendManagerConfig{CacheTTL: 5 * time.Second, RoutingStrategy: "pack"})
+	defer mgr.Close()
 	mgr.ObjectManager.cache.Set("key1", "backend-a")
 
 	got, ok := mgr.ObjectManager.cache.Get("key1")
@@ -1244,6 +1245,7 @@ func TestLocationCache_SetAndGet(t *testing.T) {
 
 func TestLocationCache_Expiry(t *testing.T) {
 	mgr := NewBackendManager(&BackendManagerConfig{CacheTTL: 10 * time.Millisecond, RoutingStrategy: "pack"})
+	defer mgr.Close()
 	mgr.ObjectManager.cache.Set("key1", "backend-a")
 
 	time.Sleep(15 * time.Millisecond)
@@ -1256,6 +1258,7 @@ func TestLocationCache_Expiry(t *testing.T) {
 
 func TestLocationCache_Overwrite(t *testing.T) {
 	mgr := NewBackendManager(&BackendManagerConfig{CacheTTL: 5 * time.Second, RoutingStrategy: "pack"})
+	defer mgr.Close()
 	mgr.ObjectManager.cache.Set("key1", "old-backend")
 	mgr.ObjectManager.cache.Set("key1", "new-backend")
 

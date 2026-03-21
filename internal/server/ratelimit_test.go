@@ -27,6 +27,7 @@ func TestRateLimiter_AllowAndBlock(t *testing.T) {
 		RequestsPerSec: 1,
 		Burst:          2,
 	})
+	defer rl.Close()
 
 	// First 2 requests (burst) should be allowed
 	if !rl.Allow("10.0.0.1") {
@@ -53,6 +54,7 @@ func TestRateLimiter_Middleware429(t *testing.T) {
 		RequestsPerSec: 1,
 		Burst:          1,
 	})
+	defer rl.Close()
 
 	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -85,6 +87,7 @@ func TestRateLimiter_Middleware429_IncrementsMetric(t *testing.T) {
 		RequestsPerSec: 1,
 		Burst:          1,
 	})
+	defer rl.Close()
 
 	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

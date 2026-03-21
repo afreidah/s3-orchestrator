@@ -1,13 +1,12 @@
 // -------------------------------------------------------------------------------
-// Test Main - Server Package Test Setup
+// Test Main - Lifecycle Package Goroutine Leak Detection
 //
 // Author: Alex Freidah
 //
-// Configures the test environment for the server package. Discards slog output
-// during test runs to keep fuzz and benchmark output clean.
+// Verifies that no goroutines are leaked after all lifecycle tests complete.
 // -------------------------------------------------------------------------------
 
-package server
+package lifecycle
 
 import (
 	"log/slog"
