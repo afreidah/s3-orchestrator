@@ -23,6 +23,7 @@ type LoginThrottle struct {
 	maxFailures     int
 	lockoutDuration time.Duration
 	stop            chan struct{}
+	closeOnce       sync.Once
 }
 
 type loginAttempt struct {
@@ -56,9 +57,11 @@ func NewLoginThrottle(maxFailures int, lockoutDuration time.Duration) *LoginThro
 	return lt
 }
 
-// Close stops the background cleanup goroutine.
+// Close stops the background cleanup goroutine. Safe to call multiple times.
 func (lt *LoginThrottle) Close() {
-	close(lt.stop)
+	lt.closeOnce.Do(func() {
+		close(lt.stop)
+	})
 }
 
 // IsLockedOut returns true if the given IP is currently locked out.
