@@ -75,6 +75,7 @@ type RedisCounterBackend struct {
 
 	stopProbe chan struct{}
 	probeDone chan struct{}
+	closeOnce sync.Once
 }
 
 // NewRedisCounterBackend creates a shared counter backend backed by Redis.
@@ -458,8 +459,11 @@ func (r *RedisCounterBackend) InFallbackMode() bool {
 }
 
 // Close stops the health probe goroutine and closes the Redis client.
+// Safe to call multiple times.
 func (r *RedisCounterBackend) Close() error {
-	close(r.stopProbe)
+	r.closeOnce.Do(func() {
+		close(r.stopProbe)
+	})
 	<-r.probeDone
 	return r.client.Close()
 }
