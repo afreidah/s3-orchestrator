@@ -111,6 +111,8 @@ func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig) 
 		return 0, fmt.Errorf("failed to plan rebalance: %w", err)
 	}
 
+	telemetry.RebalancePending.Set(float64(len(plan)))
+
 	if len(plan) == 0 {
 		slog.InfoContext(ctx, "Rebalance skipping, empty plan", "strategy", cfg.Strategy)
 		telemetry.RebalanceSkipped.WithLabelValues("empty_plan").Inc()

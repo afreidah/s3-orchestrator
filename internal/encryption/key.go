@@ -22,6 +22,7 @@ import (
 	"os"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 )
 
 // -------------------------------------------------------------------------
@@ -178,6 +179,7 @@ func (p *MultiKeyProvider) UnwrapDEK(ctx context.Context, wrappedDEK []byte, key
 	// Unknown keyID — likely metadata corruption or a rotation key that was
 	// removed from config. Log a warning and attempt with the primary key;
 	// GCM will reject the tag if it's truly the wrong key.
+	telemetry.EncryptionUnknownKeyIDTotal.Inc()
 	slog.WarnContext(ctx, "Unknown encryption keyID, falling back to primary",
 		"unknown_key_id", keyID, "primary_key_id", p.primary.KeyID())
 	return p.primary.UnwrapDEK(ctx, wrappedDEK, keyID)

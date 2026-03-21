@@ -298,6 +298,14 @@ var (
 		[]string{"reason"},
 	)
 
+	// RebalancePending tracks objects planned for rebalance in the current cycle.
+	RebalancePending = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "s3o_rebalance_pending",
+			Help: "Number of objects planned for rebalance",
+		},
+	)
+
 	// --- Replication metrics ---
 
 	// ReplicationPending tracks objects currently below the target replication factor.
@@ -562,6 +570,15 @@ var (
 			Help: "Total encryption errors",
 		},
 		[]string{"op", "error_type"},
+	)
+
+	// EncryptionUnknownKeyIDTotal counts decryption attempts where the keyID
+	// was not found in the configured keys, triggering a primary key fallback.
+	EncryptionUnknownKeyIDTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "s3o_encryption_unknown_key_id_total",
+			Help: "Decryption attempts with unknown keyID (primary key fallback)",
+		},
 	)
 
 	// KeyRotationObjectsTotal counts objects processed during key rotation.

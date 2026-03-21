@@ -170,6 +170,43 @@ deb-lint: deb ## Run lintian on the .deb packages
 	@for f in dist/*.deb; do echo "--- $$f ---"; lintian --tag-display-limit 0 "$$f"; done
 
 # -------------------------------------------------------------------------
+# APTLY PUBLISHING
+# -------------------------------------------------------------------------
+
+APTLY_URL  ?= https://apt.munchbox.cc
+APTLY_REPO ?= munchbox
+APTLY_USER ?= admin
+DEB_DIR    ?= dist
+SNAPSHOT_NAME ?= $(IMAGE)-$(shell date +%Y%m%d-%H%M%S)
+
+publish-deb: deb ## Publish .deb packages to Aptly repository
+	@if [ -z "$(APTLY_PASS)" ]; then echo "Error: APTLY_PASS not set (source munchbox-env.sh)"; exit 1; fi
+	@echo "Publishing packages to $(APTLY_URL)..."
+	@for deb in $(DEB_DIR)/*.deb; do \
+		echo "Uploading $$(basename $$deb)..."; \
+		curl -fsS -u "$(APTLY_USER):$(APTLY_PASS)" \
+			-X POST -F "file=@$$deb" \
+			"$(APTLY_URL)/api/files/$(IMAGE)" || exit 1; \
+	done
+	@echo "Adding packages to repo $(APTLY_REPO)..."
+	@curl -fsS -u "$(APTLY_USER):$(APTLY_PASS)" \
+		-X POST "$(APTLY_URL)/api/repos/$(APTLY_REPO)/file/$(IMAGE)" || exit 1
+	@echo "Creating snapshot $(SNAPSHOT_NAME)..."
+	@curl -fsS -u "$(APTLY_USER):$(APTLY_PASS)" \
+		-X POST -H 'Content-Type: application/json' \
+		-d '{"Name":"$(SNAPSHOT_NAME)"}' \
+		"$(APTLY_URL)/api/repos/$(APTLY_REPO)/snapshots" || exit 1
+	@echo "Updating published repo..."
+	@curl -fsS -u "$(APTLY_USER):$(APTLY_PASS)" \
+		-X PUT -H 'Content-Type: application/json' \
+		-d '{"Snapshots":[{"Component":"main","Name":"$(SNAPSHOT_NAME)"}],"ForceOverwrite":true,"Signing":{"Skip":true}}' \
+		'$(APTLY_URL)/api/publish/s3:munchbox:/stable' || exit 1
+	@echo "Cleaning up uploaded files..."
+	@curl -fsS -u "$(APTLY_USER):$(APTLY_PASS)" \
+		-X DELETE "$(APTLY_URL)/api/files/$(IMAGE)" || true
+	@echo "Published successfully!"
+
+# -------------------------------------------------------------------------
 # CHANGELOG
 # -------------------------------------------------------------------------
 
@@ -302,5 +339,5 @@ clean: ## Remove build artifacts, demo environments, containers, and volumes
 	docker rmi $(FULL_TAG) 2>/dev/null || true
 	docker rmi s3-orchestrator:local 2>/dev/null || true
 
-.PHONY: help builder build docker push generate test vet lint govulncheck run docs migration integration-deps integration-test integration-clean tools prep-changelog deb deb-lint deb-all changelog release release-local loadtest-build loadtest-put loadtest-get loadtest-mixed loadtest-burst loadtest-k6 kubernetes-demo nomad-demo web-tools web-godoc web-serve web-build web-docker web-push clean
+.PHONY: help builder build docker push generate test vet lint govulncheck run docs migration integration-deps integration-test integration-clean tools prep-changelog deb deb-lint deb-all publish-deb changelog release release-local loadtest-build loadtest-put loadtest-get loadtest-mixed loadtest-burst loadtest-k6 kubernetes-demo nomad-demo web-tools web-godoc web-serve web-build web-docker web-push clean
 .DEFAULT_GOAL := help
