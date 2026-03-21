@@ -20,7 +20,7 @@ func TestLoginThrottle_LockoutAfterFailures(t *testing.T) {
 	lt := NewLoginThrottle(3, 5*time.Minute)
 	defer lt.Close()
 
-	addr := "10.0.0.1:12345"
+	addr := "10.0.0.1"
 
 	for i := range 3 {
 		if lt.IsLockedOut(addr) {
@@ -38,7 +38,7 @@ func TestLoginThrottle_SuccessResetsCounter(t *testing.T) {
 	lt := NewLoginThrottle(3, 5*time.Minute)
 	defer lt.Close()
 
-	addr := "10.0.0.1:12345"
+	addr := "10.0.0.1"
 
 	lt.RecordFailure(addr)
 	lt.RecordFailure(addr)
@@ -56,7 +56,7 @@ func TestLoginThrottle_LockoutExpires(t *testing.T) {
 	lt := NewLoginThrottle(3, 50*time.Millisecond)
 	defer lt.Close()
 
-	addr := "10.0.0.1:12345"
+	addr := "10.0.0.1"
 
 	for range 3 {
 		lt.RecordFailure(addr)
@@ -77,8 +77,8 @@ func TestLoginThrottle_IPIsolation(t *testing.T) {
 	lt := NewLoginThrottle(3, 5*time.Minute)
 	defer lt.Close()
 
-	addr1 := "10.0.0.1:12345"
-	addr2 := "10.0.0.2:12345"
+	addr1 := "10.0.0.1"
+	addr2 := "10.0.0.2"
 
 	for range 3 {
 		lt.RecordFailure(addr1)
@@ -92,17 +92,16 @@ func TestLoginThrottle_IPIsolation(t *testing.T) {
 	}
 }
 
-func TestLoginThrottle_StripPort(t *testing.T) {
+func TestLoginThrottle_IPv6(t *testing.T) {
 	lt := NewLoginThrottle(3, 5*time.Minute)
 	defer lt.Close()
 
-	// Failures from different ports on same IP should accumulate
-	lt.RecordFailure("10.0.0.1:11111")
-	lt.RecordFailure("10.0.0.1:22222")
-	lt.RecordFailure("10.0.0.1:33333")
-
-	if !lt.IsLockedOut("10.0.0.1:44444") {
-		t.Error("should be locked out regardless of port")
+	ip := "::1"
+	for range 3 {
+		lt.RecordFailure(ip)
+	}
+	if !lt.IsLockedOut(ip) {
+		t.Error("IPv6 address should be locked out after 3 failures")
 	}
 }
 
@@ -113,10 +112,10 @@ func TestLoginThrottle_ConcurrentAccess(t *testing.T) {
 	var wg sync.WaitGroup
 	for i := range 50 {
 		wg.Go(func() {
-			addr := fmt.Sprintf("10.0.0.%d:12345", i%10)
-			lt.RecordFailure(addr)
-			lt.IsLockedOut(addr)
-			lt.RecordSuccess(addr)
+			ip := fmt.Sprintf("10.0.0.%d", i%10)
+			lt.RecordFailure(ip)
+			lt.IsLockedOut(ip)
+			lt.RecordSuccess(ip)
 		})
 	}
 	wg.Wait()
