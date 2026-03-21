@@ -451,21 +451,22 @@ func (o *ObjectManager) GetObject(ctx context.Context, key string, rangeHeader s
 	// Resolve locations upfront so encryption metadata is available after read.
 	locations, locErr := o.store.GetAllObjectLocations(ctx, key)
 
+	// Build a map for O(1) location lookup per backend attempt.
+	var locByBackend map[string]*store.ObjectLocation
+	if o.encryptor != nil && locErr == nil {
+		locByBackend = make(map[string]*store.ObjectLocation, len(locations))
+		for i := range locations {
+			locByBackend[locations[i].BackendName] = &locations[i]
+		}
+	}
+
 	backendName, err := o.withReadFailover(ctx, "GetObject", key, func(ctx context.Context, beName string, backend s3be.ObjectBackend) (int64, error) {
 		if !o.usage.WithinLimits(beName, 1, 0, 0) {
 			return 0, fmt.Errorf("backend %s: %w", beName, errUsageLimitSkip)
 		}
 
 		// Find encryption metadata for this backend's copy
-		var loc *store.ObjectLocation
-		if o.encryptor != nil && locErr == nil {
-			for i := range locations {
-				if locations[i].BackendName == beName {
-					loc = &locations[i]
-					break
-				}
-			}
-		}
+		loc := locByBackend[beName]
 
 		// Translate plaintext range to ciphertext range for encrypted objects
 		actualRange := rangeHeader
@@ -558,6 +559,15 @@ func (o *ObjectManager) HeadObject(ctx context.Context, key string) (*s3be.HeadO
 	// Resolve locations upfront so encryption metadata is available.
 	locations, locErr := o.store.GetAllObjectLocations(ctx, key)
 
+	// Build a map for O(1) location lookup per backend attempt.
+	var locByBackend map[string]*store.ObjectLocation
+	if o.encryptor != nil && locErr == nil {
+		locByBackend = make(map[string]*store.ObjectLocation, len(locations))
+		for i := range locations {
+			locByBackend[locations[i].BackendName] = &locations[i]
+		}
+	}
+
 	backendName, err := o.withReadFailover(ctx, "HeadObject", key, func(ctx context.Context, beName string, backend s3be.ObjectBackend) (int64, error) {
 		if !o.usage.WithinLimits(beName, 1, 0, 0) {
 			return 0, fmt.Errorf("backend %s: %w", beName, errUsageLimitSkip)
@@ -569,13 +579,8 @@ func (o *ObjectManager) HeadObject(ctx context.Context, key string) (*s3be.HeadO
 		}
 
 		// Return plaintext size for encrypted objects
-		if o.encryptor != nil && locErr == nil {
-			for i := range locations {
-				if locations[i].BackendName == beName && locations[i].Encrypted {
-					r.Size = locations[i].PlaintextSize
-					break
-				}
-			}
+		if loc := locByBackend[beName]; loc != nil && loc.Encrypted {
+			r.Size = loc.PlaintextSize
 		}
 
 		once.Do(func() { result = r })
