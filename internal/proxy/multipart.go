@@ -331,11 +331,13 @@ func (mp *MultipartManager) CompleteMultipartUpload(ctx context.Context, uploadI
 
 	// Streamed from pipe; deadline governed by the caller's context.
 	etag, err := backend.PutObject(ctx, mu.ObjectKey, uploadBody, uploadSize, mu.ContentType, mu.Metadata)
-	pr.Close() // unblock goroutine if PutObject returned without draining the pipe
 	if err != nil {
+		pipeCancel() // cancel in-flight backend reads in the goroutine
+		pr.Close()
 		span.SetStatus(codes.Error, err.Error())
 		return "", fmt.Errorf("failed to upload final object: %w", err)
 	}
+	pr.Close() // unblock goroutine if PutObject returned without draining the pipe
 
 	// Record the final object location and update quota
 	if err := mp.recordObjectOrCleanup(ctx, span, backend, mu.ObjectKey, mu.BackendName, uploadSize, enc); err != nil {
