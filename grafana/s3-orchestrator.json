@@ -2026,13 +2026,66 @@
       "collapsed": false
     },
     {
+      "type": "stat",
+      "id": 73,
+      "title": "Rebalance Pending",
+      "gridPos": {
+        "x": 0,
+        "y": 102,
+        "w": 4,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "s3o_rebalance_pending",
+          "legendFormat": "pending"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 10
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
       "type": "timeseries",
       "id": 41,
       "title": "Rebalance Runs",
       "gridPos": {
-        "x": 0,
+        "x": 4,
         "y": 102,
-        "w": 6,
+        "w": 5,
         "h": 8
       },
       "datasource": {
@@ -2073,9 +2126,9 @@
       "id": 42,
       "title": "Objects / Bytes Moved",
       "gridPos": {
-        "x": 6,
+        "x": 9,
         "y": 102,
-        "w": 6,
+        "w": 5,
         "h": 8
       },
       "datasource": {
@@ -2135,9 +2188,9 @@
       "id": 43,
       "title": "Rebalance Duration (p95)",
       "gridPos": {
-        "x": 12,
+        "x": 14,
         "y": 102,
-        "w": 6,
+        "w": 5,
         "h": 8
       },
       "datasource": {
@@ -2175,9 +2228,9 @@
       "id": 58,
       "title": "Rebalance Skipped",
       "gridPos": {
-        "x": 18,
+        "x": 19,
         "y": 102,
-        "w": 6,
+        "w": 5,
         "h": 8
       },
       "datasource": {
@@ -2774,6 +2827,55 @@
             "lineWidth": 2,
             "fillOpacity": 10,
             "showPoints": "never"
+          }
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "id": 74,
+      "title": "Unknown KeyID Fallbacks",
+      "gridPos": {
+        "x": 0,
+        "y": 135,
+        "w": 8,
+        "h": 6
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "s3o_encryption_unknown_key_id_total",
+          "legendFormat": "unknown keyID"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
           }
         }
       }
