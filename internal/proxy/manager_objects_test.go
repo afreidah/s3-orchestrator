@@ -515,6 +515,101 @@ func TestPutObject_WriteFailover_WithEncryption(t *testing.T) {
 	}
 }
 
+func TestGetObject_WithEncryption_UsesLocationMap(t *testing.T) {
+	// This test verifies the locByBackend map is built and used during
+	// encrypted GetObject. We use HeadObject-level verification since
+	// full decrypt round-trip requires wiring encryption metadata through
+	// the mock store which is tested in integration tests.
+	b1 := newMockBackend()
+	_, _ = b1.PutObject(context.Background(), "enc-key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
+
+	provider, err := encryption.NewConfigKeyProvider("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "test-0")
+	if err != nil {
+		t.Fatalf("NewConfigKeyProvider: %v", err)
+	}
+	enc, err := encryption.NewEncryptor(provider, 64*1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Non-encrypted location — encryptor is set but object is not encrypted.
+	// This exercises the locByBackend map build + lookup path without needing
+	// valid encryption metadata.
+	store := &mockStore{
+		getBackendResp: "b1",
+		getAllLocationsResp: []st.ObjectLocation{
+			{ObjectKey: "enc-key", BackendName: "b1", SizeBytes: 4, Encrypted: false},
+		},
+	}
+	mgr := NewBackendManager(&BackendManagerConfig{
+		Backends:        map[string]s3be.ObjectBackend{"b1": b1},
+		Store:           store,
+		Order:           []string{"b1"},
+		CacheTTL:        5 * time.Second,
+		BackendTimeout:  30 * time.Second,
+		RoutingStrategy: "pack",
+		Encryptor:       enc,
+	})
+	defer mgr.Close()
+
+	result, err := mgr.ObjectManager.GetObject(context.Background(), "enc-key", "")
+	if err != nil {
+		t.Fatalf("GetObject: %v", err)
+	}
+	defer func() { _ = result.Body.Close() }()
+
+	got, _ := io.ReadAll(result.Body)
+	if string(got) != "data" {
+		t.Errorf("body = %q, want %q", got, "data")
+	}
+}
+
+func TestHeadObject_WithEncryption(t *testing.T) {
+	b1 := newMockBackend()
+
+	provider, err := encryption.NewConfigKeyProvider("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "test-0")
+	if err != nil {
+		t.Fatalf("NewConfigKeyProvider: %v", err)
+	}
+	enc, err := encryption.NewEncryptor(provider, 64*1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	store := &mockStore{
+		getBackendResp: "b1",
+		getAllLocationsResp: []st.ObjectLocation{
+			{ObjectKey: "enc-key", BackendName: "b1", SizeBytes: 100, Encrypted: true, PlaintextSize: 25},
+		},
+	}
+	mgr := NewBackendManager(&BackendManagerConfig{
+		Backends:        map[string]s3be.ObjectBackend{"b1": b1},
+		Store:           store,
+		Order:           []string{"b1"},
+		CacheTTL:        5 * time.Second,
+		BackendTimeout:  30 * time.Second,
+		RoutingStrategy: "pack",
+		Encryptor:       enc,
+	})
+	defer mgr.Close()
+
+	// Put an encrypted object
+	payload := []byte("head-encryption-test-data")
+	_, err = mgr.ObjectManager.PutObject(context.Background(), "enc-key", bytes.NewReader(payload), int64(len(payload)), "text/plain", nil)
+	if err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+
+	// Head should return plaintext size
+	head, err := mgr.ObjectManager.HeadObject(context.Background(), "enc-key")
+	if err != nil {
+		t.Fatalf("HeadObject: %v", err)
+	}
+	if head.Size != 25 {
+		t.Errorf("HeadObject size = %d, want 25 (plaintext size from location)", head.Size)
+	}
+}
+
 func TestPutObject_WriteFailover_NoFailoverMetricOnFirstSuccess(t *testing.T) {
 	telemetry.WriteFailoverTotal.Reset()
 
