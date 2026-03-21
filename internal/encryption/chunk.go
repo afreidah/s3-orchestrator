@@ -20,6 +20,7 @@
 package encryption
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -59,6 +60,8 @@ type encryptReader struct {
 	buf       []byte // buffered output waiting to be read
 	header    []byte // header bytes not yet consumed
 	srcDone   bool
+	plainBuf  []byte // reused per Read()
+	nonceBuf  []byte // reused per chunk nonce derivation
 }
 
 // newEncryptReader creates a streaming encryption reader. The dek must be a
@@ -93,6 +96,8 @@ func newEncryptReader(src io.Reader, dek []byte, chunkSize int) (*encryptReader,
 		baseNonce: baseNonce,
 		chunkSize: chunkSize,
 		header:    hdr,
+		plainBuf:  make([]byte, chunkSize),
+		nonceBuf:  make([]byte, NonceSize),
 	}, nil
 }
 
@@ -116,14 +121,13 @@ func (r *encryptReader) Read(p []byte) (int, error) {
 		return 0, io.EOF
 	}
 
-	// Read one plaintext chunk
-	plain := make([]byte, r.chunkSize)
-	n, err := io.ReadFull(r.src, plain)
+	// Read one plaintext chunk into the reusable buffer
+	n, err := io.ReadFull(r.src, r.plainBuf)
 	if n == 0 && err != nil {
 		r.srcDone = true
 		return 0, io.EOF
 	}
-	plain = plain[:n]
+	plain := r.plainBuf[:n]
 
 	if err == io.ErrUnexpectedEOF || err == io.EOF {
 		r.srcDone = true
@@ -131,13 +135,13 @@ func (r *encryptReader) Read(p []byte) (int, error) {
 		return 0, fmt.Errorf("read plaintext: %w", err)
 	}
 
-	// Derive per-chunk nonce
-	nonce := chunkNonce(r.baseNonce, r.chunkIdx)
+	// Derive per-chunk nonce into the reusable buffer
+	deriveNonce(r.nonceBuf, r.baseNonce, r.chunkIdx)
 	r.chunkIdx++
 
-	ct := r.gcm.Seal(nil, nonce, plain, nil)
-	r.buf = make([]byte, 0, len(nonce)+len(ct))
-	r.buf = append(r.buf, nonce...)
+	ct := r.gcm.Seal(nil, r.nonceBuf, plain, nil)
+	r.buf = make([]byte, 0, NonceSize+len(ct))
+	r.buf = append(r.buf, r.nonceBuf...)
 	r.buf = append(r.buf, ct...)
 
 	copied := copy(p, r.buf)
@@ -160,6 +164,8 @@ type decryptReader struct {
 	chunkIdx  uint64
 	buf       []byte // buffered plaintext
 	srcDone   bool
+	chunkBuf  []byte // reused per Read()
+	nonceBuf  []byte // reused per chunk nonce verification
 }
 
 // newDecryptReader creates a streaming decryption reader. The baseNonce is
@@ -181,6 +187,8 @@ func newDecryptReader(src io.Reader, dek []byte, baseNonce []byte, chunkSize int
 		baseNonce: baseNonce,
 		chunkSize: chunkSize,
 		chunkIdx:  startChunk,
+		chunkBuf:  make([]byte, NonceSize+chunkSize+TagSize),
+		nonceBuf:  make([]byte, NonceSize),
 	}, nil
 }
 
@@ -198,14 +206,13 @@ func (r *decryptReader) Read(p []byte) (int, error) {
 		return 0, io.EOF
 	}
 
-	// Read one ciphertext chunk: nonce + (up to chunkSize + tagSize) bytes
-	chunkBuf := make([]byte, NonceSize+r.chunkSize+TagSize)
-	n, err := io.ReadFull(r.src, chunkBuf)
+	// Read one ciphertext chunk into the reusable buffer
+	n, err := io.ReadFull(r.src, r.chunkBuf)
 	if n == 0 && err != nil {
 		r.srcDone = true
 		return 0, io.EOF
 	}
-	chunkBuf = chunkBuf[:n]
+	chunk := r.chunkBuf[:n]
 
 	if err == io.ErrUnexpectedEOF || err == io.EOF {
 		r.srcDone = true
@@ -213,22 +220,20 @@ func (r *decryptReader) Read(p []byte) (int, error) {
 		return 0, fmt.Errorf("read ciphertext: %w", err)
 	}
 
-	if len(chunkBuf) < NonceSize+TagSize {
-		return 0, fmt.Errorf("chunk too short: %d bytes", len(chunkBuf))
+	if len(chunk) < NonceSize+TagSize {
+		return 0, fmt.Errorf("chunk too short: %d bytes", len(chunk))
 	}
 
 	// Verify nonce matches expected chunk index
-	nonce := chunkBuf[:NonceSize]
-	expected := chunkNonce(r.baseNonce, r.chunkIdx)
-	for i := range nonce {
-		if nonce[i] != expected[i] {
-			return 0, fmt.Errorf("nonce mismatch at chunk %d", r.chunkIdx)
-		}
+	nonce := chunk[:NonceSize]
+	deriveNonce(r.nonceBuf, r.baseNonce, r.chunkIdx)
+	if !bytes.Equal(nonce, r.nonceBuf) {
+		return 0, fmt.Errorf("nonce mismatch at chunk %d", r.chunkIdx)
 	}
 	r.chunkIdx++
 
 	// Decrypt
-	plain, err := r.gcm.Open(nil, nonce, chunkBuf[NonceSize:], nil)
+	plain, err := r.gcm.Open(nil, nonce, chunk[NonceSize:], nil)
 	if err != nil {
 		return 0, fmt.Errorf("decrypt chunk %d: %w", r.chunkIdx-1, err)
 	}
@@ -248,15 +253,20 @@ func (r *decryptReader) Read(p []byte) (int, error) {
 // requiring additional random bytes.
 func chunkNonce(base []byte, idx uint64) []byte {
 	nonce := make([]byte, NonceSize)
-	copy(nonce, base)
+	deriveNonce(nonce, base, idx)
+	return nonce
+}
 
-	// XOR chunk index into the last 8 bytes
+// deriveNonce writes a per-chunk nonce into dst by copying the base nonce
+// and XORing the chunk index into the last 8 bytes. dst must be at least
+// NonceSize bytes. Used by the streaming readers to avoid per-chunk allocation.
+func deriveNonce(dst, base []byte, idx uint64) {
+	copy(dst, base)
 	var idxBytes [8]byte
 	binary.BigEndian.PutUint64(idxBytes[:], idx)
 	for i := range 8 {
-		nonce[NonceSize-8+i] ^= idxBytes[i]
+		dst[NonceSize-8+i] ^= idxBytes[i]
 	}
-	return nonce
 }
 
 // -------------------------------------------------------------------------
