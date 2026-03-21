@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"io"
 	"log/slog"
 	"mime"
 	"net"
@@ -156,6 +157,17 @@ func (h *Handler) Register(mux *http.ServeMux, prefix string) {
 	mux.HandleFunc(prefix+"/api/sync", h.requireAuth(h.handleAPISync))
 	mux.HandleFunc(prefix+"/api/logs", h.requireAuth(h.handleAPILogs))
 	mux.Handle(prefix+"/static/", http.StripPrefix(prefix+"/static/", http.FileServerFS(staticFS)))
+}
+
+// -------------------------------------------------------------------------
+// JSON ERROR HELPER
+// -------------------------------------------------------------------------
+
+// writeJSONError writes a JSON error response with the correct content type.
+func writeJSONError(w http.ResponseWriter, status int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_, _ = io.WriteString(w, `{"error":"`+msg+`"}`)
 }
 
 // -------------------------------------------------------------------------
@@ -451,7 +463,7 @@ func (h *Handler) handleAPIDashboard(w http.ResponseWriter, r *http.Request) {
 	data, err := h.manager.GetDashboardData(r.Context())
 	if err != nil {
 		slog.ErrorContext(r.Context(), "UI: failed to get dashboard data", "error", err)
-		http.Error(w, `{"error":"failed to load data"}`, http.StatusInternalServerError)
+		writeJSONError(w, http.StatusInternalServerError, "failed to load data")
 		return
 	}
 
@@ -478,7 +490,7 @@ func (h *Handler) handleTreeAPI(w http.ResponseWriter, r *http.Request) {
 	result, err := h.manager.GetDirectoryChildren(r.Context(), prefix, startAfter, maxKeys)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "UI: failed to list directory children", "prefix", prefix, "error", err)
-		http.Error(w, `{"error":"failed to list children"}`, http.StatusInternalServerError)
+		writeJSONError(w, http.StatusInternalServerError, "failed to list children")
 		return
 	}
 
@@ -493,7 +505,7 @@ func (h *Handler) handleAPIDelete(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
 
 	if r.Method != http.MethodPost {
-		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
@@ -503,11 +515,11 @@ func (h *Handler) handleAPIDelete(w http.ResponseWriter, r *http.Request) {
 		Key string `json:"key"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	if req.Key == "" {
-		http.Error(w, `{"error":"key is required"}`, http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "key is required")
 		return
 	}
 
@@ -534,7 +546,7 @@ func (h *Handler) handleAPIDeletePrefix(w http.ResponseWriter, r *http.Request) 
 	setSecurityHeaders(w)
 
 	if r.Method != http.MethodPost {
-		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
@@ -544,11 +556,11 @@ func (h *Handler) handleAPIDeletePrefix(w http.ResponseWriter, r *http.Request) 
 		Prefix string `json:"prefix"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	if req.Prefix == "" {
-		http.Error(w, `{"error":"prefix is required"}`, http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "prefix is required")
 		return
 	}
 
@@ -612,7 +624,7 @@ func (h *Handler) handleAPIUpload(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
 
 	if r.Method != http.MethodPost {
-		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
@@ -620,24 +632,24 @@ func (h *Handler) handleAPIUpload(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
 
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
-		http.Error(w, `{"error":"failed to parse form"}`, http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "failed to parse form")
 		return
 	}
 
 	key := r.FormValue("key")
 	if key == "" {
-		http.Error(w, `{"error":"key is required"}`, http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "key is required")
 		return
 	}
 
 	if !h.validBucketPrefix(key) {
-		http.Error(w, `{"error":"key must start with a configured bucket name"}`, http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "key must start with a configured bucket name")
 		return
 	}
 
 	file, header, err := r.FormFile("file")
 	if err != nil {
-		http.Error(w, `{"error":"file is required"}`, http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "file is required")
 		return
 	}
 	defer file.Close()
@@ -673,29 +685,29 @@ func (h *Handler) handleAPIDownload(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
 
 	if r.Method != http.MethodGet {
-		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	key := r.URL.Query().Get("key")
 	if key == "" {
-		http.Error(w, `{"error":"key is required"}`, http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "key is required")
 		return
 	}
 
 	if !h.validBucketPrefix(key) {
-		http.Error(w, `{"error":"key must start with a configured bucket name"}`, http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "key must start with a configured bucket name")
 		return
 	}
 
 	result, err := h.manager.ObjectManager.GetObject(r.Context(), key, "")
 	if err != nil {
 		if errors.Is(err, store.ErrObjectNotFound) {
-			http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
+			writeJSONError(w, http.StatusNotFound, "not found")
 			return
 		}
 		slog.ErrorContext(r.Context(), "UI: failed to download object", "key", key, "error", err)
-		http.Error(w, `{"error":"download failed"}`, http.StatusInternalServerError)
+		writeJSONError(w, http.StatusInternalServerError, "download failed")
 		return
 	}
 	defer result.Body.Close()
@@ -716,7 +728,7 @@ func (h *Handler) handleAPIRebalance(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
 
 	if r.Method != http.MethodPost {
-		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
@@ -758,7 +770,7 @@ func (h *Handler) handleAPICleanExcess(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
 
 	if r.Method != http.MethodPost {
-		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
@@ -799,7 +811,7 @@ func (h *Handler) handleAPISync(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
 
 	if r.Method != http.MethodPost {
-		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
@@ -810,11 +822,11 @@ func (h *Handler) handleAPISync(w http.ResponseWriter, r *http.Request) {
 		Bucket  string `json:"bucket"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	if req.Backend == "" || req.Bucket == "" {
-		http.Error(w, `{"error":"backend and bucket are required"}`, http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "backend and bucket are required")
 		return
 	}
 

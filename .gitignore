@@ -2,6 +2,7 @@
 deploy/nomad/local/s3-orchestrator
 deploy/nomad/local/config.yaml
 *.test
+cover.out
 dist/
 *.deb
 packaging/changelog.gz

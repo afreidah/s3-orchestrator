@@ -28,6 +28,11 @@ SELECT upload_id, object_key, backend_name, content_type, metadata, created_at
 FROM multipart_uploads
 WHERE created_at < $1;
 
+-- name: GetMultipartUploadsByBackend :many
+SELECT upload_id, object_key, backend_name, content_type, metadata, created_at
+FROM multipart_uploads
+WHERE backend_name = $1;
+
 -- name: DeleteMultipartUploadsByBackend :exec
 DELETE FROM multipart_uploads WHERE backend_name = $1;
 

@@ -465,16 +465,13 @@ func (mp *MultipartManager) CleanupStaleMultipartUploads(ctx context.Context, ol
 // abortMultipartUploadsOnBackend aborts all in-progress multipart uploads
 // on the given backend.
 func (mp *MultipartManager) abortMultipartUploadsOnBackend(ctx context.Context, backendName string) {
-	uploads, err := mp.store.GetStaleMultipartUploads(ctx, 0)
+	uploads, err := mp.store.GetMultipartUploadsByBackend(ctx, backendName)
 	if err != nil {
-		slog.ErrorContext(ctx, "Drain: failed to list multipart uploads", "error", err)
+		slog.ErrorContext(ctx, "Drain: failed to list multipart uploads", "backend", backendName, "error", err)
 		return
 	}
 
 	for _, mu := range uploads {
-		if mu.BackendName != backendName {
-			continue
-		}
 		slog.InfoContext(ctx, "Drain: aborting multipart upload", "upload_id", mu.UploadID, "key", mu.ObjectKey)
 		if err := mp.AbortMultipartUpload(ctx, mu.UploadID); err != nil {
 			slog.ErrorContext(ctx, "Drain: failed to abort multipart upload",
