@@ -280,10 +280,12 @@ telemetry:
     enabled: false
     endpoint: "localhost:4317"   # OTLP gRPC endpoint
     insecure: true               # no TLS to collector
-    sample_rate: 1.0             # 1.0 = trace everything
+    sample_rate: 1.0             # fraction of requests that generate traces (use 0.01–0.1 in production)
 ```
 
 Metrics are served on the same port as the S3 API. Tracing exports spans via gRPC OTLP (e.g., to Tempo or Jaeger).
+
+**Production sample rate guidance:** A `sample_rate` of 1.0 traces every request, which is appropriate for development and low-traffic deployments. For production workloads above ~100 RPS, reduce to 0.01–0.1 to avoid overwhelming the trace backend with storage, network, and CPU overhead. Metrics and logs are unaffected by sample rate.
 
 ### circuit_breaker
 

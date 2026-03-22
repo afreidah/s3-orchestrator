@@ -402,7 +402,7 @@ telemetry:
     enabled: true
     endpoint: "localhost:4317"
     insecure: true
-    sample_rate: 1.0
+    sample_rate: 1.0             # fraction of requests that generate OTel traces (use 0.01–0.1 in production)
 
 circuit_breaker:
   failure_threshold: 3     # consecutive DB failures before opening (default: 3)

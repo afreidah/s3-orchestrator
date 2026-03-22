@@ -163,7 +163,7 @@ telemetry:
     enabled: true
     endpoint: "tempo.service.consul:4317"
     insecure: true
-    sample_rate: 1.0
+    sample_rate: 1.0             # reduce to 0.01–0.1 for production
 ```
 
 {{% notice note %}}
