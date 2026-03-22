@@ -14,12 +14,17 @@ package admin
 
 import (
 	"crypto/subtle"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"math"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
@@ -332,17 +337,103 @@ func (h *Handler) handleCancelDrain(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "drain cancelled", "backend": name})
 }
 
-// handleRemoveBackend deletes all DB records for a backend.
+// removeConfirmTTL is how long a purge confirmation token is valid.
+const removeConfirmTTL = 60 * time.Second
+
+// handleRemoveBackend deletes all DB records for a backend. When purge=true,
+// requires two-phase confirmation: first call returns a preview with a signed
+// token, second call with confirm=<token> executes the purge.
+// Without purge, executes immediately (DB records only, S3 objects preserved).
 func (h *Handler) handleRemoveBackend(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	purge := r.URL.Query().Get("purge") == "true"
+	confirmToken := r.URL.Query().Get("confirm")
 
-	if err := h.manager.DrainManager.RemoveBackend(r.Context(), name, purge); err != nil {
-		slog.ErrorContext(r.Context(), "Admin: remove backend failed", "backend", name, "error", err)
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "remove failed"})
+	// Non-purge removal: drop DB records immediately (reversible via sync)
+	if !purge {
+		if err := h.manager.DrainManager.RemoveBackend(r.Context(), name, false); err != nil {
+			slog.ErrorContext(r.Context(), "Admin: remove backend failed", "backend", name, "error", err)
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "remove failed"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "backend removed", "backend": name})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "backend removed", "backend": name})
+
+	// Purge phase 2: validate token and execute
+	if confirmToken != "" {
+		if !h.validRemoveToken(confirmToken, name) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "invalid or expired confirmation token"})
+			return
+		}
+		if err := h.manager.DrainManager.RemoveBackend(r.Context(), name, true); err != nil {
+			slog.ErrorContext(r.Context(), "Admin: purge backend failed", "backend", name, "error", err)
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "purge failed"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "backend purged", "backend": name})
+		return
+	}
+
+	// Purge phase 1: preview what will be destroyed, return confirmation token
+	objectCount, totalBytes, err := h.manager.Store().BackendObjectStats(r.Context(), name)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "backend not found or stats unavailable"})
+		return
+	}
+
+	token := h.generateRemoveToken(name)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":        "confirmation required",
+		"backend":       name,
+		"object_count":  objectCount,
+		"total_bytes":   totalBytes,
+		"confirm_token": token,
+		"expires_in":    int(removeConfirmTTL.Seconds()),
+	})
+}
+
+// generateRemoveToken creates an HMAC-signed token encoding the backend name
+// and expiry. Uses the admin token as the HMAC key.
+func (h *Handler) generateRemoveToken(name string) string {
+	expiry := time.Now().Add(removeConfirmTTL).Unix()
+	payload := fmt.Sprintf("purge|%s|%d", name, expiry)
+	mac := hmac.New(sha256.New, []byte(h.token))
+	mac.Write([]byte(payload))
+	sig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	return base64.RawURLEncoding.EncodeToString([]byte(payload)) + "." + sig
+}
+
+// validRemoveToken verifies a purge confirmation token.
+func (h *Handler) validRemoveToken(token, expectedName string) bool {
+	parts := strings.SplitN(token, ".", 2)
+	if len(parts) != 2 {
+		return false
+	}
+	payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return false
+	}
+	sig, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return false
+	}
+
+	mac := hmac.New(sha256.New, []byte(h.token))
+	mac.Write(payloadBytes)
+	if !hmac.Equal(mac.Sum(nil), sig) {
+		return false
+	}
+
+	fields := strings.SplitN(string(payloadBytes), "|", 3)
+	if len(fields) != 3 || fields[0] != "purge" || fields[1] != expectedName {
+		return false
+	}
+	expiry, err := strconv.ParseInt(fields[2], 10, 64)
+	if err != nil {
+		return false
+	}
+	return time.Now().Unix() < expiry
 }
 
 // -------------------------------------------------------------------------

@@ -10,6 +10,9 @@
 package admin
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -215,5 +218,81 @@ func newTestHandler() *Handler {
 	return &Handler{
 		token:    "test-token",
 		logLevel: &lv,
+	}
+}
+
+// -------------------------------------------------------------------------
+// REMOVE-BACKEND CONFIRMATION TESTS
+// -------------------------------------------------------------------------
+
+func TestRemoveToken_RoundTrip(t *testing.T) {
+	h := newTestHandler()
+	token := h.generateRemoveToken("my-backend")
+
+	if !h.validRemoveToken(token, "my-backend") {
+		t.Error("valid token should pass validation")
+	}
+}
+
+func TestRemoveToken_WrongBackend(t *testing.T) {
+	h := newTestHandler()
+	token := h.generateRemoveToken("backend-a")
+
+	if h.validRemoveToken(token, "backend-b") {
+		t.Error("token for backend-a should not validate for backend-b")
+	}
+}
+
+func TestRemoveToken_Tampered(t *testing.T) {
+	h := newTestHandler()
+	token := h.generateRemoveToken("my-backend")
+
+	if h.validRemoveToken(token+"x", "my-backend") {
+		t.Error("tampered token should fail validation")
+	}
+}
+
+func TestRemoveToken_Empty(t *testing.T) {
+	h := newTestHandler()
+
+	if h.validRemoveToken("", "my-backend") {
+		t.Error("empty token should fail validation")
+	}
+}
+
+func TestRemoveToken_MalformedBase64(t *testing.T) {
+	h := newTestHandler()
+	if h.validRemoveToken("not-valid-base64!!!.also-bad!!!", "my-backend") {
+		t.Error("malformed base64 should fail")
+	}
+}
+
+func TestRemoveToken_NoDot(t *testing.T) {
+	h := newTestHandler()
+	if h.validRemoveToken("nodotinthisstring", "my-backend") {
+		t.Error("token without dot separator should fail")
+	}
+}
+
+func TestRemoveToken_BadPayloadFormat(t *testing.T) {
+	h := newTestHandler()
+	// Valid base64 but wrong payload structure (not "purge|name|expiry")
+	payload := base64.RawURLEncoding.EncodeToString([]byte("wrong|format"))
+	mac := hmac.New(sha256.New, []byte("test-token"))
+	mac.Write([]byte("wrong|format"))
+	sig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	token := payload + "." + sig
+	if h.validRemoveToken(token, "my-backend") {
+		t.Error("wrong payload format should fail")
+	}
+}
+
+func TestRemoveToken_WrongKey(t *testing.T) {
+	h1 := newTestHandler()
+	h2 := &Handler{token: "different-key"}
+
+	token := h1.generateRemoveToken("my-backend")
+	if h2.validRemoveToken(token, "my-backend") {
+		t.Error("token signed with different key should fail")
 	}
 }
