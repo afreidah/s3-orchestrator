@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/store"
@@ -215,16 +216,27 @@ func (mp *MultipartManager) CompleteMultipartUpload(ctx context.Context, uploadI
 	for _, pn := range partNumbers {
 		requested[pn] = true
 	}
+	uploaded := make(map[int]bool, len(allParts))
+	for _, p := range allParts {
+		uploaded[p.PartNumber] = true
+	}
+	var missing []int
+	for _, pn := range partNumbers {
+		if !uploaded[pn] {
+			missing = append(missing, pn)
+		}
+	}
+	if len(missing) > 0 {
+		msg := "parts not uploaded: " + formatPartNumbers(missing)
+		err := &store.S3Error{StatusCode: 400, Code: "InvalidPart", Message: msg}
+		span.SetStatus(codes.Error, msg)
+		return "", err
+	}
 	var parts []store.MultipartPart
 	for _, p := range allParts {
 		if requested[p.PartNumber] {
 			parts = append(parts, p)
 		}
-	}
-	if len(parts) != len(partNumbers) {
-		err := &store.S3Error{StatusCode: 400, Code: "InvalidPart", Message: "one or more specified parts were not uploaded"}
-		span.SetStatus(codes.Error, err.Message)
-		return "", err
 	}
 
 	// Sort parts by part number for correct assembly order
@@ -481,4 +493,13 @@ func (mp *MultipartManager) abortMultipartUploadsOnBackend(ctx context.Context, 
 				"upload_id", mu.UploadID, "error", err)
 		}
 	}
+}
+
+// formatPartNumbers formats a slice of part numbers for error messages.
+func formatPartNumbers(parts []int) string {
+	s := make([]string, len(parts))
+	for i, pn := range parts {
+		s[i] = strconv.Itoa(pn)
+	}
+	return strings.Join(s, ", ")
 }
