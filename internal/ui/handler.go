@@ -17,9 +17,11 @@ package ui
 import (
 	"bytes"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -47,6 +49,8 @@ import (
 
 const (
 	sessionCookieName = "s3orch_session"
+	csrfCookieName    = "s3orch_csrf"
+	csrfHeaderName    = "X-CSRF-Token"
 	sessionTTL        = 24 * time.Hour
 )
 
@@ -185,24 +189,48 @@ func checkSecret(configured, provided string) bool {
 
 // requireAuth wraps a handler and enforces session authentication.
 // HTML requests are redirected to the login page; API requests get 401.
+// State-changing API requests (POST) also require a valid CSRF token.
 func (h *Handler) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if h.validSession(r) {
-			next(w, r)
+		if !h.validSession(r) {
+			if strings.HasPrefix(r.URL.Path, h.prefix+"/api/") {
+				slog.WarnContext(r.Context(), "UI: unauthorized API request", "path", r.URL.Path, "remote", r.RemoteAddr)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
+				return
+			}
+			http.Redirect(w, r, h.prefix+"/login", http.StatusSeeOther)
 			return
 		}
-		if strings.HasPrefix(r.URL.Path, h.prefix+"/api/") {
-			slog.WarnContext(r.Context(), "UI: unauthorized API request", "path", r.URL.Path, "remote", r.RemoteAddr)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
-			return
+
+		// CSRF check on state-changing API requests
+		if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, h.prefix+"/api/") {
+			if !h.validCSRFToken(r) {
+				slog.WarnContext(r.Context(), "UI: CSRF token mismatch", "path", r.URL.Path, "remote", r.RemoteAddr)
+				writeJSONError(w, http.StatusForbidden, "CSRF token missing or invalid")
+				return
+			}
 		}
-		http.Redirect(w, r, h.prefix+"/login", http.StatusSeeOther)
+
+		next(w, r)
 	}
 }
 
-// createSession sets an HMAC-signed session cookie on the response.
+// validCSRFToken checks that the X-CSRF-Token header matches the CSRF cookie.
+func (h *Handler) validCSRFToken(r *http.Request) bool {
+	cookie, err := r.Cookie(csrfCookieName)
+	if err != nil || cookie.Value == "" {
+		return false
+	}
+	header := r.Header.Get(csrfHeaderName)
+	if header == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(header)) == 1
+}
+
+// createSession sets an HMAC-signed session cookie and a CSRF token cookie.
 func (h *Handler) createSession(w http.ResponseWriter, r *http.Request, accessKey string) {
 	expiry := time.Now().Add(sessionTTL).Unix()
 	payload := fmt.Sprintf("%s|%d", accessKey, expiry)
@@ -212,6 +240,7 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request, accessKe
 	sig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 
 	value := base64.RawURLEncoding.EncodeToString([]byte(payload)) + "." + sig
+	secure := h.forceSecure || r.TLS != nil
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
@@ -219,9 +248,28 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request, accessKe
 		Path:     h.prefix + "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
-		Secure:   h.forceSecure || r.TLS != nil,
+		Secure:   secure,
 		MaxAge:   int(sessionTTL.Seconds()),
 	})
+
+	// CSRF token: readable by JavaScript (not HttpOnly) for double-submit pattern.
+	csrfToken := generateCSRFToken()
+	http.SetCookie(w, &http.Cookie{
+		Name:     csrfCookieName,
+		Value:    csrfToken,
+		Path:     h.prefix + "/",
+		HttpOnly: false, // JS must read this to send as X-CSRF-Token header
+		SameSite: http.SameSiteStrictMode,
+		Secure:   secure,
+		MaxAge:   int(sessionTTL.Seconds()),
+	})
+}
+
+// generateCSRFToken returns a random hex string for CSRF protection.
+func generateCSRFToken() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
 }
 
 // validSession checks whether the request carries a valid, non-expired session cookie.
@@ -337,8 +385,9 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, h.prefix+"/", http.StatusSeeOther)
 }
 
-// handleLogout clears the session cookie and redirects to login.
+// handleLogout clears the session and CSRF cookies and redirects to login.
 func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
+	secure := h.forceSecure || r.TLS != nil
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    "",
@@ -346,7 +395,14 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
 		MaxAge:   -1,
-		Secure:   h.forceSecure || r.TLS != nil,
+		Secure:   secure,
+	})
+	http.SetCookie(w, &http.Cookie{
+		Name:     csrfCookieName,
+		Value:    "",
+		Path:     h.prefix + "/",
+		MaxAge:   -1,
+		Secure:   secure,
 	})
 	http.Redirect(w, r, h.prefix+"/login", http.StatusSeeOther)
 }
