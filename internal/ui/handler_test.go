@@ -101,7 +101,8 @@ func newTestHandlerWithMock(t *testing.T) (*Handler, *http.ServeMux, *testutil.M
 }
 
 // getSessionCookie performs a login and returns the session cookie.
-func getSessionCookie(t *testing.T, h *Handler, mux *http.ServeMux) *http.Cookie {
+// loginCookies performs a login and returns the session and CSRF cookies.
+func loginCookies(t *testing.T, h *Handler, mux *http.ServeMux) (session *http.Cookie, csrf *http.Cookie) {
 	t.Helper()
 
 	form := url.Values{
@@ -114,21 +115,107 @@ func getSessionCookie(t *testing.T, h *Handler, mux *http.ServeMux) *http.Cookie
 	mux.ServeHTTP(w, req)
 
 	for _, c := range w.Result().Cookies() {
-		if c.Name == sessionCookieName {
-			return c
+		switch c.Name {
+		case sessionCookieName:
+			session = c
+		case csrfCookieName:
+			csrf = c
 		}
 	}
-	t.Fatal("login did not set session cookie")
-	return nil
+	if session == nil {
+		t.Fatal("login did not set session cookie")
+	}
+	if csrf == nil {
+		t.Fatal("login did not set CSRF cookie")
+	}
+	return session, csrf
 }
 
-// authedRequest creates a request with a valid session cookie attached.
+// getSessionCookie performs a login and returns the session cookie.
+func getSessionCookie(t *testing.T, h *Handler, mux *http.ServeMux) *http.Cookie {
+	t.Helper()
+	session, _ := loginCookies(t, h, mux)
+	return session
+}
+
+// authedRequest creates a request with valid session and CSRF credentials.
+// POST requests include the X-CSRF-Token header automatically.
 func authedRequest(t *testing.T, h *Handler, mux *http.ServeMux, method, path string, body io.Reader) *http.Request {
 	t.Helper()
-	cookie := getSessionCookie(t, h, mux)
+	session, csrf := loginCookies(t, h, mux)
 	req := httptest.NewRequest(method, path, body)
-	req.AddCookie(cookie)
+	req.AddCookie(session)
+	req.AddCookie(csrf)
+	if method == http.MethodPost {
+		req.Header.Set(csrfHeaderName, csrf.Value)
+	}
 	return req
+}
+
+// -------------------------------------------------------------------------
+// CSRF TESTS
+// -------------------------------------------------------------------------
+
+func TestCSRF_PostWithoutToken_Rejected(t *testing.T) {
+	h, mux := newTestHandler(t)
+	session := getSessionCookie(t, h, mux)
+
+	// POST without CSRF token should be rejected
+	req := httptest.NewRequest(http.MethodPost, "/ui/api/rebalance", nil)
+	req.AddCookie(session)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusForbidden)
+	}
+}
+
+func TestCSRF_PostWithCookieButNoHeader_Rejected(t *testing.T) {
+	h, mux := newTestHandler(t)
+	session, csrf := loginCookies(t, h, mux)
+
+	// Send CSRF cookie but no X-CSRF-Token header
+	req := httptest.NewRequest(http.MethodPost, "/ui/api/rebalance", nil)
+	req.AddCookie(session)
+	req.AddCookie(csrf)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusForbidden)
+	}
+}
+
+func TestCSRF_PostWithWrongToken_Rejected(t *testing.T) {
+	h, mux := newTestHandler(t)
+	session, csrf := loginCookies(t, h, mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/ui/api/rebalance", nil)
+	req.AddCookie(session)
+	req.AddCookie(csrf)
+	req.Header.Set(csrfHeaderName, "wrong-token")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusForbidden)
+	}
+}
+
+func TestCSRF_GetWithoutToken_Allowed(t *testing.T) {
+	h, mux := newTestHandler(t)
+	session := getSessionCookie(t, h, mux)
+
+	// GET requests should not require CSRF token
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/dashboard", nil)
+	req.AddCookie(session)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d (GET should not require CSRF)", w.Code, http.StatusOK)
+	}
 }
 
 // -------------------------------------------------------------------------
