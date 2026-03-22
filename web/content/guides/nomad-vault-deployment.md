@@ -300,7 +300,7 @@ telemetry:
     enabled: true
     endpoint: "tempo.service.consul:4317"
     insecure: true
-    sample_rate: 1.0
+    sample_rate: 0.1             # 10% of requests traced; use 1.0 for debugging
 {{ end }}
 EOH
         destination = "secrets/config.yaml"
