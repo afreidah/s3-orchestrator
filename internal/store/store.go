@@ -182,6 +182,36 @@ func (s *Store) RunMigrations(ctx context.Context) error { // codecov:ignore -- 
 	return nil
 }
 
+// ExpectedSchemaVersion is the migration version this binary expects.
+// Updated when new migration files are added.
+const ExpectedSchemaVersion = 4
+
+// VerifySchemaVersion checks that the database schema version matches
+// what this binary expects. Returns an error if the schema is older
+// than expected (partial migration failure). Logs a warning if the
+// schema is newer (possible downgrade).
+// codecov:ignore:start -- requires live PostgreSQL, covered by integration tests
+func (s *Store) VerifySchemaVersion(ctx context.Context) error {
+	var version int64
+	err := s.pool.QueryRow(ctx,
+		"SELECT COALESCE(MAX(version_id), 0) FROM goose_db_version WHERE is_applied = true",
+	).Scan(&version)
+	if err != nil {
+		return fmt.Errorf("query schema version: %w", err)
+	}
+
+	if version < ExpectedSchemaVersion {
+		return fmt.Errorf("database schema version %d is older than expected %d — migrations may have partially failed", version, ExpectedSchemaVersion)
+	}
+	if version > ExpectedSchemaVersion {
+		slog.WarnContext(ctx, "Database schema is newer than this binary expects — possible downgrade",
+			"schema_version", version, "expected", ExpectedSchemaVersion)
+	}
+	return nil
+}
+
+// codecov:ignore:end
+
 // -------------------------------------------------------------------------
 // TRANSACTION HELPERS
 // -------------------------------------------------------------------------
