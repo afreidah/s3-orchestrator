@@ -365,6 +365,27 @@ To limit memory growth under attack:
 
 - `s3o_rate_limit_rejections_total` — counter of rejected requests. A sustained non-zero rate means the limiter is actively throttling traffic.
 
+## Tracing Sample Rate
+
+The `telemetry.sample_rate` controls what fraction of requests generate OpenTelemetry trace spans exported to the collector (Tempo, Jaeger, etc.). This does not affect Prometheus metrics or structured logs — only distributed traces.
+
+```yaml
+telemetry:
+  sample_rate: 0.1   # 10% of requests traced
+```
+
+| Workload | Recommended Rate | Rationale |
+|----------|-----------------|-----------|
+| Development | `1.0` | Trace every request for debugging |
+| Staging | `0.1` | Enough to see patterns; 10x less volume |
+| Production < 100 RPS | `0.1` | ~10 traces/sec is manageable |
+| Production 100–1000 RPS | `0.01` | ~1–10 traces/sec |
+| Production > 1000 RPS | `0.001–0.01` | Reduce collector storage and CPU |
+
+At `1.0` with 1000 RPS, the trace collector receives ~1000 spans/sec per request hop (multiple spans per request: HTTP → manager → backend). This can generate gigabytes of trace data per day and significant CPU overhead for serialization and export.
+
+Prometheus metrics always capture 100% of requests regardless of sample rate — use metrics for alerting and dashboards, traces for debugging specific requests.
+
 ## Load Testing
 
 The `loadtest/` directory contains tools for benchmarking the orchestrator under realistic S3 traffic. All tools handle SigV4 authentication automatically.
