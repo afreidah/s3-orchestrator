@@ -120,6 +120,11 @@ Monitor encryption health with these Prometheus metrics:
 | `s3o_encryption_errors_total` | Any non-zero rate indicates encryption/decryption failures |
 | `s3o_encrypt_existing_objects_total{status="error"}` | Failures during bulk encryption of existing data |
 | `s3o_key_rotation_objects_total{status="error"}` | Failures during key rotation |
+| `s3o_encryption_unknown_key_id_total` | Decryptions falling back to primary key due to unrecognized keyID |
+
+### Nonce Safety
+
+Chunked encryption derives per-chunk nonces by XORing the chunk index into a random base nonce. AES-GCM security requires that the same (key, nonce) pair is never reused. This is guaranteed because each object gets a fresh random DEK and a fresh random base nonce — even re-uploads of identical content produce different ciphertext. See `internal/encryption/chunk.go` for the full safety invariant documentation.
 
 ## Configuration File Security
 
