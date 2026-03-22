@@ -247,6 +247,26 @@ func (r *decryptReader) Read(p []byte) (int, error) {
 // -------------------------------------------------------------------------
 // NONCE DERIVATION
 // -------------------------------------------------------------------------
+//
+// SAFETY INVARIANT: AES-GCM requires that the same (key, nonce) pair is
+// never used twice. This derivation is safe because:
+//
+//  1. Each object gets a fresh random DEK (Encryptor.Encrypt generates a
+//     new 32-byte key per call — see encryption.go:93).
+//  2. Each encrypt call generates a fresh random base nonce (see
+//     newEncryptReader — chunk.go:77-78).
+//  3. Within a single object, chunk indices are sequential (0, 1, 2, ...),
+//     so XOR with the index produces unique nonces per chunk.
+//
+// Even if the same plaintext is uploaded twice, it gets a different DEK
+// and different base nonce. Nonce reuse can only occur if a future code
+// change reuses a DEK across objects or re-encrypts with the same DEK
+// after a partial failure. The current code never does this — PutObject
+// re-encrypts with a fresh DEK on each retry attempt.
+//
+// If the DEK-per-object invariant is ever relaxed (e.g., for performance),
+// this derivation must be replaced with random per-chunk nonces or a
+// NIST-compliant counter mode (AES-ECB of the chunk index).
 
 // chunkNonce derives a per-chunk nonce by XORing the chunk index into the
 // last 8 bytes of the base nonce. Each chunk gets a unique nonce without
