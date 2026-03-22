@@ -19,6 +19,7 @@ database:
   user: "s3proxy"
   password: "s3proxy"
   ssl_mode: "disable"
+  # max_conns: 50             # default: 50; size to 2-3x max_concurrent_requests for production
 
 # --- Virtual buckets exposed to clients ---
 buckets:

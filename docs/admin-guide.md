@@ -171,14 +171,14 @@ database:
   user: "s3orchestrator"         # required
   password: "${DB_PASSWORD}"
   ssl_mode: "require"            # default: require (use "disable" for local dev)
-  max_conns: 10                  # default: 10
+  max_conns: 50                  # default: 50; size to 2-3x max_concurrent_requests
   min_conns: 5                   # default: 5
   max_conn_lifetime: "5m"        # default: 5m
 ```
 
 The default is `require`. Set `ssl_mode: disable` only for local development without TLS.
 
-Pool settings (`max_conns`, `min_conns`, `max_conn_lifetime`) control the pgx connection pool. The defaults are fine for most deployments. Increase `max_conns` if you're seeing connection wait times under high concurrency.
+Pool settings (`max_conns`, `min_conns`, `max_conn_lifetime`) control the pgx connection pool. Size `max_conns` to 2–3x your `max_concurrent_requests` setting — each S3 operation uses at least one database connection, and background workers hold additional connections during their tick. See [Performance Tuning — Connection Pool Sizing](performance-tuning.md#connection-pool-sizing) for detailed guidance.
 
 ### routing_strategy
 
