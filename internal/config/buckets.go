@@ -23,8 +23,9 @@ type CredentialConfig struct {
 // BucketConfig defines a virtual bucket with one or more credential sets.
 // Multiple services can share a bucket by each having their own credentials.
 type BucketConfig struct {
-	Name        string             `yaml:"name"`
-	Credentials []CredentialConfig `yaml:"credentials"`
+	Name                string             `yaml:"name"`
+	Credentials         []CredentialConfig `yaml:"credentials"`
+	MaxMultipartUploads int                `yaml:"max_multipart_uploads"` // Max active multipart uploads per bucket (0 = unlimited)
 }
 
 func validateBuckets(buckets []BucketConfig) []string {
@@ -50,6 +51,10 @@ func validateBuckets(buckets []BucketConfig) []string {
 			errs = append(errs, fmt.Sprintf("%s: duplicate bucket name '%s'", prefix, bkt.Name))
 		}
 		bucketNames[bkt.Name] = true
+
+		if bkt.MaxMultipartUploads < 0 {
+			errs = append(errs, fmt.Sprintf("%s: max_multipart_uploads must be >= 0", prefix))
+		}
 
 		if len(bkt.Credentials) == 0 {
 			errs = append(errs, fmt.Sprintf("%s: at least one credential is required", prefix))

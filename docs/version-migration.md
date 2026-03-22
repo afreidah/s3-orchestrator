@@ -83,6 +83,15 @@ To roll back: restore the database backup and deploy the previous binary version
 - UI API error responses return `Content-Type: application/json`.
 - UI login evaluates `checkSecret` unconditionally to prevent timing side-channel on access key validity.
 - Admin token check no longer short-circuits on empty token.
+- `remove-backend --purge` now requires `--confirm` flag. Without it, `--purge` is a dry-run that shows what would be destroyed. API requires two-phase confirmation with a signed token (60s TTL).
+- UI API POST requests now require a `X-CSRF-Token` header matching the `s3orch_csrf` cookie (double-submit cookie pattern). GET requests are unaffected.
+- `/health` and `/health/ready` responses no longer include the `instance` field (hostname).
+- Prometheus metrics can be served on a separate listener via `telemetry.metrics.listen`.
+
+**New config fields:**
+
+- `buckets[].max_multipart_uploads` — optional limit on active multipart uploads per bucket (default: 0, unlimited). Returns `503 SlowDown` when exceeded.
+- `telemetry.metrics.listen` — optional separate address for the metrics endpoint (e.g., `127.0.0.1:9091`).
 
 ### v0.14.x
 

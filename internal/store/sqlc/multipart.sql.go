@@ -11,6 +11,18 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countActiveMultipartUploadsByPrefix = `-- name: CountActiveMultipartUploadsByPrefix :one
+SELECT COUNT(*) FROM multipart_uploads
+WHERE object_key LIKE $1 || '%' ESCAPE '\'
+`
+
+func (q *Queries) CountActiveMultipartUploadsByPrefix(ctx context.Context, prefix *string) (int64, error) {
+	row := q.db.QueryRow(ctx, countActiveMultipartUploadsByPrefix, prefix)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createMultipartUpload = `-- name: CreateMultipartUpload :exec
 INSERT INTO multipart_uploads (upload_id, object_key, backend_name, content_type, metadata, created_at)
 VALUES ($1, $2, $3, $4, $5, NOW())

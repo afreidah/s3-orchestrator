@@ -1176,6 +1176,20 @@ func (s *Store) GetMultipartUploadsByBackend(ctx context.Context, backendName st
 
 // ListMultipartUploads returns in-progress multipart uploads whose key matches
 // the given prefix, up to maxUploads entries.
+// CountActiveMultipartUploads returns the number of in-progress multipart
+// uploads whose key starts with the given bucket prefix.
+// codecov:ignore:start -- requires live PostgreSQL
+func (s *Store) CountActiveMultipartUploads(ctx context.Context, bucketPrefix string) (int64, error) {
+	escapedPrefix := likeEscaper.Replace(bucketPrefix)
+	count, err := s.queries.CountActiveMultipartUploadsByPrefix(ctx, &escapedPrefix)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count active multipart uploads: %w", err)
+	}
+	return count, nil
+}
+
+// codecov:ignore:end
+
 func (s *Store) ListMultipartUploads(ctx context.Context, prefix string, maxUploads int) ([]MultipartUpload, error) { // codecov:ignore -- requires live PostgreSQL, covered by integration tests
 	escapedPrefix := likeEscaper.Replace(prefix)
 
