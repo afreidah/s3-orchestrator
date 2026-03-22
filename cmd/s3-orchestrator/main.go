@@ -108,12 +108,6 @@ func runServe() {
 	// --- Readiness gate ---
 	var ready atomic.Bool
 
-	// --- Instance ID for health responses ---
-	instanceID, _ := os.Hostname()
-	if instanceID == "" {
-		instanceID = "unknown"
-	}
-
 	// --- Load configuration ---
 	cfg, err := config.LoadConfig(*configPath)
 	if err != nil {
