@@ -640,6 +640,20 @@ func TestConfigValidation_QuotaBackendsWithReplication(t *testing.T) {
 	}
 }
 
+func TestConfigValidation_MultiBackendNoReplicationWarns(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Backends = []BackendConfig{
+		{Name: "b1", Endpoint: "e", Bucket: "b", AccessKeyID: "a", SecretAccessKey: "s", QuotaBytes: 1024},
+		{Name: "b2", Endpoint: "e2", Bucket: "b2", AccessKeyID: "a2", SecretAccessKey: "s2", QuotaBytes: 1024},
+	}
+	cfg.Replication = ReplicationConfig{Factor: 1}
+
+	// Should pass validation (warning, not error) — replication.factor=1 is valid
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Errorf("multi-backend with factor=1 should pass validation (warn only): %v", err)
+	}
+}
+
 func TestConfigValidation_NegativeAPIRequestLimit(t *testing.T) {
 	cfg := validBaseConfig()
 	cfg.Backends[0].APIRequestLimit = -1

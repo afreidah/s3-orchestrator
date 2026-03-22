@@ -137,6 +137,10 @@ func (c *Config) SetDefaultsAndValidate() error {
 		if unlimitedCount > 1 && c.Replication.Factor <= 1 {
 			errs = append(errs, "multiple backends with unlimited quota (quota_bytes: 0) requires replication.factor >= 2; without quotas there is no overflow routing and only the first backend would receive writes")
 		}
+		if c.Replication.Factor <= 1 {
+			slog.Warn("replication.factor <= 1 with multiple backends provides no redundancy — losing a backend will cause permanent data loss for objects stored exclusively on it", //nolint:sloglint // config validation has no request context
+				"backends", len(c.Backends), "replication_factor", c.Replication.Factor)
+		}
 	}
 
 	if len(errs) > 0 {
