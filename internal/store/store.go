@@ -1367,9 +1367,16 @@ func (s *Store) GetUsageForPeriod(ctx context.Context, period string) (map[strin
 // INTEGRITY VERIFICATION
 // -------------------------------------------------------------------------
 
+// codecov:ignore:start -- requires live PostgreSQL, covered by integration tests
+
 // GetRandomHashedObjects returns random object locations that have a stored
 // content hash. Used by the scrubber to verify data integrity.
 func (s *Store) GetRandomHashedObjects(ctx context.Context, limit int) ([]ObjectLocation, error) {
+	if limit <= 0 {
+		limit = 1
+	} else if limit > math.MaxInt32 {
+		limit = math.MaxInt32
+	}
 	rows, err := s.queries.GetRandomHashedObjects(ctx, int32(limit))
 	if err != nil {
 		return nil, fmt.Errorf("failed to get random hashed objects: %w", err)
@@ -1380,6 +1387,16 @@ func (s *Store) GetRandomHashedObjects(ctx context.Context, limit int) ([]Object
 // GetObjectsWithoutHash returns object locations that have no stored content
 // hash, ordered by creation time. Used by the backfill command.
 func (s *Store) GetObjectsWithoutHash(ctx context.Context, limit, offset int) ([]ObjectLocation, error) {
+	if limit < 0 {
+		limit = 0
+	} else if limit > math.MaxInt32 {
+		limit = math.MaxInt32
+	}
+	if offset < 0 {
+		offset = 0
+	} else if offset > math.MaxInt32 {
+		offset = math.MaxInt32
+	}
 	rows, err := s.queries.GetObjectsWithoutHash(ctx, db.GetObjectsWithoutHashParams{
 		Limit:  int32(limit),
 		Offset: int32(offset),
@@ -1398,6 +1415,8 @@ func (s *Store) UpdateContentHash(ctx context.Context, key, backendName, hash st
 		ContentHash: &hash,
 	})
 }
+
+// codecov:ignore:end
 
 // -------------------------------------------------------------------------
 // ADVISORY LOCKS

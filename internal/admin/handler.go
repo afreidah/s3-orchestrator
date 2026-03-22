@@ -633,6 +633,8 @@ func (h *Handler) handleEncryptExisting(w http.ResponseWriter, r *http.Request) 
 // INTEGRITY
 // -------------------------------------------------------------------------
 
+// codecov:ignore:start -- admin HTTP endpoints, covered by integration tests
+
 // handleScrub triggers an on-demand scrub cycle. Accepts an optional
 // batch_size query parameter (defaults to the configured scrubber batch size).
 func (h *Handler) handleScrub(w http.ResponseWriter, r *http.Request) {
@@ -697,6 +699,8 @@ func (h *Handler) handleBackfillChecksums(w http.ResponseWriter, r *http.Request
 		"processed": totalProcessed,
 	})
 }
+
+// codecov:ignore:end
 
 // -------------------------------------------------------------------------
 // HELPERS

@@ -300,6 +300,8 @@ func (cb *CircuitBreakerStore) DeleteObjectLocation(ctx context.Context, key, ba
 	return breaker.CBCallNoResult(cb.CircuitBreaker, func() error { return cb.real.DeleteObjectLocation(ctx, key, backendName) })
 }
 
+// codecov:ignore:start -- thin CB wrapper, covered by integration tests
+
 // GetRandomHashedObjects delegates to the real store with circuit breaker protection.
 func (cb *CircuitBreakerStore) GetRandomHashedObjects(ctx context.Context, limit int) ([]ObjectLocation, error) {
 	return breaker.CBCall(cb.CircuitBreaker, func() ([]ObjectLocation, error) { return cb.real.GetRandomHashedObjects(ctx, limit) })
@@ -314,3 +316,5 @@ func (cb *CircuitBreakerStore) GetObjectsWithoutHash(ctx context.Context, limit,
 func (cb *CircuitBreakerStore) UpdateContentHash(ctx context.Context, key, backendName, hash string) error {
 	return breaker.CBCallNoResult(cb.CircuitBreaker, func() error { return cb.real.UpdateContentHash(ctx, key, backendName, hash) })
 }
+
+// codecov:ignore:end
