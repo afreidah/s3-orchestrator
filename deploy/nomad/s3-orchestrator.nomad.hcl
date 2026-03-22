@@ -155,7 +155,7 @@ job "s3-orchestrator" {
             user: "s3orchestrator"
             password: "{{ .Data.data.db_password }}"
             ssl_mode: "require"
-            max_conns: 10
+            max_conns: 50
             min_conns: 5
             max_conn_lifetime: "5m"
 
