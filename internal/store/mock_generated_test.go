@@ -86,6 +86,21 @@ func (mr *MockMetadataStoreMockRecorder) CompleteCleanupItem(ctx, id any) *gomoc
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CompleteCleanupItem", reflect.TypeOf((*MockMetadataStore)(nil).CompleteCleanupItem), ctx, id)
 }
 
+// CountActiveMultipartUploads mocks base method.
+func (m *MockMetadataStore) CountActiveMultipartUploads(ctx context.Context, bucketPrefix string) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CountActiveMultipartUploads", ctx, bucketPrefix)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CountActiveMultipartUploads indicates an expected call of CountActiveMultipartUploads.
+func (mr *MockMetadataStoreMockRecorder) CountActiveMultipartUploads(ctx, bucketPrefix any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountActiveMultipartUploads", reflect.TypeOf((*MockMetadataStore)(nil).CountActiveMultipartUploads), ctx, bucketPrefix)
+}
+
 // CountOverReplicatedObjects mocks base method.
 func (m *MockMetadataStore) CountOverReplicatedObjects(ctx context.Context, factor int) (int64, error) {
 	m.ctrl.T.Helper()

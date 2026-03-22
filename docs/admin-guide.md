@@ -130,6 +130,7 @@ Each bucket defines a virtual namespace with one or more credential sets.
 ```yaml
 buckets:
   - name: "app1-files"
+    # max_multipart_uploads: 100  # optional; limit active multipart uploads (0 = unlimited)
     credentials:
       - access_key_id: "AKID_APP1"
         secret_access_key: "secret1"
@@ -755,11 +756,14 @@ s3-orchestrator admin drain-status <backend-name>
 # Cancel an active drain (objects already moved are not rolled back)
 s3-orchestrator admin drain-cancel <backend-name>
 
-# Remove a backend's database records (destructive, no data migration)
+# Remove a backend's database records (S3 objects preserved, reversible via sync)
 s3-orchestrator admin remove-backend <backend-name>
 
-# Remove a backend AND delete its S3 objects
+# Preview what --purge would destroy (dry-run)
 s3-orchestrator admin remove-backend <backend-name> --purge
+
+# Remove a backend AND delete its S3 objects (requires --confirm)
+s3-orchestrator admin remove-backend <backend-name> --purge --confirm
 
 # Encrypt all unencrypted objects in-place (requires encryption enabled)
 s3-orchestrator admin encrypt-existing
@@ -1038,13 +1042,19 @@ Removing deletes all database records for a backend. This is destructive — obj
 s3-orchestrator admin remove-backend <backend-name>
 ```
 
-**Drop database records AND delete S3 objects:**
+**Preview what purge would destroy (dry-run):**
 
 ```bash
 s3-orchestrator admin remove-backend <backend-name> --purge
 ```
 
-The `--purge` flag iterates all objects on the backend and deletes them from S3 before removing database records. This is best-effort — individual delete failures are logged but don't stop the operation.
+**Drop database records AND delete S3 objects (requires confirmation):**
+
+```bash
+s3-orchestrator admin remove-backend <backend-name> --purge --confirm
+```
+
+The `--purge` flag without `--confirm` shows a preview of what would be destroyed (object count, total bytes) and exits. With `--confirm`, the CLI obtains a signed confirmation token from the server (valid for 60 seconds) and executes the purge. Individual delete failures are logged but don't stop the operation.
 
 After removing, edit the config to remove the backend entry and restart.
 

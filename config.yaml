@@ -24,6 +24,7 @@ database:
 # --- Virtual buckets exposed to clients ---
 buckets:
   - name: "photos"
+    # max_multipart_uploads: 100  # optional; limit active multipart uploads (0 = unlimited)
     credentials:
       - access_key_id: "photoskey"
         secret_access_key: "photossecret"

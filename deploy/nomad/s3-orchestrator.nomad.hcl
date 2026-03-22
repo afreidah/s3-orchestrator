@@ -164,6 +164,7 @@ job "s3-orchestrator" {
           # Multiple credential sets per bucket support reader/writer separation.
           buckets:
             - name: "app-data"
+              # max_multipart_uploads: 100  # optional; limit active multipart uploads (0 = unlimited)
               credentials:
                 - access_key_id: "{{ .Data.data.bucket_access_key }}"
                   secret_access_key: "{{ .Data.data.bucket_secret_key }}"

@@ -273,6 +273,11 @@ func (m *MockStore) ListMultipartUploads(_ context.Context, _ string, _ int) ([]
 	return m.ListMultipartUploadsResp, nil
 }
 
+// CountActiveMultipartUploads returns zero (stub).
+func (m *MockStore) CountActiveMultipartUploads(_ context.Context, _ string) (int64, error) {
+	return 0, nil
+}
+
 // ListObjectsByBackend returns nil (stub).
 func (m *MockStore) ListObjectsByBackend(_ context.Context, _ string, _ int) ([]store.ObjectLocation, error) {
 	return nil, nil
