@@ -31,6 +31,31 @@ s3-orchestrator version
 # s3-orchestrator v0.8.23 go1.26.0 linux/amd64
 ```
 
+## Compatibility Matrix
+
+| Component | Tested Versions | Compatible | Notes |
+|-----------|----------------|------------|-------|
+| PostgreSQL | 16, 18 | 10+ (pgx driver) | Required. Connection pooling via pgxpool. |
+| Redis | 7, 8 | 6+ (go-redis driver) | Optional. Shared usage counters for multi-instance deployments. |
+| Go | 1.26 | 1.26+ | For building from source. Version set in `go.mod`. |
+| S3 backends | MinIO, OCI, R2 | Any S3-compatible API | GCS requires `disable_checksum`, `unsigned_payload`, `strip_sdk_headers`. |
+| Container runtime | Docker | Docker, containerd, Podman | Multi-arch images (amd64, arm64) published to ghcr.io. |
+| Orchestrators | Nomad, Kubernetes | Nomad, Kubernetes, systemd | Deploy manifests and demo scripts provided. |
+
+## Upgrade Checklist
+
+Before upgrading to a new version:
+
+- [ ] Back up the PostgreSQL database (`pg_dump`)
+- [ ] Review breaking changes for the target version below
+- [ ] Validate config against the new binary: `s3-orchestrator validate -config config.yaml`
+- [ ] Update Grafana dashboards if metric names changed (check version notes)
+- [ ] Deploy to staging and verify `/health/ready` returns `{"status":"ready"}`
+- [ ] Test a PUT + GET round-trip in staging
+- [ ] Deploy to production with rolling update (readiness probe gates traffic)
+
+To roll back: restore the database backup and deploy the previous binary version. Schema migrations are forward-only — downgrade requires a database restore.
+
 ## Version History
 
 ### v0.19.x (current)
