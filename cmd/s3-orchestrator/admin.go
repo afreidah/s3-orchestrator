@@ -165,7 +165,8 @@ func adminCommand(cmd string, args []string, baseAddr, token string, stdout, std
 	case "remove-backend":
 		fs := flag.NewFlagSet("remove-backend", flag.ContinueOnError)
 		fs.SetOutput(stderr)
-		purge := fs.Bool("purge", false, "Also delete objects from the backend's S3 storage")
+		purge := fs.Bool("purge", false, "Also delete objects from the backend's S3 storage (requires --confirm)")
+		confirm := fs.Bool("confirm", false, "Execute the purge (without this, --purge is a dry-run preview)")
 		if err := fs.Parse(args); err != nil {
 			return 1
 		}
@@ -173,16 +174,97 @@ func adminCommand(cmd string, args []string, baseAddr, token string, stdout, std
 			fmt.Fprintln(stderr, "error: backend name is required")
 			return 1
 		}
-		url := baseAddr + "/admin/api/backends/" + fs.Arg(0)
-		if *purge {
-			url += "?purge=true"
+		name := fs.Arg(0)
+
+		if !*purge {
+			// Non-purge: remove DB records immediately
+			return doDelete(baseAddr+"/admin/api/backends/"+name, token, stdout, stderr)
 		}
-		return doDelete(url, token, stdout, stderr)
+
+		if !*confirm {
+			// Purge dry-run: show what would be destroyed
+			return doRemovePreview(baseAddr, name, token, stdout, stderr)
+		}
+
+		// Purge with confirmation: two-phase flow
+		return doRemovePurge(baseAddr, name, token, stdout, stderr)
 
 	default:
 		fmt.Fprintf(stderr, "unknown admin command: %s\n", cmd)
 		return 1
 	}
+}
+
+// -------------------------------------------------------------------------
+// REMOVE-BACKEND HELPERS
+// -------------------------------------------------------------------------
+
+// doRemovePreview calls the purge endpoint without confirmation and prints
+// what would be destroyed.
+func doRemovePreview(baseAddr, name, token string, stdout, stderr io.Writer) int {
+	url := baseAddr + "/admin/api/backends/" + name + "?purge=true"
+	req, err := http.NewRequest(http.MethodDelete, url, nil)
+	if err != nil {
+		fmt.Fprintf(stderr, "error: %v\n", err)
+		return 1
+	}
+	req.Header.Set("X-Admin-Token", token)
+
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	if err != nil {
+		fmt.Fprintf(stderr, "error: %v\n", err)
+		return 1
+	}
+	defer resp.Body.Close()
+
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		fmt.Fprintf(stderr, "error: failed to parse response: %v\n", err)
+		return 1
+	}
+
+	objectCount, _ := result["object_count"].(float64)
+	totalBytes, _ := result["total_bytes"].(float64)
+
+	fmt.Fprintf(stdout, "Backend %q contains %.0f objects (%.0f bytes).\n", name, objectCount, totalBytes)
+	fmt.Fprintf(stdout, "This will permanently delete all objects from the backend's S3 storage and remove all database records.\n")
+	fmt.Fprintf(stdout, "Re-run with --confirm to proceed.\n")
+	return 0
+}
+
+// doRemovePurge performs the two-phase purge: gets a confirmation token from
+// the preview endpoint, then executes with the token.
+func doRemovePurge(baseAddr, name, token string, stdout, stderr io.Writer) int {
+	// Phase 1: get confirmation token
+	url := baseAddr + "/admin/api/backends/" + name + "?purge=true"
+	req, err := http.NewRequest(http.MethodDelete, url, nil)
+	if err != nil {
+		fmt.Fprintf(stderr, "error: %v\n", err)
+		return 1
+	}
+	req.Header.Set("X-Admin-Token", token)
+
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	if err != nil {
+		fmt.Fprintf(stderr, "error: %v\n", err)
+		return 1
+	}
+	defer resp.Body.Close()
+
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		fmt.Fprintf(stderr, "error: failed to parse response: %v\n", err)
+		return 1
+	}
+
+	confirmToken, ok := result["confirm_token"].(string)
+	if !ok || confirmToken == "" {
+		fmt.Fprintf(stderr, "error: server did not return a confirmation token\n")
+		return 1
+	}
+
+	// Phase 2: execute with confirmation token
+	return doDelete(url+"&confirm="+confirmToken, token, stdout, stderr)
 }
 
 // -------------------------------------------------------------------------
