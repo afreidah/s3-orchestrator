@@ -84,6 +84,19 @@ Stop the Docker containers and remove build artifacts:
 make clean
 ```
 
+`make clean` stops the containers but Docker volumes persist (MinIO data, PostgreSQL data). To remove everything including stored data:
+
+```bash
+docker compose -f docker-compose.test.yml down -v
+```
+
+## Troubleshooting
+
+- **`make run` fails immediately** — is Docker running? Check with `docker ps`.
+- **Port 9000 already in use** — another service is on port 9000. Stop it or change `listen_addr` in `config.yaml`.
+- **Container health checks failing** — check backing service logs: `docker compose -f docker-compose.test.yml logs`
+- **Stale data from a previous run** — clean volumes: `docker compose -f docker-compose.test.yml down -v`
+
 ## Next steps
 
 - [Admin Guide](admin-guide.md) — production deployment, backend configuration, operational procedures
