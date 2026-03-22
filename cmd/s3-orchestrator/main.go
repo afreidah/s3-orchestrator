@@ -156,7 +156,11 @@ func runServe() {
 		slog.ErrorContext(ctx, "Failed to run migrations", "error", err)
 		os.Exit(1)
 	}
-	slog.InfoContext(ctx, "Database migrations applied")
+	if err := db.VerifySchemaVersion(ctx); err != nil {
+		slog.ErrorContext(ctx, "Schema version check failed", "error", err)
+		os.Exit(1)
+	}
+	slog.InfoContext(ctx, "Database migrations applied", "schema_version", store.ExpectedSchemaVersion)
 
 	// --- Sync quota limits from config to database ---
 	if err := db.SyncQuotaLimits(ctx, cfg.Backends); err != nil {
