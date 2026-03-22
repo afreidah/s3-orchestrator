@@ -125,6 +125,8 @@ if echo "$HEALTH" | grep -q '"status":"ok"'; then
     echo "  Test upload:"
     echo "    aws --endpoint-url http://localhost:$PORT s3 cp /etc/hostname s3://photos/test.txt"
     echo ""
+    echo "  Nomad agent log: /tmp/nomad-demo.log"
+    echo ""
     echo "  Tear down:"
     echo "    ./deploy/nomad/local/demo.sh down"
     echo ""
