@@ -21,11 +21,21 @@
     return (i === 0 ? b : b.toFixed(1)) + ' ' + units[i];
   }
 
+  function getCSRFToken() {
+    var match = document.cookie.match('(?:^|; )s3orch_csrf=([^;]*)');
+    return match ? match[1] : '';
+  }
+
   function fetchWithTimeout(url, opts, ms) {
     var c = new AbortController();
     var id = setTimeout(function () { c.abort(); }, ms);
     opts = opts || {};
     opts.signal = c.signal;
+    // Include CSRF token on state-changing requests
+    if (opts.method === 'POST') {
+      opts.headers = opts.headers || {};
+      opts.headers['X-CSRF-Token'] = getCSRFToken();
+    }
     return fetch(url, opts).finally(function () { clearTimeout(id); });
   }
 
