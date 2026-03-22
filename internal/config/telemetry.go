@@ -16,6 +16,7 @@ type TelemetryConfig struct {
 type MetricsConfig struct {
 	Enabled bool   `yaml:"enabled"`
 	Path    string `yaml:"path"`
+	Listen  string `yaml:"listen"` // Separate listener address (e.g. "127.0.0.1:9091"); if empty, metrics are served on the main listener
 }
 
 // TracingConfig holds OpenTelemetry tracing settings.

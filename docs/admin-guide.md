@@ -276,6 +276,7 @@ telemetry:
   metrics:
     enabled: true
     path: "/metrics"             # default: /metrics
+    # listen: "127.0.0.1:9091"  # serve on separate address (keeps /metrics off the public port)
   tracing:
     enabled: false
     endpoint: "localhost:4317"   # OTLP gRPC endpoint

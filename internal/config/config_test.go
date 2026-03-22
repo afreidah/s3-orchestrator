@@ -1565,6 +1565,34 @@ func TestMetricsConfig_DefaultPath(t *testing.T) {
 	}
 }
 
+func TestMetricsConfig_ListenOptional(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Telemetry.Metrics.Enabled = true
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("valid config should pass: %v", err)
+	}
+
+	// Listen should be empty by default (metrics on main listener)
+	if cfg.Telemetry.Metrics.Listen != "" {
+		t.Errorf("metrics listen default = %q, want empty", cfg.Telemetry.Metrics.Listen)
+	}
+}
+
+func TestMetricsConfig_ListenSet(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Telemetry.Metrics.Enabled = true
+	cfg.Telemetry.Metrics.Listen = "127.0.0.1:9091"
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("valid config with metrics listen should pass: %v", err)
+	}
+
+	if cfg.Telemetry.Metrics.Listen != "127.0.0.1:9091" {
+		t.Errorf("metrics listen = %q, want 127.0.0.1:9091", cfg.Telemetry.Metrics.Listen)
+	}
+}
+
 // -------------------------------------------------------------------------
 // LOADCONFIG TESTS
 // -------------------------------------------------------------------------

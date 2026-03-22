@@ -303,8 +303,8 @@ jobs:
           tags: |
             ghcr.io/afreidah/s3-orchestrator-webpage:${{ steps.version.outputs.version }}
             ghcr.io/afreidah/s3-orchestrator-webpage:latest
-          cache-from: type=gha,scope=webpage
-          cache-to: type=gha,mode=max,scope=webpage
+          cache-from: type=gha,scope=webpage-v2
+          cache-to: type=gha,mode=max,scope=webpage-v2
 
       - name: Scan image with Trivy
         run: |
