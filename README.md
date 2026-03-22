@@ -425,6 +425,7 @@ telemetry:
   metrics:
     enabled: true
     path: "/metrics"
+    # listen: "127.0.0.1:9091"  # optional; serve metrics on a separate address (recommended for production)
   tracing:
     enabled: true
     endpoint: "localhost:4317"
