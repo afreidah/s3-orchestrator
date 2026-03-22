@@ -17,6 +17,7 @@ import (
 	"crypto/x509"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -106,12 +107,6 @@ func runServe() {
 
 	// --- Readiness gate ---
 	var ready atomic.Bool
-
-	// --- Instance ID for health responses ---
-	instanceID, _ := os.Hostname()
-	if instanceID == "" {
-		instanceID = "unknown"
-	}
 
 	// --- Load configuration ---
 	cfg, err := config.LoadConfig(*configPath)
@@ -354,14 +349,37 @@ func runServe() {
 	// --- Setup HTTP mux ---
 	mux := http.NewServeMux()
 
-	// Metrics endpoint
+	// Metrics endpoint — served on a separate listener if metrics.listen is set,
+	// otherwise on the main S3 listener.
 	if cfg.Telemetry.Metrics.Enabled {
-		mux.Handle(cfg.Telemetry.Metrics.Path, promhttp.Handler())
-		slog.InfoContext(ctx, "Metrics endpoint enabled", "path", cfg.Telemetry.Metrics.Path)
+		if cfg.Telemetry.Metrics.Listen != "" {
+			metricsMux := http.NewServeMux()
+			metricsMux.Handle(cfg.Telemetry.Metrics.Path, promhttp.Handler())
+			metricsServer := &http.Server{
+				Addr:    cfg.Telemetry.Metrics.Listen,
+				Handler: metricsMux,
+			}
+			go func() {
+				slog.InfoContext(ctx, "Metrics endpoint enabled on separate listener",
+					"listen", cfg.Telemetry.Metrics.Listen, "path", cfg.Telemetry.Metrics.Path)
+				if err := metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+					slog.ErrorContext(ctx, "Metrics listener failed", "error", err)
+				}
+			}()
+			go func() {
+				<-ctx.Done()
+				shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				_ = metricsServer.Shutdown(shutdownCtx)
+			}()
+		} else {
+			mux.Handle(cfg.Telemetry.Metrics.Path, promhttp.Handler())
+			slog.InfoContext(ctx, "Metrics endpoint enabled", "path", cfg.Telemetry.Metrics.Path)
+		}
 	}
 
 	// Liveness endpoint — always 200 so the service stays in Consul/K8s rotation.
-	// Body reflects DB state for monitoring; instance ID aids multi-instance debugging.
+	// Body reflects DB state for monitoring.
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		status := "ok"
 		if !cbStore.IsHealthy() {
@@ -369,7 +387,7 @@ func runServe() {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, _ = fmt.Fprintf(w, `{"status":%q,"instance":%q}`, status, instanceID)
+		_, _ = fmt.Fprintf(w, `{"status":%q}`, status)
 	})
 
 	// Readiness endpoint — returns 503 until startup completes and during shutdown drain.
@@ -377,11 +395,11 @@ func runServe() {
 		w.Header().Set("Content-Type", "application/json")
 		if !ready.Load() {
 			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = fmt.Fprintf(w, `{"status":"not ready","instance":%q}`, instanceID)
+			_, _ = io.WriteString(w, `{"status":"not ready"}`)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		_, _ = fmt.Fprintf(w, `{"status":"ready","instance":%q}`, instanceID)
+		_, _ = io.WriteString(w, `{"status":"ready"}`)
 	})
 
 	// --- Rate limiter (shared by S3 proxy and admin API) ---

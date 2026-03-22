@@ -167,6 +167,16 @@ Provide the environment variables via systemd `EnvironmentFile`, Vault agent inj
 - **Storage backends** (if self-hosted like MinIO) should only be reachable from orchestrator instances.
 - **The orchestrator** is the only component that needs to be exposed to clients.
 - **Admin API** (`/admin/api/`) is protected by token auth and per-IP rate limiting (when enabled). Consider additionally restricting access at the network level (firewall rules or reverse proxy ACLs) for defense in depth.
+- **Metrics endpoint** (`/metrics`) exposes backend names, quota utilization, replication factor, and circuit breaker state. Bind it to an internal-only address to prevent public access:
+
+  ```yaml
+  telemetry:
+    metrics:
+      enabled: true
+      listen: "127.0.0.1:9091"  # only reachable from localhost / internal network
+  ```
+
+  When `listen` is set, `/metrics` is not served on the main S3 port. Prometheus scrapes from the internal address instead.
 
 ### Kubernetes Hardening
 
