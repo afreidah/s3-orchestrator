@@ -15,9 +15,9 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
     background: #161b22; border: 1px solid #30363d; border-radius: 6px;
     box-shadow: 0 4px 16px rgba(0,0,0,0.4); display: none;
   }
-  #ac-tooltip a { color: #58a6ff; text-decoration: none; }
+  #ac-tooltip a { color: #34b882; text-decoration: none; }
   #ac-tooltip a:hover { text-decoration: underline; }
-  #ac-tooltip h3 { color: #58a6ff; font-size: 0.85rem; margin: 0 0 0.25rem 0; }
+  #ac-tooltip h3 { color: #2a9d73; font-size: 0.85rem; margin: 0 0 0.25rem 0; }
   #ac-tooltip .ac-badge {
     display: inline-block; padding: 1px 7px; border-radius: 4px;
     font-size: 0.6rem; font-weight: 600; margin-bottom: 0.4rem; text-transform: uppercase;
@@ -27,12 +27,12 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
   .ac-badge-usage { background: #9e6a0322; color: #d29922; border: 1px solid #d2992255; }
   .ac-badge-cleanup { background: #da363322; color: #f85149; border: 1px solid #f8514955; }
   #ac-tooltip p { font-size: 0.75rem; line-height: 1.4; color: #c9d1d9; margin-bottom: 0.35rem; }
-  #ac-tooltip code { background: #21262d; padding: 1px 4px; border-radius: 3px; font-size: 0.7rem; color: #79c0ff; }
-  #ac-tooltip .ac-metric { color: #d2a8ff; font-style: italic; font-size: 0.7rem; }
+  #ac-tooltip code { background: #21262d; padding: 1px 4px; border-radius: 3px; font-size: 0.7rem; color: #4aaa8a; }
+  #ac-tooltip .ac-metric { color: #a7d5c1; font-style: italic; font-size: 0.7rem; }
   #ac-tooltip table.ac-cols { width: 100%; border-collapse: collapse; margin: 0.3rem 0; font-size: 0.68rem; }
   #ac-tooltip table.ac-cols th { text-align: left; color: #8b949e; font-weight: 600; padding: 2px 6px 2px 0; border-bottom: 1px solid #30363d; }
   #ac-tooltip table.ac-cols td { padding: 1px 6px 1px 0; color: #c9d1d9; }
-  #ac-tooltip table.ac-cols td:first-child { color: #79c0ff; font-family: monospace; }
+  #ac-tooltip table.ac-cols td:first-child { color: #4aaa8a; font-family: monospace; }
   #ac-tooltip table.ac-cols td.pk { color: #f0883e; }
   #ac-tooltip table.ac-cols td.fk { color: #bc8cff; }
   #ac-tooltip .ac-idx { color: #8b949e; font-size: 0.66rem; margin-top: 0.2rem; }
@@ -64,6 +64,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
     '        BYTEA encryption_key',
     '        TEXT key_id',
     '        BIGINT plaintext_size',
+    '        TEXT content_hash',
     '        TIMESTAMPTZ created_at',
     '    }',
     '',
@@ -153,6 +154,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
         '<tr><td>encryption_key</td><td>BYTEA</td><td>Packed nonce + wrapped DEK</td></tr>' +
         '<tr><td>key_id</td><td>TEXT</td><td>KMS/Vault key version identifier</td></tr>' +
         '<tr><td>plaintext_size</td><td>BIGINT</td><td>Original size before encryption</td></tr>' +
+        '<tr><td>content_hash</td><td>TEXT</td><td>SHA-256 hex digest of plaintext (nullable)</td></tr>' +
         '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>Insert timestamp</td></tr></table>' +
         '<p class="ac-idx"><b>Indexes:</b> PK (object_key, backend_name) &bull; idx_object_locations_backend (backend_name) &bull; idx_object_locations_key_pattern (object_key text_pattern_ops) &bull; idx_object_locations_created (created_at)</p>' +
         '<p>Used by: <a href="../write-path/">write path</a> (RecordObject), <a href="../read-path/">read path</a> (GetAllObjectLocations), <a href="../background-services/">replicator</a> (GetUnderReplicatedObjects), directory tree listing, <a href="../encryption/">key rotation</a>.</p>' +
@@ -299,11 +301,11 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
 
 | Symbol | Meaning |
 |--------|---------|
-| <span style="color:#58a6ff">**PK**</span> | Primary key column |
-| <span style="color:#bc8cff">**FK**</span> | Foreign key reference |
+| <span style="color:#2a9d73">**PK**</span> | Primary key column |
+| <span style="color:#5ec9a0">**FK**</span> | Foreign key reference |
 | `\|\|--o{` | One-to-many relationship |
 | <span style="color:#f0883e">**BIGSERIAL**</span> | Auto-incrementing surrogate key |
-| <span style="color:#79c0ff">**text_pattern_ops**</span> | B-tree index optimized for LIKE prefix queries |
+| <span style="color:#4aaa8a">**text_pattern_ops**</span> | B-tree index optimized for LIKE prefix queries |
 
 ### Table Summary
 
@@ -324,3 +326,4 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
 | `00002_multipart_metadata` | Add `metadata` JSONB column to `multipart_uploads` |
 | `00003_add_encryption` | Add encryption columns to `object_locations` and `multipart_parts` |
 | `00004_add_orphan_bytes` | Add `orphan_bytes` to `backend_quotas` and `size_bytes` to `cleanup_queue` |
+| `00005_add_content_hash` | Add `content_hash` to `object_locations` for integrity verification |

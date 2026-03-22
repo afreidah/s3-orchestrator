@@ -83,7 +83,7 @@ func (q *Queries) DeleteObjectLocationsByBackend(ctx context.Context, backendNam
 }
 
 const getAllObjectLocations = `-- name: GetAllObjectLocations :many
-SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, created_at
+SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at
 FROM object_locations
 WHERE object_key = $1
 ORDER BY created_at ASC
@@ -97,6 +97,7 @@ type GetAllObjectLocationsRow struct {
 	EncryptionKey []byte
 	KeyID         *string
 	PlaintextSize *int64
+	ContentHash   *string
 	CreatedAt     pgtype.Timestamptz
 }
 
@@ -117,6 +118,7 @@ func (q *Queries) GetAllObjectLocations(ctx context.Context, objectKey string) (
 			&i.EncryptionKey,
 			&i.KeyID,
 			&i.PlaintextSize,
+			&i.ContentHash,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -219,9 +221,116 @@ func (q *Queries) GetExistingCopiesForUpdate(ctx context.Context, objectKey stri
 	return items, nil
 }
 
+const getObjectsWithoutHash = `-- name: GetObjectsWithoutHash :many
+SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at
+FROM object_locations
+WHERE content_hash IS NULL
+ORDER BY created_at ASC
+LIMIT $1 OFFSET $2
+`
+
+type GetObjectsWithoutHashParams struct {
+	Limit  int32
+	Offset int32
+}
+
+type GetObjectsWithoutHashRow struct {
+	ObjectKey     string
+	BackendName   string
+	SizeBytes     int64
+	Encrypted     bool
+	EncryptionKey []byte
+	KeyID         *string
+	PlaintextSize *int64
+	ContentHash   *string
+	CreatedAt     pgtype.Timestamptz
+}
+
+// Return object locations that have no content hash, for backfill.
+func (q *Queries) GetObjectsWithoutHash(ctx context.Context, arg GetObjectsWithoutHashParams) ([]GetObjectsWithoutHashRow, error) {
+	rows, err := q.db.Query(ctx, getObjectsWithoutHash, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetObjectsWithoutHashRow{}
+	for rows.Next() {
+		var i GetObjectsWithoutHashRow
+		if err := rows.Scan(
+			&i.ObjectKey,
+			&i.BackendName,
+			&i.SizeBytes,
+			&i.Encrypted,
+			&i.EncryptionKey,
+			&i.KeyID,
+			&i.PlaintextSize,
+			&i.ContentHash,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getRandomHashedObjects = `-- name: GetRandomHashedObjects :many
+SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at
+FROM object_locations
+WHERE content_hash IS NOT NULL
+ORDER BY random()
+LIMIT $1
+`
+
+type GetRandomHashedObjectsRow struct {
+	ObjectKey     string
+	BackendName   string
+	SizeBytes     int64
+	Encrypted     bool
+	EncryptionKey []byte
+	KeyID         *string
+	PlaintextSize *int64
+	ContentHash   *string
+	CreatedAt     pgtype.Timestamptz
+}
+
+// Return random object locations that have a content hash, for scrubber verification.
+func (q *Queries) GetRandomHashedObjects(ctx context.Context, limit int32) ([]GetRandomHashedObjectsRow, error) {
+	rows, err := q.db.Query(ctx, getRandomHashedObjects, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetRandomHashedObjectsRow{}
+	for rows.Next() {
+		var i GetRandomHashedObjectsRow
+		if err := rows.Scan(
+			&i.ObjectKey,
+			&i.BackendName,
+			&i.SizeBytes,
+			&i.Encrypted,
+			&i.EncryptionKey,
+			&i.KeyID,
+			&i.PlaintextSize,
+			&i.ContentHash,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const insertObjectLocation = `-- name: InsertObjectLocation :exec
-INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
 `
 
 type InsertObjectLocationParams struct {
@@ -232,6 +341,7 @@ type InsertObjectLocationParams struct {
 	EncryptionKey []byte
 	KeyID         *string
 	PlaintextSize *int64
+	ContentHash   *string
 }
 
 func (q *Queries) InsertObjectLocation(ctx context.Context, arg InsertObjectLocationParams) error {
@@ -243,13 +353,14 @@ func (q *Queries) InsertObjectLocation(ctx context.Context, arg InsertObjectLoca
 		arg.EncryptionKey,
 		arg.KeyID,
 		arg.PlaintextSize,
+		arg.ContentHash,
 	)
 	return err
 }
 
 const insertObjectLocationIfNotExists = `-- name: InsertObjectLocationIfNotExists :one
-INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
 ON CONFLICT (object_key, backend_name) DO NOTHING
 RETURNING true AS inserted
 `
@@ -262,6 +373,7 @@ type InsertObjectLocationIfNotExistsParams struct {
 	EncryptionKey []byte
 	KeyID         *string
 	PlaintextSize *int64
+	ContentHash   *string
 }
 
 func (q *Queries) InsertObjectLocationIfNotExists(ctx context.Context, arg InsertObjectLocationIfNotExistsParams) (bool, error) {
@@ -273,6 +385,7 @@ func (q *Queries) InsertObjectLocationIfNotExists(ctx context.Context, arg Inser
 		arg.EncryptionKey,
 		arg.KeyID,
 		arg.PlaintextSize,
+		arg.ContentHash,
 	)
 	var inserted bool
 	err := row.Scan(&inserted)
@@ -563,7 +676,7 @@ func (q *Queries) LockObjectKeyForWrite(ctx context.Context, hashtext string) er
 }
 
 const lockObjectOnBackend = `-- name: LockObjectOnBackend :one
-SELECT size_bytes, encrypted, encryption_key, key_id, plaintext_size
+SELECT size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash
 FROM object_locations
 WHERE object_key = $1 AND backend_name = $2
 FOR UPDATE
@@ -580,6 +693,7 @@ type LockObjectOnBackendRow struct {
 	EncryptionKey []byte
 	KeyID         *string
 	PlaintextSize *int64
+	ContentHash   *string
 }
 
 func (q *Queries) LockObjectOnBackend(ctx context.Context, arg LockObjectOnBackendParams) (LockObjectOnBackendRow, error) {
@@ -591,6 +705,7 @@ func (q *Queries) LockObjectOnBackend(ctx context.Context, arg LockObjectOnBacke
 		&i.EncryptionKey,
 		&i.KeyID,
 		&i.PlaintextSize,
+		&i.ContentHash,
 	)
 	return i, err
 }
@@ -623,6 +738,23 @@ func (q *Queries) MarkObjectEncrypted(ctx context.Context, arg MarkObjectEncrypt
 		arg.PlaintextSize,
 		arg.SizeBytes,
 	)
+	return err
+}
+
+const updateContentHash = `-- name: UpdateContentHash :exec
+UPDATE object_locations
+SET content_hash = $3
+WHERE object_key = $1 AND backend_name = $2
+`
+
+type UpdateContentHashParams struct {
+	ObjectKey   string
+	BackendName string
+	ContentHash *string
+}
+
+func (q *Queries) UpdateContentHash(ctx context.Context, arg UpdateContentHashParams) error {
+	_, err := q.db.Exec(ctx, updateContentHash, arg.ObjectKey, arg.BackendName, arg.ContentHash)
 	return err
 }
 

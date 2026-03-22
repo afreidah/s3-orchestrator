@@ -63,7 +63,8 @@ job "s3-orchestrator" {
       }
 
       env {
-        GOMEMLIMIT = "1843MiB"
+        GOMEMLIMIT  = "1843MiB"
+        GOMAXPROCS  = "2"
       }
 
       template {
@@ -140,6 +141,13 @@ job "s3-orchestrator" {
           encryption:
             enabled: true
             master_key: "F2rpnHM7TmwJ4/DalNfk0cvCCPmHTfvB9LyhBLPoCVc="
+            chunk_size: 262144
+
+          integrity:
+            enabled: true
+            verify_on_read: true
+            scrubber_interval: "1h"
+            scrubber_batch_size: 50
 
           circuit_breaker:
             failure_threshold: 3

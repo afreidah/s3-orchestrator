@@ -364,3 +364,30 @@ func newReconcileService(reconciler *worker.Reconciler, locker store.AdvisoryLoc
 		},
 	}
 }
+
+func newScrubberService(manager *proxy.BackendManager, locker store.AdvisoryLocker) *lockedTickerService {
+	interval := 6 * time.Hour
+	if icfg := manager.Scrubber.Config(); icfg != nil && icfg.ScrubberInterval > 0 {
+		interval = icfg.ScrubberInterval
+	}
+	return &lockedTickerService{
+		locker:   locker,
+		interval: interval,
+		lockID:   store.LockScrubber,
+		name:     "Scrubber",
+		shouldRun: func() bool {
+			icfg := manager.Scrubber.Config()
+			return icfg != nil && icfg.Enabled && icfg.ScrubberInterval > 0
+		},
+		work: func(ctx context.Context) {
+			icfg := manager.Scrubber.Config()
+			if icfg == nil {
+				return
+			}
+			checked, failed := manager.Scrubber.Scrub(ctx, icfg.ScrubberBatchSize)
+			if checked > 0 || failed > 0 {
+				slog.InfoContext(ctx, "Scrubber completed", "checked", checked, "failed", failed)
+			}
+		},
+	}
+}

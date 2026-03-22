@@ -67,4 +67,5 @@ type ObjectLocation struct {
 	EncryptionKey []byte
 	KeyID         *string
 	PlaintextSize *int64
+	ContentHash   *string
 }

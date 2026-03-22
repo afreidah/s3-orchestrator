@@ -29,7 +29,7 @@ func (q *Queries) CountOverReplicatedObjects(ctx context.Context, factor int64) 
 }
 
 const getObjectCopiesForUpdate = `-- name: GetObjectCopiesForUpdate :many
-SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, created_at
+SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at
 FROM object_locations
 WHERE object_key = $1
 FOR UPDATE
@@ -43,6 +43,7 @@ type GetObjectCopiesForUpdateRow struct {
 	EncryptionKey []byte
 	KeyID         *string
 	PlaintextSize *int64
+	ContentHash   *string
 	CreatedAt     pgtype.Timestamptz
 }
 
@@ -63,6 +64,7 @@ func (q *Queries) GetObjectCopiesForUpdate(ctx context.Context, objectKey string
 			&i.EncryptionKey,
 			&i.KeyID,
 			&i.PlaintextSize,
+			&i.ContentHash,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -83,7 +85,7 @@ WITH over_replicated AS (
     HAVING COUNT(*) > $1::bigint
     LIMIT $2
 )
-SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.created_at
+SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.created_at
 FROM object_locations ol
 JOIN over_replicated orep ON ol.object_key = orep.object_key
 ORDER BY ol.object_key, ol.created_at ASC
@@ -102,6 +104,7 @@ type GetOverReplicatedObjectsRow struct {
 	EncryptionKey []byte
 	KeyID         *string
 	PlaintextSize *int64
+	ContentHash   *string
 	CreatedAt     pgtype.Timestamptz
 }
 
@@ -122,6 +125,7 @@ func (q *Queries) GetOverReplicatedObjects(ctx context.Context, arg GetOverRepli
 			&i.EncryptionKey,
 			&i.KeyID,
 			&i.PlaintextSize,
+			&i.ContentHash,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -142,7 +146,7 @@ WITH under_replicated AS (
     HAVING COUNT(*) < $1::bigint
     LIMIT $2
 )
-SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.created_at
+SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.created_at
 FROM object_locations ol
 JOIN under_replicated ur ON ol.object_key = ur.object_key
 ORDER BY ol.object_key, ol.created_at ASC
@@ -161,6 +165,7 @@ type GetUnderReplicatedObjectsRow struct {
 	EncryptionKey []byte
 	KeyID         *string
 	PlaintextSize *int64
+	ContentHash   *string
 	CreatedAt     pgtype.Timestamptz
 }
 
@@ -181,6 +186,7 @@ func (q *Queries) GetUnderReplicatedObjects(ctx context.Context, arg GetUnderRep
 			&i.EncryptionKey,
 			&i.KeyID,
 			&i.PlaintextSize,
+			&i.ContentHash,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -202,7 +208,7 @@ WITH under_replicated AS (
     HAVING COUNT(*) < $2::bigint
     LIMIT $3
 )
-SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.created_at
+SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.created_at
 FROM object_locations ol
 JOIN under_replicated ur ON ol.object_key = ur.object_key
 ORDER BY ol.object_key, ol.created_at ASC
@@ -222,6 +228,7 @@ type GetUnderReplicatedObjectsExcludingRow struct {
 	EncryptionKey []byte
 	KeyID         *string
 	PlaintextSize *int64
+	ContentHash   *string
 	CreatedAt     pgtype.Timestamptz
 }
 
@@ -242,6 +249,7 @@ func (q *Queries) GetUnderReplicatedObjectsExcluding(ctx context.Context, arg Ge
 			&i.EncryptionKey,
 			&i.KeyID,
 			&i.PlaintextSize,
+			&i.ContentHash,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -255,8 +263,8 @@ func (q *Queries) GetUnderReplicatedObjectsExcluding(ctx context.Context, arg Ge
 }
 
 const insertReplicaConditional = `-- name: InsertReplicaConditional :one
-INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, created_at)
-SELECT $1, $2, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, NOW()
+INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at)
+SELECT $1, $2, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, NOW()
 FROM object_locations ol
 WHERE ol.object_key = $1 AND ol.backend_name = $3
 ON CONFLICT (object_key, backend_name) DO NOTHING

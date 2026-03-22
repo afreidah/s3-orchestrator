@@ -114,6 +114,11 @@ type MetadataStore interface {
 	// --- Import (sync CLI) ---
 	ImportObject(ctx context.Context, key, backend string, size int64) (bool, error)
 
+	// --- Integrity verification ---
+	GetRandomHashedObjects(ctx context.Context, limit int) ([]ObjectLocation, error)
+	GetObjectsWithoutHash(ctx context.Context, limit, offset int) ([]ObjectLocation, error)
+	UpdateContentHash(ctx context.Context, key, backendName, hash string) error
+
 	// --- Backend lifecycle ---
 	BackendObjectStats(ctx context.Context, backendName string) (int64, int64, error)
 	DeleteBackendData(ctx context.Context, backendName string) error
@@ -196,8 +201,8 @@ var (
 // GroupByKey groups a flat list of object locations into a map keyed by object_key.
 func GroupByKey(locations []ObjectLocation) map[string][]ObjectLocation {
 	m := make(map[string][]ObjectLocation, len(locations)/2)
-	for _, loc := range locations {
-		m[loc.ObjectKey] = append(m[loc.ObjectKey], loc)
+	for i := range locations {
+		m[locations[i].ObjectKey] = append(m[locations[i].ObjectKey], locations[i])
 	}
 	return m
 }

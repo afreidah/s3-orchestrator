@@ -42,6 +42,8 @@ Commands:
   drain-status        Check drain progress (requires backend name arg)
   drain-cancel        Cancel an active drain (requires backend name arg)
   remove-backend      Remove a backend and its data (requires backend name arg, --purge to delete S3 objects)
+  scrub               Trigger an on-demand integrity scrub cycle (use -batch-size to override)
+  backfill-checksums  Compute and store content hashes for all unhashed objects (use -batch-size to control pace)
 
 Flags:
 `)
@@ -161,6 +163,32 @@ func adminCommand(cmd string, args []string, baseAddr, token string, stdout, std
 			return 1
 		}
 		return doDelete(baseAddr+"/admin/api/backends/"+args[0]+"/drain", token, stdout, stderr)
+
+	case "scrub":
+		fs := flag.NewFlagSet("scrub", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		batchSize := fs.Int("batch-size", 0, "Number of objects to verify (0 = use server default)")
+		if err := fs.Parse(args); err != nil {
+			return 1
+		}
+		url := baseAddr + "/admin/api/scrub"
+		if *batchSize > 0 {
+			url += fmt.Sprintf("?batch_size=%d", *batchSize)
+		}
+		return doPost(url, "", token, stdout, stderr)
+
+	case "backfill-checksums":
+		fs := flag.NewFlagSet("backfill-checksums", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		batchSize := fs.Int("batch-size", 100, "Objects per batch")
+		if err := fs.Parse(args); err != nil {
+			return 1
+		}
+		url := baseAddr + "/admin/api/backfill-checksums"
+		if *batchSize != 100 {
+			url += fmt.Sprintf("?batch_size=%d", *batchSize)
+		}
+		return doPost(url, "", token, stdout, stderr)
 
 	case "remove-backend":
 		fs := flag.NewFlagSet("remove-backend", flag.ContinueOnError)

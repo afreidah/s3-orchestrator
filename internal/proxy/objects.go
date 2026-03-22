@@ -24,6 +24,7 @@ import (
 	"time"
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/workerpool"
 
@@ -44,15 +45,17 @@ type ObjectManager struct {
 	encryptor         *encryption.Encryptor
 	cache             *LocationCache
 	parallelBroadcast bool
+	integrityCfg      func() *config.IntegrityConfig
 }
 
 // NewObjectManager creates an ObjectManager sharing the given core infrastructure.
-func NewObjectManager(core *backendCore, encryptor *encryption.Encryptor, cache *LocationCache, parallelBroadcast bool) *ObjectManager {
+func NewObjectManager(core *backendCore, encryptor *encryption.Encryptor, cache *LocationCache, parallelBroadcast bool, integrityCfg func() *config.IntegrityConfig) *ObjectManager {
 	return &ObjectManager{
 		backendCore:       core,
 		encryptor:         encryptor,
 		cache:             cache,
 		parallelBroadcast: parallelBroadcast,
+		integrityCfg:      integrityCfg,
 	}
 }
 
@@ -113,6 +116,12 @@ func (o *ObjectManager) PutObject(ctx context.Context, key string, body io.Reade
 	}
 	bodyBytes := buf.Bytes()
 
+	// --- Compute content hash if integrity is enabled ---
+	var contentHash string
+	if icfg := o.integrityCfg(); icfg != nil && icfg.Enabled {
+		contentHash = HashBody(bodyBytes)
+	}
+
 	// --- Try eligible backends with failover ---
 	var failedBackends []string
 	var lastErr error
@@ -149,7 +158,10 @@ func (o *ObjectManager) PutObject(ctx context.Context, key string, body io.Reade
 				EncryptionKey: encryption.PackKeyData(encResult.BaseNonce, encResult.WrappedDEK),
 				KeyID:         encResult.KeyID,
 				PlaintextSize: size,
+				ContentHash:   contentHash,
 			}
+		} else if contentHash != "" {
+			enc = &store.EncryptionMeta{ContentHash: contentHash}
 		}
 
 		// --- Upload to backend ---
@@ -248,17 +260,17 @@ func (o *ObjectManager) withReadFailover(ctx context.Context, operation, key str
 
 	var lastErr error
 	var limitSkips int
-	for i, loc := range locations {
-		span.SetAttributes(telemetry.AttrBackendName.String(loc.BackendName))
+	for i := range locations {
+		span.SetAttributes(telemetry.AttrBackendName.String(locations[i].BackendName))
 
-		backend, ok := o.backends[loc.BackendName]
+		backend, ok := o.backends[locations[i].BackendName]
 		if !ok {
-			lastErr = fmt.Errorf("backend %s not found", loc.BackendName)
+			lastErr = fmt.Errorf("backend %s not found", locations[i].BackendName)
 			continue
 		}
 
 		bctx, bcancel := o.withTimeout(ctx)
-		size, err := tryBackend(bctx, loc.BackendName, backend)
+		size, err := tryBackend(bctx, locations[i].BackendName, backend)
 		if err != nil {
 			bcancel()
 			lastErr = err
@@ -267,18 +279,18 @@ func (o *ObjectManager) withReadFailover(ctx context.Context, operation, key str
 			}
 			if i < len(locations)-1 {
 				slog.WarnContext(ctx, operation+": copy failed, trying next",
-					"key", key, "failed_backend", loc.BackendName, "error", err)
+					"key", key, "failed_backend", locations[i].BackendName, "error", err)
 			}
 			continue
 		}
 
-		o.recordOperation(operation, loc.BackendName, start, nil)
+		o.recordOperation(operation, locations[i].BackendName, start, nil)
 		if i > 0 {
 			span.SetAttributes(telemetry.AttrFailover.Bool(true))
 		}
 		span.SetAttributes(telemetry.AttrObjectSize.Int64(size))
 		span.SetStatus(codes.Ok, "")
-		return loc.BackendName, nil
+		return locations[i].BackendName, nil
 	}
 
 	// All copies were on over-limit backends — return the usage limit error
@@ -529,6 +541,25 @@ func (o *ObjectManager) GetObject(ctx context.Context, key string, rangeHeader s
 			}
 		}
 
+		// Wrap with integrity verification if enabled
+		if icfg := o.integrityCfg(); icfg != nil && icfg.Enabled && icfg.VerifyOnRead {
+			expectedHash := ""
+			if loc != nil {
+				expectedHash = loc.ContentHash
+			}
+			if expectedHash != "" {
+				vr := NewVerifyingReader(r.Body)
+				vr.SetVerification(expectedHash, func(expected, actual string) {
+					slog.ErrorContext(ctx, "Integrity check failed on read",
+						"key", key, "backend", beName,
+						"expected_hash", expected, "actual_hash", actual)
+					telemetry.IntegrityErrorsTotal.WithLabelValues("read").Inc()
+					o.deleteOrEnqueue(ctx, backend, beName, key, "integrity_failed", r.Size)
+				})
+				r.Body = vr
+			}
+		}
+
 		once.Do(func() { result = r })
 		if result != r {
 			_ = r.Body.Close()
@@ -633,11 +664,11 @@ func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey strin
 	var metadata map[string]string
 	var srcFound bool
 	var srcEnc *store.EncryptionMeta
-	for _, loc := range locations {
-		if !o.usage.WithinLimits(loc.BackendName, 1, 0, 0) {
+	for i := range locations {
+		if !o.usage.WithinLimits(locations[i].BackendName, 1, 0, 0) {
 			continue
 		}
-		backend, ok := o.backends[loc.BackendName]
+		backend, ok := o.backends[locations[i].BackendName]
 		if !ok {
 			continue
 		}
@@ -651,12 +682,12 @@ func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey strin
 		contentType = headResult.ContentType
 		metadata = headResult.Metadata
 		srcFound = true
-		if loc.Encrypted {
+		if locations[i].Encrypted {
 			srcEnc = &store.EncryptionMeta{
 				Encrypted:     true,
-				EncryptionKey: loc.EncryptionKey,
-				KeyID:         loc.KeyID,
-				PlaintextSize: loc.PlaintextSize,
+				EncryptionKey: locations[i].EncryptionKey,
+				KeyID:         locations[i].KeyID,
+				PlaintextSize: locations[i].PlaintextSize,
 			}
 		}
 		break
@@ -697,11 +728,11 @@ func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey strin
 			bufpool.PutWriter(bw)
 			_ = pw.Close()
 		}()
-		for _, loc := range locations {
-			if !o.usage.WithinLimits(loc.BackendName, 1, size, 0) {
+		for li := range locations {
+			if !o.usage.WithinLimits(locations[li].BackendName, 1, size, 0) {
 				continue
 			}
-			srcBackend, ok := o.backends[loc.BackendName]
+			srcBackend, ok := o.backends[locations[li].BackendName]
 			if !ok {
 				continue
 			}
@@ -711,7 +742,7 @@ func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey strin
 				bcancel()
 				continue
 			}
-			srcBackendCh <- loc.BackendName
+			srcBackendCh <- locations[li].BackendName
 			_, copyErr := bufpool.Copy(bw, result.Body)
 			_ = result.Body.Close()
 			bcancel()
@@ -1008,18 +1039,18 @@ func (o *ObjectManager) ListObjects(ctx context.Context, prefix, delimiter, star
 		// continuation token lands after the entire prefix group, not
 		// in the middle of one.
 		var lastKey string
-		for _, obj := range storeResult.Objects {
+		for oi := range storeResult.Objects {
 			// Check CommonPrefix membership before the limit check so
 			// objects that collapse into an already-counted prefix are
 			// skipped without triggering premature truncation.
 			if delimiter != "" {
-				rest := obj.ObjectKey[len(prefix):]
+				rest := storeResult.Objects[oi].ObjectKey[len(prefix):]
 				idx := strings.Index(rest, delimiter)
 				if idx >= 0 {
-					cp := obj.ObjectKey[:len(prefix)+idx+len(delimiter)]
+					cp := storeResult.Objects[oi].ObjectKey[:len(prefix)+idx+len(delimiter)]
 					if seen[cp] {
 						// Same prefix already counted — skip silently
-						lastKey = obj.ObjectKey
+						lastKey = storeResult.Objects[oi].ObjectKey
 						continue
 					}
 					// New prefix would add an entry — enforce limit
@@ -1031,7 +1062,7 @@ func (o *ObjectManager) ListObjects(ctx context.Context, prefix, delimiter, star
 					seen[cp] = true
 					result.CommonPrefixes = append(result.CommonPrefixes, cp)
 					result.KeyCount++
-					lastKey = obj.ObjectKey
+					lastKey = storeResult.Objects[oi].ObjectKey
 					continue
 				}
 			}
@@ -1043,9 +1074,9 @@ func (o *ObjectManager) ListObjects(ctx context.Context, prefix, delimiter, star
 				break
 			}
 
-			result.Objects = append(result.Objects, obj)
+			result.Objects = append(result.Objects, storeResult.Objects[oi])
 			result.KeyCount++
-			lastKey = obj.ObjectKey
+			lastKey = storeResult.Objects[oi].ObjectKey
 		}
 
 		if result.IsTruncated || !storeResult.IsTruncated {

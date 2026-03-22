@@ -14,25 +14,25 @@ Three-state circuit breaker state machine shared by the database wrapper (`Circu
     background: #161b22; border: 1px solid #30363d; border-radius: 6px;
     box-shadow: 0 4px 16px rgba(0,0,0,0.4); display: none;
   }
-  #ac-tooltip h3 { color: #58a6ff; font-size: 0.85rem; margin: 0 0 0.25rem 0; }
+  #ac-tooltip h3 { color: #2a9d73; font-size: 0.85rem; margin: 0 0 0.25rem 0; }
   #ac-tooltip .ac-badge {
     display: inline-block; padding: 1px 7px; border-radius: 4px;
     font-size: 0.6rem; font-weight: 600; margin-bottom: 0.4rem; text-transform: uppercase;
   }
-  .ac-badge-entry { background: #1f6feb22; color: #58a6ff; border: 1px solid #58a6ff55; }
-  .ac-badge-filter { background: #9e6a0322; color: #d29922; border: 1px solid #d2992255; }
-  .ac-badge-decision { background: #58a6ff22; color: #58a6ff; border: 1px solid #58a6ff55; }
-  .ac-badge-process { background: #8957e522; color: #bc8cff; border: 1px solid #bc8cff55; }
-  .ac-badge-storage { background: #0d419d22; color: #79c0ff; border: 1px solid #79c0ff55; }
-  .ac-badge-success { background: #23863622; color: #3fb950; border: 1px solid #3fb95055; }
-  .ac-badge-reject { background: #da363322; color: #f85149; border: 1px solid #f8514955; }
-  .ac-badge-cleanup { background: #8b949e22; color: #8b949e; border: 1px solid #8b949e55; }
+  .ac-badge-entry { background: #1a7a5a22; color: #34b882; border: 1px solid #34b88255; }
+  .ac-badge-filter { background: #6b5b2e22; color: #c4a35a; border: 1px solid #c4a35a55; }
+  .ac-badge-decision { background: #2a9d7322; color: #2a9d73; border: 1px solid #2a9d7355; }
+  .ac-badge-process { background: #2d7d6a22; color: #5ec9a0; border: 1px solid #5ec9a055; }
+  .ac-badge-storage { background: #1a3a3022; color: #4aaa8a; border: 1px solid #4aaa8a55; }
+  .ac-badge-success { background: #1a7a5a22; color: #34b882; border: 1px solid #34b88255; }
+  .ac-badge-reject { background: #8b3a3a22; color: #d4a0a0; border: 1px solid #d4a0a055; }
+  .ac-badge-cleanup { background: #4a556822; color: #8a9aa8; border: 1px solid #8a9aa855; }
   #ac-tooltip p { font-size: 0.75rem; line-height: 1.4; color: #c9d1d9; margin-bottom: 0.35rem; }
-  #ac-tooltip code { background: #21262d; padding: 1px 4px; border-radius: 3px; font-size: 0.7rem; color: #79c0ff; }
-  #ac-tooltip .ac-metric { color: #d2a8ff; font-style: italic; font-size: 0.7rem; }
+  #ac-tooltip code { background: #21262d; padding: 1px 4px; border-radius: 3px; font-size: 0.7rem; color: #4aaa8a; }
+  #ac-tooltip .ac-metric { color: #a7d5c1; font-style: italic; font-size: 0.7rem; }
   #ac-diagram .node, #ac-diagram .edgePath, #ac-diagram .edgeLabel { transition: opacity 0.15s, filter 0.15s; }
   #ac-diagram svg.highlighting .node, #ac-diagram svg.highlighting .edgePath, #ac-diagram svg.highlighting .edgeLabel { opacity: 0.12; }
-  #ac-diagram svg.highlighting .node.highlight, #ac-diagram svg.highlighting .edgePath.highlight, #ac-diagram svg.highlighting .edgeLabel.highlight { opacity: 1; filter: drop-shadow(0 0 6px rgba(88,166,255,0.5)); }
+  #ac-diagram svg.highlighting .node.highlight, #ac-diagram svg.highlighting .edgePath.highlight, #ac-diagram svg.highlighting .edgeLabel.highlight { opacity: 1; filter: drop-shadow(0 0 6px rgba(42,157,115,0.5)); }
   #ac-diagram .node { cursor: pointer; }
 </style>
 
@@ -71,14 +71,14 @@ Three-state circuit breaker state machine shared by the database wrapper (`Circu
     '    RECOVER --> RESET[Reset Failure\\nCounter]:::process',
     '    RESET --> SUCCESS',
     '',
-    '    classDef entry fill:#1f6feb,stroke:#1f6feb,color:#fff,font-weight:bold',
-    '    classDef filter fill:#9e6a03,stroke:#d29922,color:#fff',
-    '    classDef decision fill:#21262d,stroke:#58a6ff,color:#e6edf3,font-size:11px',
-    '    classDef process fill:#8957e5,stroke:#bc8cff,color:#fff',
-    '    classDef storage fill:#0d419d,stroke:#58a6ff,color:#c9d1d9',
-    '    classDef success fill:#238636,stroke:#3fb950,color:#fff,font-weight:bold',
-    '    classDef reject fill:#da3633,stroke:#f85149,color:#fff,font-weight:bold',
-    '    classDef cleanup fill:#21262d,stroke:#8b949e,color:#e6edf3'
+    '    classDef entry fill:#1a7a5a,stroke:#1a7a5a,color:#fff,font-weight:bold',
+    '    classDef filter fill:#6b5b2e,stroke:#c4a35a,color:#fff',
+    '    classDef decision fill:#1e2a26,stroke:#2a9d73,color:#e6edf3,font-size:11px',
+    '    classDef process fill:#2d7d6a,stroke:#5ec9a0,color:#fff',
+    '    classDef storage fill:#1a3a30,stroke:#4aaa8a,color:#c9d1d9',
+    '    classDef success fill:#1a7a5a,stroke:#34b882,color:#fff,font-weight:bold',
+    '    classDef reject fill:#8b3a3a,stroke:#d4a0a0,color:#fff,font-weight:bold',
+    '    classDef cleanup fill:#222a26,stroke:#8a9aa8,color:#e6edf3'
   ].join('\n');
 
   mermaid.initialize({
@@ -251,10 +251,10 @@ Three-state circuit breaker state machine shared by the database wrapper (`Circu
 
 | Color | Meaning |
 |-------|---------|
-| <span style="color:#1f6feb">**Blue**</span> | Entry point |
-| <span style="color:#d29922">**Amber**</span> | Failure tracking |
-| <span style="color:#58a6ff">**Blue border**</span> | Decision / branch |
-| <span style="color:#bc8cff">**Purple**</span> | Processing step |
-| <span style="color:#3fb950">**Green**</span> | Success / recovery |
-| <span style="color:#f85149">**Red**</span> | Rejection / circuit open |
+| <span style="color:#1a7a5a">**Forest green**</span> | Entry point |
+| <span style="color:#c4a35a">**Amber**</span> | Failure tracking |
+| <span style="color:#2a9d73">**Green border**</span> | Decision / branch |
+| <span style="color:#5ec9a0">**Teal**</span> | Processing step |
+| <span style="color:#34b882">**Green**</span> | Success / recovery |
+| <span style="color:#d4a0a0">**Red**</span> | Rejection / circuit open |
 

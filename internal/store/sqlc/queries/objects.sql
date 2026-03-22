@@ -12,8 +12,8 @@ DELETE FROM object_locations
 WHERE object_key = $1;
 
 -- name: InsertObjectLocation :exec
-INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, NOW());
+INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW());
 
 -- name: ListObjectsByBackend :many
 SELECT object_key, backend_name, size_bytes, created_at
@@ -29,7 +29,7 @@ SELECT EXISTS(
 ) AS exists;
 
 -- name: LockObjectOnBackend :one
-SELECT size_bytes, encrypted, encryption_key, key_id, plaintext_size
+SELECT size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash
 FROM object_locations
 WHERE object_key = $1 AND backend_name = $2
 FOR UPDATE;
@@ -47,14 +47,14 @@ ORDER BY object_key, created_at ASC
 LIMIT @max_keys;
 
 -- name: GetAllObjectLocations :many
-SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, created_at
+SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at
 FROM object_locations
 WHERE object_key = $1
 ORDER BY created_at ASC;
 
 -- name: InsertObjectLocationIfNotExists :one
-INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
 ON CONFLICT (object_key, backend_name) DO NOTHING
 RETURNING true AS inserted;
 
@@ -125,6 +125,27 @@ SET encrypted = TRUE,
     key_id = $4,
     plaintext_size = $5,
     size_bytes = $6
+WHERE object_key = $1 AND backend_name = $2;
+
+-- name: GetRandomHashedObjects :many
+-- Return random object locations that have a content hash, for scrubber verification.
+SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at
+FROM object_locations
+WHERE content_hash IS NOT NULL
+ORDER BY random()
+LIMIT $1;
+
+-- name: GetObjectsWithoutHash :many
+-- Return object locations that have no content hash, for backfill.
+SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at
+FROM object_locations
+WHERE content_hash IS NULL
+ORDER BY created_at ASC
+LIMIT $1 OFFSET $2;
+
+-- name: UpdateContentHash :exec
+UPDATE object_locations
+SET content_hash = $3
 WHERE object_key = $1 AND backend_name = $2;
 
 -- name: ListDirectChildren :many
