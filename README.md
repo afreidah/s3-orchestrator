@@ -20,12 +20,39 @@ Built-in cross-backend replication also makes this an easy way to keep your data
 
 Objects are routed to backends based on the configured `routing_strategy`: **pack** (default) fills backends in config order, while **spread** places each write on the least-utilized backend by ratio. Metadata and quota tracking live in PostgreSQL; the backends only see standard S3 API calls. The orchestrator is fully S3-compatible and works with any standard S3 client.
 
-**Get started in under a minute:** `git clone`, `make run`, done. See the [Quickstart](docs/quickstart.md).
+## Getting Started
+
+**Prerequisites:** Go 1.26+, Docker, Make.
+
+```bash
+git clone https://github.com/afreidah/s3-orchestrator.git
+cd s3-orchestrator
+make run
+```
+
+This starts three MinIO backends, PostgreSQL, and Redis via Docker Compose, then launches the orchestrator on `localhost:9000`. Test it:
+
+```bash
+aws --endpoint-url http://localhost:9000 s3 cp /etc/hostname s3://photos/test.txt
+aws --endpoint-url http://localhost:9000 s3 ls s3://photos/
+```
+
+Default credentials: access key `photoskey`, secret `photossecret`. Web dashboard at [localhost:9000/ui/](http://localhost:9000/ui/) (login: `admin` / `admin`).
+
+See the [Quickstart](docs/quickstart.md) for full details, credentials for all buckets, and troubleshooting.
+
+**Other ways to install:**
+- Docker: `docker pull ghcr.io/afreidah/s3-orchestrator:<version>`
+- Debian: download `.deb` from [GitHub Releases](https://github.com/afreidah/s3-orchestrator/releases)
+- Binary: download from [GitHub Releases](https://github.com/afreidah/s3-orchestrator/releases)
+
+**Operational CLI:** `s3-orchestrator admin --help` for rebalance, drain, encryption management, and backend sync.
 
 ![Dashboard](docs/images/dashboard.png?v=2)
 
 ## Table of Contents
 
+- [Getting Started](#getting-started)
 - [Architecture](#architecture)
 - [S3 API Coverage](#s3-api-coverage)
 - [Authentication & Multi-Bucket](#authentication--multi-bucket)
