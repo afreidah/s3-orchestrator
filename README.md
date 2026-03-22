@@ -372,7 +372,7 @@ database:
   user: "s3proxy"
   password: "secret"
   ssl_mode: "require"
-  max_conns: 10
+  max_conns: 50               # default: 50; size to 2-3x max_concurrent_requests
   min_conns: 5
   max_conn_lifetime: "5m"
 

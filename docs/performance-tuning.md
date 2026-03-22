@@ -4,19 +4,32 @@ This guide covers configuration knobs that affect throughput, latency, and resou
 
 ```yaml
 database:
-  max_conns: 10          # max pool connections (default: 10)
+  max_conns: 50          # max pool connections (default: 50)
   min_conns: 5           # min idle connections (default: 5)
   max_conn_lifetime: "5m" # max connection age (default: 5m)
 ```
 
+### Sizing Formula
+
+Each S3 request uses at least one database connection. Background workers (rebalancer, replicator, cleanup, usage flush) each hold a connection during their tick. Advisory lock acquisition uses a dedicated connection.
+
+```
+max_conns = max_concurrent_requests + (active_workers × 2) + 10
+```
+
+| Workload | max_concurrent_requests | Recommended max_conns |
+|----------|------------------------|----------------------|
+| Dev / testing | 10 | 50 (default) |
+| Low traffic (<100 RPS) | 50 | 50 (default) |
+| Medium traffic (100–500 RPS) | 100 | 100–150 |
+| High traffic (500+ RPS) | 200+ | 200+ |
+
 ### Guidelines
 
-- **Single instance, 1-2 backends**: the defaults (10 max, 5 min) are sufficient for most workloads.
-- **Single instance, 3+ backends**: increase to `max_conns: 20` since each S3 operation involves at least one database query and concurrent requests multiply quickly.
 - **Multi-instance deployment**: divide your PostgreSQL `max_connections` across instances. Each instance's `max_conns` should be `(max_connections - 20) / instance_count` (reserve 20 for superuser and monitoring connections).
-- **High-throughput workloads** (1000+ requests/sec): increase `max_conns: 30-50` and monitor `pgx_pool_acquired_conns` / `pgx_pool_total_conns` in Prometheus.
 - `min_conns` keeps idle connections warm. Set it to roughly half of `max_conns` to avoid connection setup latency on traffic spikes.
 - `max_conn_lifetime` rotates connections to pick up DNS changes and distribute load across replicas. The 5-minute default works well in most environments.
+- Monitor `pgx_pool_acquired_conns` / `pgx_pool_total_conns` in Prometheus. If acquired consistently equals total, the pool is saturated.
 
 ## Admission Control
 
