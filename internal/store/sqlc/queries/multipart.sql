@@ -36,6 +36,10 @@ WHERE backend_name = $1;
 -- name: DeleteMultipartUploadsByBackend :exec
 DELETE FROM multipart_uploads WHERE backend_name = $1;
 
+-- name: CountActiveMultipartUploadsByPrefix :one
+SELECT COUNT(*) FROM multipart_uploads
+WHERE object_key LIKE @prefix || '%' ESCAPE '\';
+
 -- name: ListMultipartUploadsByPrefix :many
 SELECT upload_id, object_key, content_type, created_at
 FROM multipart_uploads

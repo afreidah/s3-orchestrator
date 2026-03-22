@@ -14,6 +14,7 @@ package server
 import (
 	"context"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -91,6 +92,18 @@ func (s *Server) handleCreateMultipartUpload(ctx context.Context, w http.Respons
 		if err := validateUserMetadata(metadata); err != nil {
 			writeS3Error(w, http.StatusBadRequest, "MetadataTooLarge", err.Error())
 			return http.StatusBadRequest, err
+		}
+	}
+
+	// Check per-bucket multipart upload limit
+	if limit := s.GetBucketAuth().MaxMultipartUploads(bucket); limit > 0 {
+		count, err := s.Manager.Store().CountActiveMultipartUploads(ctx, bucket+"/")
+		if err != nil {
+			return writeStorageError(w, err, "Failed to check multipart upload count"), err
+		}
+		if count >= int64(limit) {
+			writeS3Error(w, http.StatusServiceUnavailable, "SlowDown", "Too many active multipart uploads")
+			return http.StatusServiceUnavailable, errors.New("multipart upload limit reached")
 		}
 	}
 

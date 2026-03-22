@@ -832,6 +832,34 @@ func TestConfigValidation_BucketMissingName(t *testing.T) {
 	}
 }
 
+func TestConfigValidation_NegativeMaxMultipartUploads(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Buckets[0].MaxMultipartUploads = -1
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil {
+		t.Error("negative max_multipart_uploads should fail validation")
+	}
+}
+
+func TestConfigValidation_ZeroMaxMultipartUploads(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Buckets[0].MaxMultipartUploads = 0
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Errorf("zero max_multipart_uploads (unlimited) should pass: %v", err)
+	}
+}
+
+func TestConfigValidation_PositiveMaxMultipartUploads(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Buckets[0].MaxMultipartUploads = 100
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Errorf("positive max_multipart_uploads should pass: %v", err)
+	}
+}
+
 // -------------------------------------------------------------------------
 // NON-RELOADABLE FIELDS CHANGED TESTS
 // -------------------------------------------------------------------------

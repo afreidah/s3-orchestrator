@@ -375,6 +375,7 @@ server:
 # Virtual buckets with per-bucket credentials
 buckets:
   - name: "app1-files"
+    # max_multipart_uploads: 100  # optional; limit active multipart uploads per bucket (0 = unlimited)
     credentials:
       - access_key_id: "APP1_ACCESS_KEY"
         secret_access_key: "APP1_SECRET_KEY"
@@ -535,7 +536,7 @@ kill -HUP $(pidof s3-orchestrator)
 
 | Setting | Reloadable | Notes |
 |---------|:----------:|-------|
-| `buckets` (credentials) | Yes | New credentials take effect immediately |
+| `buckets` (credentials, limits) | Yes | Credentials and `max_multipart_uploads` take effect immediately |
 | `rate_limit` | Yes | New visitors get updated rates; existing per-IP limiters expire naturally |
 | `backends[].quota_bytes` | Yes | Synced to database on reload |
 | `backends[].api_request_limit` | Yes | |
@@ -876,8 +877,9 @@ s3-orchestrator admin log-level -set debug         # change log level at runtime
 s3-orchestrator admin drain <backend>              # start draining a backend
 s3-orchestrator admin drain-status <backend>       # check drain progress
 s3-orchestrator admin drain-cancel <backend>       # cancel an active drain
-s3-orchestrator admin remove-backend <backend>     # remove backend DB records
-s3-orchestrator admin remove-backend <backend> --purge  # also delete S3 objects
+s3-orchestrator admin remove-backend <backend>              # remove backend DB records (S3 objects preserved)
+s3-orchestrator admin remove-backend <backend> --purge      # preview: shows what would be destroyed
+s3-orchestrator admin remove-backend <backend> --purge --confirm  # delete S3 objects + DB records
 ```
 
 ## Development

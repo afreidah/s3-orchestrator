@@ -58,6 +58,7 @@ data:
     # Multiple credential sets per bucket support reader/writer separation.
     buckets:
       - name: "app-data"
+        # max_multipart_uploads: 100  # optional; limit active multipart uploads (0 = unlimited)
         credentials:
           - access_key_id: "${BUCKET_ACCESS_KEY}"
             secret_access_key: "${BUCKET_SECRET_KEY}"

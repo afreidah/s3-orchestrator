@@ -168,6 +168,11 @@ func (cb *CircuitBreakerStore) GetMultipartUploadsByBackend(ctx context.Context,
 
 // codecov:ignore:end
 
+// CountActiveMultipartUploads delegates to the real store with circuit breaker protection.
+func (cb *CircuitBreakerStore) CountActiveMultipartUploads(ctx context.Context, bucketPrefix string) (int64, error) {
+	return breaker.CBCall(cb.CircuitBreaker, func() (int64, error) { return cb.real.CountActiveMultipartUploads(ctx, bucketPrefix) })
+}
+
 // ListMultipartUploads delegates to the real store with circuit breaker protection.
 func (cb *CircuitBreakerStore) ListMultipartUploads(ctx context.Context, prefix string, maxUploads int) ([]MultipartUpload, error) {
 	return breaker.CBCall(cb.CircuitBreaker, func() ([]MultipartUpload, error) { return cb.real.ListMultipartUploads(ctx, prefix, maxUploads) })

@@ -302,6 +302,10 @@ ui:
 
 This ensures browsers only send the session cookie over HTTPS, even though the orchestrator itself sees HTTP.
 
+### CSRF Protection
+
+State-changing UI API requests (POST to `/ui/api/*`) require a `X-CSRF-Token` header matching the `s3orch_csrf` cookie. This double-submit cookie pattern prevents cross-site request forgery attacks from same-site subdomains. The dashboard JavaScript handles this automatically. GET requests and non-UI endpoints (S3 API, admin API) are unaffected.
+
 ### Bcrypt-Hashed Admin Secret
 
 For bare-metal deployments where the config file is stored on disk without external secret injection, use a bcrypt hash for `admin_secret` instead of plaintext:

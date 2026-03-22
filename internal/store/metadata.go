@@ -71,6 +71,7 @@ type MetadataStore interface {
 	GetParts(ctx context.Context, uploadID string) ([]MultipartPart, error)
 	DeleteMultipartUpload(ctx context.Context, uploadID string) error
 	ListMultipartUploads(ctx context.Context, prefix string, maxUploads int) ([]MultipartUpload, error)
+	CountActiveMultipartUploads(ctx context.Context, bucketPrefix string) (int64, error)
 
 	// --- Directory listing (dashboard) ---
 	ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*DirectoryListResult, error)

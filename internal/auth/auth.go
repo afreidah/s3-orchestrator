@@ -48,18 +48,23 @@ type bucketEntry struct {
 
 // BucketRegistry resolves client credentials to virtual bucket names.
 type BucketRegistry struct {
-	byAccessKey map[string]bucketEntry // access_key_id -> {bucket, secret}
-	byToken     map[string]string      // token -> bucket name
+	byAccessKey    map[string]bucketEntry // access_key_id -> {bucket, secret}
+	byToken        map[string]string      // token -> bucket name
+	multipartLimit map[string]int         // bucket name -> max active multipart uploads (0 = unlimited)
 }
 
 // NewBucketRegistry builds a credential-to-bucket lookup from the config.
 func NewBucketRegistry(buckets []config.BucketConfig) *BucketRegistry {
 	br := &BucketRegistry{
-		byAccessKey: make(map[string]bucketEntry),
-		byToken:     make(map[string]string),
+		byAccessKey:    make(map[string]bucketEntry),
+		byToken:        make(map[string]string),
+		multipartLimit: make(map[string]int),
 	}
 
 	for _, bkt := range buckets {
+		if bkt.MaxMultipartUploads > 0 {
+			br.multipartLimit[bkt.Name] = bkt.MaxMultipartUploads
+		}
 		for _, cred := range bkt.Credentials {
 			if cred.AccessKeyID != "" && cred.SecretAccessKey != "" {
 				br.byAccessKey[cred.AccessKeyID] = bucketEntry{
@@ -74,6 +79,12 @@ func NewBucketRegistry(buckets []config.BucketConfig) *BucketRegistry {
 	}
 
 	return br
+}
+
+// MaxMultipartUploads returns the configured limit for active multipart
+// uploads on the given bucket. Returns 0 if unlimited.
+func (br *BucketRegistry) MaxMultipartUploads(bucket string) int {
+	return br.multipartLimit[bucket]
 }
 
 // AuthenticateAndResolveBucket authenticates the request and returns the
