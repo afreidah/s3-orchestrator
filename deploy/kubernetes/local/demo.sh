@@ -31,6 +31,7 @@ cd "$REPO_ROOT"
 # --- Teardown ---
 if [[ "${1:-}" == "down" ]]; then
     echo "Tearing down demo environment..."
+    helm uninstall s3-orchestrator -n "$NAMESPACE" 2>/dev/null || true
     k3d cluster delete "$CLUSTER_NAME" 2>/dev/null || true
     docker compose -f docker-compose.test.yml down -v 2>/dev/null || true
     echo "Done."
@@ -38,7 +39,7 @@ if [[ "${1:-}" == "down" ]]; then
 fi
 
 # --- Preflight checks ---
-for cmd in docker k3d kubectl; do
+for cmd in docker k3d kubectl helm; do
     if ! command -v "$cmd" &>/dev/null; then
         echo "Error: $cmd is required but not installed."
         exit 1
@@ -76,15 +77,16 @@ echo "Host gateway IP: $HOST_IP"
 
 docker compose -f docker-compose.test.yml up -d tempo loki prometheus grafana
 
-# --- Apply manifests ---
-echo "Applying Kubernetes manifests..."
-kubectl apply -f deploy/kubernetes/namespace.yaml
-kubectl apply -f deploy/kubernetes/service.yaml
-kubectl apply -f deploy/kubernetes/local/secret.yaml
-sed "s/__HOST_IP__/$HOST_IP/g" deploy/kubernetes/local/configmap.yaml | kubectl apply -f -
+# --- Deploy with Helm ---
+echo "Installing s3-orchestrator via Helm..."
+sed "s/__HOST_IP__/$HOST_IP/g" deploy/kubernetes/local/values.yaml > /tmp/s3o-demo-values.yaml
+helm upgrade --install s3-orchestrator deploy/helm/s3-orchestrator \
+    -n "$NAMESPACE" --create-namespace \
+    -f /tmp/s3o-demo-values.yaml
+
+# --- Deploy monitoring sidecar ---
 sed "s/__HOST_IP__/$HOST_IP/g" deploy/kubernetes/local/alloy-config.yaml | kubectl apply -f -
 kubectl apply -f deploy/kubernetes/local/alloy-daemonset.yaml
-kubectl apply -f deploy/kubernetes/local/deployment.yaml
 
 # --- Wait for rollout ---
 echo "Waiting for deployment to roll out..."

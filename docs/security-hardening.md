@@ -220,7 +220,7 @@ The provided Kubernetes manifests include several security measures:
 - **seccompProfile: RuntimeDefault** — applies the default seccomp profile to restrict syscalls
 - **automountServiceAccountToken: false** — the orchestrator does not need Kubernetes API access
 - **NetworkPolicy** — restricts ingress to port 9000 only; egress is permissive since backend endpoints are config-driven
-- **readOnlyRootFilesystem**, **runAsNonRoot**, **capabilities.drop: ALL** — standard container hardening (see `deploy/kubernetes/deployment.yaml`)
+- **readOnlyRootFilesystem**, **runAsNonRoot**, **capabilities.drop: ALL** — standard container hardening (see `deploy/helm/s3-orchestrator/templates/deployment.yaml`)
 
 ```
 Internet --> Reverse Proxy --> S3 Orchestrator --> PostgreSQL (private)

@@ -16,23 +16,29 @@ nomad job plan -var="version=v1.0.0" deploy/nomad/s3-orchestrator.nomad.hcl
 
 **Prerequisites:** Vault KV v2 secret at `secret/data/s3-orchestrator` with all credential fields populated. See the inline comments in the job file for the full list of required keys.
 
-## Kubernetes
+## Kubernetes (Helm)
 
-Separate manifests for each resource type. Apply in order:
+A Helm chart in `deploy/helm/s3-orchestrator/` deploys the full stack: Deployment, Service, ConfigMap, Secret, ServiceAccount, NetworkPolicy, and optional Ingress.
 
 ```bash
-kubectl apply -f deploy/kubernetes/namespace.yaml
-kubectl apply -f deploy/kubernetes/secret.yaml
-kubectl apply -f deploy/kubernetes/serviceaccount.yaml
-kubectl apply -f deploy/kubernetes/configmap.yaml
-kubectl apply -f deploy/kubernetes/deployment.yaml
-kubectl apply -f deploy/kubernetes/service.yaml
+# Install with default values
+helm install s3-orchestrator deploy/helm/s3-orchestrator \
+  -n s3-orchestrator --create-namespace
 
-# Optional: external access via Ingress
-kubectl apply -f deploy/kubernetes/ingress.yaml
+# Install with custom values
+helm install s3-orchestrator deploy/helm/s3-orchestrator \
+  -n s3-orchestrator --create-namespace \
+  -f my-values.yaml
+
+# Upgrade after changing values
+helm upgrade s3-orchestrator deploy/helm/s3-orchestrator \
+  -n s3-orchestrator -f my-values.yaml
+
+# Generate raw manifests without Helm (for kubectl apply workflows)
+helm template s3-orchestrator deploy/helm/s3-orchestrator -f my-values.yaml > manifests.yaml
 ```
 
-**Prerequisites:** A PostgreSQL instance accessible from the cluster and a populated Secret with all credential fields. See `secret.yaml` for the full list.
+**Prerequisites:** A PostgreSQL instance accessible from the cluster. Configure backends, credentials, and database connection in your values file. See `deploy/helm/s3-orchestrator/values.yaml` for all available options.
 
 ## Local Demo Scripts
 
@@ -45,7 +51,7 @@ Both platforms include a `local/demo.sh` script that stands up a fully working e
 ./deploy/kubernetes/local/demo.sh down   # tear it all down
 ```
 
-Requires: `docker`, `k3d`, `kubectl`
+Requires: `docker`, `k3d`, `kubectl`, `helm`
 
 ### Nomad (dev mode)
 
