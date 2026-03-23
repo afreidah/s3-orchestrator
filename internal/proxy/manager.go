@@ -76,12 +76,14 @@ type BackendManager struct {
 	Replicator             *worker.Replicator             // background replica creation
 	OverReplicationCleaner *worker.OverReplicationCleaner // excess copy removal
 	CleanupWorker          *worker.CleanupWorker          // retry queue for failed deletions
+	Scrubber               *worker.Scrubber               // background integrity verification
 	DrainManager           *DrainManager                  // backend drain and remove operations
 	MultipartManager       *MultipartManager              // multipart upload lifecycle
 	ObjectManager          *ObjectManager                 // CRUD, read failover, broadcast reads
 	dashboard              *DashboardAggregator           // web UI data aggregation
 	usageFlushCfg          atomic.Pointer[config.UsageFlushConfig]
 	lifecycleCfg           atomic.Pointer[config.LifecycleConfig]
+	integrityCfg           atomic.Pointer[config.IntegrityConfig]
 }
 
 // NewBackendManager creates a new backend manager with the given configuration.
@@ -114,14 +116,23 @@ func NewBackendManager(cfg *BackendManagerConfig) *BackendManager {
 	cleanupWorker := worker.NewCleanupWorker(core, cleanupConcurrency)
 	multipartManager := NewMultipartManager(core, cfg.Encryptor)
 	cache := NewLocationCache(cfg.CacheTTL)
-	objectManager := NewObjectManager(core, cfg.Encryptor, cache, cfg.ParallelBroadcast)
+	// ObjectManager gets a closure for the integrity config so it can read
+	// the hot-reloadable value without a circular dependency.
+	var m *BackendManager
+	objectManager := NewObjectManager(core, cfg.Encryptor, cache, cfg.ParallelBroadcast, func() *config.IntegrityConfig {
+		if m == nil {
+			return nil
+		}
+		return m.IntegrityConfig()
+	})
 
-	m := &BackendManager{
+	m = &BackendManager{
 		backendCore:            core,
 		Rebalancer:             worker.NewRebalancer(core),
 		Replicator:             worker.NewReplicator(core),
 		OverReplicationCleaner: worker.NewOverReplicationCleaner(core),
 		CleanupWorker:          cleanupWorker,
+		Scrubber:               worker.NewScrubber(core, cfg.Encryptor),
 		MultipartManager:       multipartManager,
 		ObjectManager:          objectManager,
 		DrainManager: NewDrainManager(core,
@@ -236,6 +247,18 @@ func (m *BackendManager) SetLifecycleConfig(cfg *config.LifecycleConfig) {
 // LifecycleConfig returns the current lifecycle configuration.
 func (m *BackendManager) LifecycleConfig() *config.LifecycleConfig {
 	return m.lifecycleCfg.Load()
+}
+
+// SetIntegrityConfig atomically stores the integrity configuration and
+// forwards it to the scrubber worker.
+func (m *BackendManager) SetIntegrityConfig(cfg *config.IntegrityConfig) {
+	m.integrityCfg.Store(cfg)
+	m.Scrubber.SetConfig(cfg)
+}
+
+// IntegrityConfig returns the current integrity configuration.
+func (m *BackendManager) IntegrityConfig() *config.IntegrityConfig {
+	return m.integrityCfg.Load()
 }
 
 // NearUsageLimit returns true if any backend is approaching its usage limits.

@@ -11,7 +11,7 @@ theme = "hugo-theme-relearn"
   disableLandingPageButton = false
   alwaysopen = true
   collapsibleMenu = true
-  disableSearch = true
+  disableSearch = false
   [params.topbar]
     showTableOfContents = false
     showBreadcrumbs = false

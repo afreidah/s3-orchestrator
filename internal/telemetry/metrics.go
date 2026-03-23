@@ -581,6 +581,27 @@ var (
 		},
 	)
 
+	// --- Integrity verification metrics ---
+
+	// IntegrityErrorsTotal counts hash mismatches detected during read,
+	// replication, or background scrubbing.
+	IntegrityErrorsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "s3o_integrity_errors_total",
+			Help: "Content hash mismatches detected",
+		},
+		[]string{"operation"},
+	)
+
+	// IntegrityChecksTotal counts hash verifications performed.
+	IntegrityChecksTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "s3o_integrity_checks_total",
+			Help: "Content hash verifications performed",
+		},
+		[]string{"operation"},
+	)
+
 	// KeyRotationObjectsTotal counts objects processed during key rotation.
 	KeyRotationObjectsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{

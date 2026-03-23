@@ -488,6 +488,13 @@ encryption:
   # previous_keys:                   # old master keys for rotation (unwrap only)
   #   - "base64-encoded-old-key"
 
+integrity:
+  enabled: false               # SHA-256 content hashing for data integrity verification
+  # verify_on_read: false      # hash-check GET responses as they stream
+  # verify_on_replicate: true  # verify hash when creating replicas (default: true when enabled)
+  # scrubber_interval: "6h"    # background verification interval (0 = disabled)
+  # scrubber_batch_size: 100   # objects per scrub cycle
+
 ui:
   enabled: false             # enable the built-in web dashboard
   path: "/ui"                # URL prefix (default: /ui)
@@ -546,6 +553,7 @@ kill -HUP $(pidof s3-orchestrator)
 | `replication` | Yes | Factor, worker interval, batch size |
 | `usage_flush` | Yes | Interval, adaptive enabled/threshold/fast interval |
 | `lifecycle` | Yes | Rules (prefix, expiration_days) |
+| `integrity` | Yes | Enabled, verify_on_read, scrubber interval/batch size |
 | `server.listen_addr` | No | Requires restart |
 | `server.max_concurrent_requests` | No | Requires restart |
 | `server.max_concurrent_reads` | No | Requires restart |

@@ -13,6 +13,9 @@ type mockMetadataStore struct {
 	store.MetadataStore // embed to satisfy interface
 	pendingCleanups     []store.CleanupItem
 	completedIDs        []int64
+	randomHashedObjects []store.ObjectLocation
+	objectsWithoutHash  []store.ObjectLocation
+	lastUpdatedHash     string
 }
 
 func (m *mockMetadataStore) GetPendingCleanups(_ context.Context, _ int) ([]store.CleanupItem, error) {
@@ -34,6 +37,22 @@ func (m *mockMetadataStore) DecrementOrphanBytes(_ context.Context, _ string, _ 
 
 func (m *mockMetadataStore) CleanupQueueDepth(_ context.Context) (int64, error) {
 	return 0, nil
+}
+
+func (m *mockMetadataStore) GetRandomHashedObjects(_ context.Context, _ int) ([]store.ObjectLocation, error) {
+	return m.randomHashedObjects, nil
+}
+
+func (m *mockMetadataStore) GetObjectsWithoutHash(_ context.Context, limit, _ int) ([]store.ObjectLocation, error) {
+	if limit > len(m.objectsWithoutHash) {
+		return m.objectsWithoutHash, nil
+	}
+	return m.objectsWithoutHash[:limit], nil
+}
+
+func (m *mockMetadataStore) UpdateContentHash(_ context.Context, _, _, hash string) error {
+	m.lastUpdatedHash = hash
+	return nil
 }
 
 // newTestUsageTracker creates a UsageTracker with no limits for testing.

@@ -126,6 +126,41 @@ Monitor encryption health with these Prometheus metrics:
 
 Chunked encryption derives per-chunk nonces by XORing the chunk index into a random base nonce. AES-GCM security requires that the same (key, nonce) pair is never reused. This is guaranteed because each object gets a fresh random DEK and a fresh random base nonce — even re-uploads of identical content produce different ciphertext. See `internal/encryption/chunk.go` for the full safety invariant documentation.
 
+## Data Integrity Verification
+
+Integrity verification detects silent data corruption (bit rot, backend-side corruption, storage media degradation) by computing SHA-256 hashes at write time and verifying them on read and via background scrubbing.
+
+### Enabling Integrity
+
+```yaml
+integrity:
+  enabled: true
+  verify_on_read: true
+  scrubber_interval: "6h"
+  scrubber_batch_size: 100
+```
+
+### How it protects your data
+
+- **Write path:** SHA-256 is computed on plaintext before encryption and stored in the database.
+- **Read path:** When `verify_on_read` is enabled, a `VerifyingReader` computes the hash as data streams to the client. On mismatch, the corrupted copy is automatically enqueued for cleanup.
+- **Background scrubber:** Periodically reads random objects from backends, decrypts if needed, and verifies their hash. Corrupted copies are removed and will be re-created by the replicator if replication is configured.
+- **Backfill:** Objects written before integrity was enabled can be brought under hash management via `admin backfill-checksums`.
+
+### Recommendations
+
+- **Enable `verify_on_read`** for production deployments. The overhead is minimal — SHA-256 is computed inline during streaming with no additional buffering.
+- **Enable the scrubber** to catch corruption in objects that haven't been read recently. A 6-hour interval with 100 objects per batch provides steady coverage without excessive backend API usage.
+- **Run backfill** after enabling integrity on an existing deployment. Unhashed objects are invisible to read-time verification and the scrubber.
+- **Monitor integrity metrics** for any non-zero `s3o_integrity_errors_total` rate, which indicates data corruption.
+
+### Integrity Metrics
+
+| Metric | What to watch |
+|--------|---------------|
+| `s3o_integrity_checks_total{operation}` | Verification count by operation (read, scrub) |
+| `s3o_integrity_errors_total{operation}` | Any non-zero rate indicates data corruption |
+
 ## Configuration File Security
 
 The config file contains sensitive credentials:

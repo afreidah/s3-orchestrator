@@ -290,6 +290,7 @@ func runServe() {
 	manager.OverReplicationCleaner.SetConfig(&cfg.Replication)
 	manager.SetUsageFlushConfig(&cfg.UsageFlush)
 	manager.SetLifecycleConfig(&cfg.Lifecycle)
+	manager.SetIntegrityConfig(&cfg.Integrity)
 
 	// --- Initial quota metrics update ---
 	if err := manager.UpdateQuotaMetrics(ctx); err != nil {
@@ -307,6 +308,7 @@ func runServe() {
 		sm.Register("replicator", newReplicatorService(manager, cbStore))
 		sm.Register("over-replication", newOverReplicationService(manager, cbStore))
 		sm.Register("lifecycle", newLifecycleService(manager, cbStore))
+		sm.Register("scrubber", newScrubberService(manager, cbStore))
 
 		if cfg.Reconcile.Enabled {
 			bktNames := make([]string, len(cfg.Buckets))
@@ -332,6 +334,12 @@ func runServe() {
 			"factor", cfg.Replication.Factor,
 			"interval", cfg.Replication.WorkerInterval,
 			"batch_size", cfg.Replication.BatchSize,
+		)
+	}
+	if cfg.Integrity.Enabled {
+		slog.InfoContext(ctx, "Integrity verification enabled",
+			"verify_on_read", cfg.Integrity.VerifyOnRead,
+			"scrubber_interval", cfg.Integrity.ScrubberInterval,
 		)
 	}
 
@@ -600,7 +608,8 @@ func runServe() {
 			manager.OverReplicationCleaner.SetConfig(&newCfg.Replication)
 			manager.SetUsageFlushConfig(&newCfg.UsageFlush)
 			manager.SetLifecycleConfig(&newCfg.Lifecycle)
-			slog.InfoContext(reloadCtx, "Reloaded rebalance/replication/usage-flush/lifecycle config")
+			manager.SetIntegrityConfig(&newCfg.Integrity)
+			slog.InfoContext(reloadCtx, "Reloaded rebalance/replication/usage-flush/lifecycle/integrity config")
 
 			// Update quota metrics with new limits
 			if err := manager.UpdateQuotaMetrics(reloadCtx); err != nil {

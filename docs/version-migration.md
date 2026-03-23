@@ -58,7 +58,46 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.19.x (current)
+### v0.20.x (current)
+
+**New feature: Integrity verification**
+
+SHA-256 content hashing for object integrity verification. When enabled, objects are checksummed on write and optionally verified on read and by a background scrubber.
+
+**Database migration:**
+
+- Migration `00005_add_content_hash` adds a nullable `content_hash TEXT` column to `object_locations`. Applied automatically on startup.
+
+**New config section:**
+
+```yaml
+integrity:
+  enabled: false                     # Enable integrity verification
+  verify_on_read: false              # Hash-check GET responses as they stream
+  verify_on_replicate: true          # Verify hash when creating replicas (default when enabled)
+  scrubber_interval: "6h"            # Background verification interval (0 = disabled)
+  scrubber_batch_size: 100           # Objects per scrub cycle
+```
+
+All fields are optional and default to disabled. This is a non-breaking change — existing configs work without modification.
+
+**New admin commands:**
+
+- `admin scrub [-batch-size N]` — trigger an on-demand integrity scrub cycle.
+- `admin backfill-checksums [-batch-size N]` — compute and store hashes for objects written before integrity was enabled.
+
+**New metrics:**
+
+- `s3o_integrity_checks_total{operation}` — hash verifications performed (read, scrub).
+- `s3o_integrity_errors_total{operation}` — hash mismatches detected (read, scrub).
+
+**Behavioral notes:**
+
+- Integrity config is hot-reloadable via SIGHUP.
+- The scrubber reads objects from backends, which counts against usage quota (API calls + egress).
+- Encrypted objects are decrypted before hashing — the hash is always computed on plaintext.
+
+### v0.19.x
 
 **Breaking changes:**
 

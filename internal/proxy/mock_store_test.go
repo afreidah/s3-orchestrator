@@ -580,3 +580,15 @@ func (m *mockStore) RemoveExcessCopy(_ context.Context, key, backend string, siz
 	m.removeExcessCopyCalls = append(m.removeExcessCopyCalls, removeExcessCopyCall{key: key, backend: backend, size: size})
 	return m.removeExcessCopyErr
 }
+
+func (m *mockStore) GetRandomHashedObjects(_ context.Context, _ int) ([]st.ObjectLocation, error) {
+	return nil, nil
+}
+
+func (m *mockStore) GetObjectsWithoutHash(_ context.Context, _, _ int) ([]st.ObjectLocation, error) {
+	return nil, nil
+}
+
+func (m *mockStore) UpdateContentHash(_ context.Context, _, _, _ string) error {
+	return nil
+}

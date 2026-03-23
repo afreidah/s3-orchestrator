@@ -2882,11 +2882,122 @@
     },
     {
       "type": "row",
+      "id": 75,
+      "title": "Integrity Verification",
+      "gridPos": {
+        "x": 0,
+        "y": 142,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "id": 76,
+      "title": "Integrity Checks",
+      "gridPos": {
+        "x": 0,
+        "y": 143,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (operation) (rate(s3o_integrity_checks_total[5m]))",
+          "legendFormat": "{{operation}}"
+        }
+      ],
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 77,
+      "title": "Integrity Errors",
+      "gridPos": {
+        "x": 12,
+        "y": 143,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (operation) (rate(s3o_integrity_errors_total[5m]))",
+          "legendFormat": "{{operation}}"
+        }
+      ],
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.01
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "row",
       "id": 61,
       "title": "Redis",
       "gridPos": {
         "x": 0,
-        "y": 150,
+        "y": 152,
         "w": 24,
         "h": 1
       },

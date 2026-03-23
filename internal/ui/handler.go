@@ -637,8 +637,8 @@ func (h *Handler) handleAPIDeletePrefix(w http.ResponseWriter, r *http.Request) 
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to list objects"})
 			return
 		}
-		for _, obj := range result.Objects {
-			keys = append(keys, obj.ObjectKey)
+		for i := range result.Objects {
+			keys = append(keys, result.Objects[i].ObjectKey)
 		}
 		if !result.IsTruncated {
 			break

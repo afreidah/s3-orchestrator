@@ -74,6 +74,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /admin/api/over-replication", h.requireToken(h.handleOverReplicationClean))
 	mux.HandleFunc("POST /admin/api/rotate-encryption-key", h.requireToken(h.handleRotateEncryptionKey))
 	mux.HandleFunc("POST /admin/api/encrypt-existing", h.requireToken(h.handleEncryptExisting))
+	mux.HandleFunc("POST /admin/api/scrub", h.requireToken(h.handleScrub))
+	mux.HandleFunc("POST /admin/api/backfill-checksums", h.requireToken(h.handleBackfillChecksums))
 }
 
 // -------------------------------------------------------------------------
@@ -626,6 +628,79 @@ func (h *Handler) handleEncryptExisting(w http.ResponseWriter, r *http.Request) 
 		"total":     total,
 	})
 }
+
+// -------------------------------------------------------------------------
+// INTEGRITY
+// -------------------------------------------------------------------------
+
+// codecov:ignore:start -- admin HTTP endpoints, covered by integration tests
+
+// handleScrub triggers an on-demand scrub cycle. Accepts an optional
+// batch_size query parameter (defaults to the configured scrubber batch size).
+func (h *Handler) handleScrub(w http.ResponseWriter, r *http.Request) {
+	icfg := h.manager.IntegrityConfig()
+	if icfg == nil || !icfg.Enabled {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "skipped",
+			"reason": "integrity verification is not enabled",
+		})
+		return
+	}
+
+	batchSize := icfg.ScrubberBatchSize
+	if bs := r.URL.Query().Get("batch_size"); bs != "" {
+		if v, err := strconv.ParseInt(bs, 10, 32); err == nil && v > 0 {
+			batchSize = int(v)
+		}
+	}
+
+	checked, failed := h.manager.Scrubber.Scrub(r.Context(), batchSize)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":  "ok",
+		"checked": checked,
+		"failed":  failed,
+	})
+}
+
+// handleBackfillChecksums computes and stores content hashes for objects
+// that don't have one. Accepts an optional batch_size query parameter
+// (default 100). Paginates internally until all objects are processed or
+// the request is cancelled.
+func (h *Handler) handleBackfillChecksums(w http.ResponseWriter, r *http.Request) {
+	icfg := h.manager.IntegrityConfig()
+	if icfg == nil || !icfg.Enabled {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "skipped",
+			"reason": "integrity verification is not enabled",
+		})
+		return
+	}
+
+	batchSize := 100
+	if bs := r.URL.Query().Get("batch_size"); bs != "" {
+		if v, err := strconv.ParseInt(bs, 10, 32); err == nil && v > 0 {
+			batchSize = int(v)
+		}
+	}
+
+	var totalProcessed int
+	offset := 0
+	for {
+		processed, nextOffset := h.manager.Scrubber.Backfill(r.Context(), batchSize, offset)
+		totalProcessed += processed
+		if nextOffset == 0 {
+			break
+		}
+		offset = nextOffset
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":    "ok",
+		"processed": totalProcessed,
+	})
+}
+
+// codecov:ignore:end
 
 // -------------------------------------------------------------------------
 // HELPERS

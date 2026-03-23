@@ -109,6 +109,7 @@ type ObjectLocation struct {
 	EncryptionKey []byte
 	KeyID         string
 	PlaintextSize int64
+	ContentHash   string
 }
 
 // -------------------------------------------------------------------------
@@ -184,7 +185,7 @@ func (s *Store) RunMigrations(ctx context.Context) error { // codecov:ignore -- 
 
 // ExpectedSchemaVersion is the migration version this binary expects.
 // Updated when new migration files are added.
-const ExpectedSchemaVersion = 4
+const ExpectedSchemaVersion = 5
 
 // VerifySchemaVersion checks that the database schema version matches
 // what this binary expects. Returns an error if the schema is older
@@ -264,7 +265,9 @@ type objectLocationRow interface {
 		db.GetUnderReplicatedObjectsRow |
 		db.GetUnderReplicatedObjectsExcludingRow |
 		db.GetOverReplicatedObjectsRow |
-		db.GetObjectCopiesForUpdateRow
+		db.GetObjectCopiesForUpdateRow |
+		db.GetRandomHashedObjectsRow |
+		db.GetObjectsWithoutHashRow
 }
 
 // toObjectLocations converts any sqlc row type containing object location
@@ -284,19 +287,19 @@ func toObjectLocation(row any) ObjectLocation {
 	switch r := row.(type) {
 	case db.GetAllObjectLocationsRow:
 		return objectLocationFromDB(r.ObjectKey, r.BackendName, r.SizeBytes,
-			r.Encrypted, r.EncryptionKey, r.KeyID, r.PlaintextSize, r.CreatedAt.Time)
+			r.Encrypted, r.EncryptionKey, r.KeyID, r.PlaintextSize, r.ContentHash, r.CreatedAt.Time)
 	case db.GetUnderReplicatedObjectsRow:
 		return objectLocationFromDB(r.ObjectKey, r.BackendName, r.SizeBytes,
-			r.Encrypted, r.EncryptionKey, r.KeyID, r.PlaintextSize, r.CreatedAt.Time)
+			r.Encrypted, r.EncryptionKey, r.KeyID, r.PlaintextSize, r.ContentHash, r.CreatedAt.Time)
 	case db.GetUnderReplicatedObjectsExcludingRow:
 		return objectLocationFromDB(r.ObjectKey, r.BackendName, r.SizeBytes,
-			r.Encrypted, r.EncryptionKey, r.KeyID, r.PlaintextSize, r.CreatedAt.Time)
+			r.Encrypted, r.EncryptionKey, r.KeyID, r.PlaintextSize, r.ContentHash, r.CreatedAt.Time)
 	case db.GetOverReplicatedObjectsRow:
 		return objectLocationFromDB(r.ObjectKey, r.BackendName, r.SizeBytes,
-			r.Encrypted, r.EncryptionKey, r.KeyID, r.PlaintextSize, r.CreatedAt.Time)
+			r.Encrypted, r.EncryptionKey, r.KeyID, r.PlaintextSize, r.ContentHash, r.CreatedAt.Time)
 	case db.GetObjectCopiesForUpdateRow:
 		return objectLocationFromDB(r.ObjectKey, r.BackendName, r.SizeBytes,
-			r.Encrypted, r.EncryptionKey, r.KeyID, r.PlaintextSize, r.CreatedAt.Time)
+			r.Encrypted, r.EncryptionKey, r.KeyID, r.PlaintextSize, r.ContentHash, r.CreatedAt.Time)
 	case db.ListObjectsByBackendRow:
 		return ObjectLocation{ObjectKey: r.ObjectKey, BackendName: r.BackendName, SizeBytes: r.SizeBytes, CreatedAt: r.CreatedAt.Time}
 	case db.ListObjectsByPrefixRow:
@@ -305,6 +308,12 @@ func toObjectLocation(row any) ObjectLocation {
 		return ObjectLocation{ObjectKey: r.ObjectKey, BackendName: r.BackendName, SizeBytes: r.SizeBytes, CreatedAt: r.CreatedAt.Time}
 	case db.ListDirectChildrenRow:
 		return ObjectLocation{ObjectKey: r.ObjectKey, BackendName: r.BackendName, SizeBytes: r.SizeBytes, CreatedAt: r.CreatedAt.Time}
+	case db.GetRandomHashedObjectsRow:
+		return objectLocationFromDB(r.ObjectKey, r.BackendName, r.SizeBytes,
+			r.Encrypted, r.EncryptionKey, r.KeyID, r.PlaintextSize, r.ContentHash, r.CreatedAt.Time)
+	case db.GetObjectsWithoutHashRow:
+		return objectLocationFromDB(r.ObjectKey, r.BackendName, r.SizeBytes,
+			r.Encrypted, r.EncryptionKey, r.KeyID, r.PlaintextSize, r.ContentHash, r.CreatedAt.Time)
 	default:
 		return ObjectLocation{}
 	}
@@ -312,7 +321,7 @@ func toObjectLocation(row any) ObjectLocation {
 
 // objectLocationFromDB builds an ObjectLocation from database column values,
 // safely dereferencing nullable pointer fields.
-func objectLocationFromDB(key, backend string, size int64, encrypted bool, encKey []byte, keyID *string, ptSize *int64, created time.Time) ObjectLocation {
+func objectLocationFromDB(key, backend string, size int64, encrypted bool, encKey []byte, keyID *string, ptSize *int64, contentHash *string, created time.Time) ObjectLocation {
 	loc := ObjectLocation{
 		ObjectKey:     key,
 		BackendName:   backend,
@@ -326,6 +335,9 @@ func objectLocationFromDB(key, backend string, size int64, encrypted bool, encKe
 	}
 	if ptSize != nil {
 		loc.PlaintextSize = *ptSize
+	}
+	if contentHash != nil {
+		loc.ContentHash = *contentHash
 	}
 	return loc
 }
@@ -452,6 +464,7 @@ type EncryptionMeta struct {
 	EncryptionKey []byte
 	KeyID         string
 	PlaintextSize int64
+	ContentHash   string // SHA-256 hex digest of plaintext (empty = not computed)
 }
 
 // RecordObject atomically inserts or updates an object location, handling
@@ -503,11 +516,16 @@ func (s *Store) RecordObject(ctx context.Context, key, backend string, size int6
 			BackendName: backend,
 			SizeBytes:   size,
 		}
-		if enc != nil && enc.Encrypted {
-			params.Encrypted = true
-			params.EncryptionKey = enc.EncryptionKey
-			params.KeyID = &enc.KeyID
-			params.PlaintextSize = &enc.PlaintextSize
+		if enc != nil {
+			if enc.Encrypted {
+				params.Encrypted = true
+				params.EncryptionKey = enc.EncryptionKey
+				params.KeyID = &enc.KeyID
+				params.PlaintextSize = &enc.PlaintextSize
+			}
+			if enc.ContentHash != "" {
+				params.ContentHash = &enc.ContentHash
+			}
 		}
 
 		// --- Insert new primary copy ---
@@ -619,7 +637,7 @@ func (s *Store) MoveObjectLocation(ctx context.Context, key, fromBackend, toBack
 			return 0, fmt.Errorf("failed to delete source location: %w", err)
 		}
 
-		// --- Insert destination row preserving encryption metadata ---
+		// --- Insert destination row preserving encryption and integrity metadata ---
 		if err := qtx.InsertObjectLocation(ctx, db.InsertObjectLocationParams{
 			ObjectKey:     key,
 			BackendName:   toBackend,
@@ -628,6 +646,7 @@ func (s *Store) MoveObjectLocation(ctx context.Context, key, fromBackend, toBack
 			EncryptionKey: locked.EncryptionKey,
 			KeyID:         locked.KeyID,
 			PlaintextSize: locked.PlaintextSize,
+			ContentHash:   locked.ContentHash,
 		}); err != nil {
 			return 0, fmt.Errorf("failed to insert destination location: %w", err)
 		}
@@ -1345,6 +1364,49 @@ func (s *Store) GetUsageForPeriod(ctx context.Context, period string) (map[strin
 }
 
 // -------------------------------------------------------------------------
+// INTEGRITY VERIFICATION
+// -------------------------------------------------------------------------
+
+// codecov:ignore:start -- requires live PostgreSQL, covered by integration tests
+
+// GetRandomHashedObjects returns random object locations that have a stored
+// content hash. Used by the scrubber to verify data integrity.
+func (s *Store) GetRandomHashedObjects(ctx context.Context, limit int) ([]ObjectLocation, error) {
+	safeLimit := int32(max(1, min(limit, math.MaxInt32))) //nolint:gosec // clamped above
+	rows, err := s.queries.GetRandomHashedObjects(ctx, safeLimit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get random hashed objects: %w", err)
+	}
+	return toObjectLocations(rows), nil
+}
+
+// GetObjectsWithoutHash returns object locations that have no stored content
+// hash, ordered by creation time. Used by the backfill command.
+func (s *Store) GetObjectsWithoutHash(ctx context.Context, limit, offset int) ([]ObjectLocation, error) {
+	safeLimit := int32(max(0, min(limit, math.MaxInt32)))   //nolint:gosec // clamped
+	safeOffset := int32(max(0, min(offset, math.MaxInt32))) //nolint:gosec // clamped
+	rows, err := s.queries.GetObjectsWithoutHash(ctx, db.GetObjectsWithoutHashParams{
+		Limit:  safeLimit,
+		Offset: safeOffset,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get objects without hash: %w", err)
+	}
+	return toObjectLocations(rows), nil
+}
+
+// UpdateContentHash sets the content hash for an object location.
+func (s *Store) UpdateContentHash(ctx context.Context, key, backendName, hash string) error {
+	return s.queries.UpdateContentHash(ctx, db.UpdateContentHashParams{
+		ObjectKey:   key,
+		BackendName: backendName,
+		ContentHash: &hash,
+	})
+}
+
+// codecov:ignore:end
+
+// -------------------------------------------------------------------------
 // ADVISORY LOCKS
 // -------------------------------------------------------------------------
 
@@ -1360,6 +1422,7 @@ const (
 	LockUsageFlush       int64 = 1007
 	LockOverReplication  int64 = 1008
 	LockReconcile       int64 = 1009
+	LockScrubber        int64 = 1010
 )
 
 // WithAdvisoryLock acquires a PostgreSQL session-level advisory lock on a

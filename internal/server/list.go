@@ -71,11 +71,11 @@ type xmlListResultV2 struct {
 // prefixLen is len(bucket + "/") — used for zero-copy string slicing.
 func buildListContents(objects []store.ObjectLocation, prefixes []string, prefixLen int) ([]xmlContent, []xmlCommonPrefix) {
 	contents := make([]xmlContent, 0, len(objects))
-	for _, obj := range objects {
+	for i := range objects {
 		contents = append(contents, xmlContent{
-			Key:          obj.ObjectKey[prefixLen:],
-			Size:         obj.SizeBytes,
-			LastModified: obj.CreatedAt.UTC().Format(time.RFC3339),
+			Key:          objects[i].ObjectKey[prefixLen:],
+			Size:         objects[i].SizeBytes,
+			LastModified: objects[i].CreatedAt.UTC().Format(time.RFC3339),
 		})
 	}
 	commonPrefixes := make([]xmlCommonPrefix, 0, len(prefixes))

@@ -1,5 +1,5 @@
 ---
-title: "s3-orchestrator"
+title: " "
 archetype: "home"
 ---
 
@@ -33,25 +33,78 @@ archetype: "home"
 
 <hr style="margin-top: 3rem;">
 
-<h2 style="text-align: center; color: #93c5fd;">Unified S3 storage across multiple backends</h2>
-
-Combine free-tier and cost-limited object storage from any number of S3-compatible providers into a single endpoint. Per-backend quotas prevent surprise bills, cross-backend replication provides multi-cloud redundancy, and clients connect with any standard S3 tool - no code changes required.
+<h2 style="text-align: center; color: #2a9d73;">Unified S3 storage across multiple backends</h2>
 
 <div class="hero-bullets">
 
 - **Combine free-tier storage from multiple providers** into a single, larger pool - no cloud payment plans needed!
+
+</div>
+
+<div style="max-width: 700px; margin: 0 auto;">
+{{< mermaid >}}
+flowchart LR
+    C([S3 Clients]):::client --> O[s3-orchestrator<br/>quota routing]:::orch
+    O -->|"12/20 GB used"| B1[OCI Object Storage<br/>quota: 20 GB]:::backend
+    O -->|"10/10 GB full"| B2[Backblaze B2<br/>quota: 10 GB]:::full
+    O -->|"3/5 GB used"| B3[AWS S3<br/>quota: 5 GB]:::backend
+    B1 & B2 & B3 -.- POOL([35 GB unified · 25 GB used · 10 GB free]):::pool
+
+    classDef client fill:#6b4c2a,stroke:#d4a05a,color:#fff,font-weight:bold
+    classDef orch fill:#7a5a30,stroke:#e8c070,color:#fff,font-weight:bold
+    classDef backend fill:#3a2e20,stroke:#c4a35a,color:#e8dfd0
+    classDef full fill:#3a2e20,stroke:#8b3a3a,color:#d4a0a0
+    classDef pool fill:none,stroke:#d4a05a,color:#d4a05a,stroke-dasharray:5 5
+{{< /mermaid >}}
+</div>
+
+<div class="hero-bullets">
+
 - **Transparent multi-cloud replication** keeps copies across providers with automatic failover on read
+
+</div>
+
+<div style="max-width: 600px; margin: 0 auto;">
+{{< mermaid >}}
+flowchart LR
+    C([S3 Client]):::client --> O[s3-orchestrator<br/>replication factor: 2]:::orch
+    O -->|write| B1[Backend A]:::backend
+    O -.->|replicate| B2[Backend B]:::backend
+    B1 -->|read fails| O
+    O -->|failover read| B2
+
+    classDef client fill:#6b4c2a,stroke:#d4a05a,color:#fff,font-weight:bold
+    classDef orch fill:#7a5a30,stroke:#e8c070,color:#fff,font-weight:bold
+    classDef backend fill:#3a2e20,stroke:#c4a35a,color:#e8dfd0
+{{< /mermaid >}}
+</div>
+
+<div class="hero-bullets">
+
 - **Drop-in S3 replacement** - any tool that speaks S3 (aws cli, rclone, SDKs) works with zero code changes
 
 </div>
 
+<div style="max-width: 600px; margin: 0 auto;">
+{{< mermaid >}}
+flowchart TD
+    CLI[aws cli]:::tool --> O[s3-orchestrator<br/>:9000]:::orch
+    RC[rclone]:::tool --> O
+    SDK[Python / Go / JS<br/>S3 SDKs]:::tool --> O
+    TF[Terraform<br/>S3 backend]:::tool --> O
+
+    classDef tool fill:#3a2e20,stroke:#c4a35a,color:#e8dfd0
+    classDef orch fill:#7a5a30,stroke:#e8c070,color:#fff,font-weight:bold
+{{< /mermaid >}}
+</div>
+
 <hr style="margin-top: 3rem;">
 
-<h2 style="text-align: center; color: #93c5fd;">Key Features</h2>
+<h2 style="text-align: center; color: #2a9d73;">Key Features</h2>
 
 <div class="feature-grid">
   <div class="feature-item">
-    <i class="fas fa-layer-group feature-icon" style="color: #93c5fd;"></i>
+    <i class="fas fa-layer-group feature-icon" style="color: #2a9d73;"></i>
     <div>
       <strong>Multi-Backend Storage</strong>
       <p>Stack allocations from different providers into a single, larger storage target.</p>
@@ -91,7 +144,7 @@ Combine free-tier and cost-limited object storage from any number of S3-compatib
     <div class="feature-detail">Each object gets a unique data encryption key (DEK), wrapped by the master key. Supports inline config keys, file-based keys, or HashiCorp Vault Transit for HSM-backed key management. Key rotation re-wraps DEKs without touching object data.</div>
   </div>
   <div class="feature-item">
-    <i class="fas fa-plug feature-icon" style="color: #93c5fd;"></i>
+    <i class="fas fa-plug feature-icon" style="color: #2a9d73;"></i>
     <div>
       <strong>S3-Compatible API</strong>
       <p>Works with aws cli, rclone, any standard S3 client or SDK.</p>
@@ -134,11 +187,11 @@ Combine free-tier and cost-limited object storage from any number of S3-compatib
 
 <hr style="margin-top: 3rem;">
 
-<h2 style="text-align: center; color: #93c5fd;">Who Is This For?</h2>
+<h2 style="text-align: center; color: #2a9d73;">Who Is This For?</h2>
 
 <div class="feature-grid">
   <div class="feature-item">
-    <i class="fas fa-user-cog feature-icon" style="color: #93c5fd;"></i>
+    <i class="fas fa-user-cog feature-icon" style="color: #2a9d73;"></i>
     <div>
       <strong>Homelabbers</strong>
       <p>Stack free-tier allocations from multiple providers into usable storage without paying for a single plan.</p>
@@ -169,7 +222,7 @@ Combine free-tier and cost-limited object storage from any number of S3-compatib
 
 <hr style="margin-top: 3rem;">
 
-<h2 style="text-align: center; color: #93c5fd;">Admin Web Interface</h2>
+<h2 style="text-align: center; color: #2a9d73;">Admin Web Interface</h2>
 
 A built-in web dashboard provides real-time storage summaries, per-backend quota and usage bars, monthly traffic charts, a lazy-loaded directory tree for browsing and managing objects, and admin controls for rebalancing, syncing, uploading, and deleting files and folders.
 
@@ -177,7 +230,7 @@ A built-in web dashboard provides real-time storage summaries, per-backend quota
 
 <hr style="margin-top: 3rem;">
 
-<h2 style="text-align: center; color: #93c5fd;">Built-in Monitoring</h2>
+<h2 style="text-align: center; color: #2a9d73;">Built-in Monitoring</h2>
 
 s3-orchestrator ships with a pre-built Grafana dashboard and Prometheus metrics out of the box. Track request rates, latency percentiles, backend health, quota usage, replication progress, and background task performance - all without writing a single query.
 

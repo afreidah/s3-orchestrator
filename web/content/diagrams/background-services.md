@@ -14,25 +14,25 @@ Coordination of periodic background workers that maintain storage health, enforc
     background: #161b22; border: 1px solid #30363d; border-radius: 6px;
     box-shadow: 0 4px 16px rgba(0,0,0,0.4); display: none;
   }
-  #ac-tooltip h3 { color: #58a6ff; font-size: 0.85rem; margin: 0 0 0.25rem 0; }
+  #ac-tooltip h3 { color: #2a9d73; font-size: 0.85rem; margin: 0 0 0.25rem 0; }
   #ac-tooltip .ac-badge {
     display: inline-block; padding: 1px 7px; border-radius: 4px;
     font-size: 0.6rem; font-weight: 600; margin-bottom: 0.4rem; text-transform: uppercase;
   }
-  .ac-badge-entry { background: #1f6feb22; color: #58a6ff; border: 1px solid #58a6ff55; }
-  .ac-badge-filter { background: #9e6a0322; color: #d29922; border: 1px solid #d2992255; }
-  .ac-badge-decision { background: #58a6ff22; color: #58a6ff; border: 1px solid #58a6ff55; }
-  .ac-badge-process { background: #8957e522; color: #bc8cff; border: 1px solid #bc8cff55; }
-  .ac-badge-storage { background: #0d419d22; color: #79c0ff; border: 1px solid #79c0ff55; }
-  .ac-badge-success { background: #23863622; color: #3fb950; border: 1px solid #3fb95055; }
-  .ac-badge-reject { background: #da363322; color: #f85149; border: 1px solid #f8514955; }
-  .ac-badge-cleanup { background: #8b949e22; color: #8b949e; border: 1px solid #8b949e55; }
+  .ac-badge-entry { background: #1a7a5a22; color: #34b882; border: 1px solid #34b88255; }
+  .ac-badge-filter { background: #6b5b2e22; color: #c4a35a; border: 1px solid #c4a35a55; }
+  .ac-badge-decision { background: #2a9d7322; color: #2a9d73; border: 1px solid #2a9d7355; }
+  .ac-badge-process { background: #2d7d6a22; color: #5ec9a0; border: 1px solid #5ec9a055; }
+  .ac-badge-storage { background: #1a3a3022; color: #4aaa8a; border: 1px solid #4aaa8a55; }
+  .ac-badge-success { background: #1a7a5a22; color: #34b882; border: 1px solid #34b88255; }
+  .ac-badge-reject { background: #8b3a3a22; color: #d4a0a0; border: 1px solid #d4a0a055; }
+  .ac-badge-cleanup { background: #4a556822; color: #8a9aa8; border: 1px solid #8a9aa855; }
   #ac-tooltip p { font-size: 0.75rem; line-height: 1.4; color: #c9d1d9; margin-bottom: 0.35rem; }
-  #ac-tooltip code { background: #21262d; padding: 1px 4px; border-radius: 3px; font-size: 0.7rem; color: #79c0ff; }
-  #ac-tooltip .ac-metric { color: #d2a8ff; font-style: italic; font-size: 0.7rem; }
+  #ac-tooltip code { background: #21262d; padding: 1px 4px; border-radius: 3px; font-size: 0.7rem; color: #4aaa8a; }
+  #ac-tooltip .ac-metric { color: #a7d5c1; font-style: italic; font-size: 0.7rem; }
   #ac-diagram .node, #ac-diagram .edgePath, #ac-diagram .edgeLabel { transition: opacity 0.15s, filter 0.15s; }
   #ac-diagram svg.highlighting .node, #ac-diagram svg.highlighting .edgePath, #ac-diagram svg.highlighting .edgeLabel { opacity: 0.12; }
-  #ac-diagram svg.highlighting .node.highlight, #ac-diagram svg.highlighting .edgePath.highlight, #ac-diagram svg.highlighting .edgeLabel.highlight { opacity: 1; filter: drop-shadow(0 0 6px rgba(88,166,255,0.5)); }
+  #ac-diagram svg.highlighting .node.highlight, #ac-diagram svg.highlighting .edgePath.highlight, #ac-diagram svg.highlighting .edgeLabel.highlight { opacity: 1; filter: drop-shadow(0 0 6px rgba(42,157,115,0.5)); }
   #ac-diagram .node { cursor: pointer; }
 </style>
 
@@ -52,6 +52,7 @@ Coordination of periodic background workers that maintain storage health, enforc
     '    SCHED --> FLUSH[Usage\\nFlusher]:::filter',
     '    SCHED --> CQWORKER[Cleanup Queue\\nWorker]:::cleanup',
     '    SCHED --> RECONCILE[Orphan\\nReconciler]:::process',
+    '    SCHED --> SCRUBBER[Integrity\\nScrubber]:::process',
     '',
     '    REPL -->|copy to| S3[S3\\nBackends]:::storage',
     '    REBAL -->|move between| S3',
@@ -60,6 +61,8 @@ Coordination of periodic background workers that maintain storage health, enforc
     '    MPCLEAN -->|abort on| S3',
     '    CQWORKER -->|retry on| S3',
     '    RECONCILE -->|list + import| S3',
+    '    SCRUBBER -->|read + verify| S3',
+    '    SCRUBBER -->|on corruption| CQ',
     '',
     '    REPL -->|on failure| CQ{{Cleanup\\nQueue}}:::cleanup',
     '    REBAL -->|on failure| CQ',
@@ -68,14 +71,14 @@ Coordination of periodic background workers that maintain storage health, enforc
     '',
     '    FLUSH -->|persist| PG[(PostgreSQL)]:::storage',
     '',
-    '    classDef entry fill:#1f6feb,stroke:#1f6feb,color:#fff,font-weight:bold',
-    '    classDef filter fill:#9e6a03,stroke:#d29922,color:#fff',
-    '    classDef decision fill:#21262d,stroke:#58a6ff,color:#e6edf3,font-size:11px',
-    '    classDef process fill:#8957e5,stroke:#bc8cff,color:#fff',
-    '    classDef storage fill:#0d419d,stroke:#58a6ff,color:#c9d1d9',
-    '    classDef success fill:#238636,stroke:#3fb950,color:#fff,font-weight:bold',
-    '    classDef reject fill:#da3633,stroke:#f85149,color:#fff,font-weight:bold',
-    '    classDef cleanup fill:#21262d,stroke:#8b949e,color:#e6edf3'
+    '    classDef entry fill:#1a7a5a,stroke:#1a7a5a,color:#fff,font-weight:bold',
+    '    classDef filter fill:#6b5b2e,stroke:#c4a35a,color:#fff',
+    '    classDef decision fill:#1e2a26,stroke:#2a9d73,color:#e6edf3,font-size:11px',
+    '    classDef process fill:#2d7d6a,stroke:#5ec9a0,color:#fff',
+    '    classDef storage fill:#1a3a30,stroke:#4aaa8a,color:#c9d1d9',
+    '    classDef success fill:#1a7a5a,stroke:#34b882,color:#fff,font-weight:bold',
+    '    classDef reject fill:#8b3a3a,stroke:#d4a0a0,color:#fff,font-weight:bold',
+    '    classDef cleanup fill:#222a26,stroke:#8a9aa8,color:#e6edf3'
   ].join('\n');
 
   mermaid.initialize({
@@ -129,6 +132,11 @@ Coordination of periodic background workers that maintain storage health, enforc
       badge: 'cleanup', badgeText: 'every 1 min',
       body: '<p><code>CleanupWorker.ProcessCleanupQueue()</code> retries failed object deletions from the <code>cleanup_queue</code> table.</p><p><b>Interval</b>: 1 minute.<br><b>Advisory lock</b>: <code>LockCleanupQueue = 1003</code>.<br><b>Batch size</b>: 50 items per tick.<br><b>Concurrency</b>: configurable (default 10).</p><p><b>Backoff</b>: exponential <code>min(1m * 2^attempts, 24h)</code>.<br><b>Max attempts</b>: 10. Exhausted items remain in the table with <code>orphan_bytes</code> preserved for operator review.</p><p>Items are fed from all failure sites: <code>recordObjectOrCleanup</code>, <code>DeleteObject</code>, <code>UploadPart</code>, <code>CompleteMultipartUpload</code>, <code>AbortMultipartUpload</code>, rebalancer (3 sites), replicator. On success, <code>DecrementOrphanBytes()</code> frees the reserved quota.</p><p class="ac-metric">Metrics: cleanup_queue_enqueued_total{reason}, cleanup_queue_processed_total{status=success|retry|exhausted}, cleanup_queue_depth</p>'
     },
+    SCRUBBER: {
+      title: 'Integrity Scrubber',
+      badge: 'process', badgeText: 'configurable (default 6h)',
+      body: '<p><code>Scrubber.Scrub()</code> reads random objects from backends, computes their SHA-256 hash, and compares against the stored <code>content_hash</code>.</p><p><b>Interval</b>: configurable via <code>integrity.scrubber_interval</code> (default 6 hours, 0 = disabled).<br><b>Advisory lock</b>: <code>LockScrubber = 1010</code>.<br><b>Batch size</b>: configurable via <code>integrity.scrubber_batch_size</code> (default 100).<br><b>Guard</b>: only runs when <code>integrity.enabled: true</code> and <code>scrubber_interval > 0</code>.</p><p>Encrypted objects are decrypted before hashing — the hash is always against plaintext. Each backend read is tracked against usage quota (API calls + egress).</p><p>On hash mismatch: the corrupted copy is enqueued for cleanup via <code>DeleteOrEnqueue()</code> with reason <code>integrity_scrub_failed</code>.</p><p class="ac-metric">Metrics: s3o_integrity_checks_total{operation="scrub"}, s3o_integrity_errors_total{operation="scrub"}</p>'
+    },
     RECONCILE: {
       title: 'Orphan Reconciler',
       badge: 'process', badgeText: 'configurable (default 24h)',
@@ -137,7 +145,7 @@ Coordination of periodic background workers that maintain storage health, enforc
     PG: {
       title: 'PostgreSQL',
       badge: 'storage', badgeText: 'shared state',
-      body: '<p>Central metadata store shared by all background services. Hosts object locations, quota stats, usage counters, multipart upload state, cleanup queue, and advisory locks.</p><p><b>Advisory locks</b> provide leader election: <code>pg_try_advisory_lock(lockID)</code> ensures only one instance runs each service. Lock IDs: Rebalancer=1001, Replicator=1002, CleanupQueue=1003, MultipartCleanup=1004, Lifecycle=1005, UsageFlush=1007, OverReplication=1008, Reconcile=1009.</p><p>Key tables: <code>object_locations</code>, <code>backend_quotas</code>, <code>backend_usage</code>, <code>cleanup_queue</code>, <code>multipart_uploads</code>, <code>multipart_parts</code>.</p>'
+      body: '<p>Central metadata store shared by all background services. Hosts object locations, quota stats, usage counters, multipart upload state, cleanup queue, and advisory locks.</p><p><b>Advisory locks</b> provide leader election: <code>pg_try_advisory_lock(lockID)</code> ensures only one instance runs each service. Lock IDs: Rebalancer=1001, Replicator=1002, CleanupQueue=1003, MultipartCleanup=1004, Lifecycle=1005, UsageFlush=1007, OverReplication=1008, Reconcile=1009, Scrubber=1010.</p><p>Key tables: <code>object_locations</code>, <code>backend_quotas</code>, <code>backend_usage</code>, <code>cleanup_queue</code>, <code>multipart_uploads</code>, <code>multipart_parts</code>.</p>'
     },
     S3: {
       title: 'S3 Backends',
@@ -228,11 +236,11 @@ Coordination of periodic background workers that maintain storage health, enforc
 
 | Color | Meaning |
 |-------|---------|
-| <span style="color:#1f6feb">**Blue**</span> | Scheduler / entry point |
-| <span style="color:#d29922">**Amber**</span> | Adaptive-interval service |
-| <span style="color:#bc8cff">**Purple**</span> | Fixed-interval background worker |
-| <span style="color:#79c0ff">**Dark blue**</span> | Shared storage (PostgreSQL / S3) |
-| <span style="color:#8b949e">**Gray**</span> | Cleanup / retry queue |
+| <span style="color:#1a7a5a">**Forest green**</span> | Scheduler / entry point |
+| <span style="color:#c4a35a">**Amber**</span> | Adaptive-interval service |
+| <span style="color:#5ec9a0">**Teal**</span> | Fixed-interval background worker |
+| <span style="color:#4aaa8a">**Teal**</span> | Shared storage (PostgreSQL / S3) |
+| <span style="color:#8a9aa8">**Gray**</span> | Cleanup / retry queue |
 
 ## Service Summary
 

@@ -196,7 +196,7 @@ func (d *DrainManager) runDrain(ctx context.Context, name string, state *drainSt
 		}
 
 		// Migrate each object
-		for _, obj := range objects {
+		for i := range objects {
 			select {
 			case <-ctx.Done():
 				state.err = ctx.Err()
@@ -206,10 +206,10 @@ func (d *DrainManager) runDrain(ctx context.Context, name string, state *drainSt
 			default:
 			}
 
-			if d.DrainOneObject(ctx, srcBackend, name, &obj) {
+			if d.DrainOneObject(ctx, srcBackend, name, &objects[i]) {
 				state.moved.Add(1)
 				telemetry.DrainObjectsMoved.Inc()
-				telemetry.DrainBytesMoved.Add(float64(obj.SizeBytes))
+				telemetry.DrainBytesMoved.Add(float64(objects[i].SizeBytes))
 			}
 		}
 	}
@@ -251,8 +251,8 @@ func (d *DrainManager) DrainOneObject(ctx context.Context, srcBackend backend.Ob
 			"key", obj.ObjectKey, "error", err)
 		return false
 	}
-	for _, loc := range locations {
-		if loc.BackendName != srcName {
+	for i := range locations {
+		if locations[i].BackendName != srcName {
 			// Replica exists elsewhere — delete the source location record
 			// and the S3 object. No data transfer required.
 			if err := d.store.DeleteObjectLocation(ctx, obj.ObjectKey, srcName); err != nil {
@@ -266,7 +266,7 @@ func (d *DrainManager) DrainOneObject(ctx context.Context, srcBackend backend.Ob
 			audit.Log(ctx, "storage.DrainRemoveReplica",
 				slog.String("key", obj.ObjectKey),
 				slog.String("removed_from", srcName),
-				slog.String("exists_on", loc.BackendName),
+				slog.String("exists_on", locations[i].BackendName),
 			)
 			return true
 		}
@@ -383,16 +383,16 @@ func (d *DrainManager) PurgeBackendObjects(ctx context.Context, backend backend.
 			return
 		}
 
-		for _, obj := range objects {
-			if err := d.deleteWithTimeout(ctx, backend, obj.ObjectKey); err != nil {
+		for i := range objects {
+			if err := d.deleteWithTimeout(ctx, backend, objects[i].ObjectKey); err != nil {
 				slog.WarnContext(ctx, "Remove: failed to delete object from backend",
-					"backend", name, "key", obj.ObjectKey, "error", err)
+					"backend", name, "key", objects[i].ObjectKey, "error", err)
 			}
 			d.usage.Record(name, 1, 0, 0)
 
-			if err := d.store.DeleteObjectLocation(ctx, obj.ObjectKey, name); err != nil {
+			if err := d.store.DeleteObjectLocation(ctx, objects[i].ObjectKey, name); err != nil {
 				slog.WarnContext(ctx, "Remove: failed to delete DB record during purge",
-					"backend", name, "key", obj.ObjectKey, "error", err)
+					"backend", name, "key", objects[i].ObjectKey, "error", err)
 			}
 		}
 	}

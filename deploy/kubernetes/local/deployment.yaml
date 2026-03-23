@@ -35,6 +35,8 @@ spec:
           env:
             - name: GOMEMLIMIT
               value: "922MiB"
+            - name: GOMAXPROCS
+              value: "1"
           envFrom:
             - secretRef:
                 name: s3-orchestrator

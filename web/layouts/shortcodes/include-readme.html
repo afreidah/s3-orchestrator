@@ -6,6 +6,7 @@
 {{ $content = replaceRE `(?s)\A<p[^>]*>.*?</p>\s*` "" $content }}
 {{ $content = replaceRE `(?m)^# [^\n]+\n` "" $content }}
 {{ $content = replaceRE `\[!\[[^\]]*\]\([^\)]*\)\]\([^\)]*\)\s*\n?` "" $content }}
+{{ $content = replaceRE `(?s)<p[^>]*>\s*<strong><a href=.*?</p>` "" $content }}
 {{ $content = replaceRE `!\[([^\]]*)\]\(docs/` "![$1](/docs/" $content }}
 {{ $content = replaceRE `\]\(docs/` "](/docs/" $content }}
 {{ .Page.RenderString $content }}

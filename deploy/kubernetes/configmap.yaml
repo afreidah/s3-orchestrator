@@ -109,6 +109,13 @@ data:
     #   failure_threshold: 3
     #   open_timeout: "15s"
 
+    # --- Integrity verification ---
+    # integrity:
+    #   enabled: false
+    #   verify_on_read: false
+    #   scrubber_interval: "6h"
+    #   scrubber_batch_size: 100
+
     # --- Write routing ---
     # "spread" distributes writes by lowest utilization ratio across backends.
     # "pack" fills backends sequentially until quota is reached.

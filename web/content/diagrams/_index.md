@@ -45,7 +45,7 @@ weight: 35
     </div>
   </a>
   <a class="landing-card" href="encryption/">
-    <i class="fas fa-lock landing-card-icon" style="color: #d2a8ff;"></i>
+    <i class="fas fa-lock landing-card-icon" style="color: #a7d5c1;"></i>
     <div>
       <strong>Encryption Flow</strong>
       <p>Envelope encryption pipeline: DEK generation, key wrapping, chunk-based AES-256-GCM, and range decryption.</p>
@@ -59,7 +59,7 @@ weight: 35
     </div>
   </a>
   <a class="landing-card" href="database-schema/">
-    <i class="fas fa-database landing-card-icon" style="color: #79c0ff;"></i>
+    <i class="fas fa-database landing-card-icon" style="color: #4aaa8a;"></i>
     <div>
       <strong>Database Schema</strong>
       <p>Entity-relationship diagram of the PostgreSQL metadata store: tables, columns, indexes, and relationships.</p>

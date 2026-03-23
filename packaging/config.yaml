@@ -85,6 +85,17 @@ backends:
 #   # previous_keys:
 #   #   - "${OLD_ENCRYPTION_KEY}"
 
+# --- Integrity verification (disabled by default) ---
+# SHA-256 content hashing for data integrity. When enabled, objects are
+# checksummed on write and optionally verified on read. The background
+# scrubber periodically re-reads stored objects to detect silent corruption.
+# integrity:
+#   enabled: false
+#   verify_on_read: false            # Hash-check every GET response (streams through VerifyingReader)
+#   verify_on_replicate: true        # Verify hash when creating replicas (default: true when enabled)
+#   scrubber_interval: 6h            # Background verification interval (0 = disabled)
+#   scrubber_batch_size: 100         # Objects per scrub cycle
+
 # --- Redis shared counters (disabled by default) ---
 # When multiple instances share a PostgreSQL database, Redis provides shared
 # usage counters so all instances see the same accumulated deltas between
