@@ -1,0 +1,11 @@
+apiVersion: v2
+name: s3-orchestrator
+description: Unified S3-compatible storage across multiple backends
+type: application
+version: 0.1.0
+appVersion: "v0.20.0"
+home: https://s3-orchestrator.munchbox.cc
+sources:
+  - https://github.com/afreidah/s3-orchestrator
+maintainers:
+  - name: Alex Freidah

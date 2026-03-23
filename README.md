@@ -1143,18 +1143,14 @@ deploy/
     local/
       s3-orchestrator.nomad.hcl  Local dev job (docker-compose backing services)
       demo.sh                  One-command Nomad dev demo
+  helm/
+    s3-orchestrator/
+      Chart.yaml               Helm chart metadata
+      values.yaml              Default production values
+      templates/               Deployment, Service, ConfigMap, Secret, Ingress, etc.
   kubernetes/
-    namespace.yaml             Namespace
-    secret.yaml                Secret (credential placeholders)
-    serviceaccount.yaml        ServiceAccount (Vault annotations commented)
-    configmap.yaml             Full production config
-    deployment.yaml            Deployment with health probes and security hardening
-    service.yaml               ClusterIP service
-    ingress.yaml               Ingress with TLS (nginx/cert-manager)
     local/
-      configmap.yaml           Local dev config (docker-compose backing services)
-      deployment.yaml          Local dev deployment (locally-built image)
-      secret.yaml              Local dev secret (docker-compose credentials)
+      values.yaml              Local dev Helm values (docker-compose backing services)
       demo.sh                  One-command k3d demo
 ```
 

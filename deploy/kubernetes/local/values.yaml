@@ -1,0 +1,154 @@
+# -------------------------------------------------------------------------------
+# S3 Orchestrator - Local Dev Helm Values (k3d + docker-compose)
+#
+# Author: Alex Freidah
+#
+# Points at docker-compose.test.yml services on the host via __HOST_IP__
+# (substituted by demo.sh). Not for production use.
+# -------------------------------------------------------------------------------
+
+image:
+  repository: s3-orchestrator
+  tag: "local"
+  pullPolicy: Never
+
+env:
+  GOMEMLIMIT: "922MiB"
+  GOMAXPROCS: "1"
+
+resources:
+  requests:
+    cpu: "1024m"
+    memory: "1024Mi"
+  limits:
+    cpu: "1024m"
+    memory: "1024Mi"
+
+networkPolicy:
+  enabled: false
+
+ingress:
+  enabled: false
+
+secrets:
+  DB_PASSWORD: "s3proxy"
+  BUCKET_ACCESS_KEY: "photoskey"
+  BUCKET_SECRET_KEY: "photossecret"
+  MINIO1_ACCESS_KEY: "minioadmin"
+  MINIO1_SECRET_KEY: "minioadmin"
+  MINIO2_ACCESS_KEY: "minioadmin"
+  MINIO2_SECRET_KEY: "minioadmin"
+  MINIO3_ACCESS_KEY: "minioadmin"
+  MINIO3_SECRET_KEY: "minioadmin"
+  UI_ADMIN_KEY: "admin"
+  UI_ADMIN_SECRET: "admin"
+  UI_ADMIN_TOKEN: "admin"
+
+config:
+  server:
+    listen_addr: "0.0.0.0:9000"
+    backend_timeout: "30s"
+    max_concurrent_reads: 200
+    max_concurrent_writes: 200
+    load_shed_threshold: 0.8
+    admission_wait: "100ms"
+
+  database:
+    host: "__HOST_IP__"
+    port: 15432
+    database: "s3proxy_test"
+    user: "s3proxy"
+    password: "${DB_PASSWORD}"
+    ssl_mode: "disable"
+
+  buckets:
+    - name: "photos"
+      credentials:
+        - access_key_id: "${BUCKET_ACCESS_KEY}"
+          secret_access_key: "${BUCKET_SECRET_KEY}"
+
+  backends:
+    - name: "minio-1"
+      endpoint: "http://__HOST_IP__:19000"
+      region: "us-east-1"
+      bucket: "backend1"
+      access_key_id: "${MINIO1_ACCESS_KEY}"
+      secret_access_key: "${MINIO1_SECRET_KEY}"
+      force_path_style: true
+      unsigned_payload: true
+      quota_bytes: 10737418240
+
+    - name: "minio-2"
+      endpoint: "http://__HOST_IP__:19002"
+      region: "us-east-1"
+      bucket: "backend2"
+      access_key_id: "${MINIO2_ACCESS_KEY}"
+      secret_access_key: "${MINIO2_SECRET_KEY}"
+      force_path_style: true
+      unsigned_payload: true
+      quota_bytes: 10737418240
+
+    - name: "minio-3"
+      endpoint: "http://__HOST_IP__:19004"
+      region: "us-east-1"
+      bucket: "backend3"
+      access_key_id: "${MINIO3_ACCESS_KEY}"
+      secret_access_key: "${MINIO3_SECRET_KEY}"
+      force_path_style: true
+      unsigned_payload: true
+      quota_bytes: 10737418240
+
+  routing_strategy: "spread"
+
+  replication:
+    factor: 2
+    worker_interval: "10s"
+    batch_size: 400
+
+  rebalance:
+    enabled: true
+    strategy: "spread"
+    interval: "6h"
+    batch_size: 300
+    threshold: 0.7
+    concurrency: 5
+
+  encryption:
+    enabled: true
+    master_key: "F2rpnHM7TmwJ4/DalNfk0cvCCPmHTfvB9LyhBLPoCVc="
+    chunk_size: 262144
+
+  integrity:
+    enabled: true
+    verify_on_read: true
+    scrubber_interval: "1h"
+    scrubber_batch_size: 50
+
+  circuit_breaker:
+    failure_threshold: 3
+    open_timeout: "15s"
+    cache_ttl: "60s"
+
+  backend_circuit_breaker:
+    enabled: true
+    failure_threshold: 3
+    open_timeout: "15s"
+
+  telemetry:
+    metrics:
+      enabled: true
+    tracing:
+      enabled: true
+      endpoint: "__HOST_IP__:4317"
+      insecure: true
+
+  rate_limit:
+    enabled: true
+    requests_per_sec: 1000
+    burst: 2000
+
+  ui:
+    enabled: true
+    admin_key: "${UI_ADMIN_KEY}"
+    admin_secret: "${UI_ADMIN_SECRET}"
+    admin_token: "${UI_ADMIN_TOKEN}"
