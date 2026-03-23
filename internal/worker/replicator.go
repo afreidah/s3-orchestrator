@@ -166,8 +166,8 @@ func (r *Replicator) Replicate(ctx context.Context, cfg config.ReplicationConfig
 func (r *Replicator) ReplicateObject(ctx context.Context, quotaStats map[string]store.QuotaStat, key string, existingCopies []store.ObjectLocation, needed int) (int, error) {
 	// Build exclusion set of backends that already hold a copy
 	exclusion := make(map[string]bool, len(existingCopies))
-	for _, c := range existingCopies {
-		exclusion[c.BackendName] = true
+	for i := range existingCopies {
+		exclusion[existingCopies[i].BackendName] = true
 	}
 
 	created := 0
@@ -270,15 +270,15 @@ func (r *Replicator) CopyToReplica(ctx context.Context, key string, copies []sto
 		return 1
 	})
 
-	for _, cp := range copies {
-		srcBackend, ok := r.ops.Backends()[cp.BackendName]
+	for i := range copies {
+		srcBackend, ok := r.ops.Backends()[copies[i].BackendName]
 		if !ok {
 			continue
 		}
 
 		err := r.ops.StreamCopy(ctx, srcBackend, targetBackend, key)
 		if err == nil {
-			return cp.BackendName, nil
+			return copies[i].BackendName, nil
 		}
 
 		// Write failures won't improve with a different source — fail immediately.
@@ -287,7 +287,7 @@ func (r *Replicator) CopyToReplica(ctx context.Context, key string, copies []sto
 		}
 
 		slog.WarnContext(ctx, "Replication: source read failed, trying next copy",
-			"key", key, "source", cp.BackendName, "error", err)
+			"key", key, "source", copies[i].BackendName, "error", err)
 	}
 
 	return "", fmt.Errorf("all source copies failed for key %s", key)

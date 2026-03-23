@@ -409,3 +409,18 @@ func (m *MockStore) CountOverReplicatedObjects(_ context.Context, _ int) (int64,
 func (m *MockStore) RemoveExcessCopy(_ context.Context, _, _ string, _ int64) error {
 	return nil
 }
+
+// GetRandomHashedObjects returns nil (stub).
+func (m *MockStore) GetRandomHashedObjects(_ context.Context, _ int) ([]store.ObjectLocation, error) {
+	return nil, nil
+}
+
+// GetObjectsWithoutHash returns nil (stub).
+func (m *MockStore) GetObjectsWithoutHash(_ context.Context, _, _ int) ([]store.ObjectLocation, error) {
+	return nil, nil
+}
+
+// UpdateContentHash returns nil (stub).
+func (m *MockStore) UpdateContentHash(_ context.Context, _, _, _ string) error {
+	return nil
+}

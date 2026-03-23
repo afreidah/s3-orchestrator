@@ -570,6 +570,35 @@ After updating the config, call the `rotate-encryption-key` admin API to re-wrap
 - The `chunk_size` must stay the same for the lifetime of the data. Changing it after objects are encrypted will make those objects unreadable.
 - Encrypted objects are slightly larger than their plaintext (header + per-chunk overhead). The exact overhead is: 32 bytes (header) + 28 bytes per chunk (nonce + auth tag).
 
+### integrity
+
+SHA-256 content hashing for data integrity verification. When enabled, objects are checksummed on write and the hash is stored alongside the object location in PostgreSQL.
+
+```yaml
+integrity:
+  enabled: true
+  verify_on_read: true               # Hash-check every GET response as it streams
+  verify_on_replicate: true          # Verify hash when creating replicas (default: true)
+  scrubber_interval: "6h"            # Background verification interval (0 = disabled)
+  scrubber_batch_size: 100           # Objects per scrub cycle
+```
+
+**How it works:**
+
+- **Write path:** SHA-256 is computed on the plaintext body (before encryption) and stored in `object_locations.content_hash`.
+- **Read path (`verify_on_read`):** A `VerifyingReader` wraps the response body and computes the hash as data streams to the client. On mismatch at EOF, the corrupted copy is enqueued for cleanup.
+- **Scrubber:** A background worker periodically reads random objects from backends, decrypts if needed, and verifies their hash. Corrupted copies are enqueued for cleanup. Each read counts against the backend's usage quota.
+- **Backfill:** Objects written before integrity was enabled have no stored hash. Use `admin backfill-checksums` to read those objects and compute their hashes.
+
+**Integrity is hot-reloadable** — changes take effect on SIGHUP without a restart.
+
+**Metrics:**
+
+| Metric | Labels | Description |
+|--------|--------|-------------|
+| `s3o_integrity_checks_total` | `operation` | Hash verifications performed (read, scrub) |
+| `s3o_integrity_errors_total` | `operation` | Hash mismatches detected (read, scrub) |
+
 When enabled, the dashboard is served at `{path}/` on the same port as the S3 API.
 
 All dashboard responses include security headers (`X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Content-Security-Policy`). The dashboard requires authentication via the configured `admin_key`/`admin_secret` — unauthenticated requests are redirected to the login page (HTML) or receive `401` (API).
@@ -770,6 +799,18 @@ s3-orchestrator admin encrypt-existing
 
 # Re-wrap all DEKs encrypted with a specific key ID (key rotation)
 s3-orchestrator admin rotate-encryption-key --old-key-id config-0
+
+# Trigger an on-demand integrity scrub cycle (verify stored hashes)
+s3-orchestrator admin scrub
+
+# Scrub with a custom batch size
+s3-orchestrator admin scrub -batch-size 500
+
+# Compute and store content hashes for all unhashed objects
+s3-orchestrator admin backfill-checksums
+
+# Backfill with a custom batch size (controls pace of backend reads)
+s3-orchestrator admin backfill-checksums -batch-size 50
 ```
 
 The admin API requires `ui.admin_token` (or `ui.admin_key` as fallback) to be set in the configuration. All requests are authenticated via the `X-Admin-Token` header.

@@ -231,11 +231,11 @@ func (r *Rebalancer) PlanPackTight(ctx context.Context, stats map[string]store.Q
 				return nil, fmt.Errorf("failed to list objects on %s: %w", src.Name, err)
 			}
 
-			for _, obj := range objects {
+			for oi := range objects {
 				if remaining <= 0 || destFree <= 0 {
 					break
 				}
-				if obj.SizeBytes > destFree {
+				if objects[oi].SizeBytes > destFree {
 					continue
 				}
 
@@ -247,15 +247,15 @@ func (r *Rebalancer) PlanPackTight(ctx context.Context, stats map[string]store.Q
 				}
 
 				plan = append(plan, RebalanceMove{
-					ObjectKey:   obj.ObjectKey,
+					ObjectKey:   objects[oi].ObjectKey,
 					FromBackend: src.Name,
 					ToBackend:   dest.Name,
-					SizeBytes:   obj.SizeBytes,
+					SizeBytes:   objects[oi].SizeBytes,
 				})
 
-				destFree -= obj.SizeBytes
-				simUsed[dest.Name] += obj.SizeBytes
-				simUsed[src.Name] -= obj.SizeBytes
+				destFree -= objects[oi].SizeBytes
+				simUsed[dest.Name] += objects[oi].SizeBytes
+				simUsed[src.Name] -= objects[oi].SizeBytes
 				remaining--
 			}
 		}
@@ -335,14 +335,14 @@ func (r *Rebalancer) PlanSpreadEven(ctx context.Context, stats map[string]store.
 			return nil, fmt.Errorf("failed to list objects on %s: %w", src.Name, err)
 		}
 
-		for _, obj := range objects {
+		for oi := range objects {
 			if remaining <= 0 || src.Balance <= 0 {
 				break
 			}
 
 			// Skip if this object is larger than what the source needs to shed —
 			// moving it would overshoot and make the source under-target
-			if obj.SizeBytes > src.Balance {
+			if objects[oi].SizeBytes > src.Balance {
 				continue
 			}
 
@@ -353,7 +353,7 @@ func (r *Rebalancer) PlanSpreadEven(ctx context.Context, stats map[string]store.
 				destStat := stats[destinations[di].Name]
 				destFree := destStat.BytesLimit - simUsed[destinations[di].Name]
 
-				if deficit >= obj.SizeBytes && obj.SizeBytes <= destFree {
+				if deficit >= objects[oi].SizeBytes && objects[oi].SizeBytes <= destFree {
 					bestDest = di
 					break
 				}
@@ -365,16 +365,16 @@ func (r *Rebalancer) PlanSpreadEven(ctx context.Context, stats map[string]store.
 
 			dest := &destinations[bestDest]
 			plan = append(plan, RebalanceMove{
-				ObjectKey:   obj.ObjectKey,
+				ObjectKey:   objects[oi].ObjectKey,
 				FromBackend: src.Name,
 				ToBackend:   dest.Name,
-				SizeBytes:   obj.SizeBytes,
+				SizeBytes:   objects[oi].SizeBytes,
 			})
 
-			src.Balance -= obj.SizeBytes
-			dest.Balance += obj.SizeBytes
-			simUsed[src.Name] -= obj.SizeBytes
-			simUsed[dest.Name] += obj.SizeBytes
+			src.Balance -= objects[oi].SizeBytes
+			dest.Balance += objects[oi].SizeBytes
+			simUsed[src.Name] -= objects[oi].SizeBytes
+			simUsed[dest.Name] += objects[oi].SizeBytes
 			remaining--
 		}
 	}

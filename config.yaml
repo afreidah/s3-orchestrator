@@ -84,6 +84,13 @@ ui:
   # admin_token: "separate-token"     # Separate token for admin API (defaults to admin_key)
   # force_secure_cookies: true        # Always set Secure flag on cookies (use behind TLS proxy)
 
+# --- Integrity verification (disabled by default) ---
+# integrity:
+#   enabled: true
+#   verify_on_read: true             # Hash-check every GET response
+#   scrubber_interval: "6h"          # Background verification interval (0 = disabled)
+#   scrubber_batch_size: 100         # Objects per scrub cycle
+
 # --- Per-backend circuit breakers ---
 backend_circuit_breaker:
   enabled: true

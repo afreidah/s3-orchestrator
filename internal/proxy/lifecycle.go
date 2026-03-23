@@ -46,15 +46,15 @@ func (m *BackendManager) ProcessLifecycleRules(ctx context.Context, rules []conf
 				break
 			}
 
-			for _, obj := range objects {
-				if err := m.ObjectManager.DeleteObject(ctx, obj.ObjectKey); err != nil {
+			for i := range objects {
+				if err := m.ObjectManager.DeleteObject(ctx, objects[i].ObjectKey); err != nil {
 					slog.WarnContext(ctx, "Lifecycle: failed to delete expired object",
-						"key", obj.ObjectKey, "error", err)
+						"key", objects[i].ObjectKey, "error", err)
 					telemetry.LifecycleFailedTotal.Inc()
 					failed++
 				} else {
 					audit.Log(ctx, "lifecycle.delete",
-						slog.String("key", obj.ObjectKey),
+						slog.String("key", objects[i].ObjectKey),
 						slog.String("prefix", rule.Prefix),
 						slog.Int("expiration_days", rule.ExpirationDays),
 					)

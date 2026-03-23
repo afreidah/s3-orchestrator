@@ -334,6 +334,21 @@ func (mr *MockMetadataStoreMockRecorder) GetObjectCounts(ctx any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetObjectCounts", reflect.TypeOf((*MockMetadataStore)(nil).GetObjectCounts), ctx)
 }
 
+// GetObjectsWithoutHash mocks base method.
+func (m *MockMetadataStore) GetObjectsWithoutHash(ctx context.Context, limit, offset int) ([]ObjectLocation, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetObjectsWithoutHash", ctx, limit, offset)
+	ret0, _ := ret[0].([]ObjectLocation)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetObjectsWithoutHash indicates an expected call of GetObjectsWithoutHash.
+func (mr *MockMetadataStoreMockRecorder) GetObjectsWithoutHash(ctx, limit, offset any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetObjectsWithoutHash", reflect.TypeOf((*MockMetadataStore)(nil).GetObjectsWithoutHash), ctx, limit, offset)
+}
+
 // GetOverReplicatedObjects mocks base method.
 func (m *MockMetadataStore) GetOverReplicatedObjects(ctx context.Context, factor, limit int) ([]ObjectLocation, error) {
 	m.ctrl.T.Helper()
@@ -392,6 +407,21 @@ func (m *MockMetadataStore) GetQuotaStats(ctx context.Context) (map[string]Quota
 func (mr *MockMetadataStoreMockRecorder) GetQuotaStats(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetQuotaStats", reflect.TypeOf((*MockMetadataStore)(nil).GetQuotaStats), ctx)
+}
+
+// GetRandomHashedObjects mocks base method.
+func (m *MockMetadataStore) GetRandomHashedObjects(ctx context.Context, limit int) ([]ObjectLocation, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetRandomHashedObjects", ctx, limit)
+	ret0, _ := ret[0].([]ObjectLocation)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetRandomHashedObjects indicates an expected call of GetRandomHashedObjects.
+func (mr *MockMetadataStoreMockRecorder) GetRandomHashedObjects(ctx, limit any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRandomHashedObjects", reflect.TypeOf((*MockMetadataStore)(nil).GetRandomHashedObjects), ctx, limit)
 }
 
 // GetStaleMultipartUploads mocks base method.
@@ -643,6 +673,20 @@ func (m *MockMetadataStore) RetryCleanupItem(ctx context.Context, id int64, back
 func (mr *MockMetadataStoreMockRecorder) RetryCleanupItem(ctx, id, backoff, lastError any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RetryCleanupItem", reflect.TypeOf((*MockMetadataStore)(nil).RetryCleanupItem), ctx, id, backoff, lastError)
+}
+
+// UpdateContentHash mocks base method.
+func (m *MockMetadataStore) UpdateContentHash(ctx context.Context, key, backendName, hash string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateContentHash", ctx, key, backendName, hash)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpdateContentHash indicates an expected call of UpdateContentHash.
+func (mr *MockMetadataStoreMockRecorder) UpdateContentHash(ctx, key, backendName, hash any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateContentHash", reflect.TypeOf((*MockMetadataStore)(nil).UpdateContentHash), ctx, key, backendName, hash)
 }
 
 // WithAdvisoryLock mocks base method.

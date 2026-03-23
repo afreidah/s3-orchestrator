@@ -45,6 +45,7 @@ type Config struct {
 	UsageFlush      UsageFlushConfig     `yaml:"usage_flush"`
 	Lifecycle       LifecycleConfig      `yaml:"lifecycle"`
 	Reconcile       ReconcileConfig      `yaml:"reconcile"`
+	Integrity       IntegrityConfig      `yaml:"integrity"`
 	Redis           *RedisConfig         `yaml:"redis"`
 	RoutingStrategy string               `yaml:"routing_strategy"` // "pack" (default) or "spread"
 }
@@ -109,6 +110,7 @@ func (c *Config) SetDefaultsAndValidate() error {
 	if c.Reconcile.Enabled && c.Reconcile.Interval <= 0 {
 		c.Reconcile.Interval = 24 * time.Hour
 	}
+	errs = append(errs, c.Integrity.setDefaultsAndValidate()...)
 	if c.Redis != nil {
 		errs = append(errs, c.Redis.setDefaultsAndValidate()...)
 	}
