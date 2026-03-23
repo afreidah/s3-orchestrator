@@ -174,6 +174,61 @@ func TestBackfill_Pagination(t *testing.T) {
 	}
 }
 
+func TestBackfill_UnencryptedObject(t *testing.T) {
+	s, ops, be, ms := setupScrubber(t)
+	body := "plaintext object"
+	expectedHash := hashString(body)
+
+	ms.objectsWithoutHash = []store.ObjectLocation{
+		{ObjectKey: "bucket/plain", BackendName: "b1", SizeBytes: int64(len(body)), Encrypted: false},
+	}
+	ops.EXPECT().Store().Return(ms).AnyTimes()
+	ops.EXPECT().GetBackend("b1").Return(be, nil)
+	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
+	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
+	be.EXPECT().GetObject(gomock.Any(), "bucket/plain", "").Return(&backend.GetObjectResult{
+		Body: io.NopCloser(strings.NewReader(body)),
+		Size: int64(len(body)),
+	}, nil)
+
+	processed, _ := s.Backfill(context.Background(), 10, 0)
+	if processed != 1 {
+		t.Errorf("expected 1 processed, got %d", processed)
+	}
+	if ms.lastUpdatedHash != expectedHash {
+		t.Errorf("expected hash %s, got %s", expectedHash, ms.lastUpdatedHash)
+	}
+}
+
+func TestBackfill_BackendError(t *testing.T) {
+	s, ops, be, ms := setupScrubber(t)
+
+	ms.objectsWithoutHash = []store.ObjectLocation{
+		{ObjectKey: "bucket/key1", BackendName: "b1", SizeBytes: 10},
+	}
+	ops.EXPECT().Store().Return(ms).AnyTimes()
+	ops.EXPECT().GetBackend("b1").Return(be, nil)
+	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
+	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
+	be.EXPECT().GetObject(gomock.Any(), "bucket/key1", "").Return(nil, errors.New("timeout"))
+
+	processed, _ := s.Backfill(context.Background(), 10, 0)
+	if processed != 0 {
+		t.Errorf("expected 0 processed, got %d", processed)
+	}
+}
+
+func TestBackfill_EmptyBatch(t *testing.T) {
+	s, ops, _, ms := setupScrubber(t)
+	ms.objectsWithoutHash = nil
+	ops.EXPECT().Store().Return(ms).AnyTimes()
+
+	processed, nextOffset := s.Backfill(context.Background(), 10, 0)
+	if processed != 0 || nextOffset != 0 {
+		t.Errorf("expected 0/0, got %d/%d", processed, nextOffset)
+	}
+}
+
 func TestScrubber_SetConfig(t *testing.T) {
 	s := NewScrubber(nil, nil)
 	if s.Config() != nil {
