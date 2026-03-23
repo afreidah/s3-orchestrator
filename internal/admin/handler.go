@@ -683,6 +683,7 @@ func (h *Handler) handleBackfillChecksums(w http.ResponseWriter, r *http.Request
 		}
 	}
 
+	slog.InfoContext(r.Context(), "Admin: backfill-checksums started", "batch_size", batchSize)
 	var totalProcessed int
 	offset := 0
 	for {

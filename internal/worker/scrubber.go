@@ -149,6 +149,9 @@ func (s *Scrubber) Backfill(ctx context.Context, batchSize, offset int) (process
 		return 0, 0
 	}
 
+	slog.InfoContext(ctx, "Backfill batch starting",
+		"objects", len(locs), "offset", offset)
+
 	for i := range locs {
 		if ctx.Err() != nil {
 			break
@@ -215,8 +218,10 @@ func (s *Scrubber) readAndHash(ctx context.Context, loc *store.ObjectLocation) (
 		}
 		decrypted, decErr := s.encryptor.Decrypt(ctx, result.Body, wrappedDEK, loc.KeyID)
 		if decErr != nil {
+			telemetry.EncryptionErrorsTotal.WithLabelValues("decrypt", "decrypt_failed").Inc()
 			return "", fmt.Errorf("decrypt: %w", decErr)
 		}
+		telemetry.EncryptionOpsTotal.WithLabelValues("decrypt").Inc()
 		reader = decrypted
 	}
 
