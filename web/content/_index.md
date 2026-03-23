@@ -4,7 +4,7 @@ archetype: "home"
 ---
 
 <div style="text-align: center; margin-bottom: 1.5rem;">
-  <img src="/images/logo.png" alt="s3-orchestrator" style="max-width: 350px; height: auto;">
+  <img src="/images/logo.png?v=2" alt="s3-orchestrator" style="max-width: 350px; height: auto;">
 </div>
 
 <div class="badge-grid">
