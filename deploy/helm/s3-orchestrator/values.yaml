@@ -1,0 +1,170 @@
+# -------------------------------------------------------------------------------
+# S3 Orchestrator - Helm Chart Values
+#
+# Production-ready defaults. Users override via --set or a custom values file.
+# Sensitive values use ${VAR} syntax and are injected from the Secret.
+# -------------------------------------------------------------------------------
+
+replicaCount: 1
+
+# Operating mode: "all" (default), "api", or "worker".
+# For multi-instance HA, deploy separate api and worker releases.
+mode: all
+
+image:
+  repository: ghcr.io/afreidah/s3-orchestrator
+  tag: ""  # defaults to Chart.appVersion
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# Go runtime tuning. GOMEMLIMIT should be ~90% of resources.limits.memory.
+env:
+  GOMEMLIMIT: "900MiB"
+  GOMAXPROCS: "2"
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 512Mi
+  limits:
+    cpu: "2"
+    memory: 1Gi
+
+serviceAccount:
+  create: true
+  annotations: {}
+
+service:
+  type: ClusterIP
+  port: 9000
+
+ingress:
+  enabled: false
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "5g"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+  host: s3.example.com
+  tls:
+    enabled: false
+    secretName: s3-orchestrator-tls
+
+networkPolicy:
+  enabled: true
+
+metrics:
+  enabled: true
+  path: /metrics
+
+# Use an existing Secret instead of creating one from .secrets below.
+# The Secret must contain all env vars referenced by ${VAR} in the config.
+existingSecret: ""
+
+# Inline secrets (only used when existingSecret is empty).
+# Values are base64-encoded automatically by the template.
+secrets:
+  DB_PASSWORD: ""
+  BUCKET_ACCESS_KEY: ""
+  BUCKET_SECRET_KEY: ""
+  UI_ADMIN_KEY: ""
+  UI_ADMIN_SECRET: ""
+  # Add backend credentials as needed:
+  # BACKEND1_ACCESS_KEY: ""
+  # BACKEND1_SECRET_KEY: ""
+  # ENCRYPTION_KEY: ""  # generate with: openssl rand -base64 32
+
+# -------------------------------------------------------------------------------
+# S3 Orchestrator Configuration
+#
+# Rendered as config.yaml in the ConfigMap. This is the same config format
+# documented in the project README — no Helm-specific syntax required.
+# -------------------------------------------------------------------------------
+config:
+  server:
+    listen_addr: "0.0.0.0:9000"
+    backend_timeout: "30s"
+    shutdown_delay: "5s"
+
+  database:
+    host: "postgresql"
+    port: 5432
+    database: "s3_orchestrator"
+    user: "s3_orchestrator"
+    password: "${DB_PASSWORD}"
+    ssl_mode: "require"
+    max_conns: 50
+    min_conns: 5
+    max_conn_lifetime: "5m"
+
+  buckets:
+    - name: "default"
+      credentials:
+        - access_key_id: "${BUCKET_ACCESS_KEY}"
+          secret_access_key: "${BUCKET_SECRET_KEY}"
+
+  # Add your storage backends here. Each backend needs an S3-compatible
+  # endpoint, credentials, and a quota. Example:
+  backends: []
+  # - name: "oci"
+  #   endpoint: "https://namespace.compat.objectstorage.region.oraclecloud.com"
+  #   region: "us-phoenix-1"
+  #   bucket: "my-bucket"
+  #   access_key_id: "${BACKEND1_ACCESS_KEY}"
+  #   secret_access_key: "${BACKEND1_SECRET_KEY}"
+  #   force_path_style: true
+  #   quota_bytes: 10737418240  # 10 GB
+
+  routing_strategy: "spread"
+
+  # Encryption requires a master key. Uncomment and add ENCRYPTION_KEY to
+  # your secrets to enable. Generate with: openssl rand -base64 32
+  # encryption:
+  #   enabled: true
+  #   master_key: "${ENCRYPTION_KEY}"
+  #   chunk_size: 65536
+
+  integrity:
+    enabled: true
+    verify_on_read: true
+    scrubber_interval: "6h"
+    scrubber_batch_size: 100
+
+  replication:
+    factor: 2
+    worker_interval: "5m"
+    batch_size: 50
+
+  circuit_breaker:
+    failure_threshold: 3
+    open_timeout: "15s"
+    cache_ttl: "60s"
+
+  backend_circuit_breaker:
+    enabled: true
+    failure_threshold: 5
+    open_timeout: "5m"
+
+  rate_limit:
+    enabled: true
+    requests_per_sec: 100
+    burst: 200
+
+  ui:
+    enabled: true
+    admin_key: "${UI_ADMIN_KEY}"
+    admin_secret: "${UI_ADMIN_SECRET}"
+
+  telemetry:
+    metrics:
+      enabled: true
+      path: "/metrics"
+
+  usage_flush:
+    interval: "30s"
+    adaptive_enabled: true
+    adaptive_threshold: 0.8
+    fast_interval: "5s"

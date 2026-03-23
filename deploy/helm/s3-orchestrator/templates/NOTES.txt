@@ -1,0 +1,22 @@
+S3 Orchestrator has been deployed.
+
+{{- if .Values.ingress.enabled }}
+Access the S3 API at: https://{{ .Values.ingress.host }}
+{{- else }}
+Access the S3 API within the cluster at:
+  {{ include "s3-orchestrator.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}
+
+To port-forward for local access:
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "s3-orchestrator.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}
+{{- end }}
+
+{{- if .Values.config.ui.enabled }}
+Web dashboard: http://localhost:{{ .Values.service.port }}/ui/ (after port-forward)
+{{- end }}
+
+Next steps:
+  1. Add your storage backends to config.backends in your values file
+  2. Set real credentials in your secrets
+  {{- if not (dig "encryption" "enabled" false .Values.config) }}
+  3. Enable encryption: set config.encryption.enabled=true and provide a master key
+  {{- end }}
