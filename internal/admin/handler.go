@@ -650,7 +650,7 @@ func (h *Handler) handleScrub(w http.ResponseWriter, r *http.Request) {
 	batchSize := icfg.ScrubberBatchSize
 	if bs := r.URL.Query().Get("batch_size"); bs != "" {
 		if v, err := strconv.Atoi(bs); err == nil && v > 0 {
-			batchSize = v
+			batchSize = min(v, math.MaxInt32)
 		}
 	}
 
@@ -679,7 +679,7 @@ func (h *Handler) handleBackfillChecksums(w http.ResponseWriter, r *http.Request
 	batchSize := 100
 	if bs := r.URL.Query().Get("batch_size"); bs != "" {
 		if v, err := strconv.Atoi(bs); err == nil && v > 0 {
-			batchSize = v
+			batchSize = min(v, math.MaxInt32)
 		}
 	}
 
