@@ -1372,12 +1372,8 @@ func (s *Store) GetUsageForPeriod(ctx context.Context, period string) (map[strin
 // GetRandomHashedObjects returns random object locations that have a stored
 // content hash. Used by the scrubber to verify data integrity.
 func (s *Store) GetRandomHashedObjects(ctx context.Context, limit int) ([]ObjectLocation, error) {
-	if limit <= 0 {
-		limit = 1
-	} else if limit > math.MaxInt32 {
-		limit = math.MaxInt32
-	}
-	rows, err := s.queries.GetRandomHashedObjects(ctx, int32(limit))
+	safeLimit := int32(max(1, min(limit, math.MaxInt32))) //nolint:gosec // clamped above
+	rows, err := s.queries.GetRandomHashedObjects(ctx, safeLimit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get random hashed objects: %w", err)
 	}
@@ -1387,19 +1383,11 @@ func (s *Store) GetRandomHashedObjects(ctx context.Context, limit int) ([]Object
 // GetObjectsWithoutHash returns object locations that have no stored content
 // hash, ordered by creation time. Used by the backfill command.
 func (s *Store) GetObjectsWithoutHash(ctx context.Context, limit, offset int) ([]ObjectLocation, error) {
-	if limit < 0 {
-		limit = 0
-	} else if limit > math.MaxInt32 {
-		limit = math.MaxInt32
-	}
-	if offset < 0 {
-		offset = 0
-	} else if offset > math.MaxInt32 {
-		offset = math.MaxInt32
-	}
+	safeLimit := int32(max(0, min(limit, math.MaxInt32)))   //nolint:gosec // clamped
+	safeOffset := int32(max(0, min(offset, math.MaxInt32))) //nolint:gosec // clamped
 	rows, err := s.queries.GetObjectsWithoutHash(ctx, db.GetObjectsWithoutHashParams{
-		Limit:  int32(limit),
-		Offset: int32(offset),
+		Limit:  safeLimit,
+		Offset: safeOffset,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get objects without hash: %w", err)
