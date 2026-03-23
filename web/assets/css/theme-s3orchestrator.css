@@ -363,7 +363,7 @@ a.landing-card:hover p {
   top: 0.3rem;
   width: 1.8rem;
   height: 1.8rem;
-  background: url('/images/logo.png') no-repeat center / contain;
+  background: url('/images/logo.png?v=2') no-repeat center / contain;
 }
 
 /* Navbar bullets for sub-items */
