@@ -144,11 +144,13 @@ SET encrypted = FALSE,
 WHERE object_key = $1 AND backend_name = $2;
 
 -- name: GetRandomHashedObjects :many
--- Return random object locations that have a content hash, for scrubber verification.
+-- Return random object locations that have a content hash, for scrubber
+-- verification. Uses TABLESAMPLE to avoid a full table sort, then filters
+-- and limits. The sample percentage is generous (10%) to ensure enough rows
+-- pass the WHERE filter; the LIMIT caps the final result.
 SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at
-FROM object_locations
+FROM object_locations TABLESAMPLE BERNOULLI (10)
 WHERE content_hash IS NOT NULL
-ORDER BY random()
 LIMIT $1;
 
 -- name: GetObjectsWithoutHash :many

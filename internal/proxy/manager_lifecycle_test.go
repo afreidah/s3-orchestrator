@@ -109,8 +109,9 @@ func TestProcessLifecycleRules_BatchPagination(t *testing.T) {
 		deleteObjectResp: []st.DeletedCopy{{BackendName: "b1", SizeBytes: 1}},
 	}
 
-	// Build a batch of exactly lifecycleBatchSize objects, then an empty page
-	batch := make([]st.ObjectLocation, lifecycleBatchSize)
+	// Build a batch of exactly 100 objects (default batch size), then an empty page
+	const defaultBatchSize = 100
+	batch := make([]st.ObjectLocation, defaultBatchSize)
 	for i := range batch {
 		key := "tmp/" + string(rune('a'+i%26)) + string(rune('0'+i/26))
 		batch[i] = st.ObjectLocation{ObjectKey: key, BackendName: "b1", SizeBytes: 1, CreatedAt: time.Now().Add(-48 * time.Hour)}
@@ -128,8 +129,8 @@ func TestProcessLifecycleRules_BatchPagination(t *testing.T) {
 	}
 
 	deleted, failed := mgr.ProcessLifecycleRules(context.Background(), rules)
-	if deleted != lifecycleBatchSize {
-		t.Errorf("expected %d deleted, got %d", lifecycleBatchSize, deleted)
+	if deleted != defaultBatchSize {
+		t.Errorf("expected %d deleted, got %d", defaultBatchSize, deleted)
 	}
 	if failed != 0 {
 		t.Errorf("expected 0 failed, got %d", failed)
