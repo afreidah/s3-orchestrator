@@ -127,6 +127,22 @@ SET encrypted = TRUE,
     size_bytes = $6
 WHERE object_key = $1 AND backend_name = $2;
 
+-- name: ListAllEncryptedLocations :many
+SELECT object_key, backend_name, size_bytes, encryption_key, key_id, plaintext_size
+FROM object_locations
+WHERE encrypted = TRUE
+ORDER BY object_key, backend_name
+LIMIT $1 OFFSET $2;
+
+-- name: MarkObjectDecrypted :exec
+UPDATE object_locations
+SET encrypted = FALSE,
+    encryption_key = NULL,
+    key_id = NULL,
+    size_bytes = $3,
+    plaintext_size = NULL
+WHERE object_key = $1 AND backend_name = $2;
+
 -- name: GetRandomHashedObjects :many
 -- Return random object locations that have a content hash, for scrubber verification.
 SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at

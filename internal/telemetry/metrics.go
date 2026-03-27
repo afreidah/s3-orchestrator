@@ -620,6 +620,15 @@ var (
 		[]string{"status"},
 	)
 
+	// DecryptExistingObjectsTotal counts objects processed during decrypt-existing.
+	DecryptExistingObjectsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "s3o_decrypt_existing_objects_total",
+			Help: "Total objects processed during decrypt-existing operation",
+		},
+		[]string{"status"},
+	)
+
 	// --- Redis metrics ---
 
 	// RedisOperationsTotal counts Redis counter backend operations.

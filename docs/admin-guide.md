@@ -797,6 +797,9 @@ s3-orchestrator admin remove-backend <backend-name> --purge --confirm
 # Encrypt all unencrypted objects in-place (requires encryption enabled)
 s3-orchestrator admin encrypt-existing
 
+# Decrypt all encrypted objects back to plaintext (requires encryption enabled for key access)
+s3-orchestrator admin decrypt-existing
+
 # Re-wrap all DEKs encrypted with a specific key ID (key rotation)
 s3-orchestrator admin rotate-encryption-key --old-key-id config-0
 
@@ -948,6 +951,7 @@ If `telemetry.metrics.enabled` is `true`, metrics are exposed at `/metrics`. Key
 | `s3o_audit_events_total{event="..."}` | Audit log volume by event type — useful for detecting unusual activity |
 | `s3o_encryption_errors_total` | Any non-zero rate indicates encryption/decryption failures |
 | `s3o_encrypt_existing_objects_total{status="error"}` | Failures during bulk encryption of existing data |
+| `s3o_decrypt_existing_objects_total{status="error"}` | Failures during bulk decryption of existing data |
 | `s3o_key_rotation_objects_total{status="error"}` | Failures during key rotation |
 | `s3o_redis_fallback_active` | Alert when 1 — Redis is unavailable, using local counters |
 | `s3o_redis_operations_total{operation,status}` | Track Redis operation success/error rates |
@@ -1142,6 +1146,28 @@ If you enable encryption on an orchestrator that already has unencrypted objects
 3. **Monitor** via the `s3o_encrypt_existing_objects_total` metric (labels: `success`, `error`).
 
 Failed objects are logged individually and can be retried by calling `encrypt-existing` again — it only processes objects without encryption metadata.
+
+### Disabling encryption / decrypting existing data
+
+To remove encryption from all objects and restore plaintext on backends, use the `decrypt-existing` admin API. Encryption must still be configured when you run this (the orchestrator needs the key provider to unwrap DEKs). Disable encryption in the config *after* decryption completes.
+
+1. **Decrypt all encrypted objects:**
+
+   ```bash
+   s3-orchestrator admin decrypt-existing
+   ```
+
+   This processes all encrypted objects in batches of 100: downloads ciphertext from the backend, decrypts, re-uploads plaintext (overwriting the ciphertext), and clears encryption metadata in the database. Each object costs 2 API calls (one GET, one PUT) plus egress and ingress against the backend's usage quota. The response shows progress:
+
+   ```json
+   {"status": "complete", "decrypted": 1423, "failed": 0, "total": 1423}
+   ```
+
+2. **Disable encryption** in the config and restart the orchestrator.
+
+3. **Monitor** via the `s3o_decrypt_existing_objects_total` metric (labels: `success`, `error`).
+
+Failed objects are logged individually and can be retried by calling `decrypt-existing` again — it only processes objects with encryption metadata.
 
 ### Rotating encryption keys
 

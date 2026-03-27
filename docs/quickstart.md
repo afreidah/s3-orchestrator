@@ -12,7 +12,7 @@ This starts three MinIO instances and a PostgreSQL database via Docker Compose, 
 
 ## What `make run` does
 
-1. **`make integration-deps`** — runs `docker compose -f docker-compose.test.yml up -d` to start:
+1. **`make dev-deps`** — runs `docker compose -f docker-compose.test.yml up -d` to start:
    - MinIO 1 on `localhost:19000` (bucket: `backend1`)
    - MinIO 2 on `localhost:19002` (bucket: `backend2`)
    - MinIO 3 on `localhost:19004` (bucket: `backend3`)
