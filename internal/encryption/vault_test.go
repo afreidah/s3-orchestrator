@@ -273,6 +273,43 @@ func TestVaultKeyProvider_TokenFileMissing(t *testing.T) {
 	}
 }
 
+func TestVaultKeyProvider_TokenFileInsecurePermissions(t *testing.T) {
+	tokenFile := filepath.Join(t.TempDir(), "world-readable-token")
+	if err := os.WriteFile(tokenFile, []byte("secret-token"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := NewVaultKeyProvider(&config.VaultTransitConfig{
+		Address:   "https://vault.example.com",
+		TokenFile: tokenFile,
+		KeyName:   "test-key",
+		MountPath: "transit",
+	})
+	if err == nil {
+		t.Fatal("expected error for world-readable token file")
+	}
+	if !bytes.Contains([]byte(err.Error()), []byte("insecure permissions")) {
+		t.Errorf("error should mention insecure permissions, got: %v", err)
+	}
+}
+
+func TestVaultKeyProvider_TokenFileGroupReadable(t *testing.T) {
+	tokenFile := filepath.Join(t.TempDir(), "group-readable-token")
+	if err := os.WriteFile(tokenFile, []byte("secret-token"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := NewVaultKeyProvider(&config.VaultTransitConfig{
+		Address:   "https://vault.example.com",
+		TokenFile: tokenFile,
+		KeyName:   "test-key",
+		MountPath: "transit",
+	})
+	if err == nil {
+		t.Fatal("expected error for group-readable token file")
+	}
+}
+
 func TestVaultKeyProvider_Close(t *testing.T) {
 	ts := newFakeVault(t)
 	p := newTestVaultProvider(t, ts)
