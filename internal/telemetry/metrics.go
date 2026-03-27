@@ -629,6 +629,48 @@ var (
 		[]string{"status"},
 	)
 
+	// --- Cache metrics ---
+
+	// CacheHitsTotal counts object data cache hits.
+	CacheHitsTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "s3o_cache_hits_total",
+			Help: "Object data cache hits",
+		},
+	)
+
+	// CacheMissesTotal counts object data cache misses.
+	CacheMissesTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "s3o_cache_misses_total",
+			Help: "Object data cache misses",
+		},
+	)
+
+	// CacheEvictionsTotal counts cache entries evicted by LRU or TTL.
+	CacheEvictionsTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "s3o_cache_evictions_total",
+			Help: "Cache entries evicted (LRU or TTL)",
+		},
+	)
+
+	// CacheSizeBytes tracks current cache utilization in bytes.
+	CacheSizeBytes = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "s3o_cache_size_bytes",
+			Help: "Current object data cache size in bytes",
+		},
+	)
+
+	// CacheEntries tracks the number of entries in the cache.
+	CacheEntries = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "s3o_cache_entries",
+			Help: "Number of entries in the object data cache",
+		},
+	)
+
 	// --- Redis metrics ---
 
 	// RedisOperationsTotal counts Redis counter backend operations.

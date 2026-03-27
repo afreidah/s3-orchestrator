@@ -24,6 +24,7 @@ import (
 	"time"
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
+	objcache "github.com/afreidah/s3-orchestrator/internal/cache"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/workerpool"
@@ -44,18 +45,27 @@ type ObjectManager struct {
 	*backendCore
 	encryptor         *encryption.Encryptor
 	cache             *LocationCache
+	objectCache       objcache.ObjectCache // nil when object data caching is disabled
 	parallelBroadcast bool
 	integrityCfg      func() *config.IntegrityConfig
 }
 
 // NewObjectManager creates an ObjectManager sharing the given core infrastructure.
-func NewObjectManager(core *backendCore, encryptor *encryption.Encryptor, cache *LocationCache, parallelBroadcast bool, integrityCfg func() *config.IntegrityConfig) *ObjectManager {
+func NewObjectManager(core *backendCore, encryptor *encryption.Encryptor, cache *LocationCache, objectCache objcache.ObjectCache, parallelBroadcast bool, integrityCfg func() *config.IntegrityConfig) *ObjectManager {
 	return &ObjectManager{
 		backendCore:       core,
 		encryptor:         encryptor,
 		cache:             cache,
+		objectCache:       objectCache,
 		parallelBroadcast: parallelBroadcast,
 		integrityCfg:      integrityCfg,
+	}
+}
+
+// invalidateCache removes a key from the object data cache if caching is enabled.
+func (o *ObjectManager) invalidateCache(key string) {
+	if o.objectCache != nil {
+		o.objectCache.Invalidate(key)
 	}
 }
 
@@ -213,6 +223,7 @@ func (o *ObjectManager) PutObject(ctx context.Context, key string, body io.Reade
 			slog.String("backend", backendName),
 			slog.Int64("size", size),
 		)
+		o.invalidateCache(key)
 
 		span.SetStatus(codes.Ok, "")
 		return etag, nil
@@ -457,6 +468,24 @@ func (o *ObjectManager) parallelBroadcastRead(ctx context.Context, operation, ke
 // the object is encrypted, the response body is transparently decrypted and
 // the reported size reflects the original plaintext size.
 func (o *ObjectManager) GetObject(ctx context.Context, key string, rangeHeader string) (*s3be.GetObjectResult, error) {
+	// Check object data cache for full reads (non-range requests).
+	if o.objectCache != nil && rangeHeader == "" {
+		if entry, ok := o.objectCache.Get(key); ok {
+			audit.Log(ctx, "storage.GetObject",
+				slog.String("key", key),
+				slog.String("backend", "cache"),
+				slog.Int64("size", int64(len(entry.Data))),
+			)
+			return &s3be.GetObjectResult{
+				Body:        io.NopCloser(bytes.NewReader(entry.Data)),
+				Size:        int64(len(entry.Data)),
+				ContentType: entry.ContentType,
+				ETag:        entry.ETag,
+				Metadata:    entry.Metadata,
+			}, nil
+		}
+	}
+
 	var result *s3be.GetObjectResult
 	var once sync.Once // protects result write when parallel broadcast is enabled
 
@@ -576,6 +605,26 @@ func (o *ObjectManager) GetObject(ctx context.Context, key string, rangeHeader s
 		slog.String("backend", backendName),
 		slog.Int64("size", result.Size),
 	)
+
+	// Populate object data cache on full reads. Read the response body into
+	// memory, cache it, and replace the body with a bytes.Reader. Objects
+	// that exceed max_object_size are silently skipped by the cache.
+	if o.objectCache != nil && rangeHeader == "" {
+		data, readErr := io.ReadAll(result.Body)
+		result.Body.Close()
+		if readErr == nil {
+			_ = o.objectCache.Put(key, bytes.NewReader(data), objcache.EntryMeta{
+				ContentType: result.ContentType,
+				ETag:        result.ETag,
+				Metadata:    result.Metadata,
+			})
+			result.Body = io.NopCloser(bytes.NewReader(data))
+		} else {
+			// If we failed to read, return an empty body — the error will
+			// surface when the HTTP handler tries to write the response.
+			result.Body = io.NopCloser(bytes.NewReader(nil))
+		}
+	}
 
 	return result, nil
 }
@@ -794,6 +843,7 @@ func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey strin
 		slog.String("dest_backend", destBackendName),
 		slog.Int64("size", size),
 	)
+	o.invalidateCache(destKey)
 
 	span.SetStatus(codes.Ok, "")
 	return etag, nil
@@ -853,6 +903,7 @@ func (o *ObjectManager) DeleteObject(ctx context.Context, key string) error {
 		slog.String("key", key),
 		slog.Int("copies_deleted", len(copies)),
 	)
+	o.invalidateCache(key)
 
 	span.SetStatus(codes.Ok, "")
 	return nil
@@ -904,6 +955,7 @@ func (o *ObjectManager) DeleteObjects(ctx context.Context, keys []string) []Dele
 		}
 
 		o.cache.Delete(key)
+		o.invalidateCache(key)
 
 		if len(copies) > 0 {
 			pending = append(pending, pendingBackendDelete{key: key, copies: copies})

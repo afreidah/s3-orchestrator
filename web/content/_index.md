@@ -19,6 +19,7 @@ archetype: "home"
 {{% badge style="info" title=" " icon="fas fa-project-diagram" %}}Tempo Tracing{{% /badge %}}
 {{% badge style="green" title=" " icon="fas fa-cubes" %}}Nomad HCL{{% /badge %}}
 {{% badge style="warning" title=" " icon="fas fa-dharmachakra" %}}Kubernetes Manifests{{% /badge %}}
+{{% badge style="info" title=" " icon="fas fa-bolt" %}}Object Data Cache{{% /badge %}}
 
 </div>
 
@@ -182,6 +183,14 @@ flowchart TD
       <p>Prometheus metrics, OpenTelemetry tracing, structured audit logging.</p>
     </div>
     <div class="feature-detail">Exposes Prometheus metrics for all operations, quotas, and background tasks. Ships with a pre-built Grafana dashboard covering request rates, latency, backend health, quota usage, and replication status. OpenTelemetry tracing with configurable sampling. Structured JSON audit logs with request ID correlation across HTTP and storage layers.</div>
+  </div>
+  <div class="feature-item">
+    <i class="fas fa-bolt feature-icon" style="color: #7dd3fc;"></i>
+    <div>
+      <strong>Object Data Cache</strong>
+      <p>In-memory LRU cache for read-heavy workloads.</p>
+    </div>
+    <div class="feature-detail">Optional in-memory LRU cache that serves repeated reads from local storage, reducing backend API calls and egress. Configurable maximum cache size, per-object size limit, and TTL. Automatically invalidated on writes and deletes to ensure consistency. Ideal for read-heavy workloads where the same objects are fetched frequently.</div>
   </div>
 </div>
 
