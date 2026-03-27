@@ -4,8 +4,8 @@
 // Author: Alex Freidah
 //
 // Fuzz tests for security-critical parsing functions in the auth package.
-// Covers SigV4 header field extraction and canonical request construction
-// with adversarial inputs.
+// Covers SigV4 header field extraction, canonical request construction, and
+// presigned URL verification with adversarial inputs.
 // -------------------------------------------------------------------------------
 
 package auth
@@ -84,5 +84,43 @@ func FuzzBuildCanonicalRequest(f *testing.F) {
 
 		// Must not panic on any combination of method, path, query, and headers.
 		buildCanonicalRequest(r, headers)
+	})
+}
+
+// FuzzBuildPresignedCanonicalRequest exercises the presigned canonical request
+// builder with adversarial query strings, ensuring X-Amz-Signature is always
+// excluded and the function never panics.
+func FuzzBuildPresignedCanonicalRequest(f *testing.F) {
+	f.Add("GET", "/bucket/key", "X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=abc123&other=value", "host")
+	f.Add("PUT", "/bucket/obj", "X-Amz-Signature=&X-Amz-Date=20260326T000000Z", "host")
+	f.Add("GET", "/", "", "host")
+	f.Add("GET", "/bucket/key", "X-Amz-Signature=sig&X-Amz-Signature=sig2", "host")
+	f.Add("DELETE", "/bucket/key with spaces", "X-Amz-Signature=abc", "host")
+
+	f.Fuzz(func(t *testing.T, method, path, rawQuery, signedHeadersStr string) {
+		r, err := http.NewRequest(method, "/", nil)
+		if err != nil {
+			return
+		}
+		r.URL.Path = path
+		r.URL.RawQuery = rawQuery
+		r.Host = "localhost"
+
+		var headers []string
+		for h := range strings.SplitSeq(signedHeadersStr, ";") {
+			if h != "" {
+				headers = append(headers, h)
+			}
+		}
+		if len(headers) == 0 {
+			return
+		}
+
+		result := buildPresignedCanonicalRequest(r, headers)
+
+		// X-Amz-Signature must never appear in the canonical request.
+		if strings.Contains(result, "X-Amz-Signature") {
+			t.Error("presigned canonical request must not contain X-Amz-Signature")
+		}
 	})
 }

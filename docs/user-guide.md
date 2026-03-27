@@ -324,6 +324,55 @@ _, err := client.DeleteObject(context.Background(), &s3.DeleteObjectInput{
 })
 ```
 
+## Presigned URLs
+
+Presigned URLs let you generate a time-limited URL that grants temporary access to an object without requiring the requester to have credentials. Any AWS SDK presign client works (Go, Python boto3, Java, JavaScript, etc.).
+
+### Generating a presigned URL
+
+**AWS CLI:**
+
+```bash
+# Generate a presigned GET URL valid for 5 minutes (300 seconds)
+s3o s3 presign s3://app1-files/path/to/myfile.txt --expires-in 300
+```
+
+**Python (boto3):**
+
+```python
+url = s3.generate_presigned_url(
+    "get_object",
+    Params={"Bucket": "app1-files", "Key": "path/to/myfile.txt"},
+    ExpiresIn=300,
+)
+```
+
+**Go (AWS SDK v2):**
+
+```go
+presignClient := s3.NewPresignClient(client)
+req, err := presignClient.PresignGetObject(context.Background(), &s3.GetObjectInput{
+    Bucket: aws.String("app1-files"),
+    Key:    aws.String("path/to/myfile.txt"),
+}, s3.WithPresignExpires(5*time.Minute))
+// req.URL contains the presigned URL
+```
+
+### Using a presigned URL
+
+The presigned URL can be used with any HTTP client — no AWS credentials or SDK required:
+
+```bash
+curl -o myfile.txt "THE_PRESIGNED_URL"
+```
+
+### Notes
+
+- Presigned URLs use the same `access_key_id` and `secret_access_key` as normal requests. No additional configuration is needed.
+- Maximum expiry is 7 days (604800 seconds). The server rejects URLs with a longer expiry.
+- Presigned URLs work for GET, PUT, DELETE, and HEAD operations.
+- For security recommendations (TLS, expiry values), see the [Security Hardening](security-hardening.md#presigned-url-security) guide.
+
 ## Request Tracing
 
 Every response from the orchestrator includes an `X-Amz-Request-Id` header with a unique ID for that request. When reporting issues to your admin, include this ID so they can look up the full request trace in the audit logs.
@@ -348,7 +397,6 @@ The orchestrator implements a practical subset of the S3 API. A few things to be
 - **No bucket management** — Buckets are configured server-side. `CreateBucket`, `DeleteBucket`, and `ListBuckets` are not supported.
 - **No ACLs or policies** — Access control is handled entirely through the credential-to-bucket mapping in the server config.
 - **No object versioning** — Each key holds exactly one object. Uploading to an existing key overwrites it.
-- **No presigned URLs** — All requests must be signed at the time of the request.
 - **Max object size** — Configurable server-side (default: 5 GB). For larger objects, use multipart upload (most clients do this automatically).
 - **Multipart upload timeout** — Incomplete multipart uploads are automatically cleaned up after 24 hours.
 - **Range reads** — `GET` requests with a `Range` header are supported and return `206 Partial Content`.

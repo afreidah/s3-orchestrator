@@ -69,7 +69,7 @@ This interactive diagram shows the complete request lifecycle through the S3 Orc
     '    RL{Rate\\nLimiter}:::decision',
     '    RL -->|disabled or ok| AUTH',
     '    RL -->|exceeded| R429[429 SlowDown]:::reject',
-    '    AUTH[SigV4 / Token\\nAuth]:::process --> AUTHOK{Valid?}:::decision',
+    '    AUTH[SigV4 / Presigned / Token\\nAuth]:::process --> AUTHOK{Valid?}:::decision',
     '    AUTHOK -->|no| R403[403 Denied]:::reject',
     '    AUTHOK -->|yes| ROUTE{Method\\nRouting}:::decision',
     '    ROUTE -->|PUT| SZ{Size\\nCheck}:::decision',
@@ -115,7 +115,7 @@ This interactive diagram shows the complete request lifecycle through the S3 Orc
     REQ: {
       title: 'S3 Request',
       badge: 'process', badgeText: 'entry point',
-      body: '<p>Incoming HTTP request to the S3-compatible API endpoint.</p><p>Carries AWS SigV4 <code>Authorization</code> header (or legacy <code>X-Proxy-Token</code>), HTTP method, and <code>/{bucket}/{key}</code> path.</p><p>A unique <code>X-Amz-Request-Id</code> is assigned (or honoured from an upstream <code>X-Request-Id</code> header) for audit correlation through the entire pipeline.</p>'
+      body: '<p>Incoming HTTP request to the S3-compatible API endpoint.</p><p>Carries AWS SigV4 <code>Authorization</code> header, presigned URL query parameters, or legacy <code>X-Proxy-Token</code> header, along with HTTP method and <code>/{bucket}/{key}</code> path.</p><p>A unique <code>X-Amz-Request-Id</code> is assigned (or honoured from an upstream <code>X-Request-Id</code> header) for audit correlation through the entire pipeline.</p>'
     },
     AC: {
       title: 'Admission Controller',
@@ -178,9 +178,9 @@ This interactive diagram shows the complete request lifecycle through the S3 Orc
       body: '<p>Per-IP rate limit exceeded. The token bucket for this client IP is empty.</p><p>Response: <code>429 Too Many Requests</code> with <code>Retry-After: 1</code>.</p><p class="ac-metric">Metric: s3o_rate_limit_rejections_total</p>'
     },
     AUTH: {
-      title: 'SigV4 / Token Auth',
+      title: 'SigV4 / Presigned / Token Auth',
       badge: 'process', badgeText: 'authentication',
-      body: '<p>Verifies AWS Signature Version 4: parses the <code>Authorization</code> header, reconstructs the canonical request + string-to-sign, and derives the signing key via the HMAC-SHA256 chain:</p><p><code>secret &rarr; dateKey &rarr; dateRegionKey &rarr; dateRegionServiceKey &rarr; signingKey</code></p><p>Signing keys are cached in a <code>sync.Map</code> keyed by <code>accessKey/dateStamp/region/service</code>. Clock skew tolerance: &plusmn;15 minutes.</p><p>Also supports legacy <code>X-Proxy-Token</code> header for simple clients.</p>'
+      body: '<p>Verifies AWS Signature Version 4 from either the <code>Authorization</code> header or presigned URL query parameters (<code>X-Amz-Algorithm</code>, <code>X-Amz-Credential</code>, <code>X-Amz-Signature</code>, etc.). Reconstructs the canonical request + string-to-sign and derives the signing key via the HMAC-SHA256 chain:</p><p><code>secret &rarr; dateKey &rarr; dateRegionKey &rarr; dateRegionServiceKey &rarr; signingKey</code></p><p>Signing keys are cached in a <code>sync.Map</code> keyed by <code>accessKey/dateStamp/region/service</code>. Header auth: &plusmn;15 minute clock skew tolerance. Presigned URLs: expiry enforced via <code>X-Amz-Expires</code> (max 7 days).</p><p>Also supports legacy <code>X-Proxy-Token</code> header for simple clients.</p>'
     },
     AUTHOK: {
       title: 'Signature Valid?',

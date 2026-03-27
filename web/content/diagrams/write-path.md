@@ -115,7 +115,7 @@ Detailed flow of a PutObject request through backend selection, encryption, fail
     PUT: {
       title: 'PutObject Request',
       badge: 'entry', badgeText: 'entry point',
-      body: '<p>Incoming PUT request after passing through admission control, rate limiting, and SigV4 authentication.</p><p>At this point <code>Content-Length</code> and <code>MaxObjectSize</code> have already been validated by the HTTP handler. User metadata (<code>x-amz-meta-*</code>) has been extracted and validated (max 2KB total).</p>'
+      body: '<p>Incoming PUT request after passing through admission control, rate limiting, and SigV4 authentication (header or presigned URL).</p><p>At this point <code>Content-Length</code> and <code>MaxObjectSize</code> have already been validated by the HTTP handler. User metadata (<code>x-amz-meta-*</code>) has been extracted and validated (max 2KB total).</p>'
     },
     PREFLIGHT: {
       title: 'CanAcceptWrite Pre-flight',

@@ -162,6 +162,8 @@ openssl rand -base64 30
 
 Multiple credentials on the same bucket let different services share a namespace with independent keys. This is useful when you want a writer service and a reader service accessing the same files.
 
+SigV4 credentials also support presigned URLs automatically. Clients can generate time-limited presigned URLs using any AWS SDK presign client — no additional configuration is needed on the orchestrator side.
+
 ### database
 
 ```yaml

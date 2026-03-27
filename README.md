@@ -138,15 +138,16 @@ Every response includes an `X-Amz-Request-Id` header with a unique request ID fo
 
 Each virtual bucket has one or more credential sets. On every request, the orchestrator:
 
-1. Extracts the access key from the SigV4 `Authorization` header (or token from `X-Proxy-Token`).
+1. Extracts the access key from the SigV4 `Authorization` header, presigned URL query parameters, or token from `X-Proxy-Token`.
 2. Looks up which bucket the credential belongs to.
-3. Verifies the signature (SigV4) or token.
+3. Verifies the signature (SigV4 header or presigned query parameters) or token.
 4. Validates the URL path bucket matches the authorized bucket.
 
-Two auth methods are supported, checked in order:
+Three auth methods are supported, checked in order:
 
 1. **AWS SigV4** (recommended) - Standard AWS Signature Version 4 via the `Authorization` header. Compatible with `aws cli`, SDKs, and any S3 client. Signature verification is constant-time: unknown access keys still compute a full HMAC to prevent timing side-channel enumeration.
-2. **Legacy token** - Simple `X-Proxy-Token` header for backward compatibility.
+2. **Presigned URLs** - SigV4 query-parameter authentication (`X-Amz-Algorithm`, `X-Amz-Credential`, etc.) for time-limited, shareable URLs. Works with any AWS SDK presign client. Maximum expiry: 7 days. Uses the same bucket credentials as normal requests — no additional configuration required.
+3. **Legacy token** - Simple `X-Proxy-Token` header for backward compatibility.
 
 Multiple services can share a bucket by each having their own credentials that all map to the same bucket name. Access key IDs must be globally unique across all buckets.
 

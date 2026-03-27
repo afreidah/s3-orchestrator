@@ -4,16 +4,17 @@
 // Author: Alex Freidah
 //
 // Implements AWS SigV4 signature verification for S3 client compatibility. Parses
-// the Authorization header, reconstructs the canonical request, and verifies the
-// HMAC-SHA256 signature chain. Also supports legacy X-Proxy-Token authentication
-// for backward compatibility with simple clients.
+// the Authorization header or presigned URL query parameters, reconstructs the
+// canonical request, and verifies the HMAC-SHA256 signature chain. Also supports
+// legacy X-Proxy-Token authentication for backward compatibility with simple
+// clients.
 //
 // BucketRegistry maps client credentials to virtual buckets, enabling multi-tenant
 // access with per-bucket credential isolation.
 // -------------------------------------------------------------------------------
 
-// Package auth provides S3 SigV4 and token-based request authentication with
-// multi-bucket credential resolution.
+// Package auth provides S3 SigV4 (header and presigned URL) and token-based
+// request authentication with multi-bucket credential resolution.
 package auth
 
 import (
@@ -26,6 +27,7 @@ import (
 	"net/url"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +37,10 @@ import (
 
 // sigV4MaxSkew is the maximum allowed clock skew for SigV4 request timestamps.
 const sigV4MaxSkew = 15 * time.Minute
+
+// presignedMaxExpiry is the maximum allowed expiry for presigned URLs (7 days,
+// matching the AWS S3 limit).
+const presignedMaxExpiry = 7 * 24 * time.Hour
 
 // -------------------------------------------------------------------------
 // BUCKET REGISTRY
@@ -121,6 +127,11 @@ func (br *BucketRegistry) AuthenticateAndResolveBucket(r *http.Request) (string,
 		}
 
 		return entry.BucketName, nil
+	}
+
+	// Presigned URL auth — credentials in query string parameters.
+	if isPresignedRequest(r) {
+		return br.authenticatePresigned(r)
 	}
 
 	// Legacy token auth — iterate all tokens to avoid timing side-channels.
@@ -259,6 +270,156 @@ func verifySigV4Parsed(r *http.Request, accessKeyID, secretAccessKey, credential
 	}
 
 	return nil
+}
+
+// -------------------------------------------------------------------------
+// PRESIGNED URL VERIFICATION
+// -------------------------------------------------------------------------
+
+// isPresignedRequest returns true if the request carries SigV4 credentials
+// in query string parameters (presigned URL).
+func isPresignedRequest(r *http.Request) bool {
+	return r.URL.Query().Get("X-Amz-Algorithm") != ""
+}
+
+// authenticatePresigned extracts SigV4 credentials from query string
+// parameters and verifies the presigned URL signature.
+func (br *BucketRegistry) authenticatePresigned(r *http.Request) (string, error) {
+	q := r.URL.Query()
+	credential := q.Get("X-Amz-Credential")
+	signedHeaders := q.Get("X-Amz-SignedHeaders")
+	signature := q.Get("X-Amz-Signature")
+	amzDate := q.Get("X-Amz-Date")
+	expires := q.Get("X-Amz-Expires")
+
+	if credential == "" || signedHeaders == "" || signature == "" || amzDate == "" || expires == "" {
+		return "", fmt.Errorf("authentication failed")
+	}
+
+	accessKey, _, _ := strings.Cut(credential, "/")
+	if accessKey == "" {
+		return "", fmt.Errorf("authentication failed")
+	}
+
+	entry, ok := br.byAccessKey[accessKey]
+	secret := "dummy-secret-for-constant-time-auth"
+	if ok {
+		secret = entry.SecretAccessKey
+	}
+
+	if err := verifyPresignedSigV4(r, accessKey, secret, credential, signedHeaders, signature, amzDate, expires); err != nil || !ok {
+		return "", fmt.Errorf("authentication failed")
+	}
+
+	return entry.BucketName, nil
+}
+
+// verifyPresignedSigV4 verifies a presigned URL signature. Unlike header-based
+// SigV4, the date and expiry come from query parameters, the X-Amz-Signature
+// parameter is excluded from the canonical query string, and the payload hash
+// is always UNSIGNED-PAYLOAD.
+func verifyPresignedSigV4(r *http.Request, accessKeyID, secretAccessKey, credential, signedHeadersStr, signature, amzDate, expiresStr string) error {
+	credParts := strings.SplitN(credential, "/", 5)
+	if len(credParts) != 5 {
+		return fmt.Errorf("malformed credential scope")
+	}
+
+	dateStamp := credParts[1]
+	region := credParts[2]
+	service := credParts[3]
+
+	signedHeaders := strings.Split(signedHeadersStr, ";")
+
+	if !slices.Contains(signedHeaders, "host") {
+		return fmt.Errorf("host header must be signed")
+	}
+
+	canonicalRequest := buildPresignedCanonicalRequest(r, signedHeaders)
+
+	// Validate presigned URL timestamp and expiry
+	reqTime, err := time.Parse("20060102T150405Z", amzDate)
+	if err != nil {
+		return fmt.Errorf("malformed X-Amz-Date: %w", err)
+	}
+
+	expirySecs, err := strconv.ParseInt(expiresStr, 10, 64)
+	if err != nil || expirySecs <= 0 {
+		return fmt.Errorf("invalid X-Amz-Expires value")
+	}
+	expiryDuration := time.Duration(expirySecs) * time.Second
+	if expiryDuration > presignedMaxExpiry {
+		return fmt.Errorf("X-Amz-Expires exceeds maximum (%s)", presignedMaxExpiry)
+	}
+	if time.Now().After(reqTime.Add(expiryDuration)) {
+		return fmt.Errorf("presigned URL has expired")
+	}
+
+	credentialScope := dateStamp + "/" + region + "/" + service + "/aws4_request"
+	stringToSign := "AWS4-HMAC-SHA256\n" + amzDate + "\n" + credentialScope + "\n" + hashSHA256([]byte(canonicalRequest))
+
+	signingKey := getCachedSigningKey(accessKeyID, secretAccessKey, dateStamp, region, service)
+	expectedSig := hex.EncodeToString(hmacSHA256(signingKey, []byte(stringToSign)))
+
+	if !hmac.Equal([]byte(expectedSig), []byte(signature)) {
+		return fmt.Errorf("signature mismatch")
+	}
+
+	return nil
+}
+
+// buildPresignedCanonicalRequest constructs the canonical request for presigned
+// URL verification. Differs from the header-based variant in two ways:
+// X-Amz-Signature is excluded from the canonical query string, and the payload
+// hash is always UNSIGNED-PAYLOAD.
+func buildPresignedCanonicalRequest(r *http.Request, signedHeaders []string) string {
+	var b strings.Builder
+	b.Grow(512) // presigned URLs have more query params than header-based
+
+	// Method
+	b.WriteString(r.Method)
+	b.WriteByte('\n')
+
+	// Canonical URI
+	encodePath(&b, r.URL.Path)
+	b.WriteByte('\n')
+
+	// Canonical query string (excluding X-Amz-Signature)
+	qv := make(url.Values)
+	for k, vs := range r.URL.Query() {
+		if k != "X-Amz-Signature" {
+			qv[k] = vs
+		}
+	}
+	buildCanonicalQueryString(&b, qv)
+	b.WriteByte('\n')
+
+	// Canonical headers
+	for _, h := range signedHeaders {
+		h = strings.ToLower(strings.TrimSpace(h))
+		val := strings.TrimSpace(r.Header.Get(h))
+		if h == "host" && val == "" {
+			val = r.Host
+		}
+		b.WriteString(h)
+		b.WriteByte(':')
+		b.WriteString(val)
+		b.WriteByte('\n')
+	}
+	b.WriteByte('\n')
+
+	// Signed headers
+	for i, h := range signedHeaders {
+		if i > 0 {
+			b.WriteByte(';')
+		}
+		b.WriteString(h)
+	}
+	b.WriteByte('\n')
+
+	// Payload hash — always UNSIGNED-PAYLOAD for presigned URLs
+	b.WriteString("UNSIGNED-PAYLOAD")
+
+	return b.String()
 }
 
 // -------------------------------------------------------------------------
