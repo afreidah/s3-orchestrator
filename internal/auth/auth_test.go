@@ -14,6 +14,7 @@ import (
 	"encoding/hex"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -476,5 +477,276 @@ func TestBucketRegistry_MaxMultipartUploads(t *testing.T) {
 	}
 	if limit := br.MaxMultipartUploads("nonexistent"); limit != 0 {
 		t.Errorf("nonexistent bucket limit = %d, want 0", limit)
+	}
+}
+
+// -------------------------------------------------------------------------
+// PRESIGNED URL TESTS
+// -------------------------------------------------------------------------
+
+// presignRequest creates a valid presigned URL request for testing. Auth
+// credentials are placed in query parameters, not the Authorization header.
+func presignRequest(t *testing.T, method, path, accessKey, secret string, expireSeconds int) *http.Request {
+	t.Helper()
+
+	amzDate := time.Now().UTC().Format("20060102T150405Z")
+	dateStamp := amzDate[:8]
+	credentialScope := dateStamp + "/us-east-1/s3/aws4_request"
+	signedHeadersStr := "host"
+
+	r, _ := http.NewRequest(method, path, nil)
+	r.Host = "localhost"
+
+	// Set the presigned query parameters (except Signature, computed below)
+	q := r.URL.Query()
+	q.Set("X-Amz-Algorithm", "AWS4-HMAC-SHA256")
+	q.Set("X-Amz-Credential", accessKey+"/"+credentialScope)
+	q.Set("X-Amz-Date", amzDate)
+	q.Set("X-Amz-Expires", strconv.Itoa(expireSeconds))
+	q.Set("X-Amz-SignedHeaders", signedHeadersStr)
+	r.URL.RawQuery = q.Encode()
+
+	// Build canonical request with all query params EXCEPT Signature
+	signedHeaders := []string{"host"}
+	canonicalRequest := buildPresignedCanonicalRequest(r, signedHeaders)
+	stringToSign := "AWS4-HMAC-SHA256\n" + amzDate + "\n" + credentialScope + "\n" + hashSHA256([]byte(canonicalRequest))
+	signingKey := deriveSigningKey(secret, dateStamp, "us-east-1", "s3")
+	signature := hex.EncodeToString(hmacSHA256(signingKey, []byte(stringToSign)))
+
+	// Now add the signature to the query string
+	q.Set("X-Amz-Signature", signature)
+	r.URL.RawQuery = q.Encode()
+
+	return r
+}
+
+// TestBucketRegistry_PresignedResolvesCorrectBucket verifies that a valid
+// presigned URL resolves to the correct virtual bucket.
+func TestBucketRegistry_PresignedResolvesCorrectBucket(t *testing.T) {
+	buckets := []config.BucketConfig{
+		{Name: "app1-files", Credentials: []config.CredentialConfig{
+			{AccessKeyID: "APP1_KEY", SecretAccessKey: "APP1_SECRET"},
+		}},
+		{Name: "app2-files", Credentials: []config.CredentialConfig{
+			{AccessKeyID: "APP2_KEY", SecretAccessKey: "APP2_SECRET"},
+		}},
+	}
+
+	br := NewBucketRegistry(buckets)
+	r := presignRequest(t, "GET", "/app1-files/test.txt", "APP1_KEY", "APP1_SECRET", 300)
+	bucket, err := br.AuthenticateAndResolveBucket(r)
+	if err != nil {
+		t.Fatalf("presigned auth should succeed: %v", err)
+	}
+	if bucket != "app1-files" {
+		t.Errorf("bucket = %q, want %q", bucket, "app1-files")
+	}
+
+	r2 := presignRequest(t, "GET", "/app2-files/other.txt", "APP2_KEY", "APP2_SECRET", 300)
+	bucket2, err := br.AuthenticateAndResolveBucket(r2)
+	if err != nil {
+		t.Fatalf("presigned auth should succeed: %v", err)
+	}
+	if bucket2 != "app2-files" {
+		t.Errorf("bucket = %q, want %q", bucket2, "app2-files")
+	}
+}
+
+// TestPresigned_ExpiredURL verifies that a presigned URL whose date + expires
+// window has passed is rejected.
+func TestPresigned_ExpiredURL(t *testing.T) {
+	accessKey := "AKID"
+	secret := "SECRET"
+	dateStamp := time.Now().UTC().Add(-2 * time.Hour).Format("20060102T150405Z")
+	ds := dateStamp[:8]
+	credentialScope := ds + "/us-east-1/s3/aws4_request"
+
+	r, _ := http.NewRequest("GET", "/bucket/key", nil)
+	r.Host = "localhost"
+
+	q := r.URL.Query()
+	q.Set("X-Amz-Algorithm", "AWS4-HMAC-SHA256")
+	q.Set("X-Amz-Credential", accessKey+"/"+credentialScope)
+	q.Set("X-Amz-Date", dateStamp)
+	q.Set("X-Amz-Expires", "3600") // 1 hour — expired 1 hour ago
+	q.Set("X-Amz-SignedHeaders", "host")
+	r.URL.RawQuery = q.Encode()
+
+	canonicalRequest := buildPresignedCanonicalRequest(r, []string{"host"})
+	stringToSign := "AWS4-HMAC-SHA256\n" + dateStamp + "\n" + credentialScope + "\n" + hashSHA256([]byte(canonicalRequest))
+	signingKey := deriveSigningKey(secret, ds, "us-east-1", "s3")
+	signature := hex.EncodeToString(hmacSHA256(signingKey, []byte(stringToSign)))
+	q.Set("X-Amz-Signature", signature)
+	r.URL.RawQuery = q.Encode()
+
+	err := verifyPresignedSigV4(r, accessKey, secret, accessKey+"/"+credentialScope, "host", signature, dateStamp, "3600")
+	if err == nil {
+		t.Error("expired presigned URL should be rejected")
+	}
+}
+
+// TestPresigned_ExcessiveExpiry verifies that X-Amz-Expires values exceeding
+// the 7-day maximum are rejected.
+func TestPresigned_ExcessiveExpiry(t *testing.T) {
+	r := presignRequest(t, "GET", "/bucket/key", "AKID", "SECRET", 604800+1)
+
+	buckets := []config.BucketConfig{
+		{Name: "bucket", Credentials: []config.CredentialConfig{
+			{AccessKeyID: "AKID", SecretAccessKey: "SECRET"},
+		}},
+	}
+	br := NewBucketRegistry(buckets)
+	_, err := br.AuthenticateAndResolveBucket(r)
+	if err == nil {
+		t.Error("presigned URL with > 7 day expiry should be rejected")
+	}
+}
+
+// TestPresigned_InvalidExpiry verifies that non-integer, zero, and negative
+// X-Amz-Expires values are rejected.
+func TestPresigned_InvalidExpiry(t *testing.T) {
+	for _, expires := range []string{"abc", "0", "-100", ""} {
+		t.Run(expires, func(t *testing.T) {
+			err := verifyPresignedSigV4(
+				&http.Request{URL: &url.URL{}, Host: "localhost"},
+				"AKID", "SECRET",
+				"AKID/20260326/us-east-1/s3/aws4_request",
+				"host",
+				"fakesig",
+				time.Now().UTC().Format("20060102T150405Z"),
+				expires,
+			)
+			if err == nil {
+				t.Errorf("expires=%q should be rejected", expires)
+			}
+		})
+	}
+}
+
+// TestPresigned_TamperedSignature verifies that a presigned URL with a
+// modified signature is rejected.
+func TestPresigned_TamperedSignature(t *testing.T) {
+	r := presignRequest(t, "GET", "/bucket/key", "AKID", "SECRET", 300)
+
+	// Tamper with the signature — replace entirely with zeros
+	q := r.URL.Query()
+	sig := q.Get("X-Amz-Signature")
+	q.Set("X-Amz-Signature", strings.Repeat("0", len(sig)))
+	r.URL.RawQuery = q.Encode()
+
+	buckets := []config.BucketConfig{
+		{Name: "bucket", Credentials: []config.CredentialConfig{
+			{AccessKeyID: "AKID", SecretAccessKey: "SECRET"},
+		}},
+	}
+	br := NewBucketRegistry(buckets)
+	_, err := br.AuthenticateAndResolveBucket(r)
+	if err == nil {
+		t.Error("tampered presigned signature should be rejected")
+	}
+}
+
+// TestPresigned_UnknownAccessKeyDenied verifies that a presigned URL with an
+// unknown access key is rejected (constant-time path).
+func TestPresigned_UnknownAccessKeyDenied(t *testing.T) {
+	r := presignRequest(t, "GET", "/bucket/key", "UNKNOWN_KEY", "SOME_SECRET", 300)
+
+	buckets := []config.BucketConfig{
+		{Name: "bucket", Credentials: []config.CredentialConfig{
+			{AccessKeyID: "REAL_KEY", SecretAccessKey: "REAL_SECRET"},
+		}},
+	}
+	br := NewBucketRegistry(buckets)
+	_, err := br.AuthenticateAndResolveBucket(r)
+	if err == nil {
+		t.Error("unknown access key in presigned URL should be denied")
+	}
+}
+
+// TestPresigned_WrongSecretDenied verifies that a presigned URL signed with
+// the wrong secret is rejected.
+func TestPresigned_WrongSecretDenied(t *testing.T) {
+	// Sign with "WRONG_SECRET" but register "REAL_SECRET"
+	r := presignRequest(t, "GET", "/bucket/key", "AKID", "WRONG_SECRET", 300)
+
+	buckets := []config.BucketConfig{
+		{Name: "bucket", Credentials: []config.CredentialConfig{
+			{AccessKeyID: "AKID", SecretAccessKey: "REAL_SECRET"},
+		}},
+	}
+	br := NewBucketRegistry(buckets)
+	_, err := br.AuthenticateAndResolveBucket(r)
+	if err == nil {
+		t.Error("presigned URL signed with wrong secret should be denied")
+	}
+}
+
+// TestPresigned_HostHeaderMustBeSigned verifies that presigned URLs that do
+// not include "host" in X-Amz-SignedHeaders are rejected.
+func TestPresigned_HostHeaderMustBeSigned(t *testing.T) {
+	err := verifyPresignedSigV4(
+		&http.Request{URL: &url.URL{}, Host: "localhost"},
+		"AKID", "SECRET",
+		"AKID/20260326/us-east-1/s3/aws4_request",
+		"x-amz-date", // missing "host"
+		"fakesig",
+		time.Now().UTC().Format("20060102T150405Z"),
+		"300",
+	)
+	if err == nil {
+		t.Error("presigned URL without host in signed headers should be rejected")
+	}
+}
+
+// TestPresigned_SignatureExcludedFromCanonicalQuery verifies that
+// X-Amz-Signature is excluded from the canonical query string but other
+// X-Amz-* parameters are included.
+func TestPresigned_SignatureExcludedFromCanonicalQuery(t *testing.T) {
+	r, _ := http.NewRequest("GET", "/bucket/key?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=abc123&other=value", nil)
+	r.Host = "localhost"
+
+	canonical := buildPresignedCanonicalRequest(r, []string{"host"})
+	if strings.Contains(canonical, "X-Amz-Signature") {
+		t.Error("canonical request should NOT contain X-Amz-Signature")
+	}
+	if !strings.Contains(canonical, "X-Amz-Algorithm") {
+		t.Error("canonical request should contain X-Amz-Algorithm")
+	}
+	if !strings.Contains(canonical, "other=value") {
+		t.Error("canonical request should contain non-auth query params")
+	}
+}
+
+// TestPresigned_HeaderAndPresignedCoexist verifies that header-based SigV4
+// and presigned URL auth both work correctly in the same BucketRegistry.
+func TestPresigned_HeaderAndPresignedCoexist(t *testing.T) {
+	buckets := []config.BucketConfig{
+		{Name: "bucket-a", Credentials: []config.CredentialConfig{
+			{AccessKeyID: "KEY_A", SecretAccessKey: "SECRET_A"},
+		}},
+		{Name: "bucket-b", Credentials: []config.CredentialConfig{
+			{AccessKeyID: "KEY_B", SecretAccessKey: "SECRET_B"},
+		}},
+	}
+	br := NewBucketRegistry(buckets)
+
+	// Header-based auth
+	rHeader := signRequest(t, "GET", "/bucket-a/file.txt", "KEY_A", "SECRET_A")
+	bucket, err := br.AuthenticateAndResolveBucket(rHeader)
+	if err != nil {
+		t.Fatalf("header auth should succeed: %v", err)
+	}
+	if bucket != "bucket-a" {
+		t.Errorf("header auth bucket = %q, want %q", bucket, "bucket-a")
+	}
+
+	// Presigned URL auth
+	rPresigned := presignRequest(t, "GET", "/bucket-b/file.txt", "KEY_B", "SECRET_B", 300)
+	bucket, err = br.AuthenticateAndResolveBucket(rPresigned)
+	if err != nil {
+		t.Fatalf("presigned auth should succeed: %v", err)
+	}
+	if bucket != "bucket-b" {
+		t.Errorf("presigned auth bucket = %q, want %q", bucket, "bucket-b")
 	}
 }

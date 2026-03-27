@@ -118,7 +118,7 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     GET: {
       title: 'GetObject Request',
       badge: 'entry', badgeText: 'entry point',
-      body: '<p>Incoming GET request after passing through admission control, rate limiting, and SigV4 authentication.</p><p>The HTTP handler extracts the object key and optional <code>Range</code> header. Conditional request headers (<code>If-None-Match</code>, <code>If-Modified-Since</code>) are handled at the HTTP layer before reaching the storage manager.</p>'
+      body: '<p>Incoming GET request after passing through admission control, rate limiting, and SigV4 authentication (header or presigned URL).</p><p>The HTTP handler extracts the object key and optional <code>Range</code> header. Conditional request headers (<code>If-None-Match</code>, <code>If-Modified-Since</code>) are handled at the HTTP layer before reaching the storage manager.</p>'
     },
     DCACHE: {
       title: 'Object Data Cache Lookup',
