@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
+	objcache "github.com/afreidah/s3-orchestrator/internal/cache"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
@@ -62,6 +63,7 @@ type BackendManagerConfig struct {
 	ParallelBroadcast  bool                   // fan-out reads in parallel during degraded mode
 	Encryptor          *encryption.Encryptor  // nil when encryption is disabled
 	CounterBackend     counter.CounterBackend // nil uses LocalCounterBackend
+	ObjectCache        objcache.ObjectCache  // nil when object data caching is disabled
 	CleanupConcurrency int                    // parallel cleanup deletions (default: 10)
 	AdmissionSem       chan struct{}          // shared concurrency semaphore for HTTP + background ops (nil = unlimited)
 }
@@ -114,12 +116,12 @@ func NewBackendManager(cfg *BackendManagerConfig) *BackendManager {
 		cleanupConcurrency = 10
 	}
 	cleanupWorker := worker.NewCleanupWorker(core, cleanupConcurrency)
-	multipartManager := NewMultipartManager(core, cfg.Encryptor)
+	multipartManager := NewMultipartManager(core, cfg.Encryptor, cfg.ObjectCache)
 	cache := NewLocationCache(cfg.CacheTTL)
 	// ObjectManager gets a closure for the integrity config so it can read
 	// the hot-reloadable value without a circular dependency.
 	var m *BackendManager
-	objectManager := NewObjectManager(core, cfg.Encryptor, cache, cfg.ParallelBroadcast, func() *config.IntegrityConfig {
+	objectManager := NewObjectManager(core, cfg.Encryptor, cache, cfg.ObjectCache, cfg.ParallelBroadcast, func() *config.IntegrityConfig {
 		if m == nil {
 			return nil
 		}
