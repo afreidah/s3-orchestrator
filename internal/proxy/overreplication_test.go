@@ -85,7 +85,7 @@ func TestScoreCopy_CircuitBrokenBackend(t *testing.T) {
 		Order:           []string{"b1"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 
 	loc := st.ObjectLocation{BackendName: "b1", SizeBytes: 100}
@@ -387,7 +387,7 @@ func TestClean_AdmissionBlocked(t *testing.T) {
 		Order:           []string{"b1", "b2", "b3"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 		AdmissionSem:    sem,
 	})
 

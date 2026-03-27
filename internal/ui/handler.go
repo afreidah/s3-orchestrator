@@ -489,7 +489,7 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		TotalBytesLimit:  totalLimit,
 		TotalOrphanBytes: totalOrphan,
 		Config: configSummary{
-			RoutingStrategy:   cfg.RoutingStrategy,
+			RoutingStrategy:   string(cfg.RoutingStrategy),
 			ReplicationFactor: cfg.Replication.Factor,
 			RebalanceEnabled:  cfg.Rebalance.Enabled,
 			RebalanceStrategy: cfg.Rebalance.Strategy,

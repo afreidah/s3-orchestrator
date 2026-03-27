@@ -17,6 +17,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	st "github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
 func TestGetDashboardData_Success(t *testing.T) {
@@ -156,7 +157,7 @@ func TestGetDashboardData_UnhealthyBackends(t *testing.T) {
 		Backends:        map[string]backend.ObjectBackend{"b1": cbBackend},
 		Store:           store,
 		Order:           []string{"b1"},
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 	defer mgr.Close()
 
@@ -185,7 +186,7 @@ func TestGetDashboardData_HealthyBackendsNotMarked(t *testing.T) {
 		Backends:        map[string]backend.ObjectBackend{"b1": cbBackend},
 		Store:           store,
 		Order:           []string{"b1"},
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 	defer mgr.Close()
 

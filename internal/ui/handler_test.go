@@ -70,7 +70,7 @@ func newTestHandlerWithMock(t *testing.T) (*Handler, *http.ServeMux, *testutil.M
 		Backends:        map[string]backend.ObjectBackend{},
 		Store:           mockStore,
 		Order:           []string{"b1"},
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 	t.Cleanup(mgr.Close)
 
@@ -82,7 +82,7 @@ func newTestHandlerWithMock(t *testing.T) (*Handler, *http.ServeMux, *testutil.M
 			{Name: "b1", Endpoint: "https://s3.example.com", Bucket: "store",
 				AccessKeyID: "AK", SecretAccessKey: "SK"},
 		},
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 		Replication:     config.ReplicationConfig{Factor: 1},
 		RateLimit:       config.RateLimitConfig{Enabled: false},
 		UI: config.UIConfig{
@@ -673,7 +673,7 @@ func TestUpdateConfig_ReflectsInDashboard(t *testing.T) {
 		Buckets: []config.BucketConfig{
 			{Name: "updated-bucket"},
 		},
-		RoutingStrategy: "spread",
+		RoutingStrategy: config.RoutingSpread,
 		Replication:     config.ReplicationConfig{Factor: 2},
 		RateLimit:       config.RateLimitConfig{Enabled: true},
 	}
@@ -1661,12 +1661,12 @@ func benchLoginHandler(b *testing.B) (*Handler, *http.ServeMux) {
 		Backends:        map[string]backend.ObjectBackend{},
 		Store:           mockStore,
 		Order:           []string{},
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 	b.Cleanup(mgr.Close)
 
 	cfg := &config.Config{
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 		Replication:     config.ReplicationConfig{Factor: 1},
 		RateLimit:       config.RateLimitConfig{Enabled: false},
 		UI: config.UIConfig{

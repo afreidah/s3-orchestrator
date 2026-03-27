@@ -85,7 +85,7 @@ func setupEncryptionEnv(t *testing.T) *encryptionTestEnv {
 		Order:           testBackendOrder,
 		CacheTTL:        60 * time.Second,
 		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 		Encryptor:       enc,
 	})
 

@@ -34,18 +34,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
-// UsageLimits holds configurable monthly usage limits for a single backend.
-// Zero means unlimited for that dimension.
-type UsageLimits struct {
-	APIRequestLimit  int64
-	EgressByteLimit  int64
-	IngressByteLimit int64
-}
-
-// -------------------------------------------------------------------------
-// ERRORS
-// -------------------------------------------------------------------------
-
 // -------------------------------------------------------------------------
 // BACKEND MANAGER
 // -------------------------------------------------------------------------
@@ -58,7 +46,7 @@ type BackendManagerConfig struct {
 	CacheTTL           time.Duration
 	BackendTimeout     time.Duration
 	UsageLimits        map[string]store.UsageLimits
-	RoutingStrategy    string
+	RoutingStrategy    config.RoutingStrategy
 	ParallelBroadcast  bool                   // fan-out reads in parallel during degraded mode
 	Encryptor          *encryption.Encryptor  // nil when encryption is disabled
 	CounterBackend     counter.CounterBackend // nil uses LocalCounterBackend

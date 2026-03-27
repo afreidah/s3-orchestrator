@@ -21,6 +21,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
+	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 
@@ -38,7 +39,7 @@ type backendCore struct {
 	order           []string                         // backend selection order
 	backendTimeout  time.Duration                    // per-operation timeout for backend S3 calls
 	usage           *counter.UsageTracker            // per-backend usage counters and limits
-	routingStrategy string                           // "pack" or "spread"
+	routingStrategy config.RoutingStrategy            // RoutingPack or RoutingSpread
 	draining        sync.Map                         // map[string]*drainState — backends being drained
 	metrics         *MetricsCollector                // Prometheus metric recording and gauge refresh
 	admissionSem    chan struct{}                    // shared concurrency semaphore (nil = unlimited)
@@ -185,10 +186,28 @@ func (c *backendCore) eligibleForWrite(apiCalls, egress, ingress int64) []string
 // the configured routing strategy. "pack" returns the first backend with space,
 // "spread" returns the least-utilized backend.
 func (c *backendCore) selectBackendForWrite(ctx context.Context, size int64, eligible []string) (string, error) {
-	if c.routingStrategy == "spread" {
+	if c.routingStrategy == config.RoutingSpread {
 		return c.store.GetLeastUtilizedBackend(ctx, size, eligible)
 	}
 	return c.store.GetBackendWithSpace(ctx, size, eligible)
+}
+
+// selectWriteTarget picks a backend for a write operation, combining
+// eligibility filtering, backend selection, and error classification into
+// a single call. Returns ErrInsufficientStorage when no backend can accept
+// the write, or the classified error from the routing query.
+func (c *backendCore) selectWriteTarget(ctx context.Context, span trace.Span, operation string, size int64) (string, error) {
+	eligible := c.eligibleForWrite(1, 0, size)
+	if len(eligible) == 0 {
+		telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation, "write").Inc()
+		span.SetStatus(codes.Error, "usage limits exceeded on all backends")
+		return "", store.ErrInsufficientStorage
+	}
+	name, err := c.selectBackendForWrite(ctx, size, eligible)
+	if err != nil {
+		return "", c.classifyWriteError(span, operation, err)
+	}
+	return name, nil
 }
 
 // -------------------------------------------------------------------------
@@ -221,13 +240,13 @@ func (c *backendCore) classifyWriteError(span trace.Span, operation string, err 
 // recordObjectOrCleanup calls RecordObject and, on failure, deletes the orphaned
 // object from the backend. On success, enqueues cleanup for any displaced copies
 // on other backends (from overwrites). Updates the tracing span on error.
-func (c *backendCore) recordObjectOrCleanup(ctx context.Context, span trace.Span, backend backend.ObjectBackend, key, backendName string, size int64, enc *store.EncryptionMeta) error {
+func (c *backendCore) recordObjectOrCleanup(ctx context.Context, span trace.Span, be backend.ObjectBackend, key, backendName string, size int64, enc *store.EncryptionMeta) error {
 	displaced, err := c.store.RecordObject(ctx, key, backendName, size, enc)
 	if err != nil {
 		slog.ErrorContext(ctx, "RecordObject failed, cleaning up orphan",
 			"key", key, "backend", backendName, "error", err)
 		c.usage.Record(backendName, 1, 0, 0)
-		if delErr := backend.DeleteObject(ctx, key); delErr != nil {
+		if delErr := be.DeleteObject(ctx, key); delErr != nil {
 			slog.ErrorContext(ctx, "Failed to clean up orphaned object",
 				"key", key, "backend", backendName, "error", delErr)
 			c.enqueueCleanup(ctx, backendName, key, "orphan_record_failed", size)
@@ -261,10 +280,10 @@ func (c *backendCore) recordObjectOrCleanup(ctx context.Context, span trace.Span
 
 // deleteWithTimeout deletes an object from a backend using the configured
 // backend timeout. Returns the backend error directly.
-func (c *backendCore) deleteWithTimeout(ctx context.Context, backend backend.ObjectBackend, key string) error {
+func (c *backendCore) deleteWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) error {
 	dctx, dcancel := c.withTimeout(ctx)
 	defer dcancel()
-	return backend.DeleteObject(dctx, key)
+	return be.DeleteObject(dctx, key)
 }
 
 // streamCopy reads an object from src and writes it to dst using the configured
@@ -294,8 +313,8 @@ func (c *backendCore) streamCopy(ctx context.Context, src, dst backend.ObjectBac
 // the standard "best-effort orphan cleanup" primitive used throughout the
 // manager: rebalancer, replicator, multipart cleanup, and delete paths.
 // sizeBytes is tracked as orphan bytes when the delete is enqueued.
-func (c *backendCore) deleteOrEnqueue(ctx context.Context, backend backend.ObjectBackend, backendName, key, reason string, sizeBytes int64) {
-	if err := c.deleteWithTimeout(ctx, backend, key); err != nil {
+func (c *backendCore) deleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, backendName, key, reason string, sizeBytes int64) {
+	if err := c.deleteWithTimeout(ctx, be, key); err != nil {
 		slog.WarnContext(ctx, "Failed to delete object, enqueuing cleanup",
 			"backend", backendName, "key", key, "reason", reason, "error", err)
 		c.enqueueCleanup(ctx, backendName, key, reason, sizeBytes)
