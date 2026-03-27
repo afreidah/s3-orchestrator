@@ -177,12 +177,17 @@ func (p *VaultKeyProvider) tokenRenewalLoop(ctx context.Context) {
 }
 
 // renewToken attempts to extend the current token's TTL via Vault's
-// token/renew-self endpoint.
+// token/renew-self endpoint. The network call runs without the mutex
+// held so concurrent WrapDEK/UnwrapDEK calls are not blocked by slow
+// or unresponsive Vault instances.
 func (p *VaultKeyProvider) renewToken(ctx context.Context) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	// Read the current client reference under the read lock. The Vault
+	// client is safe for concurrent use; only SetToken mutates state.
+	p.mu.RLock()
+	client := p.client
+	p.mu.RUnlock()
 
-	secret, err := p.client.Auth().Token().RenewSelf(0)
+	secret, err := client.Auth().Token().RenewSelf(0)
 	if err != nil {
 		return fmt.Errorf("token renewal failed: %w", err)
 	}
