@@ -760,6 +760,43 @@ func TestGetObject_DBUnavailable_AllFail(t *testing.T) {
 	}
 }
 
+func TestGetObject_DBUnavailable_EncryptedRejects503(t *testing.T) {
+	b1 := newMockBackend()
+	_, _ = b1.PutObject(context.Background(), "enc-key", bytes.NewReader([]byte("ciphertext")), 10, "text/plain", nil)
+
+	provider, err := encryption.NewConfigKeyProvider("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "test-0")
+	if err != nil {
+		t.Fatalf("NewConfigKeyProvider: %v", err)
+	}
+	enc, err := encryption.NewEncryptor(provider, 64*1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	store := &mockStore{getAllLocationsErr: st.ErrDBUnavailable}
+	mgr := NewBackendManager(&BackendManagerConfig{
+		Backends:        map[string]s3be.ObjectBackend{"b1": b1},
+		Store:           store,
+		Order:           []string{"b1"},
+		CacheTTL:        5 * time.Second,
+		BackendTimeout:  30 * time.Second,
+		RoutingStrategy: config.RoutingPack,
+		Encryptor:       enc,
+	})
+	defer mgr.Close()
+
+	// With encryption enabled and DB down, GetObject should return 503
+	// instead of serving raw ciphertext to the client.
+	_, err = mgr.ObjectManager.GetObject(context.Background(), "enc-key", "")
+	if err == nil {
+		t.Fatal("expected error for encrypted read with DB unavailable")
+	}
+	var s3err *st.S3Error
+	if !errors.As(err, &s3err) || s3err.StatusCode != 503 {
+		t.Errorf("expected 503 S3Error, got: %v", err)
+	}
+}
+
 // -------------------------------------------------------------------------
 // HeadObject
 // -------------------------------------------------------------------------

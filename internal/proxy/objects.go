@@ -506,6 +506,13 @@ func (o *ObjectManager) GetObject(ctx context.Context, key string, rangeHeader s
 			return 0, fmt.Errorf("backend %s: %w", beName, errUsageLimitSkip)
 		}
 
+		// Reject encrypted object reads when the DB is unavailable.
+		// Without encryption metadata (wrapped DEK, key ID), the response
+		// would contain raw ciphertext instead of plaintext.
+		if o.encryptor != nil && locByBackend == nil {
+			return 0, store.ErrServiceUnavailable
+		}
+
 		// Find encryption metadata for this backend's copy
 		loc := locByBackend[beName]
 
