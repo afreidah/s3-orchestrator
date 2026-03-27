@@ -175,7 +175,7 @@ database:
   password: "${DB_PASSWORD}"
   ssl_mode: "require"            # default: require (use "disable" for local dev)
   max_conns: 50                  # default: 50; size to 2-3x max_concurrent_requests
-  min_conns: 5                   # default: 5
+  min_conns: 10                   # default: 5
   max_conn_lifetime: "5m"        # default: 5m
 ```
 
@@ -316,7 +316,7 @@ Per-backend circuit breakers isolate failures at the individual backend level. W
 ```yaml
 backend_circuit_breaker:
   enabled: true
-  failure_threshold: 5             # consecutive failures before opening (default: 5)
+  failure_threshold: 5             # consecutive failures before opening (default: 10)
   open_timeout: "5m"               # delay before probing recovery (default: 5m)
 ```
 
@@ -335,7 +335,7 @@ rebalance:
   interval: "6h"                 # default: 6h
   batch_size: 100                # objects per run (default: 100)
   threshold: 0.1                 # min utilization spread to trigger (default: 0.1)
-  concurrency: 5                 # parallel moves per run (default: 5)
+  concurrency: 5                 # parallel moves per run (default: 10)
 ```
 
 - **pack** — fills backends in config order, consolidating free space onto the last backend. Good for maximizing free-tier allocations.
@@ -352,7 +352,7 @@ replication:
   factor: 2                      # copies per object (default: 1 = no replication)
   worker_interval: "5m"          # replication cycle (default: 5m)
   batch_size: 50                 # objects per cycle (default: 50)
-  concurrency: 5                 # parallel object replications per cycle (default: 5)
+  concurrency: 5                 # parallel object replications per cycle (default: 10)
   unhealthy_threshold: "10m"     # grace period before replacing copies on circuit-broken backends (default: 10m)
 ```
 

@@ -6,7 +6,7 @@ theme = "hugo-theme-relearn"
 [params]
   themeVariant = ["s3orchestrator"]
   description = "Unified S3-compatible storage across multiple backends"
-  editURL = "https://github.com/afreidah/s3-orchestrator/edit/main/docs/"
+  editURL = "https://github.com/afreidah/s3-orchestrator/edit/main/web/content/"
   showVisitedLinks = false
   disableLandingPageButton = false
   alwaysopen = true

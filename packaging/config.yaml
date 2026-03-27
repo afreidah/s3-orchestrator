@@ -32,7 +32,7 @@ database:
   password: ${DB_PASSWORD}
   ssl_mode: ${DB_SSL_MODE}
   # max_conns: 50
-  # min_conns: 5
+  # min_conns: 10
   # max_conn_lifetime: 5m
 
 # --- Virtual buckets exposed to clients ---
@@ -133,6 +133,19 @@ backends:
 #   worker_interval: 5m
 #   batch_size: 50
 #   unhealthy_threshold: 10m     # Grace period before replacing copies on circuit-broken backends
+
+# --- Cleanup queue (orphaned object retry) ---
+# cleanup_queue:
+#   concurrency: 10              # Parallel deletion workers (default: 10)
+
+# --- Lifecycle rules (object expiration) ---
+# Prefix is required (empty prefix would match all objects). Rules with
+# expiration_days <= 0 are rejected at startup.
+# lifecycle:
+#   batch_size: 100              # Objects per DB query (default: 100)
+#   rules:
+#     - prefix: "tmp/"
+#       expiration_days: 30
 
 # --- Per-IP rate limiting (disabled by default) ---
 # rate_limit:
