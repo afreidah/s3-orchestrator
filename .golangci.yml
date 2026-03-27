@@ -30,7 +30,7 @@ linters:
       - legacy
       - std-error-handling
     paths:
-      - internal/storage/sqlc
+      - internal/store/sqlc
       - third_party$
       - builtin$
       - examples$
