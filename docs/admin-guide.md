@@ -592,6 +592,36 @@ integrity:
 
 **Integrity is hot-reloadable** — changes take effect on SIGHUP without a restart.
 
+### cache
+
+Optional in-memory LRU cache for full GET responses. Reduces backend API calls and egress by serving repeated reads from memory. Per-instance only — not shared across instances.
+
+```yaml
+cache:
+  enabled: true
+  max_size: "256MB"            # total cache capacity (default: 256MB)
+  max_object_size: "10MB"      # largest cacheable object (default: 10MB)
+  ttl: "5m"                    # per-entry time-to-live (default: 5m)
+```
+
+- `max_size` — total memory the cache may consume. Size this based on available container memory after accounting for the Go heap, connection pools, and streaming buffers. A good starting point is 10-25% of the container's memory allocation.
+- `max_object_size` — objects larger than this are never admitted to the cache. Prevents a single large object from evicting many smaller frequently-accessed objects. Set this below the typical "hot" object size in your workload.
+- `ttl` — maximum time an entry stays cached before automatic expiry. In multi-instance deployments, this bounds how stale a cached object can be when writes happen on another instance. Lower values reduce staleness at the cost of more backend requests.
+
+Cache entries are automatically invalidated on PutObject, DeleteObject, CopyObject, DeleteObjects, and CompleteMultipartUpload. Range requests bypass the cache on miss but are served from cache on hit.
+
+**When to enable:**
+- Read-heavy workloads where the same objects are fetched repeatedly (thumbnails, config files, assets)
+- Backends with per-request API charges or egress costs
+- High-latency backends where caching improves P99 latency
+
+**When to skip:**
+- Write-heavy workloads with few repeated reads
+- Objects are too large to fit meaningfully in memory
+- Single-instance with very low read traffic
+
+The cache is **not hot-reloadable** — changing cache settings requires a restart. When encryption is enabled, the cache stores post-decryption plaintext.
+
 **Metrics:**
 
 | Metric | Labels | Description |
@@ -955,6 +985,9 @@ If `telemetry.metrics.enabled` is `true`, metrics are exposed at `/metrics`. Key
 | `s3o_key_rotation_objects_total{status="error"}` | Failures during key rotation |
 | `s3o_redis_fallback_active` | Alert when 1 — Redis is unavailable, using local counters |
 | `s3o_redis_operations_total{operation,status}` | Track Redis operation success/error rates |
+| `s3o_cache_hits_total` / `s3o_cache_misses_total` | Cache hit ratio — low hit rate may indicate the cache is undersized or the workload is not read-heavy |
+| `s3o_cache_evictions_total` | High eviction rate suggests `max_size` is too small for the working set |
+| `s3o_cache_size_bytes` / `s3o_cache_entries` | Current cache utilization — watch for the cache staying near `max_size` |
 
 ### Structured logs
 
