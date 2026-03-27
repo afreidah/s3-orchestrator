@@ -368,3 +368,35 @@ func TestCB_ProbeJitter_RecomputedOnReopen(t *testing.T) {
 	// Verify the code path ran without panicking
 	_ = firstJitter
 }
+
+func TestCB_StaleProbeAutoResets(t *testing.T) {
+	cb := newTestBreaker(1, 5*time.Millisecond)
+
+	// Trip the breaker
+	_ = cb.PostCheck(errTest)
+	time.Sleep(10 * time.Millisecond)
+
+	// Start a probe (PreCheck transitions to half-open)
+	if err := cb.PreCheck(); err != nil {
+		t.Fatalf("probe should be allowed: %v", err)
+	}
+	if cb.State() != StateHalfOpen {
+		t.Fatalf("expected half-open, got %s", cb.State())
+	}
+
+	// Simulate a stale probe by backdating probeStarted beyond probeTimeout.
+	// Do NOT call PostCheck — the probe is "abandoned".
+	cb.probeStarted.Store(time.Now().Add(-probeTimeout - time.Second).UnixNano())
+
+	// Next PreCheck should detect the stale probe and reset to open
+	if err := cb.PreCheck(); err == nil {
+		t.Fatal("expected sentinel error after stale probe reset")
+	}
+
+	if cb.State() != StateOpen {
+		t.Fatalf("expected open after stale probe reset, got %s", cb.State())
+	}
+	if cb.probeInFlight.Load() {
+		t.Error("probeInFlight should be reset after stale probe detection")
+	}
+}

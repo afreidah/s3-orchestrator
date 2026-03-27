@@ -139,12 +139,14 @@ func (ac *AdmissionController) Middleware(next http.Handler) http.Handler {
 
 // shouldShed returns true if the request should be probabilistically
 // rejected based on current pool pressure. Shedding probability ramps
-// linearly from 0% at the threshold to 100% at full capacity.
+// linearly from 0% at the threshold to 100% at full capacity. The
+// threshold is computed with int() truncation, and shedding begins when
+// occupancy reaches or exceeds the threshold (not one above it).
 func (ac *AdmissionController) shouldShed(sem chan struct{}) bool {
 	occupancy := len(sem)
 	capacity := cap(sem)
 	threshold := int(ac.shedThreshold * float64(capacity))
-	if occupancy <= threshold {
+	if occupancy < threshold {
 		return false
 	}
 	p := float64(occupancy-threshold) / float64(capacity-threshold)
