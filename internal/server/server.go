@@ -18,14 +18,14 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
-	"sync/atomic"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/audit"
 	"github.com/afreidah/s3-orchestrator/internal/auth"
-
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
+	"github.com/afreidah/s3-orchestrator/internal/syncutil"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
+
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 )
@@ -47,7 +47,7 @@ var httpSpanName = map[string]string{
 // Server handles HTTP requests and routes them to the backend manager.
 type Server struct {
 	Manager       *proxy.BackendManager
-	bucketAuth    atomic.Pointer[auth.BucketRegistry]
+	bucketAuth    syncutil.AtomicConfig[auth.BucketRegistry]
 	MaxObjectSize int64     // Max upload body size in bytes
 	startedAt     time.Time // Stable timestamp for ListBuckets CreationDate
 }
