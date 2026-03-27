@@ -17,6 +17,10 @@ on:
     branches: [main]
   pull_request:
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -140,7 +144,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
 
       - name: Run govulncheck
         run: govulncheck ./...
@@ -156,16 +160,17 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Fuzz smoke test
+      - name: Fuzz smoke test (parallel)
         run: |
-          go test -fuzz=FuzzParseSigV4Fields -fuzztime=10s ./internal/auth/
-          go test -fuzz=FuzzBuildCanonicalRequest -fuzztime=10s ./internal/auth/
-          go test -fuzz=FuzzParsePath -fuzztime=10s ./internal/server/
-          go test -fuzz=FuzzDeleteObjectsXML -fuzztime=10s ./internal/server/
-          go test -fuzz=FuzzCompleteMultipartXML -fuzztime=10s ./internal/server/
-          go test -fuzz=FuzzIsValidRequestID -fuzztime=10s ./internal/server/
-          go test -fuzz=FuzzLoginThrottle_RemoteAddr -fuzztime=10s ./internal/server/
-          go test -fuzz=FuzzExtractClientIP -fuzztime=10s ./internal/server/
+          go test -fuzz=FuzzParseSigV4Fields -fuzztime=10s ./internal/auth/ &
+          go test -fuzz=FuzzBuildCanonicalRequest -fuzztime=10s ./internal/auth/ &
+          go test -fuzz=FuzzParsePath -fuzztime=10s ./internal/server/ &
+          go test -fuzz=FuzzDeleteObjectsXML -fuzztime=10s ./internal/server/ &
+          go test -fuzz=FuzzCompleteMultipartXML -fuzztime=10s ./internal/server/ &
+          go test -fuzz=FuzzIsValidRequestID -fuzztime=10s ./internal/server/ &
+          go test -fuzz=FuzzLoginThrottle_RemoteAddr -fuzztime=10s ./internal/server/ &
+          go test -fuzz=FuzzExtractClientIP -fuzztime=10s ./internal/server/ &
+          wait
 
   integration:
     runs-on: ubuntu-latest
@@ -257,9 +262,11 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Scan image with Trivy
-        run: |
-          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
-          trivy image --exit-code 1 --severity CRITICAL,HIGH ghcr.io/afreidah/s3-orchestrator:${{ steps.version.outputs.version }}
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ghcr.io/afreidah/s3-orchestrator:${{ steps.version.outputs.version }}
+          exit-code: 1
+          severity: CRITICAL,HIGH
 
   docker-webpage:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.web == 'true'
@@ -302,6 +309,8 @@ jobs:
           cache-to: type=gha,mode=max,scope=webpage-v2
 
       - name: Scan image with Trivy
-        run: |
-          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
-          trivy image --exit-code 1 --severity CRITICAL,HIGH ghcr.io/afreidah/s3-orchestrator-webpage:${{ steps.version.outputs.version }}
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ghcr.io/afreidah/s3-orchestrator-webpage:${{ steps.version.outputs.version }}
+          exit-code: 1
+          severity: CRITICAL,HIGH
