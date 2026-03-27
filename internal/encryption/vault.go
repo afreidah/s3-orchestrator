@@ -208,8 +208,17 @@ func (p *VaultKeyProvider) reloadTokenFile(ctx context.Context) error {
 	return nil
 }
 
-// readTokenFile reads and trims a token from a file path.
+// readTokenFile reads and trims a token from a file path. Returns an error
+// if the file is group- or world-readable (permissions wider than 0600) to
+// prevent accidental exposure of the Vault token to other local users.
 func readTokenFile(path string) (string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", fmt.Errorf("stat token file %s: %w", path, err)
+	}
+	if perm := info.Mode().Perm(); perm&0o077 != 0 {
+		return "", fmt.Errorf("token file %s has insecure permissions %04o (must be 0600 or stricter)", path, perm)
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", fmt.Errorf("read token file %s: %w", path, err)
