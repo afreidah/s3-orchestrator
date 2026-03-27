@@ -441,6 +441,24 @@ To expand your pool, add another backend with its own quota and usage limits. No
 Enable [replication](../../docs/user-guide.md) with a factor of 2 or more so that objects are copied across providers. This gives you redundancy and allows reads to fail over when one backend's usage limits are reached.
 {{% /notice %}}
 
+## Reduce API Calls with the Object Data Cache
+
+If your workload reads the same objects frequently, enable the object data cache to serve repeated GETs from memory instead of hitting backends:
+
+```yaml
+cache:
+  enabled: true
+  max_size: "256MB"
+  max_object_size: "10MB"
+  ttl: "5m"
+```
+
+Each cache hit avoids one backend API request and the associated egress, which directly extends your free-tier headroom. The cache is especially effective for providers with low API request limits (e.g., OCI at 50,000/mo or GCS at 5,000/mo).
+
+{{% notice tip %}}
+Size `max_object_size` to match your typical object sizes. If most of your objects are small config files or thumbnails, a 1-5 MB limit keeps the cache efficient. Large objects that would consume the entire cache are better left to direct backend reads.
+{{% /notice %}}
+
 ## Important Notes
 
 - Quotas are enforced atomically on every write - you will never accidentally exceed a backend's limit
