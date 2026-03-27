@@ -377,3 +377,14 @@ For multi-instance deployments behind a load balancer, ensure all instances use 
 S3 client credentials can be rotated without downtime using the SIGHUP reload mechanism. See the [admin guide](admin-guide.md#rotating-client-credentials) for the zero-downtime rotation procedure.
 
 The admin API token (`ui.admin_token`, or `ui.admin_key` if `admin_token` is not set) requires a restart to change since the UI config section is not reloadable.
+
+## Presigned URL Security
+
+Presigned URLs embed SigV4 authentication in query parameters, allowing time-limited access to objects without requiring the requester to hold credentials.
+
+**Recommendations:**
+
+- **Use TLS in production.** Presigned URLs expose the signature in the URL itself. Without TLS, a network observer can capture and reuse the URL until it expires.
+- **Use short expiry values.** 5-15 minutes is sufficient for most use cases (e.g., generating a download link for an authenticated user). Reserve longer expiry times for workflows that genuinely need them.
+- **Maximum expiry is enforced server-side.** The orchestrator rejects presigned URLs with an expiry longer than 7 days (604800 seconds), matching the AWS S3 limit.
+- **No additional configuration required.** Presigned URLs use the same `access_key_id` and `secret_access_key` already configured on the bucket. There are no separate presigned URL settings to manage.

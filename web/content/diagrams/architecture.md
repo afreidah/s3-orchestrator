@@ -52,7 +52,7 @@ High-level architecture of the S3 Orchestrator showing the request path, storage
     'flowchart TD',
     '    CLIENT([S3 Client]):::entry --> HTTP[HTTP Server\\nTLS / Timeouts]:::middleware',
     '    HTTP --> ADMIT[Admission Control\\n& Rate Limiter]:::middleware',
-    '    ADMIT --> AUTH[SigV4 / Token\\nAuthentication]:::middleware',
+    '    ADMIT --> AUTH[SigV4 / Presigned / Token\\nAuthentication]:::middleware',
     '    AUTH --> ROUTE{Request\\nRouter}:::middleware',
     '',
     '    ROUTE -->|PUT/GET/HEAD/DELETE| OBJMGR[Object\\nManager]:::handler',
@@ -139,9 +139,9 @@ High-level architecture of the S3 Orchestrator showing the request path, storage
       body: '<p><b>Admission Control:</b> Channel-based semaphore limiting concurrent in-flight requests. Global pool or separate read/write pools. Probabilistic load shedding ramps rejection from <code>shed_threshold</code> to capacity. Optional brief wait before hard rejection.</p><p><b>Rate Limiter:</b> Per-IP token bucket using <code>golang.org/x/time/rate</code>. Extracts real client IP via X-Forwarded-For with trusted proxy CIDR validation.</p><p><a href="../admission-control/" style="color:#34b882">See detailed admission control flow diagram &rarr;</a></p>'
     },
     AUTH: {
-      title: 'SigV4 / Token Authentication',
+      title: 'SigV4 / Presigned / Token Authentication',
       badge: 'middleware', badgeText: 'authentication',
-      body: '<p>Verifies AWS Signature Version 4: reconstructs canonical request, derives signing key via HMAC-SHA256 chain, compares with <code>crypto/subtle.ConstantTimeCompare</code>.</p><p>Signing keys cached in <code>sync.Map</code>. Also supports legacy <code>X-Proxy-Token</code> header.</p><p><code>BucketRegistry</code> maps access keys to virtual buckets for multi-tenant credential isolation. &plusmn;15 minute clock skew tolerance.</p>'
+      body: '<p>Verifies AWS Signature Version 4 from either the <code>Authorization</code> header or presigned URL query parameters. Reconstructs canonical request, derives signing key via HMAC-SHA256 chain, compares with <code>crypto/subtle.ConstantTimeCompare</code>.</p><p>Signing keys cached in <code>sync.Map</code>. Presigned URLs validated via <code>X-Amz-Expires</code> (max 7 days). Also supports legacy <code>X-Proxy-Token</code> header.</p><p><code>BucketRegistry</code> maps access keys to virtual buckets for multi-tenant credential isolation.</p>'
     },
     ROUTE: {
       title: 'Request Router',
