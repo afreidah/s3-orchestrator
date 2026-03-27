@@ -119,6 +119,7 @@ Monitor encryption health with these Prometheus metrics:
 |--------|---------------|
 | `s3o_encryption_errors_total` | Any non-zero rate indicates encryption/decryption failures |
 | `s3o_encrypt_existing_objects_total{status="error"}` | Failures during bulk encryption of existing data |
+| `s3o_decrypt_existing_objects_total{status="error"}` | Failures during bulk decryption of existing data |
 | `s3o_key_rotation_objects_total{status="error"}` | Failures during key rotation |
 | `s3o_encryption_unknown_key_id_total` | Decryptions falling back to primary key due to unrecognized keyID |
 

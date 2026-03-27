@@ -392,6 +392,55 @@ func (q *Queries) InsertObjectLocationIfNotExists(ctx context.Context, arg Inser
 	return inserted, err
 }
 
+const listAllEncryptedLocations = `-- name: ListAllEncryptedLocations :many
+SELECT object_key, backend_name, size_bytes, encryption_key, key_id, plaintext_size
+FROM object_locations
+WHERE encrypted = TRUE
+ORDER BY object_key, backend_name
+LIMIT $1 OFFSET $2
+`
+
+type ListAllEncryptedLocationsParams struct {
+	Limit  int32
+	Offset int32
+}
+
+type ListAllEncryptedLocationsRow struct {
+	ObjectKey     string
+	BackendName   string
+	SizeBytes     int64
+	EncryptionKey []byte
+	KeyID         *string
+	PlaintextSize *int64
+}
+
+func (q *Queries) ListAllEncryptedLocations(ctx context.Context, arg ListAllEncryptedLocationsParams) ([]ListAllEncryptedLocationsRow, error) {
+	rows, err := q.db.Query(ctx, listAllEncryptedLocations, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAllEncryptedLocationsRow{}
+	for rows.Next() {
+		var i ListAllEncryptedLocationsRow
+		if err := rows.Scan(
+			&i.ObjectKey,
+			&i.BackendName,
+			&i.SizeBytes,
+			&i.EncryptionKey,
+			&i.KeyID,
+			&i.PlaintextSize,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDirectChildren = `-- name: ListDirectChildren :many
 SELECT DISTINCT ON (object_key) object_key, backend_name, size_bytes, created_at
 FROM object_locations
@@ -708,6 +757,27 @@ func (q *Queries) LockObjectOnBackend(ctx context.Context, arg LockObjectOnBacke
 		&i.ContentHash,
 	)
 	return i, err
+}
+
+const markObjectDecrypted = `-- name: MarkObjectDecrypted :exec
+UPDATE object_locations
+SET encrypted = FALSE,
+    encryption_key = NULL,
+    key_id = NULL,
+    size_bytes = $3,
+    plaintext_size = NULL
+WHERE object_key = $1 AND backend_name = $2
+`
+
+type MarkObjectDecryptedParams struct {
+	ObjectKey   string
+	BackendName string
+	SizeBytes   int64
+}
+
+func (q *Queries) MarkObjectDecrypted(ctx context.Context, arg MarkObjectDecryptedParams) error {
+	_, err := q.db.Exec(ctx, markObjectDecrypted, arg.ObjectKey, arg.BackendName, arg.SizeBytes)
+	return err
 }
 
 const markObjectEncrypted = `-- name: MarkObjectEncrypted :exec

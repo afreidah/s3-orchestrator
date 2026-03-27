@@ -74,6 +74,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /admin/api/over-replication", h.requireToken(h.handleOverReplicationClean))
 	mux.HandleFunc("POST /admin/api/rotate-encryption-key", h.requireToken(h.handleRotateEncryptionKey))
 	mux.HandleFunc("POST /admin/api/encrypt-existing", h.requireToken(h.handleEncryptExisting))
+	mux.HandleFunc("POST /admin/api/decrypt-existing", h.requireToken(h.handleDecryptExisting))
 	mux.HandleFunc("POST /admin/api/scrub", h.requireToken(h.handleScrub))
 	mux.HandleFunc("POST /admin/api/backfill-checksums", h.requireToken(h.handleBackfillChecksums))
 }
@@ -630,10 +631,117 @@ func (h *Handler) handleEncryptExisting(w http.ResponseWriter, r *http.Request) 
 }
 
 // -------------------------------------------------------------------------
-// INTEGRITY
+// DECRYPT EXISTING OBJECTS
 // -------------------------------------------------------------------------
 
-// codecov:ignore:start -- admin HTTP endpoints, covered by integration tests
+// handleDecryptExisting downloads each encrypted object from its backend,
+// decrypts it, re-uploads the plaintext, and updates the DB record. Objects
+// are processed in batches to avoid holding long transactions. Encryption
+// must still be configured (the key provider is needed to unwrap DEKs).
+func (h *Handler) handleDecryptExisting(w http.ResponseWriter, r *http.Request) {
+	if h.encryptor == nil || h.rawStore == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "encryption not enabled"})
+		return
+	}
+
+	ctx := r.Context()
+	const batchSize = 100
+	var decrypted, failed, total int
+
+	for offset := 0; ; offset += batchSize {
+		locs, err := h.rawStore.ListAllEncryptedLocations(ctx, batchSize, offset)
+		if err != nil {
+			slog.ErrorContext(ctx, "Admin: decrypt-existing list failed", "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list encrypted objects"})
+			return
+		}
+		if len(locs) == 0 {
+			break
+		}
+
+		for _, loc := range locs {
+			total++
+
+			backend, err := h.manager.GetBackend(loc.BackendName)
+			if err != nil {
+				slog.WarnContext(ctx, "Decrypt-existing: backend not found", "key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
+				telemetry.DecryptExistingObjectsTotal.WithLabelValues("error").Inc()
+				failed++
+				continue
+			}
+
+			// Download ciphertext from backend
+			result, err := backend.GetObject(ctx, loc.ObjectKey, "")
+			if err != nil {
+				h.manager.RecordUsage(loc.BackendName, 1, 0, 0)
+				slog.WarnContext(ctx, "Decrypt-existing: download failed", "key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
+				telemetry.DecryptExistingObjectsTotal.WithLabelValues("error").Inc()
+				failed++
+				continue
+			}
+			h.manager.RecordUsage(loc.BackendName, 1, loc.SizeBytes, 0)
+
+			// Unpack stored key data
+			_, wrappedDEK, unpackErr := encryption.UnpackKeyData(loc.EncryptionKey)
+			if unpackErr != nil {
+				result.Body.Close()
+				slog.WarnContext(ctx, "Decrypt-existing: unpack key data failed", "key", loc.ObjectKey, "error", unpackErr)
+				telemetry.DecryptExistingObjectsTotal.WithLabelValues("error").Inc()
+				failed++
+				continue
+			}
+
+			// Decrypt
+			plainReader, err := h.encryptor.Decrypt(ctx, result.Body, wrappedDEK, loc.KeyID)
+			if err != nil {
+				result.Body.Close()
+				slog.WarnContext(ctx, "Decrypt-existing: decrypt failed", "key", loc.ObjectKey, "error", err)
+				telemetry.DecryptExistingObjectsTotal.WithLabelValues("error").Inc()
+				failed++
+				continue
+			}
+
+			// Re-upload plaintext (overwrites ciphertext on backend)
+			_, err = backend.PutObject(ctx, loc.ObjectKey, plainReader, loc.PlaintextSize, result.ContentType, result.Metadata)
+			result.Body.Close()
+			if err != nil {
+				h.manager.RecordUsage(loc.BackendName, 1, 0, 0)
+				slog.WarnContext(ctx, "Decrypt-existing: re-upload failed", "key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
+				telemetry.DecryptExistingObjectsTotal.WithLabelValues("error").Inc()
+				failed++
+				continue
+			}
+			h.manager.RecordUsage(loc.BackendName, 1, 0, loc.PlaintextSize)
+
+			// Update DB record
+			if err := h.rawStore.MarkObjectDecrypted(ctx, loc.ObjectKey, loc.BackendName, loc.PlaintextSize); err != nil {
+				slog.WarnContext(ctx, "Decrypt-existing: DB update failed", "key", loc.ObjectKey, "error", err)
+				telemetry.DecryptExistingObjectsTotal.WithLabelValues("error").Inc()
+				failed++
+				continue
+			}
+
+			telemetry.DecryptExistingObjectsTotal.WithLabelValues("success").Inc()
+			decrypted++
+		}
+
+		if len(locs) < batchSize {
+			break
+		}
+	}
+
+	slog.InfoContext(ctx, "Admin: decrypt-existing complete", "decrypted", decrypted, "failed", failed, "total", total)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":    "complete",
+		"decrypted": decrypted,
+		"failed":    failed,
+		"total":     total,
+	})
+}
+
+// -------------------------------------------------------------------------
+// INTEGRITY
+// -------------------------------------------------------------------------
 
 // handleScrub triggers an on-demand scrub cycle. Accepts an optional
 // batch_size query parameter (defaults to the configured scrubber batch size).
@@ -700,8 +808,6 @@ func (h *Handler) handleBackfillChecksums(w http.ResponseWriter, r *http.Request
 		"processed": totalProcessed,
 	})
 }
-
-// codecov:ignore:end
 
 // -------------------------------------------------------------------------
 // HELPERS

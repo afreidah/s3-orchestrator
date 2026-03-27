@@ -12,5 +12,4 @@ ignore:
   - "internal/testutil/"              # shared test mocks
   - "internal/store/sqlc/"            # generated code (sqlc)
   - "internal/backend/backendtest/"   # generated mock (mockgen)
-  - "internal/counter/redis.go"       # Redis counter backend, integration-tested only
   - "internal/encryption/vault.go"    # Vault transit integration, requires running Vault

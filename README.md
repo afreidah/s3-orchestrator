@@ -322,6 +322,7 @@ Objects are encrypted in fixed-size chunks (default 64 KB), so range requests (`
 - **Envelope encryption** — per-object DEKs mean rotating the master key only requires re-wrapping DEKs, not re-encrypting data
 - **Key rotation** — add the new master key, move the old one to `previous_keys`, and call the `rotate-encryption-key` admin API to re-wrap DEKs still using the old key
 - **Encrypt existing data** — the `encrypt-existing` admin API encrypts all unencrypted objects in-place without downtime
+- **Decrypt existing data** — the `decrypt-existing` admin API reverses encryption, restoring plaintext objects on backends (useful for disabling encryption or migrating away)
 - **Vault Transit support** — delegate key management to HashiCorp Vault for HSM-backed key storage. The Vault token is automatically renewed in the background; for Nomad workload identity deployments, use `token_file` to point at the Nomad-managed token file instead of a static `token` string
 - **Unknown key ID detection** — when a wrapped DEK references a key ID that isn't the current primary or any configured previous key, a warning is logged before falling back to the primary key (signals potential metadata corruption or missing rotation key)
 
@@ -684,6 +685,7 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when enabled.
 | `s3o_encryption_errors_total` | Counter | op, error_type | Encryption/decryption failures |
 | `s3o_encryption_unknown_key_id_total` | Counter | — | Decryption attempts with unknown keyID (primary key fallback) |
 | `s3o_encrypt_existing_objects_total` | Counter | status | Objects processed by encrypt-existing (success/error) |
+| `s3o_decrypt_existing_objects_total` | Counter | status | Objects processed by decrypt-existing (success/error) |
 | `s3o_key_rotation_objects_total` | Counter | status | DEKs re-wrapped by key rotation (success/error) |
 | `s3o_redis_operations_total` | Counter | operation, status | Redis command outcomes (incrby, get, getset, pipeline_add, pipeline_load) |
 | `s3o_redis_fallback_active` | Gauge | — | `1` when Redis is unavailable and using local counters |

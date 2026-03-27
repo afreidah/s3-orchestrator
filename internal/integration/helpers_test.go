@@ -3,9 +3,9 @@
 //
 // Author: Alex Freidah
 //
-// Shared setup and teardown utilities for integration tests. Provides MinIO
-// client construction, PostgreSQL connection helpers, test bucket provisioning,
-// and environment variable parsing.
+// Shared setup and teardown utilities for integration tests. Uses testcontainers
+// to spin up PostgreSQL, MinIO (x3), and Redis containers automatically. No
+// external docker-compose required — just `go test -tags integration`.
 // -------------------------------------------------------------------------------
 
 //go:build integration
@@ -22,7 +22,7 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -31,6 +31,12 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	_ "github.com/jackc/pgx/v5/stdlib"
+
+	"github.com/testcontainers/testcontainers-go"
+	tcminio "github.com/testcontainers/testcontainers-go/modules/minio"
+	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
+	tcredis "github.com/testcontainers/testcontainers-go/modules/redis"
+	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/afreidah/s3-orchestrator/internal/auth"
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
@@ -55,21 +61,121 @@ var (
 	allBackendOrder   []string
 )
 
+// minioInstance holds a running MinIO container and its connection details.
+type minioInstance struct {
+	container *tcminio.MinioContainer
+	endpoint  string
+	bucket    string
+}
+
 func TestMain(m *testing.M) {
 	// Silence the proxy's request logger so test output is clean.
 	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
 
-	minio1Endpoint := envOrDefault("MINIO1_ENDPOINT", "http://localhost:19000")
-	minio2Endpoint := envOrDefault("MINIO2_ENDPOINT", "http://localhost:19002")
-	minio3Endpoint := envOrDefault("MINIO3_ENDPOINT", "http://localhost:19004")
-	pgHost := envOrDefault("POSTGRES_HOST", "localhost")
-	pgPort := envOrDefault("POSTGRES_PORT", "15432")
+	ctx := context.Background()
 
-	port, err := strconv.Atoi(pgPort)
+	// ---------------------------------------------------------------
+	// Start containers
+	// ---------------------------------------------------------------
+
+	pgContainer, err := tcpostgres.Run(ctx,
+		"postgres:16-alpine",
+		tcpostgres.WithDatabase("s3proxy_test"),
+		tcpostgres.WithUsername("s3proxy"),
+		tcpostgres.WithPassword("s3proxy"),
+		testcontainers.WithWaitStrategy(
+			wait.ForLog("database system is ready to accept connections").
+				WithOccurrence(2).WithStartupTimeout(30*time.Second)),
+	)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "invalid POSTGRES_PORT %q: %v\n", pgPort, err)
+		fmt.Fprintf(os.Stderr, "failed to start postgres: %v\n", err)
 		os.Exit(1)
 	}
+
+	minioSpecs := []struct {
+		name   string
+		envKey string
+		bucket string
+	}{
+		{"minio-1", "MINIO1_ENDPOINT", "backend1"},
+		{"minio-2", "MINIO2_ENDPOINT", "backend2"},
+		{"minio-3", "MINIO3_ENDPOINT", "backend3"},
+	}
+
+	minios := make([]minioInstance, len(minioSpecs))
+	for i, spec := range minioSpecs {
+		ctr, err := tcminio.Run(ctx, "minio/minio:latest")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to start %s: %v\n", spec.name, err)
+			os.Exit(1)
+		}
+		endpoint, err := ctr.ConnectionString(ctx)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to get %s endpoint: %v\n", spec.name, err)
+			os.Exit(1)
+		}
+		minios[i] = minioInstance{
+			container: ctr,
+			endpoint:  "http://" + endpoint,
+			bucket:    spec.bucket,
+		}
+		// Set env vars so envOrDefault() calls elsewhere pick up the right endpoints.
+		os.Setenv(spec.envKey, minios[i].endpoint)
+	}
+
+	redisContainer, err := tcredis.Run(ctx, "redis:7-alpine")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to start redis: %v\n", err)
+		os.Exit(1)
+	}
+	redisConnStr, err := redisContainer.ConnectionString(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to get redis endpoint: %v\n", err)
+		os.Exit(1)
+	}
+	// redis module returns "redis://host:port/0" — extract host:port for REDIS_ADDR
+	redisAddr := strings.TrimPrefix(redisConnStr, "redis://")
+	redisAddr = strings.TrimSuffix(redisAddr, "/0")
+	os.Setenv("REDIS_ADDR", redisAddr)
+
+	// ---------------------------------------------------------------
+	// Create buckets on each MinIO
+	// ---------------------------------------------------------------
+
+	for _, mi := range minios {
+		mc := s3.New(s3.Options{
+			BaseEndpoint: aws.String(mi.endpoint),
+			Region:       "us-east-1",
+			Credentials:  credentials.NewStaticCredentialsProvider("minioadmin", "minioadmin", ""),
+			UsePathStyle: true,
+		})
+		_, err := mc.CreateBucket(ctx, &s3.CreateBucketInput{
+			Bucket: aws.String(mi.bucket),
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to create bucket %s: %v\n", mi.bucket, err)
+			os.Exit(1)
+		}
+	}
+
+	// ---------------------------------------------------------------
+	// Parse Postgres connection details
+	// ---------------------------------------------------------------
+
+	pgHost, err := pgContainer.Host(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to get postgres host: %v\n", err)
+		os.Exit(1)
+	}
+	pgPort, err := pgContainer.MappedPort(ctx, "5432/tcp")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to get postgres port: %v\n", err)
+		os.Exit(1)
+	}
+
+	// ---------------------------------------------------------------
+	// Build config and wire up components
+	// ---------------------------------------------------------------
 
 	cfg := &config.Config{
 		Server: config.ServerConfig{
@@ -88,7 +194,7 @@ func TestMain(m *testing.M) {
 		},
 		Database: config.DatabaseConfig{
 			Host:     pgHost,
-			Port:     port,
+			Port:     pgPort.Int(),
 			Database: "s3proxy_test",
 			User:     "s3proxy",
 			Password: "s3proxy",
@@ -102,7 +208,7 @@ func TestMain(m *testing.M) {
 		Backends: []config.BackendConfig{
 			{
 				Name:            "minio-1",
-				Endpoint:        minio1Endpoint,
+				Endpoint:        minios[0].endpoint,
 				Region:          "us-east-1",
 				Bucket:          "backend1",
 				AccessKeyID:     "minioadmin",
@@ -112,7 +218,7 @@ func TestMain(m *testing.M) {
 			},
 			{
 				Name:            "minio-2",
-				Endpoint:        minio2Endpoint,
+				Endpoint:        minios[1].endpoint,
 				Region:          "us-east-1",
 				Bucket:          "backend2",
 				AccessKeyID:     "minioadmin",
@@ -122,7 +228,7 @@ func TestMain(m *testing.M) {
 			},
 			{
 				Name:            "minio-3",
-				Endpoint:        minio3Endpoint,
+				Endpoint:        minios[2].endpoint,
 				Region:          "us-east-1",
 				Bucket:          "backend3",
 				AccessKeyID:     "minioadmin",
@@ -137,8 +243,6 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "config validation failed: %v\n", err)
 		os.Exit(1)
 	}
-
-	ctx := context.Background()
 
 	db, err := store.NewStore(ctx, &cfg.Database)
 	if err != nil {
@@ -225,9 +329,21 @@ func TestMain(m *testing.M) {
 
 	code := m.Run()
 
+	// ---------------------------------------------------------------
+	// Cleanup
+	// ---------------------------------------------------------------
+
 	httpServer.Shutdown(ctx)
 	testDB.Close()
 	db.Close()
+
+	// Terminate containers (best-effort, testcontainers handles cleanup
+	// via Ryuk even if these fail).
+	pgContainer.Terminate(ctx)
+	for _, mi := range minios {
+		mi.container.Terminate(ctx)
+	}
+	redisContainer.Terminate(ctx)
 
 	os.Exit(code)
 }

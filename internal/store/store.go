@@ -154,7 +154,7 @@ func (s *Store) Close() {
 // RunMigrations applies versioned database migrations using goose. Migrations
 // are embedded in the binary and applied in order. Already-applied migrations
 // are skipped automatically via the goose_db_version tracking table.
-func (s *Store) RunMigrations(ctx context.Context) error { // codecov:ignore -- requires live PostgreSQL, covered by integration tests
+func (s *Store) RunMigrations(ctx context.Context) error {
 	stdDB, err := sql.Open("pgx", s.connStr)
 	if err != nil {
 		return fmt.Errorf("open migration connection: %w", err)
@@ -191,7 +191,6 @@ const ExpectedSchemaVersion = 5
 // what this binary expects. Returns an error if the schema is older
 // than expected (partial migration failure). Logs a warning if the
 // schema is newer (possible downgrade).
-// codecov:ignore:start -- requires live PostgreSQL, covered by integration tests
 func (s *Store) VerifySchemaVersion(ctx context.Context) error {
 	var version int64
 	err := s.pool.QueryRow(ctx,
@@ -210,8 +209,6 @@ func (s *Store) VerifySchemaVersion(ctx context.Context) error {
 	}
 	return nil
 }
-
-// codecov:ignore:end
 
 // -------------------------------------------------------------------------
 // TRANSACTION HELPERS
@@ -1163,7 +1160,6 @@ func (s *Store) GetStaleMultipartUploads(ctx context.Context, olderThan time.Dur
 // the given backend. Used by drain to abort uploads before migrating objects.
 // Requires live PostgreSQL — covered by integration tests.
 func (s *Store) GetMultipartUploadsByBackend(ctx context.Context, backendName string) ([]MultipartUpload, error) { //nolint:dupl // intentional parallel to GetStaleMultipartUploads
-	// codecov:ignore:start -- requires live PostgreSQL
 	rows, err := s.queries.GetMultipartUploadsByBackend(ctx, backendName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get multipart uploads by backend: %w", err)
@@ -1190,14 +1186,12 @@ func (s *Store) GetMultipartUploadsByBackend(ctx context.Context, backendName st
 		uploads[i] = mu
 	}
 	return uploads, nil
-	// codecov:ignore:end
 }
 
 // ListMultipartUploads returns in-progress multipart uploads whose key matches
 // the given prefix, up to maxUploads entries.
 // CountActiveMultipartUploads returns the number of in-progress multipart
 // uploads whose key starts with the given bucket prefix.
-// codecov:ignore:start -- requires live PostgreSQL
 func (s *Store) CountActiveMultipartUploads(ctx context.Context, bucketPrefix string) (int64, error) {
 	escapedPrefix := likeEscaper.Replace(bucketPrefix)
 	count, err := s.queries.CountActiveMultipartUploadsByPrefix(ctx, &escapedPrefix)
@@ -1207,9 +1201,7 @@ func (s *Store) CountActiveMultipartUploads(ctx context.Context, bucketPrefix st
 	return count, nil
 }
 
-// codecov:ignore:end
-
-func (s *Store) ListMultipartUploads(ctx context.Context, prefix string, maxUploads int) ([]MultipartUpload, error) { // codecov:ignore -- requires live PostgreSQL, covered by integration tests
+func (s *Store) ListMultipartUploads(ctx context.Context, prefix string, maxUploads int) ([]MultipartUpload, error) {
 	escapedPrefix := likeEscaper.Replace(prefix)
 
 	rows, err := s.queries.ListMultipartUploadsByPrefix(ctx, db.ListMultipartUploadsByPrefixParams{
@@ -1367,8 +1359,6 @@ func (s *Store) GetUsageForPeriod(ctx context.Context, period string) (map[strin
 // INTEGRITY VERIFICATION
 // -------------------------------------------------------------------------
 
-// codecov:ignore:start -- requires live PostgreSQL, covered by integration tests
-
 // GetRandomHashedObjects returns random object locations that have a stored
 // content hash. Used by the scrubber to verify data integrity.
 func (s *Store) GetRandomHashedObjects(ctx context.Context, limit int) ([]ObjectLocation, error) {
@@ -1403,8 +1393,6 @@ func (s *Store) UpdateContentHash(ctx context.Context, key, backendName, hash st
 		ContentHash: &hash,
 	})
 }
-
-// codecov:ignore:end
 
 // -------------------------------------------------------------------------
 // ADVISORY LOCKS
@@ -1544,6 +1532,56 @@ func (s *Store) MarkObjectEncrypted(ctx context.Context, objectKey, backendName 
 		KeyID:         &keyID,
 		PlaintextSize: &plaintextSize,
 		SizeBytes:     ciphertextSize,
+	})
+}
+
+// DecryptableLocation holds a single encrypted object's metadata for the
+// decrypt-existing admin operation.
+type DecryptableLocation struct {
+	ObjectKey     string
+	BackendName   string
+	SizeBytes     int64
+	EncryptionKey []byte
+	KeyID         string
+	PlaintextSize int64
+}
+
+// ListAllEncryptedLocations returns a page of all encrypted object locations.
+// Used by the decrypt-existing admin endpoint to find objects that need decryption.
+func (s *Store) ListAllEncryptedLocations(ctx context.Context, limit, offset int) ([]DecryptableLocation, error) {
+	rows, err := s.queries.ListAllEncryptedLocations(ctx, db.ListAllEncryptedLocationsParams{
+		Limit:  int32(limit),
+		Offset: int32(offset),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list all encrypted locations: %w", err)
+	}
+	result := make([]DecryptableLocation, len(rows))
+	for i, r := range rows {
+		result[i] = DecryptableLocation{
+			ObjectKey:     r.ObjectKey,
+			BackendName:   r.BackendName,
+			SizeBytes:     r.SizeBytes,
+			EncryptionKey: r.EncryptionKey,
+		}
+		if r.KeyID != nil {
+			result[i].KeyID = *r.KeyID
+		}
+		if r.PlaintextSize != nil {
+			result[i].PlaintextSize = *r.PlaintextSize
+		}
+	}
+	return result, nil
+}
+
+// MarkObjectDecrypted updates a single object location to record that it has
+// been decrypted. Clears the encryption flag, wrapped DEK, key ID, and
+// plaintext size, and updates size_bytes to the plaintext size.
+func (s *Store) MarkObjectDecrypted(ctx context.Context, objectKey, backendName string, plaintextSize int64) error {
+	return s.queries.MarkObjectDecrypted(ctx, db.MarkObjectDecryptedParams{
+		ObjectKey:   objectKey,
+		BackendName: backendName,
+		SizeBytes:   plaintextSize,
 	})
 }
 
