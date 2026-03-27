@@ -426,7 +426,7 @@ database:
   password: "secret"
   ssl_mode: "require"
   max_conns: 50               # default: 50; size to 2-3x max_concurrent_requests
-  min_conns: 5
+  min_conns: 10
   max_conn_lifetime: "5m"
 
 routing_strategy: "pack"       # "pack" (fill in order) or "spread" (least utilized) (default: pack)
@@ -725,6 +725,8 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when enabled.
 | `s3o_cache_evictions_total` | Counter | — | Object data cache evictions (LRU or TTL) |
 | `s3o_cache_size_bytes` | Gauge | — | Current memory used by cached objects |
 | `s3o_cache_entries` | Gauge | — | Current number of cached objects |
+| `s3o_integrity_checks_total` | Counter | operation | Integrity hash verifications performed (read, scrub) |
+| `s3o_integrity_errors_total` | Counter | operation | Hash mismatches detected (corrupted copies enqueued for cleanup) |
 
 Quota metrics are refreshed from PostgreSQL every 30 seconds (no backend API calls).
 

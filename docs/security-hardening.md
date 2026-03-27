@@ -111,6 +111,8 @@ encryption:
 - Vault provides audit logging of all key operations.
 - Key rotation in Vault automatically versions the key; the orchestrator's `rotate-encryption-key` API re-wraps DEKs to the latest version.
 
+When using `token_file` for Nomad workload identity, the file must have permissions `0600` or stricter. The orchestrator rejects token files that are group- or world-readable to prevent accidental exposure of the Vault token to other local users.
+
 ### Encryption Metrics
 
 Monitor encryption health with these Prometheus metrics:
