@@ -19,7 +19,7 @@ archetype: "home"
 {{% badge style="info" title=" " icon="fas fa-project-diagram" %}}Tempo Tracing{{% /badge %}}
 {{% badge style="green" title=" " icon="fas fa-cubes" %}}Nomad HCL{{% /badge %}}
 {{% badge style="warning" title=" " icon="fas fa-dharmachakra" %}}Kubernetes Manifests{{% /badge %}}
-{{% badge style="info" icon="fas fa-bolt" %}}Object Data Cache{{% /badge %}}
+{{% badge style="info" title=" " icon="fas fa-bolt" %}}Object Data Cache{{% /badge %}}
 
 </div>
 
