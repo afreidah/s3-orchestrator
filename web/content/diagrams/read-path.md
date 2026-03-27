@@ -45,7 +45,10 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
 (function() {
   var diagramSrc = [
     'flowchart TD',
-    '    GET([GetObject\\nRequest]):::entry --> DBLOOKUP[DB Lookup:\\nGetAllObjectLocations]:::storage',
+    '    GET([GetObject\\nRequest]):::entry --> DCACHE{Object Data\\nCache?}:::decision',
+    '',
+    '    DCACHE -->|hit| CACHESTREAM[Return Cached\\nResponse]:::success',
+    '    DCACHE -->|miss or range req| DBLOOKUP[DB Lookup:\\nGetAllObjectLocations]:::storage',
     '',
     '    DBLOOKUP -->|not found| R404[404 Not\\nFound]:::reject',
     '    DBLOOKUP -->|DB unavailable| CACHE{Location\\nCache?}:::decision',
@@ -85,7 +88,11 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     '    INTEG -->|disabled or no hash| STREAM',
     '    VERIFY --> STREAM',
     '',
-    '    STREAM[Stream Body\\nto Client]:::process --> METRICS[Record Usage\\n& Metrics]:::process',
+    '    STREAM[Stream Body\\nto Client]:::process --> CACHEFILL{Cache\\nFill?}:::decision',
+    '    CACHEFILL -->|cacheable| CACHEPUT[Store in\\nData Cache]:::process',
+    '    CACHEFILL -->|too large or range| METRICS',
+    '    CACHEPUT --> METRICS',
+    '    METRICS[Record Usage\\n& Metrics]:::process',
     '    METRICS --> OK[Return\\nGetObjectResult]:::success',
     '',
     '    classDef entry fill:#1a7a5a,stroke:#1a7a5a,color:#fff,font-weight:bold',
@@ -112,6 +119,16 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
       title: 'GetObject Request',
       badge: 'entry', badgeText: 'entry point',
       body: '<p>Incoming GET request after passing through admission control, rate limiting, and SigV4 authentication.</p><p>The HTTP handler extracts the object key and optional <code>Range</code> header. Conditional request headers (<code>If-None-Match</code>, <code>If-Modified-Since</code>) are handled at the HTTP layer before reaching the storage manager.</p>'
+    },
+    DCACHE: {
+      title: 'Object Data Cache Lookup',
+      badge: 'decision', badgeText: 'cache check',
+      body: '<p>When the object data cache is enabled (<code>cache.enabled: true</code>), full GET requests (non-range) check the in-memory LRU cache first.</p><p>On <b>cache hit</b>: returns the cached body, content type, ETag, and metadata immediately without any backend I/O. No API call or egress is consumed.</p><p>On <b>cache miss</b> or <b>range request</b>: proceeds to the normal DB lookup path. Range requests always bypass the cache.</p><p class="ac-metric">Metrics: s3o_cache_hits_total, s3o_cache_misses_total</p>'
+    },
+    CACHESTREAM: {
+      title: 'Return Cached Response',
+      badge: 'success', badgeText: 'cache hit',
+      body: '<p>Serves the object directly from the in-memory cache. The response includes all original metadata (content type, ETag, user metadata) captured when the object was first cached.</p><p>Avoids backend API calls, egress charges, decryption overhead, and database queries. Audit event is emitted with <code>source=cache</code>.</p>'
     },
     DBLOOKUP: {
       title: 'DB Lookup: GetAllObjectLocations',
@@ -212,6 +229,16 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
       title: 'Stream Body to Client',
       badge: 'process', badgeText: 'streaming',
       body: '<p>The (possibly decrypted) response body streams directly to the HTTP client. Uses <code>sync.Once</code> to protect the result assignment when parallel broadcast is enabled &mdash; only the first successful response is returned, and losing responses have their bodies closed.</p><p>The body is an <code>io.ReadCloser</code>; the HTTP handler streams it to the response writer and closes it when done.</p>'
+    },
+    CACHEFILL: {
+      title: 'Cache Fill Decision',
+      badge: 'decision', badgeText: 'cache fill',
+      body: '<p>After a successful backend fetch, decides whether to store the response in the object data cache for future reads.</p><p>Objects are cached when: the data cache is enabled, the request is a full read (not a range request), and the object size does not exceed <code>cache.max_object_size</code>.</p><p>The response body is read into memory, stored in the cache, and replaced with a <code>bytes.Reader</code> so the HTTP handler can still stream it to the client.</p>'
+    },
+    CACHEPUT: {
+      title: 'Store in Data Cache',
+      badge: 'process', badgeText: 'cache store',
+      body: '<p>Stores the object data, content type, ETag, and user metadata in the in-memory LRU cache via <code>objectCache.Put()</code>.</p><p>If the cache is at capacity, the least recently used entry is evicted to make room. The entry expires after the configured <code>cache.ttl</code> (default: 5 minutes).</p><p class="ac-metric">Metrics: s3o_cache_size_bytes, s3o_cache_entries, s3o_cache_evictions_total</p>'
     },
     METRICS: {
       title: 'Record Usage & Metrics',

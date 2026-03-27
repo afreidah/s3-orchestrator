@@ -260,6 +260,16 @@ job "s3-orchestrator" {
           #   failure_threshold: 5    # consecutive failures before opening
           #   open_timeout: "5m"      # delay before probing recovery
 
+          # --- Object data cache (disabled by default) ---
+          # In-memory LRU cache for frequently read objects. Reduces backend
+          # API calls and egress by serving repeated reads from memory. Objects
+          # are cached after the first full GET and invalidated on write.
+          # cache:
+          #   enabled: false
+          #   max_size: "256MB"            # total cache capacity (default: 256MB)
+          #   max_object_size: "10MB"      # skip caching objects larger than this (default: 10MB)
+          #   ttl: "5m"                    # cached entry lifetime (default: 5m)
+
           # --- Per-IP rate limiting ---
           rate_limit:
             enabled: true

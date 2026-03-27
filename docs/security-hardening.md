@@ -127,6 +127,10 @@ Monitor encryption health with these Prometheus metrics:
 
 Chunked encryption derives per-chunk nonces by XORing the chunk index into a random base nonce. AES-GCM security requires that the same (key, nonce) pair is never reused. This is guaranteed because each object gets a fresh random DEK and a fresh random base nonce — even re-uploads of identical content produce different ciphertext. See `internal/encryption/chunk.go` for the full safety invariant documentation.
 
+## Object Data Cache
+
+When the in-memory object data cache is enabled (`cache.enabled: true`), cached objects are stored as post-decryption plaintext in process memory. This has the same security properties as any other in-process data — the plaintext exists in the orchestrator's address space for the duration of the cache entry's TTL, just as it does transiently during a normal GET response stream. The cache does not persist data to disk. Standard process isolation and memory protection apply; if an attacker can read the orchestrator's memory, they can already intercept plaintext during streaming regardless of caching.
+
 ## Data Integrity Verification
 
 Integrity verification detects silent data corruption (bit rot, backend-side corruption, storage media degradation) by computing SHA-256 hashes at write time and verifying them on read and via background scrubbing.
