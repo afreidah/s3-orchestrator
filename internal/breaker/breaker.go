@@ -78,6 +78,7 @@ type CircuitBreaker struct {
 	openTimeout   time.Duration
 	probeJitter   time.Duration     // randomized delay added to openTimeout; recomputed each time the circuit opens
 	probeInFlight atomic.Bool
+	probeStarted  atomic.Int64      // UnixNano timestamp of the probe dispatch; zero when no probe is active
 	name          string            // for logging and metrics labels
 	isError       func(error) bool  // returns true if the error should trip the breaker
 	sentinel      error             // error returned when circuit is open
@@ -144,8 +145,16 @@ func (cb *CircuitBreaker) ProbeEligible() bool {
 // STATE MACHINE
 // -------------------------------------------------------------------------
 
+// probeTimeout is the maximum duration a probe request can be in flight
+// before it is considered stale. If PostCheck is never called (e.g. due
+// to a panic in the call chain), the probe flag auto-resets after this
+// duration so the circuit is not permanently stuck in half-open.
+const probeTimeout = 2 * time.Minute
+
 // PreCheck returns the sentinel error when the circuit is open. Transitions
 // open → half-open when the timeout has elapsed, allowing one probe request.
+// If a previous probe has been in flight longer than probeTimeout, it is
+// considered abandoned and a new probe is allowed.
 func (cb *CircuitBreaker) PreCheck() error {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
@@ -158,11 +167,24 @@ func (cb *CircuitBreaker) PreCheck() error {
 			if !cb.probeInFlight.CompareAndSwap(false, true) {
 				return cb.sentinel // another probe already in flight
 			}
+			cb.probeStarted.Store(time.Now().UnixNano())
 			cb.transition(StateHalfOpen)
 			return nil // allow this request as the probe
 		}
 		return cb.sentinel
 	case StateHalfOpen:
+		// Recover from a stale probe whose PostCheck was never called.
+		if started := cb.probeStarted.Load(); started > 0 {
+			elapsed := time.Since(time.Unix(0, started))
+			if elapsed >= probeTimeout {
+				slog.Warn("Circuit breaker: stale probe detected, resetting to open", //nolint:sloglint // PreCheck has no request context
+					"name", cb.name, "probe_age", elapsed.Round(time.Second))
+				cb.probeInFlight.Store(false)
+				cb.probeStarted.Store(0)
+				cb.transition(StateOpen)
+				return cb.sentinel
+			}
+		}
 		return cb.sentinel
 	}
 	return nil
@@ -190,6 +212,7 @@ func (cb *CircuitBreaker) onSuccess() {
 
 	if cb.state == StateHalfOpen {
 		cb.probeInFlight.Store(false)
+		cb.probeStarted.Store(0)
 		cb.transition(StateClosed)
 	}
 	cb.failures = 0
@@ -207,6 +230,7 @@ func (cb *CircuitBreaker) onFailure() {
 	switch cb.state {
 	case StateHalfOpen:
 		cb.probeInFlight.Store(false)
+		cb.probeStarted.Store(0)
 		cb.transition(StateOpen)
 	case StateClosed:
 		if cb.failures >= cb.failThreshold {

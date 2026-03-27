@@ -384,12 +384,14 @@ func runServe() {
 	mux := http.NewServeMux()
 
 	// Metrics endpoint — served on a separate listener if metrics.listen is set,
-	// otherwise on the main S3 listener.
+	// otherwise on the main S3 listener. When separate, the server is shut down
+	// in the graceful shutdown handler alongside the main HTTP server.
+	var metricsServer *http.Server
 	if cfg.Telemetry.Metrics.Enabled {
 		if cfg.Telemetry.Metrics.Listen != "" {
 			metricsMux := http.NewServeMux()
 			metricsMux.Handle(cfg.Telemetry.Metrics.Path, promhttp.Handler())
-			metricsServer := &http.Server{
+			metricsServer = &http.Server{
 				Addr:    cfg.Telemetry.Metrics.Listen,
 				Handler: metricsMux,
 			}
@@ -399,12 +401,6 @@ func runServe() {
 				if err := metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 					slog.ErrorContext(ctx, "Metrics listener failed", "error", err)
 				}
-			}()
-			go func() {
-				<-ctx.Done()
-				shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				_ = metricsServer.Shutdown(shutdownCtx)
 			}()
 		} else {
 			mux.Handle(cfg.Telemetry.Metrics.Path, promhttp.Handler())
@@ -682,6 +678,15 @@ func runServe() {
 		// Drain inflight HTTP requests first so clients get responses quickly
 		if err := httpServer.Shutdown(shutdownCtx); err != nil {
 			slog.ErrorContext(ctx, "HTTP server shutdown error", "error", err)
+		}
+
+		// Drain inflight metrics scrapes (separate listener)
+		if metricsServer != nil {
+			metricsShutCtx, metricsCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if err := metricsServer.Shutdown(metricsShutCtx); err != nil {
+				slog.ErrorContext(ctx, "Metrics server shutdown error", "error", err)
+			}
+			metricsCancel()
 		}
 
 		// Stop rate limiter and login throttle cleanup goroutines
