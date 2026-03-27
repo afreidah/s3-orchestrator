@@ -417,6 +417,282 @@ func TestDecryptExisting_IdempotentDecrypt(t *testing.T) {
 	}
 }
 
+// TestDecryptExisting_BackendNotFound verifies that decrypt-existing gracefully
+// skips objects whose backend no longer exists and reports them as failed.
+func TestDecryptExisting_BackendNotFound(t *testing.T) {
+	env := setupEncryptionEnv(t)
+	ctx := context.Background()
+
+	// Put and encrypt a real object
+	key := uniqueKey(t, "dec-no-backend")
+	body := []byte("backend will disappear")
+	_, err := newS3Client(t).PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(key),
+		Body:          bytes.NewReader(body),
+		ContentLength: aws.Int64(int64(len(body))),
+	})
+	if err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+	env.callAdmin(t, "/admin/api/encrypt-existing")
+
+	// Create a fake backend in the quotas table to satisfy the FK, then
+	// rewrite the object's backend_name to point at it. The manager doesn't
+	// know about this backend, so GetBackend will fail.
+	_, err = testDB.ExecContext(ctx,
+		"INSERT INTO backend_quotas (backend_name, bytes_used, bytes_limit, updated_at) VALUES ('ghost-backend', 0, 0, NOW()) ON CONFLICT DO NOTHING")
+	if err != nil {
+		t.Fatalf("insert ghost backend: %v", err)
+	}
+	_, err = testDB.ExecContext(ctx,
+		"UPDATE object_locations SET backend_name = 'ghost-backend' WHERE object_key = $1",
+		internalKey(key))
+	if err != nil {
+		t.Fatalf("update backend_name: %v", err)
+	}
+
+	result := env.callAdmin(t, "/admin/api/decrypt-existing")
+	if failedCount := int(result["failed"].(float64)); failedCount != 1 {
+		t.Errorf("expected 1 failed, got %d", failedCount)
+	}
+}
+
+// TestDecryptExisting_CorruptedKeyData verifies that decrypt-existing gracefully
+// skips objects with corrupted encryption key metadata.
+func TestDecryptExisting_CorruptedKeyData(t *testing.T) {
+	env := setupEncryptionEnv(t)
+	ctx := context.Background()
+
+	// Put and encrypt a real object
+	key := uniqueKey(t, "dec-corrupt-key")
+	body := []byte("key data will be corrupted")
+	_, err := newS3Client(t).PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(key),
+		Body:          bytes.NewReader(body),
+		ContentLength: aws.Int64(int64(len(body))),
+	})
+	if err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+	env.callAdmin(t, "/admin/api/encrypt-existing")
+
+	// Corrupt the encryption_key in the DB (too short to unpack)
+	_, err = testDB.ExecContext(ctx,
+		"UPDATE object_locations SET encryption_key = $1 WHERE object_key = $2",
+		[]byte("short"), internalKey(key))
+	if err != nil {
+		t.Fatalf("corrupt encryption_key: %v", err)
+	}
+
+	result := env.callAdmin(t, "/admin/api/decrypt-existing")
+	if failedCount := int(result["failed"].(float64)); failedCount != 1 {
+		t.Errorf("expected 1 failed (corrupt key data), got %d", failedCount)
+	}
+}
+
+// TestDecryptExisting_WrongKey verifies that decrypt-existing gracefully skips
+// objects whose wrapped DEK cannot be unwrapped (wrong master key).
+func TestDecryptExisting_WrongKey(t *testing.T) {
+	env := setupEncryptionEnv(t)
+	ctx := context.Background()
+
+	// Put and encrypt a real object
+	key := uniqueKey(t, "dec-wrong-key")
+	body := []byte("encrypted with one key, decrypt with another")
+	_, err := newS3Client(t).PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(key),
+		Body:          bytes.NewReader(body),
+		ContentLength: aws.Int64(int64(len(body))),
+	})
+	if err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+	env.callAdmin(t, "/admin/api/encrypt-existing")
+
+	// Replace the wrapped DEK with garbage (valid nonce prefix + junk DEK)
+	// UnpackKeyData expects 12+ bytes: first 12 = nonce, rest = wrappedDEK
+	fakeKeyData := bytes.Repeat([]byte("X"), 12+32) // valid length but wrong ciphertext
+	_, err = testDB.ExecContext(ctx,
+		"UPDATE object_locations SET encryption_key = $1 WHERE object_key = $2",
+		fakeKeyData, internalKey(key))
+	if err != nil {
+		t.Fatalf("replace encryption_key: %v", err)
+	}
+
+	result := env.callAdmin(t, "/admin/api/decrypt-existing")
+	if failedCount := int(result["failed"].(float64)); failedCount != 1 {
+		t.Errorf("expected 1 failed (wrong key), got %d", failedCount)
+	}
+}
+
+// TestDecryptExisting_MixedSuccessAndFailure verifies that decrypt-existing
+// processes all objects even when some fail, reporting correct counts.
+func TestDecryptExisting_MixedSuccessAndFailure(t *testing.T) {
+	env := setupEncryptionEnv(t)
+	ctx := context.Background()
+
+	// Put two objects and encrypt them
+	goodKey := uniqueKey(t, "dec-mixed-good")
+	badKey := uniqueKey(t, "dec-mixed-bad")
+	body := []byte("mixed test payload")
+
+	for _, k := range []string{goodKey, badKey} {
+		_, err := newS3Client(t).PutObject(ctx, &s3.PutObjectInput{
+			Bucket:        aws.String(virtualBucket),
+			Key:           aws.String(k),
+			Body:          bytes.NewReader(body),
+			ContentLength: aws.Int64(int64(len(body))),
+		})
+		if err != nil {
+			t.Fatalf("PutObject(%s): %v", k, err)
+		}
+	}
+	env.callAdmin(t, "/admin/api/encrypt-existing")
+
+	// Corrupt one object's key data
+	_, err := testDB.ExecContext(ctx,
+		"UPDATE object_locations SET encryption_key = $1 WHERE object_key = $2",
+		[]byte("bad"), internalKey(badKey))
+	if err != nil {
+		t.Fatalf("corrupt key: %v", err)
+	}
+
+	result := env.callAdmin(t, "/admin/api/decrypt-existing")
+	decrypted := int(result["decrypted"].(float64))
+	failed := int(result["failed"].(float64))
+	total := int(result["total"].(float64))
+
+	if decrypted != 1 {
+		t.Errorf("decrypted = %d, want 1", decrypted)
+	}
+	if failed != 1 {
+		t.Errorf("failed = %d, want 1", failed)
+	}
+	if total != 2 {
+		t.Errorf("total = %d, want 2", total)
+	}
+
+	// Good object should now be plaintext and readable
+	resp, err := newS3Client(t).GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(virtualBucket),
+		Key:    aws.String(goodKey),
+	})
+	if err != nil {
+		t.Fatalf("GetObject good key: %v", err)
+	}
+	got, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !bytes.Equal(got, body) {
+		t.Error("good object body mismatch after partial decrypt")
+	}
+}
+
+// TestDecryptExisting_DownloadFails verifies that decrypt-existing gracefully
+// skips objects that exist in the DB but have been deleted from the backend.
+func TestDecryptExisting_DownloadFails(t *testing.T) {
+	env := setupEncryptionEnv(t)
+	ctx := context.Background()
+
+	// Put and encrypt
+	key := uniqueKey(t, "dec-download-fail")
+	body := []byte("will be deleted from backend")
+	_, err := newS3Client(t).PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(key),
+		Body:          bytes.NewReader(body),
+		ContentLength: aws.Int64(int64(len(body))),
+	})
+	if err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+	env.callAdmin(t, "/admin/api/encrypt-existing")
+
+	// Delete the object directly from the backend (bypassing the orchestrator)
+	backendName := queryObjectBackend(t, key)
+	backend := allBackends[backendName]
+	if err := backend.DeleteObject(ctx, internalKey(key)); err != nil {
+		t.Fatalf("direct DeleteObject: %v", err)
+	}
+
+	// decrypt-existing should fail for this object (download returns 404)
+	result := env.callAdmin(t, "/admin/api/decrypt-existing")
+	if failedCount := int(result["failed"].(float64)); failedCount != 1 {
+		t.Errorf("expected 1 failed (download error), got %d", failedCount)
+	}
+}
+
+// TestEncryptExisting_DownloadFails verifies that encrypt-existing gracefully
+// skips objects that exist in the DB but have been deleted from the backend.
+func TestEncryptExisting_DownloadFails(t *testing.T) {
+	env := setupEncryptionEnv(t)
+	ctx := context.Background()
+
+	key := uniqueKey(t, "enc-download-fail")
+	body := []byte("will be deleted from backend")
+	_, err := newS3Client(t).PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(key),
+		Body:          bytes.NewReader(body),
+		ContentLength: aws.Int64(int64(len(body))),
+	})
+	if err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+
+	// Delete the object directly from the backend
+	backendName := queryObjectBackend(t, key)
+	backend := allBackends[backendName]
+	if err := backend.DeleteObject(ctx, internalKey(key)); err != nil {
+		t.Fatalf("direct DeleteObject: %v", err)
+	}
+
+	result := env.callAdmin(t, "/admin/api/encrypt-existing")
+	if failedCount := int(result["failed"].(float64)); failedCount != 1 {
+		t.Errorf("expected 1 failed (download error), got %d", failedCount)
+	}
+}
+
+// TestEncryptExisting_BackendNotFound verifies that encrypt-existing gracefully
+// skips objects whose backend no longer exists.
+func TestEncryptExisting_BackendNotFound(t *testing.T) {
+	env := setupEncryptionEnv(t)
+	ctx := context.Background()
+
+	key := uniqueKey(t, "enc-no-backend")
+	body := []byte("backend will disappear")
+	_, err := newS3Client(t).PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(key),
+		Body:          bytes.NewReader(body),
+		ContentLength: aws.Int64(int64(len(body))),
+	})
+	if err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+
+	// Create a fake backend in the quotas table to satisfy the FK, then
+	// rewrite the object's backend_name to point at it.
+	_, err = testDB.ExecContext(ctx,
+		"INSERT INTO backend_quotas (backend_name, bytes_used, bytes_limit, updated_at) VALUES ('ghost-backend', 0, 0, NOW()) ON CONFLICT DO NOTHING")
+	if err != nil {
+		t.Fatalf("insert ghost backend: %v", err)
+	}
+	_, err = testDB.ExecContext(ctx,
+		"UPDATE object_locations SET backend_name = 'ghost-backend' WHERE object_key = $1",
+		internalKey(key))
+	if err != nil {
+		t.Fatalf("update backend_name: %v", err)
+	}
+
+	result := env.callAdmin(t, "/admin/api/encrypt-existing")
+	if failedCount := int(result["failed"].(float64)); failedCount != 1 {
+		t.Errorf("expected 1 failed, got %d", failedCount)
+	}
+}
+
 // TestEncryptDecryptExisting_DirectBackendVerification verifies that the actual
 // bytes on the backend change during encrypt/decrypt — not just the DB metadata.
 func TestEncryptDecryptExisting_DirectBackendVerification(t *testing.T) {

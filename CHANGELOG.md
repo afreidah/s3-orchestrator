@@ -3,6 +3,60 @@
 All notable changes to this project are documented in this file.
 
 
+## [0.20.3] - 2026-03-23
+
+### Added
+- add Helm chart, replace raw Kubernetes manifests (#382) (#406)
+- add compatibility matrix and upgrade checklist (#379) (#397)
+- add Getting Started section to README (#374) (#394)
+- add rebalance pending gauge and encryption unknown-keyID counter (#316) (#327)
+- add goleak goroutine leak detection and fix flaky timing tests (#315) (#324)
+- add unit tests for chunk encryption, location cache, aggregator, and cleanup queue (#312) (#323)
+
+### Fixed
+- fixup: force new version of logo everywhere with version tag
+- fixup: bust cache on logo so cloudflare doesn't serve the old one, update image push tasks in makefile
+
+### Hardened
+- security: limit active multipart uploads per bucket (#369) (#402)
+- security: add two-phase confirmation for remove-backend --purge (#368) (#401)
+- security: add CSRF token protection for UI state-changing operations (#371) (#399)
+- security: document nonce derivation safety invariant (#372) (#396)
+- security: separate metrics listener and strip instance ID from health (#370) (#395)
+
+### Improved
+- Update README.md (#400)
+- update documentation for v0.19.x changes (#328)
+- update CHANGELOG.md for v0.19.1 (#307)
+
+### Documentation
+- document docker-compose volume cleanup and add troubleshooting (#375) (#393)
+- document database connection pool sizing for production (#351) (#391)
+
+### Other
+- logging tweak and version bump
+- object integrity verification with SHA-256 content hashing (#404)
+- enhancement: add schema version validation at startup, update logo (#387) (#398)
+- report missing part numbers in CompleteMultipartUpload error (#384) (#390)
+- recommend trace sample rate for production deployments (#355) (#389)
+- warn when replication.factor=1 with multiple backends (#348) (#388)
+- added new benchmark test after a number of changes
+- perf: pipeline Redis Expire calls with INCRBY operations (#336) (#347)
+- perf: use string slicing instead of TrimPrefix in list responses (#338) (#346)
+- perf: use map lookup for encrypted object locations in GetObject and HeadObject (#337) (#345)
+- perf: replace fmt.Sprintf with string concat for multipart part keys (#335) (#344)
+- perf: parse SigV4 auth header once and reduce encoding allocations (#333, #334) (#343)
+- perf: combine backend filtering into single pass on write path (#332) (#342)
+- perf: fetch quota stats once per replication cycle (#341)
+- perf: reuse chunk buffers and nonce in encrypt/decrypt readers (#340)
+- cleanup: remove unused InFallbackMode export, cancel pipe on PutObject failure (#318) (#329)
+- validate encryption chunk size, master_key_file, and workerpool concurrency at startup (#314) (#326)
+- filter multipart uploads by backend in drain, fix UI JSON content-type (#325)
+- cancel losing goroutine contexts in parallel broadcast read (#322)
+- make Close() idempotent on RedisCounterBackend, RateLimiter, and LoginThrottle (#310) (#321)
+- remove implicit stripPort from LoginThrottle, require caller-resolved IPs (#309) (#320)
+- close timing side-channels in UI login and admin token auth (#308) (#319)
+
 ## [0.19.1] - 2026-03-20
 
 ### Improved
