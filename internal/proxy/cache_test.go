@@ -77,11 +77,7 @@ func TestLocationCache_Eviction(t *testing.T) {
 	// Wait for eviction goroutine to run (ticks every TTL)
 	time.Sleep(150 * time.Millisecond)
 
-	c.mu.RLock()
-	count := len(c.entries)
-	c.mu.RUnlock()
-
-	if count != 0 {
+	if count := c.Len(); count != 0 {
 		t.Errorf("entries after eviction = %d, want 0", count)
 	}
 }

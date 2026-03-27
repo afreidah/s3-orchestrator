@@ -25,13 +25,13 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"sync/atomic"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/audit"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/syncutil"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 )
 
@@ -42,7 +42,7 @@ import (
 type Scrubber struct {
 	ops       Ops
 	encryptor *encryption.Encryptor
-	cfg       atomic.Pointer[config.IntegrityConfig]
+	cfg       syncutil.AtomicConfig[config.IntegrityConfig]
 }
 
 // NewScrubber creates a Scrubber with the given Ops and optional encryptor.

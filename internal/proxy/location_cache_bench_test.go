@@ -76,43 +76,8 @@ func BenchmarkLocationCache_Concurrent_WriteHeavy(b *testing.B) {
 	})
 }
 
-func BenchmarkLocationCache_Eviction(b *testing.B) {
-	sizes := []int{100, 1000, 10000}
-
-	for _, n := range sizes {
-		b.Run(fmt.Sprintf("%d_entries", n), func(b *testing.B) {
-			c := &LocationCache{
-				entries: make(map[string]locationCacheEntry, n),
-				ttl:     time.Minute,
-				stop:    make(chan struct{}),
-			}
-			defer close(c.stop)
-
-			// All entries expired
-			expired := time.Now().Add(-time.Second)
-			for i := range n {
-				c.entries[fmt.Sprintf("key-%d", i)] = locationCacheEntry{
-					backendName: "b1",
-					expiry:      expired,
-				}
-			}
-
-			b.ResetTimer()
-			for b.Loop() {
-				c.evict()
-				// Refill for next iteration
-				b.StopTimer()
-				for i := range n {
-					c.entries[fmt.Sprintf("key-%d", i)] = locationCacheEntry{
-						backendName: "b1",
-						expiry:      expired,
-					}
-				}
-				b.StartTimer()
-			}
-		})
-	}
-}
+// BenchmarkTTLCache_Eviction is in internal/syncutil/ttlcache_test.go where
+// white-box access to cache internals is available.
 
 func BenchmarkLocationCache_Contention_GetSetDelete(b *testing.B) {
 	c := NewLocationCache(time.Minute)
