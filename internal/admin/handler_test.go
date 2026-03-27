@@ -222,6 +222,63 @@ func newTestHandler() *Handler {
 }
 
 // -------------------------------------------------------------------------
+// DECRYPT-EXISTING TESTS
+// -------------------------------------------------------------------------
+
+func TestDecryptExisting_NoEncryptor(t *testing.T) {
+	h := newTestHandler()
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/decrypt-existing", nil)
+	req.Header.Set("X-Admin-Token", "test-token")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+
+	var resp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp["error"] != "encryption not enabled" {
+		t.Errorf("error = %q, want %q", resp["error"], "encryption not enabled")
+	}
+}
+
+func TestDecryptExisting_MethodNotAllowed(t *testing.T) {
+	h := newTestHandler()
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/decrypt-existing", nil)
+	req.Header.Set("X-Admin-Token", "test-token")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusMethodNotAllowed)
+	}
+}
+
+func TestEncryptExisting_NoEncryptor(t *testing.T) {
+	h := newTestHandler()
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/encrypt-existing", nil)
+	req.Header.Set("X-Admin-Token", "test-token")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+}
+
+// -------------------------------------------------------------------------
 // REMOVE-BACKEND CONFIRMATION TESTS
 // -------------------------------------------------------------------------
 

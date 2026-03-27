@@ -125,6 +125,7 @@ jobs:
         uses: codecov/codecov-action@v5
         with:
           files: coverage.out
+          flags: unit
           token: ${{ secrets.CODECOV_TOKEN }}
 
   govulncheck:
@@ -177,21 +178,15 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Start services
-        run: make integration-deps
-
       - name: Integration tests
-        env:
-          MINIO1_ENDPOINT: http://localhost:19000
-          MINIO2_ENDPOINT: http://localhost:19002
-          MINIO3_ENDPOINT: http://localhost:19004
-          POSTGRES_HOST: localhost
-          POSTGRES_PORT: "15432"
-        run: go test -race -v -tags integration -count=1 ./internal/integration/
+        run: go test -race -v -tags integration -count=1 -coverprofile=integration-coverage.out -covermode=atomic -coverpkg=./... ./internal/integration/
 
-      - name: Cleanup
-        if: always()
-        run: make integration-clean
+      - name: Upload coverage
+        uses: codecov/codecov-action@v5
+        with:
+          files: integration-coverage.out
+          flags: integration
+          token: ${{ secrets.CODECOV_TOKEN }}
 
   package:
     runs-on: ubuntu-latest

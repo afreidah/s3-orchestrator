@@ -346,12 +346,11 @@ func runValidate() { // codecov:ignore -- os.Exit wrapper, logic tested via vali
 }
 ```
 
-Use this sparingly and only for code that genuinely cannot be unit tested:
+Use this sparingly and only for code that genuinely cannot be tested:
 - `main()` and subcommand entry points that call `os.Exit`
-- Trivial wrappers with no branching logic
 - Signal handlers and process lifecycle glue
 
-Extract testable logic into separate functions that return errors instead of calling `os.Exit` directly.
+Do **not** use `codecov:ignore` for code that requires a database, S3 backend, or Redis — integration tests run with testcontainers and contribute coverage. Extract testable logic into separate functions that return errors instead of calling `os.Exit` directly.
 
 ---
 

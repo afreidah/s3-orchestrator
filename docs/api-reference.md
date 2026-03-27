@@ -489,6 +489,68 @@ Removes all database records for a backend. This is destructive.
 {"error": "failed to delete backend data: ..."}
 ```
 
+### POST /admin/api/encrypt-existing
+
+Encrypts all unencrypted objects in-place. Requires encryption to be enabled in the config. Each object is downloaded, encrypted, and re-uploaded to the same backend, counting as 2 API calls plus egress and ingress against the backend's usage quota.
+
+**Response:**
+
+```json
+{"status": "complete", "encrypted": 1423, "failed": 0, "total": 1423}
+```
+
+### POST /admin/api/decrypt-existing
+
+Decrypts all encrypted objects back to plaintext. Requires encryption to be enabled in the config (the key provider is needed to unwrap DEKs). Each object is downloaded, decrypted, and re-uploaded as plaintext, counting as 2 API calls plus egress and ingress against the backend's usage quota.
+
+**Response:**
+
+```json
+{"status": "complete", "decrypted": 1423, "failed": 0, "total": 1423}
+```
+
+### POST /admin/api/rotate-encryption-key
+
+Re-wraps all DEKs encrypted with a specific key ID using the current master key. This is a metadata-only operation — no object data is re-uploaded.
+
+**Request body:**
+
+```json
+{"old_key_id": "config-0"}
+```
+
+**Response:**
+
+```json
+{"status": "complete", "rotated": 1423, "failed": 0, "total": 1423}
+```
+
+### POST /admin/api/scrub
+
+Triggers an on-demand integrity scrub cycle. Verifies stored content hashes against actual object data on backends.
+
+**Request body (optional):**
+
+```json
+{"batch_size": 500}
+```
+
+**Response:**
+
+```json
+{"status": "complete", "checked": 500, "mismatches": 0, "errors": 2}
+```
+
+### POST /admin/api/hash-existing
+
+Computes and stores content hashes for all objects that don't have one yet.
+
+**Response:**
+
+```json
+{"status": "complete", "hashed": 423, "failed": 0, "total": 423}
+```
+
 ## Error Responses
 
 All endpoints return errors as JSON:

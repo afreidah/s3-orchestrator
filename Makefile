@@ -112,7 +112,7 @@ fuzz: ## Run fuzz tests for 30s per target
 	go test -fuzz=FuzzLoginThrottle_RemoteAddr -fuzztime=30s ./internal/server/
 	go test -fuzz=FuzzExtractClientIP -fuzztime=30s ./internal/server/
 
-run: integration-deps ## Run locally (requires config.yaml)
+run: dev-deps ## Run locally (requires config.yaml)
 	go run ./cmd/s3-orchestrator -config config.yaml
 
 docs: ## Serve godoc locally at http://localhost:8080
@@ -132,21 +132,13 @@ migration: ## Create a new database migration file
 
 COMPOSE_FILE := docker-compose.test.yml
 
-integration-deps: ## Start integration test dependencies (MinIO + PostgreSQL + Redis)
-	docker compose -f $(COMPOSE_FILE) up -d minio-1 minio-2 minio-3 postgres redis --wait
-	docker compose -f $(COMPOSE_FILE) run --rm minio-setup
+integration-test: ## Run integration tests (testcontainers — no docker-compose needed)
+	go test -race -v -tags integration -count=1 ./internal/integration/
 
-integration-test: integration-deps ## Run integration tests
-	MINIO1_ENDPOINT=http://localhost:19000 \
-	MINIO2_ENDPOINT=http://localhost:19002 \
-	MINIO3_ENDPOINT=http://localhost:19004 \
-	POSTGRES_HOST=localhost \
-	POSTGRES_PORT=15432 \
-	REDIS_ADDR=localhost:16379 \
-	go test -race -v -tags integration -count=1 ./internal/integration/; \
-	rc=$$?; $(MAKE) integration-clean; exit $$rc
+dev-deps: ## Start dev environment services (MinIO + PostgreSQL + Redis + observability)
+	docker compose -f $(COMPOSE_FILE) up -d --wait
 
-integration-clean: ## Stop and remove integration test containers
+dev-clean: ## Stop and remove dev environment containers
 	docker compose -f $(COMPOSE_FILE) down -v
 
 # -------------------------------------------------------------------------
@@ -344,5 +336,5 @@ clean: ## Remove build artifacts, demo environments, containers, and volumes
 	docker rmi $(FULL_TAG) 2>/dev/null || true
 	docker rmi s3-orchestrator:local 2>/dev/null || true
 
-.PHONY: help builder build docker push generate test vet lint govulncheck bench bench-compare run docs migration integration-deps integration-test integration-clean tools prep-changelog deb deb-lint deb-all publish-deb changelog release release-local loadtest-build loadtest-put loadtest-get loadtest-mixed loadtest-burst loadtest-k6 kubernetes-demo nomad-demo web-tools web-godoc web-serve web-build web-docker web-push clean
+.PHONY: help builder build docker push generate test vet lint govulncheck bench bench-compare run docs migration integration-test dev-deps dev-clean tools prep-changelog deb deb-lint deb-all publish-deb changelog release release-local loadtest-build loadtest-put loadtest-get loadtest-mixed loadtest-burst loadtest-k6 kubernetes-demo nomad-demo web-tools web-godoc web-serve web-build web-docker web-push clean
 .DEFAULT_GOAL := help

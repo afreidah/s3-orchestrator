@@ -51,17 +51,19 @@ make test
 
 ### Integration tests
 
-Integration tests run against real MinIO and PostgreSQL containers:
+Integration tests use [testcontainers-go](https://golang.testcontainers.org/) to spin up PostgreSQL, MinIO, and Redis containers automatically — no manual setup required:
 
 ```bash
 make integration-test
 ```
 
-This automatically starts the required containers. To manage them manually:
+Docker must be running, but no pre-started containers are needed. Testcontainers manages the full lifecycle (create, start, teardown) within the test process.
+
+For local development with the full observability stack (Grafana, Prometheus, Tempo, Loki):
 
 ```bash
-make integration-deps   # start containers
-make integration-clean  # stop and remove containers
+make dev-deps    # start dev environment containers
+make dev-clean   # stop and remove dev containers
 ```
 
 ## Code Style
