@@ -34,16 +34,16 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/bufpool"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/httputil"
-
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/syncutil"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
+
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -58,7 +58,7 @@ const (
 type Handler struct {
 	manager        *proxy.BackendManager
 	dbHealthy      func() bool
-	cfg            atomic.Pointer[config.Config]
+	cfg            syncutil.AtomicConfig[config.Config]
 	templates      *template.Template
 	logBuffer      *telemetry.LogBuffer
 	loginThrottle  *httputil.LoginThrottle

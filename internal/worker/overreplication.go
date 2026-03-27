@@ -14,8 +14,6 @@
 package worker
 
 import (
-	"github.com/afreidah/s3-orchestrator/internal/backend"
-	"github.com/afreidah/s3-orchestrator/internal/store"
 	"context"
 	"fmt"
 	"log/slog"
@@ -24,7 +22,10 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/audit"
+	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/syncutil"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/workerpool"
 )
@@ -38,7 +39,7 @@ import (
 // infrastructure.
 type OverReplicationCleaner struct {
 	ops Ops
-	cfg atomic.Pointer[config.ReplicationConfig]
+	cfg syncutil.AtomicConfig[config.ReplicationConfig]
 }
 
 // NewOverReplicationCleaner creates a cleaner that shares the given core.

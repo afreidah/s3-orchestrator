@@ -5,111 +5,65 @@
 //
 // In-memory cache mapping object keys to backend names with time-based expiry.
 // Used during degraded mode (DB unavailable) to avoid broadcasting reads to all
-// backends. A background goroutine periodically evicts expired entries.
+// backends. Wraps syncutil.TTLCache with jitter on Set to prevent synchronized
+// cache expiry storms across entries.
 // -------------------------------------------------------------------------------
 
 package proxy
 
 import (
 	"math/rand/v2"
-	"sync"
 	"time"
+
+	"github.com/afreidah/s3-orchestrator/internal/syncutil"
 )
 
-// locationCacheEntry holds a cached key-to-backend mapping with TTL.
-type locationCacheEntry struct {
-	backendName string
-	expiry      time.Time
-}
-
 // LocationCache is a TTL-based cache mapping object keys to backend names.
+// It delegates storage and eviction to a generic TTLCache and applies random
+// jitter (+/-20%) on each Set to stagger expiry times.
 type LocationCache struct {
-	entries   map[string]locationCacheEntry
-	mu        sync.RWMutex
-	ttl       time.Duration
-	stop      chan struct{}
-	closeOnce sync.Once
+	cache *syncutil.TTLCache[string, string]
+	ttl   time.Duration
 }
 
 // NewLocationCache creates a location cache with the given TTL. If ttl > 0,
 // a background goroutine periodically evicts expired entries.
 func NewLocationCache(ttl time.Duration) *LocationCache {
-	c := &LocationCache{
-		entries: make(map[string]locationCacheEntry),
-		ttl:     ttl,
-		stop:    make(chan struct{}),
+	return &LocationCache{
+		cache: syncutil.NewTTLCache[string, string](ttl),
+		ttl:   ttl,
 	}
-
-	if ttl > 0 {
-		go func() {
-			ticker := time.NewTicker(ttl)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ticker.C:
-					c.evict()
-				case <-c.stop:
-					return
-				}
-			}
-		}()
-	}
-
-	return c
 }
 
 // Get returns the cached backend for a key, or false if not cached or expired.
 func (c *LocationCache) Get(key string) (string, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	entry, ok := c.entries[key]
-	if !ok || time.Now().After(entry.expiry) {
-		return "", false
-	}
-	return entry.backendName, true
+	return c.cache.Get(key)
 }
 
 // Set stores a key-to-backend mapping with the configured TTL. A random
 // jitter of +/-20% is applied to prevent synchronized cache expiry storms.
 func (c *LocationCache) Set(key, backend string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	jitter := 0.8 + rand.Float64()*0.4 // [0.8, 1.2)
-	c.entries[key] = locationCacheEntry{
-		backendName: backend,
-		expiry:      time.Now().Add(time.Duration(float64(c.ttl) * jitter)),
-	}
+	c.cache.SetWithTTL(key, backend, time.Duration(float64(c.ttl)*jitter))
 }
 
 // Delete removes a single key from the cache.
 func (c *LocationCache) Delete(key string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	delete(c.entries, key)
+	c.cache.Delete(key)
 }
 
 // Clear removes all entries from the cache.
 func (c *LocationCache) Clear() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.entries = make(map[string]locationCacheEntry)
+	c.cache.Clear()
+}
+
+// Len returns the number of entries in the cache, including expired entries
+// not yet swept by the background eviction goroutine.
+func (c *LocationCache) Len() int {
+	return c.cache.Len()
 }
 
 // Close stops the background eviction goroutine. Safe to call multiple times.
 func (c *LocationCache) Close() {
-	c.closeOnce.Do(func() {
-		close(c.stop)
-	})
-}
-
-// evict removes expired entries from the cache.
-func (c *LocationCache) evict() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	now := time.Now()
-	for key, entry := range c.entries {
-		if now.After(entry.expiry) {
-			delete(c.entries, key)
-		}
-	}
+	c.cache.Close()
 }

@@ -22,17 +22,16 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	objcache "github.com/afreidah/s3-orchestrator/internal/cache"
-	"github.com/afreidah/s3-orchestrator/internal/counter"
-	"github.com/afreidah/s3-orchestrator/internal/store"
-	"github.com/afreidah/s3-orchestrator/internal/worker"
-
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
+	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/syncutil"
+	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
 // UsageLimits holds configurable monthly usage limits for a single backend.
@@ -83,9 +82,9 @@ type BackendManager struct {
 	MultipartManager       *MultipartManager              // multipart upload lifecycle
 	ObjectManager          *ObjectManager                 // CRUD, read failover, broadcast reads
 	dashboard              *DashboardAggregator           // web UI data aggregation
-	usageFlushCfg          atomic.Pointer[config.UsageFlushConfig]
-	lifecycleCfg           atomic.Pointer[config.LifecycleConfig]
-	integrityCfg           atomic.Pointer[config.IntegrityConfig]
+	usageFlushCfg          syncutil.AtomicConfig[config.UsageFlushConfig]
+	lifecycleCfg           syncutil.AtomicConfig[config.LifecycleConfig]
+	integrityCfg           syncutil.AtomicConfig[config.IntegrityConfig]
 }
 
 // NewBackendManager creates a new backend manager with the given configuration.

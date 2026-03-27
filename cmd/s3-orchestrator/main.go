@@ -41,6 +41,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/server"
 
 	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/syncutil"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/ui"
 
@@ -302,7 +303,7 @@ func runServe() {
 	})
 
 	// --- Store config in atomic pointer for safe SIGHUP access ---
-	var cfgPtr atomic.Pointer[config.Config]
+	var cfgPtr syncutil.AtomicConfig[config.Config]
 	cfgPtr.Store(cfg)
 
 	// --- Store initial reloadable configs ---

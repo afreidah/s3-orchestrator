@@ -12,17 +12,18 @@
 package worker
 
 import (
-	"github.com/afreidah/s3-orchestrator/internal/store"
+	"cmp"
 	"context"
 	"fmt"
 	"log/slog"
-	"cmp"
 	"slices"
 	"sync/atomic"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/audit"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/syncutil"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/workerpool"
 )
@@ -35,7 +36,7 @@ import (
 // Embeds *backendCore for access to shared infrastructure.
 type Rebalancer struct {
 	ops Ops
-	cfg atomic.Pointer[config.RebalanceConfig]
+	cfg syncutil.AtomicConfig[config.RebalanceConfig]
 }
 
 // NewRebalancer creates a Rebalancer that shares the given core infrastructure.
