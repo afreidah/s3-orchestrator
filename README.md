@@ -66,6 +66,7 @@ See the [Quickstart](docs/quickstart.md) for full details, credentials for all b
 - [Lifecycle (Object Expiration)](#lifecycle-object-expiration)
 - [Orphan Reconciliation](#orphan-reconciliation)
 - [Encryption](#encryption)
+- [Object Data Cache](#object-data-cache)
 - [Rate Limiting](#rate-limiting)
 - [Usage Limits](#usage-limits)
 - [Configuration](#configuration)
@@ -330,6 +331,28 @@ Objects are encrypted in fixed-size chunks (default 64 KB), so range requests (`
 
 See the [Admin Guide](docs/admin-guide.md#encryption) for setup, key rotation, and encrypting existing data.
 
+## Object Data Cache
+
+Optional in-memory LRU cache that stores full GET responses to reduce backend API calls and egress. When a cached object is requested, the response is served directly from memory without contacting the backend. Useful for read-heavy workloads where the same objects are fetched repeatedly.
+
+**Key behaviors:**
+- **Full GET responses only** — range requests bypass the cache on miss but are served from cache on hit
+- **Admission control** — objects larger than `max_object_size` are never cached, preventing a single large object from evicting many smaller ones
+- **Automatic invalidation** — cache entries are evicted on PutObject, DeleteObject, CopyObject, DeleteObjects, and CompleteMultipartUpload
+- **TTL-based expiry** — entries expire after the configured TTL regardless of access, bounding staleness in multi-instance deployments where writes may happen on another instance
+- **Per-instance** — each orchestrator instance maintains its own cache; caches are not shared across instances
+- **Post-decryption** — when encryption is enabled, the cache stores decrypted plaintext (same security properties as any in-process data)
+
+```yaml
+cache:
+  enabled: true
+  max_size: "256MB"          # total cache capacity
+  max_object_size: "10MB"    # largest object eligible for caching
+  ttl: "5m"                  # time-to-live per entry
+```
+
+Disabled by default. Requires a restart to enable/disable (non-reloadable).
+
 ## Rate Limiting
 
 Optional per-IP token bucket rate limiting. When enabled, requests exceeding the configured rate return `429 SlowDown` with a `Retry-After: 1` header. Stale IP entries are evicted by a background goroutine every `cleanup_interval` (default 1m); entries not seen within `cleanup_max_age` (default 5m) are removed. Under high source-IP cardinality (e.g., DDoS), the map can accumulate up to `cleanup_max_age` worth of unique IPs before eviction runs — tune these values if memory pressure is a concern.
@@ -496,6 +519,12 @@ integrity:
   # scrubber_interval: "6h"    # background verification interval (0 = disabled)
   # scrubber_batch_size: 100   # objects per scrub cycle
 
+# cache:                        # optional: in-memory LRU object data cache
+#   enabled: false               # disabled by default
+#   max_size: "256MB"            # total cache capacity (default: 256MB)
+#   max_object_size: "10MB"      # largest cacheable object (default: 10MB)
+#   ttl: "5m"                    # per-entry time-to-live (default: 5m)
+
 ui:
   enabled: false             # enable the built-in web dashboard
   path: "/ui"                # URL prefix (default: /ui)
@@ -569,6 +598,7 @@ kill -HUP $(pidof s3-orchestrator)
 | `backend_circuit_breaker` | No | Requires restart |
 | `ui` | No | Requires restart |
 | `encryption` | No | Requires restart |
+| `cache` | No | Requires restart |
 | `redis` | No | Requires restart |
 | `routing_strategy` | No | Requires restart |
 | `reconcile` | No | Requires restart |
@@ -689,6 +719,11 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when enabled.
 | `s3o_key_rotation_objects_total` | Counter | status | DEKs re-wrapped by key rotation (success/error) |
 | `s3o_redis_operations_total` | Counter | operation, status | Redis command outcomes (incrby, get, getset, pipeline_add, pipeline_load) |
 | `s3o_redis_fallback_active` | Gauge | — | `1` when Redis is unavailable and using local counters |
+| `s3o_cache_hits_total` | Counter | — | Object data cache hits |
+| `s3o_cache_misses_total` | Counter | — | Object data cache misses |
+| `s3o_cache_evictions_total` | Counter | — | Object data cache evictions (LRU or TTL) |
+| `s3o_cache_size_bytes` | Gauge | — | Current memory used by cached objects |
+| `s3o_cache_entries` | Gauge | — | Current number of cached objects |
 
 Quota metrics are refreshed from PostgreSQL every 30 seconds (no backend API calls).
 

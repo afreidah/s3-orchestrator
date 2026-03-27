@@ -498,3 +498,55 @@ These reference numbers were measured on a single instance with three local MinI
 | Burst (100 VUs) | ~280/s | ~96ms | 150-200% spikes | k6 scenario, all PUTs |
 
 CPU percentages are relative to the container's CPU allocation. Memory remained flat across all tests at 1KB object sizes — the streaming architecture avoids buffering objects in memory. Larger objects (1MB+) will increase memory usage proportionally to concurrency.
+
+## Object Data Cache
+
+The optional in-memory LRU cache (`cache:` config section) trades memory for reduced backend API calls and egress. When the same objects are read repeatedly, cache hits avoid a full round-trip to the storage backend.
+
+```yaml
+cache:
+  enabled: true
+  max_size: "256MB"
+  max_object_size: "10MB"
+  ttl: "5m"
+```
+
+### Memory vs Egress Tradeoff
+
+The cache consumes container memory proportional to `max_size`. Size it based on available headroom after accounting for the Go heap, connection pools, buffer pools, and streaming concurrency:
+
+| Container Memory | Recommended `max_size` | Notes |
+|-----------------|----------------------|-------|
+| 512 MB | 64–128 MB | Leave room for GC and streaming buffers |
+| 1 GB | 128–256 MB | Good for most workloads |
+| 2+ GB | 256–512 MB | Large working sets or many concurrent readers |
+
+When `GOMEMLIMIT` is set (recommended — see [Go runtime: GOMEMLIMIT](#go-runtime-gomemlimit)), include the cache's `max_size` in your calculation:
+
+```bash
+# Example: 1024 MB container, 256 MB cache
+GOMEMLIMIT=$(( (1024 - 256) * 90 / 100 ))MiB   # ~691 MiB for Go heap
+```
+
+### When Caching Helps Most
+
+- **Read-heavy workloads** — a small set of objects serves the majority of reads (thumbnails, config files, static assets). A high `s3o_cache_hits_total` / (`hits` + `misses`) ratio confirms the cache is effective.
+- **Egress-limited backends** — backends with monthly egress caps (OCI free tier, B2 free tier). Each cache hit avoids an egress charge.
+- **High-latency backends** — caching eliminates backend round-trips, improving P50 and P99 latency for hot objects.
+
+### When Caching Adds Little Value
+
+- **Write-heavy or write-once-read-once workloads** — objects are rarely read more than once, so the cache turns over constantly with minimal hits.
+- **Objects too large for the cache** — if most objects exceed `max_object_size`, they bypass the cache entirely.
+- **Uniform access patterns** — when reads are evenly distributed across many unique objects, the working set exceeds `max_size` and eviction rates stay high.
+
+### Monitoring
+
+- `s3o_cache_hits_total` / `s3o_cache_misses_total` — compute the hit ratio. Below ~50%, the cache may be undersized or the workload is not a good fit.
+- `s3o_cache_evictions_total` — a sustained high eviction rate means objects are being evicted before they can be re-read. Increase `max_size` or lower `max_object_size` to fit more objects.
+- `s3o_cache_size_bytes` — if this consistently sits well below `max_size`, the cache is oversized and you can reclaim memory.
+- `s3o_cache_entries` — useful alongside `cache_size_bytes` to understand average cached object size.
+
+### Multi-Instance Staleness
+
+The cache is per-instance and not shared. In multi-instance deployments, a write on instance A does not invalidate the cached copy on instance B. The `ttl` setting bounds how long a stale entry can be served — lower TTL values reduce the staleness window at the cost of more backend requests after expiry. For workloads that require strict read-after-write consistency across instances, either disable the cache or set a very low TTL.

@@ -30,6 +30,8 @@ The token is the `ui.admin_token` value from the configuration file. If `admin_t
 
 All JSON request bodies on admin and UI endpoints are limited to 1 MB.
 
+**Object data caching:** When the optional in-memory cache is enabled, GET responses for eligible objects may be served from cache rather than from a backend. This is fully transparent to S3 API clients — cached responses have the same headers, status codes, and body content as uncached responses. No client-side configuration or awareness is needed.
+
 ## UI API Endpoints
 
 All UI API endpoints are mounted under the configured UI path (default: `/ui`). They require an authenticated session cookie.

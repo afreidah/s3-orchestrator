@@ -2553,3 +2553,103 @@ func TestReconcileDefaultInterval(t *testing.T) {
 		t.Errorf("Reconcile.Interval = %v, want 24h", cfg.Reconcile.Interval)
 	}
 }
+
+// -------------------------------------------------------------------------
+// CACHE CONFIG
+// -------------------------------------------------------------------------
+
+func TestCacheConfig_Defaults(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Cache = CacheConfig{Enabled: true}
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Cache.TTL != 5*time.Minute {
+		t.Errorf("TTL = %v, want 5m", cfg.Cache.TTL)
+	}
+	if cfg.Cache.MaxSizeBytes != 256*1024*1024 {
+		t.Errorf("MaxSizeBytes = %d, want %d", cfg.Cache.MaxSizeBytes, 256*1024*1024)
+	}
+	if cfg.Cache.MaxObjectSizeBytes != 10*1024*1024 {
+		t.Errorf("MaxObjectSizeBytes = %d, want %d", cfg.Cache.MaxObjectSizeBytes, 10*1024*1024)
+	}
+}
+
+func TestCacheConfig_CustomValues(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Cache = CacheConfig{
+		Enabled:       true,
+		MaxSize:       "1GB",
+		MaxObjectSize: "50MB",
+		TTL:           10 * time.Minute,
+	}
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Cache.MaxSizeBytes != 1024*1024*1024 {
+		t.Errorf("MaxSizeBytes = %d, want %d", cfg.Cache.MaxSizeBytes, 1024*1024*1024)
+	}
+	if cfg.Cache.MaxObjectSizeBytes != 50*1024*1024 {
+		t.Errorf("MaxObjectSizeBytes = %d, want %d", cfg.Cache.MaxObjectSizeBytes, 50*1024*1024)
+	}
+}
+
+func TestCacheConfig_Disabled(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Cache = CacheConfig{Enabled: false}
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Disabled cache should not parse sizes
+	if cfg.Cache.MaxSizeBytes != 0 {
+		t.Errorf("disabled cache should have zero MaxSizeBytes, got %d", cfg.Cache.MaxSizeBytes)
+	}
+}
+
+func TestCacheConfig_MaxObjectExceedsMaxSize(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Cache = CacheConfig{
+		Enabled:       true,
+		MaxSize:       "100KB",
+		MaxObjectSize: "1MB",
+	}
+	if err := cfg.SetDefaultsAndValidate(); err == nil {
+		t.Error("expected error when max_object_size > max_size")
+	}
+}
+
+func TestParseByteSize(t *testing.T) {
+	tests := []struct {
+		input string
+		want  int64
+	}{
+		{"1024", 1024},
+		{"1KB", 1024},
+		{"1kb", 1024},
+		{"256MB", 256 * 1024 * 1024},
+		{"1GB", 1024 * 1024 * 1024},
+		{"100B", 100},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got, err := parseByteSize(tt.input)
+			if err != nil {
+				t.Fatalf("parseByteSize(%q): %v", tt.input, err)
+			}
+			if got != tt.want {
+				t.Errorf("parseByteSize(%q) = %d, want %d", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseByteSize_Invalid(t *testing.T) {
+	for _, input := range []string{"", "abc", "10XB"} {
+		t.Run(input, func(t *testing.T) {
+			_, err := parseByteSize(input)
+			if err == nil {
+				t.Errorf("expected error for %q", input)
+			}
+		})
+	}
+}

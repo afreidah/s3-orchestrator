@@ -33,6 +33,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/admin"
 	"github.com/afreidah/s3-orchestrator/internal/audit"
 	"github.com/afreidah/s3-orchestrator/internal/auth"
+	objcache "github.com/afreidah/s3-orchestrator/internal/cache"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/httputil"
@@ -264,6 +265,25 @@ func runServe() {
 		admissionSem = make(chan struct{}, cfg.Server.MaxConcurrentRequests)
 	}
 
+	// --- Create object data cache (optional) ---
+	var dataCache objcache.ObjectCache
+	if cfg.Cache.Enabled {
+		mc, err := objcache.NewMemoryCache(objcache.MemoryConfig{
+			MaxSize:       cfg.Cache.MaxSizeBytes,
+			MaxObjectSize: cfg.Cache.MaxObjectSizeBytes,
+			TTL:           cfg.Cache.TTL,
+		})
+		if err != nil {
+			slog.ErrorContext(ctx, "Failed to create object cache", "error", err)
+			os.Exit(1)
+		}
+		dataCache = mc
+		slog.InfoContext(ctx, "Object data cache enabled",
+			"max_size", cfg.Cache.MaxSize,
+			"max_object_size", cfg.Cache.MaxObjectSize,
+			"ttl", cfg.Cache.TTL)
+	}
+
 	// --- Create backend manager ---
 	manager := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:           backends,
@@ -275,6 +295,7 @@ func runServe() {
 		RoutingStrategy:    cfg.RoutingStrategy,
 		ParallelBroadcast:  cfg.CircuitBreaker.ParallelBroadcast,
 		Encryptor:          encryptor,
+		ObjectCache:        dataCache,
 		CounterBackend:     counterBackend,
 		CleanupConcurrency: cfg.CleanupQueue.Concurrency,
 		AdmissionSem:       admissionSem,

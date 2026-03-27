@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	objcache "github.com/afreidah/s3-orchestrator/internal/cache"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 
 	"github.com/afreidah/s3-orchestrator/internal/audit"
@@ -32,13 +33,14 @@ import (
 // MultipartManager handles the multipart upload lifecycle.
 type MultipartManager struct {
 	*backendCore
-	encryptor *encryption.Encryptor
+	encryptor   *encryption.Encryptor
+	objectCache objcache.ObjectCache
 }
 
 // NewMultipartManager creates a MultipartManager sharing the given core
 // infrastructure and optional encryptor.
-func NewMultipartManager(core *backendCore, encryptor *encryption.Encryptor) *MultipartManager {
-	return &MultipartManager{backendCore: core, encryptor: encryptor}
+func NewMultipartManager(core *backendCore, encryptor *encryption.Encryptor, objectCache objcache.ObjectCache) *MultipartManager {
+	return &MultipartManager{backendCore: core, encryptor: encryptor, objectCache: objectCache}
 }
 
 // multipartPartKey returns the temporary object key for a multipart part.
@@ -379,6 +381,9 @@ func (mp *MultipartManager) CompleteMultipartUpload(ctx context.Context, uploadI
 		slog.Int64("total_size", totalPlaintextSize),
 		slog.Int("parts_count", len(parts)),
 	)
+	if mp.objectCache != nil {
+		mp.objectCache.Invalidate(mu.ObjectKey)
+	}
 
 	span.SetStatus(codes.Ok, "")
 	return etag, nil
