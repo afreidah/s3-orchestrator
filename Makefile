@@ -234,7 +234,7 @@ LOADTEST_ENDPOINT ?= http://localhost:9000
 LOADTEST_BUCKET   ?= photos
 
 loadtest-build: ## Build the vegeta load test binary
-	cd loadtest && go build -o s3-loadtest .
+	cd loadtest && go build -buildvcs=false -o s3-loadtest .
 
 loadtest-put: loadtest-build ## Run PUT-only load test (use LOADTEST_RATE, LOADTEST_DURATION, LOADTEST_SIZE)
 	./loadtest/s3-loadtest \
@@ -257,6 +257,11 @@ loadtest-mixed: loadtest-build ## Run mixed PUT/GET load test
 loadtest-burst: ## Run k6 burst/admission-control test (requires k6)
 	@command -v k6 >/dev/null 2>&1 || { echo "Error: k6 is not installed. Install it from https://grafana.com/docs/k6/latest/set-up/install-k6/"; exit 1; }
 	k6 run loadtest/k6/burst.js \
+		--env S3_ENDPOINT=$(LOADTEST_ENDPOINT) --env S3_BUCKET=$(LOADTEST_BUCKET)
+
+loadtest-burst-read: ## Run k6 read burst test (requires k6, use PEAK_VUS, SEED_COUNT, HOLD_DURATION)
+	@command -v k6 >/dev/null 2>&1 || { echo "Error: k6 is not installed. Install it from https://grafana.com/docs/k6/latest/set-up/install-k6/"; exit 1; }
+	k6 run loadtest/k6/burst-read.js \
 		--env S3_ENDPOINT=$(LOADTEST_ENDPOINT) --env S3_BUCKET=$(LOADTEST_BUCKET)
 
 loadtest-k6: ## Run k6 mixed CRUD workflow test (requires k6)
@@ -336,5 +341,5 @@ clean: ## Remove build artifacts, demo environments, containers, and volumes
 	docker rmi $(FULL_TAG) 2>/dev/null || true
 	docker rmi s3-orchestrator:local 2>/dev/null || true
 
-.PHONY: help builder build docker push generate test vet lint govulncheck bench bench-compare run docs migration integration-test dev-deps dev-clean tools prep-changelog deb deb-lint deb-all publish-deb changelog release release-local loadtest-build loadtest-put loadtest-get loadtest-mixed loadtest-burst loadtest-k6 kubernetes-demo nomad-demo web-tools web-godoc web-serve web-build web-docker web-push clean
+.PHONY: help builder build docker push generate test vet lint govulncheck bench bench-compare run docs migration integration-test dev-deps dev-clean tools prep-changelog deb deb-lint deb-all publish-deb changelog release release-local loadtest-build loadtest-put loadtest-get loadtest-mixed loadtest-burst loadtest-burst-read loadtest-k6 kubernetes-demo nomad-demo web-tools web-godoc web-serve web-build web-docker web-push clean
 .DEFAULT_GOAL := help
