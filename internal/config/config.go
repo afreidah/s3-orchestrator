@@ -127,6 +127,7 @@ func (c *Config) SetDefaultsAndValidate() error {
 		c.Reconcile.Interval = 24 * time.Hour
 	}
 	errs = append(errs, c.Integrity.setDefaultsAndValidate()...)
+	errs = append(errs, c.Lifecycle.setDefaultsAndValidate()...)
 	errs = append(errs, c.Cache.setDefaultsAndValidate()...)
 	if c.Redis != nil {
 		errs = append(errs, c.Redis.setDefaultsAndValidate()...)

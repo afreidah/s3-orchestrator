@@ -50,13 +50,34 @@ type ReconcileConfig struct {
 // a rule's prefix that are older than expiration_days are deleted by a background
 // worker. Empty rules list disables lifecycle processing.
 type LifecycleConfig struct {
-	Rules []LifecycleRule `yaml:"rules"`
+	Rules     []LifecycleRule `yaml:"rules"`
+	BatchSize int             `yaml:"batch_size"` // objects per DB query (default 100)
 }
 
 // LifecycleRule defines a single object expiration rule.
 type LifecycleRule struct {
 	Prefix         string `yaml:"prefix"`
 	ExpirationDays int    `yaml:"expiration_days"`
+}
+
+func (c *LifecycleConfig) setDefaultsAndValidate() []string {
+	if len(c.Rules) == 0 {
+		return nil
+	}
+
+	var errs []string
+	if c.BatchSize <= 0 {
+		c.BatchSize = 100
+	}
+	for i, rule := range c.Rules {
+		if rule.Prefix == "" {
+			errs = append(errs, fmt.Sprintf("lifecycle.rules[%d]: prefix must not be empty (would match all objects)", i))
+		}
+		if rule.ExpirationDays <= 0 {
+			errs = append(errs, fmt.Sprintf("lifecycle.rules[%d]: expiration_days must be positive", i))
+		}
+	}
+	return errs
 }
 
 func (r *RebalanceConfig) setDefaultsAndValidate() []string {
