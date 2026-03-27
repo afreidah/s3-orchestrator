@@ -207,7 +207,7 @@ func TestUpdateQuotaMetrics_ReplicationFactorFromManager(t *testing.T) {
 		Order:           []string{"b1"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 
 	// Without replication config — closure returns 0, skips query
