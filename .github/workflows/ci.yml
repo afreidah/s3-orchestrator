@@ -122,7 +122,7 @@ jobs:
         run: go test -race -coverprofile=coverage.out -covermode=atomic -coverpkg=./... ./...
 
       - name: Upload coverage
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           files: coverage.out
           flags: unit
@@ -182,7 +182,7 @@ jobs:
         run: go test -race -v -tags integration -count=1 -coverprofile=integration-coverage.out -covermode=atomic -coverpkg=./... ./internal/integration/
 
       - name: Upload coverage
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           files: integration-coverage.out
           flags: integration
