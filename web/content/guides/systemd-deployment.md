@@ -113,7 +113,7 @@ database:
   password: ${DB_PASSWORD}
   ssl_mode: ${DB_SSL_MODE}
   max_conns: 50
-  min_conns: 5
+  min_conns: 10
   max_conn_lifetime: "5m"
 
 buckets:

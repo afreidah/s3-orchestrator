@@ -5,7 +5,7 @@ This guide covers configuration knobs that affect throughput, latency, and resou
 ```yaml
 database:
   max_conns: 50          # max pool connections (default: 50)
-  min_conns: 5           # min idle connections (default: 5)
+  min_conns: 10           # min idle connections (default: 10)
   max_conn_lifetime: "5m" # max connection age (default: 5m)
 ```
 
@@ -317,7 +317,7 @@ Redis adds ~0.2ms per write operation (pipelined `INCRBY`) and ~0.2ms per read (
 ```yaml
 backend_circuit_breaker:
   enabled: true
-  failure_threshold: 5   # consecutive failures before opening (default: 5)
+  failure_threshold: 5   # consecutive failures before opening (default: 10)
   open_timeout: "5m"     # delay before probing recovery (default: 5m)
 ```
 

@@ -152,6 +152,7 @@ internal/
   proxy/                # Domain orchestration (BackendManager, ObjectManager, routing)
   server/               # S3 HTTP handlers
   store/                # MetadataStore interface, PostgreSQL impl, circuit breaker wrapper
+  syncutil/             # Generic utilities (AtomicConfig[T], TTLCache[K,V])
   telemetry/            # Prometheus metrics and OpenTelemetry tracing
   worker/               # Background services (rebalancer, replicator, cleanup, reconciler)
   ui/                   # Web dashboard handler and templates
