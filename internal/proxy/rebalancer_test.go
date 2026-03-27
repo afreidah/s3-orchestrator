@@ -155,7 +155,7 @@ func TestExecuteMoves_Concurrent(t *testing.T) {
 		Order:           []string{"src", "dest"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 
 	var plan []worker.RebalanceMove
@@ -205,7 +205,7 @@ func TestExecuteMoves_PartialFailure(t *testing.T) {
 		Order:           []string{"src", "dest"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 
 	// "fail" key does not exist on source, so GetObject returns not-found
@@ -236,7 +236,7 @@ func TestExecuteMoves_SequentialFallback(t *testing.T) {
 		Order:           []string{"src", "dest"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 
 	plan := []worker.RebalanceMove{
@@ -421,7 +421,7 @@ func newRebalanceManager(store *mockStore, names []string) *BackendManager {
 		Order:           names,
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 }
 
@@ -651,7 +651,7 @@ func TestExecuteOneMove_DestBackendNotFound(t *testing.T) {
 		Order:           []string{"src"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 
 	move := worker.RebalanceMove{
@@ -680,7 +680,7 @@ func TestExecuteOneMove_SourceGetFails(t *testing.T) {
 		Order:           []string{"src", "dest"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 
 	move := worker.RebalanceMove{
@@ -710,7 +710,7 @@ func TestExecuteOneMove_DestPutFails(t *testing.T) {
 		Order:           []string{"src", "dest"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 
 	move := worker.RebalanceMove{
@@ -739,7 +739,7 @@ func TestExecuteOneMove_MoveLocationError_CleansUpOrphan(t *testing.T) {
 		Order:           []string{"src", "dest"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 
 	move := worker.RebalanceMove{
@@ -774,7 +774,7 @@ func TestExecuteOneMove_MoveLocationError_CleanupFails_EnqueuesCleanup(t *testin
 		Order:           []string{"src", "dest"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 
 	move := worker.RebalanceMove{
@@ -812,7 +812,7 @@ func TestExecuteOneMove_MovedSizeZero_CleansUpOrphan(t *testing.T) {
 		Order:           []string{"src", "dest"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 
 	move := worker.RebalanceMove{
@@ -847,7 +847,7 @@ func TestExecuteOneMove_SourceDeleteFails_EnqueuesCleanup(t *testing.T) {
 		Order:           []string{"src", "dest"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 
 	move := worker.RebalanceMove{
@@ -915,7 +915,7 @@ func TestExecuteMoves_AdmissionBlocked(t *testing.T) {
 		Order:           []string{"b1", "b2"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 		AdmissionSem:    sem,
 	})
 

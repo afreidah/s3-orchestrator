@@ -22,6 +22,7 @@ import (
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	st "github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/config"
 
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/telemetry"
@@ -42,7 +43,7 @@ func newTestManager(store *mockStore, backends map[string]*mockBackend) *Backend
 		Order:           order,
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 }
 
@@ -83,7 +84,7 @@ func TestPutObject_PackStrategy_UsesGetBackendWithSpace(t *testing.T) {
 		Order:           []string{"b1"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 
 	_, err := mgr.ObjectManager.PutObject(context.Background(), "pack-key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
@@ -107,7 +108,7 @@ func TestPutObject_SpreadStrategy_UsesGetLeastUtilized(t *testing.T) {
 		Order:           []string{"b1"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: "spread",
+		RoutingStrategy: config.RoutingSpread,
 	})
 
 	_, err := mgr.ObjectManager.PutObject(context.Background(), "spread-key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
@@ -232,7 +233,7 @@ func newTestManagerWithOrder(store *mockStore, backends map[string]*mockBackend,
 		Order:           order,
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 }
 
@@ -477,7 +478,7 @@ func TestPutObject_WriteFailover_WithEncryption(t *testing.T) {
 		Order:           []string{"b1", "b2"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 		Encryptor:       enc,
 	})
 
@@ -547,7 +548,7 @@ func TestGetObject_WithEncryption_UsesLocationMap(t *testing.T) {
 		Order:           []string{"b1"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 		Encryptor:       enc,
 	})
 	defer mgr.Close()
@@ -588,7 +589,7 @@ func TestHeadObject_WithEncryption(t *testing.T) {
 		Order:           []string{"b1"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 		Encryptor:       enc,
 	})
 	defer mgr.Close()
@@ -1296,7 +1297,7 @@ func TestPutObject_BackendTimeout(t *testing.T) {
 		Order:           []string{"b1"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  50 * time.Millisecond,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 
 	_, err := mgr.ObjectManager.PutObject(context.Background(), "timeout-key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
@@ -1328,7 +1329,7 @@ func (s *slowMockBackend) PutObject(ctx context.Context, key string, body io.Rea
 // -------------------------------------------------------------------------
 
 func TestLocationCache_SetAndGet(t *testing.T) {
-	mgr := NewBackendManager(&BackendManagerConfig{CacheTTL: 5 * time.Second, RoutingStrategy: "pack"})
+	mgr := NewBackendManager(&BackendManagerConfig{CacheTTL: 5 * time.Second, RoutingStrategy: config.RoutingPack})
 	defer mgr.Close()
 	mgr.ObjectManager.cache.Set("key1", "backend-a")
 
@@ -1342,7 +1343,7 @@ func TestLocationCache_SetAndGet(t *testing.T) {
 }
 
 func TestLocationCache_Expiry(t *testing.T) {
-	mgr := NewBackendManager(&BackendManagerConfig{CacheTTL: 10 * time.Millisecond, RoutingStrategy: "pack"})
+	mgr := NewBackendManager(&BackendManagerConfig{CacheTTL: 10 * time.Millisecond, RoutingStrategy: config.RoutingPack})
 	defer mgr.Close()
 	mgr.ObjectManager.cache.Set("key1", "backend-a")
 
@@ -1355,7 +1356,7 @@ func TestLocationCache_Expiry(t *testing.T) {
 }
 
 func TestLocationCache_Overwrite(t *testing.T) {
-	mgr := NewBackendManager(&BackendManagerConfig{CacheTTL: 5 * time.Second, RoutingStrategy: "pack"})
+	mgr := NewBackendManager(&BackendManagerConfig{CacheTTL: 5 * time.Second, RoutingStrategy: config.RoutingPack})
 	defer mgr.Close()
 	mgr.ObjectManager.cache.Set("key1", "old-backend")
 	mgr.ObjectManager.cache.Set("key1", "new-backend")
@@ -1430,7 +1431,7 @@ func newTestManagerWithLimits(store *mockStore, backends map[string]*mockBackend
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
 		UsageLimits:     limits,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 }
 
@@ -1916,7 +1917,7 @@ func TestCopyObject_DestWriteFails(t *testing.T) {
 		Order:           []string{"src-be", "dst-be"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 
 	_, err := mgr.ObjectManager.CopyObject(context.Background(), "src", "dst")
@@ -1940,7 +1941,7 @@ func TestCopyObject_ExcludesDrainingBackend(t *testing.T) {
 		Order:           []string{"src-be", "dst-be"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 
 	// Mark both backends as draining so no eligible destination remains
@@ -1974,7 +1975,7 @@ func TestCopyObject_SourceReadFails(t *testing.T) {
 		Order:           []string{"src-be", "dst-be"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 
 	_, err := mgr.ObjectManager.CopyObject(context.Background(), "src", "dst")
@@ -1998,7 +1999,7 @@ func TestCopyObject_AllSourceGetObjectsFail(t *testing.T) {
 		Order:           []string{"src-be", "dst-be"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 
 	_, err := mgr.ObjectManager.CopyObject(context.Background(), "src", "dst")

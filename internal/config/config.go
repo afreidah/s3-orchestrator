@@ -24,6 +24,21 @@ import (
 )
 
 // -------------------------------------------------------------------------
+// ROUTING STRATEGY
+// -------------------------------------------------------------------------
+
+// RoutingStrategy determines how write operations select a target backend.
+type RoutingStrategy string
+
+const (
+	// RoutingPack fills backends in order, returning the first with space.
+	RoutingPack RoutingStrategy = "pack"
+
+	// RoutingSpread distributes writes across backends by utilization ratio.
+	RoutingSpread RoutingStrategy = "spread"
+)
+
+// -------------------------------------------------------------------------
 // ROOT CONFIG
 // -------------------------------------------------------------------------
 
@@ -48,7 +63,7 @@ type Config struct {
 	Integrity       IntegrityConfig      `yaml:"integrity"`
 	Cache           CacheConfig          `yaml:"cache"`
 	Redis           *RedisConfig         `yaml:"redis"`
-	RoutingStrategy string               `yaml:"routing_strategy"` // "pack" (default) or "spread"
+	RoutingStrategy RoutingStrategy      `yaml:"routing_strategy"` // "pack" (default) or "spread"
 }
 
 // -------------------------------------------------------------------------
@@ -119,9 +134,9 @@ func (c *Config) SetDefaultsAndValidate() error {
 
 	// Routing strategy
 	if c.RoutingStrategy == "" {
-		c.RoutingStrategy = "pack"
+		c.RoutingStrategy = RoutingPack
 	}
-	if c.RoutingStrategy != "pack" && c.RoutingStrategy != "spread" {
+	if c.RoutingStrategy != RoutingPack && c.RoutingStrategy != RoutingSpread {
 		errs = append(errs, "routing_strategy must be 'pack' or 'spread'")
 	}
 

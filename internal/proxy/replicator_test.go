@@ -100,7 +100,7 @@ func TestReplicate_QuotaStatsError(t *testing.T) {
 		Store:           store,
 		Order:           []string{"b1", "b2"},
 		CacheTTL:        5 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 
 	_, err := mgr.Replicator.Replicate(context.Background(), config.ReplicationConfig{
@@ -133,7 +133,7 @@ func TestReplicate_Success(t *testing.T) {
 		Order:           []string{"b1", "b2"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 
 	created, err := mgr.Replicator.Replicate(context.Background(), config.ReplicationConfig{
@@ -163,7 +163,7 @@ func TestFindReplicaTarget_ExcludesExistingCopies(t *testing.T) {
 		Store:           store,
 		Order:           []string{"b1", "b2", "b3"},
 		CacheTTL:        5 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 
 	stats := map[string]st.QuotaStat{
@@ -187,7 +187,7 @@ func TestFindReplicaTarget_SkipsFullBackends(t *testing.T) {
 		Store:           store,
 		Order:           []string{"b1", "b2"},
 		CacheTTL:        5 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 
 	stats := map[string]st.QuotaStat{
@@ -227,7 +227,7 @@ func TestCopyToReplica_Success(t *testing.T) {
 		Order:           []string{"b1", "b2"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 
 	copies := []st.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}
@@ -256,7 +256,7 @@ func TestCopyToReplica_FailoverToSecondCopy(t *testing.T) {
 		Order:           []string{"b1", "b2", "b3"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 
 	copies := []st.ObjectLocation{
@@ -286,7 +286,7 @@ func TestCopyToReplica_AllSourcesFail(t *testing.T) {
 		Order:           []string{"b1", "b2"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 
 	copies := []st.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}
@@ -362,7 +362,7 @@ func TestReplicate_RecordReplicaFails_CleansUpOrphan(t *testing.T) {
 		Order:           []string{"b1", "b2"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 
 	created, err := mgr.Replicator.Replicate(context.Background(), config.ReplicationConfig{
@@ -406,7 +406,7 @@ func TestCopyToReplica_TargetWriteFails(t *testing.T) {
 		Order:           []string{"b1", "b2"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 
 	copies := []st.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}
@@ -436,7 +436,7 @@ func TestReplicateObject_NoTargetAvailable(t *testing.T) {
 		Order:           []string{"b1"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 
 	created, err := mgr.Replicator.Replicate(context.Background(), config.ReplicationConfig{
@@ -472,7 +472,7 @@ func TestReplicate_SourceGoneDuringReplication(t *testing.T) {
 		Order:           []string{"b1", "b2"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 
 	created, err := mgr.Replicator.Replicate(context.Background(), config.ReplicationConfig{
@@ -529,7 +529,7 @@ func TestReplicate_HealthAware_SkipsUnhealthyTarget(t *testing.T) {
 		Order:           []string{"b1", "b2", "b3"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 
 	created, err := mgr.Replicator.Replicate(context.Background(), config.ReplicationConfig{
@@ -579,7 +579,7 @@ func TestReplicate_HealthAware_PrefersHealthySource(t *testing.T) {
 		Order:           []string{"b1", "b2", "b3"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 
 	created, err := mgr.Replicator.Replicate(context.Background(), config.ReplicationConfig{
@@ -620,7 +620,7 @@ func TestReplicate_HealthAware_BelowThreshold(t *testing.T) {
 		Order:           []string{"b1", "b2"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 
 	created, err := mgr.Replicator.Replicate(context.Background(), config.ReplicationConfig{
@@ -668,7 +668,7 @@ func TestIsBackendHealthy_CBHealthy(t *testing.T) {
 		Store:           &mockStore{},
 		Order:           []string{"b1"},
 		CacheTTL:        5 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 	if !mgr.Replicator.IsBackendHealthy("b1") {
 		t.Error("healthy CB backend should report healthy")
@@ -682,7 +682,7 @@ func TestIsBackendHealthy_CBUnhealthy(t *testing.T) {
 		Store:           &mockStore{},
 		Order:           []string{"b1"},
 		CacheTTL:        5 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 	if mgr.Replicator.IsBackendHealthy("b1") {
 		t.Error("tripped CB backend should report unhealthy")

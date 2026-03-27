@@ -63,18 +63,10 @@ func (mp *MultipartManager) CreateMultipartUpload(ctx context.Context, key, cont
 	)
 	defer span.End()
 
-	// Filter backends within usage limits, exclude draining and unhealthy
-	eligible := mp.eligibleForWrite(1, 0, 0)
-	if len(eligible) == 0 {
-		telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation, "write").Inc()
-		span.SetStatus(codes.Error, "usage limits exceeded on all backends")
-		return "", "", store.ErrInsufficientStorage
-	}
-
-	// Pick a backend (estimate 0 bytes since final size is unknown)
-	backendName, err := mp.selectBackendForWrite(ctx, 0, eligible)
+	// Pick a backend with available quota (estimate 0 bytes since final size is unknown)
+	backendName, err := mp.selectWriteTarget(ctx, span, operation, 0)
 	if err != nil {
-		return "", "", mp.classifyWriteError(span, operation, err)
+		return "", "", err
 	}
 
 	uploadID := GenerateUploadID()
@@ -119,7 +111,7 @@ func (mp *MultipartManager) UploadPart(ctx context.Context, uploadID string, par
 		return "", mp.classifyWriteError(span, operation, err)
 	}
 
-	backend, err := mp.getBackend(mu.BackendName)
+	be, err := mp.getBackend(mu.BackendName)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return "", err
@@ -157,7 +149,7 @@ func (mp *MultipartManager) UploadPart(ctx context.Context, uploadID string, par
 	partKey := multipartPartKey(uploadID, partNumber)
 	bctx, bcancel := mp.withTimeout(ctx)
 	defer bcancel()
-	etag, err := backend.PutObject(bctx, partKey, uploadBody, uploadSize, "application/octet-stream", nil)
+	etag, err := be.PutObject(bctx, partKey, uploadBody, uploadSize, "application/octet-stream", nil)
 	if err != nil {
 		mp.usage.Record(mu.BackendName, 1, 0, 0) // API call was made even on failure
 		span.SetStatus(codes.Error, err.Error())
@@ -168,7 +160,7 @@ func (mp *MultipartManager) UploadPart(ctx context.Context, uploadID string, par
 		slog.ErrorContext(ctx, "RecordPart failed, cleaning up part object",
 			"upload_id", uploadID, "part", partNumber, "error", err)
 		mp.usage.Record(mu.BackendName, 1, 0, 0)
-		if delErr := backend.DeleteObject(ctx, partKey); delErr != nil {
+		if delErr := be.DeleteObject(ctx, partKey); delErr != nil {
 			slog.ErrorContext(ctx, "Failed to clean up orphaned part object",
 				"key", partKey, "error", delErr)
 			mp.enqueueCleanup(ctx, mu.BackendName, partKey, "orphan_part_record_failed", uploadSize)
@@ -201,7 +193,7 @@ func (mp *MultipartManager) CompleteMultipartUpload(ctx context.Context, uploadI
 		return "", mp.classifyWriteError(span, operation, err)
 	}
 
-	backend, err := mp.getBackend(mu.BackendName)
+	be, err := mp.getBackend(mu.BackendName)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return "", err
@@ -275,7 +267,7 @@ func (mp *MultipartManager) CompleteMultipartUpload(ctx context.Context, uploadI
 		for _, part := range parts {
 			partKey := multipartPartKey(uploadID, part.PartNumber)
 			bctx, bcancel := mp.withTimeout(pipeCtx)
-			result, err := backend.GetObject(bctx, partKey, "")
+			result, err := be.GetObject(bctx, partKey, "")
 			if err != nil {
 				bcancel()
 				pw.CloseWithError(fmt.Errorf("failed to read part %d: %w", part.PartNumber, err))
@@ -345,7 +337,7 @@ func (mp *MultipartManager) CompleteMultipartUpload(ctx context.Context, uploadI
 	}
 
 	// Streamed from pipe; deadline governed by the caller's context.
-	etag, err := backend.PutObject(ctx, mu.ObjectKey, uploadBody, uploadSize, mu.ContentType, mu.Metadata)
+	etag, err := be.PutObject(ctx, mu.ObjectKey, uploadBody, uploadSize, mu.ContentType, mu.Metadata)
 	if err != nil {
 		pipeCancel() // cancel in-flight backend reads in the goroutine
 		pr.Close()
@@ -355,14 +347,14 @@ func (mp *MultipartManager) CompleteMultipartUpload(ctx context.Context, uploadI
 	pr.Close() // unblock goroutine if PutObject returned without draining the pipe
 
 	// Record the final object location and update quota
-	if err := mp.recordObjectOrCleanup(ctx, span, backend, mu.ObjectKey, mu.BackendName, uploadSize, enc); err != nil {
+	if err := mp.recordObjectOrCleanup(ctx, span, be, mu.ObjectKey, mu.BackendName, uploadSize, enc); err != nil {
 		return "", err
 	}
 
 	// Clean up part objects from backend
 	for _, part := range parts {
 		partKey := multipartPartKey(uploadID, part.PartNumber)
-		mp.deleteOrEnqueue(ctx, backend, mu.BackendName, partKey, "complete_part_cleanup", part.SizeBytes)
+		mp.deleteOrEnqueue(ctx, be, mu.BackendName, partKey, "complete_part_cleanup", part.SizeBytes)
 	}
 
 	// Clean up multipart records from database
@@ -405,7 +397,7 @@ func (mp *MultipartManager) AbortMultipartUpload(ctx context.Context, uploadID s
 		return mp.classifyWriteError(span, operation, err)
 	}
 
-	backend, err := mp.getBackend(mu.BackendName)
+	be, err := mp.getBackend(mu.BackendName)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return err
@@ -421,7 +413,7 @@ func (mp *MultipartManager) AbortMultipartUpload(ctx context.Context, uploadID s
 	// Delete part objects from backend
 	for _, part := range parts {
 		partKey := multipartPartKey(uploadID, part.PartNumber)
-		mp.deleteOrEnqueue(ctx, backend, mu.BackendName, partKey, "abort_part_cleanup", part.SizeBytes)
+		mp.deleteOrEnqueue(ctx, be, mu.BackendName, partKey, "abort_part_cleanup", part.SizeBytes)
 	}
 
 	// Delete multipart records from database

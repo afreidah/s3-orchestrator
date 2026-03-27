@@ -297,7 +297,7 @@ func TestMain(m *testing.M) {
 		Order:           testBackendOrder,
 		CacheTTL:        60 * time.Second,
 		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 	testManager = manager
 
@@ -507,7 +507,7 @@ func newThreeBackendManager(t *testing.T) *proxy.BackendManager {
 		Order:           allBackendOrder,
 		CacheTTL:        60 * time.Second,
 		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 }
 

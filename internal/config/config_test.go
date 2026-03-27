@@ -1297,7 +1297,7 @@ func TestNonReloadableFieldsChanged_MultipleChanges(t *testing.T) {
 
 	b.Server.ListenAddr = ":8080"
 	b.Database.Host = "newhost"
-	b.RoutingStrategy = "spread"
+	b.RoutingStrategy = RoutingSpread
 	_ = b.SetDefaultsAndValidate()
 
 	changed := NonReloadableFieldsChanged(&a, &b)
@@ -1517,7 +1517,7 @@ func TestRoutingStrategy_DefaultsPack(t *testing.T) {
 		t.Fatalf("valid config should pass: %v", err)
 	}
 
-	if cfg.RoutingStrategy != "pack" {
+	if cfg.RoutingStrategy != RoutingPack {
 		t.Errorf("routing_strategy default = %q, want \"pack\"", cfg.RoutingStrategy)
 	}
 }

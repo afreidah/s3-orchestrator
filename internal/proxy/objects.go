@@ -143,7 +143,7 @@ func (o *ObjectManager) PutObject(ctx context.Context, key string, body io.Reade
 
 		span.SetAttributes(telemetry.AttrBackendName.String(backendName))
 
-		backend, err := o.getBackend(backendName)
+		be, err := o.getBackend(backendName)
 		if err != nil {
 			span.SetStatus(codes.Error, err.Error())
 			return "", err
@@ -176,7 +176,7 @@ func (o *ObjectManager) PutObject(ctx context.Context, key string, body io.Reade
 
 		// --- Upload to backend ---
 		bctx, bcancel := o.withTimeout(ctx)
-		etag, err := backend.PutObject(bctx, key, uploadBody, uploadSize, contentType, metadata)
+		etag, err := be.PutObject(bctx, key, uploadBody, uploadSize, contentType, metadata)
 		bcancel()
 		if err != nil {
 			o.usage.Record(backendName, 1, 0, 0) // API call was made even on failure
@@ -199,7 +199,7 @@ func (o *ObjectManager) PutObject(ctx context.Context, key string, body io.Reade
 		}
 
 		// --- Record object location and update quota ---
-		if err := o.recordObjectOrCleanup(ctx, span, backend, key, backendName, uploadSize, enc); err != nil {
+		if err := o.recordObjectOrCleanup(ctx, span, be, key, backendName, uploadSize, enc); err != nil {
 			return "", err
 		}
 
@@ -717,12 +717,12 @@ func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey strin
 		if !o.usage.WithinLimits(locations[i].BackendName, 1, 0, 0) {
 			continue
 		}
-		backend, ok := o.backends[locations[i].BackendName]
+		be, ok := o.backends[locations[i].BackendName]
 		if !ok {
 			continue
 		}
 		bctx, bcancel := o.withTimeout(ctx)
-		headResult, err := backend.HeadObject(bctx, sourceKey)
+		headResult, err := be.HeadObject(bctx, sourceKey)
 		bcancel()
 		if err != nil {
 			continue
@@ -749,16 +749,10 @@ func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey strin
 
 	span.SetAttributes(telemetry.AttrObjectSize.Int64(size))
 
-	// --- Find destination backend with available quota, usage limits, exclude unhealthy ---
-	destEligible := o.eligibleForWrite(1, 0, size)
-	if len(destEligible) == 0 {
-		telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation, "write").Inc()
-		span.SetStatus(codes.Error, "usage limits exceeded on all backends")
-		return "", store.ErrInsufficientStorage
-	}
-	destBackendName, err := o.selectBackendForWrite(ctx, size, destEligible)
+	// --- Find destination backend with available quota ---
+	destBackendName, err := o.selectWriteTarget(ctx, span, operation, size)
 	if err != nil {
-		return "", o.classifyWriteError(span, operation, err)
+		return "", err
 	}
 
 	destBackend, err := o.getBackend(destBackendName)

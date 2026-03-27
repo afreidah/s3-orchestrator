@@ -130,7 +130,7 @@ func newTestServer(t *testing.T) (*httptest.Server, *testutil.MockStore, *server
 		Backends:        map[string]s3be.ObjectBackend{"b1": backend},
 		Store:           mockStore,
 		Order:           []string{"b1"},
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 	t.Cleanup(mgr.Close)
 

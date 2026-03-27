@@ -20,6 +20,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	st "github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
 // --- Test helpers ---
@@ -36,7 +37,7 @@ func newUsageManager(backendNames []string, store *mockStore) *BackendManager {
 		Backends:        backends,
 		Store:           store,
 		Order:           backendNames,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 }
 
@@ -50,7 +51,7 @@ func newUsageManagerWithLimits(backendNames []string, store *mockStore, limits m
 		Store:           store,
 		Order:           backendNames,
 		UsageLimits:     limits,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 }
 

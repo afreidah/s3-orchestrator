@@ -20,6 +20,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	st "github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
 func newDrainTestManager(store *mockStore, backends map[string]*mockBackend) *BackendManager {
@@ -35,7 +36,7 @@ func newDrainTestManager(store *mockStore, backends map[string]*mockBackend) *Ba
 		Order:           order,
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: "pack",
+		RoutingStrategy: config.RoutingPack,
 	})
 }
 

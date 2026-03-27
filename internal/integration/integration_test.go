@@ -602,7 +602,7 @@ func TestSpreadWriteRouting(t *testing.T) {
 		Order:           testBackendOrder,
 		CacheTTL:        60 * time.Second,
 		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: "spread",
+		RoutingStrategy: config.RoutingSpread,
 	})
 
 	spreadSrv := &server.Server{
