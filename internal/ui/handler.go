@@ -266,9 +266,13 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request, accessKe
 }
 
 // generateCSRFToken returns a random hex string for CSRF protection.
+// Panics if the system entropy source fails — a predictable token would
+// defeat CSRF protection entirely.
 func generateCSRFToken() string {
 	b := make([]byte, 16)
-	_, _ = rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand.Read failed: " + err.Error())
+	}
 	return hex.EncodeToString(b)
 }
 
@@ -887,16 +891,12 @@ func (h *Handler) handleAPISync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !h.validBackend(req.Backend) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "unknown backend: " + req.Backend})
+		writeJSONError(w, http.StatusBadRequest, "invalid backend or bucket")
 		return
 	}
 
 	if !h.validBucketPrefix(req.Bucket + "/") {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "unknown bucket: " + req.Bucket})
+		writeJSONError(w, http.StatusBadRequest, "invalid backend or bucket")
 		return
 	}
 

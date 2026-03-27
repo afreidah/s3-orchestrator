@@ -1209,8 +1209,8 @@ func TestAPISync_UnknownBackend(t *testing.T) {
 		t.Fatalf("status = %d, want 400", resp.StatusCode)
 	}
 	body, _ := io.ReadAll(resp.Body)
-	if !strings.Contains(string(body), "unknown backend") {
-		t.Errorf("expected unknown backend error, got: %s", body)
+	if !strings.Contains(string(body), "invalid backend or bucket") {
+		t.Errorf("expected invalid backend or bucket error, got: %s", body)
 	}
 }
 
@@ -1228,8 +1228,8 @@ func TestAPISync_UnknownBucket(t *testing.T) {
 		t.Fatalf("status = %d, want 400", resp.StatusCode)
 	}
 	body, _ := io.ReadAll(resp.Body)
-	if !strings.Contains(string(body), "unknown bucket") {
-		t.Errorf("expected unknown bucket error, got: %s", body)
+	if !strings.Contains(string(body), "invalid backend or bucket") {
+		t.Errorf("expected invalid backend or bucket error, got: %s", body)
 	}
 }
 
