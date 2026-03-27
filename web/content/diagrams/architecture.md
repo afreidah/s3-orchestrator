@@ -61,7 +61,8 @@ High-level architecture of the S3 Orchestrator showing the request path, storage
     '    ROUTE -->|/admin/| ADMIN[Admin\\nAPI]:::handler',
     '    ROUTE -->|/ui/| WEBUI[Web\\nDashboard]:::handler',
     '',
-    '    OBJMGR --> ENC{Encryption}:::storage',
+    '    OBJMGR --> DCACHE[Object Data\\nCache]:::storage',
+    '    DCACHE -->|miss| ENC{Encryption}:::storage',
     '    MPMGR --> ENC',
     '    ENC -->|enabled| VAULT[Key Provider\\nVault / KMS]:::data',
     '    ENC --> SELECT[Backend Selection\\n& Failover]:::storage',
@@ -171,6 +172,11 @@ High-level architecture of the S3 Orchestrator showing the request path, storage
       title: 'Web Dashboard',
       badge: 'handler', badgeText: 'handler',
       body: '<p>Built-in web UI at <code>/ui/</code> with HMAC-signed session cookies (24h TTL) and login throttling (5 attempts per 5 min per IP).</p><p>Features: storage summary, per-backend quota bars, monthly usage charts, lazy-loaded directory tree, multi-file/folder upload, batch delete, rebalance trigger, real-time log viewer.</p><p>CSS cache busting via <code>?v={{.Version}}</code>.</p>'
+    },
+    DCACHE: {
+      title: 'Object Data Cache',
+      badge: 'storage', badgeText: 'optional',
+      body: '<p>Optional in-memory LRU cache for object data. When enabled (<code>cache.enabled: true</code>), full GET responses are cached to avoid repeated backend fetches.</p><p>On <b>cache hit</b>: returns the cached body immediately &mdash; no backend API call, no egress, no decryption overhead.</p><p>On <b>cache miss</b>: proceeds through the normal path, then stores the response for future reads. Range requests always bypass the cache.</p><p>Automatically invalidated on PutObject, DeleteObject, CopyObject, and CompleteMultipartUpload.</p><p class="ac-metric">Config: cache.max_size, cache.max_object_size, cache.ttl</p>'
     },
     ENC: {
       title: 'Encryption Layer',
