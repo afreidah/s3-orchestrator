@@ -122,7 +122,7 @@ func (br *BucketRegistry) AuthenticateAndResolveBucket(r *http.Request) (string,
 			secret = entry.SecretAccessKey
 		}
 
-		if err := verifySigV4Parsed(r, accessKey, secret, credential, signedHeaders, signature); err != nil || !ok {
+		if err := verifySigV4Parsed(r, accessKey, secret, credential, signedHeaders, signature, ok); err != nil || !ok {
 			return "", fmt.Errorf("authentication failed")
 		}
 
@@ -174,20 +174,29 @@ type cachedSigningKey struct {
 	key       []byte
 }
 
-func getCachedSigningKey(accessKeyID, secret, dateStamp, region, service string) []byte {
-	if v, ok := signingKeyCache.Load(accessKeyID); ok {
-		c := v.(*cachedSigningKey)
-		if c.dateStamp == dateStamp && c.region == region && c.service == service {
-			return c.key
+// getCachedSigningKey returns the cached signing key for a known access key,
+// or derives a fresh one. The knownKey flag controls whether the result is
+// cached: unknown access keys (used with a dummy secret for constant-time
+// auth) are never cached to prevent an attacker from exhausting memory by
+// sending requests with randomized access key IDs.
+func getCachedSigningKey(accessKeyID, secret, dateStamp, region, service string, knownKey bool) []byte {
+	if knownKey {
+		if v, ok := signingKeyCache.Load(accessKeyID); ok {
+			c := v.(*cachedSigningKey)
+			if c.dateStamp == dateStamp && c.region == region && c.service == service {
+				return c.key
+			}
 		}
 	}
 	key := deriveSigningKey(secret, dateStamp, region, service)
-	signingKeyCache.Store(accessKeyID, &cachedSigningKey{
-		dateStamp: dateStamp,
-		region:    region,
-		service:   service,
-		key:       key,
-	})
+	if knownKey {
+		signingKeyCache.Store(accessKeyID, &cachedSigningKey{
+			dateStamp: dateStamp,
+			region:    region,
+			service:   service,
+			key:       key,
+		})
+	}
 	return key
 }
 
@@ -214,13 +223,13 @@ func VerifySigV4(r *http.Request, accessKeyID, secretAccessKey string) error {
 		return fmt.Errorf("malformed Authorization header")
 	}
 
-	return verifySigV4Parsed(r, accessKeyID, secretAccessKey, credential, signedHeadersStr, signature)
+	return verifySigV4Parsed(r, accessKeyID, secretAccessKey, credential, signedHeadersStr, signature, true)
 }
 
 // verifySigV4Parsed verifies the signature using pre-parsed Authorization
 // header fields, avoiding a redundant parse when called from
 // AuthenticateAndResolveBucket.
-func verifySigV4Parsed(r *http.Request, accessKeyID, secretAccessKey, credential, signedHeadersStr, signature string) error {
+func verifySigV4Parsed(r *http.Request, accessKeyID, secretAccessKey, credential, signedHeadersStr, signature string, knownKey bool) error {
 	// Parse credential: accessKeyID/date/region/service/aws4_request
 	credParts := strings.SplitN(credential, "/", 5)
 	if len(credParts) != 5 {
@@ -259,8 +268,8 @@ func verifySigV4Parsed(r *http.Request, accessKeyID, secretAccessKey, credential
 	credentialScope := dateStamp + "/" + region + "/" + service + "/aws4_request"
 	stringToSign := "AWS4-HMAC-SHA256\n" + amzDate + "\n" + credentialScope + "\n" + hashSHA256([]byte(canonicalRequest))
 
-	// Derive signing key (cached — changes only when dateStamp rolls over)
-	signingKey := getCachedSigningKey(accessKeyID, secretAccessKey, dateStamp, region, service)
+	// Derive signing key (cached for known keys only)
+	signingKey := getCachedSigningKey(accessKeyID, secretAccessKey, dateStamp, region, service, knownKey)
 
 	// Calculate expected signature
 	expectedSig := hex.EncodeToString(hmacSHA256(signingKey, []byte(stringToSign)))
@@ -307,7 +316,7 @@ func (br *BucketRegistry) authenticatePresigned(r *http.Request) (string, error)
 		secret = entry.SecretAccessKey
 	}
 
-	if err := verifyPresignedSigV4(r, accessKey, secret, credential, signedHeaders, signature, amzDate, expires); err != nil || !ok {
+	if err := verifyPresignedSigV4(r, accessKey, secret, credential, signedHeaders, signature, amzDate, expires, ok); err != nil || !ok {
 		return "", fmt.Errorf("authentication failed")
 	}
 
@@ -318,7 +327,7 @@ func (br *BucketRegistry) authenticatePresigned(r *http.Request) (string, error)
 // SigV4, the date and expiry come from query parameters, the X-Amz-Signature
 // parameter is excluded from the canonical query string, and the payload hash
 // is always UNSIGNED-PAYLOAD.
-func verifyPresignedSigV4(r *http.Request, accessKeyID, secretAccessKey, credential, signedHeadersStr, signature, amzDate, expiresStr string) error {
+func verifyPresignedSigV4(r *http.Request, accessKeyID, secretAccessKey, credential, signedHeadersStr, signature, amzDate, expiresStr string, knownKey bool) error {
 	credParts := strings.SplitN(credential, "/", 5)
 	if len(credParts) != 5 {
 		return fmt.Errorf("malformed credential scope")
@@ -357,7 +366,7 @@ func verifyPresignedSigV4(r *http.Request, accessKeyID, secretAccessKey, credent
 	credentialScope := dateStamp + "/" + region + "/" + service + "/aws4_request"
 	stringToSign := "AWS4-HMAC-SHA256\n" + amzDate + "\n" + credentialScope + "\n" + hashSHA256([]byte(canonicalRequest))
 
-	signingKey := getCachedSigningKey(accessKeyID, secretAccessKey, dateStamp, region, service)
+	signingKey := getCachedSigningKey(accessKeyID, secretAccessKey, dateStamp, region, service, knownKey)
 	expectedSig := hex.EncodeToString(hmacSHA256(signingKey, []byte(stringToSign)))
 
 	if !hmac.Equal([]byte(expectedSig), []byte(signature)) {

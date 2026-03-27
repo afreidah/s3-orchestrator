@@ -116,9 +116,9 @@ func (ac *AdmissionController) Middleware(next http.Handler) http.Handler {
 		// --- Brief wait before rejection ---
 		if ac.admissionWait > 0 {
 			timer := time.NewTimer(ac.admissionWait)
+			defer timer.Stop()
 			select {
 			case sem <- struct{}{}:
-				timer.Stop()
 				defer func() { <-sem }()
 				next.ServeHTTP(w, r)
 				return

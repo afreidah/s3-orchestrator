@@ -106,19 +106,19 @@ func TestSigningKeyCache(t *testing.T) {
 	accessKey := "CACHE_TEST_KEY"
 
 	// First call: cache miss — derives and stores
-	key1 := getCachedSigningKey(accessKey, secret, "20260312", "us-east-1", "s3")
+	key1 := getCachedSigningKey(accessKey, secret, "20260312", "us-east-1", "s3", true)
 	if len(key1) != 32 {
 		t.Fatalf("signing key length = %d, want 32", len(key1))
 	}
 
 	// Second call: cache hit — same params
-	key2 := getCachedSigningKey(accessKey, secret, "20260312", "us-east-1", "s3")
+	key2 := getCachedSigningKey(accessKey, secret, "20260312", "us-east-1", "s3", true)
 	if hex.EncodeToString(key1) != hex.EncodeToString(key2) {
 		t.Error("cache hit should return identical key")
 	}
 
 	// Third call: stale cache — different dateStamp forces re-derive
-	key3 := getCachedSigningKey(accessKey, secret, "20260313", "us-east-1", "s3")
+	key3 := getCachedSigningKey(accessKey, secret, "20260313", "us-east-1", "s3", true)
 	if hex.EncodeToString(key1) == hex.EncodeToString(key3) {
 		t.Error("different dateStamp should produce a different key")
 	}
@@ -579,7 +579,7 @@ func TestPresigned_ExpiredURL(t *testing.T) {
 	q.Set("X-Amz-Signature", signature)
 	r.URL.RawQuery = q.Encode()
 
-	err := verifyPresignedSigV4(r, accessKey, secret, accessKey+"/"+credentialScope, "host", signature, dateStamp, "3600")
+	err := verifyPresignedSigV4(r, accessKey, secret, accessKey+"/"+credentialScope, "host", signature, dateStamp, "3600", true)
 	if err == nil {
 		t.Error("expired presigned URL should be rejected")
 	}
@@ -615,6 +615,7 @@ func TestPresigned_InvalidExpiry(t *testing.T) {
 				"fakesig",
 				time.Now().UTC().Format("20060102T150405Z"),
 				expires,
+				true,
 			)
 			if err == nil {
 				t.Errorf("expires=%q should be rejected", expires)
@@ -692,6 +693,7 @@ func TestPresigned_HostHeaderMustBeSigned(t *testing.T) {
 		"fakesig",
 		time.Now().UTC().Format("20060102T150405Z"),
 		"300",
+		true,
 	)
 	if err == nil {
 		t.Error("presigned URL without host in signed headers should be rejected")
