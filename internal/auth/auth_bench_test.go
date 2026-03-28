@@ -55,8 +55,53 @@ func BenchmarkDeriveSigningKey(b *testing.B) {
 func BenchmarkParseSigV4Fields(b *testing.B) {
 	input := "Credential=AKID/20260215/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
 
+	b.Run("map", func(b *testing.B) {
+		for b.Loop() {
+			parseSigV4Fields(input)
+		}
+	})
+
+	b.Run("direct", func(b *testing.B) {
+		for b.Loop() {
+			parseSigV4FieldsDirect(input)
+		}
+	})
+}
+
+// BenchmarkAuthenticateAndResolveBucket measures the full per-request auth
+// entry point including access key lookup, signing key cache hit, canonical
+// request building, and signature verification.
+func BenchmarkAuthenticateAndResolveBucket(b *testing.B) {
+	accessKey := "AKIDEXAMPLE"
+	secret := "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"
+	buckets := []config.BucketConfig{
+		{Name: "bucket", Credentials: []config.CredentialConfig{
+			{AccessKeyID: accessKey, SecretAccessKey: secret},
+		}},
+	}
+	br := NewBucketRegistry(buckets)
+	r := benchSignedRequest(accessKey, secret)
+
+	b.ResetTimer()
 	for b.Loop() {
-		parseSigV4Fields(input)
+		_, _ = br.AuthenticateAndResolveBucket(r)
+	}
+}
+
+// BenchmarkCachedSigningKey_Hit measures the steady-state signing key lookup
+// after the cache has been populated. This is the per-request cost under
+// normal operation (the key only changes when the date rolls over).
+func BenchmarkCachedSigningKey_Hit(b *testing.B) {
+	accessKey := "AKIDEXAMPLE"
+	secret := "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"
+	dateStamp := time.Now().UTC().Format("20060102")
+
+	// Populate the cache
+	getCachedSigningKey(accessKey, secret, dateStamp, "us-east-1", "s3", true)
+
+	b.ResetTimer()
+	for b.Loop() {
+		getCachedSigningKey(accessKey, secret, dateStamp, "us-east-1", "s3", true)
 	}
 }
 

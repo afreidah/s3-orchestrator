@@ -2,12 +2,12 @@ package server
 
 import (
 	"fmt"
-	"github.com/afreidah/s3-orchestrator/internal/store"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"testing"
 	"time"
+
+	"github.com/afreidah/s3-orchestrator/internal/store"
 )
 
 // -------------------------------------------------------------------------
@@ -178,24 +178,7 @@ func BenchmarkBuildListContents(b *testing.B) {
 	})
 }
 
-// -------------------------------------------------------------------------
-// Span name and status string allocation
-// -------------------------------------------------------------------------
-
-func BenchmarkSpanNameSprintf(b *testing.B) {
-	methods := []string{"GET", "PUT", "HEAD", "DELETE", "POST"}
-	for b.Loop() {
-		for _, m := range methods {
-			_ = fmt.Sprintf("HTTP %s", m)
-		}
-	}
-}
-
-func BenchmarkRecordRequestStatusItoa(b *testing.B) {
-	codes := []int{200, 204, 400, 403, 404, 502, 503}
-	for b.Loop() {
-		for _, c := range codes {
-			_ = strconv.Itoa(c)
-		}
-	}
-}
+// BenchmarkSpanNameSprintf and BenchmarkRecordRequestStatusItoa were removed —
+// they measured code paths (fmt.Sprintf for span names, strconv.Itoa for status
+// codes) that were already optimized to pre-computed map lookups (httpSpanName,
+// statusStrings). Benchmarking the replaced implementation was misleading.
