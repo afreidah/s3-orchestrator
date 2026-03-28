@@ -186,6 +186,7 @@ job "s3-orchestrator" {
             enabled: true
             admin_key: "admin"
             admin_secret: "admin"
+            session_secret: "local-dev-session-key"
             admin_token: "admin"     # Separate token for admin API (defaults to admin_key)
             # force_secure_cookies: false        # Local dev — no TLS proxy
         YAML

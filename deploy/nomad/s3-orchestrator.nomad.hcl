@@ -285,6 +285,7 @@ job "s3-orchestrator" {
             enabled: true
             admin_key: "{{ .Data.data.ui_admin_key }}"
             admin_secret: "{{ .Data.data.ui_admin_secret }}"
+            session_secret: "{{ .Data.data.ui_session_secret }}"
             admin_token: "{{ .Data.data.ui_admin_token }}"
             force_secure_cookies: true
 

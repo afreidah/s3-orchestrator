@@ -12,6 +12,8 @@
 - [Logging and Audit](#logging-and-audit)
 - [Testing](#testing)
 - [Code Style](#code-style)
+- [Versioning](#versioning)
+- [Documentation Updates](#documentation-updates)
 - [Branch Naming](#branch-naming)
 
 ---
@@ -194,15 +196,42 @@ type BackendManager struct {
     usage           *UsageTracker
     metrics         *MetricsCollector
     dashboard       *DashboardAggregator
-    routingStrategy string
-    rebalanceCfg    atomic.Pointer[config.RebalanceConfig]
-    replicationCfg  atomic.Pointer[config.ReplicationConfig]
+    routingStrategy config.RoutingStrategy           // RoutingPack or RoutingSpread
+    rebalanceCfg    syncutil.AtomicConfig[config.RebalanceConfig]
+    replicationCfg  syncutil.AtomicConfig[config.ReplicationConfig]
 }
+```
+
+### Variable Naming
+
+Avoid shadowing package imports with local variable names. When a function receives or creates a `backend.ObjectBackend`, name the variable `be`, not `backend`:
+
+```go
+// Good
+be, err := mp.getBackend(mu.BackendName)
+etag, err := be.PutObject(ctx, key, body, size, contentType, nil)
+
+// Bad — shadows the backend package import
+backend, err := mp.getBackend(mu.BackendName)
+```
+
+### Typed Constants
+
+Use typed string constants for values compared in multiple places. Bare string comparisons (e.g., `routingStrategy == "spread"`) are error-prone:
+
+```go
+type RoutingStrategy string
+
+const (
+    RoutingPack   RoutingStrategy = "pack"
+    RoutingSpread RoutingStrategy = "spread"
+)
 ```
 
 ### Concurrency Patterns
 
-- **Atomic pointers** for hot-reloadable config (`atomic.Pointer[T]`)
+- **`syncutil.AtomicConfig[T]`** for hot-reloadable config (wraps `atomic.Pointer[T]` with `Store`/`Load`)
+- **`syncutil.TTLCache[K,V]`** for generic TTL-based caches with background eviction
 - **Atomic counters** for usage tracking, flushed periodically to the database
 - **Context-scoped timeouts** via helper methods (`m.withTimeout(ctx)`) for backend calls
 - **Graceful shutdown** via `context.WithCancel` + signal handling
@@ -315,19 +344,25 @@ Request IDs flow through context via `audit.WithRequestID` / `audit.RequestID`:
 
 - Benchmark files use the `_bench_test.go` suffix: `auth_bench_test.go`, `helpers_bench_test.go`
 - Integration benchmarks live in `internal/integration/bench_test.go` (gated behind the `integration` build tag)
-- Run all benchmarks: `make bench`
+- Run benchmarks: `make bench`, `make bench-auth`, `make bench-crypto`, etc. Override duration with `BENCH_TIME=5s make bench`
+- Use `b.Loop()` (Go 1.24+) for all benchmark loops — not `for i := 0; i < b.N; i++`
 - Use `b.SetBytes()` for throughput benchmarks so Go reports MB/s
 - Use `b.ResetTimer()` after setup/population steps
+- Use `b.RunParallel` with `pb.Next()` for concurrent benchmarks (`b.Loop()` cannot replace `pb.Next()` inside `RunParallel` callbacks)
+- Pre-compute keys and test data outside the measured loop — `fmt.Sprintf` inside a benchmark loop measures string formatting, not the code under test
 - Benchmark names follow `BenchmarkFunctionName/variant` with sub-benchmarks for different input sizes
 
 ### Fuzz Tests
 
 - Fuzz test files use the `_fuzz_test.go` suffix: `auth_fuzz_test.go`, `xml_fuzz_test.go`
-- Run all fuzz targets: `make fuzz` (30s per target)
+- Run fuzz targets: `make fuzz` (default 30s per target). Override with `FUZZ_TIME=5m make fuzz` for deeper exploration
 - CI runs a 10s smoke test per target to catch regressions
 - Seed the corpus with valid inputs, edge cases, and adversarial inputs via `f.Add()`
 - Fuzz callbacks must never panic — verify invariants with `t.Errorf` instead
-- For XML/string parsers, verify no panics on arbitrary input and check returned values satisfy documented invariants
+- Match the production code path — use `xml.NewDecoder().Decode` not `xml.Unmarshal` when production uses streaming decoders
+- **Differential oracles:** When two implementations exist for the same operation (e.g., `parseSigV4Fields` and `parseSigV4FieldsDirect`), fuzz both and assert they agree on every input
+- **Structural invariants:** Assert properties of the output that must always hold (e.g., "canonical request has exactly N newlines", "bucket never contains a slash", "nonce is always 12 bytes")
+- Do not assert application-level validation at the parsing layer — XML decoders accept negative integers; the handler layer validates range constraints
 
 ### Test Patterns
 
@@ -381,6 +416,42 @@ Use:
 - Declarative statements: "Service runs on port 9000"
 - Technical precision: "Uses SigV4 for request authentication"
 - Impersonal voice: "The manager selects...", "The circuit breaker wraps..."
+
+---
+
+## Versioning
+
+The `.version` file in the repository root controls the version baked into binaries, Docker images, and Debian packages. Every PR that changes Go or SQL files must bump the version.
+
+**Patch bump** (v0.X.Y -> v0.X.Y+1) for:
+- Bug fixes
+- Refactoring (no behavior change)
+- Documentation updates
+- Test improvements
+- Dependency updates
+- Cleanup and code style changes
+
+**Minor bump** (v0.X.0 -> v0.X+1.0) for:
+- New features (new config fields, new API endpoints, new CLI commands)
+- Breaking changes (required config fields, changed defaults, removed options)
+- Schema migrations that add tables or columns
+
+---
+
+## Documentation Updates
+
+When a PR changes config fields, API behavior, or deployment requirements, update all affected documentation in the same PR:
+
+- `packaging/config.yaml` — sample config
+- `config.yaml` — local dev config
+- `README.md` — config reference section
+- `docs/admin-guide.md` — operational documentation
+- `docs/security-hardening.md` — if security-relevant
+- `docs/disaster-recovery.md` — if it affects failure modes
+- `web/content/guides/*.md` — deployment guides
+- `deploy/` — Nomad, Kubernetes, and Helm manifests
+
+Search across all docs with `grep -rn 'field_name' README.md docs/ web/content/ packaging/ deploy/` before committing to catch every reference.
 
 ---
 

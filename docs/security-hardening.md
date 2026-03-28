@@ -372,7 +372,7 @@ The orchestrator detects bcrypt hashes automatically (any value starting with `$
 
 Session keys are derived deterministically from the config (via HMAC-SHA256), so sessions survive restarts and are portable across instances sharing the same config. No session storage or shared state is required beyond the config file itself.
 
-For multi-instance deployments behind a load balancer, ensure all instances use the same `admin_secret` (or the same `session_secret` if set). A session created on one instance will be accepted by any other instance with matching config.
+For multi-instance deployments behind a load balancer, ensure all instances use the same `session_secret`. A session created on one instance will be accepted by any other instance with a matching value. `session_secret` is independent of `admin_secret` — rotating one does not affect the other.
 
 ## Credential Rotation
 

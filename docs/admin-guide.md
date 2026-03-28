@@ -429,11 +429,11 @@ ui:
   admin_key: "${UI_ADMIN_KEY}"         # access key for dashboard login
   admin_secret: "${UI_ADMIN_SECRET}"   # secret key — plaintext or bcrypt hash
   admin_token: "${UI_ADMIN_TOKEN}"     # separate token for admin API (defaults to admin_key)
-  session_secret: "${UI_SESSION_SECRET}" # optional — for multi-instance session portability
+  session_secret: "${UI_SESSION_SECRET}" # required — HMAC key for session cookies
   force_secure_cookies: true           # always set Secure flag on cookies (for behind TLS proxy)
 ```
 
-Both `admin_key` and `admin_secret` are required when `enabled` is `true`. Generate them the same way as bucket credentials:
+`admin_key`, `admin_secret`, and `session_secret` are all required when `enabled` is `true`. Generate credentials the same way as bucket credentials:
 
 ```bash
 echo "Admin Key: $(openssl rand -hex 10 | tr '[:lower:]' '[:upper:]')"
@@ -448,9 +448,13 @@ htpasswd -nbBC 10 "" 'your-secret' | cut -d: -f2
 
 Both plaintext and bcrypt secrets are fully supported — no config migration needed.
 
-**Session secret:** By default, session keys are derived deterministically from `admin_secret` using HMAC-SHA256, so sessions survive restarts. For multi-instance deployments behind a load balancer, all instances sharing the same `admin_secret` will accept each other's sessions automatically.
+**Session secret:** Session keys are derived deterministically from `session_secret` using HMAC-SHA256, so sessions survive restarts. For multi-instance deployments behind a load balancer, all instances sharing the same `session_secret` will accept each other's sessions. Generate a value with:
 
-Set `session_secret` to use a separate key for session derivation — useful when you want to rotate the session key independently of `admin_secret`, or when different instances need different admin secrets but shared sessions.
+```bash
+openssl rand -hex 32
+```
+
+`session_secret` is independent of `admin_secret` — rotating the admin password does not invalidate active sessions, and vice versa.
 
 ### usage_flush
 
