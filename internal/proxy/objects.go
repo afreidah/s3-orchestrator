@@ -619,18 +619,15 @@ func (o *ObjectManager) GetObject(ctx context.Context, key string, rangeHeader s
 	if o.objectCache != nil && rangeHeader == "" {
 		data, readErr := io.ReadAll(result.Body)
 		result.Body.Close()
-		if readErr == nil {
-			_ = o.objectCache.Put(key, bytes.NewReader(data), objcache.EntryMeta{
-				ContentType: result.ContentType,
-				ETag:        result.ETag,
-				Metadata:    result.Metadata,
-			})
-			result.Body = io.NopCloser(bytes.NewReader(data))
-		} else {
-			// If we failed to read, return an empty body — the error will
-			// surface when the HTTP handler tries to write the response.
-			result.Body = io.NopCloser(bytes.NewReader(nil))
+		if readErr != nil {
+			return nil, fmt.Errorf("read object for caching: %w", readErr)
 		}
+		_ = o.objectCache.Put(key, bytes.NewReader(data), objcache.EntryMeta{
+			ContentType: result.ContentType,
+			ETag:        result.ETag,
+			Metadata:    result.Metadata,
+		})
+		result.Body = io.NopCloser(bytes.NewReader(data))
 	}
 
 	return result, nil
@@ -1207,6 +1204,12 @@ func parsePlaintextRange(rangeHeader string, plaintextSize int64) (start, end in
 	end, err = strconv.ParseInt(parts[1], 10, 64)
 	if err != nil {
 		return 0, 0, false
+	}
+
+	// Clamp end to the last valid byte offset to prevent CiphertextRange
+	// from requesting chunks beyond the actual object.
+	if end >= plaintextSize {
+		end = plaintextSize - 1
 	}
 
 	return start, end, true

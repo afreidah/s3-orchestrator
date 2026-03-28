@@ -775,7 +775,7 @@ func (h *Handler) handleAPIDownload(w http.ResponseWriter, r *http.Request) {
 	slog.InfoContext(r.Context(), "UI: downloaded object", "key", key, "size", result.Size)
 
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filepath.Base(key)))
-	w.Header().Set("Content-Type", result.ContentType)
+	w.Header().Set("Content-Type", "application/octet-stream")
 	if result.Size > 0 {
 		w.Header().Set("Content-Length", strconv.FormatInt(result.Size, 10))
 	}

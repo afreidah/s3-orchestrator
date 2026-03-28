@@ -16,6 +16,7 @@ import (
 	"encoding/base64"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -272,7 +273,7 @@ func TestMultiKeyProvider_UnwrapWithPrimary(t *testing.T) {
 	}
 }
 
-func TestMultiKeyProvider_UnknownKeyIDFallsToPrimary(t *testing.T) {
+func TestMultiKeyProvider_UnknownKeyIDReturnsError(t *testing.T) {
 	key1 := make([]byte, 32)
 	_, _ = rand.Read(key1)
 
@@ -285,17 +286,15 @@ func TestMultiKeyProvider_UnknownKeyIDFallsToPrimary(t *testing.T) {
 
 	wrapped, _, _ := primary.WrapDEK(ctx, dek)
 
-	// Unwrap with an unknown keyID — should fall back to primary
+	// Unwrap with an unknown keyID — must return an error instead of
+	// silently falling back to the primary key.
 	before := promtest.ToFloat64(telemetry.EncryptionUnknownKeyIDTotal)
-	unwrapped, err := multi.UnwrapDEK(ctx, wrapped, "unknown-key-id")
-	if err != nil {
-		t.Fatalf("UnwrapDEK fallback: %v", err)
+	_, err := multi.UnwrapDEK(ctx, wrapped, "unknown-key-id")
+	if err == nil {
+		t.Fatal("UnwrapDEK with unknown keyID should return an error")
 	}
-
-	for i := range dek {
-		if unwrapped[i] != dek[i] {
-			t.Fatalf("unwrapped[%d] mismatch", i)
-		}
+	if !strings.Contains(err.Error(), "unknown encryption key ID") {
+		t.Errorf("error should mention unknown key ID, got: %v", err)
 	}
 
 	after := promtest.ToFloat64(telemetry.EncryptionUnknownKeyIDTotal)
