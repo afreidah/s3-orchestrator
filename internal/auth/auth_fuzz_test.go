@@ -34,17 +34,25 @@ func FuzzParseSigV4Fields(f *testing.F) {
 			t.Error("parseSigV4Fields returned nil")
 		}
 
-		// When all three SigV4 fields are present, Credential must contain
-		// a slash separating the access key from the scope.
-		cred := result["Credential"]
-		sig := result["Signature"]
-		sh := result["SignedHeaders"]
-		if cred != "" && sig != "" && sh != "" {
-			if !strings.Contains(cred, "/") && len(cred) > 20 {
-				// A real Credential always has key/date/region/service/aws4_request.
-				// Not a hard invariant on fuzzed input, but worth logging.
-				t.Logf("long Credential without slash: %q", cred)
+		// Every key in the map must be non-empty (parseSigV4Fields uses
+		// idx > 0 as the guard, so empty keys should never be inserted).
+		for k := range result {
+			if k == "" {
+				t.Error("parseSigV4Fields returned entry with empty key")
 			}
+		}
+
+		// Cross-validate: parseSigV4FieldsDirect must agree with the
+		// map-based parser for the three SigV4 fields.
+		cred, sh, sig := parseSigV4FieldsDirect(input)
+		if cred != result["Credential"] {
+			t.Errorf("Credential mismatch: direct=%q map=%q", cred, result["Credential"])
+		}
+		if sh != result["SignedHeaders"] {
+			t.Errorf("SignedHeaders mismatch: direct=%q map=%q", sh, result["SignedHeaders"])
+		}
+		if sig != result["Signature"] {
+			t.Errorf("Signature mismatch: direct=%q map=%q", sig, result["Signature"])
 		}
 	})
 }
@@ -83,7 +91,15 @@ func FuzzBuildCanonicalRequest(f *testing.F) {
 		}
 
 		// Must not panic on any combination of method, path, query, and headers.
-		buildCanonicalRequest(r, headers)
+		result := buildCanonicalRequest(r, headers)
+
+		// SigV4 canonical request structure: method, URI, query, one line
+		// per header, blank line, signed headers, payload hash. Total
+		// newlines = 3 (method+URI+query) + len(headers) + 1 (blank) + 1 (signed headers).
+		expected := 3 + len(headers) + 1 + 1
+		if n := strings.Count(result, "\n"); n != expected {
+			t.Errorf("canonical request has %d newlines, want %d for %d headers", n, expected, len(headers))
+		}
 	})
 }
 

@@ -3,14 +3,15 @@
 //
 // Author: Alex Freidah
 //
-// Fuzz tests for XML unmarshaling of S3 request bodies. Ensures the delete
-// objects and multipart upload completion parsers handle malformed, truncated,
-// and adversarial XML without panicking.
+// Fuzz tests for XML parsing of S3 request bodies. Uses the streaming
+// xml.NewDecoder path to match production (handleDeleteObjects and
+// handleCompleteMultipartUpload use Decode, not Unmarshal).
 // -------------------------------------------------------------------------------
 
 package server
 
 import (
+	"bytes"
 	"encoding/xml"
 	"testing"
 )
@@ -26,8 +27,10 @@ func FuzzDeleteObjectsXML(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		var req deleteObjectsRequest
-		// Must not panic regardless of input.
-		_ = xml.Unmarshal(data, &req)
+		// Use streaming decoder to match production code path.
+		// Empty keys and zero-length lists are valid XML parse results;
+		// S3 spec validation is enforced at the handler layer.
+		_ = xml.NewDecoder(bytes.NewReader(data)).Decode(&req)
 	})
 }
 
@@ -35,12 +38,16 @@ func FuzzCompleteMultipartXML(f *testing.F) {
 	f.Add([]byte(`<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag>"abc"</ETag></Part></CompleteMultipartUpload>`))
 	f.Add([]byte(`<CompleteMultipartUpload></CompleteMultipartUpload>`))
 	f.Add([]byte(`<CompleteMultipartUpload><Part><PartNumber>-1</PartNumber><ETag></ETag></Part></CompleteMultipartUpload>`))
+	f.Add([]byte(`<CompleteMultipartUpload><Part><PartNumber>0</PartNumber><ETag>x</ETag></Part></CompleteMultipartUpload>`))
+	f.Add([]byte(`<CompleteMultipartUpload><Part><PartNumber>10001</PartNumber><ETag>x</ETag></Part></CompleteMultipartUpload>`))
 	f.Add([]byte(`not xml`))
 	f.Add([]byte{})
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		var req completeMultipartUploadRequest
-		// Must not panic regardless of input.
-		_ = xml.Unmarshal(data, &req)
+		// Use streaming decoder to match production code path.
+		// Part number validation (1-10000) is enforced at the handler
+		// layer, not at XML parse time.
+		_ = xml.NewDecoder(bytes.NewReader(data)).Decode(&req)
 	})
 }

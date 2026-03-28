@@ -170,6 +170,10 @@ jobs:
           go test -fuzz=FuzzIsValidRequestID -fuzztime=10s ./internal/server/ &
           go test -fuzz=FuzzLoginThrottle_RemoteAddr -fuzztime=10s ./internal/server/ &
           go test -fuzz=FuzzExtractClientIP -fuzztime=10s ./internal/server/ &
+          go test -fuzz=FuzzValidMetadataToken -fuzztime=10s ./internal/server/ &
+          go test -fuzz=FuzzParseHeader -fuzztime=10s ./internal/encryption/ &
+          go test -fuzz=FuzzCiphertextRange -fuzztime=10s ./internal/encryption/ &
+          go test -fuzz=FuzzUnpackKeyData -fuzztime=10s ./internal/encryption/ &
           wait
 
   integration:

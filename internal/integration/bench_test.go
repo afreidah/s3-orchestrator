@@ -42,8 +42,10 @@ func BenchmarkPutObject(b *testing.B) {
 		data := bytes.Repeat([]byte("X"), sz.size)
 		b.Run(sz.name, func(b *testing.B) {
 			b.SetBytes(int64(sz.size))
-			for i := 0; i < b.N; i++ {
+			i := 0
+			for b.Loop() {
 				key := fmt.Sprintf("bench-put/%s-%d", sz.name, i)
+				i++
 				_, err := client.PutObject(ctx, &s3.PutObjectInput{
 					Bucket:        aws.String(virtualBucket),
 					Key:           aws.String(key),

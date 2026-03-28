@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"fmt"
-	"sync"
 	"testing"
 	"time"
 )
@@ -39,15 +38,19 @@ func BenchmarkLocationCache_Concurrent_ReadHeavy(b *testing.B) {
 	c := NewLocationCache(time.Minute)
 	defer c.Close()
 
-	// Pre-populate 1000 entries
-	for i := range 1000 {
-		c.Set(fmt.Sprintf("key-%d", i), "backend-a")
+	// Pre-compute keys to keep fmt.Sprintf out of the measured loop.
+	const n = 1000
+	keys := make([]string, n)
+	for i := range n {
+		keys[i] = fmt.Sprintf("key-%d", i)
+		c.Set(keys[i], "backend-a")
 	}
 
+	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		i := 0
 		for pb.Next() {
-			key := fmt.Sprintf("key-%d", i%1000)
+			key := keys[i%n]
 			if i%10 == 0 {
 				c.Set(key, "backend-b") // 10% writes
 			} else {
@@ -62,10 +65,17 @@ func BenchmarkLocationCache_Concurrent_WriteHeavy(b *testing.B) {
 	c := NewLocationCache(time.Minute)
 	defer c.Close()
 
+	const n = 1000
+	keys := make([]string, n)
+	for i := range n {
+		keys[i] = fmt.Sprintf("key-%d", i)
+	}
+
+	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		i := 0
 		for pb.Next() {
-			key := fmt.Sprintf("key-%d", i%1000)
+			key := keys[i%n]
 			if i%2 == 0 {
 				c.Set(key, "backend-a") // 50% writes
 			} else {
@@ -83,20 +93,18 @@ func BenchmarkLocationCache_Contention_GetSetDelete(b *testing.B) {
 	c := NewLocationCache(time.Minute)
 	defer c.Close()
 
-	// Pre-populate
-	for i := range 500 {
-		c.Set(fmt.Sprintf("key-%d", i), "backend-a")
+	const n = 500
+	keys := make([]string, n)
+	for i := range n {
+		keys[i] = fmt.Sprintf("key-%d", i)
+		c.Set(keys[i], "backend-a")
 	}
 
-	var wg sync.WaitGroup
 	b.ResetTimer()
-
 	b.RunParallel(func(pb *testing.PB) {
-		wg.Add(1)
-		defer wg.Done()
 		i := 0
 		for pb.Next() {
-			key := fmt.Sprintf("key-%d", i%500)
+			key := keys[i%n]
 			switch i % 3 {
 			case 0:
 				c.Get(key)

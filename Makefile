@@ -92,25 +92,46 @@ govulncheck: ## Scan Go dependencies for known vulnerabilities
 	govulncheck ./...
 
 BENCH_COUNT ?= 5
+BENCH_TIME  ?= 1s
+FUZZ_TIME   ?= 30s
 BENCH_FILE  := benchmarks/$(shell date +%Y-%m-%d)-$(shell git rev-parse --short HEAD).txt
 
-bench: ## Run benchmark tests and save results to benchmarks/
-	go test -bench=. -benchmem -count=$(BENCH_COUNT) -run='^$$' -timeout=10m ./... | tee $(BENCH_FILE)
+bench: ## Run all benchmarks (override: BENCH_COUNT=10 BENCH_TIME=3s make bench)
+	go test -bench=. -benchmem -count=$(BENCH_COUNT) -benchtime=$(BENCH_TIME) -run='^$$' -timeout=30m ./... | tee $(BENCH_FILE)
 	@echo ""
 	@echo "Results saved to $(BENCH_FILE)"
+
+bench-auth: ## Run auth hot-path benchmarks (SigV4, signing key cache, token auth)
+	go test -bench=Benchmark -benchmem -count=$(BENCH_COUNT) -benchtime=$(BENCH_TIME) -run='^$$' -timeout=10m ./internal/auth/
+
+bench-crypto: ## Run encryption throughput benchmarks (encrypt, decrypt, round-trip)
+	go test -bench=Benchmark -benchmem -count=$(BENCH_COUNT) -benchtime=$(BENCH_TIME) -run='^$$' -timeout=10m ./internal/encryption/
+
+bench-cache: ## Run cache and buffer pool benchmarks (LocationCache, TTLCache, bufpool)
+	go test -bench=Benchmark -benchmem -count=$(BENCH_COUNT) -benchtime=$(BENCH_TIME) -run='^$$' -timeout=10m ./internal/proxy/ ./internal/syncutil/ ./internal/bufpool/
+
+bench-usage: ## Run usage tracking benchmarks (WithinLimits, Record)
+	go test -bench=Benchmark -benchmem -count=$(BENCH_COUNT) -benchtime=$(BENCH_TIME) -run='^$$' -timeout=10m ./internal/counter/
+
+bench-integration: ## Run integration benchmarks (requires Docker — PutObject, ListObjects, Rebalance)
+	go test -bench=Benchmark -benchmem -count=$(BENCH_COUNT) -benchtime=$(BENCH_TIME) -run='^$$' -timeout=30m -tags integration ./internal/integration/
 
 bench-compare: ## Compare two benchmark files (usage: make bench-compare OLD=benchmarks/old.txt NEW=benchmarks/new.txt)
 	benchstat $(OLD) $(NEW)
 
-fuzz: ## Run fuzz tests for 30s per target
-	go test -fuzz=FuzzParseSigV4Fields -fuzztime=30s ./internal/auth/
-	go test -fuzz=FuzzBuildCanonicalRequest -fuzztime=30s ./internal/auth/
-	go test -fuzz=FuzzParsePath -fuzztime=30s ./internal/server/
-	go test -fuzz=FuzzDeleteObjectsXML -fuzztime=30s ./internal/server/
-	go test -fuzz=FuzzCompleteMultipartXML -fuzztime=30s ./internal/server/
-	go test -fuzz=FuzzIsValidRequestID -fuzztime=30s ./internal/server/
-	go test -fuzz=FuzzLoginThrottle_RemoteAddr -fuzztime=30s ./internal/server/
-	go test -fuzz=FuzzExtractClientIP -fuzztime=30s ./internal/server/
+fuzz: ## Run fuzz tests (override: FUZZ_TIME=5m make fuzz)
+	go test -fuzz=FuzzParseSigV4Fields -fuzztime=$(FUZZ_TIME) ./internal/auth/
+	go test -fuzz=FuzzBuildCanonicalRequest -fuzztime=$(FUZZ_TIME) ./internal/auth/
+	go test -fuzz=FuzzParsePath -fuzztime=$(FUZZ_TIME) ./internal/server/
+	go test -fuzz=FuzzDeleteObjectsXML -fuzztime=$(FUZZ_TIME) ./internal/server/
+	go test -fuzz=FuzzCompleteMultipartXML -fuzztime=$(FUZZ_TIME) ./internal/server/
+	go test -fuzz=FuzzIsValidRequestID -fuzztime=$(FUZZ_TIME) ./internal/server/
+	go test -fuzz=FuzzLoginThrottle_RemoteAddr -fuzztime=$(FUZZ_TIME) ./internal/server/
+	go test -fuzz=FuzzExtractClientIP -fuzztime=$(FUZZ_TIME) ./internal/server/
+	go test -fuzz=FuzzValidMetadataToken -fuzztime=$(FUZZ_TIME) ./internal/server/
+	go test -fuzz=FuzzParseHeader -fuzztime=$(FUZZ_TIME) ./internal/encryption/
+	go test -fuzz=FuzzCiphertextRange -fuzztime=$(FUZZ_TIME) ./internal/encryption/
+	go test -fuzz=FuzzUnpackKeyData -fuzztime=$(FUZZ_TIME) ./internal/encryption/
 
 run: dev-deps ## Run locally (requires config.yaml)
 	go run ./cmd/s3-orchestrator -config config.yaml
