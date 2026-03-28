@@ -166,6 +166,7 @@ ui:
   enabled: true
   admin_key: ${UI_ADMIN_KEY}
   admin_secret: ${UI_ADMIN_SECRET}
+  session_secret: ${UI_SESSION_SECRET}
   force_secure_cookies: true
 
 usage_flush:

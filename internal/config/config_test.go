@@ -1881,9 +1881,22 @@ func TestUIConfig_EnabledMissingCredentials(t *testing.T) {
 	}
 }
 
-func TestUIConfig_EnabledWithCredentials(t *testing.T) {
+func TestUIConfig_EnabledMissingSessionSecret(t *testing.T) {
 	cfg := validBaseConfig()
 	cfg.UI = UIConfig{Enabled: true, AdminKey: "key", AdminSecret: "secret"}
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil {
+		t.Fatal("expected validation error for UI enabled without session_secret")
+	}
+	if !strings.Contains(err.Error(), "session_secret") {
+		t.Errorf("error = %q, want mention of session_secret", err)
+	}
+}
+
+func TestUIConfig_EnabledWithCredentials(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.UI = UIConfig{Enabled: true, AdminKey: "key", AdminSecret: "secret", SessionSecret: "sess"}
 
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
 		t.Errorf("valid UI config should pass: %v", err)

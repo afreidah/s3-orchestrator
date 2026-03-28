@@ -45,7 +45,8 @@ vault kv put secret/s3-orchestrator \
   r2_s3_access_key="R2_ACCESS_KEY" \
   r2_s3_secret_key="R2_SECRET_KEY" \
   ui_admin_key="ADMIN_KEY" \
-  ui_admin_secret="ADMIN_SECRET"
+  ui_admin_secret="ADMIN_SECRET" \
+  ui_session_secret="$(openssl rand -hex 32)"
 ```
 
 {{% notice tip %}}
@@ -284,6 +285,7 @@ ui:
   enabled: true
   admin_key: "{{ .Data.data.ui_admin_key }}"
   admin_secret: "{{ .Data.data.ui_admin_secret }}"
+  session_secret: "{{ .Data.data.ui_session_secret }}"
   force_secure_cookies: true
 
 usage_flush:

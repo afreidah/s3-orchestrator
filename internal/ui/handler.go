@@ -90,14 +90,10 @@ func New(manager *proxy.BackendManager, dbHealthy func() bool, cfg *config.Confi
 
 // deriveSessionKey produces a deterministic 32-byte HMAC key from the config
 // so that sessions survive restarts and are portable across instances sharing
-// the same config. If session_secret is set it takes precedence; otherwise
-// admin_secret is used as the key material.
+// the same config. session_secret is required when the UI is enabled;
+// config validation rejects startup without it.
 func deriveSessionKey(ui *config.UIConfig) []byte {
-	secret := ui.SessionSecret
-	if secret == "" {
-		secret = ui.AdminSecret
-	}
-	mac := hmac.New(sha256.New, []byte(secret))
+	mac := hmac.New(sha256.New, []byte(ui.SessionSecret))
 	mac.Write([]byte("s3orch-session-key"))
 	return mac.Sum(nil)
 }

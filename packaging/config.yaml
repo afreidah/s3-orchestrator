@@ -187,5 +187,6 @@ backends:
 #   path: /ui
 #   admin_key: "${UI_ADMIN_KEY}"
 #   admin_secret: "${UI_ADMIN_SECRET}"
+#   session_secret: "${UI_SESSION_SECRET}" # Required — HMAC key for session cookies (independent of admin_secret)
 #   admin_token: "${UI_ADMIN_TOKEN}"       # Separate token for admin API (defaults to admin_key)
 #   force_secure_cookies: true             # Always set Secure flag on cookies (use behind TLS proxy)
