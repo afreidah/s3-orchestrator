@@ -1398,8 +1398,21 @@ func (s *Store) UpdateContentHash(ctx context.Context, key, backendName, hash st
 // ADVISORY LOCKS
 // -------------------------------------------------------------------------
 
-// Lock IDs for PostgreSQL advisory locks. Each background task uses a unique
-// lock ID to prevent concurrent execution across multiple instances.
+// Advisory lock IDs for multi-instance coordination via PostgreSQL.
+// Each background service acquires its lock before running to prevent
+// concurrent execution across instances. IDs are arbitrary but must be
+// unique and stable across releases.
+//
+//   - LockRebalancer       (1001) periodic object distribution across backends
+//   - LockReplicator       (1002) background replica creation
+//   - LockCleanupQueue     (1003) failed deletion retry processing
+//   - LockMultipartCleanup (1004) stale multipart upload removal
+//   - LockLifecycle        (1005) object expiration rule evaluation
+//   - LockDrain            (1006) backend drain and object migration
+//   - LockUsageFlush       (1007) usage counter flush to PostgreSQL (Redis mode)
+//   - LockOverReplication  (1008) excess replica removal
+//   - LockReconcile        (1009) backend-vs-database consistency check
+//   - LockScrubber         (1010) background integrity verification
 const (
 	LockRebalancer       int64 = 1001
 	LockReplicator       int64 = 1002
@@ -1409,8 +1422,8 @@ const (
 	LockDrain            int64 = 1006
 	LockUsageFlush       int64 = 1007
 	LockOverReplication  int64 = 1008
-	LockReconcile       int64 = 1009
-	LockScrubber        int64 = 1010
+	LockReconcile        int64 = 1009
+	LockScrubber         int64 = 1010
 )
 
 // WithAdvisoryLock acquires a PostgreSQL session-level advisory lock on a
