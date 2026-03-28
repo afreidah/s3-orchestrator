@@ -2666,3 +2666,50 @@ func TestParseByteSize_Invalid(t *testing.T) {
 		})
 	}
 }
+
+func TestLifecycleConfig_EmptyPrefixRejected(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Lifecycle = LifecycleConfig{
+		Rules: []LifecycleRule{
+			{Prefix: "", ExpirationDays: 30},
+		},
+	}
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil {
+		t.Fatal("expected validation error for empty lifecycle prefix")
+	}
+	if !strings.Contains(err.Error(), "prefix must not be empty") {
+		t.Errorf("error = %q, want mention of empty prefix", err)
+	}
+}
+
+func TestLifecycleConfig_NegativeExpirationRejected(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Lifecycle = LifecycleConfig{
+		Rules: []LifecycleRule{
+			{Prefix: "tmp/", ExpirationDays: -1},
+		},
+	}
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil {
+		t.Fatal("expected validation error for negative expiration_days")
+	}
+}
+
+func TestLifecycleConfig_ValidRulePasses(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Lifecycle = LifecycleConfig{
+		Rules: []LifecycleRule{
+			{Prefix: "tmp/", ExpirationDays: 30},
+		},
+	}
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Errorf("valid lifecycle config should pass: %v", err)
+	}
+	if cfg.Lifecycle.BatchSize != 100 {
+		t.Errorf("BatchSize = %d, want 100 (default)", cfg.Lifecycle.BatchSize)
+	}
+}
