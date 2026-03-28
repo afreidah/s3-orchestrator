@@ -166,9 +166,9 @@ func (p *MultiKeyProvider) WrapDEK(ctx context.Context, dek []byte) ([]byte, str
 }
 
 // UnwrapDEK decrypts a wrapped DEK by resolving the provider for the given
-// keyID. Falls back to the primary provider if the keyID is not found in the
-// previous keys map, logging a warning so operators can investigate potential
-// metadata corruption or missing rotation keys.
+// keyID. Returns an error if the keyID matches neither the primary key nor
+// any previous rotation key — this indicates metadata corruption or a key
+// that was removed from previous_keys config before all objects were migrated.
 func (p *MultiKeyProvider) UnwrapDEK(ctx context.Context, wrappedDEK []byte, keyID string) ([]byte, error) {
 	if keyID == p.primary.KeyID() {
 		return p.primary.UnwrapDEK(ctx, wrappedDEK, keyID)
@@ -176,13 +176,10 @@ func (p *MultiKeyProvider) UnwrapDEK(ctx context.Context, wrappedDEK []byte, key
 	if prev, ok := p.previous[keyID]; ok {
 		return prev.UnwrapDEK(ctx, wrappedDEK, keyID)
 	}
-	// Unknown keyID — likely metadata corruption or a rotation key that was
-	// removed from config. Log a warning and attempt with the primary key;
-	// GCM will reject the tag if it's truly the wrong key.
 	telemetry.EncryptionUnknownKeyIDTotal.Inc()
-	slog.WarnContext(ctx, "Unknown encryption keyID, falling back to primary",
+	slog.ErrorContext(ctx, "Unknown encryption keyID — object cannot be decrypted",
 		"unknown_key_id", keyID, "primary_key_id", p.primary.KeyID())
-	return p.primary.UnwrapDEK(ctx, wrappedDEK, keyID)
+	return nil, fmt.Errorf("unknown encryption key ID %q: ensure previous_keys includes all rotation keys", keyID)
 }
 
 // -------------------------------------------------------------------------
