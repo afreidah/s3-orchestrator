@@ -209,6 +209,10 @@ func (r *Rebalancer) PlanPackTight(ctx context.Context, stats map[string]store.Q
 	var plan []RebalanceMove
 	remaining := batchSize
 
+	// Cache object lists per source to avoid re-querying when the same
+	// source is visited across multiple destination iterations.
+	objectCache := make(map[string][]store.ObjectLocation)
+
 	// --- Pack into most-full destinations, pulling from least-full sources ---
 	for di := 0; di < len(backends) && remaining > 0; di++ {
 		dest := backends[di]
@@ -227,9 +231,14 @@ func (r *Rebalancer) PlanPackTight(ctx context.Context, stats map[string]store.Q
 				continue
 			}
 
-			objects, err := r.ops.Store().ListObjectsByBackend(ctx, src.Name, remaining)
-			if err != nil {
-				return nil, fmt.Errorf("failed to list objects on %s: %w", src.Name, err)
+			objects, ok := objectCache[src.Name]
+			if !ok {
+				var err error
+				objects, err = r.ops.Store().ListObjectsByBackend(ctx, src.Name, remaining)
+				if err != nil {
+					return nil, fmt.Errorf("failed to list objects on %s: %w", src.Name, err)
+				}
+				objectCache[src.Name] = objects
 			}
 
 			for oi := range objects {
