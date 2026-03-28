@@ -3,6 +3,42 @@
 All notable changes to this project are documented in this file.
 
 
+## [0.33.0] - 2026-03-28
+
+### Added
+- add missing indexes, replace random() scrubber query, harden lifecycle (#435, #451, #453) (#463)
+- add generic AtomicConfig[T] and TTLCache[K,V] to eliminate boilerplate (#457) (#459)
+- add presigned URL support (#353) (#418)
+- add read burst loadtest, cache Grafana panels, fix loadtest build (#417)
+- add optional in-memory object data cache (#403) (#416)
+- add decrypt-existing admin API, migrate integration tests to testcontainers (#408) (#409)
+
+### Fixed
+- fixup: adding benchmarks
+- fix lint exclusion path, add concurrency cancel, harden supply chain (#454, #455) (#469)
+- fix min_conns default, document new features, update metrics table (#466, #467) (#468)
+- fixup: fix website badge
+
+### Hardened
+- security: fix signing key cache DoS, CSRF entropy, error enumeration, timer leak (#419, #431, #432, #445) (#464)
+- security: verify vault token file permissions before reading (#428) (#461)
+
+### Improved
+- update CHANGELOG.md for v0.20.3 (#407)
+
+### Dependencies
+- chore(deps): bump codecov/codecov-action from 5 to 6 (#410)
+- chore(deps): bump github.com/aws/aws-sdk-go-v2/credentials (#411)
+- chore(deps): bump github.com/jackc/pgx/v5 from 5.8.0 to 5.9.1 (#412)
+- chore(deps): bump github.com/aws/aws-sdk-go-v2 from 1.41.4 to 1.41.5 (#413)
+- chore(deps): bump github.com/aws/aws-sdk-go-v2/service/s3 (#414)
+- chore(deps): bump github.com/hashicorp/vault/api from 1.22.0 to 1.23.0 (#415)
+
+### Other
+- reject encrypted reads during DB outage, fix vault renewal mutex (#429, #433) (#465)
+- metrics shutdown, circuit breaker stale probe, load shedding threshold (#420, #424, #437) (#462)
+- extract selectWriteTarget, add typed RoutingStrategy, rename shadowed vars (#452, #458) (#460)
+
 ## [0.20.3] - 2026-03-23
 
 ### Added
