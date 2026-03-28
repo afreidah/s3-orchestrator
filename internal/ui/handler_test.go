@@ -37,8 +37,9 @@ import (
 )
 
 const (
-	testAdminKey    = "test-admin"
-	testAdminSecret = "test-secret-key"
+	testAdminKey       = "test-admin"
+	testAdminSecret    = "test-secret-key"
+	testSessionSecret  = "test-session-secret"
 )
 
 func newTestHandler(t *testing.T) (*Handler, *http.ServeMux) {
@@ -86,9 +87,10 @@ func newTestHandlerWithMock(t *testing.T) (*Handler, *http.ServeMux, *testutil.M
 		Replication:     config.ReplicationConfig{Factor: 1},
 		RateLimit:       config.RateLimitConfig{Enabled: false},
 		UI: config.UIConfig{
-			Enabled:     true,
-			AdminKey:    testAdminKey,
-			AdminSecret: testAdminSecret,
+			Enabled:       true,
+			AdminKey:      testAdminKey,
+			AdminSecret:   testAdminSecret,
+			SessionSecret: testSessionSecret,
 		},
 	}
 
@@ -437,6 +439,7 @@ func TestLogin_BcryptSecret(t *testing.T) {
 			Enabled:     true,
 			AdminKey:    testAdminKey,
 			AdminSecret: string(hash),
+			SessionSecret: testSessionSecret,
 		},
 	}
 
@@ -459,7 +462,7 @@ func TestLogin_BcryptSecret(t *testing.T) {
 }
 
 func TestDeriveSessionKey_Deterministic(t *testing.T) {
-	ui := config.UIConfig{AdminSecret: "shared-secret"}
+	ui := config.UIConfig{SessionSecret: "shared-secret"}
 	key1 := deriveSessionKey(&ui)
 	key2 := deriveSessionKey(&ui)
 
@@ -468,15 +471,15 @@ func TestDeriveSessionKey_Deterministic(t *testing.T) {
 	}
 }
 
-func TestDeriveSessionKey_SessionSecretTakesPrecedence(t *testing.T) {
-	withAdmin := config.UIConfig{AdminSecret: "admin-secret"}
-	withSession := config.UIConfig{AdminSecret: "admin-secret", SessionSecret: "session-secret"}
+func TestDeriveSessionKey_DifferentSecretsDifferentKeys(t *testing.T) {
+	ui1 := config.UIConfig{SessionSecret: "secret-one"}
+	ui2 := config.UIConfig{SessionSecret: "secret-two"}
 
-	key1 := deriveSessionKey(&withAdmin)
-	key2 := deriveSessionKey(&withSession)
+	key1 := deriveSessionKey(&ui1)
+	key2 := deriveSessionKey(&ui2)
 
 	if bytes.Equal(key1, key2) {
-		t.Error("session_secret should produce a different key than admin_secret alone")
+		t.Error("different session_secret values should produce different keys")
 	}
 }
 
@@ -1673,6 +1676,7 @@ func benchLoginHandler(b *testing.B) (*Handler, *http.ServeMux) {
 			Enabled:     true,
 			AdminKey:    testAdminKey,
 			AdminSecret: string(bcryptHash),
+			SessionSecret: testSessionSecret,
 		},
 	}
 

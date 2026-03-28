@@ -81,6 +81,7 @@ ui:
   enabled: true
   admin_key: "admin"
   admin_secret: "admin"
+  session_secret: "local-dev-session-key"
   # admin_token: "separate-token"     # Separate token for admin API (defaults to admin_key)
   # force_secure_cookies: true        # Always set Secure flag on cookies (use behind TLS proxy)
 

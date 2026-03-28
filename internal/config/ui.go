@@ -13,7 +13,7 @@ type UIConfig struct {
 	AdminKey           string `yaml:"admin_key"`           // Access key for dashboard login
 	AdminSecret        string `yaml:"admin_secret"`        // Secret key for dashboard login (plaintext or bcrypt hash)
 	AdminToken         string `yaml:"admin_token"`         // Separate token for admin API (defaults to admin_key if empty)
-	SessionSecret      string `yaml:"session_secret"`      // Optional secret for HMAC session key derivation (enables multi-instance sessions)
+	SessionSecret      string `yaml:"session_secret"`      // Required — HMAC key for session cookie derivation (independent of admin_secret)
 	ForceSecureCookies bool   `yaml:"force_secure_cookies"` // Always set Secure flag on session cookies (use behind TLS-terminating proxy)
 }
 
@@ -26,6 +26,9 @@ func (u *UIConfig) setDefaultsAndValidate() []string {
 	if u.Enabled {
 		if u.AdminKey == "" || u.AdminSecret == "" {
 			errs = append(errs, "ui.admin_key and ui.admin_secret are required when ui is enabled")
+		}
+		if u.SessionSecret == "" {
+			errs = append(errs, "ui.session_secret is required when ui is enabled (used for HMAC session key derivation)")
 		}
 	}
 
