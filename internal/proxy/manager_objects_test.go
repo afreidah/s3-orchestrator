@@ -2106,3 +2106,29 @@ func TestParsePlaintextRange_SuffixLargerThanFile(t *testing.T) {
 		t.Errorf("end = %d, want 99", end)
 	}
 }
+
+func TestParsePlaintextRange_ClampsEndToSize(t *testing.T) {
+	// Explicit range where end exceeds plaintextSize
+	start, end, ok := parsePlaintextRange("bytes=0-200", 100)
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if start != 0 {
+		t.Errorf("start = %d, want 0", start)
+	}
+	if end != 99 {
+		t.Errorf("end = %d, want 99 (clamped to plaintextSize-1)", end)
+	}
+}
+
+func TestParsePlaintextRange_ExactEndNotClamped(t *testing.T) {
+	// End is exactly the last byte — should not be clamped
+	start, end, ok := parsePlaintextRange("bytes=0-99", 100)
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if start != 0 || end != 99 {
+		t.Errorf("start=%d end=%d, want 0,99", start, end)
+	}
+}
+
