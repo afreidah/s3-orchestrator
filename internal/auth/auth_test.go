@@ -12,6 +12,7 @@ package auth
 
 import (
 	"encoding/hex"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -121,6 +122,31 @@ func TestSigningKeyCache(t *testing.T) {
 	key3 := getCachedSigningKey(accessKey, secret, "20260313", "us-east-1", "s3", true)
 	if hex.EncodeToString(key1) == hex.EncodeToString(key3) {
 		t.Error("different dateStamp should produce a different key")
+	}
+}
+
+func TestSigningKeyCache_UnknownKeysNotCached(t *testing.T) {
+	// Unknown keys (used with dummy secret for constant-time auth) must
+	// not be cached to prevent memory exhaustion from randomized access
+	// key IDs.
+	for i := range 100 {
+		fakeKey := fmt.Sprintf("UNKNOWN_%d", i)
+		getCachedSigningKey(fakeKey, "dummy-secret", "20260328", "us-east-1", "s3", false)
+	}
+
+	// Verify none of the unknown keys were cached.
+	cached := 0
+	signingKeyCache.Range(func(key, _ any) bool {
+		k := key.(string)
+		for i := range 100 {
+			if k == fmt.Sprintf("UNKNOWN_%d", i) {
+				cached++
+			}
+		}
+		return true
+	})
+	if cached > 0 {
+		t.Errorf("found %d unknown keys in cache, want 0", cached)
 	}
 }
 

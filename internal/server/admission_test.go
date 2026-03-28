@@ -293,6 +293,60 @@ func TestAdmissionController_NoSheddingBelowThreshold(t *testing.T) {
 	}
 }
 
+func TestAdmissionController_SheddingStartsAtThreshold(t *testing.T) {
+	// With capacity=10 and threshold=0.5, int(0.5*10) = 5.
+	// Shedding should start when occupancy reaches 5 (not 6).
+	ac := NewAdmissionController(10)
+	ac.SetShedThreshold(0.5)
+
+	// Fill exactly to threshold (5 of 10)
+	for range 5 {
+		ac.sem <- struct{}{}
+	}
+
+	// At exactly the threshold, shedding probability is:
+	// (5-5)/(10-5) = 0.0 — but since we use < (not <=), occupancy 5
+	// is now at-or-above threshold. The probability is 0%, so no
+	// shedding occurs at exactly the boundary.
+	shed := 0
+	for range 1000 {
+		if ac.shouldShed(ac.sem) {
+			shed++
+		}
+	}
+
+	// Drain
+	for range 5 {
+		<-ac.sem
+	}
+
+	// At exactly threshold, probability is 0/(10-5) = 0 — no shedding
+	if shed != 0 {
+		t.Errorf("shed %d/1000 at exactly threshold occupancy, expected 0", shed)
+	}
+
+	// Fill to threshold + 1 (6 of 10)
+	for range 6 {
+		ac.sem <- struct{}{}
+	}
+
+	shed = 0
+	for range 1000 {
+		if ac.shouldShed(ac.sem) {
+			shed++
+		}
+	}
+
+	for range 6 {
+		<-ac.sem
+	}
+
+	// Probability: (6-5)/(10-5) = 0.2 — expect ~200/1000
+	if shed < 100 || shed > 350 {
+		t.Errorf("shed %d/1000 at threshold+1 occupancy, expected ~200", shed)
+	}
+}
+
 func TestSplitAdmission_DeleteUsesWritePool(t *testing.T) {
 	ac := NewSplitAdmissionController(2, 1)
 

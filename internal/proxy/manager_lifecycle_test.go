@@ -13,6 +13,7 @@ package proxy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -182,6 +183,47 @@ func TestProcessLifecycleRules_ListExpiredObjectsError(t *testing.T) {
 	}
 	if failed != 1 {
 		t.Errorf("expected 1 failed, got %d", failed)
+	}
+}
+
+func TestProcessLifecycleRules_ZeroProgressTerminates(t *testing.T) {
+	backend := newMockBackend()
+	store := &mockStore{
+		// Return a full batch (100 objects) that all fail to delete.
+		// Without the zero-progress guard this would loop forever.
+		deleteObjectErr: errors.New("backend unreachable"),
+	}
+
+	// Build a batch of exactly 100 objects (default batch size)
+	const batchSize = 100
+	batch := make([]st.ObjectLocation, batchSize)
+	for i := range batch {
+		batch[i] = st.ObjectLocation{
+			ObjectKey:   fmt.Sprintf("tmp/%04d", i),
+			BackendName: "b1",
+			SizeBytes:   1,
+			CreatedAt:   time.Now().Add(-48 * time.Hour),
+		}
+	}
+
+	// Return the full batch on every call — the guard must break the loop.
+	store.listExpiredObjectsPages = [][]st.ObjectLocation{
+		batch,
+		batch, // second page would be fetched if the guard didn't stop
+	}
+
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
+
+	rules := []config.LifecycleRule{
+		{Prefix: "tmp/", ExpirationDays: 1},
+	}
+
+	deleted, failed := mgr.ProcessLifecycleRules(context.Background(), rules)
+	if deleted != 0 {
+		t.Errorf("expected 0 deleted, got %d", deleted)
+	}
+	if failed != batchSize {
+		t.Errorf("expected %d failed, got %d", batchSize, failed)
 	}
 }
 
