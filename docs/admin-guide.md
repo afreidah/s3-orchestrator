@@ -112,7 +112,7 @@ server:
 ```
 
 - `listen_addr` is the only required field.
-- `max_object_size` caps single-PUT uploads. Larger objects should use multipart upload (most clients do this automatically).
+- `max_object_size` caps single-PUT uploads. Larger objects should use multipart upload (most clients do this automatically). PutObject buffers the entire body in memory to support write failover across backends, so peak memory from uploads is approximately `max_object_size x max_concurrent_writes`.
 - `max_concurrent_requests` limits the number of S3 requests processed simultaneously. When the limit is reached, new requests are rejected with `503 SlowDown` and `Retry-After: 1`. Set to 2-3x `database.max_conns` for load shedding. `0` disables the limit.
 - `max_concurrent_reads` and `max_concurrent_writes` provide separate concurrency limits for reads (GET, HEAD) and writes (PUT, POST, DELETE). When both are set, they replace `max_concurrent_requests` with independent pools so write storms cannot starve reads.
 - `load_shed_threshold` enables active load shedding. When in-flight requests exceed this fraction of pool capacity (e.g. `0.8`), new requests are probabilistically rejected before the hard limit, providing smooth degradation instead of a cliff.
