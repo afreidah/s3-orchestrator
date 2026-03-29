@@ -33,6 +33,31 @@ Watch for these log messages:
 
 The `/health` endpoint continues to return `200 OK` with `"status":"degraded"` during database outages, so the service stays in load balancer rotation for reads.
 
+### PostgreSQL High Availability
+
+The orchestrator connects to PostgreSQL via a standard connection string and has no opinion about how the database is made highly available. Any PostgreSQL-compatible endpoint works, including:
+
+- **Patroni** — open-source HA with automatic failover via etcd/ZooKeeper consensus
+- **Amazon RDS Multi-AZ** / **Aurora** — managed failover with DNS endpoint
+- **Google Cloud SQL HA** — regional instances with automatic failover
+- **Neon / Supabase** — serverless PostgreSQL with built-in redundancy
+
+When the database fails over to a replica, the circuit breaker briefly opens (writes return 503), then the probe detects the new primary and recovers automatically. The failover window is typically under 30 seconds with Patroni or managed services.
+
+Writes are intentionally rejected during database outages rather than queued locally. This is a deliberate design choice: the database is the source of truth for object locations, and accepting writes without recording metadata would create orphaned objects that diverge from the metadata store. Use HA PostgreSQL to minimize the rejection window.
+
+### Replication and the data loss window
+
+Object replication is asynchronous. When a client writes an object, it is stored on a single backend and a 200 response is returned immediately. The background replication worker creates additional copies at the configured `replication.worker_interval` (default: 5 minutes).
+
+If the primary backend fails before replication completes, unreplicated objects written in the last worker interval are at risk. To minimize this window:
+
+- Set `replication.worker_interval` to a lower value (e.g., `30s`) at the cost of more backend API calls
+- Use backends with built-in durability guarantees (e.g., S3 Standard stores objects across 3+ availability zones)
+- Monitor `s3o_replication_pending` — a sustained non-zero value indicates the replicator cannot keep up
+
+Synchronous replication (write to N backends before returning 200) is not currently supported.
+
 ## Restoring PostgreSQL from Backup
 
 1. **Restore the database** using your standard PostgreSQL backup procedure (pg_dump/pg_restore, WAL replay, etc.).

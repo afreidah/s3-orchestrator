@@ -194,14 +194,17 @@ func (s *usageFlushService) doFlush(ctx context.Context) {
 // SERVICE CONSTRUCTORS
 // -------------------------------------------------------------------------
 
-func newMultipartCleanupService(manager *proxy.BackendManager, locker store.AdvisoryLocker) *lockedTickerService {
+func newMultipartCleanupService(manager *proxy.BackendManager, locker store.AdvisoryLocker, staleTimeout time.Duration) *lockedTickerService {
+	if staleTimeout <= 0 {
+		staleTimeout = 24 * time.Hour
+	}
 	return &lockedTickerService{
 		locker:   locker,
 		interval: 1 * time.Hour,
 		lockID:   store.LockMultipartCleanup,
 		name:     "Multipart cleanup",
 		work: func(ctx context.Context) {
-			manager.MultipartManager.CleanupStaleMultipartUploads(ctx, 24*time.Hour)
+			manager.MultipartManager.CleanupStaleMultipartUploads(ctx, staleTimeout)
 		},
 	}
 }

@@ -70,7 +70,19 @@ func (mc *MetricsCollector) UpdateQuotaMetrics(ctx context.Context) error {
 			telemetry.QuotaBytesAvailable.WithLabelValues(name).Set(0)
 		} else {
 			telemetry.QuotaBytesLimit.WithLabelValues(name).Set(float64(stat.BytesLimit))
-			telemetry.QuotaBytesAvailable.WithLabelValues(name).Set(float64(stat.BytesLimit - stat.BytesUsed - stat.OrphanBytes))
+			available := stat.BytesLimit - stat.BytesUsed - stat.OrphanBytes
+			telemetry.QuotaBytesAvailable.WithLabelValues(name).Set(float64(available))
+
+			// Warn when a backend crosses 80% utilization so operators
+			// can expand capacity before writes start failing with 507.
+			utilization := float64(stat.BytesUsed+stat.OrphanBytes) / float64(stat.BytesLimit)
+			if utilization >= 0.8 {
+				slog.WarnContext(ctx, "Backend approaching capacity",
+					"backend", name,
+					"utilization_pct", int(utilization*100),
+					"bytes_available", available,
+					"bytes_limit", stat.BytesLimit)
+			}
 		}
 	}
 

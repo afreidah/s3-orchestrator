@@ -33,9 +33,11 @@ type ReplicationConfig struct {
 	UnhealthyThreshold time.Duration `yaml:"unhealthy_threshold"`  // Grace period before replacing copies on circuit-broken backends (default: 10m)
 }
 
-// CleanupQueueConfig holds settings for the background orphan cleanup worker.
+// CleanupQueueConfig holds settings for the background orphan cleanup worker
+// and multipart upload housekeeping.
 type CleanupQueueConfig struct {
-	Concurrency int `yaml:"concurrency"` // Parallel cleanup deletions (default: 10)
+	Concurrency            int           `yaml:"concurrency"`              // Parallel cleanup deletions (default: 10)
+	MultipartStaleTimeout  time.Duration `yaml:"multipart_stale_timeout"`  // Abandon multipart uploads older than this (default: 24h)
 }
 
 // ReconcileConfig controls the background orphan reconciler that periodically

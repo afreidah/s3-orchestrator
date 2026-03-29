@@ -85,7 +85,7 @@ backends:
 #   # previous_keys:
 #   #   - "${OLD_ENCRYPTION_KEY}"
 
-# --- Integrity verification (disabled by default) ---
+# --- Integrity verification (disabled by default, recommended for production) ---
 # SHA-256 content hashing for data integrity. When enabled, objects are
 # checksummed on write and optionally verified on read. The background
 # scrubber periodically re-reads stored objects to detect silent corruption.
@@ -137,6 +137,7 @@ backends:
 # --- Cleanup queue (orphaned object retry) ---
 # cleanup_queue:
 #   concurrency: 10              # Parallel deletion workers (default: 10)
+#   multipart_stale_timeout: 24h # Abandon multipart uploads older than this (default: 24h)
 
 # --- Lifecycle rules (object expiration) ---
 # Prefix is required (empty prefix would match all objects). Rules with
