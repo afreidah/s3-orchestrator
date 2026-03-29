@@ -32,10 +32,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 
-	"github.com/afreidah/s3-orchestrator/internal/auth"
+	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
-	"github.com/afreidah/s3-orchestrator/internal/server"
+	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 
 	// -------------------------------------------------------------------------
@@ -605,7 +605,7 @@ func TestSpreadWriteRouting(t *testing.T) {
 		RoutingStrategy: config.RoutingSpread,
 	})
 
-	spreadSrv := &server.Server{
+	spreadSrv := &s3api.Server{
 		Manager: spreadManager,
 	}
 	spreadSrv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{{
@@ -3013,7 +3013,7 @@ func TestAuthSigV4(t *testing.T) {
 	)
 
 	// Start an ephemeral server with SigV4 auth enabled, sharing the same manager.
-	authSrv := &server.Server{
+	authSrv := &s3api.Server{
 		Manager: testManager,
 	}
 	authSrv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{

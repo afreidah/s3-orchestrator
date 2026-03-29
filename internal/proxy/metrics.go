@@ -16,9 +16,9 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/store"
-
-	"github.com/afreidah/s3-orchestrator/internal/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 )
 
 // MetricsCollector records Prometheus metrics for manager-level operations
@@ -82,6 +82,18 @@ func (mc *MetricsCollector) UpdateQuotaMetrics(ctx context.Context) error {
 					"utilization_pct", int(utilization*100),
 					"bytes_available", available,
 					"bytes_limit", stat.BytesLimit)
+				if event.Emit != nil {
+					event.Emit(event.Event{
+						Type:    event.BackendCapacityWarning,
+						Subject: name,
+						Data: map[string]any{
+							"backend":         name,
+							"utilization_pct": int(utilization * 100),
+							"bytes_available": available,
+							"bytes_limit":     stat.BytesLimit,
+						},
+					})
+				}
 			}
 		}
 	}

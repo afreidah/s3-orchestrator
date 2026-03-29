@@ -13,7 +13,7 @@ import (
 	"fmt"
 	"runtime"
 
-	"github.com/afreidah/s3-orchestrator/internal/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 )
 
 // runVersion prints the binary version, Go version, and platform to stdout.

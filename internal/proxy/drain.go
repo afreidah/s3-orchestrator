@@ -20,8 +20,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 
-	"github.com/afreidah/s3-orchestrator/internal/audit"
-	"github.com/afreidah/s3-orchestrator/internal/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 )
 
 // drainState tracks a single in-progress drain operation.

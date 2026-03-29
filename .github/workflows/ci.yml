@@ -168,15 +168,15 @@ jobs:
 
       - name: Fuzz smoke test (parallel)
         run: |
-          go test -fuzz=FuzzParseSigV4Fields -fuzztime=10s ./internal/auth/ &
-          go test -fuzz=FuzzBuildCanonicalRequest -fuzztime=10s ./internal/auth/ &
-          go test -fuzz=FuzzParsePath -fuzztime=10s ./internal/server/ &
-          go test -fuzz=FuzzDeleteObjectsXML -fuzztime=10s ./internal/server/ &
-          go test -fuzz=FuzzCompleteMultipartXML -fuzztime=10s ./internal/server/ &
-          go test -fuzz=FuzzIsValidRequestID -fuzztime=10s ./internal/server/ &
-          go test -fuzz=FuzzLoginThrottle_RemoteAddr -fuzztime=10s ./internal/server/ &
-          go test -fuzz=FuzzExtractClientIP -fuzztime=10s ./internal/server/ &
-          go test -fuzz=FuzzValidMetadataToken -fuzztime=10s ./internal/server/ &
+          go test -fuzz=FuzzParseSigV4Fields -fuzztime=10s ./internal/transport/auth/ &
+          go test -fuzz=FuzzBuildCanonicalRequest -fuzztime=10s ./internal/transport/auth/ &
+          go test -fuzz=FuzzParsePath -fuzztime=10s ./internal/transport/s3api/ &
+          go test -fuzz=FuzzDeleteObjectsXML -fuzztime=10s ./internal/transport/s3api/ &
+          go test -fuzz=FuzzCompleteMultipartXML -fuzztime=10s ./internal/transport/s3api/ &
+          go test -fuzz=FuzzIsValidRequestID -fuzztime=10s ./internal/transport/s3api/ &
+          go test -fuzz=FuzzLoginThrottle_RemoteAddr -fuzztime=10s ./internal/transport/s3api/ &
+          go test -fuzz=FuzzExtractClientIP -fuzztime=10s ./internal/transport/s3api/ &
+          go test -fuzz=FuzzValidMetadataToken -fuzztime=10s ./internal/transport/s3api/ &
           go test -fuzz=FuzzParseHeader -fuzztime=10s ./internal/encryption/ &
           go test -fuzz=FuzzCiphertextRange -fuzztime=10s ./internal/encryption/ &
           go test -fuzz=FuzzUnpackKeyData -fuzztime=10s ./internal/encryption/ &

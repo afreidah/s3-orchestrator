@@ -63,6 +63,7 @@ type Config struct {
 	Integrity       IntegrityConfig      `yaml:"integrity"`
 	Cache           CacheConfig          `yaml:"cache"`
 	Redis           *RedisConfig         `yaml:"redis"`
+	Notifications   NotificationConfig   `yaml:"notifications"`
 	RoutingStrategy RoutingStrategy      `yaml:"routing_strategy"` // "pack" (default) or "spread"
 }
 
@@ -129,6 +130,7 @@ func (c *Config) SetDefaultsAndValidate() error {
 	errs = append(errs, c.Integrity.setDefaultsAndValidate()...)
 	errs = append(errs, c.Lifecycle.setDefaultsAndValidate()...)
 	errs = append(errs, c.Cache.setDefaultsAndValidate()...)
+	errs = append(errs, c.Notifications.setDefaultsAndValidate()...)
 	if c.Redis != nil {
 		errs = append(errs, c.Redis.setDefaultsAndValidate()...)
 	}

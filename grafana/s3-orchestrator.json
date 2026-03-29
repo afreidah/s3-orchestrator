@@ -3098,7 +3098,7 @@
       "title": "Integrity Verification",
       "gridPos": {
         "x": 0,
-        "y": 158,
+        "y": 151,
         "w": 24,
         "h": 1
       },
@@ -3110,7 +3110,7 @@
       "title": "Integrity Checks",
       "gridPos": {
         "x": 0,
-        "y": 143,
+        "y": 152,
         "w": 12,
         "h": 8
       },
@@ -3153,7 +3153,7 @@
       "title": "Integrity Errors",
       "gridPos": {
         "x": 12,
-        "y": 143,
+        "y": 152,
         "w": 12,
         "h": 8
       },
@@ -3209,7 +3209,7 @@
       "title": "Redis",
       "gridPos": {
         "x": 0,
-        "y": 152,
+        "y": 160,
         "w": 24,
         "h": 1
       },
@@ -3221,7 +3221,7 @@
       "title": "Redis Fallback Active",
       "gridPos": {
         "x": 0,
-        "y": 151,
+        "y": 161,
         "w": 4,
         "h": 6
       },
@@ -3286,8 +3286,8 @@
       "title": "Redis Operations",
       "gridPos": {
         "x": 4,
-        "y": 151,
-        "w": 10,
+        "y": 161,
+        "w": 20,
         "h": 6
       },
       "datasource": {
@@ -3330,7 +3330,7 @@
       "title": "Over-Replication Cleanup",
       "gridPos": {
         "x": 0,
-        "y": 70,
+        "y": 167,
         "w": 24,
         "h": 1
       },
@@ -3342,7 +3342,7 @@
       "title": "Over-Replicated Objects",
       "gridPos": {
         "x": 0,
-        "y": 71,
+        "y": 168,
         "w": 4,
         "h": 6
       },
@@ -3403,7 +3403,7 @@
       "title": "Excess Copies Removed",
       "gridPos": {
         "x": 4,
-        "y": 71,
+        "y": 168,
         "w": 7,
         "h": 6
       },
@@ -3451,7 +3451,7 @@
       "title": "Cleanup Errors",
       "gridPos": {
         "x": 11,
-        "y": 71,
+        "y": 168,
         "w": 7,
         "h": 6
       },
@@ -3499,7 +3499,7 @@
       "title": "Cleanup Duration (p95)",
       "gridPos": {
         "x": 18,
-        "y": 71,
+        "y": 168,
         "w": 6,
         "h": 6
       },

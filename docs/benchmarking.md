@@ -32,10 +32,10 @@ a `*_bench_test.go` file next to the code under test. See existing examples:
 
 | File | What it covers |
 |------|---------------|
-| `internal/auth/auth_bench_test.go` | SigV4 verification, token auth, canonical request building |
+| `internal/transport/auth/auth_bench_test.go` | SigV4 verification, token auth, canonical request building |
 | `internal/proxy/location_cache_bench_test.go` | Cache get/set/delete, concurrent contention, eviction |
 | `internal/proxy/streaming_bench_test.go` | Raw io.Copy throughput, streamCopy end-to-end with mock backends |
-| `internal/server/helpers_bench_test.go` | Path parsing, metadata extraction, XML encoding, error responses |
+| `internal/transport/s3api/helpers_bench_test.go` | Path parsing, metadata extraction, XML encoding, error responses |
 
 ### 3. Run benchmarks again
 

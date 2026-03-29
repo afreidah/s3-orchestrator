@@ -14,6 +14,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 )
 
 // alwaysError is an error filter that treats all non-nil errors as failures.
@@ -398,5 +400,57 @@ func TestCB_StaleProbeAutoResets(t *testing.T) {
 	}
 	if cb.probeInFlight.Load() {
 		t.Error("probeInFlight should be reset after stale probe detection")
+	}
+}
+
+func TestTransition_EmitsOpenEvent(t *testing.T) {
+	var emitted []event.Event
+	event.Emit = func(ev event.Event) { emitted = append(emitted, ev) }
+	defer func() { event.Emit = nil }()
+
+	cb := newTestBreaker(2, time.Hour)
+	_ = cb.PostCheck(errTest)
+	_ = cb.PostCheck(errTest)
+
+	if len(emitted) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(emitted))
+	}
+	if emitted[0].Type != event.BackendCircuitOpened {
+		t.Errorf("event type = %q, want %q", emitted[0].Type, event.BackendCircuitOpened)
+	}
+	if emitted[0].Subject != "test" {
+		t.Errorf("event subject = %q, want test", emitted[0].Subject)
+	}
+}
+
+func TestTransition_EmitsClosedEvent(t *testing.T) {
+	var emitted []event.Event
+	event.Emit = func(ev event.Event) { emitted = append(emitted, ev) }
+	defer func() { event.Emit = nil }()
+
+	cb := newTestBreaker(1, 10*time.Millisecond)
+	_ = cb.PostCheck(errTest) // trip
+	emitted = nil             // clear the open event
+
+	time.Sleep(15 * time.Millisecond) // wait for probe eligibility
+	_ = cb.PreCheck()                 // enter half-open
+	_ = cb.PostCheck(nil)             // probe succeeds → closed
+
+	if len(emitted) != 1 {
+		t.Fatalf("expected 1 closed event, got %d", len(emitted))
+	}
+	if emitted[0].Type != event.BackendCircuitClosed {
+		t.Errorf("event type = %q, want %q", emitted[0].Type, event.BackendCircuitClosed)
+	}
+}
+
+func TestTransition_NoEmitWhenHookNil(t *testing.T) {
+	event.Emit = nil
+
+	cb := newTestBreaker(1, time.Hour)
+	_ = cb.PostCheck(errTest)
+
+	if cb.State() != StateOpen {
+		t.Errorf("state = %s, want open", cb.State())
 	}
 }

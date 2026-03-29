@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/afreidah/s3-orchestrator/internal/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 )
 
 // -------------------------------------------------------------------------

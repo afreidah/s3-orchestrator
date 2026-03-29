@@ -35,10 +35,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
-	"github.com/afreidah/s3-orchestrator/internal/auth"
+	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/httputil"
-	"github.com/afreidah/s3-orchestrator/internal/server"
+	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
+	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 )
 
 // -------------------------------------------------------------------------
@@ -147,7 +147,7 @@ func TestTLS(t *testing.T) {
 			t.Fatalf("NewCertReloader: %v", err)
 		}
 
-		srv := &server.Server{
+		srv := &s3api.Server{
 			Manager: testManager,
 		}
 		srv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{{
@@ -348,7 +348,7 @@ func rewriteServerCert(t *testing.T, certs *tlsTestCerts) {
 func startTLSProxy(t *testing.T, certFile, keyFile, clientCAFile string) string {
 	t.Helper()
 
-	srv := &server.Server{
+	srv := &s3api.Server{
 		Manager: testManager,
 	}
 	srv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{{

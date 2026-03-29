@@ -22,7 +22,7 @@ import (
 	"os"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 )
 
 // -------------------------------------------------------------------------

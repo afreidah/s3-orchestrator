@@ -1088,23 +1088,40 @@ cmd/s3-orchestrator/
   validate.go                Validate subcommand (config check)
   version.go                 Version subcommand (build info)
 internal/
-  admin/handler.go           Admin API handler (status, cleanup queue, log level, etc.)
-  audit/audit.go             Request ID generation, context propagation, audit logger
-  auth/auth.go               BucketRegistry, SigV4 verification, legacy token auth
-  bufpool/bufpool.go         Shared sync.Pool for streaming buffer reuse (io.CopyBuffer)
+  transport/                 HTTP interface layer
+    s3api/
+      server.go              HTTP router, bucket resolution, key prefixing, metrics
+      buckets.go             HeadBucket, GetBucketLocation, ListBuckets stubs
+      objects.go             PUT, GET, HEAD, DELETE, COPY, DeleteObjects handlers
+      list.go                ListObjectsV1 and ListObjectsV2 handlers (XML response)
+      multipart.go           Multipart upload handlers
+      helpers.go             Path parsing, S3 XML error responses
+      ratelimit.go           Per-IP token bucket rate limiter
+      admission.go           Request admission control with load shedding
+    admin/handler.go         Admin API handler (status, cleanup queue, log level, etc.)
+    auth/auth.go             BucketRegistry, SigV4 verification, legacy token auth
+    ui/
+      handler.go             Web UI HTTP handler, session auth + JSON APIs
+      templates.go           Embedded templates + formatting helpers
+      templates/             Dashboard and login HTML templates
+      static/                CSS, JS (directory tree, log viewer)
+    httputil/
+      clientip.go            Client IP extraction with X-Forwarded-For + trusted proxies
+      loginthrottle.go       Per-IP brute-force protection with lockout
+      certreloader.go        TLS certificate hot-reload with expiry warning
+  observe/                   Observability layer
+    audit/audit.go           Request ID generation, context propagation, audit logger
+    telemetry/
+      metrics.go             Prometheus metric definitions
+      tracing.go             OpenTelemetry tracer setup
+      tracehandler.go        slog handler that injects trace_id/span_id from OTel context
+      logbuffer.go           In-memory ring buffer + slog TeeHandler
+    event/event.go           Notification event type constants and Emit hook
+  util/                      Generic utilities
+    bufpool/bufpool.go       Shared sync.Pool for streaming buffer reuse (io.CopyBuffer)
+    syncutil/                AtomicConfig[T] and TTLCache[K,V]
+    workerpool/              Generic bounded-concurrency Run[T] and Collect[T,R]
   config/                    YAML config loader split by domain (server, database, encryption, etc.)
-  httputil/
-    clientip.go              Client IP extraction with X-Forwarded-For + trusted proxies
-    loginthrottle.go         Per-IP brute-force protection with lockout
-    certreloader.go          TLS certificate hot-reload with expiry warning
-  server/
-    server.go                HTTP router, bucket resolution, key prefixing, metrics
-    buckets.go               HeadBucket, GetBucketLocation, ListBuckets stubs
-    objects.go               PUT, GET, HEAD, DELETE, COPY, DeleteObjects handlers
-    list.go                  ListObjectsV1 and ListObjectsV2 handlers (XML response)
-    multipart.go             Multipart upload handlers
-    helpers.go               Path parsing, S3 XML error responses
-    ratelimit.go             Per-IP token bucket rate limiter
   breaker/
     breaker.go               Generic three-state circuit breaker state machine
   backend/
@@ -1126,8 +1143,10 @@ internal/
     redis.go                 Redis shared counter backend with circuit breaker fallback
     tracker.go               Usage limit enforcement, baseline management, flush
   proxy/
-    manager.go               Composition root, config accessors, Ops implementation
-    objects.go               Object CRUD with read failover, broadcast, batch delete
+    manager.go               Composition root, config accessors
+    objects.go               ObjectManager type, constructor, shared helpers
+    objects_read.go          Read failover, broadcast reads, GetObject, HeadObject, ListObjects
+    objects_write.go         PutObject, CopyObject, DeleteObject, DeleteObjects
     multipart.go             Multipart upload lifecycle
     drain.go                 Backend drain and remove operations
     core.go                  Shared infrastructure (timeout, admission, routing)
@@ -1137,27 +1156,20 @@ internal/
     metrics.go               Prometheus metric recording + gauge refresh
     aggregator.go            Dashboard data aggregation + lazy directory listing
   worker/
-    ops.go                   Ops interface — worker dependency contract
+    ops.go                   Role interfaces (StoreAccess, BackendAccess, AdmissionControl, DataMover)
     rebalancer.go            Object rebalancing across backends
     replicator.go            Cross-backend object replication
     overreplication.go       Over-replication detection and excess copy cleanup
     cleanup.go               Cleanup queue retry worker
+    scrubber.go              Background integrity verification
     reconciler.go            Orphan discovery and import
-  ui/
-    handler.go               Web UI HTTP handler, session auth + JSON APIs
-    templates.go             Embedded templates + formatting helpers
-    templates/dashboard.html Dashboard HTML template
-    templates/login.html     Login page HTML template
-    static/style.css         Dashboard stylesheet
-    static/tree.js           Lazy-loaded directory tree, file management, sync/rebalance
-    static/logs.js           Log viewer with level filtering, search, auto-refresh
+  notify/
+    notifier.go              Webhook notification delivery (outbox pattern)
+  encryption/                Envelope encryption (AES-256-GCM, key providers)
+  cache/                     Object data LRU cache with TTL
+  lifecycle/                 Background service manager
   testutil/
-    mock_store.go            Shared MetadataStore mock for server/ui tests
-  telemetry/
-    metrics.go               Prometheus metric definitions
-    tracing.go               OpenTelemetry tracer setup
-    tracehandler.go          slog handler that injects trace_id/span_id from OTel context
-    logbuffer.go             In-memory ring buffer + slog TeeHandler
+    mock_store.go            Shared MetadataStore mock for integration tests
 grafana/
   s3-orchestrator.json       Grafana dashboard (all Prometheus metrics)
 sqlc.yaml                    sqlc configuration

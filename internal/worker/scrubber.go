@@ -27,12 +27,12 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/afreidah/s3-orchestrator/internal/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/store"
-	"github.com/afreidah/s3-orchestrator/internal/syncutil"
-	"github.com/afreidah/s3-orchestrator/internal/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 )
 
 // Scrubber periodically verifies stored object integrity by reading objects
@@ -40,14 +40,14 @@ import (
 // stored content hash. Also supports backfilling hashes for objects that
 // were written before integrity was enabled.
 type Scrubber struct {
-	ops       Ops
+	deps      ScrubberDeps
 	encryptor *encryption.Encryptor
 	cfg       syncutil.AtomicConfig[config.IntegrityConfig]
 }
 
-// NewScrubber creates a Scrubber with the given Ops and optional encryptor.
-func NewScrubber(ops Ops, encryptor *encryption.Encryptor) *Scrubber {
-	return &Scrubber{ops: ops, encryptor: encryptor}
+// NewScrubber creates a Scrubber with the given dependencies and optional encryptor.
+func NewScrubber(deps ScrubberDeps, encryptor *encryption.Encryptor) *Scrubber {
+	return &Scrubber{deps: deps, encryptor: encryptor}
 }
 
 // SetConfig atomically stores the integrity configuration.
@@ -72,7 +72,7 @@ func (s *Scrubber) Scrub(ctx context.Context, batchSize int) (checked, failed in
 	ctx, span := telemetry.StartSpan(ctx, "Scrub")
 	defer span.End()
 
-	locs, err := s.ops.Store().GetRandomHashedObjects(ctx, batchSize)
+	locs, err := s.deps.Store().GetRandomHashedObjects(ctx, batchSize)
 	if err != nil {
 		slog.ErrorContext(ctx, "Scrubber: failed to fetch objects", "error", err)
 		return 0, 0
@@ -110,13 +110,13 @@ func (s *Scrubber) verifyObject(ctx context.Context, loc *store.ObjectLocation) 
 	}
 
 	if actual != loc.ContentHash {
-		be, _ := s.ops.GetBackend(loc.BackendName)
+		be, _ := s.deps.GetBackend(loc.BackendName)
 		slog.ErrorContext(ctx, "Scrubber: integrity check failed",
 			"key", loc.ObjectKey, "backend", loc.BackendName,
 			"expected_hash", loc.ContentHash, "actual_hash", actual)
 		telemetry.IntegrityErrorsTotal.WithLabelValues("scrub").Inc()
 		if be != nil {
-			s.ops.DeleteOrEnqueue(ctx, be, loc.BackendName, loc.ObjectKey,
+			s.deps.DeleteOrEnqueue(ctx, be, loc.BackendName, loc.ObjectKey,
 				"integrity_scrub_failed", loc.SizeBytes)
 		}
 		return false, nil
@@ -139,7 +139,7 @@ func (s *Scrubber) Backfill(ctx context.Context, batchSize, offset int) (process
 	ctx, span := telemetry.StartSpan(ctx, "Backfill")
 	defer span.End()
 
-	locs, err := s.ops.Store().GetObjectsWithoutHash(ctx, batchSize, offset)
+	locs, err := s.deps.Store().GetObjectsWithoutHash(ctx, batchSize, offset)
 	if err != nil {
 		slog.ErrorContext(ctx, "Backfill: failed to fetch objects", "error", err)
 		return 0, 0
@@ -164,7 +164,7 @@ func (s *Scrubber) Backfill(ctx context.Context, batchSize, offset int) (process
 			continue
 		}
 
-		if err := s.ops.Store().UpdateContentHash(ctx, loc.ObjectKey, loc.BackendName, hash); err != nil {
+		if err := s.deps.Store().UpdateContentHash(ctx, loc.ObjectKey, loc.BackendName, hash); err != nil {
 			slog.WarnContext(ctx, "Backfill: failed to store hash",
 				"key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
 			continue
@@ -191,23 +191,23 @@ func (s *Scrubber) Backfill(ctx context.Context, batchSize, offset int) (process
 // returns the SHA-256 hex digest of the plaintext. Records API call and
 // egress against the backend's usage quota.
 func (s *Scrubber) readAndHash(ctx context.Context, loc *store.ObjectLocation) (string, error) {
-	be, err := s.ops.GetBackend(loc.BackendName)
+	be, err := s.deps.GetBackend(loc.BackendName)
 	if err != nil {
 		return "", err
 	}
 
-	bctx, bcancel := s.ops.WithTimeout(ctx)
+	bctx, bcancel := s.deps.WithTimeout(ctx)
 	defer bcancel()
 
 	result, err := be.GetObject(bctx, loc.ObjectKey, "")
 	if err != nil {
-		s.ops.Usage().Record(loc.BackendName, 1, 0, 0)
+		s.deps.Usage().Record(loc.BackendName, 1, 0, 0)
 		return "", fmt.Errorf("get object: %w", err)
 	}
 	defer result.Body.Close()
 
 	// Record API call + egress
-	s.ops.Usage().Record(loc.BackendName, 1, result.Size, 0)
+	s.deps.Usage().Record(loc.BackendName, 1, result.Size, 0)
 
 	// Decrypt if the object is encrypted — hash is computed on plaintext
 	var reader io.Reader = result.Body

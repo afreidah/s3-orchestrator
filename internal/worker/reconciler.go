@@ -16,8 +16,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/afreidah/s3-orchestrator/internal/audit"
-	"github.com/afreidah/s3-orchestrator/internal/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 )
 
 // BackendSyncer is the interface the reconciler needs from the proxy layer.

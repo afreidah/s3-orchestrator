@@ -21,6 +21,6 @@ func TestMain(m *testing.M) {
 		// TTLCache eviction goroutines are intentional background work
 		// cleaned up by Close() in production. Many test helpers create
 		// managers without t.Cleanup access.
-		goleak.IgnoreTopFunction("github.com/afreidah/s3-orchestrator/internal/syncutil.(*TTLCache[...]).evictLoop"),
+		goleak.IgnoreTopFunction("github.com/afreidah/s3-orchestrator/internal/util/syncutil.(*TTLCache[...]).evictLoop"),
 	)
 }

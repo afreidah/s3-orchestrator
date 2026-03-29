@@ -23,10 +23,11 @@ import (
 	objcache "github.com/afreidah/s3-orchestrator/internal/cache"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 
-	"github.com/afreidah/s3-orchestrator/internal/audit"
-	"github.com/afreidah/s3-orchestrator/internal/bufpool"
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/util/bufpool"
+	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
-	"github.com/afreidah/s3-orchestrator/internal/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"go.opentelemetry.io/otel/codes"
 )
 
@@ -373,6 +374,22 @@ func (mp *MultipartManager) CompleteMultipartUpload(ctx context.Context, uploadI
 		slog.Int64("total_size", totalPlaintextSize),
 		slog.Int("parts_count", len(parts)),
 	)
+	if event.Emit != nil {
+		bucket, userKey := splitInternalKey(mu.ObjectKey)
+		event.Emit(event.Event{
+			Type:    event.ObjectCreatedCompleteMultipartUpload,
+			Subject: userKey,
+			Data: map[string]any{
+				"bucket":      bucket,
+				"key":         userKey,
+				"backend":     mu.BackendName,
+				"size":        totalPlaintextSize,
+				"parts_count": len(parts),
+				"upload_id":   uploadID,
+				"request_id":  audit.RequestID(ctx),
+			},
+		})
+	}
 	if mp.objectCache != nil {
 		mp.objectCache.Invalidate(mu.ObjectKey)
 	}

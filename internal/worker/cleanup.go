@@ -15,21 +15,21 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/afreidah/s3-orchestrator/internal/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/store"
-	"github.com/afreidah/s3-orchestrator/internal/telemetry"
-	"github.com/afreidah/s3-orchestrator/internal/workerpool"
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/util/workerpool"
 )
 
 // CleanupWorker processes the retry queue for failed object deletions.
 type CleanupWorker struct {
-	ops         Ops
+	deps        CleanupDeps
 	concurrency int
 }
 
 // NewCleanupWorker creates a CleanupWorker with explicit dependencies.
-func NewCleanupWorker(ops Ops, concurrency int) *CleanupWorker {
-	return &CleanupWorker{ops: ops, concurrency: concurrency}
+func NewCleanupWorker(deps CleanupDeps, concurrency int) *CleanupWorker {
+	return &CleanupWorker{deps: deps, concurrency: concurrency}
 }
 
 const maxCleanupAttempts = 10
@@ -51,7 +51,7 @@ func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) (processed, fai
 	)
 	defer span.End()
 
-	st := w.ops.Store()
+	st := w.deps.Store()
 	items, err := st.GetPendingCleanups(ctx, 50)
 	if err != nil {
 		slog.ErrorContext(ctx, "Failed to fetch pending cleanups", "error", err)
@@ -61,12 +61,12 @@ func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) (processed, fai
 	var processedCount, failedCount atomic.Int32
 
 	workerpool.Run(ctx, w.concurrency, items, func(ctx context.Context, item store.CleanupItem) {
-		if !w.ops.AcquireAdmission(ctx) {
+		if !w.deps.AcquireAdmission(ctx) {
 			return
 		}
-		defer w.ops.ReleaseAdmission()
+		defer w.deps.ReleaseAdmission()
 
-		be, err := w.ops.GetBackend(item.BackendName)
+		be, err := w.deps.GetBackend(item.BackendName)
 		if err != nil {
 			slog.WarnContext(ctx, "Cleanup queue: backend not found, removing item",
 				"backend", item.BackendName, "key", item.ObjectKey)
@@ -78,8 +78,8 @@ func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) (processed, fai
 			return
 		}
 
-		delErr := w.ops.DeleteWithTimeout(ctx, be, item.ObjectKey)
-		w.ops.Usage().Record(item.BackendName, 1, 0, 0)
+		delErr := w.deps.DeleteWithTimeout(ctx, be, item.ObjectKey)
+		w.deps.Usage().Record(item.BackendName, 1, 0, 0)
 
 		if delErr == nil {
 			if err := st.CompleteCleanupItem(ctx, item.ID); err != nil {

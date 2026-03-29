@@ -25,11 +25,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
-	"github.com/afreidah/s3-orchestrator/internal/auth"
+	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	objcache "github.com/afreidah/s3-orchestrator/internal/cache"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
-	"github.com/afreidah/s3-orchestrator/internal/server"
+	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 )
 
@@ -72,7 +72,7 @@ func setupCacheEnv(t *testing.T) *cacheTestEnv {
 		ObjectCache:     mc,
 	})
 
-	srv := &server.Server{Manager: mgr}
+	srv := &s3api.Server{Manager: mgr}
 	srv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{
 		{
 			Name: virtualBucket,

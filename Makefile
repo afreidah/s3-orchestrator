@@ -15,7 +15,7 @@ FULL_TAG   := $(REGISTRY)/$(IMAGE):$(VERSION)
 PLATFORMS  := linux/amd64,linux/arm64
 
 # --- Go build flags ---
-GO_LDFLAGS := -s -w -X github.com/afreidah/s3-orchestrator/internal/telemetry.Version=$(VERSION)
+GO_LDFLAGS := -s -w -X github.com/afreidah/s3-orchestrator/internal/observe/telemetry.Version=$(VERSION)
 
 
 # -------------------------------------------------------------------------
@@ -313,7 +313,12 @@ nomad-demo: ## Run the s3-orchestrator in Nomad dev mode (requires docker, nomad
 WEB_IMAGE  := $(REGISTRY)/s3-orchestrator-web
 WEB_TAG    ?= $(VERSION)
 
-GODOC_PKGS := admin audit auth backend breaker config counter encryption httputil lifecycle proxy server store telemetry ui worker
+# Format: path:name (name defaults to path when no colon is present)
+GODOC_PKGS := \
+	proxy store backend config counter encryption lifecycle breaker worker notify cache \
+	transport/s3api:s3api transport/admin:admin transport/ui:ui transport/auth:auth transport/httputil:httputil \
+	observe/telemetry:telemetry observe/audit:audit observe/event:event \
+	util/bufpool:bufpool util/syncutil:syncutil util/workerpool:workerpool
 
 web-tools: ## Install Hugo and gomarkdoc for local website development
 	go install github.com/gohugoio/hugo@latest
@@ -321,11 +326,13 @@ web-tools: ## Install Hugo and gomarkdoc for local website development
 
 web-godoc: ## Generate Go API reference markdown for the website
 	@mkdir -p web/content/godoc
-	@for pkg in $(GODOC_PKGS); do \
+	@for spec in $(GODOC_PKGS); do \
+		pkg=$${spec%%:*}; \
+		name=$${spec##*:}; \
 		echo "  godoc: internal/$$pkg"; \
-		printf -- '---\ntitle: "%s"\n---\n\n' "$$pkg" > web/content/godoc/$$pkg.md; \
-		gomarkdoc ./internal/$$pkg >> web/content/godoc/$$pkg.md; \
-		sed -i '/^# '"$$pkg"'$$/d' web/content/godoc/$$pkg.md; \
+		printf -- '---\ntitle: "%s"\n---\n\n' "$$name" > web/content/godoc/$$name.md; \
+		gomarkdoc ./internal/$$pkg >> web/content/godoc/$$name.md; \
+		sed -i '/^# '"$$name"'$$/d' web/content/godoc/$$name.md; \
 	done
 
 web-serve: web-godoc ## Serve the project website locally

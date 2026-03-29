@@ -58,6 +58,17 @@ type MultipartUpload struct {
 	Metadata    []byte
 }
 
+type NotificationOutbox struct {
+	ID          int64
+	EventType   string
+	Payload     []byte
+	EndpointUrl string
+	CreatedAt   pgtype.Timestamptz
+	NextRetry   pgtype.Timestamptz
+	Attempts    int32
+	LastError   *string
+}
+
 type ObjectLocation struct {
 	ObjectKey     string
 	BackendName   string

@@ -7,6 +7,25 @@
 # coverage reports.
 # -------------------------------------------------------------------------------
 
+coverage:
+  status:
+    project:
+      default:
+        target: auto
+    patch:
+      default:
+        target: auto
+
+flags:
+  unit:
+    paths:
+      - "internal/"
+    carryforward: true
+  integration:
+    paths:
+      - "internal/"
+    carryforward: true
+
 ignore:
   - "cmd/"                            # process entry points, not unit-testable
   - "internal/testutil/"              # shared test mocks

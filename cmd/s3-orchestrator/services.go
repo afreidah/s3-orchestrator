@@ -17,10 +17,10 @@ import (
 	"math/rand/v2"
 	"time"
 
-	"github.com/afreidah/s3-orchestrator/internal/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 
 	"github.com/afreidah/s3-orchestrator/internal/store"
-	"github.com/afreidah/s3-orchestrator/internal/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 
 	// -------------------------------------------------------------------------
 	// LOCKED TICKER SERVICE

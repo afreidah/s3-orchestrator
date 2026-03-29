@@ -110,6 +110,17 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
     '        TEXT last_error',
     '    }',
     '',
+    '    notification_outbox {',
+    '        BIGSERIAL id PK',
+    '        TEXT event_type',
+    '        JSONB payload',
+    '        TEXT endpoint_url',
+    '        TIMESTAMPTZ created_at',
+    '        TIMESTAMPTZ next_retry',
+    '        INT attempts',
+    '        TEXT last_error',
+    '    }',
+    '',
     '    backend_quotas ||--o{ object_locations : "tracks objects"',
     '    backend_quotas ||--o{ multipart_uploads : "tracks uploads"',
     '    backend_quotas ||--o{ backend_usage : "monthly usage"',
@@ -226,6 +237,23 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
         '<p>Used by: enqueueCleanup() at all failure sites (PutObject, DeleteObject, multipart ops, <a href="../background-services/">rebalancer</a>, replicator), <a href="../background-services/">cleanupQueueService</a> background worker (runs every 1 min).</p>' +
         '<p class="ac-metric">Key queries: EnqueueCleanup, GetPendingCleanups, UpdateCleanupRetry, CountPendingCleanups</p>' +
         '<p class="ac-metric">Metrics: cleanup_queue_enqueued_total, cleanup_queue_processed_total, cleanup_queue_depth</p>'
+    },
+    notification_outbox: {
+      title: 'notification_outbox',
+      badge: 'usage', badgeText: 'notifications',
+      body: '<p>Durable outbox queue for webhook event delivery. Events are inserted synchronously when state changes occur and drained asynchronously by a background worker that POSTs CloudEvents JSON to configured endpoints. Supports exponential backoff retries.</p>' +
+        '<table class="ac-cols"><tr><th>Column</th><th>Type</th><th>Notes</th></tr>' +
+        '<tr><td class="pk">id</td><td>BIGSERIAL</td><td>PRIMARY KEY (auto-increment)</td></tr>' +
+        '<tr><td>event_type</td><td>TEXT</td><td>CloudEvents type (e.g. s3:ObjectCreated:Put)</td></tr>' +
+        '<tr><td>payload</td><td>JSONB</td><td>Full CloudEvents JSON envelope</td></tr>' +
+        '<tr><td>endpoint_url</td><td>TEXT</td><td>Webhook destination URL</td></tr>' +
+        '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>Enqueue time</td></tr>' +
+        '<tr><td>next_retry</td><td>TIMESTAMPTZ</td><td>Earliest delivery attempt time</td></tr>' +
+        '<tr><td>attempts</td><td>INT</td><td>Delivery attempt count (max 10)</td></tr>' +
+        '<tr><td>last_error</td><td>TEXT</td><td>Most recent delivery error</td></tr></table>' +
+        '<p class="ac-idx"><b>Indexes:</b> PK on id &bull; idx_notification_outbox_pending (next_retry) WHERE attempts &lt; 10 (partial index)</p>' +
+        '<p>Used by: <a href="../../guides/event-notifications/">event notifications</a> &mdash; emit() inserts rows, drainOnce() processes and delivers them via HTTP POST with optional HMAC signing.</p>' +
+        '<p class="ac-metric">Metrics: notification_sent_total, notification_failed_total, notification_dropped_total, notification_queue_depth</p>'
     }
   };
 
@@ -274,7 +302,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
       // Mermaid ER diagram entity IDs follow the pattern: entity-TABLE_NAME-N
       // or just the table name directly. Try to extract the table name.
       var tableName = null;
-      var tableNames = ['backend_quotas', 'object_locations', 'multipart_uploads', 'multipart_parts', 'backend_usage', 'cleanup_queue'];
+      var tableNames = ['backend_quotas', 'object_locations', 'multipart_uploads', 'multipart_parts', 'backend_usage', 'cleanup_queue', 'notification_outbox'];
       for (var i = 0; i < tableNames.length; i++) {
         if (gId.indexOf(tableNames[i]) !== -1) {
           tableName = tableNames[i];
@@ -317,6 +345,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
 | **multipart_parts** | Individual parts within a multipart upload | `(upload_id, part_number)` |
 | **backend_usage** | Monthly API/bandwidth counters per backend | `(backend_name, period)` |
 | **cleanup_queue** | Retry queue for failed orphan deletions | `id` (auto-increment) |
+| **notification_outbox** | Durable webhook event delivery queue | `id` (auto-increment) |
 
 ### Schema Migrations
 
@@ -327,3 +356,5 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
 | `00003_add_encryption` | Add encryption columns to `object_locations` and `multipart_parts` |
 | `00004_add_orphan_bytes` | Add `orphan_bytes` to `backend_quotas` and `size_bytes` to `cleanup_queue` |
 | `00005_add_content_hash` | Add `content_hash` to `object_locations` for integrity verification |
+| `00006_add_indexes_and_tablesample` | Performance indexes on `multipart_uploads(backend_name)` and `object_locations(object_key, created_at)` |
+| `00007_notification_outbox` | Add `notification_outbox` table for durable webhook event delivery |

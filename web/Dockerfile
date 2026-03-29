@@ -6,10 +6,17 @@ COPY cmd/ cmd/
 COPY internal/ internal/
 RUN go install github.com/princjef/gomarkdoc/cmd/gomarkdoc@latest
 RUN mkdir -p /godoc && \
-    for pkg in admin audit auth backend breaker config counter encryption httputil lifecycle proxy server store telemetry ui worker; do \
-        printf -- '---\ntitle: "%s"\n---\n\n' "$pkg" > /godoc/$pkg.md && \
-        gomarkdoc ./internal/$pkg >> /godoc/$pkg.md && \
-        sed -i '/^# '"$pkg"'$/d' /godoc/$pkg.md; \
+    for spec in \
+        proxy store backend config counter encryption lifecycle breaker worker notify cache \
+        transport/s3api:s3api transport/admin:admin transport/ui:ui transport/auth:auth transport/httputil:httputil \
+        observe/telemetry:telemetry observe/audit:audit observe/event:event \
+        util/bufpool:bufpool util/syncutil:syncutil util/workerpool:workerpool; \
+    do \
+        pkg=${spec%%:*}; \
+        name=${spec##*:}; \
+        printf -- '---\ntitle: "%s"\n---\n\n' "$name" > /godoc/$name.md && \
+        gomarkdoc ./internal/$pkg >> /godoc/$name.md && \
+        sed -i '/^# '"$name"'$/d' /godoc/$name.md; \
     done
 
 FROM --platform=$BUILDPLATFORM hugomods/hugo:latest AS build

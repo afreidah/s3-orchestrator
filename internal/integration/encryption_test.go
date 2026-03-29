@@ -30,12 +30,12 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
-	"github.com/afreidah/s3-orchestrator/internal/admin"
-	"github.com/afreidah/s3-orchestrator/internal/auth"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
+	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
-	"github.com/afreidah/s3-orchestrator/internal/server"
+	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 )
 
@@ -90,7 +90,7 @@ func setupEncryptionEnv(t *testing.T) *encryptionTestEnv {
 	})
 
 	// Start proxy server
-	srv := &server.Server{Manager: mgr}
+	srv := &s3api.Server{Manager: mgr}
 	srv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{
 		{
 			Name: virtualBucket,

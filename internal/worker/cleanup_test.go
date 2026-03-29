@@ -12,7 +12,7 @@ import (
 
 func TestProcessCleanupQueue_DeleteSuccess(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	ops := NewMockOps(ctrl)
+	ops := NewMockCleanupDeps(ctrl)
 
 	st := store.CleanupItem{ID: 1, BackendName: "b1", ObjectKey: "orphan.txt", SizeBytes: 100}
 	ms := &mockMetadataStore{pendingCleanups: []store.CleanupItem{st}}
@@ -37,7 +37,7 @@ func TestProcessCleanupQueue_DeleteSuccess(t *testing.T) {
 
 func TestProcessCleanupQueue_DeleteFails_Retries(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	ops := NewMockOps(ctrl)
+	ops := NewMockCleanupDeps(ctrl)
 
 	st := store.CleanupItem{ID: 2, BackendName: "b1", ObjectKey: "stuck.txt", Attempts: 3}
 	ms := &mockMetadataStore{pendingCleanups: []store.CleanupItem{st}}
@@ -59,7 +59,7 @@ func TestProcessCleanupQueue_DeleteFails_Retries(t *testing.T) {
 
 func TestProcessCleanupQueue_AdmissionBlocked(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	ops := NewMockOps(ctrl)
+	ops := NewMockCleanupDeps(ctrl)
 
 	st := store.CleanupItem{ID: 1, BackendName: "b1", ObjectKey: "orphan.txt"}
 	ms := &mockMetadataStore{pendingCleanups: []store.CleanupItem{st}}
@@ -77,7 +77,7 @@ func TestProcessCleanupQueue_AdmissionBlocked(t *testing.T) {
 
 func TestProcessCleanupQueue_BackendNotFound(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	ops := NewMockOps(ctrl)
+	ops := NewMockCleanupDeps(ctrl)
 
 	st := store.CleanupItem{ID: 1, BackendName: "gone", ObjectKey: "orphan.txt"}
 	ms := &mockMetadataStore{pendingCleanups: []store.CleanupItem{st}}
