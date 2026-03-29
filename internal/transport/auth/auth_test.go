@@ -778,3 +778,76 @@ func TestPresigned_HeaderAndPresignedCoexist(t *testing.T) {
 		t.Errorf("presigned auth bucket = %q, want %q", bucket, "bucket-b")
 	}
 }
+
+// TestPresigned_OverflowExpiry verifies that an expiry value large enough to
+// overflow time.Duration is rejected before the multiplication.
+func TestPresigned_OverflowExpiry(t *testing.T) {
+	err := verifyPresignedSigV4(
+		&http.Request{URL: &url.URL{}, Host: "localhost"},
+		"AKID", "SECRET",
+		"AKID/20260329/us-east-1/s3/aws4_request",
+		"host",
+		"fakesig",
+		time.Now().UTC().Format("20060102T150405Z"),
+		"9999999999999", // would overflow time.Duration
+		true,
+	)
+	if err == nil {
+		t.Error("huge expiry should be rejected")
+	}
+}
+
+// TestSigV4_CredentialDateMismatch verifies that a request where the
+// credential scope date differs from X-Amz-Date is rejected.
+func TestSigV4_CredentialDateMismatch(t *testing.T) {
+	now := time.Now().UTC()
+	amzDate := now.Format("20060102T150405Z")
+	wrongDate := now.AddDate(0, 0, -1).Format("20060102") // yesterday
+
+	err := verifySigV4Parsed(
+		&http.Request{
+			Method: "GET",
+			URL:    &url.URL{Path: "/"},
+			Host:   "localhost",
+			Header: http.Header{
+				"X-Amz-Date": {amzDate},
+				"Host":       {"localhost"},
+			},
+		},
+		"AKID", "SECRET",
+		"AKID/"+wrongDate+"/us-east-1/s3/aws4_request",
+		"host",
+		"fakesig",
+		true,
+	)
+	if err == nil {
+		t.Error("credential date mismatch should be rejected")
+	}
+	if !strings.Contains(err.Error(), "credential date does not match") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// TestPresigned_CredentialDateMismatch verifies the same check for presigned URLs.
+func TestPresigned_CredentialDateMismatch(t *testing.T) {
+	now := time.Now().UTC()
+	amzDate := now.Format("20060102T150405Z")
+	wrongDate := now.AddDate(0, 0, -1).Format("20060102")
+
+	err := verifyPresignedSigV4(
+		&http.Request{URL: &url.URL{}, Host: "localhost"},
+		"AKID", "SECRET",
+		"AKID/"+wrongDate+"/us-east-1/s3/aws4_request",
+		"host",
+		"fakesig",
+		amzDate,
+		"300",
+		true,
+	)
+	if err == nil {
+		t.Error("presigned credential date mismatch should be rejected")
+	}
+	if !strings.Contains(err.Error(), "credential date does not match") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}

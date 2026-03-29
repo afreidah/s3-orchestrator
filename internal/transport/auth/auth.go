@@ -265,6 +265,12 @@ func verifySigV4Parsed(r *http.Request, accessKeyID, secretAccessKey, credential
 		return fmt.Errorf("request timestamp too skewed (%s)", skew.Truncate(time.Second))
 	}
 
+	// The date in the credential scope must match the date in X-Amz-Date
+	// to prevent replaying a signing key from a different day.
+	if amzDate[:8] != dateStamp {
+		return fmt.Errorf("credential date does not match X-Amz-Date")
+	}
+
 	credentialScope := dateStamp + "/" + region + "/" + service + "/aws4_request"
 	stringToSign := "AWS4-HMAC-SHA256\n" + amzDate + "\n" + credentialScope + "\n" + hashSHA256([]byte(canonicalRequest))
 
@@ -351,14 +357,20 @@ func verifyPresignedSigV4(r *http.Request, accessKeyID, secretAccessKey, credent
 		return fmt.Errorf("malformed X-Amz-Date: %w", err)
 	}
 
+	if amzDate[:8] != dateStamp {
+		return fmt.Errorf("credential date does not match X-Amz-Date")
+	}
+
 	expirySecs, err := strconv.ParseInt(expiresStr, 10, 64)
 	if err != nil || expirySecs <= 0 {
 		return fmt.Errorf("invalid X-Amz-Expires value")
 	}
-	expiryDuration := time.Duration(expirySecs) * time.Second
-	if expiryDuration > presignedMaxExpiry {
+	// Validate against the 7-day maximum before converting to
+	// time.Duration to prevent integer overflow on large values.
+	if expirySecs > int64(presignedMaxExpiry.Seconds()) {
 		return fmt.Errorf("X-Amz-Expires exceeds maximum (%s)", presignedMaxExpiry)
 	}
+	expiryDuration := time.Duration(expirySecs) * time.Second
 	if time.Now().After(reqTime.Add(expiryDuration)) {
 		return fmt.Errorf("presigned URL has expired")
 	}

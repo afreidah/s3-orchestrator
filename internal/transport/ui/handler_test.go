@@ -1305,6 +1305,18 @@ func TestTreeAPI_WithMaxKeys(t *testing.T) {
 	}
 }
 
+func TestTreeAPI_InvalidBucketPrefix(t *testing.T) {
+	h, mux := newTestHandler(t)
+
+	req := authedRequest(t, h, mux, http.MethodGet, "/ui/api/tree?prefix=no-such-bucket/dir", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Result().StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Result().StatusCode)
+	}
+}
+
 func TestTreeAPI_DataError(t *testing.T) {
 	h, mux, mock := newTestHandlerWithMock(t)
 	mock.ListDirChildrenErr = errors.New("db down")
