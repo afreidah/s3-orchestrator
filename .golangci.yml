@@ -10,9 +10,12 @@
 version: "2"
 linters:
   enable:
+    - copyloopvar
     - gocritic
+    - intrange
     - misspell
     - sloglint
+    - staticcheck
   settings:
     gocritic:
       disabled-checks:
