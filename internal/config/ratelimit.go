@@ -43,11 +43,20 @@ type BackendCircuitBreakerConfig struct {
 }
 
 func (r *RateLimitConfig) setDefaultsAndValidate() []string {
-	if !r.Enabled {
-		return nil
+	var errs []string
+
+	// Validate CIDR syntax even when disabled so typos are caught at
+	// startup rather than surfacing on a later SIGHUP that enables
+	// rate limiting.
+	for _, cidr := range r.TrustedProxies {
+		if _, _, err := net.ParseCIDR(cidr); err != nil {
+			errs = append(errs, fmt.Sprintf("rate_limit.trusted_proxies: invalid CIDR %q: %v", cidr, err))
+		}
 	}
 
-	var errs []string
+	if !r.Enabled {
+		return errs
+	}
 
 	if r.RequestsPerSec == 0 {
 		r.RequestsPerSec = 100
@@ -67,11 +76,6 @@ func (r *RateLimitConfig) setDefaultsAndValidate() []string {
 	}
 	if r.Burst <= 0 {
 		errs = append(errs, "rate_limit.burst must be positive")
-	}
-	for _, cidr := range r.TrustedProxies {
-		if _, _, err := net.ParseCIDR(cidr); err != nil {
-			errs = append(errs, fmt.Sprintf("rate_limit.trusted_proxies: invalid CIDR %q: %v", cidr, err))
-		}
 	}
 
 	return errs

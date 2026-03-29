@@ -279,6 +279,50 @@ func TestManager_StopErrorDoesNotPanic(t *testing.T) {
 	mgr.Stop(5 * time.Second)
 }
 
+// alwaysPanicService panics on every call, used to verify backoff.
+type alwaysPanicService struct {
+	calls atomic.Int64
+}
+
+func (s *alwaysPanicService) Run(_ context.Context) error {
+	s.calls.Add(1)
+	panic("always panic")
+}
+
+func TestManager_BackoffLimitsRestartRate(t *testing.T) {
+	mgr := NewManager()
+	svc := &alwaysPanicService{}
+	mgr.Register("always-panic", svc)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		mgr.Run(ctx)
+		close(done)
+	}()
+
+	// With exponential backoff (1s, 2s, 4s, ...) a continuously panicking
+	// service should only restart a handful of times in 5 seconds, not
+	// hundreds like the old flat 1s delay would allow.
+	time.Sleep(5 * time.Second)
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Manager.Run did not return after context cancellation")
+	}
+
+	calls := svc.calls.Load()
+	// 5 seconds with 1+2+4=7s of backoff means at most ~3-4 restarts.
+	if calls > 5 {
+		t.Errorf("Expected <=5 restarts with backoff in 5s, got %d", calls)
+	}
+	if calls < 2 {
+		t.Errorf("Expected at least 2 restarts, got %d", calls)
+	}
+}
+
 func TestManager_NoServicesRunsCleanly(t *testing.T) {
 	mgr := NewManager()
 

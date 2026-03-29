@@ -37,5 +37,12 @@ func (r *RedisConfig) setDefaultsAndValidate() []string {
 		r.OpenTimeout = 15 * time.Second
 	}
 
+	if r.FailureThreshold < 0 {
+		errs = append(errs, "redis.failure_threshold must be positive")
+	}
+	if r.OpenTimeout < 0 {
+		errs = append(errs, "redis.open_timeout must be positive")
+	}
+
 	return errs
 }
