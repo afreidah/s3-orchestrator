@@ -28,7 +28,7 @@ COPY internal/ internal/
 
 # Build binary (native cross-compilation, no QEMU needed)
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
-    -ldflags="-s -w -X github.com/afreidah/s3-orchestrator/internal/telemetry.Version=${VERSION}" \
+    -ldflags="-s -w -X github.com/afreidah/s3-orchestrator/internal/observe/telemetry.Version=${VERSION}" \
     -o s3-orchestrator ./cmd/s3-orchestrator
 
 # -------------------------------------------------------------------------
