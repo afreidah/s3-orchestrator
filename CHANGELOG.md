@@ -3,6 +3,14 @@
 All notable changes to this project are documented in this file.
 
 
+## [0.37.1] - 2026-03-29
+
+### Fixed
+- fixup: bump version
+
+### Improved
+- update CHANGELOG.md for v0.37.0 (#483)
+
 ## [0.37.0] - 2026-03-29
 
 ### Added
