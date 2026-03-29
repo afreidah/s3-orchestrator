@@ -3,6 +3,11 @@
 All notable changes to this project are documented in this file.
 
 
+## [0.37.2] - 2026-03-29
+
+### Improved
+- update CHANGELOG.md for v0.37.1 (#484)
+
 ## [0.37.1] - 2026-03-29
 
 ### Fixed
