@@ -324,7 +324,7 @@ func runServe() {
 	sm.Register("usage-flush", &usageFlushService{manager: manager, locker: cbStore}) // all modes — data safety
 
 	if *mode == "worker" || *mode == "all" {
-		sm.Register("multipart-cleanup", newMultipartCleanupService(manager, cbStore))
+		sm.Register("multipart-cleanup", newMultipartCleanupService(manager, cbStore, cfg.CleanupQueue.MultipartStaleTimeout))
 		sm.Register("cleanup-queue", newCleanupQueueService(manager, cbStore))
 		sm.Register("rebalancer", newRebalancerService(manager, cbStore))
 		sm.Register("replicator", newReplicatorService(manager, cbStore))
