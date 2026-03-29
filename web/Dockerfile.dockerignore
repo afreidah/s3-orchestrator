@@ -1,0 +1,11 @@
+.git
+.github
+benchmarks
+loadtest
+grafana
+packaging
+dist
+docker-compose*.yml
+.golangci.yml
+.goreleaser.yaml
+.codecov.yml
