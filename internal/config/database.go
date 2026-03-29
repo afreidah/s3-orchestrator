@@ -66,5 +66,9 @@ func (d *DatabaseConfig) setDefaultsAndValidate() []string {
 		d.MaxConnLifetime = 5 * time.Minute
 	}
 
+	if d.MinConns > d.MaxConns {
+		errs = append(errs, fmt.Sprintf("database.min_conns (%d) cannot exceed max_conns (%d)", d.MinConns, d.MaxConns))
+	}
+
 	return errs
 }

@@ -88,8 +88,19 @@ func (m *Manager) Stop(timeout time.Duration) {
 	}
 }
 
+// restartBackoff parameters.
+const (
+	initialBackoff = 1 * time.Second
+	maxBackoff     = 30 * time.Second
+	backoffReset   = 60 * time.Second // healthy run duration that resets backoff
+)
+
 func (m *Manager) supervise(ctx context.Context, e entry) {
+	backoff := initialBackoff
+
 	for {
+		start := time.Now()
+
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
@@ -109,16 +120,27 @@ func (m *Manager) supervise(ctx context.Context, e entry) {
 			}
 		}()
 
-		// If context is done, exit the supervision loop
 		if ctx.Err() != nil {
 			return
 		}
 
-		// Brief pause before restart to avoid tight loops
+		// Reset backoff if the service ran long enough to be considered healthy.
+		if time.Since(start) >= backoffReset {
+			backoff = initialBackoff
+		}
+
+		slog.WarnContext(ctx, "Restarting service after backoff",
+			"service", e.name,
+			"backoff", backoff,
+		)
+
 		select {
-		case <-time.After(1 * time.Second):
+		case <-time.After(backoff):
 		case <-ctx.Done():
 			return
 		}
+
+		// Exponential backoff capped at maxBackoff.
+		backoff = min(backoff*2, maxBackoff)
 	}
 }
