@@ -4,7 +4,7 @@
 # Author: Alex Freidah
 #
 # Automated dependency updates for Go modules and GitHub Actions. Checks for
-# new versions weekly.
+# new versions weekly. Updates are grouped to reduce PR noise.
 # -------------------------------------------------------------------------------
 
 version: 2
@@ -14,8 +14,19 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    groups:
+      aws-sdk:
+        patterns: ["github.com/aws/aws-sdk-go-v2*"]
+      otel:
+        patterns: ["go.opentelemetry.io/*"]
+      minor-and-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

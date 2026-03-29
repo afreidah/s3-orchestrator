@@ -91,6 +91,9 @@ nfpms:
       preremove: ./packaging/preremove.sh
       postremove: ./packaging/postremove.sh
 
+sboms:
+  - artifacts: archive
+
 checksum:
   name_template: checksums.txt
 

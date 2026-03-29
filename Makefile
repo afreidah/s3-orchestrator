@@ -91,6 +91,12 @@ lint: ## Run Go linter
 govulncheck: ## Scan Go dependencies for known vulnerabilities
 	govulncheck ./...
 
+preflight: ## Run the full release preflight locally (mirrors CI release workflow)
+	sqlc diff
+	$(MAKE) lint
+	go test -race ./...
+	go test -race -v -tags integration -count=1 ./internal/integration/
+
 BENCH_COUNT ?= 5
 BENCH_TIME  ?= 1s
 FUZZ_TIME   ?= 30s

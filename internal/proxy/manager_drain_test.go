@@ -366,7 +366,7 @@ func TestCancelDrain_CompletedDrain_ClearsState(t *testing.T) {
 	}
 
 	// Wait for drain to finish
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		p, err := mgr.DrainManager.GetDrainProgress(context.Background(), "b1")
 		if err == nil && !p.Active {
 			break
@@ -423,7 +423,7 @@ func TestRunDrain_ListObjectsByBackendFails(t *testing.T) {
 	// Wait for drain to finish — on ListObjectsByBackend error, runDrain
 	// deletes from d.draining and returns, so eventually GetDrainProgress
 	// returns Active=false with no error (state was cleaned up).
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		p, _ := mgr.DrainManager.GetDrainProgress(context.Background(), "b1")
 		if !p.Active {
 			break
@@ -453,7 +453,7 @@ func TestRunDrain_DeleteBackendDataFails(t *testing.T) {
 	}
 
 	// Wait for drain to complete
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		p, err := mgr.DrainManager.GetDrainProgress(context.Background(), "b1")
 		if err != nil || !p.Active {
 			break
