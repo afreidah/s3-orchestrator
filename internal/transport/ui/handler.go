@@ -249,7 +249,11 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request, accessKe
 	})
 
 	// CSRF token: readable by JavaScript (not HttpOnly) for double-submit pattern.
-	csrfToken := generateCSRFToken()
+	csrfToken, err := generateCSRFToken()
+	if err != nil {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     csrfCookieName,
 		Value:    csrfToken,
@@ -262,14 +266,12 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request, accessKe
 }
 
 // generateCSRFToken returns a random hex string for CSRF protection.
-// Panics if the system entropy source fails — a predictable token would
-// defeat CSRF protection entirely.
-func generateCSRFToken() string {
+func generateCSRFToken() (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
-		panic("crypto/rand.Read failed: " + err.Error())
+		return "", fmt.Errorf("crypto/rand.Read failed: %w", err)
 	}
-	return hex.EncodeToString(b)
+	return hex.EncodeToString(b), nil
 }
 
 // validSession checks whether the request carries a valid, non-expired session cookie.
@@ -535,6 +537,10 @@ func (h *Handler) handleTreeAPI(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
 
 	prefix := r.URL.Query().Get("prefix")
+	if prefix != "" && !h.validBucketPrefix(prefix) {
+		writeJSONError(w, http.StatusBadRequest, "prefix must start with a configured bucket name")
+		return
+	}
 	startAfter := r.URL.Query().Get("startAfter")
 	maxKeys := 200
 	if mk := r.URL.Query().Get("maxKeys"); mk != "" {

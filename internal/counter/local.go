@@ -137,6 +137,20 @@ func (l *LocalCounterBackend) LoadAll(backend string) LoadAllResult {
 	}
 }
 
+// SwapAll atomically reads and resets all three counter fields for a backend,
+// returning the old values. Each field is independently atomic.
+func (l *LocalCounterBackend) SwapAll(backend string) LoadAllResult {
+	c := l.get(backend)
+	if c == nil {
+		return LoadAllResult{}
+	}
+	return LoadAllResult{
+		APIRequests:  c.apiRequests.Swap(0),
+		EgressBytes:  c.egressBytes.Swap(0),
+		IngressBytes: c.ingressBytes.Swap(0),
+	}
+}
+
 // -------------------------------------------------------------------------
 // INTERNALS
 // -------------------------------------------------------------------------

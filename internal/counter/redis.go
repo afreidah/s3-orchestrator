@@ -301,10 +301,10 @@ func (r *RedisCounterBackend) tryRecover() {
 	}
 
 	period := CurrentPeriod()
-	fields := []string{FieldAPIRequests, FieldEgressBytes, FieldIngressBytes}
 
-	// Collect local deltas before building the pipeline so we snapshot
-	// a consistent view of what needs to be synced.
+	// Atomically read-and-zero local deltas so no concurrent Add() can
+	// slip between snapshot and reset (the old LoadAll + Swap two-phase
+	// had exactly that race window).
 	type backendDeltas struct {
 		name    string
 		api     int64
@@ -313,7 +313,7 @@ func (r *RedisCounterBackend) tryRecover() {
 	}
 	deltas := make([]backendDeltas, 0, len(r.backends))
 	for _, backend := range r.backends {
-		cur := r.local.LoadAll(backend)
+		cur := r.local.SwapAll(backend)
 		deltas = append(deltas, backendDeltas{
 			name:    backend,
 			api:     cur.APIRequests,
@@ -323,8 +323,8 @@ func (r *RedisCounterBackend) tryRecover() {
 	}
 
 	// Build a single pipeline: delete stale keys then INCRBY local deltas.
-	// If the pipeline fails, nothing is committed — no counter loss.
 	pipe := r.client.Pipeline()
+	fields := []string{FieldAPIRequests, FieldEgressBytes, FieldIngressBytes}
 	for _, backend := range r.backends {
 		for _, field := range fields {
 			pipe.Del(ctx, r.keyForPeriod(backend, field, period))
@@ -349,15 +349,13 @@ func (r *RedisCounterBackend) tryRecover() {
 	}
 
 	if _, err := pipe.Exec(ctx); err != nil {
+		// Pipeline failed — restore swapped deltas to local counters so
+		// they are retried on the next recovery attempt.
+		for _, d := range deltas {
+			r.local.AddAll(d.name, d.api, d.egress, d.ingress)
+		}
 		slog.Warn("Redis recovery pipeline failed, will retry", "error", err)
 		return
-	}
-
-	// Pipeline committed — safe to zero local counters now.
-	for _, backend := range r.backends {
-		for _, field := range fields {
-			r.local.Swap(backend, field)
-		}
 	}
 
 	// Clear fallback state and close circuit breaker
