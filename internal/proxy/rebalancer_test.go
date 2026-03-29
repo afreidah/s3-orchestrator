@@ -25,7 +25,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	promtest "github.com/prometheus/client_golang/prometheus/testutil"
 )
 

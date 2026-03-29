@@ -164,8 +164,8 @@ import (
     "fmt"
     "time"
 
-    "github.com/afreidah/s3-orchestrator/internal/audit"
-    "github.com/afreidah/s3-orchestrator/internal/telemetry"
+    "github.com/afreidah/s3-orchestrator/internal/observe/audit"
+    "github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 
     "go.opentelemetry.io/otel/attribute"
     "github.com/prometheus/client_golang/prometheus"
@@ -281,7 +281,7 @@ slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 
 ### Audit Logging
 
-The `internal/audit` package provides structured audit entries for security-relevant operations. Audit entries are distinguished by the `"audit": true` field.
+The `internal/observe/audit` package provides structured audit entries for security-relevant operations. Audit entries are distinguished by the `"audit": true` field.
 
 **S3 API requests** produce two correlated audit entries sharing the same `request_id`:
 

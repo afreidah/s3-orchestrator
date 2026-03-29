@@ -38,11 +38,11 @@ import (
 	tcredis "github.com/testcontainers/testcontainers-go/modules/redis"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"github.com/afreidah/s3-orchestrator/internal/auth"
+	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
-	"github.com/afreidah/s3-orchestrator/internal/server"
+	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 )
 
@@ -301,7 +301,7 @@ func TestMain(m *testing.M) {
 	})
 	testManager = manager
 
-	srv := &server.Server{
+	srv := &s3api.Server{
 		Manager: manager,
 	}
 	srv.SetBucketAuth(auth.NewBucketRegistry(cfg.Buckets))

@@ -15,7 +15,7 @@ import (
 	"math/rand/v2"
 	"time"
 
-	"github.com/afreidah/s3-orchestrator/internal/syncutil"
+	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
 // LocationCache is a TTL-based cache mapping object keys to backend names.

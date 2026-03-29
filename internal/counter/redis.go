@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/afreidah/s3-orchestrator/internal/breaker"

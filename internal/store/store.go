@@ -185,7 +185,7 @@ func (s *Store) RunMigrations(ctx context.Context) error {
 
 // ExpectedSchemaVersion is the migration version this binary expects.
 // Updated when new migration files are added.
-const ExpectedSchemaVersion = 6
+const ExpectedSchemaVersion = 7
 
 // VerifySchemaVersion checks that the database schema version matches
 // what this binary expects. Returns an error if the schema is older
@@ -1601,4 +1601,53 @@ func (s *Store) MarkObjectDecrypted(ctx context.Context, objectKey, backendName 
 // pgTimestamptz converts a time.Time to pgtype.Timestamptz for use with sqlc.
 func pgTimestamptz(t time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: t, Valid: true}
+}
+
+// -------------------------------------------------------------------------
+// NOTIFICATION OUTBOX
+// -------------------------------------------------------------------------
+
+// InsertNotification adds an event to the notification outbox for async
+// webhook delivery. Satisfies the notify.OutboxStore interface.
+func (s *Store) InsertNotification(ctx context.Context, eventType, payload, endpointURL string) error {
+	return s.queries.InsertNotification(ctx, db.InsertNotificationParams{
+		EventType:   eventType,
+		Payload:     []byte(payload),
+		EndpointUrl: endpointURL,
+	})
+}
+
+// GetPendingNotifications returns outbox rows ready for delivery.
+func (s *Store) GetPendingNotifications(ctx context.Context, limit int) ([]NotificationRow, error) {
+	rows, err := s.queries.GetPendingNotifications(ctx, int32(limit))
+	if err != nil {
+		return nil, err
+	}
+	out := make([]NotificationRow, len(rows))
+	for i, r := range rows {
+		out[i] = NotificationRow{
+			ID:          r.ID,
+			EventType:   r.EventType,
+			Payload:     r.Payload,
+			EndpointURL: r.EndpointUrl,
+			Attempts:    r.Attempts,
+		}
+	}
+	return out, nil
+}
+
+// CompleteNotification removes a delivered notification from the outbox.
+// Satisfies the notify.OutboxStore interface.
+func (s *Store) CompleteNotification(ctx context.Context, id int64) error {
+	return s.queries.CompleteNotification(ctx, id)
+}
+
+// RetryNotification increments the attempt counter and schedules the next
+// retry. Satisfies the notify.OutboxStore interface.
+func (s *Store) RetryNotification(ctx context.Context, id int64, backoff time.Duration, lastError string) error {
+	return s.queries.RetryNotification(ctx, db.RetryNotificationParams{
+		ID:        id,
+		Backoff:   pgtype.Interval{Microseconds: backoff.Microseconds(), Valid: true},
+		LastError: &lastError,
+	})
 }

@@ -21,10 +21,10 @@ func hashString(s string) string {
 	return hex.EncodeToString(h[:])
 }
 
-func setupScrubber(t *testing.T) (*Scrubber, *MockOps, *backendtest.MockObjectBackend, *mockMetadataStore) {
+func setupScrubber(t *testing.T) (*Scrubber, *MockScrubberDeps, *backendtest.MockObjectBackend, *mockMetadataStore) {
 	t.Helper()
 	ctrl := gomock.NewController(t)
-	ops := NewMockOps(ctrl)
+	ops := NewMockScrubberDeps(ctrl)
 	be := backendtest.NewMockObjectBackend(ctrl)
 	ms := &mockMetadataStore{}
 	s := NewScrubber(ops, nil)

@@ -25,8 +25,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 
-	"github.com/afreidah/s3-orchestrator/internal/audit"
-	"github.com/afreidah/s3-orchestrator/internal/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -395,11 +395,6 @@ func (c *backendCore) DeleteWithTimeout(ctx context.Context, be backend.ObjectBa
 // DeleteOrEnqueue deletes an object, enqueueing for retry on failure.
 func (c *backendCore) DeleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, backendName, key, reason string, sizeBytes int64) {
 	c.deleteOrEnqueue(ctx, be, backendName, key, reason, sizeBytes)
-}
-
-// RecordOperation records a backend operation for metrics.
-func (c *backendCore) RecordOperation(operation, backendName string, start time.Time, err error) {
-	c.recordOperation(operation, backendName, start, err)
 }
 
 // ExcludeDraining filters out backends that are being drained.

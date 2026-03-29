@@ -58,6 +58,13 @@ weight: 30
       <p>Run the orchestrator as a Nomad job with Vault-managed secrets and Transit encryption.</p>
     </div>
   </a>
+  <a class="landing-card" href="event-notifications/">
+    <i class="fas fa-bell landing-card-icon" style="color: #fcd34d;"></i>
+    <div>
+      <strong>Event Notifications</strong>
+      <p>Send webhook notifications when objects are created, deleted, or when backends change state.</p>
+    </div>
+  </a>
   <a class="landing-card" href="encrypting-existing-data/">
     <i class="fas fa-lock landing-card-icon" style="color: #fca5a5;"></i>
     <div>

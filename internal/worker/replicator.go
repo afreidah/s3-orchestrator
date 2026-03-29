@@ -20,13 +20,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/afreidah/s3-orchestrator/internal/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/store"
-	"github.com/afreidah/s3-orchestrator/internal/syncutil"
-	"github.com/afreidah/s3-orchestrator/internal/telemetry"
-	"github.com/afreidah/s3-orchestrator/internal/workerpool"
+	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/util/workerpool"
 )
 
 // -------------------------------------------------------------------------
