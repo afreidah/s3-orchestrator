@@ -455,6 +455,9 @@ func runServe() {
 		close(hupChan)
 		<-hupDone
 
+		// Use a single 30-second root deadline for the entire shutdown
+		// sequence so total time is bounded regardless of how many phases
+		// there are.
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
@@ -463,11 +466,9 @@ func runServe() {
 		}
 
 		if metricsServer != nil {
-			metricsShutCtx, metricsCancel := context.WithTimeout(context.Background(), 5*time.Second)
-			if err := metricsServer.Shutdown(metricsShutCtx); err != nil {
+			if err := metricsServer.Shutdown(shutdownCtx); err != nil {
 				slog.ErrorContext(ctx, "Metrics server shutdown error", "error", err)
 			}
-			metricsCancel()
 		}
 
 		if rl != nil {
@@ -476,12 +477,6 @@ func runServe() {
 		if loginThrottle != nil {
 			loginThrottle.Close()
 		}
-
-		preFlushCtx, preFlushCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		if err := manager.FlushUsage(preFlushCtx); err != nil {
-			slog.WarnContext(preFlushCtx, "Pre-shutdown usage flush failed", "error", err)
-		}
-		preFlushCancel()
 
 		bgCancel()
 		<-bgDone
@@ -496,23 +491,19 @@ func runServe() {
 
 		manager.Close()
 
-		flushCtx, flushCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer flushCancel()
-		if err := manager.FlushUsage(flushCtx); err != nil {
-			slog.WarnContext(flushCtx, "Final usage flush failed", "error", err)
+		if err := manager.FlushUsage(shutdownCtx); err != nil {
+			slog.WarnContext(shutdownCtx, "Final usage flush failed", "error", err)
 		}
 
 		if redisBackend, err := do.Invoke[*counter.RedisCounterBackend](inj); err == nil {
 			if err := redisBackend.Close(); err != nil {
-				slog.WarnContext(flushCtx, "Failed to close Redis client", "error", err)
+				slog.WarnContext(shutdownCtx, "Failed to close Redis client", "error", err)
 			}
 		}
 
 		db.Close()
 
-		traceCtx, traceCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer traceCancel()
-		if err := shutdownTracer(traceCtx); err != nil {
+		if err := shutdownTracer(shutdownCtx); err != nil {
 			slog.ErrorContext(ctx, "Tracer shutdown error", "error", err)
 		}
 	}()

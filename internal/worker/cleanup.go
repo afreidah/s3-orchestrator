@@ -62,6 +62,7 @@ func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) (processed, fai
 
 	workerpool.Run(ctx, w.concurrency, items, func(ctx context.Context, item store.CleanupItem) {
 		if !w.deps.AcquireAdmission(ctx) {
+			telemetry.WorkerAdmissionRejectionsTotal.WithLabelValues("cleanup").Inc()
 			return
 		}
 		defer w.deps.ReleaseAdmission()

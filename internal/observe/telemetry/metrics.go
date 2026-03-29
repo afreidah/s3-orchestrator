@@ -232,6 +232,16 @@ var (
 		},
 	)
 
+	// WorkerAdmissionRejectionsTotal counts background worker tasks that were
+	// skipped because the admission semaphore was full.
+	WorkerAdmissionRejectionsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "s3o_worker_admission_rejections_total",
+			Help: "Background worker tasks skipped due to admission control",
+		},
+		[]string{"worker"},
+	)
+
 	// LoadShedTotal counts requests probabilistically rejected by active
 	// load shedding before reaching the hard admission limit.
 	LoadShedTotal = promauto.NewCounter(
