@@ -118,6 +118,38 @@ func TestLocalCounterBackend_UnknownField(t *testing.T) {
 	}
 }
 
+func TestLocalCounterBackend_SwapAll_ReturnsAndResets(t *testing.T) {
+	cb := NewLocalCounterBackend([]string{"b1"})
+
+	cb.AddAll("b1", 10, 2048, 4096)
+
+	result := cb.SwapAll("b1")
+	if result.APIRequests != 10 {
+		t.Errorf("SwapAll apiRequests = %d, want 10", result.APIRequests)
+	}
+	if result.EgressBytes != 2048 {
+		t.Errorf("SwapAll egressBytes = %d, want 2048", result.EgressBytes)
+	}
+	if result.IngressBytes != 4096 {
+		t.Errorf("SwapAll ingressBytes = %d, want 4096", result.IngressBytes)
+	}
+
+	// After SwapAll, all counters should be zero
+	after := cb.LoadAll("b1")
+	if after.APIRequests != 0 || after.EgressBytes != 0 || after.IngressBytes != 0 {
+		t.Errorf("counters should be zero after SwapAll, got %+v", after)
+	}
+}
+
+func TestLocalCounterBackend_SwapAll_UnknownBackend(t *testing.T) {
+	cb := NewLocalCounterBackend([]string{"b1"})
+
+	result := cb.SwapAll("unknown")
+	if result.APIRequests != 0 || result.EgressBytes != 0 || result.IngressBytes != 0 {
+		t.Errorf("SwapAll on unknown should return zeros, got %+v", result)
+	}
+}
+
 func TestLocalCounterBackend_MultipleBackends(t *testing.T) {
 	cb := NewLocalCounterBackend([]string{"b1", "b2"})
 
