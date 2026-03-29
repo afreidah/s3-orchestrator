@@ -30,6 +30,7 @@ jobs:
   # ---------------------------------------------------------------------------
   changes:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       go: ${{ steps.filter.outputs.go }}
       web: ${{ steps.filter.outputs.web }}
@@ -65,6 +66,7 @@ jobs:
   version-check:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
         with:
@@ -94,6 +96,7 @@ jobs:
     needs: [changes]
     if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
 
@@ -115,6 +118,7 @@ jobs:
     needs: [changes]
     if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
 
@@ -136,6 +140,7 @@ jobs:
     needs: [changes]
     if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
 
@@ -151,6 +156,7 @@ jobs:
 
   fuzz:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: [lint, test]
     if: needs.changes.outputs.go == 'true'
     steps:
@@ -178,6 +184,7 @@ jobs:
 
   integration:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: [lint, test]
     if: needs.changes.outputs.go == 'true'
     steps:
@@ -199,6 +206,7 @@ jobs:
 
   package:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: [changes, lint, test]
     if: needs.changes.outputs.go == 'true' || needs.changes.outputs.packaging == 'true'
     steps:
@@ -213,6 +221,9 @@ jobs:
 
       - name: Prep changelog
         run: make prep-changelog
+
+      - name: Install syft (SBOM generation)
+        uses: anchore/sbom-action/download-syft@v0
 
       - name: Build debs
         uses: goreleaser/goreleaser-action@v7
@@ -230,6 +241,7 @@ jobs:
   docker:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: [changes, lint, test, integration]
     permissions:
       contents: read
@@ -275,6 +287,7 @@ jobs:
   docker-webpage:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: [changes]
     permissions:
       contents: read

@@ -420,7 +420,7 @@ func (o *ObjectManager) parallelBroadcastRead(ctx context.Context, operation, ke
 	}
 
 	var lastErr error
-	for received := 0; received < launched; received++ {
+	for received := 0; received < launched; received++ { //nolint:intrange // received used in arithmetic below
 		r := <-ch
 		if r.err != nil {
 			lastErr = r.err

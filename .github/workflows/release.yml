@@ -21,6 +21,7 @@ permissions:
 jobs:
   preflight:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
 
@@ -39,8 +40,12 @@ jobs:
       - name: Unit tests
         run: go test -race ./...
 
+      - name: Integration tests
+        run: go test -race -v -tags integration -count=1 ./internal/integration/
+
   release:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: [preflight]
     steps:
       - uses: actions/checkout@v6
@@ -53,6 +58,9 @@ jobs:
 
       - name: Prep Debian changelog
         run: make prep-changelog
+
+      - name: Install syft (SBOM generation)
+        uses: anchore/sbom-action/download-syft@v0
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v7
