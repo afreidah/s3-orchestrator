@@ -26,7 +26,7 @@ COPY docs/ /src/docs/
 COPY README.md /src/README.md
 COPY CHANGELOG.md /src/CHANGELOG.md
 COPY --from=godoc /godoc/ /src/web/content/godoc/
-# Restore our custom _index.md (godoc stage doesn't generate one anymore)
+# Restore the hand-maintained index page overwritten by the godoc stage
 COPY web/content/godoc/_index.md /src/web/content/godoc/_index.md
 RUN hugo --minify
 
