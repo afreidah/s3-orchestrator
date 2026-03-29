@@ -1264,7 +1264,7 @@
       },
       "targets": [
         {
-          "expr": "s3o_replication_pending",
+          "expr": "max(s3o_replication_pending)",
           "legendFormat": "pending"
         }
       ],
@@ -2041,7 +2041,7 @@
       },
       "targets": [
         {
-          "expr": "s3o_rebalance_pending",
+          "expr": "max(s3o_rebalance_pending)",
           "legendFormat": "pending"
         }
       ],
@@ -2498,7 +2498,7 @@
       },
       "targets": [
         {
-          "expr": "s3o_cleanup_queue_depth",
+          "expr": "max(s3o_cleanup_queue_depth)",
           "legendFormat": "depth"
         }
       ],
@@ -2847,7 +2847,7 @@
       },
       "targets": [
         {
-          "expr": "s3o_encryption_unknown_key_id_total",
+          "expr": "max(s3o_encryption_unknown_key_id_total)",
           "legendFormat": "unknown keyID"
         }
       ],
@@ -2955,7 +2955,7 @@
       },
       "targets": [
         {
-          "expr": "rate(s3o_cache_hits_total[5m]) / (rate(s3o_cache_hits_total[5m]) + rate(s3o_cache_misses_total[5m]))"
+          "expr": "sum(rate(s3o_cache_hits_total[5m])) / (sum(rate(s3o_cache_hits_total[5m])) + sum(rate(s3o_cache_misses_total[5m])))"
         }
       ],
       "fieldConfig": {
@@ -3387,7 +3387,7 @@
       },
       "targets": [
         {
-          "expr": "s3o_over_replication_pending",
+          "expr": "max(s3o_over_replication_pending)",
           "legendFormat": "pending",
           "refId": "A"
         }
