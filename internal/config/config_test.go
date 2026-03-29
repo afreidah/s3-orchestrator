@@ -2713,3 +2713,68 @@ func TestLifecycleConfig_ValidRulePasses(t *testing.T) {
 		t.Errorf("BatchSize = %d, want 100 (default)", cfg.Lifecycle.BatchSize)
 	}
 }
+
+func TestDatabaseConfig_MinConnsExceedsMaxConns(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Database.MinConns = 100
+	cfg.Database.MaxConns = 10
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil {
+		t.Fatal("min_conns > max_conns should fail validation")
+	}
+	if !strings.Contains(err.Error(), "min_conns") {
+		t.Errorf("error should mention min_conns: %v", err)
+	}
+}
+
+func TestRedisConfig_NegativeFailureThreshold(t *testing.T) {
+	r := &RedisConfig{
+		Address:          "localhost:6379",
+		FailureThreshold: -1,
+	}
+	errs := r.setDefaultsAndValidate()
+	found := false
+	for _, e := range errs {
+		if strings.Contains(e, "failure_threshold") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("negative failure_threshold should produce error, got: %v", errs)
+	}
+}
+
+func TestRedisConfig_NegativeOpenTimeout(t *testing.T) {
+	r := &RedisConfig{
+		Address:     "localhost:6379",
+		OpenTimeout: -5 * time.Second,
+	}
+	errs := r.setDefaultsAndValidate()
+	found := false
+	for _, e := range errs {
+		if strings.Contains(e, "open_timeout") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("negative open_timeout should produce error, got: %v", errs)
+	}
+}
+
+func TestRateLimitConfig_CIDRValidatedWhenDisabled(t *testing.T) {
+	r := &RateLimitConfig{
+		Enabled:        false,
+		TrustedProxies: []string{"not-a-cidr"},
+	}
+	errs := r.setDefaultsAndValidate()
+	found := false
+	for _, e := range errs {
+		if strings.Contains(e, "invalid CIDR") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("invalid CIDR should be caught even when disabled, got: %v", errs)
+	}
+}
