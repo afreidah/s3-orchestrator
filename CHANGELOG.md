@@ -3,6 +3,30 @@
 All notable changes to this project are documented in this file.
 
 
+## [0.37.0] - 2026-03-29
+
+### Added
+- add timeouts, release preflight integration tests, Dependabot grouping, linters, SBOM (#456) (#478)
+- add edge case coverage for lifecycle, config, auth cache, admission (#450) (#477)
+
+### Fixed
+- fix!: require session_secret when UI is enabled, remove admin_secret fallback (#442) (#476)
+- fixup: add new benchmark file
+
+### Improved
+- update CHANGELOG.md for v0.33.0 (#473)
+
+### Dependencies
+- chore(deps): bump aquasecurity/trivy-action (#470)
+
+### Other
+- web Dockerfile build context blocked by root .dockerignore
+- event notifications, DI refactor, package restructuring (#360) (#481)
+- configurable multipart timeout, capacity warning, production docs (#480)
+- added latest bench test
+- cache read error, download Content-Type, unknown keyID, range clamp (#439, #440, #441, #444) (#475)
+- testing: improve fuzz targets and benchmark coverage (#472) (#474)
+
 ## [0.33.0] - 2026-03-28
 
 ### Added
