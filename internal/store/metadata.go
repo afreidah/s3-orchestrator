@@ -140,6 +140,15 @@ type UsageStat struct {
 	IngressBytes int64
 }
 
+// NotificationRow represents a pending notification in the outbox table.
+type NotificationRow struct {
+	ID          int64
+	EventType   string
+	Payload     []byte
+	EndpointURL string
+	Attempts    int32
+}
+
 // CleanupItem represents a pending cleanup operation from the retry queue.
 type CleanupItem struct {
 	ID          int64

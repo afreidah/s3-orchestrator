@@ -24,7 +24,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/afreidah/s3-orchestrator/internal/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/observe/event"
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 )
 
 // -------------------------------------------------------------------------
@@ -260,6 +261,17 @@ func (cb *CircuitBreaker) transition(to State) {
 			"to", to.String(),
 			"failures", cb.failures,
 			"threshold", cb.failThreshold)
+		if event.Emit != nil {
+			event.Emit(event.Event{
+				Type:    event.BackendCircuitOpened,
+				Subject: cb.name,
+				Data: map[string]any{
+					"backend":   cb.name,
+					"failures":  cb.failures,
+					"threshold": cb.failThreshold,
+				},
+			})
+		}
 
 	case to == StateOpen && from == StateHalfOpen:
 		cb.probeJitter = rand.N(cb.openTimeout / 4)
@@ -282,6 +294,16 @@ func (cb *CircuitBreaker) transition(to State) {
 			"from", from.String(),
 			"to", to.String(),
 			"degraded_duration", time.Since(cb.openedAt).Round(time.Millisecond).String())
+		if event.Emit != nil {
+			event.Emit(event.Event{
+				Type:    event.BackendCircuitClosed,
+				Subject: cb.name,
+				Data: map[string]any{
+					"backend":           cb.name,
+					"degraded_duration": time.Since(cb.openedAt).Round(time.Millisecond).String(),
+				},
+			})
+		}
 	}
 }
 
