@@ -215,6 +215,9 @@ func (r *Rebalancer) PlanPackTight(ctx context.Context, stats map[string]store.Q
 
 	// --- Pack into most-full destinations, pulling from least-full sources ---
 	for di := 0; di < len(backends) && remaining > 0; di++ {
+		if ctx.Err() != nil {
+			return plan, ctx.Err()
+		}
 		dest := backends[di]
 		destFree := dest.Limit - simUsed[dest.Name]
 		if destFree <= 0 {
@@ -335,7 +338,7 @@ func (r *Rebalancer) PlanSpreadEven(ctx context.Context, stats map[string]store.
 	remaining := batchSize
 
 	for si := range sources {
-		if remaining <= 0 {
+		if remaining <= 0 || ctx.Err() != nil {
 			break
 		}
 
@@ -402,6 +405,7 @@ func (r *Rebalancer) ExecuteMoves(ctx context.Context, plan []RebalanceMove, str
 	var moved atomic.Int32
 	workerpool.Run(ctx, concurrency, plan, func(ctx context.Context, mv RebalanceMove) {
 		if !r.ops.AcquireAdmission(ctx) {
+			telemetry.WorkerAdmissionRejectionsTotal.WithLabelValues("rebalancer").Inc()
 			return
 		}
 		defer r.ops.ReleaseAdmission()

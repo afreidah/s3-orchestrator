@@ -121,6 +121,7 @@ func (c *OverReplicationCleaner) Clean(ctx context.Context, cfg config.Replicati
 	var removed atomic.Int64
 	workerpool.Run(ctx, cfg.Concurrency, tasks, func(ctx context.Context, task cleanupTask) {
 		if !c.ops.AcquireAdmission(ctx) {
+			telemetry.WorkerAdmissionRejectionsTotal.WithLabelValues("over_replication").Inc()
 			return
 		}
 		defer c.ops.ReleaseAdmission()
@@ -205,6 +206,9 @@ func (c *OverReplicationCleaner) cleanObject(ctx context.Context, key string, co
 
 	removed := 0
 	for i := 0; i < excess && i < len(scored); i++ {
+		if ctx.Err() != nil {
+			break
+		}
 		victim := scored[i].loc
 
 		// Delete from backend

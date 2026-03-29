@@ -291,17 +291,16 @@ func (c *backendCore) deleteWithTimeout(ctx context.Context, be backend.ObjectBa
 // "write:" to indicate which leg failed.
 func (c *backendCore) streamCopy(ctx context.Context, src, dst backend.ObjectBackend, key string) error {
 	rctx, rcancel := c.withTimeout(ctx)
+	defer rcancel()
 	result, err := src.GetObject(rctx, key, "")
 	if err != nil {
-		rcancel()
 		return fmt.Errorf("read: %w", err)
 	}
+	defer func() { _ = result.Body.Close() }()
 
 	wctx, wcancel := c.withTimeout(ctx)
+	defer wcancel()
 	_, err = dst.PutObject(wctx, key, result.Body, result.Size, result.ContentType, result.Metadata)
-	_ = result.Body.Close()
-	rcancel()
-	wcancel()
 	if err != nil {
 		return fmt.Errorf("write: %w", err)
 	}
