@@ -129,6 +129,7 @@ func (r *Replicator) Replicate(ctx context.Context, cfg config.ReplicationConfig
 	var created atomic.Int32
 	workerpool.Run(ctx, cfg.Concurrency, tasks, func(ctx context.Context, task replicaTask) {
 		if !r.ops.AcquireAdmission(ctx) {
+			telemetry.WorkerAdmissionRejectionsTotal.WithLabelValues("replicator").Inc()
 			return
 		}
 		defer r.ops.ReleaseAdmission()
@@ -272,6 +273,9 @@ func (r *Replicator) CopyToReplica(ctx context.Context, key string, copies []sto
 	})
 
 	for i := range copies {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
 		srcBackend, ok := r.ops.Backends()[copies[i].BackendName]
 		if !ok {
 			continue
