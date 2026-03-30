@@ -22,6 +22,7 @@ import (
 )
 
 func TestRateLimiter_AllowAndBlock(t *testing.T) {
+	t.Parallel()
 	rl := NewRateLimiter(config.RateLimitConfig{
 		Enabled:        true,
 		RequestsPerSec: 1,
@@ -49,6 +50,7 @@ func TestRateLimiter_AllowAndBlock(t *testing.T) {
 }
 
 func TestRateLimiter_Middleware429(t *testing.T) {
+	t.Parallel()
 	rl := NewRateLimiter(config.RateLimitConfig{
 		Enabled:        true,
 		RequestsPerSec: 1,
@@ -82,6 +84,7 @@ func TestRateLimiter_Middleware429(t *testing.T) {
 }
 
 func TestRateLimiter_Middleware429_IncrementsMetric(t *testing.T) {
+	t.Parallel()
 	rl := NewRateLimiter(config.RateLimitConfig{
 		Enabled:        true,
 		RequestsPerSec: 1,
@@ -119,6 +122,7 @@ func TestRateLimiter_Middleware429_IncrementsMetric(t *testing.T) {
 }
 
 func TestRateLimiter_UpdateLimits_NewVisitors(t *testing.T) {
+	t.Parallel()
 	rl := NewRateLimiter(config.RateLimitConfig{
 		Enabled:        true,
 		RequestsPerSec: 1,
@@ -138,6 +142,7 @@ func TestRateLimiter_UpdateLimits_NewVisitors(t *testing.T) {
 }
 
 func TestRateLimiter_UpdateLimits_ClearsExistingVisitors(t *testing.T) {
+	t.Parallel()
 	rl := NewRateLimiter(config.RateLimitConfig{
 		Enabled:        true,
 		RequestsPerSec: 1,
@@ -165,6 +170,7 @@ func TestRateLimiter_UpdateLimits_ClearsExistingVisitors(t *testing.T) {
 }
 
 func TestExtractIP_NoTrustedProxies(t *testing.T) {
+	t.Parallel()
 	rl := &RateLimiter{}
 
 	tests := []struct {
@@ -194,6 +200,7 @@ func TestExtractIP_NoTrustedProxies(t *testing.T) {
 }
 
 func TestExtractIP_WithTrustedProxies(t *testing.T) {
+	t.Parallel()
 	rl := &RateLimiter{
 		trustedProxies: httputil.ParseTrustedProxies([]string{"10.0.0.0/8", "172.16.0.0/12"}),
 	}
@@ -257,6 +264,7 @@ func TestExtractIP_WithTrustedProxies(t *testing.T) {
 }
 
 func TestRateLimiter_CustomCleanupIntervals(t *testing.T) {
+	t.Parallel()
 	rl := NewRateLimiter(config.RateLimitConfig{
 		Enabled:         true,
 		RequestsPerSec:  100,
@@ -275,6 +283,7 @@ func TestRateLimiter_CustomCleanupIntervals(t *testing.T) {
 }
 
 func TestParseCIDRs(t *testing.T) {
+	t.Parallel()
 	nets := httputil.ParseTrustedProxies([]string{"10.0.0.0/8", "invalid", "192.168.0.0/16"})
 	if len(nets) != 2 {
 		t.Fatalf("got %d nets, want 2 (invalid should be skipped)", len(nets))

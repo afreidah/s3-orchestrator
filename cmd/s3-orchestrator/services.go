@@ -61,7 +61,7 @@ func (s *lockedTickerService) Run(ctx context.Context) error {
 
 	// Stagger the first tick to avoid all instances contending for the
 	// advisory lock at the same instant.
-	jitter := rand.N(s.interval / 2)
+	jitter := rand.N(s.interval / 2) //nolint:gosec // G404: startup jitter does not require crypto-strength randomness
 	select {
 	case <-time.After(jitter):
 	case <-ctx.Done():

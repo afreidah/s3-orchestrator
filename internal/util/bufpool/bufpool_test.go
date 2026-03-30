@@ -14,6 +14,7 @@ import (
 )
 
 func TestCopy(t *testing.T) {
+	t.Parallel()
 	data := []byte("hello, buffer pool")
 	var dst bytes.Buffer
 	n, err := Copy(&dst, bytes.NewReader(data))
@@ -29,6 +30,7 @@ func TestCopy(t *testing.T) {
 }
 
 func TestWriterPool(t *testing.T) {
+	t.Parallel()
 	data := []byte("buffered writer pool test data")
 	var dst bytes.Buffer
 
@@ -51,6 +53,7 @@ func TestWriterPool(t *testing.T) {
 }
 
 func TestGetPutRoundtrip(t *testing.T) {
+	t.Parallel()
 	b := Get()
 	if len(*b) != bufSize {
 		t.Fatalf("buffer length %d, want %d", len(*b), bufSize)

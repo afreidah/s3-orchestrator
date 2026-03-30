@@ -16,6 +16,7 @@ import (
 )
 
 func TestAtomicConfig_ZeroValue(t *testing.T) {
+	t.Parallel()
 	var ac AtomicConfig[string]
 	if got := ac.Load(); got != nil {
 		t.Errorf("Load on zero value = %v, want nil", got)
@@ -23,6 +24,7 @@ func TestAtomicConfig_ZeroValue(t *testing.T) {
 }
 
 func TestAtomicConfig_StoreLoad(t *testing.T) {
+	t.Parallel()
 	var ac AtomicConfig[int]
 	v := 42
 	ac.Store(&v)
@@ -34,6 +36,7 @@ func TestAtomicConfig_StoreLoad(t *testing.T) {
 }
 
 func TestAtomicConfig_StoreOverwrite(t *testing.T) {
+	t.Parallel()
 	var ac AtomicConfig[string]
 	first := "alpha"
 	second := "beta"
@@ -48,6 +51,7 @@ func TestAtomicConfig_StoreOverwrite(t *testing.T) {
 }
 
 func TestAtomicConfig_ConcurrentAccess(t *testing.T) {
+	t.Parallel()
 	var ac AtomicConfig[int]
 	initial := 0
 	ac.Store(&initial)

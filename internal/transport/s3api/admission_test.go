@@ -23,6 +23,7 @@ import (
 )
 
 func TestAdmissionController_AllowsWithinLimit(t *testing.T) {
+	t.Parallel()
 	ac := NewAdmissionController(2)
 
 	handler := ac.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -41,6 +42,7 @@ func TestAdmissionController_AllowsWithinLimit(t *testing.T) {
 }
 
 func TestAdmissionController_RejectsOverLimit(t *testing.T) {
+	t.Parallel()
 	ac := NewAdmissionController(1)
 
 	// entered signals that the handler goroutine has acquired the semaphore
@@ -93,6 +95,7 @@ func TestAdmissionController_RejectsOverLimit(t *testing.T) {
 }
 
 func TestAdmissionController_ReleasesOnCompletion(t *testing.T) {
+	t.Parallel()
 	ac := NewAdmissionController(1)
 
 	handler := ac.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -117,6 +120,7 @@ func TestAdmissionController_ReleasesOnCompletion(t *testing.T) {
 }
 
 func TestAdmissionController_IncrementsMetric(t *testing.T) {
+	t.Parallel()
 	ac := NewAdmissionController(1)
 
 	entered := make(chan struct{})
@@ -162,6 +166,7 @@ func TestAdmissionController_IncrementsMetric(t *testing.T) {
 }
 
 func TestSplitAdmission_WriteFull_ReadAllowed(t *testing.T) {
+	t.Parallel()
 	ac := NewSplitAdmissionController(2, 1)
 
 	entered := make(chan struct{}, 2)
@@ -208,6 +213,7 @@ func TestSplitAdmission_WriteFull_ReadAllowed(t *testing.T) {
 }
 
 func TestSplitAdmission_ReadFull_WriteAllowed(t *testing.T) {
+	t.Parallel()
 	ac := NewSplitAdmissionController(1, 2)
 
 	entered := make(chan struct{}, 2)
@@ -254,6 +260,7 @@ func TestSplitAdmission_ReadFull_WriteAllowed(t *testing.T) {
 }
 
 func TestAdmissionController_LoadShedding(t *testing.T) {
+	t.Parallel()
 	ac := NewAdmissionController(10)
 	ac.SetShedThreshold(0.5)
 
@@ -282,6 +289,7 @@ func TestAdmissionController_LoadShedding(t *testing.T) {
 }
 
 func TestAdmissionController_NoSheddingBelowThreshold(t *testing.T) {
+	t.Parallel()
 	ac := NewAdmissionController(10)
 	ac.SetShedThreshold(0.8)
 
@@ -294,6 +302,7 @@ func TestAdmissionController_NoSheddingBelowThreshold(t *testing.T) {
 }
 
 func TestAdmissionController_SheddingStartsAtThreshold(t *testing.T) {
+	t.Parallel()
 	// With capacity=10 and threshold=0.5, int(0.5*10) = 5.
 	// Shedding should start when occupancy reaches 5 (not 6).
 	ac := NewAdmissionController(10)
@@ -348,6 +357,7 @@ func TestAdmissionController_SheddingStartsAtThreshold(t *testing.T) {
 }
 
 func TestSplitAdmission_DeleteUsesWritePool(t *testing.T) {
+	t.Parallel()
 	ac := NewSplitAdmissionController(2, 1)
 
 	entered := make(chan struct{})
@@ -383,6 +393,7 @@ func TestSplitAdmission_DeleteUsesWritePool(t *testing.T) {
 }
 
 func TestAdmissionController_WaitAcquiresSlot(t *testing.T) {
+	t.Parallel()
 	ac := NewAdmissionController(1)
 	ac.SetAdmissionWait(200 * time.Millisecond)
 
@@ -425,6 +436,7 @@ func TestAdmissionController_WaitAcquiresSlot(t *testing.T) {
 }
 
 func TestAdmissionController_WaitTimesOut(t *testing.T) {
+	t.Parallel()
 	ac := NewAdmissionController(1)
 	ac.SetAdmissionWait(20 * time.Millisecond)
 

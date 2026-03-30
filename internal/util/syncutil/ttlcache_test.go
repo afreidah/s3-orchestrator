@@ -18,6 +18,7 @@ import (
 )
 
 func TestTTLCache_SetGet(t *testing.T) {
+	t.Parallel()
 	c := NewTTLCache[string, string](5 * time.Second)
 	defer c.Close()
 
@@ -30,6 +31,7 @@ func TestTTLCache_SetGet(t *testing.T) {
 }
 
 func TestTTLCache_GetMiss(t *testing.T) {
+	t.Parallel()
 	c := NewTTLCache[string, int](5 * time.Second)
 	defer c.Close()
 
@@ -40,6 +42,7 @@ func TestTTLCache_GetMiss(t *testing.T) {
 }
 
 func TestTTLCache_Delete(t *testing.T) {
+	t.Parallel()
 	c := NewTTLCache[string, string](5 * time.Second)
 	defer c.Close()
 
@@ -53,6 +56,7 @@ func TestTTLCache_Delete(t *testing.T) {
 }
 
 func TestTTLCache_Clear(t *testing.T) {
+	t.Parallel()
 	c := NewTTLCache[string, string](5 * time.Second)
 	defer c.Close()
 
@@ -69,6 +73,7 @@ func TestTTLCache_Clear(t *testing.T) {
 }
 
 func TestTTLCache_Expiry(t *testing.T) {
+	t.Parallel()
 	c := NewTTLCache[string, string](50 * time.Millisecond)
 	defer c.Close()
 
@@ -87,6 +92,7 @@ func TestTTLCache_Expiry(t *testing.T) {
 }
 
 func TestTTLCache_Eviction(t *testing.T) {
+	t.Parallel()
 	c := NewTTLCache[string, string](50 * time.Millisecond)
 	defer c.Close()
 
@@ -101,6 +107,7 @@ func TestTTLCache_Eviction(t *testing.T) {
 }
 
 func TestTTLCache_SetWithTTL(t *testing.T) {
+	t.Parallel()
 	c := NewTTLCache[string, string](5 * time.Second)
 	defer c.Close()
 
@@ -119,6 +126,7 @@ func TestTTLCache_SetWithTTL(t *testing.T) {
 }
 
 func TestTTLCache_ZeroTTL(t *testing.T) {
+	t.Parallel()
 	c := NewTTLCache[string, string](0)
 	defer c.Close()
 
@@ -131,6 +139,7 @@ func TestTTLCache_ZeroTTL(t *testing.T) {
 }
 
 func TestTTLCache_Len(t *testing.T) {
+	t.Parallel()
 	c := NewTTLCache[string, string](5 * time.Second)
 	defer c.Close()
 
@@ -148,6 +157,7 @@ func TestTTLCache_Len(t *testing.T) {
 }
 
 func TestTTLCache_ConcurrentAccess(t *testing.T) {
+	t.Parallel()
 	c := NewTTLCache[string, string](5 * time.Second)
 	defer c.Close()
 
@@ -164,6 +174,7 @@ func TestTTLCache_ConcurrentAccess(t *testing.T) {
 }
 
 func TestTTLCache_CloseIdempotent(t *testing.T) {
+	t.Parallel()
 	c := NewTTLCache[string, string](5 * time.Second)
 	c.Close()
 	c.Close() // should not panic

@@ -150,7 +150,7 @@ func (ac *AdmissionController) shouldShed(sem chan struct{}) bool {
 		return false
 	}
 	p := float64(occupancy-threshold) / float64(capacity-threshold)
-	return rand.Float64() < p
+	return rand.Float64() < p //nolint:gosec // G404: load shed probability does not require crypto-strength randomness
 }
 
 // semFor returns the appropriate semaphore for the given HTTP method.

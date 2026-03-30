@@ -3,6 +3,7 @@ package auth
 import (
 	"encoding/hex"
 	"fmt"
+	"context"
 	"net/http"
 	"testing"
 	"time"
@@ -15,7 +16,7 @@ func benchSignedRequest(accessKey, secret string) *http.Request {
 	amzDate := time.Now().UTC().Format("20060102T150405Z")
 	dateStamp := amzDate[:8]
 
-	r, _ := http.NewRequest("GET", "/bucket/key", nil)
+	r, _ := http.NewRequestWithContext(context.Background(), "GET", "/bucket/key", nil)
 	r.Header.Set("X-Amz-Date", amzDate)
 	r.Header.Set("X-Amz-Content-Sha256", "UNSIGNED-PAYLOAD")
 	r.Host = "localhost"
@@ -37,7 +38,7 @@ func benchSignedRequest(accessKey, secret string) *http.Request {
 
 func BenchmarkVerifySigV4(b *testing.B) {
 	accessKey := "AKIDEXAMPLE"
-	secret := "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"
+	secret := "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY" //nolint:gosec // G101: benchmark credential
 	r := benchSignedRequest(accessKey, secret)
 
 	b.ResetTimer()
@@ -73,7 +74,7 @@ func BenchmarkParseSigV4Fields(b *testing.B) {
 // request building, and signature verification.
 func BenchmarkAuthenticateAndResolveBucket(b *testing.B) {
 	accessKey := "AKIDEXAMPLE"
-	secret := "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"
+	secret := "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY" //nolint:gosec // G101: benchmark credential
 	buckets := []config.BucketConfig{
 		{Name: "bucket", Credentials: []config.CredentialConfig{
 			{AccessKeyID: accessKey, SecretAccessKey: secret},
@@ -93,7 +94,7 @@ func BenchmarkAuthenticateAndResolveBucket(b *testing.B) {
 // normal operation (the key only changes when the date rolls over).
 func BenchmarkCachedSigningKey_Hit(b *testing.B) {
 	accessKey := "AKIDEXAMPLE"
-	secret := "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"
+	secret := "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY" //nolint:gosec // G101: benchmark credential
 	dateStamp := time.Now().UTC().Format("20060102")
 
 	// Populate the cache
@@ -116,7 +117,7 @@ func BenchmarkVerifySigV4_WithQueryParams(b *testing.B) {
 	}
 
 	accessKey := "AKIDEXAMPLE"
-	secret := "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"
+	secret := "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY" //nolint:gosec // G101: benchmark credential
 
 	for _, tc := range cases {
 		b.Run(tc.name, func(b *testing.B) {
@@ -150,7 +151,7 @@ func BenchmarkVerifySigV4_WithQueryParams(b *testing.B) {
 }
 
 func BenchmarkBuildCanonicalRequest(b *testing.B) {
-	r, _ := http.NewRequest("PUT", "/bucket/path/to/object.bin?uploadId=abc123&partNumber=3", nil)
+	r, _ := http.NewRequestWithContext(context.Background(), "PUT", "/bucket/path/to/object.bin?uploadId=abc123&partNumber=3", nil)
 	r.Header.Set("X-Amz-Date", "20260307T000000Z")
 	r.Header.Set("X-Amz-Content-Sha256", "UNSIGNED-PAYLOAD")
 	r.Header.Set("Content-Type", "application/octet-stream")
@@ -169,7 +170,7 @@ func benchPresignedRequest(accessKey, secret string) *http.Request {
 	dateStamp := amzDate[:8]
 	credentialScope := fmt.Sprintf("%s/us-east-1/s3/aws4_request", dateStamp)
 
-	r, _ := http.NewRequest("GET", "/bucket/key", nil)
+	r, _ := http.NewRequestWithContext(context.Background(), "GET", "/bucket/key", nil)
 	r.Host = "localhost"
 
 	q := r.URL.Query()
@@ -193,7 +194,7 @@ func benchPresignedRequest(accessKey, secret string) *http.Request {
 
 func BenchmarkVerifyPresignedSigV4(b *testing.B) {
 	accessKey := "AKIDEXAMPLE"
-	secret := "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"
+	secret := "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY" //nolint:gosec // G101: benchmark credential
 
 	buckets := []config.BucketConfig{
 		{Name: "bucket", Credentials: []config.CredentialConfig{
@@ -234,7 +235,7 @@ func BenchmarkTokenAuth(b *testing.B) {
 
 			// Use the last token so the loop iterates all entries
 			lastToken := buckets[tc.count-1].Credentials[0].Token
-			r, _ := http.NewRequest("GET", "/bucket/key", nil)
+			r, _ := http.NewRequestWithContext(context.Background(), "GET", "/bucket/key", nil)
 			r.Header.Set("X-Proxy-Token", lastToken)
 
 			b.ResetTimer()

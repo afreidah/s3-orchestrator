@@ -14,6 +14,7 @@ import (
 )
 
 func TestCiphertextRange_FirstChunk(t *testing.T) {
+	t.Parallel()
 	r, err := CiphertextRange(0, 63, 64)
 	if err != nil {
 		t.Fatalf("CiphertextRange: %v", err)
@@ -33,6 +34,7 @@ func TestCiphertextRange_FirstChunk(t *testing.T) {
 }
 
 func TestCiphertextRange_CrossBoundary(t *testing.T) {
+	t.Parallel()
 	// bytes 60-70 crosses chunk 0 (0-63) and chunk 1 (64-127)
 	r, err := CiphertextRange(60, 70, 64)
 	if err != nil {
@@ -50,6 +52,7 @@ func TestCiphertextRange_CrossBoundary(t *testing.T) {
 }
 
 func TestCiphertextRange_SecondChunk(t *testing.T) {
+	t.Parallel()
 	// bytes 64-127 → chunk 1 only
 	r, err := CiphertextRange(64, 127, 64)
 	if err != nil {
@@ -67,6 +70,7 @@ func TestCiphertextRange_SecondChunk(t *testing.T) {
 }
 
 func TestCiphertextRange_SingleByte(t *testing.T) {
+	t.Parallel()
 	r, err := CiphertextRange(100, 100, 64)
 	if err != nil {
 		t.Fatalf("CiphertextRange: %v", err)
@@ -83,6 +87,7 @@ func TestCiphertextRange_SingleByte(t *testing.T) {
 }
 
 func TestCiphertextRange_InvalidRange(t *testing.T) {
+	t.Parallel()
 	_, err := CiphertextRange(10, 5, 64)
 	if err == nil {
 		t.Error("expected error for end < start")

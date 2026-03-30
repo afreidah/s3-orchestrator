@@ -12,6 +12,7 @@ import (
 )
 
 func TestOverReplicationCleaner_SetConfig_RoundTrip(t *testing.T) {
+	t.Parallel()
 	ctrl := gomock.NewController(t)
 	c := NewOverReplicationCleaner(NewMockOps(ctrl))
 	if c.Config() != nil {
@@ -25,6 +26,7 @@ func TestOverReplicationCleaner_SetConfig_RoundTrip(t *testing.T) {
 }
 
 func TestCountPending(t *testing.T) {
+	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
 	ms := &mockMetadataStore{overReplicatedCount: 5}
@@ -41,6 +43,7 @@ func TestCountPending(t *testing.T) {
 }
 
 func TestScoreCopy_DrainingBackend(t *testing.T) {
+	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
 	ops.EXPECT().IsDraining("b1").Return(true)
@@ -53,6 +56,7 @@ func TestScoreCopy_DrainingBackend(t *testing.T) {
 }
 
 func TestScoreCopy_HealthyBackend(t *testing.T) {
+	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
 	be := backendtest.NewMockObjectBackend(ctrl)
@@ -72,6 +76,7 @@ func TestScoreCopy_HealthyBackend(t *testing.T) {
 }
 
 func TestScoreCopy_UnknownBackend(t *testing.T) {
+	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
 
@@ -86,6 +91,7 @@ func TestScoreCopy_UnknownBackend(t *testing.T) {
 }
 
 func TestCleanObject_RemovesLowestScored(t *testing.T) {
+	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
 	be1 := backendtest.NewMockObjectBackend(ctrl)
@@ -120,6 +126,7 @@ func TestCleanObject_RemovesLowestScored(t *testing.T) {
 }
 
 func TestClean_FactorOne_Noop(t *testing.T) {
+	t.Parallel()
 	ctrl := gomock.NewController(t)
 	c := NewOverReplicationCleaner(NewMockOps(ctrl))
 
@@ -133,6 +140,7 @@ func TestClean_FactorOne_Noop(t *testing.T) {
 }
 
 func TestClean_NothingOverReplicated(t *testing.T) {
+	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
 	ms := &mockMetadataStore{}

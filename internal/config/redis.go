@@ -13,7 +13,7 @@ import "time"
 // in local memory (single-instance default).
 type RedisConfig struct {
 	Address          string        `yaml:"address"`           // Redis address (host:port)
-	Password         string        `yaml:"password"`          // Redis password (optional)
+	Password         string        `yaml:"password"` //nolint:gosec // G117: config struct, not a hardcoded credential
 	DB               int           `yaml:"db"`                // Redis database number (default: 0)
 	TLS              bool          `yaml:"tls"`               // Use TLS for Redis connection
 	KeyPrefix        string        `yaml:"key_prefix"`        // Key prefix for namespacing (default: "s3orch")

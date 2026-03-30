@@ -28,6 +28,7 @@ import (
 // -------------------------------------------------------------------------
 
 func TestNewCertReloader_ValidCert(t *testing.T) {
+	t.Parallel()
 	certFile, keyFile := generateTestCert(t)
 	cr, err := NewCertReloader(certFile, keyFile)
 	if err != nil {
@@ -39,6 +40,7 @@ func TestNewCertReloader_ValidCert(t *testing.T) {
 }
 
 func TestNewCertReloader_InvalidPath(t *testing.T) {
+	t.Parallel()
 	_, err := NewCertReloader("/nonexistent/cert.pem", "/nonexistent/key.pem")
 	if err == nil {
 		t.Fatal("expected error for nonexistent files")
@@ -46,6 +48,7 @@ func TestNewCertReloader_InvalidPath(t *testing.T) {
 }
 
 func TestCertReloader_GetCertificate(t *testing.T) {
+	t.Parallel()
 	certFile, keyFile := generateTestCert(t)
 	cr, err := NewCertReloader(certFile, keyFile)
 	if err != nil {
@@ -62,6 +65,7 @@ func TestCertReloader_GetCertificate(t *testing.T) {
 }
 
 func TestCertReloader_Reload(t *testing.T) {
+	t.Parallel()
 	certFile, keyFile := generateTestCert(t)
 	cr, err := NewCertReloader(certFile, keyFile)
 	if err != nil {
@@ -84,6 +88,7 @@ func TestCertReloader_Reload(t *testing.T) {
 }
 
 func TestCertReloader_ReloadBadCert_KeepsOld(t *testing.T) {
+	t.Parallel()
 	certFile, keyFile := generateTestCert(t)
 	cr, err := NewCertReloader(certFile, keyFile)
 	if err != nil {
@@ -93,7 +98,7 @@ func TestCertReloader_ReloadBadCert_KeepsOld(t *testing.T) {
 	origCert, _ := cr.GetCertificate(nil)
 
 	// Corrupt the cert file
-	if err := os.WriteFile(certFile, []byte("not a cert"), 0644); err != nil {
+	if err := os.WriteFile(certFile, []byte("not a cert"), 0600); err != nil {
 		t.Fatalf("failed to corrupt cert: %v", err)
 	}
 
@@ -109,6 +114,7 @@ func TestCertReloader_ReloadBadCert_KeepsOld(t *testing.T) {
 }
 
 func TestCertReloader_ReloadWarnsOnExpiringSoon(t *testing.T) {
+	t.Parallel()
 	// Generate a cert that expires in 30 minutes (within the 24h threshold)
 	certFile, keyFile := generateTestCertWithExpiry(t, 30*time.Minute)
 	cr, err := NewCertReloader(certFile, keyFile)
@@ -123,6 +129,7 @@ func TestCertReloader_ReloadWarnsOnExpiringSoon(t *testing.T) {
 }
 
 func TestCheckCertExpiry_LongLived(t *testing.T) {
+	t.Parallel()
 	// A cert with 30 days remaining should not trigger a warning.
 	// We just verify it doesn't panic; the warning is only logged, not returned.
 	certFile, keyFile := generateTestCertWithExpiry(t, 30*24*time.Hour)
@@ -184,7 +191,7 @@ func generateTestCertWithExpiry(t *testing.T, validity time.Duration) (certFile,
 	}
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
 
-	if err := os.WriteFile(certFile, certPEM, 0644); err != nil {
+	if err := os.WriteFile(certFile, certPEM, 0600); err != nil {
 		t.Fatalf("failed to write cert: %v", err)
 	}
 	if err := os.WriteFile(keyFile, keyPEM, 0600); err != nil {
@@ -223,7 +230,7 @@ func writeTestCert(t *testing.T, certFile, keyFile string) {
 	}
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
 
-	if err := os.WriteFile(certFile, certPEM, 0644); err != nil {
+	if err := os.WriteFile(certFile, certPEM, 0600); err != nil {
 		t.Fatalf("failed to write cert: %v", err)
 	}
 	if err := os.WriteFile(keyFile, keyPEM, 0600); err != nil {

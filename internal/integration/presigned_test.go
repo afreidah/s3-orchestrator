@@ -106,7 +106,7 @@ func TestE2E_PresignedPutObject(t *testing.T) {
 	}
 
 	// Upload with plain HTTP client — no AWS credentials
-	req, err := http.NewRequest(http.MethodPut, presigned.URL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPut, presigned.URL, bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestE2E_PresignedPutObject(t *testing.T) {
 		}
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatalf("HTTP PUT presigned URL: %v", err)
 	}
