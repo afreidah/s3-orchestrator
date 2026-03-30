@@ -851,3 +851,26 @@ func TestPresigned_CredentialDateMismatch(t *testing.T) {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
+
+func TestCollapseWhitespace(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{"no change", "no change"},
+		{"  leading", " leading"},
+		{"trailing  ", "trailing "},
+		{"a  b", "a b"},
+		{"a\tb", "a b"},
+		{"a\nb", "a b"},
+		{"a\r\nb", "a b"},
+		{"a \t \n b", "a b"},
+		{"", ""},
+		{"\n", " "},
+		{"\t\t\t", " "},
+	}
+	for _, tt := range tests {
+		if got := collapseWhitespace(tt.in); got != tt.want {
+			t.Errorf("collapseWhitespace(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
