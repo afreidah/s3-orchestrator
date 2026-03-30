@@ -53,6 +53,7 @@ Coordination of periodic background workers that maintain storage health, enforc
     '    SCHED --> CQWORKER[Cleanup Queue\\nWorker]:::cleanup',
     '    SCHED --> RECONCILE[Orphan\\nReconciler]:::process',
     '    SCHED --> SCRUBBER[Integrity\\nScrubber]:::process',
+    '    SCHED --> CBWATCH[CB\\nWatchdog]:::filter',
     '',
     '    REPL -->|copy to| S3[S3\\nBackends]:::storage',
     '    REBAL -->|move between| S3',
@@ -141,6 +142,11 @@ Coordination of periodic background workers that maintain storage health, enforc
       title: 'Orphan Reconciler',
       badge: 'process', badgeText: 'configurable (default 24h)',
       body: '<p><code>Reconciler.Run()</code> scans each backend via <code>SyncBackend()</code> and imports untracked objects into the metadata database.</p><p><b>Interval</b>: configurable (default 24 hours).<br><b>Advisory lock</b>: <code>LockReconcile = 1009</code>.<br><b>Guard</b>: only runs when <code>reconcile.enabled: true</code>.</p><p>For each backend, calls <code>ListObjects</code> and checks each key against <code>object_locations</code>. Objects not in the database are imported via <code>ImportObject()</code>, which inserts the location record and increments <code>bytes_used</code>.</p><p>After importing, refreshes quota metrics to reflect newly tracked objects.</p><p>Audit event: <code>storage.ReconcileComplete</code> with imported count, skipped count, duration.</p>'
+    },
+    CBWATCH: {
+      title: 'CB Watchdog',
+      badge: 'filter', badgeText: 'every 1 min',
+      body: '<p>Checks all circuit breakers (database, per-backend, Redis) for stale half-open probes and resets them to open.</p><p><b>Interval</b>: 1 minute.<br><b>Advisory lock</b>: none (per-instance, no coordination needed).</p><p>When a half-open probe has been in flight longer than 2 minutes (e.g. the backend accepted the connection but never responded), the watchdog calls <code>ResetStaleProbe()</code> to clear the probe flag and transition the circuit back to open. The next <code>openTimeout</code> cycle will dispatch a fresh probe.</p><p>This prevents circuits from getting permanently stuck half-open on low-traffic backends where no new request arrives to trigger the passive stale-probe detection in <code>PreCheck()</code>.</p>'
     },
     PG: {
       title: 'PostgreSQL',

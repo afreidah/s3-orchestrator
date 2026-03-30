@@ -1319,8 +1319,8 @@ s3-orchestrator -config config.yaml -mode worker
 **How it works:**
 
 - **API instances** serve S3 requests, the web UI, and rate limiting. They run the usage-flush service to avoid losing counters on restart, but skip all advisory-locked background tasks.
-- **Worker instances** run all 6 background services and expose `/health`, `/health/ready`, and `/metrics` for monitoring, but don't serve S3 traffic or the web UI.
-- Background tasks that modify state (rebalancer, replicator, cleanup, lifecycle, multipart cleanup) use **PostgreSQL advisory locks** — only one instance cluster-wide executes each task per cycle. Running multiple worker instances is safe; extra instances simply skip cycles when the lock is held.
+- **Worker instances** run all background services and expose `/health`, `/health/ready`, and `/metrics` for monitoring, but don't serve S3 traffic or the web UI.
+- Background tasks that modify state (rebalancer, replicator, cleanup, lifecycle, multipart cleanup) use **PostgreSQL advisory locks** — only one instance cluster-wide executes each task per cycle. Running multiple worker instances is safe; extra instances simply skip cycles when the lock is held. The circuit breaker watchdog runs on all instances without a lock (it operates on per-instance circuit state).
 
 **Recommended topology:** N `api` instances behind a load balancer + 1–2 `worker` instances for redundancy. All instances share the same config file and PostgreSQL database.
 

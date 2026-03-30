@@ -454,3 +454,84 @@ func TestTransition_NoEmitWhenHookNil(t *testing.T) {
 		t.Errorf("state = %s, want open", cb.State())
 	}
 }
+
+// -------------------------------------------------------------------------
+// ResetStaleProbe
+// -------------------------------------------------------------------------
+
+// TestResetStaleProbe_ClosedCircuit verifies that ResetStaleProbe is a no-op
+// when the circuit is closed.
+func TestResetStaleProbe_ClosedCircuit(t *testing.T) {
+	cb := newTestBreaker(3, time.Minute)
+
+	if cb.ResetStaleProbe() {
+		t.Error("expected false for closed circuit")
+	}
+	if cb.State() != StateClosed {
+		t.Errorf("state = %s, want closed", cb.State())
+	}
+}
+
+// TestResetStaleProbe_OpenCircuit verifies that ResetStaleProbe is a no-op
+// when the circuit is open (no probe dispatched yet).
+func TestResetStaleProbe_OpenCircuit(t *testing.T) {
+	cb := newTestBreaker(1, time.Hour)
+	_ = cb.PostCheck(errTest) // trips to open
+
+	if cb.ResetStaleProbe() {
+		t.Error("expected false for open circuit with no probe")
+	}
+	if cb.State() != StateOpen {
+		t.Errorf("state = %s, want open", cb.State())
+	}
+}
+
+// TestResetStaleProbe_FreshProbe verifies that ResetStaleProbe does not reset
+// a probe that was just dispatched (well within probeTimeout).
+func TestResetStaleProbe_FreshProbe(t *testing.T) {
+	cb := newTestBreaker(1, time.Millisecond)
+	_ = cb.PostCheck(errTest)
+	time.Sleep(2 * time.Millisecond)
+
+	// Dispatch a probe via PreCheck
+	if err := cb.PreCheck(); err != nil {
+		t.Fatalf("expected probe to be allowed: %v", err)
+	}
+	if cb.State() != StateHalfOpen {
+		t.Fatalf("state = %s, want half-open", cb.State())
+	}
+
+	// Probe is fresh, should not be reset.
+	if cb.ResetStaleProbe() {
+		t.Error("expected false for fresh probe")
+	}
+	if cb.State() != StateHalfOpen {
+		t.Errorf("state = %s, want half-open (unchanged)", cb.State())
+	}
+}
+
+// TestResetStaleProbe_StaleProbe verifies that ResetStaleProbe resets a
+// half-open circuit whose probe has exceeded probeTimeout back to open.
+func TestResetStaleProbe_StaleProbe(t *testing.T) {
+	cb := newTestBreaker(1, time.Millisecond)
+	_ = cb.PostCheck(errTest)
+	time.Sleep(2 * time.Millisecond)
+
+	// Dispatch a probe
+	if err := cb.PreCheck(); err != nil {
+		t.Fatalf("expected probe: %v", err)
+	}
+
+	// Backdate the probe start to simulate a stale probe.
+	cb.probeStarted.Store(time.Now().Add(-probeTimeout - time.Second).UnixNano())
+
+	if !cb.ResetStaleProbe() {
+		t.Error("expected true for stale probe")
+	}
+	if cb.State() != StateOpen {
+		t.Errorf("state = %s, want open after stale probe reset", cb.State())
+	}
+	if cb.probeInFlight.Load() {
+		t.Error("probeInFlight should be false after reset")
+	}
+}

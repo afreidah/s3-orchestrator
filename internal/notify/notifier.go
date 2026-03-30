@@ -24,13 +24,13 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
 // -------------------------------------------------------------------------
@@ -51,13 +51,17 @@ type OutboxStore interface {
 // NOTIFIER
 // -------------------------------------------------------------------------
 
+// dampenTTL is the duration for which repeated threshold-crossing events
+// (e.g. capacity warnings) are suppressed after the first emission.
+const dampenTTL = 1 * time.Hour
+
 // Notifier delivers webhook notifications from a durable outbox queue.
 // Implements lifecycle.Service via the Run method.
 type Notifier struct {
 	endpoints []config.NotificationEndpoint
 	store     OutboxStore
 	client    *http.Client
-	dampener  sync.Map // map[string]time.Time — last-fired per event+subject
+	dampener  *syncutil.TTLCache[string, struct{}]
 }
 
 // NewNotifier creates a notifier backed by the given outbox store. Sets the
@@ -70,6 +74,7 @@ func NewNotifier(cfg *config.NotificationConfig, store OutboxStore) *Notifier {
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 		},
+		dampener: syncutil.NewTTLCache[string, struct{}](dampenTTL),
 	}
 	event.Emit = n.emit
 	return n
@@ -99,16 +104,15 @@ func (n *Notifier) emit(ev event.Event) { //nolint:gocritic // Event is passed b
 		ev.Time = time.Now().UTC()
 	}
 
-	// Dampening for threshold-crossing events
-	if ev.Type == event.BackendCapacityWarning {
+	// Dampening for threshold-crossing events. The TTL cache automatically
+	// evicts entries after dampenTTL, preventing unbounded memory growth.
+	if ev.Type == event.BackendCapacityWarning && n.dampener != nil {
 		dampenKey := ev.Type + ":" + ev.Subject
-		if last, ok := n.dampener.Load(dampenKey); ok {
-			if time.Since(last.(time.Time)) < time.Hour {
-				telemetry.NotificationDroppedTotal.Inc()
-				return
-			}
+		if _, ok := n.dampener.Get(dampenKey); ok {
+			telemetry.NotificationDroppedTotal.Inc()
+			return
 		}
-		n.dampener.Store(dampenKey, time.Now())
+		n.dampener.Set(dampenKey, struct{}{})
 	}
 
 	payload, err := json.Marshal(ev)

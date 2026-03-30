@@ -71,20 +71,34 @@ func (m *Manager) Run(ctx context.Context) {
 }
 
 // Stop calls Stop on services that implement Stoppable, in reverse
-// registration order, bounded by the given timeout.
+// registration order. The timeout is divided equally among stoppable
+// services so a slow service cannot starve the rest of their shutdown
+// budget.
 func (m *Manager) Stop(timeout time.Duration) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
+	var stoppable int
+	for _, e := range m.services {
+		if _, ok := e.service.(Stoppable); ok {
+			stoppable++
+		}
+	}
+	if stoppable == 0 {
+		return
+	}
+	perService := timeout / time.Duration(stoppable)
 
 	for i := len(m.services) - 1; i >= 0; i-- {
-		if s, ok := m.services[i].service.(Stoppable); ok {
-			if err := s.Stop(ctx); err != nil {
-				slog.ErrorContext(ctx, "Service stop error",
-					"service", m.services[i].name,
-					"error", err,
-				)
-			}
+		s, ok := m.services[i].service.(Stoppable)
+		if !ok {
+			continue
 		}
+		ctx, cancel := context.WithTimeout(context.Background(), perService)
+		if err := s.Stop(ctx); err != nil {
+			slog.ErrorContext(ctx, "Service stop error",
+				"service", m.services[i].name,
+				"error", err,
+			)
+		}
+		cancel()
 	}
 }
 
