@@ -119,6 +119,10 @@ When MinIO comes back online, the replication worker detects that objects writte
 
 No changes are needed on the MinIO side. It does not need to know about the orchestrator or the cloud backend.
 
+{{% notice info %}}
+**Encryption and replication:** If encryption is enabled, objects are encrypted before they are written to any backend. Replicas are copied as opaque ciphertext — the replicator does not decrypt and re-encrypt, it streams the encrypted bytes directly. All copies share the same encryption key metadata, so any copy can be decrypted by the orchestrator. Enabling or disabling encryption does not affect the replication process.
+{{% /notice %}}
+
 ## Monitoring Replication
 
 Track replication progress through the web dashboard or Prometheus metrics:
@@ -137,3 +141,25 @@ Replication copies count against the cloud backend's quota and usage limits. If 
 - The replicator is idempotent - restarting the orchestrator does not duplicate objects
 - To replicate to multiple cloud providers for extra safety, add more backends and increase the replication factor
 - If you have existing objects in MinIO, the orchestrator can discover and replicate them via the admin sync operation
+
+## Optional: Enable Encryption
+
+To encrypt all data before it leaves the orchestrator (so backends only ever store ciphertext), add an `encryption` section to your config:
+
+```yaml
+encryption:
+  enabled: true
+  master_key: "${ENCRYPTION_KEY}"
+```
+
+Generate a key with `openssl rand -base64 32` and store it securely.
+
+After restarting the orchestrator, all new writes are encrypted automatically. Both the primary copy on MinIO and the replica on the cloud backend are encrypted — backends never see plaintext.
+
+To encrypt objects that were uploaded before encryption was enabled, run:
+
+```bash
+s3-orchestrator admin encrypt-existing
+```
+
+For production deployments, consider using [Vault Transit](../nomad-vault-deployment/) instead of an inline key. See the [Encrypting Existing Data](../encrypting-existing-data/) guide for the full walkthrough and the [Key Rotation](../key-rotation/) guide for rotating master keys.
