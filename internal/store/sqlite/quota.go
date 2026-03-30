@@ -1,5 +1,13 @@
-// Package sqlite implements quota, usage, and orphan-bytes persistence methods
-// for the SQLite MetadataStore backend.
+// -------------------------------------------------------------------------------
+// SQLite Quota and Usage - Backend Space Management and Usage Tracking
+//
+// Author: Alex Freidah
+//
+// Implements quota enforcement, backend space selection, usage delta flushing,
+// and orphan byte tracking for the SQLite backend. Uses dynamic IN clause
+// expansion for backend-filtered queries.
+// -------------------------------------------------------------------------------
+
 package sqlite
 
 import (

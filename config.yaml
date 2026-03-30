@@ -11,13 +11,10 @@
 server:
   listen_addr: "0.0.0.0:9000"
 
-# --- PostgreSQL connection ---
+# --- Database (SQLite for local dev, no external dependencies) ---
 database:
-  host: "localhost"
-  port: 15432
-  database: "s3proxy_test"
-  user: "s3proxy"
-  password: "s3proxy"
+  driver: sqlite
+  path: "dev-data.db"
   ssl_mode: "disable"
   # max_conns: 50             # default: 50; size to 2-3x max_concurrent_requests for production
 

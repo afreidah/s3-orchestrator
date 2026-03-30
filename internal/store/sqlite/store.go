@@ -1,6 +1,14 @@
-// Package sqlite implements the MetadataStore and AdminStore interfaces
-// using an embedded SQLite database via modernc.org/sqlite (pure Go, no CGo).
-// Designed for single-instance deployments where PostgreSQL is not available.
+// -------------------------------------------------------------------------------
+// SQLite Store - Embedded Database Backend for Single-Instance Deployments
+//
+// Author: Alex Freidah
+//
+// Implements store.MetadataStore and store.AdminStore using an embedded SQLite
+// database via modernc.org/sqlite (pure Go, no CGo). Provides WAL mode for
+// concurrent reads, process-local mutex for advisory lock emulation, and
+// automatic schema migration on first start.
+// -------------------------------------------------------------------------------
+
 package sqlite
 
 import (

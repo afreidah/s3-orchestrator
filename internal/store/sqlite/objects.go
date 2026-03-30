@@ -1,5 +1,14 @@
-// Package sqlite implements object location persistence methods for the SQLite
-// MetadataStore backend.
+// -------------------------------------------------------------------------------
+// SQLite Object Operations - Location CRUD, Listing, and Integrity
+//
+// Author: Alex Freidah
+//
+// Implements object location CRUD, prefix-based listing with deduplication,
+// expired object queries, backend-scoped listing, import, and integrity
+// verification operations. Uses GROUP BY + MIN(rowid) subqueries to replace
+// PostgreSQL's DISTINCT ON for replica deduplication.
+// -------------------------------------------------------------------------------
+
 package sqlite
 
 import (

@@ -1,6 +1,13 @@
-// Package sqlite implements replication-related store operations for the
-// SQLite backend: under/over-replication queries, replica recording, and
-// excess copy removal.
+// -------------------------------------------------------------------------------
+// SQLite Replication - Under/Over-Replication Queries and Replica Management
+//
+// Author: Alex Freidah
+//
+// Implements replication queries for the SQLite backend: finding under- and
+// over-replicated objects via HAVING COUNT, recording new replicas with
+// conflict detection, and removing excess copies with quota adjustment.
+// -------------------------------------------------------------------------------
+
 package sqlite
 
 import (

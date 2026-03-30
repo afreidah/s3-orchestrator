@@ -60,6 +60,10 @@ func main() {
 			os.Args = os.Args[1:]
 			runValidate()
 			return
+		case "init":
+			os.Args = os.Args[1:]
+			runInit()
+			return
 		case "admin":
 			os.Args = os.Args[1:]
 			runAdmin()
@@ -77,6 +81,7 @@ func printUsage() {
 
 Commands:
   (default)   Start the S3 proxy server
+  init        Generate a configuration file interactively
   admin       Operational CLI for a running instance
   sync        Import pre-existing bucket objects into the database
   validate    Check a configuration file without starting the server

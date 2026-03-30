@@ -1,6 +1,13 @@
-// Package sqlite implements cleanup queue operations for the SQLite backend:
-// enqueue failed deletions, fetch pending items with backoff-aware scheduling,
-// and mark items as completed or retried.
+// -------------------------------------------------------------------------------
+// SQLite Cleanup Queue - Background Retry Worker Operations
+//
+// Author: Alex Freidah
+//
+// Implements cleanup queue operations for the SQLite backend: enqueue failed
+// deletions, fetch pending items with backoff-aware scheduling, and mark items
+// as completed or retried.
+// -------------------------------------------------------------------------------
+
 package sqlite
 
 import (

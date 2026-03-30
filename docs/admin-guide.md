@@ -11,14 +11,15 @@ This guide walks through deploying, configuring, and operating the S3 Orchestrat
 
 Get a minimal single-bucket, single-backend orchestrator running in five steps.
 
-### 1. Create a PostgreSQL database
+### 1. Generate a config file
 
-```sql
-CREATE USER s3orchestrator WITH PASSWORD 'changeme';
-CREATE DATABASE s3orchestrator OWNER s3orchestrator;
+Run the interactive config generator:
+
+```bash
+s3-orchestrator init
 ```
 
-The orchestrator creates its tables automatically on startup — no manual schema setup required.
+This prompts for a database driver (SQLite by default), backend credentials, and virtual bucket settings. Or create a config manually:
 
 ### 2. Create a minimal config
 
@@ -26,19 +27,15 @@ The orchestrator creates its tables automatically on startup — no manual schem
 server:
   listen_addr: "0.0.0.0:9000"
 
+database:
+  driver: sqlite
+  path: "s3-orchestrator.db"
+
 buckets:
   - name: "my-files"
     credentials:
       - access_key_id: "AKID_MYFILES"
         secret_access_key: "changeme-replace-with-random-secret"
-
-database:
-  host: "localhost"
-  port: 5432
-  database: "s3orchestrator"
-  user: "s3orchestrator"
-  password: "changeme"
-  ssl_mode: "disable"
 
 backends:
   - name: "primary"
@@ -166,8 +163,23 @@ SigV4 credentials also support presigned URLs automatically. Clients can generat
 
 ### database
 
+The `driver` field selects between SQLite (embedded, zero-dependency) and PostgreSQL (required for multi-instance deployments). When `driver` is omitted, the orchestrator infers `postgres` if `host` is set, otherwise `sqlite`.
+
+**SQLite (default for single-instance):**
+
 ```yaml
 database:
+  driver: sqlite
+  path: "s3-orchestrator.db"     # default: s3-orchestrator.db
+```
+
+SQLite requires no external dependencies. The database file is created automatically on first start. Advisory lock-based leader election is replaced by a process-local mutex, so multi-instance deployments are not supported with SQLite.
+
+**PostgreSQL (required for multi-instance):**
+
+```yaml
+database:
+  driver: postgres
   host: "db.example.com"        # required
   port: 5432                     # default: 5432
   database: "s3orchestrator"     # required
@@ -175,13 +187,11 @@ database:
   password: "${DB_PASSWORD}"
   ssl_mode: "require"            # default: require (use "disable" for local dev)
   max_conns: 50                  # default: 50; size to 2-3x max_concurrent_requests
-  min_conns: 10                   # default: 5
+  min_conns: 10                  # default: 5
   max_conn_lifetime: "5m"        # default: 5m
 ```
 
-The default is `require`. Set `ssl_mode: disable` only for local development without TLS.
-
-Pool settings (`max_conns`, `min_conns`, `max_conn_lifetime`) control the pgx connection pool. Size `max_conns` to 2–3x your `max_concurrent_requests` setting — each S3 operation uses at least one database connection, and background workers hold additional connections during their tick. See [Performance Tuning — Connection Pool Sizing](performance-tuning.md#connection-pool-sizing) for detailed guidance.
+Pool settings (`max_conns`, `min_conns`, `max_conn_lifetime`) control the pgx connection pool. Size `max_conns` to 2-3x your `max_concurrent_requests` setting. See [Performance Tuning - Connection Pool Sizing](performance-tuning.md#connection-pool-sizing) for detailed guidance.
 
 ### routing_strategy
 

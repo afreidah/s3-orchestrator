@@ -1,3 +1,13 @@
+// -------------------------------------------------------------------------------
+// SQLite Migrations - Schema Initialization and Version Management
+//
+// Author: Alex Freidah
+//
+// Manages the SQLite schema lifecycle. Embeds the consolidated schema DDL via
+// go:embed and applies it on first run. Subsequent starts verify the schema
+// version matches the expected version.
+// -------------------------------------------------------------------------------
+
 package sqlite
 
 import (

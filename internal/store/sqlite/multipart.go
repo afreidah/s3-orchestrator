@@ -1,4 +1,13 @@
-// Package sqlite implements multipart upload operations for the SQLite backend.
+// -------------------------------------------------------------------------------
+// SQLite Multipart Uploads - Create, Part, Complete, Abort Operations
+//
+// Author: Alex Freidah
+//
+// Implements multipart upload lifecycle operations for the SQLite backend:
+// create uploads, record parts with upsert, list uploads by prefix or backend,
+// count active uploads, and fetch stale uploads for cleanup.
+// -------------------------------------------------------------------------------
+
 package sqlite
 
 import (

@@ -31,6 +31,7 @@ buckets:
         secret_access_key: "{{ .Data.data.secret_key }}"
 
 database:
+  driver: postgres
   host: "haproxy-postgres.service.consul"
   port: 5433
   database: "s3_orchestrator"

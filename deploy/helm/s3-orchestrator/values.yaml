@@ -90,6 +90,7 @@ config:
     shutdown_delay: "5s"
 
   database:
+    driver: postgres
     host: "postgresql"
     port: 5432
     database: "s3_orchestrator"
