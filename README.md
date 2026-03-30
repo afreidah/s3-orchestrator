@@ -46,6 +46,24 @@ See the [Quickstart](docs/quickstart.md) for full details, credentials for all b
 - Debian: download `.deb` from [GitHub Releases](https://github.com/afreidah/s3-orchestrator/releases)
 - Binary: download from [GitHub Releases](https://github.com/afreidah/s3-orchestrator/releases)
 
+**Verify artifact signatures:**
+
+Container images and release checksums are signed with [cosign](https://github.com/sigstore/cosign) (keyless / Sigstore):
+
+```bash
+# Verify a container image
+cosign verify ghcr.io/afreidah/s3-orchestrator:<version> \
+  --certificate-identity-regexp='github\.com/afreidah/s3-orchestrator' \
+  --certificate-oidc-issuer='https://token.actions.githubusercontent.com'
+
+# Verify release checksums
+cosign verify-blob checksums.txt \
+  --signature checksums.txt.sig \
+  --certificate checksums.txt.pem \
+  --certificate-identity-regexp='github\.com/afreidah/s3-orchestrator' \
+  --certificate-oidc-issuer='https://token.actions.githubusercontent.com'
+```
+
 **Operational CLI:** `s3-orchestrator admin --help` for rebalance, drain, encryption management, and backend sync.
 
 ![Dashboard](docs/images/dashboard.png?v=2)

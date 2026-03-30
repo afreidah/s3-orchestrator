@@ -24,6 +24,10 @@ Please include:
 
 You should receive an acknowledgment within 48 hours. Please do not open a public GitHub issue for security vulnerabilities.
 
+## Artifact Signing
+
+All container images pushed to `ghcr.io` and release checksums on GitHub Releases are signed with [cosign](https://github.com/sigstore/cosign) using keyless Sigstore OIDC. SBOMs (SPDX) are attached to every release. See the [README](README.md#verify-artifact-signatures) for verification commands.
+
 ## Disclosure Policy
 
 - Confirmed vulnerabilities will be patched in a new release as soon as possible.

@@ -1,0 +1,98 @@
+# -------------------------------------------------------------------------------
+# Nightly Fuzz Testing - GitHub Actions
+#
+# Author: Alex Freidah
+#
+# Runs all fuzz targets nightly with meaningful run times (2 minutes each).
+# On failure, uploads the crashing input as an artifact and opens a GitHub
+# issue so the finding is tracked. Crashing inputs should be committed to
+# testdata/fuzz/ to become permanent regression tests.
+# -------------------------------------------------------------------------------
+
+name: Fuzz
+
+on:
+  schedule:
+    - cron: '0 2 * * *'   # 2:00 AM UTC daily
+  workflow_dispatch:        # allow manual trigger
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: FuzzParseSigV4Fields
+            package: ./internal/transport/auth/
+          - target: FuzzBuildCanonicalRequest
+            package: ./internal/transport/auth/
+          - target: FuzzParsePath
+            package: ./internal/transport/s3api/
+          - target: FuzzDeleteObjectsXML
+            package: ./internal/transport/s3api/
+          - target: FuzzCompleteMultipartXML
+            package: ./internal/transport/s3api/
+          - target: FuzzIsValidRequestID
+            package: ./internal/transport/s3api/
+          - target: FuzzLoginThrottle_RemoteAddr
+            package: ./internal/transport/s3api/
+          - target: FuzzExtractClientIP
+            package: ./internal/transport/s3api/
+          - target: FuzzValidMetadataToken
+            package: ./internal/transport/s3api/
+          - target: FuzzParseHeader
+            package: ./internal/encryption/
+          - target: FuzzCiphertextRange
+            package: ./internal/encryption/
+          - target: FuzzUnpackKeyData
+            package: ./internal/encryption/
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Run fuzz target
+        id: fuzz
+        run: go test -fuzz=${{ matrix.target }} -fuzztime=2m ${{ matrix.package }}
+
+      - name: Upload crashing inputs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-corpus-${{ matrix.target }}
+          path: '**/testdata/fuzz/**'
+          retention-days: 90
+
+      - name: Open issue on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Collect the crashing input filename if it exists
+          CORPUS_FILES=$(find . -path '*/testdata/fuzz/${{ matrix.target }}/*' -type f 2>/dev/null | head -5)
+          BODY="## Fuzz failure: \`${{ matrix.target }}\`
+
+          **Package:** \`${{ matrix.package }}\`
+          **Run:** [View logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+          ### Crashing inputs
+          ${CORPUS_FILES:-No corpus files found — check the run logs for the failing input.}
+
+          ### Next steps
+          1. Download the \`fuzz-corpus-${{ matrix.target }}\` artifact from the run
+          2. Copy the crashing input to \`testdata/fuzz/${{ matrix.target }}/\` in the package
+          3. Run \`go test ${{ matrix.package }}\` to reproduce and fix"
+
+          gh issue create \
+            --title "fuzz: ${{ matrix.target }} crash found" \
+            --label "bug" \
+            --body "$BODY"

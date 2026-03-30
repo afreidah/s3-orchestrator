@@ -77,6 +77,13 @@ func (o *ObjectManager) PutObject(ctx context.Context, key string, body io.Reade
 	}
 
 	// --- Try eligible backends with failover ---
+	// DEK caching: on the first encryption attempt we call Encrypt() which
+	// wraps the DEK via the KeyProvider (Vault round-trip). On retries we
+	// call EncryptWithDEK() which reuses the wrapped DEK but generates a
+	// fresh nonce, avoiding redundant Vault calls during failover storms.
+	var cachedDEK, cachedWrappedDEK []byte
+	var cachedKeyID string
+
 	var failedBackends []string
 	var lastErr error
 	for len(eligible) > 0 {
@@ -93,16 +100,29 @@ func (o *ObjectManager) PutObject(ctx context.Context, key string, body io.Reade
 			return "", err
 		}
 
-		// --- Encrypt if enabled (re-encrypt per attempt — unique nonce each time) ---
+		// --- Encrypt if enabled (fresh nonce per attempt, cached DEK on retry) ---
 		var enc *store.EncryptionMeta
 		uploadBody := io.Reader(bytes.NewReader(bodyBytes))
 		uploadSize := size
 		if o.encryptor != nil {
-			encResult, err := o.encryptor.Encrypt(ctx, bytes.NewReader(bodyBytes), size)
-			if err != nil {
-				telemetry.EncryptionErrorsTotal.WithLabelValues("encrypt", "encrypt_failed").Inc()
-				span.SetStatus(codes.Error, err.Error())
-				return "", fmt.Errorf("encrypt: %w", err)
+			var encResult *encryption.EncryptResult
+			if cachedDEK == nil {
+				encResult, err = o.encryptor.Encrypt(ctx, bytes.NewReader(bodyBytes), size)
+				if err != nil {
+					telemetry.EncryptionErrorsTotal.WithLabelValues("encrypt", "encrypt_failed").Inc()
+					span.SetStatus(codes.Error, err.Error())
+					return "", fmt.Errorf("encrypt: %w", err)
+				}
+				cachedDEK = encResult.RawDEK
+				cachedWrappedDEK = encResult.WrappedDEK
+				cachedKeyID = encResult.KeyID
+			} else {
+				encResult, err = o.encryptor.EncryptWithDEK(bytes.NewReader(bodyBytes), size, cachedDEK, cachedWrappedDEK, cachedKeyID)
+				if err != nil {
+					telemetry.EncryptionErrorsTotal.WithLabelValues("encrypt", "encrypt_failed").Inc()
+					span.SetStatus(codes.Error, err.Error())
+					return "", fmt.Errorf("encrypt: %w", err)
+				}
 			}
 			telemetry.EncryptionOpsTotal.WithLabelValues("encrypt").Inc()
 			uploadBody = encResult.Body

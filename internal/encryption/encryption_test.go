@@ -658,3 +658,87 @@ func TestEncryptDecrypt_SmallReads(t *testing.T) {
 		t.Error("small-read round-trip mismatch")
 	}
 }
+
+// -------------------------------------------------------------------------
+// ENCRYPT WITH DEK (FAILOVER REUSE)
+// -------------------------------------------------------------------------
+
+func TestEncryptWithDEK_RoundTrip(t *testing.T) {
+	enc := testEncryptor(t, 64)
+	ctx := context.Background()
+	original := make([]byte, 200)
+	if _, err := rand.Read(original); err != nil {
+		t.Fatal(err)
+	}
+
+	// First encrypt — normal path (wraps DEK via provider)
+	first, err := enc.Encrypt(ctx, bytes.NewReader(original), int64(len(original)))
+	if err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+	ct1, err := io.ReadAll(first.Body)
+	if err != nil {
+		t.Fatalf("ReadAll first: %v", err)
+	}
+	if first.RawDEK == nil {
+		t.Fatal("RawDEK should be set after Encrypt")
+	}
+
+	// Second encrypt — reuse DEK (simulates failover retry)
+	second, err := enc.EncryptWithDEK(bytes.NewReader(original), int64(len(original)), first.RawDEK, first.WrappedDEK, first.KeyID)
+	if err != nil {
+		t.Fatalf("EncryptWithDEK: %v", err)
+	}
+	ct2, err := io.ReadAll(second.Body)
+	if err != nil {
+		t.Fatalf("ReadAll second: %v", err)
+	}
+
+	// Ciphertexts must differ (different nonces)
+	if bytes.Equal(ct1, ct2) {
+		t.Error("ciphertexts should differ due to different nonces")
+	}
+
+	// Both must decrypt to same plaintext
+	for i, ct := range [][]byte{ct1, ct2} {
+		res := []*EncryptResult{first, second}[i]
+		plain, err := enc.Decrypt(ctx, bytes.NewReader(ct), res.WrappedDEK, res.KeyID)
+		if err != nil {
+			t.Fatalf("Decrypt[%d]: %v", i, err)
+		}
+		got, err := io.ReadAll(plain)
+		if err != nil {
+			t.Fatalf("ReadAll[%d]: %v", i, err)
+		}
+		if !bytes.Equal(got, original) {
+			t.Errorf("Decrypt[%d] mismatch", i)
+		}
+	}
+}
+
+func TestEncryptWithDEK_DifferentNonce(t *testing.T) {
+	enc := testEncryptor(t, 64)
+	ctx := context.Background()
+	data := []byte("test data for nonce check")
+
+	first, err := enc.Encrypt(ctx, bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Drain body to finalize
+	if _, err := io.ReadAll(first.Body); err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := enc.EncryptWithDEK(bytes.NewReader(data), int64(len(data)), first.RawDEK, first.WrappedDEK, first.KeyID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.ReadAll(second.Body); err != nil {
+		t.Fatal(err)
+	}
+
+	if bytes.Equal(first.BaseNonce, second.BaseNonce) {
+		t.Error("BaseNonce should differ between calls (random per encrypt)")
+	}
+}

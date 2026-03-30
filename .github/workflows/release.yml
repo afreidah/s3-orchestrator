@@ -17,6 +17,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  id-token: write
 
 jobs:
   preflight:
@@ -61,6 +62,9 @@ jobs:
 
       - name: Install syft (SBOM generation)
         uses: anchore/sbom-action/download-syft@v0
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v7

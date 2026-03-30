@@ -154,34 +154,6 @@ jobs:
       - name: Run govulncheck
         run: govulncheck ./...
 
-  fuzz:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    needs: [lint, test]
-    if: needs.changes.outputs.go == 'true'
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-
-      - name: Fuzz smoke test (parallel)
-        run: |
-          go test -fuzz=FuzzParseSigV4Fields -fuzztime=10s ./internal/transport/auth/ &
-          go test -fuzz=FuzzBuildCanonicalRequest -fuzztime=10s ./internal/transport/auth/ &
-          go test -fuzz=FuzzParsePath -fuzztime=10s ./internal/transport/s3api/ &
-          go test -fuzz=FuzzDeleteObjectsXML -fuzztime=10s ./internal/transport/s3api/ &
-          go test -fuzz=FuzzCompleteMultipartXML -fuzztime=10s ./internal/transport/s3api/ &
-          go test -fuzz=FuzzIsValidRequestID -fuzztime=10s ./internal/transport/s3api/ &
-          go test -fuzz=FuzzLoginThrottle_RemoteAddr -fuzztime=10s ./internal/transport/s3api/ &
-          go test -fuzz=FuzzExtractClientIP -fuzztime=10s ./internal/transport/s3api/ &
-          go test -fuzz=FuzzValidMetadataToken -fuzztime=10s ./internal/transport/s3api/ &
-          go test -fuzz=FuzzParseHeader -fuzztime=10s ./internal/encryption/ &
-          go test -fuzz=FuzzCiphertextRange -fuzztime=10s ./internal/encryption/ &
-          go test -fuzz=FuzzUnpackKeyData -fuzztime=10s ./internal/encryption/ &
-          wait
-
   integration:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -229,7 +201,7 @@ jobs:
         uses: goreleaser/goreleaser-action@v7
         with:
           version: "~> v2"
-          args: release --snapshot --clean --skip=publish
+          args: release --snapshot --clean --skip=publish,sign
 
       - name: Lint debs
         run: |
@@ -246,6 +218,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
     steps:
       - uses: actions/checkout@v6
 
@@ -259,11 +232,15 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
       - name: Read version
         id: version
         run: echo "version=$(cat .version)" >> "$GITHUB_OUTPUT"
 
       - name: Build and push
+        id: push
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -276,6 +253,11 @@ jobs:
             ghcr.io/afreidah/s3-orchestrator:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Sign image with cosign
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: cosign sign --yes ghcr.io/afreidah/s3-orchestrator@${DIGEST}
 
       - name: Scan image with Trivy
         uses: aquasecurity/trivy-action@0.35.0
@@ -292,6 +274,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
     steps:
       - uses: actions/checkout@v6
         with:
@@ -307,11 +290,15 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
       - name: Read version
         id: version
         run: echo "version=$(cat .version)" >> "$GITHUB_OUTPUT"
 
       - name: Build and push
+        id: push
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -324,6 +311,11 @@ jobs:
             ghcr.io/afreidah/s3-orchestrator-webpage:latest
           cache-from: type=gha,scope=webpage-v2
           cache-to: type=gha,mode=max,scope=webpage-v2
+
+      - name: Sign image with cosign
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: cosign sign --yes ghcr.io/afreidah/s3-orchestrator-webpage@${DIGEST}
 
       - name: Scan image with Trivy
         uses: aquasecurity/trivy-action@0.35.0

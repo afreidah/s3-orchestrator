@@ -188,7 +188,7 @@ prep-changelog: ## Compress changelog for Debian packaging
 	@gzip -9 -n -c packaging/changelog > packaging/changelog.gz
 
 deb: prep-changelog ## Build .deb packages via GoReleaser snapshot
-	goreleaser release --snapshot --clean --skip=publish
+	goreleaser release --snapshot --clean --skip=publish,sign
 
 deb-lint: deb ## Run lintian on the .deb packages
 	@for f in dist/*.deb; do echo "--- $$f ---"; lintian --tag-display-limit 0 "$$f"; done
@@ -246,7 +246,7 @@ release: ## Tag and push to trigger a GitHub Release (reads .version)
 	git push origin $(VERSION)
 
 release-local: prep-changelog ## Dry-run GoReleaser locally (no publish)
-	goreleaser release --snapshot --clean
+	goreleaser release --snapshot --clean --skip=sign
 
 # -------------------------------------------------------------------------
 # LOAD TESTING
