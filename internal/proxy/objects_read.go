@@ -646,12 +646,21 @@ func parsePlaintextRange(rangeHeader string, plaintextSize int64) (start, end in
 	}
 
 	if parts[1] == "" {
-		// Open-ended: bytes=N-
+		// Open-ended: bytes=N- (reject if start is beyond the file)
+		if start >= plaintextSize {
+			return 0, 0, false
+		}
 		return start, plaintextSize - 1, true
 	}
 
 	end, err = strconv.ParseInt(parts[1], 10, 64)
 	if err != nil {
+		return 0, 0, false
+	}
+
+	// Reject inverted ranges per RFC 7233 (last-byte-pos >= first-byte-pos)
+	// and ranges that start beyond the file.
+	if end < start || start >= plaintextSize {
 		return 0, 0, false
 	}
 
