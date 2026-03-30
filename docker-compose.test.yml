@@ -3,7 +3,7 @@
 #
 # Author: Alex Freidah
 #
-# Provides MinIO (x3), PostgreSQL, Redis, and observability stack for local
+# Provides MinIO (x3), PostgreSQL, and observability stack for local
 # development and demos. Integration tests use testcontainers instead — see
 # internal/integration/helpers_test.go.
 #
@@ -70,16 +70,6 @@ services:
       POSTGRES_PASSWORD: s3proxy
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U s3proxy -d s3proxy_test"]
-      interval: 2s
-      timeout: 5s
-      retries: 5
-
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "16379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
       interval: 2s
       timeout: 5s
       retries: 5

@@ -30,7 +30,7 @@ cd s3-orchestrator
 make run
 ```
 
-This starts three MinIO backends, PostgreSQL, and Redis via Docker Compose, then launches the orchestrator on `localhost:9000`. Test it:
+This starts three MinIO backends via Docker Compose (the orchestrator uses embedded SQLite by default, so no external database is needed), then launches the orchestrator on `localhost:9000`. Test it:
 
 ```bash
 aws --endpoint-url http://localhost:9000 s3 cp /etc/hostname s3://photos/test.txt
@@ -67,8 +67,6 @@ cosign verify-blob checksums.txt \
 ```
 
 **Operational CLI:** `s3-orchestrator admin --help` for rebalance, drain, encryption management, and backend sync.
-
-![Dashboard](docs/images/dashboard.png?v=2)
 
 ## Table of Contents
 
