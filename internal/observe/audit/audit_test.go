@@ -18,6 +18,7 @@ import (
 	"testing"
 )
 
+// TestNewID_UniqueAndCorrectLength verifies that generated IDs are 32 hex chars and unique.
 func TestNewID_UniqueAndCorrectLength(t *testing.T) {
 	ids := make(map[string]bool, 100)
 	for range 100 {
@@ -32,6 +33,7 @@ func TestNewID_UniqueAndCorrectLength(t *testing.T) {
 	}
 }
 
+// TestContextRoundTrip verifies request ID storage and retrieval from context.
 func TestContextRoundTrip(t *testing.T) {
 	ctx := context.Background()
 
@@ -53,6 +55,7 @@ func TestContextRoundTrip(t *testing.T) {
 	}
 }
 
+// TestLog_StructuredOutput verifies that audit log entries contain the expected structured fields.
 func TestLog_StructuredOutput(t *testing.T) {
 	var buf bytes.Buffer
 	handler := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})
@@ -88,14 +91,15 @@ func TestLog_StructuredOutput(t *testing.T) {
 	}
 }
 
+// TestLog_OnEventCallback verifies that the OnEvent callback is invoked with the event name.
 func TestLog_OnEventCallback(t *testing.T) {
 	var called atomic.Int32
 	var lastEvent string
-	OnEvent = func(event string) {
+	SetOnEvent(func(event string) {
 		called.Add(1)
 		lastEvent = event
-	}
-	defer func() { OnEvent = nil }()
+	})
+	defer SetOnEvent(nil)
 
 	Log(context.Background(), "test.event")
 
@@ -107,12 +111,50 @@ func TestLog_OnEventCallback(t *testing.T) {
 	}
 }
 
+// TestLog_NilOnEvent verifies that Log does not panic when no callback is registered.
 func TestLog_NilOnEvent(t *testing.T) {
-	OnEvent = nil
-	// Should not panic when OnEvent is nil
+	SetOnEvent(nil)
+	// Should not panic when callback is nil
 	Log(context.Background(), "safe.event")
 }
 
+// TestSetOnEvent_ConcurrentAccess verifies that SetOnEvent and Log can be
+// called concurrently without triggering a data race (run with -race).
+func TestSetOnEvent_ConcurrentAccess(t *testing.T) {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range 1000 {
+			Log(context.Background(), "concurrent.event")
+		}
+	}()
+
+	for range 100 {
+		SetOnEvent(func(event string) {})
+		SetOnEvent(nil)
+	}
+	<-done
+}
+
+// TestSetOnEvent_Replaces verifies that a second SetOnEvent call replaces the
+// first callback and that only the active callback is invoked.
+func TestSetOnEvent_Replaces(t *testing.T) {
+	var first, second atomic.Int32
+	SetOnEvent(func(string) { first.Add(1) })
+	Log(context.Background(), "e")
+	SetOnEvent(func(string) { second.Add(1) })
+	Log(context.Background(), "e")
+	SetOnEvent(nil)
+
+	if first.Load() != 1 {
+		t.Errorf("first callback called %d times, want 1", first.Load())
+	}
+	if second.Load() != 1 {
+		t.Errorf("second callback called %d times, want 1", second.Load())
+	}
+}
+
+// TestLog_WithoutRequestID verifies that audit entries omit request_id when none is set.
 func TestLog_WithoutRequestID(t *testing.T) {
 	var buf bytes.Buffer
 	handler := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})

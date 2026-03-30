@@ -130,7 +130,10 @@ func (s *Store) GetQuotaStats(ctx context.Context) (map[string]store.QuotaStat, 
 		if err := rows.Scan(&qs.BackendName, &qs.BytesUsed, &qs.BytesLimit, &qs.OrphanBytes, &updatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan quota stat: %w", err)
 		}
-		qs.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt)
+		qs.UpdatedAt, err = parseTime(updatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("invalid updated_at timestamp %q: %w", updatedAt, err)
+		}
 		stats[qs.BackendName] = qs
 	}
 	if err := rows.Err(); err != nil {
