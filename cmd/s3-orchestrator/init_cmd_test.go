@@ -41,7 +41,7 @@ func TestGenerateConfig_SQLite(t *testing.T) {
 		},
 	}
 
-	output, err := generateConfig(params)
+	output, err := generateConfig(&params)
 	if err != nil {
 		t.Fatalf("generateConfig: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestGenerateConfig_Postgres(t *testing.T) {
 		},
 	}
 
-	output, err := generateConfig(params)
+	output, err := generateConfig(&params)
 	if err != nil {
 		t.Fatalf("generateConfig: %v", err)
 	}

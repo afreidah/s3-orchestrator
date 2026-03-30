@@ -125,7 +125,7 @@ func runInitInteractive(configPath string, in *os.File, out *os.File) error {
 	}
 
 	// --- Generate and write ---
-	output, err := generateConfig(params)
+	output, err := generateConfig(&params)
 	if err != nil {
 		return fmt.Errorf("generate config: %w", err)
 	}
@@ -243,7 +243,7 @@ buckets:
 `))
 
 // generateConfig renders the config template with the given parameters.
-func generateConfig(params initParams) (string, error) {
+func generateConfig(params *initParams) (string, error) {
 	var buf strings.Builder
 	if err := configTemplate.Execute(&buf, params); err != nil {
 		return "", err

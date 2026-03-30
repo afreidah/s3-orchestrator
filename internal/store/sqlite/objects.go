@@ -594,11 +594,6 @@ func (s *Store) UpdateContentHash(ctx context.Context, key, backendName, hash st
 	return err
 }
 
-// scanner is satisfied by both *sql.Rows and *sql.Row.
-type scanner interface {
-	Scan(dest ...any) error
-}
-
 // scanObjectLocation scans a full object location row including all encryption
 // and integrity columns.
 func scanObjectLocation(rows *sql.Rows) (store.ObjectLocation, error) {
