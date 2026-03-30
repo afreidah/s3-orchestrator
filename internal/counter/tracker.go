@@ -59,6 +59,14 @@ func (u *UsageTracker) Record(backendName string, apiCalls, egress, ingress int6
 //	effective = baseline (from DB) + unflushed counter + proposed
 //
 // Returns true if no non-zero limit is exceeded.
+//
+// Enforcement is approximate: baseline and counter are read in separate
+// steps without a global lock, so concurrent requests may all pass the
+// check and collectively exceed the limit by a small margin. This is
+// intentional — exact enforcement would require a mutex on every request.
+// The overshoot is bounded by one flush interval worth of concurrent
+// traffic, and the s3o_usage_limit_rejections_total metric tracks when
+// limits are actively enforced.
 func (u *UsageTracker) WithinLimits(backendName string, apiCalls, egress, ingress int64) bool {
 	u.limitsMu.RLock()
 	lim, ok := u.limits[backendName]

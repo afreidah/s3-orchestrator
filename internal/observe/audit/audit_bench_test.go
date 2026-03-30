@@ -13,7 +13,6 @@ package audit
 
 import (
 	"context"
-	"io"
 	"log/slog"
 	"testing"
 )
@@ -23,7 +22,7 @@ import (
 func discardLogger(b *testing.B) {
 	b.Helper()
 	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	slog.SetDefault(slog.New(slog.DiscardHandler))
 	b.Cleanup(func() { slog.SetDefault(prev) })
 }
 

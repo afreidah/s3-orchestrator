@@ -307,6 +307,7 @@ func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 
 	sm := lifecycle.NewManager()
 	sm.Register("usage-flush", &usageFlushService{manager: manager, locker: cbStore})
+	sm.Register("cb-watchdog", &circuitBreakerWatchdog{manager: manager, cbStore: cbStore})
 
 	if mode == "worker" || mode == "all" {
 		sm.Register("multipart-cleanup", newMultipartCleanupService(manager, cbStore, cfg.CleanupQueue.MultipartStaleTimeout))

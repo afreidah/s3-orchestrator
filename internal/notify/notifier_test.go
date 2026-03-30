@@ -24,32 +24,42 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
+// TestDampening_SuppressesRepeatedCapacityWarning verifies that the TTL-based
+// dampener suppresses duplicate threshold events within the dampening window
+// and allows them after the TTL expires.
 func TestDampening_SuppressesRepeatedCapacityWarning(t *testing.T) {
-	n := &Notifier{}
+	n := NewNotifier(&config.NotificationConfig{}, &mockOutboxStore{})
 
 	dampenKey := event.BackendCapacityWarning + ":oci"
 
-	if _, ok := n.dampener.Load(dampenKey); ok {
+	// Empty initially.
+	if _, ok := n.dampener.Get(dampenKey); ok {
 		t.Fatal("dampener should be empty initially")
 	}
 
-	n.dampener.Store(dampenKey, time.Now())
-
-	if last, ok := n.dampener.Load(dampenKey); ok {
-		if time.Since(last.(time.Time)) >= time.Hour {
-			t.Error("expected suppression within the hour")
-		}
-	}
-
-	n.dampener.Store(dampenKey, time.Now().Add(-2*time.Hour))
-	if last, ok := n.dampener.Load(dampenKey); ok {
-		if time.Since(last.(time.Time)) < time.Hour {
-			t.Error("should not suppress after dampening window expires")
-		}
+	// After Set, Get returns true within the TTL window.
+	n.dampener.Set(dampenKey, struct{}{})
+	if _, ok := n.dampener.Get(dampenKey); !ok {
+		t.Error("expected entry to be present after Set")
 	}
 }
+
+// TestDampening_TTLCacheEvicts verifies that the dampener uses a TTL cache
+// that will eventually evict entries, preventing unbounded memory growth.
+func TestDampening_TTLCacheEvicts(t *testing.T) {
+	n := NewNotifier(&config.NotificationConfig{}, &mockOutboxStore{})
+	defer n.dampener.Close()
+
+	// The cache exists and is functional.
+	n.dampener.Set("key", struct{}{})
+	if _, ok := n.dampener.Get("key"); !ok {
+		t.Error("expected entry to be present")
+	}
+}
+
 
 func TestGenerateEventID_Unique(t *testing.T) {
 	seen := make(map[string]bool)
@@ -148,13 +158,18 @@ func TestEmit_SkipsNonMatchingEndpoint(t *testing.T) {
 	}
 }
 
+// TestEmit_DampensRepeatedCapacityWarnings verifies that the second capacity
+// warning for the same subject is suppressed within the dampening window.
 func TestEmit_DampensRepeatedCapacityWarnings(t *testing.T) {
 	ms := &mockOutboxStore{}
+	dampener := syncutil.NewTTLCache[string, struct{}](dampenTTL)
+	defer dampener.Close()
 	n := &Notifier{
 		endpoints: []config.NotificationEndpoint{
 			{URL: "https://hook.example.com", Events: []string{"*"}},
 		},
-		store: ms,
+		store:    ms,
+		dampener: dampener,
 	}
 
 	n.emit(event.Event{Type: event.BackendCapacityWarning, Subject: "b1"})

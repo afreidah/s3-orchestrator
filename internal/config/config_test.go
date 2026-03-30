@@ -2656,14 +2656,42 @@ func TestParseByteSize(t *testing.T) {
 	}
 }
 
+// TestParseByteSize_Invalid verifies that malformed, empty, and out-of-range
+// size strings return errors.
 func TestParseByteSize_Invalid(t *testing.T) {
-	for _, input := range []string{"", "abc", "10XB"} {
+	for _, input := range []string{"", "abc", "10XB", "MB", " KB"} {
 		t.Run(input, func(t *testing.T) {
 			_, err := parseByteSize(input)
 			if err == nil {
 				t.Errorf("expected error for %q", input)
 			}
 		})
+	}
+}
+
+// TestParseByteSize_Overflow verifies that values exceeding int64 return an
+// error instead of silently wrapping to a negative number.
+func TestParseByteSize_Overflow(t *testing.T) {
+	cases := []string{
+		"9999999999999999999GB",
+		"9223372036854775808",  // math.MaxInt64 + 1
+		"8589934592GB",         // 8GB * 1Gi overflows
+	}
+	for _, input := range cases {
+		t.Run(input, func(t *testing.T) {
+			_, err := parseByteSize(input)
+			if err == nil {
+				t.Errorf("expected overflow error for %q", input)
+			}
+		})
+	}
+}
+
+// TestParseByteSize_Negative verifies that negative values are rejected.
+func TestParseByteSize_Negative(t *testing.T) {
+	_, err := parseByteSize("-1GB")
+	if err == nil {
+		t.Error("expected error for negative size")
 	}
 }
 
