@@ -139,6 +139,27 @@ fuzz: ## Run fuzz tests (override: FUZZ_TIME=5m make fuzz)
 	go test -fuzz=FuzzCiphertextRange -fuzztime=$(FUZZ_TIME) ./internal/encryption/
 	go test -fuzz=FuzzUnpackKeyData -fuzztime=$(FUZZ_TIME) ./internal/encryption/
 
+fuzz-import: ## Import crashing inputs from the latest nightly fuzz CI run
+	@echo "Downloading fuzz corpus artifacts from latest fuzz workflow run..."
+	@run_id=$$(gh run list -w fuzz.yml --status failure --limit 1 --json databaseId --jq '.[0].databaseId'); \
+	if [ -z "$$run_id" ]; then echo "No failed fuzz runs found."; exit 0; fi; \
+	echo "Run ID: $$run_id"; \
+	tmpdir=$$(mktemp -d); \
+	gh run download "$$run_id" -D "$$tmpdir" -p 'fuzz-corpus-*' 2>/dev/null || true; \
+	count=0; \
+	for f in $$(find "$$tmpdir" -path '*/testdata/fuzz/*/*' -type f 2>/dev/null); do \
+		rel=$${f#$$tmpdir/}; \
+		dest=$$rel; \
+		mkdir -p $$(dirname "$$dest"); \
+		if [ ! -f "$$dest" ]; then \
+			cp "$$f" "$$dest"; \
+			echo "  Added $$dest"; \
+			count=$$((count + 1)); \
+		fi; \
+	done; \
+	rm -rf "$$tmpdir"; \
+	echo "Imported $$count new corpus file(s)."
+
 run: dev-deps ## Run locally (requires config.yaml)
 	go run ./cmd/s3-orchestrator -config config.yaml
 

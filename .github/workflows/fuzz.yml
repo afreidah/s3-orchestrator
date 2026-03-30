@@ -62,7 +62,7 @@ jobs:
 
       - name: Run fuzz target
         id: fuzz
-        run: go test -fuzz=${{ matrix.target }} -fuzztime=2m ${{ matrix.package }}
+        run: go test -fuzz=${{ matrix.target }} -fuzztime=2m -timeout=3m ${{ matrix.package }}
 
       - name: Upload crashing inputs
         if: failure()

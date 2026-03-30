@@ -415,8 +415,9 @@ func buildPresignedCanonicalRequest(r *http.Request, signedHeaders []string) str
 	b.WriteByte('\n')
 
 	// Canonical headers
-	for _, h := range signedHeaders {
-		h = strings.ToLower(strings.TrimSpace(h))
+	for i, h := range signedHeaders {
+		h = strings.ToLower(stripWhitespace(h))
+		signedHeaders[i] = h
 		val := strings.TrimSpace(r.Header.Get(h))
 		if h == "host" && val == "" {
 			val = r.Host
@@ -505,12 +506,11 @@ func buildCanonicalRequest(r *http.Request, signedHeaders []string) string {
 	buildCanonicalQueryString(&b, r.URL.Query())
 	b.WriteByte('\n')
 
-	// Canonical headers — per SigV4 spec, header names are lowercased and
-	// trimmed, and header values have leading/trailing whitespace trimmed
-	// and sequential whitespace (including newlines) collapsed to a single
-	// space.
+	// Canonical headers — per SigV4 spec, header names are lowercased with
+	// all whitespace stripped (HTTP header names must not contain whitespace),
+	// and header values have sequential whitespace collapsed to a single space.
 	for i, h := range signedHeaders {
-		h = strings.ToLower(strings.TrimSpace(h))
+		h = strings.ToLower(stripWhitespace(h))
 		signedHeaders[i] = h
 		val := strings.TrimSpace(r.Header.Get(h))
 		if h == "host" && val == "" {
@@ -625,6 +625,19 @@ func collapseWhitespace(s string) string {
 		}
 		inWS = false
 		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// stripWhitespace removes all whitespace characters from a string.
+// Used for header names which must not contain any whitespace per HTTP spec.
+func stripWhitespace(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if r != ' ' && r != '\t' && r != '\n' && r != '\r' {
+			b.WriteRune(r)
+		}
 	}
 	return b.String()
 }

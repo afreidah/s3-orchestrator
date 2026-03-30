@@ -874,3 +874,23 @@ func TestCollapseWhitespace(t *testing.T) {
 		}
 	}
 }
+
+func TestStripWhitespace(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{"host", "host"},
+		{"x-amz-date", "x-amz-date"},
+		{"0\n0", "00"},
+		{"\n", ""},
+		{"a b", "ab"},
+		{"a\tb\nc\rd", "abcd"},
+		{"", ""},
+		{" host ", "host"},
+	}
+	for _, tt := range tests {
+		if got := stripWhitespace(tt.in); got != tt.want {
+			t.Errorf("stripWhitespace(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
