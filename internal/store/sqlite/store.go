@@ -108,12 +108,12 @@ func withTxVal[T any](s *Store, ctx context.Context, fn func(tx *sql.Tx) (T, err
 // mutex. For single-instance SQLite deployments, this is correct — there are
 // no competing instances. Returns (false, nil) if the lock is already held
 // by another goroutine.
-func (s *Store) WithAdvisoryLock(_ context.Context, _ int64, fn func(ctx context.Context) error) (bool, error) {
+func (s *Store) WithAdvisoryLock(ctx context.Context, _ int64, fn func(ctx context.Context) error) (bool, error) {
 	if !s.mu.TryLock() {
 		return false, nil
 	}
 	defer s.mu.Unlock()
-	return true, fn(context.Background())
+	return true, fn(ctx)
 }
 
 // Compile-time interface checks.

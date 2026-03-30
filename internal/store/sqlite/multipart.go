@@ -75,7 +75,11 @@ func (s *Store) GetMultipartUpload(ctx context.Context, uploadID string) (*store
 			return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
 		}
 	}
-	mu.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+	var parseErr error
+	mu.CreatedAt, parseErr = parseTime(createdAt)
+	if parseErr != nil {
+		return nil, fmt.Errorf("invalid created_at timestamp %q: %w", createdAt, parseErr)
+	}
 
 	return &mu, nil
 }
@@ -152,7 +156,10 @@ func (s *Store) GetParts(ctx context.Context, uploadID string) ([]store.Multipar
 		if ptSize.Valid {
 			p.PlaintextSize = ptSize.Int64
 		}
-		p.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+		p.CreatedAt, err = parseTime(createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("invalid part created_at timestamp %q: %w", createdAt, err)
+		}
 		parts = append(parts, p)
 	}
 	return parts, rows.Err()
@@ -203,7 +210,10 @@ func (s *Store) ListMultipartUploads(ctx context.Context, prefix string, maxUplo
 		if contentType.Valid {
 			mu.ContentType = contentType.String
 		}
-		mu.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+		mu.CreatedAt, err = parseTime(createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("invalid created_at timestamp %q: %w", createdAt, err)
+		}
 		uploads = append(uploads, mu)
 	}
 	return uploads, rows.Err()
@@ -307,7 +317,11 @@ func scanMultipartUploads(rows *sql.Rows) ([]store.MultipartUpload, error) {
 				return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
 			}
 		}
-		mu.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+		var parseErr error
+		mu.CreatedAt, parseErr = parseTime(createdAt)
+		if parseErr != nil {
+			return nil, fmt.Errorf("invalid created_at timestamp %q: %w", createdAt, parseErr)
+		}
 		uploads = append(uploads, mu)
 	}
 	return uploads, rows.Err()
