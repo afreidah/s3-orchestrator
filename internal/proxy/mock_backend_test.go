@@ -26,7 +26,8 @@ type mockBackend struct {
 	objects    map[string]mockObject
 	putErr     error
 	getErr     error
-	getReadErr error // injected into the Body reader so reads fail mid-stream
+	getReadErr error  // injected into the Body reader so reads fail mid-stream
+	getPanic   bool   // if true, GetObject panics instead of returning
 	headErr    error
 	delErr     error
 	delDelay   time.Duration
@@ -71,6 +72,9 @@ func (m *mockBackend) PutObject(_ context.Context, key string, body io.Reader, _
 func (m *mockBackend) GetObject(_ context.Context, key string, _ string) (*s3be.GetObjectResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.getPanic {
+		panic("injected GetObject panic for testing")
+	}
 	if m.getErr != nil {
 		return nil, m.getErr
 	}
