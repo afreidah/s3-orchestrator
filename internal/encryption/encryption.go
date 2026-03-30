@@ -55,6 +55,11 @@ type EncryptResult struct {
 	// PlaintextMD5 is the hex-encoded MD5 digest of the plaintext, used as
 	// the client-facing ETag.
 	PlaintextMD5 string
+
+	// RawDEK is the plaintext DEK used for encryption. Exposed so callers
+	// can reuse it for retry attempts via EncryptWithDEK without an
+	// additional KeyProvider round-trip. Must not be persisted or logged.
+	RawDEK []byte
 }
 
 // -------------------------------------------------------------------------
@@ -120,6 +125,40 @@ func (e *Encryptor) Encrypt(ctx context.Context, body io.Reader, plaintextSize i
 		WrappedDEK:     wrappedDEK,
 		KeyID:          keyID,
 		BaseNonce:      encReader.baseNonce,
+		RawDEK:         dek,
+	}
+	fr.setResult(result)
+
+	return result, nil
+}
+
+// EncryptWithDEK encrypts using a previously wrapped DEK, skipping the
+// KeyProvider.WrapDEK call. A fresh base nonce is generated per call, so
+// the ciphertext is unique even though the same DEK is reused. This is
+// safe because AES-GCM nonce uniqueness is per (key, nonce) pair — see
+// the SAFETY INVARIANT comment in chunk.go.
+//
+// Intended for write failover retries where the Vault round-trip for key
+// wrapping has already been paid on the first attempt.
+func (e *Encryptor) EncryptWithDEK(body io.Reader, plaintextSize int64, dek, wrappedDEK []byte, keyID string) (*EncryptResult, error) {
+	md5Hash := md5.New()
+	teeBody := io.TeeReader(body, md5Hash)
+
+	encReader, err := newEncryptReader(teeBody, dek, e.chunkSize)
+	if err != nil {
+		return nil, fmt.Errorf("encrypt reader: %w", err)
+	}
+
+	ctSize := ciphertextSizeExact(plaintextSize, e.chunkSize)
+
+	fr := &md5FinalizingReader{reader: encReader, hash: md5Hash}
+	result := &EncryptResult{
+		Body:           fr,
+		CiphertextSize: ctSize,
+		WrappedDEK:     wrappedDEK,
+		KeyID:          keyID,
+		BaseNonce:      encReader.baseNonce,
+		RawDEK:         dek,
 	}
 	fr.setResult(result)
 

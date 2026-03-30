@@ -94,6 +94,16 @@ nfpms:
 sboms:
   - artifacts: archive
 
+signs:
+  - cmd: cosign
+    artifacts: checksum
+    args:
+      - "sign-blob"
+      - "--yes"
+      - "--output-signature=${signature}"
+      - "--output-certificate=${certificate}"
+      - "${artifact}"
+
 checksum:
   name_template: checksums.txt
 
