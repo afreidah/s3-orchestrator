@@ -8,7 +8,7 @@ cd s3-orchestrator
 make run
 ```
 
-This starts three MinIO instances and a PostgreSQL database via Docker Compose, then launches the orchestrator pointing at them. The included `config.yaml` is pre-configured for this environment — no manual setup required.
+This starts three MinIO instances via Docker Compose, then launches the orchestrator pointing at them. The included `config.yaml` uses embedded SQLite (no external database needed) and is pre-configured for this environment — no manual setup required.
 
 ## What `make run` does
 
@@ -16,8 +16,8 @@ This starts three MinIO instances and a PostgreSQL database via Docker Compose, 
    - MinIO 1 on `localhost:19000` (bucket: `backend1`)
    - MinIO 2 on `localhost:19002` (bucket: `backend2`)
    - MinIO 3 on `localhost:19004` (bucket: `backend3`)
-   - PostgreSQL on `localhost:15432` (database: `s3o_test`)
    - A setup container that creates the MinIO buckets
+   - PostgreSQL and Redis are also started for integration tests, but the default `config.yaml` uses embedded SQLite so neither is required for local development
 2. **`go run ./cmd/s3-orchestrator -config config.yaml`** — compiles and starts the server on port 9000
 
 ## Test it
@@ -84,7 +84,7 @@ Stop the Docker containers and remove build artifacts:
 make clean
 ```
 
-`make clean` stops the containers but Docker volumes persist (MinIO data, PostgreSQL data). To remove everything including stored data:
+`make clean` stops the containers but Docker volumes persist (MinIO data). SQLite data is stored locally in `dev-data.db`. To remove everything including stored data:
 
 ```bash
 docker compose -f docker-compose.test.yml down -v
