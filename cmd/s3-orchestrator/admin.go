@@ -15,6 +15,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"context"
 	"net/http"
 	"os"
 	"strings"
@@ -231,14 +232,14 @@ func adminCommand(cmd string, args []string, baseAddr, token string, stdout, std
 // what would be destroyed.
 func doRemovePreview(baseAddr, name, token string, stdout, stderr io.Writer) int {
 	url := baseAddr + "/admin/api/backends/" + name + "?purge=true"
-	req, err := http.NewRequest(http.MethodDelete, url, nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, url, nil)
 	if err != nil {
 		fmt.Fprintf(stderr, "error: %v\n", err)
 		return 1
 	}
 	req.Header.Set("X-Admin-Token", token)
 
-	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req) //nolint:gosec // G704: admin CLI target address is user-provided via --addr flag
 	if err != nil {
 		fmt.Fprintf(stderr, "error: %v\n", err)
 		return 1
@@ -265,14 +266,14 @@ func doRemovePreview(baseAddr, name, token string, stdout, stderr io.Writer) int
 func doRemovePurge(baseAddr, name, token string, stdout, stderr io.Writer) int {
 	// Phase 1: get confirmation token
 	url := baseAddr + "/admin/api/backends/" + name + "?purge=true"
-	req, err := http.NewRequest(http.MethodDelete, url, nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, url, nil)
 	if err != nil {
 		fmt.Fprintf(stderr, "error: %v\n", err)
 		return 1
 	}
 	req.Header.Set("X-Admin-Token", token)
 
-	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req) //nolint:gosec // G704: admin CLI target address is user-provided via --addr flag
 	if err != nil {
 		fmt.Fprintf(stderr, "error: %v\n", err)
 		return 1
@@ -321,7 +322,7 @@ func doRequest(method, url, body, token string, stdout, stderr io.Writer) int {
 		bodyReader = strings.NewReader(body)
 	}
 
-	req, err := http.NewRequest(method, url, bodyReader)
+	req, err := http.NewRequestWithContext(context.Background(), method, url, bodyReader)
 	if err != nil {
 		fmt.Fprintf(stderr, "error: %v\n", err)
 		return 1
@@ -332,7 +333,7 @@ func doRequest(method, url, body, token string, stdout, stderr io.Writer) int {
 	}
 
 	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := client.Do(req) //nolint:gosec // G704: admin CLI target address is user-provided via --addr flag
 	if err != nil {
 		fmt.Fprintf(stderr, "error: %v\n", err)
 		return 1

@@ -394,8 +394,9 @@ func (s *server) configureMetrics(mux *http.ServeMux, ctx context.Context) {
 		metricsMux := http.NewServeMux()
 		metricsMux.Handle(cfg.Telemetry.Metrics.Path, promhttp.Handler())
 		s.metricsServer = &http.Server{
-			Addr:    cfg.Telemetry.Metrics.Listen,
-			Handler: metricsMux,
+			Addr:              cfg.Telemetry.Metrics.Listen,
+			Handler:           metricsMux,
+			ReadHeaderTimeout: 10 * time.Second,
 		}
 		go func() {
 			slog.InfoContext(ctx, "Metrics endpoint enabled on separate listener",
@@ -498,7 +499,7 @@ func (s *server) configureTLS() error {
 		return fmt.Errorf("load TLS certificate: %w", err)
 	}
 
-	tlsCfg := &tls.Config{
+	tlsCfg := &tls.Config{ //nolint:gosec // G402: MinVersion set from config, defaults to TLS 1.2
 		GetCertificate: s.certReloader.GetCertificate,
 		MinVersion:     parseTLSVersion(cfg.Server.TLS.MinVersion),
 	}

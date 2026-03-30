@@ -11,6 +11,7 @@ package s3api
 
 import (
 	"io"
+	"context"
 	"net/http"
 	"strings"
 	"sync"
@@ -21,6 +22,7 @@ import (
 )
 
 func TestSetGetBucketAuth_RoundTrip(t *testing.T) {
+	t.Parallel()
 	srv := &Server{}
 
 	buckets := []config.BucketConfig{
@@ -38,6 +40,7 @@ func TestSetGetBucketAuth_RoundTrip(t *testing.T) {
 }
 
 func TestSetBucketAuth_ConcurrentAccess(t *testing.T) {
+	t.Parallel()
 	srv := &Server{}
 
 	// Set an initial registry
@@ -91,12 +94,13 @@ func TestSetBucketAuth_ConcurrentAccess(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestBucketOnlyPUT_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
 	ts, _, _ := newTestServer(t)
 
 	// PUT to a bucket-only path (no key) should hit the default case
-	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/mybucket/", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,12 +116,13 @@ func TestBucketOnlyPUT_MethodNotAllowed(t *testing.T) {
 }
 
 func TestMultipartUpload_UnsupportedMethod(t *testing.T) {
+	t.Parallel()
 	ts, _, _ := newTestServer(t)
 
 	// PATCH to a key path with uploadId should hit the multipart default case
-	req, _ := http.NewRequest(http.MethodPatch, ts.URL+"/mybucket/testkey?uploadId=upload-1", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPatch, ts.URL+"/mybucket/testkey?uploadId=upload-1", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,13 +138,14 @@ func TestMultipartUpload_UnsupportedMethod(t *testing.T) {
 }
 
 func TestInvalidPath_Returns400(t *testing.T) {
+	t.Parallel()
 	ts, _, _ := newTestServer(t)
 
 	// POST to "/" — not intercepted as ListBuckets, so parsePath returns
 	// false for the empty path and the server returns 400.
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, ts.URL+"/", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}

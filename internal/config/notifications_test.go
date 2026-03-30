@@ -6,6 +6,7 @@ import (
 )
 
 func TestNotificationConfig_ValidMinimal(t *testing.T) {
+	t.Parallel()
 	cfg := NotificationConfig{
 		Endpoints: []NotificationEndpoint{
 			{URL: "https://example.com/hook", Events: []string{"*"}},
@@ -18,6 +19,7 @@ func TestNotificationConfig_ValidMinimal(t *testing.T) {
 }
 
 func TestNotificationConfig_EmptyEndpoints(t *testing.T) {
+	t.Parallel()
 	cfg := NotificationConfig{}
 	errs := cfg.setDefaultsAndValidate()
 	if len(errs) != 0 {
@@ -26,6 +28,7 @@ func TestNotificationConfig_EmptyEndpoints(t *testing.T) {
 }
 
 func TestNotificationConfig_MissingURL(t *testing.T) {
+	t.Parallel()
 	cfg := NotificationConfig{
 		Endpoints: []NotificationEndpoint{
 			{Events: []string{"*"}},
@@ -38,6 +41,7 @@ func TestNotificationConfig_MissingURL(t *testing.T) {
 }
 
 func TestNotificationConfig_MissingEvents(t *testing.T) {
+	t.Parallel()
 	cfg := NotificationConfig{
 		Endpoints: []NotificationEndpoint{
 			{URL: "https://example.com"},
@@ -50,6 +54,7 @@ func TestNotificationConfig_MissingEvents(t *testing.T) {
 }
 
 func TestNotificationConfig_MultipleErrors(t *testing.T) {
+	t.Parallel()
 	cfg := NotificationConfig{
 		Endpoints: []NotificationEndpoint{
 			{}, // missing both url and events
@@ -62,6 +67,7 @@ func TestNotificationConfig_MultipleErrors(t *testing.T) {
 }
 
 func TestNotificationConfig_DefaultTimeout(t *testing.T) {
+	t.Parallel()
 	cfg := NotificationConfig{
 		Endpoints: []NotificationEndpoint{
 			{URL: "https://example.com", Events: []string{"*"}},
@@ -74,6 +80,7 @@ func TestNotificationConfig_DefaultTimeout(t *testing.T) {
 }
 
 func TestNotificationConfig_DefaultMaxRetries(t *testing.T) {
+	t.Parallel()
 	cfg := NotificationConfig{
 		Endpoints: []NotificationEndpoint{
 			{URL: "https://example.com", Events: []string{"*"}},

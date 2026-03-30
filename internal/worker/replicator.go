@@ -141,7 +141,7 @@ func (r *Replicator) Replicate(ctx context.Context, cfg config.ReplicationConfig
 		if replicateErr != nil {
 			slog.WarnContext(ctx, "Replication: object failed", "key", task.key, "error", replicateErr)
 		}
-		created.Add(int32(n))
+		created.Add(int32(n)) //nolint:gosec // G115: n is copies created per object, always small
 	})
 
 	copiesCreated := int(created.Load())

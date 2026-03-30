@@ -13,6 +13,7 @@ package auth
 import (
 	"encoding/hex"
 	"fmt"
+	"context"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -24,6 +25,7 @@ import (
 )
 
 func TestParseSigV4Fields(t *testing.T) {
+	t.Parallel()
 	input := "Credential=AKID/20260215/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature=abcdef1234567890"
 	fields := parseSigV4Fields(input)
 
@@ -39,6 +41,7 @@ func TestParseSigV4Fields(t *testing.T) {
 }
 
 func TestBuildCanonicalQueryString(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		values url.Values
@@ -79,6 +82,7 @@ func TestBuildCanonicalQueryString(t *testing.T) {
 }
 
 func TestDeriveSigningKey(t *testing.T) {
+	t.Parallel()
 	// AWS test vector from SigV4 documentation
 	key := deriveSigningKey("wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY", "20120215", "us-east-1", "iam")
 	if len(key) != 32 {
@@ -87,6 +91,7 @@ func TestDeriveSigningKey(t *testing.T) {
 }
 
 func TestHmacSHA256(t *testing.T) {
+	t.Parallel()
 	result := hmacSHA256([]byte("key"), []byte("data"))
 	if len(result) != 32 {
 		t.Errorf("hmacSHA256 result length = %d, want 32", len(result))
@@ -94,6 +99,7 @@ func TestHmacSHA256(t *testing.T) {
 }
 
 func TestHashSHA256(t *testing.T) {
+	t.Parallel()
 	// SHA256 of empty string
 	got := hashSHA256([]byte(""))
 	want := "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -103,7 +109,8 @@ func TestHashSHA256(t *testing.T) {
 }
 
 func TestSigningKeyCache(t *testing.T) {
-	secret := "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"
+	t.Parallel()
+	secret := "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY" //nolint:gosec // G101: test credential
 	accessKey := "CACHE_TEST_KEY"
 
 	// First call: cache miss — derives and stores
@@ -126,6 +133,7 @@ func TestSigningKeyCache(t *testing.T) {
 }
 
 func TestSigningKeyCache_UnknownKeysNotCached(t *testing.T) {
+	t.Parallel()
 	// Unknown keys (used with dummy secret for constant-time auth) must
 	// not be cached to prevent memory exhaustion from randomized access
 	// key IDs.
@@ -151,6 +159,7 @@ func TestSigningKeyCache_UnknownKeysNotCached(t *testing.T) {
 }
 
 func TestSigV4Encode(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		in, want string
 	}{
@@ -168,6 +177,7 @@ func TestSigV4Encode(t *testing.T) {
 }
 
 func TestEncodePath(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		in, want string
 	}{
@@ -189,13 +199,14 @@ func TestEncodePath(t *testing.T) {
 }
 
 func TestVerifySigV4_StaleTimestamp(t *testing.T) {
+	t.Parallel()
 	// A request signed with a timestamp 30 minutes in the past should be rejected
 	staleDate := time.Now().UTC().Add(-30 * time.Minute).Format("20060102T150405Z")
 	dateStamp := staleDate[:8]
-	secret := "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"
+	secret := "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY" //nolint:gosec // G101: test credential
 	accessKey := "AKIDEXAMPLE"
 
-	r, _ := http.NewRequest("GET", "/bucket/key", nil)
+	r, _ := http.NewRequestWithContext(context.Background(), "GET", "/bucket/key", nil)
 	r.Header.Set("X-Amz-Date", staleDate)
 	r.Header.Set("X-Amz-Content-Sha256", "UNSIGNED-PAYLOAD")
 	r.Host = "localhost"
@@ -220,12 +231,13 @@ func TestVerifySigV4_StaleTimestamp(t *testing.T) {
 }
 
 func TestVerifySigV4_HostHeaderMustBeSigned(t *testing.T) {
-	secret := "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"
+	t.Parallel()
+	secret := "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY" //nolint:gosec // G101: test credential
 	accessKey := "AKIDEXAMPLE"
 	amzDate := time.Now().UTC().Format("20060102T150405Z")
 	dateStamp := amzDate[:8]
 
-	r, _ := http.NewRequest("GET", "/bucket/key", nil)
+	r, _ := http.NewRequestWithContext(context.Background(), "GET", "/bucket/key", nil)
 	r.Header.Set("X-Amz-Date", amzDate)
 	r.Header.Set("X-Amz-Content-Sha256", "UNSIGNED-PAYLOAD")
 	r.Host = "localhost"
@@ -250,6 +262,7 @@ func TestVerifySigV4_HostHeaderMustBeSigned(t *testing.T) {
 }
 
 func TestBucketRegistry_TokenAuthIteratesAllTokens(t *testing.T) {
+	t.Parallel()
 	// Verify that token auth works correctly with multiple tokens of varying lengths
 	buckets := []config.BucketConfig{
 		{Name: "bucket-a", Credentials: []config.CredentialConfig{
@@ -273,7 +286,7 @@ func TestBucketRegistry_TokenAuthIteratesAllTokens(t *testing.T) {
 		{"medium-token", "bucket-b"},
 		{"a-very-long-token-value", "bucket-c"},
 	} {
-		r, _ := http.NewRequest("GET", "/"+tt.wantBucket+"/key", nil)
+		r, _ := http.NewRequestWithContext(context.Background(), "GET", "/"+tt.wantBucket+"/key", nil)
 		r.Header.Set("X-Proxy-Token", tt.token)
 
 		bucket, err := br.AuthenticateAndResolveBucket(r)
@@ -287,7 +300,7 @@ func TestBucketRegistry_TokenAuthIteratesAllTokens(t *testing.T) {
 	}
 
 	// Wrong token should fail
-	r, _ := http.NewRequest("GET", "/bucket-a/key", nil)
+	r, _ := http.NewRequestWithContext(context.Background(), "GET", "/bucket-a/key", nil)
 	r.Header.Set("X-Proxy-Token", "wrong")
 	_, err := br.AuthenticateAndResolveBucket(r)
 	if err == nil {
@@ -295,7 +308,7 @@ func TestBucketRegistry_TokenAuthIteratesAllTokens(t *testing.T) {
 	}
 
 	// Token with same length as a valid token but different content should fail
-	r2, _ := http.NewRequest("GET", "/bucket-a/key", nil)
+	r2, _ := http.NewRequestWithContext(context.Background(), "GET", "/bucket-a/key", nil)
 	r2.Header.Set("X-Proxy-Token", "SHORT") // same length as "short"
 	_, err = br.AuthenticateAndResolveBucket(r2)
 	if err == nil {
@@ -314,7 +327,7 @@ func signRequest(t *testing.T, method, path, accessKey, secret string) *http.Req
 	amzDate := time.Now().UTC().Format("20060102T150405Z")
 	dateStamp := amzDate[:8]
 
-	r, _ := http.NewRequest(method, path, nil)
+	r, _ := http.NewRequestWithContext(context.Background(), method, path, nil)
 	r.Header.Set("X-Amz-Date", amzDate)
 	r.Header.Set("X-Amz-Content-Sha256", "UNSIGNED-PAYLOAD")
 	r.Host = "localhost"
@@ -335,6 +348,7 @@ func signRequest(t *testing.T, method, path, accessKey, secret string) *http.Req
 }
 
 func TestBucketRegistry_SigV4ResolvesCorrectBucket(t *testing.T) {
+	t.Parallel()
 	buckets := []config.BucketConfig{
 		{Name: "app1-files", Credentials: []config.CredentialConfig{
 			{AccessKeyID: "APP1_KEY", SecretAccessKey: "APP1_SECRET"},
@@ -368,6 +382,7 @@ func TestBucketRegistry_SigV4ResolvesCorrectBucket(t *testing.T) {
 }
 
 func TestBucketRegistry_TokenResolvesCorrectBucket(t *testing.T) {
+	t.Parallel()
 	buckets := []config.BucketConfig{
 		{Name: "legacy-bucket", Credentials: []config.CredentialConfig{
 			{Token: "my-secret-token"},
@@ -376,7 +391,7 @@ func TestBucketRegistry_TokenResolvesCorrectBucket(t *testing.T) {
 
 	br := NewBucketRegistry(buckets)
 
-	r, _ := http.NewRequest("GET", "/legacy-bucket/key", nil)
+	r, _ := http.NewRequestWithContext(context.Background(), "GET", "/legacy-bucket/key", nil)
 	r.Header.Set("X-Proxy-Token", "my-secret-token")
 
 	bucket, err := br.AuthenticateAndResolveBucket(r)
@@ -389,6 +404,7 @@ func TestBucketRegistry_TokenResolvesCorrectBucket(t *testing.T) {
 }
 
 func TestBucketRegistry_UnknownAccessKeyDenied(t *testing.T) {
+	t.Parallel()
 	buckets := []config.BucketConfig{
 		{Name: "mybucket", Credentials: []config.CredentialConfig{
 			{AccessKeyID: "KNOWN_KEY", SecretAccessKey: "secret"},
@@ -405,6 +421,7 @@ func TestBucketRegistry_UnknownAccessKeyDenied(t *testing.T) {
 }
 
 func TestBucketRegistry_InvalidTokenDenied(t *testing.T) {
+	t.Parallel()
 	buckets := []config.BucketConfig{
 		{Name: "mybucket", Credentials: []config.CredentialConfig{
 			{Token: "correct-token"},
@@ -413,7 +430,7 @@ func TestBucketRegistry_InvalidTokenDenied(t *testing.T) {
 
 	br := NewBucketRegistry(buckets)
 
-	r, _ := http.NewRequest("GET", "/mybucket/key", nil)
+	r, _ := http.NewRequestWithContext(context.Background(), "GET", "/mybucket/key", nil)
 	r.Header.Set("X-Proxy-Token", "wrong-token")
 
 	_, err := br.AuthenticateAndResolveBucket(r)
@@ -423,6 +440,7 @@ func TestBucketRegistry_InvalidTokenDenied(t *testing.T) {
 }
 
 func TestBucketRegistry_NoCredentialsDenied(t *testing.T) {
+	t.Parallel()
 	buckets := []config.BucketConfig{
 		{Name: "mybucket", Credentials: []config.CredentialConfig{
 			{AccessKeyID: "KEY", SecretAccessKey: "secret"},
@@ -431,7 +449,7 @@ func TestBucketRegistry_NoCredentialsDenied(t *testing.T) {
 
 	br := NewBucketRegistry(buckets)
 
-	r, _ := http.NewRequest("GET", "/mybucket/key", nil)
+	r, _ := http.NewRequestWithContext(context.Background(), "GET", "/mybucket/key", nil)
 	_, err := br.AuthenticateAndResolveBucket(r)
 	if err == nil {
 		t.Error("request with no credentials should be denied")
@@ -439,6 +457,7 @@ func TestBucketRegistry_NoCredentialsDenied(t *testing.T) {
 }
 
 func TestBucketRegistry_MultipleCredsOnSameBucket(t *testing.T) {
+	t.Parallel()
 	buckets := []config.BucketConfig{
 		{Name: "shared-files", Credentials: []config.CredentialConfig{
 			{AccessKeyID: "WRITER_KEY", SecretAccessKey: "WRITER_SECRET"},
@@ -467,6 +486,7 @@ func TestBucketRegistry_MultipleCredsOnSameBucket(t *testing.T) {
 }
 
 func TestBucketRegistry_WrongSecretDenied(t *testing.T) {
+	t.Parallel()
 	buckets := []config.BucketConfig{
 		{Name: "mybucket", Credentials: []config.CredentialConfig{
 			{AccessKeyID: "KEY", SecretAccessKey: "correct-secret"},
@@ -484,6 +504,7 @@ func TestBucketRegistry_WrongSecretDenied(t *testing.T) {
 }
 
 func TestBucketRegistry_MaxMultipartUploads(t *testing.T) {
+	t.Parallel()
 	buckets := []config.BucketConfig{
 		{Name: "limited", MaxMultipartUploads: 50, Credentials: []config.CredentialConfig{
 			{AccessKeyID: "K1", SecretAccessKey: "S1"},
@@ -520,7 +541,7 @@ func presignRequest(t *testing.T, method, path, accessKey, secret string, expire
 	credentialScope := dateStamp + "/us-east-1/s3/aws4_request"
 	signedHeadersStr := "host"
 
-	r, _ := http.NewRequest(method, path, nil)
+	r, _ := http.NewRequestWithContext(context.Background(), method, path, nil)
 	r.Host = "localhost"
 
 	// Set the presigned query parameters (except Signature, computed below)
@@ -549,6 +570,7 @@ func presignRequest(t *testing.T, method, path, accessKey, secret string, expire
 // TestBucketRegistry_PresignedResolvesCorrectBucket verifies that a valid
 // presigned URL resolves to the correct virtual bucket.
 func TestBucketRegistry_PresignedResolvesCorrectBucket(t *testing.T) {
+	t.Parallel()
 	buckets := []config.BucketConfig{
 		{Name: "app1-files", Credentials: []config.CredentialConfig{
 			{AccessKeyID: "APP1_KEY", SecretAccessKey: "APP1_SECRET"},
@@ -581,13 +603,14 @@ func TestBucketRegistry_PresignedResolvesCorrectBucket(t *testing.T) {
 // TestPresigned_ExpiredURL verifies that a presigned URL whose date + expires
 // window has passed is rejected.
 func TestPresigned_ExpiredURL(t *testing.T) {
+	t.Parallel()
 	accessKey := "AKID"
 	secret := "SECRET"
 	dateStamp := time.Now().UTC().Add(-2 * time.Hour).Format("20060102T150405Z")
 	ds := dateStamp[:8]
 	credentialScope := ds + "/us-east-1/s3/aws4_request"
 
-	r, _ := http.NewRequest("GET", "/bucket/key", nil)
+	r, _ := http.NewRequestWithContext(context.Background(), "GET", "/bucket/key", nil)
 	r.Host = "localhost"
 
 	q := r.URL.Query()
@@ -614,6 +637,7 @@ func TestPresigned_ExpiredURL(t *testing.T) {
 // TestPresigned_ExcessiveExpiry verifies that X-Amz-Expires values exceeding
 // the 7-day maximum are rejected.
 func TestPresigned_ExcessiveExpiry(t *testing.T) {
+	t.Parallel()
 	r := presignRequest(t, "GET", "/bucket/key", "AKID", "SECRET", 604800+1)
 
 	buckets := []config.BucketConfig{
@@ -631,6 +655,7 @@ func TestPresigned_ExcessiveExpiry(t *testing.T) {
 // TestPresigned_InvalidExpiry verifies that non-integer, zero, and negative
 // X-Amz-Expires values are rejected.
 func TestPresigned_InvalidExpiry(t *testing.T) {
+	t.Parallel()
 	for _, expires := range []string{"abc", "0", "-100", ""} {
 		t.Run(expires, func(t *testing.T) {
 			err := verifyPresignedSigV4(
@@ -653,6 +678,7 @@ func TestPresigned_InvalidExpiry(t *testing.T) {
 // TestPresigned_TamperedSignature verifies that a presigned URL with a
 // modified signature is rejected.
 func TestPresigned_TamperedSignature(t *testing.T) {
+	t.Parallel()
 	r := presignRequest(t, "GET", "/bucket/key", "AKID", "SECRET", 300)
 
 	// Tamper with the signature — replace entirely with zeros
@@ -676,6 +702,7 @@ func TestPresigned_TamperedSignature(t *testing.T) {
 // TestPresigned_UnknownAccessKeyDenied verifies that a presigned URL with an
 // unknown access key is rejected (constant-time path).
 func TestPresigned_UnknownAccessKeyDenied(t *testing.T) {
+	t.Parallel()
 	r := presignRequest(t, "GET", "/bucket/key", "UNKNOWN_KEY", "SOME_SECRET", 300)
 
 	buckets := []config.BucketConfig{
@@ -693,6 +720,7 @@ func TestPresigned_UnknownAccessKeyDenied(t *testing.T) {
 // TestPresigned_WrongSecretDenied verifies that a presigned URL signed with
 // the wrong secret is rejected.
 func TestPresigned_WrongSecretDenied(t *testing.T) {
+	t.Parallel()
 	// Sign with "WRONG_SECRET" but register "REAL_SECRET"
 	r := presignRequest(t, "GET", "/bucket/key", "AKID", "WRONG_SECRET", 300)
 
@@ -711,6 +739,7 @@ func TestPresigned_WrongSecretDenied(t *testing.T) {
 // TestPresigned_HostHeaderMustBeSigned verifies that presigned URLs that do
 // not include "host" in X-Amz-SignedHeaders are rejected.
 func TestPresigned_HostHeaderMustBeSigned(t *testing.T) {
+	t.Parallel()
 	err := verifyPresignedSigV4(
 		&http.Request{URL: &url.URL{}, Host: "localhost"},
 		"AKID", "SECRET",
@@ -730,7 +759,8 @@ func TestPresigned_HostHeaderMustBeSigned(t *testing.T) {
 // X-Amz-Signature is excluded from the canonical query string but other
 // X-Amz-* parameters are included.
 func TestPresigned_SignatureExcludedFromCanonicalQuery(t *testing.T) {
-	r, _ := http.NewRequest("GET", "/bucket/key?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=abc123&other=value", nil)
+	t.Parallel()
+	r, _ := http.NewRequestWithContext(context.Background(), "GET", "/bucket/key?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=abc123&other=value", nil)
 	r.Host = "localhost"
 
 	canonical := buildPresignedCanonicalRequest(r, []string{"host"})
@@ -748,6 +778,7 @@ func TestPresigned_SignatureExcludedFromCanonicalQuery(t *testing.T) {
 // TestPresigned_HeaderAndPresignedCoexist verifies that header-based SigV4
 // and presigned URL auth both work correctly in the same BucketRegistry.
 func TestPresigned_HeaderAndPresignedCoexist(t *testing.T) {
+	t.Parallel()
 	buckets := []config.BucketConfig{
 		{Name: "bucket-a", Credentials: []config.CredentialConfig{
 			{AccessKeyID: "KEY_A", SecretAccessKey: "SECRET_A"},
@@ -782,6 +813,7 @@ func TestPresigned_HeaderAndPresignedCoexist(t *testing.T) {
 // TestPresigned_OverflowExpiry verifies that an expiry value large enough to
 // overflow time.Duration is rejected before the multiplication.
 func TestPresigned_OverflowExpiry(t *testing.T) {
+	t.Parallel()
 	err := verifyPresignedSigV4(
 		&http.Request{URL: &url.URL{}, Host: "localhost"},
 		"AKID", "SECRET",
@@ -800,6 +832,7 @@ func TestPresigned_OverflowExpiry(t *testing.T) {
 // TestSigV4_CredentialDateMismatch verifies that a request where the
 // credential scope date differs from X-Amz-Date is rejected.
 func TestSigV4_CredentialDateMismatch(t *testing.T) {
+	t.Parallel()
 	now := time.Now().UTC()
 	amzDate := now.Format("20060102T150405Z")
 	wrongDate := now.AddDate(0, 0, -1).Format("20060102") // yesterday
@@ -830,6 +863,7 @@ func TestSigV4_CredentialDateMismatch(t *testing.T) {
 
 // TestPresigned_CredentialDateMismatch verifies the same check for presigned URLs.
 func TestPresigned_CredentialDateMismatch(t *testing.T) {
+	t.Parallel()
 	now := time.Now().UTC()
 	amzDate := now.Format("20060102T150405Z")
 	wrongDate := now.AddDate(0, 0, -1).Format("20060102")
@@ -853,6 +887,7 @@ func TestPresigned_CredentialDateMismatch(t *testing.T) {
 }
 
 func TestCollapseWhitespace(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		in, want string
 	}{
@@ -876,6 +911,7 @@ func TestCollapseWhitespace(t *testing.T) {
 }
 
 func TestStripWhitespace(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		in, want string
 	}{

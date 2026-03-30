@@ -27,7 +27,7 @@ type NotificationEndpoint struct {
 	URL        string        `yaml:"url"`         // Webhook URL (required)
 	Events     []string      `yaml:"events"`      // Event type patterns with wildcard support (required)
 	Prefix     string        `yaml:"prefix"`      // Only emit data events for keys matching this prefix (optional)
-	Secret     string        `yaml:"secret"`      // HMAC-SHA256 signing key (optional)
+	Secret     string        `yaml:"secret"` //nolint:gosec // G117: config struct, not a hardcoded credential
 	Timeout    time.Duration `yaml:"timeout"`     // HTTP request timeout (default: 5s)
 	MaxRetries int           `yaml:"max_retries"` // Delivery attempts before dropping (default: 3)
 }

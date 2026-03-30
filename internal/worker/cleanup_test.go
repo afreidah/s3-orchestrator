@@ -11,6 +11,7 @@ import (
 )
 
 func TestProcessCleanupQueue_DeleteSuccess(t *testing.T) {
+	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockCleanupDeps(ctrl)
 
@@ -36,6 +37,7 @@ func TestProcessCleanupQueue_DeleteSuccess(t *testing.T) {
 }
 
 func TestProcessCleanupQueue_DeleteFails_Retries(t *testing.T) {
+	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockCleanupDeps(ctrl)
 
@@ -58,6 +60,7 @@ func TestProcessCleanupQueue_DeleteFails_Retries(t *testing.T) {
 }
 
 func TestProcessCleanupQueue_AdmissionBlocked(t *testing.T) {
+	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockCleanupDeps(ctrl)
 
@@ -76,6 +79,7 @@ func TestProcessCleanupQueue_AdmissionBlocked(t *testing.T) {
 }
 
 func TestProcessCleanupQueue_BackendNotFound(t *testing.T) {
+	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockCleanupDeps(ctrl)
 
@@ -97,6 +101,7 @@ func TestProcessCleanupQueue_BackendNotFound(t *testing.T) {
 }
 
 func TestCleanupBackoff(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		attempts int32
 		want     time.Duration

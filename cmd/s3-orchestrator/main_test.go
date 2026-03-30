@@ -63,7 +63,7 @@ func writeTestConfig(t *testing.T, content string) string {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 	return path
@@ -72,7 +72,7 @@ func writeTestConfig(t *testing.T, content string) string {
 // freePort returns an available TCP port on localhost.
 func freePort(t *testing.T) int {
 	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := net.Listen("tcp", "127.0.0.1:0") //nolint:noctx // test helper, no cancellation needed
 	if err != nil {
 		t.Fatalf("freePort: %v", err)
 	}
@@ -249,7 +249,7 @@ func TestConfigureTLS_NoTLS(t *testing.T) {
 	if err := s.loadConfig(); err != nil {
 		t.Fatalf("loadConfig: %v", err)
 	}
-	s.httpServer = &http.Server{}
+	s.httpServer = &http.Server{ReadHeaderTimeout: time.Second}
 	if err := s.configureTLS(); err != nil {
 		t.Fatalf("configureTLS: %v", err)
 	}
@@ -292,7 +292,7 @@ backends:
 	if err := s.loadConfig(); err != nil {
 		t.Fatalf("loadConfig: %v", err)
 	}
-	s.httpServer = &http.Server{}
+	s.httpServer = &http.Server{ReadHeaderTimeout: time.Second}
 	if err := s.configureTLS(); err != nil {
 		t.Fatalf("configureTLS: %v", err)
 	}
@@ -309,11 +309,11 @@ backends:
 func TestConfigureTLS_BadCert(t *testing.T) {
 	dir := t.TempDir()
 	certPath := filepath.Join(dir, "bad.pem")
-	if err := os.WriteFile(certPath, []byte("not a cert"), 0644); err != nil {
+	if err := os.WriteFile(certPath, []byte("not a cert"), 0600); err != nil {
 		t.Fatalf("write cert: %v", err)
 	}
 	keyPath := filepath.Join(dir, "bad-key.pem")
-	if err := os.WriteFile(keyPath, []byte("not a key"), 0644); err != nil {
+	if err := os.WriteFile(keyPath, []byte("not a key"), 0600); err != nil {
 		t.Fatalf("write key: %v", err)
 	}
 
@@ -345,7 +345,7 @@ backends:
 	if err := s.loadConfig(); err != nil {
 		t.Fatalf("loadConfig: %v", err)
 	}
-	s.httpServer = &http.Server{}
+	s.httpServer = &http.Server{ReadHeaderTimeout: time.Second}
 	if err := s.configureTLS(); err == nil {
 		t.Fatal("expected error for bad cert")
 	}
@@ -379,7 +379,7 @@ func TestHealthEndpoints_Healthy(t *testing.T) {
 	s.ready.Store(true)
 
 	// /health
-	req, _ := http.NewRequest("GET", "/health", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), "GET", "/health", nil)
 	w := &testResponseWriter{header: http.Header{}}
 	s.httpServer.Handler.ServeHTTP(w, req)
 	if w.code != http.StatusOK {
@@ -394,7 +394,7 @@ func TestHealthEndpoints_Healthy(t *testing.T) {
 	}
 
 	// /health/ready
-	req2, _ := http.NewRequest("GET", "/health/ready", nil)
+	req2, _ := http.NewRequestWithContext(context.Background(), "GET", "/health/ready", nil)
 	w2 := &testResponseWriter{header: http.Header{}}
 	s.httpServer.Handler.ServeHTTP(w2, req2)
 	if w2.code != http.StatusOK {
@@ -425,7 +425,7 @@ func TestHealthReady_NotReady(t *testing.T) {
 	s.buildHTTPServer()
 	// ready is false by default
 
-	req, _ := http.NewRequest("GET", "/health/ready", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), "GET", "/health/ready", nil)
 	w := &testResponseWriter{header: http.Header{}}
 	s.httpServer.Handler.ServeHTTP(w, req)
 	if w.code != http.StatusServiceUnavailable {
@@ -469,7 +469,8 @@ func TestRun_StartsAndStops(t *testing.T) {
 	addr := fmt.Sprintf("http://127.0.0.1:%d", port)
 	var lastErr error
 	for range 50 {
-		resp, err := http.Get(addr + "/health/ready")
+		getReq, _ := http.NewRequestWithContext(context.Background(), "GET", addr + "/health/ready", nil)
+		resp, err := http.DefaultClient.Do(getReq) //nolint:gosec // G704: test server URL
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
@@ -486,7 +487,8 @@ func TestRun_StartsAndStops(t *testing.T) {
 	}
 
 	// Verify /health returns 200
-	resp, err := http.Get(addr + "/health")
+	getReq, _ := http.NewRequestWithContext(context.Background(), "GET", addr + "/health", nil)
+	resp, err := http.DefaultClient.Do(getReq) //nolint:gosec // G704: test server URL
 	if err != nil {
 		cancel()
 		t.Fatalf("GET /health: %v", err)

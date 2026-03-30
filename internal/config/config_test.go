@@ -19,6 +19,7 @@ import (
 )
 
 func TestConfigValidation_MinimalValid(t *testing.T) {
+	t.Parallel()
 	cfg := Config{
 		Server: ServerConfig{
 			ListenAddr: "0.0.0.0:9000",
@@ -59,6 +60,7 @@ func TestConfigValidation_MinimalValid(t *testing.T) {
 }
 
 func TestConfigValidation_MissingRequired(t *testing.T) {
+	t.Parallel()
 	cfg := Config{}
 	err := cfg.SetDefaultsAndValidate()
 	if err == nil {
@@ -67,6 +69,7 @@ func TestConfigValidation_MissingRequired(t *testing.T) {
 }
 
 func TestConfigValidation_DuplicateBackendNames(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Backends = []BackendConfig{
 		{Name: "dup", Endpoint: "e", Bucket: "b", AccessKeyID: "a", SecretAccessKey: "s", QuotaBytes: 1},
@@ -80,6 +83,7 @@ func TestConfigValidation_DuplicateBackendNames(t *testing.T) {
 }
 
 func TestConfigValidation_NegativeQuota(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Backends[0].QuotaBytes = -1
 
@@ -90,6 +94,7 @@ func TestConfigValidation_NegativeQuota(t *testing.T) {
 }
 
 func TestConfigValidation_NegativeMaxConcurrentRequests(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Server.MaxConcurrentRequests = -1
 
@@ -100,6 +105,7 @@ func TestConfigValidation_NegativeMaxConcurrentRequests(t *testing.T) {
 }
 
 func TestConfigValidation_NegativeMaxConcurrentReads(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Server.MaxConcurrentReads = -1
 
@@ -110,6 +116,7 @@ func TestConfigValidation_NegativeMaxConcurrentReads(t *testing.T) {
 }
 
 func TestConfigValidation_NegativeMaxConcurrentWrites(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Server.MaxConcurrentWrites = -1
 
@@ -120,6 +127,7 @@ func TestConfigValidation_NegativeMaxConcurrentWrites(t *testing.T) {
 }
 
 func TestConfigValidation_InvalidLoadShedThreshold(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Server.LoadShedThreshold = 1.5
 
@@ -130,6 +138,7 @@ func TestConfigValidation_InvalidLoadShedThreshold(t *testing.T) {
 }
 
 func TestConfigValidation_NegativeLoadShedThreshold(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Server.LoadShedThreshold = -0.5
 
@@ -140,6 +149,7 @@ func TestConfigValidation_NegativeLoadShedThreshold(t *testing.T) {
 }
 
 func TestConfigValidation_ValidLoadShedThreshold(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Server.LoadShedThreshold = 0.8
 
@@ -149,6 +159,7 @@ func TestConfigValidation_ValidLoadShedThreshold(t *testing.T) {
 }
 
 func TestConfigValidation_NegativeAdmissionWait(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Server.AdmissionWait = -1 * time.Second
 
@@ -159,6 +170,7 @@ func TestConfigValidation_NegativeAdmissionWait(t *testing.T) {
 }
 
 func TestConfigValidation_ZeroMaxConcurrentRequestsDefaultsTo1000(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Server.MaxConcurrentRequests = 0
 
@@ -171,6 +183,7 @@ func TestConfigValidation_ZeroMaxConcurrentRequestsDefaultsTo1000(t *testing.T) 
 }
 
 func TestConfigValidation_SplitPoolsSkipGlobalDefault(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Server.MaxConcurrentReads = 200
 	cfg.Server.MaxConcurrentWrites = 200
@@ -184,6 +197,7 @@ func TestConfigValidation_SplitPoolsSkipGlobalDefault(t *testing.T) {
 }
 
 func TestConfigValidation_ZeroQuotaMeansUnlimited(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Backends[0].QuotaBytes = 0
 
@@ -193,6 +207,7 @@ func TestConfigValidation_ZeroQuotaMeansUnlimited(t *testing.T) {
 }
 
 func TestConfigValidation_OmittedQuotaMeansUnlimited(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Backends[0].QuotaBytes = 0
 
@@ -202,6 +217,7 @@ func TestConfigValidation_OmittedQuotaMeansUnlimited(t *testing.T) {
 }
 
 func TestConnectionString(t *testing.T) {
+	t.Parallel()
 	db := DatabaseConfig{
 		Host:     "localhost",
 		Port:     5433,
@@ -212,14 +228,15 @@ func TestConnectionString(t *testing.T) {
 	}
 
 	got := db.ConnectionString()
-	want := "postgres://s3proxy:secret@localhost:5433/s3proxy?sslmode=require"
+	want := "postgres://s3proxy:secret@localhost:5433/s3proxy?sslmode=require" //nolint:gosec // G101: test credential string
 	if got != want {
 		t.Errorf("ConnectionString() = %q, want %q", got, want)
 	}
 }
 
 func TestConnectionString_SpecialChars(t *testing.T) {
-	db := DatabaseConfig{
+	t.Parallel()
+	db := DatabaseConfig{ //nolint:gosec // G101: test config values
 		Host:     "db.example.com",
 		Port:     5432,
 		Database: "mydb",
@@ -230,13 +247,14 @@ func TestConnectionString_SpecialChars(t *testing.T) {
 
 	got := db.ConnectionString()
 	// url.UserPassword percent-encodes @ but preserves = and &
-	want := "postgres://admin:p%40ss=w%20ord&special@db.example.com:5432/mydb?sslmode=disable"
+	want := "postgres://admin:p%40ss=w%20ord&special@db.example.com:5432/mydb?sslmode=disable" //nolint:gosec // G101: test credential string
 	if got != want {
 		t.Errorf("ConnectionString() = %q, want %q", got, want)
 	}
 }
 
 func TestRebalanceConfig_Defaults(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Rebalance = RebalanceConfig{Enabled: true}
 
@@ -262,6 +280,7 @@ func TestRebalanceConfig_Defaults(t *testing.T) {
 }
 
 func TestRebalanceConfig_InvalidStrategy(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Rebalance = RebalanceConfig{
 		Enabled:   true,
@@ -277,6 +296,7 @@ func TestRebalanceConfig_InvalidStrategy(t *testing.T) {
 }
 
 func TestRebalanceConfig_DisabledSkipsValidation(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Rebalance = RebalanceConfig{
 		Enabled:  false,
@@ -289,6 +309,7 @@ func TestRebalanceConfig_DisabledSkipsValidation(t *testing.T) {
 }
 
 func TestRebalanceConfig_InvalidThreshold(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Rebalance = RebalanceConfig{
 		Enabled:   true,
@@ -304,6 +325,7 @@ func TestRebalanceConfig_InvalidThreshold(t *testing.T) {
 }
 
 func TestReplicationConfig_DefaultsWhenDisabled(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	// factor=0 should default to 1 (disabled)
 
@@ -317,6 +339,7 @@ func TestReplicationConfig_DefaultsWhenDisabled(t *testing.T) {
 }
 
 func TestReplicationConfig_DefaultsWhenEnabled(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfigTwoBackends()
 	cfg.Replication = ReplicationConfig{Factor: 2}
 
@@ -333,6 +356,7 @@ func TestReplicationConfig_DefaultsWhenEnabled(t *testing.T) {
 }
 
 func TestReplicationConfig_FactorExceedsBackends(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig() // 1 backend
 	cfg.Replication = ReplicationConfig{Factor: 2}
 
@@ -342,6 +366,7 @@ func TestReplicationConfig_FactorExceedsBackends(t *testing.T) {
 }
 
 func TestReplicationConfig_FactorNegative(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Replication = ReplicationConfig{Factor: -1}
 
@@ -351,6 +376,7 @@ func TestReplicationConfig_FactorNegative(t *testing.T) {
 }
 
 func TestReplicationConfig_DisabledSkipsValidation(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Replication = ReplicationConfig{Factor: 1, WorkerInterval: -1}
 
@@ -360,6 +386,7 @@ func TestReplicationConfig_DisabledSkipsValidation(t *testing.T) {
 }
 
 func TestCircuitBreakerDefaults(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
@@ -381,6 +408,7 @@ func TestCircuitBreakerDefaults(t *testing.T) {
 }
 
 func TestCircuitBreakerConfig_ParallelBroadcastSet(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.CircuitBreaker.ParallelBroadcast = true
 
@@ -393,6 +421,7 @@ func TestCircuitBreakerConfig_ParallelBroadcastSet(t *testing.T) {
 }
 
 func TestServerTimeoutDefaults(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
@@ -414,6 +443,7 @@ func TestServerTimeoutDefaults(t *testing.T) {
 }
 
 func TestServerTimeoutCustomValues(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Server.ReadHeaderTimeout = 5 * time.Second
 	cfg.Server.ReadTimeout = 2 * time.Minute
@@ -439,6 +469,7 @@ func TestServerTimeoutCustomValues(t *testing.T) {
 }
 
 func TestServerTimeoutCrossValidation(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name              string
 		readHeaderTimeout time.Duration
@@ -500,6 +531,7 @@ func TestServerTimeoutCrossValidation(t *testing.T) {
 }
 
 func TestNonReloadableFieldsChanged_ServerTimeouts(t *testing.T) {
+	t.Parallel()
 	a := validBaseConfig()
 	b := validBaseConfig()
 	_ = a.SetDefaultsAndValidate()
@@ -522,6 +554,7 @@ func TestNonReloadableFieldsChanged_ServerTimeouts(t *testing.T) {
 }
 
 func TestShutdownDelayDefault(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
@@ -534,6 +567,7 @@ func TestShutdownDelayDefault(t *testing.T) {
 }
 
 func TestShutdownDelayCustomValue(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Server.ShutdownDelay = 5 * time.Second
 
@@ -547,6 +581,7 @@ func TestShutdownDelayCustomValue(t *testing.T) {
 }
 
 func TestNonReloadableFieldsChanged_ShutdownDelay(t *testing.T) {
+	t.Parallel()
 	a := validBaseConfig()
 	b := validBaseConfig()
 	_ = a.SetDefaultsAndValidate()
@@ -569,6 +604,7 @@ func TestNonReloadableFieldsChanged_ShutdownDelay(t *testing.T) {
 }
 
 func TestNonReloadableFieldsChanged_CircuitBreaker(t *testing.T) {
+	t.Parallel()
 	a := validBaseConfig()
 	b := validBaseConfig()
 	_ = a.SetDefaultsAndValidate()
@@ -588,6 +624,7 @@ func TestNonReloadableFieldsChanged_CircuitBreaker(t *testing.T) {
 }
 
 func TestConfigValidation_MixedQuotaAndUnlimited(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Backends = []BackendConfig{
 		{Name: "quota", Endpoint: "e", Bucket: "b", AccessKeyID: "a", SecretAccessKey: "s", QuotaBytes: 1024},
@@ -602,6 +639,7 @@ func TestConfigValidation_MixedQuotaAndUnlimited(t *testing.T) {
 }
 
 func TestConfigValidation_MultipleUnlimitedWithoutReplication(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Backends = []BackendConfig{
 		{Name: "u1", Endpoint: "e", Bucket: "b", AccessKeyID: "a", SecretAccessKey: "s", QuotaBytes: 0},
@@ -615,6 +653,7 @@ func TestConfigValidation_MultipleUnlimitedWithoutReplication(t *testing.T) {
 }
 
 func TestConfigValidation_MultipleUnlimitedWithReplication(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Backends = []BackendConfig{
 		{Name: "u1", Endpoint: "e", Bucket: "b", AccessKeyID: "a", SecretAccessKey: "s", QuotaBytes: 0},
@@ -628,6 +667,7 @@ func TestConfigValidation_MultipleUnlimitedWithReplication(t *testing.T) {
 }
 
 func TestConfigValidation_QuotaBackendsWithReplication(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Backends = []BackendConfig{
 		{Name: "q1", Endpoint: "e", Bucket: "b", AccessKeyID: "a", SecretAccessKey: "s", QuotaBytes: 1024},
@@ -641,6 +681,7 @@ func TestConfigValidation_QuotaBackendsWithReplication(t *testing.T) {
 }
 
 func TestConfigValidation_MultiBackendNoReplicationWarns(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Backends = []BackendConfig{
 		{Name: "b1", Endpoint: "e", Bucket: "b", AccessKeyID: "a", SecretAccessKey: "s", QuotaBytes: 1024},
@@ -655,6 +696,7 @@ func TestConfigValidation_MultiBackendNoReplicationWarns(t *testing.T) {
 }
 
 func TestConfigValidation_NegativeAPIRequestLimit(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Backends[0].APIRequestLimit = -1
 
@@ -665,6 +707,7 @@ func TestConfigValidation_NegativeAPIRequestLimit(t *testing.T) {
 }
 
 func TestConfigValidation_NegativeEgressByteLimit(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Backends[0].EgressByteLimit = -1
 
@@ -675,6 +718,7 @@ func TestConfigValidation_NegativeEgressByteLimit(t *testing.T) {
 }
 
 func TestConfigValidation_NegativeIngressByteLimit(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Backends[0].IngressByteLimit = -1
 
@@ -685,6 +729,7 @@ func TestConfigValidation_NegativeIngressByteLimit(t *testing.T) {
 }
 
 func TestConfigValidation_ZeroUsageLimitsMeansUnlimited(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	// All zero — should pass (unlimited)
 	cfg.Backends[0].APIRequestLimit = 0
@@ -701,6 +746,7 @@ func TestConfigValidation_ZeroUsageLimitsMeansUnlimited(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestConfigValidation_NoBuckets(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Buckets = nil
 
@@ -714,6 +760,7 @@ func TestConfigValidation_NoBuckets(t *testing.T) {
 }
 
 func TestConfigValidation_DuplicateBucketNames(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Buckets = []BucketConfig{
 		{Name: "dup", Credentials: []CredentialConfig{{AccessKeyID: "A1", SecretAccessKey: "s1"}}},
@@ -730,6 +777,7 @@ func TestConfigValidation_DuplicateBucketNames(t *testing.T) {
 }
 
 func TestConfigValidation_DuplicateAccessKeysAcrossBuckets(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Buckets = []BucketConfig{
 		{Name: "b1", Credentials: []CredentialConfig{{AccessKeyID: "SAME", SecretAccessKey: "s1"}}},
@@ -746,6 +794,7 @@ func TestConfigValidation_DuplicateAccessKeysAcrossBuckets(t *testing.T) {
 }
 
 func TestConfigValidation_BucketMissingCredentials(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Buckets = []BucketConfig{
 		{Name: "empty", Credentials: nil},
@@ -761,6 +810,7 @@ func TestConfigValidation_BucketMissingCredentials(t *testing.T) {
 }
 
 func TestConfigValidation_CredentialWithNoAuthMethod(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Buckets = []BucketConfig{
 		{Name: "bad", Credentials: []CredentialConfig{{}}},
@@ -776,6 +826,7 @@ func TestConfigValidation_CredentialWithNoAuthMethod(t *testing.T) {
 }
 
 func TestConfigValidation_BucketNameWithSlash(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Buckets = []BucketConfig{
 		{Name: "bad/name", Credentials: []CredentialConfig{{AccessKeyID: "A", SecretAccessKey: "s"}}},
@@ -791,6 +842,7 @@ func TestConfigValidation_BucketNameWithSlash(t *testing.T) {
 }
 
 func TestConfigValidation_MultipleCredentialsOnSameBucket(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Buckets = []BucketConfig{
 		{Name: "shared", Credentials: []CredentialConfig{
@@ -805,6 +857,7 @@ func TestConfigValidation_MultipleCredentialsOnSameBucket(t *testing.T) {
 }
 
 func TestConfigValidation_TokenCredential(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Buckets = []BucketConfig{
 		{Name: "legacy", Credentials: []CredentialConfig{
@@ -818,6 +871,7 @@ func TestConfigValidation_TokenCredential(t *testing.T) {
 }
 
 func TestConfigValidation_BucketMissingName(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Buckets = []BucketConfig{
 		{Name: "", Credentials: []CredentialConfig{{AccessKeyID: "A", SecretAccessKey: "s"}}},
@@ -833,6 +887,7 @@ func TestConfigValidation_BucketMissingName(t *testing.T) {
 }
 
 func TestConfigValidation_NegativeMaxMultipartUploads(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Buckets[0].MaxMultipartUploads = -1
 
@@ -843,6 +898,7 @@ func TestConfigValidation_NegativeMaxMultipartUploads(t *testing.T) {
 }
 
 func TestConfigValidation_ZeroMaxMultipartUploads(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Buckets[0].MaxMultipartUploads = 0
 
@@ -852,6 +908,7 @@ func TestConfigValidation_ZeroMaxMultipartUploads(t *testing.T) {
 }
 
 func TestConfigValidation_PositiveMaxMultipartUploads(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Buckets[0].MaxMultipartUploads = 100
 
@@ -865,6 +922,7 @@ func TestConfigValidation_PositiveMaxMultipartUploads(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestNonReloadableFieldsChanged_IdenticalConfigs(t *testing.T) {
+	t.Parallel()
 	a := validBaseConfig()
 	b := validBaseConfig()
 	_ = a.SetDefaultsAndValidate()
@@ -877,6 +935,7 @@ func TestNonReloadableFieldsChanged_IdenticalConfigs(t *testing.T) {
 }
 
 func TestNonReloadableFieldsChanged_ListenAddr(t *testing.T) {
+	t.Parallel()
 	a := validBaseConfig()
 	b := validBaseConfig()
 	_ = a.SetDefaultsAndValidate()
@@ -890,6 +949,7 @@ func TestNonReloadableFieldsChanged_ListenAddr(t *testing.T) {
 }
 
 func TestNonReloadableFieldsChanged_MaxConcurrentRequests(t *testing.T) {
+	t.Parallel()
 	a := validBaseConfig()
 	b := validBaseConfig()
 	_ = a.SetDefaultsAndValidate()
@@ -903,6 +963,7 @@ func TestNonReloadableFieldsChanged_MaxConcurrentRequests(t *testing.T) {
 }
 
 func TestNonReloadableFieldsChanged_MaxConcurrentReads(t *testing.T) {
+	t.Parallel()
 	a := validBaseConfig()
 	b := validBaseConfig()
 	_ = a.SetDefaultsAndValidate()
@@ -917,6 +978,7 @@ func TestNonReloadableFieldsChanged_MaxConcurrentReads(t *testing.T) {
 }
 
 func TestNonReloadableFieldsChanged_MaxConcurrentWrites(t *testing.T) {
+	t.Parallel()
 	a := validBaseConfig()
 	b := validBaseConfig()
 	_ = a.SetDefaultsAndValidate()
@@ -931,6 +993,7 @@ func TestNonReloadableFieldsChanged_MaxConcurrentWrites(t *testing.T) {
 }
 
 func TestNonReloadableFieldsChanged_LoadShedThreshold(t *testing.T) {
+	t.Parallel()
 	a := validBaseConfig()
 	b := validBaseConfig()
 	_ = a.SetDefaultsAndValidate()
@@ -944,6 +1007,7 @@ func TestNonReloadableFieldsChanged_LoadShedThreshold(t *testing.T) {
 }
 
 func TestNonReloadableFieldsChanged_AdmissionWait(t *testing.T) {
+	t.Parallel()
 	a := validBaseConfig()
 	b := validBaseConfig()
 	_ = a.SetDefaultsAndValidate()
@@ -957,6 +1021,7 @@ func TestNonReloadableFieldsChanged_AdmissionWait(t *testing.T) {
 }
 
 func TestNonReloadableFieldsChanged_Database(t *testing.T) {
+	t.Parallel()
 	a := validBaseConfig()
 	b := validBaseConfig()
 	_ = a.SetDefaultsAndValidate()
@@ -976,6 +1041,7 @@ func TestNonReloadableFieldsChanged_Database(t *testing.T) {
 }
 
 func TestNonReloadableFieldsChanged_BackendStructuralFields(t *testing.T) {
+	t.Parallel()
 	a := validBaseConfig()
 	b := validBaseConfig()
 	_ = a.SetDefaultsAndValidate()
@@ -995,6 +1061,7 @@ func TestNonReloadableFieldsChanged_BackendStructuralFields(t *testing.T) {
 }
 
 func TestNonReloadableFieldsChanged_BackendCredentials(t *testing.T) {
+	t.Parallel()
 	a := validBaseConfig()
 	b := validBaseConfig()
 	_ = a.SetDefaultsAndValidate()
@@ -1014,6 +1081,7 @@ func TestNonReloadableFieldsChanged_BackendCredentials(t *testing.T) {
 }
 
 func TestNonReloadableFieldsChanged_BackendCountChanged(t *testing.T) {
+	t.Parallel()
 	a := validBaseConfig()
 	b := validBaseConfigTwoBackends()
 	_ = a.SetDefaultsAndValidate()
@@ -1032,6 +1100,7 @@ func TestNonReloadableFieldsChanged_BackendCountChanged(t *testing.T) {
 }
 
 func TestNonReloadableFieldsChanged_ReloadableOnlyChanges(t *testing.T) {
+	t.Parallel()
 	a := validBaseConfig()
 	b := validBaseConfig()
 	_ = a.SetDefaultsAndValidate()
@@ -1056,6 +1125,7 @@ func TestNonReloadableFieldsChanged_ReloadableOnlyChanges(t *testing.T) {
 }
 
 func TestNonReloadableFieldsChanged_UnsignedPayloadChanged(t *testing.T) {
+	t.Parallel()
 	a := validBaseConfig()
 	b := validBaseConfig()
 	_ = a.SetDefaultsAndValidate()
@@ -1076,6 +1146,7 @@ func TestNonReloadableFieldsChanged_UnsignedPayloadChanged(t *testing.T) {
 }
 
 func TestNonReloadableFieldsChanged_UnsignedPayloadBothNil(t *testing.T) {
+	t.Parallel()
 	a := validBaseConfig()
 	b := validBaseConfig()
 	// Both nil — should be treated as identical (both default to true)
@@ -1089,6 +1160,7 @@ func TestNonReloadableFieldsChanged_UnsignedPayloadBothNil(t *testing.T) {
 }
 
 func TestNonReloadableFieldsChanged_UnsignedPayloadExplicitTrue(t *testing.T) {
+	t.Parallel()
 	a := validBaseConfig()
 	b := validBaseConfig()
 	_ = a.SetDefaultsAndValidate()
@@ -1104,6 +1176,7 @@ func TestNonReloadableFieldsChanged_UnsignedPayloadExplicitTrue(t *testing.T) {
 }
 
 func TestNonReloadableFieldsChanged_DisableChecksumChanged(t *testing.T) {
+	t.Parallel()
 	a := validBaseConfig()
 	b := validBaseConfig()
 	_ = a.SetDefaultsAndValidate()
@@ -1123,6 +1196,7 @@ func TestNonReloadableFieldsChanged_DisableChecksumChanged(t *testing.T) {
 }
 
 func TestNonReloadableFieldsChanged_DisableChecksumBothTrue(t *testing.T) {
+	t.Parallel()
 	a := validBaseConfig()
 	b := validBaseConfig()
 	a.Backends[0].DisableChecksum = true
@@ -1137,6 +1211,7 @@ func TestNonReloadableFieldsChanged_DisableChecksumBothTrue(t *testing.T) {
 }
 
 func TestNonReloadableFieldsChanged_DisableChecksumBothFalse(t *testing.T) {
+	t.Parallel()
 	a := validBaseConfig()
 	b := validBaseConfig()
 	_ = a.SetDefaultsAndValidate()
@@ -1149,6 +1224,7 @@ func TestNonReloadableFieldsChanged_DisableChecksumBothFalse(t *testing.T) {
 }
 
 func TestNonReloadableFieldsChanged_StripSDKHeadersChanged(t *testing.T) {
+	t.Parallel()
 	a := validBaseConfig()
 	b := validBaseConfig()
 	_ = a.SetDefaultsAndValidate()
@@ -1168,6 +1244,7 @@ func TestNonReloadableFieldsChanged_StripSDKHeadersChanged(t *testing.T) {
 }
 
 func TestNonReloadableFieldsChanged_StripSDKHeadersBothTrue(t *testing.T) {
+	t.Parallel()
 	a := validBaseConfig()
 	b := validBaseConfig()
 	a.Backends[0].StripSDKHeaders = true
@@ -1182,6 +1259,7 @@ func TestNonReloadableFieldsChanged_StripSDKHeadersBothTrue(t *testing.T) {
 }
 
 func TestNonReloadableFieldsChanged_StripSDKHeadersBothFalse(t *testing.T) {
+	t.Parallel()
 	a := validBaseConfig()
 	b := validBaseConfig()
 	_ = a.SetDefaultsAndValidate()
@@ -1194,6 +1272,7 @@ func TestNonReloadableFieldsChanged_StripSDKHeadersBothFalse(t *testing.T) {
 }
 
 func TestBoolDefault(t *testing.T) {
+	t.Parallel()
 	tr := true
 	f := false
 
@@ -1212,6 +1291,7 @@ func TestBoolDefault(t *testing.T) {
 }
 
 func TestConfigValidation_TLS_CertWithoutKey(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Server.TLS.CertFile = "/etc/cert.pem"
 	err := cfg.SetDefaultsAndValidate()
@@ -1221,6 +1301,7 @@ func TestConfigValidation_TLS_CertWithoutKey(t *testing.T) {
 }
 
 func TestConfigValidation_TLS_KeyWithoutCert(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Server.TLS.KeyFile = "/etc/key.pem"
 	err := cfg.SetDefaultsAndValidate()
@@ -1230,6 +1311,7 @@ func TestConfigValidation_TLS_KeyWithoutCert(t *testing.T) {
 }
 
 func TestConfigValidation_TLS_ValidPair(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Server.TLS.CertFile = "/etc/cert.pem"
 	cfg.Server.TLS.KeyFile = "/etc/key.pem"
@@ -1242,6 +1324,7 @@ func TestConfigValidation_TLS_ValidPair(t *testing.T) {
 }
 
 func TestConfigValidation_TLS_InvalidMinVersion(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Server.TLS.CertFile = "/etc/cert.pem"
 	cfg.Server.TLS.KeyFile = "/etc/key.pem"
@@ -1253,6 +1336,7 @@ func TestConfigValidation_TLS_InvalidMinVersion(t *testing.T) {
 }
 
 func TestConfigValidation_TLS_MinVersion13(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Server.TLS.CertFile = "/etc/cert.pem"
 	cfg.Server.TLS.KeyFile = "/etc/key.pem"
@@ -1263,6 +1347,7 @@ func TestConfigValidation_TLS_MinVersion13(t *testing.T) {
 }
 
 func TestConfigValidation_TLS_NoTLSIsValid(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
 		t.Errorf("no TLS config should pass: %v", err)
@@ -1270,6 +1355,7 @@ func TestConfigValidation_TLS_NoTLSIsValid(t *testing.T) {
 }
 
 func TestNonReloadableFieldsChanged_TLS(t *testing.T) {
+	t.Parallel()
 	a := validBaseConfig()
 	b := validBaseConfig()
 	_ = a.SetDefaultsAndValidate()
@@ -1291,6 +1377,7 @@ func TestNonReloadableFieldsChanged_TLS(t *testing.T) {
 }
 
 func TestNonReloadableFieldsChanged_MultipleChanges(t *testing.T) {
+	t.Parallel()
 	a := validBaseConfig()
 	b := validBaseConfig()
 	_ = a.SetDefaultsAndValidate()
@@ -1311,6 +1398,7 @@ func TestNonReloadableFieldsChanged_MultipleChanges(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestUsageFlushConfig_Defaults(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
 		t.Fatalf("valid config should pass: %v", err)
@@ -1331,6 +1419,7 @@ func TestUsageFlushConfig_Defaults(t *testing.T) {
 }
 
 func TestUsageFlushConfig_CustomValues(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.UsageFlush = UsageFlushConfig{
 		Interval:          15 * time.Second,
@@ -1352,6 +1441,7 @@ func TestUsageFlushConfig_CustomValues(t *testing.T) {
 }
 
 func TestUsageFlushConfig_FastIntervalExceedsInterval(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.UsageFlush = UsageFlushConfig{
 		Interval:          10 * time.Second,
@@ -1369,6 +1459,7 @@ func TestUsageFlushConfig_FastIntervalExceedsInterval(t *testing.T) {
 }
 
 func TestUsageFlushConfig_InvalidThreshold(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.UsageFlush = UsageFlushConfig{
 		Interval:          30 * time.Second,
@@ -1390,6 +1481,7 @@ func TestUsageFlushConfig_InvalidThreshold(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestLifecycleConfig_EmptyRulesValid(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	// No lifecycle rules — should be valid (disabled)
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
@@ -1398,6 +1490,7 @@ func TestLifecycleConfig_EmptyRulesValid(t *testing.T) {
 }
 
 func TestLifecycleConfig_ValidRules(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Lifecycle = LifecycleConfig{
 		Rules: []LifecycleRule{
@@ -1412,6 +1505,7 @@ func TestLifecycleConfig_ValidRules(t *testing.T) {
 }
 
 func TestLifecycleConfig_MissingPrefix(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Lifecycle = LifecycleConfig{
 		Rules: []LifecycleRule{
@@ -1429,6 +1523,7 @@ func TestLifecycleConfig_MissingPrefix(t *testing.T) {
 }
 
 func TestLifecycleConfig_ZeroExpirationDays(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Lifecycle = LifecycleConfig{
 		Rules: []LifecycleRule{
@@ -1446,6 +1541,7 @@ func TestLifecycleConfig_ZeroExpirationDays(t *testing.T) {
 }
 
 func TestLifecycleConfig_NegativeExpirationDays(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Lifecycle = LifecycleConfig{
 		Rules: []LifecycleRule{
@@ -1460,6 +1556,7 @@ func TestLifecycleConfig_NegativeExpirationDays(t *testing.T) {
 }
 
 func TestLifecycleConfig_DuplicatePrefix(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Lifecycle = LifecycleConfig{
 		Rules: []LifecycleRule{
@@ -1482,6 +1579,7 @@ func TestLifecycleConfig_DuplicatePrefix(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestRateLimitConfig_Defaults(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.RateLimit = RateLimitConfig{Enabled: true}
 
@@ -1498,6 +1596,7 @@ func TestRateLimitConfig_Defaults(t *testing.T) {
 }
 
 func TestRateLimitConfig_DisabledSkipsValidation(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.RateLimit = RateLimitConfig{Enabled: false, RequestsPerSec: -1, Burst: -1}
 
@@ -1511,6 +1610,7 @@ func TestRateLimitConfig_DisabledSkipsValidation(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestRoutingStrategy_DefaultsPack(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
@@ -1523,6 +1623,7 @@ func TestRoutingStrategy_DefaultsPack(t *testing.T) {
 }
 
 func TestRoutingStrategy_InvalidValue(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.RoutingStrategy = "invalid"
 
@@ -1540,6 +1641,7 @@ func TestRoutingStrategy_InvalidValue(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestTracingConfig_EnabledWithoutEndpoint(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Telemetry.Tracing = TracingConfig{
 		Enabled: true,
@@ -1555,6 +1657,7 @@ func TestTracingConfig_EnabledWithoutEndpoint(t *testing.T) {
 }
 
 func TestTracingConfig_EnabledWithEndpoint(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Telemetry.Tracing = TracingConfig{
 		Enabled:  true,
@@ -1571,6 +1674,7 @@ func TestTracingConfig_EnabledWithEndpoint(t *testing.T) {
 }
 
 func TestTracingConfig_DisabledSkipsEndpointValidation(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Telemetry.Tracing = TracingConfig{
 		Enabled: false,
@@ -1582,6 +1686,7 @@ func TestTracingConfig_DisabledSkipsEndpointValidation(t *testing.T) {
 }
 
 func TestMetricsConfig_DefaultPath(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
@@ -1594,6 +1699,7 @@ func TestMetricsConfig_DefaultPath(t *testing.T) {
 }
 
 func TestMetricsConfig_ListenOptional(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Telemetry.Metrics.Enabled = true
 
@@ -1608,6 +1714,7 @@ func TestMetricsConfig_ListenOptional(t *testing.T) {
 }
 
 func TestMetricsConfig_ListenSet(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Telemetry.Metrics.Enabled = true
 	cfg.Telemetry.Metrics.Listen = "127.0.0.1:9091"
@@ -1626,6 +1733,7 @@ func TestMetricsConfig_ListenSet(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestLoadConfig_ValidFile(t *testing.T) {
+	t.Parallel()
 	yaml := `
 server:
   listen_addr: ":9000"
@@ -1661,6 +1769,7 @@ backends:
 }
 
 func TestLoadConfig_DisableChecksum(t *testing.T) {
+	t.Parallel()
 	yaml := `
 server:
   listen_addr: ":9000"
@@ -1694,6 +1803,7 @@ backends:
 }
 
 func TestLoadConfig_DisableChecksumDefaultFalse(t *testing.T) {
+	t.Parallel()
 	yaml := `
 server:
   listen_addr: ":9000"
@@ -1726,6 +1836,7 @@ backends:
 }
 
 func TestLoadConfig_StripSDKHeaders(t *testing.T) {
+	t.Parallel()
 	yaml := `
 server:
   listen_addr: ":9000"
@@ -1759,6 +1870,7 @@ backends:
 }
 
 func TestLoadConfig_StripSDKHeadersDefaultFalse(t *testing.T) {
+	t.Parallel()
 	yaml := `
 server:
   listen_addr: ":9000"
@@ -1791,6 +1903,7 @@ backends:
 }
 
 func TestLoadConfig_NonexistentFile(t *testing.T) {
+	t.Parallel()
 	_, err := LoadConfig("/tmp/nonexistent-config-file-abc123.yaml")
 	if err == nil {
 		t.Fatal("expected error for nonexistent file")
@@ -1801,6 +1914,7 @@ func TestLoadConfig_NonexistentFile(t *testing.T) {
 }
 
 func TestLoadConfig_InvalidYAML(t *testing.T) {
+	t.Parallel()
 	path := writeTempConfig(t, "{{invalid yaml")
 
 	_, err := LoadConfig(path)
@@ -1813,6 +1927,7 @@ func TestLoadConfig_InvalidYAML(t *testing.T) {
 }
 
 func TestLoadConfig_ValidationFailure(t *testing.T) {
+	t.Parallel()
 	// Valid YAML but fails validation (missing required fields)
 	path := writeTempConfig(t, "server:\n  listen_addr: \"\"\n")
 
@@ -1869,6 +1984,7 @@ backends:
 // -------------------------------------------------------------------------
 
 func TestUIConfig_EnabledMissingCredentials(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.UI = UIConfig{Enabled: true}
 
@@ -1882,6 +1998,7 @@ func TestUIConfig_EnabledMissingCredentials(t *testing.T) {
 }
 
 func TestUIConfig_EnabledMissingSessionSecret(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.UI = UIConfig{Enabled: true, AdminKey: "key", AdminSecret: "secret"}
 
@@ -1895,6 +2012,7 @@ func TestUIConfig_EnabledMissingSessionSecret(t *testing.T) {
 }
 
 func TestUIConfig_EnabledWithCredentials(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.UI = UIConfig{Enabled: true, AdminKey: "key", AdminSecret: "secret", SessionSecret: "sess"}
 
@@ -1907,6 +2025,7 @@ func TestUIConfig_EnabledWithCredentials(t *testing.T) {
 }
 
 func TestUIConfig_DisabledSkipsValidation(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.UI = UIConfig{Enabled: false}
 
@@ -1916,8 +2035,9 @@ func TestUIConfig_DisabledSkipsValidation(t *testing.T) {
 }
 
 func TestUIConfig_SessionSecret(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
-	cfg.UI = UIConfig{
+	cfg.UI = UIConfig{ //nolint:gosec // G101: test config values
 		Enabled:       true,
 		AdminKey:      "key",
 		AdminSecret:   "secret",
@@ -1933,6 +2053,7 @@ func TestUIConfig_SessionSecret(t *testing.T) {
 }
 
 func TestLogLevel_DefaultsToInfo(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
 		t.Fatal(err)
@@ -1943,6 +2064,7 @@ func TestLogLevel_DefaultsToInfo(t *testing.T) {
 }
 
 func TestLogLevel_CustomValue(t *testing.T) {
+	t.Parallel()
 	for _, level := range []string{"debug", "info", "warn", "error"} {
 		cfg := validBaseConfig()
 		cfg.Server.LogLevel = level
@@ -1953,6 +2075,7 @@ func TestLogLevel_CustomValue(t *testing.T) {
 }
 
 func TestLogLevel_InvalidValue(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Server.LogLevel = "trace"
 	err := cfg.SetDefaultsAndValidate()
@@ -1969,6 +2092,7 @@ func TestLogLevel_InvalidValue(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestBackendCircuitBreakerDefaults(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.BackendCircuitBreaker = BackendCircuitBreakerConfig{Enabled: true}
 
@@ -1984,6 +2108,7 @@ func TestBackendCircuitBreakerDefaults(t *testing.T) {
 }
 
 func TestBackendCircuitBreakerDefaults_Disabled(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	// Disabled (default) — defaults should NOT be applied
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
@@ -1995,6 +2120,7 @@ func TestBackendCircuitBreakerDefaults_Disabled(t *testing.T) {
 }
 
 func TestBackendCircuitBreakerDefaults_CustomValues(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.BackendCircuitBreaker = BackendCircuitBreakerConfig{
 		Enabled:          true,
@@ -2014,6 +2140,7 @@ func TestBackendCircuitBreakerDefaults_CustomValues(t *testing.T) {
 }
 
 func TestNonReloadableFieldsChanged_BackendCircuitBreaker(t *testing.T) {
+	t.Parallel()
 	a := validBaseConfig()
 	b := validBaseConfig()
 	_ = a.SetDefaultsAndValidate()
@@ -2041,6 +2168,7 @@ func TestNonReloadableFieldsChanged_BackendCircuitBreaker(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestRedisConfig_MissingAddress(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Redis = &RedisConfig{}
 
@@ -2051,6 +2179,7 @@ func TestRedisConfig_MissingAddress(t *testing.T) {
 }
 
 func TestRedisConfig_Defaults(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Redis = &RedisConfig{Address: "localhost:6379"}
 
@@ -2069,6 +2198,7 @@ func TestRedisConfig_Defaults(t *testing.T) {
 }
 
 func TestRedisConfig_CustomValues(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Redis = &RedisConfig{
 		Address:          "redis:6379",
@@ -2089,6 +2219,7 @@ func TestRedisConfig_CustomValues(t *testing.T) {
 }
 
 func TestNonReloadableFieldsChanged_RedisAdded(t *testing.T) {
+	t.Parallel()
 	a := validBaseConfig()
 	b := validBaseConfig()
 	_ = a.SetDefaultsAndValidate()
@@ -2108,6 +2239,7 @@ func TestNonReloadableFieldsChanged_RedisAdded(t *testing.T) {
 }
 
 func TestNonReloadableFieldsChanged_RedisRemoved(t *testing.T) {
+	t.Parallel()
 	a := validBaseConfig()
 	b := validBaseConfig()
 	a.Redis = &RedisConfig{Address: "localhost:6379"}
@@ -2127,6 +2259,7 @@ func TestNonReloadableFieldsChanged_RedisRemoved(t *testing.T) {
 }
 
 func TestNonReloadableFieldsChanged_RedisModified(t *testing.T) {
+	t.Parallel()
 	a := validBaseConfig()
 	b := validBaseConfig()
 	a.Redis = &RedisConfig{Address: "localhost:6379"}
@@ -2147,6 +2280,7 @@ func TestNonReloadableFieldsChanged_RedisModified(t *testing.T) {
 }
 
 func TestNonReloadableFieldsChanged_RedisBothNil(t *testing.T) {
+	t.Parallel()
 	a := validBaseConfig()
 	b := validBaseConfig()
 	_ = a.SetDefaultsAndValidate()
@@ -2161,6 +2295,7 @@ func TestNonReloadableFieldsChanged_RedisBothNil(t *testing.T) {
 }
 
 func TestNonReloadableFieldsChanged_RedisIdentical(t *testing.T) {
+	t.Parallel()
 	a := validBaseConfig()
 	b := validBaseConfig()
 	a.Redis = &RedisConfig{Address: "localhost:6379"}
@@ -2181,6 +2316,7 @@ func TestNonReloadableFieldsChanged_RedisIdentical(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestEncryptionConfig_ValidMasterKey(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Encryption = EncryptionConfig{
 		Enabled:   true,
@@ -2196,6 +2332,7 @@ func TestEncryptionConfig_ValidMasterKey(t *testing.T) {
 }
 
 func TestEncryptionConfig_CustomChunkSize(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Encryption = EncryptionConfig{
 		Enabled:   true,
@@ -2209,6 +2346,7 @@ func TestEncryptionConfig_CustomChunkSize(t *testing.T) {
 }
 
 func TestEncryptionConfig_ChunkSizeTooSmall(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Encryption = EncryptionConfig{
 		Enabled:   true,
@@ -2223,6 +2361,7 @@ func TestEncryptionConfig_ChunkSizeTooSmall(t *testing.T) {
 }
 
 func TestEncryptionConfig_ChunkSizeTooLarge(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Encryption = EncryptionConfig{
 		Enabled:   true,
@@ -2237,6 +2376,7 @@ func TestEncryptionConfig_ChunkSizeTooLarge(t *testing.T) {
 }
 
 func TestEncryptionConfig_ChunkSizeNotPowerOf2(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Encryption = EncryptionConfig{
 		Enabled:   true,
@@ -2251,6 +2391,7 @@ func TestEncryptionConfig_ChunkSizeNotPowerOf2(t *testing.T) {
 }
 
 func TestEncryptionConfig_NoKeySource(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Encryption = EncryptionConfig{Enabled: true}
 
@@ -2261,6 +2402,7 @@ func TestEncryptionConfig_NoKeySource(t *testing.T) {
 }
 
 func TestEncryptionConfig_MultipleKeySources(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Encryption = EncryptionConfig{
 		Enabled:       true,
@@ -2275,6 +2417,7 @@ func TestEncryptionConfig_MultipleKeySources(t *testing.T) {
 }
 
 func TestEncryptionConfig_InvalidBase64MasterKey(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Encryption = EncryptionConfig{
 		Enabled:   true,
@@ -2288,6 +2431,7 @@ func TestEncryptionConfig_InvalidBase64MasterKey(t *testing.T) {
 }
 
 func TestEncryptionConfig_WrongKeyLength(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Encryption = EncryptionConfig{
 		Enabled:   true,
@@ -2301,6 +2445,7 @@ func TestEncryptionConfig_WrongKeyLength(t *testing.T) {
 }
 
 func TestEncryptionConfig_InvalidPreviousKey(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Encryption = EncryptionConfig{
 		Enabled:      true,
@@ -2315,6 +2460,7 @@ func TestEncryptionConfig_InvalidPreviousKey(t *testing.T) {
 }
 
 func TestEncryptionConfig_PreviousKeyWrongLength(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Encryption = EncryptionConfig{
 		Enabled:      true,
@@ -2329,6 +2475,7 @@ func TestEncryptionConfig_PreviousKeyWrongLength(t *testing.T) {
 }
 
 func TestEncryptionConfig_VaultMissingFields(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Encryption = EncryptionConfig{
 		Enabled: true,
@@ -2348,6 +2495,7 @@ func TestEncryptionConfig_VaultMissingFields(t *testing.T) {
 }
 
 func TestEncryptionConfig_VaultBothTokenAndTokenFile(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Encryption = EncryptionConfig{
 		Enabled: true,
@@ -2369,6 +2517,7 @@ func TestEncryptionConfig_VaultBothTokenAndTokenFile(t *testing.T) {
 }
 
 func TestEncryptionConfig_VaultRenewIntervalDefault(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Encryption = EncryptionConfig{
 		Enabled: true,
@@ -2388,6 +2537,7 @@ func TestEncryptionConfig_VaultRenewIntervalDefault(t *testing.T) {
 }
 
 func TestEncryptionConfig_VaultDefaultMountPath(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Encryption = EncryptionConfig{
 		Enabled: true,
@@ -2407,6 +2557,7 @@ func TestEncryptionConfig_VaultDefaultMountPath(t *testing.T) {
 }
 
 func TestEncryptionConfig_DisabledSkipsValidation(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Encryption = EncryptionConfig{
 		Enabled:   false,
@@ -2419,6 +2570,7 @@ func TestEncryptionConfig_DisabledSkipsValidation(t *testing.T) {
 }
 
 func TestParseLogLevel(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input string
 		want  slog.Level
@@ -2445,7 +2597,7 @@ func TestParseLogLevel(t *testing.T) {
 func writeTempConfig(t *testing.T, content string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 		t.Fatalf("writing temp config: %v", err)
 	}
 	return path
@@ -2491,6 +2643,7 @@ func validBaseConfigTwoBackends() Config {
 // -------------------------------------------------------------------------
 
 func TestBackendValidation_MissingFields(t *testing.T) {
+	t.Parallel()
 	errs := validateBackends([]BackendConfig{{}})
 	for _, want := range []string{"endpoint", "bucket", "access_key_id", "secret_access_key"} {
 		found := false
@@ -2507,6 +2660,7 @@ func TestBackendValidation_MissingFields(t *testing.T) {
 }
 
 func TestRebalanceValidation_NegativeValues(t *testing.T) {
+	t.Parallel()
 	cfg := RebalanceConfig{Enabled: true, Strategy: "pack", Interval: -1, BatchSize: -1, Threshold: 2.0, Concurrency: -1}
 	errs := cfg.setDefaultsAndValidate()
 	if len(errs) < 3 {
@@ -2515,6 +2669,7 @@ func TestRebalanceValidation_NegativeValues(t *testing.T) {
 }
 
 func TestReplicationValidation_NegativeValues(t *testing.T) {
+	t.Parallel()
 	cfg := ReplicationConfig{Factor: 3, WorkerInterval: -1, BatchSize: -1}
 	errs := cfg.setDefaultsAndValidate(2)
 	for _, want := range []string{"factor", "worker_interval", "batch_size"} {
@@ -2532,6 +2687,7 @@ func TestReplicationValidation_NegativeValues(t *testing.T) {
 }
 
 func TestRateLimitValidation_NegativeValues(t *testing.T) {
+	t.Parallel()
 	cfg := RateLimitConfig{Enabled: true, RequestsPerSec: -1, Burst: -1, TrustedProxies: []string{"invalid"}}
 	errs := cfg.setDefaultsAndValidate()
 	for _, want := range []string{"requests_per_sec", "burst", "CIDR"} {
@@ -2549,6 +2705,7 @@ func TestRateLimitValidation_NegativeValues(t *testing.T) {
 }
 
 func TestUsageFlushValidation_NegativeValues(t *testing.T) {
+	t.Parallel()
 	cfg := UsageFlushConfig{Interval: -1, AdaptiveThreshold: 2.0, FastInterval: -1}
 	errs := cfg.setDefaultsAndValidate()
 	if len(errs) < 3 {
@@ -2557,6 +2714,7 @@ func TestUsageFlushValidation_NegativeValues(t *testing.T) {
 }
 
 func TestReconcileDefaultInterval(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Reconcile = ReconcileConfig{Enabled: true}
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
@@ -2572,6 +2730,7 @@ func TestReconcileDefaultInterval(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestCacheConfig_Defaults(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Cache = CacheConfig{Enabled: true}
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
@@ -2589,6 +2748,7 @@ func TestCacheConfig_Defaults(t *testing.T) {
 }
 
 func TestCacheConfig_CustomValues(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Cache = CacheConfig{
 		Enabled:       true,
@@ -2608,6 +2768,7 @@ func TestCacheConfig_CustomValues(t *testing.T) {
 }
 
 func TestCacheConfig_Disabled(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Cache = CacheConfig{Enabled: false}
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
@@ -2620,6 +2781,7 @@ func TestCacheConfig_Disabled(t *testing.T) {
 }
 
 func TestCacheConfig_MaxObjectExceedsMaxSize(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Cache = CacheConfig{
 		Enabled:       true,
@@ -2632,6 +2794,7 @@ func TestCacheConfig_MaxObjectExceedsMaxSize(t *testing.T) {
 }
 
 func TestParseByteSize(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input string
 		want  int64
@@ -2659,6 +2822,7 @@ func TestParseByteSize(t *testing.T) {
 // TestParseByteSize_Invalid verifies that malformed, empty, and out-of-range
 // size strings return errors.
 func TestParseByteSize_Invalid(t *testing.T) {
+	t.Parallel()
 	for _, input := range []string{"", "abc", "10XB", "MB", " KB"} {
 		t.Run(input, func(t *testing.T) {
 			_, err := parseByteSize(input)
@@ -2672,6 +2836,7 @@ func TestParseByteSize_Invalid(t *testing.T) {
 // TestParseByteSize_Overflow verifies that values exceeding int64 return an
 // error instead of silently wrapping to a negative number.
 func TestParseByteSize_Overflow(t *testing.T) {
+	t.Parallel()
 	cases := []string{
 		"9999999999999999999GB",
 		"9223372036854775808",  // math.MaxInt64 + 1
@@ -2689,6 +2854,7 @@ func TestParseByteSize_Overflow(t *testing.T) {
 
 // TestParseByteSize_Negative verifies that negative values are rejected.
 func TestParseByteSize_Negative(t *testing.T) {
+	t.Parallel()
 	_, err := parseByteSize("-1GB")
 	if err == nil {
 		t.Error("expected error for negative size")
@@ -2696,6 +2862,7 @@ func TestParseByteSize_Negative(t *testing.T) {
 }
 
 func TestLifecycleConfig_EmptyPrefixRejected(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Lifecycle = LifecycleConfig{
 		Rules: []LifecycleRule{
@@ -2713,6 +2880,7 @@ func TestLifecycleConfig_EmptyPrefixRejected(t *testing.T) {
 }
 
 func TestLifecycleConfig_NegativeExpirationRejected(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Lifecycle = LifecycleConfig{
 		Rules: []LifecycleRule{
@@ -2727,6 +2895,7 @@ func TestLifecycleConfig_NegativeExpirationRejected(t *testing.T) {
 }
 
 func TestLifecycleConfig_ValidRulePasses(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Lifecycle = LifecycleConfig{
 		Rules: []LifecycleRule{
@@ -2743,6 +2912,7 @@ func TestLifecycleConfig_ValidRulePasses(t *testing.T) {
 }
 
 func TestDatabaseConfig_MinConnsExceedsMaxConns(t *testing.T) {
+	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Database.MinConns = 100
 	cfg.Database.MaxConns = 10
@@ -2757,6 +2927,7 @@ func TestDatabaseConfig_MinConnsExceedsMaxConns(t *testing.T) {
 }
 
 func TestRedisConfig_NegativeFailureThreshold(t *testing.T) {
+	t.Parallel()
 	r := &RedisConfig{
 		Address:          "localhost:6379",
 		FailureThreshold: -1,
@@ -2774,6 +2945,7 @@ func TestRedisConfig_NegativeFailureThreshold(t *testing.T) {
 }
 
 func TestRedisConfig_NegativeOpenTimeout(t *testing.T) {
+	t.Parallel()
 	r := &RedisConfig{
 		Address:     "localhost:6379",
 		OpenTimeout: -5 * time.Second,
@@ -2791,6 +2963,7 @@ func TestRedisConfig_NegativeOpenTimeout(t *testing.T) {
 }
 
 func TestRateLimitConfig_CIDRValidatedWhenDisabled(t *testing.T) {
+	t.Parallel()
 	r := &RateLimitConfig{
 		Enabled:        false,
 		TrustedProxies: []string{"not-a-cidr"},

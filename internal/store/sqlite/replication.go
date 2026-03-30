@@ -63,7 +63,7 @@ func (s *Store) GetUnderReplicatedObjectsExcluding(ctx context.Context, factor, 
 	}
 	args = append(args, factor, limit)
 
-	query := fmt.Sprintf(
+	query := fmt.Sprintf( //nolint:gosec // G201: parameterized placeholders, format builds IN clause template only
 		`SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.encrypted,
 		        ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.created_at
 		 FROM object_locations ol

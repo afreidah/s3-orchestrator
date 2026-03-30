@@ -14,7 +14,7 @@ package encryption
 
 import (
 	"context"
-	"crypto/md5"
+	"crypto/md5" //nolint:gosec // G501: MD5 required by S3 specification for ETag computation
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -107,7 +107,7 @@ func (e *Encryptor) Encrypt(ctx context.Context, body io.Reader, plaintextSize i
 	}
 
 	// Tee the plaintext through an MD5 hash for ETag computation
-	md5Hash := md5.New()
+	md5Hash := md5.New() //nolint:gosec // G401: MD5 required by S3 specification for ETag computation
 	teeBody := io.TeeReader(body, md5Hash)
 
 	// Create streaming encrypt reader
@@ -141,7 +141,7 @@ func (e *Encryptor) Encrypt(ctx context.Context, body io.Reader, plaintextSize i
 // Intended for write failover retries where the Vault round-trip for key
 // wrapping has already been paid on the first attempt.
 func (e *Encryptor) EncryptWithDEK(body io.Reader, plaintextSize int64, dek, wrappedDEK []byte, keyID string) (*EncryptResult, error) {
-	md5Hash := md5.New()
+	md5Hash := md5.New() //nolint:gosec // G401: MD5 required by S3 specification for ETag computation
 	teeBody := io.TeeReader(body, md5Hash)
 
 	encReader, err := newEncryptReader(teeBody, dek, e.chunkSize)

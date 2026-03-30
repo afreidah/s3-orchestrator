@@ -282,7 +282,7 @@ func (cb *CircuitBreaker) transition(to State) {
 	switch {
 	case to == StateOpen && from == StateClosed:
 		cb.openedAt = time.Now()
-		cb.probeJitter = rand.N(cb.openTimeout / 4)
+		cb.probeJitter = rand.N(cb.openTimeout / 4) //nolint:gosec // G404: jitter does not require crypto-strength randomness
 		slog.Warn("Circuit breaker opened: failure threshold reached",
 			"name", cb.name,
 			"from", from.String(),
@@ -302,7 +302,7 @@ func (cb *CircuitBreaker) transition(to State) {
 		}
 
 	case to == StateOpen && from == StateHalfOpen:
-		cb.probeJitter = rand.N(cb.openTimeout / 4)
+		cb.probeJitter = rand.N(cb.openTimeout / 4) //nolint:gosec // G404: jitter does not require crypto-strength randomness
 		slog.Warn("Circuit breaker reopened: probe failed",
 			"name", cb.name,
 			"from", from.String(),

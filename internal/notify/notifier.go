@@ -230,7 +230,7 @@ func (n *Notifier) deliver(ctx context.Context, row store.NotificationRow, ep *c
 	}
 	n.client.Timeout = timeout
 
-	resp, err := n.client.Do(req)
+	resp, err := n.client.Do(req) //nolint:gosec // G704: endpoint URL is operator-configured, not user-tainted
 	if err != nil {
 		return fmt.Errorf("POST %s: %w", ep.URL, err)
 	}

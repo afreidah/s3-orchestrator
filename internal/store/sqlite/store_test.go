@@ -94,6 +94,7 @@ func mustInsertNotification(t *testing.T, s *Store, eventType, payload, url stri
 
 // TestRecordObject_And_GetAllLocations verifies basic object recording and retrieval.
 func TestRecordObject_And_GetAllLocations(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -119,6 +120,7 @@ func TestRecordObject_And_GetAllLocations(t *testing.T) {
 
 // TestRecordObject_Overwrite_DisplacesCopy verifies that re-recording an object on a different backend returns the displaced copy.
 func TestRecordObject_Overwrite_DisplacesCopy(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -139,6 +141,7 @@ func TestRecordObject_Overwrite_DisplacesCopy(t *testing.T) {
 
 // TestDeleteObject verifies that deleting an object removes it and returns the deleted copies.
 func TestDeleteObject(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -160,6 +163,7 @@ func TestDeleteObject(t *testing.T) {
 
 // TestDeleteObject_NotFound verifies that deleting a nonexistent object returns ErrObjectNotFound.
 func TestDeleteObject_NotFound(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -171,6 +175,7 @@ func TestDeleteObject_NotFound(t *testing.T) {
 
 // TestListObjects verifies prefix-scoped listing returns only matching objects.
 func TestListObjects(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -193,6 +198,7 @@ func TestListObjects(t *testing.T) {
 
 // TestListObjects_Pagination verifies continuation-token based pagination.
 func TestListObjects_Pagination(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -223,6 +229,7 @@ func TestListObjects_Pagination(t *testing.T) {
 
 // TestListObjectsByBackend verifies filtering objects by backend name.
 func TestListObjectsByBackend(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -240,6 +247,7 @@ func TestListObjectsByBackend(t *testing.T) {
 
 // TestImportObject verifies that importing a pre-existing object records it correctly.
 func TestImportObject(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -263,6 +271,7 @@ func TestImportObject(t *testing.T) {
 
 // TestMoveObjectLocation verifies atomic move of an object between backends.
 func TestMoveObjectLocation(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -284,6 +293,7 @@ func TestMoveObjectLocation(t *testing.T) {
 
 // TestBackendObjectStats verifies per-backend object count and byte totals.
 func TestBackendObjectStats(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -305,6 +315,7 @@ func TestBackendObjectStats(t *testing.T) {
 
 // TestRecordObject_WithEncryption verifies storing and retrieving encryption metadata.
 func TestRecordObject_WithEncryption(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -338,6 +349,7 @@ func TestRecordObject_WithEncryption(t *testing.T) {
 
 // TestGetBackendWithSpace verifies pack routing selects a backend with available quota.
 func TestGetBackendWithSpace(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -352,6 +364,7 @@ func TestGetBackendWithSpace(t *testing.T) {
 
 // TestGetLeastUtilizedBackend verifies spread routing selects the least utilized backend.
 func TestGetLeastUtilizedBackend(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -369,6 +382,7 @@ func TestGetLeastUtilizedBackend(t *testing.T) {
 
 // TestGetQuotaStats verifies per-backend quota statistics retrieval.
 func TestGetQuotaStats(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -383,6 +397,7 @@ func TestGetQuotaStats(t *testing.T) {
 
 // TestOrphanBytes verifies orphan byte tracking and adjustment.
 func TestOrphanBytes(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -411,6 +426,7 @@ func TestOrphanBytes(t *testing.T) {
 
 // TestFlushUsageDeltas_And_GetUsage verifies usage delta accumulation and flush to DB.
 func TestFlushUsageDeltas_And_GetUsage(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -442,6 +458,7 @@ func TestFlushUsageDeltas_And_GetUsage(t *testing.T) {
 
 // TestMultipartUpload_Lifecycle verifies the full create/record-part/complete/delete lifecycle.
 func TestMultipartUpload_Lifecycle(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -495,6 +512,7 @@ func TestMultipartUpload_Lifecycle(t *testing.T) {
 
 // TestListMultipartUploads verifies prefix-scoped listing of active multipart uploads.
 func TestListMultipartUploads(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -513,6 +531,7 @@ func TestListMultipartUploads(t *testing.T) {
 
 // TestCountActiveMultipartUploads verifies counting active uploads by bucket prefix.
 func TestCountActiveMultipartUploads(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -530,6 +549,7 @@ func TestCountActiveMultipartUploads(t *testing.T) {
 
 // TestGetActiveMultipartCounts verifies per-backend active multipart upload counts.
 func TestGetActiveMultipartCounts(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -551,6 +571,7 @@ func TestGetActiveMultipartCounts(t *testing.T) {
 
 // TestReplication_UnderAndOver verifies detection of under- and over-replicated objects.
 func TestReplication_UnderAndOver(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -593,6 +614,7 @@ func TestReplication_UnderAndOver(t *testing.T) {
 
 // TestRecordReplica_Duplicate verifies that recording a duplicate replica is idempotent.
 func TestRecordReplica_Duplicate(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -611,6 +633,7 @@ func TestRecordReplica_Duplicate(t *testing.T) {
 
 // TestRemoveExcessCopy verifies removal of an excess replica and quota adjustment.
 func TestRemoveExcessCopy(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -633,6 +656,7 @@ func TestRemoveExcessCopy(t *testing.T) {
 
 // TestCleanupQueue_Lifecycle verifies enqueue, dequeue, and completion of cleanup items.
 func TestCleanupQueue_Lifecycle(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -669,6 +693,7 @@ func TestCleanupQueue_Lifecycle(t *testing.T) {
 
 // TestCleanupQueue_Retry verifies exponential backoff retry for failed cleanup items.
 func TestCleanupQueue_Retry(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -692,6 +717,7 @@ func TestCleanupQueue_Retry(t *testing.T) {
 
 // TestIntegrity_HashOperations verifies content hash storage and retrieval for integrity checks.
 func TestIntegrity_HashOperations(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -734,6 +760,7 @@ func TestIntegrity_HashOperations(t *testing.T) {
 
 // TestListDirectoryChildren verifies virtual directory listing with common prefixes.
 func TestListDirectoryChildren(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -777,6 +804,7 @@ func TestListDirectoryChildren(t *testing.T) {
 
 // TestListExpiredObjects verifies listing objects older than a cutoff time.
 func TestListExpiredObjects(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -806,6 +834,7 @@ func TestListExpiredObjects(t *testing.T) {
 
 // TestEncryptionAdmin_MarkAndList verifies marking objects for re-encryption and listing them.
 func TestEncryptionAdmin_MarkAndList(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -862,6 +891,7 @@ func TestEncryptionAdmin_MarkAndList(t *testing.T) {
 
 // TestNotificationOutbox_Lifecycle verifies insert, query, and delivery of notification events.
 func TestNotificationOutbox_Lifecycle(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -893,6 +923,7 @@ func TestNotificationOutbox_Lifecycle(t *testing.T) {
 
 // TestNotificationOutbox_Retry verifies retry semantics for failed notification deliveries.
 func TestNotificationOutbox_Retry(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -916,6 +947,7 @@ func TestNotificationOutbox_Retry(t *testing.T) {
 
 // TestWithAdvisoryLock verifies basic advisory lock acquisition and callback execution.
 func TestWithAdvisoryLock(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -938,6 +970,7 @@ func TestWithAdvisoryLock(t *testing.T) {
 // TestWithAdvisoryLock_PropagatesContext verifies that the caller's context
 // (including cancellation) is forwarded to the callback, not discarded.
 func TestWithAdvisoryLock_PropagatesContext(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
@@ -959,6 +992,7 @@ func TestWithAdvisoryLock_PropagatesContext(t *testing.T) {
 // TestWithAdvisoryLock_DeadlinePropagated verifies that a context deadline
 // set by the caller is visible inside the advisory lock callback.
 func TestWithAdvisoryLock_DeadlinePropagated(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	deadline := time.Now().Add(5 * time.Second)
 	ctx, cancel := context.WithDeadline(context.Background(), deadline)
@@ -989,6 +1023,7 @@ func TestWithAdvisoryLock_DeadlinePropagated(t *testing.T) {
 
 // TestDeleteBackendData verifies that all objects for a backend are removed.
 func TestDeleteBackendData(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -1011,6 +1046,7 @@ func TestDeleteBackendData(t *testing.T) {
 
 // TestVerifySchemaVersion verifies that a matching schema version passes validation.
 func TestVerifySchemaVersion(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -1023,6 +1059,7 @@ func TestVerifySchemaVersion(t *testing.T) {
 // created_at timestamp in object_locations returns an error instead of
 // silently defaulting to the zero time.
 func TestCorruptTimestamp_GetAllObjectLocations(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -1045,6 +1082,7 @@ func TestCorruptTimestamp_GetAllObjectLocations(t *testing.T) {
 // TestCorruptTimestamp_ListObjects verifies that a malformed created_at
 // in object_locations surfaces as an error from ListObjects.
 func TestCorruptTimestamp_ListObjects(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -1064,6 +1102,7 @@ func TestCorruptTimestamp_ListObjects(t *testing.T) {
 // TestCorruptTimestamp_MultipartUpload verifies that a malformed created_at
 // in multipart_uploads surfaces as an error from GetMultipartUpload.
 func TestCorruptTimestamp_MultipartUpload(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -1083,6 +1122,7 @@ func TestCorruptTimestamp_MultipartUpload(t *testing.T) {
 // TestCorruptTimestamp_GetParts verifies that a malformed created_at in
 // multipart_parts surfaces as an error from GetParts.
 func TestCorruptTimestamp_GetParts(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -1105,6 +1145,7 @@ func TestCorruptTimestamp_GetParts(t *testing.T) {
 // TestCorruptTimestamp_ListMultipartUploads verifies that a malformed
 // created_at in multipart_uploads surfaces as an error from ListMultipartUploads.
 func TestCorruptTimestamp_ListMultipartUploads(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -1125,6 +1166,7 @@ func TestCorruptTimestamp_ListMultipartUploads(t *testing.T) {
 // created_at surfaces as an error from GetStaleMultipartUploads (used by
 // the scanMultipartUploads helper).
 func TestCorruptTimestamp_GetStaleMultipartUploads(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -1146,6 +1188,7 @@ func TestCorruptTimestamp_GetStaleMultipartUploads(t *testing.T) {
 // TestCorruptTimestamp_ListExpiredObjects verifies that a malformed created_at
 // surfaces as an error from ListExpiredObjects.
 func TestCorruptTimestamp_ListExpiredObjects(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -1167,6 +1210,7 @@ func TestCorruptTimestamp_ListExpiredObjects(t *testing.T) {
 // TestCorruptTimestamp_ListObjectsByBackend verifies that a malformed
 // created_at surfaces as an error from ListObjectsByBackend.
 func TestCorruptTimestamp_ListObjectsByBackend(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -1186,6 +1230,7 @@ func TestCorruptTimestamp_ListObjectsByBackend(t *testing.T) {
 // TestCorruptTimestamp_GetQuotaStats verifies that a malformed updated_at
 // in backend_quotas surfaces as an error from GetQuotaStats.
 func TestCorruptTimestamp_GetQuotaStats(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -1204,6 +1249,7 @@ func TestCorruptTimestamp_GetQuotaStats(t *testing.T) {
 // created_at surfaces as an error from the replication query path
 // (scanObjectLocations helper).
 func TestCorruptTimestamp_GetUnderReplicatedObjects(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -1224,6 +1270,7 @@ func TestCorruptTimestamp_GetUnderReplicatedObjects(t *testing.T) {
 // schema version newer than the binary expects returns an error, preventing
 // silent data corruption on binary downgrades.
 func TestVerifySchemaVersion_NewerThanExpected(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -1247,6 +1294,7 @@ func TestVerifySchemaVersion_NewerThanExpected(t *testing.T) {
 
 // TestDeleteObjectLocation verifies removal of a single object replica by backend.
 func TestDeleteObjectLocation(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -1265,6 +1313,7 @@ func TestDeleteObjectLocation(t *testing.T) {
 
 // TestGetObjectCounts verifies per-backend object count aggregation.
 func TestGetObjectCounts(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -1286,6 +1335,7 @@ func TestGetObjectCounts(t *testing.T) {
 
 // TestGetStaleMultipartUploads verifies detection of uploads older than a threshold.
 func TestGetStaleMultipartUploads(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -1312,6 +1362,7 @@ func TestGetStaleMultipartUploads(t *testing.T) {
 
 // TestGetMultipartUploadsByBackend verifies listing uploads filtered by backend.
 func TestGetMultipartUploadsByBackend(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -1332,6 +1383,7 @@ func TestGetMultipartUploadsByBackend(t *testing.T) {
 
 // TestGetUnderReplicatedObjectsExcluding verifies under-replication detection with backend exclusions.
 func TestGetUnderReplicatedObjectsExcluding(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -1354,6 +1406,7 @@ func TestGetUnderReplicatedObjectsExcluding(t *testing.T) {
 
 // TestCountOverReplicatedObjects verifies counting objects with more copies than the replication factor.
 func TestCountOverReplicatedObjects(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -1376,6 +1429,7 @@ func TestCountOverReplicatedObjects(t *testing.T) {
 
 // TestListAllEncryptedLocations verifies paginated listing of encrypted object locations.
 func TestListAllEncryptedLocations(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 

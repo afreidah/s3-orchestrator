@@ -17,6 +17,7 @@ import (
 )
 
 func TestLoginThrottle_LockoutAfterFailures(t *testing.T) {
+	t.Parallel()
 	lt := NewLoginThrottle(3, 5*time.Minute)
 	defer lt.Close()
 
@@ -35,6 +36,7 @@ func TestLoginThrottle_LockoutAfterFailures(t *testing.T) {
 }
 
 func TestLoginThrottle_SuccessResetsCounter(t *testing.T) {
+	t.Parallel()
 	lt := NewLoginThrottle(3, 5*time.Minute)
 	defer lt.Close()
 
@@ -53,6 +55,7 @@ func TestLoginThrottle_SuccessResetsCounter(t *testing.T) {
 }
 
 func TestLoginThrottle_LockoutExpires(t *testing.T) {
+	t.Parallel()
 	lt := NewLoginThrottle(3, 50*time.Millisecond)
 	defer lt.Close()
 
@@ -74,6 +77,7 @@ func TestLoginThrottle_LockoutExpires(t *testing.T) {
 }
 
 func TestLoginThrottle_IPIsolation(t *testing.T) {
+	t.Parallel()
 	lt := NewLoginThrottle(3, 5*time.Minute)
 	defer lt.Close()
 
@@ -93,6 +97,7 @@ func TestLoginThrottle_IPIsolation(t *testing.T) {
 }
 
 func TestLoginThrottle_IPv6(t *testing.T) {
+	t.Parallel()
 	lt := NewLoginThrottle(3, 5*time.Minute)
 	defer lt.Close()
 
@@ -106,6 +111,7 @@ func TestLoginThrottle_IPv6(t *testing.T) {
 }
 
 func TestLoginThrottle_ConcurrentAccess(t *testing.T) {
+	t.Parallel()
 	lt := NewLoginThrottle(100, 5*time.Minute)
 	defer lt.Close()
 

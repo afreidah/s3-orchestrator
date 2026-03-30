@@ -11,6 +11,7 @@ package event
 import "testing"
 
 func TestMatchesFilter(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		eventType string
 		patterns  []string

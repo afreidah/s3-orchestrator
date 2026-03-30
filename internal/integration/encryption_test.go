@@ -142,13 +142,13 @@ func setupEncryptionEnv(t *testing.T) *encryptionTestEnv {
 // callAdmin makes a POST request to the admin API.
 func (env *encryptionTestEnv) callAdmin(t *testing.T, path string) map[string]any {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodPost, "http://"+env.adminAddr+path, nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "http://"+env.adminAddr+path, nil)
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
 	}
 	req.Header.Set("X-Admin-Token", adminToken)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatalf("admin POST %s: %v", path, err)
 	}

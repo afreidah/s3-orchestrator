@@ -86,7 +86,7 @@ func newEncryptReader(src io.Reader, dek []byte, chunkSize int) (*encryptReader,
 	hdr := make([]byte, HeaderSize)
 	copy(hdr[0:4], headerMagic[:])
 	hdr[4] = 0x01 // version
-	binary.BigEndian.PutUint32(hdr[5:9], uint32(chunkSize))
+	binary.BigEndian.PutUint32(hdr[5:9], uint32(chunkSize)) //nolint:gosec // G115: chunkSize validated <= 1MB in config
 	copy(hdr[9:21], baseNonce)
 	// bytes 21-31 reserved (zeros)
 

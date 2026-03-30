@@ -28,6 +28,7 @@ func newTestCBBackend(mock *mockBackend, threshold int, timeout time.Duration) *
 // -------------------------------------------------------------------------
 
 func TestCBBackend_PutObject_Forwards(t *testing.T) {
+	t.Parallel()
 	mock := newMockBackend()
 	cb := newTestCBBackend(mock, 3, time.Minute)
 
@@ -41,6 +42,7 @@ func TestCBBackend_PutObject_Forwards(t *testing.T) {
 }
 
 func TestCBBackend_GetObject_Forwards(t *testing.T) {
+	t.Parallel()
 	mock := newMockBackend()
 	cb := newTestCBBackend(mock, 3, time.Minute)
 
@@ -57,6 +59,7 @@ func TestCBBackend_GetObject_Forwards(t *testing.T) {
 }
 
 func TestCBBackend_HeadObject_Forwards(t *testing.T) {
+	t.Parallel()
 	mock := newMockBackend()
 	cb := newTestCBBackend(mock, 3, time.Minute)
 
@@ -72,6 +75,7 @@ func TestCBBackend_HeadObject_Forwards(t *testing.T) {
 }
 
 func TestCBBackend_DeleteObject_Forwards(t *testing.T) {
+	t.Parallel()
 	mock := newMockBackend()
 	cb := newTestCBBackend(mock, 3, time.Minute)
 
@@ -95,6 +99,7 @@ func TestCBBackend_DeleteObject_Forwards(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestCBBackend_PutObject_CircuitOpen(t *testing.T) {
+	t.Parallel()
 	mock := newMockBackend()
 	mock.putErr = errors.New("connection refused")
 	cb := newTestCBBackend(mock, 1, time.Minute)
@@ -110,6 +115,7 @@ func TestCBBackend_PutObject_CircuitOpen(t *testing.T) {
 }
 
 func TestCBBackend_GetObject_CircuitOpen(t *testing.T) {
+	t.Parallel()
 	mock := newMockBackend()
 	mock.getErr = errors.New("connection refused")
 	cb := newTestCBBackend(mock, 1, time.Minute)
@@ -124,6 +130,7 @@ func TestCBBackend_GetObject_CircuitOpen(t *testing.T) {
 }
 
 func TestCBBackend_HeadObject_CircuitOpen(t *testing.T) {
+	t.Parallel()
 	mock := newMockBackend()
 	mock.headErr = errors.New("connection refused")
 	cb := newTestCBBackend(mock, 1, time.Minute)
@@ -137,6 +144,7 @@ func TestCBBackend_HeadObject_CircuitOpen(t *testing.T) {
 }
 
 func TestCBBackend_DeleteObject_CircuitOpen(t *testing.T) {
+	t.Parallel()
 	mock := newMockBackend()
 	mock.delErr = errors.New("connection refused")
 	cb := newTestCBBackend(mock, 1, time.Minute)
@@ -154,6 +162,7 @@ func TestCBBackend_DeleteObject_CircuitOpen(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestCBBackend_RecoveryAfterTimeout(t *testing.T) {
+	t.Parallel()
 	mock := newMockBackend()
 	mock.putErr = errors.New("connection refused")
 	cb := newTestCBBackend(mock, 1, 10*time.Millisecond)
@@ -183,6 +192,7 @@ func TestCBBackend_RecoveryAfterTimeout(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestCBBackend_Unwrap(t *testing.T) {
+	t.Parallel()
 	mock := newMockBackend()
 	cb := newTestCBBackend(mock, 3, time.Minute)
 
@@ -193,6 +203,7 @@ func TestCBBackend_Unwrap(t *testing.T) {
 }
 
 func TestCBBackend_NestedUnwrap(t *testing.T) {
+	t.Parallel()
 	mock := newMockBackend()
 	cb1 := newTestCBBackend(mock, 3, time.Minute)
 	cb2 := NewCircuitBreakerBackend(cb1, "outer", 3, time.Minute)

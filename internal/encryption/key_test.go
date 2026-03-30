@@ -29,6 +29,7 @@ import (
 // -------------------------------------------------------------------------
 
 func TestConfigKeyProvider_WrapUnwrap(t *testing.T) {
+	t.Parallel()
 	key := make([]byte, 32)
 	_, _ = rand.Read(key)
 	b64 := base64.StdEncoding.EncodeToString(key)
@@ -70,6 +71,7 @@ func TestConfigKeyProvider_WrapUnwrap(t *testing.T) {
 }
 
 func TestConfigKeyProvider_DefaultKeyID(t *testing.T) {
+	t.Parallel()
 	key := make([]byte, 32)
 	_, _ = rand.Read(key)
 	b64 := base64.StdEncoding.EncodeToString(key)
@@ -85,6 +87,7 @@ func TestConfigKeyProvider_DefaultKeyID(t *testing.T) {
 }
 
 func TestConfigKeyProvider_InvalidBase64(t *testing.T) {
+	t.Parallel()
 	_, err := NewConfigKeyProvider("not-valid-base64!!!", "test")
 	if err == nil {
 		t.Error("expected error for invalid base64")
@@ -92,6 +95,7 @@ func TestConfigKeyProvider_InvalidBase64(t *testing.T) {
 }
 
 func TestConfigKeyProvider_WrongKeyLength(t *testing.T) {
+	t.Parallel()
 	key := make([]byte, 16) // too short
 	b64 := base64.StdEncoding.EncodeToString(key)
 
@@ -106,6 +110,7 @@ func TestConfigKeyProvider_WrongKeyLength(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestFileKeyProvider_WrapUnwrap(t *testing.T) {
+	t.Parallel()
 	key := make([]byte, 32)
 	_, _ = rand.Read(key)
 
@@ -145,6 +150,7 @@ func TestFileKeyProvider_WrapUnwrap(t *testing.T) {
 }
 
 func TestFileKeyProvider_DefaultKeyID(t *testing.T) {
+	t.Parallel()
 	key := make([]byte, 32)
 	_, _ = rand.Read(key)
 
@@ -162,6 +168,7 @@ func TestFileKeyProvider_DefaultKeyID(t *testing.T) {
 }
 
 func TestFileKeyProvider_FileMissing(t *testing.T) {
+	t.Parallel()
 	_, err := NewFileKeyProvider("/nonexistent/key.file", "test")
 	if err == nil {
 		t.Error("expected error for missing file")
@@ -169,6 +176,7 @@ func TestFileKeyProvider_FileMissing(t *testing.T) {
 }
 
 func TestFileKeyProvider_WrongSize(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "test.key")
 	_ = os.WriteFile(path, make([]byte, 16), 0o600)
 
@@ -183,6 +191,7 @@ func TestFileKeyProvider_WrongSize(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestMultiKeyProvider_WrapUsePrimary(t *testing.T) {
+	t.Parallel()
 	key1 := make([]byte, 32)
 	key2 := make([]byte, 32)
 	_, _ = rand.Read(key1)
@@ -211,6 +220,7 @@ func TestMultiKeyProvider_WrapUsePrimary(t *testing.T) {
 }
 
 func TestMultiKeyProvider_UnwrapWithOldKey(t *testing.T) {
+	t.Parallel()
 	key1 := make([]byte, 32)
 	key2 := make([]byte, 32)
 	_, _ = rand.Read(key1)
@@ -246,6 +256,7 @@ func TestMultiKeyProvider_UnwrapWithOldKey(t *testing.T) {
 }
 
 func TestMultiKeyProvider_UnwrapWithPrimary(t *testing.T) {
+	t.Parallel()
 	key1 := make([]byte, 32)
 	_, _ = rand.Read(key1)
 
@@ -274,6 +285,7 @@ func TestMultiKeyProvider_UnwrapWithPrimary(t *testing.T) {
 }
 
 func TestMultiKeyProvider_UnknownKeyIDReturnsError(t *testing.T) {
+	t.Parallel()
 	key1 := make([]byte, 32)
 	_, _ = rand.Read(key1)
 
@@ -308,6 +320,7 @@ func TestMultiKeyProvider_UnknownKeyIDReturnsError(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestNewKeyProviderFromConfig_InlineKey(t *testing.T) {
+	t.Parallel()
 	key := make([]byte, 32)
 	_, _ = rand.Read(key)
 	b64 := base64.StdEncoding.EncodeToString(key)
@@ -323,6 +336,7 @@ func TestNewKeyProviderFromConfig_InlineKey(t *testing.T) {
 }
 
 func TestNewKeyProviderFromConfig_FileKey(t *testing.T) {
+	t.Parallel()
 	key := make([]byte, 32)
 	_, _ = rand.Read(key)
 
@@ -340,6 +354,7 @@ func TestNewKeyProviderFromConfig_FileKey(t *testing.T) {
 }
 
 func TestNewKeyProviderFromConfig_Vault(t *testing.T) {
+	t.Parallel()
 	cfg := &config.EncryptionConfig{
 		Vault: &config.VaultTransitConfig{
 			Address:   "https://vault.example.com:8200",
@@ -363,6 +378,7 @@ func TestNewKeyProviderFromConfig_Vault(t *testing.T) {
 }
 
 func TestNewKeyProviderFromConfig_NoKeySource(t *testing.T) {
+	t.Parallel()
 	cfg := &config.EncryptionConfig{}
 	_, err := NewKeyProviderFromConfig(cfg)
 	if err == nil {
@@ -371,6 +387,7 @@ func TestNewKeyProviderFromConfig_NoKeySource(t *testing.T) {
 }
 
 func TestNewKeyProviderFromConfig_WithPreviousKeys(t *testing.T) {
+	t.Parallel()
 	key1 := make([]byte, 32)
 	key2 := make([]byte, 32)
 	_, _ = rand.Read(key1)
@@ -411,6 +428,7 @@ func TestNewKeyProviderFromConfig_WithPreviousKeys(t *testing.T) {
 }
 
 func TestNewKeyProviderFromConfig_InvalidPreviousKey(t *testing.T) {
+	t.Parallel()
 	key := make([]byte, 32)
 	_, _ = rand.Read(key)
 
@@ -425,6 +443,7 @@ func TestNewKeyProviderFromConfig_InvalidPreviousKey(t *testing.T) {
 }
 
 func TestNewKeyProviderFromConfig_InvalidPrimaryKey(t *testing.T) {
+	t.Parallel()
 	cfg := &config.EncryptionConfig{MasterKey: "not-valid-base64!!!"}
 	_, err := NewKeyProviderFromConfig(cfg)
 	if err == nil {

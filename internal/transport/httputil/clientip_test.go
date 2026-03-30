@@ -7,12 +7,14 @@
 package httputil
 
 import (
+	"context"
 	"net/http"
 	"testing"
 )
 
 func TestExtractClientIP_NoProxy(t *testing.T) {
-	r, _ := http.NewRequest("GET", "/", nil)
+	t.Parallel()
+	r, _ := http.NewRequestWithContext(context.Background(), "GET", "/", nil)
 	r.RemoteAddr = "1.2.3.4:5678"
 
 	ip := ExtractClientIP(r, nil)
@@ -22,8 +24,9 @@ func TestExtractClientIP_NoProxy(t *testing.T) {
 }
 
 func TestExtractClientIP_UntrustedProxy(t *testing.T) {
+	t.Parallel()
 	trusted := ParseTrustedProxies([]string{"10.0.0.0/8"})
-	r, _ := http.NewRequest("GET", "/", nil)
+	r, _ := http.NewRequestWithContext(context.Background(), "GET", "/", nil)
 	r.RemoteAddr = "1.2.3.4:5678" // not in trusted range
 	r.Header.Set("X-Forwarded-For", "9.9.9.9")
 
@@ -34,8 +37,9 @@ func TestExtractClientIP_UntrustedProxy(t *testing.T) {
 }
 
 func TestExtractClientIP_TrustedProxy(t *testing.T) {
+	t.Parallel()
 	trusted := ParseTrustedProxies([]string{"10.0.0.0/8"})
-	r, _ := http.NewRequest("GET", "/", nil)
+	r, _ := http.NewRequestWithContext(context.Background(), "GET", "/", nil)
 	r.RemoteAddr = "10.0.0.1:5678"
 	r.Header.Set("X-Forwarded-For", "1.2.3.4, 10.0.0.2")
 
@@ -46,8 +50,9 @@ func TestExtractClientIP_TrustedProxy(t *testing.T) {
 }
 
 func TestExtractClientIP_AllTrusted(t *testing.T) {
+	t.Parallel()
 	trusted := ParseTrustedProxies([]string{"10.0.0.0/8", "172.16.0.0/12"})
-	r, _ := http.NewRequest("GET", "/", nil)
+	r, _ := http.NewRequestWithContext(context.Background(), "GET", "/", nil)
 	r.RemoteAddr = "10.0.0.1:5678"
 	r.Header.Set("X-Forwarded-For", "10.0.0.5, 172.16.0.1")
 
@@ -58,7 +63,8 @@ func TestExtractClientIP_AllTrusted(t *testing.T) {
 }
 
 func TestExtractClientIP_NoPort(t *testing.T) {
-	r, _ := http.NewRequest("GET", "/", nil)
+	t.Parallel()
+	r, _ := http.NewRequestWithContext(context.Background(), "GET", "/", nil)
 	r.RemoteAddr = "1.2.3.4"
 
 	ip := ExtractClientIP(r, nil)
@@ -68,6 +74,7 @@ func TestExtractClientIP_NoPort(t *testing.T) {
 }
 
 func TestParseTrustedProxies_Valid(t *testing.T) {
+	t.Parallel()
 	nets := ParseTrustedProxies([]string{"10.0.0.0/8", "172.16.0.0/12"})
 	if len(nets) != 2 {
 		t.Fatalf("expected 2 nets, got %d", len(nets))
@@ -75,6 +82,7 @@ func TestParseTrustedProxies_Valid(t *testing.T) {
 }
 
 func TestParseTrustedProxies_Invalid(t *testing.T) {
+	t.Parallel()
 	nets := ParseTrustedProxies([]string{"10.0.0.0/8", "invalid", "192.168.0.0/16"})
 	if len(nets) != 2 {
 		t.Fatalf("expected 2 nets (invalid skipped), got %d", len(nets))
@@ -82,6 +90,7 @@ func TestParseTrustedProxies_Invalid(t *testing.T) {
 }
 
 func TestParseTrustedProxies_Empty(t *testing.T) {
+	t.Parallel()
 	nets := ParseTrustedProxies(nil)
 	if len(nets) != 0 {
 		t.Fatalf("expected 0 nets, got %d", len(nets))
@@ -89,6 +98,7 @@ func TestParseTrustedProxies_Empty(t *testing.T) {
 }
 
 func TestRightmostUntrusted_SingleIP(t *testing.T) {
+	t.Parallel()
 	trusted := ParseTrustedProxies([]string{"10.0.0.0/8"})
 	ip := rightmostUntrusted("1.2.3.4", trusted)
 	if ip != "1.2.3.4" {
@@ -97,6 +107,7 @@ func TestRightmostUntrusted_SingleIP(t *testing.T) {
 }
 
 func TestRightmostUntrusted_EmptyEntries(t *testing.T) {
+	t.Parallel()
 	trusted := ParseTrustedProxies([]string{"10.0.0.0/8"})
 	ip := rightmostUntrusted("1.2.3.4, , 10.0.0.1", trusted)
 	if ip != "1.2.3.4" {
@@ -105,6 +116,7 @@ func TestRightmostUntrusted_EmptyEntries(t *testing.T) {
 }
 
 func TestIpInNets_InvalidIP(t *testing.T) {
+	t.Parallel()
 	trusted := ParseTrustedProxies([]string{"10.0.0.0/8"})
 	if ipInNets("not-an-ip", trusted) {
 		t.Error("invalid IP should not match any net")
@@ -112,6 +124,7 @@ func TestIpInNets_InvalidIP(t *testing.T) {
 }
 
 func TestStripPort_IPv6(t *testing.T) {
+	t.Parallel()
 	ip := stripPort("[::1]:8080")
 	if ip != "::1" {
 		t.Errorf("got %q, want ::1", ip)

@@ -3100,7 +3100,7 @@ func TestAuthSigV4(t *testing.T) {
 		// Raw HTTP request with no Authorization header at all.
 		url := fmt.Sprintf("http://%s/%s/any-key", authAddr, virtualBucket)
 		req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 		if err != nil {
 			t.Fatalf("raw GET: %v", err)
 		}
@@ -3155,7 +3155,7 @@ func TestAuthSigV4(t *testing.T) {
 	t.Run("AccessDeniedDoesNotLeakBucketName", func(t *testing.T) {
 		url := fmt.Sprintf("http://%s/%s/any-key", authAddr, virtualBucket)
 		req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 		if err != nil {
 			t.Fatalf("raw GET: %v", err)
 		}

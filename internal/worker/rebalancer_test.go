@@ -13,6 +13,7 @@ import (
 )
 
 func TestRebalancer_SetConfig_RoundTrip(t *testing.T) {
+	t.Parallel()
 	ctrl := gomock.NewController(t)
 	r := NewRebalancer(NewMockOps(ctrl))
 	if r.Config() != nil {
@@ -26,6 +27,7 @@ func TestRebalancer_SetConfig_RoundTrip(t *testing.T) {
 }
 
 func TestExceedsThreshold_BelowThreshold(t *testing.T) {
+	t.Parallel()
 	stats := map[string]store.QuotaStat{
 		"b1": {BytesUsed: 500, BytesLimit: 1000},
 		"b2": {BytesUsed: 450, BytesLimit: 1000},
@@ -36,6 +38,7 @@ func TestExceedsThreshold_BelowThreshold(t *testing.T) {
 }
 
 func TestExceedsThreshold_AboveThreshold(t *testing.T) {
+	t.Parallel()
 	stats := map[string]store.QuotaStat{
 		"b1": {BytesUsed: 900, BytesLimit: 1000},
 		"b2": {BytesUsed: 100, BytesLimit: 1000},
@@ -46,6 +49,7 @@ func TestExceedsThreshold_AboveThreshold(t *testing.T) {
 }
 
 func TestExceedsThreshold_SingleBackend(t *testing.T) {
+	t.Parallel()
 	stats := map[string]store.QuotaStat{
 		"b1": {BytesUsed: 900, BytesLimit: 1000},
 	}
@@ -55,12 +59,14 @@ func TestExceedsThreshold_SingleBackend(t *testing.T) {
 }
 
 func TestExceedsThreshold_EmptyStats(t *testing.T) {
+	t.Parallel()
 	if ExceedsThreshold(nil, []string{"b1", "b2"}, 0.1) {
 		t.Error("empty stats should not exceed threshold")
 	}
 }
 
 func TestPlanSpreadEven_BalancedSkipped(t *testing.T) {
+	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
 	ops.EXPECT().BackendOrder().Return([]string{"b1", "b2"}).AnyTimes()
@@ -81,6 +87,7 @@ func TestPlanSpreadEven_BalancedSkipped(t *testing.T) {
 }
 
 func TestPlanSpreadEven_ImbalancedPlansMoves(t *testing.T) {
+	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
 	ms := &mockMetadataStore{
@@ -113,6 +120,7 @@ func TestPlanSpreadEven_ImbalancedPlansMoves(t *testing.T) {
 }
 
 func TestExecuteOneMove_Success(t *testing.T) {
+	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
 	srcBe := backendtest.NewMockObjectBackend(ctrl)
@@ -135,6 +143,7 @@ func TestExecuteOneMove_Success(t *testing.T) {
 }
 
 func TestExecuteOneMove_StreamCopyFails(t *testing.T) {
+	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
 	srcBe := backendtest.NewMockObjectBackend(ctrl)
@@ -153,6 +162,7 @@ func TestExecuteOneMove_StreamCopyFails(t *testing.T) {
 }
 
 func TestExecuteOneMove_MoveLocationFails(t *testing.T) {
+	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
 	srcBe := backendtest.NewMockObjectBackend(ctrl)
@@ -175,6 +185,7 @@ func TestExecuteOneMove_MoveLocationFails(t *testing.T) {
 }
 
 func TestExecuteOneMove_SourceBackendNotFound(t *testing.T) {
+	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{}).AnyTimes()
@@ -189,6 +200,7 @@ func TestExecuteOneMove_SourceBackendNotFound(t *testing.T) {
 }
 
 func TestRebalance_UnknownStrategy(t *testing.T) {
+	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
 	ms := &mockMetadataStore{quotaStats: map[string]store.QuotaStat{
