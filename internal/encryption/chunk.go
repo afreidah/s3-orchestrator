@@ -311,6 +311,9 @@ func ParseHeader(r io.Reader) (chunkSize int, baseNonce []byte, err error) {
 	}
 
 	cs := int(binary.BigEndian.Uint32(hdr[5:9]))
+	if cs <= 0 {
+		return 0, nil, fmt.Errorf("invalid chunk size in header: %d", cs)
+	}
 	nonce := make([]byte, NonceSize)
 	copy(nonce, hdr[9:21])
 

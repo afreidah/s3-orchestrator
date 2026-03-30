@@ -421,6 +421,7 @@ func buildPresignedCanonicalRequest(r *http.Request, signedHeaders []string) str
 		if h == "host" && val == "" {
 			val = r.Host
 		}
+		val = collapseWhitespace(val)
 		b.WriteString(h)
 		b.WriteByte(':')
 		b.WriteString(val)
@@ -504,13 +505,18 @@ func buildCanonicalRequest(r *http.Request, signedHeaders []string) string {
 	buildCanonicalQueryString(&b, r.URL.Query())
 	b.WriteByte('\n')
 
-	// Canonical headers
-	for _, h := range signedHeaders {
+	// Canonical headers — per SigV4 spec, header names are lowercased and
+	// trimmed, and header values have leading/trailing whitespace trimmed
+	// and sequential whitespace (including newlines) collapsed to a single
+	// space.
+	for i, h := range signedHeaders {
 		h = strings.ToLower(strings.TrimSpace(h))
+		signedHeaders[i] = h
 		val := strings.TrimSpace(r.Header.Get(h))
 		if h == "host" && val == "" {
 			val = r.Host
 		}
+		val = collapseWhitespace(val)
 		b.WriteString(h)
 		b.WriteByte(':')
 		b.WriteString(val)
@@ -601,4 +607,24 @@ func hmacSHA256(key, data []byte) []byte {
 func hashSHA256(data []byte) string {
 	h := sha256.Sum256(data)
 	return hex.EncodeToString(h[:])
+}
+
+// collapseWhitespace replaces runs of whitespace (spaces, tabs, newlines)
+// with a single space, per the SigV4 canonical header value rules.
+func collapseWhitespace(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	inWS := false
+	for _, r := range s {
+		if r == ' ' || r == '\t' || r == '\n' || r == '\r' {
+			if !inWS {
+				b.WriteByte(' ')
+				inWS = true
+			}
+			continue
+		}
+		inWS = false
+		b.WriteRune(r)
+	}
+	return b.String()
 }
