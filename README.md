@@ -888,7 +888,7 @@ Without Redis, each instance tracks usage counters independently in memory and f
 
 With Redis configured, all instances share the same usage counters via Redis `INCRBY`/`GET` operations. The baseline+delta formula stays the same (`DB baseline + counter + proposed`), but the counter lives in Redis instead of local memory, eliminating the cross-instance blind spot. When Redis is active, only one instance flushes counters to PostgreSQL (coordinated via advisory lock) since `GETSET` is a destructive read.
 
-A circuit breaker monitors Redis health. If Redis becomes unavailable, the backend falls back to local in-memory counters automatically — same behavior as running without Redis. A background health probe PINGs Redis periodically and, on recovery, syncs local deltas back to Redis in a single atomic pipeline (delete stale keys + INCRBY local deltas) before resuming shared operation. Local counters are zeroed only after the pipeline commits, so a crash mid-recovery cannot lose deltas.
+A circuit breaker monitors Redis health. If Redis becomes unavailable, the backend falls back to local in-memory counters automatically — same behavior as running without Redis. A background health probe PINGs Redis periodically and, on recovery, syncs local deltas back to Redis via an additive INCRBY pipeline before resuming shared operation. The entire local counter map is swapped atomically (single pointer swap) so no concurrent Add calls can lose deltas between the snapshot and the pipeline. Stale Redis keys from before the outage expire via TTL. Local counters are zeroed only after the pipeline commits, so a crash mid-recovery cannot lose deltas. The recovery is safe for concurrent execution by multiple instances since INCRBY is additive.
 
 ```yaml
 redis:

@@ -206,3 +206,76 @@ func TestLocalCounterBackend_NilInit(t *testing.T) {
 		t.Errorf("Backends() length = %d, want 0", got)
 	}
 }
+
+// TestSwapAllBackends_ReturnsAllDeltas verifies that SwapAllBackends returns
+// accumulated deltas for all backends and resets them to zero atomically.
+func TestSwapAllBackends_ReturnsAllDeltas(t *testing.T) {
+	t.Parallel()
+	cb := NewLocalCounterBackend([]string{"b1", "b2"})
+
+	cb.AddAll("b1", 10, 100, 200)
+	cb.AddAll("b2", 20, 300, 400)
+
+	deltas := cb.SwapAllBackends()
+
+	if len(deltas) != 2 {
+		t.Fatalf("expected 2 backends, got %d", len(deltas))
+	}
+	if d := deltas["b1"]; d.APIRequests != 10 || d.EgressBytes != 100 || d.IngressBytes != 200 {
+		t.Errorf("b1 deltas = %+v, want {10, 100, 200}", d)
+	}
+	if d := deltas["b2"]; d.APIRequests != 20 || d.EgressBytes != 300 || d.IngressBytes != 400 {
+		t.Errorf("b2 deltas = %+v, want {20, 300, 400}", d)
+	}
+
+	// Counters should be zeroed after swap.
+	if got := cb.Load("b1", FieldAPIRequests); got != 0 {
+		t.Errorf("b1 apiRequests after swap = %d, want 0", got)
+	}
+	if got := cb.Load("b2", FieldAPIRequests); got != 0 {
+		t.Errorf("b2 apiRequests after swap = %d, want 0", got)
+	}
+}
+
+// TestSwapAllBackends_ConcurrentAdds verifies that Add calls concurrent with
+// SwapAllBackends do not lose deltas. The delta is either captured in the
+// swap result or remains in the new counters — never dropped.
+func TestSwapAllBackends_ConcurrentAdds(t *testing.T) {
+	t.Parallel()
+	cb := NewLocalCounterBackend([]string{"b1"})
+
+	const iterations = 10000
+	done := make(chan struct{})
+
+	// Goroutine adds 1 per iteration.
+	go func() {
+		defer close(done)
+		for range iterations {
+			cb.Add("b1", FieldAPIRequests, 1)
+		}
+	}()
+
+	// Wait for some adds to happen, then swap.
+	<-done
+
+	deltas := cb.SwapAllBackends()
+	remaining := cb.Load("b1", FieldAPIRequests)
+	total := deltas["b1"].APIRequests + remaining
+
+	if total != iterations {
+		t.Errorf("total = %d, want %d (swap got %d, remaining %d)",
+			total, iterations, deltas["b1"].APIRequests, remaining)
+	}
+}
+
+// TestSwapAllBackends_Empty verifies that SwapAllBackends works on a backend
+// with no accumulated deltas.
+func TestSwapAllBackends_Empty(t *testing.T) {
+	t.Parallel()
+	cb := NewLocalCounterBackend([]string{"b1"})
+
+	deltas := cb.SwapAllBackends()
+	if d := deltas["b1"]; d.APIRequests != 0 || d.EgressBytes != 0 || d.IngressBytes != 0 {
+		t.Errorf("expected zero deltas, got %+v", d)
+	}
+}

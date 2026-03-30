@@ -302,48 +302,29 @@ func (r *RedisCounterBackend) tryRecover() {
 
 	period := CurrentPeriod()
 
-	// Atomically read-and-zero local deltas so no concurrent Add() can
-	// slip between snapshot and reset (the old LoadAll + Swap two-phase
-	// had exactly that race window).
-	type backendDeltas struct {
-		name    string
-		api     int64
-		egress  int64
-		ingress int64
-	}
-	deltas := make([]backendDeltas, 0, len(r.backends))
-	for _, backend := range r.backends {
-		cur := r.local.SwapAll(backend)
-		deltas = append(deltas, backendDeltas{
-			name:    backend,
-			api:     cur.APIRequests,
-			egress:  cur.EgressBytes,
-			ingress: cur.IngressBytes,
-		})
-	}
+	// Atomically swap the entire local counter map in one operation. This
+	// prevents the race where per-backend SwapAll calls allow concurrent
+	// Add calls to slip between swaps and lose deltas.
+	allDeltas := r.local.SwapAllBackends()
 
-	// Build a single pipeline: delete stale keys then INCRBY local deltas.
+	// Build a pipeline of INCRBY commands (additive, safe for concurrent
+	// execution by multiple instances). No DEL — stale keys from before
+	// the outage expire via TTL, and INCRBY is idempotent across instances.
 	pipe := r.client.Pipeline()
-	fields := []string{FieldAPIRequests, FieldEgressBytes, FieldIngressBytes}
-	for _, backend := range r.backends {
-		for _, field := range fields {
-			pipe.Del(ctx, r.keyForPeriod(backend, field, period))
-		}
-	}
-	for _, d := range deltas {
-		if d.api > 0 {
-			k := r.keyForPeriod(d.name, FieldAPIRequests, period)
-			pipe.IncrBy(ctx, k, d.api)
+	for name, d := range allDeltas {
+		if d.APIRequests > 0 {
+			k := r.keyForPeriod(name, FieldAPIRequests, period)
+			pipe.IncrBy(ctx, k, d.APIRequests)
 			pipe.Expire(ctx, k, keyTTL)
 		}
-		if d.egress > 0 {
-			k := r.keyForPeriod(d.name, FieldEgressBytes, period)
-			pipe.IncrBy(ctx, k, d.egress)
+		if d.EgressBytes > 0 {
+			k := r.keyForPeriod(name, FieldEgressBytes, period)
+			pipe.IncrBy(ctx, k, d.EgressBytes)
 			pipe.Expire(ctx, k, keyTTL)
 		}
-		if d.ingress > 0 {
-			k := r.keyForPeriod(d.name, FieldIngressBytes, period)
-			pipe.IncrBy(ctx, k, d.ingress)
+		if d.IngressBytes > 0 {
+			k := r.keyForPeriod(name, FieldIngressBytes, period)
+			pipe.IncrBy(ctx, k, d.IngressBytes)
 			pipe.Expire(ctx, k, keyTTL)
 		}
 	}
@@ -351,8 +332,8 @@ func (r *RedisCounterBackend) tryRecover() {
 	if _, err := pipe.Exec(ctx); err != nil {
 		// Pipeline failed — restore swapped deltas to local counters so
 		// they are retried on the next recovery attempt.
-		for _, d := range deltas {
-			r.local.AddAll(d.name, d.api, d.egress, d.ingress)
+		for name, d := range allDeltas {
+			r.local.AddAll(name, d.APIRequests, d.EgressBytes, d.IngressBytes)
 		}
 		slog.Warn("Redis recovery pipeline failed, will retry", "error", err)
 		return
