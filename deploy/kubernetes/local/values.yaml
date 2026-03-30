@@ -13,15 +13,15 @@ image:
   pullPolicy: Never
 
 env:
-  GOMEMLIMIT: "922MiB"
-  GOMAXPROCS: "1"
+  GOMEMLIMIT: "1843MiB"
+  GOMAXPROCS: "2"
 
 resources:
   requests:
-    cpu: "1024m"
+    cpu: "4000m"
     memory: "1024Mi"
   limits:
-    cpu: "1024m"
+    cpu: "4000m"
     memory: "1024Mi"
 
 networkPolicy:
@@ -43,6 +43,7 @@ secrets:
   UI_ADMIN_KEY: "admin"
   UI_ADMIN_SECRET: "admin"
   UI_ADMIN_TOKEN: "admin"
+  UI_SESSION_SECRET: "local-dev-session-key"
 
 config:
   server:
@@ -125,13 +126,10 @@ config:
     scrubber_interval: "1h"
     scrubber_batch_size: 50
 
-  # In-memory LRU cache for frequently read objects. Reduces backend API calls
-  # and egress by serving repeated reads from memory. Objects are cached after
-  # the first full GET and invalidated on write.
   cache:
-    enabled: false
-    max_size: "256MB"
-    max_object_size: "10MB"
+    enabled: true
+    max_size: "500MB"
+    max_object_size: "50MB"
     ttl: "5m"
 
   circuit_breaker:
@@ -154,7 +152,7 @@ config:
 
   rate_limit:
     enabled: true
-    requests_per_sec: 1000
+    requests_per_sec: 1500
     burst: 2000
 
   ui:

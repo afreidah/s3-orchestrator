@@ -160,7 +160,9 @@ fuzz-import: ## Import crashing inputs from the latest nightly fuzz CI run
 	rm -rf "$$tmpdir"; \
 	echo "Imported $$count new corpus file(s)."
 
-run: dev-deps ## Run locally (requires config.yaml)
+run: ## Run locally (starts MinIO backends via Docker, uses SQLite by default)
+	docker compose -f $(COMPOSE_FILE) up -d --wait minio-1 minio-2 minio-3
+	docker compose -f $(COMPOSE_FILE) run --rm minio-setup
 	go run ./cmd/s3-orchestrator -config config.yaml
 
 docs: ## Serve godoc locally at http://localhost:8080
@@ -302,6 +304,12 @@ loadtest-mixed: loadtest-build ## Run mixed PUT/GET load test
 		-op mixed -rate $(LOADTEST_RATE) -duration $(LOADTEST_DURATION) \
 		-size $(LOADTEST_SIZE) -seed $(LOADTEST_SEED) -workers $(LOADTEST_WORKERS)
 
+loadtest-cache: loadtest-build ## Run cache stress test (seeds more data than cache capacity to exercise eviction)
+	./loadtest/s3-loadtest \
+		-endpoint $(LOADTEST_ENDPOINT) -bucket $(LOADTEST_BUCKET) \
+		-op mixed -rate $(LOADTEST_RATE) -duration $(LOADTEST_DURATION) \
+		-size 262144 -seed 2000 -workers $(LOADTEST_WORKERS)
+
 loadtest-burst: ## Run k6 burst/admission-control test (requires k6)
 	@command -v k6 >/dev/null 2>&1 || { echo "Error: k6 is not installed. Install it from https://grafana.com/docs/k6/latest/set-up/install-k6/"; exit 1; }
 	k6 run loadtest/k6/burst.js \
@@ -389,6 +397,8 @@ clean: ## Remove build artifacts, demo environments, containers, and volumes
 	docker compose -f $(COMPOSE_FILE) down -v --remove-orphans 2>/dev/null || true
 	# --- Remove orphaned volumes from previous runs ---
 	docker volume prune -f 2>/dev/null || true
+	# --- SQLite dev database ---
+	rm -f dev-data.db dev-data.db-shm dev-data.db-wal
 	# --- Build artifacts ---
 	go clean
 	rm -f s3-orchestrator loadtest/s3-loadtest
