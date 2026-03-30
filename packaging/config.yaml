@@ -23,14 +23,21 @@ server:
   #   min_version: "1.2"           # "1.2" (default) or "1.3"
   #   client_ca_file: ""           # CA bundle for mTLS client verification
 
-# --- PostgreSQL connection ---
+# --- Database ---
+# Driver "sqlite" (default) requires no external dependencies.
+# Driver "postgres" is required for multi-instance deployments.
 database:
-  host: ${DB_HOST}
-  port: ${DB_PORT}
-  database: ${DB_NAME}
-  user: ${DB_USER}
-  password: ${DB_PASSWORD}
-  ssl_mode: ${DB_SSL_MODE}
+  driver: sqlite
+  path: /var/lib/s3-orchestrator/data.db
+
+  # --- PostgreSQL (uncomment to use instead of SQLite) ---
+  # driver: postgres
+  # host: ${DB_HOST}
+  # port: ${DB_PORT}
+  # database: ${DB_NAME}
+  # user: ${DB_USER}
+  # password: ${DB_PASSWORD}
+  # ssl_mode: ${DB_SSL_MODE}
   # max_conns: 50
   # min_conns: 10
   # max_conn_lifetime: 5m

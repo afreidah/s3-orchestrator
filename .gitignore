@@ -9,6 +9,9 @@ dist/
 packaging/changelog.gz
 loadtest/s3-loadtest
 loadtest/loadtest
+*.db
+*.db-shm
+*.db-wal
 web/public/
 web/content/godoc/
 !web/content/godoc/_index.md

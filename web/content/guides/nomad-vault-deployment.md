@@ -215,6 +215,7 @@ buckets:
         secret_access_key: "{{ .Data.data.secret_key }}"
 
 database:
+  driver: postgres
   host: "postgres.service.consul"
   port: 5432
   database: "s3_orchestrator"
