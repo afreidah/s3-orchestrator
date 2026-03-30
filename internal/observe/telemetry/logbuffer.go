@@ -86,11 +86,13 @@ func (b *LogBuffer) Add(entry LogEntry) {
 
 // Entries returns buffered log entries matching the query options.
 // Results are returned in chronological order (oldest first).
+//
+// The lock is held only long enough to snapshot the ring buffer state.
+// Filtering and result construction happen outside the lock so concurrent
+// Add calls are not blocked by slow dashboard queries.
 func (b *LogBuffer) Entries(opts *LogQueryOpts) []LogEntry {
+	// Snapshot the ring buffer state under the lock.
 	b.mu.RLock()
-	defer b.mu.RUnlock()
-
-	// Determine the range of valid entries.
 	var count int
 	if b.full {
 		count = len(b.entries)
@@ -98,13 +100,10 @@ func (b *LogBuffer) Entries(opts *LogQueryOpts) []LogEntry {
 		count = b.pos
 	}
 	if count == 0 {
+		b.mu.RUnlock()
 		return nil
 	}
-
-	// Pre-parse the min level string for comparison.
-	minLevel := opts.MinLevel
-
-	result := make([]LogEntry, 0, count)
+	snapshot := make([]LogEntry, count)
 	for i := range count {
 		var idx int
 		if b.full {
@@ -112,9 +111,14 @@ func (b *LogBuffer) Entries(opts *LogQueryOpts) []LogEntry {
 		} else {
 			idx = i
 		}
-		e := b.entries[idx]
+		snapshot[i] = b.entries[idx]
+	}
+	b.mu.RUnlock()
 
-		// Apply filters.
+	// Filter outside the lock.
+	minLevel := opts.MinLevel
+	result := make([]LogEntry, 0, count)
+	for _, e := range snapshot {
 		if !opts.Since.IsZero() && e.Time.Before(opts.Since) {
 			continue
 		}
@@ -129,7 +133,6 @@ func (b *LogBuffer) Entries(opts *LogQueryOpts) []LogEntry {
 				continue
 			}
 		}
-
 		result = append(result, e)
 	}
 

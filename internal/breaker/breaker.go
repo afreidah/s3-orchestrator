@@ -240,6 +240,34 @@ func (cb *CircuitBreaker) onFailure() {
 	}
 }
 
+// ResetStaleProbe checks whether a half-open probe has exceeded probeTimeout
+// and resets the circuit to open if so. Called by the background watchdog
+// service to ensure stale probes are detected even when no new requests
+// arrive. Returns true if a stale probe was reset.
+func (cb *CircuitBreaker) ResetStaleProbe() bool {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+
+	if cb.state != StateHalfOpen {
+		return false
+	}
+	started := cb.probeStarted.Load()
+	if started == 0 {
+		return false
+	}
+	elapsed := time.Since(time.Unix(0, started))
+	if elapsed < probeTimeout {
+		return false
+	}
+
+	slog.Warn("Circuit breaker: stale probe reset by watchdog", //nolint:sloglint // watchdog has no request context
+		"name", cb.name, "probe_age", elapsed.Round(time.Second))
+	cb.probeInFlight.Store(false)
+	cb.probeStarted.Store(0)
+	cb.transition(StateOpen)
+	return true
+}
+
 // transition changes the circuit state and emits metrics + structured logs.
 // Logs include from/to state, failure counts, and degraded_duration when the
 // circuit recovers. Caller must hold cb.mu.

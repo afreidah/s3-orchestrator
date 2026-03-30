@@ -344,3 +344,64 @@ func TestManager_NoServicesRunsCleanly(t *testing.T) {
 	// Stop with no services should not panic
 	mgr.Stop(time.Second)
 }
+
+// slowStopService blocks in Stop until the context deadline expires, simulating
+// a service that consumes its entire shutdown budget.
+type slowStopService struct {
+	stopped chan string
+	name    string
+}
+
+func (s *slowStopService) Run(ctx context.Context) error {
+	<-ctx.Done()
+	return nil
+}
+
+func (s *slowStopService) Stop(ctx context.Context) error {
+	<-ctx.Done()
+	s.stopped <- s.name
+	return ctx.Err()
+}
+
+// TestManager_StopPerServiceTimeout verifies that a slow service cannot
+// starve other services of their shutdown budget. With per-service timeouts,
+// even if one service blocks until its deadline, the next service still gets
+// a full share.
+func TestManager_StopPerServiceTimeout(t *testing.T) {
+	mgr := NewManager()
+	stopped := make(chan string, 2)
+
+	mgr.Register("slow", &slowStopService{stopped: stopped, name: "slow"})
+	mgr.Register("fast", &stoppableService{stopped: stopped, name: "fast"})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		mgr.Run(ctx)
+		close(done)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	<-done
+
+	// 2 seconds total, 2 stoppable services = 1 second each.
+	start := time.Now()
+	mgr.Stop(2 * time.Second)
+	elapsed := time.Since(start)
+
+	var names []string
+	for range 2 {
+		select {
+		case name := <-stopped:
+			names = append(names, name)
+		case <-time.After(3 * time.Second):
+			t.Fatalf("timed out waiting for stop calls, got %v", names)
+		}
+	}
+
+	// Total should be ~1s (slow burns its 1s budget, fast stops instantly).
+	if elapsed > 3*time.Second {
+		t.Errorf("Stop took %v, expected ~1s (per-service budgets)", elapsed)
+	}
+}

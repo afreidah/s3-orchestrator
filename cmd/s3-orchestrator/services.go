@@ -17,15 +17,11 @@ import (
 	"math/rand/v2"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
-
-	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
-
-	// -------------------------------------------------------------------------
-	// LOCKED TICKER SERVICE
-	// -------------------------------------------------------------------------
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
+	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
@@ -367,6 +363,51 @@ func newReconcileService(reconciler *worker.Reconciler, locker store.AdvisoryLoc
 		},
 	}
 }
+
+// -------------------------------------------------------------------------
+// CIRCUIT BREAKER WATCHDOG
+// -------------------------------------------------------------------------
+
+// circuitBreakerWatchdog periodically checks all circuit breakers for stale
+// half-open probes and resets them. This prevents circuits from getting stuck
+// half-open indefinitely when no new requests arrive to trigger the passive
+// stale-probe detection in PreCheck.
+type circuitBreakerWatchdog struct {
+	manager *proxy.BackendManager
+	cbStore *store.CircuitBreakerStore
+}
+
+// Run implements lifecycle.Service. Checks every probeTimeout/2 (1 minute).
+func (w *circuitBreakerWatchdog) Run(ctx context.Context) error {
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			w.checkAll()
+		}
+	}
+}
+
+// checkAll iterates all circuit breakers and resets stale probes.
+func (w *circuitBreakerWatchdog) checkAll() {
+	// Database circuit breaker
+	w.cbStore.ResetStaleProbe()
+
+	// Backend circuit breakers
+	for _, be := range w.manager.Backends() {
+		if cb, ok := be.(*backend.CircuitBreakerBackend); ok {
+			cb.ResetStaleProbe()
+		}
+	}
+}
+
+// -------------------------------------------------------------------------
+// SCRUBBER
+// -------------------------------------------------------------------------
 
 func newScrubberService(manager *proxy.BackendManager, locker store.AdvisoryLocker) *lockedTickerService {
 	interval := 6 * time.Hour

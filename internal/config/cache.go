@@ -11,6 +11,8 @@ package config
 
 import (
 	"fmt"
+	"math"
+	"strconv"
 	"time"
 )
 
@@ -104,14 +106,21 @@ func parseByteSize(s string) (int64, error) {
 	}
 
 	numStr = trimSpace(numStr)
-	var val int64
-	for _, ch := range numStr {
-		if ch < '0' || ch > '9' {
-			return 0, fmt.Errorf("invalid byte size %q", s)
-		}
-		val = val*10 + int64(ch-'0')
+	if numStr == "" {
+		return 0, fmt.Errorf("invalid byte size %q: missing numeric value", s)
+	}
+	val, err := strconv.ParseInt(numStr, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid byte size %q: %w", s, err)
+	}
+	if val < 0 {
+		return 0, fmt.Errorf("invalid byte size %q: value must be non-negative", s)
 	}
 
+	// Check for overflow before applying the multiplier.
+	if multiplier > 1 && val > math.MaxInt64/multiplier {
+		return 0, fmt.Errorf("byte size %q overflows int64", s)
+	}
 	return val * multiplier, nil
 }
 

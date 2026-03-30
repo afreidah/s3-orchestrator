@@ -207,6 +207,8 @@ When a backend accumulates `failure_threshold` consecutive failures, the circuit
 
 After `open_timeout` elapses (plus randomized jitter of up to `open_timeout/4`), the next organic request to the backend is allowed through as a probe. If it succeeds, the circuit closes. If it fails, the circuit reopens for another timeout period. The jitter is recomputed on each open transition to prevent multiple backends from probing simultaneously after a shared failure event.
 
+A background watchdog service checks all circuit breakers every minute for stale half-open probes. If a probe has been in flight longer than 2 minutes (e.g. the backend accepted the TCP connection but never responded), the watchdog resets the circuit to open so a new probe can be dispatched. This prevents circuits from getting permanently stuck half-open on low-traffic backends where no new request arrives to trigger the passive stale-probe detection.
+
 Unlike the database circuit breaker, backend circuit breakers treat **all** errors as failures (no error filtering). This is a per-backend wrapper — each backend has its own independent circuit breaker state.
 
 ```yaml
@@ -870,6 +872,7 @@ All locked background tasks apply a random startup jitter of up to half the tick
 | Over-replication cleaner | configurable (default 5m) | Yes | Removes excess copies of objects that exceed the replication factor. Only runs when factor > 1. |
 | Lifecycle | 1h | Yes | Deletes objects matching lifecycle rules whose `created_at` exceeds `expiration_days`. Only runs when rules are configured. |
 | Reconciler | configurable (default 24h) | Yes | Scans each backend for untracked objects and imports them into the metadata database via `SyncBackend`. Only runs when `reconcile.enabled: true`. |
+| CB watchdog | 1m | No | Checks all circuit breakers for stale half-open probes. If a probe has been in flight longer than 2 minutes, resets the circuit to open so a new probe can be dispatched. Prevents circuits from getting stuck half-open when traffic stops. |
 
 Background services (rebalancer, replicator, over-replication cleaner, cleanup queue) share the admission semaphore with HTTP requests, so `max_concurrent_requests` is the total budget for both HTTP and background backend operations.
 
