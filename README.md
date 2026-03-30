@@ -46,6 +46,8 @@ See the [Quickstart](docs/quickstart.md) for full details, credentials for all b
 - Debian: download `.deb` from [GitHub Releases](https://github.com/afreidah/s3-orchestrator/releases)
 - Binary: download from [GitHub Releases](https://github.com/afreidah/s3-orchestrator/releases)
 
+> **Requires PostgreSQL 14+.** The orchestrator stores object metadata, quotas, and replication state in PostgreSQL. The `make run` quickstart handles this automatically, but standalone installs need an existing PostgreSQL instance. Database tables are created automatically on first start.
+
 **Verify artifact signatures:**
 
 Container images and release checksums are signed with [cosign](https://github.com/sigstore/cosign) (keyless / Sigstore):
@@ -464,6 +466,20 @@ backends:
     api_request_limit: 0      # monthly API request limit (0 = unlimited)
     egress_byte_limit: 0      # monthly egress byte limit (0 = unlimited)
     ingress_byte_limit: 0     # monthly ingress byte limit (0 = unlimited)
+
+**Provider quick reference** — endpoint format and required flags for common S3-compatible providers:
+
+| Provider | Endpoint | `force_path_style` | Notes |
+|----------|----------|-------------------|-------|
+| AWS S3 | `https://s3.<region>.amazonaws.com` | `false` (default) | |
+| MinIO | `http://<host>:9000` | `true` | |
+| OCI Object Storage | `https://<ns>.compat.objectstorage.<region>.oraclecloud.com` | `true` | |
+| Backblaze B2 | `https://s3.<region>.backblazeb2.com` | `false` | |
+| Cloudflare R2 | `https://<account-id>.r2.cloudflarestorage.com` | `false` | `region: auto` |
+| Wasabi | `https://s3.<region>.wasabisys.com` | `false` | |
+| Google Cloud Storage | `https://storage.googleapis.com` | `false` | Set `disable_checksum: true` and `strip_sdk_headers: true` |
+
+See the [Maximizing Free Tiers](https://s3-orchestrator.munchbox.cc/guides/maximizing-free-tiers/) guide for detailed setup on each provider including where to find credentials.
 
 telemetry:
   metrics:
