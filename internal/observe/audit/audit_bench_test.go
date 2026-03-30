@@ -5,20 +5,32 @@
 //
 // Measures the cost of audit.Log, which is called on every S3 API request
 // and storage operation. Includes the atomic OnEvent callback load and slog
-// attribute assembly.
+// attribute assembly. Uses a discard logger to avoid polluting benchmark
+// output with millions of log lines.
 // -------------------------------------------------------------------------------
 
 package audit
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"testing"
 )
 
+// discardLogger replaces the global slog default with a discard handler so
+// benchmark output is not polluted with millions of audit log lines.
+func discardLogger(b *testing.B) {
+	b.Helper()
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	b.Cleanup(func() { slog.SetDefault(prev) })
+}
+
 // BenchmarkLog_WithCallback measures audit.Log cost with a registered OnEvent
 // callback (the production configuration).
 func BenchmarkLog_WithCallback(b *testing.B) {
+	discardLogger(b)
 	SetOnEvent(func(string) {})
 	defer SetOnEvent(nil)
 
@@ -35,6 +47,7 @@ func BenchmarkLog_WithCallback(b *testing.B) {
 // BenchmarkLog_WithoutCallback measures audit.Log cost when no OnEvent
 // callback is registered (atomic pointer load returns nil).
 func BenchmarkLog_WithoutCallback(b *testing.B) {
+	discardLogger(b)
 	SetOnEvent(nil)
 
 	ctx := WithRequestID(context.Background(), "bench-req-id")
@@ -49,6 +62,7 @@ func BenchmarkLog_WithoutCallback(b *testing.B) {
 // BenchmarkLog_Concurrent measures audit.Log throughput under concurrent
 // request load from multiple goroutines.
 func BenchmarkLog_Concurrent(b *testing.B) {
+	discardLogger(b)
 	SetOnEvent(func(string) {})
 	defer SetOnEvent(nil)
 
