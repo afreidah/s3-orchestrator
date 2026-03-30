@@ -36,6 +36,7 @@ func setupScrubber(t *testing.T) (*Scrubber, *MockScrubberDeps, *backendtest.Moc
 }
 
 func TestScrub_MatchingHash(t *testing.T) {
+	t.Parallel()
 	s, ops, be, ms := setupScrubber(t)
 	body := "hello world"
 	expectedHash := hashString(body)
@@ -62,6 +63,7 @@ func TestScrub_MatchingHash(t *testing.T) {
 }
 
 func TestScrub_HashMismatch(t *testing.T) {
+	t.Parallel()
 	s, ops, be, ms := setupScrubber(t)
 
 	ms.randomHashedObjects = []store.ObjectLocation{
@@ -87,6 +89,7 @@ func TestScrub_HashMismatch(t *testing.T) {
 }
 
 func TestScrub_BackendError(t *testing.T) {
+	t.Parallel()
 	s, ops, be, ms := setupScrubber(t)
 
 	ms.randomHashedObjects = []store.ObjectLocation{
@@ -108,6 +111,7 @@ func TestScrub_BackendError(t *testing.T) {
 }
 
 func TestScrub_EmptyBatch(t *testing.T) {
+	t.Parallel()
 	s, ops, _, ms := setupScrubber(t)
 	ms.randomHashedObjects = nil
 	ops.EXPECT().Store().Return(ms).AnyTimes()
@@ -119,6 +123,7 @@ func TestScrub_EmptyBatch(t *testing.T) {
 }
 
 func TestBackfill_ComputesAndStoresHash(t *testing.T) {
+	t.Parallel()
 	s, ops, be, ms := setupScrubber(t)
 	body := "backfill me"
 	expectedHash := hashString(body)
@@ -148,6 +153,7 @@ func TestBackfill_ComputesAndStoresHash(t *testing.T) {
 }
 
 func TestBackfill_Pagination(t *testing.T) {
+	t.Parallel()
 	s, ops, be, ms := setupScrubber(t)
 
 	// Return a full batch to trigger pagination
@@ -175,6 +181,7 @@ func TestBackfill_Pagination(t *testing.T) {
 }
 
 func TestBackfill_UnencryptedObject(t *testing.T) {
+	t.Parallel()
 	s, ops, be, ms := setupScrubber(t)
 	body := "plaintext object"
 	expectedHash := hashString(body)
@@ -201,6 +208,7 @@ func TestBackfill_UnencryptedObject(t *testing.T) {
 }
 
 func TestBackfill_BackendError(t *testing.T) {
+	t.Parallel()
 	s, ops, be, ms := setupScrubber(t)
 
 	ms.objectsWithoutHash = []store.ObjectLocation{
@@ -219,6 +227,7 @@ func TestBackfill_BackendError(t *testing.T) {
 }
 
 func TestBackfill_EmptyBatch(t *testing.T) {
+	t.Parallel()
 	s, ops, _, ms := setupScrubber(t)
 	ms.objectsWithoutHash = nil
 	ops.EXPECT().Store().Return(ms).AnyTimes()
@@ -230,6 +239,7 @@ func TestBackfill_EmptyBatch(t *testing.T) {
 }
 
 func TestScrubber_SetConfig(t *testing.T) {
+	t.Parallel()
 	s := NewScrubber(nil, nil)
 	if s.Config() != nil {
 		t.Fatal("expected nil config initially")
@@ -243,6 +253,7 @@ func TestScrubber_SetConfig(t *testing.T) {
 }
 
 func TestScrub_ContextCancelled(t *testing.T) {
+	t.Parallel()
 	s, ops, _, ms := setupScrubber(t)
 	ms.randomHashedObjects = []store.ObjectLocation{
 		{ObjectKey: "bucket/key1", BackendName: "b1", SizeBytes: 11, ContentHash: "hash"},

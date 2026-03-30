@@ -588,7 +588,7 @@ func (s *Store) DeleteObject(ctx context.Context, key string) ([]DeletedCopy, er
 func (s *Store) ListObjectsByBackend(ctx context.Context, backendName string, limit int) ([]ObjectLocation, error) {
 	rows, err := s.queries.ListObjectsByBackend(ctx, db.ListObjectsByBackendParams{
 		BackendName: backendName,
-		Limit:       int32(limit),
+		Limit:       int32(limit), //nolint:gosec // G115: limit is a small caller-controlled batch size
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list objects by backend: %w", err)
@@ -721,7 +721,7 @@ func (s *Store) ListExpiredObjects(ctx context.Context, prefix string, cutoff ti
 	rows, err := s.queries.ListExpiredObjects(ctx, db.ListExpiredObjectsParams{
 		Prefix:  escapedPrefix,
 		Cutoff:  pgTimestamptz(cutoff),
-		MaxKeys: int32(limit),
+		MaxKeys: int32(limit), //nolint:gosec // G115: limit is a small caller-controlled batch size
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list expired objects: %w", err)
@@ -851,7 +851,7 @@ func (s *Store) GetAllObjectLocations(ctx context.Context, key string) ([]Object
 func (s *Store) GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]ObjectLocation, error) {
 	rows, err := s.queries.GetUnderReplicatedObjects(ctx, db.GetUnderReplicatedObjectsParams{
 		Factor:  int64(factor),
-		MaxKeys: int32(limit),
+		MaxKeys: int32(limit), //nolint:gosec // G115: limit is a small caller-controlled batch size
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to query under-replicated objects: %w", err)
@@ -867,7 +867,7 @@ func (s *Store) GetUnderReplicatedObjectsExcluding(ctx context.Context, factor, 
 	rows, err := s.queries.GetUnderReplicatedObjectsExcluding(ctx, db.GetUnderReplicatedObjectsExcludingParams{
 		Excluded: excludedBackends,
 		Factor:   int64(factor),
-		MaxKeys:  int32(limit),
+		MaxKeys:  int32(limit), //nolint:gosec // G115: limit is a small caller-controlled batch size
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to query under-replicated objects (excluding): %w", err)
@@ -1205,7 +1205,7 @@ func (s *Store) ListMultipartUploads(ctx context.Context, prefix string, maxUplo
 
 	rows, err := s.queries.ListMultipartUploadsByPrefix(ctx, db.ListMultipartUploadsByPrefixParams{
 		Prefix:     &escapedPrefix,
-		MaxUploads: int32(maxUploads),
+		MaxUploads: int32(maxUploads), //nolint:gosec // G115: maxUploads is a small caller-controlled value
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list multipart uploads: %w", err)
@@ -1465,8 +1465,8 @@ func (s *Store) WithAdvisoryLock(ctx context.Context, lockID int64, fn func(ctx 
 func (s *Store) ListEncryptedLocations(ctx context.Context, keyID string, limit, offset int) ([]EncryptedLocation, error) {
 	rows, err := s.queries.ListEncryptedLocations(ctx, db.ListEncryptedLocationsParams{
 		KeyID:  &keyID,
-		Limit:  int32(limit),
-		Offset: int32(offset),
+		Limit:  int32(limit), //nolint:gosec // G115: limit is a small caller-controlled batch size
+		Offset: int32(offset), //nolint:gosec // G115: offset is a small caller-controlled value
 	})
 	if err != nil {
 		return nil, fmt.Errorf("list encrypted locations: %w", err)
@@ -1500,8 +1500,8 @@ func (s *Store) UpdateEncryptionKey(ctx context.Context, objectKey, backendName 
 // Used by the encrypt-existing admin endpoint to find objects that need encryption.
 func (s *Store) ListUnencryptedLocations(ctx context.Context, limit, offset int) ([]UnencryptedLocation, error) {
 	rows, err := s.queries.ListUnencryptedLocations(ctx, db.ListUnencryptedLocationsParams{
-		Limit:  int32(limit),
-		Offset: int32(offset),
+		Limit:  int32(limit), //nolint:gosec // G115: limit is a small caller-controlled batch size
+		Offset: int32(offset), //nolint:gosec // G115: offset is a small caller-controlled value
 	})
 	if err != nil {
 		return nil, fmt.Errorf("list unencrypted locations: %w", err)
@@ -1535,8 +1535,8 @@ func (s *Store) MarkObjectEncrypted(ctx context.Context, objectKey, backendName 
 // Used by the decrypt-existing admin endpoint to find objects that need decryption.
 func (s *Store) ListAllEncryptedLocations(ctx context.Context, limit, offset int) ([]DecryptableLocation, error) {
 	rows, err := s.queries.ListAllEncryptedLocations(ctx, db.ListAllEncryptedLocationsParams{
-		Limit:  int32(limit),
-		Offset: int32(offset),
+		Limit:  int32(limit), //nolint:gosec // G115: limit is a small caller-controlled batch size
+		Offset: int32(offset), //nolint:gosec // G115: offset is a small caller-controlled value
 	})
 	if err != nil {
 		return nil, fmt.Errorf("list all encrypted locations: %w", err)
@@ -1591,7 +1591,7 @@ func (s *Store) InsertNotification(ctx context.Context, eventType, payload, endp
 
 // GetPendingNotifications returns outbox rows ready for delivery.
 func (s *Store) GetPendingNotifications(ctx context.Context, limit int) ([]NotificationRow, error) {
-	rows, err := s.queries.GetPendingNotifications(ctx, int32(limit))
+	rows, err := s.queries.GetPendingNotifications(ctx, int32(limit)) //nolint:gosec // G115: limit is a small caller-controlled batch size
 	if err != nil {
 		return nil, err
 	}

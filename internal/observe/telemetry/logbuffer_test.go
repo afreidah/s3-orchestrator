@@ -24,6 +24,7 @@ import (
 // -------------------------------------------------------------------------
 
 func TestLogBuffer_AddAndRetrieve(t *testing.T) {
+	t.Parallel()
 	buf := NewLogBuffer()
 
 	buf.Add(LogEntry{Time: time.Now(), Level: "INFO", Message: "hello"})
@@ -42,6 +43,7 @@ func TestLogBuffer_AddAndRetrieve(t *testing.T) {
 }
 
 func TestLogBuffer_Wraps(t *testing.T) {
+	t.Parallel()
 	buf := NewLogBuffer()
 
 	// Fill buffer beyond capacity.
@@ -72,6 +74,7 @@ func TestLogBuffer_Wraps(t *testing.T) {
 }
 
 func TestLogBuffer_Empty(t *testing.T) {
+	t.Parallel()
 	buf := NewLogBuffer()
 
 	entries := buf.Entries(&LogQueryOpts{})
@@ -81,6 +84,7 @@ func TestLogBuffer_Empty(t *testing.T) {
 }
 
 func TestLogBuffer_FilterByLevel(t *testing.T) {
+	t.Parallel()
 	buf := NewLogBuffer()
 
 	buf.Add(LogEntry{Time: time.Now(), Level: "DEBUG", Message: "debug"})
@@ -101,6 +105,7 @@ func TestLogBuffer_FilterByLevel(t *testing.T) {
 }
 
 func TestLogBuffer_FilterBySince(t *testing.T) {
+	t.Parallel()
 	buf := NewLogBuffer()
 
 	old := time.Now().Add(-10 * time.Minute)
@@ -119,6 +124,7 @@ func TestLogBuffer_FilterBySince(t *testing.T) {
 }
 
 func TestLogBuffer_Before(t *testing.T) {
+	t.Parallel()
 	buf := NewLogBuffer()
 
 	old := time.Now().Add(-10 * time.Minute)
@@ -158,6 +164,7 @@ func TestLogBuffer_Before(t *testing.T) {
 }
 
 func TestLogBuffer_FilterByComponent(t *testing.T) {
+	t.Parallel()
 	buf := NewLogBuffer()
 
 	buf.Add(LogEntry{Time: time.Now(), Level: "INFO", Message: "a", Attrs: map[string]any{"component": "server"}})
@@ -174,6 +181,7 @@ func TestLogBuffer_FilterByComponent(t *testing.T) {
 }
 
 func TestLogBuffer_Limit(t *testing.T) {
+	t.Parallel()
 	buf := NewLogBuffer()
 
 	for i := range 100 {
@@ -198,6 +206,7 @@ func TestLogBuffer_Limit(t *testing.T) {
 }
 
 func TestLogBuffer_ConcurrentAccess(t *testing.T) {
+	t.Parallel()
 	buf := NewLogBuffer()
 
 	var wg sync.WaitGroup
@@ -232,6 +241,7 @@ func TestLogBuffer_ConcurrentAccess(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestTeeHandler_WritesToBoth(t *testing.T) {
+	t.Parallel()
 	var stdout bytes.Buffer
 	jsonHandler := slog.NewJSONHandler(&stdout, &slog.HandlerOptions{Level: slog.LevelDebug})
 	buf := NewLogBuffer()
@@ -261,6 +271,7 @@ func TestTeeHandler_WritesToBoth(t *testing.T) {
 }
 
 func TestTeeHandler_WithAttrs(t *testing.T) {
+	t.Parallel()
 	var stdout bytes.Buffer
 	jsonHandler := slog.NewJSONHandler(&stdout, &slog.HandlerOptions{Level: slog.LevelDebug})
 	buf := NewLogBuffer()
@@ -278,6 +289,7 @@ func TestTeeHandler_WithAttrs(t *testing.T) {
 }
 
 func TestTeeHandler_WithGroup(t *testing.T) {
+	t.Parallel()
 	var stdout bytes.Buffer
 	jsonHandler := slog.NewJSONHandler(&stdout, &slog.HandlerOptions{Level: slog.LevelDebug})
 	buf := NewLogBuffer()
@@ -295,6 +307,7 @@ func TestTeeHandler_WithGroup(t *testing.T) {
 }
 
 func TestTeeHandler_Enabled(t *testing.T) {
+	t.Parallel()
 	var stdout bytes.Buffer
 	jsonHandler := slog.NewJSONHandler(&stdout, &slog.HandlerOptions{Level: slog.LevelWarn})
 	buf := NewLogBuffer()
@@ -310,6 +323,7 @@ func TestTeeHandler_Enabled(t *testing.T) {
 }
 
 func TestTeeHandler_WithGroupEmpty(t *testing.T) {
+	t.Parallel()
 	var stdout bytes.Buffer
 	jsonHandler := slog.NewJSONHandler(&stdout, &slog.HandlerOptions{Level: slog.LevelDebug})
 	buf := NewLogBuffer()
@@ -324,6 +338,7 @@ func TestTeeHandler_WithGroupEmpty(t *testing.T) {
 }
 
 func TestLevelToSlog_UnknownLevel(t *testing.T) {
+	t.Parallel()
 	// Unknown level strings should map to DEBUG.
 	if got := levelToSlog("UNKNOWN"); got != slog.LevelDebug {
 		t.Errorf("levelToSlog(\"UNKNOWN\") = %v, want DEBUG", got)
@@ -334,6 +349,7 @@ func TestLevelToSlog_UnknownLevel(t *testing.T) {
 }
 
 func TestTeeHandler_FilterByComponent(t *testing.T) {
+	t.Parallel()
 	var stdout bytes.Buffer
 	jsonHandler := slog.NewJSONHandler(&stdout, &slog.HandlerOptions{Level: slog.LevelDebug})
 	buf := NewLogBuffer()

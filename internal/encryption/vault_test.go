@@ -95,6 +95,7 @@ func newTestVaultProvider(t *testing.T, ts *httptest.Server) *VaultKeyProvider {
 }
 
 func TestVaultKeyProvider_WrapUnwrapRoundTrip(t *testing.T) {
+	t.Parallel()
 	ts := newFakeVault(t)
 	p := newTestVaultProvider(t, ts)
 
@@ -117,6 +118,7 @@ func TestVaultKeyProvider_WrapUnwrapRoundTrip(t *testing.T) {
 }
 
 func TestVaultKeyProvider_WrapDEK_ErrorResponse(t *testing.T) {
+	t.Parallel()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/transit/encrypt/test-key", func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "permission denied", http.StatusForbidden)
@@ -142,6 +144,7 @@ func TestVaultKeyProvider_WrapDEK_ErrorResponse(t *testing.T) {
 }
 
 func TestVaultKeyProvider_UnwrapDEK_ErrorResponse(t *testing.T) {
+	t.Parallel()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/transit/decrypt/test-key", func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "permission denied", http.StatusForbidden)
@@ -167,6 +170,7 @@ func TestVaultKeyProvider_UnwrapDEK_ErrorResponse(t *testing.T) {
 }
 
 func TestVaultKeyProvider_RenewToken(t *testing.T) {
+	t.Parallel()
 	var renewCalls atomic.Int32
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/auth/token/renew-self", func(w http.ResponseWriter, _ *http.Request) {
@@ -203,6 +207,7 @@ func TestVaultKeyProvider_RenewToken(t *testing.T) {
 }
 
 func TestVaultKeyProvider_TokenFile(t *testing.T) {
+	t.Parallel()
 	ts := newFakeVault(t)
 
 	tokenFile := filepath.Join(t.TempDir(), "vault-token")
@@ -245,6 +250,7 @@ func TestVaultKeyProvider_TokenFile(t *testing.T) {
 }
 
 func TestVaultKeyProvider_TokenFileEmpty(t *testing.T) {
+	t.Parallel()
 	tokenFile := filepath.Join(t.TempDir(), "empty-token")
 	if err := os.WriteFile(tokenFile, []byte(""), 0o600); err != nil {
 		t.Fatal(err)
@@ -262,6 +268,7 @@ func TestVaultKeyProvider_TokenFileEmpty(t *testing.T) {
 }
 
 func TestVaultKeyProvider_TokenFileMissing(t *testing.T) {
+	t.Parallel()
 	_, err := NewVaultKeyProvider(&config.VaultTransitConfig{
 		Address:   "https://vault.example.com",
 		TokenFile: "/nonexistent/path/token",
@@ -274,8 +281,9 @@ func TestVaultKeyProvider_TokenFileMissing(t *testing.T) {
 }
 
 func TestVaultKeyProvider_TokenFileInsecurePermissions(t *testing.T) {
+	t.Parallel()
 	tokenFile := filepath.Join(t.TempDir(), "world-readable-token")
-	if err := os.WriteFile(tokenFile, []byte("secret-token"), 0o644); err != nil {
+	if err := os.WriteFile(tokenFile, []byte("secret-token"), 0o644); err != nil { //nolint:gosec // G306: intentionally world-readable to test permission validation
 		t.Fatal(err)
 	}
 
@@ -294,8 +302,9 @@ func TestVaultKeyProvider_TokenFileInsecurePermissions(t *testing.T) {
 }
 
 func TestVaultKeyProvider_TokenFileGroupReadable(t *testing.T) {
+	t.Parallel()
 	tokenFile := filepath.Join(t.TempDir(), "group-readable-token")
-	if err := os.WriteFile(tokenFile, []byte("secret-token"), 0o640); err != nil {
+	if err := os.WriteFile(tokenFile, []byte("secret-token"), 0o640); err != nil { //nolint:gosec // G306: intentionally group-readable to test permission validation
 		t.Fatal(err)
 	}
 
@@ -311,6 +320,7 @@ func TestVaultKeyProvider_TokenFileGroupReadable(t *testing.T) {
 }
 
 func TestVaultKeyProvider_Close(t *testing.T) {
+	t.Parallel()
 	ts := newFakeVault(t)
 	p := newTestVaultProvider(t, ts)
 
@@ -320,6 +330,7 @@ func TestVaultKeyProvider_Close(t *testing.T) {
 }
 
 func TestVaultKeyProvider_DefaultRenewInterval(t *testing.T) {
+	t.Parallel()
 	ts := newFakeVault(t)
 	p, err := NewVaultKeyProvider(&config.VaultTransitConfig{
 		Address:   ts.URL,

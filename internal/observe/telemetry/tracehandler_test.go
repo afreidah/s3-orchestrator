@@ -24,6 +24,7 @@ import (
 // -------------------------------------------------------------------------
 
 func TestTraceHandler_NoSpan(t *testing.T) {
+	t.Parallel()
 	var buf bytes.Buffer
 	inner := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})
 	handler := NewTraceHandler(inner)
@@ -45,6 +46,7 @@ func TestTraceHandler_NoSpan(t *testing.T) {
 }
 
 func TestTraceHandler_WithSpan(t *testing.T) {
+	t.Parallel()
 	var buf bytes.Buffer
 	inner := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})
 	handler := NewTraceHandler(inner)
@@ -80,6 +82,7 @@ func TestTraceHandler_WithSpan(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestTraceHandler_WithAttrs(t *testing.T) {
+	t.Parallel()
 	var buf bytes.Buffer
 	inner := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})
 	handler := NewTraceHandler(inner)
@@ -110,6 +113,7 @@ func TestTraceHandler_WithAttrs(t *testing.T) {
 }
 
 func TestTraceHandler_WithGroup(t *testing.T) {
+	t.Parallel()
 	var buf bytes.Buffer
 	inner := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})
 	handler := NewTraceHandler(inner)
@@ -136,6 +140,7 @@ func TestTraceHandler_WithGroup(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestTraceHandler_Enabled(t *testing.T) {
+	t.Parallel()
 	inner := slog.NewJSONHandler(&bytes.Buffer{}, &slog.HandlerOptions{Level: slog.LevelWarn})
 	handler := NewTraceHandler(inner)
 

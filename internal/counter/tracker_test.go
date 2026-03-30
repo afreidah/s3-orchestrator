@@ -18,6 +18,7 @@ import (
 )
 
 func TestNewUsageTracker_NilLimits(t *testing.T) {
+	t.Parallel()
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), nil)
 	// Should not panic; nil limits treated as empty map.
 	if tracker.NearLimit(0.8) {
@@ -26,6 +27,7 @@ func TestNewUsageTracker_NilLimits(t *testing.T) {
 }
 
 func TestNearLimit_BelowThreshold(t *testing.T) {
+	t.Parallel()
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), map[string]store.UsageLimits{
 		"b1": {APIRequestLimit: 1000, EgressByteLimit: 1000},
 	})
@@ -37,6 +39,7 @@ func TestNearLimit_BelowThreshold(t *testing.T) {
 }
 
 func TestNearLimit_AboveThreshold(t *testing.T) {
+	t.Parallel()
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), map[string]store.UsageLimits{
 		"b1": {APIRequestLimit: 1000},
 	})
@@ -48,6 +51,7 @@ func TestNearLimit_AboveThreshold(t *testing.T) {
 }
 
 func TestNearLimit_NoLimitsConfigured(t *testing.T) {
+	t.Parallel()
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), map[string]store.UsageLimits{
 		"b1": {}, // all zero = unlimited
 	})
@@ -59,6 +63,7 @@ func TestNearLimit_NoLimitsConfigured(t *testing.T) {
 }
 
 func TestNearLimit_ZeroLimitDimension(t *testing.T) {
+	t.Parallel()
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), map[string]store.UsageLimits{
 		"b1": {APIRequestLimit: 0, EgressByteLimit: 1000}, // API unlimited, egress limited
 	})
@@ -70,6 +75,7 @@ func TestNearLimit_ZeroLimitDimension(t *testing.T) {
 }
 
 func TestNearLimit_UnflushedCounters(t *testing.T) {
+	t.Parallel()
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), map[string]store.UsageLimits{
 		"b1": {EgressByteLimit: 1000},
 	})
@@ -82,6 +88,7 @@ func TestNearLimit_UnflushedCounters(t *testing.T) {
 }
 
 func TestNearLimit_MultipleBackends(t *testing.T) {
+	t.Parallel()
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1", "b2"}), map[string]store.UsageLimits{
 		"b1": {APIRequestLimit: 1000},
 		"b2": {APIRequestLimit: 1000},
@@ -99,6 +106,7 @@ func TestNearLimit_MultipleBackends(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestWithinLimits_AllWithinLimits(t *testing.T) {
+	t.Parallel()
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), map[string]store.UsageLimits{
 		"b1": {APIRequestLimit: 1000, EgressByteLimit: 1000, IngressByteLimit: 1000},
 	})
@@ -108,6 +116,7 @@ func TestWithinLimits_AllWithinLimits(t *testing.T) {
 }
 
 func TestWithinLimits_APILimitExceeded(t *testing.T) {
+	t.Parallel()
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), map[string]store.UsageLimits{
 		"b1": {APIRequestLimit: 100},
 	})
@@ -119,6 +128,7 @@ func TestWithinLimits_APILimitExceeded(t *testing.T) {
 }
 
 func TestWithinLimits_EgressLimitExceeded(t *testing.T) {
+	t.Parallel()
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), map[string]store.UsageLimits{
 		"b1": {EgressByteLimit: 1000},
 	})
@@ -130,6 +140,7 @@ func TestWithinLimits_EgressLimitExceeded(t *testing.T) {
 }
 
 func TestWithinLimits_IngressLimitExceeded(t *testing.T) {
+	t.Parallel()
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), map[string]store.UsageLimits{
 		"b1": {IngressByteLimit: 500},
 	})
@@ -141,6 +152,7 @@ func TestWithinLimits_IngressLimitExceeded(t *testing.T) {
 }
 
 func TestWithinLimits_NoLimitsConfigured(t *testing.T) {
+	t.Parallel()
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), nil)
 
 	if !tracker.WithinLimits("b1", 999999, 999999, 999999) {
@@ -149,6 +161,7 @@ func TestWithinLimits_NoLimitsConfigured(t *testing.T) {
 }
 
 func TestWithinLimits_UnknownBackend(t *testing.T) {
+	t.Parallel()
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), map[string]store.UsageLimits{
 		"b1": {APIRequestLimit: 100},
 	})
@@ -159,6 +172,7 @@ func TestWithinLimits_UnknownBackend(t *testing.T) {
 }
 
 func TestWithinLimits_IncludesUnflushedCounters(t *testing.T) {
+	t.Parallel()
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), map[string]store.UsageLimits{
 		"b1": {APIRequestLimit: 100},
 	})
@@ -178,6 +192,7 @@ func TestWithinLimits_IncludesUnflushedCounters(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestBackendsWithinLimits_FiltersCorrectly(t *testing.T) {
+	t.Parallel()
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1", "b2"}), map[string]store.UsageLimits{
 		"b1": {APIRequestLimit: 10},
 		"b2": {APIRequestLimit: 1000},
@@ -195,6 +210,7 @@ func TestBackendsWithinLimits_FiltersCorrectly(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestUpdateLimits_GetLimits_RoundTrip(t *testing.T) {
+	t.Parallel()
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), nil)
 	newLimits := map[string]store.UsageLimits{
 		"b1": {APIRequestLimit: 500},
@@ -208,6 +224,7 @@ func TestUpdateLimits_GetLimits_RoundTrip(t *testing.T) {
 }
 
 func TestGetLimits_ReturnsCopy(t *testing.T) {
+	t.Parallel()
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), map[string]store.UsageLimits{
 		"b1": {APIRequestLimit: 100},
 	})
@@ -226,6 +243,7 @@ func TestGetLimits_ReturnsCopy(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestResetBaselines(t *testing.T) {
+	t.Parallel()
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1", "b2"}), map[string]store.UsageLimits{
 		"b1": {APIRequestLimit: 1000},
 		"b2": {APIRequestLimit: 1000},
@@ -245,6 +263,7 @@ func TestResetBaselines(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestFlushUsage_SwapsAndFlushes(t *testing.T) {
+	t.Parallel()
 	backend := NewLocalCounterBackend([]string{"b1"})
 	tracker := NewUsageTracker(backend, nil)
 	tracker.Record("b1", 10, 100, 50)
@@ -273,6 +292,7 @@ func TestFlushUsage_SwapsAndFlushes(t *testing.T) {
 }
 
 func TestFlushUsage_SkipsBackendsInSkipMap(t *testing.T) {
+	t.Parallel()
 	backend := NewLocalCounterBackend([]string{"b1"})
 	tracker := NewUsageTracker(backend, nil)
 	tracker.Record("b1", 10, 0, 0)
@@ -290,6 +310,7 @@ func TestFlushUsage_SkipsBackendsInSkipMap(t *testing.T) {
 }
 
 func TestFlushUsage_RestoresOnError(t *testing.T) {
+	t.Parallel()
 	cb := NewLocalCounterBackend([]string{"b1"})
 	tracker := NewUsageTracker(cb, nil)
 	tracker.Record("b1", 10, 0, 0)
@@ -314,6 +335,7 @@ func TestFlushUsage_RestoresOnError(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestBackend_ReturnsUnderlyingBackend(t *testing.T) {
+	t.Parallel()
 	cb := NewLocalCounterBackend([]string{"b1"})
 	tracker := NewUsageTracker(cb, nil)
 	if tracker.Backend() != cb {
@@ -326,6 +348,7 @@ func TestBackend_ReturnsUnderlyingBackend(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestCurrentPeriod_Format(t *testing.T) {
+	t.Parallel()
 	p := CurrentPeriod()
 	if len(p) != 7 || p[4] != '-' {
 		t.Errorf("CurrentPeriod() = %q, want YYYY-MM format", p)

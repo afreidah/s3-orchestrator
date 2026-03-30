@@ -148,7 +148,7 @@ func runInitInteractive(configPath string, in *os.File, out *os.File) error {
 		return fmt.Errorf("generated config is invalid: %w", err)
 	}
 
-	if err := os.WriteFile(configPath, []byte(output), 0644); err != nil {
+	if err := os.WriteFile(configPath, []byte(output), 0600); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}
 

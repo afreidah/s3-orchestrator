@@ -27,6 +27,7 @@ func testDEK() []byte {
 }
 
 func TestChunkNonce_UniquePerIndex(t *testing.T) {
+	t.Parallel()
 	base := make([]byte, NonceSize)
 	for i := range base {
 		base[i] = 0xff
@@ -45,6 +46,7 @@ func TestChunkNonce_UniquePerIndex(t *testing.T) {
 }
 
 func TestChunkNonce_DoesNotMutateBase(t *testing.T) {
+	t.Parallel()
 	base := make([]byte, NonceSize)
 	copy(base, "base-nonce!!")
 	original := make([]byte, NonceSize)
@@ -58,6 +60,7 @@ func TestChunkNonce_DoesNotMutateBase(t *testing.T) {
 }
 
 func TestRoundTrip_EmptyInput(t *testing.T) {
+	t.Parallel()
 	dek := testDEK()
 	er, err := newEncryptReader(bytes.NewReader(nil), dek, 1024)
 	if err != nil {
@@ -76,26 +79,32 @@ func TestRoundTrip_EmptyInput(t *testing.T) {
 }
 
 func TestRoundTrip_ExactChunkSize(t *testing.T) {
+	t.Parallel()
 	testRoundTrip(t, 1024, 1024)
 }
 
 func TestRoundTrip_OneByteOverChunk(t *testing.T) {
+	t.Parallel()
 	testRoundTrip(t, 1024, 1025)
 }
 
 func TestRoundTrip_OneByteUnderChunk(t *testing.T) {
+	t.Parallel()
 	testRoundTrip(t, 1024, 1023)
 }
 
 func TestRoundTrip_SmallChunkLargeInput(t *testing.T) {
+	t.Parallel()
 	testRoundTrip(t, 64, 1000)
 }
 
 func TestRoundTrip_SingleByte(t *testing.T) {
+	t.Parallel()
 	testRoundTrip(t, 1024, 1)
 }
 
 func TestRoundTrip_MultipleFullChunks(t *testing.T) {
+	t.Parallel()
 	testRoundTrip(t, 256, 256*5)
 }
 
@@ -145,6 +154,7 @@ func testRoundTrip(t *testing.T, chunkSize, inputSize int) {
 }
 
 func TestChunkParseHeader_InvalidMagic(t *testing.T) {
+	t.Parallel()
 	hdr := make([]byte, HeaderSize)
 	copy(hdr[0:4], "BAAD")
 	_, _, err := ParseHeader(bytes.NewReader(hdr))
@@ -154,6 +164,7 @@ func TestChunkParseHeader_InvalidMagic(t *testing.T) {
 }
 
 func TestChunkParseHeader_UnsupportedVersion(t *testing.T) {
+	t.Parallel()
 	hdr := make([]byte, HeaderSize)
 	copy(hdr[0:4], headerMagic[:])
 	hdr[4] = 0x99
@@ -164,6 +175,7 @@ func TestChunkParseHeader_UnsupportedVersion(t *testing.T) {
 }
 
 func TestChunkParseHeader_TooShort(t *testing.T) {
+	t.Parallel()
 	_, _, err := ParseHeader(bytes.NewReader([]byte("short")))
 	if err == nil {
 		t.Fatal("expected error for truncated header")
@@ -171,6 +183,7 @@ func TestChunkParseHeader_TooShort(t *testing.T) {
 }
 
 func TestChunkParseHeader_ValidRoundTrip(t *testing.T) {
+	t.Parallel()
 	hdr := make([]byte, HeaderSize)
 	copy(hdr[0:4], headerMagic[:])
 	hdr[4] = 0x01
@@ -190,6 +203,7 @@ func TestChunkParseHeader_ValidRoundTrip(t *testing.T) {
 }
 
 func TestCiphertextSize(t *testing.T) {
+	t.Parallel()
 	dek := testDEK()
 	chunkSize := 1024
 	inputSize := 2500 // 3 chunks: 1024 + 1024 + 452
@@ -214,6 +228,7 @@ func TestCiphertextSize(t *testing.T) {
 }
 
 func TestDecryptReader_ChunkTooShort(t *testing.T) {
+	t.Parallel()
 	dek := testDEK()
 	// Feed a truncated chunk (just a few bytes, less than NonceSize+TagSize)
 	short := make([]byte, 5)
@@ -228,6 +243,7 @@ func TestDecryptReader_ChunkTooShort(t *testing.T) {
 }
 
 func TestDecryptReader_NonceMismatch(t *testing.T) {
+	t.Parallel()
 	dek := testDEK()
 	chunkSize := 64
 

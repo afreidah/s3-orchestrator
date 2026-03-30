@@ -12,6 +12,7 @@ package s3api
 
 import (
 	"net"
+	"context"
 	"net/http"
 	"testing"
 )
@@ -33,7 +34,7 @@ func FuzzExtractClientIP(f *testing.F) {
 	trustedNets := []*net.IPNet{trusted}
 
 	f.Fuzz(func(t *testing.T, remoteAddr, xff string) {
-		r, err := http.NewRequest("GET", "/", nil)
+		r, err := http.NewRequestWithContext(context.Background(), "GET", "/", nil)
 		if err != nil {
 			return
 		}

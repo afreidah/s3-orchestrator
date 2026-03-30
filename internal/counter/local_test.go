@@ -12,6 +12,7 @@ package counter
 import "testing"
 
 func TestLocalCounterBackend_Add_And_Load(t *testing.T) {
+	t.Parallel()
 	cb := NewLocalCounterBackend([]string{"b1"})
 
 	cb.Add("b1", FieldAPIRequests, 5)
@@ -30,6 +31,7 @@ func TestLocalCounterBackend_Add_And_Load(t *testing.T) {
 }
 
 func TestLocalCounterBackend_Add_Accumulates(t *testing.T) {
+	t.Parallel()
 	cb := NewLocalCounterBackend([]string{"b1"})
 
 	cb.Add("b1", FieldAPIRequests, 3)
@@ -41,6 +43,7 @@ func TestLocalCounterBackend_Add_Accumulates(t *testing.T) {
 }
 
 func TestLocalCounterBackend_Swap_ReturnsAndResets(t *testing.T) {
+	t.Parallel()
 	cb := NewLocalCounterBackend([]string{"b1"})
 
 	cb.Add("b1", FieldAPIRequests, 42)
@@ -55,6 +58,7 @@ func TestLocalCounterBackend_Swap_ReturnsAndResets(t *testing.T) {
 }
 
 func TestLocalCounterBackend_AddAll(t *testing.T) {
+	t.Parallel()
 	cb := NewLocalCounterBackend([]string{"b1"})
 
 	cb.AddAll("b1", 3, 1024, 2048)
@@ -72,6 +76,7 @@ func TestLocalCounterBackend_AddAll(t *testing.T) {
 }
 
 func TestLocalCounterBackend_AddAll_SkipsZero(t *testing.T) {
+	t.Parallel()
 	cb := NewLocalCounterBackend([]string{"b1"})
 
 	cb.AddAll("b1", 0, 0, 0)
@@ -83,6 +88,7 @@ func TestLocalCounterBackend_AddAll_SkipsZero(t *testing.T) {
 }
 
 func TestLocalCounterBackend_LoadAll_UnknownBackend(t *testing.T) {
+	t.Parallel()
 	cb := NewLocalCounterBackend([]string{"b1"})
 
 	result := cb.LoadAll("unknown")
@@ -92,6 +98,7 @@ func TestLocalCounterBackend_LoadAll_UnknownBackend(t *testing.T) {
 }
 
 func TestLocalCounterBackend_UnknownBackend_NoOp(t *testing.T) {
+	t.Parallel()
 	cb := NewLocalCounterBackend([]string{"b1"})
 
 	// Should not panic
@@ -107,6 +114,7 @@ func TestLocalCounterBackend_UnknownBackend_NoOp(t *testing.T) {
 }
 
 func TestLocalCounterBackend_UnknownField(t *testing.T) {
+	t.Parallel()
 	cb := NewLocalCounterBackend([]string{"b1"})
 
 	cb.Add("b1", "bogus_field", 100)
@@ -119,6 +127,7 @@ func TestLocalCounterBackend_UnknownField(t *testing.T) {
 }
 
 func TestLocalCounterBackend_SwapAll_ReturnsAndResets(t *testing.T) {
+	t.Parallel()
 	cb := NewLocalCounterBackend([]string{"b1"})
 
 	cb.AddAll("b1", 10, 2048, 4096)
@@ -142,6 +151,7 @@ func TestLocalCounterBackend_SwapAll_ReturnsAndResets(t *testing.T) {
 }
 
 func TestLocalCounterBackend_SwapAll_UnknownBackend(t *testing.T) {
+	t.Parallel()
 	cb := NewLocalCounterBackend([]string{"b1"})
 
 	result := cb.SwapAll("unknown")
@@ -151,6 +161,7 @@ func TestLocalCounterBackend_SwapAll_UnknownBackend(t *testing.T) {
 }
 
 func TestLocalCounterBackend_MultipleBackends(t *testing.T) {
+	t.Parallel()
 	cb := NewLocalCounterBackend([]string{"b1", "b2"})
 
 	cb.Add("b1", FieldAPIRequests, 10)
@@ -165,6 +176,7 @@ func TestLocalCounterBackend_MultipleBackends(t *testing.T) {
 }
 
 func TestLocalCounterBackend_Backends(t *testing.T) {
+	t.Parallel()
 	cb := NewLocalCounterBackend([]string{"alpha", "beta"})
 
 	names := cb.Backends()
@@ -182,6 +194,7 @@ func TestLocalCounterBackend_Backends(t *testing.T) {
 }
 
 func TestLocalCounterBackend_NilInit(t *testing.T) {
+	t.Parallel()
 	cb := NewLocalCounterBackend(nil)
 
 	// Should not panic

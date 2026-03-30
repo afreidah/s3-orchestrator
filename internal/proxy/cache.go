@@ -43,7 +43,7 @@ func (c *LocationCache) Get(key string) (string, bool) {
 // Set stores a key-to-backend mapping with the configured TTL. A random
 // jitter of +/-20% is applied to prevent synchronized cache expiry storms.
 func (c *LocationCache) Set(key, backend string) {
-	jitter := 0.8 + rand.Float64()*0.4 // [0.8, 1.2)
+	jitter := 0.8 + rand.Float64()*0.4 //nolint:gosec // G404: cache jitter does not require crypto-strength randomness
 	c.cache.SetWithTTL(key, backend, time.Duration(float64(c.ttl)*jitter))
 }
 

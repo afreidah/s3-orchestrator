@@ -22,6 +22,7 @@ import (
 // -------------------------------------------------------------------------
 
 func TestInitTracer_Disabled(t *testing.T) {
+	t.Parallel()
 	cfg := config.TracingConfig{
 		Enabled: false,
 	}
@@ -45,6 +46,7 @@ func TestInitTracer_Disabled(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestTracer_ReturnsNonNil(t *testing.T) {
+	t.Parallel()
 	tracer := Tracer()
 	if tracer == nil {
 		t.Fatal("expected non-nil tracer")
@@ -56,6 +58,7 @@ func TestTracer_ReturnsNonNil(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestStartSpan_ReturnsContextAndSpan(t *testing.T) {
+	t.Parallel()
 	ctx, span := StartSpan(context.Background(), "test-span")
 	if ctx == nil {
 		t.Fatal("expected non-nil context")
@@ -67,6 +70,7 @@ func TestStartSpan_ReturnsContextAndSpan(t *testing.T) {
 }
 
 func TestStartSpan_WithAttributes(t *testing.T) {
+	t.Parallel()
 	ctx, span := StartSpan(context.Background(), "test-span",
 		AttrObjectKey.String("test-key"),
 		AttrBackendName.String("test-backend"),
@@ -85,6 +89,7 @@ func TestStartSpan_WithAttributes(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestRequestAttributes_ReturnsCorrectCount(t *testing.T) {
+	t.Parallel()
 	attrs := RequestAttributes("GET", "/bucket/key", "mybucket", "mykey", "192.168.1.1")
 	if len(attrs) != 5 {
 		t.Errorf("expected 5 attributes, got %d", len(attrs))
@@ -96,6 +101,7 @@ func TestRequestAttributes_ReturnsCorrectCount(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestBackendAttributes_ReturnsCorrectCount(t *testing.T) {
+	t.Parallel()
 	attrs := BackendAttributes("PutObject", "b1", "https://s3.example.com", "bucket", "key")
 	if len(attrs) != 5 {
 		t.Errorf("expected 5 attributes, got %d", len(attrs))

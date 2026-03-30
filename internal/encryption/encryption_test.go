@@ -13,7 +13,7 @@ package encryption
 import (
 	"bytes"
 	"context"
-	"crypto/md5"
+	"crypto/md5" //nolint:gosec // G501: MD5 used to verify S3 ETag computation
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -46,6 +46,7 @@ func testEncryptor(t *testing.T, chunkSize int) *Encryptor {
 // -------------------------------------------------------------------------
 
 func TestEncryptDecrypt_Empty(t *testing.T) {
+	t.Parallel()
 	enc := testEncryptor(t, 64)
 	ctx := context.Background()
 
@@ -80,6 +81,7 @@ func TestEncryptDecrypt_Empty(t *testing.T) {
 }
 
 func TestEncryptDecrypt_OneByte(t *testing.T) {
+	t.Parallel()
 	enc := testEncryptor(t, 64)
 	ctx := context.Background()
 	original := []byte{0x42}
@@ -110,6 +112,7 @@ func TestEncryptDecrypt_OneByte(t *testing.T) {
 }
 
 func TestEncryptDecrypt_ExactlyOneChunk(t *testing.T) {
+	t.Parallel()
 	const chunkSize = 128
 	enc := testEncryptor(t, chunkSize)
 	ctx := context.Background()
@@ -143,6 +146,7 @@ func TestEncryptDecrypt_ExactlyOneChunk(t *testing.T) {
 }
 
 func TestEncryptDecrypt_MultiChunk(t *testing.T) {
+	t.Parallel()
 	const chunkSize = 64
 	enc := testEncryptor(t, chunkSize)
 	ctx := context.Background()
@@ -181,6 +185,7 @@ func TestEncryptDecrypt_MultiChunk(t *testing.T) {
 }
 
 func TestEncryptDecrypt_LargePayload(t *testing.T) {
+	t.Parallel()
 	const chunkSize = 256
 	enc := testEncryptor(t, chunkSize)
 	ctx := context.Background()
@@ -219,6 +224,7 @@ func TestEncryptDecrypt_LargePayload(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestDecryptRange_FirstChunk(t *testing.T) {
+	t.Parallel()
 	const chunkSize = 64
 	enc := testEncryptor(t, chunkSize)
 	ctx := context.Background()
@@ -268,6 +274,7 @@ func TestDecryptRange_FirstChunk(t *testing.T) {
 }
 
 func TestDecryptRange_CrossChunkBoundary(t *testing.T) {
+	t.Parallel()
 	const chunkSize = 64
 	enc := testEncryptor(t, chunkSize)
 	ctx := context.Background()
@@ -323,6 +330,7 @@ func TestDecryptRange_CrossChunkBoundary(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestCiphertextSize_Zero(t *testing.T) {
+	t.Parallel()
 	enc := testEncryptor(t, 64)
 	got := enc.CiphertextSize(0)
 	if got != int64(HeaderSize) {
@@ -331,6 +339,7 @@ func TestCiphertextSize_Zero(t *testing.T) {
 }
 
 func TestCiphertextSize_OneChunk(t *testing.T) {
+	t.Parallel()
 	const chunkSize = 64
 	enc := testEncryptor(t, chunkSize)
 	// 1 byte → 1 chunk
@@ -342,6 +351,7 @@ func TestCiphertextSize_OneChunk(t *testing.T) {
 }
 
 func TestCiphertextSize_ExactChunk(t *testing.T) {
+	t.Parallel()
 	const chunkSize = 64
 	enc := testEncryptor(t, chunkSize)
 	got := enc.CiphertextSize(int64(chunkSize))
@@ -352,6 +362,7 @@ func TestCiphertextSize_ExactChunk(t *testing.T) {
 }
 
 func TestCiphertextSize_MultiChunk(t *testing.T) {
+	t.Parallel()
 	const chunkSize = 64
 	enc := testEncryptor(t, chunkSize)
 	// 2.5 chunks
@@ -364,6 +375,7 @@ func TestCiphertextSize_MultiChunk(t *testing.T) {
 }
 
 func TestCiphertextSize_MatchesActualOutput(t *testing.T) {
+	t.Parallel()
 	const chunkSize = 64
 	enc := testEncryptor(t, chunkSize)
 	ctx := context.Background()
@@ -395,11 +407,12 @@ func TestCiphertextSize_MatchesActualOutput(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestEncrypt_PlaintextMD5(t *testing.T) {
+	t.Parallel()
 	enc := testEncryptor(t, 64)
 	ctx := context.Background()
 
 	original := []byte("hello, world!")
-	expectedMD5 := md5.Sum(original)
+	expectedMD5 := md5.Sum(original) //nolint:gosec // G401: MD5 used to verify S3 ETag computation
 	expectedHex := hex.EncodeToString(expectedMD5[:])
 
 	result, err := enc.Encrypt(ctx, bytes.NewReader(original), int64(len(original)))
@@ -422,6 +435,7 @@ func TestEncrypt_PlaintextMD5(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestPackUnpackKeyData_RoundTrip(t *testing.T) {
+	t.Parallel()
 	baseNonce := make([]byte, NonceSize)
 	_, _ = rand.Read(baseNonce)
 
@@ -444,6 +458,7 @@ func TestPackUnpackKeyData_RoundTrip(t *testing.T) {
 }
 
 func TestUnpackKeyData_TooShort(t *testing.T) {
+	t.Parallel()
 	_, _, err := UnpackKeyData(make([]byte, NonceSize))
 	if err == nil {
 		t.Error("expected error for data <= NonceSize")
@@ -455,6 +470,7 @@ func TestUnpackKeyData_TooShort(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestParseHeader_Valid(t *testing.T) {
+	t.Parallel()
 	enc := testEncryptor(t, 256)
 	ctx := context.Background()
 
@@ -485,6 +501,7 @@ func TestParseHeader_Valid(t *testing.T) {
 }
 
 func TestParseHeader_InvalidMagic(t *testing.T) {
+	t.Parallel()
 	hdr := make([]byte, HeaderSize)
 	copy(hdr[0:4], "XXXX")
 	_, _, err := ParseHeader(bytes.NewReader(hdr))
@@ -494,6 +511,7 @@ func TestParseHeader_InvalidMagic(t *testing.T) {
 }
 
 func TestParseHeader_UnsupportedVersion(t *testing.T) {
+	t.Parallel()
 	hdr := make([]byte, HeaderSize)
 	copy(hdr[0:4], headerMagic[:])
 	hdr[4] = 0x99
@@ -504,6 +522,7 @@ func TestParseHeader_UnsupportedVersion(t *testing.T) {
 }
 
 func TestParseHeader_TooShort(t *testing.T) {
+	t.Parallel()
 	_, _, err := ParseHeader(bytes.NewReader(make([]byte, 10)))
 	if err == nil {
 		t.Error("expected error for truncated header")
@@ -515,6 +534,7 @@ func TestParseHeader_TooShort(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestEncryptor_ChunkSize(t *testing.T) {
+	t.Parallel()
 	enc := testEncryptor(t, 4096)
 	if enc.ChunkSize() != 4096 {
 		t.Errorf("ChunkSize = %d, want 4096", enc.ChunkSize())
@@ -522,6 +542,7 @@ func TestEncryptor_ChunkSize(t *testing.T) {
 }
 
 func TestNewEncryptor_InvalidChunkSize(t *testing.T) {
+	t.Parallel()
 	for _, cs := range []int{0, -1, -100} {
 		_, err := NewEncryptor(testKeyProvider(t), cs)
 		if err == nil {
@@ -531,6 +552,7 @@ func TestNewEncryptor_InvalidChunkSize(t *testing.T) {
 }
 
 func TestEncryptor_Provider(t *testing.T) {
+	t.Parallel()
 	p := testKeyProvider(t)
 	enc, err := NewEncryptor(p, 64)
 	if err != nil {
@@ -546,6 +568,7 @@ func TestEncryptor_Provider(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestDecrypt_BadWrappedDEK(t *testing.T) {
+	t.Parallel()
 	enc := testEncryptor(t, 64)
 	ctx := context.Background()
 
@@ -565,6 +588,7 @@ func TestDecrypt_BadWrappedDEK(t *testing.T) {
 }
 
 func TestDecrypt_CorruptedCiphertext(t *testing.T) {
+	t.Parallel()
 	enc := testEncryptor(t, 64)
 	ctx := context.Background()
 
@@ -592,6 +616,7 @@ func TestDecrypt_CorruptedCiphertext(t *testing.T) {
 }
 
 func TestDecryptRange_BadWrappedDEK(t *testing.T) {
+	t.Parallel()
 	enc := testEncryptor(t, 64)
 	ctx := context.Background()
 
@@ -607,6 +632,7 @@ func TestDecryptRange_BadWrappedDEK(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestEncryptDecrypt_SmallReads(t *testing.T) {
+	t.Parallel()
 	enc := testEncryptor(t, 64)
 	ctx := context.Background()
 
@@ -664,6 +690,7 @@ func TestEncryptDecrypt_SmallReads(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestEncryptWithDEK_RoundTrip(t *testing.T) {
+	t.Parallel()
 	enc := testEncryptor(t, 64)
 	ctx := context.Background()
 	original := make([]byte, 200)
@@ -717,6 +744,7 @@ func TestEncryptWithDEK_RoundTrip(t *testing.T) {
 }
 
 func TestEncryptWithDEK_DifferentNonce(t *testing.T) {
+	t.Parallel()
 	enc := testEncryptor(t, 64)
 	ctx := context.Background()
 	data := []byte("test data for nonce check")

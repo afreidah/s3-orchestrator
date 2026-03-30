@@ -27,6 +27,7 @@ func newTestCache(t *testing.T, maxSize, maxObjSize int64, ttl time.Duration) *M
 }
 
 func TestMemoryCache_PutGet(t *testing.T) {
+	t.Parallel()
 	c := newTestCache(t, 1024, 512, time.Minute)
 
 	data := []byte("hello world")
@@ -50,6 +51,7 @@ func TestMemoryCache_PutGet(t *testing.T) {
 }
 
 func TestMemoryCache_Miss(t *testing.T) {
+	t.Parallel()
 	c := newTestCache(t, 1024, 512, time.Minute)
 
 	_, ok := c.Get("nonexistent")
@@ -59,6 +61,7 @@ func TestMemoryCache_Miss(t *testing.T) {
 }
 
 func TestMemoryCache_TTLExpiry(t *testing.T) {
+	t.Parallel()
 	c := newTestCache(t, 1024, 512, 10*time.Millisecond)
 
 	if err := c.Put("key1", bytes.NewReader([]byte("data")), EntryMeta{}); err != nil {
@@ -85,6 +88,7 @@ func TestMemoryCache_TTLExpiry(t *testing.T) {
 }
 
 func TestMemoryCache_MaxObjectSize(t *testing.T) {
+	t.Parallel()
 	c := newTestCache(t, 1024, 100, time.Minute)
 
 	// Object larger than max_object_size should be silently rejected
@@ -104,6 +108,7 @@ func TestMemoryCache_MaxObjectSize(t *testing.T) {
 }
 
 func TestMemoryCache_LRUEviction(t *testing.T) {
+	t.Parallel()
 	// Cache can hold ~200 bytes. Each entry is ~100 bytes of data.
 	c := newTestCache(t, 250, 250, time.Minute)
 
@@ -146,6 +151,7 @@ func TestMemoryCache_LRUEviction(t *testing.T) {
 }
 
 func TestMemoryCache_Invalidate(t *testing.T) {
+	t.Parallel()
 	c := newTestCache(t, 1024, 512, time.Minute)
 
 	if err := c.Put("key1", bytes.NewReader([]byte("data")), EntryMeta{}); err != nil {
@@ -163,6 +169,7 @@ func TestMemoryCache_Invalidate(t *testing.T) {
 }
 
 func TestMemoryCache_OverwriteExisting(t *testing.T) {
+	t.Parallel()
 	c := newTestCache(t, 1024, 512, time.Minute)
 
 	if err := c.Put("key1", bytes.NewReader([]byte("v1")), EntryMeta{ETag: "e1"}); err != nil {
@@ -190,6 +197,7 @@ func TestMemoryCache_OverwriteExisting(t *testing.T) {
 }
 
 func TestMemoryCache_Stats(t *testing.T) {
+	t.Parallel()
 	c := newTestCache(t, 1024, 512, time.Minute)
 
 	stats := c.Stats()
@@ -212,6 +220,7 @@ func TestMemoryCache_Stats(t *testing.T) {
 }
 
 func TestMemoryCache_ConcurrentAccess(t *testing.T) {
+	t.Parallel()
 	c := newTestCache(t, 10240, 1024, time.Minute)
 
 	var wg sync.WaitGroup
@@ -220,7 +229,7 @@ func TestMemoryCache_ConcurrentAccess(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			key := string(rune('A' + i%26))
-			data := bytes.Repeat([]byte{byte(i)}, 50)
+			data := bytes.Repeat([]byte{byte(i)}, 50) //nolint:gosec // G115: test loop index, always < 256
 			_ = c.Put(key, bytes.NewReader(data), EntryMeta{})
 			c.Get(key)
 			c.Invalidate(key)
@@ -236,6 +245,7 @@ func TestMemoryCache_ConcurrentAccess(t *testing.T) {
 }
 
 func TestNewMemoryCache_Validation(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		cfg  MemoryConfig
@@ -257,6 +267,7 @@ func TestNewMemoryCache_Validation(t *testing.T) {
 }
 
 func TestMemoryCache_EntrySize(t *testing.T) {
+	t.Parallel()
 	entry := &Entry{
 		Data:        []byte("hello"),
 		ContentType: "text/plain",

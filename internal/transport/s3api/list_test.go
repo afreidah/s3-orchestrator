@@ -14,6 +14,7 @@ import (
 	"encoding/xml"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 	"io"
+	"context"
 	"net/http"
 	"strings"
 	"testing"
@@ -21,6 +22,7 @@ import (
 )
 
 func TestListObjectsV2_Success(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
 	now := time.Now()
 
@@ -59,6 +61,7 @@ func TestListObjectsV2_Success(t *testing.T) {
 }
 
 func TestListObjectsV2_WithDelimiter(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
 	now := time.Now()
 
@@ -92,6 +95,7 @@ func TestListObjectsV2_WithDelimiter(t *testing.T) {
 }
 
 func TestListObjectsV2_Pagination(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
 	now := time.Now()
 
@@ -137,6 +141,7 @@ func TestListObjectsV2_Pagination(t *testing.T) {
 }
 
 func TestListObjectsV2_Empty(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
 
 	mockStore.ListObjectsResp = &store.ListObjectsResult{
@@ -174,6 +179,7 @@ func TestListObjectsV2_Empty(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestListObjectsV1_Success(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
 	now := time.Now()
 
@@ -214,6 +220,7 @@ func TestListObjectsV1_Success(t *testing.T) {
 }
 
 func TestListObjectsV1_WithMarker(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
 	now := time.Now()
 
@@ -242,6 +249,7 @@ func TestListObjectsV1_WithMarker(t *testing.T) {
 }
 
 func TestListObjectsV1_StoreError(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
 	mockStore.ListObjectsErr = &store.S3Error{
 		StatusCode: 500,
@@ -258,6 +266,7 @@ func TestListObjectsV1_StoreError(t *testing.T) {
 }
 
 func TestListObjectsV1_Pagination(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
 	now := time.Now()
 
@@ -300,9 +309,11 @@ func TestListObjectsV1_Pagination(t *testing.T) {
 }
 
 func TestListObjectsV1_NoAuth(t *testing.T) {
+	t.Parallel()
 	ts, _, _ := newTestServer(t)
 
-	resp, err := http.Get(ts.URL + "/mybucket/")
+	getReq, _ := http.NewRequestWithContext(context.Background(), "GET", ts.URL + "/mybucket/", nil)
+	resp, err := http.DefaultClient.Do(getReq) //nolint:gosec // G704: test server URL is localhost, not tainted
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -15,6 +15,7 @@ import (
 	"encoding/xml"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 	"io"
+	"context"
 	"net/http"
 	"strings"
 	"testing"
@@ -26,6 +27,7 @@ import (
 // -------------------------------------------------------------------------
 
 func TestCreateMultipartUpload_Success(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
 
 	mockStore.GetMultipartResp = &store.MultipartUpload{
@@ -35,10 +37,10 @@ func TestCreateMultipartUpload_Success(t *testing.T) {
 		ContentType: "text/plain",
 	}
 
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/mybucket/testkey?uploads", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, ts.URL+"/mybucket/testkey?uploads", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.Header.Set("Content-Type", "text/plain")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL is localhost, not tainted
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,6 +67,7 @@ func TestCreateMultipartUpload_Success(t *testing.T) {
 }
 
 func TestCreateMultipartUpload_StoreError(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
 	mockStore.CreateMultipartErr = &store.S3Error{
 		StatusCode: 500,
@@ -72,9 +75,9 @@ func TestCreateMultipartUpload_StoreError(t *testing.T) {
 		Message:    "db error",
 	}
 
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/mybucket/testkey?uploads", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, ts.URL+"/mybucket/testkey?uploads", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL is localhost, not tainted
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,6 +89,7 @@ func TestCreateMultipartUpload_StoreError(t *testing.T) {
 }
 
 func TestCreateMultipartUpload_DefaultContentType(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
 
 	mockStore.GetMultipartResp = &store.MultipartUpload{
@@ -96,9 +100,9 @@ func TestCreateMultipartUpload_DefaultContentType(t *testing.T) {
 	}
 
 	// No Content-Type header — should default to application/octet-stream
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/mybucket/testkey?uploads", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, ts.URL+"/mybucket/testkey?uploads", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL is localhost, not tainted
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,12 +114,13 @@ func TestCreateMultipartUpload_DefaultContentType(t *testing.T) {
 }
 
 func TestCreateMultipartUpload_MetadataTooLarge(t *testing.T) {
+	t.Parallel()
 	ts, _, _ := newTestServer(t)
 
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/mybucket/testkey?uploads", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, ts.URL+"/mybucket/testkey?uploads", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.Header.Set("X-Amz-Meta-Big", strings.Repeat("x", maxUserMetadataBytes+1))
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL is localhost, not tainted
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,6 +136,7 @@ func TestCreateMultipartUpload_MetadataTooLarge(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestUploadPart_Success(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
 
 	mockStore.GetMultipartResp = &store.MultipartUpload{
@@ -141,10 +147,10 @@ func TestUploadPart_Success(t *testing.T) {
 	}
 
 	body := strings.NewReader("part-data")
-	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/mybucket/testkey?uploadId=upload-1&partNumber=1", body)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/testkey?uploadId=upload-1&partNumber=1", body)
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.ContentLength = int64(len("part-data"))
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL is localhost, not tainted
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,12 +166,13 @@ func TestUploadPart_Success(t *testing.T) {
 }
 
 func TestUploadPart_InvalidPartNumber(t *testing.T) {
+	t.Parallel()
 	ts, _, _ := newTestServer(t)
 
-	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/mybucket/testkey?uploadId=upload-1&partNumber=abc", strings.NewReader("data"))
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/testkey?uploadId=upload-1&partNumber=abc", strings.NewReader("data"))
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.ContentLength = 4
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL is localhost, not tainted
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,12 +184,13 @@ func TestUploadPart_InvalidPartNumber(t *testing.T) {
 }
 
 func TestUploadPart_ZeroPartNumber(t *testing.T) {
+	t.Parallel()
 	ts, _, _ := newTestServer(t)
 
-	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/mybucket/testkey?uploadId=upload-1&partNumber=0", strings.NewReader("data"))
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/testkey?uploadId=upload-1&partNumber=0", strings.NewReader("data"))
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.ContentLength = 4
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL is localhost, not tainted
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,12 +202,13 @@ func TestUploadPart_ZeroPartNumber(t *testing.T) {
 }
 
 func TestUploadPart_MissingContentLength(t *testing.T) {
+	t.Parallel()
 	ts, _, _ := newTestServer(t)
 
-	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/mybucket/testkey?uploadId=upload-1&partNumber=1", strings.NewReader("data"))
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/testkey?uploadId=upload-1&partNumber=1", strings.NewReader("data"))
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.ContentLength = -1
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,13 +220,14 @@ func TestUploadPart_MissingContentLength(t *testing.T) {
 }
 
 func TestUploadPart_EntityTooLarge(t *testing.T) {
+	t.Parallel()
 	ts, _, _ := newTestServer(t)
 
 	bigSize := int64(20 * 1024 * 1024)
-	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/mybucket/testkey?uploadId=upload-1&partNumber=1", io.LimitReader(neverEndingReader{}, bigSize))
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/testkey?uploadId=upload-1&partNumber=1", io.LimitReader(neverEndingReader{}, bigSize))
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.ContentLength = bigSize
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,6 +243,7 @@ func TestUploadPart_EntityTooLarge(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestCompleteMultipartUpload_Success(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, backend := newTestServer(t)
 
 	// Store has a multipart upload with one part
@@ -252,9 +263,9 @@ func TestCompleteMultipartUpload_Success(t *testing.T) {
 	mockStore.GetBackendResp = "b1"
 
 	xmlBody := `<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag>"part1"</ETag></Part></CompleteMultipartUpload>`
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/mybucket/testkey?uploadId=upload-1", strings.NewReader(xmlBody))
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, ts.URL+"/mybucket/testkey?uploadId=upload-1", strings.NewReader(xmlBody))
 	req.Header.Set("X-Proxy-Token", "test-token")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,11 +290,12 @@ func TestCompleteMultipartUpload_Success(t *testing.T) {
 }
 
 func TestCompleteMultipartUpload_MalformedXML(t *testing.T) {
+	t.Parallel()
 	ts, _, _ := newTestServer(t)
 
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/mybucket/testkey?uploadId=upload-1", strings.NewReader("not xml"))
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, ts.URL+"/mybucket/testkey?uploadId=upload-1", strings.NewReader("not xml"))
 	req.Header.Set("X-Proxy-Token", "test-token")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,6 +311,7 @@ func TestCompleteMultipartUpload_MalformedXML(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestAbortMultipartUpload_Success(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
 
 	mockStore.GetMultipartResp = &store.MultipartUpload{
@@ -309,9 +322,9 @@ func TestAbortMultipartUpload_Success(t *testing.T) {
 	}
 	mockStore.GetPartsResp = nil // no parts to clean up
 
-	req, _ := http.NewRequest(http.MethodDelete, ts.URL+"/mybucket/testkey?uploadId=upload-1", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodDelete, ts.URL+"/mybucket/testkey?uploadId=upload-1", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -324,12 +337,13 @@ func TestAbortMultipartUpload_Success(t *testing.T) {
 }
 
 func TestAbortMultipartUpload_NotFound(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
 	mockStore.GetMultipartErr = store.ErrObjectNotFound
 
-	req, _ := http.NewRequest(http.MethodDelete, ts.URL+"/mybucket/testkey?uploadId=nonexistent", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodDelete, ts.URL+"/mybucket/testkey?uploadId=nonexistent", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -345,6 +359,7 @@ func TestAbortMultipartUpload_NotFound(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestListParts_Success(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
 
 	now := time.Now().UTC()
@@ -386,6 +401,7 @@ func TestListParts_Success(t *testing.T) {
 }
 
 func TestListParts_StoreError(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
 	mockStore.GetPartsErr = &store.S3Error{
 		StatusCode: 500,
@@ -402,6 +418,7 @@ func TestListParts_StoreError(t *testing.T) {
 }
 
 func TestListParts_EmptyParts(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
 	mockStore.GetPartsResp = nil // no parts
 
@@ -426,6 +443,7 @@ func TestListParts_EmptyParts(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestListMultipartUploads_Success(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
 	now := time.Now().UTC()
 
@@ -464,6 +482,7 @@ func TestListMultipartUploads_Success(t *testing.T) {
 }
 
 func TestListMultipartUploads_Empty(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
 	mockStore.ListMultipartUploadsResp = nil
 
@@ -484,6 +503,7 @@ func TestListMultipartUploads_Empty(t *testing.T) {
 }
 
 func TestListMultipartUploads_Truncated(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
 	now := time.Now().UTC()
 
@@ -518,6 +538,7 @@ func TestListMultipartUploads_Truncated(t *testing.T) {
 }
 
 func TestListMultipartUploads_StoreError(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
 	mockStore.ListMultipartUploadsErr = &store.S3Error{
 		StatusCode: 500,
@@ -534,9 +555,11 @@ func TestListMultipartUploads_StoreError(t *testing.T) {
 }
 
 func TestListMultipartUploads_NoAuth(t *testing.T) {
+	t.Parallel()
 	ts, _, _ := newTestServer(t)
 
-	resp, err := http.Get(ts.URL + "/mybucket/?uploads")
+	getReq, _ := http.NewRequestWithContext(context.Background(), "GET", ts.URL + "/mybucket/?uploads", nil)
+	resp, err := http.DefaultClient.Do(getReq) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}

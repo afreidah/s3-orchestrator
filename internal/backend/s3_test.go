@@ -16,6 +16,7 @@ import (
 )
 
 func TestWithUnsignedPayload_AddsAPIOption(t *testing.T) {
+	t.Parallel()
 	var opts s3.Options
 	withUnsignedPayload(&opts)
 
@@ -25,6 +26,7 @@ func TestWithUnsignedPayload_AddsAPIOption(t *testing.T) {
 }
 
 func TestNewS3Backend_UnsignedPayloadDefaults(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name            string
 		endpoint        string
@@ -77,6 +79,7 @@ func TestNewS3Backend_UnsignedPayloadDefaults(t *testing.T) {
 }
 
 func TestNewS3Backend_DisableChecksum(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name            string
 		disableChecksum bool
@@ -110,6 +113,7 @@ func TestNewS3Backend_DisableChecksum(t *testing.T) {
 }
 
 func TestNewS3Backend_StripSDKHeaders(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name            string
 		stripSDKHeaders bool

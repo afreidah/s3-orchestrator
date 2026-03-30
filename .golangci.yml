@@ -10,10 +10,14 @@
 version: "2"
 linters:
   enable:
+    - bodyclose
     - copyloopvar
+    - errcheck
     - gocritic
+    - gosec
     - intrange
     - misspell
+    - noctx
     - sloglint
     - staticcheck
   settings:

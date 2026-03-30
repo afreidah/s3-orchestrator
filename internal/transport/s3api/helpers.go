@@ -123,7 +123,7 @@ func writeS3Error(w http.ResponseWriter, code int, errCode, message string) {
 	w.Header().Set("Content-Type", "application/xml")
 	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
 	w.WriteHeader(code)
-	_, _ = io.WriteString(w, body)
+	_, _ = io.WriteString(w, body) //nolint:gosec // G705: output is XML-escaped via xmlEscape before writing
 }
 
 // xmlReplacer escapes special XML characters. Allocated once at package level

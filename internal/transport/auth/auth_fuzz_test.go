@@ -11,6 +11,7 @@
 package auth
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"testing"
@@ -68,7 +69,7 @@ func FuzzBuildCanonicalRequest(f *testing.F) {
 	f.Add("GET", "", "", "host")
 
 	f.Fuzz(func(t *testing.T, method, path, rawQuery, signedHeadersStr string) {
-		r, err := http.NewRequest(method, "/", nil)
+		r, err := http.NewRequestWithContext(context.Background(), method, "/", nil)
 		if err != nil {
 			return
 		}
@@ -114,7 +115,7 @@ func FuzzBuildPresignedCanonicalRequest(f *testing.F) {
 	f.Add("DELETE", "/bucket/key with spaces", "X-Amz-Signature=abc", "host")
 
 	f.Fuzz(func(t *testing.T, method, path, rawQuery, signedHeadersStr string) {
-		r, err := http.NewRequest(method, "/", nil)
+		r, err := http.NewRequestWithContext(context.Background(), method, "/", nil)
 		if err != nil {
 			return
 		}

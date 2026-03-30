@@ -21,6 +21,7 @@ import (
 // -------------------------------------------------------------------------
 
 func TestRun_ProcessesAllItems(t *testing.T) {
+	t.Parallel()
 	var count atomic.Int32
 	items := []int{1, 2, 3, 4, 5}
 
@@ -34,6 +35,7 @@ func TestRun_ProcessesAllItems(t *testing.T) {
 }
 
 func TestRun_EmptySlice(t *testing.T) {
+	t.Parallel()
 	var count atomic.Int32
 	Run(context.Background(), 3, []int{}, func(_ context.Context, _ int) {
 		count.Add(1)
@@ -44,6 +46,7 @@ func TestRun_EmptySlice(t *testing.T) {
 }
 
 func TestRun_ConcurrencyBound(t *testing.T) {
+	t.Parallel()
 	var active, peak atomic.Int32
 	items := make([]int, 20)
 
@@ -68,6 +71,7 @@ func TestRun_ConcurrencyBound(t *testing.T) {
 }
 
 func TestRun_ZeroConcurrency(t *testing.T) {
+	t.Parallel()
 	var count atomic.Int32
 	items := []int{1, 2, 3}
 
@@ -81,6 +85,7 @@ func TestRun_ZeroConcurrency(t *testing.T) {
 }
 
 func TestRun_NegativeConcurrency(t *testing.T) {
+	t.Parallel()
 	var count atomic.Int32
 	items := []int{1, 2, 3}
 
@@ -94,6 +99,7 @@ func TestRun_NegativeConcurrency(t *testing.T) {
 }
 
 func TestRun_ContextCancellation(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -106,12 +112,13 @@ func TestRun_ContextCancellation(t *testing.T) {
 		}
 	})
 
-	if got := count.Load(); got == int32(len(items)) {
+	if got := count.Load(); got == int32(len(items)) { //nolint:gosec // G115: test slice length, always small
 		t.Errorf("processed all %d items despite cancellation", got)
 	}
 }
 
 func TestRun_PassesContext(t *testing.T) {
+	t.Parallel()
 	type ctxKey struct{}
 	ctx := context.WithValue(context.Background(), ctxKey{}, "hello")
 
@@ -127,6 +134,7 @@ func TestRun_PassesContext(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestCollect_PreservesOrder(t *testing.T) {
+	t.Parallel()
 	items := []int{10, 20, 30, 40, 50}
 
 	results := Collect(context.Background(), 5, items, func(_ context.Context, n int) int {
@@ -142,6 +150,7 @@ func TestCollect_PreservesOrder(t *testing.T) {
 }
 
 func TestCollect_EmptySlice(t *testing.T) {
+	t.Parallel()
 	results := Collect(context.Background(), 3, []int{}, func(_ context.Context, n int) int {
 		return n
 	})
@@ -151,6 +160,7 @@ func TestCollect_EmptySlice(t *testing.T) {
 }
 
 func TestCollect_ConcurrencyBound(t *testing.T) {
+	t.Parallel()
 	var active, peak atomic.Int32
 	items := make([]int, 20)
 
@@ -173,6 +183,7 @@ func TestCollect_ConcurrencyBound(t *testing.T) {
 }
 
 func TestCollect_ContextCancellation(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -204,6 +215,7 @@ func TestCollect_ContextCancellation(t *testing.T) {
 }
 
 func TestCollect_ZeroConcurrency(t *testing.T) {
+	t.Parallel()
 	results := Collect(context.Background(), 0, []int{1, 2, 3}, func(_ context.Context, n int) int {
 		return n + 1
 	})

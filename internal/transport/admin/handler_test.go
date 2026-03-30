@@ -22,6 +22,7 @@ import (
 )
 
 func TestRequireToken_Missing(t *testing.T) {
+	t.Parallel()
 	h := newTestHandler()
 	mux := http.NewServeMux()
 	h.Register(mux)
@@ -36,6 +37,7 @@ func TestRequireToken_Missing(t *testing.T) {
 }
 
 func TestRequireToken_Wrong(t *testing.T) {
+	t.Parallel()
 	h := newTestHandler()
 	mux := http.NewServeMux()
 	h.Register(mux)
@@ -51,6 +53,7 @@ func TestRequireToken_Wrong(t *testing.T) {
 }
 
 func TestRequireToken_Valid(t *testing.T) {
+	t.Parallel()
 	h := newTestHandler()
 	mux := http.NewServeMux()
 	h.Register(mux)
@@ -66,6 +69,7 @@ func TestRequireToken_Valid(t *testing.T) {
 }
 
 func TestLogLevel_Get(t *testing.T) {
+	t.Parallel()
 	h := newTestHandler()
 	mux := http.NewServeMux()
 	h.Register(mux)
@@ -89,6 +93,7 @@ func TestLogLevel_Get(t *testing.T) {
 }
 
 func TestLogLevel_Put(t *testing.T) {
+	t.Parallel()
 	h := newTestHandler()
 	mux := http.NewServeMux()
 	h.Register(mux)
@@ -118,6 +123,7 @@ func TestLogLevel_Put(t *testing.T) {
 }
 
 func TestLogLevel_PutInvalidJSON(t *testing.T) {
+	t.Parallel()
 	h := newTestHandler()
 	mux := http.NewServeMux()
 	h.Register(mux)
@@ -134,6 +140,7 @@ func TestLogLevel_PutInvalidJSON(t *testing.T) {
 }
 
 func TestLogLevel_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
 	h := newTestHandler()
 	mux := http.NewServeMux()
 	h.Register(mux)
@@ -149,6 +156,7 @@ func TestLogLevel_MethodNotAllowed(t *testing.T) {
 }
 
 func TestStatus_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
 	h := newTestHandler()
 	mux := http.NewServeMux()
 	h.Register(mux)
@@ -164,6 +172,7 @@ func TestStatus_MethodNotAllowed(t *testing.T) {
 }
 
 func TestObjectLocations_MissingKey(t *testing.T) {
+	t.Parallel()
 	h := newTestHandler()
 	mux := http.NewServeMux()
 	h.Register(mux)
@@ -179,6 +188,7 @@ func TestObjectLocations_MissingKey(t *testing.T) {
 }
 
 func TestUsageFlush_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
 	h := newTestHandler()
 	mux := http.NewServeMux()
 	h.Register(mux)
@@ -194,6 +204,7 @@ func TestUsageFlush_MethodNotAllowed(t *testing.T) {
 }
 
 func TestReplicate_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
 	h := newTestHandler()
 	mux := http.NewServeMux()
 	h.Register(mux)
@@ -226,6 +237,7 @@ func newTestHandler() *Handler {
 // -------------------------------------------------------------------------
 
 func TestDecryptExisting_NoEncryptor(t *testing.T) {
+	t.Parallel()
 	h := newTestHandler()
 	mux := http.NewServeMux()
 	h.Register(mux)
@@ -249,6 +261,7 @@ func TestDecryptExisting_NoEncryptor(t *testing.T) {
 }
 
 func TestDecryptExisting_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
 	h := newTestHandler()
 	mux := http.NewServeMux()
 	h.Register(mux)
@@ -264,6 +277,7 @@ func TestDecryptExisting_MethodNotAllowed(t *testing.T) {
 }
 
 func TestEncryptExisting_NoEncryptor(t *testing.T) {
+	t.Parallel()
 	h := newTestHandler()
 	mux := http.NewServeMux()
 	h.Register(mux)
@@ -283,6 +297,7 @@ func TestEncryptExisting_NoEncryptor(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestRemoveToken_RoundTrip(t *testing.T) {
+	t.Parallel()
 	h := newTestHandler()
 	token := h.generateRemoveToken("my-backend")
 
@@ -292,6 +307,7 @@ func TestRemoveToken_RoundTrip(t *testing.T) {
 }
 
 func TestRemoveToken_WrongBackend(t *testing.T) {
+	t.Parallel()
 	h := newTestHandler()
 	token := h.generateRemoveToken("backend-a")
 
@@ -301,6 +317,7 @@ func TestRemoveToken_WrongBackend(t *testing.T) {
 }
 
 func TestRemoveToken_Tampered(t *testing.T) {
+	t.Parallel()
 	h := newTestHandler()
 	token := h.generateRemoveToken("my-backend")
 
@@ -310,6 +327,7 @@ func TestRemoveToken_Tampered(t *testing.T) {
 }
 
 func TestRemoveToken_Empty(t *testing.T) {
+	t.Parallel()
 	h := newTestHandler()
 
 	if h.validRemoveToken("", "my-backend") {
@@ -318,6 +336,7 @@ func TestRemoveToken_Empty(t *testing.T) {
 }
 
 func TestRemoveToken_MalformedBase64(t *testing.T) {
+	t.Parallel()
 	h := newTestHandler()
 	if h.validRemoveToken("not-valid-base64!!!.also-bad!!!", "my-backend") {
 		t.Error("malformed base64 should fail")
@@ -325,6 +344,7 @@ func TestRemoveToken_MalformedBase64(t *testing.T) {
 }
 
 func TestRemoveToken_NoDot(t *testing.T) {
+	t.Parallel()
 	h := newTestHandler()
 	if h.validRemoveToken("nodotinthisstring", "my-backend") {
 		t.Error("token without dot separator should fail")
@@ -332,6 +352,7 @@ func TestRemoveToken_NoDot(t *testing.T) {
 }
 
 func TestRemoveToken_BadPayloadFormat(t *testing.T) {
+	t.Parallel()
 	h := newTestHandler()
 	// Valid base64 but wrong payload structure (not "purge|name|expiry")
 	payload := base64.RawURLEncoding.EncodeToString([]byte("wrong|format"))
@@ -345,6 +366,7 @@ func TestRemoveToken_BadPayloadFormat(t *testing.T) {
 }
 
 func TestRemoveToken_WrongKey(t *testing.T) {
+	t.Parallel()
 	h1 := newTestHandler()
 	h2 := &Handler{token: "different-key"}
 

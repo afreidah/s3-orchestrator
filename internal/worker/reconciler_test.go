@@ -8,6 +8,7 @@ import (
 )
 
 func TestReconciler_NoBuckets(t *testing.T) {
+	t.Parallel()
 	ctrl := gomock.NewController(t)
 	syncer := NewMockBackendSyncer(ctrl)
 	r := NewReconciler(syncer, nil)
@@ -15,6 +16,7 @@ func TestReconciler_NoBuckets(t *testing.T) {
 }
 
 func TestReconciler_SyncsAllBackends(t *testing.T) {
+	t.Parallel()
 	ctrl := gomock.NewController(t)
 	syncer := NewMockBackendSyncer(ctrl)
 
@@ -28,6 +30,7 @@ func TestReconciler_SyncsAllBackends(t *testing.T) {
 }
 
 func TestReconciler_ContinuesOnBackendError(t *testing.T) {
+	t.Parallel()
 	ctrl := gomock.NewController(t)
 	syncer := NewMockBackendSyncer(ctrl)
 

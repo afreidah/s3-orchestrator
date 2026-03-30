@@ -18,6 +18,7 @@ import (
 )
 
 func TestParsePath(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		path       string
@@ -91,6 +92,7 @@ func TestParsePath(t *testing.T) {
 }
 
 func TestIsValidRequestID(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		id   string
@@ -124,6 +126,7 @@ func TestIsValidRequestID(t *testing.T) {
 }
 
 func TestXmlEscape(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input string
 		want  string
@@ -149,6 +152,7 @@ func TestXmlEscape(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestExtractUserMetadata_Basic(t *testing.T) {
+	t.Parallel()
 	h := http.Header{}
 	h.Set("X-Amz-Meta-Project", "acme")
 	h.Set("X-Amz-Meta-Env", "prod")
@@ -167,6 +171,7 @@ func TestExtractUserMetadata_Basic(t *testing.T) {
 }
 
 func TestExtractUserMetadata_Empty(t *testing.T) {
+	t.Parallel()
 	h := http.Header{}
 	h.Set("Content-Type", "text/plain")
 
@@ -177,6 +182,7 @@ func TestExtractUserMetadata_Empty(t *testing.T) {
 }
 
 func TestExtractUserMetadata_BarePrefix(t *testing.T) {
+	t.Parallel()
 	h := http.Header{}
 	h.Set("X-Amz-Meta-", "value")
 
@@ -187,6 +193,7 @@ func TestExtractUserMetadata_BarePrefix(t *testing.T) {
 }
 
 func TestExtractUserMetadata_CaseInsensitive(t *testing.T) {
+	t.Parallel()
 	h := http.Header{}
 	h.Set("x-amz-meta-UPPER", "val")
 
@@ -201,6 +208,7 @@ func TestExtractUserMetadata_CaseInsensitive(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestValidateUserMetadata_WithinLimit(t *testing.T) {
+	t.Parallel()
 	meta := map[string]string{"key": "value"}
 	if err := validateUserMetadata(meta); err != nil {
 		t.Errorf("unexpected error: %v", err)
@@ -208,6 +216,7 @@ func TestValidateUserMetadata_WithinLimit(t *testing.T) {
 }
 
 func TestValidateUserMetadata_ExceedsLimit(t *testing.T) {
+	t.Parallel()
 	meta := map[string]string{"k": strings.Repeat("x", maxUserMetadataBytes+1)}
 	err := validateUserMetadata(meta)
 	if err == nil {
@@ -216,6 +225,7 @@ func TestValidateUserMetadata_ExceedsLimit(t *testing.T) {
 }
 
 func TestValidateUserMetadata_ExactLimit(t *testing.T) {
+	t.Parallel()
 	meta := map[string]string{"k": strings.Repeat("x", maxUserMetadataBytes-1)}
 	if err := validateUserMetadata(meta); err != nil {
 		t.Errorf("unexpected error at exact limit: %v", err)
@@ -223,6 +233,7 @@ func TestValidateUserMetadata_ExactLimit(t *testing.T) {
 }
 
 func TestValidateUserMetadata_RejectsCRLFInKey(t *testing.T) {
+	t.Parallel()
 	meta := map[string]string{"bad\r\nkey": "value"}
 	if err := validateUserMetadata(meta); err == nil {
 		t.Fatal("expected error for key containing CRLF")
@@ -230,6 +241,7 @@ func TestValidateUserMetadata_RejectsCRLFInKey(t *testing.T) {
 }
 
 func TestValidateUserMetadata_RejectsCRLFInValue(t *testing.T) {
+	t.Parallel()
 	meta := map[string]string{"key": "bad\nvalue"}
 	if err := validateUserMetadata(meta); err == nil {
 		t.Fatal("expected error for value containing newline")
@@ -237,6 +249,7 @@ func TestValidateUserMetadata_RejectsCRLFInValue(t *testing.T) {
 }
 
 func TestValidateUserMetadata_RejectsNullByte(t *testing.T) {
+	t.Parallel()
 	meta := map[string]string{"key": "val\x00ue"}
 	if err := validateUserMetadata(meta); err == nil {
 		t.Fatal("expected error for value containing null byte")
@@ -244,6 +257,7 @@ func TestValidateUserMetadata_RejectsNullByte(t *testing.T) {
 }
 
 func TestValidMetadataToken(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input string
 		want  bool
@@ -269,6 +283,7 @@ func TestValidMetadataToken(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestWriteS3Error_SetsContentLength(t *testing.T) {
+	t.Parallel()
 	w := httptest.NewRecorder()
 	writeS3Error(w, http.StatusNotFound, "NoSuchKey", "The specified key does not exist.")
 
@@ -291,6 +306,7 @@ func TestWriteS3Error_SetsContentLength(t *testing.T) {
 }
 
 func TestWriteS3Error_EscapesXML(t *testing.T) {
+	t.Parallel()
 	w := httptest.NewRecorder()
 	writeS3Error(w, http.StatusBadRequest, "Test", "<script>alert('xss')</script>")
 

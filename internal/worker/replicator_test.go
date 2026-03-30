@@ -14,6 +14,7 @@ import (
 )
 
 func TestReplicator_SetConfig_RoundTrip(t *testing.T) {
+	t.Parallel()
 	ctrl := gomock.NewController(t)
 	r := NewReplicator(NewMockOps(ctrl))
 	if r.Config() != nil {
@@ -27,6 +28,7 @@ func TestReplicator_SetConfig_RoundTrip(t *testing.T) {
 }
 
 func TestFindReplicaTarget_SelectsBackendWithSpace(t *testing.T) {
+	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
 	be1 := backendtest.NewMockObjectBackend(ctrl)
@@ -50,6 +52,7 @@ func TestFindReplicaTarget_SelectsBackendWithSpace(t *testing.T) {
 }
 
 func TestFindReplicaTarget_NoSpace(t *testing.T) {
+	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
 
@@ -71,6 +74,7 @@ func TestFindReplicaTarget_NoSpace(t *testing.T) {
 }
 
 func TestCopyToReplica_Success(t *testing.T) {
+	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
 	srcBe := backendtest.NewMockObjectBackend(ctrl)
@@ -93,6 +97,7 @@ func TestCopyToReplica_Success(t *testing.T) {
 }
 
 func TestCopyToReplica_AllSourcesFail(t *testing.T) {
+	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
 	srcBe := backendtest.NewMockObjectBackend(ctrl)
@@ -112,6 +117,7 @@ func TestCopyToReplica_AllSourcesFail(t *testing.T) {
 }
 
 func TestCleanupOrphan_DelegatesToDeleteOrEnqueue(t *testing.T) {
+	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
 	be := backendtest.NewMockObjectBackend(ctrl)
@@ -125,6 +131,7 @@ func TestCleanupOrphan_DelegatesToDeleteOrEnqueue(t *testing.T) {
 }
 
 func TestReplicate_FactorOne_Noop(t *testing.T) {
+	t.Parallel()
 	ctrl := gomock.NewController(t)
 	r := NewReplicator(NewMockOps(ctrl))
 
@@ -138,6 +145,7 @@ func TestReplicate_FactorOne_Noop(t *testing.T) {
 }
 
 func TestReplicate_NothingUnderReplicated(t *testing.T) {
+	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
 	ms := &mockMetadataStore{}
@@ -157,6 +165,7 @@ func TestReplicate_NothingUnderReplicated(t *testing.T) {
 }
 
 func TestReplicateObject_Success(t *testing.T) {
+	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
 	srcBe := backendtest.NewMockObjectBackend(ctrl)

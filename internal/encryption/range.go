@@ -77,7 +77,7 @@ func CiphertextRange(start, end int64, chunkSize int) (*RangeResult, error) {
 
 	return &RangeResult{
 		BackendRange: fmt.Sprintf("bytes=%d-%d", ctStart, ctEnd),
-		StartChunk:   uint64(startChunk),
+		StartChunk:   uint64(startChunk), //nolint:gosec // G115: startChunk derived from non-negative start offset
 		SliceStart:   sliceStart,
 		SliceLen:     sliceLen,
 	}, nil

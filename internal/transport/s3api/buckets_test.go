@@ -11,21 +11,23 @@ package s3api
 
 import (
 	"io"
+	"context"
 	"net/http"
 	"strings"
 	"testing"
 )
 
 func TestListBuckets(t *testing.T) {
+	t.Parallel()
 	ts, _, _ := newTestServer(t)
 
-	req, err := http.NewRequest(http.MethodGet, ts.URL+"/", nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	req.Header.Set("X-Proxy-Token", "test-token")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL is localhost, not tainted
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,9 +49,11 @@ func TestListBuckets(t *testing.T) {
 }
 
 func TestListBucketsNoAuth(t *testing.T) {
+	t.Parallel()
 	ts, _, _ := newTestServer(t)
 
-	resp, err := http.Get(ts.URL + "/")
+	getReq, _ := http.NewRequestWithContext(context.Background(), "GET", ts.URL + "/", nil)
+	resp, err := http.DefaultClient.Do(getReq) //nolint:gosec // G704: test server URL is localhost, not tainted
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,6 +65,7 @@ func TestListBucketsNoAuth(t *testing.T) {
 }
 
 func TestHeadBucket(t *testing.T) {
+	t.Parallel()
 	ts, _, _ := newTestServer(t)
 
 	resp := doReq(t, http.MethodHead, ts.URL+"/mybucket", nil)
@@ -77,6 +82,7 @@ func TestHeadBucket(t *testing.T) {
 }
 
 func TestHeadBucketWrongBucket(t *testing.T) {
+	t.Parallel()
 	ts, _, _ := newTestServer(t)
 
 	resp := doReq(t, http.MethodHead, ts.URL+"/otherbucket", nil)
@@ -88,6 +94,7 @@ func TestHeadBucketWrongBucket(t *testing.T) {
 }
 
 func TestGetBucketLocation(t *testing.T) {
+	t.Parallel()
 	ts, _, _ := newTestServer(t)
 
 	resp := doReq(t, http.MethodGet, ts.URL+"/mybucket?location", nil)
@@ -106,9 +113,11 @@ func TestGetBucketLocation(t *testing.T) {
 }
 
 func TestGetBucketLocationNoAuth(t *testing.T) {
+	t.Parallel()
 	ts, _, _ := newTestServer(t)
 
-	resp, err := http.Get(ts.URL + "/mybucket?location")
+	getReq, _ := http.NewRequestWithContext(context.Background(), "GET", ts.URL + "/mybucket?location", nil)
+	resp, err := http.DefaultClient.Do(getReq) //nolint:gosec // G704: test server URL is localhost, not tainted
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,6 +129,7 @@ func TestGetBucketLocationNoAuth(t *testing.T) {
 }
 
 func TestGetBucketVersioning(t *testing.T) {
+	t.Parallel()
 	ts, _, _ := newTestServer(t)
 
 	resp := doReq(t, http.MethodGet, ts.URL+"/mybucket?versioning", nil)

@@ -42,7 +42,7 @@ backends:
     access_key_id: ak
     secret_access_key: sk
 `
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -83,7 +83,7 @@ func TestValidateConfig_InvalidConfig(t *testing.T) {
 server:
   listen_addr: ":9000"
 `
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
 

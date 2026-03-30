@@ -65,7 +65,7 @@ func formatNumber(n int64) string {
 		if i > 0 && (len(s)-i)%3 == 0 {
 			result = append(result, ',')
 		}
-		result = append(result, byte(c))
+		result = append(result, byte(c)) //nolint:gosec // G115: ASCII digit rune, always fits in byte
 	}
 	return string(result)
 }

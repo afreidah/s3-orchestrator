@@ -155,7 +155,7 @@ func newTestServer(t *testing.T) (*httptest.Server, *testutil.MockStore, *server
 // doReq is a helper to send requests to the test server with auth.
 func doReq(t *testing.T, method, url string, body io.Reader) *http.Response {
 	t.Helper()
-	req, err := http.NewRequest(method, url, body)
+	req, err := http.NewRequestWithContext(context.Background(), method, url, body)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func doReq(t *testing.T, method, url string, body io.Reader) *http.Response {
 	if body != nil {
 		req.Header.Set("Content-Type", "application/octet-stream")
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,14 +175,15 @@ func doReq(t *testing.T, method, url string, body io.Reader) *http.Response {
 // -------------------------------------------------------------------------
 
 func TestPut_Success(t *testing.T) {
+	t.Parallel()
 	ts, _, backend := newTestServer(t)
 	data := []byte("hello world")
 
-	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/mybucket/testkey", bytes.NewReader(data))
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/testkey", bytes.NewReader(data))
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.Header.Set("Content-Type", "text/plain")
 	req.ContentLength = int64(len(data))
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,13 +201,14 @@ func TestPut_Success(t *testing.T) {
 }
 
 func TestPut_MissingContentLength(t *testing.T) {
+	t.Parallel()
 	ts, _, _ := newTestServer(t)
 
-	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/mybucket/testkey", strings.NewReader("data"))
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/testkey", strings.NewReader("data"))
 	req.Header.Set("X-Proxy-Token", "test-token")
 	// Explicitly set ContentLength to -1 to simulate missing Content-Length
 	req.ContentLength = -1
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,6 +220,7 @@ func TestPut_MissingContentLength(t *testing.T) {
 }
 
 func TestPut_EntityTooLarge(t *testing.T) {
+	t.Parallel()
 	ts, _, _ := newTestServer(t)
 
 	// Create a body whose size exceeds the limit.
@@ -225,10 +228,10 @@ func TestPut_EntityTooLarge(t *testing.T) {
 	bigSize := int64(20 * 1024 * 1024)
 	body := io.LimitReader(neverEndingReader{}, bigSize)
 
-	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/mybucket/testkey", body)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/testkey", body)
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.ContentLength = bigSize
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,13 +253,14 @@ func (neverEndingReader) Read(p []byte) (int, error) {
 }
 
 func TestPut_QuotaExhausted(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
 	mockStore.GetBackendErr = store.ErrNoSpaceAvailable
 
-	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/mybucket/testkey", strings.NewReader("data"))
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/testkey", strings.NewReader("data"))
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.ContentLength = 4
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,13 +272,14 @@ func TestPut_QuotaExhausted(t *testing.T) {
 }
 
 func TestPut_DBUnavailable(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
 	mockStore.GetBackendErr = store.ErrDBUnavailable
 
-	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/mybucket/testkey", strings.NewReader("data"))
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/testkey", strings.NewReader("data"))
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.ContentLength = 4
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,6 +295,7 @@ func TestPut_DBUnavailable(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestGet_Success(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, backend := newTestServer(t)
 
 	// Pre-store an object
@@ -316,6 +322,7 @@ func TestGet_Success(t *testing.T) {
 }
 
 func TestGet_NotFound(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
 	mockStore.GetAllLocationsErr = store.ErrObjectNotFound
 
@@ -332,6 +339,7 @@ func TestGet_NotFound(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestHead_Success(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, backend := newTestServer(t)
 
 	backend.objects["mybucket/testkey"] = serverMockObj{
@@ -359,6 +367,7 @@ func TestHead_Success(t *testing.T) {
 }
 
 func TestHead_NotFound(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
 	mockStore.GetAllLocationsErr = store.ErrObjectNotFound
 
@@ -375,6 +384,7 @@ func TestHead_NotFound(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestGet_LastModifiedHeader(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, backend := newTestServer(t)
 
 	backend.objects["mybucket/testkey"] = serverMockObj{
@@ -400,6 +410,7 @@ func TestGet_LastModifiedHeader(t *testing.T) {
 }
 
 func TestGet_ConditionalIfNoneMatch(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, backend := newTestServer(t)
 
 	backend.objects["mybucket/testkey"] = serverMockObj{
@@ -409,10 +420,10 @@ func TestGet_ConditionalIfNoneMatch(t *testing.T) {
 		{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5},
 	}
 
-	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/mybucket/testkey", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/mybucket/testkey", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.Header.Set("If-None-Match", `"abc"`)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -424,6 +435,7 @@ func TestGet_ConditionalIfNoneMatch(t *testing.T) {
 }
 
 func TestGet_ConditionalIfNoneMatchMismatch(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, backend := newTestServer(t)
 
 	backend.objects["mybucket/testkey"] = serverMockObj{
@@ -433,10 +445,10 @@ func TestGet_ConditionalIfNoneMatchMismatch(t *testing.T) {
 		{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5},
 	}
 
-	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/mybucket/testkey", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/mybucket/testkey", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.Header.Set("If-None-Match", `"different"`)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -448,6 +460,7 @@ func TestGet_ConditionalIfNoneMatchMismatch(t *testing.T) {
 }
 
 func TestGet_ConditionalIfMatch(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, backend := newTestServer(t)
 
 	backend.objects["mybucket/testkey"] = serverMockObj{
@@ -457,10 +470,10 @@ func TestGet_ConditionalIfMatch(t *testing.T) {
 		{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5},
 	}
 
-	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/mybucket/testkey", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/mybucket/testkey", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.Header.Set("If-Match", `"wrong"`)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -472,6 +485,7 @@ func TestGet_ConditionalIfMatch(t *testing.T) {
 }
 
 func TestHead_ConditionalIfNoneMatch(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, backend := newTestServer(t)
 
 	backend.objects["mybucket/testkey"] = serverMockObj{
@@ -481,10 +495,10 @@ func TestHead_ConditionalIfNoneMatch(t *testing.T) {
 		{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5},
 	}
 
-	req, _ := http.NewRequest(http.MethodHead, ts.URL+"/mybucket/testkey", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodHead, ts.URL+"/mybucket/testkey", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.Header.Set("If-None-Match", `"abc"`)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -496,6 +510,7 @@ func TestHead_ConditionalIfNoneMatch(t *testing.T) {
 }
 
 func TestGet_ConditionalIfModifiedSince(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, backend := newTestServer(t)
 
 	objTime := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
@@ -508,10 +523,10 @@ func TestGet_ConditionalIfModifiedSince(t *testing.T) {
 	}
 
 	// Request with a time after the object's last modification → 304
-	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/mybucket/testkey", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/mybucket/testkey", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.Header.Set("If-Modified-Since", objTime.Add(time.Hour).UTC().Format(http.TimeFormat))
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -523,6 +538,7 @@ func TestGet_ConditionalIfModifiedSince(t *testing.T) {
 }
 
 func TestGet_ConditionalIfModifiedSinceNewer(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, backend := newTestServer(t)
 
 	objTime := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
@@ -535,10 +551,10 @@ func TestGet_ConditionalIfModifiedSinceNewer(t *testing.T) {
 	}
 
 	// Request with a time before the object's last modification → 200
-	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/mybucket/testkey", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/mybucket/testkey", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.Header.Set("If-Modified-Since", objTime.Add(-time.Hour).UTC().Format(http.TimeFormat))
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -550,6 +566,7 @@ func TestGet_ConditionalIfModifiedSinceNewer(t *testing.T) {
 }
 
 func TestGet_ConditionalIfUnmodifiedSince(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, backend := newTestServer(t)
 
 	objTime := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
@@ -562,10 +579,10 @@ func TestGet_ConditionalIfUnmodifiedSince(t *testing.T) {
 	}
 
 	// Object was modified after the given time → 412
-	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/mybucket/testkey", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/mybucket/testkey", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.Header.Set("If-Unmodified-Since", objTime.Add(-time.Hour).UTC().Format(http.TimeFormat))
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -577,6 +594,7 @@ func TestGet_ConditionalIfUnmodifiedSince(t *testing.T) {
 }
 
 func TestGet_LastModifiedHeaderSet(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, backend := newTestServer(t)
 
 	objTime := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
@@ -606,6 +624,7 @@ func TestGet_LastModifiedHeaderSet(t *testing.T) {
 }
 
 func TestHead_LastModifiedHeaderSet(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, backend := newTestServer(t)
 
 	objTime := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
@@ -639,16 +658,17 @@ func TestHead_LastModifiedHeaderSet(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestPut_MetadataStored(t *testing.T) {
+	t.Parallel()
 	ts, _, backend := newTestServer(t)
 	data := []byte("hello")
 
-	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/mybucket/metakey", bytes.NewReader(data))
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/metakey", bytes.NewReader(data))
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.Header.Set("Content-Type", "text/plain")
 	req.Header.Set("X-Amz-Meta-Project", "acme")
 	req.Header.Set("X-Amz-Meta-Env", "prod")
 	req.ContentLength = int64(len(data))
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -667,6 +687,7 @@ func TestPut_MetadataStored(t *testing.T) {
 }
 
 func TestGet_MetadataReturned(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, backend := newTestServer(t)
 
 	backend.objects["mybucket/metakey"] = serverMockObj{
@@ -692,6 +713,7 @@ func TestGet_MetadataReturned(t *testing.T) {
 }
 
 func TestHead_MetadataReturned(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, backend := newTestServer(t)
 
 	backend.objects["mybucket/metakey"] = serverMockObj{
@@ -714,15 +736,16 @@ func TestHead_MetadataReturned(t *testing.T) {
 }
 
 func TestPut_MetadataTooLarge(t *testing.T) {
+	t.Parallel()
 	ts, _, _ := newTestServer(t)
 	data := []byte("hello")
 
-	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/mybucket/metakey", bytes.NewReader(data))
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/metakey", bytes.NewReader(data))
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.Header.Set("Content-Type", "text/plain")
 	req.Header.Set("X-Amz-Meta-Big", strings.Repeat("x", maxUserMetadataBytes+1))
 	req.ContentLength = int64(len(data))
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -738,6 +761,7 @@ func TestPut_MetadataTooLarge(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestDelete_Success(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, backend := newTestServer(t)
 
 	backend.objects["mybucket/testkey"] = serverMockObj{data: []byte("hi")}
@@ -754,6 +778,7 @@ func TestDelete_Success(t *testing.T) {
 }
 
 func TestDelete_IdempotentForMissing(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
 	mockStore.DeleteObjectErr = store.ErrObjectNotFound
 
@@ -771,6 +796,7 @@ func TestDelete_IdempotentForMissing(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestDeleteObjects_Success(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, backend := newTestServer(t)
 
 	backend.objects["mybucket/key1"] = serverMockObj{data: []byte("a")}
@@ -797,6 +823,7 @@ func TestDeleteObjects_Success(t *testing.T) {
 }
 
 func TestDeleteObjects_QuietMode(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
 	mockStore.DeleteObjectFunc = func(key string) ([]store.DeletedCopy, error) {
 		return []store.DeletedCopy{{BackendName: "b1", SizeBytes: 1}}, nil
@@ -816,6 +843,7 @@ func TestDeleteObjects_QuietMode(t *testing.T) {
 }
 
 func TestDeleteObjects_MalformedXML(t *testing.T) {
+	t.Parallel()
 	ts, _, _ := newTestServer(t)
 
 	body := strings.NewReader(`not xml at all`)
@@ -828,6 +856,7 @@ func TestDeleteObjects_MalformedXML(t *testing.T) {
 }
 
 func TestDeleteObjects_TooManyObjects(t *testing.T) {
+	t.Parallel()
 	ts, _, _ := newTestServer(t)
 
 	var sb strings.Builder
@@ -846,6 +875,7 @@ func TestDeleteObjects_TooManyObjects(t *testing.T) {
 }
 
 func TestDeleteObjects_EmptyRequest(t *testing.T) {
+	t.Parallel()
 	ts, _, _ := newTestServer(t)
 
 	body := strings.NewReader(`<Delete></Delete>`)
@@ -858,6 +888,7 @@ func TestDeleteObjects_EmptyRequest(t *testing.T) {
 }
 
 func TestDeleteObjects_PartialFailure(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
 	mockStore.DeleteObjectFunc = func(key string) ([]store.DeletedCopy, error) {
 		if key == "mybucket/bad" {
@@ -888,6 +919,7 @@ func TestDeleteObjects_PartialFailure(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestCopy_Success(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, backend := newTestServer(t)
 
 	// Pre-store source object
@@ -898,11 +930,11 @@ func TestCopy_Success(t *testing.T) {
 		{ObjectKey: "mybucket/source-key", BackendName: "b1", SizeBytes: 7},
 	}
 
-	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/mybucket/dest-key", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/dest-key", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.Header.Set("X-Amz-Copy-Source", "/mybucket/source-key")
 	req.ContentLength = 0
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -921,14 +953,15 @@ func TestCopy_Success(t *testing.T) {
 }
 
 func TestCopy_SourceNotFound(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
 	mockStore.GetAllLocationsErr = store.ErrObjectNotFound
 
-	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/mybucket/dest-key", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/dest-key", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.Header.Set("X-Amz-Copy-Source", "/mybucket/no-such-key")
 	req.ContentLength = 0
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -940,6 +973,7 @@ func TestCopy_SourceNotFound(t *testing.T) {
 }
 
 func TestCopy_URLEncodedSource(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, backend := newTestServer(t)
 
 	// Pre-store source object with a space in the key
@@ -950,11 +984,11 @@ func TestCopy_URLEncodedSource(t *testing.T) {
 		{ObjectKey: "mybucket/my file.txt", BackendName: "b1", SizeBytes: 7},
 	}
 
-	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/mybucket/dest-key", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/dest-key", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.Header.Set("X-Amz-Copy-Source", "/mybucket/my%20file.txt")
 	req.ContentLength = 0
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -972,13 +1006,14 @@ func TestCopy_URLEncodedSource(t *testing.T) {
 }
 
 func TestCopy_CrossBucketDenied(t *testing.T) {
+	t.Parallel()
 	ts, _, _ := newTestServer(t)
 
-	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/mybucket/dest-key", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/dest-key", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.Header.Set("X-Amz-Copy-Source", "/otherbucket/source-key")
 	req.ContentLength = 0
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -994,11 +1029,12 @@ func TestCopy_CrossBucketDenied(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestAuth_BadCredentials(t *testing.T) {
+	t.Parallel()
 	ts, _, _ := newTestServer(t)
 
-	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/mybucket/testkey", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/mybucket/testkey", nil)
 	req.Header.Set("X-Proxy-Token", "wrong-token")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1010,12 +1046,13 @@ func TestAuth_BadCredentials(t *testing.T) {
 }
 
 func TestAuth_BucketMismatch(t *testing.T) {
+	t.Parallel()
 	ts, _, _ := newTestServer(t)
 
 	// Token is valid for "mybucket" but request goes to "otherbucket"
-	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/otherbucket/testkey", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/otherbucket/testkey", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1027,11 +1064,12 @@ func TestAuth_BucketMismatch(t *testing.T) {
 }
 
 func TestAuth_AccessDeniedDoesNotLeakBucketName(t *testing.T) {
+	t.Parallel()
 	ts, _, _ := newTestServer(t)
 
-	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/otherbucket/testkey", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/otherbucket/testkey", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1048,11 +1086,12 @@ func TestAuth_AccessDeniedDoesNotLeakBucketName(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestUnsupportedMethod(t *testing.T) {
+	t.Parallel()
 	ts, _, _ := newTestServer(t)
 
-	req, _ := http.NewRequest(http.MethodPatch, ts.URL+"/mybucket/testkey", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPatch, ts.URL+"/mybucket/testkey", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1064,6 +1103,7 @@ func TestUnsupportedMethod(t *testing.T) {
 }
 
 func TestBucketOnlyGET_RoutesToList(t *testing.T) {
+	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
 	mockStore.ListObjectsResp = &store.ListObjectsResult{
 		Objects: []store.ObjectLocation{
