@@ -3,6 +3,23 @@
 All notable changes to this project are documented in this file.
 
 
+## [0.38.2] - 2026-03-30
+
+### Hardened
+- security hardening — Redis counter race, tree API auth, SigV4 edge cases (#488) (#491)
+
+### Improved
+- update CHANGELOG.md for v0.37.2 (#486)
+
+### Other
+- strip whitespace from SigV4 header names, add fuzz-import tooling (#498) (#503)
+- close onboarding gaps for replication with encryption (#501) (#502)
+- fuzz-found bugs in SigV4 canonical request and encryption header parsing (#495, #496) (#497)
+- cosign signing, Vault DEK caching on failover, CI improvements (#381, #425) (#494)
+- shutdown correctness, worker observability, and operational robustness (#490) (#493)
+- config validation gaps that defer errors to runtime (#489) (#492)
+- deduplicate Grafana dashboard panels on redeploy (#485) (#487)
+
 ## [0.37.2] - 2026-03-29
 
 ### Improved
