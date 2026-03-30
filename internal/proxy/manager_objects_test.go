@@ -2132,6 +2132,33 @@ func TestParsePlaintextRange_ExactEndNotClamped(t *testing.T) {
 	}
 }
 
+// TestParsePlaintextRange_InvertedRange verifies that an inverted range
+// (start > end) is rejected per RFC 7233.
+func TestParsePlaintextRange_InvertedRange(t *testing.T) {
+	_, _, ok := parsePlaintextRange("bytes=99-0", 100)
+	if ok {
+		t.Error("expected ok=false for inverted range")
+	}
+}
+
+// TestParsePlaintextRange_StartBeyondFile verifies that a range starting
+// past the end of the file is rejected.
+func TestParsePlaintextRange_StartBeyondFile(t *testing.T) {
+	_, _, ok := parsePlaintextRange("bytes=100-200", 100)
+	if ok {
+		t.Error("expected ok=false when start >= plaintextSize")
+	}
+}
+
+// TestParsePlaintextRange_OpenEndedBeyondFile verifies that an open-ended
+// range starting past the end of the file is rejected.
+func TestParsePlaintextRange_OpenEndedBeyondFile(t *testing.T) {
+	_, _, ok := parsePlaintextRange("bytes=100-", 100)
+	if ok {
+		t.Error("expected ok=false for open-ended range beyond file")
+	}
+}
+
 // TestCopyObject_SourceGetPanics verifies that a panic inside the source-reader
 // goroutine is recovered and surfaced as an error instead of deadlocking the
 // request on the io.Pipe.

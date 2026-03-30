@@ -32,6 +32,8 @@ jobs:
             package: ./internal/transport/auth/
           - target: FuzzBuildCanonicalRequest
             package: ./internal/transport/auth/
+          - target: FuzzBuildPresignedCanonicalRequest
+            package: ./internal/transport/auth/
           - target: FuzzParsePath
             package: ./internal/transport/s3api/
           - target: FuzzDeleteObjectsXML
@@ -41,10 +43,14 @@ jobs:
           - target: FuzzIsValidRequestID
             package: ./internal/transport/s3api/
           - target: FuzzLoginThrottle_RemoteAddr
-            package: ./internal/transport/s3api/
+            package: ./internal/transport/httputil/
           - target: FuzzExtractClientIP
             package: ./internal/transport/s3api/
           - target: FuzzValidMetadataToken
+            package: ./internal/transport/s3api/
+          - target: FuzzParsePlaintextRange
+            package: ./internal/proxy/
+          - target: FuzzParseQueryInt
             package: ./internal/transport/s3api/
           - target: FuzzParseHeader
             package: ./internal/encryption/
