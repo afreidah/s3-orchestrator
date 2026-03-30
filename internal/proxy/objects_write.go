@@ -270,6 +270,7 @@ func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey strin
 				EncryptionKey: locations[i].EncryptionKey,
 				KeyID:         locations[i].KeyID,
 				PlaintextSize: locations[i].PlaintextSize,
+				ContentHash:   locations[i].ContentHash,
 			}
 		}
 		break
@@ -301,6 +302,9 @@ func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey strin
 	go func() {
 		bw := bufpool.GetWriter(pw)
 		defer func() {
+			if r := recover(); r != nil {
+				pw.CloseWithError(fmt.Errorf("copy source reader panic: %v", r))
+			}
 			bufpool.PutWriter(bw)
 			_ = pw.Close()
 		}()

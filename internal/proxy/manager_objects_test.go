@@ -2132,3 +2132,22 @@ func TestParsePlaintextRange_ExactEndNotClamped(t *testing.T) {
 	}
 }
 
+// TestCopyObject_SourceGetPanics verifies that a panic inside the source-reader
+// goroutine is recovered and surfaced as an error instead of deadlocking the
+// request on the io.Pipe.
+func TestCopyObject_SourceGetPanics(t *testing.T) {
+	srcBackend := newMockBackend()
+	srcBackend.getPanic = true // causes GetObject to panic
+
+	store := &mockStore{
+		getAllLocationsResp: []st.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}},
+		getBackendResp:      "b1",
+	}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": srcBackend})
+
+	_, err := mgr.ObjectManager.CopyObject(context.Background(), "src", "dst")
+	if err == nil {
+		t.Fatal("expected error from panicking source reader, got nil")
+	}
+}
+

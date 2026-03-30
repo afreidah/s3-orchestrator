@@ -233,6 +233,7 @@ func (o *ObjectManager) parallelBroadcastRead(ctx context.Context, operation, ke
 		remaining := launched - received - 1
 		if remaining > 0 {
 			go func() {
+				defer func() { recover() }() //nolint:errcheck // best-effort drain
 				for range remaining {
 					if lr := <-ch; lr.cancel != nil {
 						lr.cancel()

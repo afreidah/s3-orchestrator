@@ -262,6 +262,9 @@ func (mp *MultipartManager) CompleteMultipartUpload(ctx context.Context, uploadI
 	go func() {
 		bw := bufpool.GetWriter(pw)
 		defer func() {
+			if r := recover(); r != nil {
+				pw.CloseWithError(fmt.Errorf("multipart assembly panic: %v", r))
+			}
 			bufpool.PutWriter(bw)
 			_ = pw.Close()
 		}()

@@ -211,7 +211,16 @@ func (c *OverReplicationCleaner) cleanObject(ctx context.Context, key string, co
 		}
 		victim := scored[i].loc
 
-		// Delete from backend
+		// Remove from metadata first so the replicator never sees a ghost
+		// copy. If the DB remove succeeds but the backend delete fails, the
+		// cleanup queue handles the orphan.
+		if err := c.ops.Store().RemoveExcessCopy(ctx, key, victim.BackendName, victim.SizeBytes); err != nil {
+			slog.WarnContext(ctx, "Over-replication: failed to remove metadata",
+				"key", key, "backend", victim.BackendName, "error", err)
+			telemetry.OverReplicationErrorsTotal.Inc()
+			continue
+		}
+
 		be, err := c.ops.GetBackend(victim.BackendName)
 		if err != nil {
 			slog.WarnContext(ctx, "Over-replication: backend not found",
@@ -221,14 +230,6 @@ func (c *OverReplicationCleaner) cleanObject(ctx context.Context, key string, co
 		}
 
 		c.ops.DeleteOrEnqueue(ctx, be, victim.BackendName, key, "over_replication", victim.SizeBytes)
-
-		// Remove from metadata
-		if err := c.ops.Store().RemoveExcessCopy(ctx, key, victim.BackendName, victim.SizeBytes); err != nil {
-			slog.WarnContext(ctx, "Over-replication: failed to remove metadata",
-				"key", key, "backend", victim.BackendName, "error", err)
-			telemetry.OverReplicationErrorsTotal.Inc()
-			continue
-		}
 
 		c.ops.Usage().Record(victim.BackendName, 1, 0, 0) // Delete API call
 

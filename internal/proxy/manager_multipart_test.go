@@ -765,3 +765,28 @@ func TestAbortMultipartUploadsOnBackend_AbortFails(t *testing.T) {
 	// Should not panic — logs error and continues
 	mgr.MultipartManager.abortMultipartUploadsOnBackend(context.Background(), "b1")
 }
+
+// TestCompleteMultipartUpload_PartGetPanics verifies that a panic inside the
+// multipart assembly goroutine is recovered and surfaced as an error instead
+// of deadlocking the request on the io.Pipe.
+func TestCompleteMultipartUpload_PartGetPanics(t *testing.T) {
+	backend := newMockBackend()
+	backend.getPanic = true // causes GetObject to panic during part assembly
+
+	store := &mockStore{
+		getMultipartResp: &st.MultipartUpload{
+			UploadID:    "upload-panic",
+			ObjectKey:   "multi/panic",
+			BackendName: "b1",
+		},
+		getPartsResp: []st.MultipartPart{
+			{PartNumber: 1, ETag: "e1", SizeBytes: 3},
+		},
+	}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
+
+	_, err := mgr.MultipartManager.CompleteMultipartUpload(context.Background(), "upload-panic", []int{1})
+	if err == nil {
+		t.Fatal("expected error from panicking part reader, got nil")
+	}
+}

@@ -118,7 +118,11 @@ func (r *Replicator) Replicate(ctx context.Context, cfg config.ReplicationConfig
 		}
 	}
 
-	// --- Fetch quota stats once for the entire cycle ---
+	// Fetch quota stats once per cycle to avoid a DB round-trip per object.
+	// This makes target selection approximately correct — concurrent PUTs
+	// may update quotas between the fetch and each task. Over-quota writes
+	// are caught by the backend layer (RecordReplica returns an error) so
+	// the worst case is a wasted copy that gets cleaned up.
 	quotaStats, err := r.ops.Store().GetQuotaStats(ctx)
 	if err != nil {
 		telemetry.ReplicationRunsTotal.WithLabelValues("error").Inc()
