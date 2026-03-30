@@ -151,6 +151,31 @@ func (l *LocalCounterBackend) SwapAll(backend string) LoadAllResult {
 	}
 }
 
+// SwapAllBackends atomically reads and resets counters for every backend in
+// a single operation by swapping the entire map. Returns the old values keyed
+// by backend name. This avoids the race where per-backend SwapAll calls allow
+// concurrent Add calls to slip between swaps.
+func (l *LocalCounterBackend) SwapAllBackends() map[string]LoadAllResult {
+	l.mu.Lock()
+	old := l.counters
+	fresh := make(map[string]*localCounters, len(old))
+	for name := range old {
+		fresh[name] = &localCounters{}
+	}
+	l.counters = fresh
+	l.mu.Unlock()
+
+	result := make(map[string]LoadAllResult, len(old))
+	for name, c := range old {
+		result[name] = LoadAllResult{
+			APIRequests:  c.apiRequests.Load(),
+			EgressBytes:  c.egressBytes.Load(),
+			IngressBytes: c.ingressBytes.Load(),
+		}
+	}
+	return result
+}
+
 // -------------------------------------------------------------------------
 // INTERNALS
 // -------------------------------------------------------------------------
