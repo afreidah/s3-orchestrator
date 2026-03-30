@@ -204,8 +204,7 @@ func (s *Store) VerifySchemaVersion(ctx context.Context) error {
 		return fmt.Errorf("database schema version %d is older than expected %d — migrations may have partially failed", version, ExpectedSchemaVersion)
 	}
 	if version > ExpectedSchemaVersion {
-		slog.WarnContext(ctx, "Database schema is newer than this binary expects — possible downgrade",
-			"schema_version", version, "expected", ExpectedSchemaVersion)
+		return fmt.Errorf("database schema version %d is newer than expected %d — binary is outdated", version, ExpectedSchemaVersion)
 	}
 	return nil
 }

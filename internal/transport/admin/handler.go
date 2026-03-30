@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -260,8 +259,8 @@ func (h *Handler) handleOverReplicationClean(w http.ResponseWriter, r *http.Requ
 	cfg := *rcfg
 	if bs := r.URL.Query().Get("batch_size"); bs != "" {
 		if n, err := strconv.Atoi(bs); err == nil && n > 0 {
-			if n > math.MaxInt32 {
-				n = math.MaxInt32
+			if n > 10000 {
+				n = 10000
 			}
 			cfg.BatchSize = n
 		}

@@ -260,7 +260,10 @@ func (s *Store) ListObjects(ctx context.Context, prefix, startAfter string, maxK
 		if err := rows.Scan(&loc.ObjectKey, &loc.BackendName, &loc.SizeBytes, &createdAt); err != nil {
 			return nil, fmt.Errorf("failed to scan object: %w", err)
 		}
-		loc.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+		loc.CreatedAt, err = parseTime(createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("invalid created_at timestamp %q: %w", createdAt, err)
+		}
 		objects = append(objects, loc)
 	}
 	if err := rows.Err(); err != nil {
@@ -311,7 +314,10 @@ func (s *Store) ListExpiredObjects(ctx context.Context, prefix string, cutoff ti
 		if err := rows.Scan(&loc.ObjectKey, &loc.BackendName, &loc.SizeBytes, &createdAt); err != nil {
 			return nil, fmt.Errorf("failed to scan expired object: %w", err)
 		}
-		loc.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+		loc.CreatedAt, err = parseTime(createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("invalid created_at timestamp %q: %w", createdAt, err)
+		}
 		locs = append(locs, loc)
 	}
 	if err := rows.Err(); err != nil {
@@ -341,7 +347,10 @@ func (s *Store) ListObjectsByBackend(ctx context.Context, backendName string, li
 		if err := rows.Scan(&loc.ObjectKey, &loc.BackendName, &loc.SizeBytes, &createdAt); err != nil {
 			return nil, fmt.Errorf("failed to scan object: %w", err)
 		}
-		loc.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+		loc.CreatedAt, err = parseTime(createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("invalid created_at timestamp %q: %w", createdAt, err)
+		}
 		locs = append(locs, loc)
 	}
 	if err := rows.Err(); err != nil {
@@ -612,7 +621,11 @@ func scanObjectLocation(rows *sql.Rows) (store.ObjectLocation, error) {
 	); err != nil {
 		return store.ObjectLocation{}, fmt.Errorf("failed to scan object location: %w", err)
 	}
-	loc.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+	var parseErr error
+	loc.CreatedAt, parseErr = parseTime(createdAt)
+	if parseErr != nil {
+		return store.ObjectLocation{}, fmt.Errorf("invalid created_at timestamp %q: %w", createdAt, parseErr)
+	}
 	if keyID != nil {
 		loc.KeyID = *keyID
 	}

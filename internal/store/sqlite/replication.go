@@ -235,7 +235,11 @@ func scanObjectLocations(rows *sql.Rows) ([]store.ObjectLocation, error) {
 		if contentHash.Valid {
 			loc.ContentHash = contentHash.String
 		}
-		loc.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+		var parseErr error
+		loc.CreatedAt, parseErr = parseTime(createdAt)
+		if parseErr != nil {
+			return nil, fmt.Errorf("invalid created_at timestamp %q: %w", createdAt, parseErr)
+		}
 		locs = append(locs, loc)
 	}
 	return locs, rows.Err()

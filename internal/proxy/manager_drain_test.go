@@ -40,6 +40,7 @@ func newDrainTestManager(store *mockStore, backends map[string]*mockBackend) *Ba
 	})
 }
 
+// TestPurgeBackendObjects_DeletesDBRecords verifies that purge deletes both S3 objects and DB records.
 func TestPurgeBackendObjects_DeletesDBRecords(t *testing.T) {
 	backend := newMockBackend()
 	// Pre-populate backend with objects
@@ -95,6 +96,7 @@ func TestPurgeBackendObjects_DeletesDBRecords(t *testing.T) {
 	}
 }
 
+// TestPurgeBackendObjects_ContinuesOnS3DeleteFailure verifies DB cleanup proceeds even if S3 delete fails.
 func TestPurgeBackendObjects_ContinuesOnS3DeleteFailure(t *testing.T) {
 	backend := newMockBackend()
 	// Don't pre-populate — S3 deletes will "fail" (object not found)
@@ -159,6 +161,7 @@ func TestRemoveBackend_PurgeTerminates(t *testing.T) {
 // drainOneObject — object already has replica elsewhere
 // -------------------------------------------------------------------------
 
+// TestDrainOneObject_ReplicaExists_DeletesSourceWithSize verifies that when a replica exists elsewhere, only the source copy is deleted.
 func TestDrainOneObject_ReplicaExists_DeletesSourceWithSize(t *testing.T) {
 	srcBackend := newMockBackend()
 	srcBackend.objects["key1"] = mockObject{data: []byte("data")}
@@ -189,6 +192,7 @@ func TestDrainOneObject_ReplicaExists_DeletesSourceWithSize(t *testing.T) {
 // drainOneObject — no replica, must copy then delete source
 // -------------------------------------------------------------------------
 
+// TestDrainOneObject_NoCopy_MovesObjectWithSize verifies that objects with no replica are copied to a destination before source deletion.
 func TestDrainOneObject_NoCopy_MovesObjectWithSize(t *testing.T) {
 	srcBackend := newMockBackend()
 	srcBackend.objects["key1"] = mockObject{data: []byte("abcd"), contentType: "text/plain"}
@@ -222,6 +226,7 @@ func TestDrainOneObject_NoCopy_MovesObjectWithSize(t *testing.T) {
 // drainOneObject — MoveObjectLocation fails, orphan enqueued with size
 // -------------------------------------------------------------------------
 
+// TestDrainOneObject_MoveLocationFails_EnqueuesOrphanWithSize verifies orphan cleanup is enqueued when the DB move fails.
 func TestDrainOneObject_MoveLocationFails_EnqueuesOrphanWithSize(t *testing.T) {
 	srcBackend := newMockBackend()
 	srcBackend.objects["key1"] = mockObject{data: []byte("abcd"), contentType: "text/plain"}
@@ -262,6 +267,7 @@ func TestDrainOneObject_MoveLocationFails_EnqueuesOrphanWithSize(t *testing.T) {
 // drainOneObject — MoveObjectLocation returns 0 (stale), enqueues orphan
 // -------------------------------------------------------------------------
 
+// TestDrainOneObject_StaleObject_EnqueuesOrphanWithSize verifies orphan cleanup when MoveObjectLocation returns 0 (stale).
 func TestDrainOneObject_StaleObject_EnqueuesOrphanWithSize(t *testing.T) {
 	srcBackend := newMockBackend()
 	srcBackend.objects["key1"] = mockObject{data: []byte("abcd"), contentType: "text/plain"}
@@ -354,6 +360,7 @@ func TestStartDrain_FlushesCleanupQueueBeforeDeleteBackendData(t *testing.T) {
 // CancelDrain
 // -------------------------------------------------------------------------
 
+// TestCancelDrain_CompletedDrain_ClearsState verifies that cancelling an already-completed drain clears state.
 func TestCancelDrain_CompletedDrain_ClearsState(t *testing.T) {
 	backend := newMockBackend()
 	store := &mockStore{
@@ -385,6 +392,7 @@ func TestCancelDrain_CompletedDrain_ClearsState(t *testing.T) {
 	}
 }
 
+// TestCancelDrain_ActiveDrain_CancelsAndClears verifies that cancelling an in-progress drain stops it via context.
 func TestCancelDrain_ActiveDrain_CancelsAndClears(t *testing.T) {
 	store := &mockStore{
 		// Gate never closes — drain blocks in ListObjectsByBackend until
@@ -407,9 +415,80 @@ func TestCancelDrain_ActiveDrain_CancelsAndClears(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
+// drainState race safety
+// -------------------------------------------------------------------------
+
+// TestGetDrainProgress_ConcurrentAccess verifies that concurrent calls to
+// GetDrainProgress while a drain is running do not trigger a data race on
+// the drainState error field (run with -race).
+func TestGetDrainProgress_ConcurrentAccess(t *testing.T) {
+	store := &mockStore{
+		listObjectsByBackendGate: make(chan struct{}),
+	}
+	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+
+	if err := mgr.DrainManager.StartDrain(context.Background(), "b1"); err != nil {
+		t.Fatalf("StartDrain: %v", err)
+	}
+
+	// Hammer GetDrainProgress from multiple goroutines while drain is active.
+	done := make(chan struct{})
+	for range 10 {
+		go func() {
+			for {
+				select {
+				case <-done:
+					return
+				default:
+					_, _ = mgr.DrainManager.GetDrainProgress(context.Background(), "b1")
+				}
+			}
+		}()
+	}
+
+	// Let the goroutines run briefly, then cancel the drain.
+	time.Sleep(50 * time.Millisecond)
+	close(done)
+	_ = mgr.DrainManager.CancelDrain("b1")
+}
+
+// TestGetDrainProgress_ReportsError verifies that a drain error (from
+// DeleteBackendData failure) is surfaced through GetDrainProgress via the
+// atomic error pointer.
+func TestGetDrainProgress_ReportsError(t *testing.T) {
+	store := &mockStore{
+		deleteBackendDataErr: errors.New("injected DB failure"),
+	}
+	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+
+	if err := mgr.DrainManager.StartDrain(context.Background(), "b1"); err != nil {
+		t.Fatalf("StartDrain: %v", err)
+	}
+
+	// Wait for drain to complete — DeleteBackendData fails so state.err is set,
+	// but the state remains in the map (no draining.Delete on this error path).
+	var progress *DrainProgress
+	for range 50 {
+		p, _ := mgr.DrainManager.GetDrainProgress(context.Background(), "b1")
+		if !p.Active {
+			progress = p
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if progress == nil {
+		t.Fatal("drain did not terminate")
+	}
+	if progress.Error == "" {
+		t.Error("expected error in progress after DeleteBackendData failure")
+	}
+}
+
+// -------------------------------------------------------------------------
 // runDrain error paths
 // -------------------------------------------------------------------------
 
+// TestRunDrain_ListObjectsByBackendFails verifies the drain terminates cleanly on a ListObjectsByBackend error.
 func TestRunDrain_ListObjectsByBackendFails(t *testing.T) {
 	store := &mockStore{
 		listObjectsByBackendErr: errors.New("db connection lost"),
@@ -441,6 +520,7 @@ func TestRunDrain_ListObjectsByBackendFails(t *testing.T) {
 	}
 }
 
+// TestRunDrain_DeleteBackendDataFails verifies the drain reports an error when final cleanup fails.
 func TestRunDrain_DeleteBackendDataFails(t *testing.T) {
 	store := &mockStore{
 		listObjectsByBackendResp: nil, // no objects → skip to cleanup
@@ -471,6 +551,7 @@ func TestRunDrain_DeleteBackendDataFails(t *testing.T) {
 // drainOneObject error paths
 // -------------------------------------------------------------------------
 
+// TestDrainOneObject_GetAllLocationsFails verifies drain handles a GetAllObjectLocations failure.
 func TestDrainOneObject_GetAllLocationsFails(t *testing.T) {
 	store := &mockStore{
 		getAllLocationsErr: errors.New("db error"),
@@ -484,6 +565,7 @@ func TestDrainOneObject_GetAllLocationsFails(t *testing.T) {
 	}
 }
 
+// TestDrainOneObject_DeleteSourceLocationFails verifies drain handles a DeleteObjectLocation failure.
 func TestDrainOneObject_DeleteSourceLocationFails(t *testing.T) {
 	store := &mockStore{
 		getAllLocationsResp: []st.ObjectLocation{
@@ -504,6 +586,7 @@ func TestDrainOneObject_DeleteSourceLocationFails(t *testing.T) {
 	}
 }
 
+// TestDrainOneObject_NoDestinationAvailable verifies drain handles the case when no destination backend has space.
 func TestDrainOneObject_NoDestinationAvailable(t *testing.T) {
 	store := &mockStore{
 		getAllLocationsResp: []st.ObjectLocation{
@@ -522,6 +605,7 @@ func TestDrainOneObject_NoDestinationAvailable(t *testing.T) {
 	}
 }
 
+// TestDrainOneObject_DestBackendNotFound verifies drain handles a missing destination backend.
 func TestDrainOneObject_DestBackendNotFound(t *testing.T) {
 	store := &mockStore{
 		getAllLocationsResp: []st.ObjectLocation{
@@ -540,6 +624,7 @@ func TestDrainOneObject_DestBackendNotFound(t *testing.T) {
 	}
 }
 
+// TestDrainOneObject_StreamCopyFails verifies drain handles a stream copy failure.
 func TestDrainOneObject_StreamCopyFails(t *testing.T) {
 	srcBackend := newMockBackend()
 	srcBackend.getErr = errors.New("read failure")
@@ -565,6 +650,7 @@ func TestDrainOneObject_StreamCopyFails(t *testing.T) {
 // purgeBackendObjects error paths
 // -------------------------------------------------------------------------
 
+// TestPurgeBackendObjects_ListObjectsFails verifies purge returns early on a list error without panicking.
 func TestPurgeBackendObjects_ListObjectsFails(t *testing.T) {
 	store := &mockStore{
 		listObjectsByBackendErr: errors.New("db error"),
@@ -575,6 +661,7 @@ func TestPurgeBackendObjects_ListObjectsFails(t *testing.T) {
 	mgr.DrainManager.PurgeBackendObjects(context.Background(), newMockBackend(), "b1")
 }
 
+// TestPurgeBackendObjects_S3DeleteFails_LogsWarning verifies DB records are deleted even when S3 delete fails.
 func TestPurgeBackendObjects_S3DeleteFails_LogsWarning(t *testing.T) {
 	backend := newMockBackend()
 	backend.delErr = errors.New("s3 timeout")
@@ -597,6 +684,7 @@ func TestPurgeBackendObjects_S3DeleteFails_LogsWarning(t *testing.T) {
 	}
 }
 
+// TestPurgeBackendObjects_DBDeleteFails verifies purge continues despite DB delete failures.
 func TestPurgeBackendObjects_DBDeleteFails(t *testing.T) {
 	backend := newMockBackend()
 	backend.objects["obj1"] = mockObject{data: []byte("data")}

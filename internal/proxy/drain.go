@@ -26,10 +26,21 @@ import (
 
 // drainState tracks a single in-progress drain operation.
 type drainState struct {
-	cancel context.CancelFunc
-	done   chan struct{}
-	err    error        // set on completion
-	moved  atomic.Int64 // objects successfully moved
+	cancel  context.CancelFunc
+	done    chan struct{}
+	errVal  atomic.Pointer[error] // set on completion; accessed from multiple goroutines
+	moved   atomic.Int64          // objects successfully moved
+}
+
+// setErr stores the completion error atomically.
+func (s *drainState) setErr(err error) { s.errVal.Store(&err) }
+
+// getErr loads the completion error atomically. Returns nil when unset.
+func (s *drainState) getErr() error {
+	if p := s.errVal.Load(); p != nil {
+		return *p
+	}
+	return nil
 }
 
 // DrainProgress holds the current state of a drain operation.
@@ -108,8 +119,8 @@ func (d *DrainManager) GetDrainProgress(ctx context.Context, name string) (*Drai
 	select {
 	case <-state.done:
 		progress.Active = false
-		if state.err != nil {
-			progress.Error = state.err.Error()
+		if err := state.getErr(); err != nil {
+			progress.Error = err.Error()
 		}
 		return progress, nil
 	default:
@@ -174,7 +185,7 @@ func (d *DrainManager) runDrain(ctx context.Context, name string, state *drainSt
 		// Check for cancellation
 		select {
 		case <-ctx.Done():
-			state.err = ctx.Err()
+			state.setErr(ctx.Err())
 			d.draining.Delete(name)
 			telemetry.DrainActive.Set(0)
 			return
@@ -185,7 +196,7 @@ func (d *DrainManager) runDrain(ctx context.Context, name string, state *drainSt
 		objects, err := d.store.ListObjectsByBackend(ctx, name, 100)
 		if err != nil {
 			slog.ErrorContext(ctx, "Drain: failed to list objects", "backend", name, "error", err)
-			state.err = err
+			state.setErr(err)
 			d.draining.Delete(name)
 			telemetry.DrainActive.Set(0)
 			return
@@ -199,7 +210,7 @@ func (d *DrainManager) runDrain(ctx context.Context, name string, state *drainSt
 		for i := range objects {
 			select {
 			case <-ctx.Done():
-				state.err = ctx.Err()
+				state.setErr(ctx.Err())
 				d.draining.Delete(name)
 				telemetry.DrainActive.Set(0)
 				return
@@ -225,7 +236,7 @@ func (d *DrainManager) runDrain(ctx context.Context, name string, state *drainSt
 	// Drain complete — clean up DB records
 	if err := d.store.DeleteBackendData(ctx, name); err != nil {
 		slog.ErrorContext(ctx, "Drain: failed to clean up backend data", "backend", name, "error", err)
-		state.err = err
+		state.setErr(err)
 	}
 
 	// Keep the entry in d.draining so the dashboard shows "Drained" and

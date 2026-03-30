@@ -75,8 +75,9 @@ func (s *Store) VerifySchemaVersion(ctx context.Context) error {
 		)
 	}
 	if version > expectedSchemaVersion {
-		slog.WarnContext(ctx, "SQLite schema is newer than this binary expects — possible downgrade",
-			"schema_version", version, "expected", expectedSchemaVersion,
+		return fmt.Errorf(
+			"SQLite schema version %d is newer than expected %d — binary is outdated",
+			version, expectedSchemaVersion,
 		)
 	}
 	return nil

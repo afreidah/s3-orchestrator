@@ -18,13 +18,24 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"log/slog"
+	"sync/atomic"
 )
 
-// OnEvent is an optional callback invoked for each audit event with the event
-// name. Set this at startup to integrate audit logging with metrics (e.g.
-// Prometheus counters). When nil, audit logging still works — events are
-// emitted via slog but no counter is incremented.
-var OnEvent func(event string)
+// onEvent holds an optional callback invoked for each audit event with the
+// event name. Set via SetOnEvent at startup to integrate audit logging with
+// metrics (e.g. Prometheus counters). When nil, audit logging still works —
+// events are emitted via slog but no counter is incremented.
+var onEvent atomic.Pointer[func(event string)]
+
+// SetOnEvent registers a callback invoked for each audit event. Pass nil to
+// clear a previously registered callback.
+func SetOnEvent(fn func(event string)) {
+	if fn == nil {
+		onEvent.Store(nil)
+	} else {
+		onEvent.Store(&fn)
+	}
+}
 
 // -------------------------------------------------------------------------
 // CONTEXT KEYS
@@ -71,8 +82,8 @@ func RequestID(ctx context.Context) string {
 // includes the request ID from context. If OnEvent is set, it is called
 // with the event name for metrics integration.
 func Log(ctx context.Context, event string, attrs ...slog.Attr) {
-	if OnEvent != nil {
-		OnEvent(event)
+	if fn := onEvent.Load(); fn != nil {
+		(*fn)(event)
 	}
 
 	base := []slog.Attr{

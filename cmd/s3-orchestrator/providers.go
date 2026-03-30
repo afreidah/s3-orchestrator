@@ -422,7 +422,7 @@ func ProvideLogBuffer(_ do.Injector) (*telemetry.LogBuffer, error) {
 
 // wireAuditMetrics connects the audit event counter to Prometheus.
 func wireAuditMetrics() {
-	audit.OnEvent = func(event string) {
+	audit.SetOnEvent(func(event string) {
 		telemetry.AuditEventsTotal.WithLabelValues(event).Inc()
-	}
+	})
 }
