@@ -1461,14 +1461,6 @@ func (s *Store) WithAdvisoryLock(ctx context.Context, lockID int64, fn func(ctx 
 // KEY ROTATION (admin-only, not on MetadataStore interface)
 // -------------------------------------------------------------------------
 
-// EncryptedLocation holds a single encrypted object's key data for rotation.
-type EncryptedLocation struct {
-	ObjectKey     string
-	BackendName   string
-	EncryptionKey []byte
-	KeyID         string
-}
-
 // ListEncryptedLocations returns a page of encrypted object locations filtered
 // by key ID. Used during key rotation to find objects wrapped with the old key.
 func (s *Store) ListEncryptedLocations(ctx context.Context, keyID string, limit, offset int) ([]EncryptedLocation, error) {
@@ -1505,14 +1497,6 @@ func (s *Store) UpdateEncryptionKey(ctx context.Context, objectKey, backendName 
 	})
 }
 
-// UnencryptedLocation holds a single unencrypted object's metadata for the
-// encrypt-existing admin operation.
-type UnencryptedLocation struct {
-	ObjectKey   string
-	BackendName string
-	SizeBytes   int64
-}
-
 // ListUnencryptedLocations returns a page of unencrypted object locations.
 // Used by the encrypt-existing admin endpoint to find objects that need encryption.
 func (s *Store) ListUnencryptedLocations(ctx context.Context, limit, offset int) ([]UnencryptedLocation, error) {
@@ -1546,17 +1530,6 @@ func (s *Store) MarkObjectEncrypted(ctx context.Context, objectKey, backendName 
 		PlaintextSize: &plaintextSize,
 		SizeBytes:     ciphertextSize,
 	})
-}
-
-// DecryptableLocation holds a single encrypted object's metadata for the
-// decrypt-existing admin operation.
-type DecryptableLocation struct {
-	ObjectKey     string
-	BackendName   string
-	SizeBytes     int64
-	EncryptionKey []byte
-	KeyID         string
-	PlaintextSize int64
 }
 
 // ListAllEncryptedLocations returns a page of all encrypted object locations.

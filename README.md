@@ -46,7 +46,7 @@ See the [Quickstart](docs/quickstart.md) for full details, credentials for all b
 - Debian: download `.deb` from [GitHub Releases](https://github.com/afreidah/s3-orchestrator/releases)
 - Binary: download from [GitHub Releases](https://github.com/afreidah/s3-orchestrator/releases)
 
-> **Requires PostgreSQL 14+.** The orchestrator stores object metadata, quotas, and replication state in PostgreSQL. The `make run` quickstart handles this automatically, but standalone installs need an existing PostgreSQL instance. Database tables are created automatically on first start.
+> **Database:** SQLite is embedded by default — no external database needed for single-instance use. For multi-instance deployments, configure `database.driver: postgres` with PostgreSQL 14+. Run `s3-orchestrator init` to generate a config file interactively.
 
 **Verify artifact signatures:**
 
@@ -438,16 +438,23 @@ buckets:
   #   credentials:
   #     - token: "my-secret-token"
 
+# SQLite (default) — zero-dependency, single-instance
 database:
-  host: "localhost"
-  port: 5432
-  database: "s3proxy"
-  user: "s3proxy"
-  password: "secret"
-  ssl_mode: "require"
-  max_conns: 50               # default: 50; size to 2-3x max_concurrent_requests
-  min_conns: 10
-  max_conn_lifetime: "5m"
+  driver: sqlite
+  path: "s3-orchestrator.db"
+
+# PostgreSQL — required for multi-instance deployments
+# database:
+#   driver: postgres
+#   host: "localhost"
+#   port: 5432
+#   database: "s3proxy"
+#   user: "s3proxy"
+#   password: "secret"
+#   ssl_mode: "require"
+#   max_conns: 50             # default: 50; size to 2-3x max_concurrent_requests
+#   min_conns: 10
+#   max_conn_lifetime: "5m"
 
 routing_strategy: "pack"       # "pack" (fill in order) or "spread" (least utilized) (default: pack)
 

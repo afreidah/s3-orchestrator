@@ -18,6 +18,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -38,6 +39,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 	"github.com/afreidah/s3-orchestrator/internal/store"
+	sqlitestore "github.com/afreidah/s3-orchestrator/internal/store/sqlite"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/transport/ui"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
@@ -47,36 +49,77 @@ import (
 // INFRASTRUCTURE PROVIDERS
 // -------------------------------------------------------------------------
 
-// ProvideStore connects to PostgreSQL, runs migrations, and syncs quota limits.
-func ProvideStore(i do.Injector) (*store.Store, error) {
+// storeBundle groups the two store interfaces returned by driver-aware
+// construction. Both PostgreSQL and SQLite stores satisfy both interfaces.
+type storeBundle struct {
+	meta  store.MetadataStore
+	admin store.AdminStore
+}
+
+// ProvideStoreBundle creates the metadata store for the configured driver,
+// runs migrations, and syncs quota limits.
+func ProvideStoreBundle(i do.Injector) (*storeBundle, error) {
 	cfg := do.MustInvoke[*config.Config](i)
 	ctx := context.Background()
 
-	db, err := store.NewStore(ctx, &cfg.Database)
+	meta, adminDB, err := openStore(ctx, &cfg.Database)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := db.RunMigrations(ctx); err != nil {
+	if err := adminDB.RunMigrations(ctx); err != nil {
 		return nil, err
 	}
-	if err := db.VerifySchemaVersion(ctx); err != nil {
+	if err := adminDB.VerifySchemaVersion(ctx); err != nil {
 		return nil, err
 	}
-	slog.InfoContext(context.Background(), "Database migrations applied", "schema_version", store.ExpectedSchemaVersion)
+	slog.InfoContext(context.Background(), "Database migrations applied",
+		"driver", cfg.Database.Driver)
 
-	if err := db.SyncQuotaLimits(ctx, cfg.Backends); err != nil {
+	if err := adminDB.SyncQuotaLimits(ctx, cfg.Backends); err != nil {
 		return nil, err
 	}
 
-	return db, nil
+	return &storeBundle{meta: meta, admin: adminDB}, nil
 }
 
-// ProvideCBStore wraps the raw store with circuit breaker protection.
+// ProvideMetadataStore extracts the MetadataStore from the bundle.
+func ProvideMetadataStore(i do.Injector) (store.MetadataStore, error) {
+	b := do.MustInvoke[*storeBundle](i)
+	return b.meta, nil
+}
+
+// ProvideAdminStore extracts the AdminStore from the bundle.
+func ProvideAdminStore(i do.Injector) (store.AdminStore, error) {
+	b := do.MustInvoke[*storeBundle](i)
+	return b.admin, nil
+}
+
+// ProvideCBStore wraps the MetadataStore with circuit breaker protection.
 func ProvideCBStore(i do.Injector) (*store.CircuitBreakerStore, error) {
 	cfg := do.MustInvoke[*config.Config](i)
-	db := do.MustInvoke[*store.Store](i)
-	return store.NewCircuitBreakerStore(db, cfg.CircuitBreaker), nil
+	meta := do.MustInvoke[store.MetadataStore](i)
+	return store.NewCircuitBreakerStore(meta, cfg.CircuitBreaker), nil
+}
+
+// openStore dispatches store construction to the appropriate driver backend.
+func openStore(ctx context.Context, dbCfg *config.DatabaseConfig) (store.MetadataStore, store.AdminStore, error) {
+	switch dbCfg.Driver {
+	case "postgres":
+		s, err := store.NewStore(ctx, dbCfg)
+		if err != nil {
+			return nil, nil, err
+		}
+		return s, s, nil
+	case "sqlite":
+		s, err := sqlitestore.NewStore(ctx, dbCfg)
+		if err != nil {
+			return nil, nil, err
+		}
+		return s, s, nil
+	default:
+		return nil, nil, fmt.Errorf("unsupported database driver: %q", dbCfg.Driver)
+	}
 }
 
 // -------------------------------------------------------------------------
@@ -345,7 +388,7 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 	cfg := do.MustInvoke[*config.Config](i)
 	manager := do.MustInvoke[*proxy.BackendManager](i)
 	cbStore := do.MustInvoke[*store.CircuitBreakerStore](i)
-	db := do.MustInvoke[*store.Store](i)
+	adminDB := do.MustInvoke[store.AdminStore](i)
 	logLevel := do.MustInvoke[*slog.LevelVar](i)
 
 	var enc *encryption.Encryptor
@@ -358,14 +401,14 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 		adminToken = cfg.UI.AdminKey
 	}
 
-	return admin.New(manager, cbStore, db, enc, adminToken, logLevel), nil
+	return admin.New(manager, cbStore, adminDB, enc, adminToken, logLevel), nil
 }
 
 // ProvideNotifier creates the webhook notification system.
 func ProvideNotifier(i do.Injector) (*notify.Notifier, error) {
 	cfg := do.MustInvoke[*config.Config](i)
-	db := do.MustInvoke[*store.Store](i)
-	return notify.NewNotifier(&cfg.Notifications, db), nil
+	adminDB := do.MustInvoke[store.AdminStore](i)
+	return notify.NewNotifier(&cfg.Notifications, adminDB), nil
 }
 
 // ProvideLogBuffer creates the in-memory log ring buffer for the dashboard.

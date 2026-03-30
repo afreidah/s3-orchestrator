@@ -105,16 +105,23 @@ server:
   backend_timeout: "2m"
   shutdown_delay: "5s"
 
+# SQLite (default) -- no external database needed
 database:
-  host: ${DB_HOST}
-  port: ${DB_PORT}
-  database: ${DB_NAME}
-  user: ${DB_USER}
-  password: ${DB_PASSWORD}
-  ssl_mode: ${DB_SSL_MODE}
-  max_conns: 50
-  min_conns: 10
-  max_conn_lifetime: "5m"
+  driver: sqlite
+  path: /var/lib/s3-orchestrator/data.db
+
+# PostgreSQL (uncomment for multi-instance deployments)
+# database:
+#   driver: postgres
+#   host: ${DB_HOST}
+#   port: ${DB_PORT}
+#   database: ${DB_NAME}
+#   user: ${DB_USER}
+#   password: ${DB_PASSWORD}
+#   ssl_mode: ${DB_SSL_MODE}
+#   max_conns: 50
+#   min_conns: 10
+#   max_conn_lifetime: "5m"
 
 buckets:
   - name: default

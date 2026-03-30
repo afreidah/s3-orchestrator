@@ -12,8 +12,12 @@ import (
 	"time"
 )
 
-// DatabaseConfig holds PostgreSQL connection settings.
+// DatabaseConfig holds metadata store connection settings. The Driver field
+// selects between "sqlite" (embedded, zero-dependency default) and "postgres"
+// (required for multi-instance deployments).
 type DatabaseConfig struct {
+	Driver          string        `yaml:"driver"`            // "sqlite" or "postgres" (default: inferred from config)
+	Path            string        `yaml:"path"`              // SQLite file path (default: "s3-orchestrator.db")
 	Host            string        `yaml:"host"`
 	Port            int           `yaml:"port"`
 	Database        string        `yaml:"database"`
@@ -39,6 +43,33 @@ func (c *DatabaseConfig) ConnectionString() string {
 }
 
 func (d *DatabaseConfig) setDefaultsAndValidate() []string {
+	// Infer driver from config if not set explicitly.
+	if d.Driver == "" {
+		if d.Host != "" {
+			d.Driver = "postgres"
+		} else {
+			d.Driver = "sqlite"
+		}
+	}
+
+	switch d.Driver {
+	case "sqlite":
+		return d.validateSQLite()
+	case "postgres":
+		return d.validatePostgres()
+	default:
+		return []string{fmt.Sprintf("database.driver must be 'sqlite' or 'postgres', got %q", d.Driver)}
+	}
+}
+
+func (d *DatabaseConfig) validateSQLite() []string {
+	if d.Path == "" {
+		d.Path = "s3-orchestrator.db"
+	}
+	return nil
+}
+
+func (d *DatabaseConfig) validatePostgres() []string {
 	var errs []string
 
 	if d.Host == "" {

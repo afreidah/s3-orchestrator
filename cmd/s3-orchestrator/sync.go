@@ -19,7 +19,6 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/store"
 )
 
 func runSync() {
@@ -70,22 +69,23 @@ func runSync() {
 	ctx := context.Background()
 
 	// --- Initialize store ---
-	db, err := store.NewStore(ctx, &cfg.Database)
+	metaDB, adminDB, err := openStore(ctx, &cfg.Database)
 	if err != nil {
 		slog.ErrorContext(ctx, "Failed to connect to database", "error", err)
 		os.Exit(1)
 	}
-	defer db.Close()
+	defer adminDB.Close()
 
-	if err := db.RunMigrations(ctx); err != nil {
+	if err := adminDB.RunMigrations(ctx); err != nil {
 		slog.ErrorContext(ctx, "Failed to run migrations", "error", err)
 		os.Exit(1)
 	}
 
-	if err := db.SyncQuotaLimits(ctx, cfg.Backends); err != nil {
+	if err := adminDB.SyncQuotaLimits(ctx, cfg.Backends); err != nil {
 		slog.ErrorContext(ctx, "Failed to sync quota limits", "error", err)
 		os.Exit(1)
 	}
+	_ = metaDB // used below via ImportObject
 
 	// --- Initialize backend ---
 	s3b, err := backend.NewS3Backend(backendCfg)
@@ -126,7 +126,7 @@ func runSync() {
 				continue
 			}
 
-			imported, err := db.ImportObject(ctx, prefixedKey, backendCfg.Name, obj.SizeBytes)
+			imported, err := metaDB.ImportObject(ctx, prefixedKey, backendCfg.Name, obj.SizeBytes)
 			if err != nil {
 				return fmt.Errorf("failed to import %s: %w", obj.Key, err)
 			}

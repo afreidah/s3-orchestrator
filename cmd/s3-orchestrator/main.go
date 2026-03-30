@@ -60,6 +60,10 @@ func main() {
 			os.Args = os.Args[1:]
 			runValidate()
 			return
+		case "init":
+			os.Args = os.Args[1:]
+			runInit()
+			return
 		case "admin":
 			os.Args = os.Args[1:]
 			runAdmin()
@@ -77,6 +81,7 @@ func printUsage() {
 
 Commands:
   (default)   Start the S3 proxy server
+  init        Generate a configuration file interactively
   admin       Operational CLI for a running instance
   sync        Import pre-existing bucket objects into the database
   validate    Check a configuration file without starting the server
@@ -140,7 +145,9 @@ func runServe() {
 	do.ProvideValue(inj, logBuffer)
 
 	// --- Register infrastructure providers ---
-	do.Provide(inj, ProvideStore)
+	do.Provide(inj, ProvideStoreBundle)
+	do.Provide(inj, ProvideMetadataStore)
+	do.Provide(inj, ProvideAdminStore)
 	do.Provide(inj, ProvideCBStore)
 	do.Provide(inj, ProvideBackends)
 	do.Provide(inj, ProvideBackendManager)
@@ -174,7 +181,7 @@ func runServe() {
 	}
 
 	// --- Resolve core services (triggers lazy construction) ---
-	db := do.MustInvoke[*store.Store](inj)
+	db := do.MustInvoke[store.AdminStore](inj)
 	cbStore := do.MustInvoke[*store.CircuitBreakerStore](inj)
 	manager := do.MustInvoke[*proxy.BackendManager](inj)
 	srv := do.MustInvoke[*s3api.Server](inj)

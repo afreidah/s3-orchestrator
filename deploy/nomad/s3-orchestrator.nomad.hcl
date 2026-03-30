@@ -149,6 +149,7 @@ job "s3-orchestrator" {
 
           # --- PostgreSQL metadata store ---
           database:
+            driver: postgres
             host: "postgres.service.consul"
             port: 5432
             database: "s3orchestrator"

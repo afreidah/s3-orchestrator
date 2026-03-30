@@ -79,6 +79,7 @@ job "s3-orchestrator" {
             admission_wait: "100ms"
 
           database:
+            driver: postgres
             host: "__HOST_IP__"
             port: 15432
             database: "s3proxy_test"

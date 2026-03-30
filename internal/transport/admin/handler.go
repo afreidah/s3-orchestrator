@@ -39,14 +39,14 @@ import (
 type Handler struct {
 	manager   *proxy.BackendManager
 	store     *store.CircuitBreakerStore
-	rawStore  *store.Store
+	rawStore  store.AdminStore
 	encryptor *encryption.Encryptor
 	token     string
 	logLevel  *slog.LevelVar
 }
 
 // New creates a new admin API handler.
-func New(manager *proxy.BackendManager, store *store.CircuitBreakerStore, rawStore *store.Store, encryptor *encryption.Encryptor, token string, logLevel *slog.LevelVar) *Handler {
+func New(manager *proxy.BackendManager, store *store.CircuitBreakerStore, rawStore store.AdminStore, encryptor *encryption.Encryptor, token string, logLevel *slog.LevelVar) *Handler {
 	return &Handler{
 		manager:   manager,
 		store:     store,
