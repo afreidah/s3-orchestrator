@@ -140,7 +140,9 @@ func runServe() {
 	do.ProvideValue(inj, logBuffer)
 
 	// --- Register infrastructure providers ---
-	do.Provide(inj, ProvideStore)
+	do.Provide(inj, ProvideStoreBundle)
+	do.Provide(inj, ProvideMetadataStore)
+	do.Provide(inj, ProvideAdminStore)
 	do.Provide(inj, ProvideCBStore)
 	do.Provide(inj, ProvideBackends)
 	do.Provide(inj, ProvideBackendManager)
@@ -174,7 +176,7 @@ func runServe() {
 	}
 
 	// --- Resolve core services (triggers lazy construction) ---
-	db := do.MustInvoke[*store.Store](inj)
+	db := do.MustInvoke[store.AdminStore](inj)
 	cbStore := do.MustInvoke[*store.CircuitBreakerStore](inj)
 	manager := do.MustInvoke[*proxy.BackendManager](inj)
 	srv := do.MustInvoke[*s3api.Server](inj)

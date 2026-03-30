@@ -17,6 +17,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
 // -------------------------------------------------------------------------
@@ -193,11 +195,70 @@ type AdvisoryLocker interface {
 }
 
 // -------------------------------------------------------------------------
+// ADMIN STORE INTERFACE
+// -------------------------------------------------------------------------
+
+// AdminStore defines startup, shutdown, and admin-only operations on the
+// concrete store. Both the PostgreSQL and SQLite stores satisfy this
+// interface. Methods here are NOT wrapped by CircuitBreakerStore.
+type AdminStore interface {
+	// Lifecycle
+	RunMigrations(ctx context.Context) error
+	VerifySchemaVersion(ctx context.Context) error
+	SyncQuotaLimits(ctx context.Context, backends []config.BackendConfig) error
+	Close()
+
+	// Encryption admin operations
+	ListEncryptedLocations(ctx context.Context, keyID string, limit, offset int) ([]EncryptedLocation, error)
+	UpdateEncryptionKey(ctx context.Context, objectKey, backendName string, newEncryptionKey []byte, newKeyID string) error
+	ListUnencryptedLocations(ctx context.Context, limit, offset int) ([]UnencryptedLocation, error)
+	MarkObjectEncrypted(ctx context.Context, objectKey, backendName string, encryptionKey []byte, keyID string, plaintextSize, ciphertextSize int64) error
+	ListAllEncryptedLocations(ctx context.Context, limit, offset int) ([]DecryptableLocation, error)
+	MarkObjectDecrypted(ctx context.Context, objectKey, backendName string, plaintextSize int64) error
+
+	// Notification outbox
+	InsertNotification(ctx context.Context, eventType, payload, endpointURL string) error
+	GetPendingNotifications(ctx context.Context, limit int) ([]NotificationRow, error)
+	CompleteNotification(ctx context.Context, id int64) error
+	RetryNotification(ctx context.Context, id int64, backoff time.Duration, lastError string) error
+
+	// Advisory lock (needed by notifier worker for leader election)
+	WithAdvisoryLock(ctx context.Context, lockID int64, fn func(ctx context.Context) error) (bool, error)
+}
+
+// EncryptedLocation represents an encrypted object location for key rotation.
+type EncryptedLocation struct {
+	ObjectKey     string
+	BackendName   string
+	EncryptionKey []byte
+	KeyID         string
+}
+
+// UnencryptedLocation represents an unencrypted object location.
+type UnencryptedLocation struct {
+	ObjectKey   string
+	BackendName string
+	SizeBytes   int64
+}
+
+// DecryptableLocation represents an encrypted object location with all
+// metadata needed for decryption.
+type DecryptableLocation struct {
+	ObjectKey     string
+	BackendName   string
+	SizeBytes     int64
+	EncryptionKey []byte
+	KeyID         string
+	PlaintextSize int64
+}
+
+// -------------------------------------------------------------------------
 // COMPILE-TIME CHECKS
 // -------------------------------------------------------------------------
 
-// Verify *Store satisfies MetadataStore.
+// Verify *Store satisfies MetadataStore and AdminStore.
 var _ MetadataStore = (*Store)(nil)
+var _ AdminStore = (*Store)(nil)
 
 // Verify MetadataStore satisfies all narrow interfaces.
 var (
