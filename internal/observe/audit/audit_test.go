@@ -20,6 +20,7 @@ import (
 
 // TestNewID_UniqueAndCorrectLength verifies that generated IDs are 32 hex chars and unique.
 func TestNewID_UniqueAndCorrectLength(t *testing.T) {
+	t.Parallel()
 	ids := make(map[string]bool, 100)
 	for range 100 {
 		id := NewID()
@@ -35,6 +36,7 @@ func TestNewID_UniqueAndCorrectLength(t *testing.T) {
 
 // TestContextRoundTrip verifies request ID storage and retrieval from context.
 func TestContextRoundTrip(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	// Empty context returns empty string

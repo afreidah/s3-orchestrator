@@ -53,6 +53,7 @@ func (m *mockDashboardStore) ListDirectoryChildren(_ context.Context, _, _ strin
 }
 
 func TestAggregator_Success(t *testing.T) {
+	t.Parallel()
 	ms := &mockDashboardStore{
 		quotaStats:      map[string]store.QuotaStat{"b1": {BytesUsed: 100}},
 		objectCounts:    map[string]int64{"b1": 5},
@@ -84,6 +85,7 @@ func TestAggregator_Success(t *testing.T) {
 }
 
 func TestAggregator_QuotaStatsError(t *testing.T) {
+	t.Parallel()
 	ms := &mockDashboardStore{
 		quotaStatsErr: errors.New("db down"),
 	}
@@ -97,6 +99,7 @@ func TestAggregator_QuotaStatsError(t *testing.T) {
 }
 
 func TestAggregator_ObjectCountsError(t *testing.T) {
+	t.Parallel()
 	ms := &mockDashboardStore{
 		quotaStats:      map[string]store.QuotaStat{},
 		objectCountsErr: errors.New("db down"),
@@ -111,6 +114,7 @@ func TestAggregator_ObjectCountsError(t *testing.T) {
 }
 
 func TestAggregator_MultipartCountsError(t *testing.T) {
+	t.Parallel()
 	ms := &mockDashboardStore{
 		quotaStats:         map[string]store.QuotaStat{},
 		objectCounts:       map[string]int64{},
@@ -126,6 +130,7 @@ func TestAggregator_MultipartCountsError(t *testing.T) {
 }
 
 func TestAggregator_UsageStatsError(t *testing.T) {
+	t.Parallel()
 	ms := &mockDashboardStore{
 		quotaStats:      map[string]store.QuotaStat{},
 		objectCounts:    map[string]int64{},
@@ -142,6 +147,7 @@ func TestAggregator_UsageStatsError(t *testing.T) {
 }
 
 func TestAggregator_DirChildrenError(t *testing.T) {
+	t.Parallel()
 	ms := &mockDashboardStore{
 		quotaStats:      map[string]store.QuotaStat{},
 		objectCounts:    map[string]int64{},
@@ -159,6 +165,7 @@ func TestAggregator_DirChildrenError(t *testing.T) {
 }
 
 func TestAggregator_GetDirectoryChildren_ClampsMaxKeys(t *testing.T) {
+	t.Parallel()
 	ms := &mockDashboardStore{
 		dirChildren: &store.DirectoryListResult{},
 	}

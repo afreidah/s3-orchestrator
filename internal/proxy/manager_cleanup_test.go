@@ -30,6 +30,7 @@ import (
 // -------------------------------------------------------------------------
 
 func TestCleanupBackoff(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		attempts int32
 		want     time.Duration
@@ -61,6 +62,7 @@ func TestCleanupBackoff(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestEnqueueCleanup_Success(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
@@ -78,6 +80,7 @@ func TestEnqueueCleanup_Success(t *testing.T) {
 }
 
 func TestEnqueueCleanup_DBError_LogsOnly(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{enqueueCleanupErr: errors.New("db down")}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
@@ -96,6 +99,7 @@ func TestEnqueueCleanup_DBError_LogsOnly(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestProcessCleanupQueue_DeleteSuccess(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	// Pre-populate orphan on the backend
 	_, _ = backend.PutObject(context.Background(), "orphan.txt", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
@@ -131,6 +135,7 @@ func TestProcessCleanupQueue_DeleteSuccess(t *testing.T) {
 }
 
 func TestProcessCleanupQueue_DeleteFails_SchedulesRetry(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	backend.delErr = errors.New("backend timeout")
 
@@ -168,6 +173,7 @@ func TestProcessCleanupQueue_DeleteFails_SchedulesRetry(t *testing.T) {
 }
 
 func TestProcessCleanupQueue_BackendNotFound_RemovesItem(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		pendingCleanups: []st.CleanupItem{
 			{ID: 3, BackendName: "gone-backend", ObjectKey: "orphan.txt", Reason: "orphan_put", Attempts: 0},
@@ -191,6 +197,7 @@ func TestProcessCleanupQueue_BackendNotFound_RemovesItem(t *testing.T) {
 }
 
 func TestProcessCleanupQueue_EmptyQueue(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
@@ -202,6 +209,7 @@ func TestProcessCleanupQueue_EmptyQueue(t *testing.T) {
 }
 
 func TestProcessCleanupQueue_FetchError(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{getPendingErr: errors.New("db error")}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
@@ -213,6 +221,7 @@ func TestProcessCleanupQueue_FetchError(t *testing.T) {
 }
 
 func TestProcessCleanupQueue_MaxAttemptsReached(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	backend.delErr = errors.New("backend timeout")
 
@@ -247,6 +256,7 @@ func TestProcessCleanupQueue_MaxAttemptsReached(t *testing.T) {
 }
 
 func TestProcessCleanupQueue_CompleteItemError(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	_, _ = backend.PutObject(context.Background(), "orphan.txt", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
@@ -269,6 +279,7 @@ func TestProcessCleanupQueue_CompleteItemError(t *testing.T) {
 }
 
 func TestProcessCleanupQueue_RetryItemError(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	backend.delErr = errors.New("backend down")
 
@@ -291,6 +302,7 @@ func TestProcessCleanupQueue_RetryItemError(t *testing.T) {
 }
 
 func TestProcessCleanupQueue_QueueDepthError(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		cleanupQueueDepthErr: errors.New("db error"),
 	}
@@ -304,6 +316,7 @@ func TestProcessCleanupQueue_QueueDepthError(t *testing.T) {
 }
 
 func TestProcessCleanupQueue_BackendNotFound_CompleteItemError(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		pendingCleanups: []st.CleanupItem{
 			{ID: 8, BackendName: "gone-backend", ObjectKey: "orphan.txt", Reason: "orphan_put", Attempts: 0},
@@ -323,6 +336,7 @@ func TestProcessCleanupQueue_BackendNotFound_CompleteItemError(t *testing.T) {
 }
 
 func TestProcessCleanupQueue_Concurrent(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	backend.delDelay = 50 * time.Millisecond
 
@@ -362,6 +376,7 @@ func TestProcessCleanupQueue_Concurrent(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestDeleteObject_BackendDeleteFails_EnqueuesCleanup(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	store := &mockStore{
 		deleteObjectResp: []st.DeletedCopy{{BackendName: "b1", SizeBytes: 100}},
@@ -390,6 +405,7 @@ func TestDeleteObject_BackendDeleteFails_EnqueuesCleanup(t *testing.T) {
 }
 
 func TestProcessCleanupQueue_AdmissionBlocked(t *testing.T) {
+	t.Parallel()
 	sem := make(chan struct{}, 1)
 	sem <- struct{}{} // fill
 
@@ -429,6 +445,7 @@ func TestProcessCleanupQueue_AdmissionBlocked(t *testing.T) {
 }
 
 func TestPutObject_RecordFails_OrphanDeleteFails_EnqueuesCleanup(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	backend.delErr = errors.New("delete failed too")
 	store := &mockStore{

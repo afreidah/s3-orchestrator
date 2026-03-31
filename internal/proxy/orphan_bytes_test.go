@@ -30,6 +30,7 @@ import (
 // -------------------------------------------------------------------------
 
 func TestEnqueueCleanup_IncrementsOrphanBytes(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
@@ -47,6 +48,7 @@ func TestEnqueueCleanup_IncrementsOrphanBytes(t *testing.T) {
 }
 
 func TestEnqueueCleanup_ZeroSize_SkipsOrphanIncrement(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
@@ -60,6 +62,7 @@ func TestEnqueueCleanup_ZeroSize_SkipsOrphanIncrement(t *testing.T) {
 }
 
 func TestEnqueueCleanup_EnqueueFails_SkipsOrphanIncrement(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{enqueueCleanupErr: errors.New("db down")}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
@@ -78,6 +81,7 @@ func TestEnqueueCleanup_EnqueueFails_SkipsOrphanIncrement(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestCleanupWorker_SuccessfulDelete_DecrementsOrphanBytes(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	_, _ = backend.PutObject(context.Background(), "orphan.txt", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
@@ -105,6 +109,7 @@ func TestCleanupWorker_SuccessfulDelete_DecrementsOrphanBytes(t *testing.T) {
 }
 
 func TestCleanupWorker_SuccessfulDelete_ZeroSize_SkipsDecrement(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	_, _ = backend.PutObject(context.Background(), "orphan.txt", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
@@ -128,6 +133,7 @@ func TestCleanupWorker_SuccessfulDelete_ZeroSize_SkipsDecrement(t *testing.T) {
 }
 
 func TestCleanupWorker_Exhausted_PreservesOrphanBytes(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	backend.delErr = errors.New("permanent failure")
 
@@ -159,6 +165,7 @@ func TestCleanupWorker_Exhausted_PreservesOrphanBytes(t *testing.T) {
 }
 
 func TestCleanupWorker_RetryNotExhausted_NoOrphanBytesChange(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	backend.delErr = errors.New("transient failure")
 
@@ -190,6 +197,7 @@ func TestCleanupWorker_RetryNotExhausted_NoOrphanBytesChange(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestPutObject_Overwrite_EnqueuesDisplacedCopiesWithSize(t *testing.T) {
+	t.Parallel()
 	b1 := newMockBackend()
 	b2 := newMockBackend()
 	b2.delErr = errors.New("backend down") // force enqueue instead of direct delete
@@ -233,6 +241,7 @@ func TestPutObject_Overwrite_EnqueuesDisplacedCopiesWithSize(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestDeleteObject_BackendFails_EnqueuesWithSize(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	backend.delErr = errors.New("timeout")
 
@@ -264,6 +273,7 @@ func TestDeleteObject_BackendFails_EnqueuesWithSize(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestFindReplicaTarget_RespectsOrphanBytes(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": newMockBackend(), "b2": newMockBackend()},
@@ -288,6 +298,7 @@ func TestFindReplicaTarget_RespectsOrphanBytes(t *testing.T) {
 }
 
 func TestFindReplicaTarget_OrphanBytesStillFits(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": newMockBackend(), "b2": newMockBackend()},
@@ -315,6 +326,7 @@ func TestFindReplicaTarget_OrphanBytesStillFits(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestOrphanBytes_FullLifecycle(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	store := &mockStore{}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
@@ -364,6 +376,7 @@ func TestOrphanBytes_FullLifecycle(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestCleanupOrphan_PassesSizeToEnqueue(t *testing.T) {
+	t.Parallel()
 	b1 := newMockBackend()
 	b1.delErr = errors.New("backend down")
 	store := &mockStore{}
@@ -389,6 +402,7 @@ func TestCleanupOrphan_PassesSizeToEnqueue(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestMetricsCollector_OrphanBytesSubtractedFromAvailable(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		getQuotaStatsResp: map[string]st.QuotaStat{
 			"b1": {BytesUsed: 200, BytesLimit: 1000, OrphanBytes: 100},
@@ -412,6 +426,7 @@ func TestMetricsCollector_OrphanBytesSubtractedFromAvailable(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestRecordObjectOrCleanup_DisplacedCopyBackendNotFound(t *testing.T) {
+	t.Parallel()
 	b1 := newMockBackend()
 	store := &mockStore{
 		getBackendResp: "b1",
@@ -438,6 +453,7 @@ func TestRecordObjectOrCleanup_DisplacedCopyBackendNotFound(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestRecordObjectOrCleanup_DisplacedCopyDeleteSucceeds(t *testing.T) {
+	t.Parallel()
 	b1 := newMockBackend()
 	b2 := newMockBackend()
 	// Put the object on b2 so the delete succeeds
@@ -470,6 +486,7 @@ func TestRecordObjectOrCleanup_DisplacedCopyDeleteSucceeds(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestEnqueueCleanup_IncrementOrphanBytesFails(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		incrementOrphanBytesErr: errors.New("db error"),
 	}
@@ -495,6 +512,7 @@ func TestEnqueueCleanup_IncrementOrphanBytesFails(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestCleanupWorker_DecrementOrphanBytesFails(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	_, _ = backend.PutObject(context.Background(), "orphan.txt", bytes.NewReader([]byte("x")), 1, "", nil)
 
@@ -528,6 +546,7 @@ func TestCleanupWorker_DecrementOrphanBytesFails(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestCleanupWorker_Exhausted_RetryFails(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	backend.delErr = errors.New("permanent")
 
@@ -551,6 +570,7 @@ func TestCleanupWorker_Exhausted_RetryFails(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestReplicate_OrphanBytesBlockTarget(t *testing.T) {
+	t.Parallel()
 	b1 := newMockBackend()
 	b2 := newMockBackend()
 	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)

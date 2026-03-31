@@ -17,6 +17,7 @@ import (
 )
 
 func TestLocationCache_SetGet(t *testing.T) {
+	t.Parallel()
 	c := NewLocationCache(5 * time.Second)
 	defer c.Close()
 
@@ -29,6 +30,7 @@ func TestLocationCache_SetGet(t *testing.T) {
 }
 
 func TestLocationCache_GetMiss(t *testing.T) {
+	t.Parallel()
 	c := NewLocationCache(5 * time.Second)
 	defer c.Close()
 
@@ -39,6 +41,7 @@ func TestLocationCache_GetMiss(t *testing.T) {
 }
 
 func TestLocationCache_Delete(t *testing.T) {
+	t.Parallel()
 	c := NewLocationCache(5 * time.Second)
 	defer c.Close()
 
@@ -52,6 +55,7 @@ func TestLocationCache_Delete(t *testing.T) {
 }
 
 func TestLocationCache_Clear(t *testing.T) {
+	t.Parallel()
 	c := NewLocationCache(5 * time.Second)
 	defer c.Close()
 
@@ -69,6 +73,7 @@ func TestLocationCache_Clear(t *testing.T) {
 
 
 func TestLocationCache_Eviction(t *testing.T) {
+	t.Parallel()
 	c := NewLocationCache(50 * time.Millisecond)
 	defer c.Close()
 
@@ -83,6 +88,7 @@ func TestLocationCache_Eviction(t *testing.T) {
 }
 
 func TestLocationCache_ZeroTTL_NoEvictionGoroutine(t *testing.T) {
+	t.Parallel()
 	c := NewLocationCache(0)
 	defer c.Close()
 
@@ -95,6 +101,7 @@ func TestLocationCache_ZeroTTL_NoEvictionGoroutine(t *testing.T) {
 }
 
 func TestLocationCache_ConcurrentAccess(t *testing.T) {
+	t.Parallel()
 	c := NewLocationCache(5 * time.Second)
 	defer c.Close()
 
@@ -111,6 +118,7 @@ func TestLocationCache_ConcurrentAccess(t *testing.T) {
 }
 
 func TestLocationCache_CloseIdempotent(t *testing.T) {
+	t.Parallel()
 	c := NewLocationCache(5 * time.Second)
 	c.Close()
 	c.Close() // should not panic

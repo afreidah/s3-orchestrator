@@ -18,6 +18,7 @@ import (
 )
 
 func TestReconciler_ImportsUntrackedObjects(t *testing.T) {
+	t.Parallel()
 	// The mock backend's ListObjects returns objects via the S3Backend
 	// interface. Since we can't easily mock ListObjects on a mockBackend
 	// (it doesn't implement the S3Backend.ListObjects method), we test
@@ -41,6 +42,7 @@ func TestReconciler_ImportsUntrackedObjects(t *testing.T) {
 }
 
 func TestReconciler_NoBuckets(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
@@ -51,6 +53,7 @@ func TestReconciler_NoBuckets(t *testing.T) {
 }
 
 func TestReconciler_CancelledContext(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
@@ -64,6 +67,7 @@ func TestReconciler_CancelledContext(t *testing.T) {
 }
 
 func TestReconciler_RunDoesNotPanicOnBackendError(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		// ImportObject returns an error
 		importObjectErr: errors.New("db error"),

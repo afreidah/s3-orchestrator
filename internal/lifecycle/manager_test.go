@@ -125,6 +125,7 @@ func TestManager_RunAndStop(t *testing.T) {
 }
 
 func TestManager_PanicRecovery(t *testing.T) {
+	t.Parallel()
 	mgr := NewManager()
 	svc := &panicOnceService{}
 	mgr.Register("panic-once", svc)
@@ -233,6 +234,7 @@ func TestManager_StopReverseOrder(t *testing.T) {
 }
 
 func TestManager_ErrorRestart(t *testing.T) {
+	t.Parallel()
 	mgr := NewManager()
 	svc := &errorOnceService{}
 	mgr.Register("error-once", svc)
@@ -260,6 +262,7 @@ func TestManager_ErrorRestart(t *testing.T) {
 }
 
 func TestManager_StopErrorDoesNotPanic(t *testing.T) {
+	t.Parallel()
 	mgr := NewManager()
 	svc := &stopErrorService{ran: make(chan struct{})}
 	mgr.Register("stop-err", svc)
@@ -324,6 +327,7 @@ func TestManager_BackoffLimitsRestartRate(t *testing.T) {
 }
 
 func TestManager_NoServicesRunsCleanly(t *testing.T) {
+	t.Parallel()
 	mgr := NewManager()
 
 	ctx, cancel := context.WithCancel(context.Background())

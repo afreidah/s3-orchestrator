@@ -23,6 +23,7 @@ import (
 )
 
 func TestProcessLifecycleRules_DeletesExpiredObjects(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	backend.objects["tmp/old-file"] = mockObject{data: []byte("data")}
 	store := &mockStore{
@@ -53,6 +54,7 @@ func TestProcessLifecycleRules_DeletesExpiredObjects(t *testing.T) {
 }
 
 func TestProcessLifecycleRules_NoExpiredObjects(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		listExpiredObjectsResp: nil, // no expired objects
 	}
@@ -75,6 +77,7 @@ func TestProcessLifecycleRules_NoExpiredObjects(t *testing.T) {
 }
 
 func TestProcessLifecycleRules_MultipleRules(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	backend.objects["tmp/a"] = mockObject{data: []byte("x")}
 	backend.objects["uploads/staging/b"] = mockObject{data: []byte("y")}
@@ -105,6 +108,7 @@ func TestProcessLifecycleRules_MultipleRules(t *testing.T) {
 }
 
 func TestProcessLifecycleRules_BatchPagination(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	store := &mockStore{
 		deleteObjectResp: []st.DeletedCopy{{BackendName: "b1", SizeBytes: 1}},
@@ -139,6 +143,7 @@ func TestProcessLifecycleRules_BatchPagination(t *testing.T) {
 }
 
 func TestProcessLifecycleRules_DeleteFailureContinues(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	store := &mockStore{
 		listExpiredObjectsResp: []st.ObjectLocation{
@@ -168,6 +173,7 @@ func TestProcessLifecycleRules_DeleteFailureContinues(t *testing.T) {
 }
 
 func TestProcessLifecycleRules_ListExpiredObjectsError(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		listExpiredObjectsErr: errors.New("db error"),
 	}
@@ -187,6 +193,7 @@ func TestProcessLifecycleRules_ListExpiredObjectsError(t *testing.T) {
 }
 
 func TestProcessLifecycleRules_ZeroProgressTerminates(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	store := &mockStore{
 		// Return a full batch (100 objects) that all fail to delete.
@@ -228,6 +235,7 @@ func TestProcessLifecycleRules_ZeroProgressTerminates(t *testing.T) {
 }
 
 func TestProcessLifecycleRules_EmptyRulesNoOp(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
