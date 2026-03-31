@@ -27,6 +27,7 @@ import (
 // -------------------------------------------------------------------------
 
 func TestScoreCopy_HealthyBackend(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		getQuotaStatsResp: map[string]st.QuotaStat{
 			"b1": {BytesUsed: 500, BytesLimit: 1000},
@@ -47,6 +48,7 @@ func TestScoreCopy_HealthyBackend(t *testing.T) {
 }
 
 func TestScoreCopy_UnknownBackend(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
@@ -59,6 +61,7 @@ func TestScoreCopy_UnknownBackend(t *testing.T) {
 }
 
 func TestScoreCopy_DrainingBackend(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 	mgr.draining.Store("b1", &drainState{done: make(chan struct{})})
@@ -72,6 +75,7 @@ func TestScoreCopy_DrainingBackend(t *testing.T) {
 }
 
 func TestScoreCopy_CircuitBrokenBackend(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{}
 	mock := newMockBackend()
 	mock.putErr = errors.New("backend down")
@@ -97,6 +101,7 @@ func TestScoreCopy_CircuitBrokenBackend(t *testing.T) {
 }
 
 func TestScoreCopy_NoQuotaData(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
@@ -114,6 +119,7 @@ func TestScoreCopy_NoQuotaData(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestClean_FactorDisabled(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
@@ -130,6 +136,7 @@ func TestClean_FactorDisabled(t *testing.T) {
 }
 
 func TestClean_NoOverReplicatedObjects(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{getOverReplicatedResp: nil}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
@@ -146,6 +153,7 @@ func TestClean_NoOverReplicatedObjects(t *testing.T) {
 }
 
 func TestClean_QueryError(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{getOverReplicatedErr: errors.New("db down")}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
@@ -159,6 +167,7 @@ func TestClean_QueryError(t *testing.T) {
 }
 
 func TestClean_QuotaStatsError_StillCleansUp(t *testing.T) {
+	t.Parallel()
 	// GetQuotaStats fails, but Clean should still proceed (scores without utilization).
 	store := &mockStore{
 		getOverReplicatedResp: []st.ObjectLocation{
@@ -188,6 +197,7 @@ func TestClean_QuotaStatsError_StillCleansUp(t *testing.T) {
 }
 
 func TestClean_RemovesExcessCopies(t *testing.T) {
+	t.Parallel()
 	// Object "key1" has 3 copies but factor=2, so 1 should be removed.
 	store := &mockStore{
 		getOverReplicatedResp: []st.ObjectLocation{
@@ -229,6 +239,7 @@ func TestClean_RemovesExcessCopies(t *testing.T) {
 }
 
 func TestClean_RemoveExcessCopyError(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		getOverReplicatedResp: []st.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
@@ -257,6 +268,7 @@ func TestClean_RemoveExcessCopyError(t *testing.T) {
 }
 
 func TestClean_MultipleObjects(t *testing.T) {
+	t.Parallel()
 	// Two objects, each with 3 copies, factor=2 -> remove 1 each = 2 total.
 	store := &mockStore{
 		getOverReplicatedResp: []st.ObjectLocation{
@@ -288,6 +300,7 @@ func TestClean_MultipleObjects(t *testing.T) {
 }
 
 func TestClean_BackendNotFoundDuringCleanup(t *testing.T) {
+	t.Parallel()
 	// Object has copies on b1 and "gone" — "gone" is not in the manager's
 	// backend map, so cleanObject should skip it and not panic.
 	store := &mockStore{
@@ -323,6 +336,7 @@ func TestClean_BackendNotFoundDuringCleanup(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestSetConfig_Config(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
@@ -348,6 +362,7 @@ func TestSetConfig_Config(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestCountPending_Success(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{countOverReplicatedResp: 42}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
@@ -361,6 +376,7 @@ func TestCountPending_Success(t *testing.T) {
 }
 
 func TestCountPending_Error(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{countOverReplicatedErr: errors.New("db error")}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
@@ -371,6 +387,7 @@ func TestCountPending_Error(t *testing.T) {
 }
 
 func TestClean_AdmissionBlocked(t *testing.T) {
+	t.Parallel()
 	sem := make(chan struct{}, 1)
 	sem <- struct{}{} // fill
 

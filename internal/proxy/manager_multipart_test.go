@@ -26,6 +26,7 @@ import (
 // -------------------------------------------------------------------------
 
 func TestCreateMultipartUpload_Success(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	store := &mockStore{getBackendResp: "b1"}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
@@ -43,6 +44,7 @@ func TestCreateMultipartUpload_Success(t *testing.T) {
 }
 
 func TestCreateMultipartUpload_DBUnavailable(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{getBackendErr: st.ErrDBUnavailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
@@ -53,6 +55,7 @@ func TestCreateMultipartUpload_DBUnavailable(t *testing.T) {
 }
 
 func TestCreateMultipartUpload_NoSpace(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{getBackendErr: st.ErrNoSpaceAvailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
@@ -67,6 +70,7 @@ func TestCreateMultipartUpload_NoSpace(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestUploadPart_Success(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	store := &mockStore{
 		getMultipartResp: &st.MultipartUpload{
@@ -92,6 +96,7 @@ func TestUploadPart_Success(t *testing.T) {
 }
 
 func TestUploadPart_InvalidPartNumber(t *testing.T) {
+	t.Parallel()
 	mgr := newTestManager(&mockStore{}, map[string]*mockBackend{"b1": newMockBackend()})
 
 	for _, pn := range []int{0, -1, 10001, 1 << 20} {
@@ -108,6 +113,7 @@ func TestUploadPart_InvalidPartNumber(t *testing.T) {
 }
 
 func TestUploadPart_DBUnavailable(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{getMultipartErr: st.ErrDBUnavailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
@@ -122,6 +128,7 @@ func TestUploadPart_DBUnavailable(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestCompleteMultipartUpload_Success(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 
 	// Pre-store parts on the backend
@@ -172,6 +179,7 @@ func TestCompleteMultipartUpload_Success(t *testing.T) {
 }
 
 func TestCompleteMultipartUpload_DBUnavailable(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{getMultipartErr: st.ErrDBUnavailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
@@ -186,6 +194,7 @@ func TestCompleteMultipartUpload_DBUnavailable(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestAbortMultipartUpload_Success(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	ctx := context.Background()
 	_, _ = backend.PutObject(ctx, "__multipart/upload-1/1", bytes.NewReader([]byte("AAA")), 3, "application/octet-stream", nil)
@@ -218,6 +227,7 @@ func TestAbortMultipartUpload_Success(t *testing.T) {
 }
 
 func TestAbortMultipartUpload_DBUnavailable(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{getMultipartErr: st.ErrDBUnavailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
@@ -228,6 +238,7 @@ func TestAbortMultipartUpload_DBUnavailable(t *testing.T) {
 }
 
 func TestAbortMultipartUpload_GetPartsError(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		getMultipartResp: &st.MultipartUpload{
 			UploadID:    "upload-1",
@@ -245,6 +256,7 @@ func TestAbortMultipartUpload_GetPartsError(t *testing.T) {
 }
 
 func TestAbortMultipartUpload_PartDeleteFails_EnqueuesCleanup(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	backend.delErr = errors.New("backend timeout")
 	ctx := context.Background()
@@ -288,6 +300,7 @@ func TestAbortMultipartUpload_PartDeleteFails_EnqueuesCleanup(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestCompleteMultipartUpload_PartSubset(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	ctx := context.Background()
 	// Upload 3 parts but only complete with parts 1 and 3
@@ -331,6 +344,7 @@ func TestCompleteMultipartUpload_PartSubset(t *testing.T) {
 }
 
 func TestCompleteMultipartUpload_InvalidPart(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		getMultipartResp: &st.MultipartUpload{
 			UploadID:    "upload-1",
@@ -360,6 +374,7 @@ func TestCompleteMultipartUpload_InvalidPart(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestCompleteMultipartUpload_GetPartsError(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		getMultipartResp: &st.MultipartUpload{
 			UploadID:    "upload-1",
@@ -377,6 +392,7 @@ func TestCompleteMultipartUpload_GetPartsError(t *testing.T) {
 }
 
 func TestCompleteMultipartUpload_PartDeleteFails_EnqueuesCleanup(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	ctx := context.Background()
 	_, _ = backend.PutObject(ctx, "__multipart/upload-1/1", bytes.NewReader([]byte("AAA")), 3, "application/octet-stream", nil)
@@ -418,6 +434,7 @@ func TestCompleteMultipartUpload_PartDeleteFails_EnqueuesCleanup(t *testing.T) {
 }
 
 func TestCompleteMultipartUpload_FinalPutFails(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	ctx := context.Background()
 	_, _ = backend.PutObject(ctx, "__multipart/upload-1/1", bytes.NewReader([]byte("AAA")), 3, "application/octet-stream", nil)
@@ -443,6 +460,7 @@ func TestCompleteMultipartUpload_FinalPutFails(t *testing.T) {
 }
 
 func TestCompleteMultipartUpload_PartReadFails(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	ctx := context.Background()
 	_, _ = backend.PutObject(ctx, "__multipart/upload-1/1", bytes.NewReader([]byte("AAA")), 3, "application/octet-stream", nil)
@@ -472,6 +490,7 @@ func TestCompleteMultipartUpload_PartReadFails(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestUploadPart_UsageLimitExceeded(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		getMultipartResp: &st.MultipartUpload{
 			UploadID:    "upload-1",
@@ -493,6 +512,7 @@ func TestUploadPart_UsageLimitExceeded(t *testing.T) {
 }
 
 func TestUploadPart_RecordPartFails_CleansUpPartObject(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	store := &mockStore{
 		getMultipartResp: &st.MultipartUpload{
@@ -521,6 +541,7 @@ func TestUploadPart_RecordPartFails_CleansUpPartObject(t *testing.T) {
 }
 
 func TestUploadPart_RecordPartFails_DeleteFails_EnqueuesCleanup(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	// Use putThenFailDelete: put succeeds, but subsequent deletes fail.
 	// The mock backend's PutObject always works; set delErr before the call
@@ -565,6 +586,7 @@ func TestUploadPart_RecordPartFails_DeleteFails_EnqueuesCleanup(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestCleanupStaleMultipartUploads_NoStaleUploads(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
@@ -573,6 +595,7 @@ func TestCleanupStaleMultipartUploads_NoStaleUploads(t *testing.T) {
 }
 
 func TestCleanupStaleMultipartUploads_QueryError(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{getStaleMultipartErr: errors.New("db error")}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
@@ -581,6 +604,7 @@ func TestCleanupStaleMultipartUploads_QueryError(t *testing.T) {
 }
 
 func TestCleanupStaleMultipartUploads_AbortsStaleUploads(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	ctx := context.Background()
 	_, _ = backend.PutObject(ctx, "__multipart/stale-1/1", bytes.NewReader([]byte("x")), 1, "", nil)
@@ -613,6 +637,7 @@ func TestCleanupStaleMultipartUploads_AbortsStaleUploads(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestCompleteMultipartUpload_UsageRecords2NPlus1APICalls(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	ctx := context.Background()
 	// Pre-store 3 parts on the backend
@@ -652,6 +677,7 @@ func TestCompleteMultipartUpload_UsageRecords2NPlus1APICalls(t *testing.T) {
 }
 
 func TestUploadPart_BackendFailure_StillRecordsUsage(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	backend.putErr = errors.New("backend timeout")
 
@@ -680,6 +706,7 @@ func TestUploadPart_BackendFailure_StillRecordsUsage(t *testing.T) {
 }
 
 func TestCreateMultipartUpload_CreateStoreError(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		getBackendResp:     "b1",
 		createMultipartErr: errors.New("db error"),
@@ -697,6 +724,7 @@ func TestCreateMultipartUpload_CreateStoreError(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestCleanupStaleMultipartUploads_AbortFails(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		getStaleMultipartResp: []st.MultipartUpload{
 			{UploadID: "stale-1", ObjectKey: "stale/key", BackendName: "b1"},
@@ -715,6 +743,7 @@ func TestCleanupStaleMultipartUploads_AbortFails(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestAbortMultipartUploadsOnBackend_ListError(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		getStaleMultipartErr: errors.New("db error"),
 	}
@@ -725,6 +754,7 @@ func TestAbortMultipartUploadsOnBackend_ListError(t *testing.T) {
 }
 
 func TestAbortMultipartUploadsOnBackend_AbortsMatchingBackend(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	ctx := context.Background()
 	_, _ = backend.PutObject(ctx, "__multipart/up-1/1", bytes.NewReader([]byte("x")), 1, "", nil)
@@ -754,6 +784,7 @@ func TestAbortMultipartUploadsOnBackend_AbortsMatchingBackend(t *testing.T) {
 }
 
 func TestAbortMultipartUploadsOnBackend_AbortFails(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		getStaleMultipartResp: []st.MultipartUpload{
 			{UploadID: "up-1", ObjectKey: "key1", BackendName: "b1"},
@@ -770,6 +801,7 @@ func TestAbortMultipartUploadsOnBackend_AbortFails(t *testing.T) {
 // multipart assembly goroutine is recovered and surfaced as an error instead
 // of deadlocking the request on the io.Pipe.
 func TestCompleteMultipartUpload_PartGetPanics(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	backend.getPanic = true // causes GetObject to panic during part assembly
 

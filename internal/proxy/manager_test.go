@@ -20,6 +20,7 @@ import (
 )
 
 func TestGenerateUploadID(t *testing.T) {
+	t.Parallel()
 	id := GenerateUploadID()
 
 	// Should be 32 hex chars (16 bytes)
@@ -39,6 +40,7 @@ func TestGenerateUploadID(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestClose_Idempotent(t *testing.T) {
+	t.Parallel()
 	mgr := newUsageManager([]string{"b1"}, &mockStore{})
 
 	// Calling Close twice should not panic
@@ -51,6 +53,7 @@ func TestClose_Idempotent(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestUpdateUsageLimits_SwapsLimits(t *testing.T) {
+	t.Parallel()
 	limits := map[string]st.UsageLimits{
 		"b1": {APIRequestLimit: 100},
 	}
@@ -81,6 +84,7 @@ func TestUpdateUsageLimits_SwapsLimits(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestRebalanceConfig_RoundTrip(t *testing.T) {
+	t.Parallel()
 	mgr := newUsageManager([]string{"b1"}, &mockStore{})
 
 	// Initially nil
@@ -111,6 +115,7 @@ func TestRebalanceConfig_RoundTrip(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestReplicationConfig_RoundTrip(t *testing.T) {
+	t.Parallel()
 	mgr := newUsageManager([]string{"b1"}, &mockStore{})
 
 	// Initially nil
@@ -139,6 +144,7 @@ func TestReplicationConfig_RoundTrip(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestUsageFlushConfig_RoundTrip(t *testing.T) {
+	t.Parallel()
 	mgr := newUsageManager([]string{"b1"}, &mockStore{})
 
 	if mgr.UsageFlushConfig() != nil {
@@ -164,6 +170,7 @@ func TestUsageFlushConfig_RoundTrip(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestLifecycleConfig_RoundTrip(t *testing.T) {
+	t.Parallel()
 	mgr := newUsageManager([]string{"b1"}, &mockStore{})
 
 	if mgr.LifecycleConfig() != nil {
@@ -191,6 +198,7 @@ func TestLifecycleConfig_RoundTrip(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestNearUsageLimit_BelowThreshold(t *testing.T) {
+	t.Parallel()
 	limits := map[string]st.UsageLimits{
 		"b1": {APIRequestLimit: 1000},
 	}
@@ -203,6 +211,7 @@ func TestNearUsageLimit_BelowThreshold(t *testing.T) {
 }
 
 func TestNearUsageLimit_AboveThreshold(t *testing.T) {
+	t.Parallel()
 	limits := map[string]st.UsageLimits{
 		"b1": {APIRequestLimit: 100},
 	}
@@ -221,6 +230,7 @@ func TestNearUsageLimit_AboveThreshold(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestClearCache_RemovesAllEntries(t *testing.T) {
+	t.Parallel()
 	mgr := newUsageManager([]string{"b1"}, &mockStore{})
 
 	mgr.ObjectManager.cache.Set("key1", "b1")
@@ -241,6 +251,7 @@ func TestClearCache_RemovesAllEntries(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestUpdateUsageLimits_ConcurrentAccess(t *testing.T) {
+	t.Parallel()
 	limits := map[string]st.UsageLimits{
 		"b1": {APIRequestLimit: 1000},
 	}

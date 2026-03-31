@@ -15,6 +15,7 @@ import (
 )
 
 func TestHashBody(t *testing.T) {
+	t.Parallel()
 	hash := HashBody([]byte("hello world"))
 	expected := "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
 	if hash != expected {
@@ -23,6 +24,7 @@ func TestHashBody(t *testing.T) {
 }
 
 func TestHashBody_Empty(t *testing.T) {
+	t.Parallel()
 	hash := HashBody(nil)
 	expected := "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 	if hash != expected {
@@ -31,6 +33,7 @@ func TestHashBody_Empty(t *testing.T) {
 }
 
 func TestVerifyingReader_Match(t *testing.T) {
+	t.Parallel()
 	data := "test data for hashing"
 	expected := HashBody([]byte(data))
 
@@ -44,6 +47,7 @@ func TestVerifyingReader_Match(t *testing.T) {
 }
 
 func TestVerifyingReader_Mismatch(t *testing.T) {
+	t.Parallel()
 	r := io.NopCloser(strings.NewReader("actual data"))
 	vr := NewVerifyingReader(r)
 	_, _ = io.ReadAll(vr)
@@ -54,6 +58,7 @@ func TestVerifyingReader_Mismatch(t *testing.T) {
 }
 
 func TestVerifyingReader_EmptyExpected(t *testing.T) {
+	t.Parallel()
 	r := io.NopCloser(strings.NewReader("any data"))
 	vr := NewVerifyingReader(r)
 	_, _ = io.ReadAll(vr)
@@ -64,6 +69,7 @@ func TestVerifyingReader_EmptyExpected(t *testing.T) {
 }
 
 func TestVerifyingReader_OnMismatchCallback(t *testing.T) {
+	t.Parallel()
 	r := io.NopCloser(strings.NewReader("actual data"))
 	vr := NewVerifyingReader(r)
 
@@ -81,6 +87,7 @@ func TestVerifyingReader_OnMismatchCallback(t *testing.T) {
 }
 
 func TestVerifyingReader_OnMatchNoCallback(t *testing.T) {
+	t.Parallel()
 	data := "matching data"
 	expected := HashBody([]byte(data))
 

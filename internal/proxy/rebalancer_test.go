@@ -140,6 +140,7 @@ func (m *delayedGetBackend) hasObject(key string) bool {
 // -------------------------------------------------------------------------
 
 func TestExecuteMoves_Concurrent(t *testing.T) {
+	t.Parallel()
 	src := newDelayedGetBackend(50 * time.Millisecond)
 	dest := newDelayedGetBackend(0)
 
@@ -191,6 +192,7 @@ func TestExecuteMoves_Concurrent(t *testing.T) {
 }
 
 func TestExecuteMoves_PartialFailure(t *testing.T) {
+	t.Parallel()
 	src := newDelayedGetBackend(0)
 	dest := newDelayedGetBackend(0)
 
@@ -222,6 +224,7 @@ func TestExecuteMoves_PartialFailure(t *testing.T) {
 }
 
 func TestExecuteMoves_SequentialFallback(t *testing.T) {
+	t.Parallel()
 	src := newDelayedGetBackend(0)
 	dest := newDelayedGetBackend(0)
 
@@ -259,6 +262,7 @@ func TestExecuteMoves_SequentialFallback(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestExceedsThreshold_BelowThreshold(t *testing.T) {
+	t.Parallel()
 	stats := map[string]st.QuotaStat{
 		"b1": {BytesUsed: 500, BytesLimit: 1000},
 		"b2": {BytesUsed: 400, BytesLimit: 1000},
@@ -270,6 +274,7 @@ func TestExceedsThreshold_BelowThreshold(t *testing.T) {
 }
 
 func TestExceedsThreshold_AtThreshold(t *testing.T) {
+	t.Parallel()
 	stats := map[string]st.QuotaStat{
 		"b1": {BytesUsed: 800, BytesLimit: 1000},
 		"b2": {BytesUsed: 200, BytesLimit: 1000},
@@ -281,6 +286,7 @@ func TestExceedsThreshold_AtThreshold(t *testing.T) {
 }
 
 func TestExceedsThreshold_SingleBackend(t *testing.T) {
+	t.Parallel()
 	stats := map[string]st.QuotaStat{
 		"b1": {BytesUsed: 900, BytesLimit: 1000},
 	}
@@ -290,6 +296,7 @@ func TestExceedsThreshold_SingleBackend(t *testing.T) {
 }
 
 func TestExceedsThreshold_ZeroLimitSkipped(t *testing.T) {
+	t.Parallel()
 	stats := map[string]st.QuotaStat{
 		"b1": {BytesUsed: 800, BytesLimit: 1000},
 		"b2": {BytesUsed: 0, BytesLimit: 0}, // unlimited, skipped
@@ -300,6 +307,7 @@ func TestExceedsThreshold_ZeroLimitSkipped(t *testing.T) {
 }
 
 func TestExceedsThreshold_MissingStatsSkipped(t *testing.T) {
+	t.Parallel()
 	stats := map[string]st.QuotaStat{
 		"b1": {BytesUsed: 800, BytesLimit: 1000},
 	}
@@ -313,6 +321,7 @@ func TestExceedsThreshold_MissingStatsSkipped(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestRebalance_QuotaStatsError(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{getQuotaStatsErr: fmt.Errorf("db down")}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
@@ -327,6 +336,7 @@ func TestRebalance_QuotaStatsError(t *testing.T) {
 }
 
 func TestRebalance_BelowThreshold_Skips(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		getQuotaStatsResp: map[string]st.QuotaStat{
 			"b1": {BytesUsed: 500, BytesLimit: 1000},
@@ -385,6 +395,7 @@ func TestRebalance_EmptyPlan_Skips(t *testing.T) {
 }
 
 func TestRebalance_UnknownStrategy(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		getQuotaStatsResp: map[string]st.QuotaStat{
 			"b1": {BytesUsed: 900, BytesLimit: 1000},
@@ -426,6 +437,7 @@ func newRebalanceManager(store *mockStore, names []string) *BackendManager {
 }
 
 func TestPlanPackTight_MovesFromLeastToMostFull(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		listObjectsByBackendResp: []st.ObjectLocation{
 			{ObjectKey: "small.txt", BackendName: "b2", SizeBytes: 100},
@@ -451,6 +463,7 @@ func TestPlanPackTight_MovesFromLeastToMostFull(t *testing.T) {
 }
 
 func TestPlanPackTight_RespectsBatchSize(t *testing.T) {
+	t.Parallel()
 	objects := make([]st.ObjectLocation, 10)
 	for i := range objects {
 		objects[i] = st.ObjectLocation{
@@ -477,6 +490,7 @@ func TestPlanPackTight_RespectsBatchSize(t *testing.T) {
 }
 
 func TestPlanPackTight_SkipsLargeObjects(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		listObjectsByBackendResp: []st.ObjectLocation{
 			{ObjectKey: "huge.bin", BackendName: "b2", SizeBytes: 500},
@@ -499,6 +513,7 @@ func TestPlanPackTight_SkipsLargeObjects(t *testing.T) {
 }
 
 func TestPlanPackTight_ZeroLimitBackendsSkipped(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{}
 	mgr := newRebalanceManager(store, []string{"b1", "b2"})
 
@@ -521,6 +536,7 @@ func TestPlanPackTight_ZeroLimitBackendsSkipped(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestPlanSpreadEven_EqualizesUtilization(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		listObjectsByBackendResp: []st.ObjectLocation{
 			{ObjectKey: "obj1", BackendName: "b1", SizeBytes: 100},
@@ -552,6 +568,7 @@ func TestPlanSpreadEven_EqualizesUtilization(t *testing.T) {
 }
 
 func TestPlanSpreadEven_ZeroTotalLimit(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{}
 	mgr := newRebalanceManager(store, []string{"b1"})
 
@@ -567,6 +584,7 @@ func TestPlanSpreadEven_ZeroTotalLimit(t *testing.T) {
 }
 
 func TestPlanSpreadEven_AlreadyBalanced(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{}
 	mgr := newRebalanceManager(store, []string{"b1", "b2"})
 
@@ -585,6 +603,7 @@ func TestPlanSpreadEven_AlreadyBalanced(t *testing.T) {
 }
 
 func TestPlanSpreadEven_ListObjectsByBackendError(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		listObjectsByBackendErr: errors.New("db error"),
 	}
@@ -602,6 +621,7 @@ func TestPlanSpreadEven_ListObjectsByBackendError(t *testing.T) {
 }
 
 func TestPlanPackTight_ListObjectsByBackendError(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		listObjectsByBackendErr: errors.New("db error"),
 	}
@@ -623,6 +643,7 @@ func TestPlanPackTight_ListObjectsByBackendError(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestExecuteOneMove_SourceBackendNotFound(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{}
 	mgr := newRebalanceManager(store, []string{"b1"})
 
@@ -640,6 +661,7 @@ func TestExecuteOneMove_SourceBackendNotFound(t *testing.T) {
 }
 
 func TestExecuteOneMove_DestBackendNotFound(t *testing.T) {
+	t.Parallel()
 	src := newMockBackend()
 	_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
@@ -668,6 +690,7 @@ func TestExecuteOneMove_DestBackendNotFound(t *testing.T) {
 }
 
 func TestExecuteOneMove_SourceGetFails(t *testing.T) {
+	t.Parallel()
 	src := newMockBackend()
 	src.getErr = errors.New("read error")
 	dest := newMockBackend()
@@ -697,6 +720,7 @@ func TestExecuteOneMove_SourceGetFails(t *testing.T) {
 }
 
 func TestExecuteOneMove_DestPutFails(t *testing.T) {
+	t.Parallel()
 	src := newMockBackend()
 	_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 	dest := newMockBackend()
@@ -727,6 +751,7 @@ func TestExecuteOneMove_DestPutFails(t *testing.T) {
 }
 
 func TestExecuteOneMove_MoveLocationError_CleansUpOrphan(t *testing.T) {
+	t.Parallel()
 	src := newMockBackend()
 	_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 	dest := newMockBackend()
@@ -761,6 +786,7 @@ func TestExecuteOneMove_MoveLocationError_CleansUpOrphan(t *testing.T) {
 }
 
 func TestExecuteOneMove_MoveLocationError_CleanupFails_EnqueuesCleanup(t *testing.T) {
+	t.Parallel()
 	src := newMockBackend()
 	_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 	dest := newMockBackend()
@@ -800,6 +826,7 @@ func TestExecuteOneMove_MoveLocationError_CleanupFails_EnqueuesCleanup(t *testin
 }
 
 func TestExecuteOneMove_MovedSizeZero_CleansUpOrphan(t *testing.T) {
+	t.Parallel()
 	src := newMockBackend()
 	_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 	dest := newMockBackend()
@@ -834,6 +861,7 @@ func TestExecuteOneMove_MovedSizeZero_CleansUpOrphan(t *testing.T) {
 }
 
 func TestExecuteOneMove_SourceDeleteFails_EnqueuesCleanup(t *testing.T) {
+	t.Parallel()
 	src := newMockBackend()
 	_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 	src.delErr = errors.New("delete failed")
@@ -873,6 +901,7 @@ func TestExecuteOneMove_SourceDeleteFails_EnqueuesCleanup(t *testing.T) {
 }
 
 func TestPlanSpreadEven_RespectsBatchSize(t *testing.T) {
+	t.Parallel()
 	objects := make([]st.ObjectLocation, 20)
 	for i := range objects {
 		objects[i] = st.ObjectLocation{
@@ -899,6 +928,7 @@ func TestPlanSpreadEven_RespectsBatchSize(t *testing.T) {
 }
 
 func TestExecuteMoves_AdmissionBlocked(t *testing.T) {
+	t.Parallel()
 	// Fill the admission semaphore and cancel the context so the
 	// rebalancer's acquireAdmission returns false and skips the move.
 	sem := make(chan struct{}, 1)
