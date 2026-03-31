@@ -23,6 +23,7 @@ import (
 )
 
 func TestExcludeUnhealthy_FiltersOpenCircuitBreaker(t *testing.T) {
+	t.Parallel()
 	healthy := backend.NewCircuitBreakerBackend(newMockBackend(), "healthy", 3, 15*time.Second)
 
 	failingMock := newMockBackend()
@@ -49,6 +50,7 @@ func TestExcludeUnhealthy_FiltersOpenCircuitBreaker(t *testing.T) {
 }
 
 func TestExcludeUnhealthy_AllHealthy(t *testing.T) {
+	t.Parallel()
 	b1 := backend.NewCircuitBreakerBackend(newMockBackend(), "b1", 3, 15*time.Second)
 	b2 := backend.NewCircuitBreakerBackend(newMockBackend(), "b2", 3, 15*time.Second)
 
@@ -66,6 +68,7 @@ func TestExcludeUnhealthy_AllHealthy(t *testing.T) {
 }
 
 func TestExcludeUnhealthy_AllUnhealthy_TimeoutNotElapsed(t *testing.T) {
+	t.Parallel()
 	failingMock1 := newMockBackend()
 	failingMock1.putErr = errors.New("backend down")
 	b1 := backend.NewCircuitBreakerBackend(failingMock1, "b1", 1, 15*time.Second)
@@ -93,6 +96,7 @@ func TestExcludeUnhealthy_AllUnhealthy_TimeoutNotElapsed(t *testing.T) {
 }
 
 func TestExcludeUnhealthy_AllUnhealthy_ProbeEligible(t *testing.T) {
+	t.Parallel()
 	failingMock1 := newMockBackend()
 	failingMock1.putErr = errors.New("backend down")
 	b1 := backend.NewCircuitBreakerBackend(failingMock1, "b1", 1, 1*time.Millisecond)
@@ -127,6 +131,7 @@ func TestExcludeUnhealthy_AllUnhealthy_ProbeEligible(t *testing.T) {
 }
 
 func TestExcludeUnhealthy_HalfOpenAllowedForProbe(t *testing.T) {
+	t.Parallel()
 	failingMock := newMockBackend()
 	failingMock.putErr = errors.New("backend down")
 	// Use a tiny open timeout so we can transition to half-open immediately
@@ -164,6 +169,7 @@ func TestExcludeUnhealthy_HalfOpenAllowedForProbe(t *testing.T) {
 }
 
 func TestExcludeUnhealthy_NonCBBackendsAlwaysEligible(t *testing.T) {
+	t.Parallel()
 	core := &backendCore{
 		backends: map[string]backend.ObjectBackend{
 			"plain": newMockBackend(),
@@ -177,6 +183,7 @@ func TestExcludeUnhealthy_NonCBBackendsAlwaysEligible(t *testing.T) {
 }
 
 func TestExcludeUnhealthy_UnknownBackendSkipped(t *testing.T) {
+	t.Parallel()
 	core := &backendCore{
 		backends: map[string]backend.ObjectBackend{},
 	}
@@ -192,6 +199,7 @@ func TestExcludeUnhealthy_UnknownBackendSkipped(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestWithTimeout_NoParentDeadline(t *testing.T) {
+	t.Parallel()
 	core := &backendCore{backendTimeout: 5 * time.Second}
 	ctx, cancel := core.withTimeout(context.Background())
 	defer cancel()
@@ -207,6 +215,7 @@ func TestWithTimeout_NoParentDeadline(t *testing.T) {
 }
 
 func TestWithTimeout_ParentTighter(t *testing.T) {
+	t.Parallel()
 	// Parent has a 1s deadline; backend timeout is 30s.
 	// The tighter parent deadline should be preserved.
 	parent, parentCancel := context.WithTimeout(context.Background(), 1*time.Second)
@@ -227,6 +236,7 @@ func TestWithTimeout_ParentTighter(t *testing.T) {
 }
 
 func TestWithTimeout_BackendTighter(t *testing.T) {
+	t.Parallel()
 	// Parent has a 30s deadline; backend timeout is 1s.
 	// The tighter backend timeout should be applied.
 	parent, parentCancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -247,6 +257,7 @@ func TestWithTimeout_BackendTighter(t *testing.T) {
 }
 
 func TestWithTimeout_ZeroTimeout(t *testing.T) {
+	t.Parallel()
 	core := &backendCore{backendTimeout: 0}
 	ctx, cancel := core.withTimeout(context.Background())
 	defer cancel()
@@ -261,6 +272,7 @@ func TestWithTimeout_ZeroTimeout(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestAcquireAdmission_NilSem(t *testing.T) {
+	t.Parallel()
 	core := &backendCore{}
 	if !core.acquireAdmission(context.Background()) {
 		t.Error("nil semaphore should always succeed")
@@ -269,6 +281,7 @@ func TestAcquireAdmission_NilSem(t *testing.T) {
 }
 
 func TestAcquireAdmission_Bounded(t *testing.T) {
+	t.Parallel()
 	sem := make(chan struct{}, 1)
 	core := &backendCore{admissionSem: sem}
 
@@ -293,6 +306,7 @@ func TestAcquireAdmission_Bounded(t *testing.T) {
 }
 
 func TestEligibleForWrite_CombinesAllFilters(t *testing.T) {
+	t.Parallel()
 	// healthy: passes all checks
 	healthy := newMockBackend()
 

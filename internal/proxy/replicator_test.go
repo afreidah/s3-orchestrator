@@ -28,6 +28,7 @@ import (
 // -------------------------------------------------------------------------
 
 func TestGroupByKey_Groups(t *testing.T) {
+	t.Parallel()
 	locations := []st.ObjectLocation{
 		{ObjectKey: "a", BackendName: "b1"},
 		{ObjectKey: "a", BackendName: "b2"},
@@ -46,6 +47,7 @@ func TestGroupByKey_Groups(t *testing.T) {
 }
 
 func TestGroupByKey_Empty(t *testing.T) {
+	t.Parallel()
 	grouped := st.GroupByKey(nil)
 	if len(grouped) != 0 {
 		t.Errorf("expected 0 groups, got %d", len(grouped))
@@ -57,6 +59,7 @@ func TestGroupByKey_Empty(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestReplicate_NoUnderReplicatedObjects(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{getUnderReplicatedResp: nil}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
@@ -73,6 +76,7 @@ func TestReplicate_NoUnderReplicatedObjects(t *testing.T) {
 }
 
 func TestReplicate_QueryError(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{getUnderReplicatedErr: errors.New("db down")}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
@@ -86,6 +90,7 @@ func TestReplicate_QueryError(t *testing.T) {
 }
 
 func TestReplicate_QuotaStatsError(t *testing.T) {
+	t.Parallel()
 	b1 := newMockBackend()
 	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
@@ -113,6 +118,7 @@ func TestReplicate_QuotaStatsError(t *testing.T) {
 }
 
 func TestReplicate_Success(t *testing.T) {
+	t.Parallel()
 	b1 := newMockBackend()
 	b2 := newMockBackend()
 	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
@@ -157,6 +163,7 @@ func TestReplicate_Success(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestFindReplicaTarget_ExcludesExistingCopies(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": newMockBackend(), "b2": newMockBackend(), "b3": newMockBackend()},
@@ -181,6 +188,7 @@ func TestFindReplicaTarget_ExcludesExistingCopies(t *testing.T) {
 }
 
 func TestFindReplicaTarget_SkipsFullBackends(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": newMockBackend(), "b2": newMockBackend()},
@@ -203,6 +211,7 @@ func TestFindReplicaTarget_SkipsFullBackends(t *testing.T) {
 }
 
 func TestFindReplicaTarget_EmptyStats(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
@@ -217,6 +226,7 @@ func TestFindReplicaTarget_EmptyStats(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestCopyToReplica_Success(t *testing.T) {
+	t.Parallel()
 	b1 := newMockBackend()
 	b2 := newMockBackend()
 	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
@@ -244,6 +254,7 @@ func TestCopyToReplica_Success(t *testing.T) {
 }
 
 func TestCopyToReplica_FailoverToSecondCopy(t *testing.T) {
+	t.Parallel()
 	b1 := newMockBackend()
 	b1.getErr = errors.New("backend down")
 	b2 := newMockBackend()
@@ -276,6 +287,7 @@ func TestCopyToReplica_FailoverToSecondCopy(t *testing.T) {
 }
 
 func TestCopyToReplica_AllSourcesFail(t *testing.T) {
+	t.Parallel()
 	b1 := newMockBackend()
 	b1.getErr = errors.New("down")
 	b2 := newMockBackend()
@@ -301,6 +313,7 @@ func TestCopyToReplica_AllSourcesFail(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestCleanupOrphan_Success(t *testing.T) {
+	t.Parallel()
 	b1 := newMockBackend()
 	_, _ = b1.PutObject(context.Background(), "orphan", bytes.NewReader([]byte("x")), 1, "", nil)
 
@@ -313,6 +326,7 @@ func TestCleanupOrphan_Success(t *testing.T) {
 }
 
 func TestCleanupOrphan_BackendNotFound(t *testing.T) {
+	t.Parallel()
 	mgr := newTestManager(&mockStore{}, map[string]*mockBackend{"b1": newMockBackend()})
 
 	// Should not panic for unknown backend
@@ -320,6 +334,7 @@ func TestCleanupOrphan_BackendNotFound(t *testing.T) {
 }
 
 func TestCleanupOrphan_DeleteFailure_EnqueuesCleanup(t *testing.T) {
+	t.Parallel()
 	b1 := newMockBackend()
 	b1.delErr = errors.New("delete failed")
 	store := &mockStore{}
@@ -342,6 +357,7 @@ func TestCleanupOrphan_DeleteFailure_EnqueuesCleanup(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestReplicate_RecordReplicaFails_CleansUpOrphan(t *testing.T) {
+	t.Parallel()
 	b1 := newMockBackend()
 	b2 := newMockBackend()
 	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
@@ -382,6 +398,7 @@ func TestReplicate_RecordReplicaFails_CleansUpOrphan(t *testing.T) {
 }
 
 func TestCopyToReplica_TargetBackendNotFound(t *testing.T) {
+	t.Parallel()
 	b1 := newMockBackend()
 	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
@@ -395,6 +412,7 @@ func TestCopyToReplica_TargetBackendNotFound(t *testing.T) {
 }
 
 func TestCopyToReplica_TargetWriteFails(t *testing.T) {
+	t.Parallel()
 	b1 := newMockBackend()
 	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 	b2 := newMockBackend()
@@ -417,6 +435,7 @@ func TestCopyToReplica_TargetWriteFails(t *testing.T) {
 }
 
 func TestReplicateObject_NoTargetAvailable(t *testing.T) {
+	t.Parallel()
 	b1 := newMockBackend()
 	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
@@ -452,6 +471,7 @@ func TestReplicateObject_NoTargetAvailable(t *testing.T) {
 }
 
 func TestReplicate_SourceGoneDuringReplication(t *testing.T) {
+	t.Parallel()
 	b1 := newMockBackend()
 	b2 := newMockBackend()
 	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
@@ -504,6 +524,7 @@ func newTrippedCBBackend(b *mockBackend, name string) *backend.CircuitBreakerBac
 }
 
 func TestReplicate_HealthAware_SkipsUnhealthyTarget(t *testing.T) {
+	t.Parallel()
 	b1 := newMockBackend()
 	b2 := newMockBackend()
 	b3 := newMockBackend()
@@ -552,6 +573,7 @@ func TestReplicate_HealthAware_SkipsUnhealthyTarget(t *testing.T) {
 }
 
 func TestReplicate_HealthAware_PrefersHealthySource(t *testing.T) {
+	t.Parallel()
 	b1 := newMockBackend()
 	b2 := newMockBackend()
 	b3 := newMockBackend()
@@ -605,6 +627,7 @@ func TestReplicate_HealthAware_PrefersHealthySource(t *testing.T) {
 }
 
 func TestReplicate_HealthAware_BelowThreshold(t *testing.T) {
+	t.Parallel()
 	b1 := newMockBackend()
 	b2 := newMockBackend()
 
@@ -637,6 +660,7 @@ func TestReplicate_HealthAware_BelowThreshold(t *testing.T) {
 }
 
 func TestUnhealthyBackends_NoCB(t *testing.T) {
+	t.Parallel()
 	mgr := newTestManager(&mockStore{}, map[string]*mockBackend{
 		"b1": newMockBackend(),
 		"b2": newMockBackend(),
@@ -648,6 +672,7 @@ func TestUnhealthyBackends_NoCB(t *testing.T) {
 }
 
 func TestIsBackendHealthy_NoCB(t *testing.T) {
+	t.Parallel()
 	mgr := newTestManager(&mockStore{}, map[string]*mockBackend{"b1": newMockBackend()})
 	if !mgr.Replicator.IsBackendHealthy("b1") {
 		t.Error("backend without CB wrapper should be healthy")
@@ -655,6 +680,7 @@ func TestIsBackendHealthy_NoCB(t *testing.T) {
 }
 
 func TestIsBackendHealthy_UnknownBackend(t *testing.T) {
+	t.Parallel()
 	mgr := newTestManager(&mockStore{}, map[string]*mockBackend{"b1": newMockBackend()})
 	if mgr.Replicator.IsBackendHealthy("nonexistent") {
 		t.Error("unknown backend should not be healthy")
@@ -662,6 +688,7 @@ func TestIsBackendHealthy_UnknownBackend(t *testing.T) {
 }
 
 func TestIsBackendHealthy_CBHealthy(t *testing.T) {
+	t.Parallel()
 	cbb := backend.NewCircuitBreakerBackend(newMockBackend(), "b1", 3, time.Minute)
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": cbb},
@@ -676,6 +703,7 @@ func TestIsBackendHealthy_CBHealthy(t *testing.T) {
 }
 
 func TestIsBackendHealthy_CBUnhealthy(t *testing.T) {
+	t.Parallel()
 	cbb := newTrippedCBBackend(newMockBackend(), "b1")
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": cbb},

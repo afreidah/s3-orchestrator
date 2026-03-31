@@ -21,6 +21,7 @@ import (
 )
 
 func TestGetDashboardData_Success(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		getQuotaStatsResp: map[string]st.QuotaStat{
 			"b1": {BackendName: "b1", BytesUsed: 500, BytesLimit: 1000},
@@ -63,6 +64,7 @@ func TestGetDashboardData_Success(t *testing.T) {
 }
 
 func TestGetDashboardData_QuotaStatsError(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		getQuotaStatsErr: errors.New("db error"),
 	}
@@ -76,6 +78,7 @@ func TestGetDashboardData_QuotaStatsError(t *testing.T) {
 }
 
 func TestGetDashboardData_ObjectCountsError(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		getQuotaStatsResp:  map[string]st.QuotaStat{"b1": {}},
 		getObjectCountsErr: errors.New("db error"),
@@ -90,6 +93,7 @@ func TestGetDashboardData_ObjectCountsError(t *testing.T) {
 }
 
 func TestGetDashboardData_MultipartCountsError(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		getQuotaStatsResp:     map[string]st.QuotaStat{"b1": {}},
 		getObjectCountsResp:   map[string]int64{"b1": 0},
@@ -105,6 +109,7 @@ func TestGetDashboardData_MultipartCountsError(t *testing.T) {
 }
 
 func TestGetDashboardData_UsageForPeriodError(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		getQuotaStatsResp:      map[string]st.QuotaStat{"b1": {}},
 		getObjectCountsResp:    map[string]int64{"b1": 0},
@@ -121,6 +126,7 @@ func TestGetDashboardData_UsageForPeriodError(t *testing.T) {
 }
 
 func TestGetDashboardData_ListDirChildrenError(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		getQuotaStatsResp:      map[string]st.QuotaStat{"b1": {}},
 		getObjectCountsResp:    map[string]int64{"b1": 0},
@@ -138,6 +144,7 @@ func TestGetDashboardData_ListDirChildrenError(t *testing.T) {
 }
 
 func TestGetDashboardData_UnhealthyBackends(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		getQuotaStatsResp:      map[string]st.QuotaStat{"b1": {}},
 		getObjectCountsResp:    map[string]int64{"b1": 0},
@@ -171,6 +178,7 @@ func TestGetDashboardData_UnhealthyBackends(t *testing.T) {
 }
 
 func TestGetDashboardData_HealthyBackendsNotMarked(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		getQuotaStatsResp:      map[string]st.QuotaStat{"b1": {}},
 		getObjectCountsResp:    map[string]int64{"b1": 0},
@@ -200,6 +208,7 @@ func TestGetDashboardData_HealthyBackendsNotMarked(t *testing.T) {
 }
 
 func TestGetDirectoryChildren_CapsMaxKeys(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		listDirChildrenResp: &st.DirectoryListResult{},
 	}

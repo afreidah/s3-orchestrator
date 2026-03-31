@@ -52,6 +52,7 @@ func newTestManager(store *mockStore, backends map[string]*mockBackend) *Backend
 // -------------------------------------------------------------------------
 
 func TestPutObject_Success(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	store := &mockStore{getBackendResp: "b1"}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
@@ -76,6 +77,7 @@ func TestPutObject_Success(t *testing.T) {
 }
 
 func TestPutObject_PackStrategy_UsesGetBackendWithSpace(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	store := &mockStore{getBackendResp: "b1"}
 	mgr := NewBackendManager(&BackendManagerConfig{
@@ -100,6 +102,7 @@ func TestPutObject_PackStrategy_UsesGetBackendWithSpace(t *testing.T) {
 }
 
 func TestPutObject_SpreadStrategy_UsesGetLeastUtilized(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	store := &mockStore{getBackendResp: "b1"}
 	mgr := NewBackendManager(&BackendManagerConfig{
@@ -128,6 +131,7 @@ func TestPutObject_SpreadStrategy_UsesGetLeastUtilized(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestCanAcceptWrite_HasCapacity(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{getBackendResp: "b1"}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
@@ -137,6 +141,7 @@ func TestCanAcceptWrite_HasCapacity(t *testing.T) {
 }
 
 func TestCanAcceptWrite_NoCapacity(t *testing.T) {
+	t.Parallel()
 	limits := map[string]st.UsageLimits{
 		"b1": {APIRequestLimit: 1},
 	}
@@ -152,6 +157,7 @@ func TestCanAcceptWrite_NoCapacity(t *testing.T) {
 }
 
 func TestPutObject_QuotaExhausted(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{getBackendErr: st.ErrNoSpaceAvailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
@@ -162,6 +168,7 @@ func TestPutObject_QuotaExhausted(t *testing.T) {
 }
 
 func TestPutObject_DBUnavailable(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{getBackendErr: st.ErrDBUnavailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
@@ -172,6 +179,7 @@ func TestPutObject_DBUnavailable(t *testing.T) {
 }
 
 func TestPutObject_BackendFailure_StillRecordsUsage(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	backend.putErr = errors.New("backend timeout")
 	store := &mockStore{getBackendResp: "b1"}
@@ -193,6 +201,7 @@ func TestPutObject_BackendFailure_StillRecordsUsage(t *testing.T) {
 }
 
 func TestPutObject_RecordFailure_CleansUp(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	store := &mockStore{
 		getBackendResp:  "b1",
@@ -242,6 +251,7 @@ func newTestManagerWithOrder(store *mockStore, backends map[string]*mockBackend,
 // -------------------------------------------------------------------------
 
 func TestPutObject_WriteFailover_Success(t *testing.T) {
+	t.Parallel()
 	b1 := newMockBackend()
 	b1.putErr = errors.New("connection refused")
 	b2 := newMockBackend()
@@ -275,6 +285,7 @@ func TestPutObject_WriteFailover_Success(t *testing.T) {
 }
 
 func TestPutObject_WriteFailover_AllBackendsFail(t *testing.T) {
+	t.Parallel()
 	b1 := newMockBackend()
 	b1.putErr = errors.New("b1 down")
 	b2 := newMockBackend()
@@ -300,6 +311,7 @@ func TestPutObject_WriteFailover_AllBackendsFail(t *testing.T) {
 }
 
 func TestPutObject_WriteFailover_SkipsMultipleFailedBackends(t *testing.T) {
+	t.Parallel()
 	b1 := newMockBackend()
 	b1.putErr = errors.New("b1 down")
 	b2 := newMockBackend()
@@ -347,6 +359,7 @@ func TestPutObject_WriteFailover_Metrics(t *testing.T) {
 }
 
 func TestPutObject_WriteFailover_UsageTracking(t *testing.T) {
+	t.Parallel()
 	b1 := newMockBackend()
 	b1.putErr = errors.New("b1 timeout")
 	b2 := newMockBackend()
@@ -377,6 +390,7 @@ func TestPutObject_WriteFailover_UsageTracking(t *testing.T) {
 }
 
 func TestPutObject_WriteFailover_DataIntegrity(t *testing.T) {
+	t.Parallel()
 	b1 := newMockBackend()
 	b1.putErr = errors.New("b1 down")
 	b2 := newMockBackend()
@@ -407,6 +421,7 @@ func TestPutObject_WriteFailover_DataIntegrity(t *testing.T) {
 }
 
 func TestPutObject_WriteFailover_BufferBodyError(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{getBackendFromEligible: true}
 	mgr := newTestManagerWithOrder(store, map[string]*mockBackend{"b1": newMockBackend()}, []string{"b1"})
 
@@ -424,6 +439,7 @@ func TestPutObject_WriteFailover_BufferBodyError(t *testing.T) {
 }
 
 func TestPutObject_WriteFailover_SelectBackendErrorDuringRetry(t *testing.T) {
+	t.Parallel()
 	b1 := newMockBackend()
 	b1.putErr = errors.New("b1 down")
 
@@ -446,6 +462,7 @@ func TestPutObject_WriteFailover_SelectBackendErrorDuringRetry(t *testing.T) {
 }
 
 func TestPutObject_WriteFailover_BackendNotInMap(t *testing.T) {
+	t.Parallel()
 	// Store returns a backend name that doesn't exist in the backends map
 	store := &mockStore{getBackendResp: "ghost"}
 	mgr := newTestManagerWithOrder(store, map[string]*mockBackend{"b1": newMockBackend()}, []string{"b1"})
@@ -457,6 +474,7 @@ func TestPutObject_WriteFailover_BackendNotInMap(t *testing.T) {
 }
 
 func TestPutObject_WriteFailover_WithEncryption(t *testing.T) {
+	t.Parallel()
 	b1 := newMockBackend()
 	b1.putErr = errors.New("b1 down")
 	b2 := newMockBackend()
@@ -517,6 +535,7 @@ func TestPutObject_WriteFailover_WithEncryption(t *testing.T) {
 }
 
 func TestGetObject_WithEncryption_UsesLocationMap(t *testing.T) {
+	t.Parallel()
 	// This test verifies the locByBackend map is built and used during
 	// encrypted GetObject. We use HeadObject-level verification since
 	// full decrypt round-trip requires wiring encryption metadata through
@@ -566,6 +585,7 @@ func TestGetObject_WithEncryption_UsesLocationMap(t *testing.T) {
 }
 
 func TestHeadObject_WithEncryption(t *testing.T) {
+	t.Parallel()
 	b1 := newMockBackend()
 
 	provider, err := encryption.NewConfigKeyProvider("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "test-0")
@@ -637,6 +657,7 @@ func TestPutObject_WriteFailover_NoFailoverMetricOnFirstSuccess(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestGetObject_Success(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	_, _ = backend.PutObject(context.Background(), "key", bytes.NewReader([]byte("hello")), 5, "text/plain", nil)
 
@@ -663,6 +684,7 @@ func TestGetObject_Success(t *testing.T) {
 }
 
 func TestGetObject_NotFound(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{getAllLocationsErr: st.ErrObjectNotFound}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
@@ -673,6 +695,7 @@ func TestGetObject_NotFound(t *testing.T) {
 }
 
 func TestGetObject_FailoverToReplica(t *testing.T) {
+	t.Parallel()
 	primary := newMockBackend()
 	primary.getErr = errors.New("backend down") // primary fails
 	replica := newMockBackend()
@@ -698,6 +721,7 @@ func TestGetObject_FailoverToReplica(t *testing.T) {
 }
 
 func TestGetObject_DBUnavailable_BroadcastHit(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	_, _ = backend.PutObject(context.Background(), "key", bytes.NewReader([]byte("broadcast")), 9, "text/plain", nil)
 
@@ -716,6 +740,7 @@ func TestGetObject_DBUnavailable_BroadcastHit(t *testing.T) {
 }
 
 func TestGetObject_DBUnavailable_CacheHit(t *testing.T) {
+	t.Parallel()
 	b1 := newMockBackend()
 	b2 := newMockBackend()
 	_, _ = b2.PutObject(context.Background(), "cached-key", bytes.NewReader([]byte("cached")), 6, "text/plain", nil)
@@ -743,6 +768,7 @@ func TestGetObject_DBUnavailable_CacheHit(t *testing.T) {
 }
 
 func TestGetObject_DBUnavailable_AllFail(t *testing.T) {
+	t.Parallel()
 	b1 := newMockBackend() // empty — no object
 	b2 := newMockBackend() // empty — no object
 
@@ -761,6 +787,7 @@ func TestGetObject_DBUnavailable_AllFail(t *testing.T) {
 }
 
 func TestGetObject_DBUnavailable_EncryptedRejects503(t *testing.T) {
+	t.Parallel()
 	b1 := newMockBackend()
 	_, _ = b1.PutObject(context.Background(), "enc-key", bytes.NewReader([]byte("ciphertext")), 10, "text/plain", nil)
 
@@ -802,6 +829,7 @@ func TestGetObject_DBUnavailable_EncryptedRejects503(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestHeadObject_Success(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	_, _ = backend.PutObject(context.Background(), "key", bytes.NewReader([]byte("headme")), 6, "application/json", nil)
 
@@ -826,6 +854,7 @@ func TestHeadObject_Success(t *testing.T) {
 }
 
 func TestHeadObject_DBUnavailable_Broadcast(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	_, _ = backend.PutObject(context.Background(), "key", bytes.NewReader([]byte("head")), 4, "text/plain", nil)
 
@@ -846,6 +875,7 @@ func TestHeadObject_DBUnavailable_Broadcast(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestDeleteObject_Success(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	_, _ = backend.PutObject(context.Background(), "del-key", bytes.NewReader([]byte("rm")), 2, "", nil)
 
@@ -864,6 +894,7 @@ func TestDeleteObject_Success(t *testing.T) {
 }
 
 func TestDeleteObject_NotFound_Idempotent(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{deleteObjectErr: st.ErrObjectNotFound}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
@@ -874,6 +905,7 @@ func TestDeleteObject_NotFound_Idempotent(t *testing.T) {
 }
 
 func TestDeleteObject_DBUnavailable(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{deleteObjectErr: st.ErrDBUnavailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
@@ -888,6 +920,7 @@ func TestDeleteObject_DBUnavailable(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestDeleteObjects_AllSuccess(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	for _, k := range []string{"a", "b", "c"} {
 		_, _ = backend.PutObject(context.Background(), k, bytes.NewReader([]byte("x")), 1, "", nil)
@@ -918,6 +951,7 @@ func TestDeleteObjects_AllSuccess(t *testing.T) {
 }
 
 func TestDeleteObjects_PartialDBFailure(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	store := &mockStore{
 		deleteObjectFunc: func(key string) ([]st.DeletedCopy, error) {
@@ -943,6 +977,7 @@ func TestDeleteObjects_PartialDBFailure(t *testing.T) {
 }
 
 func TestDeleteObjects_NotFoundIsSuccess(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{deleteObjectErr: st.ErrObjectNotFound}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
@@ -956,6 +991,7 @@ func TestDeleteObjects_NotFoundIsSuccess(t *testing.T) {
 }
 
 func TestDeleteObjects_BackendFailureEnqueuesCleanup(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	backend.delErr = errors.New("backend down")
 
@@ -988,6 +1024,7 @@ func TestDeleteObjects_BackendFailureEnqueuesCleanup(t *testing.T) {
 }
 
 func TestDeleteObjects_EmptyKeys(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
@@ -999,6 +1036,7 @@ func TestDeleteObjects_EmptyKeys(t *testing.T) {
 }
 
 func TestDeleteObjects_BackendNotInMap(t *testing.T) {
+	t.Parallel()
 	// DB returns a deleted copy pointing to a backend that doesn't exist
 	store := &mockStore{
 		deleteObjectFunc: func(key string) ([]st.DeletedCopy, error) {
@@ -1023,6 +1061,7 @@ func TestDeleteObjects_BackendNotInMap(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestCopyObject_Success(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	_, _ = backend.PutObject(context.Background(), "src", bytes.NewReader([]byte("copy-me")), 7, "text/plain", nil)
 
@@ -1045,6 +1084,7 @@ func TestCopyObject_Success(t *testing.T) {
 }
 
 func TestCopyObject_SourceNotFound(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{getAllLocationsErr: st.ErrObjectNotFound}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
@@ -1055,6 +1095,7 @@ func TestCopyObject_SourceNotFound(t *testing.T) {
 }
 
 func TestCopyObject_DBUnavailable_SourceLookup(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{getAllLocationsErr: st.ErrDBUnavailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
@@ -1065,6 +1106,7 @@ func TestCopyObject_DBUnavailable_SourceLookup(t *testing.T) {
 }
 
 func TestCopyObject_DBUnavailable_DestLookup(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	_, _ = backend.PutObject(context.Background(), "src", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
@@ -1085,6 +1127,7 @@ func TestCopyObject_DBUnavailable_DestLookup(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestListObjects_Success(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		listObjectsResp: &st.ListObjectsResult{
 			Objects: []st.ObjectLocation{
@@ -1108,6 +1151,7 @@ func TestListObjects_Success(t *testing.T) {
 }
 
 func TestListObjects_WithDelimiter(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		listObjectsResp: &st.ListObjectsResult{
 			Objects: []st.ObjectLocation{
@@ -1138,6 +1182,7 @@ func TestListObjects_WithDelimiter(t *testing.T) {
 }
 
 func TestListObjects_DelimiterPagination(t *testing.T) {
+	t.Parallel()
 	// Many objects collapse into one common prefix per page. The manager
 	// must loop-fetch from the store to fill the requested maxKeys.
 	store := &mockStore{
@@ -1188,6 +1233,7 @@ func TestListObjects_DelimiterPagination(t *testing.T) {
 }
 
 func TestListObjects_DelimiterDedup(t *testing.T) {
+	t.Parallel()
 	// Objects in the same virtual directory across pages should not produce
 	// duplicate common prefixes.
 	store := &mockStore{
@@ -1224,6 +1270,7 @@ func TestListObjects_DelimiterDedup(t *testing.T) {
 }
 
 func TestListObjects_DelimiterTruncationSkipsSeen(t *testing.T) {
+	t.Parallel()
 	// Regression: when maxKeys is reached and remaining objects belong to
 	// an already-counted CommonPrefix, the continuation token must land
 	// past the entire prefix group so the next page doesn't re-emit it.
@@ -1262,6 +1309,7 @@ func TestListObjects_DelimiterTruncationSkipsSeen(t *testing.T) {
 }
 
 func TestListObjects_ExactPageTruncation(t *testing.T) {
+	t.Parallel()
 	// Regression: when the store returns exactly maxKeys objects with
 	// IsTruncated=true, the manager must propagate truncation. Previously
 	// the outer loop exited (KeyCount == maxKeys) without marking
@@ -1298,6 +1346,7 @@ func TestListObjects_ExactPageTruncation(t *testing.T) {
 }
 
 func TestListObjects_DBUnavailable(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{listObjectsErr: st.ErrDBUnavailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
@@ -1319,6 +1368,7 @@ func TestListObjects_DBUnavailable(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestPutObject_BackendTimeout(t *testing.T) {
+	t.Parallel()
 	backend := &mockBackend{
 		objects: make(map[string]mockObject),
 		putErr:  nil,
@@ -1366,6 +1416,7 @@ func (s *slowMockBackend) PutObject(ctx context.Context, key string, body io.Rea
 // -------------------------------------------------------------------------
 
 func TestLocationCache_SetAndGet(t *testing.T) {
+	t.Parallel()
 	mgr := NewBackendManager(&BackendManagerConfig{CacheTTL: 5 * time.Second, RoutingStrategy: config.RoutingPack})
 	defer mgr.Close()
 	mgr.ObjectManager.cache.Set("key1", "backend-a")
@@ -1380,6 +1431,7 @@ func TestLocationCache_SetAndGet(t *testing.T) {
 }
 
 func TestLocationCache_Expiry(t *testing.T) {
+	t.Parallel()
 	mgr := NewBackendManager(&BackendManagerConfig{CacheTTL: 10 * time.Millisecond, RoutingStrategy: config.RoutingPack})
 	defer mgr.Close()
 	mgr.ObjectManager.cache.Set("key1", "backend-a")
@@ -1393,6 +1445,7 @@ func TestLocationCache_Expiry(t *testing.T) {
 }
 
 func TestLocationCache_Overwrite(t *testing.T) {
+	t.Parallel()
 	mgr := NewBackendManager(&BackendManagerConfig{CacheTTL: 5 * time.Second, RoutingStrategy: config.RoutingPack})
 	defer mgr.Close()
 	mgr.ObjectManager.cache.Set("key1", "old-backend")
@@ -1408,6 +1461,7 @@ func TestLocationCache_Overwrite(t *testing.T) {
 }
 
 func TestPutObject_InvalidatesCache(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	store := &mockStore{getBackendResp: "b1"}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
@@ -1428,6 +1482,7 @@ func TestPutObject_InvalidatesCache(t *testing.T) {
 }
 
 func TestDeleteObject_InvalidatesCache(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	_, _ = backend.PutObject(context.Background(), "del-key", bytes.NewReader([]byte("rm")), 2, "", nil)
 	store := &mockStore{
@@ -1473,6 +1528,7 @@ func newTestManagerWithLimits(store *mockStore, backends map[string]*mockBackend
 }
 
 func TestPutObject_UsageLimitOverflow(t *testing.T) {
+	t.Parallel()
 	b1 := newMockBackend()
 	b2 := newMockBackend()
 
@@ -1504,6 +1560,7 @@ func TestPutObject_UsageLimitOverflow(t *testing.T) {
 }
 
 func TestGetObject_UsageLimitSkipsBackend(t *testing.T) {
+	t.Parallel()
 	b1 := newMockBackend()
 	b2 := newMockBackend()
 	_, _ = b1.PutObject(context.Background(), "key", bytes.NewReader([]byte("from-b1")), 7, "text/plain", nil)
@@ -1536,6 +1593,7 @@ func TestGetObject_UsageLimitSkipsBackend(t *testing.T) {
 }
 
 func TestGetObject_AllCopiesOverLimit(t *testing.T) {
+	t.Parallel()
 	b1 := newMockBackend()
 	_, _ = b1.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
@@ -1558,6 +1616,7 @@ func TestGetObject_AllCopiesOverLimit(t *testing.T) {
 }
 
 func TestDeleteObject_AlwaysAllowed(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	_, _ = backend.PutObject(context.Background(), "del-key", bytes.NewReader([]byte("rm")), 2, "", nil)
 
@@ -1690,6 +1749,7 @@ func (s *slowGetBackend) HeadObject(ctx context.Context, key string) (*s3be.Head
 }
 
 func TestGetObject_ParallelBroadcast_FirstSuccessWins(t *testing.T) {
+	t.Parallel()
 	slow := newMockBackend()
 	fast := newMockBackend()
 	_, _ = slow.PutObject(context.Background(), "key", bytes.NewReader([]byte("slow-data")), 9, "text/plain", nil)
@@ -1727,6 +1787,7 @@ func TestGetObject_ParallelBroadcast_FirstSuccessWins(t *testing.T) {
 }
 
 func TestGetObject_ParallelBroadcast_AllFail(t *testing.T) {
+	t.Parallel()
 	b1 := newMockBackend() // empty — no object
 	b2 := newMockBackend() // empty — no object
 
@@ -1750,6 +1811,7 @@ func TestGetObject_ParallelBroadcast_AllFail(t *testing.T) {
 }
 
 func TestGetObject_ParallelBroadcast_CacheHitSkipsParallel(t *testing.T) {
+	t.Parallel()
 	b1 := newMockBackend()
 	b2 := newMockBackend()
 	_, _ = b2.PutObject(context.Background(), "cached-key", bytes.NewReader([]byte("cached")), 6, "text/plain", nil)
@@ -1784,6 +1846,7 @@ func TestGetObject_ParallelBroadcast_CacheHitSkipsParallel(t *testing.T) {
 }
 
 func TestGetObject_SequentialBroadcast_WhenDisabled(t *testing.T) {
+	t.Parallel()
 	slow := newMockBackend()
 	fast := newMockBackend()
 	_, _ = slow.PutObject(context.Background(), "key", bytes.NewReader([]byte("slow-data")), 9, "text/plain", nil)
@@ -1832,6 +1895,7 @@ func TestGetObject_SequentialBroadcast_WhenDisabled(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestGetObject_BackendNotFound_FailsOverToNext(t *testing.T) {
+	t.Parallel()
 	b2 := newMockBackend()
 	_, _ = b2.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
@@ -1856,6 +1920,7 @@ func TestGetObject_BackendNotFound_FailsOverToNext(t *testing.T) {
 }
 
 func TestGetObject_GenericStoreError(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{getAllLocationsErr: errors.New("unexpected db error")}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
@@ -1870,6 +1935,7 @@ func TestGetObject_GenericStoreError(t *testing.T) {
 }
 
 func TestGetObject_DBUnavailable_CacheHitFails_FallsThrough(t *testing.T) {
+	t.Parallel()
 	b1 := newMockBackend()
 	b2 := newMockBackend()
 	_, _ = b2.PutObject(context.Background(), "key", bytes.NewReader([]byte("from-b2")), 7, "text/plain", nil)
@@ -1897,6 +1963,7 @@ func TestGetObject_DBUnavailable_CacheHitFails_FallsThrough(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestDeleteObject_BackendNotFound_ContinuesOtherCopies(t *testing.T) {
+	t.Parallel()
 	b1 := newMockBackend()
 	_, _ = b1.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "", nil)
 
@@ -1923,6 +1990,7 @@ func TestDeleteObject_BackendNotFound_ContinuesOtherCopies(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestCopyObject_AllSourceHeadsFail(t *testing.T) {
+	t.Parallel()
 	b1 := newMockBackend()
 	b1.headErr = errors.New("head failed")
 
@@ -1939,6 +2007,7 @@ func TestCopyObject_AllSourceHeadsFail(t *testing.T) {
 }
 
 func TestCopyObject_DestWriteFails(t *testing.T) {
+	t.Parallel()
 	src := newMockBackend()
 	_, _ = src.PutObject(context.Background(), "src", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 	dst := newMockBackend()
@@ -1964,6 +2033,7 @@ func TestCopyObject_DestWriteFails(t *testing.T) {
 }
 
 func TestCopyObject_ExcludesDrainingBackend(t *testing.T) {
+	t.Parallel()
 	src := newMockBackend()
 	_, _ = src.PutObject(context.Background(), "src", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 	dst := newMockBackend()
@@ -1998,6 +2068,7 @@ func TestCopyObject_ExcludesDrainingBackend(t *testing.T) {
 }
 
 func TestCopyObject_SourceReadFails(t *testing.T) {
+	t.Parallel()
 	src := newMockBackend()
 	_, _ = src.PutObject(context.Background(), "src", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 	src.getReadErr = errors.New("disk I/O error")
@@ -2022,6 +2093,7 @@ func TestCopyObject_SourceReadFails(t *testing.T) {
 }
 
 func TestCopyObject_AllSourceGetObjectsFail(t *testing.T) {
+	t.Parallel()
 	src := newMockBackend()
 	_, _ = src.PutObject(context.Background(), "src", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 	src.getErr = errors.New("get unavailable")
@@ -2050,6 +2122,7 @@ func TestCopyObject_AllSourceGetObjectsFail(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestListObjects_GenericError(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{listObjectsErr: errors.New("unexpected query error")}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
@@ -2065,6 +2138,7 @@ func TestListObjects_GenericError(t *testing.T) {
 }
 
 func TestHeadObject_ParallelBroadcast(t *testing.T) {
+	t.Parallel()
 	slow := newMockBackend()
 	fast := newMockBackend()
 	_, _ = slow.PutObject(context.Background(), "key", bytes.NewReader([]byte("head")), 4, "text/plain", nil)
@@ -2094,6 +2168,7 @@ func TestHeadObject_ParallelBroadcast(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestParsePlaintextRange_SuffixLargerThanFile(t *testing.T) {
+	t.Parallel()
 	// bytes=-1000 on a 100-byte file should clamp start to 0
 	start, end, ok := parsePlaintextRange("bytes=-1000", 100)
 	if !ok {
@@ -2108,6 +2183,7 @@ func TestParsePlaintextRange_SuffixLargerThanFile(t *testing.T) {
 }
 
 func TestParsePlaintextRange_ClampsEndToSize(t *testing.T) {
+	t.Parallel()
 	// Explicit range where end exceeds plaintextSize
 	start, end, ok := parsePlaintextRange("bytes=0-200", 100)
 	if !ok {
@@ -2122,6 +2198,7 @@ func TestParsePlaintextRange_ClampsEndToSize(t *testing.T) {
 }
 
 func TestParsePlaintextRange_ExactEndNotClamped(t *testing.T) {
+	t.Parallel()
 	// End is exactly the last byte — should not be clamped
 	start, end, ok := parsePlaintextRange("bytes=0-99", 100)
 	if !ok {
@@ -2135,6 +2212,7 @@ func TestParsePlaintextRange_ExactEndNotClamped(t *testing.T) {
 // TestParsePlaintextRange_InvertedRange verifies that an inverted range
 // (start > end) is rejected per RFC 7233.
 func TestParsePlaintextRange_InvertedRange(t *testing.T) {
+	t.Parallel()
 	_, _, ok := parsePlaintextRange("bytes=99-0", 100)
 	if ok {
 		t.Error("expected ok=false for inverted range")
@@ -2144,6 +2222,7 @@ func TestParsePlaintextRange_InvertedRange(t *testing.T) {
 // TestParsePlaintextRange_StartBeyondFile verifies that a range starting
 // past the end of the file is rejected.
 func TestParsePlaintextRange_StartBeyondFile(t *testing.T) {
+	t.Parallel()
 	_, _, ok := parsePlaintextRange("bytes=100-200", 100)
 	if ok {
 		t.Error("expected ok=false when start >= plaintextSize")
@@ -2153,6 +2232,7 @@ func TestParsePlaintextRange_StartBeyondFile(t *testing.T) {
 // TestParsePlaintextRange_OpenEndedBeyondFile verifies that an open-ended
 // range starting past the end of the file is rejected.
 func TestParsePlaintextRange_OpenEndedBeyondFile(t *testing.T) {
+	t.Parallel()
 	_, _, ok := parsePlaintextRange("bytes=100-", 100)
 	if ok {
 		t.Error("expected ok=false for open-ended range beyond file")
@@ -2163,6 +2243,7 @@ func TestParsePlaintextRange_OpenEndedBeyondFile(t *testing.T) {
 // goroutine is recovered and surfaced as an error instead of deadlocking the
 // request on the io.Pipe.
 func TestCopyObject_SourceGetPanics(t *testing.T) {
+	t.Parallel()
 	srcBackend := newMockBackend()
 	srcBackend.getPanic = true // causes GetObject to panic
 

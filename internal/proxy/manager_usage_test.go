@@ -58,6 +58,7 @@ func newUsageManagerWithLimits(backendNames []string, store *mockStore, limits m
 // --- recordUsage tests ---
 
 func TestRecordUsage_IncrementsCounters(t *testing.T) {
+	t.Parallel()
 	mgr := newUsageManager([]string{"b1"}, &mockStore{})
 
 	mgr.usage.Record("b1", 3, 1024, 2048)
@@ -75,6 +76,7 @@ func TestRecordUsage_IncrementsCounters(t *testing.T) {
 }
 
 func TestRecordUsage_Accumulates(t *testing.T) {
+	t.Parallel()
 	mgr := newUsageManager([]string{"b1"}, &mockStore{})
 
 	mgr.usage.Record("b1", 1, 100, 200)
@@ -93,6 +95,7 @@ func TestRecordUsage_Accumulates(t *testing.T) {
 }
 
 func TestRecordUsage_UnknownBackendNoOp(t *testing.T) {
+	t.Parallel()
 	mgr := newUsageManager([]string{"b1"}, &mockStore{})
 
 	// Should not panic for unknown backend
@@ -104,6 +107,7 @@ func TestRecordUsage_UnknownBackendNoOp(t *testing.T) {
 }
 
 func TestRecordUsage_ZeroValuesSkipped(t *testing.T) {
+	t.Parallel()
 	mgr := newUsageManager([]string{"b1"}, &mockStore{})
 
 	mgr.usage.Record("b1", 0, 0, 0)
@@ -114,6 +118,7 @@ func TestRecordUsage_ZeroValuesSkipped(t *testing.T) {
 }
 
 func TestRecordUsage_MultipleBackends(t *testing.T) {
+	t.Parallel()
 	mgr := newUsageManager([]string{"b1", "b2"}, &mockStore{})
 
 	mgr.usage.Record("b1", 1, 100, 0)
@@ -130,6 +135,7 @@ func TestRecordUsage_MultipleBackends(t *testing.T) {
 // --- RecordUsage public method ---
 
 func TestRecordUsage_PublicMethod(t *testing.T) {
+	t.Parallel()
 	mgr := newUsageManager([]string{"b1"}, &mockStore{})
 
 	mgr.RecordUsage("b1", 5, 1024, 2048)
@@ -149,6 +155,7 @@ func TestRecordUsage_PublicMethod(t *testing.T) {
 // --- FlushUsage tests ---
 
 func TestFlushUsage_WritesToStore(t *testing.T) {
+	t.Parallel()
 	ms := &mockStore{}
 	mgr := newUsageManager([]string{"b1"}, ms)
 
@@ -183,6 +190,7 @@ func TestFlushUsage_WritesToStore(t *testing.T) {
 }
 
 func TestFlushUsage_SkipsZeroDeltas(t *testing.T) {
+	t.Parallel()
 	ms := &mockStore{}
 	mgr := newUsageManager([]string{"b1", "b2"}, ms)
 
@@ -204,6 +212,7 @@ func TestFlushUsage_SkipsZeroDeltas(t *testing.T) {
 }
 
 func TestFlushUsage_RestoresCountersOnError(t *testing.T) {
+	t.Parallel()
 	ms := &mockStore{
 		flushUsageErr: fmt.Errorf("db down"),
 	}
@@ -230,6 +239,7 @@ func TestFlushUsage_RestoresCountersOnError(t *testing.T) {
 }
 
 func TestFlushUsage_NoDataNoCall(t *testing.T) {
+	t.Parallel()
 	ms := &mockStore{}
 	mgr := newUsageManager([]string{"b1"}, ms)
 
@@ -245,6 +255,7 @@ func TestFlushUsage_NoDataNoCall(t *testing.T) {
 }
 
 func TestFlushUsage_SkipsDrainedBackend(t *testing.T) {
+	t.Parallel()
 	ms := &mockStore{}
 	mgr := newUsageManager([]string{"b1", "b2"}, ms)
 
@@ -282,6 +293,7 @@ func TestFlushUsage_SkipsDrainedBackend(t *testing.T) {
 // --- withinUsageLimits tests ---
 
 func TestWithinUsageLimits_NoLimits(t *testing.T) {
+	t.Parallel()
 	mgr := newUsageManager([]string{"b1"}, &mockStore{})
 
 	if !mgr.usage.WithinLimits("b1", 1000, 1000, 1000) {
@@ -290,6 +302,7 @@ func TestWithinUsageLimits_NoLimits(t *testing.T) {
 }
 
 func TestWithinUsageLimits_ApiExceeded(t *testing.T) {
+	t.Parallel()
 	limits := map[string]st.UsageLimits{
 		"b1": {APIRequestLimit: 100},
 	}
@@ -304,6 +317,7 @@ func TestWithinUsageLimits_ApiExceeded(t *testing.T) {
 }
 
 func TestWithinUsageLimits_EgressExceeded(t *testing.T) {
+	t.Parallel()
 	limits := map[string]st.UsageLimits{
 		"b1": {EgressByteLimit: 1000},
 	}
@@ -319,6 +333,7 @@ func TestWithinUsageLimits_EgressExceeded(t *testing.T) {
 }
 
 func TestWithinUsageLimits_UnlimitedDimension(t *testing.T) {
+	t.Parallel()
 	limits := map[string]st.UsageLimits{
 		"b1": {APIRequestLimit: 100, EgressByteLimit: 0, IngressByteLimit: 0},
 	}
@@ -331,6 +346,7 @@ func TestWithinUsageLimits_UnlimitedDimension(t *testing.T) {
 }
 
 func TestBackendsWithinLimits_FiltersCorrectly(t *testing.T) {
+	t.Parallel()
 	limits := map[string]st.UsageLimits{
 		"b1": {APIRequestLimit: 10},
 		"b2": {APIRequestLimit: 100},
@@ -352,6 +368,7 @@ func TestBackendsWithinLimits_FiltersCorrectly(t *testing.T) {
 // --- currentPeriod tests ---
 
 func TestCurrentPeriod_Format(t *testing.T) {
+	t.Parallel()
 	period := counter.CurrentPeriod()
 
 	matched, err := regexp.MatchString(`^\d{4}-\d{2}$`, period)
