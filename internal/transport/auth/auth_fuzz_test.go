@@ -135,9 +135,18 @@ func FuzzBuildPresignedCanonicalRequest(f *testing.F) {
 
 		result := buildPresignedCanonicalRequest(r, headers)
 
-		// X-Amz-Signature must never appear in the canonical request.
-		if strings.Contains(result, "X-Amz-Signature") {
-			t.Error("presigned canonical request must not contain X-Amz-Signature")
+		// The X-Amz-Signature query parameter must be excluded from the
+		// canonical query string. Parse the query line (third line of the
+		// canonical request) and check for the exact key, not a substring.
+		lines := strings.Split(result, "\n")
+		if len(lines) >= 3 {
+			queryLine := lines[2]
+			for _, pair := range strings.Split(queryLine, "&") {
+				key, _, _ := strings.Cut(pair, "=")
+				if key == "X-Amz-Signature" {
+					t.Errorf("canonical query string contains X-Amz-Signature key: %q", queryLine)
+				}
+			}
 		}
 	})
 }
