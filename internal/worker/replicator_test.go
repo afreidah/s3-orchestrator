@@ -31,19 +31,15 @@ func TestFindReplicaTarget_SelectsBackendWithSpace(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
-	be1 := backendtest.NewMockObjectBackend(ctrl)
-	be2 := backendtest.NewMockObjectBackend(ctrl)
 
-	ops.EXPECT().BackendOrder().Return([]string{"b1", "b2"})
-	ops.EXPECT().ExcludeDraining([]string{"b1", "b2"}).Return([]string{"b1", "b2"})
-	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": be1, "b2": be2}).AnyTimes()
+	exclusion := map[string]bool{"b1": true}
+	ops.EXPECT().SelectReplicaTarget(gomock.Any(), int64(50), exclusion).Return("b2", nil)
 
 	r := NewReplicator(ops)
 	stats := map[string]store.QuotaStat{
-		"b1": {BytesUsed: 900, BytesLimit: 1000}, // 100 free
-		"b2": {BytesUsed: 100, BytesLimit: 1000}, // 900 free
+		"b1": {BytesUsed: 900, BytesLimit: 1000},
+		"b2": {BytesUsed: 100, BytesLimit: 1000},
 	}
-	exclusion := map[string]bool{"b1": true} // b1 already has copy
 
 	target := r.FindReplicaTarget(context.Background(), stats, "key1", 50, exclusion)
 	if target != "b2" {
@@ -56,11 +52,7 @@ func TestFindReplicaTarget_NoSpace(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
 
-	ops.EXPECT().BackendOrder().Return([]string{"b1"})
-	ops.EXPECT().ExcludeDraining([]string{"b1"}).Return([]string{"b1"})
-	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{
-		"b1": backendtest.NewMockObjectBackend(ctrl),
-	}).AnyTimes()
+	ops.EXPECT().SelectReplicaTarget(gomock.Any(), int64(50), gomock.Any()).Return("", nil)
 
 	r := NewReplicator(ops)
 	stats := map[string]store.QuotaStat{
@@ -174,8 +166,7 @@ func TestReplicateObject_Success(t *testing.T) {
 	ms := &mockMetadataStore{recordReplicaOK: true}
 
 	ops.EXPECT().Store().Return(ms).AnyTimes()
-	ops.EXPECT().BackendOrder().Return([]string{"b1", "b2"}).AnyTimes()
-	ops.EXPECT().ExcludeDraining(gomock.Any()).Return([]string{"b1", "b2"}).AnyTimes()
+	ops.EXPECT().SelectReplicaTarget(gomock.Any(), int64(50), gomock.Any()).Return("b2", nil)
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": srcBe, "b2": dstBe}).AnyTimes()
 	ops.EXPECT().GetBackend("b2").Return(dstBe, nil)
 	ops.EXPECT().StreamCopy(gomock.Any(), srcBe, dstBe, "key1").Return(nil)

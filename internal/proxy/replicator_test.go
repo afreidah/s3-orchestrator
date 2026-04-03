@@ -131,7 +131,8 @@ func TestReplicate_Success(t *testing.T) {
 			"b1": {BytesUsed: 100, BytesLimit: 1000},
 			"b2": {BytesUsed: 100, BytesLimit: 1000},
 		},
-		recordReplicaInserted: true,
+		getBackendFromEligible: true,
+		recordReplicaInserted:  true,
 	}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": b1, "b2": b2},
@@ -164,7 +165,7 @@ func TestReplicate_Success(t *testing.T) {
 
 func TestFindReplicaTarget_ExcludesExistingCopies(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{}
+	store := &mockStore{getBackendFromEligible: true}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": newMockBackend(), "b2": newMockBackend(), "b3": newMockBackend()},
 		Store:           store,
@@ -542,7 +543,8 @@ func TestReplicate_HealthAware_SkipsUnhealthyTarget(t *testing.T) {
 			"b2": {BytesUsed: 100, BytesLimit: 1000},
 			"b3": {BytesUsed: 100, BytesLimit: 1000},
 		},
-		recordReplicaInserted: true,
+		getBackendFromEligible: true,
+		recordReplicaInserted:  true,
 	}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": b1, "b2": cbb2, "b3": b3},
@@ -593,7 +595,8 @@ func TestReplicate_HealthAware_PrefersHealthySource(t *testing.T) {
 			"b2": {BytesUsed: 100, BytesLimit: 1000},
 			"b3": {BytesUsed: 100, BytesLimit: 1000},
 		},
-		recordReplicaInserted: true,
+		getBackendFromEligible: true,
+		recordReplicaInserted:  true,
 	}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": cbb1, "b2": b2, "b3": b3},

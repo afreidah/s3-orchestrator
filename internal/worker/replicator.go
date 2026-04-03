@@ -231,27 +231,17 @@ func (r *Replicator) ReplicateObject(ctx context.Context, quotaStats map[string]
 	return created, nil
 }
 
-// FindReplicaTarget selects a backend that has enough space and doesn't already
-// hold a copy. quotaStats is pre-fetched once per replication cycle.
-// Returns empty string if no suitable target exists.
+// FindReplicaTarget selects a backend for a replication copy using the same
+// routing strategy as normal writes. Returns empty string if no suitable
+// target exists.
 func (r *Replicator) FindReplicaTarget(ctx context.Context, quotaStats map[string]store.QuotaStat, key string, size int64, exclusion map[string]bool) string {
-	for _, name := range r.ops.ExcludeDraining(r.ops.BackendOrder()) {
-		if exclusion[name] {
-			continue
-		}
-		if !r.IsBackendHealthy(name) {
-			continue
-		}
-		stat, ok := quotaStats[name]
-		if !ok {
-			continue
-		}
-		if stat.BytesLimit-stat.BytesUsed-stat.OrphanBytes >= size {
-			return name
-		}
+	name, err := r.ops.SelectReplicaTarget(ctx, size, exclusion)
+	if err != nil {
+		slog.WarnContext(ctx, "Replication: target selection failed",
+			"key", key, "error", err)
+		return ""
 	}
-
-	return ""
+	return name
 }
 
 // copyToReplica reads the object from an existing copy and writes it to the
