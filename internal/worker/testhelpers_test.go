@@ -25,6 +25,7 @@ type mockMetadataStore struct {
 	removedCopies       int
 	objectsByBackend    map[string][]store.ObjectLocation
 	moveSize            int64
+	staleDeleted        int
 }
 
 func (m *mockMetadataStore) GetPendingCleanups(_ context.Context, _ int) ([]store.CleanupItem, error) {
@@ -108,5 +109,10 @@ func (m *mockMetadataStore) MoveObjectLocation(_ context.Context, _, _, _ string
 }
 
 func (m *mockMetadataStore) FlushUsageDeltas(_ context.Context, _, _ string, _, _, _ int64) error {
+	return nil
+}
+
+func (m *mockMetadataStore) DeleteObjectLocation(_ context.Context, _, _ string) error {
+	m.staleDeleted++
 	return nil
 }

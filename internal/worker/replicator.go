@@ -13,6 +13,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -287,6 +288,17 @@ func (r *Replicator) CopyToReplica(ctx context.Context, key string, copies []sto
 
 		slog.WarnContext(ctx, "Replication: source read failed, trying next copy",
 			"key", key, "source", copies[i].BackendName, "error", err)
+
+		// Source returned 404 — metadata is stale, remove it immediately
+		if isNotFound(err) {
+			if delErr := r.ops.Store().DeleteObjectLocation(ctx, key, copies[i].BackendName); delErr != nil {
+				slog.WarnContext(ctx, "Replication: failed to remove stale metadata",
+					"key", key, "backend", copies[i].BackendName, "error", delErr)
+			} else {
+				slog.InfoContext(ctx, "Replication: removed stale metadata entry",
+					"key", key, "backend", copies[i].BackendName)
+			}
+		}
 	}
 
 	return "", fmt.Errorf("all source copies failed for key %s", key)
@@ -335,4 +347,11 @@ func (r *Replicator) IsBackendHealthy(name string) bool {
 		return true
 	}
 	return cbb.IsHealthy()
+}
+
+// isNotFound returns true if the error chain contains an HTTP 404 response,
+// indicating the object does not exist on the backend.
+func isNotFound(err error) bool {
+	var respErr interface{ HTTPStatusCode() int }
+	return errors.As(err, &respErr) && respErr.HTTPStatusCode() == 404
 }
