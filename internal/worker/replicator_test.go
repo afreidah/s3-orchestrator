@@ -105,6 +105,32 @@ func TestCopyToReplica_Success(t *testing.T) {
 	}
 }
 
+func TestCopyToReplica_404CleansUpStaleMetadata(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	ops := NewMockOps(ctrl)
+	srcBe := backendtest.NewMockObjectBackend(ctrl)
+	dstBe := backendtest.NewMockObjectBackend(ctrl)
+	ms := &mockMetadataStore{}
+
+	ops.EXPECT().GetBackend("b2").Return(dstBe, nil)
+	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": srcBe}).AnyTimes()
+	ops.EXPECT().StreamCopy(gomock.Any(), srcBe, dstBe, "key1").
+		Return(fmt.Errorf("read: %w", &httpError{code: 404, msg: "NoSuchKey"}))
+	ops.EXPECT().Store().Return(ms).AnyTimes()
+
+	r := NewReplicator(ops)
+	copies := []store.ObjectLocation{{BackendName: "b1"}}
+
+	_, err := r.CopyToReplica(context.Background(), "key1", copies, "b2")
+	if err == nil {
+		t.Fatal("expected error when source returns 404")
+	}
+	if ms.staleDeleted != 1 {
+		t.Errorf("staleDeleted = %d, want 1", ms.staleDeleted)
+	}
+}
+
 func TestCopyToReplica_AllSourcesFail(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
