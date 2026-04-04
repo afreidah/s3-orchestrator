@@ -299,7 +299,7 @@ func TestFindReplicaTarget_RespectsOrphanBytes(t *testing.T) {
 
 func TestFindReplicaTarget_OrphanBytesStillFits(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{}
+	store := &mockStore{getBackendFromEligible: true}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": newMockBackend(), "b2": newMockBackend()},
 		Store:           store,

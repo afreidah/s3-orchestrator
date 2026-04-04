@@ -131,7 +131,8 @@ func TestReplicate_Success(t *testing.T) {
 			"b1": {BytesUsed: 100, BytesLimit: 1000},
 			"b2": {BytesUsed: 100, BytesLimit: 1000},
 		},
-		recordReplicaInserted: true,
+		getBackendFromEligible: true,
+		recordReplicaInserted:  true,
 	}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": b1, "b2": b2},
@@ -164,7 +165,7 @@ func TestReplicate_Success(t *testing.T) {
 
 func TestFindReplicaTarget_ExcludesExistingCopies(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{}
+	store := &mockStore{getBackendFromEligible: true}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": newMockBackend(), "b2": newMockBackend(), "b3": newMockBackend()},
 		Store:           store,
@@ -207,6 +208,25 @@ func TestFindReplicaTarget_SkipsFullBackends(t *testing.T) {
 	target := mgr.Replicator.FindReplicaTarget(context.Background(), stats, "key1", 50, exclusion)
 	if target != "" {
 		t.Errorf("expected empty (no space), got %q", target)
+	}
+}
+
+func TestSelectReplicaTarget_NoSpaceAvailable(t *testing.T) {
+	t.Parallel()
+	// Mock store returns ErrNoSpaceAvailable from GetBackendWithSpace
+	store := &mockStore{getBackendErr: st.ErrNoSpaceAvailable}
+	mgr := NewBackendManager(&BackendManagerConfig{
+		Backends:        map[string]backend.ObjectBackend{"b1": newMockBackend(), "b2": newMockBackend()},
+		Store:           store,
+		Order:           []string{"b1", "b2"},
+		CacheTTL:        5 * time.Second,
+		RoutingStrategy: config.RoutingPack,
+	})
+
+	exclusion := map[string]bool{"b1": true}
+	target := mgr.Replicator.FindReplicaTarget(context.Background(), nil, "key1", 50, exclusion)
+	if target != "" {
+		t.Errorf("expected empty (no space available), got %q", target)
 	}
 }
 
@@ -542,7 +562,8 @@ func TestReplicate_HealthAware_SkipsUnhealthyTarget(t *testing.T) {
 			"b2": {BytesUsed: 100, BytesLimit: 1000},
 			"b3": {BytesUsed: 100, BytesLimit: 1000},
 		},
-		recordReplicaInserted: true,
+		getBackendFromEligible: true,
+		recordReplicaInserted:  true,
 	}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": b1, "b2": cbb2, "b3": b3},
@@ -593,7 +614,8 @@ func TestReplicate_HealthAware_PrefersHealthySource(t *testing.T) {
 			"b2": {BytesUsed: 100, BytesLimit: 1000},
 			"b3": {BytesUsed: 100, BytesLimit: 1000},
 		},
-		recordReplicaInserted: true,
+		getBackendFromEligible: true,
+		recordReplicaInserted:  true,
 	}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": cbb1, "b2": b2, "b3": b3},

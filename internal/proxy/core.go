@@ -182,6 +182,27 @@ func (c *backendCore) eligibleForWrite(apiCalls, egress, ingress int64) []string
 // ROUTING
 // -------------------------------------------------------------------------
 
+// SelectReplicaTarget picks a target backend for a replication copy using the
+// same routing strategy as normal writes. Excludes backends that already hold
+// a copy of the object.
+func (c *backendCore) SelectReplicaTarget(ctx context.Context, size int64, exclusion map[string]bool) (string, error) {
+	eligible := c.eligibleForWrite(1, 0, size)
+	filtered := make([]string, 0, len(eligible))
+	for _, name := range eligible {
+		if !exclusion[name] {
+			filtered = append(filtered, name)
+		}
+	}
+	if len(filtered) == 0 {
+		return "", nil
+	}
+	name, err := c.selectBackendForWrite(ctx, size, filtered)
+	if errors.Is(err, store.ErrNoSpaceAvailable) {
+		return "", nil
+	}
+	return name, err
+}
+
 // selectBackendForWrite picks the target backend for a write operation using
 // the configured routing strategy. "pack" returns the first backend with space,
 // "spread" returns the least-utilized backend.
