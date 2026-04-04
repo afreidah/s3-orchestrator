@@ -13,6 +13,7 @@ package backend
 
 import (
 	"context"
+	"errors"
 	"io"
 	"time"
 
@@ -44,11 +45,18 @@ func (cb *CircuitBreakerBackend) Unwrap() ObjectBackend {
 	return cb.real
 }
 
-// isBackendError returns true for all non-nil errors. Unlike the database
-// circuit breaker, which exempts application-level errors (S3Error,
-// ErrNoSpaceAvailable), backend errors are always genuine failures.
+// isBackendError returns true for errors that indicate backend health issues.
+// 404/NoSuchKey errors are excluded because they indicate a healthy backend
+// with a missing object, not a backend failure.
 func isBackendError(err error) bool {
-	return err != nil
+	if err == nil {
+		return false
+	}
+	var respErr interface{ HTTPStatusCode() int }
+	if errors.As(err, &respErr) && respErr.HTTPStatusCode() == 404 {
+		return false
+	}
+	return true
 }
 
 // PutObject uploads an object to the backend with circuit breaker protection.

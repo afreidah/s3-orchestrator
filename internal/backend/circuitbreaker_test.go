@@ -227,3 +227,88 @@ func TestCBBackend_NestedUnwrap(t *testing.T) {
 		t.Fatal("full unwrap should return the mock backend")
 	}
 }
+
+// httpError is a test helper that satisfies the HTTPStatusCode() interface.
+type httpError struct {
+	code int
+	msg  string
+}
+
+func (e *httpError) Error() string       { return e.msg }
+func (e *httpError) HTTPStatusCode() int { return e.code }
+
+func TestCBBackend_404DoesNotTripBreaker(t *testing.T) {
+	t.Parallel()
+	mock := newMockBackend()
+	cb := newTestCBBackend(mock, 3, time.Minute)
+
+	// 3 consecutive 404 errors should NOT trip the circuit breaker
+	mock.getErr = &httpError{code: 404, msg: "NoSuchKey"}
+	for range 3 {
+		_, _ = cb.GetObject(context.Background(), "missing-key", "")
+	}
+
+	// Circuit should still be closed — next call should reach the backend
+	mock.getErr = nil
+	mock.objects = map[string]mockObject{"exists": {data: []byte("data")}}
+	result, err := cb.GetObject(context.Background(), "exists", "")
+	if err != nil {
+		t.Fatalf("expected success after 404s, got error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected result, got nil")
+	}
+	if cb.State() != breaker.StateClosed {
+		t.Errorf("expected circuit closed, got %v", cb.State())
+	}
+}
+
+func TestCBBackend_500DoesTripsBreaker(t *testing.T) {
+	t.Parallel()
+	mock := newMockBackend()
+	cb := newTestCBBackend(mock, 3, time.Minute)
+
+	// 3 consecutive 500 errors SHOULD trip the circuit breaker
+	mock.getErr = &httpError{code: 500, msg: "InternalServerError"}
+	for range 3 {
+		_, _ = cb.GetObject(context.Background(), "key", "")
+	}
+
+	if cb.State() != breaker.StateOpen {
+		t.Errorf("expected circuit open after 500s, got %v", cb.State())
+	}
+
+	// Next call should return ErrBackendUnavailable without reaching backend
+	_, err := cb.GetObject(context.Background(), "key", "")
+	if !errors.Is(err, breaker.ErrBackendUnavailable) {
+		t.Errorf("expected ErrBackendUnavailable, got %v", err)
+	}
+}
+
+func TestIsBackendError_404(t *testing.T) {
+	t.Parallel()
+	if isBackendError(&httpError{code: 404, msg: "NoSuchKey"}) {
+		t.Error("404 should not be a backend error")
+	}
+}
+
+func TestIsBackendError_500(t *testing.T) {
+	t.Parallel()
+	if !isBackendError(&httpError{code: 500, msg: "InternalServerError"}) {
+		t.Error("500 should be a backend error")
+	}
+}
+
+func TestIsBackendError_Nil(t *testing.T) {
+	t.Parallel()
+	if isBackendError(nil) {
+		t.Error("nil should not be a backend error")
+	}
+}
+
+func TestIsBackendError_PlainError(t *testing.T) {
+	t.Parallel()
+	if !isBackendError(errors.New("connection refused")) {
+		t.Error("plain error should be a backend error")
+	}
+}
