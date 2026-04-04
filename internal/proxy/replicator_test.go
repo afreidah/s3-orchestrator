@@ -211,6 +211,25 @@ func TestFindReplicaTarget_SkipsFullBackends(t *testing.T) {
 	}
 }
 
+func TestSelectReplicaTarget_NoSpaceAvailable(t *testing.T) {
+	t.Parallel()
+	// Mock store returns ErrNoSpaceAvailable from GetBackendWithSpace
+	store := &mockStore{getBackendErr: st.ErrNoSpaceAvailable}
+	mgr := NewBackendManager(&BackendManagerConfig{
+		Backends:        map[string]backend.ObjectBackend{"b1": newMockBackend(), "b2": newMockBackend()},
+		Store:           store,
+		Order:           []string{"b1", "b2"},
+		CacheTTL:        5 * time.Second,
+		RoutingStrategy: config.RoutingPack,
+	})
+
+	exclusion := map[string]bool{"b1": true}
+	target := mgr.Replicator.FindReplicaTarget(context.Background(), nil, "key1", 50, exclusion)
+	if target != "" {
+		t.Errorf("expected empty (no space available), got %q", target)
+	}
+}
+
 func TestFindReplicaTarget_EmptyStats(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{}

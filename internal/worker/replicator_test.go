@@ -65,6 +65,22 @@ func TestFindReplicaTarget_NoSpace(t *testing.T) {
 	}
 }
 
+func TestFindReplicaTarget_SelectionError(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	ops := NewMockOps(ctrl)
+
+	ops.EXPECT().SelectReplicaTarget(gomock.Any(), int64(50), gomock.Any()).
+		Return("", fmt.Errorf("database unavailable"))
+
+	r := NewReplicator(ops)
+
+	target := r.FindReplicaTarget(context.Background(), nil, "key1", 50, nil)
+	if target != "" {
+		t.Errorf("FindReplicaTarget = %q, want empty (error)", target)
+	}
+}
+
 func TestCopyToReplica_Success(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)

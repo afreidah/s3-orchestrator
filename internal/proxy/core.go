@@ -196,7 +196,11 @@ func (c *backendCore) SelectReplicaTarget(ctx context.Context, size int64, exclu
 	if len(filtered) == 0 {
 		return "", nil
 	}
-	return c.selectBackendForWrite(ctx, size, filtered)
+	name, err := c.selectBackendForWrite(ctx, size, filtered)
+	if errors.Is(err, store.ErrNoSpaceAvailable) {
+		return "", nil
+	}
+	return name, err
 }
 
 // selectBackendForWrite picks the target backend for a write operation using
