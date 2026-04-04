@@ -39,6 +39,7 @@ type BackendAccess interface {
 	BackendOrder() []string
 	IsDraining(name string) bool
 	ExcludeDraining(eligible []string) []string
+	SelectReplicaTarget(ctx context.Context, size int64, exclusion map[string]bool) (string, error)
 }
 
 // AdmissionControl gates concurrent access to backends.

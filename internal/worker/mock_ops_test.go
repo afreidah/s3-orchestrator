@@ -166,6 +166,21 @@ func (mr *MockOpsMockRecorder) ReleaseAdmission() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReleaseAdmission", reflect.TypeOf((*MockOps)(nil).ReleaseAdmission))
 }
 
+// SelectReplicaTarget mocks base method.
+func (m *MockOps) SelectReplicaTarget(ctx context.Context, size int64, exclusion map[string]bool) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SelectReplicaTarget", ctx, size, exclusion)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// SelectReplicaTarget indicates an expected call of SelectReplicaTarget.
+func (mr *MockOpsMockRecorder) SelectReplicaTarget(ctx, size, exclusion any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SelectReplicaTarget", reflect.TypeOf((*MockOps)(nil).SelectReplicaTarget), ctx, size, exclusion)
+}
+
 // Store mocks base method.
 func (m *MockOps) Store() store.MetadataStore {
 	m.ctrl.T.Helper()
