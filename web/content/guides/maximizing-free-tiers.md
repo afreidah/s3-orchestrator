@@ -12,7 +12,7 @@ Most S3-compatible providers offer a free tier with a limited amount of storage 
 
 The key tools for staying within free tiers are **per-backend quotas** and **usage limits**. Quotas cap stored bytes so you never exceed a provider's free storage allowance. Usage limits cap monthly API requests, egress, and ingress so you avoid overage charges on metered dimensions.
 
-![Six cloud backends with a free-tier configuration](/docs/images/free-tier-5-cloud-setup.png?classes=lightbox)
+![Seven cloud backends with a free-tier configuration](/docs/images/free-tier-5-cloud-setup.png?classes=lightbox)
 
 Below is the configuration used to run the setup shown above. Credentials are injected via Vault templates, but you can substitute environment variables or literal values.
 
@@ -115,6 +115,15 @@ backends:
     ingress_byte_limit: 5368709120
     api_request_limit: 5000
 
+  - name: "g3"
+    endpoint: "{{ .Data.data.g3_s3_endpoint }}"
+    region: "us-east-1"
+    bucket: "{{ .Data.data.g3_s3_bucket }}"
+    access_key_id: "{{ .Data.data.g3_s3_access_key }}"
+    secret_access_key: "{{ .Data.data.g3_s3_secret_key }}"
+    force_path_style: true
+    quota_bytes: 16106127360
+
 circuit_breaker:
   failure_threshold: 3
   open_timeout: 15s
@@ -196,8 +205,13 @@ Check each provider's free-tier limits. Common examples:
 | iDrive e2 | 10 GB | Unlimited | 30 GB/mo |
 | IBM Cloud | 5 GB | Unlimited | 5 GB/mo |
 | Google Cloud (GCS) | 5 GB | 5,000/mo | 1 GB/mo |
+| [g3](https://g3.munchbox.cc) (Gmail + Drive) | 15 GB | 12,000/min (Drive) | Unlimited |
 
-With all six providers you get 50 GB of combined storage behind a single S3 endpoint.
+With all seven providers you get 65 GB of combined storage behind a single S3 endpoint.
+
+{{% notice tip %}}
+**[g3](https://github.com/afreidah/g3)** is an S3-compatible gateway that uses Google Drive for object data and Gmail for metadata. Each free Google account provides 15 GB of storage. g3 runs as a service in your infrastructure and presents a standard S3 API that S3 Orchestrator connects to like any other backend. See the [g3 project website](https://g3.munchbox.cc) for setup instructions.
+{{% /notice %}}
 
 {{% notice warning %}}
 Free-tier limits change without notice. Always verify current allowances on each provider's pricing page before configuring quotas and usage limits. The numbers listed here are a starting point, not a guarantee.
@@ -341,6 +355,17 @@ backends:
     egress_byte_limit: 1073741824
     ingress_byte_limit: 5368709120
     api_request_limit: 5000
+
+  # g3 uses Google Drive + Gmail as storage via an S3-compatible proxy.
+  # See https://github.com/afreidah/g3 for setup.
+  - name: "g3"
+    endpoint: "http://g3-proxy.service.consul:9001"
+    region: "us-east-1"
+    bucket: "my-bucket"
+    access_key_id: "${G3_ACCESS_KEY}"
+    secret_access_key: "${G3_SECRET_KEY}"
+    force_path_style: true
+    quota_bytes: 16106127360
 ```
 
 When a backend hits a usage limit, reads fail over to replicas on other backends and writes overflow to backends that still have headroom.
