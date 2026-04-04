@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -204,5 +205,54 @@ func TestReplicateObject_Success(t *testing.T) {
 	}
 	if ms.replicaRecorded != 1 {
 		t.Errorf("replicaRecorded = %d, want 1", ms.replicaRecorded)
+	}
+}
+
+// -------------------------------------------------------------------------
+// isNotFound
+// -------------------------------------------------------------------------
+
+// httpError is a test helper that satisfies the HTTPStatusCode() interface.
+type httpError struct {
+	code int
+	msg  string
+}
+
+func (e *httpError) Error() string       { return e.msg }
+func (e *httpError) HTTPStatusCode() int { return e.code }
+
+func TestIsNotFound_404(t *testing.T) {
+	t.Parallel()
+	if !isNotFound(&httpError{code: 404, msg: "NoSuchKey"}) {
+		t.Error("expected true for 404")
+	}
+}
+
+func TestIsNotFound_500(t *testing.T) {
+	t.Parallel()
+	if isNotFound(&httpError{code: 500, msg: "InternalServerError"}) {
+		t.Error("expected false for 500")
+	}
+}
+
+func TestIsNotFound_PlainError(t *testing.T) {
+	t.Parallel()
+	if isNotFound(errors.New("connection refused")) {
+		t.Error("expected false for plain error")
+	}
+}
+
+func TestIsNotFound_Wrapped404(t *testing.T) {
+	t.Parallel()
+	wrapped := fmt.Errorf("read: %w", &httpError{code: 404, msg: "NoSuchKey"})
+	if !isNotFound(wrapped) {
+		t.Error("expected true for wrapped 404")
+	}
+}
+
+func TestIsNotFound_Nil(t *testing.T) {
+	t.Parallel()
+	if isNotFound(nil) {
+		t.Error("expected false for nil")
 	}
 }
