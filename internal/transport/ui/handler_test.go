@@ -1114,17 +1114,52 @@ func TestAPIRebalance_Success(t *testing.T) {
 	mux.ServeHTTP(w, req)
 
 	resp := w.Result()
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusAccepted {
 		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("status = %d, want 200; body = %s", resp.StatusCode, body)
+		t.Fatalf("status = %d, want 202; body = %s", resp.StatusCode, body)
 	}
 
 	var result map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
-	if result["ok"] != true {
-		t.Errorf("expected ok=true, got %v", result)
+	if result["status"] != "started" {
+		t.Errorf("expected status=started, got %v", result)
+	}
+}
+
+func TestAPIRebalance_AlreadyRunning(t *testing.T) {
+	h, mux := newTestHandler(t)
+
+	// Trigger first rebalance
+	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/rebalance", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Result().StatusCode != http.StatusAccepted {
+		t.Fatalf("first trigger: status = %d, want 202", w.Result().StatusCode)
+	}
+
+	// Second should conflict while first is still running
+	req2 := authedRequest(t, h, mux, http.MethodPost, "/ui/api/rebalance", nil)
+	w2 := httptest.NewRecorder()
+	mux.ServeHTTP(w2, req2)
+	if w2.Result().StatusCode != http.StatusConflict {
+		t.Fatalf("second trigger: status = %d, want 409", w2.Result().StatusCode)
+	}
+}
+
+func TestAPIRebalance_StatusPolling(t *testing.T) {
+	h, mux := newTestHandler(t)
+
+	// Status before any run should be idle
+	req := authedRequest(t, h, mux, http.MethodGet, "/ui/api/rebalance/status", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	var result map[string]any
+	_ = json.NewDecoder(w.Body).Decode(&result)
+	if result["status"] != "idle" {
+		t.Errorf("expected status=idle, got %v", result)
 	}
 }
 
@@ -1136,8 +1171,23 @@ func TestAPIRebalance_ManagerError(t *testing.T) {
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
-	if w.Result().StatusCode != http.StatusInternalServerError {
-		t.Fatalf("status = %d, want 500", w.Result().StatusCode)
+	// Async trigger still returns 202 — errors surface via status endpoint
+	if w.Result().StatusCode != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", w.Result().StatusCode)
+	}
+
+	// Wait briefly for background goroutine to complete
+	time.Sleep(100 * time.Millisecond)
+
+	// Poll status to see the error
+	req2 := authedRequest(t, h, mux, http.MethodGet, "/ui/api/rebalance/status", nil)
+	w2 := httptest.NewRecorder()
+	mux.ServeHTTP(w2, req2)
+
+	var result map[string]any
+	_ = json.NewDecoder(w2.Body).Decode(&result)
+	if result["status"] != "error" {
+		t.Errorf("expected status=error, got %v", result)
 	}
 }
 
