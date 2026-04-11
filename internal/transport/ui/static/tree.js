@@ -432,39 +432,59 @@
     });
   }
 
+  // --- Async operation helper: trigger POST, then poll status endpoint ---
+  function runAsyncOp(btn, triggerUrl, statusUrl, label, countKey) {
+    btn.disabled = true;
+    btn.textContent = label + '\u2026';
+
+    fetchWithTimeout(triggerUrl, { method: 'POST' }, 10000)
+      .then(function (resp) {
+        if (resp.status === 401) { location.href = 'login'; return; }
+        if (resp.status === 409) {
+          btn.textContent = 'Already running';
+          setTimeout(function () { btn.disabled = false; btn.textContent = label; }, 3000);
+          return;
+        }
+        pollStatus(btn, statusUrl, label, countKey);
+      })
+      .catch(function (err) {
+        btn.textContent = err.name === 'AbortError' ? 'Request timed out' : 'Network error';
+        setTimeout(function () { btn.disabled = false; btn.textContent = label; }, 3000);
+      });
+  }
+
+  function pollStatus(btn, statusUrl, label, countKey) {
+    var poll = setInterval(function () {
+      fetch(statusUrl)
+        .then(function (resp) { return resp.json(); })
+        .then(function (data) {
+          if (data.status === 'running') return;
+          clearInterval(poll);
+          if (data.ok) {
+            btn.textContent = data[countKey] + (countKey === 'moved' ? ' moved' : ' removed');
+            setTimeout(function () { location.reload(); }, 1500);
+          } else if (data.status === 'error') {
+            btn.textContent = data.error || 'Failed';
+            setTimeout(function () { btn.disabled = false; btn.textContent = label; }, 3000);
+          } else {
+            btn.disabled = false;
+            btn.textContent = label;
+          }
+        })
+        .catch(function () {
+          clearInterval(poll);
+          btn.textContent = 'Poll error';
+          setTimeout(function () { btn.disabled = false; btn.textContent = label; }, 3000);
+        });
+    }, 2000);
+  }
+
   // --- Rebalance flow ---
   var rebalanceBtn = document.getElementById('rebalance-btn');
 
   if (rebalanceBtn) {
     rebalanceBtn.addEventListener('click', function () {
-      rebalanceBtn.disabled = true;
-      rebalanceBtn.textContent = 'Rebalancing\u2026';
-
-      fetchWithTimeout('api/rebalance', { method: 'POST' }, 60000)
-        .then(function (resp) {
-          if (resp.status === 401) { location.href = 'login'; return; }
-          return resp.json();
-        })
-        .then(function (data) {
-          if (!data) return;
-          if (data.ok) {
-            rebalanceBtn.textContent = data.moved + ' moved';
-            setTimeout(function () { location.reload(); }, 1500);
-          } else {
-            rebalanceBtn.textContent = data.error || 'Failed';
-            setTimeout(function () {
-              rebalanceBtn.disabled = false;
-              rebalanceBtn.textContent = 'Rebalance';
-            }, 3000);
-          }
-        })
-        .catch(function (err) {
-          rebalanceBtn.textContent = err.name === 'AbortError' ? 'Request timed out' : 'Network error';
-          setTimeout(function () {
-            rebalanceBtn.disabled = false;
-            rebalanceBtn.textContent = 'Rebalance';
-          }, 3000);
-        });
+      runAsyncOp(rebalanceBtn, 'api/rebalance', 'api/rebalance/status', 'Rebalance', 'moved');
     });
   }
 
@@ -473,34 +493,7 @@
 
   if (cleanExcessBtn) {
     cleanExcessBtn.addEventListener('click', function () {
-      cleanExcessBtn.disabled = true;
-      cleanExcessBtn.textContent = 'Cleaning\u2026';
-
-      fetchWithTimeout('api/clean-excess', { method: 'POST' }, 60000)
-        .then(function (resp) {
-          if (resp.status === 401) { location.href = 'login'; return; }
-          return resp.json();
-        })
-        .then(function (data) {
-          if (!data) return;
-          if (data.ok) {
-            cleanExcessBtn.textContent = data.removed + ' removed';
-            setTimeout(function () { location.reload(); }, 1500);
-          } else {
-            cleanExcessBtn.textContent = data.error || 'Failed';
-            setTimeout(function () {
-              cleanExcessBtn.disabled = false;
-              cleanExcessBtn.textContent = 'Clean Excess';
-            }, 3000);
-          }
-        })
-        .catch(function (err) {
-          cleanExcessBtn.textContent = err.name === 'AbortError' ? 'Request timed out' : 'Network error';
-          setTimeout(function () {
-            cleanExcessBtn.disabled = false;
-            cleanExcessBtn.textContent = 'Clean Excess';
-          }, 3000);
-        });
+      runAsyncOp(cleanExcessBtn, 'api/clean-excess', 'api/clean-excess/status', 'Clean Excess', 'removed');
     });
   }
 

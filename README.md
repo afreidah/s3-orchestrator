@@ -852,8 +852,10 @@ JSON APIs are available at `{path}/api/dashboard`, `{path}/api/tree`, and `{path
 | `/ui/api/delete-prefix` | Delete all objects under a prefix (POST, JSON body) |
 | `/ui/api/upload` | Upload a file (POST, multipart form) |
 | `/ui/api/download` | Download a file (GET, query param: key) |
-| `/ui/api/rebalance` | Trigger on-demand rebalance (POST) |
-| `/ui/api/clean-excess` | Remove over-replicated copies (POST) |
+| `/ui/api/rebalance` | Trigger async rebalance, returns 202 (POST) |
+| `/ui/api/rebalance/status` | Poll rebalance status (GET) |
+| `/ui/api/clean-excess` | Trigger async cleanup, returns 202 (POST) |
+| `/ui/api/clean-excess/status` | Poll cleanup status (GET) |
 | `/ui/api/logs` | Buffered log entries as JSON (query params: level, since, component, limit) |
 | `/ui/api/sync` | Import objects from a backend (POST, JSON body) |
 | `/{bucket}/{key}` | S3 API |

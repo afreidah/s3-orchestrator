@@ -199,26 +199,64 @@ The `key` must start with a configured virtual bucket name.
 
 ### POST /ui/api/rebalance
 
-Triggers an on-demand rebalance across backends.
+Triggers an on-demand rebalance in the background. Returns immediately with 202 Accepted. Poll the status endpoint for results.
 
 **Request:** No body required.
+
+**Response (202):**
+
+```json
+{"status": "started"}
+```
+
+**Response (409):** Returned if a rebalance is already running.
+
+```json
+{"error": "rebalance already running"}
+```
+
+### GET /ui/api/rebalance/status
+
+Returns the status of the most recent rebalance operation.
 
 **Response:**
 
 ```json
-{"ok": true, "moved": 5}
+{"status": "running"}
+{"status": "done", "ok": true, "moved": 5}
+{"status": "error", "error": "rebalance failed"}
+{"status": "idle"}
 ```
 
 ### POST /ui/api/clean-excess
 
-Removes over-replicated copies that exceed the configured replication factor.
+Removes over-replicated copies in the background. Returns immediately with 202 Accepted. Poll the status endpoint for results.
 
 **Request:** No body required.
+
+**Response (202):**
+
+```json
+{"status": "started"}
+```
+
+**Response (409):** Returned if cleanup is already running.
+
+```json
+{"error": "cleanup already running"}
+```
+
+### GET /ui/api/clean-excess/status
+
+Returns the status of the most recent cleanup operation.
 
 **Response:**
 
 ```json
-{"ok": true, "removed": 3}
+{"status": "running"}
+{"status": "done", "ok": true, "removed": 3}
+{"status": "error", "error": "cleanup failed"}
+{"status": "idle"}
 ```
 
 ### POST /ui/api/sync
