@@ -43,7 +43,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
 <div id="ac-diagram"></div>
 <div id="ac-tooltip"></div>
 
-<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.8.0/dist/mermaid.min.js"></script>
 <script>
 (function() {
   var diagramSrc = [
