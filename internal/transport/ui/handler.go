@@ -827,11 +827,11 @@ func (h *Handler) handleAPIRebalance(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		moved, err := h.manager.Rebalancer.Rebalance(context.Background(), runCfg)
 		if err != nil {
-			slog.Error("UI: rebalance failed", "error", err)
+			slog.Error("UI: rebalance failed", "error", err) //nolint:sloglint // background goroutine, no request context
 			h.asyncOps.Complete("rebalance", &asyncResult{Error: "rebalance failed"})
 			return
 		}
-		slog.Info("UI: manual rebalance completed", "moved", moved)
+		slog.Info("UI: manual rebalance completed", "moved", moved) //nolint:sloglint // background goroutine, no request context
 		h.asyncOps.Complete("rebalance", &asyncResult{OK: true, Count: moved})
 	}()
 
@@ -898,11 +898,11 @@ func (h *Handler) handleAPICleanExcess(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		removed, err := h.manager.OverReplicationCleaner.Clean(context.Background(), cfg)
 		if err != nil {
-			slog.Error("UI: over-replication cleanup failed", "error", err)
+			slog.Error("UI: over-replication cleanup failed", "error", err) //nolint:sloglint // background goroutine, no request context
 			h.asyncOps.Complete("clean-excess", &asyncResult{Error: "cleanup failed"})
 			return
 		}
-		slog.Info("UI: manual over-replication cleanup completed", "removed", removed)
+		slog.Info("UI: manual over-replication cleanup completed", "removed", removed) //nolint:sloglint // background goroutine, no request context
 		h.asyncOps.Complete("clean-excess", &asyncResult{OK: true, Count: removed})
 	}()
 

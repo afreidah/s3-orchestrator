@@ -7,7 +7,7 @@
 # Provides a unified endpoint for S3-compatible storage backends.
 # -------------------------------------------------------------------------------
 
-FROM --platform=$BUILDPLATFORM golang:1.26.1-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26.2-alpine AS builder
 
 ARG VERSION=dev
 ARG TARGETOS
