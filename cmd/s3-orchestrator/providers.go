@@ -251,9 +251,13 @@ func ProvideBackendManager(i do.Injector) (*proxy.BackendManager, error) {
 	cbStore := do.MustInvoke[*store.CircuitBreakerStore](i)
 	br := do.MustInvoke[*backendsResult](i)
 
-	// Optional: encryption
+	// Encryption: required when enabled, fatal on failure.
 	var enc *encryption.Encryptor
-	if e, err := do.Invoke[*encryption.Encryptor](i); err == nil {
+	if cfg.Encryption.Enabled {
+		e, err := do.Invoke[*encryption.Encryptor](i)
+		if err != nil {
+			return nil, fmt.Errorf("encryption enabled but encryptor failed to initialize: %w", err)
+		}
 		enc = e
 	}
 
@@ -393,7 +397,11 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 	logLevel := do.MustInvoke[*slog.LevelVar](i)
 
 	var enc *encryption.Encryptor
-	if e, err := do.Invoke[*encryption.Encryptor](i); err == nil {
+	if cfg.Encryption.Enabled {
+		e, err := do.Invoke[*encryption.Encryptor](i)
+		if err != nil {
+			return nil, fmt.Errorf("encryption enabled but encryptor failed to initialize: %w", err)
+		}
 		enc = e
 	}
 
