@@ -16,6 +16,7 @@ package ui
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -68,6 +69,7 @@ type Handler struct {
 	sessionKey     []byte
 	forceSecure    bool
 	trustedProxies []*net.IPNet
+	asyncOps       asyncOpTracker
 }
 
 // New creates a new UI handler.
@@ -153,7 +155,9 @@ func (h *Handler) Register(mux *http.ServeMux, prefix string) {
 	mux.HandleFunc(prefix+"/api/upload", h.requireAuth(h.handleAPIUpload))
 	mux.HandleFunc(prefix+"/api/download", h.requireAuth(h.handleAPIDownload))
 	mux.HandleFunc(prefix+"/api/rebalance", h.requireAuth(h.handleAPIRebalance))
+	mux.HandleFunc(prefix+"/api/rebalance/status", h.requireAuth(h.handleAPIRebalanceStatus))
 	mux.HandleFunc(prefix+"/api/clean-excess", h.requireAuth(h.handleAPICleanExcess))
+	mux.HandleFunc(prefix+"/api/clean-excess/status", h.requireAuth(h.handleAPICleanExcessStatus))
 	mux.HandleFunc(prefix+"/api/sync", h.requireAuth(h.handleAPISync))
 	mux.HandleFunc(prefix+"/api/logs", h.requireAuth(h.handleAPILogs))
 	mux.Handle(prefix+"/static/", http.StripPrefix(prefix+"/static/", http.FileServerFS(staticFS)))
@@ -785,7 +789,8 @@ func (h *Handler) handleAPIDownload(w http.ResponseWriter, r *http.Request) {
 	_, _ = bufpool.Copy(w, result.Body)
 }
 
-// handleAPIRebalance triggers an on-demand rebalance across backends.
+// handleAPIRebalance triggers an on-demand rebalance in the background.
+// Returns 202 Accepted immediately; poll /api/rebalance/status for results.
 func (h *Handler) handleAPIRebalance(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
 
@@ -794,11 +799,17 @@ func (h *Handler) handleAPIRebalance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.asyncOps.TryStart("rebalance") {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "rebalance already running"})
+		return
+	}
+
 	rebalCfg := h.manager.Rebalancer.Config()
 	if rebalCfg == nil {
 		rebalCfg = &h.cfg.Load().Rebalance
 	}
-	// Ensure required fields have sensible defaults for on-demand runs.
 	runCfg := *rebalCfg
 	if runCfg.Strategy == "" {
 		runCfg.Strategy = "spread"
@@ -813,21 +824,44 @@ func (h *Handler) handleAPIRebalance(w http.ResponseWriter, r *http.Request) {
 		runCfg.Concurrency = 5
 	}
 
-	moved, err := h.manager.Rebalancer.Rebalance(r.Context(), runCfg)
-	if err != nil {
-		slog.ErrorContext(r.Context(), "UI: rebalance failed", "error", err)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "rebalance failed"})
-		return
-	}
+	go func() {
+		moved, err := h.manager.Rebalancer.Rebalance(context.Background(), runCfg)
+		if err != nil {
+			slog.Error("UI: rebalance failed", "error", err) //nolint:sloglint // background goroutine, no request context
+			h.asyncOps.Complete("rebalance", &asyncResult{Error: "rebalance failed"})
+			return
+		}
+		slog.Info("UI: manual rebalance completed", "moved", moved) //nolint:sloglint // background goroutine, no request context
+		h.asyncOps.Complete("rebalance", &asyncResult{OK: true, Count: moved})
+	}()
 
-	slog.InfoContext(r.Context(), "UI: manual rebalance completed", "moved", moved)
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "moved": moved})
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "started"})
 }
 
-// handleAPICleanExcess triggers an on-demand over-replication cleanup.
+// handleAPIRebalanceStatus returns the status of a running or completed rebalance.
+func (h *Handler) handleAPIRebalanceStatus(w http.ResponseWriter, r *http.Request) {
+	setSecurityHeaders(w)
+	w.Header().Set("Content-Type", "application/json")
+	result, running := h.asyncOps.Status("rebalance")
+	if running {
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "running"})
+		return
+	}
+	if result == nil {
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "idle"})
+		return
+	}
+	if result.Error != "" {
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "error", "error": result.Error})
+	} else {
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "done", "ok": true, "moved": result.Count})
+	}
+}
+
+// handleAPICleanExcess triggers an on-demand over-replication cleanup in the
+// background. Returns 202 Accepted immediately; poll /api/clean-excess/status.
 func (h *Handler) handleAPICleanExcess(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
 
@@ -846,6 +880,13 @@ func (h *Handler) handleAPICleanExcess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.asyncOps.TryStart("clean-excess") {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "cleanup already running"})
+		return
+	}
+
 	cfg := *rcfg
 	if cfg.BatchSize == 0 {
 		cfg.BatchSize = 100
@@ -854,18 +895,40 @@ func (h *Handler) handleAPICleanExcess(w http.ResponseWriter, r *http.Request) {
 		cfg.Concurrency = 5
 	}
 
-	removed, err := h.manager.OverReplicationCleaner.Clean(r.Context(), cfg)
-	if err != nil {
-		slog.ErrorContext(r.Context(), "UI: over-replication cleanup failed", "error", err)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "cleanup failed"})
+	go func() {
+		removed, err := h.manager.OverReplicationCleaner.Clean(context.Background(), cfg)
+		if err != nil {
+			slog.Error("UI: over-replication cleanup failed", "error", err) //nolint:sloglint // background goroutine, no request context
+			h.asyncOps.Complete("clean-excess", &asyncResult{Error: "cleanup failed"})
+			return
+		}
+		slog.Info("UI: manual over-replication cleanup completed", "removed", removed) //nolint:sloglint // background goroutine, no request context
+		h.asyncOps.Complete("clean-excess", &asyncResult{OK: true, Count: removed})
+	}()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "started"})
+}
+
+// handleAPICleanExcessStatus returns the status of a running or completed cleanup.
+func (h *Handler) handleAPICleanExcessStatus(w http.ResponseWriter, r *http.Request) {
+	setSecurityHeaders(w)
+	w.Header().Set("Content-Type", "application/json")
+	result, running := h.asyncOps.Status("clean-excess")
+	if running {
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "running"})
 		return
 	}
-
-	slog.InfoContext(r.Context(), "UI: manual over-replication cleanup completed", "removed", removed)
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "removed": removed})
+	if result == nil {
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "idle"})
+		return
+	}
+	if result.Error != "" {
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "error", "error": result.Error})
+	} else {
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "done", "ok": true, "removed": result.Count})
+	}
 }
 
 // handleAPISync triggers a backend sync to import pre-existing objects.
