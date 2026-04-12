@@ -283,40 +283,41 @@ func TestVaultKeyProvider_TokenFileMissing(t *testing.T) {
 func TestVaultKeyProvider_TokenFileInsecurePermissions(t *testing.T) {
 	t.Parallel()
 	tokenFile := filepath.Join(t.TempDir(), "world-readable-token")
-	if err := os.WriteFile(tokenFile, []byte("secret-token"), 0o644); err != nil { //nolint:gosec // G306: intentionally world-readable to test permission validation
+	if err := os.WriteFile(tokenFile, []byte("secret-token"), 0o644); err != nil { //nolint:gosec // G306: intentionally world-readable to test permission warning
 		t.Fatal(err)
 	}
 
-	_, err := NewVaultKeyProvider(&config.VaultTransitConfig{
+	// Broad permissions log a warning but no longer prevent initialization.
+	// This accommodates Nomad's Vault integration which writes tokens at 0644.
+	p, err := NewVaultKeyProvider(&config.VaultTransitConfig{
 		Address:   "https://vault.example.com",
 		TokenFile: tokenFile,
 		KeyName:   "test-key",
 		MountPath: "transit",
 	})
-	if err == nil {
-		t.Fatal("expected error for world-readable token file")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if !bytes.Contains([]byte(err.Error()), []byte("insecure permissions")) {
-		t.Errorf("error should mention insecure permissions, got: %v", err)
-	}
+	p.Close()
 }
 
 func TestVaultKeyProvider_TokenFileGroupReadable(t *testing.T) {
 	t.Parallel()
 	tokenFile := filepath.Join(t.TempDir(), "group-readable-token")
-	if err := os.WriteFile(tokenFile, []byte("secret-token"), 0o640); err != nil { //nolint:gosec // G306: intentionally group-readable to test permission validation
+	if err := os.WriteFile(tokenFile, []byte("secret-token"), 0o640); err != nil { //nolint:gosec // G306: intentionally group-readable to test permission warning
 		t.Fatal(err)
 	}
 
-	_, err := NewVaultKeyProvider(&config.VaultTransitConfig{
+	p, err := NewVaultKeyProvider(&config.VaultTransitConfig{
 		Address:   "https://vault.example.com",
 		TokenFile: tokenFile,
 		KeyName:   "test-key",
 		MountPath: "transit",
 	})
-	if err == nil {
-		t.Fatal("expected error for group-readable token file")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
+	p.Close()
 }
 
 func TestVaultKeyProvider_Close(t *testing.T) {

@@ -213,16 +213,18 @@ func (p *VaultKeyProvider) reloadTokenFile(ctx context.Context) error {
 	return nil
 }
 
-// readTokenFile reads and trims a token from a file path. Returns an error
-// if the file is group- or world-readable (permissions wider than 0600) to
-// prevent accidental exposure of the Vault token to other local users.
+// readTokenFile reads and trims a token from a file path. Logs a warning
+// if the file is group- or world-readable (permissions wider than 0600).
+// Nomad's Vault integration writes tokens with 0644, which is safe inside
+// an isolated alloc directory but would be a concern on a shared host.
 func readTokenFile(path string) (string, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return "", fmt.Errorf("stat token file %s: %w", path, err)
 	}
 	if perm := info.Mode().Perm(); perm&0o077 != 0 {
-		return "", fmt.Errorf("token file %s has insecure permissions %04o (must be 0600 or stricter)", path, perm)
+		slog.WarnContext(context.Background(), "Vault token file has broad permissions",
+			"path", path, "permissions", fmt.Sprintf("%04o", perm))
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {

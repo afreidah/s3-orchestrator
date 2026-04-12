@@ -1131,20 +1131,17 @@ func TestAPIRebalance_Success(t *testing.T) {
 func TestAPIRebalance_AlreadyRunning(t *testing.T) {
 	h, mux := newTestHandler(t)
 
-	// Trigger first rebalance
+	// Simulate a rebalance already in progress by marking the operation as
+	// running directly. The async goroutine completes too fast for a
+	// second HTTP request to race against it reliably.
+	h.asyncOps.TryStart("rebalance")
+
+	// Should conflict while the operation is marked as running
 	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/rebalance", nil)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
-	if w.Result().StatusCode != http.StatusAccepted {
-		t.Fatalf("first trigger: status = %d, want 202", w.Result().StatusCode)
-	}
-
-	// Second should conflict while first is still running
-	req2 := authedRequest(t, h, mux, http.MethodPost, "/ui/api/rebalance", nil)
-	w2 := httptest.NewRecorder()
-	mux.ServeHTTP(w2, req2)
-	if w2.Result().StatusCode != http.StatusConflict {
-		t.Fatalf("second trigger: status = %d, want 409", w2.Result().StatusCode)
+	if w.Result().StatusCode != http.StatusConflict {
+		t.Fatalf("second trigger: status = %d, want 409", w.Result().StatusCode)
 	}
 }
 
