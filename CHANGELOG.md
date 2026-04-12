@@ -3,6 +3,49 @@
 All notable changes to this project are documented in this file.
 
 
+## [0.39.18] - 2026-04-12
+
+### Dependencies
+- chore(deps): bump github.com/aws/aws-sdk-go-v2/service/s3 (#542)
+- chore(deps): bump the otel group with 4 updates (#543)
+
+### Other
+- fail startup when encryption is enabled but encryptor init fails (#548) (#549)
+
+## [0.39.16] - 2026-04-11
+
+### Added
+- add g3 backend to free-tier guide, enlarge admin UI logo (#537) (#538)
+- add new benchmark test results
+
+### Improved
+- update CHANGELOG.md for v0.38.2 (#504)
+
+### Dependencies
+- chore(deps): bump actions/github-script from 8 to 9 in the actions group (#541)
+- chore(deps): bump the aws-sdk group with 2 updates (#528)
+- chore(deps): bump actions/upload-artifact in the actions group (#527)
+- chore(deps): bump github.com/aws/smithy-go in the minor-and-patch group (#529)
+- chore(deps): bump github.com/go-jose/go-jose/v4 from 4.1.3 to 4.1.4 (#530)
+
+### Other
+- run rebalance and cleanup async to prevent client-side cancellation (#546) (#547)
+- pin mermaid CDN to 11.8.0 to restore diagram tooltips (#545)
+- Replicator cleans up stale metadata on source 404 (#539)
+- 404 responses should not trip backend circuit breakers (#535) (#536)
+- Replication target selection respects configured routing strategy (#534)
+- fuzz-found false positive in presigned canonical request assertion (#523) (#526)
+- testing: add 13 integration tests for edge cases and missing scenarios (#522) (#525)
+- testing: add t.Parallel() to proxy, breaker, notify, audit, lifecycle (#522) (#524)
+- Redis counter recovery lost-update race (#507) (#521)
+- enhancement: enable gosec/errcheck/bodyclose/noctx linters, add t.Parallel() (#513) (#520)
+- robustness improvements — overflow, starvation, stale probes, blocking (#514) (#519)
+- extract testable run(), fix stale paths, add benchmarks and fuzz tests (#515)
+- extract testable run() from monolithic runServe(), update dev environment (#515) (#518)
+- panic recovery in pipe goroutines, worker ordering fixes (#508, #509) (#517)
+- concurrency and robustness fixes (#506, #510, #511, #512) (#516)
+- embedded SQLite backend, init CLI, zero-dependency deployments (#505)
+
 ## [0.38.2] - 2026-03-30
 
 ### Hardened
