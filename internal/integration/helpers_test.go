@@ -194,7 +194,7 @@ func TestMain(m *testing.M) {
 		},
 		Database: config.DatabaseConfig{
 			Host:     pgHost,
-			Port:     pgPort.Int(),
+			Port:     int(pgPort.Num()),
 			Database: "s3proxy_test",
 			User:     "s3proxy",
 			Password: "s3proxy",
