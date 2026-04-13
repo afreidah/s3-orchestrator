@@ -3,6 +3,17 @@
 All notable changes to this project are documented in this file.
 
 
+## [0.39.19] - 2026-04-13
+
+### Improved
+- update CHANGELOG.md for v0.39.18 (#550)
+
+### Dependencies
+- chore(deps): bump the minor-and-patch group with 7 updates (#544)
+
+### Other
+- adapt Port API for moby/moby v1.54 and update otel dependencies (#551)
+
 ## [0.39.18] - 2026-04-12
 
 ### Dependencies
