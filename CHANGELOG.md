@@ -3,6 +3,14 @@
 All notable changes to this project are documented in this file.
 
 
+## [0.39.21] - 2026-04-15
+
+### Improved
+- update CHANGELOG.md for v0.39.19 (#552)
+
+### Other
+- exclude failed targets from replication target selection (#553) (#554)
+
 ## [0.39.19] - 2026-04-13
 
 ### Improved
