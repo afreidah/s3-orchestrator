@@ -177,13 +177,18 @@ func (r *Replicator) ReplicateObject(ctx context.Context, quotaStats map[string]
 		exclusion[existingCopies[i].BackendName] = true
 	}
 
+	// Retry with different targets on failure without consuming a needed
+	// slot. Cap total attempts to avoid unbounded retries when every
+	// remaining backend rejects the object.
 	created := 0
-	for i := range needed {
+	maxAttempts := needed + len(r.ops.Backends())
+	for attempt := 0; created < needed && attempt < maxAttempts; attempt++ {
+		remaining := needed - created
 		// --- Find a target backend with space ---
 		target := r.FindReplicaTarget(ctx, quotaStats, key, existingCopies[0].SizeBytes, exclusion)
 		if target == "" {
 			slog.WarnContext(ctx, "Replication: no target backend with space",
-				"key", key, "needed", needed-i)
+				"key", key, "needed", remaining)
 			break
 		}
 
@@ -193,6 +198,7 @@ func (r *Replicator) ReplicateObject(ctx context.Context, quotaStats map[string]
 			slog.WarnContext(ctx, "Replication: failed to copy object data",
 				"key", key, "target", target, "error", err)
 			telemetry.ReplicationErrorsTotal.Inc()
+			exclusion[target] = true // skip this target on retry
 			continue
 		}
 
@@ -204,6 +210,7 @@ func (r *Replicator) ReplicateObject(ctx context.Context, quotaStats map[string]
 			// Clean up orphan on target
 			r.CleanupOrphan(ctx, target, key, existingCopies[0].SizeBytes)
 			telemetry.ReplicationErrorsTotal.Inc()
+			exclusion[target] = true
 			continue
 		}
 
@@ -212,6 +219,7 @@ func (r *Replicator) ReplicateObject(ctx context.Context, quotaStats map[string]
 			slog.InfoContext(ctx, "Replication: source copy gone, cleaning up orphan",
 				"key", key, "target", target)
 			r.CleanupOrphan(ctx, target, key, existingCopies[0].SizeBytes)
+			exclusion[target] = true
 			continue
 		}
 

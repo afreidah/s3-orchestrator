@@ -234,6 +234,162 @@ func TestReplicateObject_Success(t *testing.T) {
 	}
 }
 
+func TestReplicateObject_WriteFailureExcludesTarget(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	ops := NewMockOps(ctrl)
+	srcBe := backendtest.NewMockObjectBackend(ctrl)
+	failBe := backendtest.NewMockObjectBackend(ctrl)
+	okBe := backendtest.NewMockObjectBackend(ctrl)
+
+	ms := &mockMetadataStore{recordReplicaOK: true}
+
+	ops.EXPECT().Store().Return(ms).AnyTimes()
+	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
+	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{
+		"src": srcBe, "fail": failBe, "ok": okBe,
+	}).AnyTimes()
+
+	// First call selects "fail", second (with "fail" excluded) selects "ok",
+	// third finds no remaining targets and returns "" to end the loop.
+	gomock.InOrder(
+		ops.EXPECT().SelectReplicaTarget(gomock.Any(), int64(50), gomock.Any()).
+			DoAndReturn(func(_ context.Context, _ int64, excl map[string]bool) (string, error) {
+				if excl["fail"] {
+					t.Fatal("first call should not exclude 'fail'")
+				}
+				return "fail", nil
+			}),
+		ops.EXPECT().SelectReplicaTarget(gomock.Any(), int64(50), gomock.Any()).
+			DoAndReturn(func(_ context.Context, _ int64, excl map[string]bool) (string, error) {
+				if !excl["fail"] {
+					t.Fatal("second call must exclude 'fail' after write failure")
+				}
+				return "ok", nil
+			}),
+		ops.EXPECT().SelectReplicaTarget(gomock.Any(), int64(50), gomock.Any()).
+			Return("", nil),
+	)
+
+	// "fail" backend: GetBackend succeeds, StreamCopy returns write error
+	ops.EXPECT().GetBackend("fail").Return(failBe, nil)
+	ops.EXPECT().StreamCopy(gomock.Any(), srcBe, failBe, "key1").
+		Return(fmt.Errorf("write: put object failed: 413 EntityTooLarge"))
+
+	// "ok" backend: succeeds
+	ops.EXPECT().GetBackend("ok").Return(okBe, nil)
+	ops.EXPECT().StreamCopy(gomock.Any(), srcBe, okBe, "key1").Return(nil)
+
+	r := NewReplicator(ops)
+	copies := []store.ObjectLocation{{BackendName: "src", SizeBytes: 50}}
+	stats := map[string]store.QuotaStat{
+		"src":  {BytesUsed: 100, BytesLimit: 1000},
+		"fail": {BytesUsed: 100, BytesLimit: 1000},
+		"ok":   {BytesUsed: 100, BytesLimit: 1000},
+	}
+
+	// Request 2 replicas: first attempt hits "fail" and should fall through
+	// to "ok" on the second iteration with "fail" excluded.
+	created, err := r.ReplicateObject(context.Background(), stats, "key1", copies, 2)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if created != 1 {
+		t.Errorf("created = %d, want 1", created)
+	}
+}
+
+func TestReplicateObject_RecordReplicaErrorExcludesTarget(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	ops := NewMockOps(ctrl)
+	srcBe := backendtest.NewMockObjectBackend(ctrl)
+	failBe := backendtest.NewMockObjectBackend(ctrl)
+
+	ms := &mockMetadataStore{recordReplicaErr: errors.New("db down")}
+
+	ops.EXPECT().Store().Return(ms).AnyTimes()
+	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
+	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{
+		"src": srcBe, "fail": failBe,
+	}).AnyTimes()
+
+	gomock.InOrder(
+		ops.EXPECT().SelectReplicaTarget(gomock.Any(), int64(50), gomock.Any()).Return("fail", nil),
+		// After RecordReplica error, "fail" is excluded; no targets left.
+		ops.EXPECT().SelectReplicaTarget(gomock.Any(), int64(50), gomock.Any()).
+			DoAndReturn(func(_ context.Context, _ int64, excl map[string]bool) (string, error) {
+				if !excl["fail"] {
+					t.Fatal("must exclude 'fail' after RecordReplica error")
+				}
+				return "", nil
+			}),
+	)
+
+	ops.EXPECT().GetBackend("fail").Return(failBe, nil)
+	ops.EXPECT().StreamCopy(gomock.Any(), srcBe, failBe, "key1").Return(nil)
+	// CleanupOrphan path
+	ops.EXPECT().DeleteOrEnqueue(gomock.Any(), failBe, "fail", "key1", "replication_orphan", int64(50))
+
+	r := NewReplicator(ops)
+	copies := []store.ObjectLocation{{BackendName: "src", SizeBytes: 50}}
+	stats := map[string]store.QuotaStat{}
+
+	created, err := r.ReplicateObject(context.Background(), stats, "key1", copies, 1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if created != 0 {
+		t.Errorf("created = %d, want 0", created)
+	}
+}
+
+func TestReplicateObject_NotInsertedExcludesTarget(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	ops := NewMockOps(ctrl)
+	srcBe := backendtest.NewMockObjectBackend(ctrl)
+	staleBe := backendtest.NewMockObjectBackend(ctrl)
+
+	// recordReplicaOK=false simulates source deleted during replication
+	ms := &mockMetadataStore{recordReplicaOK: false}
+
+	ops.EXPECT().Store().Return(ms).AnyTimes()
+	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
+	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{
+		"src": srcBe, "stale": staleBe,
+	}).AnyTimes()
+
+	gomock.InOrder(
+		ops.EXPECT().SelectReplicaTarget(gomock.Any(), int64(50), gomock.Any()).Return("stale", nil),
+		// After !inserted, "stale" is excluded; no targets left.
+		ops.EXPECT().SelectReplicaTarget(gomock.Any(), int64(50), gomock.Any()).
+			DoAndReturn(func(_ context.Context, _ int64, excl map[string]bool) (string, error) {
+				if !excl["stale"] {
+					t.Fatal("must exclude 'stale' after !inserted")
+				}
+				return "", nil
+			}),
+	)
+
+	ops.EXPECT().GetBackend("stale").Return(staleBe, nil)
+	ops.EXPECT().StreamCopy(gomock.Any(), srcBe, staleBe, "key1").Return(nil)
+	// CleanupOrphan path
+	ops.EXPECT().DeleteOrEnqueue(gomock.Any(), staleBe, "stale", "key1", "replication_orphan", int64(50))
+
+	r := NewReplicator(ops)
+	copies := []store.ObjectLocation{{BackendName: "src", SizeBytes: 50}}
+	stats := map[string]store.QuotaStat{}
+
+	created, err := r.ReplicateObject(context.Background(), stats, "key1", copies, 1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if created != 0 {
+		t.Errorf("created = %d, want 0", created)
+	}
+}
+
 // -------------------------------------------------------------------------
 // isNotFound
 // -------------------------------------------------------------------------
