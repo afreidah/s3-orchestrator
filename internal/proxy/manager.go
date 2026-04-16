@@ -360,3 +360,101 @@ func (m *BackendManager) SyncBackend(ctx context.Context, backendName, bucket st
 		"imported", imported, "skipped", skipped)
 	return imported, skipped, nil
 }
+
+// ReconcileBackend performs a full reconciliation for a single backend: lists
+// objects on the backend, diffs against DB entries, imports untracked objects,
+// and removes stale DB entries. Uses a single ListObjects call per backend.
+func (m *BackendManager) ReconcileBackend(ctx context.Context, backendName, bucket string, knownBuckets []string) (*worker.ReconcileResult, error) {
+	be, err := m.getBackend(backendName)
+	if err != nil {
+		return nil, err
+	}
+
+	inner := be
+	for {
+		if u, ok := inner.(interface{ Unwrap() backend.ObjectBackend }); ok {
+			inner = u.Unwrap()
+		} else {
+			break
+		}
+	}
+	s3b, ok := inner.(*backend.S3Backend)
+	if !ok {
+		return nil, fmt.Errorf("backend %s does not support listing", backendName)
+	}
+
+	bucketPrefix := bucket + "/"
+	otherPrefixes := make([]string, 0, len(knownBuckets))
+	for _, b := range knownBuckets {
+		if b != bucket {
+			otherPrefixes = append(otherPrefixes, b+"/")
+		}
+	}
+
+	// Build set of keys that actually exist on the backend
+	realKeys := make(map[string]int64) // key -> size
+	var apiPages int64
+	err = s3b.ListObjects(ctx, "", func(objects []backend.ListedObject) error {
+		apiPages++
+		for _, obj := range objects {
+			key := obj.Key
+			if strings.HasPrefix(key, bucketPrefix) {
+				// belongs to this bucket
+			} else {
+				belongsToOther := false
+				for _, p := range otherPrefixes {
+					if strings.HasPrefix(key, p) {
+						belongsToOther = true
+						break
+					}
+				}
+				if belongsToOther {
+					continue
+				}
+				key = bucketPrefix + key
+			}
+			realKeys[key] = obj.SizeBytes
+		}
+		return nil
+	})
+	if apiPages > 0 {
+		m.usage.Record(backendName, apiPages, 0, 0)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list objects on %s: %w", backendName, err)
+	}
+
+	result := &worker.ReconcileResult{BackendsScanned: 1}
+
+	// Import objects on backend but not in DB
+	for key, size := range realKeys {
+		imported, importErr := m.store.ImportObject(ctx, key, backendName, size)
+		if importErr != nil {
+			slog.WarnContext(ctx, "Reconcile: import failed", "key", key, "backend", backendName, "error", importErr)
+			continue
+		}
+		if imported {
+			result.Imported++
+		}
+	}
+
+	// Remove DB entries not on backend
+	dbObjects, err := m.store.ListObjectsByBackend(ctx, backendName, 100000)
+	if err != nil {
+		return result, fmt.Errorf("list DB objects for %s: %w", backendName, err)
+	}
+	for i := range dbObjects {
+		if _, exists := realKeys[dbObjects[i].ObjectKey]; !exists {
+			if delErr := m.store.DeleteObjectLocation(ctx, dbObjects[i].ObjectKey, backendName); delErr != nil {
+				slog.WarnContext(ctx, "Reconcile: failed to remove stale entry",
+					"key", dbObjects[i].ObjectKey, "backend", backendName, "error", delErr)
+			} else {
+				slog.InfoContext(ctx, "Reconcile: removed stale entry",
+					"key", dbObjects[i].ObjectKey, "backend", backendName)
+				result.Removed++
+			}
+		}
+	}
+
+	return result, nil
+}

@@ -77,3 +77,58 @@ func TestReconciler_RunDoesNotPanicOnBackendError(t *testing.T) {
 	reconciler := worker.NewReconciler(mgr, []string{"unified"})
 	reconciler.Run(context.Background())
 }
+
+func TestReconcileBackend_UnknownBackend(t *testing.T) {
+	t.Parallel()
+	store := &mockStore{}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+
+	_, err := mgr.ReconcileBackend(context.Background(), "nonexistent", "unified", []string{"unified"})
+	if err == nil {
+		t.Fatal("expected error for unknown backend")
+	}
+}
+
+func TestReconcileBackend_ListingNotSupported(t *testing.T) {
+	t.Parallel()
+	store := &mockStore{}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+
+	// mockBackend isn't an *S3Backend so ListObjects will fail
+	_, err := mgr.ReconcileBackend(context.Background(), "b1", "unified", []string{"unified"})
+	if err == nil {
+		t.Fatal("expected error for backend that doesn't support listing")
+	}
+}
+
+func TestReconcile_ViaReconciler(t *testing.T) {
+	t.Parallel()
+	store := &mockStore{}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+
+	reconciler := worker.NewReconciler(mgr, []string{"unified"})
+	result, err := reconciler.Reconcile(context.Background(), "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// All backends fail listing (mockBackend), so nothing imported/removed
+	// but it shouldn't panic
+	if result.BackendsScanned != 0 {
+		t.Errorf("backends_scanned = %d, want 0 (all failed)", result.BackendsScanned)
+	}
+}
+
+func TestReconcile_SingleBackendViaReconciler(t *testing.T) {
+	t.Parallel()
+	store := &mockStore{}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+
+	reconciler := worker.NewReconciler(mgr, []string{"unified"})
+	result, err := reconciler.Reconcile(context.Background(), "b1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.BackendsScanned != 0 {
+		t.Errorf("backends_scanned = %d, want 0 (listing not supported)", result.BackendsScanned)
+	}
+}
