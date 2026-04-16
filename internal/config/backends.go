@@ -21,6 +21,7 @@ type BackendConfig struct {
 	DisableChecksum  bool  `yaml:"disable_checksum"`   // Disable SDK default checksums for GCS and other providers that reject them (default: false)
 	StripSDKHeaders  bool  `yaml:"strip_sdk_headers"`  // Remove SDK v2 headers (amz-sdk-*, accept-encoding, x-id) before signing for GCS compatibility (default: false)
 	QuotaBytes       int64 `yaml:"quota_bytes"`        // Maximum bytes allowed on this backend (0 = unlimited)
+	MaxObjectSize    int64 `yaml:"max_object_size"`    // Maximum size of a single object in bytes (0 = unlimited)
 	APIRequestLimit  int64 `yaml:"api_request_limit"`  // Monthly API request limit (0 = unlimited)
 	EgressByteLimit  int64 `yaml:"egress_byte_limit"`  // Monthly egress byte limit (0 = unlimited)
 	IngressByteLimit int64 `yaml:"ingress_byte_limit"` // Monthly ingress byte limit (0 = unlimited)
@@ -60,6 +61,9 @@ func validateBackends(backends []BackendConfig) []string {
 		}
 		if b.QuotaBytes < 0 {
 			errs = append(errs, fmt.Sprintf("%s: quota_bytes must not be negative", prefix))
+		}
+		if b.MaxObjectSize < 0 {
+			errs = append(errs, fmt.Sprintf("%s: max_object_size must not be negative", prefix))
 		}
 		if b.APIRequestLimit < 0 {
 			errs = append(errs, fmt.Sprintf("%s: api_request_limit must not be negative", prefix))

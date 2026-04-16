@@ -51,6 +51,7 @@ type BackendManagerConfig struct {
 	Encryptor          *encryption.Encryptor  // nil when encryption is disabled
 	CounterBackend     counter.CounterBackend // nil uses LocalCounterBackend
 	ObjectCache        objcache.ObjectCache  // nil when object data caching is disabled
+	MaxObjectSizes     map[string]int64       // per-backend max object size in bytes (0 = unlimited)
 	CleanupConcurrency int                    // parallel cleanup deletions (default: 10)
 	AdmissionSem       chan struct{}          // shared concurrency semaphore for HTTP + background ops (nil = unlimited)
 }
@@ -95,6 +96,7 @@ func NewBackendManager(cfg *BackendManagerConfig) *BackendManager {
 		backendTimeout:  cfg.BackendTimeout,
 		usage:           usage,
 		routingStrategy: cfg.RoutingStrategy,
+		maxObjectSizes:  cfg.MaxObjectSizes,
 		admissionSem:    cfg.AdmissionSem,
 	}
 

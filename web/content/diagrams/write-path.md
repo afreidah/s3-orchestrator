@@ -135,7 +135,7 @@ Detailed flow of a PutObject request through backend selection, encryption, fail
     USAGE: {
       title: 'Usage Limits Check',
       badge: 'filter', badgeText: 'quota filter',
-      body: '<p><code>BackendsWithinLimits(order, apiCalls=1, egress=0, ingress=size)</code></p><p>Checks three dimensions per backend against monthly rolling limits:</p><p>1. <b>API requests</b>: baseline + current + 1 &le; limit<br>2. <b>Egress bytes</b>: baseline + current + 0 &le; limit<br>3. <b>Ingress bytes</b>: baseline + current + size &le; limit</p><p>Effective usage = DB baseline (cached) + in-memory deltas (from counter backend). Orphan bytes from cleanup queue are factored into quota calculations.</p>'
+      body: '<p><code>BackendsWithinLimits(order, apiCalls=1, egress=0, ingress=size)</code></p><p>Checks three dimensions per backend against monthly rolling limits:</p><p>1. <b>API requests</b>: baseline + current + 1 &le; limit<br>2. <b>Egress bytes</b>: baseline + current + 0 &le; limit<br>3. <b>Ingress bytes</b>: baseline + current + size &le; limit</p><p>Also skips backends where the object size exceeds <code>max_object_size</code> (0 = unlimited). Prevents repeated 413 errors from providers with per-object size restrictions.</p><p>Effective usage = DB baseline (cached) + in-memory deltas (from counter backend). Orphan bytes from cleanup queue are factored into quota calculations.</p>'
     },
     DRAIN: {
       title: 'Exclude Draining',

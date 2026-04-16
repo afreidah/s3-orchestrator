@@ -23,12 +23,11 @@ GO_LDFLAGS := -s -w -X github.com/afreidah/s3-orchestrator/internal/observe/tele
 # -------------------------------------------------------------------------
 
 help: ## Display available Make targets
-	@echo ""
-	@echo "Available targets:"
-	@echo ""
-	@grep -E '^[a-zA-Z0-9_-]+:.*?## ' Makefile | \
-		awk 'BEGIN {FS = ":.*?## "} {printf "  %-20s %s\n", $$1, $$2}'
-	@echo ""
+	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage: make \033[36m<target>\033[0m\n"} \
+		/^[a-zA-Z0-9_-]+:.*?## / {printf "  \033[36m%-24s\033[0m %s\n", $$1, $$2} \
+		/^##@/ {printf "\n\033[1m%s\033[0m\n", substr($$0, 5)}' $(MAKEFILE_LIST)
+
+##@ Build
 
 # -------------------------------------------------------------------------
 # BUILDX SETUP
@@ -71,6 +70,8 @@ push: builder ## Build and push multi-arch images to registry
 	  --output type=image,push=true \
 	  .
 
+##@ Quality
+
 # -------------------------------------------------------------------------
 # DEVELOPMENT
 # -------------------------------------------------------------------------
@@ -96,6 +97,8 @@ preflight: ## Run the full release preflight locally (mirrors CI release workflo
 	$(MAKE) lint
 	go test -race ./...
 	go test -race -v -tags integration -count=1 ./internal/integration/
+
+##@ Benchmarks and Fuzzing
 
 BENCH_COUNT ?= 5
 BENCH_TIME  ?= 1s
@@ -163,6 +166,8 @@ fuzz-import: ## Import crashing inputs from the latest nightly fuzz CI run
 	rm -rf "$$tmpdir"; \
 	echo "Imported $$count new corpus file(s)."
 
+##@ Development
+
 run: ## Run locally (starts MinIO backends via Docker, uses SQLite by default)
 	docker compose -f $(COMPOSE_FILE) up -d --wait minio-1 minio-2 minio-3
 	docker compose -f $(COMPOSE_FILE) run --rm minio-setup
@@ -179,6 +184,8 @@ migration: ## Create a new database migration file
 	printf -- '-- +goose Up\n\n-- +goose Down\n' > "$$file"; \
 	echo "Created $$file"
 
+##@ Testing
+
 # -------------------------------------------------------------------------
 # INTEGRATION TESTS
 # -------------------------------------------------------------------------
@@ -194,6 +201,8 @@ dev-deps: ## Start dev environment services (MinIO + PostgreSQL + Redis + observ
 dev-clean: ## Stop and remove dev environment containers
 	docker compose -f $(COMPOSE_FILE) down -v
 
+##@ Tools
+
 # -------------------------------------------------------------------------
 # TOOL INSTALLATION
 # -------------------------------------------------------------------------
@@ -205,6 +214,8 @@ tools: ## Install build and packaging dependencies
 	go install golang.org/x/perf/cmd/benchstat@latest
 	sudo apt-get update && sudo apt-get install -y lintian
 	curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
+
+##@ Packaging and Release
 
 # -------------------------------------------------------------------------
 # DEBIAN PACKAGING
@@ -274,6 +285,8 @@ release: ## Tag and push to trigger a GitHub Release (reads .version)
 release-local: prep-changelog ## Dry-run GoReleaser locally (no publish)
 	goreleaser release --snapshot --clean --skip=sign
 
+##@ Load Testing
+
 # -------------------------------------------------------------------------
 # LOAD TESTING
 # -------------------------------------------------------------------------
@@ -328,6 +341,8 @@ loadtest-k6: ## Run k6 mixed CRUD workflow test (requires k6)
 	k6 run loadtest/k6/mixed.js \
 		--env S3_ENDPOINT=$(LOADTEST_ENDPOINT) --env S3_BUCKET=$(LOADTEST_BUCKET)
 
+##@ Deployment Demos
+
 # -------------------------------------------------------------------------
 # DEPLOYMENT DEMOS
 # -------------------------------------------------------------------------
@@ -337,6 +352,8 @@ kubernetes-demo: ## Run the s3-orchestrator in k3d (requires docker, k3d, kubect
 
 nomad-demo: ## Run the s3-orchestrator in Nomad dev mode (requires docker, nomad)
 	./deploy/nomad/local/demo.sh
+
+##@ Website
 
 # -------------------------------------------------------------------------
 # WEBSITE
@@ -384,6 +401,8 @@ web-push: builder ## Build and push multi-arch website image to registry
 	  -t $(WEB_IMAGE):$(WEB_TAG) \
 	  --output type=image,push=true \
 	  .
+
+##@ Cleanup
 
 # -------------------------------------------------------------------------
 # CLEANUP

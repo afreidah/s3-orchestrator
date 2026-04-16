@@ -234,6 +234,12 @@ backends:
 
 **Quota:** Set `quota_bytes` to limit how much data a backend can hold. Set to `0` or omit for unlimited. Quota is tracked in PostgreSQL and updated atomically with every write/delete. Note that multipart uploads do not reserve quota upfront — temporary parts consume backend storage without being counted against the quota until `CompleteMultipartUpload` records the final object size. A client uploading many large parts could temporarily exceed a backend's quota before completion.
 
+**Max object size:** Some providers impose per-object size limits (e.g. Supabase rejects uploads over 50 MB with 413 EntityTooLarge). Set `max_object_size` to prevent the orchestrator from routing writes, rebalance moves, or replication copies to a backend when the object exceeds the limit:
+
+```yaml
+    max_object_size: 52428800    # 50 MB (0 = unlimited)
+```
+
 **Usage limits:** Optional monthly caps on API requests, egress, and ingress per backend:
 
 ```yaml
