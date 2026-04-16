@@ -3,6 +3,18 @@
 All notable changes to this project are documented in this file.
 
 
+## [0.40.1] - 2026-04-16
+
+### Added
+- add on-demand reconciliation admin endpoint (#557) (#562)
+
+### Improved
+- update CHANGELOG.md for v0.39.21 (#555)
+
+### Other
+- per-backend max_object_size to skip oversized writes (#560) (#561)
+- pending gauges decrement per task for live progress (#558) (#559)
+
 ## [0.39.21] - 2026-04-15
 
 ### Improved
