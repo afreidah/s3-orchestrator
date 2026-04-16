@@ -111,7 +111,7 @@ func setupEncryptionEnv(t *testing.T) *encryptionTestEnv {
 	// Start admin server
 	var lv slog.LevelVar
 	lv.Set(slog.LevelInfo)
-	adminHandler := admin.New(mgr, cbStore, testStore, enc, adminToken, &lv)
+	adminHandler := admin.New(mgr, cbStore, testStore, enc, nil, adminToken, &lv)
 	adminMux := http.NewServeMux()
 	adminHandler.Register(adminMux)
 

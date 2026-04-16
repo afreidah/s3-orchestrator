@@ -546,6 +546,21 @@ func (mr *MockBackendSyncerMockRecorder) BackendOrder() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BackendOrder", reflect.TypeOf((*MockBackendSyncer)(nil).BackendOrder))
 }
 
+// ReconcileBackend mocks base method.
+func (m *MockBackendSyncer) ReconcileBackend(ctx context.Context, backendName, bucket string, knownBuckets []string) (*ReconcileResult, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ReconcileBackend", ctx, backendName, bucket, knownBuckets)
+	ret0, _ := ret[0].(*ReconcileResult)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ReconcileBackend indicates an expected call of ReconcileBackend.
+func (mr *MockBackendSyncerMockRecorder) ReconcileBackend(ctx, backendName, bucket, knownBuckets any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReconcileBackend", reflect.TypeOf((*MockBackendSyncer)(nil).ReconcileBackend), ctx, backendName, bucket, knownBuckets)
+}
+
 // SyncBackend mocks base method.
 func (m *MockBackendSyncer) SyncBackend(ctx context.Context, backendName, bucket string, knownBuckets []string) (int, int, error) {
 	m.ctrl.T.Helper()

@@ -30,29 +30,32 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/worker"
 
 	// Handler serves the admin API endpoints.
 	"github.com/afreidah/s3-orchestrator/internal/store"
 )
 
 type Handler struct {
-	manager   *proxy.BackendManager
-	store     *store.CircuitBreakerStore
-	rawStore  store.AdminStore
-	encryptor *encryption.Encryptor
-	token     string
-	logLevel  *slog.LevelVar
+	manager    *proxy.BackendManager
+	reconciler *worker.Reconciler
+	store      *store.CircuitBreakerStore
+	rawStore   store.AdminStore
+	encryptor  *encryption.Encryptor
+	token      string
+	logLevel   *slog.LevelVar
 }
 
 // New creates a new admin API handler.
-func New(manager *proxy.BackendManager, store *store.CircuitBreakerStore, rawStore store.AdminStore, encryptor *encryption.Encryptor, token string, logLevel *slog.LevelVar) *Handler {
+func New(manager *proxy.BackendManager, store *store.CircuitBreakerStore, rawStore store.AdminStore, encryptor *encryption.Encryptor, reconciler *worker.Reconciler, token string, logLevel *slog.LevelVar) *Handler {
 	return &Handler{
-		manager:   manager,
-		store:     store,
-		rawStore:  rawStore,
-		encryptor: encryptor,
-		token:     token,
-		logLevel:  logLevel,
+		manager:    manager,
+		reconciler: reconciler,
+		store:      store,
+		rawStore:   rawStore,
+		encryptor:  encryptor,
+		token:      token,
+		logLevel:   logLevel,
 	}
 }
 
@@ -76,6 +79,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /admin/api/decrypt-existing", h.requireToken(h.handleDecryptExisting))
 	mux.HandleFunc("POST /admin/api/scrub", h.requireToken(h.handleScrub))
 	mux.HandleFunc("POST /admin/api/backfill-checksums", h.requireToken(h.handleBackfillChecksums))
+	mux.HandleFunc("POST /admin/api/reconcile", h.requireToken(h.handleReconcile))
 }
 
 // -------------------------------------------------------------------------
@@ -805,6 +809,38 @@ func (h *Handler) handleBackfillChecksums(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":    "ok",
 		"processed": totalProcessed,
+	})
+}
+
+// handleReconcile triggers an on-demand reconciliation. Lists objects on
+// each backend, diffs against DB entries, imports untracked objects, and
+// removes stale entries. Use ?backend=name to scope to a single backend.
+func (h *Handler) handleReconcile(w http.ResponseWriter, r *http.Request) {
+	backendName := r.URL.Query().Get("backend")
+
+	if h.reconciler == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "reconciler not configured"})
+		return
+	}
+
+	slog.InfoContext(r.Context(), "Admin: reconcile triggered", "backend", backendName)
+
+	result, err := h.reconciler.Reconcile(r.Context(), backendName)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "Admin: reconcile failed", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	slog.InfoContext(r.Context(), "Admin: reconcile complete",
+		"imported", result.Imported, "removed", result.Removed,
+		"backends_scanned", result.BackendsScanned)
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":           "ok",
+		"imported":         result.Imported,
+		"removed":          result.Removed,
+		"backends_scanned": result.BackendsScanned,
 	})
 }
 
