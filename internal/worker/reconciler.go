@@ -13,6 +13,7 @@ package worker
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -20,10 +21,18 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 )
 
+// ReconcileResult holds the outcome of a reconciliation pass for one backend.
+type ReconcileResult struct {
+	Imported        int `json:"imported"`
+	Removed         int `json:"removed"`
+	BackendsScanned int `json:"backends_scanned"`
+}
+
 // BackendSyncer is the interface the reconciler needs from the proxy layer.
 // Defined here to avoid a worker→proxy import cycle.
 type BackendSyncer interface {
 	SyncBackend(ctx context.Context, backendName, bucket string, knownBuckets []string) (imported, skipped int, err error)
+	ReconcileBackend(ctx context.Context, backendName, bucket string, knownBuckets []string) (*ReconcileResult, error)
 	UpdateQuotaMetrics(ctx context.Context) error
 	BackendOrder() []string
 }
@@ -90,4 +99,48 @@ func (r *Reconciler) Run(ctx context.Context) {
 		slog.Int("skipped", totalSkipped),
 		slog.String("duration", duration.Round(time.Millisecond).String()),
 	)
+}
+
+// Reconcile performs a full reconciliation for the given backend (or all
+// backends if backendName is empty). Lists objects on each backend, diffs
+// against DB entries, imports untracked objects, and removes stale entries.
+func (r *Reconciler) Reconcile(ctx context.Context, backendName string) (*ReconcileResult, error) {
+	ctx = audit.WithRequestID(ctx, audit.NewID())
+
+	if len(r.bucketNames) == 0 {
+		return nil, fmt.Errorf("no buckets configured")
+	}
+
+	var backends []string
+	if backendName != "" {
+		backends = []string{backendName}
+	} else {
+		backends = r.syncer.BackendOrder()
+	}
+
+	total := &ReconcileResult{}
+	for _, name := range backends {
+		result, err := r.syncer.ReconcileBackend(ctx, name, r.bucketNames[0], r.bucketNames)
+		if err != nil {
+			slog.ErrorContext(ctx, "Reconcile: backend failed", "backend", name, "error", err)
+			continue
+		}
+		total.Imported += result.Imported
+		total.Removed += result.Removed
+		total.BackendsScanned += result.BackendsScanned
+	}
+
+	if total.Imported > 0 || total.Removed > 0 {
+		if err := r.syncer.UpdateQuotaMetrics(ctx); err != nil {
+			slog.WarnContext(ctx, "Failed to update quota metrics after reconcile", "error", err)
+		}
+	}
+
+	audit.Log(ctx, "storage.ReconcileComplete",
+		slog.Int("imported", total.Imported),
+		slog.Int("removed", total.Removed),
+		slog.Int("backends_scanned", total.BackendsScanned),
+	)
+
+	return total, nil
 }

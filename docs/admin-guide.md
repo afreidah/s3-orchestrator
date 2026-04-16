@@ -866,6 +866,12 @@ s3-orchestrator admin backfill-checksums
 
 # Backfill with a custom batch size (controls pace of backend reads)
 s3-orchestrator admin backfill-checksums -batch-size 50
+
+# Reconcile all backends (import untracked objects, remove stale DB entries)
+s3-orchestrator admin reconcile
+
+# Reconcile a single backend
+s3-orchestrator admin reconcile -backend g3
 ```
 
 The admin API requires `ui.admin_token` (or `ui.admin_key` as fallback) to be set in the configuration. All requests are authenticated via the `X-Admin-Token` header.
@@ -942,6 +948,29 @@ The dashboard also provides management actions:
 - **Rebalance** — trigger an on-demand rebalance using the configured strategy and settings
 - **Clean Excess** — remove over-replicated copies that exceed the replication factor
 - **Sync** — import pre-existing objects from a backend's S3 bucket into the proxy database. Select a backend and a virtual bucket — objects already in the database are skipped, and objects belonging to other virtual buckets are excluded.
+
+### On-demand reconciliation
+
+When a backend loses data (expired credentials, provider outage, accidental deletion), the metadata database retains stale entries that cause log noise in the rebalancer, replicator, and scrubber. The reconcile endpoint performs a full diff in a single `ListObjects` call per backend:
+
+```bash
+# Reconcile all backends
+curl -X POST -H "X-Admin-Token: $TOKEN" http://localhost:9000/admin/api/reconcile
+
+# Reconcile a single backend
+curl -X POST -H "X-Admin-Token: $TOKEN" http://localhost:9000/admin/api/reconcile?backend=g3
+```
+
+Response:
+```json
+{"status":"ok","imported":0,"removed":57,"backends_scanned":1}
+```
+
+- **imported**: objects on the backend but not in the DB (brought under management)
+- **removed**: DB entries whose objects no longer exist on the backend (stale metadata cleaned up)
+- **backends_scanned**: how many backends were processed
+
+The background reconciler (`reconcile.enabled: true`) runs the same logic on a timer. The admin endpoint is for immediate use after incidents.
 
 The dashboard requires authentication. Users log in at `{path}/login` with the `admin_key` and `admin_secret` configured in the `ui` section. Sessions last 24 hours.
 

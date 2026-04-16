@@ -321,9 +321,7 @@ Rules are hot-reloadable via `SIGHUP`. An empty rules list (or omitting the sect
 
 ## Orphan Reconciliation
 
-Optional background service that periodically scans each backend's S3 bucket and imports untracked objects into the metadata database. Objects the proxy doesn't know about — orphans from failed writes where both the DB record and cleanup queue entry were lost, manually uploaded objects, or artifacts from a database restore — are automatically brought under management so quota accounting stays accurate.
-
-The reconciler uses the same `SyncBackend` path as the `sync` CLI subcommand: for each backend, it calls `ListObjects`, checks each key against the database, and calls `ImportObject` for any that aren't tracked. Already-managed objects are skipped. The first configured virtual bucket is used as the prefix for objects that don't already have a bucket prefix.
+Optional background service that periodically scans each backend's S3 bucket and reconciles it against the metadata database. For each backend, it lists all objects via a single `ListObjects` call, diffs the result against DB entries, imports untracked objects, and removes stale DB entries where the object no longer exists on the backend.
 
 ```yaml
 reconcile:
@@ -332,6 +330,17 @@ reconcile:
 ```
 
 Disabled by default. Requires a restart to enable/disable (non-reloadable). Runs under advisory lock `1009` to prevent concurrent scans across instances.
+
+On-demand reconciliation is available via the admin API — useful after backend data loss or token expiry events:
+
+```bash
+# Reconcile all backends
+s3-orchestrator admin reconcile
+
+# Reconcile a single backend
+curl -X POST -H "X-Admin-Token: $TOKEN" \
+  http://localhost:9000/admin/api/reconcile?backend=g3
+```
 
 ## Encryption
 

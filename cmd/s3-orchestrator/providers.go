@@ -328,12 +328,14 @@ func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 		sm.Register("lifecycle", newLifecycleService(manager, cbStore))
 		sm.Register("scrubber", newScrubberService(manager, cbStore))
 
+		bktNames := make([]string, len(cfg.Buckets))
+		for idx, b := range cfg.Buckets {
+			bktNames[idx] = b.Name
+		}
+		reconciler := worker.NewReconciler(manager, bktNames)
+		do.ProvideValue(i, reconciler)
+
 		if cfg.Reconcile.Enabled {
-			bktNames := make([]string, len(cfg.Buckets))
-			for idx, b := range cfg.Buckets {
-				bktNames[idx] = b.Name
-			}
-			reconciler := worker.NewReconciler(manager, bktNames)
 			sm.Register("reconcile", newReconcileService(reconciler, cbStore, cfg.Reconcile.Interval))
 		}
 
@@ -411,12 +413,17 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 		enc = e
 	}
 
+	var reconciler *worker.Reconciler
+	if r, err := do.Invoke[*worker.Reconciler](i); err == nil {
+		reconciler = r
+	}
+
 	adminToken := cfg.UI.AdminToken
 	if adminToken == "" {
 		adminToken = cfg.UI.AdminKey
 	}
 
-	return admin.New(manager, cbStore, adminDB, enc, adminToken, logLevel), nil
+	return admin.New(manager, cbStore, adminDB, enc, reconciler, adminToken, logLevel), nil
 }
 
 // ProvideNotifier creates the webhook notification system.
