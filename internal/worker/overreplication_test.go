@@ -7,7 +7,9 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store"
+	promtest "github.com/prometheus/client_golang/prometheus/testutil"
 	"go.uber.org/mock/gomock"
 )
 
@@ -153,5 +155,8 @@ func TestClean_NothingOverReplicated(t *testing.T) {
 	}
 	if removed != 0 {
 		t.Errorf("removed = %d, want 0", removed)
+	}
+	if p := promtest.ToFloat64(telemetry.OverReplicationPending); p != 0 {
+		t.Errorf("OverReplicationPending = %v, want 0", p)
 	}
 }
