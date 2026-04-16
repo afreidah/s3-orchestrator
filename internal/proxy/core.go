@@ -40,6 +40,7 @@ type backendCore struct {
 	backendTimeout  time.Duration                    // per-operation timeout for backend S3 calls
 	usage           *counter.UsageTracker            // per-backend usage counters and limits
 	routingStrategy config.RoutingStrategy            // RoutingPack or RoutingSpread
+	maxObjectSizes  map[string]int64                 // per-backend max object size (0 = unlimited)
 	draining        sync.Map                         // map[string]*drainState — backends being drained
 	metrics         *MetricsCollector                // Prometheus metric recording and gauge refresh
 	admissionSem    chan struct{}                    // shared concurrency semaphore (nil = unlimited)
@@ -171,6 +172,9 @@ func (c *backendCore) eligibleForWrite(apiCalls, egress, ingress int64) []string
 			continue
 		}
 		if !c.usage.WithinLimits(name, apiCalls, egress, ingress) {
+			continue
+		}
+		if max := c.maxObjectSizes[name]; max > 0 && ingress > max {
 			continue
 		}
 		eligible = append(eligible, name)
