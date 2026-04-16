@@ -118,8 +118,10 @@ func (c *OverReplicationCleaner) Clean(ctx context.Context, cfg config.Replicati
 	}
 
 	// --- Remove excess copies concurrently ---
+	telemetry.OverReplicationPending.Set(float64(len(tasks)))
 	var removed atomic.Int64
 	workerpool.Run(ctx, cfg.Concurrency, tasks, func(ctx context.Context, task cleanupTask) {
+		defer telemetry.OverReplicationPending.Dec()
 		if !c.ops.AcquireAdmission(ctx) {
 			telemetry.WorkerAdmissionRejectionsTotal.WithLabelValues("over_replication").Inc()
 			return

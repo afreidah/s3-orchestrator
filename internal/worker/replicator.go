@@ -131,8 +131,10 @@ func (r *Replicator) Replicate(ctx context.Context, cfg config.ReplicationConfig
 	}
 
 	// --- Replicate under-replicated objects concurrently ---
+	telemetry.ReplicationPending.Set(float64(len(tasks)))
 	var created atomic.Int32
 	workerpool.Run(ctx, cfg.Concurrency, tasks, func(ctx context.Context, task replicaTask) {
+		defer telemetry.ReplicationPending.Dec()
 		if !r.ops.AcquireAdmission(ctx) {
 			telemetry.WorkerAdmissionRejectionsTotal.WithLabelValues("replicator").Inc()
 			return

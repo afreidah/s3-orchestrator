@@ -10,7 +10,9 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store"
+	promtest "github.com/prometheus/client_golang/prometheus/testutil"
 	"go.uber.org/mock/gomock"
 )
 
@@ -196,6 +198,9 @@ func TestReplicate_NothingUnderReplicated(t *testing.T) {
 	}
 	if created != 0 {
 		t.Errorf("created = %d, want 0", created)
+	}
+	if p := promtest.ToFloat64(telemetry.ReplicationPending); p != 0 {
+		t.Errorf("ReplicationPending = %v, want 0", p)
 	}
 }
 

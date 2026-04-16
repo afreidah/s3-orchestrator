@@ -404,6 +404,7 @@ func (r *Rebalancer) PlanSpreadEven(ctx context.Context, stats map[string]store.
 func (r *Rebalancer) ExecuteMoves(ctx context.Context, plan []RebalanceMove, strategy string, concurrency int) int {
 	var moved atomic.Int32
 	workerpool.Run(ctx, concurrency, plan, func(ctx context.Context, mv RebalanceMove) {
+		defer telemetry.RebalancePending.Dec()
 		if !r.ops.AcquireAdmission(ctx) {
 			telemetry.WorkerAdmissionRejectionsTotal.WithLabelValues("rebalancer").Inc()
 			return
