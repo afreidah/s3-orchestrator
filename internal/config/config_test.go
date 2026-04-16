@@ -2659,6 +2659,24 @@ func TestBackendValidation_MissingFields(t *testing.T) {
 	}
 }
 
+func TestBackendValidation_NegativeMaxObjectSize(t *testing.T) {
+	t.Parallel()
+	errs := validateBackends([]BackendConfig{{
+		Name: "b1", Endpoint: "https://s3.example.com", Bucket: "b",
+		AccessKeyID: "ak", SecretAccessKey: "sk", MaxObjectSize: -1,
+	}})
+	found := false
+	for _, e := range errs {
+		if strings.Contains(e, "max_object_size") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected error mentioning max_object_size for negative value")
+	}
+}
+
 func TestRebalanceValidation_NegativeValues(t *testing.T) {
 	t.Parallel()
 	cfg := RebalanceConfig{Enabled: true, Strategy: "pack", Interval: -1, BatchSize: -1, Threshold: 2.0, Concurrency: -1}

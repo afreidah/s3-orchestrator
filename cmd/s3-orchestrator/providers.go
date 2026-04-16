@@ -128,9 +128,10 @@ func openStore(ctx context.Context, dbCfg *config.DatabaseConfig) (store.Metadat
 
 // backendsResult groups the outputs of backend initialization.
 type backendsResult struct {
-	Backends    map[string]backend.ObjectBackend
-	Order       []string
-	UsageLimits map[string]store.UsageLimits
+	Backends       map[string]backend.ObjectBackend
+	Order          []string
+	UsageLimits    map[string]store.UsageLimits
+	MaxObjectSizes map[string]int64
 }
 
 // ProvideBackends initializes all configured storage backends with optional
@@ -141,6 +142,7 @@ func ProvideBackends(i do.Injector) (*backendsResult, error) {
 	backends := make(map[string]backend.ObjectBackend, len(cfg.Backends))
 	order := make([]string, 0, len(cfg.Backends))
 	limits := make(map[string]store.UsageLimits, len(cfg.Backends))
+	maxSizes := make(map[string]int64, len(cfg.Backends))
 
 	for idx := range cfg.Backends {
 		bcfg := &cfg.Backends[idx]
@@ -161,6 +163,9 @@ func ProvideBackends(i do.Injector) (*backendsResult, error) {
 			EgressByteLimit:  bcfg.EgressByteLimit,
 			IngressByteLimit: bcfg.IngressByteLimit,
 		}
+		if bcfg.MaxObjectSize > 0 {
+			maxSizes[bcfg.Name] = bcfg.MaxObjectSize
+		}
 		slog.InfoContext(context.Background(), "Backend initialized",
 			"backend", bcfg.Name,
 			"endpoint", bcfg.Endpoint,
@@ -168,7 +173,7 @@ func ProvideBackends(i do.Injector) (*backendsResult, error) {
 		)
 	}
 
-	return &backendsResult{Backends: backends, Order: order, UsageLimits: limits}, nil
+	return &backendsResult{Backends: backends, Order: order, UsageLimits: limits, MaxObjectSizes: maxSizes}, nil
 }
 
 // -------------------------------------------------------------------------
@@ -293,6 +298,7 @@ func ProvideBackendManager(i do.Injector) (*proxy.BackendManager, error) {
 		Encryptor:          enc,
 		ObjectCache:        dataCache,
 		CounterBackend:     cb,
+		MaxObjectSizes:     br.MaxObjectSizes,
 		CleanupConcurrency: cfg.CleanupQueue.Concurrency,
 		AdmissionSem:       admissionSem,
 	}), nil

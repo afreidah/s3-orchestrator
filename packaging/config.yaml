@@ -61,6 +61,7 @@ backends:
     # force_path_style: false
     # unsigned_payload: true       # Stream uploads without buffering (auto-enabled for HTTPS, set explicitly for HTTP)
     # quota_bytes: 0               # 0 = unlimited
+    # max_object_size: 0           # Per-object size limit in bytes (0 = unlimited)
     # api_request_limit: 0         # Monthly API request cap (0 = unlimited)
     # egress_byte_limit: 0         # Monthly egress cap (0 = unlimited)
     # ingress_byte_limit: 0        # Monthly ingress cap (0 = unlimited)

@@ -118,6 +118,7 @@ config:
   #   secret_access_key: "${BACKEND1_SECRET_KEY}"
   #   force_path_style: true
   #   quota_bytes: 10737418240  # 10 GB
+  #   max_object_size: 0        # per-object size limit in bytes (0 = unlimited)
 
   routing_strategy: "spread"
 

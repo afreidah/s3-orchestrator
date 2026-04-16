@@ -348,3 +348,40 @@ func TestEligibleForWrite_CombinesAllFilters(t *testing.T) {
 		t.Errorf("eligibleForWrite = %v, want [healthy]", eligible)
 	}
 }
+
+func TestEligibleForWrite_MaxObjectSize(t *testing.T) {
+	t.Parallel()
+
+	usage := counter.NewUsageTracker(
+		counter.NewLocalCounterBackend([]string{"small", "large", "unlimited"}),
+		nil,
+	)
+
+	core := &backendCore{
+		backends: map[string]backend.ObjectBackend{
+			"small":     newMockBackend(),
+			"large":     newMockBackend(),
+			"unlimited": newMockBackend(),
+		},
+		order:          []string{"small", "large", "unlimited"},
+		usage:          usage,
+		maxObjectSizes: map[string]int64{"small": 50 * 1024 * 1024}, // 50 MB
+	}
+
+	// Object under the limit — all backends eligible
+	eligible := core.eligibleForWrite(1, 0, 10*1024*1024)
+	if len(eligible) != 3 {
+		t.Errorf("10MB object: eligible = %v, want all 3 backends", eligible)
+	}
+
+	// Object over small's limit — small excluded
+	eligible = core.eligibleForWrite(1, 0, 100*1024*1024)
+	if len(eligible) != 2 {
+		t.Errorf("100MB object: eligible = %v, want [large, unlimited]", eligible)
+	}
+	for _, name := range eligible {
+		if name == "small" {
+			t.Error("100MB object: 'small' should be excluded (max_object_size=50MB)")
+		}
+	}
+}
