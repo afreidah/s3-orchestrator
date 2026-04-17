@@ -12,7 +12,7 @@ Most S3-compatible providers offer a free tier with a limited amount of storage 
 
 The key tools for staying within free tiers are **per-backend quotas** and **usage limits**. Quotas cap stored bytes so you never exceed a provider's free storage allowance. Usage limits cap monthly API requests, egress, and ingress so you avoid overage charges on metered dimensions.
 
-![Seven cloud backends with a free-tier configuration](/docs/images/free-tier-5-cloud-setup.png?classes=lightbox)
+![Seven cloud backends with a free-tier configuration](/docs/images/multi-cloud-setup.png?classes=lightbox)
 
 Below is the configuration used to run the setup shown above. Credentials are injected via Vault templates, but you can substitute environment variables or literal values.
 
