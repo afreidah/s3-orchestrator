@@ -24,7 +24,10 @@ GO_LDFLAGS := -s -w -X github.com/afreidah/s3-orchestrator/internal/observe/tele
 
 help: ## Display available Make targets
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage: make \033[36m<target>\033[0m\n"} \
-		/^[a-zA-Z0-9_-]+:.*?## / {printf "  \033[36m%-24s\033[0m %s\n", $$1, $$2} \
+		/^[a-zA-Z0-9_-]+:.*?## / { \
+			gsub(/[A-Z_][A-Z0-9_]*=[a-zA-Z0-9_|-]+/, "\033[33m&\033[0m", $$2); \
+			printf "  \033[36m%-24s\033[0m %s\n", $$1, $$2 \
+		} \
 		/^##@/ {printf "\n\033[1m%s\033[0m\n", substr($$0, 5)}' $(MAKEFILE_LIST)
 
 ##@ Build
@@ -125,8 +128,18 @@ bench-usage: ## Run usage tracking benchmarks (WithinLimits, Record)
 bench-integration: ## Run integration benchmarks (requires Docker — PutObject, ListObjects, Rebalance)
 	go test -bench=Benchmark -benchmem -count=$(BENCH_COUNT) -benchtime=$(BENCH_TIME) -run='^$$' -timeout=30m -tags integration ./internal/integration/
 
-bench-compare: ## Compare two benchmark files (usage: make bench-compare OLD=benchmarks/old.txt NEW=benchmarks/new.txt)
-	benchstat $(OLD) $(NEW)
+bench-compare: ## Compare two benchmark runs (OLD=file NEW=file, defaults to two most recent)
+	@OLD="$(OLD)"; NEW="$(NEW)"; \
+	if [ -z "$$OLD" ] || [ -z "$$NEW" ]; then \
+		files=$$(ls -1t benchmarks/*.txt 2>/dev/null | head -2); \
+		if [ "$$(echo "$$files" | wc -l)" -lt 2 ]; then \
+			echo "bench-compare: need at least 2 files in benchmarks/"; exit 1; \
+		fi; \
+		NEW=$$(echo "$$files" | sed -n '1p'); \
+		OLD=$$(echo "$$files" | sed -n '2p'); \
+		echo "Comparing OLD=$$OLD NEW=$$NEW"; \
+	fi; \
+	benchstat "$$OLD" "$$NEW"
 
 fuzz: ## Run fuzz tests (override: FUZZ_TIME=5m make fuzz)
 	go test -fuzz=FuzzParseSigV4Fields -fuzztime=$(FUZZ_TIME) ./internal/transport/auth/
