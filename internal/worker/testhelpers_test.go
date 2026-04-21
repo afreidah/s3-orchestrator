@@ -112,6 +112,10 @@ func (m *mockMetadataStore) MoveObjectLocation(_ context.Context, _, _, _ string
 	return m.moveSize, nil
 }
 
+func (m *mockMetadataStore) GetAllObjectLocations(_ context.Context, _ string) ([]store.ObjectLocation, error) {
+	return nil, nil
+}
+
 func (m *mockMetadataStore) FlushUsageDeltas(_ context.Context, _, _ string, _, _, _ int64) error {
 	return nil
 }

@@ -259,6 +259,19 @@ func (r *Rebalancer) PlanPackTight(ctx context.Context, stats map[string]store.Q
 					break // Source is now as full or fuller, stop pulling
 				}
 
+				// Skip if destination already has a copy of this object
+				existingCopies, _ := r.ops.Store().GetAllObjectLocations(ctx, objects[oi].ObjectKey)
+				alreadyOnDest := false
+				for ci := range existingCopies {
+					if existingCopies[ci].BackendName == dest.Name {
+						alreadyOnDest = true
+						break
+					}
+				}
+				if alreadyOnDest {
+					continue
+				}
+
 				plan = append(plan, RebalanceMove{
 					ObjectKey:   objects[oi].ObjectKey,
 					FromBackend: src.Name,
@@ -359,9 +372,19 @@ func (r *Rebalancer) PlanSpreadEven(ctx context.Context, stats map[string]store.
 				continue
 			}
 
+			// Check which backends already have a copy of this object
+			existingCopies, _ := r.ops.Store().GetAllObjectLocations(ctx, objects[oi].ObjectKey)
+			copySet := make(map[string]bool, len(existingCopies))
+			for i := range existingCopies {
+				copySet[existingCopies[i].BackendName] = true
+			}
+
 			// Find best destination that can fit this object without overshooting
 			bestDest := -1
 			for di := range destinations {
+				if copySet[destinations[di].Name] {
+					continue // target already has a copy
+				}
 				deficit := -destinations[di].Balance
 				destStat := stats[destinations[di].Name]
 				destFree := destStat.BytesLimit - simUsed[destinations[di].Name]

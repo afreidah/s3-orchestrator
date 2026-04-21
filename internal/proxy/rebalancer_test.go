@@ -567,6 +567,62 @@ func TestPlanSpreadEven_EqualizesUtilization(t *testing.T) {
 	}
 }
 
+func TestPlanSpreadEven_SkipsWhenTargetHasCopy(t *testing.T) {
+	t.Parallel()
+	store := &mockStore{
+		listObjectsByBackendResp: []st.ObjectLocation{
+			{ObjectKey: "obj1", BackendName: "b1", SizeBytes: 100},
+		},
+		// Simulate obj1 already existing on b2 (the would-be target)
+		getAllLocationsResp: []st.ObjectLocation{
+			{ObjectKey: "obj1", BackendName: "b1", SizeBytes: 100},
+			{ObjectKey: "obj1", BackendName: "b2", SizeBytes: 100},
+		},
+	}
+	mgr := newRebalanceManager(store, []string{"b1", "b2"})
+
+	stats := map[string]st.QuotaStat{
+		"b1": {BytesUsed: 800, BytesLimit: 1000},
+		"b2": {BytesUsed: 200, BytesLimit: 1000},
+	}
+
+	plan, err := mgr.Rebalancer.PlanSpreadEven(context.Background(), stats, 10)
+	if err != nil {
+		t.Fatalf("planSpreadEven: %v", err)
+	}
+	if len(plan) != 0 {
+		t.Errorf("expected 0 moves (target already has copy), got %d", len(plan))
+	}
+}
+
+func TestPlanPackTight_SkipsWhenTargetHasCopy(t *testing.T) {
+	t.Parallel()
+	store := &mockStore{
+		listObjectsByBackendResp: []st.ObjectLocation{
+			{ObjectKey: "obj1", BackendName: "b2", SizeBytes: 100},
+		},
+		// Simulate obj1 already existing on b1 (the most-full destination)
+		getAllLocationsResp: []st.ObjectLocation{
+			{ObjectKey: "obj1", BackendName: "b1", SizeBytes: 100},
+			{ObjectKey: "obj1", BackendName: "b2", SizeBytes: 100},
+		},
+	}
+	mgr := newRebalanceManager(store, []string{"b1", "b2"})
+
+	stats := map[string]st.QuotaStat{
+		"b1": {BytesUsed: 900, BytesLimit: 1000}, // most full
+		"b2": {BytesUsed: 100, BytesLimit: 1000}, // least full (source)
+	}
+
+	plan, err := mgr.Rebalancer.PlanPackTight(context.Background(), stats, 10)
+	if err != nil {
+		t.Fatalf("planPackTight: %v", err)
+	}
+	if len(plan) != 0 {
+		t.Errorf("expected 0 moves (target already has copy), got %d", len(plan))
+	}
+}
+
 func TestPlanSpreadEven_ZeroTotalLimit(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{}
