@@ -5,6 +5,8 @@
 //
 // Defines focused role interfaces that background workers compose to declare
 // their exact dependencies. The proxy.BackendManager implements all of them.
+// Each worker receives its own narrow store interface rather than accessing
+// a shared MetadataStore god object.
 // -------------------------------------------------------------------------------
 
 // Package worker contains background services that maintain storage health:
@@ -13,7 +15,7 @@
 // for its dependencies rather than embedding shared infrastructure.
 package worker
 
-//go:generate mockgen -destination=mock_ops_test.go -package=worker github.com/afreidah/s3-orchestrator/internal/worker Ops,CleanupDeps,ScrubberDeps,BackendSyncer
+//go:generate mockgen -destination=mock_ops_test.go -package=worker github.com/afreidah/s3-orchestrator/internal/worker Ops,CleanupOps,ScrubberOps,BackendSyncer
 
 import (
 	"context"
@@ -24,14 +26,41 @@ import (
 )
 
 // -------------------------------------------------------------------------
-// ROLE INTERFACES
+// NARROW STORE INTERFACES (per-worker)
 // -------------------------------------------------------------------------
 
-// StoreAccess provides metadata store and usage tracking.
-type StoreAccess interface {
-	Store() store.MetadataStore
-	Usage() *counter.UsageTracker
+// RebalancerStore defines the store operations the Rebalancer needs.
+type RebalancerStore interface {
+	store.ObjectStore
+	store.QuotaStore
 }
+
+// ReplicatorStore defines the store operations the Replicator needs.
+type ReplicatorStore interface {
+	store.ObjectStore
+	store.ReplicationStore
+	store.QuotaStore
+}
+
+// OverReplicationStore defines the store operations the OverReplicationCleaner needs.
+type OverReplicationStore interface {
+	store.ReplicationStore
+	store.QuotaStore
+}
+
+// CleanupWorkerStore defines the store operations the CleanupWorker needs.
+type CleanupWorkerStore interface {
+	store.CleanupStore
+}
+
+// ScrubberStore defines the store operations the Scrubber needs.
+type ScrubberStore interface {
+	store.IntegrityStore
+}
+
+// -------------------------------------------------------------------------
+// ROLE INTERFACES (non-store infrastructure)
+// -------------------------------------------------------------------------
 
 // BackendAccess provides backend fleet discovery and drain-awareness.
 type BackendAccess interface {
@@ -57,33 +86,36 @@ type DataMover interface {
 	DeleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, backendName, key, reason string, sizeBytes int64)
 }
 
+// UsageAccess provides usage tracking.
+type UsageAccess interface {
+	Usage() *counter.UsageTracker
+}
+
 // -------------------------------------------------------------------------
 // COMPOSED DEPENDENCY CONTRACTS
 // -------------------------------------------------------------------------
 
-// Ops combines all worker dependency interfaces for workers that need full
-// backend fleet access, store access, admission control, and data movement.
-// Used by Replicator, Rebalancer, and OverReplicationCleaner.
+// Ops combines fleet access, admission control, data movement, and usage
+// tracking. Used by Rebalancer, Replicator, and OverReplicationCleaner.
 type Ops interface {
-	StoreAccess
 	BackendAccess
 	AdmissionControl
 	DataMover
+	UsageAccess
 }
 
-// CleanupDeps is the dependency contract for CleanupWorker. It omits
-// BackendAccess because cleanup operates on specific named backends
-// via DataMover.GetBackend, not fleet-wide discovery.
-type CleanupDeps interface {
-	StoreAccess
+// CleanupOps is the dependency contract for CleanupWorker. It omits
+// BackendAccess because cleanup operates on specific named backends.
+type CleanupOps interface {
 	AdmissionControl
 	DataMover
+	UsageAccess
 }
 
-// ScrubberDeps is the dependency contract for Scrubber. It omits
+// ScrubberOps is the dependency contract for Scrubber. It omits
 // AdmissionControl and BackendAccess because integrity checks are
-// best-effort background work that reads from specific backends.
-type ScrubberDeps interface {
-	StoreAccess
+// best-effort background work.
+type ScrubberOps interface {
 	DataMover
+	UsageAccess
 }

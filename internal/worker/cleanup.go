@@ -23,13 +23,14 @@ import (
 
 // CleanupWorker processes the retry queue for failed object deletions.
 type CleanupWorker struct {
-	deps        CleanupDeps
+	deps        CleanupOps
+	store       CleanupWorkerStore
 	concurrency int
 }
 
 // NewCleanupWorker creates a CleanupWorker with explicit dependencies.
-func NewCleanupWorker(deps CleanupDeps, concurrency int) *CleanupWorker {
-	return &CleanupWorker{deps: deps, concurrency: concurrency}
+func NewCleanupWorker(deps CleanupOps, store CleanupWorkerStore, concurrency int) *CleanupWorker {
+	return &CleanupWorker{deps: deps, store: store, concurrency: concurrency}
 }
 
 const maxCleanupAttempts = 10
@@ -51,8 +52,7 @@ func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) (processed, fai
 	)
 	defer span.End()
 
-	st := w.deps.Store()
-	items, err := st.GetPendingCleanups(ctx, 50)
+	items, err := w.store.GetPendingCleanups(ctx, 50)
 	if err != nil {
 		slog.ErrorContext(ctx, "Failed to fetch pending cleanups", "error", err)
 		return 0, 0
@@ -71,7 +71,7 @@ func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) (processed, fai
 		if err != nil {
 			slog.WarnContext(ctx, "Cleanup queue: backend not found, removing item",
 				"backend", item.BackendName, "key", item.ObjectKey)
-			if err := st.CompleteCleanupItem(ctx, item.ID); err != nil {
+			if err := w.store.CompleteCleanupItem(ctx, item.ID); err != nil {
 				slog.ErrorContext(ctx, "Failed to complete cleanup item", "id", item.ID, "error", err)
 			}
 			telemetry.CleanupQueueProcessedTotal.WithLabelValues("success").Inc()
@@ -83,11 +83,11 @@ func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) (processed, fai
 		w.deps.Usage().Record(item.BackendName, 1, 0, 0)
 
 		if delErr == nil {
-			if err := st.CompleteCleanupItem(ctx, item.ID); err != nil {
+			if err := w.store.CompleteCleanupItem(ctx, item.ID); err != nil {
 				slog.ErrorContext(ctx, "Failed to complete cleanup item", "id", item.ID, "error", err)
 			}
 			if item.SizeBytes > 0 {
-				if err := st.DecrementOrphanBytes(ctx, item.BackendName, item.SizeBytes); err != nil {
+				if err := w.store.DecrementOrphanBytes(ctx, item.BackendName, item.SizeBytes); err != nil {
 					slog.ErrorContext(ctx, "Failed to decrement orphan bytes",
 						"backend", item.BackendName, "size", item.SizeBytes, "error", err)
 				}
@@ -108,7 +108,7 @@ func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) (processed, fai
 			slog.ErrorContext(ctx, "Cleanup queue: max attempts reached",
 				"key", item.ObjectKey, "backend", item.BackendName,
 				"attempts", newAttempts, "size", item.SizeBytes, "error", delErr)
-			if err := st.RetryCleanupItem(ctx, item.ID, 0, delErr.Error()); err != nil {
+			if err := w.store.RetryCleanupItem(ctx, item.ID, 0, delErr.Error()); err != nil {
 				slog.ErrorContext(ctx, "Failed to update exhausted cleanup item", "id", item.ID, "error", err)
 			}
 			telemetry.CleanupQueueProcessedTotal.WithLabelValues("exhausted").Inc()
@@ -118,13 +118,13 @@ func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) (processed, fai
 
 		telemetry.CleanupQueueProcessedTotal.WithLabelValues("retry").Inc()
 		backoff := CleanupBackoff(item.Attempts)
-		if err := st.RetryCleanupItem(ctx, item.ID, backoff, delErr.Error()); err != nil {
+		if err := w.store.RetryCleanupItem(ctx, item.ID, backoff, delErr.Error()); err != nil {
 			slog.ErrorContext(ctx, "Failed to update cleanup retry", "id", item.ID, "error", err)
 		}
 		failedCount.Add(1)
 	})
 
-	depth, err := st.CleanupQueueDepth(ctx)
+	depth, err := w.store.CleanupQueueDepth(ctx)
 	if err == nil {
 		telemetry.CleanupQueueDepth.Set(float64(depth))
 	}

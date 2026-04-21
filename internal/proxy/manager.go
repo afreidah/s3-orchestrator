@@ -104,7 +104,7 @@ func NewBackendManager(cfg *BackendManagerConfig) *BackendManager {
 	if cleanupConcurrency <= 0 {
 		cleanupConcurrency = 10
 	}
-	cleanupWorker := worker.NewCleanupWorker(core, cleanupConcurrency)
+	cleanupWorker := worker.NewCleanupWorker(core, cfg.Store, cleanupConcurrency)
 	multipartManager := NewMultipartManager(core, cfg.Encryptor, cfg.ObjectCache)
 	cache := NewLocationCache(cfg.CacheTTL)
 	// ObjectManager gets a closure for the integrity config so it can read
@@ -119,11 +119,11 @@ func NewBackendManager(cfg *BackendManagerConfig) *BackendManager {
 
 	m = &BackendManager{
 		backendCore:            core,
-		Rebalancer:             worker.NewRebalancer(core),
-		Replicator:             worker.NewReplicator(core),
-		OverReplicationCleaner: worker.NewOverReplicationCleaner(core),
+		Rebalancer:             worker.NewRebalancer(core, cfg.Store),
+		Replicator:             worker.NewReplicator(core, cfg.Store),
+		OverReplicationCleaner: worker.NewOverReplicationCleaner(core, cfg.Store),
 		CleanupWorker:          cleanupWorker,
-		Scrubber:               worker.NewScrubber(core, cfg.Encryptor),
+		Scrubber:               worker.NewScrubber(core, cfg.Store, cfg.Encryptor),
 		MultipartManager:       multipartManager,
 		ObjectManager:          objectManager,
 		DrainManager: NewDrainManager(core,

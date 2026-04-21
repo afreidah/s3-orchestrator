@@ -34,16 +34,16 @@ import (
 // REPLICATOR TYPE
 // -------------------------------------------------------------------------
 
-// Replicator creates additional copies of under-replicated objects across
-// backends. Embeds *backendCore for access to shared infrastructure.
+// Replicator creates additional copies of under-replicated objects across backends.
 type Replicator struct {
-	ops Ops
-	cfg syncutil.AtomicConfig[config.ReplicationConfig]
+	ops   Ops
+	store ReplicatorStore
+	cfg   syncutil.AtomicConfig[config.ReplicationConfig]
 }
 
-// NewReplicator creates a Replicator that shares the given core infrastructure.
-func NewReplicator(ops Ops) *Replicator {
-	return &Replicator{ops: ops}
+// NewReplicator creates a Replicator with fleet operations and a narrow store.
+func NewReplicator(ops Ops, store ReplicatorStore) *Replicator {
+	return &Replicator{ops: ops, store: store}
 }
 
 // SetConfig atomically stores the replication configuration.
@@ -86,9 +86,9 @@ func (r *Replicator) Replicate(ctx context.Context, cfg config.ReplicationConfig
 	var locations []store.ObjectLocation
 	var err error
 	if len(excluded) > 0 {
-		locations, err = r.ops.Store().GetUnderReplicatedObjectsExcluding(ctx, cfg.Factor, cfg.BatchSize, excluded)
+		locations, err = r.store.GetUnderReplicatedObjectsExcluding(ctx, cfg.Factor, cfg.BatchSize, excluded)
 	} else {
-		locations, err = r.ops.Store().GetUnderReplicatedObjects(ctx, cfg.Factor, cfg.BatchSize)
+		locations, err = r.store.GetUnderReplicatedObjects(ctx, cfg.Factor, cfg.BatchSize)
 	}
 	if err != nil {
 		telemetry.ReplicationRunsTotal.WithLabelValues("error").Inc()
@@ -124,7 +124,7 @@ func (r *Replicator) Replicate(ctx context.Context, cfg config.ReplicationConfig
 	// may update quotas between the fetch and each task. Over-quota writes
 	// are caught by the backend layer (RecordReplica returns an error) so
 	// the worst case is a wasted copy that gets cleaned up.
-	quotaStats, err := r.ops.Store().GetQuotaStats(ctx)
+	quotaStats, err := r.store.GetQuotaStats(ctx)
 	if err != nil {
 		telemetry.ReplicationRunsTotal.WithLabelValues("error").Inc()
 		return 0, fmt.Errorf("failed to get quota stats: %w", err)
@@ -205,7 +205,7 @@ func (r *Replicator) ReplicateObject(ctx context.Context, quotaStats map[string]
 		}
 
 		// --- Record the replica in the database (conditional insert) ---
-		inserted, err := r.ops.Store().RecordReplica(ctx, key, target, source, existingCopies[0].SizeBytes)
+		inserted, err := r.store.RecordReplica(ctx, key, target, source, existingCopies[0].SizeBytes)
 		if err != nil {
 			slog.ErrorContext(ctx, "Replication: failed to record replica",
 				"key", key, "target", target, "error", err)
@@ -301,7 +301,7 @@ func (r *Replicator) CopyToReplica(ctx context.Context, key string, copies []sto
 
 		// Source returned 404 — metadata is stale, remove it immediately
 		if isNotFound(err) {
-			if delErr := r.ops.Store().DeleteObjectLocation(ctx, key, copies[i].BackendName); delErr != nil {
+			if delErr := r.store.DeleteObjectLocation(ctx, key, copies[i].BackendName); delErr != nil {
 				slog.WarnContext(ctx, "Replication: failed to remove stale metadata",
 					"key", key, "backend", copies[i].BackendName, "error", delErr)
 			} else {
