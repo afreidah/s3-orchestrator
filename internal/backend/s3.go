@@ -40,6 +40,8 @@ import (
 // INTERFACE
 // -------------------------------------------------------------------------
 
+const spanPrefix = "Backend "
+
 // GetObjectResult holds the response from a GetObject call.
 type GetObjectResult struct {
 	Body         io.ReadCloser
@@ -155,7 +157,7 @@ func (b *S3Backend) PutObject(ctx context.Context, key string, body io.Reader, s
 	start := time.Now()
 
 	// --- Start tracing span ---
-	ctx, span := telemetry.StartClientSpan(ctx, "Backend "+operation,
+	ctx, span := telemetry.StartClientSpan(ctx, spanPrefix+operation,
 		telemetry.BackendAttributes(operation, b.name, b.endpoint, b.bucket, key)...,
 	)
 	defer span.End()
@@ -220,7 +222,7 @@ func (b *S3Backend) GetObject(ctx context.Context, key string, rangeHeader strin
 	start := time.Now()
 
 	// --- Start tracing span ---
-	ctx, span := telemetry.StartClientSpan(ctx, "Backend "+operation,
+	ctx, span := telemetry.StartClientSpan(ctx, spanPrefix+operation,
 		telemetry.BackendAttributes(operation, b.name, b.endpoint, b.bucket, key)...,
 	)
 	defer span.End()
@@ -276,7 +278,7 @@ func (b *S3Backend) HeadObject(ctx context.Context, key string) (*HeadObjectResu
 	start := time.Now()
 
 	// --- Start tracing span ---
-	ctx, span := telemetry.StartClientSpan(ctx, "Backend "+operation,
+	ctx, span := telemetry.StartClientSpan(ctx, spanPrefix+operation,
 		telemetry.BackendAttributes(operation, b.name, b.endpoint, b.bucket, key)...,
 	)
 	defer span.End()
@@ -323,7 +325,7 @@ func (b *S3Backend) DeleteObject(ctx context.Context, key string) error {
 	start := time.Now()
 
 	// --- Start tracing span ---
-	ctx, span := telemetry.StartClientSpan(ctx, "Backend "+operation,
+	ctx, span := telemetry.StartClientSpan(ctx, spanPrefix+operation,
 		telemetry.BackendAttributes(operation, b.name, b.endpoint, b.bucket, key)...,
 	)
 	defer span.End()
@@ -360,7 +362,7 @@ func (b *S3Backend) ListObjects(ctx context.Context, prefix string, fn func([]Li
 	const operation = "ListObjectsV2"
 
 	// --- Start tracing span ---
-	ctx, span := telemetry.StartClientSpan(ctx, "Backend "+operation,
+	ctx, span := telemetry.StartClientSpan(ctx, spanPrefix+operation,
 		telemetry.BackendAttributes(operation, b.name, b.endpoint, b.bucket, prefix)...,
 	)
 	defer span.End()

@@ -53,6 +53,13 @@ const (
 	csrfCookieName    = "s3orch_csrf"
 	csrfHeaderName    = "X-CSRF-Token"
 	sessionTTL        = 24 * time.Hour
+
+	contentTypeJSON = "application/json"
+	contentTypeHTML = "text/html; charset=utf-8"
+	headerContentType = "Content-Type"
+	errMethodNotAllowed   = "method not allowed"
+	errInvalidRequestBody = "invalid request body"
+	errKeyRequired        = "key is required"
 )
 
 // Handler serves the web UI dashboard.
@@ -169,7 +176,7 @@ func (h *Handler) Register(mux *http.ServeMux, prefix string) {
 
 // writeJSONError writes a JSON error response with the correct content type.
 func writeJSONError(w http.ResponseWriter, status int, msg string) {
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(headerContentType, contentTypeJSON)
 	w.WriteHeader(status)
 	_, _ = io.WriteString(w, `{"error":"`+msg+`"}`)
 }
@@ -195,7 +202,7 @@ func (h *Handler) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 		if !h.validSession(r) {
 			if strings.HasPrefix(r.URL.Path, h.prefix+"/api/") {
 				slog.WarnContext(r.Context(), "UI: unauthorized API request", "path", r.URL.Path, "remote", r.RemoteAddr)
-				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set(headerContentType, contentTypeJSON)
 				w.WriteHeader(http.StatusUnauthorized)
 				_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
 				return
@@ -334,7 +341,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, h.prefix+"/", http.StatusSeeOther)
 			return
 		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set(headerContentType, contentTypeHTML)
 		if err := h.templates.ExecuteTemplate(w, "login.html", loginPage{Version: telemetry.Version}); err != nil {
 			slog.ErrorContext(r.Context(), "UI: failed to render login page", "error", err)
 		}
@@ -350,7 +357,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	if h.loginThrottle != nil && h.loginThrottle.IsLockedOut(clientIP) {
 		slog.WarnContext(r.Context(), "UI: login attempt while locked out", "remote_addr", clientIP)
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set(headerContentType, contentTypeHTML)
 		w.WriteHeader(http.StatusTooManyRequests)
 		if err := h.templates.ExecuteTemplate(w, "login.html", loginPage{
 			Version: telemetry.Version,
@@ -372,7 +379,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 			h.loginThrottle.RecordFailure(clientIP)
 		}
 		slog.WarnContext(r.Context(), "UI: failed login attempt", "remote_addr", clientIP)
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set(headerContentType, contentTypeHTML)
 		w.WriteHeader(http.StatusUnauthorized)
 		if err := h.templates.ExecuteTemplate(w, "login.html", loginPage{
 			Version: telemetry.Version,
@@ -510,7 +517,7 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set(headerContentType, contentTypeHTML)
 	_, _ = buf.WriteTo(w)
 }
 
@@ -529,7 +536,7 @@ func (h *Handler) handleAPIDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(headerContentType, contentTypeJSON)
 	if err := json.NewEncoder(w).Encode(data); err != nil {
 		slog.ErrorContext(r.Context(), "UI: failed to encode dashboard JSON", "error", err)
 	}
@@ -560,7 +567,7 @@ func (h *Handler) handleTreeAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(headerContentType, contentTypeJSON)
 	if err := json.NewEncoder(w).Encode(result); err != nil {
 		slog.ErrorContext(r.Context(), "UI: failed to encode tree JSON", "error", err)
 	}
@@ -571,7 +578,7 @@ func (h *Handler) handleAPIDelete(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
 
 	if r.Method != http.MethodPost {
-		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		writeJSONError(w, http.StatusMethodNotAllowed, errMethodNotAllowed)
 		return
 	}
 
@@ -581,11 +588,11 @@ func (h *Handler) handleAPIDelete(w http.ResponseWriter, r *http.Request) {
 		Key string `json:"key"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid request body")
+		writeJSONError(w, http.StatusBadRequest, errInvalidRequestBody)
 		return
 	}
 	if req.Key == "" {
-		writeJSONError(w, http.StatusBadRequest, "key is required")
+		writeJSONError(w, http.StatusBadRequest, errKeyRequired)
 		return
 	}
 
@@ -596,14 +603,14 @@ func (h *Handler) handleAPIDelete(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.manager.ObjectManager.DeleteObject(r.Context(), req.Key); err != nil {
 		slog.ErrorContext(r.Context(), "UI: failed to delete object", "key", req.Key, "error", err)
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set(headerContentType, contentTypeJSON)
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "delete failed"})
 		return
 	}
 
 	slog.InfoContext(r.Context(), "UI: deleted object", "key", req.Key)
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(headerContentType, contentTypeJSON)
 	_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 }
 
@@ -612,7 +619,7 @@ func (h *Handler) handleAPIDeletePrefix(w http.ResponseWriter, r *http.Request) 
 	setSecurityHeaders(w)
 
 	if r.Method != http.MethodPost {
-		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		writeJSONError(w, http.StatusMethodNotAllowed, errMethodNotAllowed)
 		return
 	}
 
@@ -622,7 +629,7 @@ func (h *Handler) handleAPIDeletePrefix(w http.ResponseWriter, r *http.Request) 
 		Prefix string `json:"prefix"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid request body")
+		writeJSONError(w, http.StatusBadRequest, errInvalidRequestBody)
 		return
 	}
 	if req.Prefix == "" {
@@ -642,7 +649,7 @@ func (h *Handler) handleAPIDeletePrefix(w http.ResponseWriter, r *http.Request) 
 		result, err := h.manager.ObjectManager.ListObjects(r.Context(), req.Prefix, "", startAfter, 1000)
 		if err != nil {
 			slog.ErrorContext(r.Context(), "UI: failed to list objects for prefix delete", "prefix", req.Prefix, "error", err)
-			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set(headerContentType, contentTypeJSON)
 			w.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to list objects"})
 			return
@@ -657,7 +664,7 @@ func (h *Handler) handleAPIDeletePrefix(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if len(keys) == 0 {
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set(headerContentType, contentTypeJSON)
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "deleted": 0})
 		return
 	}
@@ -673,7 +680,7 @@ func (h *Handler) handleAPIDeletePrefix(w http.ResponseWriter, r *http.Request) 
 	deleted := len(keys) - errCount
 	slog.InfoContext(r.Context(), "UI: prefix delete completed", "prefix", req.Prefix, "deleted", deleted, "errors", errCount)
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(headerContentType, contentTypeJSON)
 	if errCount > 0 {
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -690,7 +697,7 @@ func (h *Handler) handleAPIUpload(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
 
 	if r.Method != http.MethodPost {
-		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		writeJSONError(w, http.StatusMethodNotAllowed, errMethodNotAllowed)
 		return
 	}
 
@@ -704,7 +711,7 @@ func (h *Handler) handleAPIUpload(w http.ResponseWriter, r *http.Request) {
 
 	key := r.FormValue("key")
 	if key == "" {
-		writeJSONError(w, http.StatusBadRequest, "key is required")
+		writeJSONError(w, http.StatusBadRequest, errKeyRequired)
 		return
 	}
 
@@ -735,14 +742,14 @@ func (h *Handler) handleAPIUpload(w http.ResponseWriter, r *http.Request) {
 	etag, err := h.manager.ObjectManager.PutObject(r.Context(), key, file, header.Size, contentType, nil)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "UI: failed to upload object", "key", key, "error", err)
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set(headerContentType, contentTypeJSON)
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "upload failed"})
 		return
 	}
 
 	slog.InfoContext(r.Context(), "UI: uploaded object", "key", key, "size", header.Size)
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(headerContentType, contentTypeJSON)
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "etag": etag})
 }
 
@@ -751,13 +758,13 @@ func (h *Handler) handleAPIDownload(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
 
 	if r.Method != http.MethodGet {
-		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		writeJSONError(w, http.StatusMethodNotAllowed, errMethodNotAllowed)
 		return
 	}
 
 	key := r.URL.Query().Get("key")
 	if key == "" {
-		writeJSONError(w, http.StatusBadRequest, "key is required")
+		writeJSONError(w, http.StatusBadRequest, errKeyRequired)
 		return
 	}
 
@@ -795,12 +802,12 @@ func (h *Handler) handleAPIRebalance(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
 
 	if r.Method != http.MethodPost {
-		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		writeJSONError(w, http.StatusMethodNotAllowed, errMethodNotAllowed)
 		return
 	}
 
 	if !h.asyncOps.TryStart("rebalance") {
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set(headerContentType, contentTypeJSON)
 		w.WriteHeader(http.StatusConflict)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "rebalance already running"})
 		return
@@ -835,7 +842,7 @@ func (h *Handler) handleAPIRebalance(w http.ResponseWriter, r *http.Request) {
 		h.asyncOps.Complete("rebalance", &asyncResult{OK: true, Count: moved})
 	}()
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(headerContentType, contentTypeJSON)
 	w.WriteHeader(http.StatusAccepted)
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "started"})
 }
@@ -843,7 +850,7 @@ func (h *Handler) handleAPIRebalance(w http.ResponseWriter, r *http.Request) {
 // handleAPIRebalanceStatus returns the status of a running or completed rebalance.
 func (h *Handler) handleAPIRebalanceStatus(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(headerContentType, contentTypeJSON)
 	result, running := h.asyncOps.Status("rebalance")
 	if running {
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "running"})
@@ -866,7 +873,7 @@ func (h *Handler) handleAPICleanExcess(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
 
 	if r.Method != http.MethodPost {
-		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		writeJSONError(w, http.StatusMethodNotAllowed, errMethodNotAllowed)
 		return
 	}
 
@@ -875,13 +882,13 @@ func (h *Handler) handleAPICleanExcess(w http.ResponseWriter, r *http.Request) {
 		rcfg = &h.cfg.Load().Replication
 	}
 	if rcfg.Factor <= 1 {
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set(headerContentType, contentTypeJSON)
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "removed": 0, "reason": "replication factor <= 1"})
 		return
 	}
 
 	if !h.asyncOps.TryStart("clean-excess") {
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set(headerContentType, contentTypeJSON)
 		w.WriteHeader(http.StatusConflict)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "cleanup already running"})
 		return
@@ -906,7 +913,7 @@ func (h *Handler) handleAPICleanExcess(w http.ResponseWriter, r *http.Request) {
 		h.asyncOps.Complete("clean-excess", &asyncResult{OK: true, Count: removed})
 	}()
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(headerContentType, contentTypeJSON)
 	w.WriteHeader(http.StatusAccepted)
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "started"})
 }
@@ -914,7 +921,7 @@ func (h *Handler) handleAPICleanExcess(w http.ResponseWriter, r *http.Request) {
 // handleAPICleanExcessStatus returns the status of a running or completed cleanup.
 func (h *Handler) handleAPICleanExcessStatus(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(headerContentType, contentTypeJSON)
 	result, running := h.asyncOps.Status("clean-excess")
 	if running {
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "running"})
@@ -936,7 +943,7 @@ func (h *Handler) handleAPISync(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
 
 	if r.Method != http.MethodPost {
-		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		writeJSONError(w, http.StatusMethodNotAllowed, errMethodNotAllowed)
 		return
 	}
 
@@ -947,7 +954,7 @@ func (h *Handler) handleAPISync(w http.ResponseWriter, r *http.Request) {
 		Bucket  string `json:"bucket"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid request body")
+		writeJSONError(w, http.StatusBadRequest, errInvalidRequestBody)
 		return
 	}
 	if req.Backend == "" || req.Bucket == "" {
@@ -974,7 +981,7 @@ func (h *Handler) handleAPISync(w http.ResponseWriter, r *http.Request) {
 	imported, skipped, err := h.manager.SyncBackend(r.Context(), req.Backend, req.Bucket, bucketNames)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "UI: sync failed", "backend", req.Backend, "bucket", req.Bucket, "error", err)
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set(headerContentType, contentTypeJSON)
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "sync failed"})
 		return
@@ -982,7 +989,7 @@ func (h *Handler) handleAPISync(w http.ResponseWriter, r *http.Request) {
 
 	slog.InfoContext(r.Context(), "UI: manual sync completed", "backend", req.Backend, "bucket", req.Bucket,
 		"imported", imported, "skipped", skipped)
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(headerContentType, contentTypeJSON)
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "imported": imported, "skipped": skipped})
 }
 
@@ -1055,7 +1062,7 @@ func (h *Handler) handleAPILogs(w http.ResponseWriter, r *http.Request) {
 		resp.HasMore = true
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(headerContentType, contentTypeJSON)
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		slog.ErrorContext(r.Context(), "UI: failed to encode logs JSON", "error", err)
 	}
