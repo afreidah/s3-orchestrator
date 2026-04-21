@@ -21,6 +21,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 )
 
+const managerSpanPrefix = "Manager "
+
 // ObjectManager handles object-level CRUD operations with read failover,
 // broadcast reads during degraded mode, and location caching.
 type ObjectManager struct {

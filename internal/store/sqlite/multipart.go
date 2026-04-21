@@ -78,7 +78,7 @@ func (s *Store) GetMultipartUpload(ctx context.Context, uploadID string) (*store
 	var parseErr error
 	mu.CreatedAt, parseErr = parseTime(createdAt)
 	if parseErr != nil {
-		return nil, fmt.Errorf("invalid created_at timestamp %q: %w", createdAt, parseErr)
+		return nil, fmt.Errorf(errInvalidTimestamp, createdAt, parseErr)
 	}
 
 	return &mu, nil
@@ -212,7 +212,7 @@ func (s *Store) ListMultipartUploads(ctx context.Context, prefix string, maxUplo
 		}
 		mu.CreatedAt, err = parseTime(createdAt)
 		if err != nil {
-			return nil, fmt.Errorf("invalid created_at timestamp %q: %w", createdAt, err)
+			return nil, fmt.Errorf(errInvalidTimestamp, createdAt, err)
 		}
 		uploads = append(uploads, mu)
 	}
@@ -320,7 +320,7 @@ func scanMultipartUploads(rows *sql.Rows) ([]store.MultipartUpload, error) {
 		var parseErr error
 		mu.CreatedAt, parseErr = parseTime(createdAt)
 		if parseErr != nil {
-			return nil, fmt.Errorf("invalid created_at timestamp %q: %w", createdAt, parseErr)
+			return nil, fmt.Errorf(errInvalidTimestamp, createdAt, parseErr)
 		}
 		uploads = append(uploads, mu)
 	}

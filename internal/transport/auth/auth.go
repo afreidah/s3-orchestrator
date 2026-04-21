@@ -22,6 +22,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -41,6 +42,11 @@ const sigV4MaxSkew = 15 * time.Minute
 // presignedMaxExpiry is the maximum allowed expiry for presigned URLs (7 days,
 // matching the AWS S3 limit).
 const presignedMaxExpiry = 7 * 24 * time.Hour
+
+const (
+	errAuthFailed = "authentication failed"
+	sigV4Prefix   = "AWS4-HMAC-SHA256 "
+)
 
 // -------------------------------------------------------------------------
 // BUCKET REGISTRY
@@ -102,18 +108,18 @@ func (br *BucketRegistry) AuthenticateAndResolveBucket(r *http.Request) (string,
 	// enumerate valid access keys, we always compute the signature — using
 	// a dummy secret when the key is unknown — so both paths take the same
 	// time.
-	if strings.HasPrefix(authHeader, "AWS4-HMAC-SHA256 ") {
+	if strings.HasPrefix(authHeader, sigV4Prefix) {
 		// Parse the header once to extract all three fields.
-		parts := authHeader[len("AWS4-HMAC-SHA256 "):]
+		parts := authHeader[len(sigV4Prefix):]
 		credential, signedHeaders, signature := parseSigV4FieldsDirect(parts)
 		if credential == "" {
-			return "", fmt.Errorf("authentication failed")
+			return "", errors.New(errAuthFailed)
 		}
 
 		// Extract access key from the credential scope (accessKey/date/region/service/aws4_request).
 		accessKey, _, _ := strings.Cut(credential, "/")
 		if accessKey == "" {
-			return "", fmt.Errorf("authentication failed")
+			return "", errors.New(errAuthFailed)
 		}
 
 		entry, ok := br.byAccessKey[accessKey]
@@ -123,7 +129,7 @@ func (br *BucketRegistry) AuthenticateAndResolveBucket(r *http.Request) (string,
 		}
 
 		if err := verifySigV4Parsed(r, accessKey, secret, credential, signedHeaders, signature, ok); err != nil || !ok {
-			return "", fmt.Errorf("authentication failed")
+			return "", errors.New(errAuthFailed)
 		}
 
 		return entry.BucketName, nil
@@ -213,11 +219,11 @@ func VerifySigV4(r *http.Request, accessKeyID, secretAccessKey string) error {
 		return fmt.Errorf("missing Authorization header")
 	}
 
-	if !strings.HasPrefix(authHeader, "AWS4-HMAC-SHA256 ") {
+	if !strings.HasPrefix(authHeader, sigV4Prefix) {
 		return fmt.Errorf("unsupported auth scheme")
 	}
 
-	parts := authHeader[len("AWS4-HMAC-SHA256 "):]
+	parts := authHeader[len(sigV4Prefix):]
 	credential, signedHeadersStr, signature := parseSigV4FieldsDirect(parts)
 	if credential == "" || signedHeadersStr == "" || signature == "" {
 		return fmt.Errorf("malformed Authorization header")
@@ -308,12 +314,12 @@ func (br *BucketRegistry) authenticatePresigned(r *http.Request) (string, error)
 	expires := q.Get("X-Amz-Expires")
 
 	if credential == "" || signedHeaders == "" || signature == "" || amzDate == "" || expires == "" {
-		return "", fmt.Errorf("authentication failed")
+		return "", errors.New(errAuthFailed)
 	}
 
 	accessKey, _, _ := strings.Cut(credential, "/")
 	if accessKey == "" {
-		return "", fmt.Errorf("authentication failed")
+		return "", errors.New(errAuthFailed)
 	}
 
 	entry, ok := br.byAccessKey[accessKey]
@@ -323,7 +329,7 @@ func (br *BucketRegistry) authenticatePresigned(r *http.Request) (string, error)
 	}
 
 	if err := verifyPresignedSigV4(r, accessKey, secret, credential, signedHeaders, signature, amzDate, expires, ok); err != nil || !ok {
-		return "", fmt.Errorf("authentication failed")
+		return "", errors.New(errAuthFailed)
 	}
 
 	return entry.BucketName, nil

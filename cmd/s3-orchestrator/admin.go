@@ -24,6 +24,14 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
+const (
+	adminBackendsPath = "/admin/api/backends/"
+	adminTokenHeader  = "X-Admin-Token"
+	flagBatchSize     = "batch-size"
+	fmtBatchSize      = "?batch_size=%d"
+	fmtError          = "error: %v\n"
+)
+
 func runAdmin() { // codecov:ignore -- CLI entry point, delegates to adminCommand
 	fs := flag.NewFlagSet("admin", flag.ExitOnError)
 	configPath := fs.String("config", "config.yaml", "Path to configuration file")
@@ -61,7 +69,7 @@ Flags:
 
 	cfg, err := config.LoadConfig(*configPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		fmt.Fprintf(os.Stderr, fmtError, err)
 		os.Exit(1)
 	}
 
@@ -118,14 +126,14 @@ func adminCommand(cmd string, args []string, baseAddr, token string, stdout, std
 		fs := flag.NewFlagSet("over-replication", flag.ContinueOnError)
 		fs.SetOutput(stderr)
 		execute := fs.Bool("execute", false, "Run cleanup (default: show status only)")
-		batchSize := fs.Int("batch-size", 0, "Override batch size for cleanup")
+		batchSize := fs.Int(flagBatchSize, 0, "Override batch size for cleanup")
 		if err := fs.Parse(args); err != nil {
 			return 1
 		}
 		if *execute {
 			url := baseAddr + "/admin/api/over-replication"
 			if *batchSize > 0 {
-				url += fmt.Sprintf("?batch_size=%d", *batchSize)
+				url += fmt.Sprintf(fmtBatchSize, *batchSize)
 			}
 			return doPost(url, "", token, stdout, stderr)
 		}
@@ -149,45 +157,45 @@ func adminCommand(cmd string, args []string, baseAddr, token string, stdout, std
 			fmt.Fprintln(stderr, "error: backend name is required")
 			return 1
 		}
-		return doPost(baseAddr+"/admin/api/backends/"+args[0]+"/drain", "", token, stdout, stderr)
+		return doPost(baseAddr+adminBackendsPath+args[0]+"/drain", "", token, stdout, stderr)
 
 	case "drain-status":
 		if len(args) == 0 {
 			fmt.Fprintln(stderr, "error: backend name is required")
 			return 1
 		}
-		return doGet(baseAddr+"/admin/api/backends/"+args[0]+"/drain", token, stdout, stderr)
+		return doGet(baseAddr+adminBackendsPath+args[0]+"/drain", token, stdout, stderr)
 
 	case "drain-cancel":
 		if len(args) == 0 {
 			fmt.Fprintln(stderr, "error: backend name is required")
 			return 1
 		}
-		return doDelete(baseAddr+"/admin/api/backends/"+args[0]+"/drain", token, stdout, stderr)
+		return doDelete(baseAddr+adminBackendsPath+args[0]+"/drain", token, stdout, stderr)
 
 	case "scrub":
 		fs := flag.NewFlagSet("scrub", flag.ContinueOnError)
 		fs.SetOutput(stderr)
-		batchSize := fs.Int("batch-size", 0, "Number of objects to verify (0 = use server default)")
+		batchSize := fs.Int(flagBatchSize, 0, "Number of objects to verify (0 = use server default)")
 		if err := fs.Parse(args); err != nil {
 			return 1
 		}
 		url := baseAddr + "/admin/api/scrub"
 		if *batchSize > 0 {
-			url += fmt.Sprintf("?batch_size=%d", *batchSize)
+			url += fmt.Sprintf(fmtBatchSize, *batchSize)
 		}
 		return doPost(url, "", token, stdout, stderr)
 
 	case "backfill-checksums":
 		fs := flag.NewFlagSet("backfill-checksums", flag.ContinueOnError)
 		fs.SetOutput(stderr)
-		batchSize := fs.Int("batch-size", 100, "Objects per batch")
+		batchSize := fs.Int(flagBatchSize, 100, "Objects per batch")
 		if err := fs.Parse(args); err != nil {
 			return 1
 		}
 		url := baseAddr + "/admin/api/backfill-checksums"
 		if *batchSize != 100 {
-			url += fmt.Sprintf("?batch_size=%d", *batchSize)
+			url += fmt.Sprintf(fmtBatchSize, *batchSize)
 		}
 		return doPost(url, "", token, stdout, stderr)
 
@@ -207,7 +215,7 @@ func adminCommand(cmd string, args []string, baseAddr, token string, stdout, std
 
 		if !*purge {
 			// Non-purge: remove DB records immediately
-			return doDelete(baseAddr+"/admin/api/backends/"+name, token, stdout, stderr)
+			return doDelete(baseAddr+adminBackendsPath+name, token, stdout, stderr)
 		}
 
 		if !*confirm {
@@ -231,17 +239,17 @@ func adminCommand(cmd string, args []string, baseAddr, token string, stdout, std
 // doRemovePreview calls the purge endpoint without confirmation and prints
 // what would be destroyed.
 func doRemovePreview(baseAddr, name, token string, stdout, stderr io.Writer) int {
-	url := baseAddr + "/admin/api/backends/" + name + "?purge=true"
+	url := baseAddr + adminBackendsPath + name + "?purge=true"
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, url, nil)
 	if err != nil {
-		fmt.Fprintf(stderr, "error: %v\n", err)
+		fmt.Fprintf(stderr, fmtError, err)
 		return 1
 	}
-	req.Header.Set("X-Admin-Token", token)
+	req.Header.Set(adminTokenHeader, token)
 
 	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req) //nolint:gosec // G704: admin CLI target address is user-provided via --addr flag
 	if err != nil {
-		fmt.Fprintf(stderr, "error: %v\n", err)
+		fmt.Fprintf(stderr, fmtError, err)
 		return 1
 	}
 	defer resp.Body.Close()
@@ -265,17 +273,17 @@ func doRemovePreview(baseAddr, name, token string, stdout, stderr io.Writer) int
 // the preview endpoint, then executes with the token.
 func doRemovePurge(baseAddr, name, token string, stdout, stderr io.Writer) int {
 	// Phase 1: get confirmation token
-	url := baseAddr + "/admin/api/backends/" + name + "?purge=true"
+	url := baseAddr + adminBackendsPath + name + "?purge=true"
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, url, nil)
 	if err != nil {
-		fmt.Fprintf(stderr, "error: %v\n", err)
+		fmt.Fprintf(stderr, fmtError, err)
 		return 1
 	}
-	req.Header.Set("X-Admin-Token", token)
+	req.Header.Set(adminTokenHeader, token)
 
 	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req) //nolint:gosec // G704: admin CLI target address is user-provided via --addr flag
 	if err != nil {
-		fmt.Fprintf(stderr, "error: %v\n", err)
+		fmt.Fprintf(stderr, fmtError, err)
 		return 1
 	}
 	defer resp.Body.Close()
@@ -324,10 +332,10 @@ func doRequest(method, url, body, token string, stdout, stderr io.Writer) int {
 
 	req, err := http.NewRequestWithContext(context.Background(), method, url, bodyReader)
 	if err != nil {
-		fmt.Fprintf(stderr, "error: %v\n", err)
+		fmt.Fprintf(stderr, fmtError, err)
 		return 1
 	}
-	req.Header.Set("X-Admin-Token", token)
+	req.Header.Set(adminTokenHeader, token)
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -335,7 +343,7 @@ func doRequest(method, url, body, token string, stdout, stderr io.Writer) int {
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req) //nolint:gosec // G704: admin CLI target address is user-provided via --addr flag
 	if err != nil {
-		fmt.Fprintf(stderr, "error: %v\n", err)
+		fmt.Fprintf(stderr, fmtError, err)
 		return 1
 	}
 	defer resp.Body.Close()
