@@ -22,6 +22,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -112,13 +113,13 @@ func (br *BucketRegistry) AuthenticateAndResolveBucket(r *http.Request) (string,
 		parts := authHeader[len(sigV4Prefix):]
 		credential, signedHeaders, signature := parseSigV4FieldsDirect(parts)
 		if credential == "" {
-			return "", fmt.Errorf(errAuthFailed)
+			return "", errors.New(errAuthFailed)
 		}
 
 		// Extract access key from the credential scope (accessKey/date/region/service/aws4_request).
 		accessKey, _, _ := strings.Cut(credential, "/")
 		if accessKey == "" {
-			return "", fmt.Errorf(errAuthFailed)
+			return "", errors.New(errAuthFailed)
 		}
 
 		entry, ok := br.byAccessKey[accessKey]
@@ -128,7 +129,7 @@ func (br *BucketRegistry) AuthenticateAndResolveBucket(r *http.Request) (string,
 		}
 
 		if err := verifySigV4Parsed(r, accessKey, secret, credential, signedHeaders, signature, ok); err != nil || !ok {
-			return "", fmt.Errorf(errAuthFailed)
+			return "", errors.New(errAuthFailed)
 		}
 
 		return entry.BucketName, nil
@@ -313,12 +314,12 @@ func (br *BucketRegistry) authenticatePresigned(r *http.Request) (string, error)
 	expires := q.Get("X-Amz-Expires")
 
 	if credential == "" || signedHeaders == "" || signature == "" || amzDate == "" || expires == "" {
-		return "", fmt.Errorf(errAuthFailed)
+		return "", errors.New(errAuthFailed)
 	}
 
 	accessKey, _, _ := strings.Cut(credential, "/")
 	if accessKey == "" {
-		return "", fmt.Errorf(errAuthFailed)
+		return "", errors.New(errAuthFailed)
 	}
 
 	entry, ok := br.byAccessKey[accessKey]
@@ -328,7 +329,7 @@ func (br *BucketRegistry) authenticatePresigned(r *http.Request) (string, error)
 	}
 
 	if err := verifyPresignedSigV4(r, accessKey, secret, credential, signedHeaders, signature, amzDate, expires, ok); err != nil || !ok {
-		return "", fmt.Errorf(errAuthFailed)
+		return "", errors.New(errAuthFailed)
 	}
 
 	return entry.BucketName, nil

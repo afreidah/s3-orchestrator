@@ -129,12 +129,11 @@ jobs:
       - name: Unit tests
         run: go test -race -coverprofile=coverage.out -covermode=atomic -coverpkg=./... ./...
 
-      - name: Upload coverage
-        uses: codecov/codecov-action@v6
+      - name: Upload unit coverage
+        uses: actions/upload-artifact@v4
         with:
-          files: coverage.out
-          flags: unit
-          token: ${{ secrets.CODECOV_TOKEN }}
+          name: unit-coverage
+          path: coverage.out
 
   govulncheck:
     needs: [changes]
@@ -157,7 +156,7 @@ jobs:
   integration:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    needs: [lint, test]
+    needs: [changes]
     if: needs.changes.outputs.go == 'true'
     steps:
       - uses: actions/checkout@v6
@@ -169,12 +168,40 @@ jobs:
       - name: Integration tests
         run: go test -race -v -tags integration -count=1 -coverprofile=integration-coverage.out -covermode=atomic -coverpkg=./... ./internal/integration/
 
-      - name: Upload coverage
-        uses: codecov/codecov-action@v6
+      - name: Upload integration coverage
+        uses: actions/upload-artifact@v4
         with:
-          files: integration-coverage.out
-          flags: integration
-          token: ${{ secrets.CODECOV_TOKEN }}
+          name: integration-coverage
+          path: integration-coverage.out
+
+  # ---------------------------------------------------------------------------
+  # SONARQUBE ANALYSIS
+  # ---------------------------------------------------------------------------
+  sonarqube:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [test, integration]
+    if: always() && needs.test.result == 'success'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Download unit coverage
+        uses: actions/download-artifact@v4
+        with:
+          name: unit-coverage
+
+      - name: Download integration coverage
+        uses: actions/download-artifact@v4
+        with:
+          name: integration-coverage
+        continue-on-error: true
+
+      - name: SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
   package:
     runs-on: ubuntu-latest

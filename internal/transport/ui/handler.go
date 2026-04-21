@@ -54,12 +54,14 @@ const (
 	csrfHeaderName    = "X-CSRF-Token"
 	sessionTTL        = 24 * time.Hour
 
-	contentTypeJSON = "application/json"
-	contentTypeHTML = "text/html; charset=utf-8"
-	headerContentType = "Content-Type"
+	contentTypeJSON       = "application/json"
+	contentTypeHTML       = "text/html; charset=utf-8"
+	headerContentType     = "Content-Type"
 	errMethodNotAllowed   = "method not allowed"
 	errInvalidRequestBody = "invalid request body"
 	errKeyRequired        = "key is required"
+	errLoginRenderFailed  = "UI: failed to render login page"
+	opCleanExcess         = "clean-excess"
 )
 
 // Handler serves the web UI dashboard.
@@ -343,7 +345,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set(headerContentType, contentTypeHTML)
 		if err := h.templates.ExecuteTemplate(w, "login.html", loginPage{Version: telemetry.Version}); err != nil {
-			slog.ErrorContext(r.Context(), "UI: failed to render login page", "error", err)
+			slog.ErrorContext(r.Context(), errLoginRenderFailed, "error", err)
 		}
 		return
 	}
@@ -363,7 +365,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 			Version: telemetry.Version,
 			Error:   "Too many attempts. Try again later.",
 		}); err != nil {
-			slog.ErrorContext(r.Context(), "UI: failed to render login page", "error", err)
+			slog.ErrorContext(r.Context(), errLoginRenderFailed, "error", err)
 		}
 		return
 	}
@@ -385,7 +387,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 			Version: telemetry.Version,
 			Error:   "Invalid credentials.",
 		}); err != nil {
-			slog.ErrorContext(r.Context(), "UI: failed to render login page", "error", err)
+			slog.ErrorContext(r.Context(), errLoginRenderFailed, "error", err)
 		}
 		return
 	}
@@ -887,7 +889,7 @@ func (h *Handler) handleAPICleanExcess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !h.asyncOps.TryStart("clean-excess") {
+	if !h.asyncOps.TryStart(opCleanExcess) {
 		w.Header().Set(headerContentType, contentTypeJSON)
 		w.WriteHeader(http.StatusConflict)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "cleanup already running"})
@@ -906,11 +908,11 @@ func (h *Handler) handleAPICleanExcess(w http.ResponseWriter, r *http.Request) {
 		removed, err := h.manager.OverReplicationCleaner.Clean(context.Background(), cfg)
 		if err != nil {
 			slog.Error("UI: over-replication cleanup failed", "error", err) //nolint:sloglint // background goroutine, no request context
-			h.asyncOps.Complete("clean-excess", &asyncResult{Error: "cleanup failed"})
+			h.asyncOps.Complete(opCleanExcess, &asyncResult{Error: "cleanup failed"})
 			return
 		}
 		slog.Info("UI: manual over-replication cleanup completed", "removed", removed) //nolint:sloglint // background goroutine, no request context
-		h.asyncOps.Complete("clean-excess", &asyncResult{OK: true, Count: removed})
+		h.asyncOps.Complete(opCleanExcess, &asyncResult{OK: true, Count: removed})
 	}()
 
 	w.Header().Set(headerContentType, contentTypeJSON)
@@ -922,7 +924,7 @@ func (h *Handler) handleAPICleanExcess(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleAPICleanExcessStatus(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
 	w.Header().Set(headerContentType, contentTypeJSON)
-	result, running := h.asyncOps.Status("clean-excess")
+	result, running := h.asyncOps.Status(opCleanExcess)
 	if running {
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "running"})
 		return
