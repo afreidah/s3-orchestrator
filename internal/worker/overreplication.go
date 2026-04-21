@@ -38,13 +38,14 @@ import (
 // configured replication factor. Embeds *backendCore for access to shared
 // infrastructure.
 type OverReplicationCleaner struct {
-	ops Ops
-	cfg syncutil.AtomicConfig[config.ReplicationConfig]
+	ops   Ops
+	store OverReplicationStore
+	cfg   syncutil.AtomicConfig[config.ReplicationConfig]
 }
 
 // NewOverReplicationCleaner creates a cleaner that shares the given core.
-func NewOverReplicationCleaner(ops Ops) *OverReplicationCleaner {
-	return &OverReplicationCleaner{ops: ops}
+func NewOverReplicationCleaner(ops Ops, store OverReplicationStore) *OverReplicationCleaner {
+	return &OverReplicationCleaner{ops: ops, store: store}
 }
 
 // SetConfig atomically stores the replication configuration.
@@ -81,7 +82,7 @@ func (c *OverReplicationCleaner) Clean(ctx context.Context, cfg config.Replicati
 	)
 
 	// --- Find over-replicated objects ---
-	locations, err := c.ops.Store().GetOverReplicatedObjects(ctx, cfg.Factor, cfg.BatchSize)
+	locations, err := c.store.GetOverReplicatedObjects(ctx, cfg.Factor, cfg.BatchSize)
 	if err != nil {
 		telemetry.OverReplicationRunsTotal.WithLabelValues("error").Inc()
 		return 0, fmt.Errorf("failed to query over-replicated objects: %w", err)
@@ -95,7 +96,7 @@ func (c *OverReplicationCleaner) Clean(ctx context.Context, cfg config.Replicati
 	}
 
 	// Pre-fetch quota stats for copy scoring (utilization ratio).
-	quotaStats, qErr := c.ops.Store().GetQuotaStats(ctx)
+	quotaStats, qErr := c.store.GetQuotaStats(ctx)
 	if qErr != nil {
 		slog.WarnContext(ctx, "Over-replication: failed to get quota stats, scoring without utilization",
 			"error", qErr)
@@ -147,7 +148,7 @@ func (c *OverReplicationCleaner) Clean(ctx context.Context, cfg config.Replicati
 
 // CountPending returns the number of objects exceeding the replication factor.
 func (c *OverReplicationCleaner) CountPending(ctx context.Context, factor int) (int64, error) {
-	return c.ops.Store().CountOverReplicatedObjects(ctx, factor)
+	return c.store.CountOverReplicatedObjects(ctx, factor)
 }
 
 // -------------------------------------------------------------------------
@@ -216,7 +217,7 @@ func (c *OverReplicationCleaner) cleanObject(ctx context.Context, key string, co
 		// Remove from metadata first so the replicator never sees a ghost
 		// copy. If the DB remove succeeds but the backend delete fails, the
 		// cleanup queue handles the orphan.
-		if err := c.ops.Store().RemoveExcessCopy(ctx, key, victim.BackendName, victim.SizeBytes); err != nil {
+		if err := c.store.RemoveExcessCopy(ctx, key, victim.BackendName, victim.SizeBytes); err != nil {
 			slog.WarnContext(ctx, "Over-replication: failed to remove metadata",
 				"key", key, "backend", victim.BackendName, "error", err)
 			telemetry.OverReplicationErrorsTotal.Inc()

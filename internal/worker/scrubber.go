@@ -40,14 +40,15 @@ import (
 // stored content hash. Also supports backfilling hashes for objects that
 // were written before integrity was enabled.
 type Scrubber struct {
-	deps      ScrubberDeps
+	deps      ScrubberOps
+	store     ScrubberStore
 	encryptor *encryption.Encryptor
 	cfg       syncutil.AtomicConfig[config.IntegrityConfig]
 }
 
 // NewScrubber creates a Scrubber with the given dependencies and optional encryptor.
-func NewScrubber(deps ScrubberDeps, encryptor *encryption.Encryptor) *Scrubber {
-	return &Scrubber{deps: deps, encryptor: encryptor}
+func NewScrubber(deps ScrubberOps, store ScrubberStore, encryptor *encryption.Encryptor) *Scrubber {
+	return &Scrubber{deps: deps, store: store, encryptor: encryptor}
 }
 
 // SetConfig atomically stores the integrity configuration.
@@ -72,7 +73,7 @@ func (s *Scrubber) Scrub(ctx context.Context, batchSize int) (checked, failed in
 	ctx, span := telemetry.StartSpan(ctx, "Scrub")
 	defer span.End()
 
-	locs, err := s.deps.Store().GetRandomHashedObjects(ctx, batchSize)
+	locs, err := s.store.GetRandomHashedObjects(ctx, batchSize)
 	if err != nil {
 		slog.ErrorContext(ctx, "Scrubber: failed to fetch objects", "error", err)
 		return 0, 0
@@ -139,7 +140,7 @@ func (s *Scrubber) Backfill(ctx context.Context, batchSize, offset int) (process
 	ctx, span := telemetry.StartSpan(ctx, "Backfill")
 	defer span.End()
 
-	locs, err := s.deps.Store().GetObjectsWithoutHash(ctx, batchSize, offset)
+	locs, err := s.store.GetObjectsWithoutHash(ctx, batchSize, offset)
 	if err != nil {
 		slog.ErrorContext(ctx, "Backfill: failed to fetch objects", "error", err)
 		return 0, 0
@@ -164,7 +165,7 @@ func (s *Scrubber) Backfill(ctx context.Context, batchSize, offset int) (process
 			continue
 		}
 
-		if err := s.deps.Store().UpdateContentHash(ctx, loc.ObjectKey, loc.BackendName, hash); err != nil {
+		if err := s.store.UpdateContentHash(ctx, loc.ObjectKey, loc.BackendName, hash); err != nil {
 			slog.WarnContext(ctx, "Backfill: failed to store hash",
 				"key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
 			continue

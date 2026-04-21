@@ -15,7 +15,7 @@ import (
 func TestRebalancer_SetConfig_RoundTrip(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	r := NewRebalancer(NewMockOps(ctrl))
+	r := NewRebalancer(NewMockOps(ctrl), &mockMetadataStore{})
 	if r.Config() != nil {
 		t.Fatal("expected nil config before set")
 	}
@@ -69,9 +69,11 @@ func TestPlanSpreadEven_BalancedSkipped(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
+	ms := &mockMetadataStore{}
+
 	ops.EXPECT().BackendOrder().Return([]string{"b1", "b2"}).AnyTimes()
 
-	r := NewRebalancer(ops)
+	r := NewRebalancer(ops, ms)
 	// Equal utilization: no moves needed
 	stats := map[string]store.QuotaStat{
 		"b1": {BytesUsed: 500, BytesLimit: 1000},
@@ -97,9 +99,8 @@ func TestPlanSpreadEven_ImbalancedPlansMoves(t *testing.T) {
 	}
 
 	ops.EXPECT().BackendOrder().Return([]string{"b1", "b2"}).AnyTimes()
-	ops.EXPECT().Store().Return(ms).AnyTimes()
 
-	r := NewRebalancer(ops)
+	r := NewRebalancer(ops, ms)
 	// b1 at 80%, b2 at 20% → target ~50%, b1 has excess
 	stats := map[string]store.QuotaStat{
 		"b1": {BytesUsed: 800, BytesLimit: 1000},
@@ -123,17 +124,17 @@ func TestExecuteOneMove_Success(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
+
 	srcBe := backendtest.NewMockObjectBackend(ctrl)
 	dstBe := backendtest.NewMockObjectBackend(ctrl)
 	ms := &mockMetadataStore{moveSize: 100}
 
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": srcBe, "b2": dstBe}).AnyTimes()
 	ops.EXPECT().StreamCopy(gomock.Any(), srcBe, dstBe, "key1").Return(nil)
-	ops.EXPECT().Store().Return(ms).AnyTimes()
 	ops.EXPECT().DeleteOrEnqueue(gomock.Any(), srcBe, "b1", "key1", "rebalance_source_delete", int64(100))
 	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
 
-	r := NewRebalancer(ops)
+	r := NewRebalancer(ops, ms)
 	ok := r.ExecuteOneMove(context.Background(), RebalanceMove{
 		ObjectKey: "key1", FromBackend: "b1", ToBackend: "b2", SizeBytes: 100,
 	}, "spread")
@@ -146,13 +147,15 @@ func TestExecuteOneMove_StreamCopyFails(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
+	ms := &mockMetadataStore{}
+
 	srcBe := backendtest.NewMockObjectBackend(ctrl)
 	dstBe := backendtest.NewMockObjectBackend(ctrl)
 
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": srcBe, "b2": dstBe}).AnyTimes()
 	ops.EXPECT().StreamCopy(gomock.Any(), srcBe, dstBe, "key1").Return(errors.New("timeout"))
 
-	r := NewRebalancer(ops)
+	r := NewRebalancer(ops, ms)
 	ok := r.ExecuteOneMove(context.Background(), RebalanceMove{
 		ObjectKey: "key1", FromBackend: "b1", ToBackend: "b2", SizeBytes: 100,
 	}, "spread")
@@ -165,17 +168,17 @@ func TestExecuteOneMove_MoveLocationFails(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
+
 	srcBe := backendtest.NewMockObjectBackend(ctrl)
 	dstBe := backendtest.NewMockObjectBackend(ctrl)
 	ms := &mockMetadataStore{moveSize: 0} // 0 = object was deleted/moved
 
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": srcBe, "b2": dstBe}).AnyTimes()
 	ops.EXPECT().StreamCopy(gomock.Any(), srcBe, dstBe, "key1").Return(nil)
-	ops.EXPECT().Store().Return(ms).AnyTimes()
 	ops.EXPECT().DeleteOrEnqueue(gomock.Any(), dstBe, "b2", "key1", "rebalance_stale_orphan", int64(100))
 	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
 
-	r := NewRebalancer(ops)
+	r := NewRebalancer(ops, ms)
 	ok := r.ExecuteOneMove(context.Background(), RebalanceMove{
 		ObjectKey: "key1", FromBackend: "b1", ToBackend: "b2", SizeBytes: 100,
 	}, "spread")
@@ -188,9 +191,11 @@ func TestExecuteOneMove_SourceBackendNotFound(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
+	ms := &mockMetadataStore{}
+
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{}).AnyTimes()
 
-	r := NewRebalancer(ops)
+	r := NewRebalancer(ops, ms)
 	ok := r.ExecuteOneMove(context.Background(), RebalanceMove{
 		ObjectKey: "key1", FromBackend: "gone", ToBackend: "b2",
 	}, "spread")
@@ -207,10 +212,9 @@ func TestRebalance_UnknownStrategy(t *testing.T) {
 		"b1": {BytesUsed: 900, BytesLimit: 1000},
 		"b2": {BytesUsed: 100, BytesLimit: 1000},
 	}}
-	ops.EXPECT().Store().Return(ms).AnyTimes()
 	ops.EXPECT().BackendOrder().Return([]string{"b1", "b2"}).AnyTimes()
 
-	r := NewRebalancer(ops)
+	r := NewRebalancer(ops, ms)
 	_, err := r.Rebalance(context.Background(), config.RebalanceConfig{
 		Strategy: "bogus", Threshold: 0.01, BatchSize: 10,
 	})

@@ -19,7 +19,7 @@ import (
 func TestReplicator_SetConfig_RoundTrip(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	r := NewReplicator(NewMockOps(ctrl))
+	r := NewReplicator(NewMockOps(ctrl), &mockMetadataStore{})
 	if r.Config() != nil {
 		t.Fatal("expected nil config before set")
 	}
@@ -34,11 +34,13 @@ func TestFindReplicaTarget_SelectsBackendWithSpace(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
+	ms := &mockMetadataStore{}
+
 
 	exclusion := map[string]bool{"b1": true}
 	ops.EXPECT().SelectReplicaTarget(gomock.Any(), int64(50), exclusion).Return("b2", nil)
 
-	r := NewReplicator(ops)
+	r := NewReplicator(ops, ms)
 	stats := map[string]store.QuotaStat{
 		"b1": {BytesUsed: 900, BytesLimit: 1000},
 		"b2": {BytesUsed: 100, BytesLimit: 1000},
@@ -54,10 +56,12 @@ func TestFindReplicaTarget_NoSpace(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
+	ms := &mockMetadataStore{}
+
 
 	ops.EXPECT().SelectReplicaTarget(gomock.Any(), int64(50), gomock.Any()).Return("", nil)
 
-	r := NewReplicator(ops)
+	r := NewReplicator(ops, ms)
 	stats := map[string]store.QuotaStat{
 		"b1": {BytesUsed: 990, BytesLimit: 1000},
 	}
@@ -72,11 +76,13 @@ func TestFindReplicaTarget_SelectionError(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
+	ms := &mockMetadataStore{}
+
 
 	ops.EXPECT().SelectReplicaTarget(gomock.Any(), int64(50), gomock.Any()).
 		Return("", fmt.Errorf("database unavailable"))
 
-	r := NewReplicator(ops)
+	r := NewReplicator(ops, ms)
 
 	target := r.FindReplicaTarget(context.Background(), nil, "key1", 50, nil)
 	if target != "" {
@@ -88,6 +94,8 @@ func TestCopyToReplica_Success(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
+	ms := &mockMetadataStore{}
+
 	srcBe := backendtest.NewMockObjectBackend(ctrl)
 	dstBe := backendtest.NewMockObjectBackend(ctrl)
 
@@ -95,7 +103,7 @@ func TestCopyToReplica_Success(t *testing.T) {
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": srcBe}).AnyTimes()
 	ops.EXPECT().StreamCopy(gomock.Any(), srcBe, dstBe, "key1").Return(nil)
 
-	r := NewReplicator(ops)
+	r := NewReplicator(ops, ms)
 	copies := []store.ObjectLocation{{BackendName: "b1"}}
 
 	src, err := r.CopyToReplica(context.Background(), "key1", copies, "b2")
@@ -111,17 +119,18 @@ func TestCopyToReplica_404CleansUpStaleMetadata(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
+	ms := &mockMetadataStore{}
+
 	srcBe := backendtest.NewMockObjectBackend(ctrl)
 	dstBe := backendtest.NewMockObjectBackend(ctrl)
-	ms := &mockMetadataStore{}
+
 
 	ops.EXPECT().GetBackend("b2").Return(dstBe, nil)
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": srcBe}).AnyTimes()
 	ops.EXPECT().StreamCopy(gomock.Any(), srcBe, dstBe, "key1").
 		Return(fmt.Errorf("read: %w", &httpError{code: 404, msg: "NoSuchKey"}))
-	ops.EXPECT().Store().Return(ms).AnyTimes()
 
-	r := NewReplicator(ops)
+	r := NewReplicator(ops, ms)
 	copies := []store.ObjectLocation{{BackendName: "b1"}}
 
 	_, err := r.CopyToReplica(context.Background(), "key1", copies, "b2")
@@ -137,6 +146,8 @@ func TestCopyToReplica_AllSourcesFail(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
+	ms := &mockMetadataStore{}
+
 	srcBe := backendtest.NewMockObjectBackend(ctrl)
 	dstBe := backendtest.NewMockObjectBackend(ctrl)
 
@@ -144,7 +155,7 @@ func TestCopyToReplica_AllSourcesFail(t *testing.T) {
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": srcBe}).AnyTimes()
 	ops.EXPECT().StreamCopy(gomock.Any(), srcBe, dstBe, "key1").Return(fmt.Errorf("read: timeout"))
 
-	r := NewReplicator(ops)
+	r := NewReplicator(ops, ms)
 	copies := []store.ObjectLocation{{BackendName: "b1"}}
 
 	_, err := r.CopyToReplica(context.Background(), "key1", copies, "b2")
@@ -157,20 +168,22 @@ func TestCleanupOrphan_DelegatesToDeleteOrEnqueue(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
+	ms := &mockMetadataStore{}
+
 	be := backendtest.NewMockObjectBackend(ctrl)
 
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": be})
 	ops.EXPECT().DeleteOrEnqueue(gomock.Any(), be, "b1", "key1", "replication_orphan", int64(100))
 	ops.EXPECT().Usage().Return(newTestUsageTracker())
 
-	r := NewReplicator(ops)
+	r := NewReplicator(ops, ms)
 	r.CleanupOrphan(context.Background(), "b1", "key1", 100)
 }
 
 func TestReplicate_FactorOne_Noop(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	r := NewReplicator(NewMockOps(ctrl))
+	r := NewReplicator(NewMockOps(ctrl), &mockMetadataStore{})
 
 	created, err := r.Replicate(context.Background(), config.ReplicationConfig{Factor: 1})
 	if err != nil {
@@ -187,10 +200,10 @@ func TestReplicate_NothingUnderReplicated(t *testing.T) {
 	ops := NewMockOps(ctrl)
 	ms := &mockMetadataStore{}
 
-	ops.EXPECT().Store().Return(ms).AnyTimes()
+
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{}).AnyTimes()
 
-	r := NewReplicator(ops)
+	r := NewReplicator(ops, ms)
 	cfg := config.ReplicationConfig{Factor: 2, BatchSize: 10, Concurrency: 1, UnhealthyThreshold: time.Hour}
 	created, err := r.Replicate(context.Background(), cfg)
 	if err != nil {
@@ -208,19 +221,19 @@ func TestReplicateObject_Success(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
+
 	srcBe := backendtest.NewMockObjectBackend(ctrl)
 	dstBe := backendtest.NewMockObjectBackend(ctrl)
 
 	ms := &mockMetadataStore{recordReplicaOK: true}
 
-	ops.EXPECT().Store().Return(ms).AnyTimes()
 	ops.EXPECT().SelectReplicaTarget(gomock.Any(), int64(50), gomock.Any()).Return("b2", nil)
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": srcBe, "b2": dstBe}).AnyTimes()
 	ops.EXPECT().GetBackend("b2").Return(dstBe, nil)
 	ops.EXPECT().StreamCopy(gomock.Any(), srcBe, dstBe, "key1").Return(nil)
 	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
 
-	r := NewReplicator(ops)
+	r := NewReplicator(ops, ms)
 	copies := []store.ObjectLocation{{BackendName: "b1", SizeBytes: 50}}
 	stats := map[string]store.QuotaStat{
 		"b1": {BytesUsed: 100, BytesLimit: 1000},
@@ -243,13 +256,13 @@ func TestReplicateObject_WriteFailureExcludesTarget(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
+
 	srcBe := backendtest.NewMockObjectBackend(ctrl)
 	failBe := backendtest.NewMockObjectBackend(ctrl)
 	okBe := backendtest.NewMockObjectBackend(ctrl)
 
 	ms := &mockMetadataStore{recordReplicaOK: true}
 
-	ops.EXPECT().Store().Return(ms).AnyTimes()
 	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{
 		"src": srcBe, "fail": failBe, "ok": okBe,
@@ -285,7 +298,7 @@ func TestReplicateObject_WriteFailureExcludesTarget(t *testing.T) {
 	ops.EXPECT().GetBackend("ok").Return(okBe, nil)
 	ops.EXPECT().StreamCopy(gomock.Any(), srcBe, okBe, "key1").Return(nil)
 
-	r := NewReplicator(ops)
+	r := NewReplicator(ops, ms)
 	copies := []store.ObjectLocation{{BackendName: "src", SizeBytes: 50}}
 	stats := map[string]store.QuotaStat{
 		"src":  {BytesUsed: 100, BytesLimit: 1000},
@@ -308,12 +321,12 @@ func TestReplicateObject_RecordReplicaErrorExcludesTarget(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
+
 	srcBe := backendtest.NewMockObjectBackend(ctrl)
 	failBe := backendtest.NewMockObjectBackend(ctrl)
 
 	ms := &mockMetadataStore{recordReplicaErr: errors.New("db down")}
 
-	ops.EXPECT().Store().Return(ms).AnyTimes()
 	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{
 		"src": srcBe, "fail": failBe,
@@ -336,7 +349,7 @@ func TestReplicateObject_RecordReplicaErrorExcludesTarget(t *testing.T) {
 	// CleanupOrphan path
 	ops.EXPECT().DeleteOrEnqueue(gomock.Any(), failBe, "fail", "key1", "replication_orphan", int64(50))
 
-	r := NewReplicator(ops)
+	r := NewReplicator(ops, ms)
 	copies := []store.ObjectLocation{{BackendName: "src", SizeBytes: 50}}
 	stats := map[string]store.QuotaStat{}
 
@@ -353,13 +366,13 @@ func TestReplicateObject_NotInsertedExcludesTarget(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
+
 	srcBe := backendtest.NewMockObjectBackend(ctrl)
 	staleBe := backendtest.NewMockObjectBackend(ctrl)
 
 	// recordReplicaOK=false simulates source deleted during replication
 	ms := &mockMetadataStore{recordReplicaOK: false}
 
-	ops.EXPECT().Store().Return(ms).AnyTimes()
 	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{
 		"src": srcBe, "stale": staleBe,
@@ -382,7 +395,7 @@ func TestReplicateObject_NotInsertedExcludesTarget(t *testing.T) {
 	// CleanupOrphan path
 	ops.EXPECT().DeleteOrEnqueue(gomock.Any(), staleBe, "stale", "key1", "replication_orphan", int64(50))
 
-	r := NewReplicator(ops)
+	r := NewReplicator(ops, ms)
 	copies := []store.ObjectLocation{{BackendName: "src", SizeBytes: 50}}
 	stats := map[string]store.QuotaStat{}
 

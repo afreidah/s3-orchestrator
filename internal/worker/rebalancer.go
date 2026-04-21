@@ -33,15 +33,15 @@ import (
 // -------------------------------------------------------------------------
 
 // Rebalancer moves objects between backends to optimize space distribution.
-// Embeds *backendCore for access to shared infrastructure.
 type Rebalancer struct {
-	ops Ops
-	cfg syncutil.AtomicConfig[config.RebalanceConfig]
+	ops   Ops
+	store RebalancerStore
+	cfg   syncutil.AtomicConfig[config.RebalanceConfig]
 }
 
-// NewRebalancer creates a Rebalancer that shares the given core infrastructure.
-func NewRebalancer(ops Ops) *Rebalancer {
-	return &Rebalancer{ops: ops}
+// NewRebalancer creates a Rebalancer with fleet operations and a narrow store.
+func NewRebalancer(ops Ops, store RebalancerStore) *Rebalancer {
+	return &Rebalancer{ops: ops, store: store}
 }
 
 // SetConfig atomically stores the rebalance configuration.
@@ -83,7 +83,7 @@ func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig) 
 	)
 
 	// --- Get current quota stats ---
-	stats, err := r.ops.Store().GetQuotaStats(ctx)
+	stats, err := r.store.GetQuotaStats(ctx)
 	if err != nil {
 		telemetry.RebalanceRunsTotal.WithLabelValues(cfg.Strategy, "error").Inc()
 		return 0, fmt.Errorf("failed to get quota stats: %w", err)
@@ -237,7 +237,7 @@ func (r *Rebalancer) PlanPackTight(ctx context.Context, stats map[string]store.Q
 			objects, ok := objectCache[src.Name]
 			if !ok {
 				var err error
-				objects, err = r.ops.Store().ListObjectsByBackend(ctx, src.Name, remaining)
+				objects, err = r.store.ListObjectsByBackend(ctx, src.Name, remaining)
 				if err != nil {
 					return nil, fmt.Errorf("failed to list objects on %s: %w", src.Name, err)
 				}
@@ -260,7 +260,7 @@ func (r *Rebalancer) PlanPackTight(ctx context.Context, stats map[string]store.Q
 				}
 
 				// Skip if destination already has a copy of this object
-				existingCopies, _ := r.ops.Store().GetAllObjectLocations(ctx, objects[oi].ObjectKey)
+				existingCopies, _ := r.store.GetAllObjectLocations(ctx, objects[oi].ObjectKey)
 				alreadyOnDest := false
 				for ci := range existingCopies {
 					if existingCopies[ci].BackendName == dest.Name {
@@ -356,7 +356,7 @@ func (r *Rebalancer) PlanSpreadEven(ctx context.Context, stats map[string]store.
 		}
 
 		src := &sources[si]
-		objects, err := r.ops.Store().ListObjectsByBackend(ctx, src.Name, remaining)
+		objects, err := r.store.ListObjectsByBackend(ctx, src.Name, remaining)
 		if err != nil {
 			return nil, fmt.Errorf("failed to list objects on %s: %w", src.Name, err)
 		}
@@ -373,7 +373,7 @@ func (r *Rebalancer) PlanSpreadEven(ctx context.Context, stats map[string]store.
 			}
 
 			// Check which backends already have a copy of this object
-			existingCopies, _ := r.ops.Store().GetAllObjectLocations(ctx, objects[oi].ObjectKey)
+			existingCopies, _ := r.store.GetAllObjectLocations(ctx, objects[oi].ObjectKey)
 			copySet := make(map[string]bool, len(existingCopies))
 			for i := range existingCopies {
 				copySet[existingCopies[i].BackendName] = true
@@ -465,7 +465,7 @@ func (r *Rebalancer) ExecuteOneMove(ctx context.Context, move RebalanceMove, str
 	}
 
 	// --- Atomic DB update (compare-and-swap) ---
-	movedSize, err := r.ops.Store().MoveObjectLocation(ctx, move.ObjectKey, move.FromBackend, move.ToBackend)
+	movedSize, err := r.store.MoveObjectLocation(ctx, move.ObjectKey, move.FromBackend, move.ToBackend)
 	if err != nil {
 		slog.ErrorContext(ctx, "Rebalance: failed to update object location",
 			"key", move.ObjectKey, "error", err)
