@@ -1,0 +1,749 @@
+PASS
+ok  	github.com/afreidah/s3-orchestrator/cmd/s3-orchestrator	0.009s
+PASS
+ok  	github.com/afreidah/s3-orchestrator/internal/backend	0.007s
+?   	github.com/afreidah/s3-orchestrator/internal/backend/backendtest	[no test files]
+goos: linux
+goarch: amd64
+pkg: github.com/afreidah/s3-orchestrator/internal/breaker
+cpu: AMD Ryzen 5 7535U with Radeon Graphics         
+BenchmarkPreCheck_Closed-12           	138762582	         8.617 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPreCheck_Closed-12           	139747036	         8.579 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPreCheck_Closed-12           	138247756	         8.641 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPreCheck_Closed-12           	137640392	         8.700 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPreCheck_Closed-12           	137061243	         8.714 ns/op	       0 B/op	       0 allocs/op
+2026/04/20 21:42:40 WARN Circuit breaker opened: failure threshold reached name=bench from=closed to=open failures=5 threshold=5
+BenchmarkPostCheck_Success-12         	  515493	      2406 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPostCheck_Success-12         	2026/04/20 21:42:41 WARN Circuit breaker opened: failure threshold reached name=bench from=closed to=open failures=5 threshold=5
+  536332	      2398 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPostCheck_Success-12         	2026/04/20 21:42:42 WARN Circuit breaker opened: failure threshold reached name=bench from=closed to=open failures=5 threshold=5
+  515457	      2411 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPostCheck_Success-12         	2026/04/20 21:42:44 WARN Circuit breaker opened: failure threshold reached name=bench from=closed to=open failures=5 threshold=5
+  523880	      2411 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPostCheck_Success-12         	2026/04/20 21:42:45 WARN Circuit breaker opened: failure threshold reached name=bench from=closed to=open failures=5 threshold=5
+  511288	      2410 ns/op	       0 B/op	       0 allocs/op
+2026/04/20 21:42:46 WARN Circuit breaker opened: failure threshold reached name=bench from=closed to=open failures=5 threshold=5
+BenchmarkPrePostCheck_RoundTrip-12    	  347769	      3600 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPrePostCheck_RoundTrip-12    	2026/04/20 21:42:47 WARN Circuit breaker opened: failure threshold reached name=bench from=closed to=open failures=5 threshold=5
+  349500	      3626 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPrePostCheck_RoundTrip-12    	2026/04/20 21:42:49 WARN Circuit breaker opened: failure threshold reached name=bench from=closed to=open failures=5 threshold=5
+  343202	      3627 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPrePostCheck_RoundTrip-12    	2026/04/20 21:42:50 WARN Circuit breaker opened: failure threshold reached name=bench from=closed to=open failures=5 threshold=5
+  348481	      3614 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPrePostCheck_RoundTrip-12    	2026/04/20 21:42:51 WARN Circuit breaker opened: failure threshold reached name=bench from=closed to=open failures=5 threshold=5
+  331537	      3617 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPreCheck_Concurrent-12       	64529749	        18.69 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPreCheck_Concurrent-12       	64488336	        19.74 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPreCheck_Concurrent-12       	63496678	        19.17 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPreCheck_Concurrent-12       	60905116	        19.69 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPreCheck_Concurrent-12       	59971447	        19.50 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/afreidah/s3-orchestrator/internal/breaker	24.660s
+goos: linux
+goarch: amd64
+pkg: github.com/afreidah/s3-orchestrator/internal/cache
+cpu: AMD Ryzen 5 7535U with Radeon Graphics         
+BenchmarkMemoryCache_Get_Hit-12                 	  505296	      2399 ns/op	       0 B/op	       0 allocs/op
+BenchmarkMemoryCache_Get_Hit-12                 	  534831	      2420 ns/op	       0 B/op	       0 allocs/op
+BenchmarkMemoryCache_Get_Hit-12                 	  498991	      2405 ns/op	       0 B/op	       0 allocs/op
+BenchmarkMemoryCache_Get_Hit-12                 	  508611	      2392 ns/op	       0 B/op	       0 allocs/op
+BenchmarkMemoryCache_Get_Hit-12                 	  506719	      2375 ns/op	       0 B/op	       0 allocs/op
+BenchmarkMemoryCache_Get_Miss-12                	138406206	         8.658 ns/op	       0 B/op	       0 allocs/op
+BenchmarkMemoryCache_Get_Miss-12                	139522311	         8.572 ns/op	       0 B/op	       0 allocs/op
+BenchmarkMemoryCache_Get_Miss-12                	138679394	         8.662 ns/op	       0 B/op	       0 allocs/op
+BenchmarkMemoryCache_Get_Miss-12                	141199909	         8.548 ns/op	       0 B/op	       0 allocs/op
+BenchmarkMemoryCache_Get_Miss-12                	140865133	         8.590 ns/op	       0 B/op	       0 allocs/op
+BenchmarkMemoryCache_Put-12                     	  255354	      4858 ns/op	   10592 B/op	      13 allocs/op
+BenchmarkMemoryCache_Put-12                     	  249392	      4840 ns/op	   10592 B/op	      13 allocs/op
+BenchmarkMemoryCache_Put-12                     	  249639	      4800 ns/op	   10592 B/op	      13 allocs/op
+BenchmarkMemoryCache_Put-12                     	  258784	      4820 ns/op	   10592 B/op	      13 allocs/op
+BenchmarkMemoryCache_Put-12                     	  251859	      4888 ns/op	   10592 B/op	      13 allocs/op
+BenchmarkMemoryCache_Put_Eviction-12            	  237024	      4891 ns/op	   10592 B/op	      13 allocs/op
+BenchmarkMemoryCache_Put_Eviction-12            	  252471	      4851 ns/op	   10592 B/op	      13 allocs/op
+BenchmarkMemoryCache_Put_Eviction-12            	  238110	      4880 ns/op	   10592 B/op	      13 allocs/op
+BenchmarkMemoryCache_Put_Eviction-12            	  247254	      4866 ns/op	   10592 B/op	      13 allocs/op
+BenchmarkMemoryCache_Put_Eviction-12            	  235905	      5000 ns/op	   10592 B/op	      13 allocs/op
+BenchmarkMemoryCache_Concurrent_ReadWrite-12    	  441577	      2698 ns/op	     240 B/op	       0 allocs/op
+BenchmarkMemoryCache_Concurrent_ReadWrite-12    	  450618	      2698 ns/op	     240 B/op	       0 allocs/op
+BenchmarkMemoryCache_Concurrent_ReadWrite-12    	  447620	      2696 ns/op	     240 B/op	       0 allocs/op
+BenchmarkMemoryCache_Concurrent_ReadWrite-12    	  453285	      2699 ns/op	     240 B/op	       0 allocs/op
+BenchmarkMemoryCache_Concurrent_ReadWrite-12    	  444724	      2687 ns/op	     240 B/op	       0 allocs/op
+PASS
+ok  	github.com/afreidah/s3-orchestrator/internal/cache	30.401s
+PASS
+ok  	github.com/afreidah/s3-orchestrator/internal/config	0.004s
+goos: linux
+goarch: amd64
+pkg: github.com/afreidah/s3-orchestrator/internal/counter
+cpu: AMD Ryzen 5 7535U with Radeon Graphics         
+BenchmarkUsageTracker_WithinLimits-12             	36840567	        34.91 ns/op	       0 B/op	       0 allocs/op
+BenchmarkUsageTracker_WithinLimits-12             	34087518	        33.81 ns/op	       0 B/op	       0 allocs/op
+BenchmarkUsageTracker_WithinLimits-12             	36223104	        33.51 ns/op	       0 B/op	       0 allocs/op
+BenchmarkUsageTracker_WithinLimits-12             	37385578	        33.35 ns/op	       0 B/op	       0 allocs/op
+BenchmarkUsageTracker_WithinLimits-12             	39631527	        32.90 ns/op	       0 B/op	       0 allocs/op
+BenchmarkUsageTracker_WithinLimits_Parallel-12    	21407583	        68.18 ns/op	       0 B/op	       0 allocs/op
+BenchmarkUsageTracker_WithinLimits_Parallel-12    	17414240	        71.95 ns/op	       0 B/op	       0 allocs/op
+BenchmarkUsageTracker_WithinLimits_Parallel-12    	20704171	        62.79 ns/op	       0 B/op	       0 allocs/op
+BenchmarkUsageTracker_WithinLimits_Parallel-12    	16917643	        72.49 ns/op	       0 B/op	       0 allocs/op
+BenchmarkUsageTracker_WithinLimits_Parallel-12    	20681766	        63.64 ns/op	       0 B/op	       0 allocs/op
+BenchmarkUsageTracker_Record-12                   	91140040	        14.03 ns/op	       0 B/op	       0 allocs/op
+BenchmarkUsageTracker_Record-12                   	90831676	        13.54 ns/op	       0 B/op	       0 allocs/op
+BenchmarkUsageTracker_Record-12                   	89710074	        13.36 ns/op	       0 B/op	       0 allocs/op
+BenchmarkUsageTracker_Record-12                   	90388718	        13.27 ns/op	       0 B/op	       0 allocs/op
+BenchmarkUsageTracker_Record-12                   	89832488	        13.38 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/afreidah/s3-orchestrator/internal/counter	19.215s
+goos: linux
+goarch: amd64
+pkg: github.com/afreidah/s3-orchestrator/internal/encryption
+cpu: AMD Ryzen 5 7535U with Radeon Graphics         
+BenchmarkEncryptReader-12             	    2164	    571132 ns/op	1835.96 MB/s	 2428169 B/op	      41 allocs/op
+BenchmarkEncryptReader-12             	    1995	    567885 ns/op	1846.46 MB/s	 2428117 B/op	      41 allocs/op
+BenchmarkEncryptReader-12             	    2012	    585798 ns/op	1790.00 MB/s	 2428158 B/op	      41 allocs/op
+BenchmarkEncryptReader-12             	    1957	    583052 ns/op	1798.42 MB/s	 2428086 B/op	      41 allocs/op
+BenchmarkEncryptReader-12             	    2077	    597586 ns/op	1754.69 MB/s	 2428063 B/op	      41 allocs/op
+BenchmarkDecryptReader-12             	    2610	    461128 ns/op	2273.93 MB/s	 1124799 B/op	      24 allocs/op
+BenchmarkDecryptReader-12             	    2823	    464776 ns/op	2256.09 MB/s	 1124745 B/op	      24 allocs/op
+BenchmarkDecryptReader-12             	    2149	    488677 ns/op	2145.75 MB/s	 1124752 B/op	      24 allocs/op
+BenchmarkDecryptReader-12             	    2504	    482754 ns/op	2172.07 MB/s	 1124767 B/op	      24 allocs/op
+BenchmarkDecryptReader-12             	    2667	    467570 ns/op	2242.61 MB/s	 1124767 B/op	      24 allocs/op
+BenchmarkRoundTrip-12                 	     622	   1847621 ns/op	 567.53 MB/s	 5795764 B/op	      92 allocs/op
+BenchmarkRoundTrip-12                 	     649	   1710277 ns/op	 613.10 MB/s	 5795693 B/op	      92 allocs/op
+BenchmarkRoundTrip-12                 	     642	   1886775 ns/op	 555.75 MB/s	 5795682 B/op	      92 allocs/op
+BenchmarkRoundTrip-12                 	     708	   1800419 ns/op	 582.41 MB/s	 5795849 B/op	      92 allocs/op
+BenchmarkRoundTrip-12                 	     696	   1798062 ns/op	 583.17 MB/s	 5795596 B/op	      92 allocs/op
+BenchmarkDeriveNonce-12               	135974623	         8.684 ns/op	       0 B/op	       0 allocs/op
+BenchmarkDeriveNonce-12               	145363380	         8.226 ns/op	       0 B/op	       0 allocs/op
+BenchmarkDeriveNonce-12               	145679142	         8.182 ns/op	       0 B/op	       0 allocs/op
+BenchmarkDeriveNonce-12               	149531533	         8.066 ns/op	       0 B/op	       0 allocs/op
+BenchmarkDeriveNonce-12               	151579975	         8.018 ns/op	       0 B/op	       0 allocs/op
+BenchmarkDeriveNonce_Sequential-12    	  136230	      8662 ns/op	       0 B/op	       0 allocs/op
+BenchmarkDeriveNonce_Sequential-12    	  143178	      8591 ns/op	       0 B/op	       0 allocs/op
+BenchmarkDeriveNonce_Sequential-12    	  136942	      8624 ns/op	       0 B/op	       0 allocs/op
+BenchmarkDeriveNonce_Sequential-12    	  136369	      8632 ns/op	       0 B/op	       0 allocs/op
+BenchmarkDeriveNonce_Sequential-12    	  145435	      8469 ns/op	       0 B/op	       0 allocs/op
+BenchmarkChunkNonce-12                	196751467	         6.088 ns/op	       0 B/op	       0 allocs/op
+BenchmarkChunkNonce-12                	199915593	         6.095 ns/op	       0 B/op	       0 allocs/op
+BenchmarkChunkNonce-12                	195256176	         6.130 ns/op	       0 B/op	       0 allocs/op
+BenchmarkChunkNonce-12                	203603054	         5.902 ns/op	       0 B/op	       0 allocs/op
+BenchmarkChunkNonce-12                	203723010	         5.943 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/afreidah/s3-orchestrator/internal/encryption	36.004s
+PASS
+ok  	github.com/afreidah/s3-orchestrator/internal/lifecycle	0.003s
+PASS
+ok  	github.com/afreidah/s3-orchestrator/internal/notify	0.008s
+goos: linux
+goarch: amd64
+pkg: github.com/afreidah/s3-orchestrator/internal/observe/audit
+cpu: AMD Ryzen 5 7535U with Radeon Graphics         
+BenchmarkLog_WithCallback-12       	 7452205	       159.3 ns/op	     480 B/op	       2 allocs/op
+BenchmarkLog_WithCallback-12       	 7455855	       159.7 ns/op	     480 B/op	       2 allocs/op
+BenchmarkLog_WithCallback-12       	 7270166	       162.9 ns/op	     480 B/op	       2 allocs/op
+BenchmarkLog_WithCallback-12       	 7635196	       161.3 ns/op	     480 B/op	       2 allocs/op
+BenchmarkLog_WithCallback-12       	 7411683	       161.6 ns/op	     480 B/op	       2 allocs/op
+BenchmarkLog_WithoutCallback-12    	14668790	        83.41 ns/op	     160 B/op	       1 allocs/op
+BenchmarkLog_WithoutCallback-12    	14642388	        80.71 ns/op	     160 B/op	       1 allocs/op
+BenchmarkLog_WithoutCallback-12    	14372100	        81.42 ns/op	     160 B/op	       1 allocs/op
+BenchmarkLog_WithoutCallback-12    	14581338	        81.65 ns/op	     160 B/op	       1 allocs/op
+BenchmarkLog_WithoutCallback-12    	14573904	        82.74 ns/op	     160 B/op	       1 allocs/op
+BenchmarkLog_Concurrent-12         	24156954	        54.17 ns/op	     160 B/op	       1 allocs/op
+BenchmarkLog_Concurrent-12         	21221769	        55.51 ns/op	     160 B/op	       1 allocs/op
+BenchmarkLog_Concurrent-12         	21453948	        56.48 ns/op	     160 B/op	       1 allocs/op
+BenchmarkLog_Concurrent-12         	21968776	        55.06 ns/op	     160 B/op	       1 allocs/op
+BenchmarkLog_Concurrent-12         	21931536	        55.00 ns/op	     160 B/op	       1 allocs/op
+PASS
+ok  	github.com/afreidah/s3-orchestrator/internal/observe/audit	18.371s
+PASS
+ok  	github.com/afreidah/s3-orchestrator/internal/observe/event	0.004s
+PASS
+ok  	github.com/afreidah/s3-orchestrator/internal/observe/telemetry	0.008s
+goos: linux
+goarch: amd64
+pkg: github.com/afreidah/s3-orchestrator/internal/proxy
+cpu: AMD Ryzen 5 7535U with Radeon Graphics         
+BenchmarkLocationCache_Get_Hit-12                    	  504009	      2412 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLocationCache_Get_Hit-12                    	  509132	      2407 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLocationCache_Get_Hit-12                    	  524263	      2403 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLocationCache_Get_Hit-12                    	  519044	      2399 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLocationCache_Get_Hit-12                    	  512434	      2413 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLocationCache_Get_Miss-12                   	72835722	        16.41 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLocationCache_Get_Miss-12                   	73769809	        16.18 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLocationCache_Get_Miss-12                   	74993676	        16.11 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLocationCache_Get_Miss-12                   	76630231	        15.95 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLocationCache_Get_Miss-12                   	74700231	        15.93 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLocationCache_Set-12                        	  506310	      2429 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLocationCache_Set-12                        	  499618	      2430 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLocationCache_Set-12                        	  504727	      2424 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLocationCache_Set-12                        	  510513	      2424 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLocationCache_Set-12                        	  503306	      2425 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLocationCache_Concurrent_ReadHeavy-12       	  514760	      2372 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLocationCache_Concurrent_ReadHeavy-12       	  500344	      2369 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLocationCache_Concurrent_ReadHeavy-12       	  499524	      2367 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLocationCache_Concurrent_ReadHeavy-12       	  489034	      2373 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLocationCache_Concurrent_ReadHeavy-12       	  507849	      2373 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLocationCache_Concurrent_WriteHeavy-12      	  969856	      1342 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLocationCache_Concurrent_WriteHeavy-12      	  959796	      1340 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLocationCache_Concurrent_WriteHeavy-12      	  948709	      1340 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLocationCache_Concurrent_WriteHeavy-12      	  927582	      1338 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLocationCache_Concurrent_WriteHeavy-12      	  938557	      1330 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLocationCache_Contention_GetSetDelete-12    	  751198	      1650 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLocationCache_Contention_GetSetDelete-12    	  719340	      1624 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLocationCache_Contention_GetSetDelete-12    	  735458	      1640 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLocationCache_Contention_GetSetDelete-12    	  709548	      1636 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLocationCache_Contention_GetSetDelete-12    	  715910	      1659 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIOCopy/4KB-12                               	33708435	        36.98 ns/op	110776.60 MB/s	      48 B/op	       1 allocs/op
+BenchmarkIOCopy/4KB-12                               	33687880	        36.49 ns/op	112262.41 MB/s	      48 B/op	       1 allocs/op
+BenchmarkIOCopy/4KB-12                               	33579051	        36.81 ns/op	111283.21 MB/s	      48 B/op	       1 allocs/op
+BenchmarkIOCopy/4KB-12                               	31356274	        36.89 ns/op	111033.42 MB/s	      48 B/op	       1 allocs/op
+BenchmarkIOCopy/4KB-12                               	32118747	        37.50 ns/op	109224.58 MB/s	      48 B/op	       1 allocs/op
+BenchmarkIOCopy/64KB-12                              	31361767	        37.60 ns/op	1742920.59 MB/s	      48 B/op	       1 allocs/op
+BenchmarkIOCopy/64KB-12                              	31550080	        37.48 ns/op	1748773.42 MB/s	      48 B/op	       1 allocs/op
+BenchmarkIOCopy/64KB-12                              	31988269	        37.06 ns/op	1768505.62 MB/s	      48 B/op	       1 allocs/op
+BenchmarkIOCopy/64KB-12                              	33234932	        37.02 ns/op	1770048.43 MB/s	      48 B/op	       1 allocs/op
+BenchmarkIOCopy/64KB-12                              	31918623	        36.69 ns/op	1786444.25 MB/s	      48 B/op	       1 allocs/op
+BenchmarkIOCopy/1024KB-12                            	29815477	        36.49 ns/op	28733982.42 MB/s	      48 B/op	       1 allocs/op
+BenchmarkIOCopy/1024KB-12                            	32692418	        36.57 ns/op	28670729.67 MB/s	      48 B/op	       1 allocs/op
+BenchmarkIOCopy/1024KB-12                            	32208154	        36.19 ns/op	28976324.28 MB/s	      48 B/op	       1 allocs/op
+BenchmarkIOCopy/1024KB-12                            	32531419	        36.30 ns/op	28886822.81 MB/s	      48 B/op	       1 allocs/op
+BenchmarkIOCopy/1024KB-12                            	33842282	        36.45 ns/op	28771135.84 MB/s	      48 B/op	       1 allocs/op
+BenchmarkIOCopy/16384KB-12                           	38328606	        29.89 ns/op	561367207.72 MB/s	      48 B/op	       1 allocs/op
+BenchmarkIOCopy/16384KB-12                           	37669790	        29.64 ns/op	565991925.60 MB/s	      48 B/op	       1 allocs/op
+BenchmarkIOCopy/16384KB-12                           	38428818	        29.60 ns/op	566747506.76 MB/s	      48 B/op	       1 allocs/op
+BenchmarkIOCopy/16384KB-12                           	39475144	        29.23 ns/op	574012053.03 MB/s	      48 B/op	       1 allocs/op
+BenchmarkIOCopy/16384KB-12                           	39545557	        29.39 ns/op	570890407.34 MB/s	      48 B/op	       1 allocs/op
+BenchmarkStreamCopy/64KB-12                          	   24411	     48576 ns/op	1349.15 MB/s	  204575 B/op	      30 allocs/op
+BenchmarkStreamCopy/64KB-12                          	   24430	     49034 ns/op	1336.55 MB/s	  204574 B/op	      30 allocs/op
+BenchmarkStreamCopy/64KB-12                          	   24673	     48968 ns/op	1338.35 MB/s	  204575 B/op	      30 allocs/op
+BenchmarkStreamCopy/64KB-12                          	   24159	     49432 ns/op	1325.78 MB/s	  204576 B/op	      30 allocs/op
+BenchmarkStreamCopy/64KB-12                          	   24195	     49265 ns/op	1330.28 MB/s	  204571 B/op	      30 allocs/op
+BenchmarkStreamCopy/1MB-12                           	    2682	    541586 ns/op	1936.12 MB/s	 3278326 B/op	      40 allocs/op
+BenchmarkStreamCopy/1MB-12                           	    2178	    589861 ns/op	1777.67 MB/s	 3278323 B/op	      40 allocs/op
+BenchmarkStreamCopy/1MB-12                           	    2636	    568304 ns/op	1845.10 MB/s	 3278329 B/op	      40 allocs/op
+BenchmarkStreamCopy/1MB-12                           	    2271	    622942 ns/op	1683.26 MB/s	 3278325 B/op	      40 allocs/op
+BenchmarkStreamCopy/1MB-12                           	    2389	    569537 ns/op	1841.10 MB/s	 3278333 B/op	      40 allocs/op
+BenchmarkStreamCopy/16MB-12                          	     187	   6391804 ns/op	2624.80 MB/s	53004561 B/op	      47 allocs/op
+BenchmarkStreamCopy/16MB-12                          	     183	   6446296 ns/op	2602.61 MB/s	53004550 B/op	      47 allocs/op
+BenchmarkStreamCopy/16MB-12                          	     186	   6407288 ns/op	2618.46 MB/s	53004554 B/op	      47 allocs/op
+BenchmarkStreamCopy/16MB-12                          	     186	   6376522 ns/op	2631.09 MB/s	53004553 B/op	      47 allocs/op
+BenchmarkStreamCopy/16MB-12                          	     184	   6388292 ns/op	2626.24 MB/s	53004548 B/op	      47 allocs/op
+PASS
+ok  	github.com/afreidah/s3-orchestrator/internal/proxy	79.584s
+PASS
+ok  	github.com/afreidah/s3-orchestrator/internal/store	0.007s
+?   	github.com/afreidah/s3-orchestrator/internal/store/sqlc	[no test files]
+PASS
+ok  	github.com/afreidah/s3-orchestrator/internal/store/sqlite	0.007s
+?   	github.com/afreidah/s3-orchestrator/internal/testutil	[no test files]
+PASS
+ok  	github.com/afreidah/s3-orchestrator/internal/transport/admin	0.009s
+goos: linux
+goarch: amd64
+pkg: github.com/afreidah/s3-orchestrator/internal/transport/auth
+cpu: AMD Ryzen 5 7535U with Radeon Graphics         
+BenchmarkVerifySigV4-12                     	  216628	      5374 ns/op	    1880 B/op	      27 allocs/op
+BenchmarkVerifySigV4-12                     	  230316	      5332 ns/op	    1880 B/op	      27 allocs/op
+BenchmarkVerifySigV4-12                     	  219175	      5341 ns/op	    1880 B/op	      27 allocs/op
+BenchmarkVerifySigV4-12                     	  213762	      5329 ns/op	    1880 B/op	      27 allocs/op
+BenchmarkVerifySigV4-12                     	  225079	      5246 ns/op	    1880 B/op	      27 allocs/op
+BenchmarkDeriveSigningKey-12                	  583401	      2130 ns/op	    2144 B/op	      29 allocs/op
+BenchmarkDeriveSigningKey-12                	  497911	      2205 ns/op	    2144 B/op	      29 allocs/op
+BenchmarkDeriveSigningKey-12                	  547272	      2182 ns/op	    2144 B/op	      29 allocs/op
+BenchmarkDeriveSigningKey-12                	  571850	      2123 ns/op	    2144 B/op	      29 allocs/op
+BenchmarkDeriveSigningKey-12                	  555183	      2143 ns/op	    2144 B/op	      29 allocs/op
+BenchmarkParseSigV4Fields/map-12            	 6459070	       184.4 ns/op	     336 B/op	       2 allocs/op
+BenchmarkParseSigV4Fields/map-12            	 6459172	       183.1 ns/op	     336 B/op	       2 allocs/op
+BenchmarkParseSigV4Fields/map-12            	 6680766	       181.9 ns/op	     336 B/op	       2 allocs/op
+BenchmarkParseSigV4Fields/map-12            	 6529260	       187.2 ns/op	     336 B/op	       2 allocs/op
+BenchmarkParseSigV4Fields/map-12            	 6485773	       183.2 ns/op	     336 B/op	       2 allocs/op
+BenchmarkParseSigV4Fields/direct-12         	27727543	        42.64 ns/op	       0 B/op	       0 allocs/op
+BenchmarkParseSigV4Fields/direct-12         	28175503	        42.73 ns/op	       0 B/op	       0 allocs/op
+BenchmarkParseSigV4Fields/direct-12         	30490382	        41.75 ns/op	       0 B/op	       0 allocs/op
+BenchmarkParseSigV4Fields/direct-12         	28640656	        41.30 ns/op	       0 B/op	       0 allocs/op
+BenchmarkParseSigV4Fields/direct-12         	29562760	        40.54 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAuthenticateAndResolveBucket-12    	  210222	      5233 ns/op	    1880 B/op	      27 allocs/op
+BenchmarkAuthenticateAndResolveBucket-12    	  224991	      5208 ns/op	    1880 B/op	      27 allocs/op
+BenchmarkAuthenticateAndResolveBucket-12    	  235095	      5224 ns/op	    1880 B/op	      27 allocs/op
+BenchmarkAuthenticateAndResolveBucket-12    	  235267	      5219 ns/op	    1880 B/op	      27 allocs/op
+BenchmarkAuthenticateAndResolveBucket-12    	  233574	      5166 ns/op	    1880 B/op	      27 allocs/op
+BenchmarkCachedSigningKey_Hit-12            	47020056	        24.83 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCachedSigningKey_Hit-12            	48706731	        24.53 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCachedSigningKey_Hit-12            	49218506	        24.51 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCachedSigningKey_Hit-12            	51402306	        24.42 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCachedSigningKey_Hit-12            	48880075	        24.49 ns/op	       0 B/op	       0 allocs/op
+BenchmarkVerifySigV4_WithQueryParams/0_params-12         	  228465	      5175 ns/op	    1880 B/op	      27 allocs/op
+BenchmarkVerifySigV4_WithQueryParams/0_params-12         	  236826	      5175 ns/op	    1880 B/op	      27 allocs/op
+BenchmarkVerifySigV4_WithQueryParams/0_params-12         	  217860	      5166 ns/op	    1880 B/op	      27 allocs/op
+BenchmarkVerifySigV4_WithQueryParams/0_params-12         	  234792	      5166 ns/op	    1880 B/op	      27 allocs/op
+BenchmarkVerifySigV4_WithQueryParams/0_params-12         	  234336	      5137 ns/op	    1880 B/op	      27 allocs/op
+BenchmarkVerifySigV4_WithQueryParams/5_params-12         	  187718	      6303 ns/op	    2536 B/op	      39 allocs/op
+BenchmarkVerifySigV4_WithQueryParams/5_params-12         	  192645	      6365 ns/op	    2536 B/op	      39 allocs/op
+BenchmarkVerifySigV4_WithQueryParams/5_params-12         	  189547	      6368 ns/op	    2536 B/op	      39 allocs/op
+BenchmarkVerifySigV4_WithQueryParams/5_params-12         	  187137	      6378 ns/op	    2536 B/op	      39 allocs/op
+BenchmarkVerifySigV4_WithQueryParams/5_params-12         	  186601	      6389 ns/op	    2536 B/op	      39 allocs/op
+BenchmarkVerifySigV4_WithQueryParams/20_params-12        	  108640	     11034 ns/op	    6208 B/op	      75 allocs/op
+BenchmarkVerifySigV4_WithQueryParams/20_params-12        	  106468	     11117 ns/op	    6208 B/op	      75 allocs/op
+BenchmarkVerifySigV4_WithQueryParams/20_params-12        	  109022	     10976 ns/op	    6208 B/op	      75 allocs/op
+BenchmarkVerifySigV4_WithQueryParams/20_params-12        	  108314	     11040 ns/op	    6208 B/op	      75 allocs/op
+BenchmarkVerifySigV4_WithQueryParams/20_params-12        	  107562	     11252 ns/op	    6208 B/op	      75 allocs/op
+BenchmarkBuildCanonicalRequest-12                        	  604536	      1845 ns/op	     976 B/op	      18 allocs/op
+BenchmarkBuildCanonicalRequest-12                        	  624380	      1860 ns/op	     976 B/op	      18 allocs/op
+BenchmarkBuildCanonicalRequest-12                        	  617356	      1853 ns/op	     976 B/op	      18 allocs/op
+BenchmarkBuildCanonicalRequest-12                        	  628641	      1850 ns/op	     976 B/op	      18 allocs/op
+BenchmarkBuildCanonicalRequest-12                        	  621375	      1847 ns/op	     976 B/op	      18 allocs/op
+BenchmarkVerifyPresignedSigV4-12                         	  140510	      8504 ns/op	    3992 B/op	      54 allocs/op
+BenchmarkVerifyPresignedSigV4-12                         	  137866	      8582 ns/op	    3992 B/op	      54 allocs/op
+BenchmarkVerifyPresignedSigV4-12                         	  141426	      8526 ns/op	    3992 B/op	      54 allocs/op
+BenchmarkVerifyPresignedSigV4-12                         	  142202	      8441 ns/op	    3992 B/op	      54 allocs/op
+BenchmarkVerifyPresignedSigV4-12                         	  138984	      8499 ns/op	    3992 B/op	      54 allocs/op
+BenchmarkTokenAuth/1_bucket-12                           	 7027232	       167.9 ns/op	      48 B/op	       1 allocs/op
+BenchmarkTokenAuth/1_bucket-12                           	 7107242	       166.0 ns/op	      48 B/op	       1 allocs/op
+BenchmarkTokenAuth/1_bucket-12                           	 7075350	       169.1 ns/op	      48 B/op	       1 allocs/op
+BenchmarkTokenAuth/1_bucket-12                           	 7167219	       168.4 ns/op	      48 B/op	       1 allocs/op
+BenchmarkTokenAuth/1_bucket-12                           	 7091730	       167.8 ns/op	      48 B/op	       1 allocs/op
+BenchmarkTokenAuth/5_buckets-12                          	 4925570	       243.6 ns/op	      48 B/op	       1 allocs/op
+BenchmarkTokenAuth/5_buckets-12                          	 4924242	       244.2 ns/op	      48 B/op	       1 allocs/op
+BenchmarkTokenAuth/5_buckets-12                          	 4978485	       242.1 ns/op	      48 B/op	       1 allocs/op
+BenchmarkTokenAuth/5_buckets-12                          	 4956409	       240.6 ns/op	      48 B/op	       1 allocs/op
+BenchmarkTokenAuth/5_buckets-12                          	 5013802	       240.6 ns/op	      48 B/op	       1 allocs/op
+BenchmarkTokenAuth/20_buckets-12                         	 2029412	       589.8 ns/op	      48 B/op	       1 allocs/op
+BenchmarkTokenAuth/20_buckets-12                         	 2106747	       569.3 ns/op	      48 B/op	       1 allocs/op
+BenchmarkTokenAuth/20_buckets-12                         	 2111803	       567.2 ns/op	      48 B/op	       1 allocs/op
+BenchmarkTokenAuth/20_buckets-12                         	 2067194	       584.2 ns/op	      48 B/op	       1 allocs/op
+BenchmarkTokenAuth/20_buckets-12                         	 2040885	       588.0 ns/op	      48 B/op	       1 allocs/op
+PASS
+ok  	github.com/afreidah/s3-orchestrator/internal/transport/auth	83.468s
+PASS
+ok  	github.com/afreidah/s3-orchestrator/internal/transport/httputil	0.004s
+goos: linux
+goarch: amd64
+pkg: github.com/afreidah/s3-orchestrator/internal/transport/s3api
+cpu: AMD Ryzen 5 7535U with Radeon Graphics         
+BenchmarkAdmission_AcquireRelease-12               	46889667	        26.07 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAdmission_AcquireRelease-12               	45978946	        25.89 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAdmission_AcquireRelease-12               	47364434	        26.00 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAdmission_AcquireRelease-12               	46974530	        25.82 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAdmission_AcquireRelease-12               	44507079	        25.82 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAdmission_AcquireRelease_Concurrent-12    	26749188	        48.94 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAdmission_AcquireRelease_Concurrent-12    	23466798	        53.43 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAdmission_AcquireRelease_Concurrent-12    	23380005	        52.31 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAdmission_AcquireRelease_Concurrent-12    	24529770	        46.52 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAdmission_AcquireRelease_Concurrent-12    	30502924	        48.30 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAdmission_SplitPool_AcquireRelease/read-12         	41239207	        28.74 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAdmission_SplitPool_AcquireRelease/read-12         	42703564	        28.34 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAdmission_SplitPool_AcquireRelease/read-12         	44271524	        28.39 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAdmission_SplitPool_AcquireRelease/read-12         	43194174	        28.07 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAdmission_SplitPool_AcquireRelease/read-12         	43201777	        28.08 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAdmission_SplitPool_AcquireRelease/write-12        	43662211	        27.66 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAdmission_SplitPool_AcquireRelease/write-12        	40378498	        27.72 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAdmission_SplitPool_AcquireRelease/write-12        	43162922	        27.82 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAdmission_SplitPool_AcquireRelease/write-12        	43668091	        27.45 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAdmission_SplitPool_AcquireRelease/write-12        	48319748	        26.94 ns/op	       0 B/op	       0 allocs/op
+BenchmarkParsePath/bucket_only-12                           	33855186	        35.56 ns/op	      32 B/op	       1 allocs/op
+BenchmarkParsePath/bucket_only-12                           	34599523	        35.33 ns/op	      32 B/op	       1 allocs/op
+BenchmarkParsePath/bucket_only-12                           	32492690	        35.62 ns/op	      32 B/op	       1 allocs/op
+BenchmarkParsePath/bucket_only-12                           	34269109	        36.49 ns/op	      32 B/op	       1 allocs/op
+BenchmarkParsePath/bucket_only-12                           	32876925	        36.28 ns/op	      32 B/op	       1 allocs/op
+BenchmarkParsePath/bucket_and_key-12                        	31226876	        38.90 ns/op	      32 B/op	       1 allocs/op
+BenchmarkParsePath/bucket_and_key-12                        	31826769	        38.83 ns/op	      32 B/op	       1 allocs/op
+BenchmarkParsePath/bucket_and_key-12                        	28908369	        39.38 ns/op	      32 B/op	       1 allocs/op
+BenchmarkParsePath/bucket_and_key-12                        	31451635	        39.39 ns/op	      32 B/op	       1 allocs/op
+BenchmarkParsePath/bucket_and_key-12                        	29728725	        39.28 ns/op	      32 B/op	       1 allocs/op
+BenchmarkParsePath/deep_path-12                             	28822632	        39.75 ns/op	      32 B/op	       1 allocs/op
+BenchmarkParsePath/deep_path-12                             	26715744	        39.29 ns/op	      32 B/op	       1 allocs/op
+BenchmarkParsePath/deep_path-12                             	31202377	        38.04 ns/op	      32 B/op	       1 allocs/op
+BenchmarkParsePath/deep_path-12                             	31561579	        38.47 ns/op	      32 B/op	       1 allocs/op
+BenchmarkParsePath/deep_path-12                             	28601875	        38.61 ns/op	      32 B/op	       1 allocs/op
+BenchmarkIsValidRequestID/valid_32-12                       	56783866	        21.20 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIsValidRequestID/valid_32-12                       	59795769	        20.87 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIsValidRequestID/valid_32-12                       	64294629	        20.92 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIsValidRequestID/valid_32-12                       	59272436	        20.52 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIsValidRequestID/valid_32-12                       	61942872	        20.66 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIsValidRequestID/valid_64-12                       	31953490	        39.08 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIsValidRequestID/valid_64-12                       	30725030	        39.16 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIsValidRequestID/valid_64-12                       	30307550	        38.49 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIsValidRequestID/valid_64-12                       	34056226	        39.21 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIsValidRequestID/valid_64-12                       	29291244	        38.74 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIsValidRequestID/invalid_chars-12                  	141319874	         8.586 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIsValidRequestID/invalid_chars-12                  	142190883	         8.444 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIsValidRequestID/invalid_chars-12                  	142564802	         8.385 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIsValidRequestID/invalid_chars-12                  	140952778	         8.492 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIsValidRequestID/invalid_chars-12                  	142777808	         8.444 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIsValidRequestID/empty-12                          	996304216	         1.208 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIsValidRequestID/empty-12                          	992316074	         1.213 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIsValidRequestID/empty-12                          	988426252	         1.210 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIsValidRequestID/empty-12                          	995661033	         1.214 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIsValidRequestID/empty-12                          	995605645	         1.251 ns/op	       0 B/op	       0 allocs/op
+BenchmarkExtractUserMetadata/no_meta-12                     	 5646444	       212.1 ns/op	      48 B/op	       3 allocs/op
+BenchmarkExtractUserMetadata/no_meta-12                     	 5526158	       215.6 ns/op	      48 B/op	       3 allocs/op
+BenchmarkExtractUserMetadata/no_meta-12                     	 5524207	       216.3 ns/op	      48 B/op	       3 allocs/op
+BenchmarkExtractUserMetadata/no_meta-12                     	 5573506	       215.4 ns/op	      48 B/op	       3 allocs/op
+BenchmarkExtractUserMetadata/no_meta-12                     	 5561527	       213.2 ns/op	      48 B/op	       3 allocs/op
+BenchmarkExtractUserMetadata/3_meta-12                      	 2000432	       601.2 ns/op	     432 B/op	       8 allocs/op
+BenchmarkExtractUserMetadata/3_meta-12                      	 1992512	       605.3 ns/op	     432 B/op	       8 allocs/op
+BenchmarkExtractUserMetadata/3_meta-12                      	 1981558	       605.2 ns/op	     432 B/op	       8 allocs/op
+BenchmarkExtractUserMetadata/3_meta-12                      	 1997509	       602.3 ns/op	     432 B/op	       8 allocs/op
+BenchmarkExtractUserMetadata/3_meta-12                      	 1999473	       599.5 ns/op	     432 B/op	       8 allocs/op
+BenchmarkExtractUserMetadata/10_meta-12                     	  662426	      1628 ns/op	    1160 B/op	      18 allocs/op
+BenchmarkExtractUserMetadata/10_meta-12                     	  698530	      1657 ns/op	    1160 B/op	      18 allocs/op
+BenchmarkExtractUserMetadata/10_meta-12                     	  683744	      1647 ns/op	    1160 B/op	      18 allocs/op
+BenchmarkExtractUserMetadata/10_meta-12                     	  700416	      1642 ns/op	    1160 B/op	      18 allocs/op
+BenchmarkExtractUserMetadata/10_meta-12                     	  700615	      1627 ns/op	    1160 B/op	      18 allocs/op
+BenchmarkExtractUserMetadata/50_meta-12                     	  160244	      7621 ns/op	    5320 B/op	      62 allocs/op
+BenchmarkExtractUserMetadata/50_meta-12                     	  156904	      7652 ns/op	    5320 B/op	      62 allocs/op
+BenchmarkExtractUserMetadata/50_meta-12                     	  154555	      7486 ns/op	    5320 B/op	      62 allocs/op
+BenchmarkExtractUserMetadata/50_meta-12                     	  153441	      7472 ns/op	    5320 B/op	      62 allocs/op
+BenchmarkExtractUserMetadata/50_meta-12                     	  162204	      7465 ns/op	    5320 B/op	      62 allocs/op
+BenchmarkValidateUserMetadata/small_2keys-12                	16785285	        69.66 ns/op	       0 B/op	       0 allocs/op
+BenchmarkValidateUserMetadata/small_2keys-12                	18131804	        66.99 ns/op	       0 B/op	       0 allocs/op
+BenchmarkValidateUserMetadata/small_2keys-12                	17755248	        65.30 ns/op	       0 B/op	       0 allocs/op
+BenchmarkValidateUserMetadata/small_2keys-12                	18223093	        65.59 ns/op	       0 B/op	       0 allocs/op
+BenchmarkValidateUserMetadata/small_2keys-12                	18102271	        66.36 ns/op	       0 B/op	       0 allocs/op
+BenchmarkValidateUserMetadata/large_20keys-12               	 2154385	       561.2 ns/op	       0 B/op	       0 allocs/op
+BenchmarkValidateUserMetadata/large_20keys-12               	 2258122	       528.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkValidateUserMetadata/large_20keys-12               	 2275462	       526.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkValidateUserMetadata/large_20keys-12               	 2188242	       554.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkValidateUserMetadata/large_20keys-12               	 2114113	       560.6 ns/op	       0 B/op	       0 allocs/op
+BenchmarkWriteS3Error-12                                    	 1000000	      1047 ns/op	    1300 B/op	      14 allocs/op
+BenchmarkWriteS3Error-12                                    	 1144870	      1047 ns/op	    1300 B/op	      14 allocs/op
+BenchmarkWriteS3Error-12                                    	 1000000	      1036 ns/op	    1300 B/op	      14 allocs/op
+BenchmarkWriteS3Error-12                                    	 1000000	      1050 ns/op	    1300 B/op	      14 allocs/op
+BenchmarkWriteS3Error-12                                    	 1000000	      1061 ns/op	    1300 B/op	      14 allocs/op
+BenchmarkWriteXML_ListV2/10_objects-12                      	  103495	     11473 ns/op	    7437 B/op	      30 allocs/op
+BenchmarkWriteXML_ListV2/10_objects-12                      	  104498	     11525 ns/op	    7437 B/op	      30 allocs/op
+BenchmarkWriteXML_ListV2/10_objects-12                      	  101733	     11510 ns/op	    7437 B/op	      30 allocs/op
+BenchmarkWriteXML_ListV2/10_objects-12                      	  101959	     11463 ns/op	    7437 B/op	      30 allocs/op
+BenchmarkWriteXML_ListV2/10_objects-12                      	  104818	     11585 ns/op	    7437 B/op	      30 allocs/op
+BenchmarkWriteXML_ListV2/100_objects-12                     	   14304	     83739 ns/op	   18579 B/op	     122 allocs/op
+BenchmarkWriteXML_ListV2/100_objects-12                     	   14310	     83720 ns/op	   18574 B/op	     122 allocs/op
+BenchmarkWriteXML_ListV2/100_objects-12                     	   14179	     84001 ns/op	   18576 B/op	     122 allocs/op
+BenchmarkWriteXML_ListV2/100_objects-12                     	   14595	     82454 ns/op	   18571 B/op	     122 allocs/op
+BenchmarkWriteXML_ListV2/100_objects-12                     	   14300	     83103 ns/op	   18574 B/op	     122 allocs/op
+BenchmarkWriteXML_ListV2/1000_objects-12                    	    1432	    789721 ns/op	  133065 B/op	    1022 allocs/op
+BenchmarkWriteXML_ListV2/1000_objects-12                    	    1530	    787499 ns/op	  133473 B/op	    1022 allocs/op
+BenchmarkWriteXML_ListV2/1000_objects-12                    	    1542	    790356 ns/op	  133467 B/op	    1022 allocs/op
+BenchmarkWriteXML_ListV2/1000_objects-12                    	    1513	    794411 ns/op	  133266 B/op	    1022 allocs/op
+BenchmarkWriteXML_ListV2/1000_objects-12                    	    1554	    798726 ns/op	  133255 B/op	    1022 allocs/op
+BenchmarkBuildListContents/1000_objects_3_prefixes-12       	   18544	     65057 ns/op	   65008 B/op	    1002 allocs/op
+BenchmarkBuildListContents/1000_objects_3_prefixes-12       	   18472	     64899 ns/op	   65008 B/op	    1002 allocs/op
+BenchmarkBuildListContents/1000_objects_3_prefixes-12       	   18438	     64812 ns/op	   65008 B/op	    1002 allocs/op
+BenchmarkBuildListContents/1000_objects_3_prefixes-12       	   18193	     66235 ns/op	   65008 B/op	    1002 allocs/op
+BenchmarkBuildListContents/1000_objects_3_prefixes-12       	   18036	     66680 ns/op	   65008 B/op	    1002 allocs/op
+BenchmarkRateLimiter_Allow_SingleIP-12                      	  252980	      4881 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRateLimiter_Allow_SingleIP-12                      	  250545	      4878 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRateLimiter_Allow_SingleIP-12                      	  253870	      4880 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRateLimiter_Allow_SingleIP-12                      	  248002	      4893 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRateLimiter_Allow_SingleIP-12                      	  246776	      4893 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRateLimiter_Allow_MultiIP-12                       	  253195	      4870 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRateLimiter_Allow_MultiIP-12                       	  250102	      4902 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRateLimiter_Allow_MultiIP-12                       	  246744	      5289 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRateLimiter_Allow_MultiIP-12                       	  236625	      5133 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRateLimiter_Allow_MultiIP-12                       	  252139	      5087 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRateLimiter_Allow_Concurrent-12                    	  312405	      4043 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRateLimiter_Allow_Concurrent-12                    	  318495	      4052 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRateLimiter_Allow_Concurrent-12                    	  310915	      4018 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRateLimiter_Allow_Concurrent-12                    	  305094	      4027 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRateLimiter_Allow_Concurrent-12                    	  307483	      4040 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/afreidah/s3-orchestrator/internal/transport/s3api	150.742s
+2026/04/20 21:49:56 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:56 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:57 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:57 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:57 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:57 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:57 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:57 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:57 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:57 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:57 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:57 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:57 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:57 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:57 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:57 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:57 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:57 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:57 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:57 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:57 WARN UI: failed login attempt remote_addr=192.0.2.1
+goos: linux
+goarch: amd64
+pkg: github.com/afreidah/s3-orchestrator/internal/transport/ui
+cpu: AMD Ryzen 5 7535U with Radeon Graphics         
+BenchmarkLogin_InvalidKey-12             	      21	  52716307 ns/op	   17391 B/op	      82 allocs/op
+BenchmarkLogin_InvalidKey-12             	2026/04/20 21:49:58 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:58 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:58 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:58 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:58 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:58 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:58 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:58 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:58 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:58 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:58 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:58 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:58 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:58 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:58 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:58 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:58 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:58 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:58 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:58 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:59 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:59 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:59 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:59 WARN UI: failed login attempt remote_addr=192.0.2.1
+      24	  49132595 ns/op	   16883 B/op	      80 allocs/op
+BenchmarkLogin_InvalidKey-12             	2026/04/20 21:49:59 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:59 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:59 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:59 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:59 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:59 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:59 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:59 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:59 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:59 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:59 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:59 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:59 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:59 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:49:59 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:00 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:00 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:00 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:00 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:00 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:00 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:00 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:00 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:00 WARN UI: failed login attempt remote_addr=192.0.2.1
+      24	  49088566 ns/op	   16883 B/op	      80 allocs/op
+BenchmarkLogin_InvalidKey-12             	2026/04/20 21:50:00 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:00 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:00 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:00 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:00 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:00 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:00 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:00 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:00 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:00 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:00 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:01 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:01 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:01 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:01 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:01 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:01 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:01 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:01 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:01 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:01 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:01 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:01 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:01 WARN UI: failed login attempt remote_addr=192.0.2.1
+      24	  49888571 ns/op	   16885 B/op	      80 allocs/op
+BenchmarkLogin_InvalidKey-12             	2026/04/20 21:50:01 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:01 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:01 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:01 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:01 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:01 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:02 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:02 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:02 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:02 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:02 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:02 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:02 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:02 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:02 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:02 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:02 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:02 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:02 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:02 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:02 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:02 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:02 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:02 WARN UI: failed login attempt remote_addr=192.0.2.1
+      24	  48726726 ns/op	   16883 B/op	      80 allocs/op
+2026/04/20 21:50:02 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:03 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:03 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:03 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:03 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:03 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:03 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:03 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:03 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:03 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:03 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:03 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:03 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:03 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:03 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:03 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:03 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:03 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:03 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:03 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:03 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:03 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:04 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:04 WARN UI: failed login attempt remote_addr=192.0.2.1
+BenchmarkLogin_ValidKeyWrongSecret-12    	      24	  48710317 ns/op	   16883 B/op	      80 allocs/op
+BenchmarkLogin_ValidKeyWrongSecret-12    	2026/04/20 21:50:04 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:04 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:04 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:04 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:04 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:04 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:04 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:04 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:04 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:04 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:04 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:04 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:04 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:04 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:04 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:04 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:04 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:05 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:05 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:05 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:05 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:05 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:05 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:05 WARN UI: failed login attempt remote_addr=192.0.2.1
+      24	  48799886 ns/op	   16883 B/op	      80 allocs/op
+BenchmarkLogin_ValidKeyWrongSecret-12    	2026/04/20 21:50:05 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:05 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:05 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:05 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:05 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:05 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:05 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:05 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:05 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:05 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:05 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:05 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:06 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:06 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:06 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:06 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:06 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:06 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:06 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:06 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:06 WARN UI: failed login attempt remote_addr=192.0.2.1
+      21	  50035547 ns/op	   16969 B/op	      80 allocs/op
+BenchmarkLogin_ValidKeyWrongSecret-12    	2026/04/20 21:50:06 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:06 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:06 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:06 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:06 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:06 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:06 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:06 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:06 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:06 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:07 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:07 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:07 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:07 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:07 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:07 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:07 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:07 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:07 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:07 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:07 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:07 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:07 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:07 WARN UI: failed login attempt remote_addr=192.0.2.1
+      24	  50428383 ns/op	   16883 B/op	      80 allocs/op
+BenchmarkLogin_ValidKeyWrongSecret-12    	2026/04/20 21:50:07 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:07 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:07 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:07 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:07 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:08 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:08 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:08 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:08 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:08 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:08 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:08 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:08 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:08 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:08 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:08 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:08 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:08 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:08 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:08 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:08 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:08 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:08 WARN UI: failed login attempt remote_addr=192.0.2.1
+2026/04/20 21:50:08 WARN UI: failed login attempt remote_addr=192.0.2.1
+      24	  48744965 ns/op	   16883 B/op	      80 allocs/op
+PASS
+ok  	github.com/afreidah/s3-orchestrator/internal/transport/ui	12.117s
+goos: linux
+goarch: amd64
+pkg: github.com/afreidah/s3-orchestrator/internal/util/bufpool
+cpu: AMD Ryzen 5 7535U with Radeon Graphics         
+BenchmarkCopy/4KB-12         	25999689	        47.78 ns/op	85724.06 MB/s	      48 B/op	       1 allocs/op
+BenchmarkCopy/4KB-12         	25664266	        47.63 ns/op	86001.99 MB/s	      48 B/op	       1 allocs/op
+BenchmarkCopy/4KB-12         	22922008	        47.88 ns/op	85548.52 MB/s	      48 B/op	       1 allocs/op
+BenchmarkCopy/4KB-12         	23423142	        47.87 ns/op	85567.86 MB/s	      48 B/op	       1 allocs/op
+BenchmarkCopy/4KB-12         	24885454	        48.00 ns/op	85334.28 MB/s	      48 B/op	       1 allocs/op
+BenchmarkCopy/64KB-12        	24668367	        48.17 ns/op	1360610.41 MB/s	      48 B/op	       1 allocs/op
+BenchmarkCopy/64KB-12        	24370294	        48.00 ns/op	1365433.46 MB/s	      48 B/op	       1 allocs/op
+BenchmarkCopy/64KB-12        	24648691	        47.83 ns/op	1370075.87 MB/s	      48 B/op	       1 allocs/op
+BenchmarkCopy/64KB-12        	25566997	        47.57 ns/op	1377742.17 MB/s	      48 B/op	       1 allocs/op
+BenchmarkCopy/64KB-12        	24680449	        47.47 ns/op	1380625.02 MB/s	      48 B/op	       1 allocs/op
+BenchmarkCopy/1024KB-12      	24124406	        49.30 ns/op	21269273.55 MB/s	      48 B/op	       1 allocs/op
+BenchmarkCopy/1024KB-12      	24568261	        50.19 ns/op	20894107.12 MB/s	      48 B/op	       1 allocs/op
+BenchmarkCopy/1024KB-12      	23807250	        49.16 ns/op	21329845.93 MB/s	      48 B/op	       1 allocs/op
+BenchmarkCopy/1024KB-12      	25523548	        49.04 ns/op	21383455.91 MB/s	      48 B/op	       1 allocs/op
+BenchmarkCopy/1024KB-12      	21764770	        49.64 ns/op	21124832.64 MB/s	      48 B/op	       1 allocs/op
+BenchmarkCopy/16384KB-12     	24790734	        46.01 ns/op	364677802.08 MB/s	      48 B/op	       1 allocs/op
+BenchmarkCopy/16384KB-12     	26308294	        45.26 ns/op	370658210.94 MB/s	      48 B/op	       1 allocs/op
+BenchmarkCopy/16384KB-12     	27489282	        45.61 ns/op	367825247.84 MB/s	      48 B/op	       1 allocs/op
+BenchmarkCopy/16384KB-12     	25375742	        45.05 ns/op	372441457.96 MB/s	      48 B/op	       1 allocs/op
+BenchmarkCopy/16384KB-12     	26978319	        44.87 ns/op	373899793.74 MB/s	      48 B/op	       1 allocs/op
+PASS
+ok  	github.com/afreidah/s3-orchestrator/internal/util/bufpool	23.683s
+goos: linux
+goarch: amd64
+pkg: github.com/afreidah/s3-orchestrator/internal/util/syncutil
+cpu: AMD Ryzen 5 7535U with Radeon Graphics         
+BenchmarkTTLCache_Eviction/100_entries-12         	  168624	      7090 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTTLCache_Eviction/100_entries-12         	  168032	      7197 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTTLCache_Eviction/100_entries-12         	  155239	      7233 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTTLCache_Eviction/100_entries-12         	  162866	      7327 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTTLCache_Eviction/100_entries-12         	  159990	      7443 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTTLCache_Eviction/1000_entries-12        	   25405	     47247 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTTLCache_Eviction/1000_entries-12        	   25400	     47430 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTTLCache_Eviction/1000_entries-12        	   25016	     47734 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTTLCache_Eviction/1000_entries-12        	   26076	     46118 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTTLCache_Eviction/1000_entries-12        	   26041	     45287 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTTLCache_Eviction/10000_entries-12       	    2761	    456706 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTTLCache_Eviction/10000_entries-12       	    2532	    459013 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTTLCache_Eviction/10000_entries-12       	    2606	    456381 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTTLCache_Eviction/10000_entries-12       	    2644	    448699 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTTLCache_Eviction/10000_entries-12       	    2726	    459858 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/afreidah/s3-orchestrator/internal/util/syncutil	109.985s
+PASS
+ok  	github.com/afreidah/s3-orchestrator/internal/util/workerpool	0.003s
+PASS
+ok  	github.com/afreidah/s3-orchestrator/internal/worker	0.009s

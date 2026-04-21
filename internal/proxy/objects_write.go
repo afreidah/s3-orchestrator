@@ -47,7 +47,7 @@ func (o *ObjectManager) PutObject(ctx context.Context, key string, body io.Reade
 	start := time.Now()
 
 	// --- Start tracing span ---
-	ctx, span := telemetry.StartSpan(ctx, "Manager "+operation,
+	ctx, span := telemetry.StartSpan(ctx, managerSpanPrefix+operation,
 		telemetry.AttrObjectKey.String(key),
 		telemetry.AttrObjectSize.Int64(size),
 	)
@@ -224,7 +224,7 @@ func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey strin
 	const operation = "CopyObject"
 	start := time.Now()
 
-	ctx, span := telemetry.StartSpan(ctx, "Manager "+operation,
+	ctx, span := telemetry.StartSpan(ctx, managerSpanPrefix+operation,
 		attribute.String("s3o.source_key", sourceKey),
 		attribute.String("s3o.dest_key", destKey),
 	)
@@ -405,7 +405,7 @@ func (o *ObjectManager) DeleteObject(ctx context.Context, key string) error {
 	start := time.Now()
 
 	// --- Start tracing span ---
-	ctx, span := telemetry.StartSpan(ctx, "Manager "+operation,
+	ctx, span := telemetry.StartSpan(ctx, managerSpanPrefix+operation,
 		telemetry.AttrObjectKey.String(key),
 	)
 	defer span.End()
@@ -486,7 +486,7 @@ func (o *ObjectManager) DeleteObjects(ctx context.Context, keys []string) []Dele
 	const operation = "DeleteObjects"
 	start := time.Now()
 
-	ctx, span := telemetry.StartSpan(ctx, "Manager "+operation,
+	ctx, span := telemetry.StartSpan(ctx, managerSpanPrefix+operation,
 		attribute.Int("s3o.batch_size", len(keys)),
 	)
 	defer span.End()

@@ -51,7 +51,7 @@ var errUsageLimitSkip = errors.New("backend skipped: usage limits exceeded")
 func (o *ObjectManager) withReadFailover(ctx context.Context, operation, key string, tryBackend func(ctx context.Context, backendName string, backend s3be.ObjectBackend) (int64, error)) (string, error) {
 	start := time.Now()
 
-	ctx, span := telemetry.StartSpan(ctx, "Manager "+operation,
+	ctx, span := telemetry.StartSpan(ctx, managerSpanPrefix+operation,
 		telemetry.AttrObjectKey.String(key),
 	)
 	defer span.End()
@@ -346,36 +346,9 @@ func (o *ObjectManager) GetObject(ctx context.Context, key string, rangeHeader s
 
 		// Decrypt the response body if the object is encrypted
 		if loc != nil && loc.Encrypted && o.encryptor != nil {
-			baseNonce, wrappedDEK, unpackErr := encryption.UnpackKeyData(loc.EncryptionKey)
-			if unpackErr != nil {
-				telemetry.EncryptionErrorsTotal.WithLabelValues("decrypt", "unpack_failed").Inc()
+			if err := decryptResponse(ctx, o.encryptor, r, loc, rng, ptStart, ptEnd); err != nil {
 				_ = r.Body.Close()
-				return 0, fmt.Errorf("unpack key data: %w", unpackErr)
-			}
-
-			if rng != nil {
-				// Range request: decrypt only the fetched chunks
-				plainReader, plainLen, decErr := o.encryptor.DecryptRange(ctx, r.Body, wrappedDEK, loc.KeyID, rng, baseNonce)
-				if decErr != nil {
-					telemetry.EncryptionErrorsTotal.WithLabelValues("decrypt_range", "decrypt_failed").Inc()
-					_ = r.Body.Close()
-					return 0, fmt.Errorf("decrypt range: %w", decErr)
-				}
-				telemetry.EncryptionOpsTotal.WithLabelValues("decrypt_range").Inc()
-				r.Body = wrapReader(plainReader, r.Body)
-				r.Size = plainLen
-				r.ContentRange = fmt.Sprintf("bytes %d-%d/%d", ptStart, ptEnd, loc.PlaintextSize)
-			} else {
-				// Full read: decrypt the entire ciphertext stream
-				decrypted, decErr := o.encryptor.Decrypt(ctx, r.Body, wrappedDEK, loc.KeyID)
-				if decErr != nil {
-					telemetry.EncryptionErrorsTotal.WithLabelValues("decrypt", "decrypt_failed").Inc()
-					_ = r.Body.Close()
-					return 0, fmt.Errorf("decrypt: %w", decErr)
-				}
-				telemetry.EncryptionOpsTotal.WithLabelValues("decrypt").Inc()
-				r.Body = wrapReader(decrypted, r.Body)
-				r.Size = loc.PlaintextSize
+				return 0, err
 			}
 		}
 
@@ -504,7 +477,7 @@ func (o *ObjectManager) ListObjects(ctx context.Context, prefix, delimiter, star
 	const operation = "ListObjects"
 	start := time.Now()
 
-	ctx, span := telemetry.StartSpan(ctx, "Manager "+operation,
+	ctx, span := telemetry.StartSpan(ctx, managerSpanPrefix+operation,
 		attribute.String("s3o.prefix", prefix),
 		attribute.String("s3o.delimiter", delimiter),
 		attribute.Int("s3o.max_keys", maxKeys),

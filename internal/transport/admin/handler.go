@@ -344,7 +344,10 @@ func (h *Handler) handleCancelDrain(w http.ResponseWriter, r *http.Request) {
 }
 
 // removeConfirmTTL is how long a purge confirmation token is valid.
-const removeConfirmTTL = 60 * time.Second
+const (
+	removeConfirmTTL       = 60 * time.Second
+	errEncryptionNotEnabled = "encryption not enabled"
+)
 
 // handleRemoveBackend deletes all DB records for a backend. When purge=true,
 // requires two-phase confirmation: first call returns a preview with a signed
@@ -451,7 +454,7 @@ func (h *Handler) validRemoveToken(token, expectedName string) bool {
 // transactions. The old key must remain in previous_keys for unwrapping.
 func (h *Handler) handleRotateEncryptionKey(w http.ResponseWriter, r *http.Request) {
 	if h.encryptor == nil || h.rawStore == nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "encryption not enabled"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": errEncryptionNotEnabled})
 		return
 	}
 
@@ -543,7 +546,7 @@ func (h *Handler) handleRotateEncryptionKey(w http.ResponseWriter, r *http.Reque
 // are processed in batches to avoid holding long transactions.
 func (h *Handler) handleEncryptExisting(w http.ResponseWriter, r *http.Request) {
 	if h.encryptor == nil || h.rawStore == nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "encryption not enabled"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": errEncryptionNotEnabled})
 		return
 	}
 
@@ -643,7 +646,7 @@ func (h *Handler) handleEncryptExisting(w http.ResponseWriter, r *http.Request) 
 // must still be configured (the key provider is needed to unwrap DEKs).
 func (h *Handler) handleDecryptExisting(w http.ResponseWriter, r *http.Request) {
 	if h.encryptor == nil || h.rawStore == nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "encryption not enabled"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": errEncryptionNotEnabled})
 		return
 	}
 

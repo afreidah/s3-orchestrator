@@ -5,7 +5,8 @@
 # s3-orchestrator
 
 [![CI](https://github.com/afreidah/s3-orchestrator/actions/workflows/ci.yml/badge.svg)](https://github.com/afreidah/s3-orchestrator/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/afreidah/s3-orchestrator/branch/main/graph/badge.svg)](https://codecov.io/gh/afreidah/s3-orchestrator)
+[![Coverage](https://sonarcloud.io/api/project_badges/measure?project=afreidah_s3-orchestrator&metric=coverage)](https://sonarcloud.io/summary/new_code?id=afreidah_s3-orchestrator)
+[![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=afreidah_s3-orchestrator&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=afreidah_s3-orchestrator)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 <p align="center">

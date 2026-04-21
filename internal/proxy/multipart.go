@@ -129,20 +129,11 @@ func (mp *MultipartManager) UploadPart(ctx context.Context, uploadID string, par
 	uploadBody := body
 	uploadSize := size
 	if mp.encryptor != nil {
-		encResult, encErr := mp.encryptor.Encrypt(ctx, body, size)
+		var encErr error
+		uploadBody, uploadSize, enc, encErr = encryptBody(ctx, mp.encryptor, body, size)
 		if encErr != nil {
-			telemetry.EncryptionErrorsTotal.WithLabelValues("encrypt", "encrypt_failed").Inc()
 			span.SetStatus(codes.Error, encErr.Error())
 			return "", fmt.Errorf("encrypt part: %w", encErr)
-		}
-		telemetry.EncryptionOpsTotal.WithLabelValues("encrypt").Inc()
-		uploadBody = encResult.Body
-		uploadSize = encResult.CiphertextSize
-		enc = &store.EncryptionMeta{
-			Encrypted:     true,
-			EncryptionKey: encryption.PackKeyData(encResult.BaseNonce, encResult.WrappedDEK),
-			KeyID:         encResult.KeyID,
-			PlaintextSize: size,
 		}
 	}
 
@@ -319,20 +310,11 @@ func (mp *MultipartManager) CompleteMultipartUpload(ctx context.Context, uploadI
 	var uploadBody io.Reader = pr
 	uploadSize := totalPlaintextSize
 	if mp.encryptor != nil {
-		encResult, encErr := mp.encryptor.Encrypt(ctx, pr, totalPlaintextSize)
+		var encErr error
+		uploadBody, uploadSize, enc, encErr = encryptBody(ctx, mp.encryptor, pr, totalPlaintextSize)
 		if encErr != nil {
-			telemetry.EncryptionErrorsTotal.WithLabelValues("encrypt", "encrypt_failed").Inc()
 			span.SetStatus(codes.Error, encErr.Error())
 			return "", fmt.Errorf("encrypt final object: %w", encErr)
-		}
-		telemetry.EncryptionOpsTotal.WithLabelValues("encrypt").Inc()
-		uploadBody = encResult.Body
-		uploadSize = encResult.CiphertextSize
-		enc = &store.EncryptionMeta{
-			Encrypted:     true,
-			EncryptionKey: encryption.PackKeyData(encResult.BaseNonce, encResult.WrappedDEK),
-			KeyID:         encResult.KeyID,
-			PlaintextSize: totalPlaintextSize,
 		}
 	} else if anyEncrypted {
 		// Parts were encrypted but encryptor is now nil (disabled). The pipe

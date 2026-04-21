@@ -18,6 +18,8 @@ import (
 	db "github.com/afreidah/s3-orchestrator/internal/store/sqlc"
 )
 
+const errUnmarshalMetadata = "failed to unmarshal metadata: %w"
+
 // MultipartUpload holds metadata for an in-progress multipart upload.
 type MultipartUpload struct {
 	UploadID    string
@@ -88,7 +90,7 @@ func (s *Store) GetMultipartUpload(ctx context.Context, uploadID string) (*Multi
 	}
 	if len(row.Metadata) > 0 {
 		if err := json.Unmarshal(row.Metadata, &mu.Metadata); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
+			return nil, fmt.Errorf(errUnmarshalMetadata, err)
 		}
 	}
 	return mu, nil
@@ -178,7 +180,7 @@ func (s *Store) GetStaleMultipartUploads(ctx context.Context, olderThan time.Dur
 		}
 		if len(row.Metadata) > 0 {
 			if err := json.Unmarshal(row.Metadata, &mu.Metadata); err != nil {
-				return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
+				return nil, fmt.Errorf(errUnmarshalMetadata, err)
 			}
 		}
 		uploads[i] = mu
@@ -210,7 +212,7 @@ func (s *Store) GetMultipartUploadsByBackend(ctx context.Context, backendName st
 		}
 		if len(row.Metadata) > 0 {
 			if err := json.Unmarshal(row.Metadata, &mu.Metadata); err != nil {
-				return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
+				return nil, fmt.Errorf(errUnmarshalMetadata, err)
 			}
 		}
 		uploads[i] = mu

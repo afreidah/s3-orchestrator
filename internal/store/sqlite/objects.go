@@ -24,6 +24,11 @@ import (
 // likeEscaper escapes SQL LIKE wildcards in prefix strings.
 var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 
+const (
+	errInvalidTimestamp = "invalid created_at timestamp %q: %w"
+	errCheckQuota       = "failed to check quota update: %w"
+)
+
 // GetAllObjectLocations returns all copies of an object, ordered by created_at
 // ascending (oldest/primary first). Used for read failover.
 func (s *Store) GetAllObjectLocations(ctx context.Context, key string) ([]store.ObjectLocation, error) {
@@ -154,7 +159,7 @@ func (s *Store) RecordObject(ctx context.Context, key, backend string, size int6
 		}
 		n, err := res.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("failed to check quota update: %w", err)
+			return nil, fmt.Errorf(errCheckQuota, err)
 		}
 		if n == 0 {
 			return nil, store.ErrNoSpaceAvailable
@@ -262,7 +267,7 @@ func (s *Store) ListObjects(ctx context.Context, prefix, startAfter string, maxK
 		}
 		loc.CreatedAt, err = parseTime(createdAt)
 		if err != nil {
-			return nil, fmt.Errorf("invalid created_at timestamp %q: %w", createdAt, err)
+			return nil, fmt.Errorf(errInvalidTimestamp, createdAt, err)
 		}
 		objects = append(objects, loc)
 	}
@@ -316,7 +321,7 @@ func (s *Store) ListExpiredObjects(ctx context.Context, prefix string, cutoff ti
 		}
 		loc.CreatedAt, err = parseTime(createdAt)
 		if err != nil {
-			return nil, fmt.Errorf("invalid created_at timestamp %q: %w", createdAt, err)
+			return nil, fmt.Errorf(errInvalidTimestamp, createdAt, err)
 		}
 		locs = append(locs, loc)
 	}
@@ -349,7 +354,7 @@ func (s *Store) ListObjectsByBackend(ctx context.Context, backendName string, li
 		}
 		loc.CreatedAt, err = parseTime(createdAt)
 		if err != nil {
-			return nil, fmt.Errorf("invalid created_at timestamp %q: %w", createdAt, err)
+			return nil, fmt.Errorf(errInvalidTimestamp, createdAt, err)
 		}
 		locs = append(locs, loc)
 	}
@@ -436,7 +441,7 @@ func (s *Store) MoveObjectLocation(ctx context.Context, key, fromBackend, toBack
 		}
 		n, err := res.RowsAffected()
 		if err != nil {
-			return 0, fmt.Errorf("failed to check quota update: %w", err)
+			return 0, fmt.Errorf(errCheckQuota, err)
 		}
 		if n == 0 {
 			return 0, store.ErrNoSpaceAvailable
@@ -491,7 +496,7 @@ func (s *Store) ImportObject(ctx context.Context, key, backend string, size int6
 		}
 		qn, err := qRes.RowsAffected()
 		if err != nil {
-			return false, fmt.Errorf("failed to check quota update: %w", err)
+			return false, fmt.Errorf(errCheckQuota, err)
 		}
 		if qn == 0 {
 			return false, store.ErrNoSpaceAvailable
@@ -624,7 +629,7 @@ func scanObjectLocation(rows *sql.Rows) (store.ObjectLocation, error) {
 	var parseErr error
 	loc.CreatedAt, parseErr = parseTime(createdAt)
 	if parseErr != nil {
-		return store.ObjectLocation{}, fmt.Errorf("invalid created_at timestamp %q: %w", createdAt, parseErr)
+		return store.ObjectLocation{}, fmt.Errorf(errInvalidTimestamp, createdAt, parseErr)
 	}
 	if keyID != nil {
 		loc.KeyID = *keyID
