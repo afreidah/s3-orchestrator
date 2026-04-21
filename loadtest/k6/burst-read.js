@@ -16,7 +16,6 @@ import { check, sleep } from "k6";
 import { Counter, Rate, Trend } from "k6/metrics";
 import { SharedArray } from "k6/data";
 import crypto from "k6/crypto";
-import exec from "k6/execution";
 
 // -- Configuration (override via --env) -----------------------------------
 
@@ -25,9 +24,9 @@ const BUCKET = __ENV.S3_BUCKET || "photos";
 const ACCESS_KEY = __ENV.AWS_ACCESS_KEY_ID || "photoskey";
 const SECRET_KEY = __ENV.AWS_SECRET_ACCESS_KEY || "photossecret";
 const REGION = __ENV.AWS_REGION || "us-east-1";
-const PEAK_VUS = parseInt(__ENV.PEAK_VUS || "100");
-const SEED_COUNT = parseInt(__ENV.SEED_COUNT || "20");
-const OBJECT_SIZE = parseInt(__ENV.OBJECT_SIZE || "4096");
+const PEAK_VUS = Number.parseInt(__ENV.PEAK_VUS || "100");
+const SEED_COUNT = Number.parseInt(__ENV.SEED_COUNT || "20");
+const OBJECT_SIZE = Number.parseInt(__ENV.OBJECT_SIZE || "4096");
 const HOLD_DURATION = __ENV.HOLD_DURATION || "30s";
 
 // -- Stages ---------------------------------------------------------------
@@ -84,7 +83,7 @@ function signRequest(method, path, body, headers) {
   headers["x-amz-content-sha256"] = payloadHash;
   headers["host"] = ENDPOINT.replace(/^https?:\/\//, "");
 
-  const signedHeaderKeys = Object.keys(headers).sort();
+  const signedHeaderKeys = Object.keys(headers).sort((a, b) => a.localeCompare(b));
   const canonicalHeaders = signedHeaderKeys
     .map((k) => k.toLowerCase() + ":" + headers[k].trim())
     .join("\n");

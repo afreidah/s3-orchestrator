@@ -12,23 +12,23 @@
 (function () {
   'use strict';
 
-  var container = document.getElementById('logs-container');
-  var levelSelect = document.getElementById('logs-level');
-  var refreshBtn = document.getElementById('logs-refresh');
-  var searchInput = document.getElementById('logs-search');
-  var autoToggle = document.getElementById('logs-auto');
+  let container = document.getElementById('logs-container');
+  let levelSelect = document.getElementById('logs-level');
+  let refreshBtn = document.getElementById('logs-refresh');
+  let searchInput = document.getElementById('logs-search');
+  let autoToggle = document.getElementById('logs-auto');
 
   if (!container) return;
 
-  var allEntries = [];
-  var hasMore = false;
-  var oldestTimestamp = '';
-  var autoInterval = null;
-  var defaultLimit = 100;
+  let allEntries = [];
+  let hasMore = false;
+  let oldestTimestamp = '';
+  let autoInterval = null;
+  let defaultLimit = 100;
 
   function fetchWithTimeout(url, opts, ms) {
-    var c = new AbortController();
-    var id = setTimeout(function () { c.abort(); }, ms);
+    let c = new AbortController();
+    let id = setTimeout(function () { c.abort(); }, ms);
     opts = opts || {};
     opts.signal = c.signal;
     return fetch(url, opts).finally(function () { clearTimeout(id); });
@@ -46,7 +46,7 @@
 
   function formatTime(iso) {
     try {
-      var d = new Date(iso);
+      let d = new Date(iso);
       return d.toLocaleTimeString(undefined, { hour12: false });
     } catch (e) {
       return iso;
@@ -55,8 +55,8 @@
 
   function formatAttrs(attrs) {
     if (!attrs) return '';
-    var parts = [];
-    for (var key in attrs) {
+    let parts = [];
+    for (let key in attrs) {
       if (Object.prototype.hasOwnProperty.call(attrs, key)) {
         parts.push(key + '=' + String(attrs[key]));
       }
@@ -69,7 +69,7 @@
     container.replaceChildren();
 
     if (entries.length === 0) {
-      var empty = document.createElement('div');
+      let empty = document.createElement('div');
       empty.className = 'logs-empty';
       empty.textContent = 'No log entries.';
       container.appendChild(empty);
@@ -77,29 +77,29 @@
       return;
     }
 
-    for (var i = entries.length - 1; i >= 0; i--) {
-      var e = entries[i];
-      var row = document.createElement('div');
+    for (let i = entries.length - 1; i >= 0; i--) {
+      let e = entries[i];
+      let row = document.createElement('div');
       row.className = 'log-entry ' + levelClass(e.level);
 
-      var timeSpan = document.createElement('span');
+      let timeSpan = document.createElement('span');
       timeSpan.className = 'log-time';
       timeSpan.textContent = formatTime(e.time);
       row.appendChild(timeSpan);
 
-      var lvlSpan = document.createElement('span');
+      let lvlSpan = document.createElement('span');
       lvlSpan.className = 'log-lvl';
       lvlSpan.textContent = e.level;
       row.appendChild(lvlSpan);
 
-      var msgSpan = document.createElement('span');
+      let msgSpan = document.createElement('span');
       msgSpan.className = 'log-msg';
       msgSpan.textContent = e.message;
       row.appendChild(msgSpan);
 
-      var attrStr = formatAttrs(e.attrs);
+      let attrStr = formatAttrs(e.attrs);
       if (attrStr) {
-        var attrSpan = document.createElement('span');
+        let attrSpan = document.createElement('span');
         attrSpan.className = 'log-attrs';
         attrSpan.textContent = attrStr;
         row.appendChild(attrSpan);
@@ -109,7 +109,7 @@
     }
 
     if (hasMore) {
-      var btn = document.createElement('button');
+      let btn = document.createElement('button');
       btn.className = 'btn-action logs-load-more';
       btn.textContent = 'Load more\u2026';
       btn.addEventListener('click', function () {
@@ -123,18 +123,18 @@
   }
 
   function applySearch() {
-    var scrollY = window.scrollY;
-    var term = (searchInput.value || '').toLowerCase();
+    let scrollY = window.scrollY;
+    let term = (searchInput.value || '').toLowerCase();
     if (!term) {
       renderEntries(allEntries);
       window.scrollTo(0, scrollY);
       return;
     }
-    var filtered = allEntries.filter(function (e) {
+    let filtered = allEntries.filter(function (e) {
       if (e.message.toLowerCase().indexOf(term) !== -1) return true;
       if (e.level.toLowerCase().indexOf(term) !== -1) return true;
       if (e.attrs) {
-        for (var key in e.attrs) {
+        for (let key in e.attrs) {
           if (Object.prototype.hasOwnProperty.call(e.attrs, key)) {
             if (String(e.attrs[key]).toLowerCase().indexOf(term) !== -1) return true;
             if (key.toLowerCase().indexOf(term) !== -1) return true;
@@ -148,20 +148,20 @@
   }
 
   function buildURL(before) {
-    var level = levelSelect.value;
-    var url = 'api/logs?limit=' + defaultLimit;
+    let level = levelSelect.value;
+    let url = 'api/logs?limit=' + defaultLimit;
     if (level) url += '&level=' + encodeURIComponent(level);
     if (before) url += '&before=' + encodeURIComponent(before);
     return url;
   }
 
   function fetchLogs() {
-    var scrollY = window.scrollY;
+    let scrollY = window.scrollY;
     allEntries = [];
     hasMore = false;
     oldestTimestamp = '';
 
-    var loadingDiv = document.createElement('div');
+    let loadingDiv = document.createElement('div');
     loadingDiv.className = 'tree-loading';
     loadingDiv.textContent = 'Loading\u2026';
     container.replaceChildren(loadingDiv);
@@ -184,7 +184,7 @@
       })
       .catch(function (err) {
         container.replaceChildren();
-        var errDiv = document.createElement('div');
+        let errDiv = document.createElement('div');
         errDiv.className = 'logs-empty';
         errDiv.textContent = err.name === 'AbortError'
           ? 'Request timed out'
@@ -205,7 +205,7 @@
       })
       .then(function (data) {
         if (!data) return;
-        var newEntries = data.entries || [];
+        let newEntries = data.entries || [];
         hasMore = data.hasMore || false;
         if (newEntries.length > 0) {
           allEntries = newEntries.concat(allEntries);
@@ -214,7 +214,7 @@
         applySearch();
       })
       .catch(function (err) {
-        var btn = container.querySelector('.logs-load-more');
+        let btn = container.querySelector('.logs-load-more');
         if (btn) {
           btn.disabled = false;
           btn.textContent = err.name === 'AbortError' ? 'Request timed out' : 'Failed to load';

@@ -22,8 +22,8 @@ const BUCKET = __ENV.S3_BUCKET || "photos";
 const ACCESS_KEY = __ENV.AWS_ACCESS_KEY_ID || "photoskey";
 const SECRET_KEY = __ENV.AWS_SECRET_ACCESS_KEY || "photossecret";
 const REGION = __ENV.AWS_REGION || "us-east-1";
-const PEAK_VUS = parseInt(__ENV.PEAK_VUS || "100");
-const OBJECT_SIZE = parseInt(__ENV.OBJECT_SIZE || "4096");
+const PEAK_VUS = Number.parseInt(__ENV.PEAK_VUS || "100");
+const OBJECT_SIZE = Number.parseInt(__ENV.OBJECT_SIZE || "4096");
 
 // -- Stages ---------------------------------------------------------------
 
@@ -73,7 +73,7 @@ function signRequest(method, path, body, headers) {
   headers["x-amz-content-sha256"] = payloadHash;
   headers["host"] = ENDPOINT.replace(/^https?:\/\//, "");
 
-  const signedHeaderKeys = Object.keys(headers).sort();
+  const signedHeaderKeys = Object.keys(headers).sort((a, b) => a.localeCompare(b));
   const canonicalHeaders = signedHeaderKeys
     .map((k) => k.toLowerCase() + ":" + headers[k].trim())
     .join("\n");

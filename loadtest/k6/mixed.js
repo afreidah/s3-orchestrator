@@ -13,7 +13,6 @@
 import http from "k6/http";
 import { check, sleep } from "k6";
 import { Rate, Trend } from "k6/metrics";
-import { SharedArray } from "k6/data";
 import crypto from "k6/crypto";
 
 // -- Configuration (override via --env) -----------------------------------
@@ -23,8 +22,8 @@ const BUCKET = __ENV.S3_BUCKET || "photos";
 const ACCESS_KEY = __ENV.AWS_ACCESS_KEY_ID || "photoskey";
 const SECRET_KEY = __ENV.AWS_SECRET_ACCESS_KEY || "photossecret";
 const REGION = __ENV.AWS_REGION || "us-east-1";
-const OBJECT_COUNT = parseInt(__ENV.OBJECT_COUNT || "20");
-const OBJECT_SIZE = parseInt(__ENV.OBJECT_SIZE || "1024");
+const OBJECT_COUNT = Number.parseInt(__ENV.OBJECT_COUNT || "20");
+const OBJECT_SIZE = Number.parseInt(__ENV.OBJECT_SIZE || "1024");
 
 // -- Stages ---------------------------------------------------------------
 
@@ -76,7 +75,7 @@ function signRequest(method, path, body, headers) {
   headers["host"] = ENDPOINT.replace(/^https?:\/\//, "");
 
   // Canonical headers (sorted)
-  const signedHeaderKeys = Object.keys(headers).sort();
+  const signedHeaderKeys = Object.keys(headers).sort((a, b) => a.localeCompare(b));
   const canonicalHeaders = signedHeaderKeys
     .map((k) => k.toLowerCase() + ":" + headers[k].trim())
     .join("\n");
