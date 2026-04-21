@@ -15,20 +15,20 @@
   // --- Helpers ---
   function formatBytes(b) {
     if (b === 0) return '0 B';
-    var units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
-    var i = 0;
+    let units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+    let i = 0;
     while (b >= 1024 && i < units.length - 1) { b /= 1024; i++; }
     return (i === 0 ? b : b.toFixed(1)) + ' ' + units[i];
   }
 
   function getCSRFToken() {
-    var match = document.cookie.match('(?:^|; )s3orch_csrf=([^;]*)');
+    let match = document.cookie.match('(?:^|; )s3orch_csrf=([^;]*)');
     return match ? match[1] : '';
   }
 
   function fetchWithTimeout(url, opts, ms) {
-    var c = new AbortController();
-    var id = setTimeout(function () { c.abort(); }, ms);
+    let c = new AbortController();
+    let id = setTimeout(function () { c.abort(); }, ms);
     opts = opts || {};
     opts.signal = c.signal;
     // Include CSRF token on state-changing requests
@@ -41,21 +41,21 @@
 
   function renderEntry(entry) {
     if (entry.isDir) {
-      var details = document.createElement('details');
+      let details = document.createElement('details');
       details.className = 'tree-dir';
       details.dataset.prefix = entry.name;
       details.dataset.loaded = 'false';
 
-      var summary = document.createElement('summary');
-      var parts = entry.name.replace(/\/$/, '').split('/');
-      var displayName = parts[parts.length - 1] + '/';
-      var nameSpan = document.createElement('span');
+      let summary = document.createElement('summary');
+      let parts = entry.name.replace(/\/$/, '').split('/');
+      let displayName = parts[parts.length - 1] + '/';
+      let nameSpan = document.createElement('span');
       nameSpan.className = 'tree-name';
       nameSpan.textContent = displayName;
-      var metaSpan = document.createElement('span');
+      let metaSpan = document.createElement('span');
       metaSpan.className = 'tree-meta';
       metaSpan.textContent = entry.fileCount + ' files \u00B7 ' + formatBytes(entry.totalSize);
-      var delSpan = document.createElement('span');
+      let delSpan = document.createElement('span');
       delSpan.className = 'tree-action tree-delete';
       delSpan.title = 'Delete';
       delSpan.textContent = '\u2715';
@@ -64,9 +64,9 @@
       summary.appendChild(delSpan);
       details.appendChild(summary);
 
-      var children = document.createElement('div');
+      let children = document.createElement('div');
       children.className = 'tree-children';
-      var loadingDiv = document.createElement('div');
+      let loadingDiv = document.createElement('div');
       loadingDiv.className = 'tree-loading';
       loadingDiv.textContent = 'Loading\u2026';
       children.appendChild(loadingDiv);
@@ -75,20 +75,20 @@
       return details;
     }
 
-    var div = document.createElement('div');
+    let div = document.createElement('div');
     div.className = 'tree-file';
     div.dataset.key = entry.name;
-    var fNameSpan = document.createElement('span');
+    let fNameSpan = document.createElement('span');
     fNameSpan.className = 'tree-name';
     fNameSpan.textContent = entry.name.split('/').pop();
-    var fMetaSpan = document.createElement('span');
+    let fMetaSpan = document.createElement('span');
     fMetaSpan.className = 'tree-meta';
     fMetaSpan.textContent = entry.backend + ' \u00B7 ' + formatBytes(entry.totalSize) + ' \u00B7 ' + entry.createdAt;
-    var fDlSpan = document.createElement('span');
+    let fDlSpan = document.createElement('span');
     fDlSpan.className = 'tree-action tree-download';
     fDlSpan.title = 'Download';
     fDlSpan.textContent = '\u2193';
-    var fDelSpan = document.createElement('span');
+    let fDelSpan = document.createElement('span');
     fDelSpan.className = 'tree-action tree-delete';
     fDelSpan.title = 'Delete';
     fDelSpan.textContent = '\u2715';
@@ -100,11 +100,11 @@
   }
 
   // --- Lazy-loaded tree expansion ---
-  var tree = document.getElementById('object-tree');
+  let tree = document.getElementById('object-tree');
 
   if (tree) {
     tree.addEventListener('toggle', function (e) {
-      var details = e.target;
+      let details = e.target;
       if (!details.open || details.dataset.loaded === 'true') return;
       if (!details.classList.contains('tree-dir')) return;
 
@@ -114,7 +114,7 @@
   }
 
   function loadChildren(prefix, startAfter, container) {
-    var url = 'api/tree?prefix=' + encodeURIComponent(prefix);
+    let url = 'api/tree?prefix=' + encodeURIComponent(prefix);
     if (startAfter) url += '&startAfter=' + encodeURIComponent(startAfter);
 
     fetchWithTimeout(url, null, 10000)
@@ -125,19 +125,19 @@
       })
       .then(function (data) {
         if (!data) return;
-        var loading = container.querySelector('.tree-loading');
+        let loading = container.querySelector('.tree-loading');
         if (loading) loading.remove();
 
-        var existing = container.querySelector('.tree-load-more');
+        let existing = container.querySelector('.tree-load-more');
         if (existing) existing.remove();
 
-        var entries = data.entries || [];
-        for (var i = 0; i < entries.length; i++) {
+        let entries = data.entries || [];
+        for (let i = 0; i < entries.length; i++) {
           container.appendChild(renderEntry(entries[i]));
         }
 
         if (data.hasMore && data.nextCursor) {
-          var btn = document.createElement('div');
+          let btn = document.createElement('div');
           btn.className = 'tree-load-more';
           btn.textContent = 'Load more\u2026';
           btn.addEventListener('click', function () {
@@ -148,28 +148,28 @@
         }
       })
       .catch(function (err) {
-        var loading = container.querySelector('.tree-loading');
+        let loading = container.querySelector('.tree-loading');
         if (loading) loading.textContent = err.name === 'AbortError' ? 'Request timed out' : 'Failed to load';
         console.error('Tree load error:', err);
       });
   }
 
   // --- Delete confirmation flow ---
-  var dialog = document.getElementById('confirm-delete');
-  var deleteNameEl = document.getElementById('confirm-delete-name');
-  var deleteCancelBtn = document.getElementById('confirm-delete-cancel');
-  var deleteOkBtn = document.getElementById('confirm-delete-ok');
-  var pendingDeleteKey = '';
-  var pendingDeleteEl = null;
-  var pendingDeleteIsDir = false;
+  let dialog = document.getElementById('confirm-delete');
+  let deleteNameEl = document.getElementById('confirm-delete-name');
+  let deleteCancelBtn = document.getElementById('confirm-delete-cancel');
+  let deleteOkBtn = document.getElementById('confirm-delete-ok');
+  let pendingDeleteKey = '';
+  let pendingDeleteEl = null;
+  let pendingDeleteIsDir = false;
 
   if (dialog && tree) {
     tree.addEventListener('click', function (e) {
-      var btn = e.target.closest('.tree-delete');
+      let btn = e.target.closest('.tree-delete');
       if (!btn) return;
 
-      var fileEl = btn.closest('.tree-file');
-      var dirEl = btn.closest('.tree-dir');
+      let fileEl = btn.closest('.tree-file');
+      let dirEl = btn.closest('.tree-dir');
 
       if (fileEl && fileEl.dataset.key) {
         pendingDeleteKey = fileEl.dataset.key;
@@ -181,8 +181,8 @@
         pendingDeleteKey = dirEl.dataset.prefix;
         pendingDeleteEl = dirEl;
         pendingDeleteIsDir = true;
-        var metaEl = dirEl.querySelector('summary .tree-meta');
-        var metaText = metaEl ? ' (' + metaEl.textContent.trim() + ')' : '';
+        let metaEl = dirEl.querySelector('summary .tree-meta');
+        let metaText = metaEl ? ' (' + metaEl.textContent.trim() + ')' : '';
         deleteNameEl.textContent = pendingDeleteKey + metaText;
       } else {
         return;
@@ -201,8 +201,8 @@
       deleteOkBtn.disabled = true;
       deleteOkBtn.textContent = 'Deleting\u2026';
 
-      var endpoint = pendingDeleteIsDir ? 'api/delete-prefix' : 'api/delete';
-      var payload = pendingDeleteIsDir
+      let endpoint = pendingDeleteIsDir ? 'api/delete-prefix' : 'api/delete';
+      let payload = pendingDeleteIsDir
         ? JSON.stringify({ prefix: pendingDeleteKey })
         : JSON.stringify({ key: pendingDeleteKey });
 
@@ -233,38 +233,38 @@
   // --- Download ---
   if (tree) {
     tree.addEventListener('click', function (e) {
-      var btn = e.target.closest('.tree-download');
+      let btn = e.target.closest('.tree-download');
       if (!btn) return;
-      var fileEl = btn.closest('.tree-file');
+      let fileEl = btn.closest('.tree-file');
       if (!fileEl || !fileEl.dataset.key) return;
       window.location = 'api/download?key=' + encodeURIComponent(fileEl.dataset.key);
     });
   }
 
   // --- Upload flow ---
-  var uploadBtn = document.getElementById('upload-btn');
-  var uploadFilesInput = document.getElementById('upload-files-input');
-  var uploadFolderInput = document.getElementById('upload-folder-input');
-  var uploadDialog = document.getElementById('upload-dialog');
-  var uploadBucketSelect = document.getElementById('upload-bucket');
-  var uploadPathInput = document.getElementById('upload-path');
-  var uploadAddFilesBtn = document.getElementById('upload-add-files');
-  var uploadAddFolderBtn = document.getElementById('upload-add-folder');
-  var uploadFileList = document.getElementById('upload-file-list');
-  var uploadProgressEl = document.getElementById('upload-progress');
-  var uploadCancelBtn = document.getElementById('upload-cancel');
-  var uploadOkBtn = document.getElementById('upload-ok');
+  let uploadBtn = document.getElementById('upload-btn');
+  let uploadFilesInput = document.getElementById('upload-files-input');
+  let uploadFolderInput = document.getElementById('upload-folder-input');
+  let uploadDialog = document.getElementById('upload-dialog');
+  let uploadBucketSelect = document.getElementById('upload-bucket');
+  let uploadPathInput = document.getElementById('upload-path');
+  let uploadAddFilesBtn = document.getElementById('upload-add-files');
+  let uploadAddFolderBtn = document.getElementById('upload-add-folder');
+  let uploadFileList = document.getElementById('upload-file-list');
+  let uploadProgressEl = document.getElementById('upload-progress');
+  let uploadCancelBtn = document.getElementById('upload-cancel');
+  let uploadOkBtn = document.getElementById('upload-ok');
 
-  var pendingFiles = [];
+  let pendingFiles = [];
 
   function renderFileList() {
     uploadFileList.replaceChildren();
-    for (var i = 0; i < pendingFiles.length; i++) {
-      var row = document.createElement('div');
+    for (let i = 0; i < pendingFiles.length; i++) {
+      let row = document.createElement('div');
       row.className = 'upload-file-row';
-      var nameSpan = document.createElement('span');
+      let nameSpan = document.createElement('span');
       nameSpan.textContent = pendingFiles[i].displayName;
-      var sizeSpan = document.createElement('span');
+      let sizeSpan = document.createElement('span');
       sizeSpan.className = 'upload-file-size';
       sizeSpan.textContent = formatBytes(pendingFiles[i].file.size);
       row.appendChild(nameSpan);
@@ -275,8 +275,8 @@
   }
 
   function buildKey(displayName) {
-    var bucket = uploadBucketSelect.value;
-    var path = uploadPathInput.value.replace(/^\/+|\/+$/g, '');
+    let bucket = uploadBucketSelect.value;
+    let path = uploadPathInput.value.replace(/^\/+|\/+$/g, '');
     if (path) {
       return bucket + '/' + path + '/' + displayName;
     }
@@ -304,12 +304,12 @@
       return;
     }
 
-    var entry = pendingFiles[index];
-    var key = buildKey(entry.displayName);
+    let entry = pendingFiles[index];
+    let key = buildKey(entry.displayName);
     uploadProgressEl.hidden = false;
     uploadProgressEl.textContent = 'Uploading ' + (index + 1) + ' of ' + pendingFiles.length + ': ' + entry.displayName;
 
-    var formData = new FormData();
+    let formData = new FormData();
     formData.append('key', key);
     formData.append('file', entry.file);
 
@@ -323,13 +323,13 @@
         if (data.ok) {
           uploadNext(index + 1, successCount + 1, failCount);
         } else {
-          var rows = uploadFileList.querySelectorAll('.upload-file-row');
+          let rows = uploadFileList.querySelectorAll('.upload-file-row');
           if (rows[index]) rows[index].classList.add('upload-failed');
           uploadNext(index + 1, successCount, failCount + 1);
         }
       })
       .catch(function () {
-        var rows = uploadFileList.querySelectorAll('.upload-file-row');
+        let rows = uploadFileList.querySelectorAll('.upload-file-row');
         if (rows[index]) rows[index].classList.add('upload-failed');
         uploadNext(index + 1, successCount, failCount + 1);
       });
@@ -355,8 +355,8 @@
     });
 
     uploadFilesInput.addEventListener('change', function () {
-      var files = uploadFilesInput.files;
-      for (var i = 0; i < files.length; i++) {
+      let files = uploadFilesInput.files;
+      for (let i = 0; i < files.length; i++) {
         pendingFiles.push({ file: files[i], displayName: files[i].name });
       }
       renderFileList();
@@ -368,8 +368,8 @@
     });
 
     uploadFolderInput.addEventListener('change', function () {
-      var files = uploadFolderInput.files;
-      for (var i = 0; i < files.length; i++) {
+      let files = uploadFolderInput.files;
+      for (let i = 0; i < files.length; i++) {
         pendingFiles.push({ file: files[i], displayName: files[i].webkitRelativePath });
       }
       renderFileList();
@@ -387,7 +387,7 @@
   }
 
   // --- Refresh button (partial update, preserves tree + logs + scroll) ---
-  var refreshBtn = document.getElementById('refresh-btn');
+  let refreshBtn = document.getElementById('refresh-btn');
   if (refreshBtn) {
     refreshBtn.addEventListener('click', function () {
       refreshBtn.disabled = true;
@@ -401,21 +401,21 @@
         })
         .then(function (html) {
           if (!html) return;
-          var doc = new DOMParser().parseFromString(html, 'text/html');
-          var sections = document.querySelectorAll('.container > section');
-          var newSections = doc.querySelectorAll('.container > section');
+          let doc = new DOMParser().parseFromString(html, 'text/html');
+          let sections = document.querySelectorAll('.container > section');
+          let newSections = doc.querySelectorAll('.container > section');
 
           // Replace storage summary, backends, and monthly usage (first 3 sections)
-          for (var i = 0; i < 3 && i < sections.length && i < newSections.length; i++) {
+          for (let i = 0; i < 3 && i < sections.length && i < newSections.length; i++) {
             sections[i].innerHTML = newSections[i].innerHTML;
           }
 
           // Update header badges (healthy/degraded)
-          var headerRight = document.querySelector('.header-right');
-          var newHeaderRight = doc.querySelector('.header-right');
+          let headerRight = document.querySelector('.header-right');
+          let newHeaderRight = doc.querySelector('.header-right');
           if (headerRight && newHeaderRight) {
-            var badge = headerRight.querySelector('.badge');
-            var newBadge = newHeaderRight.querySelector('.badge');
+            let badge = headerRight.querySelector('.badge');
+            let newBadge = newHeaderRight.querySelector('.badge');
             if (badge && newBadge) {
               badge.className = newBadge.className;
               badge.textContent = newBadge.textContent;
@@ -454,7 +454,7 @@
   }
 
   function pollStatus(btn, statusUrl, label, countKey) {
-    var poll = setInterval(function () {
+    let poll = setInterval(function () {
       fetch(statusUrl)
         .then(function (resp) { return resp.json(); })
         .then(function (data) {
@@ -480,7 +480,7 @@
   }
 
   // --- Rebalance flow ---
-  var rebalanceBtn = document.getElementById('rebalance-btn');
+  let rebalanceBtn = document.getElementById('rebalance-btn');
 
   if (rebalanceBtn) {
     rebalanceBtn.addEventListener('click', function () {
@@ -489,7 +489,7 @@
   }
 
   // --- Clean excess flow ---
-  var cleanExcessBtn = document.getElementById('clean-excess-btn');
+  let cleanExcessBtn = document.getElementById('clean-excess-btn');
 
   if (cleanExcessBtn) {
     cleanExcessBtn.addEventListener('click', function () {
@@ -498,10 +498,10 @@
   }
 
   // --- Sync flow ---
-  var syncBtn = document.getElementById('sync-btn');
-  var syncDialog = document.getElementById('sync-dialog');
-  var syncCancelBtn = document.getElementById('sync-cancel');
-  var syncOkBtn = document.getElementById('sync-ok');
+  let syncBtn = document.getElementById('sync-btn');
+  let syncDialog = document.getElementById('sync-dialog');
+  let syncCancelBtn = document.getElementById('sync-cancel');
+  let syncOkBtn = document.getElementById('sync-ok');
 
   if (syncBtn && syncDialog) {
     syncBtn.addEventListener('click', function () {
@@ -515,8 +515,8 @@
     });
 
     syncOkBtn.addEventListener('click', function () {
-      var backend = document.getElementById('sync-backend').value;
-      var bucket = document.getElementById('sync-bucket').value;
+      let backend = document.getElementById('sync-backend').value;
+      let bucket = document.getElementById('sync-bucket').value;
       if (!backend || !bucket) return;
 
       syncOkBtn.disabled = true;

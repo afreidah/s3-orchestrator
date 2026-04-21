@@ -20,7 +20,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 
-	_ "modernc.org/sqlite"
+	_ "modernc.org/sqlite" // register pure-Go SQLite driver for database/sql
 )
 
 // Store implements store.MetadataStore and store.AdminStore using SQLite.

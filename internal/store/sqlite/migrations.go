@@ -13,7 +13,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	_ "embed"
+	_ "embed" // required for //go:embed directive on migrationFS
 	"fmt"
 	"log/slog"
 )

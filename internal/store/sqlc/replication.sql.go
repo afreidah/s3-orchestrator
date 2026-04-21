@@ -88,7 +88,7 @@ WITH over_replicated AS (
 SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.created_at
 FROM object_locations ol
 JOIN over_replicated orep ON ol.object_key = orep.object_key
-ORDER BY ol.object_key, ol.created_at ASC
+ORDER BY ol.object_key ASC, ol.created_at ASC
 `
 
 type GetOverReplicatedObjectsParams struct {
@@ -149,7 +149,7 @@ WITH under_replicated AS (
 SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.created_at
 FROM object_locations ol
 JOIN under_replicated ur ON ol.object_key = ur.object_key
-ORDER BY ol.object_key, ol.created_at ASC
+ORDER BY ol.object_key ASC, ol.created_at ASC
 `
 
 type GetUnderReplicatedObjectsParams struct {
@@ -211,7 +211,7 @@ WITH under_replicated AS (
 SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.created_at
 FROM object_locations ol
 JOIN under_replicated ur ON ol.object_key = ur.object_key
-ORDER BY ol.object_key, ol.created_at ASC
+ORDER BY ol.object_key ASC, ol.created_at ASC
 `
 
 type GetUnderReplicatedObjectsExcludingParams struct {

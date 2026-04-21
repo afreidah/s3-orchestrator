@@ -27,7 +27,7 @@ spec:
       serviceAccountName: default
       containers:
         - name: alloy
-          image: grafana/alloy:latest
+          image: grafana/alloy:v1.8.2
           args: ["run", "--server.http.listen-addr=0.0.0.0:12345", "/etc/alloy/config.alloy"]
           ports:
             - name: http
@@ -45,6 +45,7 @@ spec:
             limits:
               cpu: 200m
               memory: 256Mi
+              ephemeral-storage: 200Mi
           volumeMounts:
             - name: config
               mountPath: /etc/alloy
