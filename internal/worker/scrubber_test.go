@@ -21,13 +21,13 @@ func hashString(s string) string {
 	return hex.EncodeToString(h[:])
 }
 
-func setupScrubber(t *testing.T) (*Scrubber, *MockScrubberDeps, *backendtest.MockObjectBackend, *mockMetadataStore) {
+func setupScrubber(t *testing.T) (*Scrubber, *MockScrubberOps, *backendtest.MockObjectBackend, *mockMetadataStore) {
 	t.Helper()
 	ctrl := gomock.NewController(t)
-	ops := NewMockScrubberDeps(ctrl)
+	ops := NewMockScrubberOps(ctrl)
 	be := backendtest.NewMockObjectBackend(ctrl)
 	ms := &mockMetadataStore{}
-	s := NewScrubber(ops, nil)
+	s := NewScrubber(ops, ms, nil)
 	s.SetConfig(&config.IntegrityConfig{
 		Enabled:           true,
 		ScrubberBatchSize: 100,
@@ -44,7 +44,6 @@ func TestScrub_MatchingHash(t *testing.T) {
 	ms.randomHashedObjects = []store.ObjectLocation{
 		{ObjectKey: "bucket/key1", BackendName: "b1", SizeBytes: 11, ContentHash: expectedHash},
 	}
-	ops.EXPECT().Store().Return(ms).AnyTimes()
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
 	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
@@ -69,7 +68,6 @@ func TestScrub_HashMismatch(t *testing.T) {
 	ms.randomHashedObjects = []store.ObjectLocation{
 		{ObjectKey: "bucket/key1", BackendName: "b1", SizeBytes: 11, ContentHash: "badhash"},
 	}
-	ops.EXPECT().Store().Return(ms).AnyTimes()
 	ops.EXPECT().GetBackend("b1").Return(be, nil).Times(2)
 	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
 	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
@@ -95,7 +93,6 @@ func TestScrub_BackendError(t *testing.T) {
 	ms.randomHashedObjects = []store.ObjectLocation{
 		{ObjectKey: "bucket/key1", BackendName: "b1", SizeBytes: 11, ContentHash: "somehash"},
 	}
-	ops.EXPECT().Store().Return(ms).AnyTimes()
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
 	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
@@ -112,9 +109,8 @@ func TestScrub_BackendError(t *testing.T) {
 
 func TestScrub_EmptyBatch(t *testing.T) {
 	t.Parallel()
-	s, ops, _, ms := setupScrubber(t)
+	s, _, _, ms := setupScrubber(t)
 	ms.randomHashedObjects = nil
-	ops.EXPECT().Store().Return(ms).AnyTimes()
 
 	checked, failed := s.Scrub(context.Background(), 10)
 	if checked != 0 || failed != 0 {
@@ -131,7 +127,6 @@ func TestBackfill_ComputesAndStoresHash(t *testing.T) {
 	ms.objectsWithoutHash = []store.ObjectLocation{
 		{ObjectKey: "bucket/key1", BackendName: "b1", SizeBytes: int64(len(body))},
 	}
-	ops.EXPECT().Store().Return(ms).AnyTimes()
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
 	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
@@ -162,7 +157,6 @@ func TestBackfill_Pagination(t *testing.T) {
 		locs[i] = store.ObjectLocation{ObjectKey: "bucket/key", BackendName: "b1", SizeBytes: 3}
 	}
 	ms.objectsWithoutHash = locs
-	ops.EXPECT().Store().Return(ms).AnyTimes()
 	ops.EXPECT().GetBackend("b1").Return(be, nil).Times(5)
 	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {}).Times(5)
 	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
@@ -189,7 +183,6 @@ func TestBackfill_UnencryptedObject(t *testing.T) {
 	ms.objectsWithoutHash = []store.ObjectLocation{
 		{ObjectKey: "bucket/plain", BackendName: "b1", SizeBytes: int64(len(body)), Encrypted: false},
 	}
-	ops.EXPECT().Store().Return(ms).AnyTimes()
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
 	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
@@ -214,7 +207,6 @@ func TestBackfill_BackendError(t *testing.T) {
 	ms.objectsWithoutHash = []store.ObjectLocation{
 		{ObjectKey: "bucket/key1", BackendName: "b1", SizeBytes: 10},
 	}
-	ops.EXPECT().Store().Return(ms).AnyTimes()
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
 	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
@@ -228,9 +220,8 @@ func TestBackfill_BackendError(t *testing.T) {
 
 func TestBackfill_EmptyBatch(t *testing.T) {
 	t.Parallel()
-	s, ops, _, ms := setupScrubber(t)
+	s, _, _, ms := setupScrubber(t)
 	ms.objectsWithoutHash = nil
-	ops.EXPECT().Store().Return(ms).AnyTimes()
 
 	processed, nextOffset := s.Backfill(context.Background(), 10, 0)
 	if processed != 0 || nextOffset != 0 {
@@ -240,7 +231,7 @@ func TestBackfill_EmptyBatch(t *testing.T) {
 
 func TestScrubber_SetConfig(t *testing.T) {
 	t.Parallel()
-	s := NewScrubber(nil, nil)
+	s := NewScrubber(nil, &mockMetadataStore{}, nil)
 	if s.Config() != nil {
 		t.Fatal("expected nil config initially")
 	}
@@ -254,12 +245,11 @@ func TestScrubber_SetConfig(t *testing.T) {
 
 func TestScrub_ContextCancelled(t *testing.T) {
 	t.Parallel()
-	s, ops, _, ms := setupScrubber(t)
+	s, _, _, ms := setupScrubber(t)
 	ms.randomHashedObjects = []store.ObjectLocation{
 		{ObjectKey: "bucket/key1", BackendName: "b1", SizeBytes: 11, ContentHash: "hash"},
 		{ObjectKey: "bucket/key2", BackendName: "b1", SizeBytes: 11, ContentHash: "hash"},
 	}
-	ops.EXPECT().Store().Return(ms).AnyTimes()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately

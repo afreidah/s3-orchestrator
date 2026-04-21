@@ -13,19 +13,18 @@ import (
 func TestProcessCleanupQueue_DeleteSuccess(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	ops := NewMockCleanupDeps(ctrl)
+	ops := NewMockCleanupOps(ctrl)
 
 	st := store.CleanupItem{ID: 1, BackendName: "b1", ObjectKey: "orphan.txt", SizeBytes: 100}
 	ms := &mockMetadataStore{pendingCleanups: []store.CleanupItem{st}}
 
-	ops.EXPECT().Store().Return(ms).AnyTimes()
 	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
 	ops.EXPECT().ReleaseAdmission()
 	ops.EXPECT().GetBackend("b1").Return(nil, nil) // backend value doesn't matter for this test
 	ops.EXPECT().DeleteWithTimeout(gomock.Any(), gomock.Any(), "orphan.txt").Return(nil)
 	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
 
-	w := NewCleanupWorker(ops, 1)
+	w := NewCleanupWorker(ops, ms, 1)
 	processed, failed := w.ProcessCleanupQueue(context.Background())
 
 	if processed != 1 {
@@ -39,19 +38,18 @@ func TestProcessCleanupQueue_DeleteSuccess(t *testing.T) {
 func TestProcessCleanupQueue_DeleteFails_Retries(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	ops := NewMockCleanupDeps(ctrl)
+	ops := NewMockCleanupOps(ctrl)
 
 	st := store.CleanupItem{ID: 2, BackendName: "b1", ObjectKey: "stuck.txt", Attempts: 3}
 	ms := &mockMetadataStore{pendingCleanups: []store.CleanupItem{st}}
 
-	ops.EXPECT().Store().Return(ms).AnyTimes()
 	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
 	ops.EXPECT().ReleaseAdmission()
 	ops.EXPECT().GetBackend("b1").Return(nil, nil)
 	ops.EXPECT().DeleteWithTimeout(gomock.Any(), gomock.Any(), "stuck.txt").Return(errors.New("timeout"))
 	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
 
-	w := NewCleanupWorker(ops, 1)
+	w := NewCleanupWorker(ops, ms, 1)
 	_, failed := w.ProcessCleanupQueue(context.Background())
 
 	if failed != 1 {
@@ -62,15 +60,14 @@ func TestProcessCleanupQueue_DeleteFails_Retries(t *testing.T) {
 func TestProcessCleanupQueue_AdmissionBlocked(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	ops := NewMockCleanupDeps(ctrl)
+	ops := NewMockCleanupOps(ctrl)
 
 	st := store.CleanupItem{ID: 1, BackendName: "b1", ObjectKey: "orphan.txt"}
 	ms := &mockMetadataStore{pendingCleanups: []store.CleanupItem{st}}
 
-	ops.EXPECT().Store().Return(ms).AnyTimes()
 	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(false)
 
-	w := NewCleanupWorker(ops, 1)
+	w := NewCleanupWorker(ops, ms, 1)
 	processed, failed := w.ProcessCleanupQueue(context.Background())
 
 	if processed != 0 || failed != 0 {
@@ -81,18 +78,17 @@ func TestProcessCleanupQueue_AdmissionBlocked(t *testing.T) {
 func TestProcessCleanupQueue_BackendNotFound(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	ops := NewMockCleanupDeps(ctrl)
+	ops := NewMockCleanupOps(ctrl)
 
 	st := store.CleanupItem{ID: 1, BackendName: "gone", ObjectKey: "orphan.txt"}
 	ms := &mockMetadataStore{pendingCleanups: []store.CleanupItem{st}}
 
-	ops.EXPECT().Store().Return(ms).AnyTimes()
 	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
 	ops.EXPECT().ReleaseAdmission()
 	ops.EXPECT().GetBackend("gone").Return(nil, errors.New("not found"))
 	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
 
-	w := NewCleanupWorker(ops, 1)
+	w := NewCleanupWorker(ops, ms, 1)
 	processed, _ := w.ProcessCleanupQueue(context.Background())
 
 	if processed != 1 {
