@@ -375,7 +375,9 @@ func TestHealthEndpoints_Healthy(t *testing.T) {
 	defer s.manager.Close()
 	defer func() { _ = s.shutdownTracer(context.Background()) }()
 
-	s.buildHTTPServer()
+	if err := s.buildHTTPServer(); err != nil {
+		t.Fatalf("buildHTTPServer: %v", err)
+	}
 	s.ready.Store(true)
 
 	// /health
@@ -422,7 +424,9 @@ func TestHealthReady_NotReady(t *testing.T) {
 	defer s.manager.Close()
 	defer func() { _ = s.shutdownTracer(context.Background()) }()
 
-	s.buildHTTPServer()
+	if err := s.buildHTTPServer(); err != nil {
+		t.Fatalf("buildHTTPServer: %v", err)
+	}
 	// ready is false by default
 
 	req, _ := http.NewRequestWithContext(context.Background(), "GET", "/health/ready", nil)

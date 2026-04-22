@@ -183,7 +183,9 @@ func run(ctx context.Context, configPath, mode string, stdout io.Writer) error {
 	if err := s.resolveServices(); err != nil {
 		return fmt.Errorf("resolve services: %w", err)
 	}
-	s.buildHTTPServer()
+	if err := s.buildHTTPServer(); err != nil {
+		return fmt.Errorf("build HTTP server: %w", err)
+	}
 	if err := s.configureTLS(); err != nil {
 		return fmt.Errorf("configure TLS: %w", err)
 	}
@@ -260,61 +262,30 @@ func (s *server) initLogging() error {
 	return nil
 }
 
-// initDI creates the dependency injection container and registers all
-// providers. Optional providers are registered only when the corresponding
-// config section is enabled.
+// initDI creates the dependency injection container via NewInjector (di.go).
 func (s *server) initDI() {
-	cfg := s.cfg
-
-	s.inj = do.New()
-	do.ProvideValue(s.inj, cfg)
-	do.ProvideValue(s.inj, s.mode)
-	do.ProvideValue(s.inj, &s.logLevel)
-	do.ProvideValue(s.inj, s.logBuffer)
-
-	do.Provide(s.inj, ProvideStoreBundle)
-	do.Provide(s.inj, ProvideMetadataStore)
-	do.Provide(s.inj, ProvideAdminStore)
-	do.Provide(s.inj, ProvideCBStore)
-	do.Provide(s.inj, ProvideBackends)
-	do.Provide(s.inj, ProvideBackendManager)
-	do.Provide(s.inj, ProvideBucketAuth)
-	do.Provide(s.inj, ProvideS3Server)
-	do.Provide(s.inj, ProvideLifecycleManager)
-
-	if cfg.Encryption.Enabled {
-		do.Provide(s.inj, ProvideEncryptor)
-		do.Provide(s.inj, ProvideEncryptionProvider)
-	}
-	if cfg.Redis != nil {
-		do.Provide(s.inj, ProvideRedisCounterBackend)
-	}
-	if cfg.Cache.Enabled {
-		do.Provide(s.inj, ProvideObjectCache)
-	}
-	if cfg.RateLimit.Enabled {
-		do.Provide(s.inj, ProvideRateLimiter)
-	}
-	if cfg.UI.Enabled {
-		do.Provide(s.inj, ProvideLoginThrottle)
-		do.Provide(s.inj, ProvideUIHandler)
-	}
-	if cfg.UI.AdminKey != "" {
-		do.Provide(s.inj, ProvideAdminHandler)
-	}
-	if len(cfg.Notifications.Endpoints) > 0 {
-		do.Provide(s.inj, ProvideNotifier)
-	}
+	s.inj = NewInjector(s.cfg, s.mode, &s.logLevel, s.logBuffer)
 }
 
-// resolveServices triggers lazy construction of core services from the DI
-// container, stores initial reloadable configs on the manager, and seeds
-// the quota metrics gauge.
+// resolveServices triggers lazy construction of all services from the DI
+// container. Required services return errors on failure; optional services
+// are silently nil when their config section is disabled.
 func (s *server) resolveServices() error {
-	s.db = do.MustInvoke[store.AdminStore](s.inj)
-	s.cbStore = do.MustInvoke[*store.CircuitBreakerStore](s.inj)
-	s.manager = do.MustInvoke[*proxy.BackendManager](s.inj)
-	s.srv = do.MustInvoke[*s3api.Server](s.inj)
+	var err error
+
+	// --- Required services (failure is fatal) ---
+	if s.db, err = do.Invoke[store.AdminStore](s.inj); err != nil {
+		return fmt.Errorf("initialize database: %w", err)
+	}
+	if s.cbStore, err = do.Invoke[*store.CircuitBreakerStore](s.inj); err != nil {
+		return fmt.Errorf("initialize circuit breaker store: %w", err)
+	}
+	if s.manager, err = do.Invoke[*proxy.BackendManager](s.inj); err != nil {
+		return fmt.Errorf("initialize backend manager: %w", err)
+	}
+	if s.srv, err = do.Invoke[*s3api.Server](s.inj); err != nil {
+		return fmt.Errorf("initialize S3 server: %w", err)
+	}
 
 	// Reloadable configs must be set before the lifecycle manager is
 	// constructed because service constructors read worker intervals at
@@ -326,7 +297,21 @@ func (s *server) resolveServices() error {
 	s.manager.SetLifecycleConfig(&s.cfg.Lifecycle)
 	s.manager.SetIntegrityConfig(&s.cfg.Integrity)
 
-	s.sm = do.MustInvoke[*lifecycle.Manager](s.inj)
+	if s.sm, err = do.Invoke[*lifecycle.Manager](s.inj); err != nil {
+		return fmt.Errorf("initialize lifecycle manager: %w", err)
+	}
+
+	// --- Optional services: gated on config; Invoke errors are fatal ---
+	if s.cfg.RateLimit.Enabled {
+		if s.rl, err = do.Invoke[*s3api.RateLimiter](s.inj); err != nil {
+			return fmt.Errorf("initialize rate limiter: %w", err)
+		}
+	}
+	if s.cfg.UI.Enabled {
+		if s.loginThrottle, err = do.Invoke[*httputil.LoginThrottle](s.inj); err != nil {
+			return fmt.Errorf("initialize login throttle: %w", err)
+		}
+	}
 
 	s.cfgPtr.Store(s.cfg)
 
@@ -344,7 +329,7 @@ func (s *server) resolveServices() error {
 // buildHTTPServer assembles the HTTP mux with health endpoints, metrics,
 // admin API, UI dashboard, and S3 proxy handler, then creates the
 // http.Server with configured timeouts.
-func (s *server) buildHTTPServer() {
+func (s *server) buildHTTPServer() error {
 	cfg := s.cfg
 	ctx := context.Background()
 	mux := http.NewServeMux()
@@ -352,11 +337,14 @@ func (s *server) buildHTTPServer() {
 	s.configureMetrics(mux, ctx)
 	s.registerHealthEndpoints(mux)
 
-	if r, err := do.Invoke[*s3api.RateLimiter](s.inj); err == nil {
-		s.rl = r
-	}
-
-	if adminHandler, err := do.Invoke[*admin.Handler](s.inj); err == nil {
+	// Admin handler is gated on cfg.UI.AdminKey at provider registration
+	// time, so a real Invoke error here reflects a construction failure —
+	// treat it as fatal rather than silently skipping the admin API.
+	if cfg.UI.AdminKey != "" {
+		adminHandler, err := do.Invoke[*admin.Handler](s.inj)
+		if err != nil {
+			return fmt.Errorf("initialize admin handler: %w", err)
+		}
 		adminMux := http.NewServeMux()
 		adminHandler.Register(adminMux)
 		var adminHTTP http.Handler = adminMux
@@ -368,7 +356,9 @@ func (s *server) buildHTTPServer() {
 	}
 
 	if s.mode == "api" || s.mode == "all" {
-		s.registerUIHandler(mux, ctx)
+		if err := s.registerUIHandler(mux, ctx); err != nil {
+			return err
+		}
 		s.registerS3Handler(mux)
 	}
 
@@ -380,6 +370,7 @@ func (s *server) buildHTTPServer() {
 		WriteTimeout:      cfg.Server.WriteTimeout,
 		IdleTimeout:       cfg.Server.IdleTimeout,
 	}
+	return nil
 }
 
 // configureMetrics sets up the Prometheus metrics endpoint, either on a
@@ -435,16 +426,19 @@ func (s *server) registerHealthEndpoints(mux *http.ServeMux) {
 	})
 }
 
-// registerUIHandler wires the optional web UI dashboard and login throttle.
-func (s *server) registerUIHandler(mux *http.ServeMux, ctx context.Context) {
-	if h, err := do.Invoke[*ui.Handler](s.inj); err == nil {
-		s.uiHandler = h
-		s.uiHandler.Register(mux, s.cfg.UI.Path)
-		slog.InfoContext(ctx, "Web UI enabled", "path", s.cfg.UI.Path)
+// registerUIHandler wires the optional web UI dashboard.
+func (s *server) registerUIHandler(mux *http.ServeMux, ctx context.Context) error {
+	if !s.cfg.UI.Enabled {
+		return nil
 	}
-	if lt, err := do.Invoke[*httputil.LoginThrottle](s.inj); err == nil {
-		s.loginThrottle = lt
+	h, err := do.Invoke[*ui.Handler](s.inj)
+	if err != nil {
+		return fmt.Errorf("initialize UI handler: %w", err)
 	}
+	s.uiHandler = h
+	s.uiHandler.Register(mux, s.cfg.UI.Path)
+	slog.InfoContext(ctx, "Web UI enabled", "path", s.cfg.UI.Path)
+	return nil
 }
 
 // registerS3Handler builds the S3 proxy handler with optional rate limiting
@@ -638,6 +632,14 @@ func (s *server) shutdown() {
 	ctx := context.Background()
 	slog.InfoContext(ctx, "Shutting down")
 
+	// Deferred so DI-managed resources (providers implementing do.Shutdownable)
+	// are always released, even if an earlier shutdown step panics or aborts.
+	defer func() {
+		if s.inj != nil {
+			_ = s.inj.Shutdown()
+		}
+	}()
+
 	if delay := s.cfgPtr.Load().Server.ShutdownDelay; delay > 0 {
 		slog.InfoContext(ctx, "Waiting for load balancer deregistration", "delay", delay)
 		time.Sleep(delay)
@@ -698,6 +700,7 @@ func (s *server) shutdown() {
 	if err := s.shutdownTracer(shutdownCtx); err != nil {
 		slog.ErrorContext(ctx, "Tracer shutdown error", "error", err)
 	}
+	// s.inj.Shutdown is deferred at the top of this function.
 }
 
 // -------------------------------------------------------------------------
