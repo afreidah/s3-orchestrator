@@ -71,9 +71,9 @@ func NewManager() *Manager {
 // for tests that exercise the restart path without paying real wall-clock
 // time. Must be called before Run; values take effect on the next supervise
 // iteration.
-func (m *Manager) SetBackoff(initial, max, reset time.Duration) {
+func (m *Manager) SetBackoff(initial, maximum, reset time.Duration) {
 	m.initialBackoff = initial
-	m.maxBackoff = max
+	m.maxBackoff = maximum
 	m.backoffReset = reset
 }
 
