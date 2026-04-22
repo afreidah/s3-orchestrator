@@ -6,7 +6,10 @@
 
 package config
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // UsageFlushConfig holds settings for the periodic usage counter flush to the
 // database. When adaptive flushing is enabled, the flush interval shortens
@@ -18,8 +21,8 @@ type UsageFlushConfig struct {
 	FastInterval      time.Duration `yaml:"fast_interval"`      // Interval when near limits (default: 5s)
 }
 
-func (u *UsageFlushConfig) setDefaultsAndValidate() []string {
-	var errs []string
+func (u *UsageFlushConfig) setDefaultsAndValidate() []error {
+	var errs []error
 
 	if u.Interval == 0 {
 		u.Interval = 30 * time.Second
@@ -32,16 +35,16 @@ func (u *UsageFlushConfig) setDefaultsAndValidate() []string {
 	}
 
 	if u.Interval <= 0 {
-		errs = append(errs, "usage_flush.interval must be positive")
+		errs = append(errs, fmt.Errorf("usage_flush.interval must be positive"))
 	}
 	if u.AdaptiveThreshold <= 0 || u.AdaptiveThreshold >= 1 {
-		errs = append(errs, "usage_flush.adaptive_threshold must be between 0 and 1 (exclusive)")
+		errs = append(errs, ErrUsageFlushThresholdRange)
 	}
 	if u.FastInterval <= 0 {
-		errs = append(errs, "usage_flush.fast_interval must be positive")
+		errs = append(errs, fmt.Errorf("usage_flush.fast_interval must be positive"))
 	}
 	if u.FastInterval >= u.Interval {
-		errs = append(errs, "usage_flush.fast_interval must be less than usage_flush.interval")
+		errs = append(errs, ErrUsageFlushFastInterval)
 	}
 
 	return errs

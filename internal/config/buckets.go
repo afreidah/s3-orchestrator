@@ -28,11 +28,11 @@ type BucketConfig struct {
 	MaxMultipartUploads int                `yaml:"max_multipart_uploads"` // Max active multipart uploads per bucket (0 = unlimited)
 }
 
-func validateBuckets(buckets []BucketConfig) []string {
-	var errs []string
+func validateBuckets(buckets []BucketConfig) []error {
+	var errs []error
 
 	if len(buckets) == 0 {
-		errs = append(errs, "at least one bucket is required")
+		errs = append(errs, ErrNoBuckets)
 	}
 
 	bucketNames := make(map[string]bool)
@@ -42,22 +42,22 @@ func validateBuckets(buckets []BucketConfig) []string {
 		prefix := fmt.Sprintf("buckets[%d]", i)
 
 		if bkt.Name == "" {
-			errs = append(errs, fmt.Sprintf("%s: name is required", prefix))
+			errs = append(errs, prefixed(prefix, ErrBucketNameRequired))
 		}
 		if strings.Contains(bkt.Name, "/") {
-			errs = append(errs, fmt.Sprintf("%s: name must not contain '/'", prefix))
+			errs = append(errs, prefixed(prefix, ErrBucketNameHasSlash))
 		}
 		if bucketNames[bkt.Name] {
-			errs = append(errs, fmt.Sprintf("%s: duplicate bucket name '%s'", prefix, bkt.Name))
+			errs = append(errs, prefixedDetail(prefix, ErrDuplicateBucketName, fmt.Sprintf("%q", bkt.Name)))
 		}
 		bucketNames[bkt.Name] = true
 
 		if bkt.MaxMultipartUploads < 0 {
-			errs = append(errs, fmt.Sprintf("%s: max_multipart_uploads must be >= 0", prefix))
+			errs = append(errs, prefixed(prefix, ErrNegativeMaxUploads))
 		}
 
 		if len(bkt.Credentials) == 0 {
-			errs = append(errs, fmt.Sprintf("%s: at least one credential is required", prefix))
+			errs = append(errs, prefixed(prefix, ErrNoCredential))
 		}
 
 		for j := range bkt.Credentials {
@@ -67,12 +67,12 @@ func validateBuckets(buckets []BucketConfig) []string {
 			hasSigV4 := cred.AccessKeyID != "" && cred.SecretAccessKey != ""
 			hasToken := cred.Token != ""
 			if !hasSigV4 && !hasToken {
-				errs = append(errs, fmt.Sprintf("%s: must have access_key_id+secret_access_key or token", credPrefix))
+				errs = append(errs, prefixed(credPrefix, ErrInvalidCredential))
 			}
 
 			if cred.AccessKeyID != "" {
 				if accessKeys[cred.AccessKeyID] {
-					errs = append(errs, fmt.Sprintf("%s: duplicate access_key_id '%s'", credPrefix, cred.AccessKeyID))
+					errs = append(errs, prefixedDetail(credPrefix, ErrDuplicateCredential, fmt.Sprintf("%q", cred.AccessKeyID)))
 				}
 				accessKeys[cred.AccessKeyID] = true
 			}

@@ -6,7 +6,10 @@
 
 package config
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // IntegrityConfig holds settings for object integrity verification.
 // When enabled, objects are checksummed on write and optionally verified
@@ -36,7 +39,7 @@ func (ic *IntegrityConfig) ShouldVerifyOnReplicate() bool {
 // set to false in the YAML (Go's zero-value for bool is false, so we
 // use a pointer internally during parsing — but since the config is
 // simple YAML, we just default it here and document the behavior).
-func (ic *IntegrityConfig) setDefaultsAndValidate() []string {
+func (ic *IntegrityConfig) setDefaultsAndValidate() []error {
 	if !ic.Enabled {
 		return nil
 	}
@@ -46,7 +49,7 @@ func (ic *IntegrityConfig) setDefaultsAndValidate() []string {
 	}
 
 	if ic.ScrubberInterval < 0 {
-		return []string{"integrity.scrubber_interval must be >= 0"}
+		return []error{fmt.Errorf("integrity.scrubber_interval must be >= 0")}
 	}
 
 	return nil

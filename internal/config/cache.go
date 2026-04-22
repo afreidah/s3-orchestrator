@@ -28,12 +28,12 @@ type CacheConfig struct {
 	MaxObjectSizeBytes int64 `yaml:"-"`
 }
 
-func (cc *CacheConfig) setDefaultsAndValidate() []string {
+func (cc *CacheConfig) setDefaultsAndValidate() []error {
 	if !cc.Enabled {
 		return nil
 	}
 
-	var errs []string
+	var errs []error
 
 	// Default TTL
 	if cc.TTL <= 0 {
@@ -47,9 +47,9 @@ func (cc *CacheConfig) setDefaultsAndValidate() []string {
 	maxSize, err := parseByteSize(cc.MaxSize)
 	switch {
 	case err != nil:
-		errs = append(errs, fmt.Sprintf("cache.max_size: %v", err))
+		errs = append(errs, fmt.Errorf("cache.max_size: %w", err))
 	case maxSize <= 0:
-		errs = append(errs, "cache.max_size must be positive")
+		errs = append(errs, ErrCacheMaxSizeNotPositive)
 	default:
 		cc.MaxSizeBytes = maxSize
 	}
@@ -61,15 +61,15 @@ func (cc *CacheConfig) setDefaultsAndValidate() []string {
 	maxObj, err := parseByteSize(cc.MaxObjectSize)
 	switch {
 	case err != nil:
-		errs = append(errs, fmt.Sprintf("cache.max_object_size: %v", err))
+		errs = append(errs, fmt.Errorf("cache.max_object_size: %w", err))
 	case maxObj <= 0:
-		errs = append(errs, "cache.max_object_size must be positive")
+		errs = append(errs, ErrCacheMaxObjectNotPositive)
 	default:
 		cc.MaxObjectSizeBytes = maxObj
 	}
 
 	if cc.MaxSizeBytes > 0 && cc.MaxObjectSizeBytes > 0 && cc.MaxObjectSizeBytes > cc.MaxSizeBytes {
-		errs = append(errs, "cache.max_object_size cannot exceed cache.max_size")
+		errs = append(errs, ErrCacheMaxObjectExceedsMaxSize)
 	}
 
 	return errs
