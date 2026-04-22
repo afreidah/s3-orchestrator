@@ -15,6 +15,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/afreidah/s3-orchestrator/internal/testutil/testx"
 )
 
 // -------------------------------------------------------------------------
@@ -109,8 +111,9 @@ func TestManager_RunAndStop(t *testing.T) {
 		close(done)
 	}()
 
-	// Let it tick a few times
-	time.Sleep(100 * time.Millisecond)
+	// Wait for at least a few ticks (each tick is 10ms)
+	testx.Eventually(t, 2*time.Second, func() bool { return svc.count.Load() >= 3 },
+		"service never ticked")
 	cancel()
 
 	select {
@@ -137,18 +140,15 @@ func TestManager_PanicRecovery(t *testing.T) {
 		close(done)
 	}()
 
-	// Wait long enough for the panic + restart + second call
-	time.Sleep(2 * time.Second)
+	// Wait for panic → restart → second call (backoff is ~1s on first retry)
+	testx.Eventually(t, 5*time.Second, func() bool { return svc.calls.Load() >= 2 },
+		"service did not restart after panic")
 	cancel()
 
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("Manager.Run did not return after context cancellation")
-	}
-
-	if n := svc.calls.Load(); n < 2 {
-		t.Errorf("Expected at least 2 calls (panic + restart), got %d", n)
 	}
 }
 
@@ -246,18 +246,15 @@ func TestManager_ErrorRestart(t *testing.T) {
 		close(done)
 	}()
 
-	// Wait long enough for the error + restart delay + second call
-	time.Sleep(2 * time.Second)
+	// Wait for error → restart delay → second call (backoff is ~1s on first retry)
+	testx.Eventually(t, 5*time.Second, func() bool { return svc.calls.Load() >= 2 },
+		"service did not restart after error")
 	cancel()
 
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("Manager.Run did not return after context cancellation")
-	}
-
-	if n := svc.calls.Load(); n < 2 {
-		t.Errorf("Expected at least 2 calls (error + restart), got %d", n)
 	}
 }
 

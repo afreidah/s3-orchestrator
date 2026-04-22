@@ -21,6 +21,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	st "github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/testutil/testx"
 )
 
 func newDrainTestManager(store *mockStore, backends map[string]*mockBackend) *BackendManager {
@@ -312,6 +313,7 @@ func TestDrainOneObject_StaleObject_EnqueuesOrphanWithSize(t *testing.T) {
 // runDrain processes pending cleanup queue items before calling DeleteBackendData,
 // which would otherwise silently drop them.
 func TestStartDrain_FlushesCleanupQueueBeforeDeleteBackendData(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	// Pre-populate an orphaned object that the cleanup queue should process
 	backend.objects["orphan"] = mockObject{data: []byte("stale")}
@@ -332,16 +334,13 @@ func TestStartDrain_FlushesCleanupQueueBeforeDeleteBackendData(t *testing.T) {
 	}
 
 	// Wait for drain to complete
+	testx.Eventually(t, 3*time.Second, func() bool {
+		p, pErr := mgr.DrainManager.GetDrainProgress(context.Background(), "b1")
+		return pErr == nil && !p.Active
+	}, "drain did not complete within timeout")
 	progress, err := mgr.DrainManager.GetDrainProgress(context.Background(), "b1")
-	for i := 0; i < 50 && (err != nil || progress.Active); i++ {
-		time.Sleep(50 * time.Millisecond)
-		progress, err = mgr.DrainManager.GetDrainProgress(context.Background(), "b1")
-	}
 	if err != nil {
 		t.Fatalf("GetDrainProgress: %v", err)
-	}
-	if progress.Active {
-		t.Fatal("drain did not complete within timeout")
 	}
 	if progress.Error != "" {
 		t.Fatalf("drain completed with error: %s", progress.Error)
@@ -369,6 +368,7 @@ func TestStartDrain_FlushesCleanupQueueBeforeDeleteBackendData(t *testing.T) {
 
 // TestCancelDrain_CompletedDrain_ClearsState verifies that cancelling an already-completed drain clears state.
 func TestCancelDrain_CompletedDrain_ClearsState(t *testing.T) {
+	t.Parallel()
 	backend := newMockBackend()
 	store := &mockStore{
 		listObjectsByBackendResp: nil, // no objects → drain completes immediately
@@ -380,13 +380,10 @@ func TestCancelDrain_CompletedDrain_ClearsState(t *testing.T) {
 	}
 
 	// Wait for drain to finish
-	for range 50 {
+	testx.Eventually(t, 3*time.Second, func() bool {
 		p, err := mgr.DrainManager.GetDrainProgress(context.Background(), "b1")
-		if err == nil && !p.Active {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+		return err == nil && !p.Active
+	}, "drain did not complete")
 
 	// CancelDrain on a completed drain should clear state (covers line 141)
 	if err := mgr.DrainManager.CancelDrain("b1"); err != nil {
@@ -401,6 +398,7 @@ func TestCancelDrain_CompletedDrain_ClearsState(t *testing.T) {
 
 // TestCancelDrain_ActiveDrain_CancelsAndClears verifies that cancelling an in-progress drain stops it via context.
 func TestCancelDrain_ActiveDrain_CancelsAndClears(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		// Gate never closes — drain blocks in ListObjectsByBackend until
 		// CancelDrain cancels the context.
@@ -429,6 +427,7 @@ func TestCancelDrain_ActiveDrain_CancelsAndClears(t *testing.T) {
 // GetDrainProgress while a drain is running do not trigger a data race on
 // the drainState error field (run with -race).
 func TestGetDrainProgress_ConcurrentAccess(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		listObjectsByBackendGate: make(chan struct{}),
 	}
@@ -463,6 +462,7 @@ func TestGetDrainProgress_ConcurrentAccess(t *testing.T) {
 // DeleteBackendData failure) is surfaced through GetDrainProgress via the
 // atomic error pointer.
 func TestGetDrainProgress_ReportsError(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		deleteBackendDataErr: errors.New("injected DB failure"),
 	}
@@ -475,14 +475,14 @@ func TestGetDrainProgress_ReportsError(t *testing.T) {
 	// Wait for drain to complete — DeleteBackendData fails so state.err is set,
 	// but the state remains in the map (no draining.Delete on this error path).
 	var progress *DrainProgress
-	for range 50 {
+	testx.Eventually(t, 3*time.Second, func() bool {
 		p, _ := mgr.DrainManager.GetDrainProgress(context.Background(), "b1")
 		if !p.Active {
 			progress = p
-			break
+			return true
 		}
-		time.Sleep(50 * time.Millisecond)
-	}
+		return false
+	}, "drain did not terminate")
 	if progress == nil {
 		t.Fatal("drain did not terminate")
 	}
@@ -497,6 +497,7 @@ func TestGetDrainProgress_ReportsError(t *testing.T) {
 
 // TestRunDrain_ListObjectsByBackendFails verifies the drain terminates cleanly on a ListObjectsByBackend error.
 func TestRunDrain_ListObjectsByBackendFails(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		listObjectsByBackendErr: errors.New("db connection lost"),
 	}
@@ -509,13 +510,10 @@ func TestRunDrain_ListObjectsByBackendFails(t *testing.T) {
 	// Wait for drain to finish — on ListObjectsByBackend error, runDrain
 	// deletes from d.draining and returns, so eventually GetDrainProgress
 	// returns Active=false with no error (state was cleaned up).
-	for range 50 {
+	testx.Eventually(t, 3*time.Second, func() bool {
 		p, _ := mgr.DrainManager.GetDrainProgress(context.Background(), "b1")
-		if !p.Active {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+		return !p.Active
+	}, "drain remained active after error")
 
 	// The drain state should have been removed (error path deletes from map).
 	// Attempting StartDrain again should succeed (proving old state is gone).
@@ -529,6 +527,7 @@ func TestRunDrain_ListObjectsByBackendFails(t *testing.T) {
 
 // TestRunDrain_DeleteBackendDataFails verifies the drain reports an error when final cleanup fails.
 func TestRunDrain_DeleteBackendDataFails(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		listObjectsByBackendResp: nil, // no objects → skip to cleanup
 		deleteBackendDataErr:     errors.New("db write failed"),
@@ -540,13 +539,10 @@ func TestRunDrain_DeleteBackendDataFails(t *testing.T) {
 	}
 
 	// Wait for drain to complete
-	for range 50 {
+	testx.Eventually(t, 3*time.Second, func() bool {
 		p, err := mgr.DrainManager.GetDrainProgress(context.Background(), "b1")
-		if err != nil || !p.Active {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+		return err != nil || !p.Active
+	}, "drain did not complete")
 
 	p, _ := mgr.DrainManager.GetDrainProgress(context.Background(), "b1")
 	if p == nil || p.Error == "" {
