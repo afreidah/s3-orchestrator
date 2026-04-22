@@ -37,21 +37,21 @@ type VaultTransitConfig struct {
 	RenewInterval time.Duration `yaml:"renew_interval"` // Token renewal check interval (default: 5m)
 }
 
-func (e *EncryptionConfig) setDefaultsAndValidate() []string {
+func (e *EncryptionConfig) setDefaultsAndValidate() []error {
 	if !e.Enabled {
 		return nil
 	}
 
-	var errs []string
+	var errs []error
 
 	if e.ChunkSize == 0 {
 		e.ChunkSize = 65536
 	}
 	cs := e.ChunkSize
 	if cs < 4096 || cs > 1048576 {
-		errs = append(errs, "encryption.chunk_size must be between 4096 (4KB) and 1048576 (1MB)")
+		errs = append(errs, ErrInvalidChunkSize)
 	} else if cs&(cs-1) != 0 {
-		errs = append(errs, "encryption.chunk_size must be a power of 2")
+		errs = append(errs, ErrChunkSizeNotPowerOf2)
 	}
 
 	sources := 0
@@ -65,35 +65,35 @@ func (e *EncryptionConfig) setDefaultsAndValidate() []string {
 		sources++
 	}
 	if sources == 0 {
-		errs = append(errs, "encryption: exactly one of master_key, master_key_file, or vault is required")
+		errs = append(errs, ErrKeySourceRequired)
 	} else if sources > 1 {
-		errs = append(errs, "encryption: only one of master_key, master_key_file, or vault may be set")
+		errs = append(errs, ErrMultipleKeySources)
 	}
 
 	if e.MasterKey != "" {
 		keyBytes, err := base64.StdEncoding.DecodeString(e.MasterKey)
 		if err != nil {
-			errs = append(errs, fmt.Sprintf("encryption.master_key: invalid base64: %v", err))
+			errs = append(errs, fmt.Errorf("encryption.master_key: %w: %v", ErrInvalidBase64Key, err))
 		} else if len(keyBytes) != 32 {
-			errs = append(errs, fmt.Sprintf("encryption.master_key: must be 256 bits (32 bytes), got %d bytes", len(keyBytes)))
+			errs = append(errs, fmt.Errorf("encryption.master_key: %w: got %d bytes", ErrInvalidKeyLength, len(keyBytes)))
 		}
 	}
 
 	if e.MasterKeyFile != "" {
 		info, err := os.Stat(e.MasterKeyFile)
 		if err != nil {
-			errs = append(errs, fmt.Sprintf("encryption.master_key_file: %v", err))
+			errs = append(errs, fmt.Errorf("%w: %v", ErrInvalidKeyFile, err))
 		} else if info.Size() != 32 {
-			errs = append(errs, fmt.Sprintf("encryption.master_key_file: must be 32 bytes, got %d", info.Size()))
+			errs = append(errs, fmt.Errorf("encryption.master_key_file: %w: got %d bytes", ErrInvalidKeyLength, info.Size()))
 		}
 	}
 
 	for i, pk := range e.PreviousKeys {
 		keyBytes, err := base64.StdEncoding.DecodeString(pk)
 		if err != nil {
-			errs = append(errs, fmt.Sprintf("encryption.previous_keys[%d]: invalid base64: %v", i, err))
+			errs = append(errs, fmt.Errorf("encryption.previous_keys[%d]: %w: %v", i, ErrPreviousKeyInvalid, err))
 		} else if len(keyBytes) != 32 {
-			errs = append(errs, fmt.Sprintf("encryption.previous_keys[%d]: must be 256 bits (32 bytes), got %d bytes", i, len(keyBytes)))
+			errs = append(errs, fmt.Errorf("encryption.previous_keys[%d]: %w: got %d bytes", i, ErrPreviousKeyInvalid, len(keyBytes)))
 		}
 	}
 
@@ -104,20 +104,20 @@ func (e *EncryptionConfig) setDefaultsAndValidate() []string {
 	return errs
 }
 
-func (v *VaultTransitConfig) setDefaultsAndValidate() []string {
-	var errs []string
+func (v *VaultTransitConfig) setDefaultsAndValidate() []error {
+	var errs []error
 
 	if v.Address == "" {
-		errs = append(errs, "encryption.vault.address is required")
+		errs = append(errs, ErrVaultAddressRequired)
 	}
 	if v.Token == "" && v.TokenFile == "" {
-		errs = append(errs, "encryption.vault: one of token or token_file is required")
+		errs = append(errs, ErrVaultTokenRequired)
 	}
 	if v.Token != "" && v.TokenFile != "" {
-		errs = append(errs, "encryption.vault: only one of token or token_file may be set")
+		errs = append(errs, ErrVaultTokenAmbiguous)
 	}
 	if v.KeyName == "" {
-		errs = append(errs, "encryption.vault.key_name is required")
+		errs = append(errs, ErrVaultKeyNameRequired)
 	}
 	if v.MountPath == "" {
 		v.MountPath = "transit"

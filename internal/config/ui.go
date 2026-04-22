@@ -17,18 +17,18 @@ type UIConfig struct {
 	ForceSecureCookies bool   `yaml:"force_secure_cookies"` // Always set Secure flag on session cookies (use behind TLS-terminating proxy)
 }
 
-func (u *UIConfig) setDefaultsAndValidate() []string {
-	var errs []string
+func (u *UIConfig) setDefaultsAndValidate() []error {
+	var errs []error
 
 	if u.Path == "" {
 		u.Path = "/ui"
 	}
 	if u.Enabled {
 		if u.AdminKey == "" || u.AdminSecret == "" {
-			errs = append(errs, "ui.admin_key and ui.admin_secret are required when ui is enabled")
+			errs = append(errs, ErrAdminAuthIncomplete)
 		}
 		if u.SessionSecret == "" {
-			errs = append(errs, "ui.session_secret is required when ui is enabled (used for HMAC session key derivation)")
+			errs = append(errs, ErrSessionSecretReqd)
 		}
 	}
 

@@ -35,7 +35,7 @@ func TestNotificationConfig_MissingURL(t *testing.T) {
 		},
 	}
 	errs := cfg.setDefaultsAndValidate()
-	if len(errs) != 1 || !strings.Contains(errs[0], "url is required") {
+	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "url is required") {
 		t.Errorf("expected url error, got: %v", errs)
 	}
 }
@@ -48,7 +48,7 @@ func TestNotificationConfig_MissingEvents(t *testing.T) {
 		},
 	}
 	errs := cfg.setDefaultsAndValidate()
-	if len(errs) != 1 || !strings.Contains(errs[0], "event pattern") {
+	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "event pattern") {
 		t.Errorf("expected events error, got: %v", errs)
 	}
 }

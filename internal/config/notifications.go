@@ -32,15 +32,15 @@ type NotificationEndpoint struct {
 	MaxRetries int           `yaml:"max_retries"` // Delivery attempts before dropping (default: 3)
 }
 
-func (c *NotificationConfig) setDefaultsAndValidate() []string {
-	var errs []string
+func (c *NotificationConfig) setDefaultsAndValidate() []error {
+	var errs []error
 	for i := range c.Endpoints {
 		ep := &c.Endpoints[i]
 		if ep.URL == "" {
-			errs = append(errs, fmt.Sprintf("notifications.endpoints[%d]: url is required", i))
+			errs = append(errs, fmt.Errorf("notifications.endpoints[%d]: %w", i, ErrNotificationURLRequired))
 		}
 		if len(ep.Events) == 0 {
-			errs = append(errs, fmt.Sprintf("notifications.endpoints[%d]: at least one event pattern is required", i))
+			errs = append(errs, fmt.Errorf("notifications.endpoints[%d]: %w", i, ErrNotificationEventsRequired))
 		}
 		if ep.Timeout <= 0 {
 			ep.Timeout = 5 * time.Second
