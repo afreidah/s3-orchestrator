@@ -656,15 +656,7 @@ func (s *server) shutdown() {
 	shutdownCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	if err := s.httpServer.Shutdown(shutdownCtx); err != nil {
-		slog.ErrorContext(ctx, "HTTP server shutdown error", "error", err)
-	}
-
-	if s.metricsServer != nil {
-		if err := s.metricsServer.Shutdown(shutdownCtx); err != nil {
-			slog.ErrorContext(ctx, "Metrics server shutdown error", "error", err)
-		}
-	}
+	s.shutdownHTTPServers(shutdownCtx)
 
 	if s.rl != nil {
 		s.rl.Close()
@@ -677,30 +669,56 @@ func (s *server) shutdown() {
 	<-s.bgDone
 	s.sm.Stop(10 * time.Second)
 
-	if encProvider, err := do.Invoke[encryption.KeyProvider](s.inj); err == nil {
-		if closer, ok := encProvider.(interface{ Close() }); ok {
-			closer.Close()
-		}
-	}
-
+	s.closeEncryptionProvider()
 	s.manager.Close()
 
 	if err := s.manager.FlushUsage(shutdownCtx); err != nil {
 		slog.WarnContext(shutdownCtx, "Final usage flush failed", "error", err)
 	}
 
-	if redisBackend, err := do.Invoke[*counter.RedisCounterBackend](s.inj); err == nil {
-		if err := redisBackend.Close(); err != nil {
-			slog.WarnContext(shutdownCtx, "Failed to close Redis client", "error", err)
-		}
-	}
-
+	s.closeRedisBackend(shutdownCtx)
 	s.db.Close()
 
 	if err := s.shutdownTracer(shutdownCtx); err != nil {
 		slog.ErrorContext(ctx, "Tracer shutdown error", "error", err)
 	}
 	// s.inj.Shutdown is deferred at the top of this function.
+}
+
+// shutdownHTTPServers tears down the main HTTP server and the optional
+// metrics listener, logging any errors without aborting shutdown.
+func (s *server) shutdownHTTPServers(ctx context.Context) {
+	if err := s.httpServer.Shutdown(ctx); err != nil {
+		slog.ErrorContext(ctx, "HTTP server shutdown error", "error", err)
+	}
+	if s.metricsServer != nil {
+		if err := s.metricsServer.Shutdown(ctx); err != nil {
+			slog.ErrorContext(ctx, "Metrics server shutdown error", "error", err)
+		}
+	}
+}
+
+// closeEncryptionProvider closes the encryption key provider if one was
+// resolved from the injector and implements an optional Close method.
+func (s *server) closeEncryptionProvider() {
+	encProvider, err := do.Invoke[encryption.KeyProvider](s.inj)
+	if err != nil {
+		return
+	}
+	if closer, ok := encProvider.(interface{ Close() }); ok {
+		closer.Close()
+	}
+}
+
+// closeRedisBackend closes the Redis counter backend if one was registered.
+func (s *server) closeRedisBackend(ctx context.Context) {
+	redisBackend, err := do.Invoke[*counter.RedisCounterBackend](s.inj)
+	if err != nil {
+		return
+	}
+	if err := redisBackend.Close(); err != nil {
+		slog.WarnContext(ctx, "Failed to close Redis client", "error", err)
+	}
 }
 
 // -------------------------------------------------------------------------
