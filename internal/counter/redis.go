@@ -37,6 +37,16 @@ const keyTTL = 35 * 24 * time.Hour
 // Redis while the circuit breaker is open.
 const healthProbeInterval = 5 * time.Second
 
+// opTimeout bounds individual Redis round-trip operations (GET, INCRBY,
+// EXPIRE, pipeline exec). Must be short enough that a stalled Redis can't
+// stall a request thread, but long enough to tolerate transient latency.
+const opTimeout = 2 * time.Second
+
+// pingTimeout bounds Redis liveness checks — both the initial boot-time
+// PING and the ongoing health probe that runs while the circuit breaker
+// is open. Longer than opTimeout because these aren't on the request path.
+const pingTimeout = 5 * time.Second
+
 // -------------------------------------------------------------------------
 // REDIS CLIENT INTERFACE
 // -------------------------------------------------------------------------
@@ -83,7 +93,7 @@ type RedisCounterBackend struct {
 // configured dependency must be available at boot). Starts a background
 // health probe goroutine.
 func NewRedisCounterBackend(client RedisClient, cfg *config.RedisConfig, backendNames []string) (*RedisCounterBackend, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), pingTimeout)
 	defer cancel()
 	if err := client.Ping(ctx).Err(); err != nil {
 		return nil, fmt.Errorf("redis ping failed: %w", err)
@@ -131,7 +141,7 @@ func (r *RedisCounterBackend) Add(backend, field string, delta int64) {
 	}
 
 	key := r.key(backend, field)
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
 	defer cancel()
 
 	err := r.client.IncrBy(ctx, key, delta).Err()
@@ -155,7 +165,7 @@ func (r *RedisCounterBackend) Load(backend, field string) int64 {
 	}
 
 	key := r.key(backend, field)
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
 	defer cancel()
 
 	val, err := r.client.Get(ctx, key).Int64()
@@ -176,7 +186,7 @@ func (r *RedisCounterBackend) Swap(backend, field string) int64 {
 	}
 
 	key := r.key(backend, field)
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
 	defer cancel()
 
 	val, err := r.client.GetSet(ctx, key, 0).Int64()
@@ -201,7 +211,7 @@ func (r *RedisCounterBackend) AddAll(backend string, apiReqs, egress, ingress in
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
 	defer cancel()
 
 	pipe := r.client.Pipeline()
@@ -238,7 +248,7 @@ func (r *RedisCounterBackend) LoadAll(backend string) LoadAllResult {
 		return r.local.LoadAll(backend)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
 	defer cancel()
 
 	pipe := r.client.Pipeline()
@@ -293,7 +303,7 @@ func (r *RedisCounterBackend) healthProbe() {
 //
 //nolint:sloglint // health probe has no request context
 func (r *RedisCounterBackend) tryRecover() {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
 	defer cancel()
 
 	if err := r.client.Ping(ctx).Err(); err != nil {

@@ -11,7 +11,6 @@
 package store
 
 import (
-	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"bytes"
 	"context"
 	"errors"
@@ -21,6 +20,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/afreidah/s3-orchestrator/internal/breaker"
+	"github.com/afreidah/s3-orchestrator/internal/testutil/testx"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 )
@@ -101,7 +103,7 @@ func TestCircuitBreaker_HalfOpenAfterTimeout(t *testing.T) {
 	}
 
 	// Wait for timeout
-	time.Sleep(15 * time.Millisecond)
+	testx.Eventually(t, 500*time.Millisecond, cb.ProbeEligible, "circuit breaker never became probe-eligible")
 
 	// Next call should probe (pass through to mock)
 	mock.mu.Lock()
@@ -134,7 +136,7 @@ func TestCircuitBreaker_HalfOpenFailureReopens(t *testing.T) {
 	_, _ = cb.GetAllObjectLocations(ctx, "key")
 
 	// Wait for timeout
-	time.Sleep(15 * time.Millisecond)
+	testx.Eventually(t, 500*time.Millisecond, cb.ProbeEligible, "circuit breaker never became probe-eligible")
 
 	// Probe should fail — circuit reopens, returns ErrDBUnavailable
 	_, err := cb.GetAllObjectLocations(ctx, "key")
@@ -479,7 +481,7 @@ func TestCircuitBreaker_TransitionLogs_OpenToHalfOpen(t *testing.T) {
 
 	ctx := context.Background()
 	_, _ = cb.GetAllObjectLocations(ctx, "key") // trip circuit
-	time.Sleep(15 * time.Millisecond)
+	testx.Eventually(t, 500*time.Millisecond, cb.ProbeEligible, "circuit breaker never became probe-eligible")
 
 	output := captureLogs(func() {
 		_, _ = cb.GetAllObjectLocations(ctx, "key") // triggers half-open probe
@@ -505,7 +507,7 @@ func TestCircuitBreaker_TransitionLogs_HalfOpenToClosed(t *testing.T) {
 
 	ctx := context.Background()
 	_, _ = cb.GetAllObjectLocations(ctx, "key") // trip circuit
-	time.Sleep(15 * time.Millisecond)
+	testx.Eventually(t, 500*time.Millisecond, cb.ProbeEligible, "circuit breaker never became probe-eligible")
 
 	// Fix the mock so the probe succeeds
 	mock.mu.Lock()
@@ -537,7 +539,7 @@ func TestCircuitBreaker_TransitionLogs_HalfOpenToOpen(t *testing.T) {
 
 	ctx := context.Background()
 	_, _ = cb.GetAllObjectLocations(ctx, "key") // trip circuit
-	time.Sleep(15 * time.Millisecond)
+	testx.Eventually(t, 500*time.Millisecond, cb.ProbeEligible, "circuit breaker never became probe-eligible")
 
 	output := captureLogs(func() {
 		_, _ = cb.GetAllObjectLocations(ctx, "key") // probe fails, reopens
@@ -568,10 +570,7 @@ func TestCircuitBreaker_DegradedDurationIsPositive(t *testing.T) {
 		t.Fatal("openedAt should be set when circuit opens")
 	}
 
-
-
-
-	time.Sleep(15 * time.Millisecond)
+	testx.Eventually(t, 500*time.Millisecond, cb.ProbeEligible, "circuit breaker never became probe-eligible")
 
 	// Fix mock, recover
 	mock.mu.Lock()
@@ -766,7 +765,7 @@ func TestCircuitBreaker_ConcurrentProbeSerializedByAtomicFlag(t *testing.T) {
 	_, _ = cb.GetAllObjectLocations(ctx, "key")
 
 	// Wait for timeout so probe is eligible
-	time.Sleep(15 * time.Millisecond)
+	testx.Eventually(t, 500*time.Millisecond, cb.ProbeEligible, "circuit breaker never became probe-eligible")
 
 	// Record call count before the burst
 	mock.mu.Lock()

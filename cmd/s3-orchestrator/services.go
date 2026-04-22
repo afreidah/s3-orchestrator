@@ -25,6 +25,24 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
+// Default intervals and thresholds for the background services below. Used
+// when the corresponding config section is absent or leaves the field zero.
+// These live here rather than in config so tests and operators share one
+// source of truth; promote any to config only when an operator-tunable knob
+// is actually required.
+const (
+	defaultUsageFlushInterval     = 30 * time.Second
+	defaultMultipartStaleTimeout  = 24 * time.Hour
+	defaultMultipartCleanupTick   = 1 * time.Hour
+	defaultCleanupQueueTick       = 1 * time.Minute
+	defaultRebalanceInterval      = 6 * time.Hour
+	defaultLifecycleTick          = 1 * time.Hour
+	defaultOverReplicationTick    = 5 * time.Minute
+	defaultReplicatorTick         = 5 * time.Minute
+	defaultCircuitBreakerWatchdog = 1 * time.Minute
+	defaultScrubberInterval       = 6 * time.Hour
+)
+
 // lockedTickerService runs a function on a fixed interval under an advisory
 // lock. It handles audit context creation, lock acquisition, skip/error
 // logging, and context cancellation. Most background workers use this.
@@ -118,7 +136,7 @@ type usageFlushService struct {
 // is in fallback or not configured, each instance flushes independently.
 func (s *usageFlushService) Run(ctx context.Context) error {
 	cfg := s.manager.UsageFlushConfig()
-	interval := 30 * time.Second
+	interval := defaultUsageFlushInterval
 	if cfg != nil {
 		interval = cfg.Interval
 	}
@@ -192,11 +210,11 @@ func (s *usageFlushService) doFlush(ctx context.Context) {
 
 func newMultipartCleanupService(manager *proxy.BackendManager, locker store.AdvisoryLocker, staleTimeout time.Duration) *lockedTickerService {
 	if staleTimeout <= 0 {
-		staleTimeout = 24 * time.Hour
+		staleTimeout = defaultMultipartStaleTimeout
 	}
 	return &lockedTickerService{
 		locker:   locker,
-		interval: 1 * time.Hour,
+		interval: defaultMultipartCleanupTick,
 		lockID:   store.LockMultipartCleanup,
 		name:     "Multipart cleanup",
 		work: func(ctx context.Context) {
@@ -208,7 +226,7 @@ func newMultipartCleanupService(manager *proxy.BackendManager, locker store.Advi
 func newCleanupQueueService(manager *proxy.BackendManager, locker store.AdvisoryLocker) *lockedTickerService {
 	return &lockedTickerService{
 		locker:   locker,
-		interval: 1 * time.Minute,
+		interval: defaultCleanupQueueTick,
 		lockID:   store.LockCleanupQueue,
 		name:     "Cleanup queue",
 		work: func(ctx context.Context) {
@@ -221,7 +239,7 @@ func newCleanupQueueService(manager *proxy.BackendManager, locker store.Advisory
 }
 
 func newRebalancerService(manager *proxy.BackendManager, locker store.AdvisoryLocker) *lockedTickerService {
-	interval := 6 * time.Hour
+	interval := defaultRebalanceInterval
 	if rcfg := manager.Rebalancer.Config(); rcfg != nil && rcfg.Interval > 0 {
 		interval = rcfg.Interval
 	}
@@ -255,7 +273,7 @@ func newRebalancerService(manager *proxy.BackendManager, locker store.AdvisoryLo
 func newLifecycleService(manager *proxy.BackendManager, locker store.AdvisoryLocker) *lockedTickerService {
 	return &lockedTickerService{
 		locker:   locker,
-		interval: 1 * time.Hour,
+		interval: defaultLifecycleTick,
 		lockID:   store.LockLifecycle,
 		name:     "Lifecycle",
 		shouldRun: func() bool {
@@ -286,7 +304,7 @@ func newLifecycleService(manager *proxy.BackendManager, locker store.AdvisoryLoc
 }
 
 func newOverReplicationService(manager *proxy.BackendManager, locker store.AdvisoryLocker) *lockedTickerService {
-	interval := 5 * time.Minute
+	interval := defaultOverReplicationTick
 	if rcfg := manager.OverReplicationCleaner.Config(); rcfg != nil && rcfg.WorkerInterval > 0 {
 		interval = rcfg.WorkerInterval
 	}
@@ -334,7 +352,7 @@ func newReplicatorService(manager *proxy.BackendManager, locker store.AdvisoryLo
 		}
 	}
 
-	interval := 5 * time.Minute
+	interval := defaultReplicatorTick
 	if rcfg := manager.Replicator.Config(); rcfg != nil && rcfg.WorkerInterval > 0 {
 		interval = rcfg.WorkerInterval
 	}
@@ -377,9 +395,11 @@ type circuitBreakerWatchdog struct {
 	cbStore *store.CircuitBreakerStore
 }
 
-// Run implements lifecycle.Service. Checks every probeTimeout/2 (1 minute).
+// Run implements lifecycle.Service. Checks every defaultCircuitBreakerWatchdog
+// (1 minute) — half the breaker probe timeout, so a stuck half-open probe is
+// reset within at most one tick.
 func (w *circuitBreakerWatchdog) Run(ctx context.Context) error {
-	ticker := time.NewTicker(1 * time.Minute)
+	ticker := time.NewTicker(defaultCircuitBreakerWatchdog)
 	defer ticker.Stop()
 
 	for {
@@ -410,7 +430,7 @@ func (w *circuitBreakerWatchdog) checkAll() {
 // -------------------------------------------------------------------------
 
 func newScrubberService(manager *proxy.BackendManager, locker store.AdvisoryLocker) *lockedTickerService {
-	interval := 6 * time.Hour
+	interval := defaultScrubberInterval
 	if icfg := manager.Scrubber.Config(); icfg != nil && icfg.ScrubberInterval > 0 {
 		interval = icfg.ScrubberInterval
 	}
