@@ -21,11 +21,11 @@ type RedisConfig struct {
 	OpenTimeout      time.Duration `yaml:"open_timeout"`      // Delay before probing recovery (default: 15s)
 }
 
-func (r *RedisConfig) setDefaultsAndValidate() []string {
-	var errs []string
+func (r *RedisConfig) setDefaultsAndValidate() []error {
+	var errs []error
 
 	if r.Address == "" {
-		errs = append(errs, "redis.address is required when redis section is present")
+		errs = append(errs, ErrRedisAddressRequired)
 	}
 	if r.KeyPrefix == "" {
 		r.KeyPrefix = "s3orch"
@@ -38,10 +38,10 @@ func (r *RedisConfig) setDefaultsAndValidate() []string {
 	}
 
 	if r.FailureThreshold < 0 {
-		errs = append(errs, "redis.failure_threshold must be positive")
+		errs = append(errs, ErrRedisFailureThresholdNotPos)
 	}
 	if r.OpenTimeout < 0 {
-		errs = append(errs, "redis.open_timeout must be positive")
+		errs = append(errs, ErrRedisOpenTimeoutNotPos)
 	}
 
 	return errs

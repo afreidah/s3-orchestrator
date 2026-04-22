@@ -10,6 +10,7 @@
 package config
 
 import (
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -1517,8 +1518,8 @@ func TestLifecycleConfig_MissingPrefix(t *testing.T) {
 	if err == nil {
 		t.Error("empty prefix should fail validation")
 	}
-	if !strings.Contains(err.Error(), "prefix is required") {
-		t.Errorf("error should mention prefix, got: %v", err)
+	if !errors.Is(err, ErrLifecyclePrefixRequired) {
+		t.Errorf("error should wrap ErrLifecyclePrefixRequired, got: %v", err)
 	}
 }
 
@@ -2648,7 +2649,7 @@ func TestBackendValidation_MissingFields(t *testing.T) {
 	for _, want := range []string{"endpoint", "bucket", "access_key_id", "secret_access_key"} {
 		found := false
 		for _, e := range errs {
-			if strings.Contains(e, want) {
+			if strings.Contains(e.Error(), want) {
 				found = true
 				break
 			}
@@ -2667,7 +2668,7 @@ func TestBackendValidation_NegativeMaxObjectSize(t *testing.T) {
 	}})
 	found := false
 	for _, e := range errs {
-		if strings.Contains(e, "max_object_size") {
+		if strings.Contains(e.Error(), "max_object_size") {
 			found = true
 			break
 		}
@@ -2693,7 +2694,7 @@ func TestReplicationValidation_NegativeValues(t *testing.T) {
 	for _, want := range []string{"factor", "worker_interval", "batch_size"} {
 		found := false
 		for _, e := range errs {
-			if strings.Contains(e, want) {
+			if strings.Contains(e.Error(), want) {
 				found = true
 				break
 			}
@@ -2711,7 +2712,7 @@ func TestRateLimitValidation_NegativeValues(t *testing.T) {
 	for _, want := range []string{"requests_per_sec", "burst", "CIDR"} {
 		found := false
 		for _, e := range errs {
-			if strings.Contains(e, want) {
+			if strings.Contains(e.Error(), want) {
 				found = true
 				break
 			}
@@ -2953,7 +2954,7 @@ func TestRedisConfig_NegativeFailureThreshold(t *testing.T) {
 	errs := r.setDefaultsAndValidate()
 	found := false
 	for _, e := range errs {
-		if strings.Contains(e, "failure_threshold") {
+		if strings.Contains(e.Error(), "failure_threshold") {
 			found = true
 		}
 	}
@@ -2971,7 +2972,7 @@ func TestRedisConfig_NegativeOpenTimeout(t *testing.T) {
 	errs := r.setDefaultsAndValidate()
 	found := false
 	for _, e := range errs {
-		if strings.Contains(e, "open_timeout") {
+		if strings.Contains(e.Error(), "open_timeout") {
 			found = true
 		}
 	}
@@ -2989,7 +2990,7 @@ func TestRateLimitConfig_CIDRValidatedWhenDisabled(t *testing.T) {
 	errs := r.setDefaultsAndValidate()
 	found := false
 	for _, e := range errs {
-		if strings.Contains(e, "invalid CIDR") {
+		if strings.Contains(e.Error(), "invalid CIDR") {
 			found = true
 		}
 	}

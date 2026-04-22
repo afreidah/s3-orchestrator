@@ -14,10 +14,10 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
-	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -76,18 +76,18 @@ type Config struct {
 func LoadConfig(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read config file: %w", err)
+		return nil, wrapped(ErrReadConfigFile, err)
 	}
 
 	expanded := os.Expand(string(data), os.Getenv)
 
 	var cfg Config
 	if err := yaml.Unmarshal([]byte(expanded), &cfg); err != nil {
-		return nil, fmt.Errorf("failed to parse config: %w", err)
+		return nil, wrapped(ErrParseConfig, err)
 	}
 
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
-		return nil, fmt.Errorf("invalid config: %w", err)
+		return nil, wrapped(ErrInvalidConfig, err)
 	}
 
 	return &cfg, nil
@@ -101,7 +101,7 @@ func LoadConfig(path string) (*Config, error) {
 // that all required configuration values are present. Delegates to per-type
 // validators and performs cross-field validation.
 func (c *Config) SetDefaultsAndValidate() error {
-	var errs []string
+	var errs []error
 
 	// Per-type defaults and validation
 	errs = append(errs, c.Server.setDefaultsAndValidate()...)
@@ -140,7 +140,7 @@ func (c *Config) SetDefaultsAndValidate() error {
 		c.RoutingStrategy = RoutingPack
 	}
 	if c.RoutingStrategy != RoutingPack && c.RoutingStrategy != RoutingSpread {
-		errs = append(errs, "routing_strategy must be 'pack' or 'spread'")
+		errs = append(errs, ErrInvalidRoutingStrategy)
 	}
 
 	// Cross-field: quota and replication combinations
@@ -154,10 +154,10 @@ func (c *Config) SetDefaultsAndValidate() error {
 		quotaCount := len(c.Backends) - unlimitedCount
 
 		if unlimitedCount > 0 && quotaCount > 0 {
-			errs = append(errs, "cannot mix unlimited (quota_bytes: 0) and quota-limited backends; either all backends must have quotas for overflow routing or all must be unlimited with replication")
+			errs = append(errs, ErrQuotaMixNotAllowed)
 		}
 		if unlimitedCount > 1 && c.Replication.Factor <= 1 {
-			errs = append(errs, "multiple backends with unlimited quota (quota_bytes: 0) requires replication.factor >= 2; without quotas there is no overflow routing and only the first backend would receive writes")
+			errs = append(errs, ErrUnlimitedNeedsReplication)
 		}
 		if c.Replication.Factor <= 1 {
 			slog.Warn("replication.factor <= 1 with multiple backends provides no redundancy — losing a backend will cause permanent data loss for objects stored exclusively on it", //nolint:sloglint // config validation has no request context
@@ -165,10 +165,7 @@ func (c *Config) SetDefaultsAndValidate() error {
 		}
 	}
 
-	if len(errs) > 0 {
-		return fmt.Errorf("%s", strings.Join(errs, "; "))
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // -------------------------------------------------------------------------

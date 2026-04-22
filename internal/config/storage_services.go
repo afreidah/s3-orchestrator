@@ -62,32 +62,32 @@ type LifecycleRule struct {
 	ExpirationDays int    `yaml:"expiration_days"`
 }
 
-func (c *LifecycleConfig) setDefaultsAndValidate() []string {
+func (c *LifecycleConfig) setDefaultsAndValidate() []error {
 	if len(c.Rules) == 0 {
 		return nil
 	}
 
-	var errs []string
+	var errs []error
 	if c.BatchSize <= 0 {
 		c.BatchSize = 100
 	}
 	for i, rule := range c.Rules {
 		if rule.Prefix == "" {
-			errs = append(errs, fmt.Sprintf("lifecycle.rules[%d]: prefix must not be empty (would match all objects)", i))
+			errs = append(errs, fmt.Errorf("lifecycle.rules[%d]: %w", i, ErrLifecyclePrefixRequired))
 		}
 		if rule.ExpirationDays <= 0 {
-			errs = append(errs, fmt.Sprintf("lifecycle.rules[%d]: expiration_days must be positive", i))
+			errs = append(errs, fmt.Errorf("lifecycle.rules[%d]: %w", i, ErrInvalidExpiration))
 		}
 	}
 	return errs
 }
 
-func (r *RebalanceConfig) setDefaultsAndValidate() []string {
+func (r *RebalanceConfig) setDefaultsAndValidate() []error {
 	if !r.Enabled {
 		return nil
 	}
 
-	var errs []string
+	var errs []error
 
 	if r.Strategy == "" {
 		r.Strategy = "pack"
@@ -106,32 +106,32 @@ func (r *RebalanceConfig) setDefaultsAndValidate() []string {
 	}
 
 	if r.Strategy != "pack" && r.Strategy != "spread" {
-		errs = append(errs, "rebalance.strategy must be 'pack' or 'spread'")
+		errs = append(errs, ErrInvalidRebalanceStrategy)
 	}
 	if r.Interval <= 0 {
-		errs = append(errs, "rebalance.interval must be positive")
+		errs = append(errs, ErrRebalanceIntervalNotPos)
 	}
 	if r.BatchSize <= 0 {
-		errs = append(errs, "rebalance.batch_size must be positive")
+		errs = append(errs, ErrRebalanceBatchNotPos)
 	}
 	if r.Threshold < 0 || r.Threshold > 1 {
-		errs = append(errs, "rebalance.threshold must be between 0 and 1")
+		errs = append(errs, ErrRebalanceThresholdRange)
 	}
 	if r.Concurrency <= 0 {
-		errs = append(errs, "rebalance.concurrency must be positive")
+		errs = append(errs, ErrRebalanceConcurrencyNotPos)
 	}
 
 	return errs
 }
 
-func (r *ReplicationConfig) setDefaultsAndValidate(backendCount int) []string {
-	var errs []string
+func (r *ReplicationConfig) setDefaultsAndValidate(backendCount int) []error {
+	var errs []error
 
 	if r.Factor == 0 {
 		r.Factor = 1
 	}
 	if r.Factor < 1 {
-		errs = append(errs, "replication.factor must be at least 1")
+		errs = append(errs, ErrReplicationFactorMin)
 	}
 
 	if r.Factor > 1 {
@@ -149,23 +149,22 @@ func (r *ReplicationConfig) setDefaultsAndValidate(backendCount int) []string {
 		}
 
 		if r.Factor > backendCount {
-			errs = append(errs, fmt.Sprintf(
-				"replication.factor (%d) cannot exceed number of backends (%d)",
-				r.Factor, backendCount))
+			errs = append(errs, fmt.Errorf("%w: factor=%d backends=%d",
+				ErrReplicationFactorTooLarge, r.Factor, backendCount))
 		}
 		if r.WorkerInterval <= 0 {
-			errs = append(errs, "replication.worker_interval must be positive")
+			errs = append(errs, ErrReplicationIntervalNotPos)
 		}
 		if r.BatchSize <= 0 {
-			errs = append(errs, "replication.batch_size must be positive")
+			errs = append(errs, ErrReplicationBatchNotPos)
 		}
 	}
 
 	return errs
 }
 
-func validateLifecycleRules(rules []LifecycleRule) []string {
-	var errs []string
+func validateLifecycleRules(rules []LifecycleRule) []error {
+	var errs []error
 
 	prefixes := make(map[string]bool)
 	for i := range rules {
@@ -173,13 +172,13 @@ func validateLifecycleRules(rules []LifecycleRule) []string {
 		prefix := fmt.Sprintf("lifecycle.rules[%d]", i)
 
 		if r.Prefix == "" {
-			errs = append(errs, fmt.Sprintf("%s: prefix is required", prefix))
+			errs = append(errs, fmt.Errorf("%s: %w", prefix, ErrLifecyclePrefixRequired))
 		}
 		if r.ExpirationDays <= 0 {
-			errs = append(errs, fmt.Sprintf("%s: expiration_days must be positive", prefix))
+			errs = append(errs, fmt.Errorf("%s: %w", prefix, ErrInvalidExpiration))
 		}
 		if prefixes[r.Prefix] {
-			errs = append(errs, fmt.Sprintf("%s: duplicate prefix '%s'", prefix, r.Prefix))
+			errs = append(errs, fmt.Errorf("%s: %w: %q", prefix, ErrDuplicatePrefix, r.Prefix))
 		}
 		prefixes[r.Prefix] = true
 	}

@@ -42,7 +42,7 @@ func (c *DatabaseConfig) ConnectionString() string {
 	return u.String()
 }
 
-func (d *DatabaseConfig) setDefaultsAndValidate() []string {
+func (d *DatabaseConfig) setDefaultsAndValidate() []error {
 	// Infer driver from config if not set explicitly.
 	if d.Driver == "" {
 		if d.Host != "" {
@@ -58,28 +58,28 @@ func (d *DatabaseConfig) setDefaultsAndValidate() []string {
 	case "postgres":
 		return d.validatePostgres()
 	default:
-		return []string{fmt.Sprintf("database.driver must be 'sqlite' or 'postgres', got %q", d.Driver)}
+		return []error{fmt.Errorf("database.driver must be 'sqlite' or 'postgres', got %q", d.Driver)}
 	}
 }
 
-func (d *DatabaseConfig) validateSQLite() []string {
+func (d *DatabaseConfig) validateSQLite() []error {
 	if d.Path == "" {
 		d.Path = "s3-orchestrator.db"
 	}
 	return nil
 }
 
-func (d *DatabaseConfig) validatePostgres() []string {
-	var errs []string
+func (d *DatabaseConfig) validatePostgres() []error {
+	var errs []error
 
 	if d.Host == "" {
-		errs = append(errs, "database.host is required")
+		errs = append(errs, fmt.Errorf("database.host is required"))
 	}
 	if d.Database == "" {
-		errs = append(errs, "database.database is required")
+		errs = append(errs, fmt.Errorf("database.database is required"))
 	}
 	if d.User == "" {
-		errs = append(errs, "database.user is required")
+		errs = append(errs, fmt.Errorf("database.user is required"))
 	}
 	if d.Port == 0 {
 		d.Port = 5432
@@ -98,7 +98,7 @@ func (d *DatabaseConfig) validatePostgres() []string {
 	}
 
 	if d.MinConns > d.MaxConns {
-		errs = append(errs, fmt.Sprintf("database.min_conns (%d) cannot exceed max_conns (%d)", d.MinConns, d.MaxConns))
+		errs = append(errs, fmt.Errorf("database.min_conns (%d) cannot exceed max_conns (%d)", d.MinConns, d.MaxConns))
 	}
 
 	return errs

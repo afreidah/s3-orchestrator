@@ -27,11 +27,11 @@ type BackendConfig struct {
 	IngressByteLimit int64 `yaml:"ingress_byte_limit"` // Monthly ingress byte limit (0 = unlimited)
 }
 
-func validateBackends(backends []BackendConfig) []string {
-	var errs []string
+func validateBackends(backends []BackendConfig) []error {
+	var errs []error
 
 	if len(backends) == 0 {
-		errs = append(errs, "at least one backend is required")
+		errs = append(errs, ErrNoBackends)
 	}
 
 	names := make(map[string]bool)
@@ -43,36 +43,36 @@ func validateBackends(backends []BackendConfig) []string {
 			b.Name = fmt.Sprintf("backend-%d", i)
 		}
 		if names[b.Name] {
-			errs = append(errs, fmt.Sprintf("%s: duplicate backend name '%s'", prefix, b.Name))
+			errs = append(errs, prefixedDetail(prefix, ErrDuplicateBackend, fmt.Sprintf("%q", b.Name)))
 		}
 		names[b.Name] = true
 
 		if b.Endpoint == "" {
-			errs = append(errs, fmt.Sprintf("%s: endpoint is required", prefix))
+			errs = append(errs, prefixed(prefix, ErrEndpointRequired))
 		}
 		if b.Bucket == "" {
-			errs = append(errs, fmt.Sprintf("%s: bucket is required", prefix))
+			errs = append(errs, prefixed(prefix, ErrBackendBucketReqd))
 		}
 		if b.AccessKeyID == "" {
-			errs = append(errs, fmt.Sprintf("%s: access_key_id is required", prefix))
+			errs = append(errs, prefixed(prefix, ErrAccessKeyIDReqd))
 		}
 		if b.SecretAccessKey == "" {
-			errs = append(errs, fmt.Sprintf("%s: secret_access_key is required", prefix))
+			errs = append(errs, prefixed(prefix, ErrSecretAccessKeyReqd))
 		}
 		if b.QuotaBytes < 0 {
-			errs = append(errs, fmt.Sprintf("%s: quota_bytes must not be negative", prefix))
+			errs = append(errs, prefixed(prefix, ErrNegativeQuota))
 		}
 		if b.MaxObjectSize < 0 {
-			errs = append(errs, fmt.Sprintf("%s: max_object_size must not be negative", prefix))
+			errs = append(errs, prefixed(prefix, ErrNegativeMaxObject))
 		}
 		if b.APIRequestLimit < 0 {
-			errs = append(errs, fmt.Sprintf("%s: api_request_limit must not be negative", prefix))
+			errs = append(errs, prefixed(prefix, ErrNegativeAPILimit))
 		}
 		if b.EgressByteLimit < 0 {
-			errs = append(errs, fmt.Sprintf("%s: egress_byte_limit must not be negative", prefix))
+			errs = append(errs, prefixed(prefix, ErrNegativeEgress))
 		}
 		if b.IngressByteLimit < 0 {
-			errs = append(errs, fmt.Sprintf("%s: ingress_byte_limit must not be negative", prefix))
+			errs = append(errs, prefixed(prefix, ErrNegativeIngress))
 		}
 	}
 

@@ -27,8 +27,8 @@ type TracingConfig struct {
 	Insecure   bool    `yaml:"insecure"` // Use insecure connection (no TLS)
 }
 
-func (t *TelemetryConfig) setDefaultsAndValidate() []string {
-	var errs []string
+func (t *TelemetryConfig) setDefaultsAndValidate() []error {
+	var errs []error
 
 	if t.Metrics.Path == "" {
 		t.Metrics.Path = "/metrics"
@@ -37,7 +37,7 @@ func (t *TelemetryConfig) setDefaultsAndValidate() []string {
 		t.Tracing.SampleRate = 1.0
 	}
 	if t.Tracing.Enabled && t.Tracing.Endpoint == "" {
-		errs = append(errs, "telemetry.tracing.endpoint is required when tracing is enabled")
+		errs = append(errs, ErrTracingEndpointRequired)
 	}
 
 	return errs
