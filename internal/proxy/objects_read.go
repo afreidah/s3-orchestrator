@@ -361,7 +361,7 @@ func (o *ObjectManager) GetObject(ctx context.Context, key string, rangeHeader s
 			if expectedHash != "" {
 				vr := NewVerifyingReader(r.Body)
 				vr.SetVerification(expectedHash, func(expected, actual string) {
-					slog.ErrorContext(ctx, "Integrity check failed on read",
+					slog.ErrorContext(ctx, "integrity check failed on read",
 						"key", key, "backend", beName,
 						"expected_hash", expected, "actual_hash", actual)
 					telemetry.IntegrityErrorsTotal.WithLabelValues("read").Inc()

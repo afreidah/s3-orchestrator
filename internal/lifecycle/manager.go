@@ -122,7 +122,7 @@ func (m *Manager) Stop(timeout time.Duration) {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), perService)
 		if err := s.Stop(ctx); err != nil {
-			slog.ErrorContext(ctx, "Service stop error",
+			slog.ErrorContext(ctx, "service stop error",
 				"service", m.services[i].name,
 				"error", err,
 			)
@@ -140,7 +140,7 @@ func (m *Manager) supervise(ctx context.Context, e entry) {
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
-					slog.ErrorContext(ctx, "Service panicked, restarting",
+					slog.ErrorContext(ctx, "service panicked, restarting",
 						"service", e.name,
 						"panic", fmt.Sprint(r),
 						"stack", string(debug.Stack()),
@@ -149,7 +149,7 @@ func (m *Manager) supervise(ctx context.Context, e entry) {
 			}()
 
 			if err := e.service.Run(ctx); err != nil && ctx.Err() == nil {
-				slog.ErrorContext(ctx, "Service exited unexpectedly, restarting",
+				slog.ErrorContext(ctx, "service exited unexpectedly, restarting",
 					"service", e.name,
 					"error", err,
 				)
@@ -165,7 +165,7 @@ func (m *Manager) supervise(ctx context.Context, e entry) {
 			backoff = m.initialBackoff
 		}
 
-		slog.WarnContext(ctx, "Restarting service after backoff",
+		slog.WarnContext(ctx, "restarting service after backoff",
 			"service", e.name,
 			"backoff", backoff,
 		)
