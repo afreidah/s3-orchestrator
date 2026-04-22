@@ -1978,3 +1978,99 @@ func TestLogin_BruteForceReset(t *testing.T) {
 		}
 	}
 }
+
+// -------------------------------------------------------------------------
+// CLEAN-EXCESS (OVER-REPLICATION CLEANUP)
+// -------------------------------------------------------------------------
+
+// TestAPICleanExcess_FactorLeOne covers the short-circuit branch: with the
+// default replication factor of 1, the handler returns 200 immediately with
+// removed=0 rather than kicking off a background job.
+func TestAPICleanExcess_FactorLeOne(t *testing.T) {
+	t.Parallel()
+	h, mux := newTestHandler(t)
+
+	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/clean-excess", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["ok"] != true {
+		t.Errorf("ok = %v, want true", resp["ok"])
+	}
+	// Use JSON unmarshaling's json.Number behaviour: removed comes through as float64.
+	if removed, _ := resp["removed"].(float64); removed != 0 {
+		t.Errorf("removed = %v, want 0", resp["removed"])
+	}
+}
+
+// TestAPICleanExcess_WrongMethod covers the GET-rejection path.
+func TestAPICleanExcess_WrongMethod(t *testing.T) {
+	t.Parallel()
+	h, mux := newTestHandler(t)
+
+	req := authedRequest(t, h, mux, http.MethodGet, "/ui/api/clean-excess", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusMethodNotAllowed)
+	}
+}
+
+// TestAPICleanExcess_RequiresAuth verifies unauthenticated POSTs are rejected.
+func TestAPICleanExcess_RequiresAuth(t *testing.T) {
+	t.Parallel()
+	_, mux := newTestHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/ui/api/clean-excess", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized && w.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want 401/403", w.Code)
+	}
+}
+
+// TestAPICleanExcessStatus_IdleByDefault verifies the status endpoint
+// reports "idle" when no cleanup has ever run.
+func TestAPICleanExcessStatus_IdleByDefault(t *testing.T) {
+	t.Parallel()
+	h, mux := newTestHandler(t)
+
+	req := authedRequest(t, h, mux, http.MethodGet, "/ui/api/clean-excess/status", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["status"] != "idle" {
+		t.Errorf("status = %v, want %q", resp["status"], "idle")
+	}
+}
+
+// TestAPICleanExcessStatus_RequiresAuth verifies the status endpoint rejects
+// unauthenticated requests.
+func TestAPICleanExcessStatus_RequiresAuth(t *testing.T) {
+	t.Parallel()
+	_, mux := newTestHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/clean-excess/status", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized && w.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want 401/403", w.Code)
+	}
+}

@@ -130,6 +130,7 @@ func TestManager_RunAndStop(t *testing.T) {
 func TestManager_PanicRecovery(t *testing.T) {
 	t.Parallel()
 	mgr := NewManager()
+	mgr.SetBackoff(1*time.Millisecond, 10*time.Millisecond, 1*time.Hour)
 	svc := &panicOnceService{}
 	mgr.Register("panic-once", svc)
 
@@ -140,8 +141,8 @@ func TestManager_PanicRecovery(t *testing.T) {
 		close(done)
 	}()
 
-	// Wait for panic → restart → second call (backoff is ~1s on first retry)
-	testx.Eventually(t, 5*time.Second, func() bool { return svc.calls.Load() >= 2 },
+	// Wait for panic → restart → second call (backoff is 1ms on first retry)
+	testx.Eventually(t, 2*time.Second, func() bool { return svc.calls.Load() >= 2 },
 		"service did not restart after panic")
 	cancel()
 
@@ -236,6 +237,7 @@ func TestManager_StopReverseOrder(t *testing.T) {
 func TestManager_ErrorRestart(t *testing.T) {
 	t.Parallel()
 	mgr := NewManager()
+	mgr.SetBackoff(1*time.Millisecond, 10*time.Millisecond, 1*time.Hour)
 	svc := &errorOnceService{}
 	mgr.Register("error-once", svc)
 
@@ -246,8 +248,8 @@ func TestManager_ErrorRestart(t *testing.T) {
 		close(done)
 	}()
 
-	// Wait for error → restart delay → second call (backoff is ~1s on first retry)
-	testx.Eventually(t, 5*time.Second, func() bool { return svc.calls.Load() >= 2 },
+	// Wait for error → restart delay → second call (backoff is 1ms on first retry)
+	testx.Eventually(t, 2*time.Second, func() bool { return svc.calls.Load() >= 2 },
 		"service did not restart after error")
 	cancel()
 
@@ -290,7 +292,12 @@ func (s *alwaysPanicService) Run(_ context.Context) error {
 }
 
 func TestManager_BackoffLimitsRestartRate(t *testing.T) {
+	t.Parallel()
 	mgr := NewManager()
+	// Scaled-down backoff so the test runs in tens of milliseconds instead
+	// of seconds while exercising the same exponential schedule as prod
+	// (initial, 2×initial, 4×initial, ...).
+	mgr.SetBackoff(5*time.Millisecond, 150*time.Millisecond, 1*time.Hour)
 	svc := &alwaysPanicService{}
 	mgr.Register("always-panic", svc)
 
@@ -301,10 +308,11 @@ func TestManager_BackoffLimitsRestartRate(t *testing.T) {
 		close(done)
 	}()
 
-	// With exponential backoff (1s, 2s, 4s, ...) a continuously panicking
-	// service should only restart a handful of times in 5 seconds, not
-	// hundreds like the old flat 1s delay would allow.
-	time.Sleep(5 * time.Second)
+	// With exponential backoff (5ms, 10ms, 20ms, ...) the first 25ms of the
+	// window covers roughly 5+10=15ms of backoff plus a couple of instant
+	// panic cycles — at most a handful of restarts, never the hundreds a
+	// flat 5ms delay would allow.
+	time.Sleep(25 * time.Millisecond)
 	cancel()
 
 	select {
@@ -314,9 +322,8 @@ func TestManager_BackoffLimitsRestartRate(t *testing.T) {
 	}
 
 	calls := svc.calls.Load()
-	// 5 seconds with 1+2+4=7s of backoff means at most ~3-4 restarts.
 	if calls > 5 {
-		t.Errorf("Expected <=5 restarts with backoff in 5s, got %d", calls)
+		t.Errorf("Expected <=5 restarts with exponential backoff, got %d", calls)
 	}
 	if calls < 2 {
 		t.Errorf("Expected at least 2 restarts, got %d", calls)
@@ -369,6 +376,7 @@ func (s *slowStopService) Stop(ctx context.Context) error {
 // even if one service blocks until its deadline, the next service still gets
 // a full share.
 func TestManager_StopPerServiceTimeout(t *testing.T) {
+	t.Parallel()
 	mgr := NewManager()
 	stopped := make(chan string, 2)
 
@@ -382,13 +390,16 @@ func TestManager_StopPerServiceTimeout(t *testing.T) {
 		close(done)
 	}()
 
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(10 * time.Millisecond)
 	cancel()
 	<-done
 
-	// 2 seconds total, 2 stoppable services = 1 second each.
+	// 200ms total, 2 stoppable services = 100ms each. The ratio matches
+	// production (slow burns its full share, fast returns immediately)
+	// without spending real wall-clock on a 1s-per-service budget.
+	const totalBudget = 200 * time.Millisecond
 	start := time.Now()
-	mgr.Stop(2 * time.Second)
+	mgr.Stop(totalBudget)
 	elapsed := time.Since(start)
 
 	var names []string
@@ -396,13 +407,14 @@ func TestManager_StopPerServiceTimeout(t *testing.T) {
 		select {
 		case name := <-stopped:
 			names = append(names, name)
-		case <-time.After(3 * time.Second):
+		case <-time.After(500 * time.Millisecond):
 			t.Fatalf("timed out waiting for stop calls, got %v", names)
 		}
 	}
 
-	// Total should be ~1s (slow burns its 1s budget, fast stops instantly).
-	if elapsed > 3*time.Second {
-		t.Errorf("Stop took %v, expected ~1s (per-service budgets)", elapsed)
+	// Should be ~100ms (slow burns its share, fast stops instantly). Give
+	// 3× headroom for slow CI.
+	if elapsed > 3*totalBudget {
+		t.Errorf("Stop took %v, expected ~%v (per-service budgets)", elapsed, totalBudget/2)
 	}
 }
