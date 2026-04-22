@@ -1,11 +1,11 @@
 // -------------------------------------------------------------------------------
-// DI Providers - Service Construction Functions for samber/do
+// Dependency Injection — Single Wiring Point for samber/do
 //
 // Author: Alex Freidah
 //
-// Lazy provider functions for the dependency injection container. Each function
-// resolves its own dependencies via do.Invoke and returns a fully constructed
-// service. Optional components (encryption, cache, Redis, notifications) are
+// NewInjector creates the DI container and registers all service providers.
+// Provider functions below are lazy — nothing is constructed until do.Invoke
+// is called. Optional components (encryption, cache, Redis, notifications) are
 // only registered when their config section is enabled, so do.Invoke returns
 // an error for disabled services — callers use the error to detect absence.
 //
@@ -46,6 +46,62 @@ import (
 )
 
 // -------------------------------------------------------------------------
+// INJECTOR CONSTRUCTION
+// -------------------------------------------------------------------------
+
+// NewInjector creates and configures the DI container. Required providers
+// are always registered. Optional providers are registered only when their
+// config section is enabled — do.Invoke returns an error for disabled
+// services, which callers use to detect absence.
+func NewInjector(cfg *config.Config, mode string, logLevel *slog.LevelVar, logBuffer *telemetry.LogBuffer) do.Injector {
+	inj := do.New()
+
+	// --- Value providers (static, no construction) ---
+	do.ProvideValue(inj, cfg)
+	do.ProvideValue(inj, mode)
+	do.ProvideValue(inj, logLevel)
+	do.ProvideValue(inj, logBuffer)
+
+	// --- Required infrastructure ---
+	do.Provide(inj, ProvideStoreBundle)
+	do.Provide(inj, ProvideMetadataStore)
+	do.Provide(inj, ProvideAdminStore)
+	do.Provide(inj, ProvideCBStore)
+	do.Provide(inj, ProvideBackends)
+	do.Provide(inj, ProvideBackendManager)
+	do.Provide(inj, ProvideBucketAuth)
+	do.Provide(inj, ProvideS3Server)
+	do.Provide(inj, ProvideLifecycleManager)
+
+	// --- Optional features (registered only when enabled) ---
+	if cfg.Encryption.Enabled {
+		do.Provide(inj, ProvideEncryptor)
+		do.Provide(inj, ProvideEncryptionProvider)
+	}
+	if cfg.Redis != nil {
+		do.Provide(inj, ProvideRedisCounterBackend)
+	}
+	if cfg.Cache.Enabled {
+		do.Provide(inj, ProvideObjectCache)
+	}
+	if cfg.RateLimit.Enabled {
+		do.Provide(inj, ProvideRateLimiter)
+	}
+	if cfg.UI.Enabled {
+		do.Provide(inj, ProvideLoginThrottle)
+		do.Provide(inj, ProvideUIHandler)
+	}
+	if cfg.UI.AdminKey != "" {
+		do.Provide(inj, ProvideAdminHandler)
+	}
+	if len(cfg.Notifications.Endpoints) > 0 {
+		do.Provide(inj, ProvideNotifier)
+	}
+
+	return inj
+}
+
+// -------------------------------------------------------------------------
 // INFRASTRUCTURE PROVIDERS
 // -------------------------------------------------------------------------
 
@@ -59,7 +115,10 @@ type storeBundle struct {
 // ProvideStoreBundle creates the metadata store for the configured driver,
 // runs migrations, and syncs quota limits.
 func ProvideStoreBundle(i do.Injector) (*storeBundle, error) {
-	cfg := do.MustInvoke[*config.Config](i)
+	cfg, err := do.Invoke[*config.Config](i)
+	if err != nil {
+		return nil, err
+	}
 	ctx := context.Background()
 
 	meta, adminDB, err := openStore(ctx, &cfg.Database)
@@ -85,20 +144,32 @@ func ProvideStoreBundle(i do.Injector) (*storeBundle, error) {
 
 // ProvideMetadataStore extracts the MetadataStore from the bundle.
 func ProvideMetadataStore(i do.Injector) (store.MetadataStore, error) {
-	b := do.MustInvoke[*storeBundle](i)
+	b, err := do.Invoke[*storeBundle](i)
+	if err != nil {
+		return nil, err
+	}
 	return b.meta, nil
 }
 
 // ProvideAdminStore extracts the AdminStore from the bundle.
 func ProvideAdminStore(i do.Injector) (store.AdminStore, error) {
-	b := do.MustInvoke[*storeBundle](i)
+	b, err := do.Invoke[*storeBundle](i)
+	if err != nil {
+		return nil, err
+	}
 	return b.admin, nil
 }
 
 // ProvideCBStore wraps the MetadataStore with circuit breaker protection.
 func ProvideCBStore(i do.Injector) (*store.CircuitBreakerStore, error) {
-	cfg := do.MustInvoke[*config.Config](i)
-	meta := do.MustInvoke[store.MetadataStore](i)
+	cfg, err := do.Invoke[*config.Config](i)
+	if err != nil {
+		return nil, err
+	}
+	meta, err := do.Invoke[store.MetadataStore](i)
+	if err != nil {
+		return nil, err
+	}
 	return store.NewCircuitBreakerStore(meta, cfg.CircuitBreaker), nil
 }
 
@@ -137,7 +208,10 @@ type backendsResult struct {
 // ProvideBackends initializes all configured storage backends with optional
 // per-backend circuit breakers.
 func ProvideBackends(i do.Injector) (*backendsResult, error) {
-	cfg := do.MustInvoke[*config.Config](i)
+	cfg, err := do.Invoke[*config.Config](i)
+	if err != nil {
+		return nil, err
+	}
 
 	backends := make(map[string]backend.ObjectBackend, len(cfg.Backends))
 	order := make([]string, 0, len(cfg.Backends))
@@ -182,7 +256,10 @@ func ProvideBackends(i do.Injector) (*backendsResult, error) {
 
 // ProvideEncryptor creates the envelope encryption engine.
 func ProvideEncryptor(i do.Injector) (*encryption.Encryptor, error) {
-	cfg := do.MustInvoke[*config.Config](i)
+	cfg, err := do.Invoke[*config.Config](i)
+	if err != nil {
+		return nil, err
+	}
 	provider, err := encryption.NewKeyProviderFromConfig(&cfg.Encryption)
 	if err != nil {
 		return nil, err
@@ -201,14 +278,23 @@ func ProvideEncryptor(i do.Injector) (*encryption.Encryptor, error) {
 // ProvideEncryptionProvider creates the key provider for admin key rotation
 // operations. Only registered when encryption is enabled.
 func ProvideEncryptionProvider(i do.Injector) (encryption.KeyProvider, error) {
-	cfg := do.MustInvoke[*config.Config](i)
+	cfg, err := do.Invoke[*config.Config](i)
+	if err != nil {
+		return nil, err
+	}
 	return encryption.NewKeyProviderFromConfig(&cfg.Encryption)
 }
 
 // ProvideRedisCounterBackend creates the shared Redis counter backend.
 func ProvideRedisCounterBackend(i do.Injector) (*counter.RedisCounterBackend, error) {
-	cfg := do.MustInvoke[*config.Config](i)
-	br := do.MustInvoke[*backendsResult](i)
+	cfg, err := do.Invoke[*config.Config](i)
+	if err != nil {
+		return nil, err
+	}
+	br, err := do.Invoke[*backendsResult](i)
+	if err != nil {
+		return nil, err
+	}
 
 	redisOpts := &redis.Options{
 		Addr:     cfg.Redis.Address,
@@ -229,7 +315,10 @@ func ProvideRedisCounterBackend(i do.Injector) (*counter.RedisCounterBackend, er
 
 // ProvideObjectCache creates the in-memory LRU object data cache.
 func ProvideObjectCache(i do.Injector) (objcache.ObjectCache, error) {
-	cfg := do.MustInvoke[*config.Config](i)
+	cfg, err := do.Invoke[*config.Config](i)
+	if err != nil {
+		return nil, err
+	}
 	mc, err := objcache.NewMemoryCache(objcache.MemoryConfig{
 		MaxSize:       cfg.Cache.MaxSizeBytes,
 		MaxObjectSize: cfg.Cache.MaxObjectSizeBytes,
@@ -252,9 +341,18 @@ func ProvideObjectCache(i do.Injector) (objcache.ObjectCache, error) {
 
 // ProvideBackendManager creates the central orchestration manager.
 func ProvideBackendManager(i do.Injector) (*proxy.BackendManager, error) {
-	cfg := do.MustInvoke[*config.Config](i)
-	cbStore := do.MustInvoke[*store.CircuitBreakerStore](i)
-	br := do.MustInvoke[*backendsResult](i)
+	cfg, err := do.Invoke[*config.Config](i)
+	if err != nil {
+		return nil, err
+	}
+	cbStore, err := do.Invoke[*store.CircuitBreakerStore](i)
+	if err != nil {
+		return nil, err
+	}
+	br, err := do.Invoke[*backendsResult](i)
+	if err != nil {
+		return nil, err
+	}
 
 	// Encryption: required when enabled, fatal on failure.
 	var enc *encryption.Encryptor
@@ -310,10 +408,22 @@ func ProvideBackendManager(i do.Injector) (*proxy.BackendManager, error) {
 
 // ProvideLifecycleManager creates and registers all background services.
 func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
-	cfg := do.MustInvoke[*config.Config](i)
-	manager := do.MustInvoke[*proxy.BackendManager](i)
-	cbStore := do.MustInvoke[*store.CircuitBreakerStore](i)
-	mode := do.MustInvoke[string](i)
+	cfg, err := do.Invoke[*config.Config](i)
+	if err != nil {
+		return nil, err
+	}
+	manager, err := do.Invoke[*proxy.BackendManager](i)
+	if err != nil {
+		return nil, err
+	}
+	cbStore, err := do.Invoke[*store.CircuitBreakerStore](i)
+	if err != nil {
+		return nil, err
+	}
+	mode, err := do.Invoke[string](i)
+	if err != nil {
+		return nil, err
+	}
 
 	sm := lifecycle.NewManager()
 	sm.Register("usage-flush", &usageFlushService{manager: manager, locker: cbStore})
@@ -354,15 +464,27 @@ func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 
 // ProvideBucketAuth creates the credential-to-bucket registry.
 func ProvideBucketAuth(i do.Injector) (*auth.BucketRegistry, error) {
-	cfg := do.MustInvoke[*config.Config](i)
+	cfg, err := do.Invoke[*config.Config](i)
+	if err != nil {
+		return nil, err
+	}
 	return auth.NewBucketRegistry(cfg.Buckets), nil
 }
 
 // ProvideS3Server creates the S3-compatible HTTP handler.
 func ProvideS3Server(i do.Injector) (*s3api.Server, error) {
-	cfg := do.MustInvoke[*config.Config](i)
-	manager := do.MustInvoke[*proxy.BackendManager](i)
-	bucketAuth := do.MustInvoke[*auth.BucketRegistry](i)
+	cfg, err := do.Invoke[*config.Config](i)
+	if err != nil {
+		return nil, err
+	}
+	manager, err := do.Invoke[*proxy.BackendManager](i)
+	if err != nil {
+		return nil, err
+	}
+	bucketAuth, err := do.Invoke[*auth.BucketRegistry](i)
+	if err != nil {
+		return nil, err
+	}
 
 	srv := s3api.NewServer(manager, cfg.Server.MaxObjectSize)
 	srv.SetBucketAuth(bucketAuth)
@@ -371,7 +493,10 @@ func ProvideS3Server(i do.Injector) (*s3api.Server, error) {
 
 // ProvideRateLimiter creates the per-IP rate limiter.
 func ProvideRateLimiter(i do.Injector) (*s3api.RateLimiter, error) {
-	cfg := do.MustInvoke[*config.Config](i)
+	cfg, err := do.Invoke[*config.Config](i)
+	if err != nil {
+		return nil, err
+	}
 	rl := s3api.NewRateLimiter(cfg.RateLimit)
 	slog.InfoContext(context.Background(), "Rate limiting enabled",
 		"requests_per_sec", cfg.RateLimit.RequestsPerSec,
@@ -387,22 +512,52 @@ func ProvideLoginThrottle(i do.Injector) (*httputil.LoginThrottle, error) {
 
 // ProvideUIHandler creates the web dashboard handler.
 func ProvideUIHandler(i do.Injector) (*ui.Handler, error) {
-	cfg := do.MustInvoke[*config.Config](i)
-	manager := do.MustInvoke[*proxy.BackendManager](i)
-	cbStore := do.MustInvoke[*store.CircuitBreakerStore](i)
-	logBuffer := do.MustInvoke[*telemetry.LogBuffer](i)
-	loginThrottle := do.MustInvoke[*httputil.LoginThrottle](i)
+	cfg, err := do.Invoke[*config.Config](i)
+	if err != nil {
+		return nil, err
+	}
+	manager, err := do.Invoke[*proxy.BackendManager](i)
+	if err != nil {
+		return nil, err
+	}
+	cbStore, err := do.Invoke[*store.CircuitBreakerStore](i)
+	if err != nil {
+		return nil, err
+	}
+	logBuffer, err := do.Invoke[*telemetry.LogBuffer](i)
+	if err != nil {
+		return nil, err
+	}
+	loginThrottle, err := do.Invoke[*httputil.LoginThrottle](i)
+	if err != nil {
+		return nil, err
+	}
 
 	return ui.New(manager, cbStore.IsHealthy, cfg, logBuffer, loginThrottle), nil
 }
 
 // ProvideAdminHandler creates the admin API handler.
 func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
-	cfg := do.MustInvoke[*config.Config](i)
-	manager := do.MustInvoke[*proxy.BackendManager](i)
-	cbStore := do.MustInvoke[*store.CircuitBreakerStore](i)
-	adminDB := do.MustInvoke[store.AdminStore](i)
-	logLevel := do.MustInvoke[*slog.LevelVar](i)
+	cfg, err := do.Invoke[*config.Config](i)
+	if err != nil {
+		return nil, err
+	}
+	manager, err := do.Invoke[*proxy.BackendManager](i)
+	if err != nil {
+		return nil, err
+	}
+	cbStore, err := do.Invoke[*store.CircuitBreakerStore](i)
+	if err != nil {
+		return nil, err
+	}
+	adminDB, err := do.Invoke[store.AdminStore](i)
+	if err != nil {
+		return nil, err
+	}
+	logLevel, err := do.Invoke[*slog.LevelVar](i)
+	if err != nil {
+		return nil, err
+	}
 
 	var enc *encryption.Encryptor
 	if cfg.Encryption.Enabled {
@@ -428,8 +583,14 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 
 // ProvideNotifier creates the webhook notification system.
 func ProvideNotifier(i do.Injector) (*notify.Notifier, error) {
-	cfg := do.MustInvoke[*config.Config](i)
-	adminDB := do.MustInvoke[store.AdminStore](i)
+	cfg, err := do.Invoke[*config.Config](i)
+	if err != nil {
+		return nil, err
+	}
+	adminDB, err := do.Invoke[store.AdminStore](i)
+	if err != nil {
+		return nil, err
+	}
 	return notify.NewNotifier(&cfg.Notifications, adminDB), nil
 }
 
