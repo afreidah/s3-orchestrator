@@ -35,6 +35,7 @@ func newTestCB(mock *mockStore, threshold int, timeout time.Duration) *CircuitBr
 }
 
 func TestCircuitBreaker_ClosedPassesThrough(t *testing.T) {
+	t.Parallel()
 	mock := &mockStore{
 		getAllLocationsResp: []ObjectLocation{{ObjectKey: "test", BackendName: "b1"}},
 	}
@@ -53,6 +54,7 @@ func TestCircuitBreaker_ClosedPassesThrough(t *testing.T) {
 }
 
 func TestCircuitBreaker_OpensAfterThreshold(t *testing.T) {
+	t.Parallel()
 	dbErr := errors.New("connection refused")
 	mock := &mockStore{getAllLocationsErr: dbErr}
 	cb := newTestCB(mock, 3, time.Minute)
@@ -87,6 +89,7 @@ func TestCircuitBreaker_OpensAfterThreshold(t *testing.T) {
 }
 
 func TestCircuitBreaker_HalfOpenAfterTimeout(t *testing.T) {
+	t.Parallel()
 	dbErr := errors.New("connection refused")
 	mock := &mockStore{getAllLocationsErr: dbErr}
 	cb := newTestCB(mock, 1, 10*time.Millisecond)
@@ -126,6 +129,7 @@ func TestCircuitBreaker_HalfOpenAfterTimeout(t *testing.T) {
 }
 
 func TestCircuitBreaker_HalfOpenFailureReopens(t *testing.T) {
+	t.Parallel()
 	dbErr := errors.New("connection refused")
 	mock := &mockStore{getAllLocationsErr: dbErr}
 	cb := newTestCB(mock, 1, 10*time.Millisecond)
@@ -152,6 +156,7 @@ func TestCircuitBreaker_HalfOpenFailureReopens(t *testing.T) {
 }
 
 func TestCircuitBreaker_AppErrorsDontTrip(t *testing.T) {
+	t.Parallel()
 	mock := &mockStore{getAllLocationsErr: ErrObjectNotFound}
 	cb := newTestCB(mock, 1, time.Minute)
 
@@ -175,6 +180,7 @@ func TestCircuitBreaker_AppErrorsDontTrip(t *testing.T) {
 }
 
 func TestCircuitBreaker_IsHealthy(t *testing.T) {
+	t.Parallel()
 	mock := &mockStore{getAllLocationsErr: errors.New("down")}
 	cb := newTestCB(mock, 1, time.Minute)
 
@@ -190,6 +196,7 @@ func TestCircuitBreaker_IsHealthy(t *testing.T) {
 }
 
 func TestCircuitBreaker_SuccessResetsFailures(t *testing.T) {
+	t.Parallel()
 	mock := &mockStore{
 		getAllLocationsResp: []ObjectLocation{{ObjectKey: "test", BackendName: "b1"}},
 	}
@@ -228,6 +235,7 @@ func TestCircuitBreaker_SuccessResetsFailures(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestCircuitState_String(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		state breaker.State
 		want  string
@@ -250,12 +258,14 @@ func TestCircuitState_String(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestIsDBError_NilIsNotDBError(t *testing.T) {
+	t.Parallel()
 	if isDBError(nil) {
 		t.Error("nil should not be a DB error")
 	}
 }
 
 func TestIsDBError_S3ErrorIsNotDBError(t *testing.T) {
+	t.Parallel()
 	err := &S3Error{StatusCode: 404, Code: "NoSuchKey", Message: "not found"}
 	if isDBError(err) {
 		t.Error("S3Error should not be a DB error")
@@ -263,18 +273,21 @@ func TestIsDBError_S3ErrorIsNotDBError(t *testing.T) {
 }
 
 func TestIsDBError_ErrNoSpaceIsNotDBError(t *testing.T) {
+	t.Parallel()
 	if isDBError(ErrNoSpaceAvailable) {
 		t.Error("ErrNoSpaceAvailable should not be a DB error")
 	}
 }
 
 func TestIsDBError_GenericErrorIsDBError(t *testing.T) {
+	t.Parallel()
 	if !isDBError(errors.New("connection refused")) {
 		t.Error("generic error should be a DB error")
 	}
 }
 
 func TestIsDBError_WrappedS3Error(t *testing.T) {
+	t.Parallel()
 	inner := &S3Error{StatusCode: 507, Code: "InsufficientStorage", Message: "full"}
 	wrapped := fmt.Errorf("wrapped: %w", inner)
 	if isDBError(wrapped) {
@@ -287,6 +300,7 @@ func TestIsDBError_WrappedS3Error(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestCircuitBreaker_PostCheck_NonDBErrorPassesThrough(t *testing.T) {
+	t.Parallel()
 	mock := &mockStore{getAllLocationsErr: ErrObjectNotFound}
 	cb := newTestCB(mock, 3, time.Minute)
 
@@ -303,6 +317,7 @@ func TestCircuitBreaker_PostCheck_NonDBErrorPassesThrough(t *testing.T) {
 }
 
 func TestCircuitBreaker_PostCheck_DBErrorBelowThresholdPassesRawError(t *testing.T) {
+	t.Parallel()
 	dbErr := errors.New("connection refused")
 	mock := &mockStore{getAllLocationsErr: dbErr}
 	cb := newTestCB(mock, 3, time.Minute)
@@ -322,6 +337,7 @@ func TestCircuitBreaker_PostCheck_DBErrorBelowThresholdPassesRawError(t *testing
 // -------------------------------------------------------------------------
 
 func TestCircuitBreaker_RecordObject_Success(t *testing.T) {
+	t.Parallel()
 	mock := &mockStore{}
 	cb := newTestCB(mock, 3, time.Minute)
 
@@ -332,6 +348,7 @@ func TestCircuitBreaker_RecordObject_Success(t *testing.T) {
 }
 
 func TestCircuitBreaker_RecordObject_CircuitOpen(t *testing.T) {
+	t.Parallel()
 	dbErr := errors.New("connection refused")
 	mock := &mockStore{getAllLocationsErr: dbErr, recordObjectErr: dbErr}
 	cb := newTestCB(mock, 1, time.Minute)
@@ -351,6 +368,7 @@ func TestCircuitBreaker_RecordObject_CircuitOpen(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestCircuitBreaker_CreateMultipartUpload_Success(t *testing.T) {
+	t.Parallel()
 	mock := &mockStore{}
 	cb := newTestCB(mock, 3, time.Minute)
 
@@ -361,6 +379,7 @@ func TestCircuitBreaker_CreateMultipartUpload_Success(t *testing.T) {
 }
 
 func TestCircuitBreaker_CreateMultipartUpload_CircuitOpen(t *testing.T) {
+	t.Parallel()
 	dbErr := errors.New("connection refused")
 	mock := &mockStore{getAllLocationsErr: dbErr}
 	cb := newTestCB(mock, 1, time.Minute)
@@ -379,6 +398,7 @@ func TestCircuitBreaker_CreateMultipartUpload_CircuitOpen(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestCircuitBreaker_ListMultipartUploads_Success(t *testing.T) {
+	t.Parallel()
 	mock := &mockStore{}
 	cb := newTestCB(mock, 3, time.Minute)
 
@@ -392,6 +412,7 @@ func TestCircuitBreaker_ListMultipartUploads_Success(t *testing.T) {
 }
 
 func TestCircuitBreaker_ListMultipartUploads_CircuitOpen(t *testing.T) {
+	t.Parallel()
 	dbErr := errors.New("connection refused")
 	mock := &mockStore{getAllLocationsErr: dbErr}
 	cb := newTestCB(mock, 1, time.Minute)
@@ -410,6 +431,7 @@ func TestCircuitBreaker_ListMultipartUploads_CircuitOpen(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestCircuitBreaker_WithAdvisoryLock_BypassesCircuit(t *testing.T) {
+	t.Parallel()
 	dbErr := errors.New("connection refused")
 	mock := &mockStore{getAllLocationsErr: dbErr}
 	cb := newTestCB(mock, 1, time.Minute)
@@ -501,6 +523,7 @@ func TestCircuitBreaker_TransitionLogs_OpenToHalfOpen(t *testing.T) {
 }
 
 func TestCircuitBreaker_TransitionLogs_HalfOpenToClosed(t *testing.T) {
+	t.Parallel()
 	dbErr := errors.New("connection refused")
 	mock := &mockStore{getAllLocationsErr: dbErr}
 	cb := newTestCB(mock, 1, 10*time.Millisecond)
@@ -558,6 +581,7 @@ func TestCircuitBreaker_TransitionLogs_HalfOpenToOpen(t *testing.T) {
 }
 
 func TestCircuitBreaker_DegradedDurationIsPositive(t *testing.T) {
+	t.Parallel()
 	dbErr := errors.New("connection refused")
 	mock := &mockStore{getAllLocationsErr: dbErr}
 	cb := newTestCB(mock, 1, 10*time.Millisecond)
@@ -591,6 +615,7 @@ func TestCircuitBreaker_DegradedDurationIsPositive(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestCircuitBreaker_ForwardingMethods_Closed(t *testing.T) {
+	t.Parallel()
 	mock := &mockStore{
 		getQuotaStatsResp:        map[string]QuotaStat{"b1": {BackendName: "b1", BytesUsed: 100}},
 		getObjectCountsResp:      map[string]int64{"b1": 42},
@@ -700,6 +725,7 @@ func TestCircuitBreaker_ForwardingMethods_Closed(t *testing.T) {
 }
 
 func TestCircuitBreaker_ForwardingMethods_Open(t *testing.T) {
+	t.Parallel()
 	dbErr := errors.New("connection refused")
 	mock := &mockStore{getAllLocationsErr: dbErr}
 	cb := newTestCB(mock, 1, time.Minute)
@@ -724,6 +750,7 @@ func TestCircuitBreaker_ForwardingMethods_Open(t *testing.T) {
 }
 
 func TestCircuitBreaker_BackendObjectStats_PreCheckBlocks(t *testing.T) {
+	t.Parallel()
 	dbErr := errors.New("connection refused")
 	mock := &mockStore{getAllLocationsErr: dbErr}
 	cb := newTestCB(mock, 1, time.Minute)
@@ -742,6 +769,7 @@ func TestCircuitBreaker_BackendObjectStats_PreCheckBlocks(t *testing.T) {
 }
 
 func TestCircuitBreaker_BackendObjectStats_Success(t *testing.T) {
+	t.Parallel()
 	mock := &mockStore{}
 	cb := newTestCB(mock, 3, time.Minute)
 
@@ -755,6 +783,7 @@ func TestCircuitBreaker_BackendObjectStats_Success(t *testing.T) {
 }
 
 func TestCircuitBreaker_ConcurrentProbeSerializedByAtomicFlag(t *testing.T) {
+	t.Parallel()
 	dbErr := errors.New("connection refused")
 	mock := &mockStore{getAllLocationsErr: dbErr}
 	cb := newTestCB(mock, 1, 10*time.Millisecond)

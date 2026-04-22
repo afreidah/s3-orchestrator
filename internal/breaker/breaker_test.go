@@ -36,6 +36,7 @@ func newTestBreaker(threshold int, timeout time.Duration) *CircuitBreaker {
 // -------------------------------------------------------------------------
 
 func TestCB_StartsHealthy(t *testing.T) {
+	t.Parallel()
 	cb := newTestBreaker(3, time.Minute)
 	if !cb.IsHealthy() {
 		t.Fatal("should start healthy")
@@ -46,6 +47,7 @@ func TestCB_StartsHealthy(t *testing.T) {
 }
 
 func TestCB_OpensAfterThreshold(t *testing.T) {
+	t.Parallel()
 	cb := newTestBreaker(3, time.Minute)
 
 	for i := range 2 {
@@ -69,6 +71,7 @@ func TestCB_OpensAfterThreshold(t *testing.T) {
 }
 
 func TestCB_OpenRejectsCalls(t *testing.T) {
+	t.Parallel()
 	cb := newTestBreaker(1, time.Minute)
 	_ = cb.PostCheck(errTest) // trip
 
@@ -78,6 +81,7 @@ func TestCB_OpenRejectsCalls(t *testing.T) {
 }
 
 func TestCB_HalfOpenAfterTimeout(t *testing.T) {
+	t.Parallel()
 	cb := newTestBreaker(1, 10*time.Millisecond)
 	_ = cb.PostCheck(errTest) // trip
 	time.Sleep(15 * time.Millisecond)
@@ -92,6 +96,7 @@ func TestCB_HalfOpenAfterTimeout(t *testing.T) {
 }
 
 func TestCB_HalfOpenSuccess_Closes(t *testing.T) {
+	t.Parallel()
 	cb := newTestBreaker(1, 10*time.Millisecond)
 	_ = cb.PostCheck(errTest) // trip
 	time.Sleep(15 * time.Millisecond)
@@ -105,6 +110,7 @@ func TestCB_HalfOpenSuccess_Closes(t *testing.T) {
 }
 
 func TestCB_HalfOpenFailure_Reopens(t *testing.T) {
+	t.Parallel()
 	cb := newTestBreaker(1, 10*time.Millisecond)
 	_ = cb.PostCheck(errTest) // trip
 	time.Sleep(15 * time.Millisecond)
@@ -121,6 +127,7 @@ func TestCB_HalfOpenFailure_Reopens(t *testing.T) {
 }
 
 func TestCB_SuccessResetsFailureCount(t *testing.T) {
+	t.Parallel()
 	cb := newTestBreaker(3, time.Minute)
 
 	_ = cb.PostCheck(errTest) // 1
@@ -139,6 +146,7 @@ func TestCB_SuccessResetsFailureCount(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestCB_OpenDuration_ZeroWhenClosed(t *testing.T) {
+	t.Parallel()
 	cb := newTestBreaker(3, time.Minute)
 	if d := cb.OpenDuration(); d != 0 {
 		t.Fatalf("expected 0 when closed, got %v", d)
@@ -146,6 +154,7 @@ func TestCB_OpenDuration_ZeroWhenClosed(t *testing.T) {
 }
 
 func TestCB_OpenDuration_PositiveWhenOpen(t *testing.T) {
+	t.Parallel()
 	cb := newTestBreaker(1, time.Minute)
 	_ = cb.PostCheck(errTest) // trip
 
@@ -157,6 +166,7 @@ func TestCB_OpenDuration_PositiveWhenOpen(t *testing.T) {
 }
 
 func TestCB_OpenDuration_PositiveWhenHalfOpen(t *testing.T) {
+	t.Parallel()
 	cb := newTestBreaker(1, 10*time.Millisecond)
 	_ = cb.PostCheck(errTest) // trip
 	time.Sleep(15 * time.Millisecond)
@@ -171,6 +181,7 @@ func TestCB_OpenDuration_PositiveWhenHalfOpen(t *testing.T) {
 }
 
 func TestCB_OpenDuration_ZeroAfterRecovery(t *testing.T) {
+	t.Parallel()
 	cb := newTestBreaker(1, 10*time.Millisecond)
 	_ = cb.PostCheck(errTest) // trip
 	time.Sleep(15 * time.Millisecond)
@@ -188,6 +199,7 @@ func TestCB_OpenDuration_ZeroAfterRecovery(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestCB_FilteredErrorsDontTrip(t *testing.T) {
+	t.Parallel()
 	cb := NewCircuitBreaker("test", 1, time.Minute, neverError, errSentinel)
 
 	for range 10 {
@@ -199,6 +211,7 @@ func TestCB_FilteredErrorsDontTrip(t *testing.T) {
 }
 
 func TestCB_NilErrorIsSuccess(t *testing.T) {
+	t.Parallel()
 	cb := newTestBreaker(1, time.Minute)
 	err := cb.PostCheck(nil)
 	if err != nil {
@@ -214,6 +227,7 @@ func TestCB_NilErrorIsSuccess(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestCBCall_PassesThrough(t *testing.T) {
+	t.Parallel()
 	cb := newTestBreaker(3, time.Minute)
 	result, err := CBCall(cb, func() (string, error) { return "ok", nil })
 	if err != nil || result != "ok" {
@@ -222,6 +236,7 @@ func TestCBCall_PassesThrough(t *testing.T) {
 }
 
 func TestCBCall_CircuitOpen(t *testing.T) {
+	t.Parallel()
 	cb := newTestBreaker(1, time.Minute)
 	_ = cb.PostCheck(errTest) // trip
 
@@ -239,6 +254,7 @@ func TestCBCall_CircuitOpen(t *testing.T) {
 }
 
 func TestCBCallNoResult_PassesThrough(t *testing.T) {
+	t.Parallel()
 	cb := newTestBreaker(3, time.Minute)
 	err := CBCallNoResult(cb, func() error { return nil })
 	if err != nil {
@@ -247,6 +263,7 @@ func TestCBCallNoResult_PassesThrough(t *testing.T) {
 }
 
 func TestCBCallNoResult_CircuitOpen(t *testing.T) {
+	t.Parallel()
 	cb := newTestBreaker(1, time.Minute)
 	_ = cb.PostCheck(errTest) // trip
 
@@ -261,6 +278,7 @@ func TestCBCallNoResult_CircuitOpen(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestCB_OnlyOneProbeAllowed(t *testing.T) {
+	t.Parallel()
 	cb := newTestBreaker(1, 10*time.Millisecond)
 	_ = cb.PostCheck(errTest) // trip
 	time.Sleep(15 * time.Millisecond)
@@ -291,6 +309,7 @@ func TestCB_OnlyOneProbeAllowed(t *testing.T) {
 }
 
 func TestCB_ProbeEligible(t *testing.T) {
+	t.Parallel()
 	cb := newTestBreaker(1, 5*time.Millisecond)
 
 	// Closed — not probe-eligible
@@ -322,6 +341,7 @@ func TestCB_ProbeEligible(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestCB_ProbeJitter_VariesBetweenInstances(t *testing.T) {
+	t.Parallel()
 	// Create several circuit breakers and trip them all. With openTimeout of
 	// 1s and jitter range of 250ms, collisions across 10 instances are rare.
 	const n = 10
@@ -344,6 +364,7 @@ func TestCB_ProbeJitter_VariesBetweenInstances(t *testing.T) {
 }
 
 func TestCB_ProbeJitter_RecomputedOnReopen(t *testing.T) {
+	t.Parallel()
 	cb := newTestBreaker(1, 50*time.Millisecond)
 
 	// Trip → record jitter
@@ -372,6 +393,7 @@ func TestCB_ProbeJitter_RecomputedOnReopen(t *testing.T) {
 }
 
 func TestCB_StaleProbeAutoResets(t *testing.T) {
+	t.Parallel()
 	cb := newTestBreaker(1, 5*time.Millisecond)
 
 	// Trip the breaker
@@ -462,6 +484,7 @@ func TestTransition_NoEmitWhenHookNil(t *testing.T) {
 // TestResetStaleProbe_ClosedCircuit verifies that ResetStaleProbe is a no-op
 // when the circuit is closed.
 func TestResetStaleProbe_ClosedCircuit(t *testing.T) {
+	t.Parallel()
 	cb := newTestBreaker(3, time.Minute)
 
 	if cb.ResetStaleProbe() {
@@ -475,6 +498,7 @@ func TestResetStaleProbe_ClosedCircuit(t *testing.T) {
 // TestResetStaleProbe_OpenCircuit verifies that ResetStaleProbe is a no-op
 // when the circuit is open (no probe dispatched yet).
 func TestResetStaleProbe_OpenCircuit(t *testing.T) {
+	t.Parallel()
 	cb := newTestBreaker(1, time.Hour)
 	_ = cb.PostCheck(errTest) // trips to open
 
@@ -489,6 +513,7 @@ func TestResetStaleProbe_OpenCircuit(t *testing.T) {
 // TestResetStaleProbe_FreshProbe verifies that ResetStaleProbe does not reset
 // a probe that was just dispatched (well within probeTimeout).
 func TestResetStaleProbe_FreshProbe(t *testing.T) {
+	t.Parallel()
 	cb := newTestBreaker(1, time.Millisecond)
 	_ = cb.PostCheck(errTest)
 	time.Sleep(2 * time.Millisecond)
@@ -513,6 +538,7 @@ func TestResetStaleProbe_FreshProbe(t *testing.T) {
 // TestResetStaleProbe_StaleProbe verifies that ResetStaleProbe resets a
 // half-open circuit whose probe has exceeded probeTimeout back to open.
 func TestResetStaleProbe_StaleProbe(t *testing.T) {
+	t.Parallel()
 	cb := newTestBreaker(1, time.Millisecond)
 	_ = cb.PostCheck(errTest)
 	time.Sleep(2 * time.Millisecond)

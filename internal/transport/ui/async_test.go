@@ -16,6 +16,7 @@ import "testing"
 // -------------------------------------------------------------------------
 
 func TestAsyncOpTracker_TryStart(t *testing.T) {
+	t.Parallel()
 	var tr asyncOpTracker
 
 	if !tr.TryStart("rebalance") {
@@ -29,6 +30,7 @@ func TestAsyncOpTracker_TryStart(t *testing.T) {
 }
 
 func TestAsyncOpTracker_TryStartDuplicate(t *testing.T) {
+	t.Parallel()
 	var tr asyncOpTracker
 
 	tr.TryStart("rebalance")
@@ -38,6 +40,7 @@ func TestAsyncOpTracker_TryStartDuplicate(t *testing.T) {
 }
 
 func TestAsyncOpTracker_IndependentOps(t *testing.T) {
+	t.Parallel()
 	var tr asyncOpTracker
 
 	tr.TryStart("rebalance")
@@ -51,6 +54,7 @@ func TestAsyncOpTracker_IndependentOps(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestAsyncOpTracker_Complete(t *testing.T) {
+	t.Parallel()
 	var tr asyncOpTracker
 
 	tr.TryStart("rebalance")
@@ -69,6 +73,7 @@ func TestAsyncOpTracker_Complete(t *testing.T) {
 }
 
 func TestAsyncOpTracker_CompleteError(t *testing.T) {
+	t.Parallel()
 	var tr asyncOpTracker
 
 	tr.TryStart("rebalance")
@@ -81,6 +86,7 @@ func TestAsyncOpTracker_CompleteError(t *testing.T) {
 }
 
 func TestAsyncOpTracker_RestartAfterComplete(t *testing.T) {
+	t.Parallel()
 	var tr asyncOpTracker
 
 	tr.TryStart("rebalance")
@@ -96,6 +102,7 @@ func TestAsyncOpTracker_RestartAfterComplete(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestAsyncOpTracker_StatusIdle(t *testing.T) {
+	t.Parallel()
 	var tr asyncOpTracker
 
 	result, running := tr.Status("rebalance")

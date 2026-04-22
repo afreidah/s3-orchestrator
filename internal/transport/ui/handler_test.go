@@ -159,6 +159,7 @@ func authedRequest(t *testing.T, h *Handler, mux *http.ServeMux, method, path st
 // -------------------------------------------------------------------------
 
 func TestCSRF_PostWithoutToken_Rejected(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 	session := getSessionCookie(t, h, mux)
 
@@ -174,6 +175,7 @@ func TestCSRF_PostWithoutToken_Rejected(t *testing.T) {
 }
 
 func TestCSRF_PostWithCookieButNoHeader_Rejected(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 	session, csrf := loginCookies(t, h, mux)
 
@@ -190,6 +192,7 @@ func TestCSRF_PostWithCookieButNoHeader_Rejected(t *testing.T) {
 }
 
 func TestCSRF_PostWithWrongToken_Rejected(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 	session, csrf := loginCookies(t, h, mux)
 
@@ -206,6 +209,7 @@ func TestCSRF_PostWithWrongToken_Rejected(t *testing.T) {
 }
 
 func TestCSRF_GetWithoutToken_Allowed(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 	session := getSessionCookie(t, h, mux)
 
@@ -225,6 +229,7 @@ func TestCSRF_GetWithoutToken_Allowed(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestWriteJSONError(t *testing.T) {
+	t.Parallel()
 	w := httptest.NewRecorder()
 	writeJSONError(w, http.StatusBadRequest, "something broke")
 
@@ -244,6 +249,7 @@ func TestWriteJSONError(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestDashboard_RequiresAuth(t *testing.T) {
+	t.Parallel()
 	_, mux := newTestHandler(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/ui/", nil)
@@ -261,6 +267,7 @@ func TestDashboard_RequiresAuth(t *testing.T) {
 }
 
 func TestAPIDashboard_RequiresAuth(t *testing.T) {
+	t.Parallel()
 	_, mux := newTestHandler(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/ui/api/dashboard", nil)
@@ -273,6 +280,7 @@ func TestAPIDashboard_RequiresAuth(t *testing.T) {
 }
 
 func TestLogin_ValidCredentials(t *testing.T) {
+	t.Parallel()
 	_, mux := newTestHandler(t)
 
 	form := url.Values{
@@ -310,6 +318,7 @@ func TestLogin_ValidCredentials(t *testing.T) {
 }
 
 func TestLogin_InvalidCredentials(t *testing.T) {
+	t.Parallel()
 	_, mux := newTestHandler(t)
 
 	form := url.Values{
@@ -333,6 +342,7 @@ func TestLogin_InvalidCredentials(t *testing.T) {
 }
 
 func TestLogin_GET_ShowsForm(t *testing.T) {
+	t.Parallel()
 	_, mux := newTestHandler(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/ui/login", nil)
@@ -351,6 +361,7 @@ func TestLogin_GET_ShowsForm(t *testing.T) {
 }
 
 func TestLogin_GET_RedirectsWhenAuthenticated(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 
 	cookie := getSessionCookie(t, h, mux)
@@ -369,6 +380,7 @@ func TestLogin_GET_RedirectsWhenAuthenticated(t *testing.T) {
 }
 
 func TestLogout_ClearsCookie(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 
 	cookie := getSessionCookie(t, h, mux)
@@ -390,6 +402,7 @@ func TestLogout_ClearsCookie(t *testing.T) {
 }
 
 func TestCheckSecret_Plaintext(t *testing.T) {
+	t.Parallel()
 	if !checkSecret("mysecret", "mysecret") {
 		t.Error("identical plaintext should match")
 	}
@@ -399,6 +412,7 @@ func TestCheckSecret_Plaintext(t *testing.T) {
 }
 
 func TestCheckSecret_Bcrypt(t *testing.T) {
+	t.Parallel()
 	hash, err := bcrypt.GenerateFromPassword([]byte("bcrypt-pass"), bcrypt.MinCost)
 	if err != nil {
 		t.Fatal(err)
@@ -413,6 +427,7 @@ func TestCheckSecret_Bcrypt(t *testing.T) {
 }
 
 func TestLogin_BcryptSecret(t *testing.T) {
+	t.Parallel()
 	hash, err := bcrypt.GenerateFromPassword([]byte(testAdminSecret), bcrypt.MinCost)
 	if err != nil {
 		t.Fatal(err)
@@ -462,6 +477,7 @@ func TestLogin_BcryptSecret(t *testing.T) {
 }
 
 func TestDeriveSessionKey_Deterministic(t *testing.T) {
+	t.Parallel()
 	ui := config.UIConfig{SessionSecret: "shared-secret"}
 	key1 := deriveSessionKey(&ui)
 	key2 := deriveSessionKey(&ui)
@@ -472,6 +488,7 @@ func TestDeriveSessionKey_Deterministic(t *testing.T) {
 }
 
 func TestDeriveSessionKey_DifferentSecretsDifferentKeys(t *testing.T) {
+	t.Parallel()
 	ui1 := config.UIConfig{SessionSecret: "secret-one"}
 	ui2 := config.UIConfig{SessionSecret: "secret-two"}
 
@@ -484,6 +501,7 @@ func TestDeriveSessionKey_DifferentSecretsDifferentKeys(t *testing.T) {
 }
 
 func TestCrossInstanceSession(t *testing.T) {
+	t.Parallel()
 	// Two handlers with the same config should accept each other's sessions.
 	mockStore := &testutil.MockStore{
 		GetQuotaStatsResp:      map[string]store.QuotaStat{},
@@ -531,6 +549,7 @@ func TestCrossInstanceSession(t *testing.T) {
 }
 
 func TestStaticAssets_NoAuthRequired(t *testing.T) {
+	t.Parallel()
 	_, mux := newTestHandler(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/ui/static/style.css", nil)
@@ -548,6 +567,7 @@ func TestStaticAssets_NoAuthRequired(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestDashboard_Returns200HTML(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 
 	req := authedRequest(t, h, mux, http.MethodGet, "/ui/", nil)
@@ -578,6 +598,7 @@ func TestDashboard_Returns200HTML(t *testing.T) {
 }
 
 func TestAPIDashboard_ReturnsJSON(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 
 	req := authedRequest(t, h, mux, http.MethodGet, "/ui/api/dashboard", nil)
@@ -603,6 +624,7 @@ func TestAPIDashboard_ReturnsJSON(t *testing.T) {
 }
 
 func TestTreeAPI_ReturnsJSON(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 
 	req := authedRequest(t, h, mux, http.MethodGet, "/ui/api/tree?prefix=", nil)
@@ -628,6 +650,7 @@ func TestTreeAPI_ReturnsJSON(t *testing.T) {
 }
 
 func TestSecurityHeaders_PresentOnAllEndpoints(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 
 	// Login page (no auth needed) and authenticated endpoints
@@ -669,6 +692,7 @@ func TestSecurityHeaders_PresentOnAllEndpoints(t *testing.T) {
 }
 
 func TestUpdateConfig_ReflectsInDashboard(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 
 	// Update config with a different routing strategy
@@ -702,6 +726,7 @@ func TestUpdateConfig_ReflectsInDashboard(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestAPIDelete_RequiresAuth(t *testing.T) {
+	t.Parallel()
 	_, mux := newTestHandler(t)
 
 	req := httptest.NewRequest(http.MethodPost, "/ui/api/delete", strings.NewReader(`{"key":"test"}`))
@@ -715,6 +740,7 @@ func TestAPIDelete_RequiresAuth(t *testing.T) {
 }
 
 func TestAPIUpload_RequiresAuth(t *testing.T) {
+	t.Parallel()
 	_, mux := newTestHandler(t)
 
 	req := httptest.NewRequest(http.MethodPost, "/ui/api/upload", nil)
@@ -731,6 +757,7 @@ func TestAPIUpload_RequiresAuth(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestAPIDelete_WrongMethod(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 
 	req := authedRequest(t, h, mux, http.MethodGet, "/ui/api/delete", nil)
@@ -743,6 +770,7 @@ func TestAPIDelete_WrongMethod(t *testing.T) {
 }
 
 func TestAPIDelete_BadJSON(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 
 	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/delete", strings.NewReader("{bad"))
@@ -756,6 +784,7 @@ func TestAPIDelete_BadJSON(t *testing.T) {
 }
 
 func TestAPIDelete_EmptyKey(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 
 	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/delete", strings.NewReader(`{"key":""}`))
@@ -769,6 +798,7 @@ func TestAPIDelete_EmptyKey(t *testing.T) {
 }
 
 func TestAPIDelete_Success(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 
 	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/delete",
@@ -793,6 +823,7 @@ func TestAPIDelete_Success(t *testing.T) {
 }
 
 func TestAPIDelete_ManagerError(t *testing.T) {
+	t.Parallel()
 	h, mux, mock := newTestHandlerWithMock(t)
 	mock.DeleteObjectErr = errors.New("db down")
 
@@ -812,6 +843,7 @@ func TestAPIDelete_ManagerError(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestAPIDeletePrefix_RequiresAuth(t *testing.T) {
+	t.Parallel()
 	_, mux := newTestHandler(t)
 
 	req := httptest.NewRequest(http.MethodPost, "/ui/api/delete-prefix",
@@ -826,6 +858,7 @@ func TestAPIDeletePrefix_RequiresAuth(t *testing.T) {
 }
 
 func TestAPIDeletePrefix_WrongMethod(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 
 	req := authedRequest(t, h, mux, http.MethodGet, "/ui/api/delete-prefix", nil)
@@ -838,6 +871,7 @@ func TestAPIDeletePrefix_WrongMethod(t *testing.T) {
 }
 
 func TestAPIDeletePrefix_BadJSON(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 
 	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/delete-prefix", strings.NewReader("{bad"))
@@ -851,6 +885,7 @@ func TestAPIDeletePrefix_BadJSON(t *testing.T) {
 }
 
 func TestAPIDeletePrefix_EmptyPrefix(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 
 	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/delete-prefix",
@@ -865,6 +900,7 @@ func TestAPIDeletePrefix_EmptyPrefix(t *testing.T) {
 }
 
 func TestAPIDeletePrefix_Success(t *testing.T) {
+	t.Parallel()
 	h, mux, mock := newTestHandlerWithMock(t)
 	mock.ListObjectsResp = &store.ListObjectsResult{
 		Objects: []store.ObjectLocation{
@@ -899,6 +935,7 @@ func TestAPIDeletePrefix_Success(t *testing.T) {
 }
 
 func TestAPIDeletePrefix_EmptyResult(t *testing.T) {
+	t.Parallel()
 	h, mux, mock := newTestHandlerWithMock(t)
 	mock.ListObjectsResp = &store.ListObjectsResult{
 		Objects:     nil,
@@ -930,6 +967,7 @@ func TestAPIDeletePrefix_EmptyResult(t *testing.T) {
 }
 
 func TestAPIDeletePrefix_ListObjectsError(t *testing.T) {
+	t.Parallel()
 	h, mux, mock := newTestHandlerWithMock(t)
 	mock.ListObjectsErr = errors.New("db down")
 
@@ -945,6 +983,7 @@ func TestAPIDeletePrefix_ListObjectsError(t *testing.T) {
 }
 
 func TestAPIDeletePrefix_DeleteError(t *testing.T) {
+	t.Parallel()
 	h, mux, mock := newTestHandlerWithMock(t)
 	mock.ListObjectsResp = &store.ListObjectsResult{
 		Objects: []store.ObjectLocation{
@@ -1005,6 +1044,7 @@ func multipartForm(t *testing.T, key, filename string, fileContent []byte) (*byt
 }
 
 func TestAPIUpload_WrongMethod(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 
 	req := authedRequest(t, h, mux, http.MethodGet, "/ui/api/upload", nil)
@@ -1017,6 +1057,7 @@ func TestAPIUpload_WrongMethod(t *testing.T) {
 }
 
 func TestAPIUpload_MissingKey(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 
 	body, ct := multipartForm(t, "", "test.txt", []byte("hello"))
@@ -1031,6 +1072,7 @@ func TestAPIUpload_MissingKey(t *testing.T) {
 }
 
 func TestAPIUpload_InvalidBucket(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 
 	body, ct := multipartForm(t, "wrong-bucket/file.txt", "file.txt", []byte("hello"))
@@ -1049,6 +1091,7 @@ func TestAPIUpload_InvalidBucket(t *testing.T) {
 }
 
 func TestAPIUpload_MissingFile(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 
 	// Form with key but no file field.
@@ -1064,6 +1107,7 @@ func TestAPIUpload_MissingFile(t *testing.T) {
 }
 
 func TestAPIUpload_PutObjectError(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 
 	// Valid form, but PutObject will fail because no real backend is wired up.
@@ -1083,6 +1127,7 @@ func TestAPIUpload_PutObjectError(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestAPIRebalance_RequiresAuth(t *testing.T) {
+	t.Parallel()
 	_, mux := newTestHandler(t)
 
 	req := httptest.NewRequest(http.MethodPost, "/ui/api/rebalance", nil)
@@ -1095,6 +1140,7 @@ func TestAPIRebalance_RequiresAuth(t *testing.T) {
 }
 
 func TestAPIRebalance_WrongMethod(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 
 	req := authedRequest(t, h, mux, http.MethodGet, "/ui/api/rebalance", nil)
@@ -1107,6 +1153,7 @@ func TestAPIRebalance_WrongMethod(t *testing.T) {
 }
 
 func TestAPIRebalance_Success(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 
 	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/rebalance", nil)
@@ -1129,6 +1176,7 @@ func TestAPIRebalance_Success(t *testing.T) {
 }
 
 func TestAPIRebalance_AlreadyRunning(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 
 	// Simulate a rebalance already in progress by marking the operation as
@@ -1146,6 +1194,7 @@ func TestAPIRebalance_AlreadyRunning(t *testing.T) {
 }
 
 func TestAPIRebalance_StatusPolling(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 
 	// Status before any run should be idle
@@ -1161,6 +1210,7 @@ func TestAPIRebalance_StatusPolling(t *testing.T) {
 }
 
 func TestAPIRebalance_ManagerError(t *testing.T) {
+	t.Parallel()
 	h, mux, mock := newTestHandlerWithMock(t)
 	mock.GetQuotaStatsErr = errors.New("db down")
 
@@ -1193,6 +1243,7 @@ func TestAPIRebalance_ManagerError(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestAPISync_RequiresAuth(t *testing.T) {
+	t.Parallel()
 	_, mux := newTestHandler(t)
 
 	req := httptest.NewRequest(http.MethodPost, "/ui/api/sync",
@@ -1207,6 +1258,7 @@ func TestAPISync_RequiresAuth(t *testing.T) {
 }
 
 func TestAPISync_WrongMethod(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 
 	req := authedRequest(t, h, mux, http.MethodGet, "/ui/api/sync", nil)
@@ -1219,6 +1271,7 @@ func TestAPISync_WrongMethod(t *testing.T) {
 }
 
 func TestAPISync_BadJSON(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 
 	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/sync", strings.NewReader("{bad"))
@@ -1232,6 +1285,7 @@ func TestAPISync_BadJSON(t *testing.T) {
 }
 
 func TestAPISync_EmptyFields(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 
 	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/sync",
@@ -1246,6 +1300,7 @@ func TestAPISync_EmptyFields(t *testing.T) {
 }
 
 func TestAPISync_UnknownBackend(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 
 	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/sync",
@@ -1265,6 +1320,7 @@ func TestAPISync_UnknownBackend(t *testing.T) {
 }
 
 func TestAPISync_UnknownBucket(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 
 	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/sync",
@@ -1284,6 +1340,7 @@ func TestAPISync_UnknownBucket(t *testing.T) {
 }
 
 func TestAPISync_ManagerError(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 
 	// SyncBackend fails because the mock store isn't a concrete *Store.
@@ -1303,6 +1360,7 @@ func TestAPISync_ManagerError(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestLogin_UnsupportedMethod(t *testing.T) {
+	t.Parallel()
 	_, mux := newTestHandler(t)
 
 	req := httptest.NewRequest(http.MethodPut, "/ui/login", nil)
@@ -1315,6 +1373,7 @@ func TestLogin_UnsupportedMethod(t *testing.T) {
 }
 
 func TestDashboard_DataError(t *testing.T) {
+	t.Parallel()
 	h, mux, mock := newTestHandlerWithMock(t)
 	mock.GetQuotaStatsErr = errors.New("db down")
 
@@ -1328,6 +1387,7 @@ func TestDashboard_DataError(t *testing.T) {
 }
 
 func TestAPIDashboard_DataError(t *testing.T) {
+	t.Parallel()
 	h, mux, mock := newTestHandlerWithMock(t)
 	mock.GetQuotaStatsErr = errors.New("db down")
 
@@ -1341,6 +1401,7 @@ func TestAPIDashboard_DataError(t *testing.T) {
 }
 
 func TestTreeAPI_WithMaxKeys(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 
 	req := authedRequest(t, h, mux, http.MethodGet, "/ui/api/tree?prefix=&maxKeys=50", nil)
@@ -1353,6 +1414,7 @@ func TestTreeAPI_WithMaxKeys(t *testing.T) {
 }
 
 func TestTreeAPI_InvalidBucketPrefix(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 
 	req := authedRequest(t, h, mux, http.MethodGet, "/ui/api/tree?prefix=no-such-bucket/dir", nil)
@@ -1365,6 +1427,7 @@ func TestTreeAPI_InvalidBucketPrefix(t *testing.T) {
 }
 
 func TestTreeAPI_DataError(t *testing.T) {
+	t.Parallel()
 	h, mux, mock := newTestHandlerWithMock(t)
 	mock.ListDirChildrenErr = errors.New("db down")
 
@@ -1382,6 +1445,7 @@ func TestTreeAPI_DataError(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestAPILogs_RequiresAuth(t *testing.T) {
+	t.Parallel()
 	_, mux := newTestHandler(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/ui/api/logs", nil)
@@ -1394,6 +1458,7 @@ func TestAPILogs_RequiresAuth(t *testing.T) {
 }
 
 func TestAPILogs_ReturnsJSON(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 
 	req := authedRequest(t, h, mux, http.MethodGet, "/ui/api/logs", nil)
@@ -1416,6 +1481,7 @@ func TestAPILogs_ReturnsJSON(t *testing.T) {
 }
 
 func TestAPILogs_LevelFilter(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 
 	// Add known entries to the handler's log buffer.
@@ -1444,6 +1510,7 @@ func TestAPILogs_LevelFilter(t *testing.T) {
 }
 
 func TestAPILogs_AllLevelFilters(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 
 	h.logBuffer.Add(telemetry.LogEntry{Level: "DEBUG", Message: "d"})
@@ -1481,6 +1548,7 @@ func TestAPILogs_AllLevelFilters(t *testing.T) {
 }
 
 func TestAPILogs_SinceFilter(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 
 	old := time.Now().Add(-1 * time.Hour)
@@ -1509,6 +1577,7 @@ func TestAPILogs_SinceFilter(t *testing.T) {
 }
 
 func TestAPILogs_LimitFilter(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 
 	for i := range 20 {
@@ -1532,6 +1601,7 @@ func TestAPILogs_LimitFilter(t *testing.T) {
 }
 
 func TestAPILogs_ComponentFilter(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 
 	h.logBuffer.Add(telemetry.LogEntry{Level: "INFO", Message: "a", Attrs: map[string]any{"component": "server"}})
@@ -1557,6 +1627,7 @@ func TestAPILogs_ComponentFilter(t *testing.T) {
 }
 
 func TestAPILogs_BeforeFilter(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 
 	old := time.Now().Add(-1 * time.Hour)
@@ -1585,6 +1656,7 @@ func TestAPILogs_BeforeFilter(t *testing.T) {
 }
 
 func TestAPILogs_HasMore(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 
 	for i := range 10 {
@@ -1637,6 +1709,7 @@ func TestAPILogs_HasMore(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestLogin_BruteForceProtection(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 	lt := httputil.NewLoginThrottle(3, 5*time.Minute)
 	defer lt.Close()
@@ -1751,6 +1824,7 @@ func benchLoginHandler(b *testing.B) (*Handler, *http.ServeMux) {
 // -------------------------------------------------------------------------
 
 func TestDownload_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/download?key=test-bucket/file.txt", nil)
 	w := httptest.NewRecorder()
@@ -1765,6 +1839,7 @@ func TestDownload_MethodNotAllowed(t *testing.T) {
 }
 
 func TestDownload_MissingKey(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 	req := authedRequest(t, h, mux, http.MethodGet, "/ui/api/download", nil)
 	w := httptest.NewRecorder()
@@ -1776,6 +1851,7 @@ func TestDownload_MissingKey(t *testing.T) {
 }
 
 func TestDownload_InvalidBucketPrefix(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 	req := authedRequest(t, h, mux, http.MethodGet, "/ui/api/download?key=no-such-bucket/file.txt", nil)
 	w := httptest.NewRecorder()
@@ -1787,6 +1863,7 @@ func TestDownload_InvalidBucketPrefix(t *testing.T) {
 }
 
 func TestDownload_NotFound(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 	// Default mock store returns ErrObjectNotFound for GetAllObjectLocations
 	req := authedRequest(t, h, mux, http.MethodGet, "/ui/api/download?key=test-bucket/missing.txt", nil)
@@ -1799,6 +1876,7 @@ func TestDownload_NotFound(t *testing.T) {
 }
 
 func TestDownload_StoreError(t *testing.T) {
+	t.Parallel()
 	h, mux, mock := newTestHandlerWithMock(t)
 	mock.GetAllLocationsErr = errors.New("db down")
 
@@ -1816,6 +1894,7 @@ func TestDownload_StoreError(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestCleanExcess_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 	req := authedRequest(t, h, mux, http.MethodGet, "/ui/api/clean-excess", nil)
 	w := httptest.NewRecorder()
@@ -1834,6 +1913,7 @@ func TestCleanExcess_MethodNotAllowed(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestUpload_InvalidMultipartForm(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 	// Send a POST with a non-multipart body to trigger ParseMultipartForm failure
 	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/upload", strings.NewReader("not-a-form"))
@@ -1854,6 +1934,7 @@ func TestUpload_InvalidMultipartForm(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestLogin_BruteForceReset(t *testing.T) {
+	t.Parallel()
 	h, mux := newTestHandler(t)
 	lt := httputil.NewLoginThrottle(3, 5*time.Minute)
 	defer lt.Close()

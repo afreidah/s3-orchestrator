@@ -12,6 +12,7 @@ package ui
 import "testing"
 
 func TestFormatBytes(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input int64
 		want  string
@@ -36,6 +37,7 @@ func TestFormatBytes(t *testing.T) {
 }
 
 func TestFormatNumber(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input int64
 		want  string
@@ -59,6 +61,7 @@ func TestFormatNumber(t *testing.T) {
 }
 
 func TestPct(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		used, limit int64
 		want        string
@@ -80,6 +83,7 @@ func TestPct(t *testing.T) {
 }
 
 func TestPctFloat(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		used, limit int64
 		want        float64
@@ -101,6 +105,7 @@ func TestPctFloat(t *testing.T) {
 }
 
 func TestBarColor(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		used, limit int64
 		want        string

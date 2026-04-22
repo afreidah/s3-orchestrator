@@ -15,6 +15,7 @@ import (
 )
 
 func TestDurationToInterval(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		d        time.Duration
