@@ -55,6 +55,40 @@ type OutboxStore interface {
 // (e.g. capacity warnings) are suppressed after the first emission.
 const dampenTTL = 1 * time.Hour
 
+// httpClientTimeout is the default per-request HTTP timeout the shared
+// http.Client is initialized with. Per-endpoint overrides (ep.Timeout)
+// replace this on a per-delivery basis.
+const httpClientTimeout = 10 * time.Second
+
+// emitTimeout bounds the outbox-write fan-out inside a single emit() call
+// when an event targets multiple endpoints. Must cover all endpoint inserts
+// combined, not each one.
+const emitTimeout = 5 * time.Second
+
+// drainInterval controls how often the background delivery worker wakes
+// to check for pending notifications.
+const drainInterval = 2 * time.Second
+
+// pendingBatchSize caps how many pending rows are pulled from the outbox
+// per drain tick. Bounds memory use if notifications back up.
+const pendingBatchSize = 50
+
+// advisoryLockKey is the PostgreSQL advisory-lock key the notifier uses to
+// serialize outbox drains across multiple replicas.
+const advisoryLockKey = 1011
+
+// maxBackoffShift bounds the exponential-backoff shift so we cap at 2^6 = 64
+// seconds between retries, regardless of attempt count.
+const maxBackoffShift = 6
+
+// defaultMaxRetries is used when an endpoint doesn't set MaxRetries (or sets
+// it <= 0). After this many failed attempts, a notification is dropped.
+const defaultMaxRetries = 3
+
+// defaultEndpointTimeout is used when an endpoint doesn't set Timeout (or
+// sets it <= 0).
+const defaultEndpointTimeout = 5 * time.Second
+
 // Notifier delivers webhook notifications from a durable outbox queue.
 // Implements lifecycle.Service via the Run method.
 type Notifier struct {
@@ -72,7 +106,7 @@ func NewNotifier(cfg *config.NotificationConfig, store OutboxStore) *Notifier {
 		endpoints: cfg.Endpoints,
 		store:     store,
 		client: &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout: httpClientTimeout,
 		},
 		dampener: syncutil.NewTTLCache[string, struct{}](dampenTTL),
 	}
@@ -121,7 +155,7 @@ func (n *Notifier) emit(ev event.Event) { //nolint:gocritic // Event is passed b
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), emitTimeout)
 	defer cancel()
 
 	for _, ep := range n.endpoints {
@@ -148,7 +182,7 @@ func (n *Notifier) emit(ev event.Event) { //nolint:gocritic // Event is passed b
 // Run implements lifecycle.Service. Drains the notification outbox under an
 // advisory lock, delivering pending events via HTTP POST.
 func (n *Notifier) Run(ctx context.Context) error {
-	ticker := time.NewTicker(2 * time.Second)
+	ticker := time.NewTicker(drainInterval)
 	defer ticker.Stop()
 
 	for {
@@ -163,8 +197,8 @@ func (n *Notifier) Run(ctx context.Context) error {
 
 // drainOnce processes one batch of pending notifications under an advisory lock.
 func (n *Notifier) drainOnce(ctx context.Context) {
-	acquired, err := n.store.WithAdvisoryLock(ctx, 1011, func(lockCtx context.Context) error {
-		rows, err := n.store.GetPendingNotifications(lockCtx, 50)
+	acquired, err := n.store.WithAdvisoryLock(ctx, advisoryLockKey, func(lockCtx context.Context) error {
+		rows, err := n.store.GetPendingNotifications(lockCtx, pendingBatchSize)
 		if err != nil {
 			return err
 		}
@@ -181,10 +215,10 @@ func (n *Notifier) drainOnce(ctx context.Context) {
 			start := time.Now()
 			if err := n.deliver(lockCtx, row, ep); err != nil {
 				telemetry.NotificationFailedTotal.WithLabelValues(ep.URL, row.EventType).Inc()
-				backoff := time.Duration(1<<min(row.Attempts, 6)) * time.Second
+				backoff := time.Duration(1<<min(row.Attempts, maxBackoffShift)) * time.Second
 				maxRetries := ep.MaxRetries
 				if maxRetries <= 0 {
-					maxRetries = 3
+					maxRetries = defaultMaxRetries
 				}
 				if int(row.Attempts)+1 >= maxRetries {
 					slog.ErrorContext(lockCtx, "Notification delivery exhausted",
@@ -226,7 +260,7 @@ func (n *Notifier) deliver(ctx context.Context, row store.NotificationRow, ep *c
 
 	timeout := ep.Timeout
 	if timeout <= 0 {
-		timeout = 5 * time.Second
+		timeout = defaultEndpointTimeout
 	}
 	n.client.Timeout = timeout
 
