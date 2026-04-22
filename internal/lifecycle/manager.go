@@ -38,14 +38,43 @@ type entry struct {
 	service Service
 }
 
+// Default supervisor backoff: a service that exits or panics is restarted
+// after initialBackoff, doubled each subsequent immediate failure up to
+// maxBackoff, reset to initial once the service has run healthily for at
+// least backoffReset. Tests override via SetBackoff for sub-second runs.
+const (
+	defaultInitialBackoff = 1 * time.Second
+	defaultMaxBackoff     = 30 * time.Second
+	defaultBackoffReset   = 60 * time.Second
+)
+
 // Manager registers and supervises background services.
 type Manager struct {
 	services []entry
+
+	initialBackoff time.Duration
+	maxBackoff     time.Duration
+	backoffReset   time.Duration
 }
 
-// NewManager creates an empty service manager.
+// NewManager creates an empty service manager with production backoff
+// defaults.
 func NewManager() *Manager {
-	return &Manager{}
+	return &Manager{
+		initialBackoff: defaultInitialBackoff,
+		maxBackoff:     defaultMaxBackoff,
+		backoffReset:   defaultBackoffReset,
+	}
+}
+
+// SetBackoff overrides the supervisor's restart backoff parameters. Intended
+// for tests that exercise the restart path without paying real wall-clock
+// time. Must be called before Run; values take effect on the next supervise
+// iteration.
+func (m *Manager) SetBackoff(initial, maximum, reset time.Duration) {
+	m.initialBackoff = initial
+	m.maxBackoff = maximum
+	m.backoffReset = reset
 }
 
 // Register adds a named service. Services start in registration order and stop
@@ -102,15 +131,8 @@ func (m *Manager) Stop(timeout time.Duration) {
 	}
 }
 
-// restartBackoff parameters.
-const (
-	initialBackoff = 1 * time.Second
-	maxBackoff     = 30 * time.Second
-	backoffReset   = 60 * time.Second // healthy run duration that resets backoff
-)
-
 func (m *Manager) supervise(ctx context.Context, e entry) {
-	backoff := initialBackoff
+	backoff := m.initialBackoff
 
 	for {
 		start := time.Now()
@@ -139,8 +161,8 @@ func (m *Manager) supervise(ctx context.Context, e entry) {
 		}
 
 		// Reset backoff if the service ran long enough to be considered healthy.
-		if time.Since(start) >= backoffReset {
-			backoff = initialBackoff
+		if time.Since(start) >= m.backoffReset {
+			backoff = m.initialBackoff
 		}
 
 		slog.WarnContext(ctx, "Restarting service after backoff",
@@ -155,6 +177,6 @@ func (m *Manager) supervise(ctx context.Context, e entry) {
 		}
 
 		// Exponential backoff capped at maxBackoff.
-		backoff = min(backoff*2, maxBackoff)
+		backoff = min(backoff*2, m.maxBackoff)
 	}
 }
