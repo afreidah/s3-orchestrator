@@ -164,12 +164,12 @@ func (p *VaultKeyProvider) tokenRenewalLoop(ctx context.Context) {
 		case <-ticker.C:
 			if p.tokenFile != "" {
 				if err := p.reloadTokenFile(ctx); err != nil {
-					slog.ErrorContext(ctx, "Failed to reload Vault token file",
+					slog.ErrorContext(ctx, "failed to reload Vault token file",
 						"error", err, "path", p.tokenFile)
 				}
 			} else {
 				if err := p.renewToken(ctx); err != nil {
-					slog.ErrorContext(ctx, "Failed to renew Vault token", "error", err)
+					slog.ErrorContext(ctx, "failed to renew Vault token", "error", err)
 				}
 			}
 		}

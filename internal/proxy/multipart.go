@@ -149,11 +149,11 @@ func (mp *MultipartManager) UploadPart(ctx context.Context, uploadID string, par
 	}
 
 	if err := mp.store.RecordPart(ctx, uploadID, partNumber, etag, uploadSize, enc); err != nil {
-		slog.ErrorContext(ctx, "RecordPart failed, cleaning up part object",
+		slog.ErrorContext(ctx, "recordPart failed, cleaning up part object",
 			"upload_id", uploadID, "part", partNumber, "error", err)
 		mp.usage.Record(mu.BackendName, 1, 0, 0)
 		if delErr := be.DeleteObject(ctx, partKey); delErr != nil {
-			slog.ErrorContext(ctx, "Failed to clean up orphaned part object",
+			slog.ErrorContext(ctx, "failed to clean up orphaned part object",
 				"key", partKey, "error", delErr)
 			mp.enqueueCleanup(ctx, mu.BackendName, partKey, "orphan_part_record_failed", uploadSize)
 		}
@@ -454,15 +454,15 @@ func (mp *MultipartManager) GetParts(ctx context.Context, uploadID string) ([]st
 func (mp *MultipartManager) CleanupStaleMultipartUploads(ctx context.Context, olderThan time.Duration) {
 	uploads, err := mp.store.GetStaleMultipartUploads(ctx, olderThan)
 	if err != nil {
-		slog.ErrorContext(ctx, "Failed to get stale multipart uploads", "error", err)
+		slog.ErrorContext(ctx, "failed to get stale multipart uploads", "error", err)
 		return
 	}
 
 	cleaned := 0
 	for _, mu := range uploads {
-		slog.InfoContext(ctx, "Cleaning up stale multipart upload", "upload_id", mu.UploadID, "key", mu.ObjectKey)
+		slog.InfoContext(ctx, "cleaning up stale multipart upload", "upload_id", mu.UploadID, "key", mu.ObjectKey)
 		if err := mp.AbortMultipartUpload(ctx, mu.UploadID); err != nil {
-			slog.ErrorContext(ctx, "Failed to clean up upload", "upload_id", mu.UploadID, "error", err)
+			slog.ErrorContext(ctx, "failed to clean up upload", "upload_id", mu.UploadID, "error", err)
 		} else {
 			cleaned++
 		}

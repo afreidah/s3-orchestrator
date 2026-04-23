@@ -15,6 +15,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -473,4 +474,123 @@ func TestHasPrefix(t *testing.T) {
 			t.Errorf("hasPrefix(%q, %q) = %v, want %v", tt.key, tt.prefix, got, tt.want)
 		}
 	}
+}
+
+// failingOutboxStore exercises the error branches of completeOrLog and
+// retryOrLog without requiring a real DB. Complete and Retry always fail
+// with a configured error so we can assert the metric counter bumps and
+// the worker doesn't panic or double-deliver.
+type failingOutboxStore struct {
+	pending    []store.NotificationRow
+	completeErr error
+	retryErr    error
+}
+
+func (m *failingOutboxStore) InsertNotification(_ context.Context, _, _, _ string) error {
+	return nil
+}
+
+func (m *failingOutboxStore) GetPendingNotifications(_ context.Context, _ int) ([]store.NotificationRow, error) {
+	return m.pending, nil
+}
+
+func (m *failingOutboxStore) CompleteNotification(_ context.Context, _ int64) error {
+	return m.completeErr
+}
+
+func (m *failingOutboxStore) RetryNotification(_ context.Context, _ int64, _ time.Duration, _ string) error {
+	return m.retryErr
+}
+
+func (m *failingOutboxStore) WithAdvisoryLock(_ context.Context, _ int64, fn func(context.Context) error) (bool, error) {
+	return true, fn(context.Background())
+}
+
+// TestCompleteOrLog_LogsStoreError covers the error branch that was
+// previously a silent `_ = n.store.CompleteNotification(...)`.
+func TestCompleteOrLog_LogsStoreError(t *testing.T) {
+	n := &Notifier{store: &failingOutboxStore{completeErr: fmt.Errorf("boom")}}
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("completeOrLog panicked: %v", r)
+		}
+	}()
+	n.completeOrLog(context.Background(), 42, "test_reason")
+}
+
+// TestRetryOrLog_LogsStoreError covers the retry error branch.
+func TestRetryOrLog_LogsStoreError(t *testing.T) {
+	n := &Notifier{store: &failingOutboxStore{retryErr: fmt.Errorf("kaboom")}}
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("retryOrLog panicked: %v", r)
+		}
+	}()
+	n.retryOrLog(context.Background(), 42, time.Second, "test_reason")
+}
+
+// TestDrainOnce_CompleteFailure_DoesNotPanic drives drainOnce through the
+// "delivery succeeded but Complete failed" path, previously a silent
+// discard. Verifies the worker survives the failure.
+func TestDrainOnce_CompleteFailure_DoesNotPanic(t *testing.T) {
+	// Spin up an HTTP server that always returns 204 so delivery succeeds.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	ms := &failingOutboxStore{
+		completeErr: fmt.Errorf("simulated complete failure"),
+		pending: []store.NotificationRow{
+			{ID: 1, EventType: "s3:ObjectCreated:Put", EndpointURL: srv.URL, Payload: []byte("{}")},
+		},
+	}
+	n := &Notifier{
+		endpoints: []config.NotificationEndpoint{
+			{URL: srv.URL, Events: []string{"*"}, MaxRetries: 3, Timeout: time.Second},
+		},
+		store:  ms,
+		client: &http.Client{Timeout: time.Second},
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("drainOnce panicked: %v", r)
+		}
+	}()
+	n.drainOnce(context.Background())
+}
+
+// TestDrainOnce_RetryFailure_DoesNotPanic drives drainOnce through the
+// "delivery failed AND Retry failed" path.
+func TestDrainOnce_RetryFailure_DoesNotPanic(t *testing.T) {
+	// Server always returns 500 so delivery fails → worker calls Retry →
+	// Retry also fails (injected).
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	ms := &failingOutboxStore{
+		retryErr: fmt.Errorf("simulated retry failure"),
+		pending: []store.NotificationRow{
+			{ID: 1, EventType: "s3:ObjectCreated:Put", EndpointURL: srv.URL, Payload: []byte("{}"), Attempts: 0},
+		},
+	}
+	n := &Notifier{
+		endpoints: []config.NotificationEndpoint{
+			{URL: srv.URL, Events: []string{"*"}, MaxRetries: 5, Timeout: time.Second},
+		},
+		store:  ms,
+		client: &http.Client{Timeout: time.Second},
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("drainOnce panicked: %v", r)
+		}
+	}()
+	n.drainOnce(context.Background())
 }

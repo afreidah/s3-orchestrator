@@ -230,7 +230,7 @@ func (u *UsageTracker) FlushUsage(ctx context.Context, store store.UsageFlusher,
 			u.backend.Add(name, FieldAPIRequests, apiReqs)
 			u.backend.Add(name, FieldEgressBytes, egress)
 			u.backend.Add(name, FieldIngressBytes, ingress)
-			slog.ErrorContext(ctx, "Failed to flush usage deltas", "backend", name, "error", err)
+			slog.ErrorContext(ctx, "failed to flush usage deltas", "backend", name, "error", err)
 			lastErr = err
 		}
 	}

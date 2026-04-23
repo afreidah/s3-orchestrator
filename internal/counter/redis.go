@@ -152,7 +152,7 @@ func (r *RedisCounterBackend) Add(backend, field string, delta int64) {
 		return
 	}
 	telemetry.RedisOperationsTotal.WithLabelValues("incrby", "success").Inc()
-	_ = r.cb.PostCheck(nil)
+	r.notePostCheck("incrby", nil)
 
 	// Set TTL on first write (best-effort)
 	r.client.Expire(ctx, key, keyTTL)
@@ -175,7 +175,7 @@ func (r *RedisCounterBackend) Load(backend, field string) int64 {
 		return r.local.Load(backend, field)
 	}
 	telemetry.RedisOperationsTotal.WithLabelValues("get", "success").Inc()
-	_ = r.cb.PostCheck(nil)
+	r.notePostCheck("get", nil)
 	return val
 }
 
@@ -196,7 +196,7 @@ func (r *RedisCounterBackend) Swap(backend, field string) int64 {
 		return r.local.Swap(backend, field)
 	}
 	telemetry.RedisOperationsTotal.WithLabelValues("getset", "success").Inc()
-	_ = r.cb.PostCheck(nil)
+	r.notePostCheck("getset", nil)
 	return val
 }
 
@@ -239,7 +239,7 @@ func (r *RedisCounterBackend) AddAll(backend string, apiReqs, egress, ingress in
 		return
 	}
 	telemetry.RedisOperationsTotal.WithLabelValues("pipeline_add", "success").Inc()
-	_ = r.cb.PostCheck(nil)
+	r.notePostCheck("pipeline_add", nil)
 }
 
 // LoadAll reads all three counter values from Redis in a pipeline.
@@ -263,7 +263,7 @@ func (r *RedisCounterBackend) LoadAll(backend string) LoadAllResult {
 		return r.local.LoadAll(backend)
 	}
 	telemetry.RedisOperationsTotal.WithLabelValues("pipeline_load", "success").Inc()
-	_ = r.cb.PostCheck(nil)
+	r.notePostCheck("pipeline_load", nil)
 
 	return LoadAllResult{
 		APIRequests:  cmdInt64(apiCmd),
@@ -351,7 +351,7 @@ func (r *RedisCounterBackend) tryRecover() {
 
 	// Clear fallback state and close circuit breaker
 	r.setFallback(false)
-	_ = r.cb.PostCheck(nil)
+	r.notePostCheck("recovery", nil)
 
 	slog.Info("Redis counter backend recovered, local deltas synced")
 }
@@ -379,12 +379,26 @@ func (r *RedisCounterBackend) setFallback(v bool) {
 	}
 }
 
+// notePostCheck feeds the operation outcome to the circuit breaker and
+// records any bookkeeping error to the internal-errors metric. Prefer this
+// over a bare `_ = r.cb.PostCheck(...)`: it makes state-transition bugs
+// observable via s3o_circuit_breaker_internal_errors_total.
+//
+//nolint:sloglint // Counter interface has no request context.
+func (r *RedisCounterBackend) notePostCheck(op string, opErr error) {
+	if cbErr := r.cb.PostCheck(opErr); cbErr != nil {
+		telemetry.CircuitBreakerInternalErrorsTotal.WithLabelValues("redis", op).Inc()
+		slog.Warn("Redis circuit breaker PostCheck reported error",
+			"operation", op, "error", cbErr)
+	}
+}
+
 // recordFailure feeds the error to the circuit breaker. If the breaker
 // opens, transitions to fallback mode.
 //
 //nolint:sloglint // Counter interface has no request context; fallback is a system-level event.
 func (r *RedisCounterBackend) recordFailure(err error) {
-	_ = r.cb.PostCheck(err)
+	r.notePostCheck("failure", err)
 	if !r.cb.IsHealthy() && !r.inFallback() {
 		r.setFallback(true)
 		slog.Warn("Redis counter backend entering fallback to local counters")

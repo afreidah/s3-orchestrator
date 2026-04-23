@@ -168,7 +168,7 @@ func (n *Notifier) emit(ev event.Event) { //nolint:gocritic // Event is passed b
 			}
 		}
 		if err := n.store.InsertNotification(ctx, ev.Type, string(payload), ep.URL); err != nil {
-			slog.ErrorContext(ctx, "Failed to enqueue notification",
+			slog.ErrorContext(ctx, "failed to enqueue notification",
 				"type", ev.Type, "endpoint", ep.URL, "error", err)
 			telemetry.NotificationDroppedTotal.Inc()
 		}
@@ -208,7 +208,7 @@ func (n *Notifier) drainOnce(ctx context.Context) {
 		for _, row := range rows {
 			ep := n.findEndpoint(row.EndpointURL)
 			if ep == nil {
-				_ = n.store.CompleteNotification(lockCtx, row.ID)
+				n.completeOrLog(lockCtx, row.ID, "no_matching_endpoint")
 				continue
 			}
 
@@ -221,25 +221,25 @@ func (n *Notifier) drainOnce(ctx context.Context) {
 					maxRetries = defaultMaxRetries
 				}
 				if int(row.Attempts)+1 >= maxRetries {
-					slog.ErrorContext(lockCtx, "Notification delivery exhausted",
+					slog.ErrorContext(lockCtx, "notification delivery exhausted",
 						"endpoint", ep.URL, "event", row.EventType, "attempts", row.Attempts+1, "error", err)
-					_ = n.store.CompleteNotification(lockCtx, row.ID)
+					n.completeOrLog(lockCtx, row.ID, "exhausted")
 				} else {
-					_ = n.store.RetryNotification(lockCtx, row.ID, backoff, err.Error())
+					n.retryOrLog(lockCtx, row.ID, backoff, err.Error())
 				}
 			} else {
 				telemetry.NotificationSentTotal.WithLabelValues(ep.URL, row.EventType).Inc()
 				telemetry.NotificationDuration.WithLabelValues(ep.URL).Observe(time.Since(start).Seconds())
-				_ = n.store.CompleteNotification(lockCtx, row.ID)
+				n.completeOrLog(lockCtx, row.ID, "delivered")
 			}
 		}
 		return nil
 	})
 	if err != nil {
-		slog.ErrorContext(ctx, "Notification drain failed", "error", err)
+		slog.ErrorContext(ctx, "notification drain failed", "error", err)
 	}
 	if !acquired {
-		slog.DebugContext(ctx, "Notification drain skipped, another instance holds the lock")
+		slog.DebugContext(ctx, "notification drain skipped, another instance holds the lock")
 	}
 }
 
@@ -303,4 +303,26 @@ func generateEventID() string {
 	b := make([]byte, 12)
 	_, _ = rand.Read(b)
 	return "evt_" + hex.EncodeToString(b)
+}
+
+// completeOrLog marks a notification row complete in the outbox. Store
+// errors are logged at WARN and counted in the notification-store-errors
+// metric rather than silently discarded, since a dropped Complete can lead
+// to a webhook being delivered twice on the next drain tick.
+func (n *Notifier) completeOrLog(ctx context.Context, id int64, reason string) {
+	if err := n.store.CompleteNotification(ctx, id); err != nil {
+		telemetry.NotificationStoreErrorsTotal.WithLabelValues("complete").Inc()
+		slog.WarnContext(ctx, "Notifier: CompleteNotification failed",
+			"id", id, "reason", reason, "error", err)
+	}
+}
+
+// retryOrLog schedules a notification for retry. Store errors are logged
+// and counted (see completeOrLog) rather than silently discarded.
+func (n *Notifier) retryOrLog(ctx context.Context, id int64, backoff time.Duration, reason string) {
+	if err := n.store.RetryNotification(ctx, id, backoff, reason); err != nil {
+		telemetry.NotificationStoreErrorsTotal.WithLabelValues("retry").Inc()
+		slog.WarnContext(ctx, "Notifier: RetryNotification failed",
+			"id", id, "backoff", backoff, "error", err)
+	}
 }

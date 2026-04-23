@@ -111,7 +111,7 @@ func runServe() { // codecov:ignore -- flag parsing + os.Exit wrapper
 	defer stop()
 
 	if err := run(ctx, *configPath, *mode, os.Stdout); err != nil {
-		slog.ErrorContext(ctx, "Server error", "error", err)
+		slog.ErrorContext(ctx, "server error", "error", err)
 		os.Exit(1)
 	}
 }
@@ -223,7 +223,7 @@ func run(ctx context.Context, configPath, mode string, stdout io.Writer) error {
 		return err
 	}
 
-	slog.InfoContext(ctx, "Server stopped")
+	slog.InfoContext(ctx, "server stopped")
 	return nil
 }
 
@@ -317,7 +317,7 @@ func (s *server) resolveServices() error {
 
 	ctx := context.Background()
 	if err := s.manager.UpdateQuotaMetrics(ctx); err != nil {
-		slog.WarnContext(ctx, "Failed to update initial quota metrics", "error", err)
+		slog.WarnContext(ctx, "failed to update initial quota metrics", "error", err)
 	}
 	return nil
 }
@@ -352,7 +352,7 @@ func (s *server) buildHTTPServer() error {
 			adminHTTP = s.rl.Middleware(adminHTTP)
 		}
 		mux.Handle("/admin/", adminHTTP)
-		slog.InfoContext(ctx, "Admin API enabled", "path", "/admin/api/")
+		slog.InfoContext(ctx, "admin API enabled", "path", "/admin/api/")
 	}
 
 	if s.mode == "api" || s.mode == "all" {
@@ -390,15 +390,15 @@ func (s *server) configureMetrics(mux *http.ServeMux, ctx context.Context) {
 			ReadHeaderTimeout: 10 * time.Second,
 		}
 		go func() {
-			slog.InfoContext(ctx, "Metrics endpoint enabled on separate listener",
+			slog.InfoContext(ctx, "metrics endpoint enabled on separate listener",
 				"listen", cfg.Telemetry.Metrics.Listen, "path", cfg.Telemetry.Metrics.Path)
 			if err := s.metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				slog.ErrorContext(ctx, "Metrics listener failed", "error", err)
+				slog.ErrorContext(ctx, "metrics listener failed", "error", err)
 			}
 		}()
 	} else {
 		mux.Handle(cfg.Telemetry.Metrics.Path, promhttp.Handler())
-		slog.InfoContext(ctx, "Metrics endpoint enabled", "path", cfg.Telemetry.Metrics.Path)
+		slog.InfoContext(ctx, "metrics endpoint enabled", "path", cfg.Telemetry.Metrics.Path)
 	}
 }
 
@@ -437,7 +437,7 @@ func (s *server) registerUIHandler(mux *http.ServeMux, ctx context.Context) erro
 	}
 	s.uiHandler = h
 	s.uiHandler.Register(mux, s.cfg.UI.Path)
-	slog.InfoContext(ctx, "Web UI enabled", "path", s.cfg.UI.Path)
+	slog.InfoContext(ctx, "web UI enabled", "path", s.cfg.UI.Path)
 	return nil
 }
 
@@ -560,25 +560,25 @@ func (s *server) reloadConfig() {
 
 	newCfg, err := config.LoadConfig(s.configPath)
 	if err != nil {
-		slog.ErrorContext(ctx, "Config reload failed, keeping current config", "error", err)
+		slog.ErrorContext(ctx, "config reload failed, keeping current config", "error", err)
 		return
 	}
 
 	currentCfg := s.cfgPtr.Load()
 	if warnings := config.NonReloadableFieldsChanged(currentCfg, newCfg); len(warnings) > 0 {
 		for _, w := range warnings {
-			slog.WarnContext(ctx, "Config field changed but requires restart to take effect", "field", w)
+			slog.WarnContext(ctx, "config field changed but requires restart to take effect", "field", w)
 		}
 	}
 
 	if s.certReloader != nil {
 		if err := s.certReloader.Reload(); err != nil {
-			slog.ErrorContext(ctx, "Failed to reload TLS certificate", "error", err)
+			slog.ErrorContext(ctx, "failed to reload TLS certificate", "error", err)
 		}
 	}
 
 	s.srv.SetBucketAuth(auth.NewBucketRegistry(newCfg.Buckets))
-	slog.InfoContext(ctx, "Reloaded bucket credentials", "buckets", len(newCfg.Buckets))
+	slog.InfoContext(ctx, "reloaded bucket credentials", "buckets", len(newCfg.Buckets))
 
 	if s.rl != nil && newCfg.RateLimit.Enabled {
 		s.rl.UpdateLimits(newCfg.RateLimit.RequestsPerSec, newCfg.RateLimit.Burst)
@@ -586,7 +586,7 @@ func (s *server) reloadConfig() {
 
 	reloadCtx, reloadCancel := context.WithTimeout(ctx, 10*time.Second)
 	if err := s.db.SyncQuotaLimits(reloadCtx, newCfg.Backends); err != nil {
-		slog.ErrorContext(reloadCtx, "Failed to sync quota limits on reload", "error", err)
+		slog.ErrorContext(reloadCtx, "failed to sync quota limits on reload", "error", err)
 	}
 
 	newUsageLimits := make(map[string]store.UsageLimits, len(newCfg.Backends))
@@ -610,7 +610,7 @@ func (s *server) reloadConfig() {
 	s.manager.SetIntegrityConfig(&newCfg.Integrity)
 
 	if err := s.manager.UpdateQuotaMetrics(reloadCtx); err != nil {
-		slog.WarnContext(reloadCtx, "Failed to update quota metrics after reload", "error", err)
+		slog.WarnContext(reloadCtx, "failed to update quota metrics after reload", "error", err)
 	}
 	reloadCancel()
 
@@ -619,7 +619,7 @@ func (s *server) reloadConfig() {
 	}
 
 	s.cfgPtr.Store(newCfg)
-	slog.InfoContext(ctx, "Configuration reload complete")
+	slog.InfoContext(ctx, "configuration reload complete")
 }
 
 // -------------------------------------------------------------------------
@@ -630,7 +630,7 @@ func (s *server) reloadConfig() {
 // the HTTP server has stopped accepting new connections.
 func (s *server) shutdown() {
 	ctx := context.Background()
-	slog.InfoContext(ctx, "Shutting down")
+	slog.InfoContext(ctx, "shutting down")
 
 	// Deferred so DI-managed resources (providers implementing do.Shutdownable)
 	// are always released, even if an earlier shutdown step panics or aborts.
@@ -641,7 +641,7 @@ func (s *server) shutdown() {
 	}()
 
 	if delay := s.cfgPtr.Load().Server.ShutdownDelay; delay > 0 {
-		slog.InfoContext(ctx, "Waiting for load balancer deregistration", "delay", delay)
+		slog.InfoContext(ctx, "waiting for load balancer deregistration", "delay", delay)
 		time.Sleep(delay)
 	}
 
@@ -673,14 +673,14 @@ func (s *server) shutdown() {
 	s.manager.Close()
 
 	if err := s.manager.FlushUsage(shutdownCtx); err != nil {
-		slog.WarnContext(shutdownCtx, "Final usage flush failed", "error", err)
+		slog.WarnContext(shutdownCtx, "final usage flush failed", "error", err)
 	}
 
 	s.closeRedisBackend(shutdownCtx)
 	s.db.Close()
 
 	if err := s.shutdownTracer(shutdownCtx); err != nil {
-		slog.ErrorContext(ctx, "Tracer shutdown error", "error", err)
+		slog.ErrorContext(ctx, "tracer shutdown error", "error", err)
 	}
 	// s.inj.Shutdown is deferred at the top of this function.
 }
@@ -693,7 +693,7 @@ func (s *server) shutdownHTTPServers(ctx context.Context) {
 	}
 	if s.metricsServer != nil {
 		if err := s.metricsServer.Shutdown(ctx); err != nil {
-			slog.ErrorContext(ctx, "Metrics server shutdown error", "error", err)
+			slog.ErrorContext(ctx, "metrics server shutdown error", "error", err)
 		}
 	}
 }
@@ -717,7 +717,7 @@ func (s *server) closeRedisBackend(ctx context.Context) {
 		return
 	}
 	if err := redisBackend.Close(); err != nil {
-		slog.WarnContext(ctx, "Failed to close Redis client", "error", err)
+		slog.WarnContext(ctx, "failed to close Redis client", "error", err)
 	}
 }
 

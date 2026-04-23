@@ -161,7 +161,7 @@ func (s *usageFlushService) Run(ctx context.Context) error {
 				if targetInterval != currentInterval {
 					ticker.Reset(targetInterval)
 					currentInterval = targetInterval
-					slog.InfoContext(ctx, "Usage flush interval adjusted", "interval", targetInterval)
+					slog.InfoContext(ctx, "usage flush interval adjusted", "interval", targetInterval)
 				}
 			}
 		case <-ctx.Done():
@@ -182,10 +182,10 @@ func (s *usageFlushService) flushTick(ctx context.Context) {
 				return nil
 			})
 		if err != nil && !errors.Is(err, store.ErrDBUnavailable) {
-			slog.ErrorContext(ctx, "Usage flush failed", "error", err)
+			slog.ErrorContext(ctx, "usage flush failed", "error", err)
 		}
 		if !acquired {
-			slog.DebugContext(ctx, "Usage flush skipped, another instance holds the lock")
+			slog.DebugContext(ctx, "usage flush skipped, another instance holds the lock")
 		}
 		return
 	}
@@ -197,10 +197,10 @@ func (s *usageFlushService) flushTick(ctx context.Context) {
 // doFlush performs the actual flush and quota metric update.
 func (s *usageFlushService) doFlush(ctx context.Context) {
 	if err := s.manager.FlushUsage(ctx); err != nil && !errors.Is(err, store.ErrDBUnavailable) {
-		slog.ErrorContext(ctx, "Failed to flush usage counters", "error", err)
+		slog.ErrorContext(ctx, "failed to flush usage counters", "error", err)
 	}
 	if err := s.manager.UpdateQuotaMetrics(ctx); err != nil && !errors.Is(err, store.ErrDBUnavailable) {
-		slog.ErrorContext(ctx, "Failed to update quota metrics", "error", err)
+		slog.ErrorContext(ctx, "failed to update quota metrics", "error", err)
 	}
 }
 
@@ -232,7 +232,7 @@ func newCleanupQueueService(manager *proxy.BackendManager, locker store.Advisory
 		work: func(ctx context.Context) {
 			processed, failed := manager.CleanupWorker.ProcessCleanupQueue(ctx)
 			if processed > 0 || failed > 0 {
-				slog.InfoContext(ctx, "Cleanup queue processed", "processed", processed, "failed", failed)
+				slog.InfoContext(ctx, "cleanup queue processed", "processed", processed, "failed", failed)
 			}
 		},
 	}
@@ -259,11 +259,11 @@ func newRebalancerService(manager *proxy.BackendManager, locker store.AdvisoryLo
 			}
 			moved, err := manager.Rebalancer.Rebalance(ctx, *rcfg)
 			if err != nil && !errors.Is(err, store.ErrDBUnavailable) {
-				slog.ErrorContext(ctx, "Rebalance failed", "error", err)
+				slog.ErrorContext(ctx, "rebalance failed", "error", err)
 			} else if moved > 0 {
-				slog.InfoContext(ctx, "Rebalance completed", "objects_moved", moved)
+				slog.InfoContext(ctx, "rebalance completed", "objects_moved", moved)
 				if err := manager.UpdateQuotaMetrics(ctx); err != nil {
-					slog.WarnContext(ctx, "Failed to update quota metrics after rebalance", "error", err)
+					slog.WarnContext(ctx, "failed to update quota metrics after rebalance", "error", err)
 				}
 			}
 		},
@@ -287,7 +287,7 @@ func newLifecycleService(manager *proxy.BackendManager, locker store.AdvisoryLoc
 			}
 			deleted, failed := manager.ProcessLifecycleRules(ctx, cfg.Rules)
 			if deleted > 0 || failed > 0 {
-				slog.InfoContext(ctx, "Lifecycle expiration completed",
+				slog.InfoContext(ctx, "lifecycle expiration completed",
 					"deleted", deleted, "failed", failed)
 			}
 			if failed > 0 {
@@ -324,11 +324,11 @@ func newOverReplicationService(manager *proxy.BackendManager, locker store.Advis
 			}
 			removed, err := manager.OverReplicationCleaner.Clean(ctx, *rcfg)
 			if err != nil && !errors.Is(err, store.ErrDBUnavailable) {
-				slog.ErrorContext(ctx, "Over-replication cleanup failed", "error", err)
+				slog.ErrorContext(ctx, "over-replication cleanup failed", "error", err)
 			} else if removed > 0 {
-				slog.InfoContext(ctx, "Over-replication cleanup completed", "copies_removed", removed)
+				slog.InfoContext(ctx, "over-replication cleanup completed", "copies_removed", removed)
 				if err := manager.UpdateQuotaMetrics(ctx); err != nil {
-					slog.WarnContext(ctx, "Failed to update quota metrics after over-replication cleanup", "error", err)
+					slog.WarnContext(ctx, "failed to update quota metrics after over-replication cleanup", "error", err)
 				}
 			}
 		},
@@ -343,11 +343,11 @@ func newReplicatorService(manager *proxy.BackendManager, locker store.AdvisoryLo
 		}
 		created, err := manager.Replicator.Replicate(ctx, *rcfg)
 		if err != nil && !errors.Is(err, store.ErrDBUnavailable) {
-			slog.ErrorContext(ctx, "Replication failed", "error", err)
+			slog.ErrorContext(ctx, "replication failed", "error", err)
 		} else if created > 0 {
-			slog.InfoContext(ctx, "Replication completed", "copies_created", created)
+			slog.InfoContext(ctx, "replication completed", "copies_created", created)
 			if err := manager.UpdateQuotaMetrics(ctx); err != nil {
-				slog.WarnContext(ctx, "Failed to update quota metrics after replication", "error", err)
+				slog.WarnContext(ctx, "failed to update quota metrics after replication", "error", err)
 			}
 		}
 	}
@@ -450,7 +450,7 @@ func newScrubberService(manager *proxy.BackendManager, locker store.AdvisoryLock
 			}
 			checked, failed := manager.Scrubber.Scrub(ctx, icfg.ScrubberBatchSize)
 			if checked > 0 || failed > 0 {
-				slog.InfoContext(ctx, "Scrubber completed", "checked", checked, "failed", failed)
+				slog.InfoContext(ctx, "scrubber completed", "checked", checked, "failed", failed)
 			}
 		},
 	}

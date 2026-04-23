@@ -96,7 +96,7 @@ func (d *DrainManager) StartDrain(ctx context.Context, name string) error {
 	}
 
 	telemetry.DrainActive.Set(1)
-	slog.InfoContext(ctx, "Starting backend drain", "backend", name)
+	slog.InfoContext(ctx, "starting backend drain", "backend", name)
 
 	go d.runDrain(drainCtx, name, state)
 	return nil
@@ -247,7 +247,7 @@ func (d *DrainManager) runDrain(ctx context.Context, name string, state *drainSt
 		slog.String("backend", name),
 		slog.Int64("objects_moved", state.moved.Load()),
 	)
-	slog.InfoContext(ctx, "Backend drain complete", "backend", name, "objects_moved", state.moved.Load())
+	slog.InfoContext(ctx, "backend drain complete", "backend", name, "objects_moved", state.moved.Load())
 }
 
 // drainOneObject moves a single object from the draining backend to another.
@@ -376,7 +376,7 @@ func (d *DrainManager) RemoveBackend(ctx context.Context, name string, purge boo
 		slog.String("backend", name),
 		slog.Bool("purge", purge),
 	)
-	slog.InfoContext(ctx, "Backend removed", "backend", name, "purge", purge)
+	slog.InfoContext(ctx, "backend removed", "backend", name, "purge", purge)
 
 	return nil
 }

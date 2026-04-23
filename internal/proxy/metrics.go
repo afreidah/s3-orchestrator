@@ -77,7 +77,7 @@ func (mc *MetricsCollector) UpdateQuotaMetrics(ctx context.Context) error {
 			// can expand capacity before writes start failing with 507.
 			utilization := float64(stat.BytesUsed+stat.OrphanBytes) / float64(stat.BytesLimit)
 			if utilization >= 0.8 {
-				slog.WarnContext(ctx, "Backend approaching capacity",
+				slog.WarnContext(ctx, "backend approaching capacity",
 					"backend", name,
 					"utilization_pct", int(utilization*100),
 					"bytes_available", available,
@@ -101,7 +101,7 @@ func (mc *MetricsCollector) UpdateQuotaMetrics(ctx context.Context) error {
 	// --- Object counts per backend ---
 	objCounts, err := mc.store.GetObjectCounts(ctx)
 	if err != nil {
-		slog.ErrorContext(ctx, "Failed to get object counts", "error", err)
+		slog.ErrorContext(ctx, "failed to get object counts", "error", err)
 	} else {
 		for name := range stats {
 			telemetry.ObjectCount.WithLabelValues(name).Set(0)
@@ -114,7 +114,7 @@ func (mc *MetricsCollector) UpdateQuotaMetrics(ctx context.Context) error {
 	// --- Active multipart uploads per backend ---
 	mpCounts, err := mc.store.GetActiveMultipartCounts(ctx)
 	if err != nil {
-		slog.ErrorContext(ctx, "Failed to get multipart upload counts", "error", err)
+		slog.ErrorContext(ctx, "failed to get multipart upload counts", "error", err)
 	} else {
 		for name := range stats {
 			telemetry.ActiveMultipartUploads.WithLabelValues(name).Set(0)
@@ -127,7 +127,7 @@ func (mc *MetricsCollector) UpdateQuotaMetrics(ctx context.Context) error {
 	// --- Monthly usage per backend ---
 	usage, err := mc.store.GetUsageForPeriod(ctx, counter.CurrentPeriod())
 	if err != nil {
-		slog.ErrorContext(ctx, "Failed to get usage stats", "error", err)
+		slog.ErrorContext(ctx, "failed to get usage stats", "error", err)
 	} else {
 		for name := range stats {
 			telemetry.UsageAPIRequests.WithLabelValues(name).Set(0)
@@ -152,7 +152,7 @@ func (mc *MetricsCollector) UpdateQuotaMetrics(ctx context.Context) error {
 	if factor := mc.replicationFactor(); factor > 1 {
 		locations, err := mc.store.GetUnderReplicatedObjects(ctx, factor, 10000)
 		if err != nil {
-			slog.ErrorContext(ctx, "Failed to get under-replicated objects", "error", err)
+			slog.ErrorContext(ctx, "failed to get under-replicated objects", "error", err)
 		} else {
 			telemetry.ReplicationPending.Set(float64(len(store.GroupByKey(locations))))
 		}

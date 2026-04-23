@@ -91,7 +91,7 @@ func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig) 
 
 	// --- Check threshold ---
 	if !ExceedsThreshold(stats, r.ops.BackendOrder(), cfg.Threshold) {
-		slog.InfoContext(ctx, "Rebalance skipping, within threshold",
+		slog.InfoContext(ctx, "rebalance skipping, within threshold",
 			"threshold", cfg.Threshold, "strategy", cfg.Strategy)
 		telemetry.RebalanceSkipped.WithLabelValues("threshold").Inc()
 		return 0, nil
@@ -115,7 +115,7 @@ func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig) 
 	telemetry.RebalancePending.Set(float64(len(plan)))
 
 	if len(plan) == 0 {
-		slog.InfoContext(ctx, "Rebalance skipping, empty plan", "strategy", cfg.Strategy)
+		slog.InfoContext(ctx, "rebalance skipping, empty plan", "strategy", cfg.Strategy)
 		telemetry.RebalanceSkipped.WithLabelValues("empty_plan").Inc()
 		return 0, nil
 	}

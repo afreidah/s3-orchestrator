@@ -96,7 +96,7 @@ func (s *Scrubber) Scrub(ctx context.Context, batchSize int) (checked, failed in
 		}
 	}
 
-	slog.InfoContext(ctx, "Scrub cycle complete",
+	slog.InfoContext(ctx, "scrub cycle complete",
 		"checked", checked, "failed", failed, "duration", time.Since(start))
 	return checked, failed
 }
@@ -150,7 +150,7 @@ func (s *Scrubber) Backfill(ctx context.Context, batchSize, offset int) (process
 		return 0, 0
 	}
 
-	slog.InfoContext(ctx, "Backfill batch starting",
+	slog.InfoContext(ctx, "backfill batch starting",
 		"objects", len(locs), "offset", offset)
 
 	for i := range locs {
@@ -174,7 +174,7 @@ func (s *Scrubber) Backfill(ctx context.Context, batchSize, offset int) (process
 		processed++
 	}
 
-	slog.InfoContext(ctx, "Backfill batch complete",
+	slog.InfoContext(ctx, "backfill batch complete",
 		"processed", processed, "batch_size", len(locs), "duration", time.Since(start))
 
 	// If we got a full batch, there may be more

@@ -132,7 +132,7 @@ func ProvideStoreBundle(i do.Injector) (*storeBundle, error) {
 	if err := adminDB.VerifySchemaVersion(ctx); err != nil {
 		return nil, err
 	}
-	slog.InfoContext(context.Background(), "Database migrations applied",
+	slog.InfoContext(context.Background(), "database migrations applied",
 		"driver", cfg.Database.Driver)
 
 	if err := adminDB.SyncQuotaLimits(ctx, cfg.Backends); err != nil {
@@ -240,7 +240,7 @@ func ProvideBackends(i do.Injector) (*backendsResult, error) {
 		if bcfg.MaxObjectSize > 0 {
 			maxSizes[bcfg.Name] = bcfg.MaxObjectSize
 		}
-		slog.InfoContext(context.Background(), "Backend initialized",
+		slog.InfoContext(context.Background(), "backend initialized",
 			"backend", bcfg.Name,
 			"endpoint", bcfg.Endpoint,
 			"bucket", bcfg.Bucket,
@@ -268,7 +268,7 @@ func ProvideEncryptor(i do.Injector) (*encryption.Encryptor, error) {
 	if err != nil {
 		return nil, err
 	}
-	slog.InfoContext(context.Background(), "Server-side encryption enabled",
+	slog.InfoContext(context.Background(), "server-side encryption enabled",
 		"chunk_size", cfg.Encryption.ChunkSize,
 		"key_id", provider.KeyID(),
 	)
@@ -327,7 +327,7 @@ func ProvideObjectCache(i do.Injector) (objcache.ObjectCache, error) {
 	if err != nil {
 		return nil, err
 	}
-	slog.InfoContext(context.Background(), "Object data cache enabled",
+	slog.InfoContext(context.Background(), "object data cache enabled",
 		"max_size", cfg.Cache.MaxSize,
 		"max_object_size", cfg.Cache.MaxObjectSize,
 		"ttl", cfg.Cache.TTL,
@@ -498,7 +498,7 @@ func ProvideRateLimiter(i do.Injector) (*s3api.RateLimiter, error) {
 		return nil, err
 	}
 	rl := s3api.NewRateLimiter(cfg.RateLimit)
-	slog.InfoContext(context.Background(), "Rate limiting enabled",
+	slog.InfoContext(context.Background(), "rate limiting enabled",
 		"requests_per_sec", cfg.RateLimit.RequestsPerSec,
 		"burst", cfg.RateLimit.Burst,
 	)
