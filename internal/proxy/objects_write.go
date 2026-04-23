@@ -430,7 +430,7 @@ func (o *ObjectManager) DeleteObject(ctx context.Context, key string) error {
 	workerpool.Run(ctx, len(copies), copies, func(ctx context.Context, cp store.DeletedCopy) {
 		backend, ok := o.backends[cp.BackendName]
 		if !ok {
-			slog.WarnContext(ctx, "Backend not found for delete",
+			slog.WarnContext(ctx, "backend not found for delete",
 				"backend", cp.BackendName, "key", key)
 			return
 		}
@@ -533,7 +533,7 @@ func (o *ObjectManager) DeleteObjects(ctx context.Context, keys []string) []Dele
 		for _, cp := range pd.copies {
 			backend, ok := o.backends[cp.BackendName]
 			if !ok {
-				slog.WarnContext(ctx, "Backend not found for batch delete",
+				slog.WarnContext(ctx, "backend not found for batch delete",
 					"backend", cp.BackendName, "key", pd.key)
 				continue
 			}
@@ -553,7 +553,7 @@ func (o *ObjectManager) DeleteObjects(ctx context.Context, keys []string) []Dele
 	workerpool.Run(ctx, 10, deleteItems, func(ctx context.Context, item batchDeleteItem) {
 		err := o.deleteWithTimeout(ctx, item.backend, item.key)
 		if err != nil {
-			slog.WarnContext(ctx, "Failed to delete object from backend (batch)",
+			slog.WarnContext(ctx, "failed to delete object from backend (batch)",
 				"backend", item.beName, "key", item.key, "error", err)
 			o.enqueueCleanup(ctx, item.beName, item.key, "batch_delete_failed", item.sizeBytes)
 			mu.Lock()

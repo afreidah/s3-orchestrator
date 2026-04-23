@@ -215,7 +215,7 @@ func (h *Handler) handleReplicate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.manager.UpdateQuotaMetrics(r.Context()); err != nil {
-		slog.WarnContext(r.Context(), "Failed to update quota metrics after admin replicate", "error", err)
+		slog.WarnContext(r.Context(), "failed to update quota metrics after admin replicate", "error", err)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "copies_created": created})
@@ -278,7 +278,7 @@ func (h *Handler) handleOverReplicationClean(w http.ResponseWriter, r *http.Requ
 	}
 
 	if err := h.manager.UpdateQuotaMetrics(r.Context()); err != nil {
-		slog.WarnContext(r.Context(), "Failed to update quota metrics after admin over-replication cleanup", "error", err)
+		slog.WarnContext(r.Context(), "failed to update quota metrics after admin over-replication cleanup", "error", err)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "copies_removed": removed})
@@ -301,7 +301,7 @@ func (h *Handler) handleLogLevel(w http.ResponseWriter, r *http.Request) {
 	}
 	parsed := config.ParseLogLevel(req.Level)
 	h.logLevel.Set(parsed)
-	slog.InfoContext(r.Context(), "Log level changed via admin API", "level", req.Level)
+	slog.InfoContext(r.Context(), "log level changed via admin API", "level", req.Level)
 	writeJSON(w, http.StatusOK, map[string]string{"level": strings.ToLower(parsed.String())})
 }
 

@@ -434,6 +434,18 @@ var (
 		[]string{"name", "from", "to"},
 	)
 
+	// CircuitBreakerInternalErrorsTotal counts errors returned by the
+	// breaker's own machinery (PostCheck / state transition helpers).
+	// Non-zero values indicate a bookkeeping bug, not an application
+	// error — alert on any increase.
+	CircuitBreakerInternalErrorsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "s3o_circuit_breaker_internal_errors_total",
+			Help: "Errors returned by circuit breaker PostCheck/state transitions",
+		},
+		[]string{"name", "operation"},
+	)
+
 	// DegradedReadsTotal counts reads served via broadcast during degraded mode.
 	DegradedReadsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
@@ -738,6 +750,18 @@ var (
 			Name: "s3o_notification_dropped_total",
 			Help: "Events dropped due to dampening or queue insertion failure",
 		},
+	)
+
+	// NotificationStoreErrorsTotal counts outbox-store operation failures in
+	// the delivery worker (CompleteNotification / RetryNotification). A
+	// non-zero value means the worker saw a store error that could cause
+	// duplicate or dropped webhook deliveries — alert on any increase.
+	NotificationStoreErrorsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "s3o_notification_store_errors_total",
+			Help: "Outbox store errors seen by the notification delivery worker",
+		},
+		[]string{"operation"},
 	)
 
 	// NotificationQueueDepth reports the number of pending notifications in the outbox.
