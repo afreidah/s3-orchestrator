@@ -19,142 +19,146 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/store"
 )
 
+// syncOpts holds the parsed CLI flags for `s3-orchestrator sync`.
+type syncOpts struct {
+	configPath  string
+	backendName string
+	bucketName  string
+	prefix      string
+	dryRun      bool
+}
+
 func runSync() {
-	fs := flag.NewFlagSet("sync", flag.ExitOnError)
-	configPath := fs.String("config", "config.yaml", "Path to configuration file")
-	backendName := fs.String("backend", "", "Backend name to sync (required)")
-	bucketName := fs.String("bucket", "", "Virtual bucket name to prefix imported keys with (required)")
-	prefix := fs.String("prefix", "", "Only sync objects with this key prefix")
-	dryRun := fs.Bool("dry-run", false, "Preview what would be imported without writing")
-	_ = fs.Parse(os.Args[1:])
-
-	if *backendName == "" {
-		fmt.Fprintln(os.Stderr, "error: --backend is required")
-		fs.Usage()
+	opts, ok := parseSyncFlags()
+	if !ok {
 		os.Exit(1)
 	}
-	if *bucketName == "" {
-		fmt.Fprintln(os.Stderr, "error: --bucket is required")
-		fs.Usage()
-		os.Exit(1)
-	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
-	// --- Initialize structured logger ---
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	})))
-
-	// --- Load configuration ---
-	cfg, err := config.LoadConfig(*configPath)
-	if err != nil {
-		slog.Error("Failed to load config", "error", err) //nolint:sloglint // no context before DB init
-		os.Exit(1)
-	}
-
-	// --- Find the target backend ---
-	var backendCfg *config.BackendConfig
-	for i := range cfg.Backends {
-		if cfg.Backends[i].Name == *backendName {
-			backendCfg = &cfg.Backends[i]
-			break
-		}
-	}
-	if backendCfg == nil {
-		slog.Error("Backend not found in config", "backend", *backendName) //nolint:sloglint // no context before DB init
-		os.Exit(1)
+	cfg, backendCfg, exit := loadSyncConfig(opts.configPath, opts.backendName)
+	if exit != 0 {
+		os.Exit(exit)
 	}
 
 	ctx := context.Background()
-
-	// --- Initialize store ---
-	metaDB, adminDB, err := openStore(ctx, &cfg.Database)
-	if err != nil {
-		slog.ErrorContext(ctx, "failed to connect to database", "error", err)
-		os.Exit(1)
+	metaDB, adminDB, exit := initSyncStore(ctx, cfg)
+	if exit != 0 {
+		os.Exit(exit)
 	}
 	defer adminDB.Close()
 
-	if err := adminDB.RunMigrations(ctx); err != nil {
-		slog.ErrorContext(ctx, "failed to run migrations", "error", err)
-		os.Exit(1)
-	}
-
-	if err := adminDB.SyncQuotaLimits(ctx, cfg.Backends); err != nil {
-		slog.ErrorContext(ctx, "failed to sync quota limits", "error", err)
-		os.Exit(1)
-	}
-	_ = metaDB // used below via ImportObject
-
-	// --- Initialize backend ---
 	s3b, err := backend.NewS3Backend(backendCfg)
 	if err != nil {
 		slog.ErrorContext(ctx, "failed to initialize backend", "backend", backendCfg.Name, "error", err)
 		os.Exit(1)
 	}
 
-	// --- Scan and import ---
+	if err := runSyncImport(ctx, s3b, metaDB, backendCfg, opts); err != nil {
+		slog.ErrorContext(ctx, "sync failed", "error", err)
+		os.Exit(1)
+	}
+}
+
+// parseSyncFlags parses the CLI flags for the sync subcommand and enforces
+// the required ones. Returns ok=false when a required flag is missing.
+func parseSyncFlags() (*syncOpts, bool) {
+	fs := flag.NewFlagSet("sync", flag.ExitOnError)
+	opts := &syncOpts{}
+	fs.StringVar(&opts.configPath, "config", "config.yaml", "Path to configuration file")
+	fs.StringVar(&opts.backendName, "backend", "", "Backend name to sync (required)")
+	fs.StringVar(&opts.bucketName, "bucket", "", "Virtual bucket name to prefix imported keys with (required)")
+	fs.StringVar(&opts.prefix, "prefix", "", "Only sync objects with this key prefix")
+	fs.BoolVar(&opts.dryRun, "dry-run", false, "Preview what would be imported without writing")
+	_ = fs.Parse(os.Args[1:])
+
+	if opts.backendName == "" {
+		fmt.Fprintln(os.Stderr, "error: --backend is required")
+		fs.Usage()
+		return nil, false
+	}
+	if opts.bucketName == "" {
+		fmt.Fprintln(os.Stderr, "error: --bucket is required")
+		fs.Usage()
+		return nil, false
+	}
+	return opts, true
+}
+
+// loadSyncConfig reads config.yaml and resolves the target backend by name.
+// Returns a non-zero exit code when either step fails.
+func loadSyncConfig(path, backendName string) (*config.Config, *config.BackendConfig, int) {
+	cfg, err := config.LoadConfig(path)
+	if err != nil {
+		slog.Error("Failed to load config", "error", err) //nolint:sloglint // no context before DB init
+		return nil, nil, 1
+	}
+	for i := range cfg.Backends {
+		if cfg.Backends[i].Name == backendName {
+			return cfg, &cfg.Backends[i], 0
+		}
+	}
+	slog.Error("Backend not found in config", "backend", backendName) //nolint:sloglint // no context before DB init
+	return nil, nil, 1
+}
+
+// initSyncStore opens the metadata store, applies migrations, and syncs
+// quota limits. Returns non-zero exit on any failure.
+func initSyncStore(ctx context.Context, cfg *config.Config) (store.MetadataStore, store.AdminStore, int) {
+	metaDB, adminDB, err := openStore(ctx, &cfg.Database)
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to connect to database", "error", err)
+		return nil, nil, 1
+	}
+	if err := adminDB.RunMigrations(ctx); err != nil {
+		slog.ErrorContext(ctx, "failed to run migrations", "error", err)
+		return nil, nil, 1
+	}
+	if err := adminDB.SyncQuotaLimits(ctx, cfg.Backends); err != nil {
+		slog.ErrorContext(ctx, "failed to sync quota limits", "error", err)
+		return nil, nil, 1
+	}
+	return metaDB, adminDB, 0
+}
+
+// runSyncImport walks the backend, importing each page into the metadata
+// store. Accumulates + logs totals per page.
+func runSyncImport(ctx context.Context, s3b *backend.S3Backend, metaDB store.MetadataStore, backendCfg *config.BackendConfig, opts *syncOpts) error {
+	mode := "sync"
+	if opts.dryRun {
+		mode = "dry-run"
+	}
+	slog.InfoContext(ctx, "starting sync",
+		"backend", backendCfg.Name,
+		"virtual_bucket", opts.bucketName,
+		"backend_bucket", backendCfg.Bucket,
+		"prefix", opts.prefix,
+		"mode", mode,
+	)
+
 	var totalImported, totalSkipped int
 	var totalBytes int64
 	pageNum := 0
 
-	mode := "sync"
-	if *dryRun {
-		mode = "dry-run"
-	}
-
-	slog.InfoContext(ctx, "starting sync",
-		"backend", backendCfg.Name,
-		"virtual_bucket", *bucketName,
-		"backend_bucket", backendCfg.Bucket,
-		"prefix", *prefix,
-		"mode", mode,
-	)
-
-	err = s3b.ListObjects(ctx, *prefix, func(objects []backend.ListedObject) error {
+	err := s3b.ListObjects(ctx, opts.prefix, func(objects []backend.ListedObject) error {
 		pageNum++
-		pageImported := 0
-		pageSkipped := 0
-
-		for _, obj := range objects {
-			prefixedKey := *bucketName + "/" + obj.Key
-			if *dryRun {
-				slog.InfoContext(ctx, "would import", "key", prefixedKey, "size", obj.SizeBytes)
-				pageImported++
-				totalBytes += obj.SizeBytes
-				continue
-			}
-
-			imported, err := metaDB.ImportObject(ctx, prefixedKey, backendCfg.Name, obj.SizeBytes)
-			if err != nil {
-				return fmt.Errorf("failed to import %s: %w", obj.Key, err)
-			}
-
-			if imported {
-				pageImported++
-				totalBytes += obj.SizeBytes
-			} else {
-				pageSkipped++
-			}
+		imported, skipped, bytes, err := importSyncPage(ctx, metaDB, objects, backendCfg.Name, opts)
+		if err != nil {
+			return err
 		}
-
-		totalImported += pageImported
-		totalSkipped += pageSkipped
-
+		totalImported += imported
+		totalSkipped += skipped
+		totalBytes += bytes
 		slog.InfoContext(ctx, "synced page",
-			"page", pageNum,
-			"imported", pageImported,
-			"skipped", pageSkipped,
-			"total_imported", totalImported,
-			"total_skipped", totalSkipped,
+			"page", pageNum, "imported", imported, "skipped", skipped,
+			"total_imported", totalImported, "total_skipped", totalSkipped,
 		)
-
 		return nil
 	})
 	if err != nil {
-		slog.ErrorContext(ctx, "sync failed", "error", err)
-		os.Exit(1)
+		return err
 	}
 
 	slog.InfoContext(ctx, "sync complete",
@@ -164,4 +168,30 @@ func runSync() {
 		"bytes_imported", totalBytes,
 		"mode", mode,
 	)
+	return nil
+}
+
+// importSyncPage imports one page of backend objects into the metadata
+// store (or logs them under dry-run), returning per-page counters.
+func importSyncPage(ctx context.Context, metaDB store.MetadataStore, objects []backend.ListedObject, backendName string, opts *syncOpts) (imported, skipped int, bytes int64, err error) {
+	for _, obj := range objects {
+		prefixedKey := opts.bucketName + "/" + obj.Key
+		if opts.dryRun {
+			slog.InfoContext(ctx, "would import", "key", prefixedKey, "size", obj.SizeBytes)
+			imported++
+			bytes += obj.SizeBytes
+			continue
+		}
+		ok, err := metaDB.ImportObject(ctx, prefixedKey, backendName, obj.SizeBytes)
+		if err != nil {
+			return imported, skipped, bytes, fmt.Errorf("failed to import %s: %w", obj.Key, err)
+		}
+		if ok {
+			imported++
+			bytes += obj.SizeBytes
+		} else {
+			skipped++
+		}
+	}
+	return imported, skipped, bytes, nil
 }

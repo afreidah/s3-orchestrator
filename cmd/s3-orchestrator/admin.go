@@ -98,141 +98,178 @@ Flags:
 }
 
 // adminCommand executes an admin CLI command, returning the exit code.
+// Dispatches to per-command handlers; each handler owns its flag parsing.
 func adminCommand(cmd string, args []string, baseAddr, token string, stdout, stderr io.Writer) int {
-	switch cmd {
-	case "status":
-		return doGet(baseAddr+"/admin/api/status", token, stdout, stderr)
+	handler, ok := adminHandlers[cmd]
+	if !ok {
+		fmt.Fprintf(stderr, "unknown admin command: %s\n", cmd)
+		return 1
+	}
+	return handler(args, baseAddr, token, stdout, stderr)
+}
 
-	case "object-locations":
-		fs := flag.NewFlagSet("object-locations", flag.ContinueOnError)
-		fs.SetOutput(stderr)
-		key := fs.String("key", "", "Object key to look up (required)")
-		if err := fs.Parse(args); err != nil {
-			return 1
-		}
-		if *key == "" {
-			fmt.Fprintln(stderr, "error: -key is required")
-			return 1
-		}
-		return doGet(baseAddr+"/admin/api/object-locations?key="+*key, token, stdout, stderr)
+// adminHandler is the shared shape for per-command handler functions.
+type adminHandler func(args []string, baseAddr, token string, stdout, stderr io.Writer) int
 
-	case "cleanup-queue":
-		return doGet(baseAddr+"/admin/api/cleanup-queue", token, stdout, stderr)
+// adminHandlers dispatches admin CLI subcommands. Adding a command is as
+// simple as registering one entry here.
+var adminHandlers = map[string]adminHandler{
+	"status":             adminStatus,
+	"object-locations":   adminObjectLocations,
+	"cleanup-queue":      adminCleanupQueue,
+	"usage-flush":        adminUsageFlush,
+	"replicate":          adminReplicate,
+	"over-replication":   adminOverReplication,
+	"log-level":          adminLogLevel,
+	"drain":              adminDrain,
+	"drain-status":       adminDrainStatus,
+	"drain-cancel":       adminDrainCancel,
+	"scrub":              adminScrub,
+	"backfill-checksums": adminBackfillChecksums,
+	"remove-backend":     adminRemoveBackend,
+}
 
-	case "usage-flush":
-		return doPost(baseAddr+"/admin/api/usage-flush", "", token, stdout, stderr)
+func adminStatus(_ []string, baseAddr, token string, stdout, stderr io.Writer) int {
+	return doGet(baseAddr+"/admin/api/status", token, stdout, stderr)
+}
 
-	case "replicate":
-		return doPost(baseAddr+"/admin/api/replicate", "", token, stdout, stderr)
+func adminObjectLocations(args []string, baseAddr, token string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("object-locations", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	key := fs.String("key", "", "Object key to look up (required)")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if *key == "" {
+		fmt.Fprintln(stderr, "error: -key is required")
+		return 1
+	}
+	return doGet(baseAddr+"/admin/api/object-locations?key="+*key, token, stdout, stderr)
+}
 
-	case "over-replication":
-		fs := flag.NewFlagSet("over-replication", flag.ContinueOnError)
-		fs.SetOutput(stderr)
-		execute := fs.Bool("execute", false, "Run cleanup (default: show status only)")
-		batchSize := fs.Int(flagBatchSize, 0, "Override batch size for cleanup")
-		if err := fs.Parse(args); err != nil {
-			return 1
-		}
-		if *execute {
-			url := baseAddr + "/admin/api/over-replication"
-			if *batchSize > 0 {
-				url += fmt.Sprintf(fmtBatchSize, *batchSize)
-			}
-			return doPost(url, "", token, stdout, stderr)
-		}
-		return doGet(baseAddr+"/admin/api/over-replication", token, stdout, stderr)
+func adminCleanupQueue(_ []string, baseAddr, token string, stdout, stderr io.Writer) int {
+	return doGet(baseAddr+"/admin/api/cleanup-queue", token, stdout, stderr)
+}
 
-	case "log-level":
-		fs := flag.NewFlagSet("log-level", flag.ContinueOnError)
-		fs.SetOutput(stderr)
-		set := fs.String("set", "", "Set log level (debug, info, warn, error)")
-		if err := fs.Parse(args); err != nil {
-			return 1
-		}
-		if *set != "" {
-			body := fmt.Sprintf(`{"level":%q}`, *set)
-			return doPut(baseAddr+"/admin/api/log-level", body, token, stdout, stderr)
-		}
-		return doGet(baseAddr+"/admin/api/log-level", token, stdout, stderr)
+func adminUsageFlush(_ []string, baseAddr, token string, stdout, stderr io.Writer) int {
+	return doPost(baseAddr+"/admin/api/usage-flush", "", token, stdout, stderr)
+}
 
-	case "drain":
-		if len(args) == 0 {
-			fmt.Fprintln(stderr, errBackendNameRequired)
-			return 1
-		}
-		return doPost(baseAddr+adminBackendsPath+args[0]+drainSubpath, "", token, stdout, stderr)
+func adminReplicate(_ []string, baseAddr, token string, stdout, stderr io.Writer) int {
+	return doPost(baseAddr+"/admin/api/replicate", "", token, stdout, stderr)
+}
 
-	case "drain-status":
-		if len(args) == 0 {
-			fmt.Fprintln(stderr, errBackendNameRequired)
-			return 1
-		}
-		return doGet(baseAddr+adminBackendsPath+args[0]+drainSubpath, token, stdout, stderr)
-
-	case "drain-cancel":
-		if len(args) == 0 {
-			fmt.Fprintln(stderr, errBackendNameRequired)
-			return 1
-		}
-		return doDelete(baseAddr+adminBackendsPath+args[0]+drainSubpath, token, stdout, stderr)
-
-	case "scrub":
-		fs := flag.NewFlagSet("scrub", flag.ContinueOnError)
-		fs.SetOutput(stderr)
-		batchSize := fs.Int(flagBatchSize, 0, "Number of objects to verify (0 = use server default)")
-		if err := fs.Parse(args); err != nil {
-			return 1
-		}
-		url := baseAddr + "/admin/api/scrub"
+func adminOverReplication(args []string, baseAddr, token string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("over-replication", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	execute := fs.Bool("execute", false, "Run cleanup (default: show status only)")
+	batchSize := fs.Int(flagBatchSize, 0, "Override batch size for cleanup")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if *execute {
+		url := baseAddr + "/admin/api/over-replication"
 		if *batchSize > 0 {
 			url += fmt.Sprintf(fmtBatchSize, *batchSize)
 		}
 		return doPost(url, "", token, stdout, stderr)
+	}
+	return doGet(baseAddr+"/admin/api/over-replication", token, stdout, stderr)
+}
 
-	case "backfill-checksums":
-		fs := flag.NewFlagSet("backfill-checksums", flag.ContinueOnError)
-		fs.SetOutput(stderr)
-		batchSize := fs.Int(flagBatchSize, 100, "Objects per batch")
-		if err := fs.Parse(args); err != nil {
-			return 1
-		}
-		url := baseAddr + "/admin/api/backfill-checksums"
-		if *batchSize != 100 {
-			url += fmt.Sprintf(fmtBatchSize, *batchSize)
-		}
-		return doPost(url, "", token, stdout, stderr)
-
-	case "remove-backend":
-		fs := flag.NewFlagSet("remove-backend", flag.ContinueOnError)
-		fs.SetOutput(stderr)
-		purge := fs.Bool("purge", false, "Also delete objects from the backend's S3 storage (requires --confirm)")
-		confirm := fs.Bool("confirm", false, "Execute the purge (without this, --purge is a dry-run preview)")
-		if err := fs.Parse(args); err != nil {
-			return 1
-		}
-		if fs.NArg() == 0 {
-			fmt.Fprintln(stderr, errBackendNameRequired)
-			return 1
-		}
-		name := fs.Arg(0)
-
-		if !*purge {
-			// Non-purge: remove DB records immediately
-			return doDelete(baseAddr+adminBackendsPath+name, token, stdout, stderr)
-		}
-
-		if !*confirm {
-			// Purge dry-run: show what would be destroyed
-			return doRemovePreview(baseAddr, name, token, stdout, stderr)
-		}
-
-		// Purge with confirmation: two-phase flow
-		return doRemovePurge(baseAddr, name, token, stdout, stderr)
-
-	default:
-		fmt.Fprintf(stderr, "unknown admin command: %s\n", cmd)
+func adminLogLevel(args []string, baseAddr, token string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("log-level", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	set := fs.String("set", "", "Set log level (debug, info, warn, error)")
+	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	if *set != "" {
+		body := fmt.Sprintf(`{"level":%q}`, *set)
+		return doPut(baseAddr+"/admin/api/log-level", body, token, stdout, stderr)
+	}
+	return doGet(baseAddr+"/admin/api/log-level", token, stdout, stderr)
+}
+
+// requireBackendName prints the missing-name error to stderr and returns
+// true if args is empty (caller should bail with exit 1).
+func requireBackendName(args []string, stderr io.Writer) bool {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, errBackendNameRequired)
+		return true
+	}
+	return false
+}
+
+func adminDrain(args []string, baseAddr, token string, stdout, stderr io.Writer) int {
+	if requireBackendName(args, stderr) {
+		return 1
+	}
+	return doPost(baseAddr+adminBackendsPath+args[0]+drainSubpath, "", token, stdout, stderr)
+}
+
+func adminDrainStatus(args []string, baseAddr, token string, stdout, stderr io.Writer) int {
+	if requireBackendName(args, stderr) {
+		return 1
+	}
+	return doGet(baseAddr+adminBackendsPath+args[0]+drainSubpath, token, stdout, stderr)
+}
+
+func adminDrainCancel(args []string, baseAddr, token string, stdout, stderr io.Writer) int {
+	if requireBackendName(args, stderr) {
+		return 1
+	}
+	return doDelete(baseAddr+adminBackendsPath+args[0]+drainSubpath, token, stdout, stderr)
+}
+
+func adminScrub(args []string, baseAddr, token string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("scrub", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	batchSize := fs.Int(flagBatchSize, 0, "Number of objects to verify (0 = use server default)")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	url := baseAddr + "/admin/api/scrub"
+	if *batchSize > 0 {
+		url += fmt.Sprintf(fmtBatchSize, *batchSize)
+	}
+	return doPost(url, "", token, stdout, stderr)
+}
+
+func adminBackfillChecksums(args []string, baseAddr, token string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("backfill-checksums", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	batchSize := fs.Int(flagBatchSize, 100, "Objects per batch")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	url := baseAddr + "/admin/api/backfill-checksums"
+	if *batchSize != 100 {
+		url += fmt.Sprintf(fmtBatchSize, *batchSize)
+	}
+	return doPost(url, "", token, stdout, stderr)
+}
+
+func adminRemoveBackend(args []string, baseAddr, token string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("remove-backend", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	purge := fs.Bool("purge", false, "Also delete objects from the backend's S3 storage (requires --confirm)")
+	confirm := fs.Bool("confirm", false, "Execute the purge (without this, --purge is a dry-run preview)")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if fs.NArg() == 0 {
+		fmt.Fprintln(stderr, errBackendNameRequired)
+		return 1
+	}
+	name := fs.Arg(0)
+	if !*purge {
+		return doDelete(baseAddr+adminBackendsPath+name, token, stdout, stderr)
+	}
+	if !*confirm {
+		return doRemovePreview(baseAddr, name, token, stdout, stderr)
+	}
+	return doRemovePurge(baseAddr, name, token, stdout, stderr)
 }
 
 // -------------------------------------------------------------------------

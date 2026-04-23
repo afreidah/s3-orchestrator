@@ -161,35 +161,46 @@ func (u *UsageTracker) ResetBaselines(names []string) {
 func (u *UsageTracker) NearLimit(threshold float64) bool {
 	u.limitsMu.RLock()
 	defer u.limitsMu.RUnlock()
-
 	u.baselineMu.RLock()
 	defer u.baselineMu.RUnlock()
 
 	for name, lim := range u.limits {
-		if lim.APIRequestLimit == 0 && lim.EgressByteLimit == 0 && lim.IngressByteLimit == 0 {
+		if isUnlimited(lim) {
 			continue
 		}
-
 		base := u.baseline[name]
 		cur := u.backend.LoadAll(name)
+		if backendNearLimit(base, cur, lim, threshold) {
+			return true
+		}
+	}
+	return false
+}
 
-		if lim.APIRequestLimit > 0 {
-			effective := float64(base.APIRequests+cur.APIRequests) / float64(lim.APIRequestLimit)
-			if effective >= threshold {
-				return true
-			}
+// isUnlimited returns true when all three usage dimensions are 0 (unlimited).
+func isUnlimited(lim store.UsageLimits) bool {
+	return lim.APIRequestLimit == 0 && lim.EgressByteLimit == 0 && lim.IngressByteLimit == 0
+}
+
+// backendNearLimit returns true when any configured dimension of the given
+// backend has effective usage (baseline + unflushed) at or above the
+// threshold ratio. Takes the baseline (a store.UsageStat snapshot) and the
+// live CounterBackend readings separately because they come from different
+// types with identical shapes.
+func backendNearLimit(base store.UsageStat, cur LoadAllResult, lim store.UsageLimits, threshold float64) bool {
+	if lim.APIRequestLimit > 0 {
+		if float64(base.APIRequests+cur.APIRequests)/float64(lim.APIRequestLimit) >= threshold {
+			return true
 		}
-		if lim.EgressByteLimit > 0 {
-			effective := float64(base.EgressBytes+cur.EgressBytes) / float64(lim.EgressByteLimit)
-			if effective >= threshold {
-				return true
-			}
+	}
+	if lim.EgressByteLimit > 0 {
+		if float64(base.EgressBytes+cur.EgressBytes)/float64(lim.EgressByteLimit) >= threshold {
+			return true
 		}
-		if lim.IngressByteLimit > 0 {
-			effective := float64(base.IngressBytes+cur.IngressBytes) / float64(lim.IngressByteLimit)
-			if effective >= threshold {
-				return true
-			}
+	}
+	if lim.IngressByteLimit > 0 {
+		if float64(base.IngressBytes+cur.IngressBytes)/float64(lim.IngressByteLimit) >= threshold {
+			return true
 		}
 	}
 	return false
