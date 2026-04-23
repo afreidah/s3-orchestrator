@@ -215,7 +215,7 @@ func (h *Handler) handleReplicate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.manager.UpdateQuotaMetrics(r.Context()); err != nil {
-		slog.WarnContext(r.Context(), "Failed to update quota metrics after admin replicate", "error", err)
+		slog.WarnContext(r.Context(), "failed to update quota metrics after admin replicate", "error", err)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "copies_created": created})
@@ -278,7 +278,7 @@ func (h *Handler) handleOverReplicationClean(w http.ResponseWriter, r *http.Requ
 	}
 
 	if err := h.manager.UpdateQuotaMetrics(r.Context()); err != nil {
-		slog.WarnContext(r.Context(), "Failed to update quota metrics after admin over-replication cleanup", "error", err)
+		slog.WarnContext(r.Context(), "failed to update quota metrics after admin over-replication cleanup", "error", err)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "copies_removed": removed})
@@ -301,7 +301,7 @@ func (h *Handler) handleLogLevel(w http.ResponseWriter, r *http.Request) {
 	}
 	parsed := config.ParseLogLevel(req.Level)
 	h.logLevel.Set(parsed)
-	slog.InfoContext(r.Context(), "Log level changed via admin API", "level", req.Level)
+	slog.InfoContext(r.Context(), "log level changed via admin API", "level", req.Level)
 	writeJSON(w, http.StatusOK, map[string]string{"level": strings.ToLower(parsed.String())})
 }
 
@@ -314,7 +314,7 @@ func (h *Handler) handleStartDrain(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if err := h.manager.DrainManager.StartDrain(r.Context(), name); err != nil {
 		slog.ErrorContext(r.Context(), "Admin: drain start failed", "backend", name, "error", err)
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "drain operation failed"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": errDrainOperationFailed})
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "drain started", "backend": name})
@@ -326,7 +326,7 @@ func (h *Handler) handleDrainProgress(w http.ResponseWriter, r *http.Request) {
 	progress, err := h.manager.DrainManager.GetDrainProgress(r.Context(), name)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "Admin: drain progress failed", "backend", name, "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "drain operation failed"})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": errDrainOperationFailed})
 		return
 	}
 	writeJSON(w, http.StatusOK, progress)
@@ -337,7 +337,7 @@ func (h *Handler) handleCancelDrain(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if err := h.manager.DrainManager.CancelDrain(name); err != nil {
 		slog.ErrorContext(r.Context(), "Admin: drain cancel failed", "backend", name, "error", err)
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "drain operation failed"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": errDrainOperationFailed})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "drain cancelled", "backend": name})
@@ -347,6 +347,7 @@ func (h *Handler) handleCancelDrain(w http.ResponseWriter, r *http.Request) {
 const (
 	removeConfirmTTL       = 60 * time.Second
 	errEncryptionNotEnabled = "encryption not enabled"
+	errDrainOperationFailed = "drain operation failed"
 )
 
 // handleRemoveBackend deletes all DB records for a backend. When purge=true,

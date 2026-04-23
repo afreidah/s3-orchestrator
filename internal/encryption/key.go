@@ -57,7 +57,7 @@ type ConfigKeyProvider struct {
 
 // NewConfigKeyProvider creates a provider from a base64-encoded 256-bit key.
 // The keyID identifies this key for rotation tracking; defaults to "config-0".
-func NewConfigKeyProvider(masterKeyB64 string, keyID string) (*ConfigKeyProvider, error) {
+func NewConfigKeyProvider(masterKeyB64, keyID string) (*ConfigKeyProvider, error) {
 	key, err := base64.StdEncoding.DecodeString(masterKeyB64)
 	if err != nil {
 		return nil, fmt.Errorf("invalid base64 master key: %w", err)
@@ -102,7 +102,7 @@ type FileKeyProvider struct {
 
 // NewFileKeyProvider creates a provider by reading a raw 32-byte key from
 // the given file path. The keyID defaults to "file-0" if empty.
-func NewFileKeyProvider(path string, keyID string) (*FileKeyProvider, error) {
+func NewFileKeyProvider(path, keyID string) (*FileKeyProvider, error) {
 	key, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read key file: %w", err)
@@ -177,7 +177,7 @@ func (p *MultiKeyProvider) UnwrapDEK(ctx context.Context, wrappedDEK []byte, key
 		return prev.UnwrapDEK(ctx, wrappedDEK, keyID)
 	}
 	telemetry.EncryptionUnknownKeyIDTotal.Inc()
-	slog.ErrorContext(ctx, "Unknown encryption keyID — object cannot be decrypted",
+	slog.ErrorContext(ctx, "unknown encryption keyID — object cannot be decrypted",
 		"unknown_key_id", keyID, "primary_key_id", p.primary.KeyID())
 	return nil, fmt.Errorf("unknown encryption key ID %q: ensure previous_keys includes all rotation keys", keyID)
 }

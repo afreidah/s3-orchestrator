@@ -71,18 +71,18 @@ func runSync() {
 	// --- Initialize store ---
 	metaDB, adminDB, err := openStore(ctx, &cfg.Database)
 	if err != nil {
-		slog.ErrorContext(ctx, "Failed to connect to database", "error", err)
+		slog.ErrorContext(ctx, "failed to connect to database", "error", err)
 		os.Exit(1)
 	}
 	defer adminDB.Close()
 
 	if err := adminDB.RunMigrations(ctx); err != nil {
-		slog.ErrorContext(ctx, "Failed to run migrations", "error", err)
+		slog.ErrorContext(ctx, "failed to run migrations", "error", err)
 		os.Exit(1)
 	}
 
 	if err := adminDB.SyncQuotaLimits(ctx, cfg.Backends); err != nil {
-		slog.ErrorContext(ctx, "Failed to sync quota limits", "error", err)
+		slog.ErrorContext(ctx, "failed to sync quota limits", "error", err)
 		os.Exit(1)
 	}
 	_ = metaDB // used below via ImportObject
@@ -90,7 +90,7 @@ func runSync() {
 	// --- Initialize backend ---
 	s3b, err := backend.NewS3Backend(backendCfg)
 	if err != nil {
-		slog.ErrorContext(ctx, "Failed to initialize backend", "backend", backendCfg.Name, "error", err)
+		slog.ErrorContext(ctx, "failed to initialize backend", "backend", backendCfg.Name, "error", err)
 		os.Exit(1)
 	}
 
@@ -104,7 +104,7 @@ func runSync() {
 		mode = "dry-run"
 	}
 
-	slog.InfoContext(ctx, "Starting sync",
+	slog.InfoContext(ctx, "starting sync",
 		"backend", backendCfg.Name,
 		"virtual_bucket", *bucketName,
 		"backend_bucket", backendCfg.Bucket,
@@ -120,7 +120,7 @@ func runSync() {
 		for _, obj := range objects {
 			prefixedKey := *bucketName + "/" + obj.Key
 			if *dryRun {
-				slog.InfoContext(ctx, "Would import", "key", prefixedKey, "size", obj.SizeBytes)
+				slog.InfoContext(ctx, "would import", "key", prefixedKey, "size", obj.SizeBytes)
 				pageImported++
 				totalBytes += obj.SizeBytes
 				continue
@@ -142,7 +142,7 @@ func runSync() {
 		totalImported += pageImported
 		totalSkipped += pageSkipped
 
-		slog.InfoContext(ctx, "Synced page",
+		slog.InfoContext(ctx, "synced page",
 			"page", pageNum,
 			"imported", pageImported,
 			"skipped", pageSkipped,
@@ -153,11 +153,11 @@ func runSync() {
 		return nil
 	})
 	if err != nil {
-		slog.ErrorContext(ctx, "Sync failed", "error", err)
+		slog.ErrorContext(ctx, "sync failed", "error", err)
 		os.Exit(1)
 	}
 
-	slog.InfoContext(ctx, "Sync complete",
+	slog.InfoContext(ctx, "sync complete",
 		"backend", backendCfg.Name,
 		"imported", totalImported,
 		"skipped", totalSkipped,

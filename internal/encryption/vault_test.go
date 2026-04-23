@@ -201,7 +201,7 @@ func TestVaultKeyProvider_RenewToken(t *testing.T) {
 	// Wait for at least one renewal tick
 	time.Sleep(150 * time.Millisecond)
 
-	if got := renewCalls.Load(); got == 0 {
+	if renewCalls.Load() == 0 {
 		t.Error("expected at least one RenewSelf call")
 	}
 }

@@ -85,12 +85,12 @@ func (r *Reconciler) Run(ctx context.Context) {
 	duration := time.Since(start)
 
 	if totalImported > 0 {
-		slog.InfoContext(ctx, "Reconcile complete",
+		slog.InfoContext(ctx, "reconcile complete",
 			"imported", totalImported, "skipped", totalSkipped,
 			"duration", duration.Round(time.Millisecond))
 
 		if err := r.syncer.UpdateQuotaMetrics(ctx); err != nil {
-			slog.WarnContext(ctx, "Failed to update quota metrics after reconcile", "error", err)
+			slog.WarnContext(ctx, "failed to update quota metrics after reconcile", "error", err)
 		}
 	}
 
@@ -132,7 +132,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, backendName string) (*Reconc
 
 	if total.Imported > 0 || total.Removed > 0 {
 		if err := r.syncer.UpdateQuotaMetrics(ctx); err != nil {
-			slog.WarnContext(ctx, "Failed to update quota metrics after reconcile", "error", err)
+			slog.WarnContext(ctx, "failed to update quota metrics after reconcile", "error", err)
 		}
 	}
 
