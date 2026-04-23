@@ -102,8 +102,18 @@ func LoadConfig(path string) (*Config, error) {
 // validators and performs cross-field validation.
 func (c *Config) SetDefaultsAndValidate() error {
 	var errs []error
+	errs = append(errs, c.validatePerTypeSections()...)
+	c.applyDefaultsOnlyTypes()
+	errs = append(errs, c.validateRoutingStrategy()...)
+	errs = append(errs, c.validateQuotaReplicationCombo()...)
+	return errors.Join(errs...)
+}
 
-	// Per-type defaults and validation
+// validatePerTypeSections delegates to each sub-type's
+// setDefaultsAndValidate and collects the results. Keeping this list in one
+// place makes it easy to see what the full validation surface covers.
+func (c *Config) validatePerTypeSections() []error {
+	var errs []error
 	errs = append(errs, c.Server.setDefaultsAndValidate()...)
 	errs = append(errs, c.Database.setDefaultsAndValidate()...)
 	errs = append(errs, validateBuckets(c.Buckets)...)
@@ -116,17 +126,6 @@ func (c *Config) SetDefaultsAndValidate() error {
 	errs = append(errs, c.UI.setDefaultsAndValidate()...)
 	errs = append(errs, c.UsageFlush.setDefaultsAndValidate()...)
 	errs = append(errs, validateLifecycleRules(c.Lifecycle.Rules)...)
-
-	// Defaults-only types (no validation errors)
-	c.CircuitBreaker.setDefaults()
-	c.BackendCircuitBreaker.setDefaults()
-
-	if c.CleanupQueue.Concurrency <= 0 {
-		c.CleanupQueue.Concurrency = 10
-	}
-	if c.Reconcile.Enabled && c.Reconcile.Interval <= 0 {
-		c.Reconcile.Interval = 24 * time.Hour
-	}
 	errs = append(errs, c.Integrity.setDefaultsAndValidate()...)
 	errs = append(errs, c.Lifecycle.setDefaultsAndValidate()...)
 	errs = append(errs, c.Cache.setDefaultsAndValidate()...)
@@ -134,38 +133,61 @@ func (c *Config) SetDefaultsAndValidate() error {
 	if c.Redis != nil {
 		errs = append(errs, c.Redis.setDefaultsAndValidate()...)
 	}
+	return errs
+}
 
-	// Routing strategy
+// applyDefaultsOnlyTypes handles sub-configs that have only zero-value
+// defaults (no validation errors possible): circuit breakers, cleanup
+// queue concurrency, reconcile interval.
+func (c *Config) applyDefaultsOnlyTypes() {
+	c.CircuitBreaker.setDefaults()
+	c.BackendCircuitBreaker.setDefaults()
+	if c.CleanupQueue.Concurrency <= 0 {
+		c.CleanupQueue.Concurrency = 10
+	}
+	if c.Reconcile.Enabled && c.Reconcile.Interval <= 0 {
+		c.Reconcile.Interval = 24 * time.Hour
+	}
+}
+
+// validateRoutingStrategy applies the default and enforces the enum.
+func (c *Config) validateRoutingStrategy() []error {
 	if c.RoutingStrategy == "" {
 		c.RoutingStrategy = RoutingPack
 	}
 	if c.RoutingStrategy != RoutingPack && c.RoutingStrategy != RoutingSpread {
-		errs = append(errs, ErrInvalidRoutingStrategy)
+		return []error{ErrInvalidRoutingStrategy}
 	}
+	return nil
+}
 
-	// Cross-field: quota and replication combinations
-	if len(c.Backends) > 1 {
-		unlimitedCount := 0
-		for i := range c.Backends {
-			if c.Backends[i].QuotaBytes == 0 {
-				unlimitedCount++
-			}
-		}
-		quotaCount := len(c.Backends) - unlimitedCount
-
-		if unlimitedCount > 0 && quotaCount > 0 {
-			errs = append(errs, ErrQuotaMixNotAllowed)
-		}
-		if unlimitedCount > 1 && c.Replication.Factor <= 1 {
-			errs = append(errs, ErrUnlimitedNeedsReplication)
-		}
-		if c.Replication.Factor <= 1 {
-			slog.Warn("replication.factor <= 1 with multiple backends provides no redundancy — losing a backend will cause permanent data loss for objects stored exclusively on it", //nolint:sloglint // config validation has no request context
-				"backends", len(c.Backends), "replication_factor", c.Replication.Factor)
+// validateQuotaReplicationCombo enforces the cross-field invariants around
+// mixing bounded and unlimited backend quotas, and emits a redundancy
+// warning when multiple backends are configured without replication.
+func (c *Config) validateQuotaReplicationCombo() []error {
+	if len(c.Backends) <= 1 {
+		return nil
+	}
+	var errs []error
+	unlimitedCount := 0
+	for i := range c.Backends {
+		if c.Backends[i].QuotaBytes == 0 {
+			unlimitedCount++
 		}
 	}
+	quotaCount := len(c.Backends) - unlimitedCount
 
-	return errors.Join(errs...)
+	if unlimitedCount > 0 && quotaCount > 0 {
+		errs = append(errs, ErrQuotaMixNotAllowed)
+	}
+	if unlimitedCount > 1 && c.Replication.Factor <= 1 {
+		errs = append(errs, ErrUnlimitedNeedsReplication)
+	}
+	if c.Replication.Factor <= 1 {
+		slog.Warn("replication.factor <= 1 with multiple backends provides no redundancy — losing a backend will cause permanent data loss for objects stored exclusively on it", //nolint:sloglint // config validation has no request context
+			"backends", len(c.Backends), "replication_factor", c.Replication.Factor)
+	}
+	return errs
 }
 
 // -------------------------------------------------------------------------
@@ -177,37 +199,55 @@ func (c *Config) SetDefaultsAndValidate() error {
 // to warn about changes that require a restart.
 func NonReloadableFieldsChanged(old, new *Config) []string {
 	var changed []string
+	changed = append(changed, serverFieldsChanged(&old.Server, &new.Server)...)
+	changed = append(changed, topLevelFieldsChanged(old, new)...)
+	changed = append(changed, redisFieldsChanged(old.Redis, new.Redis)...)
+	changed = append(changed, backendStructuralChanges(old.Backends, new.Backends)...)
+	return changed
+}
 
-	if old.Server.ListenAddr != new.Server.ListenAddr {
+// serverFieldsChanged enumerates non-reloadable server-config fields that
+// differ between two snapshots.
+func serverFieldsChanged(old, new *ServerConfig) []string {
+	var changed []string
+	if old.ListenAddr != new.ListenAddr {
 		changed = append(changed, "server.listen_addr")
 	}
-	if old.Server.MaxConcurrentRequests != new.Server.MaxConcurrentRequests {
+	if old.MaxConcurrentRequests != new.MaxConcurrentRequests {
 		changed = append(changed, "server.max_concurrent_requests")
 	}
-	if old.Server.MaxConcurrentReads != new.Server.MaxConcurrentReads {
+	if old.MaxConcurrentReads != new.MaxConcurrentReads {
 		changed = append(changed, "server.max_concurrent_reads")
 	}
-	if old.Server.MaxConcurrentWrites != new.Server.MaxConcurrentWrites {
+	if old.MaxConcurrentWrites != new.MaxConcurrentWrites {
 		changed = append(changed, "server.max_concurrent_writes")
 	}
-	if old.Server.LoadShedThreshold != new.Server.LoadShedThreshold {
+	if old.LoadShedThreshold != new.LoadShedThreshold {
 		changed = append(changed, "server.load_shed_threshold")
 	}
-	if old.Server.AdmissionWait != new.Server.AdmissionWait {
+	if old.AdmissionWait != new.AdmissionWait {
 		changed = append(changed, "server.admission_wait")
 	}
-	if old.Server.ReadHeaderTimeout != new.Server.ReadHeaderTimeout ||
-		old.Server.ReadTimeout != new.Server.ReadTimeout ||
-		old.Server.WriteTimeout != new.Server.WriteTimeout ||
-		old.Server.IdleTimeout != new.Server.IdleTimeout {
+	if old.ReadHeaderTimeout != new.ReadHeaderTimeout ||
+		old.ReadTimeout != new.ReadTimeout ||
+		old.WriteTimeout != new.WriteTimeout ||
+		old.IdleTimeout != new.IdleTimeout {
 		changed = append(changed, "server timeouts (read_header_timeout, read_timeout, write_timeout, idle_timeout)")
 	}
-	if old.Server.ShutdownDelay != new.Server.ShutdownDelay {
+	if old.ShutdownDelay != new.ShutdownDelay {
 		changed = append(changed, "server.shutdown_delay")
 	}
-	if old.Server.TLS != new.Server.TLS {
+	if old.TLS != new.TLS {
 		changed = append(changed, "server.tls")
 	}
+	return changed
+}
+
+// topLevelFieldsChanged enumerates non-reloadable top-level sub-configs
+// that differ (database, telemetry, UI, circuit breakers, encryption,
+// routing strategy).
+func topLevelFieldsChanged(old, new *Config) []string {
+	var changed []string
 	if old.Database != new.Database {
 		changed = append(changed, "database")
 	}
@@ -232,32 +272,43 @@ func NonReloadableFieldsChanged(old, new *Config) []string {
 	if old.RoutingStrategy != new.RoutingStrategy {
 		changed = append(changed, "routing_strategy")
 	}
-	oldHasRedis := old.Redis != nil
-	newHasRedis := new.Redis != nil
-	if oldHasRedis != newHasRedis {
-		changed = append(changed, "redis")
-	} else if oldHasRedis && newHasRedis && *old.Redis != *new.Redis {
-		changed = append(changed, "redis")
-	}
+	return changed
+}
 
-	// Backend structural changes (endpoints, S3 credentials) cannot be reloaded.
-	// Quota and usage limit changes ARE reloadable and handled separately.
-	if len(old.Backends) != len(new.Backends) {
-		changed = append(changed, "backends (count changed)")
-	} else {
-		for i := range old.Backends {
-			o, n := old.Backends[i], new.Backends[i]
-			if o.Name != n.Name || o.Endpoint != n.Endpoint || o.Region != n.Region ||
-				o.Bucket != n.Bucket || o.AccessKeyID != n.AccessKeyID ||
-				o.SecretAccessKey != n.SecretAccessKey || o.ForcePathStyle != n.ForcePathStyle ||
-				boolDefault(o.UnsignedPayload, true) != boolDefault(n.UnsignedPayload, true) ||
-				o.DisableChecksum != n.DisableChecksum ||
-				o.StripSDKHeaders != n.StripSDKHeaders {
-				changed = append(changed, fmt.Sprintf("backends[%d] (%s) structural fields", i, o.Name))
-			}
+// redisFieldsChanged handles the *RedisConfig pointer-nullable case —
+// either presence change or struct inequality counts as a diff.
+func redisFieldsChanged(old, new *RedisConfig) []string {
+	oldHas := old != nil
+	newHas := new != nil
+	if oldHas != newHas {
+		return []string{"redis"}
+	}
+	if oldHas && newHas && *old != *new {
+		return []string{"redis"}
+	}
+	return nil
+}
+
+// backendStructuralChanges reports backend-list edits that cannot be hot-
+// reloaded. Quota and usage limits are explicitly reloadable and handled
+// by a separate code path; only endpoint/credential/routing-shape fields
+// are checked here.
+func backendStructuralChanges(old, new []BackendConfig) []string {
+	if len(old) != len(new) {
+		return []string{"backends (count changed)"}
+	}
+	var changed []string
+	for i := range old {
+		o, n := old[i], new[i]
+		if o.Name != n.Name || o.Endpoint != n.Endpoint || o.Region != n.Region ||
+			o.Bucket != n.Bucket || o.AccessKeyID != n.AccessKeyID ||
+			o.SecretAccessKey != n.SecretAccessKey || o.ForcePathStyle != n.ForcePathStyle ||
+			boolDefault(o.UnsignedPayload, true) != boolDefault(n.UnsignedPayload, true) ||
+			o.DisableChecksum != n.DisableChecksum ||
+			o.StripSDKHeaders != n.StripSDKHeaders {
+			changed = append(changed, fmt.Sprintf("backends[%d] (%s) structural fields", i, o.Name))
 		}
 	}
-
 	return changed
 }
 

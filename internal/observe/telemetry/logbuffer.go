@@ -91,8 +91,25 @@ func (b *LogBuffer) Add(entry LogEntry) {
 // Filtering and result construction happen outside the lock so concurrent
 // Add calls are not blocked by slow dashboard queries.
 func (b *LogBuffer) Entries(opts *LogQueryOpts) []LogEntry {
-	// Snapshot the ring buffer state under the lock.
+	snapshot := b.snapshotEntries()
+	if len(snapshot) == 0 {
+		return nil
+	}
+	result := filterEntries(snapshot, opts)
+	if opts.Limit > 0 && len(result) > opts.Limit {
+		result = result[len(result)-opts.Limit:]
+	}
+	return result
+}
+
+// snapshotEntries acquires the read lock just long enough to copy the
+// ring-buffer contents into a slice, then releases it. Filtering happens
+// on the snapshot outside the lock so concurrent Add calls aren't blocked
+// by slow dashboard queries.
+func (b *LogBuffer) snapshotEntries() []LogEntry {
 	b.mu.RLock()
+	defer b.mu.RUnlock()
+
 	var count int
 	if b.full {
 		count = len(b.entries)
@@ -100,7 +117,6 @@ func (b *LogBuffer) Entries(opts *LogQueryOpts) []LogEntry {
 		count = b.pos
 	}
 	if count == 0 {
-		b.mu.RUnlock()
 		return nil
 	}
 	snapshot := make([]LogEntry, count)
@@ -113,11 +129,13 @@ func (b *LogBuffer) Entries(opts *LogQueryOpts) []LogEntry {
 		}
 		snapshot[i] = b.entries[idx]
 	}
-	b.mu.RUnlock()
+	return snapshot
+}
 
-	// Filter outside the lock.
-	minLevel := opts.MinLevel
-	result := make([]LogEntry, 0, count)
+// filterEntries applies the query filters (time range, min level,
+// component) to the snapshot. Pure function — no locking.
+func filterEntries(snapshot []LogEntry, opts *LogQueryOpts) []LogEntry {
+	result := make([]LogEntry, 0, len(snapshot))
 	for _, e := range snapshot {
 		if !opts.Since.IsZero() && e.Time.Before(opts.Since) {
 			continue
@@ -125,7 +143,7 @@ func (b *LogBuffer) Entries(opts *LogQueryOpts) []LogEntry {
 		if !opts.Before.IsZero() && !e.Time.Before(opts.Before) {
 			continue
 		}
-		if levelToSlog(e.Level) < minLevel {
+		if levelToSlog(e.Level) < opts.MinLevel {
 			continue
 		}
 		if opts.Component != "" {
@@ -135,12 +153,6 @@ func (b *LogBuffer) Entries(opts *LogQueryOpts) []LogEntry {
 		}
 		result = append(result, e)
 	}
-
-	// Apply limit (keep the most recent entries).
-	if opts.Limit > 0 && len(result) > opts.Limit {
-		result = result[len(result)-opts.Limit:]
-	}
-
 	return result
 }
 

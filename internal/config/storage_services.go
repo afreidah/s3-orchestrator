@@ -126,40 +126,52 @@ func (r *RebalanceConfig) setDefaultsAndValidate() []error {
 
 func (r *ReplicationConfig) setDefaultsAndValidate(backendCount int) []error {
 	var errs []error
-
 	if r.Factor == 0 {
 		r.Factor = 1
 	}
 	if r.Factor < 1 {
 		errs = append(errs, ErrReplicationFactorMin)
 	}
-
 	if r.Factor > 1 {
-		if r.WorkerInterval == 0 {
-			r.WorkerInterval = 5 * time.Minute
-		}
-		if r.BatchSize == 0 {
-			r.BatchSize = 50
-		}
-		if r.UnhealthyThreshold == 0 {
-			r.UnhealthyThreshold = 10 * time.Minute
-		}
-		if r.Concurrency <= 0 {
-			r.Concurrency = 5
-		}
-
-		if r.Factor > backendCount {
-			errs = append(errs, fmt.Errorf("%w: factor=%d backends=%d",
-				ErrReplicationFactorTooLarge, r.Factor, backendCount))
-		}
-		if r.WorkerInterval <= 0 {
-			errs = append(errs, ErrReplicationIntervalNotPos)
-		}
-		if r.BatchSize <= 0 {
-			errs = append(errs, ErrReplicationBatchNotPos)
-		}
+		r.applyReplicationDefaults()
+		errs = append(errs, r.validateReplicationLimits(backendCount)...)
 	}
+	return errs
+}
 
+// applyReplicationDefaults fills zero-valued replication knobs with
+// production defaults. Only runs when replication is actually enabled
+// (Factor > 1); leaves everything at zero otherwise so operators don't
+// see "configured" values when they never turned replication on.
+func (r *ReplicationConfig) applyReplicationDefaults() {
+	if r.WorkerInterval == 0 {
+		r.WorkerInterval = 5 * time.Minute
+	}
+	if r.BatchSize == 0 {
+		r.BatchSize = 50
+	}
+	if r.UnhealthyThreshold == 0 {
+		r.UnhealthyThreshold = 10 * time.Minute
+	}
+	if r.Concurrency <= 0 {
+		r.Concurrency = 5
+	}
+}
+
+// validateReplicationLimits enforces the non-negative + backend-count
+// invariants that only apply when Factor > 1.
+func (r *ReplicationConfig) validateReplicationLimits(backendCount int) []error {
+	var errs []error
+	if r.Factor > backendCount {
+		errs = append(errs, fmt.Errorf("%w: factor=%d backends=%d",
+			ErrReplicationFactorTooLarge, r.Factor, backendCount))
+	}
+	if r.WorkerInterval <= 0 {
+		errs = append(errs, ErrReplicationIntervalNotPos)
+	}
+	if r.BatchSize <= 0 {
+		errs = append(errs, ErrReplicationBatchNotPos)
+	}
 	return errs
 }
 

@@ -121,7 +121,21 @@ func NewNotifier(cfg *config.NotificationConfig, store OutboxStore) *Notifier {
 // emit persists an event to the outbox for each matching endpoint. Called
 // via the package-level event.Emit hook from any package in the codebase.
 func (n *Notifier) emit(ev event.Event) { //nolint:gocritic // Event is passed by value to allow callers to construct inline
-	// Fill CloudEvents envelope defaults
+	fillCloudEventDefaults(&ev)
+	if n.isDampened(&ev) {
+		return
+	}
+	payload, err := json.Marshal(ev)
+	if err != nil {
+		slog.Error("Failed to marshal notification event", "type", ev.Type, "error", err) //nolint:sloglint // emit has no request context
+		return
+	}
+	n.fanOutToEndpoints(&ev, payload)
+}
+
+// fillCloudEventDefaults populates CloudEvents envelope fields that the
+// caller didn't set. Mutates the event in place.
+func fillCloudEventDefaults(ev *event.Event) {
 	if ev.SpecVersion == "" {
 		ev.SpecVersion = "1.0"
 	}
@@ -137,24 +151,28 @@ func (n *Notifier) emit(ev event.Event) { //nolint:gocritic // Event is passed b
 	if ev.Time.IsZero() {
 		ev.Time = time.Now().UTC()
 	}
+}
 
-	// Dampening for threshold-crossing events. The TTL cache automatically
-	// evicts entries after dampenTTL, preventing unbounded memory growth.
-	if ev.Type == event.BackendCapacityWarning && n.dampener != nil {
-		dampenKey := ev.Type + ":" + ev.Subject
-		if _, ok := n.dampener.Get(dampenKey); ok {
-			telemetry.NotificationDroppedTotal.Inc()
-			return
-		}
-		n.dampener.Set(dampenKey, struct{}{})
+// isDampened returns true when the event is a threshold-crossing type
+// already emitted recently. The dampener prevents repeated capacity
+// warnings from flooding downstream pipelines.
+func (n *Notifier) isDampened(ev *event.Event) bool {
+	if ev.Type != event.BackendCapacityWarning || n.dampener == nil {
+		return false
 	}
-
-	payload, err := json.Marshal(ev)
-	if err != nil {
-		slog.Error("Failed to marshal notification event", "type", ev.Type, "error", err) //nolint:sloglint // emit has no request context
-		return
+	dampenKey := ev.Type + ":" + ev.Subject
+	if _, ok := n.dampener.Get(dampenKey); ok {
+		telemetry.NotificationDroppedTotal.Inc()
+		return true
 	}
+	n.dampener.Set(dampenKey, struct{}{})
+	return false
+}
 
+// fanOutToEndpoints inserts one outbox row per configured endpoint whose
+// filter + prefix matches the event. The delivery worker picks the rows
+// up on its next drain tick.
+func (n *Notifier) fanOutToEndpoints(ev *event.Event, payload []byte) {
 	ctx, cancel := context.WithTimeout(context.Background(), emitTimeout)
 	defer cancel()
 
@@ -162,10 +180,8 @@ func (n *Notifier) emit(ev event.Event) { //nolint:gocritic // Event is passed b
 		if !event.MatchesFilter(ev.Type, ep.Events) {
 			continue
 		}
-		if ep.Prefix != "" && ev.Subject != "" {
-			if !hasPrefix(ev.Subject, ep.Prefix) {
-				continue
-			}
+		if ep.Prefix != "" && ev.Subject != "" && !hasPrefix(ev.Subject, ep.Prefix) {
+			continue
 		}
 		if err := n.store.InsertNotification(ctx, ev.Type, string(payload), ep.URL); err != nil {
 			slog.ErrorContext(ctx, "failed to enqueue notification",
@@ -202,36 +218,9 @@ func (n *Notifier) drainOnce(ctx context.Context) {
 		if err != nil {
 			return err
 		}
-
 		telemetry.NotificationQueueDepth.Set(float64(len(rows)))
-
 		for _, row := range rows {
-			ep := n.findEndpoint(row.EndpointURL)
-			if ep == nil {
-				n.completeOrLog(lockCtx, row.ID, "no_matching_endpoint")
-				continue
-			}
-
-			start := time.Now()
-			if err := n.deliver(lockCtx, row, ep); err != nil {
-				telemetry.NotificationFailedTotal.WithLabelValues(ep.URL, row.EventType).Inc()
-				backoff := time.Duration(1<<min(row.Attempts, maxBackoffShift)) * time.Second
-				maxRetries := ep.MaxRetries
-				if maxRetries <= 0 {
-					maxRetries = defaultMaxRetries
-				}
-				if int(row.Attempts)+1 >= maxRetries {
-					slog.ErrorContext(lockCtx, "notification delivery exhausted",
-						"endpoint", ep.URL, "event", row.EventType, "attempts", row.Attempts+1, "error", err)
-					n.completeOrLog(lockCtx, row.ID, "exhausted")
-				} else {
-					n.retryOrLog(lockCtx, row.ID, backoff, err.Error())
-				}
-			} else {
-				telemetry.NotificationSentTotal.WithLabelValues(ep.URL, row.EventType).Inc()
-				telemetry.NotificationDuration.WithLabelValues(ep.URL).Observe(time.Since(start).Seconds())
-				n.completeOrLog(lockCtx, row.ID, "delivered")
-			}
+			n.processPendingRow(lockCtx, row)
 		}
 		return nil
 	})
@@ -303,6 +292,45 @@ func generateEventID() string {
 	b := make([]byte, 12)
 	_, _ = rand.Read(b)
 	return "evt_" + hex.EncodeToString(b)
+}
+
+// processPendingRow handles one outbox row: either the endpoint no longer
+// exists (complete immediately), delivery failed (retry or exhaust), or
+// delivery succeeded (complete + metrics).
+func (n *Notifier) processPendingRow(ctx context.Context, row store.NotificationRow) {
+	ep := n.findEndpoint(row.EndpointURL)
+	if ep == nil {
+		n.completeOrLog(ctx, row.ID, "no_matching_endpoint")
+		return
+	}
+	start := time.Now()
+	err := n.deliver(ctx, row, ep)
+	if err != nil {
+		n.handleDeliveryFailure(ctx, row, ep, err)
+		return
+	}
+	telemetry.NotificationSentTotal.WithLabelValues(ep.URL, row.EventType).Inc()
+	telemetry.NotificationDuration.WithLabelValues(ep.URL).Observe(time.Since(start).Seconds())
+	n.completeOrLog(ctx, row.ID, "delivered")
+}
+
+// handleDeliveryFailure decides whether to schedule a retry or give up,
+// based on the endpoint's configured max retries and the row's current
+// attempt count.
+func (n *Notifier) handleDeliveryFailure(ctx context.Context, row store.NotificationRow, ep *config.NotificationEndpoint, err error) {
+	telemetry.NotificationFailedTotal.WithLabelValues(ep.URL, row.EventType).Inc()
+	backoff := time.Duration(1<<min(row.Attempts, maxBackoffShift)) * time.Second
+	maxRetries := ep.MaxRetries
+	if maxRetries <= 0 {
+		maxRetries = defaultMaxRetries
+	}
+	if int(row.Attempts)+1 >= maxRetries {
+		slog.ErrorContext(ctx, "notification delivery exhausted",
+			"endpoint", ep.URL, "event", row.EventType, "attempts", row.Attempts+1, "error", err)
+		n.completeOrLog(ctx, row.ID, "exhausted")
+		return
+	}
+	n.retryOrLog(ctx, row.ID, backoff, err.Error())
 }
 
 // completeOrLog marks a notification row complete in the outbox. Store

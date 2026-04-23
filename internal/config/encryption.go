@@ -41,19 +41,37 @@ func (e *EncryptionConfig) setDefaultsAndValidate() []error {
 	if !e.Enabled {
 		return nil
 	}
-
 	var errs []error
+	errs = append(errs, e.validateChunkSize()...)
+	errs = append(errs, e.validateKeySources()...)
+	errs = append(errs, validateMasterKey(e.MasterKey)...)
+	errs = append(errs, validateMasterKeyFile(e.MasterKeyFile)...)
+	errs = append(errs, validatePreviousKeys(e.PreviousKeys)...)
+	if e.Vault != nil {
+		errs = append(errs, e.Vault.setDefaultsAndValidate()...)
+	}
+	return errs
+}
 
+// validateChunkSize applies the ChunkSize default and enforces the
+// 4KB-1MB-power-of-two constraints.
+func (e *EncryptionConfig) validateChunkSize() []error {
 	if e.ChunkSize == 0 {
 		e.ChunkSize = 65536
 	}
 	cs := e.ChunkSize
 	if cs < 4096 || cs > 1048576 {
-		errs = append(errs, ErrInvalidChunkSize)
-	} else if cs&(cs-1) != 0 {
-		errs = append(errs, ErrChunkSizeNotPowerOf2)
+		return []error{ErrInvalidChunkSize}
 	}
+	if cs&(cs-1) != 0 {
+		return []error{ErrChunkSizeNotPowerOf2}
+	}
+	return nil
+}
 
+// validateKeySources enforces "exactly one of master_key, master_key_file,
+// or vault" — the fan-in rule that prevents ambiguous key material.
+func (e *EncryptionConfig) validateKeySources() []error {
 	sources := 0
 	if e.MasterKey != "" {
 		sources++
@@ -64,43 +82,63 @@ func (e *EncryptionConfig) setDefaultsAndValidate() []error {
 	if e.Vault != nil {
 		sources++
 	}
-	if sources == 0 {
-		errs = append(errs, ErrKeySourceRequired)
-	} else if sources > 1 {
-		errs = append(errs, ErrMultipleKeySources)
+	switch {
+	case sources == 0:
+		return []error{ErrKeySourceRequired}
+	case sources > 1:
+		return []error{ErrMultipleKeySources}
 	}
+	return nil
+}
 
-	if e.MasterKey != "" {
-		keyBytes, err := base64.StdEncoding.DecodeString(e.MasterKey)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("encryption.master_key: %w: %v", ErrInvalidBase64Key, err))
-		} else if len(keyBytes) != 32 {
-			errs = append(errs, fmt.Errorf("encryption.master_key: %w: got %d bytes", ErrInvalidKeyLength, len(keyBytes)))
-		}
+// validateMasterKey decodes the inline base64 master key and checks its
+// length. Returns nil when the field is unset (another source provides the
+// key material).
+func validateMasterKey(masterKey string) []error {
+	if masterKey == "" {
+		return nil
 	}
-
-	if e.MasterKeyFile != "" {
-		info, err := os.Stat(e.MasterKeyFile)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("%w: %v", ErrInvalidKeyFile, err))
-		} else if info.Size() != 32 {
-			errs = append(errs, fmt.Errorf("encryption.master_key_file: %w: got %d bytes", ErrInvalidKeyLength, info.Size()))
-		}
+	keyBytes, err := base64.StdEncoding.DecodeString(masterKey)
+	if err != nil {
+		return []error{fmt.Errorf("encryption.master_key: %w: %v", ErrInvalidBase64Key, err)}
 	}
+	if len(keyBytes) != 32 {
+		return []error{fmt.Errorf("encryption.master_key: %w: got %d bytes", ErrInvalidKeyLength, len(keyBytes))}
+	}
+	return nil
+}
 
-	for i, pk := range e.PreviousKeys {
+// validateMasterKeyFile stats the configured key file and checks it's the
+// expected 32 bytes. Returns nil when the field is unset.
+func validateMasterKeyFile(path string) []error {
+	if path == "" {
+		return nil
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return []error{fmt.Errorf("%w: %v", ErrInvalidKeyFile, err)}
+	}
+	if info.Size() != 32 {
+		return []error{fmt.Errorf("encryption.master_key_file: %w: got %d bytes", ErrInvalidKeyLength, info.Size())}
+	}
+	return nil
+}
+
+// validatePreviousKeys decodes each previous-key entry and checks length.
+// Used for rotation: previous keys must be valid so objects encrypted under
+// them can still be decrypted.
+func validatePreviousKeys(keys []string) []error {
+	var errs []error
+	for i, pk := range keys {
 		keyBytes, err := base64.StdEncoding.DecodeString(pk)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("encryption.previous_keys[%d]: %w: %v", i, ErrPreviousKeyInvalid, err))
-		} else if len(keyBytes) != 32 {
+			continue
+		}
+		if len(keyBytes) != 32 {
 			errs = append(errs, fmt.Errorf("encryption.previous_keys[%d]: %w: got %d bytes", i, ErrPreviousKeyInvalid, len(keyBytes)))
 		}
 	}
-
-	if e.Vault != nil {
-		errs = append(errs, e.Vault.setDefaultsAndValidate()...)
-	}
-
 	return errs
 }
 

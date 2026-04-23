@@ -360,53 +360,68 @@ type ListedObject struct {
 // calling fn for each page of results. Uses ListObjectsV2 pagination internally.
 func (b *S3Backend) ListObjects(ctx context.Context, prefix string, fn func([]ListedObject) error) error {
 	const operation = "ListObjectsV2"
-
-	// --- Start tracing span ---
 	ctx, span := telemetry.StartClientSpan(ctx, spanPrefix+operation,
 		telemetry.BackendAttributes(operation, b.name, b.endpoint, b.bucket, prefix)...,
 	)
 	defer span.End()
 
-	input := &s3.ListObjectsV2Input{
-		Bucket: aws.String(b.bucket),
-	}
-	if prefix != "" {
-		input.Prefix = aws.String(prefix)
-	}
-
-	paginator := s3.NewListObjectsV2Paginator(b.client, input)
+	paginator := s3.NewListObjectsV2Paginator(b.client, listObjectsInput(b.bucket, prefix))
 	for paginator.HasMorePages() {
-		start := time.Now()
-		page, err := paginator.NextPage(ctx)
-		b.recordOperation(operation, start, err)
-
+		page, err := b.nextListPage(ctx, paginator, operation)
 		if err != nil {
 			span.SetStatus(codes.Error, err.Error())
 			span.RecordError(err)
-			return fmt.Errorf("list objects failed: %w", err)
+			return err
 		}
-
-		objects := make([]ListedObject, len(page.Contents))
-		for i, obj := range page.Contents {
-			key := ""
-			if obj.Key != nil {
-				key = *obj.Key
-			}
-			size := int64(0)
-			if obj.Size != nil {
-				size = *obj.Size
-			}
-			objects[i] = ListedObject{Key: key, SizeBytes: size}
+		objects := convertListPage(page)
+		if len(objects) == 0 {
+			continue
 		}
-
-		if len(objects) > 0 {
-			if err := fn(objects); err != nil {
-				return err
-			}
+		if err := fn(objects); err != nil {
+			return err
 		}
 	}
-
 	return nil
+}
+
+// listObjectsInput builds the ListObjectsV2 input for the given bucket and
+// optional prefix.
+func listObjectsInput(bucket, prefix string) *s3.ListObjectsV2Input {
+	input := &s3.ListObjectsV2Input{Bucket: aws.String(bucket)}
+	if prefix != "" {
+		input.Prefix = aws.String(prefix)
+	}
+	return input
+}
+
+// nextListPage fetches the next paginator page and records its operation
+// metrics. Wraps the SDK error with context.
+func (b *S3Backend) nextListPage(ctx context.Context, paginator *s3.ListObjectsV2Paginator, operation string) (*s3.ListObjectsV2Output, error) {
+	start := time.Now()
+	page, err := paginator.NextPage(ctx)
+	b.recordOperation(operation, start, err)
+	if err != nil {
+		return nil, fmt.Errorf("list objects failed: %w", err)
+	}
+	return page, nil
+}
+
+// convertListPage maps SDK pointer-nullable Content objects to the flat
+// ListedObject shape callers expect.
+func convertListPage(page *s3.ListObjectsV2Output) []ListedObject {
+	objects := make([]ListedObject, len(page.Contents))
+	for i, obj := range page.Contents {
+		key := ""
+		if obj.Key != nil {
+			key = *obj.Key
+		}
+		size := int64(0)
+		if obj.Size != nil {
+			size = *obj.Size
+		}
+		objects[i] = ListedObject{Key: key, SizeBytes: size}
+	}
+	return objects
 }
 
 // -------------------------------------------------------------------------

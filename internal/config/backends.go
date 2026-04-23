@@ -34,47 +34,71 @@ func validateBackends(backends []BackendConfig) []error {
 		errs = append(errs, ErrNoBackends)
 	}
 
-	names := make(map[string]bool)
+	seenNames := make(map[string]bool)
 	for i := range backends {
-		b := &backends[i]
-		prefix := fmt.Sprintf("backends[%d]", i)
+		errs = append(errs, validateBackend(i, &backends[i], seenNames)...)
+	}
+	return errs
+}
 
-		if b.Name == "" {
-			b.Name = fmt.Sprintf("backend-%d", i)
-		}
-		if names[b.Name] {
-			errs = append(errs, prefixedDetail(prefix, ErrDuplicateBackend, fmt.Sprintf("%q", b.Name)))
-		}
-		names[b.Name] = true
-
-		if b.Endpoint == "" {
-			errs = append(errs, prefixed(prefix, ErrEndpointRequired))
-		}
-		if b.Bucket == "" {
-			errs = append(errs, prefixed(prefix, ErrBackendBucketReqd))
-		}
-		if b.AccessKeyID == "" {
-			errs = append(errs, prefixed(prefix, ErrAccessKeyIDReqd))
-		}
-		if b.SecretAccessKey == "" {
-			errs = append(errs, prefixed(prefix, ErrSecretAccessKeyReqd))
-		}
-		if b.QuotaBytes < 0 {
-			errs = append(errs, prefixed(prefix, ErrNegativeQuota))
-		}
-		if b.MaxObjectSize < 0 {
-			errs = append(errs, prefixed(prefix, ErrNegativeMaxObject))
-		}
-		if b.APIRequestLimit < 0 {
-			errs = append(errs, prefixed(prefix, ErrNegativeAPILimit))
-		}
-		if b.EgressByteLimit < 0 {
-			errs = append(errs, prefixed(prefix, ErrNegativeEgress))
-		}
-		if b.IngressByteLimit < 0 {
-			errs = append(errs, prefixed(prefix, ErrNegativeIngress))
-		}
+// validateBackend checks one entry in the backends list. seenNames is the
+// caller's shared set used to flag name collisions across the full list.
+// An empty Name is filled with a default so later messages and metrics can
+// reference it unambiguously.
+func validateBackend(idx int, b *BackendConfig, seenNames map[string]bool) []error {
+	prefix := fmt.Sprintf("backends[%d]", idx)
+	if b.Name == "" {
+		b.Name = fmt.Sprintf("backend-%d", idx)
 	}
 
+	var errs []error
+	if seenNames[b.Name] {
+		errs = append(errs, prefixedDetail(prefix, ErrDuplicateBackend, fmt.Sprintf("%q", b.Name)))
+	}
+	seenNames[b.Name] = true
+
+	errs = append(errs, requiredBackendStringErrs(prefix, b)...)
+	errs = append(errs, nonNegativeBackendFieldErrs(prefix, b)...)
+	return errs
+}
+
+// requiredBackendStringErrs returns errors for any required string field
+// that's missing on the given backend.
+func requiredBackendStringErrs(prefix string, b *BackendConfig) []error {
+	var errs []error
+	if b.Endpoint == "" {
+		errs = append(errs, prefixed(prefix, ErrEndpointRequired))
+	}
+	if b.Bucket == "" {
+		errs = append(errs, prefixed(prefix, ErrBackendBucketReqd))
+	}
+	if b.AccessKeyID == "" {
+		errs = append(errs, prefixed(prefix, ErrAccessKeyIDReqd))
+	}
+	if b.SecretAccessKey == "" {
+		errs = append(errs, prefixed(prefix, ErrSecretAccessKeyReqd))
+	}
+	return errs
+}
+
+// nonNegativeBackendFieldErrs returns one error per quota/limit field that
+// has gone negative.
+func nonNegativeBackendFieldErrs(prefix string, b *BackendConfig) []error {
+	var errs []error
+	if b.QuotaBytes < 0 {
+		errs = append(errs, prefixed(prefix, ErrNegativeQuota))
+	}
+	if b.MaxObjectSize < 0 {
+		errs = append(errs, prefixed(prefix, ErrNegativeMaxObject))
+	}
+	if b.APIRequestLimit < 0 {
+		errs = append(errs, prefixed(prefix, ErrNegativeAPILimit))
+	}
+	if b.EgressByteLimit < 0 {
+		errs = append(errs, prefixed(prefix, ErrNegativeEgress))
+	}
+	if b.IngressByteLimit < 0 {
+		errs = append(errs, prefixed(prefix, ErrNegativeIngress))
+	}
 	return errs
 }

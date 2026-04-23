@@ -36,19 +36,50 @@ func runInit() { // codecov:ignore -- interactive I/O wrapper, logic tested via 
 // runInitInteractive drives the interactive config generation flow.
 func runInitInteractive(configPath string, in *os.File, out *os.File) error {
 	scanner := bufio.NewScanner(in)
-
-	// Check for existing file
-	if _, err := os.Stat(configPath); err == nil {
-		fmt.Fprintf(out, "Config file %q already exists. Overwrite? [y/N] ", configPath)
-		if !scanYesNo(scanner) {
-			fmt.Fprintln(out, "Aborted.")
-			return nil
-		}
+	if confirmed, err := confirmOverwrite(configPath, scanner, out); !confirmed || err != nil {
+		return err
 	}
 
 	var params initParams
+	promptDatabase(scanner, out, &params)
+	promptBackends(scanner, out, &params)
+	promptBuckets(scanner, out, &params)
 
-	// --- Database driver ---
+	output, err := generateConfig(&params)
+	if err != nil {
+		return fmt.Errorf("generate config: %w", err)
+	}
+	if err := validateGeneratedConfig(output); err != nil {
+		return err
+	}
+	if err := os.WriteFile(configPath, []byte(output), 0600); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+
+	fmt.Fprintf(out, "\nConfig written to %s\n", configPath)
+	fmt.Fprintln(out, "\nNext steps:")
+	fmt.Fprintf(out, "  s3-orchestrator validate -config %s\n", configPath)
+	fmt.Fprintf(out, "  s3-orchestrator -config %s\n", configPath)
+	return nil
+}
+
+// confirmOverwrite prompts when the config file already exists. Returns
+// (true, nil) if the caller should proceed, (false, nil) if the user
+// aborted, or a wrapped error for any stat failure other than "not found".
+func confirmOverwrite(configPath string, scanner *bufio.Scanner, out *os.File) (bool, error) {
+	if _, err := os.Stat(configPath); err != nil {
+		return true, nil //nolint:nilerr // missing file is the normal init case
+	}
+	fmt.Fprintf(out, "Config file %q already exists. Overwrite? [y/N] ", configPath)
+	if !scanYesNo(scanner) {
+		fmt.Fprintln(out, "Aborted.")
+		return false, nil
+	}
+	return true, nil
+}
+
+// promptDatabase collects database driver + connection inputs.
+func promptDatabase(scanner *bufio.Scanner, out *os.File, params *initParams) {
 	fmt.Fprintln(out, "\n--- Database ---")
 	fmt.Fprint(out, "Database driver (sqlite/postgres) [sqlite]: ")
 	params.Driver = scanDefault(scanner, "sqlite")
@@ -64,48 +95,56 @@ func runInitInteractive(configPath string, in *os.File, out *os.File) error {
 		params.DBUser = scanDefault(scanner, "s3_orchestrator")
 		fmt.Fprint(out, "Database password: ")
 		params.DBPassword = scanDefault(scanner, "")
-	} else {
-		params.Driver = "sqlite"
-		fmt.Fprint(out, "SQLite database path [s3-orchestrator.db]: ")
-		params.DBPath = scanDefault(scanner, "s3-orchestrator.db")
+		return
 	}
+	params.Driver = "sqlite"
+	fmt.Fprint(out, "SQLite database path [s3-orchestrator.db]: ")
+	params.DBPath = scanDefault(scanner, "s3-orchestrator.db")
+}
 
-	// --- Backend ---
+// promptBackends collects one or more backend entries until the user
+// declines to add another.
+func promptBackends(scanner *bufio.Scanner, out *os.File, params *initParams) {
 	fmt.Fprintln(out, "\n--- Storage Backend ---")
 	for {
-		var be initBackend
-		fmt.Fprint(out, "Backend name: ")
-		be.Name = scanRequired(scanner, out, "Backend name: ")
-		fmt.Fprint(out, "S3 endpoint URL: ")
-		be.Endpoint = scanRequired(scanner, out, "S3 endpoint URL: ")
-		fmt.Fprint(out, "S3 bucket name: ")
-		be.Bucket = scanRequired(scanner, out, "S3 bucket name: ")
-		fmt.Fprint(out, "Access key ID: ")
-		be.AccessKeyID = scanRequired(scanner, out, "Access key ID: ")
-		fmt.Fprint(out, "Secret access key: ")
-		be.SecretAccessKey = scanRequired(scanner, out, "Secret access key: ")
-		fmt.Fprint(out, "Force path style? (yes for MinIO/OCI) [no]: ")
-		be.ForcePathStyle = strings.EqualFold(scanDefault(scanner, "no"), "yes")
-
-		fmt.Fprintln(out, "\nQuotas and limits (0 = unlimited):")
-		fmt.Fprint(out, "  Storage quota bytes [0]: ")
-		be.QuotaBytes = scanDefault(scanner, "0")
-		fmt.Fprint(out, "  Monthly API request limit [0]: ")
-		be.APIRequestLimit = scanDefault(scanner, "0")
-		fmt.Fprint(out, "  Monthly egress byte limit [0]: ")
-		be.EgressByteLimit = scanDefault(scanner, "0")
-		fmt.Fprint(out, "  Monthly ingress byte limit [0]: ")
-		be.IngressByteLimit = scanDefault(scanner, "0")
-
-		params.Backends = append(params.Backends, be)
-
+		params.Backends = append(params.Backends, promptSingleBackend(scanner, out))
 		fmt.Fprint(out, "\nAdd another backend? [y/N] ")
 		if !scanYesNo(scanner) {
-			break
+			return
 		}
 	}
+}
 
-	// --- Virtual bucket ---
+// promptSingleBackend collects the fields for one backend entry.
+func promptSingleBackend(scanner *bufio.Scanner, out *os.File) initBackend {
+	var be initBackend
+	fmt.Fprint(out, "Backend name: ")
+	be.Name = scanRequired(scanner, out, "Backend name: ")
+	fmt.Fprint(out, "S3 endpoint URL: ")
+	be.Endpoint = scanRequired(scanner, out, "S3 endpoint URL: ")
+	fmt.Fprint(out, "S3 bucket name: ")
+	be.Bucket = scanRequired(scanner, out, "S3 bucket name: ")
+	fmt.Fprint(out, "Access key ID: ")
+	be.AccessKeyID = scanRequired(scanner, out, "Access key ID: ")
+	fmt.Fprint(out, "Secret access key: ")
+	be.SecretAccessKey = scanRequired(scanner, out, "Secret access key: ")
+	fmt.Fprint(out, "Force path style? (yes for MinIO/OCI) [no]: ")
+	be.ForcePathStyle = strings.EqualFold(scanDefault(scanner, "no"), "yes")
+
+	fmt.Fprintln(out, "\nQuotas and limits (0 = unlimited):")
+	fmt.Fprint(out, "  Storage quota bytes [0]: ")
+	be.QuotaBytes = scanDefault(scanner, "0")
+	fmt.Fprint(out, "  Monthly API request limit [0]: ")
+	be.APIRequestLimit = scanDefault(scanner, "0")
+	fmt.Fprint(out, "  Monthly egress byte limit [0]: ")
+	be.EgressByteLimit = scanDefault(scanner, "0")
+	fmt.Fprint(out, "  Monthly ingress byte limit [0]: ")
+	be.IngressByteLimit = scanDefault(scanner, "0")
+	return be
+}
+
+// promptBuckets collects one or more virtual-bucket entries.
+func promptBuckets(scanner *bufio.Scanner, out *os.File, params *initParams) {
 	fmt.Fprintln(out, "\n--- Virtual Bucket ---")
 	for {
 		var bkt initBucket
@@ -115,22 +154,18 @@ func runInitInteractive(configPath string, in *os.File, out *os.File) error {
 		bkt.AccessKeyID = scanRequired(scanner, out, "Client access key ID: ")
 		fmt.Fprint(out, "Client secret access key: ")
 		bkt.SecretAccessKey = scanRequired(scanner, out, "Client secret access key: ")
-
 		params.Buckets = append(params.Buckets, bkt)
-
 		fmt.Fprint(out, "Add another bucket? [y/N] ")
 		if !scanYesNo(scanner) {
-			break
+			return
 		}
 	}
+}
 
-	// --- Generate and write ---
-	output, err := generateConfig(&params)
-	if err != nil {
-		return fmt.Errorf("generate config: %w", err)
-	}
-
-	// Validate before writing
+// validateGeneratedConfig writes the generated YAML to a temp file and
+// runs the real LoadConfig over it to catch any defects before we
+// overwrite the user's existing config.
+func validateGeneratedConfig(yaml string) error {
 	tmpFile, err := os.CreateTemp("", "s3orch-init-*.yaml")
 	if err != nil {
 		return fmt.Errorf("create temp file: %w", err)
@@ -138,7 +173,7 @@ func runInitInteractive(configPath string, in *os.File, out *os.File) error {
 	tmpPath := tmpFile.Name()
 	defer os.Remove(tmpPath)
 
-	if _, err := tmpFile.WriteString(output); err != nil {
+	if _, err := tmpFile.WriteString(yaml); err != nil {
 		tmpFile.Close()
 		return fmt.Errorf("write temp config: %w", err)
 	}
@@ -147,15 +182,6 @@ func runInitInteractive(configPath string, in *os.File, out *os.File) error {
 	if _, err := config.LoadConfig(tmpPath); err != nil {
 		return fmt.Errorf("generated config is invalid: %w", err)
 	}
-
-	if err := os.WriteFile(configPath, []byte(output), 0600); err != nil {
-		return fmt.Errorf("write config: %w", err)
-	}
-
-	fmt.Fprintf(out, "\nConfig written to %s\n", configPath)
-	fmt.Fprintln(out, "\nNext steps:")
-	fmt.Fprintf(out, "  s3-orchestrator validate -config %s\n", configPath)
-	fmt.Fprintf(out, "  s3-orchestrator -config %s\n", configPath)
 	return nil
 }
 
