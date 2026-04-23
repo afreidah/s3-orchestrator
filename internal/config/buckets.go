@@ -35,49 +35,60 @@ func validateBuckets(buckets []BucketConfig) []error {
 		errs = append(errs, ErrNoBuckets)
 	}
 
-	bucketNames := make(map[string]bool)
-	accessKeys := make(map[string]bool)
+	seenNames := make(map[string]bool)
+	seenAccessKeys := make(map[string]bool)
 	for i := range buckets {
-		bkt := &buckets[i]
-		prefix := fmt.Sprintf("buckets[%d]", i)
+		errs = append(errs, validateBucket(i, &buckets[i], seenNames, seenAccessKeys)...)
+	}
+	return errs
+}
 
-		if bkt.Name == "" {
-			errs = append(errs, prefixed(prefix, ErrBucketNameRequired))
-		}
-		if strings.Contains(bkt.Name, "/") {
-			errs = append(errs, prefixed(prefix, ErrBucketNameHasSlash))
-		}
-		if bucketNames[bkt.Name] {
-			errs = append(errs, prefixedDetail(prefix, ErrDuplicateBucketName, fmt.Sprintf("%q", bkt.Name)))
-		}
-		bucketNames[bkt.Name] = true
+// validateBucket checks a single bucket entry. seenNames and seenAccessKeys
+// are shared maps the caller maintains across the full list to detect
+// duplicates across bucket boundaries.
+func validateBucket(idx int, bkt *BucketConfig, seenNames, seenAccessKeys map[string]bool) []error {
+	prefix := fmt.Sprintf("buckets[%d]", idx)
+	var errs []error
 
-		if bkt.MaxMultipartUploads < 0 {
-			errs = append(errs, prefixed(prefix, ErrNegativeMaxUploads))
-		}
+	if bkt.Name == "" {
+		errs = append(errs, prefixed(prefix, ErrBucketNameRequired))
+	}
+	if strings.Contains(bkt.Name, "/") {
+		errs = append(errs, prefixed(prefix, ErrBucketNameHasSlash))
+	}
+	if seenNames[bkt.Name] {
+		errs = append(errs, prefixedDetail(prefix, ErrDuplicateBucketName, fmt.Sprintf("%q", bkt.Name)))
+	}
+	seenNames[bkt.Name] = true
 
-		if len(bkt.Credentials) == 0 {
-			errs = append(errs, prefixed(prefix, ErrNoCredential))
-		}
-
-		for j := range bkt.Credentials {
-			cred := &bkt.Credentials[j]
-			credPrefix := fmt.Sprintf("%s.credentials[%d]", prefix, j)
-
-			hasSigV4 := cred.AccessKeyID != "" && cred.SecretAccessKey != ""
-			hasToken := cred.Token != ""
-			if !hasSigV4 && !hasToken {
-				errs = append(errs, prefixed(credPrefix, ErrInvalidCredential))
-			}
-
-			if cred.AccessKeyID != "" {
-				if accessKeys[cred.AccessKeyID] {
-					errs = append(errs, prefixedDetail(credPrefix, ErrDuplicateCredential, fmt.Sprintf("%q", cred.AccessKeyID)))
-				}
-				accessKeys[cred.AccessKeyID] = true
-			}
-		}
+	if bkt.MaxMultipartUploads < 0 {
+		errs = append(errs, prefixed(prefix, ErrNegativeMaxUploads))
+	}
+	if len(bkt.Credentials) == 0 {
+		errs = append(errs, prefixed(prefix, ErrNoCredential))
 	}
 
+	for j := range bkt.Credentials {
+		errs = append(errs, validateCredential(prefix, j, &bkt.Credentials[j], seenAccessKeys)...)
+	}
+	return errs
+}
+
+// validateCredential checks a single credential entry within a bucket.
+func validateCredential(bucketPrefix string, idx int, cred *CredentialConfig, seenAccessKeys map[string]bool) []error {
+	prefix := fmt.Sprintf("%s.credentials[%d]", bucketPrefix, idx)
+	var errs []error
+
+	hasSigV4 := cred.AccessKeyID != "" && cred.SecretAccessKey != ""
+	hasToken := cred.Token != ""
+	if !hasSigV4 && !hasToken {
+		errs = append(errs, prefixed(prefix, ErrInvalidCredential))
+	}
+	if cred.AccessKeyID != "" {
+		if seenAccessKeys[cred.AccessKeyID] {
+			errs = append(errs, prefixedDetail(prefix, ErrDuplicateCredential, fmt.Sprintf("%q", cred.AccessKeyID)))
+		}
+		seenAccessKeys[cred.AccessKeyID] = true
+	}
 	return errs
 }
