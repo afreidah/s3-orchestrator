@@ -277,25 +277,43 @@ func generateTLSCerts(t *testing.T) *tlsTestCerts {
 	// --- Server cert ---
 	certs.ServerCertFile = filepath.Join(dir, "server-cert.pem")
 	certs.ServerKeyFile = filepath.Join(dir, "server-key.pem")
-	writeSignedCert(t, caCert, caKey, certs.ServerCertFile, certs.ServerKeyFile,
-		[]string{"localhost"}, []net.IP{net.IPv4(127, 0, 0, 1)},
-		[]x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, 2)
+	writeSignedCert(t, caCert, caKey, signedCertParams{
+		CertFile:    certs.ServerCertFile,
+		KeyFile:     certs.ServerKeyFile,
+		DNSNames:    []string{"localhost"},
+		IPs:         []net.IP{net.IPv4(127, 0, 0, 1)},
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		Serial:      2,
+	})
 
 	// --- Client cert ---
 	certs.ClientCertFile = filepath.Join(dir, "client-cert.pem")
 	certs.ClientKeyFile = filepath.Join(dir, "client-key.pem")
-	writeSignedCert(t, caCert, caKey, certs.ClientCertFile, certs.ClientKeyFile,
-		nil, nil,
-		[]x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, 3)
+	writeSignedCert(t, caCert, caKey, signedCertParams{
+		CertFile:    certs.ClientCertFile,
+		KeyFile:     certs.ClientKeyFile,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		Serial:      3,
+	})
 
 	return certs
 }
 
+// signedCertParams groups the fields writeSignedCert needs beyond the CA it
+// signs with. Extracting a struct keeps the function signature readable for
+// callers with many optional fields (DNS names, IPs, ext-key-usage, serial).
+type signedCertParams struct {
+	CertFile    string
+	KeyFile     string
+	DNSNames    []string
+	IPs         []net.IP
+	ExtKeyUsage []x509.ExtKeyUsage
+	Serial      int64
+}
+
 // writeSignedCert generates an ECDSA key pair and a certificate signed by the
 // given CA, then writes the cert and key to the specified files.
-func writeSignedCert(t *testing.T, caCert *x509.Certificate, caKey *ecdsa.PrivateKey,
-	certFile, keyFile string, dnsNames []string, ips []net.IP,
-	extKeyUsage []x509.ExtKeyUsage, serial int64) {
+func writeSignedCert(t *testing.T, caCert *x509.Certificate, caKey *ecdsa.PrivateKey, p signedCertParams) {
 	t.Helper()
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -304,14 +322,14 @@ func writeSignedCert(t *testing.T, caCert *x509.Certificate, caKey *ecdsa.Privat
 	}
 
 	template := &x509.Certificate{
-		SerialNumber: big.NewInt(serial),
+		SerialNumber: big.NewInt(p.Serial),
 		Subject:      pkix.Name{CommonName: "test"},
 		NotBefore:    time.Now(),
 		NotAfter:     time.Now().Add(time.Hour),
-		DNSNames:     dnsNames,
-		IPAddresses:  ips,
+		DNSNames:     p.DNSNames,
+		IPAddresses:  p.IPs,
 		KeyUsage:     x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  extKeyUsage,
+		ExtKeyUsage:  p.ExtKeyUsage,
 	}
 
 	certDER, err := x509.CreateCertificate(rand.Reader, template, caCert, &key.PublicKey, caKey)
@@ -319,7 +337,7 @@ func writeSignedCert(t *testing.T, caCert *x509.Certificate, caKey *ecdsa.Privat
 		t.Fatalf("create cert: %v", err)
 	}
 
-	if err := os.WriteFile(certFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER}), 0644); err != nil {
+	if err := os.WriteFile(p.CertFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER}), 0644); err != nil {
 		t.Fatalf("write cert: %v", err)
 	}
 
@@ -327,7 +345,7 @@ func writeSignedCert(t *testing.T, caCert *x509.Certificate, caKey *ecdsa.Privat
 	if err != nil {
 		t.Fatalf("marshal key: %v", err)
 	}
-	if err := os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), 0600); err != nil {
+	if err := os.WriteFile(p.KeyFile, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), 0600); err != nil {
 		t.Fatalf("write key: %v", err)
 	}
 }
@@ -336,10 +354,14 @@ func writeSignedCert(t *testing.T, caCert *x509.Certificate, caKey *ecdsa.Privat
 // a certificate rotation (e.g. Vault PKI renewal).
 func rewriteServerCert(t *testing.T, certs *tlsTestCerts) {
 	t.Helper()
-	writeSignedCert(t, certs.caCert, certs.caKey,
-		certs.ServerCertFile, certs.ServerKeyFile,
-		[]string{"localhost"}, []net.IP{net.IPv4(127, 0, 0, 1)},
-		[]x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, 100)
+	writeSignedCert(t, certs.caCert, certs.caKey, signedCertParams{
+		CertFile:    certs.ServerCertFile,
+		KeyFile:     certs.ServerKeyFile,
+		DNSNames:    []string{"localhost"},
+		IPs:         []net.IP{net.IPv4(127, 0, 0, 1)},
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		Serial:      100,
+	})
 }
 
 // startTLSProxy starts an ephemeral TLS-enabled proxy sharing the global

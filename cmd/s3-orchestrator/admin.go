@@ -30,6 +30,9 @@ const (
 	flagBatchSize     = "batch-size"
 	fmtBatchSize      = "?batch_size=%d"
 	fmtError          = "error: %v\n"
+
+	errBackendNameRequired = "error: backend name is required"
+	drainSubpath           = "/drain"
 )
 
 func runAdmin() { // codecov:ignore -- CLI entry point, delegates to adminCommand
@@ -154,24 +157,24 @@ func adminCommand(cmd string, args []string, baseAddr, token string, stdout, std
 
 	case "drain":
 		if len(args) == 0 {
-			fmt.Fprintln(stderr, "error: backend name is required")
+			fmt.Fprintln(stderr, errBackendNameRequired)
 			return 1
 		}
-		return doPost(baseAddr+adminBackendsPath+args[0]+"/drain", "", token, stdout, stderr)
+		return doPost(baseAddr+adminBackendsPath+args[0]+drainSubpath, "", token, stdout, stderr)
 
 	case "drain-status":
 		if len(args) == 0 {
-			fmt.Fprintln(stderr, "error: backend name is required")
+			fmt.Fprintln(stderr, errBackendNameRequired)
 			return 1
 		}
-		return doGet(baseAddr+adminBackendsPath+args[0]+"/drain", token, stdout, stderr)
+		return doGet(baseAddr+adminBackendsPath+args[0]+drainSubpath, token, stdout, stderr)
 
 	case "drain-cancel":
 		if len(args) == 0 {
-			fmt.Fprintln(stderr, "error: backend name is required")
+			fmt.Fprintln(stderr, errBackendNameRequired)
 			return 1
 		}
-		return doDelete(baseAddr+adminBackendsPath+args[0]+"/drain", token, stdout, stderr)
+		return doDelete(baseAddr+adminBackendsPath+args[0]+drainSubpath, token, stdout, stderr)
 
 	case "scrub":
 		fs := flag.NewFlagSet("scrub", flag.ContinueOnError)
@@ -208,7 +211,7 @@ func adminCommand(cmd string, args []string, baseAddr, token string, stdout, std
 			return 1
 		}
 		if fs.NArg() == 0 {
-			fmt.Fprintln(stderr, "error: backend name is required")
+			fmt.Fprintln(stderr, errBackendNameRequired)
 			return 1
 		}
 		name := fs.Arg(0)

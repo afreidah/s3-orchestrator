@@ -67,6 +67,9 @@ services:
     environment:
       POSTGRES_DB: s3proxy_test
       POSTGRES_USER: s3proxy
+      # NOSONAR — test-only docker-compose; matches the user name to keep the
+      # integration harness bootable without environment variables. Never used
+      # in production.
       POSTGRES_PASSWORD: s3proxy
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U s3proxy -d s3proxy_test"]

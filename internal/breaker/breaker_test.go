@@ -175,7 +175,7 @@ func TestCB_OpenDuration_PositiveWhenHalfOpen(t *testing.T) {
 	if cb.State() != StateHalfOpen {
 		t.Fatalf("expected half-open, got %v", cb.State())
 	}
-	if d := cb.OpenDuration(); d == 0 {
+	if cb.OpenDuration() == 0 {
 		t.Fatal("expected positive duration in half-open state")
 	}
 }
