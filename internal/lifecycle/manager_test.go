@@ -122,7 +122,7 @@ func TestManager_RunAndStop(t *testing.T) {
 		t.Fatal("Manager.Run did not return after context cancellation")
 	}
 
-	if n := svc.count.Load(); n == 0 {
+	if svc.count.Load() == 0 {
 		t.Error("Service never ran")
 	}
 }

@@ -85,7 +85,11 @@ func (d *DrainManager) StartDrain(ctx context.Context, name string) error {
 	if _, ok := d.backends[name]; !ok {
 		return fmt.Errorf("backend %q not found", name)
 	}
-	drainCtx, cancel := context.WithCancel(context.Background())
+	// Deliberately decouple from the caller's ctx: the drain runs in a
+	// background goroutine that must outlive the HTTP request that started
+	// it. CancelDrain + ctx.Done() in the worker loop provide explicit
+	// shutdown hooks.
+	drainCtx, cancel := context.WithCancel(context.Background()) //nolint:contextcheck // goroutine outlives caller by design
 	state := &drainState{
 		cancel: cancel,
 		done:   make(chan struct{}),
