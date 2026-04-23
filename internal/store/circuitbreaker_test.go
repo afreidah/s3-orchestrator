@@ -522,8 +522,10 @@ func TestCircuitBreaker_TransitionLogs_OpenToHalfOpen(t *testing.T) {
 	}
 }
 
+// Not t.Parallel(): captureLogs mutates slog.SetDefault (process-global),
+// which races with other parallel tests emitting slog calls. The three
+// sibling TransitionLogs_* tests are all serial for the same reason.
 func TestCircuitBreaker_TransitionLogs_HalfOpenToClosed(t *testing.T) {
-	t.Parallel()
 	dbErr := errors.New("connection refused")
 	mock := &mockStore{getAllLocationsErr: dbErr}
 	cb := newTestCB(mock, 1, 10*time.Millisecond)
