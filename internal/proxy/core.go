@@ -84,6 +84,8 @@ func (c *backendCore) releaseAdmission() {
 // If no timeout is configured, the original context is returned unchanged.
 func (c *backendCore) withTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
 	if c.backendTimeout <= 0 {
+		// No timeout configured — return a no-op cancel so the caller can
+		// defer cancel() unconditionally without a nil check.
 		return ctx, func() {}
 	}
 	if deadline, ok := ctx.Deadline(); ok {

@@ -27,6 +27,7 @@ import (
 	"github.com/exaring/otelpgx"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	// Registers the pgx database/sql driver used by goose migrations below.
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 
@@ -279,20 +280,40 @@ func toObjectLocations[T objectLocationRow](rows []T) []ObjectLocation {
 func toObjectLocation(row any) ObjectLocation {
 	switch r := row.(type) {
 	case db.GetAllObjectLocationsRow:
-		return objectLocationFromDB(r.ObjectKey, r.BackendName, r.SizeBytes,
-			r.Encrypted, r.EncryptionKey, r.KeyID, r.PlaintextSize, r.ContentHash, r.CreatedAt.Time)
+		return objectLocationFromDB(&dbObjectRow{
+			Key: r.ObjectKey, Backend: r.BackendName, Size: r.SizeBytes,
+			Encrypted: r.Encrypted, EncryptionKey: r.EncryptionKey,
+			KeyID: r.KeyID, PlaintextSize: r.PlaintextSize, ContentHash: r.ContentHash,
+			CreatedAt: r.CreatedAt.Time,
+		})
 	case db.GetUnderReplicatedObjectsRow:
-		return objectLocationFromDB(r.ObjectKey, r.BackendName, r.SizeBytes,
-			r.Encrypted, r.EncryptionKey, r.KeyID, r.PlaintextSize, r.ContentHash, r.CreatedAt.Time)
+		return objectLocationFromDB(&dbObjectRow{
+			Key: r.ObjectKey, Backend: r.BackendName, Size: r.SizeBytes,
+			Encrypted: r.Encrypted, EncryptionKey: r.EncryptionKey,
+			KeyID: r.KeyID, PlaintextSize: r.PlaintextSize, ContentHash: r.ContentHash,
+			CreatedAt: r.CreatedAt.Time,
+		})
 	case db.GetUnderReplicatedObjectsExcludingRow:
-		return objectLocationFromDB(r.ObjectKey, r.BackendName, r.SizeBytes,
-			r.Encrypted, r.EncryptionKey, r.KeyID, r.PlaintextSize, r.ContentHash, r.CreatedAt.Time)
+		return objectLocationFromDB(&dbObjectRow{
+			Key: r.ObjectKey, Backend: r.BackendName, Size: r.SizeBytes,
+			Encrypted: r.Encrypted, EncryptionKey: r.EncryptionKey,
+			KeyID: r.KeyID, PlaintextSize: r.PlaintextSize, ContentHash: r.ContentHash,
+			CreatedAt: r.CreatedAt.Time,
+		})
 	case db.GetOverReplicatedObjectsRow:
-		return objectLocationFromDB(r.ObjectKey, r.BackendName, r.SizeBytes,
-			r.Encrypted, r.EncryptionKey, r.KeyID, r.PlaintextSize, r.ContentHash, r.CreatedAt.Time)
+		return objectLocationFromDB(&dbObjectRow{
+			Key: r.ObjectKey, Backend: r.BackendName, Size: r.SizeBytes,
+			Encrypted: r.Encrypted, EncryptionKey: r.EncryptionKey,
+			KeyID: r.KeyID, PlaintextSize: r.PlaintextSize, ContentHash: r.ContentHash,
+			CreatedAt: r.CreatedAt.Time,
+		})
 	case db.GetObjectCopiesForUpdateRow:
-		return objectLocationFromDB(r.ObjectKey, r.BackendName, r.SizeBytes,
-			r.Encrypted, r.EncryptionKey, r.KeyID, r.PlaintextSize, r.ContentHash, r.CreatedAt.Time)
+		return objectLocationFromDB(&dbObjectRow{
+			Key: r.ObjectKey, Backend: r.BackendName, Size: r.SizeBytes,
+			Encrypted: r.Encrypted, EncryptionKey: r.EncryptionKey,
+			KeyID: r.KeyID, PlaintextSize: r.PlaintextSize, ContentHash: r.ContentHash,
+			CreatedAt: r.CreatedAt.Time,
+		})
 	case db.ListObjectsByBackendRow:
 		return ObjectLocation{ObjectKey: r.ObjectKey, BackendName: r.BackendName, SizeBytes: r.SizeBytes, CreatedAt: r.CreatedAt.Time}
 	case db.ListObjectsByPrefixRow:
@@ -302,35 +323,59 @@ func toObjectLocation(row any) ObjectLocation {
 	case db.ListDirectChildrenRow:
 		return ObjectLocation{ObjectKey: r.ObjectKey, BackendName: r.BackendName, SizeBytes: r.SizeBytes, CreatedAt: r.CreatedAt.Time}
 	case db.GetRandomHashedObjectsRow:
-		return objectLocationFromDB(r.ObjectKey, r.BackendName, r.SizeBytes,
-			r.Encrypted, r.EncryptionKey, r.KeyID, r.PlaintextSize, r.ContentHash, r.CreatedAt.Time)
+		return objectLocationFromDB(&dbObjectRow{
+			Key: r.ObjectKey, Backend: r.BackendName, Size: r.SizeBytes,
+			Encrypted: r.Encrypted, EncryptionKey: r.EncryptionKey,
+			KeyID: r.KeyID, PlaintextSize: r.PlaintextSize, ContentHash: r.ContentHash,
+			CreatedAt: r.CreatedAt.Time,
+		})
 	case db.GetObjectsWithoutHashRow:
-		return objectLocationFromDB(r.ObjectKey, r.BackendName, r.SizeBytes,
-			r.Encrypted, r.EncryptionKey, r.KeyID, r.PlaintextSize, r.ContentHash, r.CreatedAt.Time)
+		return objectLocationFromDB(&dbObjectRow{
+			Key: r.ObjectKey, Backend: r.BackendName, Size: r.SizeBytes,
+			Encrypted: r.Encrypted, EncryptionKey: r.EncryptionKey,
+			KeyID: r.KeyID, PlaintextSize: r.PlaintextSize, ContentHash: r.ContentHash,
+			CreatedAt: r.CreatedAt.Time,
+		})
 	default:
 		return ObjectLocation{}
 	}
 }
 
+// dbObjectRow captures the union of fields the various sqlc-generated row
+// types for encrypted object queries expose. Extracting a struct keeps
+// objectLocationFromDB at two parameters and makes callers explicit about
+// which nullable columns they're passing.
+type dbObjectRow struct {
+	Key           string
+	Backend       string
+	Size          int64
+	Encrypted     bool
+	EncryptionKey []byte
+	KeyID         *string
+	PlaintextSize *int64
+	ContentHash   *string
+	CreatedAt     time.Time
+}
+
 // objectLocationFromDB builds an ObjectLocation from database column values,
 // safely dereferencing nullable pointer fields.
-func objectLocationFromDB(key, backend string, size int64, encrypted bool, encKey []byte, keyID *string, ptSize *int64, contentHash *string, created time.Time) ObjectLocation {
+func objectLocationFromDB(r *dbObjectRow) ObjectLocation {
 	loc := ObjectLocation{
-		ObjectKey:     key,
-		BackendName:   backend,
-		SizeBytes:     size,
-		CreatedAt:     created,
-		Encrypted:     encrypted,
-		EncryptionKey: encKey,
+		ObjectKey:     r.Key,
+		BackendName:   r.Backend,
+		SizeBytes:     r.Size,
+		CreatedAt:     r.CreatedAt,
+		Encrypted:     r.Encrypted,
+		EncryptionKey: r.EncryptionKey,
 	}
-	if keyID != nil {
-		loc.KeyID = *keyID
+	if r.KeyID != nil {
+		loc.KeyID = *r.KeyID
 	}
-	if ptSize != nil {
-		loc.PlaintextSize = *ptSize
+	if r.PlaintextSize != nil {
+		loc.PlaintextSize = *r.PlaintextSize
 	}
-	if contentHash != nil {
-		loc.ContentHash = *contentHash
+	if r.ContentHash != nil {
+		loc.ContentHash = *r.ContentHash
 	}
 	return loc
 }
