@@ -73,7 +73,7 @@ func setupEncryptionEnv(t *testing.T) *encryptionTestEnv {
 	}
 
 	// Build a manager with encryption enabled using the same backends/store
-	cbStore := store.NewCircuitBreakerStore(testStore, config.CircuitBreakerConfig{
+	dbCB := store.NewDatabaseBreaker(config.CircuitBreakerConfig{
 		FailureThreshold: 3,
 		OpenTimeout:      500 * time.Millisecond,
 		CacheTTL:         60 * time.Second,
@@ -81,7 +81,9 @@ func setupEncryptionEnv(t *testing.T) *encryptionTestEnv {
 
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        testBackends,
-		Store:           cbStore,
+		Stores:          newCBStores(testStore, dbCB),
+		Dashboard:       store.NewCBDashboardStore(testStore, dbCB),
+		Metrics:         newMetricsAdapter(testStore, dbCB),
 		Order:           testBackendOrder,
 		CacheTTL:        60 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -111,7 +113,9 @@ func setupEncryptionEnv(t *testing.T) *encryptionTestEnv {
 	// Start admin server
 	var lv slog.LevelVar
 	lv.Set(slog.LevelInfo)
-	adminHandler := admin.New(mgr, cbStore, testStore, enc, nil, adminToken, &lv)
+	adminObjects := store.NewCBObjectStore(testStore, dbCB)
+	adminCleanup := store.NewCBCleanupStore(testStore, dbCB)
+	adminHandler := admin.New(mgr, dbCB, testStore, enc, nil, adminToken, &lv, adminObjects, adminCleanup)
 	adminMux := http.NewServeMux()
 	adminHandler.Register(adminMux)
 

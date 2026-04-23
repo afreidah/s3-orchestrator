@@ -128,7 +128,9 @@ func newTestServer(t *testing.T) (*httptest.Server, *testutil.MockStore, *server
 
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        map[string]s3be.ObjectBackend{"b1": backend},
-		Store:           mockStore,
+		Stores:           proxy.StoresFromMock(mockStore),
+		Dashboard:           mockStore,
+		Metrics:           mockStore,
 		Order:           []string{"b1"},
 		RoutingStrategy: config.RoutingPack,
 	})

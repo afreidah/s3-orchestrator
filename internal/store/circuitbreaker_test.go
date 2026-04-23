@@ -27,11 +27,55 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
-func newTestCB(mock *mockStore, threshold int, timeout time.Duration) *CircuitBreakerStore {
-	return NewCircuitBreakerStore(mock, config.CircuitBreakerConfig{
-		FailureThreshold: threshold,
-		OpenTimeout:      timeout,
-	})
+// testCBBundle exercises the shared *breaker.CircuitBreaker through every
+// per-role CB wrapper. Tests call any method they need; all wrappers share
+// the same breaker, so failures on one method transition the same circuit
+// state seen by another. Production code never composes roles — this
+// aggregation exists only to keep the circuit-breaker state-machine tests
+// compact.
+type testCBBundle struct {
+	ObjectStore
+	MultipartStore
+	ReplicationStore
+	CleanupStore
+	IntegrityStore
+	LifecycleStore
+	BackendLifecycleStore
+	DashboardStore
+	UsageFlusher
+	AdvisoryLocker
+	quota QuotaStore
+	*breaker.CircuitBreaker
+}
+
+// GetBackendWithSpace forwards to the embedded QuotaStore — given by name
+// to avoid ambiguous method promotion with DashboardStore.GetQuotaStats.
+func (t *testCBBundle) GetBackendWithSpace(ctx context.Context, size int64, backendOrder []string) (string, error) {
+	return t.quota.GetBackendWithSpace(ctx, size, backendOrder)
+}
+
+// GetLeastUtilizedBackend forwards to the embedded QuotaStore.
+func (t *testCBBundle) GetLeastUtilizedBackend(ctx context.Context, size int64, eligible []string) (string, error) {
+	return t.quota.GetLeastUtilizedBackend(ctx, size, eligible)
+}
+
+func newTestCB(mock *mockStore, threshold int, timeout time.Duration) *testCBBundle {
+	_ = config.CircuitBreakerConfig{}
+	cb := breaker.NewCircuitBreaker("database", threshold, timeout, isDBError, ErrDBUnavailable)
+	return &testCBBundle{
+		ObjectStore:           NewCBObjectStore(mock, cb),
+		MultipartStore:        NewCBMultipartStore(mock, cb),
+		ReplicationStore:      NewCBReplicationStore(mock, cb),
+		CleanupStore:          NewCBCleanupStore(mock, cb),
+		IntegrityStore:        NewCBIntegrityStore(mock, cb),
+		LifecycleStore:        NewCBLifecycleStore(mock, cb),
+		BackendLifecycleStore: NewCBBackendLifecycleStore(mock, cb),
+		DashboardStore:        NewCBDashboardStore(mock, cb),
+		UsageFlusher:          NewCBUsageFlusher(mock, cb),
+		AdvisoryLocker:        NewAdvisoryLocker(mock),
+		quota:                 NewCBQuotaStore(mock, cb),
+		CircuitBreaker:        cb,
+	}
 }
 
 func TestCircuitBreaker_ClosedPassesThrough(t *testing.T) {

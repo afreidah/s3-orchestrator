@@ -25,21 +25,25 @@ import (
 	"strings"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 
-	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 
 	// Handler serves the admin API endpoints.
 	"github.com/afreidah/s3-orchestrator/internal/store"
 )
 
+// Handler serves the admin API endpoints.
 type Handler struct {
 	manager    *proxy.BackendManager
 	reconciler *worker.Reconciler
-	store      *store.CircuitBreakerStore
+	dbCB       *breaker.CircuitBreaker
+	objects    store.ObjectStore
+	cleanup    store.CleanupStore
 	rawStore   store.AdminStore
 	encryptor  *encryption.Encryptor
 	token      string
@@ -47,11 +51,13 @@ type Handler struct {
 }
 
 // New creates a new admin API handler.
-func New(manager *proxy.BackendManager, store *store.CircuitBreakerStore, rawStore store.AdminStore, encryptor *encryption.Encryptor, reconciler *worker.Reconciler, token string, logLevel *slog.LevelVar) *Handler {
+func New(manager *proxy.BackendManager, dbCB *breaker.CircuitBreaker, rawStore store.AdminStore, encryptor *encryption.Encryptor, reconciler *worker.Reconciler, token string, logLevel *slog.LevelVar, objects store.ObjectStore, cleanup store.CleanupStore) *Handler {
 	return &Handler{
 		manager:    manager,
 		reconciler: reconciler,
-		store:      store,
+		dbCB:       dbCB,
+		objects:    objects,
+		cleanup:    cleanup,
 		rawStore:   rawStore,
 		encryptor:  encryptor,
 		token:      token,
@@ -141,7 +147,7 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"db_healthy":   h.store.IsHealthy(),
+		"db_healthy":   h.dbCB.IsHealthy(),
 		"backends":     backends,
 		"usage_period": data.UsagePeriod,
 	})
@@ -155,7 +161,7 @@ func (h *Handler) handleObjectLocations(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	locations, err := h.store.GetAllObjectLocations(r.Context(), key)
+	locations, err := h.objects.GetAllObjectLocations(r.Context(), key)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "Admin: failed to fetch object locations", "key", key, "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch locations"})
@@ -167,14 +173,14 @@ func (h *Handler) handleObjectLocations(w http.ResponseWriter, r *http.Request) 
 
 // handleCleanupQueue returns cleanup queue depth and pending items.
 func (h *Handler) handleCleanupQueue(w http.ResponseWriter, r *http.Request) {
-	depth, err := h.store.CleanupQueueDepth(r.Context())
+	depth, err := h.cleanup.CleanupQueueDepth(r.Context())
 	if err != nil {
 		slog.ErrorContext(r.Context(), "Admin: failed to fetch cleanup queue depth", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch cleanup queue"})
 		return
 	}
 
-	items, err := h.store.GetPendingCleanups(r.Context(), 50)
+	items, err := h.cleanup.GetPendingCleanups(r.Context(), 50)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "Admin: failed to fetch pending cleanups", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch cleanup queue"})
@@ -386,7 +392,7 @@ func (h *Handler) handleRemoveBackend(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Purge phase 1: preview what will be destroyed, return confirmation token
-	objectCount, totalBytes, err := h.manager.Store().BackendObjectStats(r.Context(), name)
+	objectCount, totalBytes, err := h.manager.BackendLifecycle().BackendObjectStats(r.Context(), name)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "backend not found or stats unavailable"})
 		return

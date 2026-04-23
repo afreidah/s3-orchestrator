@@ -20,6 +20,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/store"
+	sqlitestore "github.com/afreidah/s3-orchestrator/internal/store/sqlite"
 )
 
 // syncOpts holds the parsed CLI flags for `s3-orchestrator sync`.
@@ -105,9 +106,33 @@ func loadSyncConfig(path, backendName string) (*config.Config, *config.BackendCo
 }
 
 // initSyncStore opens the metadata store, applies migrations, and syncs
-// quota limits. Returns non-zero exit on any failure.
-func initSyncStore(ctx context.Context, cfg *config.Config) (store.MetadataStore, store.AdminStore, int) {
-	metaDB, adminDB, err := openStore(ctx, &cfg.Database)
+// quota limits. Returns non-zero exit on any failure. sync only writes
+// new object rows, so it asks for the narrow ObjectStore plus the admin
+// handle required by RunMigrations / SyncQuotaLimits.
+func initSyncStore(ctx context.Context, cfg *config.Config) (store.ObjectStore, store.AdminStore, int) {
+	var (
+		objects store.ObjectStore
+		adminDB store.AdminStore
+		err     error
+	)
+	switch cfg.Database.Driver {
+	case "postgres":
+		s, openErr := store.NewStore(ctx, &cfg.Database)
+		if openErr != nil {
+			err = openErr
+		} else {
+			objects, adminDB = s, s
+		}
+	case "sqlite":
+		s, openErr := sqlitestore.NewStore(ctx, &cfg.Database)
+		if openErr != nil {
+			err = openErr
+		} else {
+			objects, adminDB = s, s
+		}
+	default:
+		err = fmt.Errorf("unsupported database driver: %q", cfg.Database.Driver)
+	}
 	if err != nil {
 		slog.ErrorContext(ctx, "failed to connect to database", "error", err)
 		return nil, nil, 1
@@ -120,12 +145,12 @@ func initSyncStore(ctx context.Context, cfg *config.Config) (store.MetadataStore
 		slog.ErrorContext(ctx, "failed to sync quota limits", "error", err)
 		return nil, nil, 1
 	}
-	return metaDB, adminDB, 0
+	return objects, adminDB, 0
 }
 
 // runSyncImport walks the backend, importing each page into the metadata
 // store. Accumulates + logs totals per page.
-func runSyncImport(ctx context.Context, s3b *backend.S3Backend, metaDB store.MetadataStore, backendCfg *config.BackendConfig, opts *syncOpts) error {
+func runSyncImport(ctx context.Context, s3b *backend.S3Backend, metaDB store.ObjectStore, backendCfg *config.BackendConfig, opts *syncOpts) error {
 	mode := "sync"
 	if opts.dryRun {
 		mode = "dry-run"
@@ -173,7 +198,7 @@ func runSyncImport(ctx context.Context, s3b *backend.S3Backend, metaDB store.Met
 
 // importSyncPage imports one page of backend objects into the metadata
 // store (or logs them under dry-run), returning per-page counters.
-func importSyncPage(ctx context.Context, metaDB store.MetadataStore, objects []backend.ListedObject, backendName string, opts *syncOpts) (imported, skipped int, bytes int64, err error) {
+func importSyncPage(ctx context.Context, metaDB store.ObjectStore, objects []backend.ListedObject, backendName string, opts *syncOpts) (imported, skipped int, bytes int64, err error) {
 	for _, obj := range objects {
 		prefixedKey := opts.bucketName + "/" + obj.Key
 		if opts.dryRun {

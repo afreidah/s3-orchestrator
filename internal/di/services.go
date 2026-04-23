@@ -3,12 +3,14 @@
 //
 // Author: Alex Freidah
 //
-// Service types for the lifecycle manager. Each wraps a periodic background task
-// behind the lifecycle.Service interface. Tasks that must not run concurrently
-// across instances use PostgreSQL advisory locks via lockedTickerService.
+// Service types for the lifecycle manager. Each wraps a periodic background
+// task behind the lifecycle.Service interface. Tasks that must not run
+// concurrently across instances use PostgreSQL advisory locks via
+// lockedTickerService. These live under internal/di because they are
+// provider plumbing — the main binary never constructs them directly.
 // -------------------------------------------------------------------------------
 
-package main
+package di
 
 import (
 	"context"
@@ -18,6 +20,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
@@ -27,9 +30,6 @@ import (
 
 // Default intervals and thresholds for the background services below. Used
 // when the corresponding config section is absent or leaves the field zero.
-// These live here rather than in config so tests and operators share one
-// source of truth; promote any to config only when an operator-tunable knob
-// is actually required.
 const (
 	defaultUsageFlushInterval     = 30 * time.Second
 	defaultMultipartStaleTimeout  = 24 * time.Hour
@@ -45,40 +45,26 @@ const (
 
 // lockedTickerService runs a function on a fixed interval under an advisory
 // lock. It handles audit context creation, lock acquisition, skip/error
-// logging, and context cancellation. Most background workers use this.
+// logging, and context cancellation.
 type lockedTickerService struct {
 	locker   store.AdvisoryLocker
 	interval time.Duration
 	lockID   int64
 	name     string
 
-	// shouldRun is called each tick before acquiring the lock.
-	// Return false to skip this tick. Nil means always run.
 	shouldRun func() bool
-
-	// startup is called once before the ticker loop starts, under the
-	// advisory lock. Nil means no startup pass.
-	startup func(ctx context.Context)
-
-	// work is called inside the advisory lock with an audit-tagged context.
-	work func(ctx context.Context)
-
-	// onError is called when WithAdvisoryLock returns an error (that is not
-	// ErrDBUnavailable). Nil means just log the error with the service name.
-	onError func(err error)
+	startup   func(ctx context.Context)
+	work      func(ctx context.Context)
+	onError   func(err error)
 }
 
-// Run implements lifecycle.Service. A random jitter of up to half the tick
-// interval is applied before the first tick to prevent thundering herd on
-// the advisory lock when multiple instances start simultaneously.
+// Run implements lifecycle.Service with a jittered first tick to prevent
+// thundering herd on the advisory lock at startup.
 func (s *lockedTickerService) Run(ctx context.Context) error {
-	// Optional one-time startup pass (e.g. replicator catch-up).
 	if s.startup != nil {
 		s.runOnce(ctx, s.startup)
 	}
 
-	// Stagger the first tick to avoid all instances contending for the
-	// advisory lock at the same instant.
 	jitter := rand.N(s.interval / 2) //nolint:gosec // G404: startup jitter does not require crypto-strength randomness
 	select {
 	case <-time.After(jitter):
@@ -125,15 +111,20 @@ func (s *lockedTickerService) runOnce(ctx context.Context, fn func(ctx context.C
 // USAGE FLUSH (unique: no advisory lock, adaptive interval)
 // -------------------------------------------------------------------------
 
+// usageFlushService periodically flushes in-memory usage counters to the
+// database, acquiring an advisory lock only when Redis counters are active.
 type usageFlushService struct {
 	manager *proxy.BackendManager
 	locker  store.AdvisoryLocker
 }
 
-// Run periodically flushes in-memory usage counters to the database.
-// When Redis counters are active, only one instance should flush (GETSET is a
-// destructive read), so the flush is wrapped in an advisory lock. When Redis
-// is in fallback or not configured, each instance flushes independently.
+// NewUsageFlushService constructs the usage flush background service.
+func NewUsageFlushService(manager *proxy.BackendManager, locker store.AdvisoryLocker) *usageFlushService {
+	return &usageFlushService{manager: manager, locker: locker}
+}
+
+// Run periodically flushes in-memory usage counters and adapts the tick
+// interval toward FastInterval when a backend nears its limits.
 func (s *usageFlushService) Run(ctx context.Context) error {
 	cfg := s.manager.UsageFlushConfig()
 	interval := defaultUsageFlushInterval
@@ -151,7 +142,6 @@ func (s *usageFlushService) Run(ctx context.Context) error {
 			tickCtx := audit.WithRequestID(ctx, audit.NewID())
 			s.flushTick(tickCtx)
 
-			// Adaptive interval adjustment
 			cfg = s.manager.UsageFlushConfig()
 			if cfg != nil {
 				targetInterval := cfg.Interval
@@ -172,8 +162,7 @@ func (s *usageFlushService) Run(ctx context.Context) error {
 
 // flushTick runs a single flush+metrics cycle. When Redis counters are
 // configured, wraps the flush in an advisory lock so only one instance
-// performs GETSET. The lock is acquired regardless of Redis health to
-// prevent double-counting when Redis recovers mid-flush.
+// performs the destructive GETSET.
 func (s *usageFlushService) flushTick(ctx context.Context) {
 	if s.manager.RedisCounterConfigured() {
 		acquired, err := s.locker.WithAdvisoryLock(ctx, store.LockUsageFlush,
@@ -189,8 +178,6 @@ func (s *usageFlushService) flushTick(ctx context.Context) {
 		}
 		return
 	}
-
-	// No Redis configured — flush locally without lock.
 	s.doFlush(ctx)
 }
 
@@ -208,7 +195,8 @@ func (s *usageFlushService) doFlush(ctx context.Context) {
 // SERVICE CONSTRUCTORS
 // -------------------------------------------------------------------------
 
-func newMultipartCleanupService(manager *proxy.BackendManager, locker store.AdvisoryLocker, staleTimeout time.Duration) *lockedTickerService {
+// NewMultipartCleanupService constructs the multipart-cleanup background service.
+func NewMultipartCleanupService(manager *proxy.BackendManager, locker store.AdvisoryLocker, staleTimeout time.Duration) *lockedTickerService {
 	if staleTimeout <= 0 {
 		staleTimeout = defaultMultipartStaleTimeout
 	}
@@ -223,7 +211,8 @@ func newMultipartCleanupService(manager *proxy.BackendManager, locker store.Advi
 	}
 }
 
-func newCleanupQueueService(manager *proxy.BackendManager, locker store.AdvisoryLocker) *lockedTickerService {
+// NewCleanupQueueService constructs the cleanup-queue background service.
+func NewCleanupQueueService(manager *proxy.BackendManager, locker store.AdvisoryLocker) *lockedTickerService {
 	return &lockedTickerService{
 		locker:   locker,
 		interval: defaultCleanupQueueTick,
@@ -238,7 +227,8 @@ func newCleanupQueueService(manager *proxy.BackendManager, locker store.Advisory
 	}
 }
 
-func newRebalancerService(manager *proxy.BackendManager, locker store.AdvisoryLocker) *lockedTickerService {
+// NewRebalancerService constructs the rebalancer background service.
+func NewRebalancerService(manager *proxy.BackendManager, locker store.AdvisoryLocker) *lockedTickerService {
 	interval := defaultRebalanceInterval
 	if rcfg := manager.Rebalancer.Config(); rcfg != nil && rcfg.Interval > 0 {
 		interval = rcfg.Interval
@@ -270,7 +260,8 @@ func newRebalancerService(manager *proxy.BackendManager, locker store.AdvisoryLo
 	}
 }
 
-func newLifecycleService(manager *proxy.BackendManager, locker store.AdvisoryLocker) *lockedTickerService {
+// NewLifecycleService constructs the lifecycle-expiration background service.
+func NewLifecycleService(manager *proxy.BackendManager, locker store.AdvisoryLocker) *lockedTickerService {
 	return &lockedTickerService{
 		locker:   locker,
 		interval: defaultLifecycleTick,
@@ -303,7 +294,8 @@ func newLifecycleService(manager *proxy.BackendManager, locker store.AdvisoryLoc
 	}
 }
 
-func newOverReplicationService(manager *proxy.BackendManager, locker store.AdvisoryLocker) *lockedTickerService {
+// NewOverReplicationService constructs the over-replication cleanup service.
+func NewOverReplicationService(manager *proxy.BackendManager, locker store.AdvisoryLocker) *lockedTickerService {
 	interval := defaultOverReplicationTick
 	if rcfg := manager.OverReplicationCleaner.Config(); rcfg != nil && rcfg.WorkerInterval > 0 {
 		interval = rcfg.WorkerInterval
@@ -335,7 +327,8 @@ func newOverReplicationService(manager *proxy.BackendManager, locker store.Advis
 	}
 }
 
-func newReplicatorService(manager *proxy.BackendManager, locker store.AdvisoryLocker) *lockedTickerService {
+// NewReplicatorService constructs the replication background service.
+func NewReplicatorService(manager *proxy.BackendManager, locker store.AdvisoryLocker) *lockedTickerService {
 	replicateWork := func(ctx context.Context) {
 		rcfg := manager.Replicator.Config()
 		if rcfg == nil {
@@ -370,7 +363,8 @@ func newReplicatorService(manager *proxy.BackendManager, locker store.AdvisoryLo
 	}
 }
 
-func newReconcileService(reconciler *worker.Reconciler, locker store.AdvisoryLocker, interval time.Duration) *lockedTickerService {
+// NewReconcileService constructs the reconcile background service.
+func NewReconcileService(reconciler *worker.Reconciler, locker store.AdvisoryLocker, interval time.Duration) *lockedTickerService {
 	return &lockedTickerService{
 		locker:   locker,
 		interval: interval,
@@ -387,17 +381,20 @@ func newReconcileService(reconciler *worker.Reconciler, locker store.AdvisoryLoc
 // -------------------------------------------------------------------------
 
 // circuitBreakerWatchdog periodically checks all circuit breakers for stale
-// half-open probes and resets them. This prevents circuits from getting stuck
-// half-open indefinitely when no new requests arrive to trigger the passive
-// stale-probe detection in PreCheck.
+// half-open probes and resets them. This prevents circuits from getting
+// stuck half-open indefinitely when no new requests arrive.
 type circuitBreakerWatchdog struct {
 	manager *proxy.BackendManager
-	cbStore *store.CircuitBreakerStore
+	dbCB    *breaker.CircuitBreaker
+}
+
+// NewCircuitBreakerWatchdog constructs the watchdog background service.
+func NewCircuitBreakerWatchdog(manager *proxy.BackendManager, dbCB *breaker.CircuitBreaker) *circuitBreakerWatchdog {
+	return &circuitBreakerWatchdog{manager: manager, dbCB: dbCB}
 }
 
 // Run implements lifecycle.Service. Checks every defaultCircuitBreakerWatchdog
-// (1 minute) — half the breaker probe timeout, so a stuck half-open probe is
-// reset within at most one tick.
+// (1 minute) — half the breaker probe timeout.
 func (w *circuitBreakerWatchdog) Run(ctx context.Context) error {
 	ticker := time.NewTicker(defaultCircuitBreakerWatchdog)
 	defer ticker.Stop()
@@ -414,10 +411,8 @@ func (w *circuitBreakerWatchdog) Run(ctx context.Context) error {
 
 // checkAll iterates all circuit breakers and resets stale probes.
 func (w *circuitBreakerWatchdog) checkAll() {
-	// Database circuit breaker
-	w.cbStore.ResetStaleProbe()
+	w.dbCB.ResetStaleProbe()
 
-	// Backend circuit breakers
 	for _, be := range w.manager.Backends() {
 		if cb, ok := be.(*backend.CircuitBreakerBackend); ok {
 			cb.ResetStaleProbe()
@@ -429,7 +424,8 @@ func (w *circuitBreakerWatchdog) checkAll() {
 // SCRUBBER
 // -------------------------------------------------------------------------
 
-func newScrubberService(manager *proxy.BackendManager, locker store.AdvisoryLocker) *lockedTickerService {
+// NewScrubberService constructs the integrity scrubber background service.
+func NewScrubberService(manager *proxy.BackendManager, locker store.AdvisoryLocker) *lockedTickerService {
 	interval := defaultScrubberInterval
 	if icfg := manager.Scrubber.Config(); icfg != nil && icfg.ScrubberInterval > 0 {
 		interval = icfg.ScrubberInterval

@@ -56,7 +56,7 @@ func (o *ObjectManager) withReadFailover(ctx context.Context, operation, key str
 	)
 	defer span.End()
 
-	locations, err := o.store.GetAllObjectLocations(ctx, key)
+	locations, err := o.objects.GetAllObjectLocations(ctx, key)
 	if err != nil {
 		if errors.Is(err, store.ErrObjectNotFound) {
 			span.SetStatus(codes.Error, "object not found")
@@ -292,7 +292,7 @@ func (o *ObjectManager) GetObject(ctx context.Context, key string, rangeHeader s
 	var once sync.Once // protects result write when parallel broadcast is enabled
 
 	// Resolve locations upfront so encryption metadata is available after read.
-	locations, locErr := o.store.GetAllObjectLocations(ctx, key)
+	locations, locErr := o.objects.GetAllObjectLocations(ctx, key)
 
 	// Build a map for O(1) location lookup per backend attempt.
 	var locByBackend map[string]*store.ObjectLocation
@@ -416,7 +416,7 @@ func (o *ObjectManager) HeadObject(ctx context.Context, key string) (*s3be.HeadO
 	var once sync.Once // protects result write when parallel broadcast is enabled
 
 	// Resolve locations upfront so encryption metadata is available.
-	locations, locErr := o.store.GetAllObjectLocations(ctx, key)
+	locations, locErr := o.objects.GetAllObjectLocations(ctx, key)
 
 	// Build a map for O(1) location lookup per backend attempt.
 	var locByBackend map[string]*store.ObjectLocation
@@ -491,7 +491,7 @@ func (o *ObjectManager) ListObjects(ctx context.Context, prefix, delimiter, star
 
 	const maxPages = 100 // cap DB round trips per request
 	for page := 0; page < maxPages && result.KeyCount < maxKeys; page++ {
-		storeResult, err := o.store.ListObjects(ctx, prefix, cursor, maxKeys)
+		storeResult, err := o.objects.ListObjects(ctx, prefix, cursor, maxKeys)
 		if err != nil {
 			if errors.Is(err, store.ErrDBUnavailable) {
 				span.SetStatus(codes.Error, "database unavailable")
