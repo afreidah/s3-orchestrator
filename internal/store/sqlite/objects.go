@@ -63,170 +63,192 @@ func (s *Store) GetAllObjectLocations(ctx context.Context, key string) ([]store.
 
 // RecordObject atomically inserts or updates an object location, handling
 // overwrites by returning displaced copies for cleanup.
+// sqliteCopy mirrors the narrow row columns we need when clearing displaced
+// copies during RecordObject.
+type sqliteCopy struct {
+	backendName string
+	sizeBytes   int64
+}
+
+// sqliteEncInsertFields is the exploded form of store.EncryptionMeta that
+// InsertObjectLocation needs as positional SQL args.
+type sqliteEncInsertFields struct {
+	encrypted     bool
+	encryptionKey []byte
+	keyID         *string
+	plaintextSize *int64
+	contentHash   *string
+}
+
 func (s *Store) RecordObject(ctx context.Context, key, backend string, size int64, enc *store.EncryptionMeta) ([]store.DeletedCopy, error) {
 	return withTxVal(s, ctx, func(tx *sql.Tx) ([]store.DeletedCopy, error) {
 		// SQLite single-writer serializes; no advisory lock needed.
-
-		// --- Collect all existing copies for this key ---
-		existRows, err := tx.QueryContext(ctx, `
-			SELECT backend_name, size_bytes
-			FROM object_locations
-			WHERE object_key = ?`, key)
+		existing, err := fetchExistingCopies(ctx, tx, key)
 		if err != nil {
-			return nil, fmt.Errorf("failed to query existing copies: %w", err)
+			return nil, err
 		}
-
-		type existingCopy struct {
-			backendName string
-			sizeBytes   int64
-		}
-		var existing []existingCopy
-		for existRows.Next() {
-			var ec existingCopy
-			if err := existRows.Scan(&ec.backendName, &ec.sizeBytes); err != nil {
-				existRows.Close()
-				return nil, fmt.Errorf("failed to scan existing copy: %w", err)
-			}
-			existing = append(existing, ec)
-		}
-		existRows.Close()
-		if err := existRows.Err(); err != nil {
-			return nil, fmt.Errorf("failed to iterate existing copies: %w", err)
-		}
-
-		// --- Delete all existing copies and decrement their quotas ---
-		var displaced []store.DeletedCopy
-		if len(existing) > 0 {
-			if _, err := tx.ExecContext(ctx, `DELETE FROM object_locations WHERE object_key = ?`, key); err != nil {
-				return nil, fmt.Errorf("failed to delete existing copies: %w", err)
-			}
-
-			now := time.Now().UTC().Format(time.RFC3339Nano)
-			for _, ec := range existing {
-				if _, err := tx.ExecContext(ctx, `
-					UPDATE backend_quotas
-					SET bytes_used = MAX(0, bytes_used - ?), updated_at = ?
-					WHERE backend_name = ?`, ec.sizeBytes, now, ec.backendName); err != nil {
-					return nil, fmt.Errorf("failed to decrement quota for %s: %w", ec.backendName, err)
-				}
-				if ec.backendName != backend {
-					displaced = append(displaced, store.DeletedCopy{
-						BackendName: ec.backendName,
-						SizeBytes:   ec.sizeBytes,
-					})
-				}
-			}
-		}
-
-		// --- Build insert params with optional encryption metadata ---
-		var (
-			encrypted     bool
-			encryptionKey []byte
-			keyID         *string
-			plaintextSize *int64
-			contentHash   *string
-		)
-		if enc != nil {
-			if enc.Encrypted {
-				encrypted = true
-				encryptionKey = enc.EncryptionKey
-				keyID = &enc.KeyID
-				plaintextSize = &enc.PlaintextSize
-			}
-			if enc.ContentHash != "" {
-				contentHash = &enc.ContentHash
-			}
-		}
-
-		now := time.Now().UTC().Format(time.RFC3339Nano)
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO object_locations
-			  (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			key, backend, size, encrypted, encryptionKey, keyID, plaintextSize, contentHash, now); err != nil {
-			return nil, fmt.Errorf("failed to insert object location: %w", err)
-		}
-
-		// --- Increment quota for new backend ---
-		res, err := tx.ExecContext(ctx, `
-			UPDATE backend_quotas
-			SET bytes_used = bytes_used + ?, updated_at = ?
-			WHERE backend_name = ?
-			  AND (bytes_limit = 0 OR bytes_used + orphan_bytes + ? <= bytes_limit)`,
-			size, now, backend, size)
+		displaced, err := clearDisplacedCopies(ctx, tx, key, backend, existing)
 		if err != nil {
-			return nil, fmt.Errorf("failed to update quota: %w", err)
+			return nil, err
 		}
-		n, err := res.RowsAffected()
-		if err != nil {
-			return nil, fmt.Errorf(errCheckQuota, err)
+		if err := insertObjectLocation(ctx, tx, key, backend, size, enc); err != nil {
+			return nil, err
 		}
-		if n == 0 {
-			return nil, store.ErrNoSpaceAvailable
+		if err := incrementSQLiteQuota(ctx, tx, backend, size); err != nil {
+			return nil, err
 		}
-
 		return displaced, nil
 	})
+}
+
+// fetchExistingCopies returns every backend+size row currently holding the
+// given object key. Used both by the RecordObject overwrite path and any
+// future caller that needs to inspect the existing placement.
+func fetchExistingCopies(ctx context.Context, tx *sql.Tx, key string) ([]sqliteCopy, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT backend_name, size_bytes
+		FROM object_locations
+		WHERE object_key = ?`, key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query existing copies: %w", err)
+	}
+	defer rows.Close()
+	var existing []sqliteCopy
+	for rows.Next() {
+		var ec sqliteCopy
+		if err := rows.Scan(&ec.backendName, &ec.sizeBytes); err != nil {
+			return nil, fmt.Errorf("failed to scan existing copy: %w", err)
+		}
+		existing = append(existing, ec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate existing copies: %w", err)
+	}
+	return existing, nil
+}
+
+// clearDisplacedCopies deletes every prior copy of the key and decrements
+// each affected backend's quota. Copies on backends other than the new
+// target are returned as displaced — the caller enqueues them for physical
+// orphan cleanup.
+func clearDisplacedCopies(ctx context.Context, tx *sql.Tx, key, newBackend string, existing []sqliteCopy) ([]store.DeletedCopy, error) {
+	if len(existing) == 0 {
+		return nil, nil
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM object_locations WHERE object_key = ?`, key); err != nil {
+		return nil, fmt.Errorf("failed to delete existing copies: %w", err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	var displaced []store.DeletedCopy
+	for _, ec := range existing {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE backend_quotas
+			SET bytes_used = MAX(0, bytes_used - ?), updated_at = ?
+			WHERE backend_name = ?`, ec.sizeBytes, now, ec.backendName); err != nil {
+			return nil, fmt.Errorf("failed to decrement quota for %s: %w", ec.backendName, err)
+		}
+		if ec.backendName != newBackend {
+			displaced = append(displaced, store.DeletedCopy{BackendName: ec.backendName, SizeBytes: ec.sizeBytes})
+		}
+	}
+	return displaced, nil
+}
+
+// insertObjectLocation writes the new object_locations row with encryption
+// and content-hash metadata extracted from enc.
+func insertObjectLocation(ctx context.Context, tx *sql.Tx, key, backend string, size int64, enc *store.EncryptionMeta) error {
+	fields := encInsertFieldsFrom(enc)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO object_locations
+		  (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		key, backend, size, fields.encrypted, fields.encryptionKey,
+		fields.keyID, fields.plaintextSize, fields.contentHash, now); err != nil {
+		return fmt.Errorf("failed to insert object location: %w", err)
+	}
+	return nil
+}
+
+// encInsertFieldsFrom decomposes store.EncryptionMeta (nullable pointer)
+// into the positional-arg shape insertObjectLocation needs. Handles the
+// three cases: nil meta, meta present but plaintext-only, meta with
+// encryption enabled.
+func encInsertFieldsFrom(enc *store.EncryptionMeta) sqliteEncInsertFields {
+	var f sqliteEncInsertFields
+	if enc == nil {
+		return f
+	}
+	if enc.Encrypted {
+		f.encrypted = true
+		f.encryptionKey = enc.EncryptionKey
+		f.keyID = &enc.KeyID
+		f.plaintextSize = &enc.PlaintextSize
+	}
+	if enc.ContentHash != "" {
+		f.contentHash = &enc.ContentHash
+	}
+	return f
+}
+
+// incrementSQLiteQuota credits `size` bytes to backend's quota and returns
+// store.ErrNoSpaceAvailable when the quota ceiling would be exceeded (the
+// guarded UPDATE touches zero rows).
+func incrementSQLiteQuota(ctx context.Context, tx *sql.Tx, backend string, size int64) error {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	res, err := tx.ExecContext(ctx, `
+		UPDATE backend_quotas
+		SET bytes_used = bytes_used + ?, updated_at = ?
+		WHERE backend_name = ?
+		  AND (bytes_limit = 0 OR bytes_used + orphan_bytes + ? <= bytes_limit)`,
+		size, now, backend, size)
+	if err != nil {
+		return fmt.Errorf("failed to update quota: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf(errCheckQuota, err)
+	}
+	if n == 0 {
+		return store.ErrNoSpaceAvailable
+	}
+	return nil
 }
 
 // DeleteObject removes all copies of an object and decrements their quotas.
 // Returns all deleted copies, or ErrObjectNotFound if the object doesn't exist.
 func (s *Store) DeleteObject(ctx context.Context, key string) ([]store.DeletedCopy, error) {
 	return withTxVal(s, ctx, func(tx *sql.Tx) ([]store.DeletedCopy, error) {
-		// --- Get all copies ---
-		rows, err := tx.QueryContext(ctx, `
-			SELECT backend_name, size_bytes
-			FROM object_locations
-			WHERE object_key = ?`, key)
+		existing, err := fetchExistingCopies(ctx, tx, key)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get object locations: %w", err)
+			return nil, err
 		}
-
-		type existingCopy struct {
-			backendName string
-			sizeBytes   int64
-		}
-		var existing []existingCopy
-		for rows.Next() {
-			var ec existingCopy
-			if err := rows.Scan(&ec.backendName, &ec.sizeBytes); err != nil {
-				rows.Close()
-				return nil, fmt.Errorf("failed to scan existing copy: %w", err)
-			}
-			existing = append(existing, ec)
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("failed to iterate existing copies: %w", err)
-		}
-
 		if len(existing) == 0 {
 			return nil, store.ErrObjectNotFound
 		}
-
-		// --- Delete all location records ---
 		if _, err := tx.ExecContext(ctx, `DELETE FROM object_locations WHERE object_key = ?`, key); err != nil {
 			return nil, fmt.Errorf("failed to delete object locations: %w", err)
 		}
-
-		// --- Decrement quota for each backend ---
-		now := time.Now().UTC().Format(time.RFC3339Nano)
-		copies := make([]store.DeletedCopy, len(existing))
-		for i, ec := range existing {
-			copies[i] = store.DeletedCopy{
-				BackendName: ec.backendName,
-				SizeBytes:   ec.sizeBytes,
-			}
-			if _, err := tx.ExecContext(ctx, `
-				UPDATE backend_quotas
-				SET bytes_used = MAX(0, bytes_used - ?), updated_at = ?
-				WHERE backend_name = ?`, ec.sizeBytes, now, ec.backendName); err != nil {
-				return nil, fmt.Errorf("failed to decrement quota for %s: %w", ec.backendName, err)
-			}
-		}
-
-		return copies, nil
+		return decrementDeletedCopyQuotas(ctx, tx, existing)
 	})
+}
+
+// decrementDeletedCopyQuotas subtracts every copy's bytes from its backend
+// quota and returns the same copies re-typed as store.DeletedCopy for the
+// caller to hand back to the upper layer.
+func decrementDeletedCopyQuotas(ctx context.Context, tx *sql.Tx, existing []sqliteCopy) ([]store.DeletedCopy, error) {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	copies := make([]store.DeletedCopy, len(existing))
+	for i, ec := range existing {
+		copies[i] = store.DeletedCopy{BackendName: ec.backendName, SizeBytes: ec.sizeBytes}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE backend_quotas
+			SET bytes_used = MAX(0, bytes_used - ?), updated_at = ?
+			WHERE backend_name = ?`, ec.sizeBytes, now, ec.backendName); err != nil {
+			return nil, fmt.Errorf("failed to decrement quota for %s: %w", ec.backendName, err)
+		}
+	}
+	return copies, nil
 }
 
 // ListObjects returns objects matching the given prefix, sorted by key.
@@ -364,91 +386,102 @@ func (s *Store) ListObjectsByBackend(ctx context.Context, backendName string, li
 	return locs, nil
 }
 
+// sqliteSourceCopy holds the encryption+integrity columns read from the
+// source object_locations row during MoveObjectLocation.
+type sqliteSourceCopy struct {
+	sizeBytes     int64
+	encrypted     bool
+	encryptionKey []byte
+	keyID         *string
+	plaintextSize *int64
+	contentHash   *string
+}
+
 // MoveObjectLocation atomically moves a copy of an object from one backend to
 // another. Returns (0, nil) if the source copy is gone or the target already
 // has a copy.
 func (s *Store) MoveObjectLocation(ctx context.Context, key, fromBackend, toBackend string) (int64, error) {
 	return withTxVal(s, ctx, func(tx *sql.Tx) (int64, error) {
-		// --- Check if target backend already has a copy ---
-		var exists bool
-		err := tx.QueryRowContext(ctx, `
-			SELECT EXISTS(
-				SELECT 1 FROM object_locations
-				WHERE object_key = ? AND backend_name = ?
-			)`, key, toBackend).Scan(&exists)
+		occupied, err := targetHasCopy(ctx, tx, key, toBackend)
 		if err != nil {
-			return 0, fmt.Errorf("failed to check target: %w", err)
+			return 0, err
 		}
-		if exists {
+		if occupied {
 			return 0, nil
 		}
-
-		// --- Get the source row (no FOR UPDATE needed in SQLite) ---
-		var (
-			sizeBytes     int64
-			encrypted     bool
-			encryptionKey []byte
-			keyID         *string
-			plaintextSize *int64
-			contentHash   *string
-		)
-		err = tx.QueryRowContext(ctx, `
-			SELECT size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash
-			FROM object_locations
-			WHERE object_key = ? AND backend_name = ?`, key, fromBackend).
-			Scan(&sizeBytes, &encrypted, &encryptionKey, &keyID, &plaintextSize, &contentHash)
-		if err == sql.ErrNoRows {
+		src, found, err := readSourceCopy(ctx, tx, key, fromBackend)
+		if err != nil {
+			return 0, err
+		}
+		if !found {
 			return 0, nil
 		}
-		if err != nil {
-			return 0, fmt.Errorf("failed to get source object: %w", err)
+		if err := moveObjectRows(ctx, tx, key, fromBackend, toBackend, src); err != nil {
+			return 0, err
 		}
-
-		// --- Delete source row ---
-		if _, err := tx.ExecContext(ctx, `
-			DELETE FROM object_locations
-			WHERE object_key = ? AND backend_name = ?`, key, fromBackend); err != nil {
-			return 0, fmt.Errorf("failed to delete source location: %w", err)
-		}
-
-		// --- Insert destination row preserving encryption and integrity metadata ---
-		now := time.Now().UTC().Format(time.RFC3339Nano)
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO object_locations
-			  (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			key, toBackend, sizeBytes, encrypted, encryptionKey, keyID, plaintextSize, contentHash, now); err != nil {
-			return 0, fmt.Errorf("failed to insert destination location: %w", err)
-		}
-
-		// --- Decrement source quota ---
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE backend_quotas
-			SET bytes_used = MAX(0, bytes_used - ?), updated_at = ?
-			WHERE backend_name = ?`, sizeBytes, now, fromBackend); err != nil {
-			return 0, fmt.Errorf("failed to decrement source quota: %w", err)
-		}
-
-		// --- Increment destination quota ---
-		res, err := tx.ExecContext(ctx, `
-			UPDATE backend_quotas
-			SET bytes_used = bytes_used + ?, updated_at = ?
-			WHERE backend_name = ?
-			  AND (bytes_limit = 0 OR bytes_used + orphan_bytes + ? <= bytes_limit)`,
-			sizeBytes, now, toBackend, sizeBytes)
-		if err != nil {
-			return 0, fmt.Errorf("failed to increment destination quota: %w", err)
-		}
-		n, err := res.RowsAffected()
-		if err != nil {
-			return 0, fmt.Errorf(errCheckQuota, err)
-		}
-		if n == 0 {
-			return 0, store.ErrNoSpaceAvailable
-		}
-
-		return sizeBytes, nil
+		return src.sizeBytes, nil
 	})
+}
+
+// targetHasCopy reports whether the destination backend already has a row
+// for the key. If true, MoveObjectLocation exits early as a no-op.
+func targetHasCopy(ctx context.Context, tx *sql.Tx, key, toBackend string) (bool, error) {
+	var exists bool
+	err := tx.QueryRowContext(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM object_locations
+			WHERE object_key = ? AND backend_name = ?
+		)`, key, toBackend).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("failed to check target: %w", err)
+	}
+	return exists, nil
+}
+
+// readSourceCopy fetches the source object_locations row so its encryption
+// and integrity metadata can be preserved on the destination row. The bool
+// return is false when the source copy has already been removed.
+func readSourceCopy(ctx context.Context, tx *sql.Tx, key, fromBackend string) (sqliteSourceCopy, bool, error) {
+	var src sqliteSourceCopy
+	err := tx.QueryRowContext(ctx, `
+		SELECT size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash
+		FROM object_locations
+		WHERE object_key = ? AND backend_name = ?`, key, fromBackend).
+		Scan(&src.sizeBytes, &src.encrypted, &src.encryptionKey, &src.keyID, &src.plaintextSize, &src.contentHash)
+	if err == sql.ErrNoRows {
+		return sqliteSourceCopy{}, false, nil
+	}
+	if err != nil {
+		return sqliteSourceCopy{}, false, fmt.Errorf("failed to get source object: %w", err)
+	}
+	return src, true, nil
+}
+
+// moveObjectRows performs the three write steps of MoveObjectLocation:
+// delete the source row, insert the destination row, and shift the quota
+// bytes. Returns store.ErrNoSpaceAvailable if the destination quota would
+// be exceeded.
+func moveObjectRows(ctx context.Context, tx *sql.Tx, key, fromBackend, toBackend string, src sqliteSourceCopy) error {
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM object_locations
+		WHERE object_key = ? AND backend_name = ?`, key, fromBackend); err != nil {
+		return fmt.Errorf("failed to delete source location: %w", err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO object_locations
+		  (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		key, toBackend, src.sizeBytes, src.encrypted, src.encryptionKey, src.keyID, src.plaintextSize, src.contentHash, now); err != nil {
+		return fmt.Errorf("failed to insert destination location: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE backend_quotas
+		SET bytes_used = MAX(0, bytes_used - ?), updated_at = ?
+		WHERE backend_name = ?`, src.sizeBytes, now, fromBackend); err != nil {
+		return fmt.Errorf("failed to decrement source quota: %w", err)
+	}
+	return incrementSQLiteQuota(ctx, tx, toBackend, src.sizeBytes)
 }
 
 // DeleteObjectLocation removes a single object_locations row for the given key
