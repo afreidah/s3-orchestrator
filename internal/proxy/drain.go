@@ -89,7 +89,7 @@ func (d *DrainManager) StartDrain(ctx context.Context, name string) error {
 	// background goroutine that must outlive the HTTP request that started
 	// it. CancelDrain + ctx.Done() in the worker loop provide explicit
 	// shutdown hooks.
-	drainCtx, cancel := context.WithCancel(context.Background()) //nolint:contextcheck // goroutine outlives caller by design
+	drainCtx, cancel := context.WithCancel(context.Background()) //nolint:contextcheck // NOSONAR — goroutine outlives caller by design
 	state := &drainState{
 		cancel: cancel,
 		done:   make(chan struct{}),
