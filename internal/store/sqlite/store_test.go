@@ -291,6 +291,137 @@ func TestMoveObjectLocation(t *testing.T) {
 	}
 }
 
+// TestMoveObjectLocation_TargetAlreadyHasCopy verifies the short-circuit
+// when the destination already holds a copy — MoveObjectLocation returns
+// (0, nil) without touching the source.
+func TestMoveObjectLocation_TargetAlreadyHasCopy(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	mustRecordObject(t, s, "bucket/dup", "backend-a", 100)
+	mustRecordReplica(t, s, "bucket/dup", "backend-b", "backend-a", 100)
+
+	moved, err := s.MoveObjectLocation(ctx, "bucket/dup", "backend-a", "backend-b")
+	if err != nil {
+		t.Fatalf("MoveObjectLocation: %v", err)
+	}
+	if moved != 0 {
+		t.Errorf("moved = %d, want 0 (target already has copy)", moved)
+	}
+}
+
+// TestMoveObjectLocation_SourceGone verifies the benign no-op when the
+// source row has already been removed — MoveObjectLocation returns
+// (0, nil) rather than an error.
+func TestMoveObjectLocation_SourceGone(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	moved, err := s.MoveObjectLocation(ctx, "bucket/missing", "backend-a", "backend-b")
+	if err != nil {
+		t.Fatalf("MoveObjectLocation: %v", err)
+	}
+	if moved != 0 {
+		t.Errorf("moved = %d, want 0 (no source copy)", moved)
+	}
+}
+
+// TestRecordObject_Overwrite_SameBackend covers the branch in
+// clearDisplacedCopies where the prior copy lives on the new target
+// backend — no DeletedCopy should be returned because the PutObject will
+// overwrite in place.
+func TestRecordObject_Overwrite_SameBackend(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	mustRecordObject(t, s, "bucket/k", "backend-a", 500)
+
+	displaced, err := s.RecordObject(ctx, "bucket/k", "backend-a", 700, nil)
+	if err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+	if len(displaced) != 0 {
+		t.Errorf("expected 0 displaced (same backend), got %d: %+v", len(displaced), displaced)
+	}
+}
+
+// TestMoveObjectLocation_QuotaExceeded covers the ErrNoSpaceAvailable
+// branch in moveObjectRows — the destination quota update touches zero
+// rows when the move would exceed bytes_limit.
+func TestMoveObjectLocation_QuotaExceeded(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, err := NewStore(ctx, &config.DatabaseConfig{Driver: "sqlite", Path: ":memory:"})
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	if err := s.SyncQuotaLimits(ctx, []config.BackendConfig{
+		{Name: "big", QuotaBytes: 10_000},
+		{Name: "small", QuotaBytes: 100}, // tiny — cannot hold 500-byte object
+	}); err != nil {
+		t.Fatalf("SyncQuotaLimits: %v", err)
+	}
+	if _, err := s.RecordObject(ctx, "bucket/huge", "big", 500, nil); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+	_, err = s.MoveObjectLocation(ctx, "bucket/huge", "big", "small")
+	if err != store.ErrNoSpaceAvailable {
+		t.Errorf("expected ErrNoSpaceAvailable, got %v", err)
+	}
+}
+
+// TestRecordObject_QuotaExceeded covers the ErrNoSpaceAvailable branch
+// in incrementSQLiteQuota — the guarded UPDATE touches zero rows when
+// the quota ceiling would be exceeded.
+func TestRecordObject_QuotaExceeded(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, err := NewStore(ctx, &config.DatabaseConfig{Driver: "sqlite", Path: ":memory:"})
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	if err := s.SyncQuotaLimits(ctx, []config.BackendConfig{
+		{Name: "tight", QuotaBytes: 100},
+	}); err != nil {
+		t.Fatalf("SyncQuotaLimits: %v", err)
+	}
+	_, err = s.RecordObject(ctx, "bucket/over", "tight", 500, nil)
+	if err != store.ErrNoSpaceAvailable {
+		t.Errorf("expected ErrNoSpaceAvailable, got %v", err)
+	}
+}
+
+// TestListDirectoryChildren_Pagination covers the hasMore branch: when
+// more files exist under a prefix than maxKeys allows, the caller must
+// see HasMore=true and a NextCursor pointing at the last returned entry.
+func TestListDirectoryChildren_Pagination(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	mustRecordObject(t, s, "b/a.txt", "backend-a", 10)
+	mustRecordObject(t, s, "b/b.txt", "backend-a", 20)
+	mustRecordObject(t, s, "b/c.txt", "backend-a", 30)
+
+	result, err := s.ListDirectoryChildren(ctx, "b/", "", 2)
+	if err != nil {
+		t.Fatalf("ListDirectoryChildren: %v", err)
+	}
+	if !result.HasMore {
+		t.Error("expected HasMore=true")
+	}
+	if result.NextCursor == "" {
+		t.Error("expected non-empty NextCursor")
+	}
+}
+
 // TestBackendObjectStats verifies per-backend object count and byte totals.
 func TestBackendObjectStats(t *testing.T) {
 	t.Parallel()

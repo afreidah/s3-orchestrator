@@ -21,6 +21,22 @@ import (
 // DIRECTORY LISTING
 // -------------------------------------------------------------------------
 
+// dirStat is one aggregated row from the directory stats query: either a
+// sub-directory roll-up or a single file entry directly beneath the prefix.
+type dirStat struct {
+	Name      string
+	IsDir     bool
+	FileCount int64
+	TotalSize int64
+}
+
+// fileDetail carries the per-file backend and display timestamp used to
+// enrich direct-child file entries in ListDirectoryChildren.
+type fileDetail struct {
+	Backend   string
+	CreatedAt string
+}
+
 // ListDirectoryChildren returns immediate children (directories and files)
 // under prefix, with aggregate stats for directories and detail for files.
 // Pagination uses startAfter as the cursor for file-level detail.
@@ -28,12 +44,38 @@ func (s *Store) ListDirectoryChildren(ctx context.Context, prefix, startAfter st
 	if maxKeys <= 0 {
 		maxKeys = 200
 	}
-
 	escapedPrefix := likeEscaper.Replace(prefix)
 
-	// Aggregate stats for immediate children. Deduplicates replicated
-	// objects via a MIN(rowid) subquery before grouping by relative name.
-	statsQuery := `
+	stats, err := queryDirectoryStats(ctx, s, prefix, escapedPrefix)
+	if err != nil {
+		return nil, err
+	}
+	fileLookup, fileKeys, err := queryDirectFileDetails(ctx, s, prefix, escapedPrefix, startAfter, maxKeys)
+	if err != nil {
+		return nil, err
+	}
+
+	hasMore := len(fileKeys) > maxKeys
+	if hasMore {
+		fileKeys = fileKeys[:maxKeys]
+	}
+
+	result := &store.DirectoryListResult{
+		Entries: buildDirectoryEntries(prefix, stats, fileLookup),
+	}
+	if hasMore && len(fileKeys) > 0 {
+		result.HasMore = true
+		result.NextCursor = fileKeys[len(fileKeys)-1]
+	}
+	return result, nil
+}
+
+// queryDirectoryStats returns aggregate stats for each immediate child
+// under prefix. Replicated objects are deduplicated via MIN(rowid) before
+// being grouped by relative name; the is_dir column marks whether the
+// child represents a sub-directory roll-up or a single file.
+func queryDirectoryStats(ctx context.Context, s *Store, prefix, escapedPrefix string) ([]dirStat, error) {
+	const statsQuery = `
 		SELECT
 			CASE WHEN INSTR(SUBSTR(object_key, LENGTH(?) + 1), '/') > 0
 				THEN SUBSTR(SUBSTR(object_key, LENGTH(?) + 1), 1, INSTR(SUBSTR(object_key, LENGTH(?) + 1), '/'))
@@ -58,37 +100,37 @@ func (s *Store) ListDirectoryChildren(ctx context.Context, prefix, startAfter st
 		GROUP BY name, is_dir
 		ORDER BY is_dir DESC, name ASC`
 
-	statsRows, err := s.db.QueryContext(ctx, statsQuery,
+	rows, err := s.db.QueryContext(ctx, statsQuery,
 		prefix, prefix, prefix, prefix, prefix,
 		escapedPrefix, prefix,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("directory stats: %w", err)
 	}
-	defer statsRows.Close()
+	defer rows.Close()
 
-	type dirStat struct {
-		Name      string
-		IsDir     bool
-		FileCount int64
-		TotalSize int64
-	}
 	var stats []dirStat
-	for statsRows.Next() {
+	for rows.Next() {
 		var ds dirStat
 		var isDirInt int
-		if err := statsRows.Scan(&ds.Name, &isDirInt, &ds.FileCount, &ds.TotalSize); err != nil {
+		if err := rows.Scan(&ds.Name, &isDirInt, &ds.FileCount, &ds.TotalSize); err != nil {
 			return nil, fmt.Errorf("scan directory stat: %w", err)
 		}
 		ds.IsDir = isDirInt == 1
 		stats = append(stats, ds)
 	}
-	if err := statsRows.Err(); err != nil {
+	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate directory stats: %w", err)
 	}
+	return stats, nil
+}
 
-	// Paginated file detail for direct children (non-directory entries).
-	fileQuery := `
+// queryDirectFileDetails pages through the direct-child files (entries
+// without a '/' after prefix), returning a rel-name -> backend/ctime
+// lookup plus the ordered object-key list used for the "has more" cursor.
+// One extra row is fetched to detect truncation.
+func queryDirectFileDetails(ctx context.Context, s *Store, prefix, escapedPrefix, startAfter string, maxKeys int) (map[string]fileDetail, []string, error) {
+	const fileQuery = `
 		SELECT o.object_key, o.backend_name, o.created_at
 		FROM object_locations o
 		INNER JOIN (
@@ -103,45 +145,35 @@ func (s *Store) ListDirectoryChildren(ctx context.Context, prefix, startAfter st
 		ORDER BY o.object_key
 		LIMIT ?`
 
-	fileRows, err := s.db.QueryContext(ctx, fileQuery,
+	rows, err := s.db.QueryContext(ctx, fileQuery,
 		escapedPrefix, prefix, prefix, startAfter, maxKeys+1,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("list direct children: %w", err)
+		return nil, nil, fmt.Errorf("list direct children: %w", err)
 	}
-	defer fileRows.Close()
+	defer rows.Close()
 
-	type fileDetail struct {
-		Backend   string
-		CreatedAt string
-	}
-	fileLookup := make(map[string]fileDetail)
-	var fileKeys []string
-	for fileRows.Next() {
+	lookup := make(map[string]fileDetail)
+	var keys []string
+	for rows.Next() {
 		var objectKey, backend, createdAt string
-		if err := fileRows.Scan(&objectKey, &backend, &createdAt); err != nil {
-			return nil, fmt.Errorf("scan file detail: %w", err)
+		if err := rows.Scan(&objectKey, &backend, &createdAt); err != nil {
+			return nil, nil, fmt.Errorf("scan file detail: %w", err)
 		}
 		relName := objectKey[len(prefix):]
-		fileLookup[relName] = fileDetail{Backend: backend, CreatedAt: formatTimestamp(createdAt)}
-		fileKeys = append(fileKeys, objectKey)
+		lookup[relName] = fileDetail{Backend: backend, CreatedAt: formatTimestamp(createdAt)}
+		keys = append(keys, objectKey)
 	}
-	if err := fileRows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate file details: %w", err)
+	if err := rows.Err(); err != nil {
+		return nil, nil, fmt.Errorf("iterate file details: %w", err)
 	}
+	return lookup, keys, nil
+}
 
-	hasMore := len(fileKeys) > maxKeys
-	if hasMore {
-		fileKeys = fileKeys[:maxKeys]
-		// Remove the extra entry from lookup
-		extraRel := fileKeys[maxKeys-1][len(prefix):]
-		_ = extraRel // lookup is keyed by relName, trim handled below
-	}
-
-	result := &store.DirectoryListResult{
-		Entries: make([]store.DirEntry, 0, len(stats)),
-	}
-
+// buildDirectoryEntries merges stats roll-ups with per-file details,
+// skipping files that fell outside the current page (no fileLookup entry).
+func buildDirectoryEntries(prefix string, stats []dirStat, fileLookup map[string]fileDetail) []store.DirEntry {
+	entries := make([]store.DirEntry, 0, len(stats))
 	for _, ds := range stats {
 		entry := store.DirEntry{
 			Name:      prefix + ds.Name,
@@ -150,23 +182,16 @@ func (s *Store) ListDirectoryChildren(ctx context.Context, prefix, startAfter st
 			TotalSize: ds.TotalSize,
 		}
 		if !ds.IsDir {
-			if detail, ok := fileLookup[ds.Name]; ok {
-				entry.Backend = detail.Backend
-				entry.CreatedAt = detail.CreatedAt
-			} else {
-				// File outside current page — skip.
+			detail, ok := fileLookup[ds.Name]
+			if !ok {
 				continue
 			}
+			entry.Backend = detail.Backend
+			entry.CreatedAt = detail.CreatedAt
 		}
-		result.Entries = append(result.Entries, entry)
+		entries = append(entries, entry)
 	}
-
-	if hasMore && len(fileKeys) > 0 {
-		result.HasMore = true
-		result.NextCursor = fileKeys[len(fileKeys)-1]
-	}
-
-	return result, nil
+	return entries
 }
 
 // formatTimestamp converts an RFC3339 timestamp to a short display format.

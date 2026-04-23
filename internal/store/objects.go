@@ -38,82 +38,93 @@ type EncryptionMeta struct {
 // overwrites by returning displaced copies for cleanup.
 func (s *Store) RecordObject(ctx context.Context, key, backend string, size int64, enc *EncryptionMeta) ([]DeletedCopy, error) {
 	return withTxVal(s, ctx, func(qtx *db.Queries) ([]DeletedCopy, error) {
-		// Serialize concurrent writes for the same key to prevent orphans
 		if err := qtx.LockObjectKeyForWrite(ctx, key); err != nil {
 			return nil, fmt.Errorf("failed to acquire object key lock: %w", err)
 		}
-
-		// --- Collect all existing copies for this key ---
 		existing, err := qtx.GetExistingCopiesForUpdate(ctx, key)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query existing copies: %w", err)
 		}
-
-		// --- Delete all existing copies and decrement their quotas ---
-		// Collect displaced copies on OTHER backends for orphan cleanup.
-		var displaced []DeletedCopy
-		if len(existing) > 0 {
-			if err := qtx.DeleteObjectCopies(ctx, key); err != nil {
-				return nil, fmt.Errorf("failed to delete existing copies: %w", err)
-			}
-
-			for _, ec := range existing {
-				if err := qtx.DecrementQuota(ctx, db.DecrementQuotaParams{
-					Amount:      ec.SizeBytes,
-					BackendName: ec.BackendName,
-				}); err != nil {
-					return nil, fmt.Errorf("failed to decrement quota for %s: %w", ec.BackendName, err)
-				}
-				// The new write goes to `backend`. Copies on OTHER backends
-				// need physical cleanup — the new PutObject overwrites
-				// in-place on the target backend, but stale copies on other
-				// backends become orphans.
-				if ec.BackendName != backend {
-					displaced = append(displaced, DeletedCopy{
-						BackendName: ec.BackendName,
-						SizeBytes:   ec.SizeBytes,
-					})
-				}
-			}
+		displaced, err := clearExistingCopies(ctx, qtx, key, backend, existing)
+		if err != nil {
+			return nil, err
 		}
-
-		// --- Build insert params with optional encryption metadata ---
-		params := db.InsertObjectLocationParams{
-			ObjectKey:   key,
-			BackendName: backend,
-			SizeBytes:   size,
-		}
-		if enc != nil {
-			if enc.Encrypted {
-				params.Encrypted = true
-				params.EncryptionKey = enc.EncryptionKey
-				params.KeyID = &enc.KeyID
-				params.PlaintextSize = &enc.PlaintextSize
-			}
-			if enc.ContentHash != "" {
-				params.ContentHash = &enc.ContentHash
-			}
-		}
-
-		// --- Insert new primary copy ---
-		if err := qtx.InsertObjectLocation(ctx, params); err != nil {
+		if err := qtx.InsertObjectLocation(ctx, insertParamsFromEnc(key, backend, size, enc)); err != nil {
 			return nil, fmt.Errorf("failed to insert object location: %w", err)
 		}
-
-		// --- Increment quota for new backend ---
-		n, err := qtx.IncrementQuota(ctx, db.IncrementQuotaParams{
-			Amount:      size,
-			BackendName: backend,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to update quota: %w", err)
+		if err := incrementBackendQuota(ctx, qtx, backend, size); err != nil {
+			return nil, err
 		}
-		if n == 0 {
-			return nil, ErrNoSpaceAvailable
-		}
-
 		return displaced, nil
 	})
+}
+
+// clearExistingCopies deletes any prior copies of the object and decrements
+// their backend quotas. Copies on backends other than the new target are
+// returned as DeletedCopy entries so the caller can enqueue them for
+// physical orphan cleanup.
+func clearExistingCopies(ctx context.Context, qtx *db.Queries, key, newBackend string, existing []db.GetExistingCopiesForUpdateRow) ([]DeletedCopy, error) {
+	if len(existing) == 0 {
+		return nil, nil
+	}
+	if err := qtx.DeleteObjectCopies(ctx, key); err != nil {
+		return nil, fmt.Errorf("failed to delete existing copies: %w", err)
+	}
+	var displaced []DeletedCopy
+	for _, ec := range existing {
+		if err := qtx.DecrementQuota(ctx, db.DecrementQuotaParams{
+			Amount:      ec.SizeBytes,
+			BackendName: ec.BackendName,
+		}); err != nil {
+			return nil, fmt.Errorf("failed to decrement quota for %s: %w", ec.BackendName, err)
+		}
+		// The new PutObject overwrites in place on newBackend; stale copies
+		// on every other backend become orphans requiring cleanup.
+		if ec.BackendName != newBackend {
+			displaced = append(displaced, DeletedCopy{BackendName: ec.BackendName, SizeBytes: ec.SizeBytes})
+		}
+	}
+	return displaced, nil
+}
+
+// insertParamsFromEnc builds InsertObjectLocationParams, attaching
+// encryption and content-hash metadata when provided.
+func insertParamsFromEnc(key, backend string, size int64, enc *EncryptionMeta) db.InsertObjectLocationParams {
+	params := db.InsertObjectLocationParams{
+		ObjectKey:   key,
+		BackendName: backend,
+		SizeBytes:   size,
+	}
+	if enc == nil {
+		return params
+	}
+	if enc.Encrypted {
+		params.Encrypted = true
+		params.EncryptionKey = enc.EncryptionKey
+		params.KeyID = &enc.KeyID
+		params.PlaintextSize = &enc.PlaintextSize
+	}
+	if enc.ContentHash != "" {
+		params.ContentHash = &enc.ContentHash
+	}
+	return params
+}
+
+// incrementBackendQuota credits `size` bytes to `backend`'s quota and
+// returns ErrNoSpaceAvailable when the row reports zero rows updated
+// (meaning the quota would be exceeded).
+func incrementBackendQuota(ctx context.Context, qtx *db.Queries, backend string, size int64) error {
+	n, err := qtx.IncrementQuota(ctx, db.IncrementQuotaParams{
+		Amount:      size,
+		BackendName: backend,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to update quota: %w", err)
+	}
+	if n == 0 {
+		return ErrNoSpaceAvailable
+	}
+	return nil
 }
 
 // DeleteObject removes all copies of an object and decrements their quotas.
@@ -172,74 +183,73 @@ func (s *Store) ListObjectsByBackend(ctx context.Context, backendName string, li
 // source copy is gone or the target already has a copy.
 func (s *Store) MoveObjectLocation(ctx context.Context, key, fromBackend, toBackend string) (int64, error) {
 	return withTxVal(s, ctx, func(qtx *db.Queries) (int64, error) {
-		// --- Check if target backend already has a copy ---
-		exists, err := qtx.CheckObjectExistsOnBackend(ctx, db.CheckObjectExistsOnBackendParams{
+		targetHasCopy, err := qtx.CheckObjectExistsOnBackend(ctx, db.CheckObjectExistsOnBackendParams{
 			ObjectKey:   key,
 			BackendName: toBackend,
 		})
 		if err != nil {
 			return 0, fmt.Errorf("failed to check target: %w", err)
 		}
-		if exists {
+		if targetHasCopy {
 			return 0, nil
 		}
-
-		// --- Lock the source row and verify it still belongs to the source ---
-		locked, err := qtx.LockObjectOnBackend(ctx, db.LockObjectOnBackendParams{
-			ObjectKey:   key,
-			BackendName: fromBackend,
-		})
-		if errors.Is(err, pgx.ErrNoRows) {
-			return 0, nil
+		locked, ok, err := lockSourceCopy(ctx, qtx, key, fromBackend)
+		if err != nil || !ok {
+			return 0, err
 		}
-		if err != nil {
-			return 0, fmt.Errorf("failed to lock object: %w", err)
+		if err := moveCopyBetweenBackends(ctx, qtx, key, fromBackend, toBackend, locked); err != nil {
+			return 0, err
 		}
-
-		// --- Delete source row ---
-		if err := qtx.DeleteObjectFromBackend(ctx, db.DeleteObjectFromBackendParams{
-			ObjectKey:   key,
-			BackendName: fromBackend,
-		}); err != nil {
-			return 0, fmt.Errorf("failed to delete source location: %w", err)
-		}
-
-		// --- Insert destination row preserving encryption and integrity metadata ---
-		if err := qtx.InsertObjectLocation(ctx, db.InsertObjectLocationParams{
-			ObjectKey:     key,
-			BackendName:   toBackend,
-			SizeBytes:     locked.SizeBytes,
-			Encrypted:     locked.Encrypted,
-			EncryptionKey: locked.EncryptionKey,
-			KeyID:         locked.KeyID,
-			PlaintextSize: locked.PlaintextSize,
-			ContentHash:   locked.ContentHash,
-		}); err != nil {
-			return 0, fmt.Errorf("failed to insert destination location: %w", err)
-		}
-
-		// --- Decrement source quota ---
-		if err := qtx.DecrementQuota(ctx, db.DecrementQuotaParams{
-			Amount:      locked.SizeBytes,
-			BackendName: fromBackend,
-		}); err != nil {
-			return 0, fmt.Errorf("failed to decrement source quota: %w", err)
-		}
-
-		// --- Increment destination quota ---
-		n, err := qtx.IncrementQuota(ctx, db.IncrementQuotaParams{
-			Amount:      locked.SizeBytes,
-			BackendName: toBackend,
-		})
-		if err != nil {
-			return 0, fmt.Errorf("failed to increment destination quota: %w", err)
-		}
-		if n == 0 {
-			return 0, ErrNoSpaceAvailable
-		}
-
 		return locked.SizeBytes, nil
 	})
+}
+
+// lockSourceCopy takes a row-level lock on the source copy. Returns
+// ok=false (with nil error) when the source copy is already gone — a
+// benign race the caller treats as "nothing to move."
+func lockSourceCopy(ctx context.Context, qtx *db.Queries, key, fromBackend string) (db.LockObjectOnBackendRow, bool, error) {
+	locked, err := qtx.LockObjectOnBackend(ctx, db.LockObjectOnBackendParams{
+		ObjectKey:   key,
+		BackendName: fromBackend,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return db.LockObjectOnBackendRow{}, false, nil
+	}
+	if err != nil {
+		return db.LockObjectOnBackendRow{}, false, fmt.Errorf("failed to lock object: %w", err)
+	}
+	return locked, true, nil
+}
+
+// moveCopyBetweenBackends performs the delete-source + insert-destination
+// + quota-swap sequence after the source row has been locked. Preserves
+// encryption and integrity metadata on the new row.
+func moveCopyBetweenBackends(ctx context.Context, qtx *db.Queries, key, fromBackend, toBackend string, src db.LockObjectOnBackendRow) error {
+	if err := qtx.DeleteObjectFromBackend(ctx, db.DeleteObjectFromBackendParams{
+		ObjectKey:   key,
+		BackendName: fromBackend,
+	}); err != nil {
+		return fmt.Errorf("failed to delete source location: %w", err)
+	}
+	if err := qtx.InsertObjectLocation(ctx, db.InsertObjectLocationParams{
+		ObjectKey:     key,
+		BackendName:   toBackend,
+		SizeBytes:     src.SizeBytes,
+		Encrypted:     src.Encrypted,
+		EncryptionKey: src.EncryptionKey,
+		KeyID:         src.KeyID,
+		PlaintextSize: src.PlaintextSize,
+		ContentHash:   src.ContentHash,
+	}); err != nil {
+		return fmt.Errorf("failed to insert destination location: %w", err)
+	}
+	if err := qtx.DecrementQuota(ctx, db.DecrementQuotaParams{
+		Amount:      src.SizeBytes,
+		BackendName: fromBackend,
+	}); err != nil {
+		return fmt.Errorf("failed to decrement source quota: %w", err)
+	}
+	return incrementBackendQuota(ctx, qtx, toBackend, src.SizeBytes)
 }
 
 // ListObjectsResult holds the result of a list objects query.
