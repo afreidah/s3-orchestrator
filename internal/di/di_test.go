@@ -12,6 +12,7 @@
 package di
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"strings"
@@ -38,7 +39,7 @@ func TestProviders_MissingConfigReturnsCleanError(t *testing.T) {
 		name string
 		call func(do.Injector) error
 	}{
-		{"ConcreteStore", func(i do.Injector) error { _, err := ProvideConcreteStore(i); return err }},
+		{"ConcreteStore", func(i do.Injector) error { _, err := provideConcreteStore(i); return err }},
 		{"AdminStore", func(i do.Injector) error { _, err := ProvideAdminStore(i); return err }},
 		{"DatabaseBreaker", func(i do.Injector) error { _, err := ProvideDatabaseBreaker(i); return err }},
 		{"ObjectStore", func(i do.Injector) error { _, err := ProvideObjectStore(i); return err }},
@@ -151,6 +152,137 @@ func TestProvideRateLimiter(t *testing.T) {
 		t.Fatal("ProvideRateLimiter returned nil")
 	}
 	rl.Close()
+}
+
+// TestOpenStore_InvalidDriver covers the default branch of openStore's
+// driver-dispatch switch.
+func TestOpenStore_InvalidDriver(t *testing.T) {
+	t.Parallel()
+	_, _, err := openStore(context.Background(), &config.DatabaseConfig{Driver: "bogus"})
+	if err == nil {
+		t.Fatal("expected error for unsupported driver, got nil")
+	}
+}
+
+// TestOpenStore_SQLiteInMemory covers the sqlite branch of openStore with
+// an in-memory database — verifies both returns populate and the handle
+// satisfies concreteStore.
+func TestOpenStore_SQLiteInMemory(t *testing.T) {
+	t.Parallel()
+	cs, admin, err := openStore(context.Background(), &config.DatabaseConfig{
+		Driver: "sqlite",
+		Path:   ":memory:",
+	})
+	if err != nil {
+		t.Fatalf("openStore: %v", err)
+	}
+	if cs == nil || admin == nil {
+		t.Error("expected non-nil concreteStore and AdminStore")
+	}
+	admin.Close()
+}
+
+// TestWireAuditMetrics covers the audit→Prometheus wiring side-effect.
+func TestWireAuditMetrics(t *testing.T) {
+	t.Parallel()
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("WireAuditMetrics panicked: %v", r)
+		}
+	}()
+	WireAuditMetrics()
+}
+
+// TestNarrowRoleProviders_HappyPath wires a fake concrete store plus a
+// shared breaker and invokes each per-role provider, asserting a non-nil
+// CB-wrapped role interface comes out. This is the missing coverage for
+// the successful branches of ProvideObjectStore, ProvideQuotaStore, etc.
+func TestNarrowRoleProviders_HappyPath(t *testing.T) {
+	t.Parallel()
+	inj := do.New()
+	do.ProvideValue(inj, &config.Config{CircuitBreaker: config.CircuitBreakerConfig{FailureThreshold: 3, OpenTimeout: time.Second}})
+	// Seed the concrete bundle directly — we can't open a real Postgres
+	// or SQLite store in a unit test, so fake the shape the narrow
+	// providers resolve.
+	bundle := &concreteStoreBundle{concrete: fakeConcreteStore{}}
+	do.ProvideValue(inj, bundle)
+	do.Provide(inj, ProvideDatabaseBreaker)
+
+	cases := []struct {
+		name string
+		call func() (any, error)
+	}{
+		{"ObjectStore", func() (any, error) { return ProvideObjectStore(inj) }},
+		{"QuotaStore", func() (any, error) { return ProvideQuotaStore(inj) }},
+		{"MultipartStore", func() (any, error) { return ProvideMultipartStore(inj) }},
+		{"ReplicationStore", func() (any, error) { return ProvideReplicationStore(inj) }},
+		{"CleanupStore", func() (any, error) { return ProvideCleanupStore(inj) }},
+		{"IntegrityStore", func() (any, error) { return ProvideIntegrityStore(inj) }},
+		{"LifecycleStore", func() (any, error) { return ProvideLifecycleStore(inj) }},
+		{"BackendLifecycleStore", func() (any, error) { return ProvideBackendLifecycleStore(inj) }},
+		{"DashboardStore", func() (any, error) { return ProvideDashboardStore(inj) }},
+		{"UsageFlusher", func() (any, error) { return ProvideUsageFlusher(inj) }},
+		{"AdvisoryLocker", func() (any, error) { return ProvideAdvisoryLocker(inj) }},
+	}
+	for _, tc := range cases {
+		v, err := tc.call()
+		if err != nil {
+			t.Errorf("%s: unexpected error %v", tc.name, err)
+		}
+		if v == nil {
+			t.Errorf("%s: provider returned nil value", tc.name)
+		}
+	}
+}
+
+// TestResolveProxyStores_HappyPath drives the full Stores bag assembly
+// with a seeded injector — covers resolveProxyStores's 11 sequential
+// do.Invoke calls.
+func TestResolveProxyStores_HappyPath(t *testing.T) {
+	t.Parallel()
+	inj := do.New()
+	do.ProvideValue(inj, &config.Config{CircuitBreaker: config.CircuitBreakerConfig{FailureThreshold: 3, OpenTimeout: time.Second}})
+	do.ProvideValue(inj, &concreteStoreBundle{concrete: fakeConcreteStore{}})
+	do.Provide(inj, ProvideDatabaseBreaker)
+	do.Provide(inj, ProvideObjectStore)
+	do.Provide(inj, ProvideQuotaStore)
+	do.Provide(inj, ProvideMultipartStore)
+	do.Provide(inj, ProvideReplicationStore)
+	do.Provide(inj, ProvideCleanupStore)
+	do.Provide(inj, ProvideIntegrityStore)
+	do.Provide(inj, ProvideLifecycleStore)
+	do.Provide(inj, ProvideBackendLifecycleStore)
+	do.Provide(inj, ProvideDashboardStore)
+	do.Provide(inj, ProvideUsageFlusher)
+	do.Provide(inj, ProvideAdvisoryLocker)
+
+	stores, err := resolveProxyStores(inj)
+	if err != nil {
+		t.Fatalf("resolveProxyStores: %v", err)
+	}
+	if stores.Object == nil || stores.Cleanup == nil || stores.Lock == nil {
+		t.Errorf("resolveProxyStores returned incomplete Stores: %+v", stores)
+	}
+}
+
+// TestProvideMetricsDeps_HappyPath covers the adapter-build path that
+// composes DashboardStore + ReplicationStore into proxy.MetricsDeps.
+func TestProvideMetricsDeps_HappyPath(t *testing.T) {
+	t.Parallel()
+	inj := do.New()
+	do.ProvideValue(inj, &config.Config{CircuitBreaker: config.CircuitBreakerConfig{FailureThreshold: 3, OpenTimeout: time.Second}})
+	do.ProvideValue(inj, &concreteStoreBundle{concrete: fakeConcreteStore{}})
+	do.Provide(inj, ProvideDatabaseBreaker)
+	do.Provide(inj, ProvideDashboardStore)
+	do.Provide(inj, ProvideReplicationStore)
+
+	deps, err := ProvideMetricsDeps(inj)
+	if err != nil {
+		t.Fatalf("ProvideMetricsDeps: %v", err)
+	}
+	if deps == nil {
+		t.Fatal("ProvideMetricsDeps returned nil")
+	}
 }
 
 // TestProvideDatabaseBreaker verifies the CB factory wires config values.

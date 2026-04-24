@@ -72,11 +72,11 @@ func NewInjector(cfg *config.Config, mode string, logLevel *slog.LevelVar, logBu
 	do.ProvideValue(inj, logBuffer)
 
 	// --- Required infrastructure ---
-	do.Provide(inj, ProvideConcreteStore)
+	do.Provide(inj, provideConcreteStore)
 	do.Provide(inj, ProvideAdminStore)
 	do.Provide(inj, ProvideDatabaseBreaker)
 
-	// Narrow per-role store providers — each wraps ProvideConcreteStore's
+	// Narrow per-role store providers — each wraps provideConcreteStore's
 	// value with its per-role CB decorator.
 	do.Provide(inj, ProvideObjectStore)
 	do.Provide(inj, ProvideQuotaStore)
@@ -166,10 +166,10 @@ type metricsDeps interface {
 	GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]store.ObjectLocation, error)
 }
 
-// ProvideConcreteStore creates the concrete driver store for the configured
+// provideConcreteStore creates the concrete driver store for the configured
 // driver, runs migrations, and syncs quota limits. Returned as an unexported
 // composite; no call site outside this package references it directly.
-func ProvideConcreteStore(i do.Injector) (*concreteStoreBundle, error) {
+func provideConcreteStore(i do.Injector) (*concreteStoreBundle, error) {
 	cfg, err := do.Invoke[*config.Config](i)
 	if err != nil {
 		return nil, err

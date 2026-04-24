@@ -870,3 +870,109 @@ func TestCircuitBreaker_ConcurrentProbeSerializedByAtomicFlag(t *testing.T) {
 		t.Errorf("mock received %d calls during burst, want exactly 1 probe", probes)
 	}
 }
+
+// -------------------------------------------------------------------------
+// Forwarder coverage — each narrow CB wrapper's thin pass-through methods.
+//
+// These tests don't exercise state-machine edges (the big tests above do);
+// they prove each forwarder returns the inner store's error/value so the
+// per-role CB wrappers can't quietly drift out of sync with the role
+// interface contract.
+// -------------------------------------------------------------------------
+
+func TestCBForwarders_CleanupStore(t *testing.T) {
+	t.Parallel()
+	cb := newTestCB(&mockStore{}, 3, time.Minute)
+	ctx := context.Background()
+	if err := cb.IncrementOrphanBytes(ctx, "b1", 10); err != nil {
+		t.Errorf("IncrementOrphanBytes: %v", err)
+	}
+	if err := cb.DecrementOrphanBytes(ctx, "b1", 10); err != nil {
+		t.Errorf("DecrementOrphanBytes: %v", err)
+	}
+}
+
+func TestCBForwarders_IntegrityStore(t *testing.T) {
+	t.Parallel()
+	cb := newTestCB(&mockStore{}, 3, time.Minute)
+	ctx := context.Background()
+	if _, err := cb.GetRandomHashedObjects(ctx, 5); err != nil {
+		t.Errorf("GetRandomHashedObjects: %v", err)
+	}
+	if _, err := cb.GetObjectsWithoutHash(ctx, 5, 0); err != nil {
+		t.Errorf("GetObjectsWithoutHash: %v", err)
+	}
+	if err := cb.UpdateContentHash(ctx, "k", "b1", "h"); err != nil {
+		t.Errorf("UpdateContentHash: %v", err)
+	}
+}
+
+func TestCBForwarders_MultipartStore(t *testing.T) {
+	t.Parallel()
+	cb := newTestCB(&mockStore{}, 3, time.Minute)
+	ctx := context.Background()
+	if _, err := cb.CountActiveMultipartUploads(ctx, "prefix/"); err != nil {
+		t.Errorf("CountActiveMultipartUploads: %v", err)
+	}
+	if _, err := cb.GetMultipartUploadsByBackend(ctx, "b1"); err != nil {
+		t.Errorf("GetMultipartUploadsByBackend: %v", err)
+	}
+}
+
+func TestCBForwarders_QuotaStore(t *testing.T) {
+	t.Parallel()
+	mock := &mockStore{getQuotaStatsResp: map[string]QuotaStat{"b1": {BytesUsed: 10}}}
+	cb := newTestCB(mock, 3, time.Minute)
+
+	// Exercise QuotaStore.GetQuotaStats directly. cb.GetQuotaStats would
+	// resolve to the embedded DashboardStore's forwarder — the one on
+	// cbQuotaStore needs its own hit to count toward coverage.
+	stats, err := cb.quota.GetQuotaStats(context.Background())
+	if err != nil {
+		t.Fatalf("GetQuotaStats: %v", err)
+	}
+	if stats["b1"].BytesUsed != 10 {
+		t.Errorf("GetQuotaStats: got %+v", stats)
+	}
+}
+
+func TestCBForwarders_ReplicationStore(t *testing.T) {
+	t.Parallel()
+	cb := newTestCB(&mockStore{}, 3, time.Minute)
+	ctx := context.Background()
+	if _, err := cb.GetUnderReplicatedObjectsExcluding(ctx, 2, 10, []string{"b1"}); err != nil {
+		t.Errorf("GetUnderReplicatedObjectsExcluding: %v", err)
+	}
+	if _, err := cb.GetOverReplicatedObjects(ctx, 2, 10); err != nil {
+		t.Errorf("GetOverReplicatedObjects: %v", err)
+	}
+	if _, err := cb.CountOverReplicatedObjects(ctx, 2); err != nil {
+		t.Errorf("CountOverReplicatedObjects: %v", err)
+	}
+	if err := cb.RemoveExcessCopy(ctx, "k", "b1", 100); err != nil {
+		t.Errorf("RemoveExcessCopy: %v", err)
+	}
+}
+
+// -------------------------------------------------------------------------
+// Database breaker factory + error filter wrappers
+// -------------------------------------------------------------------------
+
+func TestNewDatabaseBreaker_ReturnsHealthy(t *testing.T) {
+	t.Parallel()
+	cb := NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3, OpenTimeout: time.Second})
+	if cb == nil {
+		t.Fatal("NewDatabaseBreaker returned nil")
+	}
+	if !cb.IsHealthy() {
+		t.Error("freshly-constructed breaker should be healthy")
+	}
+}
+
+func TestIsDBError_WrappedErrNoSpace(t *testing.T) {
+	t.Parallel()
+	wrapped := fmt.Errorf("outer: %w", ErrNoSpaceAvailable)
+	if isDBError(wrapped) {
+		t.Error("wrapped ErrNoSpaceAvailable should not be a DB error")
+	}
+}
