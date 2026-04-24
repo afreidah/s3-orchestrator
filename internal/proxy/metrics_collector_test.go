@@ -237,7 +237,9 @@ func TestUpdateQuotaMetrics_ReplicationFactorFromManager(t *testing.T) {
 	}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": newMockBackend()},
-		Store:           store,
+		Stores:           StoresFromMock(store),
+		Dashboard:           store,
+		Metrics:           store,
 		Order:           []string{"b1"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
