@@ -21,10 +21,22 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 )
 
+// MetricsDeps is the narrow store surface MetricsCollector needs to refresh
+// Prometheus gauges. Defined here — at the consumer — rather than in the
+// store package: adding a new metric is a MetricsCollector concern, not a
+// store-package concern.
+type MetricsDeps interface {
+	GetQuotaStats(ctx context.Context) (map[string]store.QuotaStat, error)
+	GetObjectCounts(ctx context.Context) (map[string]int64, error)
+	GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error)
+	GetUsageForPeriod(ctx context.Context, period string) (map[string]store.UsageStat, error)
+	GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]store.ObjectLocation, error)
+}
+
 // MetricsCollector records Prometheus metrics for manager-level operations
 // and periodically refreshes gauge values from the metadata store.
 type MetricsCollector struct {
-	store             store.MetricsStore
+	store             MetricsDeps
 	usage             *counter.UsageTracker
 	backendNames      []string
 	replicationFactor func() int // returns 0 when replication is disabled
@@ -32,7 +44,7 @@ type MetricsCollector struct {
 
 // NewMetricsCollector creates a MetricsCollector with references to the store
 // and usage tracker needed for gauge refreshes.
-func NewMetricsCollector(store store.MetricsStore, usage *counter.UsageTracker, backendNames []string, replicationFactor func() int) *MetricsCollector {
+func NewMetricsCollector(store MetricsDeps, usage *counter.UsageTracker, backendNames []string, replicationFactor func() int) *MetricsCollector {
 	return &MetricsCollector{
 		store:             store,
 		usage:             usage,

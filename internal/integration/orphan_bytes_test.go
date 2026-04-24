@@ -443,14 +443,16 @@ func TestOrphanBytesSpreadRouting(t *testing.T) {
 	ctx := context.Background()
 
 	// Build a spread-strategy manager sharing the same store and backends.
-	spreadCBStore := store.NewCircuitBreakerStore(testStore, config.CircuitBreakerConfig{
+	spreadCB := store.NewDatabaseBreaker(config.CircuitBreakerConfig{
 		FailureThreshold: 3,
 		OpenTimeout:      500 * time.Millisecond,
 		CacheTTL:         60 * time.Second,
 	})
 	spreadManager := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        testBackends,
-		Store:           spreadCBStore,
+		Stores:          newCBStores(testStore, spreadCB),
+		Dashboard:       store.NewCBDashboardStore(testStore, spreadCB),
+		Metrics:         newMetricsAdapter(testStore, spreadCB),
 		Order:           testBackendOrder,
 		CacheTTL:        60 * time.Second,
 		BackendTimeout:  30 * time.Second,

@@ -152,7 +152,9 @@ func TestExecuteMoves_Concurrent(t *testing.T) {
 	obs := map[string]s3be.ObjectBackend{"src": src, "dest": dest}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        obs,
-		Store:           store,
+		Stores:           StoresFromMock(store),
+		Dashboard:           store,
+		Metrics:           store,
 		Order:           []string{"src", "dest"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -203,7 +205,9 @@ func TestExecuteMoves_PartialFailure(t *testing.T) {
 	obs := map[string]s3be.ObjectBackend{"src": src, "dest": dest}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        obs,
-		Store:           store,
+		Stores:           StoresFromMock(store),
+		Dashboard:           store,
+		Metrics:           store,
 		Order:           []string{"src", "dest"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -235,7 +239,9 @@ func TestExecuteMoves_SequentialFallback(t *testing.T) {
 	obs := map[string]s3be.ObjectBackend{"src": src, "dest": dest}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        obs,
-		Store:           store,
+		Stores:           StoresFromMock(store),
+		Dashboard:           store,
+		Metrics:           store,
 		Order:           []string{"src", "dest"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -428,7 +434,9 @@ func newRebalanceManager(store *mockStore, names []string) *BackendManager {
 	}
 	return NewBackendManager(&BackendManagerConfig{
 		Backends:        backends,
-		Store:           store,
+		Stores:           StoresFromMock(store),
+		Dashboard:           store,
+		Metrics:           store,
 		Order:           names,
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -725,7 +733,9 @@ func TestExecuteOneMove_DestBackendNotFound(t *testing.T) {
 	obs := map[string]s3be.ObjectBackend{"src": src}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        obs,
-		Store:           store,
+		Stores:           StoresFromMock(store),
+		Dashboard:           store,
+		Metrics:           store,
 		Order:           []string{"src"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -755,7 +765,9 @@ func TestExecuteOneMove_SourceGetFails(t *testing.T) {
 	obs := map[string]s3be.ObjectBackend{"src": src, "dest": dest}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        obs,
-		Store:           store,
+		Stores:           StoresFromMock(store),
+		Dashboard:           store,
+		Metrics:           store,
 		Order:           []string{"src", "dest"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -786,7 +798,9 @@ func TestExecuteOneMove_DestPutFails(t *testing.T) {
 	obs := map[string]s3be.ObjectBackend{"src": src, "dest": dest}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        obs,
-		Store:           store,
+		Stores:           StoresFromMock(store),
+		Dashboard:           store,
+		Metrics:           store,
 		Order:           []string{"src", "dest"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -816,7 +830,9 @@ func TestExecuteOneMove_MoveLocationError_CleansUpOrphan(t *testing.T) {
 	obs := map[string]s3be.ObjectBackend{"src": src, "dest": dest}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        obs,
-		Store:           store,
+		Stores:           StoresFromMock(store),
+		Dashboard:           store,
+		Metrics:           store,
 		Order:           []string{"src", "dest"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -852,7 +868,9 @@ func TestExecuteOneMove_MoveLocationError_CleanupFails_EnqueuesCleanup(t *testin
 	obs := map[string]s3be.ObjectBackend{"src": src, "dest": dest}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        obs,
-		Store:           store,
+		Stores:           StoresFromMock(store),
+		Dashboard:           store,
+		Metrics:           store,
 		Order:           []string{"src", "dest"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -891,7 +909,9 @@ func TestExecuteOneMove_MovedSizeZero_CleansUpOrphan(t *testing.T) {
 	obs := map[string]s3be.ObjectBackend{"src": src, "dest": dest}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        obs,
-		Store:           store,
+		Stores:           StoresFromMock(store),
+		Dashboard:           store,
+		Metrics:           store,
 		Order:           []string{"src", "dest"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -927,7 +947,9 @@ func TestExecuteOneMove_SourceDeleteFails_EnqueuesCleanup(t *testing.T) {
 	obs := map[string]s3be.ObjectBackend{"src": src, "dest": dest}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        obs,
-		Store:           store,
+		Stores:           StoresFromMock(store),
+		Dashboard:           store,
+		Metrics:           store,
 		Order:           []string{"src", "dest"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -997,7 +1019,9 @@ func TestExecuteMoves_AdmissionBlocked(t *testing.T) {
 	store := &mockStore{}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]s3be.ObjectBackend{"b1": src, "b2": dst},
-		Store:           store,
+		Stores:           StoresFromMock(store),
+		Dashboard:           store,
+		Metrics:           store,
 		Order:           []string{"b1", "b2"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,

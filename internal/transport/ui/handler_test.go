@@ -69,7 +69,9 @@ func newTestHandlerWithMock(t *testing.T) (*Handler, *http.ServeMux, *testutil.M
 
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{},
-		Store:           mockStore,
+		Stores:           proxy.StoresFromMock(mockStore),
+		Dashboard:           mockStore,
+		Metrics:           mockStore,
 		Order:           []string{"b1"},
 		RoutingStrategy: config.RoutingPack,
 	})
@@ -442,7 +444,9 @@ func TestLogin_BcryptSecret(t *testing.T) {
 	}
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends: map[string]backend.ObjectBackend{},
-		Store:    mockStore,
+		Stores:    proxy.StoresFromMock(mockStore),
+		Dashboard:    mockStore,
+		Metrics:    mockStore,
 		Order:    []string{},
 	})
 	t.Cleanup(mgr.Close)
@@ -512,7 +516,9 @@ func TestCrossInstanceSession(t *testing.T) {
 	}
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends: map[string]backend.ObjectBackend{},
-		Store:    mockStore,
+		Stores:    proxy.StoresFromMock(mockStore),
+		Dashboard:    mockStore,
+		Metrics:    mockStore,
 		Order:    []string{},
 	})
 	t.Cleanup(mgr.Close)
@@ -1794,7 +1800,9 @@ func benchLoginHandler(b *testing.B) (*Handler, *http.ServeMux) {
 
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{},
-		Store:           mockStore,
+		Stores:           proxy.StoresFromMock(mockStore),
+		Dashboard:           mockStore,
+		Metrics:           mockStore,
 		Order:           []string{},
 		RoutingStrategy: config.RoutingPack,
 	})

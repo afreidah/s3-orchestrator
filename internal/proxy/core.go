@@ -31,19 +31,27 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// backendCore holds the shared infrastructure that multiple storage components
-// need: the backend map, metadata store, usage tracker, and common utilities.
+// backendCore holds the shared infrastructure that multiple storage
+// components need: the backend map, per-role store views, usage tracker,
+// and common utilities. Each store field is the narrow role interface the
+// core actually calls — no composed type owns the aggregate.
 type backendCore struct {
-	backends        map[string]backend.ObjectBackend // name -> backend
-	store           store.MetadataStore              // metadata persistence (Store or CircuitBreakerStore)
-	order           []string                         // backend selection order
-	backendTimeout  time.Duration                    // per-operation timeout for backend S3 calls
-	usage           *counter.UsageTracker            // per-backend usage counters and limits
-	routingStrategy config.RoutingStrategy            // RoutingPack or RoutingSpread
-	maxObjectSizes  map[string]int64                 // per-backend max object size (0 = unlimited)
-	draining        sync.Map                         // map[string]*drainState — backends being drained
-	metrics         *MetricsCollector                // Prometheus metric recording and gauge refresh
-	admissionSem    chan struct{}                    // shared concurrency semaphore (nil = unlimited)
+	backends         map[string]backend.ObjectBackend // name -> backend
+	objects          store.ObjectStore                // object CRUD + move + import
+	quota            store.QuotaStore                 // routing / capacity queries
+	multipart        store.MultipartStore             // exposed via Manager.Multipart()
+	cleanup          store.CleanupStore               // orphan cleanup + orphan-byte accounting
+	lifecycle        store.LifecycleStore             // expiration lookups
+	backendLifecycle store.BackendLifecycleStore      // backend-level stats and deletion
+	usageFlusher     store.UsageFlusher               // usage tracker flush target
+	order            []string                         // backend selection order
+	backendTimeout   time.Duration                    // per-operation timeout for backend S3 calls
+	usage            *counter.UsageTracker            // per-backend usage counters and limits
+	routingStrategy  config.RoutingStrategy           // RoutingPack or RoutingSpread
+	maxObjectSizes   map[string]int64                 // per-backend max object size (0 = unlimited)
+	draining         sync.Map                         // map[string]*drainState — backends being drained
+	metrics          *MetricsCollector                // Prometheus metric recording and gauge refresh
+	admissionSem     chan struct{}                    // shared concurrency semaphore (nil = unlimited)
 }
 
 // -------------------------------------------------------------------------
@@ -214,9 +222,9 @@ func (c *backendCore) SelectReplicaTarget(ctx context.Context, size int64, exclu
 // "spread" returns the least-utilized backend.
 func (c *backendCore) selectBackendForWrite(ctx context.Context, size int64, eligible []string) (string, error) {
 	if c.routingStrategy == config.RoutingSpread {
-		return c.store.GetLeastUtilizedBackend(ctx, size, eligible)
+		return c.quota.GetLeastUtilizedBackend(ctx, size, eligible)
 	}
-	return c.store.GetBackendWithSpace(ctx, size, eligible)
+	return c.quota.GetBackendWithSpace(ctx, size, eligible)
 }
 
 // selectWriteTarget picks a backend for a write operation, combining
@@ -268,7 +276,7 @@ func (c *backendCore) classifyWriteError(span trace.Span, operation string, err 
 // object from the backend. On success, enqueues cleanup for any displaced copies
 // on other backends (from overwrites). Updates the tracing span on error.
 func (c *backendCore) recordObjectOrCleanup(ctx context.Context, span trace.Span, be backend.ObjectBackend, key, backendName string, size int64, enc *store.EncryptionMeta) error {
-	displaced, err := c.store.RecordObject(ctx, key, backendName, size, enc)
+	displaced, err := c.objects.RecordObject(ctx, key, backendName, size, enc)
 	if err != nil {
 		slog.ErrorContext(ctx, "recordObject failed, cleaning up orphan",
 			"key", key, "backend", backendName, "error", err)
@@ -367,13 +375,13 @@ func (c *backendCore) UpdateQuotaMetrics(ctx context.Context) error {
 // (e.g. DB down), logs the error and moves on since the circuit breaker
 // is already handling DB outages.
 func (c *backendCore) enqueueCleanup(ctx context.Context, backendName, objectKey, reason string, sizeBytes int64) {
-	if err := c.store.EnqueueCleanup(ctx, backendName, objectKey, reason, sizeBytes); err != nil {
+	if err := c.cleanup.EnqueueCleanup(ctx, backendName, objectKey, reason, sizeBytes); err != nil {
 		slog.ErrorContext(ctx, "failed to enqueue cleanup (best-effort)",
 			"backend", backendName, "key", objectKey, "reason", reason, "error", err)
 		return
 	}
 	if sizeBytes > 0 {
-		if err := c.store.IncrementOrphanBytes(ctx, backendName, sizeBytes); err != nil {
+		if err := c.cleanup.IncrementOrphanBytes(ctx, backendName, sizeBytes); err != nil {
 			slog.ErrorContext(ctx, "failed to increment orphan bytes (best-effort)",
 				"backend", backendName, "key", objectKey, "size", sizeBytes, "error", err)
 		}
@@ -402,8 +410,13 @@ func (c *backendCore) Backends() map[string]backend.ObjectBackend { return c.bac
 // BackendOrder returns the configured backend ordering.
 func (c *backendCore) BackendOrder() []string { return c.order }
 
-// Store returns the metadata store.
-func (c *backendCore) Store() store.MetadataStore { return c.store }
+// Multipart returns the multipart-upload store role. Exposed for transport
+// handlers that need direct upload bookkeeping (e.g. s3api count).
+func (c *backendCore) Multipart() store.MultipartStore { return c.multipart }
+
+// BackendLifecycle returns the backend-level admin store role. Exposed for
+// admin handlers that report per-backend stats or drop backend data.
+func (c *backendCore) BackendLifecycle() store.BackendLifecycleStore { return c.backendLifecycle }
 
 // Usage returns the usage tracker.
 func (c *backendCore) Usage() *counter.UsageTracker { return c.usage }

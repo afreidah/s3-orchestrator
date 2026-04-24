@@ -71,7 +71,7 @@ func (mp *MultipartManager) CreateMultipartUpload(ctx context.Context, key, cont
 	}
 
 	uploadID := GenerateUploadID()
-	if err := mp.store.CreateMultipartUpload(ctx, uploadID, key, backendName, contentType, metadata); err != nil {
+	if err := mp.multipart.CreateMultipartUpload(ctx, uploadID, key, backendName, contentType, metadata); err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return "", "", err
 	}
@@ -107,7 +107,7 @@ func (mp *MultipartManager) UploadPart(ctx context.Context, uploadID string, par
 		return "", err
 	}
 
-	mu, err := mp.store.GetMultipartUpload(ctx, uploadID)
+	mu, err := mp.multipart.GetMultipartUpload(ctx, uploadID)
 	if err != nil {
 		return "", mp.classifyWriteError(span, operation, err)
 	}
@@ -148,7 +148,7 @@ func (mp *MultipartManager) UploadPart(ctx context.Context, uploadID string, par
 		return "", fmt.Errorf("failed to upload part: %w", err)
 	}
 
-	if err := mp.store.RecordPart(ctx, uploadID, partNumber, etag, uploadSize, enc); err != nil {
+	if err := mp.multipart.RecordPart(ctx, uploadID, partNumber, etag, uploadSize, enc); err != nil {
 		slog.ErrorContext(ctx, "recordPart failed, cleaning up part object",
 			"upload_id", uploadID, "part", partNumber, "error", err)
 		mp.usage.Record(mu.BackendName, 1, 0, 0)
@@ -180,7 +180,7 @@ func (mp *MultipartManager) CompleteMultipartUpload(ctx context.Context, uploadI
 	)
 	defer span.End()
 
-	mu, err := mp.store.GetMultipartUpload(ctx, uploadID)
+	mu, err := mp.multipart.GetMultipartUpload(ctx, uploadID)
 	if err != nil {
 		return "", mp.classifyWriteError(span, operation, err)
 	}
@@ -191,7 +191,7 @@ func (mp *MultipartManager) CompleteMultipartUpload(ctx context.Context, uploadI
 		return "", err
 	}
 
-	allParts, err := mp.store.GetParts(ctx, uploadID)
+	allParts, err := mp.multipart.GetParts(ctx, uploadID)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return "", err
@@ -344,7 +344,7 @@ func (mp *MultipartManager) CompleteMultipartUpload(ctx context.Context, uploadI
 	}
 
 	// Clean up multipart records from database
-	if err := mp.store.DeleteMultipartUpload(ctx, uploadID); err != nil {
+	if err := mp.multipart.DeleteMultipartUpload(ctx, uploadID); err != nil {
 		span.RecordError(err)
 	}
 
@@ -394,7 +394,7 @@ func (mp *MultipartManager) AbortMultipartUpload(ctx context.Context, uploadID s
 	)
 	defer span.End()
 
-	mu, err := mp.store.GetMultipartUpload(ctx, uploadID)
+	mu, err := mp.multipart.GetMultipartUpload(ctx, uploadID)
 	if err != nil {
 		return mp.classifyWriteError(span, operation, err)
 	}
@@ -405,7 +405,7 @@ func (mp *MultipartManager) AbortMultipartUpload(ctx context.Context, uploadID s
 		return err
 	}
 
-	parts, err := mp.store.GetParts(ctx, uploadID)
+	parts, err := mp.multipart.GetParts(ctx, uploadID)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)
@@ -419,7 +419,7 @@ func (mp *MultipartManager) AbortMultipartUpload(ctx context.Context, uploadID s
 	}
 
 	// Delete multipart records from database
-	if err := mp.store.DeleteMultipartUpload(ctx, uploadID); err != nil {
+	if err := mp.multipart.DeleteMultipartUpload(ctx, uploadID); err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return err
 	}
@@ -441,18 +441,18 @@ func (mp *MultipartManager) AbortMultipartUpload(ctx context.Context, uploadID s
 // ListMultipartUploads returns active multipart uploads matching the given
 // prefix, up to maxUploads results. Pass-through to the metadata store.
 func (mp *MultipartManager) ListMultipartUploads(ctx context.Context, prefix string, maxUploads int) ([]store.MultipartUpload, error) {
-	return mp.store.ListMultipartUploads(ctx, prefix, maxUploads)
+	return mp.multipart.ListMultipartUploads(ctx, prefix, maxUploads)
 }
 
 // GetParts returns all parts for a multipart upload.
 func (mp *MultipartManager) GetParts(ctx context.Context, uploadID string) ([]store.MultipartPart, error) {
-	return mp.store.GetParts(ctx, uploadID)
+	return mp.multipart.GetParts(ctx, uploadID)
 }
 
 // CleanupStaleMultipartUploads aborts multipart uploads older than the given
 // duration. Run periodically to prevent quota leaks from abandoned uploads.
 func (mp *MultipartManager) CleanupStaleMultipartUploads(ctx context.Context, olderThan time.Duration) {
-	uploads, err := mp.store.GetStaleMultipartUploads(ctx, olderThan)
+	uploads, err := mp.multipart.GetStaleMultipartUploads(ctx, olderThan)
 	if err != nil {
 		slog.ErrorContext(ctx, "failed to get stale multipart uploads", "error", err)
 		return
@@ -479,7 +479,7 @@ func (mp *MultipartManager) CleanupStaleMultipartUploads(ctx context.Context, ol
 // abortMultipartUploadsOnBackend aborts all in-progress multipart uploads
 // on the given backend.
 func (mp *MultipartManager) abortMultipartUploadsOnBackend(ctx context.Context, backendName string) {
-	uploads, err := mp.store.GetMultipartUploadsByBackend(ctx, backendName)
+	uploads, err := mp.multipart.GetMultipartUploadsByBackend(ctx, backendName)
 	if err != nil {
 		slog.ErrorContext(ctx, "Drain: failed to list multipart uploads", "backend", backendName, "error", err)
 		return

@@ -177,7 +177,19 @@ type flushUsageCall struct {
 	ingressBytes int64
 }
 
-var _ st.MetadataStore = (*mockStore)(nil)
+var (
+	_ st.ObjectStore           = (*mockStore)(nil)
+	_ st.QuotaStore            = (*mockStore)(nil)
+	_ st.MultipartStore        = (*mockStore)(nil)
+	_ st.ReplicationStore      = (*mockStore)(nil)
+	_ st.CleanupStore          = (*mockStore)(nil)
+	_ st.IntegrityStore        = (*mockStore)(nil)
+	_ st.LifecycleStore        = (*mockStore)(nil)
+	_ st.BackendLifecycleStore = (*mockStore)(nil)
+	_ st.DashboardStore        = (*mockStore)(nil)
+	_ st.UsageFlusher          = (*mockStore)(nil)
+	_ st.AdvisoryLocker        = (*mockStore)(nil)
+)
 
 func (m *mockStore) GetAllObjectLocations(_ context.Context, key string) ([]st.ObjectLocation, error) {
 	m.mu.Lock()

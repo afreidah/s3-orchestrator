@@ -591,14 +591,16 @@ func TestSpreadWriteRouting(t *testing.T) {
 	ctx := context.Background()
 
 	// Build a spread-strategy manager sharing the same store and backends.
-	spreadCBStore := store.NewCircuitBreakerStore(testStore, config.CircuitBreakerConfig{
+	spreadCB := store.NewDatabaseBreaker(config.CircuitBreakerConfig{
 		FailureThreshold: 3,
 		OpenTimeout:      500 * time.Millisecond,
 		CacheTTL:         60 * time.Second,
 	})
 	spreadManager := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        testBackends,
-		Store:           spreadCBStore,
+		Stores:          newCBStores(testStore, spreadCB),
+		Dashboard:       store.NewCBDashboardStore(testStore, spreadCB),
+		Metrics:         newMetricsAdapter(testStore, spreadCB),
 		Order:           testBackendOrder,
 		CacheTTL:        60 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -3202,7 +3204,7 @@ func TestCircuitBreakerDegradedMode(t *testing.T) {
 		tripCircuitBreaker(t)
 
 		// Verify circuit is open
-		if testCBStore.IsHealthy() {
+		if testDatabaseCB.IsHealthy() {
 			t.Fatal("expected circuit to be open")
 		}
 
@@ -3234,7 +3236,7 @@ func TestCircuitBreakerDegradedMode(t *testing.T) {
 		testFailableStore.SetFailing(false)
 		waitForRecovery(t)
 
-		if !testCBStore.IsHealthy() {
+		if !testDatabaseCB.IsHealthy() {
 			t.Error("expected circuit to be closed after recovery")
 		}
 
@@ -3260,7 +3262,7 @@ func TestCircuitBreakerDegradedMode(t *testing.T) {
 
 		tripCircuitBreaker(t)
 
-		if testCBStore.IsHealthy() {
+		if testDatabaseCB.IsHealthy() {
 			t.Fatal("expected circuit to be open")
 		}
 

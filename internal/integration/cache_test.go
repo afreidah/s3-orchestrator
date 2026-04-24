@@ -56,7 +56,7 @@ func setupCacheEnv(t *testing.T) *cacheTestEnv {
 		t.Fatalf("NewMemoryCache: %v", err)
 	}
 
-	cbStore := store.NewCircuitBreakerStore(testStore, config.CircuitBreakerConfig{
+	dbCB := store.NewDatabaseBreaker(config.CircuitBreakerConfig{
 		FailureThreshold: 3,
 		OpenTimeout:      500 * time.Millisecond,
 		CacheTTL:         60 * time.Second,
@@ -64,7 +64,9 @@ func setupCacheEnv(t *testing.T) *cacheTestEnv {
 
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        testBackends,
-		Store:           cbStore,
+		Stores:          newCBStores(testStore, dbCB),
+		Dashboard:       store.NewCBDashboardStore(testStore, dbCB),
+		Metrics:         newMetricsAdapter(testStore, dbCB),
 		Order:           testBackendOrder,
 		CacheTTL:        60 * time.Second,
 		BackendTimeout:  30 * time.Second,

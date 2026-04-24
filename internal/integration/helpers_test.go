@@ -40,6 +40,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
@@ -54,7 +55,7 @@ var (
 	testManager       *proxy.BackendManager
 	testStore         *store.Store
 	testFailableStore *FailableStore
-	testCBStore       *store.CircuitBreakerStore
+	testDatabaseCB    *breaker.CircuitBreaker
 	testBackends      map[string]s3be.ObjectBackend
 	testBackendOrder  []string
 	allBackends       map[string]s3be.ObjectBackend
@@ -284,16 +285,19 @@ func TestMain(m *testing.M) {
 	}
 	testBackendOrder = backendOrder[:2]
 
-	// Wire: store → FailableStore → CircuitBreakerStore → manager
-	failableStore := &FailableStore{MetadataStore: db}
+	// Wire: store → FailableStore → per-role CB wrappers → manager
+	failableStore := newFailableStore(db)
 	testFailableStore = failableStore
 
-	cbStore := store.NewCircuitBreakerStore(failableStore, cfg.CircuitBreaker)
-	testCBStore = cbStore
+	dbCB := store.NewDatabaseBreaker(cfg.CircuitBreaker)
+	testDatabaseCB = dbCB
+	stores := newCBStores(failableStore, dbCB)
 
 	manager := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        testBackends,
-		Store:           cbStore,
+		Stores:          stores,
+		Dashboard:       store.NewCBDashboardStore(failableStore, dbCB),
+		Metrics:         newMetricsAdapter(failableStore, dbCB),
 		Order:           testBackendOrder,
 		CacheTTL:        60 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -496,19 +500,68 @@ func setOrphanBytes(t *testing.T, backendName string, amount int64) {
 // tests that need more than 2 backends (e.g., over-replication with factor=3).
 func newThreeBackendManager(t *testing.T) *proxy.BackendManager {
 	t.Helper()
-	cbStore := store.NewCircuitBreakerStore(testFailableStore, config.CircuitBreakerConfig{
+	dbCB := store.NewDatabaseBreaker(config.CircuitBreakerConfig{
 		FailureThreshold: 3,
 		OpenTimeout:      500 * time.Millisecond,
 		CacheTTL:         60 * time.Second,
 	})
 	return proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        allBackends,
-		Store:           cbStore,
+		Stores:          newCBStores(testFailableStore, dbCB),
+		Dashboard:       store.NewCBDashboardStore(testFailableStore, dbCB),
+		Metrics:         newMetricsAdapter(testFailableStore, dbCB),
 		Order:           allBackendOrder,
 		CacheTTL:        60 * time.Second,
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
+}
+
+// newCBStores wraps a role-bearing value (FailableStore or *store.Store)
+// with per-role CB decorators sharing a single *breaker.CircuitBreaker.
+func newCBStores(src roleStore, cb *breaker.CircuitBreaker) proxy.Stores {
+	return proxy.Stores{
+		Object:           store.NewCBObjectStore(src, cb),
+		Quota:            store.NewCBQuotaStore(src, cb),
+		Multipart:        store.NewCBMultipartStore(src, cb),
+		Replication:      store.NewCBReplicationStore(src, cb),
+		Cleanup:          store.NewCBCleanupStore(src, cb),
+		Integrity:        store.NewCBIntegrityStore(src, cb),
+		Lifecycle:        store.NewCBLifecycleStore(src, cb),
+		BackendLifecycle: store.NewCBBackendLifecycleStore(src, cb),
+		Dashboard:        store.NewCBDashboardStore(src, cb),
+		Usage:            store.NewCBUsageFlusher(src, cb),
+		Lock:             store.NewAdvisoryLocker(src),
+	}
+}
+
+// roleStore names the role union tests need on a single source value.
+type roleStore interface {
+	store.ObjectStore
+	store.QuotaStore
+	store.MultipartStore
+	store.ReplicationStore
+	store.CleanupStore
+	store.IntegrityStore
+	store.LifecycleStore
+	store.BackendLifecycleStore
+	store.DashboardStore
+	store.UsageFlusher
+	store.AdvisoryLocker
+}
+
+// metricsAdapter carries the CB-wrapped role views MetricsCollector needs.
+type metricsAdapter struct {
+	store.DashboardStore
+	store.ReplicationStore
+}
+
+// newMetricsAdapter returns a proxy.MetricsDeps-compatible value.
+func newMetricsAdapter(src roleStore, cb *breaker.CircuitBreaker) *metricsAdapter {
+	return &metricsAdapter{
+		DashboardStore:   store.NewCBDashboardStore(src, cb),
+		ReplicationStore: store.NewCBReplicationStore(src, cb),
+	}
 }
 
 func envOrDefault(key, fallback string) string {
@@ -525,12 +578,45 @@ func envOrDefault(key, fallback string) string {
 // errSimulatedDBFailure simulates a database connection error.
 var errSimulatedDBFailure = errors.New("simulated database connection failure")
 
-// FailableStore wraps a MetadataStore and can be toggled to return connection
-// errors, simulating a database outage for circuit breaker integration tests.
+// FailableStore wraps a concrete metadata store and can be toggled to return
+// connection errors, simulating a database outage for circuit breaker
+// integration tests. It embeds every narrow role interface so one instance
+// satisfies any role the proxy asks for; a single *store.Store is assigned
+// to every embedded field.
 type FailableStore struct {
-	store.MetadataStore
+	store.ObjectStore
+	store.QuotaStore
+	store.MultipartStore
+	store.ReplicationStore
+	store.CleanupStore
+	store.IntegrityStore
+	store.LifecycleStore
+	store.BackendLifecycleStore
+	store.DashboardStore
+	store.UsageFlusher
+	store.AdvisoryLocker
+	inner   *store.Store
 	mu      sync.Mutex
 	failing bool
+}
+
+// newFailableStore returns a FailableStore whose role views all resolve to
+// the same concrete *store.Store.
+func newFailableStore(db *store.Store) *FailableStore {
+	return &FailableStore{
+		ObjectStore:           db,
+		QuotaStore:            db,
+		MultipartStore:        db,
+		ReplicationStore:      db,
+		CleanupStore:          db,
+		IntegrityStore:        db,
+		LifecycleStore:        db,
+		BackendLifecycleStore: db,
+		DashboardStore:        db,
+		UsageFlusher:          db,
+		AdvisoryLocker:        db,
+		inner:                 db,
+	}
 }
 
 func (f *FailableStore) SetFailing(v bool) {
@@ -549,161 +635,161 @@ func (f *FailableStore) GetAllObjectLocations(ctx context.Context, key string) (
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
 	}
-	return f.MetadataStore.GetAllObjectLocations(ctx, key)
+	return f.inner.GetAllObjectLocations(ctx, key)
 }
 
 func (f *FailableStore) RecordObject(ctx context.Context, key, backend string, size int64, enc *store.EncryptionMeta) ([]store.DeletedCopy, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
 	}
-	return f.MetadataStore.RecordObject(ctx, key, backend, size, enc)
+	return f.inner.RecordObject(ctx, key, backend, size, enc)
 }
 
 func (f *FailableStore) DeleteObject(ctx context.Context, key string) ([]store.DeletedCopy, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
 	}
-	return f.MetadataStore.DeleteObject(ctx, key)
+	return f.inner.DeleteObject(ctx, key)
 }
 
 func (f *FailableStore) ListObjects(ctx context.Context, prefix, startAfter string, maxKeys int) (*store.ListObjectsResult, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
 	}
-	return f.MetadataStore.ListObjects(ctx, prefix, startAfter, maxKeys)
+	return f.inner.ListObjects(ctx, prefix, startAfter, maxKeys)
 }
 
 func (f *FailableStore) GetBackendWithSpace(ctx context.Context, size int64, backendOrder []string) (string, error) {
 	if f.isFailing() {
 		return "", errSimulatedDBFailure
 	}
-	return f.MetadataStore.GetBackendWithSpace(ctx, size, backendOrder)
+	return f.inner.GetBackendWithSpace(ctx, size, backendOrder)
 }
 
 func (f *FailableStore) GetLeastUtilizedBackend(ctx context.Context, size int64, eligible []string) (string, error) {
 	if f.isFailing() {
 		return "", errSimulatedDBFailure
 	}
-	return f.MetadataStore.GetLeastUtilizedBackend(ctx, size, eligible)
+	return f.inner.GetLeastUtilizedBackend(ctx, size, eligible)
 }
 
 func (f *FailableStore) CreateMultipartUpload(ctx context.Context, uploadID, key, backend, contentType string, metadata map[string]string) error {
 	if f.isFailing() {
 		return errSimulatedDBFailure
 	}
-	return f.MetadataStore.CreateMultipartUpload(ctx, uploadID, key, backend, contentType, metadata)
+	return f.inner.CreateMultipartUpload(ctx, uploadID, key, backend, contentType, metadata)
 }
 
 func (f *FailableStore) GetMultipartUpload(ctx context.Context, uploadID string) (*store.MultipartUpload, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
 	}
-	return f.MetadataStore.GetMultipartUpload(ctx, uploadID)
+	return f.inner.GetMultipartUpload(ctx, uploadID)
 }
 
 func (f *FailableStore) RecordPart(ctx context.Context, uploadID string, partNumber int, etag string, size int64, enc *store.EncryptionMeta) error {
 	if f.isFailing() {
 		return errSimulatedDBFailure
 	}
-	return f.MetadataStore.RecordPart(ctx, uploadID, partNumber, etag, size, enc)
+	return f.inner.RecordPart(ctx, uploadID, partNumber, etag, size, enc)
 }
 
 func (f *FailableStore) GetParts(ctx context.Context, uploadID string) ([]store.MultipartPart, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
 	}
-	return f.MetadataStore.GetParts(ctx, uploadID)
+	return f.inner.GetParts(ctx, uploadID)
 }
 
 func (f *FailableStore) DeleteMultipartUpload(ctx context.Context, uploadID string) error {
 	if f.isFailing() {
 		return errSimulatedDBFailure
 	}
-	return f.MetadataStore.DeleteMultipartUpload(ctx, uploadID)
+	return f.inner.DeleteMultipartUpload(ctx, uploadID)
 }
 
 func (f *FailableStore) GetQuotaStats(ctx context.Context) (map[string]store.QuotaStat, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
 	}
-	return f.MetadataStore.GetQuotaStats(ctx)
+	return f.inner.GetQuotaStats(ctx)
 }
 
 func (f *FailableStore) GetObjectCounts(ctx context.Context) (map[string]int64, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
 	}
-	return f.MetadataStore.GetObjectCounts(ctx)
+	return f.inner.GetObjectCounts(ctx)
 }
 
 func (f *FailableStore) GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
 	}
-	return f.MetadataStore.GetActiveMultipartCounts(ctx)
+	return f.inner.GetActiveMultipartCounts(ctx)
 }
 
 func (f *FailableStore) GetStaleMultipartUploads(ctx context.Context, olderThan time.Duration) ([]store.MultipartUpload, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
 	}
-	return f.MetadataStore.GetStaleMultipartUploads(ctx, olderThan)
+	return f.inner.GetStaleMultipartUploads(ctx, olderThan)
 }
 
 func (f *FailableStore) ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*store.DirectoryListResult, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
 	}
-	return f.MetadataStore.ListDirectoryChildren(ctx, prefix, startAfter, maxKeys)
+	return f.inner.ListDirectoryChildren(ctx, prefix, startAfter, maxKeys)
 }
 
 func (f *FailableStore) ListObjectsByBackend(ctx context.Context, backendName string, limit int) ([]store.ObjectLocation, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
 	}
-	return f.MetadataStore.ListObjectsByBackend(ctx, backendName, limit)
+	return f.inner.ListObjectsByBackend(ctx, backendName, limit)
 }
 
 func (f *FailableStore) MoveObjectLocation(ctx context.Context, key, fromBackend, toBackend string) (int64, error) {
 	if f.isFailing() {
 		return 0, errSimulatedDBFailure
 	}
-	return f.MetadataStore.MoveObjectLocation(ctx, key, fromBackend, toBackend)
+	return f.inner.MoveObjectLocation(ctx, key, fromBackend, toBackend)
 }
 
 func (f *FailableStore) GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]store.ObjectLocation, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
 	}
-	return f.MetadataStore.GetUnderReplicatedObjects(ctx, factor, limit)
+	return f.inner.GetUnderReplicatedObjects(ctx, factor, limit)
 }
 
 func (f *FailableStore) RecordReplica(ctx context.Context, key, targetBackend, sourceBackend string, size int64) (bool, error) {
 	if f.isFailing() {
 		return false, errSimulatedDBFailure
 	}
-	return f.MetadataStore.RecordReplica(ctx, key, targetBackend, sourceBackend, size)
+	return f.inner.RecordReplica(ctx, key, targetBackend, sourceBackend, size)
 }
 
 func (f *FailableStore) GetOverReplicatedObjects(ctx context.Context, factor, limit int) ([]store.ObjectLocation, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
 	}
-	return f.MetadataStore.GetOverReplicatedObjects(ctx, factor, limit)
+	return f.inner.GetOverReplicatedObjects(ctx, factor, limit)
 }
 
 func (f *FailableStore) CountOverReplicatedObjects(ctx context.Context, factor int) (int64, error) {
 	if f.isFailing() {
 		return 0, errSimulatedDBFailure
 	}
-	return f.MetadataStore.CountOverReplicatedObjects(ctx, factor)
+	return f.inner.CountOverReplicatedObjects(ctx, factor)
 }
 
 func (f *FailableStore) RemoveExcessCopy(ctx context.Context, key, backendName string, size int64) error {
 	if f.isFailing() {
 		return errSimulatedDBFailure
 	}
-	return f.MetadataStore.RemoveExcessCopy(ctx, key, backendName, size)
+	return f.inner.RemoveExcessCopy(ctx, key, backendName, size)
 }
 
 // tripCircuitBreaker makes enough failing requests to trip the circuit breaker open.
@@ -739,7 +825,7 @@ func waitForRecovery(t *testing.T) {
 				Bucket: aws.String(virtualBucket),
 				Key:    aws.String("probe-recovery"),
 			})
-			if testCBStore.IsHealthy() {
+			if testDatabaseCB.IsHealthy() {
 				return
 			}
 		}

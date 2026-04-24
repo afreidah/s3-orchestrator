@@ -44,6 +44,27 @@ import (
 // because it exceeded its monthly usage limits. Not exposed to callers.
 var errUsageLimitSkip = errors.New("backend skipped: usage limits exceeded")
 
+// resolveLocationsByBackend looks up every copy of key and returns a
+// backend-name → location map for O(1) lookups inside the failover
+// closure. Returns nil when encryption is disabled (the map is never
+// consulted) or when the DB lookup failed. Callers that care about the
+// DB-down case inspect o.encryptor alongside the returned map — when
+// o.encryptor != nil and the map is nil, the database failed.
+func (o *ObjectManager) resolveLocationsByBackend(ctx context.Context, key string) map[string]*store.ObjectLocation {
+	if o.encryptor == nil {
+		return nil
+	}
+	locations, err := o.objects.GetAllObjectLocations(ctx, key)
+	if err != nil {
+		return nil
+	}
+	m := make(map[string]*store.ObjectLocation, len(locations))
+	for i := range locations {
+		m[locations[i].BackendName] = &locations[i]
+	}
+	return m
+}
+
 // withReadFailover looks up all copies of an object and tries each backend in
 // order until one succeeds. The tryBackend callback should attempt the operation
 // and return the object size (for span attributes) or an error to try the next copy.
@@ -56,7 +77,7 @@ func (o *ObjectManager) withReadFailover(ctx context.Context, operation, key str
 	)
 	defer span.End()
 
-	locations, err := o.store.GetAllObjectLocations(ctx, key)
+	locations, err := o.objects.GetAllObjectLocations(ctx, key)
 	if err != nil {
 		if errors.Is(err, store.ErrObjectNotFound) {
 			span.SetStatus(codes.Error, "object not found")
@@ -292,16 +313,7 @@ func (o *ObjectManager) GetObject(ctx context.Context, key string, rangeHeader s
 	var once sync.Once // protects result write when parallel broadcast is enabled
 
 	// Resolve locations upfront so encryption metadata is available after read.
-	locations, locErr := o.store.GetAllObjectLocations(ctx, key)
-
-	// Build a map for O(1) location lookup per backend attempt.
-	var locByBackend map[string]*store.ObjectLocation
-	if o.encryptor != nil && locErr == nil {
-		locByBackend = make(map[string]*store.ObjectLocation, len(locations))
-		for i := range locations {
-			locByBackend[locations[i].BackendName] = &locations[i]
-		}
-	}
+	locByBackend := o.resolveLocationsByBackend(ctx, key)
 
 	backendName, err := o.withReadFailover(ctx, "GetObject", key, func(ctx context.Context, beName string, backend s3be.ObjectBackend) (int64, error) {
 		if !o.usage.WithinLimits(beName, 1, 0, 0) {
@@ -416,16 +428,7 @@ func (o *ObjectManager) HeadObject(ctx context.Context, key string) (*s3be.HeadO
 	var once sync.Once // protects result write when parallel broadcast is enabled
 
 	// Resolve locations upfront so encryption metadata is available.
-	locations, locErr := o.store.GetAllObjectLocations(ctx, key)
-
-	// Build a map for O(1) location lookup per backend attempt.
-	var locByBackend map[string]*store.ObjectLocation
-	if o.encryptor != nil && locErr == nil {
-		locByBackend = make(map[string]*store.ObjectLocation, len(locations))
-		for i := range locations {
-			locByBackend[locations[i].BackendName] = &locations[i]
-		}
-	}
+	locByBackend := o.resolveLocationsByBackend(ctx, key)
 
 	backendName, err := o.withReadFailover(ctx, "HeadObject", key, func(ctx context.Context, beName string, backend s3be.ObjectBackend) (int64, error) {
 		if !o.usage.WithinLimits(beName, 1, 0, 0) {
@@ -491,7 +494,7 @@ func (o *ObjectManager) ListObjects(ctx context.Context, prefix, delimiter, star
 
 	const maxPages = 100 // cap DB round trips per request
 	for page := 0; page < maxPages && result.KeyCount < maxKeys; page++ {
-		storeResult, err := o.store.ListObjects(ctx, prefix, cursor, maxKeys)
+		storeResult, err := o.objects.ListObjects(ctx, prefix, cursor, maxKeys)
 		if err != nil {
 			if errors.Is(err, store.ErrDBUnavailable) {
 				span.SetStatus(codes.Error, "database unavailable")

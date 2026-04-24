@@ -277,7 +277,9 @@ func TestFindReplicaTarget_RespectsOrphanBytes(t *testing.T) {
 	store := &mockStore{}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": newMockBackend(), "b2": newMockBackend()},
-		Store:           store,
+		Stores:           StoresFromMock(store),
+		Dashboard:           store,
+		Metrics:           store,
 		Order:           []string{"b1", "b2"},
 		CacheTTL:        5 * time.Second,
 		RoutingStrategy: config.RoutingPack,
@@ -302,7 +304,9 @@ func TestFindReplicaTarget_OrphanBytesStillFits(t *testing.T) {
 	store := &mockStore{getBackendFromEligible: true}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": newMockBackend(), "b2": newMockBackend()},
-		Store:           store,
+		Stores:           StoresFromMock(store),
+		Dashboard:           store,
+		Metrics:           store,
 		Order:           []string{"b1", "b2"},
 		CacheTTL:        5 * time.Second,
 		RoutingStrategy: config.RoutingPack,
@@ -588,7 +592,9 @@ func TestReplicate_OrphanBytesBlockTarget(t *testing.T) {
 	}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": b1, "b2": b2},
-		Store:           store,
+		Stores:           StoresFromMock(store),
+		Dashboard:           store,
+		Metrics:           store,
 		Order:           []string{"b1", "b2"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,

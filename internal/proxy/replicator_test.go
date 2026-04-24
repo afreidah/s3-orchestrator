@@ -102,7 +102,9 @@ func TestReplicate_QuotaStatsError(t *testing.T) {
 	}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": b1, "b2": newMockBackend()},
-		Store:           store,
+		Stores:           StoresFromMock(store),
+		Dashboard:           store,
+		Metrics:           store,
 		Order:           []string{"b1", "b2"},
 		CacheTTL:        5 * time.Second,
 		RoutingStrategy: config.RoutingPack,
@@ -136,7 +138,9 @@ func TestReplicate_Success(t *testing.T) {
 	}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": b1, "b2": b2},
-		Store:           store,
+		Stores:           StoresFromMock(store),
+		Dashboard:           store,
+		Metrics:           store,
 		Order:           []string{"b1", "b2"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -168,7 +172,9 @@ func TestFindReplicaTarget_ExcludesExistingCopies(t *testing.T) {
 	store := &mockStore{getBackendFromEligible: true}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": newMockBackend(), "b2": newMockBackend(), "b3": newMockBackend()},
-		Store:           store,
+		Stores:           StoresFromMock(store),
+		Dashboard:           store,
+		Metrics:           store,
 		Order:           []string{"b1", "b2", "b3"},
 		CacheTTL:        5 * time.Second,
 		RoutingStrategy: config.RoutingPack,
@@ -193,7 +199,9 @@ func TestFindReplicaTarget_SkipsFullBackends(t *testing.T) {
 	store := &mockStore{}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": newMockBackend(), "b2": newMockBackend()},
-		Store:           store,
+		Stores:           StoresFromMock(store),
+		Dashboard:           store,
+		Metrics:           store,
 		Order:           []string{"b1", "b2"},
 		CacheTTL:        5 * time.Second,
 		RoutingStrategy: config.RoutingPack,
@@ -217,7 +225,9 @@ func TestSelectReplicaTarget_NoSpaceAvailable(t *testing.T) {
 	store := &mockStore{getBackendErr: st.ErrNoSpaceAvailable}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": newMockBackend(), "b2": newMockBackend()},
-		Store:           store,
+		Stores:           StoresFromMock(store),
+		Dashboard:           store,
+		Metrics:           store,
 		Order:           []string{"b1", "b2"},
 		CacheTTL:        5 * time.Second,
 		RoutingStrategy: config.RoutingPack,
@@ -253,7 +263,7 @@ func TestCopyToReplica_Success(t *testing.T) {
 
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": b1, "b2": b2},
-		Store:           &mockStore{},
+		Stores:           StoresFromMock(&mockStore{}),
 		Order:           []string{"b1", "b2"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -283,7 +293,7 @@ func TestCopyToReplica_FailoverToSecondCopy(t *testing.T) {
 
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": b1, "b2": b2, "b3": b3},
-		Store:           &mockStore{},
+		Stores:           StoresFromMock(&mockStore{}),
 		Order:           []string{"b1", "b2", "b3"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -314,7 +324,7 @@ func TestCopyToReplica_AllSourcesFail(t *testing.T) {
 
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": b1, "b2": b2},
-		Store:           &mockStore{},
+		Stores:           StoresFromMock(&mockStore{}),
 		Order:           []string{"b1", "b2"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -394,7 +404,9 @@ func TestReplicate_RecordReplicaFails_CleansUpOrphan(t *testing.T) {
 	}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": b1, "b2": b2},
-		Store:           store,
+		Stores:           StoresFromMock(store),
+		Dashboard:           store,
+		Metrics:           store,
 		Order:           []string{"b1", "b2"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -440,7 +452,7 @@ func TestCopyToReplica_TargetWriteFails(t *testing.T) {
 
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": b1, "b2": b2},
-		Store:           &mockStore{},
+		Stores:           StoresFromMock(&mockStore{}),
 		Order:           []string{"b1", "b2"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -471,7 +483,9 @@ func TestReplicateObject_NoTargetAvailable(t *testing.T) {
 	}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": b1},
-		Store:           store,
+		Stores:           StoresFromMock(store),
+		Dashboard:           store,
+		Metrics:           store,
 		Order:           []string{"b1"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -508,7 +522,9 @@ func TestReplicate_SourceGoneDuringReplication(t *testing.T) {
 	}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": b1, "b2": b2},
-		Store:           store,
+		Stores:           StoresFromMock(store),
+		Dashboard:           store,
+		Metrics:           store,
 		Order:           []string{"b1", "b2"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -567,7 +583,9 @@ func TestReplicate_HealthAware_SkipsUnhealthyTarget(t *testing.T) {
 	}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": b1, "b2": cbb2, "b3": b3},
-		Store:           store,
+		Stores:           StoresFromMock(store),
+		Dashboard:           store,
+		Metrics:           store,
 		Order:           []string{"b1", "b2", "b3"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -619,7 +637,9 @@ func TestReplicate_HealthAware_PrefersHealthySource(t *testing.T) {
 	}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": cbb1, "b2": b2, "b3": b3},
-		Store:           store,
+		Stores:           StoresFromMock(store),
+		Dashboard:           store,
+		Metrics:           store,
 		Order:           []string{"b1", "b2", "b3"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -661,7 +681,9 @@ func TestReplicate_HealthAware_BelowThreshold(t *testing.T) {
 	}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": b1, "b2": cbb2},
-		Store:           store,
+		Stores:           StoresFromMock(store),
+		Dashboard:           store,
+		Metrics:           store,
 		Order:           []string{"b1", "b2"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -714,7 +736,7 @@ func TestIsBackendHealthy_CBHealthy(t *testing.T) {
 	cbb := backend.NewCircuitBreakerBackend(newMockBackend(), "b1", 3, time.Minute)
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": cbb},
-		Store:           &mockStore{},
+		Stores:           StoresFromMock(&mockStore{}),
 		Order:           []string{"b1"},
 		CacheTTL:        5 * time.Second,
 		RoutingStrategy: config.RoutingPack,
@@ -729,7 +751,7 @@ func TestIsBackendHealthy_CBUnhealthy(t *testing.T) {
 	cbb := newTrippedCBBackend(newMockBackend(), "b1")
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": cbb},
-		Store:           &mockStore{},
+		Stores:           StoresFromMock(&mockStore{}),
 		Order:           []string{"b1"},
 		CacheTTL:        5 * time.Second,
 		RoutingStrategy: config.RoutingPack,

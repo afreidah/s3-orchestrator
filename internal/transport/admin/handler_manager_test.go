@@ -35,13 +35,14 @@ import (
 func newTestHandlerWithManager(t *testing.T) *Handler {
 	t.Helper()
 	mock := &testutil.MockStore{}
-	cbStore := store.NewCircuitBreakerStore(mock, config.CircuitBreakerConfig{
+	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{
 		FailureThreshold: 3,
-		OpenTimeout:      50 * 0, // 0 → leave default zero; not probing in these tests
 	})
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{},
-		Store:           cbStore,
+		Stores:          proxy.StoresFromMock(mock),
+		Dashboard:       mock,
+		Metrics:         mock,
 		Order:           []string{},
 		RoutingStrategy: config.RoutingPack,
 	})
@@ -54,7 +55,9 @@ func newTestHandlerWithManager(t *testing.T) *Handler {
 	lv.Set(slog.LevelInfo)
 	return &Handler{
 		manager:  mgr,
-		store:    cbStore,
+		dbCB:     cb,
+		objects:  mock,
+		cleanup:  mock,
 		token:    "test-token",
 		logLevel: &lv,
 	}
@@ -117,9 +120,9 @@ func TestHandleObjectLocations_Happy(t *testing.T) {
 	mock := &testutil.MockStore{
 		GetAllLocationsResp: []store.ObjectLocation{{ObjectKey: "foo", BackendName: "b1"}},
 	}
-	cbStore := store.NewCircuitBreakerStore(mock, config.CircuitBreakerConfig{FailureThreshold: 3})
+	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3})
 	var lv slog.LevelVar
-	h := &Handler{store: cbStore, token: "test-token", logLevel: &lv}
+	h := &Handler{dbCB: cb, objects: mock, cleanup: mock, token: "test-token", logLevel: &lv}
 	mux := http.NewServeMux()
 	h.Register(mux)
 

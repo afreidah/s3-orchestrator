@@ -39,9 +39,14 @@ import (
 // -------------------------------------------------------------------------
 
 // BackendManagerConfig holds the parameters for creating a BackendManager.
+// Stores carries the narrow per-role store interfaces instead of one "god"
+// store; Metrics and Dashboard carry the narrow views used by
+// MetricsCollector and DashboardAggregator respectively.
 type BackendManagerConfig struct {
 	Backends           map[string]backend.ObjectBackend
-	Store              store.MetadataStore
+	Stores             Stores
+	Metrics            MetricsDeps
+	Dashboard          store.DashboardStore
 	Order              []string
 	CacheTTL           time.Duration
 	BackendTimeout     time.Duration
@@ -50,7 +55,7 @@ type BackendManagerConfig struct {
 	ParallelBroadcast  bool                   // fan-out reads in parallel during degraded mode
 	Encryptor          *encryption.Encryptor  // nil when encryption is disabled
 	CounterBackend     counter.CounterBackend // nil uses LocalCounterBackend
-	ObjectCache        objcache.ObjectCache  // nil when object data caching is disabled
+	ObjectCache        objcache.ObjectCache   // nil when object data caching is disabled
 	MaxObjectSizes     map[string]int64       // per-backend max object size in bytes (0 = unlimited)
 	CleanupConcurrency int                    // parallel cleanup deletions (default: 10)
 	AdmissionSem       chan struct{}          // shared concurrency semaphore for HTTP + background ops (nil = unlimited)
@@ -90,21 +95,27 @@ func NewBackendManager(cfg *BackendManagerConfig) *BackendManager {
 	usage := counter.NewUsageTracker(counters, cfg.UsageLimits)
 
 	core := &backendCore{
-		backends:        cfg.Backends,
-		store:           cfg.Store,
-		order:           cfg.Order,
-		backendTimeout:  cfg.BackendTimeout,
-		usage:           usage,
-		routingStrategy: cfg.RoutingStrategy,
-		maxObjectSizes:  cfg.MaxObjectSizes,
-		admissionSem:    cfg.AdmissionSem,
+		backends:         cfg.Backends,
+		objects:          cfg.Stores.Object,
+		quota:            cfg.Stores.Quota,
+		multipart:        cfg.Stores.Multipart,
+		cleanup:          cfg.Stores.Cleanup,
+		lifecycle:        cfg.Stores.Lifecycle,
+		backendLifecycle: cfg.Stores.BackendLifecycle,
+		usageFlusher:     cfg.Stores.Usage,
+		order:            cfg.Order,
+		backendTimeout:   cfg.BackendTimeout,
+		usage:            usage,
+		routingStrategy:  cfg.RoutingStrategy,
+		maxObjectSizes:   cfg.MaxObjectSizes,
+		admissionSem:     cfg.AdmissionSem,
 	}
 
 	cleanupConcurrency := cfg.CleanupConcurrency
 	if cleanupConcurrency <= 0 {
 		cleanupConcurrency = 10
 	}
-	cleanupWorker := worker.NewCleanupWorker(core, cfg.Store, cleanupConcurrency)
+	cleanupWorker := worker.NewCleanupWorker(core, cfg.Stores.Cleanup, cleanupConcurrency)
 	multipartManager := NewMultipartManager(core, cfg.Encryptor, cfg.ObjectCache)
 	cache := NewLocationCache(cfg.CacheTTL)
 	// ObjectManager gets a closure for the integrity config so it can read
@@ -117,23 +128,27 @@ func NewBackendManager(cfg *BackendManagerConfig) *BackendManager {
 		return m.IntegrityConfig()
 	})
 
+	rebalancerDeps := &rebalancerStore{ObjectStore: cfg.Stores.Object, QuotaStore: cfg.Stores.Quota}
+	replicatorDeps := &replicatorStore{ObjectStore: cfg.Stores.Object, ReplicationStore: cfg.Stores.Replication, QuotaStore: cfg.Stores.Quota}
+	overReplicationDeps := &overReplicationStore{ReplicationStore: cfg.Stores.Replication, QuotaStore: cfg.Stores.Quota}
+
 	m = &BackendManager{
 		backendCore:            core,
-		Rebalancer:             worker.NewRebalancer(core, cfg.Store),
-		Replicator:             worker.NewReplicator(core, cfg.Store),
-		OverReplicationCleaner: worker.NewOverReplicationCleaner(core, cfg.Store),
+		Rebalancer:             worker.NewRebalancer(core, rebalancerDeps),
+		Replicator:             worker.NewReplicator(core, replicatorDeps),
+		OverReplicationCleaner: worker.NewOverReplicationCleaner(core, overReplicationDeps),
 		CleanupWorker:          cleanupWorker,
-		Scrubber:               worker.NewScrubber(core, cfg.Store, cfg.Encryptor),
+		Scrubber:               worker.NewScrubber(core, cfg.Stores.Integrity, cfg.Encryptor),
 		MultipartManager:       multipartManager,
 		ObjectManager:          objectManager,
 		DrainManager: NewDrainManager(core,
 			multipartManager.abortMultipartUploadsOnBackend,
 			cleanupWorker.ProcessCleanupQueue,
 		),
-		dashboard: NewDashboardAggregator(cfg.Store, usage, cfg.Order),
+		dashboard: NewDashboardAggregator(cfg.Dashboard, usage, cfg.Order),
 	}
 
-	core.metrics = NewMetricsCollector(cfg.Store, usage, backendNames, func() int {
+	core.metrics = NewMetricsCollector(cfg.Metrics, usage, backendNames, func() int {
 		if rc := m.Replicator.Config(); rc != nil {
 			return rc.Factor
 		}
@@ -195,7 +210,7 @@ func (m *BackendManager) FlushUsage(ctx context.Context) error {
 		}
 		return true
 	})
-	return m.usage.FlushUsage(ctx, m.store, skip)
+	return m.usage.FlushUsage(ctx, m.usageFlusher, skip)
 }
 
 // RedisCounterActive returns true when the counter backend is a Redis
@@ -333,7 +348,7 @@ func (m *BackendManager) SyncBackend(ctx context.Context, backendName, bucket st
 				key = bucketPrefix + key
 			}
 
-			ok, importErr := m.store.ImportObject(ctx, key, backendName, obj.SizeBytes)
+			ok, importErr := m.objects.ImportObject(ctx, key, backendName, obj.SizeBytes)
 			if importErr != nil {
 				return fmt.Errorf("failed to import %s: %w", obj.Key, importErr)
 			}
@@ -428,7 +443,7 @@ func (m *BackendManager) ReconcileBackend(ctx context.Context, backendName, buck
 
 	// Import objects on backend but not in DB
 	for key, size := range realKeys {
-		imported, importErr := m.store.ImportObject(ctx, key, backendName, size)
+		imported, importErr := m.objects.ImportObject(ctx, key, backendName, size)
 		if importErr != nil {
 			slog.WarnContext(ctx, "Reconcile: import failed", "key", key, "backend", backendName, "error", importErr)
 			continue
@@ -439,13 +454,13 @@ func (m *BackendManager) ReconcileBackend(ctx context.Context, backendName, buck
 	}
 
 	// Remove DB entries not on backend
-	dbObjects, err := m.store.ListObjectsByBackend(ctx, backendName, 100000)
+	dbObjects, err := m.objects.ListObjectsByBackend(ctx, backendName, 100000)
 	if err != nil {
 		return result, fmt.Errorf("list DB objects for %s: %w", backendName, err)
 	}
 	for i := range dbObjects {
 		if _, exists := realKeys[dbObjects[i].ObjectKey]; !exists {
-			if delErr := m.store.DeleteObjectLocation(ctx, dbObjects[i].ObjectKey, backendName); delErr != nil {
+			if delErr := m.objects.DeleteObjectLocation(ctx, dbObjects[i].ObjectKey, backendName); delErr != nil {
 				slog.WarnContext(ctx, "Reconcile: failed to remove stale entry",
 					"key", dbObjects[i].ObjectKey, "backend", backendName, "error", delErr)
 			} else {

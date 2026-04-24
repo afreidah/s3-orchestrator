@@ -92,8 +92,21 @@ type FlushUsageCall struct {
 	IngressBytes int64
 }
 
-// Compile-time check.
-var _ store.MetadataStore = (*MockStore)(nil)
+// Compile-time checks — MockStore must satisfy every narrow role interface
+// so handler tests can hand it wherever a role is requested.
+var (
+	_ store.ObjectStore           = (*MockStore)(nil)
+	_ store.QuotaStore            = (*MockStore)(nil)
+	_ store.MultipartStore        = (*MockStore)(nil)
+	_ store.ReplicationStore      = (*MockStore)(nil)
+	_ store.CleanupStore          = (*MockStore)(nil)
+	_ store.IntegrityStore        = (*MockStore)(nil)
+	_ store.LifecycleStore        = (*MockStore)(nil)
+	_ store.BackendLifecycleStore = (*MockStore)(nil)
+	_ store.DashboardStore        = (*MockStore)(nil)
+	_ store.UsageFlusher          = (*MockStore)(nil)
+	_ store.AdvisoryLocker        = (*MockStore)(nil)
+)
 
 // GetAllObjectLocations returns the pre-configured locations or ErrObjectNotFound.
 func (m *MockStore) GetAllObjectLocations(_ context.Context, key string) ([]store.ObjectLocation, error) {

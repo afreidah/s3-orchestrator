@@ -131,7 +131,7 @@ func (d *DrainManager) GetDrainProgress(ctx context.Context, name string) (*Drai
 	}
 
 	// Query live stats from DB
-	count, bytes, err := d.store.BackendObjectStats(ctx, name)
+	count, bytes, err := d.backendLifecycle.BackendObjectStats(ctx, name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get backend stats: %w", err)
 	}
@@ -197,7 +197,7 @@ func (d *DrainManager) runDrain(ctx context.Context, name string, state *drainSt
 		}
 
 		// Get next batch of objects
-		objects, err := d.store.ListObjectsByBackend(ctx, name, 100)
+		objects, err := d.objects.ListObjectsByBackend(ctx, name, 100)
 		if err != nil {
 			slog.ErrorContext(ctx, "Drain: failed to list objects", "backend", name, "error", err)
 			state.setErr(err)
@@ -238,7 +238,7 @@ func (d *DrainManager) runDrain(ctx context.Context, name string, state *drainSt
 	}
 
 	// Drain complete — clean up DB records
-	if err := d.store.DeleteBackendData(ctx, name); err != nil {
+	if err := d.backendLifecycle.DeleteBackendData(ctx, name); err != nil {
 		slog.ErrorContext(ctx, "Drain: failed to clean up backend data", "backend", name, "error", err)
 		state.setErr(err)
 	}
@@ -260,7 +260,7 @@ func (d *DrainManager) runDrain(ctx context.Context, name string, state *drainSt
 func (d *DrainManager) DrainOneObject(ctx context.Context, srcBackend backend.ObjectBackend, srcName string, obj *store.ObjectLocation) bool {
 	// Check if the object already has a copy on another backend.
 	// If so, just delete the source — no need to copy data.
-	locations, err := d.store.GetAllObjectLocations(ctx, obj.ObjectKey)
+	locations, err := d.objects.GetAllObjectLocations(ctx, obj.ObjectKey)
 	if err != nil {
 		slog.WarnContext(ctx, "Drain: failed to look up object locations",
 			"key", obj.ObjectKey, "error", err)
@@ -270,7 +270,7 @@ func (d *DrainManager) DrainOneObject(ctx context.Context, srcBackend backend.Ob
 		if locations[i].BackendName != srcName {
 			// Replica exists elsewhere — delete the source location record
 			// and the S3 object. No data transfer required.
-			if err := d.store.DeleteObjectLocation(ctx, obj.ObjectKey, srcName); err != nil {
+			if err := d.objects.DeleteObjectLocation(ctx, obj.ObjectKey, srcName); err != nil {
 				slog.WarnContext(ctx, "Drain: failed to delete source location",
 					"key", obj.ObjectKey, "backend", srcName, "error", err)
 				return false
@@ -296,7 +296,7 @@ func (d *DrainManager) DrainOneObject(ctx context.Context, srcBackend backend.Ob
 		}
 	}
 
-	destName, err := d.store.GetLeastUtilizedBackend(ctx, obj.SizeBytes, filtered)
+	destName, err := d.quota.GetLeastUtilizedBackend(ctx, obj.SizeBytes, filtered)
 	if err != nil {
 		slog.WarnContext(ctx, "Drain: no destination backend available",
 			"key", obj.ObjectKey, "size", obj.SizeBytes, "error", err)
@@ -317,7 +317,7 @@ func (d *DrainManager) DrainOneObject(ctx context.Context, srcBackend backend.Ob
 	}
 
 	// Atomic DB update (compare-and-swap)
-	movedSize, err := d.store.MoveObjectLocation(ctx, obj.ObjectKey, srcName, destName)
+	movedSize, err := d.objects.MoveObjectLocation(ctx, obj.ObjectKey, srcName, destName)
 	if err != nil {
 		slog.ErrorContext(ctx, "Drain: failed to update object location",
 			"key", obj.ObjectKey, "error", err)
@@ -372,7 +372,7 @@ func (d *DrainManager) RemoveBackend(ctx context.Context, name string, purge boo
 	}
 
 	// Delete all DB records in FK-safe order
-	if err := d.store.DeleteBackendData(ctx, name); err != nil {
+	if err := d.backendLifecycle.DeleteBackendData(ctx, name); err != nil {
 		return fmt.Errorf("failed to delete backend data: %w", err)
 	}
 
@@ -389,7 +389,7 @@ func (d *DrainManager) RemoveBackend(ctx context.Context, name string, purge boo
 // Best-effort: logs failures but does not stop.
 func (d *DrainManager) PurgeBackendObjects(ctx context.Context, backend backend.ObjectBackend, name string) {
 	for {
-		objects, err := d.store.ListObjectsByBackend(ctx, name, 100)
+		objects, err := d.objects.ListObjectsByBackend(ctx, name, 100)
 		if err != nil {
 			slog.ErrorContext(ctx, "Remove: failed to list objects for purge", "backend", name, "error", err)
 			return
@@ -405,7 +405,7 @@ func (d *DrainManager) PurgeBackendObjects(ctx context.Context, backend backend.
 			}
 			d.usage.Record(name, 1, 0, 0)
 
-			if err := d.store.DeleteObjectLocation(ctx, objects[i].ObjectKey, name); err != nil {
+			if err := d.objects.DeleteObjectLocation(ctx, objects[i].ObjectKey, name); err != nil {
 				slog.WarnContext(ctx, "Remove: failed to delete DB record during purge",
 					"backend", name, "key", objects[i].ObjectKey, "error", err)
 			}
