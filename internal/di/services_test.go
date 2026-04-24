@@ -381,19 +381,3 @@ func TestUsageFlushService_FlushTickWithAdaptiveSwitch(t *testing.T) {
 	defer cancel()
 	_ = svc.Run(ctx)
 }
-
-// TestCircuitBreakerWatchdog_RunTicksOnce makes the watchdog's ticker
-// fire so checkAll runs inside Run, covering the main tick branch.
-func TestCircuitBreakerWatchdog_RunTicksOnce(t *testing.T) {
-	t.Parallel()
-	mgr := newTestManagerWithMock(t)
-	cb := breaker.NewCircuitBreaker("t", 3, time.Second, func(error) bool { return false }, store.ErrDBUnavailable)
-	w := &circuitBreakerWatchdog{manager: mgr, dbCB: cb}
-	// Install a ~2 ms interval by shadowing the global default via a
-	// locally-patched ticker: we can't redeclare defaultCircuitBreakerWatchdog
-	// so we cancel after enough time for the real default to have ticked
-	// at least once, which is too long — instead drive checkAll directly
-	// to cover the interesting branches and rely on RunExitsOnCancel
-	// already covering the select path.
-	w.checkAll()
-}

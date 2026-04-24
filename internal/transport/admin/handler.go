@@ -50,18 +50,33 @@ type Handler struct {
 	logLevel   *slog.LevelVar
 }
 
-// New creates a new admin API handler.
-func New(manager *proxy.BackendManager, dbCB *breaker.CircuitBreaker, rawStore store.AdminStore, encryptor *encryption.Encryptor, reconciler *worker.Reconciler, token string, logLevel *slog.LevelVar, objects store.ObjectStore, cleanup store.CleanupStore) *Handler {
+// Deps groups the narrow role interfaces and infrastructure the admin
+// handler touches. It lets New keep a small signature (below Sonar's
+// 7-parameter threshold) without hiding what the handler depends on.
+type Deps struct {
+	Manager    *proxy.BackendManager
+	DBCB       *breaker.CircuitBreaker
+	RawStore   store.AdminStore
+	Objects    store.ObjectStore
+	Cleanup    store.CleanupStore
+	Encryptor  *encryption.Encryptor
+	Reconciler *worker.Reconciler
+	Token      string
+	LogLevel   *slog.LevelVar
+}
+
+// New creates a new admin API handler from its narrow dependency bag.
+func New(d *Deps) *Handler {
 	return &Handler{
-		manager:    manager,
-		reconciler: reconciler,
-		dbCB:       dbCB,
-		objects:    objects,
-		cleanup:    cleanup,
-		rawStore:   rawStore,
-		encryptor:  encryptor,
-		token:      token,
-		logLevel:   logLevel,
+		manager:    d.Manager,
+		reconciler: d.Reconciler,
+		dbCB:       d.DBCB,
+		objects:    d.Objects,
+		cleanup:    d.Cleanup,
+		rawStore:   d.RawStore,
+		encryptor:  d.Encryptor,
+		token:      d.Token,
+		logLevel:   d.LogLevel,
 	}
 }
 

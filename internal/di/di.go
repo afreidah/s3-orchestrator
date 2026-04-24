@@ -876,7 +876,17 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 		return nil, err
 	}
 
-	return admin.New(manager, cb, adminDB, enc, reconciler, adminToken, logLevel, objects, cleanup), nil
+	return admin.New(&admin.Deps{
+		Manager:    manager,
+		DBCB:       cb,
+		RawStore:   adminDB,
+		Objects:    objects,
+		Cleanup:    cleanup,
+		Encryptor:  enc,
+		Reconciler: reconciler,
+		Token:      adminToken,
+		LogLevel:   logLevel,
+	}), nil
 }
 
 // ProvideNotifier creates the webhook notification system.
