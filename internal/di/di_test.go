@@ -21,8 +21,17 @@ import (
 
 	"github.com/samber/do/v2"
 
+	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
+	"github.com/afreidah/s3-orchestrator/internal/notify"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/proxy"
+	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
+	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
+	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
+	"github.com/afreidah/s3-orchestrator/internal/transport/ui"
 )
 
 // -------------------------------------------------------------------------
@@ -407,4 +416,150 @@ func listServiceNames(inj do.Injector) []string {
 		names = append(names, s.Service)
 	}
 	return names
+}
+
+// -------------------------------------------------------------------------
+// FULL-INJECTOR HAPPY PATH
+//
+// Drives the big composite providers (Backends, BackendManager, S3Server,
+// LifecycleManager, UIHandler, AdminHandler, Notifier) end-to-end against
+// an in-memory SQLite store and a fake S3 backend endpoint. The storage
+// calls never fire during construction — NewS3Backend only parses config —
+// so no live network is required.
+// -------------------------------------------------------------------------
+
+// happyPathConfig returns a Config that every optional provider accepts
+// and that resolves through the full NewInjector wiring.
+func happyPathConfig(tmpDir string) *config.Config {
+	return &config.Config{
+		Server: config.ServerConfig{
+			ListenAddr:            "127.0.0.1:0",
+			BackendTimeout:        30 * time.Second,
+			MaxObjectSize:         1 << 20,
+			MaxConcurrentRequests: 4,
+		},
+		Database: config.DatabaseConfig{
+			Driver: "sqlite",
+			Path:   tmpDir + "/test.db",
+		},
+		CircuitBreaker: config.CircuitBreakerConfig{
+			FailureThreshold: 3,
+			OpenTimeout:      time.Second,
+			CacheTTL:         time.Minute,
+		},
+		Backends: []config.BackendConfig{{
+			Name:            "b1",
+			Endpoint:        "http://localhost:9999",
+			Region:          "us-east-1",
+			Bucket:          "bucket",
+			AccessKeyID:     "AK",
+			SecretAccessKey: "SK",
+			ForcePathStyle:  true,
+			QuotaBytes:      1024,
+		}},
+		Buckets: []config.BucketConfig{{
+			Name:        "test-bucket",
+			Credentials: []config.CredentialConfig{{AccessKeyID: "AK", SecretAccessKey: "SK"}},
+		}},
+		RoutingStrategy: config.RoutingPack,
+		Cache: config.CacheConfig{
+			Enabled:      true,
+			MaxSize:      "64MB",
+			MaxSizeBytes: 64 << 20,
+		},
+		RateLimit: config.RateLimitConfig{
+			Enabled:        true,
+			RequestsPerSec: 10,
+			Burst:          10,
+		},
+		UI: config.UIConfig{
+			Enabled:       true,
+			AdminKey:      "admin-key",
+			AdminSecret:   "admin-secret",
+			AdminToken:    "secret-token",
+			SessionSecret: "0123456789abcdef0123456789abcdef",
+		},
+	}
+}
+
+// TestNewInjector_HappyPathResolvesEverything walks every provider
+// registered by the default-plus-ui config. Each do.Invoke exercises the
+// full body of its provider (not just the missing-dep early return),
+// which is what Sonar counts as new-code coverage.
+func TestNewInjector_HappyPathResolvesEverything(t *testing.T) {
+	t.Parallel()
+	cfg := happyPathConfig(t.TempDir())
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("config validation: %v", err)
+	}
+	inj := NewInjector(cfg, "all", new(slog.LevelVar), telemetry.NewLogBuffer())
+	t.Cleanup(func() { _ = inj.Shutdown() })
+
+	if _, err := do.Invoke[*BackendsResult](inj); err != nil {
+		t.Errorf("BackendsResult: %v", err)
+	}
+	if _, err := do.Invoke[store.AdminStore](inj); err != nil {
+		t.Errorf("AdminStore: %v", err)
+	}
+	if _, err := do.Invoke[*breaker.CircuitBreaker](inj); err != nil {
+		t.Errorf("CircuitBreaker: %v", err)
+	}
+	if _, err := do.Invoke[*proxy.BackendManager](inj); err != nil {
+		t.Errorf("BackendManager: %v", err)
+	}
+	if _, err := do.Invoke[*s3api.Server](inj); err != nil {
+		t.Errorf("S3Server: %v", err)
+	}
+	if _, err := do.Invoke[*ui.Handler](inj); err != nil {
+		t.Errorf("UIHandler: %v", err)
+	}
+	if _, err := do.Invoke[*admin.Handler](inj); err != nil {
+		t.Errorf("AdminHandler: %v", err)
+	}
+	if _, err := do.Invoke[*s3api.RateLimiter](inj); err != nil {
+		t.Errorf("RateLimiter: %v", err)
+	}
+	if _, err := do.Invoke[*httputil.LoginThrottle](inj); err != nil {
+		t.Errorf("LoginThrottle: %v", err)
+	}
+	if _, err := do.Invoke[*lifecycle.Manager](inj); err != nil {
+		t.Errorf("LifecycleManager: %v", err)
+	}
+}
+
+// TestNewInjector_WorkerModeResolvesLifecycle covers the mode == "worker"
+// / "all" branch of ProvideLifecycleManager (which registers the full
+// set of background services instead of the minimal pair).
+func TestNewInjector_WorkerModeResolvesLifecycle(t *testing.T) {
+	t.Parallel()
+	cfg := happyPathConfig(t.TempDir())
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("config validation: %v", err)
+	}
+	inj := NewInjector(cfg, "worker", new(slog.LevelVar), telemetry.NewLogBuffer())
+	t.Cleanup(func() { _ = inj.Shutdown() })
+
+	if _, err := do.Invoke[*lifecycle.Manager](inj); err != nil {
+		t.Fatalf("LifecycleManager: %v", err)
+	}
+}
+
+// TestNewInjector_NotifierResolvesWhenEndpointsConfigured covers the
+// optional notifier provider via the full injector path.
+func TestNewInjector_NotifierResolvesWhenEndpointsConfigured(t *testing.T) {
+	t.Parallel()
+	cfg := happyPathConfig(t.TempDir())
+	cfg.Notifications.Endpoints = []config.NotificationEndpoint{{
+		URL:    "http://example.invalid/webhook",
+		Events: []string{"*"},
+	}}
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("config validation: %v", err)
+	}
+	inj := NewInjector(cfg, "worker", new(slog.LevelVar), telemetry.NewLogBuffer())
+	t.Cleanup(func() { _ = inj.Shutdown() })
+
+	if _, err := do.Invoke[*notify.Notifier](inj); err != nil {
+		t.Fatalf("Notifier: %v", err)
+	}
 }
