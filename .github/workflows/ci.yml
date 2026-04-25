@@ -130,7 +130,7 @@ jobs:
         run: go test -race -coverprofile=coverage.out -covermode=atomic -coverpkg=./... ./...
 
       - name: Upload unit coverage
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: unit-coverage
           path: coverage.out
@@ -169,7 +169,7 @@ jobs:
         run: go test -race -v -tags integration -count=1 -coverprofile=integration-coverage.out -covermode=atomic -coverpkg=./... ./internal/integration/
 
       - name: Upload integration coverage
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: integration-coverage
           path: integration-coverage.out
@@ -188,18 +188,18 @@ jobs:
           fetch-depth: 0
 
       - name: Download unit coverage
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: unit-coverage
 
       - name: Download integration coverage
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: integration-coverage
         continue-on-error: true
 
       - name: SonarQube Scan
-        uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602
+        uses: SonarSource/sonarqube-scan-action@299e4b793aaa83bf2aba7c9c14bedbb485688ec4
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
@@ -287,7 +287,7 @@ jobs:
         run: cosign sign --yes ghcr.io/afreidah/s3-orchestrator@${DIGEST}
 
       - name: Scan image with Trivy
-        uses: aquasecurity/trivy-action@0.35.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ghcr.io/afreidah/s3-orchestrator:${{ steps.version.outputs.version }}
           exit-code: 1
@@ -345,7 +345,7 @@ jobs:
         run: cosign sign --yes ghcr.io/afreidah/s3-orchestrator-webpage@${DIGEST}
 
       - name: Scan image with Trivy
-        uses: aquasecurity/trivy-action@0.35.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ghcr.io/afreidah/s3-orchestrator-webpage:${{ steps.version.outputs.version }}
           exit-code: 1
