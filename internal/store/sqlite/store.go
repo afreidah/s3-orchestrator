@@ -116,8 +116,19 @@ func (s *Store) WithAdvisoryLock(ctx context.Context, _ int64, fn func(ctx conte
 	return true, fn(ctx)
 }
 
-// Compile-time interface checks.
+// Compile-time interface checks — *Store must satisfy every narrow role
+// interface plus AdminStore.
 var (
-	_ store.MetadataStore = (*Store)(nil)
-	_ store.AdminStore    = (*Store)(nil)
+	_ store.ObjectStore           = (*Store)(nil)
+	_ store.QuotaStore            = (*Store)(nil)
+	_ store.MultipartStore        = (*Store)(nil)
+	_ store.ReplicationStore      = (*Store)(nil)
+	_ store.CleanupStore          = (*Store)(nil)
+	_ store.IntegrityStore        = (*Store)(nil)
+	_ store.LifecycleStore        = (*Store)(nil)
+	_ store.BackendLifecycleStore = (*Store)(nil)
+	_ store.DashboardStore        = (*Store)(nil)
+	_ store.UsageFlusher          = (*Store)(nil)
+	_ store.AdvisoryLocker        = (*Store)(nil)
+	_ store.AdminStore            = (*Store)(nil)
 )

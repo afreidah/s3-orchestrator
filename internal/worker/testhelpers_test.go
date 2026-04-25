@@ -8,9 +8,22 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store"
 )
 
-// mockMetadataStore is a minimal stub for worker tests.
+// mockMetadataStore is a minimal stub for worker tests. It embeds every
+// narrow store role as a nil interface so any worker signature accepts it;
+// tests override only the methods they exercise, and any unstubbed call
+// panics, which surfaces test-fixture gaps loudly.
 type mockMetadataStore struct {
-	store.MetadataStore // embed to satisfy interface
+	store.ObjectStore
+	store.QuotaStore
+	store.MultipartStore
+	store.ReplicationStore
+	store.CleanupStore
+	store.IntegrityStore
+	store.LifecycleStore
+	store.BackendLifecycleStore
+	store.DashboardStore
+	store.UsageFlusher
+	store.AdvisoryLocker
 	pendingCleanups     []store.CleanupItem
 	completedIDs        []int64
 	randomHashedObjects []store.ObjectLocation

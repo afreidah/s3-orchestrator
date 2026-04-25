@@ -1,9 +1,10 @@
 // -------------------------------------------------------------------------------
-// Mock Store - Test Double for MetadataStore
+// Mock Store - Test Double for Narrow Store Roles
 //
 // Author: Alex Freidah
 //
-// Configurable MetadataStore implementation for storage package unit tests.
+// Configurable in-package mock that satisfies every narrow role interface
+// for storage package unit tests.
 // Provides pre-set responses and call counters for verifying store interactions
 // without a database.
 // -------------------------------------------------------------------------------
@@ -17,7 +18,8 @@ import (
 
 )
 
-// mockStore is a configurable MetadataStore mock for unit testing manager logic.
+// mockStore is a configurable mock satisfying every narrow role interface,
+// used by storage package unit tests (CB wrappers, circuit breaker state).
 // Each method returns its pre-configured response/error. Call tracking fields
 // allow assertions on what the manager called.
 type mockStore struct {
@@ -176,7 +178,19 @@ type flushUsageCall struct {
 	ingressBytes int64
 }
 
-var _ MetadataStore = (*mockStore)(nil)
+var (
+	_ ObjectStore           = (*mockStore)(nil)
+	_ QuotaStore            = (*mockStore)(nil)
+	_ MultipartStore        = (*mockStore)(nil)
+	_ ReplicationStore      = (*mockStore)(nil)
+	_ CleanupStore          = (*mockStore)(nil)
+	_ IntegrityStore        = (*mockStore)(nil)
+	_ LifecycleStore        = (*mockStore)(nil)
+	_ BackendLifecycleStore = (*mockStore)(nil)
+	_ DashboardStore        = (*mockStore)(nil)
+	_ UsageFlusher          = (*mockStore)(nil)
+	_ AdvisoryLocker        = (*mockStore)(nil)
+)
 
 func (m *mockStore) GetAllObjectLocations(_ context.Context, key string) ([]ObjectLocation, error) {
 	m.mu.Lock()

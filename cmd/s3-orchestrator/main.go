@@ -30,8 +30,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/samber/do/v2"
 
+	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/di"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
@@ -140,7 +142,7 @@ type server struct {
 
 	inj     do.Injector
 	db      store.AdminStore
-	cbStore *store.CircuitBreakerStore
+	dbCB    *breaker.CircuitBreaker
 	manager *proxy.BackendManager
 	srv     *s3api.Server
 	sm      *lifecycle.Manager
@@ -258,13 +260,13 @@ func (s *server) initLogging() error {
 	s.shutdownTracer = shutdownTracer
 
 	telemetry.BuildInfo.WithLabelValues(telemetry.Version, runtime.Version()).Set(1)
-	wireAuditMetrics()
+	di.WireAuditMetrics()
 	return nil
 }
 
-// initDI creates the dependency injection container via NewInjector (di.go).
+// initDI creates the dependency injection container via di.NewInjector.
 func (s *server) initDI() {
-	s.inj = NewInjector(s.cfg, s.mode, &s.logLevel, s.logBuffer)
+	s.inj = di.NewInjector(s.cfg, s.mode, &s.logLevel, s.logBuffer)
 }
 
 // resolveServices triggers lazy construction of all services from the DI
@@ -277,8 +279,8 @@ func (s *server) resolveServices() error {
 	if s.db, err = do.Invoke[store.AdminStore](s.inj); err != nil {
 		return fmt.Errorf("initialize database: %w", err)
 	}
-	if s.cbStore, err = do.Invoke[*store.CircuitBreakerStore](s.inj); err != nil {
-		return fmt.Errorf("initialize circuit breaker store: %w", err)
+	if s.dbCB, err = do.Invoke[*breaker.CircuitBreaker](s.inj); err != nil {
+		return fmt.Errorf("initialize database circuit breaker: %w", err)
 	}
 	if s.manager, err = do.Invoke[*proxy.BackendManager](s.inj); err != nil {
 		return fmt.Errorf("initialize backend manager: %w", err)
@@ -406,7 +408,7 @@ func (s *server) configureMetrics(mux *http.ServeMux, ctx context.Context) {
 func (s *server) registerHealthEndpoints(mux *http.ServeMux) {
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		status := "ok"
-		if !s.cbStore.IsHealthy() {
+		if !s.dbCB.IsHealthy() {
 			status = "degraded"
 		}
 		w.Header().Set("Content-Type", "application/json")
