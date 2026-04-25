@@ -1,21 +1,18 @@
 // -------------------------------------------------------------------------------
-// MetadataStore - Interface for Object Metadata Persistence
+// Store Role Interfaces
 //
 // Author: Alex Freidah
 //
-// Defines the contract between the BackendManager and its metadata store.
-// Implemented by Store (real PostgreSQL) and CircuitBreakerStore (degraded
-// wrapper). Startup-only methods (RunMigrations, SyncQuotaLimits, Close) live
-// on the concrete Store, not the interface.
+// Declares the narrow role interfaces that consumers request from DI. The
+// concrete *Store (PostgreSQL) and sqlite.Store (SQLite) each satisfy every
+// role — this package exposes no composed "god" interface; consumers only
+// ever import the role they actually use.
 //
-// The interface is decomposed into narrow role interfaces for consumers that
-// only need a subset of operations. MetadataStore composes all of them for
-// backward compatibility.
+// Startup/admin methods live on AdminStore and are resolved separately from
+// the request-time roles.
 // -------------------------------------------------------------------------------
 
 package store
-
-//go:generate mockgen -destination=mock_generated_test.go -package=store github.com/afreidah/s3-orchestrator/internal/store MetadataStore
 
 import (
 	"context"
@@ -138,45 +135,11 @@ type AdvisoryLocker interface {
 	WithAdvisoryLock(ctx context.Context, lockID int64, fn func(ctx context.Context) error) (bool, error)
 }
 
-// MetricsStore defines the store methods used by MetricsCollector.
-type MetricsStore interface {
-	GetQuotaStats(ctx context.Context) (map[string]QuotaStat, error)
-	GetObjectCounts(ctx context.Context) (map[string]int64, error)
-	GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error)
-	GetUsageForPeriod(ctx context.Context, period string) (map[string]UsageStat, error)
-	GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]ObjectLocation, error)
-}
-
-// DashboardStore defines the store methods used by DashboardAggregator.
+// DashboardStore defines the store methods used by the web UI dashboard
+// aggregator. It groups the four aggregate counters with the lazy-loaded
+// directory listing; nothing else needs this exact set.
 type DashboardStore interface {
 	GetQuotaStats(ctx context.Context) (map[string]QuotaStat, error)
-	GetObjectCounts(ctx context.Context) (map[string]int64, error)
-	GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error)
-	GetUsageForPeriod(ctx context.Context, period string) (map[string]UsageStat, error)
-	ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*DirectoryListResult, error)
-}
-
-// -------------------------------------------------------------------------
-// COMPOSED INTERFACE
-// -------------------------------------------------------------------------
-
-// MetadataStore defines the full contract for object metadata and quota
-// persistence. Composes all narrow role interfaces. All methods called by
-// BackendManager at request time or in background tasks are included.
-// Startup-only operations remain on the concrete Store type.
-type MetadataStore interface {
-	ObjectStore
-	QuotaStore
-	MultipartStore
-	ReplicationStore
-	CleanupStore
-	IntegrityStore
-	LifecycleStore
-	BackendLifecycleStore
-	UsageFlusher
-	AdvisoryLocker
-
-	// --- Dashboard/metrics (overlap with MetricsStore/DashboardStore) ---
 	GetObjectCounts(ctx context.Context) (map[string]int64, error)
 	GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error)
 	GetUsageForPeriod(ctx context.Context, period string) (map[string]UsageStat, error)
@@ -283,24 +246,23 @@ type DecryptableLocation struct {
 // COMPILE-TIME CHECKS
 // -------------------------------------------------------------------------
 
-// Verify *Store satisfies MetadataStore and AdminStore.
-var _ MetadataStore = (*Store)(nil)
-var _ AdminStore = (*Store)(nil)
-
-// Verify MetadataStore satisfies all narrow interfaces.
+// Verify *Store satisfies every narrow role interface and AdminStore. Adding
+// a method to *Store that does not land on any of these interfaces is a
+// signal to either slot it into an existing role or declare a new one —
+// there is no composed union for it to hide inside.
 var (
-	_ ObjectStore           = (MetadataStore)(nil)
-	_ QuotaStore            = (MetadataStore)(nil)
-	_ MultipartStore        = (MetadataStore)(nil)
-	_ ReplicationStore      = (MetadataStore)(nil)
-	_ CleanupStore          = (MetadataStore)(nil)
-	_ IntegrityStore        = (MetadataStore)(nil)
-	_ LifecycleStore        = (MetadataStore)(nil)
-	_ BackendLifecycleStore = (MetadataStore)(nil)
-	_ MetricsStore          = (MetadataStore)(nil)
-	_ DashboardStore        = (MetadataStore)(nil)
-	_ UsageFlusher          = (MetadataStore)(nil)
-	_ AdvisoryLocker        = (MetadataStore)(nil)
+	_ ObjectStore           = (*Store)(nil)
+	_ QuotaStore            = (*Store)(nil)
+	_ MultipartStore        = (*Store)(nil)
+	_ ReplicationStore      = (*Store)(nil)
+	_ CleanupStore          = (*Store)(nil)
+	_ IntegrityStore        = (*Store)(nil)
+	_ LifecycleStore        = (*Store)(nil)
+	_ BackendLifecycleStore = (*Store)(nil)
+	_ DashboardStore        = (*Store)(nil)
+	_ UsageFlusher          = (*Store)(nil)
+	_ AdvisoryLocker        = (*Store)(nil)
+	_ AdminStore            = (*Store)(nil)
 )
 
 // GroupByKey groups a flat list of object locations into a map keyed by object_key.

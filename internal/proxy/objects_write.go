@@ -231,7 +231,7 @@ func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey strin
 	defer span.End()
 
 	// --- Find all source locations (for failover) ---
-	locations, err := o.store.GetAllObjectLocations(ctx, sourceKey)
+	locations, err := o.objects.GetAllObjectLocations(ctx, sourceKey)
 	if err != nil {
 		if errors.Is(err, store.ErrObjectNotFound) {
 			span.SetStatus(codes.Error, "source object not found")
@@ -411,7 +411,7 @@ func (o *ObjectManager) DeleteObject(ctx context.Context, key string) error {
 	defer span.End()
 
 	// --- Delete all copies from store ---
-	copies, err := o.store.DeleteObject(ctx, key)
+	copies, err := o.objects.DeleteObject(ctx, key)
 	if err != nil {
 		if errors.Is(err, store.ErrObjectNotFound) {
 			// Object not in our tracking - treat as success (idempotent delete)
@@ -504,7 +504,7 @@ func (o *ObjectManager) DeleteObjects(ctx context.Context, keys []string) []Dele
 	for i, key := range keys {
 		results[i].Key = key
 
-		copies, err := o.store.DeleteObject(ctx, key)
+		copies, err := o.objects.DeleteObject(ctx, key)
 		if err != nil {
 			if errors.Is(err, store.ErrObjectNotFound) {
 				continue // not-found treated as success
