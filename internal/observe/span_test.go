@@ -92,7 +92,7 @@ func TestRun_RecorderFiresOnPanic(t *testing.T) {
 	rec := func(_ string, _ time.Time, _ error) { fired.Store(true) }
 
 	defer func() {
-		if r := recover(); r == nil {
+		if recover() == nil {
 			t.Fatal("expected panic to propagate")
 		}
 		if !fired.Load() {
