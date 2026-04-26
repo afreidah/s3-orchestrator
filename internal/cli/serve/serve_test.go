@@ -597,6 +597,54 @@ func TestReloadConfig_FailedLoadKeepsCurrent(t *testing.T) {
 	}
 }
 
+// TestReloadConfig_AppliesNewConfig drives the happy path: a fully-wired
+// server is built, the config file is rewritten with a tweaked log level,
+// and SIGHUP-style reloadConfig is invoked. After the call cfgPtr must hold
+// the new pointer and the swap must have run applyReload end-to-end (this
+// is what closes the coverage gap on internal/cli/serve/serve.go:applyReload).
+func TestReloadConfig_AppliesNewConfig(t *testing.T) {
+	path := writeTestConfig(t, validTestConfigYAML)
+	s := &server{configPath: path, mode: "all", stdout: &bytes.Buffer{}}
+
+	if err := s.loadConfig(); err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if err := s.initLogging(); err != nil {
+		t.Fatalf("initLogging: %v", err)
+	}
+	s.initDI()
+	if err := s.resolveServices(); err != nil {
+		t.Fatalf("resolveServices: %v", err)
+	}
+	t.Cleanup(func() {
+		s.adminStore().Close()
+		s.backendManager().Close()
+		_ = s.shutdownTracer(context.Background())
+	})
+
+	original := s.cfgPtr.Load()
+	if original == nil {
+		t.Fatal("cfgPtr should hold the initial config after resolveServices")
+	}
+
+	// Rewrite with a different log level — a hot-reloadable field.
+	updated := strings.Replace(validTestConfigYAML, `listen_addr: ":0"`,
+		`listen_addr: ":0"`+"\n  log_level: debug", 1)
+	if err := os.WriteFile(path, []byte(updated), 0600); err != nil {
+		t.Fatalf("rewrite config: %v", err)
+	}
+
+	s.reloadConfig()
+
+	got := s.cfgPtr.Load()
+	if got == original {
+		t.Fatalf("cfgPtr was not swapped after a successful reload")
+	}
+	if got.Server.LogLevel != "debug" {
+		t.Errorf("reloaded log_level = %q, want debug", got.Server.LogLevel)
+	}
+}
+
 // -------------------------------------------------------------------------
 // RESPONSE WRITER HELPER
 // -------------------------------------------------------------------------
