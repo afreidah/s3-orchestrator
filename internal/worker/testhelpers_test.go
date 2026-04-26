@@ -19,7 +19,7 @@ type mockMetadataStore struct {
 	store.ReplicationStore
 	store.CleanupStore
 	store.IntegrityStore
-	store.LifecycleStore
+	store.ExpiredObjectsLister
 	store.BackendLifecycleStore
 	store.DashboardStore
 	store.UsageFlusher

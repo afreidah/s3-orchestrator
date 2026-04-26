@@ -542,7 +542,7 @@ func newCBStores(src roleStore, cb *breaker.CircuitBreaker) proxy.Stores {
 		Replication:      store.NewCBReplicationStore(src, cb),
 		Cleanup:          store.NewCBCleanupStore(src, cb),
 		Integrity:        store.NewCBIntegrityStore(src, cb),
-		Lifecycle:        store.NewCBLifecycleStore(src, cb),
+		Lifecycle:        store.NewCBExpiredObjectsLister(src, cb),
 		BackendLifecycle: store.NewCBBackendLifecycleStore(src, cb),
 		Dashboard:        store.NewCBDashboardStore(src, cb),
 		Usage:            store.NewCBUsageFlusher(src, cb),
@@ -558,7 +558,7 @@ type roleStore interface {
 	store.ReplicationStore
 	store.CleanupStore
 	store.IntegrityStore
-	store.LifecycleStore
+	store.ExpiredObjectsLister
 	store.BackendLifecycleStore
 	store.DashboardStore
 	store.UsageFlusher
@@ -605,7 +605,7 @@ type FailableStore struct {
 	store.ReplicationStore
 	store.CleanupStore
 	store.IntegrityStore
-	store.LifecycleStore
+	store.ExpiredObjectsLister
 	store.BackendLifecycleStore
 	store.DashboardStore
 	store.UsageFlusher
@@ -625,7 +625,7 @@ func newFailableStore(db *store.Store) *FailableStore {
 		ReplicationStore:      db,
 		CleanupStore:          db,
 		IntegrityStore:        db,
-		LifecycleStore:        db,
+		ExpiredObjectsLister:        db,
 		BackendLifecycleStore: db,
 		DashboardStore:        db,
 		UsageFlusher:          db,

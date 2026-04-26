@@ -84,7 +84,7 @@ func NewInjector(cfg *config.Config, mode string, logLevel *slog.LevelVar, logBu
 	do.Provide(inj, ProvideReplicationStore)
 	do.Provide(inj, ProvideCleanupStore)
 	do.Provide(inj, ProvideIntegrityStore)
-	do.Provide(inj, ProvideLifecycleStore)
+	do.Provide(inj, ProvideExpiredObjectsLister)
 	do.Provide(inj, ProvideBackendLifecycleStore)
 	do.Provide(inj, ProvideDashboardStore)
 	do.Provide(inj, ProvideUsageFlusher)
@@ -147,7 +147,7 @@ type concreteStore interface {
 	store.ReplicationStore
 	store.CleanupStore
 	store.IntegrityStore
-	store.LifecycleStore
+	store.ExpiredObjectsLister
 	store.BackendLifecycleStore
 	store.DashboardStore
 	store.UsageFlusher
@@ -320,8 +320,8 @@ func ProvideIntegrityStore(i do.Injector) (store.IntegrityStore, error) {
 	return store.NewCBIntegrityStore(b.concrete, cb), nil
 }
 
-// ProvideLifecycleStore registers a CB-protected LifecycleStore view.
-func ProvideLifecycleStore(i do.Injector) (store.LifecycleStore, error) {
+// ProvideExpiredObjectsLister registers a CB-protected ExpiredObjectsLister view.
+func ProvideExpiredObjectsLister(i do.Injector) (store.ExpiredObjectsLister, error) {
 	b, err := do.Invoke[*concreteStoreBundle](i)
 	if err != nil {
 		return nil, err
@@ -330,7 +330,7 @@ func ProvideLifecycleStore(i do.Injector) (store.LifecycleStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	return store.NewCBLifecycleStore(b.concrete, cb), nil
+	return store.NewCBExpiredObjectsLister(b.concrete, cb), nil
 }
 
 // ProvideBackendLifecycleStore registers a CB-protected BackendLifecycleStore view.
@@ -654,7 +654,7 @@ func resolveProxyStores(i do.Injector) (proxy.Stores, error) {
 	if err != nil {
 		return proxy.Stores{}, err
 	}
-	lc, err := do.Invoke[store.LifecycleStore](i)
+	lc, err := do.Invoke[store.ExpiredObjectsLister](i)
 	if err != nil {
 		return proxy.Stores{}, err
 	}
