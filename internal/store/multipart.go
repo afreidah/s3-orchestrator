@@ -75,22 +75,32 @@ func (s *Store) GetMultipartUpload(ctx context.Context, uploadID string) (*Multi
 	if err != nil {
 		return nil, fmt.Errorf("failed to get multipart upload: %w", err)
 	}
+	mu, err := toMultipartUpload(row.UploadID, row.ObjectKey, row.BackendName, row.ContentType, row.Metadata, row.CreatedAt.Time)
+	if err != nil {
+		return nil, err
+	}
+	return &mu, nil
+}
 
+// toMultipartUpload assembles a MultipartUpload from the column set every
+// sqlc multipart row exposes. Centralizes the pointer-deref of ContentType
+// and the JSON unmarshal of Metadata so the slice-returning callers above
+// and below this don't carry parallel loop bodies.
+func toMultipartUpload(uploadID, objectKey, backendName string, contentType *string, metadata []byte, createdAt time.Time) (MultipartUpload, error) {
 	ct := ""
-	if row.ContentType != nil {
-		ct = *row.ContentType
+	if contentType != nil {
+		ct = *contentType
 	}
-
-	mu := &MultipartUpload{
-		UploadID:    row.UploadID,
-		ObjectKey:   row.ObjectKey,
-		BackendName: row.BackendName,
+	mu := MultipartUpload{
+		UploadID:    uploadID,
+		ObjectKey:   objectKey,
+		BackendName: backendName,
 		ContentType: ct,
-		CreatedAt:   row.CreatedAt.Time,
+		CreatedAt:   createdAt,
 	}
-	if len(row.Metadata) > 0 {
-		if err := json.Unmarshal(row.Metadata, &mu.Metadata); err != nil {
-			return nil, fmt.Errorf(errUnmarshalMetadata, err)
+	if len(metadata) > 0 {
+		if err := json.Unmarshal(metadata, &mu.Metadata); err != nil {
+			return MultipartUpload{}, fmt.Errorf(errUnmarshalMetadata, err)
 		}
 	}
 	return mu, nil
@@ -164,24 +174,11 @@ func (s *Store) GetStaleMultipartUploads(ctx context.Context, olderThan time.Dur
 	if err != nil {
 		return nil, fmt.Errorf("failed to get stale uploads: %w", err)
 	}
-
 	uploads := make([]MultipartUpload, len(rows))
 	for i, row := range rows {
-		ct := ""
-		if row.ContentType != nil {
-			ct = *row.ContentType
-		}
-		mu := MultipartUpload{
-			UploadID:    row.UploadID,
-			ObjectKey:   row.ObjectKey,
-			BackendName: row.BackendName,
-			ContentType: ct,
-			CreatedAt:   row.CreatedAt.Time,
-		}
-		if len(row.Metadata) > 0 {
-			if err := json.Unmarshal(row.Metadata, &mu.Metadata); err != nil {
-				return nil, fmt.Errorf(errUnmarshalMetadata, err)
-			}
+		mu, err := toMultipartUpload(row.UploadID, row.ObjectKey, row.BackendName, row.ContentType, row.Metadata, row.CreatedAt.Time)
+		if err != nil {
+			return nil, err
 		}
 		uploads[i] = mu
 	}
@@ -191,29 +188,16 @@ func (s *Store) GetStaleMultipartUploads(ctx context.Context, olderThan time.Dur
 // GetMultipartUploadsByBackend returns all in-progress multipart uploads on
 // the given backend. Used by drain to abort uploads before migrating objects.
 // Requires live PostgreSQL — covered by integration tests.
-func (s *Store) GetMultipartUploadsByBackend(ctx context.Context, backendName string) ([]MultipartUpload, error) { //nolint:dupl // intentional parallel to GetStaleMultipartUploads
+func (s *Store) GetMultipartUploadsByBackend(ctx context.Context, backendName string) ([]MultipartUpload, error) {
 	rows, err := s.queries.GetMultipartUploadsByBackend(ctx, backendName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get multipart uploads by backend: %w", err)
 	}
-
 	uploads := make([]MultipartUpload, len(rows))
 	for i, row := range rows {
-		ct := ""
-		if row.ContentType != nil {
-			ct = *row.ContentType
-		}
-		mu := MultipartUpload{
-			UploadID:    row.UploadID,
-			ObjectKey:   row.ObjectKey,
-			BackendName: row.BackendName,
-			ContentType: ct,
-			CreatedAt:   row.CreatedAt.Time,
-		}
-		if len(row.Metadata) > 0 {
-			if err := json.Unmarshal(row.Metadata, &mu.Metadata); err != nil {
-				return nil, fmt.Errorf(errUnmarshalMetadata, err)
-			}
+		mu, err := toMultipartUpload(row.UploadID, row.ObjectKey, row.BackendName, row.ContentType, row.Metadata, row.CreatedAt.Time)
+		if err != nil {
+			return nil, err
 		}
 		uploads[i] = mu
 	}

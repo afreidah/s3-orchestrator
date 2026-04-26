@@ -128,7 +128,9 @@ func (br *BucketRegistry) AuthenticateAndResolveBucket(r *http.Request) (string,
 			secret = entry.SecretAccessKey
 		}
 
-		if err := verifySigV4Parsed(r, accessKey, secret, credential, signedHeaders, signature, ok); err != nil || !ok {
+		if err := verifySigV4Parsed(r,
+			keyMaterial{AccessKeyID: accessKey, SecretAccessKey: secret, Known: ok},
+			credential, signedHeaders, signature); err != nil || !ok {
 			return "", errors.New(errAuthFailed)
 		}
 
@@ -210,6 +212,16 @@ func getCachedSigningKey(accessKeyID, secret, dateStamp, region, service string,
 // SIGV4 VERIFICATION
 // -------------------------------------------------------------------------
 
+// keyMaterial bundles the access-key triple SigV4 verification needs
+// to derive the signing key. The Known flag distinguishes a real
+// caller-supplied key from the dummy fallback used to keep authentication
+// constant-time when the access key is not registered.
+type keyMaterial struct {
+	AccessKeyID     string
+	SecretAccessKey string
+	Known           bool
+}
+
 // VerifySigV4 checks an AWS Signature Version 4 Authorization header against
 // the provided credentials. The caller is responsible for resolving the correct
 // credentials via BucketRegistry. Returns nil if the signature is valid.
@@ -229,67 +241,80 @@ func VerifySigV4(r *http.Request, accessKeyID, secretAccessKey string) error {
 		return fmt.Errorf("malformed Authorization header")
 	}
 
-	return verifySigV4Parsed(r, accessKeyID, secretAccessKey, credential, signedHeadersStr, signature, true)
+	return verifySigV4Parsed(r,
+		keyMaterial{AccessKeyID: accessKeyID, SecretAccessKey: secretAccessKey, Known: true},
+		credential, signedHeadersStr, signature)
 }
 
 // verifySigV4Parsed verifies the signature using pre-parsed Authorization
 // header fields, avoiding a redundant parse when called from
 // AuthenticateAndResolveBucket.
-func verifySigV4Parsed(r *http.Request, accessKeyID, secretAccessKey, credential, signedHeadersStr, signature string, knownKey bool) error {
-	// Parse credential: accessKeyID/date/region/service/aws4_request
-	credParts := strings.SplitN(credential, "/", 5)
-	if len(credParts) != 5 {
-		return fmt.Errorf("malformed credential scope")
+func verifySigV4Parsed(r *http.Request, key keyMaterial, credential, signedHeadersStr, signature string) error {
+	dateStamp, region, service, signedHeaders, err := parseSigV4Credential(credential, signedHeadersStr)
+	if err != nil {
+		return err
 	}
 
-	dateStamp := credParts[1]
-	region := credParts[2]
-	service := credParts[3]
-
-	// Build canonical request
-	signedHeaders := strings.Split(signedHeadersStr, ";")
-
-	// The host header must always be signed per the SigV4 spec to prevent
-	// replay attacks against different endpoints.
-	if !slices.Contains(signedHeaders, "host") {
-		return fmt.Errorf("host header must be signed")
-	}
-
-	canonicalRequest := buildCanonicalRequest(r, signedHeaders)
-
-	// Validate request timestamp to prevent replay attacks
+	// Validate request timestamp to prevent replay attacks. The header
+	// variant additionally enforces a skew window — presigned URLs use
+	// X-Amz-Expires and have their own freshness check.
 	amzDate := r.Header.Get("X-Amz-Date")
 	if amzDate == "" {
 		return fmt.Errorf("missing X-Amz-Date header")
 	}
-
-	reqTime, err := time.Parse("20060102T150405Z", amzDate)
+	reqTime, err := parseSigV4Time(amzDate, dateStamp)
 	if err != nil {
-		return fmt.Errorf("malformed X-Amz-Date: %w", err)
+		return err
 	}
 	if skew := time.Since(reqTime).Abs(); skew > sigV4MaxSkew {
 		return fmt.Errorf("request timestamp too skewed (%s)", skew.Truncate(time.Second))
 	}
 
-	// The date in the credential scope must match the date in X-Amz-Date
-	// to prevent replaying a signing key from a different day.
-	if amzDate[:8] != dateStamp {
-		return fmt.Errorf("credential date does not match X-Amz-Date")
-	}
+	canonicalRequest := buildCanonicalRequest(r, signedHeaders)
+	return verifySigV4Signature(canonicalRequest, signature, key, dateStamp, region, service, amzDate)
+}
 
+// parseSigV4Credential splits the SigV4 credential scope and validates the
+// signed-headers list contains "host" (which the spec requires to defeat
+// cross-endpoint replay). Returns the date/region/service triple plus the
+// expanded header list.
+func parseSigV4Credential(credential, signedHeadersStr string) (dateStamp, region, service string, signedHeaders []string, err error) {
+	credParts := strings.SplitN(credential, "/", 5)
+	if len(credParts) != 5 {
+		return "", "", "", nil, fmt.Errorf("malformed credential scope")
+	}
+	signedHeaders = strings.Split(signedHeadersStr, ";")
+	if !slices.Contains(signedHeaders, "host") {
+		return "", "", "", nil, fmt.Errorf("host header must be signed")
+	}
+	return credParts[1], credParts[2], credParts[3], signedHeaders, nil
+}
+
+// parseSigV4Time parses the SigV4 amzDate (yyyymmddTHHMMSSZ) and asserts
+// that its date prefix matches the credential scope's dateStamp — this
+// prevents replaying a signing key derived for a different day.
+func parseSigV4Time(amzDate, dateStamp string) (time.Time, error) {
+	reqTime, err := time.Parse("20060102T150405Z", amzDate)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("malformed X-Amz-Date: %w", err)
+	}
+	if amzDate[:8] != dateStamp {
+		return time.Time{}, fmt.Errorf("credential date does not match X-Amz-Date")
+	}
+	return reqTime, nil
+}
+
+// verifySigV4Signature computes the SigV4 stringToSign + signing key and
+// compares the resulting signature to the request's signature in
+// constant time. Shared by the header and presigned verification paths.
+func verifySigV4Signature(canonicalRequest, signature string, key keyMaterial, dateStamp, region, service, amzDate string) error {
 	credentialScope := dateStamp + "/" + region + "/" + service + "/aws4_request"
 	stringToSign := "AWS4-HMAC-SHA256\n" + amzDate + "\n" + credentialScope + "\n" + hashSHA256([]byte(canonicalRequest))
-
-	// Derive signing key (cached for known keys only)
-	signingKey := getCachedSigningKey(accessKeyID, secretAccessKey, dateStamp, region, service, knownKey)
-
-	// Calculate expected signature
+	signingKey := getCachedSigningKey(key.AccessKeyID, key.SecretAccessKey, dateStamp, region, service, key.Known)
 	expectedSig := hex.EncodeToString(hmacSHA256(signingKey, []byte(stringToSign)))
-
 	if !hmac.Equal([]byte(expectedSig), []byte(signature)) {
 		return fmt.Errorf("signature mismatch")
 	}
-
 	return nil
 }
 
@@ -328,7 +353,9 @@ func (br *BucketRegistry) authenticatePresigned(r *http.Request) (string, error)
 		secret = entry.SecretAccessKey
 	}
 
-	if err := verifyPresignedSigV4(r, accessKey, secret, credential, signedHeaders, signature, amzDate, expires, ok); err != nil || !ok {
+	if err := verifyPresignedSigV4(r,
+		keyMaterial{AccessKeyID: accessKey, SecretAccessKey: secret, Known: ok},
+		credential, signedHeaders, signature, amzDate, expires); err != nil || !ok {
 		return "", errors.New(errAuthFailed)
 	}
 
@@ -339,58 +366,39 @@ func (br *BucketRegistry) authenticatePresigned(r *http.Request) (string, error)
 // SigV4, the date and expiry come from query parameters, the X-Amz-Signature
 // parameter is excluded from the canonical query string, and the payload hash
 // is always UNSIGNED-PAYLOAD.
-func verifyPresignedSigV4(r *http.Request, accessKeyID, secretAccessKey, credential, signedHeadersStr, signature, amzDate, expiresStr string, knownKey bool) error {
-	credParts := strings.SplitN(credential, "/", 5)
-	if len(credParts) != 5 {
-		return fmt.Errorf("malformed credential scope")
+func verifyPresignedSigV4(r *http.Request, key keyMaterial, credential, signedHeadersStr, signature, amzDate, expiresStr string) error {
+	dateStamp, region, service, signedHeaders, err := parseSigV4Credential(credential, signedHeadersStr)
+	if err != nil {
+		return err
 	}
-
-	dateStamp := credParts[1]
-	region := credParts[2]
-	service := credParts[3]
-
-	signedHeaders := strings.Split(signedHeadersStr, ";")
-
-	if !slices.Contains(signedHeaders, "host") {
-		return fmt.Errorf("host header must be signed")
+	reqTime, err := parseSigV4Time(amzDate, dateStamp)
+	if err != nil {
+		return err
+	}
+	if err := validatePresignedExpiry(reqTime, expiresStr); err != nil {
+		return err
 	}
 
 	canonicalRequest := buildPresignedCanonicalRequest(r, signedHeaders)
+	return verifySigV4Signature(canonicalRequest, signature, key, dateStamp, region, service, amzDate)
+}
 
-	// Validate presigned URL timestamp and expiry
-	reqTime, err := time.Parse("20060102T150405Z", amzDate)
-	if err != nil {
-		return fmt.Errorf("malformed X-Amz-Date: %w", err)
-	}
-
-	if amzDate[:8] != dateStamp {
-		return fmt.Errorf("credential date does not match X-Amz-Date")
-	}
-
+// validatePresignedExpiry rejects presigned URLs whose X-Amz-Expires value
+// is malformed, exceeds the seven-day cap, or has elapsed relative to the
+// presigning timestamp.
+func validatePresignedExpiry(reqTime time.Time, expiresStr string) error {
 	expirySecs, err := strconv.ParseInt(expiresStr, 10, 64)
 	if err != nil || expirySecs <= 0 {
 		return fmt.Errorf("invalid X-Amz-Expires value")
 	}
-	// Validate against the 7-day maximum before converting to
-	// time.Duration to prevent integer overflow on large values.
+	// Validate against the 7-day maximum before converting to time.Duration
+	// to prevent integer overflow on large values.
 	if expirySecs > int64(presignedMaxExpiry.Seconds()) {
 		return fmt.Errorf("X-Amz-Expires exceeds maximum (%s)", presignedMaxExpiry)
 	}
-	expiryDuration := time.Duration(expirySecs) * time.Second
-	if time.Now().After(reqTime.Add(expiryDuration)) {
+	if time.Now().After(reqTime.Add(time.Duration(expirySecs) * time.Second)) {
 		return fmt.Errorf("presigned URL has expired")
 	}
-
-	credentialScope := dateStamp + "/" + region + "/" + service + "/aws4_request"
-	stringToSign := "AWS4-HMAC-SHA256\n" + amzDate + "\n" + credentialScope + "\n" + hashSHA256([]byte(canonicalRequest))
-
-	signingKey := getCachedSigningKey(accessKeyID, secretAccessKey, dateStamp, region, service, knownKey)
-	expectedSig := hex.EncodeToString(hmacSHA256(signingKey, []byte(stringToSign)))
-
-	if !hmac.Equal([]byte(expectedSig), []byte(signature)) {
-		return fmt.Errorf("signature mismatch")
-	}
-
 	return nil
 }
 
