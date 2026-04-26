@@ -31,7 +31,7 @@ type Stores struct {
 	Replication      store.ReplicationStore
 	Cleanup          store.CleanupStore
 	Integrity        store.IntegrityStore
-	Lifecycle        store.LifecycleStore
+	Lifecycle        store.ExpiredObjectsLister
 	BackendLifecycle store.BackendLifecycleStore
 	Dashboard        store.DashboardStore
 	Usage            store.UsageFlusher
@@ -89,7 +89,7 @@ type allRoles interface {
 	store.ReplicationStore
 	store.CleanupStore
 	store.IntegrityStore
-	store.LifecycleStore
+	store.ExpiredObjectsLister
 	store.BackendLifecycleStore
 	store.DashboardStore
 	store.UsageFlusher

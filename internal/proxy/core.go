@@ -41,7 +41,7 @@ type backendCore struct {
 	quota            store.QuotaStore                 // routing / capacity queries
 	multipart        store.MultipartStore             // exposed via Manager.Multipart()
 	cleanup          store.CleanupStore               // orphan cleanup + orphan-byte accounting
-	lifecycle        store.LifecycleStore             // expiration lookups
+	lifecycle        store.ExpiredObjectsLister             // expiration lookups
 	backendLifecycle store.BackendLifecycleStore      // backend-level stats and deletion
 	usageFlusher     store.UsageFlusher               // usage tracker flush target
 	order            []string                         // backend selection order

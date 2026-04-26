@@ -57,7 +57,7 @@ func TestProviders_MissingConfigReturnsCleanError(t *testing.T) {
 		{"ReplicationStore", func(i do.Injector) error { _, err := ProvideReplicationStore(i); return err }},
 		{"CleanupStore", func(i do.Injector) error { _, err := ProvideCleanupStore(i); return err }},
 		{"IntegrityStore", func(i do.Injector) error { _, err := ProvideIntegrityStore(i); return err }},
-		{"LifecycleStore", func(i do.Injector) error { _, err := ProvideLifecycleStore(i); return err }},
+		{"ExpiredObjectsLister", func(i do.Injector) error { _, err := ProvideExpiredObjectsLister(i); return err }},
 		{"BackendLifecycleStore", func(i do.Injector) error { _, err := ProvideBackendLifecycleStore(i); return err }},
 		{"DashboardStore", func(i do.Injector) error { _, err := ProvideDashboardStore(i); return err }},
 		{"UsageFlusher", func(i do.Injector) error { _, err := ProvideUsageFlusher(i); return err }},
@@ -227,7 +227,7 @@ func TestNarrowRoleProviders_HappyPath(t *testing.T) {
 		{"ReplicationStore", func() (any, error) { return ProvideReplicationStore(inj) }},
 		{"CleanupStore", func() (any, error) { return ProvideCleanupStore(inj) }},
 		{"IntegrityStore", func() (any, error) { return ProvideIntegrityStore(inj) }},
-		{"LifecycleStore", func() (any, error) { return ProvideLifecycleStore(inj) }},
+		{"ExpiredObjectsLister", func() (any, error) { return ProvideExpiredObjectsLister(inj) }},
 		{"BackendLifecycleStore", func() (any, error) { return ProvideBackendLifecycleStore(inj) }},
 		{"DashboardStore", func() (any, error) { return ProvideDashboardStore(inj) }},
 		{"UsageFlusher", func() (any, error) { return ProvideUsageFlusher(inj) }},
@@ -259,7 +259,7 @@ func TestResolveProxyStores_HappyPath(t *testing.T) {
 	do.Provide(inj, ProvideReplicationStore)
 	do.Provide(inj, ProvideCleanupStore)
 	do.Provide(inj, ProvideIntegrityStore)
-	do.Provide(inj, ProvideLifecycleStore)
+	do.Provide(inj, ProvideExpiredObjectsLister)
 	do.Provide(inj, ProvideBackendLifecycleStore)
 	do.Provide(inj, ProvideDashboardStore)
 	do.Provide(inj, ProvideUsageFlusher)

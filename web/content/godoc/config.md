@@ -13,6 +13,7 @@ Package config provides YAML configuration loading with environment variable exp
 
 ## Index
 
+- [Variables](<#variables>)
 - [func NonReloadableFieldsChanged\(old, new \*Config\) \[\]string](<#NonReloadableFieldsChanged>)
 - [func ParseLogLevel\(s string\) slog.Level](<#ParseLogLevel>)
 - [type BackendCircuitBreakerConfig](<#BackendCircuitBreakerConfig>)
@@ -50,8 +51,176 @@ Package config provides YAML configuration loading with environment variable exp
 - [type VaultTransitConfig](<#VaultTransitConfig>)
 
 
+## Variables
+
+<a name="ErrReadConfigFile"></a>Loader\-level wrapping errors \(LoadConfig\).
+
+```go
+var (
+    ErrReadConfigFile = errors.New("read config file")
+    ErrParseConfig    = errors.New("parse config")
+    ErrInvalidConfig  = errors.New("invalid config")
+)
+```
+
+<a name="ErrNoBuckets"></a>Bucket validation errors.
+
+```go
+var (
+    ErrNoBuckets           = errors.New("at least one bucket is required")
+    ErrBucketNameRequired  = errors.New("bucket name is required")
+    ErrBucketNameHasSlash  = errors.New("bucket name must not contain '/'")
+    ErrDuplicateBucketName = errors.New("duplicate bucket name")
+    ErrNoCredential        = errors.New("at least one credential is required")
+    ErrInvalidCredential   = errors.New("must have access_key_id+secret_access_key or token")
+    ErrDuplicateCredential = errors.New("duplicate access_key_id")
+    ErrNegativeMaxUploads  = errors.New("max_multipart_uploads must be >= 0")
+)
+```
+
+<a name="ErrNoBackends"></a>Backend validation errors.
+
+```go
+var (
+    ErrNoBackends          = errors.New("at least one backend is required")
+    ErrDuplicateBackend    = errors.New("duplicate backend name")
+    ErrEndpointRequired    = errors.New("endpoint is required")
+    ErrBackendBucketReqd   = errors.New("bucket is required")
+    ErrAccessKeyIDReqd     = errors.New("access_key_id is required")
+    ErrSecretAccessKeyReqd = errors.New("secret_access_key is required")
+    ErrNegativeQuota       = errors.New("quota_bytes must not be negative")
+    ErrNegativeMaxObject   = errors.New("max_object_size must not be negative")
+    ErrNegativeAPILimit    = errors.New("api_request_limit must not be negative")
+    ErrNegativeEgress      = errors.New("egress_byte_limit must not be negative")
+    ErrNegativeIngress     = errors.New("ingress_byte_limit must not be negative")
+)
+```
+
+<a name="ErrInvalidTLSConfig"></a>Server and TLS errors.
+
+```go
+var (
+    ErrInvalidTLSConfig  = errors.New("both cert_file and key_file are required for TLS")
+    ErrInvalidTLSVersion = errors.New("invalid TLS min_version")
+    ErrInvalidLogLevel   = errors.New("invalid log_level")
+)
+```
+
+<a name="ErrAdminAuthIncomplete"></a>UI / auth errors.
+
+```go
+var (
+    ErrAdminAuthIncomplete = errors.New("admin_key and admin_secret must both be set (or both empty)")
+    ErrSessionSecretReqd   = errors.New("session_secret is required when UI is enabled")
+)
+```
+
+<a name="ErrInvalidCIDR"></a>Rate limit errors.
+
+```go
+var (
+    ErrInvalidCIDR               = errors.New("invalid CIDR in trusted_proxies")
+    ErrRateLimitRPSNotPositive   = errors.New("rate_limit.requests_per_sec must be positive")
+    ErrRateLimitBurstNotPositive = errors.New("rate_limit.burst must be positive")
+)
+```
+
+<a name="ErrInvalidChunkSize"></a>Encryption errors.
+
+```go
+var (
+    ErrInvalidChunkSize     = errors.New("encryption.chunk_size must be between 4096 (4KB) and 1048576 (1MB)")
+    ErrChunkSizeNotPowerOf2 = errors.New("encryption.chunk_size must be a power of 2")
+    ErrKeySourceRequired    = errors.New("encryption: exactly one of master_key, master_key_file, or vault is required")
+    ErrMultipleKeySources   = errors.New("encryption: only one of master_key, master_key_file, or vault may be set")
+    ErrInvalidBase64Key     = errors.New("invalid base64 key material")
+    ErrInvalidKeyLength     = errors.New("key must be 256 bits (32 bytes)")
+    ErrInvalidKeyFile       = errors.New("invalid master_key_file")
+    ErrPreviousKeyInvalid   = errors.New("previous_keys entry invalid")
+    ErrVaultAddressRequired = errors.New("encryption.vault.address is required")
+    ErrVaultTokenRequired   = errors.New("encryption.vault: one of token or token_file is required")
+    ErrVaultTokenAmbiguous  = errors.New("encryption.vault: only one of token or token_file may be set")
+    ErrVaultKeyNameRequired = errors.New("encryption.vault.key_name is required")
+)
+```
+
+<a name="ErrRedisAddressRequired"></a>Redis / counter errors.
+
+```go
+var (
+    ErrRedisAddressRequired        = errors.New("redis.address is required when redis section is present")
+    ErrRedisFailureThresholdNotPos = errors.New("redis.failure_threshold must be positive")
+    ErrRedisOpenTimeoutNotPos      = errors.New("redis.open_timeout must be positive")
+)
+```
+
+<a name="ErrNotificationURLRequired"></a>Notifications errors.
+
+```go
+var (
+    ErrNotificationURLRequired    = errors.New("notifications endpoint url is required")
+    ErrNotificationEventsRequired = errors.New("notifications endpoint requires at least one event pattern")
+)
+```
+
+<a name="ErrLifecyclePrefixRequired"></a>Lifecycle errors.
+
+```go
+var (
+    ErrLifecyclePrefixRequired = errors.New("lifecycle.rules: prefix must not be empty (would match all objects)")
+    ErrInvalidExpiration       = errors.New("lifecycle.rules: expiration_days must be positive")
+    ErrDuplicatePrefix         = errors.New("duplicate prefix")
+)
+```
+
+<a name="ErrInvalidRebalanceStrategy"></a>Rebalance / replication errors.
+
+```go
+var (
+    ErrInvalidRebalanceStrategy   = errors.New("rebalance.strategy must be 'pack' or 'spread'")
+    ErrRebalanceIntervalNotPos    = errors.New("rebalance.interval must be positive")
+    ErrRebalanceBatchNotPos       = errors.New("rebalance.batch_size must be positive")
+    ErrRebalanceThresholdRange    = errors.New("rebalance.threshold must be between 0 and 1")
+    ErrRebalanceConcurrencyNotPos = errors.New("rebalance.concurrency must be positive")
+    ErrReplicationFactorMin       = errors.New("replication.factor must be at least 1")
+    ErrReplicationFactorTooLarge  = errors.New("replication.factor exceeds number of backends")
+    ErrReplicationIntervalNotPos  = errors.New("replication.worker_interval must be positive")
+    ErrReplicationBatchNotPos     = errors.New("replication.batch_size must be positive")
+    ErrInvalidRoutingStrategy     = errors.New("routing_strategy must be 'pack' or 'spread'")
+    ErrQuotaMixNotAllowed         = errors.New("cannot mix unlimited (quota_bytes: 0) and quota-limited backends")
+    ErrUnlimitedNeedsReplication  = errors.New("multiple backends with unlimited quota require replication.factor >= 2")
+)
+```
+
+<a name="ErrUsageFlushFastInterval"></a>Usage flush / adaptive errors.
+
+```go
+var (
+    ErrUsageFlushFastInterval   = errors.New("usage_flush.fast_interval must be less than interval")
+    ErrUsageFlushThresholdRange = errors.New("usage_flush.adaptive_threshold must be between 0 and 1")
+)
+```
+
+<a name="ErrCacheMaxSizeNotPositive"></a>Cache / storage misc.
+
+```go
+var (
+    ErrCacheMaxSizeNotPositive      = errors.New("cache.max_size must be positive")
+    ErrCacheMaxObjectNotPositive    = errors.New("cache.max_object_size must be positive")
+    ErrCacheMaxObjectExceedsMaxSize = errors.New("cache.max_object_size cannot exceed cache.max_size")
+)
+```
+
+<a name="ErrTracingEndpointRequired"></a>Telemetry errors.
+
+```go
+var (
+    ErrTracingEndpointRequired = errors.New("telemetry.tracing.endpoint is required when tracing is enabled")
+)
+```
+
 <a name="NonReloadableFieldsChanged"></a>
-## func [NonReloadableFieldsChanged](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L181>)
+## func [NonReloadableFieldsChanged](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L200>)
 
 ```go
 func NonReloadableFieldsChanged(old, new *Config) []string
@@ -60,7 +229,7 @@ func NonReloadableFieldsChanged(old, new *Config) []string
 NonReloadableFieldsChanged compares two configs and returns a list of non\-reloadable field descriptions that differ. Used by the SIGHUP handler to warn about changes that require a restart.
 
 <a name="ParseLogLevel"></a>
-## func [ParseLogLevel](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L282>)
+## func [ParseLogLevel](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L330>)
 
 ```go
 func ParseLogLevel(s string) slog.Level
@@ -272,7 +441,7 @@ type EncryptionConfig struct {
 ```
 
 <a name="IntegrityConfig"></a>
-## type [IntegrityConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/integrity.go#L14-L20>)
+## type [IntegrityConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/integrity.go#L17-L23>)
 
 IntegrityConfig holds settings for object integrity verification. When enabled, objects are checksummed on write and optionally verified on read and during replication.
 
@@ -287,7 +456,7 @@ type IntegrityConfig struct {
 ```
 
 <a name="IntegrityConfig.ShouldVerifyOnReplicate"></a>
-### func \(\*IntegrityConfig\) [ShouldVerifyOnReplicate](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/integrity.go#L24>)
+### func \(\*IntegrityConfig\) [ShouldVerifyOnReplicate](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/integrity.go#L27>)
 
 ```go
 func (ic *IntegrityConfig) ShouldVerifyOnReplicate() bool
@@ -457,7 +626,7 @@ const (
 ```
 
 <a name="ServerConfig"></a>
-## type [ServerConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/server.go#L12-L28>)
+## type [ServerConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/server.go#L15-L31>)
 
 ServerConfig holds HTTP server settings.
 
@@ -482,7 +651,7 @@ type ServerConfig struct {
 ```
 
 <a name="TLSConfig"></a>
-## type [TLSConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/server.go#L33-L38>)
+## type [TLSConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/server.go#L36-L41>)
 
 TLSConfig holds optional TLS settings for the HTTP server. When CertFile and KeyFile are both set, the server listens with TLS. When both are empty, the server runs plain HTTP for backward compatibility.
 
@@ -539,7 +708,7 @@ type UIConfig struct {
 ```
 
 <a name="UsageFlushConfig"></a>
-## type [UsageFlushConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/usage.go#L14-L19>)
+## type [UsageFlushConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/usage.go#L17-L22>)
 
 UsageFlushConfig holds settings for the periodic usage counter flush to the database. When adaptive flushing is enabled, the flush interval shortens automatically when any backend approaches a usage limit.
 
