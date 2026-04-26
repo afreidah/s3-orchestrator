@@ -1,13 +1,13 @@
 // -------------------------------------------------------------------------------
-// Admin Subcommand Tests
+// Admin CLI Tests
 //
 // Author: Alex Freidah
 //
-// Tests for the adminCommand function covering drain, drain-status, drain-cancel,
-// remove-backend, and edge cases (missing arguments, unknown commands, --purge flag).
+// Tests for Command covering drain, drain-status, drain-cancel, remove-backend,
+// and edge cases (missing arguments, unknown commands, --purge flag).
 // -------------------------------------------------------------------------------
 
-package main
+package adminctl
 
 import (
 	"bytes"
@@ -18,9 +18,9 @@ import (
 	"testing"
 )
 
-func TestAdminCommand_Drain_MissingBackend(t *testing.T) {
+func TestCommand_Drain_MissingBackend(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	code := adminCommand("drain", nil, "http://unused", "tok", &stdout, &stderr)
+	code := Command("drain", nil, "http://unused", "tok", &stdout, &stderr)
 	if code != 1 {
 		t.Errorf("exit code = %d, want 1", code)
 	}
@@ -29,9 +29,9 @@ func TestAdminCommand_Drain_MissingBackend(t *testing.T) {
 	}
 }
 
-func TestAdminCommand_DrainStatus_MissingBackend(t *testing.T) {
+func TestCommand_DrainStatus_MissingBackend(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	code := adminCommand("drain-status", nil, "http://unused", "tok", &stdout, &stderr)
+	code := Command("drain-status", nil, "http://unused", "tok", &stdout, &stderr)
 	if code != 1 {
 		t.Errorf("exit code = %d, want 1", code)
 	}
@@ -40,9 +40,9 @@ func TestAdminCommand_DrainStatus_MissingBackend(t *testing.T) {
 	}
 }
 
-func TestAdminCommand_DrainCancel_MissingBackend(t *testing.T) {
+func TestCommand_DrainCancel_MissingBackend(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	code := adminCommand("drain-cancel", nil, "http://unused", "tok", &stdout, &stderr)
+	code := Command("drain-cancel", nil, "http://unused", "tok", &stdout, &stderr)
 	if code != 1 {
 		t.Errorf("exit code = %d, want 1", code)
 	}
@@ -51,9 +51,9 @@ func TestAdminCommand_DrainCancel_MissingBackend(t *testing.T) {
 	}
 }
 
-func TestAdminCommand_RemoveBackend_MissingBackend(t *testing.T) {
+func TestCommand_RemoveBackend_MissingBackend(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	code := adminCommand("remove-backend", nil, "http://unused", "tok", &stdout, &stderr)
+	code := Command("remove-backend", nil, "http://unused", "tok", &stdout, &stderr)
 	if code != 1 {
 		t.Errorf("exit code = %d, want 1", code)
 	}
@@ -62,9 +62,9 @@ func TestAdminCommand_RemoveBackend_MissingBackend(t *testing.T) {
 	}
 }
 
-func TestAdminCommand_Unknown(t *testing.T) {
+func TestCommand_Unknown(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	code := adminCommand("nonexistent", nil, "http://unused", "tok", &stdout, &stderr)
+	code := Command("nonexistent", nil, "http://unused", "tok", &stdout, &stderr)
 	if code != 1 {
 		t.Errorf("exit code = %d, want 1", code)
 	}
@@ -73,7 +73,7 @@ func TestAdminCommand_Unknown(t *testing.T) {
 	}
 }
 
-func TestAdminCommand_Drain_SendsPost(t *testing.T) {
+func TestCommand_Drain_SendsPost(t *testing.T) {
 	var gotMethod, gotPath, gotToken string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
@@ -85,7 +85,7 @@ func TestAdminCommand_Drain_SendsPost(t *testing.T) {
 	defer srv.Close()
 
 	var stdout, stderr bytes.Buffer
-	code := adminCommand("drain", []string{"mybackend"}, srv.URL, "secret", &stdout, &stderr)
+	code := Command("drain", []string{"mybackend"}, srv.URL, "secret", &stdout, &stderr)
 	if code != 0 {
 		t.Errorf("exit code = %d, want 0", code)
 	}
@@ -100,7 +100,7 @@ func TestAdminCommand_Drain_SendsPost(t *testing.T) {
 	}
 }
 
-func TestAdminCommand_DrainStatus_SendsGet(t *testing.T) {
+func TestCommand_DrainStatus_SendsGet(t *testing.T) {
 	var gotMethod, gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
@@ -110,7 +110,7 @@ func TestAdminCommand_DrainStatus_SendsGet(t *testing.T) {
 	defer srv.Close()
 
 	var stdout, stderr bytes.Buffer
-	code := adminCommand("drain-status", []string{"oci"}, srv.URL, "tok", &stdout, &stderr)
+	code := Command("drain-status", []string{"oci"}, srv.URL, "tok", &stdout, &stderr)
 	if code != 0 {
 		t.Errorf("exit code = %d, want 0", code)
 	}
@@ -122,7 +122,7 @@ func TestAdminCommand_DrainStatus_SendsGet(t *testing.T) {
 	}
 }
 
-func TestAdminCommand_DrainCancel_SendsDelete(t *testing.T) {
+func TestCommand_DrainCancel_SendsDelete(t *testing.T) {
 	var gotMethod, gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
@@ -132,7 +132,7 @@ func TestAdminCommand_DrainCancel_SendsDelete(t *testing.T) {
 	defer srv.Close()
 
 	var stdout, stderr bytes.Buffer
-	code := adminCommand("drain-cancel", []string{"oci"}, srv.URL, "tok", &stdout, &stderr)
+	code := Command("drain-cancel", []string{"oci"}, srv.URL, "tok", &stdout, &stderr)
 	if code != 0 {
 		t.Errorf("exit code = %d, want 0", code)
 	}
@@ -144,7 +144,7 @@ func TestAdminCommand_DrainCancel_SendsDelete(t *testing.T) {
 	}
 }
 
-func TestAdminCommand_RemoveBackend_SendsDelete(t *testing.T) {
+func TestCommand_RemoveBackend_SendsDelete(t *testing.T) {
 	var gotMethod, gotPath, gotQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
@@ -155,7 +155,7 @@ func TestAdminCommand_RemoveBackend_SendsDelete(t *testing.T) {
 	defer srv.Close()
 
 	var stdout, stderr bytes.Buffer
-	code := adminCommand("remove-backend", []string{"oci"}, srv.URL, "tok", &stdout, &stderr)
+	code := Command("remove-backend", []string{"oci"}, srv.URL, "tok", &stdout, &stderr)
 	if code != 0 {
 		t.Errorf("exit code = %d, want 0", code)
 	}
@@ -170,7 +170,7 @@ func TestAdminCommand_RemoveBackend_SendsDelete(t *testing.T) {
 	}
 }
 
-func TestAdminCommand_RemoveBackend_Purge(t *testing.T) {
+func TestCommand_RemoveBackend_Purge(t *testing.T) {
 	var gotPath, gotQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
@@ -180,7 +180,7 @@ func TestAdminCommand_RemoveBackend_Purge(t *testing.T) {
 	defer srv.Close()
 
 	var stdout, stderr bytes.Buffer
-	code := adminCommand("remove-backend", []string{"-purge", "oci"}, srv.URL, "tok", &stdout, &stderr)
+	code := Command("remove-backend", []string{"-purge", "oci"}, srv.URL, "tok", &stdout, &stderr)
 	if code != 0 {
 		t.Errorf("exit code = %d, want 0", code)
 	}
@@ -192,7 +192,51 @@ func TestAdminCommand_RemoveBackend_Purge(t *testing.T) {
 	}
 }
 
-func TestAdminCommand_ServerError(t *testing.T) {
+func TestCommand_Reconcile_DefaultPostsAllBackends(t *testing.T) {
+	var gotMethod, gotPath, gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		gotQuery = r.URL.RawQuery
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+	}))
+	defer srv.Close()
+
+	var stdout, stderr bytes.Buffer
+	code := Command("reconcile", nil, srv.URL, "tok", &stdout, &stderr)
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0", code)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/admin/api/reconcile" {
+		t.Errorf("path = %q, want /admin/api/reconcile", gotPath)
+	}
+	if gotQuery != "" {
+		t.Errorf("query = %q, want empty", gotQuery)
+	}
+}
+
+func TestCommand_Reconcile_ScopesToBackend(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+	}))
+	defer srv.Close()
+
+	var stdout, stderr bytes.Buffer
+	code := Command("reconcile", []string{"-backend", "g3"}, srv.URL, "tok", &stdout, &stderr)
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0", code)
+	}
+	if gotQuery != "backend=g3" {
+		t.Errorf("query = %q, want backend=g3", gotQuery)
+	}
+}
+
+func TestCommand_ServerError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "backend not found"})
@@ -200,7 +244,7 @@ func TestAdminCommand_ServerError(t *testing.T) {
 	defer srv.Close()
 
 	var stdout, stderr bytes.Buffer
-	code := adminCommand("drain", []string{"bad"}, srv.URL, "tok", &stdout, &stderr)
+	code := Command("drain", []string{"bad"}, srv.URL, "tok", &stdout, &stderr)
 	if code != 1 {
 		t.Errorf("exit code = %d, want 1", code)
 	}

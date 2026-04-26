@@ -9,7 +9,7 @@
 // external dependencies.
 // -------------------------------------------------------------------------------
 
-package main
+package serve
 
 import (
 	"bytes"
@@ -371,8 +371,8 @@ func TestHealthEndpoints_Healthy(t *testing.T) {
 	if err := s.resolveServices(); err != nil {
 		t.Fatalf("resolveServices: %v", err)
 	}
-	defer s.db.Close()
-	defer s.manager.Close()
+	defer s.adminStore().Close()
+	defer s.backendManager().Close()
 	defer func() { _ = s.shutdownTracer(context.Background()) }()
 
 	if err := s.buildHTTPServer(); err != nil {
@@ -420,8 +420,8 @@ func TestHealthReady_NotReady(t *testing.T) {
 	if err := s.resolveServices(); err != nil {
 		t.Fatalf("resolveServices: %v", err)
 	}
-	defer s.db.Close()
-	defer s.manager.Close()
+	defer s.adminStore().Close()
+	defer s.backendManager().Close()
 	defer func() { _ = s.shutdownTracer(context.Background()) }()
 
 	if err := s.buildHTTPServer(); err != nil {
@@ -446,7 +446,7 @@ func TestHealthReady_NotReady(t *testing.T) {
 func TestRun_InvalidConfigPath(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	err := run(ctx, "/nonexistent/config.yaml", "all", &bytes.Buffer{})
+	err := Run(ctx, "/nonexistent/config.yaml", "all", &bytes.Buffer{})
 	if err == nil {
 		t.Fatal("expected error for missing config")
 	}
@@ -466,7 +466,7 @@ func TestRun_StartsAndStops(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- run(ctx, path, "all", &bytes.Buffer{})
+		errCh <- Run(ctx, path, "all", &bytes.Buffer{})
 	}()
 
 	// Wait for the server to be ready
@@ -523,7 +523,7 @@ func TestRun_InvalidConfig(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := run(ctx, path, "all", &bytes.Buffer{})
+	err := Run(ctx, path, "all", &bytes.Buffer{})
 	if err == nil {
 		t.Fatal("expected error for invalid config")
 	}
@@ -566,6 +566,35 @@ func TestLogStartup_DoesNotPanic(t *testing.T) {
 	}
 	// Should not panic
 	s.logStartup()
+}
+
+// -------------------------------------------------------------------------
+// reloadConfig - atomic rollback
+// -------------------------------------------------------------------------
+
+// TestReloadConfig_FailedLoadKeepsCurrent verifies that when LoadConfig fails
+// during a SIGHUP-driven reload, the previously-stored config remains in
+// cfgPtr and no service mutation is attempted. This is the rollback contract
+// from issue #615: a failing reload aborts cleanly rather than half-applying.
+func TestReloadConfig_FailedLoadKeepsCurrent(t *testing.T) {
+	path := writeTestConfig(t, validTestConfigYAML)
+	s := &server{configPath: path, mode: "all", stdout: &bytes.Buffer{}}
+	if err := s.loadConfig(); err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	original := s.cfg
+	s.cfgPtr.Store(original)
+
+	// Replace the config file with content LoadConfig will reject.
+	if err := os.WriteFile(path, []byte("server:\n  listen_addr: ':9000'\n"), 0600); err != nil {
+		t.Fatalf("rewrite config: %v", err)
+	}
+
+	s.reloadConfig() // must not panic and must not mutate cfgPtr
+
+	if got := s.cfgPtr.Load(); got != original {
+		t.Errorf("cfgPtr was mutated after a failing reload: got %p, want %p", got, original)
+	}
 }
 
 // -------------------------------------------------------------------------

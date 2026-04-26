@@ -8,7 +8,7 @@
 // SQLite and PostgreSQL driver configurations.
 // -------------------------------------------------------------------------------
 
-package main
+package initcmd
 
 import (
 	"os"
@@ -19,10 +19,10 @@ import (
 )
 
 func TestGenerateConfig_SQLite(t *testing.T) {
-	params := initParams{
+	params := Params{
 		Driver: "sqlite",
 		DBPath: "test.db",
-		Backends: []initBackend{
+		Backends: []Backend{
 			{
 				Name:             "minio",
 				Endpoint:         "http://localhost:9000",
@@ -36,14 +36,14 @@ func TestGenerateConfig_SQLite(t *testing.T) {
 				IngressByteLimit: "0",
 			},
 		},
-		Buckets: []initBucket{
+		Buckets: []Bucket{
 			{Name: "photos", AccessKeyID: "CLIENT_AK", SecretAccessKey: "CLIENT_SK"},
 		},
 	}
 
-	output, err := generateConfig(&params)
+	output, err := GenerateConfig(&params)
 	if err != nil {
-		t.Fatalf("generateConfig: %v", err)
+		t.Fatalf("GenerateConfig: %v", err)
 	}
 
 	if !strings.Contains(output, "driver: sqlite") {
@@ -53,7 +53,6 @@ func TestGenerateConfig_SQLite(t *testing.T) {
 		t.Error("expected path in output")
 	}
 
-	// Round-trip through config loader
 	tmpFile, err := os.CreateTemp(t.TempDir(), "*.yaml")
 	if err != nil {
 		t.Fatal(err)
@@ -79,14 +78,14 @@ func TestGenerateConfig_SQLite(t *testing.T) {
 }
 
 func TestGenerateConfig_Postgres(t *testing.T) {
-	params := initParams{
+	params := Params{
 		Driver:     "postgres",
 		DBHost:     "db.example.com",
 		DBPort:     "5432",
 		DBName:     "s3orch",
 		DBUser:     "admin",
 		DBPassword: "secret",
-		Backends: []initBackend{
+		Backends: []Backend{
 			{
 				Name:             "aws",
 				Endpoint:         "https://s3.us-east-1.amazonaws.com",
@@ -100,14 +99,14 @@ func TestGenerateConfig_Postgres(t *testing.T) {
 				IngressByteLimit: "0",
 			},
 		},
-		Buckets: []initBucket{
+		Buckets: []Bucket{
 			{Name: "app", AccessKeyID: "AK", SecretAccessKey: "SK"},
 		},
 	}
 
-	output, err := generateConfig(&params)
+	output, err := GenerateConfig(&params)
 	if err != nil {
-		t.Fatalf("generateConfig: %v", err)
+		t.Fatalf("GenerateConfig: %v", err)
 	}
 
 	if !strings.Contains(output, "driver: postgres") {
