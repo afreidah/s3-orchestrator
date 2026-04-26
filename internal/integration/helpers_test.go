@@ -391,7 +391,13 @@ func queryQuotaUsed(t *testing.T, backendName string) int64 {
 	return bytesUsed
 }
 
-// resetState truncates all object/multipart tables and resets quota counters.
+// resetState truncates all object/multipart tables and re-establishes the
+// backend_quotas row for every configured backend with usage/orphans
+// zeroed. The re-sync is necessary because tests that drain a backend
+// (TestOverReplicationDrainingBackendRemovedFirst, TestDrainBackend,
+// TestDrainBackend_WriteExclusion) leave its quota row deleted via
+// runDrain → DeleteBackendData; subsequent tests that build a manager
+// referencing all three backends would then hit FK violations on insert.
 func resetState(t *testing.T) {
 	t.Helper()
 	for _, q := range []string{
@@ -399,11 +405,20 @@ func resetState(t *testing.T) {
 		"DELETE FROM multipart_parts",
 		"DELETE FROM multipart_uploads",
 		"DELETE FROM object_locations",
-		"UPDATE backend_quotas SET bytes_used = 0, orphan_bytes = 0, updated_at = NOW()",
 	} {
 		if _, err := testDB.Exec(q); err != nil {
 			t.Fatalf("resetState: %v", err)
 		}
+	}
+	if err := testStore.SyncQuotaLimits(context.Background(), []config.BackendConfig{
+		{Name: "minio-1", QuotaBytes: 1024},
+		{Name: "minio-2", QuotaBytes: 2048},
+		{Name: "minio-3", QuotaBytes: 2048},
+	}); err != nil {
+		t.Fatalf("resetState: SyncQuotaLimits: %v", err)
+	}
+	if _, err := testDB.Exec("UPDATE backend_quotas SET bytes_used = 0, orphan_bytes = 0, updated_at = NOW()"); err != nil {
+		t.Fatalf("resetState: %v", err)
 	}
 	testManager.ClearCache()
 	testManager.ClearDrainState()
