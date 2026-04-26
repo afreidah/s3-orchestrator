@@ -25,6 +25,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/notify"
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/store"
@@ -191,15 +192,64 @@ func TestOpenStore_SQLiteInMemory(t *testing.T) {
 	admin.Close()
 }
 
-// TestWireAuditMetrics covers the audit→Prometheus wiring side-effect.
+// TestWireAuditMetrics covers the audit→Prometheus wiring side-effect
+// and drives the registered callback by emitting an audit event so the
+// inner closure (which increments the Prometheus counter) actually runs.
+// Restores the previous callback state on cleanup so other tests aren't
+// affected by the package-global SetOnEvent registration.
 func TestWireAuditMetrics(t *testing.T) {
-	t.Parallel()
 	defer func() {
+		audit.SetOnEvent(nil)
 		if r := recover(); r != nil {
 			t.Fatalf("WireAuditMetrics panicked: %v", r)
 		}
 	}()
 	WireAuditMetrics()
+	// Fire an audit event so the registered callback runs.
+	audit.Log(context.Background(), "test.coverage")
+}
+
+// TestProvideConcreteStore_SQLiteInMemory drives provideConcreteStore's
+// happy path against an in-memory sqlite, covering migrations + schema
+// verification + quota sync without needing Postgres. Resolves the
+// remaining uncovered statements in provideConcreteStore.
+func TestProvideConcreteStore_SQLiteInMemory(t *testing.T) {
+	t.Parallel()
+	inj := do.New()
+	do.ProvideValue(inj, &config.Config{
+		Database: config.DatabaseConfig{Driver: "sqlite", Path: ":memory:"},
+		Backends: []config.BackendConfig{{Name: "b1", QuotaBytes: 1024}},
+	})
+	bundle, err := provideConcreteStore(inj)
+	if err != nil {
+		t.Fatalf("provideConcreteStore: %v", err)
+	}
+	if bundle == nil || bundle.concrete == nil || bundle.admin == nil {
+		t.Fatal("expected non-nil bundle + concrete + admin")
+	}
+	bundle.admin.Close()
+}
+
+// TestOpenStore_PostgresInvalidConfig covers the postgres branch of the
+// driver switch. We can't open a real Postgres in a unit test, so we use
+// a config that fails fast — the function still exercises the
+// store.NewStore call site, which is the uncovered branch.
+func TestOpenStore_PostgresInvalidConfig(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_, _, err := openStore(ctx, &config.DatabaseConfig{
+		Driver:   "postgres",
+		Host:     "127.0.0.1",
+		Port:     1, // unreachable port — connect fails fast
+		Database: "nope",
+		User:     "nope",
+		Password: "nope",
+		SSLMode:  "disable",
+	})
+	if err == nil {
+		t.Fatal("expected error connecting to unreachable postgres, got nil")
+	}
 }
 
 // TestNarrowRoleProviders_HappyPath wires a fake concrete store plus a

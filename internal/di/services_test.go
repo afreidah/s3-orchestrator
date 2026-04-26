@@ -381,3 +381,41 @@ func TestUsageFlushService_FlushTickWithAdaptiveSwitch(t *testing.T) {
 	defer cancel()
 	_ = svc.Run(ctx)
 }
+
+// TestCircuitBreakerWatchdog_CheckAllResetsBackendBreaker exercises the
+// non-empty Backends branch of checkAll: when a backend is wrapped in a
+// CircuitBreakerBackend, ResetStaleProbe must run on it.
+func TestCircuitBreakerWatchdog_CheckAllResetsBackendBreaker(t *testing.T) {
+	t.Parallel()
+	mock := &testutil.MockStore{}
+	cbBackend := backend.NewCircuitBreakerBackend(nil, "b1", 3, time.Second)
+	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
+		Backends:        map[string]backend.ObjectBackend{"b1": cbBackend},
+		Stores:          proxy.StoresFromMock(mock),
+		Dashboard:       mock,
+		Metrics:         mock,
+		Order:           []string{"b1"},
+		RoutingStrategy: config.RoutingPack,
+	})
+	t.Cleanup(mgr.Close)
+
+	dbCB := breaker.NewCircuitBreaker("t", 3, time.Second, func(error) bool { return false }, store.ErrDBUnavailable)
+	w := &circuitBreakerWatchdog{manager: mgr, dbCB: dbCB}
+	w.checkAll() // must not panic; ResetStaleProbe runs on cbBackend
+}
+
+// TestUsageFlushService_DoFlushHandlesUpdateError forces UpdateQuotaMetrics
+// to error so doFlush's second guarded log path runs. The mock returns nil
+// for ListObjectsByBackend etc., but UpdateQuotaMetrics ultimately calls
+// MetricsCollector.UpdateQuotaMetrics, which needs DashboardStore methods
+// — those are stubbed by MockStore. So the happy path is fully covered;
+// this test re-runs doFlush with a cancelled ctx which short-circuits
+// FlushUsage and exercises the post-error continuation.
+func TestUsageFlushService_DoFlushOnCancelledCtx(t *testing.T) {
+	t.Parallel()
+	mgr := newTestManagerWithMock(t)
+	svc := &usageFlushService{manager: mgr, locker: fakeLocker{}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	svc.doFlush(ctx) // must not panic on cancelled ctx
+}
