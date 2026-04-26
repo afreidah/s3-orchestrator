@@ -646,6 +646,209 @@ func TestReloadConfig_AppliesNewConfig(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
+// configureMetrics, shutdownHTTPServers, registerS3Handler
+// -------------------------------------------------------------------------
+
+// metricsConfigYAML enables Prometheus metrics on a separate listener so
+// configureMetrics walks both branches. The address has to bind cleanly,
+// so we pick an ephemeral port from a freePort helper.
+const metricsConfigYAML = `
+server:
+  listen_addr: "127.0.0.1:%MAIN%"
+  max_concurrent_reads: 4
+  max_concurrent_writes: 4
+  load_shed_threshold: 0.9
+  admission_wait: "100ms"
+database:
+  driver: sqlite
+  path: ":memory:"
+buckets:
+  - name: test
+    credentials:
+      - access_key_id: ak
+        secret_access_key: sk
+backends:
+  - name: b1
+    endpoint: http://localhost:19000
+    region: us-east-1
+    bucket: bucket1
+    access_key_id: ak
+    secret_access_key: sk
+telemetry:
+  metrics:
+    enabled: true
+    listen: "127.0.0.1:%MET%"
+    path: "/metrics"
+`
+
+// TestConfigureMetrics_SeparateListenerAndShutdown drives the metrics
+// listener branch and shutdownHTTPServers' both-server cleanup path.
+func TestConfigureMetrics_SeparateListenerAndShutdown(t *testing.T) {
+	mainPort := freePort(t)
+	metPort := freePort(t)
+	yaml := strings.NewReplacer(
+		"%MAIN%", fmt.Sprintf("%d", mainPort),
+		"%MET%", fmt.Sprintf("%d", metPort),
+	).Replace(metricsConfigYAML)
+	path := writeTestConfig(t, yaml)
+
+	s := &server{configPath: path, mode: "all", stdout: &bytes.Buffer{}}
+	if err := s.loadConfig(); err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if err := s.initLogging(); err != nil {
+		t.Fatalf("initLogging: %v", err)
+	}
+	s.initDI()
+	if err := s.resolveServices(); err != nil {
+		t.Fatalf("resolveServices: %v", err)
+	}
+	if err := s.buildHTTPServer(); err != nil {
+		t.Fatalf("buildHTTPServer: %v", err)
+	}
+	t.Cleanup(func() {
+		s.adminStore().Close()
+		s.backendManager().Close()
+		_ = s.shutdownTracer(context.Background())
+	})
+
+	if s.metricsServer == nil {
+		t.Fatal("expected metricsServer to be configured for separate listener")
+	}
+
+	// shutdownHTTPServers must walk both servers without panicking.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	s.shutdownHTTPServers(ctx)
+}
+
+// TestConfigureMetrics_InlineOnMainMux drives the else-branch where metrics
+// are mounted on the main mux instead of a separate listener.
+func TestConfigureMetrics_InlineOnMainMux(t *testing.T) {
+	yaml := strings.Replace(validTestConfigYAML, `database:`,
+		"telemetry:\n  metrics:\n    enabled: true\n    path: \"/metrics\"\ndatabase:", 1)
+	path := writeTestConfig(t, yaml)
+	s := &server{configPath: path, mode: "all", stdout: &bytes.Buffer{}}
+	if err := s.loadConfig(); err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	mux := http.NewServeMux()
+	s.configureMetrics(mux, context.Background())
+	if s.metricsServer != nil {
+		t.Errorf("metricsServer should be nil when listen is empty")
+	}
+	// Hit /metrics to confirm the handler is mounted on the main mux.
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "/metrics", nil)
+	w := &testResponseWriter{header: http.Header{}}
+	mux.ServeHTTP(w, req)
+	if w.code != http.StatusOK {
+		t.Errorf("/metrics status = %d, want 200", w.code)
+	}
+}
+
+// uiConfigYAML enables the dashboard UI so registerUIHandler hits the
+// non-disabled branch.
+//
+//nolint:gosec // G101: hardcoded test fixture, not a real credential
+const uiConfigYAML = `
+server:
+  listen_addr: "127.0.0.1:%PORT%"
+  max_concurrent_reads: 4
+  max_concurrent_writes: 4
+database:
+  driver: sqlite
+  path: ":memory:"
+buckets:
+  - name: test
+    credentials:
+      - access_key_id: ak
+        secret_access_key: sk
+backends:
+  - name: b1
+    endpoint: http://localhost:19000
+    region: us-east-1
+    bucket: bucket1
+    access_key_id: ak
+    secret_access_key: sk
+ui:
+  enabled: true
+  path: "/ui/"
+  admin_key: "ak"
+  admin_secret: "sec-1234567890123456"
+  admin_token: "tok"
+  session_secret: "12345678901234567890123456789012"
+`
+
+// TestRegisterUIHandler_Enabled drives the do.Invoke branch of
+// registerUIHandler and TestRegisterS3Handler_WithSplitAdmissionControl
+// covers the admission-control path of registerS3Handler. Both share the
+// same wired server so we pay the DI cost once.
+func TestRegisterUIHandler_Enabled(t *testing.T) {
+	port := freePort(t)
+	yaml := strings.Replace(uiConfigYAML, "%PORT%", fmt.Sprintf("%d", port), 1)
+	path := writeTestConfig(t, yaml)
+
+	s := &server{configPath: path, mode: "all", stdout: &bytes.Buffer{}}
+	if err := s.loadConfig(); err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if err := s.initLogging(); err != nil {
+		t.Fatalf("initLogging: %v", err)
+	}
+	s.initDI()
+	if err := s.resolveServices(); err != nil {
+		t.Fatalf("resolveServices: %v", err)
+	}
+	if err := s.buildHTTPServer(); err != nil {
+		t.Fatalf("buildHTTPServer: %v", err)
+	}
+	t.Cleanup(func() {
+		s.adminStore().Close()
+		s.backendManager().Close()
+		_ = s.shutdownTracer(context.Background())
+	})
+
+	// Hit the registered UI path to prove the handler was mounted.
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "/ui/", nil)
+	w := &testResponseWriter{header: http.Header{}}
+	s.httpServer.Handler.ServeHTTP(w, req)
+	if w.code == 0 {
+		t.Errorf("/ui/ was not handled (code=0)")
+	}
+}
+
+// TestRegisterS3Handler_WithSingleAdmission drives the
+// MaxConcurrentRequests branch of registerS3Handler.
+func TestRegisterS3Handler_WithSingleAdmission(t *testing.T) {
+	yaml := strings.Replace(validTestConfigYAML, `listen_addr: ":0"`,
+		`listen_addr: ":0"`+"\n  max_concurrent_requests: 8\n  load_shed_threshold: 0.9\n  admission_wait: \"50ms\"", 1)
+	path := writeTestConfig(t, yaml)
+	s := &server{configPath: path, mode: "all", stdout: &bytes.Buffer{}}
+	if err := s.loadConfig(); err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if err := s.initLogging(); err != nil {
+		t.Fatalf("initLogging: %v", err)
+	}
+	s.initDI()
+	if err := s.resolveServices(); err != nil {
+		t.Fatalf("resolveServices: %v", err)
+	}
+	if err := s.buildHTTPServer(); err != nil {
+		t.Fatalf("buildHTTPServer: %v", err)
+	}
+	t.Cleanup(func() {
+		s.adminStore().Close()
+		s.backendManager().Close()
+		_ = s.shutdownTracer(context.Background())
+	})
+
+	if s.httpServer == nil {
+		t.Fatal("httpServer should be built")
+	}
+}
+
+// -------------------------------------------------------------------------
 // RESPONSE WRITER HELPER
 // -------------------------------------------------------------------------
 

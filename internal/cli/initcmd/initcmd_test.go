@@ -250,6 +250,51 @@ func TestRunInteractive_HappyPath(t *testing.T) {
 	}
 }
 
+// TestRun_HappyPath drives the top-level Run entry, which parses flags and
+// delegates to RunInteractive. The exit code must be 0 when the generated
+// config is valid.
+func TestRun_HappyPath(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	in := strings.NewReader(strings.Join([]string{
+		"sqlite", "db.sqlite",
+		"primary", "http://localhost:9000", "data", "AKID", "SECRET", "no",
+		"0", "0", "0", "0",
+		"n",
+		"vb1", "ck", "cs",
+		"n",
+	}, "\n") + "\n")
+	var out, errOut bytes.Buffer
+	code := Run([]string{"-config", path}, in, &out, &errOut)
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0 (errOut=%q)", code, errOut.String())
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("config not written: %v", err)
+	}
+}
+
+// TestRun_FailurePath covers the err-from-RunInteractive branch by writing
+// to an unwritable path so os.WriteFile fails.
+func TestRun_FailurePath(t *testing.T) {
+	in := strings.NewReader(strings.Join([]string{
+		"sqlite", "db.sqlite",
+		"primary", "http://localhost:9000", "data", "AKID", "SECRET", "no",
+		"0", "0", "0", "0",
+		"n",
+		"vb1", "ck", "cs",
+		"n",
+	}, "\n") + "\n")
+	var out, errOut bytes.Buffer
+	code := Run([]string{"-config", "/no/such/dir/config.yaml"}, in, &out, &errOut)
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+	if !strings.Contains(errOut.String(), "error:") {
+		t.Errorf("errOut = %q, want error prefix", errOut.String())
+	}
+}
+
 // TestRunInteractive_UserAborts covers the abort-on-existing-file branch.
 func TestRunInteractive_UserAborts(t *testing.T) {
 	dir := t.TempDir()

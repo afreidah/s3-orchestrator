@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
@@ -408,6 +409,120 @@ func TestCommand_RemoveBackend_PurgeMissingToken(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "confirmation token") {
 		t.Errorf("stderr = %q, want to mention confirmation token", stderr.String())
+	}
+}
+
+const minimalAdminYAML = `
+server:
+  listen_addr: "%ADDR%"
+database:
+  driver: sqlite
+  path: ":memory:"
+buckets:
+  - name: test
+    credentials:
+      - access_key_id: ak
+        secret_access_key: sk
+backends:
+  - name: b1
+    endpoint: http://localhost:19000
+    region: us-east-1
+    bucket: bucket1
+    access_key_id: ak
+    secret_access_key: sk
+ui:
+  admin_token: "%TOKEN%"
+`
+
+// writeAdminConfig drops a config file with the given listener address and
+// admin token so Run() finds enough state to dispatch.
+func writeAdminConfig(t *testing.T, addr, token string) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := dir + "/config.yaml"
+	body := strings.NewReplacer("%ADDR%", addr, "%TOKEN%", token).Replace(minimalAdminYAML)
+	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	return path
+}
+
+// TestRun_Help drives the no-args branch which prints usage and exits 0.
+func TestRun_Help(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{}, &stdout, &stderr)
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0", code)
+	}
+	if !strings.Contains(stderr.String(), "Usage: s3-orchestrator admin") {
+		t.Errorf("stderr = %q, want usage line", stderr.String())
+	}
+}
+
+// TestRun_BadConfigPath covers the LoadConfig-error branch.
+func TestRun_BadConfigPath(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"-config", "/no/such/file.yaml", "status"}, &stdout, &stderr)
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+}
+
+// TestRun_MissingAdminToken covers the empty-token branch where the config
+// loads cleanly but no admin_token / admin_key was set.
+func TestRun_MissingAdminToken(t *testing.T) {
+	path := writeAdminConfig(t, "127.0.0.1:9999", "")
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"-config", path, "status"}, &stdout, &stderr)
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "admin_token") {
+		t.Errorf("stderr = %q, want admin_token error", stderr.String())
+	}
+}
+
+// TestRun_DispatchesViaConfigAddr drives the full Run path: config is read,
+// the address is auto-prefixed with http://, the token comes from
+// admin_token, and the dispatch reaches the live test server.
+func TestRun_DispatchesViaConfigAddr(t *testing.T) {
+	var gotToken string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotToken = r.Header.Get("X-Admin-Token")
+		jsonOK(w, r)
+	}))
+	defer srv.Close()
+
+	addr := strings.TrimPrefix(srv.URL, "http://")
+	path := writeAdminConfig(t, addr, "tok")
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"-config", path, "status"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr=%q)", code, stderr.String())
+	}
+	if gotToken != "tok" {
+		t.Errorf("token = %q, want tok", gotToken)
+	}
+}
+
+// TestRun_AddrFlagOverridesConfig drives the -addr override branch and the
+// already-prefixed http:// path.
+func TestRun_AddrFlagOverridesConfig(t *testing.T) {
+	var hit bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hit = true
+		jsonOK(w, r)
+	}))
+	defer srv.Close()
+
+	path := writeAdminConfig(t, "127.0.0.1:9999", "tok")
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"-config", path, "-addr", srv.URL, "status"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr=%q)", code, stderr.String())
+	}
+	if !hit {
+		t.Error("server was not hit; -addr override likely ignored")
 	}
 }
 
