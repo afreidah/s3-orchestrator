@@ -223,30 +223,35 @@ func (b *S3Backend) GetObject(ctx context.Context, key string, rangeHeader strin
 			if err != nil {
 				return nil, fmt.Errorf("get object failed: %w", err)
 			}
-
-			out := &GetObjectResult{Body: result.Body}
-			if result.ContentLength != nil {
-				out.Size = *result.ContentLength
-			}
-			if result.ContentType != nil {
-				out.ContentType = *result.ContentType
-			} else {
-				out.ContentType = "application/octet-stream"
-			}
-			if result.ETag != nil {
-				out.ETag = *result.ETag
-			}
-			if result.ContentRange != nil {
-				out.ContentRange = *result.ContentRange
-			}
-			if result.LastModified != nil {
-				out.LastModified = *result.LastModified
-			}
-			if len(result.Metadata) > 0 {
-				out.Metadata = result.Metadata
-			}
-			return out, nil
+			return mapGetObjectResult(result), nil
 		})
+}
+
+// mapGetObjectResult flattens an SDK GetObjectOutput into the package-local
+// GetObjectResult, defaulting ContentType to application/octet-stream when
+// the backend omits it. Extracted so GetObject's closure body stays under
+// the cognitive-complexity threshold.
+func mapGetObjectResult(result *s3.GetObjectOutput) *GetObjectResult {
+	out := &GetObjectResult{Body: result.Body, ContentType: "application/octet-stream"}
+	if result.ContentLength != nil {
+		out.Size = *result.ContentLength
+	}
+	if result.ContentType != nil {
+		out.ContentType = *result.ContentType
+	}
+	if result.ETag != nil {
+		out.ETag = *result.ETag
+	}
+	if result.ContentRange != nil {
+		out.ContentRange = *result.ContentRange
+	}
+	if result.LastModified != nil {
+		out.LastModified = *result.LastModified
+	}
+	if len(result.Metadata) > 0 {
+		out.Metadata = result.Metadata
+	}
+	return out
 }
 
 // HeadObject retrieves object metadata without the body.

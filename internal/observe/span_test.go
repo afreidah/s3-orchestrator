@@ -124,10 +124,9 @@ func TestRunErr_HappyPath(t *testing.T) {
 func TestRunErr_PropagatesError(t *testing.T) {
 	t.Parallel()
 	want := errors.New("nope")
-	err := RunErr(context.Background(), Internal("op", nil, nil), func(_ context.Context) error {
+	if err := RunErr(context.Background(), Internal("op", nil, nil), func(_ context.Context) error {
 		return want
-	})
-	if !errors.Is(err, want) {
+	}); !errors.Is(err, want) {
 		t.Fatalf("got %v, want %v", err, want)
 	}
 }
