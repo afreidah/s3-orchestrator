@@ -125,7 +125,7 @@ var (
 	_ store.ReplicationStore      = (*Store)(nil)
 	_ store.CleanupStore          = (*Store)(nil)
 	_ store.IntegrityStore        = (*Store)(nil)
-	_ store.LifecycleStore        = (*Store)(nil)
+	_ store.ExpiredObjectsLister        = (*Store)(nil)
 	_ store.BackendLifecycleStore = (*Store)(nil)
 	_ store.DashboardStore        = (*Store)(nil)
 	_ store.UsageFlusher          = (*Store)(nil)

@@ -39,7 +39,7 @@ type testCBBundle struct {
 	ReplicationStore
 	CleanupStore
 	IntegrityStore
-	LifecycleStore
+	ExpiredObjectsLister
 	BackendLifecycleStore
 	DashboardStore
 	UsageFlusher
@@ -68,7 +68,7 @@ func newTestCB(mock *mockStore, threshold int, timeout time.Duration) *testCBBun
 		ReplicationStore:      NewCBReplicationStore(mock, cb),
 		CleanupStore:          NewCBCleanupStore(mock, cb),
 		IntegrityStore:        NewCBIntegrityStore(mock, cb),
-		LifecycleStore:        NewCBLifecycleStore(mock, cb),
+		ExpiredObjectsLister:        NewCBExpiredObjectsLister(mock, cb),
 		BackendLifecycleStore: NewCBBackendLifecycleStore(mock, cb),
 		DashboardStore:        NewCBDashboardStore(mock, cb),
 		UsageFlusher:          NewCBUsageFlusher(mock, cb),

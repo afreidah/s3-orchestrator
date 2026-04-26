@@ -101,7 +101,7 @@ var (
 	_ store.ReplicationStore      = (*MockStore)(nil)
 	_ store.CleanupStore          = (*MockStore)(nil)
 	_ store.IntegrityStore        = (*MockStore)(nil)
-	_ store.LifecycleStore        = (*MockStore)(nil)
+	_ store.ExpiredObjectsLister        = (*MockStore)(nil)
 	_ store.BackendLifecycleStore = (*MockStore)(nil)
 	_ store.DashboardStore        = (*MockStore)(nil)
 	_ store.UsageFlusher          = (*MockStore)(nil)

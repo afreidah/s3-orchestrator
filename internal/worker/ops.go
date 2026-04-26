@@ -86,8 +86,8 @@ type DataMover interface {
 	DeleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, backendName, key, reason string, sizeBytes int64)
 }
 
-// UsageAccess provides usage tracking.
-type UsageAccess interface {
+// UsageAccessor provides usage tracking.
+type UsageAccessor interface {
 	Usage() *counter.UsageTracker
 }
 
@@ -101,7 +101,7 @@ type Ops interface {
 	BackendAccess
 	AdmissionControl
 	DataMover
-	UsageAccess
+	UsageAccessor
 }
 
 // CleanupOps is the dependency contract for CleanupWorker. It omits
@@ -109,7 +109,7 @@ type Ops interface {
 type CleanupOps interface {
 	AdmissionControl
 	DataMover
-	UsageAccess
+	UsageAccessor
 }
 
 // ScrubberOps is the dependency contract for Scrubber. It omits
@@ -117,5 +117,5 @@ type CleanupOps interface {
 // best-effort background work.
 type ScrubberOps interface {
 	DataMover
-	UsageAccess
+	UsageAccessor
 }

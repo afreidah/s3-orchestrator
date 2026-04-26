@@ -185,7 +185,7 @@ var (
 	_ ReplicationStore      = (*mockStore)(nil)
 	_ CleanupStore          = (*mockStore)(nil)
 	_ IntegrityStore        = (*mockStore)(nil)
-	_ LifecycleStore        = (*mockStore)(nil)
+	_ ExpiredObjectsLister        = (*mockStore)(nil)
 	_ BackendLifecycleStore = (*mockStore)(nil)
 	_ DashboardStore        = (*mockStore)(nil)
 	_ UsageFlusher          = (*mockStore)(nil)

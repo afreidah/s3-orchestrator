@@ -113,8 +113,8 @@ type IntegrityStore interface {
 	UpdateContentHash(ctx context.Context, key, backendName, hash string) error
 }
 
-// LifecycleStore defines object lifecycle expiration operations.
-type LifecycleStore interface {
+// ExpiredObjectsLister defines object lifecycle expiration operations.
+type ExpiredObjectsLister interface {
 	ListExpiredObjects(ctx context.Context, prefix string, cutoff time.Time, limit int) ([]ObjectLocation, error)
 }
 
@@ -257,7 +257,7 @@ var (
 	_ ReplicationStore      = (*Store)(nil)
 	_ CleanupStore          = (*Store)(nil)
 	_ IntegrityStore        = (*Store)(nil)
-	_ LifecycleStore        = (*Store)(nil)
+	_ ExpiredObjectsLister        = (*Store)(nil)
 	_ BackendLifecycleStore = (*Store)(nil)
 	_ DashboardStore        = (*Store)(nil)
 	_ UsageFlusher          = (*Store)(nil)
