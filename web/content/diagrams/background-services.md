@@ -96,7 +96,7 @@ Coordination of periodic background workers that maintain storage health, enforc
     SCHED: {
       title: 'Lifecycle Manager (Scheduler)',
       badge: 'entry', badgeText: 'scheduler',
-      body: '<p>Central service orchestrator from <code>internal/lifecycle</code>. Launches all background workers as supervised goroutines.</p><p>Each service implements <code>lifecycle.Service</code> with a <code>Run(ctx)</code> method. Most workers use <code>lockedTickerService</code> which wraps periodic execution behind PostgreSQL advisory locks (<code>pg_try_advisory_lock</code>) for leader election across instances.</p><p>Services are defined in <code>cmd/s3-orchestrator/services.go</code>. Hot-reloadable configs are stored as <code>atomic.Pointer</code> on the <code>proxy.BackendManager</code>.</p>'
+      body: '<p>Central service orchestrator from <code>internal/lifecycle</code>. Launches all background workers as supervised goroutines.</p><p>Each service implements <code>lifecycle.Service</code> with a <code>Run(ctx)</code> method. Most workers use <code>lockedTickerService</code> which wraps periodic execution behind PostgreSQL advisory locks (<code>pg_try_advisory_lock</code>) for leader election across instances.</p><p>Services are defined in <code>internal/di/services.go</code>. Hot-reloadable configs are stored as <code>atomic.Pointer</code> on the <code>proxy.BackendManager</code>.</p>'
     },
     REPL: {
       title: 'Replicator',

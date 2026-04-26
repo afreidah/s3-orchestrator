@@ -28,7 +28,7 @@ Configuration changes are **not** applied automatically. When a new version adds
 
 ```bash
 s3-orchestrator version
-# s3-orchestrator v0.8.23 go1.26.0 linux/amd64
+# s3-orchestrator v0.41.7 go1.26.0 linux/amd64
 ```
 
 ## Compatibility Matrix
@@ -58,7 +58,7 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.20.x (current)
+### v0.41.x (current)
 
 **New feature: Integrity verification**
 

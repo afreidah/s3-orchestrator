@@ -89,7 +89,7 @@ func TestServiceConstructors_AllReturnNonNil(t *testing.T) {
 		{"Replicator", NewReplicatorService(mgr, locker)},
 		{"Reconcile", NewReconcileService(worker.NewReconciler(mgr, nil), locker, time.Hour)},
 		{"Scrubber", NewScrubberService(mgr, locker)},
-		{"Watchdog", NewCircuitBreakerWatchdog(mgr, breaker.NewCircuitBreaker("t", 3, time.Second, func(error) bool { return false }, store.ErrDBUnavailable))},
+		{"Watchdog", NewCircuitBreakerWatchdog(breaker.NewRegistry(breaker.NewCircuitBreaker("t", 3, time.Second, func(error) bool { return false }, store.ErrDBUnavailable)))},
 	}
 	for _, tc := range tests {
 		if tc.svc == nil {
@@ -165,24 +165,20 @@ func TestLockedTickerService_RunOnceSwallowsErrDBUnavailable(t *testing.T) {
 	}
 }
 
-// TestCircuitBreakerWatchdog_CheckAllEmptyBackends exercises the watchdog's
-// iteration loop with no backends present. Covers the concrete type so the
-// returned lifecycle.Service is not an opaque interface to the tests.
-func TestCircuitBreakerWatchdog_CheckAllEmptyBackends(t *testing.T) {
+// TestCircuitBreakerWatchdog_CheckAllEmptyRegistry exercises checkAll with an
+// empty registry to guarantee it is a safe no-op when no breakers are wired.
+func TestCircuitBreakerWatchdog_CheckAllEmptyRegistry(t *testing.T) {
 	t.Parallel()
-	mgr := newTestManagerWithMock(t)
-	cb := breaker.NewCircuitBreaker("t", 3, time.Second, func(error) bool { return false }, store.ErrDBUnavailable)
-	w := &circuitBreakerWatchdog{manager: mgr, dbCB: cb}
-	w.checkAll() // must not panic on empty Backends()
+	w := &circuitBreakerWatchdog{registry: breaker.NewRegistry()}
+	w.checkAll() // must not panic on empty registry
 }
 
 // TestCircuitBreakerWatchdog_RunExitsOnCancel covers the ticker loop's
 // ctx.Done() branch by cancelling the context before the first tick fires.
 func TestCircuitBreakerWatchdog_RunExitsOnCancel(t *testing.T) {
 	t.Parallel()
-	mgr := newTestManagerWithMock(t)
 	cb := breaker.NewCircuitBreaker("t", 3, time.Second, func(error) bool { return false }, store.ErrDBUnavailable)
-	w := &circuitBreakerWatchdog{manager: mgr, dbCB: cb}
+	w := &circuitBreakerWatchdog{registry: breaker.NewRegistry(cb)}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -382,25 +378,14 @@ func TestUsageFlushService_FlushTickWithAdaptiveSwitch(t *testing.T) {
 	_ = svc.Run(ctx)
 }
 
-// TestCircuitBreakerWatchdog_CheckAllResetsBackendBreaker exercises the
-// non-empty Backends branch of checkAll: when a backend is wrapped in a
-// CircuitBreakerBackend, ResetStaleProbe must run on it.
+// TestCircuitBreakerWatchdog_CheckAllResetsBackendBreaker verifies that a
+// per-backend CircuitBreakerBackend registered alongside the database breaker
+// receives a ResetStaleProbe call when the watchdog ticks.
 func TestCircuitBreakerWatchdog_CheckAllResetsBackendBreaker(t *testing.T) {
 	t.Parallel()
-	mock := &testutil.MockStore{}
 	cbBackend := backend.NewCircuitBreakerBackend(nil, "b1", 3, time.Second)
-	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
-		Backends:        map[string]backend.ObjectBackend{"b1": cbBackend},
-		Stores:          proxy.StoresFromMock(mock),
-		Dashboard:       mock,
-		Metrics:         mock,
-		Order:           []string{"b1"},
-		RoutingStrategy: config.RoutingPack,
-	})
-	t.Cleanup(mgr.Close)
-
 	dbCB := breaker.NewCircuitBreaker("t", 3, time.Second, func(error) bool { return false }, store.ErrDBUnavailable)
-	w := &circuitBreakerWatchdog{manager: mgr, dbCB: dbCB}
+	w := &circuitBreakerWatchdog{registry: breaker.NewRegistry(dbCB, cbBackend)}
 	w.checkAll() // must not panic; ResetStaleProbe runs on cbBackend
 }
 

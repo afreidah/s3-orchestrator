@@ -37,8 +37,8 @@ type State int
 
 const (
 	StateClosed   State = iota // healthy — all calls pass through
-	StateOpen                         // down — return sentinel error
-	StateHalfOpen                     // probing — one call allowed through
+	StateOpen                  // down — return sentinel error
+	StateHalfOpen              // probing — one call allowed through
 )
 
 // String returns the human-readable name of the circuit state.
@@ -77,12 +77,12 @@ type CircuitBreaker struct {
 	openedAt      time.Time
 	failThreshold int
 	openTimeout   time.Duration
-	probeJitter   time.Duration     // randomized delay added to openTimeout; recomputed each time the circuit opens
+	probeJitter   time.Duration // randomized delay added to openTimeout; recomputed each time the circuit opens
 	probeInFlight atomic.Bool
-	probeStarted  atomic.Int64      // UnixNano timestamp of the probe dispatch; zero when no probe is active
-	name          string            // for logging and metrics labels
-	isError       func(error) bool  // returns true if the error should trip the breaker
-	sentinel      error             // error returned when circuit is open
+	probeStarted  atomic.Int64     // UnixNano timestamp of the probe dispatch; zero when no probe is active
+	name          string           // for logging and metrics labels
+	isError       func(error) bool // returns true if the error should trip the breaker
+	sentinel      error            // error returned when circuit is open
 }
 
 // NewCircuitBreaker creates a new circuit breaker.

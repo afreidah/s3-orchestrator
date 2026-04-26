@@ -187,18 +187,28 @@ Order: stdlib, internal packages, external packages.
 Group related fields with inline comments explaining non-obvious fields:
 
 ```go
+// Stores carries the narrow per-role store interfaces the manager depends on.
+// Each consumer asks only for the slice it actually uses; no caller sees a
+// composed "god interface".
+type Stores struct {
+    Object       store.ObjectStore
+    Quota        store.QuotaStore
+    Multipart    store.MultipartStore
+    Replication  store.ReplicationStore
+    Cleanup      store.CleanupStore
+    Integrity    store.IntegrityStore
+    Lifecycle    store.ExpiredObjectsLister
+    UsageFlusher store.UsageFlusher
+}
+
 type BackendManager struct {
-    backends        map[string]ObjectBackend
-    store           MetadataStore
-    order           []string
-    cache           *LocationCache
-    backendTimeout  time.Duration
-    usage           *UsageTracker
-    metrics         *MetricsCollector
-    dashboard       *DashboardAggregator
+    *backendCore                                     // embeds the narrow Stores fields
     routingStrategy config.RoutingStrategy           // RoutingPack or RoutingSpread
     rebalanceCfg    syncutil.AtomicConfig[config.RebalanceConfig]
     replicationCfg  syncutil.AtomicConfig[config.ReplicationConfig]
+    Rebalancer      *worker.Rebalancer
+    Replicator      *worker.Replicator
+    Scrubber        *worker.Scrubber
 }
 ```
 

@@ -19,7 +19,6 @@ import (
 	"math/rand/v2"
 	"time"
 
-	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
@@ -381,17 +380,18 @@ func NewReconcileService(reconciler *worker.Reconciler, locker store.AdvisoryLoc
 // CIRCUIT BREAKER WATCHDOG
 // -------------------------------------------------------------------------
 
-// circuitBreakerWatchdog periodically checks all circuit breakers for stale
-// half-open probes and resets them. This prevents circuits from getting
-// stuck half-open indefinitely when no new requests arrive.
+// circuitBreakerWatchdog periodically resets stale half-open probes on every
+// breaker registered in the breaker.Registry. This prevents circuits from
+// getting stuck half-open indefinitely when no new requests arrive. Membership
+// in the registry is decided once at DI construction time, so the watchdog
+// itself contains no type-assertion or backend-discovery logic.
 type circuitBreakerWatchdog struct {
-	manager *proxy.BackendManager
-	dbCB    *breaker.CircuitBreaker
+	registry *breaker.Registry
 }
 
 // NewCircuitBreakerWatchdog constructs the watchdog background service.
-func NewCircuitBreakerWatchdog(manager *proxy.BackendManager, dbCB *breaker.CircuitBreaker) lifecycle.Service {
-	return &circuitBreakerWatchdog{manager: manager, dbCB: dbCB}
+func NewCircuitBreakerWatchdog(registry *breaker.Registry) lifecycle.Service {
+	return &circuitBreakerWatchdog{registry: registry}
 }
 
 // Run implements lifecycle.Service. Checks every defaultCircuitBreakerWatchdog
@@ -410,15 +410,9 @@ func (w *circuitBreakerWatchdog) Run(ctx context.Context) error {
 	}
 }
 
-// checkAll iterates all circuit breakers and resets stale probes.
+// checkAll resets stale probes on every registered breaker.
 func (w *circuitBreakerWatchdog) checkAll() {
-	w.dbCB.ResetStaleProbe()
-
-	for _, be := range w.manager.Backends() {
-		if cb, ok := be.(*backend.CircuitBreakerBackend); ok {
-			cb.ResetStaleProbe()
-		}
-	}
+	w.registry.ResetStaleProbes()
 }
 
 // -------------------------------------------------------------------------

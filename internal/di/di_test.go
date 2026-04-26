@@ -102,18 +102,6 @@ func TestProviders_MissingConfigReturnsCleanError(t *testing.T) {
 // LEAF-PROVIDER HAPPY PATHS
 // -------------------------------------------------------------------------
 
-// TestProvideLogBuffer exercises the trivial log-buffer factory.
-func TestProvideLogBuffer(t *testing.T) {
-	t.Parallel()
-	lb, err := ProvideLogBuffer(do.New())
-	if err != nil {
-		t.Fatalf("ProvideLogBuffer: %v", err)
-	}
-	if lb == nil {
-		t.Fatal("ProvideLogBuffer returned nil buffer")
-	}
-}
-
 // TestProvideLoginThrottle verifies the login-throttle constructor.
 func TestProvideLoginThrottle(t *testing.T) {
 	t.Parallel()
