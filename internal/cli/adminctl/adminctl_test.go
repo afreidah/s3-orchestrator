@@ -264,70 +264,72 @@ func jsonOK(w http.ResponseWriter, _ *http.Request) {
 // TestCommand_SimpleGetAndPostWrappers walks every handler that is a
 // one-line wrapper around doGet/doPost so the matrix is covered without
 // duplicating boilerplate per command.
+// wrapperCase carries one row of the simple-wrapper assertion table.
+type wrapperCase struct {
+	name        string
+	cmd         string
+	args        []string
+	wantMethod  string
+	wantPath    string
+	wantQueryIn string // substring match (some commands optionally append ?...)
+}
+
+// simpleWrapperCases enumerates the flag-shape variants for every plain
+// HTTP wrapper. Keeping the cmd directly on each row removes the
+// case-name → cmd-name switch that pushed the test over the cognitive
+// complexity threshold.
+var simpleWrapperCases = []wrapperCase{
+	{"status", "status", nil, http.MethodGet, "/admin/api/status", ""},
+	{"cleanup-queue", "cleanup-queue", nil, http.MethodGet, "/admin/api/cleanup-queue", ""},
+	{"usage-flush", "usage-flush", nil, http.MethodPost, "/admin/api/usage-flush", ""},
+	{"replicate", "replicate", nil, http.MethodPost, "/admin/api/replicate", ""},
+	{"over-replication", "over-replication", nil, http.MethodGet, "/admin/api/over-replication", ""},
+	{"over-replication-execute", "over-replication", []string{"-execute"}, http.MethodPost, "/admin/api/over-replication", ""},
+	{"over-replication-execute-batch", "over-replication", []string{"-execute", "-batch-size", "200"}, http.MethodPost, "/admin/api/over-replication", "batch_size=200"},
+	{"log-level-get", "log-level", nil, http.MethodGet, "/admin/api/log-level", ""},
+	{"log-level-set", "log-level", []string{"-set", "debug"}, http.MethodPut, "/admin/api/log-level", ""},
+	{"scrub", "scrub", nil, http.MethodPost, "/admin/api/scrub", ""},
+	{"scrub-batch", "scrub", []string{"-batch-size", "50"}, http.MethodPost, "/admin/api/scrub", "batch_size=50"},
+	{"backfill-checksums", "backfill-checksums", nil, http.MethodPost, "/admin/api/backfill-checksums", ""},
+	{"backfill-checksums-batch", "backfill-checksums", []string{"-batch-size", "50"}, http.MethodPost, "/admin/api/backfill-checksums", "batch_size=50"},
+	{"object-locations", "object-locations", []string{"-key", "my/key"}, http.MethodGet, "/admin/api/object-locations", "key=my/key"},
+}
+
+// runWrapperCase exercises a single wrapper assertion. Pulling the body out
+// of the loop keeps TestCommand_SimpleGetAndPostWrappers below the
+// cognitive-complexity threshold (Sonar S3776).
+func runWrapperCase(t *testing.T, tc *wrapperCase) {
+	t.Helper()
+	var gotMethod, gotPath, gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath, gotQuery = r.Method, r.URL.Path, r.URL.RawQuery
+		jsonOK(w, r)
+	}))
+	defer srv.Close()
+
+	var stdout, stderr bytes.Buffer
+	code := Command(tc.cmd, tc.args, srv.URL, "tok", &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr=%q)", code, stderr.String())
+	}
+	if gotMethod != tc.wantMethod {
+		t.Errorf("method = %q, want %q", gotMethod, tc.wantMethod)
+	}
+	if gotPath != tc.wantPath {
+		t.Errorf("path = %q, want %q", gotPath, tc.wantPath)
+	}
+	if tc.wantQueryIn != "" && !strings.Contains(gotQuery, tc.wantQueryIn) {
+		t.Errorf("query = %q, want to contain %q", gotQuery, tc.wantQueryIn)
+	}
+}
+
+// TestCommand_SimpleGetAndPostWrappers walks every handler that is a
+// one-line wrapper around doGet/doPost so the matrix is covered without
+// duplicating boilerplate per command.
 func TestCommand_SimpleGetAndPostWrappers(t *testing.T) {
-	cases := []struct {
-		name        string
-		args        []string
-		wantMethod  string
-		wantPath    string
-		wantQueryIn string // substring match (some commands optionally append ?...)
-	}{
-		{"status", nil, http.MethodGet, "/admin/api/status", ""},
-		{"cleanup-queue", nil, http.MethodGet, "/admin/api/cleanup-queue", ""},
-		{"usage-flush", nil, http.MethodPost, "/admin/api/usage-flush", ""},
-		{"replicate", nil, http.MethodPost, "/admin/api/replicate", ""},
-		{"over-replication", nil, http.MethodGet, "/admin/api/over-replication", ""},
-		{"over-replication-execute", []string{"-execute"}, http.MethodPost, "/admin/api/over-replication", ""},
-		{"over-replication-execute-batch", []string{"-execute", "-batch-size", "200"}, http.MethodPost, "/admin/api/over-replication", "batch_size=200"},
-		{"log-level-get", nil, http.MethodGet, "/admin/api/log-level", ""},
-		{"log-level-set", []string{"-set", "debug"}, http.MethodPut, "/admin/api/log-level", ""},
-		{"scrub", nil, http.MethodPost, "/admin/api/scrub", ""},
-		{"scrub-batch", []string{"-batch-size", "50"}, http.MethodPost, "/admin/api/scrub", "batch_size=50"},
-		{"backfill-checksums", nil, http.MethodPost, "/admin/api/backfill-checksums", ""},
-		{"backfill-checksums-batch", []string{"-batch-size", "50"}, http.MethodPost, "/admin/api/backfill-checksums", "batch_size=50"},
-		{"object-locations", []string{"-key", "my/key"}, http.MethodGet, "/admin/api/object-locations", "key=my/key"},
-	}
-
-	cmdName := func(name string) string {
-		// Most cases reuse the subcommand's actual name; the variants encode
-		// the flag combination in the case name, so strip the suffix.
-		switch name {
-		case "over-replication-execute", "over-replication-execute-batch":
-			return "over-replication"
-		case "log-level-get", "log-level-set":
-			return "log-level"
-		case "scrub-batch":
-			return "scrub"
-		case "backfill-checksums-batch":
-			return "backfill-checksums"
-		}
-		return name
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			var gotMethod, gotPath, gotQuery string
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				gotMethod, gotPath, gotQuery = r.Method, r.URL.Path, r.URL.RawQuery
-				jsonOK(w, r)
-			}))
-			defer srv.Close()
-
-			var stdout, stderr bytes.Buffer
-			code := Command(cmdName(tc.name), tc.args, srv.URL, "tok", &stdout, &stderr)
-			if code != 0 {
-				t.Fatalf("exit code = %d, want 0 (stderr=%q)", code, stderr.String())
-			}
-			if gotMethod != tc.wantMethod {
-				t.Errorf("method = %q, want %q", gotMethod, tc.wantMethod)
-			}
-			if gotPath != tc.wantPath {
-				t.Errorf("path = %q, want %q", gotPath, tc.wantPath)
-			}
-			if tc.wantQueryIn != "" && !strings.Contains(gotQuery, tc.wantQueryIn) {
-				t.Errorf("query = %q, want to contain %q", gotQuery, tc.wantQueryIn)
-			}
-		})
+	for i := range simpleWrapperCases {
+		tc := &simpleWrapperCases[i]
+		t.Run(tc.name, func(t *testing.T) { runWrapperCase(t, tc) })
 	}
 }
 
