@@ -280,21 +280,9 @@ func (s *Store) ListObjects(ctx context.Context, prefix, startAfter string, maxK
 	}
 	defer rows.Close()
 
-	var objects []store.ObjectLocation
-	for rows.Next() {
-		var loc store.ObjectLocation
-		var createdAt string
-		if err := rows.Scan(&loc.ObjectKey, &loc.BackendName, &loc.SizeBytes, &createdAt); err != nil {
-			return nil, fmt.Errorf("failed to scan object: %w", err)
-		}
-		loc.CreatedAt, err = parseTime(createdAt)
-		if err != nil {
-			return nil, fmt.Errorf(errInvalidTimestamp, createdAt, err)
-		}
-		objects = append(objects, loc)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate objects: %w", err)
+	objects, err := scanSlimObjectLocations(rows)
+	if err != nil {
+		return nil, err
 	}
 
 	result := &store.ListObjectsResult{}
@@ -334,23 +322,7 @@ func (s *Store) ListExpiredObjects(ctx context.Context, prefix string, cutoff ti
 	}
 	defer rows.Close()
 
-	var locs []store.ObjectLocation
-	for rows.Next() {
-		var loc store.ObjectLocation
-		var createdAt string
-		if err := rows.Scan(&loc.ObjectKey, &loc.BackendName, &loc.SizeBytes, &createdAt); err != nil {
-			return nil, fmt.Errorf("failed to scan expired object: %w", err)
-		}
-		loc.CreatedAt, err = parseTime(createdAt)
-		if err != nil {
-			return nil, fmt.Errorf(errInvalidTimestamp, createdAt, err)
-		}
-		locs = append(locs, loc)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate expired objects: %w", err)
-	}
-	return locs, nil
+	return scanSlimObjectLocations(rows)
 }
 
 // ListObjectsByBackend returns objects stored on a specific backend, ordered by
@@ -367,21 +339,31 @@ func (s *Store) ListObjectsByBackend(ctx context.Context, backendName string, li
 	}
 	defer rows.Close()
 
+	return scanSlimObjectLocations(rows)
+}
+
+// scanSlimObjectLocations consumes a *sql.Rows holding the slim
+// (object_key, backend_name, size_bytes, created_at) projection used by
+// ListObjects, ListExpiredObjects, and ListObjectsByBackend. Centralizes
+// the per-row scan + RFC3339 timestamp parse so the three list helpers
+// don't carry parallel loop bodies.
+func scanSlimObjectLocations(rows *sql.Rows) ([]store.ObjectLocation, error) {
 	var locs []store.ObjectLocation
 	for rows.Next() {
 		var loc store.ObjectLocation
 		var createdAt string
 		if err := rows.Scan(&loc.ObjectKey, &loc.BackendName, &loc.SizeBytes, &createdAt); err != nil {
-			return nil, fmt.Errorf("failed to scan object: %w", err)
+			return nil, fmt.Errorf("failed to scan object location: %w", err)
 		}
-		loc.CreatedAt, err = parseTime(createdAt)
-		if err != nil {
-			return nil, fmt.Errorf(errInvalidTimestamp, createdAt, err)
+		var parseErr error
+		loc.CreatedAt, parseErr = parseTime(createdAt)
+		if parseErr != nil {
+			return nil, fmt.Errorf(errInvalidTimestamp, createdAt, parseErr)
 		}
 		locs = append(locs, loc)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate objects: %w", err)
+		return nil, fmt.Errorf("failed to iterate object locations: %w", err)
 	}
 	return locs, nil
 }

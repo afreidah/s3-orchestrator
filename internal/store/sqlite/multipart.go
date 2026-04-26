@@ -52,35 +52,13 @@ func (s *Store) GetMultipartUpload(ctx context.Context, uploadID string) (*store
 		 WHERE upload_id = ?`,
 		uploadID,
 	)
-
-	var (
-		mu          store.MultipartUpload
-		contentType sql.NullString
-		metaJSON    sql.NullString
-		createdAt   string
-	)
-	err := row.Scan(&mu.UploadID, &mu.ObjectKey, &mu.BackendName, &contentType, &metaJSON, &createdAt)
+	mu, err := scanMultipartUploadRow(row)
 	if err == sql.ErrNoRows {
 		return nil, store.ErrMultipartUploadNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get multipart upload: %w", err)
 	}
-
-	if contentType.Valid {
-		mu.ContentType = contentType.String
-	}
-	if metaJSON.Valid && metaJSON.String != "" {
-		if err := json.Unmarshal([]byte(metaJSON.String), &mu.Metadata); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
-		}
-	}
-	var parseErr error
-	mu.CreatedAt, parseErr = parseTime(createdAt)
-	if parseErr != nil {
-		return nil, fmt.Errorf(errInvalidTimestamp, createdAt, parseErr)
-	}
-
 	return &mu, nil
 }
 
@@ -296,31 +274,51 @@ func (s *Store) GetActiveMultipartCounts(ctx context.Context) (map[string]int64,
 	return counts, rows.Err()
 }
 
-// scanMultipartUploads converts sql.Rows into a slice of MultipartUpload.
+// rowScanner is the common subset of *sql.Row and *sql.Rows used by
+// scanMultipartUploadRow so single-row and multi-row callers share one
+// column-mapping body.
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+// scanMultipartUploadRow scans the standard multipart_uploads column set
+// (upload_id, object_key, backend_name, content_type, metadata, created_at)
+// from any sql Scan-capable source and returns a MultipartUpload. Returns
+// sql.ErrNoRows untouched so single-row callers can map it to a sentinel.
+func scanMultipartUploadRow(s rowScanner) (store.MultipartUpload, error) {
+	var (
+		mu          store.MultipartUpload
+		contentType sql.NullString
+		metaJSON    sql.NullString
+		createdAt   string
+	)
+	if err := s.Scan(&mu.UploadID, &mu.ObjectKey, &mu.BackendName, &contentType, &metaJSON, &createdAt); err != nil {
+		return store.MultipartUpload{}, err
+	}
+	if contentType.Valid {
+		mu.ContentType = contentType.String
+	}
+	if metaJSON.Valid && metaJSON.String != "" {
+		if err := json.Unmarshal([]byte(metaJSON.String), &mu.Metadata); err != nil {
+			return store.MultipartUpload{}, fmt.Errorf("failed to unmarshal metadata: %w", err)
+		}
+	}
+	var parseErr error
+	mu.CreatedAt, parseErr = parseTime(createdAt)
+	if parseErr != nil {
+		return store.MultipartUpload{}, fmt.Errorf(errInvalidTimestamp, createdAt, parseErr)
+	}
+	return mu, nil
+}
+
+// scanMultipartUploads loops sql.Rows through scanMultipartUploadRow,
+// surfacing the standard "failed to scan" error wrap on per-row failures.
 func scanMultipartUploads(rows *sql.Rows) ([]store.MultipartUpload, error) {
 	var uploads []store.MultipartUpload
 	for rows.Next() {
-		var (
-			mu          store.MultipartUpload
-			contentType sql.NullString
-			metaJSON    sql.NullString
-			createdAt   string
-		)
-		if err := rows.Scan(&mu.UploadID, &mu.ObjectKey, &mu.BackendName, &contentType, &metaJSON, &createdAt); err != nil {
+		mu, err := scanMultipartUploadRow(rows)
+		if err != nil {
 			return nil, fmt.Errorf("failed to scan multipart upload: %w", err)
-		}
-		if contentType.Valid {
-			mu.ContentType = contentType.String
-		}
-		if metaJSON.Valid && metaJSON.String != "" {
-			if err := json.Unmarshal([]byte(metaJSON.String), &mu.Metadata); err != nil {
-				return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
-			}
-		}
-		var parseErr error
-		mu.CreatedAt, parseErr = parseTime(createdAt)
-		if parseErr != nil {
-			return nil, fmt.Errorf(errInvalidTimestamp, createdAt, parseErr)
 		}
 		uploads = append(uploads, mu)
 	}
