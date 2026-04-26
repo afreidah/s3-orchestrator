@@ -99,37 +99,11 @@ func (e *Encryptor) Encrypt(ctx context.Context, body io.Reader, plaintextSize i
 	if _, err := rand.Read(dek); err != nil {
 		return nil, fmt.Errorf("generate DEK: %w", err)
 	}
-
-	// Wrap DEK with master key
 	wrappedDEK, keyID, err := e.provider.WrapDEK(ctx, dek)
 	if err != nil {
 		return nil, fmt.Errorf("wrap DEK: %w", err)
 	}
-
-	// Tee the plaintext through an MD5 hash for ETag computation
-	md5Hash := md5.New() //nolint:gosec // G401: MD5 required by S3 specification for ETag computation
-	teeBody := io.TeeReader(body, md5Hash)
-
-	// Create streaming encrypt reader
-	encReader, err := newEncryptReader(teeBody, dek, e.chunkSize)
-	if err != nil {
-		return nil, fmt.Errorf("encrypt reader: %w", err)
-	}
-
-	ctSize := ciphertextSizeExact(plaintextSize, e.chunkSize)
-
-	fr := &md5FinalizingReader{reader: encReader, hash: md5Hash}
-	result := &EncryptResult{
-		Body:           fr,
-		CiphertextSize: ctSize,
-		WrappedDEK:     wrappedDEK,
-		KeyID:          keyID,
-		BaseNonce:      encReader.baseNonce,
-		RawDEK:         dek,
-	}
-	fr.setResult(result)
-
-	return result, nil
+	return e.assembleEncryptResult(body, plaintextSize, dek, wrappedDEK, keyID)
 }
 
 // EncryptWithDEK encrypts using a previously wrapped DEK, skipping the
@@ -141,6 +115,15 @@ func (e *Encryptor) Encrypt(ctx context.Context, body io.Reader, plaintextSize i
 // Intended for write failover retries where the Vault round-trip for key
 // wrapping has already been paid on the first attempt.
 func (e *Encryptor) EncryptWithDEK(body io.Reader, plaintextSize int64, dek, wrappedDEK []byte, keyID string) (*EncryptResult, error) {
+	return e.assembleEncryptResult(body, plaintextSize, dek, wrappedDEK, keyID)
+}
+
+// assembleEncryptResult builds the streaming ciphertext reader and the
+// EncryptResult shared by Encrypt and EncryptWithDEK. The two callers
+// differ only in how they obtain (dek, wrappedDEK, keyID); everything
+// downstream — MD5 tee for ETag, encrypt reader, ciphertext sizing,
+// finalizer wiring — is identical.
+func (e *Encryptor) assembleEncryptResult(body io.Reader, plaintextSize int64, dek, wrappedDEK []byte, keyID string) (*EncryptResult, error) {
 	md5Hash := md5.New() //nolint:gosec // G401: MD5 required by S3 specification for ETag computation
 	teeBody := io.TeeReader(body, md5Hash)
 
@@ -149,19 +132,16 @@ func (e *Encryptor) EncryptWithDEK(body io.Reader, plaintextSize int64, dek, wra
 		return nil, fmt.Errorf("encrypt reader: %w", err)
 	}
 
-	ctSize := ciphertextSizeExact(plaintextSize, e.chunkSize)
-
 	fr := &md5FinalizingReader{reader: encReader, hash: md5Hash}
 	result := &EncryptResult{
 		Body:           fr,
-		CiphertextSize: ctSize,
+		CiphertextSize: ciphertextSizeExact(plaintextSize, e.chunkSize),
 		WrappedDEK:     wrappedDEK,
 		KeyID:          keyID,
 		BaseNonce:      encReader.baseNonce,
 		RawDEK:         dek,
 	}
 	fr.setResult(result)
-
 	return result, nil
 }
 

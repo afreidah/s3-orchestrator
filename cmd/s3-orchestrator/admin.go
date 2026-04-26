@@ -280,29 +280,15 @@ func adminRemoveBackend(args []string, baseAddr, token string, stdout, stderr io
 // what would be destroyed.
 func doRemovePreview(baseAddr, name, token string, stdout, stderr io.Writer) int {
 	url := baseAddr + adminBackendsPath + name + "?purge=true"
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, url, nil)
-	if err != nil {
-		fmt.Fprintf(stderr, fmtError, err)
-		return 1
-	}
-	req.Header.Set(adminTokenHeader, token)
-
-	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req) //nolint:gosec // G704: admin CLI target address is user-provided via --addr flag
-	if err != nil {
-		fmt.Fprintf(stderr, fmtError, err)
-		return 1
-	}
-	defer resp.Body.Close()
-
-	var result map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		fmt.Fprintf(stderr, "error: failed to parse response: %v\n", err)
-		return 1
+	result, code := fetchJSONResponse(http.MethodDelete, url, token, stderr)
+	if code != 0 {
+		return code
 	}
 
 	objectCount, _ := result["object_count"].(float64)
 	totalBytes, _ := result["total_bytes"].(float64)
 
+	//nolint:gosec // G705: stdout print of admin-CLI response, not an HTML/HTTP write — no XSS surface
 	fmt.Fprintf(stdout, "Backend %q contains %.0f objects (%.0f bytes).\n", name, objectCount, totalBytes)
 	fmt.Fprintf(stdout, "This will permanently delete all objects from the backend's S3 storage and remove all database records.\n")
 	fmt.Fprintf(stdout, "Re-run with --confirm to proceed.\n")
@@ -312,26 +298,10 @@ func doRemovePreview(baseAddr, name, token string, stdout, stderr io.Writer) int
 // doRemovePurge performs the two-phase purge: gets a confirmation token from
 // the preview endpoint, then executes with the token.
 func doRemovePurge(baseAddr, name, token string, stdout, stderr io.Writer) int {
-	// Phase 1: get confirmation token
 	url := baseAddr + adminBackendsPath + name + "?purge=true"
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, url, nil)
-	if err != nil {
-		fmt.Fprintf(stderr, fmtError, err)
-		return 1
-	}
-	req.Header.Set(adminTokenHeader, token)
-
-	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req) //nolint:gosec // G704: admin CLI target address is user-provided via --addr flag
-	if err != nil {
-		fmt.Fprintf(stderr, fmtError, err)
-		return 1
-	}
-	defer resp.Body.Close()
-
-	var result map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		fmt.Fprintf(stderr, "error: failed to parse response: %v\n", err)
-		return 1
+	result, code := fetchJSONResponse(http.MethodDelete, url, token, stderr)
+	if code != 0 {
+		return code
 	}
 
 	confirmToken, ok := result["confirm_token"].(string)
@@ -339,9 +309,35 @@ func doRemovePurge(baseAddr, name, token string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "error: server did not return a confirmation token\n")
 		return 1
 	}
-
-	// Phase 2: execute with confirmation token
 	return doDelete(url+"&confirm="+confirmToken, token, stdout, stderr)
+}
+
+// fetchJSONResponse issues an authenticated request and decodes the JSON
+// body into a map. Returns (body, exitCode); a non-zero exitCode indicates
+// the helper has already printed an error to stderr and the caller should
+// propagate it. Shared between doRemovePreview and doRemovePurge so each
+// only carries the response-shape handling unique to it.
+func fetchJSONResponse(method, url, token string, stderr io.Writer) (map[string]any, int) {
+	req, err := http.NewRequestWithContext(context.Background(), method, url, nil)
+	if err != nil {
+		fmt.Fprintf(stderr, fmtError, err)
+		return nil, 1
+	}
+	req.Header.Set(adminTokenHeader, token)
+
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req) //nolint:gosec // G704: admin CLI target address is user-provided via --addr flag
+	if err != nil {
+		fmt.Fprintf(stderr, fmtError, err)
+		return nil, 1
+	}
+	defer resp.Body.Close()
+
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		fmt.Fprintf(stderr, "error: failed to parse response: %v\n", err)
+		return nil, 1
+	}
+	return result, 0
 }
 
 // -------------------------------------------------------------------------
