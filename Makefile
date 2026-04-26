@@ -103,13 +103,13 @@ preflight: ## Run the full release preflight locally (mirrors CI release workflo
 
 ##@ Benchmarks and Fuzzing
 
-BENCH_COUNT ?= 5
-BENCH_TIME  ?= 1s
+BENCH_COUNT ?= 10
+BENCH_TIME  ?= 2s
 FUZZ_TIME   ?= 30s
 BENCH_FILE  := benchmarks/$(shell date +%Y-%m-%d)-$(shell git rev-parse --short HEAD).txt
 
 bench: ## Run all benchmarks (override: BENCH_COUNT=10 BENCH_TIME=3s make bench)
-	go test -bench=. -benchmem -count=$(BENCH_COUNT) -benchtime=$(BENCH_TIME) -run='^$$' -timeout=30m ./... | tee $(BENCH_FILE)
+	go test -bench=. -benchmem -count=$(BENCH_COUNT) -benchtime=$(BENCH_TIME) -run='^$$' -timeout=30m ./... | grep -E '^(Benchmark|pkg:|goos:|goarch:|cpu:)' | tee $(BENCH_FILE)
 	@echo ""
 	@echo "Results saved to $(BENCH_FILE)"
 

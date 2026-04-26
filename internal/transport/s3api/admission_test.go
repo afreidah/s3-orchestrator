@@ -45,14 +45,14 @@ func TestAdmissionController_RejectsOverLimit(t *testing.T) {
 	t.Parallel()
 	ac := NewAdmissionController(1)
 
-	// entered signals that the handler goroutine has acquired the semaphore
-	entered := make(chan struct{})
+	// entered signals that the handler goroutine has acquired the semaphore.
+	// Buffered so the send always succeeds even if the test hasn't reached
+	// the receive yet — an unbuffered channel + non-blocking select would
+	// silently drop the signal under that schedule and deadlock main.
+	entered := make(chan struct{}, 1)
 	hold := make(chan struct{})
 	handler := ac.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		select {
-		case entered <- struct{}{}:
-		default:
-		}
+		entered <- struct{}{}
 		<-hold
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -123,13 +123,10 @@ func TestAdmissionController_IncrementsMetric(t *testing.T) {
 	t.Parallel()
 	ac := NewAdmissionController(1)
 
-	entered := make(chan struct{})
+	entered := make(chan struct{}, 1)
 	hold := make(chan struct{})
 	handler := ac.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		select {
-		case entered <- struct{}{}:
-		default:
-		}
+		entered <- struct{}{}
 		<-hold
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -360,13 +357,10 @@ func TestSplitAdmission_DeleteUsesWritePool(t *testing.T) {
 	t.Parallel()
 	ac := NewSplitAdmissionController(2, 1)
 
-	entered := make(chan struct{})
+	entered := make(chan struct{}, 1)
 	hold := make(chan struct{})
 	handler := ac.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		select {
-		case entered <- struct{}{}:
-		default:
-		}
+		entered <- struct{}{}
 		<-hold
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -398,12 +392,9 @@ func TestAdmissionController_WaitAcquiresSlot(t *testing.T) {
 	ac.SetAdmissionWait(200 * time.Millisecond)
 
 	hold := make(chan struct{})
-	entered := make(chan struct{})
+	entered := make(chan struct{}, 1)
 	handler := ac.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		select {
-		case entered <- struct{}{}:
-		default:
-		}
+		entered <- struct{}{}
 		<-hold
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -441,12 +432,9 @@ func TestAdmissionController_WaitTimesOut(t *testing.T) {
 	ac.SetAdmissionWait(20 * time.Millisecond)
 
 	hold := make(chan struct{})
-	entered := make(chan struct{})
+	entered := make(chan struct{}, 1)
 	handler := ac.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		select {
-		case entered <- struct{}{}:
-		default:
-		}
+		entered <- struct{}{}
 		<-hold
 		w.WriteHeader(http.StatusOK)
 	}))
