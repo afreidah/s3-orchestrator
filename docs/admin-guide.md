@@ -769,7 +769,7 @@ Prints the binary version, Go version, and platform:
 
 ```bash
 s3-orchestrator version
-# s3-orchestrator v0.8.0 go1.26.0 linux/amd64
+# s3-orchestrator v0.41.7 go1.26.0 linux/amd64
 ```
 
 ### validate

@@ -9,7 +9,7 @@
 // external dependencies.
 // -------------------------------------------------------------------------------
 
-package main
+package serve
 
 import (
 	"bytes"
@@ -371,8 +371,8 @@ func TestHealthEndpoints_Healthy(t *testing.T) {
 	if err := s.resolveServices(); err != nil {
 		t.Fatalf("resolveServices: %v", err)
 	}
-	defer s.db.Close()
-	defer s.manager.Close()
+	defer s.adminStore().Close()
+	defer s.backendManager().Close()
 	defer func() { _ = s.shutdownTracer(context.Background()) }()
 
 	if err := s.buildHTTPServer(); err != nil {
@@ -420,8 +420,8 @@ func TestHealthReady_NotReady(t *testing.T) {
 	if err := s.resolveServices(); err != nil {
 		t.Fatalf("resolveServices: %v", err)
 	}
-	defer s.db.Close()
-	defer s.manager.Close()
+	defer s.adminStore().Close()
+	defer s.backendManager().Close()
 	defer func() { _ = s.shutdownTracer(context.Background()) }()
 
 	if err := s.buildHTTPServer(); err != nil {
@@ -446,7 +446,7 @@ func TestHealthReady_NotReady(t *testing.T) {
 func TestRun_InvalidConfigPath(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	err := run(ctx, "/nonexistent/config.yaml", "all", &bytes.Buffer{})
+	err := Run(ctx, "/nonexistent/config.yaml", "all", &bytes.Buffer{})
 	if err == nil {
 		t.Fatal("expected error for missing config")
 	}
@@ -466,7 +466,7 @@ func TestRun_StartsAndStops(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- run(ctx, path, "all", &bytes.Buffer{})
+		errCh <- Run(ctx, path, "all", &bytes.Buffer{})
 	}()
 
 	// Wait for the server to be ready
@@ -523,7 +523,7 @@ func TestRun_InvalidConfig(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := run(ctx, path, "all", &bytes.Buffer{})
+	err := Run(ctx, path, "all", &bytes.Buffer{})
 	if err == nil {
 		t.Fatal("expected error for invalid config")
 	}
@@ -566,6 +566,286 @@ func TestLogStartup_DoesNotPanic(t *testing.T) {
 	}
 	// Should not panic
 	s.logStartup()
+}
+
+// -------------------------------------------------------------------------
+// reloadConfig - atomic rollback
+// -------------------------------------------------------------------------
+
+// TestReloadConfig_FailedLoadKeepsCurrent verifies that when LoadConfig fails
+// during a SIGHUP-driven reload, the previously-stored config remains in
+// cfgPtr and no service mutation is attempted. This is the rollback contract
+// from issue #615: a failing reload aborts cleanly rather than half-applying.
+func TestReloadConfig_FailedLoadKeepsCurrent(t *testing.T) {
+	path := writeTestConfig(t, validTestConfigYAML)
+	s := &server{configPath: path, mode: "all", stdout: &bytes.Buffer{}}
+	if err := s.loadConfig(); err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	original := s.cfg
+	s.cfgPtr.Store(original)
+
+	// Replace the config file with content LoadConfig will reject.
+	if err := os.WriteFile(path, []byte("server:\n  listen_addr: ':9000'\n"), 0600); err != nil {
+		t.Fatalf("rewrite config: %v", err)
+	}
+
+	s.reloadConfig() // must not panic and must not mutate cfgPtr
+
+	if got := s.cfgPtr.Load(); got != original {
+		t.Errorf("cfgPtr was mutated after a failing reload: got %p, want %p", got, original)
+	}
+}
+
+// TestReloadConfig_AppliesNewConfig drives the happy path: a fully-wired
+// server is built, the config file is rewritten with a tweaked log level,
+// and SIGHUP-style reloadConfig is invoked. After the call cfgPtr must hold
+// the new pointer and the swap must have run applyReload end-to-end (this
+// is what closes the coverage gap on internal/cli/serve/serve.go:applyReload).
+func TestReloadConfig_AppliesNewConfig(t *testing.T) {
+	path := writeTestConfig(t, validTestConfigYAML)
+	s := &server{configPath: path, mode: "all", stdout: &bytes.Buffer{}}
+
+	if err := s.loadConfig(); err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if err := s.initLogging(); err != nil {
+		t.Fatalf("initLogging: %v", err)
+	}
+	s.initDI()
+	if err := s.resolveServices(); err != nil {
+		t.Fatalf("resolveServices: %v", err)
+	}
+	t.Cleanup(func() {
+		s.adminStore().Close()
+		s.backendManager().Close()
+		_ = s.shutdownTracer(context.Background())
+	})
+
+	original := s.cfgPtr.Load()
+	if original == nil {
+		t.Fatal("cfgPtr should hold the initial config after resolveServices")
+	}
+
+	// Rewrite with a different log level — a hot-reloadable field.
+	updated := strings.Replace(validTestConfigYAML, `listen_addr: ":0"`,
+		`listen_addr: ":0"`+"\n  log_level: debug", 1)
+	if err := os.WriteFile(path, []byte(updated), 0600); err != nil {
+		t.Fatalf("rewrite config: %v", err)
+	}
+
+	s.reloadConfig()
+
+	got := s.cfgPtr.Load()
+	if got == original {
+		t.Fatalf("cfgPtr was not swapped after a successful reload")
+	}
+	if got.Server.LogLevel != "debug" {
+		t.Errorf("reloaded log_level = %q, want debug", got.Server.LogLevel)
+	}
+}
+
+// -------------------------------------------------------------------------
+// configureMetrics, shutdownHTTPServers, registerS3Handler
+// -------------------------------------------------------------------------
+
+// metricsConfigYAML enables Prometheus metrics on a separate listener so
+// configureMetrics walks both branches. The address has to bind cleanly,
+// so we pick an ephemeral port from a freePort helper.
+const metricsConfigYAML = `
+server:
+  listen_addr: "127.0.0.1:%MAIN%"
+  max_concurrent_reads: 4
+  max_concurrent_writes: 4
+  load_shed_threshold: 0.9
+  admission_wait: "100ms"
+database:
+  driver: sqlite
+  path: ":memory:"
+buckets:
+  - name: test
+    credentials:
+      - access_key_id: ak
+        secret_access_key: sk
+backends:
+  - name: b1
+    endpoint: http://localhost:19000
+    region: us-east-1
+    bucket: bucket1
+    access_key_id: ak
+    secret_access_key: sk
+telemetry:
+  metrics:
+    enabled: true
+    listen: "127.0.0.1:%MET%"
+    path: "/metrics"
+`
+
+// TestConfigureMetrics_SeparateListenerAndShutdown drives the metrics
+// listener branch and shutdownHTTPServers' both-server cleanup path.
+func TestConfigureMetrics_SeparateListenerAndShutdown(t *testing.T) {
+	mainPort := freePort(t)
+	metPort := freePort(t)
+	yaml := strings.NewReplacer(
+		"%MAIN%", fmt.Sprintf("%d", mainPort),
+		"%MET%", fmt.Sprintf("%d", metPort),
+	).Replace(metricsConfigYAML)
+	path := writeTestConfig(t, yaml)
+
+	s := &server{configPath: path, mode: "all", stdout: &bytes.Buffer{}}
+	if err := s.loadConfig(); err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if err := s.initLogging(); err != nil {
+		t.Fatalf("initLogging: %v", err)
+	}
+	s.initDI()
+	if err := s.resolveServices(); err != nil {
+		t.Fatalf("resolveServices: %v", err)
+	}
+	if err := s.buildHTTPServer(); err != nil {
+		t.Fatalf("buildHTTPServer: %v", err)
+	}
+	t.Cleanup(func() {
+		s.adminStore().Close()
+		s.backendManager().Close()
+		_ = s.shutdownTracer(context.Background())
+	})
+
+	if s.metricsServer == nil {
+		t.Fatal("expected metricsServer to be configured for separate listener")
+	}
+
+	// shutdownHTTPServers must walk both servers without panicking.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	s.shutdownHTTPServers(ctx)
+}
+
+// TestConfigureMetrics_InlineOnMainMux drives the else-branch where metrics
+// are mounted on the main mux instead of a separate listener.
+func TestConfigureMetrics_InlineOnMainMux(t *testing.T) {
+	yaml := strings.Replace(validTestConfigYAML, `database:`,
+		"telemetry:\n  metrics:\n    enabled: true\n    path: \"/metrics\"\ndatabase:", 1)
+	path := writeTestConfig(t, yaml)
+	s := &server{configPath: path, mode: "all", stdout: &bytes.Buffer{}}
+	if err := s.loadConfig(); err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	mux := http.NewServeMux()
+	s.configureMetrics(mux, context.Background())
+	if s.metricsServer != nil {
+		t.Errorf("metricsServer should be nil when listen is empty")
+	}
+	// Hit /metrics to confirm the handler is mounted on the main mux.
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "/metrics", nil)
+	w := &testResponseWriter{header: http.Header{}}
+	mux.ServeHTTP(w, req)
+	if w.code != http.StatusOK {
+		t.Errorf("/metrics status = %d, want 200", w.code)
+	}
+}
+
+// uiConfigYAML enables the dashboard UI so registerUIHandler hits the
+// non-disabled branch.
+//
+//nolint:gosec // G101: hardcoded test fixture, not a real credential
+const uiConfigYAML = `
+server:
+  listen_addr: "127.0.0.1:%PORT%"
+  max_concurrent_reads: 4
+  max_concurrent_writes: 4
+database:
+  driver: sqlite
+  path: ":memory:"
+buckets:
+  - name: test
+    credentials:
+      - access_key_id: ak
+        secret_access_key: sk
+backends:
+  - name: b1
+    endpoint: http://localhost:19000
+    region: us-east-1
+    bucket: bucket1
+    access_key_id: ak
+    secret_access_key: sk
+ui:
+  enabled: true
+  path: "/ui/"
+  admin_key: "ak"
+  admin_secret: "sec-1234567890123456"
+  admin_token: "tok"
+  session_secret: "12345678901234567890123456789012"
+`
+
+// TestRegisterUIHandler_Enabled drives the do.Invoke branch of
+// registerUIHandler and TestRegisterS3Handler_WithSplitAdmissionControl
+// covers the admission-control path of registerS3Handler. Both share the
+// same wired server so we pay the DI cost once.
+func TestRegisterUIHandler_Enabled(t *testing.T) {
+	port := freePort(t)
+	yaml := strings.Replace(uiConfigYAML, "%PORT%", fmt.Sprintf("%d", port), 1)
+	path := writeTestConfig(t, yaml)
+
+	s := &server{configPath: path, mode: "all", stdout: &bytes.Buffer{}}
+	if err := s.loadConfig(); err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if err := s.initLogging(); err != nil {
+		t.Fatalf("initLogging: %v", err)
+	}
+	s.initDI()
+	if err := s.resolveServices(); err != nil {
+		t.Fatalf("resolveServices: %v", err)
+	}
+	if err := s.buildHTTPServer(); err != nil {
+		t.Fatalf("buildHTTPServer: %v", err)
+	}
+	t.Cleanup(func() {
+		s.adminStore().Close()
+		s.backendManager().Close()
+		_ = s.shutdownTracer(context.Background())
+	})
+
+	// Hit the registered UI path to prove the handler was mounted.
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "/ui/", nil)
+	w := &testResponseWriter{header: http.Header{}}
+	s.httpServer.Handler.ServeHTTP(w, req)
+	if w.code == 0 {
+		t.Errorf("/ui/ was not handled (code=0)")
+	}
+}
+
+// TestRegisterS3Handler_WithSingleAdmission drives the
+// MaxConcurrentRequests branch of registerS3Handler.
+func TestRegisterS3Handler_WithSingleAdmission(t *testing.T) {
+	yaml := strings.Replace(validTestConfigYAML, `listen_addr: ":0"`,
+		`listen_addr: ":0"`+"\n  max_concurrent_requests: 8\n  load_shed_threshold: 0.9\n  admission_wait: \"50ms\"", 1)
+	path := writeTestConfig(t, yaml)
+	s := &server{configPath: path, mode: "all", stdout: &bytes.Buffer{}}
+	if err := s.loadConfig(); err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if err := s.initLogging(); err != nil {
+		t.Fatalf("initLogging: %v", err)
+	}
+	s.initDI()
+	if err := s.resolveServices(); err != nil {
+		t.Fatalf("resolveServices: %v", err)
+	}
+	if err := s.buildHTTPServer(); err != nil {
+		t.Fatalf("buildHTTPServer: %v", err)
+	}
+	t.Cleanup(func() {
+		s.adminStore().Close()
+		s.backendManager().Close()
+		_ = s.shutdownTracer(context.Background())
+	})
+
+	if s.httpServer == nil {
+		t.Fatal("httpServer should be built")
+	}
 }
 
 // -------------------------------------------------------------------------

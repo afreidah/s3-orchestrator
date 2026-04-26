@@ -106,9 +106,9 @@ func (fakeConcreteStore) CompleteCleanupItem(context.Context, int64) error { ret
 func (fakeConcreteStore) RetryCleanupItem(context.Context, int64, time.Duration, string) error {
 	return nil
 }
-func (fakeConcreteStore) CleanupQueueDepth(context.Context) (int64, error)               { return 0, nil }
-func (fakeConcreteStore) IncrementOrphanBytes(context.Context, string, int64) error      { return nil }
-func (fakeConcreteStore) DecrementOrphanBytes(context.Context, string, int64) error      { return nil }
+func (fakeConcreteStore) CleanupQueueDepth(context.Context) (int64, error)          { return 0, nil }
+func (fakeConcreteStore) IncrementOrphanBytes(context.Context, string, int64) error { return nil }
+func (fakeConcreteStore) DecrementOrphanBytes(context.Context, string, int64) error { return nil }
 
 func (fakeConcreteStore) GetRandomHashedObjects(context.Context, int) ([]store.ObjectLocation, error) {
 	return nil, nil

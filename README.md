@@ -916,13 +916,35 @@ Redis is optional. Without it, adaptive flushing still shortens the flush interv
 
 ## CLI Subcommands
 
+Running `s3-orchestrator` with no subcommand starts the daemon (`-config` and `-mode` flags). The subcommands below are all dispatched by the same binary; pass `-h` after any of them for usage.
+
 ### version
 
 Prints the binary version, Go version, and platform:
 
 ```bash
 s3-orchestrator version
-# s3-orchestrator v0.8.0 go1.26.0 linux/amd64
+# s3-orchestrator v0.41.7 go1.26.0 linux/amd64
+```
+
+### init
+
+Generates a configuration file interactively. Prompts for database driver (SQLite or PostgreSQL), one or more storage backends, and one or more virtual buckets, then writes a validated `config.yaml`:
+
+```bash
+s3-orchestrator init                          # writes ./config.yaml
+s3-orchestrator init -config /etc/s3o.yaml    # custom path
+```
+
+The generated config is round-tripped through the loader before being written, so the file the user lands with is guaranteed to validate.
+
+### help
+
+Prints the subcommand summary:
+
+```bash
+s3-orchestrator help
+s3-orchestrator -h
 ```
 
 ### validate
@@ -983,6 +1005,10 @@ s3-orchestrator admin drain-cancel <backend>       # cancel an active drain
 s3-orchestrator admin remove-backend <backend>              # remove backend DB records (S3 objects preserved)
 s3-orchestrator admin remove-backend <backend> --purge      # preview: shows what would be destroyed
 s3-orchestrator admin remove-backend <backend> --purge --confirm  # delete S3 objects + DB records
+s3-orchestrator admin reconcile                    # reconcile DB against all backends
+s3-orchestrator admin reconcile -backend g3        # reconcile a single backend
+s3-orchestrator admin scrub                        # trigger an integrity scrub cycle
+s3-orchestrator admin backfill-checksums           # compute hashes for unhashed objects
 ```
 
 ## Development
@@ -1136,13 +1162,21 @@ make release-local
 
 ```
 cmd/s3-orchestrator/
-  main.go                    Entry point, subcommand dispatch, backend init
-  services.go                Background task lifecycle (tickers, advisory locks)
-  admin.go                   Admin subcommand (operational CLI)
-  sync.go                    Sync subcommand (bucket import)
+  main.go                    Entry point, subcommand dispatch
+  admin.go                   Thin shim that delegates to internal/cli/adminctl
+  init_cmd.go                Thin shim that delegates to internal/cli/initcmd
+  sync.go                    Thin shim that delegates to internal/cli/synccmd
   validate.go                Validate subcommand (config check)
   version.go                 Version subcommand (build info)
 internal/
+  cli/
+    serve/                   Daemon lifecycle: server struct, Run, SIGHUP reload, shutdown
+    adminctl/                Admin operational CLI (HTTP wrapper around the admin API)
+    initcmd/                 Interactive config-file generator
+    synccmd/                 Pre-existing bucket import CLI
+  di/
+    di.go                    Single wiring point for samber/do (providers, container)
+    services.go              Background service definitions used by the lifecycle manager
   transport/                 HTTP interface layer
     s3api/
       server.go              HTTP router, bucket resolution, key prefixing, metrics
@@ -1179,11 +1213,12 @@ internal/
   config/                    YAML config loader split by domain (server, database, encryption, etc.)
   breaker/
     breaker.go               Generic three-state circuit breaker state machine
+    registry.go              Registry of breakers swept by the watchdog (DB + per-backend)
   backend/
     s3.go                    ObjectBackend interface, S3Backend (AWS SDK v2)
     circuitbreaker.go        Per-backend circuit breaker wrapper
   store/
-    metadata.go              MetadataStore interface, narrow role interfaces, data types
+    metadata.go              Narrow per-role store interfaces (ObjectStore, QuotaStore, ...)
     store.go                 PostgreSQL storage layer (pgx/v5 + sqlc)
     circuitbreaker.go        Database circuit breaker wrapper
     cleanup_queue.go         Cleanup queue Store methods
@@ -1224,7 +1259,7 @@ internal/
   cache/                     Object data LRU cache with TTL
   lifecycle/                 Background service manager
   testutil/
-    mock_store.go            Shared MetadataStore mock for integration tests
+    mock_store.go            Shared mock satisfying every narrow store role for tests
 grafana/
   s3-orchestrator.json       Grafana dashboard (all Prometheus metrics)
 sqlc.yaml                    sqlc configuration

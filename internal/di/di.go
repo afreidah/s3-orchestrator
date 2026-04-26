@@ -92,6 +92,7 @@ func NewInjector(cfg *config.Config, mode string, logLevel *slog.LevelVar, logBu
 	do.Provide(inj, ProvideMetricsDeps)
 
 	do.Provide(inj, ProvideBackends)
+	do.Provide(inj, ProvideBreakerRegistry)
 	do.Provide(inj, ProvideBackendManager)
 	do.Provide(inj, ProvideBucketAuth)
 	do.Provide(inj, ProvideS3Server)
@@ -416,6 +417,11 @@ type BackendsResult struct {
 	Order          []string
 	UsageLimits    map[string]store.UsageLimits
 	MaxObjectSizes map[string]int64
+	// Breakers is the per-backend circuit breakers produced when
+	// BackendCircuitBreaker is enabled. Empty when CBs are disabled.
+	// The watchdog registry consumes this so it never has to rediscover
+	// breakers via type assertion at runtime.
+	Breakers []breaker.StaleProbeResetter
 }
 
 // ProvideBackends initializes all configured storage backends, wrapping
@@ -430,6 +436,7 @@ func ProvideBackends(i do.Injector) (*BackendsResult, error) {
 	order := make([]string, 0, len(cfg.Backends))
 	limits := make(map[string]store.UsageLimits, len(cfg.Backends))
 	maxSizes := make(map[string]int64, len(cfg.Backends))
+	breakers := make([]breaker.StaleProbeResetter, 0, len(cfg.Backends))
 
 	for idx := range cfg.Backends {
 		bcfg := &cfg.Backends[idx]
@@ -439,9 +446,11 @@ func ProvideBackends(i do.Injector) (*BackendsResult, error) {
 		}
 		var be backend.ObjectBackend = s3be
 		if cfg.BackendCircuitBreaker.Enabled {
-			be = backend.NewCircuitBreakerBackend(s3be, bcfg.Name,
+			cbBackend := backend.NewCircuitBreakerBackend(s3be, bcfg.Name,
 				cfg.BackendCircuitBreaker.FailureThreshold,
 				cfg.BackendCircuitBreaker.OpenTimeout)
+			breakers = append(breakers, cbBackend)
+			be = cbBackend
 		}
 		backends[bcfg.Name] = be
 		order = append(order, bcfg.Name)
@@ -460,7 +469,33 @@ func ProvideBackends(i do.Injector) (*BackendsResult, error) {
 		)
 	}
 
-	return &BackendsResult{Backends: backends, Order: order, UsageLimits: limits, MaxObjectSizes: maxSizes}, nil
+	return &BackendsResult{
+		Backends:       backends,
+		Order:          order,
+		UsageLimits:    limits,
+		MaxObjectSizes: maxSizes,
+		Breakers:       breakers,
+	}, nil
+}
+
+// ProvideBreakerRegistry assembles the watchdog's breaker registry from the
+// database circuit breaker and the per-backend breakers produced during
+// backend initialization. Centralizing membership here keeps the watchdog
+// itself free of type-assertions and keeps DI as the single wiring point.
+func ProvideBreakerRegistry(i do.Injector) (*breaker.Registry, error) {
+	dbCB, err := do.Invoke[*breaker.CircuitBreaker](i)
+	if err != nil {
+		return nil, err
+	}
+	br, err := do.Invoke[*BackendsResult](i)
+	if err != nil {
+		return nil, err
+	}
+	reg := breaker.NewRegistry(dbCB)
+	for _, b := range br.Breakers {
+		reg.Register(b)
+	}
+	return reg, nil
 }
 
 // -------------------------------------------------------------------------
@@ -703,7 +738,7 @@ func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	cb, err := do.Invoke[*breaker.CircuitBreaker](i)
+	registry, err := do.Invoke[*breaker.Registry](i)
 	if err != nil {
 		return nil, err
 	}
@@ -718,7 +753,7 @@ func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 
 	sm := lifecycle.NewManager()
 	sm.Register("usage-flush", NewUsageFlushService(manager, locker))
-	sm.Register("cb-watchdog", NewCircuitBreakerWatchdog(manager, cb))
+	sm.Register("cb-watchdog", NewCircuitBreakerWatchdog(registry))
 
 	if mode == "worker" || mode == "all" {
 		sm.Register("multipart-cleanup", NewMultipartCleanupService(manager, locker, cfg.CleanupQueue.MultipartStaleTimeout))
@@ -900,11 +935,6 @@ func ProvideNotifier(i do.Injector) (*notify.Notifier, error) {
 		return nil, err
 	}
 	return notify.NewNotifier(&cfg.Notifications, adminDB), nil
-}
-
-// ProvideLogBuffer creates the in-memory log ring buffer for the dashboard.
-func ProvideLogBuffer(_ do.Injector) (*telemetry.LogBuffer, error) {
-	return telemetry.NewLogBuffer(), nil
 }
 
 // -------------------------------------------------------------------------
