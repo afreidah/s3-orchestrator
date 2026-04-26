@@ -32,8 +32,8 @@ import (
 	smithymiddleware "github.com/aws/smithy-go/middleware"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
-	"go.opentelemetry.io/otel/codes"
 )
 
 // -------------------------------------------------------------------------
@@ -154,64 +154,52 @@ func NewS3Backend(cfg *config.BackendConfig) (*S3Backend, error) {
 // PutObject uploads an object to the backend.
 func (b *S3Backend) PutObject(ctx context.Context, key string, body io.Reader, size int64, contentType string, metadata map[string]string) (string, error) {
 	const operation = "PutObject"
-	start := time.Now()
-
-	// --- Start tracing span ---
-	ctx, span := telemetry.StartClientSpan(ctx, spanPrefix+operation,
-		telemetry.BackendAttributes(operation, b.name, b.endpoint, b.bucket, key)...,
-	)
-	defer span.End()
-
-	// When unsigned_payload is enabled (default), the SDK skips computing
-	// a SHA-256 payload hash and accepts a non-seekable io.Reader directly,
-	// avoiding buffering the entire body in memory. Body integrity is
-	// protected by TLS at the transport layer. When disabled, the body is
-	// buffered into memory so the SDK can compute the SigV4 payload hash.
-	putBody := body
-	var opts []func(*s3.Options)
-	if b.unsignedPayload {
-		opts = append(opts, withUnsignedPayload)
-	} else {
-		if _, ok := body.(io.ReadSeeker); !ok {
-			data, err := io.ReadAll(body)
-			if err != nil {
-				span.SetStatus(codes.Error, err.Error())
-				return "", fmt.Errorf("failed to read body: %w", err)
+	return observe.Run(ctx,
+		observe.Client(spanPrefix+operation,
+			telemetry.BackendAttributes(operation, b.name, b.endpoint, b.bucket, key),
+			b.recordOperation),
+		func(ctx context.Context) (string, error) {
+			// When unsigned_payload is enabled (default), the SDK skips
+			// computing a SHA-256 payload hash and accepts a non-seekable
+			// io.Reader directly, avoiding buffering the entire body in
+			// memory. Body integrity is protected by TLS at the transport
+			// layer. When disabled, the body is buffered into memory so
+			// the SDK can compute the SigV4 payload hash.
+			putBody := body
+			var opts []func(*s3.Options)
+			if b.unsignedPayload {
+				opts = append(opts, withUnsignedPayload)
+			} else if _, ok := body.(io.ReadSeeker); !ok {
+				data, err := io.ReadAll(body)
+				if err != nil {
+					return "", fmt.Errorf("failed to read body: %w", err)
+				}
+				putBody = bytes.NewReader(data)
 			}
-			putBody = bytes.NewReader(data)
-		}
-	}
 
-	input := &s3.PutObjectInput{
-		Bucket:        aws.String(b.bucket),
-		Key:           aws.String(key),
-		Body:          putBody,
-		ContentLength: aws.Int64(size),
-	}
+			input := &s3.PutObjectInput{
+				Bucket:        aws.String(b.bucket),
+				Key:           aws.String(key),
+				Body:          putBody,
+				ContentLength: aws.Int64(size),
+			}
+			if contentType != "" {
+				input.ContentType = aws.String(contentType)
+			}
+			if len(metadata) > 0 {
+				input.Metadata = metadata
+			}
 
-	if contentType != "" {
-		input.ContentType = aws.String(contentType)
-	}
-	if len(metadata) > 0 {
-		input.Metadata = metadata
-	}
-
-	result, err := b.client.PutObject(ctx, input, opts...)
-
-	// --- Record metrics ---
-	b.recordOperation(operation, start, err)
-
-	if err != nil {
-		span.SetStatus(codes.Error, err.Error())
-		span.RecordError(err)
-		return "", fmt.Errorf("put object failed: %w", err)
-	}
-
-	etag := ""
-	if result.ETag != nil {
-		etag = *result.ETag
-	}
-	return etag, nil
+			result, err := b.client.PutObject(ctx, input, opts...)
+			if err != nil {
+				return "", fmt.Errorf("put object failed: %w", err)
+			}
+			etag := ""
+			if result.ETag != nil {
+				etag = *result.ETag
+			}
+			return etag, nil
+		})
 }
 
 // GetObject retrieves an object from the backend. When rangeHeader is non-empty
@@ -219,131 +207,101 @@ func (b *S3Backend) PutObject(ctx context.Context, key string, body io.Reader, s
 // contentRange value (e.g. "bytes 0-99/1000") for 206 Partial Content responses.
 func (b *S3Backend) GetObject(ctx context.Context, key string, rangeHeader string) (*GetObjectResult, error) {
 	const operation = "GetObject"
-	start := time.Now()
+	return observe.Run(ctx,
+		observe.Client(spanPrefix+operation,
+			telemetry.BackendAttributes(operation, b.name, b.endpoint, b.bucket, key),
+			b.recordOperation),
+		func(ctx context.Context) (*GetObjectResult, error) {
+			input := &s3.GetObjectInput{
+				Bucket: aws.String(b.bucket),
+				Key:    aws.String(key),
+			}
+			if rangeHeader != "" {
+				input.Range = aws.String(rangeHeader)
+			}
+			result, err := b.client.GetObject(ctx, input)
+			if err != nil {
+				return nil, fmt.Errorf("get object failed: %w", err)
+			}
 
-	// --- Start tracing span ---
-	ctx, span := telemetry.StartClientSpan(ctx, spanPrefix+operation,
-		telemetry.BackendAttributes(operation, b.name, b.endpoint, b.bucket, key)...,
-	)
-	defer span.End()
-
-	input := &s3.GetObjectInput{
-		Bucket: aws.String(b.bucket),
-		Key:    aws.String(key),
-	}
-	if rangeHeader != "" {
-		input.Range = aws.String(rangeHeader)
-	}
-
-	result, err := b.client.GetObject(ctx, input)
-
-	// --- Record metrics ---
-	b.recordOperation(operation, start, err)
-
-	if err != nil {
-		span.SetStatus(codes.Error, err.Error())
-		span.RecordError(err)
-		return nil, fmt.Errorf("get object failed: %w", err)
-	}
-
-	out := &GetObjectResult{Body: result.Body}
-
-	if result.ContentLength != nil {
-		out.Size = *result.ContentLength
-	}
-	if result.ContentType != nil {
-		out.ContentType = *result.ContentType
-	} else {
-		out.ContentType = "application/octet-stream"
-	}
-	if result.ETag != nil {
-		out.ETag = *result.ETag
-	}
-	if result.ContentRange != nil {
-		out.ContentRange = *result.ContentRange
-	}
-	if result.LastModified != nil {
-		out.LastModified = *result.LastModified
-	}
-	if len(result.Metadata) > 0 {
-		out.Metadata = result.Metadata
-	}
-
-	return out, nil
+			out := &GetObjectResult{Body: result.Body}
+			if result.ContentLength != nil {
+				out.Size = *result.ContentLength
+			}
+			if result.ContentType != nil {
+				out.ContentType = *result.ContentType
+			} else {
+				out.ContentType = "application/octet-stream"
+			}
+			if result.ETag != nil {
+				out.ETag = *result.ETag
+			}
+			if result.ContentRange != nil {
+				out.ContentRange = *result.ContentRange
+			}
+			if result.LastModified != nil {
+				out.LastModified = *result.LastModified
+			}
+			if len(result.Metadata) > 0 {
+				out.Metadata = result.Metadata
+			}
+			return out, nil
+		})
 }
 
 // HeadObject retrieves object metadata without the body.
 func (b *S3Backend) HeadObject(ctx context.Context, key string) (*HeadObjectResult, error) {
 	const operation = "HeadObject"
-	start := time.Now()
+	return observe.Run(ctx,
+		observe.Client(spanPrefix+operation,
+			telemetry.BackendAttributes(operation, b.name, b.endpoint, b.bucket, key),
+			b.recordOperation),
+		func(ctx context.Context) (*HeadObjectResult, error) {
+			result, err := b.client.HeadObject(ctx, &s3.HeadObjectInput{
+				Bucket: aws.String(b.bucket),
+				Key:    aws.String(key),
+			})
+			if err != nil {
+				return nil, fmt.Errorf("head object failed: %w", err)
+			}
 
-	// --- Start tracing span ---
-	ctx, span := telemetry.StartClientSpan(ctx, spanPrefix+operation,
-		telemetry.BackendAttributes(operation, b.name, b.endpoint, b.bucket, key)...,
-	)
-	defer span.End()
-
-	result, err := b.client.HeadObject(ctx, &s3.HeadObjectInput{
-		Bucket: aws.String(b.bucket),
-		Key:    aws.String(key),
-	})
-
-	// --- Record metrics ---
-	b.recordOperation(operation, start, err)
-
-	if err != nil {
-		span.SetStatus(codes.Error, err.Error())
-		span.RecordError(err)
-		return nil, fmt.Errorf("head object failed: %w", err)
-	}
-
-	out := &HeadObjectResult{
-		ContentType: "application/octet-stream",
-	}
-	if result.ContentLength != nil {
-		out.Size = *result.ContentLength
-	}
-	if result.ContentType != nil {
-		out.ContentType = *result.ContentType
-	}
-	if result.ETag != nil {
-		out.ETag = *result.ETag
-	}
-	if result.LastModified != nil {
-		out.LastModified = *result.LastModified
-	}
-	if len(result.Metadata) > 0 {
-		out.Metadata = result.Metadata
-	}
-
-	return out, nil
+			out := &HeadObjectResult{ContentType: "application/octet-stream"}
+			if result.ContentLength != nil {
+				out.Size = *result.ContentLength
+			}
+			if result.ContentType != nil {
+				out.ContentType = *result.ContentType
+			}
+			if result.ETag != nil {
+				out.ETag = *result.ETag
+			}
+			if result.LastModified != nil {
+				out.LastModified = *result.LastModified
+			}
+			if len(result.Metadata) > 0 {
+				out.Metadata = result.Metadata
+			}
+			return out, nil
+		})
 }
 
 // DeleteObject removes an object from the backend.
 func (b *S3Backend) DeleteObject(ctx context.Context, key string) error {
 	const operation = "DeleteObject"
-	start := time.Now()
-
-	// --- Start tracing span ---
-	ctx, span := telemetry.StartClientSpan(ctx, spanPrefix+operation,
-		telemetry.BackendAttributes(operation, b.name, b.endpoint, b.bucket, key)...,
-	)
-	defer span.End()
-
-	_, err := b.client.DeleteObject(ctx, &s3.DeleteObjectInput{
-		Bucket: aws.String(b.bucket),
-		Key:    aws.String(key),
-	})
-
-	// --- Record metrics ---
-	b.recordOperation(operation, start, err)
-
-	if err != nil {
-		span.SetStatus(codes.Error, err.Error())
-		span.RecordError(err)
-		return fmt.Errorf("delete object failed: %w", err)
-	}
-	return nil
+	return observe.RunErr(ctx,
+		observe.Client(spanPrefix+operation,
+			telemetry.BackendAttributes(operation, b.name, b.endpoint, b.bucket, key),
+			b.recordOperation),
+		func(ctx context.Context) error {
+			_, err := b.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+				Bucket: aws.String(b.bucket),
+				Key:    aws.String(key),
+			})
+			if err != nil {
+				return fmt.Errorf("delete object failed: %w", err)
+			}
+			return nil
+		})
 }
 
 // -------------------------------------------------------------------------
@@ -356,32 +314,33 @@ type ListedObject struct {
 	SizeBytes int64
 }
 
-// ListObjects iterates all objects in the backend bucket with the given prefix,
-// calling fn for each page of results. Uses ListObjectsV2 pagination internally.
+// ListObjects iterates all objects in the backend bucket with the given
+// prefix, calling fn for each page of results. Uses ListObjectsV2
+// pagination internally; per-page metric emission happens inside
+// nextListPage, so the outer span has no recorder.
 func (b *S3Backend) ListObjects(ctx context.Context, prefix string, fn func([]ListedObject) error) error {
 	const operation = "ListObjectsV2"
-	ctx, span := telemetry.StartClientSpan(ctx, spanPrefix+operation,
-		telemetry.BackendAttributes(operation, b.name, b.endpoint, b.bucket, prefix)...,
-	)
-	defer span.End()
-
-	paginator := s3.NewListObjectsV2Paginator(b.client, listObjectsInput(b.bucket, prefix))
-	for paginator.HasMorePages() {
-		page, err := b.nextListPage(ctx, paginator, operation)
-		if err != nil {
-			span.SetStatus(codes.Error, err.Error())
-			span.RecordError(err)
-			return err
-		}
-		objects := convertListPage(page)
-		if len(objects) == 0 {
-			continue
-		}
-		if err := fn(objects); err != nil {
-			return err
-		}
-	}
-	return nil
+	return observe.RunErr(ctx,
+		observe.Client(spanPrefix+operation,
+			telemetry.BackendAttributes(operation, b.name, b.endpoint, b.bucket, prefix),
+			nil),
+		func(ctx context.Context) error {
+			paginator := s3.NewListObjectsV2Paginator(b.client, listObjectsInput(b.bucket, prefix))
+			for paginator.HasMorePages() {
+				page, err := b.nextListPage(ctx, paginator, operation)
+				if err != nil {
+					return err
+				}
+				objects := convertListPage(page)
+				if len(objects) == 0 {
+					continue
+				}
+				if err := fn(objects); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
 }
 
 // listObjectsInput builds the ListObjectsV2 input for the given bucket and
