@@ -38,17 +38,17 @@ const maxUserMetadataBytes = 2048
 // vocabulary ("Object" vs "Part" etc.). Returns (statusCode, error, ok). When
 // ok is false the caller must propagate the (status, error) without further
 // processing — the response has already been written.
-func enforceContentLength(w http.ResponseWriter, r *http.Request, max int64, label string) (int, error, bool) {
+func enforceContentLength(w http.ResponseWriter, r *http.Request, maxSize int64, label string) (int, error, bool) {
 	if r.ContentLength < 0 {
 		writeS3Error(w, http.StatusLengthRequired, "MissingContentLength", label+" Content-Length is required")
 		return http.StatusLengthRequired, fmt.Errorf("missing Content-Length"), false
 	}
-	if max > 0 && r.ContentLength > max {
+	if maxSize > 0 && r.ContentLength > maxSize {
 		writeS3Error(w, http.StatusRequestEntityTooLarge, "EntityTooLarge", label+" size exceeds the maximum allowed size")
-		return http.StatusRequestEntityTooLarge, fmt.Errorf("%s size %d exceeds max %d", label, r.ContentLength, max), false
+		return http.StatusRequestEntityTooLarge, fmt.Errorf("%s size %d exceeds max %d", label, r.ContentLength, maxSize), false
 	}
-	if max > 0 {
-		r.Body = http.MaxBytesReader(w, r.Body, max)
+	if maxSize > 0 {
+		r.Body = http.MaxBytesReader(w, r.Body, maxSize)
 	}
 	return 0, nil, true
 }
