@@ -13,9 +13,10 @@
 package admin
 
 import (
-	"crypto/subtle"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -25,21 +26,39 @@ import (
 	"strings"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
-
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
-	"github.com/afreidah/s3-orchestrator/internal/worker"
-
-	// Handler serves the admin API endpoints.
 	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
+
+// BackendOps is the narrow surface of *proxy.BackendManager that the admin
+// handler depends on for operations not encapsulated by a named sub-manager
+// (replicator, drain, scrubber, etc.). *proxy.BackendManager satisfies it.
+type BackendOps interface {
+	GetDashboardData(ctx context.Context) (*proxy.DashboardData, error)
+	FlushUsage(ctx context.Context) error
+	UpdateQuotaMetrics(ctx context.Context) error
+	RecordUsage(backendName string, requests, ingressBytes, egressBytes int64)
+	GetBackend(name string) (backend.ObjectBackend, error)
+	IntegrityConfig() *config.IntegrityConfig
+}
+
+// Compile-time assertion: *proxy.BackendManager implements BackendOps.
+var _ BackendOps = (*proxy.BackendManager)(nil)
 
 // Handler serves the admin API endpoints.
 type Handler struct {
-	manager    *proxy.BackendManager
+	backendOps BackendOps
+	replicator *worker.Replicator
+	overRep    *worker.OverReplicationCleaner
+	drain      *proxy.DrainManager
+	scrubber   *worker.Scrubber
+	lifecycle  store.BackendLifecycleStore
 	reconciler *worker.Reconciler
 	dbCB       *breaker.CircuitBreaker
 	objects    store.ObjectStore
@@ -51,10 +70,16 @@ type Handler struct {
 }
 
 // Deps groups the narrow role interfaces and infrastructure the admin
-// handler touches. It lets New keep a small signature (below Sonar's
-// 7-parameter threshold) without hiding what the handler depends on.
+// handler touches. Each field carries the smallest contract the handler
+// actually uses, so the constructor (and the backing DI provider) never
+// hand the handler a god-shaped *proxy.BackendManager.
 type Deps struct {
-	Manager    *proxy.BackendManager
+	BackendOps BackendOps
+	Replicator *worker.Replicator
+	OverRep    *worker.OverReplicationCleaner
+	Drain      *proxy.DrainManager
+	Scrubber   *worker.Scrubber
+	Lifecycle  store.BackendLifecycleStore
 	DBCB       *breaker.CircuitBreaker
 	RawStore   store.AdminStore
 	Objects    store.ObjectStore
@@ -68,7 +93,12 @@ type Deps struct {
 // New creates a new admin API handler from its narrow dependency bag.
 func New(d *Deps) *Handler {
 	return &Handler{
-		manager:    d.Manager,
+		backendOps: d.BackendOps,
+		replicator: d.Replicator,
+		overRep:    d.OverRep,
+		drain:      d.Drain,
+		scrubber:   d.Scrubber,
+		lifecycle:  d.Lifecycle,
 		reconciler: d.Reconciler,
 		dbCB:       d.DBCB,
 		objects:    d.Objects,
@@ -126,7 +156,7 @@ func (h *Handler) requireToken(next http.HandlerFunc) http.HandlerFunc {
 
 // handleStatus returns backend health and circuit breaker state.
 func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
-	data, err := h.manager.GetDashboardData(r.Context())
+	data, err := h.backendOps.GetDashboardData(r.Context())
 	if err != nil {
 		slog.ErrorContext(r.Context(), "Admin: failed to fetch status", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch status"})
@@ -207,7 +237,7 @@ func (h *Handler) handleCleanupQueue(w http.ResponseWriter, r *http.Request) {
 
 // handleUsageFlush forces a flush of usage counters to the database.
 func (h *Handler) handleUsageFlush(w http.ResponseWriter, r *http.Request) {
-	if err := h.manager.FlushUsage(r.Context()); err != nil {
+	if err := h.backendOps.FlushUsage(r.Context()); err != nil {
 		slog.ErrorContext(r.Context(), "Admin: usage flush failed", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "flush failed"})
 		return
@@ -218,7 +248,7 @@ func (h *Handler) handleUsageFlush(w http.ResponseWriter, r *http.Request) {
 
 // handleReplicate triggers one replication cycle.
 func (h *Handler) handleReplicate(w http.ResponseWriter, r *http.Request) {
-	rcfg := h.manager.Replicator.Config()
+	rcfg := h.replicator.Config()
 	if rcfg == nil || rcfg.Factor <= 1 {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"status":         "skipped",
@@ -228,14 +258,14 @@ func (h *Handler) handleReplicate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	created, err := h.manager.Replicator.Replicate(r.Context(), *rcfg)
+	created, err := h.replicator.Replicate(r.Context(), *rcfg)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "Admin: replication failed", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "replication failed"})
 		return
 	}
 
-	if err := h.manager.UpdateQuotaMetrics(r.Context()); err != nil {
+	if err := h.backendOps.UpdateQuotaMetrics(r.Context()); err != nil {
 		slog.WarnContext(r.Context(), "failed to update quota metrics after admin replicate", "error", err)
 	}
 
@@ -244,7 +274,7 @@ func (h *Handler) handleReplicate(w http.ResponseWriter, r *http.Request) {
 
 // handleOverReplicationStatus returns the count of over-replicated objects.
 func (h *Handler) handleOverReplicationStatus(w http.ResponseWriter, r *http.Request) {
-	rcfg := h.manager.OverReplicationCleaner.Config()
+	rcfg := h.overRep.Config()
 	if rcfg == nil || rcfg.Factor <= 1 {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"factor":  0,
@@ -254,7 +284,7 @@ func (h *Handler) handleOverReplicationStatus(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	count, err := h.manager.OverReplicationCleaner.CountPending(r.Context(), rcfg.Factor)
+	count, err := h.overRep.CountPending(r.Context(), rcfg.Factor)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "Admin: failed to count over-replicated objects", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to count over-replicated objects"})
@@ -270,7 +300,7 @@ func (h *Handler) handleOverReplicationStatus(w http.ResponseWriter, r *http.Req
 
 // handleOverReplicationClean triggers an immediate over-replication cleanup pass.
 func (h *Handler) handleOverReplicationClean(w http.ResponseWriter, r *http.Request) {
-	rcfg := h.manager.OverReplicationCleaner.Config()
+	rcfg := h.overRep.Config()
 	if rcfg == nil || rcfg.Factor <= 1 {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"status":         "skipped",
@@ -291,14 +321,14 @@ func (h *Handler) handleOverReplicationClean(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	removed, err := h.manager.OverReplicationCleaner.Clean(r.Context(), cfg)
+	removed, err := h.overRep.Clean(r.Context(), cfg)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "Admin: over-replication cleanup failed", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "over-replication cleanup failed"})
 		return
 	}
 
-	if err := h.manager.UpdateQuotaMetrics(r.Context()); err != nil {
+	if err := h.backendOps.UpdateQuotaMetrics(r.Context()); err != nil {
 		slog.WarnContext(r.Context(), "failed to update quota metrics after admin over-replication cleanup", "error", err)
 	}
 
@@ -333,7 +363,7 @@ func (h *Handler) handleLogLevel(w http.ResponseWriter, r *http.Request) {
 // handleStartDrain begins draining a backend.
 func (h *Handler) handleStartDrain(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if err := h.manager.DrainManager.StartDrain(r.Context(), name); err != nil {
+	if err := h.drain.StartDrain(r.Context(), name); err != nil {
 		slog.ErrorContext(r.Context(), "Admin: drain start failed", "backend", name, "error", err)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": errDrainOperationFailed})
 		return
@@ -344,7 +374,7 @@ func (h *Handler) handleStartDrain(w http.ResponseWriter, r *http.Request) {
 // handleDrainProgress returns the current state of a drain operation.
 func (h *Handler) handleDrainProgress(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	progress, err := h.manager.DrainManager.GetDrainProgress(r.Context(), name)
+	progress, err := h.drain.GetDrainProgress(r.Context(), name)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "Admin: drain progress failed", "backend", name, "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": errDrainOperationFailed})
@@ -356,7 +386,7 @@ func (h *Handler) handleDrainProgress(w http.ResponseWriter, r *http.Request) {
 // handleCancelDrain cancels an active drain operation.
 func (h *Handler) handleCancelDrain(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if err := h.manager.DrainManager.CancelDrain(name); err != nil {
+	if err := h.drain.CancelDrain(name); err != nil {
 		slog.ErrorContext(r.Context(), "Admin: drain cancel failed", "backend", name, "error", err)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": errDrainOperationFailed})
 		return
@@ -382,7 +412,7 @@ func (h *Handler) handleRemoveBackend(w http.ResponseWriter, r *http.Request) {
 
 	// Non-purge removal: drop DB records immediately (reversible via sync)
 	if !purge {
-		if err := h.manager.DrainManager.RemoveBackend(r.Context(), name, false); err != nil {
+		if err := h.drain.RemoveBackend(r.Context(), name, false); err != nil {
 			slog.ErrorContext(r.Context(), "Admin: remove backend failed", "backend", name, "error", err)
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "remove failed"})
 			return
@@ -397,7 +427,7 @@ func (h *Handler) handleRemoveBackend(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "invalid or expired confirmation token"})
 			return
 		}
-		if err := h.manager.DrainManager.RemoveBackend(r.Context(), name, true); err != nil {
+		if err := h.drain.RemoveBackend(r.Context(), name, true); err != nil {
 			slog.ErrorContext(r.Context(), "Admin: purge backend failed", "backend", name, "error", err)
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "purge failed"})
 			return
@@ -407,7 +437,7 @@ func (h *Handler) handleRemoveBackend(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Purge phase 1: preview what will be destroyed, return confirmation token
-	objectCount, totalBytes, err := h.manager.BackendLifecycle().BackendObjectStats(r.Context(), name)
+	objectCount, totalBytes, err := h.lifecycle.BackendObjectStats(r.Context(), name)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "backend not found or stats unavailable"})
 		return
@@ -590,7 +620,7 @@ func (h *Handler) handleEncryptExisting(w http.ResponseWriter, r *http.Request) 
 		for _, loc := range locs {
 			total++
 
-			backend, err := h.manager.GetBackend(loc.BackendName)
+			backend, err := h.backendOps.GetBackend(loc.BackendName)
 			if err != nil {
 				slog.WarnContext(ctx, "Encrypt-existing: backend not found", "key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
 				telemetry.EncryptExistingObjectsTotal.WithLabelValues("error").Inc()
@@ -601,13 +631,13 @@ func (h *Handler) handleEncryptExisting(w http.ResponseWriter, r *http.Request) 
 			// Download plaintext from backend
 			result, err := backend.GetObject(ctx, loc.ObjectKey, "")
 			if err != nil {
-				h.manager.RecordUsage(loc.BackendName, 1, 0, 0)
+				h.backendOps.RecordUsage(loc.BackendName, 1, 0, 0)
 				slog.WarnContext(ctx, "Encrypt-existing: download failed", "key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
 				telemetry.EncryptExistingObjectsTotal.WithLabelValues("error").Inc()
 				failed++
 				continue
 			}
-			h.manager.RecordUsage(loc.BackendName, 1, loc.SizeBytes, 0)
+			h.backendOps.RecordUsage(loc.BackendName, 1, loc.SizeBytes, 0)
 
 			// Encrypt
 			encResult, err := h.encryptor.Encrypt(ctx, result.Body, loc.SizeBytes)
@@ -623,13 +653,13 @@ func (h *Handler) handleEncryptExisting(w http.ResponseWriter, r *http.Request) 
 			_, err = backend.PutObject(ctx, loc.ObjectKey, encResult.Body, encResult.CiphertextSize, result.ContentType, result.Metadata)
 			result.Body.Close()
 			if err != nil {
-				h.manager.RecordUsage(loc.BackendName, 1, 0, 0)
+				h.backendOps.RecordUsage(loc.BackendName, 1, 0, 0)
 				slog.WarnContext(ctx, "Encrypt-existing: re-upload failed", "key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
 				telemetry.EncryptExistingObjectsTotal.WithLabelValues("error").Inc()
 				failed++
 				continue
 			}
-			h.manager.RecordUsage(loc.BackendName, 1, 0, encResult.CiphertextSize)
+			h.backendOps.RecordUsage(loc.BackendName, 1, 0, encResult.CiphertextSize)
 
 			// Update DB record
 			keyData := encryption.PackKeyData(encResult.BaseNonce, encResult.WrappedDEK)
@@ -690,7 +720,7 @@ func (h *Handler) handleDecryptExisting(w http.ResponseWriter, r *http.Request) 
 		for _, loc := range locs {
 			total++
 
-			backend, err := h.manager.GetBackend(loc.BackendName)
+			backend, err := h.backendOps.GetBackend(loc.BackendName)
 			if err != nil {
 				slog.WarnContext(ctx, "Decrypt-existing: backend not found", "key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
 				telemetry.DecryptExistingObjectsTotal.WithLabelValues("error").Inc()
@@ -701,13 +731,13 @@ func (h *Handler) handleDecryptExisting(w http.ResponseWriter, r *http.Request) 
 			// Download ciphertext from backend
 			result, err := backend.GetObject(ctx, loc.ObjectKey, "")
 			if err != nil {
-				h.manager.RecordUsage(loc.BackendName, 1, 0, 0)
+				h.backendOps.RecordUsage(loc.BackendName, 1, 0, 0)
 				slog.WarnContext(ctx, "Decrypt-existing: download failed", "key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
 				telemetry.DecryptExistingObjectsTotal.WithLabelValues("error").Inc()
 				failed++
 				continue
 			}
-			h.manager.RecordUsage(loc.BackendName, 1, loc.SizeBytes, 0)
+			h.backendOps.RecordUsage(loc.BackendName, 1, loc.SizeBytes, 0)
 
 			// Unpack stored key data
 			_, wrappedDEK, unpackErr := encryption.UnpackKeyData(loc.EncryptionKey)
@@ -733,13 +763,13 @@ func (h *Handler) handleDecryptExisting(w http.ResponseWriter, r *http.Request) 
 			_, err = backend.PutObject(ctx, loc.ObjectKey, plainReader, loc.PlaintextSize, result.ContentType, result.Metadata)
 			result.Body.Close()
 			if err != nil {
-				h.manager.RecordUsage(loc.BackendName, 1, 0, 0)
+				h.backendOps.RecordUsage(loc.BackendName, 1, 0, 0)
 				slog.WarnContext(ctx, "Decrypt-existing: re-upload failed", "key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
 				telemetry.DecryptExistingObjectsTotal.WithLabelValues("error").Inc()
 				failed++
 				continue
 			}
-			h.manager.RecordUsage(loc.BackendName, 1, 0, loc.PlaintextSize)
+			h.backendOps.RecordUsage(loc.BackendName, 1, 0, loc.PlaintextSize)
 
 			// Update DB record
 			if err := h.rawStore.MarkObjectDecrypted(ctx, loc.ObjectKey, loc.BackendName, loc.PlaintextSize); err != nil {
@@ -774,7 +804,7 @@ func (h *Handler) handleDecryptExisting(w http.ResponseWriter, r *http.Request) 
 // handleScrub triggers an on-demand scrub cycle. Accepts an optional
 // batch_size query parameter (defaults to the configured scrubber batch size).
 func (h *Handler) handleScrub(w http.ResponseWriter, r *http.Request) {
-	icfg := h.manager.IntegrityConfig()
+	icfg := h.backendOps.IntegrityConfig()
 	if icfg == nil || !icfg.Enabled {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"status": "skipped",
@@ -790,7 +820,7 @@ func (h *Handler) handleScrub(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	checked, failed := h.manager.Scrubber.Scrub(r.Context(), batchSize)
+	checked, failed := h.scrubber.Scrub(r.Context(), batchSize)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":  "ok",
 		"checked": checked,
@@ -803,7 +833,7 @@ func (h *Handler) handleScrub(w http.ResponseWriter, r *http.Request) {
 // (default 100). Paginates internally until all objects are processed or
 // the request is cancelled.
 func (h *Handler) handleBackfillChecksums(w http.ResponseWriter, r *http.Request) {
-	icfg := h.manager.IntegrityConfig()
+	icfg := h.backendOps.IntegrityConfig()
 	if icfg == nil || !icfg.Enabled {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"status": "skipped",
@@ -823,7 +853,7 @@ func (h *Handler) handleBackfillChecksums(w http.ResponseWriter, r *http.Request
 	var totalProcessed int
 	offset := 0
 	for {
-		processed, nextOffset := h.manager.Scrubber.Backfill(r.Context(), batchSize, offset)
+		processed, nextOffset := h.scrubber.Backfill(r.Context(), batchSize, offset)
 		totalProcessed += processed
 		if nextOffset == 0 {
 			break
