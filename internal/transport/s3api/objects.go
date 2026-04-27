@@ -73,18 +73,8 @@ type deleteObjectError struct {
 // handlePut processes PUT requests. Requires Content-Length header to enforce
 // size-based policies in later phases.
 func (s *Server) handlePut(ctx context.Context, w http.ResponseWriter, r *http.Request, key string) (int, error) {
-	if r.ContentLength < 0 {
-		writeS3Error(w, http.StatusLengthRequired, "MissingContentLength", "Content-Length header is required")
-		return http.StatusLengthRequired, fmt.Errorf("missing Content-Length")
-	}
-
-	if s.MaxObjectSize > 0 && r.ContentLength > s.MaxObjectSize {
-		writeS3Error(w, http.StatusRequestEntityTooLarge, "EntityTooLarge", "Object size exceeds the maximum allowed size")
-		return http.StatusRequestEntityTooLarge, fmt.Errorf("object size %d exceeds max %d", r.ContentLength, s.MaxObjectSize)
-	}
-
-	if s.MaxObjectSize > 0 {
-		r.Body = http.MaxBytesReader(w, r.Body, s.MaxObjectSize)
+	if status, err, ok := enforceContentLength(w, r, s.MaxObjectSize, "Object"); !ok {
+		return status, err
 	}
 
 	contentType := r.Header.Get("Content-Type")

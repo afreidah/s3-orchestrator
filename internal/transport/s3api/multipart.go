@@ -136,18 +136,8 @@ func (s *Server) handleUploadPart(ctx context.Context, w http.ResponseWriter, r 
 		return http.StatusBadRequest, fmt.Errorf("invalid part number: %s", partNumberStr)
 	}
 
-	if r.ContentLength < 0 {
-		writeS3Error(w, http.StatusLengthRequired, "MissingContentLength", "Content-Length required")
-		return http.StatusLengthRequired, fmt.Errorf("missing Content-Length for part upload")
-	}
-
-	if s.MaxObjectSize > 0 && r.ContentLength > s.MaxObjectSize {
-		writeS3Error(w, http.StatusRequestEntityTooLarge, "EntityTooLarge", "Part size exceeds the maximum allowed size")
-		return http.StatusRequestEntityTooLarge, fmt.Errorf("part size %d exceeds max %d", r.ContentLength, s.MaxObjectSize)
-	}
-
-	if s.MaxObjectSize > 0 {
-		r.Body = http.MaxBytesReader(w, r.Body, s.MaxObjectSize)
+	if status, err, ok := enforceContentLength(w, r, s.MaxObjectSize, "Part"); !ok {
+		return status, err
 	}
 
 	etag, err := s.Manager.MultipartManager.UploadPart(ctx, uploadID, partNumber, r.Body, r.ContentLength)
