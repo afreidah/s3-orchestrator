@@ -116,14 +116,19 @@ func setupEncryptionEnv(t *testing.T) *encryptionTestEnv {
 	adminObjects := store.NewCBObjectStore(testStore, dbCB)
 	adminCleanup := store.NewCBCleanupStore(testStore, dbCB)
 	adminHandler := admin.New(&admin.Deps{
-		Manager:   mgr,
-		DBCB:      dbCB,
-		RawStore:  testStore,
-		Objects:   adminObjects,
-		Cleanup:   adminCleanup,
-		Encryptor: enc,
-		Token:     adminToken,
-		LogLevel:  &lv,
+		BackendOps: mgr,
+		Replicator: mgr.Replicator,
+		OverRep:    mgr.OverReplicationCleaner,
+		Drain:      mgr.DrainManager,
+		Scrubber:   mgr.Scrubber,
+		Lifecycle:  testStore,
+		DBCB:       dbCB,
+		RawStore:   testStore,
+		Objects:    adminObjects,
+		Cleanup:    adminCleanup,
+		Encryptor:  enc,
+		Token:      adminToken,
+		LogLevel:   &lv,
 	})
 	adminMux := http.NewServeMux()
 	adminHandler.Register(adminMux)

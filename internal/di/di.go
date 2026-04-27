@@ -857,7 +857,16 @@ func ProvideUIHandler(i do.Injector) (*ui.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	return ui.New(manager, cb.IsHealthy, cfg, logBuffer, loginThrottle), nil
+	return ui.NewWithDeps(&ui.Deps{
+		BackendOps:    manager,
+		Objects:       manager.ObjectManager,
+		Rebalancer:    manager.Rebalancer,
+		OverRep:       manager.OverReplicationCleaner,
+		DBHealthy:     cb.IsHealthy,
+		Cfg:           cfg,
+		LogBuffer:     logBuffer,
+		LoginThrottle: loginThrottle,
+	}), nil
 }
 
 // ProvideAdminHandler creates the admin API handler.
@@ -911,8 +920,18 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 		return nil, err
 	}
 
+	lifecycleStore, err := do.Invoke[store.BackendLifecycleStore](i)
+	if err != nil {
+		return nil, err
+	}
+
 	return admin.New(&admin.Deps{
-		Manager:    manager,
+		BackendOps: manager,
+		Replicator: manager.Replicator,
+		OverRep:    manager.OverReplicationCleaner,
+		Drain:      manager.DrainManager,
+		Scrubber:   manager.Scrubber,
+		Lifecycle:  lifecycleStore,
 		DBCB:       cb,
 		RawStore:   adminDB,
 		Objects:    objects,
