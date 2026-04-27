@@ -103,6 +103,7 @@ func NewRedisCounterBackend(client RedisClient, cfg *config.RedisConfig, backend
 	cb := breaker.NewCircuitBreaker("redis", cfg.FailureThreshold, cfg.OpenTimeout, func(err error) bool {
 		return err != nil
 	}, sentinel)
+	cb.SetOnStateChange(telemetry.NewCircuitBreakerHook("redis"))
 
 	r := &RedisCounterBackend{
 		client:    client,

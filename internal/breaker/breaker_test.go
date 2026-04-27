@@ -14,8 +14,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 )
 
 // alwaysError is an error filter that treats all non-nil errors as failures.
@@ -425,50 +423,56 @@ func TestCB_StaleProbeAutoResets(t *testing.T) {
 	}
 }
 
-func TestTransition_EmitsOpenEvent(t *testing.T) {
-	var emitted []event.Event
-	event.Emit = func(ev event.Event) { emitted = append(emitted, ev) }
-	defer func() { event.Emit = nil }()
-
+// TestTransition_InvokesHookOnOpen verifies the OnStateChange callback is
+// fired for the closed→open transition with the failure context populated.
+func TestTransition_InvokesHookOnOpen(t *testing.T) {
+	var infos []StateChangeInfo
 	cb := newTestBreaker(2, time.Hour)
+	cb.SetOnStateChange(func(i StateChangeInfo) { infos = append(infos, i) })
+
 	_ = cb.PostCheck(errTest)
 	_ = cb.PostCheck(errTest)
 
-	if len(emitted) != 1 {
-		t.Fatalf("expected 1 event, got %d", len(emitted))
+	if len(infos) != 1 {
+		t.Fatalf("expected 1 hook invocation, got %d", len(infos))
 	}
-	if emitted[0].Type != event.BackendCircuitOpened {
-		t.Errorf("event type = %q, want %q", emitted[0].Type, event.BackendCircuitOpened)
+	got := infos[0]
+	if got.From != StateClosed || got.To != StateOpen {
+		t.Errorf("transition = %s→%s, want closed→open", got.From, got.To)
 	}
-	if emitted[0].Subject != "test" {
-		t.Errorf("event subject = %q, want test", emitted[0].Subject)
+	if got.Failures < 2 || got.Threshold != 2 || got.Name != "test" {
+		t.Errorf("info = %+v", got)
 	}
 }
 
-func TestTransition_EmitsClosedEvent(t *testing.T) {
-	var emitted []event.Event
-	event.Emit = func(ev event.Event) { emitted = append(emitted, ev) }
-	defer func() { event.Emit = nil }()
-
+// TestTransition_InvokesHookOnRecovery walks the full open → half-open →
+// closed cycle and confirms the hook fires for each transition with a
+// non-zero OpenDuration on the recovery edge.
+func TestTransition_InvokesHookOnRecovery(t *testing.T) {
+	var infos []StateChangeInfo
 	cb := newTestBreaker(1, 10*time.Millisecond)
-	_ = cb.PostCheck(errTest) // trip
-	emitted = nil             // clear the open event
+	cb.SetOnStateChange(func(i StateChangeInfo) { infos = append(infos, i) })
 
+	_ = cb.PostCheck(errTest)         // closed → open
 	time.Sleep(15 * time.Millisecond) // wait for probe eligibility
-	_ = cb.PreCheck()                 // enter half-open
-	_ = cb.PostCheck(nil)             // probe succeeds → closed
+	_ = cb.PreCheck()                 // open → half-open
+	_ = cb.PostCheck(nil)             // half-open → closed
 
-	if len(emitted) != 1 {
-		t.Fatalf("expected 1 closed event, got %d", len(emitted))
+	if len(infos) != 3 {
+		t.Fatalf("expected 3 hook invocations, got %d", len(infos))
 	}
-	if emitted[0].Type != event.BackendCircuitClosed {
-		t.Errorf("event type = %q, want %q", emitted[0].Type, event.BackendCircuitClosed)
+	closed := infos[2]
+	if closed.From != StateHalfOpen || closed.To != StateClosed {
+		t.Errorf("final transition = %s→%s, want half-open→closed", closed.From, closed.To)
+	}
+	if closed.OpenDuration <= 0 {
+		t.Error("OpenDuration should be > 0 on recovery")
 	}
 }
 
-func TestTransition_NoEmitWhenHookNil(t *testing.T) {
-	event.Emit = nil
-
+// TestTransition_NilHookIsNoop verifies the breaker still transitions
+// correctly when no OnStateChange callback is installed.
+func TestTransition_NilHookIsNoop(t *testing.T) {
 	cb := newTestBreaker(1, time.Hour)
 	_ = cb.PostCheck(errTest)
 

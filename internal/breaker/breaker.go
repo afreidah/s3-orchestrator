@@ -12,8 +12,10 @@
 // -------------------------------------------------------------------------------
 
 // Package breaker implements a generic three-state circuit breaker (closed,
-// open, half-open) with pluggable error filters, probe jitter, and Prometheus
-// metrics. Shared by the backend and store circuit breaker wrappers.
+// open, half-open) with pluggable error filters and probe jitter. The
+// breaker emits no metrics or events on its own — callers wire those via
+// the optional OnStateChange callback so this package stays free of
+// observability dependencies.
 package breaker
 
 import (
@@ -23,9 +25,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/afreidah/s3-orchestrator/internal/observe/event"
-	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 )
 
 // -------------------------------------------------------------------------
@@ -67,8 +66,22 @@ var ErrBackendUnavailable = errors.New("backend unavailable")
 // CIRCUIT BREAKER
 // -------------------------------------------------------------------------
 
+// StateChangeInfo captures the context the breaker shares with its
+// OnStateChange callback. Failures and OpenDuration are read-only snapshots
+// of the breaker's state at the moment of the transition.
+type StateChangeInfo struct {
+	Name         string
+	From         State
+	To           State
+	Failures     int
+	Threshold    int
+	OpenDuration time.Duration // time spent open or half-open before reaching this state; zero when From was Closed
+}
+
 // CircuitBreaker implements a three-state circuit breaker with a pluggable
-// error filter. It is safe for concurrent use.
+// error filter. It is safe for concurrent use. Observability hooks live
+// behind the optional OnStateChange callback — the breaker package itself
+// imports nothing from observe/.
 type CircuitBreaker struct {
 	mu            sync.RWMutex
 	state         State
@@ -83,20 +96,19 @@ type CircuitBreaker struct {
 	name          string           // for logging and metrics labels
 	isError       func(error) bool // returns true if the error should trip the breaker
 	sentinel      error            // error returned when circuit is open
+	onStateChange func(StateChangeInfo)
 }
 
 // NewCircuitBreaker creates a new circuit breaker.
 //
-//   - name: identifier for logging and metrics (e.g. "database", "oci-backend")
+//   - name: identifier for logging and labels (e.g. "database", "oci-backend")
 //   - threshold: consecutive failures before opening
 //   - timeout: delay before probing recovery
 //   - isError: filter that returns true for errors that should count as failures
 //   - sentinel: the error returned when the circuit is open (e.g. ErrDBUnavailable)
+//
+// Use SetOnStateChange after construction to install metric / event hooks.
 func NewCircuitBreaker(name string, threshold int, timeout time.Duration, isError func(error) bool, sentinel error) *CircuitBreaker {
-	// Initialize the state gauge so Prometheus reports "closed" immediately
-	// rather than showing "No Data" until the first transition.
-	telemetry.CircuitBreakerState.WithLabelValues(name).Set(float64(StateClosed))
-
 	return &CircuitBreaker{
 		state:         StateClosed,
 		failThreshold: threshold,
@@ -106,6 +118,20 @@ func NewCircuitBreaker(name string, threshold int, timeout time.Duration, isErro
 		sentinel:      sentinel,
 	}
 }
+
+// SetOnStateChange installs a callback invoked on every closed/open/
+// half-open transition. The callback runs synchronously while the breaker
+// holds its lock, so implementations must be cheap and non-blocking.
+// Passing nil clears any previously installed callback.
+func (cb *CircuitBreaker) SetOnStateChange(fn func(StateChangeInfo)) {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	cb.onStateChange = fn
+}
+
+// Name returns the breaker's identifier — useful for callers wiring
+// observability hooks that need the label.
+func (cb *CircuitBreaker) Name() string { return cb.name }
 
 // IsHealthy returns true when the circuit is closed.
 func (cb *CircuitBreaker) IsHealthy() bool {
@@ -268,16 +294,18 @@ func (cb *CircuitBreaker) ResetStaleProbe() bool {
 	return true
 }
 
-// transition changes the circuit state and emits metrics + structured logs.
-// Logs include from/to state, failure counts, and degraded_duration when the
-// circuit recovers. Caller must hold cb.mu.
+// transition changes the circuit state, emits structured logs, and notifies
+// the OnStateChange callback. Caller must hold cb.mu.
 //
 //nolint:sloglint // State machine has no request context; transitions are system-level events.
 func (cb *CircuitBreaker) transition(to State) {
 	from := cb.state
 	cb.state = to
-	telemetry.CircuitBreakerState.WithLabelValues(cb.name).Set(float64(to))
-	telemetry.CircuitBreakerTransitionsTotal.WithLabelValues(cb.name, from.String(), to.String()).Inc()
+
+	var openFor time.Duration
+	if from != StateClosed {
+		openFor = time.Since(cb.openedAt)
+	}
 
 	switch {
 	case to == StateOpen && from == StateClosed:
@@ -289,17 +317,6 @@ func (cb *CircuitBreaker) transition(to State) {
 			"to", to.String(),
 			"failures", cb.failures,
 			"threshold", cb.failThreshold)
-		if event.Emit != nil {
-			event.Emit(event.Event{
-				Type:    event.BackendCircuitOpened,
-				Subject: cb.name,
-				Data: map[string]any{
-					"backend":   cb.name,
-					"failures":  cb.failures,
-					"threshold": cb.failThreshold,
-				},
-			})
-		}
 
 	case to == StateOpen && from == StateHalfOpen:
 		cb.probeJitter = rand.N(cb.openTimeout / 4) //nolint:gosec // G404: jitter does not require crypto-strength randomness
@@ -314,24 +331,25 @@ func (cb *CircuitBreaker) transition(to State) {
 			"name", cb.name,
 			"from", from.String(),
 			"to", to.String(),
-			"open_duration", time.Since(cb.openedAt).Round(time.Millisecond).String())
+			"open_duration", openFor.Round(time.Millisecond).String())
 
 	case to == StateClosed:
 		slog.Info("Circuit breaker closed: recovered",
 			"name", cb.name,
 			"from", from.String(),
 			"to", to.String(),
-			"degraded_duration", time.Since(cb.openedAt).Round(time.Millisecond).String())
-		if event.Emit != nil {
-			event.Emit(event.Event{
-				Type:    event.BackendCircuitClosed,
-				Subject: cb.name,
-				Data: map[string]any{
-					"backend":           cb.name,
-					"degraded_duration": time.Since(cb.openedAt).Round(time.Millisecond).String(),
-				},
-			})
-		}
+			"degraded_duration", openFor.Round(time.Millisecond).String())
+	}
+
+	if cb.onStateChange != nil {
+		cb.onStateChange(StateChangeInfo{
+			Name:         cb.name,
+			From:         from,
+			To:           to,
+			Failures:     cb.failures,
+			Threshold:    cb.failThreshold,
+			OpenDuration: openFor,
+		})
 	}
 }
 

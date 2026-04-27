@@ -18,13 +18,17 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 )
 
 // NewDatabaseBreaker returns the circuit breaker used to guard metadata
 // store calls. It treats S3Error and ErrNoSpaceAvailable as application-level
-// failures that should not trip the circuit.
+// failures that should not trip the circuit. Wires the telemetry hook so
+// CircuitBreakerState / CircuitBreakerTransitionsTotal are populated.
 func NewDatabaseBreaker(cfg config.CircuitBreakerConfig) *breaker.CircuitBreaker {
-	return breaker.NewCircuitBreaker("database", cfg.FailureThreshold, cfg.OpenTimeout, isDBError, ErrDBUnavailable)
+	cb := breaker.NewCircuitBreaker("database", cfg.FailureThreshold, cfg.OpenTimeout, isDBError, ErrDBUnavailable)
+	cb.SetOnStateChange(telemetry.NewCircuitBreakerHook("database"))
+	return cb
 }
 
 // isDBError returns true for genuine database failures. Application-level
