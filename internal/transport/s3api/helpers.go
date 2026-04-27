@@ -31,6 +31,28 @@ var xmlBufPool = sync.Pool{
 // maxUserMetadataBytes is the S3-specified limit for total user metadata size.
 const maxUserMetadataBytes = 2048
 
+// enforceContentLength applies the standard guard for any S3 PUT-style
+// handler: reject missing Content-Length with 411, reject oversized payloads
+// with 413, and otherwise wrap the body in MaxBytesReader. The label is
+// folded into the user-facing error message so callers retain their distinct
+// vocabulary ("Object" vs "Part" etc.). Returns (statusCode, error, ok). When
+// ok is false the caller must propagate the (status, error) without further
+// processing — the response has already been written.
+func enforceContentLength(w http.ResponseWriter, r *http.Request, max int64, label string) (int, error, bool) {
+	if r.ContentLength < 0 {
+		writeS3Error(w, http.StatusLengthRequired, "MissingContentLength", label+" Content-Length is required")
+		return http.StatusLengthRequired, fmt.Errorf("missing Content-Length"), false
+	}
+	if max > 0 && r.ContentLength > max {
+		writeS3Error(w, http.StatusRequestEntityTooLarge, "EntityTooLarge", label+" size exceeds the maximum allowed size")
+		return http.StatusRequestEntityTooLarge, fmt.Errorf("%s size %d exceeds max %d", label, r.ContentLength, max), false
+	}
+	if max > 0 {
+		r.Body = http.MaxBytesReader(w, r.Body, max)
+	}
+	return 0, nil, true
+}
+
 // extractUserMetadata extracts x-amz-meta-* headers from the request,
 // lowercasing the metadata key names. Returns nil when no metadata is present.
 func extractUserMetadata(h http.Header) map[string]string {
