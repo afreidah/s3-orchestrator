@@ -249,7 +249,7 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request, accessKe
 	sig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 
 	value := base64.RawURLEncoding.EncodeToString([]byte(payload)) + "." + sig
-	secure := h.forceSecure || r.TLS != nil
+	secure := h.forceSecure || httputil.IsTLSRequest(r, h.trustedProxies)
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
@@ -402,7 +402,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 // handleLogout clears the session and CSRF cookies and redirects to login.
 func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
-	secure := h.forceSecure || r.TLS != nil
+	secure := h.forceSecure || httputil.IsTLSRequest(r, h.trustedProxies)
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    "",

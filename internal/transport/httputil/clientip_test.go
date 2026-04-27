@@ -8,9 +8,72 @@ package httputil
 
 import (
 	"context"
+	"crypto/tls"
 	"net/http"
 	"testing"
 )
+
+// TestIsTLSRequest_DirectTLS covers the easy case: r.TLS is non-nil because
+// the listener terminated the TLS handshake itself.
+func TestIsTLSRequest_DirectTLS(t *testing.T) {
+	t.Parallel()
+	r, _ := http.NewRequestWithContext(context.Background(), "GET", "/", nil)
+	r.TLS = &tls.ConnectionState{} // signals TLS-terminated peer
+	if !IsTLSRequest(r, nil) {
+		t.Error("IsTLSRequest with r.TLS set should return true")
+	}
+}
+
+// TestIsTLSRequest_TrustedProxyHTTPS covers the proxy-terminated TLS case:
+// the orchestrator sees plain HTTP from a trusted proxy that forwarded
+// X-Forwarded-Proto: https.
+func TestIsTLSRequest_TrustedProxyHTTPS(t *testing.T) {
+	t.Parallel()
+	trusted := ParseTrustedProxies([]string{"10.0.0.0/8"})
+	r, _ := http.NewRequestWithContext(context.Background(), "GET", "/", nil)
+	r.RemoteAddr = "10.0.0.1:443"
+	r.Header.Set("X-Forwarded-Proto", "https")
+	if !IsTLSRequest(r, trusted) {
+		t.Error("trusted proxy + XFP=https should report TLS")
+	}
+}
+
+// TestIsTLSRequest_UntrustedProxyHTTPS guards against header spoofing: an
+// untrusted peer claiming X-Forwarded-Proto: https must NOT be honoured.
+func TestIsTLSRequest_UntrustedProxyHTTPS(t *testing.T) {
+	t.Parallel()
+	trusted := ParseTrustedProxies([]string{"10.0.0.0/8"})
+	r, _ := http.NewRequestWithContext(context.Background(), "GET", "/", nil)
+	r.RemoteAddr = "1.2.3.4:443" // outside trusted range
+	r.Header.Set("X-Forwarded-Proto", "https")
+	if IsTLSRequest(r, trusted) {
+		t.Error("untrusted peer must not be able to spoof TLS via XFP")
+	}
+}
+
+// TestIsTLSRequest_PlainHTTP confirms the default plain-HTTP case returns
+// false and does not panic when no trusted proxies are configured.
+func TestIsTLSRequest_PlainHTTP(t *testing.T) {
+	t.Parallel()
+	r, _ := http.NewRequestWithContext(context.Background(), "GET", "/", nil)
+	r.RemoteAddr = "1.2.3.4:80"
+	if IsTLSRequest(r, nil) {
+		t.Error("plain HTTP with no proxies should return false")
+	}
+}
+
+// TestIsTLSRequest_TrustedProxyXFPMissing covers the trusted-proxy case
+// without an X-Forwarded-Proto header. Without the header we cannot tell
+// whether the original hop was TLS, so the result is false.
+func TestIsTLSRequest_TrustedProxyXFPMissing(t *testing.T) {
+	t.Parallel()
+	trusted := ParseTrustedProxies([]string{"10.0.0.0/8"})
+	r, _ := http.NewRequestWithContext(context.Background(), "GET", "/", nil)
+	r.RemoteAddr = "10.0.0.1:80"
+	if IsTLSRequest(r, trusted) {
+		t.Error("missing XFP header should not infer TLS")
+	}
+}
 
 func TestExtractClientIP_NoProxy(t *testing.T) {
 	t.Parallel()
