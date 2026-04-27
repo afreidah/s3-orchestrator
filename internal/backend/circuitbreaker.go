@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 )
 
 // CircuitBreakerBackend wraps an ObjectBackend with circuit breaker protection.
@@ -31,11 +32,16 @@ type CircuitBreakerBackend struct {
 // Compile-time check.
 var _ ObjectBackend = (*CircuitBreakerBackend)(nil)
 
-// NewCircuitBreakerBackend wraps a backend with per-backend circuit breaker logic.
+// NewCircuitBreakerBackend wraps a backend with per-backend circuit breaker
+// logic. The breaker is wired to the telemetry hook so transitions surface
+// on the standard CircuitBreaker* metrics and the BackendCircuit*
+// notification events.
 func NewCircuitBreakerBackend(real ObjectBackend, name string, threshold int, timeout time.Duration) *CircuitBreakerBackend {
+	cb := breaker.NewCircuitBreaker(name, threshold, timeout, isBackendError, breaker.ErrBackendUnavailable)
+	cb.SetOnStateChange(telemetry.NewCircuitBreakerHook(name))
 	return &CircuitBreakerBackend{
 		real:           real,
-		CircuitBreaker: breaker.NewCircuitBreaker(name, threshold, timeout, isBackendError, breaker.ErrBackendUnavailable),
+		CircuitBreaker: cb,
 	}
 }
 
