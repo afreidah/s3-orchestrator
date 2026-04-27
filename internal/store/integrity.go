@@ -22,7 +22,7 @@ func (s *Store) GetRandomHashedObjects(ctx context.Context, limit int) ([]Object
 	if err != nil {
 		return nil, fmt.Errorf("failed to get random hashed objects: %w", err)
 	}
-	return toObjectLocations(rows), nil
+	return toFatObjectLocations(rows), nil
 }
 
 // GetObjectsWithoutHash returns object locations that have no stored content
@@ -37,7 +37,7 @@ func (s *Store) GetObjectsWithoutHash(ctx context.Context, limit, offset int) ([
 	if err != nil {
 		return nil, fmt.Errorf("failed to get objects without hash: %w", err)
 	}
-	return toObjectLocations(rows), nil
+	return toFatObjectLocations(rows), nil
 }
 
 // UpdateContentHash sets the content hash for an object location.
