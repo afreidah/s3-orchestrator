@@ -175,7 +175,7 @@ func (s *Store) ListObjectsByBackend(ctx context.Context, backendName string, li
 	if err != nil {
 		return nil, fmt.Errorf("failed to list objects by backend: %w", err)
 	}
-	return toObjectLocations(rows), nil
+	return toSlimObjectLocations(rows), nil
 }
 
 // MoveObjectLocation atomically moves a copy of an object from one backend to
@@ -280,7 +280,7 @@ func (s *Store) ListObjects(ctx context.Context, prefix, startAfter string, maxK
 		return nil, fmt.Errorf("failed to list objects: %w", err)
 	}
 
-	objects := toObjectLocations(rows)
+	objects := toSlimObjectLocations(rows)
 
 	result := &ListObjectsResult{}
 	if len(objects) > maxKeys {
@@ -307,7 +307,7 @@ func (s *Store) ListExpiredObjects(ctx context.Context, prefix string, cutoff ti
 	if err != nil {
 		return nil, fmt.Errorf("failed to list expired objects: %w", err)
 	}
-	return toObjectLocations(rows), nil
+	return toSlimObjectLocations(rows), nil
 }
 
 // -------------------------------------------------------------------------

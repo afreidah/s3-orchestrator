@@ -29,7 +29,7 @@ func (s *Store) GetAllObjectLocations(ctx context.Context, key string) ([]Object
 		return nil, ErrObjectNotFound
 	}
 
-	return toObjectLocations(rows), nil
+	return toFatObjectLocations(rows), nil
 }
 
 // GetUnderReplicatedObjects finds objects with fewer copies than the target
@@ -44,7 +44,7 @@ func (s *Store) GetUnderReplicatedObjects(ctx context.Context, factor, limit int
 		return nil, fmt.Errorf("failed to query under-replicated objects: %w", err)
 	}
 
-	return toObjectLocations(rows), nil
+	return toFatObjectLocations(rows), nil
 }
 
 // GetUnderReplicatedObjectsExcluding finds objects with fewer copies than the
@@ -60,7 +60,7 @@ func (s *Store) GetUnderReplicatedObjectsExcluding(ctx context.Context, factor, 
 		return nil, fmt.Errorf("failed to query under-replicated objects (excluding): %w", err)
 	}
 
-	return toObjectLocations(rows), nil
+	return toFatObjectLocations(rows), nil
 }
 
 // RecordReplica inserts a replica copy of an object, but only if the source
@@ -124,7 +124,7 @@ func (s *Store) GetOverReplicatedObjects(ctx context.Context, factor, limit int)
 		return nil, fmt.Errorf("failed to query over-replicated objects: %w", err)
 	}
 
-	return toObjectLocations(rows), nil
+	return toFatObjectLocations(rows), nil
 }
 
 // CountOverReplicatedObjects returns the total number of objects with more
@@ -166,5 +166,5 @@ func (s *Store) GetObjectCopiesForUpdate(ctx context.Context, key string) ([]Obj
 	if err != nil {
 		return nil, fmt.Errorf("failed to get copies for update: %w", err)
 	}
-	return toObjectLocations(rows), nil
+	return toFatObjectLocations(rows), nil
 }

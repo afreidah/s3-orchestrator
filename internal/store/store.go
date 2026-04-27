@@ -248,136 +248,69 @@ func withTxVal[T any](s *Store, ctx context.Context, fn func(*db.Queries) (T, er
 	return val, nil
 }
 
-// objectLocationRow is a type constraint matching all sqlc row types that
-// carry the core object location columns.
-type objectLocationRow interface {
-	db.ListObjectsByBackendRow |
-		db.ListObjectsByPrefixRow |
-		db.ListExpiredObjectsRow |
-		db.ListDirectChildrenRow |
-		db.GetAllObjectLocationsRow |
-		db.GetUnderReplicatedObjectsRow |
-		db.GetUnderReplicatedObjectsExcludingRow |
-		db.GetOverReplicatedObjectsRow |
-		db.GetObjectCopiesForUpdateRow |
-		db.GetRandomHashedObjectsRow |
-		db.GetObjectsWithoutHashRow
+// slimObjectRow is the minimum surface of sqlc rows that project an
+// ObjectLocation without encryption columns. Implemented by the four list
+// queries that pull only key/backend/size/created_at.
+type slimObjectRow interface {
+	GetObjectKey() string
+	GetBackendName() string
+	GetSizeBytes() int64
+	GetCreatedAt() pgtype.Timestamptz
 }
 
-// toObjectLocations converts any sqlc row type containing object location
-// columns into storage ObjectLocations via the common conversion helper.
-func toObjectLocations[T objectLocationRow](rows []T) []ObjectLocation {
+// fatObjectRow extends slimObjectRow with the encryption + content-hash
+// columns the seven encryption-aware queries return.
+type fatObjectRow interface {
+	slimObjectRow
+	GetEncrypted() bool
+	GetEncryptionKey() []byte
+	GetKeyID() *string
+	GetPlaintextSize() *int64
+	GetContentHash() *string
+}
+
+// toSlimObjectLocations converts a slice of slim sqlc rows. Encryption and
+// content-hash fields stay zero-valued.
+func toSlimObjectLocations[T slimObjectRow](rows []T) []ObjectLocation {
 	out := make([]ObjectLocation, len(rows))
 	for i := range rows {
-		out[i] = toObjectLocation(any(rows[i]))
+		r := rows[i]
+		out[i] = ObjectLocation{
+			ObjectKey:   r.GetObjectKey(),
+			BackendName: r.GetBackendName(),
+			SizeBytes:   r.GetSizeBytes(),
+			CreatedAt:   r.GetCreatedAt().Time,
+		}
 	}
 	return out
 }
 
-// toObjectLocation converts a single sqlc row (passed as any) into an
-// ObjectLocation. Row types that include encryption columns populate those
-// fields; simpler row types leave them at zero values.
-func toObjectLocation(row any) ObjectLocation {
-	switch r := row.(type) {
-	case db.GetAllObjectLocationsRow:
-		return objectLocationFromDB(&dbObjectRow{
-			Key: r.ObjectKey, Backend: r.BackendName, Size: r.SizeBytes,
-			Encrypted: r.Encrypted, EncryptionKey: r.EncryptionKey,
-			KeyID: r.KeyID, PlaintextSize: r.PlaintextSize, ContentHash: r.ContentHash,
-			CreatedAt: r.CreatedAt.Time,
-		})
-	case db.GetUnderReplicatedObjectsRow:
-		return objectLocationFromDB(&dbObjectRow{
-			Key: r.ObjectKey, Backend: r.BackendName, Size: r.SizeBytes,
-			Encrypted: r.Encrypted, EncryptionKey: r.EncryptionKey,
-			KeyID: r.KeyID, PlaintextSize: r.PlaintextSize, ContentHash: r.ContentHash,
-			CreatedAt: r.CreatedAt.Time,
-		})
-	case db.GetUnderReplicatedObjectsExcludingRow:
-		return objectLocationFromDB(&dbObjectRow{
-			Key: r.ObjectKey, Backend: r.BackendName, Size: r.SizeBytes,
-			Encrypted: r.Encrypted, EncryptionKey: r.EncryptionKey,
-			KeyID: r.KeyID, PlaintextSize: r.PlaintextSize, ContentHash: r.ContentHash,
-			CreatedAt: r.CreatedAt.Time,
-		})
-	case db.GetOverReplicatedObjectsRow:
-		return objectLocationFromDB(&dbObjectRow{
-			Key: r.ObjectKey, Backend: r.BackendName, Size: r.SizeBytes,
-			Encrypted: r.Encrypted, EncryptionKey: r.EncryptionKey,
-			KeyID: r.KeyID, PlaintextSize: r.PlaintextSize, ContentHash: r.ContentHash,
-			CreatedAt: r.CreatedAt.Time,
-		})
-	case db.GetObjectCopiesForUpdateRow:
-		return objectLocationFromDB(&dbObjectRow{
-			Key: r.ObjectKey, Backend: r.BackendName, Size: r.SizeBytes,
-			Encrypted: r.Encrypted, EncryptionKey: r.EncryptionKey,
-			KeyID: r.KeyID, PlaintextSize: r.PlaintextSize, ContentHash: r.ContentHash,
-			CreatedAt: r.CreatedAt.Time,
-		})
-	case db.ListObjectsByBackendRow:
-		return ObjectLocation{ObjectKey: r.ObjectKey, BackendName: r.BackendName, SizeBytes: r.SizeBytes, CreatedAt: r.CreatedAt.Time}
-	case db.ListObjectsByPrefixRow:
-		return ObjectLocation{ObjectKey: r.ObjectKey, BackendName: r.BackendName, SizeBytes: r.SizeBytes, CreatedAt: r.CreatedAt.Time}
-	case db.ListExpiredObjectsRow:
-		return ObjectLocation{ObjectKey: r.ObjectKey, BackendName: r.BackendName, SizeBytes: r.SizeBytes, CreatedAt: r.CreatedAt.Time}
-	case db.ListDirectChildrenRow:
-		return ObjectLocation{ObjectKey: r.ObjectKey, BackendName: r.BackendName, SizeBytes: r.SizeBytes, CreatedAt: r.CreatedAt.Time}
-	case db.GetRandomHashedObjectsRow:
-		return objectLocationFromDB(&dbObjectRow{
-			Key: r.ObjectKey, Backend: r.BackendName, Size: r.SizeBytes,
-			Encrypted: r.Encrypted, EncryptionKey: r.EncryptionKey,
-			KeyID: r.KeyID, PlaintextSize: r.PlaintextSize, ContentHash: r.ContentHash,
-			CreatedAt: r.CreatedAt.Time,
-		})
-	case db.GetObjectsWithoutHashRow:
-		return objectLocationFromDB(&dbObjectRow{
-			Key: r.ObjectKey, Backend: r.BackendName, Size: r.SizeBytes,
-			Encrypted: r.Encrypted, EncryptionKey: r.EncryptionKey,
-			KeyID: r.KeyID, PlaintextSize: r.PlaintextSize, ContentHash: r.ContentHash,
-			CreatedAt: r.CreatedAt.Time,
-		})
-	default:
-		return ObjectLocation{}
+// toFatObjectLocations converts a slice of encryption-aware sqlc rows.
+// Pointer-typed nullable columns are safely dereferenced.
+func toFatObjectLocations[T fatObjectRow](rows []T) []ObjectLocation {
+	out := make([]ObjectLocation, len(rows))
+	for i := range rows {
+		r := rows[i]
+		loc := ObjectLocation{
+			ObjectKey:     r.GetObjectKey(),
+			BackendName:   r.GetBackendName(),
+			SizeBytes:     r.GetSizeBytes(),
+			CreatedAt:     r.GetCreatedAt().Time,
+			Encrypted:     r.GetEncrypted(),
+			EncryptionKey: r.GetEncryptionKey(),
+		}
+		if k := r.GetKeyID(); k != nil {
+			loc.KeyID = *k
+		}
+		if p := r.GetPlaintextSize(); p != nil {
+			loc.PlaintextSize = *p
+		}
+		if h := r.GetContentHash(); h != nil {
+			loc.ContentHash = *h
+		}
+		out[i] = loc
 	}
-}
-
-// dbObjectRow captures the union of fields the various sqlc-generated row
-// types for encrypted object queries expose. Extracting a struct keeps
-// objectLocationFromDB at two parameters and makes callers explicit about
-// which nullable columns they're passing.
-type dbObjectRow struct {
-	Key           string
-	Backend       string
-	Size          int64
-	Encrypted     bool
-	EncryptionKey []byte
-	KeyID         *string
-	PlaintextSize *int64
-	ContentHash   *string
-	CreatedAt     time.Time
-}
-
-// objectLocationFromDB builds an ObjectLocation from database column values,
-// safely dereferencing nullable pointer fields.
-func objectLocationFromDB(r *dbObjectRow) ObjectLocation {
-	loc := ObjectLocation{
-		ObjectKey:     r.Key,
-		BackendName:   r.Backend,
-		SizeBytes:     r.Size,
-		CreatedAt:     r.CreatedAt,
-		Encrypted:     r.Encrypted,
-		EncryptionKey: r.EncryptionKey,
-	}
-	if r.KeyID != nil {
-		loc.KeyID = *r.KeyID
-	}
-	if r.PlaintextSize != nil {
-		loc.PlaintextSize = *r.PlaintextSize
-	}
-	if r.ContentHash != nil {
-		loc.ContentHash = *r.ContentHash
-	}
-	return loc
+	return out
 }
 
 // pgTimestamptz converts a time.Time to pgtype.Timestamptz for use with sqlc.

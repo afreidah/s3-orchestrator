@@ -1,12 +1,13 @@
 // -------------------------------------------------------------------------------
-// store.objectLocationFromDB unit tests
+// store row → ObjectLocation conversion tests
 //
 // Author: Alex Freidah
 //
-// objectLocationFromDB is a pure helper that flattens nullable database
-// columns into an ObjectLocation. Exercised end-to-end via toObjectLocation
-// in integration paths; these unit tests cover each nullable-field branch
-// directly without requiring a PostgreSQL connection.
+// Exercises the generic toFatObjectLocations and toSlimObjectLocations
+// helpers without standing up a real PostgreSQL. Each row type the queries
+// project has its own accessor methods (in internal/store/sqlc), and these
+// tests assert the conversion for every shape — including the nullable
+// pointer fields on the encryption-aware ("fat") rows.
 // -------------------------------------------------------------------------------
 
 package store
@@ -25,93 +26,166 @@ func pgtime(t time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: t, Valid: true}
 }
 
-// TestObjectLocationFromDB_AllFieldsPopulated covers the happy path where
-// every nullable column carries a value.
-func TestObjectLocationFromDB_AllFieldsPopulated(t *testing.T) {
+// -------------------------------------------------------------------------
+// Fat-row conversions: encryption + content-hash columns
+// -------------------------------------------------------------------------
+
+// TestToFatObjectLocations_AllFieldsPopulated verifies every nullable
+// pointer column is dereferenced when set.
+func TestToFatObjectLocations_AllFieldsPopulated(t *testing.T) {
 	t.Parallel()
 	keyID := "key-abc"
 	var ptSize int64 = 4096
 	hash := "sha256:deadbeef"
 	created := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 
-	loc := objectLocationFromDB(&dbObjectRow{
-		Key:           "obj/foo",
-		Backend:       "b1",
-		Size:          4200,
+	out := toFatObjectLocations([]db.GetAllObjectLocationsRow{{
+		ObjectKey:     "obj/foo",
+		BackendName:   "b1",
+		SizeBytes:     4200,
 		Encrypted:     true,
 		EncryptionKey: []byte{0xde, 0xad, 0xbe, 0xef},
 		KeyID:         &keyID,
 		PlaintextSize: &ptSize,
 		ContentHash:   &hash,
-		CreatedAt:     created,
-	})
+		CreatedAt:     pgtime(created),
+	}})
+	if len(out) != 1 {
+		t.Fatalf("expected 1 location, got %d", len(out))
+	}
+	loc := out[0]
 
 	if loc.ObjectKey != "obj/foo" || loc.BackendName != "b1" || loc.SizeBytes != 4200 {
 		t.Errorf("basic fields: %+v", loc)
 	}
-	if !loc.Encrypted || string(loc.EncryptionKey) != "\xde\xad\xbe\xef" {
-		t.Errorf("encryption fields: encrypted=%v key=%x", loc.Encrypted, loc.EncryptionKey)
+	if !loc.Encrypted || loc.KeyID != "key-abc" {
+		t.Errorf("encryption fields: %+v", loc)
 	}
-	if loc.KeyID != keyID || loc.PlaintextSize != ptSize || loc.ContentHash != hash {
-		t.Errorf("nullable fields: keyID=%q ptSize=%d hash=%q", loc.KeyID, loc.PlaintextSize, loc.ContentHash)
+	if loc.PlaintextSize != 4096 || loc.ContentHash != "sha256:deadbeef" {
+		t.Errorf("nullable fields: %+v", loc)
 	}
 	if !loc.CreatedAt.Equal(created) {
 		t.Errorf("CreatedAt = %v, want %v", loc.CreatedAt, created)
 	}
 }
 
-// TestObjectLocationFromDB_NilNullableFields covers the non-encrypted path
-// where KeyID, PlaintextSize, and ContentHash are all nil — they must
-// flatten to their zero values, not panic.
-func TestObjectLocationFromDB_NilNullableFields(t *testing.T) {
+// TestToFatObjectLocations_NilNullableFields verifies the helper does not
+// panic when KeyID, PlaintextSize, or ContentHash are nil.
+func TestToFatObjectLocations_NilNullableFields(t *testing.T) {
 	t.Parallel()
-	loc := objectLocationFromDB(&dbObjectRow{
-		Key:       "obj/bar",
-		Backend:   "b2",
-		Size:      1024,
-		Encrypted: false,
-		// KeyID / PlaintextSize / ContentHash intentionally nil
-		CreatedAt: time.Now(),
-	})
-
-	if loc.KeyID != "" {
-		t.Errorf("KeyID = %q, want empty", loc.KeyID)
+	out := toFatObjectLocations([]db.GetAllObjectLocationsRow{{
+		ObjectKey:   "k",
+		BackendName: "b",
+		SizeBytes:   1,
+		CreatedAt:   pgtime(time.Now()),
+		// Encrypted=false, EncryptionKey nil, KeyID/PlaintextSize/ContentHash nil
+	}})
+	loc := out[0]
+	if loc.KeyID != "" || loc.PlaintextSize != 0 || loc.ContentHash != "" {
+		t.Errorf("nil pointer fields not zeroed: %+v", loc)
 	}
-	if loc.PlaintextSize != 0 {
-		t.Errorf("PlaintextSize = %d, want 0", loc.PlaintextSize)
-	}
-	if loc.ContentHash != "" {
-		t.Errorf("ContentHash = %q, want empty", loc.ContentHash)
+	if loc.Encrypted {
+		t.Errorf("Encrypted should be false")
 	}
 }
 
-// TestObjectLocationFromDB_PartialNilFields covers mixed-null rows (for
-// example an encrypted object with no content hash yet).
-func TestObjectLocationFromDB_PartialNilFields(t *testing.T) {
+// TestToFatObjectLocations_PartialNilFields covers the mid-state where some
+// nullable fields are set and others are not.
+func TestToFatObjectLocations_PartialNilFields(t *testing.T) {
 	t.Parallel()
-	keyID := "key-x"
-	loc := objectLocationFromDB(&dbObjectRow{
-		Key:       "obj/baz",
-		Backend:   "b3",
-		Size:      512,
-		Encrypted: true,
-		KeyID:     &keyID,
-		// PlaintextSize and ContentHash still nil
-		CreatedAt: time.Now(),
-	})
-	if loc.KeyID != keyID {
-		t.Errorf("KeyID = %q, want %q", loc.KeyID, keyID)
+	keyID := "k1"
+	out := toFatObjectLocations([]db.GetAllObjectLocationsRow{{
+		ObjectKey:     "k",
+		BackendName:   "b",
+		SizeBytes:     1,
+		Encrypted:     true,
+		EncryptionKey: []byte{0x01},
+		KeyID:         &keyID,
+		// PlaintextSize/ContentHash nil
+		CreatedAt: pgtime(time.Now()),
+	}})
+	loc := out[0]
+	if loc.KeyID != "k1" {
+		t.Errorf("KeyID = %q, want k1", loc.KeyID)
 	}
 	if loc.PlaintextSize != 0 || loc.ContentHash != "" {
-		t.Errorf("expected other nullable fields zero; got ptSize=%d hash=%q", loc.PlaintextSize, loc.ContentHash)
+		t.Errorf("nil pointer fields not zeroed: %+v", loc)
 	}
 }
+
+// TestToFatObjectLocations_EveryRowType walks each fat-row sqlc type to
+// confirm the accessor methods are wired and the generic helper accepts
+// each one. A zero-element entry per type is enough — the per-field
+// flattening is exhaustively tested for GetAllObjectLocationsRow above.
+func TestToFatObjectLocations_EveryRowType(t *testing.T) {
+	t.Parallel()
+	now := pgtime(time.Now())
+
+	if got := toFatObjectLocations([]db.GetAllObjectLocationsRow{{ObjectKey: "a", CreatedAt: now}}); got[0].ObjectKey != "a" {
+		t.Error("GetAllObjectLocationsRow not converted")
+	}
+	if got := toFatObjectLocations([]db.GetUnderReplicatedObjectsRow{{ObjectKey: "b", CreatedAt: now}}); got[0].ObjectKey != "b" {
+		t.Error("GetUnderReplicatedObjectsRow not converted")
+	}
+	if got := toFatObjectLocations([]db.GetUnderReplicatedObjectsExcludingRow{{ObjectKey: "c", CreatedAt: now}}); got[0].ObjectKey != "c" {
+		t.Error("GetUnderReplicatedObjectsExcludingRow not converted")
+	}
+	if got := toFatObjectLocations([]db.GetOverReplicatedObjectsRow{{ObjectKey: "d", CreatedAt: now}}); got[0].ObjectKey != "d" {
+		t.Error("GetOverReplicatedObjectsRow not converted")
+	}
+	if got := toFatObjectLocations([]db.GetObjectCopiesForUpdateRow{{ObjectKey: "e", CreatedAt: now}}); got[0].ObjectKey != "e" {
+		t.Error("GetObjectCopiesForUpdateRow not converted")
+	}
+	if got := toFatObjectLocations([]db.GetRandomHashedObjectsRow{{ObjectKey: "f", CreatedAt: now}}); got[0].ObjectKey != "f" {
+		t.Error("GetRandomHashedObjectsRow not converted")
+	}
+	if got := toFatObjectLocations([]db.GetObjectsWithoutHashRow{{ObjectKey: "g", CreatedAt: now}}); got[0].ObjectKey != "g" {
+		t.Error("GetObjectsWithoutHashRow not converted")
+	}
+}
+
 // -------------------------------------------------------------------------
-// insertParamsFromEnc — pure branch coverage
-//
-// insertParamsFromEnc turns a *EncryptionMeta (nullable) into positional
-// sqlc params. Three branches: nil meta, plaintext-only meta, and
-// encrypted meta with content hash.
+// Slim-row conversions: key/backend/size/created_at only
+// -------------------------------------------------------------------------
+
+// TestToSlimObjectLocations_EveryRowType walks each slim-row sqlc type.
+// Slim rows have no encryption columns, so the resulting ObjectLocation
+// leaves them at zero values.
+func TestToSlimObjectLocations_EveryRowType(t *testing.T) {
+	t.Parallel()
+	now := pgtime(time.Now())
+
+	if got := toSlimObjectLocations([]db.ListObjectsByBackendRow{{ObjectKey: "a", BackendName: "b1", SizeBytes: 1, CreatedAt: now}}); got[0].ObjectKey != "a" || got[0].Encrypted {
+		t.Errorf("ListObjectsByBackendRow not converted: %+v", got[0])
+	}
+	if got := toSlimObjectLocations([]db.ListObjectsByPrefixRow{{ObjectKey: "b", BackendName: "b2", SizeBytes: 2, CreatedAt: now}}); got[0].ObjectKey != "b" {
+		t.Error("ListObjectsByPrefixRow not converted")
+	}
+	if got := toSlimObjectLocations([]db.ListExpiredObjectsRow{{ObjectKey: "c", BackendName: "b3", SizeBytes: 3, CreatedAt: now}}); got[0].ObjectKey != "c" {
+		t.Error("ListExpiredObjectsRow not converted")
+	}
+	if got := toSlimObjectLocations([]db.ListDirectChildrenRow{{ObjectKey: "d", BackendName: "b4", SizeBytes: 4, CreatedAt: now}}); got[0].ObjectKey != "d" {
+		t.Error("ListDirectChildrenRow not converted")
+	}
+}
+
+// TestToSlimObjectLocations_PreservesOrder verifies the output slice keeps
+// the input ordering — important for the dashboard directory listing.
+func TestToSlimObjectLocations_PreservesOrder(t *testing.T) {
+	t.Parallel()
+	now := pgtime(time.Now())
+	out := toSlimObjectLocations([]db.ListObjectsByBackendRow{
+		{ObjectKey: "a", BackendName: "b", SizeBytes: 1, CreatedAt: now},
+		{ObjectKey: "b", BackendName: "b", SizeBytes: 2, CreatedAt: now},
+		{ObjectKey: "c", BackendName: "b", SizeBytes: 3, CreatedAt: now},
+	})
+	if len(out) != 3 || out[0].ObjectKey != "a" || out[2].ObjectKey != "c" {
+		t.Errorf("order not preserved: %+v", out)
+	}
+}
+
+// -------------------------------------------------------------------------
+// insertParamsFromEnc: nullable column threading for object insert
 // -------------------------------------------------------------------------
 
 // TestInsertParamsFromEnc_NilMeta covers the "no encryption metadata"
@@ -192,193 +266,5 @@ func TestInsertParamsFromEnc_EncryptedNoHash(t *testing.T) {
 	}
 	if params.ContentHash != nil {
 		t.Errorf("ContentHash should stay nil when Hash is empty")
-	}
-}
-
-// -------------------------------------------------------------------------
-// toObjectLocation switch coverage
-//
-// toObjectLocation flattens the sqlc-generated row types our queries
-// produce into the store.ObjectLocation domain type. Each case in its type
-// switch is a separate integration-only code path; the tests below
-// exercise every branch without needing a real PostgreSQL.
-// -------------------------------------------------------------------------
-
-// TestToObjectLocation_GetAllObjectLocationsRow covers the row returned by
-// GetAllObjectLocations (the encrypted-object-aware primary read path).
-func TestToObjectLocation_GetAllObjectLocationsRow(t *testing.T) {
-	t.Parallel()
-	keyID := "k-1"
-	var ptSize int64 = 1234
-	hash := "sha256:abc"
-	now := time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC)
-
-	loc := toObjectLocation(db.GetAllObjectLocationsRow{
-		ObjectKey: "k", BackendName: "b1", SizeBytes: 100,
-		Encrypted: true, EncryptionKey: []byte{0x01, 0x02},
-		KeyID: &keyID, PlaintextSize: &ptSize, ContentHash: &hash,
-		CreatedAt: pgtime(now),
-	})
-	if loc.ObjectKey != "k" || loc.BackendName != "b1" || loc.SizeBytes != 100 {
-		t.Errorf("unexpected location: %+v", loc)
-	}
-	if !loc.Encrypted || loc.KeyID != keyID || loc.PlaintextSize != ptSize {
-		t.Errorf("encryption fields not flattened: %+v", loc)
-	}
-}
-
-// TestToObjectLocation_GetUnderReplicatedObjectsRow covers the under-
-// replicated query row.
-func TestToObjectLocation_GetUnderReplicatedObjectsRow(t *testing.T) {
-	t.Parallel()
-	loc := toObjectLocation(db.GetUnderReplicatedObjectsRow{
-		ObjectKey: "u", BackendName: "b2", SizeBytes: 200,
-		CreatedAt: pgtime(time.Now()),
-	})
-	if loc.ObjectKey != "u" || loc.BackendName != "b2" || loc.SizeBytes != 200 {
-		t.Errorf("unexpected location: %+v", loc)
-	}
-}
-
-// TestToObjectLocation_GetUnderReplicatedObjectsExcludingRow covers the
-// "exclude certain backends" variant of the under-replicated query.
-func TestToObjectLocation_GetUnderReplicatedObjectsExcludingRow(t *testing.T) {
-	t.Parallel()
-	loc := toObjectLocation(db.GetUnderReplicatedObjectsExcludingRow{
-		ObjectKey: "u2", BackendName: "b3", SizeBytes: 300,
-		CreatedAt: pgtime(time.Now()),
-	})
-	if loc.ObjectKey != "u2" || loc.BackendName != "b3" || loc.SizeBytes != 300 {
-		t.Errorf("unexpected location: %+v", loc)
-	}
-}
-
-// TestToObjectLocation_GetOverReplicatedObjectsRow covers the over-
-// replicated query row.
-func TestToObjectLocation_GetOverReplicatedObjectsRow(t *testing.T) {
-	t.Parallel()
-	loc := toObjectLocation(db.GetOverReplicatedObjectsRow{
-		ObjectKey: "o", BackendName: "b4", SizeBytes: 400,
-		CreatedAt: pgtime(time.Now()),
-	})
-	if loc.ObjectKey != "o" || loc.BackendName != "b4" || loc.SizeBytes != 400 {
-		t.Errorf("unexpected location: %+v", loc)
-	}
-}
-
-// TestToObjectLocation_GetObjectCopiesForUpdateRow covers the locked
-// copies query used during replication planning.
-func TestToObjectLocation_GetObjectCopiesForUpdateRow(t *testing.T) {
-	t.Parallel()
-	loc := toObjectLocation(db.GetObjectCopiesForUpdateRow{
-		ObjectKey: "c", BackendName: "b5", SizeBytes: 500,
-		CreatedAt: pgtime(time.Now()),
-	})
-	if loc.ObjectKey != "c" || loc.BackendName != "b5" || loc.SizeBytes != 500 {
-		t.Errorf("unexpected location: %+v", loc)
-	}
-}
-
-// TestToObjectLocation_ListObjectsByBackendRow covers the simple list row.
-func TestToObjectLocation_ListObjectsByBackendRow(t *testing.T) {
-	t.Parallel()
-	loc := toObjectLocation(db.ListObjectsByBackendRow{
-		ObjectKey: "lb", BackendName: "b6", SizeBytes: 600,
-		CreatedAt: pgtime(time.Now()),
-	})
-	if loc.ObjectKey != "lb" || loc.BackendName != "b6" {
-		t.Errorf("unexpected location: %+v", loc)
-	}
-}
-
-// TestToObjectLocation_ListObjectsByPrefixRow covers the prefix-list row.
-func TestToObjectLocation_ListObjectsByPrefixRow(t *testing.T) {
-	t.Parallel()
-	loc := toObjectLocation(db.ListObjectsByPrefixRow{
-		ObjectKey: "lp", BackendName: "b7", SizeBytes: 700,
-		CreatedAt: pgtime(time.Now()),
-	})
-	if loc.ObjectKey != "lp" || loc.BackendName != "b7" {
-		t.Errorf("unexpected location: %+v", loc)
-	}
-}
-
-// TestToObjectLocation_ListExpiredObjectsRow covers the lifecycle query row.
-func TestToObjectLocation_ListExpiredObjectsRow(t *testing.T) {
-	t.Parallel()
-	loc := toObjectLocation(db.ListExpiredObjectsRow{
-		ObjectKey: "le", BackendName: "b8", SizeBytes: 800,
-		CreatedAt: pgtime(time.Now()),
-	})
-	if loc.ObjectKey != "le" || loc.BackendName != "b8" {
-		t.Errorf("unexpected location: %+v", loc)
-	}
-}
-
-// TestToObjectLocation_ListDirectChildrenRow covers the dashboard directory-
-// listing row.
-func TestToObjectLocation_ListDirectChildrenRow(t *testing.T) {
-	t.Parallel()
-	loc := toObjectLocation(db.ListDirectChildrenRow{
-		ObjectKey: "ld", BackendName: "b9", SizeBytes: 900,
-		CreatedAt: pgtime(time.Now()),
-	})
-	if loc.ObjectKey != "ld" || loc.BackendName != "b9" {
-		t.Errorf("unexpected location: %+v", loc)
-	}
-}
-
-// TestToObjectLocation_GetRandomHashedObjectsRow covers the scrubber's
-// random-sampling query.
-func TestToObjectLocation_GetRandomHashedObjectsRow(t *testing.T) {
-	t.Parallel()
-	loc := toObjectLocation(db.GetRandomHashedObjectsRow{
-		ObjectKey: "r", BackendName: "b10", SizeBytes: 1000,
-		CreatedAt: pgtime(time.Now()),
-	})
-	if loc.ObjectKey != "r" || loc.BackendName != "b10" {
-		t.Errorf("unexpected location: %+v", loc)
-	}
-}
-
-// TestToObjectLocation_GetObjectsWithoutHashRow covers the backfill query
-// used by handleBackfillChecksums.
-func TestToObjectLocation_GetObjectsWithoutHashRow(t *testing.T) {
-	t.Parallel()
-	loc := toObjectLocation(db.GetObjectsWithoutHashRow{
-		ObjectKey: "nh", BackendName: "b11", SizeBytes: 1100,
-		CreatedAt: pgtime(time.Now()),
-	})
-	if loc.ObjectKey != "nh" || loc.BackendName != "b11" {
-		t.Errorf("unexpected location: %+v", loc)
-	}
-}
-
-// TestToObjectLocation_UnknownTypeReturnsZero covers the default arm.
-func TestToObjectLocation_UnknownTypeReturnsZero(t *testing.T) {
-	t.Parallel()
-	loc := toObjectLocation(struct{}{})
-	if loc.ObjectKey != "" || loc.BackendName != "" {
-		t.Errorf("unknown row type should yield zero ObjectLocation, got %+v", loc)
-	}
-}
-
-// TestToObjectLocations_FlattensSlice sanity-checks the slice helper that
-// routes every row through toObjectLocation.
-func TestToObjectLocations_FlattensSlice(t *testing.T) {
-	t.Parallel()
-	rows := []any{
-		db.ListObjectsByBackendRow{ObjectKey: "a", BackendName: "b", SizeBytes: 1, CreatedAt: pgtime(time.Now())},
-		db.ListObjectsByBackendRow{ObjectKey: "c", BackendName: "d", SizeBytes: 2, CreatedAt: pgtime(time.Now())},
-	}
-	out := make([]ObjectLocation, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, toObjectLocation(r))
-	}
-	if len(out) != 2 {
-		t.Fatalf("expected 2 results, got %d", len(out))
-	}
-	if out[0].ObjectKey != "a" || out[1].ObjectKey != "c" {
-		t.Errorf("unexpected flattened slice: %+v", out)
 	}
 }
