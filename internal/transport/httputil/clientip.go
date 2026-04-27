@@ -15,6 +15,24 @@ import (
 	"strings"
 )
 
+// IsTLSRequest reports whether the original client connection was over TLS.
+// True when r.TLS is set (TLS terminated at this server) or when the direct
+// peer is a trusted proxy that forwarded X-Forwarded-Proto: https. Returns
+// false when no trusted-proxy chain is configured and r.TLS is nil — callers
+// can opt in to forced-Secure cookies via a separate config flag.
+func IsTLSRequest(r *http.Request, trustedProxies []*net.IPNet) bool {
+	if r.TLS != nil {
+		return true
+	}
+	if len(trustedProxies) == 0 {
+		return false
+	}
+	if !ipInNets(stripPort(r.RemoteAddr), trustedProxies) {
+		return false
+	}
+	return strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+}
+
 // ExtractClientIP returns the client's real IP address. When the direct peer
 // is a trusted proxy and X-Forwarded-For is present, the rightmost untrusted
 // IP is returned. Otherwise the direct peer IP is returned.
