@@ -43,6 +43,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
+	"github.com/afreidah/s3-orchestrator/internal/worker"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 
 	"golang.org/x/crypto/bcrypt"
@@ -64,9 +65,53 @@ const (
 	opCleanExcess         = "clean-excess"
 )
 
+// BackendOps is the narrow surface of *proxy.BackendManager that the UI
+// dashboard depends on for operations not exposed via a named sub-manager.
+// *proxy.BackendManager satisfies it.
+type BackendOps interface {
+	GetDashboardData(ctx context.Context) (*proxy.DashboardData, error)
+	GetDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*store.DirectoryListResult, error)
+	SyncBackend(ctx context.Context, backendName, virtualBucket string, virtualBuckets []string) (int, int, error)
+}
+
+// Compile-time assertion: *proxy.BackendManager implements BackendOps.
+var _ BackendOps = (*proxy.BackendManager)(nil)
+
+// Deps groups the narrow types the UI handler depends on. Construction goes
+// through this struct so the handler never holds a *proxy.BackendManager.
+type Deps struct {
+	BackendOps    BackendOps
+	Objects       *proxy.ObjectManager
+	Rebalancer    *worker.Rebalancer
+	OverRep       *worker.OverReplicationCleaner
+	DBHealthy     func() bool
+	Cfg           *config.Config
+	LogBuffer     *telemetry.LogBuffer
+	LoginThrottle *httputil.LoginThrottle
+}
+
+// fromManager builds Deps from a BackendManager, plumbing its sub-managers
+// into the narrow fields. Used by the legacy New constructor and by tests
+// that already wire a manager up.
+func fromManager(manager *proxy.BackendManager, dbHealthy func() bool, cfg *config.Config, logBuffer *telemetry.LogBuffer, loginThrottle *httputil.LoginThrottle) *Deps {
+	return &Deps{
+		BackendOps:    manager,
+		Objects:       manager.ObjectManager,
+		Rebalancer:    manager.Rebalancer,
+		OverRep:       manager.OverReplicationCleaner,
+		DBHealthy:     dbHealthy,
+		Cfg:           cfg,
+		LogBuffer:     logBuffer,
+		LoginThrottle: loginThrottle,
+	}
+}
+
 // Handler serves the web UI dashboard.
 type Handler struct {
-	manager        *proxy.BackendManager
+	backendOps     BackendOps
+	objects        *proxy.ObjectManager
+	rebalancer     *worker.Rebalancer
+	overRep        *worker.OverReplicationCleaner
 	dbHealthy      func() bool
 	cfg            syncutil.AtomicConfig[config.Config]
 	templates      *template.Template
@@ -81,21 +126,32 @@ type Handler struct {
 	asyncOps       asyncOpTracker
 }
 
-// New creates a new UI handler.
+// New creates a UI handler from a fully-wired BackendManager. Retained for
+// callers that already hold a manager (tests, legacy entry points). DI uses
+// NewWithDeps directly so handlers never depend on the god-shaped manager.
 func New(manager *proxy.BackendManager, dbHealthy func() bool, cfg *config.Config, logBuffer *telemetry.LogBuffer, loginThrottle *httputil.LoginThrottle) *Handler {
+	return NewWithDeps(fromManager(manager, dbHealthy, cfg, logBuffer, loginThrottle))
+}
+
+// NewWithDeps is the explicit-deps constructor. The DI layer routes through
+// here so the dependency graph is visible at the call site.
+func NewWithDeps(d *Deps) *Handler {
 	h := &Handler{
-		manager:        manager,
-		dbHealthy:      dbHealthy,
+		backendOps:     d.BackendOps,
+		objects:        d.Objects,
+		rebalancer:     d.Rebalancer,
+		overRep:        d.OverRep,
+		dbHealthy:      d.DBHealthy,
 		templates:      loadTemplates(),
-		logBuffer:      logBuffer,
-		loginThrottle:  loginThrottle,
-		adminKey:       cfg.UI.AdminKey,
-		adminSecret:    cfg.UI.AdminSecret,
-		sessionKey:     deriveSessionKey(&cfg.UI),
-		forceSecure:    cfg.UI.ForceSecureCookies,
-		trustedProxies: httputil.ParseTrustedProxies(cfg.RateLimit.TrustedProxies),
+		logBuffer:      d.LogBuffer,
+		loginThrottle:  d.LoginThrottle,
+		adminKey:       d.Cfg.UI.AdminKey,
+		adminSecret:    d.Cfg.UI.AdminSecret,
+		sessionKey:     deriveSessionKey(&d.Cfg.UI),
+		forceSecure:    d.Cfg.UI.ForceSecureCookies,
+		trustedProxies: httputil.ParseTrustedProxies(d.Cfg.RateLimit.TrustedProxies),
 	}
-	h.cfg.Store(cfg)
+	h.cfg.Store(d.Cfg)
 	return h
 }
 
@@ -452,7 +508,7 @@ type configSummary struct {
 func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
 
-	data, err := h.manager.GetDashboardData(r.Context())
+	data, err := h.backendOps.GetDashboardData(r.Context())
 	if err != nil {
 		slog.ErrorContext(r.Context(), "UI: failed to get dashboard data", "error", err)
 		http.Error(w, "Failed to load dashboard data", http.StatusInternalServerError)
@@ -531,7 +587,7 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleAPIDashboard(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
 
-	data, err := h.manager.GetDashboardData(r.Context())
+	data, err := h.backendOps.GetDashboardData(r.Context())
 	if err != nil {
 		slog.ErrorContext(r.Context(), "UI: failed to get dashboard data", "error", err)
 		writeJSONError(w, http.StatusInternalServerError, "failed to load data")
@@ -562,7 +618,7 @@ func (h *Handler) handleTreeAPI(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	result, err := h.manager.GetDirectoryChildren(r.Context(), prefix, startAfter, maxKeys)
+	result, err := h.backendOps.GetDirectoryChildren(r.Context(), prefix, startAfter, maxKeys)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "UI: failed to list directory children", "prefix", prefix, "error", err)
 		writeJSONError(w, http.StatusInternalServerError, "failed to list children")
@@ -603,7 +659,7 @@ func (h *Handler) handleAPIDelete(w http.ResponseWriter, r *http.Request) {
 		telemetry.RequestDuration.WithLabelValues("DELETE").Observe(time.Since(opStart).Seconds())
 	}()
 
-	if err := h.manager.ObjectManager.DeleteObject(r.Context(), req.Key); err != nil {
+	if err := h.objects.DeleteObject(r.Context(), req.Key); err != nil {
 		slog.ErrorContext(r.Context(), "UI: failed to delete object", "key", req.Key, "error", err)
 		w.Header().Set(headerContentType, contentTypeJSON)
 		w.WriteHeader(http.StatusInternalServerError)
@@ -648,7 +704,7 @@ func (h *Handler) handleAPIDeletePrefix(w http.ResponseWriter, r *http.Request) 
 	var keys []string
 	startAfter := ""
 	for {
-		result, err := h.manager.ObjectManager.ListObjects(r.Context(), req.Prefix, "", startAfter, 1000)
+		result, err := h.objects.ListObjects(r.Context(), req.Prefix, "", startAfter, 1000)
 		if err != nil {
 			slog.ErrorContext(r.Context(), "UI: failed to list objects for prefix delete", "prefix", req.Prefix, "error", err)
 			w.Header().Set(headerContentType, contentTypeJSON)
@@ -671,7 +727,7 @@ func (h *Handler) handleAPIDeletePrefix(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	results := h.manager.ObjectManager.DeleteObjects(r.Context(), keys)
+	results := h.objects.DeleteObjects(r.Context(), keys)
 	var errCount int
 	for _, res := range results {
 		if res.Err != nil {
@@ -741,7 +797,7 @@ func (h *Handler) handleAPIUpload(w http.ResponseWriter, r *http.Request) {
 		telemetry.RequestDuration.WithLabelValues("PUT").Observe(time.Since(opStart).Seconds())
 	}()
 
-	etag, err := h.manager.ObjectManager.PutObject(r.Context(), key, file, header.Size, contentType, nil)
+	etag, err := h.objects.PutObject(r.Context(), key, file, header.Size, contentType, nil)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "UI: failed to upload object", "key", key, "error", err)
 		w.Header().Set(headerContentType, contentTypeJSON)
@@ -775,7 +831,7 @@ func (h *Handler) handleAPIDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.manager.ObjectManager.GetObject(r.Context(), key, "")
+	result, err := h.objects.GetObject(r.Context(), key, "")
 	if err != nil {
 		if errors.Is(err, store.ErrObjectNotFound) {
 			writeJSONError(w, http.StatusNotFound, "not found")
@@ -815,7 +871,7 @@ func (h *Handler) handleAPIRebalance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rebalCfg := h.manager.Rebalancer.Config()
+	rebalCfg := h.rebalancer.Config()
 	if rebalCfg == nil {
 		rebalCfg = &h.cfg.Load().Rebalance
 	}
@@ -834,7 +890,7 @@ func (h *Handler) handleAPIRebalance(w http.ResponseWriter, r *http.Request) {
 	}
 
 	go func() {
-		moved, err := h.manager.Rebalancer.Rebalance(context.Background(), runCfg)
+		moved, err := h.rebalancer.Rebalance(context.Background(), runCfg)
 		if err != nil {
 			slog.Error("UI: rebalance failed", "error", err) //nolint:sloglint // background goroutine, no request context
 			h.asyncOps.Complete("rebalance", &asyncResult{Error: "rebalance failed"})
@@ -879,7 +935,7 @@ func (h *Handler) handleAPICleanExcess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rcfg := h.manager.OverReplicationCleaner.Config()
+	rcfg := h.overRep.Config()
 	if rcfg == nil {
 		rcfg = &h.cfg.Load().Replication
 	}
@@ -905,7 +961,7 @@ func (h *Handler) handleAPICleanExcess(w http.ResponseWriter, r *http.Request) {
 	}
 
 	go func() {
-		removed, err := h.manager.OverReplicationCleaner.Clean(context.Background(), cfg)
+		removed, err := h.overRep.Clean(context.Background(), cfg)
 		if err != nil {
 			slog.Error("UI: over-replication cleanup failed", "error", err) //nolint:sloglint // background goroutine, no request context
 			h.asyncOps.Complete(opCleanExcess, &asyncResult{Error: "cleanup failed"})
@@ -980,7 +1036,7 @@ func (h *Handler) handleAPISync(w http.ResponseWriter, r *http.Request) {
 		bucketNames[i] = b.Name
 	}
 
-	imported, skipped, err := h.manager.SyncBackend(r.Context(), req.Backend, req.Bucket, bucketNames)
+	imported, skipped, err := h.backendOps.SyncBackend(r.Context(), req.Backend, req.Bucket, bucketNames)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "UI: sync failed", "backend", req.Backend, "bucket", req.Bucket, "error", err)
 		w.Header().Set(headerContentType, contentTypeJSON)

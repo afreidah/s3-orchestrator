@@ -54,12 +54,17 @@ func newTestHandlerWithManager(t *testing.T) *Handler {
 	var lv slog.LevelVar
 	lv.Set(slog.LevelInfo)
 	return &Handler{
-		manager:  mgr,
-		dbCB:     cb,
-		objects:  mock,
-		cleanup:  mock,
-		token:    "test-token",
-		logLevel: &lv,
+		backendOps: mgr,
+		replicator: mgr.Replicator,
+		overRep:    mgr.OverReplicationCleaner,
+		drain:      mgr.DrainManager,
+		scrubber:   mgr.Scrubber,
+		lifecycle:  mock,
+		dbCB:       cb,
+		objects:    mock,
+		cleanup:    mock,
+		token:      "test-token",
+		logLevel:   &lv,
 	}
 }
 
