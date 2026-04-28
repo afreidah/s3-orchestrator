@@ -13,8 +13,8 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/store"
@@ -54,32 +54,29 @@ func (s *Store) GetUnderReplicatedObjectsExcluding(ctx context.Context, factor, 
 		return s.GetUnderReplicatedObjects(ctx, factor, limit)
 	}
 
-	// Build dynamic NOT IN (?,?,...) placeholder list.
-	placeholders := make([]string, len(excludedBackends))
-	args := make([]any, 0, len(excludedBackends)+2)
-	for i, b := range excludedBackends {
-		placeholders[i] = "?"
-		args = append(args, b)
+	// Expand the excluded list inside SQLite via the JSON1 extension's
+	// json_each so the query body stays a fixed literal — no Go-side
+	// string concatenation building the IN clause.
+	excludedJSON, err := json.Marshal(excludedBackends)
+	if err != nil {
+		return nil, fmt.Errorf("encode excluded backend list: %w", err)
 	}
-	args = append(args, factor, limit)
 
-	query := fmt.Sprintf( //nolint:gosec // G201: parameterized placeholders, format builds IN clause template only
-		`SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.encrypted,
-		        ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.created_at
-		 FROM object_locations ol
-		 JOIN (
-		     SELECT object_key
-		     FROM object_locations
-		     WHERE backend_name NOT IN (%s)
-		     GROUP BY object_key
-		     HAVING COUNT(*) < ?
-		     LIMIT ?
-		 ) ur ON ol.object_key = ur.object_key
-		 ORDER BY ol.object_key, ol.created_at ASC`,
-		strings.Join(placeholders, ","),
-	)
+	const query = `
+		SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.encrypted,
+		       ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.created_at
+		FROM object_locations ol
+		JOIN (
+		    SELECT object_key
+		    FROM object_locations
+		    WHERE backend_name NOT IN (SELECT value FROM json_each(?))
+		    GROUP BY object_key
+		    HAVING COUNT(*) < ?
+		    LIMIT ?
+		) ur ON ol.object_key = ur.object_key
+		ORDER BY ol.object_key, ol.created_at ASC`
 
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.db.QueryContext(ctx, query, string(excludedJSON), factor, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query under-replicated objects (excluding): %w", err)
 	}

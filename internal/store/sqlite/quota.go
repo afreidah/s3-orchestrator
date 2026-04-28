@@ -13,8 +13,8 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -55,13 +55,21 @@ func (s *Store) GetBackendWithSpace(ctx context.Context, size int64, backendOrde
 }
 
 // GetLeastUtilizedBackend finds the backend with the lowest utilization ratio
-// that has enough space for the given size. Used by the "spread" routing strategy.
+// that has enough space for the given size. Used by the "spread" routing
+// strategy. The eligible list expands inside SQLite via the JSON1
+// extension's json_each, so the query body is a fixed literal with no
+// dynamic SQL string construction.
 func (s *Store) GetLeastUtilizedBackend(ctx context.Context, size int64, eligible []string) (string, error) {
 	if len(eligible) == 0 {
 		return "", store.ErrNoSpaceAvailable
 	}
 
-	query := `
+	eligibleJSON, err := json.Marshal(eligible)
+	if err != nil {
+		return "", fmt.Errorf("encode eligible backend list: %w", err)
+	}
+
+	const query = `
 		SELECT q.backend_name
 		FROM backend_quotas q
 		LEFT JOIN (
@@ -70,7 +78,7 @@ func (s *Store) GetLeastUtilizedBackend(ctx context.Context, size int64, eligibl
 			JOIN multipart_parts mp ON mp.upload_id = mu.upload_id
 			GROUP BY mu.backend_name
 		) m ON m.backend_name = q.backend_name
-		WHERE q.backend_name IN (` + placeholders(len(eligible)) + `)
+		WHERE q.backend_name IN (SELECT value FROM json_each(?))
 		  AND CASE WHEN q.bytes_limit = 0 THEN 9223372036854775807
 		           ELSE (q.bytes_limit - q.bytes_used - q.orphan_bytes - COALESCE(m.inflight, 0))
 		      END >= ?
@@ -79,11 +87,8 @@ func (s *Store) GetLeastUtilizedBackend(ctx context.Context, size int64, eligibl
 		         END ASC
 		LIMIT 1`
 
-	args := toArgs(eligible)
-	args = append(args, size)
-
 	var backendName string
-	err := s.db.QueryRowContext(ctx, query, args...).Scan(&backendName)
+	err = s.db.QueryRowContext(ctx, query, string(eligibleJSON), size).Scan(&backendName)
 	if err == sql.ErrNoRows {
 		return "", store.ErrNoSpaceAvailable
 	}
@@ -241,21 +246,4 @@ func (s *Store) GetUsageForPeriod(ctx context.Context, period string) (map[strin
 		return nil, fmt.Errorf("failed to iterate usage stats: %w", err)
 	}
 	return stats, nil
-}
-
-// placeholders returns a string of n comma-separated "?" placeholders.
-func placeholders(n int) string {
-	if n <= 0 {
-		return ""
-	}
-	return strings.Repeat("?,", n-1) + "?"
-}
-
-// toArgs converts a string slice to a slice of any for use as query arguments.
-func toArgs(ss []string) []any {
-	args := make([]any, len(ss))
-	for i, s := range ss {
-		args[i] = s
-	}
-	return args
 }
