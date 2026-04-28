@@ -206,6 +206,69 @@ func TestReconcileSorted_DBIteratorErrorAborts(t *testing.T) {
 	}
 }
 
+// TestReconcileSorted_S3PrimeErrorAborts verifies the very first call to
+// s3.next, before the loop starts, surfaces from the merge. Covers the
+// priming-error early return distinct from the in-loop error paths.
+func TestReconcileSorted_S3PrimeErrorAborts(t *testing.T) {
+	want := errors.New("s3 prime")
+	s3 := &sliceKeySource{err: want, errAt: 0} // fail on first next()
+	_, _, err := runMerge(t, s3, &sliceKeySource{})
+	if !errors.Is(err, want) {
+		t.Errorf("err = %v, want %v", err, want)
+	}
+}
+
+// TestReconcileSorted_DBPrimeErrorAborts verifies the priming call to
+// dbIter.next surfaces from the merge.
+func TestReconcileSorted_DBPrimeErrorAborts(t *testing.T) {
+	want := errors.New("db prime")
+	dbIter := &sliceKeySource{err: want, errAt: 0}
+	_, _, err := runMerge(t, &sliceKeySource{entries: []reconcileEntry{e("a", 1)}}, dbIter)
+	if !errors.Is(err, want) {
+		t.Errorf("err = %v, want %v", err, want)
+	}
+}
+
+// TestReconcileSorted_DeleteHandlerErrorAborts ensures onDelete failures
+// propagate (mirrors TestReconcileSorted_HandlerErrorAborts on the import
+// side, but explicitly drives the delete branch).
+func TestReconcileSorted_DeleteHandlerErrorAborts(t *testing.T) {
+	want := errors.New("delete broke")
+	dbIter := &sliceKeySource{entries: []reconcileEntry{e("x", 0), e("y", 0)}}
+	called := 0
+	err := reconcileSorted(context.Background(), &sliceKeySource{}, dbIter,
+		func(_ context.Context, _ reconcileEntry) error { return nil },
+		func(_ context.Context, _ string) error {
+			called++
+			return want
+		},
+	)
+	if !errors.Is(err, want) {
+		t.Errorf("err = %v, want %v", err, want)
+	}
+	if called != 1 {
+		t.Errorf("expected exactly one onDelete invocation before abort, got %d", called)
+	}
+}
+
+// TestReconcileSorted_MatchStepS3AdvanceErrorAborts targets the S3-side
+// advance inside matchStep: the first key matches, then the second
+// s3.next call fails. Without this, matchStep's s3-advance error branch
+// is never hit.
+func TestReconcileSorted_MatchStepS3AdvanceErrorAborts(t *testing.T) {
+	want := errors.New("s3 advance after match")
+	s3 := &sliceKeySource{
+		entries: []reconcileEntry{e("a", 1)},
+		err:     want,
+		errAt:   1, // fail when advanceS3 runs after the match
+	}
+	dbIter := &sliceKeySource{entries: []reconcileEntry{e("a", 0), e("b", 0)}}
+	_, _, err := runMerge(t, s3, dbIter)
+	if !errors.Is(err, want) {
+		t.Errorf("err = %v, want %v", err, want)
+	}
+}
+
 // TestReconcileSorted_HandlerErrorAborts verifies that an onImport /
 // onDelete failure short-circuits the merge.
 func TestReconcileSorted_HandlerErrorAborts(t *testing.T) {
@@ -328,6 +391,21 @@ func TestDBCursorStream_PropagatesError(t *testing.T) {
 	_, _, err := it.next(ctx)
 	if !errors.Is(err, want) {
 		t.Errorf("err = %v, want %v", err, want)
+	}
+}
+
+// TestDBCursorStream_StopIsNoop confirms stop is callable and idempotent
+// — it has no goroutine to halt, so the contract is "does not panic and
+// has no side effect on subsequent next calls."
+func TestDBCursorStream_StopIsNoop(t *testing.T) {
+	t.Parallel()
+	lister := &fakeLister{pages: [][]st.ObjectLocation{{{ObjectKey: "vb/a"}}}}
+	it := newDBCursorStream(context.Background(), lister, "be1", "vb/", nil)
+	it.stop()
+	it.stop() // idempotent
+	got := drain(t, it)
+	if !equalStrings(got, []string{"vb/a"}) {
+		t.Errorf("stop should not affect iteration, got %v", got)
 	}
 }
 

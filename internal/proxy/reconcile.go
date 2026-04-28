@@ -61,49 +61,100 @@ func reconcileSorted(
 	onImport func(ctx context.Context, e reconcileEntry) error,
 	onDelete func(ctx context.Context, key string) error,
 ) error {
-	s3Cur, s3OK, err := s3.next(ctx)
-	if err != nil {
+	s := &mergeState{ctx: ctx, s3: s3, db: dbIter, onImport: onImport, onDelete: onDelete}
+	if err := s.advanceS3(); err != nil {
 		return err
 	}
-	dbCur, dbOK, err := dbIter.next(ctx)
-	if err != nil {
+	if err := s.advanceDB(); err != nil {
 		return err
 	}
-
-	for {
-		switch {
-		case !s3OK && !dbOK:
-			return nil
-
-		case !dbOK || (s3OK && s3Cur.key < dbCur.key):
-			if err := onImport(ctx, s3Cur); err != nil {
-				return err
-			}
-			s3Cur, s3OK, err = s3.next(ctx)
-			if err != nil {
-				return err
-			}
-
-		case !s3OK || s3Cur.key > dbCur.key:
-			if err := onDelete(ctx, dbCur.key); err != nil {
-				return err
-			}
-			dbCur, dbOK, err = dbIter.next(ctx)
-			if err != nil {
-				return err
-			}
-
-		default: // equal: both sides agree on this key
-			s3Cur, s3OK, err = s3.next(ctx)
-			if err != nil {
-				return err
-			}
-			dbCur, dbOK, err = dbIter.next(ctx)
-			if err != nil {
-				return err
-			}
+	for !s.done() {
+		if err := s.step(); err != nil {
+			return err
 		}
 	}
+	return nil
+}
+
+// mergeState holds the rolling cursor pair plus the callbacks the merge
+// loop dispatches to. Pulling the four-variable cursor state into a struct
+// is the only way to extract the per-branch bodies into methods without
+// passing pointers to every variable on every call — and the extraction is
+// what keeps each method below the cognitive-complexity threshold.
+type mergeState struct {
+	ctx      context.Context
+	s3, db   keySource
+	s3Cur    reconcileEntry
+	dbCur    reconcileEntry
+	s3OK     bool
+	dbOK     bool
+	onImport func(ctx context.Context, e reconcileEntry) error
+	onDelete func(ctx context.Context, key string) error
+}
+
+// done reports whether both streams are exhausted.
+func (s *mergeState) done() bool { return !s.s3OK && !s.dbOK }
+
+// step advances exactly one merge round, picking the branch (import,
+// delete, or match) based on which side currently holds the smaller key.
+func (s *mergeState) step() error {
+	switch {
+	case !s.dbOK || (s.s3OK && s.s3Cur.key < s.dbCur.key):
+		return s.importStep()
+	case !s.s3OK || s.s3Cur.key > s.dbCur.key:
+		return s.deleteStep()
+	default:
+		return s.matchStep()
+	}
+}
+
+// importStep fires onImport for the current S3 entry then pulls the next
+// one. Used when the DB cursor is exhausted or the S3 key sorts before
+// the DB key.
+func (s *mergeState) importStep() error {
+	if err := s.onImport(s.ctx, s.s3Cur); err != nil {
+		return err
+	}
+	return s.advanceS3()
+}
+
+// deleteStep fires onDelete for the current DB key then pulls the next DB
+// row. Used when the S3 stream is exhausted or the DB key sorts before
+// the S3 key.
+func (s *mergeState) deleteStep() error {
+	if err := s.onDelete(s.ctx, s.dbCur.key); err != nil {
+		return err
+	}
+	return s.advanceDB()
+}
+
+// matchStep advances both cursors. Used when the keys match — the row is
+// present on both sides and no callback fires.
+func (s *mergeState) matchStep() error {
+	if err := s.advanceS3(); err != nil {
+		return err
+	}
+	return s.advanceDB()
+}
+
+// advanceS3 pulls the next entry from the S3 stream into the cursor pair.
+func (s *mergeState) advanceS3() error {
+	cur, ok, err := s.s3.next(s.ctx)
+	if err != nil {
+		return err
+	}
+	s.s3Cur, s.s3OK = cur, ok
+	return nil
+}
+
+// advanceDB pulls the next entry from the DB stream into the cursor pair.
+func (s *mergeState) advanceDB() error {
+	cur, ok, err := s.db.next(s.ctx)
+	if err != nil {
+		return err
+	}
+	s.dbCur, s.dbOK = cur, ok
+	return nil
 }
 
 // -------------------------------------------------------------------------
@@ -294,6 +345,9 @@ func (d *dbCursorStream) next(ctx context.Context) (reconcileEntry, bool, error)
 	}
 }
 
+// stop is a no-op for the DB cursor — the iterator owns no goroutine and
+// holds no other resource that needs explicit teardown. Defined so the
+// type satisfies keySource alongside s3KeyStream, which does need cleanup.
 func (d *dbCursorStream) stop() {}
 
 // belongs reports whether a DB-side key falls within the current bucket
