@@ -13,6 +13,7 @@ package sqlite
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -593,6 +594,39 @@ func TestGetLeastUtilizedBackend(t *testing.T) {
 	}
 	if name != "backend-b" {
 		t.Errorf("expected backend-b (less utilized), got %q", name)
+	}
+}
+
+// TestGetLeastUtilizedBackend_FiltersByEligibleList confirms the IN clause
+// genuinely filters: backend-a has more free space than backend-b, but
+// the eligible list contains only backend-b, so backend-b must win.
+func TestGetLeastUtilizedBackend_FiltersByEligibleList(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	mustRecordObject(t, s, "bucket/big", "backend-b", 500<<20)
+
+	name, err := s.GetLeastUtilizedBackend(ctx, 100, []string{"backend-b"})
+	if err != nil {
+		t.Fatalf("GetLeastUtilizedBackend: %v", err)
+	}
+	if name != "backend-b" {
+		t.Errorf("eligible=[backend-b] forced selection failed, got %q", name)
+	}
+}
+
+// TestGetLeastUtilizedBackend_RejectsUnknownEligibleNames asserts the IN
+// filter does not silently fall back to a registered-but-not-eligible
+// backend when the caller's list contains only unknown names.
+func TestGetLeastUtilizedBackend_RejectsUnknownEligibleNames(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	_, err := s.GetLeastUtilizedBackend(ctx, 100, []string{"never-registered"})
+	if !errors.Is(err, store.ErrNoSpaceAvailable) {
+		t.Errorf("err = %v, want ErrNoSpaceAvailable", err)
 	}
 }
 
