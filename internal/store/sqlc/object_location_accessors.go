@@ -46,10 +46,17 @@ func (r ListExpiredObjectsRow) GetCreatedAt() pgtype.Timestamptz { return r.Crea
 
 // ListDirectChildrenRow
 
-func (r ListDirectChildrenRow) GetObjectKey() string         { return r.ObjectKey }
-func (r ListDirectChildrenRow) GetBackendName() string       { return r.BackendName }
-func (r ListDirectChildrenRow) GetSizeBytes() int64          { return r.SizeBytes }
+func (r ListDirectChildrenRow) GetObjectKey() string             { return r.ObjectKey }
+func (r ListDirectChildrenRow) GetBackendName() string           { return r.BackendName }
+func (r ListDirectChildrenRow) GetSizeBytes() int64              { return r.SizeBytes }
 func (r ListDirectChildrenRow) GetCreatedAt() pgtype.Timestamptz { return r.CreatedAt }
+
+// ListObjectsByBackendKeyAscRow
+
+func (r ListObjectsByBackendKeyAscRow) GetObjectKey() string             { return r.ObjectKey }
+func (r ListObjectsByBackendKeyAscRow) GetBackendName() string           { return r.BackendName }
+func (r ListObjectsByBackendKeyAscRow) GetSizeBytes() int64              { return r.SizeBytes }
+func (r ListObjectsByBackendKeyAscRow) GetCreatedAt() pgtype.Timestamptz { return r.CreatedAt }
 
 // -------------------------------------------------------------------------
 // Fat rows (slim columns + encryption + content hash).

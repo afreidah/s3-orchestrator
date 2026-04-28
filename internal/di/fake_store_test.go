@@ -35,6 +35,9 @@ func (fakeConcreteStore) ListObjects(context.Context, string, string, int) (*sto
 func (fakeConcreteStore) ListObjectsByBackend(context.Context, string, int) ([]store.ObjectLocation, error) {
 	return nil, nil
 }
+func (fakeConcreteStore) ListObjectsByBackendKeyAsc(context.Context, string, string, int) ([]store.ObjectLocation, error) {
+	return nil, nil
+}
 func (fakeConcreteStore) MoveObjectLocation(context.Context, string, string, string) (int64, error) {
 	return 0, nil
 }

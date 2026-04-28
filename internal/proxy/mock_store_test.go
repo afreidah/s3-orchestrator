@@ -75,6 +75,10 @@ type mockStore struct {
 	listObjectsByBackendResp  []st.ObjectLocation
 	listObjectsByBackendPages [][]st.ObjectLocation // for paginated tests
 	listObjectsByBackendErr   error
+
+	// listObjectsByBackendKeyAscFn drives the cursor-based listing used by
+	// ReconcileBackend's sorted-merge join. Tests set it; default returns nil.
+	listObjectsByBackendKeyAscFn func(afterKey string, limit int) ([]st.ObjectLocation, error)
 	listObjectsByBackendGate  chan struct{} // if set, blocks until closed
 	deleteObjectLocationCalls []deleteObjectLocationCall
 	deleteObjectLocationErr   error
@@ -401,6 +405,19 @@ func (m *mockStore) ListObjectsByBackend(ctx context.Context, _ string, _ int) (
 		return page, nil
 	}
 	return m.listObjectsByBackendResp, nil
+}
+
+// ListObjectsByBackendKeyAsc paginates by object_key. Tests install
+// listObjectsByBackendKeyAscFn to drive the ReconcileBackend sorted-merge
+// with deterministic page sequences.
+func (m *mockStore) ListObjectsByBackendKeyAsc(_ context.Context, _, afterKey string, limit int) ([]st.ObjectLocation, error) {
+	m.mu.Lock()
+	fn := m.listObjectsByBackendKeyAscFn
+	m.mu.Unlock()
+	if fn != nil {
+		return fn(afterKey, limit)
+	}
+	return nil, nil
 }
 
 func (m *mockStore) MoveObjectLocation(_ context.Context, _, _, _ string) (int64, error) {

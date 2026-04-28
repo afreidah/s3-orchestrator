@@ -174,7 +174,11 @@ ui:
   admin_key: ${UI_ADMIN_KEY}
   admin_secret: ${UI_ADMIN_SECRET}
   session_secret: ${UI_SESSION_SECRET}
-  force_secure_cookies: true
+  force_secure_cookies: true   # unconditionally sets Secure on session cookies; if the
+                               # service runs behind a TLS-terminating reverse proxy you
+                               # can drop this and instead set rate_limit.trusted_proxies
+                               # so the orchestrator picks up TLS from X-Forwarded-Proto.
+                               # See docs/security-hardening.md.
 
 usage_flush:
   interval: "30s"

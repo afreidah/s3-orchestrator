@@ -287,7 +287,12 @@ ui:
   admin_key: "{{ .Data.data.ui_admin_key }}"
   admin_secret: "{{ .Data.data.ui_admin_secret }}"
   session_secret: "{{ .Data.data.ui_session_secret }}"
-  force_secure_cookies: true
+  force_secure_cookies: true   # unconditionally sets Secure on session cookies. The
+                               # trusted_proxies block above also lets the orchestrator
+                               # detect TLS via X-Forwarded-Proto when the reverse proxy
+                               # forwards it; either path is sufficient. Keep this line
+                               # if you do not want to rely on the proxy always forwarding
+                               # the header. See docs/security-hardening.md.
 
 usage_flush:
   interval: "30s"

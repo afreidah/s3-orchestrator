@@ -375,27 +375,33 @@ nomad-demo: ## Run the s3-orchestrator in Nomad dev mode (requires docker, nomad
 WEB_IMAGE  := $(REGISTRY)/s3-orchestrator-web
 WEB_TAG    ?= $(VERSION)
 
-# Format: path:name (name defaults to path when no colon is present)
-GODOC_PKGS := \
-	proxy store backend config counter encryption lifecycle breaker worker notify cache \
-	transport/s3api:s3api transport/admin:admin transport/ui:ui transport/auth:auth transport/httputil:httputil \
-	observe/telemetry:telemetry observe/audit:audit observe/event:event \
-	util/bufpool:bufpool util/syncutil:syncutil util/workerpool:workerpool
+# GODOC_EXCLUDES filters auto-discovered internal packages out of the godoc
+# build. Anchored regex: each alternative matches a complete sub-path under
+# internal/. Adjust here when adding a new test-only or generated package.
+GODOC_EXCLUDES := ^(integration|testutil|testutil/.*|backend/backendtest|store/sqlc|store/migrations|.*/testdata|.*/testdata/.*)$$
 
 web-tools: ## Install Hugo and gomarkdoc for local website development
 	go install github.com/gohugoio/hugo@latest
 	go install github.com/princjef/gomarkdoc/cmd/gomarkdoc@latest
 
+# web-godoc auto-discovers every internal/ Go package and generates a
+# matching Hugo godoc page, avoiding the maintenance hazard of a hand-kept
+# package list. The page filename is the package's basename; nested
+# packages produce non-colliding bases (e.g. transport/admin -> admin.md,
+# cli/adminctl -> adminctl.md).
 web-godoc: ## Generate Go API reference markdown for the website
 	@mkdir -p web/content/godoc
-	@for spec in $(GODOC_PKGS); do \
-		pkg=$${spec%%:*}; \
-		name=$${spec##*:}; \
-		echo "  godoc: internal/$$pkg"; \
-		printf -- '---\ntitle: "%s"\n---\n\n' "$$name" > web/content/godoc/$$name.md; \
-		gomarkdoc ./internal/$$pkg >> web/content/godoc/$$name.md; \
-		sed -i '/^# '"$$name"'$$/d' web/content/godoc/$$name.md; \
-	done
+	@go list -f '{{.ImportPath}}' ./internal/... \
+		| sed 's|^github.com/afreidah/s3-orchestrator/internal/||' \
+		| grep -vE '$(GODOC_EXCLUDES)' \
+		| sort \
+		| while read pkg; do \
+			name=$$(basename $$pkg); \
+			echo "  godoc: internal/$$pkg -> $$name.md"; \
+			printf -- '---\ntitle: "%s"\n---\n\n' "$$name" > web/content/godoc/$$name.md; \
+			gomarkdoc ./internal/$$pkg >> web/content/godoc/$$name.md; \
+			sed -i '/^# '"$$name"'$$/d' web/content/godoc/$$name.md; \
+		done
 
 web-serve: web-godoc ## Serve the project website locally
 	cd web && hugo serve

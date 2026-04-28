@@ -343,6 +343,45 @@ func TestIsDBError_WrappedS3Error(t *testing.T) {
 // postCheck edge cases
 // -------------------------------------------------------------------------
 
+// TestCBObjectStore_ListObjectsByBackendKeyAsc_DelegatesAndReturnsRows
+// covers the closed-circuit happy path: the call passes through to the
+// inner store and returns its rows.
+func TestCBObjectStore_ListObjectsByBackendKeyAsc_DelegatesAndReturnsRows(t *testing.T) {
+	t.Parallel()
+	want := []ObjectLocation{{ObjectKey: "vb/a", BackendName: "be1"}, {ObjectKey: "vb/b", BackendName: "be1"}}
+	mock := &mockStore{listObjectsByBackendKeyAscResp: want}
+	cb := newTestCB(mock, 3, time.Minute)
+
+	got, err := cb.ListObjectsByBackendKeyAsc(context.Background(), "be1", "", 100)
+	if err != nil {
+		t.Fatalf("ListObjectsByBackendKeyAsc: %v", err)
+	}
+	if len(got) != 2 || got[0].ObjectKey != "vb/a" || got[1].ObjectKey != "vb/b" {
+		t.Errorf("got %+v, want %+v", got, want)
+	}
+}
+
+// TestCBObjectStore_ListObjectsByBackendKeyAsc_OpenCircuitReturnsSentinel
+// trips the breaker, then verifies the next call returns ErrDBUnavailable
+// without reaching the inner store.
+func TestCBObjectStore_ListObjectsByBackendKeyAsc_OpenCircuitReturnsSentinel(t *testing.T) {
+	t.Parallel()
+	dbErr := errors.New("conn refused")
+	mock := &mockStore{listObjectsByBackendKeyAscErr: dbErr}
+	cb := newTestCB(mock, 1, time.Minute)
+
+	// First call: real DB error trips the breaker.
+	if _, err := cb.ListObjectsByBackendKeyAsc(context.Background(), "be1", "", 100); err == nil {
+		t.Fatal("expected DB error on first call")
+	}
+
+	// Second call: circuit open → sentinel.
+	_, err := cb.ListObjectsByBackendKeyAsc(context.Background(), "be1", "", 100)
+	if !errors.Is(err, ErrDBUnavailable) {
+		t.Errorf("err = %v, want ErrDBUnavailable", err)
+	}
+}
+
 func TestCircuitBreaker_PostCheck_NonDBErrorPassesThrough(t *testing.T) {
 	t.Parallel()
 	mock := &mockStore{getAllLocationsErr: ErrObjectNotFound}

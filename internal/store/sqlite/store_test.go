@@ -245,6 +245,91 @@ func TestListObjectsByBackend(t *testing.T) {
 	}
 }
 
+// TestListObjectsByBackendKeyAsc_FirstPage drives the cursor's empty-string
+// initial call: returns the lex-smallest rows for the backend in order.
+func TestListObjectsByBackendKeyAsc_FirstPage(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	mustRecordObject(t, s, "vb/c", "backend-a", 30)
+	mustRecordObject(t, s, "vb/a", "backend-a", 10)
+	mustRecordObject(t, s, "vb/b", "backend-a", 20)
+	mustRecordObject(t, s, "vb/x", "backend-b", 99) // different backend
+
+	got, err := s.ListObjectsByBackendKeyAsc(ctx, "backend-a", "", 10)
+	if err != nil {
+		t.Fatalf("ListObjectsByBackendKeyAsc: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("len = %d, want 3 (be1 only)", len(got))
+	}
+	want := []string{"vb/a", "vb/b", "vb/c"}
+	for i, w := range want {
+		if got[i].ObjectKey != w {
+			t.Errorf("got[%d] = %q, want %q (lex order)", i, got[i].ObjectKey, w)
+		}
+	}
+}
+
+// TestListObjectsByBackendKeyAsc_HonoursCursor verifies the > $afterKey
+// filter — successive pages skip rows already returned.
+func TestListObjectsByBackendKeyAsc_HonoursCursor(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	for _, k := range []string{"vb/a", "vb/b", "vb/c", "vb/d"} {
+		mustRecordObject(t, s, k, "backend-a", 1)
+	}
+
+	// First page: cursor "" → ["vb/a", "vb/b"]
+	page1, err := s.ListObjectsByBackendKeyAsc(ctx, "backend-a", "", 2)
+	if err != nil {
+		t.Fatalf("page1: %v", err)
+	}
+	if len(page1) != 2 || page1[0].ObjectKey != "vb/a" || page1[1].ObjectKey != "vb/b" {
+		t.Fatalf("page1 unexpected: %+v", page1)
+	}
+
+	// Second page: cursor "vb/b" → ["vb/c", "vb/d"]
+	page2, err := s.ListObjectsByBackendKeyAsc(ctx, "backend-a", page1[1].ObjectKey, 2)
+	if err != nil {
+		t.Fatalf("page2: %v", err)
+	}
+	if len(page2) != 2 || page2[0].ObjectKey != "vb/c" || page2[1].ObjectKey != "vb/d" {
+		t.Fatalf("page2 unexpected: %+v", page2)
+	}
+
+	// Third page: cursor "vb/d" → empty
+	page3, err := s.ListObjectsByBackendKeyAsc(ctx, "backend-a", page2[1].ObjectKey, 2)
+	if err != nil {
+		t.Fatalf("page3: %v", err)
+	}
+	if len(page3) != 0 {
+		t.Errorf("page3 should be empty, got %v", page3)
+	}
+}
+
+// TestListObjectsByBackendKeyAsc_RespectsLimit confirms the LIMIT clause
+// is honoured even when more rows match.
+func TestListObjectsByBackendKeyAsc_RespectsLimit(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	for _, k := range []string{"vb/a", "vb/b", "vb/c"} {
+		mustRecordObject(t, s, k, "backend-a", 1)
+	}
+	got, err := s.ListObjectsByBackendKeyAsc(ctx, "backend-a", "", 1)
+	if err != nil {
+		t.Fatalf("ListObjectsByBackendKeyAsc: %v", err)
+	}
+	if len(got) != 1 || got[0].ObjectKey != "vb/a" {
+		t.Errorf("limit not honoured: %+v", got)
+	}
+}
+
 // TestImportObject verifies that importing a pre-existing object records it correctly.
 func TestImportObject(t *testing.T) {
 	t.Parallel()

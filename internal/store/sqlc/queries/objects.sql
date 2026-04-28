@@ -22,6 +22,17 @@ WHERE backend_name = $1
 ORDER BY size_bytes ASC
 LIMIT $2;
 
+-- ListObjectsByBackendKeyAsc returns rows for a backend in ascending object_key
+-- order, starting strictly after the supplied cursor. Used by ReconcileBackend
+-- to drive a bounded-memory sorted-merge join against an S3 ListObjects walk.
+-- Pass '' as the cursor on the first call.
+-- name: ListObjectsByBackendKeyAsc :many
+SELECT object_key, backend_name, size_bytes, created_at
+FROM object_locations
+WHERE backend_name = $1 AND object_key > $2
+ORDER BY object_key ASC
+LIMIT $3;
+
 -- name: CheckObjectExistsOnBackend :one
 SELECT EXISTS(
     SELECT 1 FROM object_locations

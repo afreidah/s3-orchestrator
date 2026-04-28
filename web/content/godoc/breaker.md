@@ -9,7 +9,7 @@ title: "breaker"
 import "github.com/afreidah/s3-orchestrator/internal/breaker"
 ```
 
-Package breaker implements a generic three\-state circuit breaker \(closed, open, half\-open\) with pluggable error filters, probe jitter, and Prometheus metrics. Shared by the backend and store circuit breaker wrappers.
+Package breaker implements a generic three\-state circuit breaker \(closed, open, half\-open\) with pluggable error filters and probe jitter. The breaker emits no metrics or events on its own — callers wire those via the optional OnStateChange callback so this package stays free of observability dependencies.
 
 ## Index
 
@@ -19,11 +19,13 @@ Package breaker implements a generic three\-state circuit breaker \(closed, open
 - [type CircuitBreaker](<#CircuitBreaker>)
   - [func NewCircuitBreaker\(name string, threshold int, timeout time.Duration, isError func\(error\) bool, sentinel error\) \*CircuitBreaker](<#NewCircuitBreaker>)
   - [func \(cb \*CircuitBreaker\) IsHealthy\(\) bool](<#CircuitBreaker.IsHealthy>)
+  - [func \(cb \*CircuitBreaker\) Name\(\) string](<#CircuitBreaker.Name>)
   - [func \(cb \*CircuitBreaker\) OpenDuration\(\) time.Duration](<#CircuitBreaker.OpenDuration>)
   - [func \(cb \*CircuitBreaker\) PostCheck\(err error\) error](<#CircuitBreaker.PostCheck>)
   - [func \(cb \*CircuitBreaker\) PreCheck\(\) error](<#CircuitBreaker.PreCheck>)
   - [func \(cb \*CircuitBreaker\) ProbeEligible\(\) bool](<#CircuitBreaker.ProbeEligible>)
   - [func \(cb \*CircuitBreaker\) ResetStaleProbe\(\) bool](<#CircuitBreaker.ResetStaleProbe>)
+  - [func \(cb \*CircuitBreaker\) SetOnStateChange\(fn func\(StateChangeInfo\)\)](<#CircuitBreaker.SetOnStateChange>)
   - [func \(cb \*CircuitBreaker\) State\(\) State](<#CircuitBreaker.State>)
 - [type Registry](<#Registry>)
   - [func NewRegistry\(initial ...StaleProbeResetter\) \*Registry](<#NewRegistry>)
@@ -33,6 +35,7 @@ Package breaker implements a generic three\-state circuit breaker \(closed, open
 - [type StaleProbeResetter](<#StaleProbeResetter>)
 - [type State](<#State>)
   - [func \(s State\) String\(\) string](<#State.String>)
+- [type StateChangeInfo](<#StateChangeInfo>)
 
 
 ## Variables
@@ -44,7 +47,7 @@ var ErrBackendUnavailable = errors.New("backend unavailable")
 ```
 
 <a name="CBCall"></a>
-## func [CBCall](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/breaker/breaker.go#L343>)
+## func [CBCall](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/breaker/breaker.go#L361>)
 
 ```go
 func CBCall[T any](cb *CircuitBreaker, fn func() (T, error)) (T, error)
@@ -53,7 +56,7 @@ func CBCall[T any](cb *CircuitBreaker, fn func() (T, error)) (T, error)
 CBCall wraps a call that returns \(T, error\) with circuit breaker logic.
 
 <a name="CBCallNoResult"></a>
-## func [CBCallNoResult](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/breaker/breaker.go#L353>)
+## func [CBCallNoResult](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/breaker/breaker.go#L371>)
 
 ```go
 func CBCallNoResult(cb *CircuitBreaker, fn func() error) error
@@ -62,9 +65,9 @@ func CBCallNoResult(cb *CircuitBreaker, fn func() error) error
 CBCallNoResult wraps a call that returns only error with circuit breaker logic.
 
 <a name="CircuitBreaker"></a>
-## type [CircuitBreaker](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/breaker/breaker.go#L72-L86>)
+## type [CircuitBreaker](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/breaker/breaker.go#L85-L100>)
 
-CircuitBreaker implements a three\-state circuit breaker with a pluggable error filter. It is safe for concurrent use.
+CircuitBreaker implements a three\-state circuit breaker with a pluggable error filter. It is safe for concurrent use. Observability hooks live behind the optional OnStateChange callback — the breaker package itself imports nothing from observe/.
 
 ```go
 type CircuitBreaker struct {
@@ -73,7 +76,7 @@ type CircuitBreaker struct {
 ```
 
 <a name="NewCircuitBreaker"></a>
-### func [NewCircuitBreaker](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/breaker/breaker.go#L95>)
+### func [NewCircuitBreaker](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/breaker/breaker.go#L111>)
 
 ```go
 func NewCircuitBreaker(name string, threshold int, timeout time.Duration, isError func(error) bool, sentinel error) *CircuitBreaker
@@ -81,14 +84,16 @@ func NewCircuitBreaker(name string, threshold int, timeout time.Duration, isErro
 
 NewCircuitBreaker creates a new circuit breaker.
 
-- name: identifier for logging and metrics \(e.g. "database", "oci\-backend"\)
+- name: identifier for logging and labels \(e.g. "database", "oci\-backend"\)
 - threshold: consecutive failures before opening
 - timeout: delay before probing recovery
 - isError: filter that returns true for errors that should count as failures
 - sentinel: the error returned when the circuit is open \(e.g. ErrDBUnavailable\)
 
+Use SetOnStateChange after construction to install metric / event hooks.
+
 <a name="CircuitBreaker.IsHealthy"></a>
-### func \(\*CircuitBreaker\) [IsHealthy](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/breaker/breaker.go#L111>)
+### func \(\*CircuitBreaker\) [IsHealthy](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/breaker/breaker.go#L137>)
 
 ```go
 func (cb *CircuitBreaker) IsHealthy() bool
@@ -96,8 +101,17 @@ func (cb *CircuitBreaker) IsHealthy() bool
 
 IsHealthy returns true when the circuit is closed.
 
+<a name="CircuitBreaker.Name"></a>
+### func \(\*CircuitBreaker\) [Name](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/breaker/breaker.go#L134>)
+
+```go
+func (cb *CircuitBreaker) Name() string
+```
+
+Name returns the breaker's identifier — useful for callers wiring observability hooks that need the label.
+
 <a name="CircuitBreaker.OpenDuration"></a>
-### func \(\*CircuitBreaker\) [OpenDuration](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/breaker/breaker.go#L126>)
+### func \(\*CircuitBreaker\) [OpenDuration](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/breaker/breaker.go#L152>)
 
 ```go
 func (cb *CircuitBreaker) OpenDuration() time.Duration
@@ -106,7 +120,7 @@ func (cb *CircuitBreaker) OpenDuration() time.Duration
 OpenDuration returns how long the circuit has been open or half\-open. Returns 0 when the circuit is closed \(healthy\).
 
 <a name="CircuitBreaker.PostCheck"></a>
-### func \(\*CircuitBreaker\) [PostCheck](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/breaker/breaker.go#L197>)
+### func \(\*CircuitBreaker\) [PostCheck](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/breaker/breaker.go#L223>)
 
 ```go
 func (cb *CircuitBreaker) PostCheck(err error) error
@@ -115,7 +129,7 @@ func (cb *CircuitBreaker) PostCheck(err error) error
 PostCheck records the result of a real call and transitions state. When an error causes the circuit to open \(or reopen\), the original error is replaced with the sentinel so callers always see the canonical error.
 
 <a name="CircuitBreaker.PreCheck"></a>
-### func \(\*CircuitBreaker\) [PreCheck](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/breaker/breaker.go#L159>)
+### func \(\*CircuitBreaker\) [PreCheck](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/breaker/breaker.go#L185>)
 
 ```go
 func (cb *CircuitBreaker) PreCheck() error
@@ -124,7 +138,7 @@ func (cb *CircuitBreaker) PreCheck() error
 PreCheck returns the sentinel error when the circuit is open. Transitions open → half\-open when the timeout has elapsed, allowing one probe request. If a previous probe has been in flight longer than probeTimeout, it is considered abandoned and a new probe is allowed.
 
 <a name="CircuitBreaker.ProbeEligible"></a>
-### func \(\*CircuitBreaker\) [ProbeEligible](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/breaker/breaker.go#L139>)
+### func \(\*CircuitBreaker\) [ProbeEligible](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/breaker/breaker.go#L165>)
 
 ```go
 func (cb *CircuitBreaker) ProbeEligible() bool
@@ -133,7 +147,7 @@ func (cb *CircuitBreaker) ProbeEligible() bool
 ProbeEligible returns true when the circuit is open and the open timeout has elapsed, meaning the next request should be allowed through as a probe. This is a read\-only check with no side effects — the actual state transition happens in PreCheck when the request is dispatched.
 
 <a name="CircuitBreaker.ResetStaleProbe"></a>
-### func \(\*CircuitBreaker\) [ResetStaleProbe](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/breaker/breaker.go#L247>)
+### func \(\*CircuitBreaker\) [ResetStaleProbe](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/breaker/breaker.go#L273>)
 
 ```go
 func (cb *CircuitBreaker) ResetStaleProbe() bool
@@ -141,8 +155,17 @@ func (cb *CircuitBreaker) ResetStaleProbe() bool
 
 ResetStaleProbe checks whether a half\-open probe has exceeded probeTimeout and resets the circuit to open if so. Called by the background watchdog service to ensure stale probes are detected even when no new requests arrive. Returns true if a stale probe was reset.
 
+<a name="CircuitBreaker.SetOnStateChange"></a>
+### func \(\*CircuitBreaker\) [SetOnStateChange](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/breaker/breaker.go#L126>)
+
+```go
+func (cb *CircuitBreaker) SetOnStateChange(fn func(StateChangeInfo))
+```
+
+SetOnStateChange installs a callback invoked on every closed/open/ half\-open transition. The callback runs synchronously while the breaker holds its lock, so implementations must be cheap and non\-blocking. Passing nil clears any previously installed callback.
+
 <a name="CircuitBreaker.State"></a>
-### func \(\*CircuitBreaker\) [State](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/breaker/breaker.go#L118>)
+### func \(\*CircuitBreaker\) [State](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/breaker/breaker.go#L144>)
 
 ```go
 func (cb *CircuitBreaker) State() State
@@ -211,7 +234,7 @@ type StaleProbeResetter interface {
 ```
 
 <a name="State"></a>
-## type [State](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/breaker/breaker.go#L36>)
+## type [State](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/breaker/breaker.go#L35>)
 
 State represents the current circuit breaker state.
 
@@ -230,12 +253,28 @@ const (
 ```
 
 <a name="State.String"></a>
-### func \(State\) [String](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/breaker/breaker.go#L45>)
+### func \(State\) [String](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/breaker/breaker.go#L44>)
 
 ```go
 func (s State) String() string
 ```
 
 String returns the human\-readable name of the circuit state.
+
+<a name="StateChangeInfo"></a>
+## type [StateChangeInfo](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/breaker/breaker.go#L72-L79>)
+
+StateChangeInfo captures the context the breaker shares with its OnStateChange callback. Failures and OpenDuration are read\-only snapshots of the breaker's state at the moment of the transition.
+
+```go
+type StateChangeInfo struct {
+    Name         string
+    From         State
+    To           State
+    Failures     int
+    Threshold    int
+    OpenDuration time.Duration // time spent open or half-open before reaching this state; zero when From was Closed
+}
+```
 
 Generated by [gomarkdoc](<https://github.com/princjef/gomarkdoc>)

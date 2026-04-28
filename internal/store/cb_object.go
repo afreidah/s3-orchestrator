@@ -52,6 +52,14 @@ func (c *cbObjectStore) ListObjectsByBackend(ctx context.Context, backendName st
 	return breaker.CBCall(c.cb, func() ([]ObjectLocation, error) { return c.inner.ListObjectsByBackend(ctx, backendName, limit) })
 }
 
+// ListObjectsByBackendKeyAsc forwards the paginated key-asc listing under
+// the breaker. Used by ReconcileBackend's bounded-memory sorted-merge join.
+func (c *cbObjectStore) ListObjectsByBackendKeyAsc(ctx context.Context, backendName, afterKey string, limit int) ([]ObjectLocation, error) {
+	return breaker.CBCall(c.cb, func() ([]ObjectLocation, error) {
+		return c.inner.ListObjectsByBackendKeyAsc(ctx, backendName, afterKey, limit)
+	})
+}
+
 // MoveObjectLocation forwards to the inner store under the breaker.
 func (c *cbObjectStore) MoveObjectLocation(ctx context.Context, key, fromBackend, toBackend string) (int64, error) {
 	return breaker.CBCall(c.cb, func() (int64, error) { return c.inner.MoveObjectLocation(ctx, key, fromBackend, toBackend) })

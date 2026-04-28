@@ -322,7 +322,7 @@ Rules are hot-reloadable via `SIGHUP`. An empty rules list (or omitting the sect
 
 ## Orphan Reconciliation
 
-Optional background service that periodically scans each backend's S3 bucket and reconciles it against the metadata database. For each backend, it lists all objects via a single `ListObjects` call, diffs the result against DB entries, imports untracked objects, and removes stale DB entries where the object no longer exists on the backend.
+Optional background service that periodically scans each backend's S3 bucket and reconciles it against the metadata database. For each backend, it walks both sides as ascending key streams — S3 paginated by `ListObjects` and the DB paginated by `ListObjectsByBackendKeyAsc` — and merges them in lockstep. Keys present only on the backend are imported; keys present only in the DB are removed. Memory is bounded by the page size on each side (1000 entries) regardless of object count, so backends holding millions of objects reconcile without OOM. Rows owned by sibling virtual buckets stored on the same backend are skipped so a per-bucket pass does not affect other buckets.
 
 ```yaml
 reconcile:
@@ -1195,13 +1195,24 @@ internal/
       templates/             Dashboard and login HTML templates
       static/                CSS, JS (directory tree, log viewer)
     httputil/
-      clientip.go            Client IP extraction with X-Forwarded-For + trusted proxies
+      clientip.go            Client IP extraction (XFF) and IsTLSRequest (XFP) for trusted proxies
       loginthrottle.go       Per-IP brute-force protection with lockout
       certreloader.go        TLS certificate hot-reload with expiry warning
   observe/                   Observability layer
     audit/audit.go           Request ID generation, context propagation, audit logger
     telemetry/
-      metrics.go             Prometheus metric definitions
+      metrics.go             Package doc only; metric vars live in metrics_*.go
+      metrics_request.go     Request, backend, manager, rate-limit metrics
+      metrics_quota.go       Quota, object, multipart, usage metrics
+      metrics_rebalance.go   Rebalancer metrics
+      metrics_replication.go Replication and over-replication metrics
+      metrics_breaker.go     Circuit breaker state and transition metrics
+      metrics_cleanup.go     Cleanup queue, lifecycle, drain metrics
+      metrics_audit.go       Audit event metrics
+      metrics_encryption.go  Encryption and integrity metrics
+      metrics_cache.go       Object cache and Redis metrics
+      metrics_meta.go        Build info and notification metrics
+      cb_hook.go             Bridges breaker.SetOnStateChange to gauge/counter/event
       tracing.go             OpenTelemetry tracer setup
       tracehandler.go        slog handler that injects trace_id/span_id from OTel context
       logbuffer.go           In-memory ring buffer + slog TeeHandler
@@ -1239,6 +1250,7 @@ internal/
     objects_write.go         PutObject, CopyObject, DeleteObject, DeleteObjects
     multipart.go             Multipart upload lifecycle
     drain.go                 Backend drain and remove operations
+    reconcile.go             Bounded-memory sorted-merge reconciliation engine
     core.go                  Shared infrastructure (timeout, admission, routing)
     lifecycle.go             Lifecycle expiration rule processing
     dashboard.go             DashboardData type + thin wrappers

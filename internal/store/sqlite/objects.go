@@ -342,6 +342,26 @@ func (s *Store) ListObjectsByBackend(ctx context.Context, backendName string, li
 	return scanSlimObjectLocations(rows)
 }
 
+// ListObjectsByBackendKeyAsc returns rows for a backend in ascending
+// object_key order, starting strictly after afterKey. The empty string
+// returns the first page. Used by ReconcileBackend's bounded-memory
+// sorted-merge join against an S3 ListObjects walk; both sides are in lex
+// order so the merge is O(limit) memory bounded.
+func (s *Store) ListObjectsByBackendKeyAsc(ctx context.Context, backendName, afterKey string, limit int) ([]store.ObjectLocation, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT object_key, backend_name, size_bytes, created_at
+		FROM object_locations
+		WHERE backend_name = ? AND object_key > ?
+		ORDER BY object_key ASC
+		LIMIT ?`, backendName, afterKey, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to page objects by backend: %w", err)
+	}
+	defer rows.Close()
+
+	return scanSlimObjectLocations(rows)
+}
+
 // scanSlimObjectLocations consumes a *sql.Rows holding the slim
 // (object_key, backend_name, size_bytes, created_at) projection used by
 // ListObjects, ListExpiredObjects, and ListObjectsByBackend. Centralizes
