@@ -164,9 +164,8 @@ func TestToSlimObjectLocations_EveryRowType(t *testing.T) {
 	if got := toSlimObjectLocations([]db.ListExpiredObjectsRow{{ObjectKey: "c", BackendName: "b3", SizeBytes: 3, CreatedAt: now}}); got[0].ObjectKey != "c" {
 		t.Error("ListExpiredObjectsRow not converted")
 	}
-	if got := toSlimObjectLocations([]db.ListDirectChildrenRow{{ObjectKey: "d", BackendName: "b4", SizeBytes: 4, CreatedAt: now}}); got[0].ObjectKey != "d" {
-		t.Error("ListDirectChildrenRow not converted")
-	}
+	// ListDirectChildrenRow groups by object_key with a backend_names array
+	// and is intentionally not part of the slim-row projection set.
 }
 
 // TestToSlimObjectLocations_PreservesOrder verifies the output slice keeps

@@ -83,7 +83,8 @@
     fNameSpan.textContent = entry.name.split('/').pop();
     let fMetaSpan = document.createElement('span');
     fMetaSpan.className = 'tree-meta';
-    fMetaSpan.textContent = entry.backend + ' \u00B7 ' + formatBytes(entry.totalSize) + ' \u00B7 ' + entry.createdAt;
+    let backendsLabel = Array.isArray(entry.backends) ? entry.backends.join(', ') : '';
+    fMetaSpan.textContent = backendsLabel + ' \u00B7 ' + formatBytes(entry.totalSize) + ' \u00B7 ' + entry.createdAt;
     let fDlSpan = document.createElement('span');
     fDlSpan.className = 'tree-action tree-download';
     fDlSpan.title = 'Download';
@@ -433,7 +434,8 @@
   }
 
   // --- Async operation helper: trigger POST, then poll status endpoint ---
-  function runAsyncOp(btn, triggerUrl, statusUrl, label, countKey) {
+  function runAsyncOp(btn, triggerUrl, statusUrl, label, countKey, noun, opts) {
+    let options = opts || {};
     btn.disabled = true;
     btn.textContent = label + '\u2026';
 
@@ -445,7 +447,7 @@
           setTimeout(function () { btn.disabled = false; btn.textContent = label; }, 3000);
           return;
         }
-        pollStatus(btn, statusUrl, label, countKey);
+        pollStatus(btn, statusUrl, label, countKey, noun, options);
       })
       .catch(function (err) {
         btn.textContent = err.name === 'AbortError' ? 'Request timed out' : 'Network error';
@@ -453,18 +455,34 @@
       });
   }
 
-  function pollStatus(btn, statusUrl, label, countKey) {
+  function pollStatus(btn, statusUrl, label, countKey, noun, options) {
+    let suffix = noun ? ' ' + noun : '';
     let poll = setInterval(function () {
       fetch(statusUrl)
         .then(function (resp) { return resp.json(); })
         .then(function (data) {
           if (data.status === 'running') return;
           clearInterval(poll);
+          if (data.status === 'skipped') {
+            btn.textContent = 'Skipped';
+            setStatusBanner(data.reason || 'skipped', 'skipped');
+            setTimeout(function () { btn.disabled = false; btn.textContent = label; }, 3000);
+            return;
+          }
           if (data.ok) {
-            btn.textContent = data[countKey] + (countKey === 'moved' ? ' moved' : ' removed');
-            setTimeout(function () { location.reload(); }, 1500);
+            let extra = '';
+            if (typeof data.failed === 'number' && data.failed > 0) {
+              extra = ', ' + data.failed + ' failed';
+            }
+            btn.textContent = data[countKey] + suffix + extra;
+            if (options.skipReload) {
+              setTimeout(function () { btn.disabled = false; btn.textContent = label; }, 3000);
+            } else {
+              setTimeout(function () { location.reload(); }, 1500);
+            }
           } else if (data.status === 'error') {
             btn.textContent = data.error || 'Failed';
+            setStatusBanner(data.error || 'failed', 'error');
             setTimeout(function () { btn.disabled = false; btn.textContent = label; }, 3000);
           } else {
             btn.disabled = false;
@@ -479,12 +497,20 @@
     }, 2000);
   }
 
+  function setStatusBanner(text, kind) {
+    let banner = document.getElementById('admin-action-status');
+    if (!banner) return;
+    banner.textContent = text;
+    banner.className = 'admin-action-status' + (kind ? ' ' + kind : '');
+    setTimeout(function () { banner.textContent = ''; banner.className = 'admin-action-status'; }, 6000);
+  }
+
   // --- Rebalance flow ---
   let rebalanceBtn = document.getElementById('rebalance-btn');
 
   if (rebalanceBtn) {
     rebalanceBtn.addEventListener('click', function () {
-      runAsyncOp(rebalanceBtn, 'api/rebalance', 'api/rebalance/status', 'Rebalance', 'moved');
+      runAsyncOp(rebalanceBtn, 'api/rebalance', 'api/rebalance/status', 'Rebalance', 'moved', 'moved');
     });
   }
 
@@ -493,7 +519,44 @@
 
   if (cleanExcessBtn) {
     cleanExcessBtn.addEventListener('click', function () {
-      runAsyncOp(cleanExcessBtn, 'api/clean-excess', 'api/clean-excess/status', 'Clean Excess', 'removed');
+      runAsyncOp(cleanExcessBtn, 'api/clean-excess', 'api/clean-excess/status', 'Clean Excess', 'removed', 'removed');
+    });
+  }
+
+  // --- Replicate Now flow ---
+  let replicateBtn = document.getElementById('replicate-btn');
+
+  if (replicateBtn) {
+    replicateBtn.addEventListener('click', function () {
+      runAsyncOp(replicateBtn, 'api/replicate', 'api/replicate/status', 'Replicate Now', 'copies_created', 'copies created');
+    });
+  }
+
+  // --- Scrub flow ---
+  let scrubBtn = document.getElementById('scrub-btn');
+
+  if (scrubBtn) {
+    scrubBtn.addEventListener('click', function () {
+      runAsyncOp(scrubBtn, 'api/scrub', 'api/scrub/status', 'Scrub', 'checked', 'checked', { skipReload: true });
+    });
+  }
+
+  // --- Backfill checksums flow ---
+  let backfillBtn = document.getElementById('backfill-checksums-btn');
+
+  if (backfillBtn) {
+    backfillBtn.addEventListener('click', function () {
+      runAsyncOp(backfillBtn, 'api/backfill-checksums', 'api/backfill-checksums/status', 'Backfill Checksums', 'processed', 'processed', { skipReload: true });
+    });
+  }
+
+  // --- Encrypt existing flow ---
+  let encryptExistingBtn = document.getElementById('encrypt-existing-btn');
+
+  if (encryptExistingBtn) {
+    encryptExistingBtn.addEventListener('click', function () {
+      if (!confirm('Encrypt every existing unencrypted object? This can take a long time.')) return;
+      runAsyncOp(encryptExistingBtn, 'api/encrypt-existing', 'api/encrypt-existing/status', 'Encrypt Existing', 'encrypted', 'encrypted', { skipReload: true });
     });
   }
 

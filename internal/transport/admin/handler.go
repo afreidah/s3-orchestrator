@@ -249,30 +249,54 @@ func (h *Handler) handleUsageFlush(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "flushed"})
 }
 
-// handleReplicate triggers one replication cycle.
-func (h *Handler) handleReplicate(w http.ResponseWriter, r *http.Request) {
+// ReplicateResult is the outcome of a one-shot replication cycle.
+type ReplicateResult struct {
+	Status        string // "ok" or "skipped"
+	Reason        string // populated when Status is "skipped"
+	CopiesCreated int
+}
+
+// Replicate runs one replication cycle synchronously and returns the
+// resulting counts. Skips when replication is unconfigured or factor <= 1.
+// Refreshes quota metrics on success. Exposed for callers (UI, tests) that
+// need the counts back as Go values rather than JSON.
+func (h *Handler) Replicate(ctx context.Context) (ReplicateResult, error) {
 	rcfg := h.replicator.Config()
 	if rcfg == nil || rcfg.Factor <= 1 {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"status":         "skipped",
-			"copies_created": 0,
-			"reason":         "replication not configured or factor <= 1",
-		})
-		return
+		return ReplicateResult{Status: "skipped", Reason: "replication not configured or factor <= 1"}, nil
 	}
 
-	created, err := h.replicator.Replicate(r.Context(), *rcfg)
+	created, err := h.replicator.Replicate(ctx, *rcfg)
+	if err != nil {
+		return ReplicateResult{}, err
+	}
+
+	if mErr := h.backendOps.UpdateQuotaMetrics(ctx); mErr != nil {
+		slog.WarnContext(ctx, "failed to update quota metrics after replicate", "error", mErr)
+	}
+
+	return ReplicateResult{Status: "ok", CopiesCreated: created}, nil
+}
+
+// handleReplicate triggers one replication cycle.
+func (h *Handler) handleReplicate(w http.ResponseWriter, r *http.Request) {
+	res, err := h.Replicate(r.Context())
 	if err != nil {
 		slog.ErrorContext(r.Context(), "Admin: replication failed", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "replication failed"})
 		return
 	}
 
-	if err := h.backendOps.UpdateQuotaMetrics(r.Context()); err != nil {
-		slog.WarnContext(r.Context(), "failed to update quota metrics after admin replicate", "error", err)
+	if res.Status == "skipped" {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":         "skipped",
+			"copies_created": 0,
+			"reason":         res.Reason,
+		})
+		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "copies_created": created})
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "copies_created": res.CopiesCreated})
 }
 
 // handleOverReplicationStatus returns the count of over-replicated objects.
@@ -639,11 +663,22 @@ type bulkRewriteOp[L bulkRewriteRow] struct {
 	rewrite func(ctx context.Context, src *backend.GetObjectResult, loc L) (io.Reader, int64, func() error, error)
 }
 
-// handleEncryptExisting downloads each unencrypted object from its backend,
-// encrypts it, re-uploads the ciphertext, and updates the DB record. Objects
-// are processed in batches to avoid holding long transactions.
-func (h *Handler) handleEncryptExisting(w http.ResponseWriter, r *http.Request) {
-	runBulkRewrite(h, w, r, bulkRewriteOp[*encryptRow]{
+// BulkRewriteResult is the outcome of a bulk encrypt/decrypt-existing pass.
+// Status is "complete" when the run finished, "skipped" when the operation
+// is unavailable (encryption not enabled).
+type BulkRewriteResult struct {
+	Status  string
+	Reason  string
+	Success int
+	Failed  int
+	Total   int
+}
+
+// EncryptExisting downloads every unencrypted object, encrypts it,
+// re-uploads the ciphertext, and updates the DB record. Returns counts.
+// Skips when encryption is not configured.
+func (h *Handler) EncryptExisting(ctx context.Context) BulkRewriteResult {
+	return runBulkRewriteCounts(h, ctx, bulkRewriteOp[*encryptRow]{
 		opName:      "encrypt-existing",
 		logTag:      "Encrypt-existing",
 		listErrMsg:  "failed to list unencrypted objects",
@@ -674,12 +709,27 @@ func (h *Handler) handleEncryptExisting(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// handleEncryptExisting wraps EncryptExisting in JSON envelope semantics.
+func (h *Handler) handleEncryptExisting(w http.ResponseWriter, r *http.Request) {
+	res := h.EncryptExisting(r.Context())
+	if res.Status == "skipped" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": res.Reason})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":    "complete",
+		"encrypted": res.Success,
+		"failed":    res.Failed,
+		"total":     res.Total,
+	})
+}
+
 // handleDecryptExisting downloads each encrypted object from its backend,
 // decrypts it, re-uploads the plaintext, and updates the DB record. Objects
 // are processed in batches to avoid holding long transactions. Encryption
 // must still be configured (the key provider is needed to unwrap DEKs).
 func (h *Handler) handleDecryptExisting(w http.ResponseWriter, r *http.Request) {
-	runBulkRewrite(h, w, r, bulkRewriteOp[*decryptRow]{
+	res := runBulkRewriteCounts(h, r.Context(), bulkRewriteOp[*decryptRow]{
 		opName:      "decrypt-existing",
 		logTag:      "Decrypt-existing",
 		listErrMsg:  "failed to list encrypted objects",
@@ -711,20 +761,27 @@ func (h *Handler) handleDecryptExisting(w http.ResponseWriter, r *http.Request) 
 			return plainReader, loc.PlaintextSize, dbUpdate, nil
 		},
 	})
-}
-
-// runBulkRewrite is the shared driver for handleEncryptExisting and
-// handleDecryptExisting. The two handlers used to carry ~90 lines of
-// near-identical pagination + download + upload + usage-tracking code; this
-// helper centralises that scaffolding. Generic over the row type so each
-// caller can keep its full per-row metadata in the closure.
-func runBulkRewrite[L bulkRewriteRow](h *Handler, w http.ResponseWriter, r *http.Request, op bulkRewriteOp[L]) {
-	if h.encryptor == nil || h.rawStore == nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": errEncryptionNotEnabled})
+	if res.Status == "skipped" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": res.Reason})
 		return
 	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":    "complete",
+		"decrypted": res.Success,
+		"failed":    res.Failed,
+		"total":     res.Total,
+	})
+}
 
-	ctx := r.Context()
+// runBulkRewriteCounts is the shared driver for the encrypt/decrypt-existing
+// operations. Returns counts so callers (HTTP handlers, UI handlers, tests)
+// can decide how to surface them. A list-listFn error short-circuits the
+// run with the partial counts gathered so far.
+func runBulkRewriteCounts[L bulkRewriteRow](h *Handler, ctx context.Context, op bulkRewriteOp[L]) BulkRewriteResult {
+	if h.encryptor == nil || h.rawStore == nil {
+		return BulkRewriteResult{Status: "skipped", Reason: errEncryptionNotEnabled}
+	}
+
 	const batchSize = 100
 	var success, failed, total int
 
@@ -732,8 +789,7 @@ func runBulkRewrite[L bulkRewriteRow](h *Handler, w http.ResponseWriter, r *http
 		rows, err := op.listFn(ctx, batchSize, offset)
 		if err != nil {
 			slog.ErrorContext(ctx, "Admin: "+op.opName+" list failed", "error", err)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": op.listErrMsg})
-			return
+			return BulkRewriteResult{Status: "skipped", Reason: op.listErrMsg, Success: success, Failed: failed, Total: total}
 		}
 		if len(rows) == 0 {
 			break
@@ -754,12 +810,7 @@ func runBulkRewrite[L bulkRewriteRow](h *Handler, w http.ResponseWriter, r *http
 	}
 
 	slog.InfoContext(ctx, "Admin: "+op.opName+" complete", op.resultLabel, success, "failed", failed, "total", total)
-	writeJSON(w, http.StatusOK, map[string]any{
-		"status":       "complete",
-		op.resultLabel: success,
-		"failed":       failed,
-		"total":        total,
-	})
+	return BulkRewriteResult{Status: "complete", Success: success, Failed: failed, Total: total}
 }
 
 // processBulkLocation runs one rewrite step for a single object location:
@@ -817,70 +868,99 @@ func processBulkLocation[L bulkRewriteRow](h *Handler, ctx context.Context, op b
 // INTEGRITY
 // -------------------------------------------------------------------------
 
+// ScrubResult is the outcome of one on-demand scrub cycle.
+type ScrubResult struct {
+	Status  string // "ok" or "skipped"
+	Reason  string // populated when Status is "skipped"
+	Checked int
+	Failed  int
+}
+
+// Scrub runs one integrity-verification scrub pass synchronously and
+// returns the per-pass counts. batchSize <= 0 means use the configured
+// ScrubberBatchSize. Skips when integrity verification is not enabled.
+func (h *Handler) Scrub(ctx context.Context, batchSize int) ScrubResult {
+	icfg := h.backendOps.IntegrityConfig()
+	if icfg == nil || !icfg.Enabled {
+		return ScrubResult{Status: "skipped", Reason: "integrity verification is not enabled"}
+	}
+	if batchSize <= 0 {
+		batchSize = icfg.ScrubberBatchSize
+	}
+	checked, failed := h.scrubber.Scrub(ctx, batchSize)
+	return ScrubResult{Status: "ok", Checked: checked, Failed: failed}
+}
+
 // handleScrub triggers an on-demand scrub cycle. Accepts an optional
 // batch_size query parameter (defaults to the configured scrubber batch size).
 func (h *Handler) handleScrub(w http.ResponseWriter, r *http.Request) {
-	icfg := h.backendOps.IntegrityConfig()
-	if icfg == nil || !icfg.Enabled {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"status": "skipped",
-			"reason": "integrity verification is not enabled",
-		})
-		return
-	}
-
-	batchSize := icfg.ScrubberBatchSize
+	batchSize := 0
 	if bs := r.URL.Query().Get("batch_size"); bs != "" {
 		if v, err := strconv.ParseInt(bs, 10, 32); err == nil && v > 0 {
 			batchSize = int(v)
 		}
 	}
 
-	checked, failed := h.scrubber.Scrub(r.Context(), batchSize)
+	res := h.Scrub(r.Context(), batchSize)
+	if res.Status == "skipped" {
+		writeJSON(w, http.StatusOK, map[string]any{"status": "skipped", "reason": res.Reason})
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":  "ok",
-		"checked": checked,
-		"failed":  failed,
+		"checked": res.Checked,
+		"failed":  res.Failed,
 	})
 }
 
-// handleBackfillChecksums computes and stores content hashes for objects
-// that don't have one. Accepts an optional batch_size query parameter
-// (default 100). Paginates internally until all objects are processed or
-// the request is cancelled.
-func (h *Handler) handleBackfillChecksums(w http.ResponseWriter, r *http.Request) {
+// BackfillChecksumsResult is the outcome of a checksum backfill pass.
+type BackfillChecksumsResult struct {
+	Status    string // "ok" or "skipped"
+	Reason    string // populated when Status is "skipped"
+	Processed int
+}
+
+// BackfillChecksums computes and stores content hashes for objects that
+// don't have one, paginating internally until all objects are processed
+// or the context is cancelled. batchSize <= 0 means use 100. Skips when
+// integrity verification is not enabled.
+func (h *Handler) BackfillChecksums(ctx context.Context, batchSize int) BackfillChecksumsResult {
 	icfg := h.backendOps.IntegrityConfig()
 	if icfg == nil || !icfg.Enabled {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"status": "skipped",
-			"reason": "integrity verification is not enabled",
-		})
-		return
+		return BackfillChecksumsResult{Status: "skipped", Reason: "integrity verification is not enabled"}
+	}
+	if batchSize <= 0 {
+		batchSize = 100
 	}
 
-	batchSize := 100
-	if bs := r.URL.Query().Get("batch_size"); bs != "" {
-		if v, err := strconv.ParseInt(bs, 10, 32); err == nil && v > 0 {
-			batchSize = int(v)
-		}
-	}
-
-	slog.InfoContext(r.Context(), "Admin: backfill-checksums started", "batch_size", batchSize)
-	var totalProcessed int
-	offset := 0
-	for {
-		processed, nextOffset := h.scrubber.Backfill(r.Context(), batchSize, offset)
-		totalProcessed += processed
+	slog.InfoContext(ctx, "Backfill-checksums started", "batch_size", batchSize)
+	var total int
+	for offset := 0; ; {
+		processed, nextOffset := h.scrubber.Backfill(ctx, batchSize, offset)
+		total += processed
 		if nextOffset == 0 {
 			break
 		}
 		offset = nextOffset
 	}
+	return BackfillChecksumsResult{Status: "ok", Processed: total}
+}
 
-	writeJSON(w, http.StatusOK, map[string]any{
-		"status":    "ok",
-		"processed": totalProcessed,
-	})
+// handleBackfillChecksums triggers a checksum backfill pass.
+func (h *Handler) handleBackfillChecksums(w http.ResponseWriter, r *http.Request) {
+	batchSize := 0
+	if bs := r.URL.Query().Get("batch_size"); bs != "" {
+		if v, err := strconv.ParseInt(bs, 10, 32); err == nil && v > 0 {
+			batchSize = int(v)
+		}
+	}
+
+	res := h.BackfillChecksums(r.Context(), batchSize)
+	if res.Status == "skipped" {
+		writeJSON(w, http.StatusOK, map[string]any{"status": "skipped", "reason": res.Reason})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "processed": res.Processed})
 }
 
 // handleReconcile triggers an on-demand reconciliation. Lists objects on

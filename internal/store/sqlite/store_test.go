@@ -14,6 +14,7 @@ package sqlite
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -1045,6 +1046,83 @@ func TestListDirectoryChildren(t *testing.T) {
 	}
 	if !foundFile {
 		t.Error("missing file entry for file.txt")
+	}
+}
+
+// TestListDirectoryChildren_ReplicationSemantics verifies that replicated
+// objects show all backends in the file row, that directory roll-ups sum
+// physical bytes across replicas, and that file_count counts distinct
+// object keys (logical files).
+func TestListDirectoryChildren_ReplicationSemantics(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	// One replicated object (factor=2) and one single-copy object under the
+	// same prefix. Physical bytes for the directory roll-up is
+	// (100 + 100) + 50 = 250; logical file count is 2.
+	mustRecordObject(t, s, "bucket/replicated.txt", "backend-a", 100)
+	mustRecordReplica(t, s, "bucket/replicated.txt", "backend-b", "backend-a", 100)
+	mustRecordObject(t, s, "bucket/single.txt", "backend-a", 50)
+
+	// File-level listing of the bucket.
+	result, err := s.ListDirectoryChildren(ctx, "bucket/", "", 100)
+	if err != nil {
+		t.Fatalf("ListDirectoryChildren(bucket/): %v", err)
+	}
+
+	var replicated, single *store.DirEntry
+	for i := range result.Entries {
+		switch result.Entries[i].Name {
+		case "bucket/replicated.txt":
+			replicated = &result.Entries[i]
+		case "bucket/single.txt":
+			single = &result.Entries[i]
+		}
+	}
+	if replicated == nil {
+		t.Fatal("missing entry for replicated.txt")
+	}
+	if single == nil {
+		t.Fatal("missing entry for single.txt")
+	}
+
+	// File rows report logical (single replica) size and the full sorted
+	// backend set the object lives on.
+	if replicated.TotalSize != 100 {
+		t.Errorf("replicated.txt TotalSize = %d, want 100 (logical)", replicated.TotalSize)
+	}
+	if got, want := replicated.Backends, []string{"backend-a", "backend-b"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("replicated.txt Backends = %v, want %v (sorted)", got, want)
+	}
+	if single.TotalSize != 50 {
+		t.Errorf("single.txt TotalSize = %d, want 50", single.TotalSize)
+	}
+	if got, want := single.Backends, []string{"backend-a"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("single.txt Backends = %v, want %v", got, want)
+	}
+
+	// Root-level listing rolls bucket/ into a directory entry with physical
+	// bytes summed across replicas.
+	root, err := s.ListDirectoryChildren(ctx, "", "", 100)
+	if err != nil {
+		t.Fatalf("ListDirectoryChildren(root): %v", err)
+	}
+	var bucketDir *store.DirEntry
+	for i := range root.Entries {
+		if root.Entries[i].Name == "bucket/" && root.Entries[i].IsDir {
+			bucketDir = &root.Entries[i]
+			break
+		}
+	}
+	if bucketDir == nil {
+		t.Fatal("missing directory entry for bucket/ at root")
+	}
+	if bucketDir.FileCount != 2 {
+		t.Errorf("bucket/ FileCount = %d, want 2 (distinct object keys)", bucketDir.FileCount)
+	}
+	if bucketDir.TotalSize != 250 {
+		t.Errorf("bucket/ TotalSize = %d, want 250 (physical: 100+100+50)", bucketDir.TotalSize)
 	}
 }
 

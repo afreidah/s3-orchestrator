@@ -16,11 +16,16 @@ import "sync"
 // TYPES
 // -------------------------------------------------------------------------
 
-// asyncResult holds the outcome of a completed async operation.
+// asyncResult holds the outcome of a completed async operation. Extra
+// carries op-specific fields for the status payload (e.g. failed/total
+// counts for encrypt-existing). Skipped, when set, surfaces a reason
+// instead of a hard success.
 type asyncResult struct {
-	OK    bool
-	Count int
-	Error string
+	OK      bool
+	Count   int
+	Error   string
+	Skipped string
+	Extra   map[string]any
 }
 
 // asyncOpTracker manages named async operations. Each operation can be running

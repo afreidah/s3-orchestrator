@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"html/template"
 	"io/fs"
+	"strings"
 )
 
 //go:embed templates/*.html static/*
@@ -28,6 +29,7 @@ func loadTemplates() *template.Template {
 		"pct":          pct,
 		"pctFloat":     pctFloat,
 		"barColor":     barColor,
+		"joinStrings":  strings.Join,
 	}
 	return template.Must(
 		template.New("").Funcs(funcMap).ParseFS(embeddedFS, "templates/*.html"),
