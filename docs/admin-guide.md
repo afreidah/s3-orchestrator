@@ -951,7 +951,7 @@ The dashboard also provides management actions:
 
 ### On-demand reconciliation
 
-When a backend loses data (expired credentials, provider outage, accidental deletion), the metadata database retains stale entries that cause log noise in the rebalancer, replicator, and scrubber. The reconcile endpoint performs a full diff in a single `ListObjects` call per backend:
+When a backend loses data (expired credentials, provider outage, accidental deletion), the metadata database retains stale entries that cause log noise in the rebalancer, replicator, and scrubber. The reconcile endpoint walks both the backend (paginated `ListObjects`) and the metadata DB (paginated cursor over `object_locations` ordered by key) as ascending key streams, then merges them in lockstep. Memory is bounded by a 1000-entry page size on each side regardless of total object count, so a backend holding millions of objects reconciles without OOM. Keys belonging to sibling virtual buckets stored on the same backend are skipped — each virtual bucket reconciles in its own pass.
 
 ```bash
 # Reconcile all backends

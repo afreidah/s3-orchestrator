@@ -631,6 +631,56 @@ func (q *Queries) ListObjectsByBackend(ctx context.Context, arg ListObjectsByBac
 	return items, nil
 }
 
+const listObjectsByBackendKeyAsc = `-- name: ListObjectsByBackendKeyAsc :many
+SELECT object_key, backend_name, size_bytes, created_at
+FROM object_locations
+WHERE backend_name = $1 AND object_key > $2
+ORDER BY object_key ASC
+LIMIT $3
+`
+
+type ListObjectsByBackendKeyAscParams struct {
+	BackendName string
+	ObjectKey   string
+	Limit       int32
+}
+
+type ListObjectsByBackendKeyAscRow struct {
+	ObjectKey   string
+	BackendName string
+	SizeBytes   int64
+	CreatedAt   pgtype.Timestamptz
+}
+
+// ListObjectsByBackendKeyAsc returns rows for a backend in ascending object_key
+// order, starting strictly after the supplied cursor. Used by ReconcileBackend
+// to drive a bounded-memory sorted-merge join against an S3 ListObjects walk.
+// Pass ” as the cursor on the first call.
+func (q *Queries) ListObjectsByBackendKeyAsc(ctx context.Context, arg ListObjectsByBackendKeyAscParams) ([]ListObjectsByBackendKeyAscRow, error) {
+	rows, err := q.db.Query(ctx, listObjectsByBackendKeyAsc, arg.BackendName, arg.ObjectKey, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListObjectsByBackendKeyAscRow{}
+	for rows.Next() {
+		var i ListObjectsByBackendKeyAscRow
+		if err := rows.Scan(
+			&i.ObjectKey,
+			&i.BackendName,
+			&i.SizeBytes,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listObjectsByPrefix = `-- name: ListObjectsByPrefix :many
 SELECT DISTINCT ON (object_key) object_key, backend_name, size_bytes, created_at
 FROM object_locations

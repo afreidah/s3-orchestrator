@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
@@ -376,100 +377,85 @@ func (m *BackendManager) SyncBackend(ctx context.Context, backendName, bucket st
 	return imported, skipped, nil
 }
 
-// ReconcileBackend performs a full reconciliation for a single backend: lists
-// objects on the backend, diffs against DB entries, imports untracked objects,
-// and removes stale DB entries. Uses a single ListObjects call per backend.
+// ReconcileBackend reconciles a single backend against the metadata store
+// using a bounded-memory sorted-merge: both sides are walked in lex key
+// order and diffed in lockstep. The S3 walk and DB cursor each cap their
+// in-flight buffer, so memory is independent of object count.
+//
+// Behaviour: imports keys present on the backend but not in the DB, and
+// deletes DB rows whose keys are no longer on the backend. Keys owned by
+// sibling virtual buckets stored on the same backend are left alone in
+// both directions — sibling buckets are reconciled by their own pass.
 func (m *BackendManager) ReconcileBackend(ctx context.Context, backendName, bucket string, knownBuckets []string) (*worker.ReconcileResult, error) {
-	be, err := m.getBackend(backendName)
+	s3b, err := m.resolveS3Backend(backendName)
 	if err != nil {
 		return nil, err
 	}
 
+	bucketPrefix := bucket + "/"
+	otherPrefixes := siblingPrefixes(knownBuckets, bucket)
+
+	var apiPages int64
+	s3 := newS3KeyStream(ctx, s3b, bucketPrefix, otherPrefixes, &apiPages)
+	defer s3.stop()
+
+	dbIter := newDBCursorStream(ctx, m.objects, backendName, bucketPrefix, otherPrefixes)
+	defer dbIter.stop()
+
+	res := &reconcileResult{}
+	mergeErr := reconcileSorted(
+		ctx, s3, dbIter,
+		importHandler(backendName, m.objects.ImportObject, res),
+		deleteHandler(backendName, m.objects.DeleteObjectLocation, res),
+	)
+
+	if pages := atomic.LoadInt64(&apiPages); pages > 0 {
+		m.usage.Record(backendName, pages, 0, 0)
+	}
+	if mergeErr != nil {
+		return &worker.ReconcileResult{BackendsScanned: 1, Imported: int(res.imported), Removed: int(res.removed)},
+			fmt.Errorf("reconcile %s: %w", backendName, mergeErr)
+	}
+
+	return &worker.ReconcileResult{
+		BackendsScanned: 1,
+		Imported:        int(res.imported),
+		Removed:         int(res.removed),
+	}, nil
+}
+
+// resolveS3Backend unwraps any decorators (circuit breaker etc.) and
+// returns the underlying lister, which must support the streaming
+// ListObjects API the reconciler drives. The interface return makes the
+// dependency narrow so tests can substitute a fake.
+func (m *BackendManager) resolveS3Backend(name string) (objectLister, error) {
+	be, err := m.getBackend(name)
+	if err != nil {
+		return nil, err
+	}
 	inner := be
 	for {
-		if u, ok := inner.(interface{ Unwrap() backend.ObjectBackend }); ok {
-			inner = u.Unwrap()
-		} else {
+		u, ok := inner.(interface{ Unwrap() backend.ObjectBackend })
+		if !ok {
 			break
 		}
+		inner = u.Unwrap()
 	}
-	s3b, ok := inner.(*backend.S3Backend)
+	lister, ok := inner.(objectLister)
 	if !ok {
-		return nil, fmt.Errorf("backend %s does not support listing", backendName)
+		return nil, fmt.Errorf("backend %s does not support listing", name)
 	}
+	return lister, nil
+}
 
-	bucketPrefix := bucket + "/"
-	otherPrefixes := make([]string, 0, len(knownBuckets))
+// siblingPrefixes returns the bucket-prefix list (each suffixed with '/')
+// for every known bucket except the one currently being reconciled.
+func siblingPrefixes(knownBuckets []string, current string) []string {
+	out := make([]string, 0, len(knownBuckets))
 	for _, b := range knownBuckets {
-		if b != bucket {
-			otherPrefixes = append(otherPrefixes, b+"/")
+		if b != current {
+			out = append(out, b+"/")
 		}
 	}
-
-	// Build set of keys that actually exist on the backend
-	realKeys := make(map[string]int64) // key -> size
-	var apiPages int64
-	err = s3b.ListObjects(ctx, "", func(objects []backend.ListedObject) error {
-		apiPages++
-		for _, obj := range objects {
-			key := obj.Key
-			if strings.HasPrefix(key, bucketPrefix) {
-				// belongs to this bucket
-			} else {
-				belongsToOther := false
-				for _, p := range otherPrefixes {
-					if strings.HasPrefix(key, p) {
-						belongsToOther = true
-						break
-					}
-				}
-				if belongsToOther {
-					continue
-				}
-				key = bucketPrefix + key
-			}
-			realKeys[key] = obj.SizeBytes
-		}
-		return nil
-	})
-	if apiPages > 0 {
-		m.usage.Record(backendName, apiPages, 0, 0)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("list objects on %s: %w", backendName, err)
-	}
-
-	result := &worker.ReconcileResult{BackendsScanned: 1}
-
-	// Import objects on backend but not in DB
-	for key, size := range realKeys {
-		imported, importErr := m.objects.ImportObject(ctx, key, backendName, size)
-		if importErr != nil {
-			slog.WarnContext(ctx, "Reconcile: import failed", "key", key, "backend", backendName, "error", importErr)
-			continue
-		}
-		if imported {
-			result.Imported++
-		}
-	}
-
-	// Remove DB entries not on backend
-	dbObjects, err := m.objects.ListObjectsByBackend(ctx, backendName, 100000)
-	if err != nil {
-		return result, fmt.Errorf("list DB objects for %s: %w", backendName, err)
-	}
-	for i := range dbObjects {
-		if _, exists := realKeys[dbObjects[i].ObjectKey]; !exists {
-			if delErr := m.objects.DeleteObjectLocation(ctx, dbObjects[i].ObjectKey, backendName); delErr != nil {
-				slog.WarnContext(ctx, "Reconcile: failed to remove stale entry",
-					"key", dbObjects[i].ObjectKey, "backend", backendName, "error", delErr)
-			} else {
-				slog.InfoContext(ctx, "Reconcile: removed stale entry",
-					"key", dbObjects[i].ObjectKey, "backend", backendName)
-				result.Removed++
-			}
-		}
-	}
-
-	return result, nil
+	return out
 }

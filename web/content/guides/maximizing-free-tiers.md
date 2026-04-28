@@ -158,7 +158,7 @@ ui:
   admin_key: "{{ .Data.data.ui_admin_key }}"
   admin_secret: "{{ .Data.data.ui_admin_secret }}"
   session_secret: "{{ .Data.data.ui_session_secret }}"
-  force_secure_cookies: true
+  force_secure_cookies: true   # unconditionally sets Secure on session cookies; alternative is to let the orchestrator detect TLS via X-Forwarded-Proto from a trusted_proxies CIDR — see docs/security-hardening.md
 
 usage_flush:
   interval: "30s"

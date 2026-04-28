@@ -42,6 +42,11 @@ type MockStore struct {
 	ListObjectsPages []store.ListObjectsResult // for paginated tests
 	ListObjectsErr   error
 
+	// ListObjectsByBackendKeyAscFn is invoked by tests that drive the
+	// ReconcileBackend sorted-merge with a deterministic page sequence.
+	// Returning an empty slice signals end-of-stream.
+	ListObjectsByBackendKeyAscFn func(afterKey string, limit int) ([]store.ObjectLocation, error)
+
 	// Multipart
 	CreateMultipartErr       error
 	GetMultipartResp         *store.MultipartUpload
@@ -293,6 +298,16 @@ func (m *MockStore) CountActiveMultipartUploads(_ context.Context, _ string) (in
 
 // ListObjectsByBackend returns nil (stub).
 func (m *MockStore) ListObjectsByBackend(_ context.Context, _ string, _ int) ([]store.ObjectLocation, error) {
+	return nil, nil
+}
+
+// ListObjectsByBackendKeyAsc returns nil by default. Tests that exercise
+// reconciliation paths can set ListObjectsByBackendKeyAscPages on the mock
+// to drive the sorted-merge with deterministic responses.
+func (m *MockStore) ListObjectsByBackendKeyAsc(_ context.Context, _ /*backend*/ string, afterKey string, limit int) ([]store.ObjectLocation, error) {
+	if m.ListObjectsByBackendKeyAscFn != nil {
+		return m.ListObjectsByBackendKeyAscFn(afterKey, limit)
+	}
 	return nil, nil
 }
 
