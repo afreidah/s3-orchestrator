@@ -335,14 +335,27 @@ ui:
 
 ### Secure Cookies Behind TLS Proxies
 
-When the orchestrator sits behind a TLS-terminating reverse proxy (Traefik, nginx, ALB), the connection to the container is plaintext HTTP, so `r.TLS` is nil and the `Secure` flag is not set on session cookies by default. Set `force_secure_cookies` to always set the `Secure` flag:
+When the orchestrator sits behind a TLS-terminating reverse proxy (Traefik, nginx, ALB), the connection to the orchestrator itself is plaintext HTTP. The session and CSRF cookies still need the `Secure` flag so browsers only send them over HTTPS. There are two ways to get the `Secure` flag set in this layout.
+
+**Recommended: trust the proxy and honour `X-Forwarded-Proto`.** Configure `rate_limit.trusted_proxies` with the CIDR(s) the proxy connects from, and ensure the proxy forwards `X-Forwarded-Proto: https`. The orchestrator sets `Secure` on every cookie when the direct peer is in the trusted CIDR set and the header reads `https`. The check is spoof-resistant — requests from outside the trusted CIDR cannot claim TLS by setting the header themselves.
+
+```yaml
+rate_limit:
+  trusted_proxies:
+    - "10.0.0.0/8"     # the network the reverse proxy connects from
+    - "172.16.0.0/12"
+```
+
+Most reverse proxies forward `X-Forwarded-Proto` automatically, but the option may be named differently or off by default depending on the implementation — consult the proxy's documentation.
+
+**Alternative: force the flag unconditionally.** When the proxy is not under your control, or you'd rather not depend on the header path, set `force_secure_cookies: true`. Cookies then ship with `Secure=true` regardless of the request's apparent scheme.
 
 ```yaml
 ui:
   force_secure_cookies: true
 ```
 
-This ensures browsers only send the session cookie over HTTPS, even though the orchestrator itself sees HTTP.
+`force_secure_cookies` overrides the trusted-proxy detection: when it is true the header check is not consulted.
 
 ### CSRF Protection
 
