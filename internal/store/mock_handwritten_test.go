@@ -77,6 +77,9 @@ type mockStore struct {
 	listObjectsByBackendPages [][]ObjectLocation // for paginated tests
 	listObjectsByBackendErr   error
 	listObjectsByBackendGate  chan struct{} // if set, blocks until closed
+
+	listObjectsByBackendKeyAscResp []ObjectLocation
+	listObjectsByBackendKeyAscErr  error
 	deleteObjectLocationCalls []deleteObjectLocationCall
 	deleteObjectLocationErr   error
 	deleteBackendDataErr      error
@@ -375,8 +378,16 @@ func (m *mockStore) ListMultipartUploads(_ context.Context, _ string, _ int) ([]
 	return nil, nil
 }
 
+// ListObjectsByBackendKeyAsc returns the configured fixture or err.
+// Tests can drive the cursor by setting listObjectsByBackendKeyAscResp /
+// listObjectsByBackendKeyAscErr; the helpers default to no-op.
 func (m *mockStore) ListObjectsByBackendKeyAsc(_ context.Context, _, _ string, _ int) ([]ObjectLocation, error) {
-	return nil, nil
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.listObjectsByBackendKeyAscErr != nil {
+		return nil, m.listObjectsByBackendKeyAscErr
+	}
+	return m.listObjectsByBackendKeyAscResp, nil
 }
 
 func (m *mockStore) ListObjectsByBackend(ctx context.Context, _ string, _ int) ([]ObjectLocation, error) {

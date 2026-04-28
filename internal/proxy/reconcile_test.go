@@ -25,6 +25,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/afreidah/s3-orchestrator/internal/backend"
 	st "github.com/afreidah/s3-orchestrator/internal/store"
 )
 
@@ -414,6 +415,106 @@ func TestSiblingPrefixes_NoMatch(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
+// s3KeyStream — goroutine-backed iterator over the S3 page callback
+// -------------------------------------------------------------------------
+
+// fakeLister implements objectLister by feeding the supplied pages into
+// the callback and optionally returning an error after the last page.
+type fakeLister2 struct {
+	pages [][]backend.ListedObject
+	err   error
+}
+
+func (f *fakeLister2) ListObjects(_ context.Context, _ string, fn func([]backend.ListedObject) error) error {
+	for _, p := range f.pages {
+		if err := fn(p); err != nil {
+			return err
+		}
+	}
+	return f.err
+}
+
+// TestS3KeyStream_StreamsAcrossPagesAndNamespaces drives a multi-page
+// walk and verifies that bucket-routing rules are applied while the
+// stream is consumed.
+func TestS3KeyStream_StreamsAcrossPagesAndNamespaces(t *testing.T) {
+	pages := [][]backend.ListedObject{
+		{{Key: "vb/a", SizeBytes: 1}, {Key: "other/skipme", SizeBytes: 9}},
+		{{Key: "legacy", SizeBytes: 2}, {Key: "vb/z", SizeBytes: 3}},
+	}
+	var apiPages int64
+	s3 := newS3KeyStream(context.Background(),
+		&fakeLister2{pages: pages}, "vb/", []string{"other/"}, &apiPages)
+	defer s3.stop()
+
+	got := drain(t, s3)
+	want := []string{"vb/a", "vb/legacy", "vb/z"}
+	if !equalStrings(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	if apiPages != 2 {
+		t.Errorf("apiPages = %d, want 2", apiPages)
+	}
+}
+
+// TestS3KeyStream_PropagatesListerError confirms that an error returned
+// from ListObjects after the page callback drains surfaces from next.
+func TestS3KeyStream_PropagatesListerError(t *testing.T) {
+	want := errors.New("list boom")
+	s3 := newS3KeyStream(context.Background(),
+		&fakeLister2{
+			pages: [][]backend.ListedObject{{{Key: "vb/a", SizeBytes: 1}}},
+			err:   want,
+		}, "vb/", nil, nil)
+	defer s3.stop()
+
+	// First entry comes through cleanly.
+	if _, ok, err := s3.next(context.Background()); err != nil || !ok {
+		t.Fatalf("first next: ok=%v err=%v", ok, err)
+	}
+	// After channel closes, the deferred err is delivered on the next call.
+	if _, _, err := s3.next(context.Background()); !errors.Is(err, want) {
+		t.Errorf("err = %v, want %v", err, want)
+	}
+}
+
+// TestS3KeyStream_StopUnblocksGoroutine triggers stop while the producer
+// goroutine is still trying to push entries; the test's success criterion
+// is simply that next returns end-of-stream and stop does not deadlock.
+func TestS3KeyStream_StopUnblocksGoroutine(t *testing.T) {
+	pages := [][]backend.ListedObject{
+		{{Key: "vb/a", SizeBytes: 1}, {Key: "vb/b", SizeBytes: 2}},
+	}
+	s3 := newS3KeyStream(context.Background(),
+		&fakeLister2{pages: pages}, "vb/", nil, nil)
+
+	// Pull one entry, then stop without draining.
+	if _, ok, err := s3.next(context.Background()); err != nil || !ok {
+		t.Fatalf("first next: ok=%v err=%v", ok, err)
+	}
+	s3.stop()
+	s3.stop() // idempotent
+}
+
+// TestS3KeyStream_ContextCancelTerminates verifies that a context cancel
+// while next is blocked propagates as an error.
+func TestS3KeyStream_ContextCancelTerminates(t *testing.T) {
+	// fakeLister2 with no pages — the channel will close cleanly, so we
+	// exercise the ctx.Done branch by using a no-op lister that never
+	// publishes anything and a cancelled ctx.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	s3 := newS3KeyStream(ctx, &fakeLister2{
+		pages: [][]backend.ListedObject{{{Key: "vb/a", SizeBytes: 1}}},
+	}, "vb/", nil, nil)
+	defer s3.stop()
+
+	if _, _, err := s3.next(ctx); err == nil {
+		t.Error("cancelled ctx should produce an error from next")
+	}
+}
+
+// -------------------------------------------------------------------------
 // importHandler / deleteHandler
 // -------------------------------------------------------------------------
 
@@ -474,6 +575,130 @@ func TestDeleteHandler_CountsAndContinues(t *testing.T) {
 	_ = h(context.Background(), "vb/y")
 	if res.removed != 1 {
 		t.Errorf("removed = %d after success, want 1", res.removed)
+	}
+}
+
+// -------------------------------------------------------------------------
+// ReconcileBackend — manager-level happy and error paths
+// -------------------------------------------------------------------------
+
+// listingMockBackend satisfies both backend.ObjectBackend (via the embedded
+// mockBackend) and the proxy.objectLister contract used by reconcile.
+// Tests can wire it into newTestManager and then drive ReconcileBackend
+// end-to-end against a deterministic key list.
+type listingMockBackend struct {
+	*mockBackend
+	pages [][]backend.ListedObject
+	err   error
+}
+
+// ListObjects feeds the configured pages into the callback, mirroring the
+// real S3 backend's signature.
+func (l *listingMockBackend) ListObjects(_ context.Context, _ string, fn func([]backend.ListedObject) error) error {
+	for _, p := range l.pages {
+		if err := fn(p); err != nil {
+			return err
+		}
+	}
+	return l.err
+}
+
+// TestReconcileBackend_HappyPathImportsAndDeletes drives a fully wired
+// BackendManager through ReconcileBackend with a backend that lists three
+// keys (a, b, c). The DB cursor returns ("b", "x"), so the merge should
+// import a and c (S3-only) and delete x (DB-only).
+func TestReconcileBackend_HappyPathImportsAndDeletes(t *testing.T) {
+	t.Parallel()
+	store := &mockStore{
+		listObjectsByBackendKeyAscFn: func(afterKey string, _ int) ([]st.ObjectLocation, error) {
+			// One-shot: return both rows on the first call, empty after.
+			if afterKey == "" {
+				return []st.ObjectLocation{
+					{ObjectKey: "vb/b", BackendName: "b1"},
+					{ObjectKey: "vb/x", BackendName: "b1"},
+				}, nil
+			}
+			return nil, nil
+		},
+	}
+	listing := &listingMockBackend{
+		mockBackend: newMockBackend(),
+		pages: [][]backend.ListedObject{
+			{{Key: "vb/a", SizeBytes: 1}, {Key: "vb/b", SizeBytes: 2}, {Key: "vb/c", SizeBytes: 3}},
+		},
+	}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": listing.mockBackend})
+	// Replace the registered backend with our listing-capable variant.
+	mgr.backends["b1"] = listing
+
+	res, err := mgr.ReconcileBackend(context.Background(), "b1", "vb", []string{"vb"})
+	if err != nil {
+		t.Fatalf("ReconcileBackend: %v", err)
+	}
+	if res.BackendsScanned != 1 {
+		t.Errorf("BackendsScanned = %d, want 1", res.BackendsScanned)
+	}
+	if res.Imported != 2 {
+		t.Errorf("Imported = %d, want 2 (a, c)", res.Imported)
+	}
+	if res.Removed != 1 {
+		t.Errorf("Removed = %d, want 1 (x)", res.Removed)
+	}
+	// Verify the delete reached the store with the right key.
+	if len(store.deleteObjectLocationCalls) != 1 || store.deleteObjectLocationCalls[0].key != "vb/x" {
+		t.Errorf("delete calls = %+v, want one call for vb/x", store.deleteObjectLocationCalls)
+	}
+}
+
+// TestReconcileBackend_NoMutationsWhenInSync verifies the no-op case:
+// every S3 key matches a DB row, so no imports or deletes fire.
+func TestReconcileBackend_NoMutationsWhenInSync(t *testing.T) {
+	t.Parallel()
+	store := &mockStore{
+		listObjectsByBackendKeyAscFn: func(afterKey string, _ int) ([]st.ObjectLocation, error) {
+			if afterKey == "" {
+				return []st.ObjectLocation{
+					{ObjectKey: "vb/a"},
+					{ObjectKey: "vb/b"},
+				}, nil
+			}
+			return nil, nil
+		},
+	}
+	listing := &listingMockBackend{
+		mockBackend: newMockBackend(),
+		pages: [][]backend.ListedObject{
+			{{Key: "vb/a", SizeBytes: 1}, {Key: "vb/b", SizeBytes: 2}},
+		},
+	}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": listing.mockBackend})
+	mgr.backends["b1"] = listing
+
+	res, err := mgr.ReconcileBackend(context.Background(), "b1", "vb", []string{"vb"})
+	if err != nil {
+		t.Fatalf("ReconcileBackend: %v", err)
+	}
+	if res.Imported != 0 || res.Removed != 0 {
+		t.Errorf("res = %+v, want zero imports + deletes", res)
+	}
+}
+
+// TestReconcileBackend_PropagatesS3ListingError surfaces a transport
+// failure from the listing path back to the caller.
+func TestReconcileBackend_PropagatesS3ListingError(t *testing.T) {
+	t.Parallel()
+	want := errors.New("list boom")
+	listing := &listingMockBackend{
+		mockBackend: newMockBackend(),
+		pages:       [][]backend.ListedObject{{{Key: "vb/a", SizeBytes: 1}}},
+		err:         want,
+	}
+	mgr := newTestManager(&mockStore{}, map[string]*mockBackend{"b1": listing.mockBackend})
+	mgr.backends["b1"] = listing
+
+	_, err := mgr.ReconcileBackend(context.Background(), "b1", "vb", []string{"vb"})
+	if !errors.Is(err, want) {
+		t.Errorf("err = %v, want %v", err, want)
 	}
 }
 

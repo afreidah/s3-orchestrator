@@ -114,11 +114,18 @@ func reconcileSorted(
 // merge consumer. Memory: O(s3StreamSize * average key length) at most.
 const s3StreamSize = 1000
 
-// s3KeyStream inverts the page-callback shape of *backend.S3Backend.
-// ListObjects into a forward iterator. A single goroutine drives the
-// callback, dropping keys that belong to other virtual buckets and
-// namespacing the rest under bucketPrefix. apiPages, when non-nil, is
-// incremented per S3 page so the caller can record API usage.
+// objectLister is the narrow surface of *backend.S3Backend that
+// s3KeyStream depends on. Defining it here keeps the iterator decoupled
+// from the concrete S3 client and lets tests substitute a fake.
+type objectLister interface {
+	ListObjects(ctx context.Context, prefix string, fn func([]backend.ListedObject) error) error
+}
+
+// s3KeyStream inverts the page-callback shape of objectLister.ListObjects
+// into a forward iterator. A single goroutine drives the callback,
+// dropping keys that belong to other virtual buckets and namespacing the
+// rest under bucketPrefix. apiPages, when non-nil, is incremented per
+// page so the caller can record API usage.
 type s3KeyStream struct {
 	ch        chan reconcileEntry
 	errCh     chan error
@@ -132,7 +139,7 @@ type s3KeyStream struct {
 // not leak goroutines.
 func newS3KeyStream(
 	ctx context.Context,
-	s3b *backend.S3Backend,
+	s3b objectLister,
 	bucketPrefix string,
 	otherPrefixes []string,
 	apiPages *int64,

@@ -424,10 +424,11 @@ func (m *BackendManager) ReconcileBackend(ctx context.Context, backendName, buck
 	}, nil
 }
 
-// resolveS3Backend unwraps any decorators (circuit breaker etc.) and returns
-// the underlying *backend.S3Backend, which is the only type that supports
-// the streaming ListObjects API the reconciler depends on.
-func (m *BackendManager) resolveS3Backend(name string) (*backend.S3Backend, error) {
+// resolveS3Backend unwraps any decorators (circuit breaker etc.) and
+// returns the underlying lister, which must support the streaming
+// ListObjects API the reconciler drives. The interface return makes the
+// dependency narrow so tests can substitute a fake.
+func (m *BackendManager) resolveS3Backend(name string) (objectLister, error) {
 	be, err := m.getBackend(name)
 	if err != nil {
 		return nil, err
@@ -440,11 +441,11 @@ func (m *BackendManager) resolveS3Backend(name string) (*backend.S3Backend, erro
 		}
 		inner = u.Unwrap()
 	}
-	s3b, ok := inner.(*backend.S3Backend)
+	lister, ok := inner.(objectLister)
 	if !ok {
 		return nil, fmt.Errorf("backend %s does not support listing", name)
 	}
-	return s3b, nil
+	return lister, nil
 }
 
 // siblingPrefixes returns the bucket-prefix list (each suffixed with '/')

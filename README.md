@@ -322,7 +322,7 @@ Rules are hot-reloadable via `SIGHUP`. An empty rules list (or omitting the sect
 
 ## Orphan Reconciliation
 
-Optional background service that periodically scans each backend's S3 bucket and reconciles it against the metadata database. For each backend, it lists all objects via a single `ListObjects` call, diffs the result against DB entries, imports untracked objects, and removes stale DB entries where the object no longer exists on the backend.
+Optional background service that periodically scans each backend's S3 bucket and reconciles it against the metadata database. For each backend, it walks both sides as ascending key streams — S3 paginated by `ListObjects` and the DB paginated by `ListObjectsByBackendKeyAsc` — and merges them in lockstep. Keys present only on the backend are imported; keys present only in the DB are removed. Memory is bounded by the page size on each side (1000 entries) regardless of object count, so backends holding millions of objects reconcile without OOM. Rows owned by sibling virtual buckets stored on the same backend are skipped so a per-bucket pass does not affect other buckets.
 
 ```yaml
 reconcile:
@@ -1239,6 +1239,7 @@ internal/
     objects_write.go         PutObject, CopyObject, DeleteObject, DeleteObjects
     multipart.go             Multipart upload lifecycle
     drain.go                 Backend drain and remove operations
+    reconcile.go             Bounded-memory sorted-merge reconciliation engine
     core.go                  Shared infrastructure (timeout, admission, routing)
     lifecycle.go             Lifecycle expiration rule processing
     dashboard.go             DashboardData type + thin wrappers
