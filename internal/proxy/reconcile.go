@@ -348,7 +348,11 @@ func (d *dbCursorStream) next(ctx context.Context) (reconcileEntry, bool, error)
 // stop is a no-op for the DB cursor — the iterator owns no goroutine and
 // holds no other resource that needs explicit teardown. Defined so the
 // type satisfies keySource alongside s3KeyStream, which does need cleanup.
-func (d *dbCursorStream) stop() {}
+func (d *dbCursorStream) stop() {
+	// Intentionally empty: nothing to release. Required to satisfy the
+	// keySource interface uniformly with s3KeyStream, whose stop tears
+	// down a producer goroutine.
+}
 
 // belongs reports whether a DB-side key falls within the current bucket
 // prefix. Keys owned by sibling buckets are skipped so a single-bucket
