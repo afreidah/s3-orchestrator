@@ -375,6 +375,10 @@ func (m *mockStore) ListMultipartUploads(_ context.Context, _ string, _ int) ([]
 	return nil, nil
 }
 
+func (m *mockStore) ListObjectsByBackendKeyAsc(_ context.Context, _, _ string, _ int) ([]ObjectLocation, error) {
+	return nil, nil
+}
+
 func (m *mockStore) ListObjectsByBackend(ctx context.Context, _ string, _ int) ([]ObjectLocation, error) {
 	m.mu.Lock()
 	gate := m.listObjectsByBackendGate

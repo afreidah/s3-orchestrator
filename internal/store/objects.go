@@ -178,6 +178,23 @@ func (s *Store) ListObjectsByBackend(ctx context.Context, backendName string, li
 	return toSlimObjectLocations(rows), nil
 }
 
+// ListObjectsByBackendKeyAsc returns rows for a backend in ascending
+// object_key order, starting strictly after the supplied cursor. The empty
+// string returns the first page. Used by ReconcileBackend to drive a
+// bounded-memory sorted-merge join against an S3 ListObjects walk; both
+// sides are in lex order so the merge is O(n) memory bounded by limit.
+func (s *Store) ListObjectsByBackendKeyAsc(ctx context.Context, backendName, afterKey string, limit int) ([]ObjectLocation, error) {
+	rows, err := s.queries.ListObjectsByBackendKeyAsc(ctx, db.ListObjectsByBackendKeyAscParams{
+		BackendName: backendName,
+		ObjectKey:   afterKey,
+		Limit:       int32(limit), //nolint:gosec // G115: limit is a small caller-controlled batch size
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to page objects by backend: %w", err)
+	}
+	return toSlimObjectLocations(rows), nil
+}
+
 // MoveObjectLocation atomically moves a copy of an object from one backend to
 // another. Uses SELECT FOR UPDATE to prevent races. Returns (0, nil) if the
 // source copy is gone or the target already has a copy.
