@@ -44,12 +44,9 @@ func (r ListExpiredObjectsRow) GetBackendName() string       { return r.BackendN
 func (r ListExpiredObjectsRow) GetSizeBytes() int64          { return r.SizeBytes }
 func (r ListExpiredObjectsRow) GetCreatedAt() pgtype.Timestamptz { return r.CreatedAt }
 
-// ListDirectChildrenRow
-
-func (r ListDirectChildrenRow) GetObjectKey() string             { return r.ObjectKey }
-func (r ListDirectChildrenRow) GetBackendName() string           { return r.BackendName }
-func (r ListDirectChildrenRow) GetSizeBytes() int64              { return r.SizeBytes }
-func (r ListDirectChildrenRow) GetCreatedAt() pgtype.Timestamptz { return r.CreatedAt }
+// ListDirectChildrenRow has no ObjectLocation projection; it groups by
+// object_key and exposes a backend_names array, so it does not fit the
+// single-backend ObjectLocation shape consumed by toObjectLocation.
 
 // ListObjectsByBackendKeyAscRow
 

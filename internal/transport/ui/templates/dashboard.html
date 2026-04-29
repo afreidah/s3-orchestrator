@@ -71,6 +71,15 @@
       <button id="rebalance-btn" class="btn-action">Rebalance</button>
       <button id="clean-excess-btn" class="btn-action">Clean Excess</button>
       <button id="sync-btn" class="btn-action">Sync</button>
+      <button id="replicate-btn" class="btn-action">Replicate Now</button>
+      {{if .Config.IntegrityEnabled}}
+      <button id="scrub-btn" class="btn-action">Scrub</button>
+      <button id="backfill-checksums-btn" class="btn-action">Backfill Checksums</button>
+      {{end}}
+      {{if .Config.EncryptionEnabled}}
+      <button id="encrypt-existing-btn" class="btn-action">Encrypt Existing</button>
+      {{end}}
+      <span id="admin-action-status" class="admin-action-status"></span>
     </h2>
     <table>
       <thead>
@@ -191,7 +200,7 @@
         {{else}}
         <div class="tree-file" data-key="{{.Name}}">
           <span class="tree-name">{{.Name}}</span>
-          <span class="tree-meta">{{.Backend}} &middot; {{formatBytes .TotalSize}} &middot; {{.CreatedAt}}</span>
+          <span class="tree-meta">{{joinStrings .Backends ", "}} &middot; {{formatBytes .TotalSize}} &middot; {{.CreatedAt}}</span>
           <span class="tree-action tree-delete" title="Delete">&#x2715;</span>
         </div>
         {{end}}

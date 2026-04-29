@@ -857,11 +857,17 @@ func ProvideUIHandler(i do.Injector) (*ui.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
+	adminHandler, err := do.Invoke[*admin.Handler](i)
+	if err != nil {
+		return nil, err
+	}
+
 	return ui.NewWithDeps(&ui.Deps{
 		BackendOps:    manager,
 		Objects:       manager.ObjectManager,
 		Rebalancer:    manager.Rebalancer,
 		OverRep:       manager.OverReplicationCleaner,
+		AdminHandler:  adminHandler,
 		DBHealthy:     cb.IsHealthy,
 		Cfg:           cfg,
 		LogBuffer:     logBuffer,

@@ -333,12 +333,12 @@ func (s *Store) ListExpiredObjects(ctx context.Context, prefix string, cutoff ti
 
 // DirEntry holds aggregate stats for one immediate child of a directory prefix.
 type DirEntry struct {
-	Name      string `json:"name"`      // absolute path (e.g. "bucket/photos/")
-	IsDir     bool   `json:"isDir"`     // true for directories
-	FileCount int64  `json:"fileCount"` // number of files (recursive for dirs)
-	TotalSize int64  `json:"totalSize"` // total bytes (recursive for dirs)
-	Backend   string `json:"backend"`   // backend name (files only)
-	CreatedAt string `json:"createdAt"` // formatted timestamp (files only)
+	Name      string   `json:"name"`      // absolute path (e.g. "bucket/photos/")
+	IsDir     bool     `json:"isDir"`     // true for directories
+	FileCount int64    `json:"fileCount"` // distinct object_keys (logical files, recursive for dirs)
+	TotalSize int64    `json:"totalSize"` // physical bytes summed across all replica rows
+	Backends  []string `json:"backends"`  // sorted backends a file is replicated to (files only)
+	CreatedAt string   `json:"createdAt"` // formatted timestamp (files only)
 }
 
 // DirectoryListResult holds the response for a lazy-loaded directory listing.
@@ -376,7 +376,8 @@ func (s *Store) ListDirectoryChildren(ctx context.Context, prefix, startAfter st
 
 	// Build a lookup of file details by relative name.
 	type fileDetail struct {
-		Backend   string
+		Backends  []string
+		SizeBytes int64
 		CreatedAt string
 	}
 	fileLookup := make(map[string]fileDetail, len(fileRows))
@@ -387,7 +388,8 @@ func (s *Store) ListDirectoryChildren(ctx context.Context, prefix, startAfter st
 	for _, row := range fileRows {
 		relName := row.ObjectKey[len(prefix):]
 		fileLookup[relName] = fileDetail{
-			Backend:   row.BackendName,
+			Backends:  row.BackendNames,
+			SizeBytes: row.SizeBytes,
 			CreatedAt: row.CreatedAt.Time.Format("2006-01-02 15:04"),
 		}
 	}
@@ -404,13 +406,18 @@ func (s *Store) ListDirectoryChildren(ctx context.Context, prefix, startAfter st
 			TotalSize: s.TotalSize,
 		}
 		if !s.IsDir {
-			if detail, ok := fileLookup[s.Name]; ok {
-				entry.Backend = detail.Backend
-				entry.CreatedAt = detail.CreatedAt
-			} else {
-				// File is outside the current page — skip it.
+			detail, ok := fileLookup[s.Name]
+			if !ok {
+				// File is outside the current page.
 				continue
 			}
+			entry.Backends = detail.Backends
+			entry.CreatedAt = detail.CreatedAt
+			// Per-file row reports the logical object size, not the
+			// replica-sum returned by GetDirectoryStats; SizeBytes is
+			// a single replica's size and matches what the user
+			// uploaded.
+			entry.TotalSize = detail.SizeBytes
 		}
 		result.Entries = append(result.Entries, entry)
 	}

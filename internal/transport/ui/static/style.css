@@ -96,7 +96,15 @@ header {
 
 header h1 { font-size: 1.25rem; font-weight: 600; color: #f8fafc; }
 
-.header-logo { height: 4rem; }
+.header-logo { height: 7rem; }
+
+.admin-action-status {
+  margin-left: 0.75rem;
+  font-size: 0.85rem;
+  color: #94a3b8;
+}
+.admin-action-status.error { color: #fca5a5; }
+.admin-action-status.skipped { color: #fcd34d; }
 
 .badge {
   display: inline-block;

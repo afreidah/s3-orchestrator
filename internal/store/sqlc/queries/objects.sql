@@ -72,7 +72,9 @@ RETURNING true AS inserted;
 -- name: GetDirectoryStats :many
 -- Aggregate count and size for immediate children of a directory prefix.
 -- Directories (containing a '/') and files are distinguished by is_dir.
--- Uses a subquery to deduplicate replicated objects before summing sizes.
+-- file_count counts distinct object_keys (logical files); total_size sums
+-- every replica row in object_locations so directory totals reflect real
+-- physical storage consumption, matching the Storage Summary semantics.
 SELECT
     (CASE WHEN position('/' IN substring(object_key FROM length(@prefix::text) + 1)) > 0
          THEN substring(object_key FROM length(@prefix::text) + 1
@@ -82,15 +84,11 @@ SELECT
     (CASE WHEN position('/' IN substring(object_key FROM length(@prefix::text) + 1)) > 0
          THEN true ELSE false
     END)::boolean AS is_dir,
-    COUNT(*)  AS file_count,
+    COUNT(DISTINCT object_key) AS file_count,
     COALESCE(SUM(size_bytes), 0)::bigint AS total_size
-FROM (
-    SELECT DISTINCT ON (object_key) object_key, size_bytes
-    FROM object_locations
-    WHERE object_key LIKE @prefix::text || '%' ESCAPE '\'
-      AND length(object_key) > length(@prefix::text)
-    ORDER BY object_key, created_at ASC
-) deduped
+FROM object_locations
+WHERE object_key LIKE @prefix::text || '%' ESCAPE '\'
+  AND length(object_key) > length(@prefix::text)
 GROUP BY name, is_dir
 ORDER BY is_dir DESC, name ASC;
 
@@ -179,11 +177,18 @@ WHERE object_key = $1 AND backend_name = $2;
 
 -- name: ListDirectChildren :many
 -- Return per-file detail for non-directory children under a prefix, with pagination.
-SELECT DISTINCT ON (object_key) object_key, backend_name, size_bytes, created_at
+-- Aggregates every replica into a sorted backend_names array per object_key so
+-- the file row reflects all backends a file lives on, not just one.
+SELECT
+    object_key,
+    ARRAY_AGG(backend_name ORDER BY backend_name)::text[] AS backend_names,
+    MAX(size_bytes)::bigint AS size_bytes,
+    MIN(created_at)::timestamptz AS created_at
 FROM object_locations
 WHERE object_key LIKE @prefix::text || '%' ESCAPE '\'
   AND position('/' IN substring(object_key FROM length(@prefix::text) + 1)) = 0
   AND length(object_key) > length(@prefix::text)
   AND object_key > @start_after
-ORDER BY object_key, created_at ASC
+GROUP BY object_key
+ORDER BY object_key
 LIMIT @max_keys;
