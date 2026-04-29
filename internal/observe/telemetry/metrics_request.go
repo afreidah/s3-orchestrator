@@ -125,6 +125,16 @@ var (
 		},
 	)
 
+	// AdmissionClientCanceledTotal counts requests where the client closed
+	// or cancelled their context while waiting for an admission slot. These
+	// are not server-side rejections and do not count against capacity SLOs.
+	AdmissionClientCanceledTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "s3o_admission_client_canceled_total",
+			Help: "Total admission waits aborted by client context cancellation",
+		},
+	)
+
 	// WorkerAdmissionRejectionsTotal counts background worker tasks that were
 	// skipped because the admission semaphore was full.
 	WorkerAdmissionRejectionsTotal = promauto.NewCounterVec(
