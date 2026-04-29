@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/internalkey"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
@@ -165,7 +166,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// --- Prefix key for internal storage isolation ---
-	internalKey := bucket + "/" + key
+	internalKey := internalkey.Make(bucket, key)
 
 	// --- Start tracing span ---
 	spanName := httpSpanName[method]
@@ -299,41 +300,30 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	span.SetAttributes(attribute.Int("http.status_code", status))
 
-	// --- Audit log (fixed-size backing array avoids heap allocation) ---
+	// --- Audit log ---
 	elapsed := time.Since(start)
-	var attrBuf [11]slog.Attr
-	n := 0
-	attrBuf[n] = slog.String("operation", operation)
-	n++
-	attrBuf[n] = slog.String("method", method)
-	n++
-	attrBuf[n] = slog.String("path", r.URL.Path)
-	n++
-	attrBuf[n] = slog.String("remote", r.RemoteAddr)
-	n++
-	attrBuf[n] = slog.String("bucket", bucket)
-	n++
-	attrBuf[n] = slog.Int("status", status)
-	n++
-	attrBuf[n] = slog.Duration("duration", elapsed)
-	n++
+	attrs := []slog.Attr{
+		slog.String("operation", operation),
+		slog.String("method", method),
+		slog.String("path", r.URL.Path),
+		slog.String("remote", r.RemoteAddr),
+		slog.String("bucket", bucket),
+		slog.Int("status", status),
+		slog.Duration("duration", elapsed),
+	}
 	if key != "" {
-		attrBuf[n] = slog.String("key", key)
-		n++
+		attrs = append(attrs, slog.String("key", key))
 	}
 	if requestSize > 0 {
-		attrBuf[n] = slog.Int64("request_size", requestSize)
-		n++
+		attrs = append(attrs, slog.Int64("request_size", requestSize))
 	}
 	if responseSize > 0 {
-		attrBuf[n] = slog.Int64("response_size", responseSize)
-		n++
+		attrs = append(attrs, slog.Int64("response_size", responseSize))
 	}
 	if err != nil {
-		attrBuf[n] = slog.String("error", err.Error())
-		n++
+		attrs = append(attrs, slog.String("error", err.Error()))
 	}
-	audit.Log(ctx, "s3."+operation, attrBuf[:n]...)
+	audit.Log(ctx, "s3."+operation, attrs...)
 }
 
 // -------------------------------------------------------------------------

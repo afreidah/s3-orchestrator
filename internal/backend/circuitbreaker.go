@@ -46,7 +46,8 @@ func NewCircuitBreakerBackend(real ObjectBackend, name string, threshold int, ti
 }
 
 // Unwrap returns the underlying ObjectBackend. This is needed for code that
-// type-asserts to a concrete type (e.g. SyncBackend asserting *S3Backend).
+// type-asserts to a concrete type or to a narrow interface (e.g. the
+// reconciler's objectLister, which extends ObjectBackend with ListObjects).
 func (cb *CircuitBreakerBackend) Unwrap() ObjectBackend {
 	return cb.real
 }

@@ -13,7 +13,6 @@ package proxy
 
 import (
 	"io"
-	"strings"
 
 	objcache "github.com/afreidah/s3-orchestrator/internal/cache"
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -75,10 +74,3 @@ func (o *ObjectManager) CanAcceptWrite(size int64) bool {
 	return len(o.eligibleForWrite(1, 0, size)) > 0
 }
 
-// splitInternalKey extracts the bucket and user-facing key from the internal
-// key format "bucket/userkey". Used for notification event payloads so the
-// event key matches what the client used, not the internal prefix.
-func splitInternalKey(internalKey string) (bucket, key string) {
-	bucket, key, _ = strings.Cut(internalKey, "/")
-	return bucket, key
-}

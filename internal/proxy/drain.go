@@ -182,47 +182,38 @@ func (d *DrainManager) runDrain(ctx context.Context, name string, state *drainSt
 	)
 	defer span.End()
 
-	// Abort in-progress multipart uploads on this backend
 	d.abortMultipartUploads(ctx, name)
-
 	srcBackend, _ := d.getBackend(name)
 
+	if err := d.migrateBackendObjects(ctx, name, state, srcBackend); err != nil {
+		d.abortDrainWithError(name, state, err)
+		return
+	}
+	d.finalizeDrain(ctx, name, state)
+}
+
+// migrateBackendObjects walks the source backend's tracked objects in pages
+// and migrates each one. Returns ctx.Err() on cancellation, the store error
+// on a list failure, or nil when every page has been processed.
+func (d *DrainManager) migrateBackendObjects(ctx context.Context, name string, state *drainState, srcBackend backend.ObjectBackend) error {
 	for {
-		// Check for cancellation
-		select {
-		case <-ctx.Done():
-			state.setErr(ctx.Err())
-			d.draining.Delete(name)
-			telemetry.DrainActive.Set(0)
-			return
-		default:
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 
-		// Get next batch of objects
 		objects, err := d.objects.ListObjectsByBackend(ctx, name, 100)
 		if err != nil {
 			slog.ErrorContext(ctx, "Drain: failed to list objects", "backend", name, "error", err)
-			state.setErr(err)
-			d.draining.Delete(name)
-			telemetry.DrainActive.Set(0)
-			return
+			return err
 		}
-
 		if len(objects) == 0 {
-			break // drain complete
+			return nil
 		}
 
-		// Migrate each object
 		for i := range objects {
-			select {
-			case <-ctx.Done():
-				state.setErr(ctx.Err())
-				d.draining.Delete(name)
-				telemetry.DrainActive.Set(0)
-				return
-			default:
+			if err := ctx.Err(); err != nil {
+				return err
 			}
-
 			if d.DrainOneObject(ctx, srcBackend, name, &objects[i]) {
 				state.moved.Add(1)
 				telemetry.DrainObjectsMoved.Inc()
@@ -230,23 +221,35 @@ func (d *DrainManager) runDrain(ctx context.Context, name string, state *drainSt
 			}
 		}
 	}
+}
 
-	// Flush any pending cleanup queue items for this backend before
-	// deleting all DB records (which would silently drop pending items).
+// abortDrainWithError records the failure on state, drops the entry from
+// d.draining (so the backend becomes eligible for writes again on next
+// reload), and clears the active-drain gauge. Single source of truth for
+// the bail-out invariant.
+func (d *DrainManager) abortDrainWithError(name string, state *drainState, err error) {
+	state.setErr(err)
+	d.draining.Delete(name)
+	telemetry.DrainActive.Set(0)
+}
+
+// finalizeDrain runs after a successful migration. Flushes pending cleanup
+// queue items so they are not dropped by the subsequent DeleteBackendData,
+// then removes all DB records and clears the active-drain gauge. The entry
+// in d.draining stays so the dashboard reports "Drained" and the backend
+// remains excluded from new writes until removed from config.
+func (d *DrainManager) finalizeDrain(ctx context.Context, name string, state *drainState) {
 	processed, failed := d.processCleanupQueue(ctx)
 	if processed > 0 || failed > 0 {
 		slog.InfoContext(ctx, "Drain: flushed cleanup queue before removing backend data",
 			"backend", name, "processed", processed, "failed", failed)
 	}
 
-	// Drain complete — clean up DB records
 	if err := d.backendLifecycle.DeleteBackendData(ctx, name); err != nil {
 		slog.ErrorContext(ctx, "Drain: failed to clean up backend data", "backend", name, "error", err)
 		state.setErr(err)
 	}
 
-	// Keep the entry in d.draining so the dashboard shows "Drained" and
-	// the backend remains excluded from new writes until removed from config.
 	telemetry.DrainActive.Set(0)
 
 	audit.Log(ctx, "storage.DrainComplete",

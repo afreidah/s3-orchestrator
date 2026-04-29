@@ -12,6 +12,7 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -21,6 +22,54 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 )
+
+// putEncryptState carries the cached DEK across PutObject failover attempts
+// so retries reuse the wrapped DEK instead of paying another KeyProvider
+// round-trip. The zero value means "no DEK cached yet — wrap on first call".
+type putEncryptState struct {
+	dek, wrappedDEK []byte
+	keyID           string
+}
+
+// encryptForPut prepares an upload body for PutObject. The first call wraps
+// a fresh DEK via the KeyProvider and stores it in state; subsequent calls
+// reuse the cached DEK with a new base nonce, so retry storms do not
+// hammer the KeyProvider. Returns the ciphertext stream, its size, and the
+// storage-side encryption metadata. The caller layers integrity fields
+// (e.g. ContentHash) onto the returned EncryptionMeta.
+func encryptForPut(
+	ctx context.Context,
+	enc *encryption.Encryptor,
+	plaintext []byte,
+	plaintextSize int64,
+	state *putEncryptState,
+) (io.Reader, int64, *store.EncryptionMeta, error) {
+	var (
+		result *encryption.EncryptResult
+		err    error
+	)
+	if state.dek == nil {
+		result, err = enc.Encrypt(ctx, bytes.NewReader(plaintext), plaintextSize)
+		if err == nil {
+			state.dek = result.RawDEK()
+			state.wrappedDEK = result.WrappedDEK
+			state.keyID = result.KeyID
+		}
+	} else {
+		result, err = enc.EncryptWithDEK(bytes.NewReader(plaintext), plaintextSize, state.dek, state.wrappedDEK, state.keyID)
+	}
+	if err != nil {
+		telemetry.EncryptionErrorsTotal.WithLabelValues("encrypt", "encrypt_failed").Inc()
+		return nil, 0, nil, fmt.Errorf("encrypt: %w", err)
+	}
+	telemetry.EncryptionOpsTotal.WithLabelValues("encrypt").Inc()
+	return result.Body, result.CiphertextSize, &store.EncryptionMeta{
+		Encrypted:     true,
+		EncryptionKey: encryption.PackKeyData(result.BaseNonce, result.WrappedDEK),
+		KeyID:         result.KeyID,
+		PlaintextSize: plaintextSize,
+	}, nil
+}
 
 // encryptBody encrypts a request body for upload. Returns the encrypted body,
 // ciphertext size, and encryption metadata for the store. Used by UploadPart
