@@ -38,6 +38,7 @@ func dirTestPrefix(t *testing.T, label string) string {
 // a replicated file's row exposes every backend it lives on as a sorted
 // slice and reports the logical (single-replica) size.
 func TestPgListDirectoryChildren_FileRowReplicated(t *testing.T) {
+	resetState(t)
 	ctx := context.Background()
 	prefix := dirTestPrefix(t, "dirtest-replicated")
 	key := prefix + "file.txt"
@@ -72,6 +73,7 @@ func TestPgListDirectoryChildren_FileRowReplicated(t *testing.T) {
 // TestPgListDirectoryChildren_FileRowSingle asserts that a single-replica
 // file rolls up with its one backend in a one-element slice.
 func TestPgListDirectoryChildren_FileRowSingle(t *testing.T) {
+	resetState(t)
 	ctx := context.Background()
 	prefix := dirTestPrefix(t, "dirtest-single")
 	key := prefix + "file.txt"
@@ -104,6 +106,7 @@ func TestPgListDirectoryChildren_FileRowSingle(t *testing.T) {
 // roll-up at the parent prefix sums physical bytes across replicas
 // (matching Storage Summary semantics) and counts distinct object keys.
 func TestPgListDirectoryChildren_DirRollupPhysicalBytes(t *testing.T) {
+	resetState(t)
 	ctx := context.Background()
 	parent := dirTestPrefix(t, "dirtest-rollup")
 	repKey := parent + "child/replicated.txt"
