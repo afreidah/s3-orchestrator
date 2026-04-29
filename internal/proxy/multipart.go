@@ -20,7 +20,9 @@ import (
 	"strings"
 	"time"
 
+	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	objcache "github.com/afreidah/s3-orchestrator/internal/cache"
+	"github.com/afreidah/s3-orchestrator/internal/internalkey"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
@@ -246,63 +248,8 @@ func (mp *MultipartManager) CompleteMultipartUpload(ctx context.Context, uploadI
 	// Stream parts sequentially through a pipe. When parts are encrypted,
 	// each part is decrypted inline so the pipe carries plaintext. The main
 	// goroutine then optionally re-encrypts as a single final object.
-	pr, pw := io.Pipe()
-	pipeCtx, pipeCancel := context.WithCancel(ctx)
+	pr, pipeCancel := mp.streamPartsThroughPipe(ctx, be, uploadID, parts)
 	defer pipeCancel()
-
-	go func() {
-		bw := bufpool.GetWriter(pw)
-		defer func() {
-			if r := recover(); r != nil {
-				pw.CloseWithError(fmt.Errorf("multipart assembly panic: %v", r))
-			}
-			bufpool.PutWriter(bw)
-			_ = pw.Close()
-		}()
-		for _, part := range parts {
-			partKey := multipartPartKey(uploadID, part.PartNumber)
-			bctx, bcancel := mp.withTimeout(pipeCtx)
-			result, err := be.GetObject(bctx, partKey, "")
-			if err != nil {
-				bcancel()
-				pw.CloseWithError(fmt.Errorf("failed to read part %d: %w", part.PartNumber, err))
-				return
-			}
-
-			var src io.Reader = result.Body
-			if part.Encrypted && mp.encryptor != nil {
-				_, wrappedDEK, unpackErr := encryption.UnpackKeyData(part.EncryptionKey)
-				if unpackErr != nil {
-					telemetry.EncryptionErrorsTotal.WithLabelValues("decrypt", "unpack_failed").Inc()
-					_ = result.Body.Close()
-					bcancel()
-					pw.CloseWithError(fmt.Errorf("unpack part %d key: %w", part.PartNumber, unpackErr))
-					return
-				}
-				decrypted, decErr := mp.encryptor.Decrypt(pipeCtx, result.Body, wrappedDEK, part.KeyID)
-				if decErr != nil {
-					telemetry.EncryptionErrorsTotal.WithLabelValues("decrypt", "decrypt_failed").Inc()
-					_ = result.Body.Close()
-					bcancel()
-					pw.CloseWithError(fmt.Errorf("decrypt part %d: %w", part.PartNumber, decErr))
-					return
-				}
-				telemetry.EncryptionOpsTotal.WithLabelValues("decrypt").Inc()
-				src = decrypted
-			}
-
-			_, err = bufpool.Copy(bw, src)
-			_ = result.Body.Close()
-			bcancel()
-			if err != nil {
-				pw.CloseWithError(fmt.Errorf("failed to stream part %d: %w", part.PartNumber, err))
-				return
-			}
-		}
-		if err := bw.Flush(); err != nil {
-			pw.CloseWithError(fmt.Errorf("failed to flush multipart stream: %w", err))
-		}
-	}()
 
 	// When encryption is enabled, re-encrypt the combined plaintext as a
 	// single object with unified chunk boundaries. Otherwise upload as-is.
@@ -360,7 +307,7 @@ func (mp *MultipartManager) CompleteMultipartUpload(ctx context.Context, uploadI
 		slog.Int("parts_count", len(parts)),
 	)
 	if event.Emit != nil {
-		bucket, userKey := splitInternalKey(mu.ObjectKey)
+		bucket, userKey := internalkey.Split(mu.ObjectKey)
 		event.Emit(event.Event{
 			Type:    event.ObjectCreatedCompleteMultipartUpload,
 			Subject: userKey,
@@ -492,6 +439,91 @@ func (mp *MultipartManager) abortMultipartUploadsOnBackend(ctx context.Context, 
 				"upload_id", mu.UploadID, "error", err)
 		}
 	}
+}
+
+// -------------------------------------------------------------------------
+// PART STREAMING
+// -------------------------------------------------------------------------
+
+// streamPartsThroughPipe spawns a goroutine that reads each part in order,
+// decrypts encrypted parts inline so the pipe carries plaintext, and writes
+// the concatenated stream to the returned reader. The caller must invoke
+// the returned cancel func to stop in-flight backend reads when assembly
+// fails downstream (e.g. the final PutObject errors out).
+func (mp *MultipartManager) streamPartsThroughPipe(
+	ctx context.Context,
+	be s3be.ObjectBackend,
+	uploadID string,
+	parts []store.MultipartPart,
+) (*io.PipeReader, context.CancelFunc) {
+	pr, pw := io.Pipe()
+	pipeCtx, pipeCancel := context.WithCancel(ctx)
+
+	go func() {
+		bw := bufpool.GetWriter(pw)
+		defer func() {
+			if r := recover(); r != nil {
+				pw.CloseWithError(fmt.Errorf("multipart assembly panic: %v", r))
+			}
+			bufpool.PutWriter(bw)
+			_ = pw.Close()
+		}()
+		for i := range parts {
+			if err := mp.streamOnePart(pipeCtx, be, bw, uploadID, &parts[i]); err != nil {
+				pw.CloseWithError(err)
+				return
+			}
+		}
+		if err := bw.Flush(); err != nil {
+			pw.CloseWithError(fmt.Errorf("failed to flush multipart stream: %w", err))
+		}
+	}()
+
+	return pr, pipeCancel
+}
+
+// streamOnePart fetches one part from the backend, decrypts it when the
+// part was stored encrypted, and copies the plaintext into bw. Closes the
+// backend response body and the per-call timeout context before returning.
+// Errors are wrapped with the part number so the assembly failure message
+// identifies which part failed.
+func (mp *MultipartManager) streamOnePart(
+	ctx context.Context,
+	be s3be.ObjectBackend,
+	bw io.Writer,
+	uploadID string,
+	part *store.MultipartPart,
+) error {
+	partKey := multipartPartKey(uploadID, part.PartNumber)
+	bctx, bcancel := mp.withTimeout(ctx)
+	defer bcancel()
+
+	result, err := be.GetObject(bctx, partKey, "")
+	if err != nil {
+		return fmt.Errorf("failed to read part %d: %w", part.PartNumber, err)
+	}
+	defer func() { _ = result.Body.Close() }()
+
+	src := io.Reader(result.Body)
+	if part.Encrypted && mp.encryptor != nil {
+		_, wrappedDEK, unpackErr := encryption.UnpackKeyData(part.EncryptionKey)
+		if unpackErr != nil {
+			telemetry.EncryptionErrorsTotal.WithLabelValues("decrypt", "unpack_failed").Inc()
+			return fmt.Errorf("unpack part %d key: %w", part.PartNumber, unpackErr)
+		}
+		decrypted, decErr := mp.encryptor.Decrypt(ctx, result.Body, wrappedDEK, part.KeyID)
+		if decErr != nil {
+			telemetry.EncryptionErrorsTotal.WithLabelValues("decrypt", "decrypt_failed").Inc()
+			return fmt.Errorf("decrypt part %d: %w", part.PartNumber, decErr)
+		}
+		telemetry.EncryptionOpsTotal.WithLabelValues("decrypt").Inc()
+		src = decrypted
+	}
+
+	if _, err := bufpool.Copy(bw, src); err != nil {
+		return fmt.Errorf("failed to stream part %d: %w", part.PartNumber, err)
+	}
+	return nil
 }
 
 // formatPartNumbers formats a slice of part numbers for error messages.

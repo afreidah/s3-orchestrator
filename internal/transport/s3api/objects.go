@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/internalkey"
 	"github.com/afreidah/s3-orchestrator/internal/util/bufpool"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"go.opentelemetry.io/otel/trace"
@@ -250,7 +251,7 @@ func (s *Server) handleCopyObject(ctx context.Context, w http.ResponseWriter, r 
 	}
 
 	// Prefix source key for internal storage
-	sourceInternalKey := bucket + "/" + sourceKey
+	sourceInternalKey := internalkey.Make(bucket, sourceKey)
 
 	etag, err := s.Manager.ObjectManager.CopyObject(ctx, sourceInternalKey, destInternalKey)
 	if err != nil {
@@ -293,7 +294,7 @@ func (s *Server) handleDeleteObjects(ctx context.Context, w http.ResponseWriter,
 	// Prefix each key with the bucket for internal storage
 	keys := make([]string, len(req.Objects))
 	for i, obj := range req.Objects {
-		keys[i] = bucket + "/" + obj.Key
+		keys[i] = internalkey.Make(bucket, obj.Key)
 	}
 
 	results := s.Manager.ObjectManager.DeleteObjects(ctx, keys)

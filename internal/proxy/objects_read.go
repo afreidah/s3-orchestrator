@@ -163,54 +163,69 @@ func (o *ObjectManager) broadcastRead(ctx context.Context, operation, key string
 		}
 	}
 
+	concurrency := 1
 	if o.parallelBroadcast {
-		return o.parallelBroadcastRead(ctx, operation, key, start, span, tryBackend)
+		concurrency = len(o.order)
 	}
-	return o.sequentialBroadcastRead(ctx, operation, key, start, span, tryBackend)
+	return o.tryAllBackends(ctx, operation, key, start, span, concurrency, tryBackend)
 }
 
-// sequentialBroadcastRead tries each backend in order until one succeeds.
-func (o *ObjectManager) sequentialBroadcastRead(ctx context.Context, operation, key string, start time.Time, span trace.Span, tryBackend func(ctx context.Context, backendName string, backend s3be.ObjectBackend) (int64, error)) (string, error) {
-	var lastErr error
-	for _, name := range o.order {
-		backend, ok := o.backends[name]
-		if !ok {
-			continue
-		}
-		bctx, bcancel := o.withTimeout(ctx)
-		size, err := tryBackend(bctx, name, backend)
-		if err != nil {
-			bcancel()
-			lastErr = err
-			continue
-		}
-
-		// Success — cache the result for future degraded reads
+// tryAllBackends invokes tryBackend on every backend in o.order and returns
+// the first successful result. With concurrency <= 1 the backends are tried
+// serially; otherwise they race in parallel with losers cancelled in the
+// background so connections release promptly. On success, the winner's
+// name is cached for future degraded reads.
+func (o *ObjectManager) tryAllBackends(
+	ctx context.Context,
+	operation, key string,
+	start time.Time,
+	span trace.Span,
+	concurrency int,
+	tryBackend func(ctx context.Context, backendName string, backend s3be.ObjectBackend) (int64, error),
+) (string, error) {
+	recordWinner := func(name string, size int64, parallel bool) {
 		o.cache.Set(key, name)
 		o.recordOperation(operation, name, start, nil)
 		span.SetAttributes(telemetry.AttrBackendName.String(name))
 		span.SetAttributes(telemetry.AttrObjectSize.Int64(size))
+		if parallel {
+			span.SetAttributes(telemetry.AttrParallelBroadcast.Bool(true))
+		}
 		span.SetStatus(codes.Ok, "")
-		return name, nil
 	}
 
-	// All backends failed — return the actual error so the server can
-	// distinguish "object not found" (404) from "backends unreachable" (502).
-	if lastErr != nil {
-		span.SetStatus(codes.Error, lastErr.Error())
-		span.RecordError(lastErr)
-		return "", fmt.Errorf("all backends failed during degraded read: %w", lastErr)
+	allFailed := func(lastErr error) (string, error) {
+		// Return the actual error so the server can distinguish
+		// "object not found" (404) from "backends unreachable" (502).
+		if lastErr != nil {
+			span.SetStatus(codes.Error, lastErr.Error())
+			span.RecordError(lastErr)
+			return "", fmt.Errorf("all backends failed during degraded read: %w", lastErr)
+		}
+		span.SetStatus(codes.Error, "no backends available")
+		return "", store.ErrObjectNotFound
 	}
 
-	span.SetStatus(codes.Error, "no backends available")
-	return "", store.ErrObjectNotFound
-}
+	if concurrency <= 1 {
+		var lastErr error
+		for _, name := range o.order {
+			backend, ok := o.backends[name]
+			if !ok {
+				continue
+			}
+			bctx, bcancel := o.withTimeout(ctx)
+			size, err := tryBackend(bctx, name, backend)
+			if err != nil {
+				bcancel()
+				lastErr = err
+				continue
+			}
+			recordWinner(name, size, false)
+			return name, nil
+		}
+		return allFailed(lastErr)
+	}
 
-// parallelBroadcastRead fans out to all backends concurrently and returns
-// the first successful result. A background goroutine drains remaining
-// results and cancels losing contexts so backend connections are released
-// promptly rather than lingering until their timeout expires.
-func (o *ObjectManager) parallelBroadcastRead(ctx context.Context, operation, key string, start time.Time, span trace.Span, tryBackend func(ctx context.Context, backendName string, backend s3be.ObjectBackend) (int64, error)) (string, error) {
 	type broadcastResult struct {
 		name   string
 		size   int64
@@ -220,7 +235,6 @@ func (o *ObjectManager) parallelBroadcastRead(ctx context.Context, operation, ke
 
 	launched := 0
 	ch := make(chan broadcastResult, len(o.order))
-
 	for _, name := range o.order {
 		backend, ok := o.backends[name]
 		if !ok {
@@ -235,7 +249,7 @@ func (o *ObjectManager) parallelBroadcastRead(ctx context.Context, operation, ke
 				ch <- broadcastResult{name: beName, err: err}
 				return
 			}
-			// On success, send the cancel func so the caller can decide
+			// On success, send the cancel so the caller can decide
 			// whether to keep the context alive (winner) or cancel it (loser).
 			ch <- broadcastResult{name: beName, size: size, cancel: tcancel}
 		}(name, backend)
@@ -248,9 +262,8 @@ func (o *ObjectManager) parallelBroadcastRead(ctx context.Context, operation, ke
 			lastErr = r.err
 			continue
 		}
-
-		// First success — drain remaining results in the background
-		// to cancel loser contexts promptly.
+		// First success — drain remaining results in the background to
+		// cancel loser contexts promptly.
 		remaining := launched - received - 1
 		if remaining > 0 {
 			go func() {
@@ -262,24 +275,10 @@ func (o *ObjectManager) parallelBroadcastRead(ctx context.Context, operation, ke
 				}
 			}()
 		}
-
-		o.cache.Set(key, r.name)
-		o.recordOperation(operation, r.name, start, nil)
-		span.SetAttributes(telemetry.AttrBackendName.String(r.name))
-		span.SetAttributes(telemetry.AttrObjectSize.Int64(r.size))
-		span.SetAttributes(telemetry.AttrParallelBroadcast.Bool(true))
-		span.SetStatus(codes.Ok, "")
+		recordWinner(r.name, r.size, true)
 		return r.name, nil
 	}
-
-	if lastErr != nil {
-		span.SetStatus(codes.Error, lastErr.Error())
-		span.RecordError(lastErr)
-		return "", fmt.Errorf("all backends failed during degraded read: %w", lastErr)
-	}
-
-	span.SetStatus(codes.Error, "no backends available")
-	return "", store.ErrObjectNotFound
+	return allFailed(lastErr)
 }
 
 // -------------------------------------------------------------------------
@@ -621,11 +620,14 @@ func parsePlaintextRange(rangeHeader string, plaintextSize int64) (start, end in
 		return 0, 0, false
 	}
 
+	// Reject ranges whose first-byte-pos is beyond the file. Applies to both
+	// open-ended (bytes=N-) and explicit (bytes=N-M) forms.
+	if start >= plaintextSize {
+		return 0, 0, false
+	}
+
 	if parts[1] == "" {
-		// Open-ended: bytes=N- (reject if start is beyond the file)
-		if start >= plaintextSize {
-			return 0, 0, false
-		}
+		// Open-ended: bytes=N-
 		return start, plaintextSize - 1, true
 	}
 
@@ -634,9 +636,8 @@ func parsePlaintextRange(rangeHeader string, plaintextSize int64) (start, end in
 		return 0, 0, false
 	}
 
-	// Reject inverted ranges per RFC 7233 (last-byte-pos >= first-byte-pos)
-	// and ranges that start beyond the file.
-	if end < start || start >= plaintextSize {
+	// Reject inverted ranges per RFC 7233 (last-byte-pos >= first-byte-pos).
+	if end < start {
 		return 0, 0, false
 	}
 

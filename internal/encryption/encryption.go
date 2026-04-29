@@ -14,11 +14,8 @@ package encryption
 
 import (
 	"context"
-	"crypto/md5" //nolint:gosec // G501: MD5 required by S3 specification for ETag computation
 	"crypto/rand"
-	"encoding/hex"
 	"fmt"
-	"hash"
 	"io"
 )
 
@@ -52,15 +49,16 @@ type EncryptResult struct {
 	// range-based decryption without fetching the header from the backend.
 	BaseNonce []byte
 
-	// PlaintextMD5 is the hex-encoded MD5 digest of the plaintext, used as
-	// the client-facing ETag.
-	PlaintextMD5 string
-
-	// RawDEK is the plaintext DEK used for encryption. Exposed so callers
-	// can reuse it for retry attempts via EncryptWithDEK without an
-	// additional KeyProvider round-trip. Must not be persisted or logged.
-	RawDEK []byte
+	// rawDEK is the plaintext DEK used for encryption. Reachable only via
+	// the RawDEK accessor so it does not surface in struct printers,
+	// marshalers, or log lines that walk exported fields.
+	rawDEK []byte
 }
+
+// RawDEK returns the plaintext DEK so the caller can reuse it on retry via
+// EncryptWithDEK, avoiding an extra KeyProvider round-trip. Callers must
+// not persist or log the returned bytes.
+func (r *EncryptResult) RawDEK() []byte { return r.rawDEK }
 
 // -------------------------------------------------------------------------
 // CONSTRUCTOR
@@ -121,28 +119,20 @@ func (e *Encryptor) EncryptWithDEK(body io.Reader, plaintextSize int64, dek, wra
 // assembleEncryptResult builds the streaming ciphertext reader and the
 // EncryptResult shared by Encrypt and EncryptWithDEK. The two callers
 // differ only in how they obtain (dek, wrappedDEK, keyID); everything
-// downstream — MD5 tee for ETag, encrypt reader, ciphertext sizing,
-// finalizer wiring — is identical.
+// downstream is identical.
 func (e *Encryptor) assembleEncryptResult(body io.Reader, plaintextSize int64, dek, wrappedDEK []byte, keyID string) (*EncryptResult, error) {
-	md5Hash := md5.New() //nolint:gosec // G401: MD5 required by S3 specification for ETag computation
-	teeBody := io.TeeReader(body, md5Hash)
-
-	encReader, err := newEncryptReader(teeBody, dek, e.chunkSize)
+	encReader, err := newEncryptReader(body, dek, e.chunkSize)
 	if err != nil {
 		return nil, fmt.Errorf("encrypt reader: %w", err)
 	}
-
-	fr := &md5FinalizingReader{reader: encReader, hash: md5Hash}
-	result := &EncryptResult{
-		Body:           fr,
+	return &EncryptResult{
+		Body:           encReader,
 		CiphertextSize: ciphertextSizeExact(plaintextSize, e.chunkSize),
 		WrappedDEK:     wrappedDEK,
 		KeyID:          keyID,
 		BaseNonce:      encReader.baseNonce,
-		RawDEK:         dek,
-	}
-	fr.setResult(result)
-	return result, nil
+		rawDEK:         dek,
+	}, nil
 }
 
 // -------------------------------------------------------------------------
@@ -202,35 +192,6 @@ func (e *Encryptor) DecryptRange(ctx context.Context, body io.Reader, wrappedDEK
 // size using this Encryptor's chunk size.
 func (e *Encryptor) CiphertextSize(plaintextSize int64) int64 {
 	return ciphertextSizeExact(plaintextSize, e.chunkSize)
-}
-
-// -------------------------------------------------------------------------
-// MD5 FINALIZING READER
-// -------------------------------------------------------------------------
-
-// md5FinalizingReader wraps an encrypt reader and captures the MD5 digest
-// after the plaintext has been fully consumed. The digest is available via
-// the PlaintextMD5 field on EncryptResult after the reader returns io.EOF.
-type md5FinalizingReader struct {
-	reader *encryptReader
-	hash   hash.Hash
-	result *EncryptResult
-}
-
-// Read delegates to the encrypt reader. When EOF is reached, the MD5 digest
-// is finalized and stored in the associated EncryptResult.
-func (r *md5FinalizingReader) Read(p []byte) (int, error) {
-	n, err := r.reader.Read(p)
-	if err == io.EOF && r.result != nil && r.result.PlaintextMD5 == "" {
-		r.result.PlaintextMD5 = hex.EncodeToString(r.hash.Sum(nil))
-	}
-	return n, err
-}
-
-// setResult links the finalizing reader to its EncryptResult so the MD5
-// digest can be stored when encryption completes.
-func (r *md5FinalizingReader) setResult(res *EncryptResult) {
-	r.result = res
 }
 
 // -------------------------------------------------------------------------
