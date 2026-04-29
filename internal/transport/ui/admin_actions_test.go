@@ -316,3 +316,92 @@ func decodeBody(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
 	}
 	return got
 }
+
+// -------------------------------------------------------------------------
+// Per-wrapper smoke coverage. Each handleAPI* wrapper is a thin shim over
+// startAdminAction (or writeAdminActionStatus) that closes over a fixed
+// op name and the admin handler's exported method. Exercising the
+// dispatcher's failure paths through every wrapper guarantees the wrapper
+// lines themselves are covered, even though end-to-end happy-path runs
+// would require the full admin dependency graph.
+// -------------------------------------------------------------------------
+
+// TestAdminActionWrappers_NotConfigured asserts every trigger wrapper
+// surfaces 503 when the UI handler was built without an admin dependency,
+// and that every status wrapper reports "idle" before any op has been
+// started. Both paths exercise the wrapper's single line of code.
+func TestAdminActionWrappers_NotConfigured(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name        string
+		triggerPath string
+		statusPath  string
+		trigger     func(*Handler, http.ResponseWriter, *http.Request)
+		status      func(*Handler, http.ResponseWriter, *http.Request)
+	}{
+		{"replicate", "/api/replicate", "/api/replicate/status",
+			(*Handler).handleAPIReplicate, (*Handler).handleAPIReplicateStatus},
+		{"scrub", "/api/scrub", "/api/scrub/status",
+			(*Handler).handleAPIScrub, (*Handler).handleAPIScrubStatus},
+		{"backfill-checksums", "/api/backfill-checksums", "/api/backfill-checksums/status",
+			(*Handler).handleAPIBackfillChecksums, (*Handler).handleAPIBackfillChecksumsStatus},
+		{"encrypt-existing", "/api/encrypt-existing", "/api/encrypt-existing/status",
+			(*Handler).handleAPIEncryptExisting, (*Handler).handleAPIEncryptExistingStatus},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := &Handler{} // adminHandler nil
+
+			// Trigger: 503 because admin handler is not configured.
+			triggerReq := httptest.NewRequest(http.MethodPost, tc.triggerPath, nil)
+			triggerW := httptest.NewRecorder()
+			tc.trigger(h, triggerW, triggerReq)
+			if triggerW.Code != http.StatusServiceUnavailable {
+				t.Errorf("trigger status = %d, want %d", triggerW.Code, http.StatusServiceUnavailable)
+			}
+
+			// Status: idle because no run has ever started.
+			statusReq := httptest.NewRequest(http.MethodGet, tc.statusPath, nil)
+			statusW := httptest.NewRecorder()
+			tc.status(h, statusW, statusReq)
+			body := decodeBody(t, statusW)
+			if body["status"] != "idle" {
+				t.Errorf("status body = %v, want idle", body)
+			}
+		})
+	}
+}
+
+// TestAdminActionWrappers_MethodNotAllowed asserts every trigger wrapper
+// rejects non-POST requests before reaching the dispatcher's other
+// guards.
+func TestAdminActionWrappers_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		path    string
+		trigger func(*Handler, http.ResponseWriter, *http.Request)
+	}{
+		{"replicate", "/api/replicate", (*Handler).handleAPIReplicate},
+		{"scrub", "/api/scrub", (*Handler).handleAPIScrub},
+		{"backfill-checksums", "/api/backfill-checksums", (*Handler).handleAPIBackfillChecksums},
+		{"encrypt-existing", "/api/encrypt-existing", (*Handler).handleAPIEncryptExisting},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := &Handler{adminHandler: stubAdminHandler()}
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			w := httptest.NewRecorder()
+			tc.trigger(h, w, req)
+			if w.Code != http.StatusMethodNotAllowed {
+				t.Errorf("status = %d, want %d", w.Code, http.StatusMethodNotAllowed)
+			}
+		})
+	}
+}
