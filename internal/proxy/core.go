@@ -280,8 +280,13 @@ func (c *backendCore) recordObjectOrCleanup(ctx context.Context, span trace.Span
 	if err != nil {
 		slog.ErrorContext(ctx, "recordObject failed, cleaning up orphan",
 			"key", key, "backend", backendName, "error", err)
-		c.usage.Record(backendName, 1, 0, 0)
-		if delErr := be.DeleteObject(ctx, key); delErr != nil {
+		// Account for both API calls the failure path made: the PUT that
+		// succeeded against the backend (the caller's success-path Record
+		// runs only after we return nil) and the cleanup DELETE about to run.
+		c.usage.Record(backendName, 1, 0, 0) // PUT
+		delErr := c.deleteWithTimeout(ctx, be, key)
+		c.usage.Record(backendName, 1, 0, 0) // cleanup DELETE
+		if delErr != nil {
 			slog.ErrorContext(ctx, "failed to clean up orphaned object",
 				"key", key, "backend", backendName, "error", delErr)
 			c.enqueueCleanup(ctx, backendName, key, "orphan_record_failed", size)

@@ -13,6 +13,7 @@ package s3api
 import (
 	"context"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,6 +23,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/internalkey"
+	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/util/bufpool"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"go.opentelemetry.io/otel/trace"
@@ -306,10 +308,11 @@ func (s *Server) handleDeleteObjects(ctx context.Context, w http.ResponseWriter,
 	for i, res := range results {
 		userKey := req.Objects[i].Key
 		if res.Err != nil {
+			code, msg := deleteObjectErrorFor(res.Err)
 			resp.Errors = append(resp.Errors, deleteObjectError{
 				Key:     userKey,
-				Code:    "InternalError",
-				Message: "Failed to delete object",
+				Code:    code,
+				Message: msg,
 			})
 		} else if !req.Quiet {
 			resp.Deleted = append(resp.Deleted, deletedObject{Key: userKey})
@@ -320,6 +323,17 @@ func (s *Server) handleDeleteObjects(ctx context.Context, w http.ResponseWriter,
 		return http.StatusOK, fmt.Errorf("failed to encode delete objects response: %w", err)
 	}
 	return http.StatusOK, nil
+}
+
+// deleteObjectErrorFor extracts the S3-compatible error code and message for
+// a per-key DeleteObjects failure. Typed *store.S3Error values surface their
+// canonical Code/Message (e.g. NoSuchKey, ServiceUnavailable); generic errors
+// fall back to InternalError so clients still see a valid S3 error envelope.
+func deleteObjectErrorFor(err error) (code, message string) {
+	if s3err, ok := errors.AsType[*store.S3Error](err); ok {
+		return s3err.Code, s3err.Message
+	}
+	return "InternalError", "Failed to delete object"
 }
 
 // -------------------------------------------------------------------------

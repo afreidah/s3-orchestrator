@@ -534,9 +534,10 @@ func TestUploadPart_RecordPartFails_CleansUpPartObject(t *testing.T) {
 		t.Error("orphaned part should be deleted from backend")
 	}
 
-	// Usage: 1 API call for the orphan cleanup delete (put usage only recorded on success path)
-	if got := mgr.usage.Backend().Load("b1", counter.FieldAPIRequests); got != 1 {
-		t.Errorf("apiRequests = %d, want 1 (orphan delete)", got)
+	// Usage: 2 API calls — the part PUT that succeeded against the backend
+	// and the cleanup DELETE that ran after RecordPart failed.
+	if got := mgr.usage.Backend().Load("b1", counter.FieldAPIRequests); got != 2 {
+		t.Errorf("apiRequests = %d, want 2 (PUT + orphan DELETE)", got)
 	}
 }
 
