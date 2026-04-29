@@ -170,11 +170,9 @@ func (o *ObjectManager) broadcastRead(ctx context.Context, operation, key string
 	return o.tryAllBackends(ctx, operation, key, start, span, concurrency, tryBackend)
 }
 
-// tryAllBackends invokes tryBackend on every backend in o.order and returns
-// the first successful result. With concurrency <= 1 the backends are tried
-// serially; otherwise they race in parallel with losers cancelled in the
-// background so connections release promptly. On success, the winner's
-// name is cached for future degraded reads.
+// tryAllBackends dispatches to the sequential or parallel branch based on
+// concurrency. Both branches return the first backend whose tryBackend call
+// succeeds and cache the winner's name for future degraded reads.
 func (o *ObjectManager) tryAllBackends(
 	ctx context.Context,
 	operation, key string,
@@ -183,77 +181,63 @@ func (o *ObjectManager) tryAllBackends(
 	concurrency int,
 	tryBackend func(ctx context.Context, backendName string, backend s3be.ObjectBackend) (int64, error),
 ) (string, error) {
-	recordWinner := func(name string, size int64, parallel bool) {
-		o.cache.Set(key, name)
-		o.recordOperation(operation, name, start, nil)
-		span.SetAttributes(telemetry.AttrBackendName.String(name))
-		span.SetAttributes(telemetry.AttrObjectSize.Int64(size))
-		if parallel {
-			span.SetAttributes(telemetry.AttrParallelBroadcast.Bool(true))
-		}
-		span.SetStatus(codes.Ok, "")
-	}
-
-	allFailed := func(lastErr error) (string, error) {
-		// Return the actual error so the server can distinguish
-		// "object not found" (404) from "backends unreachable" (502).
-		if lastErr != nil {
-			span.SetStatus(codes.Error, lastErr.Error())
-			span.RecordError(lastErr)
-			return "", fmt.Errorf("all backends failed during degraded read: %w", lastErr)
-		}
-		span.SetStatus(codes.Error, "no backends available")
-		return "", store.ErrObjectNotFound
-	}
-
 	if concurrency <= 1 {
-		var lastErr error
-		for _, name := range o.order {
-			backend, ok := o.backends[name]
-			if !ok {
-				continue
-			}
-			bctx, bcancel := o.withTimeout(ctx)
-			size, err := tryBackend(bctx, name, backend)
-			if err != nil {
-				bcancel()
-				lastErr = err
-				continue
-			}
-			recordWinner(name, size, false)
-			return name, nil
-		}
-		return allFailed(lastErr)
+		return o.tryBackendsSequentially(ctx, operation, key, start, span, tryBackend)
 	}
+	return o.tryBackendsInParallel(ctx, operation, key, start, span, tryBackend)
+}
 
-	type broadcastResult struct {
-		name   string
-		size   int64
-		err    error
-		cancel context.CancelFunc
-	}
-
-	launched := 0
-	ch := make(chan broadcastResult, len(o.order))
+// tryBackendsSequentially walks o.order one backend at a time. The first
+// success short-circuits and is recorded as the broadcast winner; otherwise
+// the last error (if any) is wrapped as a degraded-read failure.
+func (o *ObjectManager) tryBackendsSequentially(
+	ctx context.Context,
+	operation, key string,
+	start time.Time,
+	span trace.Span,
+	tryBackend func(ctx context.Context, backendName string, backend s3be.ObjectBackend) (int64, error),
+) (string, error) {
+	var lastErr error
 	for _, name := range o.order {
 		backend, ok := o.backends[name]
 		if !ok {
 			continue
 		}
-		launched++
-		go func(beName string, be s3be.ObjectBackend) {
-			tctx, tcancel := o.withTimeout(ctx)
-			size, err := tryBackend(tctx, beName, be)
-			if err != nil {
-				tcancel()
-				ch <- broadcastResult{name: beName, err: err}
-				return
-			}
-			// On success, send the cancel so the caller can decide
-			// whether to keep the context alive (winner) or cancel it (loser).
-			ch <- broadcastResult{name: beName, size: size, cancel: tcancel}
-		}(name, backend)
+		bctx, bcancel := o.withTimeout(ctx)
+		size, err := tryBackend(bctx, name, backend)
+		if err != nil {
+			bcancel()
+			lastErr = err
+			continue
+		}
+		o.recordBroadcastWinner(operation, key, name, size, start, span, false)
+		return name, nil
 	}
+	return broadcastAllFailed(span, lastErr)
+}
+
+// broadcastResult carries one parallel-probe outcome back to the
+// fan-in loop. cancel is set on success so losers' contexts can be
+// released without waiting for the per-backend timeout.
+type broadcastResult struct {
+	name   string
+	size   int64
+	err    error
+	cancel context.CancelFunc
+}
+
+// tryBackendsInParallel launches one probe per backend in o.order and
+// returns the first success, draining the remaining responses in the
+// background so loser contexts are cancelled promptly.
+func (o *ObjectManager) tryBackendsInParallel(
+	ctx context.Context,
+	operation, key string,
+	start time.Time,
+	span trace.Span,
+	tryBackend func(ctx context.Context, backendName string, backend s3be.ObjectBackend) (int64, error),
+) (string, error) {
+	ch := make(chan broadcastResult, len(o.order))
+	launched := o.launchBackendProbes(ctx, ch, tryBackend)
 
 	var lastErr error
 	for received := 0; received < launched; received++ { //nolint:intrange // received used in arithmetic below
@@ -262,23 +246,98 @@ func (o *ObjectManager) tryAllBackends(
 			lastErr = r.err
 			continue
 		}
-		// First success — drain remaining results in the background to
-		// cancel loser contexts promptly.
-		remaining := launched - received - 1
-		if remaining > 0 {
-			go func() {
-				defer func() { recover() }() //nolint:errcheck // best-effort drain
-				for range remaining {
-					if lr := <-ch; lr.cancel != nil {
-						lr.cancel()
-					}
-				}
-			}()
+		if remaining := launched - received - 1; remaining > 0 {
+			go drainAndCancelLosers(ch, remaining)
 		}
-		recordWinner(r.name, r.size, true)
+		o.recordBroadcastWinner(operation, key, r.name, r.size, start, span, true)
 		return r.name, nil
 	}
-	return allFailed(lastErr)
+	return broadcastAllFailed(span, lastErr)
+}
+
+// launchBackendProbes spawns one goroutine per eligible backend, each of
+// which writes its outcome to ch. Returns the number of probes launched
+// so the caller knows how many results to read.
+func (o *ObjectManager) launchBackendProbes(
+	ctx context.Context,
+	ch chan<- broadcastResult,
+	tryBackend func(ctx context.Context, backendName string, backend s3be.ObjectBackend) (int64, error),
+) int {
+	launched := 0
+	for _, name := range o.order {
+		backend, ok := o.backends[name]
+		if !ok {
+			continue
+		}
+		launched++
+		go o.runBackendProbe(ctx, name, backend, tryBackend, ch)
+	}
+	return launched
+}
+
+// runBackendProbe is the per-backend goroutine body. On error it returns
+// its cancel func to the channel as nil; on success it forwards the cancel
+// so the caller can decide whether to keep the context alive (winner) or
+// cancel it (loser).
+func (o *ObjectManager) runBackendProbe(
+	ctx context.Context,
+	name string,
+	backend s3be.ObjectBackend,
+	tryBackend func(ctx context.Context, backendName string, backend s3be.ObjectBackend) (int64, error),
+	ch chan<- broadcastResult,
+) {
+	tctx, tcancel := o.withTimeout(ctx)
+	size, err := tryBackend(tctx, name, backend)
+	if err != nil {
+		tcancel()
+		ch <- broadcastResult{name: name, err: err}
+		return
+	}
+	ch <- broadcastResult{name: name, size: size, cancel: tcancel}
+}
+
+// drainAndCancelLosers reads the remaining results from ch after a winner
+// has been declared and cancels any contexts the losers returned.
+// Best-effort: a sender that panicked or closed early is tolerated.
+func drainAndCancelLosers(ch <-chan broadcastResult, remaining int) {
+	defer func() { recover() }() //nolint:errcheck // best-effort drain
+	for range remaining {
+		if lr := <-ch; lr.cancel != nil {
+			lr.cancel()
+		}
+	}
+}
+
+// recordBroadcastWinner caches the winner's name for future degraded reads,
+// emits operation metrics, and sets the success-path span attributes.
+func (o *ObjectManager) recordBroadcastWinner(
+	operation, key, name string,
+	size int64,
+	start time.Time,
+	span trace.Span,
+	parallel bool,
+) {
+	o.cache.Set(key, name)
+	o.recordOperation(operation, name, start, nil)
+	span.SetAttributes(telemetry.AttrBackendName.String(name))
+	span.SetAttributes(telemetry.AttrObjectSize.Int64(size))
+	if parallel {
+		span.SetAttributes(telemetry.AttrParallelBroadcast.Bool(true))
+	}
+	span.SetStatus(codes.Ok, "")
+}
+
+// broadcastAllFailed builds the all-failed return value. When at least one
+// backend returned an error, that error is wrapped so the server can
+// distinguish "backend unreachable" (502) from "object not found" (404).
+func broadcastAllFailed(span trace.Span, lastErr error) (string, error) {
+	if lastErr != nil {
+		span.SetStatus(codes.Error, lastErr.Error())
+		span.RecordError(lastErr)
+		return "", fmt.Errorf("all backends failed during degraded read: %w", lastErr)
+	}
+	span.SetStatus(codes.Error, "no backends available")
+	return "", store.ErrObjectNotFound
 }
 
 // -------------------------------------------------------------------------
