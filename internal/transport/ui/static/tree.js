@@ -83,7 +83,8 @@
     fNameSpan.textContent = entry.name.split('/').pop();
     let fMetaSpan = document.createElement('span');
     fMetaSpan.className = 'tree-meta';
-    fMetaSpan.textContent = entry.backend + ' \u00B7 ' + formatBytes(entry.totalSize) + ' \u00B7 ' + entry.createdAt;
+    let backendsLabel = Array.isArray(entry.backends) ? entry.backends.join(', ') : '';
+    fMetaSpan.textContent = backendsLabel + ' \u00B7 ' + formatBytes(entry.totalSize) + ' \u00B7 ' + entry.createdAt;
     let fDlSpan = document.createElement('span');
     fDlSpan.className = 'tree-action tree-download';
     fDlSpan.title = 'Download';
@@ -432,8 +433,21 @@
     });
   }
 
+  // --- Button reset helper: re-enable and restore the original label after
+  // a delay. Used by every error / skipped / done branch in the async
+  // pipeline; pulling it out keeps callbacks shallow and removes a half
+  // dozen copies of the same setTimeout closure.
+  function resetButton(btn, label, delay) {
+    setTimeout(function () { btn.disabled = false; btn.textContent = label; }, delay);
+  }
+
+  function reloadAfter(delay) {
+    setTimeout(function () { location.reload(); }, delay);
+  }
+
   // --- Async operation helper: trigger POST, then poll status endpoint ---
-  function runAsyncOp(btn, triggerUrl, statusUrl, label, countKey) {
+  function runAsyncOp(btn, triggerUrl, statusUrl, label, countKey, noun, opts) {
+    let options = opts || {};
     btn.disabled = true;
     btn.textContent = label + '\u2026';
 
@@ -442,41 +456,80 @@
         if (resp.status === 401) { location.href = 'login'; return; }
         if (resp.status === 409) {
           btn.textContent = 'Already running';
-          setTimeout(function () { btn.disabled = false; btn.textContent = label; }, 3000);
+          resetButton(btn, label, 3000);
           return;
         }
-        pollStatus(btn, statusUrl, label, countKey);
+        pollStatus(btn, statusUrl, label, countKey, noun, options);
       })
       .catch(function (err) {
         btn.textContent = err.name === 'AbortError' ? 'Request timed out' : 'Network error';
-        setTimeout(function () { btn.disabled = false; btn.textContent = label; }, 3000);
+        resetButton(btn, label, 3000);
       });
   }
 
-  function pollStatus(btn, statusUrl, label, countKey) {
+  // applyPollResult dispatches a finished poll payload onto the button.
+  // Lives outside pollStatus so the .then callback only has to forward
+  // the parsed JSON, keeping the async chain at three levels of nesting.
+  function applyPollResult(data, ctx) {
+    if (data.status === 'skipped') {
+      ctx.btn.textContent = 'Skipped';
+      setStatusBanner(data.reason || 'skipped', 'skipped');
+      resetButton(ctx.btn, ctx.label, 3000);
+      return;
+    }
+    if (data.ok) {
+      let extra = '';
+      if (typeof data.failed === 'number' && data.failed > 0) {
+        extra = ', ' + data.failed + ' failed';
+      }
+      ctx.btn.textContent = data[ctx.countKey] + ctx.suffix + extra;
+      if (ctx.skipReload) {
+        resetButton(ctx.btn, ctx.label, 3000);
+      } else {
+        reloadAfter(1500);
+      }
+      return;
+    }
+    if (data.status === 'error') {
+      ctx.btn.textContent = data.error || 'Failed';
+      setStatusBanner(data.error || 'failed', 'error');
+      resetButton(ctx.btn, ctx.label, 3000);
+      return;
+    }
+    ctx.btn.disabled = false;
+    ctx.btn.textContent = ctx.label;
+  }
+
+  function pollStatus(btn, statusUrl, label, countKey, noun, options) {
+    let ctx = {
+      btn: btn,
+      label: label,
+      countKey: countKey,
+      suffix: noun ? ' ' + noun : '',
+      skipReload: !!options.skipReload,
+    };
     let poll = setInterval(function () {
       fetch(statusUrl)
         .then(function (resp) { return resp.json(); })
         .then(function (data) {
           if (data.status === 'running') return;
           clearInterval(poll);
-          if (data.ok) {
-            btn.textContent = data[countKey] + (countKey === 'moved' ? ' moved' : ' removed');
-            setTimeout(function () { location.reload(); }, 1500);
-          } else if (data.status === 'error') {
-            btn.textContent = data.error || 'Failed';
-            setTimeout(function () { btn.disabled = false; btn.textContent = label; }, 3000);
-          } else {
-            btn.disabled = false;
-            btn.textContent = label;
-          }
+          applyPollResult(data, ctx);
         })
         .catch(function () {
           clearInterval(poll);
           btn.textContent = 'Poll error';
-          setTimeout(function () { btn.disabled = false; btn.textContent = label; }, 3000);
+          resetButton(btn, label, 3000);
         });
     }, 2000);
+  }
+
+  function setStatusBanner(text, kind) {
+    let banner = document.getElementById('admin-action-status');
+    if (!banner) return;
+    banner.textContent = text;
+    banner.className = 'admin-action-status' + (kind ? ' ' + kind : '');
+    setTimeout(function () { banner.textContent = ''; banner.className = 'admin-action-status'; }, 6000);
   }
 
   // --- Rebalance flow ---
@@ -484,7 +537,7 @@
 
   if (rebalanceBtn) {
     rebalanceBtn.addEventListener('click', function () {
-      runAsyncOp(rebalanceBtn, 'api/rebalance', 'api/rebalance/status', 'Rebalance', 'moved');
+      runAsyncOp(rebalanceBtn, 'api/rebalance', 'api/rebalance/status', 'Rebalance', 'moved', 'moved');
     });
   }
 
@@ -493,7 +546,44 @@
 
   if (cleanExcessBtn) {
     cleanExcessBtn.addEventListener('click', function () {
-      runAsyncOp(cleanExcessBtn, 'api/clean-excess', 'api/clean-excess/status', 'Clean Excess', 'removed');
+      runAsyncOp(cleanExcessBtn, 'api/clean-excess', 'api/clean-excess/status', 'Clean Excess', 'removed', 'removed');
+    });
+  }
+
+  // --- Replicate Now flow ---
+  let replicateBtn = document.getElementById('replicate-btn');
+
+  if (replicateBtn) {
+    replicateBtn.addEventListener('click', function () {
+      runAsyncOp(replicateBtn, 'api/replicate', 'api/replicate/status', 'Replicate Now', 'copies_created', 'copies created');
+    });
+  }
+
+  // --- Scrub flow ---
+  let scrubBtn = document.getElementById('scrub-btn');
+
+  if (scrubBtn) {
+    scrubBtn.addEventListener('click', function () {
+      runAsyncOp(scrubBtn, 'api/scrub', 'api/scrub/status', 'Scrub', 'checked', 'checked', { skipReload: true });
+    });
+  }
+
+  // --- Backfill checksums flow ---
+  let backfillBtn = document.getElementById('backfill-checksums-btn');
+
+  if (backfillBtn) {
+    backfillBtn.addEventListener('click', function () {
+      runAsyncOp(backfillBtn, 'api/backfill-checksums', 'api/backfill-checksums/status', 'Backfill Checksums', 'processed', 'processed', { skipReload: true });
+    });
+  }
+
+  // --- Encrypt existing flow ---
+  let encryptExistingBtn = document.getElementById('encrypt-existing-btn');
+
+  if (encryptExistingBtn) {
+    encryptExistingBtn.addEventListener('click', function () {
+      if (!confirm('Encrypt every existing unencrypted object? This can take a long time.')) return;
+      runAsyncOp(encryptExistingBtn, 'api/encrypt-existing', 'api/encrypt-existing/status', 'Encrypt Existing', 'encrypted', 'encrypted', { skipReload: true });
     });
   }
 

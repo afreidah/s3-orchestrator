@@ -141,15 +141,11 @@ SELECT
     (CASE WHEN position('/' IN substring(object_key FROM length($1::text) + 1)) > 0
          THEN true ELSE false
     END)::boolean AS is_dir,
-    COUNT(*)  AS file_count,
+    COUNT(DISTINCT object_key) AS file_count,
     COALESCE(SUM(size_bytes), 0)::bigint AS total_size
-FROM (
-    SELECT DISTINCT ON (object_key) object_key, size_bytes
-    FROM object_locations
-    WHERE object_key LIKE $1::text || '%' ESCAPE '\'
-      AND length(object_key) > length($1::text)
-    ORDER BY object_key, created_at ASC
-) deduped
+FROM object_locations
+WHERE object_key LIKE $1::text || '%' ESCAPE '\'
+  AND length(object_key) > length($1::text)
 GROUP BY name, is_dir
 ORDER BY is_dir DESC, name ASC
 `
@@ -163,7 +159,9 @@ type GetDirectoryStatsRow struct {
 
 // Aggregate count and size for immediate children of a directory prefix.
 // Directories (containing a '/') and files are distinguished by is_dir.
-// Uses a subquery to deduplicate replicated objects before summing sizes.
+// file_count counts distinct object_keys (logical files); total_size sums
+// every replica row in object_locations so directory totals reflect real
+// physical storage consumption, matching the Storage Summary semantics.
 func (q *Queries) GetDirectoryStats(ctx context.Context, prefix string) ([]GetDirectoryStatsRow, error) {
 	rows, err := q.db.Query(ctx, getDirectoryStats, prefix)
 	if err != nil {
@@ -444,13 +442,18 @@ func (q *Queries) ListAllEncryptedLocations(ctx context.Context, arg ListAllEncr
 }
 
 const listDirectChildren = `-- name: ListDirectChildren :many
-SELECT DISTINCT ON (object_key) object_key, backend_name, size_bytes, created_at
+SELECT
+    object_key,
+    ARRAY_AGG(backend_name ORDER BY backend_name)::text[] AS backend_names,
+    MAX(size_bytes)::bigint AS size_bytes,
+    MIN(created_at)::timestamptz AS created_at
 FROM object_locations
 WHERE object_key LIKE $1::text || '%' ESCAPE '\'
   AND position('/' IN substring(object_key FROM length($1::text) + 1)) = 0
   AND length(object_key) > length($1::text)
   AND object_key > $2
-ORDER BY object_key, created_at ASC
+GROUP BY object_key
+ORDER BY object_key
 LIMIT $3
 `
 
@@ -461,13 +464,15 @@ type ListDirectChildrenParams struct {
 }
 
 type ListDirectChildrenRow struct {
-	ObjectKey   string
-	BackendName string
-	SizeBytes   int64
-	CreatedAt   pgtype.Timestamptz
+	ObjectKey    string
+	BackendNames []string
+	SizeBytes    int64
+	CreatedAt    pgtype.Timestamptz
 }
 
 // Return per-file detail for non-directory children under a prefix, with pagination.
+// Aggregates every replica into a sorted backend_names array per object_key so
+// the file row reflects all backends a file lives on, not just one.
 func (q *Queries) ListDirectChildren(ctx context.Context, arg ListDirectChildrenParams) ([]ListDirectChildrenRow, error) {
 	rows, err := q.db.Query(ctx, listDirectChildren, arg.Prefix, arg.StartAfter, arg.MaxKeys)
 	if err != nil {
@@ -479,7 +484,7 @@ func (q *Queries) ListDirectChildren(ctx context.Context, arg ListDirectChildren
 		var i ListDirectChildrenRow
 		if err := rows.Scan(
 			&i.ObjectKey,
-			&i.BackendName,
+			&i.BackendNames,
 			&i.SizeBytes,
 			&i.CreatedAt,
 		); err != nil {
