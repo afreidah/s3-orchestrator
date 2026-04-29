@@ -123,7 +123,12 @@ func (ac *AdmissionController) Middleware(next http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			case <-timer.C:
+				// Wait elapsed without admission. Fall through to capacity rejection.
 			case <-r.Context().Done():
+				// Client gave up before we could admit. Don't count this as a
+				// server-side rejection or write a response to a closed connection.
+				telemetry.AdmissionClientCanceledTotal.Inc()
+				return
 			}
 		}
 

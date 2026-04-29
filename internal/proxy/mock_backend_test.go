@@ -22,15 +22,17 @@ import (
 
 // mockBackend is an in-memory s3be.ObjectBackend for unit testing.
 type mockBackend struct {
-	mu         sync.Mutex
-	objects    map[string]mockObject
-	putErr     error
-	getErr     error
-	getReadErr error  // injected into the Body reader so reads fail mid-stream
-	getPanic   bool   // if true, GetObject panics instead of returning
-	headErr    error
-	delErr     error
-	delDelay   time.Duration
+	mu                 sync.Mutex
+	objects            map[string]mockObject
+	putErr             error
+	getErr             error
+	getReadErr         error // injected into the Body reader so reads fail mid-stream
+	getPanic           bool  // if true, GetObject panics instead of returning
+	headErr            error
+	delErr             error
+	delDelay           time.Duration
+	lastDeleteHadDdl   bool // set on each DeleteObject; true when the ctx carried a deadline
+	lastDeleteDeadline time.Time
 }
 
 type mockObject struct {
@@ -116,7 +118,7 @@ func (m *mockBackend) HeadObject(_ context.Context, key string) (*s3be.HeadObjec
 	}, nil
 }
 
-func (m *mockBackend) DeleteObject(_ context.Context, key string) error {
+func (m *mockBackend) DeleteObject(ctx context.Context, key string) error {
 	m.mu.Lock()
 	delay := m.delDelay
 	m.mu.Unlock()
@@ -125,6 +127,12 @@ func (m *mockBackend) DeleteObject(_ context.Context, key string) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if dl, ok := ctx.Deadline(); ok {
+		m.lastDeleteHadDdl = true
+		m.lastDeleteDeadline = dl
+	} else {
+		m.lastDeleteHadDdl = false
+	}
 	if m.delErr != nil {
 		return m.delErr
 	}

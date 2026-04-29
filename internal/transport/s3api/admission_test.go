@@ -12,6 +12,7 @@
 package s3api
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -455,6 +456,68 @@ func TestAdmissionController_WaitTimesOut(t *testing.T) {
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("timed-out request: got %d, want 503", rec.Code)
+	}
+
+	close(hold)
+	wg.Wait()
+}
+
+func TestAdmissionController_ClientCancelDuringWaitNotCountedAsRejection(t *testing.T) {
+	t.Parallel()
+	ac := NewAdmissionController(1)
+	// Generous wait so the test reliably observes the client-cancel branch
+	// rather than racing the timer.
+	ac.SetAdmissionWait(2 * time.Second)
+
+	hold := make(chan struct{})
+	entered := make(chan struct{}, 1)
+	handler := ac.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		entered <- struct{}{}
+		<-hold
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// Fill the only slot.
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("GET", "/test-bucket/key", nil)
+		handler.ServeHTTP(rec, req)
+	})
+	<-entered
+
+	beforeCancel := testutil.ToFloat64(telemetry.AdmissionClientCanceledTotal)
+
+	// Second request: cancel its context shortly after dispatch so it lands
+	// in the brief-wait branch and exits via r.Context().Done().
+	ctx, cancel := context.WithCancel(context.Background())
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequestWithContext(ctx, "GET", "/test-bucket/key2", nil)
+	done := make(chan struct{})
+	go func() {
+		handler.ServeHTTP(rec, req)
+		close(done)
+	}()
+	time.Sleep(50 * time.Millisecond) // let the goroutine reach the wait
+	cancel()
+	<-done
+
+	// The dedicated client-cancel counter must increment by exactly 1.
+	// (Asserting the rejection counter does NOT increment is unreliable here
+	// because other parallel tests share the global counter; the directly
+	// observable invariants are this delta and the empty response below.)
+	if afterCancel := testutil.ToFloat64(telemetry.AdmissionClientCanceledTotal); afterCancel != beforeCancel+1 {
+		t.Errorf("AdmissionClientCanceledTotal did not increment: before=%v after=%v",
+			beforeCancel, afterCancel)
+	}
+	// No response should have been written for a cancelled client. httptest
+	// defaults Code to 200 when WriteHeader is never called, and Body is
+	// empty when Write is never called.
+	if rec.Code != http.StatusOK {
+		t.Errorf("response status was set despite client cancel: got %d, want 200 (default, not written)", rec.Code)
+	}
+	if rec.Body.Len() != 0 {
+		t.Errorf("response body was written despite client cancel: %q", rec.Body.String())
 	}
 
 	close(hold)

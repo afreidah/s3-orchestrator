@@ -12,6 +12,7 @@ package s3api
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -913,6 +914,54 @@ func TestDeleteObjects_PartialFailure(t *testing.T) {
 	}
 	if !strings.Contains(s, "<Error>") {
 		t.Error("response missing <Error> for failed key")
+	}
+}
+
+// TestDeleteObjects_PerKeyTypedError verifies that typed *store.S3Error values
+// returned for individual keys propagate their canonical Code and Message into
+// the per-key XML response — instead of the legacy hardcoded InternalError.
+func TestDeleteObjects_PerKeyTypedError(t *testing.T) {
+	t.Parallel()
+	ts, mockStore, _ := newTestServer(t)
+	mockStore.DeleteObjectFunc = func(key string) ([]store.DeletedCopy, error) {
+		switch key {
+		case "mybucket/missing":
+			return nil, &store.S3Error{StatusCode: 404, Code: "NoSuchKey", Message: "object not found"}
+		case "mybucket/forbidden":
+			return nil, &store.S3Error{StatusCode: 403, Code: "AccessDenied", Message: "denied"}
+		case "mybucket/anon":
+			return nil, errors.New("untyped backend error")
+		}
+		return []store.DeletedCopy{{BackendName: "b1", SizeBytes: 1}}, nil
+	}
+
+	body := strings.NewReader(`<Delete>` +
+		`<Object><Key>missing</Key></Object>` +
+		`<Object><Key>forbidden</Key></Object>` +
+		`<Object><Key>anon</Key></Object>` +
+		`</Delete>`)
+	resp := doReq(t, http.MethodPost, ts.URL+"/mybucket?delete", body)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	respBody, _ := io.ReadAll(resp.Body)
+	s := string(respBody)
+
+	// Typed S3Errors must surface their canonical Code/Message.
+	if !strings.Contains(s, "<Code>NoSuchKey</Code>") {
+		t.Errorf("response missing NoSuchKey for typed S3Error key: %s", s)
+	}
+	if !strings.Contains(s, "<Message>object not found</Message>") {
+		t.Errorf("response missing typed message for NoSuchKey: %s", s)
+	}
+	if !strings.Contains(s, "<Code>AccessDenied</Code>") {
+		t.Errorf("response missing AccessDenied for typed S3Error key: %s", s)
+	}
+	// Untyped errors still fall back to InternalError so clients see a valid envelope.
+	if !strings.Contains(s, "<Code>InternalError</Code>") {
+		t.Errorf("response missing InternalError fallback for untyped error: %s", s)
 	}
 }
 
