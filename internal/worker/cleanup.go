@@ -36,12 +36,16 @@ func NewCleanupWorker(deps CleanupOps, store CleanupWorkerStore, concurrency int
 const maxCleanupAttempts = 10
 
 // CleanupBackoff returns the backoff duration for the given attempt number.
-// Uses exponential backoff: min(1m * 2^attempts, 24h).
+// Uses exponential backoff: min(1m * 2^attempts, 24h). Short-circuits the
+// shift for attempts >= 11 (where the doubling already exceeds the cap) and
+// for negative inputs, since shifting by a negative or out-of-range count is
+// undefined in Go.
 func CleanupBackoff(attempts int32) time.Duration {
-	if attempts > 20 {
-		return 24 * time.Hour
+	const maxBackoff = 24 * time.Hour
+	if attempts < 0 || attempts >= 11 {
+		return maxBackoff
 	}
-	return min(time.Minute*(1<<attempts), 24*time.Hour)
+	return min(time.Minute<<attempts, maxBackoff)
 }
 
 // ProcessCleanupQueue fetches pending cleanup items and attempts to delete the

@@ -9,14 +9,56 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"sync/atomic"
 	"testing"
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 )
+
+// countingKeyProvider wraps a real KeyProvider and counts WrapDEK calls so
+// tests can assert that the DEK cache short-circuits the KeyProvider on
+// retries. wrapErr, when set, returns an error from WrapDEK without
+// incrementing the counter, simulating a Vault failure.
+type countingKeyProvider struct {
+	inner   encryption.KeyProvider
+	wraps   atomic.Int32
+	wrapErr error
+}
+
+func (c *countingKeyProvider) WrapDEK(ctx context.Context, dek []byte) ([]byte, string, error) {
+	if c.wrapErr != nil {
+		return nil, "", c.wrapErr
+	}
+	c.wraps.Add(1)
+	return c.inner.WrapDEK(ctx, dek)
+}
+
+func (c *countingKeyProvider) UnwrapDEK(ctx context.Context, wrapped []byte, keyID string) ([]byte, error) {
+	return c.inner.UnwrapDEK(ctx, wrapped, keyID)
+}
+
+func (c *countingKeyProvider) KeyID() string { return c.inner.KeyID() }
+
+// newCountingEncryptor returns an Encryptor backed by a counting key
+// provider so callers can inspect WrapDEK invocation counts.
+func newCountingEncryptor(t *testing.T) (*encryption.Encryptor, *countingKeyProvider) {
+	t.Helper()
+	inner, err := encryption.NewConfigKeyProvider("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "test-0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cp := &countingKeyProvider{inner: inner}
+	enc, err := encryption.NewEncryptor(cp, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return enc, cp
+}
 
 func newTestEncryptor(t *testing.T) *encryption.Encryptor {
 	t.Helper()
@@ -281,6 +323,144 @@ func TestDecryptResponse_DecryptError(t *testing.T) {
 	err = decryptResponse(context.Background(), enc, r, loc, nil, 0, 0)
 	if err == nil {
 		t.Fatal("expected error for corrupted ciphertext")
+	}
+}
+
+// -------------------------------------------------------------------------
+// encryptForPut
+// -------------------------------------------------------------------------
+
+func TestEncryptForPut_FirstCallPopulatesStateAndMeta(t *testing.T) {
+	t.Parallel()
+	enc, _ := newCountingEncryptor(t)
+	plain := []byte("first call payload")
+	var state putEncryptState
+
+	body, ctSize, meta, err := encryptForPut(context.Background(), enc, plain, int64(len(plain)), &state)
+	if err != nil {
+		t.Fatalf("encryptForPut: %v", err)
+	}
+	if state.dek == nil || state.wrappedDEK == nil || state.keyID == "" {
+		t.Errorf("state not populated: dek=%v wrappedDEK=%v keyID=%q", state.dek, state.wrappedDEK, state.keyID)
+	}
+	if !meta.Encrypted {
+		t.Error("meta.Encrypted = false, want true")
+	}
+	if meta.PlaintextSize != int64(len(plain)) {
+		t.Errorf("meta.PlaintextSize = %d, want %d", meta.PlaintextSize, len(plain))
+	}
+	if meta.KeyID == "" {
+		t.Error("meta.KeyID is empty")
+	}
+	if meta.ContentHash != "" {
+		t.Errorf("meta.ContentHash = %q, want empty (caller layers integrity)", meta.ContentHash)
+	}
+	if ctSize <= int64(len(plain)) {
+		t.Errorf("ciphertext size %d should exceed plaintext %d", ctSize, len(plain))
+	}
+	if _, err := io.ReadAll(body); err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+}
+
+func TestEncryptForPut_RetryReusesCachedDEK(t *testing.T) {
+	t.Parallel()
+	enc, cp := newCountingEncryptor(t)
+	plain := []byte("retry payload — wraps once across N calls")
+	var state putEncryptState
+
+	const calls = 3
+	for i := range calls {
+		body, _, _, err := encryptForPut(context.Background(), enc, plain, int64(len(plain)), &state)
+		if err != nil {
+			t.Fatalf("call %d: %v", i, err)
+		}
+		if _, err := io.ReadAll(body); err != nil {
+			t.Fatalf("call %d read: %v", i, err)
+		}
+	}
+	if got := cp.wraps.Load(); got != 1 {
+		t.Errorf("WrapDEK called %d times across %d encryptForPut calls, want 1", got, calls)
+	}
+}
+
+func TestEncryptForPut_RetryUsesFreshNonce(t *testing.T) {
+	t.Parallel()
+	enc, _ := newCountingEncryptor(t)
+	plain := []byte("nonce uniqueness check")
+	var state putEncryptState
+
+	_, _, meta1, err := encryptForPut(context.Background(), enc, plain, int64(len(plain)), &state)
+	if err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+	_, _, meta2, err := encryptForPut(context.Background(), enc, plain, int64(len(plain)), &state)
+	if err != nil {
+		t.Fatalf("second call: %v", err)
+	}
+
+	nonce1, _, err := encryption.UnpackKeyData(meta1.EncryptionKey)
+	if err != nil {
+		t.Fatalf("unpack first: %v", err)
+	}
+	nonce2, _, err := encryption.UnpackKeyData(meta2.EncryptionKey)
+	if err != nil {
+		t.Fatalf("unpack second: %v", err)
+	}
+	if bytes.Equal(nonce1, nonce2) {
+		t.Errorf("base nonces must differ across retries (cached DEK + same nonce = AES-GCM key reuse)")
+	}
+}
+
+func TestEncryptForPut_RoundTripDecrypts(t *testing.T) {
+	t.Parallel()
+	enc, _ := newCountingEncryptor(t)
+	plain := []byte("round-trip payload via encryptForPut")
+	var state putEncryptState
+
+	body, _, meta, err := encryptForPut(context.Background(), enc, plain, int64(len(plain)), &state)
+	if err != nil {
+		t.Fatalf("encryptForPut: %v", err)
+	}
+	ciphertext, err := io.ReadAll(body)
+	if err != nil {
+		t.Fatalf("read ciphertext: %v", err)
+	}
+
+	_, wrappedDEK, err := encryption.UnpackKeyData(meta.EncryptionKey)
+	if err != nil {
+		t.Fatalf("unpack key data: %v", err)
+	}
+	plainReader, err := enc.Decrypt(context.Background(), bytes.NewReader(ciphertext), wrappedDEK, meta.KeyID)
+	if err != nil {
+		t.Fatalf("decrypt: %v", err)
+	}
+	got, err := io.ReadAll(plainReader)
+	if err != nil {
+		t.Fatalf("read plaintext: %v", err)
+	}
+	if !bytes.Equal(got, plain) {
+		t.Errorf("round-trip mismatch: got %q, want %q", got, plain)
+	}
+}
+
+func TestEncryptForPut_WrapErrorLeavesStateEmpty(t *testing.T) {
+	t.Parallel()
+	enc, cp := newCountingEncryptor(t)
+	cp.wrapErr = errors.New("simulated KeyProvider failure")
+
+	var state putEncryptState
+	plain := []byte("doomed payload")
+	_, _, _, err := encryptForPut(context.Background(), enc, plain, int64(len(plain)), &state)
+	if err == nil {
+		t.Fatal("expected error from failing KeyProvider")
+	}
+	if !errors.Is(err, cp.wrapErr) {
+		// fmt.Errorf("encrypt: %w", err) wraps the underlying provider error.
+		t.Errorf("error chain does not contain provider error: %v", err)
+	}
+	if state.dek != nil || state.wrappedDEK != nil || state.keyID != "" {
+		t.Errorf("state must remain empty so a retry attempts to wrap again: %+v", state)
 	}
 }
 

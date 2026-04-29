@@ -30,6 +30,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
+	"github.com/afreidah/s3-orchestrator/internal/internalkey"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
@@ -291,28 +292,14 @@ func GenerateUploadID() string {
 // objects that need the bucket prefix prepended.
 // Returns counts of imported vs skipped objects.
 func (m *BackendManager) SyncBackend(ctx context.Context, backendName, bucket string, knownBuckets []string) (imported, skipped int, err error) {
-	be, err := m.getBackend(backendName)
+	s3b, err := m.resolveS3Backend(backendName)
 	if err != nil {
 		return 0, 0, err
 	}
 
-	// Unwrap any circuit breaker wrappers to get the concrete *backend.S3Backend.
-	inner := be
-	for {
-		if u, ok := inner.(interface{ Unwrap() backend.ObjectBackend }); ok {
-			inner = u.Unwrap()
-		} else {
-			break
-		}
-	}
-	s3b, ok := inner.(*backend.S3Backend)
-	if !ok {
-		return 0, 0, fmt.Errorf("backend %s does not support listing", backendName)
-	}
-
 	slog.InfoContext(ctx, "starting backend sync", "backend", backendName, "bucket", bucket)
 
-	bucketPrefix := bucket + "/"
+	bucketPrefix := internalkey.Prefix(bucket)
 
 	// Build a set of other bucket prefixes so we can skip objects that belong
 	// to a different virtual bucket.
@@ -392,7 +379,7 @@ func (m *BackendManager) ReconcileBackend(ctx context.Context, backendName, buck
 		return nil, err
 	}
 
-	bucketPrefix := bucket + "/"
+	bucketPrefix := internalkey.Prefix(bucket)
 	otherPrefixes := siblingPrefixes(knownBuckets, bucket)
 
 	var apiPages int64

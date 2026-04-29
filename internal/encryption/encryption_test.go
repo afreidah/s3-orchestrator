@@ -5,7 +5,7 @@
 //
 // Tests for the Encryptor covering encrypt/decrypt round-trips at various
 // sizes, range-based decryption across chunk boundaries, ciphertext size
-// calculations, key data packing, and MD5 ETag generation.
+// calculations, and key data packing.
 // -------------------------------------------------------------------------------
 
 package encryption
@@ -13,9 +13,7 @@ package encryption
 import (
 	"bytes"
 	"context"
-	"crypto/md5" //nolint:gosec // G501: MD5 used to verify S3 ETag computation
 	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"testing"
@@ -403,34 +401,6 @@ func TestCiphertextSize_MatchesActualOutput(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
-// MD5 ETAG
-// -------------------------------------------------------------------------
-
-func TestEncrypt_PlaintextMD5(t *testing.T) {
-	t.Parallel()
-	enc := testEncryptor(t, 64)
-	ctx := context.Background()
-
-	original := []byte("hello, world!")
-	expectedMD5 := md5.Sum(original) //nolint:gosec // G401: MD5 used to verify S3 ETag computation
-	expectedHex := hex.EncodeToString(expectedMD5[:])
-
-	result, err := enc.Encrypt(ctx, bytes.NewReader(original), int64(len(original)))
-	if err != nil {
-		t.Fatalf("Encrypt: %v", err)
-	}
-
-	// Must read all ciphertext to finalize the MD5
-	if _, err := io.ReadAll(result.Body); err != nil {
-		t.Fatalf("ReadAll: %v", err)
-	}
-
-	if result.PlaintextMD5 != expectedHex {
-		t.Errorf("PlaintextMD5 = %q, want %q", result.PlaintextMD5, expectedHex)
-	}
-}
-
-// -------------------------------------------------------------------------
 // PACK / UNPACK KEY DATA
 // -------------------------------------------------------------------------
 
@@ -707,12 +677,12 @@ func TestEncryptWithDEK_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadAll first: %v", err)
 	}
-	if first.RawDEK == nil {
+	if first.RawDEK() == nil {
 		t.Fatal("RawDEK should be set after Encrypt")
 	}
 
 	// Second encrypt — reuse DEK (simulates failover retry)
-	second, err := enc.EncryptWithDEK(bytes.NewReader(original), int64(len(original)), first.RawDEK, first.WrappedDEK, first.KeyID)
+	second, err := enc.EncryptWithDEK(bytes.NewReader(original), int64(len(original)), first.RawDEK(), first.WrappedDEK, first.KeyID)
 	if err != nil {
 		t.Fatalf("EncryptWithDEK: %v", err)
 	}
@@ -758,7 +728,7 @@ func TestEncryptWithDEK_DifferentNonce(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	second, err := enc.EncryptWithDEK(bytes.NewReader(data), int64(len(data)), first.RawDEK, first.WrappedDEK, first.KeyID)
+	second, err := enc.EncryptWithDEK(bytes.NewReader(data), int64(len(data)), first.RawDEK(), first.WrappedDEK, first.KeyID)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -18,14 +18,13 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"sync"
 	"time"
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/internalkey"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/util/workerpool"
 
-	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
@@ -77,12 +76,10 @@ func (o *ObjectManager) PutObject(ctx context.Context, key string, body io.Reade
 	}
 
 	// --- Try eligible backends with failover ---
-	// DEK caching: on the first encryption attempt we call Encrypt() which
-	// wraps the DEK via the KeyProvider (Vault round-trip). On retries we
-	// call EncryptWithDEK() which reuses the wrapped DEK but generates a
-	// fresh nonce, avoiding redundant Vault calls during failover storms.
-	var cachedDEK, cachedWrappedDEK []byte
-	var cachedKeyID string
+	// DEK caching: encryptForPut wraps a fresh DEK on first call and reuses
+	// it on retries with a new base nonce, sparing the KeyProvider during
+	// failover storms.
+	var dekState putEncryptState
 
 	var failedBackends []string
 	var lastErr error
@@ -100,40 +97,17 @@ func (o *ObjectManager) PutObject(ctx context.Context, key string, body io.Reade
 			return "", err
 		}
 
-		// --- Encrypt if enabled (fresh nonce per attempt, cached DEK on retry) ---
-		var enc *store.EncryptionMeta
+		// --- Encrypt if enabled, layer integrity hash either way ---
 		uploadBody := io.Reader(bytes.NewReader(bodyBytes))
 		uploadSize := size
+		var enc *store.EncryptionMeta
 		if o.encryptor != nil {
-			var encResult *encryption.EncryptResult
-			if cachedDEK == nil {
-				encResult, err = o.encryptor.Encrypt(ctx, bytes.NewReader(bodyBytes), size)
-				if err != nil {
-					telemetry.EncryptionErrorsTotal.WithLabelValues("encrypt", "encrypt_failed").Inc()
-					span.SetStatus(codes.Error, err.Error())
-					return "", fmt.Errorf("encrypt: %w", err)
-				}
-				cachedDEK = encResult.RawDEK
-				cachedWrappedDEK = encResult.WrappedDEK
-				cachedKeyID = encResult.KeyID
-			} else {
-				encResult, err = o.encryptor.EncryptWithDEK(bytes.NewReader(bodyBytes), size, cachedDEK, cachedWrappedDEK, cachedKeyID)
-				if err != nil {
-					telemetry.EncryptionErrorsTotal.WithLabelValues("encrypt", "encrypt_failed").Inc()
-					span.SetStatus(codes.Error, err.Error())
-					return "", fmt.Errorf("encrypt: %w", err)
-				}
+			uploadBody, uploadSize, enc, err = encryptForPut(ctx, o.encryptor, bodyBytes, size, &dekState)
+			if err != nil {
+				span.SetStatus(codes.Error, err.Error())
+				return "", err
 			}
-			telemetry.EncryptionOpsTotal.WithLabelValues("encrypt").Inc()
-			uploadBody = encResult.Body
-			uploadSize = encResult.CiphertextSize
-			enc = &store.EncryptionMeta{
-				Encrypted:     true,
-				EncryptionKey: encryption.PackKeyData(encResult.BaseNonce, encResult.WrappedDEK),
-				KeyID:         encResult.KeyID,
-				PlaintextSize: size,
-				ContentHash:   contentHash,
-			}
+			enc.ContentHash = contentHash
 		} else if contentHash != "" {
 			enc = &store.EncryptionMeta{ContentHash: contentHash}
 		}
@@ -188,7 +162,7 @@ func (o *ObjectManager) PutObject(ctx context.Context, key string, body io.Reade
 			slog.Int64("size", size),
 		)
 		if event.Emit != nil {
-			bucket, userKey := splitInternalKey(key)
+			bucket, userKey := internalkey.Split(key)
 			event.Emit(event.Event{
 				Type:    event.ObjectCreatedPut,
 				Subject: userKey,
@@ -375,7 +349,7 @@ func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey strin
 		slog.Int64("size", size),
 	)
 	if event.Emit != nil {
-		bucket, userKey := splitInternalKey(destKey)
+		bucket, userKey := internalkey.Split(destKey)
 		event.Emit(event.Event{
 			Type:    event.ObjectCreatedCopy,
 			Subject: userKey,
@@ -450,7 +424,7 @@ func (o *ObjectManager) DeleteObject(ctx context.Context, key string) error {
 		slog.Int("copies_deleted", len(copies)),
 	)
 	if event.Emit != nil {
-		bucket, userKey := splitInternalKey(key)
+		bucket, userKey := internalkey.Split(key)
 		event.Emit(event.Event{
 			Type:    event.ObjectRemovedDelete,
 			Subject: userKey,
@@ -547,25 +521,10 @@ func (o *ObjectManager) DeleteObjects(ctx context.Context, keys []string) []Dele
 	}
 
 	// Delete from backends concurrently, capped at 10 in-flight calls.
-	var mu sync.Mutex
-	var backendErrors []error
-
+	// deleteOrEnqueue handles per-failure logging + cleanup-queue insert.
 	workerpool.Run(ctx, 10, deleteItems, func(ctx context.Context, item batchDeleteItem) {
-		err := o.deleteWithTimeout(ctx, item.backend, item.key)
-		if err != nil {
-			slog.WarnContext(ctx, "failed to delete object from backend (batch)",
-				"backend", item.beName, "key", item.key, "error", err)
-			o.enqueueCleanup(ctx, item.beName, item.key, "batch_delete_failed", item.sizeBytes)
-			mu.Lock()
-			backendErrors = append(backendErrors, err)
-			mu.Unlock()
-		}
+		o.deleteOrEnqueue(ctx, item.backend, item.beName, item.key, "batch_delete_failed", item.sizeBytes)
 	})
-
-	// Record backend errors on the span after all goroutines have finished.
-	for _, err := range backendErrors {
-		span.RecordError(err)
-	}
 
 	// Tally outcomes for metrics and audit
 	var successCount, errorCount int

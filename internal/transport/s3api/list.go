@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/internalkey"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 )
 
@@ -92,7 +93,7 @@ func buildListContents(objects []store.ObjectLocation, prefixes []string, prefix
 // marker-based pagination. Internally prefixes queries with the bucket name and
 // strips the prefix from results before returning to clients.
 func (s *Server) handleListObjectsV1(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket string) (int, error) {
-	bucketPrefix := bucket + "/"
+	bucketPrefix := internalkey.Prefix(bucket)
 
 	userPrefix := r.URL.Query().Get("prefix")
 	delimiter := r.URL.Query().Get("delimiter")
@@ -143,7 +144,7 @@ func (s *Server) handleListObjectsV1(ctx context.Context, w http.ResponseWriter,
 // S3-compatible ListObjectsV2 XML response. Internally prefixes queries with
 // the bucket name and strips the prefix from results before returning to clients.
 func (s *Server) handleListObjectsV2(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket string) (int, error) {
-	bucketPrefix := bucket + "/"
+	bucketPrefix := internalkey.Prefix(bucket)
 
 	userPrefix := r.URL.Query().Get("prefix")
 	delimiter := r.URL.Query().Get("delimiter")

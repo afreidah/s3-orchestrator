@@ -21,6 +21,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/afreidah/s3-orchestrator/internal/internalkey"
 )
 
 // -------------------------------------------------------------------------
@@ -97,7 +99,7 @@ func (s *Server) handleCreateMultipartUpload(ctx context.Context, w http.Respons
 
 	// Check per-bucket multipart upload limit
 	if limit := s.GetBucketAuth().MaxMultipartUploads(bucket); limit > 0 {
-		count, err := s.Manager.Multipart().CountActiveMultipartUploads(ctx, bucket+"/")
+		count, err := s.Manager.Multipart().CountActiveMultipartUploads(ctx, internalkey.Prefix(bucket))
 		if err != nil {
 			return writeStorageError(w, err, "Failed to check multipart upload count"), err
 		}
@@ -239,7 +241,7 @@ type xmlUpload struct {
 // multipart uploads scoped to the bucket. Strips the internal bucket prefix
 // from keys before returning to clients.
 func (s *Server) handleListMultipartUploads(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket string) (int, error) {
-	bucketPrefix := bucket + "/"
+	bucketPrefix := internalkey.Prefix(bucket)
 
 	maxUploads := parseQueryInt(r, "max-uploads", 1000, 1000)
 
