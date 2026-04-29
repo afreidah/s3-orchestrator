@@ -15,12 +15,123 @@
 package admin
 
 import (
+	"bytes"
 	"context"
+	"io"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
+	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/testutil"
 )
+
+// fakeBackend is a minimal in-memory ObjectBackend used by the bulk-rewrite
+// happy-path tests. GetObject returns a fixed payload and PutObject is a
+// no-op recorder so the rewrite closure can run end-to-end without real
+// network I/O.
+type fakeBackend struct {
+	payload []byte
+	puts    atomic.Int64
+}
+
+func (f *fakeBackend) GetObject(_ context.Context, _, _ string) (*backend.GetObjectResult, error) {
+	body := io.NopCloser(bytes.NewReader(f.payload))
+	return &backend.GetObjectResult{
+		Body:        body,
+		Size:        int64(len(f.payload)),
+		ContentType: "application/octet-stream",
+	}, nil
+}
+
+func (f *fakeBackend) PutObject(_ context.Context, _ string, body io.Reader, _ int64, _ string, _ map[string]string) (string, error) {
+	if _, err := io.Copy(io.Discard, body); err != nil {
+		return "", err
+	}
+	f.puts.Add(1)
+	return "etag", nil
+}
+
+func (f *fakeBackend) HeadObject(_ context.Context, _ string) (*backend.HeadObjectResult, error) {
+	return &backend.HeadObjectResult{Size: int64(len(f.payload))}, nil
+}
+
+func (f *fakeBackend) DeleteObject(_ context.Context, _ string) error { return nil }
+
+// rowAdminStore returns a single UnencryptedLocation on the first call to
+// ListUnencryptedLocations and an empty slice afterwards, so the
+// bulk-rewrite loop processes exactly one object before terminating.
+type rowAdminStore struct {
+	emptyAdminStore
+	row     store.UnencryptedLocation
+	served  atomic.Bool
+	marked  atomic.Bool
+}
+
+func (r *rowAdminStore) ListUnencryptedLocations(_ context.Context, _, _ int) ([]store.UnencryptedLocation, error) {
+	if r.served.Swap(true) {
+		return nil, nil
+	}
+	return []store.UnencryptedLocation{r.row}, nil
+}
+
+func (r *rowAdminStore) MarkObjectEncrypted(_ context.Context, _, _ string, _ []byte, _ string, _, _ int64) error {
+	r.marked.Store(true)
+	return nil
+}
+
+// emptyAdminStore is a minimal AdminStore stub: every list returns no rows
+// and every mutator is a no-op. Lets EncryptExisting's listFn closure run
+// to completion against a non-nil rawStore without inventing per-test
+// fixture data. The masterless methods that the bulk-rewrite path never
+// exercises are present only to satisfy the interface contract.
+type emptyAdminStore struct{}
+
+func (emptyAdminStore) RunMigrations(_ context.Context) error          { return nil }
+func (emptyAdminStore) VerifySchemaVersion(_ context.Context) error    { return nil }
+func (emptyAdminStore) SyncQuotaLimits(_ context.Context, _ []config.BackendConfig) error {
+	return nil
+}
+func (emptyAdminStore) Close() {}
+
+func (emptyAdminStore) ListEncryptedLocations(_ context.Context, _ string, _, _ int) ([]store.EncryptedLocation, error) {
+	return nil, nil
+}
+func (emptyAdminStore) UpdateEncryptionKey(_ context.Context, _, _ string, _ []byte, _ string) error {
+	return nil
+}
+func (emptyAdminStore) ListUnencryptedLocations(_ context.Context, _, _ int) ([]store.UnencryptedLocation, error) {
+	return nil, nil
+}
+func (emptyAdminStore) MarkObjectEncrypted(_ context.Context, _, _ string, _ []byte, _ string, _, _ int64) error {
+	return nil
+}
+func (emptyAdminStore) ListAllEncryptedLocations(_ context.Context, _, _ int) ([]store.DecryptableLocation, error) {
+	return nil, nil
+}
+func (emptyAdminStore) MarkObjectDecrypted(_ context.Context, _, _ string, _ int64) error {
+	return nil
+}
+func (emptyAdminStore) InsertNotification(_ context.Context, _, _, _ string) error {
+	return nil
+}
+func (emptyAdminStore) GetPendingNotifications(_ context.Context, _ int) ([]store.NotificationRow, error) {
+	return nil, nil
+}
+func (emptyAdminStore) CompleteNotification(_ context.Context, _ int64) error { return nil }
+func (emptyAdminStore) RetryNotification(_ context.Context, _ int64, _ time.Duration, _ string) error {
+	return nil
+}
+func (emptyAdminStore) WithAdvisoryLock(_ context.Context, _ int64, fn func(ctx context.Context) error) (bool, error) {
+	if fn == nil {
+		return true, nil
+	}
+	return true, fn(context.Background())
+}
 
 // enableIntegrityForTest stores an integrity-enabled config on the
 // handler's BackendOps so the Scrub / BackfillChecksums skipped guard
@@ -116,6 +227,101 @@ func TestEncryptExisting_SkippedWhenEncryptorNil(t *testing.T) {
 	}
 	if res.Reason == "" {
 		t.Error("Reason is empty; want non-empty explanation")
+	}
+}
+
+// TestEncryptExisting_HappyPathEmptyStore asserts that with both an
+// encryptor and an admin store wired in, EncryptExisting walks the
+// pagination loop, sees no rows on the first batch, and returns
+// Status="complete" with zero counts. Drives the listFn closure that the
+// nil-encryptor test cannot reach.
+func TestEncryptExisting_HappyPathEmptyStore(t *testing.T) {
+	t.Parallel()
+	h := newTestHandlerWithManager(t)
+
+	// 32-byte base64-encoded master key for the local config-key provider.
+	provider, err := encryption.NewConfigKeyProvider("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "test-key")
+	if err != nil {
+		t.Fatalf("NewConfigKeyProvider: %v", err)
+	}
+	enc, err := encryption.NewEncryptor(provider, 64*1024)
+	if err != nil {
+		t.Fatalf("NewEncryptor: %v", err)
+	}
+	h.encryptor = enc
+	h.rawStore = emptyAdminStore{}
+
+	res := h.EncryptExisting(context.Background())
+	if res.Status != "complete" {
+		t.Errorf("Status = %q, want complete", res.Status)
+	}
+	if res.Total != 0 || res.Success != 0 || res.Failed != 0 {
+		t.Errorf("counts = (success=%d failed=%d total=%d), want all 0",
+			res.Success, res.Failed, res.Total)
+	}
+}
+
+// TestEncryptExisting_HappyPathOneRow asserts the full bulk-rewrite path
+// runs end-to-end on a single row backed by a fake backend: the listFn
+// closure yields the row, processBulkLocation downloads from the fake,
+// the rewrite closure encrypts, the fake's PutObject accepts the
+// ciphertext, and the dbUpdate closure marks the object encrypted.
+func TestEncryptExisting_HappyPathOneRow(t *testing.T) {
+	t.Parallel()
+	mock := &testutil.MockStore{}
+	fake := &fakeBackend{payload: []byte("hello world")}
+	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
+		Backends:        map[string]backend.ObjectBackend{"backend-a": fake},
+		Stores:          proxy.StoresFromMock(mock),
+		Dashboard:       mock,
+		Metrics:         mock,
+		Order:           []string{"backend-a"},
+		RoutingStrategy: config.RoutingPack,
+	})
+
+	provider, err := encryption.NewConfigKeyProvider("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "test-key")
+	if err != nil {
+		t.Fatalf("NewConfigKeyProvider: %v", err)
+	}
+	enc, err := encryption.NewEncryptor(provider, 64*1024)
+	if err != nil {
+		t.Fatalf("NewEncryptor: %v", err)
+	}
+
+	rawStore := &rowAdminStore{row: store.UnencryptedLocation{
+		ObjectKey:   "bucket/file.txt",
+		BackendName: "backend-a",
+		SizeBytes:   int64(len(fake.payload)),
+	}}
+
+	h := &Handler{
+		backendOps: mgr,
+		replicator: mgr.Replicator,
+		overRep:    mgr.OverReplicationCleaner,
+		drain:      mgr.DrainManager,
+		scrubber:   mgr.Scrubber,
+		objects:    mock,
+		cleanup:    mock,
+		rawStore:   rawStore,
+		encryptor:  enc,
+		token:      "test-token",
+	}
+
+	res := h.EncryptExisting(context.Background())
+	if res.Status != "complete" {
+		t.Errorf("Status = %q, want complete", res.Status)
+	}
+	if res.Total != 1 {
+		t.Errorf("Total = %d, want 1", res.Total)
+	}
+	if res.Success != 1 || res.Failed != 0 {
+		t.Errorf("counts = (success=%d failed=%d), want (1, 0)", res.Success, res.Failed)
+	}
+	if !rawStore.marked.Load() {
+		t.Error("MarkObjectEncrypted was not called; dbUpdate closure did not run")
+	}
+	if fake.puts.Load() != 1 {
+		t.Errorf("fakeBackend.PutObject calls = %d, want 1", fake.puts.Load())
 	}
 }
 

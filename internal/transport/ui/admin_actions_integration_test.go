@@ -26,11 +26,11 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
 )
 
-// newSkippedAdminHandler builds an *admin.Handler whose operations all
-// resolve to the documented "skipped" branch: factor-1 replication, no
-// encryptor, no integrity config. Mirrors the fixture in admin's tests
-// since the helper there is unexported.
-func newSkippedAdminHandler(t *testing.T) *admin.Handler {
+// newAdminHandlerForTest builds an *admin.Handler against a mock store
+// and an empty backend set. opts mutates the resulting BackendManager so
+// individual tests can flip the relevant skipped-vs-happy guards before
+// the handler is returned.
+func newAdminHandlerForTest(t *testing.T, opts ...func(*proxy.BackendManager)) *admin.Handler {
 	t.Helper()
 	mock := &testutil.MockStore{}
 	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3})
@@ -44,6 +44,9 @@ func newSkippedAdminHandler(t *testing.T) *admin.Handler {
 	})
 	mgr.Replicator.SetConfig(&config.ReplicationConfig{Factor: 1})
 	mgr.OverReplicationCleaner.SetConfig(&config.ReplicationConfig{Factor: 1})
+	for _, opt := range opts {
+		opt(mgr)
+	}
 
 	return admin.New(&admin.Deps{
 		BackendOps: mgr,
@@ -57,6 +60,52 @@ func newSkippedAdminHandler(t *testing.T) *admin.Handler {
 		Cleanup:    mock,
 		Token:      "test-token",
 	})
+}
+
+// newSkippedAdminHandler is the most common shape: every op resolves to
+// the skipped branch.
+func newSkippedAdminHandler(t *testing.T) *admin.Handler {
+	t.Helper()
+	return newAdminHandlerForTest(t)
+}
+
+// TestHandleAPIReplicate_HappyPathReturnsCount asserts that when the
+// admin handler is configured to actually run (factor > 1) the wrapper
+// closure surfaces the CopiesCreated count via the status endpoint
+// rather than the skipped reason. Drives the "non-skipped return" line
+// of every wrapper closure since the structural shape is identical
+// across the four operations; covering one is enough.
+func TestHandleAPIReplicate_HappyPathReturnsCount(t *testing.T) {
+	t.Parallel()
+	h := &Handler{adminHandler: newAdminHandlerForTest(t, func(mgr *proxy.BackendManager) {
+		mgr.Replicator.SetConfig(&config.ReplicationConfig{Factor: 2, BatchSize: 10})
+	})}
+
+	triggerReq := httptest.NewRequest(http.MethodPost, "/api/replicate", nil)
+	triggerW := httptest.NewRecorder()
+	h.handleAPIReplicate(triggerW, triggerReq)
+	if triggerW.Code != http.StatusAccepted {
+		t.Fatalf("trigger status = %d, want %d", triggerW.Code, http.StatusAccepted)
+	}
+
+	res := waitForResult(t, h, "replicate")
+	if !res.OK || res.Skipped != "" {
+		t.Errorf("result = %+v, want OK and no Skipped reason", res)
+	}
+	if res.Count != 0 {
+		t.Errorf("Count = %d, want 0 (empty store)", res.Count)
+	}
+
+	statusReq := httptest.NewRequest(http.MethodGet, "/api/replicate/status", nil)
+	statusW := httptest.NewRecorder()
+	h.handleAPIReplicateStatus(statusW, statusReq)
+	body := decodeBody(t, statusW)
+	if body["status"] != "done" {
+		t.Errorf("status body = %v, want status=done", body)
+	}
+	if body["copies_created"] != float64(0) {
+		t.Errorf("copies_created = %v, want 0", body["copies_created"])
+	}
 }
 
 // TestAdminActionWrappers_RouteIntoAdmin asserts that each trigger
