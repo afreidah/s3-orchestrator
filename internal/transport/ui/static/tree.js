@@ -433,6 +433,18 @@
     });
   }
 
+  // --- Button reset helper: re-enable and restore the original label after
+  // a delay. Used by every error / skipped / done branch in the async
+  // pipeline; pulling it out keeps callbacks shallow and removes a half
+  // dozen copies of the same setTimeout closure.
+  function resetButton(btn, label, delay) {
+    setTimeout(function () { btn.disabled = false; btn.textContent = label; }, delay);
+  }
+
+  function reloadAfter(delay) {
+    setTimeout(function () { location.reload(); }, delay);
+  }
+
   // --- Async operation helper: trigger POST, then poll status endpoint ---
   function runAsyncOp(btn, triggerUrl, statusUrl, label, countKey, noun, opts) {
     let options = opts || {};
@@ -444,55 +456,70 @@
         if (resp.status === 401) { location.href = 'login'; return; }
         if (resp.status === 409) {
           btn.textContent = 'Already running';
-          setTimeout(function () { btn.disabled = false; btn.textContent = label; }, 3000);
+          resetButton(btn, label, 3000);
           return;
         }
         pollStatus(btn, statusUrl, label, countKey, noun, options);
       })
       .catch(function (err) {
         btn.textContent = err.name === 'AbortError' ? 'Request timed out' : 'Network error';
-        setTimeout(function () { btn.disabled = false; btn.textContent = label; }, 3000);
+        resetButton(btn, label, 3000);
       });
   }
 
+  // applyPollResult dispatches a finished poll payload onto the button.
+  // Lives outside pollStatus so the .then callback only has to forward
+  // the parsed JSON, keeping the async chain at three levels of nesting.
+  function applyPollResult(data, ctx) {
+    if (data.status === 'skipped') {
+      ctx.btn.textContent = 'Skipped';
+      setStatusBanner(data.reason || 'skipped', 'skipped');
+      resetButton(ctx.btn, ctx.label, 3000);
+      return;
+    }
+    if (data.ok) {
+      let extra = '';
+      if (typeof data.failed === 'number' && data.failed > 0) {
+        extra = ', ' + data.failed + ' failed';
+      }
+      ctx.btn.textContent = data[ctx.countKey] + ctx.suffix + extra;
+      if (ctx.skipReload) {
+        resetButton(ctx.btn, ctx.label, 3000);
+      } else {
+        reloadAfter(1500);
+      }
+      return;
+    }
+    if (data.status === 'error') {
+      ctx.btn.textContent = data.error || 'Failed';
+      setStatusBanner(data.error || 'failed', 'error');
+      resetButton(ctx.btn, ctx.label, 3000);
+      return;
+    }
+    ctx.btn.disabled = false;
+    ctx.btn.textContent = ctx.label;
+  }
+
   function pollStatus(btn, statusUrl, label, countKey, noun, options) {
-    let suffix = noun ? ' ' + noun : '';
+    let ctx = {
+      btn: btn,
+      label: label,
+      countKey: countKey,
+      suffix: noun ? ' ' + noun : '',
+      skipReload: !!options.skipReload,
+    };
     let poll = setInterval(function () {
       fetch(statusUrl)
         .then(function (resp) { return resp.json(); })
         .then(function (data) {
           if (data.status === 'running') return;
           clearInterval(poll);
-          if (data.status === 'skipped') {
-            btn.textContent = 'Skipped';
-            setStatusBanner(data.reason || 'skipped', 'skipped');
-            setTimeout(function () { btn.disabled = false; btn.textContent = label; }, 3000);
-            return;
-          }
-          if (data.ok) {
-            let extra = '';
-            if (typeof data.failed === 'number' && data.failed > 0) {
-              extra = ', ' + data.failed + ' failed';
-            }
-            btn.textContent = data[countKey] + suffix + extra;
-            if (options.skipReload) {
-              setTimeout(function () { btn.disabled = false; btn.textContent = label; }, 3000);
-            } else {
-              setTimeout(function () { location.reload(); }, 1500);
-            }
-          } else if (data.status === 'error') {
-            btn.textContent = data.error || 'Failed';
-            setStatusBanner(data.error || 'failed', 'error');
-            setTimeout(function () { btn.disabled = false; btn.textContent = label; }, 3000);
-          } else {
-            btn.disabled = false;
-            btn.textContent = label;
-          }
+          applyPollResult(data, ctx);
         })
         .catch(function () {
           clearInterval(poll);
           btn.textContent = 'Poll error';
-          setTimeout(function () { btn.disabled = false; btn.textContent = label; }, 3000);
+          resetButton(btn, label, 3000);
         });
     }, 2000);
   }
