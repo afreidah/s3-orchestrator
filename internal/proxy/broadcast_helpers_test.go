@@ -60,36 +60,97 @@ func TestBroadcastAllFailed_WrapsLastError(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
-// drainAndCancelLosers
+// drainAndCleanupLosers
 // -------------------------------------------------------------------------
 
-func TestDrainAndCancelLosers_InvokesCancelOnEachResult(t *testing.T) {
+// TestDrainAndCleanupLosers_InvokesCleanupOnEachResult verifies that every
+// loser result drained from the channel has its cleanup func invoked, so
+// per-call timeout contexts are released promptly instead of leaking until
+// the deadline fires.
+func TestDrainAndCleanupLosers_InvokesCleanupOnEachResult(t *testing.T) {
 	t.Parallel()
 	ch := make(chan broadcastResult, 3)
-	var cancels atomic.Int32
-	mkCancel := func() context.CancelFunc { return func() { cancels.Add(1) } }
+	var cleanups atomic.Int32
+	mkCleanup := func() func() { return func() { cleanups.Add(1) } }
 
-	ch <- broadcastResult{name: "a", cancel: mkCancel()}
-	ch <- broadcastResult{name: "b", cancel: mkCancel()}
-	ch <- broadcastResult{name: "c", cancel: mkCancel()}
+	ch <- broadcastResult{name: "a", cleanup: mkCleanup()}
+	ch <- broadcastResult{name: "b", cleanup: mkCleanup()}
+	ch <- broadcastResult{name: "c", cleanup: mkCleanup()}
 
-	drainAndCancelLosers(ch, 3)
-	if got := cancels.Load(); got != 3 {
-		t.Errorf("cancel invocations = %d, want 3", got)
+	drainAndCleanupLosers(ch, 3)
+	if got := cleanups.Load(); got != 3 {
+		t.Errorf("cleanup invocations = %d, want 3", got)
 	}
 }
 
-func TestDrainAndCancelLosers_TolerestNilCancel(t *testing.T) {
+// TestDrainAndCleanupLosers_ToleratesNilCleanup verifies the drain skips
+// results whose cleanup is nil (errored probes) without panicking.
+func TestDrainAndCleanupLosers_ToleratesNilCleanup(t *testing.T) {
 	t.Parallel()
 	ch := make(chan broadcastResult, 2)
+	var cleanups atomic.Int32
+	cleanupFn := func() { cleanups.Add(1) }
+
+	ch <- broadcastResult{name: "errored", err: errors.New("fail")} // nil cleanup
+	ch <- broadcastResult{name: "won", cleanup: cleanupFn}
+
+	drainAndCleanupLosers(ch, 2)
+	if got := cleanups.Load(); got != 1 {
+		t.Errorf("cleanup invocations = %d, want 1 (nil cleanup skipped)", got)
+	}
+}
+
+// -------------------------------------------------------------------------
+// bodyWithCancel
+// -------------------------------------------------------------------------
+
+// stringReadCloser is a minimal io.ReadCloser that records the number of
+// times Close has been invoked. Used to verify bodyWithCancel forwards the
+// underlying Close as well as firing the cancel.
+type stringReadCloser struct {
+	*strings.Reader
+	closes atomic.Int32
+}
+
+// Close records the call and returns nil.
+func (s *stringReadCloser) Close() error {
+	s.closes.Add(1)
+	return nil
+}
+
+// TestBodyWithCancel_ClosesAndCancels verifies the wrapper forwards Close
+// to the underlying body AND invokes the cancel func once. Without this
+// the read-path callbacks would leak per-call timeout contexts on every
+// successful streaming GetObject.
+func TestBodyWithCancel_ClosesAndCancels(t *testing.T) {
+	t.Parallel()
+	inner := &stringReadCloser{Reader: strings.NewReader("payload")}
 	var cancels atomic.Int32
-	cancelFn := func() { cancels.Add(1) }
+	wrapped := bodyWithCancel(inner, func() { cancels.Add(1) })
 
-	ch <- broadcastResult{name: "errored", err: errors.New("fail")} // nil cancel
-	ch <- broadcastResult{name: "won", cancel: cancelFn}
-
-	drainAndCancelLosers(ch, 2)
+	if err := wrapped.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if got := inner.closes.Load(); got != 1 {
+		t.Errorf("inner Close calls = %d, want 1", got)
+	}
 	if got := cancels.Load(); got != 1 {
-		t.Errorf("cancel invocations = %d, want 1 (nil cancel skipped)", got)
+		t.Errorf("cancel invocations = %d, want 1", got)
+	}
+}
+
+// TestBodyWithCancel_IdempotentClose verifies double-Close fires cancel
+// exactly once. Lets callers defer Close without worrying about whether
+// the body has already been closed earlier in the response path.
+func TestBodyWithCancel_IdempotentClose(t *testing.T) {
+	t.Parallel()
+	inner := &stringReadCloser{Reader: strings.NewReader("x")}
+	var cancels atomic.Int32
+	wrapped := bodyWithCancel(inner, func() { cancels.Add(1) })
+
+	_ = wrapped.Close()
+	_ = wrapped.Close()
+	if got := cancels.Load(); got != 1 {
+		t.Errorf("cancel invocations after double-close = %d, want 1", got)
 	}
 }
