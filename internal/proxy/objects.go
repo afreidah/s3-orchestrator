@@ -13,6 +13,7 @@ package proxy
 
 import (
 	"io"
+	"sync"
 
 	objcache "github.com/afreidah/s3-orchestrator/internal/cache"
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -61,6 +62,30 @@ func wrapReader(r io.Reader, c io.Closer) io.ReadCloser {
 		io.Reader
 		io.Closer
 	}{Reader: r, Closer: c}
+}
+
+// bodyWithCancel wraps body so that its Close also invokes cancel. Used by
+// the read path to release per-call timeout contexts when the consumer
+// finishes reading the body, instead of letting the timeout fire on its own.
+func bodyWithCancel(body io.ReadCloser, cancel func()) io.ReadCloser {
+	return &cancellingReadCloser{ReadCloser: body, cancel: cancel}
+}
+
+// cancellingReadCloser invokes a cancel func exactly once after the
+// wrapped ReadCloser is closed. Idempotent so callers can defer Close
+// without worrying about double-cancel.
+type cancellingReadCloser struct {
+	io.ReadCloser
+	cancel func()
+	once   sync.Once
+}
+
+// Close closes the wrapped ReadCloser and then invokes the cancel func.
+// Errors from the underlying Close are returned; cancel cannot fail.
+func (c *cancellingReadCloser) Close() error {
+	err := c.ReadCloser.Close()
+	c.once.Do(c.cancel)
+	return err
 }
 
 // -------------------------------------------------------------------------
