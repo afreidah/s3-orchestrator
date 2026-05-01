@@ -73,6 +73,14 @@ func (o *ObjectManager) resolveLocationsByBackend(ctx context.Context, key strin
 // already attached the cancel to the result body's Close (GetObject).
 type readBackendFn func(ctx context.Context, backendName string, backend s3be.ObjectBackend) (int64, func(), error)
 
+// noopCleanup is the cleanup returned by readBackendFn implementations
+// when there is nothing for the orchestrator to release: error paths
+// where the callback already cancelled its own timeout, and the GetObject
+// success path where the cancel is attached to the body's Close.
+func noopCleanup() {
+	// meant to be a noop function
+}
+
 // withReadFailover looks up all copies of an object and tries each backend in
 // order until one succeeds. The tryBackend callback should attempt the operation
 // and return the object size (for span attributes) or an error to try the next copy.
@@ -99,18 +107,28 @@ func (o *ObjectManager) withReadFailover(ctx context.Context, operation, key str
 		return "", fmt.Errorf("failed to find object location: %w", err)
 	}
 
+	return o.tryEachLocation(ctx, operation, key, start, span, locations, tryBackend)
+}
+
+// tryEachLocation walks the resolved location list and runs the per-backend
+// callback against each, returning on the first success. Records lastErr
+// and a count of usage-limit skips so the failure-path return distinguishes
+// "all backends declined for usage limits" from "all backends genuinely
+// failed."
+func (o *ObjectManager) tryEachLocation(ctx context.Context, operation, key string, start time.Time, span trace.Span, locations []store.ObjectLocation, tryBackend readBackendFn) (string, error) {
 	var lastErr error
 	var limitSkips int
 	for i := range locations {
 		span.SetAttributes(telemetry.AttrBackendName.String(locations[i].BackendName))
+		name := locations[i].BackendName
 
-		backend, ok := o.backends[locations[i].BackendName]
+		backend, ok := o.backends[name]
 		if !ok {
-			lastErr = fmt.Errorf("backend %s not found", locations[i].BackendName)
+			lastErr = fmt.Errorf("backend %s not found", name)
 			continue
 		}
 
-		size, cleanup, err := tryBackend(ctx, locations[i].BackendName, backend)
+		size, cleanup, err := tryBackend(ctx, name, backend)
 		if err != nil {
 			lastErr = err
 			if errors.Is(err, errUsageLimitSkip) {
@@ -118,31 +136,36 @@ func (o *ObjectManager) withReadFailover(ctx context.Context, operation, key str
 			}
 			if i < len(locations)-1 {
 				slog.WarnContext(ctx, operation+": copy failed, trying next",
-					"key", key, "failed_backend", locations[i].BackendName, "error", err)
+					"key", key, "failed_backend", name, "error", err)
 			}
 			continue
 		}
 
 		cleanup()
-		o.recordOperation(operation, locations[i].BackendName, start, nil)
+		o.recordOperation(operation, name, start, nil)
 		if i > 0 {
 			span.SetAttributes(telemetry.AttrFailover.Bool(true))
 		}
 		span.SetAttributes(telemetry.AttrObjectSize.Int64(size))
 		span.SetStatus(codes.Ok, "")
-		return locations[i].BackendName, nil
+		return name, nil
 	}
 
-	// All copies were on over-limit backends — return the usage limit error
+	return "", failoverFailureResult(span, operation, locations, lastErr, limitSkips)
+}
+
+// failoverFailureResult finalises the span and chooses between the
+// usage-limit-exceeded sentinel and the underlying lastErr based on
+// whether every location declined for over-limit reasons.
+func failoverFailureResult(span trace.Span, operation string, locations []store.ObjectLocation, lastErr error, limitSkips int) error {
 	if limitSkips > 0 && limitSkips == len(locations) {
 		telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation, "read").Inc()
 		span.SetStatus(codes.Error, "all copies over usage limit")
-		return "", store.ErrUsageLimitExceeded
+		return store.ErrUsageLimitExceeded
 	}
-
 	span.SetStatus(codes.Error, lastErr.Error())
 	span.RecordError(lastErr)
-	return "", lastErr
+	return lastErr
 }
 
 // broadcastRead tries all backends when the DB is unavailable. Checks the
@@ -386,7 +409,6 @@ func (o *ObjectManager) GetObject(ctx context.Context, key string, rangeHeader s
 		// the once-winner attaches bcancel to the body's Close so the
 		// streaming read keeps the context alive until the consumer is done.
 		bctx, bcancel := o.withTimeout(ctx)
-		noopCleanup := func() {}
 
 		if !o.usage.WithinLimits(beName, 1, 0, 0) {
 			bcancel()
@@ -517,13 +539,13 @@ func (o *ObjectManager) HeadObject(ctx context.Context, key string) (*s3be.HeadO
 		bctx, bcancel := o.withTimeout(ctx)
 		if !o.usage.WithinLimits(beName, 1, 0, 0) {
 			bcancel()
-			return 0, func() {}, fmt.Errorf("backend %s: %w", beName, errUsageLimitSkip)
+			return 0, noopCleanup, fmt.Errorf("backend %s: %w", beName, errUsageLimitSkip)
 		}
 		r, err := backend.HeadObject(bctx, key)
 		if err != nil {
 			bcancel()
 			o.usage.Record(beName, 1, 0, 0) // API call was made even on failure
-			return 0, func() {}, err
+			return 0, noopCleanup, err
 		}
 
 		// Return plaintext size for encrypted objects
