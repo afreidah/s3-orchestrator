@@ -38,6 +38,7 @@ type testCBBundle struct {
 	MultipartStore
 	ReplicationStore
 	CleanupStore
+	PendingStore
 	IntegrityStore
 	ExpiredObjectsLister
 	BackendLifecycleStore
@@ -67,6 +68,7 @@ func newTestCB(mock *mockStore, threshold int, timeout time.Duration) *testCBBun
 		MultipartStore:        NewCBMultipartStore(mock, cb),
 		ReplicationStore:      NewCBReplicationStore(mock, cb),
 		CleanupStore:          NewCBCleanupStore(mock, cb),
+		PendingStore:          NewCBPendingStore(mock, cb),
 		IntegrityStore:        NewCBIntegrityStore(mock, cb),
 		ExpiredObjectsLister:        NewCBExpiredObjectsLister(mock, cb),
 		BackendLifecycleStore: NewCBBackendLifecycleStore(mock, cb),
@@ -669,17 +671,31 @@ func TestCircuitBreaker_DegradedDurationIsPositive(t *testing.T) {
 	t.Parallel()
 	dbErr := errors.New("connection refused")
 	mock := &mockStore{getAllLocationsErr: dbErr}
-	cb := newTestCB(mock, 1, 10*time.Millisecond)
+	const openTimeout = 10 * time.Millisecond
+	cb := newTestCB(mock, 1, openTimeout)
 
 	ctx := context.Background()
 	_, _ = cb.GetAllObjectLocations(ctx, "key") // trip circuit
 
-	// Record openedAt timestamp
-	if cb.OpenDuration() == 0 {
-		t.Fatal("openedAt should be set when circuit opens")
+	// Verify the trip happened. State must be open synchronously with the
+	// failed call returning — that is what guarantees openedAt was set
+	// inside transition()'s critical section. Asserting OpenDuration != 0
+	// here would be flaky: time.Since on a monotonic clock that resolves
+	// both reads to the same nanosecond returns 0.
+	if cb.State() != breaker.StateOpen {
+		t.Fatalf("state = %v, want open after threshold breach", cb.State())
 	}
 
 	testx.Eventually(t, 500*time.Millisecond, cb.ProbeEligible, "circuit breaker never became probe-eligible")
+
+	// By the time the breaker is probe-eligible, real wall-clock time has
+	// provably elapsed beyond openTimeout. OpenDuration must therefore be
+	// strictly positive. The upper bound catches the bug a fragile
+	// equality-with-zero check actually misses: if openedAt were ever the
+	// zero value, time.Since(zero) would return roughly two millennia.
+	if d := cb.OpenDuration(); d < openTimeout || d > time.Second {
+		t.Fatalf("OpenDuration = %v, want between %v and 1s", d, openTimeout)
+	}
 
 	// Fix mock, recover
 	mock.mu.Lock()

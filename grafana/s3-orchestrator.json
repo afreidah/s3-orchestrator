@@ -3540,6 +3540,170 @@
         "type": "prometheus",
         "uid": "prometheus"
       }
+    },
+    {
+      "type": "row",
+      "id": 73,
+      "title": "Pending PUT Intents",
+      "gridPos": {
+        "x": 0,
+        "y": 174,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false
+    },
+    {
+      "type": "stat",
+      "id": 74,
+      "title": "Pending Intents Depth",
+      "description": "Unresolved PUT intents waiting for the reaper. Steady-state should be 0; persistent non-zero indicates the reaper is not draining (DB outage, backend HEAD failures, or operator-review-required ambiguous rows).",
+      "gridPos": {
+        "x": 0,
+        "y": 175,
+        "w": 6,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "max(s3o_pending_intents_depth)",
+          "legendFormat": "depth"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 20
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 75,
+      "title": "Pending Intent Throughput",
+      "description": "Rate of intents enqueued by the write path versus resolved by status. Steady state has enqueued and committed close to equal; promoted/dropped events indicate the reaper is repairing failed commits.",
+      "gridPos": {
+        "x": 6,
+        "y": 175,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "rate(s3o_pending_intents_enqueued_total[5m])",
+          "legendFormat": "enqueued"
+        },
+        {
+          "expr": "sum by (status) (rate(s3o_pending_intents_resolved_total[5m]))",
+          "legendFormat": "{{status}}"
+        }
+      ],
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "id": 76,
+      "title": "Ambiguous Intents (lifetime)",
+      "description": "Lifetime count of pending intents the reaper refused to promote because the destination already held a row for the same key. These rows stay in the database for operator review; any non-zero value warrants investigation.",
+      "gridPos": {
+        "x": 18,
+        "y": 175,
+        "w": 6,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(s3o_pending_intents_resolved_total{status=\"ambiguous\"})",
+          "legendFormat": "ambiguous"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        }
+      }
     }
   ]
 }

@@ -57,6 +57,7 @@ type Config struct {
 	Encryption            EncryptionConfig            `yaml:"encryption"`
 	UI                    UIConfig                    `yaml:"ui"`
 	CleanupQueue    CleanupQueueConfig   `yaml:"cleanup_queue"`
+	WritePath       WritePathConfig      `yaml:"write_path"`
 	UsageFlush      UsageFlushConfig     `yaml:"usage_flush"`
 	Lifecycle       LifecycleConfig      `yaml:"lifecycle"`
 	Reconcile       ReconcileConfig      `yaml:"reconcile"`
