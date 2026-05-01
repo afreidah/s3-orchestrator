@@ -37,6 +37,13 @@ func (c *cbObjectStore) RecordObject(ctx context.Context, key, backend string, s
 	return breaker.CBCall(c.cb, func() ([]DeletedCopy, error) { return c.inner.RecordObject(ctx, key, backend, size, enc) })
 }
 
+// RecordObjectAndClearPending forwards to the inner store under the breaker.
+func (c *cbObjectStore) RecordObjectAndClearPending(ctx context.Context, key, backend string, size int64, enc *EncryptionMeta, intentID string) ([]DeletedCopy, error) {
+	return breaker.CBCall(c.cb, func() ([]DeletedCopy, error) {
+		return c.inner.RecordObjectAndClearPending(ctx, key, backend, size, enc, intentID)
+	})
+}
+
 // DeleteObject forwards to the inner store under the breaker.
 func (c *cbObjectStore) DeleteObject(ctx context.Context, key string) ([]DeletedCopy, error) {
 	return breaker.CBCall(c.cb, func() ([]DeletedCopy, error) { return c.inner.DeleteObject(ctx, key) })

@@ -57,6 +57,7 @@ var (
 type ObjectStore interface {
 	GetAllObjectLocations(ctx context.Context, key string) ([]ObjectLocation, error)
 	RecordObject(ctx context.Context, key, backend string, size int64, enc *EncryptionMeta) ([]DeletedCopy, error)
+	RecordObjectAndClearPending(ctx context.Context, key, backend string, size int64, enc *EncryptionMeta, intentID string) ([]DeletedCopy, error)
 	DeleteObject(ctx context.Context, key string) ([]DeletedCopy, error)
 	ListObjects(ctx context.Context, prefix, startAfter string, maxKeys int) (*ListObjectsResult, error)
 	ListObjectsByBackend(ctx context.Context, backendName string, limit int) ([]ObjectLocation, error)
@@ -105,6 +106,20 @@ type CleanupStore interface {
 	CleanupQueueDepth(ctx context.Context) (int64, error)
 	IncrementOrphanBytes(ctx context.Context, backendName string, amount int64) error
 	DecrementOrphanBytes(ctx context.Context, backendName string, amount int64) error
+}
+
+// PendingStore defines in-flight PutObject intent tracking. The write path
+// inserts an intent before the backend PUT and removes it on a successful
+// commit; the pending reaper resolves any intents left behind by a failed
+// commit so a DB outage between PUT and RecordObject cannot silently destroy
+// the prior copy of an overwritten key.
+type PendingStore interface {
+	InsertPending(ctx context.Context, p *PendingObject) error
+	DeletePending(ctx context.Context, intentID string) error
+	GetStalePending(ctx context.Context, olderThan time.Time, limit int) ([]PendingObject, error)
+	PromotePending(ctx context.Context, p *PendingObject) (PendingPromoteResult, []DeletedCopy, error)
+	PendingDepth(ctx context.Context) (int64, error)
+	DeletePendingByBackend(ctx context.Context, backendName string) error
 }
 
 // IntegrityStore defines content hash verification operations.
@@ -216,6 +231,53 @@ type CleanupItem struct {
 	Attempts    int32
 	SizeBytes   int64
 }
+
+// PendingObject represents an in-flight PutObject intent recorded before
+// the backend PUT. CreatedAt is set by the database default at insert time
+// and read back during reaper scans to gate on min-age.
+type PendingObject struct {
+	IntentID      string
+	ObjectKey     string
+	BackendName   string
+	SizeBytes     int64
+	Encrypted     bool
+	EncryptionKey []byte
+	KeyID         string
+	PlaintextSize int64
+	ContentHash   string
+	CreatedAt     time.Time
+}
+
+// PendingPromoteResult describes how PromotePending resolved an intent.
+type PendingPromoteResult int
+
+const (
+	// PendingPromoteCommitted means the pending row was promoted into
+	// object_locations and removed in the same transaction.
+	PendingPromoteCommitted PendingPromoteResult = iota
+
+	// PendingPromoteAmbiguous is reserved for pathological cases where
+	// the resolver cannot decide between promotion and dropping (e.g. a
+	// future bug or an unexpected DB state). The current resolver does
+	// not produce this result; the timestamp comparison covers every
+	// previously-ambiguous case as Superseded instead. Kept so the metric
+	// label and constant stay stable across releases.
+	PendingPromoteAmbiguous
+
+	// PendingPromoteAlreadyResolved means the pending row was gone by the
+	// time the transaction acquired its lock — another reaper instance
+	// already resolved it. Benign no-op.
+	PendingPromoteAlreadyResolved
+
+	// PendingPromoteSuperseded means a successful write for the same key
+	// committed after this intent was inserted. The intent is provably
+	// stale, so the resolver deletes the pending row in the same
+	// transaction as the timestamp check. The bytes pointed to by the
+	// intent are either gone (same-backend overwrite) or orphan
+	// (different-backend retry); orphan bytes are eventually cleaned up
+	// by the reconciler.
+	PendingPromoteSuperseded
+)
 
 // EncryptedLocation represents an encrypted object location for key rotation.
 type EncryptedLocation struct {
