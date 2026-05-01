@@ -823,6 +823,9 @@ func TestCircuitBreaker_ForwardingMethods_Closed(t *testing.T) {
 	if err := cb.DeleteObjectLocation(ctx, "k", "b1"); err != nil {
 		t.Errorf("DeleteObjectLocation: %v", err)
 	}
+	if _, err := cb.SweepStaleCleanupQueueRows(ctx, "k", "b1"); err != nil {
+		t.Errorf("SweepStaleCleanupQueueRows: %v", err)
+	}
 }
 
 func TestCircuitBreaker_ForwardingMethods_Open(t *testing.T) {
@@ -847,6 +850,9 @@ func TestCircuitBreaker_ForwardingMethods_Open(t *testing.T) {
 	}
 	if err := cb.DeleteBackendData(ctx, "b1"); !errors.Is(err, ErrDBUnavailable) {
 		t.Errorf("DeleteBackendData: got %v, want ErrDBUnavailable", err)
+	}
+	if _, err := cb.SweepStaleCleanupQueueRows(ctx, "k", "b1"); !errors.Is(err, ErrDBUnavailable) {
+		t.Errorf("SweepStaleCleanupQueueRows: got %v, want ErrDBUnavailable", err)
 	}
 }
 

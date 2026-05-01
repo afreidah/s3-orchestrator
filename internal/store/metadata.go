@@ -106,6 +106,7 @@ type CleanupStore interface {
 	CleanupQueueDepth(ctx context.Context) (int64, error)
 	IncrementOrphanBytes(ctx context.Context, backendName string, amount int64) error
 	DecrementOrphanBytes(ctx context.Context, backendName string, amount int64) error
+	SweepStaleCleanupQueueRows(ctx context.Context, key, backend string) (int64, error)
 }
 
 // PendingStore defines in-flight PutObject intent tracking. The write path

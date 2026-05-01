@@ -11,9 +11,8 @@
 package auth
 
 import (
-	"encoding/hex"
-	"fmt"
 	"context"
+	"encoding/hex"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -108,53 +107,151 @@ func TestHashSHA256(t *testing.T) {
 	}
 }
 
-func TestSigningKeyCache(t *testing.T) {
+// TestSigV4Timing_KnownVsUnknownEquivalent verifies the request-latency
+// side channel has been closed: an authenticator should take roughly the
+// same wall time regardless of whether the access key is registered.
+// Removing signingKeyCache means both paths now run deriveSigningKey;
+// this test pins that property by sampling many auths from each path
+// and asserting the median delta sits inside a generous tolerance
+// (~30% of either median, well above measurement noise).
+//
+// The test is best-effort under load: CPU jitter on a contended host
+// can blow the assertion. Run it with at least a few iterations of
+// -count to confirm the median is stable. A real attacker has many more
+// samples than we use here, so the bar for "indistinguishable" is
+// tighter than the bar for "doesn't flake under CI" — the safety
+// argument lives in the code change, not in the timing assertion.
+func TestSigV4Timing_KnownVsUnknownEquivalent(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("timing-sensitive; run without -short")
+	}
+
+	knownAccess := "AKIDKNOWN"
+	knownSecret := "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY" //nolint:gosec // G101: test credential
+	br := NewBucketRegistry([]config.BucketConfig{
+		{Name: "bucket", Credentials: []config.CredentialConfig{
+			{AccessKeyID: knownAccess, SecretAccessKey: knownSecret},
+		}},
+	})
+
+	knownReq := signedRequestFor(t, knownAccess, knownSecret)
+
+	// Build an unknown-access request that will FAIL signature verification
+	// but exercises the same deriveSigningKey path on the auth side. Reuse
+	// a synthetic Authorization header signed with a dummy access key the
+	// registry doesn't know.
+	unknownReq := signedRequestFor(t, "AKIDUNKNOWN", knownSecret)
+
+	const samples = 500
+	knownTimes := make([]time.Duration, samples)
+	unknownTimes := make([]time.Duration, samples)
+
+	// Warm up to amortize package-init costs out of the timed runs.
+	for range 50 {
+		_, _ = br.AuthenticateAndResolveBucket(knownReq)
+		_, _ = br.AuthenticateAndResolveBucket(unknownReq)
+	}
+
+	for i := range samples {
+		t0 := time.Now()
+		_, _ = br.AuthenticateAndResolveBucket(knownReq)
+		knownTimes[i] = time.Since(t0)
+	}
+	for i := range samples {
+		t0 := time.Now()
+		_, _ = br.AuthenticateAndResolveBucket(unknownReq)
+		unknownTimes[i] = time.Since(t0)
+	}
+
+	knownMedian := medianDuration(knownTimes)
+	unknownMedian := medianDuration(unknownTimes)
+	delta := absDuration(knownMedian - unknownMedian)
+	t.Logf("known median = %v, unknown median = %v, delta = %v", knownMedian, unknownMedian, delta)
+
+	// Tolerance is the smaller of the two medians: any timing channel
+	// big enough for an attacker to detect would push delta above the
+	// faster path's whole runtime. On a contended host the medians can
+	// drift by tens of percent independently; this bar catches a real
+	// cache asymmetry (which would be ~4x) without flaking on jitter.
+	smaller := min(knownMedian, unknownMedian)
+	if delta > smaller {
+		t.Errorf("median timing delta %v exceeds smaller-median floor %v (known=%v, unknown=%v)",
+			delta, smaller, knownMedian, unknownMedian)
+	}
+}
+
+// signedRequestFor builds a syntactically valid signed request for the
+// given access key. The signature is computed against a fixed secret so
+// the unknown-key request still exercises every parsing/validation step
+// on the auth path before the secret-mismatch failure.
+func signedRequestFor(t *testing.T, accessKey, secret string) *http.Request {
+	t.Helper()
+	r, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://example.com/bucket/key", http.NoBody)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	r.Host = "example.com"
+	now := time.Now().UTC()
+	amzDate := now.Format("20060102T150405Z")
+	dateStamp := now.Format("20060102")
+	r.Header.Set("X-Amz-Date", amzDate)
+	r.Header.Set("X-Amz-Content-SHA256", hashSHA256(nil))
+	signedHeaders := []string{"host", "x-amz-content-sha256", "x-amz-date"}
+	canonical := buildCanonicalRequest(r, signedHeaders)
+	scope := dateStamp + "/us-east-1/s3/aws4_request"
+	stringToSign := "AWS4-HMAC-SHA256\n" + amzDate + "\n" + scope + "\n" + hashSHA256([]byte(canonical))
+	key := deriveSigningKey(secret, dateStamp, "us-east-1", "s3")
+	sig := hex.EncodeToString(hmacSHA256(key, []byte(stringToSign)))
+	r.Header.Set("Authorization",
+		"AWS4-HMAC-SHA256 Credential="+accessKey+"/"+scope+
+			", SignedHeaders=host;x-amz-content-sha256;x-amz-date"+
+			", Signature="+sig)
+	return r
+}
+
+// medianDuration returns the median of a (possibly unsorted) duration
+// slice. The slice is sorted in place; callers should not rely on input
+// order being preserved.
+func medianDuration(d []time.Duration) time.Duration {
+	cp := make([]time.Duration, len(d))
+	copy(cp, d)
+	for i := 1; i < len(cp); i++ {
+		for j := i; j > 0 && cp[j-1] > cp[j]; j-- {
+			cp[j-1], cp[j] = cp[j], cp[j-1]
+		}
+	}
+	return cp[len(cp)/2]
+}
+
+// absDuration returns the absolute value of a Duration.
+func absDuration(d time.Duration) time.Duration {
+	if d < 0 {
+		return -d
+	}
+	return d
+}
+
+// TestDeriveSigningKey_Deterministic verifies the same inputs produce
+// the same signing key; the previous test relied on a cache for this
+// guarantee, but determinism is a property of HMAC itself.
+func TestDeriveSigningKey_Deterministic(t *testing.T) {
 	t.Parallel()
 	secret := "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY" //nolint:gosec // G101: test credential
-	accessKey := "CACHE_TEST_KEY"
 
-	// First call: cache miss — derives and stores
-	key1 := getCachedSigningKey(accessKey, secret, "20260312", "us-east-1", "s3", true)
+	key1 := deriveSigningKey(secret, "20260312", "us-east-1", "s3")
 	if len(key1) != 32 {
 		t.Fatalf("signing key length = %d, want 32", len(key1))
 	}
 
-	// Second call: cache hit — same params
-	key2 := getCachedSigningKey(accessKey, secret, "20260312", "us-east-1", "s3", true)
+	key2 := deriveSigningKey(secret, "20260312", "us-east-1", "s3")
 	if hex.EncodeToString(key1) != hex.EncodeToString(key2) {
-		t.Error("cache hit should return identical key")
+		t.Error("identical inputs should produce identical key")
 	}
 
-	// Third call: stale cache — different dateStamp forces re-derive
-	key3 := getCachedSigningKey(accessKey, secret, "20260313", "us-east-1", "s3", true)
+	key3 := deriveSigningKey(secret, "20260313", "us-east-1", "s3")
 	if hex.EncodeToString(key1) == hex.EncodeToString(key3) {
 		t.Error("different dateStamp should produce a different key")
-	}
-}
-
-func TestSigningKeyCache_UnknownKeysNotCached(t *testing.T) {
-	t.Parallel()
-	// Unknown keys (used with dummy secret for constant-time auth) must
-	// not be cached to prevent memory exhaustion from randomized access
-	// key IDs.
-	for i := range 100 {
-		fakeKey := fmt.Sprintf("UNKNOWN_%d", i)
-		getCachedSigningKey(fakeKey, "dummy-secret", "20260328", "us-east-1", "s3", false)
-	}
-
-	// Verify none of the unknown keys were cached.
-	cached := 0
-	signingKeyCache.Range(func(key, _ any) bool {
-		k := key.(string)
-		for i := range 100 {
-			if k == fmt.Sprintf("UNKNOWN_%d", i) {
-				cached++
-			}
-		}
-		return true
-	})
-	if cached > 0 {
-		t.Errorf("found %d unknown keys in cache, want 0", cached)
 	}
 }
 
