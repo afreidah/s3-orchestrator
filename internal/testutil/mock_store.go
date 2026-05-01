@@ -157,6 +157,16 @@ func (m *MockStore) RecordObject(_ context.Context, key, backend string, size in
 	return nil, m.RecordObjectErr
 }
 
+// RecordObjectAndClearPending records the call alongside RecordObjectCalls so
+// existing call-count assertions stay green. Returns the same pre-configured
+// error as RecordObject.
+func (m *MockStore) RecordObjectAndClearPending(_ context.Context, key, backend string, size int64, _ *store.EncryptionMeta, _ string) ([]store.DeletedCopy, error) {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+	m.RecordObjectCalls = append(m.RecordObjectCalls, RecordObjectCall{Key: key, Backend: backend, Size: size})
+	return nil, m.RecordObjectErr
+}
+
 // DeleteObject records the call and returns the pre-configured response or error.
 func (m *MockStore) DeleteObject(_ context.Context, key string) ([]store.DeletedCopy, error) {
 	m.Mu.Lock()
@@ -450,5 +460,39 @@ func (m *MockStore) GetObjectsWithoutHash(_ context.Context, _, _ int) ([]store.
 
 // UpdateContentHash returns nil (stub).
 func (m *MockStore) UpdateContentHash(_ context.Context, _, _, _ string) error {
+	return nil
+}
+
+// -------------------------------------------------------------------------
+// PENDING OBJECTS - PutObject Intent Tracking
+// -------------------------------------------------------------------------
+
+// InsertPending returns nil (stub).
+func (m *MockStore) InsertPending(_ context.Context, _ *store.PendingObject) error {
+	return nil
+}
+
+// DeletePending returns nil (stub).
+func (m *MockStore) DeletePending(_ context.Context, _ string) error {
+	return nil
+}
+
+// GetStalePending returns an empty slice (stub).
+func (m *MockStore) GetStalePending(_ context.Context, _ time.Time, _ int) ([]store.PendingObject, error) {
+	return nil, nil
+}
+
+// PromotePending returns the AlreadyResolved sentinel (stub: nothing to do).
+func (m *MockStore) PromotePending(_ context.Context, _ *store.PendingObject) (store.PendingPromoteResult, []store.DeletedCopy, error) {
+	return store.PendingPromoteAlreadyResolved, nil, nil
+}
+
+// PendingDepth returns 0 (stub).
+func (m *MockStore) PendingDepth(_ context.Context) (int64, error) {
+	return 0, nil
+}
+
+// DeletePendingByBackend returns nil (stub).
+func (m *MockStore) DeletePendingByBackend(_ context.Context, _ string) error {
 	return nil
 }

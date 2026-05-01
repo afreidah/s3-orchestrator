@@ -95,6 +95,21 @@ type mockStore struct {
 	cleanupQueueDepthVal int64
 	cleanupQueueDepthErr error
 
+	// Pending objects (PutObject intent tracking)
+	recordObjectAndClearPendingCalls []string
+	insertPendingCalls       []st.PendingObject
+	insertPendingErr         error
+	deletePendingCalls       []string
+	deletePendingErr         error
+	getStalePendingResp      []st.PendingObject
+	getStalePendingErr       error
+	promotePendingResult     st.PendingPromoteResult
+	promotePendingDisplaced  []st.DeletedCopy
+	promotePendingErr        error
+	pendingDepthResp         int64
+	pendingDepthErr          error
+	deletePendingByBackendErr error
+
 	// Orphan bytes tracking
 	incrementOrphanBytesCalls []orphanBytesCall
 	decrementOrphanBytesCalls []orphanBytesCall
@@ -244,6 +259,14 @@ func (m *mockStore) RecordObject(_ context.Context, key, backend string, size in
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.recordObjectCalls = append(m.recordObjectCalls, recordObjectCall{Key: key, Backend: backend, Size: size})
+	return m.recordObjectResp, m.recordObjectErr
+}
+
+func (m *mockStore) RecordObjectAndClearPending(_ context.Context, key, backend string, size int64, _ *st.EncryptionMeta, intentID string) ([]st.DeletedCopy, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.recordObjectCalls = append(m.recordObjectCalls, recordObjectCall{Key: key, Backend: backend, Size: size})
+	m.recordObjectAndClearPendingCalls = append(m.recordObjectAndClearPendingCalls, intentID)
 	return m.recordObjectResp, m.recordObjectErr
 }
 
@@ -620,4 +643,44 @@ func (m *mockStore) GetObjectsWithoutHash(_ context.Context, _, _ int) ([]st.Obj
 
 func (m *mockStore) UpdateContentHash(_ context.Context, _, _, _ string) error {
 	return nil
+}
+
+// --- Pending objects ---
+
+func (m *mockStore) InsertPending(_ context.Context, p *st.PendingObject) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.insertPendingCalls = append(m.insertPendingCalls, *p)
+	return m.insertPendingErr
+}
+
+func (m *mockStore) DeletePending(_ context.Context, intentID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.deletePendingCalls = append(m.deletePendingCalls, intentID)
+	return m.deletePendingErr
+}
+
+func (m *mockStore) GetStalePending(_ context.Context, _ time.Time, _ int) ([]st.PendingObject, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.getStalePendingResp, m.getStalePendingErr
+}
+
+func (m *mockStore) PromotePending(_ context.Context, _ *st.PendingObject) (st.PendingPromoteResult, []st.DeletedCopy, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.promotePendingResult, m.promotePendingDisplaced, m.promotePendingErr
+}
+
+func (m *mockStore) PendingDepth(_ context.Context) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.pendingDepthResp, m.pendingDepthErr
+}
+
+func (m *mockStore) DeletePendingByBackend(_ context.Context, _ string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.deletePendingByBackendErr
 }

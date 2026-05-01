@@ -30,6 +30,7 @@ type Stores struct {
 	Multipart        store.MultipartStore
 	Replication      store.ReplicationStore
 	Cleanup          store.CleanupStore
+	Pending          store.PendingStore
 	Integrity        store.IntegrityStore
 	Lifecycle        store.ExpiredObjectsLister
 	BackendLifecycle store.BackendLifecycleStore
@@ -69,6 +70,7 @@ func StoresFromMock(m allRoles) Stores {
 		Multipart:        m,
 		Replication:      m,
 		Cleanup:          m,
+		Pending:          m,
 		Integrity:        m,
 		Lifecycle:        m,
 		BackendLifecycle: m,
@@ -88,6 +90,7 @@ type allRoles interface {
 	store.MultipartStore
 	store.ReplicationStore
 	store.CleanupStore
+	store.PendingStore
 	store.IntegrityStore
 	store.ExpiredObjectsLister
 	store.BackendLifecycleStore
