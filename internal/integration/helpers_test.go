@@ -402,6 +402,7 @@ func resetState(t *testing.T) {
 	t.Helper()
 	for _, q := range []string{
 		"DELETE FROM cleanup_queue",
+		"DELETE FROM pending_objects",
 		"DELETE FROM multipart_parts",
 		"DELETE FROM multipart_uploads",
 		"DELETE FROM object_locations",
@@ -541,6 +542,7 @@ func newCBStores(src roleStore, cb *breaker.CircuitBreaker) proxy.Stores {
 		Multipart:        store.NewCBMultipartStore(src, cb),
 		Replication:      store.NewCBReplicationStore(src, cb),
 		Cleanup:          store.NewCBCleanupStore(src, cb),
+		Pending:          store.NewCBPendingStore(src, cb),
 		Integrity:        store.NewCBIntegrityStore(src, cb),
 		Lifecycle:        store.NewCBExpiredObjectsLister(src, cb),
 		BackendLifecycle: store.NewCBBackendLifecycleStore(src, cb),
@@ -557,6 +559,7 @@ type roleStore interface {
 	store.MultipartStore
 	store.ReplicationStore
 	store.CleanupStore
+	store.PendingStore
 	store.IntegrityStore
 	store.ExpiredObjectsLister
 	store.BackendLifecycleStore
@@ -604,15 +607,17 @@ type FailableStore struct {
 	store.MultipartStore
 	store.ReplicationStore
 	store.CleanupStore
+	store.PendingStore
 	store.IntegrityStore
 	store.ExpiredObjectsLister
 	store.BackendLifecycleStore
 	store.DashboardStore
 	store.UsageFlusher
 	store.AdvisoryLocker
-	inner   *store.Store
-	mu      sync.Mutex
-	failing bool
+	inner            *store.Store
+	mu               sync.Mutex
+	failing          bool
+	failCommitOnce   bool // when true, RecordObjectAndClearPending fails once, then auto-clears
 }
 
 // newFailableStore returns a FailableStore whose role views all resolve to
@@ -624,6 +629,7 @@ func newFailableStore(db *store.Store) *FailableStore {
 		MultipartStore:        db,
 		ReplicationStore:      db,
 		CleanupStore:          db,
+		PendingStore:          db,
 		IntegrityStore:        db,
 		ExpiredObjectsLister:        db,
 		BackendLifecycleStore: db,
@@ -658,6 +664,39 @@ func (f *FailableStore) RecordObject(ctx context.Context, key, backend string, s
 		return nil, errSimulatedDBFailure
 	}
 	return f.inner.RecordObject(ctx, key, backend, size, enc)
+}
+
+// SetFailCommitOnce arms a one-shot failure on RecordObjectAndClearPending
+// so the next PUT lands its bytes on the backend, inserts a pending intent,
+// and then sees the metadata commit fail — exactly the data-loss scenario
+// the pending-row pattern exists to recover from.
+func (f *FailableStore) SetFailCommitOnce() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.failCommitOnce = true
+}
+
+// consumeFailCommitOnce returns true and clears the one-shot flag if it
+// was armed; otherwise returns false. The auto-clear ensures the next PUT
+// in the same test sees the original behaviour.
+func (f *FailableStore) consumeFailCommitOnce() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.failCommitOnce {
+		f.failCommitOnce = false
+		return true
+	}
+	return false
+}
+
+// RecordObjectAndClearPending honours both the global failing flag and the
+// one-shot fail-commit flag, so tests can simulate either a sustained DB
+// outage or a single mid-PUT blip without affecting other store calls.
+func (f *FailableStore) RecordObjectAndClearPending(ctx context.Context, key, backend string, size int64, enc *store.EncryptionMeta, intentID string) ([]store.DeletedCopy, error) {
+	if f.isFailing() || f.consumeFailCommitOnce() {
+		return nil, errSimulatedDBFailure
+	}
+	return f.inner.RecordObjectAndClearPending(ctx, key, backend, size, enc, intentID)
 }
 
 func (f *FailableStore) DeleteObject(ctx context.Context, key string) ([]store.DeletedCopy, error) {

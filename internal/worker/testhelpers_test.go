@@ -18,6 +18,7 @@ type mockMetadataStore struct {
 	store.MultipartStore
 	store.ReplicationStore
 	store.CleanupStore
+	store.PendingStore
 	store.IntegrityStore
 	store.ExpiredObjectsLister
 	store.BackendLifecycleStore
@@ -40,6 +41,16 @@ type mockMetadataStore struct {
 	objectsByBackend    map[string][]store.ObjectLocation
 	moveSize            int64
 	staleDeleted        int
+
+	// Pending reaper fixtures
+	stalePending           []store.PendingObject
+	deletedPendingIDs      []string
+	promotedPending        []store.PendingObject
+	promoteResult          store.PendingPromoteResult
+	promoteDisplaced       []store.DeletedCopy
+	promoteErr             error
+	pendingDepthVal        int64
+	pendingDepthErr        error
 }
 
 func (m *mockMetadataStore) GetPendingCleanups(_ context.Context, _ int) ([]store.CleanupItem, error) {
@@ -136,4 +147,34 @@ func (m *mockMetadataStore) FlushUsageDeltas(_ context.Context, _, _ string, _, 
 func (m *mockMetadataStore) DeleteObjectLocation(_ context.Context, _, _ string) error {
 	m.staleDeleted++
 	return nil
+}
+
+// --- PendingStore stubs ---
+
+// GetStalePending returns the configured fixture rows; the reaper batch
+// limit is ignored to keep tests focused on resolution outcomes rather
+// than pagination.
+func (m *mockMetadataStore) GetStalePending(_ context.Context, _ time.Time, _ int) ([]store.PendingObject, error) {
+	return m.stalePending, nil
+}
+
+// DeletePending records the intent ID so tests can assert reaper deletions.
+func (m *mockMetadataStore) DeletePending(_ context.Context, intentID string) error {
+	m.deletedPendingIDs = append(m.deletedPendingIDs, intentID)
+	return nil
+}
+
+// PromotePending captures the input and returns the test's preconfigured
+// resolution outcome. The captured slice lets tests verify the reaper
+// passed the intent through unchanged.
+func (m *mockMetadataStore) PromotePending(_ context.Context, p *store.PendingObject) (store.PendingPromoteResult, []store.DeletedCopy, error) {
+	if p != nil {
+		m.promotedPending = append(m.promotedPending, *p)
+	}
+	return m.promoteResult, m.promoteDisplaced, m.promoteErr
+}
+
+// PendingDepth returns the configured depth value (defaults to 0).
+func (m *mockMetadataStore) PendingDepth(_ context.Context) (int64, error) {
+	return m.pendingDepthVal, m.pendingDepthErr
 }

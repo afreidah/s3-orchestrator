@@ -264,6 +264,7 @@ func TestNarrowRoleProviders_HappyPath(t *testing.T) {
 		{"MultipartStore", func() (any, error) { return ProvideMultipartStore(inj) }},
 		{"ReplicationStore", func() (any, error) { return ProvideReplicationStore(inj) }},
 		{"CleanupStore", func() (any, error) { return ProvideCleanupStore(inj) }},
+		{"PendingStore", func() (any, error) { return ProvidePendingStore(inj) }},
 		{"IntegrityStore", func() (any, error) { return ProvideIntegrityStore(inj) }},
 		{"ExpiredObjectsLister", func() (any, error) { return ProvideExpiredObjectsLister(inj) }},
 		{"BackendLifecycleStore", func() (any, error) { return ProvideBackendLifecycleStore(inj) }},
@@ -296,6 +297,7 @@ func TestResolveProxyStores_HappyPath(t *testing.T) {
 	do.Provide(inj, ProvideMultipartStore)
 	do.Provide(inj, ProvideReplicationStore)
 	do.Provide(inj, ProvideCleanupStore)
+	do.Provide(inj, ProvidePendingStore)
 	do.Provide(inj, ProvideIntegrityStore)
 	do.Provide(inj, ProvideExpiredObjectsLister)
 	do.Provide(inj, ProvideBackendLifecycleStore)

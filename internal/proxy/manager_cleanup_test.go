@@ -446,10 +446,13 @@ func TestProcessCleanupQueue_AdmissionBlocked(t *testing.T) {
 	}
 }
 
-func TestPutObject_RecordFails_OrphanDeleteFails_EnqueuesCleanup(t *testing.T) {
+// TestPutObject_RecordFails_DoesNotEnqueueOrphanCleanup verifies that the
+// pending-row pattern bypasses the cleanup queue: the recovery breadcrumb
+// is the pending intent itself, not a queued orphan delete, so a record
+// failure produces zero cleanup_queue entries.
+func TestPutObject_RecordFails_DoesNotEnqueueOrphanCleanup(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
-	backend.delErr = errors.New("delete failed too")
 	store := &mockStore{
 		getBackendResp:  "b1",
 		recordObjectErr: errors.New("db error"),
@@ -463,11 +466,13 @@ func TestPutObject_RecordFails_OrphanDeleteFails_EnqueuesCleanup(t *testing.T) {
 
 	store.mu.Lock()
 	defer store.mu.Unlock()
-	if len(store.enqueueCleanupCalls) != 1 {
-		t.Fatalf("expected 1 enqueue call, got %d", len(store.enqueueCleanupCalls))
+	// Under the pending-row pattern the cleanup queue is no longer used as
+	// a fallback for record failures: the pending intent itself is the
+	// recovery breadcrumb, and the reaper resolves it on a later tick.
+	if len(store.enqueueCleanupCalls) != 0 {
+		t.Fatalf("expected 0 enqueue calls (pending pattern handles recovery), got %d", len(store.enqueueCleanupCalls))
 	}
-	c := store.enqueueCleanupCalls[0]
-	if c.reason != "orphan_record_failed" {
-		t.Errorf("expected reason=orphan_record_failed, got %q", c.reason)
+	if len(store.insertPendingCalls) != 1 {
+		t.Fatalf("expected 1 InsertPending call, got %d", len(store.insertPendingCalls))
 	}
 }

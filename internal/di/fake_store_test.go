@@ -26,6 +26,9 @@ func (fakeConcreteStore) GetAllObjectLocations(context.Context, string) ([]store
 func (fakeConcreteStore) RecordObject(context.Context, string, string, int64, *store.EncryptionMeta) ([]store.DeletedCopy, error) {
 	return nil, nil
 }
+func (fakeConcreteStore) RecordObjectAndClearPending(context.Context, string, string, int64, *store.EncryptionMeta, string) ([]store.DeletedCopy, error) {
+	return nil, nil
+}
 func (fakeConcreteStore) DeleteObject(context.Context, string) ([]store.DeletedCopy, error) {
 	return nil, nil
 }
@@ -151,3 +154,14 @@ func (fakeConcreteStore) FlushUsageDeltas(context.Context, string, string, int64
 func (fakeConcreteStore) WithAdvisoryLock(context.Context, int64, func(ctx context.Context) error) (bool, error) {
 	return false, nil
 }
+
+func (fakeConcreteStore) InsertPending(context.Context, *store.PendingObject) error { return nil }
+func (fakeConcreteStore) DeletePending(context.Context, string) error               { return nil }
+func (fakeConcreteStore) GetStalePending(context.Context, time.Time, int) ([]store.PendingObject, error) {
+	return nil, nil
+}
+func (fakeConcreteStore) PromotePending(context.Context, *store.PendingObject) (store.PendingPromoteResult, []store.DeletedCopy, error) {
+	return 0, nil, nil
+}
+func (fakeConcreteStore) PendingDepth(context.Context) (int64, error)         { return 0, nil }
+func (fakeConcreteStore) DeletePendingByBackend(context.Context, string) error { return nil }

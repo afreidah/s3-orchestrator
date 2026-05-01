@@ -7,6 +7,11 @@
 // through deleteWithTimeout (i.e. the per-backend timeout is honored). Without
 // the timeout wiring, a hung backend would block the user's request for the
 // full request-context lifetime.
+//
+// Note: PutObject no longer goes through the orphan-cleanup path; the
+// pending-row pattern leaves bytes on the backend for the reaper to
+// resolve. Multipart commit still uses the legacy cleanup-on-failure
+// flow until the pending pattern extends to the multipart manager.
 // -------------------------------------------------------------------------------
 
 package proxy
@@ -19,29 +24,6 @@ import (
 
 	st "github.com/afreidah/s3-orchestrator/internal/store"
 )
-
-func TestPutObject_RecordFailure_CleanupDeleteCarriesDeadline(t *testing.T) {
-	t.Parallel()
-	backend := newMockBackend()
-	store := &mockStore{
-		getBackendResp:  "b1",
-		recordObjectErr: errors.New("db write failed"),
-	}
-	// newTestManager sets BackendTimeout to 30s; the cleanup delete must
-	// receive a ctx whose Deadline reflects that, not the bare request ctx.
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
-
-	_, err := mgr.ObjectManager.PutObject(context.Background(), "k", bytes.NewReader([]byte("data")), 4, "", nil)
-	if err == nil {
-		t.Fatal("expected error from RecordObject failure to trigger cleanup")
-	}
-
-	backend.mu.Lock()
-	defer backend.mu.Unlock()
-	if !backend.lastDeleteHadDdl {
-		t.Error("orphan-cleanup DeleteObject should be invoked with a deadline-bound ctx (deleteWithTimeout)")
-	}
-}
 
 func TestUploadPart_RecordFailure_CleanupDeleteCarriesDeadline(t *testing.T) {
 	t.Parallel()

@@ -35,6 +35,7 @@ const (
 	defaultMultipartStaleTimeout  = 24 * time.Hour
 	defaultMultipartCleanupTick   = 1 * time.Hour
 	defaultCleanupQueueTick       = 1 * time.Minute
+	defaultPendingReaperTick      = 1 * time.Minute
 	defaultRebalanceInterval      = 6 * time.Hour
 	defaultLifecycleTick          = 1 * time.Hour
 	defaultOverReplicationTick    = 5 * time.Minute
@@ -222,6 +223,32 @@ func NewCleanupQueueService(manager *proxy.BackendManager, locker store.Advisory
 			processed, failed := manager.CleanupWorker.ProcessCleanupQueue(ctx)
 			if processed > 0 || failed > 0 {
 				slog.InfoContext(ctx, "cleanup queue processed", "processed", processed, "failed", failed)
+			}
+		},
+	}
+}
+
+// NewPendingReaperService constructs the pending-objects reaper background
+// service. The reaper resolves abandoned PUT intents by HEADing the
+// destination backend and either promoting the intent into object_locations
+// (bytes present) or dropping it (bytes absent). Returns nil when no
+// pending reaper is configured on the manager.
+func NewPendingReaperService(manager *proxy.BackendManager, locker store.AdvisoryLocker, tick time.Duration) lifecycle.Service {
+	if manager.PendingReaper == nil {
+		return nil
+	}
+	if tick <= 0 {
+		tick = defaultPendingReaperTick
+	}
+	return &lockedTickerService{
+		locker:   locker,
+		interval: tick,
+		lockID:   store.LockPendingReaper,
+		name:     "Pending reaper",
+		work: func(ctx context.Context) {
+			resolved, failed := manager.PendingReaper.ProcessPendingQueue(ctx)
+			if resolved > 0 || failed > 0 {
+				slog.InfoContext(ctx, "pending reaper processed", "resolved", resolved, "failed", failed)
 			}
 		},
 	}

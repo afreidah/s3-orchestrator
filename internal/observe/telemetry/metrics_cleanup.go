@@ -3,8 +3,7 @@
 //
 // Author: Alex Freidah
 //
-// Domain-scoped slice of the s3o_* Prometheus surface. Split out of the
-// original 784-line metrics.go to keep each subsystem under ~150 lines.
+// Domain-scoped slice of the s3o_* Prometheus surface.
 // -------------------------------------------------------------------------------
 
 package telemetry
@@ -40,6 +39,37 @@ var (
 		prometheus.GaugeOpts{
 			Name: "s3o_cleanup_queue_depth",
 			Help: "Current number of pending items in the cleanup retry queue",
+		},
+	)
+
+	// --- Pending objects (write-path PUT-before-COMMIT pattern) ---
+
+	// PendingIntentsEnqueuedTotal counts pending intents inserted by the
+	// write path before the backend PUT.
+	PendingIntentsEnqueuedTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "s3o_pending_intents_enqueued_total",
+			Help: "Total in-flight PUT intents inserted before the backend write",
+		},
+	)
+
+	// PendingIntentsResolvedTotal counts intents resolved by the reaper or
+	// the synchronous commit path. Status is one of: committed, promoted,
+	// dropped, ambiguous, already_resolved.
+	PendingIntentsResolvedTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "s3o_pending_intents_resolved_total",
+			Help: "Total pending PUT intents resolved by status",
+		},
+		[]string{"status"},
+	)
+
+	// PendingIntentsDepth tracks the current number of unresolved pending
+	// intents in the database.
+	PendingIntentsDepth = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "s3o_pending_intents_depth",
+			Help: "Current number of unresolved pending PUT intents",
 		},
 	)
 

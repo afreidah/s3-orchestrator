@@ -112,6 +112,18 @@ func (o *ObjectManager) PutObject(ctx context.Context, key string, body io.Reade
 			enc = &store.EncryptionMeta{ContentHash: contentHash}
 		}
 
+		// --- Insert pending intent before backend PUT ---
+		// The intent acts as a recovery breadcrumb: if the metadata commit
+		// fails after the bytes land on the backend, the pending reaper
+		// promotes the intent into object_locations on a later tick rather
+		// than the old failure path silently deleting the just-written
+		// (and possibly only) copy.
+		intentID, err := o.insertPendingIntent(ctx, key, backendName, uploadSize, enc)
+		if err != nil {
+			span.SetStatus(codes.Error, err.Error())
+			return "", err
+		}
+
 		// --- Upload to backend ---
 		bctx, bcancel := o.withTimeout(ctx)
 		etag, err := be.PutObject(bctx, key, uploadBody, uploadSize, contentType, metadata)
@@ -120,6 +132,12 @@ func (o *ObjectManager) PutObject(ctx context.Context, key string, body io.Reade
 			o.usage.Record(backendName, 1, 0, 0) // API call was made even on failure
 			lastErr = err
 			failedBackends = append(failedBackends, backendName)
+
+			// Leave the pending row for the reaper to resolve. A backend
+			// PUT error does not reliably mean the bytes are absent (the
+			// response could have been lost mid-flight), so the reaper
+			// HEADs the backend on its next tick and either promotes or
+			// drops the intent based on what is actually there.
 
 			// Remove failed backend from eligible list and retry
 			remaining := make([]string, 0, len(eligible)-1)
@@ -136,8 +154,8 @@ func (o *ObjectManager) PutObject(ctx context.Context, key string, body io.Reade
 			continue
 		}
 
-		// --- Record object location and update quota ---
-		if err := o.recordObjectOrCleanup(ctx, span, be, key, backendName, uploadSize, enc); err != nil {
+		// --- Record object location, update quota, clear pending intent (atomic) ---
+		if err := o.recordObjectAndPromoteIntent(ctx, span, key, backendName, uploadSize, enc, intentID); err != nil {
 			return "", err
 		}
 

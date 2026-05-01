@@ -27,6 +27,7 @@ import (
 //   - LockOverReplication  (1008) excess replica removal
 //   - LockReconcile        (1009) backend-vs-database consistency check
 //   - LockScrubber         (1010) background integrity verification
+//   - LockPendingReaper    (1011) abandoned PUT-intent resolution
 const (
 	LockRebalancer       int64 = 1001
 	LockReplicator       int64 = 1002
@@ -38,6 +39,7 @@ const (
 	LockOverReplication  int64 = 1008
 	LockReconcile        int64 = 1009
 	LockScrubber         int64 = 1010
+	LockPendingReaper    int64 = 1011
 )
 
 // WithAdvisoryLock acquires a PostgreSQL session-level advisory lock on a

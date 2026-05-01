@@ -64,10 +64,12 @@ func (s *Store) GetAllObjectLocations(ctx context.Context, key string) ([]store.
 // RecordObject atomically inserts or updates an object location, handling
 // overwrites by returning displaced copies for cleanup.
 // sqliteCopy mirrors the narrow row columns we need when clearing displaced
-// copies during RecordObject.
+// copies during RecordObject and when comparing creation timestamps in
+// PromotePending.
 type sqliteCopy struct {
 	backendName string
 	sizeBytes   int64
+	createdAt   time.Time
 }
 
 // sqliteEncInsertFields is the exploded form of store.EncryptionMeta that
@@ -81,6 +83,20 @@ type sqliteEncInsertFields struct {
 }
 
 func (s *Store) RecordObject(ctx context.Context, key, backend string, size int64, enc *store.EncryptionMeta) ([]store.DeletedCopy, error) {
+	return s.recordObjectTx(ctx, key, backend, size, enc, "")
+}
+
+// RecordObjectAndClearPending performs the same atomic commit as RecordObject
+// and additionally deletes the matching pending_objects intent inside the
+// same transaction.
+func (s *Store) RecordObjectAndClearPending(ctx context.Context, key, backend string, size int64, enc *store.EncryptionMeta, intentID string) ([]store.DeletedCopy, error) {
+	return s.recordObjectTx(ctx, key, backend, size, enc, intentID)
+}
+
+// recordObjectTx is the shared implementation for RecordObject and
+// RecordObjectAndClearPending. When intentID is non-empty the same
+// transaction also deletes the corresponding pending row.
+func (s *Store) recordObjectTx(ctx context.Context, key, backend string, size int64, enc *store.EncryptionMeta, intentID string) ([]store.DeletedCopy, error) {
 	return withTxVal(s, ctx, func(tx *sql.Tx) ([]store.DeletedCopy, error) {
 		// SQLite single-writer serializes; no advisory lock needed.
 		existing, err := fetchExistingCopies(ctx, tx, key)
@@ -97,6 +113,11 @@ func (s *Store) RecordObject(ctx context.Context, key, backend string, size int6
 		if err := incrementSQLiteQuota(ctx, tx, backend, size); err != nil {
 			return nil, err
 		}
+		if intentID != "" {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM pending_objects WHERE intent_id = ?`, intentID); err != nil {
+				return nil, fmt.Errorf("failed to clear pending intent: %w", err)
+			}
+		}
 		return displaced, nil
 	})
 }
@@ -106,7 +127,7 @@ func (s *Store) RecordObject(ctx context.Context, key, backend string, size int6
 // future caller that needs to inspect the existing placement.
 func fetchExistingCopies(ctx context.Context, tx *sql.Tx, key string) ([]sqliteCopy, error) {
 	rows, err := tx.QueryContext(ctx, `
-		SELECT backend_name, size_bytes
+		SELECT backend_name, size_bytes, created_at
 		FROM object_locations
 		WHERE object_key = ?`, key)
 	if err != nil {
@@ -115,9 +136,15 @@ func fetchExistingCopies(ctx context.Context, tx *sql.Tx, key string) ([]sqliteC
 	defer rows.Close()
 	var existing []sqliteCopy
 	for rows.Next() {
-		var ec sqliteCopy
-		if err := rows.Scan(&ec.backendName, &ec.sizeBytes); err != nil {
+		var (
+			ec        sqliteCopy
+			createdAt string
+		)
+		if err := rows.Scan(&ec.backendName, &ec.sizeBytes, &createdAt); err != nil {
 			return nil, fmt.Errorf("failed to scan existing copy: %w", err)
+		}
+		if t, err := time.Parse(time.RFC3339Nano, createdAt); err == nil {
+			ec.createdAt = t
 		}
 		existing = append(existing, ec)
 	}

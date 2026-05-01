@@ -41,6 +41,7 @@ type backendCore struct {
 	quota            store.QuotaStore                 // routing / capacity queries
 	multipart        store.MultipartStore             // exposed via Manager.Multipart()
 	cleanup          store.CleanupStore               // orphan cleanup + orphan-byte accounting
+	pending          store.PendingStore               // in-flight PUT intent tracking (nil = pending pattern disabled)
 	lifecycle        store.ExpiredObjectsLister             // expiration lookups
 	backendLifecycle store.BackendLifecycleStore      // backend-level stats and deletion
 	usageFlusher     store.UsageFlusher               // usage tracker flush target
@@ -291,6 +292,99 @@ func (c *backendCore) recordObjectOrCleanup(ctx context.Context, span trace.Span
 				"key", key, "backend", backendName, "error", delErr)
 			c.enqueueCleanup(ctx, backendName, key, "orphan_record_failed", size)
 		}
+		span.SetStatus(codes.Error, err.Error())
+		span.RecordError(err)
+		return fmt.Errorf("failed to record object: %w", err)
+	}
+
+	// Clean up stale copies on other backends displaced by this overwrite.
+	for _, dc := range displaced {
+		dcBackend, ok := c.backends[dc.BackendName]
+		if !ok {
+			slog.WarnContext(ctx, "displaced copy backend not found",
+				"backend", dc.BackendName, "key", key)
+			continue
+		}
+		c.deleteOrEnqueue(ctx, dcBackend, dc.BackendName, key, "overwrite_displaced", dc.SizeBytes)
+	}
+
+	if len(displaced) > 0 {
+		audit.Log(ctx, "storage.overwrite_displaced",
+			slog.String("key", key),
+			slog.String("new_backend", backendName),
+			slog.Int("displaced_copies", len(displaced)),
+		)
+	}
+
+	return nil
+}
+
+// insertPendingIntent records an in-flight PUT intent before the backend
+// upload. Returns the generated intent ID, or empty string if no pending
+// store is configured (in which case the legacy delete-on-record-failure
+// path remains in effect for that PUT). A failure to insert the intent
+// while pending tracking is configured fails the PUT — proceeding without
+// the intent would reintroduce the data-loss window the pattern exists to
+// close.
+func (c *backendCore) insertPendingIntent(ctx context.Context, key, backendName string, size int64, enc *store.EncryptionMeta) (string, error) {
+	if c.pending == nil {
+		return "", nil
+	}
+	intentID := audit.NewID()
+	p := store.PendingObject{
+		IntentID:    intentID,
+		ObjectKey:   key,
+		BackendName: backendName,
+		SizeBytes:   size,
+	}
+	if enc != nil {
+		p.Encrypted = enc.Encrypted
+		p.EncryptionKey = enc.EncryptionKey
+		p.KeyID = enc.KeyID
+		p.PlaintextSize = enc.PlaintextSize
+		p.ContentHash = enc.ContentHash
+	}
+	if err := c.pending.InsertPending(ctx, &p); err != nil {
+		return "", fmt.Errorf("insert pending intent: %w", err)
+	}
+	telemetry.PendingIntentsEnqueuedTotal.Inc()
+	return intentID, nil
+}
+
+// recordObjectAndPromoteIntent commits the object location, updates quota,
+// and clears the pending intent in a single transaction. On failure, the
+// pending row is left in place and the backend bytes are NOT deleted: the
+// pending reaper resolves the intent on a later tick by HEADing the
+// backend, promoting the metadata if the bytes are present and removing
+// the intent if they are absent.
+//
+// When intentID is empty (no pending store configured) this falls back to
+// the legacy recordObjectOrCleanup behavior so existing call sites and
+// tests retain their previous semantics.
+func (c *backendCore) recordObjectAndPromoteIntent(ctx context.Context, span trace.Span, key, backendName string, size int64, enc *store.EncryptionMeta, intentID string) error {
+	if intentID == "" {
+		// No pending tracking — caller already wrote bytes, fall back to the
+		// legacy path. The backend is unavailable here, so we cannot use
+		// recordObjectOrCleanup (which deletes on failure). Resolve via the
+		// backend map.
+		be, ok := c.backends[backendName]
+		if !ok {
+			return fmt.Errorf("backend %s not registered", backendName)
+		}
+		return c.recordObjectOrCleanup(ctx, span, be, key, backendName, size, enc)
+	}
+
+	displaced, err := c.objects.RecordObjectAndClearPending(ctx, key, backendName, size, enc, intentID)
+	if err == nil {
+		telemetry.PendingIntentsResolvedTotal.WithLabelValues("committed").Inc()
+	}
+	if err != nil {
+		slog.ErrorContext(ctx, "recordObjectAndClearPending failed; intent left for reaper",
+			"key", key, "backend", backendName, "intent_id", intentID, "error", err)
+		// The successful PUT against the backend still consumed an API
+		// call. The success-path usage record runs only when this returns
+		// nil, so account for it here.
+		c.usage.Record(backendName, 1, 0, 0)
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)
 		return fmt.Errorf("failed to record object: %w", err)

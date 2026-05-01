@@ -61,6 +61,9 @@ type BackendManagerConfig struct {
 	MaxObjectSizes     map[string]int64       // per-backend max object size in bytes (0 = unlimited)
 	CleanupConcurrency int                    // parallel cleanup deletions (default: 10)
 	AdmissionSem       chan struct{}          // shared concurrency semaphore for HTTP + background ops (nil = unlimited)
+
+	PendingReaperMinAge time.Duration // ignore intents younger than this — guards in-flight PUTs
+	PendingReaperBatch  int           // max intents resolved per reaper tick
 }
 
 // BackendManager manages multiple storage backends with quota tracking.
@@ -73,6 +76,7 @@ type BackendManager struct {
 	Replicator             *worker.Replicator             // background replica creation
 	OverReplicationCleaner *worker.OverReplicationCleaner // excess copy removal
 	CleanupWorker          *worker.CleanupWorker          // retry queue for failed deletions
+	PendingReaper          *worker.PendingReaper          // resolves abandoned PUT intents
 	Scrubber               *worker.Scrubber               // background integrity verification
 	DrainManager           *DrainManager                  // backend drain and remove operations
 	MultipartManager       *MultipartManager              // multipart upload lifecycle
@@ -102,6 +106,7 @@ func NewBackendManager(cfg *BackendManagerConfig) *BackendManager {
 		quota:            cfg.Stores.Quota,
 		multipart:        cfg.Stores.Multipart,
 		cleanup:          cfg.Stores.Cleanup,
+		pending:          cfg.Stores.Pending,
 		lifecycle:        cfg.Stores.Lifecycle,
 		backendLifecycle: cfg.Stores.BackendLifecycle,
 		usageFlusher:     cfg.Stores.Usage,
@@ -118,6 +123,14 @@ func NewBackendManager(cfg *BackendManagerConfig) *BackendManager {
 		cleanupConcurrency = 10
 	}
 	cleanupWorker := worker.NewCleanupWorker(core, cfg.Stores.Cleanup, cleanupConcurrency)
+	// PendingReaper uses the same admission/data-mover/usage surface as the
+	// cleanup worker. The constructor's zero-value fallbacks cover any
+	// settings the caller leaves unset; the lifecycle scheduler chooses the
+	// tick interval.
+	var pendingReaper *worker.PendingReaper
+	if cfg.Stores.Pending != nil {
+		pendingReaper = worker.NewPendingReaper(core, cfg.Stores.Pending, 0, cfg.PendingReaperMinAge, cfg.PendingReaperBatch)
+	}
 	multipartManager := NewMultipartManager(core, cfg.Encryptor, cfg.ObjectCache)
 	cache := NewLocationCache(cfg.CacheTTL)
 	// ObjectManager gets a closure for the integrity config so it can read
@@ -140,6 +153,7 @@ func NewBackendManager(cfg *BackendManagerConfig) *BackendManager {
 		Replicator:             worker.NewReplicator(core, replicatorDeps),
 		OverReplicationCleaner: worker.NewOverReplicationCleaner(core, overReplicationDeps),
 		CleanupWorker:          cleanupWorker,
+		PendingReaper:          pendingReaper,
 		Scrubber:               worker.NewScrubber(core, cfg.Stores.Integrity, cfg.Encryptor),
 		MultipartManager:       multipartManager,
 		ObjectManager:          objectManager,

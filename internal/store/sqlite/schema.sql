@@ -129,5 +129,30 @@ CREATE TABLE IF NOT EXISTS notification_outbox (
 CREATE INDEX IF NOT EXISTS idx_notification_outbox_pending
     ON notification_outbox(next_retry) WHERE attempts < 10;
 
+-- In-flight PutObject intent tracking. The write path inserts a row before
+-- the backend PUT and removes it on a successful metadata commit; the
+-- pending reaper resolves any rows left behind by a failed commit so a DB
+-- outage between PUT and RecordObject cannot silently destroy the prior
+-- copy of an overwritten key. See migrations/00008_pending_objects.sql for
+-- the full design notes (mirrored here for the SQLite backend).
+CREATE TABLE IF NOT EXISTS pending_objects (
+    intent_id      TEXT PRIMARY KEY,
+    object_key     TEXT NOT NULL,
+    backend_name   TEXT NOT NULL REFERENCES backend_quotas(backend_name),
+    size_bytes     INTEGER NOT NULL,
+    encrypted      INTEGER NOT NULL DEFAULT 0,
+    encryption_key BLOB,
+    key_id         TEXT,
+    plaintext_size INTEGER,
+    content_hash   TEXT,
+    created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_pending_objects_created
+    ON pending_objects(created_at);
+
+CREATE INDEX IF NOT EXISTS idx_pending_objects_backend
+    ON pending_objects(backend_name);
+
 -- Stamp the schema version after all tables and indexes are created.
-INSERT INTO schema_version (version) VALUES (1);
+INSERT INTO schema_version (version) VALUES (2);

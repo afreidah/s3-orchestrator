@@ -83,6 +83,7 @@ func NewInjector(cfg *config.Config, mode string, logLevel *slog.LevelVar, logBu
 	do.Provide(inj, ProvideMultipartStore)
 	do.Provide(inj, ProvideReplicationStore)
 	do.Provide(inj, ProvideCleanupStore)
+	do.Provide(inj, ProvidePendingStore)
 	do.Provide(inj, ProvideIntegrityStore)
 	do.Provide(inj, ProvideExpiredObjectsLister)
 	do.Provide(inj, ProvideBackendLifecycleStore)
@@ -147,6 +148,7 @@ type concreteStore interface {
 	store.MultipartStore
 	store.ReplicationStore
 	store.CleanupStore
+	store.PendingStore
 	store.IntegrityStore
 	store.ExpiredObjectsLister
 	store.BackendLifecycleStore
@@ -306,6 +308,30 @@ func ProvideCleanupStore(i do.Injector) (store.CleanupStore, error) {
 		return nil, err
 	}
 	return store.NewCBCleanupStore(b.concrete, cb), nil
+}
+
+// ProvidePendingStore registers a CB-protected PendingStore view used by the
+// write path's PUT-before-COMMIT pending-row pattern. Returns nil when the
+// operator disables the pattern via write_path.pending_pattern.enabled=false;
+// the write path's nil check falls back to the legacy cleanup-on-failure
+// behaviour in that case.
+func ProvidePendingStore(i do.Injector) (store.PendingStore, error) {
+	cfg, err := do.Invoke[*config.Config](i)
+	if err != nil {
+		return nil, err
+	}
+	if !cfg.WritePath.PendingPattern.IsEnabled() {
+		return nil, nil //nolint:nilnil // intentional: nil signals feature off, caller branches on it
+	}
+	b, err := do.Invoke[*concreteStoreBundle](i)
+	if err != nil {
+		return nil, err
+	}
+	cb, err := do.Invoke[*breaker.CircuitBreaker](i)
+	if err != nil {
+		return nil, err
+	}
+	return store.NewCBPendingStore(b.concrete, cb), nil
 }
 
 // ProvideIntegrityStore registers a CB-protected IntegrityStore view.
@@ -659,6 +685,9 @@ func ProvideBackendManager(i do.Injector) (*proxy.BackendManager, error) {
 		MaxObjectSizes:     br.MaxObjectSizes,
 		CleanupConcurrency: cfg.CleanupQueue.Concurrency,
 		AdmissionSem:       admissionSem,
+
+		PendingReaperMinAge: cfg.WritePath.PendingPattern.MinAge,
+		PendingReaperBatch:  cfg.WritePath.PendingPattern.BatchSize,
 	}), nil
 }
 
@@ -682,6 +711,10 @@ func resolveProxyStores(i do.Injector) (proxy.Stores, error) {
 		return proxy.Stores{}, err
 	}
 	cu, err := do.Invoke[store.CleanupStore](i)
+	if err != nil {
+		return proxy.Stores{}, err
+	}
+	pen, err := do.Invoke[store.PendingStore](i)
 	if err != nil {
 		return proxy.Stores{}, err
 	}
@@ -715,6 +748,7 @@ func resolveProxyStores(i do.Injector) (proxy.Stores, error) {
 		Multipart:        mp,
 		Replication:      rep,
 		Cleanup:          cu,
+		Pending:          pen,
 		Integrity:        ig,
 		Lifecycle:        lc,
 		BackendLifecycle: blc,
@@ -758,6 +792,9 @@ func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 	if mode == "worker" || mode == "all" {
 		sm.Register("multipart-cleanup", NewMultipartCleanupService(manager, locker, cfg.CleanupQueue.MultipartStaleTimeout))
 		sm.Register("cleanup-queue", NewCleanupQueueService(manager, locker))
+		if svc := NewPendingReaperService(manager, locker, cfg.WritePath.PendingPattern.ReaperTick); svc != nil {
+			sm.Register("pending-reaper", svc)
+		}
 		sm.Register("rebalancer", NewRebalancerService(manager, locker))
 		sm.Register("replicator", NewReplicatorService(manager, locker))
 		sm.Register("over-replication", NewOverReplicationService(manager, locker))

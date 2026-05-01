@@ -2,7 +2,7 @@
 SELECT pg_advisory_xact_lock(hashtext($1));
 
 -- name: GetExistingCopiesForUpdate :many
-SELECT backend_name, size_bytes
+SELECT backend_name, size_bytes, created_at
 FROM object_locations
 WHERE object_key = $1
 FOR UPDATE;

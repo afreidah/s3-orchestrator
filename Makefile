@@ -7,7 +7,7 @@
 # container images and Debian packages.
 # -------------------------------------------------------------------------------
 
-REGISTRY   ?= registry.munchbox.cc
+REGISTRY   ?= $(or $(DOCKER_REGISTRY),registry.example.com)
 IMAGE      := s3-orchestrator
 VERSION    ?= $(shell cat .version)
 
@@ -227,6 +227,7 @@ tools: ## Install build and packaging dependencies
 	go install golang.org/x/perf/cmd/benchstat@latest
 	sudo apt-get update && sudo apt-get install -y lintian
 	curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
+	curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sudo sh -s -- -b /usr/local/bin
 
 ##@ Packaging and Release
 
@@ -247,14 +248,17 @@ deb-lint: deb ## Run lintian on the .deb packages
 # APTLY PUBLISHING
 # -------------------------------------------------------------------------
 
-APTLY_URL  ?= https://apt.munchbox.cc
-APTLY_REPO ?= munchbox
-APTLY_USER ?= admin
-DEB_DIR    ?= dist
-SNAPSHOT_NAME ?= $(IMAGE)-$(shell date +%Y%m%d-%H%M%S)
+APTLY_URL             ?= $(or $(APTLY_ENDPOINT),https://apt.example.com)
+APTLY_REPO            ?= $(or $(APTLY_REPOSITORY),example)
+APTLY_USER            ?= admin
+APTLY_PUBLISH_PREFIX  ?= $(or $(APTLY_PREFIX),s3:example:)
+APTLY_DISTRIBUTION    ?= stable
+APTLY_ARCHITECTURES   ?= amd64,arm64
+DEB_DIR               ?= dist
+SNAPSHOT_NAME         ?= $(IMAGE)-$(shell date +%Y%m%d-%H%M%S)
 
 publish-deb: ## Publish .deb packages to Aptly repository
-	@if [ -z "$(APTLY_PASS)" ]; then echo "Error: APTLY_PASS not set (source munchbox-env.sh)"; exit 1; fi
+	@if [ -z "$(APTLY_PASS)" ]; then echo "Error: APTLY_PASS not set"; exit 1; fi
 	@echo "Publishing packages to $(APTLY_URL)..."
 	@for deb in $(DEB_DIR)/*.deb; do \
 		echo "Uploading $$(basename $$deb)..."; \
@@ -264,17 +268,37 @@ publish-deb: ## Publish .deb packages to Aptly repository
 	done
 	@echo "Adding packages to repo $(APTLY_REPO)..."
 	@curl -fsS -u "$(APTLY_USER):$(APTLY_PASS)" \
-		-X POST "$(APTLY_URL)/api/repos/$(APTLY_REPO)/file/$(IMAGE)" || exit 1
+		-X POST "$(APTLY_URL)/api/repos/$(APTLY_REPO)/file/$(IMAGE)?forceReplace=1" || exit 1
 	@echo "Creating snapshot $(SNAPSHOT_NAME)..."
 	@curl -fsS -u "$(APTLY_USER):$(APTLY_PASS)" \
 		-X POST -H 'Content-Type: application/json' \
 		-d '{"Name":"$(SNAPSHOT_NAME)"}' \
 		"$(APTLY_URL)/api/repos/$(APTLY_REPO)/snapshots" || exit 1
-	@echo "Updating published repo..."
-	@curl -fsS -u "$(APTLY_USER):$(APTLY_PASS)" \
+	@echo "Updating published repo at $(APTLY_PUBLISH_PREFIX) ($(APTLY_DISTRIBUTION))..."
+	@body=$$(mktemp); \
+	status=$$(curl -sS -u "$(APTLY_USER):$(APTLY_PASS)" \
+		-o "$$body" -w '%{http_code}' \
 		-X PUT -H 'Content-Type: application/json' \
 		-d '{"Snapshots":[{"Component":"main","Name":"$(SNAPSHOT_NAME)"}],"ForceOverwrite":true}' \
-		'$(APTLY_URL)/api/publish/:./stable' || exit 1
+		'$(APTLY_URL)/api/publish/$(APTLY_PUBLISH_PREFIX)/$(APTLY_DISTRIBUTION)'); \
+	if [ "$$status" = "200" ]; then \
+		echo "Updated existing publication."; \
+		rm -f "$$body"; \
+	elif [ "$$status" = "404" ]; then \
+		echo "No publication at $(APTLY_PUBLISH_PREFIX)/$(APTLY_DISTRIBUTION); bootstrapping..."; \
+		rm -f "$$body"; \
+		archs=$$(echo '$(APTLY_ARCHITECTURES)' | sed 's/,/","/g'); \
+		curl -fsS -u "$(APTLY_USER):$(APTLY_PASS)" \
+			-X POST -H 'Content-Type: application/json' \
+			-d "{\"SourceKind\":\"snapshot\",\"Sources\":[{\"Component\":\"main\",\"Name\":\"$(SNAPSHOT_NAME)\"}],\"Architectures\":[\"$$archs\"],\"Distribution\":\"$(APTLY_DISTRIBUTION)\"}" \
+			'$(APTLY_URL)/api/publish/$(APTLY_PUBLISH_PREFIX)' || exit 1; \
+		echo "Bootstrapped publication."; \
+	else \
+		echo "Publish update failed: HTTP $$status"; \
+		echo "Server response:"; cat "$$body"; echo; \
+		rm -f "$$body"; \
+		exit 1; \
+	fi
 	@echo "Cleaning up uploaded files..."
 	@curl -fsS -u "$(APTLY_USER):$(APTLY_PASS)" \
 		-X DELETE "$(APTLY_URL)/api/files/$(IMAGE)" || true

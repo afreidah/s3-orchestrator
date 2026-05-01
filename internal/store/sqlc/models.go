@@ -80,3 +80,16 @@ type ObjectLocation struct {
 	PlaintextSize *int64
 	ContentHash   *string
 }
+
+type PendingObject struct {
+	IntentID      string
+	ObjectKey     string
+	BackendName   string
+	SizeBytes     int64
+	Encrypted     bool
+	EncryptionKey []byte
+	KeyID         *string
+	PlaintextSize *int64
+	ContentHash   *string
+	CreatedAt     pgtype.Timestamptz
+}

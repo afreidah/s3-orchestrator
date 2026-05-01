@@ -206,7 +206,11 @@ func TestPutObject_BackendFailure_StillRecordsUsage(t *testing.T) {
 	}
 }
 
-func TestPutObject_RecordFailure_CleansUp(t *testing.T) {
+// TestPutObject_RecordFailure_LeavesBackendBytesAndPendingIntent is the
+// regression test for the data-loss window in issue #657. It verifies the
+// pending-row pattern: on metadata commit failure the backend bytes stay
+// in place and a pending intent is left for the reaper to resolve.
+func TestPutObject_RecordFailure_LeavesBackendBytesAndPendingIntent(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
 	store := &mockStore{
@@ -217,17 +221,52 @@ func TestPutObject_RecordFailure_CleansUp(t *testing.T) {
 
 	_, err := mgr.ObjectManager.PutObject(context.Background(), "cleanup-key", bytes.NewReader([]byte("data")), 4, "", nil)
 	if err == nil {
-		t.Fatal("expected error from RecordObject failure")
+		t.Fatal("expected error from RecordObjectAndClearPending failure")
 	}
-	// Backend object should be cleaned up
-	if backend.hasObject("cleanup-key") {
-		t.Error("orphaned object should have been deleted from backend")
+	// With the pending-row pattern, the backend bytes are intentionally
+	// retained on commit failure: the pending intent remains and the
+	// reaper resolves it on a later tick. Deleting the bytes here would
+	// reintroduce the data-loss window the pattern exists to close.
+	if !backend.hasObject("cleanup-key") {
+		t.Error("backend bytes should be retained for the pending reaper to resolve")
+	}
+	if len(store.insertPendingCalls) != 1 {
+		t.Fatalf("expected 1 InsertPending call, got %d", len(store.insertPendingCalls))
+	}
+	if store.insertPendingCalls[0].ObjectKey != "cleanup-key" || store.insertPendingCalls[0].BackendName != "b1" {
+		t.Errorf("InsertPending called with %+v", store.insertPendingCalls[0])
 	}
 
-	// Usage: 2 API calls — the PUT that succeeded against the backend and
-	// the cleanup DELETE that ran after RecordObject failed.
-	if got := mgr.usage.Backend().Load("b1", counter.FieldAPIRequests); got != 2 {
-		t.Errorf("apiRequests = %d, want 2 (PUT + orphan DELETE)", got)
+	// Usage: 1 API call — the successful PUT. The cleanup DELETE no longer
+	// runs because the bytes are intentionally left for reaper reconciliation.
+	if got := mgr.usage.Backend().Load("b1", counter.FieldAPIRequests); got != 1 {
+		t.Errorf("apiRequests = %d, want 1 (PUT only)", got)
+	}
+}
+
+// TestPutObject_RecordFailure_LegacyPath verifies that when the pending
+// store is not wired (feature gate off), the write path falls back to the
+// legacy delete-on-record-failure behaviour: backend bytes are removed and
+// no pending intent is recorded.
+func TestPutObject_RecordFailure_LegacyPath(t *testing.T) {
+	t.Parallel()
+	backend := newMockBackend()
+	store := &mockStore{
+		getBackendResp:  "b1",
+		recordObjectErr: errors.New("db write failed"),
+	}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
+	mgr.pending = nil // simulate feature-disabled wiring
+
+	_, err := mgr.ObjectManager.PutObject(context.Background(), "legacy-key", bytes.NewReader([]byte("data")), 4, "", nil)
+	if err == nil {
+		t.Fatal("expected error from RecordObject failure")
+	}
+	if backend.hasObject("legacy-key") {
+		t.Error("legacy path should delete the orphan from the backend")
+	}
+	if len(store.insertPendingCalls) != 0 {
+		t.Errorf("legacy path should not insert pending intents, got %d", len(store.insertPendingCalls))
 	}
 }
 

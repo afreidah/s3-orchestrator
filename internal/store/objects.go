@@ -37,6 +37,21 @@ type EncryptionMeta struct {
 // RecordObject atomically inserts or updates an object location, handling
 // overwrites by returning displaced copies for cleanup.
 func (s *Store) RecordObject(ctx context.Context, key, backend string, size int64, enc *EncryptionMeta) ([]DeletedCopy, error) {
+	return s.recordObjectTx(ctx, key, backend, size, enc, "")
+}
+
+// RecordObjectAndClearPending performs the same atomic commit as RecordObject
+// and additionally deletes the matching pending_objects intent inside the
+// same transaction. The write path uses this on a successful PUT so the
+// intent never outlives a committed location.
+func (s *Store) RecordObjectAndClearPending(ctx context.Context, key, backend string, size int64, enc *EncryptionMeta, intentID string) ([]DeletedCopy, error) {
+	return s.recordObjectTx(ctx, key, backend, size, enc, intentID)
+}
+
+// recordObjectTx is the shared implementation for RecordObject and
+// RecordObjectAndClearPending. When intentID is non-empty the same
+// transaction also deletes the corresponding pending row.
+func (s *Store) recordObjectTx(ctx context.Context, key, backend string, size int64, enc *EncryptionMeta, intentID string) ([]DeletedCopy, error) {
 	return withTxVal(s, ctx, func(qtx *db.Queries) ([]DeletedCopy, error) {
 		if err := qtx.LockObjectKeyForWrite(ctx, key); err != nil {
 			return nil, fmt.Errorf("failed to acquire object key lock: %w", err)
@@ -54,6 +69,11 @@ func (s *Store) RecordObject(ctx context.Context, key, backend string, size int6
 		}
 		if err := incrementBackendQuota(ctx, qtx, backend, size); err != nil {
 			return nil, err
+		}
+		if intentID != "" {
+			if err := qtx.DeletePendingObject(ctx, intentID); err != nil {
+				return nil, fmt.Errorf("failed to clear pending intent: %w", err)
+			}
 		}
 		return displaced, nil
 	})
