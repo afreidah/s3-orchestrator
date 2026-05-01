@@ -687,6 +687,157 @@ func TestListObjectsV2_DelimiterPaginationNoDuplicateCommonPrefix(t *testing.T) 
 	}
 }
 
+// TestReconcile_StaleRowSweepsCleanupQueue is the regression test for
+// issue #664. Seed an object_locations row plus a cleanup_queue row that
+// reference a key the backend does not actually hold; run reconcile;
+// assert both rows are gone and orphan_bytes is back at zero.
+//
+// Drives the real Postgres + MinIO stack so the SQL transactions in
+// SweepStaleCleanupQueueRows are exercised end-to-end.
+func TestReconcile_StaleRowSweepsCleanupQueue(t *testing.T) {
+	resetState(t)
+
+	ctx := context.Background()
+	staleKey := internalKey(uniqueKey(t, "issue664-stale"))
+	const backend = "minio-1"
+	// minio-1's per-test quota is 1024 bytes; keep the seed well under
+	// that so RecordObject does not reject for ErrNoSpaceAvailable.
+	const sizeBytes int64 = 256
+
+	// Seed an object_locations row pointing at a key that was never
+	// uploaded to the backend, plus a cleanup_queue entry for the same
+	// key+backend with a corresponding orphan_bytes credit.
+	if _, err := testStore.RecordObject(ctx, staleKey, backend, sizeBytes, nil); err != nil {
+		t.Fatalf("seed RecordObject: %v", err)
+	}
+	if err := testStore.EnqueueCleanup(ctx, backend, staleKey, "test-seed", sizeBytes); err != nil {
+		t.Fatalf("seed EnqueueCleanup: %v", err)
+	}
+	if err := testStore.IncrementOrphanBytes(ctx, backend, sizeBytes); err != nil {
+		t.Fatalf("seed IncrementOrphanBytes: %v", err)
+	}
+
+	// Sanity check the seed landed.
+	if got := queryObjectCopies(t, strings.TrimPrefix(staleKey, virtualBucket+"/")); got != 1 {
+		t.Fatalf("seed: object_locations rows = %d, want 1", got)
+	}
+	if queryCleanupQueueCount(t, backend) == 0 {
+		t.Fatal("seed: cleanup_queue row missing")
+	}
+	if got := queryOrphanBytes(t, backend); got != sizeBytes {
+		t.Fatalf("seed: orphan_bytes = %d, want %d", got, sizeBytes)
+	}
+
+	// Run reconcile. Backend has no objects, DB has one stale row, so
+	// the delete path fires for our seeded key.
+	res, err := testManager.ReconcileBackend(ctx, backend, virtualBucket, []string{virtualBucket})
+	if err != nil {
+		t.Fatalf("ReconcileBackend: %v", err)
+	}
+	if res.Removed == 0 {
+		t.Errorf("reconcile removed = %d, want >= 1", res.Removed)
+	}
+
+	// Both rows must be gone after reconcile.
+	if got := queryObjectCopies(t, strings.TrimPrefix(staleKey, virtualBucket+"/")); got != 0 {
+		t.Errorf("object_locations rows after reconcile = %d, want 0", got)
+	}
+	if got := queryCleanupQueueCount(t, backend); got != 0 {
+		t.Errorf("cleanup_queue rows after reconcile = %d, want 0", got)
+	}
+	if got := queryOrphanBytes(t, backend); got != 0 {
+		t.Errorf("orphan_bytes after reconcile = %d, want 0 (decremented in step with sweep)", got)
+	}
+}
+
+// TestSweepStaleCleanupQueueRows_PostgresDirect_RemovesMatchAndDecrementsOrphan
+// drives the Postgres SweepStaleCleanupQueueRows method directly against
+// the real DB to confirm matching rows are deleted and orphan_bytes is
+// decremented by their summed size. Mirrors the SQLite-side unit test.
+func TestSweepStaleCleanupQueueRows_PostgresDirect_RemovesMatchAndDecrementsOrphan(t *testing.T) {
+	resetState(t)
+	ctx := context.Background()
+	const backend = "minio-1"
+
+	key := internalKey(uniqueKey(t, "sweep-direct-match"))
+	mustEnqueueWithSize(t, ctx, backend, key, "test", 100)
+	mustEnqueueWithSize(t, ctx, backend, key, "retry", 200)
+	mustEnqueueWithSize(t, ctx, backend, internalKey(uniqueKey(t, "sweep-direct-other")), "test", 50)
+	if err := testStore.IncrementOrphanBytes(ctx, backend, 350); err != nil {
+		t.Fatalf("IncrementOrphanBytes: %v", err)
+	}
+
+	rows, err := testStore.SweepStaleCleanupQueueRows(ctx, key, backend)
+	if err != nil {
+		t.Fatalf("SweepStaleCleanupQueueRows: %v", err)
+	}
+	if rows != 2 {
+		t.Errorf("rows deleted = %d, want 2", rows)
+	}
+	if got := queryCleanupQueueCount(t, backend); got != 1 {
+		t.Errorf("cleanup_queue rows = %d, want 1 (other key preserved)", got)
+	}
+	if got := queryOrphanBytes(t, backend); got != 50 {
+		t.Errorf("orphan_bytes = %d, want 50 (350 - (100+200))", got)
+	}
+}
+
+// TestSweepStaleCleanupQueueRows_PostgresDirect_NoMatchIsNoOp verifies
+// the Postgres sweep returns 0 and leaves orphan_bytes untouched when no
+// rows match the (key, backend) pair.
+func TestSweepStaleCleanupQueueRows_PostgresDirect_NoMatchIsNoOp(t *testing.T) {
+	resetState(t)
+	ctx := context.Background()
+	const backend = "minio-1"
+
+	if err := testStore.IncrementOrphanBytes(ctx, backend, 100); err != nil {
+		t.Fatalf("IncrementOrphanBytes: %v", err)
+	}
+	rows, err := testStore.SweepStaleCleanupQueueRows(ctx, internalKey("nonexistent"), backend)
+	if err != nil {
+		t.Fatalf("SweepStaleCleanupQueueRows: %v", err)
+	}
+	if rows != 0 {
+		t.Errorf("rows = %d, want 0", rows)
+	}
+	if got := queryOrphanBytes(t, backend); got != 100 {
+		t.Errorf("orphan_bytes = %d, want 100 (untouched)", got)
+	}
+}
+
+// TestSweepStaleCleanupQueueRows_PostgresDirect_OnlyThisBackend verifies
+// the sweep deletes only rows matching the requested backend; same-key
+// entries on other backends are preserved.
+func TestSweepStaleCleanupQueueRows_PostgresDirect_OnlyThisBackend(t *testing.T) {
+	resetState(t)
+	ctx := context.Background()
+
+	key := internalKey(uniqueKey(t, "sweep-direct-isolation"))
+	mustEnqueueWithSize(t, ctx, "minio-1", key, "test", 100)
+	mustEnqueueWithSize(t, ctx, "minio-2", key, "test", 200)
+
+	rows, err := testStore.SweepStaleCleanupQueueRows(ctx, key, "minio-1")
+	if err != nil {
+		t.Fatalf("SweepStaleCleanupQueueRows: %v", err)
+	}
+	if rows != 1 {
+		t.Errorf("rows = %d, want 1 (only minio-1)", rows)
+	}
+	if got := queryCleanupQueueCount(t, "minio-2"); got != 1 {
+		t.Errorf("minio-2 cleanup_queue rows = %d, want 1 (preserved)", got)
+	}
+}
+
+// mustEnqueueWithSize seeds a cleanup_queue row with the given size,
+// failing the test on error. Extracted to keep the per-case test bodies
+// short and readable.
+func mustEnqueueWithSize(t *testing.T, ctx context.Context, backend, key, reason string, size int64) {
+	t.Helper()
+	if err := testStore.EnqueueCleanup(ctx, backend, key, reason, size); err != nil {
+		t.Fatalf("EnqueueCleanup(%s, %s, size=%d): %v", backend, key, size, err)
+	}
+}
+
 // -------------------------------------------------------------------------
 // SPREAD WRITE ROUTING
 // -------------------------------------------------------------------------

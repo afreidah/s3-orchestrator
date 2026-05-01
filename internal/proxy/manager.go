@@ -378,6 +378,27 @@ func (m *BackendManager) SyncBackend(ctx context.Context, backendName, bucket st
 	return imported, skipped, nil
 }
 
+// makeReconcileDeleter composes the object_locations row delete with a
+// cleanup_queue sweep so stale queue entries pointing at the same key
+// are removed in lockstep. Without the sweep, queue rows for a key the
+// backend no longer holds keep retrying DeleteObject (which 404s) until
+// they exhaust attempts and bloat the queue. The sweep failure is best-
+// effort: if the cleanup store call errors, the metadata delete still
+// stands and the next reconcile pass will sweep the orphan rows. We
+// log but do not propagate.
+func (m *BackendManager) makeReconcileDeleter() deleterFn {
+	return func(ctx context.Context, key, backendName string) error {
+		if err := m.objects.DeleteObjectLocation(ctx, key, backendName); err != nil {
+			return err
+		}
+		if _, err := m.cleanup.SweepStaleCleanupQueueRows(ctx, key, backendName); err != nil {
+			slog.WarnContext(ctx, "Reconcile: failed to sweep cleanup_queue rows for stale key",
+				"key", key, "backend", backendName, "error", err)
+		}
+		return nil
+	}
+}
+
 // ReconcileBackend reconciles a single backend against the metadata store
 // using a bounded-memory sorted-merge: both sides are walked in lex key
 // order and diffed in lockstep. The S3 walk and DB cursor each cap their
@@ -407,7 +428,7 @@ func (m *BackendManager) ReconcileBackend(ctx context.Context, backendName, buck
 	mergeErr := reconcileSorted(
 		ctx, s3, dbIter,
 		importHandler(backendName, m.objects.ImportObject, res),
-		deleteHandler(backendName, m.objects.DeleteObjectLocation, res),
+		deleteHandler(backendName, m.makeReconcileDeleter(), res),
 	)
 
 	if pages := atomic.LoadInt64(&apiPages); pages > 0 {

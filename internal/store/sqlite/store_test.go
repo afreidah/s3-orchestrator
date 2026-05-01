@@ -962,6 +962,108 @@ func TestCleanupQueue_Retry(t *testing.T) {
 	}
 }
 
+// TestSweepStaleCleanupQueueRows_RemovesMatchAndDecrementsOrphan verifies
+// the sweep deletes every cleanup_queue row matching the (key, backend)
+// pair and credits the bytes back to the backend's orphan_bytes counter.
+func TestSweepStaleCleanupQueueRows_RemovesMatchAndDecrementsOrphan(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	// Two queue rows for the same key+backend, plus a row that should be
+	// left untouched. EnqueueCleanup itself does not bump orphan_bytes
+	// (the production code does that at the call sites that enqueue), so
+	// we set it directly to simulate the steady state the sweep should
+	// undo.
+	if err := s.EnqueueCleanup(ctx, "backend-a", "bucket/k", "test", 100); err != nil {
+		t.Fatalf("EnqueueCleanup #1: %v", err)
+	}
+	if err := s.EnqueueCleanup(ctx, "backend-a", "bucket/k", "retry", 200); err != nil {
+		t.Fatalf("EnqueueCleanup #2: %v", err)
+	}
+	if err := s.EnqueueCleanup(ctx, "backend-a", "bucket/other", "test", 50); err != nil {
+		t.Fatalf("EnqueueCleanup #3: %v", err)
+	}
+	if err := s.IncrementOrphanBytes(ctx, "backend-a", 350); err != nil {
+		t.Fatalf("IncrementOrphanBytes: %v", err)
+	}
+
+	rows, err := s.SweepStaleCleanupQueueRows(ctx, "bucket/k", "backend-a")
+	if err != nil {
+		t.Fatalf("SweepStaleCleanupQueueRows: %v", err)
+	}
+	if rows != 2 {
+		t.Errorf("rows deleted = %d, want 2", rows)
+	}
+
+	// Untouched row remains.
+	depth, _ := s.CleanupQueueDepth(ctx)
+	if depth != 1 {
+		t.Errorf("queue depth = %d, want 1 (only bucket/other left)", depth)
+	}
+
+	// orphan_bytes for backend-a: 350 - (100+200) = 50.
+	stats, err := s.GetQuotaStats(ctx)
+	if err != nil {
+		t.Fatalf("GetQuotaStats: %v", err)
+	}
+	if got := stats["backend-a"].OrphanBytes; got != 50 {
+		t.Errorf("orphan_bytes = %d, want 50", got)
+	}
+}
+
+// TestSweepStaleCleanupQueueRows_NoMatchIsNoOp verifies that calling the
+// sweep when no rows match returns 0 and does not touch orphan_bytes.
+func TestSweepStaleCleanupQueueRows_NoMatchIsNoOp(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	if err := s.IncrementOrphanBytes(ctx, "backend-a", 100); err != nil {
+		t.Fatalf("IncrementOrphanBytes: %v", err)
+	}
+
+	rows, err := s.SweepStaleCleanupQueueRows(ctx, "bucket/missing", "backend-a")
+	if err != nil {
+		t.Fatalf("SweepStaleCleanupQueueRows: %v", err)
+	}
+	if rows != 0 {
+		t.Errorf("rows = %d, want 0 for no-match sweep", rows)
+	}
+	stats, _ := s.GetQuotaStats(ctx)
+	if got := stats["backend-a"].OrphanBytes; got != 100 {
+		t.Errorf("orphan_bytes = %d, want 100 (untouched)", got)
+	}
+}
+
+// TestSweepStaleCleanupQueueRows_OnlyOtherBackend verifies the sweep
+// only touches the requested backend's rows; same-key rows on other
+// backends are left alone.
+func TestSweepStaleCleanupQueueRows_OnlyOtherBackend(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	if err := s.EnqueueCleanup(ctx, "backend-a", "bucket/k", "test", 100); err != nil {
+		t.Fatalf("EnqueueCleanup a: %v", err)
+	}
+	if err := s.EnqueueCleanup(ctx, "backend-b", "bucket/k", "test", 200); err != nil {
+		t.Fatalf("EnqueueCleanup b: %v", err)
+	}
+
+	rows, err := s.SweepStaleCleanupQueueRows(ctx, "bucket/k", "backend-a")
+	if err != nil {
+		t.Fatalf("SweepStaleCleanupQueueRows: %v", err)
+	}
+	if rows != 1 {
+		t.Errorf("rows = %d, want 1 (only backend-a row)", rows)
+	}
+	depth, _ := s.CleanupQueueDepth(ctx)
+	if depth != 1 {
+		t.Errorf("queue depth = %d, want 1 (backend-b row preserved)", depth)
+	}
+}
+
 // -------------------------------------------------------------------------
 // INTEGRITY
 // -------------------------------------------------------------------------

@@ -12,6 +12,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"time"
 
@@ -85,6 +86,47 @@ func (s *Store) RetryCleanupItem(ctx context.Context, id int64, backoff time.Dur
 		return fmt.Errorf("failed to update cleanup retry: %w", err)
 	}
 	return nil
+}
+
+// SweepStaleCleanupQueueRows removes every cleanup_queue row matching the
+// (object_key, backend_name) pair and decrements the backend's
+// orphan_bytes counter by the sum of their size_bytes. Used by the
+// reconciler when it deletes a stale object_locations row so the queue
+// does not retain orphan entries pointing at a key the backend no longer
+// holds. Returns the number of rows deleted.
+func (s *Store) SweepStaleCleanupQueueRows(ctx context.Context, key, backend string) (int64, error) {
+	return withTxVal(s, ctx, func(tx *sql.Tx) (int64, error) {
+		var totalBytes sql.NullInt64
+		var rowCount int64
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COALESCE(SUM(size_bytes), 0), COUNT(*)
+			 FROM cleanup_queue
+			 WHERE object_key = ? AND backend_name = ?`,
+			key, backend,
+		).Scan(&totalBytes, &rowCount); err != nil {
+			return 0, fmt.Errorf("sum cleanup queue size: %w", err)
+		}
+		if rowCount == 0 {
+			return 0, nil
+		}
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM cleanup_queue WHERE object_key = ? AND backend_name = ?`,
+			key, backend,
+		); err != nil {
+			return 0, fmt.Errorf("delete cleanup queue rows: %w", err)
+		}
+		if totalBytes.Valid && totalBytes.Int64 > 0 {
+			now := time.Now().UTC().Format(time.RFC3339Nano)
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE backend_quotas
+				SET orphan_bytes = MAX(0, orphan_bytes - ?), updated_at = ?
+				WHERE backend_name = ?`, totalBytes.Int64, now, backend,
+			); err != nil {
+				return 0, fmt.Errorf("decrement orphan bytes: %w", err)
+			}
+		}
+		return rowCount, nil
+	})
 }
 
 // CleanupQueueDepth returns the number of items still pending in the queue

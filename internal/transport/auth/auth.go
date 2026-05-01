@@ -30,7 +30,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -167,50 +166,26 @@ func (br *BucketRegistry) AuthenticateAndResolveBucket(r *http.Request) (string,
 
 
 // -------------------------------------------------------------------------
-// SIGNING KEY CACHE
-// -------------------------------------------------------------------------
-
-// signingKeyCache avoids re-deriving the HMAC signing key on every request.
-// The key only changes when the dateStamp rolls over (once per day), so
-// caching eliminates 4 HMAC-SHA256 operations per request under steady load.
-var signingKeyCache sync.Map // accessKeyID → *cachedSigningKey
-
-type cachedSigningKey struct {
-	dateStamp string
-	region    string
-	service   string
-	key       []byte
-}
-
-// getCachedSigningKey returns the cached signing key for a known access key,
-// or derives a fresh one. The knownKey flag controls whether the result is
-// cached: unknown access keys (used with a dummy secret for constant-time
-// auth) are never cached to prevent an attacker from exhausting memory by
-// sending requests with randomized access key IDs.
-func getCachedSigningKey(accessKeyID, secret, dateStamp, region, service string, knownKey bool) []byte {
-	if knownKey {
-		if v, ok := signingKeyCache.Load(accessKeyID); ok {
-			c := v.(*cachedSigningKey)
-			if c.dateStamp == dateStamp && c.region == region && c.service == service {
-				return c.key
-			}
-		}
-	}
-	key := deriveSigningKey(secret, dateStamp, region, service)
-	if knownKey {
-		signingKeyCache.Store(accessKeyID, &cachedSigningKey{
-			dateStamp: dateStamp,
-			region:    region,
-			service:   service,
-			key:       key,
-		})
-	}
-	return key
-}
-
-// -------------------------------------------------------------------------
 // SIGV4 VERIFICATION
 // -------------------------------------------------------------------------
+
+// Note on signing-key derivation timing.
+//
+// SigV4 verification derives a per-request signing key via four chained
+// HMAC-SHA256 operations (date, region, service, "aws4_request"). The
+// straightforward optimization is to memoize the result per access-key
+// for the duration of a date+region+service window — the inputs only
+// change when the dateStamp rolls over (once per day) — but that creates
+// a request-latency side channel: cache hits skip the HMACs while
+// cache-miss / unknown-key paths run them every time. An attacker who
+// times responses can then distinguish "is this access key registered?"
+// without ever producing a valid signature.
+//
+// We therefore derive on every request, paying ~4 HMAC-SHA256 ops
+// (~few microseconds, dwarfed by network latency) to keep both paths
+// timing-equivalent. The previous signingKeyCache var was removed for
+// this reason; do not reintroduce it without a constant-time strategy
+// that doesn't leak known-vs-unknown.
 
 // keyMaterial bundles the access-key triple SigV4 verification needs
 // to derive the signing key. The Known flag distinguishes a real
@@ -310,7 +285,7 @@ func parseSigV4Time(amzDate, dateStamp string) (time.Time, error) {
 func verifySigV4Signature(canonicalRequest, signature string, key keyMaterial, dateStamp, region, service, amzDate string) error {
 	credentialScope := dateStamp + "/" + region + "/" + service + "/aws4_request"
 	stringToSign := "AWS4-HMAC-SHA256\n" + amzDate + "\n" + credentialScope + "\n" + hashSHA256([]byte(canonicalRequest))
-	signingKey := getCachedSigningKey(key.AccessKeyID, key.SecretAccessKey, dateStamp, region, service, key.Known)
+	signingKey := deriveSigningKey(key.SecretAccessKey, dateStamp, region, service)
 	expectedSig := hex.EncodeToString(hmacSHA256(signingKey, []byte(stringToSign)))
 	if !hmac.Equal([]byte(expectedSig), []byte(signature)) {
 		return fmt.Errorf("signature mismatch")

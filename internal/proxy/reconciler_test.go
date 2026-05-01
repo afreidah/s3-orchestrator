@@ -17,6 +17,68 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
+// TestMakeReconcileDeleter_SweepsCleanupQueue verifies the composed
+// deleter the reconciler uses calls DeleteObjectLocation followed by
+// SweepStaleCleanupQueueRows so stale queue rows pointing at a key the
+// backend no longer holds are dropped in lockstep with the metadata row.
+func TestMakeReconcileDeleter_SweepsCleanupQueue(t *testing.T) {
+	t.Parallel()
+	store := &mockStore{}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+
+	deleter := mgr.makeReconcileDeleter()
+	if err := deleter(context.Background(), "bucket/k1", "b1"); err != nil {
+		t.Fatalf("deleter returned error: %v", err)
+	}
+
+	// Both store calls should have fired — DeleteObjectLocation tracked
+	// via deleteObjectLocationCalls and SweepStaleCleanupQueueRows via
+	// sweepStaleCalls (added when this fix landed).
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if got := len(store.sweepStaleCalls); got != 1 {
+		t.Fatalf("SweepStaleCleanupQueueRows calls = %d, want 1", got)
+	}
+	if store.sweepStaleCalls[0].key != "bucket/k1" || store.sweepStaleCalls[0].backend != "b1" {
+		t.Errorf("sweep called with %+v, want {key:bucket/k1 backend:b1}", store.sweepStaleCalls[0])
+	}
+}
+
+// TestMakeReconcileDeleter_SweepFailureNotPropagated verifies a sweep
+// error is logged and swallowed so the reconcile pass keeps going. The
+// metadata delete already succeeded; one orphan queue row left for the
+// next pass is preferable to aborting reconcile mid-pass.
+func TestMakeReconcileDeleter_SweepFailureNotPropagated(t *testing.T) {
+	t.Parallel()
+	store := &mockStore{sweepStaleErr: errors.New("db blip")}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+
+	deleter := mgr.makeReconcileDeleter()
+	if err := deleter(context.Background(), "bucket/k1", "b1"); err != nil {
+		t.Errorf("deleter must not propagate sweep failure, got %v", err)
+	}
+}
+
+// TestMakeReconcileDeleter_DeleteFailurePropagates verifies that if the
+// metadata delete itself fails, the error propagates and the sweep is
+// not attempted (the row may still be live elsewhere).
+func TestMakeReconcileDeleter_DeleteFailurePropagates(t *testing.T) {
+	t.Parallel()
+	store := &mockStore{deleteObjectLocationErr: errors.New("db blip")}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+
+	deleter := mgr.makeReconcileDeleter()
+	if err := deleter(context.Background(), "bucket/k1", "b1"); err == nil {
+		t.Fatal("expected delete failure to propagate")
+	}
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if got := len(store.sweepStaleCalls); got != 0 {
+		t.Errorf("sweep should be skipped when delete fails, got %d calls", got)
+	}
+}
+
 func TestReconciler_ImportsUntrackedObjects(t *testing.T) {
 	t.Parallel()
 	// The mock backend's ListObjects returns objects via the S3Backend

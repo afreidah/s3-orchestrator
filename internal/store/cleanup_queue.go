@@ -114,6 +114,42 @@ func (s *Store) DecrementOrphanBytes(ctx context.Context, backendName string, am
 	return nil
 }
 
+// SweepStaleCleanupQueueRows removes every cleanup_queue row matching
+// the (object_key, backend_name) pair and decrements the backend's
+// orphan_bytes counter by the sum of their size_bytes. Used by the
+// reconciler when it deletes a stale object_locations row so the queue
+// does not retain orphan entries pointing at a key the backend no
+// longer holds. Returns the number of rows deleted.
+func (s *Store) SweepStaleCleanupQueueRows(ctx context.Context, key, backend string) (int64, error) {
+	return withTxVal(s, ctx, func(qtx *db.Queries) (int64, error) {
+		totals, err := qtx.SumCleanupQueueSizeByKey(ctx, db.SumCleanupQueueSizeByKeyParams{
+			ObjectKey:   key,
+			BackendName: backend,
+		})
+		if err != nil {
+			return 0, fmt.Errorf("sum cleanup queue size: %w", err)
+		}
+		if totals.RowCount == 0 {
+			return 0, nil
+		}
+		if _, err := qtx.DeleteCleanupQueueByKey(ctx, db.DeleteCleanupQueueByKeyParams{
+			ObjectKey:   key,
+			BackendName: backend,
+		}); err != nil {
+			return 0, fmt.Errorf("delete cleanup queue rows: %w", err)
+		}
+		if totals.TotalBytes > 0 {
+			if err := qtx.DecrementOrphanBytes(ctx, db.DecrementOrphanBytesParams{
+				Amount:      totals.TotalBytes,
+				BackendName: backend,
+			}); err != nil {
+				return 0, fmt.Errorf("decrement orphan bytes: %w", err)
+			}
+		}
+		return totals.RowCount, nil
+	})
+}
+
 // durationToInterval converts a Go time.Duration to a pgtype.Interval.
 func durationToInterval(d time.Duration) pgtype.Interval {
 	return pgtype.Interval{
