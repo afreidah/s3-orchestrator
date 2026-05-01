@@ -44,6 +44,12 @@ import (
 // because it exceeded its monthly usage limits. Not exposed to callers.
 var errUsageLimitSkip = errors.New("backend skipped: usage limits exceeded")
 
+// listObjectsMaxPages caps DB round trips per ListObjects request so a
+// single client call cannot drag the database through unbounded scans on
+// pathological prefix layouts. Exposed as a var (rather than const) so
+// tests can lower it without generating hundreds of mock pages.
+var listObjectsMaxPages = 100
+
 // resolveLocationsByBackend looks up every copy of key and returns a
 // backend-name → location map for O(1) lookups inside the failover
 // closure. Returns nil when encryption is disabled (the map is never
@@ -573,6 +579,44 @@ func (o *ObjectManager) HeadObject(ctx context.Context, key string) (*s3be.HeadO
 	return result, nil
 }
 
+// advancePastEmittedCommonPrefix rewrites a continuation cursor so the
+// next ListObjects call cannot re-emit a CommonPrefix the current call
+// already returned. The seen map is local to a single ListObjects
+// invocation, so without this rewrite a cursor that lands inside an
+// already-emitted CP (e.g., maxPages cap reached deep in a tenant's keys
+// or the page boundary aligned mid-group) would let the next call walk
+// the same group and emit its CP a second time.
+//
+// The rewrite increments the last byte of the CP, producing the smallest
+// string lex-greater than every key starting with that CP. The store's
+// next-page WHERE object_key > cursor then skips the rest of the group
+// cleanly. Returns the input unchanged when the delimiter is unset, the
+// cursor does not fall inside an emitted CP, or the last byte is 0xff
+// (no representable advance — accept potential re-emission rather than
+// corrupt the cursor).
+func advancePastEmittedCommonPrefix(prefix, delimiter, cursor string, seen map[string]bool) string {
+	if delimiter == "" || cursor == "" {
+		return cursor
+	}
+	if !strings.HasPrefix(cursor, prefix) {
+		return cursor
+	}
+	rest := cursor[len(prefix):]
+	idx := strings.Index(rest, delimiter)
+	if idx < 0 {
+		return cursor
+	}
+	cp := cursor[:len(prefix)+idx+len(delimiter)]
+	if !seen[cp] {
+		return cursor
+	}
+	last := cp[len(cp)-1]
+	if last == 0xff {
+		return cursor
+	}
+	return cp[:len(cp)-1] + string([]byte{last + 1})
+}
+
 // ListObjectsV2Result holds the processed result for the S3 ListObjectsV2 response.
 type ListObjectsV2Result struct {
 	Objects               []store.ObjectLocation
@@ -603,7 +647,7 @@ func (o *ObjectManager) ListObjects(ctx context.Context, prefix, delimiter, star
 	seen := make(map[string]bool) // tracks emitted common prefixes across fetches
 	lastStoreTruncated := false   // whether the most recent store page had more data
 
-	const maxPages = 100 // cap DB round trips per request
+	maxPages := listObjectsMaxPages
 	for page := 0; page < maxPages && result.KeyCount < maxKeys; page++ {
 		storeResult, err := o.objects.ListObjects(ctx, prefix, cursor, maxKeys)
 		if err != nil {
@@ -674,7 +718,7 @@ func (o *ObjectManager) ListObjects(ctx context.Context, prefix, delimiter, star
 		// mark as truncated so the client paginates back.
 		if page == maxPages-1 && storeResult.IsTruncated && !result.IsTruncated {
 			result.IsTruncated = true
-			result.NextContinuationToken = cursor
+			result.NextContinuationToken = advancePastEmittedCommonPrefix(prefix, delimiter, cursor, seen)
 		}
 	}
 
@@ -684,7 +728,7 @@ func (o *ObjectManager) ListObjects(ctx context.Context, prefix, delimiter, star
 	// mark the result as truncated so the client paginates correctly.
 	if !result.IsTruncated && lastStoreTruncated && result.KeyCount >= maxKeys {
 		result.IsTruncated = true
-		result.NextContinuationToken = cursor
+		result.NextContinuationToken = advancePastEmittedCommonPrefix(prefix, delimiter, cursor, seen)
 	}
 
 	o.recordOperation(operation, "", start, nil)
