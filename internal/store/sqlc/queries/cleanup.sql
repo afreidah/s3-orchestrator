@@ -24,3 +24,19 @@ SELECT COUNT(*) FROM cleanup_queue WHERE attempts < 10;
 
 -- name: DeleteCleanupQueueByBackend :exec
 DELETE FROM cleanup_queue WHERE backend_name = $1;
+
+-- name: SumCleanupQueueSizeByKey :one
+-- Returns the sum of size_bytes for every cleanup_queue row matching the
+-- given (object_key, backend_name) pair. Used by the reconciler-driven
+-- sweep so orphan_bytes can be decremented in step with the row delete.
+SELECT COALESCE(SUM(size_bytes), 0)::bigint AS total_bytes,
+       COUNT(*)::bigint AS row_count
+FROM cleanup_queue
+WHERE object_key = $1 AND backend_name = $2;
+
+-- name: DeleteCleanupQueueByKey :execrows
+-- Removes every cleanup_queue row matching the given (object_key,
+-- backend_name) pair. Returns the number of rows deleted so the caller
+-- can confirm the sum-then-delete pair stayed consistent.
+DELETE FROM cleanup_queue
+WHERE object_key = $1 AND backend_name = $2;

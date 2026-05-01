@@ -381,6 +381,11 @@ func (m *MockStore) IncrementOrphanBytes(_ context.Context, _ string, _ int64) e
 }
 
 // DecrementOrphanBytes returns nil (stub).
+// SweepStaleCleanupQueueRows is a stub returning (0, nil).
+func (m *MockStore) SweepStaleCleanupQueueRows(_ context.Context, _, _ string) (int64, error) {
+	return 0, nil
+}
+
 func (m *MockStore) DecrementOrphanBytes(_ context.Context, _ string, _ int64) error {
 	return nil
 }

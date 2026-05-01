@@ -116,6 +116,11 @@ type mockStore struct {
 	incrementOrphanBytesErr   error
 	decrementOrphanBytesErr   error
 
+	// Reconciler stale-row sweep
+	sweepStaleCalls []sweepStaleCall
+	sweepStaleResp  int64
+	sweepStaleErr   error
+
 	// Replication
 	getUnderReplicatedResp          []st.ObjectLocation
 	getUnderReplicatedErr           error
@@ -186,6 +191,10 @@ type removeExcessCopyCall struct {
 type orphanBytesCall struct {
 	backendName string
 	sizeBytes   int64
+}
+
+type sweepStaleCall struct {
+	key, backend string
 }
 
 type flushUsageCall struct {
@@ -533,6 +542,13 @@ func (m *mockStore) DecrementOrphanBytes(_ context.Context, backendName string, 
 	defer m.mu.Unlock()
 	m.decrementOrphanBytesCalls = append(m.decrementOrphanBytesCalls, orphanBytesCall{backendName: backendName, sizeBytes: sizeBytes})
 	return m.decrementOrphanBytesErr
+}
+
+func (m *mockStore) SweepStaleCleanupQueueRows(_ context.Context, key, backend string) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sweepStaleCalls = append(m.sweepStaleCalls, sweepStaleCall{key: key, backend: backend})
+	return m.sweepStaleResp, m.sweepStaleErr
 }
 
 func (m *mockStore) GetPendingCleanups(_ context.Context, _ int) ([]st.CleanupItem, error) {

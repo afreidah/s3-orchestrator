@@ -60,3 +60,10 @@ func (c *cbCleanupStore) IncrementOrphanBytes(ctx context.Context, backendName s
 func (c *cbCleanupStore) DecrementOrphanBytes(ctx context.Context, backendName string, amount int64) error {
 	return breaker.CBCallNoResult(c.cb, func() error { return c.inner.DecrementOrphanBytes(ctx, backendName, amount) })
 }
+
+// SweepStaleCleanupQueueRows forwards to the inner store under the breaker.
+func (c *cbCleanupStore) SweepStaleCleanupQueueRows(ctx context.Context, key, backend string) (int64, error) {
+	return breaker.CBCall(c.cb, func() (int64, error) {
+		return c.inner.SweepStaleCleanupQueueRows(ctx, key, backend)
+	})
+}

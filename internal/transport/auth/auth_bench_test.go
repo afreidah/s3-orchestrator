@@ -89,22 +89,6 @@ func BenchmarkAuthenticateAndResolveBucket(b *testing.B) {
 	}
 }
 
-// BenchmarkCachedSigningKey_Hit measures the steady-state signing key lookup
-// after the cache has been populated. This is the per-request cost under
-// normal operation (the key only changes when the date rolls over).
-func BenchmarkCachedSigningKey_Hit(b *testing.B) {
-	accessKey := "AKIDEXAMPLE"
-	secret := "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY" //nolint:gosec // G101: benchmark credential
-	dateStamp := time.Now().UTC().Format("20060102")
-
-	// Populate the cache
-	getCachedSigningKey(accessKey, secret, dateStamp, "us-east-1", "s3", true)
-
-	b.ResetTimer()
-	for b.Loop() {
-		getCachedSigningKey(accessKey, secret, dateStamp, "us-east-1", "s3", true)
-	}
-}
 
 func BenchmarkVerifySigV4_WithQueryParams(b *testing.B) {
 	cases := []struct {

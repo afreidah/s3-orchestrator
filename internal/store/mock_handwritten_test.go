@@ -525,6 +525,10 @@ func (m *mockStore) DecrementOrphanBytes(_ context.Context, backendName string, 
 	return m.decrementOrphanBytesErr
 }
 
+func (m *mockStore) SweepStaleCleanupQueueRows(_ context.Context, _, _ string) (int64, error) {
+	return 0, nil
+}
+
 func (m *mockStore) GetPendingCleanups(_ context.Context, _ int) ([]CleanupItem, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

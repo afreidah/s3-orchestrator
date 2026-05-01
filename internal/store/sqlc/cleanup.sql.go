@@ -40,6 +40,27 @@ func (q *Queries) DeleteCleanupQueueByBackend(ctx context.Context, backendName s
 	return err
 }
 
+const deleteCleanupQueueByKey = `-- name: DeleteCleanupQueueByKey :execrows
+DELETE FROM cleanup_queue
+WHERE object_key = $1 AND backend_name = $2
+`
+
+type DeleteCleanupQueueByKeyParams struct {
+	ObjectKey   string
+	BackendName string
+}
+
+// Removes every cleanup_queue row matching the given (object_key,
+// backend_name) pair. Returns the number of rows deleted so the caller
+// can confirm the sum-then-delete pair stayed consistent.
+func (q *Queries) DeleteCleanupQueueByKey(ctx context.Context, arg DeleteCleanupQueueByKeyParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteCleanupQueueByKey, arg.ObjectKey, arg.BackendName)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const enqueueCleanup = `-- name: EnqueueCleanup :exec
 INSERT INTO cleanup_queue (backend_name, object_key, reason, size_bytes)
 VALUES ($1, $2, $3, $4)
@@ -104,6 +125,33 @@ func (q *Queries) GetPendingCleanups(ctx context.Context, limit int32) ([]GetPen
 		return nil, err
 	}
 	return items, nil
+}
+
+const sumCleanupQueueSizeByKey = `-- name: SumCleanupQueueSizeByKey :one
+SELECT COALESCE(SUM(size_bytes), 0)::bigint AS total_bytes,
+       COUNT(*)::bigint AS row_count
+FROM cleanup_queue
+WHERE object_key = $1 AND backend_name = $2
+`
+
+type SumCleanupQueueSizeByKeyParams struct {
+	ObjectKey   string
+	BackendName string
+}
+
+type SumCleanupQueueSizeByKeyRow struct {
+	TotalBytes int64
+	RowCount   int64
+}
+
+// Returns the sum of size_bytes for every cleanup_queue row matching the
+// given (object_key, backend_name) pair. Used by the reconciler-driven
+// sweep so orphan_bytes can be decremented in step with the row delete.
+func (q *Queries) SumCleanupQueueSizeByKey(ctx context.Context, arg SumCleanupQueueSizeByKeyParams) (SumCleanupQueueSizeByKeyRow, error) {
+	row := q.db.QueryRow(ctx, sumCleanupQueueSizeByKey, arg.ObjectKey, arg.BackendName)
+	var i SumCleanupQueueSizeByKeyRow
+	err := row.Scan(&i.TotalBytes, &i.RowCount)
+	return i, err
 }
 
 const updateCleanupRetry = `-- name: UpdateCleanupRetry :exec
