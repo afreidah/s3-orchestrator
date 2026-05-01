@@ -583,6 +583,110 @@ func TestListAndCopy(t *testing.T) {
 	})
 }
 
+// delimiterGroup describes one CommonPrefix group to seed under the test
+// prefix: a logical name (becomes the group's middle path component) and
+// the number of objects to put inside it.
+type delimiterGroup struct {
+	name  string
+	count int
+}
+
+// seedDelimiterGroups uploads count objects per group under the given
+// prefix, naming them `{prefix}{name}/{NNN}` so they collapse into a
+// single CommonPrefix (`{prefix}{name}/`) when listed with delimiter "/".
+func seedDelimiterGroups(t *testing.T, ctx context.Context, client *s3.Client, prefix string, groups []delimiterGroup) {
+	t.Helper()
+	for _, g := range groups {
+		for i := 0; i < g.count; i++ {
+			key := fmt.Sprintf("%s%s/%03d", prefix, g.name, i)
+			_, err := client.PutObject(ctx, &s3.PutObjectInput{
+				Bucket:        aws.String(virtualBucket),
+				Key:           aws.String(key),
+				Body:          bytes.NewReader([]byte("x")),
+				ContentLength: aws.Int64(1),
+			})
+			if err != nil {
+				t.Fatalf("PutObject(%s): %v", key, err)
+			}
+		}
+	}
+}
+
+// walkCommonPrefixes paginates ListObjectsV2 under the given prefix with
+// "/" as the delimiter and returns a count of how many times each
+// CommonPrefix was emitted across the paginated responses. maxKeysPerPage
+// is small enough that a deep group must span store-page boundaries.
+func walkCommonPrefixes(t *testing.T, ctx context.Context, client *s3.Client, prefix string, maxKeysPerPage int32) map[string]int {
+	t.Helper()
+	const maxPagesGuard = 10
+	seen := make(map[string]int)
+	var token *string
+	for page := 1; page <= maxPagesGuard; page++ {
+		out, err := client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+			Bucket:            aws.String(virtualBucket),
+			Prefix:            aws.String(prefix),
+			Delimiter:         aws.String("/"),
+			MaxKeys:           aws.Int32(maxKeysPerPage),
+			ContinuationToken: token,
+		})
+		if err != nil {
+			t.Fatalf("ListObjectsV2 page %d: %v", page, err)
+		}
+		for _, cp := range out.CommonPrefixes {
+			seen[*cp.Prefix]++
+		}
+		if out.IsTruncated == nil || !*out.IsTruncated {
+			return seen
+		}
+		if out.NextContinuationToken == nil || *out.NextContinuationToken == "" {
+			t.Fatal("IsTruncated=true but NextContinuationToken empty; cannot continue")
+		}
+		token = out.NextContinuationToken
+	}
+	t.Fatalf("walked %d pages without termination", maxPagesGuard)
+	return nil
+}
+
+// TestListObjectsV2_DelimiterPaginationNoDuplicateCommonPrefix is the
+// end-to-end regression for issue #660. It seeds a deep CommonPrefix
+// group large enough to span the manager's store-page boundary, then
+// walks ListObjectsV2 with a delimiter via NextContinuationToken and
+// asserts no CommonPrefix appears in more than one paginated response.
+//
+// Drives a real Postgres + MinIO stack so the cursor rewrite is
+// exercised against the production store query, not the in-memory mock.
+func TestListObjectsV2_DelimiterPaginationNoDuplicateCommonPrefix(t *testing.T) {
+	resetState(t)
+
+	client := newS3Client(t)
+	ctx := context.Background()
+	prefix := fmt.Sprintf("issue660/%d/", time.Now().UnixNano())
+
+	// b/ is deep enough that paginating with maxKeys=2 must cross store
+	// page boundaries mid-group, which is exactly the scenario where the
+	// old NextContinuationToken would land inside b/ and the next call
+	// would re-emit it.
+	seedDelimiterGroups(t, ctx, client, prefix, []delimiterGroup{
+		{"a", 2},
+		{"b", 30},
+		{"c", 2},
+	})
+
+	seen := walkCommonPrefixes(t, ctx, client, prefix, 2)
+
+	for cp, count := range seen {
+		if count > 1 {
+			t.Errorf("CommonPrefix %q emitted %d times across paginated responses (want 1)", cp, count)
+		}
+	}
+	for _, name := range []string{"a", "b", "c"} {
+		expected := prefix + name + "/"
+		if seen[expected] == 0 {
+			t.Errorf("expected CommonPrefix %q never appeared in any page", expected)
+		}
+	}
+}
+
 // -------------------------------------------------------------------------
 // SPREAD WRITE ROUTING
 // -------------------------------------------------------------------------
