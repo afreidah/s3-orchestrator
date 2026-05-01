@@ -330,6 +330,135 @@ func TestPromotePending_Superseded(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
+// intentSuperseded — pure function feeding the timestamp drop path
+// -------------------------------------------------------------------------
+
+// TestIntentSuperseded_NoExistingCopies verifies the empty case: with no
+// existing rows there is nothing newer than the intent.
+func TestIntentSuperseded_NoExistingCopies(t *testing.T) {
+	t.Parallel()
+	if intentSuperseded(nil, time.Now()) {
+		t.Error("empty existing slice must not be superseded")
+	}
+}
+
+// TestIntentSuperseded_AllOlder verifies the canonical promote case: the
+// intent is at least as new as every existing copy.
+func TestIntentSuperseded_AllOlder(t *testing.T) {
+	t.Parallel()
+	intentTime := time.Now()
+	existing := []sqliteCopy{
+		{backendName: "b1", createdAt: intentTime.Add(-1 * time.Minute)},
+		{backendName: "b2", createdAt: intentTime.Add(-2 * time.Minute)},
+	}
+	if intentSuperseded(existing, intentTime) {
+		t.Error("all-older existing rows must not trigger supersession")
+	}
+}
+
+// TestIntentSuperseded_AnyNewer verifies that even one row newer than the
+// intent fires the drop path. This is the head-of-line-blocking fix: a
+// successful retry on any backend authoritatively supersedes the stale
+// intent.
+func TestIntentSuperseded_AnyNewer(t *testing.T) {
+	t.Parallel()
+	intentTime := time.Now()
+	existing := []sqliteCopy{
+		{backendName: "b1", createdAt: intentTime.Add(-1 * time.Minute)},
+		{backendName: "b2", createdAt: intentTime.Add(1 * time.Minute)},
+	}
+	if !intentSuperseded(existing, intentTime) {
+		t.Error("any newer existing row must trigger supersession")
+	}
+}
+
+// TestIntentSuperseded_EqualTimePromotes verifies that ties go to promote.
+// Only strictly newer existing rows count as supersession.
+func TestIntentSuperseded_EqualTimePromotes(t *testing.T) {
+	t.Parallel()
+	intentTime := time.Now()
+	existing := []sqliteCopy{{backendName: "b1", createdAt: intentTime}}
+	if intentSuperseded(existing, intentTime) {
+		t.Error("equal timestamp must not trigger supersession")
+	}
+}
+
+// TestIntentSuperseded_ZeroTimeSkipped verifies that rows with a
+// zero-value createdAt (parse failure or NULL) are ignored rather than
+// being mistaken for an "older than intent" row that promotes.
+func TestIntentSuperseded_ZeroTimeSkipped(t *testing.T) {
+	t.Parallel()
+	intentTime := time.Now()
+	// Mix one zero-time row with one strictly-newer row to confirm the
+	// skip condition isolates only the zero entry.
+	existing := []sqliteCopy{
+		{backendName: "b1"},
+		{backendName: "b2", createdAt: intentTime.Add(time.Hour)},
+	}
+	if !intentSuperseded(existing, intentTime) {
+		t.Error("non-zero newer row must still trigger supersession")
+	}
+	// Now drop the newer row — the zero-time row alone must NOT trigger.
+	existing = []sqliteCopy{{backendName: "b1"}}
+	if intentSuperseded(existing, intentTime) {
+		t.Error("zero-time row alone must not trigger supersession")
+	}
+}
+
+// -------------------------------------------------------------------------
+// pendingRowExists — txn probe used by promotePendingTx
+// -------------------------------------------------------------------------
+
+// TestPendingRowExists_TrueWhenInserted verifies the probe returns true
+// for a row that exists.
+func TestPendingRowExists_TrueWhenInserted(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	intent := pendingFixture("present", "bucket/k")
+	if err := s.InsertPending(ctx, &intent); err != nil {
+		t.Fatalf("InsertPending: %v", err)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx: %v", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	got, err := pendingRowExists(ctx, tx, "present")
+	if err != nil {
+		t.Fatalf("pendingRowExists: %v", err)
+	}
+	if !got {
+		t.Error("expected true for existing row")
+	}
+}
+
+// TestPendingRowExists_FalseWhenMissing verifies the probe returns false
+// without erroring when the row is gone.
+func TestPendingRowExists_FalseWhenMissing(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx: %v", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	got, err := pendingRowExists(ctx, tx, "missing")
+	if err != nil {
+		t.Fatalf("pendingRowExists: %v", err)
+	}
+	if got {
+		t.Error("expected false for missing row")
+	}
+}
+
+// -------------------------------------------------------------------------
 // RecordObjectAndClearPending
 // -------------------------------------------------------------------------
 

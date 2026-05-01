@@ -15,6 +15,7 @@ package worker
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -319,5 +320,215 @@ func TestProcessPendingQueue_EmptyBatchIsNoOp(t *testing.T) {
 	resolved, failed := r.ProcessPendingQueue(context.Background())
 	if resolved != 0 || failed != 0 {
 		t.Errorf("resolved=%d failed=%d, want 0/0 for empty queue", resolved, failed)
+	}
+}
+
+// -------------------------------------------------------------------------
+// probeBackend — three-outcome backend HEAD classifier
+// -------------------------------------------------------------------------
+
+// TestProbeBackend_Found verifies a 200 response classifies as probeFound
+// and records the API call against the backend's usage counter.
+func TestProbeBackend_Found(t *testing.T) {
+	t.Parallel()
+	r, ops, be, _ := setupReaper(t)
+	p := pendingFixture("i1", "bucket/k", "b1")
+
+	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
+	ops.EXPECT().Usage().Return(newTestUsageTracker())
+	be.EXPECT().HeadObject(gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
+
+	if got := r.probeBackend(context.Background(), be, &p); got != probeFound {
+		t.Errorf("got %v, want probeFound", got)
+	}
+}
+
+// TestProbeBackend_NotFound verifies a 404 response classifies as
+// probeNotFound — the signal that lets the reaper drop the intent.
+func TestProbeBackend_NotFound(t *testing.T) {
+	t.Parallel()
+	r, ops, be, _ := setupReaper(t)
+	p := pendingFixture("i1", "bucket/k", "b1")
+
+	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
+	ops.EXPECT().Usage().Return(newTestUsageTracker())
+	be.EXPECT().HeadObject(gomock.Any(), "bucket/k").Return(nil, &httpError{code: 404, msg: "NoSuchKey"})
+
+	if got := r.probeBackend(context.Background(), be, &p); got != probeNotFound {
+		t.Errorf("got %v, want probeNotFound", got)
+	}
+}
+
+// TestProbeBackend_TransientError verifies any non-404 error classifies
+// as probeError so the reaper leaves the intent for the next tick rather
+// than acting on inconclusive information.
+func TestProbeBackend_TransientError(t *testing.T) {
+	t.Parallel()
+	r, ops, be, _ := setupReaper(t)
+	p := pendingFixture("i1", "bucket/k", "b1")
+
+	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
+	ops.EXPECT().Usage().Return(newTestUsageTracker())
+	be.EXPECT().HeadObject(gomock.Any(), "bucket/k").Return(nil, errors.New("connection reset"))
+
+	if got := r.probeBackend(context.Background(), be, &p); got != probeError {
+		t.Errorf("got %v, want probeError", got)
+	}
+}
+
+// -------------------------------------------------------------------------
+// dropIntent — covers the two reasons (backend_removed, head_404)
+// -------------------------------------------------------------------------
+
+// TestDropIntent_BackendRemoved verifies the backend-removed path deletes
+// the row and counts as resolved without emitting a head_404 audit log.
+func TestDropIntent_BackendRemoved(t *testing.T) {
+	t.Parallel()
+	r, _, _, ms := setupReaper(t)
+	p := pendingFixture("i1", "bucket/k", "gone")
+
+	var resolvedCount, failedCount atomic.Int32
+	r.dropIntent(context.Background(), &p, "backend_removed", &resolvedCount, &failedCount)
+
+	if resolvedCount.Load() != 1 || failedCount.Load() != 0 {
+		t.Errorf("resolved=%d failed=%d, want 1/0", resolvedCount.Load(), failedCount.Load())
+	}
+	if len(ms.deletedPendingIDs) != 1 || ms.deletedPendingIDs[0] != "i1" {
+		t.Errorf("deletedPendingIDs = %v, want [i1]", ms.deletedPendingIDs)
+	}
+}
+
+// TestDropIntent_Head404 verifies the head-404 path deletes the row,
+// counts as resolved, and emits an audit log so operators can correlate
+// reaper activity with backend state.
+func TestDropIntent_Head404(t *testing.T) {
+	t.Parallel()
+	r, _, _, ms := setupReaper(t)
+	p := pendingFixture("i1", "bucket/k", "b1")
+
+	var resolvedCount, failedCount atomic.Int32
+	r.dropIntent(context.Background(), &p, "head_404", &resolvedCount, &failedCount)
+
+	if resolvedCount.Load() != 1 || failedCount.Load() != 0 {
+		t.Errorf("resolved=%d failed=%d, want 1/0", resolvedCount.Load(), failedCount.Load())
+	}
+	if len(ms.deletedPendingIDs) != 1 {
+		t.Errorf("deletedPendingIDs = %v, want one entry", ms.deletedPendingIDs)
+	}
+}
+
+// failingDeleteStore wraps mockMetadataStore and returns an error from
+// DeletePending so we can exercise dropIntent's failure branch.
+type failingDeleteStore struct {
+	*mockMetadataStore
+	deleteErr error
+}
+
+func (f *failingDeleteStore) DeletePending(_ context.Context, _ string) error {
+	return f.deleteErr
+}
+
+// TestDropIntent_DeleteFailureCountedAsFailed verifies that when the
+// store can't delete the pending row (DB blip), the intent is counted as
+// failed and left for the next tick rather than spuriously resolving.
+func TestDropIntent_DeleteFailureCountedAsFailed(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	ops := NewMockCleanupOps(ctrl)
+	ms := &failingDeleteStore{
+		mockMetadataStore: &mockMetadataStore{},
+		deleteErr:         errors.New("db down"),
+	}
+	r := NewPendingReaper(ops, ms, 1, time.Minute, 50)
+	p := pendingFixture("i1", "bucket/k", "b1")
+
+	var resolvedCount, failedCount atomic.Int32
+	r.dropIntent(context.Background(), &p, "head_404", &resolvedCount, &failedCount)
+
+	if resolvedCount.Load() != 0 || failedCount.Load() != 1 {
+		t.Errorf("resolved=%d failed=%d, want 0/1 on delete failure", resolvedCount.Load(), failedCount.Load())
+	}
+}
+
+// -------------------------------------------------------------------------
+// onPromote* handlers — direct tests of the four result-code branches
+// -------------------------------------------------------------------------
+
+// TestOnPromoteCommitted_FansOutDisplacedCleanup verifies a successful
+// promotion enqueues cleanup deletes for displaced copies on other
+// backends so orphan bytes do not accumulate.
+func TestOnPromoteCommitted_FansOutDisplacedCleanup(t *testing.T) {
+	t.Parallel()
+	r, ops, _, _ := setupReaper(t)
+	p := pendingFixture("i1", "bucket/k", "b1")
+	be2 := backendtest.NewMockObjectBackend(gomock.NewController(t))
+
+	ops.EXPECT().GetBackend("b2").Return(be2, nil)
+	ops.EXPECT().DeleteOrEnqueue(gomock.Any(), be2, "b2", "bucket/k", "overwrite_displaced", int64(200))
+
+	var resolvedCount atomic.Int32
+	displaced := []store.DeletedCopy{{BackendName: "b2", SizeBytes: 200}}
+	r.onPromoteCommitted(context.Background(), &p, displaced, &resolvedCount)
+
+	if resolvedCount.Load() != 1 {
+		t.Errorf("resolvedCount = %d, want 1", resolvedCount.Load())
+	}
+}
+
+// TestOnPromoteCommitted_DisplacedBackendNotRegistered verifies the
+// reaper logs and skips a displaced copy whose backend is no longer in
+// config rather than panicking. The intent itself still counts as
+// resolved.
+func TestOnPromoteCommitted_DisplacedBackendNotRegistered(t *testing.T) {
+	t.Parallel()
+	r, ops, _, _ := setupReaper(t)
+	p := pendingFixture("i1", "bucket/k", "b1")
+
+	ops.EXPECT().GetBackend("gone").Return(nil, errors.New("not found"))
+
+	var resolvedCount atomic.Int32
+	displaced := []store.DeletedCopy{{BackendName: "gone", SizeBytes: 50}}
+	r.onPromoteCommitted(context.Background(), &p, displaced, &resolvedCount)
+
+	if resolvedCount.Load() != 1 {
+		t.Errorf("resolvedCount = %d, want 1 (intent still resolved)", resolvedCount.Load())
+	}
+}
+
+// TestOnPromoteSuperseded_CountsResolved verifies the timestamp drop
+// branch updates accounting without taking any further action — the
+// store already deleted the pending row in-txn.
+func TestOnPromoteSuperseded_CountsResolved(t *testing.T) {
+	t.Parallel()
+	r, _, _, ms := setupReaper(t)
+	p := pendingFixture("i1", "bucket/k", "b1")
+
+	var resolvedCount atomic.Int32
+	r.onPromoteSuperseded(context.Background(), &p, &resolvedCount)
+
+	if resolvedCount.Load() != 1 {
+		t.Errorf("resolvedCount = %d, want 1", resolvedCount.Load())
+	}
+	if len(ms.deletedPendingIDs) != 0 {
+		t.Errorf("onPromoteSuperseded must not call DeletePending again; deletedPendingIDs = %v", ms.deletedPendingIDs)
+	}
+}
+
+// TestOnPromoteAmbiguous_CountsFailed verifies the ambiguous branch
+// updates only the failed counter and does not delete the row, so an
+// operator-review-required state is never silently lost.
+func TestOnPromoteAmbiguous_CountsFailed(t *testing.T) {
+	t.Parallel()
+	r, _, _, ms := setupReaper(t)
+	p := pendingFixture("i1", "bucket/k", "b1")
+
+	var failedCount atomic.Int32
+	r.onPromoteAmbiguous(context.Background(), &p, &failedCount)
+
+	if failedCount.Load() != 1 {
+		t.Errorf("failedCount = %d, want 1", failedCount.Load())
+	}
+	if len(ms.deletedPendingIDs) != 0 {
+		t.Errorf("ambiguous branch must not delete the row; deletedPendingIDs = %v", ms.deletedPendingIDs)
 	}
 }

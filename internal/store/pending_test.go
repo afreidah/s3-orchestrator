@@ -17,6 +17,10 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
+
+	db "github.com/afreidah/s3-orchestrator/internal/store/sqlc"
 )
 
 // -------------------------------------------------------------------------
@@ -130,6 +134,77 @@ func TestPendingEncryptionMeta_HashOnlyReturnsMeta(t *testing.T) {
 	}
 	if got.Encrypted || got.ContentHash != "hash" {
 		t.Errorf("meta mismatch: %+v", got)
+	}
+}
+
+// -------------------------------------------------------------------------
+// intentSuperseded — pure function, drives the timestamp-aware drop path
+// -------------------------------------------------------------------------
+
+// TestIntentSuperseded_NoExistingCopiesNeverSuperseded verifies the empty
+// case: with no existing rows there is nothing newer than the intent.
+func TestIntentSuperseded_NoExistingCopiesNeverSuperseded(t *testing.T) {
+	t.Parallel()
+	if intentSuperseded(nil, time.Now()) {
+		t.Error("empty existing slice must not be superseded")
+	}
+}
+
+// TestIntentSuperseded_AllOlderNeverSuperseded verifies the canonical
+// promote case: the intent is at least as new as every existing copy.
+func TestIntentSuperseded_AllOlderNeverSuperseded(t *testing.T) {
+	t.Parallel()
+	intentTime := time.Now()
+	existing := []db.GetExistingCopiesForUpdateRow{
+		{BackendName: "b1", CreatedAt: pgTimestamptz(intentTime.Add(-1 * time.Minute))},
+		{BackendName: "b2", CreatedAt: pgTimestamptz(intentTime.Add(-2 * time.Minute))},
+	}
+	if intentSuperseded(existing, intentTime) {
+		t.Error("all-older existing rows must not trigger supersession")
+	}
+}
+
+// TestIntentSuperseded_AnyNewerSupersedes verifies that even one row newer
+// than the intent fires the drop path. This is the head-of-line-blocking
+// fix: a successful retry on any backend authoritatively supersedes the
+// stale intent.
+func TestIntentSuperseded_AnyNewerSupersedes(t *testing.T) {
+	t.Parallel()
+	intentTime := time.Now()
+	existing := []db.GetExistingCopiesForUpdateRow{
+		{BackendName: "b1", CreatedAt: pgTimestamptz(intentTime.Add(-1 * time.Minute))},
+		{BackendName: "b2", CreatedAt: pgTimestamptz(intentTime.Add(1 * time.Minute))},
+	}
+	if !intentSuperseded(existing, intentTime) {
+		t.Error("any newer existing row must trigger supersession")
+	}
+}
+
+// TestIntentSuperseded_EqualTimePromotes verifies that ties go to promote.
+// The intent is "at least as new" as the existing row; only strictly
+// newer existing rows count as supersession.
+func TestIntentSuperseded_EqualTimePromotes(t *testing.T) {
+	t.Parallel()
+	intentTime := time.Now()
+	existing := []db.GetExistingCopiesForUpdateRow{
+		{BackendName: "b1", CreatedAt: pgTimestamptz(intentTime)},
+	}
+	if intentSuperseded(existing, intentTime) {
+		t.Error("equal timestamp must not trigger supersession")
+	}
+}
+
+// TestIntentSuperseded_InvalidTimestampSkipped verifies that rows with a
+// non-Valid pgtype.Timestamptz are ignored. This protects against a
+// theoretical NULL slipping through and incorrectly bypassing the check.
+func TestIntentSuperseded_InvalidTimestampSkipped(t *testing.T) {
+	t.Parallel()
+	intentTime := time.Now()
+	existing := []db.GetExistingCopiesForUpdateRow{
+		{BackendName: "b1", CreatedAt: pgtype.Timestamptz{Time: intentTime.Add(time.Hour), Valid: false}},
+	}
+	if intentSuperseded(existing, intentTime) {
+		t.Error("invalid timestamp must be ignored, not treated as newer")
 	}
 }
 

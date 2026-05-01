@@ -108,63 +108,101 @@ func (s *Store) DeletePendingByBackend(ctx context.Context, backendName string) 
 //     between GetStalePending and the lock acquire), the transaction is
 //     rolled back and PendingPromoteAlreadyResolved is returned.
 func (s *Store) PromotePending(ctx context.Context, p *PendingObject) (PendingPromoteResult, []DeletedCopy, error) {
-	type promoteOut struct {
-		result    PendingPromoteResult
-		displaced []DeletedCopy
-	}
-	out, err := withTxVal(s, ctx, func(qtx *db.Queries) (promoteOut, error) {
-		if _, err := qtx.LockPendingForUpdate(ctx, p.IntentID); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return promoteOut{result: PendingPromoteAlreadyResolved}, nil
-			}
-			return promoteOut{}, fmt.Errorf("lock pending row: %w", err)
-		}
-
-		if err := qtx.LockObjectKeyForWrite(ctx, p.ObjectKey); err != nil {
-			return promoteOut{}, fmt.Errorf("lock object key: %w", err)
-		}
-		existing, err := qtx.GetExistingCopiesForUpdate(ctx, p.ObjectKey)
-		if err != nil {
-			return promoteOut{}, fmt.Errorf("query existing copies: %w", err)
-		}
-		// Drop the intent if any existing object_locations row was created
-		// after this intent was inserted: a successful write happened later
-		// and is the authoritative state, so the intent's bytes are either
-		// overwritten (same backend) or stranded orphans (different backend).
-		// Either way, promotion would corrupt the metadata or restore stale
-		// content, and leaving the row creates head-of-line blocking on the
-		// reaper queue.
-		for _, ec := range existing {
-			if ec.CreatedAt.Valid && ec.CreatedAt.Time.After(p.CreatedAt) {
-				if err := qtx.DeletePendingObject(ctx, p.IntentID); err != nil {
-					return promoteOut{}, fmt.Errorf("delete superseded pending row: %w", err)
-				}
-				return promoteOut{result: PendingPromoteSuperseded}, nil
-			}
-		}
-
-		displaced, err := clearExistingCopies(ctx, qtx, p.ObjectKey, p.BackendName, existing)
-		if err != nil {
-			return promoteOut{}, err
-		}
-		if err := qtx.InsertObjectLocation(ctx, insertParamsFromEnc(p.ObjectKey, p.BackendName, p.SizeBytes, pendingEncryptionMeta(p))); err != nil {
-			return promoteOut{}, fmt.Errorf("insert promoted location: %w", err)
-		}
-		if err := incrementBackendQuota(ctx, qtx, p.BackendName, p.SizeBytes); err != nil {
-			return promoteOut{}, err
-		}
-		if err := qtx.DeletePendingObject(ctx, p.IntentID); err != nil {
-			return promoteOut{}, fmt.Errorf("delete promoted pending row: %w", err)
-		}
-		return promoteOut{result: PendingPromoteCommitted, displaced: displaced}, nil
+	out, err := withTxVal(s, ctx, func(qtx *db.Queries) (promoteOutcome, error) {
+		return promotePendingTx(ctx, qtx, p)
 	})
 	if err != nil {
-		// On txn error the result code is meaningless; callers check err first.
-		// Returning Ambiguous keeps the legacy contract intact for any caller
-		// that ignores err and inspects the result anyway.
+		// On txn error the result code is meaningless; callers check err
+		// first. Returning Ambiguous keeps the legacy contract intact for
+		// any caller that ignores err and inspects the result anyway.
 		return PendingPromoteAmbiguous, nil, err
 	}
 	return out.result, out.displaced, nil
+}
+
+// promoteOutcome carries the resolution result and any displaced copies
+// out of the transactional body so the caller can fan out cleanups.
+type promoteOutcome struct {
+	result    PendingPromoteResult
+	displaced []DeletedCopy
+}
+
+// promotePendingTx is the transactional body of PromotePending. Split out
+// so the orchestration reads as four ordered steps: lock, supersession
+// check, commit, and the same-tx delete of the pending row.
+func promotePendingTx(ctx context.Context, qtx *db.Queries, p *PendingObject) (promoteOutcome, error) {
+	resolved, err := lockPendingRow(ctx, qtx, p.IntentID)
+	if err != nil {
+		return promoteOutcome{}, err
+	}
+	if resolved {
+		return promoteOutcome{result: PendingPromoteAlreadyResolved}, nil
+	}
+
+	if err := qtx.LockObjectKeyForWrite(ctx, p.ObjectKey); err != nil {
+		return promoteOutcome{}, fmt.Errorf("lock object key: %w", err)
+	}
+	existing, err := qtx.GetExistingCopiesForUpdate(ctx, p.ObjectKey)
+	if err != nil {
+		return promoteOutcome{}, fmt.Errorf("query existing copies: %w", err)
+	}
+
+	if intentSuperseded(existing, p.CreatedAt) {
+		if err := qtx.DeletePendingObject(ctx, p.IntentID); err != nil {
+			return promoteOutcome{}, fmt.Errorf("delete superseded pending row: %w", err)
+		}
+		return promoteOutcome{result: PendingPromoteSuperseded}, nil
+	}
+
+	return commitPromotion(ctx, qtx, p, existing)
+}
+
+// lockPendingRow takes a SELECT FOR UPDATE on the pending row. Returns
+// (true, nil) if the row is gone — another reaper instance already
+// resolved it. Other errors propagate.
+func lockPendingRow(ctx context.Context, qtx *db.Queries, intentID string) (alreadyResolved bool, err error) {
+	if _, err := qtx.LockPendingForUpdate(ctx, intentID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return true, nil
+		}
+		return false, fmt.Errorf("lock pending row: %w", err)
+	}
+	return false, nil
+}
+
+// intentSuperseded reports whether any existing object_locations row was
+// created after the pending intent. A newer row means a successful write
+// happened later and is authoritative, so the intent is provably stale —
+// dropping it avoids head-of-line blocking and prevents the reaper from
+// corrupting metadata that a retry already committed.
+func intentSuperseded(existing []db.GetExistingCopiesForUpdateRow, intentCreatedAt time.Time) bool {
+	for _, ec := range existing {
+		if ec.CreatedAt.Valid && ec.CreatedAt.Time.After(intentCreatedAt) {
+			return true
+		}
+	}
+	return false
+}
+
+// commitPromotion finalises a non-superseded intent: clears prior copies,
+// inserts the new object_location row, increments the destination quota,
+// and deletes the pending row in the same transaction. Returns the
+// displaced copies so the caller can enqueue them for cleanup.
+func commitPromotion(ctx context.Context, qtx *db.Queries, p *PendingObject, existing []db.GetExistingCopiesForUpdateRow) (promoteOutcome, error) {
+	displaced, err := clearExistingCopies(ctx, qtx, p.ObjectKey, p.BackendName, existing)
+	if err != nil {
+		return promoteOutcome{}, err
+	}
+	if err := qtx.InsertObjectLocation(ctx, insertParamsFromEnc(p.ObjectKey, p.BackendName, p.SizeBytes, pendingEncryptionMeta(p))); err != nil {
+		return promoteOutcome{}, fmt.Errorf("insert promoted location: %w", err)
+	}
+	if err := incrementBackendQuota(ctx, qtx, p.BackendName, p.SizeBytes); err != nil {
+		return promoteOutcome{}, err
+	}
+	if err := qtx.DeletePendingObject(ctx, p.IntentID); err != nil {
+		return promoteOutcome{}, fmt.Errorf("delete promoted pending row: %w", err)
+	}
+	return promoteOutcome{result: PendingPromoteCommitted, displaced: displaced}, nil
 }
 
 // -------------------------------------------------------------------------
