@@ -1401,6 +1401,133 @@ func TestListObjects_ExactPageTruncation(t *testing.T) {
 	}
 }
 
+// TestAdvancePastEmittedCommonPrefix_TableDriven covers every branch of the
+// helper that rewrites pagination cursors so a CommonPrefix already returned
+// in the current call cannot be re-emitted by the next.
+func TestAdvancePastEmittedCommonPrefix_TableDriven(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name      string
+		prefix    string
+		delimiter string
+		cursor    string
+		seen      map[string]bool
+		want      string
+	}{
+		{
+			name: "empty delimiter returns cursor unchanged",
+			cursor: "tenant/a/k1", delimiter: "",
+			want: "tenant/a/k1",
+		},
+		{
+			name: "empty cursor returns cursor unchanged",
+			delimiter: "/", cursor: "",
+			want: "",
+		},
+		{
+			name: "cursor not under prefix returns unchanged",
+			prefix: "users/", delimiter: "/", cursor: "other/x",
+			seen: map[string]bool{"users/0010/": true},
+			want: "other/x",
+		},
+		{
+			name: "no delimiter in cursor's tail returns unchanged",
+			prefix: "users/", delimiter: "/", cursor: "users/standalone-key",
+			seen: map[string]bool{},
+			want: "users/standalone-key",
+		},
+		{
+			name: "cursor inside un-emitted CP returns unchanged",
+			prefix: "users/", delimiter: "/", cursor: "users/0010/k1",
+			seen: map[string]bool{},
+			want: "users/0010/k1",
+		},
+		{
+			// "/" (0x2F) + 1 = "0" (0x30); CP "users/0010/" -> "users/00100"
+			name: "cursor inside emitted CP advances past group",
+			prefix: "users/", delimiter: "/", cursor: "users/0010/k99",
+			seen: map[string]bool{"users/0010/": true},
+			want: "users/00100",
+		},
+		{
+			// last byte "-" (0x2D) -> "." (0x2E); CP "u-0010--" -> "u-0010-."
+			name: "multi-byte delimiter advances correctly",
+			prefix: "u-", delimiter: "--", cursor: "u-0010--k1",
+			seen: map[string]bool{"u-0010--": true},
+			want: "u-0010-.",
+		},
+		{
+			name: "0xff last byte cannot advance, returns cursor unchanged",
+			prefix: "p", delimiter: "\xff", cursor: "p\xffk",
+			seen: map[string]bool{"p\xff": true},
+			want: "p\xffk",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := advancePastEmittedCommonPrefix(tc.prefix, tc.delimiter, tc.cursor, tc.seen)
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestListObjects_PageBoundaryMidCommonPrefix is the regression test for
+// the cross-call CommonPrefix re-emission bug. With a deep prefix group
+// whose keys span store-page boundaries and a maxKeys that aligns the
+// boundary inside the group, the post-loop NextContinuationToken used
+// to be the mid-group object key — and the next ListObjects call with
+// that token re-emitted the same CommonPrefix because its `seen` map
+// is local to a single call. The fix rewrites the cursor to the
+// lex-upper-bound of the group so the next page skips it cleanly.
+func TestListObjects_PageBoundaryMidCommonPrefix(t *testing.T) {
+	t.Parallel()
+	// Page 1 finishes the "a/" group quickly; page 2 opens "b/" and
+	// reports more data. With maxKeys=2 the outer loop accumulates two
+	// CommonPrefixes (a/ and b/) and exits because KeyCount == maxKeys,
+	// while the store still has more b/* keys queued — the post-loop
+	// truncation branch fires.
+	store := &mockStore{
+		listObjectsPages: []st.ListObjectsResult{
+			{
+				Objects: []st.ObjectLocation{
+					{ObjectKey: "a/1", BackendName: "b1"},
+					{ObjectKey: "a/2", BackendName: "b1"},
+				},
+				IsTruncated: true,
+			},
+			{
+				Objects: []st.ObjectLocation{
+					{ObjectKey: "b/1", BackendName: "b1"},
+					{ObjectKey: "b/2", BackendName: "b1"},
+					{ObjectKey: "b/3", BackendName: "b1"},
+				},
+				IsTruncated: true,
+			},
+		},
+	}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+
+	result, err := mgr.ObjectManager.ListObjects(context.Background(), "", "/", "", 2)
+	if err != nil {
+		t.Fatalf("ListObjects: %v", err)
+	}
+	if len(result.CommonPrefixes) != 2 || result.CommonPrefixes[0] != "a/" || result.CommonPrefixes[1] != "b/" {
+		t.Errorf("CommonPrefixes = %v, want [a/ b/]", result.CommonPrefixes)
+	}
+	if !result.IsTruncated {
+		t.Error("IsTruncated = false, want true (b/ group still has data)")
+	}
+	// Without the fix, NextContinuationToken would be "b/3" (mid-b/ group)
+	// and the next call would re-emit "b/" against a fresh seen map.
+	// The fix advances to "b" + (delimiter+1) = "b0".
+	if result.NextContinuationToken != "b0" {
+		t.Errorf("NextContinuationToken = %q, want %q (advanced past b/ group)", result.NextContinuationToken, "b0")
+	}
+}
+
 func TestListObjects_DBUnavailable(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{listObjectsErr: st.ErrDBUnavailable}
