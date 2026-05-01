@@ -583,6 +583,91 @@ func TestListAndCopy(t *testing.T) {
 	})
 }
 
+// TestListObjectsV2_DelimiterPaginationNoDuplicateCommonPrefix is the
+// end-to-end regression for issue #660. It seeds a deep CommonPrefix
+// group large enough to span the manager's store-page boundary, then
+// walks ListObjectsV2 with a delimiter via NextContinuationToken and
+// asserts no CommonPrefix appears in more than one paginated response.
+//
+// Drives a real Postgres + MinIO stack so the cursor rewrite is
+// exercised against the production store query, not the in-memory mock.
+func TestListObjectsV2_DelimiterPaginationNoDuplicateCommonPrefix(t *testing.T) {
+	resetState(t)
+
+	client := newS3Client(t)
+	ctx := context.Background()
+	prefix := fmt.Sprintf("issue660/%d/", time.Now().UnixNano())
+
+	// Seed three CommonPrefix groups (a/, b/, c/) under the test prefix,
+	// with the b/ group deep enough that paginating with maxKeys=2 must
+	// span a store-page boundary mid-group.
+	groups := []struct {
+		name  string
+		count int
+	}{
+		{"a", 2},
+		{"b", 30}, // deep group that spans page boundaries
+		{"c", 2},
+	}
+	for _, g := range groups {
+		for i := 0; i < g.count; i++ {
+			key := fmt.Sprintf("%s%s/%03d", prefix, g.name, i)
+			_, err := client.PutObject(ctx, &s3.PutObjectInput{
+				Bucket:        aws.String(virtualBucket),
+				Key:           aws.String(key),
+				Body:          bytes.NewReader([]byte("x")),
+				ContentLength: aws.Int64(1),
+			})
+			if err != nil {
+				t.Fatalf("PutObject(%s): %v", key, err)
+			}
+		}
+	}
+
+	seen := make(map[string]int)
+	var token *string
+	pageCount := 0
+	const maxPagesGuard = 10
+	for {
+		pageCount++
+		if pageCount > maxPagesGuard {
+			t.Fatalf("walked %d pages without termination", pageCount)
+		}
+		out, err := client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+			Bucket:            aws.String(virtualBucket),
+			Prefix:            aws.String(prefix),
+			Delimiter:         aws.String("/"),
+			MaxKeys:           aws.Int32(2),
+			ContinuationToken: token,
+		})
+		if err != nil {
+			t.Fatalf("ListObjectsV2 page %d: %v", pageCount, err)
+		}
+		for _, cp := range out.CommonPrefixes {
+			seen[*cp.Prefix]++
+		}
+		if out.IsTruncated == nil || !*out.IsTruncated {
+			break
+		}
+		if out.NextContinuationToken == nil || *out.NextContinuationToken == "" {
+			t.Fatal("IsTruncated=true but NextContinuationToken empty; cannot continue")
+		}
+		token = out.NextContinuationToken
+	}
+
+	for cp, count := range seen {
+		if count > 1 {
+			t.Errorf("CommonPrefix %q emitted %d times across paginated responses (want 1)", cp, count)
+		}
+	}
+	for _, name := range []string{"a", "b", "c"} {
+		expected := prefix + name + "/"
+		if seen[expected] == 0 {
+			t.Errorf("expected CommonPrefix %q never appeared in any page", expected)
+		}
+	}
+}
+
 // -------------------------------------------------------------------------
 // SPREAD WRITE ROUTING
 // -------------------------------------------------------------------------

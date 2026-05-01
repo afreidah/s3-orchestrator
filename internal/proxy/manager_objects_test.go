@@ -1528,6 +1528,131 @@ func TestListObjects_PageBoundaryMidCommonPrefix(t *testing.T) {
 	}
 }
 
+// TestListObjects_MaxPagesCapMidCommonPrefix exercises the second emission
+// site (maxPages cap reached while still inside an emitted CP). Lowers the
+// cap so the test only needs a handful of mock pages to drive the branch.
+func TestListObjects_MaxPagesCapMidCommonPrefix(t *testing.T) {
+	t.Parallel()
+	originalCap := listObjectsMaxPages
+	listObjectsMaxPages = 2
+	defer func() { listObjectsMaxPages = originalCap }()
+
+	// Both store pages return only "users/0001/<k>" keys: the inner loop
+	// emits CP "users/0001/" once, then silently skips; the outer loop
+	// hits the maxPages=2 cap with the store still reporting more data.
+	store := &mockStore{
+		listObjectsPages: []st.ListObjectsResult{
+			{
+				Objects: []st.ObjectLocation{
+					{ObjectKey: "users/0001/k01", BackendName: "b1"},
+					{ObjectKey: "users/0001/k02", BackendName: "b1"},
+				},
+				IsTruncated: true,
+			},
+			{
+				Objects: []st.ObjectLocation{
+					{ObjectKey: "users/0001/k03", BackendName: "b1"},
+					{ObjectKey: "users/0001/k04", BackendName: "b1"},
+				},
+				IsTruncated: true,
+			},
+		},
+	}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+
+	result, err := mgr.ObjectManager.ListObjects(context.Background(), "users/", "/", "", 1000)
+	if err != nil {
+		t.Fatalf("ListObjects: %v", err)
+	}
+	if len(result.CommonPrefixes) != 1 || result.CommonPrefixes[0] != "users/0001/" {
+		t.Errorf("CommonPrefixes = %v, want [users/0001/]", result.CommonPrefixes)
+	}
+	if !result.IsTruncated {
+		t.Error("IsTruncated = false, want true (maxPages cap with more data)")
+	}
+	// Without the fix the token would be "users/0001/k04" (mid-group) and
+	// the next call would re-emit "users/0001/". The fix advances to the
+	// CP's lex-upper-bound: "users/0001/" with last byte "/" (0x2F)
+	// replaced by "0" (0x30) -> "users/00010".
+	if result.NextContinuationToken != "users/00010" {
+		t.Errorf("NextContinuationToken = %q, want %q (advanced past users/0001/ group)",
+			result.NextContinuationToken, "users/00010")
+	}
+}
+
+// TestListObjects_CrossCallWalkDoesNotDuplicateCommonPrefix simulates a
+// real S3 client paginating through ListObjects and asserts the
+// CommonPrefix the first call emitted is not re-emitted by the second.
+// Direct demonstration that the cursor rewrite restores forward progress.
+func TestListObjects_CrossCallWalkDoesNotDuplicateCommonPrefix(t *testing.T) {
+	t.Parallel()
+	// Six pages chained in mock order so each ListObjects call consumes
+	// exactly the pages it would in production. With maxKeys=2 and the
+	// b/ group spanning two store batches, the first call emits [a/, b/]
+	// and exits via the post-loop branch; the second call must not
+	// re-emit b/ when handed the (advanced) token.
+	store := &mockStore{
+		listObjectsPages: []st.ListObjectsResult{
+			// First call's pages
+			{
+				Objects: []st.ObjectLocation{
+					{ObjectKey: "a/1", BackendName: "b1"},
+					{ObjectKey: "a/2", BackendName: "b1"},
+				},
+				IsTruncated: true,
+			},
+			{
+				Objects: []st.ObjectLocation{
+					{ObjectKey: "b/1", BackendName: "b1"},
+					{ObjectKey: "b/2", BackendName: "b1"},
+					{ObjectKey: "b/3", BackendName: "b1"},
+				},
+				IsTruncated: true,
+			},
+			// Second call's pages — store is queried with startAfter="b0"
+			// so it returns only c/ and beyond.
+			{
+				Objects: []st.ObjectLocation{
+					{ObjectKey: "c/1", BackendName: "b1"},
+					{ObjectKey: "d/1", BackendName: "b1"},
+				},
+				IsTruncated: false,
+			},
+		},
+	}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+
+	first, err := mgr.ObjectManager.ListObjects(context.Background(), "", "/", "", 2)
+	if err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+	if first.NextContinuationToken == "" {
+		t.Fatal("first call returned empty token; cannot walk")
+	}
+
+	second, err := mgr.ObjectManager.ListObjects(context.Background(), "", "/", first.NextContinuationToken, 1000)
+	if err != nil {
+		t.Fatalf("second call: %v", err)
+	}
+
+	// Union of CommonPrefixes across both calls must contain no duplicates.
+	combined := append([]string{}, first.CommonPrefixes...)
+	combined = append(combined, second.CommonPrefixes...)
+	seen := map[string]bool{}
+	for _, cp := range combined {
+		if seen[cp] {
+			t.Errorf("CommonPrefix %q emitted twice across paginated calls", cp)
+		}
+		seen[cp] = true
+	}
+	// Sanity: second call should produce c/ and d/, never re-encounter b/.
+	for _, cp := range second.CommonPrefixes {
+		if cp == "b/" {
+			t.Error("second call re-emitted b/ — cross-call dedup broken")
+		}
+	}
+}
+
 func TestListObjects_DBUnavailable(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{listObjectsErr: st.ErrDBUnavailable}

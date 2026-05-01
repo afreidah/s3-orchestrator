@@ -44,6 +44,12 @@ import (
 // because it exceeded its monthly usage limits. Not exposed to callers.
 var errUsageLimitSkip = errors.New("backend skipped: usage limits exceeded")
 
+// listObjectsMaxPages caps DB round trips per ListObjects request so a
+// single client call cannot drag the database through unbounded scans on
+// pathological prefix layouts. Exposed as a var (rather than const) so
+// tests can lower it without generating hundreds of mock pages.
+var listObjectsMaxPages = 100
+
 // resolveLocationsByBackend looks up every copy of key and returns a
 // backend-name → location map for O(1) lookups inside the failover
 // closure. Returns nil when encryption is disabled (the map is never
@@ -641,7 +647,7 @@ func (o *ObjectManager) ListObjects(ctx context.Context, prefix, delimiter, star
 	seen := make(map[string]bool) // tracks emitted common prefixes across fetches
 	lastStoreTruncated := false   // whether the most recent store page had more data
 
-	const maxPages = 100 // cap DB round trips per request
+	maxPages := listObjectsMaxPages
 	for page := 0; page < maxPages && result.KeyCount < maxKeys; page++ {
 		storeResult, err := o.objects.ListObjects(ctx, prefix, cursor, maxKeys)
 		if err != nil {
