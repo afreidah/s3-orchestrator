@@ -40,6 +40,31 @@ type CleanupQueueConfig struct {
 	MultipartStaleTimeout  time.Duration `yaml:"multipart_stale_timeout"`  // Abandon multipart uploads older than this (default: 24h)
 }
 
+// WritePathConfig gates write-path correctness features. The pending-row
+// pattern (PUT-before-COMMIT intent tracking) is on by default; operators
+// can disable it to fall back to the legacy delete-on-record-failure path,
+// which trades data-loss safety for one fewer round-trip per PUT.
+type WritePathConfig struct {
+	PendingPattern PendingPatternConfig `yaml:"pending_pattern"`
+}
+
+// PendingPatternConfig configures the pending-row pattern used by the
+// write path to avoid losing the prior copy of an overwritten key when
+// the metadata commit fails.
+type PendingPatternConfig struct {
+	Enabled    *bool         `yaml:"enabled"`     // Default: true. Set to false to disable.
+	ReaperTick time.Duration `yaml:"reaper_tick"` // How often the reaper resolves abandoned intents (default: 1m)
+	MinAge     time.Duration `yaml:"min_age"`     // Don't reap intents younger than this — guards in-flight PUTs (default: 5m)
+	BatchSize  int           `yaml:"batch_size"`  // Max intents resolved per tick (default: 50)
+}
+
+// IsEnabled returns true unless the operator has explicitly disabled the
+// pending pattern. The pointer-typed Enabled field lets the YAML loader
+// distinguish "absent" (default true) from "explicitly false".
+func (p *PendingPatternConfig) IsEnabled() bool {
+	return p.Enabled == nil || *p.Enabled
+}
+
 // ReconcileConfig controls the background orphan reconciler that periodically
 // scans backends and imports untracked objects into the metadata database.
 // Disabled by default.
