@@ -35,8 +35,9 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
-	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
+	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 )
 
 // testMasterKey is a 256-bit AES key used for integration test encryption.
@@ -49,7 +50,7 @@ type encryptionTestEnv struct {
 	proxyClient *s3.Client
 	adminAddr   string
 	encryptor   *encryption.Encryptor
-	rawStore    *store.Store
+	rawStore    *postgres.Store
 	manager     *proxy.BackendManager
 }
 

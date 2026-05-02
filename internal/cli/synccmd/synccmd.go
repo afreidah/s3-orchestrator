@@ -21,6 +21,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
 	sqlitestore "github.com/afreidah/s3-orchestrator/internal/store/sqlite"
 )
 
@@ -121,7 +122,7 @@ func initStore(ctx context.Context, cfg *config.Config) (store.ObjectStore, stor
 	)
 	switch cfg.Database.Driver {
 	case "postgres":
-		s, openErr := store.NewStore(ctx, &cfg.Database)
+		s, openErr := postgres.NewStore(ctx, &cfg.Database)
 		if openErr != nil {
 			err = openErr
 		} else {

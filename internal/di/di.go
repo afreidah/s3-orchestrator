@@ -45,6 +45,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
 	sqlitestore "github.com/afreidah/s3-orchestrator/internal/store/sqlite"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
@@ -221,7 +222,7 @@ func ProvideDatabaseBreaker(i do.Injector) (*breaker.CircuitBreaker, error) {
 func openStore(ctx context.Context, dbCfg *config.DatabaseConfig) (concreteStore, store.AdminStore, error) {
 	switch dbCfg.Driver {
 	case "postgres":
-		s, err := store.NewStore(ctx, dbCfg)
+		s, err := postgres.NewStore(ctx, dbCfg)
 		if err != nil {
 			return nil, nil, err
 		}
