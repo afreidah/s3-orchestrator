@@ -630,6 +630,68 @@ func TestStoreInt_ListObjectsByBackendKeyAsc(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
+// GetObjectBackendsForKeys (rebalancer batch query)
+// -------------------------------------------------------------------------
+
+// TestStoreInt_GetObjectBackendsForKeys_EmptyInput verifies the
+// helper returns an empty map for a nil or empty input slice without
+// issuing a query.
+func TestStoreInt_GetObjectBackendsForKeys_EmptyInput(t *testing.T) {
+	s := adapterPgStore(t)
+	got, err := s.GetObjectBackendsForKeys(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("GetObjectBackendsForKeys(nil): %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected empty map for nil input, got %v", got)
+	}
+	got, err = s.GetObjectBackendsForKeys(context.Background(), []string{})
+	if err != nil {
+		t.Fatalf("GetObjectBackendsForKeys([]): %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected empty map for empty slice, got %v", got)
+	}
+}
+
+// TestStoreInt_GetObjectBackendsForKeys_GroupsByKey verifies replicas
+// of the same key are bucketed together, missing keys are absent, and
+// the helper reads every backend for every supplied key in one round
+// trip.
+func TestStoreInt_GetObjectBackendsForKeys_GroupsByKey(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	k1 := uniqueKey(t, "k1")
+	k2 := uniqueKey(t, "k2")
+	missing := uniqueKey(t, "missing")
+	if _, err := s.RecordObject(ctx, k1, "backend-a", 100, nil); err != nil {
+		t.Fatalf("RecordObject(k1): %v", err)
+	}
+	defer func() { _, _ = s.DeleteObject(ctx, k1) }()
+	if _, err := s.RecordReplica(ctx, k1, "backend-b", "backend-a", 100); err != nil {
+		t.Fatalf("RecordReplica: %v", err)
+	}
+	if _, err := s.RecordObject(ctx, k2, "backend-a", 50, nil); err != nil {
+		t.Fatalf("RecordObject(k2): %v", err)
+	}
+	defer func() { _, _ = s.DeleteObject(ctx, k2) }()
+
+	got, err := s.GetObjectBackendsForKeys(ctx, []string{k1, k2, missing})
+	if err != nil {
+		t.Fatalf("GetObjectBackendsForKeys: %v", err)
+	}
+	if len(got[k1]) != 2 {
+		t.Errorf("k1 should have 2 backends, got %v", got[k1])
+	}
+	if len(got[k2]) != 1 || got[k2][0] != "backend-a" {
+		t.Errorf("k2 backends mismatch: %v", got[k2])
+	}
+	if _, ok := got[missing]; ok {
+		t.Errorf("missing key should not be in result map: %v", got)
+	}
+}
+
+// -------------------------------------------------------------------------
 // SCHEMA / LIFECYCLE
 // -------------------------------------------------------------------------
 

@@ -27,6 +27,46 @@ var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 
 const errInvalidTimestamp = "invalid created_at timestamp %q: %w"
 
+// GetObjectBackendsForKeys returns a map from each supplied object_key to
+// the backends that hold a copy. Empty input yields an empty map; keys
+// with no copies are absent from the result. Used by the rebalancer
+// planner to fold the per-key existence check into a single query per
+// batch instead of N+1.
+func (s *Store) GetObjectBackendsForKeys(ctx context.Context, keys []string) (map[string][]string, error) {
+	if len(keys) == 0 {
+		return map[string][]string{}, nil
+	}
+	// SQLite has no array/IN-list parameter type; build the placeholder
+	// list dynamically. The keys slice is caller-controlled (planner
+	// batch size) and small.
+	placeholders := strings.Repeat("?,", len(keys))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := make([]any, len(keys))
+	for i, k := range keys {
+		args[i] = k
+	}
+	// G202: placeholders is "?,?,?" built from strings.Repeat, not user
+	// input; the actual key values are passed as args.
+	query := `SELECT object_key, backend_name FROM object_locations WHERE object_key IN (` + placeholders + `)` //nolint:gosec
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get object backends for keys: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[string][]string, len(keys))
+	for rows.Next() {
+		var key, backend string
+		if err := rows.Scan(&key, &backend); err != nil {
+			return nil, fmt.Errorf("failed to scan key/backend pair: %w", err)
+		}
+		out[key] = append(out[key], backend)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate key/backend rows: %w", err)
+	}
+	return out, nil
+}
+
 // GetAllObjectLocations returns all copies of an object, ordered by created_at
 // ascending (oldest/primary first). Used for read failover.
 func (s *Store) GetAllObjectLocations(ctx context.Context, key string) ([]store.ObjectLocation, error) {

@@ -120,6 +120,98 @@ func TestPlanSpreadEven_ImbalancedPlansMoves(t *testing.T) {
 	}
 }
 
+// TestPlanSpreadEven_BatchesBackendLookup verifies the planner issues
+// exactly one GetObjectBackendsForKeys call per source backend it
+// considers, regardless of how many candidate objects that source has.
+// Catches regression of the original N+1 GetAllObjectLocations call
+// inside the per-object loop.
+func TestPlanSpreadEven_BatchesBackendLookup(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	ops := NewMockOps(ctrl)
+	objs := []store.ObjectLocation{
+		{ObjectKey: "k1", BackendName: "b1", SizeBytes: 50},
+		{ObjectKey: "k2", BackendName: "b1", SizeBytes: 50},
+		{ObjectKey: "k3", BackendName: "b1", SizeBytes: 50},
+		{ObjectKey: "k4", BackendName: "b1", SizeBytes: 50},
+		{ObjectKey: "k5", BackendName: "b1", SizeBytes: 50},
+	}
+	ms := &mockMetadataStore{
+		objectsByBackend: map[string][]store.ObjectLocation{"b1": objs},
+		// Pre-populate: k2 already has a replica on b2, the others don't.
+		getBackendsForKeysResp: map[string][]string{
+			"k1": {"b1"},
+			"k2": {"b1", "b2"},
+			"k3": {"b1"},
+			"k4": {"b1"},
+			"k5": {"b1"},
+		},
+	}
+	ops.EXPECT().BackendOrder().Return([]string{"b1", "b2"}).AnyTimes()
+
+	r := NewRebalancer(ops, ms)
+	stats := map[string]store.QuotaStat{
+		"b1": {BytesUsed: 800, BytesLimit: 1000},
+		"b2": {BytesUsed: 200, BytesLimit: 1000},
+	}
+	plan, err := r.PlanSpreadEven(context.Background(), stats, 10)
+	if err != nil {
+		t.Fatalf("PlanSpreadEven: %v", err)
+	}
+	if ms.getBackendsForKeysCalls != 1 {
+		t.Errorf("expected 1 GetObjectBackendsForKeys call (one per source), got %d", ms.getBackendsForKeysCalls)
+	}
+	for _, mv := range plan {
+		if mv.ObjectKey == "k2" {
+			t.Errorf("k2 already lives on b2 and must not be planned for move; plan=%+v", plan)
+		}
+	}
+}
+
+// TestPlanPackTight_BatchesBackendLookup verifies the same N+1 fix
+// in the pack-tight planner: one batch lookup per source, regardless
+// of how many candidate objects that source holds.
+func TestPlanPackTight_BatchesBackendLookup(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	ops := NewMockOps(ctrl)
+	objs := []store.ObjectLocation{
+		{ObjectKey: "k1", BackendName: "b2", SizeBytes: 50},
+		{ObjectKey: "k2", BackendName: "b2", SizeBytes: 50},
+		{ObjectKey: "k3", BackendName: "b2", SizeBytes: 50},
+	}
+	ms := &mockMetadataStore{
+		objectsByBackend: map[string][]store.ObjectLocation{"b2": objs},
+		// k2 already lives on b1 (the more-utilized destination); the
+		// planner must skip it without re-querying per object.
+		getBackendsForKeysResp: map[string][]string{
+			"k1": {"b2"},
+			"k2": {"b1", "b2"},
+			"k3": {"b2"},
+		},
+	}
+	ops.EXPECT().BackendOrder().Return([]string{"b1", "b2"}).AnyTimes()
+
+	r := NewRebalancer(ops, ms)
+	// b1 is the most-full destination, b2 is the source.
+	stats := map[string]store.QuotaStat{
+		"b1": {BytesUsed: 800, BytesLimit: 1000},
+		"b2": {BytesUsed: 100, BytesLimit: 1000},
+	}
+	plan, err := r.PlanPackTight(context.Background(), stats, 10)
+	if err != nil {
+		t.Fatalf("PlanPackTight: %v", err)
+	}
+	if ms.getBackendsForKeysCalls != 1 {
+		t.Errorf("expected 1 GetObjectBackendsForKeys call (one per source), got %d", ms.getBackendsForKeysCalls)
+	}
+	for _, mv := range plan {
+		if mv.ObjectKey == "k2" && mv.ToBackend == "b1" {
+			t.Errorf("k2 already on b1 and must not be planned for move to b1; plan=%+v", plan)
+		}
+	}
+}
+
 func TestExecuteOneMove_Success(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)

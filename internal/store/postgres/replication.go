@@ -30,6 +30,26 @@ func (s *Store) GetAllObjectLocations(ctx context.Context, key string) ([]Object
 	return toFatObjectLocations(rows), nil
 }
 
+// GetObjectBackendsForKeys returns a map from each supplied object_key to
+// the set of backend names that hold a copy. Empty input yields an empty
+// map; keys with no copies are absent from the result. Used by the
+// rebalancer planner to fold the per-key existence check into a single
+// query per batch instead of N+1.
+func (s *Store) GetObjectBackendsForKeys(ctx context.Context, keys []string) (map[string][]string, error) {
+	if len(keys) == 0 {
+		return map[string][]string{}, nil
+	}
+	rows, err := s.queries.GetObjectBackendsForKeys(ctx, keys)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get object backends for keys: %w", err)
+	}
+	out := make(map[string][]string, len(keys))
+	for _, r := range rows {
+		out[r.ObjectKey] = append(out[r.ObjectKey], r.BackendName)
+	}
+	return out, nil
+}
+
 // GetUnderReplicatedObjects finds objects with fewer copies than the target
 // replication factor. Returns all rows for those objects so callers know which
 // backends already have copies.

@@ -23,6 +23,9 @@ type fakeConcreteStore struct{}
 func (fakeConcreteStore) GetAllObjectLocations(context.Context, string) ([]store.ObjectLocation, error) {
 	return nil, nil
 }
+func (fakeConcreteStore) GetObjectBackendsForKeys(context.Context, []string) (map[string][]string, error) {
+	return nil, nil
+}
 func (fakeConcreteStore) RecordObject(context.Context, string, string, int64, *store.EncryptionMeta) ([]store.DeletedCopy, error) {
 	return nil, nil
 }

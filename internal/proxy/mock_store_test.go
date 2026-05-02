@@ -28,6 +28,9 @@ type mockStore struct {
 	getAllLocationsResp []st.ObjectLocation
 	getAllLocationsErr  error
 
+	getBackendsForKeysResp map[string][]string
+	getBackendsForKeysErr  error
+
 	getBackendResp         string
 	getBackendErr          error
 	getBackendFromEligible bool                                                // when true, returns eligible[0] instead of getBackendResp
@@ -230,6 +233,19 @@ func (m *mockStore) GetAllObjectLocations(_ context.Context, key string) ([]st.O
 		return m.getAllLocationsResp, nil
 	}
 	return nil, st.ErrObjectNotFound
+}
+
+func (m *mockStore) GetObjectBackendsForKeys(_ context.Context, _ []string) (map[string][]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.callCount++
+	if m.getBackendsForKeysErr != nil {
+		return nil, m.getBackendsForKeysErr
+	}
+	if m.getBackendsForKeysResp != nil {
+		return m.getBackendsForKeysResp, nil
+	}
+	return map[string][]string{}, nil
 }
 
 func (m *mockStore) GetBackendWithSpace(_ context.Context, size int64, eligible []string) (string, error) {
