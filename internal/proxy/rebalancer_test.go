@@ -582,9 +582,8 @@ func TestPlanSpreadEven_SkipsWhenTargetHasCopy(t *testing.T) {
 			{ObjectKey: "obj1", BackendName: "b1", SizeBytes: 100},
 		},
 		// Simulate obj1 already existing on b2 (the would-be target)
-		getAllLocationsResp: []st.ObjectLocation{
-			{ObjectKey: "obj1", BackendName: "b1", SizeBytes: 100},
-			{ObjectKey: "obj1", BackendName: "b2", SizeBytes: 100},
+		getBackendsForKeysResp: map[string][]string{
+			"obj1": {"b1", "b2"},
 		},
 	}
 	mgr := newRebalanceManager(store, []string{"b1", "b2"})
@@ -610,9 +609,8 @@ func TestPlanPackTight_SkipsWhenTargetHasCopy(t *testing.T) {
 			{ObjectKey: "obj1", BackendName: "b2", SizeBytes: 100},
 		},
 		// Simulate obj1 already existing on b1 (the most-full destination)
-		getAllLocationsResp: []st.ObjectLocation{
-			{ObjectKey: "obj1", BackendName: "b1", SizeBytes: 100},
-			{ObjectKey: "obj1", BackendName: "b2", SizeBytes: 100},
+		getBackendsForKeysResp: map[string][]string{
+			"obj1": {"b1", "b2"},
 		},
 	}
 	mgr := newRebalanceManager(store, []string{"b1", "b2"})

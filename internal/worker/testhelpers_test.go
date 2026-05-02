@@ -42,6 +42,12 @@ type mockMetadataStore struct {
 	moveSize            int64
 	staleDeleted        int
 
+	// Rebalancer planner fixtures: counts batch invocations and lets
+	// tests override the (key -> backends) map returned by the new
+	// batch query.
+	getBackendsForKeysCalls int
+	getBackendsForKeysResp  map[string][]string
+
 	// Pending reaper fixtures
 	stalePending           []store.PendingObject
 	deletedPendingIDs      []string
@@ -138,6 +144,14 @@ func (m *mockMetadataStore) MoveObjectLocation(_ context.Context, _, _, _ string
 
 func (m *mockMetadataStore) GetAllObjectLocations(_ context.Context, _ string) ([]store.ObjectLocation, error) {
 	return nil, nil
+}
+
+func (m *mockMetadataStore) GetObjectBackendsForKeys(_ context.Context, _ []string) (map[string][]string, error) {
+	m.getBackendsForKeysCalls++
+	if m.getBackendsForKeysResp != nil {
+		return m.getBackendsForKeysResp, nil
+	}
+	return map[string][]string{}, nil
 }
 
 func (m *mockMetadataStore) FlushUsageDeltas(_ context.Context, _, _ string, _, _, _ int64) error {

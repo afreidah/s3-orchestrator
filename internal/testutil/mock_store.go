@@ -29,6 +29,9 @@ type MockStore struct {
 	GetAllLocationsResp []store.ObjectLocation
 	GetAllLocationsErr  error
 
+	GetObjectBackendsForKeysResp map[string][]string
+	GetObjectBackendsForKeysErr  error
+
 	GetBackendResp string
 	GetBackendErr  error
 
@@ -125,6 +128,22 @@ func (m *MockStore) GetAllObjectLocations(_ context.Context, key string) ([]stor
 		return m.GetAllLocationsResp, nil
 	}
 	return nil, store.ErrObjectNotFound
+}
+
+// GetObjectBackendsForKeys returns an empty map by default; tests that
+// need a specific response set m.GetObjectBackendsForKeysResp and the
+// mock returns it verbatim (a copy of the supplied keys is not made).
+func (m *MockStore) GetObjectBackendsForKeys(_ context.Context, _ []string) (map[string][]string, error) {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+	m.CallCount++
+	if m.GetObjectBackendsForKeysErr != nil {
+		return nil, m.GetObjectBackendsForKeysErr
+	}
+	if m.GetObjectBackendsForKeysResp != nil {
+		return m.GetObjectBackendsForKeysResp, nil
+	}
+	return map[string][]string{}, nil
 }
 
 // GetBackendWithSpace returns the pre-configured backend name or error.
