@@ -24,6 +24,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/testutil"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
@@ -107,7 +108,7 @@ func TestLockedTickerService_RunOnceSkipsOnLockBusy(t *testing.T) {
 	svc := &lockedTickerService{
 		locker:   fakeLocker{},
 		interval: time.Second,
-		lockID:   store.LockRebalancer,
+		lockID:   core.LockRebalancer,
 		name:     "test",
 		work:     func(context.Context) { workCalled = true },
 	}
@@ -134,7 +135,7 @@ func TestLockedTickerService_RunOnceInvokesOnError(t *testing.T) {
 	svc := &lockedTickerService{
 		locker:   errLocker{err: errors.New("advisory lock broke")},
 		interval: time.Second,
-		lockID:   store.LockLifecycle,
+		lockID:   core.LockLifecycle,
 		name:     "test",
 		work:     func(context.Context) {},
 		onError:  func(err error) { caught = err },
@@ -154,7 +155,7 @@ func TestLockedTickerService_RunOnceSwallowsErrDBUnavailable(t *testing.T) {
 	svc := &lockedTickerService{
 		locker:   errLocker{err: store.ErrDBUnavailable},
 		interval: time.Second,
-		lockID:   store.LockLifecycle,
+		lockID:   core.LockLifecycle,
 		name:     "test",
 		work:     func(context.Context) {},
 		onError:  func(error) { onErrCalled = true },
@@ -195,7 +196,7 @@ func TestLockedTickerService_RunExitsOnCancel(t *testing.T) {
 	svc := &lockedTickerService{
 		locker:   fakeLocker{},
 		interval: time.Hour, // long interval so Run blocks in the tick select
-		lockID:   store.LockRebalancer,
+		lockID:   core.LockRebalancer,
 		name:     "test",
 		work:     func(context.Context) {},
 	}
@@ -215,7 +216,7 @@ func TestLockedTickerService_RunStartupFires(t *testing.T) {
 	svc := &lockedTickerService{
 		locker:   acquiringLocker{},
 		interval: time.Hour,
-		lockID:   store.LockReplicator,
+		lockID:   core.LockReplicator,
 		name:     "test",
 		work:     func(context.Context) {},
 		startup:  func(context.Context) { startupCalled = true },
@@ -325,7 +326,7 @@ func TestLockedTickerService_RunTicksOnce(t *testing.T) {
 	svc := &lockedTickerService{
 		locker:   acquiringLocker{},
 		interval: 2 * time.Millisecond,
-		lockID:   store.LockRebalancer,
+		lockID:   core.LockRebalancer,
 		name:     "test",
 		shouldRun: func() bool {
 			select {

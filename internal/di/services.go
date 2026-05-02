@@ -25,6 +25,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
@@ -166,7 +167,7 @@ func (s *usageFlushService) Run(ctx context.Context) error {
 // performs the destructive GETSET.
 func (s *usageFlushService) flushTick(ctx context.Context) {
 	if s.manager.RedisCounterConfigured() {
-		acquired, err := s.locker.WithAdvisoryLock(ctx, store.LockUsageFlush,
+		acquired, err := s.locker.WithAdvisoryLock(ctx, core.LockUsageFlush,
 			func(lockCtx context.Context) error {
 				s.doFlush(lockCtx)
 				return nil
@@ -204,7 +205,7 @@ func NewMultipartCleanupService(manager *proxy.BackendManager, locker store.Advi
 	return &lockedTickerService{
 		locker:   locker,
 		interval: defaultMultipartCleanupTick,
-		lockID:   store.LockMultipartCleanup,
+		lockID:   core.LockMultipartCleanup,
 		name:     "Multipart cleanup",
 		work: func(ctx context.Context) {
 			manager.MultipartManager.CleanupStaleMultipartUploads(ctx, staleTimeout)
@@ -217,7 +218,7 @@ func NewCleanupQueueService(manager *proxy.BackendManager, locker store.Advisory
 	return &lockedTickerService{
 		locker:   locker,
 		interval: defaultCleanupQueueTick,
-		lockID:   store.LockCleanupQueue,
+		lockID:   core.LockCleanupQueue,
 		name:     "Cleanup queue",
 		work: func(ctx context.Context) {
 			processed, failed := manager.CleanupWorker.ProcessCleanupQueue(ctx)
@@ -243,7 +244,7 @@ func NewPendingReaperService(manager *proxy.BackendManager, locker store.Advisor
 	return &lockedTickerService{
 		locker:   locker,
 		interval: tick,
-		lockID:   store.LockPendingReaper,
+		lockID:   core.LockPendingReaper,
 		name:     "Pending reaper",
 		work: func(ctx context.Context) {
 			resolved, failed := manager.PendingReaper.ProcessPendingQueue(ctx)
@@ -263,7 +264,7 @@ func NewRebalancerService(manager *proxy.BackendManager, locker store.AdvisoryLo
 	return &lockedTickerService{
 		locker:   locker,
 		interval: interval,
-		lockID:   store.LockRebalancer,
+		lockID:   core.LockRebalancer,
 		name:     "Rebalance",
 		shouldRun: func() bool {
 			rcfg := manager.Rebalancer.Config()
@@ -292,7 +293,7 @@ func NewLifecycleService(manager *proxy.BackendManager, locker store.AdvisoryLoc
 	return &lockedTickerService{
 		locker:   locker,
 		interval: defaultLifecycleTick,
-		lockID:   store.LockLifecycle,
+		lockID:   core.LockLifecycle,
 		name:     "Lifecycle",
 		shouldRun: func() bool {
 			cfg := manager.LifecycleConfig()
@@ -330,7 +331,7 @@ func NewOverReplicationService(manager *proxy.BackendManager, locker store.Advis
 	return &lockedTickerService{
 		locker:   locker,
 		interval: interval,
-		lockID:   store.LockOverReplication,
+		lockID:   core.LockOverReplication,
 		name:     "Over-replication cleanup",
 		shouldRun: func() bool {
 			rcfg := manager.OverReplicationCleaner.Config()
@@ -379,7 +380,7 @@ func NewReplicatorService(manager *proxy.BackendManager, locker store.AdvisoryLo
 	return &lockedTickerService{
 		locker:   locker,
 		interval: interval,
-		lockID:   store.LockReplicator,
+		lockID:   core.LockReplicator,
 		name:     "Replication",
 		shouldRun: func() bool {
 			rcfg := manager.Replicator.Config()
@@ -395,7 +396,7 @@ func NewReconcileService(reconciler *worker.Reconciler, locker store.AdvisoryLoc
 	return &lockedTickerService{
 		locker:   locker,
 		interval: interval,
-		lockID:   store.LockReconcile,
+		lockID:   core.LockReconcile,
 		name:     "Reconcile",
 		work: func(ctx context.Context) {
 			reconciler.Run(ctx)
@@ -455,7 +456,7 @@ func NewScrubberService(manager *proxy.BackendManager, locker store.AdvisoryLock
 	return &lockedTickerService{
 		locker:   locker,
 		interval: interval,
-		lockID:   store.LockScrubber,
+		lockID:   core.LockScrubber,
 		name:     "Scrubber",
 		shouldRun: func() bool {
 			icfg := manager.Scrubber.Config()

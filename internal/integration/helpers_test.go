@@ -45,6 +45,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
 )
 
 const virtualBucket = "test-bucket"
@@ -53,7 +54,7 @@ var (
 	proxyAddr         string
 	testDB            *sql.DB
 	testManager       *proxy.BackendManager
-	testStore         *store.Store
+	testStore         *postgres.Store
 	testFailableStore *FailableStore
 	testDatabaseCB    *breaker.CircuitBreaker
 	testBackends      map[string]s3be.ObjectBackend
@@ -245,7 +246,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	db, err := store.NewStore(ctx, &cfg.Database)
+	db, err := postgres.NewStore(ctx, &cfg.Database)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to create store: %v\n", err)
 		os.Exit(1)
@@ -533,7 +534,7 @@ func newThreeBackendManager(t *testing.T) *proxy.BackendManager {
 	})
 }
 
-// newCBStores wraps a role-bearing value (FailableStore or *store.Store)
+// newCBStores wraps a role-bearing value (FailableStore or *postgres.Store)
 // with per-role CB decorators sharing a single *breaker.CircuitBreaker.
 func newCBStores(src roleStore, cb *breaker.CircuitBreaker) proxy.Stores {
 	return proxy.Stores{
@@ -599,7 +600,7 @@ var errSimulatedDBFailure = errors.New("simulated database connection failure")
 // FailableStore wraps a concrete metadata store and can be toggled to return
 // connection errors, simulating a database outage for circuit breaker
 // integration tests. It embeds every narrow role interface so one instance
-// satisfies any role the proxy asks for; a single *store.Store is assigned
+// satisfies any role the proxy asks for; a single *postgres.Store is assigned
 // to every embedded field.
 type FailableStore struct {
 	store.ObjectStore
@@ -614,15 +615,15 @@ type FailableStore struct {
 	store.DashboardStore
 	store.UsageFlusher
 	store.AdvisoryLocker
-	inner            *store.Store
+	inner            *postgres.Store
 	mu               sync.Mutex
 	failing          bool
 	failCommitOnce   bool // when true, RecordObjectAndClearPending fails once, then auto-clears
 }
 
 // newFailableStore returns a FailableStore whose role views all resolve to
-// the same concrete *store.Store.
-func newFailableStore(db *store.Store) *FailableStore {
+// the same concrete *postgres.Store.
+func newFailableStore(db *postgres.Store) *FailableStore {
 	return &FailableStore{
 		ObjectStore:           db,
 		QuotaStore:            db,
