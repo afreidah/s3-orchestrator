@@ -84,7 +84,7 @@ func (o *ObjectManager) PutObject(ctx context.Context, key string, body io.Reade
 	var failedBackends []string
 	var lastErr error
 	for len(eligible) > 0 {
-		backendName, err := o.selectBackendForWrite(ctx, size, eligible)
+		backendName, err := o.parent.selectBackendForWrite(ctx, size, eligible)
 		if err != nil {
 			return "", o.classifyWriteError(span, operation, err)
 		}
@@ -118,7 +118,7 @@ func (o *ObjectManager) PutObject(ctx context.Context, key string, body io.Reade
 		// promotes the intent into object_locations on a later tick rather
 		// than the old failure path silently deleting the just-written
 		// (and possibly only) copy.
-		intentID, err := o.insertPendingIntent(ctx, key, backendName, uploadSize, enc)
+		intentID, err := o.parent.insertPendingIntent(ctx, key, backendName, uploadSize, enc)
 		if err != nil {
 			span.SetStatus(codes.Error, err.Error())
 			return "", err
@@ -155,7 +155,7 @@ func (o *ObjectManager) PutObject(ctx context.Context, key string, body io.Reade
 		}
 
 		// --- Record object location, update quota, clear pending intent (atomic) ---
-		if err := o.recordObjectAndPromoteIntent(ctx, span, key, backendName, uploadSize, enc, intentID); err != nil {
+		if err := o.parent.recordObjectAndPromoteIntent(ctx, span, key, backendName, uploadSize, enc, intentID); err != nil {
 			return "", err
 		}
 
@@ -223,7 +223,7 @@ func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey strin
 	defer span.End()
 
 	// --- Find all source locations (for failover) ---
-	locations, err := o.objects.GetAllObjectLocations(ctx, sourceKey)
+	locations, err := o.parent.stores.Object.GetAllObjectLocations(ctx, sourceKey)
 	if err != nil {
 		if errors.Is(err, core.ErrObjectNotFound) {
 			span.SetStatus(codes.Error, "source object not found")
@@ -276,7 +276,7 @@ func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey strin
 	span.SetAttributes(telemetry.AttrObjectSize.Int64(size))
 
 	// --- Find destination backend with available quota ---
-	destBackendName, err := o.selectWriteTarget(ctx, span, operation, size)
+	destBackendName, err := o.parent.selectWriteTarget(ctx, span, operation, size)
 	if err != nil {
 		return "", err
 	}
@@ -344,7 +344,7 @@ func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey strin
 	// --- Record destination location and update quota ---
 	// Preserve encryption metadata: ciphertext is copied as-is so the
 	// destination keeps the same wrapped DEK and key ID.
-	if err := o.recordObjectOrCleanup(ctx, span, destBackend, destKey, destBackendName, size, srcEnc); err != nil {
+	if err := o.parent.recordObjectOrCleanup(ctx, span, destBackend, destKey, destBackendName, size, srcEnc); err != nil {
 		return "", err
 	}
 
@@ -403,7 +403,7 @@ func (o *ObjectManager) DeleteObject(ctx context.Context, key string) error {
 	defer span.End()
 
 	// --- Delete all copies from store ---
-	copies, err := o.objects.DeleteObject(ctx, key)
+	copies, err := o.parent.stores.Object.DeleteObject(ctx, key)
 	if err != nil {
 		if errors.Is(err, core.ErrObjectNotFound) {
 			// Object not in our tracking - treat as success (idempotent delete)
@@ -426,7 +426,7 @@ func (o *ObjectManager) DeleteObject(ctx context.Context, key string) error {
 				"backend", cp.BackendName, "key", key)
 			return
 		}
-		o.deleteOrEnqueue(ctx, backend, cp.BackendName, key, "delete_failed", cp.SizeBytes)
+		o.parent.deleteOrEnqueue(ctx, backend, cp.BackendName, key, "delete_failed", cp.SizeBytes)
 	})
 
 	// --- Record metrics (use first copy's backend for primary) ---
@@ -491,7 +491,7 @@ func (o *ObjectManager) DeleteObjects(ctx context.Context, keys []string) []Dele
 	// Single-transaction metadata removal: returns the displaced
 	// copies map keyed by object_key. Keys with no copies on disk are
 	// absent from the map (treated as success per S3 spec).
-	copiesByKey, err := o.objects.DeleteObjectsBatch(ctx, keys)
+	copiesByKey, err := o.parent.stores.Object.DeleteObjectsBatch(ctx, keys)
 	if err != nil {
 		// Whole-tx failure: every key surfaces the error. The cache
 		// and backend cleanup paths are skipped; nothing was changed.
@@ -537,7 +537,7 @@ func (o *ObjectManager) DeleteObjects(ctx context.Context, keys []string) []Dele
 	// Delete from backends concurrently, capped at 10 in-flight calls.
 	// deleteOrEnqueue handles per-failure logging + cleanup-queue insert.
 	workerpool.Run(ctx, 10, deleteItems, func(ctx context.Context, item batchDeleteItem) {
-		o.deleteOrEnqueue(ctx, item.backend, item.beName, item.key, "batch_delete_failed", item.sizeBytes)
+		o.parent.deleteOrEnqueue(ctx, item.backend, item.beName, item.key, "batch_delete_failed", item.sizeBytes)
 	})
 
 	// Tally outcomes for metrics and audit
