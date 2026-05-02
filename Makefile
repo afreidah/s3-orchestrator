@@ -206,7 +206,7 @@ migration: ## Create a new database migration file
 COMPOSE_FILE := docker-compose.test.yml
 
 integration-test: ## Run integration tests (testcontainers — no docker-compose needed)
-	go test -race -v -tags integration -count=1 ./internal/integration/
+	go test -race -v -tags integration -count=1 ./internal/integration/ ./internal/store/postgres/
 
 dev-deps: ## Start dev environment services (MinIO + PostgreSQL + Redis + observability)
 	docker compose -f $(COMPOSE_FILE) up -d --wait
