@@ -12,35 +12,10 @@ import (
 	"time"
 )
 
-// Advisory lock IDs for multi-instance coordination via PostgreSQL.
-// Each background service acquires its lock before running to prevent
-// concurrent execution across instances. IDs are arbitrary but must be
-// unique and stable across releases.
-//
-//   - LockRebalancer       (1001) periodic object distribution across backends
-//   - LockReplicator       (1002) background replica creation
-//   - LockCleanupQueue     (1003) failed deletion retry processing
-//   - LockMultipartCleanup (1004) stale multipart upload removal
-//   - LockLifecycle        (1005) object expiration rule evaluation
-//   - LockDrain            (1006) backend drain and object migration
-//   - LockUsageFlush       (1007) usage counter flush to PostgreSQL (Redis mode)
-//   - LockOverReplication  (1008) excess replica removal
-//   - LockReconcile        (1009) backend-vs-database consistency check
-//   - LockScrubber         (1010) background integrity verification
-//   - LockPendingReaper    (1011) abandoned PUT-intent resolution
-const (
-	LockRebalancer       int64 = 1001
-	LockReplicator       int64 = 1002
-	LockCleanupQueue     int64 = 1003
-	LockMultipartCleanup int64 = 1004
-	LockLifecycle        int64 = 1005
-	LockDrain            int64 = 1006
-	LockUsageFlush       int64 = 1007
-	LockOverReplication  int64 = 1008
-	LockReconcile        int64 = 1009
-	LockScrubber         int64 = 1010
-	LockPendingReaper    int64 = 1011
-)
+// Advisory lock IDs live in internal/store/core. The postgres engine
+// only implements WithAdvisoryLock; callers reference the constants
+// from core directly so no engine-specific symbol leaks into request-
+// path code.
 
 // WithAdvisoryLock acquires a PostgreSQL session-level advisory lock on a
 // dedicated connection from the pool. If the lock is acquired, fn runs and

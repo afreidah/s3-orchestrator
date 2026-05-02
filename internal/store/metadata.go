@@ -11,69 +11,7 @@
 
 package store
 
-import (
-	"context"
-
-	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/store/core"
-	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
-)
-
-// -------------------------------------------------------------------------
-// CONSTRUCTOR (Postgres engine)
-// -------------------------------------------------------------------------
-
-// NewStore re-exports postgres.NewStore so callers that still reach for
-// store.NewStore continue to work during the engine-package move.
-func NewStore(ctx context.Context, dbCfg *config.DatabaseConfig) (*postgres.Store, error) {
-	return postgres.NewStore(ctx, dbCfg)
-}
-
-// Store re-exports postgres.Store under the store-package name so
-// callers that still reach for *store.Store continue to compile.
-type Store = postgres.Store
-
-// -------------------------------------------------------------------------
-// ADVISORY LOCK IDS
-// -------------------------------------------------------------------------
-
-// Re-exported lock IDs originally defined in the postgres engine package.
-// Background services name these IDs when calling
-// AdvisoryLocker.WithAdvisoryLock to elect a leader across instances.
-const (
-	// LockRebalancer aliases postgres.LockRebalancer.
-	LockRebalancer = postgres.LockRebalancer
-
-	// LockReplicator aliases postgres.LockReplicator.
-	LockReplicator = postgres.LockReplicator
-
-	// LockCleanupQueue aliases postgres.LockCleanupQueue.
-	LockCleanupQueue = postgres.LockCleanupQueue
-
-	// LockMultipartCleanup aliases postgres.LockMultipartCleanup.
-	LockMultipartCleanup = postgres.LockMultipartCleanup
-
-	// LockLifecycle aliases postgres.LockLifecycle.
-	LockLifecycle = postgres.LockLifecycle
-
-	// LockDrain aliases postgres.LockDrain.
-	LockDrain = postgres.LockDrain
-
-	// LockUsageFlush aliases postgres.LockUsageFlush.
-	LockUsageFlush = postgres.LockUsageFlush
-
-	// LockOverReplication aliases postgres.LockOverReplication.
-	LockOverReplication = postgres.LockOverReplication
-
-	// LockReconcile aliases postgres.LockReconcile.
-	LockReconcile = postgres.LockReconcile
-
-	// LockScrubber aliases postgres.LockScrubber.
-	LockScrubber = postgres.LockScrubber
-
-	// LockPendingReaper aliases postgres.LockPendingReaper.
-	LockPendingReaper = postgres.LockPendingReaper
-)
+import "github.com/afreidah/s3-orchestrator/internal/store/core"
 
 // -------------------------------------------------------------------------
 // REQUEST-TIME ROLE INTERFACES
