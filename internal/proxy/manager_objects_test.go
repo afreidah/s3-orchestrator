@@ -256,7 +256,7 @@ func TestPutObject_RecordFailure_LegacyPath(t *testing.T) {
 		recordObjectErr: errors.New("db write failed"),
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
-	mgr.pending = nil // simulate feature-disabled wiring
+	mgr.stores.Pending = nil // simulate feature-disabled wiring
 
 	_, err := mgr.ObjectManager.PutObject(context.Background(), "legacy-key", bytes.NewReader([]byte("data")), 4, "", nil)
 	if err == nil {
