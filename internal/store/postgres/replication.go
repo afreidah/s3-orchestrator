@@ -4,17 +4,15 @@
 // Author: Alex Freidah
 // -------------------------------------------------------------------------------
 
-package store
+package postgres
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"math"
 
-	"github.com/jackc/pgx/v5"
-
-	db "github.com/afreidah/s3-orchestrator/internal/store/sqlc"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	db "github.com/afreidah/s3-orchestrator/internal/store/postgres/sqlc"
 )
 
 // GetAllObjectLocations returns all copies of an object, ordered by created_at
@@ -63,43 +61,10 @@ func (s *Store) GetUnderReplicatedObjectsExcluding(ctx context.Context, factor, 
 	return toFatObjectLocations(rows), nil
 }
 
-// RecordReplica inserts a replica copy of an object, but only if the source
-// copy still exists. This prevents stale replicas when an object is overwritten
-// or deleted during the (potentially slow) replication copy. Returns true if
-// the replica was inserted, false if skipped.
+// RecordReplica inserts a replica copy of an object, but only if the
+// source copy still exists. Delegates to core.RecordReplica.
 func (s *Store) RecordReplica(ctx context.Context, key, targetBackend, sourceBackend string, size int64) (bool, error) {
-	return withTxVal(s, ctx, func(qtx *db.Queries) (bool, error) {
-		// --- Conditional insert: only if source copy still exists ---
-		inserted, err := qtx.InsertReplicaConditional(ctx, db.InsertReplicaConditionalParams{
-			ObjectKey:     key,
-			BackendName:   targetBackend,
-			BackendName_2: sourceBackend,
-		})
-		if errors.Is(err, pgx.ErrNoRows) {
-			return false, nil
-		}
-		if err != nil {
-			return false, fmt.Errorf("failed to insert replica: %w", err)
-		}
-
-		if !inserted {
-			return false, nil
-		}
-
-		// --- Increment quota for target backend ---
-		n, err := qtx.IncrementQuota(ctx, db.IncrementQuotaParams{
-			Amount:      size,
-			BackendName: targetBackend,
-		})
-		if err != nil {
-			return false, fmt.Errorf("failed to update quota: %w", err)
-		}
-		if n == 0 {
-			return false, ErrNoSpaceAvailable
-		}
-
-		return true, nil
-	})
+	return core.RecordReplica(ctx, s, key, targetBackend, sourceBackend, size)
 }
 
 // GetOverReplicatedObjects finds objects with more copies than the target
@@ -137,25 +102,11 @@ func (s *Store) CountOverReplicatedObjects(ctx context.Context, factor int) (int
 	return count, nil
 }
 
-// RemoveExcessCopy deletes one copy of an object from the given backend inside
-// a transaction, decrementing the backend quota atomically. The caller must
-// have already performed FOR UPDATE locking and copy-count validation.
+// RemoveExcessCopy deletes one copy of an object from the given
+// backend inside a transaction, decrementing the backend quota
+// atomically. Delegates to core.RemoveExcessCopy.
 func (s *Store) RemoveExcessCopy(ctx context.Context, key, backendName string, size int64) error {
-	return s.withTx(ctx, func(qtx *db.Queries) error {
-		if err := qtx.DeleteObjectFromBackend(ctx, db.DeleteObjectFromBackendParams{
-			ObjectKey:   key,
-			BackendName: backendName,
-		}); err != nil {
-			return fmt.Errorf("failed to delete excess copy: %w", err)
-		}
-		if err := qtx.DecrementQuota(ctx, db.DecrementQuotaParams{
-			Amount:      size,
-			BackendName: backendName,
-		}); err != nil {
-			return fmt.Errorf("failed to decrement quota: %w", err)
-		}
-		return nil
-	})
+	return core.RemoveExcessCopy(ctx, s, key, backendName, size)
 }
 
 // GetObjectCopiesForUpdate retrieves all copies of an object under a FOR

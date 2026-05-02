@@ -1,25 +1,205 @@
 // -------------------------------------------------------------------------------
-// Store Role Interfaces
+// Store Package - Type and Interface Aliases
 //
 // Author: Alex Freidah
 //
-// Declares the narrow role interfaces that consumers request from DI. The
-// concrete *Store (PostgreSQL) and sqlite.Store (SQLite) each satisfy every
-// role — this package exposes no composed "god" interface; consumers only
-// ever import the role they actually use.
-//
-// Startup/admin methods live on AdminStore and are resolved separately from
-// the request-time roles.
+// Re-exports the canonical role interfaces, domain types, and sentinel errors
+// from internal/store/core under their original names so consumers and the
+// circuit-breaker decorators in this package compile unchanged. New code
+// should import from internal/store/core directly.
 // -------------------------------------------------------------------------------
 
 package store
 
 import (
 	"context"
-	"errors"
-	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
+)
+
+// -------------------------------------------------------------------------
+// CONSTRUCTOR (Postgres engine)
+// -------------------------------------------------------------------------
+
+// NewStore re-exports postgres.NewStore so callers that still reach for
+// store.NewStore continue to work during the engine-package move.
+func NewStore(ctx context.Context, dbCfg *config.DatabaseConfig) (*postgres.Store, error) {
+	return postgres.NewStore(ctx, dbCfg)
+}
+
+// Store re-exports postgres.Store under the store-package name so
+// callers that still reach for *store.Store continue to compile.
+type Store = postgres.Store
+
+// -------------------------------------------------------------------------
+// ADVISORY LOCK IDS
+// -------------------------------------------------------------------------
+
+// Re-exported lock IDs originally defined in the postgres engine package.
+// Background services name these IDs when calling
+// AdvisoryLocker.WithAdvisoryLock to elect a leader across instances.
+const (
+	// LockRebalancer aliases postgres.LockRebalancer.
+	LockRebalancer = postgres.LockRebalancer
+
+	// LockReplicator aliases postgres.LockReplicator.
+	LockReplicator = postgres.LockReplicator
+
+	// LockCleanupQueue aliases postgres.LockCleanupQueue.
+	LockCleanupQueue = postgres.LockCleanupQueue
+
+	// LockMultipartCleanup aliases postgres.LockMultipartCleanup.
+	LockMultipartCleanup = postgres.LockMultipartCleanup
+
+	// LockLifecycle aliases postgres.LockLifecycle.
+	LockLifecycle = postgres.LockLifecycle
+
+	// LockDrain aliases postgres.LockDrain.
+	LockDrain = postgres.LockDrain
+
+	// LockUsageFlush aliases postgres.LockUsageFlush.
+	LockUsageFlush = postgres.LockUsageFlush
+
+	// LockOverReplication aliases postgres.LockOverReplication.
+	LockOverReplication = postgres.LockOverReplication
+
+	// LockReconcile aliases postgres.LockReconcile.
+	LockReconcile = postgres.LockReconcile
+
+	// LockScrubber aliases postgres.LockScrubber.
+	LockScrubber = postgres.LockScrubber
+
+	// LockPendingReaper aliases postgres.LockPendingReaper.
+	LockPendingReaper = postgres.LockPendingReaper
+)
+
+// -------------------------------------------------------------------------
+// REQUEST-TIME ROLE INTERFACES
+// -------------------------------------------------------------------------
+
+type (
+	// ObjectStore aliases core.ObjectStore.
+	ObjectStore = core.ObjectStore
+
+	// QuotaStore aliases core.QuotaStore.
+	QuotaStore = core.QuotaStore
+
+	// MultipartStore aliases core.MultipartStore.
+	MultipartStore = core.MultipartStore
+
+	// ReplicationStore aliases core.ReplicationStore.
+	ReplicationStore = core.ReplicationStore
+
+	// CleanupStore aliases core.CleanupStore.
+	CleanupStore = core.CleanupStore
+
+	// PendingStore aliases core.PendingStore.
+	PendingStore = core.PendingStore
+
+	// IntegrityStore aliases core.IntegrityStore.
+	IntegrityStore = core.IntegrityStore
+
+	// ExpiredObjectsLister aliases core.ExpiredObjectsLister.
+	ExpiredObjectsLister = core.ExpiredObjectsLister
+
+	// BackendLifecycleStore aliases core.BackendLifecycleStore.
+	BackendLifecycleStore = core.BackendLifecycleStore
+
+	// UsageFlusher aliases core.UsageFlusher.
+	UsageFlusher = core.UsageFlusher
+
+	// AdvisoryLocker aliases core.AdvisoryLocker.
+	AdvisoryLocker = core.AdvisoryLocker
+
+	// DashboardStore aliases core.DashboardStore.
+	DashboardStore = core.DashboardStore
+
+	// AdminStore aliases core.AdminStore.
+	AdminStore = core.AdminStore
+)
+
+// -------------------------------------------------------------------------
+// DOMAIN TYPES
+// -------------------------------------------------------------------------
+
+type (
+	// ObjectLocation aliases core.ObjectLocation.
+	ObjectLocation = core.ObjectLocation
+
+	// EncryptionMeta aliases core.EncryptionMeta.
+	EncryptionMeta = core.EncryptionMeta
+
+	// DeletedCopy aliases core.DeletedCopy.
+	DeletedCopy = core.DeletedCopy
+
+	// PendingObject aliases core.PendingObject.
+	PendingObject = core.PendingObject
+
+	// PendingPromoteResult aliases core.PendingPromoteResult.
+	PendingPromoteResult = core.PendingPromoteResult
+
+	// QuotaStat aliases core.QuotaStat.
+	QuotaStat = core.QuotaStat
+
+	// UsageLimits aliases core.UsageLimits.
+	UsageLimits = core.UsageLimits
+
+	// UsageStat aliases core.UsageStat.
+	UsageStat = core.UsageStat
+
+	// MultipartUpload aliases core.MultipartUpload.
+	MultipartUpload = core.MultipartUpload
+
+	// MultipartPart aliases core.MultipartPart.
+	MultipartPart = core.MultipartPart
+
+	// CleanupItem aliases core.CleanupItem.
+	CleanupItem = core.CleanupItem
+
+	// NotificationRow aliases core.NotificationRow.
+	NotificationRow = core.NotificationRow
+
+	// EncryptedLocation aliases core.EncryptedLocation.
+	EncryptedLocation = core.EncryptedLocation
+
+	// UnencryptedLocation aliases core.UnencryptedLocation.
+	UnencryptedLocation = core.UnencryptedLocation
+
+	// DecryptableLocation aliases core.DecryptableLocation.
+	DecryptableLocation = core.DecryptableLocation
+
+	// ListObjectsResult aliases core.ListObjectsResult.
+	ListObjectsResult = core.ListObjectsResult
+
+	// DirEntry aliases core.DirEntry.
+	DirEntry = core.DirEntry
+
+	// DirectoryListResult aliases core.DirectoryListResult.
+	DirectoryListResult = core.DirectoryListResult
+
+	// S3Error aliases core.S3Error.
+	S3Error = core.S3Error
+)
+
+// -------------------------------------------------------------------------
+// PENDING-PROMOTE RESULT ENUM
+// -------------------------------------------------------------------------
+
+const (
+	// PendingPromoteCommitted aliases core.PendingPromoteCommitted.
+	PendingPromoteCommitted = core.PendingPromoteCommitted
+
+	// PendingPromoteAmbiguous aliases core.PendingPromoteAmbiguous.
+	PendingPromoteAmbiguous = core.PendingPromoteAmbiguous
+
+	// PendingPromoteAlreadyResolved aliases
+	// core.PendingPromoteAlreadyResolved.
+	PendingPromoteAlreadyResolved = core.PendingPromoteAlreadyResolved
+
+	// PendingPromoteSuperseded aliases core.PendingPromoteSuperseded.
+	PendingPromoteSuperseded = core.PendingPromoteSuperseded
 )
 
 // -------------------------------------------------------------------------
@@ -27,313 +207,30 @@ import (
 // -------------------------------------------------------------------------
 
 var (
-	// ErrDBUnavailable is returned by CircuitBreakerStore when the circuit is
-	// open (database is known to be down). The manager uses errors.Is checks
-	// to trigger broadcast fallback (reads) or 503 rejection (writes).
-	ErrDBUnavailable = errors.New("database unavailable")
+	// ErrNoSpaceAvailable re-exports core.ErrNoSpaceAvailable.
+	ErrNoSpaceAvailable = core.ErrNoSpaceAvailable
 
-	// ErrServiceUnavailable is returned to S3 clients when writes are rejected
-	// during a database outage. The server layer's writeStorageError helper
-	// translates this into the appropriate S3 XML error response.
-	ErrServiceUnavailable = &S3Error{
-		StatusCode: 503,
-		Code:       "ServiceUnavailable",
-		Message:    "database unavailable, writes are temporarily rejected",
-	}
+	// ErrDBUnavailable re-exports core.ErrDBUnavailable.
+	ErrDBUnavailable = core.ErrDBUnavailable
 
-	// ErrInsufficientStorage is returned when no backend has enough quota.
-	ErrInsufficientStorage = &S3Error{StatusCode: 507, Code: "InsufficientStorage", Message: "no backend has sufficient quota"}
+	// ErrObjectNotFound re-exports core.ErrObjectNotFound.
+	ErrObjectNotFound = core.ErrObjectNotFound
 
-	// ErrUsageLimitExceeded is returned when all backends holding an object
-	// have exceeded their monthly usage limits.
-	ErrUsageLimitExceeded = &S3Error{StatusCode: 429, Code: "SlowDown", Message: "monthly usage limit exceeded for all backends holding this object"}
+	// ErrMultipartUploadNotFound re-exports core.ErrMultipartUploadNotFound.
+	ErrMultipartUploadNotFound = core.ErrMultipartUploadNotFound
+
+	// ErrServiceUnavailable re-exports core.ErrServiceUnavailable.
+	ErrServiceUnavailable = core.ErrServiceUnavailable
+
+	// ErrInsufficientStorage re-exports core.ErrInsufficientStorage.
+	ErrInsufficientStorage = core.ErrInsufficientStorage
+
+	// ErrUsageLimitExceeded re-exports core.ErrUsageLimitExceeded.
+	ErrUsageLimitExceeded = core.ErrUsageLimitExceeded
 )
 
-// -------------------------------------------------------------------------
-// NARROW ROLE INTERFACES
-// -------------------------------------------------------------------------
-
-// ObjectStore defines object location CRUD and listing operations.
-type ObjectStore interface {
-	GetAllObjectLocations(ctx context.Context, key string) ([]ObjectLocation, error)
-	RecordObject(ctx context.Context, key, backend string, size int64, enc *EncryptionMeta) ([]DeletedCopy, error)
-	RecordObjectAndClearPending(ctx context.Context, key, backend string, size int64, enc *EncryptionMeta, intentID string) ([]DeletedCopy, error)
-	DeleteObject(ctx context.Context, key string) ([]DeletedCopy, error)
-	ListObjects(ctx context.Context, prefix, startAfter string, maxKeys int) (*ListObjectsResult, error)
-	ListObjectsByBackend(ctx context.Context, backendName string, limit int) ([]ObjectLocation, error)
-	ListObjectsByBackendKeyAsc(ctx context.Context, backendName, afterKey string, limit int) ([]ObjectLocation, error)
-	MoveObjectLocation(ctx context.Context, key, fromBackend, toBackend string) (int64, error)
-	ImportObject(ctx context.Context, key, backend string, size int64) (bool, error)
-	DeleteObjectLocation(ctx context.Context, key, backendName string) error
-}
-
-// QuotaStore defines quota routing queries.
-type QuotaStore interface {
-	GetBackendWithSpace(ctx context.Context, size int64, backendOrder []string) (string, error)
-	GetLeastUtilizedBackend(ctx context.Context, size int64, eligible []string) (string, error)
-	GetQuotaStats(ctx context.Context) (map[string]QuotaStat, error)
-}
-
-// MultipartStore defines multipart upload lifecycle operations.
-type MultipartStore interface {
-	CreateMultipartUpload(ctx context.Context, uploadID, key, backend, contentType string, metadata map[string]string) error
-	GetMultipartUpload(ctx context.Context, uploadID string) (*MultipartUpload, error)
-	RecordPart(ctx context.Context, uploadID string, partNumber int, etag string, size int64, enc *EncryptionMeta) error
-	GetParts(ctx context.Context, uploadID string) ([]MultipartPart, error)
-	DeleteMultipartUpload(ctx context.Context, uploadID string) error
-	ListMultipartUploads(ctx context.Context, prefix string, maxUploads int) ([]MultipartUpload, error)
-	CountActiveMultipartUploads(ctx context.Context, bucketPrefix string) (int64, error)
-	GetStaleMultipartUploads(ctx context.Context, olderThan time.Duration) ([]MultipartUpload, error)
-	GetMultipartUploadsByBackend(ctx context.Context, backendName string) ([]MultipartUpload, error)
-}
-
-// ReplicationStore defines replication management operations.
-type ReplicationStore interface {
-	GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]ObjectLocation, error)
-	GetUnderReplicatedObjectsExcluding(ctx context.Context, factor, limit int, excludedBackends []string) ([]ObjectLocation, error)
-	RecordReplica(ctx context.Context, key, targetBackend, sourceBackend string, size int64) (bool, error)
-	GetOverReplicatedObjects(ctx context.Context, factor, limit int) ([]ObjectLocation, error)
-	CountOverReplicatedObjects(ctx context.Context, factor int) (int64, error)
-	RemoveExcessCopy(ctx context.Context, key, backendName string, size int64) error
-}
-
-// CleanupStore defines cleanup queue and orphan byte tracking operations.
-type CleanupStore interface {
-	EnqueueCleanup(ctx context.Context, backendName, objectKey, reason string, sizeBytes int64) error
-	GetPendingCleanups(ctx context.Context, limit int) ([]CleanupItem, error)
-	CompleteCleanupItem(ctx context.Context, id int64) error
-	RetryCleanupItem(ctx context.Context, id int64, backoff time.Duration, lastError string) error
-	CleanupQueueDepth(ctx context.Context) (int64, error)
-	IncrementOrphanBytes(ctx context.Context, backendName string, amount int64) error
-	DecrementOrphanBytes(ctx context.Context, backendName string, amount int64) error
-	SweepStaleCleanupQueueRows(ctx context.Context, key, backend string) (int64, error)
-}
-
-// PendingStore defines in-flight PutObject intent tracking. The write path
-// inserts an intent before the backend PUT and removes it on a successful
-// commit; the pending reaper resolves any intents left behind by a failed
-// commit so a DB outage between PUT and RecordObject cannot silently destroy
-// the prior copy of an overwritten key.
-type PendingStore interface {
-	InsertPending(ctx context.Context, p *PendingObject) error
-	DeletePending(ctx context.Context, intentID string) error
-	GetStalePending(ctx context.Context, olderThan time.Time, limit int) ([]PendingObject, error)
-	PromotePending(ctx context.Context, p *PendingObject) (PendingPromoteResult, []DeletedCopy, error)
-	PendingDepth(ctx context.Context) (int64, error)
-	DeletePendingByBackend(ctx context.Context, backendName string) error
-}
-
-// IntegrityStore defines content hash verification operations.
-type IntegrityStore interface {
-	GetRandomHashedObjects(ctx context.Context, limit int) ([]ObjectLocation, error)
-	GetObjectsWithoutHash(ctx context.Context, limit, offset int) ([]ObjectLocation, error)
-	UpdateContentHash(ctx context.Context, key, backendName, hash string) error
-}
-
-// ExpiredObjectsLister defines object lifecycle expiration operations.
-type ExpiredObjectsLister interface {
-	ListExpiredObjects(ctx context.Context, prefix string, cutoff time.Time, limit int) ([]ObjectLocation, error)
-}
-
-// BackendLifecycleStore defines backend-level admin operations.
-type BackendLifecycleStore interface {
-	BackendObjectStats(ctx context.Context, backendName string) (int64, int64, error)
-	DeleteBackendData(ctx context.Context, backendName string) error
-}
-
-// UsageFlusher defines the store method used by UsageTracker.FlushUsage.
-type UsageFlusher interface {
-	FlushUsageDeltas(ctx context.Context, backendName, period string, apiRequests, egressBytes, ingressBytes int64) error
-}
-
-// AdvisoryLocker defines the store method used by background services for
-// leader election across instances.
-type AdvisoryLocker interface {
-	WithAdvisoryLock(ctx context.Context, lockID int64, fn func(ctx context.Context) error) (bool, error)
-}
-
-// DashboardStore defines the store methods used by the web UI dashboard
-// aggregator. It groups the four aggregate counters with the lazy-loaded
-// directory listing; nothing else needs this exact set.
-type DashboardStore interface {
-	GetQuotaStats(ctx context.Context) (map[string]QuotaStat, error)
-	GetObjectCounts(ctx context.Context) (map[string]int64, error)
-	GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error)
-	GetUsageForPeriod(ctx context.Context, period string) (map[string]UsageStat, error)
-	ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*DirectoryListResult, error)
-}
-
-// -------------------------------------------------------------------------
-// ADMIN STORE INTERFACE
-// -------------------------------------------------------------------------
-
-// AdminStore defines startup, shutdown, and admin-only operations on the
-// concrete store. Both the PostgreSQL and SQLite stores satisfy this
-// interface. Methods here are NOT wrapped by CircuitBreakerStore.
-type AdminStore interface {
-	// Lifecycle
-	RunMigrations(ctx context.Context) error
-	VerifySchemaVersion(ctx context.Context) error
-	SyncQuotaLimits(ctx context.Context, backends []config.BackendConfig) error
-	Close()
-
-	// Encryption admin operations
-	ListEncryptedLocations(ctx context.Context, keyID string, limit, offset int) ([]EncryptedLocation, error)
-	UpdateEncryptionKey(ctx context.Context, objectKey, backendName string, newEncryptionKey []byte, newKeyID string) error
-	ListUnencryptedLocations(ctx context.Context, limit, offset int) ([]UnencryptedLocation, error)
-	MarkObjectEncrypted(ctx context.Context, objectKey, backendName string, encryptionKey []byte, keyID string, plaintextSize, ciphertextSize int64) error
-	ListAllEncryptedLocations(ctx context.Context, limit, offset int) ([]DecryptableLocation, error)
-	MarkObjectDecrypted(ctx context.Context, objectKey, backendName string, plaintextSize int64) error
-
-	// Notification outbox
-	InsertNotification(ctx context.Context, eventType, payload, endpointURL string) error
-	GetPendingNotifications(ctx context.Context, limit int) ([]NotificationRow, error)
-	CompleteNotification(ctx context.Context, id int64) error
-	RetryNotification(ctx context.Context, id int64, backoff time.Duration, lastError string) error
-
-	// Advisory lock (needed by notifier worker for leader election)
-	WithAdvisoryLock(ctx context.Context, lockID int64, fn func(ctx context.Context) error) (bool, error)
-}
-
-// -------------------------------------------------------------------------
-// TYPES
-// -------------------------------------------------------------------------
-
-// UsageLimits holds configurable monthly usage limits for a single backend.
-// Zero means unlimited for that dimension.
-type UsageLimits struct {
-	APIRequestLimit  int64
-	EgressByteLimit  int64
-	IngressByteLimit int64
-}
-
-// UsageStat holds usage statistics for a single backend in a given period.
-type UsageStat struct {
-	APIRequests  int64
-	EgressBytes  int64
-	IngressBytes int64
-}
-
-// NotificationRow represents a pending notification in the outbox table.
-type NotificationRow struct {
-	ID          int64
-	EventType   string
-	Payload     []byte
-	EndpointURL string
-	Attempts    int32
-}
-
-// CleanupItem represents a pending cleanup operation from the retry queue.
-type CleanupItem struct {
-	ID          int64
-	BackendName string
-	ObjectKey   string
-	Reason      string
-	Attempts    int32
-	SizeBytes   int64
-}
-
-// PendingObject represents an in-flight PutObject intent recorded before
-// the backend PUT. CreatedAt is set by the database default at insert time
-// and read back during reaper scans to gate on min-age.
-type PendingObject struct {
-	IntentID      string
-	ObjectKey     string
-	BackendName   string
-	SizeBytes     int64
-	Encrypted     bool
-	EncryptionKey []byte
-	KeyID         string
-	PlaintextSize int64
-	ContentHash   string
-	CreatedAt     time.Time
-}
-
-// PendingPromoteResult describes how PromotePending resolved an intent.
-type PendingPromoteResult int
-
-const (
-	// PendingPromoteCommitted means the pending row was promoted into
-	// object_locations and removed in the same transaction.
-	PendingPromoteCommitted PendingPromoteResult = iota
-
-	// PendingPromoteAmbiguous is reserved for pathological cases where
-	// the resolver cannot decide between promotion and dropping (e.g. a
-	// future bug or an unexpected DB state). The current resolver does
-	// not produce this result; the timestamp comparison covers every
-	// previously-ambiguous case as Superseded instead. Kept so the metric
-	// label and constant stay stable across releases.
-	PendingPromoteAmbiguous
-
-	// PendingPromoteAlreadyResolved means the pending row was gone by the
-	// time the transaction acquired its lock — another reaper instance
-	// already resolved it. Benign no-op.
-	PendingPromoteAlreadyResolved
-
-	// PendingPromoteSuperseded means a successful write for the same key
-	// committed after this intent was inserted. The intent is provably
-	// stale, so the resolver deletes the pending row in the same
-	// transaction as the timestamp check. The bytes pointed to by the
-	// intent are either gone (same-backend overwrite) or orphan
-	// (different-backend retry); orphan bytes are eventually cleaned up
-	// by the reconciler.
-	PendingPromoteSuperseded
-)
-
-// EncryptedLocation represents an encrypted object location for key rotation.
-type EncryptedLocation struct {
-	ObjectKey     string
-	BackendName   string
-	EncryptionKey []byte
-	KeyID         string
-}
-
-// UnencryptedLocation represents an unencrypted object location.
-type UnencryptedLocation struct {
-	ObjectKey   string
-	BackendName string
-	SizeBytes   int64
-}
-
-// DecryptableLocation represents an encrypted object location with all
-// metadata needed for decryption.
-type DecryptableLocation struct {
-	ObjectKey     string
-	BackendName   string
-	SizeBytes     int64
-	EncryptionKey []byte
-	KeyID         string
-	PlaintextSize int64
-}
-
-// -------------------------------------------------------------------------
-// COMPILE-TIME CHECKS
-// -------------------------------------------------------------------------
-
-// Verify *Store satisfies every narrow role interface and AdminStore. Adding
-// a method to *Store that does not land on any of these interfaces is a
-// signal to either slot it into an existing role or declare a new one —
-// there is no composed union for it to hide inside.
-var (
-	_ ObjectStore           = (*Store)(nil)
-	_ QuotaStore            = (*Store)(nil)
-	_ MultipartStore        = (*Store)(nil)
-	_ ReplicationStore      = (*Store)(nil)
-	_ CleanupStore          = (*Store)(nil)
-	_ IntegrityStore        = (*Store)(nil)
-	_ ExpiredObjectsLister        = (*Store)(nil)
-	_ BackendLifecycleStore = (*Store)(nil)
-	_ DashboardStore        = (*Store)(nil)
-	_ UsageFlusher          = (*Store)(nil)
-	_ AdvisoryLocker        = (*Store)(nil)
-	_ AdminStore            = (*Store)(nil)
-)
-
-// GroupByKey groups a flat list of object locations into a map keyed by object_key.
+// GroupByKey re-exports core.GroupByKey for callers that still reach for it
+// under the store package name.
 func GroupByKey(locations []ObjectLocation) map[string][]ObjectLocation {
-	m := make(map[string][]ObjectLocation, len(locations)/2)
-	for i := range locations {
-		m[locations[i].ObjectKey] = append(m[locations[i].ObjectKey], locations[i])
-	}
-	return m
+	return core.GroupByKey(locations)
 }

@@ -4,7 +4,8 @@
 # Author: Alex Freidah
 #
 # Linter settings for static analysis. Enables gocritic (diagnostic + performance
-# tags) and misspell. Excludes generated sqlc code from analysis.
+# tags) and misspell. Excludes generated sqlc code (postgres engine) from
+# analysis.
 # -------------------------------------------------------------------------------
 
 version: "2"
@@ -37,7 +38,7 @@ linters:
       - legacy
       - std-error-handling
     paths:
-      - internal/store/sqlc
+      - internal/store/postgres/sqlc
       - third_party$
       - builtin$
       - examples$

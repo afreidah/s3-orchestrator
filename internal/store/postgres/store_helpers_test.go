@@ -5,12 +5,12 @@
 //
 // Exercises the generic toFatObjectLocations and toSlimObjectLocations
 // helpers without standing up a real PostgreSQL. Each row type the queries
-// project has its own accessor methods (in internal/store/sqlc), and these
+// project has its own accessor methods (in internal/store/postgres/sqlc), and these
 // tests assert the conversion for every shape — including the nullable
 // pointer fields on the encryption-aware ("fat") rows.
 // -------------------------------------------------------------------------------
 
-package store
+package postgres
 
 import (
 	"testing"
@@ -18,7 +18,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	db "github.com/afreidah/s3-orchestrator/internal/store/sqlc"
+	db "github.com/afreidah/s3-orchestrator/internal/store/postgres/sqlc"
 )
 
 // pgtime returns a pgx timestamptz wrapping t, valid and non-zero.
