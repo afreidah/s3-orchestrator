@@ -16,21 +16,21 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
-	st "github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 func TestGetDashboardData_Success(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
-		getQuotaStatsResp: map[string]st.QuotaStat{
+		getQuotaStatsResp: map[string]core.QuotaStat{
 			"b1": {BackendName: "b1", BytesUsed: 500, BytesLimit: 1000},
 		},
 		getObjectCountsResp:    map[string]int64{"b1": 42},
 		getActiveMultipartResp: map[string]int64{"b1": 3},
-		getUsageForPeriodResp:  map[string]st.UsageStat{"b1": {APIRequests: 100}},
-		listDirChildrenResp: &st.DirectoryListResult{
-			Entries: []st.DirEntry{
+		getUsageForPeriodResp:  map[string]core.UsageStat{"b1": {APIRequests: 100}},
+		listDirChildrenResp: &core.DirectoryListResult{
+			Entries: []core.DirEntry{
 				{Name: "bucket1/", IsDir: true, FileCount: 10, TotalSize: 4096},
 			},
 		},
@@ -80,7 +80,7 @@ func TestGetDashboardData_QuotaStatsError(t *testing.T) {
 func TestGetDashboardData_ObjectCountsError(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
-		getQuotaStatsResp:  map[string]st.QuotaStat{"b1": {}},
+		getQuotaStatsResp:  map[string]core.QuotaStat{"b1": {}},
 		getObjectCountsErr: errors.New("db error"),
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
@@ -95,7 +95,7 @@ func TestGetDashboardData_ObjectCountsError(t *testing.T) {
 func TestGetDashboardData_MultipartCountsError(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
-		getQuotaStatsResp:     map[string]st.QuotaStat{"b1": {}},
+		getQuotaStatsResp:     map[string]core.QuotaStat{"b1": {}},
 		getObjectCountsResp:   map[string]int64{"b1": 0},
 		getActiveMultipartErr: errors.New("db error"),
 	}
@@ -111,7 +111,7 @@ func TestGetDashboardData_MultipartCountsError(t *testing.T) {
 func TestGetDashboardData_UsageForPeriodError(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
-		getQuotaStatsResp:      map[string]st.QuotaStat{"b1": {}},
+		getQuotaStatsResp:      map[string]core.QuotaStat{"b1": {}},
 		getObjectCountsResp:    map[string]int64{"b1": 0},
 		getActiveMultipartResp: map[string]int64{"b1": 0},
 		getUsageForPeriodErr:   errors.New("db error"),
@@ -128,10 +128,10 @@ func TestGetDashboardData_UsageForPeriodError(t *testing.T) {
 func TestGetDashboardData_ListDirChildrenError(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
-		getQuotaStatsResp:      map[string]st.QuotaStat{"b1": {}},
+		getQuotaStatsResp:      map[string]core.QuotaStat{"b1": {}},
 		getObjectCountsResp:    map[string]int64{"b1": 0},
 		getActiveMultipartResp: map[string]int64{"b1": 0},
-		getUsageForPeriodResp:  map[string]st.UsageStat{},
+		getUsageForPeriodResp:  map[string]core.UsageStat{},
 		listDirChildrenErr:     errors.New("db error"),
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
@@ -146,11 +146,11 @@ func TestGetDashboardData_ListDirChildrenError(t *testing.T) {
 func TestGetDashboardData_UnhealthyBackends(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
-		getQuotaStatsResp:      map[string]st.QuotaStat{"b1": {}},
+		getQuotaStatsResp:      map[string]core.QuotaStat{"b1": {}},
 		getObjectCountsResp:    map[string]int64{"b1": 0},
 		getActiveMultipartResp: map[string]int64{"b1": 0},
-		getUsageForPeriodResp:  map[string]st.UsageStat{},
-		listDirChildrenResp:    &st.DirectoryListResult{},
+		getUsageForPeriodResp:  map[string]core.UsageStat{},
+		listDirChildrenResp:    &core.DirectoryListResult{},
 	}
 
 	// Create a manager with a CircuitBreakerBackend in open state
@@ -162,9 +162,9 @@ func TestGetDashboardData_UnhealthyBackends(t *testing.T) {
 
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": cbBackend},
-		Stores:           StoresFromMock(store),
-		Dashboard:           store,
-		Metrics:           store,
+		Stores:          StoresFromMock(store),
+		Dashboard:       store,
+		Metrics:         store,
 		Order:           []string{"b1"},
 		RoutingStrategy: config.RoutingPack,
 	})
@@ -182,11 +182,11 @@ func TestGetDashboardData_UnhealthyBackends(t *testing.T) {
 func TestGetDashboardData_HealthyBackendsNotMarked(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
-		getQuotaStatsResp:      map[string]st.QuotaStat{"b1": {}},
+		getQuotaStatsResp:      map[string]core.QuotaStat{"b1": {}},
 		getObjectCountsResp:    map[string]int64{"b1": 0},
 		getActiveMultipartResp: map[string]int64{"b1": 0},
-		getUsageForPeriodResp:  map[string]st.UsageStat{},
-		listDirChildrenResp:    &st.DirectoryListResult{},
+		getUsageForPeriodResp:  map[string]core.UsageStat{},
+		listDirChildrenResp:    &core.DirectoryListResult{},
 	}
 
 	// Healthy CB backend — circuit is closed
@@ -194,9 +194,9 @@ func TestGetDashboardData_HealthyBackendsNotMarked(t *testing.T) {
 
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": cbBackend},
-		Stores:           StoresFromMock(store),
-		Dashboard:           store,
-		Metrics:           store,
+		Stores:          StoresFromMock(store),
+		Dashboard:       store,
+		Metrics:         store,
 		Order:           []string{"b1"},
 		RoutingStrategy: config.RoutingPack,
 	})
@@ -214,7 +214,7 @@ func TestGetDashboardData_HealthyBackendsNotMarked(t *testing.T) {
 func TestGetDirectoryChildren_CapsMaxKeys(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
-		listDirChildrenResp: &st.DirectoryListResult{},
+		listDirChildrenResp: &core.DirectoryListResult{},
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 	defer mgr.Close()

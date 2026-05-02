@@ -8,7 +8,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"go.uber.org/mock/gomock"
 )
 
@@ -28,7 +28,7 @@ func TestRebalancer_SetConfig_RoundTrip(t *testing.T) {
 
 func TestExceedsThreshold_BelowThreshold(t *testing.T) {
 	t.Parallel()
-	stats := map[string]store.QuotaStat{
+	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 500, BytesLimit: 1000},
 		"b2": {BytesUsed: 450, BytesLimit: 1000},
 	}
@@ -39,7 +39,7 @@ func TestExceedsThreshold_BelowThreshold(t *testing.T) {
 
 func TestExceedsThreshold_AboveThreshold(t *testing.T) {
 	t.Parallel()
-	stats := map[string]store.QuotaStat{
+	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 900, BytesLimit: 1000},
 		"b2": {BytesUsed: 100, BytesLimit: 1000},
 	}
@@ -50,7 +50,7 @@ func TestExceedsThreshold_AboveThreshold(t *testing.T) {
 
 func TestExceedsThreshold_SingleBackend(t *testing.T) {
 	t.Parallel()
-	stats := map[string]store.QuotaStat{
+	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 900, BytesLimit: 1000},
 	}
 	if ExceedsThreshold(stats, []string{"b1"}, 0.1) {
@@ -75,7 +75,7 @@ func TestPlanSpreadEven_BalancedSkipped(t *testing.T) {
 
 	r := NewRebalancer(ops, ms)
 	// Equal utilization: no moves needed
-	stats := map[string]store.QuotaStat{
+	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 500, BytesLimit: 1000},
 		"b2": {BytesUsed: 500, BytesLimit: 1000},
 	}
@@ -93,7 +93,7 @@ func TestPlanSpreadEven_ImbalancedPlansMoves(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
 	ms := &mockMetadataStore{
-		objectsByBackend: map[string][]store.ObjectLocation{
+		objectsByBackend: map[string][]core.ObjectLocation{
 			"b1": {{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100}},
 		},
 	}
@@ -102,7 +102,7 @@ func TestPlanSpreadEven_ImbalancedPlansMoves(t *testing.T) {
 
 	r := NewRebalancer(ops, ms)
 	// b1 at 80%, b2 at 20% → target ~50%, b1 has excess
-	stats := map[string]store.QuotaStat{
+	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 800, BytesLimit: 1000},
 		"b2": {BytesUsed: 200, BytesLimit: 1000},
 	}
@@ -129,7 +129,7 @@ func TestPlanSpreadEven_BatchesBackendLookup(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
-	objs := []store.ObjectLocation{
+	objs := []core.ObjectLocation{
 		{ObjectKey: "k1", BackendName: "b1", SizeBytes: 50},
 		{ObjectKey: "k2", BackendName: "b1", SizeBytes: 50},
 		{ObjectKey: "k3", BackendName: "b1", SizeBytes: 50},
@@ -137,7 +137,7 @@ func TestPlanSpreadEven_BatchesBackendLookup(t *testing.T) {
 		{ObjectKey: "k5", BackendName: "b1", SizeBytes: 50},
 	}
 	ms := &mockMetadataStore{
-		objectsByBackend: map[string][]store.ObjectLocation{"b1": objs},
+		objectsByBackend: map[string][]core.ObjectLocation{"b1": objs},
 		// Pre-populate: k2 already has a replica on b2, the others don't.
 		getBackendsForKeysResp: map[string][]string{
 			"k1": {"b1"},
@@ -150,7 +150,7 @@ func TestPlanSpreadEven_BatchesBackendLookup(t *testing.T) {
 	ops.EXPECT().BackendOrder().Return([]string{"b1", "b2"}).AnyTimes()
 
 	r := NewRebalancer(ops, ms)
-	stats := map[string]store.QuotaStat{
+	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 800, BytesLimit: 1000},
 		"b2": {BytesUsed: 200, BytesLimit: 1000},
 	}
@@ -175,13 +175,13 @@ func TestPlanPackTight_BatchesBackendLookup(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
-	objs := []store.ObjectLocation{
+	objs := []core.ObjectLocation{
 		{ObjectKey: "k1", BackendName: "b2", SizeBytes: 50},
 		{ObjectKey: "k2", BackendName: "b2", SizeBytes: 50},
 		{ObjectKey: "k3", BackendName: "b2", SizeBytes: 50},
 	}
 	ms := &mockMetadataStore{
-		objectsByBackend: map[string][]store.ObjectLocation{"b2": objs},
+		objectsByBackend: map[string][]core.ObjectLocation{"b2": objs},
 		// k2 already lives on b1 (the more-utilized destination); the
 		// planner must skip it without re-querying per object.
 		getBackendsForKeysResp: map[string][]string{
@@ -194,7 +194,7 @@ func TestPlanPackTight_BatchesBackendLookup(t *testing.T) {
 
 	r := NewRebalancer(ops, ms)
 	// b1 is the most-full destination, b2 is the source.
-	stats := map[string]store.QuotaStat{
+	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 800, BytesLimit: 1000},
 		"b2": {BytesUsed: 100, BytesLimit: 1000},
 	}
@@ -300,7 +300,7 @@ func TestRebalance_UnknownStrategy(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
-	ms := &mockMetadataStore{quotaStats: map[string]store.QuotaStat{
+	ms := &mockMetadataStore{quotaStats: map[string]core.QuotaStat{
 		"b1": {BytesUsed: 900, BytesLimit: 1000},
 		"b2": {BytesUsed: 100, BytesLimit: 1000},
 	}}

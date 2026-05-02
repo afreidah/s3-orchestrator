@@ -26,7 +26,7 @@ import (
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
-	st "github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // -------------------------------------------------------------------------
@@ -299,13 +299,13 @@ func TestReconcileSorted_HandlerErrorAborts(t *testing.T) {
 // applies the cursor + limit so tests can assert real pagination
 // semantics rather than blindly returning whatever the test wired.
 type fakeLister struct {
-	pages [][]st.ObjectLocation
+	pages [][]core.ObjectLocation
 	calls int
 	err   error
 	errAt int
 }
 
-func (f *fakeLister) ListObjectsByBackendKeyAsc(_ context.Context, _, afterKey string, limit int) ([]st.ObjectLocation, error) {
+func (f *fakeLister) ListObjectsByBackendKeyAsc(_ context.Context, _, afterKey string, limit int) ([]core.ObjectLocation, error) {
 	if f.err != nil && f.calls == f.errAt {
 		f.calls++
 		return nil, f.err
@@ -316,7 +316,7 @@ func (f *fakeLister) ListObjectsByBackendKeyAsc(_ context.Context, _, afterKey s
 	}
 	page := f.pages[0]
 	f.pages = f.pages[1:]
-	out := make([]st.ObjectLocation, 0, len(page))
+	out := make([]core.ObjectLocation, 0, len(page))
 	for i := range page {
 		if page[i].ObjectKey > afterKey {
 			out = append(out, page[i])
@@ -332,12 +332,12 @@ func (f *fakeLister) ListObjectsByBackendKeyAsc(_ context.Context, _, afterKey s
 // after page until ListObjectsByBackendKeyAsc returns empty.
 func TestDBCursorStream_DrainsAcrossPages(t *testing.T) {
 	lister := &fakeLister{
-		pages: [][]st.ObjectLocation{
+		pages: [][]core.ObjectLocation{
 			{{ObjectKey: "vb/a"}, {ObjectKey: "vb/b"}},
 			{{ObjectKey: "vb/c"}, {ObjectKey: "vb/d"}},
 		},
 	}
-	it := newDBCursorStream(context.Background(), lister, "be1", "vb/", nil)
+	it := newDBCursorStream(lister, "be1", "vb/", nil)
 	got := drain(t, it)
 	want := []string{"vb/a", "vb/b", "vb/c", "vb/d"}
 	if !equalStrings(got, want) {
@@ -349,7 +349,7 @@ func TestDBCursorStream_DrainsAcrossPages(t *testing.T) {
 // dropped — they belong to another bucket's reconcile pass.
 func TestDBCursorStream_FiltersSiblingBucket(t *testing.T) {
 	lister := &fakeLister{
-		pages: [][]st.ObjectLocation{
+		pages: [][]core.ObjectLocation{
 			{
 				{ObjectKey: "vb/a"},
 				{ObjectKey: "other/x"}, // sibling bucket; must be skipped
@@ -357,7 +357,7 @@ func TestDBCursorStream_FiltersSiblingBucket(t *testing.T) {
 			},
 		},
 	}
-	it := newDBCursorStream(context.Background(), lister, "be1", "vb/", []string{"other/"})
+	it := newDBCursorStream(lister, "be1", "vb/", []string{"other/"})
 	got := drain(t, it)
 	if !equalStrings(got, []string{"vb/a", "vb/b"}) {
 		t.Errorf("sibling-bucket row not filtered: %v", got)
@@ -370,13 +370,13 @@ func TestDBCursorStream_FiltersSiblingBucket(t *testing.T) {
 func TestDBCursorStream_PropagatesError(t *testing.T) {
 	want := errors.New("query failed")
 	lister := &fakeLister{
-		pages: [][]st.ObjectLocation{
+		pages: [][]core.ObjectLocation{
 			{{ObjectKey: "vb/a"}, {ObjectKey: "vb/b"}},
 		},
 		err:   want,
 		errAt: 1, // fail on the second page fetch
 	}
-	it := newDBCursorStream(context.Background(), lister, "be1", "vb/", nil)
+	it := newDBCursorStream(lister, "be1", "vb/", nil)
 	ctx := context.Background()
 
 	// Page 1 — should succeed.
@@ -399,8 +399,8 @@ func TestDBCursorStream_PropagatesError(t *testing.T) {
 // has no side effect on subsequent next calls."
 func TestDBCursorStream_StopIsNoop(t *testing.T) {
 	t.Parallel()
-	lister := &fakeLister{pages: [][]st.ObjectLocation{{{ObjectKey: "vb/a"}}}}
-	it := newDBCursorStream(context.Background(), lister, "be1", "vb/", nil)
+	lister := &fakeLister{pages: [][]core.ObjectLocation{{{ObjectKey: "vb/a"}}}}
+	it := newDBCursorStream(lister, "be1", "vb/", nil)
 	it.stop()
 	it.stop() // idempotent
 	got := drain(t, it)
@@ -412,12 +412,12 @@ func TestDBCursorStream_StopIsNoop(t *testing.T) {
 // TestDBCursorStream_ContextCancellation verifies the cursor stops trying
 // to fetch new pages once the context is cancelled.
 func TestDBCursorStream_ContextCancellation(t *testing.T) {
-	lister := &fakeLister{pages: [][]st.ObjectLocation{
+	lister := &fakeLister{pages: [][]core.ObjectLocation{
 		{{ObjectKey: "vb/a"}},
 	}}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	it := newDBCursorStream(ctx, lister, "be1", "vb/", nil)
+	it := newDBCursorStream(lister, "be1", "vb/", nil)
 	_, ok, err := it.next(ctx)
 	if ok || err == nil {
 		t.Errorf("cancelled ctx should abort: ok=%v err=%v", ok, err)
@@ -688,10 +688,10 @@ func (l *listingMockBackend) ListObjects(_ context.Context, _ string, fn func([]
 func TestReconcileBackend_HappyPathImportsAndDeletes(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
-		listObjectsByBackendKeyAscFn: func(afterKey string, _ int) ([]st.ObjectLocation, error) {
+		listObjectsByBackendKeyAscFn: func(afterKey string, _ int) ([]core.ObjectLocation, error) {
 			// One-shot: return both rows on the first call, empty after.
 			if afterKey == "" {
-				return []st.ObjectLocation{
+				return []core.ObjectLocation{
 					{ObjectKey: "vb/b", BackendName: "b1"},
 					{ObjectKey: "vb/x", BackendName: "b1"},
 				}, nil
@@ -733,9 +733,9 @@ func TestReconcileBackend_HappyPathImportsAndDeletes(t *testing.T) {
 func TestReconcileBackend_NoMutationsWhenInSync(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
-		listObjectsByBackendKeyAscFn: func(afterKey string, _ int) ([]st.ObjectLocation, error) {
+		listObjectsByBackendKeyAscFn: func(afterKey string, _ int) ([]core.ObjectLocation, error) {
 			if afterKey == "" {
-				return []st.ObjectLocation{
+				return []core.ObjectLocation{
 					{ObjectKey: "vb/a"},
 					{ObjectKey: "vb/b"},
 				}, nil

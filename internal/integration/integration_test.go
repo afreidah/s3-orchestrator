@@ -32,11 +32,12 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 
-	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
-	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
+	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 
 	// -------------------------------------------------------------------------
 	// CRUD
@@ -2865,7 +2866,7 @@ func TestStore(t *testing.T) {
 			t.Fatal("expected error, got nil")
 		}
 
-		var s3Err *store.S3Error
+		var s3Err *core.S3Error
 		if !errors.As(err, &s3Err) {
 			t.Fatalf("expected *S3Error, got %T: %v", err, err)
 		}

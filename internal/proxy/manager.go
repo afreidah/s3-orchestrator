@@ -31,7 +31,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/internalkey"
-	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
@@ -48,11 +48,11 @@ type BackendManagerConfig struct {
 	Backends           map[string]backend.ObjectBackend
 	Stores             Stores
 	Metrics            MetricsDeps
-	Dashboard          store.DashboardStore
+	Dashboard          core.DashboardStore
 	Order              []string
 	CacheTTL           time.Duration
 	BackendTimeout     time.Duration
-	UsageLimits        map[string]store.UsageLimits
+	UsageLimits        map[string]core.UsageLimits
 	RoutingStrategy    config.RoutingStrategy
 	ParallelBroadcast  bool                   // fan-out reads in parallel during degraded mode
 	Encryptor          *encryption.Encryptor  // nil when encryption is disabled
@@ -208,7 +208,7 @@ func (m *BackendManager) RecordUsage(backendName string, apiCalls, egress, ingre
 
 // UpdateUsageLimits replaces the per-backend usage limits. Safe to call
 // concurrently with request handling.
-func (m *BackendManager) UpdateUsageLimits(limits map[string]store.UsageLimits) {
+func (m *BackendManager) UpdateUsageLimits(limits map[string]core.UsageLimits) {
 	m.usage.UpdateLimits(limits)
 }
 
@@ -421,7 +421,7 @@ func (m *BackendManager) ReconcileBackend(ctx context.Context, backendName, buck
 	s3 := newS3KeyStream(ctx, s3b, bucketPrefix, otherPrefixes, &apiPages)
 	defer s3.stop()
 
-	dbIter := newDBCursorStream(ctx, m.objects, backendName, bucketPrefix, otherPrefixes)
+	dbIter := newDBCursorStream(m.objects, backendName, bucketPrefix, otherPrefixes)
 	defer dbIter.stop()
 
 	res := &reconcileResult{}

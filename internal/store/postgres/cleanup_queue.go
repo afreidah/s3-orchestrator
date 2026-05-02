@@ -37,15 +37,15 @@ func (s *Store) EnqueueCleanup(ctx context.Context, backendName, objectKey, reas
 }
 
 // GetPendingCleanups returns cleanup items ready for retry.
-func (s *Store) GetPendingCleanups(ctx context.Context, limit int) ([]CleanupItem, error) {
+func (s *Store) GetPendingCleanups(ctx context.Context, limit int) ([]core.CleanupItem, error) {
 	rows, err := s.queries.GetPendingCleanups(ctx, int32(limit)) //nolint:gosec // G115: limit is a small caller-controlled batch size
 	if err != nil {
 		return nil, fmt.Errorf("failed to get pending cleanups: %w", err)
 	}
 
-	items := make([]CleanupItem, len(rows))
+	items := make([]core.CleanupItem, len(rows))
 	for i, row := range rows {
-		items[i] = CleanupItem{
+		items[i] = core.CleanupItem{
 			ID:          row.ID,
 			BackendName: row.BackendName,
 			ObjectKey:   row.ObjectKey,

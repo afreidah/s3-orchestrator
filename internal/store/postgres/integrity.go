@@ -11,12 +11,13 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	db "github.com/afreidah/s3-orchestrator/internal/store/postgres/sqlc"
 )
 
 // GetRandomHashedObjects returns random object locations that have a stored
 // content hash. Used by the scrubber to verify data integrity.
-func (s *Store) GetRandomHashedObjects(ctx context.Context, limit int) ([]ObjectLocation, error) {
+func (s *Store) GetRandomHashedObjects(ctx context.Context, limit int) ([]core.ObjectLocation, error) {
 	safeLimit := int32(max(1, min(limit, math.MaxInt32))) //nolint:gosec // clamped above
 	rows, err := s.queries.GetRandomHashedObjects(ctx, safeLimit)
 	if err != nil {
@@ -27,7 +28,7 @@ func (s *Store) GetRandomHashedObjects(ctx context.Context, limit int) ([]Object
 
 // GetObjectsWithoutHash returns object locations that have no stored content
 // hash, ordered by creation time. Used by the backfill command.
-func (s *Store) GetObjectsWithoutHash(ctx context.Context, limit, offset int) ([]ObjectLocation, error) {
+func (s *Store) GetObjectsWithoutHash(ctx context.Context, limit, offset int) ([]core.ObjectLocation, error) {
 	safeLimit := int32(max(0, min(limit, math.MaxInt32)))   //nolint:gosec // clamped
 	safeOffset := int32(max(0, min(offset, math.MaxInt32))) //nolint:gosec // clamped
 	rows, err := s.queries.GetObjectsWithoutHash(ctx, db.GetObjectsWithoutHashParams{

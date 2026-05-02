@@ -45,6 +45,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
 	sqlitestore "github.com/afreidah/s3-orchestrator/internal/store/sqlite"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
@@ -74,7 +75,9 @@ func NewInjector(cfg *config.Config, mode string, logLevel *slog.LevelVar, logBu
 
 	// --- Required infrastructure ---
 	do.Provide(inj, provideConcreteStore)
-	do.Provide(inj, ProvideAdminStore)
+	do.Provide(inj, ProvideLifecycleAdmin)
+	do.Provide(inj, ProvideEncryptionAdmin)
+	do.Provide(inj, ProvideNotificationOutbox)
 	do.Provide(inj, ProvideDatabaseBreaker)
 
 	// Narrow per-role store providers — each wraps provideConcreteStore's
@@ -132,30 +135,26 @@ func NewInjector(cfg *config.Config, mode string, logLevel *slog.LevelVar, logBu
 // STORE PROVIDERS
 // -------------------------------------------------------------------------
 
-// concreteStoreBundle groups the concrete driver handle (narrow-role
-// carrier) and the admin-only interface. Both PostgreSQL *store.Store and
-// SQLite *sqlite.Store satisfy every narrow role plus AdminStore.
-type concreteStoreBundle struct {
-	concrete concreteStore
-	admin    store.AdminStore
-}
-
-// concreteStore collects the role interfaces satisfied by the driver-level
-// store without introducing a user-facing composed type. Declared
+// concreteStore collects every role interface satisfied by the driver-
+// level store without introducing a user-facing composed type. Declared
 // unexported and scoped to this package — callers outside di never see it.
+// Both PostgreSQL *postgres.Store and SQLite *sqlite.Store satisfy this.
 type concreteStore interface {
-	store.ObjectStore
-	store.QuotaStore
-	store.MultipartStore
-	store.ReplicationStore
-	store.CleanupStore
-	store.PendingStore
-	store.IntegrityStore
-	store.ExpiredObjectsLister
-	store.BackendLifecycleStore
-	store.DashboardStore
-	store.UsageFlusher
-	store.AdvisoryLocker
+	core.ObjectStore
+	core.QuotaStore
+	core.MultipartStore
+	core.ReplicationStore
+	core.CleanupStore
+	core.PendingStore
+	core.IntegrityStore
+	core.ExpiredObjectsLister
+	core.BackendLifecycleStore
+	core.DashboardStore
+	core.UsageFlusher
+	core.AdvisoryLocker
+	core.LifecycleAdmin
+	core.EncryptionAdmin
+	core.NotificationOutbox
 	metricsDeps
 }
 
@@ -163,49 +162,75 @@ type concreteStore interface {
 // here (not exported) because it only exists so concreteStore satisfies the
 // proxy-owned MetricsDeps contract structurally.
 type metricsDeps interface {
-	GetQuotaStats(ctx context.Context) (map[string]store.QuotaStat, error)
+	GetQuotaStats(ctx context.Context) (map[string]core.QuotaStat, error)
 	GetObjectCounts(ctx context.Context) (map[string]int64, error)
 	GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error)
-	GetUsageForPeriod(ctx context.Context, period string) (map[string]store.UsageStat, error)
-	GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]store.ObjectLocation, error)
+	GetUsageForPeriod(ctx context.Context, period string) (map[string]core.UsageStat, error)
+	GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]core.ObjectLocation, error)
 }
 
 // provideConcreteStore creates the concrete driver store for the configured
-// driver, runs migrations, and syncs quota limits. Returned as an unexported
-// composite; no call site outside this package references it directly.
-func provideConcreteStore(i do.Injector) (*concreteStoreBundle, error) {
+// driver, runs migrations, and syncs quota limits. Returned as an
+// unexported composite; no call site outside this package references it
+// directly. Narrow per-role providers extract the role they need from this
+// single concrete value.
+func provideConcreteStore(i do.Injector) (concreteStore, error) {
 	cfg, err := do.Invoke[*config.Config](i)
 	if err != nil {
 		return nil, err
 	}
 	ctx := context.Background()
 
-	cs, adminDB, err := openStore(ctx, &cfg.Database)
+	cs, err := openStore(ctx, &cfg.Database)
 	if err != nil {
 		return nil, err
 	}
-	if err := adminDB.RunMigrations(ctx); err != nil {
+	if err := cs.RunMigrations(ctx); err != nil {
 		return nil, err
 	}
-	if err := adminDB.VerifySchemaVersion(ctx); err != nil {
+	if err := cs.VerifySchemaVersion(ctx); err != nil {
 		return nil, err
 	}
 	slog.InfoContext(ctx, "database migrations applied", "driver", cfg.Database.Driver)
 
-	if err := adminDB.SyncQuotaLimits(ctx, cfg.Backends); err != nil {
+	if err := cs.SyncQuotaLimits(ctx, cfg.Backends); err != nil {
 		return nil, err
 	}
 
-	return &concreteStoreBundle{concrete: cs, admin: adminDB}, nil
+	return cs, nil
 }
 
-// ProvideAdminStore extracts the AdminStore from the concrete bundle.
-func ProvideAdminStore(i do.Injector) (store.AdminStore, error) {
-	b, err := do.Invoke[*concreteStoreBundle](i)
+// extractAdminRole resolves the concreteStore from the injector and
+// narrows it to the requested admin-role interface T. Each ProvideX admin
+// extractor below is a one-line wrapper around this helper - inlining the
+// three-line resolve+narrow body in each one would produce identical
+// implementations and trigger duplicate-code lints.
+func extractAdminRole[T any](i do.Injector) (T, error) {
+	cs, err := do.Invoke[concreteStore](i)
 	if err != nil {
-		return nil, err
+		var zero T
+		return zero, err
 	}
-	return b.admin, nil
+	return any(cs).(T), nil
+}
+
+// ProvideLifecycleAdmin exposes the LifecycleAdmin role from the concrete
+// store. Used at boot/shutdown for migrations, schema checks, and Close.
+func ProvideLifecycleAdmin(i do.Injector) (core.LifecycleAdmin, error) {
+	return extractAdminRole[core.LifecycleAdmin](i)
+}
+
+// ProvideEncryptionAdmin exposes the EncryptionAdmin role from the
+// concrete store. Used by the admin HTTP handler for key rotation and
+// encrypt/decrypt batch operations.
+func ProvideEncryptionAdmin(i do.Injector) (core.EncryptionAdmin, error) {
+	return extractAdminRole[core.EncryptionAdmin](i)
+}
+
+// ProvideNotificationOutbox exposes the NotificationOutbox role from the
+// concrete store. Used by the notifier worker for durable webhook delivery.
+func ProvideNotificationOutbox(i do.Injector) (core.NotificationOutbox, error) {
+	return extractAdminRole[core.NotificationOutbox](i)
 }
 
 // ProvideDatabaseBreaker constructs the shared *breaker.CircuitBreaker that
@@ -219,22 +244,14 @@ func ProvideDatabaseBreaker(i do.Injector) (*breaker.CircuitBreaker, error) {
 }
 
 // openStore dispatches store construction to the configured driver.
-func openStore(ctx context.Context, dbCfg *config.DatabaseConfig) (concreteStore, store.AdminStore, error) {
+func openStore(ctx context.Context, dbCfg *config.DatabaseConfig) (concreteStore, error) {
 	switch dbCfg.Driver {
 	case "postgres":
-		s, err := postgres.NewStore(ctx, dbCfg)
-		if err != nil {
-			return nil, nil, err
-		}
-		return s, s, nil
+		return postgres.NewStore(ctx, dbCfg)
 	case "sqlite":
-		s, err := sqlitestore.NewStore(ctx, dbCfg)
-		if err != nil {
-			return nil, nil, err
-		}
-		return s, s, nil
+		return sqlitestore.NewStore(ctx, dbCfg)
 	default:
-		return nil, nil, fmt.Errorf("unsupported database driver: %q", dbCfg.Driver)
+		return nil, fmt.Errorf("unsupported database driver: %q", dbCfg.Driver)
 	}
 }
 
@@ -247,8 +264,8 @@ func openStore(ctx context.Context, dbCfg *config.DatabaseConfig) (concreteStore
 // -------------------------------------------------------------------------
 
 // ProvideObjectStore registers a CB-protected ObjectStore view.
-func ProvideObjectStore(i do.Injector) (store.ObjectStore, error) {
-	b, err := do.Invoke[*concreteStoreBundle](i)
+func ProvideObjectStore(i do.Injector) (core.ObjectStore, error) {
+	cs, err := do.Invoke[concreteStore](i)
 	if err != nil {
 		return nil, err
 	}
@@ -256,12 +273,12 @@ func ProvideObjectStore(i do.Injector) (store.ObjectStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	return store.NewCBObjectStore(b.concrete, cb), nil
+	return store.NewCBObjectStore(cs, cb), nil
 }
 
 // ProvideQuotaStore registers a CB-protected QuotaStore view.
-func ProvideQuotaStore(i do.Injector) (store.QuotaStore, error) {
-	b, err := do.Invoke[*concreteStoreBundle](i)
+func ProvideQuotaStore(i do.Injector) (core.QuotaStore, error) {
+	cs, err := do.Invoke[concreteStore](i)
 	if err != nil {
 		return nil, err
 	}
@@ -269,12 +286,12 @@ func ProvideQuotaStore(i do.Injector) (store.QuotaStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	return store.NewCBQuotaStore(b.concrete, cb), nil
+	return store.NewCBQuotaStore(cs, cb), nil
 }
 
 // ProvideMultipartStore registers a CB-protected MultipartStore view.
-func ProvideMultipartStore(i do.Injector) (store.MultipartStore, error) {
-	b, err := do.Invoke[*concreteStoreBundle](i)
+func ProvideMultipartStore(i do.Injector) (core.MultipartStore, error) {
+	cs, err := do.Invoke[concreteStore](i)
 	if err != nil {
 		return nil, err
 	}
@@ -282,12 +299,12 @@ func ProvideMultipartStore(i do.Injector) (store.MultipartStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	return store.NewCBMultipartStore(b.concrete, cb), nil
+	return store.NewCBMultipartStore(cs, cb), nil
 }
 
 // ProvideReplicationStore registers a CB-protected ReplicationStore view.
-func ProvideReplicationStore(i do.Injector) (store.ReplicationStore, error) {
-	b, err := do.Invoke[*concreteStoreBundle](i)
+func ProvideReplicationStore(i do.Injector) (core.ReplicationStore, error) {
+	cs, err := do.Invoke[concreteStore](i)
 	if err != nil {
 		return nil, err
 	}
@@ -295,12 +312,12 @@ func ProvideReplicationStore(i do.Injector) (store.ReplicationStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	return store.NewCBReplicationStore(b.concrete, cb), nil
+	return store.NewCBReplicationStore(cs, cb), nil
 }
 
 // ProvideCleanupStore registers a CB-protected CleanupStore view.
-func ProvideCleanupStore(i do.Injector) (store.CleanupStore, error) {
-	b, err := do.Invoke[*concreteStoreBundle](i)
+func ProvideCleanupStore(i do.Injector) (core.CleanupStore, error) {
+	cs, err := do.Invoke[concreteStore](i)
 	if err != nil {
 		return nil, err
 	}
@@ -308,7 +325,7 @@ func ProvideCleanupStore(i do.Injector) (store.CleanupStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	return store.NewCBCleanupStore(b.concrete, cb), nil
+	return store.NewCBCleanupStore(cs, cb), nil
 }
 
 // ProvidePendingStore registers a CB-protected PendingStore view used by the
@@ -316,7 +333,7 @@ func ProvideCleanupStore(i do.Injector) (store.CleanupStore, error) {
 // operator disables the pattern via write_path.pending_pattern.enabled=false;
 // the write path's nil check falls back to the legacy cleanup-on-failure
 // behaviour in that case.
-func ProvidePendingStore(i do.Injector) (store.PendingStore, error) {
+func ProvidePendingStore(i do.Injector) (core.PendingStore, error) {
 	cfg, err := do.Invoke[*config.Config](i)
 	if err != nil {
 		return nil, err
@@ -324,7 +341,7 @@ func ProvidePendingStore(i do.Injector) (store.PendingStore, error) {
 	if !cfg.WritePath.PendingPattern.IsEnabled() {
 		return nil, nil //nolint:nilnil // intentional: nil signals feature off, caller branches on it
 	}
-	b, err := do.Invoke[*concreteStoreBundle](i)
+	cs, err := do.Invoke[concreteStore](i)
 	if err != nil {
 		return nil, err
 	}
@@ -332,12 +349,12 @@ func ProvidePendingStore(i do.Injector) (store.PendingStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	return store.NewCBPendingStore(b.concrete, cb), nil
+	return store.NewCBPendingStore(cs, cb), nil
 }
 
 // ProvideIntegrityStore registers a CB-protected IntegrityStore view.
-func ProvideIntegrityStore(i do.Injector) (store.IntegrityStore, error) {
-	b, err := do.Invoke[*concreteStoreBundle](i)
+func ProvideIntegrityStore(i do.Injector) (core.IntegrityStore, error) {
+	cs, err := do.Invoke[concreteStore](i)
 	if err != nil {
 		return nil, err
 	}
@@ -345,12 +362,12 @@ func ProvideIntegrityStore(i do.Injector) (store.IntegrityStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	return store.NewCBIntegrityStore(b.concrete, cb), nil
+	return store.NewCBIntegrityStore(cs, cb), nil
 }
 
 // ProvideExpiredObjectsLister registers a CB-protected ExpiredObjectsLister view.
-func ProvideExpiredObjectsLister(i do.Injector) (store.ExpiredObjectsLister, error) {
-	b, err := do.Invoke[*concreteStoreBundle](i)
+func ProvideExpiredObjectsLister(i do.Injector) (core.ExpiredObjectsLister, error) {
+	cs, err := do.Invoke[concreteStore](i)
 	if err != nil {
 		return nil, err
 	}
@@ -358,12 +375,12 @@ func ProvideExpiredObjectsLister(i do.Injector) (store.ExpiredObjectsLister, err
 	if err != nil {
 		return nil, err
 	}
-	return store.NewCBExpiredObjectsLister(b.concrete, cb), nil
+	return store.NewCBExpiredObjectsLister(cs, cb), nil
 }
 
 // ProvideBackendLifecycleStore registers a CB-protected BackendLifecycleStore view.
-func ProvideBackendLifecycleStore(i do.Injector) (store.BackendLifecycleStore, error) {
-	b, err := do.Invoke[*concreteStoreBundle](i)
+func ProvideBackendLifecycleStore(i do.Injector) (core.BackendLifecycleStore, error) {
+	cs, err := do.Invoke[concreteStore](i)
 	if err != nil {
 		return nil, err
 	}
@@ -371,12 +388,12 @@ func ProvideBackendLifecycleStore(i do.Injector) (store.BackendLifecycleStore, e
 	if err != nil {
 		return nil, err
 	}
-	return store.NewCBBackendLifecycleStore(b.concrete, cb), nil
+	return store.NewCBBackendLifecycleStore(cs, cb), nil
 }
 
 // ProvideDashboardStore registers a CB-protected DashboardStore view.
-func ProvideDashboardStore(i do.Injector) (store.DashboardStore, error) {
-	b, err := do.Invoke[*concreteStoreBundle](i)
+func ProvideDashboardStore(i do.Injector) (core.DashboardStore, error) {
+	cs, err := do.Invoke[concreteStore](i)
 	if err != nil {
 		return nil, err
 	}
@@ -384,12 +401,12 @@ func ProvideDashboardStore(i do.Injector) (store.DashboardStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	return store.NewCBDashboardStore(b.concrete, cb), nil
+	return store.NewCBDashboardStore(cs, cb), nil
 }
 
 // ProvideUsageFlusher registers a CB-protected UsageFlusher view.
-func ProvideUsageFlusher(i do.Injector) (store.UsageFlusher, error) {
-	b, err := do.Invoke[*concreteStoreBundle](i)
+func ProvideUsageFlusher(i do.Injector) (core.UsageFlusher, error) {
+	cs, err := do.Invoke[concreteStore](i)
 	if err != nil {
 		return nil, err
 	}
@@ -397,17 +414,17 @@ func ProvideUsageFlusher(i do.Injector) (store.UsageFlusher, error) {
 	if err != nil {
 		return nil, err
 	}
-	return store.NewCBUsageFlusher(b.concrete, cb), nil
+	return store.NewCBUsageFlusher(cs, cb), nil
 }
 
 // ProvideAdvisoryLocker registers a pass-through AdvisoryLocker — advisory
 // locks bypass the breaker (see internal/store/cb_lock.go).
-func ProvideAdvisoryLocker(i do.Injector) (store.AdvisoryLocker, error) {
-	b, err := do.Invoke[*concreteStoreBundle](i)
+func ProvideAdvisoryLocker(i do.Injector) (core.AdvisoryLocker, error) {
+	cs, err := do.Invoke[concreteStore](i)
 	if err != nil {
 		return nil, err
 	}
-	return store.NewAdvisoryLocker(b.concrete), nil
+	return store.NewAdvisoryLocker(cs), nil
 }
 
 // metricsDepsAdapter composes the narrow roles MetricsCollector queries.
@@ -415,18 +432,18 @@ func ProvideAdvisoryLocker(i do.Injector) (store.AdvisoryLocker, error) {
 // adapter structurally satisfies proxy.MetricsDeps without inventing a
 // composed interface.
 type metricsDepsAdapter struct {
-	store.DashboardStore   // GetQuotaStats, GetObjectCounts, GetActiveMultipartCounts, GetUsageForPeriod
-	store.ReplicationStore // GetUnderReplicatedObjects (among others)
+	core.DashboardStore   // GetQuotaStats, GetObjectCounts, GetActiveMultipartCounts, GetUsageForPeriod
+	core.ReplicationStore // GetUnderReplicatedObjects (among others)
 }
 
 // ProvideMetricsDeps builds the adapter MetricsCollector uses to refresh
 // Prometheus gauges.
 func ProvideMetricsDeps(i do.Injector) (proxy.MetricsDeps, error) {
-	dash, err := do.Invoke[store.DashboardStore](i)
+	dash, err := do.Invoke[core.DashboardStore](i)
 	if err != nil {
 		return nil, err
 	}
-	repl, err := do.Invoke[store.ReplicationStore](i)
+	repl, err := do.Invoke[core.ReplicationStore](i)
 	if err != nil {
 		return nil, err
 	}
@@ -442,7 +459,7 @@ func ProvideMetricsDeps(i do.Injector) (proxy.MetricsDeps, error) {
 type BackendsResult struct {
 	Backends       map[string]backend.ObjectBackend
 	Order          []string
-	UsageLimits    map[string]store.UsageLimits
+	UsageLimits    map[string]core.UsageLimits
 	MaxObjectSizes map[string]int64
 	// Breakers is the per-backend circuit breakers produced when
 	// BackendCircuitBreaker is enabled. Empty when CBs are disabled.
@@ -461,7 +478,7 @@ func ProvideBackends(i do.Injector) (*BackendsResult, error) {
 
 	backends := make(map[string]backend.ObjectBackend, len(cfg.Backends))
 	order := make([]string, 0, len(cfg.Backends))
-	limits := make(map[string]store.UsageLimits, len(cfg.Backends))
+	limits := make(map[string]core.UsageLimits, len(cfg.Backends))
 	maxSizes := make(map[string]int64, len(cfg.Backends))
 	breakers := make([]breaker.StaleProbeResetter, 0, len(cfg.Backends))
 
@@ -481,7 +498,7 @@ func ProvideBackends(i do.Injector) (*BackendsResult, error) {
 		}
 		backends[bcfg.Name] = be
 		order = append(order, bcfg.Name)
-		limits[bcfg.Name] = store.UsageLimits{
+		limits[bcfg.Name] = core.UsageLimits{
 			APIRequestLimit:  bcfg.APIRequestLimit,
 			EgressByteLimit:  bcfg.EgressByteLimit,
 			IngressByteLimit: bcfg.IngressByteLimit,
@@ -629,7 +646,7 @@ func ProvideBackendManager(i do.Injector) (*proxy.BackendManager, error) {
 	if err != nil {
 		return nil, err
 	}
-	dash, err := do.Invoke[store.DashboardStore](i)
+	dash, err := do.Invoke[core.DashboardStore](i)
 	if err != nil {
 		return nil, err
 	}
@@ -695,51 +712,51 @@ func ProvideBackendManager(i do.Injector) (*proxy.BackendManager, error) {
 // resolveProxyStores assembles the proxy.Stores bag by invoking each narrow
 // role provider. Defined here so ProvideBackendManager stays readable.
 func resolveProxyStores(i do.Injector) (proxy.Stores, error) {
-	obj, err := do.Invoke[store.ObjectStore](i)
+	obj, err := do.Invoke[core.ObjectStore](i)
 	if err != nil {
 		return proxy.Stores{}, err
 	}
-	q, err := do.Invoke[store.QuotaStore](i)
+	q, err := do.Invoke[core.QuotaStore](i)
 	if err != nil {
 		return proxy.Stores{}, err
 	}
-	mp, err := do.Invoke[store.MultipartStore](i)
+	mp, err := do.Invoke[core.MultipartStore](i)
 	if err != nil {
 		return proxy.Stores{}, err
 	}
-	rep, err := do.Invoke[store.ReplicationStore](i)
+	rep, err := do.Invoke[core.ReplicationStore](i)
 	if err != nil {
 		return proxy.Stores{}, err
 	}
-	cu, err := do.Invoke[store.CleanupStore](i)
+	cu, err := do.Invoke[core.CleanupStore](i)
 	if err != nil {
 		return proxy.Stores{}, err
 	}
-	pen, err := do.Invoke[store.PendingStore](i)
+	pen, err := do.Invoke[core.PendingStore](i)
 	if err != nil {
 		return proxy.Stores{}, err
 	}
-	ig, err := do.Invoke[store.IntegrityStore](i)
+	ig, err := do.Invoke[core.IntegrityStore](i)
 	if err != nil {
 		return proxy.Stores{}, err
 	}
-	lc, err := do.Invoke[store.ExpiredObjectsLister](i)
+	lc, err := do.Invoke[core.ExpiredObjectsLister](i)
 	if err != nil {
 		return proxy.Stores{}, err
 	}
-	blc, err := do.Invoke[store.BackendLifecycleStore](i)
+	blc, err := do.Invoke[core.BackendLifecycleStore](i)
 	if err != nil {
 		return proxy.Stores{}, err
 	}
-	dash, err := do.Invoke[store.DashboardStore](i)
+	dash, err := do.Invoke[core.DashboardStore](i)
 	if err != nil {
 		return proxy.Stores{}, err
 	}
-	uf, err := do.Invoke[store.UsageFlusher](i)
+	uf, err := do.Invoke[core.UsageFlusher](i)
 	if err != nil {
 		return proxy.Stores{}, err
 	}
-	lock, err := do.Invoke[store.AdvisoryLocker](i)
+	lock, err := do.Invoke[core.AdvisoryLocker](i)
 	if err != nil {
 		return proxy.Stores{}, err
 	}
@@ -777,7 +794,7 @@ func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	locker, err := do.Invoke[store.AdvisoryLocker](i)
+	locker, err := do.Invoke[core.AdvisoryLocker](i)
 	if err != nil {
 		return nil, err
 	}
@@ -927,7 +944,7 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	adminDB, err := do.Invoke[store.AdminStore](i)
+	encAdmin, err := do.Invoke[core.EncryptionAdmin](i)
 	if err != nil {
 		return nil, err
 	}
@@ -955,16 +972,16 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 		adminToken = cfg.UI.AdminKey
 	}
 
-	objects, err := do.Invoke[store.ObjectStore](i)
+	objects, err := do.Invoke[core.ObjectStore](i)
 	if err != nil {
 		return nil, err
 	}
-	cleanup, err := do.Invoke[store.CleanupStore](i)
+	cleanup, err := do.Invoke[core.CleanupStore](i)
 	if err != nil {
 		return nil, err
 	}
 
-	lifecycleStore, err := do.Invoke[store.BackendLifecycleStore](i)
+	lifecycleStore, err := do.Invoke[core.BackendLifecycleStore](i)
 	if err != nil {
 		return nil, err
 	}
@@ -977,7 +994,7 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 		Scrubber:   manager.Scrubber,
 		Lifecycle:  lifecycleStore,
 		DBCB:       cb,
-		RawStore:   adminDB,
+		Encryption: encAdmin,
 		Objects:    objects,
 		Cleanup:    cleanup,
 		Encryptor:  enc,
@@ -993,11 +1010,11 @@ func ProvideNotifier(i do.Injector) (*notify.Notifier, error) {
 	if err != nil {
 		return nil, err
 	}
-	adminDB, err := do.Invoke[store.AdminStore](i)
+	cs, err := do.Invoke[concreteStore](i)
 	if err != nil {
 		return nil, err
 	}
-	return notify.NewNotifier(&cfg.Notifications, adminDB), nil
+	return notify.NewNotifier(&cfg.Notifications, cs), nil
 }
 
 // -------------------------------------------------------------------------

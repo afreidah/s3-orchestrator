@@ -3,10 +3,11 @@
 //
 // Author: Alex Freidah
 //
-// Implements store.MetadataStore and store.AdminStore using an embedded SQLite
-// database via modernc.org/sqlite (pure Go, no CGo). Provides WAL mode for
-// concurrent reads, process-local mutex for advisory lock emulation, and
-// automatic schema migration on first start.
+// Implements every core role interface and the three admin role interfaces
+// (LifecycleAdmin, EncryptionAdmin, NotificationOutbox) using an embedded
+// SQLite database via modernc.org/sqlite (pure Go, no CGo). Provides WAL
+// mode for concurrent reads, process-local mutex for advisory lock
+// emulation, and automatic schema migration on first start.
 // -------------------------------------------------------------------------------
 
 package sqlite
@@ -18,13 +19,13 @@ import (
 	"sync"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 
 	_ "modernc.org/sqlite" // register pure-Go SQLite driver for database/sql
 )
 
-// Store implements store.MetadataStore and store.AdminStore using SQLite.
+// Store implements every core role interface plus LifecycleAdmin,
+// EncryptionAdmin, and NotificationOutbox using SQLite.
 type Store struct {
 	db *sql.DB
 	mu sync.Mutex // advisory lock emulation for single-instance
@@ -122,18 +123,20 @@ func (s *Store) WithAdvisoryLock(ctx context.Context, _ int64, fn func(ctx conte
 }
 
 // Compile-time interface checks — *Store must satisfy every narrow role
-// interface plus AdminStore.
+// interface and the three admin role interfaces.
 var (
-	_ store.ObjectStore           = (*Store)(nil)
-	_ store.QuotaStore            = (*Store)(nil)
-	_ store.MultipartStore        = (*Store)(nil)
-	_ store.ReplicationStore      = (*Store)(nil)
-	_ store.CleanupStore          = (*Store)(nil)
-	_ store.IntegrityStore        = (*Store)(nil)
-	_ store.ExpiredObjectsLister        = (*Store)(nil)
-	_ store.BackendLifecycleStore = (*Store)(nil)
-	_ store.DashboardStore        = (*Store)(nil)
-	_ store.UsageFlusher          = (*Store)(nil)
-	_ store.AdvisoryLocker        = (*Store)(nil)
-	_ store.AdminStore            = (*Store)(nil)
+	_ core.ObjectStore           = (*Store)(nil)
+	_ core.QuotaStore            = (*Store)(nil)
+	_ core.MultipartStore        = (*Store)(nil)
+	_ core.ReplicationStore      = (*Store)(nil)
+	_ core.CleanupStore          = (*Store)(nil)
+	_ core.IntegrityStore        = (*Store)(nil)
+	_ core.ExpiredObjectsLister  = (*Store)(nil)
+	_ core.BackendLifecycleStore = (*Store)(nil)
+	_ core.DashboardStore        = (*Store)(nil)
+	_ core.UsageFlusher          = (*Store)(nil)
+	_ core.AdvisoryLocker        = (*Store)(nil)
+	_ core.LifecycleAdmin        = (*Store)(nil)
+	_ core.EncryptionAdmin       = (*Store)(nil)
+	_ core.NotificationOutbox    = (*Store)(nil)
 )

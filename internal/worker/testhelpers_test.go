@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/counter"
-	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // mockMetadataStore is a minimal stub for worker tests. It embeds every
@@ -13,32 +13,32 @@ import (
 // tests override only the methods they exercise, and any unstubbed call
 // panics, which surfaces test-fixture gaps loudly.
 type mockMetadataStore struct {
-	store.ObjectStore
-	store.QuotaStore
-	store.MultipartStore
-	store.ReplicationStore
-	store.CleanupStore
-	store.PendingStore
-	store.IntegrityStore
-	store.ExpiredObjectsLister
-	store.BackendLifecycleStore
-	store.DashboardStore
-	store.UsageFlusher
-	store.AdvisoryLocker
-	pendingCleanups     []store.CleanupItem
+	core.ObjectStore
+	core.QuotaStore
+	core.MultipartStore
+	core.ReplicationStore
+	core.CleanupStore
+	core.PendingStore
+	core.IntegrityStore
+	core.ExpiredObjectsLister
+	core.BackendLifecycleStore
+	core.DashboardStore
+	core.UsageFlusher
+	core.AdvisoryLocker
+	pendingCleanups     []core.CleanupItem
 	completedIDs        []int64
-	randomHashedObjects []store.ObjectLocation
-	objectsWithoutHash  []store.ObjectLocation
+	randomHashedObjects []core.ObjectLocation
+	objectsWithoutHash  []core.ObjectLocation
 	lastUpdatedHash     string
-	underReplicated     []store.ObjectLocation
-	overReplicated      []store.ObjectLocation
+	underReplicated     []core.ObjectLocation
+	overReplicated      []core.ObjectLocation
 	overReplicatedCount int64
-	quotaStats          map[string]store.QuotaStat
+	quotaStats          map[string]core.QuotaStat
 	recordReplicaOK     bool
 	recordReplicaErr    error
 	replicaRecorded     int
 	removedCopies       int
-	objectsByBackend    map[string][]store.ObjectLocation
+	objectsByBackend    map[string][]core.ObjectLocation
 	moveSize            int64
 	staleDeleted        int
 
@@ -49,17 +49,17 @@ type mockMetadataStore struct {
 	getBackendsForKeysResp  map[string][]string
 
 	// Pending reaper fixtures
-	stalePending           []store.PendingObject
-	deletedPendingIDs      []string
-	promotedPending        []store.PendingObject
-	promoteResult          store.PendingPromoteResult
-	promoteDisplaced       []store.DeletedCopy
-	promoteErr             error
-	pendingDepthVal        int64
-	pendingDepthErr        error
+	stalePending      []core.PendingObject
+	deletedPendingIDs []string
+	promotedPending   []core.PendingObject
+	promoteResult     core.PendingPromoteResult
+	promoteDisplaced  []core.DeletedCopy
+	promoteErr        error
+	pendingDepthVal   int64
+	pendingDepthErr   error
 }
 
-func (m *mockMetadataStore) GetPendingCleanups(_ context.Context, _ int) ([]store.CleanupItem, error) {
+func (m *mockMetadataStore) GetPendingCleanups(_ context.Context, _ int) ([]core.CleanupItem, error) {
 	return m.pendingCleanups, nil
 }
 
@@ -80,11 +80,11 @@ func (m *mockMetadataStore) CleanupQueueDepth(_ context.Context) (int64, error) 
 	return 0, nil
 }
 
-func (m *mockMetadataStore) GetRandomHashedObjects(_ context.Context, _ int) ([]store.ObjectLocation, error) {
+func (m *mockMetadataStore) GetRandomHashedObjects(_ context.Context, _ int) ([]core.ObjectLocation, error) {
 	return m.randomHashedObjects, nil
 }
 
-func (m *mockMetadataStore) GetObjectsWithoutHash(_ context.Context, limit, _ int) ([]store.ObjectLocation, error) {
+func (m *mockMetadataStore) GetObjectsWithoutHash(_ context.Context, limit, _ int) ([]core.ObjectLocation, error) {
 	if limit > len(m.objectsWithoutHash) {
 		return m.objectsWithoutHash, nil
 	}
@@ -101,15 +101,15 @@ func newTestUsageTracker() *counter.UsageTracker {
 	return counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1", "b2"}), nil)
 }
 
-func (m *mockMetadataStore) GetUnderReplicatedObjects(_ context.Context, _, _ int) ([]store.ObjectLocation, error) {
+func (m *mockMetadataStore) GetUnderReplicatedObjects(_ context.Context, _, _ int) ([]core.ObjectLocation, error) {
 	return m.underReplicated, nil
 }
 
-func (m *mockMetadataStore) GetUnderReplicatedObjectsExcluding(_ context.Context, _, _ int, _ []string) ([]store.ObjectLocation, error) {
+func (m *mockMetadataStore) GetUnderReplicatedObjectsExcluding(_ context.Context, _, _ int, _ []string) ([]core.ObjectLocation, error) {
 	return m.underReplicated, nil
 }
 
-func (m *mockMetadataStore) GetQuotaStats(_ context.Context) (map[string]store.QuotaStat, error) {
+func (m *mockMetadataStore) GetQuotaStats(_ context.Context) (map[string]core.QuotaStat, error) {
 	return m.quotaStats, nil
 }
 
@@ -121,7 +121,7 @@ func (m *mockMetadataStore) RecordReplica(_ context.Context, _, _, _ string, _ i
 	return m.recordReplicaOK, nil
 }
 
-func (m *mockMetadataStore) GetOverReplicatedObjects(_ context.Context, _, _ int) ([]store.ObjectLocation, error) {
+func (m *mockMetadataStore) GetOverReplicatedObjects(_ context.Context, _, _ int) ([]core.ObjectLocation, error) {
 	return m.overReplicated, nil
 }
 
@@ -134,7 +134,7 @@ func (m *mockMetadataStore) RemoveExcessCopy(_ context.Context, _, _ string, _ i
 	return nil
 }
 
-func (m *mockMetadataStore) ListObjectsByBackend(_ context.Context, name string, _ int) ([]store.ObjectLocation, error) {
+func (m *mockMetadataStore) ListObjectsByBackend(_ context.Context, name string, _ int) ([]core.ObjectLocation, error) {
 	return m.objectsByBackend[name], nil
 }
 
@@ -142,7 +142,7 @@ func (m *mockMetadataStore) MoveObjectLocation(_ context.Context, _, _, _ string
 	return m.moveSize, nil
 }
 
-func (m *mockMetadataStore) GetAllObjectLocations(_ context.Context, _ string) ([]store.ObjectLocation, error) {
+func (m *mockMetadataStore) GetAllObjectLocations(_ context.Context, _ string) ([]core.ObjectLocation, error) {
 	return nil, nil
 }
 
@@ -168,7 +168,7 @@ func (m *mockMetadataStore) DeleteObjectLocation(_ context.Context, _, _ string)
 // GetStalePending returns the configured fixture rows; the reaper batch
 // limit is ignored to keep tests focused on resolution outcomes rather
 // than pagination.
-func (m *mockMetadataStore) GetStalePending(_ context.Context, _ time.Time, _ int) ([]store.PendingObject, error) {
+func (m *mockMetadataStore) GetStalePending(_ context.Context, _ time.Time, _ int) ([]core.PendingObject, error) {
 	return m.stalePending, nil
 }
 
@@ -181,7 +181,7 @@ func (m *mockMetadataStore) DeletePending(_ context.Context, intentID string) er
 // PromotePending captures the input and returns the test's preconfigured
 // resolution outcome. The captured slice lets tests verify the reaper
 // passed the intent through unchanged.
-func (m *mockMetadataStore) PromotePending(_ context.Context, p *store.PendingObject) (store.PendingPromoteResult, []store.DeletedCopy, error) {
+func (m *mockMetadataStore) PromotePending(_ context.Context, p *core.PendingObject) (core.PendingPromoteResult, []core.DeletedCopy, error) {
 	if p != nil {
 		m.promotedPending = append(m.promotedPending, *p)
 	}

@@ -20,7 +20,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
-	st "github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 )
@@ -86,7 +86,7 @@ func TestCleanupWorker_SuccessfulDelete_DecrementsOrphanBytes(t *testing.T) {
 	_, _ = backend.PutObject(context.Background(), "orphan.txt", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
 	store := &mockStore{
-		pendingCleanups: []st.CleanupItem{
+		pendingCleanups: []core.CleanupItem{
 			{ID: 1, BackendName: "b1", ObjectKey: "orphan.txt", Reason: "delete_failed", Attempts: 0, SizeBytes: 4},
 		},
 	}
@@ -114,7 +114,7 @@ func TestCleanupWorker_SuccessfulDelete_ZeroSize_SkipsDecrement(t *testing.T) {
 	_, _ = backend.PutObject(context.Background(), "orphan.txt", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
 	store := &mockStore{
-		pendingCleanups: []st.CleanupItem{
+		pendingCleanups: []core.CleanupItem{
 			{ID: 1, BackendName: "b1", ObjectKey: "orphan.txt", Reason: "delete_failed", Attempts: 0, SizeBytes: 0},
 		},
 	}
@@ -138,7 +138,7 @@ func TestCleanupWorker_Exhausted_PreservesOrphanBytes(t *testing.T) {
 	backend.delErr = errors.New("permanent failure")
 
 	store := &mockStore{
-		pendingCleanups: []st.CleanupItem{
+		pendingCleanups: []core.CleanupItem{
 			{ID: 1, BackendName: "b1", ObjectKey: "stuck.txt", Reason: "delete_failed", Attempts: 9, SizeBytes: 8192},
 		},
 	}
@@ -170,7 +170,7 @@ func TestCleanupWorker_RetryNotExhausted_NoOrphanBytesChange(t *testing.T) {
 	backend.delErr = errors.New("transient failure")
 
 	store := &mockStore{
-		pendingCleanups: []st.CleanupItem{
+		pendingCleanups: []core.CleanupItem{
 			{ID: 1, BackendName: "b1", ObjectKey: "retry.txt", Reason: "delete_failed", Attempts: 3, SizeBytes: 1024},
 		},
 	}
@@ -205,7 +205,7 @@ func TestPutObject_Overwrite_EnqueuesDisplacedCopiesWithSize(t *testing.T) {
 	store := &mockStore{
 		getBackendResp: "b1",
 		// RecordObject returns displaced copies on b2
-		recordObjectResp: []st.DeletedCopy{{BackendName: "b2", SizeBytes: 500}},
+		recordObjectResp: []core.DeletedCopy{{BackendName: "b2", SizeBytes: 500}},
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": b1, "b2": b2})
 
@@ -246,7 +246,7 @@ func TestDeleteObject_BackendFails_EnqueuesWithSize(t *testing.T) {
 	backend.delErr = errors.New("timeout")
 
 	store := &mockStore{
-		deleteObjectResp: []st.DeletedCopy{{BackendName: "b1", SizeBytes: 2048}},
+		deleteObjectResp: []core.DeletedCopy{{BackendName: "b1", SizeBytes: 2048}},
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
@@ -277,15 +277,15 @@ func TestFindReplicaTarget_RespectsOrphanBytes(t *testing.T) {
 	store := &mockStore{}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": newMockBackend(), "b2": newMockBackend()},
-		Stores:           StoresFromMock(store),
-		Dashboard:           store,
-		Metrics:           store,
+		Stores:          StoresFromMock(store),
+		Dashboard:       store,
+		Metrics:         store,
 		Order:           []string{"b1", "b2"},
 		CacheTTL:        5 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
 
-	stats := map[string]st.QuotaStat{
+	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 100, BytesLimit: 1000},
 		// b2 has 800 used + 150 orphan = 950 effective, only 50 bytes free
 		"b2": {BytesUsed: 800, BytesLimit: 1000, OrphanBytes: 150},
@@ -304,15 +304,15 @@ func TestFindReplicaTarget_OrphanBytesStillFits(t *testing.T) {
 	store := &mockStore{getBackendFromEligible: true}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": newMockBackend(), "b2": newMockBackend()},
-		Stores:           StoresFromMock(store),
-		Dashboard:           store,
-		Metrics:           store,
+		Stores:          StoresFromMock(store),
+		Dashboard:       store,
+		Metrics:         store,
 		Order:           []string{"b1", "b2"},
 		CacheTTL:        5 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
 
-	stats := map[string]st.QuotaStat{
+	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 100, BytesLimit: 1000},
 		// b2 has 800 used + 100 orphan = 900 effective, 100 bytes free
 		"b2": {BytesUsed: 800, BytesLimit: 1000, OrphanBytes: 100},
@@ -355,7 +355,7 @@ func TestOrphanBytes_FullLifecycle(t *testing.T) {
 	_, _ = backend.PutObject(context.Background(), "file.txt", bytes.NewReader([]byte("x")), 1, "", nil)
 
 	store.mu.Lock()
-	store.pendingCleanups = []st.CleanupItem{
+	store.pendingCleanups = []core.CleanupItem{
 		{ID: 1, BackendName: "b1", ObjectKey: "file.txt", Reason: "delete_failed", Attempts: 0, SizeBytes: 1024},
 	}
 	store.mu.Unlock()
@@ -408,7 +408,7 @@ func TestCleanupOrphan_PassesSizeToEnqueue(t *testing.T) {
 func TestMetricsCollector_OrphanBytesSubtractedFromAvailable(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
-		getQuotaStatsResp: map[string]st.QuotaStat{
+		getQuotaStatsResp: map[string]core.QuotaStat{
 			"b1": {BytesUsed: 200, BytesLimit: 1000, OrphanBytes: 100},
 		},
 	}
@@ -435,7 +435,7 @@ func TestRecordObjectOrCleanup_DisplacedCopyBackendNotFound(t *testing.T) {
 	store := &mockStore{
 		getBackendResp: "b1",
 		// RecordObject returns a displaced copy on "gone" (which is not in backends)
-		recordObjectResp: []st.DeletedCopy{{BackendName: "gone", SizeBytes: 300}},
+		recordObjectResp: []core.DeletedCopy{{BackendName: "gone", SizeBytes: 300}},
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": b1})
 
@@ -465,7 +465,7 @@ func TestRecordObjectOrCleanup_DisplacedCopyDeleteSucceeds(t *testing.T) {
 
 	store := &mockStore{
 		getBackendResp:   "b1",
-		recordObjectResp: []st.DeletedCopy{{BackendName: "b2", SizeBytes: 3}},
+		recordObjectResp: []core.DeletedCopy{{BackendName: "b2", SizeBytes: 3}},
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": b1, "b2": b2})
 
@@ -521,7 +521,7 @@ func TestCleanupWorker_DecrementOrphanBytesFails(t *testing.T) {
 	_, _ = backend.PutObject(context.Background(), "orphan.txt", bytes.NewReader([]byte("x")), 1, "", nil)
 
 	store := &mockStore{
-		pendingCleanups: []st.CleanupItem{
+		pendingCleanups: []core.CleanupItem{
 			{ID: 1, BackendName: "b1", ObjectKey: "orphan.txt", Reason: "test", Attempts: 0, SizeBytes: 100},
 		},
 		decrementOrphanBytesErr: errors.New("db error"),
@@ -555,7 +555,7 @@ func TestCleanupWorker_Exhausted_RetryFails(t *testing.T) {
 	backend.delErr = errors.New("permanent")
 
 	store := &mockStore{
-		pendingCleanups: []st.CleanupItem{
+		pendingCleanups: []core.CleanupItem{
 			{ID: 1, BackendName: "b1", ObjectKey: "stuck.txt", Reason: "test", Attempts: 9, SizeBytes: 512},
 		},
 		retryCleanupErr: errors.New("db error"),
@@ -580,10 +580,10 @@ func TestReplicate_OrphanBytesBlockTarget(t *testing.T) {
 	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
 	store := &mockStore{
-		getUnderReplicatedResp: []st.ObjectLocation{
+		getUnderReplicatedResp: []core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
 		},
-		getQuotaStatsResp: map[string]st.QuotaStat{
+		getQuotaStatsResp: map[string]core.QuotaStat{
 			"b1": {BytesUsed: 100, BytesLimit: 1000},
 			// b2 has 990 used + 8 orphan = 998 effective, only 2 bytes free — can't fit 4
 			"b2": {BytesUsed: 990, BytesLimit: 1000, OrphanBytes: 8},
@@ -592,9 +592,9 @@ func TestReplicate_OrphanBytesBlockTarget(t *testing.T) {
 	}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": b1, "b2": b2},
-		Stores:           StoresFromMock(store),
-		Dashboard:           store,
-		Metrics:           store,
+		Stores:          StoresFromMock(store),
+		Dashboard:       store,
+		Metrics:         store,
 		Order:           []string{"b1", "b2"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,

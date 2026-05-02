@@ -19,7 +19,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -69,7 +68,7 @@ func (s *Store) GetObjectBackendsForKeys(ctx context.Context, keys []string) (ma
 
 // GetAllObjectLocations returns all copies of an object, ordered by created_at
 // ascending (oldest/primary first). Used for read failover.
-func (s *Store) GetAllObjectLocations(ctx context.Context, key string) ([]store.ObjectLocation, error) {
+func (s *Store) GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT object_key, backend_name, size_bytes, encrypted, encryption_key,
 		       key_id, plaintext_size, content_hash, created_at
@@ -81,7 +80,7 @@ func (s *Store) GetAllObjectLocations(ctx context.Context, key string) ([]store.
 	}
 	defer rows.Close()
 
-	var locs []store.ObjectLocation
+	var locs []core.ObjectLocation
 	for rows.Next() {
 		loc, err := scanObjectLocation(rows)
 		if err != nil {
@@ -94,32 +93,32 @@ func (s *Store) GetAllObjectLocations(ctx context.Context, key string) ([]store.
 	}
 
 	if len(locs) == 0 {
-		return nil, store.ErrObjectNotFound
+		return nil, core.ErrObjectNotFound
 	}
 	return locs, nil
 }
 
 // RecordObject delegates to core.RecordObject which composes the
 // engine-agnostic transactional sequence against the SQLite TxAdapter.
-func (s *Store) RecordObject(ctx context.Context, key, backend string, size int64, enc *store.EncryptionMeta) ([]store.DeletedCopy, error) {
+func (s *Store) RecordObject(ctx context.Context, key, backend string, size int64, enc *core.EncryptionMeta) ([]core.DeletedCopy, error) {
 	return core.RecordObject(ctx, s, key, backend, size, enc)
 }
 
 // RecordObjectAndClearPending delegates to core. Inside the same
 // transaction the pending row is deleted so the intent never outlives
 // a committed location.
-func (s *Store) RecordObjectAndClearPending(ctx context.Context, key, backend string, size int64, enc *store.EncryptionMeta, intentID string) ([]store.DeletedCopy, error) {
+func (s *Store) RecordObjectAndClearPending(ctx context.Context, key, backend string, size int64, enc *core.EncryptionMeta, intentID string) ([]core.DeletedCopy, error) {
 	return core.RecordObjectAndClearPending(ctx, s, key, backend, size, enc, intentID)
 }
 
 // DeleteObject delegates to core.DeleteObject.
-func (s *Store) DeleteObject(ctx context.Context, key string) ([]store.DeletedCopy, error) {
+func (s *Store) DeleteObject(ctx context.Context, key string) ([]core.DeletedCopy, error) {
 	return core.DeleteObject(ctx, s, key)
 }
 
 // DeleteObjectsBatch delegates to core.DeleteObjectsBatch which
 // removes every supplied key in one transaction.
-func (s *Store) DeleteObjectsBatch(ctx context.Context, keys []string) (map[string][]store.DeletedCopy, error) {
+func (s *Store) DeleteObjectsBatch(ctx context.Context, keys []string) (map[string][]core.DeletedCopy, error) {
 	return core.DeleteObjectsBatch(ctx, s, keys)
 }
 
@@ -127,7 +126,7 @@ func (s *Store) DeleteObjectsBatch(ctx context.Context, keys []string) (map[stri
 // Supports pagination via startAfter and maxKeys. Returns one extra row to
 // detect truncation. Uses a subquery with GROUP BY to deduplicate replicated
 // objects (equivalent to DISTINCT ON in PostgreSQL).
-func (s *Store) ListObjects(ctx context.Context, prefix, startAfter string, maxKeys int) (*store.ListObjectsResult, error) {
+func (s *Store) ListObjects(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.ListObjectsResult, error) {
 	if maxKeys <= 0 {
 		maxKeys = 1000
 	}
@@ -157,7 +156,7 @@ func (s *Store) ListObjects(ctx context.Context, prefix, startAfter string, maxK
 		return nil, err
 	}
 
-	result := &store.ListObjectsResult{}
+	result := &core.ListObjectsResult{}
 	if len(objects) > maxKeys {
 		result.IsTruncated = true
 		result.NextContinuationToken = objects[maxKeys-1].ObjectKey
@@ -172,7 +171,7 @@ func (s *Store) ListObjects(ctx context.Context, prefix, startAfter string, maxK
 // ListExpiredObjects returns one row per unique key matching the given prefix
 // whose created_at is older than cutoff, up to limit rows. Used by lifecycle
 // expiration to find objects eligible for deletion.
-func (s *Store) ListExpiredObjects(ctx context.Context, prefix string, cutoff time.Time, limit int) ([]store.ObjectLocation, error) {
+func (s *Store) ListExpiredObjects(ctx context.Context, prefix string, cutoff time.Time, limit int) ([]core.ObjectLocation, error) {
 	escapedPrefix := likeEscaper.Replace(prefix)
 	cutoffStr := cutoff.UTC().Format(time.RFC3339Nano)
 
@@ -199,7 +198,7 @@ func (s *Store) ListExpiredObjects(ctx context.Context, prefix string, cutoff ti
 
 // ListObjectsByBackend returns objects stored on a specific backend, ordered by
 // size ascending (smallest first). Used by the rebalancer to find movable objects.
-func (s *Store) ListObjectsByBackend(ctx context.Context, backendName string, limit int) ([]store.ObjectLocation, error) {
+func (s *Store) ListObjectsByBackend(ctx context.Context, backendName string, limit int) ([]core.ObjectLocation, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT object_key, backend_name, size_bytes, created_at
 		FROM object_locations
@@ -219,7 +218,7 @@ func (s *Store) ListObjectsByBackend(ctx context.Context, backendName string, li
 // returns the first page. Used by ReconcileBackend's bounded-memory
 // sorted-merge join against an S3 ListObjects walk; both sides are in lex
 // order so the merge is O(limit) memory bounded.
-func (s *Store) ListObjectsByBackendKeyAsc(ctx context.Context, backendName, afterKey string, limit int) ([]store.ObjectLocation, error) {
+func (s *Store) ListObjectsByBackendKeyAsc(ctx context.Context, backendName, afterKey string, limit int) ([]core.ObjectLocation, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT object_key, backend_name, size_bytes, created_at
 		FROM object_locations
@@ -239,10 +238,10 @@ func (s *Store) ListObjectsByBackendKeyAsc(ctx context.Context, backendName, aft
 // ListObjects, ListExpiredObjects, and ListObjectsByBackend. Centralizes
 // the per-row scan + RFC3339 timestamp parse so the three list helpers
 // don't carry parallel loop bodies.
-func scanSlimObjectLocations(rows *sql.Rows) ([]store.ObjectLocation, error) {
-	var locs []store.ObjectLocation
+func scanSlimObjectLocations(rows *sql.Rows) ([]core.ObjectLocation, error) {
+	var locs []core.ObjectLocation
 	for rows.Next() {
-		var loc store.ObjectLocation
+		var loc core.ObjectLocation
 		var createdAt string
 		if err := rows.Scan(&loc.ObjectKey, &loc.BackendName, &loc.SizeBytes, &createdAt); err != nil {
 			return nil, fmt.Errorf("failed to scan object location: %w", err)
@@ -316,7 +315,7 @@ func (s *Store) DeleteBackendData(ctx context.Context, backendName string) error
 // GetRandomHashedObjects returns random object locations that have a stored
 // content hash. Used by the scrubber to verify data integrity. Uses
 // ORDER BY RANDOM() LIMIT instead of PostgreSQL TABLESAMPLE BERNOULLI.
-func (s *Store) GetRandomHashedObjects(ctx context.Context, limit int) ([]store.ObjectLocation, error) {
+func (s *Store) GetRandomHashedObjects(ctx context.Context, limit int) ([]core.ObjectLocation, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT object_key, backend_name, size_bytes, encrypted, encryption_key,
 		       key_id, plaintext_size, content_hash, created_at
@@ -329,7 +328,7 @@ func (s *Store) GetRandomHashedObjects(ctx context.Context, limit int) ([]store.
 	}
 	defer rows.Close()
 
-	var locs []store.ObjectLocation
+	var locs []core.ObjectLocation
 	for rows.Next() {
 		loc, err := scanObjectLocation(rows)
 		if err != nil {
@@ -345,7 +344,7 @@ func (s *Store) GetRandomHashedObjects(ctx context.Context, limit int) ([]store.
 
 // GetObjectsWithoutHash returns object locations that have no stored content
 // hash, ordered by creation time. Used by the backfill command.
-func (s *Store) GetObjectsWithoutHash(ctx context.Context, limit, offset int) ([]store.ObjectLocation, error) {
+func (s *Store) GetObjectsWithoutHash(ctx context.Context, limit, offset int) ([]core.ObjectLocation, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT object_key, backend_name, size_bytes, encrypted, encryption_key,
 		       key_id, plaintext_size, content_hash, created_at
@@ -358,7 +357,7 @@ func (s *Store) GetObjectsWithoutHash(ctx context.Context, limit, offset int) ([
 	}
 	defer rows.Close()
 
-	var locs []store.ObjectLocation
+	var locs []core.ObjectLocation
 	for rows.Next() {
 		loc, err := scanObjectLocation(rows)
 		if err != nil {
@@ -383,9 +382,9 @@ func (s *Store) UpdateContentHash(ctx context.Context, key, backendName, hash st
 
 // scanObjectLocation scans a full object location row including all encryption
 // and integrity columns.
-func scanObjectLocation(rows *sql.Rows) (store.ObjectLocation, error) {
+func scanObjectLocation(rows *sql.Rows) (core.ObjectLocation, error) {
 	var (
-		loc           store.ObjectLocation
+		loc           core.ObjectLocation
 		createdAt     string
 		keyID         *string
 		plaintextSize *int64
@@ -397,12 +396,12 @@ func scanObjectLocation(rows *sql.Rows) (store.ObjectLocation, error) {
 		&keyID, &plaintextSize, &contentHash,
 		&createdAt,
 	); err != nil {
-		return store.ObjectLocation{}, fmt.Errorf("failed to scan object location: %w", err)
+		return core.ObjectLocation{}, fmt.Errorf("failed to scan object location: %w", err)
 	}
 	var parseErr error
 	loc.CreatedAt, parseErr = parseTime(createdAt)
 	if parseErr != nil {
-		return store.ObjectLocation{}, fmt.Errorf(errInvalidTimestamp, createdAt, parseErr)
+		return core.ObjectLocation{}, fmt.Errorf(errInvalidTimestamp, createdAt, parseErr)
 	}
 	if keyID != nil {
 		loc.KeyID = *keyID

@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/counter"
-	st "github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // -------------------------------------------------------------------------
@@ -45,22 +45,22 @@ func TestCreateMultipartUpload_Success(t *testing.T) {
 
 func TestCreateMultipartUpload_DBUnavailable(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{getBackendErr: st.ErrDBUnavailable}
+	store := &mockStore{getBackendErr: core.ErrDBUnavailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	_, _, err := mgr.MultipartManager.CreateMultipartUpload(context.Background(), "key", "", nil)
-	if !errors.Is(err, st.ErrServiceUnavailable) {
+	if !errors.Is(err, core.ErrServiceUnavailable) {
 		t.Fatalf("expected st.ErrServiceUnavailable, got %v", err)
 	}
 }
 
 func TestCreateMultipartUpload_NoSpace(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{getBackendErr: st.ErrNoSpaceAvailable}
+	store := &mockStore{getBackendErr: core.ErrNoSpaceAvailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	_, _, err := mgr.MultipartManager.CreateMultipartUpload(context.Background(), "key", "", nil)
-	if !errors.Is(err, st.ErrInsufficientStorage) {
+	if !errors.Is(err, core.ErrInsufficientStorage) {
 		t.Fatalf("expected st.ErrInsufficientStorage, got %v", err)
 	}
 }
@@ -73,7 +73,7 @@ func TestUploadPart_Success(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
 	store := &mockStore{
-		getMultipartResp: &st.MultipartUpload{
+		getMultipartResp: &core.MultipartUpload{
 			UploadID:    "upload-1",
 			ObjectKey:   "multi/key",
 			BackendName: "b1",
@@ -105,7 +105,7 @@ func TestUploadPart_InvalidPartNumber(t *testing.T) {
 			t.Errorf("UploadPart(partNumber=%d) should fail", pn)
 			continue
 		}
-		var s3Err *st.S3Error
+		var s3Err *core.S3Error
 		if !errors.As(err, &s3Err) || s3Err.Code != "InvalidArgument" {
 			t.Errorf("UploadPart(partNumber=%d) = %v, want st.S3Error InvalidArgument", pn, err)
 		}
@@ -114,11 +114,11 @@ func TestUploadPart_InvalidPartNumber(t *testing.T) {
 
 func TestUploadPart_DBUnavailable(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{getMultipartErr: st.ErrDBUnavailable}
+	store := &mockStore{getMultipartErr: core.ErrDBUnavailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	_, err := mgr.MultipartManager.UploadPart(context.Background(), "upload-1", 1, bytes.NewReader([]byte("x")), 1)
-	if !errors.Is(err, st.ErrServiceUnavailable) {
+	if !errors.Is(err, core.ErrServiceUnavailable) {
 		t.Fatalf("expected st.ErrServiceUnavailable, got %v", err)
 	}
 }
@@ -137,13 +137,13 @@ func TestCompleteMultipartUpload_Success(t *testing.T) {
 	_, _ = backend.PutObject(ctx, "__multipart/upload-1/2", bytes.NewReader([]byte("BBB")), 3, "application/octet-stream", nil)
 
 	store := &mockStore{
-		getMultipartResp: &st.MultipartUpload{
+		getMultipartResp: &core.MultipartUpload{
 			UploadID:    "upload-1",
 			ObjectKey:   "multi/key",
 			BackendName: "b1",
 			ContentType: "application/zip",
 		},
-		getPartsResp: []st.MultipartPart{
+		getPartsResp: []core.MultipartPart{
 			{PartNumber: 1, ETag: "e1", SizeBytes: 3},
 			{PartNumber: 2, ETag: "e2", SizeBytes: 3},
 		},
@@ -180,11 +180,11 @@ func TestCompleteMultipartUpload_Success(t *testing.T) {
 
 func TestCompleteMultipartUpload_DBUnavailable(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{getMultipartErr: st.ErrDBUnavailable}
+	store := &mockStore{getMultipartErr: core.ErrDBUnavailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	_, err := mgr.MultipartManager.CompleteMultipartUpload(context.Background(), "upload-1", []int{1})
-	if !errors.Is(err, st.ErrServiceUnavailable) {
+	if !errors.Is(err, core.ErrServiceUnavailable) {
 		t.Fatalf("expected st.ErrServiceUnavailable, got %v", err)
 	}
 }
@@ -200,12 +200,12 @@ func TestAbortMultipartUpload_Success(t *testing.T) {
 	_, _ = backend.PutObject(ctx, "__multipart/upload-1/1", bytes.NewReader([]byte("AAA")), 3, "application/octet-stream", nil)
 
 	store := &mockStore{
-		getMultipartResp: &st.MultipartUpload{
+		getMultipartResp: &core.MultipartUpload{
 			UploadID:    "upload-1",
 			ObjectKey:   "multi/key",
 			BackendName: "b1",
 		},
-		getPartsResp: []st.MultipartPart{
+		getPartsResp: []core.MultipartPart{
 			{PartNumber: 1, ETag: "e1", SizeBytes: 3, CreatedAt: time.Now()},
 		},
 	}
@@ -228,11 +228,11 @@ func TestAbortMultipartUpload_Success(t *testing.T) {
 
 func TestAbortMultipartUpload_DBUnavailable(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{getMultipartErr: st.ErrDBUnavailable}
+	store := &mockStore{getMultipartErr: core.ErrDBUnavailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	err := mgr.MultipartManager.AbortMultipartUpload(context.Background(), "upload-1")
-	if !errors.Is(err, st.ErrServiceUnavailable) {
+	if !errors.Is(err, core.ErrServiceUnavailable) {
 		t.Fatalf("expected st.ErrServiceUnavailable, got %v", err)
 	}
 }
@@ -240,7 +240,7 @@ func TestAbortMultipartUpload_DBUnavailable(t *testing.T) {
 func TestAbortMultipartUpload_GetPartsError(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
-		getMultipartResp: &st.MultipartUpload{
+		getMultipartResp: &core.MultipartUpload{
 			UploadID:    "upload-1",
 			ObjectKey:   "multi/key",
 			BackendName: "b1",
@@ -267,12 +267,12 @@ func TestAbortMultipartUpload_PartDeleteFails_EnqueuesCleanup(t *testing.T) {
 	backend.mu.Unlock()
 
 	store := &mockStore{
-		getMultipartResp: &st.MultipartUpload{
+		getMultipartResp: &core.MultipartUpload{
 			UploadID:    "upload-1",
 			ObjectKey:   "multi/key",
 			BackendName: "b1",
 		},
-		getPartsResp: []st.MultipartPart{
+		getPartsResp: []core.MultipartPart{
 			{PartNumber: 1, ETag: "e1", SizeBytes: 3},
 		},
 	}
@@ -309,13 +309,13 @@ func TestCompleteMultipartUpload_PartSubset(t *testing.T) {
 	_, _ = backend.PutObject(ctx, "__multipart/upload-1/3", bytes.NewReader([]byte("CCC")), 3, "application/octet-stream", nil)
 
 	store := &mockStore{
-		getMultipartResp: &st.MultipartUpload{
+		getMultipartResp: &core.MultipartUpload{
 			UploadID:    "upload-1",
 			ObjectKey:   "multi/key",
 			BackendName: "b1",
 			ContentType: "application/zip",
 		},
-		getPartsResp: []st.MultipartPart{
+		getPartsResp: []core.MultipartPart{
 			{PartNumber: 1, ETag: "e1", SizeBytes: 3},
 			{PartNumber: 2, ETag: "e2", SizeBytes: 3},
 			{PartNumber: 3, ETag: "e3", SizeBytes: 3},
@@ -346,13 +346,13 @@ func TestCompleteMultipartUpload_PartSubset(t *testing.T) {
 func TestCompleteMultipartUpload_InvalidPart(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
-		getMultipartResp: &st.MultipartUpload{
+		getMultipartResp: &core.MultipartUpload{
 			UploadID:    "upload-1",
 			ObjectKey:   "multi/key",
 			BackendName: "b1",
 			ContentType: "text/plain",
 		},
-		getPartsResp: []st.MultipartPart{
+		getPartsResp: []core.MultipartPart{
 			{PartNumber: 1, ETag: "e1", SizeBytes: 3},
 		},
 	}
@@ -363,7 +363,7 @@ func TestCompleteMultipartUpload_InvalidPart(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing part")
 	}
-	var s3err *st.S3Error
+	var s3err *core.S3Error
 	if !errors.As(err, &s3err) || s3err.Code != "InvalidPart" {
 		t.Errorf("expected st.S3Error with Code=InvalidPart, got %v", err)
 	}
@@ -376,7 +376,7 @@ func TestCompleteMultipartUpload_InvalidPart(t *testing.T) {
 func TestCompleteMultipartUpload_GetPartsError(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
-		getMultipartResp: &st.MultipartUpload{
+		getMultipartResp: &core.MultipartUpload{
 			UploadID:    "upload-1",
 			ObjectKey:   "multi/key",
 			BackendName: "b1",
@@ -398,13 +398,13 @@ func TestCompleteMultipartUpload_PartDeleteFails_EnqueuesCleanup(t *testing.T) {
 	_, _ = backend.PutObject(ctx, "__multipart/upload-1/1", bytes.NewReader([]byte("AAA")), 3, "application/octet-stream", nil)
 
 	store := &mockStore{
-		getMultipartResp: &st.MultipartUpload{
+		getMultipartResp: &core.MultipartUpload{
 			UploadID:    "upload-1",
 			ObjectKey:   "multi/key",
 			BackendName: "b1",
 			ContentType: "application/zip",
 		},
-		getPartsResp: []st.MultipartPart{
+		getPartsResp: []core.MultipartPart{
 			{PartNumber: 1, ETag: "e1", SizeBytes: 3},
 		},
 	}
@@ -441,13 +441,13 @@ func TestCompleteMultipartUpload_FinalPutFails(t *testing.T) {
 	backend.putErr = errors.New("write failed")
 
 	store := &mockStore{
-		getMultipartResp: &st.MultipartUpload{
+		getMultipartResp: &core.MultipartUpload{
 			UploadID:    "upload-1",
 			ObjectKey:   "multi/key",
 			BackendName: "b1",
 			ContentType: "application/zip",
 		},
-		getPartsResp: []st.MultipartPart{
+		getPartsResp: []core.MultipartPart{
 			{PartNumber: 1, ETag: "e1", SizeBytes: 3},
 		},
 	}
@@ -467,13 +467,13 @@ func TestCompleteMultipartUpload_PartReadFails(t *testing.T) {
 	backend.getReadErr = errors.New("disk I/O error")
 
 	store := &mockStore{
-		getMultipartResp: &st.MultipartUpload{
+		getMultipartResp: &core.MultipartUpload{
 			UploadID:    "upload-1",
 			ObjectKey:   "multi/key",
 			BackendName: "b1",
 			ContentType: "application/zip",
 		},
-		getPartsResp: []st.MultipartPart{
+		getPartsResp: []core.MultipartPart{
 			{PartNumber: 1, ETag: "e1", SizeBytes: 3},
 		},
 	}
@@ -492,7 +492,7 @@ func TestCompleteMultipartUpload_PartReadFails(t *testing.T) {
 func TestUploadPart_UsageLimitExceeded(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
-		getMultipartResp: &st.MultipartUpload{
+		getMultipartResp: &core.MultipartUpload{
 			UploadID:    "upload-1",
 			ObjectKey:   "multi/key",
 			BackendName: "b1",
@@ -501,12 +501,12 @@ func TestUploadPart_UsageLimitExceeded(t *testing.T) {
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	// Set usage limits that will be exceeded
-	mgr.usage.UpdateLimits(map[string]st.UsageLimits{
+	mgr.usage.UpdateLimits(map[string]core.UsageLimits{
 		"b1": {IngressByteLimit: 1}, // only 1 byte allowed
 	})
 
 	_, err := mgr.MultipartManager.UploadPart(context.Background(), "upload-1", 1, bytes.NewReader([]byte("large-data")), 10)
-	if !errors.Is(err, st.ErrInsufficientStorage) {
+	if !errors.Is(err, core.ErrInsufficientStorage) {
 		t.Fatalf("expected st.ErrInsufficientStorage, got %v", err)
 	}
 }
@@ -515,7 +515,7 @@ func TestUploadPart_RecordPartFails_CleansUpPartObject(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
 	store := &mockStore{
-		getMultipartResp: &st.MultipartUpload{
+		getMultipartResp: &core.MultipartUpload{
 			UploadID:    "upload-1",
 			ObjectKey:   "multi/key",
 			BackendName: "b1",
@@ -550,7 +550,7 @@ func TestUploadPart_RecordPartFails_DeleteFails_EnqueuesCleanup(t *testing.T) {
 	backend.delErr = errors.New("backend timeout")
 
 	store := &mockStore{
-		getMultipartResp: &st.MultipartUpload{
+		getMultipartResp: &core.MultipartUpload{
 			UploadID:    "upload-1",
 			ObjectKey:   "multi/key",
 			BackendName: "b1",
@@ -611,15 +611,15 @@ func TestCleanupStaleMultipartUploads_AbortsStaleUploads(t *testing.T) {
 	_, _ = backend.PutObject(ctx, "__multipart/stale-1/1", bytes.NewReader([]byte("x")), 1, "", nil)
 
 	store := &mockStore{
-		getStaleMultipartResp: []st.MultipartUpload{
+		getStaleMultipartResp: []core.MultipartUpload{
 			{UploadID: "stale-1", ObjectKey: "stale/key", BackendName: "b1"},
 		},
-		getMultipartResp: &st.MultipartUpload{
+		getMultipartResp: &core.MultipartUpload{
 			UploadID:    "stale-1",
 			ObjectKey:   "stale/key",
 			BackendName: "b1",
 		},
-		getPartsResp: []st.MultipartPart{
+		getPartsResp: []core.MultipartPart{
 			{PartNumber: 1, ETag: "e1", SizeBytes: 1},
 		},
 	}
@@ -647,13 +647,13 @@ func TestCompleteMultipartUpload_UsageRecords2NPlus1APICalls(t *testing.T) {
 	_, _ = backend.PutObject(ctx, "__multipart/upload-1/3", bytes.NewReader([]byte("CCC")), 3, "application/octet-stream", nil)
 
 	store := &mockStore{
-		getMultipartResp: &st.MultipartUpload{
+		getMultipartResp: &core.MultipartUpload{
 			UploadID:    "upload-1",
 			ObjectKey:   "multi/key",
 			BackendName: "b1",
 			ContentType: "application/zip",
 		},
-		getPartsResp: []st.MultipartPart{
+		getPartsResp: []core.MultipartPart{
 			{PartNumber: 1, ETag: "e1", SizeBytes: 3},
 			{PartNumber: 2, ETag: "e2", SizeBytes: 3},
 			{PartNumber: 3, ETag: "e3", SizeBytes: 3},
@@ -683,7 +683,7 @@ func TestUploadPart_BackendFailure_StillRecordsUsage(t *testing.T) {
 	backend.putErr = errors.New("backend timeout")
 
 	store := &mockStore{
-		getMultipartResp: &st.MultipartUpload{
+		getMultipartResp: &core.MultipartUpload{
 			UploadID:    "upload-1",
 			ObjectKey:   "multi/key",
 			BackendName: "b1",
@@ -727,7 +727,7 @@ func TestCreateMultipartUpload_CreateStoreError(t *testing.T) {
 func TestCleanupStaleMultipartUploads_AbortFails(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
-		getStaleMultipartResp: []st.MultipartUpload{
+		getStaleMultipartResp: []core.MultipartUpload{
 			{UploadID: "stale-1", ObjectKey: "stale/key", BackendName: "b1"},
 		},
 		// GetMultipartUpload will fail, causing AbortMultipartUpload to fail
@@ -761,16 +761,16 @@ func TestAbortMultipartUploadsOnBackend_AbortsMatchingBackend(t *testing.T) {
 	_, _ = backend.PutObject(ctx, "__multipart/up-1/1", bytes.NewReader([]byte("x")), 1, "", nil)
 
 	store := &mockStore{
-		getStaleMultipartResp: []st.MultipartUpload{
+		getStaleMultipartResp: []core.MultipartUpload{
 			{UploadID: "up-1", ObjectKey: "key1", BackendName: "b1"},
 			{UploadID: "up-2", ObjectKey: "key2", BackendName: "b2"}, // different backend — skipped
 		},
-		getMultipartResp: &st.MultipartUpload{
+		getMultipartResp: &core.MultipartUpload{
 			UploadID:    "up-1",
 			ObjectKey:   "key1",
 			BackendName: "b1",
 		},
-		getPartsResp: []st.MultipartPart{
+		getPartsResp: []core.MultipartPart{
 			{PartNumber: 1, ETag: "e1", SizeBytes: 1},
 		},
 	}
@@ -787,7 +787,7 @@ func TestAbortMultipartUploadsOnBackend_AbortsMatchingBackend(t *testing.T) {
 func TestAbortMultipartUploadsOnBackend_AbortFails(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
-		getStaleMultipartResp: []st.MultipartUpload{
+		getStaleMultipartResp: []core.MultipartUpload{
 			{UploadID: "up-1", ObjectKey: "key1", BackendName: "b1"},
 		},
 		getMultipartErr: errors.New("db error"), // causes AbortMultipartUpload to fail
@@ -807,12 +807,12 @@ func TestCompleteMultipartUpload_PartGetPanics(t *testing.T) {
 	backend.getPanic = true // causes GetObject to panic during part assembly
 
 	store := &mockStore{
-		getMultipartResp: &st.MultipartUpload{
+		getMultipartResp: &core.MultipartUpload{
 			UploadID:    "upload-panic",
 			ObjectKey:   "multi/panic",
 			BackendName: "b1",
 		},
-		getPartsResp: []st.MultipartPart{
+		getPartsResp: []core.MultipartPart{
 			{PartNumber: 1, ETag: "e1", SizeBytes: 3},
 		},
 	}

@@ -17,46 +17,44 @@
 
 package proxy
 
-import (
-	"github.com/afreidah/s3-orchestrator/internal/store"
-)
+import "github.com/afreidah/s3-orchestrator/internal/store/core"
 
 // Stores groups the narrow store roles injected into BackendManager.
 // Each field is populated at DI wiring time with a CB-wrapped view of the
 // concrete store. Consumers read the field that matches their role.
 type Stores struct {
-	Object           store.ObjectStore
-	Quota            store.QuotaStore
-	Multipart        store.MultipartStore
-	Replication      store.ReplicationStore
-	Cleanup          store.CleanupStore
-	Pending          store.PendingStore
-	Integrity        store.IntegrityStore
-	Lifecycle        store.ExpiredObjectsLister
-	BackendLifecycle store.BackendLifecycleStore
-	Dashboard        store.DashboardStore
-	Usage            store.UsageFlusher
-	Lock             store.AdvisoryLocker
+	Object           core.ObjectStore
+	Quota            core.QuotaStore
+	Multipart        core.MultipartStore
+	Replication      core.ReplicationStore
+	Cleanup          core.CleanupStore
+	Pending          core.PendingStore
+	Integrity        core.IntegrityStore
+	Lifecycle        core.ExpiredObjectsLister
+	BackendLifecycle core.BackendLifecycleStore
+	Dashboard        core.DashboardStore
+	Usage            core.UsageFlusher
+	Lock             core.AdvisoryLocker
 }
 
 // rebalancerStore satisfies worker.RebalancerStore by embedding the two
 // narrow roles the rebalancer actually touches.
 type rebalancerStore struct {
-	store.ObjectStore
-	store.QuotaStore
+	core.ObjectStore
+	core.QuotaStore
 }
 
 // replicatorStore satisfies worker.ReplicatorStore.
 type replicatorStore struct {
-	store.ObjectStore
-	store.ReplicationStore
-	store.QuotaStore
+	core.ObjectStore
+	core.ReplicationStore
+	core.QuotaStore
 }
 
 // overReplicationStore satisfies worker.OverReplicationStore.
 type overReplicationStore struct {
-	store.ReplicationStore
-	store.QuotaStore
+	core.ReplicationStore
+	core.QuotaStore
 }
 
 // StoresFromMock returns a Stores bag where every field points at the same
@@ -85,16 +83,16 @@ func StoresFromMock(m allRoles) Stores {
 // spread across a Stores bag. Declared inline rather than exported because
 // only tests need this composite shape.
 type allRoles interface {
-	store.ObjectStore
-	store.QuotaStore
-	store.MultipartStore
-	store.ReplicationStore
-	store.CleanupStore
-	store.PendingStore
-	store.IntegrityStore
-	store.ExpiredObjectsLister
-	store.BackendLifecycleStore
-	store.DashboardStore
-	store.UsageFlusher
-	store.AdvisoryLocker
+	core.ObjectStore
+	core.QuotaStore
+	core.MultipartStore
+	core.ReplicationStore
+	core.CleanupStore
+	core.PendingStore
+	core.IntegrityStore
+	core.ExpiredObjectsLister
+	core.BackendLifecycleStore
+	core.DashboardStore
+	core.UsageFlusher
+	core.AdvisoryLocker
 }

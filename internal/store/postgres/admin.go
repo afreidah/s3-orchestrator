@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	db "github.com/afreidah/s3-orchestrator/internal/store/postgres/sqlc"
 )
 
@@ -71,7 +72,7 @@ func (s *Store) DeleteObjectLocation(ctx context.Context, key, backendName strin
 
 // ListEncryptedLocations returns a page of encrypted object locations filtered
 // by key ID. Used during key rotation to find objects wrapped with the old key.
-func (s *Store) ListEncryptedLocations(ctx context.Context, keyID string, limit, offset int) ([]EncryptedLocation, error) {
+func (s *Store) ListEncryptedLocations(ctx context.Context, keyID string, limit, offset int) ([]core.EncryptedLocation, error) {
 	rows, err := s.queries.ListEncryptedLocations(ctx, db.ListEncryptedLocationsParams{
 		KeyID:  &keyID,
 		Limit:  int32(limit),  //nolint:gosec // G115: limit is a small caller-controlled batch size
@@ -80,9 +81,9 @@ func (s *Store) ListEncryptedLocations(ctx context.Context, keyID string, limit,
 	if err != nil {
 		return nil, fmt.Errorf("list encrypted locations: %w", err)
 	}
-	result := make([]EncryptedLocation, len(rows))
+	result := make([]core.EncryptedLocation, len(rows))
 	for i, r := range rows {
-		result[i] = EncryptedLocation{
+		result[i] = core.EncryptedLocation{
 			ObjectKey:     r.ObjectKey,
 			BackendName:   r.BackendName,
 			EncryptionKey: r.EncryptionKey,
@@ -107,7 +108,7 @@ func (s *Store) UpdateEncryptionKey(ctx context.Context, objectKey, backendName 
 
 // ListUnencryptedLocations returns a page of unencrypted object locations.
 // Used by the encrypt-existing admin endpoint to find objects that need encryption.
-func (s *Store) ListUnencryptedLocations(ctx context.Context, limit, offset int) ([]UnencryptedLocation, error) {
+func (s *Store) ListUnencryptedLocations(ctx context.Context, limit, offset int) ([]core.UnencryptedLocation, error) {
 	rows, err := s.queries.ListUnencryptedLocations(ctx, db.ListUnencryptedLocationsParams{
 		Limit:  int32(limit),  //nolint:gosec // G115: limit is a small caller-controlled batch size
 		Offset: int32(offset), //nolint:gosec // G115: offset is a small caller-controlled value
@@ -115,9 +116,9 @@ func (s *Store) ListUnencryptedLocations(ctx context.Context, limit, offset int)
 	if err != nil {
 		return nil, fmt.Errorf("list unencrypted locations: %w", err)
 	}
-	result := make([]UnencryptedLocation, len(rows))
+	result := make([]core.UnencryptedLocation, len(rows))
 	for i, r := range rows {
-		result[i] = UnencryptedLocation{
+		result[i] = core.UnencryptedLocation{
 			ObjectKey:   r.ObjectKey,
 			BackendName: r.BackendName,
 			SizeBytes:   r.SizeBytes,
@@ -142,7 +143,7 @@ func (s *Store) MarkObjectEncrypted(ctx context.Context, objectKey, backendName 
 
 // ListAllEncryptedLocations returns a page of all encrypted object locations.
 // Used by the decrypt-existing admin endpoint to find objects that need decryption.
-func (s *Store) ListAllEncryptedLocations(ctx context.Context, limit, offset int) ([]DecryptableLocation, error) {
+func (s *Store) ListAllEncryptedLocations(ctx context.Context, limit, offset int) ([]core.DecryptableLocation, error) {
 	rows, err := s.queries.ListAllEncryptedLocations(ctx, db.ListAllEncryptedLocationsParams{
 		Limit:  int32(limit),  //nolint:gosec // G115: limit is a small caller-controlled batch size
 		Offset: int32(offset), //nolint:gosec // G115: offset is a small caller-controlled value
@@ -150,9 +151,9 @@ func (s *Store) ListAllEncryptedLocations(ctx context.Context, limit, offset int
 	if err != nil {
 		return nil, fmt.Errorf("list all encrypted locations: %w", err)
 	}
-	result := make([]DecryptableLocation, len(rows))
+	result := make([]core.DecryptableLocation, len(rows))
 	for i, r := range rows {
-		result[i] = DecryptableLocation{
+		result[i] = core.DecryptableLocation{
 			ObjectKey:     r.ObjectKey,
 			BackendName:   r.BackendName,
 			SizeBytes:     r.SizeBytes,

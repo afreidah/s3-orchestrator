@@ -19,7 +19,7 @@ import (
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
-	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // newTestMultipartManager builds a minimal MultipartManager suitable for
@@ -52,7 +52,7 @@ func TestStreamOnePart_PlaintextCopiesBytes(t *testing.T) {
 	preloadPart(be, uploadID, 1, []byte("plaintext part 1 contents"))
 
 	var buf bytes.Buffer
-	part := &store.MultipartPart{PartNumber: 1, SizeBytes: 25}
+	part := &core.MultipartPart{PartNumber: 1, SizeBytes: 25}
 	if err := mp.streamOnePart(context.Background(), be, &buf, uploadID, part); err != nil {
 		t.Fatalf("streamOnePart: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestStreamOnePart_GetObjectErrorWrapsPartNumber(t *testing.T) {
 	be.getErr = errors.New("backend down")
 
 	var buf bytes.Buffer
-	part := &store.MultipartPart{PartNumber: 7}
+	part := &core.MultipartPart{PartNumber: 7}
 	err := mp.streamOnePart(context.Background(), be, &buf, "upload-x", part)
 	if err == nil {
 		t.Fatal("expected error from failing backend")
@@ -90,7 +90,7 @@ func TestStreamOnePart_BodyReadErrorWrapsPartNumber(t *testing.T) {
 	be.getReadErr = errors.New("connection reset")
 
 	var buf bytes.Buffer
-	part := &store.MultipartPart{PartNumber: 3}
+	part := &core.MultipartPart{PartNumber: 3}
 	err := mp.streamOnePart(context.Background(), be, &buf, uploadID, part)
 	if err == nil {
 		t.Fatal("expected error from failing read")
@@ -119,7 +119,7 @@ func TestStreamOnePart_EncryptedPartDecrypts(t *testing.T) {
 
 	const uploadID = "upload-enc"
 	preloadPart(be, uploadID, 5, ciphertext)
-	part := &store.MultipartPart{
+	part := &core.MultipartPart{
 		PartNumber:    5,
 		Encrypted:     true,
 		EncryptionKey: encryption.PackKeyData(res.BaseNonce, res.WrappedDEK),
@@ -146,7 +146,7 @@ func TestStreamOnePart_EncryptedPartWithoutEncryptorPassesCiphertext(t *testing.
 	ciphertext := []byte("opaque ciphertext bytes")
 	preloadPart(be, uploadID, 2, ciphertext)
 
-	part := &store.MultipartPart{PartNumber: 2, Encrypted: true}
+	part := &core.MultipartPart{PartNumber: 2, Encrypted: true}
 
 	var buf bytes.Buffer
 	if err := mp.streamOnePart(context.Background(), be, &buf, uploadID, part); err != nil {
@@ -166,7 +166,7 @@ func TestStreamOnePart_BadEncryptionKeyWrapsPartNumber(t *testing.T) {
 	preloadPart(be, uploadID, 4, []byte("anything"))
 
 	// EncryptionKey too short → UnpackKeyData fails.
-	part := &store.MultipartPart{PartNumber: 4, Encrypted: true, EncryptionKey: []byte("tiny")}
+	part := &core.MultipartPart{PartNumber: 4, Encrypted: true, EncryptionKey: []byte("tiny")}
 
 	var buf bytes.Buffer
 	err := mp.streamOnePart(context.Background(), be, &buf, uploadID, part)
@@ -194,7 +194,7 @@ func TestStreamOnePart_DecryptErrorWrapsPartNumber(t *testing.T) {
 
 	const uploadID = "upload-decryptfail"
 	preloadPart(be, uploadID, 6, []byte("not-real-ciphertext-bytes"))
-	part := &store.MultipartPart{
+	part := &core.MultipartPart{
 		PartNumber:    6,
 		Encrypted:     true,
 		EncryptionKey: encryption.PackKeyData(res.BaseNonce, res.WrappedDEK),
@@ -224,7 +224,7 @@ func TestStreamPartsThroughPipe_ConcatenatesInOrder(t *testing.T) {
 	preloadPart(be, uploadID, 2, []byte("beta-"))
 	preloadPart(be, uploadID, 3, []byte("gamma"))
 
-	parts := []store.MultipartPart{
+	parts := []core.MultipartPart{
 		{PartNumber: 1, SizeBytes: 6},
 		{PartNumber: 2, SizeBytes: 5},
 		{PartNumber: 3, SizeBytes: 5},
@@ -251,7 +251,7 @@ func TestStreamPartsThroughPipe_PropagatesPartFailure(t *testing.T) {
 	// Part 2 deliberately not preloaded — backend returns NotFound.
 	preloadPart(be, uploadID, 3, []byte("ok-3"))
 
-	parts := []store.MultipartPart{
+	parts := []core.MultipartPart{
 		{PartNumber: 1, SizeBytes: 4},
 		{PartNumber: 2, SizeBytes: 4},
 		{PartNumber: 3, SizeBytes: 4},
@@ -294,7 +294,7 @@ func TestStreamPartsThroughPipe_MixedEncryptedAndPlain(t *testing.T) {
 	// Part 3: plaintext
 	preloadPart(be, uploadID, 3, []byte("PLAIN3"))
 
-	parts := []store.MultipartPart{
+	parts := []core.MultipartPart{
 		{PartNumber: 1, SizeBytes: 7},
 		{
 			PartNumber:    2,

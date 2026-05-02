@@ -23,20 +23,20 @@ import (
 // overwrites by returning displaced copies for cleanup. Delegates to
 // core.RecordObject which composes lock, displacement, insert, and
 // quota update against the postgres TxAdapter.
-func (s *Store) RecordObject(ctx context.Context, key, backend string, size int64, enc *EncryptionMeta) ([]DeletedCopy, error) {
+func (s *Store) RecordObject(ctx context.Context, key, backend string, size int64, enc *core.EncryptionMeta) ([]core.DeletedCopy, error) {
 	return core.RecordObject(ctx, s, key, backend, size, enc)
 }
 
 // RecordObjectAndClearPending performs the same atomic commit as
 // RecordObject and additionally deletes the matching pending_objects
 // intent inside the same transaction. Delegates to core.
-func (s *Store) RecordObjectAndClearPending(ctx context.Context, key, backend string, size int64, enc *EncryptionMeta, intentID string) ([]DeletedCopy, error) {
+func (s *Store) RecordObjectAndClearPending(ctx context.Context, key, backend string, size int64, enc *core.EncryptionMeta, intentID string) ([]core.DeletedCopy, error) {
 	return core.RecordObjectAndClearPending(ctx, s, key, backend, size, enc, intentID)
 }
 
 // insertParamsFromEnc builds InsertObjectLocationParams, attaching
 // encryption and content-hash metadata when provided.
-func insertParamsFromEnc(key, backend string, size int64, enc *EncryptionMeta) db.InsertObjectLocationParams {
+func insertParamsFromEnc(key, backend string, size int64, enc *core.EncryptionMeta) db.InsertObjectLocationParams {
 	params := db.InsertObjectLocationParams{
 		ObjectKey:   key,
 		BackendName: backend,
@@ -60,20 +60,20 @@ func insertParamsFromEnc(key, backend string, size int64, enc *EncryptionMeta) d
 // DeleteObject removes all copies of an object and decrements their
 // quotas. Returns all deleted copies, or ErrObjectNotFound if the
 // object doesn't exist. Delegates to core.DeleteObject.
-func (s *Store) DeleteObject(ctx context.Context, key string) ([]DeletedCopy, error) {
+func (s *Store) DeleteObject(ctx context.Context, key string) ([]core.DeletedCopy, error) {
 	return core.DeleteObject(ctx, s, key)
 }
 
 // DeleteObjectsBatch delegates to core.DeleteObjectsBatch which
 // removes every supplied key in one transaction and returns per-key
 // displaced copies for backend cleanup.
-func (s *Store) DeleteObjectsBatch(ctx context.Context, keys []string) (map[string][]DeletedCopy, error) {
+func (s *Store) DeleteObjectsBatch(ctx context.Context, keys []string) (map[string][]core.DeletedCopy, error) {
 	return core.DeleteObjectsBatch(ctx, s, keys)
 }
 
 // ListObjectsByBackend returns objects stored on a specific backend, ordered by
 // size ascending (smallest first). Used by the rebalancer to find movable objects.
-func (s *Store) ListObjectsByBackend(ctx context.Context, backendName string, limit int) ([]ObjectLocation, error) {
+func (s *Store) ListObjectsByBackend(ctx context.Context, backendName string, limit int) ([]core.ObjectLocation, error) {
 	rows, err := s.queries.ListObjectsByBackend(ctx, db.ListObjectsByBackendParams{
 		BackendName: backendName,
 		Limit:       int32(limit), //nolint:gosec // G115: limit is a small caller-controlled batch size
@@ -89,7 +89,7 @@ func (s *Store) ListObjectsByBackend(ctx context.Context, backendName string, li
 // string returns the first page. Used by ReconcileBackend to drive a
 // bounded-memory sorted-merge join against an S3 ListObjects walk; both
 // sides are in lex order so the merge is O(n) memory bounded by limit.
-func (s *Store) ListObjectsByBackendKeyAsc(ctx context.Context, backendName, afterKey string, limit int) ([]ObjectLocation, error) {
+func (s *Store) ListObjectsByBackendKeyAsc(ctx context.Context, backendName, afterKey string, limit int) ([]core.ObjectLocation, error) {
 	rows, err := s.queries.ListObjectsByBackendKeyAsc(ctx, db.ListObjectsByBackendKeyAscParams{
 		BackendName: backendName,
 		ObjectKey:   afterKey,
@@ -111,7 +111,7 @@ func (s *Store) MoveObjectLocation(ctx context.Context, key, fromBackend, toBack
 // ListObjects returns objects matching the given prefix, sorted by key.
 // Supports pagination via startAfter and maxKeys. Returns one extra row to
 // detect truncation.
-func (s *Store) ListObjects(ctx context.Context, prefix, startAfter string, maxKeys int) (*ListObjectsResult, error) {
+func (s *Store) ListObjects(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.ListObjectsResult, error) {
 	if maxKeys <= 0 {
 		maxKeys = 1000
 	}
@@ -131,7 +131,7 @@ func (s *Store) ListObjects(ctx context.Context, prefix, startAfter string, maxK
 
 	objects := toSlimObjectLocations(rows)
 
-	result := &ListObjectsResult{}
+	result := &core.ListObjectsResult{}
 	if len(objects) > maxKeys {
 		result.IsTruncated = true
 		result.NextContinuationToken = objects[maxKeys-1].ObjectKey
@@ -146,7 +146,7 @@ func (s *Store) ListObjects(ctx context.Context, prefix, startAfter string, maxK
 // ListExpiredObjects returns one row per unique key matching the given prefix
 // whose created_at is older than cutoff, up to limit rows. Used by lifecycle
 // expiration to find objects eligible for deletion.
-func (s *Store) ListExpiredObjects(ctx context.Context, prefix string, cutoff time.Time, limit int) ([]ObjectLocation, error) {
+func (s *Store) ListExpiredObjects(ctx context.Context, prefix string, cutoff time.Time, limit int) ([]core.ObjectLocation, error) {
 	escapedPrefix := likeEscaper.Replace(prefix)
 	rows, err := s.queries.ListExpiredObjects(ctx, db.ListExpiredObjectsParams{
 		Prefix:  escapedPrefix,
@@ -166,7 +166,7 @@ func (s *Store) ListExpiredObjects(ctx context.Context, prefix string, cutoff ti
 // ListDirectoryChildren returns the immediate children of a directory prefix
 // with aggregate stats for subdirectories. Files include backend and creation
 // time. Prefix must end with "/" (or be "" for root).
-func (s *Store) ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*DirectoryListResult, error) {
+func (s *Store) ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.DirectoryListResult, error) {
 	if maxKeys <= 0 {
 		maxKeys = 200
 	}
@@ -209,12 +209,12 @@ func (s *Store) ListDirectoryChildren(ctx context.Context, prefix, startAfter st
 		}
 	}
 
-	result := &DirectoryListResult{
-		Entries: make([]DirEntry, 0, len(stats)),
+	result := &core.DirectoryListResult{
+		Entries: make([]core.DirEntry, 0, len(stats)),
 	}
 
 	for _, s := range stats {
-		entry := DirEntry{
+		entry := core.DirEntry{
 			Name:      prefix + s.Name,
 			IsDir:     s.IsDir,
 			FileCount: s.FileCount,

@@ -28,7 +28,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
-	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 	"github.com/afreidah/s3-orchestrator/internal/util/workerpool"
 )
@@ -92,7 +92,7 @@ func (r *Replicator) replicate(ctx context.Context, cfg config.ReplicationConfig
 	excluded := r.UnhealthyBackends(cfg.UnhealthyThreshold)
 
 	// --- Find under-replicated objects ---
-	var locations []store.ObjectLocation
+	var locations []core.ObjectLocation
 	var err error
 	if len(excluded) > 0 {
 		locations, err = r.store.GetUnderReplicatedObjectsExcluding(ctx, cfg.Factor, cfg.BatchSize, excluded)
@@ -112,12 +112,12 @@ func (r *Replicator) replicate(ctx context.Context, cfg config.ReplicationConfig
 	}
 
 	// --- Group locations by object key ---
-	grouped := store.GroupByKey(locations)
+	grouped := core.GroupByKey(locations)
 
 	// Flatten map into a slice for the worker pool
 	type replicaTask struct {
 		key    string
-		copies []store.ObjectLocation
+		copies []core.ObjectLocation
 		needed int
 	}
 	var tasks []replicaTask
@@ -177,11 +177,10 @@ func (r *Replicator) replicate(ctx context.Context, cfg config.ReplicationConfig
 // INTERNALS
 // -------------------------------------------------------------------------
 
-
 // ReplicateObject creates up to `needed` additional copies of a single object.
 // quotaStats is pre-fetched once per replication cycle to avoid redundant DB queries.
 // Returns the number of copies successfully created.
-func (r *Replicator) ReplicateObject(ctx context.Context, quotaStats map[string]store.QuotaStat, key string, existingCopies []store.ObjectLocation, needed int) (int, error) {
+func (r *Replicator) ReplicateObject(ctx context.Context, quotaStats map[string]core.QuotaStat, key string, existingCopies []core.ObjectLocation, needed int) (int, error) {
 	// Build exclusion set of backends that already hold a copy
 	exclusion := make(map[string]bool, len(existingCopies))
 	for i := range existingCopies {
@@ -254,7 +253,7 @@ func (r *Replicator) ReplicateObject(ctx context.Context, quotaStats map[string]
 // FindReplicaTarget selects a backend for a replication copy using the same
 // routing strategy as normal writes. Returns empty string if no suitable
 // target exists.
-func (r *Replicator) FindReplicaTarget(ctx context.Context, quotaStats map[string]store.QuotaStat, key string, size int64, exclusion map[string]bool) string {
+func (r *Replicator) FindReplicaTarget(ctx context.Context, quotaStats map[string]core.QuotaStat, key string, size int64, exclusion map[string]bool) string {
 	name, err := r.ops.SelectReplicaTarget(ctx, size, exclusion)
 	if err != nil {
 		slog.WarnContext(ctx, "Replication: target selection failed",
@@ -267,60 +266,82 @@ func (r *Replicator) FindReplicaTarget(ctx context.Context, quotaStats map[strin
 // copyToReplica reads the object from an existing copy and writes it to the
 // target backend. Tries each existing copy in order for failover. Returns the
 // source backend name that was successfully read from.
-func (r *Replicator) CopyToReplica(ctx context.Context, key string, copies []store.ObjectLocation, target string) (string, error) {
+func (r *Replicator) CopyToReplica(ctx context.Context, key string, copies []core.ObjectLocation, target string) (string, error) {
 	targetBackend, err := r.ops.GetBackend(target)
 	if err != nil {
 		return "", err
 	}
 
 	// Prefer healthy sources to avoid circuit breaker latency/failures.
-	slices.SortStableFunc(copies, func(a, b store.ObjectLocation) int {
-		aOK := r.IsBackendHealthy(a.BackendName)
-		bOK := r.IsBackendHealthy(b.BackendName)
-		if aOK == bOK {
-			return 0
-		}
-		if aOK {
-			return -1
-		}
-		return 1
+	slices.SortStableFunc(copies, func(a, b core.ObjectLocation) int {
+		return cmpHealthFirst(r.IsBackendHealthy(a.BackendName), r.IsBackendHealthy(b.BackendName))
 	})
 
 	for i := range copies {
 		if ctx.Err() != nil {
 			return "", ctx.Err()
 		}
-		srcBackend, ok := r.ops.Backends()[copies[i].BackendName]
-		if !ok {
-			continue
-		}
-
-		err := r.ops.StreamCopy(ctx, srcBackend, targetBackend, key)
-		if err == nil {
-			return copies[i].BackendName, nil
-		}
-
-		// Write failures won't improve with a different source — fail immediately.
-		if strings.HasPrefix(err.Error(), "write:") {
-			return "", fmt.Errorf("failed to write to target %s: %w", target, err)
-		}
-
-		slog.WarnContext(ctx, "Replication: source read failed, trying next copy",
-			"key", key, "source", copies[i].BackendName, "error", err)
-
-		// Source returned 404 — metadata is stale, remove it immediately
-		if isNotFound(err) {
-			if delErr := r.store.DeleteObjectLocation(ctx, key, copies[i].BackendName); delErr != nil {
-				slog.WarnContext(ctx, "Replication: failed to remove stale metadata",
-					"key", key, "backend", copies[i].BackendName, "error", delErr)
-			} else {
-				slog.InfoContext(ctx, "Replication: removed stale metadata entry",
-					"key", key, "backend", copies[i].BackendName)
-			}
+		sourceName, terminal, err := r.tryCopyFrom(ctx, key, target, targetBackend, &copies[i])
+		if terminal {
+			return sourceName, err
 		}
 	}
 
 	return "", fmt.Errorf("all source copies failed for key %s", key)
+}
+
+// cmpHealthFirst orders two health flags so true (healthy) sorts before
+// false (unhealthy). The comparator inside CopyToReplica delegates to
+// this helper so the closure body stays a single expression and the
+// outer method stays under the cognitive-complexity ceiling.
+func cmpHealthFirst(aOK, bOK bool) int {
+	switch {
+	case aOK == bOK:
+		return 0
+	case aOK:
+		return -1
+	default:
+		return 1
+	}
+}
+
+// tryCopyFrom attempts a stream-copy from one source location to the
+// target. Returns terminal=true with (sourceName, nil) on success or with
+// ("", err) when the failure mode means no other source could help (a
+// write-side error). Returns terminal=false to signal the caller should
+// move on to the next source.
+func (r *Replicator) tryCopyFrom(ctx context.Context, key, target string, targetBackend backend.ObjectBackend, loc *core.ObjectLocation) (string, bool, error) {
+	srcBackend, ok := r.ops.Backends()[loc.BackendName]
+	if !ok {
+		return "", false, nil
+	}
+	err := r.ops.StreamCopy(ctx, srcBackend, targetBackend, key)
+	if err == nil {
+		return loc.BackendName, true, nil
+	}
+	// Write failures won't improve with a different source — fail immediately.
+	if strings.HasPrefix(err.Error(), "write:") {
+		return "", true, fmt.Errorf("failed to write to target %s: %w", target, err)
+	}
+	slog.WarnContext(ctx, "Replication: source read failed, trying next copy",
+		"key", key, "source", loc.BackendName, "error", err)
+	if isNotFound(err) {
+		r.pruneStaleSource(ctx, key, loc.BackendName)
+	}
+	return "", false, nil
+}
+
+// pruneStaleSource removes a source-side ObjectLocation row when the
+// backend reported the object missing. Logging-only on DB failure: a
+// stuck stale row is preferable to aborting the replication pass.
+func (r *Replicator) pruneStaleSource(ctx context.Context, key, backendName string) {
+	if delErr := r.store.DeleteObjectLocation(ctx, key, backendName); delErr != nil {
+		slog.WarnContext(ctx, "Replication: failed to remove stale metadata",
+			"key", key, "backend", backendName, "error", delErr)
+		return
+	}
+	slog.InfoContext(ctx, "Replication: removed stale metadata entry",
+		"key", key, "backend", backendName)
 }
 
 // cleanupOrphan deletes an object from a backend when the DB record was not

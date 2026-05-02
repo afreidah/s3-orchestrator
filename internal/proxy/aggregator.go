@@ -15,19 +15,19 @@ import (
 	"context"
 
 	"github.com/afreidah/s3-orchestrator/internal/counter"
-	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // DashboardAggregator queries the metadata store and usage tracker to build
 // snapshots for the web UI.
 type DashboardAggregator struct {
-	store store.DashboardStore
+	store core.DashboardStore
 	usage *counter.UsageTracker
 	order []string
 }
 
 // NewDashboardAggregator creates a DashboardAggregator.
-func NewDashboardAggregator(store store.DashboardStore, usage *counter.UsageTracker, order []string) *DashboardAggregator {
+func NewDashboardAggregator(store core.DashboardStore, usage *counter.UsageTracker, order []string) *DashboardAggregator {
 	return &DashboardAggregator{
 		store: store,
 		usage: usage,
@@ -78,7 +78,7 @@ func (da *DashboardAggregator) GetDashboardData(ctx context.Context) (*Dashboard
 
 // GetDirectoryChildren returns the immediate children of a directory path
 // for the lazy-loaded file browser.
-func (da *DashboardAggregator) GetDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*store.DirectoryListResult, error) {
+func (da *DashboardAggregator) GetDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.DirectoryListResult, error) {
 	if maxKeys <= 0 || maxKeys > 200 {
 		maxKeys = 200
 	}

@@ -24,7 +24,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
-	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
@@ -60,7 +60,6 @@ func TestDampening_TTLCacheEvicts(t *testing.T) {
 		t.Error("expected entry to be present")
 	}
 }
-
 
 func TestGenerateEventID_Unique(t *testing.T) {
 	seen := make(map[string]bool)
@@ -189,7 +188,7 @@ func TestDeliver_Success(t *testing.T) {
 
 	n := &Notifier{client: &http.Client{Timeout: 5 * time.Second}}
 	ep := &config.NotificationEndpoint{URL: srv.URL}
-	row := store.NotificationRow{Payload: []byte(`{"type":"test"}`)}
+	row := core.NotificationRow{Payload: []byte(`{"type":"test"}`)}
 
 	err := n.deliver(context.Background(), row, ep)
 	if err != nil {
@@ -205,7 +204,7 @@ func TestDeliver_ServerError(t *testing.T) {
 
 	n := &Notifier{client: &http.Client{Timeout: 5 * time.Second}}
 	ep := &config.NotificationEndpoint{URL: srv.URL}
-	row := store.NotificationRow{Payload: []byte(`{"type":"test"}`)}
+	row := core.NotificationRow{Payload: []byte(`{"type":"test"}`)}
 
 	err := n.deliver(context.Background(), row, ep)
 	if err == nil {
@@ -224,7 +223,7 @@ func TestDeliver_HMACSignature(t *testing.T) {
 	n := &Notifier{client: &http.Client{Timeout: 5 * time.Second}}
 	ep := &config.NotificationEndpoint{URL: srv.URL, Secret: "test-secret"}
 	payload := []byte(`{"type":"test"}`)
-	row := store.NotificationRow{Payload: payload}
+	row := core.NotificationRow{Payload: payload}
 
 	_ = n.deliver(context.Background(), row, ep)
 
@@ -255,7 +254,7 @@ func TestNewNotifier_SetsEmitHook(t *testing.T) {
 type mockOutboxStore struct {
 	insertCount  int
 	lastPayload  string
-	pending      []store.NotificationRow
+	pending      []core.NotificationRow
 	completedIDs []int64
 	retriedIDs   []int64
 }
@@ -266,7 +265,7 @@ func (m *mockOutboxStore) InsertNotification(_ context.Context, _, payload, _ st
 	return nil
 }
 
-func (m *mockOutboxStore) GetPendingNotifications(_ context.Context, _ int) ([]store.NotificationRow, error) {
+func (m *mockOutboxStore) GetPendingNotifications(_ context.Context, _ int) ([]core.NotificationRow, error) {
 	return m.pending, nil
 }
 
@@ -360,7 +359,7 @@ func TestDrainOnce_DeliversAndCompletes(t *testing.T) {
 	defer srv.Close()
 
 	ms := &mockOutboxStore{
-		pending: []store.NotificationRow{
+		pending: []core.NotificationRow{
 			{ID: 1, EventType: "test", Payload: []byte(`{"type":"test"}`), EndpointURL: srv.URL},
 		},
 	}
@@ -386,7 +385,7 @@ func TestDrainOnce_RetriesOnFailure(t *testing.T) {
 	defer srv.Close()
 
 	ms := &mockOutboxStore{
-		pending: []store.NotificationRow{
+		pending: []core.NotificationRow{
 			{ID: 1, EventType: "test", Payload: []byte(`{"type":"test"}`), EndpointURL: srv.URL, Attempts: 0},
 		},
 	}
@@ -412,7 +411,7 @@ func TestDrainOnce_ExhaustsAfterMaxRetries(t *testing.T) {
 	defer srv.Close()
 
 	ms := &mockOutboxStore{
-		pending: []store.NotificationRow{
+		pending: []core.NotificationRow{
 			{ID: 1, EventType: "test", Payload: []byte(`{"type":"test"}`), EndpointURL: srv.URL, Attempts: 2},
 		},
 	}
@@ -434,7 +433,7 @@ func TestDrainOnce_ExhaustsAfterMaxRetries(t *testing.T) {
 
 func TestDrainOnce_UnknownEndpointCompleted(t *testing.T) {
 	ms := &mockOutboxStore{
-		pending: []store.NotificationRow{
+		pending: []core.NotificationRow{
 			{ID: 1, EventType: "test", Payload: []byte(`{}`), EndpointURL: "https://gone.example.com"},
 		},
 	}
@@ -481,7 +480,7 @@ func TestHasPrefix(t *testing.T) {
 // with a configured error so we can assert the metric counter bumps and
 // the worker doesn't panic or double-deliver.
 type failingOutboxStore struct {
-	pending    []store.NotificationRow
+	pending     []core.NotificationRow
 	completeErr error
 	retryErr    error
 }
@@ -490,7 +489,7 @@ func (m *failingOutboxStore) InsertNotification(_ context.Context, _, _, _ strin
 	return nil
 }
 
-func (m *failingOutboxStore) GetPendingNotifications(_ context.Context, _ int) ([]store.NotificationRow, error) {
+func (m *failingOutboxStore) GetPendingNotifications(_ context.Context, _ int) ([]core.NotificationRow, error) {
 	return m.pending, nil
 }
 
@@ -543,7 +542,7 @@ func TestDrainOnce_CompleteFailure_DoesNotPanic(t *testing.T) {
 
 	ms := &failingOutboxStore{
 		completeErr: fmt.Errorf("simulated complete failure"),
-		pending: []store.NotificationRow{
+		pending: []core.NotificationRow{
 			{ID: 1, EventType: "s3:ObjectCreated:Put", EndpointURL: srv.URL, Payload: []byte("{}")},
 		},
 	}
@@ -575,7 +574,7 @@ func TestDrainOnce_RetryFailure_DoesNotPanic(t *testing.T) {
 
 	ms := &failingOutboxStore{
 		retryErr: fmt.Errorf("simulated retry failure"),
-		pending: []store.NotificationRow{
+		pending: []core.NotificationRow{
 			{ID: 1, EventType: "s3:ObjectCreated:Put", EndpointURL: srv.URL, Payload: []byte("{}"), Attempts: 0},
 		},
 	}

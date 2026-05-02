@@ -20,7 +20,7 @@ import (
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
-	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // putEncryptState carries the cached DEK across PutObject failover attempts
@@ -43,7 +43,7 @@ func encryptForPut(
 	plaintext []byte,
 	plaintextSize int64,
 	state *putEncryptState,
-) (io.Reader, int64, *store.EncryptionMeta, error) {
+) (io.Reader, int64, *core.EncryptionMeta, error) {
 	var (
 		result *encryption.EncryptResult
 		err    error
@@ -63,7 +63,7 @@ func encryptForPut(
 		return nil, 0, nil, fmt.Errorf("encrypt: %w", err)
 	}
 	telemetry.EncryptionOpsTotal.WithLabelValues("encrypt").Inc()
-	return result.Body, result.CiphertextSize, &store.EncryptionMeta{
+	return result.Body, result.CiphertextSize, &core.EncryptionMeta{
 		Encrypted:     true,
 		EncryptionKey: encryption.PackKeyData(result.BaseNonce, result.WrappedDEK),
 		KeyID:         result.KeyID,
@@ -75,7 +75,7 @@ func encryptForPut(
 // ciphertext size, and encryption metadata for the store. Used by UploadPart
 // and CompleteMultipartUpload. PutObject uses its own inline path because it
 // caches the DEK across retry attempts.
-func encryptBody(ctx context.Context, enc *encryption.Encryptor, body io.Reader, plaintextSize int64) (io.Reader, int64, *store.EncryptionMeta, error) {
+func encryptBody(ctx context.Context, enc *encryption.Encryptor, body io.Reader, plaintextSize int64) (io.Reader, int64, *core.EncryptionMeta, error) {
 	result, err := enc.Encrypt(ctx, body, plaintextSize)
 	if err != nil {
 		telemetry.EncryptionErrorsTotal.WithLabelValues("encrypt", "encrypt_failed").Inc()
@@ -83,7 +83,7 @@ func encryptBody(ctx context.Context, enc *encryption.Encryptor, body io.Reader,
 	}
 	telemetry.EncryptionOpsTotal.WithLabelValues("encrypt").Inc()
 
-	meta := &store.EncryptionMeta{
+	meta := &core.EncryptionMeta{
 		Encrypted:     true,
 		EncryptionKey: encryption.PackKeyData(result.BaseNonce, result.WrappedDEK),
 		KeyID:         result.KeyID,
@@ -95,7 +95,7 @@ func encryptBody(ctx context.Context, enc *encryption.Encryptor, body io.Reader,
 // decryptResponse decrypts a GetObject response body in place. Handles both
 // full reads and range requests. Mutates r.Body, r.Size, and r.ContentRange.
 // The caller must close r.Body on error.
-func decryptResponse(ctx context.Context, enc *encryption.Encryptor, r *s3be.GetObjectResult, loc *store.ObjectLocation, rng *encryption.RangeResult, ptStart, ptEnd int64) error {
+func decryptResponse(ctx context.Context, enc *encryption.Encryptor, r *s3be.GetObjectResult, loc *core.ObjectLocation, rng *encryption.RangeResult, ptStart, ptEnd int64) error {
 	baseNonce, wrappedDEK, err := encryption.UnpackKeyData(loc.EncryptionKey)
 	if err != nil {
 		telemetry.EncryptionErrorsTotal.WithLabelValues("decrypt", "unpack_failed").Inc()

@@ -14,9 +14,8 @@ import (
 	"testing"
 	"time"
 
-	st "github.com/afreidah/s3-orchestrator/internal/store"
-
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 func TestGenerateUploadID(t *testing.T) {
@@ -54,7 +53,7 @@ func TestClose_Idempotent(t *testing.T) {
 
 func TestUpdateUsageLimits_SwapsLimits(t *testing.T) {
 	t.Parallel()
-	limits := map[string]st.UsageLimits{
+	limits := map[string]core.UsageLimits{
 		"b1": {APIRequestLimit: 100},
 	}
 	mgr := newUsageManagerWithLimits([]string{"b1"}, &mockStore{}, limits)
@@ -65,7 +64,7 @@ func TestUpdateUsageLimits_SwapsLimits(t *testing.T) {
 	}
 
 	// Update to a much lower limit
-	mgr.UpdateUsageLimits(map[string]st.UsageLimits{
+	mgr.UpdateUsageLimits(map[string]core.UsageLimits{
 		"b1": {APIRequestLimit: 10},
 	})
 
@@ -199,7 +198,7 @@ func TestLifecycleConfig_RoundTrip(t *testing.T) {
 
 func TestNearUsageLimit_BelowThreshold(t *testing.T) {
 	t.Parallel()
-	limits := map[string]st.UsageLimits{
+	limits := map[string]core.UsageLimits{
 		"b1": {APIRequestLimit: 1000},
 	}
 	mgr := newUsageManagerWithLimits([]string{"b1"}, &mockStore{}, limits)
@@ -212,13 +211,13 @@ func TestNearUsageLimit_BelowThreshold(t *testing.T) {
 
 func TestNearUsageLimit_AboveThreshold(t *testing.T) {
 	t.Parallel()
-	limits := map[string]st.UsageLimits{
+	limits := map[string]core.UsageLimits{
 		"b1": {APIRequestLimit: 100},
 	}
 	mgr := newUsageManagerWithLimits([]string{"b1"}, &mockStore{}, limits)
 
 	// Set baseline at 90% of limit
-	mgr.usage.SetBaseline("b1", st.UsageStat{APIRequests: 90})
+	mgr.usage.SetBaseline("b1", core.UsageStat{APIRequests: 90})
 
 	if !mgr.NearUsageLimit(0.8) {
 		t.Error("should be near limit at 90% usage with 80% threshold")
@@ -252,7 +251,7 @@ func TestClearCache_RemovesAllEntries(t *testing.T) {
 
 func TestUpdateUsageLimits_ConcurrentAccess(t *testing.T) {
 	t.Parallel()
-	limits := map[string]st.UsageLimits{
+	limits := map[string]core.UsageLimits{
 		"b1": {APIRequestLimit: 1000},
 	}
 	mgr := newUsageManagerWithLimits([]string{"b1"}, &mockStore{}, limits)
@@ -277,7 +276,7 @@ func TestUpdateUsageLimits_ConcurrentAccess(t *testing.T) {
 		go func(n int) {
 			defer wg.Done()
 			for j := range 100 {
-				mgr.UpdateUsageLimits(map[string]st.UsageLimits{
+				mgr.UpdateUsageLimits(map[string]core.UsageLimits{
 					"b1": {APIRequestLimit: int64(n*100 + j)},
 				})
 			}

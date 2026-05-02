@@ -18,9 +18,9 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
-	"github.com/afreidah/s3-orchestrator/internal/counter"
-	st "github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // --- Test helpers ---
@@ -35,24 +35,24 @@ func newUsageManager(backendNames []string, store *mockStore) *BackendManager {
 	}
 	return NewBackendManager(&BackendManagerConfig{
 		Backends:        backends,
-		Stores:           StoresFromMock(store),
-		Dashboard:           store,
-		Metrics:           store,
+		Stores:          StoresFromMock(store),
+		Dashboard:       store,
+		Metrics:         store,
 		Order:           backendNames,
 		RoutingStrategy: config.RoutingPack,
 	})
 }
 
-func newUsageManagerWithLimits(backendNames []string, store *mockStore, limits map[string]st.UsageLimits) *BackendManager {
+func newUsageManagerWithLimits(backendNames []string, store *mockStore, limits map[string]core.UsageLimits) *BackendManager {
 	backends := make(map[string]backend.ObjectBackend, len(backendNames))
 	for _, name := range backendNames {
 		backends[name] = newMockBackend()
 	}
 	return NewBackendManager(&BackendManagerConfig{
 		Backends:        backends,
-		Stores:           StoresFromMock(store),
-		Dashboard:           store,
-		Metrics:           store,
+		Stores:          StoresFromMock(store),
+		Dashboard:       store,
+		Metrics:         store,
 		Order:           backendNames,
 		UsageLimits:     limits,
 		RoutingStrategy: config.RoutingPack,
@@ -307,13 +307,13 @@ func TestWithinUsageLimits_NoLimits(t *testing.T) {
 
 func TestWithinUsageLimits_ApiExceeded(t *testing.T) {
 	t.Parallel()
-	limits := map[string]st.UsageLimits{
+	limits := map[string]core.UsageLimits{
 		"b1": {APIRequestLimit: 100},
 	}
 	mgr := newUsageManagerWithLimits([]string{"b1"}, &mockStore{}, limits)
 
 	// Set baseline to exactly the limit
-	mgr.usage.SetBaseline("b1", st.UsageStat{APIRequests: 100})
+	mgr.usage.SetBaseline("b1", core.UsageStat{APIRequests: 100})
 
 	if mgr.usage.WithinLimits("b1", 1, 0, 0) {
 		t.Error("should exceed API request limit")
@@ -322,13 +322,13 @@ func TestWithinUsageLimits_ApiExceeded(t *testing.T) {
 
 func TestWithinUsageLimits_EgressExceeded(t *testing.T) {
 	t.Parallel()
-	limits := map[string]st.UsageLimits{
+	limits := map[string]core.UsageLimits{
 		"b1": {EgressByteLimit: 1000},
 	}
 	mgr := newUsageManagerWithLimits([]string{"b1"}, &mockStore{}, limits)
 
 	// Baseline: 500, unflushed: add 400, proposed: 200 -- 1100 > 1000
-	mgr.usage.SetBaseline("b1", st.UsageStat{EgressBytes: 500})
+	mgr.usage.SetBaseline("b1", core.UsageStat{EgressBytes: 500})
 	mgr.usage.Backend().Add("b1", counter.FieldEgressBytes, 400)
 
 	if mgr.usage.WithinLimits("b1", 0, 200, 0) {
@@ -338,7 +338,7 @@ func TestWithinUsageLimits_EgressExceeded(t *testing.T) {
 
 func TestWithinUsageLimits_UnlimitedDimension(t *testing.T) {
 	t.Parallel()
-	limits := map[string]st.UsageLimits{
+	limits := map[string]core.UsageLimits{
 		"b1": {APIRequestLimit: 100, EgressByteLimit: 0, IngressByteLimit: 0},
 	}
 	mgr := newUsageManagerWithLimits([]string{"b1"}, &mockStore{}, limits)
@@ -351,14 +351,14 @@ func TestWithinUsageLimits_UnlimitedDimension(t *testing.T) {
 
 func TestBackendsWithinLimits_FiltersCorrectly(t *testing.T) {
 	t.Parallel()
-	limits := map[string]st.UsageLimits{
+	limits := map[string]core.UsageLimits{
 		"b1": {APIRequestLimit: 10},
 		"b2": {APIRequestLimit: 100},
 	}
 	mgr := newUsageManagerWithLimits([]string{"b1", "b2"}, &mockStore{}, limits)
 
 	// Push b1 over limit
-	mgr.usage.SetBaseline("b1", st.UsageStat{APIRequests: 10})
+	mgr.usage.SetBaseline("b1", core.UsageStat{APIRequests: 10})
 
 	eligible := mgr.usage.BackendsWithinLimits(mgr.order, 1, 0, 0)
 	if len(eligible) != 1 {

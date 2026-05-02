@@ -16,7 +16,8 @@ import (
 	"maps"
 	"sync"
 	"time"
-	"github.com/afreidah/s3-orchestrator/internal/store"
+
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // UsageTracker tracks per-backend usage counters, enforces monthly usage limits,
@@ -24,23 +25,23 @@ import (
 // to a CounterBackend, allowing local atomics or shared Redis counters.
 type UsageTracker struct {
 	backend    CounterBackend
-	limits     map[string]store.UsageLimits
+	limits     map[string]core.UsageLimits
 	limitsMu   sync.RWMutex
-	baseline   map[string]store.UsageStat
+	baseline   map[string]core.UsageStat
 	baselineMu sync.RWMutex
 }
 
 // NewUsageTracker creates a usage tracker with the given counter backend and
 // per-backend limits. The counter backend determines whether deltas are stored
 // locally (default) or in a shared store like Redis.
-func NewUsageTracker(backend CounterBackend, limits map[string]store.UsageLimits) *UsageTracker {
+func NewUsageTracker(backend CounterBackend, limits map[string]core.UsageLimits) *UsageTracker {
 	if limits == nil {
-		limits = make(map[string]store.UsageLimits)
+		limits = make(map[string]core.UsageLimits)
 	}
 	return &UsageTracker{
 		backend:  backend,
 		limits:   limits,
-		baseline: make(map[string]store.UsageStat),
+		baseline: make(map[string]core.UsageStat),
 	}
 }
 
@@ -120,17 +121,17 @@ func (u *UsageTracker) BackendsWithinLimits(order []string, apiCalls, egress, in
 
 // UpdateLimits replaces the per-backend usage limits. Safe to call concurrently
 // with request handling.
-func (u *UsageTracker) UpdateLimits(limits map[string]store.UsageLimits) {
+func (u *UsageTracker) UpdateLimits(limits map[string]core.UsageLimits) {
 	u.limitsMu.Lock()
 	defer u.limitsMu.Unlock()
 	u.limits = limits
 }
 
 // GetLimits returns a shallow copy of the current per-backend usage limits.
-func (u *UsageTracker) GetLimits() map[string]store.UsageLimits {
+func (u *UsageTracker) GetLimits() map[string]core.UsageLimits {
 	u.limitsMu.RLock()
 	defer u.limitsMu.RUnlock()
-	cp := make(map[string]store.UsageLimits, len(u.limits))
+	cp := make(map[string]core.UsageLimits, len(u.limits))
 	maps.Copy(cp, u.limits)
 	return cp
 }
@@ -140,7 +141,7 @@ func (u *UsageTracker) GetLimits() map[string]store.UsageLimits {
 // -------------------------------------------------------------------------
 
 // SetBaseline updates the cached DB usage baseline for a single backend.
-func (u *UsageTracker) SetBaseline(name string, stat store.UsageStat) {
+func (u *UsageTracker) SetBaseline(name string, stat core.UsageStat) {
 	u.baselineMu.Lock()
 	defer u.baselineMu.Unlock()
 	u.baseline[name] = stat
@@ -151,7 +152,7 @@ func (u *UsageTracker) ResetBaselines(names []string) {
 	u.baselineMu.Lock()
 	defer u.baselineMu.Unlock()
 	for _, name := range names {
-		u.baseline[name] = store.UsageStat{}
+		u.baseline[name] = core.UsageStat{}
 	}
 }
 
@@ -178,7 +179,7 @@ func (u *UsageTracker) NearLimit(threshold float64) bool {
 }
 
 // isUnlimited returns true when all three usage dimensions are 0 (unlimited).
-func isUnlimited(lim store.UsageLimits) bool {
+func isUnlimited(lim core.UsageLimits) bool {
 	return lim.APIRequestLimit == 0 && lim.EgressByteLimit == 0 && lim.IngressByteLimit == 0
 }
 
@@ -187,7 +188,7 @@ func isUnlimited(lim store.UsageLimits) bool {
 // threshold ratio. Takes the baseline (a store.UsageStat snapshot) and the
 // live CounterBackend readings separately because they come from different
 // types with identical shapes.
-func backendNearLimit(base store.UsageStat, cur LoadAllResult, lim store.UsageLimits, threshold float64) bool {
+func backendNearLimit(base core.UsageStat, cur LoadAllResult, lim core.UsageLimits, threshold float64) bool {
 	if lim.APIRequestLimit > 0 {
 		if float64(base.APIRequests+cur.APIRequests)/float64(lim.APIRequestLimit) >= threshold {
 			return true
@@ -219,7 +220,7 @@ func CurrentPeriod() string {
 // deltas to the database. Called periodically (every 30s). On DB error, deltas
 // are added back to avoid data loss. Backends in the skip set have their
 // counters discarded (used for drained backends whose DB records are gone).
-func (u *UsageTracker) FlushUsage(ctx context.Context, store store.UsageFlusher, skip map[string]bool) error {
+func (u *UsageTracker) FlushUsage(ctx context.Context, store core.UsageFlusher, skip map[string]bool) error {
 	period := CurrentPeriod()
 	var lastErr error
 

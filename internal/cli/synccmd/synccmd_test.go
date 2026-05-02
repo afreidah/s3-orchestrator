@@ -20,12 +20,12 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // freshStore opens a fresh in-memory sqlite store for each test so
 // importPage can exercise the real ObjectStore surface end-to-end.
-func freshStore(t *testing.T) (store.ObjectStore, store.AdminStore) {
+func freshStore(t *testing.T) (core.ObjectStore, core.LifecycleAdmin) {
 	t.Helper()
 	path := writeYAML(t, validYAML)
 	cfg, _, code := loadConfig(path, "b1")
@@ -45,7 +45,7 @@ func freshStore(t *testing.T) (store.ObjectStore, store.AdminStore) {
 // to the real sqlite store. Used to drive the error-propagation branch in
 // importPage without faking the full surface.
 type errorObjectStore struct {
-	store.ObjectStore
+	core.ObjectStore
 	err error
 }
 

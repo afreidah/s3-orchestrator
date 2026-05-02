@@ -26,7 +26,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
-	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 	"github.com/afreidah/s3-orchestrator/internal/util/workerpool"
 )
@@ -141,7 +141,7 @@ func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig) 
 
 // exceedsThreshold returns true if the utilization spread across backends
 // exceeds the configured threshold.
-func ExceedsThreshold(stats map[string]store.QuotaStat, order []string, threshold float64) bool {
+func ExceedsThreshold(stats map[string]core.QuotaStat, order []string, threshold float64) bool {
 	if len(order) < 2 {
 		return false
 	}
@@ -180,7 +180,7 @@ func ExceedsThreshold(stats map[string]store.QuotaStat, order []string, threshol
 // from the least-utilized. Sorts by percent full descending and only moves
 // objects from a less-full source to a more-full destination. Skips moves
 // that would not increase the destination's packing ratio.
-func (r *Rebalancer) PlanPackTight(ctx context.Context, stats map[string]store.QuotaStat, batchSize int) ([]RebalanceMove, error) {
+func (r *Rebalancer) PlanPackTight(ctx context.Context, stats map[string]core.QuotaStat, batchSize int) ([]RebalanceMove, error) {
 	type backendUtil struct {
 		Name  string
 		Limit int64
@@ -210,7 +210,7 @@ func (r *Rebalancer) PlanPackTight(ctx context.Context, stats map[string]store.Q
 
 	// Cache object lists per source to avoid re-querying when the same
 	// source is visited across multiple destination iterations.
-	objectCache := make(map[string][]store.ObjectLocation)
+	objectCache := make(map[string][]core.ObjectLocation)
 
 	// --- Pack into most-full destinations, pulling from least-full sources ---
 	for di := 0; di < len(backends) && remaining > 0; di++ {
@@ -302,7 +302,7 @@ type backendBalance struct {
 
 // planSpreadEven equalizes utilization ratios across backends. Moves objects
 // from over-utilized backends to under-utilized ones.
-func (r *Rebalancer) PlanSpreadEven(ctx context.Context, stats map[string]store.QuotaStat, batchSize int) ([]RebalanceMove, error) {
+func (r *Rebalancer) PlanSpreadEven(ctx context.Context, stats map[string]core.QuotaStat, batchSize int) ([]RebalanceMove, error) {
 	var totalUsed, totalLimit int64
 	for _, name := range r.ops.BackendOrder() {
 		stat, ok := stats[name]

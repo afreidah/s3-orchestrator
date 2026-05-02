@@ -28,7 +28,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
-	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
@@ -50,7 +50,9 @@ func TestProviders_MissingConfigReturnsCleanError(t *testing.T) {
 		call func(do.Injector) error
 	}{
 		{"ConcreteStore", func(i do.Injector) error { _, err := provideConcreteStore(i); return err }},
-		{"AdminStore", func(i do.Injector) error { _, err := ProvideAdminStore(i); return err }},
+		{"LifecycleAdmin", func(i do.Injector) error { _, err := ProvideLifecycleAdmin(i); return err }},
+		{"EncryptionAdmin", func(i do.Injector) error { _, err := ProvideEncryptionAdmin(i); return err }},
+		{"NotificationOutbox", func(i do.Injector) error { _, err := ProvideNotificationOutbox(i); return err }},
 		{"DatabaseBreaker", func(i do.Injector) error { _, err := ProvideDatabaseBreaker(i); return err }},
 		{"ObjectStore", func(i do.Injector) error { _, err := ProvideObjectStore(i); return err }},
 		{"QuotaStore", func(i do.Injector) error { _, err := ProvideQuotaStore(i); return err }},
@@ -156,28 +158,28 @@ func TestProvideRateLimiter(t *testing.T) {
 // driver-dispatch switch.
 func TestOpenStore_InvalidDriver(t *testing.T) {
 	t.Parallel()
-	_, _, err := openStore(context.Background(), &config.DatabaseConfig{Driver: "bogus"})
+	_, err := openStore(context.Background(), &config.DatabaseConfig{Driver: "bogus"})
 	if err == nil {
 		t.Fatal("expected error for unsupported driver, got nil")
 	}
 }
 
 // TestOpenStore_SQLiteInMemory covers the sqlite branch of openStore with
-// an in-memory database — verifies both returns populate and the handle
-// satisfies concreteStore.
+// an in-memory database — verifies the handle is non-nil and satisfies the
+// LifecycleAdmin role embedded in concreteStore.
 func TestOpenStore_SQLiteInMemory(t *testing.T) {
 	t.Parallel()
-	cs, admin, err := openStore(context.Background(), &config.DatabaseConfig{
+	cs, err := openStore(context.Background(), &config.DatabaseConfig{
 		Driver: "sqlite",
 		Path:   ":memory:",
 	})
 	if err != nil {
 		t.Fatalf("openStore: %v", err)
 	}
-	if cs == nil || admin == nil {
-		t.Error("expected non-nil concreteStore and AdminStore")
+	if cs == nil {
+		t.Fatal("expected non-nil concreteStore")
 	}
-	admin.Close()
+	cs.Close()
 }
 
 // TestWireAuditMetrics covers the audit→Prometheus wiring side-effect
@@ -208,14 +210,14 @@ func TestProvideConcreteStore_SQLiteInMemory(t *testing.T) {
 		Database: config.DatabaseConfig{Driver: "sqlite", Path: ":memory:"},
 		Backends: []config.BackendConfig{{Name: "b1", QuotaBytes: 1024}},
 	})
-	bundle, err := provideConcreteStore(inj)
+	cs, err := provideConcreteStore(inj)
 	if err != nil {
 		t.Fatalf("provideConcreteStore: %v", err)
 	}
-	if bundle == nil || bundle.concrete == nil || bundle.admin == nil {
-		t.Fatal("expected non-nil bundle + concrete + admin")
+	if cs == nil {
+		t.Fatal("expected non-nil concreteStore")
 	}
-	bundle.admin.Close()
+	cs.Close()
 }
 
 // TestOpenStore_PostgresInvalidConfig covers the postgres branch of the
@@ -226,7 +228,7 @@ func TestOpenStore_PostgresInvalidConfig(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
-	_, _, err := openStore(ctx, &config.DatabaseConfig{
+	_, err := openStore(ctx, &config.DatabaseConfig{
 		Driver:   "postgres",
 		Host:     "127.0.0.1",
 		Port:     1, // unreachable port — connect fails fast
@@ -248,11 +250,10 @@ func TestNarrowRoleProviders_HappyPath(t *testing.T) {
 	t.Parallel()
 	inj := do.New()
 	do.ProvideValue(inj, &config.Config{CircuitBreaker: config.CircuitBreakerConfig{FailureThreshold: 3, OpenTimeout: time.Second}})
-	// Seed the concrete bundle directly — we can't open a real Postgres
+	// Seed the concrete store directly — we can't open a real Postgres
 	// or SQLite store in a unit test, so fake the shape the narrow
 	// providers resolve.
-	bundle := &concreteStoreBundle{concrete: fakeConcreteStore{}}
-	do.ProvideValue(inj, bundle)
+	do.ProvideValue[concreteStore](inj, fakeConcreteStore{})
 	do.Provide(inj, ProvideDatabaseBreaker)
 
 	cases := []struct {
@@ -290,7 +291,7 @@ func TestResolveProxyStores_HappyPath(t *testing.T) {
 	t.Parallel()
 	inj := do.New()
 	do.ProvideValue(inj, &config.Config{CircuitBreaker: config.CircuitBreakerConfig{FailureThreshold: 3, OpenTimeout: time.Second}})
-	do.ProvideValue(inj, &concreteStoreBundle{concrete: fakeConcreteStore{}})
+	do.ProvideValue[concreteStore](inj, fakeConcreteStore{})
 	do.Provide(inj, ProvideDatabaseBreaker)
 	do.Provide(inj, ProvideObjectStore)
 	do.Provide(inj, ProvideQuotaStore)
@@ -320,7 +321,7 @@ func TestProvideMetricsDeps_HappyPath(t *testing.T) {
 	t.Parallel()
 	inj := do.New()
 	do.ProvideValue(inj, &config.Config{CircuitBreaker: config.CircuitBreakerConfig{FailureThreshold: 3, OpenTimeout: time.Second}})
-	do.ProvideValue(inj, &concreteStoreBundle{concrete: fakeConcreteStore{}})
+	do.ProvideValue[concreteStore](inj, fakeConcreteStore{})
 	do.Provide(inj, ProvideDatabaseBreaker)
 	do.Provide(inj, ProvideDashboardStore)
 	do.Provide(inj, ProvideReplicationStore)
@@ -423,7 +424,9 @@ func TestNewInjector_DefaultsRegisterRequiredOnly(t *testing.T) {
 		"internal/store/core.ObjectStore",
 		"internal/store/core.QuotaStore",
 		"internal/store/core.CleanupStore",
-		"internal/store/core.AdminStore",
+		"internal/store/core.LifecycleAdmin",
+		"internal/store/core.EncryptionAdmin",
+		"internal/store/core.NotificationOutbox",
 		"internal/breaker.CircuitBreaker",
 		"internal/proxy.BackendManager",
 		"internal/transport/s3api.Server",
@@ -538,8 +541,14 @@ func TestNewInjector_HappyPathResolvesEverything(t *testing.T) {
 	if _, err := do.Invoke[*BackendsResult](inj); err != nil {
 		t.Errorf("BackendsResult: %v", err)
 	}
-	if _, err := do.Invoke[store.AdminStore](inj); err != nil {
-		t.Errorf("AdminStore: %v", err)
+	if _, err := do.Invoke[core.LifecycleAdmin](inj); err != nil {
+		t.Errorf("LifecycleAdmin: %v", err)
+	}
+	if _, err := do.Invoke[core.EncryptionAdmin](inj); err != nil {
+		t.Errorf("EncryptionAdmin: %v", err)
+	}
+	if _, err := do.Invoke[core.NotificationOutbox](inj); err != nil {
+		t.Errorf("NotificationOutbox: %v", err)
 	}
 	if _, err := do.Invoke[*breaker.CircuitBreaker](inj); err != nil {
 		t.Errorf("CircuitBreaker: %v", err)

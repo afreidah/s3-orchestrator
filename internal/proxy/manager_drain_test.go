@@ -11,16 +11,17 @@
 package proxy
 
 import (
-	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"context"
 	"errors"
 	"slices"
 	"testing"
 	"time"
 
-	"github.com/afreidah/s3-orchestrator/internal/counter"
-	st "github.com/afreidah/s3-orchestrator/internal/store"
+	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
+
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/testutil/testx"
 )
 
@@ -33,9 +34,9 @@ func newDrainTestManager(store *mockStore, backends map[string]*mockBackend) *Ba
 	}
 	return NewBackendManager(&BackendManagerConfig{
 		Backends:        obs,
-		Stores:           StoresFromMock(store),
-		Dashboard:           store,
-		Metrics:           store,
+		Stores:          StoresFromMock(store),
+		Dashboard:       store,
+		Metrics:         store,
 		Order:           order,
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -53,7 +54,7 @@ func TestPurgeBackendObjects_DeletesDBRecords(t *testing.T) {
 
 	store := &mockStore{
 		// First call returns two objects, second call returns empty (records deleted)
-		listObjectsByBackendPages: [][]st.ObjectLocation{
+		listObjectsByBackendPages: [][]core.ObjectLocation{
 			{
 				{ObjectKey: "obj1", BackendName: "b1", SizeBytes: 5},
 				{ObjectKey: "obj2", BackendName: "b1", SizeBytes: 5},
@@ -107,7 +108,7 @@ func TestPurgeBackendObjects_ContinuesOnS3DeleteFailure(t *testing.T) {
 	// Don't pre-populate — S3 deletes will "fail" (object not found)
 
 	store := &mockStore{
-		listObjectsByBackendPages: [][]st.ObjectLocation{
+		listObjectsByBackendPages: [][]core.ObjectLocation{
 			{{ObjectKey: "missing", BackendName: "b1", SizeBytes: 5}},
 			{},
 		},
@@ -140,7 +141,7 @@ func TestRemoveBackend_PurgeTerminates(t *testing.T) {
 	backend.objects["k1"] = mockObject{data: []byte("x")}
 
 	store := &mockStore{
-		listObjectsByBackendPages: [][]st.ObjectLocation{
+		listObjectsByBackendPages: [][]core.ObjectLocation{
 			{{ObjectKey: "k1", BackendName: "b1", SizeBytes: 1}},
 			{}, // purge loop exits
 		},
@@ -175,7 +176,7 @@ func TestDrainOneObject_ReplicaExists_DeletesSourceWithSize(t *testing.T) {
 
 	store := &mockStore{
 		// GetAllObjectLocations returns copies on both b1 (source) and b2 (replica)
-		getAllLocationsResp: []st.ObjectLocation{
+		getAllLocationsResp: []core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
 			{ObjectKey: "key1", BackendName: "b2", SizeBytes: 4},
 		},
@@ -183,7 +184,7 @@ func TestDrainOneObject_ReplicaExists_DeletesSourceWithSize(t *testing.T) {
 
 	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": srcBackend, "b2": newMockBackend()})
 
-	obj := &st.ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
+	obj := &core.ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
 	ok := mgr.DrainManager.DrainOneObject(context.Background(), srcBackend, "b1", obj)
 	if !ok {
 		t.Fatal("drainOneObject should succeed when replica exists")
@@ -209,7 +210,7 @@ func TestDrainOneObject_NoCopy_MovesObjectWithSize(t *testing.T) {
 
 	store := &mockStore{
 		// Only on b1 (no replica)
-		getAllLocationsResp: []st.ObjectLocation{
+		getAllLocationsResp: []core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
 		},
 		getBackendResp:         "b2",
@@ -218,7 +219,7 @@ func TestDrainOneObject_NoCopy_MovesObjectWithSize(t *testing.T) {
 
 	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": srcBackend, "b2": dstBackend})
 
-	obj := &st.ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
+	obj := &core.ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
 	ok := mgr.DrainManager.DrainOneObject(context.Background(), srcBackend, "b1", obj)
 	if !ok {
 		t.Fatal("drainOneObject should succeed")
@@ -243,7 +244,7 @@ func TestDrainOneObject_MoveLocationFails_EnqueuesOrphanWithSize(t *testing.T) {
 	dstBackend := newMockBackend()
 
 	store := &mockStore{
-		getAllLocationsResp: []st.ObjectLocation{
+		getAllLocationsResp: []core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
 		},
 		getBackendResp:        "b2",
@@ -255,7 +256,7 @@ func TestDrainOneObject_MoveLocationFails_EnqueuesOrphanWithSize(t *testing.T) {
 	// Make dstBackend.DeleteObject fail so enqueueCleanup is triggered
 	dstBackend.delErr = errors.New("backend down")
 
-	obj := &st.ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
+	obj := &core.ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
 	ok := mgr.DrainManager.DrainOneObject(context.Background(), srcBackend, "b1", obj)
 	if ok {
 		t.Fatal("drainOneObject should fail when MoveObjectLocation fails")
@@ -286,7 +287,7 @@ func TestDrainOneObject_StaleObject_EnqueuesOrphanWithSize(t *testing.T) {
 	dstBackend.delErr = errors.New("backend down") // force enqueue
 
 	store := &mockStore{
-		getAllLocationsResp: []st.ObjectLocation{
+		getAllLocationsResp: []core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
 		},
 		getBackendResp:         "b2",
@@ -295,7 +296,7 @@ func TestDrainOneObject_StaleObject_EnqueuesOrphanWithSize(t *testing.T) {
 
 	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": srcBackend, "b2": dstBackend})
 
-	obj := &st.ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
+	obj := &core.ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
 	ok := mgr.DrainManager.DrainOneObject(context.Background(), srcBackend, "b1", obj)
 	if ok {
 		t.Fatal("drainOneObject should return false for stale object")
@@ -324,7 +325,7 @@ func TestStartDrain_FlushesCleanupQueueBeforeDeleteBackendData(t *testing.T) {
 		// No objects to migrate (drain completes immediately)
 		listObjectsByBackendResp: nil,
 		// Pending cleanup item for the draining backend
-		pendingCleanups: []st.CleanupItem{
+		pendingCleanups: []core.CleanupItem{
 			{ID: 42, BackendName: "b1", ObjectKey: "orphan", Attempts: 0},
 		},
 	}
@@ -564,7 +565,7 @@ func TestDrainOneObject_GetAllLocationsFails(t *testing.T) {
 	}
 	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	obj := &st.ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
+	obj := &core.ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
 	ok := mgr.DrainManager.DrainOneObject(context.Background(), newMockBackend(), "b1", obj)
 	if ok {
 		t.Error("expected failure when GetAllObjectLocations fails")
@@ -575,7 +576,7 @@ func TestDrainOneObject_GetAllLocationsFails(t *testing.T) {
 func TestDrainOneObject_DeleteSourceLocationFails(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
-		getAllLocationsResp: []st.ObjectLocation{
+		getAllLocationsResp: []core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
 			{ObjectKey: "key1", BackendName: "b2", SizeBytes: 4}, // replica exists
 		},
@@ -586,7 +587,7 @@ func TestDrainOneObject_DeleteSourceLocationFails(t *testing.T) {
 
 	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": srcBackend, "b2": newMockBackend()})
 
-	obj := &st.ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
+	obj := &core.ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
 	ok := mgr.DrainManager.DrainOneObject(context.Background(), srcBackend, "b1", obj)
 	if ok {
 		t.Error("expected failure when DeleteObjectLocation fails")
@@ -597,16 +598,16 @@ func TestDrainOneObject_DeleteSourceLocationFails(t *testing.T) {
 func TestDrainOneObject_NoDestinationAvailable(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
-		getAllLocationsResp: []st.ObjectLocation{
+		getAllLocationsResp: []core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
 		},
-		getBackendErr: st.ErrNoSpaceAvailable,
+		getBackendErr: core.ErrNoSpaceAvailable,
 	}
 	srcBackend := newMockBackend()
 
 	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": srcBackend})
 
-	obj := &st.ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
+	obj := &core.ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
 	ok := mgr.DrainManager.DrainOneObject(context.Background(), srcBackend, "b1", obj)
 	if ok {
 		t.Error("expected failure when no destination available")
@@ -617,7 +618,7 @@ func TestDrainOneObject_NoDestinationAvailable(t *testing.T) {
 func TestDrainOneObject_DestBackendNotFound(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
-		getAllLocationsResp: []st.ObjectLocation{
+		getAllLocationsResp: []core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
 		},
 		getBackendResp: "ghost", // not in backends map
@@ -626,7 +627,7 @@ func TestDrainOneObject_DestBackendNotFound(t *testing.T) {
 
 	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": srcBackend})
 
-	obj := &st.ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
+	obj := &core.ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
 	ok := mgr.DrainManager.DrainOneObject(context.Background(), srcBackend, "b1", obj)
 	if ok {
 		t.Error("expected failure when destination backend not found")
@@ -642,14 +643,14 @@ func TestDrainOneObject_StreamCopyFails(t *testing.T) {
 	dstBackend := newMockBackend()
 
 	store := &mockStore{
-		getAllLocationsResp: []st.ObjectLocation{
+		getAllLocationsResp: []core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
 		},
 		getBackendResp: "b2",
 	}
 	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": srcBackend, "b2": dstBackend})
 
-	obj := &st.ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
+	obj := &core.ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
 	ok := mgr.DrainManager.DrainOneObject(context.Background(), srcBackend, "b1", obj)
 	if ok {
 		t.Error("expected failure when streamCopy fails")
@@ -679,7 +680,7 @@ func TestPurgeBackendObjects_S3DeleteFails_LogsWarning(t *testing.T) {
 	backend.delErr = errors.New("s3 timeout")
 
 	store := &mockStore{
-		listObjectsByBackendPages: [][]st.ObjectLocation{
+		listObjectsByBackendPages: [][]core.ObjectLocation{
 			{{ObjectKey: "obj1", BackendName: "b1", SizeBytes: 5}},
 			{},
 		},
@@ -703,7 +704,7 @@ func TestPurgeBackendObjects_DBDeleteFails(t *testing.T) {
 	backend.objects["obj1"] = mockObject{data: []byte("data")}
 
 	store := &mockStore{
-		listObjectsByBackendPages: [][]st.ObjectLocation{
+		listObjectsByBackendPages: [][]core.ObjectLocation{
 			{{ObjectKey: "obj1", BackendName: "b1", SizeBytes: 5}},
 			{},
 		},

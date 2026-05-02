@@ -10,16 +10,17 @@ import (
 	"context"
 
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // cbQuotaStore wraps a QuotaStore with circuit-breaker protection.
 type cbQuotaStore struct {
-	inner QuotaStore
+	inner core.QuotaStore
 	cb    *breaker.CircuitBreaker
 }
 
 // NewCBQuotaStore returns a CB-protected view of inner typed as QuotaStore.
-func NewCBQuotaStore(inner QuotaStore, cb *breaker.CircuitBreaker) QuotaStore {
+func NewCBQuotaStore(inner core.QuotaStore, cb *breaker.CircuitBreaker) core.QuotaStore {
 	return &cbQuotaStore{inner: inner, cb: cb}
 }
 
@@ -34,6 +35,6 @@ func (c *cbQuotaStore) GetLeastUtilizedBackend(ctx context.Context, size int64, 
 }
 
 // GetQuotaStats forwards to the inner store under the breaker.
-func (c *cbQuotaStore) GetQuotaStats(ctx context.Context) (map[string]QuotaStat, error) {
-	return breaker.CBCall(c.cb, func() (map[string]QuotaStat, error) { return c.inner.GetQuotaStats(ctx) })
+func (c *cbQuotaStore) GetQuotaStats(ctx context.Context) (map[string]core.QuotaStat, error) {
+	return breaker.CBCall(c.cb, func() (map[string]core.QuotaStat, error) { return c.inner.GetQuotaStats(ctx) })
 }

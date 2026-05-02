@@ -24,6 +24,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/testutil"
 )
 
@@ -123,7 +124,7 @@ func TestHandleCleanupQueue_ReturnsDepth(t *testing.T) {
 func TestHandleObjectLocations_Happy(t *testing.T) {
 	t.Parallel()
 	mock := &testutil.MockStore{
-		GetAllLocationsResp: []store.ObjectLocation{{ObjectKey: "foo", BackendName: "b1"}},
+		GetAllLocationsResp: []core.ObjectLocation{{ObjectKey: "foo", BackendName: "b1"}},
 	}
 	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3})
 	var lv slog.LevelVar

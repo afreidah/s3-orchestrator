@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	db "github.com/afreidah/s3-orchestrator/internal/store/postgres/sqlc"
 )
 
@@ -26,14 +27,14 @@ func (s *Store) InsertNotification(ctx context.Context, eventType, payload, endp
 }
 
 // GetPendingNotifications returns outbox rows ready for delivery.
-func (s *Store) GetPendingNotifications(ctx context.Context, limit int) ([]NotificationRow, error) {
+func (s *Store) GetPendingNotifications(ctx context.Context, limit int) ([]core.NotificationRow, error) {
 	rows, err := s.queries.GetPendingNotifications(ctx, int32(limit)) //nolint:gosec // G115: limit is a small caller-controlled batch size
 	if err != nil {
 		return nil, err
 	}
-	out := make([]NotificationRow, len(rows))
+	out := make([]core.NotificationRow, len(rows))
 	for i, r := range rows {
-		out[i] = NotificationRow{
+		out[i] = core.NotificationRow{
 			ID:          r.ID,
 			EventType:   r.EventType,
 			Payload:     r.Payload,

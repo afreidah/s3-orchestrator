@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------
-// SQLite Store Tests - Full MetadataStore and AdminStore Contract Coverage
+// SQLite Store Tests - Full Role Interface Contract Coverage
 //
 // Author: Alex Freidah
 //
@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // -------------------------------------------------------------------------
@@ -158,7 +158,7 @@ func TestDeleteObject(t *testing.T) {
 	}
 
 	_, err = s.GetAllObjectLocations(ctx, "bucket/key1")
-	if err != store.ErrObjectNotFound {
+	if err != core.ErrObjectNotFound {
 		t.Errorf("expected ErrObjectNotFound, got %v", err)
 	}
 }
@@ -170,7 +170,7 @@ func TestDeleteObject_NotFound(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := s.DeleteObject(ctx, "bucket/nonexistent")
-	if err != store.ErrObjectNotFound {
+	if err != core.ErrObjectNotFound {
 		t.Errorf("expected ErrObjectNotFound, got %v", err)
 	}
 }
@@ -457,7 +457,7 @@ func TestMoveObjectLocation_QuotaExceeded(t *testing.T) {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	_, err = s.MoveObjectLocation(ctx, "bucket/huge", "big", "small")
-	if err != store.ErrNoSpaceAvailable {
+	if err != core.ErrNoSpaceAvailable {
 		t.Errorf("expected ErrNoSpaceAvailable, got %v", err)
 	}
 }
@@ -480,7 +480,7 @@ func TestRecordObject_QuotaExceeded(t *testing.T) {
 		t.Fatalf("SyncQuotaLimits: %v", err)
 	}
 	_, err = s.RecordObject(ctx, "bucket/over", "tight", 500, nil)
-	if err != store.ErrNoSpaceAvailable {
+	if err != core.ErrNoSpaceAvailable {
 		t.Errorf("expected ErrNoSpaceAvailable, got %v", err)
 	}
 }
@@ -537,7 +537,7 @@ func TestRecordObject_WithEncryption(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	enc := &store.EncryptionMeta{
+	enc := &core.EncryptionMeta{
 		Encrypted:     true,
 		EncryptionKey: []byte("wrapped-dek"),
 		KeyID:         "key-1",
@@ -626,7 +626,7 @@ func TestGetLeastUtilizedBackend_RejectsUnknownEligibleNames(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := s.GetLeastUtilizedBackend(ctx, 100, []string{"never-registered"})
-	if !errors.Is(err, store.ErrNoSpaceAvailable) {
+	if !errors.Is(err, core.ErrNoSpaceAvailable) {
 		t.Errorf("err = %v, want ErrNoSpaceAvailable", err)
 	}
 }
@@ -756,7 +756,7 @@ func TestMultipartUpload_Lifecycle(t *testing.T) {
 	}
 
 	_, err = s.GetMultipartUpload(ctx, "upload-1")
-	if err != store.ErrMultipartUploadNotFound {
+	if err != core.ErrMultipartUploadNotFound {
 		t.Errorf("expected ErrMultipartUploadNotFound, got %v", err)
 	}
 }
@@ -1163,7 +1163,7 @@ func seedReplicationFixture(t *testing.T, s *Store) {
 }
 
 // findEntry returns the first DirEntry matching name; nil when absent.
-func findEntry(entries []store.DirEntry, name string) *store.DirEntry {
+func findEntry(entries []core.DirEntry, name string) *core.DirEntry {
 	for i := range entries {
 		if entries[i].Name == name {
 			return &entries[i]
@@ -1960,7 +1960,7 @@ func TestDeleteObjectsBatch_RemovesRowsAndDecrementsQuotas(t *testing.T) {
 
 	// Verify rows are gone.
 	for _, k := range []string{"bucket/k1", "bucket/k2"} {
-		if _, err := s.GetAllObjectLocations(ctx, k); !errors.Is(err, store.ErrObjectNotFound) {
+		if _, err := s.GetAllObjectLocations(ctx, k); !errors.Is(err, core.ErrObjectNotFound) {
 			t.Errorf("expected %s gone, got err=%v", k, err)
 		}
 	}
@@ -1984,7 +1984,7 @@ func TestListAllEncryptedLocations(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	enc := &store.EncryptionMeta{
+	enc := &core.EncryptionMeta{
 		Encrypted:     true,
 		EncryptionKey: []byte("dek"),
 		KeyID:         "key-1",

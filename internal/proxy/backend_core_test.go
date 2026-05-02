@@ -19,7 +19,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
-	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 func TestExcludeUnhealthy_FiltersOpenCircuitBreaker(t *testing.T) {
@@ -322,14 +322,14 @@ func TestEligibleForWrite_CombinesAllFilters(t *testing.T) {
 	// over-limit: within limits check fails
 	overLimit := newMockBackend()
 
-	limits := map[string]store.UsageLimits{
+	limits := map[string]core.UsageLimits{
 		"over-limit": {APIRequestLimit: 1},
 	}
 	usage := counter.NewUsageTracker(
 		counter.NewLocalCounterBackend([]string{"healthy", "draining", "unhealthy", "over-limit"}),
 		limits,
 	)
-	usage.SetBaseline("over-limit", store.UsageStat{APIRequests: 1})
+	usage.SetBaseline("over-limit", core.UsageStat{APIRequests: 1})
 
 	core := &backendCore{
 		backends: map[string]backend.ObjectBackend{

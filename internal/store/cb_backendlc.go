@@ -10,18 +10,19 @@ import (
 	"context"
 
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // cbBackendLifecycleStore wraps a BackendLifecycleStore with circuit-breaker
 // protection.
 type cbBackendLifecycleStore struct {
-	inner BackendLifecycleStore
+	inner core.BackendLifecycleStore
 	cb    *breaker.CircuitBreaker
 }
 
 // NewCBBackendLifecycleStore returns a CB-protected view typed as
 // BackendLifecycleStore.
-func NewCBBackendLifecycleStore(inner BackendLifecycleStore, cb *breaker.CircuitBreaker) BackendLifecycleStore {
+func NewCBBackendLifecycleStore(inner core.BackendLifecycleStore, cb *breaker.CircuitBreaker) core.BackendLifecycleStore {
 	return &cbBackendLifecycleStore{inner: inner, cb: cb}
 }
 

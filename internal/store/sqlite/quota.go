@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // GetBackendWithSpace finds a backend with enough quota for the given size.
@@ -51,7 +51,7 @@ func (s *Store) GetBackendWithSpace(ctx context.Context, size int64, backendOrde
 		}
 	}
 
-	return "", store.ErrNoSpaceAvailable
+	return "", core.ErrNoSpaceAvailable
 }
 
 // GetLeastUtilizedBackend finds the backend with the lowest utilization ratio
@@ -61,7 +61,7 @@ func (s *Store) GetBackendWithSpace(ctx context.Context, size int64, backendOrde
 // dynamic SQL string construction.
 func (s *Store) GetLeastUtilizedBackend(ctx context.Context, size int64, eligible []string) (string, error) {
 	if len(eligible) == 0 {
-		return "", store.ErrNoSpaceAvailable
+		return "", core.ErrNoSpaceAvailable
 	}
 
 	eligibleJSON, err := json.Marshal(eligible)
@@ -90,7 +90,7 @@ func (s *Store) GetLeastUtilizedBackend(ctx context.Context, size int64, eligibl
 	var backendName string
 	err = s.db.QueryRowContext(ctx, query, string(eligibleJSON), size).Scan(&backendName)
 	if err == sql.ErrNoRows {
-		return "", store.ErrNoSpaceAvailable
+		return "", core.ErrNoSpaceAvailable
 	}
 	if err != nil {
 		return "", fmt.Errorf("failed to find least utilized backend: %w", err)
@@ -119,7 +119,7 @@ func (s *Store) SyncQuotaLimits(ctx context.Context, backends []config.BackendCo
 }
 
 // GetQuotaStats returns quota statistics for all backends.
-func (s *Store) GetQuotaStats(ctx context.Context) (map[string]store.QuotaStat, error) {
+func (s *Store) GetQuotaStats(ctx context.Context) (map[string]core.QuotaStat, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT backend_name, bytes_used, bytes_limit, orphan_bytes, updated_at
 		FROM backend_quotas`)
@@ -128,9 +128,9 @@ func (s *Store) GetQuotaStats(ctx context.Context) (map[string]store.QuotaStat, 
 	}
 	defer rows.Close()
 
-	stats := make(map[string]store.QuotaStat)
+	stats := make(map[string]core.QuotaStat)
 	for rows.Next() {
-		var qs store.QuotaStat
+		var qs core.QuotaStat
 		var updatedAt string
 		if err := rows.Scan(&qs.BackendName, &qs.BytesUsed, &qs.BytesLimit, &qs.OrphanBytes, &updatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan quota stat: %w", err)
@@ -223,7 +223,7 @@ func (s *Store) FlushUsageDeltas(ctx context.Context, backendName, period string
 }
 
 // GetUsageForPeriod returns usage statistics for all backends in the given period.
-func (s *Store) GetUsageForPeriod(ctx context.Context, period string) (map[string]store.UsageStat, error) {
+func (s *Store) GetUsageForPeriod(ctx context.Context, period string) (map[string]core.UsageStat, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT backend_name, api_requests, egress_bytes, ingress_bytes
 		FROM backend_usage
@@ -233,10 +233,10 @@ func (s *Store) GetUsageForPeriod(ctx context.Context, period string) (map[strin
 	}
 	defer rows.Close()
 
-	stats := make(map[string]store.UsageStat)
+	stats := make(map[string]core.UsageStat)
 	for rows.Next() {
 		var name string
-		var us store.UsageStat
+		var us core.UsageStat
 		if err := rows.Scan(&name, &us.APIRequests, &us.EgressBytes, &us.IngressBytes); err != nil {
 			return nil, fmt.Errorf("failed to scan usage stat: %w", err)
 		}

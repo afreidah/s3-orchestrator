@@ -12,7 +12,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"go.uber.org/mock/gomock"
 )
 
@@ -41,7 +41,7 @@ func TestScrub_MatchingHash(t *testing.T) {
 	body := "hello world"
 	expectedHash := hashString(body)
 
-	ms.randomHashedObjects = []store.ObjectLocation{
+	ms.randomHashedObjects = []core.ObjectLocation{
 		{ObjectKey: "bucket/key1", BackendName: "b1", SizeBytes: 11, ContentHash: expectedHash},
 	}
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
@@ -65,7 +65,7 @@ func TestScrub_HashMismatch(t *testing.T) {
 	t.Parallel()
 	s, ops, be, ms := setupScrubber(t)
 
-	ms.randomHashedObjects = []store.ObjectLocation{
+	ms.randomHashedObjects = []core.ObjectLocation{
 		{ObjectKey: "bucket/key1", BackendName: "b1", SizeBytes: 11, ContentHash: "badhash"},
 	}
 	ops.EXPECT().GetBackend("b1").Return(be, nil).Times(2)
@@ -90,7 +90,7 @@ func TestScrub_BackendError(t *testing.T) {
 	t.Parallel()
 	s, ops, be, ms := setupScrubber(t)
 
-	ms.randomHashedObjects = []store.ObjectLocation{
+	ms.randomHashedObjects = []core.ObjectLocation{
 		{ObjectKey: "bucket/key1", BackendName: "b1", SizeBytes: 11, ContentHash: "somehash"},
 	}
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
@@ -124,7 +124,7 @@ func TestBackfill_ComputesAndStoresHash(t *testing.T) {
 	body := "backfill me"
 	expectedHash := hashString(body)
 
-	ms.objectsWithoutHash = []store.ObjectLocation{
+	ms.objectsWithoutHash = []core.ObjectLocation{
 		{ObjectKey: "bucket/key1", BackendName: "b1", SizeBytes: int64(len(body))},
 	}
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
@@ -152,9 +152,9 @@ func TestBackfill_Pagination(t *testing.T) {
 	s, ops, be, ms := setupScrubber(t)
 
 	// Return a full batch to trigger pagination
-	locs := make([]store.ObjectLocation, 5)
+	locs := make([]core.ObjectLocation, 5)
 	for i := range locs {
-		locs[i] = store.ObjectLocation{ObjectKey: "bucket/key", BackendName: "b1", SizeBytes: 3}
+		locs[i] = core.ObjectLocation{ObjectKey: "bucket/key", BackendName: "b1", SizeBytes: 3}
 	}
 	ms.objectsWithoutHash = locs
 	ops.EXPECT().GetBackend("b1").Return(be, nil).Times(5)
@@ -180,7 +180,7 @@ func TestBackfill_UnencryptedObject(t *testing.T) {
 	body := "plaintext object"
 	expectedHash := hashString(body)
 
-	ms.objectsWithoutHash = []store.ObjectLocation{
+	ms.objectsWithoutHash = []core.ObjectLocation{
 		{ObjectKey: "bucket/plain", BackendName: "b1", SizeBytes: int64(len(body)), Encrypted: false},
 	}
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
@@ -204,7 +204,7 @@ func TestBackfill_BackendError(t *testing.T) {
 	t.Parallel()
 	s, ops, be, ms := setupScrubber(t)
 
-	ms.objectsWithoutHash = []store.ObjectLocation{
+	ms.objectsWithoutHash = []core.ObjectLocation{
 		{ObjectKey: "bucket/key1", BackendName: "b1", SizeBytes: 10},
 	}
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
@@ -246,7 +246,7 @@ func TestScrubber_SetConfig(t *testing.T) {
 func TestScrub_ContextCancelled(t *testing.T) {
 	t.Parallel()
 	s, _, _, ms := setupScrubber(t)
-	ms.randomHashedObjects = []store.ObjectLocation{
+	ms.randomHashedObjects = []core.ObjectLocation{
 		{ObjectKey: "bucket/key1", BackendName: "b1", SizeBytes: 11, ContentHash: "hash"},
 		{ObjectKey: "bucket/key2", BackendName: "b1", SizeBytes: 11, ContentHash: "hash"},
 	}
@@ -262,4 +262,3 @@ func TestScrub_ContextCancelled(t *testing.T) {
 		t.Errorf("expected 0 failed, got %d", failed)
 	}
 }
-

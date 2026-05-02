@@ -14,12 +14,13 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
-	"github.com/afreidah/s3-orchestrator/internal/store"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // xmlBufPool reuses bytes.Buffer instances for XML response encoding,
@@ -167,7 +168,7 @@ func xmlEscape(s string) string {
 // appropriate S3 XML error response. Falls back to 502 InternalError for
 // untyped errors. Returns the HTTP status code used.
 func writeStorageError(w http.ResponseWriter, err error, fallbackMsg string) int {
-	var s3err *store.S3Error
+	var s3err *core.S3Error
 	if errors.As(err, &s3err) {
 		writeS3Error(w, s3err.StatusCode, s3err.Code, s3err.Message)
 		return s3err.StatusCode

@@ -35,7 +35,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
-	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
@@ -61,12 +61,12 @@ type Handler struct {
 	overRep    *worker.OverReplicationCleaner
 	drain      *proxy.DrainManager
 	scrubber   *worker.Scrubber
-	lifecycle  store.BackendLifecycleStore
+	lifecycle  core.BackendLifecycleStore
 	reconciler *worker.Reconciler
 	dbCB       *breaker.CircuitBreaker
-	objects    store.ObjectStore
-	cleanup    store.CleanupStore
-	rawStore   store.AdminStore
+	objects    core.ObjectStore
+	cleanup    core.CleanupStore
+	encAdmin   core.EncryptionAdmin
 	encryptor  *encryption.Encryptor
 	token      string
 	logLevel   *slog.LevelVar
@@ -82,11 +82,11 @@ type Deps struct {
 	OverRep    *worker.OverReplicationCleaner
 	Drain      *proxy.DrainManager
 	Scrubber   *worker.Scrubber
-	Lifecycle  store.BackendLifecycleStore
+	Lifecycle  core.BackendLifecycleStore
 	DBCB       *breaker.CircuitBreaker
-	RawStore   store.AdminStore
-	Objects    store.ObjectStore
-	Cleanup    store.CleanupStore
+	Encryption core.EncryptionAdmin
+	Objects    core.ObjectStore
+	Cleanup    core.CleanupStore
 	Encryptor  *encryption.Encryptor
 	Reconciler *worker.Reconciler
 	Token      string
@@ -106,7 +106,7 @@ func New(d *Deps) *Handler {
 		dbCB:       d.DBCB,
 		objects:    d.Objects,
 		cleanup:    d.Cleanup,
-		rawStore:   d.RawStore,
+		encAdmin:   d.Encryption,
 		encryptor:  d.Encryptor,
 		token:      d.Token,
 		logLevel:   d.LogLevel,
@@ -423,7 +423,7 @@ func (h *Handler) handleCancelDrain(w http.ResponseWriter, r *http.Request) {
 
 // removeConfirmTTL is how long a purge confirmation token is valid.
 const (
-	removeConfirmTTL       = 60 * time.Second
+	removeConfirmTTL        = 60 * time.Second
 	errEncryptionNotEnabled = "encryption not enabled"
 	errDrainOperationFailed = "drain operation failed"
 )
@@ -532,7 +532,7 @@ func (h *Handler) validRemoveToken(token, expectedName string) bool {
 // current primary key. Objects are processed in batches to avoid holding long
 // transactions. The old key must remain in previous_keys for unwrapping.
 func (h *Handler) handleRotateEncryptionKey(w http.ResponseWriter, r *http.Request) {
-	if h.encryptor == nil || h.rawStore == nil {
+	if h.encryptor == nil || h.encAdmin == nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": errEncryptionNotEnabled})
 		return
 	}
@@ -551,7 +551,7 @@ func (h *Handler) handleRotateEncryptionKey(w http.ResponseWriter, r *http.Reque
 	var rotated, failed, total int
 
 	for offset := 0; ; offset += batchSize {
-		locs, err := h.rawStore.ListEncryptedLocations(ctx, req.OldKeyID, batchSize, offset)
+		locs, err := h.encAdmin.ListEncryptedLocations(ctx, req.OldKeyID, batchSize, offset)
 		if err != nil {
 			slog.ErrorContext(ctx, "Admin: key rotation list failed", "error", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list encrypted objects"})
@@ -590,7 +590,7 @@ func (h *Handler) handleRotateEncryptionKey(w http.ResponseWriter, r *http.Reque
 			}
 
 			newKeyData := encryption.PackKeyData(baseNonce, newWrapped)
-			if err := h.rawStore.UpdateEncryptionKey(ctx, loc.ObjectKey, loc.BackendName, newKeyData, newKeyID); err != nil {
+			if err := h.encAdmin.UpdateEncryptionKey(ctx, loc.ObjectKey, loc.BackendName, newKeyData, newKeyID); err != nil {
 				slog.WarnContext(ctx, "Key rotation: update failed", "key", loc.ObjectKey, "error", err)
 				telemetry.KeyRotationObjectsTotal.WithLabelValues("error").Inc()
 				failed++
@@ -633,13 +633,13 @@ type bulkRewriteRow interface {
 // while letting bulkRewriteRow stay independent of the store package types.
 // Pointer receivers avoid copying the embedded store row (DecryptableLocation
 // carries a []byte and trips gocritic's hugeParam).
-type encryptRow struct{ store.UnencryptedLocation }
+type encryptRow struct{ core.UnencryptedLocation }
 
 func (r *encryptRow) rewriteKey() string     { return r.ObjectKey }
 func (r *encryptRow) rewriteBackend() string { return r.BackendName }
 func (r *encryptRow) rewriteSize() int64     { return r.SizeBytes }
 
-type decryptRow struct{ store.DecryptableLocation }
+type decryptRow struct{ core.DecryptableLocation }
 
 func (r *decryptRow) rewriteKey() string     { return r.ObjectKey }
 func (r *decryptRow) rewriteBackend() string { return r.BackendName }
@@ -685,7 +685,7 @@ func (h *Handler) EncryptExisting(ctx context.Context) BulkRewriteResult {
 		resultLabel: "encrypted",
 		counter:     telemetry.EncryptExistingObjectsTotal,
 		listFn: func(ctx context.Context, batchSize, offset int) ([]*encryptRow, error) {
-			rows, err := h.rawStore.ListUnencryptedLocations(ctx, batchSize, offset)
+			rows, err := h.encAdmin.ListUnencryptedLocations(ctx, batchSize, offset)
 			if err != nil {
 				return nil, err
 			}
@@ -702,7 +702,7 @@ func (h *Handler) EncryptExisting(ctx context.Context) BulkRewriteResult {
 			}
 			dbUpdate := func() error {
 				keyData := encryption.PackKeyData(encResult.BaseNonce, encResult.WrappedDEK)
-				return h.rawStore.MarkObjectEncrypted(ctx, loc.ObjectKey, loc.BackendName, keyData, encResult.KeyID, loc.SizeBytes, encResult.CiphertextSize)
+				return h.encAdmin.MarkObjectEncrypted(ctx, loc.ObjectKey, loc.BackendName, keyData, encResult.KeyID, loc.SizeBytes, encResult.CiphertextSize)
 			}
 			return encResult.Body, encResult.CiphertextSize, dbUpdate, nil
 		},
@@ -736,7 +736,7 @@ func (h *Handler) handleDecryptExisting(w http.ResponseWriter, r *http.Request) 
 		resultLabel: "decrypted",
 		counter:     telemetry.DecryptExistingObjectsTotal,
 		listFn: func(ctx context.Context, batchSize, offset int) ([]*decryptRow, error) {
-			rows, err := h.rawStore.ListAllEncryptedLocations(ctx, batchSize, offset)
+			rows, err := h.encAdmin.ListAllEncryptedLocations(ctx, batchSize, offset)
 			if err != nil {
 				return nil, err
 			}
@@ -756,7 +756,7 @@ func (h *Handler) handleDecryptExisting(w http.ResponseWriter, r *http.Request) 
 				return nil, 0, nil, err
 			}
 			dbUpdate := func() error {
-				return h.rawStore.MarkObjectDecrypted(ctx, loc.ObjectKey, loc.BackendName, loc.PlaintextSize)
+				return h.encAdmin.MarkObjectDecrypted(ctx, loc.ObjectKey, loc.BackendName, loc.PlaintextSize)
 			}
 			return plainReader, loc.PlaintextSize, dbUpdate, nil
 		},
@@ -778,7 +778,7 @@ func (h *Handler) handleDecryptExisting(w http.ResponseWriter, r *http.Request) 
 // can decide how to surface them. A list-listFn error short-circuits the
 // run with the partial counts gathered so far.
 func runBulkRewriteCounts[L bulkRewriteRow](h *Handler, ctx context.Context, op bulkRewriteOp[L]) BulkRewriteResult {
-	if h.encryptor == nil || h.rawStore == nil {
+	if h.encryptor == nil || h.encAdmin == nil {
 		return BulkRewriteResult{Status: "skipped", Reason: errEncryptionNotEnabled}
 	}
 

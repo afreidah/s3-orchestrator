@@ -16,14 +16,13 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // GetUnderReplicatedObjects finds objects with fewer copies than the target
 // replication factor. Returns all rows for those objects so callers know which
 // backends already have copies.
-func (s *Store) GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]store.ObjectLocation, error) {
+func (s *Store) GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]core.ObjectLocation, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.encrypted,
 		        ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.created_at
@@ -49,7 +48,7 @@ func (s *Store) GetUnderReplicatedObjects(ctx context.Context, factor, limit int
 // GetUnderReplicatedObjectsExcluding finds objects with fewer copies than the
 // target factor, ignoring copies on the excluded backends. Returns all rows
 // for those objects so callers know the full picture.
-func (s *Store) GetUnderReplicatedObjectsExcluding(ctx context.Context, factor, limit int, excludedBackends []string) ([]store.ObjectLocation, error) {
+func (s *Store) GetUnderReplicatedObjectsExcluding(ctx context.Context, factor, limit int, excludedBackends []string) ([]core.ObjectLocation, error) {
 	if len(excludedBackends) == 0 {
 		return s.GetUnderReplicatedObjects(ctx, factor, limit)
 	}
@@ -93,7 +92,7 @@ func (s *Store) RecordReplica(ctx context.Context, key, targetBackend, sourceBac
 // GetOverReplicatedObjects finds objects with more copies than the target
 // replication factor. Returns all rows for those objects so callers can
 // score each copy and decide which to remove.
-func (s *Store) GetOverReplicatedObjects(ctx context.Context, factor, limit int) ([]store.ObjectLocation, error) {
+func (s *Store) GetOverReplicatedObjects(ctx context.Context, factor, limit int) ([]core.ObjectLocation, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.encrypted,
 		        ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.created_at
@@ -141,11 +140,11 @@ func (s *Store) RemoveExcessCopy(ctx context.Context, key, backendName string, s
 }
 
 // scanObjectLocations converts sql.Rows into a slice of ObjectLocation.
-func scanObjectLocations(rows *sql.Rows) ([]store.ObjectLocation, error) {
-	var locs []store.ObjectLocation
+func scanObjectLocations(rows *sql.Rows) ([]core.ObjectLocation, error) {
+	var locs []core.ObjectLocation
 	for rows.Next() {
 		var (
-			loc         store.ObjectLocation
+			loc         core.ObjectLocation
 			keyID       sql.NullString
 			ptSize      sql.NullInt64
 			contentHash sql.NullString

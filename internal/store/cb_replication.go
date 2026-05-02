@@ -10,27 +10,28 @@ import (
 	"context"
 
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // cbReplicationStore wraps a ReplicationStore with circuit-breaker protection.
 type cbReplicationStore struct {
-	inner ReplicationStore
+	inner core.ReplicationStore
 	cb    *breaker.CircuitBreaker
 }
 
 // NewCBReplicationStore returns a CB-protected view typed as ReplicationStore.
-func NewCBReplicationStore(inner ReplicationStore, cb *breaker.CircuitBreaker) ReplicationStore {
+func NewCBReplicationStore(inner core.ReplicationStore, cb *breaker.CircuitBreaker) core.ReplicationStore {
 	return &cbReplicationStore{inner: inner, cb: cb}
 }
 
 // GetUnderReplicatedObjects forwards to the inner store under the breaker.
-func (c *cbReplicationStore) GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]ObjectLocation, error) {
-	return breaker.CBCall(c.cb, func() ([]ObjectLocation, error) { return c.inner.GetUnderReplicatedObjects(ctx, factor, limit) })
+func (c *cbReplicationStore) GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]core.ObjectLocation, error) {
+	return breaker.CBCall(c.cb, func() ([]core.ObjectLocation, error) { return c.inner.GetUnderReplicatedObjects(ctx, factor, limit) })
 }
 
 // GetUnderReplicatedObjectsExcluding forwards to the inner store under the breaker.
-func (c *cbReplicationStore) GetUnderReplicatedObjectsExcluding(ctx context.Context, factor, limit int, excludedBackends []string) ([]ObjectLocation, error) {
-	return breaker.CBCall(c.cb, func() ([]ObjectLocation, error) {
+func (c *cbReplicationStore) GetUnderReplicatedObjectsExcluding(ctx context.Context, factor, limit int, excludedBackends []string) ([]core.ObjectLocation, error) {
+	return breaker.CBCall(c.cb, func() ([]core.ObjectLocation, error) {
 		return c.inner.GetUnderReplicatedObjectsExcluding(ctx, factor, limit, excludedBackends)
 	})
 }
@@ -41,8 +42,8 @@ func (c *cbReplicationStore) RecordReplica(ctx context.Context, key, targetBacke
 }
 
 // GetOverReplicatedObjects forwards to the inner store under the breaker.
-func (c *cbReplicationStore) GetOverReplicatedObjects(ctx context.Context, factor, limit int) ([]ObjectLocation, error) {
-	return breaker.CBCall(c.cb, func() ([]ObjectLocation, error) { return c.inner.GetOverReplicatedObjects(ctx, factor, limit) })
+func (c *cbReplicationStore) GetOverReplicatedObjects(ctx context.Context, factor, limit int) ([]core.ObjectLocation, error) {
+	return breaker.CBCall(c.cb, func() ([]core.ObjectLocation, error) { return c.inner.GetOverReplicatedObjects(ctx, factor, limit) })
 }
 
 // CountOverReplicatedObjects forwards to the inner store under the breaker.

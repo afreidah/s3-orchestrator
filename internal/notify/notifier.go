@@ -28,8 +28,8 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
-	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
@@ -38,13 +38,13 @@ import (
 // -------------------------------------------------------------------------
 
 // OutboxStore defines the persistence methods the notifier needs for
-// durable event delivery. Implemented by store.Store.
+// durable event delivery. Composed of the durable outbox row operations
+// plus the advisory-lock helper used to serialize the drain loop across
+// replicas. Both core.NotificationOutbox and core.AdvisoryLocker are
+// satisfied by the engine concrete *Store.
 type OutboxStore interface {
-	InsertNotification(ctx context.Context, eventType, payload, endpointURL string) error
-	GetPendingNotifications(ctx context.Context, limit int) ([]store.NotificationRow, error)
-	CompleteNotification(ctx context.Context, id int64) error
-	RetryNotification(ctx context.Context, id int64, backoff time.Duration, lastError string) error
-	WithAdvisoryLock(ctx context.Context, lockID int64, fn func(ctx context.Context) error) (bool, error)
+	core.NotificationOutbox
+	core.AdvisoryLocker
 }
 
 // -------------------------------------------------------------------------
@@ -233,7 +233,7 @@ func (n *Notifier) drainOnce(ctx context.Context) {
 }
 
 // deliver sends a single notification to the endpoint via HTTP POST.
-func (n *Notifier) deliver(ctx context.Context, row store.NotificationRow, ep *config.NotificationEndpoint) error {
+func (n *Notifier) deliver(ctx context.Context, row core.NotificationRow, ep *config.NotificationEndpoint) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ep.URL, bytes.NewReader(row.Payload))
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
@@ -297,7 +297,7 @@ func generateEventID() string {
 // processPendingRow handles one outbox row: either the endpoint no longer
 // exists (complete immediately), delivery failed (retry or exhaust), or
 // delivery succeeded (complete + metrics).
-func (n *Notifier) processPendingRow(ctx context.Context, row store.NotificationRow) {
+func (n *Notifier) processPendingRow(ctx context.Context, row core.NotificationRow) {
 	ep := n.findEndpoint(row.EndpointURL)
 	if ep == nil {
 		n.completeOrLog(ctx, row.ID, "no_matching_endpoint")
@@ -317,7 +317,7 @@ func (n *Notifier) processPendingRow(ctx context.Context, row store.Notification
 // handleDeliveryFailure decides whether to schedule a retry or give up,
 // based on the endpoint's configured max retries and the row's current
 // attempt count.
-func (n *Notifier) handleDeliveryFailure(ctx context.Context, row store.NotificationRow, ep *config.NotificationEndpoint, err error) {
+func (n *Notifier) handleDeliveryFailure(ctx context.Context, row core.NotificationRow, ep *config.NotificationEndpoint, err error) {
 	telemetry.NotificationFailedTotal.WithLabelValues(ep.URL, row.EventType).Inc()
 	backoff := time.Duration(1<<min(row.Attempts, maxBackoffShift)) * time.Second
 	maxRetries := ep.MaxRetries

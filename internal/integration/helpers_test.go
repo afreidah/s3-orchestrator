@@ -38,14 +38,15 @@ import (
 	tcredis "github.com/testcontainers/testcontainers-go/modules/redis"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
-	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
+	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
+	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 )
 
 const virtualBucket = "test-bucket"
@@ -555,24 +556,24 @@ func newCBStores(src roleStore, cb *breaker.CircuitBreaker) proxy.Stores {
 
 // roleStore names the role union tests need on a single source value.
 type roleStore interface {
-	store.ObjectStore
-	store.QuotaStore
-	store.MultipartStore
-	store.ReplicationStore
-	store.CleanupStore
-	store.PendingStore
-	store.IntegrityStore
-	store.ExpiredObjectsLister
-	store.BackendLifecycleStore
-	store.DashboardStore
-	store.UsageFlusher
-	store.AdvisoryLocker
+	core.ObjectStore
+	core.QuotaStore
+	core.MultipartStore
+	core.ReplicationStore
+	core.CleanupStore
+	core.PendingStore
+	core.IntegrityStore
+	core.ExpiredObjectsLister
+	core.BackendLifecycleStore
+	core.DashboardStore
+	core.UsageFlusher
+	core.AdvisoryLocker
 }
 
 // metricsAdapter carries the CB-wrapped role views MetricsCollector needs.
 type metricsAdapter struct {
-	store.DashboardStore
-	store.ReplicationStore
+	core.DashboardStore
+	core.ReplicationStore
 }
 
 // newMetricsAdapter returns a proxy.MetricsDeps-compatible value.
@@ -603,22 +604,22 @@ var errSimulatedDBFailure = errors.New("simulated database connection failure")
 // satisfies any role the proxy asks for; a single *postgres.Store is assigned
 // to every embedded field.
 type FailableStore struct {
-	store.ObjectStore
-	store.QuotaStore
-	store.MultipartStore
-	store.ReplicationStore
-	store.CleanupStore
-	store.PendingStore
-	store.IntegrityStore
-	store.ExpiredObjectsLister
-	store.BackendLifecycleStore
-	store.DashboardStore
-	store.UsageFlusher
-	store.AdvisoryLocker
-	inner            *postgres.Store
-	mu               sync.Mutex
-	failing          bool
-	failCommitOnce   bool // when true, RecordObjectAndClearPending fails once, then auto-clears
+	core.ObjectStore
+	core.QuotaStore
+	core.MultipartStore
+	core.ReplicationStore
+	core.CleanupStore
+	core.PendingStore
+	core.IntegrityStore
+	core.ExpiredObjectsLister
+	core.BackendLifecycleStore
+	core.DashboardStore
+	core.UsageFlusher
+	core.AdvisoryLocker
+	inner          *postgres.Store
+	mu             sync.Mutex
+	failing        bool
+	failCommitOnce bool // when true, RecordObjectAndClearPending fails once, then auto-clears
 }
 
 // newFailableStore returns a FailableStore whose role views all resolve to
@@ -632,7 +633,7 @@ func newFailableStore(db *postgres.Store) *FailableStore {
 		CleanupStore:          db,
 		PendingStore:          db,
 		IntegrityStore:        db,
-		ExpiredObjectsLister:        db,
+		ExpiredObjectsLister:  db,
 		BackendLifecycleStore: db,
 		DashboardStore:        db,
 		UsageFlusher:          db,
@@ -653,14 +654,14 @@ func (f *FailableStore) isFailing() bool {
 	return f.failing
 }
 
-func (f *FailableStore) GetAllObjectLocations(ctx context.Context, key string) ([]store.ObjectLocation, error) {
+func (f *FailableStore) GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
 	}
 	return f.inner.GetAllObjectLocations(ctx, key)
 }
 
-func (f *FailableStore) RecordObject(ctx context.Context, key, backend string, size int64, enc *store.EncryptionMeta) ([]store.DeletedCopy, error) {
+func (f *FailableStore) RecordObject(ctx context.Context, key, backend string, size int64, enc *core.EncryptionMeta) ([]core.DeletedCopy, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
 	}
@@ -693,21 +694,21 @@ func (f *FailableStore) consumeFailCommitOnce() bool {
 // RecordObjectAndClearPending honours both the global failing flag and the
 // one-shot fail-commit flag, so tests can simulate either a sustained DB
 // outage or a single mid-PUT blip without affecting other store calls.
-func (f *FailableStore) RecordObjectAndClearPending(ctx context.Context, key, backend string, size int64, enc *store.EncryptionMeta, intentID string) ([]store.DeletedCopy, error) {
+func (f *FailableStore) RecordObjectAndClearPending(ctx context.Context, key, backend string, size int64, enc *core.EncryptionMeta, intentID string) ([]core.DeletedCopy, error) {
 	if f.isFailing() || f.consumeFailCommitOnce() {
 		return nil, errSimulatedDBFailure
 	}
 	return f.inner.RecordObjectAndClearPending(ctx, key, backend, size, enc, intentID)
 }
 
-func (f *FailableStore) DeleteObject(ctx context.Context, key string) ([]store.DeletedCopy, error) {
+func (f *FailableStore) DeleteObject(ctx context.Context, key string) ([]core.DeletedCopy, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
 	}
 	return f.inner.DeleteObject(ctx, key)
 }
 
-func (f *FailableStore) ListObjects(ctx context.Context, prefix, startAfter string, maxKeys int) (*store.ListObjectsResult, error) {
+func (f *FailableStore) ListObjects(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.ListObjectsResult, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
 	}
@@ -735,21 +736,21 @@ func (f *FailableStore) CreateMultipartUpload(ctx context.Context, uploadID, key
 	return f.inner.CreateMultipartUpload(ctx, uploadID, key, backend, contentType, metadata)
 }
 
-func (f *FailableStore) GetMultipartUpload(ctx context.Context, uploadID string) (*store.MultipartUpload, error) {
+func (f *FailableStore) GetMultipartUpload(ctx context.Context, uploadID string) (*core.MultipartUpload, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
 	}
 	return f.inner.GetMultipartUpload(ctx, uploadID)
 }
 
-func (f *FailableStore) RecordPart(ctx context.Context, uploadID string, partNumber int, etag string, size int64, enc *store.EncryptionMeta) error {
+func (f *FailableStore) RecordPart(ctx context.Context, uploadID string, partNumber int, etag string, size int64, enc *core.EncryptionMeta) error {
 	if f.isFailing() {
 		return errSimulatedDBFailure
 	}
 	return f.inner.RecordPart(ctx, uploadID, partNumber, etag, size, enc)
 }
 
-func (f *FailableStore) GetParts(ctx context.Context, uploadID string) ([]store.MultipartPart, error) {
+func (f *FailableStore) GetParts(ctx context.Context, uploadID string) ([]core.MultipartPart, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
 	}
@@ -763,7 +764,7 @@ func (f *FailableStore) DeleteMultipartUpload(ctx context.Context, uploadID stri
 	return f.inner.DeleteMultipartUpload(ctx, uploadID)
 }
 
-func (f *FailableStore) GetQuotaStats(ctx context.Context) (map[string]store.QuotaStat, error) {
+func (f *FailableStore) GetQuotaStats(ctx context.Context) (map[string]core.QuotaStat, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
 	}
@@ -784,21 +785,21 @@ func (f *FailableStore) GetActiveMultipartCounts(ctx context.Context) (map[strin
 	return f.inner.GetActiveMultipartCounts(ctx)
 }
 
-func (f *FailableStore) GetStaleMultipartUploads(ctx context.Context, olderThan time.Duration) ([]store.MultipartUpload, error) {
+func (f *FailableStore) GetStaleMultipartUploads(ctx context.Context, olderThan time.Duration) ([]core.MultipartUpload, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
 	}
 	return f.inner.GetStaleMultipartUploads(ctx, olderThan)
 }
 
-func (f *FailableStore) ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*store.DirectoryListResult, error) {
+func (f *FailableStore) ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.DirectoryListResult, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
 	}
 	return f.inner.ListDirectoryChildren(ctx, prefix, startAfter, maxKeys)
 }
 
-func (f *FailableStore) ListObjectsByBackend(ctx context.Context, backendName string, limit int) ([]store.ObjectLocation, error) {
+func (f *FailableStore) ListObjectsByBackend(ctx context.Context, backendName string, limit int) ([]core.ObjectLocation, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
 	}
@@ -812,7 +813,7 @@ func (f *FailableStore) MoveObjectLocation(ctx context.Context, key, fromBackend
 	return f.inner.MoveObjectLocation(ctx, key, fromBackend, toBackend)
 }
 
-func (f *FailableStore) GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]store.ObjectLocation, error) {
+func (f *FailableStore) GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]core.ObjectLocation, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
 	}
@@ -826,7 +827,7 @@ func (f *FailableStore) RecordReplica(ctx context.Context, key, targetBackend, s
 	return f.inner.RecordReplica(ctx, key, targetBackend, sourceBackend, size)
 }
 
-func (f *FailableStore) GetOverReplicatedObjects(ctx context.Context, factor, limit int) ([]store.ObjectLocation, error) {
+func (f *FailableStore) GetOverReplicatedObjects(ctx context.Context, factor, limit int) ([]core.ObjectLocation, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
 	}

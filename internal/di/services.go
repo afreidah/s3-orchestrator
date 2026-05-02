@@ -24,7 +24,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
-	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
@@ -49,7 +48,7 @@ const (
 // lock. It handles audit context creation, lock acquisition, skip/error
 // logging, and context cancellation.
 type lockedTickerService struct {
-	locker   store.AdvisoryLocker
+	locker   core.AdvisoryLocker
 	interval time.Duration
 	lockID   int64
 	name     string
@@ -97,7 +96,7 @@ func (s *lockedTickerService) runOnce(ctx context.Context, fn func(ctx context.C
 			fn(lockCtx)
 			return nil
 		})
-	if err != nil && !errors.Is(err, store.ErrDBUnavailable) {
+	if err != nil && !errors.Is(err, core.ErrDBUnavailable) {
 		if s.onError != nil {
 			s.onError(err)
 		} else {
@@ -117,11 +116,11 @@ func (s *lockedTickerService) runOnce(ctx context.Context, fn func(ctx context.C
 // database, acquiring an advisory lock only when Redis counters are active.
 type usageFlushService struct {
 	manager *proxy.BackendManager
-	locker  store.AdvisoryLocker
+	locker  core.AdvisoryLocker
 }
 
 // NewUsageFlushService constructs the usage flush background service.
-func NewUsageFlushService(manager *proxy.BackendManager, locker store.AdvisoryLocker) lifecycle.Service {
+func NewUsageFlushService(manager *proxy.BackendManager, locker core.AdvisoryLocker) lifecycle.Service {
 	return &usageFlushService{manager: manager, locker: locker}
 }
 
@@ -172,7 +171,7 @@ func (s *usageFlushService) flushTick(ctx context.Context) {
 				s.doFlush(lockCtx)
 				return nil
 			})
-		if err != nil && !errors.Is(err, store.ErrDBUnavailable) {
+		if err != nil && !errors.Is(err, core.ErrDBUnavailable) {
 			slog.ErrorContext(ctx, "usage flush failed", "error", err)
 		}
 		if !acquired {
@@ -185,10 +184,10 @@ func (s *usageFlushService) flushTick(ctx context.Context) {
 
 // doFlush performs the actual flush and quota metric update.
 func (s *usageFlushService) doFlush(ctx context.Context) {
-	if err := s.manager.FlushUsage(ctx); err != nil && !errors.Is(err, store.ErrDBUnavailable) {
+	if err := s.manager.FlushUsage(ctx); err != nil && !errors.Is(err, core.ErrDBUnavailable) {
 		slog.ErrorContext(ctx, "failed to flush usage counters", "error", err)
 	}
-	if err := s.manager.UpdateQuotaMetrics(ctx); err != nil && !errors.Is(err, store.ErrDBUnavailable) {
+	if err := s.manager.UpdateQuotaMetrics(ctx); err != nil && !errors.Is(err, core.ErrDBUnavailable) {
 		slog.ErrorContext(ctx, "failed to update quota metrics", "error", err)
 	}
 }
@@ -198,7 +197,7 @@ func (s *usageFlushService) doFlush(ctx context.Context) {
 // -------------------------------------------------------------------------
 
 // NewMultipartCleanupService constructs the multipart-cleanup background service.
-func NewMultipartCleanupService(manager *proxy.BackendManager, locker store.AdvisoryLocker, staleTimeout time.Duration) lifecycle.Service {
+func NewMultipartCleanupService(manager *proxy.BackendManager, locker core.AdvisoryLocker, staleTimeout time.Duration) lifecycle.Service {
 	if staleTimeout <= 0 {
 		staleTimeout = defaultMultipartStaleTimeout
 	}
@@ -214,7 +213,7 @@ func NewMultipartCleanupService(manager *proxy.BackendManager, locker store.Advi
 }
 
 // NewCleanupQueueService constructs the cleanup-queue background service.
-func NewCleanupQueueService(manager *proxy.BackendManager, locker store.AdvisoryLocker) lifecycle.Service {
+func NewCleanupQueueService(manager *proxy.BackendManager, locker core.AdvisoryLocker) lifecycle.Service {
 	return &lockedTickerService{
 		locker:   locker,
 		interval: defaultCleanupQueueTick,
@@ -234,7 +233,7 @@ func NewCleanupQueueService(manager *proxy.BackendManager, locker store.Advisory
 // destination backend and either promoting the intent into object_locations
 // (bytes present) or dropping it (bytes absent). Returns nil when no
 // pending reaper is configured on the manager.
-func NewPendingReaperService(manager *proxy.BackendManager, locker store.AdvisoryLocker, tick time.Duration) lifecycle.Service {
+func NewPendingReaperService(manager *proxy.BackendManager, locker core.AdvisoryLocker, tick time.Duration) lifecycle.Service {
 	if manager.PendingReaper == nil {
 		return nil
 	}
@@ -256,7 +255,7 @@ func NewPendingReaperService(manager *proxy.BackendManager, locker store.Advisor
 }
 
 // NewRebalancerService constructs the rebalancer background service.
-func NewRebalancerService(manager *proxy.BackendManager, locker store.AdvisoryLocker) lifecycle.Service {
+func NewRebalancerService(manager *proxy.BackendManager, locker core.AdvisoryLocker) lifecycle.Service {
 	interval := defaultRebalanceInterval
 	if rcfg := manager.Rebalancer.Config(); rcfg != nil && rcfg.Interval > 0 {
 		interval = rcfg.Interval
@@ -276,7 +275,7 @@ func NewRebalancerService(manager *proxy.BackendManager, locker store.AdvisoryLo
 				return
 			}
 			moved, err := manager.Rebalancer.Rebalance(ctx, *rcfg)
-			if err != nil && !errors.Is(err, store.ErrDBUnavailable) {
+			if err != nil && !errors.Is(err, core.ErrDBUnavailable) {
 				slog.ErrorContext(ctx, "rebalance failed", "error", err)
 			} else if moved > 0 {
 				slog.InfoContext(ctx, "rebalance completed", "objects_moved", moved)
@@ -289,7 +288,7 @@ func NewRebalancerService(manager *proxy.BackendManager, locker store.AdvisoryLo
 }
 
 // NewLifecycleService constructs the lifecycle-expiration background service.
-func NewLifecycleService(manager *proxy.BackendManager, locker store.AdvisoryLocker) lifecycle.Service {
+func NewLifecycleService(manager *proxy.BackendManager, locker core.AdvisoryLocker) lifecycle.Service {
 	return &lockedTickerService{
 		locker:   locker,
 		interval: defaultLifecycleTick,
@@ -323,7 +322,7 @@ func NewLifecycleService(manager *proxy.BackendManager, locker store.AdvisoryLoc
 }
 
 // NewOverReplicationService constructs the over-replication cleanup service.
-func NewOverReplicationService(manager *proxy.BackendManager, locker store.AdvisoryLocker) lifecycle.Service {
+func NewOverReplicationService(manager *proxy.BackendManager, locker core.AdvisoryLocker) lifecycle.Service {
 	interval := defaultOverReplicationTick
 	if rcfg := manager.OverReplicationCleaner.Config(); rcfg != nil && rcfg.WorkerInterval > 0 {
 		interval = rcfg.WorkerInterval
@@ -343,7 +342,7 @@ func NewOverReplicationService(manager *proxy.BackendManager, locker store.Advis
 				return
 			}
 			removed, err := manager.OverReplicationCleaner.Clean(ctx, *rcfg)
-			if err != nil && !errors.Is(err, store.ErrDBUnavailable) {
+			if err != nil && !errors.Is(err, core.ErrDBUnavailable) {
 				slog.ErrorContext(ctx, "over-replication cleanup failed", "error", err)
 			} else if removed > 0 {
 				slog.InfoContext(ctx, "over-replication cleanup completed", "copies_removed", removed)
@@ -356,14 +355,14 @@ func NewOverReplicationService(manager *proxy.BackendManager, locker store.Advis
 }
 
 // NewReplicatorService constructs the replication background service.
-func NewReplicatorService(manager *proxy.BackendManager, locker store.AdvisoryLocker) lifecycle.Service {
+func NewReplicatorService(manager *proxy.BackendManager, locker core.AdvisoryLocker) lifecycle.Service {
 	replicateWork := func(ctx context.Context) {
 		rcfg := manager.Replicator.Config()
 		if rcfg == nil {
 			return
 		}
 		created, err := manager.Replicator.Replicate(ctx, *rcfg)
-		if err != nil && !errors.Is(err, store.ErrDBUnavailable) {
+		if err != nil && !errors.Is(err, core.ErrDBUnavailable) {
 			slog.ErrorContext(ctx, "replication failed", "error", err)
 		} else if created > 0 {
 			slog.InfoContext(ctx, "replication completed", "copies_created", created)
@@ -392,7 +391,7 @@ func NewReplicatorService(manager *proxy.BackendManager, locker store.AdvisoryLo
 }
 
 // NewReconcileService constructs the reconcile background service.
-func NewReconcileService(reconciler *worker.Reconciler, locker store.AdvisoryLocker, interval time.Duration) lifecycle.Service {
+func NewReconcileService(reconciler *worker.Reconciler, locker core.AdvisoryLocker, interval time.Duration) lifecycle.Service {
 	return &lockedTickerService{
 		locker:   locker,
 		interval: interval,
@@ -448,7 +447,7 @@ func (w *circuitBreakerWatchdog) checkAll() {
 // -------------------------------------------------------------------------
 
 // NewScrubberService constructs the integrity scrubber background service.
-func NewScrubberService(manager *proxy.BackendManager, locker store.AdvisoryLocker) lifecycle.Service {
+func NewScrubberService(manager *proxy.BackendManager, locker core.AdvisoryLocker) lifecycle.Service {
 	interval := defaultScrubberInterval
 	if icfg := manager.Scrubber.Config(); icfg != nil && icfg.ScrubberInterval > 0 {
 		interval = icfg.ScrubberInterval

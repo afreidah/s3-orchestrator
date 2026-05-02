@@ -23,7 +23,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
-	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/testutil"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
@@ -90,7 +89,7 @@ func TestServiceConstructors_AllReturnNonNil(t *testing.T) {
 		{"Replicator", NewReplicatorService(mgr, locker)},
 		{"Reconcile", NewReconcileService(worker.NewReconciler(mgr, nil), locker, time.Hour)},
 		{"Scrubber", NewScrubberService(mgr, locker)},
-		{"Watchdog", NewCircuitBreakerWatchdog(breaker.NewRegistry(breaker.NewCircuitBreaker("t", 3, time.Second, func(error) bool { return false }, store.ErrDBUnavailable)))},
+		{"Watchdog", NewCircuitBreakerWatchdog(breaker.NewRegistry(breaker.NewCircuitBreaker("t", 3, time.Second, func(error) bool { return false }, core.ErrDBUnavailable)))},
 	}
 	for _, tc := range tests {
 		if tc.svc == nil {
@@ -153,7 +152,7 @@ func TestLockedTickerService_RunOnceSwallowsErrDBUnavailable(t *testing.T) {
 	t.Parallel()
 	var onErrCalled bool
 	svc := &lockedTickerService{
-		locker:   errLocker{err: store.ErrDBUnavailable},
+		locker:   errLocker{err: core.ErrDBUnavailable},
 		interval: time.Second,
 		lockID:   core.LockLifecycle,
 		name:     "test",
@@ -178,7 +177,7 @@ func TestCircuitBreakerWatchdog_CheckAllEmptyRegistry(t *testing.T) {
 // ctx.Done() branch by cancelling the context before the first tick fires.
 func TestCircuitBreakerWatchdog_RunExitsOnCancel(t *testing.T) {
 	t.Parallel()
-	cb := breaker.NewCircuitBreaker("t", 3, time.Second, func(error) bool { return false }, store.ErrDBUnavailable)
+	cb := breaker.NewCircuitBreaker("t", 3, time.Second, func(error) bool { return false }, core.ErrDBUnavailable)
 	w := &circuitBreakerWatchdog{registry: breaker.NewRegistry(cb)}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -385,7 +384,7 @@ func TestUsageFlushService_FlushTickWithAdaptiveSwitch(t *testing.T) {
 func TestCircuitBreakerWatchdog_CheckAllResetsBackendBreaker(t *testing.T) {
 	t.Parallel()
 	cbBackend := backend.NewCircuitBreakerBackend(nil, "b1", 3, time.Second)
-	dbCB := breaker.NewCircuitBreaker("t", 3, time.Second, func(error) bool { return false }, store.ErrDBUnavailable)
+	dbCB := breaker.NewCircuitBreaker("t", 3, time.Second, func(error) bool { return false }, core.ErrDBUnavailable)
 	w := &circuitBreakerWatchdog{registry: breaker.NewRegistry(dbCB, cbBackend)}
 	w.checkAll() // must not panic; ResetStaleProbe runs on cbBackend
 }

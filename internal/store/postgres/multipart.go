@@ -15,6 +15,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	db "github.com/afreidah/s3-orchestrator/internal/store/postgres/sqlc"
 )
 
@@ -44,10 +45,10 @@ func (s *Store) CreateMultipartUpload(ctx context.Context, uploadID, key, backen
 }
 
 // GetMultipartUpload retrieves metadata for a multipart upload.
-func (s *Store) GetMultipartUpload(ctx context.Context, uploadID string) (*MultipartUpload, error) {
+func (s *Store) GetMultipartUpload(ctx context.Context, uploadID string) (*core.MultipartUpload, error) {
 	row, err := s.queries.GetMultipartUpload(ctx, uploadID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrMultipartUploadNotFound
+		return nil, core.ErrMultipartUploadNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get multipart upload: %w", err)
@@ -63,12 +64,12 @@ func (s *Store) GetMultipartUpload(ctx context.Context, uploadID string) (*Multi
 // sqlc multipart row exposes. Centralizes the pointer-deref of ContentType
 // and the JSON unmarshal of Metadata so the slice-returning callers above
 // and below this don't carry parallel loop bodies.
-func toMultipartUpload(uploadID, objectKey, backendName string, contentType *string, metadata []byte, createdAt time.Time) (MultipartUpload, error) {
+func toMultipartUpload(uploadID, objectKey, backendName string, contentType *string, metadata []byte, createdAt time.Time) (core.MultipartUpload, error) {
 	ct := ""
 	if contentType != nil {
 		ct = *contentType
 	}
-	mu := MultipartUpload{
+	mu := core.MultipartUpload{
 		UploadID:    uploadID,
 		ObjectKey:   objectKey,
 		BackendName: backendName,
@@ -77,7 +78,7 @@ func toMultipartUpload(uploadID, objectKey, backendName string, contentType *str
 	}
 	if len(metadata) > 0 {
 		if err := json.Unmarshal(metadata, &mu.Metadata); err != nil {
-			return MultipartUpload{}, fmt.Errorf(errUnmarshalMetadata, err)
+			return core.MultipartUpload{}, fmt.Errorf(errUnmarshalMetadata, err)
 		}
 	}
 	return mu, nil
@@ -85,7 +86,7 @@ func toMultipartUpload(uploadID, objectKey, backendName string, contentType *str
 
 // RecordPart records a completed part for a multipart upload.
 // S3 spec requires part numbers between 1 and 10000.
-func (s *Store) RecordPart(ctx context.Context, uploadID string, partNumber int, etag string, size int64, enc *EncryptionMeta) error {
+func (s *Store) RecordPart(ctx context.Context, uploadID string, partNumber int, etag string, size int64, enc *core.EncryptionMeta) error {
 	if partNumber < 1 || partNumber > 10000 {
 		return fmt.Errorf("invalid part number %d: must be between 1 and 10000", partNumber)
 	}
@@ -108,15 +109,15 @@ func (s *Store) RecordPart(ctx context.Context, uploadID string, partNumber int,
 }
 
 // GetParts returns all parts for a multipart upload, ordered by part number.
-func (s *Store) GetParts(ctx context.Context, uploadID string) ([]MultipartPart, error) {
+func (s *Store) GetParts(ctx context.Context, uploadID string) ([]core.MultipartPart, error) {
 	rows, err := s.queries.GetParts(ctx, uploadID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get parts: %w", err)
 	}
 
-	parts := make([]MultipartPart, len(rows))
+	parts := make([]core.MultipartPart, len(rows))
 	for i, row := range rows {
-		p := MultipartPart{
+		p := core.MultipartPart{
 			PartNumber:    int(row.PartNumber),
 			ETag:          row.Etag,
 			SizeBytes:     row.SizeBytes,
@@ -145,13 +146,13 @@ func (s *Store) DeleteMultipartUpload(ctx context.Context, uploadID string) erro
 }
 
 // GetStaleMultipartUploads returns uploads older than the given duration.
-func (s *Store) GetStaleMultipartUploads(ctx context.Context, olderThan time.Duration) ([]MultipartUpload, error) {
+func (s *Store) GetStaleMultipartUploads(ctx context.Context, olderThan time.Duration) ([]core.MultipartUpload, error) {
 	cutoff := time.Now().Add(-olderThan)
 	rows, err := s.queries.GetStaleMultipartUploads(ctx, pgTimestamptz(cutoff))
 	if err != nil {
 		return nil, fmt.Errorf("failed to get stale uploads: %w", err)
 	}
-	uploads := make([]MultipartUpload, len(rows))
+	uploads := make([]core.MultipartUpload, len(rows))
 	for i, row := range rows {
 		mu, err := toMultipartUpload(row.UploadID, row.ObjectKey, row.BackendName, row.ContentType, row.Metadata, row.CreatedAt.Time)
 		if err != nil {
@@ -165,12 +166,12 @@ func (s *Store) GetStaleMultipartUploads(ctx context.Context, olderThan time.Dur
 // GetMultipartUploadsByBackend returns all in-progress multipart uploads on
 // the given backend. Used by drain to abort uploads before migrating objects.
 // Requires live PostgreSQL — covered by integration tests.
-func (s *Store) GetMultipartUploadsByBackend(ctx context.Context, backendName string) ([]MultipartUpload, error) {
+func (s *Store) GetMultipartUploadsByBackend(ctx context.Context, backendName string) ([]core.MultipartUpload, error) {
 	rows, err := s.queries.GetMultipartUploadsByBackend(ctx, backendName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get multipart uploads by backend: %w", err)
 	}
-	uploads := make([]MultipartUpload, len(rows))
+	uploads := make([]core.MultipartUpload, len(rows))
 	for i, row := range rows {
 		mu, err := toMultipartUpload(row.UploadID, row.ObjectKey, row.BackendName, row.ContentType, row.Metadata, row.CreatedAt.Time)
 		if err != nil {
@@ -194,7 +195,7 @@ func (s *Store) CountActiveMultipartUploads(ctx context.Context, bucketPrefix st
 
 // ListMultipartUploads returns in-progress multipart uploads whose key matches
 // the given prefix, up to maxUploads entries.
-func (s *Store) ListMultipartUploads(ctx context.Context, prefix string, maxUploads int) ([]MultipartUpload, error) {
+func (s *Store) ListMultipartUploads(ctx context.Context, prefix string, maxUploads int) ([]core.MultipartUpload, error) {
 	escapedPrefix := likeEscaper.Replace(prefix)
 
 	rows, err := s.queries.ListMultipartUploadsByPrefix(ctx, db.ListMultipartUploadsByPrefixParams{
@@ -205,13 +206,13 @@ func (s *Store) ListMultipartUploads(ctx context.Context, prefix string, maxUplo
 		return nil, fmt.Errorf("failed to list multipart uploads: %w", err)
 	}
 
-	uploads := make([]MultipartUpload, len(rows))
+	uploads := make([]core.MultipartUpload, len(rows))
 	for i, row := range rows {
 		ct := ""
 		if row.ContentType != nil {
 			ct = *row.ContentType
 		}
-		uploads[i] = MultipartUpload{
+		uploads[i] = core.MultipartUpload{
 			UploadID:    row.UploadID,
 			ObjectKey:   row.ObjectKey,
 			ContentType: ct,

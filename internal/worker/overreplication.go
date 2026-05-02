@@ -28,7 +28,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
-	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 	"github.com/afreidah/s3-orchestrator/internal/util/workerpool"
 )
@@ -112,11 +112,11 @@ func (c *OverReplicationCleaner) clean(ctx context.Context, cfg config.Replicati
 	}
 
 	// --- Group locations by object key ---
-	grouped := store.GroupByKey(locations)
+	grouped := core.GroupByKey(locations)
 
 	type cleanupTask struct {
 		key    string
-		copies []store.ObjectLocation
+		copies []core.ObjectLocation
 		excess int
 	}
 	var tasks []cleanupTask
@@ -167,7 +167,7 @@ func (c *OverReplicationCleaner) CountPending(ctx context.Context, factor int) (
 // scoredCopy pairs a copy location with a health/utilization score.
 // Higher scores indicate copies that should be kept.
 type scoredCopy struct {
-	loc   store.ObjectLocation
+	loc   core.ObjectLocation
 	score float64
 }
 
@@ -179,7 +179,7 @@ type scoredCopy struct {
 // Among healthy backends, the most utilized backend gets the lowest score,
 // making its copy the first candidate for removal -- freeing space where it
 // is scarcest.
-func (c *OverReplicationCleaner) ScoreCopy(loc *store.ObjectLocation, stats map[string]store.QuotaStat) float64 {
+func (c *OverReplicationCleaner) ScoreCopy(loc *core.ObjectLocation, stats map[string]core.QuotaStat) float64 {
 	if c.ops.IsDraining(loc.BackendName) {
 		return 0
 	}
@@ -204,7 +204,7 @@ func (c *OverReplicationCleaner) ScoreCopy(loc *store.ObjectLocation, stats map[
 // cleanObject removes excess copies of a single object. Scores all copies,
 // sorts ascending, and removes the lowest-scoring copies until the count
 // reaches the target factor. Returns the number of copies removed.
-func (c *OverReplicationCleaner) cleanObject(ctx context.Context, key string, copies []store.ObjectLocation, excess int, stats map[string]store.QuotaStat) int {
+func (c *OverReplicationCleaner) cleanObject(ctx context.Context, key string, copies []core.ObjectLocation, excess int, stats map[string]core.QuotaStat) int {
 	// Score each copy
 	scored := make([]scoredCopy, len(copies))
 	for i := range copies {

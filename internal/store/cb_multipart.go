@@ -11,16 +11,17 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // cbMultipartStore wraps a MultipartStore with circuit-breaker protection.
 type cbMultipartStore struct {
-	inner MultipartStore
+	inner core.MultipartStore
 	cb    *breaker.CircuitBreaker
 }
 
 // NewCBMultipartStore returns a CB-protected view typed as MultipartStore.
-func NewCBMultipartStore(inner MultipartStore, cb *breaker.CircuitBreaker) MultipartStore {
+func NewCBMultipartStore(inner core.MultipartStore, cb *breaker.CircuitBreaker) core.MultipartStore {
 	return &cbMultipartStore{inner: inner, cb: cb}
 }
 
@@ -32,18 +33,18 @@ func (c *cbMultipartStore) CreateMultipartUpload(ctx context.Context, uploadID, 
 }
 
 // GetMultipartUpload forwards to the inner store under the breaker.
-func (c *cbMultipartStore) GetMultipartUpload(ctx context.Context, uploadID string) (*MultipartUpload, error) {
-	return breaker.CBCall(c.cb, func() (*MultipartUpload, error) { return c.inner.GetMultipartUpload(ctx, uploadID) })
+func (c *cbMultipartStore) GetMultipartUpload(ctx context.Context, uploadID string) (*core.MultipartUpload, error) {
+	return breaker.CBCall(c.cb, func() (*core.MultipartUpload, error) { return c.inner.GetMultipartUpload(ctx, uploadID) })
 }
 
 // RecordPart forwards to the inner store under the breaker.
-func (c *cbMultipartStore) RecordPart(ctx context.Context, uploadID string, partNumber int, etag string, size int64, enc *EncryptionMeta) error {
+func (c *cbMultipartStore) RecordPart(ctx context.Context, uploadID string, partNumber int, etag string, size int64, enc *core.EncryptionMeta) error {
 	return breaker.CBCallNoResult(c.cb, func() error { return c.inner.RecordPart(ctx, uploadID, partNumber, etag, size, enc) })
 }
 
 // GetParts forwards to the inner store under the breaker.
-func (c *cbMultipartStore) GetParts(ctx context.Context, uploadID string) ([]MultipartPart, error) {
-	return breaker.CBCall(c.cb, func() ([]MultipartPart, error) { return c.inner.GetParts(ctx, uploadID) })
+func (c *cbMultipartStore) GetParts(ctx context.Context, uploadID string) ([]core.MultipartPart, error) {
+	return breaker.CBCall(c.cb, func() ([]core.MultipartPart, error) { return c.inner.GetParts(ctx, uploadID) })
 }
 
 // DeleteMultipartUpload forwards to the inner store under the breaker.
@@ -52,8 +53,8 @@ func (c *cbMultipartStore) DeleteMultipartUpload(ctx context.Context, uploadID s
 }
 
 // ListMultipartUploads forwards to the inner store under the breaker.
-func (c *cbMultipartStore) ListMultipartUploads(ctx context.Context, prefix string, maxUploads int) ([]MultipartUpload, error) {
-	return breaker.CBCall(c.cb, func() ([]MultipartUpload, error) { return c.inner.ListMultipartUploads(ctx, prefix, maxUploads) })
+func (c *cbMultipartStore) ListMultipartUploads(ctx context.Context, prefix string, maxUploads int) ([]core.MultipartUpload, error) {
+	return breaker.CBCall(c.cb, func() ([]core.MultipartUpload, error) { return c.inner.ListMultipartUploads(ctx, prefix, maxUploads) })
 }
 
 // CountActiveMultipartUploads forwards to the inner store under the breaker.
@@ -62,11 +63,11 @@ func (c *cbMultipartStore) CountActiveMultipartUploads(ctx context.Context, buck
 }
 
 // GetStaleMultipartUploads forwards to the inner store under the breaker.
-func (c *cbMultipartStore) GetStaleMultipartUploads(ctx context.Context, olderThan time.Duration) ([]MultipartUpload, error) {
-	return breaker.CBCall(c.cb, func() ([]MultipartUpload, error) { return c.inner.GetStaleMultipartUploads(ctx, olderThan) })
+func (c *cbMultipartStore) GetStaleMultipartUploads(ctx context.Context, olderThan time.Duration) ([]core.MultipartUpload, error) {
+	return breaker.CBCall(c.cb, func() ([]core.MultipartUpload, error) { return c.inner.GetStaleMultipartUploads(ctx, olderThan) })
 }
 
 // GetMultipartUploadsByBackend forwards to the inner store under the breaker.
-func (c *cbMultipartStore) GetMultipartUploadsByBackend(ctx context.Context, backendName string) ([]MultipartUpload, error) {
-	return breaker.CBCall(c.cb, func() ([]MultipartUpload, error) { return c.inner.GetMultipartUploadsByBackend(ctx, backendName) })
+func (c *cbMultipartStore) GetMultipartUploadsByBackend(ctx context.Context, backendName string) ([]core.MultipartUpload, error) {
+	return breaker.CBCall(c.cb, func() ([]core.MultipartUpload, error) { return c.inner.GetMultipartUploadsByBackend(ctx, backendName) })
 }
