@@ -20,13 +20,12 @@ import (
 	"io"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
-	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/testutil"
 )
 
@@ -62,75 +61,51 @@ func (f *fakeBackend) HeadObject(_ context.Context, _ string) (*backend.HeadObje
 
 func (f *fakeBackend) DeleteObject(_ context.Context, _ string) error { return nil }
 
-// rowAdminStore returns a single UnencryptedLocation on the first call to
+// rowEncAdmin returns a single UnencryptedLocation on the first call to
 // ListUnencryptedLocations and an empty slice afterwards, so the
 // bulk-rewrite loop processes exactly one object before terminating.
-type rowAdminStore struct {
-	emptyAdminStore
-	row     store.UnencryptedLocation
-	served  atomic.Bool
-	marked  atomic.Bool
+type rowEncAdmin struct {
+	emptyEncAdmin
+	row    core.UnencryptedLocation
+	served atomic.Bool
+	marked atomic.Bool
 }
 
-func (r *rowAdminStore) ListUnencryptedLocations(_ context.Context, _, _ int) ([]store.UnencryptedLocation, error) {
+func (r *rowEncAdmin) ListUnencryptedLocations(_ context.Context, _, _ int) ([]core.UnencryptedLocation, error) {
 	if r.served.Swap(true) {
 		return nil, nil
 	}
-	return []store.UnencryptedLocation{r.row}, nil
+	return []core.UnencryptedLocation{r.row}, nil
 }
 
-func (r *rowAdminStore) MarkObjectEncrypted(_ context.Context, _, _ string, _ []byte, _ string, _, _ int64) error {
+func (r *rowEncAdmin) MarkObjectEncrypted(_ context.Context, _, _ string, _ []byte, _ string, _, _ int64) error {
 	r.marked.Store(true)
 	return nil
 }
 
-// emptyAdminStore is a minimal AdminStore stub: every list returns no rows
-// and every mutator is a no-op. Lets EncryptExisting's listFn closure run
-// to completion against a non-nil rawStore without inventing per-test
-// fixture data. The masterless methods that the bulk-rewrite path never
-// exercises are present only to satisfy the interface contract.
-type emptyAdminStore struct{}
+// emptyEncAdmin is a minimal EncryptionAdmin stub: every list returns no
+// rows and every mutator is a no-op. Lets EncryptExisting's listFn closure
+// run to completion against a non-nil encAdmin without inventing per-test
+// fixture data.
+type emptyEncAdmin struct{}
 
-func (emptyAdminStore) RunMigrations(_ context.Context) error          { return nil }
-func (emptyAdminStore) VerifySchemaVersion(_ context.Context) error    { return nil }
-func (emptyAdminStore) SyncQuotaLimits(_ context.Context, _ []config.BackendConfig) error {
-	return nil
-}
-func (emptyAdminStore) Close() {}
-
-func (emptyAdminStore) ListEncryptedLocations(_ context.Context, _ string, _, _ int) ([]store.EncryptedLocation, error) {
+func (emptyEncAdmin) ListEncryptedLocations(_ context.Context, _ string, _, _ int) ([]core.EncryptedLocation, error) {
 	return nil, nil
 }
-func (emptyAdminStore) UpdateEncryptionKey(_ context.Context, _, _ string, _ []byte, _ string) error {
+func (emptyEncAdmin) UpdateEncryptionKey(_ context.Context, _, _ string, _ []byte, _ string) error {
 	return nil
 }
-func (emptyAdminStore) ListUnencryptedLocations(_ context.Context, _, _ int) ([]store.UnencryptedLocation, error) {
+func (emptyEncAdmin) ListUnencryptedLocations(_ context.Context, _, _ int) ([]core.UnencryptedLocation, error) {
 	return nil, nil
 }
-func (emptyAdminStore) MarkObjectEncrypted(_ context.Context, _, _ string, _ []byte, _ string, _, _ int64) error {
+func (emptyEncAdmin) MarkObjectEncrypted(_ context.Context, _, _ string, _ []byte, _ string, _, _ int64) error {
 	return nil
 }
-func (emptyAdminStore) ListAllEncryptedLocations(_ context.Context, _, _ int) ([]store.DecryptableLocation, error) {
+func (emptyEncAdmin) ListAllEncryptedLocations(_ context.Context, _, _ int) ([]core.DecryptableLocation, error) {
 	return nil, nil
 }
-func (emptyAdminStore) MarkObjectDecrypted(_ context.Context, _, _ string, _ int64) error {
+func (emptyEncAdmin) MarkObjectDecrypted(_ context.Context, _, _ string, _ int64) error {
 	return nil
-}
-func (emptyAdminStore) InsertNotification(_ context.Context, _, _, _ string) error {
-	return nil
-}
-func (emptyAdminStore) GetPendingNotifications(_ context.Context, _ int) ([]store.NotificationRow, error) {
-	return nil, nil
-}
-func (emptyAdminStore) CompleteNotification(_ context.Context, _ int64) error { return nil }
-func (emptyAdminStore) RetryNotification(_ context.Context, _ int64, _ time.Duration, _ string) error {
-	return nil
-}
-func (emptyAdminStore) WithAdvisoryLock(_ context.Context, _ int64, fn func(ctx context.Context) error) (bool, error) {
-	if fn == nil {
-		return true, nil
-	}
-	return true, fn(context.Background())
 }
 
 // enableIntegrityForTest stores an integrity-enabled config on the
@@ -249,7 +224,7 @@ func TestEncryptExisting_HappyPathEmptyStore(t *testing.T) {
 		t.Fatalf("NewEncryptor: %v", err)
 	}
 	h.encryptor = enc
-	h.rawStore = emptyAdminStore{}
+	h.encAdmin = emptyEncAdmin{}
 
 	res := h.EncryptExisting(context.Background())
 	if res.Status != "complete" {
@@ -288,7 +263,7 @@ func TestEncryptExisting_HappyPathOneRow(t *testing.T) {
 		t.Fatalf("NewEncryptor: %v", err)
 	}
 
-	rawStore := &rowAdminStore{row: store.UnencryptedLocation{
+	encAdmin := &rowEncAdmin{row: core.UnencryptedLocation{
 		ObjectKey:   "bucket/file.txt",
 		BackendName: "backend-a",
 		SizeBytes:   int64(len(fake.payload)),
@@ -302,7 +277,7 @@ func TestEncryptExisting_HappyPathOneRow(t *testing.T) {
 		scrubber:   mgr.Scrubber,
 		objects:    mock,
 		cleanup:    mock,
-		rawStore:   rawStore,
+		encAdmin:   encAdmin,
 		encryptor:  enc,
 		token:      "test-token",
 	}
@@ -317,7 +292,7 @@ func TestEncryptExisting_HappyPathOneRow(t *testing.T) {
 	if res.Success != 1 || res.Failed != 0 {
 		t.Errorf("counts = (success=%d failed=%d), want (1, 0)", res.Success, res.Failed)
 	}
-	if !rawStore.marked.Load() {
+	if !encAdmin.marked.Load() {
 		t.Error("MarkObjectEncrypted was not called; dbUpdate closure did not run")
 	}
 	if fake.puts.Load() != 1 {

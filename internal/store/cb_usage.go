@@ -10,16 +10,17 @@ import (
 	"context"
 
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // cbUsageFlusher wraps a UsageFlusher with circuit-breaker protection.
 type cbUsageFlusher struct {
-	inner UsageFlusher
+	inner core.UsageFlusher
 	cb    *breaker.CircuitBreaker
 }
 
 // NewCBUsageFlusher returns a CB-protected view typed as UsageFlusher.
-func NewCBUsageFlusher(inner UsageFlusher, cb *breaker.CircuitBreaker) UsageFlusher {
+func NewCBUsageFlusher(inner core.UsageFlusher, cb *breaker.CircuitBreaker) core.UsageFlusher {
 	return &cbUsageFlusher{inner: inner, cb: cb}
 }
 

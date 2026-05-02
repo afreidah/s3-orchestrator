@@ -17,14 +17,14 @@ import (
 
 // GetAllObjectLocations returns all copies of an object, ordered by created_at
 // ascending (oldest/primary first). Used for read failover.
-func (s *Store) GetAllObjectLocations(ctx context.Context, key string) ([]ObjectLocation, error) {
+func (s *Store) GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error) {
 	rows, err := s.queries.GetAllObjectLocations(ctx, key)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get object locations: %w", err)
 	}
 
 	if len(rows) == 0 {
-		return nil, ErrObjectNotFound
+		return nil, core.ErrObjectNotFound
 	}
 
 	return toFatObjectLocations(rows), nil
@@ -53,7 +53,7 @@ func (s *Store) GetObjectBackendsForKeys(ctx context.Context, keys []string) (ma
 // GetUnderReplicatedObjects finds objects with fewer copies than the target
 // replication factor. Returns all rows for those objects so callers know which
 // backends already have copies.
-func (s *Store) GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]ObjectLocation, error) {
+func (s *Store) GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]core.ObjectLocation, error) {
 	rows, err := s.queries.GetUnderReplicatedObjects(ctx, db.GetUnderReplicatedObjectsParams{
 		Factor:  int64(factor),
 		MaxKeys: int32(limit), //nolint:gosec // G115: limit is a small caller-controlled batch size
@@ -68,7 +68,7 @@ func (s *Store) GetUnderReplicatedObjects(ctx context.Context, factor, limit int
 // GetUnderReplicatedObjectsExcluding finds objects with fewer copies than the
 // target factor, ignoring copies on the excluded backends. Returns all rows
 // for those objects so callers know the full picture.
-func (s *Store) GetUnderReplicatedObjectsExcluding(ctx context.Context, factor, limit int, excludedBackends []string) ([]ObjectLocation, error) {
+func (s *Store) GetUnderReplicatedObjectsExcluding(ctx context.Context, factor, limit int, excludedBackends []string) ([]core.ObjectLocation, error) {
 	rows, err := s.queries.GetUnderReplicatedObjectsExcluding(ctx, db.GetUnderReplicatedObjectsExcludingParams{
 		Excluded: excludedBackends,
 		Factor:   int64(factor),
@@ -90,7 +90,7 @@ func (s *Store) RecordReplica(ctx context.Context, key, targetBackend, sourceBac
 // GetOverReplicatedObjects finds objects with more copies than the target
 // replication factor. Returns all rows for those objects so callers can
 // score each copy and decide which to remove.
-func (s *Store) GetOverReplicatedObjects(ctx context.Context, factor, limit int) ([]ObjectLocation, error) {
+func (s *Store) GetOverReplicatedObjects(ctx context.Context, factor, limit int) ([]core.ObjectLocation, error) {
 	var maxKeys int32
 	switch {
 	case limit <= 0:
@@ -132,7 +132,7 @@ func (s *Store) RemoveExcessCopy(ctx context.Context, key, backendName string, s
 // GetObjectCopiesForUpdate retrieves all copies of an object under a FOR
 // UPDATE lock, suitable for use inside a transaction to prevent concurrent
 // modification during over-replication cleanup.
-func (s *Store) GetObjectCopiesForUpdate(ctx context.Context, key string) ([]ObjectLocation, error) {
+func (s *Store) GetObjectCopiesForUpdate(ctx context.Context, key string) ([]core.ObjectLocation, error) {
 	rows, err := s.queries.GetObjectCopiesForUpdate(ctx, key)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get copies for update: %w", err)

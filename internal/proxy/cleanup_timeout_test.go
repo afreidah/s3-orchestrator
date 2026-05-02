@@ -22,14 +22,14 @@ import (
 	"errors"
 	"testing"
 
-	st "github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 func TestUploadPart_RecordFailure_CleanupDeleteCarriesDeadline(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
 	store := &mockStore{
-		getMultipartResp: &st.MultipartUpload{
+		getMultipartResp: &core.MultipartUpload{
 			UploadID:    "upload-1",
 			ObjectKey:   "multi/key",
 			BackendName: "b1",

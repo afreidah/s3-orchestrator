@@ -23,9 +23,9 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/internalkey"
-	"github.com/afreidah/s3-orchestrator/internal/store"
-	"github.com/afreidah/s3-orchestrator/internal/util/bufpool"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/bufpool"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -330,7 +330,7 @@ func (s *Server) handleDeleteObjects(ctx context.Context, w http.ResponseWriter,
 // canonical Code/Message (e.g. NoSuchKey, ServiceUnavailable); generic errors
 // fall back to InternalError so clients still see a valid S3 error envelope.
 func deleteObjectErrorFor(err error) (code, message string) {
-	if s3err, ok := errors.AsType[*store.S3Error](err); ok {
+	if s3err, ok := errors.AsType[*core.S3Error](err); ok {
 		return s3err.Code, s3err.Message
 	}
 	return "InternalError", "Failed to delete object"

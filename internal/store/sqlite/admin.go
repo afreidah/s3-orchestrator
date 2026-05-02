@@ -3,10 +3,11 @@
 //
 // Author: Alex Freidah
 //
-// Implements AdminStore methods for encryption key rotation, encrypt/decrypt
-// existing data operations, and the notification outbox used by the event
-// delivery system. These methods are not on the MetadataStore interface and
-// are not wrapped by CircuitBreakerStore.
+// Implements the EncryptionAdmin and NotificationOutbox role interfaces:
+// encryption key rotation, encrypt/decrypt existing data operations, and
+// the notification outbox used by the event delivery system. These methods
+// are not on a request-time role interface and are not wrapped by
+// CircuitBreakerStore.
 // -------------------------------------------------------------------------------
 
 package sqlite
@@ -17,7 +18,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // -------------------------------------------------------------------------
@@ -26,7 +27,7 @@ import (
 
 // ListEncryptedLocations returns a page of encrypted object locations filtered
 // by key ID. Used during key rotation to find objects wrapped with the old key.
-func (s *Store) ListEncryptedLocations(ctx context.Context, keyID string, limit, offset int) ([]store.EncryptedLocation, error) {
+func (s *Store) ListEncryptedLocations(ctx context.Context, keyID string, limit, offset int) ([]core.EncryptedLocation, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT object_key, backend_name, encryption_key, key_id
 		FROM object_locations
@@ -40,9 +41,9 @@ func (s *Store) ListEncryptedLocations(ctx context.Context, keyID string, limit,
 	}
 	defer rows.Close()
 
-	var locs []store.EncryptedLocation
+	var locs []core.EncryptedLocation
 	for rows.Next() {
-		var loc store.EncryptedLocation
+		var loc core.EncryptedLocation
 		if err := rows.Scan(&loc.ObjectKey, &loc.BackendName, &loc.EncryptionKey, &loc.KeyID); err != nil {
 			return nil, fmt.Errorf("scan encrypted location: %w", err)
 		}
@@ -73,7 +74,7 @@ func (s *Store) UpdateEncryptionKey(ctx context.Context, objectKey, backendName 
 // ListUnencryptedLocations returns a page of unencrypted object locations.
 // Used by the encrypt-existing admin endpoint to find objects that need
 // encryption.
-func (s *Store) ListUnencryptedLocations(ctx context.Context, limit, offset int) ([]store.UnencryptedLocation, error) {
+func (s *Store) ListUnencryptedLocations(ctx context.Context, limit, offset int) ([]core.UnencryptedLocation, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT object_key, backend_name, size_bytes
 		FROM object_locations
@@ -87,9 +88,9 @@ func (s *Store) ListUnencryptedLocations(ctx context.Context, limit, offset int)
 	}
 	defer rows.Close()
 
-	var locs []store.UnencryptedLocation
+	var locs []core.UnencryptedLocation
 	for rows.Next() {
-		var loc store.UnencryptedLocation
+		var loc core.UnencryptedLocation
 		if err := rows.Scan(&loc.ObjectKey, &loc.BackendName, &loc.SizeBytes); err != nil {
 			return nil, fmt.Errorf("scan unencrypted location: %w", err)
 		}
@@ -136,7 +137,7 @@ func (s *Store) MarkObjectEncrypted(ctx context.Context, objectKey, backendName 
 
 // ListAllEncryptedLocations returns a page of all encrypted object locations
 // with decryption metadata. Used by the decrypt-existing admin endpoint.
-func (s *Store) ListAllEncryptedLocations(ctx context.Context, limit, offset int) ([]store.DecryptableLocation, error) {
+func (s *Store) ListAllEncryptedLocations(ctx context.Context, limit, offset int) ([]core.DecryptableLocation, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT object_key, backend_name, size_bytes, encryption_key, key_id, plaintext_size
 		FROM object_locations
@@ -150,9 +151,9 @@ func (s *Store) ListAllEncryptedLocations(ctx context.Context, limit, offset int
 	}
 	defer rows.Close()
 
-	var locs []store.DecryptableLocation
+	var locs []core.DecryptableLocation
 	for rows.Next() {
-		var loc store.DecryptableLocation
+		var loc core.DecryptableLocation
 		if err := rows.Scan(&loc.ObjectKey, &loc.BackendName, &loc.SizeBytes, &loc.EncryptionKey, &loc.KeyID, &loc.PlaintextSize); err != nil {
 			return nil, fmt.Errorf("scan decryptable location: %w", err)
 		}
@@ -222,7 +223,7 @@ func (s *Store) InsertNotification(ctx context.Context, eventType, payload, endp
 
 // GetPendingNotifications returns notifications ready for delivery, ordered
 // by creation time.
-func (s *Store) GetPendingNotifications(ctx context.Context, limit int) ([]store.NotificationRow, error) {
+func (s *Store) GetPendingNotifications(ctx context.Context, limit int) ([]core.NotificationRow, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, event_type, payload, endpoint_url, attempts
 		FROM notification_outbox
@@ -236,9 +237,9 @@ func (s *Store) GetPendingNotifications(ctx context.Context, limit int) ([]store
 	}
 	defer rows.Close()
 
-	var notifs []store.NotificationRow
+	var notifs []core.NotificationRow
 	for rows.Next() {
-		var n store.NotificationRow
+		var n core.NotificationRow
 		if err := rows.Scan(&n.ID, &n.EventType, &n.Payload, &n.EndpointURL, &n.Attempts); err != nil {
 			return nil, fmt.Errorf("scan notification: %w", err)
 		}

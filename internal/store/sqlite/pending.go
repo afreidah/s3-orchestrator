@@ -18,12 +18,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // InsertPending records an in-flight PUT intent.
-func (s *Store) InsertPending(ctx context.Context, p *store.PendingObject) error {
+func (s *Store) InsertPending(ctx context.Context, p *core.PendingObject) error {
 	keyID := nullableString(p.KeyID)
 	plaintextSize := nullableInt64(p.PlaintextSize)
 	contentHash := nullableString(p.ContentHash)
@@ -56,7 +55,7 @@ func (s *Store) DeletePending(ctx context.Context, intentID string) error {
 
 // GetStalePending returns pending intents at or older than olderThan,
 // oldest first, capped at limit.
-func (s *Store) GetStalePending(ctx context.Context, olderThan time.Time, limit int) ([]store.PendingObject, error) {
+func (s *Store) GetStalePending(ctx context.Context, olderThan time.Time, limit int) ([]core.PendingObject, error) {
 	cutoff := olderThan.UTC().Format(time.RFC3339Nano)
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT intent_id, object_key, backend_name, size_bytes,
@@ -73,10 +72,10 @@ func (s *Store) GetStalePending(ctx context.Context, olderThan time.Time, limit 
 	}
 	defer rows.Close()
 
-	var out []store.PendingObject
+	var out []core.PendingObject
 	for rows.Next() {
 		var (
-			p             store.PendingObject
+			p             core.PendingObject
 			encrypted     int
 			keyID         sql.NullString
 			plaintextSize sql.NullInt64
@@ -143,10 +142,11 @@ func (s *Store) DeletePendingByBackend(ctx context.Context, backendName string) 
 //     new row is inserted, quotas are adjusted, and the pending row is
 //     deleted in the same transaction.
 //   - If the pending row is already gone, the call is a benign no-op.
+//
 // PromotePending delegates to core.PromotePending which composes the
 // engine-agnostic claim, supersession check, commit, and same-tx
 // delete of the pending row against the SQLite TxAdapter.
-func (s *Store) PromotePending(ctx context.Context, p *store.PendingObject) (store.PendingPromoteResult, []store.DeletedCopy, error) {
+func (s *Store) PromotePending(ctx context.Context, p *core.PendingObject) (core.PendingPromoteResult, []core.DeletedCopy, error) {
 	return core.PromotePending(ctx, s, p)
 }
 

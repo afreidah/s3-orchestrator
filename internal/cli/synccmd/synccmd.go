@@ -20,7 +20,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
 	sqlitestore "github.com/afreidah/s3-orchestrator/internal/store/sqlite"
 )
@@ -112,12 +112,12 @@ func loadConfig(path, backendName string) (*config.Config, *config.BackendConfig
 
 // initStore opens the metadata store, applies migrations, and syncs quota
 // limits. Returns non-zero exit on any failure. sync only writes new object
-// rows, so it asks for the narrow ObjectStore plus the admin handle required
-// by RunMigrations / SyncQuotaLimits.
-func initStore(ctx context.Context, cfg *config.Config) (store.ObjectStore, store.AdminStore, int) {
+// rows, so it asks for the narrow ObjectStore plus the LifecycleAdmin handle
+// required by RunMigrations / SyncQuotaLimits.
+func initStore(ctx context.Context, cfg *config.Config) (core.ObjectStore, core.LifecycleAdmin, int) {
 	var (
-		objects store.ObjectStore
-		adminDB store.AdminStore
+		objects core.ObjectStore
+		adminDB core.LifecycleAdmin
 		err     error
 	)
 	switch cfg.Database.Driver {
@@ -155,7 +155,7 @@ func initStore(ctx context.Context, cfg *config.Config) (store.ObjectStore, stor
 
 // runImport walks the backend, importing each page into the metadata store.
 // Accumulates and logs totals per page.
-func runImport(ctx context.Context, s3b *backend.S3Backend, metaDB store.ObjectStore, backendCfg *config.BackendConfig, opts *Options) error {
+func runImport(ctx context.Context, s3b *backend.S3Backend, metaDB core.ObjectStore, backendCfg *config.BackendConfig, opts *Options) error {
 	mode := "sync"
 	if opts.DryRun {
 		mode = "dry-run"
@@ -203,7 +203,7 @@ func runImport(ctx context.Context, s3b *backend.S3Backend, metaDB store.ObjectS
 
 // importPage imports one page of backend objects into the metadata store
 // (or logs them under dry-run), returning per-page counters.
-func importPage(ctx context.Context, metaDB store.ObjectStore, objects []backend.ListedObject, backendName string, opts *Options) (imported, skipped int, bytes int64, err error) {
+func importPage(ctx context.Context, metaDB core.ObjectStore, objects []backend.ListedObject, backendName string, opts *Options) (imported, skipped int, bytes int64, err error) {
 	for _, obj := range objects {
 		prefixedKey := opts.BucketName + "/" + obj.Key
 		if opts.DryRun {

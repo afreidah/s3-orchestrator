@@ -23,13 +23,13 @@ import (
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	objcache "github.com/afreidah/s3-orchestrator/internal/cache"
 	"github.com/afreidah/s3-orchestrator/internal/internalkey"
-	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 
-	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
-	"github.com/afreidah/s3-orchestrator/internal/util/bufpool"
-	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/util/bufpool"
 	"go.opentelemetry.io/otel/codes"
 )
 
@@ -104,7 +104,7 @@ func (mp *MultipartManager) UploadPart(ctx context.Context, uploadID string, par
 	defer span.End()
 
 	if partNumber < 1 || partNumber > 10000 {
-		err := &store.S3Error{StatusCode: 400, Code: "InvalidArgument", Message: "Part number must be between 1 and 10000"}
+		err := &core.S3Error{StatusCode: 400, Code: "InvalidArgument", Message: "Part number must be between 1 and 10000"}
 		span.SetStatus(codes.Error, err.Message)
 		return "", err
 	}
@@ -123,11 +123,11 @@ func (mp *MultipartManager) UploadPart(ctx context.Context, uploadID string, par
 	// Check usage limits before uploading
 	if !mp.usage.WithinLimits(mu.BackendName, 1, 0, size) {
 		span.SetStatus(codes.Error, "usage limits exceeded")
-		return "", store.ErrInsufficientStorage
+		return "", core.ErrInsufficientStorage
 	}
 
 	// Encrypt if enabled
-	var enc *store.EncryptionMeta
+	var enc *core.EncryptionMeta
 	uploadBody := body
 	uploadSize := size
 	if mp.encryptor != nil {
@@ -222,11 +222,11 @@ func (mp *MultipartManager) CompleteMultipartUpload(ctx context.Context, uploadI
 	}
 	if len(missing) > 0 {
 		msg := "parts not uploaded: " + formatPartNumbers(missing)
-		err := &store.S3Error{StatusCode: 400, Code: "InvalidPart", Message: msg}
+		err := &core.S3Error{StatusCode: 400, Code: "InvalidPart", Message: msg}
 		span.SetStatus(codes.Error, msg)
 		return "", err
 	}
-	var parts []store.MultipartPart
+	var parts []core.MultipartPart
 	for _, p := range allParts {
 		if requested[p.PartNumber] {
 			parts = append(parts, p)
@@ -234,7 +234,7 @@ func (mp *MultipartManager) CompleteMultipartUpload(ctx context.Context, uploadI
 	}
 
 	// Sort parts by part number for correct assembly order
-	slices.SortFunc(parts, func(a, b store.MultipartPart) int {
+	slices.SortFunc(parts, func(a, b core.MultipartPart) int {
 		return a.PartNumber - b.PartNumber
 	})
 
@@ -259,7 +259,7 @@ func (mp *MultipartManager) CompleteMultipartUpload(ctx context.Context, uploadI
 
 	// When encryption is enabled, re-encrypt the combined plaintext as a
 	// single object with unified chunk boundaries. Otherwise upload as-is.
-	var enc *store.EncryptionMeta
+	var enc *core.EncryptionMeta
 	var uploadBody io.Reader = pr
 	uploadSize := totalPlaintextSize
 	if mp.encryptor != nil {
@@ -393,12 +393,12 @@ func (mp *MultipartManager) AbortMultipartUpload(ctx context.Context, uploadID s
 
 // ListMultipartUploads returns active multipart uploads matching the given
 // prefix, up to maxUploads results. Pass-through to the metadata store.
-func (mp *MultipartManager) ListMultipartUploads(ctx context.Context, prefix string, maxUploads int) ([]store.MultipartUpload, error) {
+func (mp *MultipartManager) ListMultipartUploads(ctx context.Context, prefix string, maxUploads int) ([]core.MultipartUpload, error) {
 	return mp.multipart.ListMultipartUploads(ctx, prefix, maxUploads)
 }
 
 // GetParts returns all parts for a multipart upload.
-func (mp *MultipartManager) GetParts(ctx context.Context, uploadID string) ([]store.MultipartPart, error) {
+func (mp *MultipartManager) GetParts(ctx context.Context, uploadID string) ([]core.MultipartPart, error) {
 	return mp.multipart.GetParts(ctx, uploadID)
 }
 
@@ -460,7 +460,7 @@ func (mp *MultipartManager) streamPartsThroughPipe(
 	ctx context.Context,
 	be s3be.ObjectBackend,
 	uploadID string,
-	parts []store.MultipartPart,
+	parts []core.MultipartPart,
 ) (*io.PipeReader, context.CancelFunc) {
 	pr, pw := io.Pipe()
 	pipeCtx, pipeCancel := context.WithCancel(ctx)
@@ -498,7 +498,7 @@ func (mp *MultipartManager) streamOnePart(
 	be s3be.ObjectBackend,
 	bw io.Writer,
 	uploadID string,
-	part *store.MultipartPart,
+	part *core.MultipartPart,
 ) error {
 	partKey := multipartPartKey(uploadID, part.PartNumber)
 	bctx, bcancel := mp.withTimeout(ctx)

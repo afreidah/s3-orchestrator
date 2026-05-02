@@ -17,7 +17,7 @@ import (
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
-	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // countingKeyProvider wraps a real KeyProvider and counts WrapDEK calls so
@@ -129,7 +129,7 @@ func TestDecryptResponse_FullRead(t *testing.T) {
 		t.Fatalf("read ciphertext: %v", err)
 	}
 
-	loc := &store.ObjectLocation{
+	loc := &core.ObjectLocation{
 		Encrypted:     true,
 		EncryptionKey: encryption.PackKeyData(encResult.BaseNonce, encResult.WrappedDEK),
 		KeyID:         encResult.KeyID,
@@ -174,7 +174,7 @@ func TestEncryptBody_ThenDecryptResponse_RoundTrip(t *testing.T) {
 	}
 
 	// Decrypt via helper
-	loc := &store.ObjectLocation{
+	loc := &core.ObjectLocation{
 		Encrypted:     true,
 		EncryptionKey: meta.EncryptionKey,
 		KeyID:         meta.KeyID,
@@ -215,7 +215,7 @@ func TestDecryptResponse_RangeRead(t *testing.T) {
 		t.Fatalf("read ciphertext: %v", err)
 	}
 
-	loc := &store.ObjectLocation{
+	loc := &core.ObjectLocation{
 		Encrypted:     true,
 		EncryptionKey: encryption.PackKeyData(encResult.BaseNonce, encResult.WrappedDEK),
 		KeyID:         encResult.KeyID,
@@ -275,7 +275,7 @@ func TestDecryptResponse_RangeDecryptError(t *testing.T) {
 	}
 	_, _ = io.ReadAll(encResult.Body)
 
-	loc := &store.ObjectLocation{
+	loc := &core.ObjectLocation{
 		Encrypted:     true,
 		EncryptionKey: encryption.PackKeyData(encResult.BaseNonce, encResult.WrappedDEK),
 		KeyID:         encResult.KeyID,
@@ -307,7 +307,7 @@ func TestDecryptResponse_DecryptError(t *testing.T) {
 	// Read and discard the real ciphertext
 	_, _ = io.ReadAll(encResult.Body)
 
-	loc := &store.ObjectLocation{
+	loc := &core.ObjectLocation{
 		Encrypted:     true,
 		EncryptionKey: encryption.PackKeyData(encResult.BaseNonce, encResult.WrappedDEK),
 		KeyID:         encResult.KeyID,
@@ -468,7 +468,7 @@ func TestDecryptResponse_BadKeyData(t *testing.T) {
 	t.Parallel()
 	enc := newTestEncryptor(t)
 
-	loc := &store.ObjectLocation{
+	loc := &core.ObjectLocation{
 		Encrypted:     true,
 		EncryptionKey: []byte("garbage"),
 		KeyID:         "test-0",

@@ -22,7 +22,7 @@ import (
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/internalkey"
-	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/workerpool"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
@@ -57,7 +57,7 @@ func (o *ObjectManager) PutObject(ctx context.Context, key string, body io.Reade
 	if len(eligible) == 0 {
 		telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation, "write").Inc()
 		span.SetStatus(codes.Error, "usage limits exceeded on all backends")
-		return "", store.ErrInsufficientStorage
+		return "", core.ErrInsufficientStorage
 	}
 
 	// --- Buffer body for retry ---
@@ -100,7 +100,7 @@ func (o *ObjectManager) PutObject(ctx context.Context, key string, body io.Reade
 		// --- Encrypt if enabled, layer integrity hash either way ---
 		uploadBody := io.Reader(bytes.NewReader(bodyBytes))
 		uploadSize := size
-		var enc *store.EncryptionMeta
+		var enc *core.EncryptionMeta
 		if o.encryptor != nil {
 			uploadBody, uploadSize, enc, err = encryptForPut(ctx, o.encryptor, bodyBytes, size, &dekState)
 			if err != nil {
@@ -109,7 +109,7 @@ func (o *ObjectManager) PutObject(ctx context.Context, key string, body io.Reade
 			}
 			enc.ContentHash = contentHash
 		} else if contentHash != "" {
-			enc = &store.EncryptionMeta{ContentHash: contentHash}
+			enc = &core.EncryptionMeta{ContentHash: contentHash}
 		}
 
 		// --- Insert pending intent before backend PUT ---
@@ -225,7 +225,7 @@ func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey strin
 	// --- Find all source locations (for failover) ---
 	locations, err := o.objects.GetAllObjectLocations(ctx, sourceKey)
 	if err != nil {
-		if errors.Is(err, store.ErrObjectNotFound) {
+		if errors.Is(err, core.ErrObjectNotFound) {
 			span.SetStatus(codes.Error, "source object not found")
 			return "", err
 		}
@@ -237,7 +237,7 @@ func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey strin
 	var contentType string
 	var metadata map[string]string
 	var srcFound bool
-	var srcEnc *store.EncryptionMeta
+	var srcEnc *core.EncryptionMeta
 	for i := range locations {
 		if !o.usage.WithinLimits(locations[i].BackendName, 1, 0, 0) {
 			continue
@@ -257,7 +257,7 @@ func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey strin
 		metadata = headResult.Metadata
 		srcFound = true
 		if locations[i].Encrypted {
-			srcEnc = &store.EncryptionMeta{
+			srcEnc = &core.EncryptionMeta{
 				Encrypted:     true,
 				EncryptionKey: locations[i].EncryptionKey,
 				KeyID:         locations[i].KeyID,
@@ -405,7 +405,7 @@ func (o *ObjectManager) DeleteObject(ctx context.Context, key string) error {
 	// --- Delete all copies from store ---
 	copies, err := o.objects.DeleteObject(ctx, key)
 	if err != nil {
-		if errors.Is(err, store.ErrObjectNotFound) {
+		if errors.Is(err, core.ErrObjectNotFound) {
 			// Object not in our tracking - treat as success (idempotent delete)
 			span.SetStatus(codes.Ok, "object not found - treating as success")
 			return nil
@@ -419,7 +419,7 @@ func (o *ObjectManager) DeleteObject(ctx context.Context, key string) error {
 	o.cache.Delete(key)
 
 	// --- Delete from each backend that held a copy (fan out concurrently) ---
-	workerpool.Run(ctx, len(copies), copies, func(ctx context.Context, cp store.DeletedCopy) {
+	workerpool.Run(ctx, len(copies), copies, func(ctx context.Context, cp core.DeletedCopy) {
 		backend, ok := o.backends[cp.BackendName]
 		if !ok {
 			slog.WarnContext(ctx, "backend not found for delete",

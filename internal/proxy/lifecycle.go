@@ -17,10 +17,10 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
-	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // ProcessLifecycleRules evaluates all lifecycle rules and deletes expired
@@ -85,7 +85,7 @@ func (m *BackendManager) applyLifecycleRule(ctx context.Context, rule config.Lif
 
 // deleteLifecycleBatch processes one batch of expired objects, emitting
 // audit + metrics for each outcome. Returns (deleted, failed) counts.
-func (m *BackendManager) deleteLifecycleBatch(ctx context.Context, rule config.LifecycleRule, objects []store.ObjectLocation) (deleted, failed int) {
+func (m *BackendManager) deleteLifecycleBatch(ctx context.Context, rule config.LifecycleRule, objects []core.ObjectLocation) (deleted, failed int) {
 	for i := range objects {
 		if err := m.ObjectManager.DeleteObject(ctx, objects[i].ObjectKey); err != nil {
 			slog.WarnContext(ctx, "Lifecycle: failed to delete expired object",

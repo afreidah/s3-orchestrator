@@ -21,7 +21,7 @@ import (
 	"time"
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
-	st "github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -152,9 +152,9 @@ func TestExecuteMoves_Concurrent(t *testing.T) {
 	obs := map[string]s3be.ObjectBackend{"src": src, "dest": dest}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        obs,
-		Stores:           StoresFromMock(store),
-		Dashboard:           store,
-		Metrics:           store,
+		Stores:          StoresFromMock(store),
+		Dashboard:       store,
+		Metrics:         store,
 		Order:           []string{"src", "dest"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -205,9 +205,9 @@ func TestExecuteMoves_PartialFailure(t *testing.T) {
 	obs := map[string]s3be.ObjectBackend{"src": src, "dest": dest}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        obs,
-		Stores:           StoresFromMock(store),
-		Dashboard:           store,
-		Metrics:           store,
+		Stores:          StoresFromMock(store),
+		Dashboard:       store,
+		Metrics:         store,
 		Order:           []string{"src", "dest"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -239,9 +239,9 @@ func TestExecuteMoves_SequentialFallback(t *testing.T) {
 	obs := map[string]s3be.ObjectBackend{"src": src, "dest": dest}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        obs,
-		Stores:           StoresFromMock(store),
-		Dashboard:           store,
-		Metrics:           store,
+		Stores:          StoresFromMock(store),
+		Dashboard:       store,
+		Metrics:         store,
 		Order:           []string{"src", "dest"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -269,7 +269,7 @@ func TestExecuteMoves_SequentialFallback(t *testing.T) {
 
 func TestExceedsThreshold_BelowThreshold(t *testing.T) {
 	t.Parallel()
-	stats := map[string]st.QuotaStat{
+	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 500, BytesLimit: 1000},
 		"b2": {BytesUsed: 400, BytesLimit: 1000},
 	}
@@ -281,7 +281,7 @@ func TestExceedsThreshold_BelowThreshold(t *testing.T) {
 
 func TestExceedsThreshold_AtThreshold(t *testing.T) {
 	t.Parallel()
-	stats := map[string]st.QuotaStat{
+	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 800, BytesLimit: 1000},
 		"b2": {BytesUsed: 200, BytesLimit: 1000},
 	}
@@ -293,7 +293,7 @@ func TestExceedsThreshold_AtThreshold(t *testing.T) {
 
 func TestExceedsThreshold_SingleBackend(t *testing.T) {
 	t.Parallel()
-	stats := map[string]st.QuotaStat{
+	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 900, BytesLimit: 1000},
 	}
 	if worker.ExceedsThreshold(stats, []string{"b1"}, 0.10) {
@@ -303,7 +303,7 @@ func TestExceedsThreshold_SingleBackend(t *testing.T) {
 
 func TestExceedsThreshold_ZeroLimitSkipped(t *testing.T) {
 	t.Parallel()
-	stats := map[string]st.QuotaStat{
+	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 800, BytesLimit: 1000},
 		"b2": {BytesUsed: 0, BytesLimit: 0}, // unlimited, skipped
 	}
@@ -314,7 +314,7 @@ func TestExceedsThreshold_ZeroLimitSkipped(t *testing.T) {
 
 func TestExceedsThreshold_MissingStatsSkipped(t *testing.T) {
 	t.Parallel()
-	stats := map[string]st.QuotaStat{
+	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 800, BytesLimit: 1000},
 	}
 	if worker.ExceedsThreshold(stats, []string{"b1", "b2"}, 0.10) {
@@ -344,7 +344,7 @@ func TestRebalance_QuotaStatsError(t *testing.T) {
 func TestRebalance_BelowThreshold_Skips(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
-		getQuotaStatsResp: map[string]st.QuotaStat{
+		getQuotaStatsResp: map[string]core.QuotaStat{
 			"b1": {BytesUsed: 500, BytesLimit: 1000},
 			"b2": {BytesUsed: 490, BytesLimit: 1000},
 		},
@@ -371,7 +371,7 @@ func TestRebalance_EmptyPlan_Skips(t *testing.T) {
 	// Utilization exceeds threshold (90% vs 10%) but ListObjectsByBackend
 	// returns no moveable objects, so the plan is empty.
 	store := &mockStore{
-		getQuotaStatsResp: map[string]st.QuotaStat{
+		getQuotaStatsResp: map[string]core.QuotaStat{
 			"b1": {BytesUsed: 900, BytesLimit: 1000},
 			"b2": {BytesUsed: 100, BytesLimit: 1000},
 		},
@@ -403,7 +403,7 @@ func TestRebalance_EmptyPlan_Skips(t *testing.T) {
 func TestRebalance_UnknownStrategy(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
-		getQuotaStatsResp: map[string]st.QuotaStat{
+		getQuotaStatsResp: map[string]core.QuotaStat{
 			"b1": {BytesUsed: 900, BytesLimit: 1000},
 			"b2": {BytesUsed: 100, BytesLimit: 1000},
 		},
@@ -434,9 +434,9 @@ func newRebalanceManager(store *mockStore, names []string) *BackendManager {
 	}
 	return NewBackendManager(&BackendManagerConfig{
 		Backends:        backends,
-		Stores:           StoresFromMock(store),
-		Dashboard:           store,
-		Metrics:           store,
+		Stores:          StoresFromMock(store),
+		Dashboard:       store,
+		Metrics:         store,
 		Order:           names,
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -447,13 +447,13 @@ func newRebalanceManager(store *mockStore, names []string) *BackendManager {
 func TestPlanPackTight_MovesFromLeastToMostFull(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
-		listObjectsByBackendResp: []st.ObjectLocation{
+		listObjectsByBackendResp: []core.ObjectLocation{
 			{ObjectKey: "small.txt", BackendName: "b2", SizeBytes: 100},
 		},
 	}
 	mgr := newRebalanceManager(store, []string{"b1", "b2"})
 
-	stats := map[string]st.QuotaStat{
+	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 800, BytesLimit: 1000}, // 80% full, 200 free
 		"b2": {BytesUsed: 200, BytesLimit: 1000}, // 20% full
 	}
@@ -472,9 +472,9 @@ func TestPlanPackTight_MovesFromLeastToMostFull(t *testing.T) {
 
 func TestPlanPackTight_RespectsBatchSize(t *testing.T) {
 	t.Parallel()
-	objects := make([]st.ObjectLocation, 10)
+	objects := make([]core.ObjectLocation, 10)
 	for i := range objects {
-		objects[i] = st.ObjectLocation{
+		objects[i] = core.ObjectLocation{
 			ObjectKey:   fmt.Sprintf("obj%d", i),
 			BackendName: "b2",
 			SizeBytes:   10,
@@ -483,7 +483,7 @@ func TestPlanPackTight_RespectsBatchSize(t *testing.T) {
 	store := &mockStore{listObjectsByBackendResp: objects}
 	mgr := newRebalanceManager(store, []string{"b1", "b2"})
 
-	stats := map[string]st.QuotaStat{
+	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 100, BytesLimit: 1000}, // 10% full
 		"b2": {BytesUsed: 900, BytesLimit: 1000}, // 90% full
 	}
@@ -500,13 +500,13 @@ func TestPlanPackTight_RespectsBatchSize(t *testing.T) {
 func TestPlanPackTight_SkipsLargeObjects(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
-		listObjectsByBackendResp: []st.ObjectLocation{
+		listObjectsByBackendResp: []core.ObjectLocation{
 			{ObjectKey: "huge.bin", BackendName: "b2", SizeBytes: 500},
 		},
 	}
 	mgr := newRebalanceManager(store, []string{"b1", "b2"})
 
-	stats := map[string]st.QuotaStat{
+	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 900, BytesLimit: 1000}, // only 100 bytes free
 		"b2": {BytesUsed: 200, BytesLimit: 1000},
 	}
@@ -525,7 +525,7 @@ func TestPlanPackTight_ZeroLimitBackendsSkipped(t *testing.T) {
 	store := &mockStore{}
 	mgr := newRebalanceManager(store, []string{"b1", "b2"})
 
-	stats := map[string]st.QuotaStat{
+	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 0, BytesLimit: 0}, // unlimited, skip
 		"b2": {BytesUsed: 500, BytesLimit: 1000},
 	}
@@ -546,14 +546,14 @@ func TestPlanPackTight_ZeroLimitBackendsSkipped(t *testing.T) {
 func TestPlanSpreadEven_EqualizesUtilization(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
-		listObjectsByBackendResp: []st.ObjectLocation{
+		listObjectsByBackendResp: []core.ObjectLocation{
 			{ObjectKey: "obj1", BackendName: "b1", SizeBytes: 100},
 			{ObjectKey: "obj2", BackendName: "b1", SizeBytes: 100},
 		},
 	}
 	mgr := newRebalanceManager(store, []string{"b1", "b2"})
 
-	stats := map[string]st.QuotaStat{
+	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 800, BytesLimit: 1000}, // 80%
 		"b2": {BytesUsed: 200, BytesLimit: 1000}, // 20%
 	}
@@ -578,7 +578,7 @@ func TestPlanSpreadEven_EqualizesUtilization(t *testing.T) {
 func TestPlanSpreadEven_SkipsWhenTargetHasCopy(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
-		listObjectsByBackendResp: []st.ObjectLocation{
+		listObjectsByBackendResp: []core.ObjectLocation{
 			{ObjectKey: "obj1", BackendName: "b1", SizeBytes: 100},
 		},
 		// Simulate obj1 already existing on b2 (the would-be target)
@@ -588,7 +588,7 @@ func TestPlanSpreadEven_SkipsWhenTargetHasCopy(t *testing.T) {
 	}
 	mgr := newRebalanceManager(store, []string{"b1", "b2"})
 
-	stats := map[string]st.QuotaStat{
+	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 800, BytesLimit: 1000},
 		"b2": {BytesUsed: 200, BytesLimit: 1000},
 	}
@@ -605,7 +605,7 @@ func TestPlanSpreadEven_SkipsWhenTargetHasCopy(t *testing.T) {
 func TestPlanPackTight_SkipsWhenTargetHasCopy(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
-		listObjectsByBackendResp: []st.ObjectLocation{
+		listObjectsByBackendResp: []core.ObjectLocation{
 			{ObjectKey: "obj1", BackendName: "b2", SizeBytes: 100},
 		},
 		// Simulate obj1 already existing on b1 (the most-full destination)
@@ -615,7 +615,7 @@ func TestPlanPackTight_SkipsWhenTargetHasCopy(t *testing.T) {
 	}
 	mgr := newRebalanceManager(store, []string{"b1", "b2"})
 
-	stats := map[string]st.QuotaStat{
+	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 900, BytesLimit: 1000}, // most full
 		"b2": {BytesUsed: 100, BytesLimit: 1000}, // least full (source)
 	}
@@ -634,7 +634,7 @@ func TestPlanSpreadEven_ZeroTotalLimit(t *testing.T) {
 	store := &mockStore{}
 	mgr := newRebalanceManager(store, []string{"b1"})
 
-	stats := map[string]st.QuotaStat{} // no stats at all
+	stats := map[string]core.QuotaStat{} // no stats at all
 
 	plan, err := mgr.Rebalancer.PlanSpreadEven(context.Background(), stats, 10)
 	if err != nil {
@@ -650,7 +650,7 @@ func TestPlanSpreadEven_AlreadyBalanced(t *testing.T) {
 	store := &mockStore{}
 	mgr := newRebalanceManager(store, []string{"b1", "b2"})
 
-	stats := map[string]st.QuotaStat{
+	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 500, BytesLimit: 1000},
 		"b2": {BytesUsed: 500, BytesLimit: 1000},
 	}
@@ -671,7 +671,7 @@ func TestPlanSpreadEven_ListObjectsByBackendError(t *testing.T) {
 	}
 	mgr := newRebalanceManager(store, []string{"b1", "b2"})
 
-	stats := map[string]st.QuotaStat{
+	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 800, BytesLimit: 1000},
 		"b2": {BytesUsed: 200, BytesLimit: 1000},
 	}
@@ -689,7 +689,7 @@ func TestPlanPackTight_ListObjectsByBackendError(t *testing.T) {
 	}
 	mgr := newRebalanceManager(store, []string{"b1", "b2"})
 
-	stats := map[string]st.QuotaStat{
+	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 800, BytesLimit: 1000},
 		"b2": {BytesUsed: 200, BytesLimit: 1000},
 	}
@@ -731,9 +731,9 @@ func TestExecuteOneMove_DestBackendNotFound(t *testing.T) {
 	obs := map[string]s3be.ObjectBackend{"src": src}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        obs,
-		Stores:           StoresFromMock(store),
-		Dashboard:           store,
-		Metrics:           store,
+		Stores:          StoresFromMock(store),
+		Dashboard:       store,
+		Metrics:         store,
 		Order:           []string{"src"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -763,9 +763,9 @@ func TestExecuteOneMove_SourceGetFails(t *testing.T) {
 	obs := map[string]s3be.ObjectBackend{"src": src, "dest": dest}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        obs,
-		Stores:           StoresFromMock(store),
-		Dashboard:           store,
-		Metrics:           store,
+		Stores:          StoresFromMock(store),
+		Dashboard:       store,
+		Metrics:         store,
 		Order:           []string{"src", "dest"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -796,9 +796,9 @@ func TestExecuteOneMove_DestPutFails(t *testing.T) {
 	obs := map[string]s3be.ObjectBackend{"src": src, "dest": dest}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        obs,
-		Stores:           StoresFromMock(store),
-		Dashboard:           store,
-		Metrics:           store,
+		Stores:          StoresFromMock(store),
+		Dashboard:       store,
+		Metrics:         store,
 		Order:           []string{"src", "dest"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -828,9 +828,9 @@ func TestExecuteOneMove_MoveLocationError_CleansUpOrphan(t *testing.T) {
 	obs := map[string]s3be.ObjectBackend{"src": src, "dest": dest}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        obs,
-		Stores:           StoresFromMock(store),
-		Dashboard:           store,
-		Metrics:           store,
+		Stores:          StoresFromMock(store),
+		Dashboard:       store,
+		Metrics:         store,
 		Order:           []string{"src", "dest"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -866,9 +866,9 @@ func TestExecuteOneMove_MoveLocationError_CleanupFails_EnqueuesCleanup(t *testin
 	obs := map[string]s3be.ObjectBackend{"src": src, "dest": dest}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        obs,
-		Stores:           StoresFromMock(store),
-		Dashboard:           store,
-		Metrics:           store,
+		Stores:          StoresFromMock(store),
+		Dashboard:       store,
+		Metrics:         store,
 		Order:           []string{"src", "dest"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -907,9 +907,9 @@ func TestExecuteOneMove_MovedSizeZero_CleansUpOrphan(t *testing.T) {
 	obs := map[string]s3be.ObjectBackend{"src": src, "dest": dest}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        obs,
-		Stores:           StoresFromMock(store),
-		Dashboard:           store,
-		Metrics:           store,
+		Stores:          StoresFromMock(store),
+		Dashboard:       store,
+		Metrics:         store,
 		Order:           []string{"src", "dest"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -945,9 +945,9 @@ func TestExecuteOneMove_SourceDeleteFails_EnqueuesCleanup(t *testing.T) {
 	obs := map[string]s3be.ObjectBackend{"src": src, "dest": dest}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        obs,
-		Stores:           StoresFromMock(store),
-		Dashboard:           store,
-		Metrics:           store,
+		Stores:          StoresFromMock(store),
+		Dashboard:       store,
+		Metrics:         store,
 		Order:           []string{"src", "dest"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -978,9 +978,9 @@ func TestExecuteOneMove_SourceDeleteFails_EnqueuesCleanup(t *testing.T) {
 
 func TestPlanSpreadEven_RespectsBatchSize(t *testing.T) {
 	t.Parallel()
-	objects := make([]st.ObjectLocation, 20)
+	objects := make([]core.ObjectLocation, 20)
 	for i := range objects {
-		objects[i] = st.ObjectLocation{
+		objects[i] = core.ObjectLocation{
 			ObjectKey:   fmt.Sprintf("obj%d", i),
 			BackendName: "b1",
 			SizeBytes:   10,
@@ -989,7 +989,7 @@ func TestPlanSpreadEven_RespectsBatchSize(t *testing.T) {
 	store := &mockStore{listObjectsByBackendResp: objects}
 	mgr := newRebalanceManager(store, []string{"b1", "b2"})
 
-	stats := map[string]st.QuotaStat{
+	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 900, BytesLimit: 1000},
 		"b2": {BytesUsed: 100, BytesLimit: 1000},
 	}
@@ -1017,9 +1017,9 @@ func TestExecuteMoves_AdmissionBlocked(t *testing.T) {
 	store := &mockStore{}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]s3be.ObjectBackend{"b1": src, "b2": dst},
-		Stores:           StoresFromMock(store),
-		Dashboard:           store,
-		Metrics:           store,
+		Stores:          StoresFromMock(store),
+		Dashboard:       store,
+		Metrics:         store,
 		Order:           []string{"b1", "b2"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,

@@ -38,7 +38,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
-	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
@@ -185,7 +185,7 @@ func (s *server) initDI() {
 // Optional services are constructed lazily by their first invoker; this
 // function only catches errors that should be fatal at boot.
 func (s *server) resolveServices() error {
-	if _, err := do.Invoke[store.AdminStore](s.inj); err != nil {
+	if _, err := do.Invoke[core.LifecycleAdmin](s.inj); err != nil {
 		return fmt.Errorf("initialize database: %w", err)
 	}
 	if _, err := do.Invoke[*breaker.CircuitBreaker](s.inj); err != nil {
@@ -237,11 +237,11 @@ func invokeOptional[T any](inj do.Injector) T {
 	return v
 }
 
-// adminStore returns the resolved AdminStore. Fatal errors at boot have
-// already surfaced via resolveServices, so nil is impossible after Run
+// adminStore returns the resolved LifecycleAdmin. Fatal errors at boot
+// have already surfaced via resolveServices, so nil is impossible after Run
 // progresses past that step.
-func (s *server) adminStore() store.AdminStore {
-	v, _ := do.Invoke[store.AdminStore](s.inj)
+func (s *server) adminStore() core.LifecycleAdmin {
+	v, _ := do.Invoke[core.LifecycleAdmin](s.inj)
 	return v
 }
 
@@ -548,10 +548,10 @@ func (s *server) applyReload(ctx context.Context, newCfg *config.Config) {
 	}
 
 	manager := s.backendManager()
-	newUsageLimits := make(map[string]store.UsageLimits, len(newCfg.Backends))
+	newUsageLimits := make(map[string]core.UsageLimits, len(newCfg.Backends))
 	for i := range newCfg.Backends {
 		bcfg := &newCfg.Backends[i]
-		newUsageLimits[bcfg.Name] = store.UsageLimits{
+		newUsageLimits[bcfg.Name] = core.UsageLimits{
 			APIRequestLimit:  bcfg.APIRequestLimit,
 			EgressByteLimit:  bcfg.EgressByteLimit,
 			IngressByteLimit: bcfg.IngressByteLimit,

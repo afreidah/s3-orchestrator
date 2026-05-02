@@ -18,9 +18,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"go.opentelemetry.io/otel/trace"
-
-	st "github.com/afreidah/s3-orchestrator/internal/store"
 )
 
 // noopSpan returns a no-op trace.Span suitable for helpers that only call
@@ -39,7 +38,7 @@ func TestBroadcastAllFailed_NilErrorReturnsObjectNotFound(t *testing.T) {
 	if name != "" {
 		t.Errorf("name = %q, want empty", name)
 	}
-	if !errors.Is(err, st.ErrObjectNotFound) {
+	if !errors.Is(err, core.ErrObjectNotFound) {
 		t.Errorf("err = %v, want chain containing ErrObjectNotFound", err)
 	}
 }

@@ -25,7 +25,7 @@ import (
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	objcache "github.com/afreidah/s3-orchestrator/internal/cache"
-	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
@@ -56,7 +56,7 @@ var listObjectsMaxPages = 100
 // consulted) or when the DB lookup failed. Callers that care about the
 // DB-down case inspect o.encryptor alongside the returned map — when
 // o.encryptor != nil and the map is nil, the database failed.
-func (o *ObjectManager) resolveLocationsByBackend(ctx context.Context, key string) map[string]*store.ObjectLocation {
+func (o *ObjectManager) resolveLocationsByBackend(ctx context.Context, key string) map[string]*core.ObjectLocation {
 	if o.encryptor == nil {
 		return nil
 	}
@@ -64,7 +64,7 @@ func (o *ObjectManager) resolveLocationsByBackend(ctx context.Context, key strin
 	if err != nil {
 		return nil
 	}
-	m := make(map[string]*store.ObjectLocation, len(locations))
+	m := make(map[string]*core.ObjectLocation, len(locations))
 	for i := range locations {
 		m[locations[i].BackendName] = &locations[i]
 	}
@@ -101,11 +101,11 @@ func (o *ObjectManager) withReadFailover(ctx context.Context, operation, key str
 
 	locations, err := o.objects.GetAllObjectLocations(ctx, key)
 	if err != nil {
-		if errors.Is(err, store.ErrObjectNotFound) {
+		if errors.Is(err, core.ErrObjectNotFound) {
 			span.SetStatus(codes.Error, "object not found")
 			return "", err
 		}
-		if errors.Is(err, store.ErrDBUnavailable) {
+		if errors.Is(err, core.ErrDBUnavailable) {
 			return o.broadcastRead(ctx, operation, key, start, span, tryBackend)
 		}
 		span.SetStatus(codes.Error, err.Error())
@@ -121,7 +121,7 @@ func (o *ObjectManager) withReadFailover(ctx context.Context, operation, key str
 // and a count of usage-limit skips so the failure-path return distinguishes
 // "all backends declined for usage limits" from "all backends genuinely
 // failed."
-func (o *ObjectManager) tryEachLocation(ctx context.Context, operation, key string, start time.Time, span trace.Span, locations []store.ObjectLocation, tryBackend readBackendFn) (string, error) {
+func (o *ObjectManager) tryEachLocation(ctx context.Context, operation, key string, start time.Time, span trace.Span, locations []core.ObjectLocation, tryBackend readBackendFn) (string, error) {
 	var lastErr error
 	var limitSkips int
 	for i := range locations {
@@ -163,11 +163,11 @@ func (o *ObjectManager) tryEachLocation(ctx context.Context, operation, key stri
 // failoverFailureResult finalises the span and chooses between the
 // usage-limit-exceeded sentinel and the underlying lastErr based on
 // whether every location declined for over-limit reasons.
-func failoverFailureResult(span trace.Span, operation string, locations []store.ObjectLocation, lastErr error, limitSkips int) error {
+func failoverFailureResult(span trace.Span, operation string, locations []core.ObjectLocation, lastErr error, limitSkips int) error {
 	if limitSkips > 0 && limitSkips == len(locations) {
 		telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation, "read").Inc()
 		span.SetStatus(codes.Error, "all copies over usage limit")
-		return store.ErrUsageLimitExceeded
+		return core.ErrUsageLimitExceeded
 	}
 	span.SetStatus(codes.Error, lastErr.Error())
 	span.RecordError(lastErr)
@@ -373,7 +373,7 @@ func broadcastAllFailed(span trace.Span, lastErr error) (string, error) {
 		return "", fmt.Errorf("all backends failed during degraded read: %w", lastErr)
 	}
 	span.SetStatus(codes.Error, "no backends available")
-	return "", store.ErrObjectNotFound
+	return "", core.ErrObjectNotFound
 }
 
 // -------------------------------------------------------------------------
@@ -426,7 +426,7 @@ func (o *ObjectManager) GetObject(ctx context.Context, key string, rangeHeader s
 		// would contain raw ciphertext instead of plaintext.
 		if o.encryptor != nil && locByBackend == nil {
 			bcancel()
-			return 0, noopCleanup, store.ErrServiceUnavailable
+			return 0, noopCleanup, core.ErrServiceUnavailable
 		}
 
 		// Find encryption metadata for this backend's copy
@@ -619,7 +619,7 @@ func advancePastEmittedCommonPrefix(prefix, delimiter, cursor string, seen map[s
 
 // ListObjectsV2Result holds the processed result for the S3 ListObjectsV2 response.
 type ListObjectsV2Result struct {
-	Objects               []store.ObjectLocation
+	Objects               []core.ObjectLocation
 	CommonPrefixes        []string
 	IsTruncated           bool
 	NextContinuationToken string
@@ -651,9 +651,9 @@ func (o *ObjectManager) ListObjects(ctx context.Context, prefix, delimiter, star
 	for page := 0; page < maxPages && result.KeyCount < maxKeys; page++ {
 		storeResult, err := o.objects.ListObjects(ctx, prefix, cursor, maxKeys)
 		if err != nil {
-			if errors.Is(err, store.ErrDBUnavailable) {
+			if errors.Is(err, core.ErrDBUnavailable) {
 				span.SetStatus(codes.Error, "database unavailable")
-				return nil, &store.S3Error{StatusCode: 503, Code: "ServiceUnavailable", Message: "listing unavailable during database outage"}
+				return nil, &core.S3Error{StatusCode: 503, Code: "ServiceUnavailable", Message: "listing unavailable during database outage"}
 			}
 			span.SetStatus(codes.Error, err.Error())
 			span.RecordError(err)

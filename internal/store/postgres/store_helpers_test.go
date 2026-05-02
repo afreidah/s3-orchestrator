@@ -18,6 +18,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	db "github.com/afreidah/s3-orchestrator/internal/store/postgres/sqlc"
 )
 
@@ -205,7 +206,7 @@ func TestInsertParamsFromEnc_NilMeta(t *testing.T) {
 // meta is present but Encrypted=false — only ContentHash should be set.
 func TestInsertParamsFromEnc_PlaintextHashOnly(t *testing.T) {
 	t.Parallel()
-	params := insertParamsFromEnc("k", "b", 10, &EncryptionMeta{
+	params := insertParamsFromEnc("k", "b", 10, &core.EncryptionMeta{
 		Encrypted:   false,
 		ContentHash: "sha256:abc",
 	})
@@ -224,7 +225,7 @@ func TestInsertParamsFromEnc_PlaintextHashOnly(t *testing.T) {
 // case: every nullable column should be threaded through.
 func TestInsertParamsFromEnc_EncryptedWithHash(t *testing.T) {
 	t.Parallel()
-	meta := &EncryptionMeta{
+	meta := &core.EncryptionMeta{
 		Encrypted:     true,
 		EncryptionKey: []byte{0x01, 0x02},
 		KeyID:         "kid-1",
@@ -253,7 +254,7 @@ func TestInsertParamsFromEnc_EncryptedWithHash(t *testing.T) {
 // yet-hashed case: KeyID / PlaintextSize are set, ContentHash stays nil.
 func TestInsertParamsFromEnc_EncryptedNoHash(t *testing.T) {
 	t.Parallel()
-	meta := &EncryptionMeta{
+	meta := &core.EncryptionMeta{
 		Encrypted:     true,
 		EncryptionKey: []byte{0xff},
 		KeyID:         "kid-2",

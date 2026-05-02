@@ -30,13 +30,13 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
-	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
-	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
+	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 )
 
@@ -124,7 +124,7 @@ func setupEncryptionEnv(t *testing.T) *encryptionTestEnv {
 		Scrubber:   mgr.Scrubber,
 		Lifecycle:  testStore,
 		DBCB:       dbCB,
-		RawStore:   testStore,
+		Encryption: testStore,
 		Objects:    adminObjects,
 		Cleanup:    adminCleanup,
 		Encryptor:  enc,

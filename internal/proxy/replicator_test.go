@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
-	st "github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 )
@@ -29,12 +29,12 @@ import (
 
 func TestGroupByKey_Groups(t *testing.T) {
 	t.Parallel()
-	locations := []st.ObjectLocation{
+	locations := []core.ObjectLocation{
 		{ObjectKey: "a", BackendName: "b1"},
 		{ObjectKey: "a", BackendName: "b2"},
 		{ObjectKey: "b", BackendName: "b1"},
 	}
-	grouped := st.GroupByKey(locations)
+	grouped := core.GroupByKey(locations)
 	if len(grouped) != 2 {
 		t.Fatalf("expected 2 groups, got %d", len(grouped))
 	}
@@ -48,7 +48,7 @@ func TestGroupByKey_Groups(t *testing.T) {
 
 func TestGroupByKey_Empty(t *testing.T) {
 	t.Parallel()
-	grouped := st.GroupByKey(nil)
+	grouped := core.GroupByKey(nil)
 	if len(grouped) != 0 {
 		t.Errorf("expected 0 groups, got %d", len(grouped))
 	}
@@ -95,16 +95,16 @@ func TestReplicate_QuotaStatsError(t *testing.T) {
 	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
 	store := &mockStore{
-		getUnderReplicatedResp: []st.ObjectLocation{
+		getUnderReplicatedResp: []core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
 		},
 		getQuotaStatsErr: errors.New("db down"),
 	}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": b1, "b2": newMockBackend()},
-		Stores:           StoresFromMock(store),
-		Dashboard:           store,
-		Metrics:           store,
+		Stores:          StoresFromMock(store),
+		Dashboard:       store,
+		Metrics:         store,
 		Order:           []string{"b1", "b2"},
 		CacheTTL:        5 * time.Second,
 		RoutingStrategy: config.RoutingPack,
@@ -126,10 +126,10 @@ func TestReplicate_Success(t *testing.T) {
 	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
 	store := &mockStore{
-		getUnderReplicatedResp: []st.ObjectLocation{
+		getUnderReplicatedResp: []core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
 		},
-		getQuotaStatsResp: map[string]st.QuotaStat{
+		getQuotaStatsResp: map[string]core.QuotaStat{
 			"b1": {BytesUsed: 100, BytesLimit: 1000},
 			"b2": {BytesUsed: 100, BytesLimit: 1000},
 		},
@@ -138,9 +138,9 @@ func TestReplicate_Success(t *testing.T) {
 	}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": b1, "b2": b2},
-		Stores:           StoresFromMock(store),
-		Dashboard:           store,
-		Metrics:           store,
+		Stores:          StoresFromMock(store),
+		Dashboard:       store,
+		Metrics:         store,
 		Order:           []string{"b1", "b2"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -172,15 +172,15 @@ func TestFindReplicaTarget_ExcludesExistingCopies(t *testing.T) {
 	store := &mockStore{getBackendFromEligible: true}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": newMockBackend(), "b2": newMockBackend(), "b3": newMockBackend()},
-		Stores:           StoresFromMock(store),
-		Dashboard:           store,
-		Metrics:           store,
+		Stores:          StoresFromMock(store),
+		Dashboard:       store,
+		Metrics:         store,
 		Order:           []string{"b1", "b2", "b3"},
 		CacheTTL:        5 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
 
-	stats := map[string]st.QuotaStat{
+	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 100, BytesLimit: 1000},
 		"b2": {BytesUsed: 100, BytesLimit: 1000},
 		"b3": {BytesUsed: 100, BytesLimit: 1000},
@@ -199,15 +199,15 @@ func TestFindReplicaTarget_SkipsFullBackends(t *testing.T) {
 	store := &mockStore{}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": newMockBackend(), "b2": newMockBackend()},
-		Stores:           StoresFromMock(store),
-		Dashboard:           store,
-		Metrics:           store,
+		Stores:          StoresFromMock(store),
+		Dashboard:       store,
+		Metrics:         store,
 		Order:           []string{"b1", "b2"},
 		CacheTTL:        5 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
 
-	stats := map[string]st.QuotaStat{
+	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 100, BytesLimit: 1000},
 		"b2": {BytesUsed: 999, BytesLimit: 1000}, // only 1 byte free
 	}
@@ -222,12 +222,12 @@ func TestFindReplicaTarget_SkipsFullBackends(t *testing.T) {
 func TestSelectReplicaTarget_NoSpaceAvailable(t *testing.T) {
 	t.Parallel()
 	// Mock store returns ErrNoSpaceAvailable from GetBackendWithSpace
-	store := &mockStore{getBackendErr: st.ErrNoSpaceAvailable}
+	store := &mockStore{getBackendErr: core.ErrNoSpaceAvailable}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": newMockBackend(), "b2": newMockBackend()},
-		Stores:           StoresFromMock(store),
-		Dashboard:           store,
-		Metrics:           store,
+		Stores:          StoresFromMock(store),
+		Dashboard:       store,
+		Metrics:         store,
 		Order:           []string{"b1", "b2"},
 		CacheTTL:        5 * time.Second,
 		RoutingStrategy: config.RoutingPack,
@@ -245,7 +245,7 @@ func TestFindReplicaTarget_EmptyStats(t *testing.T) {
 	store := &mockStore{}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	target := mgr.Replicator.FindReplicaTarget(context.Background(), map[string]st.QuotaStat{}, "key1", 50, map[string]bool{})
+	target := mgr.Replicator.FindReplicaTarget(context.Background(), map[string]core.QuotaStat{}, "key1", 50, map[string]bool{})
 	if target != "" {
 		t.Errorf("expected empty with no quota stats, got %q", target)
 	}
@@ -263,14 +263,14 @@ func TestCopyToReplica_Success(t *testing.T) {
 
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": b1, "b2": b2},
-		Stores:           StoresFromMock(&mockStore{}),
+		Stores:          StoresFromMock(&mockStore{}),
 		Order:           []string{"b1", "b2"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
 
-	copies := []st.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}
+	copies := []core.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}
 	source, err := mgr.Replicator.CopyToReplica(context.Background(), "key1", copies, "b2")
 	if err != nil {
 		t.Fatalf("copyToReplica: %v", err)
@@ -293,14 +293,14 @@ func TestCopyToReplica_FailoverToSecondCopy(t *testing.T) {
 
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": b1, "b2": b2, "b3": b3},
-		Stores:           StoresFromMock(&mockStore{}),
+		Stores:          StoresFromMock(&mockStore{}),
 		Order:           []string{"b1", "b2", "b3"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
 
-	copies := []st.ObjectLocation{
+	copies := []core.ObjectLocation{
 		{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
 		{ObjectKey: "key1", BackendName: "b2", SizeBytes: 4},
 	}
@@ -324,14 +324,14 @@ func TestCopyToReplica_AllSourcesFail(t *testing.T) {
 
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": b1, "b2": b2},
-		Stores:           StoresFromMock(&mockStore{}),
+		Stores:          StoresFromMock(&mockStore{}),
 		Order:           []string{"b1", "b2"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
 
-	copies := []st.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}
+	copies := []core.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}
 	_, err := mgr.Replicator.CopyToReplica(context.Background(), "key1", copies, "b2")
 	if err == nil {
 		t.Fatal("expected error when all source copies fail")
@@ -393,10 +393,10 @@ func TestReplicate_RecordReplicaFails_CleansUpOrphan(t *testing.T) {
 	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
 	store := &mockStore{
-		getUnderReplicatedResp: []st.ObjectLocation{
+		getUnderReplicatedResp: []core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
 		},
-		getQuotaStatsResp: map[string]st.QuotaStat{
+		getQuotaStatsResp: map[string]core.QuotaStat{
 			"b1": {BytesUsed: 100, BytesLimit: 1000},
 			"b2": {BytesUsed: 100, BytesLimit: 1000},
 		},
@@ -404,9 +404,9 @@ func TestReplicate_RecordReplicaFails_CleansUpOrphan(t *testing.T) {
 	}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": b1, "b2": b2},
-		Stores:           StoresFromMock(store),
-		Dashboard:           store,
-		Metrics:           store,
+		Stores:          StoresFromMock(store),
+		Dashboard:       store,
+		Metrics:         store,
 		Order:           []string{"b1", "b2"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -436,7 +436,7 @@ func TestCopyToReplica_TargetBackendNotFound(t *testing.T) {
 
 	mgr := newTestManager(&mockStore{}, map[string]*mockBackend{"b1": b1})
 
-	copies := []st.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}
+	copies := []core.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}
 	_, err := mgr.Replicator.CopyToReplica(context.Background(), "key1", copies, "nonexistent")
 	if err == nil {
 		t.Fatal("expected error when target backend not found")
@@ -452,14 +452,14 @@ func TestCopyToReplica_TargetWriteFails(t *testing.T) {
 
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": b1, "b2": b2},
-		Stores:           StoresFromMock(&mockStore{}),
+		Stores:          StoresFromMock(&mockStore{}),
 		Order:           []string{"b1", "b2"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
 
-	copies := []st.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}
+	copies := []core.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}
 	_, err := mgr.Replicator.CopyToReplica(context.Background(), "key1", copies, "b2")
 	if err == nil {
 		t.Fatal("expected error when target PutObject fails")
@@ -472,10 +472,10 @@ func TestReplicateObject_NoTargetAvailable(t *testing.T) {
 	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
 	store := &mockStore{
-		getUnderReplicatedResp: []st.ObjectLocation{
+		getUnderReplicatedResp: []core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
 		},
-		getQuotaStatsResp: map[string]st.QuotaStat{
+		getQuotaStatsResp: map[string]core.QuotaStat{
 			// Only b1 has space, but it already holds the copy
 			"b1": {BytesUsed: 100, BytesLimit: 1000},
 		},
@@ -483,9 +483,9 @@ func TestReplicateObject_NoTargetAvailable(t *testing.T) {
 	}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": b1},
-		Stores:           StoresFromMock(store),
-		Dashboard:           store,
-		Metrics:           store,
+		Stores:          StoresFromMock(store),
+		Dashboard:       store,
+		Metrics:         store,
 		Order:           []string{"b1"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -511,10 +511,10 @@ func TestReplicate_SourceGoneDuringReplication(t *testing.T) {
 	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
 	store := &mockStore{
-		getUnderReplicatedResp: []st.ObjectLocation{
+		getUnderReplicatedResp: []core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
 		},
-		getQuotaStatsResp: map[string]st.QuotaStat{
+		getQuotaStatsResp: map[string]core.QuotaStat{
 			"b1": {BytesUsed: 100, BytesLimit: 1000},
 			"b2": {BytesUsed: 100, BytesLimit: 1000},
 		},
@@ -522,9 +522,9 @@ func TestReplicate_SourceGoneDuringReplication(t *testing.T) {
 	}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": b1, "b2": b2},
-		Stores:           StoresFromMock(store),
-		Dashboard:           store,
-		Metrics:           store,
+		Stores:          StoresFromMock(store),
+		Dashboard:       store,
+		Metrics:         store,
 		Order:           []string{"b1", "b2"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -570,10 +570,10 @@ func TestReplicate_HealthAware_SkipsUnhealthyTarget(t *testing.T) {
 	cbb2 := newTrippedCBBackend(b2, "b2")
 
 	store := &mockStore{
-		getUnderReplicatedExcludingResp: []st.ObjectLocation{
+		getUnderReplicatedExcludingResp: []core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
 		},
-		getQuotaStatsResp: map[string]st.QuotaStat{
+		getQuotaStatsResp: map[string]core.QuotaStat{
 			"b1": {BytesUsed: 100, BytesLimit: 1000},
 			"b2": {BytesUsed: 100, BytesLimit: 1000},
 			"b3": {BytesUsed: 100, BytesLimit: 1000},
@@ -583,9 +583,9 @@ func TestReplicate_HealthAware_SkipsUnhealthyTarget(t *testing.T) {
 	}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": b1, "b2": cbb2, "b3": b3},
-		Stores:           StoresFromMock(store),
-		Dashboard:           store,
-		Metrics:           store,
+		Stores:          StoresFromMock(store),
+		Dashboard:       store,
+		Metrics:         store,
 		Order:           []string{"b1", "b2", "b3"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -623,11 +623,11 @@ func TestReplicate_HealthAware_PrefersHealthySource(t *testing.T) {
 	cbb1 := newTrippedCBBackend(b1, "b1")
 
 	store := &mockStore{
-		getUnderReplicatedExcludingResp: []st.ObjectLocation{
+		getUnderReplicatedExcludingResp: []core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
 			{ObjectKey: "key1", BackendName: "b2", SizeBytes: 4},
 		},
-		getQuotaStatsResp: map[string]st.QuotaStat{
+		getQuotaStatsResp: map[string]core.QuotaStat{
 			"b1": {BytesUsed: 100, BytesLimit: 1000},
 			"b2": {BytesUsed: 100, BytesLimit: 1000},
 			"b3": {BytesUsed: 100, BytesLimit: 1000},
@@ -637,9 +637,9 @@ func TestReplicate_HealthAware_PrefersHealthySource(t *testing.T) {
 	}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": cbb1, "b2": b2, "b3": b3},
-		Stores:           StoresFromMock(store),
-		Dashboard:           store,
-		Metrics:           store,
+		Stores:          StoresFromMock(store),
+		Dashboard:       store,
+		Metrics:         store,
 		Order:           []string{"b1", "b2", "b3"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -681,9 +681,9 @@ func TestReplicate_HealthAware_BelowThreshold(t *testing.T) {
 	}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": b1, "b2": cbb2},
-		Stores:           StoresFromMock(store),
-		Dashboard:           store,
-		Metrics:           store,
+		Stores:          StoresFromMock(store),
+		Dashboard:       store,
+		Metrics:         store,
 		Order:           []string{"b1", "b2"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -736,7 +736,7 @@ func TestIsBackendHealthy_CBHealthy(t *testing.T) {
 	cbb := backend.NewCircuitBreakerBackend(newMockBackend(), "b1", 3, time.Minute)
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": cbb},
-		Stores:           StoresFromMock(&mockStore{}),
+		Stores:          StoresFromMock(&mockStore{}),
 		Order:           []string{"b1"},
 		CacheTTL:        5 * time.Second,
 		RoutingStrategy: config.RoutingPack,
@@ -751,7 +751,7 @@ func TestIsBackendHealthy_CBUnhealthy(t *testing.T) {
 	cbb := newTrippedCBBackend(newMockBackend(), "b1")
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": cbb},
-		Stores:           StoresFromMock(&mockStore{}),
+		Stores:          StoresFromMock(&mockStore{}),
 		Order:           []string{"b1"},
 		CacheTTL:        5 * time.Second,
 		RoutingStrategy: config.RoutingPack,

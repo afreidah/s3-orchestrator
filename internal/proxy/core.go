@@ -23,7 +23,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
-	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
@@ -37,14 +37,14 @@ import (
 // core actually calls — no composed type owns the aggregate.
 type backendCore struct {
 	backends         map[string]backend.ObjectBackend // name -> backend
-	objects          store.ObjectStore                // object CRUD + move + import
-	quota            store.QuotaStore                 // routing / capacity queries
-	multipart        store.MultipartStore             // exposed via Manager.Multipart()
-	cleanup          store.CleanupStore               // orphan cleanup + orphan-byte accounting
-	pending          store.PendingStore               // in-flight PUT intent tracking (nil = pending pattern disabled)
-	lifecycle        store.ExpiredObjectsLister             // expiration lookups
-	backendLifecycle store.BackendLifecycleStore      // backend-level stats and deletion
-	usageFlusher     store.UsageFlusher               // usage tracker flush target
+	objects          core.ObjectStore                 // object CRUD + move + import
+	quota            core.QuotaStore                  // routing / capacity queries
+	multipart        core.MultipartStore              // exposed via Manager.Multipart()
+	cleanup          core.CleanupStore                // orphan cleanup + orphan-byte accounting
+	pending          core.PendingStore                // in-flight PUT intent tracking (nil = pending pattern disabled)
+	lifecycle        core.ExpiredObjectsLister        // expiration lookups
+	backendLifecycle core.BackendLifecycleStore       // backend-level stats and deletion
+	usageFlusher     core.UsageFlusher                // usage tracker flush target
 	order            []string                         // backend selection order
 	backendTimeout   time.Duration                    // per-operation timeout for backend S3 calls
 	usage            *counter.UsageTracker            // per-backend usage counters and limits
@@ -212,7 +212,7 @@ func (c *backendCore) SelectReplicaTarget(ctx context.Context, size int64, exclu
 		return "", nil
 	}
 	name, err := c.selectBackendForWrite(ctx, size, filtered)
-	if errors.Is(err, store.ErrNoSpaceAvailable) {
+	if errors.Is(err, core.ErrNoSpaceAvailable) {
 		return "", nil
 	}
 	return name, err
@@ -237,7 +237,7 @@ func (c *backendCore) selectWriteTarget(ctx context.Context, span trace.Span, op
 	if len(eligible) == 0 {
 		telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation, "write").Inc()
 		span.SetStatus(codes.Error, "usage limits exceeded on all backends")
-		return "", store.ErrInsufficientStorage
+		return "", core.ErrInsufficientStorage
 	}
 	name, err := c.selectBackendForWrite(ctx, size, eligible)
 	if err != nil {
@@ -255,14 +255,14 @@ func (c *backendCore) selectWriteTarget(ctx context.Context, span trace.Span, op
 // cases: database unavailable (503), no space available (507), and generic
 // errors. Returns the translated error.
 func (c *backendCore) classifyWriteError(span trace.Span, operation string, err error) error {
-	if errors.Is(err, store.ErrDBUnavailable) {
+	if errors.Is(err, core.ErrDBUnavailable) {
 		span.SetStatus(codes.Error, "database unavailable")
 		telemetry.DegradedWriteRejectionsTotal.WithLabelValues(operation).Inc()
-		return store.ErrServiceUnavailable
+		return core.ErrServiceUnavailable
 	}
-	if errors.Is(err, store.ErrNoSpaceAvailable) {
+	if errors.Is(err, core.ErrNoSpaceAvailable) {
 		span.SetStatus(codes.Error, "insufficient storage")
-		return store.ErrInsufficientStorage
+		return core.ErrInsufficientStorage
 	}
 	span.SetStatus(codes.Error, err.Error())
 	span.RecordError(err)
@@ -276,7 +276,7 @@ func (c *backendCore) classifyWriteError(span trace.Span, operation string, err 
 // recordObjectOrCleanup calls RecordObject and, on failure, deletes the orphaned
 // object from the backend. On success, enqueues cleanup for any displaced copies
 // on other backends (from overwrites). Updates the tracing span on error.
-func (c *backendCore) recordObjectOrCleanup(ctx context.Context, span trace.Span, be backend.ObjectBackend, key, backendName string, size int64, enc *store.EncryptionMeta) error {
+func (c *backendCore) recordObjectOrCleanup(ctx context.Context, span trace.Span, be backend.ObjectBackend, key, backendName string, size int64, enc *core.EncryptionMeta) error {
 	displaced, err := c.objects.RecordObject(ctx, key, backendName, size, enc)
 	if err != nil {
 		slog.ErrorContext(ctx, "recordObject failed, cleaning up orphan",
@@ -326,12 +326,12 @@ func (c *backendCore) recordObjectOrCleanup(ctx context.Context, span trace.Span
 // while pending tracking is configured fails the PUT — proceeding without
 // the intent would reintroduce the data-loss window the pattern exists to
 // close.
-func (c *backendCore) insertPendingIntent(ctx context.Context, key, backendName string, size int64, enc *store.EncryptionMeta) (string, error) {
+func (c *backendCore) insertPendingIntent(ctx context.Context, key, backendName string, size int64, enc *core.EncryptionMeta) (string, error) {
 	if c.pending == nil {
 		return "", nil
 	}
 	intentID := audit.NewID()
-	p := store.PendingObject{
+	p := core.PendingObject{
 		IntentID:    intentID,
 		ObjectKey:   key,
 		BackendName: backendName,
@@ -361,7 +361,7 @@ func (c *backendCore) insertPendingIntent(ctx context.Context, key, backendName 
 // When intentID is empty (no pending store configured) this falls back to
 // the legacy recordObjectOrCleanup behavior so existing call sites and
 // tests retain their previous semantics.
-func (c *backendCore) recordObjectAndPromoteIntent(ctx context.Context, span trace.Span, key, backendName string, size int64, enc *store.EncryptionMeta, intentID string) error {
+func (c *backendCore) recordObjectAndPromoteIntent(ctx context.Context, span trace.Span, key, backendName string, size int64, enc *core.EncryptionMeta, intentID string) error {
 	if intentID == "" {
 		// No pending tracking — caller already wrote bytes, fall back to the
 		// legacy path. The backend is unavailable here, so we cannot use
@@ -511,11 +511,11 @@ func (c *backendCore) BackendOrder() []string { return c.order }
 
 // Multipart returns the multipart-upload store role. Exposed for transport
 // handlers that need direct upload bookkeeping (e.g. s3api count).
-func (c *backendCore) Multipart() store.MultipartStore { return c.multipart }
+func (c *backendCore) Multipart() core.MultipartStore { return c.multipart }
 
 // BackendLifecycle returns the backend-level admin store role. Exposed for
 // admin handlers that report per-backend stats or drop backend data.
-func (c *backendCore) BackendLifecycle() store.BackendLifecycleStore { return c.backendLifecycle }
+func (c *backendCore) BackendLifecycle() core.BackendLifecycleStore { return c.backendLifecycle }
 
 // Usage returns the usage tracker.
 func (c *backendCore) Usage() *counter.UsageTracker { return c.usage }

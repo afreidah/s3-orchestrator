@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // -------------------------------------------------------------------------
@@ -26,8 +26,8 @@ import (
 
 // pendingFixture returns a minimal PendingObject with backend-a and the
 // given key/intent ID. Tests override fields as needed.
-func pendingFixture(intentID, key string) store.PendingObject {
-	return store.PendingObject{
+func pendingFixture(intentID, key string) core.PendingObject {
+	return core.PendingObject{
 		IntentID:    intentID,
 		ObjectKey:   key,
 		BackendName: "backend-a",
@@ -206,7 +206,7 @@ func TestPending_DeleteByBackend(t *testing.T) {
 	a.BackendName = "backend-a"
 	b := pendingFixture("b", "k-b")
 	b.BackendName = "backend-b"
-	for _, p := range []store.PendingObject{a, b} {
+	for _, p := range []core.PendingObject{a, b} {
 		if err := s.InsertPending(ctx, &p); err != nil {
 			t.Fatalf("InsertPending: %v", err)
 		}
@@ -248,7 +248,7 @@ func TestPromotePending_Committed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PromotePending: %v", err)
 	}
-	if result != store.PendingPromoteCommitted {
+	if result != core.PendingPromoteCommitted {
 		t.Errorf("result = %v, want Committed", result)
 	}
 	if len(displaced) != 0 {
@@ -273,7 +273,7 @@ func TestPromotePending_AlreadyResolved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PromotePending: %v", err)
 	}
-	if result != store.PendingPromoteAlreadyResolved {
+	if result != core.PendingPromoteAlreadyResolved {
 		t.Errorf("result = %v, want AlreadyResolved", result)
 	}
 	if len(displaced) != 0 {
@@ -314,7 +314,7 @@ func TestPromotePending_Superseded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PromotePending: %v", err)
 	}
-	if result != store.PendingPromoteSuperseded {
+	if result != core.PendingPromoteSuperseded {
 		t.Errorf("result = %v, want Superseded", result)
 	}
 	if len(displaced) != 0 {

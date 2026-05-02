@@ -27,12 +27,12 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
-	"github.com/afreidah/s3-orchestrator/internal/store"
-	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
 // Scrubber periodically verifies stored object integrity by reading objects
@@ -104,7 +104,7 @@ func (s *Scrubber) Scrub(ctx context.Context, batchSize int) (checked, failed in
 // verifyObject reads a single object, computes its hash, and compares to
 // the stored content hash. On mismatch the corrupted copy is enqueued for
 // cleanup. Returns true if the hash matches.
-func (s *Scrubber) verifyObject(ctx context.Context, loc *store.ObjectLocation) (bool, error) {
+func (s *Scrubber) verifyObject(ctx context.Context, loc *core.ObjectLocation) (bool, error) {
 	actual, err := s.readAndHash(ctx, loc)
 	if err != nil {
 		return false, err
@@ -191,7 +191,7 @@ func (s *Scrubber) Backfill(ctx context.Context, batchSize, offset int) (process
 // readAndHash reads an object from its backend, decrypts if encrypted, and
 // returns the SHA-256 hex digest of the plaintext. Records API call and
 // egress against the backend's usage quota.
-func (s *Scrubber) readAndHash(ctx context.Context, loc *store.ObjectLocation) (string, error) {
+func (s *Scrubber) readAndHash(ctx context.Context, loc *core.ObjectLocation) (string, error) {
 	be, err := s.deps.GetBackend(loc.BackendName)
 	if err != nil {
 		return "", err

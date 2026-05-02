@@ -22,7 +22,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
-	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // -------------------------------------------------------------------------
@@ -31,31 +31,31 @@ import (
 
 // RebalancerStore defines the store operations the Rebalancer needs.
 type RebalancerStore interface {
-	store.ObjectStore
-	store.QuotaStore
+	core.ObjectStore
+	core.QuotaStore
 }
 
 // ReplicatorStore defines the store operations the Replicator needs.
 type ReplicatorStore interface {
-	store.ObjectStore
-	store.ReplicationStore
-	store.QuotaStore
+	core.ObjectStore
+	core.ReplicationStore
+	core.QuotaStore
 }
 
 // OverReplicationStore defines the store operations the OverReplicationCleaner needs.
 type OverReplicationStore interface {
-	store.ReplicationStore
-	store.QuotaStore
+	core.ReplicationStore
+	core.QuotaStore
 }
 
 // CleanupWorkerStore defines the store operations the CleanupWorker needs.
 type CleanupWorkerStore interface {
-	store.CleanupStore
+	core.CleanupStore
 }
 
 // ScrubberStore defines the store operations the Scrubber needs.
 type ScrubberStore interface {
-	store.IntegrityStore
+	core.IntegrityStore
 }
 
 // -------------------------------------------------------------------------

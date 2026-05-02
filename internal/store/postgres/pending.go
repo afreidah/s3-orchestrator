@@ -31,7 +31,7 @@ import (
 // InsertPending records an in-flight PUT intent. Called before the backend
 // upload so a metadata commit failure cannot silently destroy the prior
 // copy of an overwritten key.
-func (s *Store) InsertPending(ctx context.Context, p *PendingObject) error {
+func (s *Store) InsertPending(ctx context.Context, p *core.PendingObject) error {
 	if err := s.queries.InsertPendingObject(ctx, pendingInsertParams(p)); err != nil {
 		return fmt.Errorf("insert pending object: %w", err)
 	}
@@ -51,7 +51,7 @@ func (s *Store) DeletePending(ctx context.Context, intentID string) error {
 // GetStalePending returns pending intents whose created_at is at or before
 // olderThan, oldest first, capped at limit rows. Used by the reaper to
 // resolve intents that have outlived their original PUT's commit window.
-func (s *Store) GetStalePending(ctx context.Context, olderThan time.Time, limit int) ([]PendingObject, error) {
+func (s *Store) GetStalePending(ctx context.Context, olderThan time.Time, limit int) ([]core.PendingObject, error) {
 	rows, err := s.queries.GetStalePendingObjects(ctx, db.GetStalePendingObjectsParams{
 		OlderThan: pgTimestamptz(olderThan),
 		MaxKeys:   int32(limit), //nolint:gosec // G115: limit is a small caller-controlled batch size
@@ -59,7 +59,7 @@ func (s *Store) GetStalePending(ctx context.Context, olderThan time.Time, limit 
 	if err != nil {
 		return nil, fmt.Errorf("get stale pending objects: %w", err)
 	}
-	out := make([]PendingObject, len(rows))
+	out := make([]core.PendingObject, len(rows))
 	for i := range rows {
 		out[i] = pendingFromRow(&rows[i])
 	}
@@ -89,7 +89,7 @@ func (s *Store) DeletePendingByBackend(ctx context.Context, backendName string) 
 // PromotePending resolves a pending intent transactionally. Delegates to
 // core.PromotePending which composes the lock, supersession check,
 // commit, and same-tx pending delete against the per-engine TxAdapter.
-func (s *Store) PromotePending(ctx context.Context, p *PendingObject) (PendingPromoteResult, []DeletedCopy, error) {
+func (s *Store) PromotePending(ctx context.Context, p *core.PendingObject) (core.PendingPromoteResult, []core.DeletedCopy, error) {
 	return core.PromotePending(ctx, s, p)
 }
 
@@ -100,7 +100,7 @@ func (s *Store) PromotePending(ctx context.Context, p *PendingObject) (PendingPr
 // pendingInsertParams maps a PendingObject onto the sqlc insert struct.
 // Pointer-typed columns stay nil when their string/int64 source is empty
 // so the database stores SQL NULL rather than the zero value.
-func pendingInsertParams(p *PendingObject) db.InsertPendingObjectParams {
+func pendingInsertParams(p *core.PendingObject) db.InsertPendingObjectParams {
 	params := db.InsertPendingObjectParams{
 		IntentID:      p.IntentID,
 		ObjectKey:     p.ObjectKey,
@@ -123,8 +123,8 @@ func pendingInsertParams(p *PendingObject) db.InsertPendingObjectParams {
 
 // pendingFromRow maps a sqlc PendingObject row onto the package type,
 // dereferencing nullable columns to their zero value when SQL NULL.
-func pendingFromRow(row *db.PendingObject) PendingObject {
-	p := PendingObject{
+func pendingFromRow(row *db.PendingObject) core.PendingObject {
+	p := core.PendingObject{
 		IntentID:      row.IntentID,
 		ObjectKey:     row.ObjectKey,
 		BackendName:   row.BackendName,

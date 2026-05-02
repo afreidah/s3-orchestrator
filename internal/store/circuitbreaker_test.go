@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/testutil/testx"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -34,18 +35,18 @@ import (
 // aggregation exists only to keep the circuit-breaker state-machine tests
 // compact.
 type testCBBundle struct {
-	ObjectStore
-	MultipartStore
-	ReplicationStore
-	CleanupStore
-	PendingStore
-	IntegrityStore
-	ExpiredObjectsLister
-	BackendLifecycleStore
-	DashboardStore
-	UsageFlusher
-	AdvisoryLocker
-	quota QuotaStore
+	core.ObjectStore
+	core.MultipartStore
+	core.ReplicationStore
+	core.CleanupStore
+	core.PendingStore
+	core.IntegrityStore
+	core.ExpiredObjectsLister
+	core.BackendLifecycleStore
+	core.DashboardStore
+	core.UsageFlusher
+	core.AdvisoryLocker
+	quota core.QuotaStore
 	*breaker.CircuitBreaker
 }
 
@@ -62,7 +63,7 @@ func (t *testCBBundle) GetLeastUtilizedBackend(ctx context.Context, size int64, 
 
 func newTestCB(mock *mockStore, threshold int, timeout time.Duration) *testCBBundle {
 	_ = config.CircuitBreakerConfig{}
-	cb := breaker.NewCircuitBreaker("database", threshold, timeout, isDBError, ErrDBUnavailable)
+	cb := breaker.NewCircuitBreaker("database", threshold, timeout, isDBError, core.ErrDBUnavailable)
 	return &testCBBundle{
 		ObjectStore:           NewCBObjectStore(mock, cb),
 		MultipartStore:        NewCBMultipartStore(mock, cb),
@@ -70,7 +71,7 @@ func newTestCB(mock *mockStore, threshold int, timeout time.Duration) *testCBBun
 		CleanupStore:          NewCBCleanupStore(mock, cb),
 		PendingStore:          NewCBPendingStore(mock, cb),
 		IntegrityStore:        NewCBIntegrityStore(mock, cb),
-		ExpiredObjectsLister:        NewCBExpiredObjectsLister(mock, cb),
+		ExpiredObjectsLister:  NewCBExpiredObjectsLister(mock, cb),
 		BackendLifecycleStore: NewCBBackendLifecycleStore(mock, cb),
 		DashboardStore:        NewCBDashboardStore(mock, cb),
 		UsageFlusher:          NewCBUsageFlusher(mock, cb),
@@ -83,7 +84,7 @@ func newTestCB(mock *mockStore, threshold int, timeout time.Duration) *testCBBun
 func TestCircuitBreaker_ClosedPassesThrough(t *testing.T) {
 	t.Parallel()
 	mock := &mockStore{
-		getAllLocationsResp: []ObjectLocation{{ObjectKey: "test", BackendName: "b1"}},
+		getAllLocationsResp: []core.ObjectLocation{{ObjectKey: "test", BackendName: "b1"}},
 	}
 	cb := newTestCB(mock, 3, time.Minute)
 
@@ -117,7 +118,7 @@ func TestCircuitBreaker_OpensAfterThreshold(t *testing.T) {
 
 	// 3rd call trips the threshold — circuit opens, returns ErrDBUnavailable
 	_, err := cb.GetAllObjectLocations(ctx, "key")
-	if !errors.Is(err, ErrDBUnavailable) {
+	if !errors.Is(err, core.ErrDBUnavailable) {
 		t.Fatalf("call 2: expected ErrDBUnavailable, got %v", err)
 	}
 	if mock.callCount != 3 {
@@ -126,7 +127,7 @@ func TestCircuitBreaker_OpensAfterThreshold(t *testing.T) {
 
 	// 4th call should return ErrDBUnavailable without hitting mock
 	_, err = cb.GetAllObjectLocations(ctx, "key")
-	if !errors.Is(err, ErrDBUnavailable) {
+	if !errors.Is(err, core.ErrDBUnavailable) {
 		t.Fatalf("expected ErrDBUnavailable, got %v", err)
 	}
 	if mock.callCount != 3 {
@@ -147,7 +148,7 @@ func TestCircuitBreaker_HalfOpenAfterTimeout(t *testing.T) {
 
 	// Should be open
 	_, err := cb.GetAllObjectLocations(ctx, "key")
-	if !errors.Is(err, ErrDBUnavailable) {
+	if !errors.Is(err, core.ErrDBUnavailable) {
 		t.Fatalf("expected ErrDBUnavailable, got %v", err)
 	}
 
@@ -157,7 +158,7 @@ func TestCircuitBreaker_HalfOpenAfterTimeout(t *testing.T) {
 	// Next call should probe (pass through to mock)
 	mock.mu.Lock()
 	mock.getAllLocationsErr = nil
-	mock.getAllLocationsResp = []ObjectLocation{{ObjectKey: "test", BackendName: "b1"}}
+	mock.getAllLocationsResp = []core.ObjectLocation{{ObjectKey: "test", BackendName: "b1"}}
 	mock.mu.Unlock()
 
 	result, err := cb.GetAllObjectLocations(ctx, "key")
@@ -190,20 +191,20 @@ func TestCircuitBreaker_HalfOpenFailureReopens(t *testing.T) {
 
 	// Probe should fail — circuit reopens, returns ErrDBUnavailable
 	_, err := cb.GetAllObjectLocations(ctx, "key")
-	if !errors.Is(err, ErrDBUnavailable) {
+	if !errors.Is(err, core.ErrDBUnavailable) {
 		t.Fatalf("expected ErrDBUnavailable on failed probe, got %v", err)
 	}
 
 	// Circuit should be open again
 	_, err = cb.GetAllObjectLocations(ctx, "key")
-	if !errors.Is(err, ErrDBUnavailable) {
+	if !errors.Is(err, core.ErrDBUnavailable) {
 		t.Fatalf("expected ErrDBUnavailable after failed probe, got %v", err)
 	}
 }
 
 func TestCircuitBreaker_AppErrorsDontTrip(t *testing.T) {
 	t.Parallel()
-	mock := &mockStore{getAllLocationsErr: ErrObjectNotFound}
+	mock := &mockStore{getAllLocationsErr: core.ErrObjectNotFound}
 	cb := newTestCB(mock, 1, time.Minute)
 
 	ctx := context.Background()
@@ -211,7 +212,7 @@ func TestCircuitBreaker_AppErrorsDontTrip(t *testing.T) {
 	// Application errors should not trip the circuit
 	for range 5 {
 		_, err := cb.GetAllObjectLocations(ctx, "key")
-		if !errors.Is(err, ErrObjectNotFound) {
+		if !errors.Is(err, core.ErrObjectNotFound) {
 			t.Fatalf("expected ErrObjectNotFound, got %v", err)
 		}
 	}
@@ -244,7 +245,7 @@ func TestCircuitBreaker_IsHealthy(t *testing.T) {
 func TestCircuitBreaker_SuccessResetsFailures(t *testing.T) {
 	t.Parallel()
 	mock := &mockStore{
-		getAllLocationsResp: []ObjectLocation{{ObjectKey: "test", BackendName: "b1"}},
+		getAllLocationsResp: []core.ObjectLocation{{ObjectKey: "test", BackendName: "b1"}},
 	}
 	cb := newTestCB(mock, 3, time.Minute)
 
@@ -312,7 +313,7 @@ func TestIsDBError_NilIsNotDBError(t *testing.T) {
 
 func TestIsDBError_S3ErrorIsNotDBError(t *testing.T) {
 	t.Parallel()
-	err := &S3Error{StatusCode: 404, Code: "NoSuchKey", Message: "not found"}
+	err := &core.S3Error{StatusCode: 404, Code: "NoSuchKey", Message: "not found"}
 	if isDBError(err) {
 		t.Error("S3Error should not be a DB error")
 	}
@@ -320,7 +321,7 @@ func TestIsDBError_S3ErrorIsNotDBError(t *testing.T) {
 
 func TestIsDBError_ErrNoSpaceIsNotDBError(t *testing.T) {
 	t.Parallel()
-	if isDBError(ErrNoSpaceAvailable) {
+	if isDBError(core.ErrNoSpaceAvailable) {
 		t.Error("ErrNoSpaceAvailable should not be a DB error")
 	}
 }
@@ -334,7 +335,7 @@ func TestIsDBError_GenericErrorIsDBError(t *testing.T) {
 
 func TestIsDBError_WrappedS3Error(t *testing.T) {
 	t.Parallel()
-	inner := &S3Error{StatusCode: 507, Code: "InsufficientStorage", Message: "full"}
+	inner := &core.S3Error{StatusCode: 507, Code: "InsufficientStorage", Message: "full"}
 	wrapped := fmt.Errorf("wrapped: %w", inner)
 	if isDBError(wrapped) {
 		t.Error("wrapped S3Error should not be a DB error")
@@ -350,7 +351,7 @@ func TestIsDBError_WrappedS3Error(t *testing.T) {
 // inner store and returns its rows.
 func TestCBObjectStore_ListObjectsByBackendKeyAsc_DelegatesAndReturnsRows(t *testing.T) {
 	t.Parallel()
-	want := []ObjectLocation{{ObjectKey: "vb/a", BackendName: "be1"}, {ObjectKey: "vb/b", BackendName: "be1"}}
+	want := []core.ObjectLocation{{ObjectKey: "vb/a", BackendName: "be1"}, {ObjectKey: "vb/b", BackendName: "be1"}}
 	mock := &mockStore{listObjectsByBackendKeyAscResp: want}
 	cb := newTestCB(mock, 3, time.Minute)
 
@@ -379,19 +380,19 @@ func TestCBObjectStore_ListObjectsByBackendKeyAsc_OpenCircuitReturnsSentinel(t *
 
 	// Second call: circuit open → sentinel.
 	_, err := cb.ListObjectsByBackendKeyAsc(context.Background(), "be1", "", 100)
-	if !errors.Is(err, ErrDBUnavailable) {
+	if !errors.Is(err, core.ErrDBUnavailable) {
 		t.Errorf("err = %v, want ErrDBUnavailable", err)
 	}
 }
 
 func TestCircuitBreaker_PostCheck_NonDBErrorPassesThrough(t *testing.T) {
 	t.Parallel()
-	mock := &mockStore{getAllLocationsErr: ErrObjectNotFound}
+	mock := &mockStore{getAllLocationsErr: core.ErrObjectNotFound}
 	cb := newTestCB(mock, 3, time.Minute)
 
 	// ErrObjectNotFound is not a DB error, so it should pass through unchanged
 	_, err := cb.GetAllObjectLocations(context.Background(), "key")
-	if !errors.Is(err, ErrObjectNotFound) {
+	if !errors.Is(err, core.ErrObjectNotFound) {
 		t.Fatalf("expected ErrObjectNotFound passthrough, got %v", err)
 	}
 
@@ -443,7 +444,7 @@ func TestCircuitBreaker_RecordObject_CircuitOpen(t *testing.T) {
 
 	// RecordObject should return ErrDBUnavailable
 	_, err := cb.RecordObject(context.Background(), "key", "b1", 100, nil)
-	if !errors.Is(err, ErrDBUnavailable) {
+	if !errors.Is(err, core.ErrDBUnavailable) {
 		t.Fatalf("expected ErrDBUnavailable, got %v", err)
 	}
 }
@@ -473,7 +474,7 @@ func TestCircuitBreaker_CreateMultipartUpload_CircuitOpen(t *testing.T) {
 	_, _ = cb.GetAllObjectLocations(context.Background(), "key")
 
 	err := cb.CreateMultipartUpload(context.Background(), "upload-1", "key", "b1", "application/octet-stream", nil)
-	if !errors.Is(err, ErrDBUnavailable) {
+	if !errors.Is(err, core.ErrDBUnavailable) {
 		t.Fatalf("expected ErrDBUnavailable, got %v", err)
 	}
 }
@@ -506,7 +507,7 @@ func TestCircuitBreaker_ListMultipartUploads_CircuitOpen(t *testing.T) {
 	_, _ = cb.GetAllObjectLocations(context.Background(), "key")
 
 	_, err := cb.ListMultipartUploads(context.Background(), "prefix/", 100)
-	if !errors.Is(err, ErrDBUnavailable) {
+	if !errors.Is(err, core.ErrDBUnavailable) {
 		t.Fatalf("expected ErrDBUnavailable, got %v", err)
 	}
 }
@@ -622,7 +623,7 @@ func TestCircuitBreaker_TransitionLogs_HalfOpenToClosed(t *testing.T) {
 	// Fix the mock so the probe succeeds
 	mock.mu.Lock()
 	mock.getAllLocationsErr = nil
-	mock.getAllLocationsResp = []ObjectLocation{{ObjectKey: "test", BackendName: "b1"}}
+	mock.getAllLocationsResp = []core.ObjectLocation{{ObjectKey: "test", BackendName: "b1"}}
 	mock.mu.Unlock()
 
 	output := captureLogs(func() {
@@ -700,7 +701,7 @@ func TestCircuitBreaker_DegradedDurationIsPositive(t *testing.T) {
 	// Fix mock, recover
 	mock.mu.Lock()
 	mock.getAllLocationsErr = nil
-	mock.getAllLocationsResp = []ObjectLocation{{ObjectKey: "test", BackendName: "b1"}}
+	mock.getAllLocationsResp = []core.ObjectLocation{{ObjectKey: "test", BackendName: "b1"}}
 	mock.mu.Unlock()
 
 	_, _ = cb.GetAllObjectLocations(ctx, "key") // probe + close
@@ -718,15 +719,15 @@ func TestCircuitBreaker_DegradedDurationIsPositive(t *testing.T) {
 func TestCircuitBreaker_ForwardingMethods_Closed(t *testing.T) {
 	t.Parallel()
 	mock := &mockStore{
-		getQuotaStatsResp:        map[string]QuotaStat{"b1": {BackendName: "b1", BytesUsed: 100}},
+		getQuotaStatsResp:        map[string]core.QuotaStat{"b1": {BackendName: "b1", BytesUsed: 100}},
 		getObjectCountsResp:      map[string]int64{"b1": 42},
 		getActiveMultipartResp:   map[string]int64{"b1": 5},
-		getUsageForPeriodResp:    map[string]UsageStat{"b1": {APIRequests: 10}},
-		listObjectsByBackendResp: []ObjectLocation{{ObjectKey: "k", BackendName: "b1"}},
-		getUnderReplicatedResp:   []ObjectLocation{{ObjectKey: "k", BackendName: "b1"}},
+		getUsageForPeriodResp:    map[string]core.UsageStat{"b1": {APIRequests: 10}},
+		listObjectsByBackendResp: []core.ObjectLocation{{ObjectKey: "k", BackendName: "b1"}},
+		getUnderReplicatedResp:   []core.ObjectLocation{{ObjectKey: "k", BackendName: "b1"}},
 		recordReplicaInserted:    true,
 		cleanupQueueDepthVal:     7,
-		listDirChildrenResp:      &DirectoryListResult{},
+		listDirChildrenResp:      &core.DirectoryListResult{},
 	}
 	cb := newTestCB(mock, 3, time.Minute)
 	ctx := context.Background()
@@ -839,19 +840,19 @@ func TestCircuitBreaker_ForwardingMethods_Open(t *testing.T) {
 	_, _ = cb.GetAllObjectLocations(ctx, "key")
 
 	// Verify a sample of forwarding methods return ErrDBUnavailable
-	if _, err := cb.GetQuotaStats(ctx); !errors.Is(err, ErrDBUnavailable) {
+	if _, err := cb.GetQuotaStats(ctx); !errors.Is(err, core.ErrDBUnavailable) {
 		t.Errorf("GetQuotaStats: got %v, want ErrDBUnavailable", err)
 	}
-	if _, err := cb.ListObjectsByBackend(ctx, "b1", 100); !errors.Is(err, ErrDBUnavailable) {
+	if _, err := cb.ListObjectsByBackend(ctx, "b1", 100); !errors.Is(err, core.ErrDBUnavailable) {
 		t.Errorf("ListObjectsByBackend: got %v, want ErrDBUnavailable", err)
 	}
-	if err := cb.FlushUsageDeltas(ctx, "b1", "2024-01", 1, 2, 3); !errors.Is(err, ErrDBUnavailable) {
+	if err := cb.FlushUsageDeltas(ctx, "b1", "2024-01", 1, 2, 3); !errors.Is(err, core.ErrDBUnavailable) {
 		t.Errorf("FlushUsageDeltas: got %v, want ErrDBUnavailable", err)
 	}
-	if err := cb.DeleteBackendData(ctx, "b1"); !errors.Is(err, ErrDBUnavailable) {
+	if err := cb.DeleteBackendData(ctx, "b1"); !errors.Is(err, core.ErrDBUnavailable) {
 		t.Errorf("DeleteBackendData: got %v, want ErrDBUnavailable", err)
 	}
-	if _, err := cb.SweepStaleCleanupQueueRows(ctx, "k", "b1"); !errors.Is(err, ErrDBUnavailable) {
+	if _, err := cb.SweepStaleCleanupQueueRows(ctx, "k", "b1"); !errors.Is(err, core.ErrDBUnavailable) {
 		t.Errorf("SweepStaleCleanupQueueRows: got %v, want ErrDBUnavailable", err)
 	}
 }
@@ -867,7 +868,7 @@ func TestCircuitBreaker_BackendObjectStats_PreCheckBlocks(t *testing.T) {
 	_, _ = cb.GetAllObjectLocations(ctx, "key")
 
 	count, bytes, err := cb.BackendObjectStats(ctx, "b1")
-	if !errors.Is(err, ErrDBUnavailable) {
+	if !errors.Is(err, core.ErrDBUnavailable) {
 		t.Errorf("BackendObjectStats: got %v, want ErrDBUnavailable", err)
 	}
 	if count != 0 || bytes != 0 {
@@ -982,7 +983,7 @@ func TestCBForwarders_MultipartStore(t *testing.T) {
 
 func TestCBForwarders_QuotaStore(t *testing.T) {
 	t.Parallel()
-	mock := &mockStore{getQuotaStatsResp: map[string]QuotaStat{"b1": {BytesUsed: 10}}}
+	mock := &mockStore{getQuotaStatsResp: map[string]core.QuotaStat{"b1": {BytesUsed: 10}}}
 	cb := newTestCB(mock, 3, time.Minute)
 
 	// Exercise QuotaStore.GetQuotaStats directly. cb.GetQuotaStats would
@@ -1032,7 +1033,7 @@ func TestNewDatabaseBreaker_ReturnsHealthy(t *testing.T) {
 
 func TestIsDBError_WrappedErrNoSpace(t *testing.T) {
 	t.Parallel()
-	wrapped := fmt.Errorf("outer: %w", ErrNoSpaceAvailable)
+	wrapped := fmt.Errorf("outer: %w", core.ErrNoSpaceAvailable)
 	if isDBError(wrapped) {
 		t.Error("wrapped ErrNoSpaceAvailable should not be a DB error")
 	}

@@ -17,8 +17,8 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
-	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // MetricsDeps is the narrow store surface MetricsCollector needs to refresh
@@ -26,11 +26,11 @@ import (
 // store package: adding a new metric is a MetricsCollector concern, not a
 // store-package concern.
 type MetricsDeps interface {
-	GetQuotaStats(ctx context.Context) (map[string]store.QuotaStat, error)
+	GetQuotaStats(ctx context.Context) (map[string]core.QuotaStat, error)
 	GetObjectCounts(ctx context.Context) (map[string]int64, error)
 	GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error)
-	GetUsageForPeriod(ctx context.Context, period string) (map[string]store.UsageStat, error)
-	GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]store.ObjectLocation, error)
+	GetUsageForPeriod(ctx context.Context, period string) (map[string]core.UsageStat, error)
+	GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]core.ObjectLocation, error)
 }
 
 // MetricsCollector records Prometheus metrics for manager-level operations
@@ -166,7 +166,7 @@ func (mc *MetricsCollector) UpdateQuotaMetrics(ctx context.Context) error {
 		if err != nil {
 			slog.ErrorContext(ctx, "failed to get under-replicated objects", "error", err)
 		} else {
-			telemetry.ReplicationPending.Set(float64(len(store.GroupByKey(locations))))
+			telemetry.ReplicationPending.Set(float64(len(core.GroupByKey(locations))))
 		}
 	}
 
