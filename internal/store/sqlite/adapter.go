@@ -15,9 +15,9 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -138,25 +138,23 @@ func (a *sqliteTxAdapter) GetExistingCopiesForUpdate(ctx context.Context, object
 }
 
 // GetCopiesForKeysForUpdate returns every (key, backend, size) row
-// matching any key in the supplied list. SQLite has no array
-// parameter type; the placeholder list is built from strings.Repeat
-// (NOT user input - keys go in args[]). FOR UPDATE is a silent no-op
-// since SQLite serializes writers; the in-tx read provides the same
-// exclusivity guarantee.
+// matching any key in the supplied list. The query uses SQLite's
+// json_each so the SQL stays static and the keys array is passed as
+// a single JSON-encoded parameter rather than interpolated into the
+// SQL string. FOR UPDATE is a silent no-op since SQLite serializes
+// writers; the in-tx read provides the same exclusivity guarantee.
 func (a *sqliteTxAdapter) GetCopiesForKeysForUpdate(ctx context.Context, keys []string) ([]core.KeyedExistingCopy, error) {
 	if len(keys) == 0 {
 		return nil, nil
 	}
-	placeholders := strings.Repeat("?,", len(keys))
-	placeholders = placeholders[:len(placeholders)-1]
-	args := make([]any, len(keys))
-	for i, k := range keys {
-		args[i] = k
+	keysJSON, err := json.Marshal(keys)
+	if err != nil {
+		return nil, fmt.Errorf("marshal keys: %w", err)
 	}
-	// G202: placeholders is "?,?,?" built from strings.Repeat, not
-	// user input; the actual key values are passed as args.
-	query := `SELECT object_key, backend_name, size_bytes FROM object_locations WHERE object_key IN (` + placeholders + `)` //nolint:gosec
-	rows, err := a.tx.QueryContext(ctx, query, args...)
+	rows, err := a.tx.QueryContext(ctx, `
+		SELECT object_key, backend_name, size_bytes
+		FROM object_locations
+		WHERE object_key IN (SELECT value FROM json_each(?))`, string(keysJSON))
 	if err != nil {
 		return nil, fmt.Errorf("get copies for keys: %w", err)
 	}
@@ -177,20 +175,19 @@ func (a *sqliteTxAdapter) GetCopiesForKeysForUpdate(ctx context.Context, keys []
 
 // DeleteObjectsByKeys bulk-deletes object_locations rows for every
 // supplied key. Caller must have already locked the rows via
-// GetCopiesForKeysForUpdate.
+// GetCopiesForKeysForUpdate. Uses json_each so the SQL stays static
+// and the keys array is passed as a JSON parameter.
 func (a *sqliteTxAdapter) DeleteObjectsByKeys(ctx context.Context, keys []string) error {
 	if len(keys) == 0 {
 		return nil
 	}
-	placeholders := strings.Repeat("?,", len(keys))
-	placeholders = placeholders[:len(placeholders)-1]
-	args := make([]any, len(keys))
-	for i, k := range keys {
-		args[i] = k
+	keysJSON, err := json.Marshal(keys)
+	if err != nil {
+		return fmt.Errorf("marshal keys: %w", err)
 	}
-	// G202: see GetCopiesForKeysForUpdate.
-	query := `DELETE FROM object_locations WHERE object_key IN (` + placeholders + `)` //nolint:gosec
-	if _, err := a.tx.ExecContext(ctx, query, args...); err != nil {
+	if _, err := a.tx.ExecContext(ctx, `
+		DELETE FROM object_locations
+		WHERE object_key IN (SELECT value FROM json_each(?))`, string(keysJSON)); err != nil {
 		return fmt.Errorf("delete objects by keys: %w", err)
 	}
 	return nil
