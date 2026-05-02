@@ -85,7 +85,7 @@ func TestScoreCopy_CircuitBrokenBackend(t *testing.T) {
 
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": cbBackend},
-		Stores:          StoresFromMock(store),
+		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
 		Metrics:         store,
 		Order:           []string{"b1"},
@@ -402,7 +402,7 @@ func TestClean_AdmissionBlocked(t *testing.T) {
 	}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": newMockBackend(), "b2": newMockBackend(), "b3": newMockBackend()},
-		Stores:          StoresFromMock(store),
+		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
 		Metrics:         store,
 		Order:           []string{"b1", "b2", "b3"},

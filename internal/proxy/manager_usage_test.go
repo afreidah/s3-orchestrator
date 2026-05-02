@@ -35,7 +35,7 @@ func newUsageManager(backendNames []string, store *mockStore) *BackendManager {
 	}
 	return NewBackendManager(&BackendManagerConfig{
 		Backends:        backends,
-		Stores:          StoresFromMock(store),
+		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
 		Metrics:         store,
 		Order:           backendNames,
@@ -50,7 +50,7 @@ func newUsageManagerWithLimits(backendNames []string, store *mockStore, limits m
 	}
 	return NewBackendManager(&BackendManagerConfig{
 		Backends:        backends,
-		Stores:          StoresFromMock(store),
+		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
 		Metrics:         store,
 		Order:           backendNames,
