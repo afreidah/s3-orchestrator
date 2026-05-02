@@ -15,6 +15,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -134,6 +135,62 @@ func (a *sqliteTxAdapter) GetExistingCopiesForUpdate(ctx context.Context, object
 		return nil, fmt.Errorf("iterate existing copies: %w", err)
 	}
 	return out, nil
+}
+
+// GetCopiesForKeysForUpdate returns every (key, backend, size) row
+// matching any key in the supplied list. The query uses SQLite's
+// json_each so the SQL stays static and the keys array is passed as
+// a single JSON-encoded parameter rather than interpolated into the
+// SQL string. FOR UPDATE is a silent no-op since SQLite serializes
+// writers; the in-tx read provides the same exclusivity guarantee.
+func (a *sqliteTxAdapter) GetCopiesForKeysForUpdate(ctx context.Context, keys []string) ([]core.KeyedExistingCopy, error) {
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	keysJSON, err := json.Marshal(keys)
+	if err != nil {
+		return nil, fmt.Errorf("marshal keys: %w", err)
+	}
+	rows, err := a.tx.QueryContext(ctx, `
+		SELECT object_key, backend_name, size_bytes
+		FROM object_locations
+		WHERE object_key IN (SELECT value FROM json_each(?))`, string(keysJSON))
+	if err != nil {
+		return nil, fmt.Errorf("get copies for keys: %w", err)
+	}
+	defer rows.Close()
+	var out []core.KeyedExistingCopy
+	for rows.Next() {
+		var ec core.KeyedExistingCopy
+		if err := rows.Scan(&ec.ObjectKey, &ec.BackendName, &ec.SizeBytes); err != nil {
+			return nil, fmt.Errorf("scan keyed copy: %w", err)
+		}
+		out = append(out, ec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate keyed copies: %w", err)
+	}
+	return out, nil
+}
+
+// DeleteObjectsByKeys bulk-deletes object_locations rows for every
+// supplied key. Caller must have already locked the rows via
+// GetCopiesForKeysForUpdate. Uses json_each so the SQL stays static
+// and the keys array is passed as a JSON parameter.
+func (a *sqliteTxAdapter) DeleteObjectsByKeys(ctx context.Context, keys []string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	keysJSON, err := json.Marshal(keys)
+	if err != nil {
+		return fmt.Errorf("marshal keys: %w", err)
+	}
+	if _, err := a.tx.ExecContext(ctx, `
+		DELETE FROM object_locations
+		WHERE object_key IN (SELECT value FROM json_each(?))`, string(keysJSON)); err != nil {
+		return fmt.Errorf("delete objects by keys: %w", err)
+	}
+	return nil
 }
 
 // InsertObjectLocation writes a new object_locations row carrying the

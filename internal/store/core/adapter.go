@@ -64,12 +64,31 @@ type PendingTxAdapter interface {
 	DeletePendingByBackend(ctx context.Context, backendName string) error
 }
 
+// KeyedExistingCopy is an ExistingCopy that also carries the object_key
+// so batch operations can group rows by key.
+type KeyedExistingCopy struct {
+	ObjectKey   string
+	BackendName string
+	SizeBytes   int64
+}
+
 // ObjectsTxAdapter exposes the transactional operations on the
 // object_locations table.
 type ObjectsTxAdapter interface {
 	GetExistingCopiesForUpdate(ctx context.Context, objectKey string) ([]ExistingCopy, error)
 	InsertObjectLocation(ctx context.Context, loc *ObjectLocation) error
 	DeleteObjectCopies(ctx context.Context, objectKey string) error
+
+	// GetCopiesForKeysForUpdate returns every (key, backend, size) row
+	// matching any key in the supplied list, locked FOR UPDATE so the
+	// same transaction can delete the rows and decrement quotas
+	// atomically. Used by the batch-delete path.
+	GetCopiesForKeysForUpdate(ctx context.Context, keys []string) ([]KeyedExistingCopy, error)
+
+	// DeleteObjectsByKeys removes every object_locations row whose key
+	// is in the supplied list. Caller must have already locked the
+	// rows via GetCopiesForKeysForUpdate.
+	DeleteObjectsByKeys(ctx context.Context, keys []string) error
 
 	// CheckObjectExistsOnBackend reports whether the object_locations
 	// table holds a row for (key, backend).

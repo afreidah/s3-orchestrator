@@ -44,6 +44,10 @@ type mockStore struct {
 	deleteObjectErr  error
 	deleteObjectFunc func(key string) ([]DeletedCopy, error)
 
+	deleteObjectsBatchResp  map[string][]DeletedCopy
+	deleteObjectsBatchErr   error
+	deleteObjectsBatchCalls [][]string
+
 	listObjectsResp  *ListObjectsResult
 	listObjectsPages []ListObjectsResult // for paginated tests
 	listObjectsErr   error
@@ -293,6 +297,19 @@ func (m *mockStore) DeleteObject(_ context.Context, key string) ([]DeletedCopy, 
 		return nil, m.deleteObjectErr
 	}
 	return m.deleteObjectResp, nil
+}
+
+func (m *mockStore) DeleteObjectsBatch(_ context.Context, keys []string) (map[string][]DeletedCopy, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.deleteObjectsBatchCalls = append(m.deleteObjectsBatchCalls, keys)
+	if m.deleteObjectsBatchErr != nil {
+		return nil, m.deleteObjectsBatchErr
+	}
+	if m.deleteObjectsBatchResp != nil {
+		return m.deleteObjectsBatchResp, nil
+	}
+	return map[string][]DeletedCopy{}, nil
 }
 
 func (m *mockStore) ListObjects(_ context.Context, _, startAfter string, _ int) (*ListObjectsResult, error) {
