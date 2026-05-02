@@ -30,6 +30,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/testutil"
 	"golang.org/x/crypto/bcrypt"
 	// newTestHandler builds a Handler wired to mock data for testing.
@@ -619,7 +620,7 @@ func TestAPIDashboard_ReturnsJSON(t *testing.T) {
 		t.Errorf("Content-Type = %q, want application/json", ct)
 	}
 
-	var data proxy.DashboardData
+	var data dashboard.Data
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		t.Fatalf("failed to decode JSON: %v", err)
 	}

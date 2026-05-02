@@ -16,10 +16,10 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
-	"github.com/afreidah/s3-orchestrator/internal/counter"
-	"github.com/afreidah/s3-orchestrator/internal/store/core"
-
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // -------------------------------------------------------------------------
@@ -30,7 +30,7 @@ func TestRecordOperation_Success(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{}
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend(nil), nil)
-	mc := NewMetricsCollector(store, usage, []string{"b1"}, func() int { return 0 })
+	mc := metrics.New(store, usage, []string{"b1"}, func() int { return 0 })
 
 	// Should not panic
 	mc.RecordOperation("PutObject", "b1", time.Now(), nil)
@@ -40,7 +40,7 @@ func TestRecordOperation_Error(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{}
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend(nil), nil)
-	mc := NewMetricsCollector(store, usage, []string{"b1"}, func() int { return 0 })
+	mc := metrics.New(store, usage, []string{"b1"}, func() int { return 0 })
 
 	// Should not panic with error status
 	mc.RecordOperation("GetObject", "b1", time.Now(), errors.New("backend down"))
@@ -68,7 +68,7 @@ func TestUpdateQuotaMetrics_Success(t *testing.T) {
 		},
 	}
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1", "b2"}), nil)
-	mc := NewMetricsCollector(store, usage, []string{"b1", "b2"}, func() int { return 0 })
+	mc := metrics.New(store, usage, []string{"b1", "b2"}, func() int { return 0 })
 
 	err := mc.UpdateQuotaMetrics(context.Background())
 	if err != nil {
@@ -89,7 +89,7 @@ func TestUpdateQuotaMetrics_CapacityWarning(t *testing.T) {
 		getUsageForPeriodResp:  map[string]core.UsageStat{},
 	}
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1", "b2", "b3"}), nil)
-	mc := NewMetricsCollector(store, usage, []string{"b1", "b2", "b3"}, func() int { return 0 })
+	mc := metrics.New(store, usage, []string{"b1", "b2", "b3"}, func() int { return 0 })
 
 	// The warning is logged via slog — this test exercises the code path.
 	// Verification is that the metrics are set correctly and no panic occurs.
@@ -105,7 +105,7 @@ func TestUpdateQuotaMetrics_QuotaStatsError(t *testing.T) {
 		getQuotaStatsErr: errors.New("db down"),
 	}
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend(nil), nil)
-	mc := NewMetricsCollector(store, usage, []string{"b1"}, func() int { return 0 })
+	mc := metrics.New(store, usage, []string{"b1"}, func() int { return 0 })
 
 	err := mc.UpdateQuotaMetrics(context.Background())
 	if err == nil {
@@ -121,7 +121,7 @@ func TestUpdateQuotaMetrics_ObjectCountsError(t *testing.T) {
 		getUsageForPeriodResp: map[string]core.UsageStat{},
 	}
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1"}), nil)
-	mc := NewMetricsCollector(store, usage, []string{"b1"}, func() int { return 0 })
+	mc := metrics.New(store, usage, []string{"b1"}, func() int { return 0 })
 
 	// Should not return error — object counts error is logged only
 	err := mc.UpdateQuotaMetrics(context.Background())
@@ -139,7 +139,7 @@ func TestUpdateQuotaMetrics_MultipartCountsError(t *testing.T) {
 		getUsageForPeriodResp: map[string]core.UsageStat{},
 	}
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1"}), nil)
-	mc := NewMetricsCollector(store, usage, []string{"b1"}, func() int { return 0 })
+	mc := metrics.New(store, usage, []string{"b1"}, func() int { return 0 })
 
 	err := mc.UpdateQuotaMetrics(context.Background())
 	if err != nil {
@@ -156,7 +156,7 @@ func TestUpdateQuotaMetrics_UsageForPeriodError(t *testing.T) {
 		getUsageForPeriodErr:   errors.New("db error"),
 	}
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1"}), nil)
-	mc := NewMetricsCollector(store, usage, []string{"b1"}, func() int { return 0 })
+	mc := metrics.New(store, usage, []string{"b1"}, func() int { return 0 })
 
 	err := mc.UpdateQuotaMetrics(context.Background())
 	if err != nil {
@@ -180,7 +180,7 @@ func TestUpdateQuotaMetrics_ReplicationPending(t *testing.T) {
 		},
 	}
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1"}), nil)
-	mc := NewMetricsCollector(store, usage, []string{"b1"}, func() int { return 2 })
+	mc := metrics.New(store, usage, []string{"b1"}, func() int { return 2 })
 
 	err := mc.UpdateQuotaMetrics(context.Background())
 	if err != nil {
@@ -197,7 +197,7 @@ func TestUpdateQuotaMetrics_ReplicationPendingSkippedWhenDisabled(t *testing.T) 
 		getUsageForPeriodResp:  map[string]core.UsageStat{},
 	}
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1"}), nil)
-	mc := NewMetricsCollector(store, usage, []string{"b1"}, func() int { return 0 })
+	mc := metrics.New(store, usage, []string{"b1"}, func() int { return 0 })
 
 	err := mc.UpdateQuotaMetrics(context.Background())
 	if err != nil {
@@ -215,7 +215,7 @@ func TestUpdateQuotaMetrics_ReplicationPendingQueryError(t *testing.T) {
 		getUnderReplicatedErr:  errors.New("db error"),
 	}
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1"}), nil)
-	mc := NewMetricsCollector(store, usage, []string{"b1"}, func() int { return 2 })
+	mc := metrics.New(store, usage, []string{"b1"}, func() int { return 2 })
 
 	// Should not return error — under-replicated query error is non-fatal
 	err := mc.UpdateQuotaMetrics(context.Background())
@@ -247,14 +247,14 @@ func TestUpdateQuotaMetrics_ReplicationFactorFromManager(t *testing.T) {
 	})
 
 	// Without replication config — closure returns 0, skips query
-	err := mgr.metrics.UpdateQuotaMetrics(context.Background())
+	err := mgr.metricsCollector.UpdateQuotaMetrics(context.Background())
 	if err != nil {
 		t.Fatalf("UpdateQuotaMetrics (no repl config): %v", err)
 	}
 
 	// With replication config — closure returns factor, queries DB
 	mgr.Replicator.SetConfig(&config.ReplicationConfig{Factor: 2, BatchSize: 50})
-	err = mgr.metrics.UpdateQuotaMetrics(context.Background())
+	err = mgr.metricsCollector.UpdateQuotaMetrics(context.Background())
 	if err != nil {
 		t.Fatalf("UpdateQuotaMetrics (with repl config): %v", err)
 	}

@@ -7,7 +7,7 @@
 // errors, empty data, and directory listing edge cases.
 // -------------------------------------------------------------------------------
 
-package proxy
+package dashboard
 
 import (
 	"context"
@@ -67,8 +67,8 @@ func TestAggregator_Success(t *testing.T) {
 		nil,
 	)
 
-	da := NewDashboardAggregator(ms, usage, []string{"b1"})
-	data, err := da.GetDashboardData(context.Background())
+	da := New(ms, usage, []string{"b1"})
+	data, err := da.GetData(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,9 +90,9 @@ func TestAggregator_QuotaStatsError(t *testing.T) {
 		quotaStatsErr: errors.New("db down"),
 	}
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend(nil), nil)
-	da := NewDashboardAggregator(ms, usage, nil)
+	da := New(ms, usage, nil)
 
-	_, err := da.GetDashboardData(context.Background())
+	_, err := da.GetData(context.Background())
 	if err == nil {
 		t.Fatal("expected error when QuotaStats fails")
 	}
@@ -105,9 +105,9 @@ func TestAggregator_ObjectCountsError(t *testing.T) {
 		objectCountsErr: errors.New("db down"),
 	}
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend(nil), nil)
-	da := NewDashboardAggregator(ms, usage, nil)
+	da := New(ms, usage, nil)
 
-	_, err := da.GetDashboardData(context.Background())
+	_, err := da.GetData(context.Background())
 	if err == nil {
 		t.Fatal("expected error when ObjectCounts fails")
 	}
@@ -121,9 +121,9 @@ func TestAggregator_MultipartCountsError(t *testing.T) {
 		multipartCountsErr: errors.New("db down"),
 	}
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend(nil), nil)
-	da := NewDashboardAggregator(ms, usage, nil)
+	da := New(ms, usage, nil)
 
-	_, err := da.GetDashboardData(context.Background())
+	_, err := da.GetData(context.Background())
 	if err == nil {
 		t.Fatal("expected error when MultipartCounts fails")
 	}
@@ -138,9 +138,9 @@ func TestAggregator_UsageStatsError(t *testing.T) {
 		usageStatsErr:   errors.New("db down"),
 	}
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend(nil), nil)
-	da := NewDashboardAggregator(ms, usage, nil)
+	da := New(ms, usage, nil)
 
-	_, err := da.GetDashboardData(context.Background())
+	_, err := da.GetData(context.Background())
 	if err == nil {
 		t.Fatal("expected error when UsageStats fails")
 	}
@@ -156,9 +156,9 @@ func TestAggregator_DirChildrenError(t *testing.T) {
 		dirChildrenErr:  errors.New("db down"),
 	}
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend(nil), nil)
-	da := NewDashboardAggregator(ms, usage, nil)
+	da := New(ms, usage, nil)
 
-	_, err := da.GetDashboardData(context.Background())
+	_, err := da.GetData(context.Background())
 	if err == nil {
 		t.Fatal("expected error when DirChildren fails")
 	}
@@ -170,7 +170,7 @@ func TestAggregator_GetDirectoryChildren_ClampsMaxKeys(t *testing.T) {
 		dirChildren: &core.DirectoryListResult{},
 	}
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend(nil), nil)
-	da := NewDashboardAggregator(ms, usage, nil)
+	da := New(ms, usage, nil)
 
 	// maxKeys=0 should be clamped to 200
 	result, err := da.GetDirectoryChildren(context.Background(), "", "", 0)

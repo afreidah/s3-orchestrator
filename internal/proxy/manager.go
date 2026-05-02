@@ -31,6 +31,9 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/internalkey"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
@@ -47,7 +50,7 @@ import (
 type BackendManagerConfig struct {
 	Backends           map[string]backend.ObjectBackend
 	Stores             Stores
-	Metrics            MetricsDeps
+	Metrics            metrics.Deps
 	Dashboard          core.DashboardStore
 	Order              []string
 	CacheTTL           time.Duration
@@ -78,10 +81,10 @@ type BackendManager struct {
 	CleanupWorker          *worker.CleanupWorker          // retry queue for failed deletions
 	PendingReaper          *worker.PendingReaper          // resolves abandoned PUT intents
 	Scrubber               *worker.Scrubber               // background integrity verification
-	DrainManager           *DrainManager                  // backend drain and remove operations
+	DrainManager           *drain.Manager                 // backend drain and remove operations
 	MultipartManager       *MultipartManager              // multipart upload lifecycle
 	ObjectManager          *ObjectManager                 // CRUD, read failover, broadcast reads
-	dashboard              *DashboardAggregator           // web UI data aggregation
+	dashboard              *dashboard.Aggregator          // web UI data aggregation
 	usageFlushCfg          syncutil.AtomicConfig[config.UsageFlushConfig]
 	lifecycleCfg           syncutil.AtomicConfig[config.LifecycleConfig]
 	integrityCfg           syncutil.AtomicConfig[config.IntegrityConfig]
@@ -147,6 +150,16 @@ func NewBackendManager(cfg *BackendManagerConfig) *BackendManager {
 	replicatorDeps := &replicatorStore{ObjectStore: cfg.Stores.Object, ReplicationStore: cfg.Stores.Replication, QuotaStore: cfg.Stores.Quota}
 	overReplicationDeps := &overReplicationStore{ReplicationStore: cfg.Stores.Replication, QuotaStore: cfg.Stores.Quota}
 
+	drainManager := drain.New(
+		core,
+		cfg.Stores.Object,
+		cfg.Stores.Quota,
+		cfg.Stores.BackendLifecycle,
+		multipartManager.abortMultipartUploadsOnBackend,
+		cleanupWorker.ProcessCleanupQueue,
+	)
+	core.drainMgr = drainManager
+
 	m = &BackendManager{
 		backendCore:            core,
 		Rebalancer:             worker.NewRebalancer(core, rebalancerDeps),
@@ -157,14 +170,11 @@ func NewBackendManager(cfg *BackendManagerConfig) *BackendManager {
 		Scrubber:               worker.NewScrubber(core, cfg.Stores.Integrity, cfg.Encryptor),
 		MultipartManager:       multipartManager,
 		ObjectManager:          objectManager,
-		DrainManager: NewDrainManager(core,
-			multipartManager.abortMultipartUploadsOnBackend,
-			cleanupWorker.ProcessCleanupQueue,
-		),
-		dashboard: NewDashboardAggregator(cfg.Dashboard, usage, cfg.Order),
+		DrainManager:           drainManager,
+		dashboard:              dashboard.New(cfg.Dashboard, usage, cfg.Order),
 	}
 
-	core.metrics = NewMetricsCollector(cfg.Metrics, usage, backendNames, func() int {
+	core.metricsCollector = metrics.New(cfg.Metrics, usage, backendNames, func() int {
 		if rc := m.Replicator.Config(); rc != nil {
 			return rc.Factor
 		}
@@ -182,10 +192,7 @@ func (m *BackendManager) ClearCache() {
 // ClearDrainState removes all entries from the draining map. Used by tests
 // to reset state between runs.
 func (m *BackendManager) ClearDrainState() {
-	m.draining.Range(func(key, _ any) bool {
-		m.draining.Delete(key)
-		return true
-	})
+	m.DrainManager.ClearState()
 }
 
 // AdmissionSem returns the shared admission semaphore, or nil if none is
@@ -216,16 +223,7 @@ func (m *BackendManager) UpdateUsageLimits(limits map[string]core.UsageLimits) {
 // Backends that have completed draining are skipped because their DB records
 // (including backend_usage) have been removed.
 func (m *BackendManager) FlushUsage(ctx context.Context) error {
-	skip := make(map[string]bool)
-	m.draining.Range(func(key, val any) bool {
-		state := val.(*drainState)
-		select {
-		case <-state.done:
-			skip[key.(string)] = true
-		default:
-		}
-		return true
-	})
+	skip := m.DrainManager.CompletedBackends()
 	return m.usage.FlushUsage(ctx, m.usageFlusher, skip)
 }
 

@@ -40,6 +40,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
@@ -70,7 +71,7 @@ const (
 // dashboard depends on for operations not exposed via a named sub-manager.
 // *proxy.BackendManager satisfies it.
 type BackendOps interface {
-	GetDashboardData(ctx context.Context) (*proxy.DashboardData, error)
+	GetDashboardData(ctx context.Context) (*dashboard.Data, error)
 	GetDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.DirectoryListResult, error)
 	SyncBackend(ctx context.Context, backendName, virtualBucket string, virtualBuckets []string) (int, int, error)
 }
@@ -549,7 +550,7 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 type dashboardPage struct {
 	Version          string
 	DBHealthy        bool
-	Data             *proxy.DashboardData
+	Data             *dashboard.Data
 	Buckets          []string
 	Config           configSummary
 	TotalBytesUsed   int64

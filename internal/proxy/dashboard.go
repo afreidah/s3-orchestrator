@@ -1,10 +1,12 @@
 // -------------------------------------------------------------------------------
-// Dashboard Data - Aggregated Stats for the Web UI
+// Dashboard - BackendManager Wrappers
 //
 // Author: Alex Freidah
 //
-// DashboardData type and thin wrappers on BackendManager that delegate to the
-// DashboardAggregator.
+// Thin BackendManager methods that delegate to the dashboard.Aggregator
+// and enrich the result with cluster-state data only the manager has
+// (drain progress, breaker health). The Aggregator itself lives in the
+// dashboard subpackage.
 // -------------------------------------------------------------------------------
 
 package proxy
@@ -13,32 +15,21 @@ import (
 	"context"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
-// DashboardData holds a snapshot of all operational data for the dashboard.
-type DashboardData struct {
-	BackendOrder          []string
-	QuotaStats            map[string]core.QuotaStat
-	ObjectCounts          map[string]int64
-	ActiveMultipartCounts map[string]int64
-	UsageStats            map[string]core.UsageStat
-	UsageLimits           map[string]core.UsageLimits
-	UsagePeriod           string
-	TopLevelEntries       *core.DirectoryListResult
-	DrainingBackends      map[string]DrainProgress
-	UnhealthyBackends     map[string]bool
-}
-
-// GetDashboardData delegates to the DashboardAggregator and enriches the
-// result with drain status from the BackendManager's in-memory state.
-func (m *BackendManager) GetDashboardData(ctx context.Context) (*DashboardData, error) {
-	data, err := m.dashboard.GetDashboardData(ctx)
+// GetDashboardData delegates to the dashboard.Aggregator and enriches the
+// result with drain status and circuit-breaker health from the
+// BackendManager's in-memory state.
+func (m *BackendManager) GetDashboardData(ctx context.Context) (*dashboard.Data, error) {
+	data, err := m.dashboard.GetData(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	data.DrainingBackends = make(map[string]DrainProgress)
+	data.DrainingBackends = make(map[string]drain.Progress)
 	for _, name := range m.order {
 		if !m.IsDraining(name) {
 			continue
@@ -59,7 +50,7 @@ func (m *BackendManager) GetDashboardData(ctx context.Context) (*DashboardData, 
 	return data, nil
 }
 
-// GetDirectoryChildren delegates to the DashboardAggregator.
+// GetDirectoryChildren delegates to the dashboard.Aggregator.
 func (m *BackendManager) GetDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.DirectoryListResult, error) {
 	return m.dashboard.GetDirectoryChildren(ctx, prefix, startAfter, maxKeys)
 }
