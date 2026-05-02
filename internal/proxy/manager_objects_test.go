@@ -2381,8 +2381,8 @@ func TestCopyObject_ExcludesDrainingBackend(t *testing.T) {
 	})
 
 	// Mark both backends as draining so no eligible destination remains
-	mgr.draining.Store("src-be", &drainState{done: make(chan struct{})})
-	mgr.draining.Store("dst-be", &drainState{done: make(chan struct{})})
+	mgr.DrainManager.SeedActiveForTest("src-be")
+	mgr.DrainManager.SeedActiveForTest("dst-be")
 
 	// CopyObject should fail — all backends are draining
 	_, err := mgr.ObjectManager.CopyObject(context.Background(), "src", "dst")

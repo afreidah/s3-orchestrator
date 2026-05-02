@@ -19,10 +19,10 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
-	"github.com/afreidah/s3-orchestrator/internal/counter"
-	"github.com/afreidah/s3-orchestrator/internal/store/core"
-
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // -------------------------------------------------------------------------
@@ -413,7 +413,7 @@ func TestMetricsCollector_OrphanBytesSubtractedFromAvailable(t *testing.T) {
 		},
 	}
 
-	mc := NewMetricsCollector(store, counter.NewUsageTracker(nil, nil), []string{"b1"}, func() int { return 0 })
+	mc := metrics.New(store, counter.NewUsageTracker(nil, nil), []string{"b1"}, func() int { return 0 })
 	if err := mc.UpdateQuotaMetrics(context.Background()); err != nil {
 		t.Fatalf("UpdateQuotaMetrics: %v", err)
 	}

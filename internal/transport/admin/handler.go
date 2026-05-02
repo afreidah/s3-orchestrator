@@ -35,6 +35,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
@@ -43,7 +45,7 @@ import (
 // handler depends on for operations not encapsulated by a named sub-manager
 // (replicator, drain, scrubber, etc.). *proxy.BackendManager satisfies it.
 type BackendOps interface {
-	GetDashboardData(ctx context.Context) (*proxy.DashboardData, error)
+	GetDashboardData(ctx context.Context) (*dashboard.Data, error)
 	FlushUsage(ctx context.Context) error
 	UpdateQuotaMetrics(ctx context.Context) error
 	RecordUsage(backendName string, requests, ingressBytes, egressBytes int64)
@@ -59,7 +61,7 @@ type Handler struct {
 	backendOps BackendOps
 	replicator *worker.Replicator
 	overRep    *worker.OverReplicationCleaner
-	drain      *proxy.DrainManager
+	drain      *drain.Manager
 	scrubber   *worker.Scrubber
 	lifecycle  core.BackendLifecycleStore
 	reconciler *worker.Reconciler
@@ -80,7 +82,7 @@ type Deps struct {
 	BackendOps BackendOps
 	Replicator *worker.Replicator
 	OverRep    *worker.OverReplicationCleaner
-	Drain      *proxy.DrainManager
+	Drain      *drain.Manager
 	Scrubber   *worker.Scrubber
 	Lifecycle  core.BackendLifecycleStore
 	DBCB       *breaker.CircuitBreaker

@@ -19,6 +19,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -331,6 +332,8 @@ func TestEligibleForWrite_CombinesAllFilters(t *testing.T) {
 	)
 	usage.SetBaseline("over-limit", core.UsageStat{APIRequests: 1})
 
+	dm := drain.New(nil, nil, nil, nil, nil, nil)
+	dm.SeedActiveForTest("draining")
 	core := &backendCore{
 		backends: map[string]backend.ObjectBackend{
 			"healthy":    healthy,
@@ -338,10 +341,10 @@ func TestEligibleForWrite_CombinesAllFilters(t *testing.T) {
 			"unhealthy":  unhealthy,
 			"over-limit": overLimit,
 		},
-		order: []string{"healthy", "draining", "unhealthy", "over-limit"},
-		usage: usage,
+		order:    []string{"healthy", "draining", "unhealthy", "over-limit"},
+		usage:    usage,
+		drainMgr: dm,
 	}
-	core.draining.Store("draining", &drainState{done: make(chan struct{})})
 
 	eligible := core.eligibleForWrite(1, 0, 0)
 	if len(eligible) != 1 || eligible[0] != "healthy" {

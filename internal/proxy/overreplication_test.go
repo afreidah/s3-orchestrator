@@ -64,7 +64,7 @@ func TestScoreCopy_DrainingBackend(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
-	mgr.draining.Store("b1", &drainState{done: make(chan struct{})})
+	mgr.DrainManager.SeedActiveForTest("b1")
 
 	loc := core.ObjectLocation{BackendName: "b1", SizeBytes: 100}
 	score := mgr.OverReplicationCleaner.ScoreCopy(&loc, nil)
