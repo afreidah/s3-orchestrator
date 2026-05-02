@@ -338,7 +338,7 @@ func TestDBCursorStream_DrainsAcrossPages(t *testing.T) {
 		},
 	}
 	it := newDBCursorStream(lister, "be1", "vb/", nil)
-	got := drain(t, it)
+	got := drainStream(t, it)
 	want := []string{"vb/a", "vb/b", "vb/c", "vb/d"}
 	if !equalStrings(got, want) {
 		t.Errorf("got %v, want %v", got, want)
@@ -358,7 +358,7 @@ func TestDBCursorStream_FiltersSiblingBucket(t *testing.T) {
 		},
 	}
 	it := newDBCursorStream(lister, "be1", "vb/", []string{"other/"})
-	got := drain(t, it)
+	got := drainStream(t, it)
 	if !equalStrings(got, []string{"vb/a", "vb/b"}) {
 		t.Errorf("sibling-bucket row not filtered: %v", got)
 	}
@@ -403,7 +403,7 @@ func TestDBCursorStream_StopIsNoop(t *testing.T) {
 	it := newDBCursorStream(lister, "be1", "vb/", nil)
 	it.stop()
 	it.stop() // idempotent
-	got := drain(t, it)
+	got := drainStream(t, it)
 	if !equalStrings(got, []string{"vb/a"}) {
 		t.Errorf("stop should not affect iteration, got %v", got)
 	}
@@ -426,7 +426,7 @@ func TestDBCursorStream_ContextCancellation(t *testing.T) {
 
 // drain returns the keys produced by an iterator until exhausted, failing
 // the test on any non-nil error.
-func drain(t *testing.T, it keySource) []string {
+func drainStream(t *testing.T, it keySource) []string {
 	t.Helper()
 	var out []string
 	for {
@@ -525,7 +525,7 @@ func TestS3KeyStream_StreamsAcrossPagesAndNamespaces(t *testing.T) {
 		&fakeLister2{pages: pages}, "vb/", []string{"other/"}, &apiPages)
 	defer s3.stop()
 
-	got := drain(t, s3)
+	got := drainStream(t, s3)
 	want := []string{"vb/a", "vb/legacy", "vb/z"}
 	if !equalStrings(got, want) {
 		t.Errorf("got %v, want %v", got, want)

@@ -16,13 +16,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"sync"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
@@ -30,6 +30,13 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
+
+// drainChecker reports whether a named backend is currently being drained.
+// backendCore consumes this so drain ownership can live in the drain
+// subpackage while backendCore filters write eligibility.
+type drainChecker interface {
+	IsDraining(name string) bool
+}
 
 // backendCore holds the shared infrastructure that multiple storage
 // components need: the backend map, per-role store views, usage tracker,
@@ -50,8 +57,8 @@ type backendCore struct {
 	usage            *counter.UsageTracker            // per-backend usage counters and limits
 	routingStrategy  config.RoutingStrategy           // RoutingPack or RoutingSpread
 	maxObjectSizes   map[string]int64                 // per-backend max object size (0 = unlimited)
-	draining         sync.Map                         // map[string]*drainState — backends being drained
-	metrics          *MetricsCollector                // Prometheus metric recording and gauge refresh
+	drainMgr         drainChecker                     // owned by drain.Manager; wired post-construction
+	metricsCollector *metrics.Collector               // Prometheus metric recording and gauge refresh
 	admissionSem     chan struct{}                    // shared concurrency semaphore (nil = unlimited)
 }
 
@@ -129,9 +136,13 @@ func (c *backendCore) getBackend(name string) (backend.ObjectBackend, error) {
 // -------------------------------------------------------------------------
 
 // IsDraining returns true if the named backend is currently being drained.
+// Returns false when no drain manager is wired (e.g. early in test
+// fixtures that build a backendCore without a manager).
 func (c *backendCore) IsDraining(name string) bool {
-	_, ok := c.draining.Load(name)
-	return ok
+	if c.drainMgr == nil {
+		return false
+	}
+	return c.drainMgr.IsDraining(name)
 }
 
 // excludeDraining filters out backends that are currently draining.
@@ -460,12 +471,12 @@ func (c *backendCore) deleteOrEnqueue(ctx context.Context, be backend.ObjectBack
 
 // recordOperation delegates to the MetricsCollector.
 func (c *backendCore) recordOperation(operation, backend string, start time.Time, err error) {
-	c.metrics.RecordOperation(operation, backend, start, err)
+	c.metricsCollector.RecordOperation(operation, backend, start, err)
 }
 
 // UpdateQuotaMetrics refreshes Prometheus gauges from the metadata store.
 func (c *backendCore) UpdateQuotaMetrics(ctx context.Context) error {
-	return c.metrics.UpdateQuotaMetrics(ctx)
+	return c.metricsCollector.UpdateQuotaMetrics(ctx)
 }
 
 // enqueueCleanup adds a failed cleanup operation to the retry queue and

@@ -22,6 +22,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
 	"github.com/afreidah/s3-orchestrator/internal/testutil/testx"
 )
 
@@ -477,7 +478,7 @@ func TestGetDrainProgress_ReportsError(t *testing.T) {
 
 	// Wait for drain to complete — DeleteBackendData fails so state.err is set,
 	// but the state remains in the map (no draining.Delete on this error path).
-	var progress *DrainProgress
+	var progress *drain.Progress
 	testx.Eventually(t, 3*time.Second, func() bool {
 		p, _ := mgr.DrainManager.GetDrainProgress(context.Background(), "b1")
 		if !p.Active {

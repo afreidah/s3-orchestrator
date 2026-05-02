@@ -44,6 +44,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
@@ -427,18 +428,18 @@ func ProvideAdvisoryLocker(i do.Injector) (core.AdvisoryLocker, error) {
 	return store.NewAdvisoryLocker(cs), nil
 }
 
-// metricsDepsAdapter composes the narrow roles MetricsCollector queries.
+// metricsDepsAdapter composes the narrow roles metrics.Collector queries.
 // Struct embedding promotes each method to the top-level type, so the
-// adapter structurally satisfies proxy.MetricsDeps without inventing a
+// adapter structurally satisfies metrics.Deps without inventing a
 // composed interface.
 type metricsDepsAdapter struct {
 	core.DashboardStore   // GetQuotaStats, GetObjectCounts, GetActiveMultipartCounts, GetUsageForPeriod
 	core.ReplicationStore // GetUnderReplicatedObjects (among others)
 }
 
-// ProvideMetricsDeps builds the adapter MetricsCollector uses to refresh
+// ProvideMetricsDeps builds the adapter metrics.Collector uses to refresh
 // Prometheus gauges.
-func ProvideMetricsDeps(i do.Injector) (proxy.MetricsDeps, error) {
+func ProvideMetricsDeps(i do.Injector) (metrics.Deps, error) {
 	dash, err := do.Invoke[core.DashboardStore](i)
 	if err != nil {
 		return nil, err
@@ -650,7 +651,7 @@ func ProvideBackendManager(i do.Injector) (*proxy.BackendManager, error) {
 	if err != nil {
 		return nil, err
 	}
-	metrics, err := do.Invoke[proxy.MetricsDeps](i)
+	metricsDeps, err := do.Invoke[metrics.Deps](i)
 	if err != nil {
 		return nil, err
 	}
@@ -689,7 +690,7 @@ func ProvideBackendManager(i do.Injector) (*proxy.BackendManager, error) {
 	return proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:           br.Backends,
 		Stores:             stores,
-		Metrics:            metrics,
+		Metrics:            metricsDeps,
 		Dashboard:          dash,
 		Order:              br.Order,
 		CacheTTL:           cfg.CircuitBreaker.CacheTTL,
