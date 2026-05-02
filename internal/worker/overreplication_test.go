@@ -8,7 +8,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
-	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	promtest "github.com/prometheus/client_golang/prometheus/testutil"
 	"go.uber.org/mock/gomock"
 )
@@ -52,7 +52,7 @@ func TestScoreCopy_DrainingBackend(t *testing.T) {
 	ops.EXPECT().IsDraining("b1").Return(true)
 
 	c := NewOverReplicationCleaner(ops, ms)
-	score := c.ScoreCopy(&store.ObjectLocation{BackendName: "b1"}, nil)
+	score := c.ScoreCopy(&core.ObjectLocation{BackendName: "b1"}, nil)
 	if score != 0 {
 		t.Errorf("draining backend should score 0, got %f", score)
 	}
@@ -70,10 +70,10 @@ func TestScoreCopy_HealthyBackend(t *testing.T) {
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": be})
 
 	c := NewOverReplicationCleaner(ops, ms)
-	stats := map[string]store.QuotaStat{
+	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 200, BytesLimit: 1000}, // 20% utilized
 	}
-	score := c.ScoreCopy(&store.ObjectLocation{BackendName: "b1"}, stats)
+	score := c.ScoreCopy(&core.ObjectLocation{BackendName: "b1"}, stats)
 	// Score should be 2 + (1 - 0.2) = 2.8
 	if score < 2.7 || score > 2.9 {
 		t.Errorf("healthy backend at 20%% should score ~2.8, got %f", score)
@@ -86,12 +86,11 @@ func TestScoreCopy_UnknownBackend(t *testing.T) {
 	ops := NewMockOps(ctrl)
 	ms := &mockMetadataStore{}
 
-
 	ops.EXPECT().IsDraining("gone").Return(false)
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{})
 
 	c := NewOverReplicationCleaner(ops, ms)
-	score := c.ScoreCopy(&store.ObjectLocation{BackendName: "gone"}, nil)
+	score := c.ScoreCopy(&core.ObjectLocation{BackendName: "gone"}, nil)
 	if score != 0 {
 		t.Errorf("unknown backend should score 0, got %f", score)
 	}
@@ -106,7 +105,6 @@ func TestCleanObject_RemovesLowestScored(t *testing.T) {
 	be1 := backendtest.NewMockObjectBackend(ctrl)
 	be2 := backendtest.NewMockObjectBackend(ctrl)
 
-
 	ops.EXPECT().IsDraining(gomock.Any()).Return(false).AnyTimes()
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": be1, "b2": be2}).AnyTimes()
 	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
@@ -115,11 +113,11 @@ func TestCleanObject_RemovesLowestScored(t *testing.T) {
 	ops.EXPECT().DeleteOrEnqueue(gomock.Any(), be1, "b1", "key1", "over_replication", int64(100))
 
 	c := NewOverReplicationCleaner(ops, ms)
-	copies := []store.ObjectLocation{
+	copies := []core.ObjectLocation{
 		{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
 		{ObjectKey: "key1", BackendName: "b2", SizeBytes: 100},
 	}
-	stats := map[string]store.QuotaStat{
+	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 900, BytesLimit: 1000}, // 90% → lower score
 		"b2": {BytesUsed: 100, BytesLimit: 1000}, // 10% → higher score
 	}
@@ -152,7 +150,6 @@ func TestClean_NothingOverReplicated(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
 	ms := &mockMetadataStore{}
-
 
 	c := NewOverReplicationCleaner(ops, ms)
 	removed, err := c.Clean(context.Background(), config.ReplicationConfig{Factor: 2, BatchSize: 10, Concurrency: 1})

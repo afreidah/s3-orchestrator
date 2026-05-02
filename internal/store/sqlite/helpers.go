@@ -24,4 +24,3 @@ func now() string {
 func parseTime(s string) (time.Time, error) {
 	return time.Parse(time.RFC3339Nano, s)
 }
-

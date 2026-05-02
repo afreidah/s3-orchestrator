@@ -15,6 +15,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // TestCBForwarders_GetObjectBackendsForKeys verifies the new ObjectStore
@@ -40,7 +42,7 @@ func TestCBForwarders_GetObjectBackendsForKeys(t *testing.T) {
 	tripMock := &mockStore{getAllLocationsErr: dbErr}
 	tripCB := newTestCB(tripMock, 1, time.Minute)
 	_, _ = tripCB.GetAllObjectLocations(context.Background(), "k")
-	if _, err := tripCB.GetObjectBackendsForKeys(context.Background(), []string{"k1"}); !errors.Is(err, ErrDBUnavailable) {
+	if _, err := tripCB.GetObjectBackendsForKeys(context.Background(), []string{"k1"}); !errors.Is(err, core.ErrDBUnavailable) {
 		t.Errorf("expected ErrDBUnavailable when breaker open, got %v", err)
 	}
 }
@@ -52,14 +54,14 @@ func TestCBForwarders_PendingStore(t *testing.T) {
 	t.Parallel()
 	mock := &mockStore{
 		pendingDepthResp:        7,
-		getStalePendingResp:     []PendingObject{{IntentID: "x"}},
-		promotePendingResult:    PendingPromoteCommitted,
-		promotePendingDisplaced: []DeletedCopy{{BackendName: "old", SizeBytes: 5}},
+		getStalePendingResp:     []core.PendingObject{{IntentID: "x"}},
+		promotePendingResult:    core.PendingPromoteCommitted,
+		promotePendingDisplaced: []core.DeletedCopy{{BackendName: "old", SizeBytes: 5}},
 	}
 	cb := newTestCB(mock, 3, time.Minute)
 	ctx := context.Background()
 
-	if err := cb.InsertPending(ctx, &PendingObject{IntentID: "x"}); err != nil {
+	if err := cb.InsertPending(ctx, &core.PendingObject{IntentID: "x"}); err != nil {
 		t.Errorf("InsertPending: %v", err)
 	}
 	if err := cb.DeletePending(ctx, "x"); err != nil {
@@ -79,11 +81,11 @@ func TestCBForwarders_PendingStore(t *testing.T) {
 	if depth != 7 {
 		t.Errorf("PendingDepth = %d, want 7", depth)
 	}
-	result, displaced, err := cb.PromotePending(ctx, &PendingObject{IntentID: "x"})
+	result, displaced, err := cb.PromotePending(ctx, &core.PendingObject{IntentID: "x"})
 	if err != nil {
 		t.Fatalf("PromotePending: %v", err)
 	}
-	if result != PendingPromoteCommitted {
+	if result != core.PendingPromoteCommitted {
 		t.Errorf("PromotePending result = %v, want Committed", result)
 	}
 	if len(displaced) != 1 || displaced[0].BackendName != "old" {
@@ -108,22 +110,22 @@ func TestCBForwarders_PendingStore_OpenCircuitReturnsSentinel(t *testing.T) {
 
 	_, _ = cb.GetAllObjectLocations(ctx, "k")
 
-	if err := cb.InsertPending(ctx, &PendingObject{IntentID: "x"}); !errors.Is(err, ErrDBUnavailable) {
+	if err := cb.InsertPending(ctx, &core.PendingObject{IntentID: "x"}); !errors.Is(err, core.ErrDBUnavailable) {
 		t.Errorf("InsertPending: got %v, want ErrDBUnavailable", err)
 	}
-	if err := cb.DeletePending(ctx, "x"); !errors.Is(err, ErrDBUnavailable) {
+	if err := cb.DeletePending(ctx, "x"); !errors.Is(err, core.ErrDBUnavailable) {
 		t.Errorf("DeletePending: got %v, want ErrDBUnavailable", err)
 	}
-	if _, err := cb.GetStalePending(ctx, time.Now(), 10); !errors.Is(err, ErrDBUnavailable) {
+	if _, err := cb.GetStalePending(ctx, time.Now(), 10); !errors.Is(err, core.ErrDBUnavailable) {
 		t.Errorf("GetStalePending: got %v, want ErrDBUnavailable", err)
 	}
-	if _, err := cb.PendingDepth(ctx); !errors.Is(err, ErrDBUnavailable) {
+	if _, err := cb.PendingDepth(ctx); !errors.Is(err, core.ErrDBUnavailable) {
 		t.Errorf("PendingDepth: got %v, want ErrDBUnavailable", err)
 	}
-	if _, _, err := cb.PromotePending(ctx, &PendingObject{IntentID: "x"}); !errors.Is(err, ErrDBUnavailable) {
+	if _, _, err := cb.PromotePending(ctx, &core.PendingObject{IntentID: "x"}); !errors.Is(err, core.ErrDBUnavailable) {
 		t.Errorf("PromotePending: got %v, want ErrDBUnavailable", err)
 	}
-	if err := cb.DeletePendingByBackend(ctx, "b1"); !errors.Is(err, ErrDBUnavailable) {
+	if err := cb.DeletePendingByBackend(ctx, "b1"); !errors.Is(err, core.ErrDBUnavailable) {
 		t.Errorf("DeletePendingByBackend: got %v, want ErrDBUnavailable", err)
 	}
 }

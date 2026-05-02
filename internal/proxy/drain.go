@@ -18,7 +18,7 @@ import (
 	"sync/atomic"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
-	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
@@ -26,10 +26,10 @@ import (
 
 // drainState tracks a single in-progress drain operation.
 type drainState struct {
-	cancel  context.CancelFunc
-	done    chan struct{}
-	errVal  atomic.Pointer[error] // set on completion; accessed from multiple goroutines
-	moved   atomic.Int64          // objects successfully moved
+	cancel context.CancelFunc
+	done   chan struct{}
+	errVal atomic.Pointer[error] // set on completion; accessed from multiple goroutines
+	moved  atomic.Int64          // objects successfully moved
 }
 
 // setErr stores the completion error atomically.
@@ -262,7 +262,7 @@ func (d *DrainManager) finalizeDrain(ctx context.Context, name string, state *dr
 // drainOneObject moves a single object from the draining backend to another.
 // If the object already has a replica on another backend, the source copy is
 // simply removed (no data transfer needed). Returns true on success.
-func (d *DrainManager) DrainOneObject(ctx context.Context, srcBackend backend.ObjectBackend, srcName string, obj *store.ObjectLocation) bool {
+func (d *DrainManager) DrainOneObject(ctx context.Context, srcBackend backend.ObjectBackend, srcName string, obj *core.ObjectLocation) bool {
 	// Check if the object already has a copy on another backend.
 	// If so, just delete the source — no need to copy data.
 	locations, err := d.objects.GetAllObjectLocations(ctx, obj.ObjectKey)

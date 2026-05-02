@@ -11,16 +11,17 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // cbCleanupStore wraps a CleanupStore with circuit-breaker protection.
 type cbCleanupStore struct {
-	inner CleanupStore
+	inner core.CleanupStore
 	cb    *breaker.CircuitBreaker
 }
 
 // NewCBCleanupStore returns a CB-protected view typed as CleanupStore.
-func NewCBCleanupStore(inner CleanupStore, cb *breaker.CircuitBreaker) CleanupStore {
+func NewCBCleanupStore(inner core.CleanupStore, cb *breaker.CircuitBreaker) core.CleanupStore {
 	return &cbCleanupStore{inner: inner, cb: cb}
 }
 
@@ -32,8 +33,8 @@ func (c *cbCleanupStore) EnqueueCleanup(ctx context.Context, backendName, object
 }
 
 // GetPendingCleanups forwards to the inner store under the breaker.
-func (c *cbCleanupStore) GetPendingCleanups(ctx context.Context, limit int) ([]CleanupItem, error) {
-	return breaker.CBCall(c.cb, func() ([]CleanupItem, error) { return c.inner.GetPendingCleanups(ctx, limit) })
+func (c *cbCleanupStore) GetPendingCleanups(ctx context.Context, limit int) ([]core.CleanupItem, error) {
+	return breaker.CBCall(c.cb, func() ([]core.CleanupItem, error) { return c.inner.GetPendingCleanups(ctx, limit) })
 }
 
 // CompleteCleanupItem forwards to the inner store under the breaker.

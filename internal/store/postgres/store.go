@@ -215,11 +215,11 @@ type fatObjectRow interface {
 
 // toSlimObjectLocations converts a slice of slim sqlc rows. Encryption and
 // content-hash fields stay zero-valued.
-func toSlimObjectLocations[T slimObjectRow](rows []T) []ObjectLocation {
-	out := make([]ObjectLocation, len(rows))
+func toSlimObjectLocations[T slimObjectRow](rows []T) []core.ObjectLocation {
+	out := make([]core.ObjectLocation, len(rows))
 	for i := range rows {
 		r := rows[i]
-		out[i] = ObjectLocation{
+		out[i] = core.ObjectLocation{
 			ObjectKey:   r.GetObjectKey(),
 			BackendName: r.GetBackendName(),
 			SizeBytes:   r.GetSizeBytes(),
@@ -231,11 +231,11 @@ func toSlimObjectLocations[T slimObjectRow](rows []T) []ObjectLocation {
 
 // toFatObjectLocations converts a slice of encryption-aware sqlc rows.
 // Pointer-typed nullable columns are safely dereferenced.
-func toFatObjectLocations[T fatObjectRow](rows []T) []ObjectLocation {
-	out := make([]ObjectLocation, len(rows))
+func toFatObjectLocations[T fatObjectRow](rows []T) []core.ObjectLocation {
+	out := make([]core.ObjectLocation, len(rows))
 	for i := range rows {
 		r := rows[i]
-		loc := ObjectLocation{
+		loc := core.ObjectLocation{
 			ObjectKey:     r.GetObjectKey(),
 			BackendName:   r.GetBackendName(),
 			SizeBytes:     r.GetSizeBytes(),

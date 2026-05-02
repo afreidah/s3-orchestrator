@@ -16,7 +16,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // -------------------------------------------------------------------------
@@ -43,7 +43,7 @@ type fileDetail struct {
 // ListDirectoryChildren returns immediate children (directories and files)
 // under prefix, with aggregate stats for directories and detail for files.
 // Pagination uses startAfter as the cursor for file-level detail.
-func (s *Store) ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*store.DirectoryListResult, error) {
+func (s *Store) ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.DirectoryListResult, error) {
 	if maxKeys <= 0 {
 		maxKeys = 200
 	}
@@ -63,7 +63,7 @@ func (s *Store) ListDirectoryChildren(ctx context.Context, prefix, startAfter st
 		fileKeys = fileKeys[:maxKeys]
 	}
 
-	result := &store.DirectoryListResult{
+	result := &core.DirectoryListResult{
 		Entries: buildDirectoryEntries(prefix, stats, fileLookup),
 	}
 	if hasMore && len(fileKeys) > 0 {
@@ -174,10 +174,10 @@ func queryDirectFileDetails(ctx context.Context, s *Store, prefix, escapedPrefix
 // skipping files that fell outside the current page (no fileLookup entry).
 // File rows report the logical size from fileDetail rather than the
 // replica-summed total_size returned by the stats query.
-func buildDirectoryEntries(prefix string, stats []dirStat, fileLookup map[string]fileDetail) []store.DirEntry {
-	entries := make([]store.DirEntry, 0, len(stats))
+func buildDirectoryEntries(prefix string, stats []dirStat, fileLookup map[string]fileDetail) []core.DirEntry {
+	entries := make([]core.DirEntry, 0, len(stats))
 	for _, ds := range stats {
-		entry := store.DirEntry{
+		entry := core.DirEntry{
 			Name:      prefix + ds.Name,
 			IsDir:     ds.IsDir,
 			FileCount: ds.FileCount,

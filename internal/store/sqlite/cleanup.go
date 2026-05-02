@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -35,7 +34,7 @@ func (s *Store) EnqueueCleanup(ctx context.Context, backendName, objectKey, reas
 
 // GetPendingCleanups returns cleanup items ready for retry (next_retry in the
 // past and fewer than 10 attempts).
-func (s *Store) GetPendingCleanups(ctx context.Context, limit int) ([]store.CleanupItem, error) {
+func (s *Store) GetPendingCleanups(ctx context.Context, limit int) ([]core.CleanupItem, error) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, backend_name, object_key, reason, attempts, size_bytes
@@ -50,9 +49,9 @@ func (s *Store) GetPendingCleanups(ctx context.Context, limit int) ([]store.Clea
 	}
 	defer rows.Close()
 
-	var items []store.CleanupItem
+	var items []core.CleanupItem
 	for rows.Next() {
-		var item store.CleanupItem
+		var item core.CleanupItem
 		if err := rows.Scan(&item.ID, &item.BackendName, &item.ObjectKey, &item.Reason, &item.Attempts, &item.SizeBytes); err != nil {
 			return nil, fmt.Errorf("failed to scan cleanup item: %w", err)
 		}

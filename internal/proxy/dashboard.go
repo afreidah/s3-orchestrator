@@ -13,19 +13,19 @@ import (
 	"context"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
-	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // DashboardData holds a snapshot of all operational data for the dashboard.
 type DashboardData struct {
 	BackendOrder          []string
-	QuotaStats            map[string]store.QuotaStat
+	QuotaStats            map[string]core.QuotaStat
 	ObjectCounts          map[string]int64
 	ActiveMultipartCounts map[string]int64
-	UsageStats            map[string]store.UsageStat
-	UsageLimits           map[string]store.UsageLimits
+	UsageStats            map[string]core.UsageStat
+	UsageLimits           map[string]core.UsageLimits
 	UsagePeriod           string
-	TopLevelEntries       *store.DirectoryListResult
+	TopLevelEntries       *core.DirectoryListResult
 	DrainingBackends      map[string]DrainProgress
 	UnhealthyBackends     map[string]bool
 }
@@ -60,6 +60,6 @@ func (m *BackendManager) GetDashboardData(ctx context.Context) (*DashboardData, 
 }
 
 // GetDirectoryChildren delegates to the DashboardAggregator.
-func (m *BackendManager) GetDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*store.DirectoryListResult, error) {
+func (m *BackendManager) GetDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.DirectoryListResult, error) {
 	return m.dashboard.GetDirectoryChildren(ctx, prefix, startAfter, maxKeys)
 }

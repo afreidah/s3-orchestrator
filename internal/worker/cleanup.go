@@ -16,8 +16,8 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
-	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/workerpool"
 )
 
@@ -64,7 +64,7 @@ func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) (processed, fai
 
 	var processedCount, failedCount atomic.Int32
 
-	workerpool.Run(ctx, w.concurrency, items, func(ctx context.Context, item store.CleanupItem) {
+	workerpool.Run(ctx, w.concurrency, items, func(ctx context.Context, item core.CleanupItem) {
 		if !w.deps.AcquireAdmission(ctx) {
 			telemetry.WorkerAdmissionRejectionsTotal.WithLabelValues("cleanup").Inc()
 			return

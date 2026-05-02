@@ -14,6 +14,8 @@ package postgres
 
 import (
 	"testing"
+
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // -------------------------------------------------------------------------
@@ -25,7 +27,7 @@ import (
 // in the generated insert params.
 func TestPendingInsertParams_NullableFieldsOmittedWhenZero(t *testing.T) {
 	t.Parallel()
-	p := PendingObject{
+	p := core.PendingObject{
 		IntentID:    "abc",
 		ObjectKey:   "k",
 		BackendName: "b1",
@@ -51,7 +53,7 @@ func TestPendingInsertParams_NullableFieldsOmittedWhenZero(t *testing.T) {
 // non-nil pointer types so the database stores them rather than NULL.
 func TestPendingInsertParams_NullableFieldsSetWhenPresent(t *testing.T) {
 	t.Parallel()
-	p := PendingObject{
+	p := core.PendingObject{
 		IntentID:      "abc",
 		ObjectKey:     "k",
 		BackendName:   "b1",
@@ -80,5 +82,3 @@ func TestPendingInsertParams_NullableFieldsSetWhenPresent(t *testing.T) {
 // -------------------------------------------------------------------------
 // pendingEncryptionMeta
 // -------------------------------------------------------------------------
-
-

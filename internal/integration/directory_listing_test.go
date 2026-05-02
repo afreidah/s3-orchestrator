@@ -22,7 +22,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // dirTestPrefix builds a per-test directory prefix that contains no LIKE
@@ -146,7 +146,7 @@ func TestPgListDirectoryChildren_DirRollupPhysicalBytes(t *testing.T) {
 
 // findEntryByName returns the first DirEntry whose Name matches; nil when
 // the entry is absent (callers fail the test instead of dereferencing).
-func findEntryByName(entries []store.DirEntry, name string) *store.DirEntry {
+func findEntryByName(entries []core.DirEntry, name string) *core.DirEntry {
 	for i := range entries {
 		if entries[i].Name == name {
 			return &entries[i]

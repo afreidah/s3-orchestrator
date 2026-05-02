@@ -14,17 +14,19 @@ package store
 
 import (
 	"context"
+
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // advisoryLockerPassthrough forwards AdvisoryLocker calls directly. It exists
 // so DI can hand out an AdvisoryLocker view of the concrete store without
 // exposing the full type.
 type advisoryLockerPassthrough struct {
-	inner AdvisoryLocker
+	inner core.AdvisoryLocker
 }
 
 // NewAdvisoryLocker returns a direct pass-through view typed as AdvisoryLocker.
-func NewAdvisoryLocker(inner AdvisoryLocker) AdvisoryLocker {
+func NewAdvisoryLocker(inner core.AdvisoryLocker) core.AdvisoryLocker {
 	return &advisoryLockerPassthrough{inner: inner}
 }
 

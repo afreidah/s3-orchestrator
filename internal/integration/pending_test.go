@@ -25,10 +25,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-
-	"github.com/afreidah/s3-orchestrator/internal/store"
 )
 
 // queryPendingCount returns the number of pending intents for a key.
@@ -172,7 +171,7 @@ func TestPending_ReaperDropsIntentWhenBackendHas404(t *testing.T) {
 
 	// Insert a pending row directly without ever uploading bytes. The
 	// reaper's HEAD will fail with 404 and it should drop the row.
-	intent := &store.PendingObject{
+	intent := &core.PendingObject{
 		IntentID:    "drop-" + strings.TrimPrefix(key, "pending-drop-"),
 		ObjectKey:   internalKey(key),
 		BackendName: "minio-1",
@@ -207,7 +206,7 @@ func TestPending_ReaperRespectsMinAge(t *testing.T) {
 	ctx := context.Background()
 	key := uniqueKey(t, "pending-young")
 
-	intent := &store.PendingObject{
+	intent := &core.PendingObject{
 		IntentID:    "young-" + strings.TrimPrefix(key, "pending-young-"),
 		ObjectKey:   internalKey(key),
 		BackendName: "minio-1",

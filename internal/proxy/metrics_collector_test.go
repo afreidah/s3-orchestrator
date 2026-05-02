@@ -17,7 +17,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
-	st "github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 )
@@ -53,7 +53,7 @@ func TestRecordOperation_Error(t *testing.T) {
 func TestUpdateQuotaMetrics_Success(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
-		getQuotaStatsResp: map[string]st.QuotaStat{
+		getQuotaStatsResp: map[string]core.QuotaStat{
 			"b1": {BytesUsed: 500, BytesLimit: 1000},
 			"b2": {BytesUsed: 0, BytesLimit: 0}, // unlimited
 		},
@@ -63,7 +63,7 @@ func TestUpdateQuotaMetrics_Success(t *testing.T) {
 		getActiveMultipartResp: map[string]int64{
 			"b1": 3,
 		},
-		getUsageForPeriodResp: map[string]st.UsageStat{
+		getUsageForPeriodResp: map[string]core.UsageStat{
 			"b1": {APIRequests: 100, EgressBytes: 5000, IngressBytes: 2000},
 		},
 	}
@@ -79,14 +79,14 @@ func TestUpdateQuotaMetrics_Success(t *testing.T) {
 func TestUpdateQuotaMetrics_CapacityWarning(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
-		getQuotaStatsResp: map[string]st.QuotaStat{
-			"b1": {BytesUsed: 900, BytesLimit: 1000},              // 90% — should warn
-			"b2": {BytesUsed: 500, BytesLimit: 1000},              // 50% — no warning
+		getQuotaStatsResp: map[string]core.QuotaStat{
+			"b1": {BytesUsed: 900, BytesLimit: 1000},                  // 90% — should warn
+			"b2": {BytesUsed: 500, BytesLimit: 1000},                  // 50% — no warning
 			"b3": {BytesUsed: 800, BytesLimit: 1000, OrphanBytes: 50}, // 85% with orphans — should warn
 		},
 		getObjectCountsResp:    map[string]int64{},
 		getActiveMultipartResp: map[string]int64{},
-		getUsageForPeriodResp:  map[string]st.UsageStat{},
+		getUsageForPeriodResp:  map[string]core.UsageStat{},
 	}
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1", "b2", "b3"}), nil)
 	mc := NewMetricsCollector(store, usage, []string{"b1", "b2", "b3"}, func() int { return 0 })
@@ -116,9 +116,9 @@ func TestUpdateQuotaMetrics_QuotaStatsError(t *testing.T) {
 func TestUpdateQuotaMetrics_ObjectCountsError(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
-		getQuotaStatsResp:     map[string]st.QuotaStat{"b1": {BytesUsed: 100, BytesLimit: 1000}},
+		getQuotaStatsResp:     map[string]core.QuotaStat{"b1": {BytesUsed: 100, BytesLimit: 1000}},
 		getObjectCountsErr:    errors.New("db error"),
-		getUsageForPeriodResp: map[string]st.UsageStat{},
+		getUsageForPeriodResp: map[string]core.UsageStat{},
 	}
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1"}), nil)
 	mc := NewMetricsCollector(store, usage, []string{"b1"}, func() int { return 0 })
@@ -133,10 +133,10 @@ func TestUpdateQuotaMetrics_ObjectCountsError(t *testing.T) {
 func TestUpdateQuotaMetrics_MultipartCountsError(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
-		getQuotaStatsResp:     map[string]st.QuotaStat{"b1": {BytesUsed: 100, BytesLimit: 1000}},
+		getQuotaStatsResp:     map[string]core.QuotaStat{"b1": {BytesUsed: 100, BytesLimit: 1000}},
 		getObjectCountsResp:   map[string]int64{"b1": 5},
 		getActiveMultipartErr: errors.New("db error"),
-		getUsageForPeriodResp: map[string]st.UsageStat{},
+		getUsageForPeriodResp: map[string]core.UsageStat{},
 	}
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1"}), nil)
 	mc := NewMetricsCollector(store, usage, []string{"b1"}, func() int { return 0 })
@@ -150,7 +150,7 @@ func TestUpdateQuotaMetrics_MultipartCountsError(t *testing.T) {
 func TestUpdateQuotaMetrics_UsageForPeriodError(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
-		getQuotaStatsResp:      map[string]st.QuotaStat{"b1": {BytesUsed: 100, BytesLimit: 1000}},
+		getQuotaStatsResp:      map[string]core.QuotaStat{"b1": {BytesUsed: 100, BytesLimit: 1000}},
 		getObjectCountsResp:    map[string]int64{"b1": 5},
 		getActiveMultipartResp: map[string]int64{},
 		getUsageForPeriodErr:   errors.New("db error"),
@@ -171,11 +171,11 @@ func TestUpdateQuotaMetrics_UsageForPeriodError(t *testing.T) {
 func TestUpdateQuotaMetrics_ReplicationPending(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
-		getQuotaStatsResp:      map[string]st.QuotaStat{"b1": {BytesUsed: 100, BytesLimit: 1000}},
+		getQuotaStatsResp:      map[string]core.QuotaStat{"b1": {BytesUsed: 100, BytesLimit: 1000}},
 		getObjectCountsResp:    map[string]int64{"b1": 5},
 		getActiveMultipartResp: map[string]int64{},
-		getUsageForPeriodResp:  map[string]st.UsageStat{},
-		getUnderReplicatedResp: []st.ObjectLocation{
+		getUsageForPeriodResp:  map[string]core.UsageStat{},
+		getUnderReplicatedResp: []core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
 		},
 	}
@@ -191,10 +191,10 @@ func TestUpdateQuotaMetrics_ReplicationPending(t *testing.T) {
 func TestUpdateQuotaMetrics_ReplicationPendingSkippedWhenDisabled(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
-		getQuotaStatsResp:      map[string]st.QuotaStat{"b1": {BytesUsed: 100, BytesLimit: 1000}},
+		getQuotaStatsResp:      map[string]core.QuotaStat{"b1": {BytesUsed: 100, BytesLimit: 1000}},
 		getObjectCountsResp:    map[string]int64{"b1": 5},
 		getActiveMultipartResp: map[string]int64{},
-		getUsageForPeriodResp:  map[string]st.UsageStat{},
+		getUsageForPeriodResp:  map[string]core.UsageStat{},
 	}
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1"}), nil)
 	mc := NewMetricsCollector(store, usage, []string{"b1"}, func() int { return 0 })
@@ -208,10 +208,10 @@ func TestUpdateQuotaMetrics_ReplicationPendingSkippedWhenDisabled(t *testing.T) 
 func TestUpdateQuotaMetrics_ReplicationPendingQueryError(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
-		getQuotaStatsResp:      map[string]st.QuotaStat{"b1": {BytesUsed: 100, BytesLimit: 1000}},
+		getQuotaStatsResp:      map[string]core.QuotaStat{"b1": {BytesUsed: 100, BytesLimit: 1000}},
 		getObjectCountsResp:    map[string]int64{"b1": 5},
 		getActiveMultipartResp: map[string]int64{},
-		getUsageForPeriodResp:  map[string]st.UsageStat{},
+		getUsageForPeriodResp:  map[string]core.UsageStat{},
 		getUnderReplicatedErr:  errors.New("db error"),
 	}
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1"}), nil)
@@ -227,19 +227,19 @@ func TestUpdateQuotaMetrics_ReplicationPendingQueryError(t *testing.T) {
 func TestUpdateQuotaMetrics_ReplicationFactorFromManager(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
-		getQuotaStatsResp:      map[string]st.QuotaStat{"b1": {BytesUsed: 100, BytesLimit: 1000}},
+		getQuotaStatsResp:      map[string]core.QuotaStat{"b1": {BytesUsed: 100, BytesLimit: 1000}},
 		getObjectCountsResp:    map[string]int64{"b1": 5},
 		getActiveMultipartResp: map[string]int64{},
-		getUsageForPeriodResp:  map[string]st.UsageStat{},
-		getUnderReplicatedResp: []st.ObjectLocation{
+		getUsageForPeriodResp:  map[string]core.UsageStat{},
+		getUnderReplicatedResp: []core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
 		},
 	}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": newMockBackend()},
-		Stores:           StoresFromMock(store),
-		Dashboard:           store,
-		Metrics:           store,
+		Stores:          StoresFromMock(store),
+		Dashboard:       store,
+		Metrics:         store,
 		Order:           []string{"b1"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,

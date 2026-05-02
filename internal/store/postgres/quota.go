@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	db "github.com/afreidah/s3-orchestrator/internal/store/postgres/sqlc"
 )
 
@@ -52,7 +53,7 @@ func (s *Store) GetBackendWithSpace(ctx context.Context, size int64, backendOrde
 		}
 	}
 
-	return "", ErrNoSpaceAvailable
+	return "", core.ErrNoSpaceAvailable
 }
 
 // GetLeastUtilizedBackend finds the backend with the lowest utilization ratio
@@ -63,7 +64,7 @@ func (s *Store) GetLeastUtilizedBackend(ctx context.Context, size int64, eligibl
 		MinSize:      size,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", ErrNoSpaceAvailable
+		return "", core.ErrNoSpaceAvailable
 	}
 	if err != nil {
 		return "", fmt.Errorf("failed to find least utilized backend: %w", err)
@@ -72,15 +73,15 @@ func (s *Store) GetLeastUtilizedBackend(ctx context.Context, size int64, eligibl
 }
 
 // GetQuotaStats returns quota statistics for all backends.
-func (s *Store) GetQuotaStats(ctx context.Context) (map[string]QuotaStat, error) {
+func (s *Store) GetQuotaStats(ctx context.Context) (map[string]core.QuotaStat, error) {
 	rows, err := s.queries.GetAllQuotaStats(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query quota stats: %w", err)
 	}
 
-	stats := make(map[string]QuotaStat)
+	stats := make(map[string]core.QuotaStat)
 	for _, row := range rows {
-		stats[row.BackendName] = QuotaStat{
+		stats[row.BackendName] = core.QuotaStat{
 			BackendName: row.BackendName,
 			BytesUsed:   row.BytesUsed,
 			BytesLimit:  row.BytesLimit,

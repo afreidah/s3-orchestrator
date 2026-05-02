@@ -136,33 +136,39 @@ type DashboardStore interface {
 }
 
 // -------------------------------------------------------------------------
-// ADMIN ROLE INTERFACE
+// ADMIN ROLE INTERFACES
 // -------------------------------------------------------------------------
 
-// AdminStore defines startup, shutdown, and admin-only operations on the
-// concrete store. Both engines satisfy this interface. Methods here are
-// not wrapped by CircuitBreakerStore.
-type AdminStore interface {
-	// Lifecycle
+// LifecycleAdmin defines startup, shutdown, and schema-management
+// operations on the concrete store. These methods are not wrapped by
+// CircuitBreakerStore - they run during boot before the breaker is wired
+// up, and Close() releases pool resources directly.
+type LifecycleAdmin interface {
 	RunMigrations(ctx context.Context) error
 	VerifySchemaVersion(ctx context.Context) error
 	SyncQuotaLimits(ctx context.Context, backends []config.BackendConfig) error
 	Close()
+}
 
-	// Encryption admin operations
+// EncryptionAdmin defines the admin-only encryption key rotation and
+// encrypt/decrypt batch operations used by the admin HTTP handler. These
+// are not on the request hot path, so they bypass the circuit breaker.
+type EncryptionAdmin interface {
 	ListEncryptedLocations(ctx context.Context, keyID string, limit, offset int) ([]EncryptedLocation, error)
 	UpdateEncryptionKey(ctx context.Context, objectKey, backendName string, newEncryptionKey []byte, newKeyID string) error
 	ListUnencryptedLocations(ctx context.Context, limit, offset int) ([]UnencryptedLocation, error)
 	MarkObjectEncrypted(ctx context.Context, objectKey, backendName string, encryptionKey []byte, keyID string, plaintextSize, ciphertextSize int64) error
 	ListAllEncryptedLocations(ctx context.Context, limit, offset int) ([]DecryptableLocation, error)
 	MarkObjectDecrypted(ctx context.Context, objectKey, backendName string, plaintextSize int64) error
+}
 
-	// Notification outbox
+// NotificationOutbox defines the durable notification outbox operations
+// the notifier worker uses to deliver webhook events with retry/backoff
+// semantics. Leader election around the drain loop comes from a separate
+// AdvisoryLocker dependency.
+type NotificationOutbox interface {
 	InsertNotification(ctx context.Context, eventType, payload, endpointURL string) error
 	GetPendingNotifications(ctx context.Context, limit int) ([]NotificationRow, error)
 	CompleteNotification(ctx context.Context, id int64) error
 	RetryNotification(ctx context.Context, id int64, backoff time.Duration, lastError string) error
-
-	// Advisory lock (used by notifier worker for leader election)
-	WithAdvisoryLock(ctx context.Context, lockID int64, fn func(ctx context.Context) error) (bool, error)
 }

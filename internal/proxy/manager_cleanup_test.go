@@ -19,9 +19,9 @@ import (
 	"time"
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
-	"github.com/afreidah/s3-orchestrator/internal/counter"
-	st "github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
@@ -105,7 +105,7 @@ func TestProcessCleanupQueue_DeleteSuccess(t *testing.T) {
 	_, _ = backend.PutObject(context.Background(), "orphan.txt", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
 	store := &mockStore{
-		pendingCleanups: []st.CleanupItem{
+		pendingCleanups: []core.CleanupItem{
 			{ID: 1, BackendName: "b1", ObjectKey: "orphan.txt", Reason: "orphan_put", Attempts: 0},
 		},
 	}
@@ -140,7 +140,7 @@ func TestProcessCleanupQueue_DeleteFails_SchedulesRetry(t *testing.T) {
 	backend.delErr = errors.New("backend timeout")
 
 	store := &mockStore{
-		pendingCleanups: []st.CleanupItem{
+		pendingCleanups: []core.CleanupItem{
 			{ID: 2, BackendName: "b1", ObjectKey: "stuck.txt", Reason: "delete_failed", Attempts: 3},
 		},
 	}
@@ -175,7 +175,7 @@ func TestProcessCleanupQueue_DeleteFails_SchedulesRetry(t *testing.T) {
 func TestProcessCleanupQueue_BackendNotFound_RemovesItem(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
-		pendingCleanups: []st.CleanupItem{
+		pendingCleanups: []core.CleanupItem{
 			{ID: 3, BackendName: "gone-backend", ObjectKey: "orphan.txt", Reason: "orphan_put", Attempts: 0},
 		},
 	}
@@ -226,7 +226,7 @@ func TestProcessCleanupQueue_MaxAttemptsReached(t *testing.T) {
 	backend.delErr = errors.New("backend timeout")
 
 	store := &mockStore{
-		pendingCleanups: []st.CleanupItem{
+		pendingCleanups: []core.CleanupItem{
 			{ID: 5, BackendName: "b1", ObjectKey: "stuck.txt", Reason: "delete_failed", Attempts: 9},
 		},
 	}
@@ -261,7 +261,7 @@ func TestProcessCleanupQueue_CompleteItemError(t *testing.T) {
 	_, _ = backend.PutObject(context.Background(), "orphan.txt", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
 	store := &mockStore{
-		pendingCleanups: []st.CleanupItem{
+		pendingCleanups: []core.CleanupItem{
 			{ID: 6, BackendName: "b1", ObjectKey: "orphan.txt", Reason: "orphan_put", Attempts: 0},
 		},
 		completeCleanupErr: errors.New("db error"),
@@ -284,7 +284,7 @@ func TestProcessCleanupQueue_RetryItemError(t *testing.T) {
 	backend.delErr = errors.New("backend down")
 
 	store := &mockStore{
-		pendingCleanups: []st.CleanupItem{
+		pendingCleanups: []core.CleanupItem{
 			{ID: 7, BackendName: "b1", ObjectKey: "stuck.txt", Reason: "delete_failed", Attempts: 1},
 		},
 		retryCleanupErr: errors.New("db error on retry"),
@@ -318,7 +318,7 @@ func TestProcessCleanupQueue_QueueDepthError(t *testing.T) {
 func TestProcessCleanupQueue_BackendNotFound_CompleteItemError(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
-		pendingCleanups: []st.CleanupItem{
+		pendingCleanups: []core.CleanupItem{
 			{ID: 8, BackendName: "gone-backend", ObjectKey: "orphan.txt", Reason: "orphan_put", Attempts: 0},
 		},
 		completeCleanupErr: errors.New("db error"),
@@ -341,11 +341,11 @@ func TestProcessCleanupQueue_Concurrent(t *testing.T) {
 	backend.delDelay = 50 * time.Millisecond
 
 	// Create 10 cleanup items, each with a pre-populated object
-	var items []st.CleanupItem
+	var items []core.CleanupItem
 	for i := range 10 {
 		key := fmt.Sprintf("orphan-%d", i)
 		backend.objects[key] = mockObject{data: []byte("data")}
-		items = append(items, st.CleanupItem{
+		items = append(items, core.CleanupItem{
 			ID: int64(i + 1), BackendName: "b1", ObjectKey: key, Reason: "test", Attempts: 0,
 		})
 	}
@@ -379,7 +379,7 @@ func TestDeleteObject_BackendDeleteFails_EnqueuesCleanup(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
 	store := &mockStore{
-		deleteObjectResp: []st.DeletedCopy{{BackendName: "b1", SizeBytes: 100}},
+		deleteObjectResp: []core.DeletedCopy{{BackendName: "b1", SizeBytes: 100}},
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
@@ -413,15 +413,15 @@ func TestProcessCleanupQueue_AdmissionBlocked(t *testing.T) {
 	backend.objects["orphan.txt"] = mockObject{data: []byte("data")}
 
 	store := &mockStore{
-		pendingCleanups: []st.CleanupItem{
+		pendingCleanups: []core.CleanupItem{
 			{ID: 1, BackendName: "b1", ObjectKey: "orphan.txt", Reason: "orphan_put", Attempts: 0},
 		},
 	}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]s3be.ObjectBackend{"b1": backend},
-		Stores:           StoresFromMock(store),
-		Dashboard:           store,
-		Metrics:           store,
+		Stores:          StoresFromMock(store),
+		Dashboard:       store,
+		Metrics:         store,
 		Order:           []string{"b1"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,

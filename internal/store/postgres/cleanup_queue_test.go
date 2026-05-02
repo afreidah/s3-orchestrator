@@ -17,9 +17,9 @@ import (
 func TestDurationToInterval(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name     string
-		d        time.Duration
-		wantUS   int64
+		name   string
+		d      time.Duration
+		wantUS int64
 	}{
 		{"one minute", time.Minute, 60_000_000},
 		{"one hour", time.Hour, 3_600_000_000},

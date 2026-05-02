@@ -22,7 +22,7 @@ import (
 	"sync/atomic"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
-	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // reconcileEntry is the unit consumed by the merge: a key already namespaced
@@ -61,15 +61,15 @@ func reconcileSorted(
 	onImport func(ctx context.Context, e reconcileEntry) error,
 	onDelete func(ctx context.Context, key string) error,
 ) error {
-	s := &mergeState{ctx: ctx, s3: s3, db: dbIter, onImport: onImport, onDelete: onDelete}
-	if err := s.advanceS3(); err != nil {
+	s := &mergeState{s3: s3, db: dbIter, onImport: onImport, onDelete: onDelete}
+	if err := s.advanceS3(ctx); err != nil {
 		return err
 	}
-	if err := s.advanceDB(); err != nil {
+	if err := s.advanceDB(ctx); err != nil {
 		return err
 	}
 	for !s.done() {
-		if err := s.step(); err != nil {
+		if err := s.step(ctx); err != nil {
 			return err
 		}
 	}
@@ -82,7 +82,6 @@ func reconcileSorted(
 // passing pointers to every variable on every call — and the extraction is
 // what keeps each method below the cognitive-complexity threshold.
 type mergeState struct {
-	ctx      context.Context
 	s3, db   keySource
 	s3Cur    reconcileEntry
 	dbCur    reconcileEntry
@@ -97,49 +96,49 @@ func (s *mergeState) done() bool { return !s.s3OK && !s.dbOK }
 
 // step advances exactly one merge round, picking the branch (import,
 // delete, or match) based on which side currently holds the smaller key.
-func (s *mergeState) step() error {
+func (s *mergeState) step(ctx context.Context) error {
 	switch {
 	case !s.dbOK || (s.s3OK && s.s3Cur.key < s.dbCur.key):
-		return s.importStep()
+		return s.importStep(ctx)
 	case !s.s3OK || s.s3Cur.key > s.dbCur.key:
-		return s.deleteStep()
+		return s.deleteStep(ctx)
 	default:
-		return s.matchStep()
+		return s.matchStep(ctx)
 	}
 }
 
 // importStep fires onImport for the current S3 entry then pulls the next
 // one. Used when the DB cursor is exhausted or the S3 key sorts before
 // the DB key.
-func (s *mergeState) importStep() error {
-	if err := s.onImport(s.ctx, s.s3Cur); err != nil {
+func (s *mergeState) importStep(ctx context.Context) error {
+	if err := s.onImport(ctx, s.s3Cur); err != nil {
 		return err
 	}
-	return s.advanceS3()
+	return s.advanceS3(ctx)
 }
 
 // deleteStep fires onDelete for the current DB key then pulls the next DB
 // row. Used when the S3 stream is exhausted or the DB key sorts before
 // the S3 key.
-func (s *mergeState) deleteStep() error {
-	if err := s.onDelete(s.ctx, s.dbCur.key); err != nil {
+func (s *mergeState) deleteStep(ctx context.Context) error {
+	if err := s.onDelete(ctx, s.dbCur.key); err != nil {
 		return err
 	}
-	return s.advanceDB()
+	return s.advanceDB(ctx)
 }
 
 // matchStep advances both cursors. Used when the keys match — the row is
 // present on both sides and no callback fires.
-func (s *mergeState) matchStep() error {
-	if err := s.advanceS3(); err != nil {
+func (s *mergeState) matchStep(ctx context.Context) error {
+	if err := s.advanceS3(ctx); err != nil {
 		return err
 	}
-	return s.advanceDB()
+	return s.advanceDB(ctx)
 }
 
 // advanceS3 pulls the next entry from the S3 stream into the cursor pair.
-func (s *mergeState) advanceS3() error {
-	cur, ok, err := s.s3.next(s.ctx)
+func (s *mergeState) advanceS3(ctx context.Context) error {
+	cur, ok, err := s.s3.next(ctx)
 	if err != nil {
 		return err
 	}
@@ -148,8 +147,8 @@ func (s *mergeState) advanceS3() error {
 }
 
 // advanceDB pulls the next entry from the DB stream into the cursor pair.
-func (s *mergeState) advanceDB() error {
-	cur, ok, err := s.db.next(s.ctx)
+func (s *mergeState) advanceDB(ctx context.Context) error {
+	cur, ok, err := s.db.next(ctx)
 	if err != nil {
 		return err
 	}
@@ -284,30 +283,28 @@ const dbCursorPageSize = 1000
 
 // dbKeyLister is the narrow contract the cursor needs from the store.
 type dbKeyLister interface {
-	ListObjectsByBackendKeyAsc(ctx context.Context, backendName, afterKey string, limit int) ([]store.ObjectLocation, error)
+	ListObjectsByBackendKeyAsc(ctx context.Context, backendName, afterKey string, limit int) ([]core.ObjectLocation, error)
 }
 
 // dbCursorStream walks store.ListObjectsByBackendKeyAsc one bounded page at
 // a time and filters rows to those belonging to bucketPrefix. Keys for
 // sibling buckets stored on the same backend are skipped.
 type dbCursorStream struct {
-	ctx          context.Context
-	store        dbKeyLister
-	backendName  string
-	bucketPrefix string
+	store         dbKeyLister
+	backendName   string
+	bucketPrefix  string
 	otherPrefixes []string
 
-	page    []store.ObjectLocation
-	idx     int
-	cursor  string
+	page      []core.ObjectLocation
+	idx       int
+	cursor    string
 	exhausted bool
 }
 
 // newDBCursorStream prepares the iterator without issuing any query yet —
 // the first next call pulls the first page.
-func newDBCursorStream(ctx context.Context, s dbKeyLister, backendName, bucketPrefix string, otherPrefixes []string) *dbCursorStream {
+func newDBCursorStream(s dbKeyLister, backendName, bucketPrefix string, otherPrefixes []string) *dbCursorStream {
 	return &dbCursorStream{
-		ctx:           ctx,
 		store:         s,
 		backendName:   backendName,
 		bucketPrefix:  bucketPrefix,

@@ -15,7 +15,7 @@ import (
 	"errors"
 	"testing"
 
-	st "github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // newDrainState builds a drainState matching what StartDrain would create.
@@ -86,7 +86,7 @@ func TestMigrateBackendObjects_PropagatesCancellation(t *testing.T) {
 	// Provide a non-empty page so the loop reaches the inner cancellation
 	// check rather than exiting on empty.
 	store := &mockStore{
-		listObjectsByBackendResp: []st.ObjectLocation{
+		listObjectsByBackendResp: []core.ObjectLocation{
 			{ObjectKey: "k1", BackendName: "b1", SizeBytes: 1},
 		},
 	}
@@ -112,14 +112,14 @@ func TestMigrateBackendObjects_IncrementsMovedOnSuccess(t *testing.T) {
 	// row attribute DrainOneObject inspects is BackendName, so this is
 	// sufficient to drive the success path for both objects.
 	store := &mockStore{
-		listObjectsByBackendPages: [][]st.ObjectLocation{
+		listObjectsByBackendPages: [][]core.ObjectLocation{
 			{
 				{ObjectKey: "k1", BackendName: "b1", SizeBytes: 4},
 				{ObjectKey: "k2", BackendName: "b1", SizeBytes: 5},
 			},
 			nil, // second page empty → loop exits
 		},
-		getAllLocationsResp: []st.ObjectLocation{
+		getAllLocationsResp: []core.ObjectLocation{
 			{BackendName: "b1"},
 			{BackendName: "b2"}, // replica elsewhere → fast-path delete
 		},

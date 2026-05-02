@@ -15,36 +15,37 @@ import (
 	"context"
 	"time"
 
-	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 type fakeConcreteStore struct{}
 
-func (fakeConcreteStore) GetAllObjectLocations(context.Context, string) ([]store.ObjectLocation, error) {
+func (fakeConcreteStore) GetAllObjectLocations(context.Context, string) ([]core.ObjectLocation, error) {
 	return nil, nil
 }
 func (fakeConcreteStore) GetObjectBackendsForKeys(context.Context, []string) (map[string][]string, error) {
 	return nil, nil
 }
-func (fakeConcreteStore) RecordObject(context.Context, string, string, int64, *store.EncryptionMeta) ([]store.DeletedCopy, error) {
+func (fakeConcreteStore) RecordObject(context.Context, string, string, int64, *core.EncryptionMeta) ([]core.DeletedCopy, error) {
 	return nil, nil
 }
-func (fakeConcreteStore) RecordObjectAndClearPending(context.Context, string, string, int64, *store.EncryptionMeta, string) ([]store.DeletedCopy, error) {
+func (fakeConcreteStore) RecordObjectAndClearPending(context.Context, string, string, int64, *core.EncryptionMeta, string) ([]core.DeletedCopy, error) {
 	return nil, nil
 }
-func (fakeConcreteStore) DeleteObject(context.Context, string) ([]store.DeletedCopy, error) {
+func (fakeConcreteStore) DeleteObject(context.Context, string) ([]core.DeletedCopy, error) {
 	return nil, nil
 }
-func (fakeConcreteStore) DeleteObjectsBatch(context.Context, []string) (map[string][]store.DeletedCopy, error) {
+func (fakeConcreteStore) DeleteObjectsBatch(context.Context, []string) (map[string][]core.DeletedCopy, error) {
 	return nil, nil
 }
-func (fakeConcreteStore) ListObjects(context.Context, string, string, int) (*store.ListObjectsResult, error) {
+func (fakeConcreteStore) ListObjects(context.Context, string, string, int) (*core.ListObjectsResult, error) {
 	return nil, nil
 }
-func (fakeConcreteStore) ListObjectsByBackend(context.Context, string, int) ([]store.ObjectLocation, error) {
+func (fakeConcreteStore) ListObjectsByBackend(context.Context, string, int) ([]core.ObjectLocation, error) {
 	return nil, nil
 }
-func (fakeConcreteStore) ListObjectsByBackendKeyAsc(context.Context, string, string, int) ([]store.ObjectLocation, error) {
+func (fakeConcreteStore) ListObjectsByBackendKeyAsc(context.Context, string, string, int) ([]core.ObjectLocation, error) {
 	return nil, nil
 }
 func (fakeConcreteStore) MoveObjectLocation(context.Context, string, string, string) (int64, error) {
@@ -61,46 +62,46 @@ func (fakeConcreteStore) GetBackendWithSpace(context.Context, int64, []string) (
 func (fakeConcreteStore) GetLeastUtilizedBackend(context.Context, int64, []string) (string, error) {
 	return "", nil
 }
-func (fakeConcreteStore) GetQuotaStats(context.Context) (map[string]store.QuotaStat, error) {
+func (fakeConcreteStore) GetQuotaStats(context.Context) (map[string]core.QuotaStat, error) {
 	return nil, nil
 }
 
 func (fakeConcreteStore) CreateMultipartUpload(context.Context, string, string, string, string, map[string]string) error {
 	return nil
 }
-func (fakeConcreteStore) GetMultipartUpload(context.Context, string) (*store.MultipartUpload, error) {
+func (fakeConcreteStore) GetMultipartUpload(context.Context, string) (*core.MultipartUpload, error) {
 	return nil, nil
 }
-func (fakeConcreteStore) RecordPart(context.Context, string, int, string, int64, *store.EncryptionMeta) error {
+func (fakeConcreteStore) RecordPart(context.Context, string, int, string, int64, *core.EncryptionMeta) error {
 	return nil
 }
-func (fakeConcreteStore) GetParts(context.Context, string) ([]store.MultipartPart, error) {
+func (fakeConcreteStore) GetParts(context.Context, string) ([]core.MultipartPart, error) {
 	return nil, nil
 }
 func (fakeConcreteStore) DeleteMultipartUpload(context.Context, string) error { return nil }
-func (fakeConcreteStore) ListMultipartUploads(context.Context, string, int) ([]store.MultipartUpload, error) {
+func (fakeConcreteStore) ListMultipartUploads(context.Context, string, int) ([]core.MultipartUpload, error) {
 	return nil, nil
 }
 func (fakeConcreteStore) CountActiveMultipartUploads(context.Context, string) (int64, error) {
 	return 0, nil
 }
-func (fakeConcreteStore) GetStaleMultipartUploads(context.Context, time.Duration) ([]store.MultipartUpload, error) {
+func (fakeConcreteStore) GetStaleMultipartUploads(context.Context, time.Duration) ([]core.MultipartUpload, error) {
 	return nil, nil
 }
-func (fakeConcreteStore) GetMultipartUploadsByBackend(context.Context, string) ([]store.MultipartUpload, error) {
+func (fakeConcreteStore) GetMultipartUploadsByBackend(context.Context, string) ([]core.MultipartUpload, error) {
 	return nil, nil
 }
 
-func (fakeConcreteStore) GetUnderReplicatedObjects(context.Context, int, int) ([]store.ObjectLocation, error) {
+func (fakeConcreteStore) GetUnderReplicatedObjects(context.Context, int, int) ([]core.ObjectLocation, error) {
 	return nil, nil
 }
-func (fakeConcreteStore) GetUnderReplicatedObjectsExcluding(context.Context, int, int, []string) ([]store.ObjectLocation, error) {
+func (fakeConcreteStore) GetUnderReplicatedObjectsExcluding(context.Context, int, int, []string) ([]core.ObjectLocation, error) {
 	return nil, nil
 }
 func (fakeConcreteStore) RecordReplica(context.Context, string, string, string, int64) (bool, error) {
 	return false, nil
 }
-func (fakeConcreteStore) GetOverReplicatedObjects(context.Context, int, int) ([]store.ObjectLocation, error) {
+func (fakeConcreteStore) GetOverReplicatedObjects(context.Context, int, int) ([]core.ObjectLocation, error) {
 	return nil, nil
 }
 func (fakeConcreteStore) CountOverReplicatedObjects(context.Context, int) (int64, error) {
@@ -111,7 +112,7 @@ func (fakeConcreteStore) RemoveExcessCopy(context.Context, string, string, int64
 func (fakeConcreteStore) EnqueueCleanup(context.Context, string, string, string, int64) error {
 	return nil
 }
-func (fakeConcreteStore) GetPendingCleanups(context.Context, int) ([]store.CleanupItem, error) {
+func (fakeConcreteStore) GetPendingCleanups(context.Context, int) ([]core.CleanupItem, error) {
 	return nil, nil
 }
 func (fakeConcreteStore) CompleteCleanupItem(context.Context, int64) error { return nil }
@@ -125,17 +126,17 @@ func (fakeConcreteStore) SweepStaleCleanupQueueRows(context.Context, string, str
 	return 0, nil
 }
 
-func (fakeConcreteStore) GetRandomHashedObjects(context.Context, int) ([]store.ObjectLocation, error) {
+func (fakeConcreteStore) GetRandomHashedObjects(context.Context, int) ([]core.ObjectLocation, error) {
 	return nil, nil
 }
-func (fakeConcreteStore) GetObjectsWithoutHash(context.Context, int, int) ([]store.ObjectLocation, error) {
+func (fakeConcreteStore) GetObjectsWithoutHash(context.Context, int, int) ([]core.ObjectLocation, error) {
 	return nil, nil
 }
 func (fakeConcreteStore) UpdateContentHash(context.Context, string, string, string) error {
 	return nil
 }
 
-func (fakeConcreteStore) ListExpiredObjects(context.Context, string, time.Time, int) ([]store.ObjectLocation, error) {
+func (fakeConcreteStore) ListExpiredObjects(context.Context, string, time.Time, int) ([]core.ObjectLocation, error) {
 	return nil, nil
 }
 
@@ -150,10 +151,10 @@ func (fakeConcreteStore) GetObjectCounts(context.Context) (map[string]int64, err
 func (fakeConcreteStore) GetActiveMultipartCounts(context.Context) (map[string]int64, error) {
 	return nil, nil
 }
-func (fakeConcreteStore) GetUsageForPeriod(context.Context, string) (map[string]store.UsageStat, error) {
+func (fakeConcreteStore) GetUsageForPeriod(context.Context, string) (map[string]core.UsageStat, error) {
 	return nil, nil
 }
-func (fakeConcreteStore) ListDirectoryChildren(context.Context, string, string, int) (*store.DirectoryListResult, error) {
+func (fakeConcreteStore) ListDirectoryChildren(context.Context, string, string, int) (*core.DirectoryListResult, error) {
 	return nil, nil
 }
 
@@ -164,13 +165,51 @@ func (fakeConcreteStore) WithAdvisoryLock(context.Context, int64, func(ctx conte
 	return false, nil
 }
 
-func (fakeConcreteStore) InsertPending(context.Context, *store.PendingObject) error { return nil }
-func (fakeConcreteStore) DeletePending(context.Context, string) error               { return nil }
-func (fakeConcreteStore) GetStalePending(context.Context, time.Time, int) ([]store.PendingObject, error) {
+func (fakeConcreteStore) InsertPending(context.Context, *core.PendingObject) error { return nil }
+func (fakeConcreteStore) DeletePending(context.Context, string) error              { return nil }
+func (fakeConcreteStore) GetStalePending(context.Context, time.Time, int) ([]core.PendingObject, error) {
 	return nil, nil
 }
-func (fakeConcreteStore) PromotePending(context.Context, *store.PendingObject) (store.PendingPromoteResult, []store.DeletedCopy, error) {
+func (fakeConcreteStore) PromotePending(context.Context, *core.PendingObject) (core.PendingPromoteResult, []core.DeletedCopy, error) {
 	return 0, nil, nil
 }
-func (fakeConcreteStore) PendingDepth(context.Context) (int64, error)         { return 0, nil }
+func (fakeConcreteStore) PendingDepth(context.Context) (int64, error)          { return 0, nil }
 func (fakeConcreteStore) DeletePendingByBackend(context.Context, string) error { return nil }
+
+// LifecycleAdmin
+func (fakeConcreteStore) RunMigrations(context.Context) error                              { return nil }
+func (fakeConcreteStore) VerifySchemaVersion(context.Context) error                        { return nil }
+func (fakeConcreteStore) SyncQuotaLimits(context.Context, []config.BackendConfig) error    { return nil }
+func (fakeConcreteStore) Close()                                                           {}
+
+// EncryptionAdmin
+func (fakeConcreteStore) ListEncryptedLocations(context.Context, string, int, int) ([]core.EncryptedLocation, error) {
+	return nil, nil
+}
+func (fakeConcreteStore) UpdateEncryptionKey(context.Context, string, string, []byte, string) error {
+	return nil
+}
+func (fakeConcreteStore) ListUnencryptedLocations(context.Context, int, int) ([]core.UnencryptedLocation, error) {
+	return nil, nil
+}
+func (fakeConcreteStore) MarkObjectEncrypted(context.Context, string, string, []byte, string, int64, int64) error {
+	return nil
+}
+func (fakeConcreteStore) ListAllEncryptedLocations(context.Context, int, int) ([]core.DecryptableLocation, error) {
+	return nil, nil
+}
+func (fakeConcreteStore) MarkObjectDecrypted(context.Context, string, string, int64) error {
+	return nil
+}
+
+// NotificationOutbox
+func (fakeConcreteStore) InsertNotification(context.Context, string, string, string) error {
+	return nil
+}
+func (fakeConcreteStore) GetPendingNotifications(context.Context, int) ([]core.NotificationRow, error) {
+	return nil, nil
+}
+func (fakeConcreteStore) CompleteNotification(context.Context, int64) error { return nil }
+func (fakeConcreteStore) RetryNotification(context.Context, int64, time.Duration, string) error {
+	return nil
+}

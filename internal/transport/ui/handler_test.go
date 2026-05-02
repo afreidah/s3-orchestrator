@@ -24,22 +24,21 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
-	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/testutil"
 	"golang.org/x/crypto/bcrypt"
-
 	// newTestHandler builds a Handler wired to mock data for testing.
-	"github.com/afreidah/s3-orchestrator/internal/store"
 )
 
 const (
-	testAdminKey       = "test-admin"
-	testAdminSecret    = "test-secret-key"
-	testSessionSecret  = "test-session-secret"
+	testAdminKey      = "test-admin"
+	testAdminSecret   = "test-secret-key"
+	testSessionSecret = "test-session-secret"
 )
 
 func newTestHandler(t *testing.T) (*Handler, *http.ServeMux) {
@@ -54,14 +53,14 @@ func newTestHandlerWithMock(t *testing.T) (*Handler, *http.ServeMux, *testutil.M
 	t.Helper()
 
 	mockStore := &testutil.MockStore{
-		GetQuotaStatsResp: map[string]store.QuotaStat{
+		GetQuotaStatsResp: map[string]core.QuotaStat{
 			"b1": {BackendName: "b1", BytesUsed: 500, BytesLimit: 1000},
 		},
 		GetObjectCountsResp:    map[string]int64{"b1": 42},
 		GetActiveMultipartResp: map[string]int64{"b1": 0},
-		GetUsageForPeriodResp:  map[string]store.UsageStat{"b1": {APIRequests: 100}},
-		ListDirChildrenResp: &store.DirectoryListResult{
-			Entries: []store.DirEntry{
+		GetUsageForPeriodResp:  map[string]core.UsageStat{"b1": {APIRequests: 100}},
+		ListDirChildrenResp: &core.DirectoryListResult{
+			Entries: []core.DirEntry{
 				{Name: "bucket1/", IsDir: true, FileCount: 10, TotalSize: 4096},
 			},
 		},
@@ -69,9 +68,9 @@ func newTestHandlerWithMock(t *testing.T) (*Handler, *http.ServeMux, *testutil.M
 
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{},
-		Stores:           proxy.StoresFromMock(mockStore),
-		Dashboard:           mockStore,
-		Metrics:           mockStore,
+		Stores:          proxy.StoresFromMock(mockStore),
+		Dashboard:       mockStore,
+		Metrics:         mockStore,
 		Order:           []string{"b1"},
 		RoutingStrategy: config.RoutingPack,
 	})
@@ -436,18 +435,18 @@ func TestLogin_BcryptSecret(t *testing.T) {
 	}
 
 	mockStore := &testutil.MockStore{
-		GetQuotaStatsResp:      map[string]store.QuotaStat{},
+		GetQuotaStatsResp:      map[string]core.QuotaStat{},
 		GetObjectCountsResp:    map[string]int64{},
 		GetActiveMultipartResp: map[string]int64{},
-		GetUsageForPeriodResp:  map[string]store.UsageStat{},
-		ListDirChildrenResp:    &store.DirectoryListResult{},
+		GetUsageForPeriodResp:  map[string]core.UsageStat{},
+		ListDirChildrenResp:    &core.DirectoryListResult{},
 	}
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
-		Backends: map[string]backend.ObjectBackend{},
+		Backends:  map[string]backend.ObjectBackend{},
 		Stores:    proxy.StoresFromMock(mockStore),
-		Dashboard:    mockStore,
-		Metrics:    mockStore,
-		Order:    []string{},
+		Dashboard: mockStore,
+		Metrics:   mockStore,
+		Order:     []string{},
 	})
 	t.Cleanup(mgr.Close)
 
@@ -455,9 +454,9 @@ func TestLogin_BcryptSecret(t *testing.T) {
 		Buckets:  []config.BucketConfig{{Name: "b"}},
 		Backends: []config.BackendConfig{{Name: "b1", Endpoint: "e", Bucket: "b", AccessKeyID: "a", SecretAccessKey: "s"}},
 		UI: config.UIConfig{
-			Enabled:     true,
-			AdminKey:    testAdminKey,
-			AdminSecret: string(hash),
+			Enabled:       true,
+			AdminKey:      testAdminKey,
+			AdminSecret:   string(hash),
 			SessionSecret: testSessionSecret,
 		},
 	}
@@ -508,18 +507,18 @@ func TestCrossInstanceSession(t *testing.T) {
 	t.Parallel()
 	// Two handlers with the same config should accept each other's sessions.
 	mockStore := &testutil.MockStore{
-		GetQuotaStatsResp:      map[string]store.QuotaStat{},
+		GetQuotaStatsResp:      map[string]core.QuotaStat{},
 		GetObjectCountsResp:    map[string]int64{},
 		GetActiveMultipartResp: map[string]int64{},
-		GetUsageForPeriodResp:  map[string]store.UsageStat{},
-		ListDirChildrenResp:    &store.DirectoryListResult{},
+		GetUsageForPeriodResp:  map[string]core.UsageStat{},
+		ListDirChildrenResp:    &core.DirectoryListResult{},
 	}
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
-		Backends: map[string]backend.ObjectBackend{},
+		Backends:  map[string]backend.ObjectBackend{},
 		Stores:    proxy.StoresFromMock(mockStore),
-		Dashboard:    mockStore,
-		Metrics:    mockStore,
-		Order:    []string{},
+		Dashboard: mockStore,
+		Metrics:   mockStore,
+		Order:     []string{},
 	})
 	t.Cleanup(mgr.Close)
 
@@ -646,7 +645,7 @@ func TestTreeAPI_ReturnsJSON(t *testing.T) {
 		t.Errorf("Content-Type = %q, want application/json", ct)
 	}
 
-	var result store.DirectoryListResult
+	var result core.DirectoryListResult
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		t.Fatalf("failed to decode JSON: %v", err)
 	}
@@ -908,8 +907,8 @@ func TestAPIDeletePrefix_EmptyPrefix(t *testing.T) {
 func TestAPIDeletePrefix_Success(t *testing.T) {
 	t.Parallel()
 	h, mux, mock := newTestHandlerWithMock(t)
-	mock.ListObjectsResp = &store.ListObjectsResult{
-		Objects: []store.ObjectLocation{
+	mock.ListObjectsResp = &core.ListObjectsResult{
+		Objects: []core.ObjectLocation{
 			{ObjectKey: "test-bucket/a.txt", BackendName: "b1", SizeBytes: 100},
 			{ObjectKey: "test-bucket/b.txt", BackendName: "b1", SizeBytes: 200},
 		},
@@ -943,7 +942,7 @@ func TestAPIDeletePrefix_Success(t *testing.T) {
 func TestAPIDeletePrefix_EmptyResult(t *testing.T) {
 	t.Parallel()
 	h, mux, mock := newTestHandlerWithMock(t)
-	mock.ListObjectsResp = &store.ListObjectsResult{
+	mock.ListObjectsResp = &core.ListObjectsResult{
 		Objects:     nil,
 		IsTruncated: false,
 	}
@@ -991,8 +990,8 @@ func TestAPIDeletePrefix_ListObjectsError(t *testing.T) {
 func TestAPIDeletePrefix_DeleteError(t *testing.T) {
 	t.Parallel()
 	h, mux, mock := newTestHandlerWithMock(t)
-	mock.ListObjectsResp = &store.ListObjectsResult{
-		Objects: []store.ObjectLocation{
+	mock.ListObjectsResp = &core.ListObjectsResult{
+		Objects: []core.ObjectLocation{
 			{ObjectKey: "test-bucket/a.txt", BackendName: "b1", SizeBytes: 100},
 		},
 		IsTruncated: false,
@@ -1791,18 +1790,18 @@ func benchLoginHandler(b *testing.B) (*Handler, *http.ServeMux) {
 	}
 
 	mockStore := &testutil.MockStore{
-		GetQuotaStatsResp:      map[string]store.QuotaStat{},
+		GetQuotaStatsResp:      map[string]core.QuotaStat{},
 		GetObjectCountsResp:    map[string]int64{},
 		GetActiveMultipartResp: map[string]int64{},
-		GetUsageForPeriodResp:  map[string]store.UsageStat{},
-		ListDirChildrenResp:    &store.DirectoryListResult{},
+		GetUsageForPeriodResp:  map[string]core.UsageStat{},
+		ListDirChildrenResp:    &core.DirectoryListResult{},
 	}
 
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{},
-		Stores:           proxy.StoresFromMock(mockStore),
-		Dashboard:           mockStore,
-		Metrics:           mockStore,
+		Stores:          proxy.StoresFromMock(mockStore),
+		Dashboard:       mockStore,
+		Metrics:         mockStore,
 		Order:           []string{},
 		RoutingStrategy: config.RoutingPack,
 	})
@@ -1813,9 +1812,9 @@ func benchLoginHandler(b *testing.B) (*Handler, *http.ServeMux) {
 		Replication:     config.ReplicationConfig{Factor: 1},
 		RateLimit:       config.RateLimitConfig{Enabled: false},
 		UI: config.UIConfig{
-			Enabled:     true,
-			AdminKey:    testAdminKey,
-			AdminSecret: string(bcryptHash),
+			Enabled:       true,
+			AdminKey:      testAdminKey,
+			AdminSecret:   string(bcryptHash),
 			SessionSecret: testSessionSecret,
 		},
 	}

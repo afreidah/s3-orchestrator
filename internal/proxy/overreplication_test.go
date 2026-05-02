@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
-	st "github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 )
@@ -29,14 +29,14 @@ import (
 func TestScoreCopy_HealthyBackend(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
-		getQuotaStatsResp: map[string]st.QuotaStat{
+		getQuotaStatsResp: map[string]core.QuotaStat{
 			"b1": {BytesUsed: 500, BytesLimit: 1000},
 		},
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	loc := st.ObjectLocation{BackendName: "b1", SizeBytes: 100}
-	stats := map[string]st.QuotaStat{
+	loc := core.ObjectLocation{BackendName: "b1", SizeBytes: 100}
+	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 500, BytesLimit: 1000},
 	}
 	score := mgr.OverReplicationCleaner.ScoreCopy(&loc, stats)
@@ -52,7 +52,7 @@ func TestScoreCopy_UnknownBackend(t *testing.T) {
 	store := &mockStore{}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	loc := st.ObjectLocation{BackendName: "nonexistent", SizeBytes: 100}
+	loc := core.ObjectLocation{BackendName: "nonexistent", SizeBytes: 100}
 	score := mgr.OverReplicationCleaner.ScoreCopy(&loc, nil)
 
 	if score != 0 {
@@ -66,7 +66,7 @@ func TestScoreCopy_DrainingBackend(t *testing.T) {
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 	mgr.draining.Store("b1", &drainState{done: make(chan struct{})})
 
-	loc := st.ObjectLocation{BackendName: "b1", SizeBytes: 100}
+	loc := core.ObjectLocation{BackendName: "b1", SizeBytes: 100}
 	score := mgr.OverReplicationCleaner.ScoreCopy(&loc, nil)
 
 	if score != 0 {
@@ -85,16 +85,16 @@ func TestScoreCopy_CircuitBrokenBackend(t *testing.T) {
 
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": cbBackend},
-		Stores:           StoresFromMock(store),
-		Dashboard:           store,
-		Metrics:           store,
+		Stores:          StoresFromMock(store),
+		Dashboard:       store,
+		Metrics:         store,
 		Order:           []string{"b1"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
 
-	loc := st.ObjectLocation{BackendName: "b1", SizeBytes: 100}
+	loc := core.ObjectLocation{BackendName: "b1", SizeBytes: 100}
 	score := mgr.OverReplicationCleaner.ScoreCopy(&loc, nil)
 
 	if score != 1 {
@@ -107,7 +107,7 @@ func TestScoreCopy_NoQuotaData(t *testing.T) {
 	store := &mockStore{}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	loc := st.ObjectLocation{BackendName: "b1", SizeBytes: 100}
+	loc := core.ObjectLocation{BackendName: "b1", SizeBytes: 100}
 	score := mgr.OverReplicationCleaner.ScoreCopy(&loc, nil)
 
 	// No quota data -> 2.5 (mid-range)
@@ -172,7 +172,7 @@ func TestClean_QuotaStatsError_StillCleansUp(t *testing.T) {
 	t.Parallel()
 	// GetQuotaStats fails, but Clean should still proceed (scores without utilization).
 	store := &mockStore{
-		getOverReplicatedResp: []st.ObjectLocation{
+		getOverReplicatedResp: []core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
 			{ObjectKey: "key1", BackendName: "b2", SizeBytes: 100},
 			{ObjectKey: "key1", BackendName: "b3", SizeBytes: 100},
@@ -202,12 +202,12 @@ func TestClean_RemovesExcessCopies(t *testing.T) {
 	t.Parallel()
 	// Object "key1" has 3 copies but factor=2, so 1 should be removed.
 	store := &mockStore{
-		getOverReplicatedResp: []st.ObjectLocation{
+		getOverReplicatedResp: []core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
 			{ObjectKey: "key1", BackendName: "b2", SizeBytes: 100},
 			{ObjectKey: "key1", BackendName: "b3", SizeBytes: 100},
 		},
-		getQuotaStatsResp: map[string]st.QuotaStat{
+		getQuotaStatsResp: map[string]core.QuotaStat{
 			"b1": {BytesUsed: 100, BytesLimit: 1000},
 			"b2": {BytesUsed: 500, BytesLimit: 1000},
 			"b3": {BytesUsed: 900, BytesLimit: 1000},
@@ -243,7 +243,7 @@ func TestClean_RemovesExcessCopies(t *testing.T) {
 func TestClean_RemoveExcessCopyError(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
-		getOverReplicatedResp: []st.ObjectLocation{
+		getOverReplicatedResp: []core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
 			{ObjectKey: "key1", BackendName: "b2", SizeBytes: 100},
 			{ObjectKey: "key1", BackendName: "b3", SizeBytes: 100},
@@ -273,7 +273,7 @@ func TestClean_MultipleObjects(t *testing.T) {
 	t.Parallel()
 	// Two objects, each with 3 copies, factor=2 -> remove 1 each = 2 total.
 	store := &mockStore{
-		getOverReplicatedResp: []st.ObjectLocation{
+		getOverReplicatedResp: []core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
 			{ObjectKey: "key1", BackendName: "b2", SizeBytes: 100},
 			{ObjectKey: "key1", BackendName: "b3", SizeBytes: 100},
@@ -306,7 +306,7 @@ func TestClean_BackendNotFoundDuringCleanup(t *testing.T) {
 	// Object has copies on b1 and "gone" — "gone" is not in the manager's
 	// backend map, so cleanObject should skip it and not panic.
 	store := &mockStore{
-		getOverReplicatedResp: []st.ObjectLocation{
+		getOverReplicatedResp: []core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
 			{ObjectKey: "key1", BackendName: "gone", SizeBytes: 100},
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
@@ -394,7 +394,7 @@ func TestClean_AdmissionBlocked(t *testing.T) {
 	sem <- struct{}{} // fill
 
 	store := &mockStore{
-		getOverReplicatedResp: []st.ObjectLocation{
+		getOverReplicatedResp: []core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
 			{ObjectKey: "key1", BackendName: "b2", SizeBytes: 100},
 			{ObjectKey: "key1", BackendName: "b3", SizeBytes: 100},
@@ -402,9 +402,9 @@ func TestClean_AdmissionBlocked(t *testing.T) {
 	}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": newMockBackend(), "b2": newMockBackend(), "b3": newMockBackend()},
-		Stores:           StoresFromMock(store),
-		Dashboard:           store,
-		Metrics:           store,
+		Stores:          StoresFromMock(store),
+		Dashboard:       store,
+		Metrics:         store,
 		Order:           []string{"b1", "b2", "b3"},
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,

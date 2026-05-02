@@ -37,15 +37,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/afreidah/s3-orchestrator/internal/util/bufpool"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/proxy"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
-	"github.com/afreidah/s3-orchestrator/internal/proxy"
-	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/util/bufpool"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
-	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -71,7 +71,7 @@ const (
 // *proxy.BackendManager satisfies it.
 type BackendOps interface {
 	GetDashboardData(ctx context.Context) (*proxy.DashboardData, error)
-	GetDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*store.DirectoryListResult, error)
+	GetDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.DirectoryListResult, error)
 	SyncBackend(ctx context.Context, backendName, virtualBucket string, virtualBuckets []string) (int, int, error)
 }
 
@@ -532,11 +532,11 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		Secure:   secure,
 	})
 	http.SetCookie(w, &http.Cookie{
-		Name:     csrfCookieName,
-		Value:    "",
-		Path:     h.prefix + "/",
-		MaxAge:   -1,
-		Secure:   secure,
+		Name:   csrfCookieName,
+		Value:  "",
+		Path:   h.prefix + "/",
+		MaxAge: -1,
+		Secure: secure,
 	})
 	http.Redirect(w, r, h.prefix+"/login", http.StatusSeeOther)
 }
@@ -595,7 +595,7 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	for _, name := range bucketNames {
 		dirName := name + "/"
 		if !existing[dirName] {
-			data.TopLevelEntries.Entries = append(data.TopLevelEntries.Entries, store.DirEntry{
+			data.TopLevelEntries.Entries = append(data.TopLevelEntries.Entries, core.DirEntry{
 				Name:  dirName,
 				IsDir: true,
 			})
@@ -899,7 +899,7 @@ func (h *Handler) handleAPIDownload(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.objects.GetObject(r.Context(), key, "")
 	if err != nil {
-		if errors.Is(err, store.ErrObjectNotFound) {
+		if errors.Is(err, core.ErrObjectNotFound) {
 			writeJSONError(w, http.StatusNotFound, "not found")
 			return
 		}

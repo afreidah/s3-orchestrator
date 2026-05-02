@@ -15,24 +15,24 @@ import (
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/counter"
-	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // mockDashboardStore implements store.DashboardStore for aggregator tests.
 type mockDashboardStore struct {
-	quotaStats      map[string]store.QuotaStat
-	quotaStatsErr   error
-	objectCounts    map[string]int64
-	objectCountsErr error
+	quotaStats         map[string]core.QuotaStat
+	quotaStatsErr      error
+	objectCounts       map[string]int64
+	objectCountsErr    error
 	multipartCounts    map[string]int64
 	multipartCountsErr error
-	usageStats      map[string]store.UsageStat
-	usageStatsErr   error
-	dirChildren     *store.DirectoryListResult
-	dirChildrenErr  error
+	usageStats         map[string]core.UsageStat
+	usageStatsErr      error
+	dirChildren        *core.DirectoryListResult
+	dirChildrenErr     error
 }
 
-func (m *mockDashboardStore) GetQuotaStats(_ context.Context) (map[string]store.QuotaStat, error) {
+func (m *mockDashboardStore) GetQuotaStats(_ context.Context) (map[string]core.QuotaStat, error) {
 	return m.quotaStats, m.quotaStatsErr
 }
 
@@ -44,22 +44,22 @@ func (m *mockDashboardStore) GetActiveMultipartCounts(_ context.Context) (map[st
 	return m.multipartCounts, m.multipartCountsErr
 }
 
-func (m *mockDashboardStore) GetUsageForPeriod(_ context.Context, _ string) (map[string]store.UsageStat, error) {
+func (m *mockDashboardStore) GetUsageForPeriod(_ context.Context, _ string) (map[string]core.UsageStat, error) {
 	return m.usageStats, m.usageStatsErr
 }
 
-func (m *mockDashboardStore) ListDirectoryChildren(_ context.Context, _, _ string, _ int) (*store.DirectoryListResult, error) {
+func (m *mockDashboardStore) ListDirectoryChildren(_ context.Context, _, _ string, _ int) (*core.DirectoryListResult, error) {
 	return m.dirChildren, m.dirChildrenErr
 }
 
 func TestAggregator_Success(t *testing.T) {
 	t.Parallel()
 	ms := &mockDashboardStore{
-		quotaStats:      map[string]store.QuotaStat{"b1": {BytesUsed: 100}},
+		quotaStats:      map[string]core.QuotaStat{"b1": {BytesUsed: 100}},
 		objectCounts:    map[string]int64{"b1": 5},
 		multipartCounts: map[string]int64{"b1": 1},
-		usageStats:      map[string]store.UsageStat{"b1": {APIRequests: 10}},
-		dirChildren:     &store.DirectoryListResult{},
+		usageStats:      map[string]core.UsageStat{"b1": {APIRequests: 10}},
+		dirChildren:     &core.DirectoryListResult{},
 	}
 
 	usage := counter.NewUsageTracker(
@@ -101,7 +101,7 @@ func TestAggregator_QuotaStatsError(t *testing.T) {
 func TestAggregator_ObjectCountsError(t *testing.T) {
 	t.Parallel()
 	ms := &mockDashboardStore{
-		quotaStats:      map[string]store.QuotaStat{},
+		quotaStats:      map[string]core.QuotaStat{},
 		objectCountsErr: errors.New("db down"),
 	}
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend(nil), nil)
@@ -116,7 +116,7 @@ func TestAggregator_ObjectCountsError(t *testing.T) {
 func TestAggregator_MultipartCountsError(t *testing.T) {
 	t.Parallel()
 	ms := &mockDashboardStore{
-		quotaStats:         map[string]store.QuotaStat{},
+		quotaStats:         map[string]core.QuotaStat{},
 		objectCounts:       map[string]int64{},
 		multipartCountsErr: errors.New("db down"),
 	}
@@ -132,7 +132,7 @@ func TestAggregator_MultipartCountsError(t *testing.T) {
 func TestAggregator_UsageStatsError(t *testing.T) {
 	t.Parallel()
 	ms := &mockDashboardStore{
-		quotaStats:      map[string]store.QuotaStat{},
+		quotaStats:      map[string]core.QuotaStat{},
 		objectCounts:    map[string]int64{},
 		multipartCounts: map[string]int64{},
 		usageStatsErr:   errors.New("db down"),
@@ -149,10 +149,10 @@ func TestAggregator_UsageStatsError(t *testing.T) {
 func TestAggregator_DirChildrenError(t *testing.T) {
 	t.Parallel()
 	ms := &mockDashboardStore{
-		quotaStats:      map[string]store.QuotaStat{},
+		quotaStats:      map[string]core.QuotaStat{},
 		objectCounts:    map[string]int64{},
 		multipartCounts: map[string]int64{},
-		usageStats:      map[string]store.UsageStat{},
+		usageStats:      map[string]core.UsageStat{},
 		dirChildrenErr:  errors.New("db down"),
 	}
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend(nil), nil)
@@ -167,7 +167,7 @@ func TestAggregator_DirChildrenError(t *testing.T) {
 func TestAggregator_GetDirectoryChildren_ClampsMaxKeys(t *testing.T) {
 	t.Parallel()
 	ms := &mockDashboardStore{
-		dirChildren: &store.DirectoryListResult{},
+		dirChildren: &core.DirectoryListResult{},
 	}
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend(nil), nil)
 	da := NewDashboardAggregator(ms, usage, nil)
