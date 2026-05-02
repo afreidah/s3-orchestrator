@@ -206,7 +206,7 @@ migration: ## Create a new database migration file
 COMPOSE_FILE := docker-compose.test.yml
 
 integration-test: ## Run integration tests (testcontainers — no docker-compose needed)
-	go test -race -v -tags integration -count=1 ./internal/integration/
+	go test -race -v -tags integration -count=1 ./internal/integration/ ./internal/store/postgres/
 
 dev-deps: ## Start dev environment services (MinIO + PostgreSQL + Redis + observability)
 	docker compose -f $(COMPOSE_FILE) up -d --wait
@@ -402,7 +402,7 @@ WEB_TAG    ?= $(VERSION)
 # GODOC_EXCLUDES filters auto-discovered internal packages out of the godoc
 # build. Anchored regex: each alternative matches a complete sub-path under
 # internal/. Adjust here when adding a new test-only or generated package.
-GODOC_EXCLUDES := ^(integration|testutil|testutil/.*|backend/backendtest|store/sqlc|store/migrations|.*/testdata|.*/testdata/.*)$$
+GODOC_EXCLUDES := ^(integration|testutil|testutil/.*|backend/backendtest|store/postgres/sqlc|store/postgres/migrations|.*/testdata|.*/testdata/.*)$$
 
 web-tools: ## Install Hugo and gomarkdoc for local website development
 	go install github.com/gohugoio/hugo@latest

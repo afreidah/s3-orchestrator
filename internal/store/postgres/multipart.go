@@ -4,7 +4,7 @@
 // Author: Alex Freidah
 // -------------------------------------------------------------------------------
 
-package store
+package postgres
 
 import (
 	"context"
@@ -15,33 +15,10 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	db "github.com/afreidah/s3-orchestrator/internal/store/sqlc"
+	db "github.com/afreidah/s3-orchestrator/internal/store/postgres/sqlc"
 )
 
 const errUnmarshalMetadata = "failed to unmarshal metadata: %w"
-
-// MultipartUpload holds metadata for an in-progress multipart upload.
-type MultipartUpload struct {
-	UploadID    string
-	ObjectKey   string
-	BackendName string
-	ContentType string
-	Metadata    map[string]string
-	CreatedAt   time.Time
-}
-
-// MultipartPart holds metadata for a single completed part of a multipart
-// upload, including optional encryption metadata when encryption is enabled.
-type MultipartPart struct {
-	PartNumber    int
-	ETag          string
-	SizeBytes     int64
-	CreatedAt     time.Time
-	Encrypted     bool
-	EncryptionKey []byte
-	KeyID         string
-	PlaintextSize int64
-}
 
 // CreateMultipartUpload records a new multipart upload in the database.
 func (s *Store) CreateMultipartUpload(ctx context.Context, uploadID, key, backend, contentType string, metadata map[string]string) error {

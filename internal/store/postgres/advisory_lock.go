@@ -4,7 +4,7 @@
 // Author: Alex Freidah
 // -------------------------------------------------------------------------------
 
-package store
+package postgres
 
 import (
 	"context"

@@ -7,7 +7,7 @@
 // The store methods themselves are thin DB wrappers tested via integration tests.
 // -------------------------------------------------------------------------------
 
-package store
+package postgres
 
 import (
 	"testing"
