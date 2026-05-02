@@ -402,7 +402,7 @@ WEB_TAG    ?= $(VERSION)
 # GODOC_EXCLUDES filters auto-discovered internal packages out of the godoc
 # build. Anchored regex: each alternative matches a complete sub-path under
 # internal/. Adjust here when adding a new test-only or generated package.
-GODOC_EXCLUDES := ^(integration|testutil|testutil/.*|backend/backendtest|store/sqlc|store/migrations|.*/testdata|.*/testdata/.*)$$
+GODOC_EXCLUDES := ^(integration|testutil|testutil/.*|backend/backendtest|store/postgres/sqlc|store/postgres/migrations|.*/testdata|.*/testdata/.*)$$
 
 web-tools: ## Install Hugo and gomarkdoc for local website development
 	go install github.com/gohugoio/hugo@latest
