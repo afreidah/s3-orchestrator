@@ -25,6 +25,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/testutil"
 )
@@ -247,7 +248,7 @@ func TestEncryptExisting_HappyPathOneRow(t *testing.T) {
 	fake := &fakeBackend{payload: []byte("hello world")}
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"backend-a": fake},
-		Stores:          proxy.StoresFromMock(mock),
+		Stores:          proxytest.StoresFromMock(mock),
 		Dashboard:       mock,
 		Metrics:         mock,
 		Order:           []string{"backend-a"},

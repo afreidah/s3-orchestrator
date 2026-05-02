@@ -71,7 +71,6 @@ func TestLocationCache_Clear(t *testing.T) {
 	}
 }
 
-
 func TestLocationCache_Eviction(t *testing.T) {
 	t.Parallel()
 	c := NewLocationCache(50 * time.Millisecond)

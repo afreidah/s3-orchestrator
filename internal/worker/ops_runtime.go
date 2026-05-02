@@ -1,18 +1,14 @@
 // -------------------------------------------------------------------------------
-// Worker Dependency Contracts — Role-Based Interfaces
+// Worker Dependency Contracts — Runtime Infrastructure Roles
 //
 // Author: Alex Freidah
 //
-// Defines focused role interfaces that background workers compose to declare
-// their exact dependencies. The proxy.BackendManager implements all of them.
-// Each worker receives its own narrow store interface rather than accessing
-// a shared MetadataStore god object.
+// The non-store infrastructure each background worker needs from the
+// proxy layer: backend fleet discovery, admission gating, data-movement
+// primitives, and usage accounting. Composed types at the bottom of the
+// file pin which subset each worker takes.
 // -------------------------------------------------------------------------------
 
-// Package worker contains background services that maintain storage health:
-// rebalancing, replication, over-replication cleanup, orphan cleanup queue
-// processing, and reconciliation. Each worker receives composed interfaces
-// for its dependencies rather than embedding shared infrastructure.
 package worker
 
 //go:generate mockgen -destination=mock_ops_test.go -package=worker github.com/afreidah/s3-orchestrator/internal/worker Ops,CleanupOps,ScrubberOps,BackendSyncer
@@ -22,45 +18,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
-	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
-
-// -------------------------------------------------------------------------
-// NARROW STORE INTERFACES (per-worker)
-// -------------------------------------------------------------------------
-
-// RebalancerStore defines the store operations the Rebalancer needs.
-type RebalancerStore interface {
-	core.ObjectStore
-	core.QuotaStore
-}
-
-// ReplicatorStore defines the store operations the Replicator needs.
-type ReplicatorStore interface {
-	core.ObjectStore
-	core.ReplicationStore
-	core.QuotaStore
-}
-
-// OverReplicationStore defines the store operations the OverReplicationCleaner needs.
-type OverReplicationStore interface {
-	core.ReplicationStore
-	core.QuotaStore
-}
-
-// CleanupWorkerStore defines the store operations the CleanupWorker needs.
-type CleanupWorkerStore interface {
-	core.CleanupStore
-}
-
-// ScrubberStore defines the store operations the Scrubber needs.
-type ScrubberStore interface {
-	core.IntegrityStore
-}
-
-// -------------------------------------------------------------------------
-// ROLE INTERFACES (non-store infrastructure)
-// -------------------------------------------------------------------------
 
 // BackendAccess provides backend fleet discovery and drain-awareness.
 type BackendAccess interface {
