@@ -4,7 +4,7 @@
 // Author: Alex Freidah
 // -------------------------------------------------------------------------------
 
-package store
+package postgres
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	db "github.com/afreidah/s3-orchestrator/internal/store/sqlc"
+	db "github.com/afreidah/s3-orchestrator/internal/store/postgres/sqlc"
 )
 
 // SyncQuotaLimits ensures the backend_quotas table has entries for all configured

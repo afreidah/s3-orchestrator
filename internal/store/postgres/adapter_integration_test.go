@@ -1,0 +1,765 @@
+// -------------------------------------------------------------------------------
+// Postgres TxAdapter - Per-Method Integration Tests
+//
+// Author: Alex Freidah
+//
+// Direct coverage for every method on pgTxAdapter against a real PostgreSQL
+// instance via testcontainers. Tagged "integration" so the default unit
+// test run skips it; the integration-test target in the Makefile and the
+// integration job in CI run it.
+// -------------------------------------------------------------------------------
+
+//go:build integration
+// +build integration
+
+package postgres
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/testcontainers/testcontainers-go"
+	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
+	"github.com/testcontainers/testcontainers-go/wait"
+)
+
+// -------------------------------------------------------------------------
+// SHARED CONTAINER FIXTURE
+// -------------------------------------------------------------------------
+
+var (
+	pgFixtureOnce sync.Once
+	pgFixture     *Store
+	pgFixtureErr  error
+)
+
+// adapterPgStore lazily starts a Postgres testcontainer once for the
+// suite, applies the embedded migrations, seeds quota rows for the
+// test backends, and returns a *Store whose pool every test can issue
+// transactions against. Container lifecycle relies on Ryuk for
+// teardown.
+func adapterPgStore(t *testing.T) *Store {
+	t.Helper()
+	pgFixtureOnce.Do(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+
+		ctr, err := tcpostgres.Run(ctx,
+			"postgres:16-alpine",
+			tcpostgres.WithDatabase("adapter_test"),
+			tcpostgres.WithUsername("s3proxy"),
+			tcpostgres.WithPassword("s3proxy"),
+			testcontainers.WithWaitStrategy(
+				wait.ForLog("database system is ready to accept connections").
+					WithOccurrence(2).WithStartupTimeout(30*time.Second)),
+		)
+		if err != nil {
+			pgFixtureErr = fmt.Errorf("start postgres: %w", err)
+			return
+		}
+		host, err := ctr.Host(ctx)
+		if err != nil {
+			pgFixtureErr = fmt.Errorf("postgres host: %w", err)
+			return
+		}
+		port, err := ctr.MappedPort(ctx, "5432/tcp")
+		if err != nil {
+			pgFixtureErr = fmt.Errorf("postgres port: %w", err)
+			return
+		}
+
+		s, err := NewStore(ctx, &config.DatabaseConfig{
+			Host:     host,
+			Port:     int(port.Num()),
+			Database: "adapter_test",
+			User:     "s3proxy",
+			Password: "s3proxy",
+			SSLMode:  "disable",
+			MaxConns: 4,
+			MinConns: 1,
+		})
+		if err != nil {
+			pgFixtureErr = fmt.Errorf("NewStore: %w", err)
+			return
+		}
+		if err := s.RunMigrations(ctx); err != nil {
+			pgFixtureErr = fmt.Errorf("RunMigrations: %w", err)
+			return
+		}
+		if err := s.SyncQuotaLimits(ctx, []config.BackendConfig{
+			{Name: "backend-a", QuotaBytes: 1 << 30},
+			{Name: "backend-b", QuotaBytes: 1 << 30},
+		}); err != nil {
+			pgFixtureErr = fmt.Errorf("SyncQuotaLimits: %w", err)
+			return
+		}
+		pgFixture = s
+	})
+	if pgFixtureErr != nil {
+		t.Fatalf("postgres fixture: %v", pgFixtureErr)
+	}
+	if pgFixture == nil {
+		t.Fatal("postgres fixture nil")
+	}
+	return pgFixture
+}
+
+// withPgAdapter opens a tx on the shared *Store, hands the wrapping
+// adapter to fn, and rolls back on return so each test starts with a
+// clean slate. Tests that need rows committed call s.* methods on the
+// outer *Store before opening the adapter tx.
+func withPgAdapter(t *testing.T, s *Store, fn func(*pgTxAdapter)) {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	fn(&pgTxAdapter{q: s.queries.WithTx(tx)})
+}
+
+// uniqueKey returns a key prefixed with the test name so suites can
+// run in parallel against the shared container without colliding on
+// rows committed outside the rollback-scoped adapter tx.
+func uniqueKey(t *testing.T, suffix string) string {
+	t.Helper()
+	return t.Name() + "/" + suffix
+}
+
+// -------------------------------------------------------------------------
+// AcquireKeyLock
+// -------------------------------------------------------------------------
+
+// TestPgAdapter_AcquireKeyLock_Succeeds verifies the advisory key
+// lock returns a nil error against a real Postgres tx.
+func TestPgAdapter_AcquireKeyLock_Succeeds(t *testing.T) {
+	s := adapterPgStore(t)
+	withPgAdapter(t, s, func(a *pgTxAdapter) {
+		if err := a.AcquireKeyLock(context.Background(), uniqueKey(t, "k")); err != nil {
+			t.Errorf("AcquireKeyLock: %v", err)
+		}
+	})
+}
+
+// -------------------------------------------------------------------------
+// PENDING TX
+// -------------------------------------------------------------------------
+
+// TestPgAdapter_ClaimPending_TrueWhenInserted verifies the FOR UPDATE
+// lock returns true for an existing pending row.
+func TestPgAdapter_ClaimPending_TrueWhenInserted(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	intentID := uniqueKey(t, "intent")
+	if err := s.InsertPending(ctx, &core.PendingObject{
+		IntentID: intentID, ObjectKey: uniqueKey(t, "k"), BackendName: "backend-a", SizeBytes: 1,
+	}); err != nil {
+		t.Fatalf("InsertPending: %v", err)
+	}
+	defer func() { _ = s.DeletePending(ctx, intentID) }()
+
+	withPgAdapter(t, s, func(a *pgTxAdapter) {
+		got, err := a.ClaimPending(ctx, intentID)
+		if err != nil {
+			t.Fatalf("ClaimPending: %v", err)
+		}
+		if !got {
+			t.Error("expected true for existing intent")
+		}
+	})
+}
+
+// TestPgAdapter_ClaimPending_FalseWhenMissing verifies the lock
+// translates pgx.ErrNoRows into (false, nil).
+func TestPgAdapter_ClaimPending_FalseWhenMissing(t *testing.T) {
+	s := adapterPgStore(t)
+	withPgAdapter(t, s, func(a *pgTxAdapter) {
+		got, err := a.ClaimPending(context.Background(), uniqueKey(t, "missing"))
+		if err != nil {
+			t.Fatalf("ClaimPending: %v", err)
+		}
+		if got {
+			t.Error("expected false for missing intent")
+		}
+	})
+}
+
+// TestPgAdapter_InsertPending_PreservesAllFields verifies a fully
+// populated pending row inserted through the adapter round-trips
+// every field through GetStalePending. The adapter call is committed
+// (not rolled back) so the read-back can see the row.
+func TestPgAdapter_InsertPending_PreservesAllFields(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	intentID := uniqueKey(t, "intent")
+	want := core.PendingObject{
+		IntentID:      intentID,
+		ObjectKey:     uniqueKey(t, "k"),
+		BackendName:   "backend-a",
+		SizeBytes:     200,
+		Encrypted:     true,
+		EncryptionKey: []byte("packed"),
+		KeyID:         "kid-1",
+		PlaintextSize: 180,
+		ContentHash:   "abc123",
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+	a := &pgTxAdapter{q: s.queries.WithTx(tx)}
+	if err := a.InsertPending(ctx, &want); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("InsertPending: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	defer func() { _ = s.DeletePending(ctx, intentID) }()
+
+	rows, err := s.GetStalePending(ctx, time.Now().Add(time.Hour), 1000)
+	if err != nil {
+		t.Fatalf("GetStalePending: %v", err)
+	}
+	var got *core.PendingObject
+	for i := range rows {
+		if rows[i].IntentID == intentID {
+			got = &rows[i]
+			break
+		}
+	}
+	if got == nil {
+		t.Fatalf("intent %s not found in stale pending list", intentID)
+	}
+	if got.ObjectKey != want.ObjectKey || got.BackendName != want.BackendName || got.SizeBytes != want.SizeBytes {
+		t.Errorf("required fields mismatch: got %+v want %+v", got, want)
+	}
+	if !got.Encrypted || got.KeyID != "kid-1" || got.PlaintextSize != 180 || got.ContentHash != "abc123" {
+		t.Errorf("optional fields mismatch: %+v", got)
+	}
+	if string(got.EncryptionKey) != "packed" {
+		t.Errorf("EncryptionKey not preserved: %v", got.EncryptionKey)
+	}
+}
+
+// TestPgAdapter_InsertPending_NullableFieldsOmitted verifies that
+// empty optional fields land as SQL NULL when round-tripped via the
+// adapter and read back through GetStalePending.
+func TestPgAdapter_InsertPending_NullableFieldsOmitted(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	intentID := uniqueKey(t, "intent")
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+	a := &pgTxAdapter{q: s.queries.WithTx(tx)}
+	if err := a.InsertPending(ctx, &core.PendingObject{
+		IntentID: intentID, ObjectKey: uniqueKey(t, "k"), BackendName: "backend-a", SizeBytes: 5,
+	}); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("InsertPending: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	defer func() { _ = s.DeletePending(ctx, intentID) }()
+
+	rows, err := s.GetStalePending(ctx, time.Now().Add(time.Hour), 1000)
+	if err != nil {
+		t.Fatalf("GetStalePending: %v", err)
+	}
+	for i := range rows {
+		if rows[i].IntentID != intentID {
+			continue
+		}
+		got := rows[i]
+		if got.KeyID != "" || got.PlaintextSize != 0 || got.ContentHash != "" {
+			t.Errorf("expected zero optional fields (SQL NULL), got %+v", got)
+		}
+		return
+	}
+	t.Fatalf("intent %s not found", intentID)
+}
+
+// TestPgAdapter_DeletePending_RemovesRow verifies the delete clears
+// the row.
+func TestPgAdapter_DeletePending_RemovesRow(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	intentID := uniqueKey(t, "intent")
+	if err := s.InsertPending(ctx, &core.PendingObject{
+		IntentID: intentID, ObjectKey: uniqueKey(t, "k"), BackendName: "backend-a", SizeBytes: 1,
+	}); err != nil {
+		t.Fatalf("InsertPending: %v", err)
+	}
+	withPgAdapter(t, s, func(a *pgTxAdapter) {
+		if err := a.DeletePending(ctx, intentID); err != nil {
+			t.Fatalf("DeletePending: %v", err)
+		}
+		got, err := a.ClaimPending(ctx, intentID)
+		if err != nil {
+			t.Fatalf("ClaimPending: %v", err)
+		}
+		if got {
+			t.Error("intent still present after DeletePending")
+		}
+	})
+}
+
+// TestPgAdapter_DeletePendingByBackend_RemovesAllForBackend verifies
+// the scoped delete clears every intent for the named backend without
+// touching other backends' intents.
+func TestPgAdapter_DeletePendingByBackend_RemovesAllForBackend(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	prefix := t.Name() + "/i-"
+	for i, backend := range []string{"backend-a", "backend-a", "backend-b"} {
+		if err := s.InsertPending(ctx, &core.PendingObject{
+			IntentID:    fmt.Sprintf("%s%d", prefix, i),
+			ObjectKey:   uniqueKey(t, fmt.Sprintf("k-%d", i)),
+			BackendName: backend,
+			SizeBytes:   1,
+		}); err != nil {
+			t.Fatalf("InsertPending(%d): %v", i, err)
+		}
+	}
+	defer func() {
+		_ = s.DeletePending(ctx, prefix+"0")
+		_ = s.DeletePending(ctx, prefix+"1")
+		_ = s.DeletePending(ctx, prefix+"2")
+	}()
+
+	withPgAdapter(t, s, func(a *pgTxAdapter) {
+		if err := a.DeletePendingByBackend(ctx, "backend-a"); err != nil {
+			t.Fatalf("DeletePendingByBackend: %v", err)
+		}
+		if got, err := a.ClaimPending(ctx, prefix+"0"); err != nil || got {
+			t.Errorf("backend-a intent 0 still present: got=%v err=%v", got, err)
+		}
+		if got, err := a.ClaimPending(ctx, prefix+"1"); err != nil || got {
+			t.Errorf("backend-a intent 1 still present: got=%v err=%v", got, err)
+		}
+		if got, err := a.ClaimPending(ctx, prefix+"2"); err != nil || !got {
+			t.Errorf("backend-b intent 2 missing: got=%v err=%v", got, err)
+		}
+	})
+}
+
+// -------------------------------------------------------------------------
+// OBJECTS TX
+// -------------------------------------------------------------------------
+
+// TestPgAdapter_GetExistingCopiesForUpdate_ReturnsAllCopies verifies
+// the FOR UPDATE read returns every copy of a key with the correct
+// backend, size, and timestamp fields.
+func TestPgAdapter_GetExistingCopiesForUpdate_ReturnsAllCopies(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	key := uniqueKey(t, "k")
+	if _, err := s.RecordObject(ctx, key, "backend-a", 100, nil); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+	defer func() { _, _ = s.DeleteObject(ctx, key) }()
+	if _, err := s.RecordReplica(ctx, key, "backend-b", "backend-a", 100); err != nil {
+		t.Fatalf("RecordReplica: %v", err)
+	}
+
+	withPgAdapter(t, s, func(a *pgTxAdapter) {
+		copies, err := a.GetExistingCopiesForUpdate(ctx, key)
+		if err != nil {
+			t.Fatalf("GetExistingCopiesForUpdate: %v", err)
+		}
+		if len(copies) != 2 {
+			t.Fatalf("expected 2 copies, got %d", len(copies))
+		}
+		seen := map[string]int64{}
+		for _, ec := range copies {
+			seen[ec.BackendName] = ec.SizeBytes
+			if ec.CreatedAt.IsZero() {
+				t.Errorf("CreatedAt zero for %s", ec.BackendName)
+			}
+		}
+		if seen["backend-a"] != 100 || seen["backend-b"] != 100 {
+			t.Errorf("expected both copies at 100 bytes, got %v", seen)
+		}
+	})
+}
+
+// TestPgAdapter_GetExistingCopiesForUpdate_EmptyForUnknownKey verifies
+// the read returns an empty slice (no error) when the key has no
+// rows.
+func TestPgAdapter_GetExistingCopiesForUpdate_EmptyForUnknownKey(t *testing.T) {
+	s := adapterPgStore(t)
+	withPgAdapter(t, s, func(a *pgTxAdapter) {
+		copies, err := a.GetExistingCopiesForUpdate(context.Background(), uniqueKey(t, "missing"))
+		if err != nil {
+			t.Fatalf("GetExistingCopiesForUpdate: %v", err)
+		}
+		if len(copies) != 0 {
+			t.Errorf("expected empty slice for missing key, got %+v", copies)
+		}
+	})
+}
+
+// TestPgAdapter_InsertObjectLocation_PreservesEncryptionFields
+// verifies the insert lands every encryption + integrity field through
+// GetAllObjectLocations.
+func TestPgAdapter_InsertObjectLocation_PreservesEncryptionFields(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	key := uniqueKey(t, "k")
+	enc := &core.EncryptionMeta{
+		Encrypted:     true,
+		EncryptionKey: []byte("packed"),
+		KeyID:         "kid-1",
+		PlaintextSize: 50,
+		ContentHash:   "abc123",
+	}
+	if _, err := s.RecordObject(ctx, key, "backend-a", 75, enc); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+	defer func() { _, _ = s.DeleteObject(ctx, key) }()
+
+	locs, err := s.GetAllObjectLocations(ctx, key)
+	if err != nil {
+		t.Fatalf("GetAllObjectLocations: %v", err)
+	}
+	if len(locs) != 1 {
+		t.Fatalf("expected 1 location, got %d", len(locs))
+	}
+	got := locs[0]
+	if got.SizeBytes != 75 || !got.Encrypted || got.KeyID != "kid-1" || got.PlaintextSize != 50 || got.ContentHash != "abc123" {
+		t.Errorf("encryption fields not preserved: %+v", got)
+	}
+	if string(got.EncryptionKey) != "packed" {
+		t.Errorf("EncryptionKey not preserved: %v", got.EncryptionKey)
+	}
+}
+
+// TestPgAdapter_DeleteObjectCopies_RemovesAllRows verifies every copy
+// of the key is removed while copies of other keys remain.
+func TestPgAdapter_DeleteObjectCopies_RemovesAllRows(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	key := uniqueKey(t, "k")
+	other := uniqueKey(t, "other")
+	if _, err := s.RecordObject(ctx, key, "backend-a", 100, nil); err != nil {
+		t.Fatalf("RecordObject(target): %v", err)
+	}
+	if _, err := s.RecordObject(ctx, other, "backend-a", 100, nil); err != nil {
+		t.Fatalf("RecordObject(other): %v", err)
+	}
+	defer func() {
+		_, _ = s.DeleteObject(ctx, key)
+		_, _ = s.DeleteObject(ctx, other)
+	}()
+
+	withPgAdapter(t, s, func(a *pgTxAdapter) {
+		if err := a.DeleteObjectCopies(ctx, key); err != nil {
+			t.Fatalf("DeleteObjectCopies: %v", err)
+		}
+		copies, err := a.GetExistingCopiesForUpdate(ctx, key)
+		if err != nil {
+			t.Fatalf("GetExistingCopiesForUpdate(target): %v", err)
+		}
+		if len(copies) != 0 {
+			t.Errorf("target copies still present: %+v", copies)
+		}
+		copies, err = a.GetExistingCopiesForUpdate(ctx, other)
+		if err != nil {
+			t.Fatalf("GetExistingCopiesForUpdate(other): %v", err)
+		}
+		if len(copies) != 1 {
+			t.Errorf("other key untouched expected, got %+v", copies)
+		}
+	})
+}
+
+// TestPgAdapter_CheckObjectExistsOnBackend verifies both the present
+// and missing branches of the existence probe.
+func TestPgAdapter_CheckObjectExistsOnBackend(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	key := uniqueKey(t, "k")
+	if _, err := s.RecordObject(ctx, key, "backend-a", 100, nil); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+	defer func() { _, _ = s.DeleteObject(ctx, key) }()
+
+	withPgAdapter(t, s, func(a *pgTxAdapter) {
+		got, err := a.CheckObjectExistsOnBackend(ctx, key, "backend-a")
+		if err != nil {
+			t.Fatalf("CheckObjectExistsOnBackend(present): %v", err)
+		}
+		if !got {
+			t.Error("expected true for present (key, backend)")
+		}
+		got, err = a.CheckObjectExistsOnBackend(ctx, key, "backend-b")
+		if err != nil {
+			t.Fatalf("CheckObjectExistsOnBackend(missing): %v", err)
+		}
+		if got {
+			t.Error("expected false for missing (key, backend)")
+		}
+	})
+}
+
+// TestPgAdapter_LockObjectOnBackend_ReturnsRow verifies the lock
+// returns the row payload when the (key, backend) row exists,
+// preserving every encryption and integrity column.
+func TestPgAdapter_LockObjectOnBackend_ReturnsRow(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	key := uniqueKey(t, "k")
+	enc := &core.EncryptionMeta{
+		Encrypted:     true,
+		EncryptionKey: []byte("packed"),
+		KeyID:         "kid-1",
+		PlaintextSize: 50,
+		ContentHash:   "hash",
+	}
+	if _, err := s.RecordObject(ctx, key, "backend-a", 75, enc); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+	defer func() { _, _ = s.DeleteObject(ctx, key) }()
+
+	withPgAdapter(t, s, func(a *pgTxAdapter) {
+		loc, ok, err := a.LockObjectOnBackend(ctx, key, "backend-a")
+		if err != nil {
+			t.Fatalf("LockObjectOnBackend: %v", err)
+		}
+		if !ok {
+			t.Fatal("expected row present")
+		}
+		if loc.SizeBytes != 75 || !loc.Encrypted || loc.KeyID != "kid-1" || loc.PlaintextSize != 50 || loc.ContentHash != "hash" {
+			t.Errorf("payload mismatch: %+v", loc)
+		}
+		if string(loc.EncryptionKey) != "packed" {
+			t.Errorf("EncryptionKey not preserved: %v", loc.EncryptionKey)
+		}
+	})
+}
+
+// TestPgAdapter_LockObjectOnBackend_FalseWhenMissing verifies the
+// lock translates pgx.ErrNoRows into (nil, false, nil).
+func TestPgAdapter_LockObjectOnBackend_FalseWhenMissing(t *testing.T) {
+	s := adapterPgStore(t)
+	withPgAdapter(t, s, func(a *pgTxAdapter) {
+		loc, ok, err := a.LockObjectOnBackend(context.Background(), uniqueKey(t, "missing"), "backend-a")
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				t.Fatal("ErrNoRows leaked to caller; should be (nil, false, nil)")
+			}
+			t.Fatalf("LockObjectOnBackend: %v", err)
+		}
+		if ok || loc != nil {
+			t.Errorf("expected (nil, false, nil) for missing row, got loc=%+v ok=%v", loc, ok)
+		}
+	})
+}
+
+// TestPgAdapter_DeleteObjectFromBackend_RemovesOneRow verifies only
+// the targeted (key, backend) row is removed; replicas remain.
+func TestPgAdapter_DeleteObjectFromBackend_RemovesOneRow(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	key := uniqueKey(t, "k")
+	if _, err := s.RecordObject(ctx, key, "backend-a", 100, nil); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+	if _, err := s.RecordReplica(ctx, key, "backend-b", "backend-a", 100); err != nil {
+		t.Fatalf("RecordReplica: %v", err)
+	}
+	defer func() { _, _ = s.DeleteObject(ctx, key) }()
+
+	withPgAdapter(t, s, func(a *pgTxAdapter) {
+		if err := a.DeleteObjectFromBackend(ctx, key, "backend-a"); err != nil {
+			t.Fatalf("DeleteObjectFromBackend: %v", err)
+		}
+		copies, err := a.GetExistingCopiesForUpdate(ctx, key)
+		if err != nil {
+			t.Fatalf("GetExistingCopiesForUpdate: %v", err)
+		}
+		if len(copies) != 1 || copies[0].BackendName != "backend-b" {
+			t.Errorf("expected only backend-b after delete, got %+v", copies)
+		}
+	})
+}
+
+// TestPgAdapter_InsertObjectLocationIfNotExists_BothBranches verifies
+// the conditional insert returns true when a row is newly created
+// and false when one already exists for (key, backend).
+func TestPgAdapter_InsertObjectLocationIfNotExists_BothBranches(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	key := uniqueKey(t, "k")
+	defer func() { _, _ = s.DeleteObject(ctx, key) }()
+
+	if got, err := s.ImportObject(ctx, key, "backend-a", 50); err != nil || !got {
+		t.Fatalf("ImportObject(insert): got=%v err=%v, want (true, nil)", got, err)
+	}
+	if got, err := s.ImportObject(ctx, key, "backend-a", 50); err != nil || got {
+		t.Errorf("ImportObject(idempotent): got=%v err=%v, want (false, nil)", got, err)
+	}
+}
+
+// TestPgAdapter_InsertReplicaConditional_InsertsWhenSourceExists
+// verifies the conditional insert succeeds when the source row is
+// present and the target row is absent.
+func TestPgAdapter_InsertReplicaConditional_InsertsWhenSourceExists(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	key := uniqueKey(t, "k")
+	if _, err := s.RecordObject(ctx, key, "backend-a", 100, nil); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+	defer func() { _, _ = s.DeleteObject(ctx, key) }()
+
+	if ok, err := s.RecordReplica(ctx, key, "backend-b", "backend-a", 100); err != nil || !ok {
+		t.Fatalf("RecordReplica(insert): got ok=%v err=%v, want (true, nil)", ok, err)
+	}
+
+	locs, err := s.GetAllObjectLocations(ctx, key)
+	if err != nil {
+		t.Fatalf("GetAllObjectLocations: %v", err)
+	}
+	if len(locs) != 2 {
+		t.Errorf("expected 2 copies after replica, got %d", len(locs))
+	}
+}
+
+// TestPgAdapter_InsertReplicaConditional_SkipsWhenSourceMissing
+// verifies the conditional insert returns false (without error) when
+// the source row has been removed.
+func TestPgAdapter_InsertReplicaConditional_SkipsWhenSourceMissing(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	withPgAdapter(t, s, func(a *pgTxAdapter) {
+		got, err := a.InsertReplicaConditional(ctx, uniqueKey(t, "missing"), "backend-b", "backend-a")
+		if err != nil {
+			t.Fatalf("InsertReplicaConditional: %v", err)
+		}
+		if got {
+			t.Error("expected false when source is missing")
+		}
+	})
+}
+
+// -------------------------------------------------------------------------
+// CLEANUP TX
+// -------------------------------------------------------------------------
+
+// TestPgAdapter_SumAndDeleteCleanupQueueRows_DeletesAndReturnsTotals
+// verifies the sum-then-delete returns the row count and total bytes
+// of the rows it removed.
+func TestPgAdapter_SumAndDeleteCleanupQueueRows_DeletesAndReturnsTotals(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	key := uniqueKey(t, "k")
+	if err := s.EnqueueCleanup(ctx, "backend-a", key, "test", 256); err != nil {
+		t.Fatalf("EnqueueCleanup(1): %v", err)
+	}
+	if err := s.EnqueueCleanup(ctx, "backend-a", key, "test", 256); err != nil {
+		t.Fatalf("EnqueueCleanup(2): %v", err)
+	}
+
+	withPgAdapter(t, s, func(a *pgTxAdapter) {
+		count, total, err := a.SumAndDeleteCleanupQueueRows(ctx, key, "backend-a")
+		if err != nil {
+			t.Fatalf("SumAndDeleteCleanupQueueRows: %v", err)
+		}
+		if count != 2 || total != 512 {
+			t.Errorf("count=%d total=%d, want 2 and 512", count, total)
+		}
+	})
+}
+
+// TestPgAdapter_SumAndDeleteCleanupQueueRows_NoRowsReturnsZero
+// verifies the sum-then-delete returns (0, 0, nil) when no matching
+// rows exist.
+func TestPgAdapter_SumAndDeleteCleanupQueueRows_NoRowsReturnsZero(t *testing.T) {
+	s := adapterPgStore(t)
+	withPgAdapter(t, s, func(a *pgTxAdapter) {
+		count, total, err := a.SumAndDeleteCleanupQueueRows(context.Background(), uniqueKey(t, "missing"), "backend-a")
+		if err != nil {
+			t.Fatalf("SumAndDeleteCleanupQueueRows: %v", err)
+		}
+		if count != 0 || total != 0 {
+			t.Errorf("count=%d total=%d, want 0 and 0", count, total)
+		}
+	})
+}
+
+// -------------------------------------------------------------------------
+// QUOTA TX
+// -------------------------------------------------------------------------
+
+// TestPgAdapter_IncrementBackendQuota_AddsBytesUsed verifies the
+// increment updates bytes_used and returns nil error inside a tx.
+func TestPgAdapter_IncrementBackendQuota_AddsBytesUsed(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	withPgAdapter(t, s, func(a *pgTxAdapter) {
+		if err := a.IncrementBackendQuota(ctx, "backend-a", 500); err != nil {
+			t.Fatalf("IncrementBackendQuota: %v", err)
+		}
+	})
+}
+
+// TestPgAdapter_IncrementBackendQuota_ReturnsErrNoSpaceWhenExceeded
+// verifies the guarded UPDATE returns ErrNoSpaceAvailable when the
+// quota ceiling would be exceeded.
+func TestPgAdapter_IncrementBackendQuota_ReturnsErrNoSpaceWhenExceeded(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	if _, err := s.pool.Exec(ctx,
+		`UPDATE backend_quotas SET bytes_limit = 100 WHERE backend_name = $1`, "backend-a",
+	); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	defer func() {
+		_, _ = s.pool.Exec(ctx,
+			`UPDATE backend_quotas SET bytes_limit = $1 WHERE backend_name = $2`, int64(1<<30), "backend-a",
+		)
+	}()
+
+	withPgAdapter(t, s, func(a *pgTxAdapter) {
+		err := a.IncrementBackendQuota(ctx, "backend-a", 200)
+		if !errors.Is(err, core.ErrNoSpaceAvailable) {
+			t.Errorf("got %v, want ErrNoSpaceAvailable", err)
+		}
+	})
+}
+
+// TestPgAdapter_DecrementBackendQuota_NoErrorOnZero verifies the
+// decrement returns nil when there's no row drift.
+func TestPgAdapter_DecrementBackendQuota_NoErrorOnZero(t *testing.T) {
+	s := adapterPgStore(t)
+	withPgAdapter(t, s, func(a *pgTxAdapter) {
+		if err := a.DecrementBackendQuota(context.Background(), "backend-b", 100); err != nil {
+			t.Errorf("DecrementBackendQuota: %v", err)
+		}
+	})
+}
+
+// TestPgAdapter_DecrementOrphanBytes_NoErrorOnZero verifies the
+// orphan_bytes decrement returns nil even when the counter is at
+// zero (the SQL clamps via MAX(0, ...)).
+func TestPgAdapter_DecrementOrphanBytes_NoErrorOnZero(t *testing.T) {
+	s := adapterPgStore(t)
+	withPgAdapter(t, s, func(a *pgTxAdapter) {
+		if err := a.DecrementOrphanBytes(context.Background(), "backend-a", 9999); err != nil {
+			t.Errorf("DecrementOrphanBytes: %v", err)
+		}
+	})
+}

@@ -420,10 +420,10 @@ func TestNewInjector_DefaultsRegisterRequiredOnly(t *testing.T) {
 	joined := strings.Join(listServiceNames(inj), ",")
 
 	for _, want := range []string{
-		"internal/store.ObjectStore",
-		"internal/store.QuotaStore",
-		"internal/store.CleanupStore",
-		"internal/store.AdminStore",
+		"internal/store/core.ObjectStore",
+		"internal/store/core.QuotaStore",
+		"internal/store/core.CleanupStore",
+		"internal/store/core.AdminStore",
 		"internal/breaker.CircuitBreaker",
 		"internal/proxy.BackendManager",
 		"internal/transport/s3api.Server",

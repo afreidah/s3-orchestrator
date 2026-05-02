@@ -11,13 +11,12 @@
 // Package store provides PostgreSQL metadata persistence for the S3 orchestrator.
 // metadata tracking, quota enforcement, circuit breaker protection, replication,
 // and rebalancing.
-package store
+package postgres
 
 import (
 	"context"
 	"database/sql"
 	"embed"
-	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -32,7 +31,8 @@ import (
 	"github.com/pressly/goose/v3"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	db "github.com/afreidah/s3-orchestrator/internal/store/sqlc"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	db "github.com/afreidah/s3-orchestrator/internal/store/postgres/sqlc"
 )
 
 //go:embed migrations/*.sql
@@ -40,35 +40,6 @@ var migrationFS embed.FS
 
 // likeEscaper escapes SQL LIKE wildcards in prefix strings.
 var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
-
-// -------------------------------------------------------------------------
-// ERRORS
-// -------------------------------------------------------------------------
-
-// S3Error is a structured error that carries an HTTP status code and S3 error
-// code, allowing the server layer to translate storage errors into S3 XML
-// responses without per-handler error mapping.
-type S3Error struct {
-	StatusCode int    // HTTP status code (e.g. 404, 507)
-	Code       string // S3 error code (e.g. "NoSuchKey")
-	Message    string // Human-readable message
-}
-
-// Error returns the human-readable error message.
-func (e *S3Error) Error() string {
-	return e.Message
-}
-
-var (
-	// ErrNoSpaceAvailable is an internal error used between store and manager.
-	ErrNoSpaceAvailable = errors.New("no backend has sufficient quota")
-
-	// ErrObjectNotFound is returned when an object is not in the location table.
-	ErrObjectNotFound = &S3Error{StatusCode: 404, Code: "NoSuchKey", Message: "object not found"}
-
-	// ErrMultipartUploadNotFound is returned when a multipart upload ID is not found.
-	ErrMultipartUploadNotFound = &S3Error{StatusCode: 404, Code: "NoSuchUpload", Message: "multipart upload not found"}
-)
 
 // -------------------------------------------------------------------------
 // TYPES
@@ -79,35 +50,6 @@ type Store struct {
 	pool    *pgxpool.Pool
 	queries *db.Queries
 	connStr string
-}
-
-// QuotaStat holds quota statistics for a single backend.
-type QuotaStat struct {
-	BackendName string
-	BytesUsed   int64
-	BytesLimit  int64
-	OrphanBytes int64
-	UpdatedAt   time.Time
-}
-
-// DeletedCopy holds information about a single deleted copy of an object.
-type DeletedCopy struct {
-	BackendName string
-	SizeBytes   int64
-}
-
-// ObjectLocation holds information about where an object is stored, including
-// optional encryption metadata for objects encrypted with envelope encryption.
-type ObjectLocation struct {
-	ObjectKey     string
-	BackendName   string
-	SizeBytes     int64
-	CreatedAt     time.Time
-	Encrypted     bool
-	EncryptionKey []byte
-	KeyID         string
-	PlaintextSize int64
-	ContentHash   string
 }
 
 // -------------------------------------------------------------------------
@@ -226,27 +168,29 @@ func (s *Store) withTx(ctx context.Context, fn func(*db.Queries) error) error {
 	return tx.Commit(ctx)
 }
 
-// withTxVal executes fn within a transaction and returns its result,
-// committing on success or rolling back on error.
-func withTxVal[T any](s *Store, ctx context.Context, fn func(*db.Queries) (T, error)) (T, error) {
+// WithTx satisfies core.Runner by opening a transaction, wrapping the
+// sqlc Queries in a pgTxAdapter, and invoking fn. Commits on a nil
+// return; rolls back otherwise. Lets engine-agnostic core helpers
+// orchestrate multi-statement operations against the postgres engine.
+func (s *Store) WithTx(ctx context.Context, fn func(ctx context.Context, tx core.TxAdapter) error) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		var zero T
-		return zero, fmt.Errorf("failed to begin transaction: %w", err)
+		return fmt.Errorf("begin transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	val, err := fn(s.queries.WithTx(tx))
-	if err != nil {
-		var zero T
-		return zero, err
+	adapter := &pgTxAdapter{q: s.queries.WithTx(tx)}
+	if err := fn(ctx, adapter); err != nil {
+		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		var zero T
-		return zero, fmt.Errorf("failed to commit: %w", err)
+		return fmt.Errorf("commit transaction: %w", err)
 	}
-	return val, nil
+	return nil
 }
+
+// Compile-time check that *Store satisfies core.Runner.
+var _ core.Runner = (*Store)(nil)
 
 // slimObjectRow is the minimum surface of sqlc rows that project an
 // ObjectLocation without encryption columns. Implemented by the four list

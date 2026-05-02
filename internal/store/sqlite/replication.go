@@ -15,9 +15,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // GetUnderReplicatedObjects finds objects with fewer copies than the target
@@ -85,56 +85,9 @@ func (s *Store) GetUnderReplicatedObjectsExcluding(ctx context.Context, factor, 
 	return scanObjectLocations(rows)
 }
 
-// RecordReplica inserts a replica copy of an object, but only if the source
-// copy still exists and the target does not already have a copy. Returns true
-// if the replica was inserted, false if skipped.
+// RecordReplica delegates to core.RecordReplica.
 func (s *Store) RecordReplica(ctx context.Context, key, targetBackend, sourceBackend string, size int64) (bool, error) {
-	return withTxVal(s, ctx, func(tx *sql.Tx) (bool, error) {
-		now := time.Now().UTC().Format(time.RFC3339Nano)
-
-		// Conditional insert: copy metadata from source, skip if target already has a copy.
-		res, err := tx.ExecContext(ctx,
-			`INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at)
-			 SELECT ?, ?, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ?
-			 FROM object_locations ol
-			 WHERE ol.object_key = ? AND ol.backend_name = ?
-			 ON CONFLICT (object_key, backend_name) DO NOTHING`,
-			key, targetBackend, now, key, sourceBackend,
-		)
-		if err != nil {
-			return false, fmt.Errorf("failed to insert replica: %w", err)
-		}
-
-		affected, err := res.RowsAffected()
-		if err != nil {
-			return false, fmt.Errorf("failed to get rows affected: %w", err)
-		}
-		if affected == 0 {
-			return false, nil
-		}
-
-		// Increment quota for target backend.
-		updNow := time.Now().UTC().Format(time.RFC3339Nano)
-		res, err = tx.ExecContext(ctx,
-			`UPDATE backend_quotas
-			 SET bytes_used = bytes_used + ?, updated_at = ?
-			 WHERE backend_name = ?
-			   AND (bytes_limit = 0 OR bytes_used + orphan_bytes + ? <= bytes_limit)`,
-			size, updNow, targetBackend, size,
-		)
-		if err != nil {
-			return false, fmt.Errorf("failed to update quota: %w", err)
-		}
-		n, err := res.RowsAffected()
-		if err != nil {
-			return false, fmt.Errorf("failed to get rows affected: %w", err)
-		}
-		if n == 0 {
-			return false, store.ErrNoSpaceAvailable
-		}
-
-		return true, nil
-	})
+	return core.RecordReplica(ctx, s, key, targetBackend, sourceBackend, size)
 }
 
 // GetOverReplicatedObjects finds objects with more copies than the target
@@ -182,28 +135,9 @@ func (s *Store) CountOverReplicatedObjects(ctx context.Context, factor int) (int
 	return count, nil
 }
 
-// RemoveExcessCopy deletes one copy of an object from the given backend inside
-// a transaction, decrementing the backend quota atomically.
+// RemoveExcessCopy delegates to core.RemoveExcessCopy.
 func (s *Store) RemoveExcessCopy(ctx context.Context, key, backendName string, size int64) error {
-	return s.withTx(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM object_locations WHERE object_key = ? AND backend_name = ?`,
-			key, backendName,
-		); err != nil {
-			return fmt.Errorf("failed to delete excess copy: %w", err)
-		}
-
-		now := time.Now().UTC().Format(time.RFC3339Nano)
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE backend_quotas
-			 SET bytes_used = MAX(0, bytes_used - ?), updated_at = ?
-			 WHERE backend_name = ?`,
-			size, now, backendName,
-		); err != nil {
-			return fmt.Errorf("failed to decrement quota: %w", err)
-		}
-		return nil
-	})
+	return core.RemoveExcessCopy(ctx, s, key, backendName, size)
 }
 
 // scanObjectLocations converts sql.Rows into a slice of ObjectLocation.

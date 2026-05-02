@@ -166,7 +166,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Integration tests
-        run: go test -race -v -tags integration -count=1 -coverprofile=integration-coverage.out -covermode=atomic -coverpkg=./... ./internal/integration/
+        run: go test -race -v -tags integration -count=1 -coverprofile=integration-coverage.out -covermode=atomic -coverpkg=./... ./internal/integration/ ./internal/store/postgres/
 
       - name: Upload integration coverage
         uses: actions/upload-artifact@v7

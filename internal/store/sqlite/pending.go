@@ -15,11 +15,11 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // InsertPending records an in-flight PUT intent.
@@ -143,118 +143,11 @@ func (s *Store) DeletePendingByBackend(ctx context.Context, backendName string) 
 //     new row is inserted, quotas are adjusted, and the pending row is
 //     deleted in the same transaction.
 //   - If the pending row is already gone, the call is a benign no-op.
+// PromotePending delegates to core.PromotePending which composes the
+// engine-agnostic claim, supersession check, commit, and same-tx
+// delete of the pending row against the SQLite TxAdapter.
 func (s *Store) PromotePending(ctx context.Context, p *store.PendingObject) (store.PendingPromoteResult, []store.DeletedCopy, error) {
-	out, err := withTxVal(s, ctx, func(tx *sql.Tx) (sqlitePromoteOutcome, error) {
-		return promotePendingTx(ctx, tx, p)
-	})
-	if err != nil {
-		return store.PendingPromoteAmbiguous, nil, err
-	}
-	return out.result, out.displaced, nil
-}
-
-// sqlitePromoteOutcome carries the resolution result and any displaced
-// copies out of the transactional body.
-type sqlitePromoteOutcome struct {
-	result    store.PendingPromoteResult
-	displaced []store.DeletedCopy
-}
-
-// promotePendingTx is the transactional body of PromotePending. Split out
-// so the orchestration reads as four ordered steps: probe for existence,
-// supersession check, commit, and the same-tx delete of the pending row.
-func promotePendingTx(ctx context.Context, tx *sql.Tx, p *store.PendingObject) (sqlitePromoteOutcome, error) {
-	resolved, err := pendingRowExists(ctx, tx, p.IntentID)
-	if err != nil {
-		return sqlitePromoteOutcome{}, err
-	}
-	if !resolved {
-		return sqlitePromoteOutcome{result: store.PendingPromoteAlreadyResolved}, nil
-	}
-
-	existing, err := fetchExistingCopies(ctx, tx, p.ObjectKey)
-	if err != nil {
-		return sqlitePromoteOutcome{}, err
-	}
-	if intentSuperseded(existing, p.CreatedAt) {
-		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM pending_objects WHERE intent_id = ?`, p.IntentID,
-		); err != nil {
-			return sqlitePromoteOutcome{}, fmt.Errorf("delete superseded pending row: %w", err)
-		}
-		return sqlitePromoteOutcome{result: store.PendingPromoteSuperseded}, nil
-	}
-
-	return commitPromotion(ctx, tx, p, existing)
-}
-
-// pendingRowExists reports whether a pending row exists for the given
-// intent_id. Returns (false, nil) when the row is gone — another reaper
-// already resolved it. SQLite's single-writer model means no row-level
-// lock is needed; the existence probe inside the txn is the equivalent
-// guard against double-resolution.
-func pendingRowExists(ctx context.Context, tx *sql.Tx, intentID string) (bool, error) {
-	var probe string
-	err := tx.QueryRowContext(ctx,
-		`SELECT intent_id FROM pending_objects WHERE intent_id = ?`, intentID,
-	).Scan(&probe)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("lock pending row: %w", err)
-	}
-	return true, nil
-}
-
-// intentSuperseded reports whether any existing object_locations row was
-// created after the pending intent. A newer row means a successful write
-// happened later and is authoritative, so the intent is provably stale.
-func intentSuperseded(existing []sqliteCopy, intentCreatedAt time.Time) bool {
-	for _, ec := range existing {
-		if !ec.createdAt.IsZero() && ec.createdAt.After(intentCreatedAt) {
-			return true
-		}
-	}
-	return false
-}
-
-// commitPromotion finalises a non-superseded intent: clears prior copies,
-// inserts the new object_location row, increments the destination quota,
-// and deletes the pending row in the same transaction.
-func commitPromotion(ctx context.Context, tx *sql.Tx, p *store.PendingObject, existing []sqliteCopy) (sqlitePromoteOutcome, error) {
-	displaced, err := clearDisplacedCopies(ctx, tx, p.ObjectKey, p.BackendName, existing)
-	if err != nil {
-		return sqlitePromoteOutcome{}, err
-	}
-	enc := pendingEncryptionMeta(p)
-	if err := insertObjectLocation(ctx, tx, p.ObjectKey, p.BackendName, p.SizeBytes, enc); err != nil {
-		return sqlitePromoteOutcome{}, err
-	}
-	if err := incrementSQLiteQuota(ctx, tx, p.BackendName, p.SizeBytes); err != nil {
-		return sqlitePromoteOutcome{}, err
-	}
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM pending_objects WHERE intent_id = ?`, p.IntentID,
-	); err != nil {
-		return sqlitePromoteOutcome{}, fmt.Errorf("delete promoted pending row: %w", err)
-	}
-	return sqlitePromoteOutcome{result: store.PendingPromoteCommitted, displaced: displaced}, nil
-}
-
-// pendingEncryptionMeta builds an EncryptionMeta from a PendingObject, or
-// returns nil when the pending row carries no encryption or hash metadata.
-func pendingEncryptionMeta(p *store.PendingObject) *store.EncryptionMeta {
-	if !p.Encrypted && p.ContentHash == "" {
-		return nil
-	}
-	return &store.EncryptionMeta{
-		Encrypted:     p.Encrypted,
-		EncryptionKey: p.EncryptionKey,
-		KeyID:         p.KeyID,
-		PlaintextSize: p.PlaintextSize,
-		ContentHash:   p.ContentHash,
-	}
+	return core.PromotePending(ctx, s, p)
 }
 
 // nullableString returns sql.NullString{Valid:false} when s is empty so the

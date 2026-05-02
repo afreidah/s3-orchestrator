@@ -19,6 +19,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/store"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 
 	_ "modernc.org/sqlite" // register pure-Go SQLite driver for database/sql
 )
@@ -87,22 +88,26 @@ func (s *Store) withTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
 	return tx.Commit()
 }
 
-// withTxVal executes fn inside a transaction and returns a value.
-func withTxVal[T any](s *Store, ctx context.Context, fn func(tx *sql.Tx) (T, error)) (T, error) {
+// WithTx satisfies core.Runner by opening a transaction, wrapping it in
+// a sqliteTxAdapter, and invoking fn. Commits on a nil return; rolls
+// back otherwise. Lets engine-agnostic core helpers orchestrate
+// multi-statement operations against the SQLite engine.
+func (s *Store) WithTx(ctx context.Context, fn func(ctx context.Context, tx core.TxAdapter) error) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		var zero T
-		return zero, fmt.Errorf("begin tx: %w", err)
+		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	val, err := fn(tx)
-	if err != nil {
-		var zero T
-		return zero, err
+	adapter := &sqliteTxAdapter{tx: tx}
+	if err := fn(ctx, adapter); err != nil {
+		return err
 	}
-	return val, tx.Commit()
+	return tx.Commit()
 }
+
+// Compile-time check that *Store satisfies core.Runner.
+var _ core.Runner = (*Store)(nil)
 
 // WithAdvisoryLock emulates PostgreSQL advisory locks using a process-local
 // mutex. For single-instance SQLite deployments, this is correct — there are

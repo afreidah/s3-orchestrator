@@ -4,13 +4,13 @@
 // Author: Alex Freidah
 // -------------------------------------------------------------------------------
 
-package store
+package postgres
 
 import (
 	"context"
 	"fmt"
 
-	db "github.com/afreidah/s3-orchestrator/internal/store/sqlc"
+	db "github.com/afreidah/s3-orchestrator/internal/store/postgres/sqlc"
 )
 
 // -------------------------------------------------------------------------
