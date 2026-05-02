@@ -175,6 +175,23 @@ UPDATE object_locations
 SET content_hash = $3
 WHERE object_key = $1 AND backend_name = $2;
 
+-- name: GetCopiesForKeysForUpdate :many
+-- Returns (object_key, backend_name, size_bytes) for every row matching
+-- a key in the supplied list, locked FOR UPDATE so the same transaction
+-- can delete the rows and decrement the corresponding backend quotas
+-- atomically. Used by the batch-delete path so an N-key request is one
+-- transaction instead of N.
+SELECT object_key, backend_name, size_bytes
+FROM object_locations
+WHERE object_key = ANY(@object_keys::text[])
+FOR UPDATE;
+
+-- name: DeleteObjectsByKeys :exec
+-- Deletes every row whose object_key is in the supplied list. Caller
+-- must have already locked the rows via GetCopiesForKeysForUpdate.
+DELETE FROM object_locations
+WHERE object_key = ANY(@object_keys::text[]);
+
 -- name: GetObjectBackendsForKeys :many
 -- Returns (object_key, backend_name) for every object_locations row whose
 -- object_key is in the supplied list. Used by the rebalancer planner to

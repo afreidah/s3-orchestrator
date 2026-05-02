@@ -54,6 +54,14 @@ func (c *cbObjectStore) DeleteObject(ctx context.Context, key string) ([]Deleted
 	return breaker.CBCall(c.cb, func() ([]DeletedCopy, error) { return c.inner.DeleteObject(ctx, key) })
 }
 
+// DeleteObjectsBatch forwards the batch-delete to the inner store
+// under the breaker.
+func (c *cbObjectStore) DeleteObjectsBatch(ctx context.Context, keys []string) (map[string][]DeletedCopy, error) {
+	return breaker.CBCall(c.cb, func() (map[string][]DeletedCopy, error) {
+		return c.inner.DeleteObjectsBatch(ctx, keys)
+	})
+}
+
 // ListObjects forwards to the inner store under the breaker.
 func (c *cbObjectStore) ListObjects(ctx context.Context, prefix, startAfter string, maxKeys int) (*ListObjectsResult, error) {
 	return breaker.CBCall(c.cb, func() (*ListObjectsResult, error) { return c.inner.ListObjects(ctx, prefix, startAfter, maxKeys) })

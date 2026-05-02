@@ -41,6 +41,11 @@ type MockStore struct {
 	DeleteObjectErr  error
 	DeleteObjectFunc func(key string) ([]store.DeletedCopy, error)
 
+	DeleteObjectsBatchResp  map[string][]store.DeletedCopy
+	DeleteObjectsBatchErr   error
+	DeleteObjectsBatchFunc  func(keys []string) (map[string][]store.DeletedCopy, error)
+	DeleteObjectsBatchCalls [][]string
+
 	ListObjectsResp  *store.ListObjectsResult
 	ListObjectsPages []store.ListObjectsResult // for paginated tests
 	ListObjectsErr   error
@@ -198,6 +203,25 @@ func (m *MockStore) DeleteObject(_ context.Context, key string) ([]store.Deleted
 		return nil, m.DeleteObjectErr
 	}
 	return m.DeleteObjectResp, nil
+}
+
+// DeleteObjectsBatch records the keys, then returns the pre-configured
+// response or error. Default returns an empty map (every key
+// treated as not-found).
+func (m *MockStore) DeleteObjectsBatch(_ context.Context, keys []string) (map[string][]store.DeletedCopy, error) {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+	m.DeleteObjectsBatchCalls = append(m.DeleteObjectsBatchCalls, keys)
+	if m.DeleteObjectsBatchErr != nil {
+		return nil, m.DeleteObjectsBatchErr
+	}
+	if m.DeleteObjectsBatchFunc != nil {
+		return m.DeleteObjectsBatchFunc(keys)
+	}
+	if m.DeleteObjectsBatchResp != nil {
+		return m.DeleteObjectsBatchResp, nil
+	}
+	return map[string][]store.DeletedCopy{}, nil
 }
 
 // ListObjects returns the next pre-configured page or the static response.

@@ -185,6 +185,39 @@ func (a *pgTxAdapter) InsertObjectLocationIfNotExists(ctx context.Context, loc *
 	return inserted, nil
 }
 
+// GetCopiesForKeysForUpdate returns every (key, backend, size) row
+// matching any key in the supplied list, locked FOR UPDATE.
+func (a *pgTxAdapter) GetCopiesForKeysForUpdate(ctx context.Context, keys []string) ([]core.KeyedExistingCopy, error) {
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	rows, err := a.q.GetCopiesForKeysForUpdate(ctx, keys)
+	if err != nil {
+		return nil, fmt.Errorf("get copies for keys: %w", err)
+	}
+	out := make([]core.KeyedExistingCopy, len(rows))
+	for i, r := range rows {
+		out[i] = core.KeyedExistingCopy{
+			ObjectKey:   r.ObjectKey,
+			BackendName: r.BackendName,
+			SizeBytes:   r.SizeBytes,
+		}
+	}
+	return out, nil
+}
+
+// DeleteObjectsByKeys bulk-deletes object_locations rows for every
+// supplied key.
+func (a *pgTxAdapter) DeleteObjectsByKeys(ctx context.Context, keys []string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	if err := a.q.DeleteObjectsByKeys(ctx, keys); err != nil {
+		return fmt.Errorf("delete objects by keys: %w", err)
+	}
+	return nil
+}
+
 // InsertReplicaConditional inserts a replica row only if the source
 // copy still exists. Returns false (with nil error) when the source
 // copy is gone - a benign race the caller treats as nothing-to-do.

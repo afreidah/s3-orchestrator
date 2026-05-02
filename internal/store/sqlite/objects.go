@@ -14,6 +14,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -32,23 +33,22 @@ const errInvalidTimestamp = "invalid created_at timestamp %q: %w"
 // with no copies are absent from the result. Used by the rebalancer
 // planner to fold the per-key existence check into a single query per
 // batch instead of N+1.
+//
+// The query uses SQLite's json_each so the SQL stays static and the
+// keys array is passed as a single JSON-encoded parameter rather than
+// interpolated into the SQL string.
 func (s *Store) GetObjectBackendsForKeys(ctx context.Context, keys []string) (map[string][]string, error) {
 	if len(keys) == 0 {
 		return map[string][]string{}, nil
 	}
-	// SQLite has no array/IN-list parameter type; build the placeholder
-	// list dynamically. The keys slice is caller-controlled (planner
-	// batch size) and small.
-	placeholders := strings.Repeat("?,", len(keys))
-	placeholders = placeholders[:len(placeholders)-1]
-	args := make([]any, len(keys))
-	for i, k := range keys {
-		args[i] = k
+	keysJSON, err := json.Marshal(keys)
+	if err != nil {
+		return nil, fmt.Errorf("marshal keys: %w", err)
 	}
-	// G202: placeholders is "?,?,?" built from strings.Repeat, not user
-	// input; the actual key values are passed as args.
-	query := `SELECT object_key, backend_name FROM object_locations WHERE object_key IN (` + placeholders + `)` //nolint:gosec
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT object_key, backend_name
+		FROM object_locations
+		WHERE object_key IN (SELECT value FROM json_each(?))`, string(keysJSON))
 	if err != nil {
 		return nil, fmt.Errorf("failed to get object backends for keys: %w", err)
 	}
@@ -115,6 +115,12 @@ func (s *Store) RecordObjectAndClearPending(ctx context.Context, key, backend st
 // DeleteObject delegates to core.DeleteObject.
 func (s *Store) DeleteObject(ctx context.Context, key string) ([]store.DeletedCopy, error) {
 	return core.DeleteObject(ctx, s, key)
+}
+
+// DeleteObjectsBatch delegates to core.DeleteObjectsBatch which
+// removes every supplied key in one transaction.
+func (s *Store) DeleteObjectsBatch(ctx context.Context, keys []string) (map[string][]store.DeletedCopy, error) {
+	return core.DeleteObjectsBatch(ctx, s, keys)
 }
 
 // ListObjects returns objects matching the given prefix, sorted by key.

@@ -35,6 +35,9 @@ func (fakeConcreteStore) RecordObjectAndClearPending(context.Context, string, st
 func (fakeConcreteStore) DeleteObject(context.Context, string) ([]store.DeletedCopy, error) {
 	return nil, nil
 }
+func (fakeConcreteStore) DeleteObjectsBatch(context.Context, []string) (map[string][]store.DeletedCopy, error) {
+	return nil, nil
+}
 func (fakeConcreteStore) ListObjects(context.Context, string, string, int) (*store.ListObjectsResult, error) {
 	return nil, nil
 }

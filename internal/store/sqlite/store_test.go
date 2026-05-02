@@ -1918,6 +1918,66 @@ func TestGetObjectBackendsForKeys_GroupsByKey(t *testing.T) {
 	}
 }
 
+// TestDeleteObjectsBatch_EmptyInput verifies the batch helper returns
+// an empty map for nil/empty input without opening a transaction.
+func TestDeleteObjectsBatch_EmptyInput(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	got, err := s.DeleteObjectsBatch(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("DeleteObjectsBatch(nil): %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected empty map, got %v", got)
+	}
+}
+
+// TestDeleteObjectsBatch_RemovesRowsAndDecrementsQuotas verifies a
+// mixed batch removes every supplied key's rows, decrements the
+// affected backend quotas exactly once each by the summed sizes, and
+// returns the per-key displaced copies for cleanup.
+func TestDeleteObjectsBatch_RemovesRowsAndDecrementsQuotas(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+	mustRecordObject(t, s, "bucket/k1", "backend-a", 100)
+	mustRecordReplica(t, s, "bucket/k1", "backend-b", "backend-a", 100)
+	mustRecordObject(t, s, "bucket/k2", "backend-a", 50)
+
+	got, err := s.DeleteObjectsBatch(ctx, []string{"bucket/k1", "bucket/k2", "bucket/missing"})
+	if err != nil {
+		t.Fatalf("DeleteObjectsBatch: %v", err)
+	}
+	if len(got["bucket/k1"]) != 2 {
+		t.Errorf("k1 should have 2 displaced copies, got %v", got["bucket/k1"])
+	}
+	if len(got["bucket/k2"]) != 1 || got["bucket/k2"][0].BackendName != "backend-a" {
+		t.Errorf("k2 displaced copy mismatch: %v", got["bucket/k2"])
+	}
+	if _, ok := got["bucket/missing"]; ok {
+		t.Errorf("missing key must not be in result map: %v", got)
+	}
+
+	// Verify rows are gone.
+	for _, k := range []string{"bucket/k1", "bucket/k2"} {
+		if _, err := s.GetAllObjectLocations(ctx, k); !errors.Is(err, store.ErrObjectNotFound) {
+			t.Errorf("expected %s gone, got err=%v", k, err)
+		}
+	}
+
+	// Verify quotas decremented by the summed sizes.
+	stats, err := s.GetQuotaStats(ctx)
+	if err != nil {
+		t.Fatalf("GetQuotaStats: %v", err)
+	}
+	if stats["backend-a"].BytesUsed != 0 {
+		t.Errorf("backend-a bytes_used = %d, want 0 (k1+k2 = 150 removed)", stats["backend-a"].BytesUsed)
+	}
+	if stats["backend-b"].BytesUsed != 0 {
+		t.Errorf("backend-b bytes_used = %d, want 0 (k1 replica = 100 removed)", stats["backend-b"].BytesUsed)
+	}
+}
+
 // TestListAllEncryptedLocations verifies paginated listing of encrypted object locations.
 func TestListAllEncryptedLocations(t *testing.T) {
 	t.Parallel()

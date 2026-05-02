@@ -997,7 +997,7 @@ func TestAPIDeletePrefix_DeleteError(t *testing.T) {
 		},
 		IsTruncated: false,
 	}
-	mock.DeleteObjectErr = errors.New("delete failed")
+	mock.DeleteObjectsBatchErr = errors.New("delete failed")
 
 	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/delete-prefix",
 		strings.NewReader(`{"prefix":"test-bucket/"}`))
