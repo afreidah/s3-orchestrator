@@ -70,11 +70,14 @@ type BackendManagerConfig struct {
 }
 
 // BackendManager manages multiple storage backends with quota tracking.
-// Embeds *backendCore for shared infrastructure (backend map, store, usage,
-// timeouts, routing) and adds the S3 API surface, encryption, caching,
-// dashboard, and hot-reloadable configuration.
+// Embeds *backendCore for non-store infrastructure (backends, usage,
+// admission, draining, metrics) and holds the per-role store views,
+// workers, and hot-reloadable configuration. Store-touching write-path
+// helpers are methods on *BackendManager (manager_writepath.go); pure
+// infra primitives stay on *backendCore.
 type BackendManager struct {
 	*backendCore
+	stores                 Stores                         // per-role store views
 	Rebalancer             *worker.Rebalancer             // periodic object distribution
 	Replicator             *worker.Replicator             // background replica creation
 	OverReplicationCleaner *worker.OverReplicationCleaner // excess copy removal
@@ -104,36 +107,15 @@ func NewBackendManager(cfg *BackendManagerConfig) *BackendManager {
 	usage := counter.NewUsageTracker(counters, cfg.UsageLimits)
 
 	core := &backendCore{
-		backends:         cfg.Backends,
-		objects:          cfg.Stores.Object,
-		quota:            cfg.Stores.Quota,
-		multipart:        cfg.Stores.Multipart,
-		cleanup:          cfg.Stores.Cleanup,
-		pending:          cfg.Stores.Pending,
-		lifecycle:        cfg.Stores.Lifecycle,
-		backendLifecycle: cfg.Stores.BackendLifecycle,
-		usageFlusher:     cfg.Stores.Usage,
-		order:            cfg.Order,
-		backendTimeout:   cfg.BackendTimeout,
-		usage:            usage,
-		routingStrategy:  cfg.RoutingStrategy,
-		maxObjectSizes:   cfg.MaxObjectSizes,
-		admissionSem:     cfg.AdmissionSem,
+		backends:        cfg.Backends,
+		order:           cfg.Order,
+		backendTimeout:  cfg.BackendTimeout,
+		usage:           usage,
+		routingStrategy: cfg.RoutingStrategy,
+		maxObjectSizes:  cfg.MaxObjectSizes,
+		admissionSem:    cfg.AdmissionSem,
 	}
 
-	cleanupConcurrency := cfg.CleanupConcurrency
-	if cleanupConcurrency <= 0 {
-		cleanupConcurrency = 10
-	}
-	cleanupWorker := worker.NewCleanupWorker(core, cfg.Stores.Cleanup, cleanupConcurrency)
-	// PendingReaper uses the same admission/data-mover/usage surface as the
-	// cleanup worker. The constructor's zero-value fallbacks cover any
-	// settings the caller leaves unset; the lifecycle scheduler chooses the
-	// tick interval.
-	var pendingReaper *worker.PendingReaper
-	if cfg.Stores.Pending != nil {
-		pendingReaper = worker.NewPendingReaper(core, cfg.Stores.Pending, 0, cfg.PendingReaperMinAge, cfg.PendingReaperBatch)
-	}
 	multipartManager := NewMultipartManager(core, cfg.Encryptor, cfg.ObjectCache)
 	cache := NewLocationCache(cfg.CacheTTL)
 	// ObjectManager gets a closure for the integrity config so it can read
@@ -146,33 +128,46 @@ func NewBackendManager(cfg *BackendManagerConfig) *BackendManager {
 		return m.IntegrityConfig()
 	})
 
+	m = &BackendManager{
+		backendCore:      core,
+		stores:           cfg.Stores,
+		MultipartManager: multipartManager,
+		ObjectManager:    objectManager,
+		dashboard:        dashboard.New(cfg.Dashboard, usage, cfg.Order),
+	}
+	multipartManager.parent = m
+	objectManager.parent = m
+
+	// Workers and drain take *BackendManager (which satisfies worker.Ops /
+	// drain.Core via promoted backendCore methods plus its own write-path
+	// helpers). The construction order requires m to exist first.
+	cleanupConcurrency := cfg.CleanupConcurrency
+	if cleanupConcurrency <= 0 {
+		cleanupConcurrency = 10
+	}
+	m.CleanupWorker = worker.NewCleanupWorker(m, cfg.Stores.Cleanup, cleanupConcurrency)
+	if cfg.Stores.Pending != nil {
+		m.PendingReaper = worker.NewPendingReaper(m, cfg.Stores.Pending, 0, cfg.PendingReaperMinAge, cfg.PendingReaperBatch)
+	}
+
 	rebalancerDeps := &rebalancerStore{ObjectStore: cfg.Stores.Object, QuotaStore: cfg.Stores.Quota}
 	replicatorDeps := &replicatorStore{ObjectStore: cfg.Stores.Object, ReplicationStore: cfg.Stores.Replication, QuotaStore: cfg.Stores.Quota}
 	overReplicationDeps := &overReplicationStore{ReplicationStore: cfg.Stores.Replication, QuotaStore: cfg.Stores.Quota}
 
-	drainManager := drain.New(
-		core,
+	m.Rebalancer = worker.NewRebalancer(m, rebalancerDeps)
+	m.Replicator = worker.NewReplicator(m, replicatorDeps)
+	m.OverReplicationCleaner = worker.NewOverReplicationCleaner(m, overReplicationDeps)
+	m.Scrubber = worker.NewScrubber(m, cfg.Stores.Integrity, cfg.Encryptor)
+
+	m.DrainManager = drain.New(
+		m,
 		cfg.Stores.Object,
 		cfg.Stores.Quota,
 		cfg.Stores.BackendLifecycle,
 		multipartManager.abortMultipartUploadsOnBackend,
-		cleanupWorker.ProcessCleanupQueue,
+		m.CleanupWorker.ProcessCleanupQueue,
 	)
-	core.drainMgr = drainManager
-
-	m = &BackendManager{
-		backendCore:            core,
-		Rebalancer:             worker.NewRebalancer(core, rebalancerDeps),
-		Replicator:             worker.NewReplicator(core, replicatorDeps),
-		OverReplicationCleaner: worker.NewOverReplicationCleaner(core, overReplicationDeps),
-		CleanupWorker:          cleanupWorker,
-		PendingReaper:          pendingReaper,
-		Scrubber:               worker.NewScrubber(core, cfg.Stores.Integrity, cfg.Encryptor),
-		MultipartManager:       multipartManager,
-		ObjectManager:          objectManager,
-		DrainManager:           drainManager,
-		dashboard:              dashboard.New(cfg.Dashboard, usage, cfg.Order),
-	}
+	core.drainMgr = m.DrainManager
 
 	core.metricsCollector = metrics.New(cfg.Metrics, usage, backendNames, func() int {
 		if rc := m.Replicator.Config(); rc != nil {
@@ -224,7 +219,7 @@ func (m *BackendManager) UpdateUsageLimits(limits map[string]core.UsageLimits) {
 // (including backend_usage) have been removed.
 func (m *BackendManager) FlushUsage(ctx context.Context) error {
 	skip := m.DrainManager.CompletedBackends()
-	return m.usage.FlushUsage(ctx, m.usageFlusher, skip)
+	return m.usage.FlushUsage(ctx, m.stores.Usage, skip)
 }
 
 // RedisCounterActive returns true when the counter backend is a Redis
@@ -348,7 +343,7 @@ func (m *BackendManager) SyncBackend(ctx context.Context, backendName, bucket st
 				key = bucketPrefix + key
 			}
 
-			ok, importErr := m.objects.ImportObject(ctx, key, backendName, obj.SizeBytes)
+			ok, importErr := m.stores.Object.ImportObject(ctx, key, backendName, obj.SizeBytes)
 			if importErr != nil {
 				return fmt.Errorf("failed to import %s: %w", obj.Key, importErr)
 			}
@@ -386,10 +381,10 @@ func (m *BackendManager) SyncBackend(ctx context.Context, backendName, bucket st
 // log but do not propagate.
 func (m *BackendManager) makeReconcileDeleter() deleterFn {
 	return func(ctx context.Context, key, backendName string) error {
-		if err := m.objects.DeleteObjectLocation(ctx, key, backendName); err != nil {
+		if err := m.stores.Object.DeleteObjectLocation(ctx, key, backendName); err != nil {
 			return err
 		}
-		if _, err := m.cleanup.SweepStaleCleanupQueueRows(ctx, key, backendName); err != nil {
+		if _, err := m.stores.Cleanup.SweepStaleCleanupQueueRows(ctx, key, backendName); err != nil {
 			slog.WarnContext(ctx, "Reconcile: failed to sweep cleanup_queue rows for stale key",
 				"key", key, "backend", backendName, "error", err)
 		}
@@ -419,13 +414,13 @@ func (m *BackendManager) ReconcileBackend(ctx context.Context, backendName, buck
 	s3 := newS3KeyStream(ctx, s3b, bucketPrefix, otherPrefixes, &apiPages)
 	defer s3.stop()
 
-	dbIter := newDBCursorStream(m.objects, backendName, bucketPrefix, otherPrefixes)
+	dbIter := newDBCursorStream(m.stores.Object, backendName, bucketPrefix, otherPrefixes)
 	defer dbIter.stop()
 
 	res := &reconcileResult{}
 	mergeErr := reconcileSorted(
 		ctx, s3, dbIter,
-		importHandler(backendName, m.objects.ImportObject, res),
+		importHandler(backendName, m.stores.Object.ImportObject, res),
 		deleteHandler(backendName, m.makeReconcileDeleter(), res),
 	)
 

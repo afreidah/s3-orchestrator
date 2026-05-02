@@ -60,7 +60,7 @@ func (o *ObjectManager) resolveLocationsByBackend(ctx context.Context, key strin
 	if o.encryptor == nil {
 		return nil
 	}
-	locations, err := o.objects.GetAllObjectLocations(ctx, key)
+	locations, err := o.parent.stores.Object.GetAllObjectLocations(ctx, key)
 	if err != nil {
 		return nil
 	}
@@ -99,7 +99,7 @@ func (o *ObjectManager) withReadFailover(ctx context.Context, operation, key str
 	)
 	defer span.End()
 
-	locations, err := o.objects.GetAllObjectLocations(ctx, key)
+	locations, err := o.parent.stores.Object.GetAllObjectLocations(ctx, key)
 	if err != nil {
 		if errors.Is(err, core.ErrObjectNotFound) {
 			span.SetStatus(codes.Error, "object not found")
@@ -482,7 +482,7 @@ func (o *ObjectManager) GetObject(ctx context.Context, key string, rangeHeader s
 						"key", key, "backend", beName,
 						"expected_hash", expected, "actual_hash", actual)
 					telemetry.IntegrityErrorsTotal.WithLabelValues("read").Inc()
-					o.deleteOrEnqueue(ctx, backend, beName, key, "integrity_failed", r.Size)
+					o.parent.deleteOrEnqueue(ctx, backend, beName, key, "integrity_failed", r.Size)
 				})
 				r.Body = vr
 			}
@@ -649,7 +649,7 @@ func (o *ObjectManager) ListObjects(ctx context.Context, prefix, delimiter, star
 
 	maxPages := listObjectsMaxPages
 	for page := 0; page < maxPages && result.KeyCount < maxKeys; page++ {
-		storeResult, err := o.objects.ListObjects(ctx, prefix, cursor, maxKeys)
+		storeResult, err := o.parent.stores.Object.ListObjects(ctx, prefix, cursor, maxKeys)
 		if err != nil {
 			if errors.Is(err, core.ErrDBUnavailable) {
 				span.SetStatus(codes.Error, "database unavailable")

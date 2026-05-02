@@ -27,6 +27,7 @@ const managerSpanPrefix = "Manager "
 // broadcast reads during degraded mode, and location caching.
 type ObjectManager struct {
 	*backendCore
+	parent            *BackendManager // set post-construction; routes write-path helpers to the parent's store fields
 	encryptor         *encryption.Encryptor
 	cache             *LocationCache
 	objectCache       objcache.ObjectCache // nil when object data caching is disabled
@@ -34,7 +35,10 @@ type ObjectManager struct {
 	integrityCfg      func() *config.IntegrityConfig
 }
 
-// NewObjectManager creates an ObjectManager sharing the given core infrastructure.
+// NewObjectManager creates an ObjectManager sharing the given core
+// infrastructure. The caller wires the parent BackendManager pointer
+// after construction (chicken-and-egg: BackendManager builds this
+// manager and points the parent ref back to itself).
 func NewObjectManager(core *backendCore, encryptor *encryption.Encryptor, cache *LocationCache, objectCache objcache.ObjectCache, parallelBroadcast bool, integrityCfg func() *config.IntegrityConfig) *ObjectManager {
 	return &ObjectManager{
 		backendCore:       core,

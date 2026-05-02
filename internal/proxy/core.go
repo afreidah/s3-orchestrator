@@ -15,18 +15,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 
-	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
-	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -38,20 +36,12 @@ type drainChecker interface {
 	IsDraining(name string) bool
 }
 
-// backendCore holds the shared infrastructure that multiple storage
-// components need: the backend map, per-role store views, usage tracker,
-// and common utilities. Each store field is the narrow role interface the
-// core actually calls — no composed type owns the aggregate.
+// backendCore holds the non-store infrastructure that multiple storage
+// components need: the backend map, usage tracker, admission gate,
+// drain-checker, metrics collector, and per-op timeouts. Per-role store
+// views live on *BackendManager; backendCore deliberately holds none.
 type backendCore struct {
 	backends         map[string]backend.ObjectBackend // name -> backend
-	objects          core.ObjectStore                 // object CRUD + move + import
-	quota            core.QuotaStore                  // routing / capacity queries
-	multipart        core.MultipartStore              // exposed via Manager.Multipart()
-	cleanup          core.CleanupStore                // orphan cleanup + orphan-byte accounting
-	pending          core.PendingStore                // in-flight PUT intent tracking (nil = pending pattern disabled)
-	lifecycle        core.ExpiredObjectsLister        // expiration lookups
-	backendLifecycle core.BackendLifecycleStore       // backend-level stats and deletion
-	usageFlusher     core.UsageFlusher                // usage tracker flush target
 	order            []string                         // backend selection order
 	backendTimeout   time.Duration                    // per-operation timeout for backend S3 calls
 	usage            *counter.UsageTracker            // per-backend usage counters and limits
@@ -205,59 +195,6 @@ func (c *backendCore) eligibleForWrite(apiCalls, egress, ingress int64) []string
 }
 
 // -------------------------------------------------------------------------
-// ROUTING
-// -------------------------------------------------------------------------
-
-// SelectReplicaTarget picks a target backend for a replication copy using the
-// same routing strategy as normal writes. Excludes backends that already hold
-// a copy of the object.
-func (c *backendCore) SelectReplicaTarget(ctx context.Context, size int64, exclusion map[string]bool) (string, error) {
-	eligible := c.eligibleForWrite(1, 0, size)
-	filtered := make([]string, 0, len(eligible))
-	for _, name := range eligible {
-		if !exclusion[name] {
-			filtered = append(filtered, name)
-		}
-	}
-	if len(filtered) == 0 {
-		return "", nil
-	}
-	name, err := c.selectBackendForWrite(ctx, size, filtered)
-	if errors.Is(err, core.ErrNoSpaceAvailable) {
-		return "", nil
-	}
-	return name, err
-}
-
-// selectBackendForWrite picks the target backend for a write operation using
-// the configured routing strategy. "pack" returns the first backend with space,
-// "spread" returns the least-utilized backend.
-func (c *backendCore) selectBackendForWrite(ctx context.Context, size int64, eligible []string) (string, error) {
-	if c.routingStrategy == config.RoutingSpread {
-		return c.quota.GetLeastUtilizedBackend(ctx, size, eligible)
-	}
-	return c.quota.GetBackendWithSpace(ctx, size, eligible)
-}
-
-// selectWriteTarget picks a backend for a write operation, combining
-// eligibility filtering, backend selection, and error classification into
-// a single call. Returns ErrInsufficientStorage when no backend can accept
-// the write, or the classified error from the routing query.
-func (c *backendCore) selectWriteTarget(ctx context.Context, span trace.Span, operation string, size int64) (string, error) {
-	eligible := c.eligibleForWrite(1, 0, size)
-	if len(eligible) == 0 {
-		telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation, "write").Inc()
-		span.SetStatus(codes.Error, "usage limits exceeded on all backends")
-		return "", core.ErrInsufficientStorage
-	}
-	name, err := c.selectBackendForWrite(ctx, size, eligible)
-	if err != nil {
-		return "", c.classifyWriteError(span, operation, err)
-	}
-	return name, nil
-}
-
-// -------------------------------------------------------------------------
 // ERROR CLASSIFICATION
 // -------------------------------------------------------------------------
 
@@ -278,149 +215,6 @@ func (c *backendCore) classifyWriteError(span trace.Span, operation string, err 
 	span.SetStatus(codes.Error, err.Error())
 	span.RecordError(err)
 	return err
-}
-
-// -------------------------------------------------------------------------
-// RECORD + CLEANUP
-// -------------------------------------------------------------------------
-
-// recordObjectOrCleanup calls RecordObject and, on failure, deletes the orphaned
-// object from the backend. On success, enqueues cleanup for any displaced copies
-// on other backends (from overwrites). Updates the tracing span on error.
-func (c *backendCore) recordObjectOrCleanup(ctx context.Context, span trace.Span, be backend.ObjectBackend, key, backendName string, size int64, enc *core.EncryptionMeta) error {
-	displaced, err := c.objects.RecordObject(ctx, key, backendName, size, enc)
-	if err != nil {
-		slog.ErrorContext(ctx, "recordObject failed, cleaning up orphan",
-			"key", key, "backend", backendName, "error", err)
-		// Account for both API calls the failure path made: the PUT that
-		// succeeded against the backend (the caller's success-path Record
-		// runs only after we return nil) and the cleanup DELETE about to run.
-		c.usage.Record(backendName, 1, 0, 0) // PUT
-		delErr := c.deleteWithTimeout(ctx, be, key)
-		c.usage.Record(backendName, 1, 0, 0) // cleanup DELETE
-		if delErr != nil {
-			slog.ErrorContext(ctx, "failed to clean up orphaned object",
-				"key", key, "backend", backendName, "error", delErr)
-			c.enqueueCleanup(ctx, backendName, key, "orphan_record_failed", size)
-		}
-		span.SetStatus(codes.Error, err.Error())
-		span.RecordError(err)
-		return fmt.Errorf("failed to record object: %w", err)
-	}
-
-	// Clean up stale copies on other backends displaced by this overwrite.
-	for _, dc := range displaced {
-		dcBackend, ok := c.backends[dc.BackendName]
-		if !ok {
-			slog.WarnContext(ctx, "displaced copy backend not found",
-				"backend", dc.BackendName, "key", key)
-			continue
-		}
-		c.deleteOrEnqueue(ctx, dcBackend, dc.BackendName, key, "overwrite_displaced", dc.SizeBytes)
-	}
-
-	if len(displaced) > 0 {
-		audit.Log(ctx, "storage.overwrite_displaced",
-			slog.String("key", key),
-			slog.String("new_backend", backendName),
-			slog.Int("displaced_copies", len(displaced)),
-		)
-	}
-
-	return nil
-}
-
-// insertPendingIntent records an in-flight PUT intent before the backend
-// upload. Returns the generated intent ID, or empty string if no pending
-// store is configured (in which case the legacy delete-on-record-failure
-// path remains in effect for that PUT). A failure to insert the intent
-// while pending tracking is configured fails the PUT — proceeding without
-// the intent would reintroduce the data-loss window the pattern exists to
-// close.
-func (c *backendCore) insertPendingIntent(ctx context.Context, key, backendName string, size int64, enc *core.EncryptionMeta) (string, error) {
-	if c.pending == nil {
-		return "", nil
-	}
-	intentID := audit.NewID()
-	p := core.PendingObject{
-		IntentID:    intentID,
-		ObjectKey:   key,
-		BackendName: backendName,
-		SizeBytes:   size,
-	}
-	if enc != nil {
-		p.Encrypted = enc.Encrypted
-		p.EncryptionKey = enc.EncryptionKey
-		p.KeyID = enc.KeyID
-		p.PlaintextSize = enc.PlaintextSize
-		p.ContentHash = enc.ContentHash
-	}
-	if err := c.pending.InsertPending(ctx, &p); err != nil {
-		return "", fmt.Errorf("insert pending intent: %w", err)
-	}
-	telemetry.PendingIntentsEnqueuedTotal.Inc()
-	return intentID, nil
-}
-
-// recordObjectAndPromoteIntent commits the object location, updates quota,
-// and clears the pending intent in a single transaction. On failure, the
-// pending row is left in place and the backend bytes are NOT deleted: the
-// pending reaper resolves the intent on a later tick by HEADing the
-// backend, promoting the metadata if the bytes are present and removing
-// the intent if they are absent.
-//
-// When intentID is empty (no pending store configured) this falls back to
-// the legacy recordObjectOrCleanup behavior so existing call sites and
-// tests retain their previous semantics.
-func (c *backendCore) recordObjectAndPromoteIntent(ctx context.Context, span trace.Span, key, backendName string, size int64, enc *core.EncryptionMeta, intentID string) error {
-	if intentID == "" {
-		// No pending tracking — caller already wrote bytes, fall back to the
-		// legacy path. The backend is unavailable here, so we cannot use
-		// recordObjectOrCleanup (which deletes on failure). Resolve via the
-		// backend map.
-		be, ok := c.backends[backendName]
-		if !ok {
-			return fmt.Errorf("backend %s not registered", backendName)
-		}
-		return c.recordObjectOrCleanup(ctx, span, be, key, backendName, size, enc)
-	}
-
-	displaced, err := c.objects.RecordObjectAndClearPending(ctx, key, backendName, size, enc, intentID)
-	if err == nil {
-		telemetry.PendingIntentsResolvedTotal.WithLabelValues("committed").Inc()
-	}
-	if err != nil {
-		slog.ErrorContext(ctx, "recordObjectAndClearPending failed; intent left for reaper",
-			"key", key, "backend", backendName, "intent_id", intentID, "error", err)
-		// The successful PUT against the backend still consumed an API
-		// call. The success-path usage record runs only when this returns
-		// nil, so account for it here.
-		c.usage.Record(backendName, 1, 0, 0)
-		span.SetStatus(codes.Error, err.Error())
-		span.RecordError(err)
-		return fmt.Errorf("failed to record object: %w", err)
-	}
-
-	// Clean up stale copies on other backends displaced by this overwrite.
-	for _, dc := range displaced {
-		dcBackend, ok := c.backends[dc.BackendName]
-		if !ok {
-			slog.WarnContext(ctx, "displaced copy backend not found",
-				"backend", dc.BackendName, "key", key)
-			continue
-		}
-		c.deleteOrEnqueue(ctx, dcBackend, dc.BackendName, key, "overwrite_displaced", dc.SizeBytes)
-	}
-
-	if len(displaced) > 0 {
-		audit.Log(ctx, "storage.overwrite_displaced",
-			slog.String("key", key),
-			slog.String("new_backend", backendName),
-			slog.Int("displaced_copies", len(displaced)),
-		)
-	}
-
-	return nil
 }
 
 // deleteWithTimeout deletes an object from a backend using the configured
@@ -452,19 +246,6 @@ func (c *backendCore) streamCopy(ctx context.Context, src, dst backend.ObjectBac
 	return nil
 }
 
-// deleteOrEnqueue attempts to delete an object from a backend. If the delete
-// fails, it logs a warning and enqueues the key for background retry. This is
-// the standard "best-effort orphan cleanup" primitive used throughout the
-// manager: rebalancer, replicator, multipart cleanup, and delete paths.
-// sizeBytes is tracked as orphan bytes when the delete is enqueued.
-func (c *backendCore) deleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, backendName, key, reason string, sizeBytes int64) {
-	if err := c.deleteWithTimeout(ctx, be, key); err != nil {
-		slog.WarnContext(ctx, "failed to delete object, enqueuing cleanup",
-			"backend", backendName, "key", key, "reason", reason, "error", err)
-		c.enqueueCleanup(ctx, backendName, key, reason, sizeBytes)
-	}
-}
-
 // -------------------------------------------------------------------------
 // METRICS
 // -------------------------------------------------------------------------
@@ -477,26 +258,6 @@ func (c *backendCore) recordOperation(operation, backend string, start time.Time
 // UpdateQuotaMetrics refreshes Prometheus gauges from the metadata store.
 func (c *backendCore) UpdateQuotaMetrics(ctx context.Context) error {
 	return c.metricsCollector.UpdateQuotaMetrics(ctx)
-}
-
-// enqueueCleanup adds a failed cleanup operation to the retry queue and
-// increments orphan_bytes so the write path accounts for the physically
-// unreleased space. Best-effort: if the enqueue or orphan update fails
-// (e.g. DB down), logs the error and moves on since the circuit breaker
-// is already handling DB outages.
-func (c *backendCore) enqueueCleanup(ctx context.Context, backendName, objectKey, reason string, sizeBytes int64) {
-	if err := c.cleanup.EnqueueCleanup(ctx, backendName, objectKey, reason, sizeBytes); err != nil {
-		slog.ErrorContext(ctx, "failed to enqueue cleanup (best-effort)",
-			"backend", backendName, "key", objectKey, "reason", reason, "error", err)
-		return
-	}
-	if sizeBytes > 0 {
-		if err := c.cleanup.IncrementOrphanBytes(ctx, backendName, sizeBytes); err != nil {
-			slog.ErrorContext(ctx, "failed to increment orphan bytes (best-effort)",
-				"backend", backendName, "key", objectKey, "size", sizeBytes, "error", err)
-		}
-	}
-	telemetry.CleanupQueueEnqueuedTotal.WithLabelValues(reason).Inc()
 }
 
 // -------------------------------------------------------------------------
@@ -520,14 +281,6 @@ func (c *backendCore) Backends() map[string]backend.ObjectBackend { return c.bac
 // BackendOrder returns the configured backend ordering.
 func (c *backendCore) BackendOrder() []string { return c.order }
 
-// Multipart returns the multipart-upload store role. Exposed for transport
-// handlers that need direct upload bookkeeping (e.g. s3api count).
-func (c *backendCore) Multipart() core.MultipartStore { return c.multipart }
-
-// BackendLifecycle returns the backend-level admin store role. Exposed for
-// admin handlers that report per-backend stats or drop backend data.
-func (c *backendCore) BackendLifecycle() core.BackendLifecycleStore { return c.backendLifecycle }
-
 // Usage returns the usage tracker.
 func (c *backendCore) Usage() *counter.UsageTracker { return c.usage }
 
@@ -539,11 +292,6 @@ func (c *backendCore) StreamCopy(ctx context.Context, src, dst backend.ObjectBac
 // DeleteWithTimeout deletes an object from a backend with the configured timeout.
 func (c *backendCore) DeleteWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) error {
 	return c.deleteWithTimeout(ctx, be, key)
-}
-
-// DeleteOrEnqueue deletes an object, enqueueing for retry on failure.
-func (c *backendCore) DeleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, backendName, key, reason string, sizeBytes int64) {
-	c.deleteOrEnqueue(ctx, be, backendName, key, reason, sizeBytes)
 }
 
 // ExcludeDraining filters out backends that are being drained.
