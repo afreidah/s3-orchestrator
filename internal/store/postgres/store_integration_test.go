@@ -236,33 +236,48 @@ func TestStoreInt_UsageFlushAndRead(t *testing.T) {
 // MULTIPART
 // -------------------------------------------------------------------------
 
-// TestStoreInt_MultipartLifecycle covers create, GetMultipartUpload,
-// RecordPart, GetParts, CountActiveMultipartUploadsByPrefix,
-// ListMultipartUploads, GetMultipartUploadsByBackend, and finally
-// DeleteMultipartUpload.
-func TestStoreInt_MultipartLifecycle(t *testing.T) {
-	s := adapterPgStore(t)
+// seedMultipartUpload creates a multipart upload and returns the
+// upload ID + cleanup. Shared by the multipart tests below to keep
+// each test focused on one Store method.
+func seedMultipartUpload(t *testing.T, s *Store, contentType string, metadata map[string]string) (uploadID, key string) {
+	t.Helper()
 	ctx := context.Background()
-	uploadID := uniqueKey(t, "upload")
-	key := uniqueKey(t, "k")
-	if err := s.CreateMultipartUpload(ctx, uploadID, key, "backend-a", "application/octet-stream", map[string]string{"foo": "bar"}); err != nil {
+	uploadID = uniqueKey(t, "upload")
+	key = uniqueKey(t, "k")
+	if err := s.CreateMultipartUpload(ctx, uploadID, key, "backend-a", contentType, metadata); err != nil {
 		t.Fatalf("CreateMultipartUpload: %v", err)
 	}
-	defer func() { _ = s.DeleteMultipartUpload(ctx, uploadID) }()
+	t.Cleanup(func() { _ = s.DeleteMultipartUpload(context.Background(), uploadID) })
+	return uploadID, key
+}
 
-	mu, err := s.GetMultipartUpload(ctx, uploadID)
+// TestStoreInt_GetMultipartUpload verifies CreateMultipartUpload +
+// GetMultipartUpload round-trips key, backend, and metadata.
+func TestStoreInt_GetMultipartUpload(t *testing.T) {
+	s := adapterPgStore(t)
+	uploadID, key := seedMultipartUpload(t, s, "application/octet-stream", map[string]string{"foo": "bar"})
+
+	mu, err := s.GetMultipartUpload(context.Background(), uploadID)
 	if err != nil {
 		t.Fatalf("GetMultipartUpload: %v", err)
 	}
 	if mu.ObjectKey != key || mu.BackendName != "backend-a" || mu.Metadata["foo"] != "bar" {
 		t.Errorf("upload payload mismatch: %+v", mu)
 	}
+}
+
+// TestStoreInt_RecordPartAndGetParts verifies parts are persisted
+// in part-number order with the right etag and size.
+func TestStoreInt_RecordPartAndGetParts(t *testing.T) {
+	s := adapterPgStore(t)
+	uploadID, _ := seedMultipartUpload(t, s, "", nil)
+	ctx := context.Background()
 
 	if err := s.RecordPart(ctx, uploadID, 1, "etag-1", 1024, nil); err != nil {
-		t.Fatalf("RecordPart: %v", err)
+		t.Fatalf("RecordPart(1): %v", err)
 	}
 	if err := s.RecordPart(ctx, uploadID, 2, "etag-2", 2048, nil); err != nil {
-		t.Fatalf("RecordPart: %v", err)
+		t.Fatalf("RecordPart(2): %v", err)
 	}
 	parts, err := s.GetParts(ctx, uploadID)
 	if err != nil {
@@ -271,34 +286,63 @@ func TestStoreInt_MultipartLifecycle(t *testing.T) {
 	if len(parts) != 2 || parts[0].PartNumber != 1 || parts[1].PartNumber != 2 {
 		t.Errorf("parts ordering or count wrong: %+v", parts)
 	}
+}
 
-	count, err := s.CountActiveMultipartUploads(ctx, t.Name())
+// TestStoreInt_CountActiveMultipartUploads verifies the helper
+// counts in-progress uploads under a prefix.
+func TestStoreInt_CountActiveMultipartUploads(t *testing.T) {
+	s := adapterPgStore(t)
+	seedMultipartUpload(t, s, "", nil)
+
+	count, err := s.CountActiveMultipartUploads(context.Background(), t.Name())
 	if err != nil {
 		t.Fatalf("CountActiveMultipartUploads: %v", err)
 	}
 	if count < 1 {
 		t.Errorf("expected count>=1, got %d", count)
 	}
-	uploads, err := s.ListMultipartUploads(ctx, t.Name(), 100)
+}
+
+// TestStoreInt_ListMultipartUploads verifies the prefix list returns
+// in-progress uploads.
+func TestStoreInt_ListMultipartUploads(t *testing.T) {
+	s := adapterPgStore(t)
+	seedMultipartUpload(t, s, "", nil)
+
+	uploads, err := s.ListMultipartUploads(context.Background(), t.Name(), 100)
 	if err != nil {
 		t.Fatalf("ListMultipartUploads: %v", err)
 	}
 	if len(uploads) == 0 {
 		t.Error("expected at least one upload")
 	}
-	uploads, err = s.GetMultipartUploadsByBackend(ctx, "backend-a")
+}
+
+// TestStoreInt_GetMultipartUploadsByBackend verifies the helper
+// returns uploads scoped to a backend.
+func TestStoreInt_GetMultipartUploadsByBackend(t *testing.T) {
+	s := adapterPgStore(t)
+	seedMultipartUpload(t, s, "", nil)
+
+	uploads, err := s.GetMultipartUploadsByBackend(context.Background(), "backend-a")
 	if err != nil {
 		t.Fatalf("GetMultipartUploadsByBackend: %v", err)
 	}
 	if len(uploads) == 0 {
 		t.Error("expected at least one upload on backend-a")
 	}
+}
 
-	stale, err := s.GetStaleMultipartUploads(ctx, -time.Hour)
-	if err != nil {
+// TestStoreInt_GetStaleMultipartUploads verifies the helper runs
+// without error against a fresh upload (passing a negative duration
+// matches uploads created at any time).
+func TestStoreInt_GetStaleMultipartUploads(t *testing.T) {
+	s := adapterPgStore(t)
+	seedMultipartUpload(t, s, "", nil)
+
+	if _, err := s.GetStaleMultipartUploads(context.Background(), -time.Hour); err != nil {
 		t.Fatalf("GetStaleMultipartUploads: %v", err)
 	}
-	_ = stale
 }
 
 // TestStoreInt_RecordPart_RejectsInvalidPartNumber covers the input
