@@ -243,6 +243,15 @@ func (r *Rebalancer) PlanPackTight(ctx context.Context, stats map[string]store.Q
 				objectCache[src.Name] = objects
 			}
 
+			// Batch-fetch the existing-copies map for every candidate
+			// key in this source's slice. Replaces a per-object
+			// GetAllObjectLocations call inside the inner loop.
+			keys := make([]string, len(objects))
+			for i := range objects {
+				keys[i] = objects[i].ObjectKey
+			}
+			copyMap, _ := r.store.GetObjectBackendsForKeys(ctx, keys)
+
 			for oi := range objects {
 				if remaining <= 0 || destFree <= 0 {
 					break
@@ -259,15 +268,7 @@ func (r *Rebalancer) PlanPackTight(ctx context.Context, stats map[string]store.Q
 				}
 
 				// Skip if destination already has a copy of this object
-				existingCopies, _ := r.store.GetAllObjectLocations(ctx, objects[oi].ObjectKey)
-				alreadyOnDest := false
-				for ci := range existingCopies {
-					if existingCopies[ci].BackendName == dest.Name {
-						alreadyOnDest = true
-						break
-					}
-				}
-				if alreadyOnDest {
+				if slices.Contains(copyMap[objects[oi].ObjectKey], dest.Name) {
 					continue
 				}
 
@@ -360,6 +361,15 @@ func (r *Rebalancer) PlanSpreadEven(ctx context.Context, stats map[string]store.
 			return nil, fmt.Errorf("failed to list objects on %s: %w", src.Name, err)
 		}
 
+		// Batch-fetch the existing-copies map for every candidate key in
+		// this source's slice. Replaces a per-object GetAllObjectLocations
+		// call inside the inner loop.
+		keys := make([]string, len(objects))
+		for i := range objects {
+			keys[i] = objects[i].ObjectKey
+		}
+		copyMap, _ := r.store.GetObjectBackendsForKeys(ctx, keys)
+
 		for oi := range objects {
 			if remaining <= 0 || src.Balance <= 0 {
 				break
@@ -371,11 +381,10 @@ func (r *Rebalancer) PlanSpreadEven(ctx context.Context, stats map[string]store.
 				continue
 			}
 
-			// Check which backends already have a copy of this object
-			existingCopies, _ := r.store.GetAllObjectLocations(ctx, objects[oi].ObjectKey)
-			copySet := make(map[string]bool, len(existingCopies))
-			for i := range existingCopies {
-				copySet[existingCopies[i].BackendName] = true
+			// Backends that already hold a copy of this key.
+			copySet := make(map[string]bool, len(copyMap[objects[oi].ObjectKey]))
+			for _, b := range copyMap[objects[oi].ObjectKey] {
+				copySet[b] = true
 			}
 
 			// Find best destination that can fit this object without overshooting

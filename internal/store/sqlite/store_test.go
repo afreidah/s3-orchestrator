@@ -1872,6 +1872,52 @@ func TestCountOverReplicatedObjects(t *testing.T) {
 	}
 }
 
+// TestGetObjectBackendsForKeys_EmptyInput verifies the helper returns
+// an empty map for a nil/empty key slice without issuing a query.
+func TestGetObjectBackendsForKeys_EmptyInput(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	got, err := s.GetObjectBackendsForKeys(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("GetObjectBackendsForKeys(nil): %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected empty map for nil input, got %v", got)
+	}
+	got, err = s.GetObjectBackendsForKeys(context.Background(), []string{})
+	if err != nil {
+		t.Fatalf("GetObjectBackendsForKeys([]): %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected empty map for empty slice, got %v", got)
+	}
+}
+
+// TestGetObjectBackendsForKeys_GroupsByKey verifies replicas of the
+// same key are bucketed together and unrelated keys are absent.
+func TestGetObjectBackendsForKeys_GroupsByKey(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+	mustRecordObject(t, s, "bucket/k1", "backend-a", 100)
+	mustRecordReplica(t, s, "bucket/k1", "backend-b", "backend-a", 100)
+	mustRecordObject(t, s, "bucket/k2", "backend-a", 50)
+
+	got, err := s.GetObjectBackendsForKeys(ctx, []string{"bucket/k1", "bucket/k2", "bucket/missing"})
+	if err != nil {
+		t.Fatalf("GetObjectBackendsForKeys: %v", err)
+	}
+	if len(got["bucket/k1"]) != 2 {
+		t.Errorf("bucket/k1 should have 2 backends, got %v", got["bucket/k1"])
+	}
+	if len(got["bucket/k2"]) != 1 || got["bucket/k2"][0] != "backend-a" {
+		t.Errorf("bucket/k2 backends mismatch: %v", got["bucket/k2"])
+	}
+	if _, ok := got["bucket/missing"]; ok {
+		t.Errorf("missing key should not be in result map: %v", got)
+	}
+}
+
 // TestListAllEncryptedLocations verifies paginated listing of encrypted object locations.
 func TestListAllEncryptedLocations(t *testing.T) {
 	t.Parallel()

@@ -17,6 +17,34 @@ import (
 	"time"
 )
 
+// TestCBForwarders_GetObjectBackendsForKeys verifies the new ObjectStore
+// method routes through the breaker: forwarded under closed breaker,
+// short-circuits to ErrDBUnavailable once the breaker has tripped.
+func TestCBForwarders_GetObjectBackendsForKeys(t *testing.T) {
+	t.Parallel()
+	mock := &mockStore{
+		getBackendsForKeysResp: map[string][]string{"k1": {"b1", "b2"}},
+	}
+	cb := newTestCB(mock, 3, time.Minute)
+	got, err := cb.GetObjectBackendsForKeys(context.Background(), []string{"k1"})
+	if err != nil {
+		t.Fatalf("GetObjectBackendsForKeys: %v", err)
+	}
+	if len(got["k1"]) != 2 || got["k1"][0] != "b1" || got["k1"][1] != "b2" {
+		t.Errorf("forwarder did not return mock response verbatim: %+v", got)
+	}
+
+	// Trip the breaker through a different ObjectStore method, then
+	// verify GetObjectBackendsForKeys short-circuits.
+	dbErr := errors.New("connection refused")
+	tripMock := &mockStore{getAllLocationsErr: dbErr}
+	tripCB := newTestCB(tripMock, 1, time.Minute)
+	_, _ = tripCB.GetAllObjectLocations(context.Background(), "k")
+	if _, err := tripCB.GetObjectBackendsForKeys(context.Background(), []string{"k1"}); !errors.Is(err, ErrDBUnavailable) {
+		t.Errorf("expected ErrDBUnavailable when breaker open, got %v", err)
+	}
+}
+
 // TestCBForwarders_PendingStore verifies every PendingStore method on the
 // circuit-breaker decorator forwards arguments to the inner store and
 // returns the inner store's result unchanged when the breaker is closed.

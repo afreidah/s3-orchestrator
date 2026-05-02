@@ -220,6 +220,41 @@ func (q *Queries) GetExistingCopiesForUpdate(ctx context.Context, objectKey stri
 	return items, nil
 }
 
+const getObjectBackendsForKeys = `-- name: GetObjectBackendsForKeys :many
+SELECT object_key, backend_name
+FROM object_locations
+WHERE object_key = ANY($1::text[])
+`
+
+type GetObjectBackendsForKeysRow struct {
+	ObjectKey   string
+	BackendName string
+}
+
+// Returns (object_key, backend_name) for every object_locations row whose
+// object_key is in the supplied list. Used by the rebalancer planner to
+// determine which backends already hold a copy of each candidate key in a
+// batch, replacing the per-key GetAllObjectLocations N+1 pattern.
+func (q *Queries) GetObjectBackendsForKeys(ctx context.Context, objectKeys []string) ([]GetObjectBackendsForKeysRow, error) {
+	rows, err := q.db.Query(ctx, getObjectBackendsForKeys, objectKeys)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetObjectBackendsForKeysRow{}
+	for rows.Next() {
+		var i GetObjectBackendsForKeysRow
+		if err := rows.Scan(&i.ObjectKey, &i.BackendName); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getObjectsWithoutHash = `-- name: GetObjectsWithoutHash :many
 SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at
 FROM object_locations

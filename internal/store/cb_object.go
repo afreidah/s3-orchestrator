@@ -32,6 +32,11 @@ func (c *cbObjectStore) GetAllObjectLocations(ctx context.Context, key string) (
 	return breaker.CBCall(c.cb, func() ([]ObjectLocation, error) { return c.inner.GetAllObjectLocations(ctx, key) })
 }
 
+// GetObjectBackendsForKeys forwards to the inner store under the breaker.
+func (c *cbObjectStore) GetObjectBackendsForKeys(ctx context.Context, keys []string) (map[string][]string, error) {
+	return breaker.CBCall(c.cb, func() (map[string][]string, error) { return c.inner.GetObjectBackendsForKeys(ctx, keys) })
+}
+
 // RecordObject forwards to the inner store under the breaker.
 func (c *cbObjectStore) RecordObject(ctx context.Context, key, backend string, size int64, enc *EncryptionMeta) ([]DeletedCopy, error) {
 	return breaker.CBCall(c.cb, func() ([]DeletedCopy, error) { return c.inner.RecordObject(ctx, key, backend, size, enc) })

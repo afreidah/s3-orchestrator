@@ -175,6 +175,15 @@ UPDATE object_locations
 SET content_hash = $3
 WHERE object_key = $1 AND backend_name = $2;
 
+-- name: GetObjectBackendsForKeys :many
+-- Returns (object_key, backend_name) for every object_locations row whose
+-- object_key is in the supplied list. Used by the rebalancer planner to
+-- determine which backends already hold a copy of each candidate key in a
+-- batch, replacing the per-key GetAllObjectLocations N+1 pattern.
+SELECT object_key, backend_name
+FROM object_locations
+WHERE object_key = ANY(@object_keys::text[]);
+
 -- name: ListDirectChildren :many
 -- Return per-file detail for non-directory children under a prefix, with pagination.
 -- Aggregates every replica into a sorted backend_names array per object_key so
