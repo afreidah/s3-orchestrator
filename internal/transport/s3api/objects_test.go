@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 
@@ -129,7 +130,7 @@ func newTestServer(t *testing.T) (*httptest.Server, *testutil.MockStore, *server
 
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        map[string]s3be.ObjectBackend{"b1": backend},
-		Stores:          proxy.StoresFromMock(mockStore),
+		Stores:          proxytest.StoresFromMock(mockStore),
 		Dashboard:       mockStore,
 		Metrics:         mockStore,
 		Order:           []string{"b1"},

@@ -39,7 +39,7 @@ func newTestManager(store *mockStore, backends map[string]*mockBackend) *Backend
 	}
 	return NewBackendManager(&BackendManagerConfig{
 		Backends:        obs,
-		Stores:          StoresFromMock(store),
+		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
 		Metrics:         store,
 		Order:           order,
@@ -84,7 +84,7 @@ func TestPutObject_PackStrategy_UsesGetBackendWithSpace(t *testing.T) {
 	store := &mockStore{getBackendResp: "b1"}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]s3be.ObjectBackend{"b1": backend},
-		Stores:          StoresFromMock(store),
+		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
 		Metrics:         store,
 		Order:           []string{"b1"},
@@ -111,7 +111,7 @@ func TestPutObject_SpreadStrategy_UsesGetLeastUtilized(t *testing.T) {
 	store := &mockStore{getBackendResp: "b1"}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]s3be.ObjectBackend{"b1": backend},
-		Stores:          StoresFromMock(store),
+		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
 		Metrics:         store,
 		Order:           []string{"b1"},
@@ -284,7 +284,7 @@ func newTestManagerWithOrder(store *mockStore, backends map[string]*mockBackend,
 	}
 	return NewBackendManager(&BackendManagerConfig{
 		Backends:        obs,
-		Stores:          StoresFromMock(store),
+		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
 		Metrics:         store,
 		Order:           order,
@@ -540,7 +540,7 @@ func TestPutObject_WriteFailover_WithEncryption(t *testing.T) {
 	obs := map[string]s3be.ObjectBackend{"b1": b1, "b2": b2}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        obs,
-		Stores:          StoresFromMock(store),
+		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
 		Metrics:         store,
 		Order:           []string{"b1", "b2"},
@@ -613,7 +613,7 @@ func TestGetObject_WithEncryption_UsesLocationMap(t *testing.T) {
 	}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]s3be.ObjectBackend{"b1": b1},
-		Stores:          StoresFromMock(store),
+		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
 		Metrics:         store,
 		Order:           []string{"b1"},
@@ -657,7 +657,7 @@ func TestHeadObject_WithEncryption(t *testing.T) {
 	}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]s3be.ObjectBackend{"b1": b1},
-		Stores:          StoresFromMock(store),
+		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
 		Metrics:         store,
 		Order:           []string{"b1"},
@@ -857,7 +857,7 @@ func TestGetObject_DBUnavailable_EncryptedRejects503(t *testing.T) {
 	store := &mockStore{getAllLocationsErr: core.ErrDBUnavailable}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]s3be.ObjectBackend{"b1": b1},
-		Stores:          StoresFromMock(store),
+		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
 		Metrics:         store,
 		Order:           []string{"b1"},
@@ -1697,7 +1697,7 @@ func TestPutObject_BackendTimeout(t *testing.T) {
 	obs := map[string]s3be.ObjectBackend{"b1": slowBackend}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        obs,
-		Stores:          StoresFromMock(store),
+		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
 		Metrics:         store,
 		Order:           []string{"b1"},
@@ -1837,7 +1837,7 @@ func newTestManagerWithLimits(store *mockStore, backends map[string]*mockBackend
 	}
 	return NewBackendManager(&BackendManagerConfig{
 		Backends:        obs,
-		Stores:          StoresFromMock(store),
+		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
 		Metrics:         store,
 		Order:           order,
@@ -2036,7 +2036,7 @@ func newTestManagerParallel(store *mockStore, orderedBackends []struct {
 	}
 	return NewBackendManager(&BackendManagerConfig{
 		Backends:          obs,
-		Stores:            StoresFromMock(store),
+		Stores:            testStoresFromMock(store),
 		Dashboard:         store,
 		Metrics:           store,
 		Order:             order,
@@ -2183,7 +2183,7 @@ func TestGetObject_SequentialBroadcast_WhenDisabled(t *testing.T) {
 	}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:          obs,
-		Stores:            StoresFromMock(store),
+		Stores:            testStoresFromMock(store),
 		Dashboard:         store,
 		Metrics:           store,
 		Order:             []string{"slow", "fast"},
@@ -2344,7 +2344,7 @@ func TestCopyObject_DestWriteFails(t *testing.T) {
 	}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]s3be.ObjectBackend{"src-be": src, "dst-be": dst},
-		Stores:          StoresFromMock(store),
+		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
 		Metrics:         store,
 		Order:           []string{"src-be", "dst-be"},
@@ -2371,7 +2371,7 @@ func TestCopyObject_ExcludesDrainingBackend(t *testing.T) {
 	}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]s3be.ObjectBackend{"src-be": src, "dst-be": dst},
-		Stores:          StoresFromMock(store),
+		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
 		Metrics:         store,
 		Order:           []string{"src-be", "dst-be"},
@@ -2408,7 +2408,7 @@ func TestCopyObject_SourceReadFails(t *testing.T) {
 	}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]s3be.ObjectBackend{"src-be": src, "dst-be": newMockBackend()},
-		Stores:          StoresFromMock(store),
+		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
 		Metrics:         store,
 		Order:           []string{"src-be", "dst-be"},
@@ -2435,7 +2435,7 @@ func TestCopyObject_AllSourceGetObjectsFail(t *testing.T) {
 	}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]s3be.ObjectBackend{"src-be": src, "dst-be": newMockBackend()},
-		Stores:          StoresFromMock(store),
+		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
 		Metrics:         store,
 		Order:           []string{"src-be", "dst-be"},

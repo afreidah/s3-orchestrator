@@ -31,6 +31,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/testutil"
 	"golang.org/x/crypto/bcrypt"
 	// newTestHandler builds a Handler wired to mock data for testing.
@@ -69,7 +70,7 @@ func newTestHandlerWithMock(t *testing.T) (*Handler, *http.ServeMux, *testutil.M
 
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{},
-		Stores:          proxy.StoresFromMock(mockStore),
+		Stores:          proxytest.StoresFromMock(mockStore),
 		Dashboard:       mockStore,
 		Metrics:         mockStore,
 		Order:           []string{"b1"},
@@ -444,7 +445,7 @@ func TestLogin_BcryptSecret(t *testing.T) {
 	}
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:  map[string]backend.ObjectBackend{},
-		Stores:    proxy.StoresFromMock(mockStore),
+		Stores:    proxytest.StoresFromMock(mockStore),
 		Dashboard: mockStore,
 		Metrics:   mockStore,
 		Order:     []string{},
@@ -516,7 +517,7 @@ func TestCrossInstanceSession(t *testing.T) {
 	}
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:  map[string]backend.ObjectBackend{},
-		Stores:    proxy.StoresFromMock(mockStore),
+		Stores:    proxytest.StoresFromMock(mockStore),
 		Dashboard: mockStore,
 		Metrics:   mockStore,
 		Order:     []string{},
@@ -1800,7 +1801,7 @@ func benchLoginHandler(b *testing.B) (*Handler, *http.ServeMux) {
 
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{},
-		Stores:          proxy.StoresFromMock(mockStore),
+		Stores:          proxytest.StoresFromMock(mockStore),
 		Dashboard:       mockStore,
 		Metrics:         mockStore,
 		Order:           []string{},

@@ -35,7 +35,7 @@ func newDrainTestManager(store *mockStore, backends map[string]*mockBackend) *Ba
 	}
 	return NewBackendManager(&BackendManagerConfig{
 		Backends:        obs,
-		Stores:          StoresFromMock(store),
+		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
 		Metrics:         store,
 		Order:           order,

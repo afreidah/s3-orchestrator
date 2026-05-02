@@ -419,7 +419,7 @@ func TestProcessCleanupQueue_AdmissionBlocked(t *testing.T) {
 	}
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]s3be.ObjectBackend{"b1": backend},
-		Stores:          StoresFromMock(store),
+		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
 		Metrics:         store,
 		Order:           []string{"b1"},

@@ -23,6 +23,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/testutil"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
@@ -51,7 +52,7 @@ func newTestManagerWithMock(t *testing.T) *proxy.BackendManager {
 	mock := &testutil.MockStore{}
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{},
-		Stores:          proxy.StoresFromMock(mock),
+		Stores:          proxytest.StoresFromMock(mock),
 		Dashboard:       mock,
 		Metrics:         mock,
 		Order:           []string{},

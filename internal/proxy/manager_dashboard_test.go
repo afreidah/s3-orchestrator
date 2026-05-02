@@ -162,7 +162,7 @@ func TestGetDashboardData_UnhealthyBackends(t *testing.T) {
 
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": cbBackend},
-		Stores:          StoresFromMock(store),
+		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
 		Metrics:         store,
 		Order:           []string{"b1"},
@@ -194,7 +194,7 @@ func TestGetDashboardData_HealthyBackendsNotMarked(t *testing.T) {
 
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": cbBackend},
-		Stores:          StoresFromMock(store),
+		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
 		Metrics:         store,
 		Order:           []string{"b1"},
