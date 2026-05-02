@@ -692,6 +692,80 @@ func TestStoreInt_GetObjectBackendsForKeys_GroupsByKey(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
+// DeleteObjectsBatch (single-tx batch delete)
+// -------------------------------------------------------------------------
+
+// TestStoreInt_DeleteObjectsBatch_EmptyInput verifies the helper
+// short-circuits on an empty input without opening a transaction.
+func TestStoreInt_DeleteObjectsBatch_EmptyInput(t *testing.T) {
+	s := adapterPgStore(t)
+	got, err := s.DeleteObjectsBatch(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("DeleteObjectsBatch(nil): %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected empty map for nil input, got %v", got)
+	}
+}
+
+// TestStoreInt_DeleteObjectsBatch_RemovesRowsAndDecrementsQuotas
+// verifies the single-tx batch removes every supplied key's rows,
+// decrements each affected backend's quota by the summed size, and
+// returns per-key displaced copies for cleanup.
+func TestStoreInt_DeleteObjectsBatch_RemovesRowsAndDecrementsQuotas(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	k1 := uniqueKey(t, "k1")
+	k2 := uniqueKey(t, "k2")
+	missing := uniqueKey(t, "missing")
+	if _, err := s.RecordObject(ctx, k1, "backend-a", 100, nil); err != nil {
+		t.Fatalf("RecordObject(k1): %v", err)
+	}
+	if _, err := s.RecordReplica(ctx, k1, "backend-b", "backend-a", 100); err != nil {
+		t.Fatalf("RecordReplica: %v", err)
+	}
+	if _, err := s.RecordObject(ctx, k2, "backend-a", 50, nil); err != nil {
+		t.Fatalf("RecordObject(k2): %v", err)
+	}
+
+	beforeA, err := s.GetQuotaStats(ctx)
+	if err != nil {
+		t.Fatalf("GetQuotaStats(before): %v", err)
+	}
+
+	got, err := s.DeleteObjectsBatch(ctx, []string{k1, k2, missing})
+	if err != nil {
+		t.Fatalf("DeleteObjectsBatch: %v", err)
+	}
+	if len(got[k1]) != 2 {
+		t.Errorf("%s should have 2 displaced copies, got %v", k1, got[k1])
+	}
+	if len(got[k2]) != 1 || got[k2][0].BackendName != "backend-a" {
+		t.Errorf("%s displaced copy mismatch: %v", k2, got[k2])
+	}
+	if _, ok := got[missing]; ok {
+		t.Errorf("missing key must not be in result map: %v", got)
+	}
+
+	for _, k := range []string{k1, k2} {
+		if _, err := s.GetAllObjectLocations(ctx, k); !errors.Is(err, core.ErrObjectNotFound) {
+			t.Errorf("expected %s gone, got err=%v", k, err)
+		}
+	}
+
+	afterA, err := s.GetQuotaStats(ctx)
+	if err != nil {
+		t.Fatalf("GetQuotaStats(after): %v", err)
+	}
+	if before, after := beforeA["backend-a"].BytesUsed, afterA["backend-a"].BytesUsed; before-after != 150 {
+		t.Errorf("backend-a delta = %d, want 150 (k1=100 + k2=50)", before-after)
+	}
+	if before, after := beforeA["backend-b"].BytesUsed, afterA["backend-b"].BytesUsed; before-after != 100 {
+		t.Errorf("backend-b delta = %d, want 100 (k1 replica)", before-after)
+	}
+}
+
+// -------------------------------------------------------------------------
 // SCHEMA / LIFECYCLE
 // -------------------------------------------------------------------------
 

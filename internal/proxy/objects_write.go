@@ -470,10 +470,10 @@ type DeleteObjectResult struct {
 	Err error
 }
 
-// DeleteObjects deletes multiple objects in a single request. Metadata removal
-// happens sequentially (each key is its own transaction via the existing
-// store.DeleteObject path), while backend S3 deletes run concurrently with
-// bounded parallelism to avoid overwhelming backends.
+// DeleteObjects deletes multiple objects in a single request. Metadata
+// removal happens in a single transaction via DeleteObjectsBatch;
+// backend S3 deletes run concurrently with bounded parallelism to
+// avoid overwhelming backends.
 func (o *ObjectManager) DeleteObjects(ctx context.Context, keys []string) []DeleteObjectResult {
 	const operation = "DeleteObjects"
 	start := time.Now()
@@ -484,36 +484,34 @@ func (o *ObjectManager) DeleteObjects(ctx context.Context, keys []string) []Dele
 	defer span.End()
 
 	results := make([]DeleteObjectResult, len(keys))
-
-	// Remove each key from the DB and collect backend copies that need
-	// physical deletion afterwards.
-	type pendingBackendDelete struct {
-		key    string
-		copies []store.DeletedCopy
-	}
-	var pending []pendingBackendDelete
-
 	for i, key := range keys {
 		results[i].Key = key
-
-		copies, err := o.objects.DeleteObject(ctx, key)
-		if err != nil {
-			if errors.Is(err, store.ErrObjectNotFound) {
-				continue // not-found treated as success
-			}
-			results[i].Err = o.classifyWriteError(span, operation, err)
-			continue
-		}
-
-		o.cache.Delete(key)
-		o.invalidateCache(key)
-
-		if len(copies) > 0 {
-			pending = append(pending, pendingBackendDelete{key: key, copies: copies})
-		}
 	}
 
-	// Flatten pending deletes into a single work slice for the pool
+	// Single-transaction metadata removal: returns the displaced
+	// copies map keyed by object_key. Keys with no copies on disk are
+	// absent from the map (treated as success per S3 spec).
+	copiesByKey, err := o.objects.DeleteObjectsBatch(ctx, keys)
+	if err != nil {
+		// Whole-tx failure: every key surfaces the error. The cache
+		// and backend cleanup paths are skipped; nothing was changed.
+		classified := o.classifyWriteError(span, operation, err)
+		for i := range results {
+			results[i].Err = classified
+		}
+		return results
+	}
+
+	// Cache invalidation per key whose row(s) actually went away. A
+	// key absent from copiesByKey was already gone (not-found is
+	// silent success), so its cache entries are also stale and worth
+	// flushing.
+	for _, key := range keys {
+		o.cache.Delete(key)
+		o.invalidateCache(key)
+	}
+
+	// Flatten displaced copies into a single work slice for the pool.
 	type batchDeleteItem struct {
 		key       string
 		backend   s3be.ObjectBackend
@@ -521,19 +519,17 @@ func (o *ObjectManager) DeleteObjects(ctx context.Context, keys []string) []Dele
 		sizeBytes int64
 	}
 	var deleteItems []batchDeleteItem
-	for _, pd := range pending {
-		for _, cp := range pd.copies {
+	for key, copies := range copiesByKey {
+		for _, cp := range copies {
 			backend, ok := o.backends[cp.BackendName]
 			if !ok {
 				slog.WarnContext(ctx, "backend not found for batch delete",
-					"backend", cp.BackendName, "key", pd.key)
+					"backend", cp.BackendName, "key", key)
 				continue
 			}
 			deleteItems = append(deleteItems, batchDeleteItem{
-				key: pd.key, backend: backend, beName: cp.BackendName, sizeBytes: cp.SizeBytes,
+				key: key, backend: backend, beName: cp.BackendName, sizeBytes: cp.SizeBytes,
 			})
-		}
-		for _, cp := range pd.copies {
 			o.usage.Record(cp.BackendName, 1, 0, 0)
 		}
 	}

@@ -82,6 +82,18 @@ func (q *Queries) DeleteObjectLocationsByBackend(ctx context.Context, backendNam
 	return err
 }
 
+const deleteObjectsByKeys = `-- name: DeleteObjectsByKeys :exec
+DELETE FROM object_locations
+WHERE object_key = ANY($1::text[])
+`
+
+// Deletes every row whose object_key is in the supplied list. Caller
+// must have already locked the rows via GetCopiesForKeysForUpdate.
+func (q *Queries) DeleteObjectsByKeys(ctx context.Context, objectKeys []string) error {
+	_, err := q.db.Exec(ctx, deleteObjectsByKeys, objectKeys)
+	return err
+}
+
 const getAllObjectLocations = `-- name: GetAllObjectLocations :many
 SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at
 FROM object_locations
@@ -121,6 +133,44 @@ func (q *Queries) GetAllObjectLocations(ctx context.Context, objectKey string) (
 			&i.ContentHash,
 			&i.CreatedAt,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getCopiesForKeysForUpdate = `-- name: GetCopiesForKeysForUpdate :many
+SELECT object_key, backend_name, size_bytes
+FROM object_locations
+WHERE object_key = ANY($1::text[])
+FOR UPDATE
+`
+
+type GetCopiesForKeysForUpdateRow struct {
+	ObjectKey   string
+	BackendName string
+	SizeBytes   int64
+}
+
+// Returns (object_key, backend_name, size_bytes) for every row matching
+// a key in the supplied list, locked FOR UPDATE so the same transaction
+// can delete the rows and decrement the corresponding backend quotas
+// atomically. Used by the batch-delete path so an N-key request is one
+// transaction instead of N.
+func (q *Queries) GetCopiesForKeysForUpdate(ctx context.Context, objectKeys []string) ([]GetCopiesForKeysForUpdateRow, error) {
+	rows, err := q.db.Query(ctx, getCopiesForKeysForUpdate, objectKeys)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetCopiesForKeysForUpdateRow{}
+	for rows.Next() {
+		var i GetCopiesForKeysForUpdateRow
+		if err := rows.Scan(&i.ObjectKey, &i.BackendName, &i.SizeBytes); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

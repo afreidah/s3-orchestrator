@@ -983,8 +983,12 @@ func TestDeleteObjects_AllSuccess(t *testing.T) {
 	}
 
 	store := &mockStore{
-		deleteObjectFunc: func(key string) ([]st.DeletedCopy, error) {
-			return []st.DeletedCopy{{BackendName: "b1", SizeBytes: 1}}, nil
+		deleteObjectsBatchFunc: func(keys []string) (map[string][]st.DeletedCopy, error) {
+			out := make(map[string][]st.DeletedCopy, len(keys))
+			for _, k := range keys {
+				out[k] = []st.DeletedCopy{{BackendName: "b1", SizeBytes: 1}}
+			}
+			return out, nil
 		},
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
@@ -1006,35 +1010,32 @@ func TestDeleteObjects_AllSuccess(t *testing.T) {
 	}
 }
 
-func TestDeleteObjects_PartialDBFailure(t *testing.T) {
+// TestDeleteObjects_DBFailureFailsAll verifies the batch's all-or-
+// nothing semantics: a DB error during the single transaction surfaces
+// to every result. The earlier "partial DB failure" case no longer
+// applies under one-tx semantics.
+func TestDeleteObjects_DBFailureFailsAll(t *testing.T) {
 	t.Parallel()
-	backend := newMockBackend()
-	store := &mockStore{
-		deleteObjectFunc: func(key string) ([]st.DeletedCopy, error) {
-			if key == "bad" {
-				return nil, errors.New("db error")
-			}
-			return []st.DeletedCopy{{BackendName: "b1", SizeBytes: 1}}, nil
-		},
-	}
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
+	store := &mockStore{deleteObjectsBatchErr: errors.New("db error")}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	results := mgr.ObjectManager.DeleteObjects(context.Background(), []string{"ok1", "bad", "ok2"})
+	results := mgr.ObjectManager.DeleteObjects(context.Background(), []string{"k1", "k2", "k3"})
 
-	if results[0].Err != nil {
-		t.Errorf("results[0]: unexpected error: %v", results[0].Err)
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(results))
 	}
-	if results[1].Err == nil {
-		t.Error("results[1]: expected error for 'bad' key")
-	}
-	if results[2].Err != nil {
-		t.Errorf("results[2]: unexpected error: %v", results[2].Err)
+	for i, r := range results {
+		if r.Err == nil {
+			t.Errorf("results[%d]: expected DB error to surface", i)
+		}
 	}
 }
 
 func TestDeleteObjects_NotFoundIsSuccess(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{deleteObjectErr: st.ErrObjectNotFound}
+	// Empty map (default) means every key was not found; single-tx
+	// returned no displaced copies. S3 spec: not-found is success.
+	store := &mockStore{}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	results := mgr.ObjectManager.DeleteObjects(context.Background(), []string{"gone1", "gone2"})
@@ -1052,8 +1053,12 @@ func TestDeleteObjects_BackendFailureEnqueuesCleanup(t *testing.T) {
 	backend.delErr = errors.New("backend down")
 
 	store := &mockStore{
-		deleteObjectFunc: func(key string) ([]st.DeletedCopy, error) {
-			return []st.DeletedCopy{{BackendName: "b1", SizeBytes: 1}}, nil
+		deleteObjectsBatchFunc: func(keys []string) (map[string][]st.DeletedCopy, error) {
+			out := make(map[string][]st.DeletedCopy, len(keys))
+			for _, k := range keys {
+				out[k] = []st.DeletedCopy{{BackendName: "b1", SizeBytes: 1}}
+			}
+			return out, nil
 		},
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
@@ -1095,8 +1100,12 @@ func TestDeleteObjects_BackendNotInMap(t *testing.T) {
 	t.Parallel()
 	// DB returns a deleted copy pointing to a backend that doesn't exist
 	store := &mockStore{
-		deleteObjectFunc: func(key string) ([]st.DeletedCopy, error) {
-			return []st.DeletedCopy{{BackendName: "ghost", SizeBytes: 1}}, nil
+		deleteObjectsBatchFunc: func(keys []string) (map[string][]st.DeletedCopy, error) {
+			out := make(map[string][]st.DeletedCopy, len(keys))
+			for _, k := range keys {
+				out[k] = []st.DeletedCopy{{BackendName: "ghost", SizeBytes: 1}}
+			}
+			return out, nil
 		},
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})

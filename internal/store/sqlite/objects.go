@@ -117,6 +117,12 @@ func (s *Store) DeleteObject(ctx context.Context, key string) ([]store.DeletedCo
 	return core.DeleteObject(ctx, s, key)
 }
 
+// DeleteObjectsBatch delegates to core.DeleteObjectsBatch which
+// removes every supplied key in one transaction.
+func (s *Store) DeleteObjectsBatch(ctx context.Context, keys []string) (map[string][]store.DeletedCopy, error) {
+	return core.DeleteObjectsBatch(ctx, s, keys)
+}
+
 // ListObjects returns objects matching the given prefix, sorted by key.
 // Supports pagination via startAfter and maxKeys. Returns one extra row to
 // detect truncation. Uses a subquery with GROUP BY to deduplicate replicated

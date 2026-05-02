@@ -17,6 +17,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -134,6 +135,65 @@ func (a *sqliteTxAdapter) GetExistingCopiesForUpdate(ctx context.Context, object
 		return nil, fmt.Errorf("iterate existing copies: %w", err)
 	}
 	return out, nil
+}
+
+// GetCopiesForKeysForUpdate returns every (key, backend, size) row
+// matching any key in the supplied list. SQLite has no array
+// parameter type; the placeholder list is built from strings.Repeat
+// (NOT user input - keys go in args[]). FOR UPDATE is a silent no-op
+// since SQLite serializes writers; the in-tx read provides the same
+// exclusivity guarantee.
+func (a *sqliteTxAdapter) GetCopiesForKeysForUpdate(ctx context.Context, keys []string) ([]core.KeyedExistingCopy, error) {
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	placeholders := strings.Repeat("?,", len(keys))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := make([]any, len(keys))
+	for i, k := range keys {
+		args[i] = k
+	}
+	// G202: placeholders is "?,?,?" built from strings.Repeat, not
+	// user input; the actual key values are passed as args.
+	query := `SELECT object_key, backend_name, size_bytes FROM object_locations WHERE object_key IN (` + placeholders + `)` //nolint:gosec
+	rows, err := a.tx.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("get copies for keys: %w", err)
+	}
+	defer rows.Close()
+	var out []core.KeyedExistingCopy
+	for rows.Next() {
+		var ec core.KeyedExistingCopy
+		if err := rows.Scan(&ec.ObjectKey, &ec.BackendName, &ec.SizeBytes); err != nil {
+			return nil, fmt.Errorf("scan keyed copy: %w", err)
+		}
+		out = append(out, ec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate keyed copies: %w", err)
+	}
+	return out, nil
+}
+
+// DeleteObjectsByKeys bulk-deletes object_locations rows for every
+// supplied key. Caller must have already locked the rows via
+// GetCopiesForKeysForUpdate.
+func (a *sqliteTxAdapter) DeleteObjectsByKeys(ctx context.Context, keys []string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	placeholders := strings.Repeat("?,", len(keys))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := make([]any, len(keys))
+	for i, k := range keys {
+		args[i] = k
+	}
+	// G202: see GetCopiesForKeysForUpdate.
+	query := `DELETE FROM object_locations WHERE object_key IN (` + placeholders + `)` //nolint:gosec
+	if _, err := a.tx.ExecContext(ctx, query, args...); err != nil {
+		return fmt.Errorf("delete objects by keys: %w", err)
+	}
+	return nil
 }
 
 // InsertObjectLocation writes a new object_locations row carrying the

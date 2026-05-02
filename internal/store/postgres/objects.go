@@ -64,6 +64,13 @@ func (s *Store) DeleteObject(ctx context.Context, key string) ([]DeletedCopy, er
 	return core.DeleteObject(ctx, s, key)
 }
 
+// DeleteObjectsBatch delegates to core.DeleteObjectsBatch which
+// removes every supplied key in one transaction and returns per-key
+// displaced copies for backend cleanup.
+func (s *Store) DeleteObjectsBatch(ctx context.Context, keys []string) (map[string][]DeletedCopy, error) {
+	return core.DeleteObjectsBatch(ctx, s, keys)
+}
+
 // ListObjectsByBackend returns objects stored on a specific backend, ordered by
 // size ascending (smallest first). Used by the rebalancer to find movable objects.
 func (s *Store) ListObjectsByBackend(ctx context.Context, backendName string, limit int) ([]ObjectLocation, error) {

@@ -101,6 +101,53 @@ func DeleteObject(ctx context.Context, runner Runner, key string) ([]DeletedCopy
 }
 
 // -------------------------------------------------------------------------
+// DELETE OBJECTS BATCH
+// -------------------------------------------------------------------------
+
+// DeleteObjectsBatch removes every supplied key (and all its replicas)
+// in a single transaction, decrementing each affected backend's quota
+// once by the sum of removed bytes. Returns a map from key to its
+// displaced copies so the caller can fan out to the backend cleanup
+// path. Keys with no copies on disk are absent from the returned map
+// (treated as success-with-nothing-to-clean-up). Empty input yields an
+// empty map without opening a transaction.
+func DeleteObjectsBatch(ctx context.Context, runner Runner, keys []string) (map[string][]DeletedCopy, error) {
+	if len(keys) == 0 {
+		return map[string][]DeletedCopy{}, nil
+	}
+	return WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) (map[string][]DeletedCopy, error) {
+		rows, err := tx.GetCopiesForKeysForUpdate(ctx, keys)
+		if err != nil {
+			return nil, err
+		}
+		if len(rows) == 0 {
+			return map[string][]DeletedCopy{}, nil
+		}
+		if err := tx.DeleteObjectsByKeys(ctx, keys); err != nil {
+			return nil, fmt.Errorf("delete object copies by keys: %w", err)
+		}
+		// Per-key copies for the caller, plus per-backend totals so we
+		// decrement each backend's quota exactly once instead of once
+		// per displaced copy.
+		copies := make(map[string][]DeletedCopy, len(keys))
+		backendTotals := make(map[string]int64)
+		for _, r := range rows {
+			copies[r.ObjectKey] = append(copies[r.ObjectKey], DeletedCopy{
+				BackendName: r.BackendName,
+				SizeBytes:   r.SizeBytes,
+			})
+			backendTotals[r.BackendName] += r.SizeBytes
+		}
+		for backend, total := range backendTotals {
+			if err := tx.DecrementBackendQuota(ctx, backend, total); err != nil {
+				return nil, err
+			}
+		}
+		return copies, nil
+	})
+}
+
+// -------------------------------------------------------------------------
 // MOVE OBJECT LOCATION
 // -------------------------------------------------------------------------
 
