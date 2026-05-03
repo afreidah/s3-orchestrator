@@ -11,7 +11,12 @@
 
 package core
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"sync"
+	"testing"
+)
 
 // -------------------------------------------------------------------------
 // objectFromEnc
@@ -181,3 +186,181 @@ func TestGroupByKey_MultipleKeysAndReplicas(t *testing.T) {
 		t.Errorf("k2 should have 1 copy, got %d", len(got["k2"]))
 	}
 }
+
+// -------------------------------------------------------------------------
+// applyQuotaDeltas - #687 deadlock regression
+// -------------------------------------------------------------------------
+
+// quotaTxStub is the minimal TxAdapter implementation needed to drive
+// applyQuotaDeltas. Every method other than Increment/DecrementBackendQuota
+// returns the zero value or nil; only the two quota mutators are
+// instrumented to record call order so tests can assert lock-acquisition
+// sequence.
+type quotaTxStub struct {
+	mu      sync.Mutex
+	ops     []quotaOp
+	failOn  string
+	failErr error
+}
+
+type quotaOp struct {
+	backend string
+	delta   int64 // positive=increment, negative=decrement (mirrors caller intent)
+}
+
+func (t *quotaTxStub) IncrementBackendQuota(_ context.Context, backend string, delta int64) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if backend == t.failOn {
+		return t.failErr
+	}
+	t.ops = append(t.ops, quotaOp{backend: backend, delta: delta})
+	return nil
+}
+
+func (t *quotaTxStub) DecrementBackendQuota(_ context.Context, backend string, delta int64) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if backend == t.failOn {
+		return t.failErr
+	}
+	t.ops = append(t.ops, quotaOp{backend: backend, delta: -delta})
+	return nil
+}
+
+// The remaining TxAdapter methods are unused by applyQuotaDeltas; stubs
+// return zero values so the type satisfies the full interface.
+func (*quotaTxStub) AcquireKeyLock(context.Context, string) error { return nil }
+
+func (*quotaTxStub) ClaimPending(context.Context, string) (bool, error) { return false, nil }
+func (*quotaTxStub) InsertPending(context.Context, *PendingObject) error { return nil }
+func (*quotaTxStub) DeletePending(context.Context, string) error         { return nil }
+func (*quotaTxStub) DeletePendingByBackend(context.Context, string) error {
+	return nil
+}
+
+func (*quotaTxStub) GetExistingCopiesForUpdate(context.Context, string) ([]ExistingCopy, error) {
+	return nil, nil
+}
+func (*quotaTxStub) InsertObjectLocation(context.Context, *ObjectLocation) error { return nil }
+func (*quotaTxStub) DeleteObjectCopies(context.Context, string) error            { return nil }
+func (*quotaTxStub) GetCopiesForKeysForUpdate(context.Context, []string) ([]KeyedExistingCopy, error) {
+	return nil, nil
+}
+func (*quotaTxStub) DeleteObjectsByKeys(context.Context, []string) error { return nil }
+func (*quotaTxStub) CheckObjectExistsOnBackend(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+func (*quotaTxStub) LockObjectOnBackend(context.Context, string, string) (*ObjectLocation, bool, error) {
+	return nil, false, nil
+}
+func (*quotaTxStub) DeleteObjectFromBackend(context.Context, string, string) error { return nil }
+func (*quotaTxStub) InsertObjectLocationIfNotExists(context.Context, *ObjectLocation) (bool, error) {
+	return false, nil
+}
+func (*quotaTxStub) InsertReplicaConditional(context.Context, string, string, string) (int64, bool, error) {
+	return 0, false, nil
+}
+
+func (*quotaTxStub) SumAndDeleteCleanupQueueRows(context.Context, string, string) (int64, int64, error) {
+	return 0, 0, nil
+}
+func (*quotaTxStub) DecrementOrphanBytes(context.Context, string, int64) error { return nil }
+
+// TestApplyQuotaDeltas_StableOrderAcrossInputs runs applyQuotaDeltas
+// against the same backend set with two different map insertion orders
+// (Go map iteration is non-deterministic) and asserts both calls
+// produce the same sorted-by-backend-name SQL sequence. This is the
+// invariant that prevents the #687 deadlock: any two transactions that
+// touch the same backend set request locks in identical order.
+func TestApplyQuotaDeltas_StableOrderAcrossInputs(t *testing.T) {
+	t.Parallel()
+	deltasA := map[string]int64{"minio-3": -100, "minio-1": -50, "minio-2": -75}
+	deltasB := map[string]int64{"minio-2": -75, "minio-3": -100, "minio-1": -50}
+
+	txA := &quotaTxStub{}
+	txB := &quotaTxStub{}
+	if err := applyQuotaDeltas(context.Background(), txA, deltasA); err != nil {
+		t.Fatalf("applyQuotaDeltas A: %v", err)
+	}
+	if err := applyQuotaDeltas(context.Background(), txB, deltasB); err != nil {
+		t.Fatalf("applyQuotaDeltas B: %v", err)
+	}
+	if len(txA.ops) != 3 || len(txB.ops) != 3 {
+		t.Fatalf("expected 3 ops each, got A=%d B=%d", len(txA.ops), len(txB.ops))
+	}
+	for i := range txA.ops {
+		if txA.ops[i] != txB.ops[i] {
+			t.Errorf("op %d diverged: A=%+v B=%+v", i, txA.ops[i], txB.ops[i])
+		}
+	}
+	want := []string{"minio-1", "minio-2", "minio-3"}
+	for i, w := range want {
+		if txA.ops[i].backend != w {
+			t.Errorf("op[%d].backend = %q, want %q (sorted backend_name)", i, txA.ops[i].backend, w)
+		}
+	}
+}
+
+// TestApplyQuotaDeltas_PositiveAndNegative verifies signed deltas route
+// correctly: positive -> Increment, negative -> Decrement, zero ->
+// skipped (so net-zero same-backend overwrites produce no SQL call).
+func TestApplyQuotaDeltas_PositiveAndNegative(t *testing.T) {
+	t.Parallel()
+	tx := &quotaTxStub{}
+	deltas := map[string]int64{
+		"a": -100,
+		"b": 200,
+		"c": 0,
+		"d": -50,
+	}
+	if err := applyQuotaDeltas(context.Background(), tx, deltas); err != nil {
+		t.Fatalf("applyQuotaDeltas: %v", err)
+	}
+	want := []quotaOp{
+		{backend: "a", delta: -100},
+		{backend: "b", delta: 200},
+		{backend: "d", delta: -50},
+	}
+	if len(tx.ops) != len(want) {
+		t.Fatalf("ops = %d, want %d (zero delta should be skipped)", len(tx.ops), len(want))
+	}
+	for i, w := range want {
+		if tx.ops[i] != w {
+			t.Errorf("op[%d] = %+v, want %+v", i, tx.ops[i], w)
+		}
+	}
+}
+
+// TestApplyQuotaDeltas_PropagatesError verifies the helper short-circuits
+// on the first SQL error and surfaces it to the caller.
+func TestApplyQuotaDeltas_PropagatesError(t *testing.T) {
+	t.Parallel()
+	want := errors.New("simulated DB error")
+	tx := &quotaTxStub{failOn: "b", failErr: want}
+	deltas := map[string]int64{"a": 10, "b": 20, "c": 30}
+	err := applyQuotaDeltas(context.Background(), tx, deltas)
+	if !errors.Is(err, want) {
+		t.Errorf("err = %v, want wrap of %v", err, want)
+	}
+	if len(tx.ops) != 1 || tx.ops[0].backend != "a" {
+		t.Errorf("expected single op on 'a' before failure, got %+v", tx.ops)
+	}
+}
+
+// TestApplyQuotaDeltas_EmptyMap verifies the no-op path: an empty map
+// (and a nil map) both produce zero SQL calls and no error.
+func TestApplyQuotaDeltas_EmptyMap(t *testing.T) {
+	t.Parallel()
+	tx := &quotaTxStub{}
+	if err := applyQuotaDeltas(context.Background(), tx, nil); err != nil {
+		t.Errorf("nil map err = %v, want nil", err)
+	}
+	if err := applyQuotaDeltas(context.Background(), tx, map[string]int64{}); err != nil {
+		t.Errorf("empty map err = %v, want nil", err)
+	}
+	if len(tx.ops) != 0 {
+		t.Errorf("expected no ops, got %+v", tx.ops)
+	}
+}
+
