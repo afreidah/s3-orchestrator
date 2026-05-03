@@ -114,6 +114,27 @@ CREATE TABLE IF NOT EXISTS cleanup_queue (
 CREATE INDEX IF NOT EXISTS idx_cleanup_queue_next_retry
     ON cleanup_queue(next_retry) WHERE attempts < 10;
 
+-- Dead-letter for cleanup_queue rows that exhausted their retry budget
+-- without ever succeeding at the physical backend delete. The bytes are
+-- still on disk, so orphan_bytes is NOT decremented; operators inspect
+-- this table to find unrecoverable orphans and decide whether to retry
+-- or write each entry off deliberately.
+CREATE TABLE IF NOT EXISTS cleanup_dlq (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    original_id       INTEGER NOT NULL,
+    backend_name      TEXT NOT NULL REFERENCES backend_quotas(backend_name),
+    object_key        TEXT NOT NULL,
+    reason            TEXT NOT NULL,
+    size_bytes        INTEGER NOT NULL DEFAULT 0,
+    attempts          INT NOT NULL,
+    first_enqueued_at TEXT NOT NULL,
+    moved_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    last_error        TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_cleanup_dlq_backend
+    ON cleanup_dlq(backend_name);
+
 -- Durable webhook notification delivery queue.
 CREATE TABLE IF NOT EXISTS notification_outbox (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,

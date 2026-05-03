@@ -265,6 +265,11 @@ func (*quotaTxStub) InsertReplicaConditional(context.Context, string, string, st
 func (*quotaTxStub) SumAndDeleteCleanupQueueRows(context.Context, string, string) (int64, int64, error) {
 	return 0, 0, nil
 }
+func (*quotaTxStub) GetCleanupQueueRow(context.Context, int64) (CleanupQueueRow, error) {
+	return CleanupQueueRow{}, nil
+}
+func (*quotaTxStub) InsertCleanupDLQ(context.Context, *CleanupQueueRow) error { return nil }
+func (*quotaTxStub) DeleteCleanupItem(context.Context, int64) error           { return nil }
 func (*quotaTxStub) DecrementOrphanBytes(context.Context, string, int64) error { return nil }
 
 // TestApplyQuotaDeltas_StableOrderAcrossInputs runs applyQuotaDeltas

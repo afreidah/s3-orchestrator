@@ -82,4 +82,10 @@ var (
 		Code:       "SlowDown",
 		Message:    "monthly usage limit exceeded for all backends holding this object",
 	}
+
+	// ErrCleanupItemNotFound is returned by CleanupTxAdapter.GetCleanupQueueRow
+	// when the row no longer exists - typically because another worker
+	// already moved it to the DLQ or completed it. Callers treat this as
+	// a benign no-op rather than an error.
+	ErrCleanupItemNotFound = errors.New("cleanup queue row not found")
 )

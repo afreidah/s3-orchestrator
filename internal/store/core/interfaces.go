@@ -78,6 +78,19 @@ type CleanupStore interface {
 	IncrementOrphanBytes(ctx context.Context, backendName string, amount int64) error
 	DecrementOrphanBytes(ctx context.Context, backendName string, amount int64) error
 	SweepStaleCleanupQueueRows(ctx context.Context, key, backend string) (int64, error)
+
+	// MoveCleanupToDLQ atomically graduates an exhausted cleanup_queue
+	// row to cleanup_dlq. orphan_bytes is intentionally left untouched
+	// because the underlying backend object is still on disk; the DLQ
+	// entry exists so an operator can investigate, retry, or write off
+	// each unrecoverable orphan deliberately. Returns true if a row was
+	// moved, false if no row existed (benign concurrent-finaliser race).
+	MoveCleanupToDLQ(ctx context.Context, id int64, lastError string) (bool, error)
+
+	// CleanupDLQDepth returns the number of rows currently in
+	// cleanup_dlq. Updates the cleanup_dlq_depth gauge so dashboards can
+	// surface the count of unrecoverable orphans needing attention.
+	CleanupDLQDepth(ctx context.Context) (int64, error)
 }
 
 // PendingStore defines in-flight PutObject intent tracking. The write

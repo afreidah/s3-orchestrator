@@ -36,6 +36,8 @@ Package config provides YAML configuration loading with environment variable exp
 - [type MetricsConfig](<#MetricsConfig>)
 - [type NotificationConfig](<#NotificationConfig>)
 - [type NotificationEndpoint](<#NotificationEndpoint>)
+- [type PendingPatternConfig](<#PendingPatternConfig>)
+  - [func \(p \*PendingPatternConfig\) IsEnabled\(\) bool](<#PendingPatternConfig.IsEnabled>)
 - [type RateLimitConfig](<#RateLimitConfig>)
 - [type RebalanceConfig](<#RebalanceConfig>)
 - [type ReconcileConfig](<#ReconcileConfig>)
@@ -49,6 +51,7 @@ Package config provides YAML configuration loading with environment variable exp
 - [type UIConfig](<#UIConfig>)
 - [type UsageFlushConfig](<#UsageFlushConfig>)
 - [type VaultTransitConfig](<#VaultTransitConfig>)
+- [type WritePathConfig](<#WritePathConfig>)
 
 
 ## Variables
@@ -220,7 +223,7 @@ var (
 ```
 
 <a name="NonReloadableFieldsChanged"></a>
-## func [NonReloadableFieldsChanged](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L200>)
+## func [NonReloadableFieldsChanged](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L201>)
 
 ```go
 func NonReloadableFieldsChanged(old, new *Config) []string
@@ -229,7 +232,7 @@ func NonReloadableFieldsChanged(old, new *Config) []string
 NonReloadableFieldsChanged compares two configs and returns a list of non\-reloadable field descriptions that differ. Used by the SIGHUP handler to warn about changes that require a restart.
 
 <a name="ParseLogLevel"></a>
-## func [ParseLogLevel](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L330>)
+## func [ParseLogLevel](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L331>)
 
 ```go
 func ParseLogLevel(s string) slog.Level
@@ -333,7 +336,7 @@ type CleanupQueueConfig struct {
 ```
 
 <a name="Config"></a>
-## type [Config](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L46-L68>)
+## type [Config](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L46-L69>)
 
 Config holds the complete service configuration.
 
@@ -352,6 +355,7 @@ type Config struct {
     Encryption            EncryptionConfig            `yaml:"encryption"`
     UI                    UIConfig                    `yaml:"ui"`
     CleanupQueue          CleanupQueueConfig          `yaml:"cleanup_queue"`
+    WritePath             WritePathConfig             `yaml:"write_path"`
     UsageFlush            UsageFlushConfig            `yaml:"usage_flush"`
     Lifecycle             LifecycleConfig             `yaml:"lifecycle"`
     Reconcile             ReconcileConfig             `yaml:"reconcile"`
@@ -364,7 +368,7 @@ type Config struct {
 ```
 
 <a name="LoadConfig"></a>
-### func [LoadConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L76>)
+### func [LoadConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L77>)
 
 ```go
 func LoadConfig(path string) (*Config, error)
@@ -373,7 +377,7 @@ func LoadConfig(path string) (*Config, error)
 LoadConfig reads and parses the configuration file with environment variable expansion. Returns an error if the file cannot be read, parsed, or validated.
 
 <a name="Config.SetDefaultsAndValidate"></a>
-### func \(\*Config\) [SetDefaultsAndValidate](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L103>)
+### func \(\*Config\) [SetDefaultsAndValidate](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L104>)
 
 ```go
 func (c *Config) SetDefaultsAndValidate() error
@@ -465,7 +469,7 @@ func (ic *IntegrityConfig) ShouldVerifyOnReplicate() bool
 ShouldVerifyOnReplicate returns whether replication copies should be hash\-verified. Defaults to true when integrity is enabled.
 
 <a name="LifecycleConfig"></a>
-## type [LifecycleConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/storage_services.go#L54-L57>)
+## type [LifecycleConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/storage_services.go#L79-L82>)
 
 LifecycleConfig holds rules for automatic object expiration. Objects matching a rule's prefix that are older than expiration\_days are deleted by a background worker. Empty rules list disables lifecycle processing.
 
@@ -477,7 +481,7 @@ type LifecycleConfig struct {
 ```
 
 <a name="LifecycleRule"></a>
-## type [LifecycleRule](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/storage_services.go#L60-L63>)
+## type [LifecycleRule](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/storage_services.go#L85-L88>)
 
 LifecycleRule defines a single object expiration rule.
 
@@ -528,6 +532,29 @@ type NotificationEndpoint struct {
 }
 ```
 
+<a name="PendingPatternConfig"></a>
+## type [PendingPatternConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/storage_services.go#L54-L59>)
+
+PendingPatternConfig configures the pending\-row pattern used by the write path to avoid losing the prior copy of an overwritten key when the metadata commit fails.
+
+```go
+type PendingPatternConfig struct {
+    Enabled    *bool         `yaml:"enabled"`     // Default: true. Set to false to disable.
+    ReaperTick time.Duration `yaml:"reaper_tick"` // How often the reaper resolves abandoned intents (default: 1m)
+    MinAge     time.Duration `yaml:"min_age"`     // Don't reap intents younger than this — guards in-flight PUTs (default: 5m)
+    BatchSize  int           `yaml:"batch_size"`  // Max intents resolved per tick (default: 50)
+}
+```
+
+<a name="PendingPatternConfig.IsEnabled"></a>
+### func \(\*PendingPatternConfig\) [IsEnabled](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/storage_services.go#L64>)
+
+```go
+func (p *PendingPatternConfig) IsEnabled() bool
+```
+
+IsEnabled returns true unless the operator has explicitly disabled the pending pattern. The pointer\-typed Enabled field lets the YAML loader distinguish "absent" \(default true\) from "explicitly false".
+
 <a name="RateLimitConfig"></a>
 ## type [RateLimitConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/ratelimit.go#L16-L23>)
 
@@ -561,7 +588,7 @@ type RebalanceConfig struct {
 ```
 
 <a name="ReconcileConfig"></a>
-## type [ReconcileConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/storage_services.go#L46-L49>)
+## type [ReconcileConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/storage_services.go#L71-L74>)
 
 ReconcileConfig controls the background orphan reconciler that periodically scans backends and imports untracked objects into the metadata database. Disabled by default.
 
@@ -735,6 +762,17 @@ type VaultTransitConfig struct {
     MountPath     string        `yaml:"mount_path"`     // Transit mount path (default: "transit")
     CACert        string        `yaml:"ca_cert"`        // Path to PEM CA certificate for TLS verification
     RenewInterval time.Duration `yaml:"renew_interval"` // Token renewal check interval (default: 5m)
+}
+```
+
+<a name="WritePathConfig"></a>
+## type [WritePathConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/storage_services.go#L47-L49>)
+
+WritePathConfig gates write\-path correctness features. The pending\-row pattern \(PUT\-before\-COMMIT intent tracking\) is on by default; operators can disable it to fall back to the legacy delete\-on\-record\-failure path, which trades data\-loss safety for one fewer round\-trip per PUT.
+
+```go
+type WritePathConfig struct {
+    PendingPattern PendingPatternConfig `yaml:"pending_pattern"`
 }
 ```
 

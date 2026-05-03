@@ -68,3 +68,17 @@ func (c *cbCleanupStore) SweepStaleCleanupQueueRows(ctx context.Context, key, ba
 		return c.inner.SweepStaleCleanupQueueRows(ctx, key, backend)
 	})
 }
+
+// MoveCleanupToDLQ forwards to the inner store under the breaker.
+func (c *cbCleanupStore) MoveCleanupToDLQ(ctx context.Context, id int64, lastError string) (bool, error) {
+	return breaker.CBCall(c.cb, func() (bool, error) {
+		return c.inner.MoveCleanupToDLQ(ctx, id, lastError)
+	})
+}
+
+// CleanupDLQDepth forwards to the inner store under the breaker.
+func (c *cbCleanupStore) CleanupDLQDepth(ctx context.Context) (int64, error) {
+	return breaker.CBCall(c.cb, func() (int64, error) {
+		return c.inner.CleanupDLQDepth(ctx)
+	})
+}
