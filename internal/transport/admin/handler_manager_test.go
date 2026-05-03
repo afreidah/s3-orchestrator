@@ -48,6 +48,7 @@ func newTestHandlerWithManager(t *testing.T) *Handler {
 		Order:           []string{},
 		RoutingStrategy: config.RoutingPack,
 	})
+	proxytest.AttachWorkers(mgr, mock)
 	// Empty reloadable configs so Replicator.Config()/Scrubber.Config() return
 	// sentinel states the handlers can interpret.
 	mgr.Replicator.SetConfig(&config.ReplicationConfig{Factor: 1})

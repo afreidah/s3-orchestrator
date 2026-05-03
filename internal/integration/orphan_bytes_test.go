@@ -26,6 +26,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
@@ -448,9 +449,10 @@ func TestOrphanBytesSpreadRouting(t *testing.T) {
 		OpenTimeout:      500 * time.Millisecond,
 		CacheTTL:         60 * time.Second,
 	})
+	stores := newCBStores(testStore, spreadCB)
 	spreadManager := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        testBackends,
-		Stores:          newCBStores(testStore, spreadCB),
+		Stores:          stores,
 		Dashboard:       store.NewCBDashboardStore(testStore, spreadCB),
 		Metrics:         newMetricsAdapter(testStore, spreadCB),
 		Order:           testBackendOrder,
@@ -458,6 +460,7 @@ func TestOrphanBytesSpreadRouting(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingSpread,
 	})
+	proxytest.AttachWorkersWithStores(spreadManager, &stores)
 
 	spreadSrv := &s3api.Server{
 		Manager: spreadManager,

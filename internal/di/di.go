@@ -44,6 +44,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -100,6 +101,19 @@ func NewInjector(cfg *config.Config, mode string, logLevel *slog.LevelVar, logBu
 	do.Provide(inj, ProvideBackends)
 	do.Provide(inj, ProvideBreakerRegistry)
 	do.Provide(inj, ProvideBackendManager)
+
+	// Worker providers — each takes BackendManager (worker.Ops) plus the
+	// per-worker store role from above. drain.Manager wires itself onto
+	// BackendManager via WireDrain so backendCore's eligibility filters
+	// see drain state.
+	do.Provide(inj, ProvideRebalancer)
+	do.Provide(inj, ProvideReplicator)
+	do.Provide(inj, ProvideOverReplicationCleaner)
+	do.Provide(inj, ProvideCleanupWorker)
+	do.Provide(inj, ProvidePendingReaper)
+	do.Provide(inj, ProvideScrubber)
+	do.Provide(inj, ProvideDrainManager)
+
 	do.Provide(inj, ProvideBucketAuth)
 	do.Provide(inj, ProvideS3Server)
 	do.Provide(inj, ProvideLifecycleManager)
@@ -452,6 +466,209 @@ func ProvideMetricsDeps(i do.Injector) (metrics.Deps, error) {
 }
 
 // -------------------------------------------------------------------------
+// WORKER PROVIDERS
+//
+// Each worker is its own DI service. Providers invoke *proxy.BackendManager
+// (which satisfies worker.Ops / CleanupOps / ScrubberOps via promoted
+// backendCore methods plus its own write-path helpers) and the per-worker
+// store role. The worker.Rebalancer/Replicator/OverReplicationCleaner take
+// compound store contracts; the providers build the embed-shaped adapter
+// inline rather than declaring a named struct in the production package.
+// -------------------------------------------------------------------------
+
+// rebalancerStoreAdapter satisfies worker.RebalancerStore.
+type rebalancerStoreAdapter struct {
+	core.ObjectStore
+	core.QuotaStore
+}
+
+// replicatorStoreAdapter satisfies worker.ReplicatorStore.
+type replicatorStoreAdapter struct {
+	core.ObjectStore
+	core.ReplicationStore
+	core.QuotaStore
+}
+
+// overReplicationStoreAdapter satisfies worker.OverReplicationStore.
+type overReplicationStoreAdapter struct {
+	core.ReplicationStore
+	core.QuotaStore
+}
+
+// ProvideRebalancer constructs the rebalancer worker.
+func ProvideRebalancer(i do.Injector) (*worker.Rebalancer, error) {
+	mgr, err := do.Invoke[*proxy.BackendManager](i)
+	if err != nil {
+		return nil, err
+	}
+	obj, err := do.Invoke[core.ObjectStore](i)
+	if err != nil {
+		return nil, err
+	}
+	q, err := do.Invoke[core.QuotaStore](i)
+	if err != nil {
+		return nil, err
+	}
+	rb := worker.NewRebalancer(mgr, &rebalancerStoreAdapter{ObjectStore: obj, QuotaStore: q})
+	mgr.Rebalancer = rb
+	return rb, nil
+}
+
+// ProvideReplicator constructs the replication worker.
+func ProvideReplicator(i do.Injector) (*worker.Replicator, error) {
+	mgr, err := do.Invoke[*proxy.BackendManager](i)
+	if err != nil {
+		return nil, err
+	}
+	obj, err := do.Invoke[core.ObjectStore](i)
+	if err != nil {
+		return nil, err
+	}
+	repl, err := do.Invoke[core.ReplicationStore](i)
+	if err != nil {
+		return nil, err
+	}
+	q, err := do.Invoke[core.QuotaStore](i)
+	if err != nil {
+		return nil, err
+	}
+	rp := worker.NewReplicator(mgr, &replicatorStoreAdapter{ObjectStore: obj, ReplicationStore: repl, QuotaStore: q})
+	mgr.Replicator = rp
+	return rp, nil
+}
+
+// ProvideOverReplicationCleaner constructs the over-replication cleanup worker.
+func ProvideOverReplicationCleaner(i do.Injector) (*worker.OverReplicationCleaner, error) {
+	mgr, err := do.Invoke[*proxy.BackendManager](i)
+	if err != nil {
+		return nil, err
+	}
+	repl, err := do.Invoke[core.ReplicationStore](i)
+	if err != nil {
+		return nil, err
+	}
+	q, err := do.Invoke[core.QuotaStore](i)
+	if err != nil {
+		return nil, err
+	}
+	or := worker.NewOverReplicationCleaner(mgr, &overReplicationStoreAdapter{ReplicationStore: repl, QuotaStore: q})
+	mgr.OverReplicationCleaner = or
+	return or, nil
+}
+
+// ProvideCleanupWorker constructs the cleanup-queue worker.
+func ProvideCleanupWorker(i do.Injector) (*worker.CleanupWorker, error) {
+	cfg, err := do.Invoke[*config.Config](i)
+	if err != nil {
+		return nil, err
+	}
+	mgr, err := do.Invoke[*proxy.BackendManager](i)
+	if err != nil {
+		return nil, err
+	}
+	cleanup, err := do.Invoke[core.CleanupStore](i)
+	if err != nil {
+		return nil, err
+	}
+	concurrency := cfg.CleanupQueue.Concurrency
+	if concurrency <= 0 {
+		concurrency = 10
+	}
+	cw := worker.NewCleanupWorker(mgr, cleanup, concurrency)
+	mgr.CleanupWorker = cw
+	return cw, nil
+}
+
+// ProvidePendingReaper constructs the pending-reaper worker. Returns nil
+// when the pending pattern is disabled (matches the legacy NewBackendManager
+// behavior of only attaching a reaper when stores.Pending is non-nil).
+func ProvidePendingReaper(i do.Injector) (*worker.PendingReaper, error) {
+	cfg, err := do.Invoke[*config.Config](i)
+	if err != nil {
+		return nil, err
+	}
+	if !cfg.WritePath.PendingPattern.IsEnabled() {
+		return nil, nil //nolint:nilnil // intentional: nil signals feature off
+	}
+	mgr, err := do.Invoke[*proxy.BackendManager](i)
+	if err != nil {
+		return nil, err
+	}
+	pending, err := do.Invoke[core.PendingStore](i)
+	if err != nil {
+		return nil, err
+	}
+	if pending == nil {
+		return nil, nil //nolint:nilnil // store provider returned nil, feature off
+	}
+	pr := worker.NewPendingReaper(mgr, pending, 0, cfg.WritePath.PendingPattern.MinAge, cfg.WritePath.PendingPattern.BatchSize)
+	mgr.PendingReaper = pr
+	return pr, nil
+}
+
+// ProvideScrubber constructs the integrity-verification worker.
+func ProvideScrubber(i do.Injector) (*worker.Scrubber, error) {
+	cfg, err := do.Invoke[*config.Config](i)
+	if err != nil {
+		return nil, err
+	}
+	mgr, err := do.Invoke[*proxy.BackendManager](i)
+	if err != nil {
+		return nil, err
+	}
+	integrity, err := do.Invoke[core.IntegrityStore](i)
+	if err != nil {
+		return nil, err
+	}
+	var enc *encryption.Encryptor
+	if cfg.Encryption.Enabled {
+		if e, err := do.Invoke[*encryption.Encryptor](i); err == nil {
+			enc = e
+		}
+	}
+	sc := worker.NewScrubber(mgr, integrity, enc)
+	mgr.Scrubber = sc
+	return sc, nil
+}
+
+// ProvideDrainManager constructs the drain manager. Depends on
+// BackendManager (drain.Core seam), the cleanup worker (for the
+// cleanup-queue flush before backend deletion), and the per-worker store
+// roles drain pulls directly.
+func ProvideDrainManager(i do.Injector) (*drain.Manager, error) {
+	mgr, err := do.Invoke[*proxy.BackendManager](i)
+	if err != nil {
+		return nil, err
+	}
+	cleanup, err := do.Invoke[*worker.CleanupWorker](i)
+	if err != nil {
+		return nil, err
+	}
+	obj, err := do.Invoke[core.ObjectStore](i)
+	if err != nil {
+		return nil, err
+	}
+	q, err := do.Invoke[core.QuotaStore](i)
+	if err != nil {
+		return nil, err
+	}
+	blc, err := do.Invoke[core.BackendLifecycleStore](i)
+	if err != nil {
+		return nil, err
+	}
+	dm := drain.New(
+		mgr,
+		obj,
+		q,
+		blc,
+		mgr.MultipartManager.AbortMultipartUploadsOnBackend,
+		cleanup.ProcessCleanupQueue,
+	)
+	mgr.WireDrain(dm)
+	return dm, nil
+}
+
+// -------------------------------------------------------------------------
 // BACKEND PROVIDERS
 // -------------------------------------------------------------------------
 
@@ -655,59 +872,84 @@ func ProvideBackendManager(i do.Injector) (*proxy.BackendManager, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	// Encryption: required when enabled, fatal on failure.
-	var enc *encryption.Encryptor
-	if cfg.Encryption.Enabled {
-		e, err := do.Invoke[*encryption.Encryptor](i)
-		if err != nil {
-			return nil, fmt.Errorf("encryption enabled but encryptor failed to initialize: %w", err)
-		}
-		enc = e
-	}
-
-	// Optional: Redis counter backend
-	var cb counter.CounterBackend
-	if rb, err := do.Invoke[*counter.RedisCounterBackend](i); err == nil {
-		cb = rb
-	}
-
-	// Optional: object cache
-	var dataCache objcache.ObjectCache
-	if c, err := do.Invoke[objcache.ObjectCache](i); err == nil {
-		dataCache = c
-	}
-
-	// Admission semaphore
-	var admissionSem chan struct{}
-	switch {
-	case cfg.Server.MaxConcurrentReads > 0 && cfg.Server.MaxConcurrentWrites > 0:
-		admissionSem = make(chan struct{}, cfg.Server.MaxConcurrentWrites)
-	case cfg.Server.MaxConcurrentRequests > 0:
-		admissionSem = make(chan struct{}, cfg.Server.MaxConcurrentRequests)
+	enc, err := resolveOptionalEncryptor(i, cfg.Encryption.Enabled)
+	if err != nil {
+		return nil, err
 	}
 
 	return proxy.NewBackendManager(&proxy.BackendManagerConfig{
-		Backends:           br.Backends,
-		Stores:             stores,
-		Metrics:            metricsDeps,
-		Dashboard:          dash,
-		Order:              br.Order,
-		CacheTTL:           cfg.CircuitBreaker.CacheTTL,
-		BackendTimeout:     cfg.Server.BackendTimeout,
-		UsageLimits:        br.UsageLimits,
-		RoutingStrategy:    cfg.RoutingStrategy,
-		ParallelBroadcast:  cfg.CircuitBreaker.ParallelBroadcast,
-		Encryptor:          enc,
-		ObjectCache:        dataCache,
-		CounterBackend:     cb,
-		MaxObjectSizes:     br.MaxObjectSizes,
-		CleanupConcurrency: cfg.CleanupQueue.Concurrency,
-		AdmissionSem:       admissionSem,
-
-		PendingReaperMinAge: cfg.WritePath.PendingPattern.MinAge,
-		PendingReaperBatch:  cfg.WritePath.PendingPattern.BatchSize,
+		Backends:          br.Backends,
+		Stores:            stores,
+		Metrics:           metricsDeps,
+		Dashboard:         dash,
+		Order:             br.Order,
+		CacheTTL:          cfg.CircuitBreaker.CacheTTL,
+		BackendTimeout:    cfg.Server.BackendTimeout,
+		UsageLimits:       br.UsageLimits,
+		RoutingStrategy:   cfg.RoutingStrategy,
+		ParallelBroadcast: cfg.CircuitBreaker.ParallelBroadcast,
+		Encryptor:         enc,
+		ObjectCache:       resolveOptionalCache(i),
+		CounterBackend:    resolveOptionalCounterBackend(i),
+		MaxObjectSizes:    br.MaxObjectSizes,
+		AdmissionSem:      admissionSemFor(&cfg.Server),
+		ReplicationFactor: replicationFactorFromInjector(i),
 	}), nil
+}
+
+// resolveOptionalCounterBackend returns the configured Redis counter
+// backend, or nil when Redis is disabled / not registered. The
+// CounterBackend field on BackendManagerConfig accepts nil to mean
+// "use the local counter backend".
+func resolveOptionalCounterBackend(i do.Injector) counter.CounterBackend {
+	rb, err := do.Invoke[*counter.RedisCounterBackend](i)
+	if err != nil {
+		return nil
+	}
+	return rb
+}
+
+// resolveOptionalCache returns the object data cache, or nil when
+// caching is disabled / not registered. NewBackendManager treats nil as
+// "object data caching is off" (read path bypasses the cache layer).
+func resolveOptionalCache(i do.Injector) objcache.ObjectCache {
+	c, err := do.Invoke[objcache.ObjectCache](i)
+	if err != nil {
+		return nil
+	}
+	return c
+}
+
+// admissionSemFor returns the shared admission semaphore sized per the
+// server config. Reads/writes-split values take precedence over the
+// merged MaxConcurrentRequests, matching the original switch's
+// behaviour. Returns nil when no concurrency cap is configured.
+func admissionSemFor(s *config.ServerConfig) chan struct{} {
+	switch {
+	case s.MaxConcurrentReads > 0 && s.MaxConcurrentWrites > 0:
+		return make(chan struct{}, s.MaxConcurrentWrites)
+	case s.MaxConcurrentRequests > 0:
+		return make(chan struct{}, s.MaxConcurrentRequests)
+	default:
+		return nil
+	}
+}
+
+// replicationFactorFromInjector returns a closure that lazily resolves
+// the replicator from i and reads its hot-reloadable factor. Returns 0
+// when replication is disabled or the replicator hasn't been registered
+// yet (api mode).
+func replicationFactorFromInjector(i do.Injector) func() int {
+	return func() int {
+		rep, err := do.Invoke[*worker.Replicator](i)
+		if err != nil {
+			return 0
+		}
+		if rc := rep.Config(); rc != nil {
+			return rc.Factor
+		}
+		return 0
+	}
 }
 
 // resolveProxyStores assembles the proxy.Stores bag by invoking each narrow
@@ -781,6 +1023,64 @@ func resolveProxyStores(i do.Injector) (proxy.Stores, error) {
 // BACKGROUND SERVICE PROVIDERS
 // -------------------------------------------------------------------------
 
+// lifecycleWorkerSet bundles the workers ProvideLifecycleManager registers
+// services for. Resolved via resolveLifecycleWorkers so the provider body
+// stays a flat sequence of registrations rather than a chain of error
+// returns.
+type lifecycleWorkerSet struct {
+	cleanup       *worker.CleanupWorker
+	rebalancer    *worker.Rebalancer
+	replicator    *worker.Replicator
+	overRep       *worker.OverReplicationCleaner
+	scrubber      *worker.Scrubber
+	pendingReaper *worker.PendingReaper // nil when the pending pattern is off
+}
+
+// resolveLifecycleWorkers invokes every worker the lifecycle manager
+// registers a service for. drain.Manager is invoked too (not registered)
+// so its DI side-effect — wiring itself into BackendManager — runs.
+func resolveLifecycleWorkers(i do.Injector) (lifecycleWorkerSet, error) {
+	var ws lifecycleWorkerSet
+	var err error
+	if ws.cleanup, err = do.Invoke[*worker.CleanupWorker](i); err != nil {
+		return ws, err
+	}
+	if ws.rebalancer, err = do.Invoke[*worker.Rebalancer](i); err != nil {
+		return ws, err
+	}
+	if ws.replicator, err = do.Invoke[*worker.Replicator](i); err != nil {
+		return ws, err
+	}
+	if ws.overRep, err = do.Invoke[*worker.OverReplicationCleaner](i); err != nil {
+		return ws, err
+	}
+	if ws.scrubber, err = do.Invoke[*worker.Scrubber](i); err != nil {
+		return ws, err
+	}
+	if _, err = do.Invoke[*drain.Manager](i); err != nil {
+		return ws, err
+	}
+	// PendingReaper provider returns (nil, nil) when the feature is off.
+	ws.pendingReaper, _ = do.Invoke[*worker.PendingReaper](i)
+	return ws, nil
+}
+
+// registerWorkerServices registers the worker-mode lifecycle services on
+// sm. Pulled out of ProvideLifecycleManager so that function stays under
+// the cognitive-complexity ceiling.
+func registerWorkerServices(sm *lifecycle.Manager, mgr *proxy.BackendManager, ws lifecycleWorkerSet, locker core.AdvisoryLocker, cfg *config.Config) {
+	sm.Register("multipart-cleanup", NewMultipartCleanupService(mgr, locker, cfg.CleanupQueue.MultipartStaleTimeout))
+	sm.Register("cleanup-queue", NewCleanupQueueService(ws.cleanup, locker))
+	if svc := NewPendingReaperService(ws.pendingReaper, locker, cfg.WritePath.PendingPattern.ReaperTick); svc != nil {
+		sm.Register("pending-reaper", svc)
+	}
+	sm.Register("rebalancer", NewRebalancerService(mgr, ws.rebalancer, locker))
+	sm.Register("replicator", NewReplicatorService(mgr, ws.replicator, locker))
+	sm.Register("over-replication", NewOverReplicationService(mgr, ws.overRep, locker))
+	sm.Register("lifecycle", NewLifecycleService(mgr, locker))
+	sm.Register("scrubber", NewScrubberService(ws.scrubber, locker))
+}
+
 // ProvideLifecycleManager creates and registers all background services.
 func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 	cfg, err := do.Invoke[*config.Config](i)
@@ -808,33 +1108,27 @@ func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 	sm.Register("usage-flush", NewUsageFlushService(manager, locker))
 	sm.Register("cb-watchdog", NewCircuitBreakerWatchdog(registry))
 
-	if mode == "worker" || mode == "all" {
-		sm.Register("multipart-cleanup", NewMultipartCleanupService(manager, locker, cfg.CleanupQueue.MultipartStaleTimeout))
-		sm.Register("cleanup-queue", NewCleanupQueueService(manager, locker))
-		if svc := NewPendingReaperService(manager, locker, cfg.WritePath.PendingPattern.ReaperTick); svc != nil {
-			sm.Register("pending-reaper", svc)
-		}
-		sm.Register("rebalancer", NewRebalancerService(manager, locker))
-		sm.Register("replicator", NewReplicatorService(manager, locker))
-		sm.Register("over-replication", NewOverReplicationService(manager, locker))
-		sm.Register("lifecycle", NewLifecycleService(manager, locker))
-		sm.Register("scrubber", NewScrubberService(manager, locker))
+	if mode != "worker" && mode != "all" {
+		return sm, nil
+	}
 
-		bktNames := make([]string, len(cfg.Buckets))
-		for idx, b := range cfg.Buckets {
-			bktNames[idx] = b.Name
-		}
-		reconciler := worker.NewReconciler(manager, bktNames)
-		do.ProvideValue(i, reconciler)
+	ws, err := resolveLifecycleWorkers(i)
+	if err != nil {
+		return nil, err
+	}
+	registerWorkerServices(sm, manager, ws, locker, cfg)
 
-		if cfg.Reconcile.Enabled {
-			sm.Register("reconcile", NewReconcileService(reconciler, locker, cfg.Reconcile.Interval))
-		}
-
-		// Optional: notification delivery worker
-		if notifier, err := do.Invoke[*notify.Notifier](i); err == nil {
-			sm.Register("notifications", notifier)
-		}
+	bktNames := make([]string, len(cfg.Buckets))
+	for idx, b := range cfg.Buckets {
+		bktNames[idx] = b.Name
+	}
+	reconciler := worker.NewReconciler(manager, bktNames)
+	do.ProvideValue(i, reconciler)
+	if cfg.Reconcile.Enabled {
+		sm.Register("reconcile", NewReconcileService(reconciler, locker, cfg.Reconcile.Interval))
+	}
+	if notifier, err := do.Invoke[*notify.Notifier](i); err == nil {
+		sm.Register("notifications", notifier)
 	}
 
 	return sm, nil
@@ -917,18 +1211,83 @@ func ProvideUIHandler(i do.Injector) (*ui.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
+	rebalancer, err := do.Invoke[*worker.Rebalancer](i)
+	if err != nil {
+		return nil, err
+	}
+	overRep, err := do.Invoke[*worker.OverReplicationCleaner](i)
+	if err != nil {
+		return nil, err
+	}
 
-	return ui.NewWithDeps(&ui.Deps{
+	return ui.New(&ui.Deps{
 		BackendOps:    manager,
 		Objects:       manager.ObjectManager,
-		Rebalancer:    manager.Rebalancer,
-		OverRep:       manager.OverReplicationCleaner,
+		Rebalancer:    rebalancer,
+		OverRep:       overRep,
 		AdminHandler:  adminHandler,
 		DBHealthy:     cb.IsHealthy,
 		Cfg:           cfg,
 		LogBuffer:     logBuffer,
 		LoginThrottle: loginThrottle,
 	}), nil
+}
+
+// adminHandlerDeps groups the worker handles + narrow store roles
+// ProvideAdminHandler resolves so the provider body stays compact.
+type adminHandlerDeps struct {
+	replicator *worker.Replicator
+	overRep    *worker.OverReplicationCleaner
+	scrubber   *worker.Scrubber
+	drain      *drain.Manager
+	objects    core.ObjectStore
+	cleanup    core.CleanupStore
+	lifecycle  core.BackendLifecycleStore
+}
+
+// resolveAdminHandlerDeps invokes the worker + store dependencies the
+// admin handler needs. Each invocation may fail (e.g. provider missing),
+// so the helper bails on the first error.
+func resolveAdminHandlerDeps(i do.Injector) (adminHandlerDeps, error) {
+	var d adminHandlerDeps
+	var err error
+	if d.replicator, err = do.Invoke[*worker.Replicator](i); err != nil {
+		return d, err
+	}
+	if d.overRep, err = do.Invoke[*worker.OverReplicationCleaner](i); err != nil {
+		return d, err
+	}
+	if d.scrubber, err = do.Invoke[*worker.Scrubber](i); err != nil {
+		return d, err
+	}
+	if d.drain, err = do.Invoke[*drain.Manager](i); err != nil {
+		return d, err
+	}
+	if d.objects, err = do.Invoke[core.ObjectStore](i); err != nil {
+		return d, err
+	}
+	if d.cleanup, err = do.Invoke[core.CleanupStore](i); err != nil {
+		return d, err
+	}
+	if d.lifecycle, err = do.Invoke[core.BackendLifecycleStore](i); err != nil {
+		return d, err
+	}
+	return d, nil
+}
+
+// resolveOptionalEncryptor returns the live *encryption.Encryptor when
+// encryption is enabled, or nil otherwise. A configured-but-failing
+// encryptor surfaces as an error so the admin handler doesn't quietly
+// run without encryption support.
+func resolveOptionalEncryptor(i do.Injector, enabled bool) (*encryption.Encryptor, error) {
+	if !enabled {
+		return nil, nil //nolint:nilnil // encryption disabled is a valid state
+	}
+	e, err := do.Invoke[*encryption.Encryptor](i)
+	if err != nil {
+		return nil, fmt.Errorf("encryption enabled but encryptor failed to initialize: %w", err)
+	}
+	return e, nil
 }
 
 // ProvideAdminHandler creates the admin API handler.
@@ -953,16 +1312,17 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	var enc *encryption.Encryptor
-	if cfg.Encryption.Enabled {
-		e, err := do.Invoke[*encryption.Encryptor](i)
-		if err != nil {
-			return nil, fmt.Errorf("encryption enabled but encryptor failed to initialize: %w", err)
-		}
-		enc = e
+	enc, err := resolveOptionalEncryptor(i, cfg.Encryption.Enabled)
+	if err != nil {
+		return nil, err
 	}
 
+	deps, err := resolveAdminHandlerDeps(i)
+	if err != nil {
+		return nil, err
+	}
+
+	// Reconciler is optional: only registered in worker/all modes.
 	var reconciler *worker.Reconciler
 	if r, err := do.Invoke[*worker.Reconciler](i); err == nil {
 		reconciler = r
@@ -973,31 +1333,17 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 		adminToken = cfg.UI.AdminKey
 	}
 
-	objects, err := do.Invoke[core.ObjectStore](i)
-	if err != nil {
-		return nil, err
-	}
-	cleanup, err := do.Invoke[core.CleanupStore](i)
-	if err != nil {
-		return nil, err
-	}
-
-	lifecycleStore, err := do.Invoke[core.BackendLifecycleStore](i)
-	if err != nil {
-		return nil, err
-	}
-
 	return admin.New(&admin.Deps{
 		BackendOps: manager,
-		Replicator: manager.Replicator,
-		OverRep:    manager.OverReplicationCleaner,
-		Drain:      manager.DrainManager,
-		Scrubber:   manager.Scrubber,
-		Lifecycle:  lifecycleStore,
+		Replicator: deps.replicator,
+		OverRep:    deps.overRep,
+		Drain:      deps.drain,
+		Scrubber:   deps.scrubber,
+		Lifecycle:  deps.lifecycle,
 		DBCB:       cb,
 		Encryption: encAdmin,
-		Objects:    objects,
-		Cleanup:    cleanup,
+		Objects:    deps.objects,
+		Cleanup:    deps.cleanup,
 		Encryptor:  enc,
 		Reconciler: reconciler,
 		Token:      adminToken,

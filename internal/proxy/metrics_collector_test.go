@@ -245,6 +245,7 @@ func TestUpdateQuotaMetrics_ReplicationFactorFromManager(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
+	wireWorkersForTest(mgr)
 
 	// Without replication config — closure returns 0, skips query
 	err := mgr.metricsCollector.UpdateQuotaMetrics(context.Background())
