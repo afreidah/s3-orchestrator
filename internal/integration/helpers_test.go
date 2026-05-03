@@ -42,6 +42,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
@@ -305,6 +306,7 @@ func TestMain(m *testing.M) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
+	proxytest.AttachWorkersWithStores(manager, &stores)
 	testManager = manager
 
 	srv := &s3api.Server{
@@ -523,9 +525,10 @@ func newThreeBackendManager(t *testing.T) *proxy.BackendManager {
 		OpenTimeout:      500 * time.Millisecond,
 		CacheTTL:         60 * time.Second,
 	})
-	return proxy.NewBackendManager(&proxy.BackendManagerConfig{
+	stores := newCBStores(testFailableStore, dbCB)
+	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        allBackends,
-		Stores:          newCBStores(testFailableStore, dbCB),
+		Stores:          stores,
 		Dashboard:       store.NewCBDashboardStore(testFailableStore, dbCB),
 		Metrics:         newMetricsAdapter(testFailableStore, dbCB),
 		Order:           allBackendOrder,
@@ -533,6 +536,8 @@ func newThreeBackendManager(t *testing.T) *proxy.BackendManager {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
+	proxytest.AttachWorkersWithStores(mgr, &stores)
+	return mgr
 }
 
 // newCBStores wraps a role-bearing value (FailableStore or *postgres.Store)

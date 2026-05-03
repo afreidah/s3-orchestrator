@@ -284,6 +284,7 @@ func TestFindReplicaTarget_RespectsOrphanBytes(t *testing.T) {
 		CacheTTL:        5 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
+	wireWorkersForTest(mgr)
 
 	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 100, BytesLimit: 1000},
@@ -311,6 +312,7 @@ func TestFindReplicaTarget_OrphanBytesStillFits(t *testing.T) {
 		CacheTTL:        5 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
+	wireWorkersForTest(mgr)
 
 	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 100, BytesLimit: 1000},
@@ -600,6 +602,7 @@ func TestReplicate_OrphanBytesBlockTarget(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
+	wireWorkersForTest(mgr)
 
 	created, err := mgr.Replicator.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:    2,

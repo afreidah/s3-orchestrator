@@ -160,6 +160,7 @@ func TestExecuteMoves_Concurrent(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
+	wireWorkersForTest(mgr)
 
 	var plan []worker.RebalanceMove
 	for i := range 5 {
@@ -213,6 +214,7 @@ func TestExecuteMoves_PartialFailure(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
+	wireWorkersForTest(mgr)
 
 	// "fail" key does not exist on source, so GetObject returns not-found
 	plan := []worker.RebalanceMove{
@@ -247,6 +249,7 @@ func TestExecuteMoves_SequentialFallback(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
+	wireWorkersForTest(mgr)
 
 	plan := []worker.RebalanceMove{
 		{ObjectKey: "a", FromBackend: "src", ToBackend: "dest", SizeBytes: 5},
@@ -432,7 +435,7 @@ func newRebalanceManager(store *mockStore, names []string) *BackendManager {
 	for _, name := range names {
 		backends[name] = newMockBackend()
 	}
-	return NewBackendManager(&BackendManagerConfig{
+	return wireWorkersForTest(NewBackendManager(&BackendManagerConfig{
 		Backends:        backends,
 		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
@@ -441,7 +444,7 @@ func newRebalanceManager(store *mockStore, names []string) *BackendManager {
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
-	})
+	}))
 }
 
 func TestPlanPackTight_MovesFromLeastToMostFull(t *testing.T) {
@@ -739,6 +742,7 @@ func TestExecuteOneMove_DestBackendNotFound(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
+	wireWorkersForTest(mgr)
 
 	move := worker.RebalanceMove{
 		ObjectKey:   "key",
@@ -771,6 +775,7 @@ func TestExecuteOneMove_SourceGetFails(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
+	wireWorkersForTest(mgr)
 
 	move := worker.RebalanceMove{
 		ObjectKey:   "key",
@@ -804,6 +809,7 @@ func TestExecuteOneMove_DestPutFails(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
+	wireWorkersForTest(mgr)
 
 	move := worker.RebalanceMove{
 		ObjectKey:   "key",
@@ -836,6 +842,7 @@ func TestExecuteOneMove_MoveLocationError_CleansUpOrphan(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
+	wireWorkersForTest(mgr)
 
 	move := worker.RebalanceMove{
 		ObjectKey:   "key",
@@ -874,6 +881,7 @@ func TestExecuteOneMove_MoveLocationError_CleanupFails_EnqueuesCleanup(t *testin
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
+	wireWorkersForTest(mgr)
 
 	move := worker.RebalanceMove{
 		ObjectKey:   "key",
@@ -915,6 +923,7 @@ func TestExecuteOneMove_MovedSizeZero_CleansUpOrphan(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
+	wireWorkersForTest(mgr)
 
 	move := worker.RebalanceMove{
 		ObjectKey:   "key",
@@ -953,6 +962,7 @@ func TestExecuteOneMove_SourceDeleteFails_EnqueuesCleanup(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
+	wireWorkersForTest(mgr)
 
 	move := worker.RebalanceMove{
 		ObjectKey:   "key",
@@ -1026,6 +1036,7 @@ func TestExecuteMoves_AdmissionBlocked(t *testing.T) {
 		RoutingStrategy: config.RoutingPack,
 		AdmissionSem:    sem,
 	})
+	wireWorkersForTest(mgr)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately so acquireAdmission returns false

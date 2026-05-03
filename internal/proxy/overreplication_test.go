@@ -93,6 +93,7 @@ func TestScoreCopy_CircuitBrokenBackend(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
+	wireWorkersForTest(mgr)
 
 	loc := core.ObjectLocation{BackendName: "b1", SizeBytes: 100}
 	score := mgr.OverReplicationCleaner.ScoreCopy(&loc, nil)
@@ -411,6 +412,7 @@ func TestClean_AdmissionBlocked(t *testing.T) {
 		RoutingStrategy: config.RoutingPack,
 		AdmissionSem:    sem,
 	})
+	wireWorkersForTest(mgr)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

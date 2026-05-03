@@ -37,7 +37,7 @@ func newTestManager(store *mockStore, backends map[string]*mockBackend) *Backend
 		obs[name] = b
 		order = append(order, name)
 	}
-	return NewBackendManager(&BackendManagerConfig{
+	return wireWorkersForTest(NewBackendManager(&BackendManagerConfig{
 		Backends:        obs,
 		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
@@ -46,7 +46,7 @@ func newTestManager(store *mockStore, backends map[string]*mockBackend) *Backend
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
-	})
+	}))
 }
 
 // -------------------------------------------------------------------------
@@ -92,6 +92,7 @@ func TestPutObject_PackStrategy_UsesGetBackendWithSpace(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
+	wireWorkersForTest(mgr)
 
 	_, err := mgr.ObjectManager.PutObject(context.Background(), "pack-key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 	if err != nil {
@@ -119,6 +120,7 @@ func TestPutObject_SpreadStrategy_UsesGetLeastUtilized(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingSpread,
 	})
+	wireWorkersForTest(mgr)
 
 	_, err := mgr.ObjectManager.PutObject(context.Background(), "spread-key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 	if err != nil {
@@ -282,7 +284,7 @@ func newTestManagerWithOrder(store *mockStore, backends map[string]*mockBackend,
 	for name, b := range backends {
 		obs[name] = b
 	}
-	return NewBackendManager(&BackendManagerConfig{
+	return wireWorkersForTest(NewBackendManager(&BackendManagerConfig{
 		Backends:        obs,
 		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
@@ -291,7 +293,7 @@ func newTestManagerWithOrder(store *mockStore, backends map[string]*mockBackend,
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
-	})
+	}))
 }
 
 // -------------------------------------------------------------------------
@@ -549,6 +551,7 @@ func TestPutObject_WriteFailover_WithEncryption(t *testing.T) {
 		RoutingStrategy: config.RoutingPack,
 		Encryptor:       enc,
 	})
+	wireWorkersForTest(mgr)
 
 	payload := []byte("encrypt-failover-test-data")
 	etag, err := mgr.ObjectManager.PutObject(context.Background(), "enc-key", bytes.NewReader(payload), int64(len(payload)), "text/plain", nil)
@@ -622,6 +625,7 @@ func TestGetObject_WithEncryption_UsesLocationMap(t *testing.T) {
 		RoutingStrategy: config.RoutingPack,
 		Encryptor:       enc,
 	})
+	wireWorkersForTest(mgr)
 	defer mgr.Close()
 
 	result, err := mgr.ObjectManager.GetObject(context.Background(), "enc-key", "")
@@ -666,6 +670,7 @@ func TestHeadObject_WithEncryption(t *testing.T) {
 		RoutingStrategy: config.RoutingPack,
 		Encryptor:       enc,
 	})
+	wireWorkersForTest(mgr)
 	defer mgr.Close()
 
 	// Put an encrypted object
@@ -866,6 +871,7 @@ func TestGetObject_DBUnavailable_EncryptedRejects503(t *testing.T) {
 		RoutingStrategy: config.RoutingPack,
 		Encryptor:       enc,
 	})
+	wireWorkersForTest(mgr)
 	defer mgr.Close()
 
 	// With encryption enabled and DB down, GetObject should return 503
@@ -1705,6 +1711,7 @@ func TestPutObject_BackendTimeout(t *testing.T) {
 		BackendTimeout:  50 * time.Millisecond,
 		RoutingStrategy: config.RoutingPack,
 	})
+	wireWorkersForTest(mgr)
 
 	_, err := mgr.ObjectManager.PutObject(context.Background(), "timeout-key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 	if err == nil {
@@ -1737,6 +1744,8 @@ func (s *slowMockBackend) PutObject(ctx context.Context, key string, body io.Rea
 func TestLocationCache_SetAndGet(t *testing.T) {
 	t.Parallel()
 	mgr := NewBackendManager(&BackendManagerConfig{CacheTTL: 5 * time.Second, RoutingStrategy: config.RoutingPack})
+	wireWorkersForTest(mgr)
+	wireWorkersForTest(mgr)
 	defer mgr.Close()
 	mgr.ObjectManager.cache.Set("key1", "backend-a")
 
@@ -1752,6 +1761,8 @@ func TestLocationCache_SetAndGet(t *testing.T) {
 func TestLocationCache_Expiry(t *testing.T) {
 	t.Parallel()
 	mgr := NewBackendManager(&BackendManagerConfig{CacheTTL: 10 * time.Millisecond, RoutingStrategy: config.RoutingPack})
+	wireWorkersForTest(mgr)
+	wireWorkersForTest(mgr)
 	defer mgr.Close()
 	mgr.ObjectManager.cache.Set("key1", "backend-a")
 
@@ -1766,6 +1777,8 @@ func TestLocationCache_Expiry(t *testing.T) {
 func TestLocationCache_Overwrite(t *testing.T) {
 	t.Parallel()
 	mgr := NewBackendManager(&BackendManagerConfig{CacheTTL: 5 * time.Second, RoutingStrategy: config.RoutingPack})
+	wireWorkersForTest(mgr)
+	wireWorkersForTest(mgr)
 	defer mgr.Close()
 	mgr.ObjectManager.cache.Set("key1", "old-backend")
 	mgr.ObjectManager.cache.Set("key1", "new-backend")
@@ -1835,7 +1848,7 @@ func newTestManagerWithLimits(store *mockStore, backends map[string]*mockBackend
 		obs[name] = b
 		order = append(order, name)
 	}
-	return NewBackendManager(&BackendManagerConfig{
+	return wireWorkersForTest(NewBackendManager(&BackendManagerConfig{
 		Backends:        obs,
 		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
@@ -1845,7 +1858,7 @@ func newTestManagerWithLimits(store *mockStore, backends map[string]*mockBackend
 		BackendTimeout:  30 * time.Second,
 		UsageLimits:     limits,
 		RoutingStrategy: config.RoutingPack,
-	})
+	}))
 }
 
 func TestPutObject_UsageLimitOverflow(t *testing.T) {
@@ -2034,7 +2047,7 @@ func newTestManagerParallel(store *mockStore, orderedBackends []struct {
 		obs[b.name] = b.backend
 		order = append(order, b.name)
 	}
-	return NewBackendManager(&BackendManagerConfig{
+	return wireWorkersForTest(NewBackendManager(&BackendManagerConfig{
 		Backends:          obs,
 		Stores:            testStoresFromMock(store),
 		Dashboard:         store,
@@ -2044,7 +2057,7 @@ func newTestManagerParallel(store *mockStore, orderedBackends []struct {
 		BackendTimeout:    30 * time.Second,
 		RoutingStrategy:   "pack",
 		ParallelBroadcast: true,
-	})
+	}))
 }
 
 // slowGetBackend wraps a mockBackend and adds a delay to GetObject and HeadObject.
@@ -2192,6 +2205,7 @@ func TestGetObject_SequentialBroadcast_WhenDisabled(t *testing.T) {
 		RoutingStrategy:   "pack",
 		ParallelBroadcast: false,
 	})
+	wireWorkersForTest(mgr)
 	defer mgr.Close()
 
 	start := time.Now()
@@ -2352,6 +2366,7 @@ func TestCopyObject_DestWriteFails(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
+	wireWorkersForTest(mgr)
 
 	_, err := mgr.ObjectManager.CopyObject(context.Background(), "src", "dst")
 	if err == nil {
@@ -2379,6 +2394,7 @@ func TestCopyObject_ExcludesDrainingBackend(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
+	wireWorkersForTest(mgr)
 
 	// Mark both backends as draining so no eligible destination remains
 	mgr.DrainManager.SeedActiveForTest("src-be")
@@ -2416,6 +2432,7 @@ func TestCopyObject_SourceReadFails(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
+	wireWorkersForTest(mgr)
 
 	_, err := mgr.ObjectManager.CopyObject(context.Background(), "src", "dst")
 	if err == nil {
@@ -2443,6 +2460,7 @@ func TestCopyObject_AllSourceGetObjectsFail(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
+	wireWorkersForTest(mgr)
 
 	_, err := mgr.ObjectManager.CopyObject(context.Background(), "src", "dst")
 	if err == nil {

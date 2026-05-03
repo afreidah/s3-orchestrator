@@ -28,6 +28,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
+	"github.com/afreidah/s3-orchestrator/internal/worker"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
@@ -73,6 +75,13 @@ func TestProviders_MissingConfigReturnsCleanError(t *testing.T) {
 		{"ObjectCache", func(i do.Injector) error { _, err := ProvideObjectCache(i); return err }},
 		{"BackendManager", func(i do.Injector) error { _, err := ProvideBackendManager(i); return err }},
 		{"LifecycleManager", func(i do.Injector) error { _, err := ProvideLifecycleManager(i); return err }},
+		{"Rebalancer", func(i do.Injector) error { _, err := ProvideRebalancer(i); return err }},
+		{"Replicator", func(i do.Injector) error { _, err := ProvideReplicator(i); return err }},
+		{"OverReplicationCleaner", func(i do.Injector) error { _, err := ProvideOverReplicationCleaner(i); return err }},
+		{"CleanupWorker", func(i do.Injector) error { _, err := ProvideCleanupWorker(i); return err }},
+		{"PendingReaper", func(i do.Injector) error { _, err := ProvidePendingReaper(i); return err }},
+		{"Scrubber", func(i do.Injector) error { _, err := ProvideScrubber(i); return err }},
+		{"DrainManager", func(i do.Injector) error { _, err := ProvideDrainManager(i); return err }},
 		{"BucketAuth", func(i do.Injector) error { _, err := ProvideBucketAuth(i); return err }},
 		{"S3Server", func(i do.Injector) error { _, err := ProvideS3Server(i); return err }},
 		{"RateLimiter", func(i do.Injector) error { _, err := ProvideRateLimiter(i); return err }},
@@ -405,6 +414,31 @@ func TestProvideObjectCache_InvalidSize(t *testing.T) {
 	_, _ = ProvideObjectCache(inj)
 }
 
+// TestResolveOptionalEncryptor_Disabled returns nil/nil when encryption
+// is off — covers the early-return branch.
+func TestResolveOptionalEncryptor_Disabled(t *testing.T) {
+	t.Parallel()
+	inj := do.New()
+	enc, err := resolveOptionalEncryptor(inj, false)
+	if err != nil {
+		t.Fatalf("resolveOptionalEncryptor(false): %v", err)
+	}
+	if enc != nil {
+		t.Errorf("expected nil encryptor when disabled, got %v", enc)
+	}
+}
+
+// TestResolveOptionalEncryptor_EnabledMissing wraps the do.Invoke error
+// when encryption is enabled but no encryptor provider is registered.
+func TestResolveOptionalEncryptor_EnabledMissing(t *testing.T) {
+	t.Parallel()
+	inj := do.New()
+	_, err := resolveOptionalEncryptor(inj, true)
+	if err == nil {
+		t.Fatal("expected error when encryption enabled but no provider, got nil")
+	}
+}
+
 // -------------------------------------------------------------------------
 // NewInjector REGISTRATION MATRIX
 // -------------------------------------------------------------------------
@@ -578,7 +612,9 @@ func TestNewInjector_HappyPathResolvesEverything(t *testing.T) {
 
 // TestNewInjector_WorkerModeResolvesLifecycle covers the mode == "worker"
 // / "all" branch of ProvideLifecycleManager (which registers the full
-// set of background services instead of the minimal pair).
+// set of background services instead of the minimal pair). Also drives
+// each per-worker DI provider through its happy path so the worker-
+// construction branches added in #676 B run end-to-end.
 func TestNewInjector_WorkerModeResolvesLifecycle(t *testing.T) {
 	t.Parallel()
 	cfg := happyPathConfig(t.TempDir())
@@ -590,6 +626,28 @@ func TestNewInjector_WorkerModeResolvesLifecycle(t *testing.T) {
 
 	if _, err := do.Invoke[*lifecycle.Manager](inj); err != nil {
 		t.Fatalf("LifecycleManager: %v", err)
+	}
+	if _, err := do.Invoke[*worker.Rebalancer](inj); err != nil {
+		t.Errorf("Rebalancer: %v", err)
+	}
+	if _, err := do.Invoke[*worker.Replicator](inj); err != nil {
+		t.Errorf("Replicator: %v", err)
+	}
+	if _, err := do.Invoke[*worker.OverReplicationCleaner](inj); err != nil {
+		t.Errorf("OverReplicationCleaner: %v", err)
+	}
+	if _, err := do.Invoke[*worker.CleanupWorker](inj); err != nil {
+		t.Errorf("CleanupWorker: %v", err)
+	}
+	if _, err := do.Invoke[*worker.Scrubber](inj); err != nil {
+		t.Errorf("Scrubber: %v", err)
+	}
+	if _, err := do.Invoke[*drain.Manager](inj); err != nil {
+		t.Errorf("DrainManager: %v", err)
+	}
+	// PendingReaper is optional: nil when the pending pattern is off.
+	if _, err := do.Invoke[*worker.PendingReaper](inj); err != nil {
+		t.Errorf("PendingReaper: %v", err)
 	}
 }
 

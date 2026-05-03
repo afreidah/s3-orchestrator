@@ -168,6 +168,7 @@ func TestGetDashboardData_UnhealthyBackends(t *testing.T) {
 		Order:           []string{"b1"},
 		RoutingStrategy: config.RoutingPack,
 	})
+	wireWorkersForTest(mgr)
 	defer mgr.Close()
 
 	data, err := mgr.GetDashboardData(context.Background())
@@ -200,6 +201,7 @@ func TestGetDashboardData_HealthyBackendsNotMarked(t *testing.T) {
 		Order:           []string{"b1"},
 		RoutingStrategy: config.RoutingPack,
 	})
+	wireWorkersForTest(mgr)
 	defer mgr.Close()
 
 	data, err := mgr.GetDashboardData(context.Background())

@@ -45,6 +45,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 	"github.com/afreidah/s3-orchestrator/internal/transport/ui"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
+	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
 // server holds the runtime state shared across the serve lifecycle (startup,
@@ -199,9 +200,9 @@ func (s *server) resolveServices() error {
 		return fmt.Errorf("initialize S3 server: %w", err)
 	}
 
-	manager.Rebalancer.SetConfig(&s.cfg.Rebalance)
-	manager.Replicator.SetConfig(&s.cfg.Replication)
-	manager.OverReplicationCleaner.SetConfig(&s.cfg.Replication)
+	if err := s.applyWorkerConfigs(&s.cfg.Rebalance, &s.cfg.Replication, &s.cfg.Integrity); err != nil {
+		return err
+	}
 	manager.SetUsageFlushConfig(&s.cfg.UsageFlush)
 	manager.SetLifecycleConfig(&s.cfg.Lifecycle)
 	manager.SetIntegrityConfig(&s.cfg.Integrity)
@@ -267,6 +268,26 @@ func (s *server) s3Server() *s3api.Server {
 func (s *server) lifecycleManager() *lifecycle.Manager {
 	v, _ := do.Invoke[*lifecycle.Manager](s.inj)
 	return v
+}
+
+// applyWorkerConfigs pushes the (possibly hot-reloaded) Rebalance,
+// Replication, and Integrity configs onto each worker. Workers are
+// resolved from DI on every call so a not-yet-constructed worker (e.g.
+// in api mode) doesn't crash boot.
+func (s *server) applyWorkerConfigs(rebalance *config.RebalanceConfig, replication *config.ReplicationConfig, integrity *config.IntegrityConfig) error {
+	if rb, err := do.Invoke[*worker.Rebalancer](s.inj); err == nil {
+		rb.SetConfig(rebalance)
+	}
+	if rp, err := do.Invoke[*worker.Replicator](s.inj); err == nil {
+		rp.SetConfig(replication)
+	}
+	if or, err := do.Invoke[*worker.OverReplicationCleaner](s.inj); err == nil {
+		or.SetConfig(replication)
+	}
+	if sc, err := do.Invoke[*worker.Scrubber](s.inj); err == nil {
+		sc.SetConfig(integrity)
+	}
+	return nil
 }
 
 // -------------------------------------------------------------------------
@@ -561,9 +582,9 @@ func (s *server) applyReload(ctx context.Context, newCfg *config.Config) {
 
 	s.logLevel.Set(config.ParseLogLevel(newCfg.Server.LogLevel))
 
-	manager.Rebalancer.SetConfig(&newCfg.Rebalance)
-	manager.Replicator.SetConfig(&newCfg.Replication)
-	manager.OverReplicationCleaner.SetConfig(&newCfg.Replication)
+	if err := s.applyWorkerConfigs(&newCfg.Rebalance, &newCfg.Replication, &newCfg.Integrity); err != nil {
+		slog.WarnContext(reloadCtx, "failed to apply worker configs", "error", err)
+	}
 	manager.SetUsageFlushConfig(&newCfg.UsageFlush)
 	manager.SetLifecycleConfig(&newCfg.Lifecycle)
 	manager.SetIntegrityConfig(&newCfg.Integrity)

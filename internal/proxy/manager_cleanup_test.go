@@ -428,6 +428,7 @@ func TestProcessCleanupQueue_AdmissionBlocked(t *testing.T) {
 		RoutingStrategy: config.RoutingPack,
 		AdmissionSem:    sem,
 	})
+	wireWorkersForTest(mgr)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
