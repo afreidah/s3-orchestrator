@@ -317,20 +317,24 @@ func (a *sqliteTxAdapter) InsertObjectLocationIfNotExists(ctx context.Context, l
 
 // InsertReplicaConditional inserts a replica row only if the source
 // copy still exists and the target does not already have a copy.
-func (a *sqliteTxAdapter) InsertReplicaConditional(ctx context.Context, objectKey, targetBackend, sourceBackend string) (bool, error) {
+// Returns the inserted size_bytes (read from the locked source row, so
+// it agrees with whatever object_locations.size_bytes the SQLite row
+// got) on success, or (0, false, nil) when the source is missing or the
+// target already has a copy.
+func (a *sqliteTxAdapter) InsertReplicaConditional(ctx context.Context, objectKey, targetBackend, sourceBackend string) (int64, bool, error) {
 	srcLoc, ok, err := a.LockObjectOnBackend(ctx, objectKey, sourceBackend)
 	if err != nil {
-		return false, err
+		return 0, false, err
 	}
 	if !ok {
-		return false, nil
+		return 0, false, nil
 	}
 	targetExists, err := a.CheckObjectExistsOnBackend(ctx, objectKey, targetBackend)
 	if err != nil {
-		return false, err
+		return 0, false, err
 	}
 	if targetExists {
-		return false, nil
+		return 0, false, nil
 	}
 	dest := &core.ObjectLocation{
 		ObjectKey:     objectKey,
@@ -343,9 +347,9 @@ func (a *sqliteTxAdapter) InsertReplicaConditional(ctx context.Context, objectKe
 		ContentHash:   srcLoc.ContentHash,
 	}
 	if err := a.InsertObjectLocation(ctx, dest); err != nil {
-		return false, err
+		return 0, false, err
 	}
-	return true, nil
+	return srcLoc.SizeBytes, true, nil
 }
 
 // -------------------------------------------------------------------------

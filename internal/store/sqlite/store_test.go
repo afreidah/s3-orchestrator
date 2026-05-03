@@ -66,10 +66,13 @@ func mustCreateUpload(t *testing.T, s *Store, uploadID, key, backend string) {
 	}
 }
 
-// mustRecordReplica records a replica, failing the test on error.
-func mustRecordReplica(t *testing.T, s *Store, key, target, source string, size int64) {
+// mustRecordReplica records a replica, failing the test on error. The
+// size parameter is unused after #652 — the SQL now reads size from the
+// source row inside the conditional INSERT — but the helper signature
+// keeps it so call sites continue to document expected size at a glance.
+func mustRecordReplica(t *testing.T, s *Store, key, target, source string, _ int64) {
 	t.Helper()
-	if _, err := s.RecordReplica(context.Background(), key, target, source, size); err != nil {
+	if _, _, err := s.RecordReplica(context.Background(), key, target, source); err != nil {
 		t.Fatalf("RecordReplica(%s, %s): %v", key, target, err)
 	}
 }
@@ -839,12 +842,15 @@ func TestReplication_UnderAndOver(t *testing.T) {
 	}
 
 	// Record replica
-	inserted, err := s.RecordReplica(ctx, "bucket/key1", "backend-b", "backend-a", 1024)
+	size, inserted, err := s.RecordReplica(ctx, "bucket/key1", "backend-b", "backend-a")
 	if err != nil {
 		t.Fatalf("RecordReplica: %v", err)
 	}
 	if !inserted {
 		t.Error("expected replica to be inserted")
+	}
+	if size != 1024 {
+		t.Errorf("expected recorded size 1024, got %d", size)
 	}
 
 	// Should no longer be under-replicated
@@ -873,12 +879,15 @@ func TestRecordReplica_Duplicate(t *testing.T) {
 	mustRecordReplica(t, s, "bucket/key1", "backend-b", "backend-a", 1024)
 
 	// Duplicate replica should return false
-	inserted, err := s.RecordReplica(ctx, "bucket/key1", "backend-b", "backend-a", 1024)
+	size, inserted, err := s.RecordReplica(ctx, "bucket/key1", "backend-b", "backend-a")
 	if err != nil {
 		t.Fatalf("RecordReplica duplicate: %v", err)
 	}
 	if inserted {
 		t.Error("expected inserted=false for duplicate replica")
+	}
+	if size != 0 {
+		t.Errorf("expected size 0 on duplicate, got %d", size)
 	}
 }
 
