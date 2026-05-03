@@ -42,7 +42,7 @@ const healthProbeInterval = 5 * time.Second
 // stall a request thread, but long enough to tolerate transient latency.
 const opTimeout = 2 * time.Second
 
-// pingTimeout bounds Redis liveness checks — both the initial boot-time
+// pingTimeout bounds Redis liveness checks  -  both the initial boot-time
 // PING and the ongoing health probe that runs while the circuit breaker
 // is open. Longer than opTimeout because these aren't on the request path.
 const pingTimeout = 5 * time.Second
@@ -319,7 +319,7 @@ func (r *RedisCounterBackend) tryRecover() {
 	allDeltas := r.local.SwapAllBackends()
 
 	// Build a pipeline of INCRBY commands (additive, safe for concurrent
-	// execution by multiple instances). No DEL — stale keys from before
+	// execution by multiple instances). No DEL  -  stale keys from before
 	// the outage expire via TTL, and INCRBY is idempotent across instances.
 	pipe := r.client.Pipeline()
 	for name, d := range allDeltas {
@@ -341,7 +341,7 @@ func (r *RedisCounterBackend) tryRecover() {
 	}
 
 	if _, err := pipe.Exec(ctx); err != nil {
-		// Pipeline failed — restore swapped deltas to local counters so
+		// Pipeline failed  -  restore swapped deltas to local counters so
 		// they are retried on the next recovery attempt.
 		for name, d := range allDeltas {
 			r.local.AddAll(name, d.APIRequests, d.EgressBytes, d.IngressBytes)

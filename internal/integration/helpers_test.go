@@ -5,7 +5,7 @@
 //
 // Shared setup and teardown utilities for integration tests. Uses testcontainers
 // to spin up PostgreSQL, MinIO (x3), and Redis containers automatically. No
-// external docker-compose required — just `go test -tags integration`.
+// external docker-compose required  -  just `go test -tags integration`.
 // -------------------------------------------------------------------------------
 
 //go:build integration
@@ -50,8 +50,11 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 )
 
+// virtualBucket is an integration-test fixture helper; see file header for
+// the surrounding lifecycle the helpers participate in.
 const virtualBucket = "test-bucket"
 
+// proxyAddr and related package-level variables used by this package.
 var (
 	proxyAddr         string
 	testDB            *sql.DB
@@ -72,6 +75,8 @@ type minioInstance struct {
 	bucket    string
 }
 
+// TestMain is an integration-test fixture helper; see file header for
+// the surrounding lifecycle the helpers participate in.
 func TestMain(m *testing.M) {
 	// Silence the proxy's request logger so test output is clean.
 	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -137,7 +142,7 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "failed to get redis endpoint: %v\n", err)
 		os.Exit(1)
 	}
-	// redis module returns "redis://host:port/0" — extract host:port for REDIS_ADDR
+	// redis module returns "redis://host:port/0"  -  extract host:port for REDIS_ADDR
 	redisAddr := strings.TrimPrefix(redisConnStr, "redis://")
 	redisAddr = strings.TrimSuffix(redisAddr, "/0")
 	os.Setenv("REDIS_ADDR", redisAddr)
@@ -288,7 +293,7 @@ func TestMain(m *testing.M) {
 	}
 	testBackendOrder = backendOrder[:2]
 
-	// Wire: store → FailableStore → per-role CB wrappers → manager
+	// Wire: store -> FailableStore -> per-role CB wrappers -> manager
 	failableStore := newFailableStore(db)
 	testFailableStore = failableStore
 
@@ -400,7 +405,7 @@ func queryQuotaUsed(t *testing.T, backendName string) int64 {
 // zeroed. The re-sync is necessary because tests that drain a backend
 // (TestOverReplicationDrainingBackendRemovedFirst, TestDrainBackend,
 // TestDrainBackend_WriteExclusion) leave its quota row deleted via
-// runDrain → DeleteBackendData; subsequent tests that build a manager
+// runDrain -> DeleteBackendData; subsequent tests that build a manager
 // referencing all three backends would then hit FK violations on insert.
 func resetState(t *testing.T) {
 	t.Helper()
@@ -589,6 +594,8 @@ func newMetricsAdapter(src roleStore, cb *breaker.CircuitBreaker) *metricsAdapte
 	}
 }
 
+// envOrDefault is an integration-test fixture helper; see file header for
+// the surrounding lifecycle the helpers participate in.
 func envOrDefault(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -597,17 +604,19 @@ func envOrDefault(key, fallback string) string {
 }
 
 // -------------------------------------------------------------------------
-// FailableStore — injectable failure wrapper for circuit breaker tests
+// FailableStore  -  injectable failure wrapper for circuit breaker tests
 // -------------------------------------------------------------------------
 
-// errSimulatedDBFailure simulates a database connection error.
+// errSimulatedDBFailure is an integration-test fixture helper; see file header for
+// the surrounding lifecycle the helpers participate in.
 var errSimulatedDBFailure = errors.New("simulated database connection failure")
 
 // FailableStore wraps a concrete metadata store and can be toggled to return
 // connection errors, simulating a database outage for circuit breaker
 // integration tests. It embeds every narrow role interface so one instance
 // satisfies any role the proxy asks for; a single *postgres.Store is assigned
-// to every embedded field.
+// to is an integration-test fixture helper; see file header for
+// the surrounding lifecycle the helpers participate in.
 type FailableStore struct {
 	core.ObjectStore
 	core.QuotaStore
@@ -647,18 +656,24 @@ func newFailableStore(db *postgres.Store) *FailableStore {
 	}
 }
 
+// SetFailing is an integration-test fixture helper; see file header for
+// the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) SetFailing(v bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.failing = v
 }
 
+// isFailing is an integration-test fixture helper; see file header for
+// the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) isFailing() bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.failing
 }
 
+// GetAllObjectLocations is an integration-test fixture helper; see file header for
+// the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
@@ -666,6 +681,8 @@ func (f *FailableStore) GetAllObjectLocations(ctx context.Context, key string) (
 	return f.inner.GetAllObjectLocations(ctx, key)
 }
 
+// RecordObject is an integration-test fixture helper; see file header for
+// the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) RecordObject(ctx context.Context, key, backend string, size int64, enc *core.EncryptionMeta) ([]core.DeletedCopy, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
@@ -675,7 +692,7 @@ func (f *FailableStore) RecordObject(ctx context.Context, key, backend string, s
 
 // SetFailCommitOnce arms a one-shot failure on RecordObjectAndClearPending
 // so the next PUT lands its bytes on the backend, inserts a pending intent,
-// and then sees the metadata commit fail — exactly the data-loss scenario
+// and then sees the metadata commit fail  -  exactly the data-loss scenario
 // the pending-row pattern exists to recover from.
 func (f *FailableStore) SetFailCommitOnce() {
 	f.mu.Lock()
@@ -706,6 +723,8 @@ func (f *FailableStore) RecordObjectAndClearPending(ctx context.Context, key, ba
 	return f.inner.RecordObjectAndClearPending(ctx, key, backend, size, enc, intentID)
 }
 
+// DeleteObject is an integration-test fixture helper; see file header for
+// the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) DeleteObject(ctx context.Context, key string) ([]core.DeletedCopy, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
@@ -713,6 +732,8 @@ func (f *FailableStore) DeleteObject(ctx context.Context, key string) ([]core.De
 	return f.inner.DeleteObject(ctx, key)
 }
 
+// ListObjects is an integration-test fixture helper; see file header for
+// the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) ListObjects(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.ListObjectsResult, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
@@ -720,6 +741,8 @@ func (f *FailableStore) ListObjects(ctx context.Context, prefix, startAfter stri
 	return f.inner.ListObjects(ctx, prefix, startAfter, maxKeys)
 }
 
+// GetBackendWithSpace is an integration-test fixture helper; see file header for
+// the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) GetBackendWithSpace(ctx context.Context, size int64, backendOrder []string) (string, error) {
 	if f.isFailing() {
 		return "", errSimulatedDBFailure
@@ -727,6 +750,8 @@ func (f *FailableStore) GetBackendWithSpace(ctx context.Context, size int64, bac
 	return f.inner.GetBackendWithSpace(ctx, size, backendOrder)
 }
 
+// GetLeastUtilizedBackend is an integration-test fixture helper; see file header for
+// the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) GetLeastUtilizedBackend(ctx context.Context, size int64, eligible []string) (string, error) {
 	if f.isFailing() {
 		return "", errSimulatedDBFailure
@@ -734,6 +759,8 @@ func (f *FailableStore) GetLeastUtilizedBackend(ctx context.Context, size int64,
 	return f.inner.GetLeastUtilizedBackend(ctx, size, eligible)
 }
 
+// CreateMultipartUpload is an integration-test fixture helper; see file header for
+// the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) CreateMultipartUpload(ctx context.Context, uploadID, key, backend, contentType string, metadata map[string]string) error {
 	if f.isFailing() {
 		return errSimulatedDBFailure
@@ -741,6 +768,8 @@ func (f *FailableStore) CreateMultipartUpload(ctx context.Context, uploadID, key
 	return f.inner.CreateMultipartUpload(ctx, uploadID, key, backend, contentType, metadata)
 }
 
+// GetMultipartUpload is an integration-test fixture helper; see file header for
+// the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) GetMultipartUpload(ctx context.Context, uploadID string) (*core.MultipartUpload, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
@@ -748,6 +777,8 @@ func (f *FailableStore) GetMultipartUpload(ctx context.Context, uploadID string)
 	return f.inner.GetMultipartUpload(ctx, uploadID)
 }
 
+// RecordPart is an integration-test fixture helper; see file header for
+// the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) RecordPart(ctx context.Context, uploadID string, partNumber int, etag string, size int64, enc *core.EncryptionMeta) error {
 	if f.isFailing() {
 		return errSimulatedDBFailure
@@ -755,6 +786,8 @@ func (f *FailableStore) RecordPart(ctx context.Context, uploadID string, partNum
 	return f.inner.RecordPart(ctx, uploadID, partNumber, etag, size, enc)
 }
 
+// GetParts is an integration-test fixture helper; see file header for
+// the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) GetParts(ctx context.Context, uploadID string) ([]core.MultipartPart, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
@@ -762,6 +795,8 @@ func (f *FailableStore) GetParts(ctx context.Context, uploadID string) ([]core.M
 	return f.inner.GetParts(ctx, uploadID)
 }
 
+// DeleteMultipartUpload is an integration-test fixture helper; see file header for
+// the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) DeleteMultipartUpload(ctx context.Context, uploadID string) error {
 	if f.isFailing() {
 		return errSimulatedDBFailure
@@ -769,6 +804,8 @@ func (f *FailableStore) DeleteMultipartUpload(ctx context.Context, uploadID stri
 	return f.inner.DeleteMultipartUpload(ctx, uploadID)
 }
 
+// GetQuotaStats is an integration-test fixture helper; see file header for
+// the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) GetQuotaStats(ctx context.Context) (map[string]core.QuotaStat, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
@@ -776,6 +813,8 @@ func (f *FailableStore) GetQuotaStats(ctx context.Context) (map[string]core.Quot
 	return f.inner.GetQuotaStats(ctx)
 }
 
+// GetObjectCounts is an integration-test fixture helper; see file header for
+// the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) GetObjectCounts(ctx context.Context) (map[string]int64, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
@@ -783,6 +822,8 @@ func (f *FailableStore) GetObjectCounts(ctx context.Context) (map[string]int64, 
 	return f.inner.GetObjectCounts(ctx)
 }
 
+// GetActiveMultipartCounts is an integration-test fixture helper; see file header for
+// the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
@@ -790,6 +831,8 @@ func (f *FailableStore) GetActiveMultipartCounts(ctx context.Context) (map[strin
 	return f.inner.GetActiveMultipartCounts(ctx)
 }
 
+// GetStaleMultipartUploads is an integration-test fixture helper; see file header for
+// the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) GetStaleMultipartUploads(ctx context.Context, olderThan time.Duration) ([]core.MultipartUpload, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
@@ -797,6 +840,8 @@ func (f *FailableStore) GetStaleMultipartUploads(ctx context.Context, olderThan 
 	return f.inner.GetStaleMultipartUploads(ctx, olderThan)
 }
 
+// ListDirectoryChildren is an integration-test fixture helper; see file header for
+// the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.DirectoryListResult, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
@@ -804,6 +849,8 @@ func (f *FailableStore) ListDirectoryChildren(ctx context.Context, prefix, start
 	return f.inner.ListDirectoryChildren(ctx, prefix, startAfter, maxKeys)
 }
 
+// ListObjectsByBackend is an integration-test fixture helper; see file header for
+// the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) ListObjectsByBackend(ctx context.Context, backendName string, limit int) ([]core.ObjectLocation, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
@@ -811,6 +858,8 @@ func (f *FailableStore) ListObjectsByBackend(ctx context.Context, backendName st
 	return f.inner.ListObjectsByBackend(ctx, backendName, limit)
 }
 
+// MoveObjectLocation is an integration-test fixture helper; see file header for
+// the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) MoveObjectLocation(ctx context.Context, key, fromBackend, toBackend string) (int64, error) {
 	if f.isFailing() {
 		return 0, errSimulatedDBFailure
@@ -818,6 +867,8 @@ func (f *FailableStore) MoveObjectLocation(ctx context.Context, key, fromBackend
 	return f.inner.MoveObjectLocation(ctx, key, fromBackend, toBackend)
 }
 
+// GetUnderReplicatedObjects is an integration-test fixture helper; see file header for
+// the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]core.ObjectLocation, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
@@ -825,6 +876,8 @@ func (f *FailableStore) GetUnderReplicatedObjects(ctx context.Context, factor, l
 	return f.inner.GetUnderReplicatedObjects(ctx, factor, limit)
 }
 
+// RecordReplica is an integration-test fixture helper; see file header for
+// the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) RecordReplica(ctx context.Context, key, targetBackend, sourceBackend string) (int64, bool, error) {
 	if f.isFailing() {
 		return 0, false, errSimulatedDBFailure
@@ -832,6 +885,8 @@ func (f *FailableStore) RecordReplica(ctx context.Context, key, targetBackend, s
 	return f.inner.RecordReplica(ctx, key, targetBackend, sourceBackend)
 }
 
+// GetOverReplicatedObjects is an integration-test fixture helper; see file header for
+// the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) GetOverReplicatedObjects(ctx context.Context, factor, limit int) ([]core.ObjectLocation, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBFailure
@@ -839,6 +894,8 @@ func (f *FailableStore) GetOverReplicatedObjects(ctx context.Context, factor, li
 	return f.inner.GetOverReplicatedObjects(ctx, factor, limit)
 }
 
+// CountOverReplicatedObjects is an integration-test fixture helper; see file header for
+// the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) CountOverReplicatedObjects(ctx context.Context, factor int) (int64, error) {
 	if f.isFailing() {
 		return 0, errSimulatedDBFailure
@@ -846,6 +903,8 @@ func (f *FailableStore) CountOverReplicatedObjects(ctx context.Context, factor i
 	return f.inner.CountOverReplicatedObjects(ctx, factor)
 }
 
+// RemoveExcessCopy is an integration-test fixture helper; see file header for
+// the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) RemoveExcessCopy(ctx context.Context, key, backendName string, size int64) error {
 	if f.isFailing() {
 		return errSimulatedDBFailure
@@ -858,7 +917,7 @@ func tripCircuitBreaker(t *testing.T) {
 	t.Helper()
 	client := newS3Client(t)
 	ctx := context.Background()
-	// The default failure threshold is 3 — make enough failing requests
+	// The default failure threshold is 3  -  make enough failing requests
 	for i := 0; i < 5; i++ {
 		client.HeadObject(ctx, &s3.HeadObjectInput{
 			Bucket: aws.String(virtualBucket),

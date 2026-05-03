@@ -7,7 +7,7 @@
 // closure body that calls into the admin operation is actually executed.
 // The admin handler is configured into the documented "skipped" shape
 // (replication factor 1, encryptor nil, integrity disabled) so each
-// op short-circuits without touching real backends — exactly the path
+// op short-circuits without touching real backends  -  exactly the path
 // the dashboard's banner relies on.
 // -------------------------------------------------------------------------------
 

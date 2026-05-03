@@ -25,6 +25,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/util/workerpool"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // PendingReaperStore defines the store operations the reaper needs.
 type PendingReaperStore interface {
 	core.PendingStore
@@ -62,6 +66,10 @@ func NewPendingReaper(deps CleanupOps, store PendingReaperStore, concurrency int
 		batchSize:   batchSize,
 	}
 }
+
+// -------------------------------------------------------------------------
+// REAPER TICK
+// -------------------------------------------------------------------------
 
 // ProcessPendingQueue runs one reaper tick: fetch stale intents, HEAD
 // their destinations, and promote or drop based on what the backend
@@ -118,10 +126,15 @@ func (r *PendingReaper) resolveOneIntent(ctx context.Context, p *core.PendingObj
 	}
 }
 
+// -------------------------------------------------------------------------
+// BACKEND PROBE AND DROP / PROMOTE PATHS
+// -------------------------------------------------------------------------
+
 // probeOutcome enumerates the three states a backend HEAD can resolve to
 // from the reaper's point of view.
 type probeOutcome int
 
+// probeFound and related constants used by this package.
 const (
 	// probeFound means HEAD returned 200; bytes are present on the backend.
 	probeFound probeOutcome = iota

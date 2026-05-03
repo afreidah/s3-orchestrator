@@ -637,15 +637,35 @@ type bulkRewriteRow interface {
 // carries a []byte and trips gocritic's hugeParam).
 type encryptRow struct{ core.UnencryptedLocation }
 
-func (r *encryptRow) rewriteKey() string     { return r.ObjectKey }
-func (r *encryptRow) rewriteBackend() string { return r.BackendName }
-func (r *encryptRow) rewriteSize() int64     { return r.SizeBytes }
+// rewriteKey returns the object key the bulk-rewrite loop should
+// re-process. Implements the rewriteRow interface for encryptRow.
+func (r *encryptRow) rewriteKey() string { return r.ObjectKey }
 
+// rewriteBackend returns the source backend the row currently lives on.
+// Implements the rewriteRow interface for encryptRow.
+func (r *encryptRow) rewriteBackend() string { return r.BackendName }
+
+// rewriteSize returns the row's stored size, used for quota accounting
+// and progress reporting. Implements rewriteRow for encryptRow.
+func (r *encryptRow) rewriteSize() int64 { return r.SizeBytes }
+
+// decryptRow wraps core.DecryptableLocation so the same bulkRewriteRow
+// machinery that handles encrypt-existing can run decrypt-existing
+// without duplicating the pagination + download + upload + DB-update
+// scaffolding.
 type decryptRow struct{ core.DecryptableLocation }
 
-func (r *decryptRow) rewriteKey() string     { return r.ObjectKey }
+// rewriteKey returns the object key to re-process. Implements
+// rewriteRow for decryptRow.
+func (r *decryptRow) rewriteKey() string { return r.ObjectKey }
+
+// rewriteBackend returns the source backend the row currently lives on.
+// Implements rewriteRow for decryptRow.
 func (r *decryptRow) rewriteBackend() string { return r.BackendName }
-func (r *decryptRow) rewriteSize() int64     { return r.SizeBytes }
+
+// rewriteSize returns the row's stored size, used for quota accounting
+// and progress reporting. Implements rewriteRow for decryptRow.
+func (r *decryptRow) rewriteSize() int64 { return r.SizeBytes }
 
 // bulkRewriteOp parameterises the encrypt/decrypt-existing handlers, which
 // share their pagination + download + upload + DB-update scaffolding and

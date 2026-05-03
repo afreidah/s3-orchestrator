@@ -51,10 +51,10 @@ var errUsageLimitSkip = errors.New("backend skipped: usage limits exceeded")
 var listObjectsMaxPages = 100
 
 // resolveLocationsByBackend looks up every copy of key and returns a
-// backend-name → location map for O(1) lookups inside the failover
+// backend-name -> location map for O(1) lookups inside the failover
 // closure. Returns nil when encryption is disabled (the map is never
 // consulted) or when the DB lookup failed. Callers that care about the
-// DB-down case inspect o.encryptor alongside the returned map — when
+// DB-down case inspect o.encryptor alongside the returned map  -  when
 // o.encryptor != nil and the map is nil, the database failed.
 func (o *ObjectManager) resolveLocationsByBackend(ctx context.Context, key string) map[string]*core.ObjectLocation {
 	if o.encryptor == nil {
@@ -75,7 +75,7 @@ func (o *ObjectManager) resolveLocationsByBackend(ctx context.Context, key strin
 // timeout context and is responsible for releasing it on the error path. On
 // success it returns a cleanup func the orchestrator invokes once the winner
 // is declared; that cleanup either releases the timeout immediately
-// (HeadObject — no streaming body) or is a no-op because the callback has
+// (HeadObject  -  no streaming body) or is a no-op because the callback has
 // already attached the cancel to the result body's Close (GetObject).
 type readBackendFn func(ctx context.Context, backendName string, backend s3be.ObjectBackend) (int64, func(), error)
 
@@ -194,7 +194,7 @@ func (o *ObjectManager) broadcastRead(ctx context.Context, operation, key string
 				telemetry.DegradedCacheHitsTotal.Inc()
 				return cachedBackend, nil
 			}
-			// Cache hit but backend failed — fall through to broadcast.
+			// Cache hit but backend failed  -  fall through to broadcast.
 			// The callback already released its timeout on the error path.
 		}
 	}
@@ -592,7 +592,7 @@ func (o *ObjectManager) HeadObject(ctx context.Context, key string) (*s3be.HeadO
 // next-page WHERE object_key > cursor then skips the rest of the group
 // cleanly. Returns the input unchanged when the delimiter is unset, the
 // cursor does not fall inside an emitted CP, or the last byte is 0xff
-// (no representable advance — accept potential re-emission rather than
+// (no representable advance  -  accept potential re-emission rather than
 // corrupt the cursor).
 func advancePastEmittedCommonPrefix(prefix, delimiter, cursor string, seen map[string]bool) string {
 	if delimiter == "" || cursor == "" {
@@ -679,11 +679,11 @@ func (o *ObjectManager) ListObjects(ctx context.Context, prefix, delimiter, star
 				if idx >= 0 {
 					cp := storeResult.Objects[oi].ObjectKey[:len(prefix)+idx+len(delimiter)]
 					if seen[cp] {
-						// Same prefix already counted — skip silently
+						// Same prefix already counted  -  skip silently
 						lastKey = storeResult.Objects[oi].ObjectKey
 						continue
 					}
-					// New prefix would add an entry — enforce limit
+					// New prefix would add an entry  -  enforce limit
 					if result.KeyCount >= maxKeys {
 						result.IsTruncated = true
 						result.NextContinuationToken = lastKey
@@ -697,7 +697,7 @@ func (o *ObjectManager) ListObjects(ctx context.Context, prefix, delimiter, star
 				}
 			}
 
-			// Regular object — enforce limit before adding
+			// Regular object  -  enforce limit before adding
 			if result.KeyCount >= maxKeys {
 				result.IsTruncated = true
 				result.NextContinuationToken = lastKey

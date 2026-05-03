@@ -6,7 +6,7 @@
 // Wraps an ObjectBackend (typically a real or mock S3Backend) and can be
 // toggled to return injected errors per-method. Mirrors the FailableStore
 // pattern used for integration tests that exercise database-circuit-breaker
-// paths — FailableBackend unlocks equivalent scenarios on the object-store
+// paths  -  FailableBackend unlocks equivalent scenarios on the object-store
 // side (backend 500s, timeouts, per-operation errors, mid-stream read
 // failures, etc.).
 //
@@ -36,6 +36,7 @@ var ErrSimulatedBackendFailure = errors.New("simulated backend failure")
 // keys so typos surface as compile errors.
 type Method int
 
+// MethodPut and related constants used by this package.
 const (
 	MethodPut Method = iota
 	MethodGet
@@ -113,6 +114,9 @@ func (f *FailableBackend) errFor(m Method) error {
 // ObjectBackend implementation with failure injection
 // -------------------------------------------------------------------------
 
+// PutObject delegates to the wrapped backend unless an error is
+// configured for MethodPut, in which case it returns that error
+// without touching the backend so tests can simulate write failures.
 func (f *FailableBackend) PutObject(ctx context.Context, key string, body io.Reader, size int64, contentType string, metadata map[string]string) (string, error) {
 	if err := f.errFor(MethodPut); err != nil {
 		return "", err
@@ -120,6 +124,7 @@ func (f *FailableBackend) PutObject(ctx context.Context, key string, body io.Rea
 	return f.ObjectBackend.PutObject(ctx, key, body, size, contentType, metadata)
 }
 
+// GetObject returns object.
 func (f *FailableBackend) GetObject(ctx context.Context, key, rangeHeader string) (*backend.GetObjectResult, error) {
 	if err := f.errFor(MethodGet); err != nil {
 		return nil, err
@@ -127,6 +132,10 @@ func (f *FailableBackend) GetObject(ctx context.Context, key, rangeHeader string
 	return f.ObjectBackend.GetObject(ctx, key, rangeHeader)
 }
 
+// HeadObject delegates to the wrapped backend unless an error is
+// configured for MethodHead, in which case it returns that error
+// without touching the backend so tests can simulate metadata-fetch
+// failures independently of GetObject failures.
 func (f *FailableBackend) HeadObject(ctx context.Context, key string) (*backend.HeadObjectResult, error) {
 	if err := f.errFor(MethodHead); err != nil {
 		return nil, err
@@ -134,6 +143,7 @@ func (f *FailableBackend) HeadObject(ctx context.Context, key string) (*backend.
 	return f.ObjectBackend.HeadObject(ctx, key)
 }
 
+// DeleteObject deletes object.
 func (f *FailableBackend) DeleteObject(ctx context.Context, key string) error {
 	if err := f.errFor(MethodDelete); err != nil {
 		return err

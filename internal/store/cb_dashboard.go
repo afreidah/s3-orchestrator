@@ -1,7 +1,13 @@
 // -------------------------------------------------------------------------------
-// CB Decorator — DashboardStore
+// CB Decorator  -  DashboardStore
 //
 // Author: Alex Freidah
+//
+// Wraps a core.DashboardStore (the read-side aggregations the admin UI
+// needs - directory listings, object/upload counts, usage views) so
+// every call routes through the database CircuitBreaker. Returns
+// ErrDBUnavailable instantly when the breaker is open so the dashboard
+// surfaces a clear "DB down" state instead of hanging.
 // -------------------------------------------------------------------------------
 
 package store

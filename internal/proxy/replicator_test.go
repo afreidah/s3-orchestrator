@@ -27,6 +27,8 @@ import (
 // st.GroupByKey
 // -------------------------------------------------------------------------
 
+// TestGroupByKey_Groups verifies the group by key groups contract.
+// Asserts that expected 2 groups, got.
 func TestGroupByKey_Groups(t *testing.T) {
 	t.Parallel()
 	locations := []core.ObjectLocation{
@@ -46,6 +48,8 @@ func TestGroupByKey_Groups(t *testing.T) {
 	}
 }
 
+// TestGroupByKey_Empty verifies the group by key empty contract.
+// Asserts that expected 0 groups, got.
 func TestGroupByKey_Empty(t *testing.T) {
 	t.Parallel()
 	grouped := core.GroupByKey(nil)
@@ -58,6 +62,8 @@ func TestGroupByKey_Empty(t *testing.T) {
 // Replicate (top-level)
 // -------------------------------------------------------------------------
 
+// TestReplicate_NoUnderReplicatedObjects verifies the replicate no under replicated objects contract.
+// Asserts that Replicate:.
 func TestReplicate_NoUnderReplicatedObjects(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{getUnderReplicatedResp: nil}
@@ -75,6 +81,7 @@ func TestReplicate_NoUnderReplicatedObjects(t *testing.T) {
 	}
 }
 
+// TestReplicate_QueryError verifies the replicate query error path by exercising errors.New, context.Background.
 func TestReplicate_QueryError(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{getUnderReplicatedErr: errors.New("db down")}
@@ -89,6 +96,7 @@ func TestReplicate_QueryError(t *testing.T) {
 	}
 }
 
+// TestReplicate_QuotaStatsError verifies the replicate quota stats error path by exercising b1.PutObject, context.Background, bytes.NewReader.
 func TestReplicate_QuotaStatsError(t *testing.T) {
 	t.Parallel()
 	b1 := newMockBackend()
@@ -120,6 +128,8 @@ func TestReplicate_QuotaStatsError(t *testing.T) {
 	}
 }
 
+// TestReplicate_Success verifies the replicate success contract.
+// Asserts that Replicate:.
 func TestReplicate_Success(t *testing.T) {
 	t.Parallel()
 	b1 := newMockBackend()
@@ -169,6 +179,8 @@ func TestReplicate_Success(t *testing.T) {
 // findReplicaTarget
 // -------------------------------------------------------------------------
 
+// TestFindReplicaTarget_ExcludesExistingCopies verifies the find replica target excludes existing copies contract.
+// Asserts that expected b3, got.
 func TestFindReplicaTarget_ExcludesExistingCopies(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{getBackendFromEligible: true}
@@ -197,6 +209,8 @@ func TestFindReplicaTarget_ExcludesExistingCopies(t *testing.T) {
 	}
 }
 
+// TestFindReplicaTarget_SkipsFullBackends verifies the find replica target skips full backends contract.
+// Asserts that expected empty (no space), got.
 func TestFindReplicaTarget_SkipsFullBackends(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{}
@@ -223,6 +237,8 @@ func TestFindReplicaTarget_SkipsFullBackends(t *testing.T) {
 	}
 }
 
+// TestSelectReplicaTarget_NoSpaceAvailable verifies the select replica target no space available contract.
+// Asserts that expected empty (no space available), got.
 func TestSelectReplicaTarget_NoSpaceAvailable(t *testing.T) {
 	t.Parallel()
 	// Mock store returns ErrNoSpaceAvailable from GetBackendWithSpace
@@ -245,6 +261,8 @@ func TestSelectReplicaTarget_NoSpaceAvailable(t *testing.T) {
 	}
 }
 
+// TestFindReplicaTarget_EmptyStats verifies the find replica target empty stats contract.
+// Asserts that expected empty with no quota stats, got.
 func TestFindReplicaTarget_EmptyStats(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{}
@@ -260,6 +278,8 @@ func TestFindReplicaTarget_EmptyStats(t *testing.T) {
 // copyToReplica
 // -------------------------------------------------------------------------
 
+// TestCopyToReplica_Success verifies the copy to replica success contract.
+// Asserts that copyToReplica:.
 func TestCopyToReplica_Success(t *testing.T) {
 	t.Parallel()
 	b1 := newMockBackend()
@@ -289,6 +309,8 @@ func TestCopyToReplica_Success(t *testing.T) {
 	}
 }
 
+// TestCopyToReplica_FailoverToSecondCopy verifies the copy to replica failover to second copy contract.
+// Asserts that copyToReplica should failover:.
 func TestCopyToReplica_FailoverToSecondCopy(t *testing.T) {
 	t.Parallel()
 	b1 := newMockBackend()
@@ -323,6 +345,7 @@ func TestCopyToReplica_FailoverToSecondCopy(t *testing.T) {
 	}
 }
 
+// TestCopyToReplica_AllSourcesFail verifies the copy to replica all sources fail path by exercising errors.New, context.Background.
 func TestCopyToReplica_AllSourcesFail(t *testing.T) {
 	t.Parallel()
 	b1 := newMockBackend()
@@ -350,6 +373,7 @@ func TestCopyToReplica_AllSourcesFail(t *testing.T) {
 // cleanupOrphan
 // -------------------------------------------------------------------------
 
+// TestCleanupOrphan_Success verifies the cleanup orphan success path by exercising b1.PutObject, context.Background, bytes.NewReader.
 func TestCleanupOrphan_Success(t *testing.T) {
 	t.Parallel()
 	b1 := newMockBackend()
@@ -363,6 +387,7 @@ func TestCleanupOrphan_Success(t *testing.T) {
 	}
 }
 
+// TestCleanupOrphan_BackendNotFound verifies the cleanup orphan backend not found path by exercising context.Background.
 func TestCleanupOrphan_BackendNotFound(t *testing.T) {
 	t.Parallel()
 	mgr := newTestManager(&mockStore{}, map[string]*mockBackend{"b1": newMockBackend()})
@@ -371,6 +396,8 @@ func TestCleanupOrphan_BackendNotFound(t *testing.T) {
 	mgr.Replicator.CleanupOrphan(context.Background(), "unknown", "orphan", 1)
 }
 
+// TestCleanupOrphan_DeleteFailure_EnqueuesCleanup verifies the cleanup orphan delete failure enqueues cleanup contract.
+// Asserts that expected 1 enqueue call, got.
 func TestCleanupOrphan_DeleteFailure_EnqueuesCleanup(t *testing.T) {
 	t.Parallel()
 	b1 := newMockBackend()
@@ -394,6 +421,8 @@ func TestCleanupOrphan_DeleteFailure_EnqueuesCleanup(t *testing.T) {
 // Replicate edge cases
 // -------------------------------------------------------------------------
 
+// TestReplicate_RecordReplicaFails_CleansUpOrphan verifies the replicate record replica fails cleans up orphan contract.
+// Asserts that Replicate:.
 func TestReplicate_RecordReplicaFails_CleansUpOrphan(t *testing.T) {
 	t.Parallel()
 	b1 := newMockBackend()
@@ -438,6 +467,7 @@ func TestReplicate_RecordReplicaFails_CleansUpOrphan(t *testing.T) {
 	}
 }
 
+// TestCopyToReplica_TargetBackendNotFound verifies the copy to replica target backend not found path by exercising b1.PutObject, context.Background, bytes.NewReader.
 func TestCopyToReplica_TargetBackendNotFound(t *testing.T) {
 	t.Parallel()
 	b1 := newMockBackend()
@@ -452,6 +482,7 @@ func TestCopyToReplica_TargetBackendNotFound(t *testing.T) {
 	}
 }
 
+// TestCopyToReplica_TargetWriteFails verifies the copy to replica target write fails path by exercising b1.PutObject, context.Background, bytes.NewReader.
 func TestCopyToReplica_TargetWriteFails(t *testing.T) {
 	t.Parallel()
 	b1 := newMockBackend()
@@ -476,6 +507,8 @@ func TestCopyToReplica_TargetWriteFails(t *testing.T) {
 	}
 }
 
+// TestReplicateObject_NoTargetAvailable verifies the replicate object no target available contract.
+// Asserts that Replicate:.
 func TestReplicateObject_NoTargetAvailable(t *testing.T) {
 	t.Parallel()
 	b1 := newMockBackend()
@@ -515,6 +548,8 @@ func TestReplicateObject_NoTargetAvailable(t *testing.T) {
 	}
 }
 
+// TestReplicate_SourceGoneDuringReplication verifies the replicate source gone during replication contract.
+// Asserts that Replicate:.
 func TestReplicate_SourceGoneDuringReplication(t *testing.T) {
 	t.Parallel()
 	b1 := newMockBackend()
@@ -571,6 +606,8 @@ func newTrippedCBBackend(b *mockBackend, name string) *backend.CircuitBreakerBac
 	return cbb
 }
 
+// TestReplicate_HealthAware_SkipsUnhealthyTarget verifies the replicate health aware skips unhealthy target contract.
+// Asserts that Replicate:.
 func TestReplicate_HealthAware_SkipsUnhealthyTarget(t *testing.T) {
 	t.Parallel()
 	b1 := newMockBackend()
@@ -578,7 +615,7 @@ func TestReplicate_HealthAware_SkipsUnhealthyTarget(t *testing.T) {
 	b3 := newMockBackend()
 	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
-	// b2 is circuit-broken — should not be selected as target
+	// b2 is circuit-broken  -  should not be selected as target
 	cbb2 := newTrippedCBBackend(b2, "b2")
 
 	store := &mockStore{
@@ -608,7 +645,7 @@ func TestReplicate_HealthAware_SkipsUnhealthyTarget(t *testing.T) {
 	created, err := mgr.Replicator.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:             2,
 		BatchSize:          10,
-		UnhealthyThreshold: 0, // immediate — any open CB counts
+		UnhealthyThreshold: 0, // immediate  -  any open CB counts
 	})
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
@@ -624,6 +661,8 @@ func TestReplicate_HealthAware_SkipsUnhealthyTarget(t *testing.T) {
 	}
 }
 
+// TestReplicate_HealthAware_PrefersHealthySource verifies the replicate health aware prefers healthy source contract.
+// Asserts that Replicate:.
 func TestReplicate_HealthAware_PrefersHealthySource(t *testing.T) {
 	t.Parallel()
 	b1 := newMockBackend()
@@ -632,7 +671,7 @@ func TestReplicate_HealthAware_PrefersHealthySource(t *testing.T) {
 	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 	_, _ = b2.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
-	// b1 is circuit-broken — b2 should be preferred as source
+	// b1 is circuit-broken  -  b2 should be preferred as source
 	cbb1 := newTrippedCBBackend(b1, "b1")
 
 	store := &mockStore{
@@ -751,12 +790,14 @@ func TestReplicate_UsesRecordedSize_NotFirstCopy(t *testing.T) {
 	}
 }
 
+// TestReplicate_HealthAware_BelowThreshold verifies the replicate health aware below threshold contract.
+// Asserts that Replicate:.
 func TestReplicate_HealthAware_BelowThreshold(t *testing.T) {
 	t.Parallel()
 	b1 := newMockBackend()
 	b2 := newMockBackend()
 
-	// b2 is circuit-broken but threshold is very high — should use normal query
+	// b2 is circuit-broken but threshold is very high  -  should use normal query
 	cbb2 := newTrippedCBBackend(b2, "b2")
 
 	store := &mockStore{
@@ -777,7 +818,7 @@ func TestReplicate_HealthAware_BelowThreshold(t *testing.T) {
 	created, err := mgr.Replicator.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:             2,
 		BatchSize:          10,
-		UnhealthyThreshold: time.Hour, // CB just opened — below threshold
+		UnhealthyThreshold: time.Hour, // CB just opened  -  below threshold
 	})
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
@@ -787,6 +828,8 @@ func TestReplicate_HealthAware_BelowThreshold(t *testing.T) {
 	}
 }
 
+// TestUnhealthyBackends_NoCB verifies the unhealthy backends no cb contract.
+// Asserts that expected empty, got.
 func TestUnhealthyBackends_NoCB(t *testing.T) {
 	t.Parallel()
 	mgr := newTestManager(&mockStore{}, map[string]*mockBackend{
@@ -799,6 +842,7 @@ func TestUnhealthyBackends_NoCB(t *testing.T) {
 	}
 }
 
+// TestIsBackendHealthy_NoCB verifies the is backend healthy no cb behaviour described by the test name.
 func TestIsBackendHealthy_NoCB(t *testing.T) {
 	t.Parallel()
 	mgr := newTestManager(&mockStore{}, map[string]*mockBackend{"b1": newMockBackend()})
@@ -807,6 +851,7 @@ func TestIsBackendHealthy_NoCB(t *testing.T) {
 	}
 }
 
+// TestIsBackendHealthy_UnknownBackend verifies the is backend healthy unknown backend behaviour described by the test name.
 func TestIsBackendHealthy_UnknownBackend(t *testing.T) {
 	t.Parallel()
 	mgr := newTestManager(&mockStore{}, map[string]*mockBackend{"b1": newMockBackend()})
@@ -815,6 +860,7 @@ func TestIsBackendHealthy_UnknownBackend(t *testing.T) {
 	}
 }
 
+// TestIsBackendHealthy_CBHealthy verifies the is backend healthy cbhealthy path by exercising backend.NewCircuitBreakerBackend.
 func TestIsBackendHealthy_CBHealthy(t *testing.T) {
 	t.Parallel()
 	cbb := backend.NewCircuitBreakerBackend(newMockBackend(), "b1", 3, time.Minute)
@@ -831,6 +877,7 @@ func TestIsBackendHealthy_CBHealthy(t *testing.T) {
 	}
 }
 
+// TestIsBackendHealthy_CBUnhealthy verifies the is backend healthy cbunhealthy behaviour described by the test name.
 func TestIsBackendHealthy_CBUnhealthy(t *testing.T) {
 	t.Parallel()
 	cbb := newTrippedCBBackend(newMockBackend(), "b1")

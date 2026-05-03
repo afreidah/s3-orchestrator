@@ -33,6 +33,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 )
 
+// serverMockBackend is the in-memory ObjectBackend used by S3-handler
+// tests in this file. Holds objects in a map and lets tests inject
+// per-method errors (putErr, getErr, headErr, delErr) so each handler
+// branch can be exercised without spinning up MinIO.
 type serverMockBackend struct {
 	mu      sync.Mutex
 	objects map[string]serverMockObj
@@ -42,6 +46,9 @@ type serverMockBackend struct {
 	delErr  error
 }
 
+// serverMockObj is one stored object inside serverMockBackend - the
+// payload plus the metadata fields the handler-test assertions read
+// (content-type, etag, last-modified, user metadata).
 type serverMockObj struct {
 	data         []byte
 	contentType  string
@@ -50,10 +57,15 @@ type serverMockObj struct {
 	metadata     map[string]string
 }
 
+// newServerMockBackend constructs a new server mock backend.
 func newServerMockBackend() *serverMockBackend {
 	return &serverMockBackend{objects: make(map[string]serverMockObj)}
 }
 
+// PutObject satisfies backend.ObjectBackend by reading the body into
+// memory, recording the resulting object under key, and returning a
+// fixed test etag. Honours putErr so error-path tests can inject a
+// failure without touching the backend interface.
 func (b *serverMockBackend) PutObject(_ context.Context, key string, body io.Reader, _ int64, contentType string, metadata map[string]string) (string, error) {
 	if b.putErr != nil {
 		return "", b.putErr
@@ -69,6 +81,7 @@ func (b *serverMockBackend) PutObject(_ context.Context, key string, body io.Rea
 	return etag, nil
 }
 
+// GetObject returns object.
 func (b *serverMockBackend) GetObject(_ context.Context, key string, _ string) (*s3be.GetObjectResult, error) {
 	if b.getErr != nil {
 		return nil, b.getErr
@@ -89,6 +102,9 @@ func (b *serverMockBackend) GetObject(_ context.Context, key string, _ string) (
 	}, nil
 }
 
+// HeadObject satisfies backend.ObjectBackend by returning the stored
+// object's metadata. Honours headErr so HEAD-error path tests can
+// inject a failure independently of GET/PUT.
 func (b *serverMockBackend) HeadObject(_ context.Context, key string) (*s3be.HeadObjectResult, error) {
 	if b.headErr != nil {
 		return nil, b.headErr
@@ -108,6 +124,7 @@ func (b *serverMockBackend) HeadObject(_ context.Context, key string) (*s3be.Hea
 	}, nil
 }
 
+// DeleteObject deletes object.
 func (b *serverMockBackend) DeleteObject(_ context.Context, key string) error {
 	if b.delErr != nil {
 		return b.delErr
@@ -179,6 +196,8 @@ func doReq(t *testing.T, method, url string, body io.Reader) *http.Response {
 // PUT
 // -------------------------------------------------------------------------
 
+// TestPut_Success verifies the put success contract.
+// Asserts that status = , want 200.
 func TestPut_Success(t *testing.T) {
 	t.Parallel()
 	ts, _, backend := newTestServer(t)
@@ -205,6 +224,8 @@ func TestPut_Success(t *testing.T) {
 	}
 }
 
+// TestPut_MissingContentLength verifies the put missing content length contract.
+// Asserts that status = , want 411.
 func TestPut_MissingContentLength(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t)
@@ -224,6 +245,8 @@ func TestPut_MissingContentLength(t *testing.T) {
 	}
 }
 
+// TestPut_EntityTooLarge verifies the put entity too large contract.
+// Asserts that status = , want 413.
 func TestPut_EntityTooLarge(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t)
@@ -250,6 +273,7 @@ func TestPut_EntityTooLarge(t *testing.T) {
 // neverEndingReader produces zero bytes indefinitely.
 type neverEndingReader struct{}
 
+// Read reads .
 func (neverEndingReader) Read(p []byte) (int, error) {
 	for i := range p {
 		p[i] = 0
@@ -257,6 +281,8 @@ func (neverEndingReader) Read(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// TestPut_QuotaExhausted verifies the put quota exhausted contract.
+// Asserts that status = , want 507.
 func TestPut_QuotaExhausted(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
@@ -276,6 +302,8 @@ func TestPut_QuotaExhausted(t *testing.T) {
 	}
 }
 
+// TestPut_DBUnavailable verifies the put dbunavailable contract.
+// Asserts that status = , want 503.
 func TestPut_DBUnavailable(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
@@ -299,6 +327,8 @@ func TestPut_DBUnavailable(t *testing.T) {
 // GET
 // -------------------------------------------------------------------------
 
+// TestGet_Success verifies the get success contract.
+// Asserts that status = , want 200.
 func TestGet_Success(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, backend := newTestServer(t)
@@ -326,6 +356,8 @@ func TestGet_Success(t *testing.T) {
 	}
 }
 
+// TestGet_NotFound verifies the get not found contract.
+// Asserts that status = , want 404.
 func TestGet_NotFound(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
@@ -343,6 +375,8 @@ func TestGet_NotFound(t *testing.T) {
 // HEAD
 // -------------------------------------------------------------------------
 
+// TestHead_Success verifies the head success contract.
+// Asserts that status = , want 200.
 func TestHead_Success(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, backend := newTestServer(t)
@@ -371,6 +405,8 @@ func TestHead_Success(t *testing.T) {
 	}
 }
 
+// TestHead_NotFound verifies the head not found contract.
+// Asserts that status = , want 404.
 func TestHead_NotFound(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
@@ -388,6 +424,8 @@ func TestHead_NotFound(t *testing.T) {
 // CONDITIONAL REQUESTS
 // -------------------------------------------------------------------------
 
+// TestGet_LastModifiedHeader verifies the get last modified header contract.
+// Asserts that status = , want 200.
 func TestGet_LastModifiedHeader(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, backend := newTestServer(t)
@@ -406,7 +444,7 @@ func TestGet_LastModifiedHeader(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
-	// LastModified comes from the backend, not the store — the mock backend
+	// LastModified comes from the backend, not the store  -  the mock backend
 	// doesn't set it, so the header should be absent for this test.
 	// This test validates that the header is at least not causing errors.
 	if resp.Header.Get("ETag") != `"abc"` {
@@ -414,6 +452,8 @@ func TestGet_LastModifiedHeader(t *testing.T) {
 	}
 }
 
+// TestGet_ConditionalIfNoneMatch verifies the get conditional if none match contract.
+// Asserts that status = , want 304.
 func TestGet_ConditionalIfNoneMatch(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, backend := newTestServer(t)
@@ -439,6 +479,8 @@ func TestGet_ConditionalIfNoneMatch(t *testing.T) {
 	}
 }
 
+// TestGet_ConditionalIfNoneMatchMismatch verifies the get conditional if none match mismatch contract.
+// Asserts that status = , want 200.
 func TestGet_ConditionalIfNoneMatchMismatch(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, backend := newTestServer(t)
@@ -464,6 +506,8 @@ func TestGet_ConditionalIfNoneMatchMismatch(t *testing.T) {
 	}
 }
 
+// TestGet_ConditionalIfMatch verifies the get conditional if match contract.
+// Asserts that status = , want 412.
 func TestGet_ConditionalIfMatch(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, backend := newTestServer(t)
@@ -489,6 +533,8 @@ func TestGet_ConditionalIfMatch(t *testing.T) {
 	}
 }
 
+// TestHead_ConditionalIfNoneMatch verifies the head conditional if none match contract.
+// Asserts that status = , want 304.
 func TestHead_ConditionalIfNoneMatch(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, backend := newTestServer(t)
@@ -514,6 +560,8 @@ func TestHead_ConditionalIfNoneMatch(t *testing.T) {
 	}
 }
 
+// TestGet_ConditionalIfModifiedSince verifies the get conditional if modified since contract.
+// Asserts that status = , want 304.
 func TestGet_ConditionalIfModifiedSince(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, backend := newTestServer(t)
@@ -527,7 +575,7 @@ func TestGet_ConditionalIfModifiedSince(t *testing.T) {
 		{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5},
 	}
 
-	// Request with a time after the object's last modification → 304
+	// Request with a time after the object's last modification -> 304
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/mybucket/testkey", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.Header.Set("If-Modified-Since", objTime.Add(time.Hour).UTC().Format(http.TimeFormat))
@@ -542,6 +590,8 @@ func TestGet_ConditionalIfModifiedSince(t *testing.T) {
 	}
 }
 
+// TestGet_ConditionalIfModifiedSinceNewer verifies the get conditional if modified since newer contract.
+// Asserts that status = , want 200.
 func TestGet_ConditionalIfModifiedSinceNewer(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, backend := newTestServer(t)
@@ -555,7 +605,7 @@ func TestGet_ConditionalIfModifiedSinceNewer(t *testing.T) {
 		{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5},
 	}
 
-	// Request with a time before the object's last modification → 200
+	// Request with a time before the object's last modification -> 200
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/mybucket/testkey", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.Header.Set("If-Modified-Since", objTime.Add(-time.Hour).UTC().Format(http.TimeFormat))
@@ -570,6 +620,8 @@ func TestGet_ConditionalIfModifiedSinceNewer(t *testing.T) {
 	}
 }
 
+// TestGet_ConditionalIfUnmodifiedSince verifies the get conditional if unmodified since contract.
+// Asserts that status = , want 412.
 func TestGet_ConditionalIfUnmodifiedSince(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, backend := newTestServer(t)
@@ -583,7 +635,7 @@ func TestGet_ConditionalIfUnmodifiedSince(t *testing.T) {
 		{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5},
 	}
 
-	// Object was modified after the given time → 412
+	// Object was modified after the given time -> 412
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/mybucket/testkey", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.Header.Set("If-Unmodified-Since", objTime.Add(-time.Hour).UTC().Format(http.TimeFormat))
@@ -598,6 +650,8 @@ func TestGet_ConditionalIfUnmodifiedSince(t *testing.T) {
 	}
 }
 
+// TestGet_LastModifiedHeaderSet verifies the get last modified header set contract.
+// Asserts that status = , want 200.
 func TestGet_LastModifiedHeaderSet(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, backend := newTestServer(t)
@@ -628,6 +682,8 @@ func TestGet_LastModifiedHeaderSet(t *testing.T) {
 	}
 }
 
+// TestHead_LastModifiedHeaderSet verifies the head last modified header set contract.
+// Asserts that status = , want 200.
 func TestHead_LastModifiedHeaderSet(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, backend := newTestServer(t)
@@ -662,6 +718,8 @@ func TestHead_LastModifiedHeaderSet(t *testing.T) {
 // METADATA ROUND-TRIP
 // -------------------------------------------------------------------------
 
+// TestPut_MetadataStored verifies the put metadata stored contract.
+// Asserts that status = , want 200.
 func TestPut_MetadataStored(t *testing.T) {
 	t.Parallel()
 	ts, _, backend := newTestServer(t)
@@ -691,6 +749,8 @@ func TestPut_MetadataStored(t *testing.T) {
 	}
 }
 
+// TestGet_MetadataReturned verifies the get metadata returned contract.
+// Asserts that status = , want 200.
 func TestGet_MetadataReturned(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, backend := newTestServer(t)
@@ -717,6 +777,8 @@ func TestGet_MetadataReturned(t *testing.T) {
 	}
 }
 
+// TestHead_MetadataReturned verifies the head metadata returned contract.
+// Asserts that status = , want 200.
 func TestHead_MetadataReturned(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, backend := newTestServer(t)
@@ -740,6 +802,8 @@ func TestHead_MetadataReturned(t *testing.T) {
 	}
 }
 
+// TestPut_MetadataTooLarge verifies the put metadata too large contract.
+// Asserts that status = , want 400.
 func TestPut_MetadataTooLarge(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t)
@@ -765,6 +829,8 @@ func TestPut_MetadataTooLarge(t *testing.T) {
 // DELETE
 // -------------------------------------------------------------------------
 
+// TestDelete_Success verifies the delete success contract.
+// Asserts that status = , want 204.
 func TestDelete_Success(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, backend := newTestServer(t)
@@ -782,6 +848,8 @@ func TestDelete_Success(t *testing.T) {
 	}
 }
 
+// TestDelete_IdempotentForMissing verifies the delete idempotent for missing contract.
+// Asserts that status = , want 204.
 func TestDelete_IdempotentForMissing(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
@@ -800,6 +868,8 @@ func TestDelete_IdempotentForMissing(t *testing.T) {
 // DELETE OBJECTS (BATCH)
 // -------------------------------------------------------------------------
 
+// TestDeleteObjects_Success verifies the delete objects success contract.
+// Asserts that status = , want 200.
 func TestDeleteObjects_Success(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, backend := newTestServer(t)
@@ -827,6 +897,8 @@ func TestDeleteObjects_Success(t *testing.T) {
 	}
 }
 
+// TestDeleteObjects_QuietMode verifies the delete objects quiet mode contract.
+// Asserts that status = , want 200.
 func TestDeleteObjects_QuietMode(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
@@ -847,6 +919,8 @@ func TestDeleteObjects_QuietMode(t *testing.T) {
 	}
 }
 
+// TestDeleteObjects_MalformedXML verifies the delete objects malformed xml contract.
+// Asserts that status = , want 400.
 func TestDeleteObjects_MalformedXML(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t)
@@ -860,6 +934,8 @@ func TestDeleteObjects_MalformedXML(t *testing.T) {
 	}
 }
 
+// TestDeleteObjects_TooManyObjects verifies the delete objects too many objects contract.
+// Asserts that status = , want 400.
 func TestDeleteObjects_TooManyObjects(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t)
@@ -879,6 +955,8 @@ func TestDeleteObjects_TooManyObjects(t *testing.T) {
 	}
 }
 
+// TestDeleteObjects_EmptyRequest verifies the delete objects empty request contract.
+// Asserts that status = , want 400.
 func TestDeleteObjects_EmptyRequest(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t)
@@ -945,7 +1023,7 @@ func TestDeleteObjects_TypedErrorSurfaces(t *testing.T) {
 		t.Errorf("typed S3Error Message missing: %s", s)
 	}
 
-	// Untyped error case → InternalError fallback.
+	// Untyped error case -> InternalError fallback.
 	tsUntyped, mockStoreUntyped, _ := newTestServer(t)
 	mockStoreUntyped.DeleteObjectsBatchErr = errors.New("untyped backend error")
 
@@ -964,6 +1042,8 @@ func TestDeleteObjects_TypedErrorSurfaces(t *testing.T) {
 // COPY
 // -------------------------------------------------------------------------
 
+// TestCopy_Success verifies the copy success contract.
+// Asserts that status = , want 200. body:.
 func TestCopy_Success(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, backend := newTestServer(t)
@@ -998,6 +1078,8 @@ func TestCopy_Success(t *testing.T) {
 	}
 }
 
+// TestCopy_SourceNotFound verifies the copy source not found contract.
+// Asserts that status = , want 404.
 func TestCopy_SourceNotFound(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
@@ -1018,6 +1100,8 @@ func TestCopy_SourceNotFound(t *testing.T) {
 	}
 }
 
+// TestCopy_URLEncodedSource verifies the copy urlencoded source contract.
+// Asserts that status = , want 200. body:.
 func TestCopy_URLEncodedSource(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, backend := newTestServer(t)
@@ -1051,6 +1135,8 @@ func TestCopy_URLEncodedSource(t *testing.T) {
 	}
 }
 
+// TestCopy_CrossBucketDenied verifies the copy cross bucket denied contract.
+// Asserts that status = , want 403.
 func TestCopy_CrossBucketDenied(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t)
@@ -1074,6 +1160,8 @@ func TestCopy_CrossBucketDenied(t *testing.T) {
 // AUTH
 // -------------------------------------------------------------------------
 
+// TestAuth_BadCredentials verifies the auth bad credentials contract.
+// Asserts that status = , want 403.
 func TestAuth_BadCredentials(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t)
@@ -1091,6 +1179,8 @@ func TestAuth_BadCredentials(t *testing.T) {
 	}
 }
 
+// TestAuth_BucketMismatch verifies the auth bucket mismatch contract.
+// Asserts that status = , want 403.
 func TestAuth_BucketMismatch(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t)
@@ -1109,6 +1199,7 @@ func TestAuth_BucketMismatch(t *testing.T) {
 	}
 }
 
+// TestAuth_AccessDeniedDoesNotLeakBucketName verifies the auth access denied does not leak bucket name path by exercising http.NewRequestWithContext, context.Background, io.ReadAll.
 func TestAuth_AccessDeniedDoesNotLeakBucketName(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t)
@@ -1131,6 +1222,8 @@ func TestAuth_AccessDeniedDoesNotLeakBucketName(t *testing.T) {
 // ROUTING
 // -------------------------------------------------------------------------
 
+// TestUnsupportedMethod verifies the unsupported method contract.
+// Asserts that status = , want 405.
 func TestUnsupportedMethod(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t)
@@ -1148,6 +1241,8 @@ func TestUnsupportedMethod(t *testing.T) {
 	}
 }
 
+// TestBucketOnlyGET_RoutesToList verifies the bucket only get routes to list contract.
+// Asserts that status = , want 200.
 func TestBucketOnlyGET_RoutesToList(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)

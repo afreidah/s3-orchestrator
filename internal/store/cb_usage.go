@@ -1,7 +1,13 @@
 // -------------------------------------------------------------------------------
-// CB Decorator — UsageFlusher
+// CB Decorator  -  UsageFlusher
 //
 // Author: Alex Freidah
+//
+// Wraps a core.UsageFlusher (the upsert-with-add that drains in-memory
+// or Redis usage deltas into backend_usage) so every call routes
+// through the database CircuitBreaker. Keeps the flusher from blocking
+// on an unreachable database by returning ErrDBUnavailable instantly
+// when the breaker is open; the next tick retries.
 // -------------------------------------------------------------------------------
 
 package store

@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------
-// Worker Dependency Contracts — Per-Worker Store Roles
+// Worker Dependency Contracts  -  Per-Worker Store Roles
 //
 // Author: Alex Freidah
 //

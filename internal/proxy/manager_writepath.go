@@ -130,7 +130,7 @@ func (m *BackendManager) recordObjectOrCleanup(ctx context.Context, span trace.S
 // upload. Returns the generated intent ID, or empty string if no pending
 // store is configured (in which case the legacy delete-on-record-failure
 // path remains in effect for that PUT). A failure to insert the intent
-// while pending tracking is configured fails the PUT — proceeding without
+// while pending tracking is configured fails the PUT  -  proceeding without
 // the intent would reintroduce the data-loss window the pattern exists to
 // close.
 func (m *BackendManager) insertPendingIntent(ctx context.Context, key, backendName string, size int64, enc *core.EncryptionMeta) (string, error) {
@@ -170,7 +170,7 @@ func (m *BackendManager) insertPendingIntent(ctx context.Context, key, backendNa
 // tests retain their previous semantics.
 func (m *BackendManager) recordObjectAndPromoteIntent(ctx context.Context, span trace.Span, key, backendName string, size int64, enc *core.EncryptionMeta, intentID string) error {
 	if intentID == "" {
-		// No pending tracking — caller already wrote bytes, fall back to the
+		// No pending tracking  -  caller already wrote bytes, fall back to the
 		// legacy path. The backend is unavailable here, so we cannot use
 		// recordObjectOrCleanup (which deletes on failure). Resolve via the
 		// backend map.

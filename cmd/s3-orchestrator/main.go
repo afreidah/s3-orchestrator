@@ -22,6 +22,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/cli/serve"
 )
 
+// main is the program entry point.
 func main() { // codecov:ignore -- thin wrapper, logic tested via subcommands
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
@@ -52,6 +53,8 @@ func main() { // codecov:ignore -- thin wrapper, logic tested via subcommands
 	runServe()
 }
 
+// printUsage writes the top-level command summary to stderr. Called when
+// the binary is invoked with help, --help, -h, or no arguments.
 func printUsage() {
 	fmt.Fprintf(os.Stderr, `Usage: s3-orchestrator [command]
 
@@ -68,6 +71,10 @@ Run 's3-orchestrator <command> --help' for command-specific flags.
 `)
 }
 
+// runServe parses the serve-mode flags (config path, operating mode) and
+// dispatches into the server bootstrap. It is the default entry point
+// when no subcommand is supplied. The codecov:ignore is set because this
+// is an os.Exit-bearing wrapper; the real logic lives in cli/serve.
 func runServe() { // codecov:ignore -- flag parsing + os.Exit wrapper
 	configPath := flag.String("config", "config.yaml", "Path to configuration file")
 	mode := flag.String("mode", "all", "Operating mode: api, worker, or all")

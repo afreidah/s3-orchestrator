@@ -2,6 +2,13 @@
 // Client IP Extraction Tests
 //
 // Author: Alex Freidah
+//
+// Verifies the client-IP extraction used by per-IP rate limiting and
+// audit logging: parsing X-Forwarded-For with respect to the configured
+// trusted-proxy hop count, falling back to RemoteAddr, and rejecting
+// spoofed forwarded values when no proxy is trusted. The trusted-hop
+// count is the load-bearing piece - mis-configuring it would let any
+// client spoof their IP via XFF.
 // -------------------------------------------------------------------------------
 
 package httputil
@@ -75,6 +82,8 @@ func TestIsTLSRequest_TrustedProxyXFPMissing(t *testing.T) {
 	}
 }
 
+// TestExtractClientIP_NoProxy verifies the extract client ip no proxy contract.
+// Asserts that got , want 1.2.3.4.
 func TestExtractClientIP_NoProxy(t *testing.T) {
 	t.Parallel()
 	r, _ := http.NewRequestWithContext(context.Background(), "GET", "/", nil)
@@ -86,6 +95,8 @@ func TestExtractClientIP_NoProxy(t *testing.T) {
 	}
 }
 
+// TestExtractClientIP_UntrustedProxy verifies the extract client ip untrusted proxy contract.
+// Asserts that got , want 1.2.3.4 (XFF ignored for untrusted peer).
 func TestExtractClientIP_UntrustedProxy(t *testing.T) {
 	t.Parallel()
 	trusted := ParseTrustedProxies([]string{"10.0.0.0/8"})
@@ -99,6 +110,8 @@ func TestExtractClientIP_UntrustedProxy(t *testing.T) {
 	}
 }
 
+// TestExtractClientIP_TrustedProxy verifies the extract client ip trusted proxy contract.
+// Asserts that got , want 1.2.3.4 (rightmost untrusted).
 func TestExtractClientIP_TrustedProxy(t *testing.T) {
 	t.Parallel()
 	trusted := ParseTrustedProxies([]string{"10.0.0.0/8"})
@@ -112,6 +125,8 @@ func TestExtractClientIP_TrustedProxy(t *testing.T) {
 	}
 }
 
+// TestExtractClientIP_AllTrusted verifies the extract client ip all trusted contract.
+// Asserts that got , want 10.0.0.5 (leftmost fallback).
 func TestExtractClientIP_AllTrusted(t *testing.T) {
 	t.Parallel()
 	trusted := ParseTrustedProxies([]string{"10.0.0.0/8", "172.16.0.0/12"})
@@ -125,6 +140,8 @@ func TestExtractClientIP_AllTrusted(t *testing.T) {
 	}
 }
 
+// TestExtractClientIP_NoPort verifies the extract client ip no port contract.
+// Asserts that got , want 1.2.3.4.
 func TestExtractClientIP_NoPort(t *testing.T) {
 	t.Parallel()
 	r, _ := http.NewRequestWithContext(context.Background(), "GET", "/", nil)
@@ -136,6 +153,8 @@ func TestExtractClientIP_NoPort(t *testing.T) {
 	}
 }
 
+// TestParseTrustedProxies_Valid verifies the parse trusted proxies valid contract.
+// Asserts that expected 2 nets, got.
 func TestParseTrustedProxies_Valid(t *testing.T) {
 	t.Parallel()
 	nets := ParseTrustedProxies([]string{"10.0.0.0/8", "172.16.0.0/12"})
@@ -144,6 +163,8 @@ func TestParseTrustedProxies_Valid(t *testing.T) {
 	}
 }
 
+// TestParseTrustedProxies_Invalid verifies the parse trusted proxies invalid contract.
+// Asserts that expected 2 nets (invalid skipped), got.
 func TestParseTrustedProxies_Invalid(t *testing.T) {
 	t.Parallel()
 	nets := ParseTrustedProxies([]string{"10.0.0.0/8", "invalid", "192.168.0.0/16"})
@@ -152,6 +173,8 @@ func TestParseTrustedProxies_Invalid(t *testing.T) {
 	}
 }
 
+// TestParseTrustedProxies_Empty verifies the parse trusted proxies empty contract.
+// Asserts that expected 0 nets, got.
 func TestParseTrustedProxies_Empty(t *testing.T) {
 	t.Parallel()
 	nets := ParseTrustedProxies(nil)
@@ -160,6 +183,8 @@ func TestParseTrustedProxies_Empty(t *testing.T) {
 	}
 }
 
+// TestRightmostUntrusted_SingleIP verifies the rightmost untrusted single ip contract.
+// Asserts that got , want 1.2.3.4.
 func TestRightmostUntrusted_SingleIP(t *testing.T) {
 	t.Parallel()
 	trusted := ParseTrustedProxies([]string{"10.0.0.0/8"})
@@ -169,6 +194,8 @@ func TestRightmostUntrusted_SingleIP(t *testing.T) {
 	}
 }
 
+// TestRightmostUntrusted_EmptyEntries verifies the rightmost untrusted empty entries contract.
+// Asserts that got , want 1.2.3.4.
 func TestRightmostUntrusted_EmptyEntries(t *testing.T) {
 	t.Parallel()
 	trusted := ParseTrustedProxies([]string{"10.0.0.0/8"})
@@ -178,6 +205,7 @@ func TestRightmostUntrusted_EmptyEntries(t *testing.T) {
 	}
 }
 
+// TestIpInNets_InvalidIP verifies the ip in nets invalid ip behaviour described by the test name.
 func TestIpInNets_InvalidIP(t *testing.T) {
 	t.Parallel()
 	trusted := ParseTrustedProxies([]string{"10.0.0.0/8"})
@@ -186,6 +214,8 @@ func TestIpInNets_InvalidIP(t *testing.T) {
 	}
 }
 
+// TestStripPort_IPv6 verifies the strip port ipv6 contract.
+// Asserts that got , want ::1.
 func TestStripPort_IPv6(t *testing.T) {
 	t.Parallel()
 	ip := stripPort("[::1]:8080")

@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------
-// Metrics — Cache, Redis
+// Metrics  -  Cache, Redis
 //
 // Author: Alex Freidah
 //
@@ -14,6 +14,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
+// CacheHitsTotal and related package-level variables used by this package.
 var (
 	// --- Cache metrics ---
 

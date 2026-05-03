@@ -15,6 +15,8 @@ import (
 	"testing"
 )
 
+// TestAtomicConfig_ZeroValue verifies the atomic config zero value contract.
+// Asserts that Load on zero value = , want nil.
 func TestAtomicConfig_ZeroValue(t *testing.T) {
 	t.Parallel()
 	var ac AtomicConfig[string]
@@ -23,6 +25,8 @@ func TestAtomicConfig_ZeroValue(t *testing.T) {
 	}
 }
 
+// TestAtomicConfig_StoreLoad verifies the atomic config store load contract.
+// Asserts that Load = , want pointer to 42.
 func TestAtomicConfig_StoreLoad(t *testing.T) {
 	t.Parallel()
 	var ac AtomicConfig[int]
@@ -35,6 +39,8 @@ func TestAtomicConfig_StoreLoad(t *testing.T) {
 	}
 }
 
+// TestAtomicConfig_StoreOverwrite verifies the atomic config store overwrite contract.
+// Asserts that Load after overwrite = , want pointer to beta.
 func TestAtomicConfig_StoreOverwrite(t *testing.T) {
 	t.Parallel()
 	var ac AtomicConfig[string]
@@ -50,6 +56,7 @@ func TestAtomicConfig_StoreOverwrite(t *testing.T) {
 	}
 }
 
+// TestAtomicConfig_ConcurrentAccess verifies the atomic config concurrent access path by exercising ac.Store, wg.Go, ac.Load.
 func TestAtomicConfig_ConcurrentAccess(t *testing.T) {
 	t.Parallel()
 	var ac AtomicConfig[int]

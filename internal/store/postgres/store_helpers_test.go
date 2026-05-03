@@ -1,12 +1,12 @@
 // -------------------------------------------------------------------------------
-// store row → ObjectLocation conversion tests
+// store row -> ObjectLocation conversion tests
 //
 // Author: Alex Freidah
 //
 // Exercises the generic toFatObjectLocations and toSlimObjectLocations
 // helpers without standing up a real PostgreSQL. Each row type the queries
 // project has its own accessor methods (in internal/store/postgres/sqlc), and these
-// tests assert the conversion for every shape — including the nullable
+// tests assert the conversion for every shape  -  including the nullable
 // pointer fields on the encryption-aware ("fat") rows.
 // -------------------------------------------------------------------------------
 
@@ -116,7 +116,7 @@ func TestToFatObjectLocations_PartialNilFields(t *testing.T) {
 
 // TestToFatObjectLocations_EveryRowType walks each fat-row sqlc type to
 // confirm the accessor methods are wired and the generic helper accepts
-// each one. A zero-element entry per type is enough — the per-field
+// each one. A zero-element entry per type is enough  -  the per-field
 // flattening is exhaustively tested for GetAllObjectLocationsRow above.
 func TestToFatObjectLocations_EveryRowType(t *testing.T) {
 	t.Parallel()
@@ -170,7 +170,7 @@ func TestToSlimObjectLocations_EveryRowType(t *testing.T) {
 }
 
 // TestToSlimObjectLocations_PreservesOrder verifies the output slice keeps
-// the input ordering — important for the dashboard directory listing.
+// the input ordering  -  important for the dashboard directory listing.
 func TestToSlimObjectLocations_PreservesOrder(t *testing.T) {
 	t.Parallel()
 	now := pgtime(time.Now())
@@ -203,7 +203,7 @@ func TestInsertParamsFromEnc_NilMeta(t *testing.T) {
 }
 
 // TestInsertParamsFromEnc_PlaintextHashOnly covers the case where the
-// meta is present but Encrypted=false — only ContentHash should be set.
+// meta is present but Encrypted=false  -  only ContentHash should be set.
 func TestInsertParamsFromEnc_PlaintextHashOnly(t *testing.T) {
 	t.Parallel()
 	params := insertParamsFromEnc("k", "b", 10, &core.EncryptionMeta{

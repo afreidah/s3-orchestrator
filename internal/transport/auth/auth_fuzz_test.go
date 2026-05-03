@@ -17,6 +17,8 @@ import (
 	"testing"
 )
 
+// FuzzParseSigV4Fields fuzzes the parse sig v4 fields contract.
+// Asserts that Credential mismatch: direct= map=.
 func FuzzParseSigV4Fields(f *testing.F) {
 	f.Add("Credential=AKID/20260215/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature=abcdef1234567890")
 	f.Add("")
@@ -58,6 +60,8 @@ func FuzzParseSigV4Fields(f *testing.F) {
 	})
 }
 
+// FuzzBuildCanonicalRequest fuzzes the build canonical request contract.
+// Asserts that canonical request has newlines, want for headers.
 func FuzzBuildCanonicalRequest(f *testing.F) {
 	f.Add("GET", "/bucket/key", "param=value", "host;x-amz-date")
 	f.Add("PUT", "/bucket/path/to/obj", "uploadId=abc&partNumber=3", "content-type;host;x-amz-date")

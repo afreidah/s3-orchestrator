@@ -2,6 +2,12 @@
 // Backend Configuration
 //
 // Author: Alex Freidah
+//
+// Defines BackendConfig - the per-backend YAML block describing the S3
+// endpoint, credentials, optional quota and per-object size cap, and the
+// read/write tunables (timeouts, max idle conns, signing tweaks) - plus
+// its validators. Every backend listed in config.yaml is parsed into one
+// of these structs and handed to the BackendManager at startup.
 // -------------------------------------------------------------------------------
 
 package config
@@ -27,6 +33,10 @@ type BackendConfig struct {
 	IngressByteLimit int64 `yaml:"ingress_byte_limit"` // Monthly ingress byte limit (0 = unlimited)
 }
 
+// validateBackends checks every BackendConfig in the configured list,
+// fills missing names with backend-N defaults, and surfaces every
+// per-entry problem in one pass so operators see all the typos at
+// once rather than fixing one and rerunning.
 func validateBackends(backends []BackendConfig) []error {
 	var errs []error
 

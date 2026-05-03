@@ -42,6 +42,7 @@ const sigV4MaxSkew = 15 * time.Minute
 // matching the AWS S3 limit).
 const presignedMaxExpiry = 7 * 24 * time.Hour
 
+// errAuthFailed and related constants used by this package.
 const (
 	errAuthFailed = "authentication failed"
 	sigV4Prefix   = "AWS4-HMAC-SHA256 "
@@ -104,8 +105,8 @@ func (br *BucketRegistry) AuthenticateAndResolveBucket(r *http.Request) (string,
 	authHeader := r.Header.Get("Authorization")
 
 	// SigV4 takes precedence. To prevent timing side-channels that could
-	// enumerate valid access keys, we always compute the signature — using
-	// a dummy secret when the key is unknown — so both paths take the same
+	// enumerate valid access keys, we always compute the signature  -  using
+	// a dummy secret when the key is unknown  -  so both paths take the same
 	// time.
 	if strings.HasPrefix(authHeader, sigV4Prefix) {
 		// Parse the header once to extract all three fields.
@@ -136,12 +137,12 @@ func (br *BucketRegistry) AuthenticateAndResolveBucket(r *http.Request) (string,
 		return entry.BucketName, nil
 	}
 
-	// Presigned URL auth — credentials in query string parameters.
+	// Presigned URL auth  -  credentials in query string parameters.
 	if isPresignedRequest(r) {
 		return br.authenticatePresigned(r)
 	}
 
-	// Legacy token auth — iterate all tokens to avoid timing side-channels.
+	// Legacy token auth  -  iterate all tokens to avoid timing side-channels.
 	// ConstantTimeCompare requires equal-length inputs, so skip mismatched
 	// lengths without leaking which token matched.
 	proxyToken := r.Header.Get("X-Proxy-Token")
@@ -174,8 +175,8 @@ func (br *BucketRegistry) AuthenticateAndResolveBucket(r *http.Request) (string,
 // SigV4 verification derives a per-request signing key via four chained
 // HMAC-SHA256 operations (date, region, service, "aws4_request"). The
 // straightforward optimization is to memoize the result per access-key
-// for the duration of a date+region+service window — the inputs only
-// change when the dateStamp rolls over (once per day) — but that creates
+// for the duration of a date+region+service window  -  the inputs only
+// change when the dateStamp rolls over (once per day)  -  but that creates
 // a request-latency side channel: cache hits skip the HMACs while
 // cache-miss / unknown-key paths run them every time. An attacker who
 // times responses can then distinguish "is this access key registered?"
@@ -231,7 +232,7 @@ func verifySigV4Parsed(r *http.Request, key keyMaterial, credential, signedHeade
 	}
 
 	// Validate request timestamp to prevent replay attacks. The header
-	// variant additionally enforces a skew window — presigned URLs use
+	// variant additionally enforces a skew window  -  presigned URLs use
 	// X-Amz-Expires and have their own freshness check.
 	amzDate := r.Header.Get("X-Amz-Date")
 	if amzDate == "" {
@@ -266,7 +267,7 @@ func parseSigV4Credential(credential, signedHeadersStr string) (dateStamp, regio
 }
 
 // parseSigV4Time parses the SigV4 amzDate (yyyymmddTHHMMSSZ) and asserts
-// that its date prefix matches the credential scope's dateStamp — this
+// that its date prefix matches the credential scope's dateStamp  -  this
 // prevents replaying a signing key derived for a different day.
 func parseSigV4Time(amzDate, dateStamp string) (time.Time, error) {
 	reqTime, err := time.Parse("20060102T150405Z", amzDate)
@@ -428,7 +429,7 @@ func buildPresignedCanonicalRequest(r *http.Request, signedHeaders []string) str
 	}
 	b.WriteByte('\n')
 
-	// Payload hash — always UNSIGNED-PAYLOAD for presigned URLs
+	// Payload hash  -  always UNSIGNED-PAYLOAD for presigned URLs
 	b.WriteString("UNSIGNED-PAYLOAD")
 
 	return b.String()
@@ -495,7 +496,7 @@ func buildCanonicalRequest(r *http.Request, signedHeaders []string) string {
 	buildCanonicalQueryString(&b, r.URL.Query())
 	b.WriteByte('\n')
 
-	// Canonical headers — per SigV4 spec, header names are lowercased with
+	// Canonical headers  -  per SigV4 spec, header names are lowercased with
 	// all whitespace stripped (HTTP header names must not contain whitespace),
 	// and header values have sequential whitespace collapsed to a single space.
 	for i, h := range signedHeaders {

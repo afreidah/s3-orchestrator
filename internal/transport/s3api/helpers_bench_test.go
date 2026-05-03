@@ -1,3 +1,16 @@
+// -------------------------------------------------------------------------------
+// S3 API Helper Benchmarks
+//
+// Author: Alex Freidah
+//
+// Pins the per-request cost of helpers that run on every S3 API call:
+// path parsing, request-id validation, user-metadata extraction and
+// validation, and writeS3Error envelope serialization. These functions
+// are tiny but called millions of times per day under load, so a
+// regression here is visible in p99 latency before it shows up anywhere
+// else.
+// -------------------------------------------------------------------------------
+
 package s3api
 
 import (
@@ -14,6 +27,7 @@ import (
 // Path parsing
 // -------------------------------------------------------------------------
 
+// BenchmarkParsePath measures the parse path behaviour described by the test name.
 func BenchmarkParsePath(b *testing.B) {
 	paths := []struct {
 		name, path string
@@ -36,6 +50,7 @@ func BenchmarkParsePath(b *testing.B) {
 // Request ID validation
 // -------------------------------------------------------------------------
 
+// BenchmarkIsValidRequestID measures the is valid request id behaviour described by the test name.
 func BenchmarkIsValidRequestID(b *testing.B) {
 	ids := []struct {
 		name, id string
@@ -59,6 +74,7 @@ func BenchmarkIsValidRequestID(b *testing.B) {
 // Metadata extraction and validation
 // -------------------------------------------------------------------------
 
+// BenchmarkExtractUserMetadata measures the extract user metadata path by exercising h.Set, fmt.Sprintf.
 func BenchmarkExtractUserMetadata(b *testing.B) {
 	cases := []struct {
 		name    string
@@ -88,6 +104,9 @@ func BenchmarkExtractUserMetadata(b *testing.B) {
 	}
 }
 
+// BenchmarkValidateUserMetadata measures the validate user metadata behaviour across the supplied sub-cases:
+// "small_2keys", "large_20keys".
+// Each sub-case exercises one branch of the code under test.
 func BenchmarkValidateUserMetadata(b *testing.B) {
 	small := map[string]string{"author": "test", "project": "bench"}
 	large := make(map[string]string, 20)
@@ -111,6 +130,7 @@ func BenchmarkValidateUserMetadata(b *testing.B) {
 // S3 XML error response
 // -------------------------------------------------------------------------
 
+// BenchmarkWriteS3Error measures the write s3 error path by exercising httptest.NewRecorder.
 func BenchmarkWriteS3Error(b *testing.B) {
 	for b.Loop() {
 		w := httptest.NewRecorder()
@@ -122,6 +142,7 @@ func BenchmarkWriteS3Error(b *testing.B) {
 // S3 XML list response encoding
 // -------------------------------------------------------------------------
 
+// BenchmarkWriteXML_ListV2 measures the write xml list v2 path by exercising time.Now, fmt.Sprintf, httptest.NewRecorder.
 func BenchmarkWriteXML_ListV2(b *testing.B) {
 	sizes := []int{10, 100, 1000}
 
@@ -155,6 +176,7 @@ func BenchmarkWriteXML_ListV2(b *testing.B) {
 	}
 }
 
+// BenchmarkBuildListContents measures the build list contents path by exercising time.Now, fmt.Sprintf.
 func BenchmarkBuildListContents(b *testing.B) {
 	now := time.Now()
 	objects := make([]core.ObjectLocation, 1000)
@@ -178,7 +200,7 @@ func BenchmarkBuildListContents(b *testing.B) {
 	})
 }
 
-// BenchmarkSpanNameSprintf and BenchmarkRecordRequestStatusItoa were removed —
+// BenchmarkSpanNameSprintf and BenchmarkRecordRequestStatusItoa were removed  - 
 // they measured code paths (fmt.Sprintf for span names, strconv.Itoa for status
 // codes) that were already optimized to pre-computed map lookups (httpSpanName,
 // statusStrings). Benchmarking the replaced implementation was misleading.

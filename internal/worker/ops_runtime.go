@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------
-// Worker Dependency Contracts — Runtime Infrastructure Roles
+// Worker Dependency Contracts  -  Runtime Infrastructure Roles
 //
 // Author: Alex Freidah
 //

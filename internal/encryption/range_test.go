@@ -13,6 +13,8 @@ import (
 	"testing"
 )
 
+// TestCiphertextRange_FirstChunk verifies the ciphertext range first chunk contract.
+// Asserts that CiphertextRange:.
 func TestCiphertextRange_FirstChunk(t *testing.T) {
 	t.Parallel()
 	r, err := CiphertextRange(0, 63, 64)
@@ -33,6 +35,8 @@ func TestCiphertextRange_FirstChunk(t *testing.T) {
 	}
 }
 
+// TestCiphertextRange_CrossBoundary verifies the ciphertext range cross boundary contract.
+// Asserts that CiphertextRange:.
 func TestCiphertextRange_CrossBoundary(t *testing.T) {
 	t.Parallel()
 	// bytes 60-70 crosses chunk 0 (0-63) and chunk 1 (64-127)
@@ -51,9 +55,11 @@ func TestCiphertextRange_CrossBoundary(t *testing.T) {
 	}
 }
 
+// TestCiphertextRange_SecondChunk verifies the ciphertext range second chunk contract.
+// Asserts that CiphertextRange:.
 func TestCiphertextRange_SecondChunk(t *testing.T) {
 	t.Parallel()
-	// bytes 64-127 → chunk 1 only
+	// bytes 64-127 -> chunk 1 only
 	r, err := CiphertextRange(64, 127, 64)
 	if err != nil {
 		t.Fatalf("CiphertextRange: %v", err)
@@ -69,6 +75,8 @@ func TestCiphertextRange_SecondChunk(t *testing.T) {
 	}
 }
 
+// TestCiphertextRange_SingleByte verifies the ciphertext range single byte contract.
+// Asserts that CiphertextRange:.
 func TestCiphertextRange_SingleByte(t *testing.T) {
 	t.Parallel()
 	r, err := CiphertextRange(100, 100, 64)
@@ -86,6 +94,7 @@ func TestCiphertextRange_SingleByte(t *testing.T) {
 	}
 }
 
+// TestCiphertextRange_InvalidRange verifies the ciphertext range invalid range behaviour described by the test name.
 func TestCiphertextRange_InvalidRange(t *testing.T) {
 	t.Parallel()
 	_, err := CiphertextRange(10, 5, 64)

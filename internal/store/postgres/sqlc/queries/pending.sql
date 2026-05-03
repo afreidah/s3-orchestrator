@@ -1,3 +1,15 @@
+-- -----------------------------------------------------------------------------
+-- Pending Object Queries
+--
+-- Author: Alex Freidah
+--
+-- sqlc-input definitions for pending_objects - the in-flight PUT intent
+-- table that backs the PUT-before-COMMIT write-path pattern. Covers
+-- inserting an intent, atomically claiming and resolving it, and the
+-- timestamp-aware reaper scan that finds stale rows surviving a failed
+-- metadata commit.
+-- -----------------------------------------------------------------------------
+
 -- name: InsertPendingObject :exec
 INSERT INTO pending_objects (
     intent_id, object_key, backend_name, size_bytes,

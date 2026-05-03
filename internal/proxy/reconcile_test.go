@@ -43,6 +43,10 @@ type sliceKeySource struct {
 	stopped bool
 }
 
+// next satisfies the keySource interface for tests. Returns entries
+// from the slice in order, optionally raising the configured error at
+// the specified index so error-path branches in reconcileSorted can be
+// covered without a real backend or DB.
 func (s *sliceKeySource) next(_ context.Context) (reconcileEntry, bool, error) {
 	if s.err != nil && s.idx == s.errAt {
 		return reconcileEntry{}, false, s.err
@@ -55,6 +59,9 @@ func (s *sliceKeySource) next(_ context.Context) (reconcileEntry, bool, error) {
 	return e, true, nil
 }
 
+// stop satisfies the keySource interface for tests. Records that stop
+// was called so the test can assert reconcileSorted releases its
+// sources on every exit path (success, error, context cancellation).
 func (s *sliceKeySource) stop() { s.stopped = true }
 
 // e is a tiny constructor for test entry literals.
@@ -78,7 +85,7 @@ func runMerge(t *testing.T, s3, dbIter keySource) (imports []reconcileEntry, del
 }
 
 // -------------------------------------------------------------------------
-// reconcileSorted — every merge branch
+// reconcileSorted  -  every merge branch
 // -------------------------------------------------------------------------
 
 // TestReconcileSorted_EmptyBothInputs verifies the trivial case: no
@@ -126,7 +133,7 @@ func TestReconcileSorted_OnlyDB(t *testing.T) {
 }
 
 // TestReconcileSorted_FullMatch covers the equal-key path: every key on
-// both sides → no work.
+// both sides -> no work.
 func TestReconcileSorted_FullMatch(t *testing.T) {
 	s3 := &sliceKeySource{entries: []reconcileEntry{e("a", 1), e("b", 2), e("c", 3)}}
 	dbIter := &sliceKeySource{entries: []reconcileEntry{e("a", 0), e("b", 0), e("c", 0)}}
@@ -291,7 +298,7 @@ func TestReconcileSorted_HandlerErrorAborts(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
-// dbCursorStream — paginated DB iterator
+// dbCursorStream  -  paginated DB iterator
 // -------------------------------------------------------------------------
 
 // fakeLister is a hand-rolled dbKeyLister that returns a slice of
@@ -305,6 +312,7 @@ type fakeLister struct {
 	errAt int
 }
 
+// ListObjectsByBackendKeyAsc lists objects by backend key asc.
 func (f *fakeLister) ListObjectsByBackendKeyAsc(_ context.Context, _, afterKey string, limit int) ([]core.ObjectLocation, error) {
 	if f.err != nil && f.calls == f.errAt {
 		f.calls++
@@ -346,7 +354,7 @@ func TestDBCursorStream_DrainsAcrossPages(t *testing.T) {
 }
 
 // TestDBCursorStream_FiltersSiblingBucket verifies sibling-bucket rows are
-// dropped — they belong to another bucket's reconcile pass.
+// dropped  -  they belong to another bucket's reconcile pass.
 func TestDBCursorStream_FiltersSiblingBucket(t *testing.T) {
 	lister := &fakeLister{
 		pages: [][]core.ObjectLocation{
@@ -379,7 +387,7 @@ func TestDBCursorStream_PropagatesError(t *testing.T) {
 	it := newDBCursorStream(lister, "be1", "vb/", nil)
 	ctx := context.Background()
 
-	// Page 1 — should succeed.
+	// Page 1  -  should succeed.
 	for i, want := range []string{"vb/a", "vb/b"} {
 		ent, ok, err := it.next(ctx)
 		if err != nil || !ok || ent.key != want {
@@ -387,7 +395,7 @@ func TestDBCursorStream_PropagatesError(t *testing.T) {
 		}
 	}
 
-	// Page 2 fetch — fakeLister returns the configured error.
+	// Page 2 fetch  -  fakeLister returns the configured error.
 	_, _, err := it.next(ctx)
 	if !errors.Is(err, want) {
 		t.Errorf("err = %v, want %v", err, want)
@@ -395,7 +403,7 @@ func TestDBCursorStream_PropagatesError(t *testing.T) {
 }
 
 // TestDBCursorStream_StopIsNoop confirms stop is callable and idempotent
-// — it has no goroutine to halt, so the contract is "does not panic and
+//  -  it has no goroutine to halt, so the contract is "does not panic and
 // has no side effect on subsequent next calls."
 func TestDBCursorStream_StopIsNoop(t *testing.T) {
 	t.Parallel()
@@ -426,6 +434,8 @@ func TestDBCursorStream_ContextCancellation(t *testing.T) {
 
 // drain returns the keys produced by an iterator until exhausted, failing
 // the test on any non-nil error.
+// drainStream drain stream.
+// drainStream drain stream.
 func drainStream(t *testing.T, it keySource) []string {
 	t.Helper()
 	var out []string
@@ -446,7 +456,7 @@ func drainStream(t *testing.T, it keySource) []string {
 // -------------------------------------------------------------------------
 
 // TestNamespaceKey_OwnBucket covers a key already namespaced to the
-// current bucket — left untouched.
+// current bucket  -  left untouched.
 func TestNamespaceKey_OwnBucket(t *testing.T) {
 	got, ok := namespaceKey("vb/foo", "vb/", []string{"other/"})
 	if !ok || got != "vb/foo" {
@@ -455,7 +465,7 @@ func TestNamespaceKey_OwnBucket(t *testing.T) {
 }
 
 // TestNamespaceKey_SiblingBucket covers a key that belongs to another
-// configured virtual bucket — dropped.
+// configured virtual bucket  -  dropped.
 func TestNamespaceKey_SiblingBucket(t *testing.T) {
 	_, ok := namespaceKey("other/foo", "vb/", []string{"other/"})
 	if ok {
@@ -464,7 +474,7 @@ func TestNamespaceKey_SiblingBucket(t *testing.T) {
 }
 
 // TestNamespaceKey_LegacyKey covers a key with no recognised prefix
-// (legacy data not yet bucket-namespaced) — adopted under bucketPrefix.
+// (legacy data not yet bucket-namespaced)  -  adopted under bucketPrefix.
 func TestNamespaceKey_LegacyKey(t *testing.T) {
 	got, ok := namespaceKey("foo/bar", "vb/", []string{"other/"})
 	if !ok || got != "vb/foo/bar" {
@@ -493,7 +503,7 @@ func TestSiblingPrefixes_NoMatch(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
-// s3KeyStream — goroutine-backed iterator over the S3 page callback
+// s3KeyStream  -  goroutine-backed iterator over the S3 page callback
 // -------------------------------------------------------------------------
 
 // fakeLister implements objectLister by feeding the supplied pages into
@@ -503,6 +513,7 @@ type fakeLister2 struct {
 	err   error
 }
 
+// ListObjects lists objects.
 func (f *fakeLister2) ListObjects(_ context.Context, _ string, fn func([]backend.ListedObject) error) error {
 	for _, p := range f.pages {
 		if err := fn(p); err != nil {
@@ -577,7 +588,7 @@ func TestS3KeyStream_StopUnblocksGoroutine(t *testing.T) {
 // TestS3KeyStream_ContextCancelTerminates verifies that a context cancel
 // while next is blocked propagates as an error.
 func TestS3KeyStream_ContextCancelTerminates(t *testing.T) {
-	// fakeLister2 with no pages — the channel will close cleanly, so we
+	// fakeLister2 with no pages  -  the channel will close cleanly, so we
 	// exercise the ctx.Done branch by using a no-op lister that never
 	// publishes anything and a cancelled ctx.
 	ctx, cancel := context.WithCancel(context.Background())
@@ -613,7 +624,7 @@ func TestImportHandler_CountsCreatedNotSkipped(t *testing.T) {
 }
 
 // TestImportHandler_SwallowsErrorButContinues verifies an import failure
-// is logged but does not abort the merge — the merge would otherwise stop
+// is logged but does not abort the merge  -  the merge would otherwise stop
 // on the first transient row failure.
 func TestImportHandler_SwallowsErrorButContinues(t *testing.T) {
 	res := &reconcileResult{}
@@ -657,7 +668,7 @@ func TestDeleteHandler_CountsAndContinues(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
-// ReconcileBackend — manager-level happy and error paths
+// ReconcileBackend  -  manager-level happy and error paths
 // -------------------------------------------------------------------------
 
 // listingMockBackend satisfies both backend.ObjectBackend (via the embedded
@@ -784,6 +795,9 @@ func TestReconcileBackend_PropagatesS3ListingError(t *testing.T) {
 // String-slice equality helpers
 // -------------------------------------------------------------------------
 
+// keysOf projects a []reconcileEntry into its keys slice so the test
+// can compare against the expected ordering with equalStrings without
+// exposing the entry struct fields the comparison does not care about.
 func keysOf(es []reconcileEntry) []string {
 	out := make([]string, len(es))
 	for i, e := range es {
@@ -792,6 +806,9 @@ func keysOf(es []reconcileEntry) []string {
 	return out
 }
 
+// equalStrings is a tiny equality helper used so the assertion sites
+// below stay readable. reflect.DeepEqual would also work; this lets the
+// failure messages cite the exact diverging position cheaply.
 func equalStrings(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

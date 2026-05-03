@@ -1,3 +1,16 @@
+# -------------------------------------------------------------------------------
+# Documentation Site Container
+#
+# Author: Alex Freidah
+#
+# Multi-stage build that produces the static documentation site.
+# Stage 1 (godoc): runs gomarkdoc to render Go API references into Hugo
+# content. Stage 2 (hugo): copies the rendered markdown plus the rest of
+# web/content/ and runs Hugo to produce the final static site. Stage 3
+# serves the site via nginx so the same image works as both a build
+# artifact and a deployable container.
+# -------------------------------------------------------------------------------
+
 FROM --platform=$BUILDPLATFORM golang:1.26.2 AS godoc
 WORKDIR /src
 COPY go.mod go.sum ./

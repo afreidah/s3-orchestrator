@@ -2,6 +2,15 @@
 // Encryption Helper Tests
 //
 // Author: Alex Freidah
+//
+// Verifies the proxy-side adapters that bridge BackendManager to the
+// chunked encryption package: the on-write wrap of the upload reader,
+// the on-read unwrap and ciphertext range plumbing, and the metadata
+// projection that records encrypted, encryption_key, key_id, and
+// plaintext_size into object_locations. These adapters are the seam
+// where plaintext sizes and ciphertext ranges have to stay perfectly
+// aligned, so the tests are exhaustive across encrypted/unencrypted
+// branches.
 // -------------------------------------------------------------------------------
 
 package proxy
@@ -30,6 +39,10 @@ type countingKeyProvider struct {
 	wrapErr error
 }
 
+// WrapDEK delegates to the wrapped provider but optionally returns
+// wrapErr without incrementing the call counter so the test can
+// simulate a Vault transit failure without losing visibility into
+// the cache hit/miss accounting.
 func (c *countingKeyProvider) WrapDEK(ctx context.Context, dek []byte) ([]byte, string, error) {
 	if c.wrapErr != nil {
 		return nil, "", c.wrapErr
@@ -38,10 +51,14 @@ func (c *countingKeyProvider) WrapDEK(ctx context.Context, dek []byte) ([]byte, 
 	return c.inner.WrapDEK(ctx, dek)
 }
 
+// UnwrapDEK delegates to the wrapped provider; the test does not
+// inject failures here because the cache covers the wrap path only.
 func (c *countingKeyProvider) UnwrapDEK(ctx context.Context, wrapped []byte, keyID string) ([]byte, error) {
 	return c.inner.UnwrapDEK(ctx, wrapped, keyID)
 }
 
+// KeyID returns the inner provider's KeyID so the cache key the
+// encryptor builds remains stable across test calls.
 func (c *countingKeyProvider) KeyID() string { return c.inner.KeyID() }
 
 // newCountingEncryptor returns an Encryptor backed by a counting key
@@ -60,6 +77,7 @@ func newCountingEncryptor(t *testing.T) (*encryption.Encryptor, *countingKeyProv
 	return enc, cp
 }
 
+// newTestEncryptor constructs a new test encryptor.
 func newTestEncryptor(t *testing.T) *encryption.Encryptor {
 	t.Helper()
 	p, err := encryption.NewConfigKeyProvider("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "test-0")
@@ -73,6 +91,8 @@ func newTestEncryptor(t *testing.T) *encryption.Encryptor {
 	return enc
 }
 
+// TestEncryptBody_Success verifies the encrypt body success contract.
+// Asserts that encryptBody:.
 func TestEncryptBody_Success(t *testing.T) {
 	t.Parallel()
 	enc := newTestEncryptor(t)
@@ -114,6 +134,8 @@ func TestEncryptBody_Success(t *testing.T) {
 	}
 }
 
+// TestDecryptResponse_FullRead verifies the decrypt response full read contract.
+// Asserts that encrypt:.
 func TestDecryptResponse_FullRead(t *testing.T) {
 	t.Parallel()
 	enc := newTestEncryptor(t)
@@ -158,6 +180,8 @@ func TestDecryptResponse_FullRead(t *testing.T) {
 	}
 }
 
+// TestEncryptBody_ThenDecryptResponse_RoundTrip verifies the encrypt body then decrypt response round trip contract.
+// Asserts that encryptBody:.
 func TestEncryptBody_ThenDecryptResponse_RoundTrip(t *testing.T) {
 	t.Parallel()
 	enc := newTestEncryptor(t)
@@ -199,6 +223,8 @@ func TestEncryptBody_ThenDecryptResponse_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestDecryptResponse_RangeRead verifies the decrypt response range read contract.
+// Asserts that encrypt:.
 func TestDecryptResponse_RangeRead(t *testing.T) {
 	t.Parallel()
 	enc := newTestEncryptor(t)
@@ -264,6 +290,8 @@ func TestDecryptResponse_RangeRead(t *testing.T) {
 	}
 }
 
+// TestDecryptResponse_RangeDecryptError verifies the decrypt response range decrypt error contract.
+// Asserts that encrypt:.
 func TestDecryptResponse_RangeDecryptError(t *testing.T) {
 	t.Parallel()
 	enc := newTestEncryptor(t)
@@ -295,11 +323,13 @@ func TestDecryptResponse_RangeDecryptError(t *testing.T) {
 	}
 }
 
+// TestDecryptResponse_DecryptError verifies the decrypt response decrypt error contract.
+// Asserts that encrypt:.
 func TestDecryptResponse_DecryptError(t *testing.T) {
 	t.Parallel()
 	enc := newTestEncryptor(t)
 
-	// Valid key data but garbage ciphertext — decrypt should fail
+	// Valid key data but garbage ciphertext  -  decrypt should fail
 	encResult, err := enc.Encrypt(context.Background(), bytes.NewReader([]byte("x")), 1)
 	if err != nil {
 		t.Fatalf("encrypt: %v", err)
@@ -330,6 +360,8 @@ func TestDecryptResponse_DecryptError(t *testing.T) {
 // encryptForPut
 // -------------------------------------------------------------------------
 
+// TestEncryptForPut_FirstCallPopulatesStateAndMeta verifies the encrypt for put first call populates state and meta contract.
+// Asserts that encryptForPut:.
 func TestEncryptForPut_FirstCallPopulatesStateAndMeta(t *testing.T) {
 	t.Parallel()
 	enc, _ := newCountingEncryptor(t)
@@ -363,10 +395,12 @@ func TestEncryptForPut_FirstCallPopulatesStateAndMeta(t *testing.T) {
 	}
 }
 
+// TestEncryptForPut_RetryReusesCachedDEK verifies the encrypt for put retry reuses cached dek contract.
+// Asserts that call :.
 func TestEncryptForPut_RetryReusesCachedDEK(t *testing.T) {
 	t.Parallel()
 	enc, cp := newCountingEncryptor(t)
-	plain := []byte("retry payload — wraps once across N calls")
+	plain := []byte("retry payload  -  wraps once across N calls")
 	var state putEncryptState
 
 	const calls = 3
@@ -384,6 +418,8 @@ func TestEncryptForPut_RetryReusesCachedDEK(t *testing.T) {
 	}
 }
 
+// TestEncryptForPut_RetryUsesFreshNonce verifies the encrypt for put retry uses fresh nonce contract.
+// Asserts that first call:.
 func TestEncryptForPut_RetryUsesFreshNonce(t *testing.T) {
 	t.Parallel()
 	enc, _ := newCountingEncryptor(t)
@@ -412,6 +448,8 @@ func TestEncryptForPut_RetryUsesFreshNonce(t *testing.T) {
 	}
 }
 
+// TestEncryptForPut_RoundTripDecrypts verifies the encrypt for put round trip decrypts contract.
+// Asserts that encryptForPut:.
 func TestEncryptForPut_RoundTripDecrypts(t *testing.T) {
 	t.Parallel()
 	enc, _ := newCountingEncryptor(t)
@@ -444,6 +482,8 @@ func TestEncryptForPut_RoundTripDecrypts(t *testing.T) {
 	}
 }
 
+// TestEncryptForPut_WrapErrorLeavesStateEmpty verifies the encrypt for put wrap error leaves state empty contract.
+// Asserts that error chain does not contain provider error:.
 func TestEncryptForPut_WrapErrorLeavesStateEmpty(t *testing.T) {
 	t.Parallel()
 	enc, cp := newCountingEncryptor(t)
@@ -464,6 +504,7 @@ func TestEncryptForPut_WrapErrorLeavesStateEmpty(t *testing.T) {
 	}
 }
 
+// TestDecryptResponse_BadKeyData verifies the decrypt response bad key data path by exercising io.NopCloser, bytes.NewReader, context.Background.
 func TestDecryptResponse_BadKeyData(t *testing.T) {
 	t.Parallel()
 	enc := newTestEncryptor(t)

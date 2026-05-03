@@ -134,7 +134,7 @@ func TestPending_DeleteRemovesRow(t *testing.T) {
 }
 
 // TestPending_DeleteUnknownIntentIsNoOp verifies deleting a non-existent
-// intent does not error — important for reaper retries.
+// intent does not error  -  important for reaper retries.
 func TestPending_DeleteUnknownIntentIsNoOp(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -159,7 +159,7 @@ func TestPending_GetStaleRespectsCutoff(t *testing.T) {
 		t.Fatalf("InsertPending: %v", err)
 	}
 
-	// Cutoff well in the past — the just-inserted row must be excluded.
+	// Cutoff well in the past  -  the just-inserted row must be excluded.
 	stale, err := s.GetStalePending(ctx, time.Now().Add(-time.Hour), 10)
 	if err != nil {
 		t.Fatalf("GetStalePending: %v", err)
@@ -222,7 +222,7 @@ func TestPending_DeleteByBackend(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
-// PromotePending — three resolution branches
+// PromotePending  -  three resolution branches
 // -------------------------------------------------------------------------
 
 // TestPromotePending_Committed verifies promotion creates the
@@ -303,7 +303,7 @@ func TestPromotePending_Superseded(t *testing.T) {
 	// strictly later created_at.
 	time.Sleep(10 * time.Millisecond)
 
-	// Now record a successful object_locations row for the same key —
+	// Now record a successful object_locations row for the same key  - 
 	// simulates a retry that committed normally after the original PUT's
 	// metadata commit failed.
 	if _, err := s.RecordObject(ctx, "bucket/k1", "backend-a", 200, nil); err != nil {
@@ -330,7 +330,7 @@ func TestPromotePending_Superseded(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
-// intentSuperseded — pure function feeding the timestamp drop path
+// intentSuperseded  -  pure function feeding the timestamp drop path
 // -------------------------------------------------------------------------
 
 // Tests for intentSuperseded and the pending row existence probe live in

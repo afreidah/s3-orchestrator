@@ -23,6 +23,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
+// TestParseSigV4Fields verifies the parse sig v4 fields contract.
+// Asserts that Credential =.
 func TestParseSigV4Fields(t *testing.T) {
 	t.Parallel()
 	input := "Credential=AKID/20260215/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature=abcdef1234567890"
@@ -39,6 +41,8 @@ func TestParseSigV4Fields(t *testing.T) {
 	}
 }
 
+// TestBuildCanonicalQueryString verifies the build canonical query string contract.
+// Asserts that buildCanonicalQueryString() = , want.
 func TestBuildCanonicalQueryString(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -80,6 +84,8 @@ func TestBuildCanonicalQueryString(t *testing.T) {
 	}
 }
 
+// TestDeriveSigningKey verifies the derive signing key contract.
+// Asserts that signing key length = , want 32.
 func TestDeriveSigningKey(t *testing.T) {
 	t.Parallel()
 	// AWS test vector from SigV4 documentation
@@ -89,6 +95,8 @@ func TestDeriveSigningKey(t *testing.T) {
 	}
 }
 
+// TestHmacSHA256 verifies the hmac sha256 contract.
+// Asserts that hmacSHA256 result length = , want 32.
 func TestHmacSHA256(t *testing.T) {
 	t.Parallel()
 	result := hmacSHA256([]byte("key"), []byte("data"))
@@ -97,6 +105,8 @@ func TestHmacSHA256(t *testing.T) {
 	}
 }
 
+// TestHashSHA256 verifies the hash sha256 contract.
+// Asserts that hashSHA256('') = , want.
 func TestHashSHA256(t *testing.T) {
 	t.Parallel()
 	// SHA256 of empty string
@@ -119,7 +129,7 @@ func TestHashSHA256(t *testing.T) {
 // can blow the assertion. Run it with at least a few iterations of
 // -count to confirm the median is stable. A real attacker has many more
 // samples than we use here, so the bar for "indistinguishable" is
-// tighter than the bar for "doesn't flake under CI" — the safety
+// tighter than the bar for "doesn't flake under CI"  -  the safety
 // argument lives in the code change, not in the timing assertion.
 func TestSigV4Timing_KnownVsUnknownEquivalent(t *testing.T) {
 	t.Parallel()
@@ -255,6 +265,8 @@ func TestDeriveSigningKey_Deterministic(t *testing.T) {
 	}
 }
 
+// TestSigV4Encode verifies the sig v4 encode contract.
+// Asserts that sigV4Encode() = , want.
 func TestSigV4Encode(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -273,6 +285,8 @@ func TestSigV4Encode(t *testing.T) {
 	}
 }
 
+// TestEncodePath verifies the encode path contract.
+// Asserts that encodePath() = , want.
 func TestEncodePath(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -295,6 +309,7 @@ func TestEncodePath(t *testing.T) {
 	}
 }
 
+// TestVerifySigV4_StaleTimestamp verifies the verify sig v4 stale timestamp path by exercising time.Now, http.NewRequestWithContext, context.Background.
 func TestVerifySigV4_StaleTimestamp(t *testing.T) {
 	t.Parallel()
 	// A request signed with a timestamp 30 minutes in the past should be rejected
@@ -327,6 +342,7 @@ func TestVerifySigV4_StaleTimestamp(t *testing.T) {
 	}
 }
 
+// TestVerifySigV4_HostHeaderMustBeSigned verifies the verify sig v4 host header must be signed path by exercising time.Now, http.NewRequestWithContext, context.Background.
 func TestVerifySigV4_HostHeaderMustBeSigned(t *testing.T) {
 	t.Parallel()
 	secret := "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY" //nolint:gosec // G101: test credential
@@ -358,6 +374,8 @@ func TestVerifySigV4_HostHeaderMustBeSigned(t *testing.T) {
 	}
 }
 
+// TestBucketRegistry_TokenAuthIteratesAllTokens verifies the bucket registry token auth iterates all tokens contract.
+// Asserts that token should succeed:.
 func TestBucketRegistry_TokenAuthIteratesAllTokens(t *testing.T) {
 	t.Parallel()
 	// Verify that token auth works correctly with multiple tokens of varying lengths
@@ -444,6 +462,8 @@ func signRequest(t *testing.T, method, path, accessKey, secret string) *http.Req
 	return r
 }
 
+// TestBucketRegistry_SigV4ResolvesCorrectBucket verifies the bucket registry sig v4 resolves correct bucket contract.
+// Asserts that auth should succeed:.
 func TestBucketRegistry_SigV4ResolvesCorrectBucket(t *testing.T) {
 	t.Parallel()
 	buckets := []config.BucketConfig{
@@ -478,6 +498,8 @@ func TestBucketRegistry_SigV4ResolvesCorrectBucket(t *testing.T) {
 	}
 }
 
+// TestBucketRegistry_TokenResolvesCorrectBucket verifies the bucket registry token resolves correct bucket contract.
+// Asserts that token auth should succeed:.
 func TestBucketRegistry_TokenResolvesCorrectBucket(t *testing.T) {
 	t.Parallel()
 	buckets := []config.BucketConfig{
@@ -500,6 +522,7 @@ func TestBucketRegistry_TokenResolvesCorrectBucket(t *testing.T) {
 	}
 }
 
+// TestBucketRegistry_UnknownAccessKeyDenied verifies the bucket registry unknown access key denied path by exercising br.AuthenticateAndResolveBucket.
 func TestBucketRegistry_UnknownAccessKeyDenied(t *testing.T) {
 	t.Parallel()
 	buckets := []config.BucketConfig{
@@ -517,6 +540,7 @@ func TestBucketRegistry_UnknownAccessKeyDenied(t *testing.T) {
 	}
 }
 
+// TestBucketRegistry_InvalidTokenDenied verifies the bucket registry invalid token denied path by exercising http.NewRequestWithContext, context.Background, br.AuthenticateAndResolveBucket.
 func TestBucketRegistry_InvalidTokenDenied(t *testing.T) {
 	t.Parallel()
 	buckets := []config.BucketConfig{
@@ -536,6 +560,7 @@ func TestBucketRegistry_InvalidTokenDenied(t *testing.T) {
 	}
 }
 
+// TestBucketRegistry_NoCredentialsDenied verifies the bucket registry no credentials denied path by exercising http.NewRequestWithContext, context.Background, br.AuthenticateAndResolveBucket.
 func TestBucketRegistry_NoCredentialsDenied(t *testing.T) {
 	t.Parallel()
 	buckets := []config.BucketConfig{
@@ -553,6 +578,8 @@ func TestBucketRegistry_NoCredentialsDenied(t *testing.T) {
 	}
 }
 
+// TestBucketRegistry_MultipleCredsOnSameBucket verifies the bucket registry multiple creds on same bucket contract.
+// Asserts that writer auth should succeed:.
 func TestBucketRegistry_MultipleCredsOnSameBucket(t *testing.T) {
 	t.Parallel()
 	buckets := []config.BucketConfig{
@@ -582,6 +609,7 @@ func TestBucketRegistry_MultipleCredsOnSameBucket(t *testing.T) {
 	}
 }
 
+// TestBucketRegistry_WrongSecretDenied verifies the bucket registry wrong secret denied path by exercising br.AuthenticateAndResolveBucket.
 func TestBucketRegistry_WrongSecretDenied(t *testing.T) {
 	t.Parallel()
 	buckets := []config.BucketConfig{
@@ -592,7 +620,7 @@ func TestBucketRegistry_WrongSecretDenied(t *testing.T) {
 
 	br := NewBucketRegistry(buckets)
 
-	// Sign with wrong secret — access key is known but signature won't match
+	// Sign with wrong secret  -  access key is known but signature won't match
 	r := signRequest(t, "GET", "/mybucket/key", "KEY", "wrong-secret")
 	_, err := br.AuthenticateAndResolveBucket(r)
 	if err == nil {
@@ -600,6 +628,8 @@ func TestBucketRegistry_WrongSecretDenied(t *testing.T) {
 	}
 }
 
+// TestBucketRegistry_MaxMultipartUploads verifies the bucket registry max multipart uploads contract.
+// Asserts that limited bucket limit = , want 50.
 func TestBucketRegistry_MaxMultipartUploads(t *testing.T) {
 	t.Parallel()
 	buckets := []config.BucketConfig{
@@ -714,7 +744,7 @@ func TestPresigned_ExpiredURL(t *testing.T) {
 	q.Set("X-Amz-Algorithm", "AWS4-HMAC-SHA256")
 	q.Set("X-Amz-Credential", accessKey+"/"+credentialScope)
 	q.Set("X-Amz-Date", dateStamp)
-	q.Set("X-Amz-Expires", "3600") // 1 hour — expired 1 hour ago
+	q.Set("X-Amz-Expires", "3600") // 1 hour  -  expired 1 hour ago
 	q.Set("X-Amz-SignedHeaders", "host")
 	r.URL.RawQuery = q.Encode()
 
@@ -779,7 +809,7 @@ func TestPresigned_TamperedSignature(t *testing.T) {
 	t.Parallel()
 	r := presignRequest(t, "GET", "/bucket/key", "AKID", "SECRET", 300)
 
-	// Tamper with the signature — replace entirely with zeros
+	// Tamper with the signature  -  replace entirely with zeros
 	q := r.URL.Query()
 	sig := q.Get("X-Amz-Signature")
 	q.Set("X-Amz-Signature", strings.Repeat("0", len(sig)))
@@ -980,6 +1010,8 @@ func TestPresigned_CredentialDateMismatch(t *testing.T) {
 	}
 }
 
+// TestCollapseWhitespace verifies the collapse whitespace contract.
+// Asserts that collapseWhitespace() = , want.
 func TestCollapseWhitespace(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -1004,6 +1036,8 @@ func TestCollapseWhitespace(t *testing.T) {
 	}
 }
 
+// TestStripWhitespace verifies the strip whitespace contract.
+// Asserts that stripWhitespace() = , want.
 func TestStripWhitespace(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

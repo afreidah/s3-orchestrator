@@ -2,6 +2,15 @@
 // Advisory Lock Operations
 //
 // Author: Alex Freidah
+//
+// Implements WithAdvisoryLock against pg_try_advisory_lock /
+// pg_advisory_unlock so the orchestrator's background workers
+// (rebalancer, replicator, cleanup queue, lifecycle, usage flush) can
+// elect a single leader across multiple instances. Each worker uses a
+// stable lock id; if the try-lock fails, the worker skips this tick
+// and lets the leader run instead. Connection-affinity rules of pgx
+// require the lock acquire/release to run on the same connection,
+// which is what this wrapper guarantees.
 // -------------------------------------------------------------------------------
 
 package postgres

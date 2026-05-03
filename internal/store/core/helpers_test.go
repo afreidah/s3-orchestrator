@@ -61,7 +61,9 @@ func TestObjectFromEnc_EncryptedFields(t *testing.T) {
 
 // TestObjectFromEnc_HashOnly verifies that an integrity-only PUT
 // (encryption disabled, content hash present) still copies the hash
-// across without setting any encryption fields.
+// across is a no-op stub on quotaTxStub so the type satisfies the
+// full TxAdapter interface; only the quota-touching methods carry
+// real test fixtures.
 func TestObjectFromEnc_HashOnly(t *testing.T) {
 	t.Parallel()
 	enc := &EncryptionMeta{ContentHash: "abc123"}
@@ -148,7 +150,9 @@ func TestDisplacedFromExisting_OtherBackends(t *testing.T) {
 // -------------------------------------------------------------------------
 
 // TestGroupByKey_EmptySlice verifies the empty-slice case returns an
-// empty map.
+// empty is a no-op stub on quotaTxStub so the type satisfies the
+// full TxAdapter interface; only the quota-touching methods carry
+// real test fixtures.
 func TestGroupByKey_EmptySlice(t *testing.T) {
 	t.Parallel()
 	got := GroupByKey(nil)
@@ -157,7 +161,9 @@ func TestGroupByKey_EmptySlice(t *testing.T) {
 	}
 }
 
-// TestGroupByKey_SingleKeySingleCopy verifies the trivial case.
+// TestGroupByKey_SingleKeySingleCopy is a no-op stub on quotaTxStub so the type satisfies the
+// full TxAdapter interface; only the quota-touching methods carry
+// real test fixtures.
 func TestGroupByKey_SingleKeySingleCopy(t *testing.T) {
 	t.Parallel()
 	got := GroupByKey([]ObjectLocation{{ObjectKey: "k", BackendName: "b1"}})
@@ -203,11 +209,17 @@ type quotaTxStub struct {
 	failErr error
 }
 
+// quotaOp is a no-op stub on quotaTxStub so the type satisfies the
+// full TxAdapter interface; only the quota-touching methods carry
+// real test fixtures.
 type quotaOp struct {
 	backend string
 	delta   int64 // positive=increment, negative=decrement (mirrors caller intent)
 }
 
+// IncrementBackendQuota is a no-op stub on quotaTxStub so the type satisfies the
+// full TxAdapter interface; only the quota-touching methods carry
+// real test fixtures.
 func (t *quotaTxStub) IncrementBackendQuota(_ context.Context, backend string, delta int64) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -218,6 +230,9 @@ func (t *quotaTxStub) IncrementBackendQuota(_ context.Context, backend string, d
 	return nil
 }
 
+// DecrementBackendQuota is a no-op stub on quotaTxStub so the type satisfies the
+// full TxAdapter interface; only the quota-touching methods carry
+// real test fixtures.
 func (t *quotaTxStub) DecrementBackendQuota(_ context.Context, backend string, delta int64) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -230,46 +245,109 @@ func (t *quotaTxStub) DecrementBackendQuota(_ context.Context, backend string, d
 
 // The remaining TxAdapter methods are unused by applyQuotaDeltas; stubs
 // return zero values so the type satisfies the full interface.
+// AcquireKeyLock is a no-op stub on quotaTxStub so the type satisfies the
+// full TxAdapter interface; only the quota-touching methods carry
+// real test fixtures.
+// AcquireKeyLock is a no-op stub on quotaTxStub so the type satisfies the
+// full TxAdapter interface; only the quota-touching methods carry
+// real test fixtures.
 func (*quotaTxStub) AcquireKeyLock(context.Context, string) error { return nil }
 
+// ClaimPending is a no-op stub on quotaTxStub so the type satisfies the
+// full TxAdapter interface; only the quota-touching methods carry
+// real test fixtures.
 func (*quotaTxStub) ClaimPending(context.Context, string) (bool, error) { return false, nil }
+// InsertPending is a no-op stub on quotaTxStub so the type satisfies the
+// full TxAdapter interface; only the quota-touching methods carry
+// real test fixtures.
 func (*quotaTxStub) InsertPending(context.Context, *PendingObject) error { return nil }
+// DeletePending is a no-op stub on quotaTxStub so the type satisfies the
+// full TxAdapter interface; only the quota-touching methods carry
+// real test fixtures.
 func (*quotaTxStub) DeletePending(context.Context, string) error         { return nil }
+// DeletePendingByBackend is a no-op stub on quotaTxStub so the type satisfies the
+// full TxAdapter interface; only the quota-touching methods carry
+// real test fixtures.
 func (*quotaTxStub) DeletePendingByBackend(context.Context, string) error {
 	return nil
 }
 
+// GetExistingCopiesForUpdate is a no-op stub on quotaTxStub so the type satisfies the
+// full TxAdapter interface; only the quota-touching methods carry
+// real test fixtures.
 func (*quotaTxStub) GetExistingCopiesForUpdate(context.Context, string) ([]ExistingCopy, error) {
 	return nil, nil
 }
+// InsertObjectLocation is a no-op stub on quotaTxStub so the type satisfies the
+// full TxAdapter interface; only the quota-touching methods carry
+// real test fixtures.
 func (*quotaTxStub) InsertObjectLocation(context.Context, *ObjectLocation) error { return nil }
+// DeleteObjectCopies is a no-op stub on quotaTxStub so the type satisfies the
+// full TxAdapter interface; only the quota-touching methods carry
+// real test fixtures.
 func (*quotaTxStub) DeleteObjectCopies(context.Context, string) error            { return nil }
+// GetCopiesForKeysForUpdate is a no-op stub on quotaTxStub so the type satisfies the
+// full TxAdapter interface; only the quota-touching methods carry
+// real test fixtures.
 func (*quotaTxStub) GetCopiesForKeysForUpdate(context.Context, []string) ([]KeyedExistingCopy, error) {
 	return nil, nil
 }
+// DeleteObjectsByKeys is a no-op stub on quotaTxStub so the type satisfies the
+// full TxAdapter interface; only the quota-touching methods carry
+// real test fixtures.
 func (*quotaTxStub) DeleteObjectsByKeys(context.Context, []string) error { return nil }
+// CheckObjectExistsOnBackend is a no-op stub on quotaTxStub so the type satisfies the
+// full TxAdapter interface; only the quota-touching methods carry
+// real test fixtures.
 func (*quotaTxStub) CheckObjectExistsOnBackend(context.Context, string, string) (bool, error) {
 	return false, nil
 }
+// LockObjectOnBackend is a no-op stub on quotaTxStub so the type satisfies the
+// full TxAdapter interface; only the quota-touching methods carry
+// real test fixtures.
 func (*quotaTxStub) LockObjectOnBackend(context.Context, string, string) (*ObjectLocation, bool, error) {
 	return nil, false, nil
 }
+// DeleteObjectFromBackend is a no-op stub on quotaTxStub so the type satisfies the
+// full TxAdapter interface; only the quota-touching methods carry
+// real test fixtures.
 func (*quotaTxStub) DeleteObjectFromBackend(context.Context, string, string) error { return nil }
+// InsertObjectLocationIfNotExists is a no-op stub on quotaTxStub so the type satisfies the
+// full TxAdapter interface; only the quota-touching methods carry
+// real test fixtures.
 func (*quotaTxStub) InsertObjectLocationIfNotExists(context.Context, *ObjectLocation) (bool, error) {
 	return false, nil
 }
+// InsertReplicaConditional is a no-op stub on quotaTxStub so the type satisfies the
+// full TxAdapter interface; only the quota-touching methods carry
+// real test fixtures.
 func (*quotaTxStub) InsertReplicaConditional(context.Context, string, string, string) (int64, bool, error) {
 	return 0, false, nil
 }
 
+// SumAndDeleteCleanupQueueRows is a no-op stub on quotaTxStub so the type satisfies the
+// full TxAdapter interface; only the quota-touching methods carry
+// real test fixtures.
 func (*quotaTxStub) SumAndDeleteCleanupQueueRows(context.Context, string, string) (int64, int64, error) {
 	return 0, 0, nil
 }
+// GetCleanupQueueRow is a no-op stub on quotaTxStub so the type satisfies the
+// full TxAdapter interface; only the quota-touching methods carry
+// real test fixtures.
 func (*quotaTxStub) GetCleanupQueueRow(context.Context, int64) (CleanupQueueRow, error) {
 	return CleanupQueueRow{}, nil
 }
+// InsertCleanupDLQ is a no-op stub on quotaTxStub so the type satisfies the
+// full TxAdapter interface; only the quota-touching methods carry
+// real test fixtures.
 func (*quotaTxStub) InsertCleanupDLQ(context.Context, *CleanupQueueRow) error { return nil }
+// DeleteCleanupItem is a no-op stub on quotaTxStub so the type satisfies the
+// full TxAdapter interface; only the quota-touching methods carry
+// real test fixtures.
 func (*quotaTxStub) DeleteCleanupItem(context.Context, int64) error           { return nil }
+// DecrementOrphanBytes is a no-op stub on quotaTxStub so the type satisfies the
+// full TxAdapter interface; only the quota-touching methods carry
+// real test fixtures.
 func (*quotaTxStub) DecrementOrphanBytes(context.Context, string, int64) error { return nil }
 
 // TestApplyQuotaDeltas_StableOrderAcrossInputs runs applyQuotaDeltas

@@ -253,6 +253,7 @@ func (q *Queries) IncrementQuota(ctx context.Context, arg IncrementQuotaParams) 
 }
 
 const upsertQuotaLimit = `-- name: UpsertQuotaLimit :exec
+
 INSERT INTO backend_quotas (backend_name, bytes_limit, bytes_used, updated_at)
 VALUES ($1, $2, 0, NOW())
 ON CONFLICT (backend_name) DO UPDATE SET
@@ -265,6 +266,18 @@ type UpsertQuotaLimitParams struct {
 	BytesLimit  int64
 }
 
+// -----------------------------------------------------------------------------
+// Quota Queries
+//
+// Author: Alex Freidah
+//
+// sqlc-input definitions for backend_quotas - the per-backend bytes_used,
+// bytes_limit, and orphan_bytes counters. The increment query is guarded
+// (WHERE bytes_used + delta <= bytes_limit) so an INSERT exceeding the
+// limit touches zero rows and the engine returns ErrNoSpaceAvailable. Lock
+// acquisition order across multi-row updates is enforced at the call site
+// (sorted backend_name) to avoid deadlock.
+// -----------------------------------------------------------------------------
 func (q *Queries) UpsertQuotaLimit(ctx context.Context, arg UpsertQuotaLimitParams) error {
 	_, err := q.db.Exec(ctx, upsertQuotaLimit, arg.BackendName, arg.BytesLimit)
 	return err

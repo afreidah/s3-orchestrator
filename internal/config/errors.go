@@ -4,7 +4,7 @@
 // Author: Alex Freidah
 //
 // Config validators previously returned errors as joined strings, forcing
-// tests to match on substrings. That made error messages de-facto APIs —
+// tests to match on substrings. That made error messages de-facto APIs  - 
 // a harmless reword would silently break test assertions.
 //
 // Each validator now wraps a sentinel defined below using fmt.Errorf("%w:

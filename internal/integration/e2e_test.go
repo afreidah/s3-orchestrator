@@ -1,3 +1,15 @@
+// -------------------------------------------------------------------------------
+// End-to-End Integration Tests
+//
+// Author: Alex Freidah
+//
+// Exercises full S3 lifecycles - single-object PUT/GET/DELETE/COPY,
+// multipart upload/list/complete/abort, and the canonical S3 error
+// responses - against real MinIO and PostgreSQL containers. Gated behind
+// the `integration` build tag and run in CI with testcontainers so the
+// public S3 surface stays bug-compatible with real clients.
+// -------------------------------------------------------------------------------
+
 //go:build integration
 
 package integration
@@ -20,6 +32,8 @@ import (
 // E2E LIFECYCLE TESTS
 // -------------------------------------------------------------------------
 
+// TestE2E_FullLifecycle verifies the e2 e full lifecycle contract.
+// Asserts that PutObject:.
 func TestE2E_FullLifecycle(t *testing.T) {
 	resetState(t)
 	client := newS3Client(t)
@@ -106,7 +120,7 @@ func TestE2E_FullLifecycle(t *testing.T) {
 		t.Fatalf("DeleteObject: %v", err)
 	}
 
-	// Verify deletion — GET should return NoSuchKey.
+	// Verify deletion  -  GET should return NoSuchKey.
 	_, err = client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(virtualBucket),
 		Key:    aws.String(key),
@@ -117,6 +131,8 @@ func TestE2E_FullLifecycle(t *testing.T) {
 	assertS3ErrorCode(t, err, "NoSuchKey")
 }
 
+// TestE2E_MultipartLifecycle verifies the e2 e multipart lifecycle contract.
+// Asserts that CreateMultipartUpload:.
 func TestE2E_MultipartLifecycle(t *testing.T) {
 	resetState(t)
 	client := newS3Client(t)
@@ -135,7 +151,7 @@ func TestE2E_MultipartLifecycle(t *testing.T) {
 	}
 	uploadID := *createResp.UploadId
 
-	// UploadPart — two 100-byte parts (sized to fit test backend quotas).
+	// UploadPart  -  two 100-byte parts (sized to fit test backend quotas).
 	partSize := 100
 	part1Data := bytes.Repeat([]byte("A"), partSize)
 	part2Data := bytes.Repeat([]byte("B"), partSize)
@@ -213,6 +229,9 @@ func TestE2E_MultipartLifecycle(t *testing.T) {
 	}
 }
 
+// TestE2E_ErrorResponses verifies the e2 e error responses behaviour across the supplied sub-cases:
+// "GetNonexistent", "HeadNonexistent", "DeleteNonexistent_Idempotent".
+// Each sub-case exercises one branch of the code under test.
 func TestE2E_ErrorResponses(t *testing.T) {
 	resetState(t)
 	client := newS3Client(t)
@@ -237,7 +256,7 @@ func TestE2E_ErrorResponses(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error for nonexistent key")
 		}
-		// HEAD returns 404 but no XML body — SDK returns a generic error.
+		// HEAD returns 404 but no XML body  -  SDK returns a generic error.
 		var respErr *smithyhttp.ResponseError
 		if !errors.As(err, &respErr) {
 			t.Fatalf("expected ResponseError, got %T: %v", err, err)

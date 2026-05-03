@@ -49,7 +49,8 @@ func TestStrPtr_PointerWhenNonEmpty(t *testing.T) {
 	}
 }
 
-// TestInt64Ptr_NilWhenZero verifies the helper returns nil for zero.
+// TestInt64Ptr_NilWhenZero verifies the int64 ptr nil when zero contract.
+// Asserts that expected nil for zero, got.
 func TestInt64Ptr_NilWhenZero(t *testing.T) {
 	t.Parallel()
 	if got := int64Ptr(0); got != nil {
@@ -70,7 +71,8 @@ func TestInt64Ptr_PointerWhenNonZero(t *testing.T) {
 	}
 }
 
-// TestDerefStr verifies safe dereference of a nullable string pointer.
+// TestDerefStr verifies the deref str contract.
+// Asserts that nil deref: expected empty string, got.
 func TestDerefStr(t *testing.T) {
 	t.Parallel()
 	if got := derefStr(nil); got != "" {
@@ -82,7 +84,8 @@ func TestDerefStr(t *testing.T) {
 	}
 }
 
-// TestDerefInt64 verifies safe dereference of a nullable int64 pointer.
+// TestDerefInt64 verifies the deref int64 contract.
+// Asserts that nil deref: expected 0, got.
 func TestDerefInt64(t *testing.T) {
 	t.Parallel()
 	if got := derefInt64(nil); got != 0 {

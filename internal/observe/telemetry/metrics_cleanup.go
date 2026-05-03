@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------
-// Metrics — Cleanup Queue, Lifecycle, Drain
+// Metrics  -  Cleanup Queue, Lifecycle, Drain
 //
 // Author: Alex Freidah
 //
@@ -13,6 +13,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
+// CleanupQueueEnqueuedTotal and related package-level variables used by this package.
 var (
 	// --- Cleanup queue metrics ---
 

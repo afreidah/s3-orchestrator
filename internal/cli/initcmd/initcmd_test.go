@@ -313,6 +313,8 @@ func TestRunInteractive_UserAborts(t *testing.T) {
 	}
 }
 
+// TestGenerateConfig_SQLite verifies the generate config sqlite contract.
+// Asserts that GenerateConfig:.
 func TestGenerateConfig_SQLite(t *testing.T) {
 	params := Params{
 		Driver: "sqlite",
@@ -372,6 +374,8 @@ func TestGenerateConfig_SQLite(t *testing.T) {
 	}
 }
 
+// TestGenerateConfig_Postgres verifies the generate config postgres contract.
+// Asserts that GenerateConfig:.
 func TestGenerateConfig_Postgres(t *testing.T) {
 	params := Params{
 		Driver:     "postgres",

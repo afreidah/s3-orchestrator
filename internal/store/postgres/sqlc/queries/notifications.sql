@@ -1,3 +1,14 @@
+-- -----------------------------------------------------------------------------
+-- Notification Outbox Queries
+--
+-- Author: Alex Freidah
+--
+-- sqlc-input definitions for notification_outbox. Covers the durable webhook
+-- delivery flow: synchronous insert at every event site, fetch-pending with
+-- backoff-aware scheduling, complete on successful delivery, and retry with
+-- exponential backoff on failure.
+-- -----------------------------------------------------------------------------
+
 -- name: InsertNotification :exec
 INSERT INTO notification_outbox (event_type, payload, endpoint_url)
 VALUES ($1, $2, $3);

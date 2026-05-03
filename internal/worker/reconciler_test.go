@@ -1,3 +1,16 @@
+// -------------------------------------------------------------------------------
+// Reconciler Tests
+//
+// Author: Alex Freidah
+//
+// Verifies the reconciler scans every configured backend, imports
+// untracked objects into the metadata store, sweeps stale rows whose
+// keys the backend no longer holds, and continues past per-backend
+// errors instead of aborting the cycle. The continue-on-error path is
+// load-bearing: a single down backend must not stall reconciliation
+// for the rest of the fleet.
+// -------------------------------------------------------------------------------
+
 package worker
 
 import (
@@ -7,6 +20,7 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
+// TestReconciler_NoBuckets verifies the reconciler no buckets path by exercising gomock.NewController, r.Run, context.Background.
 func TestReconciler_NoBuckets(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -15,6 +29,7 @@ func TestReconciler_NoBuckets(t *testing.T) {
 	r.Run(context.Background()) // should not panic
 }
 
+// TestReconciler_SyncsAllBackends verifies the reconciler syncs all backends path by exercising gomock.NewController, syncer.EXPECT, gomock.Any.
 func TestReconciler_SyncsAllBackends(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -29,6 +44,7 @@ func TestReconciler_SyncsAllBackends(t *testing.T) {
 	r.Run(context.Background())
 }
 
+// TestReconciler_ContinuesOnBackendError verifies the reconciler continues on backend error path by exercising gomock.NewController, syncer.EXPECT, gomock.Any.
 func TestReconciler_ContinuesOnBackendError(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -43,6 +59,8 @@ func TestReconciler_ContinuesOnBackendError(t *testing.T) {
 	r.Run(context.Background()) // should not panic
 }
 
+// TestReconcile_AllBackends verifies the reconcile all backends contract.
+// Asserts that unexpected error:.
 func TestReconcile_AllBackends(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -71,6 +89,8 @@ func TestReconcile_AllBackends(t *testing.T) {
 	}
 }
 
+// TestReconcile_SingleBackend verifies the reconcile single backend contract.
+// Asserts that unexpected error:.
 func TestReconcile_SingleBackend(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -93,6 +113,7 @@ func TestReconcile_SingleBackend(t *testing.T) {
 	}
 }
 
+// TestReconcile_NoBuckets verifies the reconcile no buckets path by exercising gomock.NewController, r.Reconcile, context.Background.
 func TestReconcile_NoBuckets(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)

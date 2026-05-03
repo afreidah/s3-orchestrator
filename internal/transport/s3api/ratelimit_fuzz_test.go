@@ -17,6 +17,7 @@ import (
 	"testing"
 )
 
+// FuzzExtractClientIP fuzzes the extract client ip path by exercising net.ParseCIDR, http.NewRequestWithContext, context.Background.
 func FuzzExtractClientIP(f *testing.F) {
 	f.Add("192.168.1.1:8080", "10.0.0.1, 172.16.0.1, 192.168.1.1")
 	f.Add("[::1]:443", "2001:db8::1, ::ffff:10.0.0.1")

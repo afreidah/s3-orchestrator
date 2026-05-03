@@ -22,9 +22,14 @@ func alwaysError(err error) bool { return err != nil }
 // neverError is an error filter that never treats errors as failures.
 func neverError(_ error) bool { return false }
 
+// errTest is the non-DB sentinel passed through in tests where
+// the call result must NOT trip the breaker.
 var errTest = errors.New("test error")
+// errSentinel is the DB-typed sentinel passed through in tests
+// where the call result must trip the breaker.
 var errSentinel = errors.New("circuit open")
 
+// newTestBreaker constructs a new test breaker.
 func newTestBreaker(threshold int, timeout time.Duration) *CircuitBreaker {
 	return NewCircuitBreaker("test", threshold, timeout, alwaysError, errSentinel)
 }
@@ -33,6 +38,8 @@ func newTestBreaker(threshold int, timeout time.Duration) *CircuitBreaker {
 // State transitions
 // -------------------------------------------------------------------------
 
+// TestCB_StartsHealthy verifies the cb starts healthy contract.
+// Asserts that expected closed, got.
 func TestCB_StartsHealthy(t *testing.T) {
 	t.Parallel()
 	cb := newTestBreaker(3, time.Minute)
@@ -44,6 +51,8 @@ func TestCB_StartsHealthy(t *testing.T) {
 	}
 }
 
+// TestCB_OpensAfterThreshold verifies the cb opens after threshold contract.
+// Asserts that call : should return raw error below threshold.
 func TestCB_OpensAfterThreshold(t *testing.T) {
 	t.Parallel()
 	cb := newTestBreaker(3, time.Minute)
@@ -68,6 +77,8 @@ func TestCB_OpensAfterThreshold(t *testing.T) {
 	}
 }
 
+// TestCB_OpenRejectsCalls verifies the cb open rejects calls contract.
+// Asserts that expected sentinel, got.
 func TestCB_OpenRejectsCalls(t *testing.T) {
 	t.Parallel()
 	cb := newTestBreaker(1, time.Minute)
@@ -78,6 +89,8 @@ func TestCB_OpenRejectsCalls(t *testing.T) {
 	}
 }
 
+// TestCB_HalfOpenAfterTimeout verifies the cb half open after timeout contract.
+// Asserts that probe should be allowed:.
 func TestCB_HalfOpenAfterTimeout(t *testing.T) {
 	t.Parallel()
 	cb := newTestBreaker(1, 10*time.Millisecond)
@@ -93,6 +106,7 @@ func TestCB_HalfOpenAfterTimeout(t *testing.T) {
 	}
 }
 
+// TestCB_HalfOpenSuccess_Closes verifies the cb half open success closes path by exercising cb.PostCheck, time.Sleep, cb.PreCheck.
 func TestCB_HalfOpenSuccess_Closes(t *testing.T) {
 	t.Parallel()
 	cb := newTestBreaker(1, 10*time.Millisecond)
@@ -107,6 +121,8 @@ func TestCB_HalfOpenSuccess_Closes(t *testing.T) {
 	}
 }
 
+// TestCB_HalfOpenFailure_Reopens verifies the cb half open failure reopens contract.
+// Asserts that expected open, got.
 func TestCB_HalfOpenFailure_Reopens(t *testing.T) {
 	t.Parallel()
 	cb := newTestBreaker(1, 10*time.Millisecond)
@@ -124,6 +140,7 @@ func TestCB_HalfOpenFailure_Reopens(t *testing.T) {
 	}
 }
 
+// TestCB_SuccessResetsFailureCount verifies the cb success resets failure count path by exercising cb.PostCheck, cb.IsHealthy.
 func TestCB_SuccessResetsFailureCount(t *testing.T) {
 	t.Parallel()
 	cb := newTestBreaker(3, time.Minute)
@@ -135,7 +152,7 @@ func TestCB_SuccessResetsFailureCount(t *testing.T) {
 	_ = cb.PostCheck(errTest) // 2 again
 
 	if !cb.IsHealthy() {
-		t.Fatal("should still be healthy — counter was reset")
+		t.Fatal("should still be healthy  -  counter was reset")
 	}
 }
 
@@ -143,6 +160,8 @@ func TestCB_SuccessResetsFailureCount(t *testing.T) {
 // OpenDuration
 // -------------------------------------------------------------------------
 
+// TestCB_OpenDuration_ZeroWhenClosed verifies the cb open duration zero when closed contract.
+// Asserts that expected 0 when closed, got.
 func TestCB_OpenDuration_ZeroWhenClosed(t *testing.T) {
 	t.Parallel()
 	cb := newTestBreaker(3, time.Minute)
@@ -151,6 +170,8 @@ func TestCB_OpenDuration_ZeroWhenClosed(t *testing.T) {
 	}
 }
 
+// TestCB_OpenDuration_PositiveWhenOpen verifies the cb open duration positive when open contract.
+// Asserts that expected >= 5ms, got.
 func TestCB_OpenDuration_PositiveWhenOpen(t *testing.T) {
 	t.Parallel()
 	cb := newTestBreaker(1, time.Minute)
@@ -163,6 +184,8 @@ func TestCB_OpenDuration_PositiveWhenOpen(t *testing.T) {
 	}
 }
 
+// TestCB_OpenDuration_PositiveWhenHalfOpen verifies the cb open duration positive when half open contract.
+// Asserts that expected half-open, got.
 func TestCB_OpenDuration_PositiveWhenHalfOpen(t *testing.T) {
 	t.Parallel()
 	cb := newTestBreaker(1, 10*time.Millisecond)
@@ -178,6 +201,8 @@ func TestCB_OpenDuration_PositiveWhenHalfOpen(t *testing.T) {
 	}
 }
 
+// TestCB_OpenDuration_ZeroAfterRecovery verifies the cb open duration zero after recovery contract.
+// Asserts that expected 0 after recovery, got.
 func TestCB_OpenDuration_ZeroAfterRecovery(t *testing.T) {
 	t.Parallel()
 	cb := newTestBreaker(1, 10*time.Millisecond)
@@ -196,6 +221,7 @@ func TestCB_OpenDuration_ZeroAfterRecovery(t *testing.T) {
 // Pluggable error filter
 // -------------------------------------------------------------------------
 
+// TestCB_FilteredErrorsDontTrip verifies the cb filtered errors dont trip path by exercising cb.PostCheck, cb.IsHealthy.
 func TestCB_FilteredErrorsDontTrip(t *testing.T) {
 	t.Parallel()
 	cb := NewCircuitBreaker("test", 1, time.Minute, neverError, errSentinel)
@@ -208,6 +234,8 @@ func TestCB_FilteredErrorsDontTrip(t *testing.T) {
 	}
 }
 
+// TestCB_NilErrorIsSuccess verifies the cb nil error is success contract.
+// Asserts that nil error should pass through as nil, got.
 func TestCB_NilErrorIsSuccess(t *testing.T) {
 	t.Parallel()
 	cb := newTestBreaker(1, time.Minute)
@@ -224,6 +252,8 @@ func TestCB_NilErrorIsSuccess(t *testing.T) {
 // CBCall / CBCallNoResult helpers
 // -------------------------------------------------------------------------
 
+// TestCBCall_PassesThrough verifies the cbcall passes through contract.
+// Asserts that unexpected: result= err=.
 func TestCBCall_PassesThrough(t *testing.T) {
 	t.Parallel()
 	cb := newTestBreaker(3, time.Minute)
@@ -233,6 +263,8 @@ func TestCBCall_PassesThrough(t *testing.T) {
 	}
 }
 
+// TestCBCall_CircuitOpen verifies the cbcall circuit open contract.
+// Asserts that expected sentinel, got.
 func TestCBCall_CircuitOpen(t *testing.T) {
 	t.Parallel()
 	cb := newTestBreaker(1, time.Minute)
@@ -251,6 +283,8 @@ func TestCBCall_CircuitOpen(t *testing.T) {
 	}
 }
 
+// TestCBCallNoResult_PassesThrough verifies the cbcall no result passes through contract.
+// Asserts that unexpected error:.
 func TestCBCallNoResult_PassesThrough(t *testing.T) {
 	t.Parallel()
 	cb := newTestBreaker(3, time.Minute)
@@ -260,6 +294,8 @@ func TestCBCallNoResult_PassesThrough(t *testing.T) {
 	}
 }
 
+// TestCBCallNoResult_CircuitOpen verifies the cbcall no result circuit open contract.
+// Asserts that expected sentinel, got.
 func TestCBCallNoResult_CircuitOpen(t *testing.T) {
 	t.Parallel()
 	cb := newTestBreaker(1, time.Minute)
@@ -275,6 +311,8 @@ func TestCBCallNoResult_CircuitOpen(t *testing.T) {
 // Concurrent probe serialization
 // -------------------------------------------------------------------------
 
+// TestCB_OnlyOneProbeAllowed verifies the cb only one probe allowed contract.
+// Asserts that expected exactly 1 probe, got.
 func TestCB_OnlyOneProbeAllowed(t *testing.T) {
 	t.Parallel()
 	cb := newTestBreaker(1, 10*time.Millisecond)
@@ -306,11 +344,12 @@ func TestCB_OnlyOneProbeAllowed(t *testing.T) {
 	}
 }
 
+// TestCB_ProbeEligible verifies the cb probe eligible path by exercising cb.ProbeEligible, cb.PostCheck, time.Sleep.
 func TestCB_ProbeEligible(t *testing.T) {
 	t.Parallel()
 	cb := newTestBreaker(1, 5*time.Millisecond)
 
-	// Closed — not probe-eligible
+	// Closed  -  not probe-eligible
 	if cb.ProbeEligible() {
 		t.Error("closed circuit should not be probe-eligible")
 	}
@@ -327,7 +366,7 @@ func TestCB_ProbeEligible(t *testing.T) {
 		t.Error("open circuit with elapsed timeout should be probe-eligible")
 	}
 
-	// Transition to half-open via PreCheck — no longer probe-eligible
+	// Transition to half-open via PreCheck  -  no longer probe-eligible
 	_ = cb.PreCheck()
 	if cb.ProbeEligible() {
 		t.Error("half-open circuit should not be probe-eligible")
@@ -338,6 +377,8 @@ func TestCB_ProbeEligible(t *testing.T) {
 // Probe jitter
 // -------------------------------------------------------------------------
 
+// TestCB_ProbeJitter_VariesBetweenInstances verifies the cb probe jitter varies between instances contract.
+// Asserts that expected jitter diversity, but all breakers got the same value.
 func TestCB_ProbeJitter_VariesBetweenInstances(t *testing.T) {
 	t.Parallel()
 	// Create several circuit breakers and trip them all. With openTimeout of
@@ -361,17 +402,18 @@ func TestCB_ProbeJitter_VariesBetweenInstances(t *testing.T) {
 	}
 }
 
+// TestCB_ProbeJitter_RecomputedOnReopen verifies the cb probe jitter recomputed on reopen path by exercising cb.PostCheck, time.Sleep, cb.PreCheck.
 func TestCB_ProbeJitter_RecomputedOnReopen(t *testing.T) {
 	t.Parallel()
 	cb := newTestBreaker(1, 50*time.Millisecond)
 
-	// Trip → record jitter
+	// Trip -> record jitter
 	_ = cb.PostCheck(errTest)
 	cb.mu.RLock()
 	firstJitter := cb.probeJitter
 	cb.mu.RUnlock()
 
-	// Recover — sleep must exceed openTimeout + max jitter (50ms + 12.5ms)
+	// Recover  -  sleep must exceed openTimeout + max jitter (50ms + 12.5ms)
 	time.Sleep(80 * time.Millisecond)
 	_ = cb.PreCheck()
 	_ = cb.PostCheck(nil)
@@ -379,7 +421,7 @@ func TestCB_ProbeJitter_RecomputedOnReopen(t *testing.T) {
 		t.Fatal("expected recovery to closed state")
 	}
 
-	// Trip again → new jitter (may coincidentally equal firstJitter, but
+	// Trip again -> new jitter (may coincidentally equal firstJitter, but
 	// the code path that sets it is exercised)
 	_ = cb.PostCheck(errTest)
 	cb.mu.RLock()
@@ -390,6 +432,8 @@ func TestCB_ProbeJitter_RecomputedOnReopen(t *testing.T) {
 	_ = firstJitter
 }
 
+// TestCB_StaleProbeAutoResets verifies the cb stale probe auto resets contract.
+// Asserts that probe should be allowed:.
 func TestCB_StaleProbeAutoResets(t *testing.T) {
 	t.Parallel()
 	cb := newTestBreaker(1, 5*time.Millisecond)
@@ -407,7 +451,7 @@ func TestCB_StaleProbeAutoResets(t *testing.T) {
 	}
 
 	// Simulate a stale probe by backdating probeStarted beyond probeTimeout.
-	// Do NOT call PostCheck — the probe is "abandoned".
+	// Do NOT call PostCheck  -  the probe is "abandoned".
 	cb.probeStarted.Store(time.Now().Add(-probeTimeout - time.Second).UnixNano())
 
 	// Next PreCheck should detect the stale probe and reset to open
@@ -424,7 +468,7 @@ func TestCB_StaleProbeAutoResets(t *testing.T) {
 }
 
 // TestTransition_InvokesHookOnOpen verifies the OnStateChange callback is
-// fired for the closed→open transition with the failure context populated.
+// fired for the closed->open transition with the failure context populated.
 func TestTransition_InvokesHookOnOpen(t *testing.T) {
 	var infos []StateChangeInfo
 	cb := newTestBreaker(2, time.Hour)
@@ -438,14 +482,14 @@ func TestTransition_InvokesHookOnOpen(t *testing.T) {
 	}
 	got := infos[0]
 	if got.From != StateClosed || got.To != StateOpen {
-		t.Errorf("transition = %s→%s, want closed→open", got.From, got.To)
+		t.Errorf("transition = %s->%s, want closed->open", got.From, got.To)
 	}
 	if got.Failures < 2 || got.Threshold != 2 || got.Name != "test" {
 		t.Errorf("info = %+v", got)
 	}
 }
 
-// TestTransition_InvokesHookOnRecovery walks the full open → half-open →
+// TestTransition_InvokesHookOnRecovery walks the full open -> half-open ->
 // closed cycle and confirms the hook fires for each transition with a
 // non-zero OpenDuration on the recovery edge.
 func TestTransition_InvokesHookOnRecovery(t *testing.T) {
@@ -453,17 +497,17 @@ func TestTransition_InvokesHookOnRecovery(t *testing.T) {
 	cb := newTestBreaker(1, 10*time.Millisecond)
 	cb.SetOnStateChange(func(i StateChangeInfo) { infos = append(infos, i) })
 
-	_ = cb.PostCheck(errTest)         // closed → open
+	_ = cb.PostCheck(errTest)         // closed -> open
 	time.Sleep(15 * time.Millisecond) // wait for probe eligibility
-	_ = cb.PreCheck()                 // open → half-open
-	_ = cb.PostCheck(nil)             // half-open → closed
+	_ = cb.PreCheck()                 // open -> half-open
+	_ = cb.PostCheck(nil)             // half-open -> closed
 
 	if len(infos) != 3 {
 		t.Fatalf("expected 3 hook invocations, got %d", len(infos))
 	}
 	closed := infos[2]
 	if closed.From != StateHalfOpen || closed.To != StateClosed {
-		t.Errorf("final transition = %s→%s, want half-open→closed", closed.From, closed.To)
+		t.Errorf("final transition = %s->%s, want half-open->closed", closed.From, closed.To)
 	}
 	if closed.OpenDuration <= 0 {
 		t.Error("OpenDuration should be > 0 on recovery")

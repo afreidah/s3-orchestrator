@@ -8,12 +8,12 @@
 // provide a pluggable error filter so only domain-relevant failures trip the
 // breaker.
 //
-// States: closed (healthy) → open (down) → half-open (probing) → closed.
+// States: closed (healthy) -> open (down) -> half-open (probing) -> closed.
 // -------------------------------------------------------------------------------
 
 // Package breaker implements a generic three-state circuit breaker (closed,
 // open, half-open) with pluggable error filters and probe jitter. The
-// breaker emits no metrics or events on its own — callers wire those via
+// breaker emits no metrics or events on its own  -  callers wire those via
 // the optional OnStateChange callback so this package stays free of
 // observability dependencies.
 package breaker
@@ -34,10 +34,11 @@ import (
 // State represents the current circuit breaker state.
 type State int
 
+// StateClosed and related constants used by this package.
 const (
-	StateClosed   State = iota // healthy — all calls pass through
-	StateOpen                  // down — return sentinel error
-	StateHalfOpen              // probing — one call allowed through
+	StateClosed   State = iota // healthy  -  all calls pass through
+	StateOpen                  // down  -  return sentinel error
+	StateHalfOpen              // probing  -  one call allowed through
 )
 
 // String returns the human-readable name of the circuit state.
@@ -80,7 +81,7 @@ type StateChangeInfo struct {
 
 // CircuitBreaker implements a three-state circuit breaker with a pluggable
 // error filter. It is safe for concurrent use. Observability hooks live
-// behind the optional OnStateChange callback — the breaker package itself
+// behind the optional OnStateChange callback  -  the breaker package itself
 // imports nothing from observe/.
 type CircuitBreaker struct {
 	mu            sync.RWMutex
@@ -129,7 +130,7 @@ func (cb *CircuitBreaker) SetOnStateChange(fn func(StateChangeInfo)) {
 	cb.onStateChange = fn
 }
 
-// Name returns the breaker's identifier — useful for callers wiring
+// Name returns the breaker's identifier  -  useful for callers wiring
 // observability hooks that need the label.
 func (cb *CircuitBreaker) Name() string { return cb.name }
 
@@ -160,7 +161,7 @@ func (cb *CircuitBreaker) OpenDuration() time.Duration {
 
 // ProbeEligible returns true when the circuit is open and the open timeout
 // has elapsed, meaning the next request should be allowed through as a probe.
-// This is a read-only check with no side effects — the actual state transition
+// This is a read-only check with no side effects  -  the actual state transition
 // happens in PreCheck when the request is dispatched.
 func (cb *CircuitBreaker) ProbeEligible() bool {
 	cb.mu.RLock()
@@ -179,7 +180,7 @@ func (cb *CircuitBreaker) ProbeEligible() bool {
 const probeTimeout = 2 * time.Minute
 
 // PreCheck returns the sentinel error when the circuit is open. Transitions
-// open → half-open when the timeout has elapsed, allowing one probe request.
+// open -> half-open when the timeout has elapsed, allowing one probe request.
 // If a previous probe has been in flight longer than probeTimeout, it is
 // considered abandoned and a new probe is allowed.
 func (cb *CircuitBreaker) PreCheck() error {
@@ -232,7 +233,7 @@ func (cb *CircuitBreaker) PostCheck(err error) error {
 	return err
 }
 
-// onSuccess resets failures and transitions half-open → closed.
+// onSuccess resets failures and transitions half-open -> closed.
 func (cb *CircuitBreaker) onSuccess() {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()

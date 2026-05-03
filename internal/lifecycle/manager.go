@@ -21,6 +21,10 @@ import (
 	"time"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // Service represents a long-running background task. Run blocks until ctx is
 // cancelled or a fatal error occurs.
 type Service interface {
@@ -33,6 +37,9 @@ type Stoppable interface {
 	Stop(ctx context.Context) error
 }
 
+// entry pairs a registered Service with the human-readable name used
+// in supervisor logs and metric labels. The Manager walks []entry to
+// start, supervise, and stop each service.
 type entry struct {
 	name    string
 	service Service
@@ -56,6 +63,10 @@ type Manager struct {
 	maxBackoff     time.Duration
 	backoffReset   time.Duration
 }
+
+// -------------------------------------------------------------------------
+// MANAGER LIFECYCLE
+// -------------------------------------------------------------------------
 
 // NewManager creates an empty service manager with production backoff
 // defaults.
@@ -131,6 +142,15 @@ func (m *Manager) Stop(timeout time.Duration) {
 	}
 }
 
+// -------------------------------------------------------------------------
+// SUPERVISOR LOOP
+// -------------------------------------------------------------------------
+
+// supervise runs a single service in a loop and restarts it with
+// exponential backoff if Run returns or panics while ctx is still
+// alive. The backoff resets to initialBackoff after the service runs
+// healthily for at least healthyResetWindow so a long-stable service
+// doesn't carry stale backoff state into a fresh fault.
 func (m *Manager) supervise(ctx context.Context, e entry) {
 	backoff := m.initialBackoff
 

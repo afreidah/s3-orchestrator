@@ -5,7 +5,7 @@
 //
 // Tests cover flag parsing, config loading, store init dispatch, and the
 // page-import accumulator. The HTTP-going code paths (real S3 listing) are
-// out of scope here — they are covered by the integration suite.
+// out of scope here  -  they are covered by the integration suite.
 // -------------------------------------------------------------------------------
 
 package synccmd
@@ -49,6 +49,9 @@ type errorObjectStore struct {
 	err error
 }
 
+// ImportObject records the import call so the test can assert it
+// happened. The first return value mirrors the real store's
+// inserted=true semantics for a fresh row.
 func (e errorObjectStore) ImportObject(context.Context, string, string, int64) (bool, error) {
 	return false, e.err
 }
@@ -65,6 +68,9 @@ func writeYAML(t *testing.T, content string) string {
 	return path
 }
 
+// validYAML is the synccmd_test reference config: minimal but
+// complete enough for the bootstrap to wire a fake backend and a
+// real (in-memory) store.
 const validYAML = `
 server:
   listen_addr: ":0"
@@ -260,6 +266,8 @@ func TestImportPage_PropagatesError(t *testing.T) {
 // We invoke Run with a dry-run so we don't actually need a live MinIO; the
 // failure happens at ListObjects time. The check here is only that the
 // process exit code is non-zero, not the precise error.
+// TestRun_FailsWithoutLiveBackend verifies run_fails without live backend.
+// TestRun_FailsWithoutLiveBackend verifies run_fails without live backend.
 func TestRun_FailsWithoutLiveBackend(t *testing.T) {
 	path := writeYAML(t, validYAML)
 	args := []string{

@@ -41,9 +41,15 @@ type cleanupTxStub struct {
 	sumDeleteErr       error
 }
 
+// GetCleanupQueueRow is a no-op stub on cleanupTxStub so the type satisfies the
+// full TxAdapter interface; only the cleanup-touching methods carry
+// real test fixtures.
 func (t *cleanupTxStub) GetCleanupQueueRow(_ context.Context, _ int64) (CleanupQueueRow, error) {
 	return t.getRow, t.getRowErr
 }
+// InsertCleanupDLQ is a no-op stub on cleanupTxStub so the type satisfies the
+// full TxAdapter interface; only the cleanup-touching methods carry
+// real test fixtures.
 func (t *cleanupTxStub) InsertCleanupDLQ(_ context.Context, row *CleanupQueueRow) error {
 	if t.insertDLQErr != nil {
 		return t.insertDLQErr
@@ -51,6 +57,9 @@ func (t *cleanupTxStub) InsertCleanupDLQ(_ context.Context, row *CleanupQueueRow
 	t.insertedDLQ = append(t.insertedDLQ, *row)
 	return nil
 }
+// DeleteCleanupItem is a no-op stub on cleanupTxStub so the type satisfies the
+// full TxAdapter interface; only the cleanup-touching methods carry
+// real test fixtures.
 func (t *cleanupTxStub) DeleteCleanupItem(_ context.Context, id int64) error {
 	if t.deleteErr != nil {
 		return t.deleteErr
@@ -58,48 +67,107 @@ func (t *cleanupTxStub) DeleteCleanupItem(_ context.Context, id int64) error {
 	t.deletedID = id
 	return nil
 }
+// SumAndDeleteCleanupQueueRows is a no-op stub on cleanupTxStub so the type satisfies the
+// full TxAdapter interface; only the cleanup-touching methods carry
+// real test fixtures.
 func (t *cleanupTxStub) SumAndDeleteCleanupQueueRows(_ context.Context, _, _ string) (int64, int64, error) {
 	return t.sumDeleteRowCount, t.sumDeleteTotalSize, t.sumDeleteErr
 }
 
+// IncrementBackendQuota is a no-op stub on cleanupTxStub so the type satisfies the
+// full TxAdapter interface; only the cleanup-touching methods carry
+// real test fixtures.
 func (t *cleanupTxStub) IncrementBackendQuota(context.Context, string, int64) error { return nil }
+// DecrementBackendQuota is a no-op stub on cleanupTxStub so the type satisfies the
+// full TxAdapter interface; only the cleanup-touching methods carry
+// real test fixtures.
 func (t *cleanupTxStub) DecrementBackendQuota(context.Context, string, int64) error { return nil }
+// DecrementOrphanBytes is a no-op stub on cleanupTxStub so the type satisfies the
+// full TxAdapter interface; only the cleanup-touching methods carry
+// real test fixtures.
 func (t *cleanupTxStub) DecrementOrphanBytes(_ context.Context, _ string, delta int64) error {
 	t.decrementOrphans = append(t.decrementOrphans, delta)
 	return nil
 }
 
+// AcquireKeyLock is a no-op stub on cleanupTxStub so the type satisfies the
+// full TxAdapter interface; only the cleanup-touching methods carry
+// real test fixtures.
 func (t *cleanupTxStub) AcquireKeyLock(context.Context, string) error              { return nil }
+// ClaimPending is a no-op stub on cleanupTxStub so the type satisfies the
+// full TxAdapter interface; only the cleanup-touching methods carry
+// real test fixtures.
 func (t *cleanupTxStub) ClaimPending(context.Context, string) (bool, error)        { return false, nil }
+// InsertPending is a no-op stub on cleanupTxStub so the type satisfies the
+// full TxAdapter interface; only the cleanup-touching methods carry
+// real test fixtures.
 func (t *cleanupTxStub) InsertPending(context.Context, *PendingObject) error       { return nil }
+// DeletePending is a no-op stub on cleanupTxStub so the type satisfies the
+// full TxAdapter interface; only the cleanup-touching methods carry
+// real test fixtures.
 func (t *cleanupTxStub) DeletePending(context.Context, string) error               { return nil }
+// DeletePendingByBackend is a no-op stub on cleanupTxStub so the type satisfies the
+// full TxAdapter interface; only the cleanup-touching methods carry
+// real test fixtures.
 func (t *cleanupTxStub) DeletePendingByBackend(context.Context, string) error      { return nil }
+// GetExistingCopiesForUpdate is a no-op stub on cleanupTxStub so the type satisfies the
+// full TxAdapter interface; only the cleanup-touching methods carry
+// real test fixtures.
 func (t *cleanupTxStub) GetExistingCopiesForUpdate(context.Context, string) ([]ExistingCopy, error) {
 	return nil, nil
 }
+// InsertObjectLocation is a no-op stub on cleanupTxStub so the type satisfies the
+// full TxAdapter interface; only the cleanup-touching methods carry
+// real test fixtures.
 func (t *cleanupTxStub) InsertObjectLocation(context.Context, *ObjectLocation) error { return nil }
+// DeleteObjectCopies is a no-op stub on cleanupTxStub so the type satisfies the
+// full TxAdapter interface; only the cleanup-touching methods carry
+// real test fixtures.
 func (t *cleanupTxStub) DeleteObjectCopies(context.Context, string) error           { return nil }
+// GetCopiesForKeysForUpdate is a no-op stub on cleanupTxStub so the type satisfies the
+// full TxAdapter interface; only the cleanup-touching methods carry
+// real test fixtures.
 func (t *cleanupTxStub) GetCopiesForKeysForUpdate(context.Context, []string) ([]KeyedExistingCopy, error) {
 	return nil, nil
 }
+// DeleteObjectsByKeys is a no-op stub on cleanupTxStub so the type satisfies the
+// full TxAdapter interface; only the cleanup-touching methods carry
+// real test fixtures.
 func (t *cleanupTxStub) DeleteObjectsByKeys(context.Context, []string) error { return nil }
+// CheckObjectExistsOnBackend is a no-op stub on cleanupTxStub so the type satisfies the
+// full TxAdapter interface; only the cleanup-touching methods carry
+// real test fixtures.
 func (t *cleanupTxStub) CheckObjectExistsOnBackend(context.Context, string, string) (bool, error) {
 	return false, nil
 }
+// LockObjectOnBackend is a no-op stub on cleanupTxStub so the type satisfies the
+// full TxAdapter interface; only the cleanup-touching methods carry
+// real test fixtures.
 func (t *cleanupTxStub) LockObjectOnBackend(context.Context, string, string) (*ObjectLocation, bool, error) {
 	return nil, false, nil
 }
+// DeleteObjectFromBackend is a no-op stub on cleanupTxStub so the type satisfies the
+// full TxAdapter interface; only the cleanup-touching methods carry
+// real test fixtures.
 func (t *cleanupTxStub) DeleteObjectFromBackend(context.Context, string, string) error { return nil }
+// InsertObjectLocationIfNotExists is a no-op stub on cleanupTxStub so the type satisfies the
+// full TxAdapter interface; only the cleanup-touching methods carry
+// real test fixtures.
 func (t *cleanupTxStub) InsertObjectLocationIfNotExists(context.Context, *ObjectLocation) (bool, error) {
 	return false, nil
 }
+// InsertReplicaConditional is a no-op stub on cleanupTxStub so the type satisfies the
+// full TxAdapter interface; only the cleanup-touching methods carry
+// real test fixtures.
 func (t *cleanupTxStub) InsertReplicaConditional(context.Context, string, string, string) (int64, bool, error) {
 	return 0, false, nil
 }
 
 // stubRunner runs the supplied closure synchronously against the
 // embedded TxAdapter so cleanup_test.go can exercise the tx body
-// without standing up a real engine.
+// without is a no-op stub on cleanupTxStub so the type satisfies the
+// full TxAdapter interface; only the cleanup-touching methods carry
+// real test fixtures.
 type stubRunner struct {
 	tx TxAdapter
 }

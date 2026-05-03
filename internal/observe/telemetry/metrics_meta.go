@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------
-// Metrics — Build Info, Notifications
+// Metrics  -  Build Info, Notifications
 //
 // Author: Alex Freidah
 //
@@ -14,6 +14,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
+// BuildInfo and related package-level variables used by this package.
 var (
 	// --- Info metric ---
 
@@ -57,7 +58,7 @@ var (
 	// NotificationStoreErrorsTotal counts outbox-store operation failures in
 	// the delivery worker (CompleteNotification / RetryNotification). A
 	// non-zero value means the worker saw a store error that could cause
-	// duplicate or dropped webhook deliveries — alert on any increase.
+	// duplicate or dropped webhook deliveries  -  alert on any increase.
 	NotificationStoreErrorsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "s3o_notification_store_errors_total",

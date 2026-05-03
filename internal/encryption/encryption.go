@@ -66,7 +66,7 @@ func (r *EncryptResult) RawDEK() []byte { return r.rawDEK }
 
 // NewEncryptor creates an Encryptor with the given key provider and chunk
 // size. The chunk size must be positive. Config validation enforces stricter
-// bounds (4KB–1MB, power of 2); this guard catches programming errors.
+// bounds (4KB-1MB, power of 2); this guard catches programming errors.
 func NewEncryptor(provider KeyProvider, chunkSize int) (*Encryptor, error) {
 	if chunkSize <= 0 {
 		return nil, fmt.Errorf("encryption chunk size must be positive, got %d", chunkSize)
@@ -107,7 +107,7 @@ func (e *Encryptor) Encrypt(ctx context.Context, body io.Reader, plaintextSize i
 // EncryptWithDEK encrypts using a previously wrapped DEK, skipping the
 // KeyProvider.WrapDEK call. A fresh base nonce is generated per call, so
 // the ciphertext is unique even though the same DEK is reused. This is
-// safe because AES-GCM nonce uniqueness is per (key, nonce) pair — see
+// safe because AES-GCM nonce uniqueness is per (key, nonce) pair  -  see
 // the SAFETY INVARIANT comment in chunk.go.
 //
 // Intended for write failover retries where the Vault round-trip for key

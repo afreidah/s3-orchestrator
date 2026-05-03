@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -775,5 +776,86 @@ func TestStoreInt_VerifySchemaVersion(t *testing.T) {
 	s := adapterPgStore(t)
 	if err := s.VerifySchemaVersion(context.Background()); err != nil {
 		t.Errorf("VerifySchemaVersion: %v", err)
+	}
+}
+
+// TestStoreInt_VerifySchemaVersion_OlderThanExpected verifies the
+// "older than expected" diagnostic surfaces when the goose_db_version
+// row records a version below ExpectedSchemaVersion. Operators rely on
+// this branch to detect partial-migration failures at startup; if the
+// path were silent, a half-applied migration could let a binary boot
+// against an inconsistent schema.
+func TestStoreInt_VerifySchemaVersion_OlderThanExpected(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	pool := s.pool
+
+	// goose tracks the applied version in goose_db_version, ordered by
+	// id; the latest row wins. Insert a row whose version is below
+	// ExpectedSchemaVersion to simulate a partially-rolled-back state.
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO goose_db_version (version_id, is_applied, tstamp)
+		 VALUES ($1, true, NOW())`,
+		ExpectedSchemaVersion-1); err != nil {
+		t.Fatalf("seed older version: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx,
+			`DELETE FROM goose_db_version WHERE version_id = $1`,
+			ExpectedSchemaVersion-1)
+	})
+
+	// VerifySchemaVersion uses MAX(version_id) WHERE is_applied = true,
+	// so we need to mark the real latest row as un-applied for this
+	// test, then restore it on cleanup.
+	if _, err := pool.Exec(ctx,
+		`UPDATE goose_db_version SET is_applied = false
+		 WHERE version_id = $1`, ExpectedSchemaVersion); err != nil {
+		t.Fatalf("hide latest applied version: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx,
+			`UPDATE goose_db_version SET is_applied = true
+			 WHERE version_id = $1`, ExpectedSchemaVersion)
+	})
+
+	err := s.VerifySchemaVersion(ctx)
+	if err == nil {
+		t.Fatal("expected older-than-expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "older than expected") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+// TestStoreInt_VerifySchemaVersion_NewerThanExpected verifies the
+// "newer than expected" diagnostic surfaces when the database has a
+// migration the binary has never seen. This is what operators see
+// after rolling a binary back below the schema's frontier; surfacing
+// the mismatch prevents the older binary from running write paths
+// that may not be aware of new columns.
+func TestStoreInt_VerifySchemaVersion_NewerThanExpected(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	pool := s.pool
+
+	// Insert a synthetic future version row.
+	future := int64(ExpectedSchemaVersion + 100)
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO goose_db_version (version_id, is_applied, tstamp)
+		 VALUES ($1, true, NOW())`, future); err != nil {
+		t.Fatalf("seed future version: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx,
+			`DELETE FROM goose_db_version WHERE version_id = $1`, future)
+	})
+
+	err := s.VerifySchemaVersion(ctx)
+	if err == nil {
+		t.Fatal("expected newer-than-expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "newer than expected") {
+		t.Errorf("unexpected error message: %v", err)
 	}
 }

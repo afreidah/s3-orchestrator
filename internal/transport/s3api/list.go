@@ -69,7 +69,7 @@ type xmlListResultV2 struct {
 
 // buildListContents converts storage objects and common prefixes to their XML
 // representations, stripping the internal bucket prefix from each key.
-// prefixLen is len(bucket + "/") — used for zero-copy string slicing.
+// prefixLen is len(bucket + "/")  -  used for zero-copy string slicing.
 func buildListContents(objects []core.ObjectLocation, prefixes []string, prefixLen int) ([]xmlContent, []xmlCommonPrefix) {
 	contents := make([]xmlContent, 0, len(objects))
 	for i := range objects {

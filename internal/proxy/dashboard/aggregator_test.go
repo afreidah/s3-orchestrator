@@ -32,26 +32,33 @@ type mockDashboardStore struct {
 	dirChildrenErr     error
 }
 
+// GetQuotaStats returns quota stats.
 func (m *mockDashboardStore) GetQuotaStats(_ context.Context) (map[string]core.QuotaStat, error) {
 	return m.quotaStats, m.quotaStatsErr
 }
 
+// GetObjectCounts returns object counts.
 func (m *mockDashboardStore) GetObjectCounts(_ context.Context) (map[string]int64, error) {
 	return m.objectCounts, m.objectCountsErr
 }
 
+// GetActiveMultipartCounts returns active multipart counts.
 func (m *mockDashboardStore) GetActiveMultipartCounts(_ context.Context) (map[string]int64, error) {
 	return m.multipartCounts, m.multipartCountsErr
 }
 
+// GetUsageForPeriod returns usage for period.
 func (m *mockDashboardStore) GetUsageForPeriod(_ context.Context, _ string) (map[string]core.UsageStat, error) {
 	return m.usageStats, m.usageStatsErr
 }
 
+// ListDirectoryChildren lists directory children.
 func (m *mockDashboardStore) ListDirectoryChildren(_ context.Context, _, _ string, _ int) (*core.DirectoryListResult, error) {
 	return m.dirChildren, m.dirChildrenErr
 }
 
+// TestAggregator_Success verifies the aggregator success contract.
+// Asserts that BytesUsed = , want 100.
 func TestAggregator_Success(t *testing.T) {
 	t.Parallel()
 	ms := &mockDashboardStore{
@@ -84,6 +91,7 @@ func TestAggregator_Success(t *testing.T) {
 	}
 }
 
+// TestAggregator_QuotaStatsError verifies the aggregator quota stats error path by exercising errors.New, counter.NewUsageTracker, counter.NewLocalCounterBackend.
 func TestAggregator_QuotaStatsError(t *testing.T) {
 	t.Parallel()
 	ms := &mockDashboardStore{
@@ -98,6 +106,7 @@ func TestAggregator_QuotaStatsError(t *testing.T) {
 	}
 }
 
+// TestAggregator_ObjectCountsError verifies the aggregator object counts error path by exercising errors.New, counter.NewUsageTracker, counter.NewLocalCounterBackend.
 func TestAggregator_ObjectCountsError(t *testing.T) {
 	t.Parallel()
 	ms := &mockDashboardStore{
@@ -113,6 +122,7 @@ func TestAggregator_ObjectCountsError(t *testing.T) {
 	}
 }
 
+// TestAggregator_MultipartCountsError verifies the aggregator multipart counts error path by exercising errors.New, counter.NewUsageTracker, counter.NewLocalCounterBackend.
 func TestAggregator_MultipartCountsError(t *testing.T) {
 	t.Parallel()
 	ms := &mockDashboardStore{
@@ -129,6 +139,7 @@ func TestAggregator_MultipartCountsError(t *testing.T) {
 	}
 }
 
+// TestAggregator_UsageStatsError verifies the aggregator usage stats error path by exercising errors.New, counter.NewUsageTracker, counter.NewLocalCounterBackend.
 func TestAggregator_UsageStatsError(t *testing.T) {
 	t.Parallel()
 	ms := &mockDashboardStore{
@@ -146,6 +157,7 @@ func TestAggregator_UsageStatsError(t *testing.T) {
 	}
 }
 
+// TestAggregator_DirChildrenError verifies the aggregator dir children error path by exercising errors.New, counter.NewUsageTracker, counter.NewLocalCounterBackend.
 func TestAggregator_DirChildrenError(t *testing.T) {
 	t.Parallel()
 	ms := &mockDashboardStore{
@@ -164,6 +176,7 @@ func TestAggregator_DirChildrenError(t *testing.T) {
 	}
 }
 
+// TestAggregator_GetDirectoryChildren_ClampsMaxKeys verifies the aggregator get directory children clamps max keys path by exercising counter.NewUsageTracker, counter.NewLocalCounterBackend, da.GetDirectoryChildren.
 func TestAggregator_GetDirectoryChildren_ClampsMaxKeys(t *testing.T) {
 	t.Parallel()
 	ms := &mockDashboardStore{

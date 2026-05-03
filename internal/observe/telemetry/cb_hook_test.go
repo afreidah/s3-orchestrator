@@ -3,7 +3,7 @@
 //
 // Author: Alex Freidah
 //
-// Verifies that the telemetry → breaker bridge populates the gauge,
+// Verifies that the telemetry -> breaker bridge populates the gauge,
 // counter, and event bus on the appropriate transitions. Lives here (not
 // in internal/breaker) so the breaker package itself stays free of
 // observability dependencies.
@@ -19,7 +19,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 )
 
-// TestNewCircuitBreakerHook_EmitsOpenEvent confirms the closed→open
+// TestNewCircuitBreakerHook_EmitsOpenEvent confirms the closed->open
 // transition emits a BackendCircuitOpened event with failure context.
 func TestNewCircuitBreakerHook_EmitsOpenEvent(t *testing.T) {
 	var emitted []event.Event
@@ -49,7 +49,7 @@ func TestNewCircuitBreakerHook_EmitsOpenEvent(t *testing.T) {
 	}
 }
 
-// TestNewCircuitBreakerHook_EmitsClosedEvent confirms the *→closed
+// TestNewCircuitBreakerHook_EmitsClosedEvent confirms the *->closed
 // transition emits a BackendCircuitClosed event with degraded duration.
 func TestNewCircuitBreakerHook_EmitsClosedEvent(t *testing.T) {
 	var emitted []event.Event

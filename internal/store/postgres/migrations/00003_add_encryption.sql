@@ -1,3 +1,15 @@
+-- -----------------------------------------------------------------------------
+-- Server-Side Envelope Encryption Columns
+--
+-- Author: Alex Freidah
+--
+-- Adds the per-row encryption fields (encrypted, encryption_key, key_id,
+-- plaintext_size) to object_locations and multipart_parts so each row
+-- carries everything decryption needs without an external lookup. The new
+-- columns default to a non-encrypted-equivalent value so pre-existing rows
+-- stay valid after migration.
+-- -----------------------------------------------------------------------------
+
 -- +goose Up
 ALTER TABLE object_locations
     ADD COLUMN encrypted      BOOLEAN NOT NULL DEFAULT FALSE,

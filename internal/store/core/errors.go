@@ -34,6 +34,7 @@ func (e *S3Error) Error() string {
 // SENTINEL ERRORS
 // -------------------------------------------------------------------------
 
+// ErrNoSpaceAvailable and related package-level variables used by this package.
 var (
 	// ErrNoSpaceAvailable is returned when no backend has sufficient quota.
 	ErrNoSpaceAvailable = errors.New("no backend has sufficient quota")

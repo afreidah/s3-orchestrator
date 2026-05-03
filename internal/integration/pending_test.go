@@ -107,7 +107,7 @@ func TestPending_DBBlipMidPUT_RecoveredByReaper(t *testing.T) {
 	//
 	// Bypass the S3 client here: the AWS SDK retries 5xx responses and
 	// would consume the one-shot flag on the first attempt, then succeed
-	// on the retry — masking the failure we're trying to observe.
+	// on the retry  -  masking the failure we're trying to observe.
 	testFailableStore.SetFailCommitOnce()
 
 	_, err := testManager.ObjectManager.PutObject(
@@ -117,7 +117,7 @@ func TestPending_DBBlipMidPUT_RecoveredByReaper(t *testing.T) {
 		t.Fatal("expected PutObject to fail after armed commit failure")
 	}
 
-	// The bytes must remain on the backend — the whole point of the
+	// The bytes must remain on the backend  -  the whole point of the
 	// pending-row pattern is to never delete an only-copy on commit
 	// failure. There is no per-key API to query the backend directly,
 	// so we infer presence from the reaper's later promotion succeeding.
@@ -140,7 +140,7 @@ func TestPending_DBBlipMidPUT_RecoveredByReaper(t *testing.T) {
 		t.Errorf("object_locations rows after reaper = %d, want 1 (promoted)", got)
 	}
 
-	// And the bytes are now readable through the proxy — proves the
+	// And the bytes are now readable through the proxy  -  proves the
 	// promoted location resolves to a backend that actually holds them.
 	out, err := client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(virtualBucket),
@@ -198,7 +198,7 @@ func TestPending_ReaperDropsIntentWhenBackendHas404(t *testing.T) {
 }
 
 // TestPending_ReaperRespectsMinAge verifies that a freshly inserted
-// pending row is left alone — the min-age guard exists so the reaper
+// pending row is left alone  -  the min-age guard exists so the reaper
 // does not race a synchronous commit that hasn't yet run.
 func TestPending_ReaperRespectsMinAge(t *testing.T) {
 	resetState(t)

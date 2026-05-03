@@ -13,6 +13,8 @@ import (
 	"testing"
 )
 
+// TestCopy verifies the copy contract.
+// Asserts that copied bytes, want.
 func TestCopy(t *testing.T) {
 	t.Parallel()
 	data := []byte("hello, buffer pool")
@@ -29,6 +31,8 @@ func TestCopy(t *testing.T) {
 	}
 }
 
+// TestWriterPool verifies the writer pool contract.
+// Asserts that copied bytes, want.
 func TestWriterPool(t *testing.T) {
 	t.Parallel()
 	data := []byte("buffered writer pool test data")
@@ -52,6 +56,8 @@ func TestWriterPool(t *testing.T) {
 	}
 }
 
+// TestGetPutRoundtrip verifies the get put roundtrip contract.
+// Asserts that buffer length , want.
 func TestGetPutRoundtrip(t *testing.T) {
 	t.Parallel()
 	b := Get()

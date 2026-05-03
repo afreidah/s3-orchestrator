@@ -18,6 +18,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// TestGenerateUploadID verifies the generate upload id contract.
+// Asserts that GenerateUploadID() length = , want 32.
 func TestGenerateUploadID(t *testing.T) {
 	t.Parallel()
 	id := GenerateUploadID()
@@ -38,6 +40,7 @@ func TestGenerateUploadID(t *testing.T) {
 // Close (idempotent)
 // -------------------------------------------------------------------------
 
+// TestClose_Idempotent verifies the close idempotent path by exercising mgr.Close.
 func TestClose_Idempotent(t *testing.T) {
 	t.Parallel()
 	mgr := newUsageManager([]string{"b1"}, &mockStore{})
@@ -51,6 +54,7 @@ func TestClose_Idempotent(t *testing.T) {
 // UpdateUsageLimits
 // -------------------------------------------------------------------------
 
+// TestUpdateUsageLimits_SwapsLimits verifies the update usage limits swaps limits path by exercising mgr.UpdateUsageLimits.
 func TestUpdateUsageLimits_SwapsLimits(t *testing.T) {
 	t.Parallel()
 	limits := map[string]core.UsageLimits{
@@ -82,6 +86,8 @@ func TestUpdateUsageLimits_SwapsLimits(t *testing.T) {
 // Rebalancer.SetConfig / Rebalancer.Config
 // -------------------------------------------------------------------------
 
+// TestRebalanceConfig_RoundTrip verifies the rebalance config round trip contract.
+// Asserts that rebalance config mismatch: v.
 func TestRebalanceConfig_RoundTrip(t *testing.T) {
 	t.Parallel()
 	mgr := newUsageManager([]string{"b1"}, &mockStore{})
@@ -113,6 +119,8 @@ func TestRebalanceConfig_RoundTrip(t *testing.T) {
 // Replicator.SetConfig / Replicator.Config
 // -------------------------------------------------------------------------
 
+// TestReplicationConfig_RoundTrip verifies the replication config round trip contract.
+// Asserts that replication config mismatch: v.
 func TestReplicationConfig_RoundTrip(t *testing.T) {
 	t.Parallel()
 	mgr := newUsageManager([]string{"b1"}, &mockStore{})
@@ -142,6 +150,8 @@ func TestReplicationConfig_RoundTrip(t *testing.T) {
 // SetUsageFlushConfig / UsageFlushConfig
 // -------------------------------------------------------------------------
 
+// TestUsageFlushConfig_RoundTrip verifies the usage flush config round trip contract.
+// Asserts that interval = , want 5m.
 func TestUsageFlushConfig_RoundTrip(t *testing.T) {
 	t.Parallel()
 	mgr := newUsageManager([]string{"b1"}, &mockStore{})
@@ -168,6 +178,8 @@ func TestUsageFlushConfig_RoundTrip(t *testing.T) {
 // SetLifecycleConfig / LifecycleConfig
 // -------------------------------------------------------------------------
 
+// TestLifecycleConfig_RoundTrip verifies the lifecycle config round trip contract.
+// Asserts that lifecycle config mismatch: v.
 func TestLifecycleConfig_RoundTrip(t *testing.T) {
 	t.Parallel()
 	mgr := newUsageManager([]string{"b1"}, &mockStore{})
@@ -196,6 +208,7 @@ func TestLifecycleConfig_RoundTrip(t *testing.T) {
 // NearUsageLimit
 // -------------------------------------------------------------------------
 
+// TestNearUsageLimit_BelowThreshold verifies the near usage limit below threshold path by exercising mgr.NearUsageLimit.
 func TestNearUsageLimit_BelowThreshold(t *testing.T) {
 	t.Parallel()
 	limits := map[string]core.UsageLimits{
@@ -203,12 +216,13 @@ func TestNearUsageLimit_BelowThreshold(t *testing.T) {
 	}
 	mgr := newUsageManagerWithLimits([]string{"b1"}, &mockStore{}, limits)
 
-	// No usage baseline set — should be well below threshold
+	// No usage baseline set  -  should be well below threshold
 	if mgr.NearUsageLimit(0.8) {
 		t.Error("should not be near limit with zero usage")
 	}
 }
 
+// TestNearUsageLimit_AboveThreshold verifies the near usage limit above threshold path by exercising mgr.NearUsageLimit.
 func TestNearUsageLimit_AboveThreshold(t *testing.T) {
 	t.Parallel()
 	limits := map[string]core.UsageLimits{
@@ -228,6 +242,7 @@ func TestNearUsageLimit_AboveThreshold(t *testing.T) {
 // ClearCache
 // -------------------------------------------------------------------------
 
+// TestClearCache_RemovesAllEntries verifies the clear cache removes all entries path by exercising mgr.ClearCache.
 func TestClearCache_RemovesAllEntries(t *testing.T) {
 	t.Parallel()
 	mgr := newUsageManager([]string{"b1"}, &mockStore{})
@@ -249,6 +264,7 @@ func TestClearCache_RemovesAllEntries(t *testing.T) {
 // Concurrent Safety
 // -------------------------------------------------------------------------
 
+// TestUpdateUsageLimits_ConcurrentAccess verifies the update usage limits concurrent access path by exercising wg.Add, wg.Done, mgr.UpdateUsageLimits.
 func TestUpdateUsageLimits_ConcurrentAccess(t *testing.T) {
 	t.Parallel()
 	limits := map[string]core.UsageLimits{

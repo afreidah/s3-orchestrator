@@ -28,7 +28,7 @@ var Emit func(Event)
 // EVENT TYPE CONSTANTS
 // -------------------------------------------------------------------------
 
-// Operational events — infrastructure state changes.
+// Operational events  -  infrastructure state changes.
 const (
 	BackendCircuitOpened       = "backend.circuit.opened"
 	BackendCircuitClosed       = "backend.circuit.closed"
@@ -47,7 +47,7 @@ const (
 	ServiceStopping            = "service.stopping"
 )
 
-// Data events — S3-compatible object mutation names.
+// Data events  -  S3-compatible object mutation names.
 const (
 	ObjectCreatedPut                     = "s3:ObjectCreated:Put"
 	ObjectCreatedCopy                    = "s3:ObjectCreated:Copy"

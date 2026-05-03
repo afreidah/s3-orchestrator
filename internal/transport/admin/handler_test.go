@@ -21,6 +21,8 @@ import (
 	"testing"
 )
 
+// TestRequireToken_Missing verifies the require token missing contract.
+// Asserts that status = , want.
 func TestRequireToken_Missing(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler()
@@ -36,6 +38,8 @@ func TestRequireToken_Missing(t *testing.T) {
 	}
 }
 
+// TestRequireToken_Wrong verifies the require token wrong contract.
+// Asserts that status = , want.
 func TestRequireToken_Wrong(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler()
@@ -52,6 +56,8 @@ func TestRequireToken_Wrong(t *testing.T) {
 	}
 }
 
+// TestRequireToken_Valid verifies the require token valid contract.
+// Asserts that status = , want.
 func TestRequireToken_Valid(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler()
@@ -68,6 +74,8 @@ func TestRequireToken_Valid(t *testing.T) {
 	}
 }
 
+// TestLogLevel_Get verifies the log level get contract.
+// Asserts that status = , want.
 func TestLogLevel_Get(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler()
@@ -92,6 +100,8 @@ func TestLogLevel_Get(t *testing.T) {
 	}
 }
 
+// TestLogLevel_Put verifies the log level put contract.
+// Asserts that status = , want.
 func TestLogLevel_Put(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler()
@@ -122,6 +132,8 @@ func TestLogLevel_Put(t *testing.T) {
 	}
 }
 
+// TestLogLevel_PutInvalidJSON verifies the log level put invalid json contract.
+// Asserts that status = , want.
 func TestLogLevel_PutInvalidJSON(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler()
@@ -139,6 +151,8 @@ func TestLogLevel_PutInvalidJSON(t *testing.T) {
 	}
 }
 
+// TestLogLevel_MethodNotAllowed verifies the log level method not allowed contract.
+// Asserts that status = , want.
 func TestLogLevel_MethodNotAllowed(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler()
@@ -155,6 +169,8 @@ func TestLogLevel_MethodNotAllowed(t *testing.T) {
 	}
 }
 
+// TestStatus_MethodNotAllowed verifies the status method not allowed contract.
+// Asserts that status = , want.
 func TestStatus_MethodNotAllowed(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler()
@@ -171,6 +187,8 @@ func TestStatus_MethodNotAllowed(t *testing.T) {
 	}
 }
 
+// TestObjectLocations_MissingKey verifies the object locations missing key contract.
+// Asserts that status = , want.
 func TestObjectLocations_MissingKey(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler()
@@ -187,6 +205,8 @@ func TestObjectLocations_MissingKey(t *testing.T) {
 	}
 }
 
+// TestUsageFlush_MethodNotAllowed verifies the usage flush method not allowed contract.
+// Asserts that status = , want.
 func TestUsageFlush_MethodNotAllowed(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler()
@@ -203,6 +223,8 @@ func TestUsageFlush_MethodNotAllowed(t *testing.T) {
 	}
 }
 
+// TestReplicate_MethodNotAllowed verifies the replicate method not allowed contract.
+// Asserts that status = , want.
 func TestReplicate_MethodNotAllowed(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler()
@@ -223,6 +245,7 @@ func TestReplicate_MethodNotAllowed(t *testing.T) {
 // HELPERS
 // -------------------------------------------------------------------------
 
+// newTestHandler constructs a new test handler.
 func newTestHandler() *Handler {
 	var lv slog.LevelVar
 	lv.Set(slog.LevelInfo)
@@ -236,6 +259,8 @@ func newTestHandler() *Handler {
 // DECRYPT-EXISTING TESTS
 // -------------------------------------------------------------------------
 
+// TestDecryptExisting_NoEncryptor verifies the decrypt existing no encryptor contract.
+// Asserts that status = , want.
 func TestDecryptExisting_NoEncryptor(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler()
@@ -260,6 +285,8 @@ func TestDecryptExisting_NoEncryptor(t *testing.T) {
 	}
 }
 
+// TestDecryptExisting_MethodNotAllowed verifies the decrypt existing method not allowed contract.
+// Asserts that status = , want.
 func TestDecryptExisting_MethodNotAllowed(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler()
@@ -276,6 +303,8 @@ func TestDecryptExisting_MethodNotAllowed(t *testing.T) {
 	}
 }
 
+// TestEncryptExisting_NoEncryptor verifies the encrypt existing no encryptor contract.
+// Asserts that status = , want.
 func TestEncryptExisting_NoEncryptor(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler()
@@ -296,6 +325,7 @@ func TestEncryptExisting_NoEncryptor(t *testing.T) {
 // REMOVE-BACKEND CONFIRMATION TESTS
 // -------------------------------------------------------------------------
 
+// TestRemoveToken_RoundTrip verifies the remove token round trip behaviour described by the test name.
 func TestRemoveToken_RoundTrip(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler()
@@ -306,6 +336,7 @@ func TestRemoveToken_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestRemoveToken_WrongBackend verifies the remove token wrong backend behaviour described by the test name.
 func TestRemoveToken_WrongBackend(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler()
@@ -316,6 +347,7 @@ func TestRemoveToken_WrongBackend(t *testing.T) {
 	}
 }
 
+// TestRemoveToken_Tampered verifies the remove token tampered behaviour described by the test name.
 func TestRemoveToken_Tampered(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler()
@@ -326,6 +358,7 @@ func TestRemoveToken_Tampered(t *testing.T) {
 	}
 }
 
+// TestRemoveToken_Empty verifies the remove token empty behaviour described by the test name.
 func TestRemoveToken_Empty(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler()
@@ -335,6 +368,7 @@ func TestRemoveToken_Empty(t *testing.T) {
 	}
 }
 
+// TestRemoveToken_MalformedBase64 verifies the remove token malformed base64 behaviour described by the test name.
 func TestRemoveToken_MalformedBase64(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler()
@@ -343,6 +377,7 @@ func TestRemoveToken_MalformedBase64(t *testing.T) {
 	}
 }
 
+// TestRemoveToken_NoDot verifies the remove token no dot behaviour described by the test name.
 func TestRemoveToken_NoDot(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler()
@@ -351,6 +386,7 @@ func TestRemoveToken_NoDot(t *testing.T) {
 	}
 }
 
+// TestRemoveToken_BadPayloadFormat verifies the remove token bad payload format path by exercising hmac.New, mac.Write, mac.Sum.
 func TestRemoveToken_BadPayloadFormat(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler()
@@ -365,6 +401,7 @@ func TestRemoveToken_BadPayloadFormat(t *testing.T) {
 	}
 }
 
+// TestRemoveToken_WrongKey verifies the remove token wrong key behaviour described by the test name.
 func TestRemoveToken_WrongKey(t *testing.T) {
 	t.Parallel()
 	h1 := newTestHandler()

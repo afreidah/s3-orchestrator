@@ -2,6 +2,13 @@
 // Admin and Backend Lifecycle Operations
 //
 // Author: Alex Freidah
+//
+// Implements the Postgres engine bindings for backend-lifecycle ops:
+// adding a backend to backend_quotas at startup (UpsertQuotaLimit),
+// listing backends, and deleting all metadata for a removed backend
+// (DeleteBackendData). Translates between sqlc-generated row types
+// and the canonical core domain types so business logic in core/
+// stays engine-agnostic.
 // -------------------------------------------------------------------------------
 
 package postgres

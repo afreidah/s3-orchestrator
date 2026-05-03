@@ -17,6 +17,8 @@ import (
 	"time"
 )
 
+// TestTTLCache_SetGet verifies the ttlcache set get contract.
+// Asserts that Get(key1) = (, ), want (value1, true).
 func TestTTLCache_SetGet(t *testing.T) {
 	t.Parallel()
 	c := NewTTLCache[string, string](5 * time.Second)
@@ -30,6 +32,8 @@ func TestTTLCache_SetGet(t *testing.T) {
 	}
 }
 
+// TestTTLCache_GetMiss verifies the ttlcache get miss contract.
+// Asserts that Get(nonexistent) = (, ), want (0, false).
 func TestTTLCache_GetMiss(t *testing.T) {
 	t.Parallel()
 	c := NewTTLCache[string, int](5 * time.Second)
@@ -41,6 +45,7 @@ func TestTTLCache_GetMiss(t *testing.T) {
 	}
 }
 
+// TestTTLCache_Delete verifies the ttlcache delete path by exercising c.Close, c.Set, c.Delete.
 func TestTTLCache_Delete(t *testing.T) {
 	t.Parallel()
 	c := NewTTLCache[string, string](5 * time.Second)
@@ -55,6 +60,7 @@ func TestTTLCache_Delete(t *testing.T) {
 	}
 }
 
+// TestTTLCache_Clear verifies the ttlcache clear path by exercising c.Close, c.Set, c.Clear.
 func TestTTLCache_Clear(t *testing.T) {
 	t.Parallel()
 	c := NewTTLCache[string, string](5 * time.Second)
@@ -72,6 +78,7 @@ func TestTTLCache_Clear(t *testing.T) {
 	}
 }
 
+// TestTTLCache_Expiry verifies the ttlcache expiry path by exercising c.Close, c.Set, c.Get.
 func TestTTLCache_Expiry(t *testing.T) {
 	t.Parallel()
 	c := NewTTLCache[string, string](50 * time.Millisecond)
@@ -91,6 +98,8 @@ func TestTTLCache_Expiry(t *testing.T) {
 	}
 }
 
+// TestTTLCache_Eviction verifies the ttlcache eviction contract.
+// Asserts that entries after eviction = , want 0.
 func TestTTLCache_Eviction(t *testing.T) {
 	t.Parallel()
 	c := NewTTLCache[string, string](50 * time.Millisecond)
@@ -106,6 +115,7 @@ func TestTTLCache_Eviction(t *testing.T) {
 	}
 }
 
+// TestTTLCache_SetWithTTL verifies the ttlcache set with ttl path by exercising c.Close, c.SetWithTTL, c.Get.
 func TestTTLCache_SetWithTTL(t *testing.T) {
 	t.Parallel()
 	c := NewTTLCache[string, string](5 * time.Second)
@@ -125,6 +135,7 @@ func TestTTLCache_SetWithTTL(t *testing.T) {
 	}
 }
 
+// TestTTLCache_ZeroTTL verifies the ttlcache zero ttl path by exercising c.Close, c.Set, c.Get.
 func TestTTLCache_ZeroTTL(t *testing.T) {
 	t.Parallel()
 	c := NewTTLCache[string, string](0)
@@ -138,6 +149,8 @@ func TestTTLCache_ZeroTTL(t *testing.T) {
 	}
 }
 
+// TestTTLCache_Len verifies the ttlcache len contract.
+// Asserts that Len = , want 3.
 func TestTTLCache_Len(t *testing.T) {
 	t.Parallel()
 	c := NewTTLCache[string, string](5 * time.Second)
@@ -156,6 +169,7 @@ func TestTTLCache_Len(t *testing.T) {
 	}
 }
 
+// TestTTLCache_ConcurrentAccess verifies the ttlcache concurrent access path by exercising c.Close, wg.Go, fmt.Sprintf.
 func TestTTLCache_ConcurrentAccess(t *testing.T) {
 	t.Parallel()
 	c := NewTTLCache[string, string](5 * time.Second)
@@ -173,6 +187,7 @@ func TestTTLCache_ConcurrentAccess(t *testing.T) {
 	wg.Wait()
 }
 
+// TestTTLCache_CloseIdempotent verifies the ttlcache close idempotent path by exercising c.Close.
 func TestTTLCache_CloseIdempotent(t *testing.T) {
 	t.Parallel()
 	c := NewTTLCache[string, string](5 * time.Second)
@@ -184,6 +199,7 @@ func TestTTLCache_CloseIdempotent(t *testing.T) {
 // BENCHMARKS
 // -------------------------------------------------------------------------
 
+// BenchmarkTTLCache_Eviction measures the ttlcache eviction path by exercising fmt.Sprintf, time.Now.
 func BenchmarkTTLCache_Eviction(b *testing.B) {
 	sizes := []int{100, 1000, 10000}
 

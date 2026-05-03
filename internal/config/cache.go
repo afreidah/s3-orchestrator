@@ -28,6 +28,7 @@ type CacheConfig struct {
 	MaxObjectSizeBytes int64 `yaml:"-"`
 }
 
+// setDefaultsAndValidate sets defaults and validate.
 func (cc *CacheConfig) setDefaultsAndValidate() []error {
 	if !cc.Enabled {
 		return nil
@@ -135,6 +136,9 @@ func trimSpace(s string) string {
 	return s
 }
 
+// toUpper is an ASCII-only uppercase. Used for the cache mode comparator
+// without pulling in unicode/text since cache mode values are a small
+// closed set ("memory", "redis", etc.) and never carry non-ASCII.
 func toUpper(s string) string {
 	b := make([]byte, len(s))
 	for i := range s {
@@ -147,6 +151,7 @@ func toUpper(s string) string {
 	return string(b)
 }
 
+// hasSuffix reports whether suffix.
 func hasSuffix(s, suffix string) bool {
 	return len(s) >= len(suffix) && s[len(s)-len(suffix):] == suffix
 }

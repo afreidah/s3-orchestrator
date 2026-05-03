@@ -26,6 +26,7 @@ func testDEK() []byte {
 	return dek
 }
 
+// TestChunkNonce_UniquePerIndex verifies the chunk nonce unique per index path by exercising bytes.Equal.
 func TestChunkNonce_UniquePerIndex(t *testing.T) {
 	t.Parallel()
 	base := make([]byte, NonceSize)
@@ -45,6 +46,7 @@ func TestChunkNonce_UniquePerIndex(t *testing.T) {
 	}
 }
 
+// TestChunkNonce_DoesNotMutateBase verifies the chunk nonce does not mutate base path by exercising bytes.Equal.
 func TestChunkNonce_DoesNotMutateBase(t *testing.T) {
 	t.Parallel()
 	base := make([]byte, NonceSize)
@@ -59,6 +61,8 @@ func TestChunkNonce_DoesNotMutateBase(t *testing.T) {
 	}
 }
 
+// TestRoundTrip_EmptyInput verifies the round trip empty input contract.
+// Asserts that ciphertext len = , want (header only).
 func TestRoundTrip_EmptyInput(t *testing.T) {
 	t.Parallel()
 	dek := testDEK()
@@ -78,36 +82,45 @@ func TestRoundTrip_EmptyInput(t *testing.T) {
 	}
 }
 
+// TestRoundTrip_ExactChunkSize verifies the round trip exact chunk size behaviour described by the test name.
 func TestRoundTrip_ExactChunkSize(t *testing.T) {
 	t.Parallel()
 	testRoundTrip(t, 1024, 1024)
 }
 
+// TestRoundTrip_OneByteOverChunk verifies the round trip one byte over chunk behaviour described by the test name.
 func TestRoundTrip_OneByteOverChunk(t *testing.T) {
 	t.Parallel()
 	testRoundTrip(t, 1024, 1025)
 }
 
+// TestRoundTrip_OneByteUnderChunk verifies the round trip one byte under chunk behaviour described by the test name.
 func TestRoundTrip_OneByteUnderChunk(t *testing.T) {
 	t.Parallel()
 	testRoundTrip(t, 1024, 1023)
 }
 
+// TestRoundTrip_SmallChunkLargeInput verifies the round trip small chunk large input behaviour described by the test name.
 func TestRoundTrip_SmallChunkLargeInput(t *testing.T) {
 	t.Parallel()
 	testRoundTrip(t, 64, 1000)
 }
 
+// TestRoundTrip_SingleByte verifies the round trip single byte behaviour described by the test name.
 func TestRoundTrip_SingleByte(t *testing.T) {
 	t.Parallel()
 	testRoundTrip(t, 1024, 1)
 }
 
+// TestRoundTrip_MultipleFullChunks verifies the round trip multiple full chunks behaviour described by the test name.
 func TestRoundTrip_MultipleFullChunks(t *testing.T) {
 	t.Parallel()
 	testRoundTrip(t, 256, 256*5)
 }
 
+// testRoundTrip is the shared body of the encrypt/decrypt round-trip
+// table tests. Encrypts the plaintext, decrypts the ciphertext, and
+// asserts byte-for-byte equality plus the size invariants.
 func testRoundTrip(t *testing.T, chunkSize, inputSize int) {
 	t.Helper()
 
@@ -153,6 +166,7 @@ func testRoundTrip(t *testing.T, chunkSize, inputSize int) {
 	}
 }
 
+// TestChunkParseHeader_InvalidMagic verifies the chunk parse header invalid magic path by exercising bytes.NewReader.
 func TestChunkParseHeader_InvalidMagic(t *testing.T) {
 	t.Parallel()
 	hdr := make([]byte, HeaderSize)
@@ -163,6 +177,7 @@ func TestChunkParseHeader_InvalidMagic(t *testing.T) {
 	}
 }
 
+// TestChunkParseHeader_UnsupportedVersion verifies the chunk parse header unsupported version path by exercising bytes.NewReader.
 func TestChunkParseHeader_UnsupportedVersion(t *testing.T) {
 	t.Parallel()
 	hdr := make([]byte, HeaderSize)
@@ -174,6 +189,7 @@ func TestChunkParseHeader_UnsupportedVersion(t *testing.T) {
 	}
 }
 
+// TestChunkParseHeader_TooShort verifies the chunk parse header too short path by exercising bytes.NewReader.
 func TestChunkParseHeader_TooShort(t *testing.T) {
 	t.Parallel()
 	_, _, err := ParseHeader(bytes.NewReader([]byte("short")))
@@ -182,6 +198,8 @@ func TestChunkParseHeader_TooShort(t *testing.T) {
 	}
 }
 
+// TestChunkParseHeader_ValidRoundTrip verifies the chunk parse header valid round trip contract.
+// Asserts that chunk size = , want 4096.
 func TestChunkParseHeader_ValidRoundTrip(t *testing.T) {
 	t.Parallel()
 	hdr := make([]byte, HeaderSize)
@@ -202,6 +220,8 @@ func TestChunkParseHeader_ValidRoundTrip(t *testing.T) {
 	}
 }
 
+// TestCiphertextSize verifies the ciphertext size contract.
+// Asserts that ciphertext len = , want.
 func TestCiphertextSize(t *testing.T) {
 	t.Parallel()
 	dek := testDEK()
@@ -227,6 +247,7 @@ func TestCiphertextSize(t *testing.T) {
 	}
 }
 
+// TestDecryptReader_ChunkTooShort verifies the decrypt reader chunk too short path by exercising bytes.NewReader, io.ReadAll.
 func TestDecryptReader_ChunkTooShort(t *testing.T) {
 	t.Parallel()
 	dek := testDEK()
@@ -242,6 +263,7 @@ func TestDecryptReader_ChunkTooShort(t *testing.T) {
 	}
 }
 
+// TestDecryptReader_NonceMismatch verifies the decrypt reader nonce mismatch path by exercising bytes.NewReader, io.ReadAll.
 func TestDecryptReader_NonceMismatch(t *testing.T) {
 	t.Parallel()
 	dek := testDEK()
@@ -273,6 +295,7 @@ func TestDecryptReader_NonceMismatch(t *testing.T) {
 	}
 }
 
+// BenchmarkEncryptReader measures the encrypt reader path by exercising bytes.NewReader, io.Copy.
 func BenchmarkEncryptReader(b *testing.B) {
 	dek := testDEK()
 	data := make([]byte, 1<<20) // 1 MiB
@@ -288,6 +311,7 @@ func BenchmarkEncryptReader(b *testing.B) {
 	}
 }
 
+// BenchmarkDecryptReader measures the decrypt reader path by exercising bytes.NewReader, io.ReadAll, io.Copy.
 func BenchmarkDecryptReader(b *testing.B) {
 	dek := testDEK()
 	chunkSize := 64 * 1024
@@ -319,6 +343,7 @@ func BenchmarkDecryptReader(b *testing.B) {
 	}
 }
 
+// BenchmarkRoundTrip measures the round trip path by exercising bytes.NewReader, io.ReadAll, io.Copy.
 func BenchmarkRoundTrip(b *testing.B) {
 	dek := testDEK()
 	chunkSize := 64 * 1024

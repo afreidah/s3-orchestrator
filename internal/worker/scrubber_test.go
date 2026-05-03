@@ -1,3 +1,16 @@
+// -------------------------------------------------------------------------------
+// Integrity Scrubber Tests
+//
+// Author: Alex Freidah
+//
+// Covers the scrubber's verify-and-repair path: hash matches accept the
+// copy, mismatches enqueue cleanup with reason integrity_scrub_failed,
+// backend errors are tolerated and counted, empty batches no-op, and the
+// backfill path computes-then-stores hashes for objects predating the
+// content_hash column. The mismatch enqueue is the load-bearing assertion
+// because it is how silent corruption gets surfaced.
+// -------------------------------------------------------------------------------
+
 package worker
 
 import (
@@ -16,11 +29,13 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
+// hashString reports whether h string.
 func hashString(s string) string {
 	h := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(h[:])
 }
 
+// setupScrubber sets up scrubber.
 func setupScrubber(t *testing.T) (*Scrubber, *MockScrubberOps, *backendtest.MockObjectBackend, *mockMetadataStore) {
 	t.Helper()
 	ctrl := gomock.NewController(t)
@@ -35,6 +50,8 @@ func setupScrubber(t *testing.T) (*Scrubber, *MockScrubberOps, *backendtest.Mock
 	return s, ops, be, ms
 }
 
+// TestScrub_MatchingHash verifies the scrub matching hash contract.
+// Asserts that expected 1 checked, got.
 func TestScrub_MatchingHash(t *testing.T) {
 	t.Parallel()
 	s, ops, be, ms := setupScrubber(t)
@@ -61,6 +78,8 @@ func TestScrub_MatchingHash(t *testing.T) {
 	}
 }
 
+// TestScrub_HashMismatch verifies the scrub hash mismatch contract.
+// Asserts that expected 1 checked, got.
 func TestScrub_HashMismatch(t *testing.T) {
 	t.Parallel()
 	s, ops, be, ms := setupScrubber(t)
@@ -86,6 +105,8 @@ func TestScrub_HashMismatch(t *testing.T) {
 	}
 }
 
+// TestScrub_BackendError verifies the scrub backend error contract.
+// Asserts that expected 0 checked, got.
 func TestScrub_BackendError(t *testing.T) {
 	t.Parallel()
 	s, ops, be, ms := setupScrubber(t)
@@ -107,6 +128,8 @@ func TestScrub_BackendError(t *testing.T) {
 	}
 }
 
+// TestScrub_EmptyBatch verifies the scrub empty batch contract.
+// Asserts that expected 0/0, got /.
 func TestScrub_EmptyBatch(t *testing.T) {
 	t.Parallel()
 	s, _, _, ms := setupScrubber(t)
@@ -118,6 +141,8 @@ func TestScrub_EmptyBatch(t *testing.T) {
 	}
 }
 
+// TestBackfill_ComputesAndStoresHash verifies the backfill computes and stores hash contract.
+// Asserts that expected 1 processed, got.
 func TestBackfill_ComputesAndStoresHash(t *testing.T) {
 	t.Parallel()
 	s, ops, be, ms := setupScrubber(t)
@@ -147,6 +172,8 @@ func TestBackfill_ComputesAndStoresHash(t *testing.T) {
 	}
 }
 
+// TestBackfill_Pagination verifies the backfill pagination contract.
+// Asserts that expected 5 processed, got.
 func TestBackfill_Pagination(t *testing.T) {
 	t.Parallel()
 	s, ops, be, ms := setupScrubber(t)
@@ -174,6 +201,8 @@ func TestBackfill_Pagination(t *testing.T) {
 	}
 }
 
+// TestBackfill_UnencryptedObject verifies the backfill unencrypted object contract.
+// Asserts that expected 1 processed, got.
 func TestBackfill_UnencryptedObject(t *testing.T) {
 	t.Parallel()
 	s, ops, be, ms := setupScrubber(t)
@@ -200,6 +229,8 @@ func TestBackfill_UnencryptedObject(t *testing.T) {
 	}
 }
 
+// TestBackfill_BackendError verifies the backfill backend error contract.
+// Asserts that expected 0 processed, got.
 func TestBackfill_BackendError(t *testing.T) {
 	t.Parallel()
 	s, ops, be, ms := setupScrubber(t)
@@ -218,6 +249,8 @@ func TestBackfill_BackendError(t *testing.T) {
 	}
 }
 
+// TestBackfill_EmptyBatch verifies the backfill empty batch contract.
+// Asserts that expected 0/0, got /.
 func TestBackfill_EmptyBatch(t *testing.T) {
 	t.Parallel()
 	s, _, _, ms := setupScrubber(t)
@@ -229,6 +262,8 @@ func TestBackfill_EmptyBatch(t *testing.T) {
 	}
 }
 
+// TestScrubber_SetConfig verifies the scrubber set config contract.
+// Asserts that expected batch size 50, got.
 func TestScrubber_SetConfig(t *testing.T) {
 	t.Parallel()
 	s := NewScrubber(nil, &mockMetadataStore{}, nil)
@@ -243,6 +278,8 @@ func TestScrubber_SetConfig(t *testing.T) {
 	}
 }
 
+// TestScrub_ContextCancelled verifies the scrub context cancelled contract.
+// Asserts that expected 0 checked with cancelled context, got.
 func TestScrub_ContextCancelled(t *testing.T) {
 	t.Parallel()
 	s, _, _, ms := setupScrubber(t)

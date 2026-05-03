@@ -216,7 +216,7 @@ func (m *BackendManager) RedisCounterActive() bool {
 
 // RedisCounterConfigured returns true when the counter backend is a Redis
 // backend, regardless of health status. Used by the flush service to decide
-// whether an advisory lock is needed — the lock must be held even during
+// whether an advisory lock is needed  -  the lock must be held even during
 // fallback to prevent double-counting when Redis recovers mid-flush.
 func (m *BackendManager) RedisCounterConfigured() bool {
 	_, ok := m.usage.Backend().(*counter.RedisCounterBackend)
@@ -307,11 +307,11 @@ func (m *BackendManager) SyncBackend(ctx context.Context, backendName, bucket st
 		for _, obj := range objects {
 			key := obj.Key
 
-			// Already belongs to this bucket — use as-is.
+			// Already belongs to this bucket  -  use as-is.
 			if strings.HasPrefix(key, bucketPrefix) {
 				// good, keep key
 			} else {
-				// Check if it belongs to a different virtual bucket — skip.
+				// Check if it belongs to a different virtual bucket  -  skip.
 				belongsToOther := false
 				for _, p := range otherPrefixes {
 					if strings.HasPrefix(key, p) {
@@ -322,7 +322,7 @@ func (m *BackendManager) SyncBackend(ctx context.Context, backendName, bucket st
 				if belongsToOther {
 					continue
 				}
-				// Externally-uploaded object without a bucket prefix — prepend.
+				// Externally-uploaded object without a bucket prefix  -  prepend.
 				key = bucketPrefix + key
 			}
 
@@ -383,7 +383,7 @@ func (m *BackendManager) makeReconcileDeleter() deleterFn {
 // Behaviour: imports keys present on the backend but not in the DB, and
 // deletes DB rows whose keys are no longer on the backend. Keys owned by
 // sibling virtual buckets stored on the same backend are left alone in
-// both directions — sibling buckets are reconciled by their own pass.
+// both directions  -  sibling buckets are reconciled by their own pass.
 func (m *BackendManager) ReconcileBackend(ctx context.Context, backendName, bucket string, knownBuckets []string) (*worker.ReconcileResult, error) {
 	s3b, err := m.resolveS3Backend(backendName)
 	if err != nil {

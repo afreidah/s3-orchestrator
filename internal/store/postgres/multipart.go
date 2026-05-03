@@ -2,6 +2,13 @@
 // Multipart Upload Operations
 //
 // Author: Alex Freidah
+//
+// Implements the Postgres engine bindings for the in-progress multipart
+// upload state stored in multipart_uploads + multipart_parts. Carries
+// upload create/lookup/delete, per-part record/list/delete, and the
+// stale-upload sweep used by the multipart cleanup background worker.
+// The metadata JSONB column lets clients pass arbitrary user metadata
+// through CompleteMultipartUpload without a schema change.
 // -------------------------------------------------------------------------------
 
 package postgres
@@ -19,7 +26,15 @@ import (
 	db "github.com/afreidah/s3-orchestrator/internal/store/postgres/sqlc"
 )
 
+// errUnmarshalMetadata is the wrap format string used by every site
+// that unmarshals the JSONB metadata column. Centralised so the audit
+// log "failed to unmarshal metadata" string stays grep-able and a typo
+// in one site doesn't drift from the others.
 const errUnmarshalMetadata = "failed to unmarshal metadata: %w"
+
+// -------------------------------------------------------------------------
+// UPLOAD LIFECYCLE
+// -------------------------------------------------------------------------
 
 // CreateMultipartUpload records a new multipart upload in the database.
 func (s *Store) CreateMultipartUpload(ctx context.Context, uploadID, key, backend, contentType string, metadata map[string]string) error {
@@ -84,6 +99,10 @@ func toMultipartUpload(uploadID, objectKey, backendName string, contentType *str
 	return mu, nil
 }
 
+// -------------------------------------------------------------------------
+// PARTS
+// -------------------------------------------------------------------------
+
 // RecordPart records a completed part for a multipart upload.
 // S3 spec requires part numbers between 1 and 10000.
 func (s *Store) RecordPart(ctx context.Context, uploadID string, partNumber int, etag string, size int64, enc *core.EncryptionMeta) error {
@@ -136,6 +155,10 @@ func (s *Store) GetParts(ctx context.Context, uploadID string) ([]core.Multipart
 	return parts, nil
 }
 
+// -------------------------------------------------------------------------
+// DELETION, LISTING, COUNTS
+// -------------------------------------------------------------------------
+
 // DeleteMultipartUpload removes a multipart upload and its parts (cascading).
 func (s *Store) DeleteMultipartUpload(ctx context.Context, uploadID string) error {
 	err := s.queries.DeleteMultipartUpload(ctx, uploadID)
@@ -165,7 +188,7 @@ func (s *Store) GetStaleMultipartUploads(ctx context.Context, olderThan time.Dur
 
 // GetMultipartUploadsByBackend returns all in-progress multipart uploads on
 // the given backend. Used by drain to abort uploads before migrating objects.
-// Requires live PostgreSQL — covered by integration tests.
+// Requires live PostgreSQL  -  covered by integration tests.
 func (s *Store) GetMultipartUploadsByBackend(ctx context.Context, backendName string) ([]core.MultipartUpload, error) {
 	rows, err := s.queries.GetMultipartUploadsByBackend(ctx, backendName)
 	if err != nil {

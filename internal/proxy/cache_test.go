@@ -16,6 +16,8 @@ import (
 	"time"
 )
 
+// TestLocationCache_SetGet verifies the location cache set get contract.
+// Asserts that Get(key1) = (, ), want (backend-a, true).
 func TestLocationCache_SetGet(t *testing.T) {
 	t.Parallel()
 	c := NewLocationCache(5 * time.Second)
@@ -29,6 +31,7 @@ func TestLocationCache_SetGet(t *testing.T) {
 	}
 }
 
+// TestLocationCache_GetMiss verifies the location cache get miss path by exercising c.Close, c.Get.
 func TestLocationCache_GetMiss(t *testing.T) {
 	t.Parallel()
 	c := NewLocationCache(5 * time.Second)
@@ -40,6 +43,7 @@ func TestLocationCache_GetMiss(t *testing.T) {
 	}
 }
 
+// TestLocationCache_Delete verifies the location cache delete path by exercising c.Close, c.Set, c.Delete.
 func TestLocationCache_Delete(t *testing.T) {
 	t.Parallel()
 	c := NewLocationCache(5 * time.Second)
@@ -54,6 +58,7 @@ func TestLocationCache_Delete(t *testing.T) {
 	}
 }
 
+// TestLocationCache_Clear verifies the location cache clear path by exercising c.Close, c.Set, c.Clear.
 func TestLocationCache_Clear(t *testing.T) {
 	t.Parallel()
 	c := NewLocationCache(5 * time.Second)
@@ -71,6 +76,8 @@ func TestLocationCache_Clear(t *testing.T) {
 	}
 }
 
+// TestLocationCache_Eviction verifies the location cache eviction contract.
+// Asserts that entries after eviction = , want 0.
 func TestLocationCache_Eviction(t *testing.T) {
 	t.Parallel()
 	c := NewLocationCache(50 * time.Millisecond)
@@ -86,6 +93,7 @@ func TestLocationCache_Eviction(t *testing.T) {
 	}
 }
 
+// TestLocationCache_ZeroTTL_NoEvictionGoroutine verifies the location cache zero ttl no eviction goroutine path by exercising c.Close, c.Set, c.Get.
 func TestLocationCache_ZeroTTL_NoEvictionGoroutine(t *testing.T) {
 	t.Parallel()
 	c := NewLocationCache(0)
@@ -99,6 +107,7 @@ func TestLocationCache_ZeroTTL_NoEvictionGoroutine(t *testing.T) {
 	}
 }
 
+// TestLocationCache_ConcurrentAccess verifies the location cache concurrent access path by exercising c.Close, wg.Go, fmt.Sprintf.
 func TestLocationCache_ConcurrentAccess(t *testing.T) {
 	t.Parallel()
 	c := NewLocationCache(5 * time.Second)
@@ -116,6 +125,7 @@ func TestLocationCache_ConcurrentAccess(t *testing.T) {
 	wg.Wait()
 }
 
+// TestLocationCache_CloseIdempotent verifies the location cache close idempotent path by exercising c.Close.
 func TestLocationCache_CloseIdempotent(t *testing.T) {
 	t.Parallel()
 	c := NewLocationCache(5 * time.Second)

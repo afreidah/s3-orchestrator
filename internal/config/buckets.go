@@ -2,6 +2,13 @@
 // Bucket Configuration
 //
 // Author: Alex Freidah
+//
+// Defines virtual-bucket configuration: the public bucket name clients see,
+// the credential bundles that authorize access, and the bucket-prefix
+// convention used to namespace objects in the underlying physical
+// backends. Validators enforce that every bucket has at least one
+// credential and that access keys are unique across buckets so SigV4
+// resolution is unambiguous.
 // -------------------------------------------------------------------------------
 
 package config
@@ -28,6 +35,10 @@ type BucketConfig struct {
 	MaxMultipartUploads int                `yaml:"max_multipart_uploads"` // Max active multipart uploads per bucket (0 = unlimited)
 }
 
+// validateBuckets enforces that at least one virtual bucket is
+// configured, every bucket has a unique name, and every bucket carries
+// at least one credential pair so SigV4 resolution has something to
+// match. Errors aggregate so operators see all problems in one pass.
 func validateBuckets(buckets []BucketConfig) []error {
 	var errs []error
 

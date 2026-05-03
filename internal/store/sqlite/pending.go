@@ -21,6 +21,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// INTENT LIFECYCLE
+// -------------------------------------------------------------------------
+
 // InsertPending records an in-flight PUT intent.
 func (s *Store) InsertPending(ctx context.Context, p *core.PendingObject) error {
 	keyID := nullableString(p.KeyID)
@@ -110,6 +114,10 @@ func (s *Store) GetStalePending(ctx context.Context, olderThan time.Time, limit 
 	return out, nil
 }
 
+// -------------------------------------------------------------------------
+// REAPER SUPPORT
+// -------------------------------------------------------------------------
+
 // PendingDepth returns the total number of pending intents.
 func (s *Store) PendingDepth(ctx context.Context) (int64, error) {
 	var depth int64
@@ -149,6 +157,10 @@ func (s *Store) DeletePendingByBackend(ctx context.Context, backendName string) 
 func (s *Store) PromotePending(ctx context.Context, p *core.PendingObject) (core.PendingPromoteResult, []core.DeletedCopy, error) {
 	return core.PromotePending(ctx, s, p)
 }
+
+// -------------------------------------------------------------------------
+// NULL HELPERS
+// -------------------------------------------------------------------------
 
 // nullableString returns sql.NullString{Valid:false} when s is empty so the
 // pending row stores SQL NULL rather than the zero value.

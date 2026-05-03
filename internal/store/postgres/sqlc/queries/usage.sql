@@ -1,3 +1,15 @@
+-- -----------------------------------------------------------------------------
+-- Usage Queries
+--
+-- Author: Alex Freidah
+--
+-- sqlc-input definitions for backend_usage - the monthly per-backend
+-- (api_requests, egress_bytes, ingress_bytes) counters used by the usage
+-- flusher and the dashboard. FlushUsageDeltas uses INSERT ON CONFLICT DO
+-- UPDATE with column-level ADDs so multiple flushers can converge on the
+-- same row without losing deltas.
+-- -----------------------------------------------------------------------------
+
 -- name: FlushUsageDeltas :exec
 -- Atomically adds accumulated in-memory deltas to the persistent usage row.
 -- Creates the row if it doesn't exist for this (backend, period) yet.
