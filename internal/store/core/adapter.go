@@ -128,6 +128,23 @@ type CleanupTxAdapter interface {
 	// the given (objectKey, backend) pair and returns the count and
 	// total size of the deleted rows.
 	SumAndDeleteCleanupQueueRows(ctx context.Context, objectKey, backend string) (deleted int64, totalBytes int64, err error)
+
+	// GetCleanupQueueRow returns the full payload of a single
+	// cleanup_queue row by id. Used inside MoveCleanupToDLQ so the row
+	// contents (key, backend, size, attempts, created_at, last_error)
+	// can be copied into the DLQ insert without a separate round trip.
+	GetCleanupQueueRow(ctx context.Context, id int64) (CleanupQueueRow, error)
+
+	// InsertCleanupDLQ inserts the supplied row into cleanup_dlq. The
+	// original_id retains the queue row's id for forensic correlation;
+	// first_enqueued_at carries the original created_at so the DLQ
+	// entry remembers how long the cleanup was outstanding. Takes a
+	// pointer so the 112-byte row payload travels by reference.
+	InsertCleanupDLQ(ctx context.Context, row *CleanupQueueRow) error
+
+	// DeleteCleanupItem removes a cleanup_queue row by id. Used inside
+	// MoveCleanupToDLQ so the queue->DLQ move is atomic.
+	DeleteCleanupItem(ctx context.Context, id int64) error
 }
 
 // QuotaTxAdapter exposes the transactional operations on the
@@ -170,4 +187,9 @@ type Reader interface {
 	// Cleanup queue reads
 	GetPendingCleanups(ctx context.Context, limit int) ([]CleanupItem, error)
 	CleanupQueueDepth(ctx context.Context) (int64, error)
+
+	// CleanupDLQDepth returns the number of rows in cleanup_dlq. Used
+	// by the cleanup_dlq_depth gauge so dashboards surface the count
+	// of unrecoverable orphans needing operator attention.
+	CleanupDLQDepth(ctx context.Context) (int64, error)
 }

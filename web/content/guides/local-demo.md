@@ -155,7 +155,7 @@ Detailed HTTP-level metrics: request rate broken down by method, duration percen
 
 ### Manager Operations
 
-The backend and manager operations panels show request rate and duration at the storage layer — below the HTTP handler and above the individual S3 backends. This section also displays the circuit breaker status for each backend and the database, replication activity (pending replicas, copies created, errors, duration), rebalancer runs, and cleanup queue depth.
+The backend and manager operations panels show request rate and duration at the storage layer — below the HTTP handler and above the individual S3 backends. This section also displays the circuit breaker status for each backend and the database, replication activity (pending replicas, copies created, errors, duration), rebalancer runs, the cleanup queue depth, and the cleanup DLQ depth (`s3o_cleanup_dlq_depth`) — a non-zero DLQ means at least one unrecoverable orphan needs operator action.
 
 ![Manager Operations](/images/demo-grafana-manager.png)
 

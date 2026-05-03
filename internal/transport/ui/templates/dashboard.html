@@ -68,16 +68,16 @@
   <!-- Backends -->
   <section>
     <h2>Backends
-      <button id="rebalance-btn" class="btn-action">Rebalance</button>
-      <button id="clean-excess-btn" class="btn-action">Clean Excess</button>
-      <button id="sync-btn" class="btn-action">Sync</button>
-      <button id="replicate-btn" class="btn-action">Replicate Now</button>
+      <button id="rebalance-btn" class="btn-action" title="Move objects between backends to better match the configured routing strategy and even out space usage. Runs in the background; safe to trigger any time.">Rebalance</button>
+      <button id="clean-excess-btn" class="btn-action" title="Delete extra object replicas that exceed the configured replication factor. Frees space without reducing redundancy below the target.">Clean Excess</button>
+      <button id="sync-btn" class="btn-action" title="Scan a backend bucket and register objects that exist in storage but are missing from the orchestrator's metadata, mapping them into a virtual bucket.">Sync</button>
+      <button id="replicate-btn" class="btn-action" title="Run one immediate replication pass to copy under-replicated objects to additional backends until they meet the configured replication factor.">Replicate Now</button>
       {{if .Config.IntegrityEnabled}}
-      <button id="scrub-btn" class="btn-action">Scrub</button>
-      <button id="backfill-checksums-btn" class="btn-action">Backfill Checksums</button>
+      <button id="scrub-btn" class="btn-action" title="Verify stored object checksums against backend data to detect corruption. Reports number checked and number failed.">Scrub</button>
+      <button id="backfill-checksums-btn" class="btn-action" title="Compute and persist content hashes for objects that don't yet have one (e.g. uploaded before checksumming was enabled).">Backfill Checksums</button>
       {{end}}
       {{if .Config.EncryptionEnabled}}
-      <button id="encrypt-existing-btn" class="btn-action">Encrypt Existing</button>
+      <button id="encrypt-existing-btn" class="btn-action" title="Walk every unencrypted object, encrypt it with the configured key, re-upload the ciphertext, and update its metadata. Long-running.">Encrypt Existing</button>
       {{end}}
       <span id="admin-action-status" class="admin-action-status"></span>
     </h2>

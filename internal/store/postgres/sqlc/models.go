@@ -25,6 +25,19 @@ type BackendUsage struct {
 	UpdatedAt    pgtype.Timestamptz
 }
 
+type CleanupDlq struct {
+	ID              int64
+	OriginalID      int64
+	BackendName     string
+	ObjectKey       string
+	Reason          string
+	SizeBytes       int64
+	Attempts        int32
+	FirstEnqueuedAt pgtype.Timestamptz
+	MovedAt         pgtype.Timestamptz
+	LastError       *string
+}
+
 type CleanupQueue struct {
 	ID          int64
 	BackendName string

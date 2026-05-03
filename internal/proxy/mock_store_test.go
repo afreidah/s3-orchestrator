@@ -95,13 +95,18 @@ type mockStore struct {
 	moveObjectLocationErr        error
 
 	// Cleanup queue
-	enqueueCleanupErr    error
-	pendingCleanups      []core.CleanupItem
-	getPendingErr        error
-	completeCleanupErr   error
-	retryCleanupErr      error
-	cleanupQueueDepthVal int64
-	cleanupQueueDepthErr error
+	enqueueCleanupErr      error
+	pendingCleanups        []core.CleanupItem
+	getPendingErr          error
+	completeCleanupErr     error
+	retryCleanupErr        error
+	cleanupQueueDepthVal   int64
+	cleanupQueueDepthErr   error
+	cleanupDLQDepthVal     int64
+	cleanupDLQDepthErr     error
+	moveCleanupToDLQErr    error
+	moveCleanupToDLQResult bool
+	movedToDLQ             []dlqMove
 
 	// Pending objects (PutObject intent tracking)
 	recordObjectAndClearPendingCalls []string
@@ -203,6 +208,11 @@ type orphanBytesCall struct {
 
 type sweepStaleCall struct {
 	key, backend string
+}
+
+type dlqMove struct {
+	id        int64
+	lastError string
 }
 
 type flushUsageCall struct {
@@ -616,6 +626,20 @@ func (m *mockStore) RetryCleanupItem(_ context.Context, id int64, backoff time.D
 
 func (m *mockStore) CleanupQueueDepth(_ context.Context) (int64, error) {
 	return m.cleanupQueueDepthVal, m.cleanupQueueDepthErr
+}
+
+func (m *mockStore) CleanupDLQDepth(_ context.Context) (int64, error) {
+	return m.cleanupDLQDepthVal, m.cleanupDLQDepthErr
+}
+
+func (m *mockStore) MoveCleanupToDLQ(_ context.Context, id int64, lastError string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.movedToDLQ = append(m.movedToDLQ, dlqMove{id: id, lastError: lastError})
+	if m.moveCleanupToDLQErr != nil {
+		return false, m.moveCleanupToDLQErr
+	}
+	return m.moveCleanupToDLQResult, nil
 }
 
 func (m *mockStore) ListExpiredObjects(_ context.Context, _ string, _ time.Time, _ int) ([]core.ObjectLocation, error) {

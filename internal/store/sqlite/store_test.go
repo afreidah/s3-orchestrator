@@ -2014,3 +2014,152 @@ func TestListAllEncryptedLocations(t *testing.T) {
 		t.Errorf("plaintext_size = %d, want 1024", locs[0].PlaintextSize)
 	}
 }
+
+// -------------------------------------------------------------------------
+// CLEANUP DLQ - END TO END
+// -------------------------------------------------------------------------
+
+// TestStore_MoveCleanupToDLQ_GraduatesQueueRow asserts the
+// engine-level wrapper (Store.MoveCleanupToDLQ delegating to
+// core.MoveCleanupToDLQ over a real Runner) atomically moves the
+// queue row into cleanup_dlq, leaves orphan_bytes untouched, and
+// preserves enough context (key, size, backend, last_error) for
+// operator triage.
+func TestStore_MoveCleanupToDLQ_GraduatesQueueRow(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+	mustEnqueueCleanup(t, s, "backend-a", "bucket/doomed")
+	if err := s.IncrementOrphanBytes(ctx, "backend-a", 256); err != nil {
+		t.Fatalf("IncrementOrphanBytes: %v", err)
+	}
+
+	// Stamp a last_error and look up the queue row id.
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE cleanup_queue SET last_error = ? WHERE object_key = ?`,
+		"earlier transient", "bucket/doomed",
+	); err != nil {
+		t.Fatalf("set last_error: %v", err)
+	}
+	var id int64
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT id FROM cleanup_queue WHERE object_key = ?`, "bucket/doomed",
+	).Scan(&id); err != nil {
+		t.Fatalf("lookup id: %v", err)
+	}
+
+	moved, err := s.MoveCleanupToDLQ(ctx, id, "permanent failure")
+	if err != nil {
+		t.Fatalf("MoveCleanupToDLQ: %v", err)
+	}
+	if !moved {
+		t.Errorf("expected moved=true on first call")
+	}
+
+	// cleanup_queue must be empty for that object.
+	var remaining int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM cleanup_queue WHERE id = ?`, id,
+	).Scan(&remaining); err != nil {
+		t.Fatalf("count queue: %v", err)
+	}
+	if remaining != 0 {
+		t.Errorf("cleanup_queue row still present after move; got %d rows", remaining)
+	}
+
+	// cleanup_dlq must hold the row with the supplied last_error.
+	var (
+		dlqOriginal  int64
+		dlqBackend   string
+		dlqKey       string
+		dlqReason    string
+		dlqSize      int64
+		dlqAttempts  int32
+		dlqLastError string
+	)
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT original_id, backend_name, object_key, reason, size_bytes, attempts, COALESCE(last_error, '')
+		 FROM cleanup_dlq WHERE original_id = ?`, id,
+	).Scan(&dlqOriginal, &dlqBackend, &dlqKey, &dlqReason, &dlqSize, &dlqAttempts, &dlqLastError); err != nil {
+		t.Fatalf("probe DLQ: %v", err)
+	}
+	if dlqOriginal != id || dlqBackend != "backend-a" || dlqKey != "bucket/doomed" ||
+		dlqReason != "test" || dlqSize != 256 || dlqLastError != "permanent failure" {
+		t.Errorf("DLQ row mismatch: orig=%d backend=%q key=%q reason=%q size=%d err=%q",
+			dlqOriginal, dlqBackend, dlqKey, dlqReason, dlqSize, dlqLastError)
+	}
+
+	// orphan_bytes must NOT have been decremented - the backend object
+	// is still on disk and the DLQ flow is intentionally not a write-off.
+	var orphan int64
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT orphan_bytes FROM backend_quotas WHERE backend_name = ?`, "backend-a",
+	).Scan(&orphan); err != nil {
+		t.Fatalf("query orphan_bytes: %v", err)
+	}
+	if orphan != 256 {
+		t.Errorf("orphan_bytes=%d, want 256 (move must not decrement)", orphan)
+	}
+}
+
+// TestStore_MoveCleanupToDLQ_MissingRowReturnsFalse asserts a no-op
+// move on a non-existent id - the documented contract for a benign
+// concurrent finaliser race.
+func TestStore_MoveCleanupToDLQ_MissingRowReturnsFalse(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	moved, err := s.MoveCleanupToDLQ(context.Background(), 99999, "irrelevant")
+	if err != nil {
+		t.Fatalf("MoveCleanupToDLQ: %v", err)
+	}
+	if moved {
+		t.Errorf("expected moved=false when id does not exist")
+	}
+}
+
+// TestStore_CleanupDLQDepth_CountsRows asserts the DLQ depth gauge
+// query returns the live row count, including across multiple inserts.
+func TestStore_CleanupDLQDepth_CountsRows(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	depth, err := s.CleanupDLQDepth(ctx)
+	if err != nil {
+		t.Fatalf("CleanupDLQDepth (empty): %v", err)
+	}
+	if depth != 0 {
+		t.Errorf("empty depth=%d, want 0", depth)
+	}
+
+	// Seed two queue rows then graduate them both.
+	mustEnqueueCleanup(t, s, "backend-a", "bucket/k1")
+	mustEnqueueCleanup(t, s, "backend-a", "bucket/k2")
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM cleanup_queue ORDER BY id`)
+	if err != nil {
+		t.Fatalf("query ids: %v", err)
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			t.Fatalf("scan: %v", err)
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	for _, id := range ids {
+		if _, err := s.MoveCleanupToDLQ(ctx, id, ""); err != nil {
+			t.Fatalf("MoveCleanupToDLQ(%d): %v", id, err)
+		}
+	}
+
+	depth, err = s.CleanupDLQDepth(ctx)
+	if err != nil {
+		t.Fatalf("CleanupDLQDepth: %v", err)
+	}
+	if depth != 2 {
+		t.Errorf("depth=%d, want 2", depth)
+	}
+}

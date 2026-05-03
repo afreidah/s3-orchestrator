@@ -794,6 +794,12 @@ func TestCircuitBreaker_ForwardingMethods_Closed(t *testing.T) {
 	if _, err := cb.CleanupQueueDepth(ctx); err != nil {
 		t.Errorf("CleanupQueueDepth: %v", err)
 	}
+	if _, err := cb.CleanupDLQDepth(ctx); err != nil {
+		t.Errorf("CleanupDLQDepth: %v", err)
+	}
+	if _, err := cb.MoveCleanupToDLQ(ctx, 1, "test"); err != nil {
+		t.Errorf("MoveCleanupToDLQ: %v", err)
+	}
 	if _, err := cb.ImportObject(ctx, "k", "b1", 100); err != nil {
 		t.Errorf("ImportObject: %v", err)
 	}

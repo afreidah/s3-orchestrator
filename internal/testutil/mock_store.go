@@ -454,6 +454,16 @@ func (m *MockStore) CleanupQueueDepth(_ context.Context) (int64, error) {
 	return 0, nil
 }
 
+// MoveCleanupToDLQ records nothing and reports the row as moved (stub).
+func (m *MockStore) MoveCleanupToDLQ(_ context.Context, _ int64, _ string) (bool, error) {
+	return true, nil
+}
+
+// CleanupDLQDepth returns zero (stub).
+func (m *MockStore) CleanupDLQDepth(_ context.Context) (int64, error) {
+	return 0, nil
+}
+
 // ListExpiredObjects returns nil (stub).
 func (m *MockStore) ListExpiredObjects(_ context.Context, _ string, _ time.Time, _ int) ([]core.ObjectLocation, error) {
 	return nil, nil

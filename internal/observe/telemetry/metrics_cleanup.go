@@ -42,6 +42,29 @@ var (
 		},
 	)
 
+	// CleanupDLQDepth tracks the current number of rows in the cleanup
+	// dead-letter table - cleanup_queue rows that exhausted their retry
+	// budget without ever succeeding at the physical backend delete. A
+	// non-zero value means orphan bytes are still on the backend with
+	// no automatic recovery in flight; operators must investigate.
+	CleanupDLQDepth = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "s3o_cleanup_dlq_depth",
+			Help: "Current number of unrecoverable orphans in the cleanup dead-letter queue",
+		},
+	)
+
+	// CleanupDLQEnqueuedTotal counts cleanup_queue rows graduated to the
+	// dead-letter table per backend, labelled so dashboards can pinpoint
+	// which backend is failing physical deletes.
+	CleanupDLQEnqueuedTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "s3o_cleanup_dlq_enqueued_total",
+			Help: "Total cleanup_queue rows moved to cleanup_dlq after exhausting retries",
+		},
+		[]string{"backend"},
+	)
+
 	// --- Pending objects (write-path PUT-before-COMMIT pattern) ---
 
 	// PendingIntentsEnqueuedTotal counts pending intents inserted by the

@@ -11,6 +11,19 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countCleanupDLQ = `-- name: CountCleanupDLQ :one
+SELECT COUNT(*) FROM cleanup_dlq
+`
+
+// Returns the current depth of the cleanup_dlq table for the dashboard
+// and the cleanup_dlq_depth gauge.
+func (q *Queries) CountCleanupDLQ(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countCleanupDLQ)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countPendingCleanups = `-- name: CountPendingCleanups :one
 SELECT COUNT(*) FROM cleanup_queue WHERE attempts < 10
 `
@@ -83,6 +96,44 @@ func (q *Queries) EnqueueCleanup(ctx context.Context, arg EnqueueCleanupParams) 
 	return err
 }
 
+const getCleanupQueueRow = `-- name: GetCleanupQueueRow :one
+SELECT id, backend_name, object_key, reason, size_bytes,
+       attempts, created_at, last_error
+FROM cleanup_queue
+WHERE id = $1
+`
+
+type GetCleanupQueueRowRow struct {
+	ID          int64
+	BackendName string
+	ObjectKey   string
+	Reason      string
+	SizeBytes   int64
+	Attempts    int32
+	CreatedAt   pgtype.Timestamptz
+	LastError   *string
+}
+
+// Fetches a single cleanup_queue row by id along with the columns the
+// DLQ insert needs (backend, key, reason, size, attempts, created_at,
+// last_error). Used inside MoveCleanupToDLQ so the row contents survive
+// the queue->DLQ move.
+func (q *Queries) GetCleanupQueueRow(ctx context.Context, id int64) (GetCleanupQueueRowRow, error) {
+	row := q.db.QueryRow(ctx, getCleanupQueueRow, id)
+	var i GetCleanupQueueRowRow
+	err := row.Scan(
+		&i.ID,
+		&i.BackendName,
+		&i.ObjectKey,
+		&i.Reason,
+		&i.SizeBytes,
+		&i.Attempts,
+		&i.CreatedAt,
+		&i.LastError,
+	)
+	return i, err
+}
+
 const getPendingCleanups = `-- name: GetPendingCleanups :many
 SELECT id, backend_name, object_key, reason, attempts, size_bytes
 FROM cleanup_queue
@@ -125,6 +176,42 @@ func (q *Queries) GetPendingCleanups(ctx context.Context, limit int32) ([]GetPen
 		return nil, err
 	}
 	return items, nil
+}
+
+const insertCleanupDLQ = `-- name: InsertCleanupDLQ :exec
+INSERT INTO cleanup_dlq (
+    original_id, backend_name, object_key, reason, size_bytes,
+    attempts, first_enqueued_at, last_error
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+`
+
+type InsertCleanupDLQParams struct {
+	OriginalID      int64
+	BackendName     string
+	ObjectKey       string
+	Reason          string
+	SizeBytes       int64
+	Attempts        int32
+	FirstEnqueuedAt pgtype.Timestamptz
+	LastError       *string
+}
+
+// Inserts an exhausted cleanup_queue row into the dead-letter table.
+// The original_id retains the queue row's id for forensic correlation;
+// first_enqueued_at carries the original created_at so the DLQ entry
+// remembers how long the cleanup was outstanding.
+func (q *Queries) InsertCleanupDLQ(ctx context.Context, arg InsertCleanupDLQParams) error {
+	_, err := q.db.Exec(ctx, insertCleanupDLQ,
+		arg.OriginalID,
+		arg.BackendName,
+		arg.ObjectKey,
+		arg.Reason,
+		arg.SizeBytes,
+		arg.Attempts,
+		arg.FirstEnqueuedAt,
+		arg.LastError,
+	)
+	return err
 }
 
 const sumCleanupQueueSizeByKey = `-- name: SumCleanupQueueSizeByKey :one
