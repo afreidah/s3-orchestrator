@@ -98,8 +98,8 @@ func (fakeConcreteStore) GetUnderReplicatedObjects(context.Context, int, int) ([
 func (fakeConcreteStore) GetUnderReplicatedObjectsExcluding(context.Context, int, int, []string) ([]core.ObjectLocation, error) {
 	return nil, nil
 }
-func (fakeConcreteStore) RecordReplica(context.Context, string, string, string, int64) (bool, error) {
-	return false, nil
+func (fakeConcreteStore) RecordReplica(context.Context, string, string, string) (int64, bool, error) {
+	return 0, false, nil
 }
 func (fakeConcreteStore) GetOverReplicatedObjects(context.Context, int, int) ([]core.ObjectLocation, error) {
 	return nil, nil

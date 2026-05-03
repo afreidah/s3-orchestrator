@@ -127,6 +127,7 @@ type mockStore struct {
 	getUnderReplicatedExcludingResp []core.ObjectLocation
 	getUnderReplicatedExcludingErr  error
 	recordReplicaInserted           bool
+	recordReplicaSize               int64
 	recordReplicaErr                error
 	recordReplicaCalls              []recordReplicaCall
 
@@ -180,7 +181,6 @@ type deleteObjectLocationCall struct {
 
 type recordReplicaCall struct {
 	key, targetBackend, sourceBackend string
-	size                              int64
 }
 
 type removeExcessCopyCall struct {
@@ -494,19 +494,18 @@ func (m *mockStore) GetUnderReplicatedObjectsExcluding(_ context.Context, _, _ i
 	return m.getUnderReplicatedExcludingResp, nil
 }
 
-func (m *mockStore) RecordReplica(_ context.Context, key, targetBackend, sourceBackend string, size int64) (bool, error) {
+func (m *mockStore) RecordReplica(_ context.Context, key, targetBackend, sourceBackend string) (int64, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.recordReplicaCalls = append(m.recordReplicaCalls, recordReplicaCall{
 		key:           key,
 		targetBackend: targetBackend,
 		sourceBackend: sourceBackend,
-		size:          size,
 	})
 	if m.recordReplicaErr != nil {
-		return false, m.recordReplicaErr
+		return 0, false, m.recordReplicaErr
 	}
-	return m.recordReplicaInserted, nil
+	return m.recordReplicaSize, m.recordReplicaInserted, nil
 }
 
 func (m *mockStore) FlushUsageDeltas(_ context.Context, backendName, period string, apiRequests, egressBytes, ingressBytes int64) error {

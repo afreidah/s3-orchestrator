@@ -165,7 +165,7 @@ func TestAdapterErr_InsertObjectLocationIfNotExists(t *testing.T) {
 func TestAdapterErr_InsertReplicaConditional(t *testing.T) {
 	t.Parallel()
 	a := closedAdapter(t, newTestStore(t))
-	if _, err := a.InsertReplicaConditional(context.Background(), "k", "backend-b", "backend-a"); err == nil {
+	if _, _, err := a.InsertReplicaConditional(context.Background(), "k", "backend-b", "backend-a"); err == nil {
 		t.Error("expected error from closed tx")
 	}
 }

@@ -18,9 +18,9 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
-	"github.com/afreidah/s3-orchestrator/internal/store/core"
-
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // -------------------------------------------------------------------------
@@ -277,7 +277,7 @@ func TestCopyToReplica_Success(t *testing.T) {
 	wireWorkersForTest(mgr)
 
 	copies := []core.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}
-	source, err := mgr.Replicator.CopyToReplica(context.Background(), "key1", copies, "b2")
+	source, _, err := mgr.Replicator.CopyToReplica(context.Background(), "key1", copies, "b2")
 	if err != nil {
 		t.Fatalf("copyToReplica: %v", err)
 	}
@@ -311,7 +311,7 @@ func TestCopyToReplica_FailoverToSecondCopy(t *testing.T) {
 		{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
 		{ObjectKey: "key1", BackendName: "b2", SizeBytes: 4},
 	}
-	source, err := mgr.Replicator.CopyToReplica(context.Background(), "key1", copies, "b3")
+	source, _, err := mgr.Replicator.CopyToReplica(context.Background(), "key1", copies, "b3")
 	if err != nil {
 		t.Fatalf("copyToReplica should failover: %v", err)
 	}
@@ -340,7 +340,7 @@ func TestCopyToReplica_AllSourcesFail(t *testing.T) {
 	wireWorkersForTest(mgr)
 
 	copies := []core.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}
-	_, err := mgr.Replicator.CopyToReplica(context.Background(), "key1", copies, "b2")
+	_, _, err := mgr.Replicator.CopyToReplica(context.Background(), "key1", copies, "b2")
 	if err == nil {
 		t.Fatal("expected error when all source copies fail")
 	}
@@ -446,7 +446,7 @@ func TestCopyToReplica_TargetBackendNotFound(t *testing.T) {
 	mgr := newTestManager(&mockStore{}, map[string]*mockBackend{"b1": b1})
 
 	copies := []core.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}
-	_, err := mgr.Replicator.CopyToReplica(context.Background(), "key1", copies, "nonexistent")
+	_, _, err := mgr.Replicator.CopyToReplica(context.Background(), "key1", copies, "nonexistent")
 	if err == nil {
 		t.Fatal("expected error when target backend not found")
 	}
@@ -470,7 +470,7 @@ func TestCopyToReplica_TargetWriteFails(t *testing.T) {
 	wireWorkersForTest(mgr)
 
 	copies := []core.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}
-	_, err := mgr.Replicator.CopyToReplica(context.Background(), "key1", copies, "b2")
+	_, _, err := mgr.Replicator.CopyToReplica(context.Background(), "key1", copies, "b2")
 	if err == nil {
 		t.Fatal("expected error when target PutObject fails")
 	}
@@ -679,6 +679,75 @@ func TestReplicate_HealthAware_PrefersHealthySource(t *testing.T) {
 	}
 	if store.recordReplicaCalls[0].sourceBackend != "b2" {
 		t.Errorf("expected source=b2 (healthy), got %q", store.recordReplicaCalls[0].sourceBackend)
+	}
+}
+
+// TestReplicate_UsesRecordedSize_NotFirstCopy regression-tests #652. When
+// existingCopies disagree on SizeBytes (an in-flight overwrite race) and
+// the chosen source is not copies[0], the replicator must use the SQL's
+// recorded size for usage accounting - not copies[0].SizeBytes. The mock
+// returns recordReplicaSize=200; the test asserts both source and target
+// usage records reflect 200 (not 999, the bogus copies[0] size).
+func TestReplicate_UsesRecordedSize_NotFirstCopy(t *testing.T) {
+	t.Parallel()
+	b1 := newMockBackend()
+	b2 := newMockBackend()
+	b3 := newMockBackend()
+	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
+	_, _ = b2.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
+
+	// b1 is circuit-broken so the failover sort picks b2 as the source.
+	cbb1 := newTrippedCBBackend(b1, "b1")
+
+	store := &mockStore{
+		getUnderReplicatedExcludingResp: []core.ObjectLocation{
+			// copies[0] reports a stale, very different SizeBytes than
+			// the source row's current size_bytes. Pre-fix, the
+			// replicator used 999 here for usage tracking and quota
+			// even though the SQL inserted a different size.
+			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 999},
+			{ObjectKey: "key1", BackendName: "b2", SizeBytes: 200},
+		},
+		getQuotaStatsResp: map[string]core.QuotaStat{
+			"b1": {BytesUsed: 100, BytesLimit: 100000},
+			"b2": {BytesUsed: 100, BytesLimit: 100000},
+			"b3": {BytesUsed: 100, BytesLimit: 100000},
+		},
+		getBackendFromEligible: true,
+		recordReplicaInserted:  true,
+		recordReplicaSize:      200, // size the SQL conditional INSERT actually wrote
+	}
+	mgr := NewBackendManager(&BackendManagerConfig{
+		Backends:        map[string]backend.ObjectBackend{"b1": cbb1, "b2": b2, "b3": b3},
+		Stores:          testStoresFromMock(store),
+		Dashboard:       store,
+		Metrics:         store,
+		Order:           []string{"b1", "b2", "b3"},
+		CacheTTL:        5 * time.Second,
+		BackendTimeout:  30 * time.Second,
+		RoutingStrategy: config.RoutingPack,
+	})
+	wireWorkersForTest(mgr)
+
+	created, err := mgr.Replicator.Replicate(context.Background(), config.ReplicationConfig{
+		Factor:             3,
+		BatchSize:          10,
+		UnhealthyThreshold: 0,
+	})
+	if err != nil {
+		t.Fatalf("Replicate: %v", err)
+	}
+	if created != 1 {
+		t.Fatalf("expected 1 created, got %d", created)
+	}
+
+	// Source (b2) should accrue 200 bytes of egress, not 999.
+	if got := mgr.usage.Backend().Load("b2", counter.FieldEgressBytes); got != 200 {
+		t.Errorf("source egress = %d, want 200 (recorded size, not copies[0].SizeBytes)", got)
+	}
+	// Target should accrue 200 bytes of ingress.
+	if got := mgr.usage.Backend().Load("b3", counter.FieldIngressBytes); got != 200 {
+		t.Errorf("target ingress = %d, want 200 (recorded size, not copies[0].SizeBytes)", got)
 	}
 }
 

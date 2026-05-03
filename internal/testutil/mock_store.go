@@ -380,9 +380,9 @@ func (m *MockStore) GetUnderReplicatedObjectsExcluding(_ context.Context, _, _ i
 	return nil, nil
 }
 
-// RecordReplica returns false (stub).
-func (m *MockStore) RecordReplica(_ context.Context, _, _, _ string, _ int64) (bool, error) {
-	return false, nil
+// RecordReplica returns (0, false, nil) (stub).
+func (m *MockStore) RecordReplica(_ context.Context, _, _, _ string) (int64, bool, error) {
+	return 0, false, nil
 }
 
 // FlushUsageDeltas records the call arguments and returns the pre-configured error.

@@ -3074,7 +3074,7 @@ func TestStore(t *testing.T) {
 		}
 
 		// Replica to minio-2 should succeed.
-		ok, err := testStore.RecordReplica(ctx, key, "minio-2", "minio-1", 100)
+		_, ok, err := testStore.RecordReplica(ctx, key, "minio-2", "minio-1")
 		if err != nil {
 			t.Fatalf("RecordReplica: %v", err)
 		}
@@ -3097,7 +3097,7 @@ func TestStore(t *testing.T) {
 
 		// Try to replicate to minio-1 citing minio-1 as source (stale).
 		// Source doesn't exist on minio-1, so should return false.
-		ok, err = testStore.RecordReplica(ctx, key, "minio-1", "minio-1", 50)
+		_, ok, err = testStore.RecordReplica(ctx, key, "minio-1", "minio-1")
 		if err != nil {
 			t.Fatalf("RecordReplica stale: %v", err)
 		}

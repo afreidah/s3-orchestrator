@@ -187,6 +187,13 @@ func (r *Replicator) ReplicateObject(ctx context.Context, quotaStats map[string]
 		exclusion[existingCopies[i].BackendName] = true
 	}
 
+	// Estimate size for target selection. Selection runs before we pick a
+	// source, so we use the largest known copy size to avoid placing on a
+	// backend that lacks space for the (likely identical) copy that will
+	// be transferred. Authoritative size for quota and metadata is the
+	// source's size at insert time, returned by RecordReplica below.
+	sizeEstimate := maxCopySize(existingCopies)
+
 	// Retry with different targets on failure without consuming a needed
 	// slot. Cap total attempts to avoid unbounded retries when every
 	// remaining backend rejects the object.
@@ -194,53 +201,65 @@ func (r *Replicator) ReplicateObject(ctx context.Context, quotaStats map[string]
 	maxAttempts := needed + len(r.ops.Backends())
 	for attempt := 0; created < needed && attempt < maxAttempts; attempt++ {
 		remaining := needed - created
-		// --- Find a target backend with space ---
-		target := r.FindReplicaTarget(ctx, quotaStats, key, existingCopies[0].SizeBytes, exclusion)
+		target := r.FindReplicaTarget(ctx, quotaStats, key, sizeEstimate, exclusion)
 		if target == "" {
 			slog.WarnContext(ctx, "Replication: no target backend with space",
 				"key", key, "needed", remaining)
 			break
 		}
 
-		// --- Copy data from an existing copy to the target ---
-		source, err := r.CopyToReplica(ctx, key, existingCopies, target)
+		// CopyToReplica returns the source's size from the in-memory
+		// ObjectLocation slice. transferredSize is the bytes the
+		// streaming copy moved; recordedSize is what RecordReplica
+		// actually wrote into both object_locations.size_bytes and
+		// backend_quotas.bytes_used (read from the source row inside
+		// the conditional INSERT). They equal each other unless an
+		// overwrite landed mid-replication.
+		source, transferredSize, err := r.CopyToReplica(ctx, key, existingCopies, target)
 		if err != nil {
 			slog.WarnContext(ctx, "Replication: failed to copy object data",
 				"key", key, "target", target, "error", err)
 			telemetry.ReplicationErrorsTotal.Inc()
-			exclusion[target] = true // skip this target on retry
+			exclusion[target] = true
 			continue
 		}
 
-		// --- Record the replica in the database (conditional insert) ---
-		inserted, err := r.store.RecordReplica(ctx, key, target, source, existingCopies[0].SizeBytes)
+		recordedSize, inserted, err := r.store.RecordReplica(ctx, key, target, source)
 		if err != nil {
 			slog.ErrorContext(ctx, "Replication: failed to record replica",
 				"key", key, "target", target, "error", err)
-			// Clean up orphan on target
-			r.CleanupOrphan(ctx, target, key, existingCopies[0].SizeBytes)
+			r.CleanupOrphan(ctx, target, key, transferredSize)
 			telemetry.ReplicationErrorsTotal.Inc()
 			exclusion[target] = true
 			continue
 		}
 
 		if !inserted {
-			// Source copy was deleted/overwritten during replication
+			// Source copy was deleted/overwritten during replication.
 			slog.InfoContext(ctx, "Replication: source copy gone, cleaning up orphan",
 				"key", key, "target", target)
-			r.CleanupOrphan(ctx, target, key, existingCopies[0].SizeBytes)
+			r.CleanupOrphan(ctx, target, key, transferredSize)
 			exclusion[target] = true
 			continue
 		}
 
-		r.ops.Usage().Record(source, 1, existingCopies[0].SizeBytes, 0) // source: Get + egress
-		r.ops.Usage().Record(target, 1, 0, existingCopies[0].SizeBytes) // target: Put + ingress
+		// Surface the rare race where the source row's size_bytes shifted
+		// between GetUnderReplicatedObjects and the conditional INSERT.
+		// recordedSize is authoritative for accounting; the operator
+		// sees the discrepancy in case it indicates a deeper bug.
+		if recordedSize != transferredSize {
+			slog.WarnContext(ctx, "Replication: source size shifted mid-replication",
+				"key", key, "source", source, "transferred", transferredSize, "recorded", recordedSize)
+		}
+
+		r.ops.Usage().Record(source, 1, recordedSize, 0) // source: Get + egress
+		r.ops.Usage().Record(target, 1, 0, recordedSize) // target: Put + ingress
 
 		audit.Log(ctx, "replication.copy",
 			slog.String("key", key),
 			slog.String("source_backend", source),
 			slog.String("target_backend", target),
-			slog.Int64("size", existingCopies[0].SizeBytes),
+			slog.Int64("size", recordedSize),
 		)
 
 		exclusion[target] = true
@@ -248,6 +267,19 @@ func (r *Replicator) ReplicateObject(ctx context.Context, quotaStats map[string]
 	}
 
 	return created, nil
+}
+
+// maxCopySize returns the largest SizeBytes across copies, used as a
+// conservative size estimate for target selection before a source is
+// picked. Returns 0 for an empty slice.
+func maxCopySize(copies []core.ObjectLocation) int64 {
+	var m int64
+	for i := range copies {
+		if copies[i].SizeBytes > m {
+			m = copies[i].SizeBytes
+		}
+	}
+	return m
 }
 
 // FindReplicaTarget selects a backend for a replication copy using the same
@@ -265,11 +297,13 @@ func (r *Replicator) FindReplicaTarget(ctx context.Context, quotaStats map[strin
 
 // copyToReplica reads the object from an existing copy and writes it to the
 // target backend. Tries each existing copy in order for failover. Returns the
-// source backend name that was successfully read from.
-func (r *Replicator) CopyToReplica(ctx context.Context, key string, copies []core.ObjectLocation, target string) (string, error) {
+// source backend name that was successfully read from and the size_bytes
+// recorded on that source's ObjectLocation row (the size of the bytes that
+// were actually transferred).
+func (r *Replicator) CopyToReplica(ctx context.Context, key string, copies []core.ObjectLocation, target string) (string, int64, error) {
 	targetBackend, err := r.ops.GetBackend(target)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 
 	// Prefer healthy sources to avoid circuit breaker latency/failures.
@@ -279,15 +313,15 @@ func (r *Replicator) CopyToReplica(ctx context.Context, key string, copies []cor
 
 	for i := range copies {
 		if ctx.Err() != nil {
-			return "", ctx.Err()
+			return "", 0, ctx.Err()
 		}
-		sourceName, terminal, err := r.tryCopyFrom(ctx, key, target, targetBackend, &copies[i])
+		sourceName, sourceSize, terminal, err := r.tryCopyFrom(ctx, key, target, targetBackend, &copies[i])
 		if terminal {
-			return sourceName, err
+			return sourceName, sourceSize, err
 		}
 	}
 
-	return "", fmt.Errorf("all source copies failed for key %s", key)
+	return "", 0, fmt.Errorf("all source copies failed for key %s", key)
 }
 
 // cmpHealthFirst orders two health flags so true (healthy) sorts before
@@ -306,29 +340,29 @@ func cmpHealthFirst(aOK, bOK bool) int {
 }
 
 // tryCopyFrom attempts a stream-copy from one source location to the
-// target. Returns terminal=true with (sourceName, nil) on success or with
-// ("", err) when the failure mode means no other source could help (a
-// write-side error). Returns terminal=false to signal the caller should
-// move on to the next source.
-func (r *Replicator) tryCopyFrom(ctx context.Context, key, target string, targetBackend backend.ObjectBackend, loc *core.ObjectLocation) (string, bool, error) {
+// target. Returns terminal=true with (sourceName, sourceSize, nil) on
+// success or with ("", 0, err) when the failure mode means no other
+// source could help (a write-side error). Returns terminal=false to
+// signal the caller should move on to the next source.
+func (r *Replicator) tryCopyFrom(ctx context.Context, key, target string, targetBackend backend.ObjectBackend, loc *core.ObjectLocation) (string, int64, bool, error) {
 	srcBackend, ok := r.ops.Backends()[loc.BackendName]
 	if !ok {
-		return "", false, nil
+		return "", 0, false, nil
 	}
 	err := r.ops.StreamCopy(ctx, srcBackend, targetBackend, key)
 	if err == nil {
-		return loc.BackendName, true, nil
+		return loc.BackendName, loc.SizeBytes, true, nil
 	}
 	// Write failures won't improve with a different source — fail immediately.
 	if strings.HasPrefix(err.Error(), "write:") {
-		return "", true, fmt.Errorf("failed to write to target %s: %w", target, err)
+		return "", 0, true, fmt.Errorf("failed to write to target %s: %w", target, err)
 	}
 	slog.WarnContext(ctx, "Replication: source read failed, trying next copy",
 		"key", key, "source", loc.BackendName, "error", err)
 	if isNotFound(err) {
 		r.pruneStaleSource(ctx, key, loc.BackendName)
 	}
-	return "", false, nil
+	return "", 0, false, nil
 }
 
 // pruneStaleSource removes a source-side ObjectLocation row when the

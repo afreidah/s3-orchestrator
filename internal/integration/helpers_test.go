@@ -825,11 +825,11 @@ func (f *FailableStore) GetUnderReplicatedObjects(ctx context.Context, factor, l
 	return f.inner.GetUnderReplicatedObjects(ctx, factor, limit)
 }
 
-func (f *FailableStore) RecordReplica(ctx context.Context, key, targetBackend, sourceBackend string, size int64) (bool, error) {
+func (f *FailableStore) RecordReplica(ctx context.Context, key, targetBackend, sourceBackend string) (int64, bool, error) {
 	if f.isFailing() {
-		return false, errSimulatedDBFailure
+		return 0, false, errSimulatedDBFailure
 	}
-	return f.inner.RecordReplica(ctx, key, targetBackend, sourceBackend, size)
+	return f.inner.RecordReplica(ctx, key, targetBackend, sourceBackend)
 }
 
 func (f *FailableStore) GetOverReplicatedObjects(ctx context.Context, factor, limit int) ([]core.ObjectLocation, error) {

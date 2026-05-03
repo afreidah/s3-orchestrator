@@ -46,7 +46,7 @@ func TestPgListDirectoryChildren_FileRowReplicated(t *testing.T) {
 	if _, err := testStore.RecordObject(ctx, key, "minio-1", 100, nil); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	if _, err := testStore.RecordReplica(ctx, key, "minio-2", "minio-1", 100); err != nil {
+	if _, _, err := testStore.RecordReplica(ctx, key, "minio-2", "minio-1"); err != nil {
 		t.Fatalf("RecordReplica: %v", err)
 	}
 	t.Cleanup(func() {
@@ -115,7 +115,7 @@ func TestPgListDirectoryChildren_DirRollupPhysicalBytes(t *testing.T) {
 	if _, err := testStore.RecordObject(ctx, repKey, "minio-1", 100, nil); err != nil {
 		t.Fatalf("RecordObject(replicated): %v", err)
 	}
-	if _, err := testStore.RecordReplica(ctx, repKey, "minio-2", "minio-1", 100); err != nil {
+	if _, _, err := testStore.RecordReplica(ctx, repKey, "minio-2", "minio-1"); err != nil {
 		t.Fatalf("RecordReplica: %v", err)
 	}
 	if _, err := testStore.RecordObject(ctx, singleKey, "minio-1", 50, nil); err != nil {

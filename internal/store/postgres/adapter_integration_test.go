@@ -370,7 +370,7 @@ func TestPgAdapter_GetExistingCopiesForUpdate_ReturnsAllCopies(t *testing.T) {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	defer func() { _, _ = s.DeleteObject(ctx, key) }()
-	if _, err := s.RecordReplica(ctx, key, "backend-b", "backend-a", 100); err != nil {
+	if _, _, err := s.RecordReplica(ctx, key, "backend-b", "backend-a"); err != nil {
 		t.Fatalf("RecordReplica: %v", err)
 	}
 
@@ -577,7 +577,7 @@ func TestPgAdapter_DeleteObjectFromBackend_RemovesOneRow(t *testing.T) {
 	if _, err := s.RecordObject(ctx, key, "backend-a", 100, nil); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	if _, err := s.RecordReplica(ctx, key, "backend-b", "backend-a", 100); err != nil {
+	if _, _, err := s.RecordReplica(ctx, key, "backend-b", "backend-a"); err != nil {
 		t.Fatalf("RecordReplica: %v", err)
 	}
 	defer func() { _, _ = s.DeleteObject(ctx, key) }()
@@ -625,7 +625,7 @@ func TestPgAdapter_InsertReplicaConditional_InsertsWhenSourceExists(t *testing.T
 	}
 	defer func() { _, _ = s.DeleteObject(ctx, key) }()
 
-	if ok, err := s.RecordReplica(ctx, key, "backend-b", "backend-a", 100); err != nil || !ok {
+	if _, ok, err := s.RecordReplica(ctx, key, "backend-b", "backend-a"); err != nil || !ok {
 		t.Fatalf("RecordReplica(insert): got ok=%v err=%v, want (true, nil)", ok, err)
 	}
 
@@ -645,7 +645,7 @@ func TestPgAdapter_InsertReplicaConditional_SkipsWhenSourceMissing(t *testing.T)
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	withPgAdapter(t, s, func(a *pgTxAdapter) {
-		got, err := a.InsertReplicaConditional(ctx, uniqueKey(t, "missing"), "backend-b", "backend-a")
+		_, got, err := a.InsertReplicaConditional(ctx, uniqueKey(t, "missing"), "backend-b", "backend-a")
 		if err != nil {
 			t.Fatalf("InsertReplicaConditional: %v", err)
 		}

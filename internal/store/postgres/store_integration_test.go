@@ -668,7 +668,7 @@ func TestStoreInt_GetObjectBackendsForKeys_GroupsByKey(t *testing.T) {
 		t.Fatalf("RecordObject(k1): %v", err)
 	}
 	defer func() { _, _ = s.DeleteObject(ctx, k1) }()
-	if _, err := s.RecordReplica(ctx, k1, "backend-b", "backend-a", 100); err != nil {
+	if _, _, err := s.RecordReplica(ctx, k1, "backend-b", "backend-a"); err != nil {
 		t.Fatalf("RecordReplica: %v", err)
 	}
 	if _, err := s.RecordObject(ctx, k2, "backend-a", 50, nil); err != nil {
@@ -721,7 +721,7 @@ func TestStoreInt_DeleteObjectsBatch_RemovesRowsAndDecrementsQuotas(t *testing.T
 	if _, err := s.RecordObject(ctx, k1, "backend-a", 100, nil); err != nil {
 		t.Fatalf("RecordObject(k1): %v", err)
 	}
-	if _, err := s.RecordReplica(ctx, k1, "backend-b", "backend-a", 100); err != nil {
+	if _, _, err := s.RecordReplica(ctx, k1, "backend-b", "backend-a"); err != nil {
 		t.Fatalf("RecordReplica: %v", err)
 	}
 	if _, err := s.RecordObject(ctx, k2, "backend-a", 50, nil); err != nil {

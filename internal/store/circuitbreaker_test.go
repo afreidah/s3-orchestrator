@@ -782,7 +782,7 @@ func TestCircuitBreaker_ForwardingMethods_Closed(t *testing.T) {
 	if _, err := cb.GetUnderReplicatedObjects(ctx, 2, 100); err != nil {
 		t.Errorf("GetUnderReplicatedObjects: %v", err)
 	}
-	if _, err := cb.RecordReplica(ctx, "k", "b2", "b1", 100); err != nil {
+	if _, _, err := cb.RecordReplica(ctx, "k", "b2", "b1"); err != nil {
 		t.Errorf("RecordReplica: %v", err)
 	}
 	if _, err := cb.GetUsageForPeriod(ctx, "2024-01"); err != nil {

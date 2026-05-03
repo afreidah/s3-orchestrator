@@ -101,14 +101,17 @@ func TestCopyToReplica_Success(t *testing.T) {
 	ops.EXPECT().StreamCopy(gomock.Any(), srcBe, dstBe, "key1").Return(nil)
 
 	r := NewReplicator(ops, ms)
-	copies := []core.ObjectLocation{{BackendName: "b1"}}
+	copies := []core.ObjectLocation{{BackendName: "b1", SizeBytes: 4096}}
 
-	src, err := r.CopyToReplica(context.Background(), "key1", copies, "b2")
+	src, size, err := r.CopyToReplica(context.Background(), "key1", copies, "b2")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if src != "b1" {
 		t.Errorf("source = %q, want b1", src)
+	}
+	if size != 4096 {
+		t.Errorf("size = %d, want 4096 (the source's SizeBytes)", size)
 	}
 }
 
@@ -129,7 +132,7 @@ func TestCopyToReplica_404CleansUpStaleMetadata(t *testing.T) {
 	r := NewReplicator(ops, ms)
 	copies := []core.ObjectLocation{{BackendName: "b1"}}
 
-	_, err := r.CopyToReplica(context.Background(), "key1", copies, "b2")
+	_, _, err := r.CopyToReplica(context.Background(), "key1", copies, "b2")
 	if err == nil {
 		t.Fatal("expected error when source returns 404")
 	}
@@ -154,7 +157,7 @@ func TestCopyToReplica_AllSourcesFail(t *testing.T) {
 	r := NewReplicator(ops, ms)
 	copies := []core.ObjectLocation{{BackendName: "b1"}}
 
-	_, err := r.CopyToReplica(context.Background(), "key1", copies, "b2")
+	_, _, err := r.CopyToReplica(context.Background(), "key1", copies, "b2")
 	if err == nil {
 		t.Fatal("expected error when all sources fail")
 	}

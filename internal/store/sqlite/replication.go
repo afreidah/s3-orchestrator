@@ -85,8 +85,8 @@ func (s *Store) GetUnderReplicatedObjectsExcluding(ctx context.Context, factor, 
 }
 
 // RecordReplica delegates to core.RecordReplica.
-func (s *Store) RecordReplica(ctx context.Context, key, targetBackend, sourceBackend string, size int64) (bool, error) {
-	return core.RecordReplica(ctx, s, key, targetBackend, sourceBackend, size)
+func (s *Store) RecordReplica(ctx context.Context, key, targetBackend, sourceBackend string) (int64, bool, error) {
+	return core.RecordReplica(ctx, s, key, targetBackend, sourceBackend)
 }
 
 // GetOverReplicatedObjects finds objects with more copies than the target
