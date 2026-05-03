@@ -43,7 +43,9 @@ func RecordObjectAndClearPending(ctx context.Context, runner Runner, key, backen
 
 // recordObjectTx is the shared transactional body. When intentID is
 // non-empty the same transaction also deletes the corresponding
-// pending row.
+// pending row. All per-backend quota deltas are aggregated and applied
+// in stable backend_name order via applyQuotaDeltas (see #687) so
+// concurrent overwrites can never deadlock on backend_quotas row locks.
 func recordObjectTx(ctx context.Context, tx TxAdapter, key, backend string, size int64, enc *EncryptionMeta, intentID string) ([]DeletedCopy, error) {
 	if err := tx.AcquireKeyLock(ctx, key); err != nil {
 		return nil, err
@@ -52,14 +54,16 @@ func recordObjectTx(ctx context.Context, tx TxAdapter, key, backend string, size
 	if err != nil {
 		return nil, err
 	}
-	displaced, err := clearExistingCopies(ctx, tx, key, backend, existing)
+	deltas := make(map[string]int64, len(existing)+1)
+	displaced, err := clearExistingCopies(ctx, tx, key, backend, existing, deltas)
 	if err != nil {
 		return nil, err
 	}
 	if err := tx.InsertObjectLocation(ctx, objectFromEnc(key, backend, size, enc)); err != nil {
 		return nil, fmt.Errorf("insert object location: %w", err)
 	}
-	if err := tx.IncrementBackendQuota(ctx, backend, size); err != nil {
+	deltas[backend] += size
+	if err := applyQuotaDeltas(ctx, tx, deltas); err != nil {
 		return nil, err
 	}
 	if intentID != "" {
@@ -76,7 +80,8 @@ func recordObjectTx(ctx context.Context, tx TxAdapter, key, backend string, size
 
 // DeleteObject removes all copies of an object and decrements their
 // quotas. Returns ErrObjectNotFound if the object doesn't exist;
-// otherwise returns the deleted copies for cleanup.
+// otherwise returns the deleted copies for cleanup. Quota deltas apply
+// in stable backend_name order (see #687).
 func DeleteObject(ctx context.Context, runner Runner, key string) ([]DeletedCopy, error) {
 	return WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) ([]DeletedCopy, error) {
 		existing, err := tx.GetExistingCopiesForUpdate(ctx, key)
@@ -90,11 +95,13 @@ func DeleteObject(ctx context.Context, runner Runner, key string) ([]DeletedCopy
 			return nil, fmt.Errorf("delete object copies: %w", err)
 		}
 		copies := make([]DeletedCopy, len(existing))
+		deltas := make(map[string]int64, len(existing))
 		for i, ec := range existing {
 			copies[i] = DeletedCopy{BackendName: ec.BackendName, SizeBytes: ec.SizeBytes}
-			if err := tx.DecrementBackendQuota(ctx, ec.BackendName, ec.SizeBytes); err != nil {
-				return nil, err
-			}
+			deltas[ec.BackendName] -= ec.SizeBytes
+		}
+		if err := applyQuotaDeltas(ctx, tx, deltas); err != nil {
+			return nil, err
 		}
 		return copies, nil
 	})
@@ -128,20 +135,21 @@ func DeleteObjectsBatch(ctx context.Context, runner Runner, keys []string) (map[
 		}
 		// Per-key copies for the caller, plus per-backend totals so we
 		// decrement each backend's quota exactly once instead of once
-		// per displaced copy.
+		// per displaced copy. Deltas apply in stable backend_name
+		// order via applyQuotaDeltas (see #687); the previous
+		// map-iteration order was non-deterministic and let two
+		// concurrent batch deletes deadlock on backend_quotas locks.
 		copies := make(map[string][]DeletedCopy, len(keys))
-		backendTotals := make(map[string]int64)
+		deltas := make(map[string]int64)
 		for _, r := range rows {
 			copies[r.ObjectKey] = append(copies[r.ObjectKey], DeletedCopy{
 				BackendName: r.BackendName,
 				SizeBytes:   r.SizeBytes,
 			})
-			backendTotals[r.BackendName] += r.SizeBytes
+			deltas[r.BackendName] -= r.SizeBytes
 		}
-		for backend, total := range backendTotals {
-			if err := tx.DecrementBackendQuota(ctx, backend, total); err != nil {
-				return nil, err
-			}
+		if err := applyQuotaDeltas(ctx, tx, deltas); err != nil {
+			return nil, err
 		}
 		return copies, nil
 	})
@@ -184,10 +192,13 @@ func MoveObjectLocation(ctx context.Context, runner Runner, key, fromBackend, to
 		if err := tx.InsertObjectLocation(ctx, dest); err != nil {
 			return 0, err
 		}
-		if err := tx.DecrementBackendQuota(ctx, fromBackend, src.SizeBytes); err != nil {
-			return 0, err
-		}
-		if err := tx.IncrementBackendQuota(ctx, toBackend, src.SizeBytes); err != nil {
+		// Apply both quota deltas in stable order (#687): a concurrent
+		// move in the opposite direction (b1->b2 vs b2->b1) used to
+		// lock the two rows in opposite sequences and deadlock.
+		if err := applyQuotaDeltas(ctx, tx, map[string]int64{
+			fromBackend: -src.SizeBytes,
+			toBackend:   src.SizeBytes,
+		}); err != nil {
 			return 0, err
 		}
 		return src.SizeBytes, nil
