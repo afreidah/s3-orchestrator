@@ -10,7 +10,11 @@
 
 package core
 
-import "time"
+import (
+	"context"
+	"sort"
+	"time"
+)
 
 // -------------------------------------------------------------------------
 // PENDING-INTENT HELPERS
@@ -68,6 +72,45 @@ func objectFromEnc(key, backend string, size int64, enc *EncryptionMeta) *Object
 		loc.ContentHash = enc.ContentHash
 	}
 	return loc
+}
+
+// -------------------------------------------------------------------------
+// QUOTA DELTA APPLICATION
+// -------------------------------------------------------------------------
+
+// applyQuotaDeltas applies signed byte deltas to backend_quotas rows in
+// stable backend_name order. Acquiring backend_quotas row locks in a
+// deterministic global order is what prevents the deadlock storm
+// observed in #687 - any two concurrent transactions that touch the
+// same backend set request locks in the same sequence, so one queues
+// behind the other instead of forming a cycle.
+//
+// Negative deltas decrement (the SQL clamps to zero); positive deltas
+// increment; zero deltas are skipped so net-zero same-backend overwrites
+// produce no SQL call.
+func applyQuotaDeltas(ctx context.Context, tx TxAdapter, deltas map[string]int64) error {
+	if len(deltas) == 0 {
+		return nil
+	}
+	backends := make([]string, 0, len(deltas))
+	for b := range deltas {
+		backends = append(backends, b)
+	}
+	sort.Strings(backends)
+	for _, b := range backends {
+		d := deltas[b]
+		switch {
+		case d > 0:
+			if err := tx.IncrementBackendQuota(ctx, b, d); err != nil {
+				return err
+			}
+		case d < 0:
+			if err := tx.DecrementBackendQuota(ctx, b, -d); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // -------------------------------------------------------------------------
