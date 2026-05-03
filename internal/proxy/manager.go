@@ -48,25 +48,27 @@ import (
 // store; Metrics and Dashboard carry the narrow views used by
 // MetricsCollector and DashboardAggregator respectively.
 type BackendManagerConfig struct {
-	Backends           map[string]backend.ObjectBackend
-	Stores             Stores
-	Metrics            metrics.Deps
-	Dashboard          core.DashboardStore
-	Order              []string
-	CacheTTL           time.Duration
-	BackendTimeout     time.Duration
-	UsageLimits        map[string]core.UsageLimits
-	RoutingStrategy    config.RoutingStrategy
-	ParallelBroadcast  bool                   // fan-out reads in parallel during degraded mode
-	Encryptor          *encryption.Encryptor  // nil when encryption is disabled
-	CounterBackend     counter.CounterBackend // nil uses LocalCounterBackend
-	ObjectCache        objcache.ObjectCache   // nil when object data caching is disabled
-	MaxObjectSizes     map[string]int64       // per-backend max object size in bytes (0 = unlimited)
-	CleanupConcurrency int                    // parallel cleanup deletions (default: 10)
-	AdmissionSem       chan struct{}          // shared concurrency semaphore for HTTP + background ops (nil = unlimited)
+	Backends          map[string]backend.ObjectBackend
+	Stores            Stores
+	Metrics           metrics.Deps
+	Dashboard         core.DashboardStore
+	Order             []string
+	CacheTTL          time.Duration
+	BackendTimeout    time.Duration
+	UsageLimits       map[string]core.UsageLimits
+	RoutingStrategy   config.RoutingStrategy
+	ParallelBroadcast bool                   // fan-out reads in parallel during degraded mode
+	Encryptor         *encryption.Encryptor  // nil when encryption is disabled
+	CounterBackend    counter.CounterBackend // nil uses LocalCounterBackend
+	ObjectCache       objcache.ObjectCache   // nil when object data caching is disabled
+	MaxObjectSizes    map[string]int64       // per-backend max object size in bytes (0 = unlimited)
+	AdmissionSem      chan struct{}          // shared concurrency semaphore for HTTP + background ops (nil = unlimited)
 
-	PendingReaperMinAge time.Duration // ignore intents younger than this — guards in-flight PUTs
-	PendingReaperBatch  int           // max intents resolved per reaper tick
+	// ReplicationFactor is invoked by the metrics collector when refreshing
+	// the under-replicated-objects gauge. Returns 0 when replication is
+	// disabled. Lazy-evaluated so it can resolve the live replicator's
+	// configured factor (which is hot-reloadable).
+	ReplicationFactor func() int
 }
 
 // BackendManager manages multiple storage backends with quota tracking.
@@ -77,20 +79,37 @@ type BackendManagerConfig struct {
 // infra primitives stay on *backendCore.
 type BackendManager struct {
 	*backendCore
-	stores                 Stores                         // per-role store views
-	Rebalancer             *worker.Rebalancer             // periodic object distribution
-	Replicator             *worker.Replicator             // background replica creation
-	OverReplicationCleaner *worker.OverReplicationCleaner // excess copy removal
-	CleanupWorker          *worker.CleanupWorker          // retry queue for failed deletions
-	PendingReaper          *worker.PendingReaper          // resolves abandoned PUT intents
-	Scrubber               *worker.Scrubber               // background integrity verification
-	DrainManager           *drain.Manager                 // backend drain and remove operations
-	MultipartManager       *MultipartManager              // multipart upload lifecycle
-	ObjectManager          *ObjectManager                 // CRUD, read failover, broadcast reads
-	dashboard              *dashboard.Aggregator          // web UI data aggregation
-	usageFlushCfg          syncutil.AtomicConfig[config.UsageFlushConfig]
-	lifecycleCfg           syncutil.AtomicConfig[config.LifecycleConfig]
-	integrityCfg           syncutil.AtomicConfig[config.IntegrityConfig]
+	stores           Stores                // per-role store views
+	MultipartManager *MultipartManager     // multipart upload lifecycle
+	ObjectManager    *ObjectManager        // CRUD, read failover, broadcast reads
+	dashboard        *dashboard.Aggregator // web UI data aggregation
+
+	// The following worker handles are wired post-construction by the
+	// per-worker DI providers (#676 B). Production code resolves workers
+	// through DI; these fields exist as convenience handles for the
+	// dashboard, tests, and config-reload paths that already hold a
+	// *BackendManager. Treat them as nil-able when accessing outside of
+	// fully-DI-wired contexts.
+	Rebalancer             *worker.Rebalancer
+	Replicator             *worker.Replicator
+	OverReplicationCleaner *worker.OverReplicationCleaner
+	CleanupWorker          *worker.CleanupWorker
+	PendingReaper          *worker.PendingReaper
+	Scrubber               *worker.Scrubber
+	DrainManager           *drain.Manager
+
+	usageFlushCfg syncutil.AtomicConfig[config.UsageFlushConfig]
+	lifecycleCfg  syncutil.AtomicConfig[config.LifecycleConfig]
+	integrityCfg  syncutil.AtomicConfig[config.IntegrityConfig]
+}
+
+// WireDrain installs the drain.Manager: stores it on BackendManager so
+// dashboard rendering and drain-aware tests can reach it, and points
+// backendCore.drainMgr at it so eligibility filters see drain state.
+// Called by the drain DI provider after both values exist.
+func (m *BackendManager) WireDrain(d *drain.Manager) {
+	m.DrainManager = d
+	m.drainMgr = d
 }
 
 // NewBackendManager creates a new backend manager with the given configuration.
@@ -138,43 +157,7 @@ func NewBackendManager(cfg *BackendManagerConfig) *BackendManager {
 	multipartManager.parent = m
 	objectManager.parent = m
 
-	// Workers and drain take *BackendManager (which satisfies worker.Ops /
-	// drain.Core via promoted backendCore methods plus its own write-path
-	// helpers). The construction order requires m to exist first.
-	cleanupConcurrency := cfg.CleanupConcurrency
-	if cleanupConcurrency <= 0 {
-		cleanupConcurrency = 10
-	}
-	m.CleanupWorker = worker.NewCleanupWorker(m, cfg.Stores.Cleanup, cleanupConcurrency)
-	if cfg.Stores.Pending != nil {
-		m.PendingReaper = worker.NewPendingReaper(m, cfg.Stores.Pending, 0, cfg.PendingReaperMinAge, cfg.PendingReaperBatch)
-	}
-
-	rebalancerDeps := &rebalancerStore{ObjectStore: cfg.Stores.Object, QuotaStore: cfg.Stores.Quota}
-	replicatorDeps := &replicatorStore{ObjectStore: cfg.Stores.Object, ReplicationStore: cfg.Stores.Replication, QuotaStore: cfg.Stores.Quota}
-	overReplicationDeps := &overReplicationStore{ReplicationStore: cfg.Stores.Replication, QuotaStore: cfg.Stores.Quota}
-
-	m.Rebalancer = worker.NewRebalancer(m, rebalancerDeps)
-	m.Replicator = worker.NewReplicator(m, replicatorDeps)
-	m.OverReplicationCleaner = worker.NewOverReplicationCleaner(m, overReplicationDeps)
-	m.Scrubber = worker.NewScrubber(m, cfg.Stores.Integrity, cfg.Encryptor)
-
-	m.DrainManager = drain.New(
-		m,
-		cfg.Stores.Object,
-		cfg.Stores.Quota,
-		cfg.Stores.BackendLifecycle,
-		multipartManager.abortMultipartUploadsOnBackend,
-		m.CleanupWorker.ProcessCleanupQueue,
-	)
-	core.drainMgr = m.DrainManager
-
-	core.metricsCollector = metrics.New(cfg.Metrics, usage, backendNames, func() int {
-		if rc := m.Replicator.Config(); rc != nil {
-			return rc.Factor
-		}
-		return 0
-	})
+	core.metricsCollector = metrics.New(cfg.Metrics, usage, backendNames, cfg.ReplicationFactor)
 
 	return m
 }
@@ -264,11 +247,11 @@ func (m *BackendManager) LifecycleConfig() *config.LifecycleConfig {
 	return m.lifecycleCfg.Load()
 }
 
-// SetIntegrityConfig atomically stores the integrity configuration and
-// forwards it to the scrubber worker.
+// SetIntegrityConfig atomically stores the integrity configuration. The
+// scrubber's own SetConfig is invoked separately by the caller (serve)
+// since the scrubber is a top-level DI service after #676 B.
 func (m *BackendManager) SetIntegrityConfig(cfg *config.IntegrityConfig) {
 	m.integrityCfg.Store(cfg)
-	m.Scrubber.SetConfig(cfg)
 }
 
 // IntegrityConfig returns the current integrity configuration.

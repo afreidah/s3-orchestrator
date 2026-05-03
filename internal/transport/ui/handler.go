@@ -95,21 +95,6 @@ type Deps struct {
 	LoginThrottle *httputil.LoginThrottle
 }
 
-// fromManager builds Deps from a BackendManager, plumbing its sub-managers
-// into the narrow fields. Used by the legacy New constructor and by tests
-// that already wire a manager up.
-func fromManager(manager *proxy.BackendManager, dbHealthy func() bool, cfg *config.Config, logBuffer *telemetry.LogBuffer, loginThrottle *httputil.LoginThrottle) *Deps {
-	return &Deps{
-		BackendOps:    manager,
-		Objects:       manager.ObjectManager,
-		Rebalancer:    manager.Rebalancer,
-		OverRep:       manager.OverReplicationCleaner,
-		DBHealthy:     dbHealthy,
-		Cfg:           cfg,
-		LogBuffer:     logBuffer,
-		LoginThrottle: loginThrottle,
-	}
-}
 
 // Handler serves the web UI dashboard.
 type Handler struct {
@@ -132,16 +117,10 @@ type Handler struct {
 	asyncOps       asyncOpTracker
 }
 
-// New creates a UI handler from a fully-wired BackendManager. Retained for
-// callers that already hold a manager (tests, legacy entry points). DI uses
-// NewWithDeps directly so handlers never depend on the god-shaped manager.
-func New(manager *proxy.BackendManager, dbHealthy func() bool, cfg *config.Config, logBuffer *telemetry.LogBuffer, loginThrottle *httputil.LoginThrottle) *Handler {
-	return NewWithDeps(fromManager(manager, dbHealthy, cfg, logBuffer, loginThrottle))
-}
-
-// NewWithDeps is the explicit-deps constructor. The DI layer routes through
-// here so the dependency graph is visible at the call site.
-func NewWithDeps(d *Deps) *Handler {
+// New is the explicit-deps constructor. The DI layer constructs Deps and
+// passes it here; tests build Deps directly. Each field is the smallest
+// contract the handler uses, so wiring stays visible at the call site.
+func New(d *Deps) *Handler {
 	h := &Handler{
 		backendOps:     d.BackendOps,
 		objects:        d.Objects,

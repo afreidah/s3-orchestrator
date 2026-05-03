@@ -33,7 +33,7 @@ func newDrainTestManager(store *mockStore, backends map[string]*mockBackend) *Ba
 		obs[name] = b
 		order = append(order, name)
 	}
-	return NewBackendManager(&BackendManagerConfig{
+	return wireWorkersForTest(NewBackendManager(&BackendManagerConfig{
 		Backends:        obs,
 		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
@@ -42,7 +42,7 @@ func newDrainTestManager(store *mockStore, backends map[string]*mockBackend) *Ba
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
-	})
+	}))
 }
 
 // TestPurgeBackendObjects_DeletesDBRecords verifies that purge deletes both S3 objects and DB records.

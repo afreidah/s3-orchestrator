@@ -190,8 +190,13 @@ func (mc *Collector) updateUsageGauges(ctx context.Context, stats map[string]cor
 }
 
 // updateReplicationPending updates the under-replicated-objects gauge.
-// No-op when replication is disabled (factor <= 1).
+// No-op when replication is disabled (factor <= 1) or when no factor
+// source has been wired (the closure is nil in test fixtures that build
+// metrics without a BackendManager).
 func (mc *Collector) updateReplicationPending(ctx context.Context) {
+	if mc.replicationFactor == nil {
+		return
+	}
 	factor := mc.replicationFactor()
 	if factor <= 1 {
 		return

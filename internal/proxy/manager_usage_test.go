@@ -33,14 +33,14 @@ func newUsageManager(backendNames []string, store *mockStore) *BackendManager {
 	for _, name := range backendNames {
 		backends[name] = newMockBackend()
 	}
-	return NewBackendManager(&BackendManagerConfig{
+	return wireWorkersForTest(NewBackendManager(&BackendManagerConfig{
 		Backends:        backends,
 		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
 		Metrics:         store,
 		Order:           backendNames,
 		RoutingStrategy: config.RoutingPack,
-	})
+	}))
 }
 
 func newUsageManagerWithLimits(backendNames []string, store *mockStore, limits map[string]core.UsageLimits) *BackendManager {
@@ -48,7 +48,7 @@ func newUsageManagerWithLimits(backendNames []string, store *mockStore, limits m
 	for _, name := range backendNames {
 		backends[name] = newMockBackend()
 	}
-	return NewBackendManager(&BackendManagerConfig{
+	return wireWorkersForTest(NewBackendManager(&BackendManagerConfig{
 		Backends:        backends,
 		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
@@ -56,7 +56,7 @@ func newUsageManagerWithLimits(backendNames []string, store *mockStore, limits m
 		Order:           backendNames,
 		UsageLimits:     limits,
 		RoutingStrategy: config.RoutingPack,
-	})
+	}))
 }
 
 // --- recordUsage tests ---

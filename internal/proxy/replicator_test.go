@@ -109,6 +109,7 @@ func TestReplicate_QuotaStatsError(t *testing.T) {
 		CacheTTL:        5 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
+	wireWorkersForTest(mgr)
 
 	_, err := mgr.Replicator.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:    2,
@@ -146,6 +147,7 @@ func TestReplicate_Success(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
+	wireWorkersForTest(mgr)
 
 	created, err := mgr.Replicator.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:    2,
@@ -179,6 +181,7 @@ func TestFindReplicaTarget_ExcludesExistingCopies(t *testing.T) {
 		CacheTTL:        5 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
+	wireWorkersForTest(mgr)
 
 	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 100, BytesLimit: 1000},
@@ -206,6 +209,7 @@ func TestFindReplicaTarget_SkipsFullBackends(t *testing.T) {
 		CacheTTL:        5 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
+	wireWorkersForTest(mgr)
 
 	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 100, BytesLimit: 1000},
@@ -232,6 +236,7 @@ func TestSelectReplicaTarget_NoSpaceAvailable(t *testing.T) {
 		CacheTTL:        5 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
+	wireWorkersForTest(mgr)
 
 	exclusion := map[string]bool{"b1": true}
 	target := mgr.Replicator.FindReplicaTarget(context.Background(), nil, "key1", 50, exclusion)
@@ -269,6 +274,7 @@ func TestCopyToReplica_Success(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
+	wireWorkersForTest(mgr)
 
 	copies := []core.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}
 	source, err := mgr.Replicator.CopyToReplica(context.Background(), "key1", copies, "b2")
@@ -299,6 +305,7 @@ func TestCopyToReplica_FailoverToSecondCopy(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
+	wireWorkersForTest(mgr)
 
 	copies := []core.ObjectLocation{
 		{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
@@ -330,6 +337,7 @@ func TestCopyToReplica_AllSourcesFail(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
+	wireWorkersForTest(mgr)
 
 	copies := []core.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}
 	_, err := mgr.Replicator.CopyToReplica(context.Background(), "key1", copies, "b2")
@@ -412,6 +420,7 @@ func TestReplicate_RecordReplicaFails_CleansUpOrphan(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
+	wireWorkersForTest(mgr)
 
 	created, err := mgr.Replicator.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:    2,
@@ -458,6 +467,7 @@ func TestCopyToReplica_TargetWriteFails(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
+	wireWorkersForTest(mgr)
 
 	copies := []core.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}
 	_, err := mgr.Replicator.CopyToReplica(context.Background(), "key1", copies, "b2")
@@ -491,6 +501,7 @@ func TestReplicateObject_NoTargetAvailable(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
+	wireWorkersForTest(mgr)
 
 	created, err := mgr.Replicator.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:    2,
@@ -530,6 +541,7 @@ func TestReplicate_SourceGoneDuringReplication(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
+	wireWorkersForTest(mgr)
 
 	created, err := mgr.Replicator.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:    2,
@@ -591,6 +603,7 @@ func TestReplicate_HealthAware_SkipsUnhealthyTarget(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
+	wireWorkersForTest(mgr)
 
 	created, err := mgr.Replicator.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:             2,
@@ -645,6 +658,7 @@ func TestReplicate_HealthAware_PrefersHealthySource(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
+	wireWorkersForTest(mgr)
 
 	created, err := mgr.Replicator.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:             3,
@@ -689,6 +703,7 @@ func TestReplicate_HealthAware_BelowThreshold(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
+	wireWorkersForTest(mgr)
 
 	created, err := mgr.Replicator.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:             2,
@@ -741,6 +756,7 @@ func TestIsBackendHealthy_CBHealthy(t *testing.T) {
 		CacheTTL:        5 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
+	wireWorkersForTest(mgr)
 	if !mgr.Replicator.IsBackendHealthy("b1") {
 		t.Error("healthy CB backend should report healthy")
 	}
@@ -756,6 +772,7 @@ func TestIsBackendHealthy_CBUnhealthy(t *testing.T) {
 		CacheTTL:        5 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
+	wireWorkersForTest(mgr)
 	if mgr.Replicator.IsBackendHealthy("b1") {
 		t.Error("tripped CB backend should report unhealthy")
 	}

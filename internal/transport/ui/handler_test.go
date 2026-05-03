@@ -76,6 +76,7 @@ func newTestHandlerWithMock(t *testing.T) (*Handler, *http.ServeMux, *testutil.M
 		Order:           []string{"b1"},
 		RoutingStrategy: config.RoutingPack,
 	})
+	proxytest.AttachWorkers(mgr, mockStore)
 	t.Cleanup(mgr.Close)
 
 	cfg := &config.Config{
@@ -97,7 +98,7 @@ func newTestHandlerWithMock(t *testing.T) (*Handler, *http.ServeMux, *testutil.M
 		},
 	}
 
-	h := New(mgr, func() bool { return true }, cfg, telemetry.NewLogBuffer(), nil)
+	h := New(&Deps{BackendOps: mgr, Objects: mgr.ObjectManager, Rebalancer: mgr.Rebalancer, OverRep: mgr.OverReplicationCleaner, DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
 
 	mux := http.NewServeMux()
 	h.Register(mux, "/ui")
@@ -450,6 +451,7 @@ func TestLogin_BcryptSecret(t *testing.T) {
 		Metrics:   mockStore,
 		Order:     []string{},
 	})
+	proxytest.AttachWorkers(mgr, mockStore)
 	t.Cleanup(mgr.Close)
 
 	cfg := &config.Config{
@@ -463,7 +465,7 @@ func TestLogin_BcryptSecret(t *testing.T) {
 		},
 	}
 
-	h := New(mgr, func() bool { return true }, cfg, telemetry.NewLogBuffer(), nil)
+	h := New(&Deps{BackendOps: mgr, Objects: mgr.ObjectManager, Rebalancer: mgr.Rebalancer, OverRep: mgr.OverReplicationCleaner, DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
 	mux := http.NewServeMux()
 	h.Register(mux, "/ui")
 
@@ -522,6 +524,7 @@ func TestCrossInstanceSession(t *testing.T) {
 		Metrics:   mockStore,
 		Order:     []string{},
 	})
+	proxytest.AttachWorkers(mgr, mockStore)
 	t.Cleanup(mgr.Close)
 
 	cfg := &config.Config{
@@ -534,8 +537,8 @@ func TestCrossInstanceSession(t *testing.T) {
 		},
 	}
 
-	h1 := New(mgr, func() bool { return true }, cfg, telemetry.NewLogBuffer(), nil)
-	h2 := New(mgr, func() bool { return true }, cfg, telemetry.NewLogBuffer(), nil)
+	h1 := New(&Deps{BackendOps: mgr, Objects: mgr.ObjectManager, Rebalancer: mgr.Rebalancer, OverRep: mgr.OverReplicationCleaner, DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
+	h2 := New(&Deps{BackendOps: mgr, Objects: mgr.ObjectManager, Rebalancer: mgr.Rebalancer, OverRep: mgr.OverReplicationCleaner, DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
 	mux1 := http.NewServeMux()
 	mux2 := http.NewServeMux()
 	h1.Register(mux1, "/ui")
@@ -1807,6 +1810,7 @@ func benchLoginHandler(b *testing.B) (*Handler, *http.ServeMux) {
 		Order:           []string{},
 		RoutingStrategy: config.RoutingPack,
 	})
+	proxytest.AttachWorkers(mgr, mockStore)
 	b.Cleanup(mgr.Close)
 
 	cfg := &config.Config{
@@ -1821,7 +1825,7 @@ func benchLoginHandler(b *testing.B) (*Handler, *http.ServeMux) {
 		},
 	}
 
-	h := New(mgr, func() bool { return true }, cfg, telemetry.NewLogBuffer(), nil)
+	h := New(&Deps{BackendOps: mgr, Objects: mgr.ObjectManager, Rebalancer: mgr.Rebalancer, OverRep: mgr.OverReplicationCleaner, DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
 	mux := http.NewServeMux()
 	h.Register(mux, "/ui")
 

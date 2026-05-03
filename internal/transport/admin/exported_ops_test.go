@@ -254,6 +254,7 @@ func TestEncryptExisting_HappyPathOneRow(t *testing.T) {
 		Order:           []string{"backend-a"},
 		RoutingStrategy: config.RoutingPack,
 	})
+	proxytest.AttachWorkers(mgr, mock)
 
 	provider, err := encryption.NewConfigKeyProvider("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "test-key")
 	if err != nil {

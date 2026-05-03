@@ -740,7 +740,7 @@ func TestCleanupStaleMultipartUploads_AbortFails(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
-// abortMultipartUploadsOnBackend
+// AbortMultipartUploadsOnBackend
 // -------------------------------------------------------------------------
 
 func TestAbortMultipartUploadsOnBackend_ListError(t *testing.T) {
@@ -751,7 +751,7 @@ func TestAbortMultipartUploadsOnBackend_ListError(t *testing.T) {
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	// Should not panic — logs error and returns early
-	mgr.MultipartManager.abortMultipartUploadsOnBackend(context.Background(), "b1")
+	mgr.MultipartManager.AbortMultipartUploadsOnBackend(context.Background(), "b1")
 }
 
 func TestAbortMultipartUploadsOnBackend_AbortsMatchingBackend(t *testing.T) {
@@ -776,7 +776,7 @@ func TestAbortMultipartUploadsOnBackend_AbortsMatchingBackend(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	mgr.MultipartManager.abortMultipartUploadsOnBackend(ctx, "b1")
+	mgr.MultipartManager.AbortMultipartUploadsOnBackend(ctx, "b1")
 
 	// Part should be cleaned up
 	if backend.hasObject("__multipart/up-1/1") {
@@ -795,7 +795,7 @@ func TestAbortMultipartUploadsOnBackend_AbortFails(t *testing.T) {
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	// Should not panic — logs error and continues
-	mgr.MultipartManager.abortMultipartUploadsOnBackend(context.Background(), "b1")
+	mgr.MultipartManager.AbortMultipartUploadsOnBackend(context.Background(), "b1")
 }
 
 // TestCompleteMultipartUpload_PartGetPanics verifies that a panic inside the

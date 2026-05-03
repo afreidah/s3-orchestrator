@@ -43,6 +43,7 @@ func newAdminHandlerForTest(t *testing.T, opts ...func(*proxy.BackendManager)) *
 		Order:           []string{},
 		RoutingStrategy: config.RoutingPack,
 	})
+	proxytest.AttachWorkers(mgr, mock)
 	mgr.Replicator.SetConfig(&config.ReplicationConfig{Factor: 1})
 	mgr.OverReplicationCleaner.SetConfig(&config.ReplicationConfig{Factor: 1})
 	for _, opt := range opts {

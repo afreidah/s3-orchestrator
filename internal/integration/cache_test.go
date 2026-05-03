@@ -28,6 +28,7 @@ import (
 	objcache "github.com/afreidah/s3-orchestrator/internal/cache"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
@@ -62,9 +63,10 @@ func setupCacheEnv(t *testing.T) *cacheTestEnv {
 		CacheTTL:         60 * time.Second,
 	})
 
+	stores := newCBStores(testStore, dbCB)
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        testBackends,
-		Stores:          newCBStores(testStore, dbCB),
+		Stores:          stores,
 		Dashboard:       store.NewCBDashboardStore(testStore, dbCB),
 		Metrics:         newMetricsAdapter(testStore, dbCB),
 		Order:           testBackendOrder,
@@ -73,6 +75,7 @@ func setupCacheEnv(t *testing.T) *cacheTestEnv {
 		RoutingStrategy: config.RoutingPack,
 		ObjectCache:     mc,
 	})
+	proxytest.AttachWorkersWithStores(mgr, &stores)
 
 	srv := &s3api.Server{Manager: mgr}
 	srv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{

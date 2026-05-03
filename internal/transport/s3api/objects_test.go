@@ -136,6 +136,7 @@ func newTestServer(t *testing.T) (*httptest.Server, *testutil.MockStore, *server
 		Order:           []string{"b1"},
 		RoutingStrategy: config.RoutingPack,
 	})
+	proxytest.AttachWorkers(mgr, mockStore)
 	t.Cleanup(mgr.Close)
 
 	srv := &Server{

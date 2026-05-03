@@ -33,6 +33,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
@@ -80,9 +81,10 @@ func setupEncryptionEnv(t *testing.T) *encryptionTestEnv {
 		CacheTTL:         60 * time.Second,
 	})
 
+	stores := newCBStores(testStore, dbCB)
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        testBackends,
-		Stores:          newCBStores(testStore, dbCB),
+		Stores:          stores,
 		Dashboard:       store.NewCBDashboardStore(testStore, dbCB),
 		Metrics:         newMetricsAdapter(testStore, dbCB),
 		Order:           testBackendOrder,
@@ -91,6 +93,7 @@ func setupEncryptionEnv(t *testing.T) *encryptionTestEnv {
 		RoutingStrategy: config.RoutingPack,
 		Encryptor:       enc,
 	})
+	proxytest.AttachWorkersWithStores(mgr, &stores)
 
 	// Start proxy server
 	srv := &s3api.Server{Manager: mgr}

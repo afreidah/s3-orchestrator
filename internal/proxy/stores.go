@@ -37,23 +37,4 @@ type Stores struct {
 	Lock             core.AdvisoryLocker
 }
 
-// rebalancerStore satisfies worker.RebalancerStore by embedding the two
-// narrow roles the rebalancer actually touches.
-type rebalancerStore struct {
-	core.ObjectStore
-	core.QuotaStore
-}
-
-// replicatorStore satisfies worker.ReplicatorStore.
-type replicatorStore struct {
-	core.ObjectStore
-	core.ReplicationStore
-	core.QuotaStore
-}
-
-// overReplicationStore satisfies worker.OverReplicationStore.
-type overReplicationStore struct {
-	core.ReplicationStore
-	core.QuotaStore
-}
 

@@ -45,9 +45,22 @@ func (acquiringLocker) WithAdvisoryLock(ctx context.Context, _ int64, fn func(ct
 	return true, fn(ctx)
 }
 
-// newTestManagerWithMock builds a BackendManager backed by testutil.MockStore
-// so the service constructors have a valid manager to pass through.
-func newTestManagerWithMock(t *testing.T) *proxy.BackendManager {
+// servicesFixture bundles a BackendManager with the workers that the
+// background-service factories accept. Workers are no longer fields on
+// BackendManager (#676 B); each one is a separate dependency.
+type servicesFixture struct {
+	mgr           *proxy.BackendManager
+	rebalancer    *worker.Rebalancer
+	replicator    *worker.Replicator
+	overRep       *worker.OverReplicationCleaner
+	cleanupWorker *worker.CleanupWorker
+	scrubber      *worker.Scrubber
+}
+
+// newServicesFixture builds the manager and the workers the service
+// constructors need. Mirrors what the per-worker DI providers do at
+// runtime, just inline so the test stays free of the do.Injector.
+func newServicesFixture(t *testing.T) *servicesFixture {
 	t.Helper()
 	mock := &testutil.MockStore{}
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
@@ -58,15 +71,48 @@ func newTestManagerWithMock(t *testing.T) *proxy.BackendManager {
 		Order:           []string{},
 		RoutingStrategy: config.RoutingPack,
 	})
-	// Reload configs so Config() accessors return non-nil values when the
-	// service constructors read them.
-	mgr.Rebalancer.SetConfig(&config.RebalanceConfig{})
-	mgr.Replicator.SetConfig(&config.ReplicationConfig{Factor: 1})
-	mgr.OverReplicationCleaner.SetConfig(&config.ReplicationConfig{Factor: 1})
+	proxytest.AttachWorkers(mgr, mock)
+
+	rb := worker.NewRebalancer(mgr, struct {
+		core.ObjectStore
+		core.QuotaStore
+	}{ObjectStore: mock, QuotaStore: mock})
+	rb.SetConfig(&config.RebalanceConfig{})
+	mgr.Rebalancer = rb
+
+	rp := worker.NewReplicator(mgr, struct {
+		core.ObjectStore
+		core.ReplicationStore
+		core.QuotaStore
+	}{ObjectStore: mock, ReplicationStore: mock, QuotaStore: mock})
+	rp.SetConfig(&config.ReplicationConfig{Factor: 1})
+	mgr.Replicator = rp
+
+	or := worker.NewOverReplicationCleaner(mgr, struct {
+		core.ReplicationStore
+		core.QuotaStore
+	}{ReplicationStore: mock, QuotaStore: mock})
+	or.SetConfig(&config.ReplicationConfig{Factor: 1})
+	mgr.OverReplicationCleaner = or
+
+	cw := worker.NewCleanupWorker(mgr, mock, 10)
+	mgr.CleanupWorker = cw
+
+	sc := worker.NewScrubber(mgr, mock, nil)
+	sc.SetConfig(&config.IntegrityConfig{})
+	mgr.Scrubber = sc
+
 	mgr.SetLifecycleConfig(&config.LifecycleConfig{})
 	mgr.SetIntegrityConfig(&config.IntegrityConfig{})
 	t.Cleanup(mgr.Close)
-	return mgr
+	return &servicesFixture{
+		mgr:           mgr,
+		rebalancer:    rb,
+		replicator:    rp,
+		overRep:       or,
+		cleanupWorker: cw,
+		scrubber:      sc,
+	}
 }
 
 // TestServiceConstructors_AllReturnNonNil asserts each factory produces a
@@ -74,22 +120,22 @@ func newTestManagerWithMock(t *testing.T) *proxy.BackendManager {
 // body surfaces as a nil return.
 func TestServiceConstructors_AllReturnNonNil(t *testing.T) {
 	t.Parallel()
-	mgr := newTestManagerWithMock(t)
+	f := newServicesFixture(t)
 	locker := fakeLocker{}
 
 	tests := []struct {
 		name string
 		svc  any
 	}{
-		{"UsageFlush", NewUsageFlushService(mgr, locker)},
-		{"MultipartCleanup", NewMultipartCleanupService(mgr, locker, 0)},
-		{"CleanupQueue", NewCleanupQueueService(mgr, locker)},
-		{"Rebalancer", NewRebalancerService(mgr, locker)},
-		{"Lifecycle", NewLifecycleService(mgr, locker)},
-		{"OverReplication", NewOverReplicationService(mgr, locker)},
-		{"Replicator", NewReplicatorService(mgr, locker)},
-		{"Reconcile", NewReconcileService(worker.NewReconciler(mgr, nil), locker, time.Hour)},
-		{"Scrubber", NewScrubberService(mgr, locker)},
+		{"UsageFlush", NewUsageFlushService(f.mgr, locker)},
+		{"MultipartCleanup", NewMultipartCleanupService(f.mgr, locker, 0)},
+		{"CleanupQueue", NewCleanupQueueService(f.cleanupWorker, locker)},
+		{"Rebalancer", NewRebalancerService(f.mgr, f.rebalancer, locker)},
+		{"Lifecycle", NewLifecycleService(f.mgr, locker)},
+		{"OverReplication", NewOverReplicationService(f.mgr, f.overRep, locker)},
+		{"Replicator", NewReplicatorService(f.mgr, f.replicator, locker)},
+		{"Reconcile", NewReconcileService(worker.NewReconciler(f.mgr, nil), locker, time.Hour)},
+		{"Scrubber", NewScrubberService(f.scrubber, locker)},
 		{"Watchdog", NewCircuitBreakerWatchdog(breaker.NewRegistry(breaker.NewCircuitBreaker("t", 3, time.Second, func(error) bool { return false }, core.ErrDBUnavailable)))},
 	}
 	for _, tc := range tests {
@@ -236,7 +282,7 @@ func TestLockedTickerService_RunStartupFires(t *testing.T) {
 // ctx.Done() path for the adaptive-interval flusher.
 func TestUsageFlushService_RunExitsOnCancel(t *testing.T) {
 	t.Parallel()
-	mgr := newTestManagerWithMock(t)
+	f := newServicesFixture(t); mgr := f.mgr
 	mgr.SetUsageFlushConfig(&config.UsageFlushConfig{Interval: time.Hour})
 	svc := NewUsageFlushService(mgr, fakeLocker{})
 	ctx, cancel := context.WithCancel(context.Background())
@@ -252,7 +298,7 @@ func TestUsageFlushService_RunExitsOnCancel(t *testing.T) {
 // error out.
 func TestUsageFlushService_DoFlushOnMockManager(t *testing.T) {
 	t.Parallel()
-	mgr := newTestManagerWithMock(t)
+	f := newServicesFixture(t); mgr := f.mgr
 	svc := &usageFlushService{manager: mgr, locker: fakeLocker{}}
 	svc.doFlush(context.Background())
 	svc.flushTick(context.Background()) // exercises the non-Redis branch
@@ -277,17 +323,17 @@ func asTicker(t *testing.T, svc any) *lockedTickerService {
 // eats into the PR gate.
 func TestServiceClosures_ExerciseWorkAndShouldRun(t *testing.T) {
 	t.Parallel()
-	mgr := newTestManagerWithMock(t)
+	f := newServicesFixture(t); mgr := f.mgr
 	ctx := context.Background()
 	locker := acquiringLocker{}
 
 	mpc := asTicker(t, NewMultipartCleanupService(mgr, locker, 100*time.Millisecond))
 	mpc.work(ctx)
 
-	cq := asTicker(t, NewCleanupQueueService(mgr, locker))
+	cq := asTicker(t, NewCleanupQueueService(f.cleanupWorker, locker))
 	cq.work(ctx)
 
-	rb := asTicker(t, NewRebalancerService(mgr, locker))
+	rb := asTicker(t, NewRebalancerService(mgr, f.rebalancer, locker))
 	_ = rb.shouldRun()
 	rb.work(ctx)
 
@@ -298,11 +344,11 @@ func TestServiceClosures_ExerciseWorkAndShouldRun(t *testing.T) {
 		lc.onError(errors.New("simulated failure for coverage"))
 	}
 
-	or := asTicker(t, NewOverReplicationService(mgr, locker))
+	or := asTicker(t, NewOverReplicationService(mgr, f.overRep, locker))
 	_ = or.shouldRun()
 	or.work(ctx)
 
-	rp := asTicker(t, NewReplicatorService(mgr, locker))
+	rp := asTicker(t, NewReplicatorService(mgr, f.replicator, locker))
 	_ = rp.shouldRun()
 	rp.work(ctx)
 	if rp.startup != nil {
@@ -312,7 +358,7 @@ func TestServiceClosures_ExerciseWorkAndShouldRun(t *testing.T) {
 	rc := asTicker(t, NewReconcileService(worker.NewReconciler(mgr, nil), locker, 100*time.Millisecond))
 	rc.work(ctx)
 
-	sc := asTicker(t, NewScrubberService(mgr, locker))
+	sc := asTicker(t, NewScrubberService(f.scrubber, locker))
 	_ = sc.shouldRun()
 	sc.work(ctx)
 }
@@ -352,7 +398,7 @@ func TestLockedTickerService_RunTicksOnce(t *testing.T) {
 // once so the body of Run beyond the initial select is covered.
 func TestUsageFlushService_RunTicksOnce(t *testing.T) {
 	t.Parallel()
-	mgr := newTestManagerWithMock(t)
+	f := newServicesFixture(t); mgr := f.mgr
 	mgr.SetUsageFlushConfig(&config.UsageFlushConfig{Interval: 2 * time.Millisecond})
 	svc := NewUsageFlushService(mgr, fakeLocker{})
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
@@ -366,7 +412,7 @@ func TestUsageFlushService_RunTicksOnce(t *testing.T) {
 // lock sidechannel.
 func TestUsageFlushService_FlushTickWithAdaptiveSwitch(t *testing.T) {
 	t.Parallel()
-	mgr := newTestManagerWithMock(t)
+	f := newServicesFixture(t); mgr := f.mgr
 	mgr.SetUsageFlushConfig(&config.UsageFlushConfig{
 		Interval:          2 * time.Millisecond,
 		FastInterval:      time.Millisecond,
@@ -399,7 +445,7 @@ func TestCircuitBreakerWatchdog_CheckAllResetsBackendBreaker(t *testing.T) {
 // FlushUsage and exercises the post-error continuation.
 func TestUsageFlushService_DoFlushOnCancelledCtx(t *testing.T) {
 	t.Parallel()
-	mgr := newTestManagerWithMock(t)
+	f := newServicesFixture(t); mgr := f.mgr
 	svc := &usageFlushService{manager: mgr, locker: fakeLocker{}}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
