@@ -54,9 +54,18 @@ WHERE object_key = $1
 FOR UPDATE;
 
 -- name: InsertReplicaConditional :one
+-- Returns the size_bytes that was actually inserted into object_locations
+-- (read from the source row in the same statement). Caller uses this size
+-- for IncrementBackendQuota so object_locations.size_bytes and
+-- backend_quotas.bytes_used always agree, even if the in-memory copy size
+-- the caller observed before InsertReplicaConditional differs from the
+-- source row's current size_bytes (e.g. a concurrent overwrite landed
+-- between GetUnderReplicatedObjects and the conditional insert).
+-- ON CONFLICT or missing source returns no rows; the caller treats that
+-- as inserted=false.
 INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at)
 SELECT $1, $2, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, NOW()
 FROM object_locations ol
 WHERE ol.object_key = $1 AND ol.backend_name = $3
 ON CONFLICT (object_key, backend_name) DO NOTHING
-RETURNING true AS inserted;
+RETURNING size_bytes;

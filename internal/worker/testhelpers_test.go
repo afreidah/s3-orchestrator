@@ -35,6 +35,7 @@ type mockMetadataStore struct {
 	overReplicatedCount int64
 	quotaStats          map[string]core.QuotaStat
 	recordReplicaOK     bool
+	recordReplicaSize   int64
 	recordReplicaErr    error
 	replicaRecorded     int
 	removedCopies       int
@@ -113,12 +114,12 @@ func (m *mockMetadataStore) GetQuotaStats(_ context.Context) (map[string]core.Qu
 	return m.quotaStats, nil
 }
 
-func (m *mockMetadataStore) RecordReplica(_ context.Context, _, _, _ string, _ int64) (bool, error) {
+func (m *mockMetadataStore) RecordReplica(_ context.Context, _, _, _ string) (int64, bool, error) {
 	m.replicaRecorded++
 	if m.recordReplicaErr != nil {
-		return false, m.recordReplicaErr
+		return 0, false, m.recordReplicaErr
 	}
-	return m.recordReplicaOK, nil
+	return m.recordReplicaSize, m.recordReplicaOK, nil
 }
 
 func (m *mockMetadataStore) GetOverReplicatedObjects(_ context.Context, _, _ int) ([]core.ObjectLocation, error) {

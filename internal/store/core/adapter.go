@@ -109,10 +109,14 @@ type ObjectsTxAdapter interface {
 	InsertObjectLocationIfNotExists(ctx context.Context, loc *ObjectLocation) (inserted bool, err error)
 
 	// InsertReplicaConditional inserts a replica row only if the
-	// source copy still exists. Returns true if the replica was
-	// inserted, false if the source copy is gone (a benign race the
-	// caller treats as nothing-to-do).
-	InsertReplicaConditional(ctx context.Context, objectKey, targetBackend, sourceBackend string) (inserted bool, err error)
+	// source copy still exists. Returns the size_bytes the row was
+	// inserted with (read from the source row inside the same
+	// statement) and inserted=true on success, or (0, false, nil)
+	// when the source copy is gone or the target already has a copy.
+	// Callers use the returned size for IncrementBackendQuota so
+	// object_locations.size_bytes and backend_quotas.bytes_used always
+	// agree.
+	InsertReplicaConditional(ctx context.Context, objectKey, targetBackend, sourceBackend string) (size int64, inserted bool, err error)
 }
 
 // CleanupTxAdapter exposes the transactional operations on the

@@ -219,21 +219,23 @@ func (a *pgTxAdapter) DeleteObjectsByKeys(ctx context.Context, keys []string) er
 }
 
 // InsertReplicaConditional inserts a replica row only if the source
-// copy still exists. Returns false (with nil error) when the source
-// copy is gone - a benign race the caller treats as nothing-to-do.
-func (a *pgTxAdapter) InsertReplicaConditional(ctx context.Context, objectKey, targetBackend, sourceBackend string) (bool, error) {
-	inserted, err := a.q.InsertReplicaConditional(ctx, db.InsertReplicaConditionalParams{
+// copy still exists. Returns the inserted size_bytes (read from the
+// source row in the same statement) on success, or (0, false, nil)
+// when the source copy is gone - a benign race the caller treats as
+// nothing-to-do.
+func (a *pgTxAdapter) InsertReplicaConditional(ctx context.Context, objectKey, targetBackend, sourceBackend string) (int64, bool, error) {
+	size, err := a.q.InsertReplicaConditional(ctx, db.InsertReplicaConditionalParams{
 		ObjectKey:     objectKey,
 		BackendName:   targetBackend,
 		BackendName_2: sourceBackend,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
+		return 0, false, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("insert replica conditional: %w", err)
+		return 0, false, fmt.Errorf("insert replica conditional: %w", err)
 	}
-	return inserted, nil
+	return size, true, nil
 }
 
 // -------------------------------------------------------------------------

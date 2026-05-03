@@ -268,7 +268,7 @@ SELECT $1, $2, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.pla
 FROM object_locations ol
 WHERE ol.object_key = $1 AND ol.backend_name = $3
 ON CONFLICT (object_key, backend_name) DO NOTHING
-RETURNING true AS inserted
+RETURNING size_bytes
 `
 
 type InsertReplicaConditionalParams struct {
@@ -277,9 +277,18 @@ type InsertReplicaConditionalParams struct {
 	BackendName_2 string
 }
 
-func (q *Queries) InsertReplicaConditional(ctx context.Context, arg InsertReplicaConditionalParams) (bool, error) {
+// Returns the size_bytes that was actually inserted into object_locations
+// (read from the source row in the same statement). Caller uses this size
+// for IncrementBackendQuota so object_locations.size_bytes and
+// backend_quotas.bytes_used always agree, even if the in-memory copy size
+// the caller observed before InsertReplicaConditional differs from the
+// source row's current size_bytes (e.g. a concurrent overwrite landed
+// between GetUnderReplicatedObjects and the conditional insert).
+// ON CONFLICT or missing source returns no rows; the caller treats that
+// as inserted=false.
+func (q *Queries) InsertReplicaConditional(ctx context.Context, arg InsertReplicaConditionalParams) (int64, error) {
 	row := q.db.QueryRow(ctx, insertReplicaConditional, arg.ObjectKey, arg.BackendName, arg.BackendName_2)
-	var inserted bool
-	err := row.Scan(&inserted)
-	return inserted, err
+	var size_bytes int64
+	err := row.Scan(&size_bytes)
+	return size_bytes, err
 }

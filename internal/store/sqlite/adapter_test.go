@@ -435,12 +435,15 @@ func TestAdapter_InsertReplicaConditional_InsertsWhenSourceExists(t *testing.T) 
 	mustRecordObject(t, s, "bucket/k", "backend-a", 100)
 
 	withAdapter(t, s, func(a *sqliteTxAdapter) {
-		ok, err := a.InsertReplicaConditional(ctx, "bucket/k", "backend-b", "backend-a")
+		size, ok, err := a.InsertReplicaConditional(ctx, "bucket/k", "backend-b", "backend-a")
 		if err != nil {
 			t.Fatalf("InsertReplicaConditional: %v", err)
 		}
 		if !ok {
 			t.Error("expected true when source exists and target missing")
+		}
+		if size != 100 {
+			t.Errorf("expected size 100 (source row's), got %d", size)
 		}
 		// Verify the replica row is there with the source's metadata.
 		copies, err := a.GetExistingCopiesForUpdate(ctx, "bucket/k")
@@ -460,12 +463,15 @@ func TestAdapter_InsertReplicaConditional_FalseWhenSourceMissing(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	withAdapter(t, s, func(a *sqliteTxAdapter) {
-		ok, err := a.InsertReplicaConditional(context.Background(), "bucket/k", "backend-b", "backend-a")
+		size, ok, err := a.InsertReplicaConditional(context.Background(), "bucket/k", "backend-b", "backend-a")
 		if err != nil {
 			t.Fatalf("InsertReplicaConditional: %v", err)
 		}
 		if ok {
 			t.Error("expected false when source is missing")
+		}
+		if size != 0 {
+			t.Errorf("expected size 0 when source missing, got %d", size)
 		}
 	})
 }
@@ -481,12 +487,15 @@ func TestAdapter_InsertReplicaConditional_FalseWhenTargetExists(t *testing.T) {
 	mustRecordReplica(t, s, "bucket/k", "backend-b", "backend-a", 100)
 
 	withAdapter(t, s, func(a *sqliteTxAdapter) {
-		ok, err := a.InsertReplicaConditional(ctx, "bucket/k", "backend-b", "backend-a")
+		size, ok, err := a.InsertReplicaConditional(ctx, "bucket/k", "backend-b", "backend-a")
 		if err != nil {
 			t.Fatalf("InsertReplicaConditional: %v", err)
 		}
 		if ok {
 			t.Error("expected false when target already has a copy")
+		}
+		if size != 0 {
+			t.Errorf("expected size 0 when target already exists, got %d", size)
 		}
 	})
 }

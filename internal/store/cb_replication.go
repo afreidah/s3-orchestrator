@@ -36,9 +36,19 @@ func (c *cbReplicationStore) GetUnderReplicatedObjectsExcluding(ctx context.Cont
 	})
 }
 
-// RecordReplica forwards to the inner store under the breaker.
-func (c *cbReplicationStore) RecordReplica(ctx context.Context, key, targetBackend, sourceBackend string, size int64) (bool, error) {
-	return breaker.CBCall(c.cb, func() (bool, error) { return c.inner.RecordReplica(ctx, key, targetBackend, sourceBackend, size) })
+// RecordReplica forwards to the inner store under the breaker. The
+// (size, inserted) pair is returned via a tuple so the generic CBCall
+// helper can handle the single-result signature.
+func (c *cbReplicationStore) RecordReplica(ctx context.Context, key, targetBackend, sourceBackend string) (int64, bool, error) {
+	type recordOut struct {
+		size     int64
+		inserted bool
+	}
+	out, err := breaker.CBCall(c.cb, func() (recordOut, error) {
+		size, inserted, err := c.inner.RecordReplica(ctx, key, targetBackend, sourceBackend)
+		return recordOut{size: size, inserted: inserted}, err
+	})
+	return out.size, out.inserted, err
 }
 
 // GetOverReplicatedObjects forwards to the inner store under the breaker.
