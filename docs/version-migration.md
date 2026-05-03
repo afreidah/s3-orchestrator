@@ -58,7 +58,36 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.41.x (current)
+### v0.44.x (current)
+
+**Cleanup queue dead-letter for unrecoverable orphans**
+
+Cleanup queue rows that exhausted their retry budget previously stayed pinned in `cleanup_queue` with `attempts >= 10`, invisible to the worker (filtered out by the partial index) and surfaced only by a single counter increment. They are now graduated to a new `cleanup_dlq` table by `core.MoveCleanupToDLQ` so an operator can find them, retry them manually, or write each one off deliberately.
+
+**Database migration:**
+
+- `00009_cleanup_dlq.sql` — adds the `cleanup_dlq` table (auto-applied on startup). The columns mirror `cleanup_queue` plus `original_id`, `first_enqueued_at`, and `moved_at` so each DLQ row carries enough context to investigate the orphan.
+
+**Behavioral changes:**
+
+- **Exhaustion path** — the cleanup worker now calls `MoveCleanupToDLQ(id, last_error)` instead of `RetryCleanupItem(id, 0, ...)` when `attempts` reaches 10. The move is a single transaction (read queue row → insert DLQ row → delete queue row) so the row is never duplicated or lost.
+- **Quota accounting unchanged** — `orphan_bytes` is intentionally NOT decremented when a row is moved to the DLQ. The backend object is still on disk; the bytes really are still occupying the backend's quota. Reclaim happens only when an operator confirms the object is gone (e.g. via the reconciler) and writes off the row deliberately.
+
+**New metrics:**
+
+- `s3o_cleanup_dlq_depth` (gauge) — current count of unrecoverable orphans waiting in the DLQ.
+- `s3o_cleanup_dlq_enqueued_total{backend}` (counter) — rate of graduations per backend; one backend dominating means that backend's delete path is broken.
+
+**New audit event:**
+
+- `cleanup_queue.exhausted_to_dlq` — emitted with the row's key, backend, attempts, size_bytes, and final last_error each time a queue row is graduated.
+
+**Operator action items after upgrade:**
+
+- Set up an alert on `s3o_cleanup_dlq_depth > 0` so unrecoverable orphans surface promptly.
+- Use the SQL recipes in [admin-guide.md#cleanup-queue](../admin-guide/#cleanup-queue) and [disaster-recovery.md#cleanup-queue-recovery](../disaster-recovery/#cleanup-queue-recovery) to inspect and resolve DLQ entries.
+
+### v0.41.x
 
 **New feature: Integrity verification**
 

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/workerpool"
@@ -109,11 +110,41 @@ func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) (processed, fai
 
 		newAttempts := item.Attempts + 1
 		if newAttempts >= maxCleanupAttempts {
-			slog.ErrorContext(ctx, "Cleanup queue: max attempts reached",
+			slog.ErrorContext(ctx, "Cleanup queue: max attempts reached, moving to DLQ",
 				"key", item.ObjectKey, "backend", item.BackendName,
 				"attempts", newAttempts, "size", item.SizeBytes, "error", delErr)
-			if err := w.store.RetryCleanupItem(ctx, item.ID, 0, delErr.Error()); err != nil {
-				slog.ErrorContext(ctx, "failed to update exhausted cleanup item", "id", item.ID, "error", err)
+			moved, mvErr := w.store.MoveCleanupToDLQ(ctx, item.ID, delErr.Error())
+			if mvErr != nil {
+				slog.ErrorContext(ctx, "failed to move cleanup item to DLQ",
+					"id", item.ID, "error", mvErr)
+				telemetry.CleanupQueueProcessedTotal.WithLabelValues("exhausted").Inc()
+				failedCount.Add(1)
+				return
+			}
+			if moved {
+				telemetry.CleanupDLQEnqueuedTotal.WithLabelValues(item.BackendName).Inc()
+				audit.Log(ctx, "cleanup_queue.exhausted_to_dlq",
+					slog.String("key", item.ObjectKey),
+					slog.String("backend", item.BackendName),
+					slog.String("reason", item.Reason),
+					slog.Int("attempts", int(newAttempts)),
+					slog.Int64("size_bytes", item.SizeBytes),
+					slog.String("last_error", delErr.Error()),
+				)
+				if event.Emit != nil {
+					event.Emit(event.Event{
+						Type:    event.CleanupExhausted,
+						Subject: item.BackendName,
+						Data: map[string]any{
+							"backend":    item.BackendName,
+							"object_key": item.ObjectKey,
+							"reason":     item.Reason,
+							"attempts":   int(newAttempts),
+							"size_bytes": item.SizeBytes,
+							"last_error": delErr.Error(),
+						},
+					})
+				}
 			}
 			telemetry.CleanupQueueProcessedTotal.WithLabelValues("exhausted").Inc()
 			failedCount.Add(1)
@@ -131,6 +162,10 @@ func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) (processed, fai
 	depth, err := w.store.CleanupQueueDepth(ctx)
 	if err == nil {
 		telemetry.CleanupQueueDepth.Set(float64(depth))
+	}
+	dlqDepth, err := w.store.CleanupDLQDepth(ctx)
+	if err == nil {
+		telemetry.CleanupDLQDepth.Set(float64(dlqDepth))
 	}
 
 	return int(processedCount.Load()), int(failedCount.Load())

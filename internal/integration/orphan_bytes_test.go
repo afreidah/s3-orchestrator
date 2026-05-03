@@ -217,6 +217,99 @@ func TestOrphanBytes(t *testing.T) {
 		}
 	})
 
+	t.Run("MoveCleanupToDLQ_GraduatesQueueRow", func(t *testing.T) {
+		resetState(t)
+
+		// Enqueue a cleanup row and bump orphan_bytes to mirror the
+		// state the worker would have produced when the row was first
+		// added at a failure site.
+		err := testStore.EnqueueCleanup(ctx, "minio-1", "test-bucket/dlq-graduate", "delete_failed", 4096)
+		if err != nil {
+			t.Fatalf("EnqueueCleanup: %v", err)
+		}
+		if err := testStore.IncrementOrphanBytes(ctx, "minio-1", 4096); err != nil {
+			t.Fatalf("IncrementOrphanBytes: %v", err)
+		}
+
+		// Look up the queue row id and stamp a pre-existing last_error
+		// so the move preserves it when an empty argument is passed
+		// (covers the "use the row's stored error" branch).
+		var id int64
+		if err := testDB.QueryRow(
+			"SELECT id FROM cleanup_queue WHERE object_key = $1",
+			"test-bucket/dlq-graduate",
+		).Scan(&id); err != nil {
+			t.Fatalf("lookup id: %v", err)
+		}
+		if _, err := testDB.Exec(
+			"UPDATE cleanup_queue SET last_error = $1 WHERE id = $2",
+			"transient-earlier", id,
+		); err != nil {
+			t.Fatalf("set last_error: %v", err)
+		}
+
+		moved, err := testStore.MoveCleanupToDLQ(ctx, id, "permanent failure")
+		if err != nil {
+			t.Fatalf("MoveCleanupToDLQ: %v", err)
+		}
+		if !moved {
+			t.Errorf("expected moved=true on first call")
+		}
+
+		// cleanup_queue must be empty for that key.
+		if got := queryCleanupQueueCount(t, "minio-1"); got != 0 {
+			t.Errorf("cleanup_queue count after move = %d, want 0", got)
+		}
+
+		// cleanup_dlq must hold the row with full forensic context.
+		var (
+			origID    int64
+			backend   string
+			key       string
+			reason    string
+			size      int64
+			attempts  int32
+			lastError string
+		)
+		if err := testDB.QueryRow(
+			`SELECT original_id, backend_name, object_key, reason, size_bytes, attempts, COALESCE(last_error, '')
+			 FROM cleanup_dlq WHERE original_id = $1`, id,
+		).Scan(&origID, &backend, &key, &reason, &size, &attempts, &lastError); err != nil {
+			t.Fatalf("probe DLQ: %v", err)
+		}
+		if origID != id || backend != "minio-1" || key != "test-bucket/dlq-graduate" ||
+			reason != "delete_failed" || size != 4096 || lastError != "permanent failure" {
+			t.Errorf("DLQ row mismatch: orig=%d backend=%q key=%q reason=%q size=%d err=%q",
+				origID, backend, key, reason, size, lastError)
+		}
+
+		// orphan_bytes must be unchanged - the bytes are still on the
+		// backend and the DLQ flow is intentionally not a write-off.
+		if got := queryOrphanBytes(t, "minio-1"); got != 4096 {
+			t.Errorf("orphan_bytes after move = %d, want 4096 (unchanged)", got)
+		}
+
+		// CleanupDLQDepth surfaces the new row.
+		depth, err := testStore.CleanupDLQDepth(ctx)
+		if err != nil {
+			t.Fatalf("CleanupDLQDepth: %v", err)
+		}
+		if depth != 1 {
+			t.Errorf("CleanupDLQDepth = %d, want 1", depth)
+		}
+	})
+
+	t.Run("MoveCleanupToDLQ_MissingRowIsNoOp", func(t *testing.T) {
+		resetState(t)
+		moved, err := testStore.MoveCleanupToDLQ(ctx, 999999, "irrelevant")
+		if err != nil {
+			t.Fatalf("MoveCleanupToDLQ: %v", err)
+		}
+		if moved {
+			t.Errorf("expected moved=false when id does not exist (concurrent finaliser race)")
+		}
+	})
+
 	t.Run("CleanupZeroSizeSkipsOrphanDecrement", func(t *testing.T) {
 		resetState(t)
 

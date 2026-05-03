@@ -27,6 +27,11 @@ type mockMetadataStore struct {
 	core.AdvisoryLocker
 	pendingCleanups     []core.CleanupItem
 	completedIDs        []int64
+	dlqMoves            []dlqMoveCall
+	moveDLQResult       bool
+	moveDLQErr          error
+	dlqDepthVal         int64
+	dlqDepthErr         error
 	randomHashedObjects []core.ObjectLocation
 	objectsWithoutHash  []core.ObjectLocation
 	lastUpdatedHash     string
@@ -79,6 +84,29 @@ func (m *mockMetadataStore) DecrementOrphanBytes(_ context.Context, _ string, _ 
 
 func (m *mockMetadataStore) CleanupQueueDepth(_ context.Context) (int64, error) {
 	return 0, nil
+}
+
+// dlqMoveCall records a MoveCleanupToDLQ invocation so cleanup-worker
+// tests can assert which (id, last_error) tuples were graduated.
+type dlqMoveCall struct {
+	id        int64
+	lastError string
+}
+
+func (m *mockMetadataStore) MoveCleanupToDLQ(_ context.Context, id int64, lastError string) (bool, error) {
+	m.dlqMoves = append(m.dlqMoves, dlqMoveCall{id: id, lastError: lastError})
+	if m.moveDLQErr != nil {
+		return false, m.moveDLQErr
+	}
+	if !m.moveDLQResult {
+		// Default to true so the happy path requires no per-test setup.
+		return true, nil
+	}
+	return m.moveDLQResult, nil
+}
+
+func (m *mockMetadataStore) CleanupDLQDepth(_ context.Context) (int64, error) {
+	return m.dlqDepthVal, m.dlqDepthErr
 }
 
 func (m *mockMetadataStore) GetRandomHashedObjects(_ context.Context, _ int) ([]core.ObjectLocation, error) {

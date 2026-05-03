@@ -40,3 +40,28 @@ WHERE object_key = $1 AND backend_name = $2;
 -- can confirm the sum-then-delete pair stayed consistent.
 DELETE FROM cleanup_queue
 WHERE object_key = $1 AND backend_name = $2;
+
+-- name: GetCleanupQueueRow :one
+-- Fetches a single cleanup_queue row by id along with the columns the
+-- DLQ insert needs (backend, key, reason, size, attempts, created_at,
+-- last_error). Used inside MoveCleanupToDLQ so the row contents survive
+-- the queue->DLQ move.
+SELECT id, backend_name, object_key, reason, size_bytes,
+       attempts, created_at, last_error
+FROM cleanup_queue
+WHERE id = $1;
+
+-- name: InsertCleanupDLQ :exec
+-- Inserts an exhausted cleanup_queue row into the dead-letter table.
+-- The original_id retains the queue row's id for forensic correlation;
+-- first_enqueued_at carries the original created_at so the DLQ entry
+-- remembers how long the cleanup was outstanding.
+INSERT INTO cleanup_dlq (
+    original_id, backend_name, object_key, reason, size_bytes,
+    attempts, first_enqueued_at, last_error
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
+
+-- name: CountCleanupDLQ :one
+-- Returns the current depth of the cleanup_dlq table for the dashboard
+-- and the cleanup_dlq_depth gauge.
+SELECT COUNT(*) FROM cleanup_dlq;

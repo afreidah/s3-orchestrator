@@ -226,7 +226,7 @@ High-level architecture of the S3 Orchestrator showing the request path, storage
     PG: {
       title: 'PostgreSQL',
       badge: 'data', badgeText: 'metadata store',
-      body: '<p>Stores all object metadata, locations, multipart state, quotas, usage counters, cleanup queue, and replication state.</p><p>Tables: <code>objects</code>, <code>multipart_uploads</code>, <code>multipart_parts</code>, <code>backend_quotas</code>, <code>backend_usage</code>, <code>cleanup_queue</code>, <code>replication_state</code>.</p><p>Uses advisory locks for distributed worker coordination. Connection pool: pgx with configurable <code>max_conns</code>, <code>min_conns</code>, <code>max_conn_lifetime</code>. Migrations applied automatically on startup.</p>'
+      body: '<p>Stores all object metadata, locations, multipart state, quotas, usage counters, cleanup queue, and replication state.</p><p>Tables: <code>object_locations</code>, <code>multipart_uploads</code>, <code>multipart_parts</code>, <code>backend_quotas</code>, <code>backend_usage</code>, <code>cleanup_queue</code>, <code>cleanup_dlq</code>, <code>pending_objects</code>, <code>notification_outbox</code>.</p><p>Uses advisory locks for distributed worker coordination. Connection pool: pgx with configurable <code>max_conns</code>, <code>min_conns</code>, <code>max_conn_lifetime</code>. Migrations applied automatically on startup.</p>'
     },
     BROADCAST: {
       title: 'Broadcast Reads',
@@ -256,7 +256,7 @@ High-level architecture of the S3 Orchestrator showing the request path, storage
     CLEAN: {
       title: 'Cleanup Queue',
       badge: 'background', badgeText: 'background worker',
-      body: '<p>Retries failed backend deletions with exponential backoff (1 minute to 24 hours, max 10 attempts). Runs every minute, processes up to 50 items with 10 concurrent goroutines.</p><p>Enqueued at all failure sites: PutObject rollback, DeleteObject, multipart abort/complete, rebalancer, replicator.</p><p class="ac-metric">Metrics: s3o_cleanup_queue_depth, s3o_cleanup_queue_processed_total</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a></p>'
+      body: '<p>Retries failed backend deletions with exponential backoff (1 minute to 24 hours, max 10 attempts). Runs every minute, processes up to 50 items with 10 concurrent goroutines.</p><p>Enqueued at all failure sites: PutObject rollback, DeleteObject, multipart abort/complete, rebalancer, replicator.</p><p>On the tenth consecutive failure the row is graduated to <code>cleanup_dlq</code> via <code>core.MoveCleanupToDLQ</code> and the <code>cleanup.exhausted</code> notification is emitted; <code>orphan_bytes</code> is intentionally untouched because the bytes are still on disk.</p><p class="ac-metric">Metrics: s3o_cleanup_queue_depth, s3o_cleanup_queue_processed_total, s3o_cleanup_dlq_depth, s3o_cleanup_dlq_enqueued_total{backend}</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a></p>'
     },
     LIFE: {
       title: 'Lifecycle Expiration',

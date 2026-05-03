@@ -143,11 +143,32 @@ s3-orchestrator admin cleanup-queue
 # If the queue is backed up, check the logs for persistent errors.
 ```
 
-Items that exhaust all 10 retry attempts remain in the queue with `orphan_bytes` still reserved — the write path continues to account for the unreleased space. Monitor `s3o_quota_orphan_bytes` for backends with elevated values. After manually resolving an exhausted item (deleting the orphan from the backend), decrement `orphan_bytes` and remove the item:
+Items that exhaust all 10 retry attempts are graduated to the `cleanup_dlq` table by the worker (single transaction: read the queue row, insert into `cleanup_dlq`, delete the queue row). `orphan_bytes` is intentionally NOT decremented during the move because the backend object is still on disk. The write path continues to account for the unreleased space until an operator confirms the object is gone and writes off the row.
+
+Monitor `s3o_cleanup_dlq_depth` (gauge) and `s3o_cleanup_dlq_enqueued_total{backend}` (counter): a non-zero depth means at least one unrecoverable orphan needs operator action; a single backend dominating the counter rate means that backend's delete path is broken and should be investigated.
+
+After manually resolving a DLQ entry (e.g. confirming via the reconciler that the object is gone, or deleting it out-of-band), decrement `orphan_bytes` and remove the row:
 
 ```sql
-UPDATE backend_quotas SET orphan_bytes = orphan_bytes - (SELECT size_bytes FROM cleanup_queue WHERE id = 123) WHERE backend_name = (SELECT backend_name FROM cleanup_queue WHERE id = 123);
-DELETE FROM cleanup_queue WHERE id = 123;
+-- View pending DLQ entries
+SELECT id, original_id, backend_name, object_key, reason, attempts,
+       size_bytes, first_enqueued_at, moved_at, last_error
+FROM cleanup_dlq
+ORDER BY moved_at;
+
+-- After confirming the object is gone:
+BEGIN;
+UPDATE backend_quotas
+   SET orphan_bytes = GREATEST(0, orphan_bytes - (SELECT size_bytes FROM cleanup_dlq WHERE id = 42))
+ WHERE backend_name = (SELECT backend_name FROM cleanup_dlq WHERE id = 42);
+DELETE FROM cleanup_dlq WHERE id = 42;
+COMMIT;
+
+-- To push a DLQ entry back through automatic retry (e.g. after fixing the backend):
+INSERT INTO cleanup_queue (backend_name, object_key, reason, size_bytes, next_retry, attempts, last_error)
+SELECT backend_name, object_key, reason, size_bytes, NOW(), 0, last_error
+  FROM cleanup_dlq WHERE id = 42;
+DELETE FROM cleanup_dlq WHERE id = 42;
 ```
 
 ## Multi-Instance Recovery

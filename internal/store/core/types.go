@@ -177,6 +177,20 @@ type CleanupItem struct {
 	SizeBytes   int64
 }
 
+// CleanupQueueRow is the full payload of a single cleanup_queue row,
+// returned by GetCleanupQueueRow inside the move-to-DLQ transaction so
+// every column the DLQ insert needs travels with one read.
+type CleanupQueueRow struct {
+	ID          int64
+	BackendName string
+	ObjectKey   string
+	Reason      string
+	SizeBytes   int64
+	Attempts    int32
+	CreatedAt   time.Time
+	LastError   string
+}
+
 // -------------------------------------------------------------------------
 // NOTIFICATIONS
 // -------------------------------------------------------------------------

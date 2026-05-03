@@ -593,6 +593,14 @@ func (m *mockStore) CleanupQueueDepth(_ context.Context) (int64, error) {
 	return m.cleanupQueueDepthVal, m.cleanupQueueDepthErr
 }
 
+func (m *mockStore) CleanupDLQDepth(_ context.Context) (int64, error) {
+	return 0, nil
+}
+
+func (m *mockStore) MoveCleanupToDLQ(_ context.Context, _ int64, _ string) (bool, error) {
+	return true, nil
+}
+
 func (m *mockStore) ListExpiredObjects(_ context.Context, _ string, _ time.Time, _ int) ([]core.ObjectLocation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

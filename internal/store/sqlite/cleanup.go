@@ -104,3 +104,25 @@ func (s *Store) CleanupQueueDepth(ctx context.Context) (int64, error) {
 	}
 	return count, nil
 }
+
+// CleanupDLQDepth returns the number of rows currently in cleanup_dlq.
+// Surfaces the count of unrecoverable orphans so the dashboard and the
+// cleanup_dlq_depth gauge can flag operator-visible work.
+func (s *Store) CleanupDLQDepth(ctx context.Context) (int64, error) {
+	var count int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM cleanup_dlq`,
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count cleanup DLQ rows: %w", err)
+	}
+	return count, nil
+}
+
+// MoveCleanupToDLQ atomically graduates an exhausted cleanup_queue row
+// to the dead-letter table. Delegates to core.MoveCleanupToDLQ so both
+// engines share the move semantics - notably that orphan_bytes is left
+// untouched because the backend object is still on disk.
+func (s *Store) MoveCleanupToDLQ(ctx context.Context, id int64, lastError string) (bool, error) {
+	return core.MoveCleanupToDLQ(ctx, s, id, lastError)
+}

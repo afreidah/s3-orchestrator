@@ -280,7 +280,7 @@ When a backend S3 operation succeeds but the subsequent metadata update or clean
 
 **Orphan bytes tracking** — each enqueued item records the object's `size_bytes`. When an item is enqueued, the corresponding backend's `orphan_bytes` counter in `backend_quotas` is incremented. All capacity checks (write routing, replication target selection) subtract `orphan_bytes` from available space, so the write path never overcommits storage on a backend with pending cleanups. When a cleanup succeeds, `orphan_bytes` is decremented. This prevents a sustained backend outage from silently allowing quota overcommitment: even if a backend is down for days and cleanup retries are exhausting, the space consumed by orphaned objects remains reserved.
 
-A background worker runs every minute, fetching pending items and attempting to delete them from their respective backends. Failed attempts are rescheduled with exponential backoff (`1m × 2^attempts`, capped at 24h). After 10 failed attempts, the item remains in the queue for manual inspection — the worker query filters it out via a partial index, and `orphan_bytes` stays incremented to keep the space reserved.
+A background worker runs every minute, fetching pending items and attempting to delete them from their respective backends. Failed attempts are rescheduled with exponential backoff (`1m × 2^attempts`, capped at 24h). After 10 failed attempts, the row is graduated to the `cleanup_dlq` (dead-letter) table by `core.MoveCleanupToDLQ` in a single transaction. `orphan_bytes` is intentionally NOT decremented during the move because the backend object is still on disk — the bytes really are still occupying the backend's quota, and decrementing here would lie about reclaimed capacity. Operators monitor `s3o_cleanup_dlq_depth` and `s3o_cleanup_dlq_enqueued_total{backend}` to spot unrecoverable orphans, then resolve each entry deliberately (delete the object out-of-band, then write off the row + adjust `orphan_bytes` by its size).
 
 Enqueue points cover all failure sites across the codebase:
 
@@ -294,14 +294,27 @@ Enqueue points cover all failure sites across the codebase:
 
 Enqueue is best-effort: if the database is down (circuit breaker open), the failure is logged and the orphan is not enqueued. This avoids cascading failures — if the DB recovers, the next operation that fails will be enqueued normally.
 
-Operators can inspect exhausted items directly:
+Operators inspect exhausted items in the dead-letter table:
 
 ```sql
-SELECT * FROM cleanup_queue WHERE attempts >= 10;
+SELECT id, original_id, backend_name, object_key, reason, attempts,
+       size_bytes, first_enqueued_at, moved_at, last_error
+FROM cleanup_dlq
+ORDER BY moved_at;
 
--- After manually resolving, decrement orphan_bytes and remove the item:
-UPDATE backend_quotas SET orphan_bytes = orphan_bytes - (SELECT size_bytes FROM cleanup_queue WHERE id = 123) WHERE backend_name = (SELECT backend_name FROM cleanup_queue WHERE id = 123);
-DELETE FROM cleanup_queue WHERE id = 123;
+-- After confirming the object is gone (manual S3 delete, reconciler sweep, etc.):
+BEGIN;
+UPDATE backend_quotas
+   SET orphan_bytes = GREATEST(0, orphan_bytes - (SELECT size_bytes FROM cleanup_dlq WHERE id = 42))
+ WHERE backend_name = (SELECT backend_name FROM cleanup_dlq WHERE id = 42);
+DELETE FROM cleanup_dlq WHERE id = 42;
+COMMIT;
+
+-- To push a DLQ entry back through automatic retry (e.g. after fixing the backend):
+INSERT INTO cleanup_queue (backend_name, object_key, reason, size_bytes, next_retry, attempts, last_error)
+SELECT backend_name, object_key, reason, size_bytes, NOW(), 0, last_error
+  FROM cleanup_dlq WHERE id = 42;
+DELETE FROM cleanup_dlq WHERE id = 42;
 ```
 
 ## Lifecycle (Object Expiration)
@@ -684,7 +697,7 @@ Non-reloadable field changes are logged as warnings but do not prevent the reloa
 
 ## Database
 
-The orchestrator connects to PostgreSQL via pgx/v5 connection pools and auto-applies versioned migrations on startup using [goose](https://github.com/pressly/goose). Migration files are embedded in the binary and tracked via a `goose_db_version` table — only unapplied migrations run. Six tables are created:
+The orchestrator connects to PostgreSQL via pgx/v5 connection pools and auto-applies versioned migrations on startup using [goose](https://github.com/pressly/goose). Migration files are embedded in the binary and tracked via a `goose_db_version` table — only unapplied migrations run. The schema currently provisions:
 
 | Table | Purpose |
 |-------|---------|
@@ -694,6 +707,9 @@ The orchestrator connects to PostgreSQL via pgx/v5 connection pools and auto-app
 | `multipart_parts` | Individual parts for active multipart uploads |
 | `backend_usage` | Monthly per-backend API request and data transfer counters |
 | `cleanup_queue` | Retry queue for failed backend object deletions |
+| `cleanup_dlq` | Dead-letter for `cleanup_queue` rows that exhausted retries; surfaces unrecoverable orphans for operator action |
+| `pending_objects` | In-flight PUT intents recorded before the backend write so a DB outage can't silently destroy the prior copy |
+| `notification_outbox` | Durable webhook event delivery queue |
 
 Quota updates are transactional: object location inserts/deletes and quota counter changes happen atomically.
 
@@ -756,6 +772,8 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when enabled.
 | `s3o_cleanup_queue_enqueued_total` | Counter | reason | Items added to the cleanup retry queue |
 | `s3o_cleanup_queue_processed_total` | Counter | status | Items processed from the cleanup queue (success/retry/exhausted) |
 | `s3o_cleanup_queue_depth` | Gauge | — | Current pending items in the cleanup queue |
+| `s3o_cleanup_dlq_depth` | Gauge | — | Unrecoverable orphans waiting in the cleanup dead-letter table |
+| `s3o_cleanup_dlq_enqueued_total` | Counter | backend | Cleanup rows graduated to the dead-letter after exhausting retries |
 | `s3o_rate_limit_rejections_total` | Counter | — | Requests rejected by per-IP rate limiting |
 | `s3o_admission_rejections_total` | Counter | — | Requests rejected by server-level admission control |
 | `s3o_lifecycle_deleted_total` | Counter | — | Objects deleted by lifecycle expiration |
@@ -808,7 +826,7 @@ Structured audit log entries are emitted as JSON via `slog` for every S3 API req
 | Over-replication cleaner | `over_replication.start`, `over_replication.remove`, `over_replication.complete` |
 | Multipart cleanup | `storage.MultipartCleanup` |
 | Overwrite (displaced) | `storage.overwrite_displaced` |
-| Cleanup queue | `cleanup_queue.processed` |
+| Cleanup queue | `cleanup_queue.processed`, `cleanup_queue.exhausted_to_dlq` |
 
 Example audit log entry:
 
@@ -880,7 +898,7 @@ All locked background tasks apply a random startup jitter of up to half the tick
 |------|----------|:-------------:|-------------|
 | Usage flush + metrics | configurable (default 30s) | When Redis configured | Flushes usage counters to PostgreSQL, then refreshes quota stats, usage baselines, object counts, and multipart counts. Updates Prometheus gauges. Adaptive mode shortens interval near limits. Advisory lock is acquired whenever Redis is configured (regardless of health) to prevent double-counting during recovery. |
 | Stale multipart cleanup | 1h | Yes | Aborts multipart uploads older than 24h and deletes their temporary part objects. |
-| Cleanup queue | 1m | Yes | Retries failed backend object deletions with exponential backoff (1m to 24h, max 10 attempts). |
+| Cleanup queue | 1m | Yes | Retries failed backend object deletions with exponential backoff (1m to 24h, max 10 attempts). On the tenth consecutive failure the row graduates to `cleanup_dlq` for operator action; `orphan_bytes` stays incremented because the bytes are still on disk. |
 | Rebalancer | configurable (default 6h) | Yes | Moves objects between backends per strategy. Only runs when enabled. |
 | Replicator | configurable (default 5m) | Yes | Creates copies of under-replicated objects. Only runs when factor > 1. Runs once at startup. |
 | Over-replication cleaner | configurable (default 5m) | Yes | Removes excess copies of objects that exceed the replication factor. Only runs when factor > 1. |

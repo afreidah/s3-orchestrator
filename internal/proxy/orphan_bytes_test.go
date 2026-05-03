@@ -132,7 +132,7 @@ func TestCleanupWorker_SuccessfulDelete_ZeroSize_SkipsDecrement(t *testing.T) {
 	}
 }
 
-func TestCleanupWorker_Exhausted_PreservesOrphanBytes(t *testing.T) {
+func TestCleanupWorker_Exhausted_MovesToDLQ_PreservesOrphanBytes(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
 	backend.delErr = errors.New("permanent failure")
@@ -151,16 +151,28 @@ func TestCleanupWorker_Exhausted_PreservesOrphanBytes(t *testing.T) {
 
 	store.mu.Lock()
 	defer store.mu.Unlock()
-	// Exhausted items must NOT decrement orphan bytes — space is still occupied
+	// Exhausted items must NOT decrement orphan bytes - the backend
+	// object is still on disk and quota math must reflect that.
 	if len(store.decrementOrphanBytesCalls) != 0 {
 		t.Errorf("expected 0 DecrementOrphanBytes calls for exhausted item, got %d", len(store.decrementOrphanBytesCalls))
 	}
-	// Item should stay in queue via RetryCleanupItem (not CompleteCleanupItem)
+	// CompleteCleanupItem must not run - the row is moved, not deleted by
+	// the success path.
 	if len(store.completeCleanupCalls) != 0 {
 		t.Errorf("expected 0 CompleteCleanupItem calls, got %d", len(store.completeCleanupCalls))
 	}
-	if len(store.retryCleanupCalls) != 1 {
-		t.Fatalf("expected 1 RetryCleanupItem call, got %d", len(store.retryCleanupCalls))
+	// RetryCleanupItem must not run - the previous behavior pinned the
+	// row in cleanup_queue with attempts=11; the new behavior moves it.
+	if len(store.retryCleanupCalls) != 0 {
+		t.Errorf("expected 0 RetryCleanupItem calls; exhausted item now graduates to DLQ instead, got %d", len(store.retryCleanupCalls))
+	}
+	// MoveCleanupToDLQ must run exactly once with the exhausted item's id
+	// and the most recent backend error attached.
+	if len(store.movedToDLQ) != 1 {
+		t.Fatalf("expected 1 MoveCleanupToDLQ call, got %d", len(store.movedToDLQ))
+	}
+	if store.movedToDLQ[0].id != 1 {
+		t.Errorf("dlq move id=%d, want 1", store.movedToDLQ[0].id)
 	}
 }
 
@@ -548,10 +560,14 @@ func TestCleanupWorker_DecrementOrphanBytesFails(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
-// Cleanup worker: exhausted item — RetryCleanupItem fails (best-effort)
+// Cleanup worker: exhausted item — MoveCleanupToDLQ fails (best-effort)
 // -------------------------------------------------------------------------
 
-func TestCleanupWorker_Exhausted_RetryFails(t *testing.T) {
+// TestCleanupWorker_Exhausted_DLQMoveFails asserts that a DB failure on
+// the move-to-DLQ transaction is tolerated: the worker still counts the
+// item as failed and proceeds, the cleanup_queue row stays put (the
+// next tick will try again), and orphan_bytes remains untouched.
+func TestCleanupWorker_Exhausted_DLQMoveFails(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
 	backend.delErr = errors.New("permanent")
@@ -560,14 +576,21 @@ func TestCleanupWorker_Exhausted_RetryFails(t *testing.T) {
 		pendingCleanups: []core.CleanupItem{
 			{ID: 1, BackendName: "b1", ObjectKey: "stuck.txt", Reason: "test", Attempts: 9, SizeBytes: 512},
 		},
-		retryCleanupErr: errors.New("db error"),
+		moveCleanupToDLQErr: errors.New("db error"),
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	// Should not panic even if RetryCleanupItem fails
 	_, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
 	if failed != 1 {
 		t.Fatalf("expected failed=1, got %d", failed)
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.movedToDLQ) != 1 {
+		t.Errorf("expected MoveCleanupToDLQ to be attempted once, got %d", len(store.movedToDLQ))
+	}
+	if len(store.decrementOrphanBytesCalls) != 0 {
+		t.Errorf("orphan_bytes must NOT be decremented when DLQ move fails; got %d calls", len(store.decrementOrphanBytesCalls))
 	}
 }
 

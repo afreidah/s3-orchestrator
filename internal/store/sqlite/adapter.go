@@ -381,6 +381,75 @@ func (a *sqliteTxAdapter) SumAndDeleteCleanupQueueRows(ctx context.Context, obje
 	return rowCount, totalBytes.Int64, nil
 }
 
+// GetCleanupQueueRow returns the full payload of a cleanup_queue row by
+// id. Inside MoveCleanupToDLQ this read carries every column the DLQ
+// insert needs in one round trip. Returns ErrCleanupItemNotFound when
+// the row is gone (a concurrent worker already moved or completed it).
+func (a *sqliteTxAdapter) GetCleanupQueueRow(ctx context.Context, id int64) (core.CleanupQueueRow, error) {
+	var (
+		row       core.CleanupQueueRow
+		createdAt string
+		lastErr   sql.NullString
+	)
+	err := a.tx.QueryRowContext(ctx,
+		`SELECT id, backend_name, object_key, reason, size_bytes,
+		        attempts, created_at, last_error
+		 FROM cleanup_queue
+		 WHERE id = ?`, id,
+	).Scan(&row.ID, &row.BackendName, &row.ObjectKey, &row.Reason,
+		&row.SizeBytes, &row.Attempts, &createdAt, &lastErr)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return core.CleanupQueueRow{}, core.ErrCleanupItemNotFound
+		}
+		return core.CleanupQueueRow{}, fmt.Errorf("get cleanup queue row: %w", err)
+	}
+	if t, perr := time.Parse(time.RFC3339Nano, createdAt); perr == nil {
+		row.CreatedAt = t
+	}
+	if lastErr.Valid {
+		row.LastError = lastErr.String
+	}
+	return row, nil
+}
+
+// InsertCleanupDLQ inserts row into cleanup_dlq. Bytes are not
+// reconciled here because the underlying object is still on the backend;
+// orphan_bytes accounting stays untouched on the move.
+func (a *sqliteTxAdapter) InsertCleanupDLQ(ctx context.Context, row *core.CleanupQueueRow) error {
+	firstEnqueued := row.CreatedAt.UTC().Format(time.RFC3339Nano)
+	if row.CreatedAt.IsZero() {
+		firstEnqueued = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+	var lastErr any
+	if row.LastError != "" {
+		lastErr = row.LastError
+	}
+	if _, err := a.tx.ExecContext(ctx,
+		`INSERT INTO cleanup_dlq (
+			original_id, backend_name, object_key, reason, size_bytes,
+			attempts, first_enqueued_at, last_error
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		row.ID, row.BackendName, row.ObjectKey, row.Reason, row.SizeBytes,
+		row.Attempts, firstEnqueued, lastErr,
+	); err != nil {
+		return fmt.Errorf("insert cleanup_dlq: %w", err)
+	}
+	return nil
+}
+
+// DeleteCleanupItem removes the cleanup_queue row by id. Used inside
+// MoveCleanupToDLQ so the queue->DLQ move is atomic with the insert
+// above.
+func (a *sqliteTxAdapter) DeleteCleanupItem(ctx context.Context, id int64) error {
+	if _, err := a.tx.ExecContext(ctx,
+		`DELETE FROM cleanup_queue WHERE id = ?`, id,
+	); err != nil {
+		return fmt.Errorf("delete cleanup_queue row: %w", err)
+	}
+	return nil
+}
+
 // -------------------------------------------------------------------------
 // QUOTA TX OPERATIONS
 // -------------------------------------------------------------------------

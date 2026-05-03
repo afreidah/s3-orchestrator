@@ -110,6 +110,19 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
     '        TEXT last_error',
     '    }',
     '',
+    '    cleanup_dlq {',
+    '        BIGSERIAL id PK',
+    '        BIGINT original_id',
+    '        TEXT backend_name FK',
+    '        TEXT object_key',
+    '        TEXT reason',
+    '        BIGINT size_bytes',
+    '        INT attempts',
+    '        TIMESTAMPTZ first_enqueued_at',
+    '        TIMESTAMPTZ moved_at',
+    '        TEXT last_error',
+    '    }',
+    '',
     '    notification_outbox {',
     '        BIGSERIAL id PK',
     '        TEXT event_type',
@@ -125,6 +138,8 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
     '    backend_quotas ||--o{ multipart_uploads : "tracks uploads"',
     '    backend_quotas ||--o{ backend_usage : "monthly usage"',
     '    backend_quotas ||--o{ cleanup_queue : "pending deletes"',
+    '    backend_quotas ||--o{ cleanup_dlq : "exhausted orphans"',
+    '    cleanup_queue ||--o| cleanup_dlq : "graduates on retry exhaustion"',
     '    multipart_uploads ||--o{ multipart_parts : "upload parts"'
   ].join('\n');
 
@@ -234,9 +249,30 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
         '<tr><td>attempts</td><td>INT</td><td>Retry count (max 10)</td></tr>' +
         '<tr><td>last_error</td><td>TEXT</td><td>Most recent error message</td></tr></table>' +
         '<p class="ac-idx"><b>Indexes:</b> PK on id &bull; idx_cleanup_queue_next_retry (next_retry) WHERE attempts &lt; 10 (partial index)</p>' +
-        '<p>Used by: enqueueCleanup() at all failure sites (PutObject, DeleteObject, multipart ops, <a href="../background-services/">rebalancer</a>, replicator), <a href="../background-services/">cleanupQueueService</a> background worker (runs every 1 min).</p>' +
+        '<p>Used by: enqueueCleanup() at all failure sites (PutObject, DeleteObject, multipart ops, <a href="../background-services/">rebalancer</a>, replicator), <a href="../background-services/">cleanupQueueService</a> background worker (runs every 1 min). On the tenth consecutive failure the row graduates to <code>cleanup_dlq</code> via <code>MoveCleanupToDLQ</code>; orphan_bytes is intentionally untouched there because the bytes are still on disk.</p>' +
         '<p class="ac-metric">Key queries: EnqueueCleanup, GetPendingCleanups, UpdateCleanupRetry, CountPendingCleanups</p>' +
         '<p class="ac-metric">Metrics: cleanup_queue_enqueued_total, cleanup_queue_processed_total, cleanup_queue_depth</p>'
+    },
+    cleanup_dlq: {
+      title: 'cleanup_dlq',
+      badge: 'cleanup', badgeText: 'dead-letter queue',
+      body: '<p>Dead-letter table for cleanup_queue rows that exhausted their retry budget without ever succeeding at the physical backend delete. The row contents are preserved verbatim (key, backend, size, last_error) and the original_id correlates back to the queue row that was moved. Operators inspect this table to find unrecoverable orphans and retry them manually or write each entry off deliberately.</p>' +
+        '<p><b>Important:</b> moving a row here does NOT decrement <code>orphan_bytes</code>. The backend object is still on disk; reclaim happens only when an operator confirms it is gone (e.g. via the reconciler) and runs a manual cleanup.</p>' +
+        '<table class="ac-cols"><tr><th>Column</th><th>Type</th><th>Notes</th></tr>' +
+        '<tr><td class="pk">id</td><td>BIGSERIAL</td><td>PRIMARY KEY (auto-increment)</td></tr>' +
+        '<tr><td>original_id</td><td>BIGINT</td><td>cleanup_queue.id at the time of the move</td></tr>' +
+        '<tr><td class="fk">backend_name</td><td>TEXT</td><td>FK &rarr; backend_quotas</td></tr>' +
+        '<tr><td>object_key</td><td>TEXT</td><td>S3 key still on the backend</td></tr>' +
+        '<tr><td>reason</td><td>TEXT</td><td>Original enqueue reason</td></tr>' +
+        '<tr><td>size_bytes</td><td>BIGINT</td><td>Bytes still occupying backend quota</td></tr>' +
+        '<tr><td>attempts</td><td>INT</td><td>Final attempt count (>= 10)</td></tr>' +
+        '<tr><td>first_enqueued_at</td><td>TIMESTAMPTZ</td><td>Original cleanup_queue.created_at</td></tr>' +
+        '<tr><td>moved_at</td><td>TIMESTAMPTZ</td><td>When the row was graduated</td></tr>' +
+        '<tr><td>last_error</td><td>TEXT</td><td>Final backend-delete failure</td></tr></table>' +
+        '<p class="ac-idx"><b>Indexes:</b> PK on id &bull; idx_cleanup_dlq_backend (backend_name)</p>' +
+        '<p>Written by: <a href="../background-services/">cleanupQueueService</a> on retry exhaustion via <code>core.MoveCleanupToDLQ</code> (single transaction: read queue row, insert here, delete queue row).</p>' +
+        '<p class="ac-metric">Key queries: InsertCleanupDLQ, CountCleanupDLQ</p>' +
+        '<p class="ac-metric">Metrics: cleanup_dlq_depth (gauge), cleanup_dlq_enqueued_total{backend} (counter)</p>'
     },
     notification_outbox: {
       title: 'notification_outbox',
@@ -302,7 +338,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
       // Mermaid ER diagram entity IDs follow the pattern: entity-TABLE_NAME-N
       // or just the table name directly. Try to extract the table name.
       var tableName = null;
-      var tableNames = ['backend_quotas', 'object_locations', 'multipart_uploads', 'multipart_parts', 'backend_usage', 'cleanup_queue', 'notification_outbox'];
+      var tableNames = ['backend_quotas', 'object_locations', 'multipart_uploads', 'multipart_parts', 'backend_usage', 'cleanup_queue', 'cleanup_dlq', 'notification_outbox'];
       for (var i = 0; i < tableNames.length; i++) {
         if (gId.indexOf(tableNames[i]) !== -1) {
           tableName = tableNames[i];
@@ -345,6 +381,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
 | **multipart_parts** | Individual parts within a multipart upload | `(upload_id, part_number)` |
 | **backend_usage** | Monthly API/bandwidth counters per backend | `(backend_name, period)` |
 | **cleanup_queue** | Retry queue for failed orphan deletions | `id` (auto-increment) |
+| **cleanup_dlq** | Dead-letter for cleanup_queue rows that exhausted retries | `id` (auto-increment) |
 | **notification_outbox** | Durable webhook event delivery queue | `id` (auto-increment) |
 
 ### Schema Migrations
@@ -358,3 +395,5 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
 | `00005_add_content_hash` | Add `content_hash` to `object_locations` for integrity verification |
 | `00006_add_indexes_and_tablesample` | Performance indexes on `multipart_uploads(backend_name)` and `object_locations(object_key, created_at)` |
 | `00007_notification_outbox` | Add `notification_outbox` table for durable webhook event delivery |
+| `00008_pending_objects` | Add `pending_objects` table for the PUT-before-COMMIT write-path pattern |
+| `00009_cleanup_dlq` | Add `cleanup_dlq` table so retry-exhausted cleanup rows surface for operator action |

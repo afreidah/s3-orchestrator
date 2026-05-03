@@ -391,25 +391,38 @@ When any backend object deletion fails during normal operations (PutObject orpha
 
 Each enqueued item tracks the object's `size_bytes`. On enqueue, the backend's `orphan_bytes` counter is incremented so that write routing and replication target selection account for the physically unreleased space. On successful cleanup, `orphan_bytes` is decremented. This prevents quota overcommitment during sustained backend outages.
 
-The background worker runs every minute and retries with exponential backoff (1 minute to 24 hours). After 10 failed attempts, the item remains in the queue and `orphan_bytes` stays incremented — the space stays reserved until an operator resolves it. The worker query filters exhausted items automatically via a partial index.
+The background worker runs every minute and retries with exponential backoff (1 minute to 24 hours). After 10 failed attempts, the row is graduated to the `cleanup_dlq` table via `core.MoveCleanupToDLQ` (single transaction: read the row, insert it into `cleanup_dlq`, delete it from `cleanup_queue`). `orphan_bytes` is intentionally NOT decremented during the move because the backend object is still on disk. The DLQ entry retains the full row payload (key, backend, size, reason, last_error) plus an `original_id` correlation column so an operator can find the original queue entry.
 
-**Monitoring:** Alert on `s3o_cleanup_queue_depth` staying elevated — this means orphaned objects are accumulating. Alert on `s3o_cleanup_queue_processed_total{status="exhausted"}` — these items need manual attention. Alert on `s3o_quota_orphan_bytes` — elevated values mean backends have significant physically unreleased space.
+**Monitoring:**
 
-**Manual cleanup:** Inspect exhausted items and resolve manually:
+- `s3o_cleanup_queue_depth` staying elevated — orphaned objects are accumulating in the active queue.
+- `s3o_cleanup_queue_processed_total{status="exhausted"}` — counter increments each time an item exhausts retries.
+- `s3o_cleanup_dlq_depth > 0` — the DLQ holds at least one unrecoverable orphan; alerting here gives operators a direct signal instead of a counter delta.
+- `s3o_cleanup_dlq_enqueued_total{backend}` — rate of graduations per backend; a single backend dominating means that backend's delete path is broken.
+- `s3o_quota_orphan_bytes` — elevated values mean backends have significant physically unreleased space (DLQ entries are the long-tail contributors).
+
+**Manual cleanup:** Inspect DLQ entries and resolve them deliberately. The bytes are still on the backend, so the workflow is *delete the object out-of-band, then write off the row + adjust orphan_bytes by the row's size*:
 
 ```sql
--- View items that exceeded max retries
-SELECT id, backend_name, object_key, reason, attempts, size_bytes, last_error, created_at
-FROM cleanup_queue
-WHERE attempts >= 10
-ORDER BY created_at;
+-- View unrecoverable orphans needing manual intervention
+SELECT id, original_id, backend_name, object_key, reason, attempts,
+       size_bytes, first_enqueued_at, moved_at, last_error
+FROM cleanup_dlq
+ORDER BY moved_at;
 
--- Reset an item for retry (e.g., after fixing the backend)
-UPDATE cleanup_queue SET attempts = 0, next_retry = NOW() WHERE id = 123;
+-- After confirming the object is gone (manual S3 delete, reconciler sweep, etc.):
+BEGIN;
+UPDATE backend_quotas
+   SET orphan_bytes = GREATEST(0, orphan_bytes - (SELECT size_bytes FROM cleanup_dlq WHERE id = 42))
+ WHERE backend_name = (SELECT backend_name FROM cleanup_dlq WHERE id = 42);
+DELETE FROM cleanup_dlq WHERE id = 42;
+COMMIT;
 
--- After manually deleting the orphaned object from the backend, decrement orphan_bytes and remove the item:
-UPDATE backend_quotas SET orphan_bytes = orphan_bytes - (SELECT size_bytes FROM cleanup_queue WHERE id = 123) WHERE backend_name = (SELECT backend_name FROM cleanup_queue WHERE id = 123);
-DELETE FROM cleanup_queue WHERE id = 123;
+-- Or, to push a DLQ entry back through automatic retry (e.g. after fixing the backend):
+INSERT INTO cleanup_queue (backend_name, object_key, reason, size_bytes, next_retry, attempts, last_error)
+SELECT backend_name, object_key, reason, size_bytes, NOW(), 0, last_error
+  FROM cleanup_dlq WHERE id = 42;
+DELETE FROM cleanup_dlq WHERE id = 42;
 ```
 
 ### rate_limit
@@ -1028,7 +1041,9 @@ If `telemetry.metrics.enabled` is `true`, metrics are exposed at `/metrics`. Key
 | `s3o_load_shed_total` | Requests probabilistically shed before the hard admission limit |
 | `s3o_early_rejections_total` | Uploads rejected before body transmission (no backend capacity) |
 | `s3o_cleanup_queue_depth` | Alert when consistently > 0 — orphaned objects are failing cleanup |
-| `s3o_cleanup_queue_processed_total{status="exhausted"}` | Items that exceeded max retries — manual intervention needed |
+| `s3o_cleanup_queue_processed_total{status="exhausted"}` | Items that exceeded max retries — graduated to the DLQ |
+| `s3o_cleanup_dlq_depth` | Alert when > 0 — at least one unrecoverable orphan needs operator action |
+| `s3o_cleanup_dlq_enqueued_total{backend="..."}` | Rate of graduations per backend; one backend dominating means its delete path is broken |
 | `s3o_audit_events_total{event="..."}` | Audit log volume by event type — useful for detecting unusual activity |
 | `s3o_encryption_errors_total` | Any non-zero rate indicates encryption/decryption failures |
 | `s3o_encrypt_existing_objects_total{status="error"}` | Failures during bulk encryption of existing data |
@@ -1056,6 +1071,7 @@ Key audit events:
 | `replication.start`, `replication.copy`, `replication.complete` | Replicator | Replica creation runs |
 | `storage.MultipartCleanup` | Multipart cleanup | Stale upload cleanup |
 | `cleanup_queue.processed` | Cleanup queue | Orphaned object successfully deleted on retry |
+| `cleanup_queue.exhausted_to_dlq` | Cleanup queue | Row graduated to `cleanup_dlq` after exhausting retries |
 
 Each S3 API request produces two correlated audit entries (HTTP-level and storage-level) sharing the same `request_id`. Internal operations (rebalance, replication) generate their own correlation IDs. The `request_id` also appears as a `s3o.request_id` attribute on OpenTelemetry spans.
 

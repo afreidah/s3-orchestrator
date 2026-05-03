@@ -220,7 +220,7 @@ func TestProcessCleanupQueue_FetchError(t *testing.T) {
 	}
 }
 
-func TestProcessCleanupQueue_MaxAttemptsReached(t *testing.T) {
+func TestProcessCleanupQueue_MaxAttemptsReached_MovesToDLQ(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
 	backend.delErr = errors.New("backend timeout")
@@ -243,12 +243,20 @@ func TestProcessCleanupQueue_MaxAttemptsReached(t *testing.T) {
 
 	store.mu.Lock()
 	defer store.mu.Unlock()
-	// Exhausted items stay in queue with orphan_bytes preserved — RetryCleanupItem
-	// is called to persist the final attempt count/error for operator review.
-	if len(store.retryCleanupCalls) != 1 {
-		t.Errorf("expected 1 retry call for exhausted item, got %d", len(store.retryCleanupCalls))
-	} else if store.retryCleanupCalls[0].id != 5 {
-		t.Errorf("expected RetryCleanupItem(5), got id=%d", store.retryCleanupCalls[0].id)
+	// Exhausted items graduate to cleanup_dlq via MoveCleanupToDLQ;
+	// orphan_bytes stays untouched so quota math reflects the real
+	// state of the backend (the object is still on disk).
+	if len(store.movedToDLQ) != 1 {
+		t.Fatalf("expected 1 MoveCleanupToDLQ call, got %d", len(store.movedToDLQ))
+	}
+	if store.movedToDLQ[0].id != 5 {
+		t.Errorf("expected MoveCleanupToDLQ(5), got id=%d", store.movedToDLQ[0].id)
+	}
+	if store.movedToDLQ[0].lastError != "backend timeout" {
+		t.Errorf("expected lastError=%q, got %q", "backend timeout", store.movedToDLQ[0].lastError)
+	}
+	if len(store.retryCleanupCalls) != 0 {
+		t.Errorf("expected 0 RetryCleanupItem calls (exhausted now moves), got %d", len(store.retryCleanupCalls))
 	}
 	if len(store.completeCleanupCalls) != 0 {
 		t.Errorf("expected 0 CompleteCleanupItem calls, got %v", store.completeCleanupCalls)

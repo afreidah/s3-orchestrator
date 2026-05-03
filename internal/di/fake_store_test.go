@@ -119,7 +119,11 @@ func (fakeConcreteStore) CompleteCleanupItem(context.Context, int64) error { ret
 func (fakeConcreteStore) RetryCleanupItem(context.Context, int64, time.Duration, string) error {
 	return nil
 }
-func (fakeConcreteStore) CleanupQueueDepth(context.Context) (int64, error)          { return 0, nil }
+func (fakeConcreteStore) CleanupQueueDepth(context.Context) (int64, error) { return 0, nil }
+func (fakeConcreteStore) CleanupDLQDepth(context.Context) (int64, error)   { return 0, nil }
+func (fakeConcreteStore) MoveCleanupToDLQ(context.Context, int64, string) (bool, error) {
+	return true, nil
+}
 func (fakeConcreteStore) IncrementOrphanBytes(context.Context, string, int64) error { return nil }
 func (fakeConcreteStore) DecrementOrphanBytes(context.Context, string, int64) error { return nil }
 func (fakeConcreteStore) SweepStaleCleanupQueueRows(context.Context, string, string) (int64, error) {

@@ -3,16 +3,20 @@
 //
 // Author: Alex Freidah
 //
-// Engine-agnostic transactional logic for the cleanup_queue table. Most
-// queue operations are single-statement and stay in the engine packages;
-// the multi-step sweep that pairs row-deletion with orphan-bytes
-// accounting lives here so both engines share one implementation.
+// Engine-agnostic transactional logic for the cleanup_queue and cleanup_dlq
+// tables. Most queue operations are single-statement and stay in the engine
+// packages; the multi-step flows that need atomicity across rows live here
+// so both engines share one implementation: the stale-row sweep that pairs
+// row-deletion with orphan-bytes accounting, and the move-to-DLQ flow that
+// graduates an exhausted retry to the dead-letter table without touching
+// quota state.
 // -------------------------------------------------------------------------------
 
 package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 
@@ -41,5 +45,46 @@ func SweepStaleCleanupQueueRows(ctx context.Context, runner Runner, objectKey, b
 			}
 		}
 		return rowCount, nil
+	})
+}
+
+// -------------------------------------------------------------------------
+// MOVE CLEANUP TO DLQ
+// -------------------------------------------------------------------------
+
+// MoveCleanupToDLQ atomically graduates an exhausted cleanup_queue row
+// (one whose retry budget is spent without ever succeeding at the
+// physical backend delete) to the cleanup_dlq table. The single
+// transaction reads the queue row, inserts a corresponding DLQ row, and
+// deletes the queue row.
+//
+// orphan_bytes is intentionally left untouched: the backend object is
+// still on disk, so the bytes really are still occupying the backend's
+// quota - decrementing here would lie about reclaimed capacity. The DLQ
+// table exists so an operator can see the unrecoverable orphan, decide
+// whether to retry it manually or write it off, and reconcile
+// orphan_bytes deliberately as part of that workflow.
+//
+// Returns true if a row was moved, false if no row existed for id (a
+// benign concurrent-finaliser race).
+func MoveCleanupToDLQ(ctx context.Context, runner Runner, id int64, lastError string) (bool, error) {
+	return WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) (bool, error) {
+		row, err := tx.GetCleanupQueueRow(ctx, id)
+		if err != nil {
+			if errors.Is(err, ErrCleanupItemNotFound) {
+				return false, nil
+			}
+			return false, err
+		}
+		if lastError != "" {
+			row.LastError = lastError
+		}
+		if err := tx.InsertCleanupDLQ(ctx, &row); err != nil {
+			return false, err
+		}
+		if err := tx.DeleteCleanupItem(ctx, id); err != nil {
+			return false, err
+		}
+		return true, nil
 	})
 }
