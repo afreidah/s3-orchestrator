@@ -15,6 +15,10 @@
 // without further plumbing.
 // -------------------------------------------------------------------------------
 
+// Package db contains the sqlc-generated query bindings for the
+// PostgreSQL engine plus a small handful of hand-written accessor
+// helpers that share the package. Generated files are produced from
+// internal/store/postgres/sqlc/queries; do not hand-edit those.
 package db
 
 import "github.com/jackc/pgx/v5/pgtype"

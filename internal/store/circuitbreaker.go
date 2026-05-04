@@ -11,6 +11,11 @@
 // wrapper.
 // -------------------------------------------------------------------------------
 
+// Package store hosts the metadata-persistence layer's circuit-breaker
+// decorators. Each per-role wrapper (cb_object.go, cb_quota.go, ...)
+// passes its underlying store call through a shared
+// *breaker.CircuitBreaker so a database outage degrades cleanly
+// instead of cascading into every caller.
 package store
 
 import (

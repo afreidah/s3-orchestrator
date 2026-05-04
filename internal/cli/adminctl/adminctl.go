@@ -8,6 +8,10 @@
 // instance. Formats JSON responses for human consumption.
 // -------------------------------------------------------------------------------
 
+// Package adminctl implements the `s3-orchestrator admin ...` family of
+// subcommands. Each command is a thin HTTP client over the admin API
+// exposed by the running server, formatting JSON responses for human
+// consumption.
 package adminctl
 
 import (

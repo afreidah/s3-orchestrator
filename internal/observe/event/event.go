@@ -9,6 +9,11 @@
 // Emit function at startup; callers nil-check before calling.
 // -------------------------------------------------------------------------------
 
+// Package event defines the CloudEvents-shaped notification types the
+// orchestrator emits when objects are created, deleted, or otherwise
+// mutated, plus the package-level Emit hook other layers call to
+// publish them. The package has zero internal dependencies so any
+// caller can import it without creating a cycle.
 package event
 
 import (
