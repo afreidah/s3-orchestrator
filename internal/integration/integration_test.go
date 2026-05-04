@@ -4353,44 +4353,65 @@ func TestDrainBackend(t *testing.T) {
 	client := newS3Client(t)
 	ctx := context.Background()
 
-	// Upload several small objects  -  pack routing puts them on minio-1 first (quota 1024).
-	keys := make([]string, 5)
+	keys := seedDrainObjects(t, ctx, client, 5, 50, "D")
+	assertObjectsOnBackend(t, keys, "minio-1")
+
+	if err := testManager.DrainManager.StartDrain(ctx, "minio-1"); err != nil {
+		t.Fatalf("StartDrain: %v", err)
+	}
+	waitDrainComplete(t, ctx, "minio-1", 30*time.Second)
+
+	assertObjectsOnBackend(t, keys, "minio-2")
+	assertProxyServesSize(t, ctx, client, keys, 50, "after drain")
+	assertNoLocationsOnBackend(t, "minio-1")
+}
+
+// seedDrainObjects writes count uniformly-sized objects through the
+// proxy with pack routing, returning their user keys for downstream
+// assertions.
+func seedDrainObjects(t *testing.T, ctx context.Context, client *s3.Client, count, sizeBytes int, fillByte string) []string {
+	t.Helper()
+	keys := make([]string, count)
+	body := bytes.Repeat([]byte(fillByte), sizeBytes)
 	for i := range keys {
 		keys[i] = uniqueKey(t, "drain")
-		body := bytes.Repeat([]byte("D"), 50)
 		_, err := client.PutObject(ctx, &s3.PutObjectInput{
 			Bucket:        aws.String(virtualBucket),
 			Key:           aws.String(keys[i]),
 			Body:          bytes.NewReader(body),
-			ContentLength: aws.Int64(50),
+			ContentLength: aws.Int64(int64(sizeBytes)),
 		})
 		if err != nil {
 			t.Fatalf("PutObject[%d]: %v", i, err)
 		}
 	}
+	return keys
+}
 
-	// Verify all objects landed on minio-1 (pack routing, plenty of quota).
+// assertObjectsOnBackend asserts every key resolves to wantBackend in
+// object_locations.
+func assertObjectsOnBackend(t *testing.T, keys []string, wantBackend string) {
+	t.Helper()
 	for _, key := range keys {
-		if b := queryObjectBackend(t, key); b != "minio-1" {
-			t.Fatalf("expected object on minio-1, got %s", b)
+		if b := queryObjectBackend(t, key); b != wantBackend {
+			t.Errorf("object %s on %s, want %s", key, b, wantBackend)
 		}
 	}
+}
 
-	// Start drain of minio-1.
-	if err := testManager.DrainManager.StartDrain(ctx, "minio-1"); err != nil {
-		t.Fatalf("StartDrain: %v", err)
-	}
-
-	// Wait for the drain to finish (poll progress).
-	deadline := time.After(30 * time.Second)
+// waitDrainComplete polls GetDrainProgress until it reports inactive
+// or the deadline elapses. Surfaces a stored error string if the drain
+// finished unsuccessfully.
+func waitDrainComplete(t *testing.T, ctx context.Context, backend string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.After(timeout)
 	for {
 		select {
 		case <-deadline:
-			t.Fatal("drain did not complete within 30s")
+			t.Fatalf("drain of %s did not complete within %s", backend, timeout)
 		default:
 		}
-
-		progress, err := testManager.DrainManager.GetDrainProgress(ctx, "minio-1")
+		progress, err := testManager.DrainManager.GetDrainProgress(ctx, backend)
 		if err != nil {
 			t.Fatalf("GetDrainProgress: %v", err)
 		}
@@ -4398,42 +4419,43 @@ func TestDrainBackend(t *testing.T) {
 			if progress.Error != "" {
 				t.Fatalf("drain failed: %s", progress.Error)
 			}
-			break
+			return
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
+}
 
-	// All objects should now be on minio-2.
-	for _, key := range keys {
-		if b := queryObjectBackend(t, key); b != "minio-2" {
-			t.Errorf("after drain: object %s on %s, want minio-2", key, b)
-		}
-	}
-
-	// Objects should still be readable through the proxy.
+// assertProxyServesSize fetches each key through the proxy and asserts
+// the body has the expected length, reporting which phase failed.
+func assertProxyServesSize(t *testing.T, ctx context.Context, client *s3.Client, keys []string, wantSize int, phase string) {
+	t.Helper()
 	for _, key := range keys {
 		resp, err := client.GetObject(ctx, &s3.GetObjectInput{
 			Bucket: aws.String(virtualBucket),
 			Key:    aws.String(key),
 		})
 		if err != nil {
-			t.Errorf("GetObject(%s) after drain: %v", key, err)
+			t.Errorf("GetObject(%s) %s: %v", key, phase, err)
 			continue
 		}
 		data, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		if len(data) != 50 {
-			t.Errorf("GetObject(%s) body = %d bytes, want 50", key, len(data))
+		if len(data) != wantSize {
+			t.Errorf("GetObject(%s) %s body = %d bytes, want %d", key, phase, len(data), wantSize)
 		}
 	}
+}
 
-	// minio-1 should have no object_locations rows.
+// assertNoLocationsOnBackend asserts no object_locations rows reference
+// backend, used to confirm a drain emptied the source completely.
+func assertNoLocationsOnBackend(t *testing.T, backend string) {
+	t.Helper()
 	var count int
-	if err := testDB.QueryRow("SELECT COUNT(*) FROM object_locations WHERE backend_name = 'minio-1'").Scan(&count); err != nil {
+	if err := testDB.QueryRow("SELECT COUNT(*) FROM object_locations WHERE backend_name = $1", backend).Scan(&count); err != nil {
 		t.Fatalf("count query: %v", err)
 	}
 	if count != 0 {
-		t.Errorf("minio-1 still has %d object_locations rows after drain", count)
+		t.Errorf("%s still has %d object_locations rows after drain", backend, count)
 	}
 }
 
