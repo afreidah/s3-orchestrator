@@ -92,7 +92,9 @@ func (c *backendCore) withTimeout(ctx context.Context) (context.Context, context
 	if c.backendTimeout <= 0 {
 		// No timeout configured  -  return a no-op cancel so the caller can
 		// defer cancel() unconditionally without a nil check.
-		return ctx, func() {}
+		return ctx, func() {
+			// Intentionally empty: nothing to cancel when no timeout was set.
+		}
 	}
 	if deadline, ok := ctx.Deadline(); ok {
 		if remaining := time.Until(deadline); remaining < c.backendTimeout {

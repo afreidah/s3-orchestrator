@@ -64,7 +64,7 @@ func (mp *MultipartManager) CreateMultipartUpload(ctx context.Context, key, cont
 	const operation = "CreateMultipartUpload"
 	start := time.Now()
 
-	ctx, span := telemetry.StartSpan(ctx, "Manager "+operation,
+	ctx, span := telemetry.StartSpan(ctx, managerSpanPrefix+operation,
 		telemetry.AttrObjectKey.String(key),
 	)
 	defer span.End()
@@ -100,7 +100,7 @@ func (mp *MultipartManager) UploadPart(ctx context.Context, uploadID string, par
 	const operation = "UploadPart"
 	start := time.Now()
 
-	ctx, span := telemetry.StartSpan(ctx, "Manager "+operation,
+	ctx, span := telemetry.StartSpan(ctx, managerSpanPrefix+operation,
 		telemetry.AttrUploadID.String(uploadID),
 		telemetry.AttrPartNumber.Int(partNumber),
 	)
@@ -186,7 +186,7 @@ func (mp *MultipartManager) CompleteMultipartUpload(ctx context.Context, uploadI
 	const operation = "CompleteMultipartUpload"
 	start := time.Now()
 
-	ctx, span := telemetry.StartSpan(ctx, "Manager "+operation,
+	ctx, span := telemetry.StartSpan(ctx, managerSpanPrefix+operation,
 		telemetry.AttrUploadID.String(uploadID),
 	)
 	defer span.End()
@@ -362,7 +362,7 @@ func (mp *MultipartManager) AbortMultipartUpload(ctx context.Context, uploadID s
 	const operation = "AbortMultipartUpload"
 	start := time.Now()
 
-	ctx, span := telemetry.StartSpan(ctx, "Manager "+operation,
+	ctx, span := telemetry.StartSpan(ctx, managerSpanPrefix+operation,
 		telemetry.AttrUploadID.String(uploadID),
 	)
 	defer span.End()

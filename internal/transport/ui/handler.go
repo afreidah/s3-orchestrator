@@ -62,6 +62,7 @@ const (
 	contentTypeJSON       = "application/json"
 	contentTypeHTML       = "text/html; charset=utf-8"
 	headerContentType     = "Content-Type"
+	loginPath             = "/login"
 	errMethodNotAllowed   = "method not allowed"
 	errInvalidRequestBody = "invalid request body"
 	errKeyRequired        = "key is required"
@@ -265,7 +266,7 @@ var uiAPIRoutes = []uiAPIRoute{
 // Register mounts the UI routes on the given mux under the configured prefix.
 func (h *Handler) Register(mux *http.ServeMux, prefix string) {
 	h.prefix = prefix
-	mux.HandleFunc(prefix+"/login", h.handleLogin)
+	mux.HandleFunc(prefix+loginPath, h.handleLogin)
 	mux.HandleFunc(prefix+"/logout", h.handleLogout)
 	mux.HandleFunc(prefix+"/", h.requireAuth(h.handleDashboard))
 	for _, route := range uiAPIRoutes {
@@ -311,7 +312,7 @@ func (h *Handler) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 				_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
 				return
 			}
-			http.Redirect(w, r, h.prefix+"/login", http.StatusSeeOther)
+			http.Redirect(w, r, h.prefix+loginPath, http.StatusSeeOther)
 			return
 		}
 
@@ -527,7 +528,7 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		MaxAge: -1,
 		Secure: secure,
 	})
-	http.Redirect(w, r, h.prefix+"/login", http.StatusSeeOther)
+	http.Redirect(w, r, h.prefix+loginPath, http.StatusSeeOther)
 }
 
 // -------------------------------------------------------------------------
