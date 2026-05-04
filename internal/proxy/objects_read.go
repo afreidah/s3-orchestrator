@@ -380,125 +380,21 @@ func broadcastAllFailed(span trace.Span, lastErr error) (string, error) {
 // READ OPERATIONS
 // -------------------------------------------------------------------------
 
-// GetObject retrieves an object from the backend where it's stored. Tries the
-// primary copy first, then falls back to replicas if the primary fails. When
-// the object is encrypted, the response body is transparently decrypted and
-// the reported size reflects the original plaintext size.
+// GetObject retrieves an object from the backend where it's stored. Tries
+// the primary copy first, then falls back to replicas if the primary
+// fails. When the object is encrypted, the response body is transparently
+// decrypted and the reported size reflects the original plaintext size.
 func (o *ObjectManager) GetObject(ctx context.Context, key string, rangeHeader string) (*s3be.GetObjectResult, error) {
-	// Check object data cache for full reads (non-range requests).
-	if o.objectCache != nil && rangeHeader == "" {
-		if entry, ok := o.objectCache.Get(key); ok {
-			audit.Log(ctx, "storage.GetObject",
-				slog.String("key", key),
-				slog.String("backend", "cache"),
-				slog.Int64("size", int64(len(entry.Data))),
-			)
-			return &s3be.GetObjectResult{
-				Body:        io.NopCloser(bytes.NewReader(entry.Data)),
-				Size:        int64(len(entry.Data)),
-				ContentType: entry.ContentType,
-				ETag:        entry.ETag,
-				Metadata:    entry.Metadata,
-			}, nil
-		}
+	if cached, ok := o.tryGetObjectCache(ctx, key, rangeHeader); ok {
+		return cached, nil
 	}
 
 	var result *s3be.GetObjectResult
-	var once sync.Once // protects result write when parallel broadcast is enabled
-
-	// Resolve locations upfront so encryption metadata is available after read.
+	var once sync.Once
 	locByBackend := o.resolveLocationsByBackend(ctx, key)
 
 	backendName, err := o.withReadFailover(ctx, "GetObject", key, func(ctx context.Context, beName string, backend s3be.ObjectBackend) (int64, func(), error) {
-		// Per-callback timeout context. The callback owns bcancel on every
-		// path: error paths and once-loser branches release immediately;
-		// the once-winner attaches bcancel to the body's Close so the
-		// streaming read keeps the context alive until the consumer is done.
-		bctx, bcancel := o.withTimeout(ctx)
-
-		if !o.usage.WithinLimits(beName, 1, 0, 0) {
-			bcancel()
-			return 0, noopCleanup, fmt.Errorf("backend %s: %w", beName, errUsageLimitSkip)
-		}
-
-		// Reject encrypted object reads when the DB is unavailable.
-		// Without encryption metadata (wrapped DEK, key ID), the response
-		// would contain raw ciphertext instead of plaintext.
-		if o.encryptor != nil && locByBackend == nil {
-			bcancel()
-			return 0, noopCleanup, core.ErrServiceUnavailable
-		}
-
-		// Find encryption metadata for this backend's copy
-		loc := locByBackend[beName]
-
-		// Translate plaintext range to ciphertext range for encrypted objects
-		actualRange := rangeHeader
-		var rng *encryption.RangeResult
-		var ptStart, ptEnd int64
-		if loc != nil && loc.Encrypted && rangeHeader != "" {
-			var ok bool
-			ptStart, ptEnd, ok = parsePlaintextRange(rangeHeader, loc.PlaintextSize)
-			if ok {
-				rng, _ = encryption.CiphertextRange(ptStart, ptEnd, o.encryptor.ChunkSize())
-				if rng != nil {
-					actualRange = rng.BackendRange
-				}
-			}
-		}
-
-		r, err := backend.GetObject(bctx, key, actualRange)
-		if err != nil {
-			bcancel()
-			o.usage.Record(beName, 1, 0, 0)
-			return 0, noopCleanup, err
-		}
-		if !o.usage.WithinLimits(beName, 1, r.Size, 0) {
-			_ = r.Body.Close()
-			bcancel()
-			o.usage.Record(beName, 1, 0, 0)
-			return 0, noopCleanup, fmt.Errorf("backend %s egress: %w", beName, errUsageLimitSkip)
-		}
-
-		// Decrypt the response body if the object is encrypted
-		if loc != nil && loc.Encrypted && o.encryptor != nil {
-			if err := decryptResponse(ctx, o.encryptor, r, loc, rng, ptStart, ptEnd); err != nil {
-				_ = r.Body.Close()
-				bcancel()
-				return 0, noopCleanup, err
-			}
-		}
-
-		// Wrap with integrity verification if enabled
-		if icfg := o.integrityCfg(); icfg != nil && icfg.Enabled && icfg.VerifyOnRead {
-			expectedHash := ""
-			if loc != nil {
-				expectedHash = loc.ContentHash
-			}
-			if expectedHash != "" {
-				vr := NewVerifyingReader(r.Body)
-				vr.SetVerification(expectedHash, func(expected, actual string) {
-					slog.ErrorContext(ctx, "integrity check failed on read",
-						"key", key, "backend", beName,
-						"expected_hash", expected, "actual_hash", actual)
-					telemetry.IntegrityErrorsTotal.WithLabelValues("read").Inc()
-					o.parent.deleteOrEnqueue(ctx, backend, beName, key, "integrity_failed", r.Size)
-				})
-				r.Body = vr
-			}
-		}
-
-		// Wrap the body's Close so the per-callback timeout is released
-		// when the consumer finishes reading. Done before once.Do so the
-		// winning result carries the wrapped Close; losers throw it away.
-		r.Body = bodyWithCancel(r.Body, bcancel)
-
-		once.Do(func() { result = r })
-		if result != r {
-			// Loser: close our body which fires bcancel via the wrapper.
-			_ = r.Body.Close()
-		}
-		return r.Size, noopCleanup, nil
+		return o.getObjectAttempt(ctx, key, rangeHeader, beName, backend, locByBackend, &once, &result)
 	})
 	if err != nil {
 		return nil, err
@@ -511,24 +407,165 @@ func (o *ObjectManager) GetObject(ctx context.Context, key string, rangeHeader s
 		slog.Int64("size", result.Size),
 	)
 
-	// Populate object data cache on full reads. Read the response body into
-	// memory, cache it, and replace the body with a bytes.Reader. Objects
-	// that exceed max_object_size are silently skipped by the cache.
-	if o.objectCache != nil && rangeHeader == "" {
-		data, readErr := io.ReadAll(result.Body)
-		result.Body.Close()
-		if readErr != nil {
-			return nil, fmt.Errorf("read object for caching: %w", readErr)
-		}
-		_ = o.objectCache.Put(key, bytes.NewReader(data), objcache.EntryMeta{
-			ContentType: result.ContentType,
-			ETag:        result.ETag,
-			Metadata:    result.Metadata,
-		})
-		result.Body = io.NopCloser(bytes.NewReader(data))
+	if err := o.populateObjectCache(key, rangeHeader, result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// tryGetObjectCache returns a synthesized GetObjectResult when the object
+// data cache holds a non-range hit for this key. ok=false signals that the
+// caller must read from a backend.
+func (o *ObjectManager) tryGetObjectCache(ctx context.Context, key, rangeHeader string) (*s3be.GetObjectResult, bool) {
+	if o.objectCache == nil || rangeHeader != "" {
+		return nil, false
+	}
+	entry, ok := o.objectCache.Get(key)
+	if !ok {
+		return nil, false
+	}
+	audit.Log(ctx, "storage.GetObject",
+		slog.String("key", key),
+		slog.String("backend", "cache"),
+		slog.Int64("size", int64(len(entry.Data))),
+	)
+	return &s3be.GetObjectResult{
+		Body:        io.NopCloser(bytes.NewReader(entry.Data)),
+		Size:        int64(len(entry.Data)),
+		ContentType: entry.ContentType,
+		ETag:        entry.ETag,
+		Metadata:    entry.Metadata,
+	}, true
+}
+
+// getObjectAttempt is the per-backend callback invoked by withReadFailover
+// for GetObject. It owns the per-attempt timeout, applies usage limits,
+// translates encrypted ranges, decrypts and verifies the body, and records
+// the winning result via once.
+func (o *ObjectManager) getObjectAttempt(
+	ctx context.Context,
+	key, rangeHeader, beName string,
+	backend s3be.ObjectBackend,
+	locByBackend map[string]*core.ObjectLocation,
+	once *sync.Once,
+	result **s3be.GetObjectResult,
+) (int64, func(), error) {
+	bctx, bcancel := o.withTimeout(ctx)
+
+	if !o.usage.WithinLimits(beName, 1, 0, 0) {
+		bcancel()
+		return 0, noopCleanup, fmt.Errorf("backend %s: %w", beName, errUsageLimitSkip)
+	}
+	if o.encryptor != nil && locByBackend == nil {
+		bcancel()
+		return 0, noopCleanup, core.ErrServiceUnavailable
 	}
 
-	return result, nil
+	loc := locByBackend[beName]
+	actualRange, rng, ptStart, ptEnd := o.resolveBackendRange(rangeHeader, loc)
+
+	r, err := backend.GetObject(bctx, key, actualRange)
+	if err != nil {
+		bcancel()
+		o.usage.Record(beName, 1, 0, 0)
+		return 0, noopCleanup, err
+	}
+	if !o.usage.WithinLimits(beName, 1, r.Size, 0) {
+		_ = r.Body.Close()
+		bcancel()
+		o.usage.Record(beName, 1, 0, 0)
+		return 0, noopCleanup, fmt.Errorf("backend %s egress: %w", beName, errUsageLimitSkip)
+	}
+
+	if loc != nil && loc.Encrypted && o.encryptor != nil {
+		if err := decryptResponse(ctx, o.encryptor, r, loc, rng, ptStart, ptEnd); err != nil {
+			_ = r.Body.Close()
+			bcancel()
+			return 0, noopCleanup, err
+		}
+	}
+
+	o.maybeWrapIntegrityReader(ctx, r, loc, key, beName, backend)
+
+	r.Body = bodyWithCancel(r.Body, bcancel)
+	once.Do(func() { *result = r })
+	if *result != r {
+		_ = r.Body.Close()
+	}
+	return r.Size, noopCleanup, nil
+}
+
+// resolveBackendRange translates a plaintext Range header into the actual
+// ciphertext range to request from the backend. Returns the original
+// header verbatim for unencrypted objects.
+func (o *ObjectManager) resolveBackendRange(rangeHeader string, loc *core.ObjectLocation) (string, *encryption.RangeResult, int64, int64) {
+	if loc == nil || !loc.Encrypted || rangeHeader == "" {
+		return rangeHeader, nil, 0, 0
+	}
+	ptStart, ptEnd, ok := parsePlaintextRange(rangeHeader, loc.PlaintextSize)
+	if !ok {
+		return rangeHeader, nil, 0, 0
+	}
+	rng, _ := encryption.CiphertextRange(ptStart, ptEnd, o.encryptor.ChunkSize())
+	if rng == nil {
+		return rangeHeader, nil, ptStart, ptEnd
+	}
+	return rng.BackendRange, rng, ptStart, ptEnd
+}
+
+// maybeWrapIntegrityReader replaces r.Body with a verifying reader when
+// integrity verification is enabled and an expected content hash is
+// available. A hash mismatch logs, increments telemetry, and enqueues the
+// bad copy for cleanup.
+func (o *ObjectManager) maybeWrapIntegrityReader(
+	ctx context.Context,
+	r *s3be.GetObjectResult,
+	loc *core.ObjectLocation,
+	key, beName string,
+	backend s3be.ObjectBackend,
+) {
+	icfg := o.integrityCfg()
+	if icfg == nil || !icfg.Enabled || !icfg.VerifyOnRead {
+		return
+	}
+	expectedHash := ""
+	if loc != nil {
+		expectedHash = loc.ContentHash
+	}
+	if expectedHash == "" {
+		return
+	}
+	vr := NewVerifyingReader(r.Body)
+	vr.SetVerification(expectedHash, func(expected, actual string) {
+		slog.ErrorContext(ctx, "integrity check failed on read",
+			"key", key, "backend", beName,
+			"expected_hash", expected, "actual_hash", actual)
+		telemetry.IntegrityErrorsTotal.WithLabelValues("read").Inc()
+		o.parent.deleteOrEnqueue(ctx, backend, beName, key, "integrity_failed", r.Size)
+	})
+	r.Body = vr
+}
+
+// populateObjectCache reads the response body into memory, stores it in
+// the object cache, and replaces result.Body with a bytes.Reader so the
+// caller can stream the same content. Skipped for range requests and when
+// the cache is disabled.
+func (o *ObjectManager) populateObjectCache(key, rangeHeader string, result *s3be.GetObjectResult) error {
+	if o.objectCache == nil || rangeHeader != "" {
+		return nil
+	}
+	data, readErr := io.ReadAll(result.Body)
+	result.Body.Close()
+	if readErr != nil {
+		return fmt.Errorf("read object for caching: %w", readErr)
+	}
+	_ = o.objectCache.Put(key, bytes.NewReader(data), objcache.EntryMeta{
+		ContentType: result.ContentType,
+		ETag:        result.ETag,
+		Metadata:    result.Metadata,
+	})
+	result.Body = io.NopCloser(bytes.NewReader(data))
+	return nil
 }
 
 // HeadObject retrieves object metadata. Tries the primary copy first, then
@@ -626,11 +663,11 @@ type ListObjectsV2Result struct {
 	KeyCount              int
 }
 
-// ListObjects returns objects matching the given prefix with optional delimiter
-// support for virtual directory grouping. When a delimiter is set, many raw
-// objects may collapse into a single CommonPrefix, so we loop-fetch from the
-// store until maxKeys post-grouping items are collected or the store is
-// exhausted.
+// ListObjects returns objects matching the given prefix with optional
+// delimiter support for virtual directory grouping. When a delimiter is
+// set, many raw objects may collapse into a single CommonPrefix, so the
+// loop fetches store pages until maxKeys post-grouping items are
+// collected or the store is exhausted.
 func (o *ObjectManager) ListObjects(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*ListObjectsV2Result, error) {
 	const operation = "ListObjects"
 	start := time.Now()
@@ -644,88 +681,32 @@ func (o *ObjectManager) ListObjects(ctx context.Context, prefix, delimiter, star
 
 	result := &ListObjectsV2Result{}
 	cursor := startAfter
-	seen := make(map[string]bool) // tracks emitted common prefixes across fetches
-	lastStoreTruncated := false   // whether the most recent store page had more data
+	seen := make(map[string]bool)
+	lastStoreTruncated := false
 
 	maxPages := listObjectsMaxPages
 	for page := 0; page < maxPages && result.KeyCount < maxKeys; page++ {
 		storeResult, err := o.parent.stores.Object.ListObjects(ctx, prefix, cursor, maxKeys)
 		if err != nil {
-			if errors.Is(err, core.ErrDBUnavailable) {
-				span.SetStatus(codes.Error, "database unavailable")
-				return nil, &core.S3Error{StatusCode: 503, Code: "ServiceUnavailable", Message: "listing unavailable during database outage"}
-			}
-			span.SetStatus(codes.Error, err.Error())
-			span.RecordError(err)
-			return nil, fmt.Errorf("failed to list objects: %w", err)
+			return nil, listObjectsError(span, err)
 		}
-
 		if len(storeResult.Objects) == 0 {
 			break
 		}
 		lastStoreTruncated = storeResult.IsTruncated
 
-		// lastKey tracks the most recently consumed object key so the
-		// continuation token lands after the entire prefix group, not
-		// in the middle of one.
-		var lastKey string
-		for oi := range storeResult.Objects {
-			// Check CommonPrefix membership before the limit check so
-			// objects that collapse into an already-counted prefix are
-			// skipped without triggering premature truncation.
-			if delimiter != "" {
-				rest := storeResult.Objects[oi].ObjectKey[len(prefix):]
-				idx := strings.Index(rest, delimiter)
-				if idx >= 0 {
-					cp := storeResult.Objects[oi].ObjectKey[:len(prefix)+idx+len(delimiter)]
-					if seen[cp] {
-						// Same prefix already counted  -  skip silently
-						lastKey = storeResult.Objects[oi].ObjectKey
-						continue
-					}
-					// New prefix would add an entry  -  enforce limit
-					if result.KeyCount >= maxKeys {
-						result.IsTruncated = true
-						result.NextContinuationToken = lastKey
-						break
-					}
-					seen[cp] = true
-					result.CommonPrefixes = append(result.CommonPrefixes, cp)
-					result.KeyCount++
-					lastKey = storeResult.Objects[oi].ObjectKey
-					continue
-				}
-			}
-
-			// Regular object  -  enforce limit before adding
-			if result.KeyCount >= maxKeys {
-				result.IsTruncated = true
-				result.NextContinuationToken = lastKey
-				break
-			}
-
-			result.Objects = append(result.Objects, storeResult.Objects[oi])
-			result.KeyCount++
-			lastKey = storeResult.Objects[oi].ObjectKey
-		}
-
+		o.consumeListPage(storeResult.Objects, prefix, delimiter, maxKeys, seen, result)
 		if result.IsTruncated || !storeResult.IsTruncated {
 			break
 		}
 		cursor = storeResult.Objects[len(storeResult.Objects)-1].ObjectKey
 
-		// If this is the last allowed page and the store has more data,
-		// mark as truncated so the client paginates back.
 		if page == maxPages-1 && storeResult.IsTruncated && !result.IsTruncated {
 			result.IsTruncated = true
 			result.NextContinuationToken = advancePastEmittedCommonPrefix(prefix, delimiter, cursor, seen)
 		}
 	}
 
-	// When we consumed exactly maxKeys entries from a single store page
-	// and the store reported more data, the inner loop never tried to add
-	// a (maxKeys+1)th entry so IsTruncated was never set. Detect this and
-	// mark the result as truncated so the client paginates correctly.
 	if !result.IsTruncated && lastStoreTruncated && result.KeyCount >= maxKeys {
 		result.IsTruncated = true
 		result.NextContinuationToken = advancePastEmittedCommonPrefix(prefix, delimiter, cursor, seen)
@@ -742,6 +723,85 @@ func (o *ObjectManager) ListObjects(ctx context.Context, prefix, delimiter, star
 	span.SetStatus(codes.Ok, "")
 	span.SetAttributes(attribute.Int("s3o.key_count", result.KeyCount))
 	return result, nil
+}
+
+// listObjectsError translates a store-side ListObjects error into the
+// error returned to the caller. ErrDBUnavailable becomes a 503; anything
+// else is wrapped with context.
+func listObjectsError(span trace.Span, err error) error {
+	if errors.Is(err, core.ErrDBUnavailable) {
+		span.SetStatus(codes.Error, "database unavailable")
+		return &core.S3Error{StatusCode: 503, Code: "ServiceUnavailable", Message: "listing unavailable during database outage"}
+	}
+	span.SetStatus(codes.Error, err.Error())
+	span.RecordError(err)
+	return fmt.Errorf("failed to list objects: %w", err)
+}
+
+// consumeListPage walks one store page, folding raw objects into
+// CommonPrefixes when delimiter is set and appending plain objects
+// otherwise. Mutates result and seen, and sets result.IsTruncated when
+// maxKeys is hit mid-page.
+func (o *ObjectManager) consumeListPage(
+	objects []core.ObjectLocation,
+	prefix, delimiter string,
+	maxKeys int,
+	seen map[string]bool,
+	result *ListObjectsV2Result,
+) {
+	var lastKey string
+	for oi := range objects {
+		key := objects[oi].ObjectKey
+		if delimiter != "" {
+			handled, truncated := tryEmitCommonPrefix(key, prefix, delimiter, maxKeys, seen, result, lastKey)
+			if handled {
+				lastKey = key
+				if truncated {
+					return
+				}
+				continue
+			}
+		}
+		if result.KeyCount >= maxKeys {
+			result.IsTruncated = true
+			result.NextContinuationToken = lastKey
+			return
+		}
+		result.Objects = append(result.Objects, objects[oi])
+		result.KeyCount++
+		lastKey = key
+	}
+}
+
+// tryEmitCommonPrefix folds key into a CommonPrefix when one applies.
+// handled=false signals the key should fall through to plain-object
+// handling. truncated=true signals the caller to stop iterating because
+// maxKeys was hit while emitting a new prefix.
+func tryEmitCommonPrefix(
+	key, prefix, delimiter string,
+	maxKeys int,
+	seen map[string]bool,
+	result *ListObjectsV2Result,
+	lastKey string,
+) (bool, bool) {
+	rest := key[len(prefix):]
+	idx := strings.Index(rest, delimiter)
+	if idx < 0 {
+		return false, false
+	}
+	cp := key[:len(prefix)+idx+len(delimiter)]
+	if seen[cp] {
+		return true, false
+	}
+	if result.KeyCount >= maxKeys {
+		result.IsTruncated = true
+		result.NextContinuationToken = lastKey
+		return true, true
+	}
+	seen[cp] = true
+	result.CommonPrefixes = append(result.CommonPrefixes, cp)
+	result.KeyCount++
+	return true, false
 }
 
 // -------------------------------------------------------------------------

@@ -46,309 +46,342 @@ import (
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 )
 
-// TestCRUD verifies the crud behaviour across the supplied sub-cases:
-// "PutGetRoundTrip", "PutHeadMetadata", "PutDeleteGet404", "GetNonexistent".
-// Each sub-case exercises one branch of the code under test.
-func TestCRUD(t *testing.T) {
+// TestCRUD_PutGetRoundTrip is one of the sub-cases extracted from the
+// original mega-TestCRUD; behaviour is preserved.
+func TestCRUD_PutGetRoundTrip(t *testing.T) {
 	client := newS3Client(t)
+	_ = client
 	ctx := context.Background()
+	_ = ctx
 
-	t.Run("PutGetRoundTrip", func(t *testing.T) {
-		key := uniqueKey(t, "crud")
-		body := bytes.Repeat([]byte("A"), 100)
+	key := uniqueKey(t, "crud")
+	body := bytes.Repeat([]byte("A"), 100)
 
-		_, err := client.PutObject(ctx, &s3.PutObjectInput{
-			Bucket:        aws.String(virtualBucket),
-			Key:           aws.String(key),
-			Body:          bytes.NewReader(body),
-			ContentLength: aws.Int64(100),
-		})
-		if err != nil {
-			t.Fatalf("PutObject: %v", err)
-		}
-
-		resp, err := client.GetObject(ctx, &s3.GetObjectInput{
-			Bucket: aws.String(virtualBucket),
-			Key:    aws.String(key),
-		})
-		if err != nil {
-			t.Fatalf("GetObject: %v", err)
-		}
-		defer resp.Body.Close()
-
-		got, err := io.ReadAll(resp.Body)
-		if err != nil {
-			t.Fatalf("ReadAll: %v", err)
-		}
-		if !bytes.Equal(got, body) {
-			t.Fatalf("body mismatch: got %d bytes, want %d", len(got), len(body))
-		}
+	_, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(key),
+		Body:          bytes.NewReader(body),
+		ContentLength: aws.Int64(100),
 	})
+	if err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
 
-	t.Run("PutHeadMetadata", func(t *testing.T) {
-		key := uniqueKey(t, "crud")
-		body := bytes.Repeat([]byte("B"), 200)
-
-		putResp, err := client.PutObject(ctx, &s3.PutObjectInput{
-			Bucket:        aws.String(virtualBucket),
-			Key:           aws.String(key),
-			Body:          bytes.NewReader(body),
-			ContentLength: aws.Int64(200),
-			ContentType:   aws.String("text/plain"),
-		})
-		if err != nil {
-			t.Fatalf("PutObject: %v", err)
-		}
-
-		head, err := client.HeadObject(ctx, &s3.HeadObjectInput{
-			Bucket: aws.String(virtualBucket),
-			Key:    aws.String(key),
-		})
-		if err != nil {
-			t.Fatalf("HeadObject: %v", err)
-		}
-
-		if got := aws.ToInt64(head.ContentLength); got != 200 {
-			t.Errorf("ContentLength = %d, want 200", got)
-		}
-		if got := aws.ToString(head.ContentType); got != "text/plain" {
-			t.Errorf("ContentType = %q, want %q", got, "text/plain")
-		}
-		if head.ETag == nil || *head.ETag == "" {
-			t.Error("ETag is empty")
-		}
-		if putResp.ETag != nil && head.ETag != nil && *putResp.ETag != *head.ETag {
-			t.Errorf("ETag mismatch: put=%q head=%q", *putResp.ETag, *head.ETag)
-		}
+	resp, err := client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(virtualBucket),
+		Key:    aws.String(key),
 	})
+	if err != nil {
+		t.Fatalf("GetObject: %v", err)
+	}
+	defer resp.Body.Close()
 
-	t.Run("PutDeleteGet404", func(t *testing.T) {
-		key := uniqueKey(t, "crud")
-		body := []byte("delete-me")
+	got, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if !bytes.Equal(got, body) {
+		t.Fatalf("body mismatch: got %d bytes, want %d", len(got), len(body))
+	}
+}
 
-		_, err := client.PutObject(ctx, &s3.PutObjectInput{
-			Bucket:        aws.String(virtualBucket),
-			Key:           aws.String(key),
-			Body:          bytes.NewReader(body),
-			ContentLength: aws.Int64(int64(len(body))),
-		})
-		if err != nil {
-			t.Fatalf("PutObject: %v", err)
-		}
+// TestCRUD_PutHeadMetadata is one of the sub-cases extracted from the
+// original mega-TestCRUD; behaviour is preserved.
+func TestCRUD_PutHeadMetadata(t *testing.T) {
+	client := newS3Client(t)
+	_ = client
+	ctx := context.Background()
+	_ = ctx
 
-		_, err = client.DeleteObject(ctx, &s3.DeleteObjectInput{
-			Bucket: aws.String(virtualBucket),
-			Key:    aws.String(key),
-		})
-		if err != nil {
-			t.Fatalf("DeleteObject: %v", err)
-		}
+	key := uniqueKey(t, "crud")
+	body := bytes.Repeat([]byte("B"), 200)
 
-		_, err = client.GetObject(ctx, &s3.GetObjectInput{
-			Bucket: aws.String(virtualBucket),
-			Key:    aws.String(key),
-		})
-		if err == nil {
-			t.Fatal("expected error for GET after DELETE, got nil")
-		}
-		assertHTTPStatus(t, err, 404)
+	putResp, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(key),
+		Body:          bytes.NewReader(body),
+		ContentLength: aws.Int64(200),
+		ContentType:   aws.String("text/plain"),
 	})
+	if err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
 
-	t.Run("GetNonexistent", func(t *testing.T) {
-		_, err := client.GetObject(ctx, &s3.GetObjectInput{
-			Bucket: aws.String(virtualBucket),
-			Key:    aws.String(fmt.Sprintf("nonexistent-%d", time.Now().UnixNano())),
-		})
-		if err == nil {
-			t.Fatal("expected error for nonexistent key, got nil")
-		}
-		assertHTTPStatus(t, err, 404)
+	head, err := client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(virtualBucket),
+		Key:    aws.String(key),
 	})
+	if err != nil {
+		t.Fatalf("HeadObject: %v", err)
+	}
+
+	if got := aws.ToInt64(head.ContentLength); got != 200 {
+		t.Errorf("ContentLength = %d, want 200", got)
+	}
+	if got := aws.ToString(head.ContentType); got != "text/plain" {
+		t.Errorf("ContentType = %q, want %q", got, "text/plain")
+	}
+	if head.ETag == nil || *head.ETag == "" {
+		t.Error("ETag is empty")
+	}
+	if putResp.ETag != nil && head.ETag != nil && *putResp.ETag != *head.ETag {
+		t.Errorf("ETag mismatch: put=%q head=%q", *putResp.ETag, *head.ETag)
+	}
+}
+
+// TestCRUD_PutDeleteGet404 is one of the sub-cases extracted from the
+// original mega-TestCRUD; behaviour is preserved.
+func TestCRUD_PutDeleteGet404(t *testing.T) {
+	client := newS3Client(t)
+	_ = client
+	ctx := context.Background()
+	_ = ctx
+
+	key := uniqueKey(t, "crud")
+	body := []byte("delete-me")
+
+	_, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(key),
+		Body:          bytes.NewReader(body),
+		ContentLength: aws.Int64(int64(len(body))),
+	})
+	if err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+
+	_, err = client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(virtualBucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		t.Fatalf("DeleteObject: %v", err)
+	}
+
+	_, err = client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(virtualBucket),
+		Key:    aws.String(key),
+	})
+	if err == nil {
+		t.Fatal("expected error for GET after DELETE, got nil")
+	}
+	assertHTTPStatus(t, err, 404)
+}
+
+// TestCRUD_GetNonexistent is one of the sub-cases extracted from the
+// original mega-TestCRUD; behaviour is preserved.
+func TestCRUD_GetNonexistent(t *testing.T) {
+	client := newS3Client(t)
+	_ = client
+	ctx := context.Background()
+	_ = ctx
+
+	_, err := client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(virtualBucket),
+		Key:    aws.String(fmt.Sprintf("nonexistent-%d", time.Now().UnixNano())),
+	})
+	if err == nil {
+		t.Fatal("expected error for nonexistent key, got nil")
+	}
+	assertHTTPStatus(t, err, 404)
 }
 
 // -------------------------------------------------------------------------
 // QUOTA ROUTING
 // -------------------------------------------------------------------------
 
-// TestQuotaRouting verifies the quota routing behaviour across the supplied sub-cases:
-// "SmallObjectLandsOnFirstBackend", "OverflowToSecondBackend", "AllBackendsFull507", "DeleteFreesQuotaThenPutSucceeds".
-// Each sub-case exercises one branch of the code under test.
-func TestQuotaRouting(t *testing.T) {
+// TestQuotaRouting_SmallObjectLandsOnFirstBackend is one of the sub-cases extracted from the
+// original mega-TestQuotaRouting; behaviour is preserved.
+func TestQuotaRouting_SmallObjectLandsOnFirstBackend(t *testing.T) {
 	client := newS3Client(t)
+	_ = client
 	ctx := context.Background()
+	_ = ctx
 
-	t.Run("SmallObjectLandsOnFirstBackend", func(t *testing.T) {
-		resetState(t)
+	resetState(t)
 
-		key := uniqueKey(t, "quota")
-		body := bytes.Repeat([]byte("X"), 100)
+	key := uniqueKey(t, "quota")
+	body := bytes.Repeat([]byte("X"), 100)
 
-		_, err := client.PutObject(ctx, &s3.PutObjectInput{
-			Bucket:        aws.String(virtualBucket),
-			Key:           aws.String(key),
-			Body:          bytes.NewReader(body),
-			ContentLength: aws.Int64(100),
-		})
-		if err != nil {
-			t.Fatalf("PutObject: %v", err)
-		}
-
-		backend := queryObjectBackend(t, key)
-		if backend != "minio-1" {
-			t.Errorf("object landed on %q, want %q", backend, "minio-1")
-		}
+	_, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(key),
+		Body:          bytes.NewReader(body),
+		ContentLength: aws.Int64(100),
 	})
+	if err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
 
-	t.Run("OverflowToSecondBackend", func(t *testing.T) {
-		resetState(t)
+	backend := queryObjectBackend(t, key)
+	if backend != "minio-1" {
+		t.Errorf("object landed on %q, want %q", backend, "minio-1")
+	}
+}
 
-		// Fill minio-1 near capacity (900 of 1024 bytes)
-		fillKey := uniqueKey(t, "fill")
-		_, err := client.PutObject(ctx, &s3.PutObjectInput{
-			Bucket:        aws.String(virtualBucket),
-			Key:           aws.String(fillKey),
-			Body:          bytes.NewReader(bytes.Repeat([]byte("F"), 900)),
-			ContentLength: aws.Int64(900),
-		})
-		if err != nil {
-			t.Fatalf("fill PutObject: %v", err)
-		}
+// TestQuotaRouting_OverflowToSecondBackend is one of the sub-cases extracted from the
+// original mega-TestQuotaRouting; behaviour is preserved.
+func TestQuotaRouting_OverflowToSecondBackend(t *testing.T) {
+	client := newS3Client(t)
+	_ = client
+	ctx := context.Background()
+	_ = ctx
 
-		// 200 bytes won't fit minio-1 (900+200=1100 > 1024), should overflow to minio-2
-		overflowKey := uniqueKey(t, "overflow")
-		_, err = client.PutObject(ctx, &s3.PutObjectInput{
-			Bucket:        aws.String(virtualBucket),
-			Key:           aws.String(overflowKey),
-			Body:          bytes.NewReader(bytes.Repeat([]byte("O"), 200)),
-			ContentLength: aws.Int64(200),
-		})
-		if err != nil {
-			t.Fatalf("overflow PutObject: %v", err)
-		}
+	resetState(t)
 
-		backend := queryObjectBackend(t, overflowKey)
-		if backend != "minio-2" {
-			t.Errorf("overflow object landed on %q, want %q", backend, "minio-2")
-		}
+	fillKey := uniqueKey(t, "fill")
+	_, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(fillKey),
+		Body:          bytes.NewReader(bytes.Repeat([]byte("F"), 900)),
+		ContentLength: aws.Int64(900),
 	})
+	if err != nil {
+		t.Fatalf("fill PutObject: %v", err)
+	}
 
-	t.Run("AllBackendsFull507", func(t *testing.T) {
-		resetState(t)
-
-		// Fill minio-1 to capacity (1024 bytes)
-		_, err := client.PutObject(ctx, &s3.PutObjectInput{
-			Bucket:        aws.String(virtualBucket),
-			Key:           aws.String(uniqueKey(t, "full1")),
-			Body:          bytes.NewReader(bytes.Repeat([]byte("A"), 1024)),
-			ContentLength: aws.Int64(1024),
-		})
-		if err != nil {
-			t.Fatalf("fill minio-1: %v", err)
-		}
-
-		// Fill minio-2 to capacity (2048 bytes)
-		_, err = client.PutObject(ctx, &s3.PutObjectInput{
-			Bucket:        aws.String(virtualBucket),
-			Key:           aws.String(uniqueKey(t, "full2")),
-			Body:          bytes.NewReader(bytes.Repeat([]byte("B"), 2048)),
-			ContentLength: aws.Int64(2048),
-		})
-		if err != nil {
-			t.Fatalf("fill minio-2: %v", err)
-		}
-
-		// 1 more byte should fail with 507
-		_, err = client.PutObject(ctx, &s3.PutObjectInput{
-			Bucket:        aws.String(virtualBucket),
-			Key:           aws.String(uniqueKey(t, "excess")),
-			Body:          bytes.NewReader([]byte("X")),
-			ContentLength: aws.Int64(1),
-		})
-		if err == nil {
-			t.Fatal("expected error when all backends full, got nil")
-		}
-		assertHTTPStatus(t, err, 507)
+	overflowKey := uniqueKey(t, "overflow")
+	_, err = client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(overflowKey),
+		Body:          bytes.NewReader(bytes.Repeat([]byte("O"), 200)),
+		ContentLength: aws.Int64(200),
 	})
+	if err != nil {
+		t.Fatalf("overflow PutObject: %v", err)
+	}
 
-	t.Run("DeleteFreesQuotaThenPutSucceeds", func(t *testing.T) {
-		resetState(t)
+	backend := queryObjectBackend(t, overflowKey)
+	if backend != "minio-2" {
+		t.Errorf("overflow object landed on %q, want %q", backend, "minio-2")
+	}
+}
 
-		// Fill minio-1 exactly
-		fillKey := uniqueKey(t, "del-quota")
-		_, err := client.PutObject(ctx, &s3.PutObjectInput{
-			Bucket:        aws.String(virtualBucket),
-			Key:           aws.String(fillKey),
-			Body:          bytes.NewReader(bytes.Repeat([]byte("D"), 1024)),
-			ContentLength: aws.Int64(1024),
-		})
-		if err != nil {
-			t.Fatalf("fill minio-1: %v", err)
-		}
+// TestQuotaRouting_AllBackendsFull507 is one of the sub-cases extracted from the
+// original mega-TestQuotaRouting; behaviour is preserved.
+func TestQuotaRouting_AllBackendsFull507(t *testing.T) {
+	client := newS3Client(t)
+	_ = client
+	ctx := context.Background()
+	_ = ctx
 
-		// Fill minio-2 exactly
-		_, err = client.PutObject(ctx, &s3.PutObjectInput{
-			Bucket:        aws.String(virtualBucket),
-			Key:           aws.String(uniqueKey(t, "del-quota2")),
-			Body:          bytes.NewReader(bytes.Repeat([]byte("E"), 2048)),
-			ContentLength: aws.Int64(2048),
-		})
-		if err != nil {
-			t.Fatalf("fill minio-2: %v", err)
-		}
+	resetState(t)
 
-		if used := queryQuotaUsed(t, "minio-1"); used != 1024 {
-			t.Fatalf("expected 1024 bytes used on minio-1, got %d", used)
-		}
-
-		// Delete from minio-1
-		_, err = client.DeleteObject(ctx, &s3.DeleteObjectInput{
-			Bucket: aws.String(virtualBucket),
-			Key:    aws.String(fillKey),
-		})
-		if err != nil {
-			t.Fatalf("DeleteObject: %v", err)
-		}
-
-		if used := queryQuotaUsed(t, "minio-1"); used != 0 {
-			t.Errorf("expected 0 bytes used after delete, got %d", used)
-		}
-
-		// New PUT should succeed on minio-1
-		newKey := uniqueKey(t, "reuse")
-		_, err = client.PutObject(ctx, &s3.PutObjectInput{
-			Bucket:        aws.String(virtualBucket),
-			Key:           aws.String(newKey),
-			Body:          bytes.NewReader(bytes.Repeat([]byte("N"), 500)),
-			ContentLength: aws.Int64(500),
-		})
-		if err != nil {
-			t.Fatalf("PutObject after delete: %v", err)
-		}
-
-		backend := queryObjectBackend(t, newKey)
-		if backend != "minio-1" {
-			t.Errorf("new object landed on %q, want %q", backend, "minio-1")
-		}
+	_, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(uniqueKey(t, "full1")),
+		Body:          bytes.NewReader(bytes.Repeat([]byte("A"), 1024)),
+		ContentLength: aws.Int64(1024),
 	})
+	if err != nil {
+		t.Fatalf("fill minio-1: %v", err)
+	}
+
+	_, err = client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(uniqueKey(t, "full2")),
+		Body:          bytes.NewReader(bytes.Repeat([]byte("B"), 2048)),
+		ContentLength: aws.Int64(2048),
+	})
+	if err != nil {
+		t.Fatalf("fill minio-2: %v", err)
+	}
+
+	_, err = client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(uniqueKey(t, "excess")),
+		Body:          bytes.NewReader([]byte("X")),
+		ContentLength: aws.Int64(1),
+	})
+	if err == nil {
+		t.Fatal("expected error when all backends full, got nil")
+	}
+	assertHTTPStatus(t, err, 507)
+}
+
+// TestQuotaRouting_DeleteFreesQuotaThenPutSucceeds is one of the sub-cases extracted from the
+// original mega-TestQuotaRouting; behaviour is preserved.
+func TestQuotaRouting_DeleteFreesQuotaThenPutSucceeds(t *testing.T) {
+	client := newS3Client(t)
+	_ = client
+	ctx := context.Background()
+	_ = ctx
+
+	resetState(t)
+
+	fillKey := uniqueKey(t, "del-quota")
+	_, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(fillKey),
+		Body:          bytes.NewReader(bytes.Repeat([]byte("D"), 1024)),
+		ContentLength: aws.Int64(1024),
+	})
+	if err != nil {
+		t.Fatalf("fill minio-1: %v", err)
+	}
+
+	_, err = client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(uniqueKey(t, "del-quota2")),
+		Body:          bytes.NewReader(bytes.Repeat([]byte("E"), 2048)),
+		ContentLength: aws.Int64(2048),
+	})
+	if err != nil {
+		t.Fatalf("fill minio-2: %v", err)
+	}
+
+	if used := queryQuotaUsed(t, "minio-1"); used != 1024 {
+		t.Fatalf("expected 1024 bytes used on minio-1, got %d", used)
+	}
+
+	_, err = client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(virtualBucket),
+		Key:    aws.String(fillKey),
+	})
+	if err != nil {
+		t.Fatalf("DeleteObject: %v", err)
+	}
+
+	if used := queryQuotaUsed(t, "minio-1"); used != 0 {
+		t.Errorf("expected 0 bytes used after delete, got %d", used)
+	}
+
+	newKey := uniqueKey(t, "reuse")
+	_, err = client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(newKey),
+		Body:          bytes.NewReader(bytes.Repeat([]byte("N"), 500)),
+		ContentLength: aws.Int64(500),
+	})
+	if err != nil {
+		t.Fatalf("PutObject after delete: %v", err)
+	}
+
+	backend := queryObjectBackend(t, newKey)
+	if backend != "minio-1" {
+		t.Errorf("new object landed on %q, want %q", backend, "minio-1")
+	}
 }
 
 // -------------------------------------------------------------------------
 // RANGE REQUESTS
 // -------------------------------------------------------------------------
 
-// TestRangeRequests verifies the range requests behaviour across the supplied sub-cases:
-// "PartialGet206", "FullGetHasAcceptRanges", "HeadHasAcceptRanges".
-// Each sub-case exercises one branch of the code under test.
-func TestRangeRequests(t *testing.T) {
+// TestRangeRequests_PartialGet206 is one of the sub-cases extracted from the
+// original mega-TestRangeRequests; behaviour is preserved.
+func TestRangeRequests_PartialGet206(t *testing.T) {
 	client := newS3Client(t)
+	_ = client
 	ctx := context.Background()
-
+	_ = ctx
+	resetState(t)
 	key := uniqueKey(t, "range")
+	_ = key
 	body := make([]byte, 256)
+	_ = body
 	for i := range body {
 		body[i] = byte(i)
 	}
-
 	_, err := client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:        aws.String(virtualBucket),
 		Key:           aws.String(key),
@@ -359,69 +392,115 @@ func TestRangeRequests(t *testing.T) {
 		t.Fatalf("PutObject: %v", err)
 	}
 
-	t.Run("PartialGet206", func(t *testing.T) {
-		resp, err := client.GetObject(ctx, &s3.GetObjectInput{
-			Bucket: aws.String(virtualBucket),
-			Key:    aws.String(key),
-			Range:  aws.String("bytes=0-99"),
-		})
-		if err != nil {
-			t.Fatalf("GetObject with Range: %v", err)
-		}
-		defer resp.Body.Close()
-
-		got, err := io.ReadAll(resp.Body)
-		if err != nil {
-			t.Fatalf("ReadAll: %v", err)
-		}
-		if len(got) != 100 {
-			t.Errorf("got %d bytes, want 100", len(got))
-		}
-		if !bytes.Equal(got, body[:100]) {
-			t.Error("partial body doesn't match expected range")
-		}
-		if resp.ContentRange == nil || *resp.ContentRange == "" {
-			t.Error("expected Content-Range header in response")
-		}
+	resp, err := client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(virtualBucket),
+		Key:    aws.String(key),
+		Range:  aws.String("bytes=0-99"),
 	})
+	if err != nil {
+		t.Fatalf("GetObject with Range: %v", err)
+	}
+	defer resp.Body.Close()
 
-	t.Run("FullGetHasAcceptRanges", func(t *testing.T) {
-		resp, err := client.GetObject(ctx, &s3.GetObjectInput{
-			Bucket: aws.String(virtualBucket),
-			Key:    aws.String(key),
-		})
-		if err != nil {
-			t.Fatalf("GetObject: %v", err)
-		}
-		defer resp.Body.Close()
-		io.Copy(io.Discard, resp.Body)
+	got, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if len(got) != 100 {
+		t.Errorf("got %d bytes, want 100", len(got))
+	}
+	if !bytes.Equal(got, body[:100]) {
+		t.Error("partial body doesn't match expected range")
+	}
+	if resp.ContentRange == nil || *resp.ContentRange == "" {
+		t.Error("expected Content-Range header in response")
+	}
+}
 
-		if resp.AcceptRanges == nil || *resp.AcceptRanges != "bytes" {
-			got := ""
-			if resp.AcceptRanges != nil {
-				got = *resp.AcceptRanges
-			}
-			t.Errorf("Accept-Ranges = %q, want %q", got, "bytes")
-		}
+// TestRangeRequests_FullGetHasAcceptRanges is one of the sub-cases extracted from the
+// original mega-TestRangeRequests; behaviour is preserved.
+func TestRangeRequests_FullGetHasAcceptRanges(t *testing.T) {
+	client := newS3Client(t)
+	_ = client
+	ctx := context.Background()
+	_ = ctx
+	resetState(t)
+	key := uniqueKey(t, "range")
+	_ = key
+	body := make([]byte, 256)
+	_ = body
+	for i := range body {
+		body[i] = byte(i)
+	}
+	_, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(key),
+		Body:          bytes.NewReader(body),
+		ContentLength: aws.Int64(256),
 	})
+	if err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
 
-	t.Run("HeadHasAcceptRanges", func(t *testing.T) {
-		resp, err := client.HeadObject(ctx, &s3.HeadObjectInput{
-			Bucket: aws.String(virtualBucket),
-			Key:    aws.String(key),
-		})
-		if err != nil {
-			t.Fatalf("HeadObject: %v", err)
-		}
-
-		if resp.AcceptRanges == nil || *resp.AcceptRanges != "bytes" {
-			got := ""
-			if resp.AcceptRanges != nil {
-				got = *resp.AcceptRanges
-			}
-			t.Errorf("Accept-Ranges = %q, want %q", got, "bytes")
-		}
+	resp, err := client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(virtualBucket),
+		Key:    aws.String(key),
 	})
+	if err != nil {
+		t.Fatalf("GetObject: %v", err)
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+
+	if resp.AcceptRanges == nil || *resp.AcceptRanges != "bytes" {
+		got := ""
+		if resp.AcceptRanges != nil {
+			got = *resp.AcceptRanges
+		}
+		t.Errorf("Accept-Ranges = %q, want %q", got, "bytes")
+	}
+}
+
+// TestRangeRequests_HeadHasAcceptRanges is one of the sub-cases extracted from the
+// original mega-TestRangeRequests; behaviour is preserved.
+func TestRangeRequests_HeadHasAcceptRanges(t *testing.T) {
+	client := newS3Client(t)
+	_ = client
+	ctx := context.Background()
+	_ = ctx
+	resetState(t)
+	key := uniqueKey(t, "range")
+	_ = key
+	body := make([]byte, 256)
+	_ = body
+	for i := range body {
+		body[i] = byte(i)
+	}
+	_, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(key),
+		Body:          bytes.NewReader(body),
+		ContentLength: aws.Int64(256),
+	})
+	if err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+
+	resp, err := client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(virtualBucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		t.Fatalf("HeadObject: %v", err)
+	}
+
+	if resp.AcceptRanges == nil || *resp.AcceptRanges != "bytes" {
+		got := ""
+		if resp.AcceptRanges != nil {
+			got = *resp.AcceptRanges
+		}
+		t.Errorf("Accept-Ranges = %q, want %q", got, "bytes")
+	}
 }
 
 // -------------------------------------------------------------------------
@@ -510,93 +589,101 @@ func TestMultipartUpload(t *testing.T) {
 // LIST AND COPY
 // -------------------------------------------------------------------------
 
-// TestListAndCopy verifies the list and copy behaviour across the supplied sub-cases:
-// "ListObjectsV2", "CopyObject".
-// Each sub-case exercises one branch of the code under test.
-func TestListAndCopy(t *testing.T) {
+// TestListAndCopy_ListObjectsV2 is one of the sub-cases extracted from the
+// original mega-TestListAndCopy; behaviour is preserved.
+func TestListAndCopy_ListObjectsV2(t *testing.T) {
 	client := newS3Client(t)
+	_ = client
 	ctx := context.Background()
+	_ = ctx
 
-	t.Run("ListObjectsV2", func(t *testing.T) {
-		prefix := fmt.Sprintf("list-test/%d/", time.Now().UnixNano())
-		keys := []string{prefix + "a", prefix + "b", prefix + "c"}
+	resetState(t)
+	prefix := fmt.Sprintf("list-test/%d/", time.Now().UnixNano())
+	keys := []string{prefix + "a", prefix + "b", prefix + "c"}
 
-		for _, k := range keys {
-			_, err := client.PutObject(ctx, &s3.PutObjectInput{
-				Bucket:        aws.String(virtualBucket),
-				Key:           aws.String(k),
-				Body:          bytes.NewReader([]byte("data")),
-				ContentLength: aws.Int64(4),
-			})
-			if err != nil {
-				t.Fatalf("PutObject(%s): %v", k, err)
-			}
-		}
-
-		list, err := client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
-			Bucket: aws.String(virtualBucket),
-			Prefix: aws.String(prefix),
-		})
-		if err != nil {
-			t.Fatalf("ListObjectsV2: %v", err)
-		}
-
-		if len(list.Contents) != 3 {
-			t.Errorf("got %d objects, want 3", len(list.Contents))
-		}
-
-		found := make(map[string]bool)
-		for _, obj := range list.Contents {
-			found[*obj.Key] = true
-		}
-		for _, k := range keys {
-			if !found[k] {
-				t.Errorf("missing key %q in list results", k)
-			}
-		}
-	})
-
-	t.Run("CopyObject", func(t *testing.T) {
-		srcKey := uniqueKey(t, "copy-src")
-		dstKey := uniqueKey(t, "copy-dst")
-		body := []byte("copy-me-please")
-
+	for _, k := range keys {
 		_, err := client.PutObject(ctx, &s3.PutObjectInput{
 			Bucket:        aws.String(virtualBucket),
-			Key:           aws.String(srcKey),
-			Body:          bytes.NewReader(body),
-			ContentLength: aws.Int64(int64(len(body))),
+			Key:           aws.String(k),
+			Body:          bytes.NewReader([]byte("data")),
+			ContentLength: aws.Int64(4),
 		})
 		if err != nil {
-			t.Fatalf("PutObject source: %v", err)
+			t.Fatalf("PutObject(%s): %v", k, err)
 		}
+	}
 
-		_, err = client.CopyObject(ctx, &s3.CopyObjectInput{
-			Bucket:     aws.String(virtualBucket),
-			Key:        aws.String(dstKey),
-			CopySource: aws.String(virtualBucket + "/" + srcKey),
-		})
-		if err != nil {
-			t.Fatalf("CopyObject: %v", err)
-		}
-
-		getResp, err := client.GetObject(ctx, &s3.GetObjectInput{
-			Bucket: aws.String(virtualBucket),
-			Key:    aws.String(dstKey),
-		})
-		if err != nil {
-			t.Fatalf("GetObject copy: %v", err)
-		}
-		defer getResp.Body.Close()
-
-		got, err := io.ReadAll(getResp.Body)
-		if err != nil {
-			t.Fatalf("ReadAll: %v", err)
-		}
-		if !bytes.Equal(got, body) {
-			t.Errorf("copied body mismatch: got %q, want %q", got, body)
-		}
+	list, err := client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+		Bucket: aws.String(virtualBucket),
+		Prefix: aws.String(prefix),
 	})
+	if err != nil {
+		t.Fatalf("ListObjectsV2: %v", err)
+	}
+
+	if len(list.Contents) != 3 {
+		t.Errorf("got %d objects, want 3", len(list.Contents))
+	}
+
+	found := make(map[string]bool)
+	for _, obj := range list.Contents {
+		found[*obj.Key] = true
+	}
+	for _, k := range keys {
+		if !found[k] {
+			t.Errorf("missing key %q in list results", k)
+		}
+	}
+}
+
+// TestListAndCopy_CopyObject is one of the sub-cases extracted from the
+// original mega-TestListAndCopy; behaviour is preserved.
+func TestListAndCopy_CopyObject(t *testing.T) {
+	client := newS3Client(t)
+	_ = client
+	ctx := context.Background()
+	_ = ctx
+
+	resetState(t)
+	srcKey := uniqueKey(t, "copy-src")
+	dstKey := uniqueKey(t, "copy-dst")
+	body := []byte("copy-me-please")
+
+	_, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(srcKey),
+		Body:          bytes.NewReader(body),
+		ContentLength: aws.Int64(int64(len(body))),
+	})
+	if err != nil {
+		t.Fatalf("PutObject source: %v", err)
+	}
+
+	_, err = client.CopyObject(ctx, &s3.CopyObjectInput{
+		Bucket:     aws.String(virtualBucket),
+		Key:        aws.String(dstKey),
+		CopySource: aws.String(virtualBucket + "/" + srcKey),
+	})
+	if err != nil {
+		t.Fatalf("CopyObject: %v", err)
+	}
+
+	getResp, err := client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(virtualBucket),
+		Key:    aws.String(dstKey),
+	})
+	if err != nil {
+		t.Fatalf("GetObject copy: %v", err)
+	}
+	defer getResp.Body.Close()
+
+	got, err := io.ReadAll(getResp.Body)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if !bytes.Equal(got, body) {
+		t.Errorf("copied body mismatch: got %q, want %q", got, body)
+	}
 }
 
 // delimiterGroup describes one CommonPrefix group to seed under the test
@@ -858,19 +945,19 @@ func mustEnqueueWithSize(t *testing.T, ctx context.Context, backend, key, reason
 // SPREAD WRITE ROUTING
 // -------------------------------------------------------------------------
 
-// TestSpreadWriteRouting verifies the spread write routing behaviour across the supplied sub-cases:
-// "DistributesAcrossBackends", "PreferLeastUtilizedAfterImbalance", "ContrastWithPackBehavior".
-// Each sub-case exercises one branch of the code under test.
-func TestSpreadWriteRouting(t *testing.T) {
+// TestSpreadWriteRouting_DistributesAcrossBackends is one of the sub-cases extracted from the
+// original mega-TestSpreadWriteRouting; behaviour is preserved.
+func TestSpreadWriteRouting_DistributesAcrossBackends(t *testing.T) {
 	ctx := context.Background()
-
-	// Build a spread-strategy manager sharing the same store and backends.
+	_ = ctx
 	spreadCB := store.NewDatabaseBreaker(config.CircuitBreakerConfig{
 		FailureThreshold: 3,
 		OpenTimeout:      500 * time.Millisecond,
 		CacheTTL:         60 * time.Second,
 	})
+	_ = spreadCB
 	stores := newCBStores(testStore, spreadCB)
+	_ = stores
 	spreadManager := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        testBackends,
 		Stores:          stores,
@@ -881,11 +968,12 @@ func TestSpreadWriteRouting(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingSpread,
 	})
+	_ = spreadManager
 	proxytest.AttachWorkersWithStores(spreadManager, &stores)
-
 	spreadSrv := &s3api.Server{
 		Manager: spreadManager,
 	}
+	_ = spreadSrv
 	spreadSrv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{{
 		Name: virtualBucket,
 		Credentials: []config.CredentialConfig{{
@@ -893,7 +981,6 @@ func TestSpreadWriteRouting(t *testing.T) {
 			SecretAccessKey: "test",
 		}},
 	}}))
-
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -903,176 +990,257 @@ func TestSpreadWriteRouting(t *testing.T) {
 		ReadTimeout:  5 * time.Minute,
 		WriteTimeout: 5 * time.Minute,
 	}
+	_ = httpSrv
 	go httpSrv.Serve(listener)
 	defer httpSrv.Shutdown(ctx)
-
 	spreadClient := s3.New(s3.Options{
 		BaseEndpoint: aws.String("http://" + listener.Addr().String()),
 		Region:       "us-east-1",
 		Credentials:  credentials.NewStaticCredentialsProvider("test", "test", ""),
 		UsePathStyle: true,
 	})
+	_ = spreadClient
 
-	t.Run("DistributesAcrossBackends", func(t *testing.T) {
-		resetState(t)
-		spreadManager.ClearCache()
+	resetState(t)
+	spreadManager.ClearCache()
 
-		// Put 4 objects of 200 bytes each. With spread routing the manager
-		// should pick the backend with the lowest utilization ratio each time.
-		//
-		// minio-1: quota 1024, minio-2: quota 2048
-		//
-		// obj-0: both at 0% -> picks first in order (minio-1)
-		//   minio-1=200/1024 (19.5%), minio-2=0/2048 (0%)
-		// obj-1: minio-2 least utilized -> picks minio-2
-		//   minio-1=200/1024 (19.5%), minio-2=200/2048 (9.8%)
-		// obj-2: minio-2 still least utilized -> picks minio-2
-		//   minio-1=200/1024 (19.5%), minio-2=400/2048 (19.5%)
-		// obj-3: equal utilization -> could go either way
-		keys := make([]string, 4)
-		for i := range keys {
-			keys[i] = uniqueKey(t, "spread-route")
-			_, err := spreadClient.PutObject(ctx, &s3.PutObjectInput{
-				Bucket:        aws.String(virtualBucket),
-				Key:           aws.String(keys[i]),
-				Body:          bytes.NewReader(bytes.Repeat([]byte("S"), 200)),
-				ContentLength: aws.Int64(200),
-			})
-			if err != nil {
-				t.Fatalf("PutObject %d: %v", i, err)
-			}
+	keys := make([]string, 4)
+	for i := range keys {
+		keys[i] = uniqueKey(t, "spread-route")
+		_, err := spreadClient.PutObject(ctx, &s3.PutObjectInput{
+			Bucket:        aws.String(virtualBucket),
+			Key:           aws.String(keys[i]),
+			Body:          bytes.NewReader(bytes.Repeat([]byte("S"), 200)),
+			ContentLength: aws.Int64(200),
+		})
+		if err != nil {
+			t.Fatalf("PutObject %d: %v", i, err)
 		}
+	}
 
-		// Count objects per backend
-		placement := make(map[string]int)
-		for _, key := range keys {
-			placement[queryObjectBackend(t, key)]++
+	placement := make(map[string]int)
+	for _, key := range keys {
+		placement[queryObjectBackend(t, key)]++
+	}
+
+	t.Logf("placement: %v", placement)
+
+	if len(placement) < 2 {
+		t.Errorf("spread routing placed all objects on %v, expected distribution across 2 backends", placement)
+	}
+
+	if placement["minio-2"] < 2 {
+		t.Errorf("minio-2 got %d objects, want >= 2", placement["minio-2"])
+	}
+
+	for _, key := range keys {
+		resp, err := spreadClient.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String(virtualBucket),
+			Key:    aws.String(key),
+		})
+		if err != nil {
+			t.Fatalf("GetObject(%s): %v", key, err)
 		}
+		resp.Body.Close()
+	}
+}
 
-		t.Logf("placement: %v", placement)
-
-		// With spread routing, objects should land on BOTH backends.
-		// Pack strategy would put all 4 on minio-1 (total 800 < 1024).
-		if len(placement) < 2 {
-			t.Errorf("spread routing placed all objects on %v, expected distribution across 2 backends", placement)
-		}
-
-		// minio-2 should have received at least 2 objects (it has lower utilization
-		// for obj-1 and obj-2 at minimum).
-		if placement["minio-2"] < 2 {
-			t.Errorf("minio-2 got %d objects, want >= 2", placement["minio-2"])
-		}
-
-		// All objects should be readable
-		for _, key := range keys {
-			resp, err := spreadClient.GetObject(ctx, &s3.GetObjectInput{
-				Bucket: aws.String(virtualBucket),
-				Key:    aws.String(key),
-			})
-			if err != nil {
-				t.Fatalf("GetObject(%s): %v", key, err)
-			}
-			resp.Body.Close()
-		}
+// TestSpreadWriteRouting_PreferLeastUtilizedAfterImbalance is one of the sub-cases extracted from the
+// original mega-TestSpreadWriteRouting; behaviour is preserved.
+func TestSpreadWriteRouting_PreferLeastUtilizedAfterImbalance(t *testing.T) {
+	ctx := context.Background()
+	_ = ctx
+	spreadCB := store.NewDatabaseBreaker(config.CircuitBreakerConfig{
+		FailureThreshold: 3,
+		OpenTimeout:      500 * time.Millisecond,
+		CacheTTL:         60 * time.Second,
 	})
-
-	t.Run("PreferLeastUtilizedAfterImbalance", func(t *testing.T) {
-		resetState(t)
-		spreadManager.ClearCache()
-
-		// Pre-fill minio-1 to 50% via the store directly.
-		if _, err := testStore.RecordObject(ctx, uniqueKey(t, "prefill"), "minio-1", 512, nil); err != nil {
-			t.Fatalf("RecordObject prefill: %v", err)
-		}
-		// minio-1: 512/1024 = 50%, minio-2: 0/2048 = 0%
-
-		// Put 3 objects via spread proxy  -  all should land on minio-2 (least utilized).
-		keys := make([]string, 3)
-		for i := range keys {
-			keys[i] = uniqueKey(t, "spread-imbal")
-			_, err := spreadClient.PutObject(ctx, &s3.PutObjectInput{
-				Bucket:        aws.String(virtualBucket),
-				Key:           aws.String(keys[i]),
-				Body:          bytes.NewReader(bytes.Repeat([]byte("I"), 100)),
-				ContentLength: aws.Int64(100),
-			})
-			if err != nil {
-				t.Fatalf("PutObject %d: %v", i, err)
-			}
-		}
-
-		// All 3 should be on minio-2 since its utilization (0%->4.9%) stays
-		// well below minio-1 (50%) the entire time.
-		for i, key := range keys {
-			backend := queryObjectBackend(t, key)
-			if backend != "minio-2" {
-				t.Errorf("obj-%d on %q, want minio-2 (least utilized)", i, backend)
-			}
-		}
+	_ = spreadCB
+	stores := newCBStores(testStore, spreadCB)
+	_ = stores
+	spreadManager := proxy.NewBackendManager(&proxy.BackendManagerConfig{
+		Backends:        testBackends,
+		Stores:          stores,
+		Dashboard:       store.NewCBDashboardStore(testStore, spreadCB),
+		Metrics:         newMetricsAdapter(testStore, spreadCB),
+		Order:           testBackendOrder,
+		CacheTTL:        60 * time.Second,
+		BackendTimeout:  30 * time.Second,
+		RoutingStrategy: config.RoutingSpread,
 	})
-
-	t.Run("ContrastWithPackBehavior", func(t *testing.T) {
-		resetState(t)
-		spreadManager.ClearCache()
-		testManager.ClearCache()
-
-		// Use the default pack-strategy proxy to put 4 small objects.
-		// With pack, they should all land on minio-1 (first in order, 800 < 1024 quota).
-		packClient := newS3Client(t)
-		packKeys := make([]string, 4)
-		for i := range packKeys {
-			packKeys[i] = uniqueKey(t, "pack-contrast")
-			_, err := packClient.PutObject(ctx, &s3.PutObjectInput{
-				Bucket:        aws.String(virtualBucket),
-				Key:           aws.String(packKeys[i]),
-				Body:          bytes.NewReader(bytes.Repeat([]byte("P"), 200)),
-				ContentLength: aws.Int64(200),
-			})
-			if err != nil {
-				t.Fatalf("PutObject pack %d: %v", i, err)
-			}
-		}
-
-		packPlacement := make(map[string]int)
-		for _, key := range packKeys {
-			packPlacement[queryObjectBackend(t, key)]++
-		}
-		t.Logf("pack placement: %v", packPlacement)
-
-		// Pack strategy: all 4 should be on minio-1 (800 bytes < 1024 quota)
-		if packPlacement["minio-1"] != 4 {
-			t.Errorf("pack placed %d on minio-1, want 4", packPlacement["minio-1"])
-		}
-
-		// Now reset and do the same with spread
-		resetState(t)
-		spreadManager.ClearCache()
-
-		spreadKeys := make([]string, 4)
-		for i := range spreadKeys {
-			spreadKeys[i] = uniqueKey(t, "spread-contrast")
-			_, err := spreadClient.PutObject(ctx, &s3.PutObjectInput{
-				Bucket:        aws.String(virtualBucket),
-				Key:           aws.String(spreadKeys[i]),
-				Body:          bytes.NewReader(bytes.Repeat([]byte("S"), 200)),
-				ContentLength: aws.Int64(200),
-			})
-			if err != nil {
-				t.Fatalf("PutObject spread %d: %v", i, err)
-			}
-		}
-
-		spreadPlacement := make(map[string]int)
-		for _, key := range spreadKeys {
-			spreadPlacement[queryObjectBackend(t, key)]++
-		}
-		t.Logf("spread placement: %v", spreadPlacement)
-
-		// Spread strategy: objects should be distributed across both backends
-		if len(spreadPlacement) < 2 {
-			t.Errorf("spread placed all on one backend: %v", spreadPlacement)
-		}
+	_ = spreadManager
+	proxytest.AttachWorkersWithStores(spreadManager, &stores)
+	spreadSrv := &s3api.Server{
+		Manager: spreadManager,
+	}
+	_ = spreadSrv
+	spreadSrv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{{
+		Name: virtualBucket,
+		Credentials: []config.CredentialConfig{{
+			AccessKeyID:     "test",
+			SecretAccessKey: "test",
+		}},
+	}}))
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	httpSrv := &http.Server{
+		Handler:      spreadSrv,
+		ReadTimeout:  5 * time.Minute,
+		WriteTimeout: 5 * time.Minute,
+	}
+	_ = httpSrv
+	go httpSrv.Serve(listener)
+	defer httpSrv.Shutdown(ctx)
+	spreadClient := s3.New(s3.Options{
+		BaseEndpoint: aws.String("http://" + listener.Addr().String()),
+		Region:       "us-east-1",
+		Credentials:  credentials.NewStaticCredentialsProvider("test", "test", ""),
+		UsePathStyle: true,
 	})
+	_ = spreadClient
+
+	resetState(t)
+	spreadManager.ClearCache()
+
+	if _, err := testStore.RecordObject(ctx, uniqueKey(t, "prefill"), "minio-1", 512, nil); err != nil {
+		t.Fatalf("RecordObject prefill: %v", err)
+	}
+
+	keys := make([]string, 3)
+	for i := range keys {
+		keys[i] = uniqueKey(t, "spread-imbal")
+		_, err := spreadClient.PutObject(ctx, &s3.PutObjectInput{
+			Bucket:        aws.String(virtualBucket),
+			Key:           aws.String(keys[i]),
+			Body:          bytes.NewReader(bytes.Repeat([]byte("I"), 100)),
+			ContentLength: aws.Int64(100),
+		})
+		if err != nil {
+			t.Fatalf("PutObject %d: %v", i, err)
+		}
+	}
+
+	for i, key := range keys {
+		backend := queryObjectBackend(t, key)
+		if backend != "minio-2" {
+			t.Errorf("obj-%d on %q, want minio-2 (least utilized)", i, backend)
+		}
+	}
+}
+
+// TestSpreadWriteRouting_ContrastWithPackBehavior is one of the sub-cases extracted from the
+// original mega-TestSpreadWriteRouting; behaviour is preserved.
+func TestSpreadWriteRouting_ContrastWithPackBehavior(t *testing.T) {
+	ctx := context.Background()
+	_ = ctx
+	spreadCB := store.NewDatabaseBreaker(config.CircuitBreakerConfig{
+		FailureThreshold: 3,
+		OpenTimeout:      500 * time.Millisecond,
+		CacheTTL:         60 * time.Second,
+	})
+	_ = spreadCB
+	stores := newCBStores(testStore, spreadCB)
+	_ = stores
+	spreadManager := proxy.NewBackendManager(&proxy.BackendManagerConfig{
+		Backends:        testBackends,
+		Stores:          stores,
+		Dashboard:       store.NewCBDashboardStore(testStore, spreadCB),
+		Metrics:         newMetricsAdapter(testStore, spreadCB),
+		Order:           testBackendOrder,
+		CacheTTL:        60 * time.Second,
+		BackendTimeout:  30 * time.Second,
+		RoutingStrategy: config.RoutingSpread,
+	})
+	_ = spreadManager
+	proxytest.AttachWorkersWithStores(spreadManager, &stores)
+	spreadSrv := &s3api.Server{
+		Manager: spreadManager,
+	}
+	_ = spreadSrv
+	spreadSrv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{{
+		Name: virtualBucket,
+		Credentials: []config.CredentialConfig{{
+			AccessKeyID:     "test",
+			SecretAccessKey: "test",
+		}},
+	}}))
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	httpSrv := &http.Server{
+		Handler:      spreadSrv,
+		ReadTimeout:  5 * time.Minute,
+		WriteTimeout: 5 * time.Minute,
+	}
+	_ = httpSrv
+	go httpSrv.Serve(listener)
+	defer httpSrv.Shutdown(ctx)
+	spreadClient := s3.New(s3.Options{
+		BaseEndpoint: aws.String("http://" + listener.Addr().String()),
+		Region:       "us-east-1",
+		Credentials:  credentials.NewStaticCredentialsProvider("test", "test", ""),
+		UsePathStyle: true,
+	})
+	_ = spreadClient
+
+	resetState(t)
+	spreadManager.ClearCache()
+	testManager.ClearCache()
+
+	packClient := newS3Client(t)
+	packKeys := make([]string, 4)
+	for i := range packKeys {
+		packKeys[i] = uniqueKey(t, "pack-contrast")
+		_, err := packClient.PutObject(ctx, &s3.PutObjectInput{
+			Bucket:        aws.String(virtualBucket),
+			Key:           aws.String(packKeys[i]),
+			Body:          bytes.NewReader(bytes.Repeat([]byte("P"), 200)),
+			ContentLength: aws.Int64(200),
+		})
+		if err != nil {
+			t.Fatalf("PutObject pack %d: %v", i, err)
+		}
+	}
+
+	packPlacement := make(map[string]int)
+	for _, key := range packKeys {
+		packPlacement[queryObjectBackend(t, key)]++
+	}
+	t.Logf("pack placement: %v", packPlacement)
+
+	if packPlacement["minio-1"] != 4 {
+		t.Errorf("pack placed %d on minio-1, want 4", packPlacement["minio-1"])
+	}
+
+	resetState(t)
+	spreadManager.ClearCache()
+
+	spreadKeys := make([]string, 4)
+	for i := range spreadKeys {
+		spreadKeys[i] = uniqueKey(t, "spread-contrast")
+		_, err := spreadClient.PutObject(ctx, &s3.PutObjectInput{
+			Bucket:        aws.String(virtualBucket),
+			Key:           aws.String(spreadKeys[i]),
+			Body:          bytes.NewReader(bytes.Repeat([]byte("S"), 200)),
+			ContentLength: aws.Int64(200),
+		})
+		if err != nil {
+			t.Fatalf("PutObject spread %d: %v", i, err)
+		}
+	}
+
+	spreadPlacement := make(map[string]int)
+	for _, key := range spreadKeys {
+		spreadPlacement[queryObjectBackend(t, key)]++
+	}
+	t.Logf("spread placement: %v", spreadPlacement)
+
+	if len(spreadPlacement) < 2 {
+		t.Errorf("spread placed all on one backend: %v", spreadPlacement)
+	}
 }
 
 // -------------------------------------------------------------------------
@@ -1193,163 +1361,165 @@ func TestRebalancePackTight(t *testing.T) {
 	}
 }
 
-// TestRebalancePackTinyToFuller verifies the rebalance pack tiny to fuller behaviour across the supplied sub-cases:
-// "DestHasRoom", "DestIsFull".
-// Each sub-case exercises one branch of the code under test.
-func TestRebalancePackTinyToFuller(t *testing.T) {
+// TestRebalancePackTinyToFuller_DestHasRoom is one of the sub-cases extracted from the
+// original mega-TestRebalancePackTinyToFuller; behaviour is preserved.
+func TestRebalancePackTinyToFuller_DestHasRoom(t *testing.T) {
 	client := newS3Client(t)
+	_ = client
 	ctx := context.Background()
-
+	_ = ctx
 	packCfg := config.RebalanceConfig{
 		Enabled:   true,
 		Strategy:  "pack",
 		BatchSize: 10,
 		Threshold: 0,
 	}
+	_ = packCfg
 
-	t.Run("DestHasRoom", func(t *testing.T) {
-		resetState(t)
+	resetState(t)
 
-		// Fill minio-1 to force overflow, then replace with a tiny object
-		fillKey := uniqueKey(t, "tiny-fill")
-		_, err := client.PutObject(ctx, &s3.PutObjectInput{
-			Bucket:        aws.String(virtualBucket),
-			Key:           aws.String(fillKey),
-			Body:          bytes.NewReader(bytes.Repeat([]byte("F"), 1024)),
-			ContentLength: aws.Int64(1024),
-		})
-		if err != nil {
-			t.Fatalf("PutObject fill: %v", err)
-		}
-
-		// Overflow a 1000-byte object to minio-2
-		bigKey := uniqueKey(t, "tiny-big")
-		_, err = client.PutObject(ctx, &s3.PutObjectInput{
-			Bucket:        aws.String(virtualBucket),
-			Key:           aws.String(bigKey),
-			Body:          bytes.NewReader(bytes.Repeat([]byte("B"), 1000)),
-			ContentLength: aws.Int64(1000),
-		})
-		if err != nil {
-			t.Fatalf("PutObject big: %v", err)
-		}
-
-		// Delete fill, put a tiny object on minio-1
-		_, _ = client.DeleteObject(ctx, &s3.DeleteObjectInput{
-			Bucket: aws.String(virtualBucket),
-			Key:    aws.String(fillKey),
-		})
-		tinyKey := uniqueKey(t, "tiny-obj")
-		_, err = client.PutObject(ctx, &s3.PutObjectInput{
-			Bucket:        aws.String(virtualBucket),
-			Key:           aws.String(tinyKey),
-			Body:          bytes.NewReader(bytes.Repeat([]byte("T"), 100)),
-			ContentLength: aws.Int64(100),
-		})
-		if err != nil {
-			t.Fatalf("PutObject tiny: %v", err)
-		}
-
-		// State: minio-1=100/1024 (9.8%), minio-2=1000/2048 (48.8%)
-		m1Before := queryQuotaUsed(t, "minio-1")
-		m2Before := queryQuotaUsed(t, "minio-2")
-		t.Logf("before: minio-1=%d (%.1f%%) minio-2=%d (%.1f%%)",
-			m1Before, float64(m1Before)/1024*100, m2Before, float64(m2Before)/2048*100)
-
-		moved, err := testManager.Rebalancer.Rebalance(ctx, packCfg)
-		if err != nil {
-			t.Fatalf("Rebalance: %v", err)
-		}
-
-		m1Used := queryQuotaUsed(t, "minio-1")
-		m2Used := queryQuotaUsed(t, "minio-2")
-		t.Logf("after: moved %d, minio-1=%d (%.1f%%) minio-2=%d (%.1f%%)",
-			moved, m1Used, float64(m1Used)/1024*100, m2Used, float64(m2Used)/2048*100)
-
-		// Tiny object should move from minio-1 to minio-2
-		if moved != 1 {
-			t.Errorf("moved = %d, want 1", moved)
-		}
-		if m2Used != 1100 {
-			t.Errorf("minio-2 bytes_used = %d, want 1100", m2Used)
-		}
-		if m1Used != 0 {
-			t.Errorf("minio-1 bytes_used = %d, want 0", m1Used)
-		}
-
-		// Object still accessible
-		_, err = client.HeadObject(ctx, &s3.HeadObjectInput{
-			Bucket: aws.String(virtualBucket),
-			Key:    aws.String(tinyKey),
-		})
-		if err != nil {
-			t.Errorf("tiny object not accessible: %v", err)
-		}
+	fillKey := uniqueKey(t, "tiny-fill")
+	_, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(fillKey),
+		Body:          bytes.NewReader(bytes.Repeat([]byte("F"), 1024)),
+		ContentLength: aws.Int64(1024),
 	})
+	if err != nil {
+		t.Fatalf("PutObject fill: %v", err)
+	}
 
-	t.Run("DestIsFull", func(t *testing.T) {
-		resetState(t)
-
-		// Fill minio-1 to force overflow, then replace with tiny object
-		fillKey := uniqueKey(t, "full-fill")
-		_, err := client.PutObject(ctx, &s3.PutObjectInput{
-			Bucket:        aws.String(virtualBucket),
-			Key:           aws.String(fillKey),
-			Body:          bytes.NewReader(bytes.Repeat([]byte("F"), 1024)),
-			ContentLength: aws.Int64(1024),
-		})
-		if err != nil {
-			t.Fatalf("PutObject fill: %v", err)
-		}
-
-		// Fill minio-2 completely
-		bigKey := uniqueKey(t, "full-big")
-		_, err = client.PutObject(ctx, &s3.PutObjectInput{
-			Bucket:        aws.String(virtualBucket),
-			Key:           aws.String(bigKey),
-			Body:          bytes.NewReader(bytes.Repeat([]byte("B"), 2048)),
-			ContentLength: aws.Int64(2048),
-		})
-		if err != nil {
-			t.Fatalf("PutObject big: %v", err)
-		}
-
-		// Delete fill, put tiny on minio-1
-		_, _ = client.DeleteObject(ctx, &s3.DeleteObjectInput{
-			Bucket: aws.String(virtualBucket),
-			Key:    aws.String(fillKey),
-		})
-		tinyKey := uniqueKey(t, "full-tiny")
-		_, err = client.PutObject(ctx, &s3.PutObjectInput{
-			Bucket:        aws.String(virtualBucket),
-			Key:           aws.String(tinyKey),
-			Body:          bytes.NewReader(bytes.Repeat([]byte("T"), 100)),
-			ContentLength: aws.Int64(100),
-		})
-		if err != nil {
-			t.Fatalf("PutObject tiny: %v", err)
-		}
-
-		// State: minio-1=100/1024 (9.8%), minio-2=2048/2048 (100%)
-		t.Logf("before: minio-1=%d minio-2=%d",
-			queryQuotaUsed(t, "minio-1"), queryQuotaUsed(t, "minio-2"))
-
-		moved, err := testManager.Rebalancer.Rebalance(ctx, packCfg)
-		if err != nil {
-			t.Fatalf("Rebalance: %v", err)
-		}
-
-		t.Logf("after: moved %d, minio-1=%d minio-2=%d",
-			moved, queryQuotaUsed(t, "minio-1"), queryQuotaUsed(t, "minio-2"))
-
-		// Nothing should move  -  minio-2 is full, can't pack into it
-		if moved != 0 {
-			t.Errorf("moved = %d, want 0 (destination full)", moved)
-		}
-		if got := queryQuotaUsed(t, "minio-1"); got != 100 {
-			t.Errorf("minio-1 bytes_used = %d, want 100", got)
-		}
+	bigKey := uniqueKey(t, "tiny-big")
+	_, err = client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(bigKey),
+		Body:          bytes.NewReader(bytes.Repeat([]byte("B"), 1000)),
+		ContentLength: aws.Int64(1000),
 	})
+	if err != nil {
+		t.Fatalf("PutObject big: %v", err)
+	}
+
+	_, _ = client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(virtualBucket),
+		Key:    aws.String(fillKey),
+	})
+	tinyKey := uniqueKey(t, "tiny-obj")
+	_, err = client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(tinyKey),
+		Body:          bytes.NewReader(bytes.Repeat([]byte("T"), 100)),
+		ContentLength: aws.Int64(100),
+	})
+	if err != nil {
+		t.Fatalf("PutObject tiny: %v", err)
+	}
+
+	m1Before := queryQuotaUsed(t, "minio-1")
+	m2Before := queryQuotaUsed(t, "minio-2")
+	t.Logf("before: minio-1=%d (%.1f%%) minio-2=%d (%.1f%%)",
+		m1Before, float64(m1Before)/1024*100, m2Before, float64(m2Before)/2048*100)
+
+	moved, err := testManager.Rebalancer.Rebalance(ctx, packCfg)
+	if err != nil {
+		t.Fatalf("Rebalance: %v", err)
+	}
+
+	m1Used := queryQuotaUsed(t, "minio-1")
+	m2Used := queryQuotaUsed(t, "minio-2")
+	t.Logf("after: moved %d, minio-1=%d (%.1f%%) minio-2=%d (%.1f%%)",
+		moved, m1Used, float64(m1Used)/1024*100, m2Used, float64(m2Used)/2048*100)
+
+	if moved != 1 {
+		t.Errorf("moved = %d, want 1", moved)
+	}
+	if m2Used != 1100 {
+		t.Errorf("minio-2 bytes_used = %d, want 1100", m2Used)
+	}
+	if m1Used != 0 {
+		t.Errorf("minio-1 bytes_used = %d, want 0", m1Used)
+	}
+
+	_, err = client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(virtualBucket),
+		Key:    aws.String(tinyKey),
+	})
+	if err != nil {
+		t.Errorf("tiny object not accessible: %v", err)
+	}
+}
+
+// TestRebalancePackTinyToFuller_DestIsFull is one of the sub-cases extracted from the
+// original mega-TestRebalancePackTinyToFuller; behaviour is preserved.
+func TestRebalancePackTinyToFuller_DestIsFull(t *testing.T) {
+	client := newS3Client(t)
+	_ = client
+	ctx := context.Background()
+	_ = ctx
+	packCfg := config.RebalanceConfig{
+		Enabled:   true,
+		Strategy:  "pack",
+		BatchSize: 10,
+		Threshold: 0,
+	}
+	_ = packCfg
+
+	resetState(t)
+
+	fillKey := uniqueKey(t, "full-fill")
+	_, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(fillKey),
+		Body:          bytes.NewReader(bytes.Repeat([]byte("F"), 1024)),
+		ContentLength: aws.Int64(1024),
+	})
+	if err != nil {
+		t.Fatalf("PutObject fill: %v", err)
+	}
+
+	bigKey := uniqueKey(t, "full-big")
+	_, err = client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(bigKey),
+		Body:          bytes.NewReader(bytes.Repeat([]byte("B"), 2048)),
+		ContentLength: aws.Int64(2048),
+	})
+	if err != nil {
+		t.Fatalf("PutObject big: %v", err)
+	}
+
+	_, _ = client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(virtualBucket),
+		Key:    aws.String(fillKey),
+	})
+	tinyKey := uniqueKey(t, "full-tiny")
+	_, err = client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(tinyKey),
+		Body:          bytes.NewReader(bytes.Repeat([]byte("T"), 100)),
+		ContentLength: aws.Int64(100),
+	})
+	if err != nil {
+		t.Fatalf("PutObject tiny: %v", err)
+	}
+
+	t.Logf("before: minio-1=%d minio-2=%d",
+		queryQuotaUsed(t, "minio-1"), queryQuotaUsed(t, "minio-2"))
+
+	moved, err := testManager.Rebalancer.Rebalance(ctx, packCfg)
+	if err != nil {
+		t.Fatalf("Rebalance: %v", err)
+	}
+
+	t.Logf("after: moved %d, minio-1=%d minio-2=%d",
+		moved, queryQuotaUsed(t, "minio-1"), queryQuotaUsed(t, "minio-2"))
+
+	if moved != 0 {
+		t.Errorf("moved = %d, want 0 (destination full)", moved)
+	}
+	if got := queryQuotaUsed(t, "minio-1"); got != 100 {
+		t.Errorf("minio-1 bytes_used = %d, want 100", got)
+	}
 }
 
 // TestRebalanceSpreadEven verifies the rebalance spread even contract.
@@ -2584,174 +2754,165 @@ func TestOverReplicationCountPending(t *testing.T) {
 // IMPORT (Sync)
 // -------------------------------------------------------------------------
 
-// TestImportPreExistingObjects verifies the import pre existing objects behaviour across the supplied sub-cases:
-// "ImportAndAccessViaProxy", "ImportIdempotent", "ImportDoesNotOverwriteProxyObject".
-// Each sub-case exercises one branch of the code under test.
-func TestImportPreExistingObjects(t *testing.T) {
+// TestImportPreExistingObjects_ImportAndAccessViaProxy is one of the sub-cases extracted from the
+// original mega-TestImportPreExistingObjects; behaviour is preserved.
+func TestImportPreExistingObjects_ImportAndAccessViaProxy(t *testing.T) {
 	ctx := context.Background()
+	_ = ctx
 
-	t.Run("ImportAndAccessViaProxy", func(t *testing.T) {
-		resetState(t)
+	resetState(t)
 
-		// Upload objects directly to MinIO (bypassing the proxy).
-		// These exist in S3 but are invisible to the proxy's metadata DB.
-		// Objects are stored at the bucket-prefixed path to match the proxy's
-		// internal key format (bucket/key).
-		directClient := newDirectMinioClient(t, "minio-1")
-		keys := make([]string, 3)
-		for i := range keys {
-			keys[i] = fmt.Sprintf("import-test/obj-%d-%d", i, time.Now().UnixNano())
-			_, err := directClient.PutObject(ctx, &s3.PutObjectInput{
-				Bucket:        aws.String("backend1"),
-				Key:           aws.String(internalKey(keys[i])),
-				Body:          bytes.NewReader(bytes.Repeat([]byte("I"), 100)),
-				ContentLength: aws.Int64(100),
-			})
-			if err != nil {
-				t.Fatalf("direct PutObject(%s): %v", keys[i], err)
-			}
-		}
-
-		// Verify they are NOT accessible via the proxy (no DB record)
-		proxyClient := newS3Client(t)
-		for _, key := range keys {
-			_, err := proxyClient.GetObject(ctx, &s3.GetObjectInput{
-				Bucket: aws.String(virtualBucket),
-				Key:    aws.String(key),
-			})
-			if err == nil {
-				t.Fatalf("expected 404 for %q before import, got nil", key)
-			}
-			assertHTTPStatus(t, err, 404)
-		}
-
-		// Import each object with the bucket-prefixed key
-		store := testStore
-		for _, key := range keys {
-			imported, err := store.ImportObject(ctx, internalKey(key), "minio-1", 100)
-			if err != nil {
-				t.Fatalf("ImportObject(%q): %v", key, err)
-			}
-			if !imported {
-				t.Errorf("ImportObject(%q) = false, want true", key)
-			}
-		}
-
-		// Verify quota was updated
-		if used := queryQuotaUsed(t, "minio-1"); used != 300 {
-			t.Errorf("minio-1 bytes_used = %d, want 300", used)
-		}
-
-		// Verify imported objects are now accessible via the proxy
-		for _, key := range keys {
-			resp, err := proxyClient.GetObject(ctx, &s3.GetObjectInput{
-				Bucket: aws.String(virtualBucket),
-				Key:    aws.String(key),
-			})
-			if err != nil {
-				t.Fatalf("GetObject(%q) after import: %v", key, err)
-			}
-			got, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			if len(got) != 100 {
-				t.Errorf("GetObject(%q) body = %d bytes, want 100", key, len(got))
-			}
-		}
-
-		// Verify they appear in ListObjectsV2
-		list, err := proxyClient.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
-			Bucket: aws.String(virtualBucket),
-			Prefix: aws.String("import-test/"),
-		})
-		if err != nil {
-			t.Fatalf("ListObjectsV2: %v", err)
-		}
-		if len(list.Contents) != 3 {
-			t.Errorf("listed %d objects, want 3", len(list.Contents))
-		}
-	})
-
-	t.Run("ImportIdempotent", func(t *testing.T) {
-		resetState(t)
-
-		// Put an object directly on MinIO at the bucket-prefixed path
-		directClient := newDirectMinioClient(t, "minio-1")
-		key := fmt.Sprintf("import-idem/%d", time.Now().UnixNano())
+	directClient := newDirectMinioClient(t, "minio-1")
+	keys := make([]string, 3)
+	for i := range keys {
+		keys[i] = fmt.Sprintf("import-test/obj-%d-%d", i, time.Now().UnixNano())
 		_, err := directClient.PutObject(ctx, &s3.PutObjectInput{
 			Bucket:        aws.String("backend1"),
-			Key:           aws.String(internalKey(key)),
-			Body:          bytes.NewReader(bytes.Repeat([]byte("D"), 200)),
-			ContentLength: aws.Int64(200),
+			Key:           aws.String(internalKey(keys[i])),
+			Body:          bytes.NewReader(bytes.Repeat([]byte("I"), 100)),
+			ContentLength: aws.Int64(100),
 		})
 		if err != nil {
-			t.Fatalf("direct PutObject: %v", err)
+			t.Fatalf("direct PutObject(%s): %v", keys[i], err)
 		}
+	}
 
-		store := testStore
+	proxyClient := newS3Client(t)
+	for _, key := range keys {
+		_, err := proxyClient.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String(virtualBucket),
+			Key:    aws.String(key),
+		})
+		if err == nil {
+			t.Fatalf("expected 404 for %q before import, got nil", key)
+		}
+		assertHTTPStatus(t, err, 404)
+	}
 
-		// First import with bucket-prefixed key
-		imported, err := store.ImportObject(ctx, internalKey(key), "minio-1", 200)
+	store := testStore
+	for _, key := range keys {
+		imported, err := store.ImportObject(ctx, internalKey(key), "minio-1", 100)
 		if err != nil {
-			t.Fatalf("ImportObject first: %v", err)
+			t.Fatalf("ImportObject(%q): %v", key, err)
 		}
 		if !imported {
-			t.Error("first ImportObject = false, want true")
+			t.Errorf("ImportObject(%q) = false, want true", key)
 		}
+	}
 
-		// Second import of the same key/backend  -  should be a no-op
-		imported, err = store.ImportObject(ctx, internalKey(key), "minio-1", 200)
-		if err != nil {
-			t.Fatalf("ImportObject second: %v", err)
-		}
-		if imported {
-			t.Error("second ImportObject = true, want false (idempotent skip)")
-		}
+	if used := queryQuotaUsed(t, "minio-1"); used != 300 {
+		t.Errorf("minio-1 bytes_used = %d, want 300", used)
+	}
 
-		// Quota should only count the object once
-		if used := queryQuotaUsed(t, "minio-1"); used != 200 {
-			t.Errorf("minio-1 bytes_used = %d, want 200 (not double-counted)", used)
-		}
-
-		// Only 1 row in object_locations
-		if copies := queryObjectCopies(t, key); copies != 1 {
-			t.Errorf("object copies = %d, want 1", copies)
-		}
-	})
-
-	t.Run("ImportDoesNotOverwriteProxyObject", func(t *testing.T) {
-		resetState(t)
-
-		// PUT an object through the proxy (creates DB record)
-		proxyClient := newS3Client(t)
-		key := uniqueKey(t, "import-existing")
-		body := bytes.Repeat([]byte("P"), 150)
-		_, err := proxyClient.PutObject(ctx, &s3.PutObjectInput{
-			Bucket:        aws.String(virtualBucket),
-			Key:           aws.String(key),
-			Body:          bytes.NewReader(body),
-			ContentLength: aws.Int64(150),
+	for _, key := range keys {
+		resp, err := proxyClient.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String(virtualBucket),
+			Key:    aws.String(key),
 		})
 		if err != nil {
-			t.Fatalf("PutObject via proxy: %v", err)
+			t.Fatalf("GetObject(%q) after import: %v", key, err)
 		}
+		got, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if len(got) != 100 {
+			t.Errorf("GetObject(%q) body = %d bytes, want 100", key, len(got))
+		}
+	}
 
-		backend := queryObjectBackend(t, key)
-
-		// Try to import the same key (with bucket prefix)  -  should skip
-		store := testStore
-		imported, err := store.ImportObject(ctx, internalKey(key), backend, 150)
-		if err != nil {
-			t.Fatalf("ImportObject: %v", err)
-		}
-		if imported {
-			t.Error("ImportObject should skip existing proxy object")
-		}
-
-		// Quota unchanged
-		if used := queryQuotaUsed(t, backend); used != 150 {
-			t.Errorf("%s bytes_used = %d, want 150", backend, used)
-		}
+	list, err := proxyClient.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+		Bucket: aws.String(virtualBucket),
+		Prefix: aws.String("import-test/"),
 	})
+	if err != nil {
+		t.Fatalf("ListObjectsV2: %v", err)
+	}
+	if len(list.Contents) != 3 {
+		t.Errorf("listed %d objects, want 3", len(list.Contents))
+	}
+}
+
+// TestImportPreExistingObjects_ImportIdempotent is one of the sub-cases extracted from the
+// original mega-TestImportPreExistingObjects; behaviour is preserved.
+func TestImportPreExistingObjects_ImportIdempotent(t *testing.T) {
+	ctx := context.Background()
+	_ = ctx
+
+	resetState(t)
+
+	directClient := newDirectMinioClient(t, "minio-1")
+	key := fmt.Sprintf("import-idem/%d", time.Now().UnixNano())
+	_, err := directClient.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String("backend1"),
+		Key:           aws.String(internalKey(key)),
+		Body:          bytes.NewReader(bytes.Repeat([]byte("D"), 200)),
+		ContentLength: aws.Int64(200),
+	})
+	if err != nil {
+		t.Fatalf("direct PutObject: %v", err)
+	}
+
+	store := testStore
+
+	imported, err := store.ImportObject(ctx, internalKey(key), "minio-1", 200)
+	if err != nil {
+		t.Fatalf("ImportObject first: %v", err)
+	}
+	if !imported {
+		t.Error("first ImportObject = false, want true")
+	}
+
+	imported, err = store.ImportObject(ctx, internalKey(key), "minio-1", 200)
+	if err != nil {
+		t.Fatalf("ImportObject second: %v", err)
+	}
+	if imported {
+		t.Error("second ImportObject = true, want false (idempotent skip)")
+	}
+
+	if used := queryQuotaUsed(t, "minio-1"); used != 200 {
+		t.Errorf("minio-1 bytes_used = %d, want 200 (not double-counted)", used)
+	}
+
+	if copies := queryObjectCopies(t, key); copies != 1 {
+		t.Errorf("object copies = %d, want 1", copies)
+	}
+}
+
+// TestImportPreExistingObjects_ImportDoesNotOverwriteProxyObject is one of the sub-cases extracted from the
+// original mega-TestImportPreExistingObjects; behaviour is preserved.
+func TestImportPreExistingObjects_ImportDoesNotOverwriteProxyObject(t *testing.T) {
+	ctx := context.Background()
+	_ = ctx
+
+	resetState(t)
+
+	proxyClient := newS3Client(t)
+	key := uniqueKey(t, "import-existing")
+	body := bytes.Repeat([]byte("P"), 150)
+	_, err := proxyClient.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(key),
+		Body:          bytes.NewReader(body),
+		ContentLength: aws.Int64(150),
+	})
+	if err != nil {
+		t.Fatalf("PutObject via proxy: %v", err)
+	}
+
+	backend := queryObjectBackend(t, key)
+
+	store := testStore
+	imported, err := store.ImportObject(ctx, internalKey(key), backend, 150)
+	if err != nil {
+		t.Fatalf("ImportObject: %v", err)
+	}
+	if imported {
+		t.Error("ImportObject should skip existing proxy object")
+	}
+
+	if used := queryQuotaUsed(t, backend); used != 150 {
+		t.Errorf("%s bytes_used = %d, want 150", backend, used)
+	}
 }
 
 // TestListObjectsFromBackend verifies the list objects from backend contract.
@@ -2883,349 +3044,422 @@ func assertHTTPStatus(t *testing.T, err error, wantStatus int) {
 // STORE-LEVEL TESTS
 // -------------------------------------------------------------------------
 
-// TestStore verifies the store behaviour across the supplied sub-cases:
-// "RecordObject_OverwriteUpdatesQuota", "DeleteObject_NotFound", "MoveObjectLocation_RaceSafe", "ListObjects_PaginationAndEscaping", "GetBackendWithSpace_RespectsOrder", "GetLeastUtilizedBackend_PicksLeastFull", and 3 more.
-// Each sub-case exercises one branch of the code under test.
-func TestStore(t *testing.T) {
+// TestStore_RecordObject_OverwriteUpdatesQuota is one of the sub-cases extracted from the
+// original mega-TestStore; behaviour is preserved.
+func TestStore_RecordObject_OverwriteUpdatesQuota(t *testing.T) {
 	ctx := context.Background()
+	_ = ctx
 
-	t.Run("RecordObject_OverwriteUpdatesQuota", func(t *testing.T) {
-		resetState(t)
+	resetState(t)
 
-		key := uniqueKey(t, "store-overwrite")
+	key := uniqueKey(t, "store-overwrite")
 
-		// Record on backend A with 100 bytes (using internal key format).
-		if _, err := testStore.RecordObject(ctx, internalKey(key), "minio-1", 100, nil); err != nil {
-			t.Fatalf("RecordObject A: %v", err)
+	if _, err := testStore.RecordObject(ctx, internalKey(key), "minio-1", 100, nil); err != nil {
+		t.Fatalf("RecordObject A: %v", err)
+	}
+	if used := queryQuotaUsed(t, "minio-1"); used != 100 {
+		t.Fatalf("minio-1 after first record = %d, want 100", used)
+	}
+
+	if _, err := testStore.RecordObject(ctx, internalKey(key), "minio-2", 200, nil); err != nil {
+		t.Fatalf("RecordObject B: %v", err)
+	}
+
+	if used := queryQuotaUsed(t, "minio-1"); used != 0 {
+		t.Errorf("minio-1 after overwrite = %d, want 0", used)
+	}
+
+	if used := queryQuotaUsed(t, "minio-2"); used != 200 {
+		t.Errorf("minio-2 after overwrite = %d, want 200", used)
+	}
+
+	if copies := queryObjectCopies(t, key); copies != 1 {
+		t.Errorf("copies = %d, want 1", copies)
+	}
+
+	if backend := queryObjectBackend(t, key); backend != "minio-2" {
+		t.Errorf("backend = %q, want %q", backend, "minio-2")
+	}
+}
+
+// TestStore_DeleteObject_NotFound is one of the sub-cases extracted from the
+// original mega-TestStore; behaviour is preserved.
+func TestStore_DeleteObject_NotFound(t *testing.T) {
+	ctx := context.Background()
+	_ = ctx
+
+	resetState(t)
+
+	_, err := testStore.DeleteObject(ctx, "nonexistent-key-"+fmt.Sprintf("%d", time.Now().UnixNano()))
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+
+	var s3Err *core.S3Error
+	if !errors.As(err, &s3Err) {
+		t.Fatalf("expected *S3Error, got %T: %v", err, err)
+	}
+	if s3Err.StatusCode != 404 {
+		t.Errorf("status = %d, want 404", s3Err.StatusCode)
+	}
+}
+
+// TestStore_MoveObjectLocation_RaceSafe is one of the sub-cases extracted from the
+// original mega-TestStore; behaviour is preserved.
+func TestStore_MoveObjectLocation_RaceSafe(t *testing.T) {
+	ctx := context.Background()
+	_ = ctx
+
+	resetState(t)
+
+	key := uniqueKey(t, "store-move")
+
+	if _, err := testStore.RecordObject(ctx, key, "minio-1", 100, nil); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+
+	size, err := testStore.MoveObjectLocation(ctx, key, "minio-1", "minio-2")
+	if err != nil {
+		t.Fatalf("MoveObjectLocation: %v", err)
+	}
+	if size != 100 {
+		t.Errorf("moved size = %d, want 100", size)
+	}
+
+	if used := queryQuotaUsed(t, "minio-1"); used != 0 {
+		t.Errorf("minio-1 after move = %d, want 0", used)
+	}
+	if used := queryQuotaUsed(t, "minio-2"); used != 100 {
+		t.Errorf("minio-2 after move = %d, want 100", used)
+	}
+
+	size, err = testStore.MoveObjectLocation(ctx, key, "minio-1", "minio-2")
+	if err != nil {
+		t.Fatalf("second MoveObjectLocation: %v", err)
+	}
+	if size != 0 {
+		t.Errorf("second move size = %d, want 0 (source gone)", size)
+	}
+
+	if used := queryQuotaUsed(t, "minio-1"); used != 0 {
+		t.Errorf("minio-1 after second move = %d, want 0", used)
+	}
+	if used := queryQuotaUsed(t, "minio-2"); used != 100 {
+		t.Errorf("minio-2 after second move = %d, want 100", used)
+	}
+}
+
+// TestStore_ListObjects_PaginationAndEscaping is one of the sub-cases extracted from the
+// original mega-TestStore; behaviour is preserved.
+func TestStore_ListObjects_PaginationAndEscaping(t *testing.T) {
+	ctx := context.Background()
+	_ = ctx
+
+	resetState(t)
+
+	prefix := fmt.Sprintf("list-escape/%d/", time.Now().UnixNano())
+	wildcardKeys := []string{
+		prefix + "normal-key",
+		prefix + "has%percent",
+		prefix + "has_underscore",
+	}
+	for _, key := range wildcardKeys {
+		if _, err := testStore.RecordObject(ctx, key, "minio-1", 10, nil); err != nil {
+			t.Fatalf("RecordObject(%q): %v", key, err)
 		}
-		if used := queryQuotaUsed(t, "minio-1"); used != 100 {
-			t.Fatalf("minio-1 after first record = %d, want 100", used)
-		}
+	}
 
-		// Overwrite to backend B with 200 bytes.
-		if _, err := testStore.RecordObject(ctx, internalKey(key), "minio-2", 200, nil); err != nil {
-			t.Fatalf("RecordObject B: %v", err)
-		}
+	result, err := testStore.ListObjects(ctx, prefix, "", 1000)
+	if err != nil {
+		t.Fatalf("ListObjects: %v", err)
+	}
+	if len(result.Objects) != 3 {
+		t.Errorf("got %d objects, want 3", len(result.Objects))
+	}
 
-		// Old backend quota should be decremented.
-		if used := queryQuotaUsed(t, "minio-1"); used != 0 {
-			t.Errorf("minio-1 after overwrite = %d, want 0", used)
-		}
+	underscorePrefix := prefix + "has_"
+	result, err = testStore.ListObjects(ctx, underscorePrefix, "", 1000)
+	if err != nil {
+		t.Fatalf("ListObjects underscore: %v", err)
+	}
+	if len(result.Objects) != 1 {
+		t.Errorf("underscore prefix got %d objects, want 1", len(result.Objects))
+	}
 
-		// New backend quota should reflect the new size.
-		if used := queryQuotaUsed(t, "minio-2"); used != 200 {
-			t.Errorf("minio-2 after overwrite = %d, want 200", used)
-		}
+	result, err = testStore.ListObjects(ctx, prefix, "", 2)
+	if err != nil {
+		t.Fatalf("ListObjects page1: %v", err)
+	}
+	if !result.IsTruncated {
+		t.Error("expected IsTruncated=true for page 1")
+	}
+	if len(result.Objects) != 2 {
+		t.Errorf("page 1 got %d objects, want 2", len(result.Objects))
+	}
 
-		// Only 1 copy should exist.
-		if copies := queryObjectCopies(t, key); copies != 1 {
-			t.Errorf("copies = %d, want 1", copies)
-		}
+	result2, err := testStore.ListObjects(ctx, prefix, result.NextContinuationToken, 2)
+	if err != nil {
+		t.Fatalf("ListObjects page2: %v", err)
+	}
+	if result2.IsTruncated {
+		t.Error("expected IsTruncated=false for page 2")
+	}
+	if len(result2.Objects) != 1 {
+		t.Errorf("page 2 got %d objects, want 1", len(result2.Objects))
+	}
+}
 
-		if backend := queryObjectBackend(t, key); backend != "minio-2" {
-			t.Errorf("backend = %q, want %q", backend, "minio-2")
-		}
-	})
+// TestStore_GetBackendWithSpace_RespectsOrder is one of the sub-cases extracted from the
+// original mega-TestStore; behaviour is preserved.
+func TestStore_GetBackendWithSpace_RespectsOrder(t *testing.T) {
+	ctx := context.Background()
+	_ = ctx
 
-	t.Run("DeleteObject_NotFound", func(t *testing.T) {
-		resetState(t)
+	resetState(t)
 
-		_, err := testStore.DeleteObject(ctx, "nonexistent-key-"+fmt.Sprintf("%d", time.Now().UnixNano()))
+	name, err := testStore.GetBackendWithSpace(ctx, 10, []string{"minio-1", "minio-2"})
+	if err != nil {
+		t.Fatalf("GetBackendWithSpace: %v", err)
+	}
+	if name != "minio-1" {
+		t.Errorf("got %q, want %q (first in order)", name, "minio-1")
+	}
+
+	name, err = testStore.GetBackendWithSpace(ctx, 10, []string{"minio-2", "minio-1"})
+	if err != nil {
+		t.Fatalf("GetBackendWithSpace reversed: %v", err)
+	}
+	if name != "minio-2" {
+		t.Errorf("got %q, want %q (first in reversed order)", name, "minio-2")
+	}
+
+	if _, err := testStore.RecordObject(ctx, uniqueKey(t, "fill"), "minio-1", 1024, nil); err != nil {
+		t.Fatalf("RecordObject fill: %v", err)
+	}
+	name, err = testStore.GetBackendWithSpace(ctx, 1, []string{"minio-1", "minio-2"})
+	if err != nil {
+		t.Fatalf("GetBackendWithSpace after fill: %v", err)
+	}
+	if name != "minio-2" {
+		t.Errorf("got %q, want %q (minio-1 full)", name, "minio-2")
+	}
+}
+
+// TestStore_GetLeastUtilizedBackend_PicksLeastFull is one of the sub-cases extracted from the
+// original mega-TestStore; behaviour is preserved.
+func TestStore_GetLeastUtilizedBackend_PicksLeastFull(t *testing.T) {
+	ctx := context.Background()
+	_ = ctx
+
+	resetState(t)
+
+	name, err := testStore.GetLeastUtilizedBackend(ctx, 10, []string{"minio-1", "minio-2"})
+	if err != nil {
+		t.Fatalf("GetLeastUtilizedBackend empty: %v", err)
+	}
+	if name != "minio-1" && name != "minio-2" {
+		t.Errorf("unexpected backend %q", name)
+	}
+
+	if _, err := testStore.RecordObject(ctx, uniqueKey(t, "fill"), "minio-1", 500, nil); err != nil {
+		t.Fatalf("RecordObject fill: %v", err)
+	}
+	name, err = testStore.GetLeastUtilizedBackend(ctx, 10, []string{"minio-1", "minio-2"})
+	if err != nil {
+		t.Fatalf("GetLeastUtilizedBackend after fill: %v", err)
+	}
+	if name != "minio-2" {
+		t.Errorf("got %q, want %q (minio-2 is least utilized)", name, "minio-2")
+	}
+}
+
+// TestStore_GetLeastUtilizedBackend_RespectsMinSize is one of the sub-cases extracted from the
+// original mega-TestStore; behaviour is preserved.
+func TestStore_GetLeastUtilizedBackend_RespectsMinSize(t *testing.T) {
+	ctx := context.Background()
+	_ = ctx
+
+	resetState(t)
+
+	if _, err := testStore.RecordObject(ctx, uniqueKey(t, "full"), "minio-1", 1024, nil); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+
+	name, err := testStore.GetLeastUtilizedBackend(ctx, 1, []string{"minio-1", "minio-2"})
+	if err != nil {
+		t.Fatalf("GetLeastUtilizedBackend: %v", err)
+	}
+	if name != "minio-2" {
+		t.Errorf("got %q, want %q (minio-1 full)", name, "minio-2")
+	}
+}
+
+// TestStore_RecordReplica_StaleSourceSkipped is one of the sub-cases extracted from the
+// original mega-TestStore; behaviour is preserved.
+func TestStore_RecordReplica_StaleSourceSkipped(t *testing.T) {
+	ctx := context.Background()
+	_ = ctx
+
+	resetState(t)
+
+	key := uniqueKey(t, "store-replica")
+
+	if _, err := testStore.RecordObject(ctx, key, "minio-1", 100, nil); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+
+	_, ok, err := testStore.RecordReplica(ctx, key, "minio-2", "minio-1")
+	if err != nil {
+		t.Fatalf("RecordReplica: %v", err)
+	}
+	if !ok {
+		t.Error("first RecordReplica = false, want true")
+	}
+	if used := queryQuotaUsed(t, "minio-2"); used != 100 {
+		t.Errorf("minio-2 after replica = %d, want 100", used)
+	}
+
+	if _, err := testStore.DeleteObject(ctx, key); err != nil {
+		t.Fatalf("DeleteObject: %v", err)
+	}
+
+	if _, err := testStore.RecordObject(ctx, key, "minio-2", 50, nil); err != nil {
+		t.Fatalf("RecordObject fresh: %v", err)
+	}
+
+	_, ok, err = testStore.RecordReplica(ctx, key, "minio-1", "minio-1")
+	if err != nil {
+		t.Fatalf("RecordReplica stale: %v", err)
+	}
+	if ok {
+		t.Error("stale RecordReplica = true, want false (source doesn't exist)")
+	}
+}
+
+// TestStore_RecordPart_InvalidPartNumber is one of the sub-cases extracted from the
+// original mega-TestStore; behaviour is preserved.
+func TestStore_RecordPart_InvalidPartNumber(t *testing.T) {
+	ctx := context.Background()
+	_ = ctx
+
+	resetState(t)
+
+	for _, pn := range []int{0, -1, 10001, 1 << 20} {
+		err := testStore.RecordPart(ctx, "upload-invalid", pn, "\"etag\"", 100, nil)
 		if err == nil {
-			t.Fatal("expected error, got nil")
+			t.Errorf("RecordPart(%d) should fail, got nil", pn)
 		}
-
-		var s3Err *core.S3Error
-		if !errors.As(err, &s3Err) {
-			t.Fatalf("expected *S3Error, got %T: %v", err, err)
-		}
-		if s3Err.StatusCode != 404 {
-			t.Errorf("status = %d, want 404", s3Err.StatusCode)
-		}
-	})
-
-	t.Run("MoveObjectLocation_RaceSafe", func(t *testing.T) {
-		resetState(t)
-
-		key := uniqueKey(t, "store-move")
-
-		// Put on minio-1.
-		if _, err := testStore.RecordObject(ctx, key, "minio-1", 100, nil); err != nil {
-			t.Fatalf("RecordObject: %v", err)
-		}
-
-		// Move from minio-1 -> minio-2.
-		size, err := testStore.MoveObjectLocation(ctx, key, "minio-1", "minio-2")
-		if err != nil {
-			t.Fatalf("MoveObjectLocation: %v", err)
-		}
-		if size != 100 {
-			t.Errorf("moved size = %d, want 100", size)
-		}
-
-		// Quotas should be updated.
-		if used := queryQuotaUsed(t, "minio-1"); used != 0 {
-			t.Errorf("minio-1 after move = %d, want 0", used)
-		}
-		if used := queryQuotaUsed(t, "minio-2"); used != 100 {
-			t.Errorf("minio-2 after move = %d, want 100", used)
-		}
-
-		// Move again from minio-1 (source gone) -> should return 0, nil.
-		size, err = testStore.MoveObjectLocation(ctx, key, "minio-1", "minio-2")
-		if err != nil {
-			t.Fatalf("second MoveObjectLocation: %v", err)
-		}
-		if size != 0 {
-			t.Errorf("second move size = %d, want 0 (source gone)", size)
-		}
-
-		// Quotas unchanged.
-		if used := queryQuotaUsed(t, "minio-1"); used != 0 {
-			t.Errorf("minio-1 after second move = %d, want 0", used)
-		}
-		if used := queryQuotaUsed(t, "minio-2"); used != 100 {
-			t.Errorf("minio-2 after second move = %d, want 100", used)
-		}
-	})
-
-	t.Run("ListObjects_PaginationAndEscaping", func(t *testing.T) {
-		resetState(t)
-
-		// Insert keys with LIKE wildcards to test escaping.
-		prefix := fmt.Sprintf("list-escape/%d/", time.Now().UnixNano())
-		wildcardKeys := []string{
-			prefix + "normal-key",
-			prefix + "has%percent",
-			prefix + "has_underscore",
-		}
-		for _, key := range wildcardKeys {
-			if _, err := testStore.RecordObject(ctx, key, "minio-1", 10, nil); err != nil {
-				t.Fatalf("RecordObject(%q): %v", key, err)
-			}
-		}
-
-		// Query with exact prefix  -  all 3 should match.
-		result, err := testStore.ListObjects(ctx, prefix, "", 1000)
-		if err != nil {
-			t.Fatalf("ListObjects: %v", err)
-		}
-		if len(result.Objects) != 3 {
-			t.Errorf("got %d objects, want 3", len(result.Objects))
-		}
-
-		// A prefix containing _ should not match the other keys.
-		underscorePrefix := prefix + "has_"
-		result, err = testStore.ListObjects(ctx, underscorePrefix, "", 1000)
-		if err != nil {
-			t.Fatalf("ListObjects underscore: %v", err)
-		}
-		if len(result.Objects) != 1 {
-			t.Errorf("underscore prefix got %d objects, want 1", len(result.Objects))
-		}
-
-		// Test pagination with startAfter.
-		result, err = testStore.ListObjects(ctx, prefix, "", 2)
-		if err != nil {
-			t.Fatalf("ListObjects page1: %v", err)
-		}
-		if !result.IsTruncated {
-			t.Error("expected IsTruncated=true for page 1")
-		}
-		if len(result.Objects) != 2 {
-			t.Errorf("page 1 got %d objects, want 2", len(result.Objects))
-		}
-
-		// Page 2 using continuation token.
-		result2, err := testStore.ListObjects(ctx, prefix, result.NextContinuationToken, 2)
-		if err != nil {
-			t.Fatalf("ListObjects page2: %v", err)
-		}
-		if result2.IsTruncated {
-			t.Error("expected IsTruncated=false for page 2")
-		}
-		if len(result2.Objects) != 1 {
-			t.Errorf("page 2 got %d objects, want 1", len(result2.Objects))
-		}
-	})
-
-	t.Run("GetBackendWithSpace_RespectsOrder", func(t *testing.T) {
-		resetState(t)
-
-		// Both backends have plenty of space. First in order should be returned.
-		name, err := testStore.GetBackendWithSpace(ctx, 10, []string{"minio-1", "minio-2"})
-		if err != nil {
-			t.Fatalf("GetBackendWithSpace: %v", err)
-		}
-		if name != "minio-1" {
-			t.Errorf("got %q, want %q (first in order)", name, "minio-1")
-		}
-
-		// Reverse order  -  minio-2 should be returned first.
-		name, err = testStore.GetBackendWithSpace(ctx, 10, []string{"minio-2", "minio-1"})
-		if err != nil {
-			t.Fatalf("GetBackendWithSpace reversed: %v", err)
-		}
-		if name != "minio-2" {
-			t.Errorf("got %q, want %q (first in reversed order)", name, "minio-2")
-		}
-
-		// Fill minio-1 completely, then first-in-order should skip to minio-2.
-		if _, err := testStore.RecordObject(ctx, uniqueKey(t, "fill"), "minio-1", 1024, nil); err != nil {
-			t.Fatalf("RecordObject fill: %v", err)
-		}
-		name, err = testStore.GetBackendWithSpace(ctx, 1, []string{"minio-1", "minio-2"})
-		if err != nil {
-			t.Fatalf("GetBackendWithSpace after fill: %v", err)
-		}
-		if name != "minio-2" {
-			t.Errorf("got %q, want %q (minio-1 full)", name, "minio-2")
-		}
-	})
-
-	t.Run("GetLeastUtilizedBackend_PicksLeastFull", func(t *testing.T) {
-		resetState(t)
-
-		// Both empty  -  either could be returned, but with equal utilization
-		// the ORDER BY should be deterministic. Just verify no error.
-		name, err := testStore.GetLeastUtilizedBackend(ctx, 10, []string{"minio-1", "minio-2"})
-		if err != nil {
-			t.Fatalf("GetLeastUtilizedBackend empty: %v", err)
-		}
-		if name != "minio-1" && name != "minio-2" {
-			t.Errorf("unexpected backend %q", name)
-		}
-
-		// Add 500 bytes to minio-1 (quota 1024). minio-2 (quota 2048) stays empty.
-		// minio-1 utilization: 500/1024 ~= 49%, minio-2: 0/2048 = 0%.
-		// Least utilized should be minio-2.
-		if _, err := testStore.RecordObject(ctx, uniqueKey(t, "fill"), "minio-1", 500, nil); err != nil {
-			t.Fatalf("RecordObject fill: %v", err)
-		}
-		name, err = testStore.GetLeastUtilizedBackend(ctx, 10, []string{"minio-1", "minio-2"})
-		if err != nil {
-			t.Fatalf("GetLeastUtilizedBackend after fill: %v", err)
-		}
-		if name != "minio-2" {
-			t.Errorf("got %q, want %q (minio-2 is least utilized)", name, "minio-2")
-		}
-	})
-
-	t.Run("GetLeastUtilizedBackend_RespectsMinSize", func(t *testing.T) {
-		resetState(t)
-
-		// Fill minio-1 to capacity (1024 bytes).
-		if _, err := testStore.RecordObject(ctx, uniqueKey(t, "full"), "minio-1", 1024, nil); err != nil {
-			t.Fatalf("RecordObject: %v", err)
-		}
-
-		// Request 1 byte  -  minio-1 has 0 available, should return minio-2.
-		name, err := testStore.GetLeastUtilizedBackend(ctx, 1, []string{"minio-1", "minio-2"})
-		if err != nil {
-			t.Fatalf("GetLeastUtilizedBackend: %v", err)
-		}
-		if name != "minio-2" {
-			t.Errorf("got %q, want %q (minio-1 full)", name, "minio-2")
-		}
-	})
-
-	t.Run("RecordReplica_StaleSourceSkipped", func(t *testing.T) {
-		resetState(t)
-
-		key := uniqueKey(t, "store-replica")
-
-		// Record on minio-1.
-		if _, err := testStore.RecordObject(ctx, key, "minio-1", 100, nil); err != nil {
-			t.Fatalf("RecordObject: %v", err)
-		}
-
-		// Replica to minio-2 should succeed.
-		_, ok, err := testStore.RecordReplica(ctx, key, "minio-2", "minio-1")
-		if err != nil {
-			t.Fatalf("RecordReplica: %v", err)
-		}
-		if !ok {
-			t.Error("first RecordReplica = false, want true")
-		}
-		if used := queryQuotaUsed(t, "minio-2"); used != 100 {
-			t.Errorf("minio-2 after replica = %d, want 100", used)
-		}
-
-		// Delete source (and all copies).
-		if _, err := testStore.DeleteObject(ctx, key); err != nil {
-			t.Fatalf("DeleteObject: %v", err)
-		}
-
-		// Record the key fresh on minio-2 (different lifecycle).
-		if _, err := testStore.RecordObject(ctx, key, "minio-2", 50, nil); err != nil {
-			t.Fatalf("RecordObject fresh: %v", err)
-		}
-
-		// Try to replicate to minio-1 citing minio-1 as source (stale).
-		// Source doesn't exist on minio-1, so should return false.
-		_, ok, err = testStore.RecordReplica(ctx, key, "minio-1", "minio-1")
-		if err != nil {
-			t.Fatalf("RecordReplica stale: %v", err)
-		}
-		if ok {
-			t.Error("stale RecordReplica = true, want false (source doesn't exist)")
-		}
-	})
-
-	t.Run("RecordPart_InvalidPartNumber", func(t *testing.T) {
-		resetState(t)
-
-		for _, pn := range []int{0, -1, 10001, 1 << 20} {
-			err := testStore.RecordPart(ctx, "upload-invalid", pn, "\"etag\"", 100, nil)
-			if err == nil {
-				t.Errorf("RecordPart(%d) should fail, got nil", pn)
-			}
-		}
-	})
+	}
 }
 
 // -------------------------------------------------------------------------
 // SYNC PIPELINE
 // -------------------------------------------------------------------------
 
-// TestSyncPipeline verifies the sync pipeline behaviour across the supplied sub-cases:
-// "ImportAndVerify", "IdempotentRerun".
-// Each sub-case exercises one branch of the code under test.
-func TestSyncPipeline(t *testing.T) {
+// TestSyncPipeline_ImportAndVerify is one of the sub-cases extracted from the
+// original mega-TestSyncPipeline; behaviour is preserved.
+func TestSyncPipeline_ImportAndVerify(t *testing.T) {
 	ctx := context.Background()
+	_ = ctx
 
-	t.Run("ImportAndVerify", func(t *testing.T) {
-		resetState(t)
+	resetState(t)
 
-		// Put 5 objects directly to MinIO (simulating pre-existing bucket content).
-		// Objects are stored at bucket-prefixed paths to match the proxy's
-		// internal key format (bucket/key).
-		directClient := newDirectMinioClient(t, "minio-1")
-		prefix := fmt.Sprintf("sync-test/%d/", time.Now().UnixNano())
-		keys := make([]string, 5)
-		for i := range keys {
-			keys[i] = fmt.Sprintf("%sobj-%d", prefix, i)
-			_, err := directClient.PutObject(ctx, &s3.PutObjectInput{
-				Bucket:        aws.String("backend1"),
-				Key:           aws.String(internalKey(keys[i])),
-				Body:          bytes.NewReader(bytes.Repeat([]byte("S"), 80)),
-				ContentLength: aws.Int64(80),
-			})
+	directClient := newDirectMinioClient(t, "minio-1")
+	prefix := fmt.Sprintf("sync-test/%d/", time.Now().UnixNano())
+	keys := make([]string, 5)
+	for i := range keys {
+		keys[i] = fmt.Sprintf("%sobj-%d", prefix, i)
+		_, err := directClient.PutObject(ctx, &s3.PutObjectInput{
+			Bucket:        aws.String("backend1"),
+			Key:           aws.String(internalKey(keys[i])),
+			Body:          bytes.NewReader(bytes.Repeat([]byte("S"), 80)),
+			ContentLength: aws.Int64(80),
+		})
+		if err != nil {
+			t.Fatalf("direct PutObject(%s): %v", keys[i], err)
+		}
+	}
+
+	backend := newTestS3Backend(t, "minio-1")
+	var imported, skipped int
+
+	err := backend.ListObjects(ctx, internalKey(prefix), func(objects []s3be.ListedObject) error {
+		for _, obj := range objects {
+			ok, err := testStore.ImportObject(ctx, obj.Key, "minio-1", obj.SizeBytes)
 			if err != nil {
-				t.Fatalf("direct PutObject(%s): %v", keys[i], err)
+				return fmt.Errorf("ImportObject(%s): %w", obj.Key, err)
+			}
+			if ok {
+				imported++
+			} else {
+				skipped++
 			}
 		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("ListObjects+ImportObject pipeline: %v", err)
+	}
 
-		// Create an S3Backend and run the same pipeline as runSync:
-		// backend.ListObjects -> store.ImportObject
-		backend := newTestS3Backend(t, "minio-1")
-		var imported, skipped int
+	if imported != 5 {
+		t.Errorf("imported = %d, want 5", imported)
+	}
+	if skipped != 0 {
+		t.Errorf("skipped = %d, want 0", skipped)
+	}
 
+	if used := queryQuotaUsed(t, "minio-1"); used != 400 {
+		t.Errorf("minio-1 bytes_used = %d, want 400", used)
+	}
+
+	proxyClient := newS3Client(t)
+	for _, key := range keys {
+		resp, err := proxyClient.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String(virtualBucket),
+			Key:    aws.String(key),
+		})
+		if err != nil {
+			t.Fatalf("GetObject(%s) after sync: %v", key, err)
+		}
+		got, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if len(got) != 80 {
+			t.Errorf("GetObject(%s) body = %d bytes, want 80", key, len(got))
+		}
+	}
+}
+
+// TestSyncPipeline_IdempotentRerun is one of the sub-cases extracted from the
+// original mega-TestSyncPipeline; behaviour is preserved.
+func TestSyncPipeline_IdempotentRerun(t *testing.T) {
+	ctx := context.Background()
+	_ = ctx
+
+	resetState(t)
+
+	directClient := newDirectMinioClient(t, "minio-1")
+	prefix := fmt.Sprintf("sync-idem/%d/", time.Now().UnixNano())
+	for i := 0; i < 3; i++ {
+		key := fmt.Sprintf("%sobj-%d", prefix, i)
+		_, err := directClient.PutObject(ctx, &s3.PutObjectInput{
+			Bucket:        aws.String("backend1"),
+			Key:           aws.String(internalKey(key)),
+			Body:          bytes.NewReader(bytes.Repeat([]byte("I"), 60)),
+			ContentLength: aws.Int64(60),
+		})
+		if err != nil {
+			t.Fatalf("direct PutObject(%s): %v", key, err)
+		}
+	}
+
+	backend := newTestS3Backend(t, "minio-1")
+
+	syncOnce := func() (imported, skipped int) {
 		err := backend.ListObjects(ctx, internalKey(prefix), func(objects []s3be.ListedObject) error {
 			for _, obj := range objects {
 				ok, err := testStore.ImportObject(ctx, obj.Key, "minio-1", obj.SizeBytes)
 				if err != nil {
-					return fmt.Errorf("ImportObject(%s): %w", obj.Key, err)
+					return err
 				}
 				if ok {
 					imported++
@@ -3236,119 +3470,43 @@ func TestSyncPipeline(t *testing.T) {
 			return nil
 		})
 		if err != nil {
-			t.Fatalf("ListObjects+ImportObject pipeline: %v", err)
+			t.Fatalf("sync pipeline: %v", err)
 		}
+		return
+	}
 
-		if imported != 5 {
-			t.Errorf("imported = %d, want 5", imported)
-		}
-		if skipped != 0 {
-			t.Errorf("skipped = %d, want 0", skipped)
-		}
+	imp1, skip1 := syncOnce()
+	if imp1 != 3 || skip1 != 0 {
+		t.Errorf("run 1: imported=%d skipped=%d, want 3/0", imp1, skip1)
+	}
 
-		// Verify quota updated correctly: 5 * 80 = 400
-		if used := queryQuotaUsed(t, "minio-1"); used != 400 {
-			t.Errorf("minio-1 bytes_used = %d, want 400", used)
-		}
+	imp2, skip2 := syncOnce()
+	if imp2 != 0 || skip2 != 3 {
+		t.Errorf("run 2: imported=%d skipped=%d, want 0/3", imp2, skip2)
+	}
 
-		// Verify all objects accessible via proxy
-		proxyClient := newS3Client(t)
-		for _, key := range keys {
-			resp, err := proxyClient.GetObject(ctx, &s3.GetObjectInput{
-				Bucket: aws.String(virtualBucket),
-				Key:    aws.String(key),
-			})
-			if err != nil {
-				t.Fatalf("GetObject(%s) after sync: %v", key, err)
-			}
-			got, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			if len(got) != 80 {
-				t.Errorf("GetObject(%s) body = %d bytes, want 80", key, len(got))
-			}
-		}
-	})
-
-	t.Run("IdempotentRerun", func(t *testing.T) {
-		resetState(t)
-
-		// Put 3 objects directly to MinIO at bucket-prefixed paths.
-		directClient := newDirectMinioClient(t, "minio-1")
-		prefix := fmt.Sprintf("sync-idem/%d/", time.Now().UnixNano())
-		for i := 0; i < 3; i++ {
-			key := fmt.Sprintf("%sobj-%d", prefix, i)
-			_, err := directClient.PutObject(ctx, &s3.PutObjectInput{
-				Bucket:        aws.String("backend1"),
-				Key:           aws.String(internalKey(key)),
-				Body:          bytes.NewReader(bytes.Repeat([]byte("I"), 60)),
-				ContentLength: aws.Int64(60),
-			})
-			if err != nil {
-				t.Fatalf("direct PutObject(%s): %v", key, err)
-			}
-		}
-
-		backend := newTestS3Backend(t, "minio-1")
-
-		// Run sync pipeline twice.
-		syncOnce := func() (imported, skipped int) {
-			err := backend.ListObjects(ctx, internalKey(prefix), func(objects []s3be.ListedObject) error {
-				for _, obj := range objects {
-					ok, err := testStore.ImportObject(ctx, obj.Key, "minio-1", obj.SizeBytes)
-					if err != nil {
-						return err
-					}
-					if ok {
-						imported++
-					} else {
-						skipped++
-					}
-				}
-				return nil
-			})
-			if err != nil {
-				t.Fatalf("sync pipeline: %v", err)
-			}
-			return
-		}
-
-		imp1, skip1 := syncOnce()
-		if imp1 != 3 || skip1 != 0 {
-			t.Errorf("run 1: imported=%d skipped=%d, want 3/0", imp1, skip1)
-		}
-
-		// Second run: all should be skipped.
-		imp2, skip2 := syncOnce()
-		if imp2 != 0 || skip2 != 3 {
-			t.Errorf("run 2: imported=%d skipped=%d, want 0/3", imp2, skip2)
-		}
-
-		// Quota should not be double-counted.
-		if used := queryQuotaUsed(t, "minio-1"); used != 180 {
-			t.Errorf("minio-1 bytes_used = %d, want 180 (not double-counted)", used)
-		}
-	})
+	if used := queryQuotaUsed(t, "minio-1"); used != 180 {
+		t.Errorf("minio-1 bytes_used = %d, want 180 (not double-counted)", used)
+	}
 }
 
 // -------------------------------------------------------------------------
 // AUTH (SigV4)
 // -------------------------------------------------------------------------
 
-// TestAuthSigV4 verifies the auth sig v4 behaviour across the supplied sub-cases:
-// "ValidCredentials", "WrongCredentials403", "UnsignedRequest403", "SpecialCharKeysSigV4", "AccessDeniedDoesNotLeakBucketName".
-// Each sub-case exercises one branch of the code under test.
-func TestAuthSigV4(t *testing.T) {
+// TestAuthSigV4_ValidCredentials is one of the sub-cases extracted from the
+// original mega-TestAuthSigV4; behaviour is preserved.
+func TestAuthSigV4_ValidCredentials(t *testing.T) {
 	ctx := context.Background()
-
+	_ = ctx
 	const (
 		authKey    = "TESTKEY0123456789"
 		authSecret = "TESTSECRET0123456789abcdefghijklm"
 	)
-
-	// Start an ephemeral server with SigV4 auth enabled, sharing the same manager.
 	authSrv := &s3api.Server{
 		Manager: testManager,
 	}
+	_ = authSrv
 	authSrv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{
 		{
 			Name: virtualBucket,
@@ -3360,22 +3518,20 @@ func TestAuthSigV4(t *testing.T) {
 			},
 		},
 	}))
-
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
 	authAddr := listener.Addr().String()
-
+	_ = authAddr
 	httpServer := &http.Server{
 		Handler:      authSrv,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
 	}
+	_ = httpServer
 	go httpServer.Serve(listener)
 	defer httpServer.Shutdown(ctx)
-
-	// Helper: create an S3 client for the auth server with given credentials.
 	authClient := func(key, secret string) *s3.Client {
 		return s3.New(s3.Options{
 			BaseEndpoint: aws.String("http://" + authAddr),
@@ -3384,13 +3540,216 @@ func TestAuthSigV4(t *testing.T) {
 			UsePathStyle: true,
 		})
 	}
+	_ = authClient
 
-	t.Run("ValidCredentials", func(t *testing.T) {
-		client := authClient(authKey, authSecret)
-		key := uniqueKey(t, "auth")
-		body := []byte("authenticated-content")
+	client := authClient(authKey, authSecret)
+	key := uniqueKey(t, "auth")
+	body := []byte("authenticated-content")
 
-		// PUT should succeed
+	_, err = client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(key),
+		Body:          bytes.NewReader(body),
+		ContentLength: aws.Int64(int64(len(body))),
+	})
+	if err != nil {
+		t.Fatalf("PutObject with valid creds: %v", err)
+	}
+
+	resp, err := client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(virtualBucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		t.Fatalf("GetObject with valid creds: %v", err)
+	}
+	defer resp.Body.Close()
+
+	got, _ := io.ReadAll(resp.Body)
+	if !bytes.Equal(got, body) {
+		t.Errorf("body mismatch: got %d bytes, want %d", len(got), len(body))
+	}
+}
+
+// TestAuthSigV4_WrongCredentials403 is one of the sub-cases extracted from the
+// original mega-TestAuthSigV4; behaviour is preserved.
+func TestAuthSigV4_WrongCredentials403(t *testing.T) {
+	ctx := context.Background()
+	_ = ctx
+	const (
+		authKey    = "TESTKEY0123456789"
+		authSecret = "TESTSECRET0123456789abcdefghijklm"
+	)
+	authSrv := &s3api.Server{
+		Manager: testManager,
+	}
+	_ = authSrv
+	authSrv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{
+		{
+			Name: virtualBucket,
+			Credentials: []config.CredentialConfig{
+				{
+					AccessKeyID:     authKey,
+					SecretAccessKey: authSecret,
+				},
+			},
+		},
+	}))
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	authAddr := listener.Addr().String()
+	_ = authAddr
+	httpServer := &http.Server{
+		Handler:      authSrv,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
+	}
+	_ = httpServer
+	go httpServer.Serve(listener)
+	defer httpServer.Shutdown(ctx)
+	authClient := func(key, secret string) *s3.Client {
+		return s3.New(s3.Options{
+			BaseEndpoint: aws.String("http://" + authAddr),
+			Region:       "us-east-1",
+			Credentials:  credentials.NewStaticCredentialsProvider(key, secret, ""),
+			UsePathStyle: true,
+		})
+	}
+	_ = authClient
+
+	client := authClient("WRONGKEY", "WRONGSECRET")
+	_, err = client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(virtualBucket),
+		Key:    aws.String("any-key"),
+	})
+	if err == nil {
+		t.Fatal("expected error with wrong credentials, got nil")
+	}
+	assertHTTPStatus(t, err, 403)
+}
+
+// TestAuthSigV4_UnsignedRequest403 is one of the sub-cases extracted from the
+// original mega-TestAuthSigV4; behaviour is preserved.
+func TestAuthSigV4_UnsignedRequest403(t *testing.T) {
+	ctx := context.Background()
+	_ = ctx
+	const (
+		authKey    = "TESTKEY0123456789"
+		authSecret = "TESTSECRET0123456789abcdefghijklm"
+	)
+	authSrv := &s3api.Server{
+		Manager: testManager,
+	}
+	_ = authSrv
+	authSrv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{
+		{
+			Name: virtualBucket,
+			Credentials: []config.CredentialConfig{
+				{
+					AccessKeyID:     authKey,
+					SecretAccessKey: authSecret,
+				},
+			},
+		},
+	}))
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	authAddr := listener.Addr().String()
+	_ = authAddr
+	httpServer := &http.Server{
+		Handler:      authSrv,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
+	}
+	_ = httpServer
+	go httpServer.Serve(listener)
+	defer httpServer.Shutdown(ctx)
+	authClient := func(key, secret string) *s3.Client {
+		return s3.New(s3.Options{
+			BaseEndpoint: aws.String("http://" + authAddr),
+			Region:       "us-east-1",
+			Credentials:  credentials.NewStaticCredentialsProvider(key, secret, ""),
+			UsePathStyle: true,
+		})
+	}
+	_ = authClient
+
+	url := fmt.Sprintf("http://%s/%s/any-key", authAddr, virtualBucket)
+	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("raw GET: %v", err)
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+
+	if resp.StatusCode != 403 {
+		t.Errorf("status = %d, want 403", resp.StatusCode)
+	}
+}
+
+// TestAuthSigV4_SpecialCharKeysSigV4 is one of the sub-cases extracted from the
+// original mega-TestAuthSigV4; behaviour is preserved.
+func TestAuthSigV4_SpecialCharKeysSigV4(t *testing.T) {
+	ctx := context.Background()
+	_ = ctx
+	const (
+		authKey    = "TESTKEY0123456789"
+		authSecret = "TESTSECRET0123456789abcdefghijklm"
+	)
+	authSrv := &s3api.Server{
+		Manager: testManager,
+	}
+	_ = authSrv
+	authSrv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{
+		{
+			Name: virtualBucket,
+			Credentials: []config.CredentialConfig{
+				{
+					AccessKeyID:     authKey,
+					SecretAccessKey: authSecret,
+				},
+			},
+		},
+	}))
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	authAddr := listener.Addr().String()
+	_ = authAddr
+	httpServer := &http.Server{
+		Handler:      authSrv,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
+	}
+	_ = httpServer
+	go httpServer.Serve(listener)
+	defer httpServer.Shutdown(ctx)
+	authClient := func(key, secret string) *s3.Client {
+		return s3.New(s3.Options{
+			BaseEndpoint: aws.String("http://" + authAddr),
+			Region:       "us-east-1",
+			Credentials:  credentials.NewStaticCredentialsProvider(key, secret, ""),
+			UsePathStyle: true,
+		})
+	}
+	_ = authClient
+
+	client := authClient(authKey, authSecret)
+
+	keys := []string{
+		uniqueKey(t, "auth") + "/my file.txt",
+		uniqueKey(t, "auth") + "/a+b.dat",
+		uniqueKey(t, "auth") + "/path/with spaces/and+plus",
+	}
+
+	for _, key := range keys {
+		body := []byte("content-for-" + key)
 		_, err := client.PutObject(ctx, &s3.PutObjectInput{
 			Bucket:        aws.String(virtualBucket),
 			Key:           aws.String(key),
@@ -3398,322 +3757,300 @@ func TestAuthSigV4(t *testing.T) {
 			ContentLength: aws.Int64(int64(len(body))),
 		})
 		if err != nil {
-			t.Fatalf("PutObject with valid creds: %v", err)
+			t.Fatalf("PutObject key=%q: %v", key, err)
 		}
 
-		// GET should succeed
 		resp, err := client.GetObject(ctx, &s3.GetObjectInput{
 			Bucket: aws.String(virtualBucket),
 			Key:    aws.String(key),
 		})
 		if err != nil {
-			t.Fatalf("GetObject with valid creds: %v", err)
+			t.Fatalf("GetObject key=%q: %v", key, err)
 		}
-		defer resp.Body.Close()
-
 		got, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
 		if !bytes.Equal(got, body) {
-			t.Errorf("body mismatch: got %d bytes, want %d", len(got), len(body))
+			t.Errorf("key=%q: body mismatch: got %q, want %q", key, got, body)
 		}
-	})
+	}
+}
 
-	t.Run("WrongCredentials403", func(t *testing.T) {
-		client := authClient("WRONGKEY", "WRONGSECRET")
-		_, err := client.GetObject(ctx, &s3.GetObjectInput{
-			Bucket: aws.String(virtualBucket),
-			Key:    aws.String("any-key"),
+// TestAuthSigV4_AccessDeniedDoesNotLeakBucketName is one of the sub-cases extracted from the
+// original mega-TestAuthSigV4; behaviour is preserved.
+func TestAuthSigV4_AccessDeniedDoesNotLeakBucketName(t *testing.T) {
+	ctx := context.Background()
+	_ = ctx
+	const (
+		authKey    = "TESTKEY0123456789"
+		authSecret = "TESTSECRET0123456789abcdefghijklm"
+	)
+	authSrv := &s3api.Server{
+		Manager: testManager,
+	}
+	_ = authSrv
+	authSrv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{
+		{
+			Name: virtualBucket,
+			Credentials: []config.CredentialConfig{
+				{
+					AccessKeyID:     authKey,
+					SecretAccessKey: authSecret,
+				},
+			},
+		},
+	}))
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	authAddr := listener.Addr().String()
+	_ = authAddr
+	httpServer := &http.Server{
+		Handler:      authSrv,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
+	}
+	_ = httpServer
+	go httpServer.Serve(listener)
+	defer httpServer.Shutdown(ctx)
+	authClient := func(key, secret string) *s3.Client {
+		return s3.New(s3.Options{
+			BaseEndpoint: aws.String("http://" + authAddr),
+			Region:       "us-east-1",
+			Credentials:  credentials.NewStaticCredentialsProvider(key, secret, ""),
+			UsePathStyle: true,
 		})
-		if err == nil {
-			t.Fatal("expected error with wrong credentials, got nil")
-		}
-		assertHTTPStatus(t, err, 403)
-	})
+	}
+	_ = authClient
 
-	t.Run("UnsignedRequest403", func(t *testing.T) {
-		// Raw HTTP request with no Authorization header at all.
-		url := fmt.Sprintf("http://%s/%s/any-key", authAddr, virtualBucket)
-		req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
-		resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
-		if err != nil {
-			t.Fatalf("raw GET: %v", err)
-		}
-		defer resp.Body.Close()
-		io.Copy(io.Discard, resp.Body)
+	url := fmt.Sprintf("http://%s/%s/any-key", authAddr, virtualBucket)
+	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("raw GET: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
 
-		if resp.StatusCode != 403 {
-			t.Errorf("status = %d, want 403", resp.StatusCode)
-		}
-	})
-
-	// Keys containing spaces, plus signs, and nested paths require
-	// per-segment URI encoding in the SigV4 canonical request.
-	t.Run("SpecialCharKeysSigV4", func(t *testing.T) {
-		client := authClient(authKey, authSecret)
-
-		keys := []string{
-			uniqueKey(t, "auth") + "/my file.txt",
-			uniqueKey(t, "auth") + "/a+b.dat",
-			uniqueKey(t, "auth") + "/path/with spaces/and+plus",
-		}
-
-		for _, key := range keys {
-			body := []byte("content-for-" + key)
-			_, err := client.PutObject(ctx, &s3.PutObjectInput{
-				Bucket:        aws.String(virtualBucket),
-				Key:           aws.String(key),
-				Body:          bytes.NewReader(body),
-				ContentLength: aws.Int64(int64(len(body))),
-			})
-			if err != nil {
-				t.Fatalf("PutObject key=%q: %v", key, err)
-			}
-
-			resp, err := client.GetObject(ctx, &s3.GetObjectInput{
-				Bucket: aws.String(virtualBucket),
-				Key:    aws.String(key),
-			})
-			if err != nil {
-				t.Fatalf("GetObject key=%q: %v", key, err)
-			}
-			got, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-
-			if !bytes.Equal(got, body) {
-				t.Errorf("key=%q: body mismatch: got %q, want %q", key, got, body)
-			}
-		}
-	})
-
-	// The 403 error response must not reveal the target bucket name.
-	t.Run("AccessDeniedDoesNotLeakBucketName", func(t *testing.T) {
-		url := fmt.Sprintf("http://%s/%s/any-key", authAddr, virtualBucket)
-		req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
-		resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
-		if err != nil {
-			t.Fatalf("raw GET: %v", err)
-		}
-		defer resp.Body.Close()
-		body, _ := io.ReadAll(resp.Body)
-
-		if resp.StatusCode != 403 {
-			t.Fatalf("status = %d, want 403", resp.StatusCode)
-		}
-		if strings.Contains(string(body), virtualBucket) {
-			t.Errorf("403 response body should not contain bucket name %q, got: %s", virtualBucket, body)
-		}
-	})
+	if resp.StatusCode != 403 {
+		t.Fatalf("status = %d, want 403", resp.StatusCode)
+	}
+	if strings.Contains(string(body), virtualBucket) {
+		t.Errorf("403 response body should not contain bucket name %q, got: %s", virtualBucket, body)
+	}
 }
 
 // -------------------------------------------------------------------------
 // CIRCUIT BREAKER DEGRADED MODE
 // -------------------------------------------------------------------------
 
-// TestCircuitBreakerDegradedMode verifies the circuit breaker degraded mode behaviour across the supplied sub-cases:
-// "ReadsDuringOutage", "WritesRejectedDuringOutage".
-// Each sub-case exercises one branch of the code under test.
-func TestCircuitBreakerDegradedMode(t *testing.T) {
-	t.Run("ReadsDuringOutage", func(t *testing.T) {
-		resetState(t)
-		client := newS3Client(t)
-		ctx := context.Background()
+// TestCircuitBreakerDegradedMode_ReadsDuringOutage is one of the sub-cases extracted from the
+// original mega-TestCircuitBreakerDegradedMode; behaviour is preserved.
+func TestCircuitBreakerDegradedMode_ReadsDuringOutage(t *testing.T) {
+	resetState(t)
+	client := newS3Client(t)
+	ctx := context.Background()
 
-		// PUT an object while DB is healthy
-		key := uniqueKey(t, "cb-read")
-		body := bytes.Repeat([]byte("R"), 100)
-		_, err := client.PutObject(ctx, &s3.PutObjectInput{
-			Bucket:        aws.String(virtualBucket),
-			Key:           aws.String(key),
-			Body:          bytes.NewReader(body),
-			ContentLength: aws.Int64(100),
-		})
-		if err != nil {
-			t.Fatalf("PutObject: %v", err)
-		}
-
-		// Toggle FailableStore to failing
-		testFailableStore.SetFailing(true)
-		defer testFailableStore.SetFailing(false)
-
-		// Trip the circuit breaker
-		tripCircuitBreaker(t)
-
-		// Verify circuit is open
-		if testDatabaseCB.IsHealthy() {
-			t.Fatal("expected circuit to be open")
-		}
-
-		// GET should succeed via broadcast (object exists on backend)
-		resp, err := client.GetObject(ctx, &s3.GetObjectInput{
-			Bucket: aws.String(virtualBucket),
-			Key:    aws.String(key),
-		})
-		if err != nil {
-			t.Fatalf("GetObject during outage should succeed via broadcast: %v", err)
-		}
-		defer resp.Body.Close()
-
-		got, _ := io.ReadAll(resp.Body)
-		if !bytes.Equal(got, body) {
-			t.Errorf("body mismatch: got %d bytes, want %d", len(got), len(body))
-		}
-
-		// HEAD should also succeed via broadcast
-		_, err = client.HeadObject(ctx, &s3.HeadObjectInput{
-			Bucket: aws.String(virtualBucket),
-			Key:    aws.String(key),
-		})
-		if err != nil {
-			t.Fatalf("HeadObject during outage should succeed via broadcast: %v", err)
-		}
-
-		// Restore DB and wait for recovery
-		testFailableStore.SetFailing(false)
-		waitForRecovery(t)
-
-		if !testDatabaseCB.IsHealthy() {
-			t.Error("expected circuit to be closed after recovery")
-		}
-
-		// Normal GET should work again
-		resp2, err := client.GetObject(ctx, &s3.GetObjectInput{
-			Bucket: aws.String(virtualBucket),
-			Key:    aws.String(key),
-		})
-		if err != nil {
-			t.Fatalf("GetObject after recovery: %v", err)
-		}
-		resp2.Body.Close()
+	key := uniqueKey(t, "cb-read")
+	body := bytes.Repeat([]byte("R"), 100)
+	_, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(key),
+		Body:          bytes.NewReader(body),
+		ContentLength: aws.Int64(100),
 	})
+	if err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
 
-	t.Run("WritesRejectedDuringOutage", func(t *testing.T) {
-		resetState(t)
-		client := newS3Client(t)
-		ctx := context.Background()
+	testFailableStore.SetFailing(true)
+	defer testFailableStore.SetFailing(false)
 
-		// Toggle FailableStore to failing and trip circuit
-		testFailableStore.SetFailing(true)
-		defer testFailableStore.SetFailing(false)
+	tripCircuitBreaker(t)
 
-		tripCircuitBreaker(t)
+	if testDatabaseCB.IsHealthy() {
+		t.Fatal("expected circuit to be open")
+	}
 
-		if testDatabaseCB.IsHealthy() {
-			t.Fatal("expected circuit to be open")
-		}
-
-		// PUT should return 503
-		_, err := client.PutObject(ctx, &s3.PutObjectInput{
-			Bucket:        aws.String(virtualBucket),
-			Key:           aws.String(uniqueKey(t, "cb-write")),
-			Body:          bytes.NewReader([]byte("x")),
-			ContentLength: aws.Int64(1),
-		})
-		if err == nil {
-			t.Fatal("PutObject should fail during outage")
-		}
-		assertHTTPStatus(t, err, 503)
-
-		// DELETE should return 503
-		_, err = client.DeleteObject(ctx, &s3.DeleteObjectInput{
-			Bucket: aws.String(virtualBucket),
-			Key:    aws.String("any-key"),
-		})
-		if err == nil {
-			t.Fatal("DeleteObject should fail during outage")
-		}
-		assertHTTPStatus(t, err, 503)
-
-		// LIST should return 503
-		_, err = client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
-			Bucket: aws.String(virtualBucket),
-		})
-		if err == nil {
-			t.Fatal("ListObjectsV2 should fail during outage")
-		}
-		assertHTTPStatus(t, err, 503)
-
-		// Restore and verify writes work again
-		testFailableStore.SetFailing(false)
-		waitForRecovery(t)
-
-		_, err = client.PutObject(ctx, &s3.PutObjectInput{
-			Bucket:        aws.String(virtualBucket),
-			Key:           aws.String(uniqueKey(t, "cb-write-after")),
-			Body:          bytes.NewReader([]byte("y")),
-			ContentLength: aws.Int64(1),
-		})
-		if err != nil {
-			t.Fatalf("PutObject after recovery should succeed: %v", err)
-		}
+	resp, err := client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(virtualBucket),
+		Key:    aws.String(key),
 	})
+	if err != nil {
+		t.Fatalf("GetObject during outage should succeed via broadcast: %v", err)
+	}
+	defer resp.Body.Close()
+
+	got, _ := io.ReadAll(resp.Body)
+	if !bytes.Equal(got, body) {
+		t.Errorf("body mismatch: got %d bytes, want %d", len(got), len(body))
+	}
+
+	_, err = client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(virtualBucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		t.Fatalf("HeadObject during outage should succeed via broadcast: %v", err)
+	}
+
+	testFailableStore.SetFailing(false)
+	waitForRecovery(t)
+
+	if !testDatabaseCB.IsHealthy() {
+		t.Error("expected circuit to be closed after recovery")
+	}
+
+	resp2, err := client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(virtualBucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		t.Fatalf("GetObject after recovery: %v", err)
+	}
+	resp2.Body.Close()
+}
+
+// TestCircuitBreakerDegradedMode_WritesRejectedDuringOutage is one of the sub-cases extracted from the
+// original mega-TestCircuitBreakerDegradedMode; behaviour is preserved.
+func TestCircuitBreakerDegradedMode_WritesRejectedDuringOutage(t *testing.T) {
+	resetState(t)
+	client := newS3Client(t)
+	ctx := context.Background()
+
+	testFailableStore.SetFailing(true)
+	defer testFailableStore.SetFailing(false)
+
+	tripCircuitBreaker(t)
+
+	if testDatabaseCB.IsHealthy() {
+		t.Fatal("expected circuit to be open")
+	}
+
+	_, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(uniqueKey(t, "cb-write")),
+		Body:          bytes.NewReader([]byte("x")),
+		ContentLength: aws.Int64(1),
+	})
+	if err == nil {
+		t.Fatal("PutObject should fail during outage")
+	}
+	assertHTTPStatus(t, err, 503)
+
+	_, err = client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(virtualBucket),
+		Key:    aws.String("any-key"),
+	})
+	if err == nil {
+		t.Fatal("DeleteObject should fail during outage")
+	}
+	assertHTTPStatus(t, err, 503)
+
+	_, err = client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+		Bucket: aws.String(virtualBucket),
+	})
+	if err == nil {
+		t.Fatal("ListObjectsV2 should fail during outage")
+	}
+	assertHTTPStatus(t, err, 503)
+
+	testFailableStore.SetFailing(false)
+	waitForRecovery(t)
+
+	_, err = client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(uniqueKey(t, "cb-write-after")),
+		Body:          bytes.NewReader([]byte("y")),
+		ContentLength: aws.Int64(1),
+	})
+	if err != nil {
+		t.Fatalf("PutObject after recovery should succeed: %v", err)
+	}
 }
 
 // -------------------------------------------------------------------------
 // BUCKET OPERATIONS
 // -------------------------------------------------------------------------
 
-// TestBucketOperations verifies the bucket operations behaviour across the supplied sub-cases:
-// "HeadBucket", "GetBucketLocation", "ListBuckets".
-// Each sub-case exercises one branch of the code under test.
-func TestBucketOperations(t *testing.T) {
+// TestBucketOperations_HeadBucket is one of the sub-cases extracted from the
+// original mega-TestBucketOperations; behaviour is preserved.
+func TestBucketOperations_HeadBucket(t *testing.T) {
 	client := newS3Client(t)
+	_ = client
 	ctx := context.Background()
+	_ = ctx
 
-	t.Run("HeadBucket", func(t *testing.T) {
-		_, err := client.HeadBucket(ctx, &s3.HeadBucketInput{
-			Bucket: aws.String(virtualBucket),
-		})
-		if err != nil {
-			t.Fatalf("HeadBucket: %v", err)
-		}
+	_, err := client.HeadBucket(ctx, &s3.HeadBucketInput{
+		Bucket: aws.String(virtualBucket),
 	})
+	if err != nil {
+		t.Fatalf("HeadBucket: %v", err)
+	}
+}
 
-	t.Run("GetBucketLocation", func(t *testing.T) {
-		resp, err := client.GetBucketLocation(ctx, &s3.GetBucketLocationInput{
-			Bucket: aws.String(virtualBucket),
-		})
-		if err != nil {
-			t.Fatalf("GetBucketLocation: %v", err)
-		}
-		// Orchestrator returns empty LocationConstraint (us-east-1 equivalent)
-		if resp.LocationConstraint != "" {
-			t.Errorf("LocationConstraint = %q, want empty", resp.LocationConstraint)
-		}
-	})
+// TestBucketOperations_GetBucketLocation is one of the sub-cases extracted from the
+// original mega-TestBucketOperations; behaviour is preserved.
+func TestBucketOperations_GetBucketLocation(t *testing.T) {
+	client := newS3Client(t)
+	_ = client
+	ctx := context.Background()
+	_ = ctx
 
-	t.Run("ListBuckets", func(t *testing.T) {
-		resp, err := client.ListBuckets(ctx, &s3.ListBucketsInput{})
-		if err != nil {
-			t.Fatalf("ListBuckets: %v", err)
-		}
-		if len(resp.Buckets) == 0 {
-			t.Fatal("expected at least one bucket")
-		}
-		found := false
-		for _, b := range resp.Buckets {
-			if aws.ToString(b.Name) == virtualBucket {
-				found = true
-			}
-		}
-		if !found {
-			t.Errorf("ListBuckets did not include %q", virtualBucket)
-		}
+	resp, err := client.GetBucketLocation(ctx, &s3.GetBucketLocationInput{
+		Bucket: aws.String(virtualBucket),
 	})
+	if err != nil {
+		t.Fatalf("GetBucketLocation: %v", err)
+	}
+
+	if resp.LocationConstraint != "" {
+		t.Errorf("LocationConstraint = %q, want empty", resp.LocationConstraint)
+	}
+}
+
+// TestBucketOperations_ListBuckets is one of the sub-cases extracted from the
+// original mega-TestBucketOperations; behaviour is preserved.
+func TestBucketOperations_ListBuckets(t *testing.T) {
+	client := newS3Client(t)
+	_ = client
+	ctx := context.Background()
+	_ = ctx
+
+	resp, err := client.ListBuckets(ctx, &s3.ListBucketsInput{})
+	if err != nil {
+		t.Fatalf("ListBuckets: %v", err)
+	}
+	if len(resp.Buckets) == 0 {
+		t.Fatal("expected at least one bucket")
+	}
+	found := false
+	for _, b := range resp.Buckets {
+		if aws.ToString(b.Name) == virtualBucket {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("ListBuckets did not include %q", virtualBucket)
+	}
 }
 
 // -------------------------------------------------------------------------
 // LIST OBJECTS V1
 // -------------------------------------------------------------------------
 
-// TestListObjectsV1 verifies the list objects v1 behaviour across the supplied sub-cases:
-// "BasicList", "WithMarker".
-// Each sub-case exercises one branch of the code under test.
-func TestListObjectsV1(t *testing.T) {
+// TestListObjectsV1_BasicList is one of the sub-cases extracted from the
+// original mega-TestListObjectsV1; behaviour is preserved.
+func TestListObjectsV1_BasicList(t *testing.T) {
 	client := newS3Client(t)
+	_ = client
 	ctx := context.Background()
-
+	_ = ctx
 	prefix := fmt.Sprintf("listv1/%d/", time.Now().UnixNano())
+	_ = prefix
 	keys := []string{prefix + "a", prefix + "b", prefix + "c"}
-
+	_ = keys
 	for _, k := range keys {
 		_, err := client.PutObject(ctx, &s3.PutObjectInput{
 			Bucket:        aws.String(virtualBucket),
@@ -3726,40 +4063,59 @@ func TestListObjectsV1(t *testing.T) {
 		}
 	}
 
-	t.Run("BasicList", func(t *testing.T) {
-		resp, err := client.ListObjects(ctx, &s3.ListObjectsInput{
-			Bucket: aws.String(virtualBucket),
-			Prefix: aws.String(prefix),
-		})
-		if err != nil {
-			t.Fatalf("ListObjects: %v", err)
-		}
-		if len(resp.Contents) != 3 {
-			t.Errorf("got %d objects, want 3", len(resp.Contents))
-		}
+	resp, err := client.ListObjects(ctx, &s3.ListObjectsInput{
+		Bucket: aws.String(virtualBucket),
+		Prefix: aws.String(prefix),
 	})
+	if err != nil {
+		t.Fatalf("ListObjects: %v", err)
+	}
+	if len(resp.Contents) != 3 {
+		t.Errorf("got %d objects, want 3", len(resp.Contents))
+	}
+}
 
-	t.Run("WithMarker", func(t *testing.T) {
-		// Use the first key as a marker to skip it and get the remaining two
-		resp, err := client.ListObjects(ctx, &s3.ListObjectsInput{
-			Bucket: aws.String(virtualBucket),
-			Prefix: aws.String(prefix),
-			Marker: aws.String(keys[0]),
+// TestListObjectsV1_WithMarker is one of the sub-cases extracted from the
+// original mega-TestListObjectsV1; behaviour is preserved.
+func TestListObjectsV1_WithMarker(t *testing.T) {
+	client := newS3Client(t)
+	_ = client
+	ctx := context.Background()
+	_ = ctx
+	prefix := fmt.Sprintf("listv1/%d/", time.Now().UnixNano())
+	_ = prefix
+	keys := []string{prefix + "a", prefix + "b", prefix + "c"}
+	_ = keys
+	for _, k := range keys {
+		_, err := client.PutObject(ctx, &s3.PutObjectInput{
+			Bucket:        aws.String(virtualBucket),
+			Key:           aws.String(k),
+			Body:          bytes.NewReader([]byte("data")),
+			ContentLength: aws.Int64(4),
 		})
 		if err != nil {
-			t.Fatalf("ListObjects with marker: %v", err)
+			t.Fatalf("PutObject(%s): %v", k, err)
 		}
-		if len(resp.Contents) != 2 {
-			t.Fatalf("got %d objects, want 2", len(resp.Contents))
-		}
-		// The returned keys should be "b" and "c" (sorted after marker "a")
-		for _, obj := range resp.Contents {
-			k := aws.ToString(obj.Key)
-			if k == keys[0] {
-				t.Errorf("marker key %q should not appear in results", k)
-			}
-		}
+	}
+
+	resp, err := client.ListObjects(ctx, &s3.ListObjectsInput{
+		Bucket: aws.String(virtualBucket),
+		Prefix: aws.String(prefix),
+		Marker: aws.String(keys[0]),
 	})
+	if err != nil {
+		t.Fatalf("ListObjects with marker: %v", err)
+	}
+	if len(resp.Contents) != 2 {
+		t.Fatalf("got %d objects, want 2", len(resp.Contents))
+	}
+
+	for _, obj := range resp.Contents {
+		k := aws.ToString(obj.Key)
+		if k == keys[0] {
+			t.Errorf("marker key %q should not appear in results", k)
+		}
+	}
 }
 
 // -------------------------------------------------------------------------

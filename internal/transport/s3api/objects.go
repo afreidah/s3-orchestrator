@@ -349,42 +349,85 @@ func deleteObjectErrorFor(err error) (code, message string) {
 // -------------------------------------------------------------------------
 
 // checkConditionals evaluates conditional request headers per RFC 7232.
-// Returns the HTTP status to send and whether the caller should short-circuit.
-// Evaluation order follows the spec: If-Match -> If-Unmodified-Since ->
-// If-None-Match -> If-Modified-Since.
+// Returns the HTTP status to send and whether the caller should
+// short-circuit. Evaluation order follows the spec: If-Match,
+// If-Unmodified-Since, If-None-Match, If-Modified-Since.
 func checkConditionals(r *http.Request, etag string, lastModified time.Time) (int, bool) {
-	// --- If-Match (precondition for safe updates) ---
-	if im := r.Header.Get("If-Match"); im != "" && etag != "" {
-		if im != etag && im != "*" {
-			return http.StatusPreconditionFailed, true
-		}
+	if status, done := checkIfMatch(r.Header.Get("If-Match"), etag); done {
+		return status, true
 	}
-
-	// --- If-Unmodified-Since ---
-	if ius := r.Header.Get("If-Unmodified-Since"); ius != "" && r.Header.Get("If-Match") == "" {
-		if t, err := http.ParseTime(ius); err == nil {
-			if !lastModified.IsZero() && lastModified.After(t) {
-				return http.StatusPreconditionFailed, true
-			}
-		}
+	if status, done := checkIfUnmodifiedSince(r, lastModified); done {
+		return status, true
 	}
-
-	// --- If-None-Match (ETag-based conditional GET) ---
 	inm := r.Header.Get("If-None-Match")
-	if inm != "" && etag != "" {
-		if inm == etag || inm == "*" {
-			return http.StatusNotModified, true
-		}
+	if status, done := checkIfNoneMatch(inm, etag); done {
+		return status, true
 	}
-
-	// --- If-Modified-Since (time-based, only when If-None-Match is absent) ---
-	if ims := r.Header.Get("If-Modified-Since"); ims != "" && inm == "" {
-		if t, err := http.ParseTime(ims); err == nil {
-			if !lastModified.IsZero() && !lastModified.After(t) {
-				return http.StatusNotModified, true
-			}
-		}
+	if status, done := checkIfModifiedSince(r.Header.Get("If-Modified-Since"), inm, lastModified); done {
+		return status, true
 	}
+	return 0, false
+}
 
+// checkIfMatch returns 412 Precondition Failed when If-Match is present
+// and does not equal the current etag (or "*"). The empty-etag case
+// short-circuits because S3 treats it as "no current representation",
+// which never satisfies a strong validator.
+func checkIfMatch(im, etag string) (int, bool) {
+	if im == "" || etag == "" {
+		return 0, false
+	}
+	if im != etag && im != "*" {
+		return http.StatusPreconditionFailed, true
+	}
+	return 0, false
+}
+
+// checkIfUnmodifiedSince returns 412 Precondition Failed when
+// If-Unmodified-Since is present without an If-Match (per RFC 7232,
+// If-Match takes precedence) and the resource was modified after the
+// header's timestamp.
+func checkIfUnmodifiedSince(r *http.Request, lastModified time.Time) (int, bool) {
+	ius := r.Header.Get("If-Unmodified-Since")
+	if ius == "" || r.Header.Get("If-Match") != "" {
+		return 0, false
+	}
+	t, err := http.ParseTime(ius)
+	if err != nil {
+		return 0, false
+	}
+	if !lastModified.IsZero() && lastModified.After(t) {
+		return http.StatusPreconditionFailed, true
+	}
+	return 0, false
+}
+
+// checkIfNoneMatch returns 304 Not Modified when If-None-Match is
+// present and matches the current etag (or "*"). Used by clients to
+// avoid re-downloading unchanged objects.
+func checkIfNoneMatch(inm, etag string) (int, bool) {
+	if inm == "" || etag == "" {
+		return 0, false
+	}
+	if inm == etag || inm == "*" {
+		return http.StatusNotModified, true
+	}
+	return 0, false
+}
+
+// checkIfModifiedSince returns 304 Not Modified when If-Modified-Since
+// is present, If-None-Match is absent (per RFC 7232 precedence), and the
+// resource has not been modified after the header's timestamp.
+func checkIfModifiedSince(ims, inm string, lastModified time.Time) (int, bool) {
+	if ims == "" || inm != "" {
+		return 0, false
+	}
+	t, err := http.ParseTime(ims)
+	if err != nil {
+		return 0, false
+	}
+	if !lastModified.IsZero() && !lastModified.After(t) {
+		return http.StatusNotModified, true
+	}
 	return 0, false
 }

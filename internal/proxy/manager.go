@@ -275,12 +275,12 @@ func GenerateUploadID() string {
 	return hex.EncodeToString(b)
 }
 
-// SyncBackend scans a backend's S3 bucket and imports pre-existing objects into
-// the proxy database. Objects already tracked for the backend are skipped.
-// knownBuckets is the full list of configured virtual bucket names, used to
-// distinguish objects belonging to other buckets from externally-uploaded
-// objects that need the bucket prefix prepended.
-// Returns counts of imported vs skipped objects.
+// SyncBackend scans a backend's S3 bucket and imports pre-existing
+// objects into the proxy database. Objects already tracked for the
+// backend are skipped. knownBuckets is the full list of configured
+// virtual bucket names, used to distinguish objects belonging to other
+// buckets from externally-uploaded objects that need the bucket prefix
+// prepended. Returns counts of imported vs skipped objects.
 func (m *BackendManager) SyncBackend(ctx context.Context, backendName, bucket string, knownBuckets []string) (imported, skipped int, err error) {
 	s3b, err := m.resolveS3Backend(backendName)
 	if err != nil {
@@ -290,61 +290,22 @@ func (m *BackendManager) SyncBackend(ctx context.Context, backendName, bucket st
 	slog.InfoContext(ctx, "starting backend sync", "backend", backendName, "bucket", bucket)
 
 	bucketPrefix := internalkey.Prefix(bucket)
-
-	// Build a set of other bucket prefixes so we can skip objects that belong
-	// to a different virtual bucket.
-	otherPrefixes := make([]string, 0, len(knownBuckets))
-	for _, b := range knownBuckets {
-		if b != bucket {
-			otherPrefixes = append(otherPrefixes, b+"/")
-		}
-	}
-
+	otherPrefixes := siblingPrefixes(knownBuckets, bucket)
 	var apiPages int64
 
 	err = s3b.ListObjects(ctx, "", func(objects []backend.ListedObject) error {
 		apiPages++
-		for _, obj := range objects {
-			key := obj.Key
-
-			// Already belongs to this bucket  -  use as-is.
-			if strings.HasPrefix(key, bucketPrefix) {
-				// good, keep key
-			} else {
-				// Check if it belongs to a different virtual bucket  -  skip.
-				belongsToOther := false
-				for _, p := range otherPrefixes {
-					if strings.HasPrefix(key, p) {
-						belongsToOther = true
-						break
-					}
-				}
-				if belongsToOther {
-					continue
-				}
-				// Externally-uploaded object without a bucket prefix  -  prepend.
-				key = bucketPrefix + key
-			}
-
-			ok, importErr := m.stores.Object.ImportObject(ctx, key, backendName, obj.SizeBytes)
-			if importErr != nil {
-				return fmt.Errorf("failed to import %s: %w", obj.Key, importErr)
-			}
-			if ok {
-				imported++
-			} else {
-				skipped++
-			}
-		}
-		return nil
+		pImported, pSkipped, err := m.importSyncPage(ctx, backendName, bucketPrefix, otherPrefixes, objects)
+		imported += pImported
+		skipped += pSkipped
+		return err
 	})
 
-	// Record ListObjectsV2 API calls against the backend's usage quota.
-	// Each page is one API request to the backend provider.
+	// Record ListObjectsV2 API calls against the backend's usage quota:
+	// each page is one API request to the backend provider.
 	if apiPages > 0 {
 		m.usage.Record(backendName, apiPages, 0, 0)
 	}
-
 	if err != nil {
 		return imported, skipped, err
 	}
@@ -352,6 +313,49 @@ func (m *BackendManager) SyncBackend(ctx context.Context, backendName, bucket st
 	slog.InfoContext(ctx, "backend sync complete", "backend", backendName, "bucket", bucket,
 		"imported", imported, "skipped", skipped)
 	return imported, skipped, nil
+}
+
+// importSyncPage processes one page of backend ListObjects results,
+// importing objects that belong to bucket and skipping those that fall
+// inside sibling virtual buckets sharing the same backend.
+func (m *BackendManager) importSyncPage(
+	ctx context.Context,
+	backendName, bucketPrefix string,
+	otherPrefixes []string,
+	objects []backend.ListedObject,
+) (imported, skipped int, err error) {
+	for _, obj := range objects {
+		key, ok := normalizeSyncKey(obj.Key, bucketPrefix, otherPrefixes)
+		if !ok {
+			continue
+		}
+		inserted, importErr := m.stores.Object.ImportObject(ctx, key, backendName, obj.SizeBytes)
+		if importErr != nil {
+			return imported, skipped, fmt.Errorf("failed to import %s: %w", obj.Key, importErr)
+		}
+		if inserted {
+			imported++
+		} else {
+			skipped++
+		}
+	}
+	return imported, skipped, nil
+}
+
+// normalizeSyncKey returns the storage key to import, plus ok=false when
+// the object belongs to a sibling bucket and should be skipped. Keys
+// without any known prefix are treated as externally-uploaded objects
+// and get the target bucket's prefix prepended.
+func normalizeSyncKey(rawKey, bucketPrefix string, otherPrefixes []string) (string, bool) {
+	if strings.HasPrefix(rawKey, bucketPrefix) {
+		return rawKey, true
+	}
+	for _, p := range otherPrefixes {
+		if strings.HasPrefix(rawKey, p) {
+			return "", false
+		}
+	}
+	return bucketPrefix + rawKey, true
 }
 
 // makeReconcileDeleter composes the object_locations row delete with a

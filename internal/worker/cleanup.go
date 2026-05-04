@@ -53,8 +53,8 @@ func CleanupBackoff(attempts int32) time.Duration {
 	return min(time.Minute<<attempts, maxBackoff)
 }
 
-// ProcessCleanupQueue fetches pending cleanup items and attempts to delete the
-// orphaned objects from their respective backends.
+// ProcessCleanupQueue fetches pending cleanup items and attempts to
+// delete the orphaned objects from their respective backends.
 func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) (processed, failed int) {
 	ctx, span := telemetry.StartSpan(ctx, "ProcessCleanupQueue",
 		telemetry.AttrOperation.String("cleanup_queue"),
@@ -75,102 +75,148 @@ func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) (processed, fai
 			return
 		}
 		defer w.deps.ReleaseAdmission()
-
-		be, err := w.deps.GetBackend(item.BackendName)
-		if err != nil {
-			slog.WarnContext(ctx, "Cleanup queue: backend not found, removing item",
-				"backend", item.BackendName, "key", item.ObjectKey)
-			if err := w.store.CompleteCleanupItem(ctx, item.ID); err != nil {
-				slog.ErrorContext(ctx, "failed to complete cleanup item", "id", item.ID, "error", err)
-			}
-			telemetry.CleanupQueueProcessedTotal.WithLabelValues("success").Inc()
-			processedCount.Add(1)
-			return
-		}
-
-		delErr := w.deps.DeleteWithTimeout(ctx, be, item.ObjectKey)
-		w.deps.Usage().Record(item.BackendName, 1, 0, 0)
-
-		if delErr == nil {
-			if err := w.store.CompleteCleanupItem(ctx, item.ID); err != nil {
-				slog.ErrorContext(ctx, "failed to complete cleanup item", "id", item.ID, "error", err)
-			}
-			if item.SizeBytes > 0 {
-				if err := w.store.DecrementOrphanBytes(ctx, item.BackendName, item.SizeBytes); err != nil {
-					slog.ErrorContext(ctx, "failed to decrement orphan bytes",
-						"backend", item.BackendName, "size", item.SizeBytes, "error", err)
-				}
-			}
-			telemetry.CleanupQueueProcessedTotal.WithLabelValues("success").Inc()
-			processedCount.Add(1)
-			audit.Log(ctx, "cleanup_queue.processed",
-				slog.String("key", item.ObjectKey),
-				slog.String("backend", item.BackendName),
-				slog.String("reason", item.Reason),
-				slog.Int("attempt", int(item.Attempts+1)),
-			)
-			return
-		}
-
-		newAttempts := item.Attempts + 1
-		if newAttempts >= maxCleanupAttempts {
-			slog.ErrorContext(ctx, "Cleanup queue: max attempts reached, moving to DLQ",
-				"key", item.ObjectKey, "backend", item.BackendName,
-				"attempts", newAttempts, "size", item.SizeBytes, "error", delErr)
-			moved, mvErr := w.store.MoveCleanupToDLQ(ctx, item.ID, delErr.Error())
-			if mvErr != nil {
-				slog.ErrorContext(ctx, "failed to move cleanup item to DLQ",
-					"id", item.ID, "error", mvErr)
-				telemetry.CleanupQueueProcessedTotal.WithLabelValues("exhausted").Inc()
-				failedCount.Add(1)
-				return
-			}
-			if moved {
-				telemetry.CleanupDLQEnqueuedTotal.WithLabelValues(item.BackendName).Inc()
-				audit.Log(ctx, "cleanup_queue.exhausted_to_dlq",
-					slog.String("key", item.ObjectKey),
-					slog.String("backend", item.BackendName),
-					slog.String("reason", item.Reason),
-					slog.Int("attempts", int(newAttempts)),
-					slog.Int64("size_bytes", item.SizeBytes),
-					slog.String("last_error", delErr.Error()),
-				)
-				if event.Emit != nil {
-					event.Emit(event.Event{
-						Type:    event.CleanupExhausted,
-						Subject: item.BackendName,
-						Data: map[string]any{
-							"backend":    item.BackendName,
-							"object_key": item.ObjectKey,
-							"reason":     item.Reason,
-							"attempts":   int(newAttempts),
-							"size_bytes": item.SizeBytes,
-							"last_error": delErr.Error(),
-						},
-					})
-				}
-			}
-			telemetry.CleanupQueueProcessedTotal.WithLabelValues("exhausted").Inc()
-			failedCount.Add(1)
-			return
-		}
-
-		telemetry.CleanupQueueProcessedTotal.WithLabelValues("retry").Inc()
-		backoff := CleanupBackoff(item.Attempts)
-		if err := w.store.RetryCleanupItem(ctx, item.ID, backoff, delErr.Error()); err != nil {
-			slog.ErrorContext(ctx, "failed to update cleanup retry", "id", item.ID, "error", err)
-		}
-		failedCount.Add(1)
+		w.processCleanupItem(ctx, item, &processedCount, &failedCount)
 	})
 
-	depth, err := w.store.CleanupQueueDepth(ctx)
-	if err == nil {
-		telemetry.CleanupQueueDepth.Set(float64(depth))
-	}
-	dlqDepth, err := w.store.CleanupDLQDepth(ctx)
-	if err == nil {
-		telemetry.CleanupDLQDepth.Set(float64(dlqDepth))
+	w.recordCleanupDepths(ctx)
+	return int(processedCount.Load()), int(failedCount.Load())
+}
+
+// processCleanupItem handles one cleanup queue row: resolve the backend,
+// attempt the delete, and either complete, retry, or graduate the row to
+// the DLQ depending on the outcome.
+func (w *CleanupWorker) processCleanupItem(
+	ctx context.Context,
+	item core.CleanupItem,
+	processedCount, failedCount *atomic.Int32,
+) {
+	be, err := w.deps.GetBackend(item.BackendName)
+	if err != nil {
+		w.completeUnknownBackendItem(ctx, item, processedCount)
+		return
 	}
 
-	return int(processedCount.Load()), int(failedCount.Load())
+	delErr := w.deps.DeleteWithTimeout(ctx, be, item.ObjectKey)
+	w.deps.Usage().Record(item.BackendName, 1, 0, 0)
+
+	if delErr == nil {
+		w.completeCleanupSuccess(ctx, item, processedCount)
+		return
+	}
+
+	newAttempts := item.Attempts + 1
+	if newAttempts >= maxCleanupAttempts {
+		w.exhaustCleanupToDLQ(ctx, item, newAttempts, delErr, failedCount)
+		return
+	}
+	w.scheduleCleanupRetry(ctx, item, delErr, failedCount)
+}
+
+// completeUnknownBackendItem retires a cleanup row whose backend is no
+// longer registered. Treated as success because the configured fleet
+// cannot have an orphan on a backend it does not know about.
+func (w *CleanupWorker) completeUnknownBackendItem(ctx context.Context, item core.CleanupItem, processedCount *atomic.Int32) {
+	slog.WarnContext(ctx, "Cleanup queue: backend not found, removing item",
+		"backend", item.BackendName, "key", item.ObjectKey)
+	if err := w.store.CompleteCleanupItem(ctx, item.ID); err != nil {
+		slog.ErrorContext(ctx, "failed to complete cleanup item", "id", item.ID, "error", err)
+	}
+	telemetry.CleanupQueueProcessedTotal.WithLabelValues("success").Inc()
+	processedCount.Add(1)
+}
+
+// completeCleanupSuccess records a successful backend delete: complete
+// the row, decrement orphan-bytes accounting, audit, and bump the
+// success counter.
+func (w *CleanupWorker) completeCleanupSuccess(ctx context.Context, item core.CleanupItem, processedCount *atomic.Int32) {
+	if err := w.store.CompleteCleanupItem(ctx, item.ID); err != nil {
+		slog.ErrorContext(ctx, "failed to complete cleanup item", "id", item.ID, "error", err)
+	}
+	if item.SizeBytes > 0 {
+		if err := w.store.DecrementOrphanBytes(ctx, item.BackendName, item.SizeBytes); err != nil {
+			slog.ErrorContext(ctx, "failed to decrement orphan bytes",
+				"backend", item.BackendName, "size", item.SizeBytes, "error", err)
+		}
+	}
+	telemetry.CleanupQueueProcessedTotal.WithLabelValues("success").Inc()
+	processedCount.Add(1)
+	audit.Log(ctx, "cleanup_queue.processed",
+		slog.String("key", item.ObjectKey),
+		slog.String("backend", item.BackendName),
+		slog.String("reason", item.Reason),
+		slog.Int("attempt", int(item.Attempts+1)),
+	)
+}
+
+// exhaustCleanupToDLQ moves a cleanup item that has exhausted its retries
+// into the dead-letter queue. Emits an audit entry and a CleanupExhausted
+// event so operators can investigate stuck rows.
+func (w *CleanupWorker) exhaustCleanupToDLQ(
+	ctx context.Context,
+	item core.CleanupItem,
+	newAttempts int32,
+	delErr error,
+	failedCount *atomic.Int32,
+) {
+	slog.ErrorContext(ctx, "Cleanup queue: max attempts reached, moving to DLQ",
+		"key", item.ObjectKey, "backend", item.BackendName,
+		"attempts", newAttempts, "size", item.SizeBytes, "error", delErr)
+	moved, mvErr := w.store.MoveCleanupToDLQ(ctx, item.ID, delErr.Error())
+	if mvErr != nil {
+		slog.ErrorContext(ctx, "failed to move cleanup item to DLQ",
+			"id", item.ID, "error", mvErr)
+		telemetry.CleanupQueueProcessedTotal.WithLabelValues("exhausted").Inc()
+		failedCount.Add(1)
+		return
+	}
+	if moved {
+		telemetry.CleanupDLQEnqueuedTotal.WithLabelValues(item.BackendName).Inc()
+		audit.Log(ctx, "cleanup_queue.exhausted_to_dlq",
+			slog.String("key", item.ObjectKey),
+			slog.String("backend", item.BackendName),
+			slog.String("reason", item.Reason),
+			slog.Int("attempts", int(newAttempts)),
+			slog.Int64("size_bytes", item.SizeBytes),
+			slog.String("last_error", delErr.Error()),
+		)
+		if event.Emit != nil {
+			event.Emit(event.Event{
+				Type:    event.CleanupExhausted,
+				Subject: item.BackendName,
+				Data: map[string]any{
+					"backend":    item.BackendName,
+					"object_key": item.ObjectKey,
+					"reason":     item.Reason,
+					"attempts":   int(newAttempts),
+					"size_bytes": item.SizeBytes,
+					"last_error": delErr.Error(),
+				},
+			})
+		}
+	}
+	telemetry.CleanupQueueProcessedTotal.WithLabelValues("exhausted").Inc()
+	failedCount.Add(1)
+}
+
+// scheduleCleanupRetry stamps the next retry deadline on a still-eligible
+// cleanup row using exponential backoff.
+func (w *CleanupWorker) scheduleCleanupRetry(ctx context.Context, item core.CleanupItem, delErr error, failedCount *atomic.Int32) {
+	telemetry.CleanupQueueProcessedTotal.WithLabelValues("retry").Inc()
+	backoff := CleanupBackoff(item.Attempts)
+	if err := w.store.RetryCleanupItem(ctx, item.ID, backoff, delErr.Error()); err != nil {
+		slog.ErrorContext(ctx, "failed to update cleanup retry", "id", item.ID, "error", err)
+	}
+	failedCount.Add(1)
+}
+
+// recordCleanupDepths refreshes the cleanup-queue and DLQ depth gauges
+// at the end of a tick. Errors are tolerated because depth reads are
+// purely informational.
+func (w *CleanupWorker) recordCleanupDepths(ctx context.Context) {
+	if depth, err := w.store.CleanupQueueDepth(ctx); err == nil {
+		telemetry.CleanupQueueDepth.Set(float64(depth))
+	}
+	if dlqDepth, err := w.store.CleanupDLQDepth(ctx); err == nil {
+		telemetry.CleanupDLQDepth.Set(float64(dlqDepth))
+	}
 }

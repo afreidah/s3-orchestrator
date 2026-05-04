@@ -156,7 +156,8 @@ func (s *Server) handleUploadPart(ctx context.Context, w http.ResponseWriter, r 
 func (s *Server) handleCompleteMultipartUpload(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket, key string) (int, error) {
 	uploadID := r.URL.Query().Get("uploadId")
 
-	// Limit the XML body to 1 MB to prevent memory exhaustion from oversized requests.
+	// Limit the XML body to 1 MB to prevent memory exhaustion from
+	// oversized requests.
 	var req completeMultipartUploadRequest
 	if err := xml.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
 		writeS3Error(w, http.StatusBadRequest, "MalformedXML", "Failed to parse request body")
@@ -168,27 +169,8 @@ func (s *Server) handleCompleteMultipartUpload(ctx context.Context, w http.Respo
 		partNumbers = append(partNumbers, p.PartNumber)
 	}
 
-	// Validate total assembled size against MaxObjectSize before the
-	// expensive reassembly (read all parts + re-upload combined object).
-	if s.MaxObjectSize > 0 {
-		parts, err := s.Manager.MultipartManager.GetParts(ctx, uploadID)
-		if err != nil {
-			return writeStorageError(w, err, "Failed to get parts"), err
-		}
-		requested := make(map[int]bool, len(partNumbers))
-		for _, pn := range partNumbers {
-			requested[pn] = true
-		}
-		var totalSize int64
-		for _, p := range parts {
-			if requested[p.PartNumber] {
-				totalSize += p.SizeBytes
-			}
-		}
-		if totalSize > s.MaxObjectSize {
-			writeS3Error(w, http.StatusRequestEntityTooLarge, "EntityTooLarge", "Combined object size exceeds the maximum allowed size")
-			return http.StatusRequestEntityTooLarge, fmt.Errorf("combined size %d exceeds max %d", totalSize, s.MaxObjectSize)
-		}
+	if status, err := s.checkMultipartTotalSize(ctx, w, uploadID, partNumbers); err != nil {
+		return status, err
 	}
 
 	etag, err := s.Manager.MultipartManager.CompleteMultipartUpload(ctx, uploadID, partNumbers)
@@ -207,6 +189,35 @@ func (s *Server) handleCompleteMultipartUpload(ctx context.Context, w http.Respo
 		return http.StatusOK, fmt.Errorf("failed to encode complete multipart response: %w", err)
 	}
 	return http.StatusOK, nil
+}
+
+// checkMultipartTotalSize validates the combined assembled size against
+// MaxObjectSize before the expensive reassembly path runs (read all
+// parts + re-upload combined object). Returns (0, nil) when the limit is
+// disabled or the assembly is within bounds.
+func (s *Server) checkMultipartTotalSize(ctx context.Context, w http.ResponseWriter, uploadID string, partNumbers []int) (int, error) {
+	if s.MaxObjectSize <= 0 {
+		return 0, nil
+	}
+	parts, err := s.Manager.MultipartManager.GetParts(ctx, uploadID)
+	if err != nil {
+		return writeStorageError(w, err, "Failed to get parts"), err
+	}
+	requested := make(map[int]bool, len(partNumbers))
+	for _, pn := range partNumbers {
+		requested[pn] = true
+	}
+	var totalSize int64
+	for _, p := range parts {
+		if requested[p.PartNumber] {
+			totalSize += p.SizeBytes
+		}
+	}
+	if totalSize > s.MaxObjectSize {
+		writeS3Error(w, http.StatusRequestEntityTooLarge, "EntityTooLarge", "Combined object size exceeds the maximum allowed size")
+		return http.StatusRequestEntityTooLarge, fmt.Errorf("combined size %d exceeds max %d", totalSize, s.MaxObjectSize)
+	}
+	return 0, nil
 }
 
 // handleAbortMultipartUpload handles DELETE /{bucket}/{key}?uploadId=X
