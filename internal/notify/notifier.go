@@ -94,7 +94,7 @@ const defaultMaxRetries = 3
 const defaultEndpointTimeout = 5 * time.Second
 
 // Notifier delivers webhook notifications from a durable outbox queue.
-// Implements lifecycle.Service via the Run method.
+// Implements lifecycle.Runner via the Run method.
 type Notifier struct {
 	endpoints []config.NotificationEndpoint
 	store     OutboxStore
@@ -199,7 +199,7 @@ func (n *Notifier) fanOutToEndpoints(ev *event.Event, payload []byte) {
 // BACKGROUND DELIVERY WORKER
 // -------------------------------------------------------------------------
 
-// Run implements lifecycle.Service. Drains the notification outbox under an
+// Run implements lifecycle.Runner. Drains the notification outbox under an
 // advisory lock, delivering pending events via HTTP POST.
 func (n *Notifier) Run(ctx context.Context) error {
 	ticker := time.NewTicker(drainInterval)
