@@ -74,12 +74,29 @@ func (o *ObjectManager) PutObject(ctx context.Context, key string, body io.Reade
 	var lastErr error
 
 	for len(eligible) > 0 {
-		res := o.attemptPutOnBackend(ctx, span, operation, key, bodyBytes, size, contentType, metadata, contentHash, &dekState, eligible)
+		res := o.attemptPutOnBackend(ctx, span, &putAttemptRequest{
+			operation:   operation,
+			key:         key,
+			bodyBytes:   bodyBytes,
+			size:        size,
+			contentType: contentType,
+			metadata:    metadata,
+			contentHash: contentHash,
+			dekState:    &dekState,
+			eligible:    eligible,
+		})
 		if res.fatalErr != nil {
 			return "", res.fatalErr
 		}
 		if res.putErr == nil {
-			o.finalizePutSuccess(ctx, span, operation, key, res.backend, size, start, failedBackends)
+			o.finalizePutSuccess(ctx, span, &putSuccessRequest{
+				operation:      operation,
+				key:            key,
+				backendName:    res.backend,
+				size:           size,
+				start:          start,
+				failedBackends: failedBackends,
+			})
 			return res.etag, nil
 		}
 		lastErr = res.putErr
@@ -123,24 +140,28 @@ func (o *ObjectManager) bufferPutBody(span trace.Span, body io.Reader) ([]byte, 
 	return bodyBytes, contentHash, nil
 }
 
+// putAttemptRequest bundles the per-attempt arguments to
+// attemptPutOnBackend so the helper signature stays under the
+// parameter-count limit.
+type putAttemptRequest struct {
+	operation   string
+	key         string
+	bodyBytes   []byte
+	size        int64
+	contentType string
+	metadata    map[string]string
+	contentHash string
+	dekState    *putEncryptState
+	eligible    []string
+}
+
 // attemptPutOnBackend performs one backend PUT attempt: select a
 // destination, prepare the payload (encrypt/hash), insert a pending
 // intent, upload, then promote the intent on success.
-func (o *ObjectManager) attemptPutOnBackend(
-	ctx context.Context,
-	span trace.Span,
-	operation, key string,
-	bodyBytes []byte,
-	size int64,
-	contentType string,
-	metadata map[string]string,
-	contentHash string,
-	dekState *putEncryptState,
-	eligible []string,
-) putAttemptResult {
-	backendName, err := o.parent.selectBackendForWrite(ctx, size, eligible)
+func (o *ObjectManager) attemptPutOnBackend(ctx context.Context, span trace.Span, req *putAttemptRequest) putAttemptResult {
+	backendName, err := o.parent.selectBackendForWrite(ctx, req.size, req.eligible)
 	if err != nil {
-		return putAttemptResult{fatalErr: o.classifyWriteError(span, operation, err)}
+		return putAttemptResult{fatalErr: o.classifyWriteError(span, req.operation, err)}
 	}
 	span.SetAttributes(telemetry.AttrBackendName.String(backendName))
 
@@ -150,7 +171,7 @@ func (o *ObjectManager) attemptPutOnBackend(
 		return putAttemptResult{backend: backendName, fatalErr: err}
 	}
 
-	uploadBody, uploadSize, enc, err := o.buildPutPayload(ctx, bodyBytes, size, contentHash, dekState)
+	uploadBody, uploadSize, enc, err := o.buildPutPayload(ctx, req.bodyBytes, req.size, req.contentHash, req.dekState)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return putAttemptResult{backend: backendName, fatalErr: err}
@@ -160,14 +181,14 @@ func (o *ObjectManager) attemptPutOnBackend(
 	// commit failure after the bytes land has a recovery breadcrumb: the
 	// pending reaper promotes the intent on a later tick instead of the
 	// old failure path silently deleting the just-written copy.
-	intentID, err := o.parent.insertPendingIntent(ctx, key, backendName, uploadSize, enc)
+	intentID, err := o.parent.insertPendingIntent(ctx, req.key, backendName, uploadSize, enc)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return putAttemptResult{backend: backendName, fatalErr: err}
 	}
 
 	bctx, bcancel := o.withTimeout(ctx)
-	etag, err := be.PutObject(bctx, key, uploadBody, uploadSize, contentType, metadata)
+	etag, err := be.PutObject(bctx, req.key, uploadBody, uploadSize, req.contentType, req.metadata)
 	bcancel()
 	if err != nil {
 		o.usage.Record(backendName, 1, 0, 0)
@@ -178,10 +199,10 @@ func (o *ObjectManager) attemptPutOnBackend(
 		return putAttemptResult{backend: backendName, putErr: err}
 	}
 
-	if err := o.parent.recordObjectAndPromoteIntent(ctx, span, key, backendName, uploadSize, enc, intentID); err != nil {
+	if err := o.parent.recordObjectAndPromoteIntent(ctx, span, req.key, backendName, uploadSize, enc, intentID); err != nil {
 		return putAttemptResult{backend: backendName, fatalErr: err}
 	}
-	o.cache.Delete(key)
+	o.cache.Delete(req.key)
 	return putAttemptResult{backend: backendName, etag: etag}
 }
 
@@ -210,46 +231,50 @@ func (o *ObjectManager) buildPutPayload(
 	return bytes.NewReader(bodyBytes), size, enc, nil
 }
 
+// putSuccessRequest bundles the metadata that finalizePutSuccess emits
+// so the helper signature stays under the parameter-count limit.
+type putSuccessRequest struct {
+	operation      string
+	key            string
+	backendName    string
+	size           int64
+	start          time.Time
+	failedBackends []string
+}
+
 // finalizePutSuccess emits success metrics, audit log, and an event
 // notification for a successful PutObject. Records failover spans when
 // retries occurred.
-func (o *ObjectManager) finalizePutSuccess(
-	ctx context.Context,
-	span trace.Span,
-	operation, key, backendName string,
-	size int64,
-	start time.Time,
-	failedBackends []string,
-) {
-	o.recordOperation(operation, backendName, start, nil)
-	o.usage.Record(backendName, 1, 0, size)
-	if len(failedBackends) > 0 {
-		for _, fb := range failedBackends {
-			telemetry.WriteFailoverTotal.WithLabelValues(operation, fb, backendName).Inc()
+func (o *ObjectManager) finalizePutSuccess(ctx context.Context, span trace.Span, req *putSuccessRequest) {
+	o.recordOperation(req.operation, req.backendName, req.start, nil)
+	o.usage.Record(req.backendName, 1, 0, req.size)
+	if len(req.failedBackends) > 0 {
+		for _, fb := range req.failedBackends {
+			telemetry.WriteFailoverTotal.WithLabelValues(req.operation, fb, req.backendName).Inc()
 		}
 		span.SetAttributes(telemetry.AttrWriteFailover.Bool(true))
-		span.SetAttributes(telemetry.AttrFailoverAttempts.Int(len(failedBackends)))
+		span.SetAttributes(telemetry.AttrFailoverAttempts.Int(len(req.failedBackends)))
 	}
 	audit.Log(ctx, "storage.PutObject",
-		slog.String("key", key),
-		slog.String("backend", backendName),
-		slog.Int64("size", size),
+		slog.String("key", req.key),
+		slog.String("backend", req.backendName),
+		slog.Int64("size", req.size),
 	)
 	if event.Emit != nil {
-		bucket, userKey := internalkey.Split(key)
+		bucket, userKey := internalkey.Split(req.key)
 		event.Emit(event.Event{
 			Type:    event.ObjectCreatedPut,
 			Subject: userKey,
 			Data: map[string]any{
 				"bucket":     bucket,
 				"key":        userKey,
-				"backend":    backendName,
-				"size":       size,
+				"backend":    req.backendName,
+				"size":       req.size,
 				"request_id": audit.RequestID(ctx),
 			},
 		})
 	}
-	o.invalidateCache(key)
+	o.invalidateCache(req.key)
 	span.SetStatus(codes.Ok, "")
 }
 
@@ -555,8 +580,8 @@ func (o *ObjectManager) DeleteObject(ctx context.Context, key string) error {
 
 // DeleteObjectResult holds the outcome of a single key within a batch delete.
 type DeleteObjectResult struct {
-	Key string
-	Err error
+	Key string `json:"key,omitempty"`
+	Err error  `json:"err,omitempty"`
 }
 
 // batchDeleteItem is one (key, backend) pair fanned out to the worker

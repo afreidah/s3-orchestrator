@@ -394,7 +394,16 @@ func (o *ObjectManager) GetObject(ctx context.Context, key string, rangeHeader s
 	locByBackend := o.resolveLocationsByBackend(ctx, key)
 
 	backendName, err := o.withReadFailover(ctx, "GetObject", key, func(ctx context.Context, beName string, backend s3be.ObjectBackend) (int64, func(), error) {
-		return o.getObjectAttempt(ctx, key, rangeHeader, beName, backend, locByBackend, &once, &result)
+		req := &getAttemptRequest{
+			key:          key,
+			rangeHeader:  rangeHeader,
+			beName:       beName,
+			backend:      backend,
+			locByBackend: locByBackend,
+			once:         &once,
+			result:       &result,
+		}
+		return o.getObjectAttempt(ctx, req)
 	})
 	if err != nil {
 		return nil, err
@@ -438,43 +447,48 @@ func (o *ObjectManager) tryGetObjectCache(ctx context.Context, key, rangeHeader 
 	}, true
 }
 
+// getAttemptRequest bundles the per-attempt arguments to getObjectAttempt
+// so the callback signature stays under the parameter-count limit.
+type getAttemptRequest struct {
+	key          string
+	rangeHeader  string
+	beName       string
+	backend      s3be.ObjectBackend
+	locByBackend map[string]*core.ObjectLocation
+	once         *sync.Once
+	result       **s3be.GetObjectResult
+}
+
 // getObjectAttempt is the per-backend callback invoked by withReadFailover
 // for GetObject. It owns the per-attempt timeout, applies usage limits,
 // translates encrypted ranges, decrypts and verifies the body, and records
 // the winning result via once.
-func (o *ObjectManager) getObjectAttempt(
-	ctx context.Context,
-	key, rangeHeader, beName string,
-	backend s3be.ObjectBackend,
-	locByBackend map[string]*core.ObjectLocation,
-	once *sync.Once,
-	result **s3be.GetObjectResult,
-) (int64, func(), error) {
+func (o *ObjectManager) getObjectAttempt(ctx context.Context, req *getAttemptRequest) (int64, func(), error) {
 	bctx, bcancel := o.withTimeout(ctx)
 
-	if !o.usage.WithinLimits(beName, 1, 0, 0) {
+	if !o.usage.WithinLimits(req.beName, 1, 0, 0) {
 		bcancel()
-		return 0, noopCleanup, fmt.Errorf("backend %s: %w", beName, errUsageLimitSkip)
+		return 0, noopCleanup, fmt.Errorf("backend %s: %w", req.beName, errUsageLimitSkip)
 	}
-	if o.encryptor != nil && locByBackend == nil {
+	if o.encryptor != nil && req.locByBackend == nil {
 		bcancel()
 		return 0, noopCleanup, core.ErrServiceUnavailable
 	}
 
-	loc := locByBackend[beName]
-	actualRange, rng, ptStart, ptEnd := o.resolveBackendRange(rangeHeader, loc)
+	loc := req.locByBackend[req.beName]
+	actualRange, rng, ptStart, ptEnd := o.resolveBackendRange(req.rangeHeader, loc)
 
-	r, err := backend.GetObject(bctx, key, actualRange)
+	r, err := req.backend.GetObject(bctx, req.key, actualRange)
 	if err != nil {
 		bcancel()
-		o.usage.Record(beName, 1, 0, 0)
+		o.usage.Record(req.beName, 1, 0, 0)
 		return 0, noopCleanup, err
 	}
-	if !o.usage.WithinLimits(beName, 1, r.Size, 0) {
+	if !o.usage.WithinLimits(req.beName, 1, r.Size, 0) {
 		_ = r.Body.Close()
 		bcancel()
-		o.usage.Record(beName, 1, 0, 0)
-		return 0, noopCleanup, fmt.Errorf("backend %s egress: %w", beName, errUsageLimitSkip)
+		o.usage.Record(req.beName, 1, 0, 0)
+		return 0, noopCleanup, fmt.Errorf("backend %s egress: %w", req.beName, errUsageLimitSkip)
 	}
 
 	if loc != nil && loc.Encrypted && o.encryptor != nil {
@@ -485,11 +499,11 @@ func (o *ObjectManager) getObjectAttempt(
 		}
 	}
 
-	o.maybeWrapIntegrityReader(ctx, r, loc, key, beName, backend)
+	o.maybeWrapIntegrityReader(ctx, r, loc, req.key, req.beName, req.backend)
 
 	r.Body = bodyWithCancel(r.Body, bcancel)
-	once.Do(func() { *result = r })
-	if *result != r {
+	req.once.Do(func() { *req.result = r })
+	if *req.result != r {
 		_ = r.Body.Close()
 	}
 	return r.Size, noopCleanup, nil
@@ -656,11 +670,11 @@ func advancePastEmittedCommonPrefix(prefix, delimiter, cursor string, seen map[s
 
 // ListObjectsV2Result holds the processed result for the S3 ListObjectsV2 response.
 type ListObjectsV2Result struct {
-	Objects               []core.ObjectLocation
-	CommonPrefixes        []string
-	IsTruncated           bool
-	NextContinuationToken string
-	KeyCount              int
+	Objects               []core.ObjectLocation `json:"objects,omitempty"`
+	CommonPrefixes        []string              `json:"common_prefixes,omitempty"`
+	IsTruncated           bool                  `json:"is_truncated,omitempty"`
+	NextContinuationToken string                `json:"next_continuation_token,omitempty"`
+	KeyCount              int                   `json:"key_count,omitempty"`
 }
 
 // ListObjects returns objects matching the given prefix with optional

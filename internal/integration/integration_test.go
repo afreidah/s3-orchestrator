@@ -2758,66 +2758,17 @@ func TestOverReplicationCountPending(t *testing.T) {
 // original mega-TestImportPreExistingObjects; behaviour is preserved.
 func TestImportPreExistingObjects_ImportAndAccessViaProxy(t *testing.T) {
 	ctx := context.Background()
-	_ = ctx
-
 	resetState(t)
 
-	directClient := newDirectMinioClient(t, "minio-1")
-	keys := make([]string, 3)
-	for i := range keys {
-		keys[i] = fmt.Sprintf("import-test/obj-%d-%d", i, time.Now().UnixNano())
-		_, err := directClient.PutObject(ctx, &s3.PutObjectInput{
-			Bucket:        aws.String("backend1"),
-			Key:           aws.String(internalKey(keys[i])),
-			Body:          bytes.NewReader(bytes.Repeat([]byte("I"), 100)),
-			ContentLength: aws.Int64(100),
-		})
-		if err != nil {
-			t.Fatalf("direct PutObject(%s): %v", keys[i], err)
-		}
-	}
-
+	keys := seedDirectMinioObjects(t, ctx, "import-test/obj", 3, 100, "I")
 	proxyClient := newS3Client(t)
-	for _, key := range keys {
-		_, err := proxyClient.GetObject(ctx, &s3.GetObjectInput{
-			Bucket: aws.String(virtualBucket),
-			Key:    aws.String(key),
-		})
-		if err == nil {
-			t.Fatalf("expected 404 for %q before import, got nil", key)
-		}
-		assertHTTPStatus(t, err, 404)
-	}
-
-	store := testStore
-	for _, key := range keys {
-		imported, err := store.ImportObject(ctx, internalKey(key), "minio-1", 100)
-		if err != nil {
-			t.Fatalf("ImportObject(%q): %v", key, err)
-		}
-		if !imported {
-			t.Errorf("ImportObject(%q) = false, want true", key)
-		}
-	}
+	assertProxy404ForAll(t, ctx, proxyClient, keys)
+	importAllToMinio1(t, ctx, keys, 100)
 
 	if used := queryQuotaUsed(t, "minio-1"); used != 300 {
 		t.Errorf("minio-1 bytes_used = %d, want 300", used)
 	}
-
-	for _, key := range keys {
-		resp, err := proxyClient.GetObject(ctx, &s3.GetObjectInput{
-			Bucket: aws.String(virtualBucket),
-			Key:    aws.String(key),
-		})
-		if err != nil {
-			t.Fatalf("GetObject(%q) after import: %v", key, err)
-		}
-		got, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if len(got) != 100 {
-			t.Errorf("GetObject(%q) body = %d bytes, want 100", key, len(got))
-		}
-	}
+	assertProxyServesAll(t, ctx, proxyClient, keys, 100)
 
 	list, err := proxyClient.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
 		Bucket: aws.String(virtualBucket),
@@ -2828,6 +2779,80 @@ func TestImportPreExistingObjects_ImportAndAccessViaProxy(t *testing.T) {
 	}
 	if len(list.Contents) != 3 {
 		t.Errorf("listed %d objects, want 3", len(list.Contents))
+	}
+}
+
+// seedDirectMinioObjects writes count objects directly to the minio-1
+// container (bypassing the proxy) under a unique prefix derived from
+// keyPrefix. Returns the user-visible key list.
+func seedDirectMinioObjects(t *testing.T, ctx context.Context, keyPrefix string, count int, sizeBytes int, fillByte string) []string {
+	t.Helper()
+	directClient := newDirectMinioClient(t, "minio-1")
+	keys := make([]string, count)
+	for i := range keys {
+		keys[i] = fmt.Sprintf("%s-%d-%d", keyPrefix, i, time.Now().UnixNano())
+		_, err := directClient.PutObject(ctx, &s3.PutObjectInput{
+			Bucket:        aws.String("backend1"),
+			Key:           aws.String(internalKey(keys[i])),
+			Body:          bytes.NewReader(bytes.Repeat([]byte(fillByte), sizeBytes)),
+			ContentLength: aws.Int64(int64(sizeBytes)),
+		})
+		if err != nil {
+			t.Fatalf("direct PutObject(%s): %v", keys[i], err)
+		}
+	}
+	return keys
+}
+
+// assertProxy404ForAll fetches each key through the proxy and fails the
+// test if any request does not return 404.
+func assertProxy404ForAll(t *testing.T, ctx context.Context, proxyClient *s3.Client, keys []string) {
+	t.Helper()
+	for _, key := range keys {
+		_, err := proxyClient.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String(virtualBucket),
+			Key:    aws.String(key),
+		})
+		if err == nil {
+			t.Fatalf("expected 404 for %q before import, got nil", key)
+		}
+		assertHTTPStatus(t, err, 404)
+	}
+}
+
+// importAllToMinio1 imports each key into the metadata store as living
+// on minio-1 with the provided size, asserting that ImportObject reports
+// each row as freshly inserted.
+func importAllToMinio1(t *testing.T, ctx context.Context, keys []string, sizeBytes int64) {
+	t.Helper()
+	for _, key := range keys {
+		imported, err := testStore.ImportObject(ctx, internalKey(key), "minio-1", sizeBytes)
+		if err != nil {
+			t.Fatalf("ImportObject(%q): %v", key, err)
+		}
+		if !imported {
+			t.Errorf("ImportObject(%q) = false, want true", key)
+		}
+	}
+}
+
+// assertProxyServesAll fetches each key through the proxy and asserts
+// the returned body is exactly wantSize bytes.
+func assertProxyServesAll(t *testing.T, ctx context.Context, proxyClient *s3.Client, keys []string, wantSize int) {
+	t.Helper()
+	for _, key := range keys {
+		resp, err := proxyClient.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String(virtualBucket),
+			Key:    aws.String(key),
+		})
+		if err != nil {
+			t.Fatalf("GetObject(%q) after import: %v", key, err)
+		}
+		got, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if len(got) != wantSize {
+			t.Errorf("GetObject(%q) body = %d bytes, want %d", key, len(got), wantSize)
+		}
 	}
 }
 
@@ -3360,30 +3385,56 @@ func TestStore_RecordPart_InvalidPartNumber(t *testing.T) {
 // original mega-TestSyncPipeline; behaviour is preserved.
 func TestSyncPipeline_ImportAndVerify(t *testing.T) {
 	ctx := context.Background()
-	_ = ctx
-
 	resetState(t)
 
-	directClient := newDirectMinioClient(t, "minio-1")
 	prefix := fmt.Sprintf("sync-test/%d/", time.Now().UnixNano())
-	keys := make([]string, 5)
+	keys := seedDirectMinioPrefixed(t, ctx, prefix, 5, 80, "S")
+
+	backend := newTestS3Backend(t, "minio-1")
+	imported, skipped, err := runSyncPipeline(ctx, backend, internalKey(prefix))
+	if err != nil {
+		t.Fatalf("ListObjects+ImportObject pipeline: %v", err)
+	}
+	if imported != 5 {
+		t.Errorf("imported = %d, want 5", imported)
+	}
+	if skipped != 0 {
+		t.Errorf("skipped = %d, want 0", skipped)
+	}
+	if used := queryQuotaUsed(t, "minio-1"); used != 400 {
+		t.Errorf("minio-1 bytes_used = %d, want 400", used)
+	}
+	assertProxyServesAll(t, ctx, newS3Client(t), keys, 80)
+}
+
+// seedDirectMinioPrefixed writes count objects directly to minio-1
+// under the given prefix, each filled with sizeBytes copies of fillByte.
+// Returns the user-visible keys.
+func seedDirectMinioPrefixed(t *testing.T, ctx context.Context, prefix string, count int, sizeBytes int, fillByte string) []string {
+	t.Helper()
+	directClient := newDirectMinioClient(t, "minio-1")
+	keys := make([]string, count)
 	for i := range keys {
 		keys[i] = fmt.Sprintf("%sobj-%d", prefix, i)
 		_, err := directClient.PutObject(ctx, &s3.PutObjectInput{
 			Bucket:        aws.String("backend1"),
 			Key:           aws.String(internalKey(keys[i])),
-			Body:          bytes.NewReader(bytes.Repeat([]byte("S"), 80)),
-			ContentLength: aws.Int64(80),
+			Body:          bytes.NewReader(bytes.Repeat([]byte(fillByte), sizeBytes)),
+			ContentLength: aws.Int64(int64(sizeBytes)),
 		})
 		if err != nil {
 			t.Fatalf("direct PutObject(%s): %v", keys[i], err)
 		}
 	}
+	return keys
+}
 
-	backend := newTestS3Backend(t, "minio-1")
+// runSyncPipeline lists objects under prefix from backend and imports
+// each into the metadata store on minio-1, returning the counts of
+// freshly inserted (imported) and already-tracked (skipped) rows.
+func runSyncPipeline(ctx context.Context, backend *s3be.S3Backend, prefix string) (int, int, error) {
 	var imported, skipped int
-
-	err := backend.ListObjects(ctx, internalKey(prefix), func(objects []s3be.ListedObject) error {
+	err := backend.ListObjects(ctx, prefix, func(objects []s3be.ListedObject) error {
 		for _, obj := range objects {
 			ok, err := testStore.ImportObject(ctx, obj.Key, "minio-1", obj.SizeBytes)
 			if err != nil {
@@ -3397,90 +3448,32 @@ func TestSyncPipeline_ImportAndVerify(t *testing.T) {
 		}
 		return nil
 	})
-	if err != nil {
-		t.Fatalf("ListObjects+ImportObject pipeline: %v", err)
-	}
-
-	if imported != 5 {
-		t.Errorf("imported = %d, want 5", imported)
-	}
-	if skipped != 0 {
-		t.Errorf("skipped = %d, want 0", skipped)
-	}
-
-	if used := queryQuotaUsed(t, "minio-1"); used != 400 {
-		t.Errorf("minio-1 bytes_used = %d, want 400", used)
-	}
-
-	proxyClient := newS3Client(t)
-	for _, key := range keys {
-		resp, err := proxyClient.GetObject(ctx, &s3.GetObjectInput{
-			Bucket: aws.String(virtualBucket),
-			Key:    aws.String(key),
-		})
-		if err != nil {
-			t.Fatalf("GetObject(%s) after sync: %v", key, err)
-		}
-		got, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if len(got) != 80 {
-			t.Errorf("GetObject(%s) body = %d bytes, want 80", key, len(got))
-		}
-	}
+	return imported, skipped, err
 }
 
 // TestSyncPipeline_IdempotentRerun is one of the sub-cases extracted from the
 // original mega-TestSyncPipeline; behaviour is preserved.
 func TestSyncPipeline_IdempotentRerun(t *testing.T) {
 	ctx := context.Background()
-	_ = ctx
-
 	resetState(t)
 
-	directClient := newDirectMinioClient(t, "minio-1")
 	prefix := fmt.Sprintf("sync-idem/%d/", time.Now().UnixNano())
-	for i := 0; i < 3; i++ {
-		key := fmt.Sprintf("%sobj-%d", prefix, i)
-		_, err := directClient.PutObject(ctx, &s3.PutObjectInput{
-			Bucket:        aws.String("backend1"),
-			Key:           aws.String(internalKey(key)),
-			Body:          bytes.NewReader(bytes.Repeat([]byte("I"), 60)),
-			ContentLength: aws.Int64(60),
-		})
-		if err != nil {
-			t.Fatalf("direct PutObject(%s): %v", key, err)
-		}
-	}
+	_ = seedDirectMinioPrefixed(t, ctx, prefix, 3, 60, "I")
 
 	backend := newTestS3Backend(t, "minio-1")
 
-	syncOnce := func() (imported, skipped int) {
-		err := backend.ListObjects(ctx, internalKey(prefix), func(objects []s3be.ListedObject) error {
-			for _, obj := range objects {
-				ok, err := testStore.ImportObject(ctx, obj.Key, "minio-1", obj.SizeBytes)
-				if err != nil {
-					return err
-				}
-				if ok {
-					imported++
-				} else {
-					skipped++
-				}
-			}
-			return nil
-		})
-		if err != nil {
-			t.Fatalf("sync pipeline: %v", err)
-		}
-		return
+	imp1, skip1, err := runSyncPipeline(ctx, backend, internalKey(prefix))
+	if err != nil {
+		t.Fatalf("sync pipeline run 1: %v", err)
 	}
-
-	imp1, skip1 := syncOnce()
 	if imp1 != 3 || skip1 != 0 {
 		t.Errorf("run 1: imported=%d skipped=%d, want 3/0", imp1, skip1)
 	}
 
-	imp2, skip2 := syncOnce()
+	imp2, skip2, err := runSyncPipeline(ctx, backend, internalKey(prefix))
+	if err != nil {
+		t.Fatalf("sync pipeline run 2: %v", err)
+	}
 	if imp2 != 0 || skip2 != 3 {
 		t.Errorf("run 2: imported=%d skipped=%d, want 0/3", imp2, skip2)
 	}

@@ -164,7 +164,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	span.SetAttributes(attribute.Int("http.status_code", status))
 
-	s.auditRequest(ctx, r, method, bucket, key, operation, status, requestSize, responseSize, time.Since(start), err)
+	s.auditRequest(ctx, r, &auditEntry{
+		method:       method,
+		bucket:       bucket,
+		key:          key,
+		operation:    operation,
+		status:       status,
+		requestSize:  requestSize,
+		responseSize: responseSize,
+		elapsed:      time.Since(start),
+		err:          err,
+	})
 }
 
 // rejectAuth writes a 403 AccessDenied response after authentication
@@ -276,6 +286,17 @@ func (s *Server) routeBucketRequest(ctx context.Context, w http.ResponseWriter, 
 	return "", 0, nil, false
 }
 
+// objectRouteKey carries the path-derived identifiers a per-object
+// dispatcher needs. Bundling them keeps the dispatcher signatures under
+// the parameter-count limit.
+type objectRouteKey struct {
+	method      string
+	bucket      string
+	key         string
+	internalKey string
+	uploadID    string
+}
+
 // routeObjectRequest dispatches object-level operations to their
 // handlers, splitting on multipart-upload state. supported=false means
 // the method/query combination is not supported and the caller emits 405.
@@ -283,32 +304,33 @@ func (s *Server) routeObjectRequest(ctx context.Context, w http.ResponseWriter, 
 	query := r.URL.Query()
 	_, hasUploads := query["uploads"]
 	uploadID := query.Get("uploadId")
+	rk := &objectRouteKey{method: method, bucket: bucket, key: key, internalKey: internalKey, uploadID: uploadID}
 
 	switch {
 	case hasUploads && method == http.MethodPost:
 		st, e := s.handleCreateMultipartUpload(ctx, w, r, bucket, key, internalKey)
 		return "CreateMultipartUpload", st, 0, 0, e, true
 	case uploadID != "":
-		return s.routeMultipartRequest(ctx, w, r, method, bucket, key, internalKey, uploadID)
+		return s.routeMultipartRequest(ctx, w, r, rk)
 	default:
 		return s.routePlainObjectRequest(ctx, w, r, method, bucket, internalKey)
 	}
 }
 
 // routeMultipartRequest dispatches per-uploadID multipart operations.
-func (s *Server) routeMultipartRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, method, bucket, key, internalKey, uploadID string) (string, int, int64, int64, error, bool) {
-	switch method {
+func (s *Server) routeMultipartRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, rk *objectRouteKey) (string, int, int64, int64, error, bool) {
+	switch rk.method {
 	case http.MethodPut:
-		st, e := s.handleUploadPart(ctx, w, r, internalKey)
+		st, e := s.handleUploadPart(ctx, w, r, rk.internalKey)
 		return "UploadPart", st, r.ContentLength, 0, e, true
 	case http.MethodPost:
-		st, e := s.handleCompleteMultipartUpload(ctx, w, r, bucket, key)
+		st, e := s.handleCompleteMultipartUpload(ctx, w, r, rk.bucket, rk.key)
 		return "CompleteMultipartUpload", st, 0, 0, e, true
 	case http.MethodDelete:
-		st, e := s.handleAbortMultipartUpload(ctx, w, uploadID)
+		st, e := s.handleAbortMultipartUpload(ctx, w, rk.uploadID)
 		return "AbortMultipartUpload", st, 0, 0, e, true
 	case http.MethodGet:
-		st, e := s.handleListParts(ctx, w, r, bucket, key, internalKey)
+		st, e := s.handleListParts(ctx, w, r, rk.bucket, rk.key, rk.internalKey)
 		return "ListParts", st, 0, 0, e, true
 	}
 	return "", 0, 0, 0, nil, false
@@ -339,32 +361,47 @@ func (s *Server) routePlainObjectRequest(ctx context.Context, w http.ResponseWri
 	return "", 0, 0, 0, nil, false
 }
 
+// auditEntry carries the data emitted to the audit log for a completed
+// S3 request. Bundling these keeps auditRequest under the parameter
+// count limit.
+type auditEntry struct {
+	method       string
+	bucket       string
+	key          string
+	operation    string
+	status       int
+	requestSize  int64
+	responseSize int64
+	elapsed      time.Duration
+	err          error
+}
+
 // auditRequest emits the per-request audit log entry. Path, method,
-// bucket, status, and duration are always present; key, sizes, and error
-// are appended only when they carry information.
-func (s *Server) auditRequest(ctx context.Context, r *http.Request, method, bucket, key, operation string, status int, requestSize, responseSize int64, elapsed time.Duration, err error) {
+// bucket, status, and duration are always present; key, sizes, and
+// error are appended only when they carry information.
+func (s *Server) auditRequest(ctx context.Context, r *http.Request, e *auditEntry) {
 	attrs := []slog.Attr{
-		slog.String("operation", operation),
-		slog.String("method", method),
+		slog.String("operation", e.operation),
+		slog.String("method", e.method),
 		slog.String("path", r.URL.Path),
 		slog.String("remote", r.RemoteAddr),
-		slog.String("bucket", bucket),
-		slog.Int("status", status),
-		slog.Duration("duration", elapsed),
+		slog.String("bucket", e.bucket),
+		slog.Int("status", e.status),
+		slog.Duration("duration", e.elapsed),
 	}
-	if key != "" {
-		attrs = append(attrs, slog.String("key", key))
+	if e.key != "" {
+		attrs = append(attrs, slog.String("key", e.key))
 	}
-	if requestSize > 0 {
-		attrs = append(attrs, slog.Int64("request_size", requestSize))
+	if e.requestSize > 0 {
+		attrs = append(attrs, slog.Int64("request_size", e.requestSize))
 	}
-	if responseSize > 0 {
-		attrs = append(attrs, slog.Int64("response_size", responseSize))
+	if e.responseSize > 0 {
+		attrs = append(attrs, slog.Int64("response_size", e.responseSize))
 	}
-	if err != nil {
-		attrs = append(attrs, slog.String("error", err.Error()))
+	if e.err != nil {
+		attrs = append(attrs, slog.String("error", e.err.Error()))
 	}
-	audit.Log(ctx, "s3."+operation, attrs...)
+	audit.Log(ctx, "s3."+e.operation, attrs...)
 }
 
 // -------------------------------------------------------------------------
