@@ -22,7 +22,8 @@
   }
 
   function getCSRFToken() {
-    let match = document.cookie.match('(?:^|; )s3orch_csrf=([^;]*)');
+    const re = /(?:^|; )s3orch_csrf=([^;]*)/;
+    const match = re.exec(document.cookie);
     return match ? match[1] : '';
   }
 
@@ -133,8 +134,8 @@
         if (existing) existing.remove();
 
         let entries = data.entries || [];
-        for (let i = 0; i < entries.length; i++) {
-          container.appendChild(renderEntry(entries[i]));
+        for (const entry of entries) {
+          container.appendChild(renderEntry(entry));
         }
 
         if (data.hasMore && data.nextCursor) {
@@ -161,7 +162,6 @@
   let deleteCancelBtn = document.getElementById('confirm-delete-cancel');
   let deleteOkBtn = document.getElementById('confirm-delete-ok');
   let pendingDeleteKey = '';
-  let pendingDeleteEl = null;
   let pendingDeleteIsDir = false;
 
   if (dialog && tree) {
@@ -172,15 +172,13 @@
       let fileEl = btn.closest('.tree-file');
       let dirEl = btn.closest('.tree-dir');
 
-      if (fileEl && fileEl.dataset.key) {
+      if (fileEl?.dataset.key) {
         pendingDeleteKey = fileEl.dataset.key;
-        pendingDeleteEl = fileEl;
         pendingDeleteIsDir = false;
         deleteNameEl.textContent = pendingDeleteKey.split('/').pop();
-      } else if (dirEl && dirEl.dataset.prefix) {
+      } else if (dirEl?.dataset.prefix) {
         e.preventDefault();
         pendingDeleteKey = dirEl.dataset.prefix;
-        pendingDeleteEl = dirEl;
         pendingDeleteIsDir = true;
         let metaEl = dirEl.querySelector('summary .tree-meta');
         let metaText = metaEl ? ' (' + metaEl.textContent.trim() + ')' : '';
@@ -237,8 +235,8 @@
       let btn = e.target.closest('.tree-download');
       if (!btn) return;
       let fileEl = btn.closest('.tree-file');
-      if (!fileEl || !fileEl.dataset.key) return;
-      window.location = 'api/download?key=' + encodeURIComponent(fileEl.dataset.key);
+      if (!fileEl?.dataset.key) return;
+      globalThis.location = 'api/download?key=' + encodeURIComponent(fileEl.dataset.key);
     });
   }
 
@@ -260,14 +258,14 @@
 
   function renderFileList() {
     uploadFileList.replaceChildren();
-    for (let i = 0; i < pendingFiles.length; i++) {
+    for (const entry of pendingFiles) {
       let row = document.createElement('div');
       row.className = 'upload-file-row';
       let nameSpan = document.createElement('span');
-      nameSpan.textContent = pendingFiles[i].displayName;
+      nameSpan.textContent = entry.displayName;
       let sizeSpan = document.createElement('span');
       sizeSpan.className = 'upload-file-size';
-      sizeSpan.textContent = formatBytes(pendingFiles[i].file.size);
+      sizeSpan.textContent = formatBytes(entry.file.size);
       row.appendChild(nameSpan);
       row.appendChild(sizeSpan);
       uploadFileList.appendChild(row);
@@ -356,9 +354,8 @@
     });
 
     uploadFilesInput.addEventListener('change', function () {
-      let files = uploadFilesInput.files;
-      for (let i = 0; i < files.length; i++) {
-        pendingFiles.push({ file: files[i], displayName: files[i].name });
+      for (const file of uploadFilesInput.files) {
+        pendingFiles.push({ file: file, displayName: file.name });
       }
       renderFileList();
     });
@@ -369,9 +366,8 @@
     });
 
     uploadFolderInput.addEventListener('change', function () {
-      let files = uploadFolderInput.files;
-      for (let i = 0; i < files.length; i++) {
-        pendingFiles.push({ file: files[i], displayName: files[i].webkitRelativePath });
+      for (const file of uploadFolderInput.files) {
+        pendingFiles.push({ file: file, displayName: file.webkitRelativePath });
       }
       renderFileList();
     });
