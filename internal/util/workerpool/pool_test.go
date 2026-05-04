@@ -20,6 +20,8 @@ import (
 // RUN
 // -------------------------------------------------------------------------
 
+// TestRun_ProcessesAllItems verifies the run processes all items contract.
+// Asserts that processed items, want 5.
 func TestRun_ProcessesAllItems(t *testing.T) {
 	t.Parallel()
 	var count atomic.Int32
@@ -34,6 +36,8 @@ func TestRun_ProcessesAllItems(t *testing.T) {
 	}
 }
 
+// TestRun_EmptySlice verifies the run empty slice contract.
+// Asserts that processed items, want 0.
 func TestRun_EmptySlice(t *testing.T) {
 	t.Parallel()
 	var count atomic.Int32
@@ -45,6 +49,8 @@ func TestRun_EmptySlice(t *testing.T) {
 	}
 }
 
+// TestRun_ConcurrencyBound verifies the run concurrency bound contract.
+// Asserts that peak concurrency = , want <= 3.
 func TestRun_ConcurrencyBound(t *testing.T) {
 	t.Parallel()
 	var active, peak atomic.Int32
@@ -70,6 +76,8 @@ func TestRun_ConcurrencyBound(t *testing.T) {
 	}
 }
 
+// TestRun_ZeroConcurrency verifies the run zero concurrency contract.
+// Asserts that processed items, want 3.
 func TestRun_ZeroConcurrency(t *testing.T) {
 	t.Parallel()
 	var count atomic.Int32
@@ -84,6 +92,8 @@ func TestRun_ZeroConcurrency(t *testing.T) {
 	}
 }
 
+// TestRun_NegativeConcurrency verifies the run negative concurrency contract.
+// Asserts that processed items, want 3.
 func TestRun_NegativeConcurrency(t *testing.T) {
 	t.Parallel()
 	var count atomic.Int32
@@ -98,6 +108,8 @@ func TestRun_NegativeConcurrency(t *testing.T) {
 	}
 }
 
+// TestRun_ContextCancellation verifies the run context cancellation contract.
+// Asserts that processed all items despite cancellation.
 func TestRun_ContextCancellation(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -117,6 +129,8 @@ func TestRun_ContextCancellation(t *testing.T) {
 	}
 }
 
+// TestRun_PassesContext verifies the run passes context contract.
+// Asserts that context value = , want hello.
 func TestRun_PassesContext(t *testing.T) {
 	t.Parallel()
 	type ctxKey struct{}
@@ -133,6 +147,8 @@ func TestRun_PassesContext(t *testing.T) {
 // COLLECT
 // -------------------------------------------------------------------------
 
+// TestCollect_PreservesOrder verifies the collect preserves order contract.
+// Asserts that results[] = , want.
 func TestCollect_PreservesOrder(t *testing.T) {
 	t.Parallel()
 	items := []int{10, 20, 30, 40, 50}
@@ -149,6 +165,8 @@ func TestCollect_PreservesOrder(t *testing.T) {
 	}
 }
 
+// TestCollect_EmptySlice verifies the collect empty slice contract.
+// Asserts that len(results) = , want 0.
 func TestCollect_EmptySlice(t *testing.T) {
 	t.Parallel()
 	results := Collect(context.Background(), 3, []int{}, func(_ context.Context, n int) int {
@@ -159,6 +177,8 @@ func TestCollect_EmptySlice(t *testing.T) {
 	}
 }
 
+// TestCollect_ConcurrencyBound verifies the collect concurrency bound contract.
+// Asserts that peak concurrency = , want <= 4.
 func TestCollect_ConcurrencyBound(t *testing.T) {
 	t.Parallel()
 	var active, peak atomic.Int32
@@ -182,6 +202,8 @@ func TestCollect_ConcurrencyBound(t *testing.T) {
 	}
 }
 
+// TestCollect_ContextCancellation verifies the collect context cancellation contract.
+// Asserts that len(results) = , want 100.
 func TestCollect_ContextCancellation(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -214,6 +236,8 @@ func TestCollect_ContextCancellation(t *testing.T) {
 	}
 }
 
+// TestCollect_ZeroConcurrency verifies the collect zero concurrency contract.
+// Asserts that results[] = , want.
 func TestCollect_ZeroConcurrency(t *testing.T) {
 	t.Parallel()
 	results := Collect(context.Background(), 0, []int{1, 2, 3}, func(_ context.Context, n int) int {

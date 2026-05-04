@@ -2,6 +2,15 @@
 // Quota Operations
 //
 // Author: Alex Freidah
+//
+// Implements the Postgres engine bindings for the backend_quotas table:
+// per-backend bytes_used, bytes_limit, and orphan_bytes tracking. Carries
+// the read-side eligibility queries the BackendManager uses for write
+// routing (GetBackendWithSpace, GetLeastUtilizedBackend) and the per-tx
+// increment / decrement primitives core/ uses to keep quota in lockstep
+// with object_locations changes. Increment is guarded so the UPDATE
+// touches zero rows when the limit would be exceeded, surfacing as
+// ErrNoSpaceAvailable.
 // -------------------------------------------------------------------------------
 
 package postgres

@@ -29,6 +29,8 @@ import (
 // worker.CleanupBackoff
 // -------------------------------------------------------------------------
 
+// TestCleanupBackoff verifies the cleanup backoff contract.
+// Asserts that worker.CleanupBackoff() = , want.
 func TestCleanupBackoff(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -61,6 +63,8 @@ func TestCleanupBackoff(t *testing.T) {
 // enqueueCleanup
 // -------------------------------------------------------------------------
 
+// TestEnqueueCleanup_Success verifies the enqueue cleanup success contract.
+// Asserts that expected 1 enqueue call, got.
 func TestEnqueueCleanup_Success(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{}
@@ -79,6 +83,8 @@ func TestEnqueueCleanup_Success(t *testing.T) {
 	}
 }
 
+// TestEnqueueCleanup_DBError_LogsOnly verifies the enqueue cleanup dberror logs only contract.
+// Asserts that expected 1 enqueue call, got.
 func TestEnqueueCleanup_DBError_LogsOnly(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{enqueueCleanupErr: errors.New("db down")}
@@ -98,6 +104,8 @@ func TestEnqueueCleanup_DBError_LogsOnly(t *testing.T) {
 // ProcessCleanupQueue
 // -------------------------------------------------------------------------
 
+// TestProcessCleanupQueue_DeleteSuccess verifies the process cleanup queue delete success contract.
+// Asserts that expected processed=1, got.
 func TestProcessCleanupQueue_DeleteSuccess(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -134,6 +142,8 @@ func TestProcessCleanupQueue_DeleteSuccess(t *testing.T) {
 	}
 }
 
+// TestProcessCleanupQueue_DeleteFails_SchedulesRetry verifies the process cleanup queue delete fails schedules retry contract.
+// Asserts that expected processed=0, got.
 func TestProcessCleanupQueue_DeleteFails_SchedulesRetry(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -172,6 +182,8 @@ func TestProcessCleanupQueue_DeleteFails_SchedulesRetry(t *testing.T) {
 	}
 }
 
+// TestProcessCleanupQueue_BackendNotFound_RemovesItem verifies the process cleanup queue backend not found removes item contract.
+// Asserts that expected processed=1, got.
 func TestProcessCleanupQueue_BackendNotFound_RemovesItem(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -196,6 +208,8 @@ func TestProcessCleanupQueue_BackendNotFound_RemovesItem(t *testing.T) {
 	}
 }
 
+// TestProcessCleanupQueue_EmptyQueue verifies the process cleanup queue empty queue contract.
+// Asserts that expected 0/0, got /.
 func TestProcessCleanupQueue_EmptyQueue(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{}
@@ -208,6 +222,8 @@ func TestProcessCleanupQueue_EmptyQueue(t *testing.T) {
 	}
 }
 
+// TestProcessCleanupQueue_FetchError verifies the process cleanup queue fetch error contract.
+// Asserts that expected 0/0 on fetch error, got /.
 func TestProcessCleanupQueue_FetchError(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{getPendingErr: errors.New("db error")}
@@ -220,6 +236,8 @@ func TestProcessCleanupQueue_FetchError(t *testing.T) {
 	}
 }
 
+// TestProcessCleanupQueue_MaxAttemptsReached_MovesToDLQ verifies the process cleanup queue max attempts reached moves to dlq contract.
+// Asserts that expected processed=0, got.
 func TestProcessCleanupQueue_MaxAttemptsReached_MovesToDLQ(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -263,6 +281,8 @@ func TestProcessCleanupQueue_MaxAttemptsReached_MovesToDLQ(t *testing.T) {
 	}
 }
 
+// TestProcessCleanupQueue_CompleteItemError verifies the process cleanup queue complete item error contract.
+// Asserts that expected processed=1 (delete succeeded), got.
 func TestProcessCleanupQueue_CompleteItemError(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -286,6 +306,8 @@ func TestProcessCleanupQueue_CompleteItemError(t *testing.T) {
 	}
 }
 
+// TestProcessCleanupQueue_RetryItemError verifies the process cleanup queue retry item error contract.
+// Asserts that expected processed=0, got.
 func TestProcessCleanupQueue_RetryItemError(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -309,6 +331,8 @@ func TestProcessCleanupQueue_RetryItemError(t *testing.T) {
 	}
 }
 
+// TestProcessCleanupQueue_QueueDepthError verifies the process cleanup queue queue depth error contract.
+// Asserts that expected 0/0, got /.
 func TestProcessCleanupQueue_QueueDepthError(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -316,13 +340,15 @@ func TestProcessCleanupQueue_QueueDepthError(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	// Should not panic — depth error is silently ignored
+	// Should not panic  -  depth error is silently ignored
 	processed, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
 	if processed != 0 || failed != 0 {
 		t.Errorf("expected 0/0, got %d/%d", processed, failed)
 	}
 }
 
+// TestProcessCleanupQueue_BackendNotFound_CompleteItemError verifies the process cleanup queue backend not found complete item error contract.
+// Asserts that expected processed=1, got.
 func TestProcessCleanupQueue_BackendNotFound_CompleteItemError(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -333,7 +359,7 @@ func TestProcessCleanupQueue_BackendNotFound_CompleteItemError(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	// Should not panic — completion error is logged only
+	// Should not panic  -  completion error is logged only
 	processed, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
 	if processed != 1 {
 		t.Errorf("expected processed=1, got %d", processed)
@@ -343,6 +369,8 @@ func TestProcessCleanupQueue_BackendNotFound_CompleteItemError(t *testing.T) {
 	}
 }
 
+// TestProcessCleanupQueue_Concurrent verifies the process cleanup queue concurrent contract.
+// Asserts that processed = , want 10.
 func TestProcessCleanupQueue_Concurrent(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -383,6 +411,8 @@ func TestProcessCleanupQueue_Concurrent(t *testing.T) {
 // Enqueue wiring at failure sites
 // -------------------------------------------------------------------------
 
+// TestDeleteObject_BackendDeleteFails_EnqueuesCleanup verifies the delete object backend delete fails enqueues cleanup contract.
+// Asserts that DeleteObject should succeed even if backend delete fails:.
 func TestDeleteObject_BackendDeleteFails_EnqueuesCleanup(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -412,6 +442,8 @@ func TestDeleteObject_BackendDeleteFails_EnqueuesCleanup(t *testing.T) {
 	}
 }
 
+// TestProcessCleanupQueue_AdmissionBlocked verifies the process cleanup queue admission blocked contract.
+// Asserts that expected processed=0 when admission blocked, got.
 func TestProcessCleanupQueue_AdmissionBlocked(t *testing.T) {
 	t.Parallel()
 	sem := make(chan struct{}, 1)

@@ -173,7 +173,7 @@ func TestLoadConfig_ValidFile(t *testing.T) {
 	}
 }
 
-// TestLoadConfig_MissingFile verifies that a missing config returns an error.
+// TestLoadConfig_MissingFile verifies the load config missing file behaviour described by the test name.
 func TestLoadConfig_MissingFile(t *testing.T) {
 	s := &server{configPath: "/nonexistent/config.yaml"}
 	if err := s.loadConfig(); err == nil {
@@ -181,7 +181,7 @@ func TestLoadConfig_MissingFile(t *testing.T) {
 	}
 }
 
-// TestLoadConfig_InvalidYAML verifies that invalid config content returns an error.
+// TestLoadConfig_InvalidYAML verifies the load config invalid yaml behaviour described by the test name.
 func TestLoadConfig_InvalidYAML(t *testing.T) {
 	path := writeTestConfig(t, "server:\n  listen_addr: ':9000'\n")
 	s := &server{configPath: path}
@@ -627,7 +627,7 @@ func TestReloadConfig_AppliesNewConfig(t *testing.T) {
 		t.Fatal("cfgPtr should hold the initial config after resolveServices")
 	}
 
-	// Rewrite with a different log level — a hot-reloadable field.
+	// Rewrite with a different log level  -  a hot-reloadable field.
 	updated := strings.Replace(validTestConfigYAML, `listen_addr: ":0"`,
 		`listen_addr: ":0"`+"\n  log_level: debug", 1)
 	if err := os.WriteFile(path, []byte(updated), 0600); err != nil {
@@ -859,8 +859,15 @@ type testResponseWriter struct {
 	code   int
 }
 
+// Header satisfies http.ResponseWriter; the test recorder ignores
+// the value, this exists only to make the type interface-conformant.
 func (w *testResponseWriter) Header() http.Header       { return w.header }
+// WriteHeader writes header.
 func (w *testResponseWriter) WriteHeader(code int)       { w.code = code }
+// Write writes .
 func (w *testResponseWriter) Write(b []byte) (int, error) { return w.body.Write(b) }
 
+// Compile-time check that testResponseWriter satisfies the
+// http.ResponseWriter interface so handlers under test can write
+// through it without a real net/http server.
 var _ http.ResponseWriter = (*testResponseWriter)(nil)

@@ -1,3 +1,14 @@
+# -------------------------------------------------------------------------------
+# Tempo - Local Demo Configuration
+#
+# Author: Alex Freidah
+#
+# Single-binary Tempo trace store for the docker-compose / kubernetes local
+# demo. Receives OTLP gRPC traces from the orchestrator on port 4317 and
+# stores them on local disk. Production deployments wire to a managed Tempo
+# or alternative OTel-compatible trace store.
+# -------------------------------------------------------------------------------
+
 stream_over_http_enabled: true
 
 server:

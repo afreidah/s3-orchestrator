@@ -51,6 +51,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+// sessionCookieName and related constants used by this package.
 const (
 	sessionCookieName = "s3orch_session"
 	csrfCookieName    = "s3orch_csrf"
@@ -198,6 +199,7 @@ func setSecurityHeaders(w http.ResponseWriter) {
 // registered API route has been classified.
 type quotaTracking int
 
+// quotaTrackingNone and related constants used by this package.
 const (
 	// quotaTrackingNone is for routes that never reach a real backend
 	// (HTML pages, JSON read-throughs, status pollers, log streamers).

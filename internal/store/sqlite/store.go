@@ -111,7 +111,7 @@ func (s *Store) WithTx(ctx context.Context, fn func(ctx context.Context, tx core
 var _ core.Runner = (*Store)(nil)
 
 // WithAdvisoryLock emulates PostgreSQL advisory locks using a process-local
-// mutex. For single-instance SQLite deployments, this is correct — there are
+// mutex. For single-instance SQLite deployments, this is correct  -  there are
 // no competing instances. Returns (false, nil) if the lock is already held
 // by another goroutine.
 func (s *Store) WithAdvisoryLock(ctx context.Context, _ int64, fn func(ctx context.Context) error) (bool, error) {
@@ -122,7 +122,7 @@ func (s *Store) WithAdvisoryLock(ctx context.Context, _ int64, fn func(ctx conte
 	return true, fn(ctx)
 }
 
-// Compile-time interface checks — *Store must satisfy every narrow role
+// Compile-time interface checks  -  *Store must satisfy every narrow role
 // interface and the three admin role interfaces.
 var (
 	_ core.ObjectStore           = (*Store)(nil)

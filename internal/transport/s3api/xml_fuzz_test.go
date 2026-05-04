@@ -16,6 +16,7 @@ import (
 	"testing"
 )
 
+// FuzzDeleteObjectsXML fuzzes the delete objects xml path by exercising xml.NewDecoder, bytes.NewReader.
 func FuzzDeleteObjectsXML(f *testing.F) {
 	f.Add([]byte(`<Delete><Quiet>false</Quiet><Object><Key>file.txt</Key></Object></Delete>`))
 	f.Add([]byte(`<Delete><Object><Key>a</Key></Object><Object><Key>b</Key></Object></Delete>`))
@@ -34,6 +35,7 @@ func FuzzDeleteObjectsXML(f *testing.F) {
 	})
 }
 
+// FuzzCompleteMultipartXML fuzzes the complete multipart xml path by exercising xml.NewDecoder, bytes.NewReader.
 func FuzzCompleteMultipartXML(f *testing.F) {
 	f.Add([]byte(`<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag>"abc"</ETag></Part></CompleteMultipartUpload>`))
 	f.Add([]byte(`<CompleteMultipartUpload></CompleteMultipartUpload>`))

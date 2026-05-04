@@ -23,6 +23,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
+// TestAdmissionController_AllowsWithinLimit verifies the admission controller allows within limit contract.
+// Asserts that request : got , want 200.
 func TestAdmissionController_AllowsWithinLimit(t *testing.T) {
 	t.Parallel()
 	ac := NewAdmissionController(2)
@@ -31,7 +33,7 @@ func TestAdmissionController_AllowsWithinLimit(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	// Send 2 sequential requests — both should succeed
+	// Send 2 sequential requests  -  both should succeed
 	for i := range 2 {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest("GET", "/test-bucket/key", nil)
@@ -42,13 +44,15 @@ func TestAdmissionController_AllowsWithinLimit(t *testing.T) {
 	}
 }
 
+// TestAdmissionController_RejectsOverLimit verifies the admission controller rejects over limit contract.
+// Asserts that second request: got , want 503.
 func TestAdmissionController_RejectsOverLimit(t *testing.T) {
 	t.Parallel()
 	ac := NewAdmissionController(1)
 
 	// entered signals that the handler goroutine has acquired the semaphore.
 	// Buffered so the send always succeeds even if the test hasn't reached
-	// the receive yet — an unbuffered channel + non-blocking select would
+	// the receive yet  -  an unbuffered channel + non-blocking select would
 	// silently drop the signal under that schedule and deadlock main.
 	entered := make(chan struct{}, 1)
 	hold := make(chan struct{})
@@ -58,7 +62,7 @@ func TestAdmissionController_RejectsOverLimit(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	// Start first request — will block inside handler
+	// Start first request  -  will block inside handler
 	var wg sync.WaitGroup
 	wg.Add(1)
 	firstDone := make(chan int, 1)
@@ -73,7 +77,7 @@ func TestAdmissionController_RejectsOverLimit(t *testing.T) {
 	// Wait for the first request to enter the handler
 	<-entered
 
-	// Second request should be rejected — semaphore is full
+	// Second request should be rejected  -  semaphore is full
 	rec2 := httptest.NewRecorder()
 	req2 := httptest.NewRequest("PUT", "/test-bucket/key2", nil)
 	handler.ServeHTTP(rec2, req2)
@@ -95,6 +99,8 @@ func TestAdmissionController_RejectsOverLimit(t *testing.T) {
 	}
 }
 
+// TestAdmissionController_ReleasesOnCompletion verifies the admission controller releases on completion contract.
+// Asserts that first request: got , want 200.
 func TestAdmissionController_ReleasesOnCompletion(t *testing.T) {
 	t.Parallel()
 	ac := NewAdmissionController(1)
@@ -120,6 +126,8 @@ func TestAdmissionController_ReleasesOnCompletion(t *testing.T) {
 	}
 }
 
+// TestAdmissionController_IncrementsMetric verifies the admission controller increments metric contract.
+// Asserts that status = , want 503.
 func TestAdmissionController_IncrementsMetric(t *testing.T) {
 	t.Parallel()
 	ac := NewAdmissionController(1)
@@ -163,6 +171,8 @@ func TestAdmissionController_IncrementsMetric(t *testing.T) {
 	}
 }
 
+// TestSplitAdmission_WriteFull_ReadAllowed verifies the split admission write full read allowed contract.
+// Asserts that second write: got , want 503.
 func TestSplitAdmission_WriteFull_ReadAllowed(t *testing.T) {
 	t.Parallel()
 	ac := NewSplitAdmissionController(2, 1)
@@ -192,7 +202,7 @@ func TestSplitAdmission_WriteFull_ReadAllowed(t *testing.T) {
 		t.Errorf("second write: got %d, want 503", rec.Code)
 	}
 
-	// A read should still succeed — separate pool
+	// A read should still succeed  -  separate pool
 	readDone := make(chan int, 1)
 	wg.Go(func() {
 		rec := httptest.NewRecorder()
@@ -210,6 +220,8 @@ func TestSplitAdmission_WriteFull_ReadAllowed(t *testing.T) {
 	}
 }
 
+// TestSplitAdmission_ReadFull_WriteAllowed verifies the split admission read full write allowed contract.
+// Asserts that second read: got , want 503.
 func TestSplitAdmission_ReadFull_WriteAllowed(t *testing.T) {
 	t.Parallel()
 	ac := NewSplitAdmissionController(1, 2)
@@ -239,7 +251,7 @@ func TestSplitAdmission_ReadFull_WriteAllowed(t *testing.T) {
 		t.Errorf("second read: got %d, want 503", rec.Code)
 	}
 
-	// A write should still succeed — separate pool
+	// A write should still succeed  -  separate pool
 	writeDone := make(chan int, 1)
 	wg.Go(func() {
 		rec := httptest.NewRecorder()
@@ -257,12 +269,14 @@ func TestSplitAdmission_ReadFull_WriteAllowed(t *testing.T) {
 	}
 }
 
+// TestAdmissionController_LoadShedding verifies the admission controller load shedding contract.
+// Asserts that shed /1000 at 80 occupancy (threshold 50), expected ~600.
 func TestAdmissionController_LoadShedding(t *testing.T) {
 	t.Parallel()
 	ac := NewAdmissionController(10)
 	ac.SetShedThreshold(0.5)
 
-	// Fill 8 of 10 slots → 80% occupancy, above 50% threshold
+	// Fill 8 of 10 slots -> 80% occupancy, above 50% threshold
 	for range 8 {
 		ac.sem <- struct{}{}
 	}
@@ -286,12 +300,13 @@ func TestAdmissionController_LoadShedding(t *testing.T) {
 	}
 }
 
+// TestAdmissionController_NoSheddingBelowThreshold verifies the admission controller no shedding below threshold path by exercising ac.SetShedThreshold.
 func TestAdmissionController_NoSheddingBelowThreshold(t *testing.T) {
 	t.Parallel()
 	ac := NewAdmissionController(10)
 	ac.SetShedThreshold(0.8)
 
-	// 0% occupancy, well below 80% threshold — should never shed
+	// 0% occupancy, well below 80% threshold  -  should never shed
 	for range 100 {
 		if ac.shouldShed(ac.sem) {
 			t.Fatal("shed at 0%% occupancy with 80%% threshold")
@@ -299,6 +314,8 @@ func TestAdmissionController_NoSheddingBelowThreshold(t *testing.T) {
 	}
 }
 
+// TestAdmissionController_SheddingStartsAtThreshold verifies the admission controller shedding starts at threshold contract.
+// Asserts that shed /1000 at exactly threshold occupancy, expected 0.
 func TestAdmissionController_SheddingStartsAtThreshold(t *testing.T) {
 	t.Parallel()
 	// With capacity=10 and threshold=0.5, int(0.5*10) = 5.
@@ -312,7 +329,7 @@ func TestAdmissionController_SheddingStartsAtThreshold(t *testing.T) {
 	}
 
 	// At exactly the threshold, shedding probability is:
-	// (5-5)/(10-5) = 0.0 — but since we use < (not <=), occupancy 5
+	// (5-5)/(10-5) = 0.0  -  but since we use < (not <=), occupancy 5
 	// is now at-or-above threshold. The probability is 0%, so no
 	// shedding occurs at exactly the boundary.
 	shed := 0
@@ -327,7 +344,7 @@ func TestAdmissionController_SheddingStartsAtThreshold(t *testing.T) {
 		<-ac.sem
 	}
 
-	// At exactly threshold, probability is 0/(10-5) = 0 — no shedding
+	// At exactly threshold, probability is 0/(10-5) = 0  -  no shedding
 	if shed != 0 {
 		t.Errorf("shed %d/1000 at exactly threshold occupancy, expected 0", shed)
 	}
@@ -348,12 +365,14 @@ func TestAdmissionController_SheddingStartsAtThreshold(t *testing.T) {
 		<-ac.sem
 	}
 
-	// Probability: (6-5)/(10-5) = 0.2 — expect ~200/1000
+	// Probability: (6-5)/(10-5) = 0.2  -  expect ~200/1000
 	if shed < 100 || shed > 350 {
 		t.Errorf("shed %d/1000 at threshold+1 occupancy, expected ~200", shed)
 	}
 }
 
+// TestSplitAdmission_DeleteUsesWritePool verifies the split admission delete uses write pool contract.
+// Asserts that PUT while DELETE holds write pool: got , want 503.
 func TestSplitAdmission_DeleteUsesWritePool(t *testing.T) {
 	t.Parallel()
 	ac := NewSplitAdmissionController(2, 1)
@@ -375,7 +394,7 @@ func TestSplitAdmission_DeleteUsesWritePool(t *testing.T) {
 	})
 	<-entered
 
-	// A PUT should be rejected — same pool
+	// A PUT should be rejected  -  same pool
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("PUT", "/test-bucket/key2", nil)
 	handler.ServeHTTP(rec, req)
@@ -387,6 +406,8 @@ func TestSplitAdmission_DeleteUsesWritePool(t *testing.T) {
 	wg.Wait()
 }
 
+// TestAdmissionController_WaitAcquiresSlot verifies the admission controller wait acquires slot contract.
+// Asserts that request after wait: got , want 200.
 func TestAdmissionController_WaitAcquiresSlot(t *testing.T) {
 	t.Parallel()
 	ac := NewAdmissionController(1)
@@ -409,7 +430,7 @@ func TestAdmissionController_WaitAcquiresSlot(t *testing.T) {
 	})
 	<-entered
 
-	// Release the slot after 50ms — well within the 200ms wait window
+	// Release the slot after 50ms  -  well within the 200ms wait window
 	secondDone := make(chan int, 1)
 	wg.Go(func() {
 		rec := httptest.NewRecorder()
@@ -427,6 +448,8 @@ func TestAdmissionController_WaitAcquiresSlot(t *testing.T) {
 	}
 }
 
+// TestAdmissionController_WaitTimesOut verifies the admission controller wait times out contract.
+// Asserts that timed-out request: got , want 503.
 func TestAdmissionController_WaitTimesOut(t *testing.T) {
 	t.Parallel()
 	ac := NewAdmissionController(1)
@@ -449,7 +472,7 @@ func TestAdmissionController_WaitTimesOut(t *testing.T) {
 	})
 	<-entered
 
-	// Second request — slot never frees, should timeout after 20ms
+	// Second request  -  slot never frees, should timeout after 20ms
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/test-bucket/key2", nil)
 	handler.ServeHTTP(rec, req)
@@ -462,6 +485,8 @@ func TestAdmissionController_WaitTimesOut(t *testing.T) {
 	wg.Wait()
 }
 
+// TestAdmissionController_ClientCancelDuringWaitNotCountedAsRejection verifies the admission controller client cancel during wait not counted as rejection contract.
+// Asserts that AdmissionClientCanceledTotal did not increment: before= after=.
 func TestAdmissionController_ClientCancelDuringWaitNotCountedAsRejection(t *testing.T) {
 	t.Parallel()
 	ac := NewAdmissionController(1)

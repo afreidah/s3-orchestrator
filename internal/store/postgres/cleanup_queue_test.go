@@ -14,6 +14,8 @@ import (
 	"time"
 )
 
+// TestDurationToInterval verifies the duration to interval contract.
+// Asserts that Microseconds = , want.
 func TestDurationToInterval(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

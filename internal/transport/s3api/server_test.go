@@ -21,6 +21,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
+// TestSetGetBucketAuth_RoundTrip verifies the set get bucket auth round trip path by exercising auth.NewBucketRegistry, srv.SetBucketAuth, srv.GetBucketAuth.
 func TestSetGetBucketAuth_RoundTrip(t *testing.T) {
 	t.Parallel()
 	srv := &Server{}
@@ -39,6 +40,7 @@ func TestSetGetBucketAuth_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestSetBucketAuth_ConcurrentAccess verifies the set bucket auth concurrent access path by exercising auth.NewBucketRegistry, srv.SetBucketAuth, wg.Add.
 func TestSetBucketAuth_ConcurrentAccess(t *testing.T) {
 	t.Parallel()
 	srv := &Server{}
@@ -93,6 +95,8 @@ func TestSetBucketAuth_ConcurrentAccess(t *testing.T) {
 // Routing: untested code paths in ServeHTTP
 // -------------------------------------------------------------------------
 
+// TestBucketOnlyPUT_MethodNotAllowed verifies the bucket only put method not allowed contract.
+// Asserts that status = , want 405.
 func TestBucketOnlyPUT_MethodNotAllowed(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t)
@@ -115,6 +119,8 @@ func TestBucketOnlyPUT_MethodNotAllowed(t *testing.T) {
 	}
 }
 
+// TestMultipartUpload_UnsupportedMethod verifies the multipart upload unsupported method contract.
+// Asserts that status = , want 405.
 func TestMultipartUpload_UnsupportedMethod(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t)
@@ -137,11 +143,13 @@ func TestMultipartUpload_UnsupportedMethod(t *testing.T) {
 	}
 }
 
+// TestInvalidPath_Returns400 verifies the invalid path returns400 contract.
+// Asserts that status = , want 400.
 func TestInvalidPath_Returns400(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t)
 
-	// POST to "/" — not intercepted as ListBuckets, so parsePath returns
+	// POST to "/"  -  not intercepted as ListBuckets, so parsePath returns
 	// false for the empty path and the server returns 400.
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, ts.URL+"/", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")

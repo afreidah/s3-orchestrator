@@ -14,6 +14,8 @@ import (
 	"testing"
 )
 
+// TestHashBody verifies the hash body contract.
+// Asserts that HashBody = , want.
 func TestHashBody(t *testing.T) {
 	t.Parallel()
 	hash := HashBody([]byte("hello world"))
@@ -23,6 +25,8 @@ func TestHashBody(t *testing.T) {
 	}
 }
 
+// TestHashBody_Empty verifies the hash body empty contract.
+// Asserts that HashBody(nil) = , want.
 func TestHashBody_Empty(t *testing.T) {
 	t.Parallel()
 	hash := HashBody(nil)
@@ -32,6 +36,8 @@ func TestHashBody_Empty(t *testing.T) {
 	}
 }
 
+// TestVerifyingReader_Match verifies the verifying reader match contract.
+// Asserts that Verify should pass:.
 func TestVerifyingReader_Match(t *testing.T) {
 	t.Parallel()
 	data := "test data for hashing"
@@ -46,6 +52,7 @@ func TestVerifyingReader_Match(t *testing.T) {
 	}
 }
 
+// TestVerifyingReader_Mismatch verifies the verifying reader mismatch path by exercising io.NopCloser, strings.NewReader, io.ReadAll.
 func TestVerifyingReader_Mismatch(t *testing.T) {
 	t.Parallel()
 	r := io.NopCloser(strings.NewReader("actual data"))
@@ -57,6 +64,8 @@ func TestVerifyingReader_Mismatch(t *testing.T) {
 	}
 }
 
+// TestVerifyingReader_EmptyExpected verifies the verifying reader empty expected contract.
+// Asserts that Verify with empty expected should pass:.
 func TestVerifyingReader_EmptyExpected(t *testing.T) {
 	t.Parallel()
 	r := io.NopCloser(strings.NewReader("any data"))
@@ -68,6 +77,7 @@ func TestVerifyingReader_EmptyExpected(t *testing.T) {
 	}
 }
 
+// TestVerifyingReader_OnMismatchCallback verifies the verifying reader on mismatch callback path by exercising io.NopCloser, strings.NewReader, vr.SetVerification.
 func TestVerifyingReader_OnMismatchCallback(t *testing.T) {
 	t.Parallel()
 	r := io.NopCloser(strings.NewReader("actual data"))
@@ -86,6 +96,7 @@ func TestVerifyingReader_OnMismatchCallback(t *testing.T) {
 	}
 }
 
+// TestVerifyingReader_OnMatchNoCallback verifies the verifying reader on match no callback path by exercising io.NopCloser, strings.NewReader, vr.SetVerification.
 func TestVerifyingReader_OnMatchNoCallback(t *testing.T) {
 	t.Parallel()
 	data := "matching data"

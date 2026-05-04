@@ -1,7 +1,13 @@
 // -------------------------------------------------------------------------------
-// CB Decorator — ExpiredObjectsLister
+// CB Decorator  -  ExpiredObjectsLister
 //
 // Author: Alex Freidah
+//
+// Wraps a core.ExpiredObjectsLister so the lifecycle worker's
+// ListExpiredObjects scan routes through the database CircuitBreaker.
+// When the breaker is open the lifecycle tick returns ErrDBUnavailable
+// instantly and the worker logs and skips, rather than hanging on a
+// long-running scan against an unreachable DB.
 // -------------------------------------------------------------------------------
 
 package store

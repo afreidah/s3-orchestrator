@@ -174,7 +174,7 @@ func TestOpenStore_InvalidDriver(t *testing.T) {
 }
 
 // TestOpenStore_SQLiteInMemory covers the sqlite branch of openStore with
-// an in-memory database — verifies the handle is non-nil and satisfies the
+// an in-memory database  -  verifies the handle is non-nil and satisfies the
 // LifecycleAdmin role embedded in concreteStore.
 func TestOpenStore_SQLiteInMemory(t *testing.T) {
 	t.Parallel()
@@ -191,7 +191,7 @@ func TestOpenStore_SQLiteInMemory(t *testing.T) {
 	cs.Close()
 }
 
-// TestWireAuditMetrics covers the audit→Prometheus wiring side-effect
+// TestWireAuditMetrics covers the audit->Prometheus wiring side-effect
 // and drives the registered callback by emitting an audit event so the
 // inner closure (which increments the Prometheus counter) actually runs.
 // Restores the previous callback state on cleanup so other tests aren't
@@ -231,7 +231,7 @@ func TestProvideConcreteStore_SQLiteInMemory(t *testing.T) {
 
 // TestOpenStore_PostgresInvalidConfig covers the postgres branch of the
 // driver switch. We can't open a real Postgres in a unit test, so we use
-// a config that fails fast — the function still exercises the
+// a config that fails fast  -  the function still exercises the
 // store.NewStore call site, which is the uncovered branch.
 func TestOpenStore_PostgresInvalidConfig(t *testing.T) {
 	t.Parallel()
@@ -240,7 +240,7 @@ func TestOpenStore_PostgresInvalidConfig(t *testing.T) {
 	_, err := openStore(ctx, &config.DatabaseConfig{
 		Driver:   "postgres",
 		Host:     "127.0.0.1",
-		Port:     1, // unreachable port — connect fails fast
+		Port:     1, // unreachable port  -  connect fails fast
 		Database: "nope",
 		User:     "nope",
 		Password: "nope",
@@ -259,7 +259,7 @@ func TestNarrowRoleProviders_HappyPath(t *testing.T) {
 	t.Parallel()
 	inj := do.New()
 	do.ProvideValue(inj, &config.Config{CircuitBreaker: config.CircuitBreakerConfig{FailureThreshold: 3, OpenTimeout: time.Second}})
-	// Seed the concrete store directly — we can't open a real Postgres
+	// Seed the concrete store directly  -  we can't open a real Postgres
 	// or SQLite store in a unit test, so fake the shape the narrow
 	// providers resolve.
 	do.ProvideValue[concreteStore](inj, fakeConcreteStore{})
@@ -294,7 +294,7 @@ func TestNarrowRoleProviders_HappyPath(t *testing.T) {
 }
 
 // TestResolveProxyStores_HappyPath drives the full Stores bag assembly
-// with a seeded injector — covers resolveProxyStores's 11 sequential
+// with a seeded injector  -  covers resolveProxyStores's 11 sequential
 // do.Invoke calls.
 func TestResolveProxyStores_HappyPath(t *testing.T) {
 	t.Parallel()
@@ -396,7 +396,7 @@ func TestProvideEncryptionProvider_InvalidKey(t *testing.T) {
 }
 
 // TestProvideObjectCache_InvalidSize verifies invalid cache sizing never
-// panics — either a clean error or a nil cache is acceptable.
+// panics  -  either a clean error or a nil cache is acceptable.
 func TestProvideObjectCache_InvalidSize(t *testing.T) {
 	t.Parallel()
 	inj := do.New()
@@ -415,7 +415,7 @@ func TestProvideObjectCache_InvalidSize(t *testing.T) {
 }
 
 // TestResolveOptionalEncryptor_Disabled returns nil/nil when encryption
-// is off — covers the early-return branch.
+// is off  -  covers the early-return branch.
 func TestResolveOptionalEncryptor_Disabled(t *testing.T) {
 	t.Parallel()
 	inj := do.New()
@@ -501,7 +501,7 @@ func listServiceNames(inj do.Injector) []string {
 // Drives the big composite providers (Backends, BackendManager, S3Server,
 // LifecycleManager, UIHandler, AdminHandler, Notifier) end-to-end against
 // an in-memory SQLite store and a fake S3 backend endpoint. The storage
-// calls never fire during construction — NewS3Backend only parses config —
+// calls never fire during construction  -  NewS3Backend only parses config  - 
 // so no live network is required.
 // -------------------------------------------------------------------------
 

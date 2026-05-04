@@ -1,3 +1,16 @@
+// -------------------------------------------------------------------------------
+// Cleanup Worker Tests
+//
+// Author: Alex Freidah
+//
+// Covers the cleanup-worker decision tree against a mock store and mock
+// backends: successful retry, transient failure with retry scheduled,
+// admission rejection, missing-backend completion, the exhaustion path
+// that graduates rows to cleanup_dlq, and the DLQ-move-failure tolerance
+// path. Also pins the exponential-backoff curve produced by
+// CleanupBackoff across attempt counts.
+// -------------------------------------------------------------------------------
+
 package worker
 
 import (
@@ -10,6 +23,8 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
+// TestProcessCleanupQueue_DeleteSuccess verifies the process cleanup queue delete success contract.
+// Asserts that expected processed=1, got.
 func TestProcessCleanupQueue_DeleteSuccess(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -35,6 +50,8 @@ func TestProcessCleanupQueue_DeleteSuccess(t *testing.T) {
 	}
 }
 
+// TestProcessCleanupQueue_DeleteFails_Retries verifies the process cleanup queue delete fails retries contract.
+// Asserts that expected failed=1, got.
 func TestProcessCleanupQueue_DeleteFails_Retries(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -57,6 +74,8 @@ func TestProcessCleanupQueue_DeleteFails_Retries(t *testing.T) {
 	}
 }
 
+// TestProcessCleanupQueue_AdmissionBlocked verifies the process cleanup queue admission blocked contract.
+// Asserts that expected 0/0 when blocked, got /.
 func TestProcessCleanupQueue_AdmissionBlocked(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -75,6 +94,8 @@ func TestProcessCleanupQueue_AdmissionBlocked(t *testing.T) {
 	}
 }
 
+// TestProcessCleanupQueue_BackendNotFound verifies the process cleanup queue backend not found contract.
+// Asserts that expected processed=1 (item removed), got.
 func TestProcessCleanupQueue_BackendNotFound(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -96,6 +117,8 @@ func TestProcessCleanupQueue_BackendNotFound(t *testing.T) {
 	}
 }
 
+// TestCleanupBackoff verifies the cleanup backoff contract.
+// Asserts that CleanupBackoff() = , want.
 func TestCleanupBackoff(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

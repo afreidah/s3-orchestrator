@@ -25,6 +25,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// TestUploadPart_RecordFailure_CleanupDeleteCarriesDeadline verifies the upload part record failure cleanup delete carries deadline path by exercising errors.New, context.Background, bytes.NewReader.
 func TestUploadPart_RecordFailure_CleanupDeleteCarriesDeadline(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()

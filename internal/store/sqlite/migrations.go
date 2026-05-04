@@ -41,7 +41,7 @@ func (s *Store) RunMigrations(ctx context.Context) error {
 			return nil
 		}
 		return fmt.Errorf(
-			"SQLite schema version %d does not match expected %d — manual migration required",
+			"SQLite schema version %d does not match expected %d  -  manual migration required",
 			version, expectedSchemaVersion,
 		)
 	}
@@ -65,18 +65,18 @@ func (s *Store) VerifySchemaVersion(ctx context.Context) error {
 		return fmt.Errorf("query schema version: %w", err)
 	}
 	if !exists {
-		return fmt.Errorf("schema_version table does not exist — database not initialised")
+		return fmt.Errorf("schema_version table does not exist  -  database not initialised")
 	}
 
 	if version < expectedSchemaVersion {
 		return fmt.Errorf(
-			"SQLite schema version %d is older than expected %d — migrations may have partially failed",
+			"SQLite schema version %d is older than expected %d  -  migrations may have partially failed",
 			version, expectedSchemaVersion,
 		)
 	}
 	if version > expectedSchemaVersion {
 		return fmt.Errorf(
-			"SQLite schema version %d is newer than expected %d — binary is outdated",
+			"SQLite schema version %d is newer than expected %d  -  binary is outdated",
 			version, expectedSchemaVersion,
 		)
 	}

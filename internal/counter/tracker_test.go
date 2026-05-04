@@ -17,6 +17,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// TestNewUsageTracker_NilLimits verifies the new usage tracker nil limits path by exercising tracker.NearLimit.
 func TestNewUsageTracker_NilLimits(t *testing.T) {
 	t.Parallel()
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), nil)
@@ -26,6 +27,7 @@ func TestNewUsageTracker_NilLimits(t *testing.T) {
 	}
 }
 
+// TestNearLimit_BelowThreshold verifies the near limit below threshold path by exercising tracker.SetBaseline, tracker.NearLimit.
 func TestNearLimit_BelowThreshold(t *testing.T) {
 	t.Parallel()
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), map[string]core.UsageLimits{
@@ -38,6 +40,7 @@ func TestNearLimit_BelowThreshold(t *testing.T) {
 	}
 }
 
+// TestNearLimit_AboveThreshold verifies the near limit above threshold path by exercising tracker.SetBaseline, tracker.NearLimit.
 func TestNearLimit_AboveThreshold(t *testing.T) {
 	t.Parallel()
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), map[string]core.UsageLimits{
@@ -50,6 +53,7 @@ func TestNearLimit_AboveThreshold(t *testing.T) {
 	}
 }
 
+// TestNearLimit_NoLimitsConfigured verifies the near limit no limits configured path by exercising tracker.SetBaseline, tracker.NearLimit.
 func TestNearLimit_NoLimitsConfigured(t *testing.T) {
 	t.Parallel()
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), map[string]core.UsageLimits{
@@ -62,6 +66,7 @@ func TestNearLimit_NoLimitsConfigured(t *testing.T) {
 	}
 }
 
+// TestNearLimit_ZeroLimitDimension verifies the near limit zero limit dimension path by exercising tracker.SetBaseline, tracker.NearLimit.
 func TestNearLimit_ZeroLimitDimension(t *testing.T) {
 	t.Parallel()
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), map[string]core.UsageLimits{
@@ -74,6 +79,7 @@ func TestNearLimit_ZeroLimitDimension(t *testing.T) {
 	}
 }
 
+// TestNearLimit_UnflushedCounters verifies the near limit unflushed counters path by exercising tracker.SetBaseline, tracker.Record, tracker.NearLimit.
 func TestNearLimit_UnflushedCounters(t *testing.T) {
 	t.Parallel()
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), map[string]core.UsageLimits{
@@ -87,6 +93,7 @@ func TestNearLimit_UnflushedCounters(t *testing.T) {
 	}
 }
 
+// TestNearLimit_MultipleBackends verifies the near limit multiple backends path by exercising tracker.SetBaseline, tracker.NearLimit.
 func TestNearLimit_MultipleBackends(t *testing.T) {
 	t.Parallel()
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1", "b2"}), map[string]core.UsageLimits{
@@ -105,6 +112,7 @@ func TestNearLimit_MultipleBackends(t *testing.T) {
 // WithinLimits
 // -------------------------------------------------------------------------
 
+// TestWithinLimits_AllWithinLimits verifies the within limits all within limits path by exercising tracker.WithinLimits.
 func TestWithinLimits_AllWithinLimits(t *testing.T) {
 	t.Parallel()
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), map[string]core.UsageLimits{
@@ -115,6 +123,7 @@ func TestWithinLimits_AllWithinLimits(t *testing.T) {
 	}
 }
 
+// TestWithinLimits_APILimitExceeded verifies the within limits apilimit exceeded path by exercising tracker.SetBaseline, tracker.WithinLimits.
 func TestWithinLimits_APILimitExceeded(t *testing.T) {
 	t.Parallel()
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), map[string]core.UsageLimits{
@@ -127,6 +136,7 @@ func TestWithinLimits_APILimitExceeded(t *testing.T) {
 	}
 }
 
+// TestWithinLimits_EgressLimitExceeded verifies the within limits egress limit exceeded path by exercising tracker.SetBaseline, tracker.WithinLimits.
 func TestWithinLimits_EgressLimitExceeded(t *testing.T) {
 	t.Parallel()
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), map[string]core.UsageLimits{
@@ -139,6 +149,7 @@ func TestWithinLimits_EgressLimitExceeded(t *testing.T) {
 	}
 }
 
+// TestWithinLimits_IngressLimitExceeded verifies the within limits ingress limit exceeded path by exercising tracker.SetBaseline, tracker.WithinLimits.
 func TestWithinLimits_IngressLimitExceeded(t *testing.T) {
 	t.Parallel()
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), map[string]core.UsageLimits{
@@ -151,6 +162,7 @@ func TestWithinLimits_IngressLimitExceeded(t *testing.T) {
 	}
 }
 
+// TestWithinLimits_NoLimitsConfigured verifies the within limits no limits configured path by exercising tracker.WithinLimits.
 func TestWithinLimits_NoLimitsConfigured(t *testing.T) {
 	t.Parallel()
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), nil)
@@ -160,6 +172,7 @@ func TestWithinLimits_NoLimitsConfigured(t *testing.T) {
 	}
 }
 
+// TestWithinLimits_UnknownBackend verifies the within limits unknown backend path by exercising tracker.WithinLimits.
 func TestWithinLimits_UnknownBackend(t *testing.T) {
 	t.Parallel()
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), map[string]core.UsageLimits{
@@ -171,6 +184,7 @@ func TestWithinLimits_UnknownBackend(t *testing.T) {
 	}
 }
 
+// TestWithinLimits_IncludesUnflushedCounters verifies the within limits includes unflushed counters path by exercising tracker.SetBaseline, tracker.Record, tracker.WithinLimits.
 func TestWithinLimits_IncludesUnflushedCounters(t *testing.T) {
 	t.Parallel()
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), map[string]core.UsageLimits{
@@ -191,6 +205,8 @@ func TestWithinLimits_IncludesUnflushedCounters(t *testing.T) {
 // BackendsWithinLimits
 // -------------------------------------------------------------------------
 
+// TestBackendsWithinLimits_FiltersCorrectly verifies the backends within limits filters correctly contract.
+// Asserts that expected [b2], got.
 func TestBackendsWithinLimits_FiltersCorrectly(t *testing.T) {
 	t.Parallel()
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1", "b2"}), map[string]core.UsageLimits{
@@ -209,6 +225,8 @@ func TestBackendsWithinLimits_FiltersCorrectly(t *testing.T) {
 // UpdateLimits / GetLimits
 // -------------------------------------------------------------------------
 
+// TestUpdateLimits_GetLimits_RoundTrip verifies the update limits get limits round trip contract.
+// Asserts that GetLimits()[b1].APIRequestLimit = , want 500.
 func TestUpdateLimits_GetLimits_RoundTrip(t *testing.T) {
 	t.Parallel()
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), nil)
@@ -223,6 +241,7 @@ func TestUpdateLimits_GetLimits_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestGetLimits_ReturnsCopy verifies the get limits returns copy path by exercising tracker.GetLimits.
 func TestGetLimits_ReturnsCopy(t *testing.T) {
 	t.Parallel()
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1"}), map[string]core.UsageLimits{
@@ -242,6 +261,7 @@ func TestGetLimits_ReturnsCopy(t *testing.T) {
 // ResetBaselines
 // -------------------------------------------------------------------------
 
+// TestResetBaselines verifies the reset baselines path by exercising tracker.SetBaseline, tracker.ResetBaselines, tracker.WithinLimits.
 func TestResetBaselines(t *testing.T) {
 	t.Parallel()
 	tracker := NewUsageTracker(NewLocalCounterBackend([]string{"b1", "b2"}), map[string]core.UsageLimits{
@@ -262,6 +282,8 @@ func TestResetBaselines(t *testing.T) {
 // FlushUsage
 // -------------------------------------------------------------------------
 
+// TestFlushUsage_SwapsAndFlushes verifies the flush usage swaps and flushes contract.
+// Asserts that unexpected error:.
 func TestFlushUsage_SwapsAndFlushes(t *testing.T) {
 	t.Parallel()
 	backend := NewLocalCounterBackend([]string{"b1"})
@@ -291,6 +313,7 @@ func TestFlushUsage_SwapsAndFlushes(t *testing.T) {
 	}
 }
 
+// TestFlushUsage_SkipsBackendsInSkipMap verifies the flush usage skips backends in skip map path by exercising tracker.Record, tracker.FlushUsage, context.Background.
 func TestFlushUsage_SkipsBackendsInSkipMap(t *testing.T) {
 	t.Parallel()
 	backend := NewLocalCounterBackend([]string{"b1"})
@@ -309,6 +332,8 @@ func TestFlushUsage_SkipsBackendsInSkipMap(t *testing.T) {
 	}
 }
 
+// TestFlushUsage_RestoresOnError verifies the flush usage restores on error contract.
+// Asserts that counter should be restored after flush error, got.
 func TestFlushUsage_RestoresOnError(t *testing.T) {
 	t.Parallel()
 	cb := NewLocalCounterBackend([]string{"b1"})
@@ -334,6 +359,7 @@ func TestFlushUsage_RestoresOnError(t *testing.T) {
 // Backend accessor
 // -------------------------------------------------------------------------
 
+// TestBackend_ReturnsUnderlyingBackend verifies the backend returns underlying backend path by exercising tracker.Backend.
 func TestBackend_ReturnsUnderlyingBackend(t *testing.T) {
 	t.Parallel()
 	cb := NewLocalCounterBackend([]string{"b1"})
@@ -347,6 +373,8 @@ func TestBackend_ReturnsUnderlyingBackend(t *testing.T) {
 // CurrentPeriod
 // -------------------------------------------------------------------------
 
+// TestCurrentPeriod_Format verifies the current period format contract.
+// Asserts that CurrentPeriod() = , want YYYY-MM format.
 func TestCurrentPeriod_Format(t *testing.T) {
 	t.Parallel()
 	p := CurrentPeriod()
@@ -359,10 +387,15 @@ func TestCurrentPeriod_Format(t *testing.T) {
 // Test helpers
 // -------------------------------------------------------------------------
 
+// mockUsageFlusher is a no-op flusher used by tests that exercise
+// the tracker without standing up a real database.
 type mockUsageFlusher struct {
 	fn func(name, period string, api, egress, ingress int64) error
 }
 
+// FlushUsageDeltas records the flush call for later assertion.
+// Returns the test-configured error so the tracker's error path
+// gets exercised.
 func (m *mockUsageFlusher) FlushUsageDeltas(ctx context.Context, name, period string, api, egress, ingress int64) error {
 	return m.fn(name, period, api, egress, ingress)
 }

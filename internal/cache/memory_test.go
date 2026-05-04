@@ -2,6 +2,13 @@
 // Memory Cache Tests
 //
 // Author: Alex Freidah
+//
+// Covers the in-process MemoryCache used as the optional read-side cache:
+// basic Get/Set, TTL expiration, the eviction goroutine that runs only when
+// a positive TTL is configured, and the size-bounded LRU behavior. Pinned
+// because the cache sits in the read hot path and a leak in the eviction
+// goroutine or LRU pointer stitching would surface as memory growth in
+// production.
 // -------------------------------------------------------------------------------
 
 package cache
@@ -13,6 +20,7 @@ import (
 	"time"
 )
 
+// newTestCache constructs a new test cache.
 func newTestCache(t *testing.T, maxSize, maxObjSize int64, ttl time.Duration) *MemoryCache {
 	t.Helper()
 	c, err := NewMemoryCache(MemoryConfig{
@@ -26,6 +34,8 @@ func newTestCache(t *testing.T, maxSize, maxObjSize int64, ttl time.Duration) *M
 	return c
 }
 
+// TestMemoryCache_PutGet verifies the memory cache put get contract.
+// Asserts that Put:.
 func TestMemoryCache_PutGet(t *testing.T) {
 	t.Parallel()
 	c := newTestCache(t, 1024, 512, time.Minute)
@@ -50,6 +60,7 @@ func TestMemoryCache_PutGet(t *testing.T) {
 	}
 }
 
+// TestMemoryCache_Miss verifies the memory cache miss path by exercising c.Get.
 func TestMemoryCache_Miss(t *testing.T) {
 	t.Parallel()
 	c := newTestCache(t, 1024, 512, time.Minute)
@@ -60,6 +71,8 @@ func TestMemoryCache_Miss(t *testing.T) {
 	}
 }
 
+// TestMemoryCache_TTLExpiry verifies the memory cache ttlexpiry contract.
+// Asserts that Put:.
 func TestMemoryCache_TTLExpiry(t *testing.T) {
 	t.Parallel()
 	c := newTestCache(t, 1024, 512, 10*time.Millisecond)
@@ -87,6 +100,8 @@ func TestMemoryCache_TTLExpiry(t *testing.T) {
 	}
 }
 
+// TestMemoryCache_MaxObjectSize verifies the memory cache max object size contract.
+// Asserts that Put:.
 func TestMemoryCache_MaxObjectSize(t *testing.T) {
 	t.Parallel()
 	c := newTestCache(t, 1024, 100, time.Minute)
@@ -107,6 +122,8 @@ func TestMemoryCache_MaxObjectSize(t *testing.T) {
 	}
 }
 
+// TestMemoryCache_LRUEviction verifies the memory cache lrueviction contract.
+// Asserts that Put first:.
 func TestMemoryCache_LRUEviction(t *testing.T) {
 	t.Parallel()
 	// Cache can hold ~200 bytes. Each entry is ~100 bytes of data.
@@ -150,6 +167,8 @@ func TestMemoryCache_LRUEviction(t *testing.T) {
 	}
 }
 
+// TestMemoryCache_Invalidate verifies the memory cache invalidate contract.
+// Asserts that Put:.
 func TestMemoryCache_Invalidate(t *testing.T) {
 	t.Parallel()
 	c := newTestCache(t, 1024, 512, time.Minute)
@@ -168,6 +187,8 @@ func TestMemoryCache_Invalidate(t *testing.T) {
 	c.Invalidate("nonexistent")
 }
 
+// TestMemoryCache_OverwriteExisting verifies the memory cache overwrite existing contract.
+// Asserts that Put v1:.
 func TestMemoryCache_OverwriteExisting(t *testing.T) {
 	t.Parallel()
 	c := newTestCache(t, 1024, 512, time.Minute)
@@ -196,6 +217,8 @@ func TestMemoryCache_OverwriteExisting(t *testing.T) {
 	}
 }
 
+// TestMemoryCache_Stats verifies the memory cache stats contract.
+// Asserts that empty cache stats = v.
 func TestMemoryCache_Stats(t *testing.T) {
 	t.Parallel()
 	c := newTestCache(t, 1024, 512, time.Minute)
@@ -219,6 +242,8 @@ func TestMemoryCache_Stats(t *testing.T) {
 	}
 }
 
+// TestMemoryCache_ConcurrentAccess verifies the memory cache concurrent access contract.
+// Asserts that negative size_bytes:.
 func TestMemoryCache_ConcurrentAccess(t *testing.T) {
 	t.Parallel()
 	c := newTestCache(t, 10240, 1024, time.Minute)
@@ -244,6 +269,7 @@ func TestMemoryCache_ConcurrentAccess(t *testing.T) {
 	}
 }
 
+// TestNewMemoryCache_Validation verifies the new memory cache validation behaviour described by the test name.
 func TestNewMemoryCache_Validation(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -266,6 +292,8 @@ func TestNewMemoryCache_Validation(t *testing.T) {
 	}
 }
 
+// TestMemoryCache_EntrySize verifies the memory cache entry size contract.
+// Asserts that entry.Size() = , want 26.
 func TestMemoryCache_EntrySize(t *testing.T) {
 	t.Parallel()
 	entry := &Entry{

@@ -2,6 +2,13 @@
 // Rate Limit and Circuit Breaker Configuration
 //
 // Author: Alex Freidah
+//
+// Defines RateLimitConfig (per-IP login throttling tunables and the
+// stale-entry eviction window) and CircuitBreakerConfig (failure
+// threshold, open-state timeout, cache TTL during degraded reads).
+// Validators enforce positive intervals and sensible relationships
+// between fields so a misconfiguration cannot accidentally produce a
+// no-op rate limiter or a circuit breaker that never trips.
 // -------------------------------------------------------------------------------
 
 package config
@@ -28,7 +35,7 @@ type RateLimitConfig struct {
 type CircuitBreakerConfig struct {
 	FailureThreshold  int           `yaml:"failure_threshold"`  // Consecutive failures before opening (default: 3)
 	OpenTimeout       time.Duration `yaml:"open_timeout"`       // Delay before probing recovery (default: 15s)
-	CacheTTL          time.Duration `yaml:"cache_ttl"`          // TTL for key→backend cache during degraded reads (default: 60s)
+	CacheTTL          time.Duration `yaml:"cache_ttl"`          // TTL for key->backend cache during degraded reads (default: 60s)
 	ParallelBroadcast bool          `yaml:"parallel_broadcast"` // Fan-out reads to all backends in parallel during degraded mode (default: false)
 }
 
@@ -42,6 +49,7 @@ type BackendCircuitBreakerConfig struct {
 	OpenTimeout      time.Duration `yaml:"open_timeout"`      // Delay before probing recovery (default: 5m)
 }
 
+// setDefaultsAndValidate sets defaults and validate.
 func (r *RateLimitConfig) setDefaultsAndValidate() []error {
 	var errs []error
 
@@ -81,6 +89,7 @@ func (r *RateLimitConfig) setDefaultsAndValidate() []error {
 	return errs
 }
 
+// setDefaults sets defaults.
 func (cb *CircuitBreakerConfig) setDefaults() {
 	if cb.FailureThreshold == 0 {
 		cb.FailureThreshold = 3
@@ -93,6 +102,7 @@ func (cb *CircuitBreakerConfig) setDefaults() {
 	}
 }
 
+// setDefaults sets defaults.
 func (bcb *BackendCircuitBreakerConfig) setDefaults() {
 	if !bcb.Enabled {
 		return

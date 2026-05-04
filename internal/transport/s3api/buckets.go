@@ -22,6 +22,9 @@ import (
 // XML RESPONSE TYPES
 // -------------------------------------------------------------------------
 
+// xmlListBucketsResult is the XML envelope returned by ListBuckets.
+// Field tags must match the AWS S3 1996 XML schema exactly so v2 SDK
+// clients can unmarshal the response.
 type xmlListBucketsResult struct {
 	XMLName xml.Name   `xml:"ListAllMyBucketsResult"`
 	Xmlns   string     `xml:"xmlns,attr"`
@@ -29,25 +32,40 @@ type xmlListBucketsResult struct {
 	Buckets xmlBuckets `xml:"Buckets"`
 }
 
+// xmlOwner is the bucket-owner block included in ListBuckets and
+// individual Bucket envelopes. The orchestrator returns the configured
+// virtual-bucket owner for both fields.
 type xmlOwner struct {
 	ID          string `xml:"ID"`
 	DisplayName string `xml:"DisplayName"`
 }
 
+// xmlBuckets wraps the Bucket array in the ListBuckets response so the
+// XML output matches S3's nested <Buckets><Bucket/></Buckets> shape.
 type xmlBuckets struct {
 	Bucket []xmlBucket `xml:"Bucket"`
 }
 
+// xmlBucket is one entry inside ListBuckets - the bucket name and its
+// creation date in RFC 3339. The orchestrator currently surfaces only
+// the configured virtual buckets; physical backends are not exposed.
 type xmlBucket struct {
 	Name         string `xml:"Name"`
 	CreationDate string `xml:"CreationDate"`
 }
 
+// xmlLocationConstraint is the response body for GetBucketLocation.
+// The orchestrator returns an empty body (us-east-1 by S3 convention)
+// since there is no per-bucket region to expose.
 type xmlLocationConstraint struct {
 	XMLName xml.Name `xml:"LocationConstraint"`
 	Xmlns   string   `xml:"xmlns,attr"`
 }
 
+// xmlVersioningConfiguration is the empty response body returned by
+// GetBucketVersioning. Object versioning is not implemented; the empty
+// envelope keeps clients that probe the endpoint happy without
+// promising features the orchestrator does not provide.
 type xmlVersioningConfiguration struct {
 	XMLName xml.Name `xml:"VersioningConfiguration"`
 	Xmlns   string   `xml:"xmlns,attr"`

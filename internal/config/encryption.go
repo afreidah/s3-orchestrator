@@ -2,6 +2,13 @@
 // Encryption Configuration
 //
 // Author: Alex Freidah
+//
+// Defines EncryptionConfig: the master key source (env, file, or vault),
+// the chunk size used by the streaming encryptor, and the validator that
+// enforces the "exactly one key source" fan-in rule. The fan-in guard
+// prevents ambiguous key material from silently picking the wrong source
+// when multiple are partially configured. Master keys are base64-decoded
+// at validation time so a malformed key fails startup, not the first PUT.
 // -------------------------------------------------------------------------------
 
 package config
@@ -13,13 +20,17 @@ import (
 	"time"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // EncryptionConfig holds settings for server-side envelope encryption.
 // When enabled, objects are encrypted with per-object DEKs using chunked
 // AES-256-GCM before being stored on backends. Exactly one key source
 // (master_key, master_key_file, or vault) must be configured.
 type EncryptionConfig struct {
 	Enabled       bool              `yaml:"enabled"`
-	ChunkSize     int               `yaml:"chunk_size"`      // Plaintext bytes per chunk (default: 65536, range: 4KB–1MB, must be power of 2)
+	ChunkSize     int               `yaml:"chunk_size"`      // Plaintext bytes per chunk (default: 65536, range: 4KB-1MB, must be power of 2)
 	MasterKey     string            `yaml:"master_key"`      // Base64-encoded 256-bit key (inline or via env var)
 	MasterKeyFile string            `yaml:"master_key_file"` // Path to file containing raw 32-byte key
 	Vault         *VaultTransitConfig `yaml:"vault"`          // Vault Transit key management
@@ -37,6 +48,11 @@ type VaultTransitConfig struct {
 	RenewInterval time.Duration `yaml:"renew_interval"` // Token renewal check interval (default: 5m)
 }
 
+// -------------------------------------------------------------------------
+// VALIDATION
+// -------------------------------------------------------------------------
+
+// setDefaultsAndValidate sets defaults and validate.
 func (e *EncryptionConfig) setDefaultsAndValidate() []error {
 	if !e.Enabled {
 		return nil
@@ -70,7 +86,7 @@ func (e *EncryptionConfig) validateChunkSize() []error {
 }
 
 // validateKeySources enforces "exactly one of master_key, master_key_file,
-// or vault" — the fan-in rule that prevents ambiguous key material.
+// or vault"  -  the fan-in rule that prevents ambiguous key material.
 func (e *EncryptionConfig) validateKeySources() []error {
 	sources := 0
 	if e.MasterKey != "" {
@@ -142,6 +158,7 @@ func validatePreviousKeys(keys []string) []error {
 	return errs
 }
 
+// setDefaultsAndValidate sets defaults and validate.
 func (v *VaultTransitConfig) setDefaultsAndValidate() []error {
 	var errs []error
 

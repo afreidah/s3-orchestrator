@@ -79,7 +79,7 @@ type Manager struct {
 	abortMultipartUploads func(ctx context.Context, backendName string)
 	processCleanupQueue   func(ctx context.Context) (processed, failed int)
 
-	draining sync.Map // map[string]*drainState — backends being drained
+	draining sync.Map // map[string]*drainState  -  backends being drained
 }
 
 // New creates a Manager.
@@ -176,7 +176,7 @@ func (d *Manager) StartDrain(ctx context.Context, name string) error {
 	}
 	// Detach cancellation/deadline from the caller's ctx (the drain runs in
 	// a background goroutine that must outlive the HTTP request) but
-	// preserve its values — trace IDs, audit request ID, OTel baggage —
+	// preserve its values  -  trace IDs, audit request ID, OTel baggage  - 
 	// so spans started under drainCtx still link back to the request that
 	// initiated the drain. CancelDrain + ctx.Done() in the worker loop
 	// provide the explicit shutdown hooks.

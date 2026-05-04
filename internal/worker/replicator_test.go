@@ -1,3 +1,17 @@
+// -------------------------------------------------------------------------------
+// Replicator Tests
+//
+// Author: Alex Freidah
+//
+// Covers replication target selection (backend with space, no-space
+// case, store-error case), the source-to-replica copy primitive, the
+// quota-conscious size accounting that uses the size returned by the
+// conditional INSERT, and config round-trip. Pins the contract that
+// CopyToReplica returns the actual source size so the caller can
+// keep object_locations.size_bytes and backend_quotas.bytes_used in
+// sync without reading the row twice.
+// -------------------------------------------------------------------------------
+
 package worker
 
 import (
@@ -16,6 +30,8 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
+// TestReplicator_SetConfig_RoundTrip verifies the replicator set config round trip contract.
+// Asserts that Config().Factor = , want 3.
 func TestReplicator_SetConfig_RoundTrip(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -30,6 +46,8 @@ func TestReplicator_SetConfig_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestFindReplicaTarget_SelectsBackendWithSpace verifies the find replica target selects backend with space contract.
+// Asserts that FindReplicaTarget = , want b2.
 func TestFindReplicaTarget_SelectsBackendWithSpace(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -51,6 +69,8 @@ func TestFindReplicaTarget_SelectsBackendWithSpace(t *testing.T) {
 	}
 }
 
+// TestFindReplicaTarget_NoSpace verifies the find replica target no space contract.
+// Asserts that FindReplicaTarget = , want empty (no space).
 func TestFindReplicaTarget_NoSpace(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -70,6 +90,8 @@ func TestFindReplicaTarget_NoSpace(t *testing.T) {
 	}
 }
 
+// TestFindReplicaTarget_SelectionError verifies the find replica target selection error contract.
+// Asserts that FindReplicaTarget = , want empty (error).
 func TestFindReplicaTarget_SelectionError(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -87,6 +109,8 @@ func TestFindReplicaTarget_SelectionError(t *testing.T) {
 	}
 }
 
+// TestCopyToReplica_Success verifies the copy to replica success contract.
+// Asserts that unexpected error:.
 func TestCopyToReplica_Success(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -115,6 +139,8 @@ func TestCopyToReplica_Success(t *testing.T) {
 	}
 }
 
+// TestCopyToReplica_404CleansUpStaleMetadata verifies the copy to replica 404 cleans up stale metadata contract.
+// Asserts that staleDeleted = , want 1.
 func TestCopyToReplica_404CleansUpStaleMetadata(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -141,6 +167,7 @@ func TestCopyToReplica_404CleansUpStaleMetadata(t *testing.T) {
 	}
 }
 
+// TestCopyToReplica_AllSourcesFail verifies the copy to replica all sources fail path by exercising gomock.NewController, backendtest.NewMockObjectBackend, ops.EXPECT.
 func TestCopyToReplica_AllSourcesFail(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -163,6 +190,7 @@ func TestCopyToReplica_AllSourcesFail(t *testing.T) {
 	}
 }
 
+// TestCleanupOrphan_DelegatesToDeleteOrEnqueue verifies the cleanup orphan delegates to delete or enqueue path by exercising gomock.NewController, backendtest.NewMockObjectBackend, ops.EXPECT.
 func TestCleanupOrphan_DelegatesToDeleteOrEnqueue(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -179,6 +207,8 @@ func TestCleanupOrphan_DelegatesToDeleteOrEnqueue(t *testing.T) {
 	r.CleanupOrphan(context.Background(), "b1", "key1", 100)
 }
 
+// TestReplicate_FactorOne_Noop verifies the replicate factor one noop contract.
+// Asserts that unexpected error:.
 func TestReplicate_FactorOne_Noop(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -193,6 +223,8 @@ func TestReplicate_FactorOne_Noop(t *testing.T) {
 	}
 }
 
+// TestReplicate_NothingUnderReplicated verifies the replicate nothing under replicated contract.
+// Asserts that unexpected error:.
 func TestReplicate_NothingUnderReplicated(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -215,6 +247,8 @@ func TestReplicate_NothingUnderReplicated(t *testing.T) {
 	}
 }
 
+// TestReplicateObject_Success verifies the replicate object success contract.
+// Asserts that unexpected error:.
 func TestReplicateObject_Success(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -250,6 +284,8 @@ func TestReplicateObject_Success(t *testing.T) {
 	}
 }
 
+// TestReplicateObject_WriteFailureExcludesTarget verifies the replicate object write failure excludes target contract.
+// Asserts that unexpected error:.
 func TestReplicateObject_WriteFailureExcludesTarget(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -315,6 +351,8 @@ func TestReplicateObject_WriteFailureExcludesTarget(t *testing.T) {
 	}
 }
 
+// TestReplicateObject_RecordReplicaErrorExcludesTarget verifies the replicate object record replica error excludes target contract.
+// Asserts that unexpected error:.
 func TestReplicateObject_RecordReplicaErrorExcludesTarget(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -360,6 +398,8 @@ func TestReplicateObject_RecordReplicaErrorExcludesTarget(t *testing.T) {
 	}
 }
 
+// TestReplicateObject_NotInsertedExcludesTarget verifies the replicate object not inserted excludes target contract.
+// Asserts that unexpected error:.
 func TestReplicateObject_NotInsertedExcludesTarget(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -416,9 +456,15 @@ type httpError struct {
 	msg  string
 }
 
+// Error returns the error message.
 func (e *httpError) Error() string       { return e.msg }
+// HTTPStatusCode satisfies smithy/awserr's status-code accessor so
+// the replicator's isNotFound-style typed-error tests can detect a
+// 404 from this fake without depending on the real AWS SDK error
+// hierarchy.
 func (e *httpError) HTTPStatusCode() int { return e.code }
 
+// TestIsNotFound_404 verifies the is not found 404 behaviour described by the test name.
 func TestIsNotFound_404(t *testing.T) {
 	t.Parallel()
 	if !isNotFound(&httpError{code: 404, msg: "NoSuchKey"}) {
@@ -426,6 +472,7 @@ func TestIsNotFound_404(t *testing.T) {
 	}
 }
 
+// TestIsNotFound_500 verifies the is not found 500 behaviour described by the test name.
 func TestIsNotFound_500(t *testing.T) {
 	t.Parallel()
 	if isNotFound(&httpError{code: 500, msg: "InternalServerError"}) {
@@ -433,6 +480,7 @@ func TestIsNotFound_500(t *testing.T) {
 	}
 }
 
+// TestIsNotFound_PlainError verifies the is not found plain error path by exercising errors.New.
 func TestIsNotFound_PlainError(t *testing.T) {
 	t.Parallel()
 	if isNotFound(errors.New("connection refused")) {
@@ -440,6 +488,7 @@ func TestIsNotFound_PlainError(t *testing.T) {
 	}
 }
 
+// TestIsNotFound_Wrapped404 verifies the is not found wrapped404 path by exercising fmt.Errorf.
 func TestIsNotFound_Wrapped404(t *testing.T) {
 	t.Parallel()
 	wrapped := fmt.Errorf("read: %w", &httpError{code: 404, msg: "NoSuchKey"})
@@ -448,6 +497,7 @@ func TestIsNotFound_Wrapped404(t *testing.T) {
 	}
 }
 
+// TestIsNotFound_Nil verifies the is not found nil behaviour described by the test name.
 func TestIsNotFound_Nil(t *testing.T) {
 	t.Parallel()
 	if isNotFound(nil) {

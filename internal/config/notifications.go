@@ -32,6 +32,7 @@ type NotificationEndpoint struct {
 	MaxRetries int           `yaml:"max_retries"` // Delivery attempts before dropping (default: 3)
 }
 
+// setDefaultsAndValidate sets defaults and validate.
 func (c *NotificationConfig) setDefaultsAndValidate() []error {
 	var errs []error
 	for i := range c.Endpoints {

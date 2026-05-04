@@ -1,3 +1,15 @@
+// -------------------------------------------------------------------------------
+// Buffer Pool Benchmarks
+//
+// Author: Alex Freidah
+//
+// Measures bufpool.Copy throughput across object sizes (4KB, 64KB, 1MB,
+// 16MB) - the path used by every GET, PUT, multipart assembly, and UI
+// download. Pinned because regressions in the shared buffer pool's
+// sync.Pool semantics or io.CopyBuffer wrapper translate directly to
+// reduced streaming throughput everywhere in the proxy.
+// -------------------------------------------------------------------------------
+
 package bufpool
 
 import (

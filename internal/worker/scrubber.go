@@ -62,7 +62,7 @@ func (s *Scrubber) Config() *config.IntegrityConfig {
 }
 
 // -------------------------------------------------------------------------
-// SCRUB — verify existing hashes
+// SCRUB  -  verify existing hashes
 // -------------------------------------------------------------------------
 
 // Scrub verifies a batch of objects with stored content hashes. Returns the
@@ -127,7 +127,7 @@ func (s *Scrubber) verifyObject(ctx context.Context, loc *core.ObjectLocation) (
 }
 
 // -------------------------------------------------------------------------
-// BACKFILL — compute hashes for objects that don't have one
+// BACKFILL  -  compute hashes for objects that don't have one
 // -------------------------------------------------------------------------
 
 // Backfill reads objects that have no stored content hash, computes the
@@ -185,7 +185,7 @@ func (s *Scrubber) Backfill(ctx context.Context, batchSize, offset int) (process
 }
 
 // -------------------------------------------------------------------------
-// SHARED — read object from backend, decrypt if needed, compute SHA-256
+// SHARED  -  read object from backend, decrypt if needed, compute SHA-256
 // -------------------------------------------------------------------------
 
 // readAndHash reads an object from its backend, decrypts if encrypted, and
@@ -210,7 +210,7 @@ func (s *Scrubber) readAndHash(ctx context.Context, loc *core.ObjectLocation) (s
 	// Record API call + egress
 	s.deps.Usage().Record(loc.BackendName, 1, result.Size, 0)
 
-	// Decrypt if the object is encrypted — hash is computed on plaintext
+	// Decrypt if the object is encrypted  -  hash is computed on plaintext
 	var reader io.Reader = result.Body
 	if loc.Encrypted && s.encryptor != nil {
 		_, wrappedDEK, unpackErr := encryption.UnpackKeyData(loc.EncryptionKey)

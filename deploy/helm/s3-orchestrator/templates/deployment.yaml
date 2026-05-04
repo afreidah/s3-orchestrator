@@ -1,3 +1,14 @@
+# -------------------------------------------------------------------------------
+# Helm Template - Deployment
+#
+# Author: Alex Freidah
+#
+# The orchestrator pod spec. Single-container Deployment that mounts the
+# rendered ConfigMap, the optional credentials Secret, and exposes the S3
+# port. Resource requests, replica count, and probe settings are sourced
+# from .Values so operators can tune per-environment without templating.
+# -------------------------------------------------------------------------------
+
 apiVersion: apps/v1
 kind: Deployment
 metadata:

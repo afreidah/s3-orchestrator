@@ -20,6 +20,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// TestGetDashboardData_Success verifies the get dashboard data success contract.
+// Asserts that GetDashboardData:.
 func TestGetDashboardData_Success(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -63,6 +65,7 @@ func TestGetDashboardData_Success(t *testing.T) {
 	}
 }
 
+// TestGetDashboardData_QuotaStatsError verifies the get dashboard data quota stats error path by exercising errors.New, mgr.Close, mgr.GetDashboardData.
 func TestGetDashboardData_QuotaStatsError(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -77,6 +80,7 @@ func TestGetDashboardData_QuotaStatsError(t *testing.T) {
 	}
 }
 
+// TestGetDashboardData_ObjectCountsError verifies the get dashboard data object counts error path by exercising errors.New, mgr.Close, mgr.GetDashboardData.
 func TestGetDashboardData_ObjectCountsError(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -92,6 +96,7 @@ func TestGetDashboardData_ObjectCountsError(t *testing.T) {
 	}
 }
 
+// TestGetDashboardData_MultipartCountsError verifies the get dashboard data multipart counts error path by exercising errors.New, mgr.Close, mgr.GetDashboardData.
 func TestGetDashboardData_MultipartCountsError(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -108,6 +113,7 @@ func TestGetDashboardData_MultipartCountsError(t *testing.T) {
 	}
 }
 
+// TestGetDashboardData_UsageForPeriodError verifies the get dashboard data usage for period error path by exercising errors.New, mgr.Close, mgr.GetDashboardData.
 func TestGetDashboardData_UsageForPeriodError(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -125,6 +131,7 @@ func TestGetDashboardData_UsageForPeriodError(t *testing.T) {
 	}
 }
 
+// TestGetDashboardData_ListDirChildrenError verifies the get dashboard data list dir children error path by exercising errors.New, mgr.Close, mgr.GetDashboardData.
 func TestGetDashboardData_ListDirChildrenError(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -143,6 +150,8 @@ func TestGetDashboardData_ListDirChildrenError(t *testing.T) {
 	}
 }
 
+// TestGetDashboardData_UnhealthyBackends verifies the get dashboard data unhealthy backends contract.
+// Asserts that GetDashboardData:.
 func TestGetDashboardData_UnhealthyBackends(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -180,6 +189,8 @@ func TestGetDashboardData_UnhealthyBackends(t *testing.T) {
 	}
 }
 
+// TestGetDashboardData_HealthyBackendsNotMarked verifies the get dashboard data healthy backends not marked contract.
+// Asserts that GetDashboardData:.
 func TestGetDashboardData_HealthyBackendsNotMarked(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -190,7 +201,7 @@ func TestGetDashboardData_HealthyBackendsNotMarked(t *testing.T) {
 		listDirChildrenResp:    &core.DirectoryListResult{},
 	}
 
-	// Healthy CB backend — circuit is closed
+	// Healthy CB backend  -  circuit is closed
 	cbBackend := backend.NewCircuitBreakerBackend(newMockBackend(), "b1", 5, time.Minute)
 
 	mgr := NewBackendManager(&BackendManagerConfig{
@@ -213,6 +224,8 @@ func TestGetDashboardData_HealthyBackendsNotMarked(t *testing.T) {
 	}
 }
 
+// TestGetDirectoryChildren_CapsMaxKeys verifies the get directory children caps max keys contract.
+// Asserts that GetDirectoryChildren:.
 func TestGetDirectoryChildren_CapsMaxKeys(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{

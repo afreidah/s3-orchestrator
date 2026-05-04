@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------
-// Metrics — Quota, Object, Multipart, Usage
+// Metrics  -  Quota, Object, Multipart, Usage
 //
 // Author: Alex Freidah
 //
@@ -14,6 +14,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
+// QuotaBytesUsed and related package-level variables used by this package.
 var (
 	// --- Quota metrics ---
 

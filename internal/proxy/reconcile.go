@@ -79,7 +79,7 @@ func reconcileSorted(
 // mergeState holds the rolling cursor pair plus the callbacks the merge
 // loop dispatches to. Pulling the four-variable cursor state into a struct
 // is the only way to extract the per-branch bodies into methods without
-// passing pointers to every variable on every call — and the extraction is
+// passing pointers to every variable on every call  -  and the extraction is
 // what keeps each method below the cognitive-complexity threshold.
 type mergeState struct {
 	s3, db   keySource
@@ -127,7 +127,7 @@ func (s *mergeState) deleteStep(ctx context.Context) error {
 	return s.advanceDB(ctx)
 }
 
-// matchStep advances both cursors. Used when the keys match — the row is
+// matchStep advances both cursors. Used when the keys match  -  the row is
 // present on both sides and no callback fires.
 func (s *mergeState) matchStep(ctx context.Context) error {
 	if err := s.advanceS3(ctx); err != nil {
@@ -245,6 +245,13 @@ func namespaceKey(rawKey, bucketPrefix string, otherPrefixes []string) (string, 
 	return bucketPrefix + rawKey, true
 }
 
+// next pulls the next entry off the streaming channel that the
+// background goroutine fills with backend-listed keys. Returns
+// (entry, true, nil) on a successful read, (zero, false, nil) on
+// graceful end-of-stream, or (zero, false, err) on either a producer
+// error or a context cancellation. Once an error is observed it is
+// latched into s.pending so subsequent calls see the same error
+// instead of an empty channel.
 func (s *s3KeyStream) next(ctx context.Context) (reconcileEntry, bool, error) {
 	if s.pending != nil {
 		return reconcileEntry{}, false, s.pending
@@ -266,6 +273,9 @@ func (s *s3KeyStream) next(ctx context.Context) (reconcileEntry, bool, error) {
 	}
 }
 
+// stop cancels the producer goroutine if it is still running. Idempotent
+// via closeOnce so multiple stop calls (Reconcile early-exits, deferred
+// cleanup, error paths) do not double-close the cancel func.
 func (s *s3KeyStream) stop() {
 	if !s.closeOnce {
 		s.closeOnce = true
@@ -301,7 +311,7 @@ type dbCursorStream struct {
 	exhausted bool
 }
 
-// newDBCursorStream prepares the iterator without issuing any query yet —
+// newDBCursorStream prepares the iterator without issuing any query yet  - 
 // the first next call pulls the first page.
 func newDBCursorStream(s dbKeyLister, backendName, bucketPrefix string, otherPrefixes []string) *dbCursorStream {
 	return &dbCursorStream{
@@ -312,6 +322,11 @@ func newDBCursorStream(s dbKeyLister, backendName, bucketPrefix string, otherPre
 	}
 }
 
+// next returns the next bucket-scoped row from the DB cursor, fetching
+// a fresh bounded page when the in-memory buffer drains. Rows for
+// sibling buckets stored on the same backend are skipped silently.
+// Returns (zero, false, nil) at end-of-stream, never blocks on the DB
+// once exhausted.
 func (d *dbCursorStream) next(ctx context.Context) (reconcileEntry, bool, error) {
 	for {
 		// Drain the in-memory page first.
@@ -342,7 +357,7 @@ func (d *dbCursorStream) next(ctx context.Context) (reconcileEntry, bool, error)
 	}
 }
 
-// stop is a no-op for the DB cursor — the iterator owns no goroutine and
+// stop is a no-op for the DB cursor  -  the iterator owns no goroutine and
 // holds no other resource that needs explicit teardown. Defined so the
 // type satisfies keySource alongside s3KeyStream, which does need cleanup.
 func (d *dbCursorStream) stop() {
@@ -371,7 +386,7 @@ func (d *dbCursorStream) belongs(key string) bool {
 // -------------------------------------------------------------------------
 
 // importHandler returns the onImport callback used by the merge. Failures
-// are logged but do not abort the reconcile pass — a single import
+// are logged but do not abort the reconcile pass  -  a single import
 // failure should not stop the diff for thousands of other keys.
 func importHandler(backendName string, importer importerFn, result *reconcileResult) func(context.Context, reconcileEntry) error {
 	return func(ctx context.Context, e reconcileEntry) error {
@@ -409,5 +424,12 @@ type reconcileResult struct {
 	removed  int64
 }
 
+// importerFn imports a backend-listed key into the metadata store.
+// Returns (inserted, error). inserted is false when the row already
+// existed, which the reconciler treats as a benign no-op. Carrier
+// type so tests can substitute a fake importer.
 type importerFn func(ctx context.Context, key, backendName string, size int64) (bool, error)
+
+// deleterFn removes a metadata row whose backend confirmed it does not
+// hold the key. Carrier type so tests can substitute a fake deleter.
 type deleterFn func(ctx context.Context, key, backendName string) error

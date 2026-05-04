@@ -42,7 +42,7 @@ type AllRoles interface {
 // *proxy.BackendManager call this with the same mock they fed
 // StoresFromMock so mgr.Rebalancer / mgr.Replicator / mgr.DrainManager
 // are populated. Integration tests that use CB-wrapped real stores call
-// AttachWorkersWithStores instead. Production code never calls either —
+// AttachWorkersWithStores instead. Production code never calls either  - 
 // production wiring goes through the DI providers in internal/di.
 func AttachWorkers(mgr *proxy.BackendManager, m AllRoles) {
 	stores := proxy.Stores{

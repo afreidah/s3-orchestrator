@@ -23,6 +23,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 )
 
+// -------------------------------------------------------------------------
+// TYPE
+// -------------------------------------------------------------------------
+
 // AdmissionController limits the number of concurrent in-flight requests.
 // When readSem and writeSem are set, reads and writes are tracked in
 // separate pools; otherwise the global sem is used for all requests.
@@ -33,6 +37,10 @@ type AdmissionController struct {
 	shedThreshold float64       // 0 = disabled, e.g. 0.8 = shed at 80%
 	admissionWait time.Duration // 0 = instant reject (default)
 }
+
+// -------------------------------------------------------------------------
+// CONSTRUCTORS AND CONFIG
+// -------------------------------------------------------------------------
 
 // NewAdmissionController creates an admission controller with a single
 // global concurrency limit. The limit must be positive.
@@ -65,7 +73,7 @@ func NewSplitAdmissionControllerFromSem(readSem, writeSem chan struct{}) *Admiss
 }
 
 // SetShedThreshold configures the pressure threshold at which active load
-// shedding begins. Value is a fraction of pool capacity (0.0–1.0). Zero
+// shedding begins. Value is a fraction of pool capacity (0.0-1.0). Zero
 // disables shedding (default).
 func (ac *AdmissionController) SetShedThreshold(t float64) {
 	ac.shedThreshold = t
@@ -83,6 +91,10 @@ func isWriteMethod(method string) bool {
 		method == http.MethodPost ||
 		method == http.MethodDelete
 }
+
+// -------------------------------------------------------------------------
+// MIDDLEWARE
+// -------------------------------------------------------------------------
 
 // Middleware wraps an http.Handler with admission control. Requests that
 // exceed the concurrency limit receive 503 SlowDown with Retry-After.
@@ -141,6 +153,10 @@ func (ac *AdmissionController) Middleware(next http.Handler) http.Handler {
 		writeS3Error(w, http.StatusServiceUnavailable, "SlowDown", "Server at capacity")
 	})
 }
+
+// -------------------------------------------------------------------------
+// LOAD SHEDDING
+// -------------------------------------------------------------------------
 
 // shouldShed returns true if the request should be probabilistically
 // rejected based on current pool pressure. Shedding probability ramps

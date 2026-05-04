@@ -7,7 +7,7 @@
 // task behind the lifecycle.Service interface. Tasks that must not run
 // concurrently across instances use PostgreSQL advisory locks via
 // lockedTickerService. These live under internal/di because they are
-// provider plumbing — the main binary never constructs them directly.
+// provider plumbing  -  the main binary never constructs them directly.
 // -------------------------------------------------------------------------------
 
 package di
@@ -422,7 +422,7 @@ func NewCircuitBreakerWatchdog(registry *breaker.Registry) lifecycle.Service {
 }
 
 // Run implements lifecycle.Service. Checks every defaultCircuitBreakerWatchdog
-// (1 minute) — half the breaker probe timeout.
+// (1 minute)  -  half the breaker probe timeout.
 func (w *circuitBreakerWatchdog) Run(ctx context.Context) error {
 	ticker := time.NewTicker(defaultCircuitBreakerWatchdog)
 	defer ticker.Stop()

@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------
-// Span Helper — uniform tracing + metrics + status emission
+// Span Helper  -  uniform tracing + metrics + status emission
 //
 // Author: Alex Freidah
 //
@@ -40,7 +40,7 @@ import (
 
 // Recorder receives operation timing and outcome for Prometheus or other
 // metric backends. It is invoked exactly once per Run, after the underlying
-// closure returns. A nil recorder is allowed — Run skips metric emission
+// closure returns. A nil recorder is allowed  -  Run skips metric emission
 // when none is configured.
 type Recorder func(operation string, start time.Time, err error)
 

@@ -19,6 +19,7 @@ func (q *Queries) DeleteUsageByBackend(ctx context.Context, backendName string) 
 }
 
 const flushUsageDeltas = `-- name: FlushUsageDeltas :exec
+
 INSERT INTO backend_usage (backend_name, period, api_requests, egress_bytes, ingress_bytes, updated_at)
 VALUES ($1, $2, $3, $4, $5, NOW())
 ON CONFLICT (backend_name, period) DO UPDATE SET
@@ -36,6 +37,17 @@ type FlushUsageDeltasParams struct {
 	IngressBytes int64
 }
 
+// -----------------------------------------------------------------------------
+// Usage Queries
+//
+// Author: Alex Freidah
+//
+// sqlc-input definitions for backend_usage - the monthly per-backend
+// (api_requests, egress_bytes, ingress_bytes) counters used by the usage
+// flusher and the dashboard. FlushUsageDeltas uses INSERT ON CONFLICT DO
+// UPDATE with column-level ADDs so multiple flushers can converge on the
+// same row without losing deltas.
+// -----------------------------------------------------------------------------
 // Atomically adds accumulated in-memory deltas to the persistent usage row.
 // Creates the row if it doesn't exist for this (backend, period) yet.
 func (q *Queries) FlushUsageDeltas(ctx context.Context, arg FlushUsageDeltasParams) error {

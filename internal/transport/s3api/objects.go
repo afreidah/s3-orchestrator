@@ -47,6 +47,9 @@ type deleteObjectsRequest struct {
 	Objects []deleteObjectEntry `xml:"Object"`
 }
 
+// deleteObjectEntry is one key in a DeleteObjects request body. The S3
+// XML schema also allows a per-key VersionId, which the orchestrator
+// ignores because object versioning is not implemented.
 type deleteObjectEntry struct {
 	Key string `xml:"Key"`
 }
@@ -59,10 +62,15 @@ type deleteObjectsResult struct {
 	Errors  []deleteObjectError `xml:"Error,omitempty"`
 }
 
+// deletedObject is one entry in the Deleted block of a DeleteObjects
+// response. Suppressed when the request had Quiet=true.
 type deletedObject struct {
 	Key string `xml:"Key"`
 }
 
+// deleteObjectError is one entry in the Error block of a DeleteObjects
+// response. Always emitted on per-key failure even when Quiet=true so
+// the client can distinguish a partial failure from a full success.
 type deleteObjectError struct {
 	Key     string `xml:"Key"`
 	Code    string `xml:"Code"`
@@ -124,7 +132,7 @@ func (s *Server) handlePut(ctx context.Context, w http.ResponseWriter, r *http.R
 }
 
 // handleGet processes GET requests. Streams the response body directly to avoid
-// buffering large objects in memory. Supports Range requests — when the client
+// buffering large objects in memory. Supports Range requests  -  when the client
 // sends a Range header, the response is 206 Partial Content with Content-Range.
 func (s *Server) handleGet(ctx context.Context, w http.ResponseWriter, r *http.Request, key string) (int, int64, error) {
 	rangeHeader := r.Header.Get("Range")
@@ -342,8 +350,8 @@ func deleteObjectErrorFor(err error) (code, message string) {
 
 // checkConditionals evaluates conditional request headers per RFC 7232.
 // Returns the HTTP status to send and whether the caller should short-circuit.
-// Evaluation order follows the spec: If-Match → If-Unmodified-Since →
-// If-None-Match → If-Modified-Since.
+// Evaluation order follows the spec: If-Match -> If-Unmodified-Since ->
+// If-None-Match -> If-Modified-Since.
 func checkConditionals(r *http.Request, etag string, lastModified time.Time) (int, bool) {
 	// --- If-Match (precondition for safe updates) ---
 	if im := r.Header.Get("If-Match"); im != "" && etag != "" {

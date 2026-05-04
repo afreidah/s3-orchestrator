@@ -106,7 +106,7 @@ type FlushUsageCall struct {
 	IngressBytes int64
 }
 
-// Compile-time checks — MockStore must satisfy every narrow role interface
+// Compile-time checks  -  MockStore must satisfy every narrow role interface
 // so handler tests can hand it wherever a role is requested.
 var (
 	_ core.ObjectStore           = (*MockStore)(nil)

@@ -23,6 +23,8 @@ import (
 // HANDLE
 // -------------------------------------------------------------------------
 
+// TestTraceHandler_NoSpan verifies the trace handler no span contract.
+// Asserts that unmarshal:.
 func TestTraceHandler_NoSpan(t *testing.T) {
 	t.Parallel()
 	var buf bytes.Buffer
@@ -45,6 +47,8 @@ func TestTraceHandler_NoSpan(t *testing.T) {
 	}
 }
 
+// TestTraceHandler_WithSpan verifies the trace handler with span contract.
+// Asserts that unmarshal:.
 func TestTraceHandler_WithSpan(t *testing.T) {
 	t.Parallel()
 	var buf bytes.Buffer
@@ -81,6 +85,8 @@ func TestTraceHandler_WithSpan(t *testing.T) {
 // WITH ATTRS / WITH GROUP
 // -------------------------------------------------------------------------
 
+// TestTraceHandler_WithAttrs verifies the trace handler with attrs contract.
+// Asserts that unmarshal:.
 func TestTraceHandler_WithAttrs(t *testing.T) {
 	t.Parallel()
 	var buf bytes.Buffer
@@ -112,6 +118,8 @@ func TestTraceHandler_WithAttrs(t *testing.T) {
 	}
 }
 
+// TestTraceHandler_WithGroup verifies the trace handler with group contract.
+// Asserts that unmarshal:.
 func TestTraceHandler_WithGroup(t *testing.T) {
 	t.Parallel()
 	var buf bytes.Buffer
@@ -139,6 +147,7 @@ func TestTraceHandler_WithGroup(t *testing.T) {
 // ENABLED
 // -------------------------------------------------------------------------
 
+// TestTraceHandler_Enabled verifies the trace handler enabled path by exercising slog.NewJSONHandler, handler.Enabled, context.Background.
 func TestTraceHandler_Enabled(t *testing.T) {
 	t.Parallel()
 	inner := slog.NewJSONHandler(&bytes.Buffer{}, &slog.HandlerOptions{Level: slog.LevelWarn})

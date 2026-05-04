@@ -27,6 +27,8 @@ import (
 // CreateMultipartUpload
 // -------------------------------------------------------------------------
 
+// TestCreateMultipartUpload_Success verifies the create multipart upload success contract.
+// Asserts that status = , want 200. body:.
 func TestCreateMultipartUpload_Success(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
@@ -67,6 +69,8 @@ func TestCreateMultipartUpload_Success(t *testing.T) {
 	}
 }
 
+// TestCreateMultipartUpload_StoreError verifies the create multipart upload store error contract.
+// Asserts that status = , want 500.
 func TestCreateMultipartUpload_StoreError(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
@@ -89,6 +93,8 @@ func TestCreateMultipartUpload_StoreError(t *testing.T) {
 	}
 }
 
+// TestCreateMultipartUpload_DefaultContentType verifies the create multipart upload default content type contract.
+// Asserts that status = , want 200.
 func TestCreateMultipartUpload_DefaultContentType(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
@@ -100,7 +106,7 @@ func TestCreateMultipartUpload_DefaultContentType(t *testing.T) {
 		ContentType: "application/octet-stream",
 	}
 
-	// No Content-Type header — should default to application/octet-stream
+	// No Content-Type header  -  should default to application/octet-stream
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, ts.URL+"/mybucket/testkey?uploads", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
 	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL is localhost, not tainted
@@ -114,6 +120,8 @@ func TestCreateMultipartUpload_DefaultContentType(t *testing.T) {
 	}
 }
 
+// TestCreateMultipartUpload_MetadataTooLarge verifies the create multipart upload metadata too large contract.
+// Asserts that status = , want 400.
 func TestCreateMultipartUpload_MetadataTooLarge(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t)
@@ -136,6 +144,8 @@ func TestCreateMultipartUpload_MetadataTooLarge(t *testing.T) {
 // UploadPart
 // -------------------------------------------------------------------------
 
+// TestUploadPart_Success verifies the upload part success contract.
+// Asserts that status = , want 200. body:.
 func TestUploadPart_Success(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
@@ -166,6 +176,8 @@ func TestUploadPart_Success(t *testing.T) {
 	}
 }
 
+// TestUploadPart_InvalidPartNumber verifies the upload part invalid part number contract.
+// Asserts that status = , want 400.
 func TestUploadPart_InvalidPartNumber(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t)
@@ -184,6 +196,8 @@ func TestUploadPart_InvalidPartNumber(t *testing.T) {
 	}
 }
 
+// TestUploadPart_ZeroPartNumber verifies the upload part zero part number contract.
+// Asserts that status = , want 400.
 func TestUploadPart_ZeroPartNumber(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t)
@@ -202,6 +216,8 @@ func TestUploadPart_ZeroPartNumber(t *testing.T) {
 	}
 }
 
+// TestUploadPart_MissingContentLength verifies the upload part missing content length contract.
+// Asserts that status = , want 411.
 func TestUploadPart_MissingContentLength(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t)
@@ -220,6 +236,8 @@ func TestUploadPart_MissingContentLength(t *testing.T) {
 	}
 }
 
+// TestUploadPart_EntityTooLarge verifies the upload part entity too large contract.
+// Asserts that status = , want 413.
 func TestUploadPart_EntityTooLarge(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t)
@@ -243,6 +261,8 @@ func TestUploadPart_EntityTooLarge(t *testing.T) {
 // CompleteMultipartUpload
 // -------------------------------------------------------------------------
 
+// TestCompleteMultipartUpload_Success verifies the complete multipart upload success contract.
+// Asserts that status = , want 200. body:.
 func TestCompleteMultipartUpload_Success(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, backend := newTestServer(t)
@@ -290,6 +310,8 @@ func TestCompleteMultipartUpload_Success(t *testing.T) {
 	}
 }
 
+// TestCompleteMultipartUpload_MalformedXML verifies the complete multipart upload malformed xml contract.
+// Asserts that status = , want 400.
 func TestCompleteMultipartUpload_MalformedXML(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t)
@@ -311,6 +333,8 @@ func TestCompleteMultipartUpload_MalformedXML(t *testing.T) {
 // AbortMultipartUpload
 // -------------------------------------------------------------------------
 
+// TestAbortMultipartUpload_Success verifies the abort multipart upload success contract.
+// Asserts that status = , want 204. body:.
 func TestAbortMultipartUpload_Success(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
@@ -337,6 +361,8 @@ func TestAbortMultipartUpload_Success(t *testing.T) {
 	}
 }
 
+// TestAbortMultipartUpload_NotFound verifies the abort multipart upload not found contract.
+// Asserts that status = , want 404.
 func TestAbortMultipartUpload_NotFound(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
@@ -359,6 +385,8 @@ func TestAbortMultipartUpload_NotFound(t *testing.T) {
 // ListParts
 // -------------------------------------------------------------------------
 
+// TestListParts_Success verifies the list parts success contract.
+// Asserts that status = , want 200. body:.
 func TestListParts_Success(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
@@ -401,6 +429,8 @@ func TestListParts_Success(t *testing.T) {
 	}
 }
 
+// TestListParts_StoreError verifies the list parts store error contract.
+// Asserts that status = , want 500.
 func TestListParts_StoreError(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
@@ -418,6 +448,8 @@ func TestListParts_StoreError(t *testing.T) {
 	}
 }
 
+// TestListParts_EmptyParts verifies the list parts empty parts contract.
+// Asserts that status = , want 200.
 func TestListParts_EmptyParts(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
@@ -443,6 +475,8 @@ func TestListParts_EmptyParts(t *testing.T) {
 // ListMultipartUploads
 // -------------------------------------------------------------------------
 
+// TestListMultipartUploads_Success verifies the list multipart uploads success contract.
+// Asserts that status = , want 200. body:.
 func TestListMultipartUploads_Success(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
@@ -482,6 +516,8 @@ func TestListMultipartUploads_Success(t *testing.T) {
 	}
 }
 
+// TestListMultipartUploads_Empty verifies the list multipart uploads empty contract.
+// Asserts that status = , want 200.
 func TestListMultipartUploads_Empty(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
@@ -503,6 +539,8 @@ func TestListMultipartUploads_Empty(t *testing.T) {
 	}
 }
 
+// TestListMultipartUploads_Truncated verifies the list multipart uploads truncated contract.
+// Asserts that status = , want 200.
 func TestListMultipartUploads_Truncated(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
@@ -538,6 +576,8 @@ func TestListMultipartUploads_Truncated(t *testing.T) {
 	}
 }
 
+// TestListMultipartUploads_StoreError verifies the list multipart uploads store error contract.
+// Asserts that status = , want 500.
 func TestListMultipartUploads_StoreError(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
@@ -555,6 +595,8 @@ func TestListMultipartUploads_StoreError(t *testing.T) {
 	}
 }
 
+// TestListMultipartUploads_NoAuth verifies the list multipart uploads no auth contract.
+// Asserts that expected 403, got.
 func TestListMultipartUploads_NoAuth(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t)

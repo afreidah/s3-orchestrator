@@ -27,6 +27,8 @@ import (
 // TESTS
 // -------------------------------------------------------------------------
 
+// TestNewCertReloader_ValidCert verifies the new cert reloader valid cert contract.
+// Asserts that NewCertReloader failed:.
 func TestNewCertReloader_ValidCert(t *testing.T) {
 	t.Parallel()
 	certFile, keyFile := generateTestCert(t)
@@ -39,6 +41,7 @@ func TestNewCertReloader_ValidCert(t *testing.T) {
 	}
 }
 
+// TestNewCertReloader_InvalidPath verifies the new cert reloader invalid path behaviour described by the test name.
 func TestNewCertReloader_InvalidPath(t *testing.T) {
 	t.Parallel()
 	_, err := NewCertReloader("/nonexistent/cert.pem", "/nonexistent/key.pem")
@@ -47,6 +50,8 @@ func TestNewCertReloader_InvalidPath(t *testing.T) {
 	}
 }
 
+// TestCertReloader_GetCertificate verifies the cert reloader get certificate contract.
+// Asserts that NewCertReloader failed:.
 func TestCertReloader_GetCertificate(t *testing.T) {
 	t.Parallel()
 	certFile, keyFile := generateTestCert(t)
@@ -64,6 +69,8 @@ func TestCertReloader_GetCertificate(t *testing.T) {
 	}
 }
 
+// TestCertReloader_Reload verifies the cert reloader reload contract.
+// Asserts that NewCertReloader failed:.
 func TestCertReloader_Reload(t *testing.T) {
 	t.Parallel()
 	certFile, keyFile := generateTestCert(t)
@@ -87,6 +94,8 @@ func TestCertReloader_Reload(t *testing.T) {
 	}
 }
 
+// TestCertReloader_ReloadBadCert_KeepsOld verifies the cert reloader reload bad cert keeps old contract.
+// Asserts that NewCertReloader failed:.
 func TestCertReloader_ReloadBadCert_KeepsOld(t *testing.T) {
 	t.Parallel()
 	certFile, keyFile := generateTestCert(t)
@@ -113,6 +122,8 @@ func TestCertReloader_ReloadBadCert_KeepsOld(t *testing.T) {
 	}
 }
 
+// TestCertReloader_ReloadWarnsOnExpiringSoon verifies the cert reloader reload warns on expiring soon contract.
+// Asserts that NewCertReloader:.
 func TestCertReloader_ReloadWarnsOnExpiringSoon(t *testing.T) {
 	t.Parallel()
 	// Generate a cert that expires in 30 minutes (within the 24h threshold)
@@ -128,6 +139,8 @@ func TestCertReloader_ReloadWarnsOnExpiringSoon(t *testing.T) {
 	}
 }
 
+// TestCheckCertExpiry_LongLived verifies the check cert expiry long lived contract.
+// Asserts that NewCertReloader:.
 func TestCheckCertExpiry_LongLived(t *testing.T) {
 	t.Parallel()
 	// A cert with 30 days remaining should not trigger a warning.

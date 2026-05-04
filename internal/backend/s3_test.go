@@ -15,6 +15,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
+// TestWithUnsignedPayload_AddsAPIOption verifies the with unsigned payload adds apioption contract.
+// Asserts that expected 1 API option, got.
 func TestWithUnsignedPayload_AddsAPIOption(t *testing.T) {
 	t.Parallel()
 	var opts s3.Options
@@ -25,6 +27,8 @@ func TestWithUnsignedPayload_AddsAPIOption(t *testing.T) {
 	}
 }
 
+// TestNewS3Backend_UnsignedPayloadDefaults verifies the new s3 backend unsigned payload defaults contract.
+// Asserts that unexpected error:.
 func TestNewS3Backend_UnsignedPayloadDefaults(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -78,6 +82,8 @@ func TestNewS3Backend_UnsignedPayloadDefaults(t *testing.T) {
 	}
 }
 
+// TestNewS3Backend_DisableChecksum verifies the new s3 backend disable checksum contract.
+// Asserts that unexpected error:.
 func TestNewS3Backend_DisableChecksum(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -112,6 +118,8 @@ func TestNewS3Backend_DisableChecksum(t *testing.T) {
 	}
 }
 
+// TestNewS3Backend_StripSDKHeaders verifies the new s3 backend strip sdkheaders contract.
+// Asserts that unexpected error:.
 func TestNewS3Backend_StripSDKHeaders(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

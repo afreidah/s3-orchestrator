@@ -32,6 +32,8 @@ func noopSpan() trace.Span {
 // broadcastAllFailed
 // -------------------------------------------------------------------------
 
+// TestBroadcastAllFailed_NilErrorReturnsObjectNotFound verifies the broadcast all failed nil error returns object not found contract.
+// Asserts that name = , want empty.
 func TestBroadcastAllFailed_NilErrorReturnsObjectNotFound(t *testing.T) {
 	t.Parallel()
 	name, err := broadcastAllFailed(noopSpan(), nil)
@@ -43,6 +45,8 @@ func TestBroadcastAllFailed_NilErrorReturnsObjectNotFound(t *testing.T) {
 	}
 }
 
+// TestBroadcastAllFailed_WrapsLastError verifies the broadcast all failed wraps last error contract.
+// Asserts that name = , want empty.
 func TestBroadcastAllFailed_WrapsLastError(t *testing.T) {
 	t.Parallel()
 	lastErr := errors.New("backend on fire")

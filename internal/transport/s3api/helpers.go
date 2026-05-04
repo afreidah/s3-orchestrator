@@ -32,13 +32,17 @@ var xmlBufPool = sync.Pool{
 // maxUserMetadataBytes is the S3-specified limit for total user metadata size.
 const maxUserMetadataBytes = 2048
 
+// -------------------------------------------------------------------------
+// REQUEST GUARDS
+// -------------------------------------------------------------------------
+
 // enforceContentLength applies the standard guard for any S3 PUT-style
 // handler: reject missing Content-Length with 411, reject oversized payloads
 // with 413, and otherwise wrap the body in MaxBytesReader. The label is
 // folded into the user-facing error message so callers retain their distinct
 // vocabulary ("Object" vs "Part" etc.). Returns (statusCode, error, ok). When
 // ok is false the caller must propagate the (status, error) without further
-// processing — the response has already been written.
+// processing  -  the response has already been written.
 func enforceContentLength(w http.ResponseWriter, r *http.Request, maxSize int64, label string) (int, error, bool) {
 	if r.ContentLength < 0 {
 		writeS3Error(w, http.StatusLengthRequired, "MissingContentLength", label+" Content-Length is required")
@@ -53,6 +57,10 @@ func enforceContentLength(w http.ResponseWriter, r *http.Request, maxSize int64,
 	}
 	return 0, nil, true
 }
+
+// -------------------------------------------------------------------------
+// USER METADATA
+// -------------------------------------------------------------------------
 
 // extractUserMetadata extracts x-amz-meta-* headers from the request,
 // lowercasing the metadata key names. Returns nil when no metadata is present.
@@ -103,6 +111,10 @@ func validateUserMetadata(meta map[string]string) error {
 	return nil
 }
 
+// -------------------------------------------------------------------------
+// PATH AND QUERY PARSING
+// -------------------------------------------------------------------------
+
 // parsePath extracts bucket and key from the URL path.
 // Expected format: /{bucket} or /{bucket}/{key...}
 // When no key is present, key is empty (used for bucket-level operations like
@@ -135,6 +147,10 @@ func parseQueryInt(r *http.Request, param string, defaultVal, max int) int {
 	}
 	return v
 }
+
+// -------------------------------------------------------------------------
+// RESPONSE HELPERS
+// -------------------------------------------------------------------------
 
 // writeS3Error sends an S3-style XML error response with Content-Length.
 func writeS3Error(w http.ResponseWriter, code int, errCode, message string) {

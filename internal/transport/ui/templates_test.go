@@ -11,6 +11,8 @@ package ui
 
 import "testing"
 
+// TestFormatBytes verifies the format bytes contract.
+// Asserts that formatBytes() = , want.
 func TestFormatBytes(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -36,6 +38,8 @@ func TestFormatBytes(t *testing.T) {
 	}
 }
 
+// TestFormatNumber verifies the format number contract.
+// Asserts that formatNumber() = , want.
 func TestFormatNumber(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -60,6 +64,8 @@ func TestFormatNumber(t *testing.T) {
 	}
 }
 
+// TestPct verifies the pct contract.
+// Asserts that pct(, ) = , want.
 func TestPct(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -82,6 +88,8 @@ func TestPct(t *testing.T) {
 	}
 }
 
+// TestPctFloat verifies the pct float contract.
+// Asserts that pctFloat(, ) = , want.
 func TestPctFloat(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -104,6 +112,8 @@ func TestPctFloat(t *testing.T) {
 	}
 }
 
+// TestBarColor verifies the bar color contract.
+// Asserts that barColor(, ) = , want.
 func TestBarColor(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

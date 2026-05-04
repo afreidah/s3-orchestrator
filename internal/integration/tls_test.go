@@ -45,6 +45,9 @@ import (
 // TLS
 // -------------------------------------------------------------------------
 
+// TestTLS verifies the tls behaviour across the supplied sub-cases:
+// "CRUDOverTLS", "mTLSAcceptsValidClient", "mTLSRejectsNoClientCert", "CertReloaderIntegration".
+// Each sub-case exercises one branch of the code under test.
 func TestTLS(t *testing.T) {
 	ctx := context.Background()
 

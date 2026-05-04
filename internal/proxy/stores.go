@@ -1,10 +1,10 @@
 // -------------------------------------------------------------------------------
-// Stores — per-role store dependency bag
+// Stores  -  per-role store dependency bag
 //
 // Author: Alex Freidah
 //
 // Stores is a plain container for the narrow role interfaces the proxy layer
-// and its workers need. It is NOT an interface — nothing can claim to
+// and its workers need. It is NOT an interface  -  nothing can claim to
 // "implement Stores". Each field names the role explicitly, so adding a new
 // method to the storage layer forces a decision about which role owns it.
 //

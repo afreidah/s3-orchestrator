@@ -1,7 +1,13 @@
 // -------------------------------------------------------------------------------
-// CB Decorator — ReplicationStore
+// CB Decorator  -  ReplicationStore
 //
 // Author: Alex Freidah
+//
+// Wraps a core.ReplicationStore (under-replicated and over-replicated
+// scans, conditional replica inserts, excess-copy removal) so every
+// call routes through the database CircuitBreaker. Lets the replicator
+// and over-replication cleaner skip a tick when the breaker is open
+// instead of blocking on an unreachable database.
 // -------------------------------------------------------------------------------
 
 package store

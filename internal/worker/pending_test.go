@@ -324,7 +324,7 @@ func TestProcessPendingQueue_EmptyBatchIsNoOp(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
-// probeBackend — three-outcome backend HEAD classifier
+// probeBackend  -  three-outcome backend HEAD classifier
 // -------------------------------------------------------------------------
 
 // TestProbeBackend_Found verifies a 200 response classifies as probeFound
@@ -344,7 +344,7 @@ func TestProbeBackend_Found(t *testing.T) {
 }
 
 // TestProbeBackend_NotFound verifies a 404 response classifies as
-// probeNotFound — the signal that lets the reaper drop the intent.
+// probeNotFound  -  the signal that lets the reaper drop the intent.
 func TestProbeBackend_NotFound(t *testing.T) {
 	t.Parallel()
 	r, ops, be, _ := setupReaper(t)
@@ -377,7 +377,7 @@ func TestProbeBackend_TransientError(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
-// dropIntent — covers the two reasons (backend_removed, head_404)
+// dropIntent  -  covers the two reasons (backend_removed, head_404)
 // -------------------------------------------------------------------------
 
 // TestDropIntent_BackendRemoved verifies the backend-removed path deletes
@@ -424,6 +424,9 @@ type failingDeleteStore struct {
 	deleteErr error
 }
 
+// DeletePending returns the configured deleteErr unconditionally so
+// the reaper's drop-intent path can be exercised against a transient
+// DB failure without standing up a real database.
 func (f *failingDeleteStore) DeletePending(_ context.Context, _ string) error {
 	return f.deleteErr
 }
@@ -451,7 +454,7 @@ func TestDropIntent_DeleteFailureCountedAsFailed(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
-// onPromote* handlers — direct tests of the four result-code branches
+// onPromote* handlers  -  direct tests of the four result-code branches
 // -------------------------------------------------------------------------
 
 // TestOnPromoteCommitted_FansOutDisplacedCleanup verifies a successful
@@ -496,7 +499,7 @@ func TestOnPromoteCommitted_DisplacedBackendNotRegistered(t *testing.T) {
 }
 
 // TestOnPromoteSuperseded_CountsResolved verifies the timestamp drop
-// branch updates accounting without taking any further action — the
+// branch updates accounting without taking any further action  -  the
 // store already deleted the pending row in-txn.
 func TestOnPromoteSuperseded_CountsResolved(t *testing.T) {
 	t.Parallel()

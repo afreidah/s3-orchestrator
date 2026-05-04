@@ -19,6 +19,8 @@ import (
 	"testing"
 )
 
+// TestCommand_Drain_MissingBackend verifies the command drain missing backend contract.
+// Asserts that exit code = , want 1.
 func TestCommand_Drain_MissingBackend(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Command("drain", nil, "http://unused", "tok", &stdout, &stderr)
@@ -30,6 +32,8 @@ func TestCommand_Drain_MissingBackend(t *testing.T) {
 	}
 }
 
+// TestCommand_DrainStatus_MissingBackend verifies the command drain status missing backend contract.
+// Asserts that exit code = , want 1.
 func TestCommand_DrainStatus_MissingBackend(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Command("drain-status", nil, "http://unused", "tok", &stdout, &stderr)
@@ -41,6 +45,8 @@ func TestCommand_DrainStatus_MissingBackend(t *testing.T) {
 	}
 }
 
+// TestCommand_DrainCancel_MissingBackend verifies the command drain cancel missing backend contract.
+// Asserts that exit code = , want 1.
 func TestCommand_DrainCancel_MissingBackend(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Command("drain-cancel", nil, "http://unused", "tok", &stdout, &stderr)
@@ -52,6 +58,8 @@ func TestCommand_DrainCancel_MissingBackend(t *testing.T) {
 	}
 }
 
+// TestCommand_RemoveBackend_MissingBackend verifies the command remove backend missing backend contract.
+// Asserts that exit code = , want 1.
 func TestCommand_RemoveBackend_MissingBackend(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Command("remove-backend", nil, "http://unused", "tok", &stdout, &stderr)
@@ -63,6 +71,8 @@ func TestCommand_RemoveBackend_MissingBackend(t *testing.T) {
 	}
 }
 
+// TestCommand_Unknown verifies the command unknown contract.
+// Asserts that exit code = , want 1.
 func TestCommand_Unknown(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Command("nonexistent", nil, "http://unused", "tok", &stdout, &stderr)
@@ -74,6 +84,8 @@ func TestCommand_Unknown(t *testing.T) {
 	}
 }
 
+// TestCommand_Drain_SendsPost verifies the command drain sends post contract.
+// Asserts that exit code = , want 0.
 func TestCommand_Drain_SendsPost(t *testing.T) {
 	var gotMethod, gotPath, gotToken string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -101,6 +113,8 @@ func TestCommand_Drain_SendsPost(t *testing.T) {
 	}
 }
 
+// TestCommand_DrainStatus_SendsGet verifies the command drain status sends get contract.
+// Asserts that exit code = , want 0.
 func TestCommand_DrainStatus_SendsGet(t *testing.T) {
 	var gotMethod, gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -123,6 +137,8 @@ func TestCommand_DrainStatus_SendsGet(t *testing.T) {
 	}
 }
 
+// TestCommand_DrainCancel_SendsDelete verifies the command drain cancel sends delete contract.
+// Asserts that exit code = , want 0.
 func TestCommand_DrainCancel_SendsDelete(t *testing.T) {
 	var gotMethod, gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -145,6 +161,8 @@ func TestCommand_DrainCancel_SendsDelete(t *testing.T) {
 	}
 }
 
+// TestCommand_RemoveBackend_SendsDelete verifies the command remove backend sends delete contract.
+// Asserts that exit code = , want 0.
 func TestCommand_RemoveBackend_SendsDelete(t *testing.T) {
 	var gotMethod, gotPath, gotQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -171,6 +189,8 @@ func TestCommand_RemoveBackend_SendsDelete(t *testing.T) {
 	}
 }
 
+// TestCommand_RemoveBackend_Purge verifies the command remove backend purge contract.
+// Asserts that exit code = , want 0.
 func TestCommand_RemoveBackend_Purge(t *testing.T) {
 	var gotPath, gotQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -193,6 +213,8 @@ func TestCommand_RemoveBackend_Purge(t *testing.T) {
 	}
 }
 
+// TestCommand_Reconcile_DefaultPostsAllBackends verifies the command reconcile default posts all backends contract.
+// Asserts that exit code = , want 0.
 func TestCommand_Reconcile_DefaultPostsAllBackends(t *testing.T) {
 	var gotMethod, gotPath, gotQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -219,6 +241,8 @@ func TestCommand_Reconcile_DefaultPostsAllBackends(t *testing.T) {
 	}
 }
 
+// TestCommand_Reconcile_ScopesToBackend verifies the command reconcile scopes to backend contract.
+// Asserts that exit code = , want 0.
 func TestCommand_Reconcile_ScopesToBackend(t *testing.T) {
 	var gotQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -237,6 +261,8 @@ func TestCommand_Reconcile_ScopesToBackend(t *testing.T) {
 	}
 }
 
+// TestCommand_ServerError verifies the command server error contract.
+// Asserts that exit code = , want 1.
 func TestCommand_ServerError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
@@ -276,7 +302,7 @@ type wrapperCase struct {
 
 // simpleWrapperCases enumerates the flag-shape variants for every plain
 // HTTP wrapper. Keeping the cmd directly on each row removes the
-// case-name → cmd-name switch that pushed the test over the cognitive
+// case-name -> cmd-name switch that pushed the test over the cognitive
 // complexity threshold.
 var simpleWrapperCases = []wrapperCase{
 	{"status", "status", nil, http.MethodGet, "/admin/api/status", ""},
@@ -414,6 +440,9 @@ func TestCommand_RemoveBackend_PurgeMissingToken(t *testing.T) {
 	}
 }
 
+// minimalAdminYAML is the smallest valid config blob admin tests
+// need to reach the dispatcher; only the server.admin_token field is
+// load-bearing for the auth path under test.
 const minimalAdminYAML = `
 server:
   listen_addr: "%ADDR%"

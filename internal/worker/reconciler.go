@@ -29,7 +29,7 @@ type ReconcileResult struct {
 }
 
 // BackendSyncer is the interface the reconciler needs from the proxy layer.
-// Defined here to avoid a worker→proxy import cycle.
+// Defined here to avoid a worker->proxy import cycle.
 type BackendSyncer interface {
 	SyncBackend(ctx context.Context, backendName, bucket string, knownBuckets []string) (imported, skipped int, err error)
 	ReconcileBackend(ctx context.Context, backendName, bucket string, knownBuckets []string) (*ReconcileResult, error)

@@ -29,6 +29,7 @@ import (
 // CONSTANTS
 // -------------------------------------------------------------------------
 
+// TracerName and related constants used by this package.
 const (
 	// TracerName identifies spans created by this service.
 	TracerName = "s3-orchestrator"

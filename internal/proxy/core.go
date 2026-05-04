@@ -90,7 +90,7 @@ func (c *backendCore) releaseAdmission() {
 // If no timeout is configured, the original context is returned unchanged.
 func (c *backendCore) withTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
 	if c.backendTimeout <= 0 {
-		// No timeout configured — return a no-op cancel so the caller can
+		// No timeout configured  -  return a no-op cancel so the caller can
 		// defer cancel() unconditionally without a nil check.
 		return ctx, func() {}
 	}
@@ -149,8 +149,8 @@ func (c *backendCore) excludeDraining(eligible []string) []string {
 // excludeUnhealthy filters out backends whose circuit breaker is open.
 // Half-open and probe-eligible backends are allowed through so the circuit
 // breaker's probe mechanism can test recovery via organic traffic. Without
-// this, all backends tripping simultaneously would deadlock — no request
-// would ever reach PreCheck to trigger the open → half-open transition.
+// this, all backends tripping simultaneously would deadlock  -  no request
+// would ever reach PreCheck to trigger the open -> half-open transition.
 func (c *backendCore) excludeUnhealthy(eligible []string) []string {
 	filtered := make([]string, 0, len(eligible))
 	for _, name := range eligible {
@@ -284,7 +284,7 @@ func (c *backendCore) BackendOrder() []string { return c.order }
 // Usage returns the usage tracker.
 func (c *backendCore) Usage() *counter.UsageTracker { return c.usage }
 
-// StreamCopy pipes a GetObject→PutObject between two backends.
+// StreamCopy pipes a GetObject->PutObject between two backends.
 func (c *backendCore) StreamCopy(ctx context.Context, src, dst backend.ObjectBackend, key string) error {
 	return c.streamCopy(ctx, src, dst, key)
 }

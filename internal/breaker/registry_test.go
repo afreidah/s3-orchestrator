@@ -1,12 +1,28 @@
+// -------------------------------------------------------------------------------
+// Breaker Registry Tests
+//
+// Author: Alex Freidah
+//
+// Verifies the per-process registry that hot-reload code uses to reset every
+// known circuit breaker after a config change. Tests cover registration, nil
+// filtering, idempotent resets when the registry is empty, and that the real
+// *CircuitBreaker satisfies the Resetter interface so the reload path does
+// not depend on a hand-rolled adapter.
+// -------------------------------------------------------------------------------
+
 package breaker
 
 import "testing"
 
+// fakeResetter is a counting Resetter used to assert that the
+// registry calls ResetStaleProbe on every registered breaker.
 type fakeResetter struct {
 	count int
 	ret   bool
 }
 
+// ResetStaleProbe records that the registry called the resetter
+// and returns the test-configured boolean as the probe result.
 func (f *fakeResetter) ResetStaleProbe() bool {
 	f.count++
 	return f.ret

@@ -26,6 +26,10 @@ type LoginThrottle struct {
 	closeOnce       sync.Once
 }
 
+// loginAttempt is the per-IP entry the throttle keeps in memory:
+// running failure count and the timestamp at which the IP becomes
+// eligible to retry. Resets to a fresh zero value once a login
+// succeeds so a one-off typo doesn't permanently degrade an IP.
 type loginAttempt struct {
 	failures    int
 	lockedUntil time.Time

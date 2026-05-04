@@ -1,3 +1,16 @@
+// -------------------------------------------------------------------------------
+// Auth Benchmarks - SigV4 Verification Hot Path
+//
+// Author: Alex Freidah
+//
+// Pins the per-request cost of SigV4 verification: full VerifySigV4 with
+// and without query params, the per-call deriveSigningKey HMAC chain, and
+// the parser that splits the Authorization header. AuthenticateAndResolveBucket
+// covers the full bucket-lookup path so credential-cache regressions
+// surface here. Critical to keep stable because every request pays this
+// cost.
+// -------------------------------------------------------------------------------
+
 package auth
 
 import (
@@ -36,6 +49,7 @@ func benchSignedRequest(accessKey, secret string) *http.Request {
 	return r
 }
 
+// BenchmarkVerifySigV4 measures the verify sig v4 behaviour described by the test name.
 func BenchmarkVerifySigV4(b *testing.B) {
 	accessKey := "AKIDEXAMPLE"
 	secret := "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY" //nolint:gosec // G101: benchmark credential
@@ -47,12 +61,16 @@ func BenchmarkVerifySigV4(b *testing.B) {
 	}
 }
 
+// BenchmarkDeriveSigningKey measures the derive signing key behaviour described by the test name.
 func BenchmarkDeriveSigningKey(b *testing.B) {
 	for b.Loop() {
 		deriveSigningKey("wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY", "20260215", "us-east-1", "s3")
 	}
 }
 
+// BenchmarkParseSigV4Fields measures the parse sig v4 fields behaviour across the supplied sub-cases:
+// "map", "direct".
+// Each sub-case exercises one branch of the code under test.
 func BenchmarkParseSigV4Fields(b *testing.B) {
 	input := "Credential=AKID/20260215/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
 
@@ -90,6 +108,7 @@ func BenchmarkAuthenticateAndResolveBucket(b *testing.B) {
 }
 
 
+// BenchmarkVerifySigV4_WithQueryParams measures the verify sig v4 with query params path by exercising q.Set, fmt.Sprintf, q.Encode.
 func BenchmarkVerifySigV4_WithQueryParams(b *testing.B) {
 	cases := []struct {
 		name   string
@@ -134,6 +153,7 @@ func BenchmarkVerifySigV4_WithQueryParams(b *testing.B) {
 	}
 }
 
+// BenchmarkBuildCanonicalRequest measures the build canonical request path by exercising http.NewRequestWithContext, context.Background.
 func BenchmarkBuildCanonicalRequest(b *testing.B) {
 	r, _ := http.NewRequestWithContext(context.Background(), "PUT", "/bucket/path/to/object.bin?uploadId=abc123&partNumber=3", nil)
 	r.Header.Set("X-Amz-Date", "20260307T000000Z")
@@ -176,6 +196,7 @@ func benchPresignedRequest(accessKey, secret string) *http.Request {
 	return r
 }
 
+// BenchmarkVerifyPresignedSigV4 measures the verify presigned sig v4 path by exercising br.AuthenticateAndResolveBucket.
 func BenchmarkVerifyPresignedSigV4(b *testing.B) {
 	accessKey := "AKIDEXAMPLE"
 	secret := "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY" //nolint:gosec // G101: benchmark credential
@@ -194,6 +215,7 @@ func BenchmarkVerifyPresignedSigV4(b *testing.B) {
 	}
 }
 
+// BenchmarkTokenAuth measures the token auth path by exercising fmt.Sprintf, http.NewRequestWithContext, context.Background.
 func BenchmarkTokenAuth(b *testing.B) {
 	tokens := []struct {
 		name  string

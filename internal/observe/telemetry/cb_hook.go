@@ -35,7 +35,7 @@ func NewCircuitBreakerHook(name string) func(breaker.StateChangeInfo) {
 }
 
 // emitCircuitEvent sends the corresponding BackendCircuit{Opened,Closed}
-// event for the closed→open and *→closed transitions. Other transitions
+// event for the closed->open and *->closed transitions. Other transitions
 // are state-machine internals and not user-visible.
 func emitCircuitEvent(info breaker.StateChangeInfo) {
 	if event.Emit == nil {

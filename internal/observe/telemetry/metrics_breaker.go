@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------
-// Metrics — Circuit Breaker
+// Metrics  -  Circuit Breaker
 //
 // Author: Alex Freidah
 //
@@ -14,6 +14,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
+// CircuitBreakerState and related package-level variables used by this package.
 var (
 	// --- Circuit breaker metrics ---
 
@@ -39,7 +40,7 @@ var (
 	// CircuitBreakerInternalErrorsTotal counts errors returned by the
 	// breaker's own machinery (PostCheck / state transition helpers).
 	// Non-zero values indicate a bookkeeping bug, not an application
-	// error — alert on any increase.
+	// error  -  alert on any increase.
 	CircuitBreakerInternalErrorsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "s3o_circuit_breaker_internal_errors_total",

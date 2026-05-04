@@ -40,6 +40,10 @@ import (
 // INTERFACE
 // -------------------------------------------------------------------------
 
+// spanPrefix is prepended to every OpenTelemetry span name produced by
+// this package so traces clearly attribute the call to the backend
+// layer ("Backend GetObject") versus the manager layer ("Manager
+// GetObject") in the same trace.
 const spanPrefix = "Backend "
 
 // GetObjectResult holds the response from a GetObject call.

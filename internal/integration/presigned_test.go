@@ -63,7 +63,7 @@ func TestE2E_PresignedGetObject(t *testing.T) {
 		t.Fatalf("PresignGetObject: %v", err)
 	}
 
-	// Fetch with plain HTTP client — no AWS credentials
+	// Fetch with plain HTTP client  -  no AWS credentials
 	resp, err := http.Get(presigned.URL)
 	if err != nil {
 		t.Fatalf("HTTP GET presigned URL: %v", err)
@@ -105,7 +105,7 @@ func TestE2E_PresignedPutObject(t *testing.T) {
 		t.Fatalf("PresignPutObject: %v", err)
 	}
 
-	// Upload with plain HTTP client — no AWS credentials
+	// Upload with plain HTTP client  -  no AWS credentials
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPut, presigned.URL, bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
@@ -179,7 +179,7 @@ func TestE2E_PresignedExpiredURL(t *testing.T) {
 	// Wait for expiry
 	time.Sleep(2 * time.Second)
 
-	// Attempt to fetch — should be rejected
+	// Attempt to fetch  -  should be rejected
 	resp, err := http.Get(presigned.URL)
 	if err != nil {
 		t.Fatalf("HTTP GET expired presigned URL: %v", err)

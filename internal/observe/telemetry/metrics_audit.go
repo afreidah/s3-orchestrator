@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------
-// Metrics — Audit
+// Metrics  -  Audit
 //
 // Author: Alex Freidah
 //
@@ -14,6 +14,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
+// AuditEventsTotal and related package-level variables used by this package.
 var (
 	// --- Audit metrics ---
 

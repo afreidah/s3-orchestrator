@@ -2,6 +2,14 @@
 // Server Configuration
 //
 // Author: Alex Freidah
+//
+// Defines ServerConfig - the HTTP listener block - plus the TLS, admin
+// API, request-id, admission control, and timeout sub-blocks. Carries
+// the listen address, optional Unix socket, hard admission cap, load-
+// shedding threshold, and read/write/header timeouts. Validators enforce
+// that admission limits are non-zero when configured and that the TLS
+// cert and key are both present (or both absent) so partial TLS
+// configuration cannot start.
 // -------------------------------------------------------------------------------
 
 package config
@@ -10,6 +18,10 @@ import (
 	"fmt"
 	"time"
 )
+
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
 
 // ServerConfig holds HTTP server settings.
 type ServerConfig struct {
@@ -40,6 +52,11 @@ type TLSConfig struct {
 	ClientCAFile string `yaml:"client_ca_file"` // Path to CA bundle for client certificate verification (mTLS)
 }
 
+// -------------------------------------------------------------------------
+// VALIDATION
+// -------------------------------------------------------------------------
+
+// setDefaultsAndValidate sets defaults and validate.
 func (s *ServerConfig) setDefaultsAndValidate() []error {
 	var errs []error
 	errs = append(errs, s.validateBasics()...)

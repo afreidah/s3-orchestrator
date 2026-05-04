@@ -2,6 +2,14 @@
 // Redis Configuration
 //
 // Author: Alex Freidah
+//
+// Defines the optional Redis block used for shared usage counters across
+// multiple orchestrator instances. When absent, the orchestrator uses
+// in-process atomic counters (single-instance only). When present, every
+// instance reads and writes the same counter keys so quota enforcement
+// stays consistent under horizontal scaling. Holds the connection
+// address, pool size, and the timeouts that bound liveness and command
+// latency.
 // -------------------------------------------------------------------------------
 
 package config
@@ -21,6 +29,7 @@ type RedisConfig struct {
 	OpenTimeout      time.Duration `yaml:"open_timeout"`      // Delay before probing recovery (default: 15s)
 }
 
+// setDefaultsAndValidate sets defaults and validate.
 func (r *RedisConfig) setDefaultsAndValidate() []error {
 	var errs []error
 

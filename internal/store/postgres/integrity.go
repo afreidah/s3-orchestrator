@@ -2,6 +2,13 @@
 // Integrity Verification Operations
 //
 // Author: Alex Freidah
+//
+// Implements the Postgres engine bindings for the integrity scrubber:
+// random-sample selection of objects whose content_hash is set,
+// listing of objects whose hash is null (so the backfill path can
+// compute one), and the per-object UpdateContentHash. Uses TABLESAMPLE
+// SYSTEM for cheap random sampling instead of ORDER BY random() so the
+// scrubber stays linear-time as the table grows.
 // -------------------------------------------------------------------------------
 
 package postgres

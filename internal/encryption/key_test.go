@@ -28,6 +28,8 @@ import (
 // CONFIG KEY PROVIDER
 // -------------------------------------------------------------------------
 
+// TestConfigKeyProvider_WrapUnwrap verifies the config key provider wrap unwrap contract.
+// Asserts that NewConfigKeyProvider:.
 func TestConfigKeyProvider_WrapUnwrap(t *testing.T) {
 	t.Parallel()
 	key := make([]byte, 32)
@@ -70,6 +72,8 @@ func TestConfigKeyProvider_WrapUnwrap(t *testing.T) {
 	}
 }
 
+// TestConfigKeyProvider_DefaultKeyID verifies the config key provider default key id contract.
+// Asserts that NewConfigKeyProvider:.
 func TestConfigKeyProvider_DefaultKeyID(t *testing.T) {
 	t.Parallel()
 	key := make([]byte, 32)
@@ -86,6 +90,7 @@ func TestConfigKeyProvider_DefaultKeyID(t *testing.T) {
 	}
 }
 
+// TestConfigKeyProvider_InvalidBase64 verifies the config key provider invalid base64 behaviour described by the test name.
 func TestConfigKeyProvider_InvalidBase64(t *testing.T) {
 	t.Parallel()
 	_, err := NewConfigKeyProvider("not-valid-base64!!!", "test")
@@ -94,6 +99,7 @@ func TestConfigKeyProvider_InvalidBase64(t *testing.T) {
 	}
 }
 
+// TestConfigKeyProvider_WrongKeyLength verifies the config key provider wrong key length behaviour described by the test name.
 func TestConfigKeyProvider_WrongKeyLength(t *testing.T) {
 	t.Parallel()
 	key := make([]byte, 16) // too short
@@ -109,6 +115,8 @@ func TestConfigKeyProvider_WrongKeyLength(t *testing.T) {
 // FILE KEY PROVIDER
 // -------------------------------------------------------------------------
 
+// TestFileKeyProvider_WrapUnwrap verifies the file key provider wrap unwrap contract.
+// Asserts that WriteFile:.
 func TestFileKeyProvider_WrapUnwrap(t *testing.T) {
 	t.Parallel()
 	key := make([]byte, 32)
@@ -149,6 +157,8 @@ func TestFileKeyProvider_WrapUnwrap(t *testing.T) {
 	}
 }
 
+// TestFileKeyProvider_DefaultKeyID verifies the file key provider default key id contract.
+// Asserts that NewFileKeyProvider:.
 func TestFileKeyProvider_DefaultKeyID(t *testing.T) {
 	t.Parallel()
 	key := make([]byte, 32)
@@ -167,6 +177,7 @@ func TestFileKeyProvider_DefaultKeyID(t *testing.T) {
 	}
 }
 
+// TestFileKeyProvider_FileMissing verifies the file key provider file missing behaviour described by the test name.
 func TestFileKeyProvider_FileMissing(t *testing.T) {
 	t.Parallel()
 	_, err := NewFileKeyProvider("/nonexistent/key.file", "test")
@@ -175,6 +186,7 @@ func TestFileKeyProvider_FileMissing(t *testing.T) {
 	}
 }
 
+// TestFileKeyProvider_WrongSize verifies the file key provider wrong size path by exercising filepath.Join, os.WriteFile.
 func TestFileKeyProvider_WrongSize(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "test.key")
@@ -190,6 +202,8 @@ func TestFileKeyProvider_WrongSize(t *testing.T) {
 // MULTI-KEY PROVIDER (KEY ROTATION)
 // -------------------------------------------------------------------------
 
+// TestMultiKeyProvider_WrapUsePrimary verifies the multi key provider wrap use primary contract.
+// Asserts that KeyID = , want.
 func TestMultiKeyProvider_WrapUsePrimary(t *testing.T) {
 	t.Parallel()
 	key1 := make([]byte, 32)
@@ -219,6 +233,8 @@ func TestMultiKeyProvider_WrapUsePrimary(t *testing.T) {
 	}
 }
 
+// TestMultiKeyProvider_UnwrapWithOldKey verifies the multi key provider unwrap with old key contract.
+// Asserts that WrapDEK:.
 func TestMultiKeyProvider_UnwrapWithOldKey(t *testing.T) {
 	t.Parallel()
 	key1 := make([]byte, 32)
@@ -255,6 +271,8 @@ func TestMultiKeyProvider_UnwrapWithOldKey(t *testing.T) {
 	}
 }
 
+// TestMultiKeyProvider_UnwrapWithPrimary verifies the multi key provider unwrap with primary contract.
+// Asserts that WrapDEK:.
 func TestMultiKeyProvider_UnwrapWithPrimary(t *testing.T) {
 	t.Parallel()
 	key1 := make([]byte, 32)
@@ -284,6 +302,8 @@ func TestMultiKeyProvider_UnwrapWithPrimary(t *testing.T) {
 	}
 }
 
+// TestMultiKeyProvider_UnknownKeyIDReturnsError verifies the multi key provider unknown key idreturns error contract.
+// Asserts that error should mention unknown key ID, got:.
 func TestMultiKeyProvider_UnknownKeyIDReturnsError(t *testing.T) {
 	t.Parallel()
 	key1 := make([]byte, 32)
@@ -298,7 +318,7 @@ func TestMultiKeyProvider_UnknownKeyIDReturnsError(t *testing.T) {
 
 	wrapped, _, _ := primary.WrapDEK(ctx, dek)
 
-	// Unwrap with an unknown keyID — must return an error instead of
+	// Unwrap with an unknown keyID  -  must return an error instead of
 	// silently falling back to the primary key.
 	before := promtest.ToFloat64(telemetry.EncryptionUnknownKeyIDTotal)
 	_, err := multi.UnwrapDEK(ctx, wrapped, "unknown-key-id")
@@ -319,6 +339,8 @@ func TestMultiKeyProvider_UnknownKeyIDReturnsError(t *testing.T) {
 // NEW KEY PROVIDER FROM CONFIG
 // -------------------------------------------------------------------------
 
+// TestNewKeyProviderFromConfig_InlineKey verifies the new key provider from config inline key contract.
+// Asserts that NewKeyProviderFromConfig:.
 func TestNewKeyProviderFromConfig_InlineKey(t *testing.T) {
 	t.Parallel()
 	key := make([]byte, 32)
@@ -335,6 +357,8 @@ func TestNewKeyProviderFromConfig_InlineKey(t *testing.T) {
 	}
 }
 
+// TestNewKeyProviderFromConfig_FileKey verifies the new key provider from config file key contract.
+// Asserts that NewKeyProviderFromConfig:.
 func TestNewKeyProviderFromConfig_FileKey(t *testing.T) {
 	t.Parallel()
 	key := make([]byte, 32)
@@ -353,6 +377,8 @@ func TestNewKeyProviderFromConfig_FileKey(t *testing.T) {
 	}
 }
 
+// TestNewKeyProviderFromConfig_Vault verifies the new key provider from config vault contract.
+// Asserts that NewKeyProviderFromConfig:.
 func TestNewKeyProviderFromConfig_Vault(t *testing.T) {
 	t.Parallel()
 	cfg := &config.EncryptionConfig{
@@ -377,6 +403,7 @@ func TestNewKeyProviderFromConfig_Vault(t *testing.T) {
 	}
 }
 
+// TestNewKeyProviderFromConfig_NoKeySource verifies the new key provider from config no key source behaviour described by the test name.
 func TestNewKeyProviderFromConfig_NoKeySource(t *testing.T) {
 	t.Parallel()
 	cfg := &config.EncryptionConfig{}
@@ -386,6 +413,8 @@ func TestNewKeyProviderFromConfig_NoKeySource(t *testing.T) {
 	}
 }
 
+// TestNewKeyProviderFromConfig_WithPreviousKeys verifies the new key provider from config with previous keys contract.
+// Asserts that NewKeyProviderFromConfig:.
 func TestNewKeyProviderFromConfig_WithPreviousKeys(t *testing.T) {
 	t.Parallel()
 	key1 := make([]byte, 32)
@@ -427,6 +456,7 @@ func TestNewKeyProviderFromConfig_WithPreviousKeys(t *testing.T) {
 	}
 }
 
+// TestNewKeyProviderFromConfig_InvalidPreviousKey verifies the new key provider from config invalid previous key path by exercising rand.Read.
 func TestNewKeyProviderFromConfig_InvalidPreviousKey(t *testing.T) {
 	t.Parallel()
 	key := make([]byte, 32)
@@ -442,6 +472,7 @@ func TestNewKeyProviderFromConfig_InvalidPreviousKey(t *testing.T) {
 	}
 }
 
+// TestNewKeyProviderFromConfig_InvalidPrimaryKey verifies the new key provider from config invalid primary key behaviour described by the test name.
 func TestNewKeyProviderFromConfig_InvalidPrimaryKey(t *testing.T) {
 	t.Parallel()
 	cfg := &config.EncryptionConfig{MasterKey: "not-valid-base64!!!"}

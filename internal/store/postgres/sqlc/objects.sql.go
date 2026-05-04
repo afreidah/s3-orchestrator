@@ -859,9 +859,21 @@ func (q *Queries) ListUnencryptedLocations(ctx context.Context, arg ListUnencryp
 }
 
 const lockObjectKeyForWrite = `-- name: LockObjectKeyForWrite :exec
+
 SELECT pg_advisory_xact_lock(hashtext($1))
 `
 
+// -----------------------------------------------------------------------------
+// Object Location Queries
+//
+// Author: Alex Freidah
+//
+// sqlc-input definitions for object_locations - the canonical (object_key,
+// backend_name) ledger of which backends hold which objects. Includes the
+// transactional advisory lock primitive (LockObjectKeyForWrite) used by the
+// write path, the FOR UPDATE locks used by the per-key transactional helpers
+// in core/, and the listing queries the manager and dashboard consume.
+// -----------------------------------------------------------------------------
 func (q *Queries) LockObjectKeyForWrite(ctx context.Context, hashtext string) error {
 	_, err := q.db.Exec(ctx, lockObjectKeyForWrite, hashtext)
 	return err

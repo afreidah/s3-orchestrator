@@ -1,3 +1,14 @@
+# -------------------------------------------------------------------------------
+# Helm Template - ConfigMap
+#
+# Author: Alex Freidah
+#
+# Renders the orchestrator's config.yaml from .Values.config so operators can
+# tweak per-environment settings (backends, buckets, server listener) via
+# values without rebuilding the image. Mounted into the Deployment at
+# /etc/s3-orchestrator/config.yaml.
+# -------------------------------------------------------------------------------
+
 apiVersion: v1
 kind: ConfigMap
 metadata:

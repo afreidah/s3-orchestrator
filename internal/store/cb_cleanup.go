@@ -1,7 +1,13 @@
 // -------------------------------------------------------------------------------
-// CB Decorator — CleanupStore
+// CB Decorator  -  CleanupStore
 //
 // Author: Alex Freidah
+//
+// Wraps a core.CleanupStore (cleanup_queue + cleanup_dlq + orphan_bytes
+// counters) so every call routes through the database CircuitBreaker.
+// When the breaker is open, calls return ErrDBUnavailable instantly;
+// when closed, they delegate to the inner store. Decorator pattern
+// keeps the cleanup worker unaware of the breaker.
 // -------------------------------------------------------------------------------
 
 package store

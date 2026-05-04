@@ -25,6 +25,8 @@ import (
 // CreateMultipartUpload
 // -------------------------------------------------------------------------
 
+// TestCreateMultipartUpload_Success verifies the create multipart upload success contract.
+// Asserts that CreateMultipartUpload:.
 func TestCreateMultipartUpload_Success(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -43,6 +45,8 @@ func TestCreateMultipartUpload_Success(t *testing.T) {
 	}
 }
 
+// TestCreateMultipartUpload_DBUnavailable verifies the create multipart upload dbunavailable contract.
+// Asserts that expected st.ErrServiceUnavailable, got.
 func TestCreateMultipartUpload_DBUnavailable(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{getBackendErr: core.ErrDBUnavailable}
@@ -54,6 +58,8 @@ func TestCreateMultipartUpload_DBUnavailable(t *testing.T) {
 	}
 }
 
+// TestCreateMultipartUpload_NoSpace verifies the create multipart upload no space contract.
+// Asserts that expected st.ErrInsufficientStorage, got.
 func TestCreateMultipartUpload_NoSpace(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{getBackendErr: core.ErrNoSpaceAvailable}
@@ -69,6 +75,8 @@ func TestCreateMultipartUpload_NoSpace(t *testing.T) {
 // UploadPart
 // -------------------------------------------------------------------------
 
+// TestUploadPart_Success verifies the upload part success contract.
+// Asserts that UploadPart:.
 func TestUploadPart_Success(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -95,6 +103,8 @@ func TestUploadPart_Success(t *testing.T) {
 	}
 }
 
+// TestUploadPart_InvalidPartNumber verifies the upload part invalid part number contract.
+// Asserts that UploadPart(partNumber=) should fail.
 func TestUploadPart_InvalidPartNumber(t *testing.T) {
 	t.Parallel()
 	mgr := newTestManager(&mockStore{}, map[string]*mockBackend{"b1": newMockBackend()})
@@ -112,6 +122,8 @@ func TestUploadPart_InvalidPartNumber(t *testing.T) {
 	}
 }
 
+// TestUploadPart_DBUnavailable verifies the upload part dbunavailable contract.
+// Asserts that expected st.ErrServiceUnavailable, got.
 func TestUploadPart_DBUnavailable(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{getMultipartErr: core.ErrDBUnavailable}
@@ -127,6 +139,8 @@ func TestUploadPart_DBUnavailable(t *testing.T) {
 // CompleteMultipartUpload
 // -------------------------------------------------------------------------
 
+// TestCompleteMultipartUpload_Success verifies the complete multipart upload success contract.
+// Asserts that CompleteMultipartUpload:.
 func TestCompleteMultipartUpload_Success(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -178,6 +192,8 @@ func TestCompleteMultipartUpload_Success(t *testing.T) {
 	}
 }
 
+// TestCompleteMultipartUpload_DBUnavailable verifies the complete multipart upload dbunavailable contract.
+// Asserts that expected st.ErrServiceUnavailable, got.
 func TestCompleteMultipartUpload_DBUnavailable(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{getMultipartErr: core.ErrDBUnavailable}
@@ -193,6 +209,8 @@ func TestCompleteMultipartUpload_DBUnavailable(t *testing.T) {
 // AbortMultipartUpload
 // -------------------------------------------------------------------------
 
+// TestAbortMultipartUpload_Success verifies the abort multipart upload success contract.
+// Asserts that AbortMultipartUpload:.
 func TestAbortMultipartUpload_Success(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -226,6 +244,8 @@ func TestAbortMultipartUpload_Success(t *testing.T) {
 	}
 }
 
+// TestAbortMultipartUpload_DBUnavailable verifies the abort multipart upload dbunavailable contract.
+// Asserts that expected st.ErrServiceUnavailable, got.
 func TestAbortMultipartUpload_DBUnavailable(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{getMultipartErr: core.ErrDBUnavailable}
@@ -237,6 +257,7 @@ func TestAbortMultipartUpload_DBUnavailable(t *testing.T) {
 	}
 }
 
+// TestAbortMultipartUpload_GetPartsError verifies the abort multipart upload get parts error path by exercising errors.New, context.Background.
 func TestAbortMultipartUpload_GetPartsError(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -255,6 +276,8 @@ func TestAbortMultipartUpload_GetPartsError(t *testing.T) {
 	}
 }
 
+// TestAbortMultipartUpload_PartDeleteFails_EnqueuesCleanup verifies the abort multipart upload part delete fails enqueues cleanup contract.
+// Asserts that AbortMultipartUpload:.
 func TestAbortMultipartUpload_PartDeleteFails_EnqueuesCleanup(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -299,6 +322,8 @@ func TestAbortMultipartUpload_PartDeleteFails_EnqueuesCleanup(t *testing.T) {
 // CompleteMultipartUpload part filtering
 // -------------------------------------------------------------------------
 
+// TestCompleteMultipartUpload_PartSubset verifies the complete multipart upload part subset contract.
+// Asserts that CompleteMultipartUpload:.
 func TestCompleteMultipartUpload_PartSubset(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -343,6 +368,8 @@ func TestCompleteMultipartUpload_PartSubset(t *testing.T) {
 	}
 }
 
+// TestCompleteMultipartUpload_InvalidPart verifies the complete multipart upload invalid part contract.
+// Asserts that expected st.S3Error with Code=InvalidPart, got.
 func TestCompleteMultipartUpload_InvalidPart(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -373,6 +400,7 @@ func TestCompleteMultipartUpload_InvalidPart(t *testing.T) {
 // CompleteMultipartUpload error paths
 // -------------------------------------------------------------------------
 
+// TestCompleteMultipartUpload_GetPartsError verifies the complete multipart upload get parts error path by exercising errors.New, context.Background.
 func TestCompleteMultipartUpload_GetPartsError(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -391,6 +419,8 @@ func TestCompleteMultipartUpload_GetPartsError(t *testing.T) {
 	}
 }
 
+// TestCompleteMultipartUpload_PartDeleteFails_EnqueuesCleanup verifies the complete multipart upload part delete fails enqueues cleanup contract.
+// Asserts that CompleteMultipartUpload:.
 func TestCompleteMultipartUpload_PartDeleteFails_EnqueuesCleanup(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -433,6 +463,7 @@ func TestCompleteMultipartUpload_PartDeleteFails_EnqueuesCleanup(t *testing.T) {
 	}
 }
 
+// TestCompleteMultipartUpload_FinalPutFails verifies the complete multipart upload final put fails path by exercising context.Background, backend.PutObject, bytes.NewReader.
 func TestCompleteMultipartUpload_FinalPutFails(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -459,6 +490,7 @@ func TestCompleteMultipartUpload_FinalPutFails(t *testing.T) {
 	}
 }
 
+// TestCompleteMultipartUpload_PartReadFails verifies the complete multipart upload part read fails path by exercising context.Background, backend.PutObject, bytes.NewReader.
 func TestCompleteMultipartUpload_PartReadFails(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -489,6 +521,8 @@ func TestCompleteMultipartUpload_PartReadFails(t *testing.T) {
 // UploadPart error paths
 // -------------------------------------------------------------------------
 
+// TestUploadPart_UsageLimitExceeded verifies the upload part usage limit exceeded contract.
+// Asserts that expected st.ErrInsufficientStorage, got.
 func TestUploadPart_UsageLimitExceeded(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -511,6 +545,8 @@ func TestUploadPart_UsageLimitExceeded(t *testing.T) {
 	}
 }
 
+// TestUploadPart_RecordPartFails_CleansUpPartObject verifies the upload part record part fails cleans up part object contract.
+// Asserts that apiRequests = , want 2 (PUT + orphan DELETE).
 func TestUploadPart_RecordPartFails_CleansUpPartObject(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -534,13 +570,15 @@ func TestUploadPart_RecordPartFails_CleansUpPartObject(t *testing.T) {
 		t.Error("orphaned part should be deleted from backend")
 	}
 
-	// Usage: 2 API calls — the part PUT that succeeded against the backend
+	// Usage: 2 API calls  -  the part PUT that succeeded against the backend
 	// and the cleanup DELETE that ran after RecordPart failed.
 	if got := mgr.usage.Backend().Load("b1", counter.FieldAPIRequests); got != 2 {
 		t.Errorf("apiRequests = %d, want 2 (PUT + orphan DELETE)", got)
 	}
 }
 
+// TestUploadPart_RecordPartFails_DeleteFails_EnqueuesCleanup verifies the upload part record part fails delete fails enqueues cleanup contract.
+// Asserts that expected 1 enqueue call, got.
 func TestUploadPart_RecordPartFails_DeleteFails_EnqueuesCleanup(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -586,6 +624,7 @@ func TestUploadPart_RecordPartFails_DeleteFails_EnqueuesCleanup(t *testing.T) {
 // CleanupStaleMultipartUploads
 // -------------------------------------------------------------------------
 
+// TestCleanupStaleMultipartUploads_NoStaleUploads verifies the cleanup stale multipart uploads no stale uploads path by exercising context.Background.
 func TestCleanupStaleMultipartUploads_NoStaleUploads(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{}
@@ -595,6 +634,7 @@ func TestCleanupStaleMultipartUploads_NoStaleUploads(t *testing.T) {
 	mgr.MultipartManager.CleanupStaleMultipartUploads(context.Background(), time.Hour)
 }
 
+// TestCleanupStaleMultipartUploads_QueryError verifies the cleanup stale multipart uploads query error path by exercising errors.New, context.Background.
 func TestCleanupStaleMultipartUploads_QueryError(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{getStaleMultipartErr: errors.New("db error")}
@@ -604,6 +644,7 @@ func TestCleanupStaleMultipartUploads_QueryError(t *testing.T) {
 	mgr.MultipartManager.CleanupStaleMultipartUploads(context.Background(), time.Hour)
 }
 
+// TestCleanupStaleMultipartUploads_AbortsStaleUploads verifies the cleanup stale multipart uploads aborts stale uploads path by exercising context.Background, backend.PutObject, bytes.NewReader.
 func TestCleanupStaleMultipartUploads_AbortsStaleUploads(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -637,6 +678,8 @@ func TestCleanupStaleMultipartUploads_AbortsStaleUploads(t *testing.T) {
 // CreateMultipartUpload edge cases
 // -------------------------------------------------------------------------
 
+// TestCompleteMultipartUpload_UsageRecords2NPlus1APICalls verifies the complete multipart upload usage records2 nplus1 apicalls contract.
+// Asserts that CompleteMultipartUpload:.
 func TestCompleteMultipartUpload_UsageRecords2NPlus1APICalls(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -677,6 +720,8 @@ func TestCompleteMultipartUpload_UsageRecords2NPlus1APICalls(t *testing.T) {
 	}
 }
 
+// TestUploadPart_BackendFailure_StillRecordsUsage verifies the upload part backend failure still records usage contract.
+// Asserts that apiRequests = , want 1 (failed call still counts).
 func TestUploadPart_BackendFailure_StillRecordsUsage(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -706,6 +751,7 @@ func TestUploadPart_BackendFailure_StillRecordsUsage(t *testing.T) {
 	}
 }
 
+// TestCreateMultipartUpload_CreateStoreError verifies the create multipart upload create store error path by exercising errors.New, context.Background.
 func TestCreateMultipartUpload_CreateStoreError(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -721,9 +767,10 @@ func TestCreateMultipartUpload_CreateStoreError(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
-// CleanupStaleMultipartUploads — abort failure path
+// CleanupStaleMultipartUploads  -  abort failure path
 // -------------------------------------------------------------------------
 
+// TestCleanupStaleMultipartUploads_AbortFails verifies the cleanup stale multipart uploads abort fails path by exercising errors.New, context.Background.
 func TestCleanupStaleMultipartUploads_AbortFails(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -735,7 +782,7 @@ func TestCleanupStaleMultipartUploads_AbortFails(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	// Should not panic — logs the error and continues
+	// Should not panic  -  logs the error and continues
 	mgr.MultipartManager.CleanupStaleMultipartUploads(context.Background(), time.Hour)
 }
 
@@ -743,6 +790,7 @@ func TestCleanupStaleMultipartUploads_AbortFails(t *testing.T) {
 // AbortMultipartUploadsOnBackend
 // -------------------------------------------------------------------------
 
+// TestAbortMultipartUploadsOnBackend_ListError verifies the abort multipart uploads on backend list error path by exercising errors.New, context.Background.
 func TestAbortMultipartUploadsOnBackend_ListError(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -750,10 +798,11 @@ func TestAbortMultipartUploadsOnBackend_ListError(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	// Should not panic — logs error and returns early
+	// Should not panic  -  logs error and returns early
 	mgr.MultipartManager.AbortMultipartUploadsOnBackend(context.Background(), "b1")
 }
 
+// TestAbortMultipartUploadsOnBackend_AbortsMatchingBackend verifies the abort multipart uploads on backend aborts matching backend path by exercising context.Background, backend.PutObject, bytes.NewReader.
 func TestAbortMultipartUploadsOnBackend_AbortsMatchingBackend(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -763,7 +812,7 @@ func TestAbortMultipartUploadsOnBackend_AbortsMatchingBackend(t *testing.T) {
 	store := &mockStore{
 		getStaleMultipartResp: []core.MultipartUpload{
 			{UploadID: "up-1", ObjectKey: "key1", BackendName: "b1"},
-			{UploadID: "up-2", ObjectKey: "key2", BackendName: "b2"}, // different backend — skipped
+			{UploadID: "up-2", ObjectKey: "key2", BackendName: "b2"}, // different backend  -  skipped
 		},
 		getMultipartResp: &core.MultipartUpload{
 			UploadID:    "up-1",
@@ -784,6 +833,7 @@ func TestAbortMultipartUploadsOnBackend_AbortsMatchingBackend(t *testing.T) {
 	}
 }
 
+// TestAbortMultipartUploadsOnBackend_AbortFails verifies the abort multipart uploads on backend abort fails path by exercising errors.New, context.Background.
 func TestAbortMultipartUploadsOnBackend_AbortFails(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -794,7 +844,7 @@ func TestAbortMultipartUploadsOnBackend_AbortFails(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	// Should not panic — logs error and continues
+	// Should not panic  -  logs error and continues
 	mgr.MultipartManager.AbortMultipartUploadsOnBackend(context.Background(), "b1")
 }
 

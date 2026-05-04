@@ -1,3 +1,14 @@
+# -------------------------------------------------------------------------------
+# Grafana Dashboard Provisioning
+#
+# Author: Alex Freidah
+#
+# Read at Grafana startup to discover dashboards mounted into the container
+# at /etc/grafana/provisioning/dashboards. Lets the demo stack ship with the
+# orchestrator dashboards pre-loaded so a fresh `make demo` shows useful
+# panels instead of an empty Grafana home page.
+# -------------------------------------------------------------------------------
+
 apiVersion: 1
 
 providers:

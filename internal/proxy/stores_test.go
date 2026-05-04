@@ -26,12 +26,19 @@ type rebalancerStoreT struct {
 	core.QuotaStore
 }
 
+// replicatorStoreT bundles the narrow store roles the Replicator needs
+// (object reads, replication ops, quota writes) into a single test
+// fixture so wireWorkersForTest can hand the worker exactly the slice
+// of methods it depends on without a god-interface.
 type replicatorStoreT struct {
 	core.ObjectStore
 	core.ReplicationStore
 	core.QuotaStore
 }
 
+// overReplicationStoreT bundles the narrow store roles the
+// OverReplicationCleaner needs (replication scans + quota writes)
+// into a single test fixture, mirroring the production composition.
 type overReplicationStoreT struct {
 	core.ReplicationStore
 	core.QuotaStore
@@ -73,7 +80,7 @@ func wireWorkersForTest(m *BackendManager) *BackendManager {
 }
 
 // allRoles is the structural shape testStoresFromMock requires of its
-// argument — any value that satisfies every narrow role interface.
+// argument  -  any value that satisfies every narrow role interface.
 type allRoles interface {
 	core.ObjectStore
 	core.QuotaStore

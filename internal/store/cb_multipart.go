@@ -1,7 +1,13 @@
 // -------------------------------------------------------------------------------
-// CB Decorator — MultipartStore
+// CB Decorator  -  MultipartStore
 //
 // Author: Alex Freidah
+//
+// Wraps a core.MultipartStore (multipart_uploads + multipart_parts
+// state for in-progress uploads) so every call routes through the
+// database CircuitBreaker. Keeps the multipart APIs from hanging on an
+// unreachable database by returning ErrDBUnavailable instantly when
+// the breaker is open.
 // -------------------------------------------------------------------------------
 
 package store

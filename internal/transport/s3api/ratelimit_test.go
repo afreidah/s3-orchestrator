@@ -21,6 +21,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
+// TestRateLimiter_AllowAndBlock verifies the rate limiter allow and block path by exercising rl.Close, rl.Allow.
 func TestRateLimiter_AllowAndBlock(t *testing.T) {
 	t.Parallel()
 	rl := NewRateLimiter(config.RateLimitConfig{
@@ -49,6 +50,8 @@ func TestRateLimiter_AllowAndBlock(t *testing.T) {
 	}
 }
 
+// TestRateLimiter_Middleware429 verifies the rate limiter middleware429 contract.
+// Asserts that first request: got , want 200.
 func TestRateLimiter_Middleware429(t *testing.T) {
 	t.Parallel()
 	rl := NewRateLimiter(config.RateLimitConfig{
@@ -83,6 +86,8 @@ func TestRateLimiter_Middleware429(t *testing.T) {
 	}
 }
 
+// TestRateLimiter_Middleware429_IncrementsMetric verifies the rate limiter middleware429 increments metric contract.
+// Asserts that status = , want 429.
 func TestRateLimiter_Middleware429_IncrementsMetric(t *testing.T) {
 	t.Parallel()
 	rl := NewRateLimiter(config.RateLimitConfig{
@@ -121,6 +126,8 @@ func TestRateLimiter_Middleware429_IncrementsMetric(t *testing.T) {
 	}
 }
 
+// TestRateLimiter_UpdateLimits_NewVisitors verifies the rate limiter update limits new visitors contract.
+// Asserts that request should be allowed with new burst=1000.
 func TestRateLimiter_UpdateLimits_NewVisitors(t *testing.T) {
 	t.Parallel()
 	rl := NewRateLimiter(config.RateLimitConfig{
@@ -141,6 +148,8 @@ func TestRateLimiter_UpdateLimits_NewVisitors(t *testing.T) {
 	}
 }
 
+// TestRateLimiter_UpdateLimits_ClearsExistingVisitors verifies the rate limiter update limits clears existing visitors contract.
+// Asserts that existing visitor request should be allowed with new burst=1000.
 func TestRateLimiter_UpdateLimits_ClearsExistingVisitors(t *testing.T) {
 	t.Parallel()
 	rl := NewRateLimiter(config.RateLimitConfig{
@@ -158,7 +167,7 @@ func TestRateLimiter_UpdateLimits_ClearsExistingVisitors(t *testing.T) {
 		t.Fatal("second request (within burst) should be allowed")
 	}
 
-	// Update limits to a higher burst — clears all existing visitors
+	// Update limits to a higher burst  -  clears all existing visitors
 	rl.UpdateLimits(1, 1000)
 
 	// Existing visitor gets a fresh limiter with new burst=1000
@@ -169,6 +178,8 @@ func TestRateLimiter_UpdateLimits_ClearsExistingVisitors(t *testing.T) {
 	}
 }
 
+// TestExtractIP_NoTrustedProxies verifies the extract ip no trusted proxies contract.
+// Asserts that extractIP() = , want.
 func TestExtractIP_NoTrustedProxies(t *testing.T) {
 	t.Parallel()
 	rl := &RateLimiter{}
@@ -199,6 +210,8 @@ func TestExtractIP_NoTrustedProxies(t *testing.T) {
 	}
 }
 
+// TestExtractIP_WithTrustedProxies verifies the extract ip with trusted proxies contract.
+// Asserts that extractIP() = , want.
 func TestExtractIP_WithTrustedProxies(t *testing.T) {
 	t.Parallel()
 	rl := &RateLimiter{
@@ -263,6 +276,8 @@ func TestExtractIP_WithTrustedProxies(t *testing.T) {
 	}
 }
 
+// TestRateLimiter_CustomCleanupIntervals verifies the rate limiter custom cleanup intervals contract.
+// Asserts that cleanupInterval = , want 2s.
 func TestRateLimiter_CustomCleanupIntervals(t *testing.T) {
 	t.Parallel()
 	rl := NewRateLimiter(config.RateLimitConfig{
@@ -282,6 +297,8 @@ func TestRateLimiter_CustomCleanupIntervals(t *testing.T) {
 	}
 }
 
+// TestParseCIDRs verifies the parse cidrs contract.
+// Asserts that got nets, want 2 (invalid should be skipped).
 func TestParseCIDRs(t *testing.T) {
 	t.Parallel()
 	nets := httputil.ParseTrustedProxies([]string{"10.0.0.0/8", "invalid", "192.168.0.0/16"})

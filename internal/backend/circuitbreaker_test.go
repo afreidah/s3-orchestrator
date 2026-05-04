@@ -19,6 +19,7 @@ import (
 	"time"
 )
 
+// newTestCBBackend constructs a new test cbbackend.
 func newTestCBBackend(mock *mockBackend, threshold int, timeout time.Duration) *CircuitBreakerBackend {
 	return NewCircuitBreakerBackend(mock, "test-backend", threshold, timeout)
 }
@@ -27,6 +28,8 @@ func newTestCBBackend(mock *mockBackend, threshold int, timeout time.Duration) *
 // Forwarding when closed
 // -------------------------------------------------------------------------
 
+// TestCBBackend_PutObject_Forwards verifies the cbbackend put object forwards contract.
+// Asserts that PutObject:.
 func TestCBBackend_PutObject_Forwards(t *testing.T) {
 	t.Parallel()
 	mock := newMockBackend()
@@ -41,6 +44,8 @@ func TestCBBackend_PutObject_Forwards(t *testing.T) {
 	}
 }
 
+// TestCBBackend_GetObject_Forwards verifies the cbbackend get object forwards contract.
+// Asserts that GetObject:.
 func TestCBBackend_GetObject_Forwards(t *testing.T) {
 	t.Parallel()
 	mock := newMockBackend()
@@ -58,6 +63,8 @@ func TestCBBackend_GetObject_Forwards(t *testing.T) {
 	}
 }
 
+// TestCBBackend_HeadObject_Forwards verifies the cbbackend head object forwards contract.
+// Asserts that HeadObject:.
 func TestCBBackend_HeadObject_Forwards(t *testing.T) {
 	t.Parallel()
 	mock := newMockBackend()
@@ -74,6 +81,8 @@ func TestCBBackend_HeadObject_Forwards(t *testing.T) {
 	}
 }
 
+// TestCBBackend_DeleteObject_Forwards verifies the cbbackend delete object forwards contract.
+// Asserts that DeleteObject:.
 func TestCBBackend_DeleteObject_Forwards(t *testing.T) {
 	t.Parallel()
 	mock := newMockBackend()
@@ -98,6 +107,8 @@ func TestCBBackend_DeleteObject_Forwards(t *testing.T) {
 // Circuit open
 // -------------------------------------------------------------------------
 
+// TestCBBackend_PutObject_CircuitOpen verifies the cbbackend put object circuit open contract.
+// Asserts that expected breaker.ErrBackendUnavailable, got.
 func TestCBBackend_PutObject_CircuitOpen(t *testing.T) {
 	t.Parallel()
 	mock := newMockBackend()
@@ -114,6 +125,8 @@ func TestCBBackend_PutObject_CircuitOpen(t *testing.T) {
 	}
 }
 
+// TestCBBackend_GetObject_CircuitOpen verifies the cbbackend get object circuit open contract.
+// Asserts that expected breaker.ErrBackendUnavailable, got.
 func TestCBBackend_GetObject_CircuitOpen(t *testing.T) {
 	t.Parallel()
 	mock := newMockBackend()
@@ -129,6 +142,8 @@ func TestCBBackend_GetObject_CircuitOpen(t *testing.T) {
 	}
 }
 
+// TestCBBackend_HeadObject_CircuitOpen verifies the cbbackend head object circuit open contract.
+// Asserts that expected breaker.ErrBackendUnavailable, got.
 func TestCBBackend_HeadObject_CircuitOpen(t *testing.T) {
 	t.Parallel()
 	mock := newMockBackend()
@@ -143,6 +158,8 @@ func TestCBBackend_HeadObject_CircuitOpen(t *testing.T) {
 	}
 }
 
+// TestCBBackend_DeleteObject_CircuitOpen verifies the cbbackend delete object circuit open contract.
+// Asserts that expected breaker.ErrBackendUnavailable, got.
 func TestCBBackend_DeleteObject_CircuitOpen(t *testing.T) {
 	t.Parallel()
 	mock := newMockBackend()
@@ -161,6 +178,8 @@ func TestCBBackend_DeleteObject_CircuitOpen(t *testing.T) {
 // Recovery
 // -------------------------------------------------------------------------
 
+// TestCBBackend_RecoveryAfterTimeout verifies the cbbackend recovery after timeout contract.
+// Asserts that probe should succeed:.
 func TestCBBackend_RecoveryAfterTimeout(t *testing.T) {
 	t.Parallel()
 	mock := newMockBackend()
@@ -191,6 +210,7 @@ func TestCBBackend_RecoveryAfterTimeout(t *testing.T) {
 // Unwrap
 // -------------------------------------------------------------------------
 
+// TestCBBackend_Unwrap verifies the cbbackend unwrap path by exercising cb.Unwrap.
 func TestCBBackend_Unwrap(t *testing.T) {
 	t.Parallel()
 	mock := newMockBackend()
@@ -202,6 +222,7 @@ func TestCBBackend_Unwrap(t *testing.T) {
 	}
 }
 
+// TestCBBackend_NestedUnwrap verifies the cbbackend nested unwrap path by exercising cb2.Unwrap, u.Unwrap.
 func TestCBBackend_NestedUnwrap(t *testing.T) {
 	t.Parallel()
 	mock := newMockBackend()
@@ -234,9 +255,14 @@ type httpError struct {
 	msg  string
 }
 
+// Error returns the error message.
 func (e *httpError) Error() string       { return e.msg }
+// HTTPStatusCode satisfies the smithy http.ResponseError
+// interface used by the awserr-style typed-error tests below.
 func (e *httpError) HTTPStatusCode() int { return e.code }
 
+// TestCBBackend_404DoesNotTripBreaker verifies the cbbackend 404 does not trip breaker contract.
+// Asserts that expected success after 404s, got error:.
 func TestCBBackend_404DoesNotTripBreaker(t *testing.T) {
 	t.Parallel()
 	mock := newMockBackend()
@@ -248,7 +274,7 @@ func TestCBBackend_404DoesNotTripBreaker(t *testing.T) {
 		_, _ = cb.GetObject(context.Background(), "missing-key", "")
 	}
 
-	// Circuit should still be closed — next call should reach the backend
+	// Circuit should still be closed  -  next call should reach the backend
 	mock.getErr = nil
 	mock.objects = map[string]mockObject{"exists": {data: []byte("data")}}
 	result, err := cb.GetObject(context.Background(), "exists", "")
@@ -263,6 +289,8 @@ func TestCBBackend_404DoesNotTripBreaker(t *testing.T) {
 	}
 }
 
+// TestCBBackend_500DoesTripsBreaker verifies the cbbackend 500 does trips breaker contract.
+// Asserts that expected circuit open after 500s, got.
 func TestCBBackend_500DoesTripsBreaker(t *testing.T) {
 	t.Parallel()
 	mock := newMockBackend()
@@ -285,6 +313,7 @@ func TestCBBackend_500DoesTripsBreaker(t *testing.T) {
 	}
 }
 
+// TestIsBackendError_404 verifies the is backend error 404 behaviour described by the test name.
 func TestIsBackendError_404(t *testing.T) {
 	t.Parallel()
 	if isBackendError(&httpError{code: 404, msg: "NoSuchKey"}) {
@@ -292,6 +321,7 @@ func TestIsBackendError_404(t *testing.T) {
 	}
 }
 
+// TestIsBackendError_500 verifies the is backend error 500 behaviour described by the test name.
 func TestIsBackendError_500(t *testing.T) {
 	t.Parallel()
 	if !isBackendError(&httpError{code: 500, msg: "InternalServerError"}) {
@@ -299,6 +329,7 @@ func TestIsBackendError_500(t *testing.T) {
 	}
 }
 
+// TestIsBackendError_Nil verifies the is backend error nil behaviour described by the test name.
 func TestIsBackendError_Nil(t *testing.T) {
 	t.Parallel()
 	if isBackendError(nil) {
@@ -306,6 +337,7 @@ func TestIsBackendError_Nil(t *testing.T) {
 	}
 }
 
+// TestIsBackendError_PlainError verifies the is backend error plain error path by exercising errors.New.
 func TestIsBackendError_PlainError(t *testing.T) {
 	t.Parallel()
 	if !isBackendError(errors.New("connection refused")) {

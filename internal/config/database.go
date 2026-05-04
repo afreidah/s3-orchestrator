@@ -2,6 +2,13 @@
 // Database Configuration
 //
 // Author: Alex Freidah
+//
+// Defines DatabaseConfig - the metadata-store connection block. Selects
+// between the postgres engine (production) and the embedded sqlite engine
+// (development, single-instance demos), carries the pgx pool tunables
+// (max/min conns, lifetimes, SSL mode), and validates that the chosen
+// engine has the fields it needs. The validator surfaces every per-field
+// problem in one pass so operators can fix multiple typos at once.
 // -------------------------------------------------------------------------------
 
 package config
@@ -42,6 +49,7 @@ func (c *DatabaseConfig) ConnectionString() string {
 	return u.String()
 }
 
+// setDefaultsAndValidate sets defaults and validate.
 func (d *DatabaseConfig) setDefaultsAndValidate() []error {
 	// Infer driver from config if not set explicitly.
 	if d.Driver == "" {
@@ -62,6 +70,10 @@ func (d *DatabaseConfig) setDefaultsAndValidate() []error {
 	}
 }
 
+// validateSQLite fills the SQLite engine's default file path when
+// unset and returns no errors otherwise. Single-instance SQLite
+// deployments only need a writable path; everything else has sane
+// defaults.
 func (d *DatabaseConfig) validateSQLite() []error {
 	if d.Path == "" {
 		d.Path = "s3-orchestrator.db"
@@ -69,6 +81,10 @@ func (d *DatabaseConfig) validateSQLite() []error {
 	return nil
 }
 
+// validatePostgres enforces the required Postgres fields (host,
+// database, user) and validates the pgx pool tunables. Fans every
+// missing-required error into the returned slice so operators can fix
+// them all in one config-edit cycle.
 func (d *DatabaseConfig) validatePostgres() []error {
 	var errs []error
 

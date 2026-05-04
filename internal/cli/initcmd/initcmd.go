@@ -231,6 +231,11 @@ type Bucket struct {
 // CONFIG GENERATION
 // -------------------------------------------------------------------------
 
+// configTemplate is the YAML scaffold used by `s3-orchestrator init`
+// to write a starter config.yaml. Fields are templated against the
+// answers the interactive prompt collected, with engine-specific
+// branches for sqlite vs postgres so the produced file is immediately
+// runnable without manual edits.
 var configTemplate = template.Must(template.New("config").Parse(`server:
   listen_addr: ":9000"
 

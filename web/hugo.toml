@@ -1,3 +1,14 @@
+# -------------------------------------------------------------------------------
+# Hugo Site Configuration
+#
+# Author: Alex Freidah
+#
+# Top-level config for the documentation Hugo site. Sets the base URL the
+# build embeds into absolute links, the page title, and the theme. The
+# rest of the site uses convention-over-configuration; per-section settings
+# live alongside the pages they affect under content/.
+# -------------------------------------------------------------------------------
+
 baseURL = "https://s3-orchestrator.munchbox.cc/"
 languageCode = "en-us"
 title = "s3-orchestrator"

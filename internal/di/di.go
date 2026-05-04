@@ -1,10 +1,10 @@
 // -------------------------------------------------------------------------------
-// Dependency Injection — Single Wiring Point for samber/do
+// Dependency Injection  -  Single Wiring Point for samber/do
 //
 // Author: Alex Freidah
 //
 // NewInjector creates the DI container and registers every provider the
-// service needs. Providers are lazy — nothing is constructed until the
+// service needs. Providers are lazy  -  nothing is constructed until the
 // corresponding do.Invoke call. Optional components (encryption, cache,
 // Redis, notifications) register only when enabled in config; do.Invoke
 // returns an error for disabled services, which callers use to detect
@@ -14,7 +14,7 @@
 // QuotaStore, CleanupStore, ...) so consumers can ask only for the slice
 // they actually use. Each narrow provider wraps the concrete *store.Store
 // with the per-role CB decorator. No consumer ever sees a composed "god
-// interface" — that type no longer exists.
+// interface"  -  that type no longer exists.
 //
 // Non-DI packages (internal/*, internal/transport/*) never import samber/do.
 // Constructors keep explicit parameters; only this package and cmd/ touch
@@ -64,7 +64,7 @@ import (
 
 // NewInjector creates and configures the DI container. Required providers
 // are always registered. Optional providers register only when their config
-// section is enabled — do.Invoke returns an error for disabled services,
+// section is enabled  -  do.Invoke returns an error for disabled services,
 // which callers use to detect absence.
 func NewInjector(cfg *config.Config, mode string, logLevel *slog.LevelVar, logBuffer *telemetry.LogBuffer) do.Injector {
 	inj := do.New()
@@ -82,7 +82,7 @@ func NewInjector(cfg *config.Config, mode string, logLevel *slog.LevelVar, logBu
 	do.Provide(inj, ProvideNotificationOutbox)
 	do.Provide(inj, ProvideDatabaseBreaker)
 
-	// Narrow per-role store providers — each wraps provideConcreteStore's
+	// Narrow per-role store providers  -  each wraps provideConcreteStore's
 	// value with its per-role CB decorator.
 	do.Provide(inj, ProvideObjectStore)
 	do.Provide(inj, ProvideQuotaStore)
@@ -102,7 +102,7 @@ func NewInjector(cfg *config.Config, mode string, logLevel *slog.LevelVar, logBu
 	do.Provide(inj, ProvideBreakerRegistry)
 	do.Provide(inj, ProvideBackendManager)
 
-	// Worker providers — each takes BackendManager (worker.Ops) plus the
+	// Worker providers  -  each takes BackendManager (worker.Ops) plus the
 	// per-worker store role from above. drain.Manager wires itself onto
 	// BackendManager via WireDrain so backendCore's eligibility filters
 	// see drain state.
@@ -152,7 +152,7 @@ func NewInjector(cfg *config.Config, mode string, logLevel *slog.LevelVar, logBu
 
 // concreteStore collects every role interface satisfied by the driver-
 // level store without introducing a user-facing composed type. Declared
-// unexported and scoped to this package — callers outside di never see it.
+// unexported and scoped to this package  -  callers outside di never see it.
 // Both PostgreSQL *postgres.Store and SQLite *sqlite.Store satisfy this.
 type concreteStore interface {
 	core.ObjectStore
@@ -432,7 +432,7 @@ func ProvideUsageFlusher(i do.Injector) (core.UsageFlusher, error) {
 	return store.NewCBUsageFlusher(cs, cb), nil
 }
 
-// ProvideAdvisoryLocker registers a pass-through AdvisoryLocker — advisory
+// ProvideAdvisoryLocker registers a pass-through AdvisoryLocker  -  advisory
 // locks bypass the breaker (see internal/store/cb_lock.go).
 func ProvideAdvisoryLocker(i do.Injector) (core.AdvisoryLocker, error) {
 	cs, err := do.Invoke[concreteStore](i)
@@ -1038,7 +1038,7 @@ type lifecycleWorkerSet struct {
 
 // resolveLifecycleWorkers invokes every worker the lifecycle manager
 // registers a service for. drain.Manager is invoked too (not registered)
-// so its DI side-effect — wiring itself into BackendManager — runs.
+// so its DI side-effect  -  wiring itself into BackendManager  -  runs.
 func resolveLifecycleWorkers(i do.Injector) (lifecycleWorkerSet, error) {
 	var ws lifecycleWorkerSet
 	var err error

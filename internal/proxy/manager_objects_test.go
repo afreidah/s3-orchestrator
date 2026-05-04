@@ -53,6 +53,8 @@ func newTestManager(store *mockStore, backends map[string]*mockBackend) *Backend
 // PutObject
 // -------------------------------------------------------------------------
 
+// TestPutObject_Success verifies the put object success contract.
+// Asserts that PutObject:.
 func TestPutObject_Success(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -78,6 +80,8 @@ func TestPutObject_Success(t *testing.T) {
 	}
 }
 
+// TestPutObject_PackStrategy_UsesGetBackendWithSpace verifies the put object pack strategy uses get backend with space contract.
+// Asserts that PutObject:.
 func TestPutObject_PackStrategy_UsesGetBackendWithSpace(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -106,6 +110,8 @@ func TestPutObject_PackStrategy_UsesGetBackendWithSpace(t *testing.T) {
 	}
 }
 
+// TestPutObject_SpreadStrategy_UsesGetLeastUtilized verifies the put object spread strategy uses get least utilized contract.
+// Asserts that PutObject:.
 func TestPutObject_SpreadStrategy_UsesGetLeastUtilized(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -138,6 +144,7 @@ func TestPutObject_SpreadStrategy_UsesGetLeastUtilized(t *testing.T) {
 // CanAcceptWrite
 // -------------------------------------------------------------------------
 
+// TestCanAcceptWrite_HasCapacity verifies the can accept write has capacity behaviour described by the test name.
 func TestCanAcceptWrite_HasCapacity(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{getBackendResp: "b1"}
@@ -148,6 +155,7 @@ func TestCanAcceptWrite_HasCapacity(t *testing.T) {
 	}
 }
 
+// TestCanAcceptWrite_NoCapacity verifies the can accept write no capacity behaviour described by the test name.
 func TestCanAcceptWrite_NoCapacity(t *testing.T) {
 	t.Parallel()
 	limits := map[string]core.UsageLimits{
@@ -164,6 +172,8 @@ func TestCanAcceptWrite_NoCapacity(t *testing.T) {
 	}
 }
 
+// TestPutObject_QuotaExhausted verifies the put object quota exhausted contract.
+// Asserts that expected st.ErrInsufficientStorage, got.
 func TestPutObject_QuotaExhausted(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{getBackendErr: core.ErrNoSpaceAvailable}
@@ -175,6 +185,8 @@ func TestPutObject_QuotaExhausted(t *testing.T) {
 	}
 }
 
+// TestPutObject_DBUnavailable verifies the put object dbunavailable contract.
+// Asserts that expected st.ErrServiceUnavailable, got.
 func TestPutObject_DBUnavailable(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{getBackendErr: core.ErrDBUnavailable}
@@ -186,6 +198,8 @@ func TestPutObject_DBUnavailable(t *testing.T) {
 	}
 }
 
+// TestPutObject_BackendFailure_StillRecordsUsage verifies the put object backend failure still records usage contract.
+// Asserts that apiRequests = , want 1 (failed call still counts).
 func TestPutObject_BackendFailure_StillRecordsUsage(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -239,7 +253,7 @@ func TestPutObject_RecordFailure_LeavesBackendBytesAndPendingIntent(t *testing.T
 		t.Errorf("InsertPending called with %+v", store.insertPendingCalls[0])
 	}
 
-	// Usage: 1 API call — the successful PUT. The cleanup DELETE no longer
+	// Usage: 1 API call  -  the successful PUT. The cleanup DELETE no longer
 	// runs because the bytes are intentionally left for reaper reconciliation.
 	if got := mgr.usage.Backend().Load("b1", counter.FieldAPIRequests); got != 1 {
 		t.Errorf("apiRequests = %d, want 1 (PUT only)", got)
@@ -275,6 +289,7 @@ func TestPutObject_RecordFailure_LegacyPath(t *testing.T) {
 // errReader is an io.Reader that always returns the configured error.
 type errReader struct{ err error }
 
+// Read reads .
 func (r *errReader) Read([]byte) (int, error) { return 0, r.err }
 
 // newTestManagerWithOrder creates a BackendManager with an explicit backend order
@@ -300,6 +315,8 @@ func newTestManagerWithOrder(store *mockStore, backends map[string]*mockBackend,
 // PutObject Write Failover
 // -------------------------------------------------------------------------
 
+// TestPutObject_WriteFailover_Success verifies the put object write failover success contract.
+// Asserts that PutObject should succeed via failover:.
 func TestPutObject_WriteFailover_Success(t *testing.T) {
 	t.Parallel()
 	b1 := newMockBackend()
@@ -334,6 +351,8 @@ func TestPutObject_WriteFailover_Success(t *testing.T) {
 	}
 }
 
+// TestPutObject_WriteFailover_AllBackendsFail verifies the put object write failover all backends fail contract.
+// Asserts that total API requests = , want 3 (one per failed backend).
 func TestPutObject_WriteFailover_AllBackendsFail(t *testing.T) {
 	t.Parallel()
 	b1 := newMockBackend()
@@ -360,6 +379,8 @@ func TestPutObject_WriteFailover_AllBackendsFail(t *testing.T) {
 	}
 }
 
+// TestPutObject_WriteFailover_SkipsMultipleFailedBackends verifies the put object write failover skips multiple failed backends contract.
+// Asserts that PutObject should succeed on b3:.
 func TestPutObject_WriteFailover_SkipsMultipleFailedBackends(t *testing.T) {
 	t.Parallel()
 	b1 := newMockBackend()
@@ -387,6 +408,8 @@ func TestPutObject_WriteFailover_SkipsMultipleFailedBackends(t *testing.T) {
 	}
 }
 
+// TestPutObject_WriteFailover_Metrics verifies the put object write failover metrics contract.
+// Asserts that PutObject:.
 func TestPutObject_WriteFailover_Metrics(t *testing.T) {
 	telemetry.WriteFailoverTotal.Reset()
 
@@ -408,6 +431,8 @@ func TestPutObject_WriteFailover_Metrics(t *testing.T) {
 	}
 }
 
+// TestPutObject_WriteFailover_UsageTracking verifies the put object write failover usage tracking contract.
+// Asserts that PutObject:.
 func TestPutObject_WriteFailover_UsageTracking(t *testing.T) {
 	t.Parallel()
 	b1 := newMockBackend()
@@ -439,6 +464,8 @@ func TestPutObject_WriteFailover_UsageTracking(t *testing.T) {
 	}
 }
 
+// TestPutObject_WriteFailover_DataIntegrity verifies the put object write failover data integrity contract.
+// Asserts that PutObject:.
 func TestPutObject_WriteFailover_DataIntegrity(t *testing.T) {
 	t.Parallel()
 	b1 := newMockBackend()
@@ -470,6 +497,8 @@ func TestPutObject_WriteFailover_DataIntegrity(t *testing.T) {
 	}
 }
 
+// TestPutObject_WriteFailover_BufferBodyError verifies the put object write failover buffer body error contract.
+// Asserts that error = , want.
 func TestPutObject_WriteFailover_BufferBodyError(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{getBackendFromEligible: true}
@@ -488,6 +517,8 @@ func TestPutObject_WriteFailover_BufferBodyError(t *testing.T) {
 	}
 }
 
+// TestPutObject_WriteFailover_SelectBackendErrorDuringRetry verifies the put object write failover select backend error during retry contract.
+// Asserts that expected st.ErrServiceUnavailable, got.
 func TestPutObject_WriteFailover_SelectBackendErrorDuringRetry(t *testing.T) {
 	t.Parallel()
 	b1 := newMockBackend()
@@ -511,6 +542,7 @@ func TestPutObject_WriteFailover_SelectBackendErrorDuringRetry(t *testing.T) {
 	}
 }
 
+// TestPutObject_WriteFailover_BackendNotInMap verifies the put object write failover backend not in map path by exercising context.Background, bytes.NewReader.
 func TestPutObject_WriteFailover_BackendNotInMap(t *testing.T) {
 	t.Parallel()
 	// Store returns a backend name that doesn't exist in the backends map
@@ -523,6 +555,8 @@ func TestPutObject_WriteFailover_BackendNotInMap(t *testing.T) {
 	}
 }
 
+// TestPutObject_WriteFailover_WithEncryption verifies the put object write failover with encryption contract.
+// Asserts that NewConfigKeyProvider:.
 func TestPutObject_WriteFailover_WithEncryption(t *testing.T) {
 	t.Parallel()
 	b1 := newMockBackend()
@@ -587,6 +621,8 @@ func TestPutObject_WriteFailover_WithEncryption(t *testing.T) {
 	}
 }
 
+// TestGetObject_WithEncryption_UsesLocationMap verifies the get object with encryption uses location map contract.
+// Asserts that NewConfigKeyProvider:.
 func TestGetObject_WithEncryption_UsesLocationMap(t *testing.T) {
 	t.Parallel()
 	// This test verifies the locByBackend map is built and used during
@@ -605,7 +641,7 @@ func TestGetObject_WithEncryption_UsesLocationMap(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Non-encrypted location — encryptor is set but object is not encrypted.
+	// Non-encrypted location  -  encryptor is set but object is not encrypted.
 	// This exercises the locByBackend map build + lookup path without needing
 	// valid encryption metadata.
 	store := &mockStore{
@@ -640,6 +676,8 @@ func TestGetObject_WithEncryption_UsesLocationMap(t *testing.T) {
 	}
 }
 
+// TestHeadObject_WithEncryption verifies the head object with encryption contract.
+// Asserts that NewConfigKeyProvider:.
 func TestHeadObject_WithEncryption(t *testing.T) {
 	t.Parallel()
 	b1 := newMockBackend()
@@ -690,6 +728,8 @@ func TestHeadObject_WithEncryption(t *testing.T) {
 	}
 }
 
+// TestPutObject_WriteFailover_NoFailoverMetricOnFirstSuccess verifies the put object write failover no failover metric on first success contract.
+// Asserts that PutObject:.
 func TestPutObject_WriteFailover_NoFailoverMetricOnFirstSuccess(t *testing.T) {
 	telemetry.WriteFailoverTotal.Reset()
 
@@ -704,7 +744,7 @@ func TestPutObject_WriteFailover_NoFailoverMetricOnFirstSuccess(t *testing.T) {
 		t.Fatalf("PutObject: %v", err)
 	}
 
-	// No failover occurred — metric should be 0
+	// No failover occurred  -  metric should be 0
 	got := testutil.ToFloat64(telemetry.WriteFailoverTotal.WithLabelValues("PutObject", "b1", "b2"))
 	if got != 0 {
 		t.Errorf("WriteFailoverTotal should be 0 when no failover occurs, got %v", got)
@@ -715,6 +755,8 @@ func TestPutObject_WriteFailover_NoFailoverMetricOnFirstSuccess(t *testing.T) {
 // GetObject
 // -------------------------------------------------------------------------
 
+// TestGetObject_Success verifies the get object success contract.
+// Asserts that GetObject:.
 func TestGetObject_Success(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -742,6 +784,8 @@ func TestGetObject_Success(t *testing.T) {
 	}
 }
 
+// TestGetObject_NotFound verifies the get object not found contract.
+// Asserts that expected st.ErrObjectNotFound, got.
 func TestGetObject_NotFound(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{getAllLocationsErr: core.ErrObjectNotFound}
@@ -753,6 +797,8 @@ func TestGetObject_NotFound(t *testing.T) {
 	}
 }
 
+// TestGetObject_FailoverToReplica verifies the get object failover to replica contract.
+// Asserts that GetObject should failover:.
 func TestGetObject_FailoverToReplica(t *testing.T) {
 	t.Parallel()
 	primary := newMockBackend()
@@ -779,6 +825,8 @@ func TestGetObject_FailoverToReplica(t *testing.T) {
 	}
 }
 
+// TestGetObject_DBUnavailable_BroadcastHit verifies the get object dbunavailable broadcast hit contract.
+// Asserts that GetObject broadcast should succeed:.
 func TestGetObject_DBUnavailable_BroadcastHit(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -798,6 +846,8 @@ func TestGetObject_DBUnavailable_BroadcastHit(t *testing.T) {
 	}
 }
 
+// TestGetObject_DBUnavailable_CacheHit verifies the get object dbunavailable cache hit contract.
+// Asserts that first GetObject:.
 func TestGetObject_DBUnavailable_CacheHit(t *testing.T) {
 	t.Parallel()
 	b1 := newMockBackend()
@@ -826,10 +876,11 @@ func TestGetObject_DBUnavailable_CacheHit(t *testing.T) {
 	}
 }
 
+// TestGetObject_DBUnavailable_AllFail verifies the get object dbunavailable all fail path by exercising context.Background, errors.Is.
 func TestGetObject_DBUnavailable_AllFail(t *testing.T) {
 	t.Parallel()
-	b1 := newMockBackend() // empty — no object
-	b2 := newMockBackend() // empty — no object
+	b1 := newMockBackend() // empty  -  no object
+	b2 := newMockBackend() // empty  -  no object
 
 	store := &mockStore{getAllLocationsErr: core.ErrDBUnavailable}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": b1, "b2": b2})
@@ -838,13 +889,15 @@ func TestGetObject_DBUnavailable_AllFail(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	// Should NOT be st.ErrObjectNotFound — real backend errors should propagate
+	// Should NOT be st.ErrObjectNotFound  -  real backend errors should propagate
 	// so the server maps them to 502 instead of a misleading 404.
 	if errors.Is(err, core.ErrObjectNotFound) {
 		t.Fatal("should not mask backend errors as st.ErrObjectNotFound")
 	}
 }
 
+// TestGetObject_DBUnavailable_EncryptedRejects503 verifies the get object dbunavailable encrypted rejects503 contract.
+// Asserts that NewConfigKeyProvider:.
 func TestGetObject_DBUnavailable_EncryptedRejects503(t *testing.T) {
 	t.Parallel()
 	b1 := newMockBackend()
@@ -890,6 +943,8 @@ func TestGetObject_DBUnavailable_EncryptedRejects503(t *testing.T) {
 // HeadObject
 // -------------------------------------------------------------------------
 
+// TestHeadObject_Success verifies the head object success contract.
+// Asserts that HeadObject:.
 func TestHeadObject_Success(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -915,6 +970,8 @@ func TestHeadObject_Success(t *testing.T) {
 	}
 }
 
+// TestHeadObject_DBUnavailable_Broadcast verifies the head object dbunavailable broadcast contract.
+// Asserts that HeadObject broadcast should succeed:.
 func TestHeadObject_DBUnavailable_Broadcast(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -936,6 +993,8 @@ func TestHeadObject_DBUnavailable_Broadcast(t *testing.T) {
 // DeleteObject
 // -------------------------------------------------------------------------
 
+// TestDeleteObject_Success verifies the delete object success contract.
+// Asserts that DeleteObject:.
 func TestDeleteObject_Success(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -955,6 +1014,8 @@ func TestDeleteObject_Success(t *testing.T) {
 	}
 }
 
+// TestDeleteObject_NotFound_Idempotent verifies the delete object not found idempotent contract.
+// Asserts that DeleteObject of nonexistent key should succeed (idempotent):.
 func TestDeleteObject_NotFound_Idempotent(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{deleteObjectErr: core.ErrObjectNotFound}
@@ -966,6 +1027,8 @@ func TestDeleteObject_NotFound_Idempotent(t *testing.T) {
 	}
 }
 
+// TestDeleteObject_DBUnavailable verifies the delete object dbunavailable contract.
+// Asserts that expected st.ErrServiceUnavailable, got.
 func TestDeleteObject_DBUnavailable(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{deleteObjectErr: core.ErrDBUnavailable}
@@ -981,6 +1044,8 @@ func TestDeleteObject_DBUnavailable(t *testing.T) {
 // DeleteObjects (batch)
 // -------------------------------------------------------------------------
 
+// TestDeleteObjects_AllSuccess verifies the delete objects all success contract.
+// Asserts that expected 3 results, got.
 func TestDeleteObjects_AllSuccess(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -1037,6 +1102,8 @@ func TestDeleteObjects_DBFailureFailsAll(t *testing.T) {
 	}
 }
 
+// TestDeleteObjects_NotFoundIsSuccess verifies the delete objects not found is success contract.
+// Asserts that results[]: not-found should be success, got.
 func TestDeleteObjects_NotFoundIsSuccess(t *testing.T) {
 	t.Parallel()
 	// Empty map (default) means every key was not found; single-tx
@@ -1053,6 +1120,8 @@ func TestDeleteObjects_NotFoundIsSuccess(t *testing.T) {
 	}
 }
 
+// TestDeleteObjects_BackendFailureEnqueuesCleanup verifies the delete objects backend failure enqueues cleanup contract.
+// Asserts that results[]: unexpected error:.
 func TestDeleteObjects_BackendFailureEnqueuesCleanup(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -1090,6 +1159,8 @@ func TestDeleteObjects_BackendFailureEnqueuesCleanup(t *testing.T) {
 	}
 }
 
+// TestDeleteObjects_EmptyKeys verifies the delete objects empty keys contract.
+// Asserts that expected 0 results, got.
 func TestDeleteObjects_EmptyKeys(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{}
@@ -1102,6 +1173,8 @@ func TestDeleteObjects_EmptyKeys(t *testing.T) {
 	}
 }
 
+// TestDeleteObjects_BackendNotInMap verifies the delete objects backend not in map contract.
+// Asserts that expected 1 result, got.
 func TestDeleteObjects_BackendNotInMap(t *testing.T) {
 	t.Parallel()
 	// DB returns a deleted copy pointing to a backend that doesn't exist
@@ -1131,6 +1204,8 @@ func TestDeleteObjects_BackendNotInMap(t *testing.T) {
 // CopyObject
 // -------------------------------------------------------------------------
 
+// TestCopyObject_Success verifies the copy object success contract.
+// Asserts that CopyObject:.
 func TestCopyObject_Success(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -1154,6 +1229,8 @@ func TestCopyObject_Success(t *testing.T) {
 	}
 }
 
+// TestCopyObject_SourceNotFound verifies the copy object source not found contract.
+// Asserts that expected st.ErrObjectNotFound, got.
 func TestCopyObject_SourceNotFound(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{getAllLocationsErr: core.ErrObjectNotFound}
@@ -1165,6 +1242,8 @@ func TestCopyObject_SourceNotFound(t *testing.T) {
 	}
 }
 
+// TestCopyObject_DBUnavailable_SourceLookup verifies the copy object dbunavailable source lookup contract.
+// Asserts that expected st.ErrServiceUnavailable, got.
 func TestCopyObject_DBUnavailable_SourceLookup(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{getAllLocationsErr: core.ErrDBUnavailable}
@@ -1176,6 +1255,8 @@ func TestCopyObject_DBUnavailable_SourceLookup(t *testing.T) {
 	}
 }
 
+// TestCopyObject_DBUnavailable_DestLookup verifies the copy object dbunavailable dest lookup contract.
+// Asserts that expected st.ErrServiceUnavailable, got.
 func TestCopyObject_DBUnavailable_DestLookup(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -1197,6 +1278,8 @@ func TestCopyObject_DBUnavailable_DestLookup(t *testing.T) {
 // ListObjects
 // -------------------------------------------------------------------------
 
+// TestListObjects_Success verifies the list objects success contract.
+// Asserts that ListObjects:.
 func TestListObjects_Success(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -1221,6 +1304,8 @@ func TestListObjects_Success(t *testing.T) {
 	}
 }
 
+// TestListObjects_WithDelimiter verifies the list objects with delimiter contract.
+// Asserts that ListObjects:.
 func TestListObjects_WithDelimiter(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -1252,6 +1337,8 @@ func TestListObjects_WithDelimiter(t *testing.T) {
 	}
 }
 
+// TestListObjects_DelimiterPagination verifies the list objects delimiter pagination contract.
+// Asserts that ListObjects:.
 func TestListObjects_DelimiterPagination(t *testing.T) {
 	t.Parallel()
 	// Many objects collapse into one common prefix per page. The manager
@@ -1303,6 +1390,8 @@ func TestListObjects_DelimiterPagination(t *testing.T) {
 	}
 }
 
+// TestListObjects_DelimiterDedup verifies the list objects delimiter dedup contract.
+// Asserts that ListObjects:.
 func TestListObjects_DelimiterDedup(t *testing.T) {
 	t.Parallel()
 	// Objects in the same virtual directory across pages should not produce
@@ -1340,6 +1429,8 @@ func TestListObjects_DelimiterDedup(t *testing.T) {
 	}
 }
 
+// TestListObjects_DelimiterTruncationSkipsSeen verifies the list objects delimiter truncation skips seen contract.
+// Asserts that ListObjects:.
 func TestListObjects_DelimiterTruncationSkipsSeen(t *testing.T) {
 	t.Parallel()
 	// Regression: when maxKeys is reached and remaining objects belong to
@@ -1379,6 +1470,8 @@ func TestListObjects_DelimiterTruncationSkipsSeen(t *testing.T) {
 	}
 }
 
+// TestListObjects_ExactPageTruncation verifies the list objects exact page truncation contract.
+// Asserts that ListObjects:.
 func TestListObjects_ExactPageTruncation(t *testing.T) {
 	t.Parallel()
 	// Regression: when the store returns exactly maxKeys objects with
@@ -1493,7 +1586,7 @@ func TestAdvancePastEmittedCommonPrefix_TableDriven(t *testing.T) {
 // the cross-call CommonPrefix re-emission bug. With a deep prefix group
 // whose keys span store-page boundaries and a maxKeys that aligns the
 // boundary inside the group, the post-loop NextContinuationToken used
-// to be the mid-group object key — and the next ListObjects call with
+// to be the mid-group object key  -  and the next ListObjects call with
 // that token re-emitted the same CommonPrefix because its `seen` map
 // is local to a single call. The fix rewrites the cursor to the
 // lex-upper-bound of the group so the next page skips it cleanly.
@@ -1502,7 +1595,7 @@ func TestListObjects_PageBoundaryMidCommonPrefix(t *testing.T) {
 	// Page 1 finishes the "a/" group quickly; page 2 opens "b/" and
 	// reports more data. With maxKeys=2 the outer loop accumulates two
 	// CommonPrefixes (a/ and b/) and exits because KeyCount == maxKeys,
-	// while the store still has more b/* keys queued — the post-loop
+	// while the store still has more b/* keys queued  -  the post-loop
 	// truncation branch fires.
 	store := &mockStore{
 		listObjectsPages: []core.ListObjectsResult{
@@ -1624,7 +1717,7 @@ func TestListObjects_CrossCallWalkDoesNotDuplicateCommonPrefix(t *testing.T) {
 				},
 				IsTruncated: true,
 			},
-			// Second call's pages — store is queried with startAfter="b0"
+			// Second call's pages  -  store is queried with startAfter="b0"
 			// so it returns only c/ and beyond.
 			{
 				Objects: []core.ObjectLocation{
@@ -1663,11 +1756,13 @@ func TestListObjects_CrossCallWalkDoesNotDuplicateCommonPrefix(t *testing.T) {
 	// Sanity: second call should produce c/ and d/, never re-encounter b/.
 	for _, cp := range second.CommonPrefixes {
 		if cp == "b/" {
-			t.Error("second call re-emitted b/ — cross-call dedup broken")
+			t.Error("second call re-emitted b/  -  cross-call dedup broken")
 		}
 	}
 }
 
+// TestListObjects_DBUnavailable verifies the list objects dbunavailable contract.
+// Asserts that expected st.S3Error, got :.
 func TestListObjects_DBUnavailable(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{listObjectsErr: core.ErrDBUnavailable}
@@ -1690,6 +1785,8 @@ func TestListObjects_DBUnavailable(t *testing.T) {
 // Backend Timeout
 // -------------------------------------------------------------------------
 
+// TestPutObject_BackendTimeout verifies the put object backend timeout contract.
+// Asserts that expected context.DeadlineExceeded, got.
 func TestPutObject_BackendTimeout(t *testing.T) {
 	t.Parallel()
 	backend := &mockBackend{
@@ -1728,6 +1825,9 @@ type slowMockBackend struct {
 	delay time.Duration
 }
 
+// PutObject satisfies backend.ObjectBackend for the manager-test
+// fakes; records the call args and returns the test-configured
+// error or success.
 func (s *slowMockBackend) PutObject(ctx context.Context, key string, body io.Reader, size int64, contentType string, metadata map[string]string) (string, error) {
 	select {
 	case <-time.After(s.delay):
@@ -1741,6 +1841,8 @@ func (s *slowMockBackend) PutObject(ctx context.Context, key string, body io.Rea
 // Location Cache
 // -------------------------------------------------------------------------
 
+// TestLocationCache_SetAndGet verifies the location cache set and get contract.
+// Asserts that cached backend = , want.
 func TestLocationCache_SetAndGet(t *testing.T) {
 	t.Parallel()
 	mgr := NewBackendManager(&BackendManagerConfig{CacheTTL: 5 * time.Second, RoutingStrategy: config.RoutingPack})
@@ -1758,6 +1860,7 @@ func TestLocationCache_SetAndGet(t *testing.T) {
 	}
 }
 
+// TestLocationCache_Expiry verifies the location cache expiry path by exercising mgr.Close, time.Sleep.
 func TestLocationCache_Expiry(t *testing.T) {
 	t.Parallel()
 	mgr := NewBackendManager(&BackendManagerConfig{CacheTTL: 10 * time.Millisecond, RoutingStrategy: config.RoutingPack})
@@ -1774,6 +1877,8 @@ func TestLocationCache_Expiry(t *testing.T) {
 	}
 }
 
+// TestLocationCache_Overwrite verifies the location cache overwrite contract.
+// Asserts that cached backend = , want.
 func TestLocationCache_Overwrite(t *testing.T) {
 	t.Parallel()
 	mgr := NewBackendManager(&BackendManagerConfig{CacheTTL: 5 * time.Second, RoutingStrategy: config.RoutingPack})
@@ -1792,6 +1897,8 @@ func TestLocationCache_Overwrite(t *testing.T) {
 	}
 }
 
+// TestPutObject_InvalidatesCache verifies the put object invalidates cache contract.
+// Asserts that PutObject:.
 func TestPutObject_InvalidatesCache(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -1813,6 +1920,8 @@ func TestPutObject_InvalidatesCache(t *testing.T) {
 	}
 }
 
+// TestDeleteObject_InvalidatesCache verifies the delete object invalidates cache contract.
+// Asserts that DeleteObject:.
 func TestDeleteObject_InvalidatesCache(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -1841,6 +1950,7 @@ func TestDeleteObject_InvalidatesCache(t *testing.T) {
 // Usage Limit Enforcement
 // -------------------------------------------------------------------------
 
+// newTestManagerWithLimits constructs a new test manager with limits.
 func newTestManagerWithLimits(store *mockStore, backends map[string]*mockBackend, limits map[string]core.UsageLimits) *BackendManager {
 	obs := make(map[string]s3be.ObjectBackend, len(backends))
 	var order []string
@@ -1861,6 +1971,8 @@ func newTestManagerWithLimits(store *mockStore, backends map[string]*mockBackend
 	}))
 }
 
+// TestPutObject_UsageLimitOverflow verifies the put object usage limit overflow contract.
+// Asserts that PutObject should overflow to b2:.
 func TestPutObject_UsageLimitOverflow(t *testing.T) {
 	t.Parallel()
 	b1 := newMockBackend()
@@ -1893,6 +2005,8 @@ func TestPutObject_UsageLimitOverflow(t *testing.T) {
 	}
 }
 
+// TestGetObject_UsageLimitSkipsBackend verifies the get object usage limit skips backend contract.
+// Asserts that GetObject should skip b1 and use b2:.
 func TestGetObject_UsageLimitSkipsBackend(t *testing.T) {
 	t.Parallel()
 	b1 := newMockBackend()
@@ -1926,6 +2040,8 @@ func TestGetObject_UsageLimitSkipsBackend(t *testing.T) {
 	}
 }
 
+// TestGetObject_AllCopiesOverLimit verifies the get object all copies over limit contract.
+// Asserts that expected st.ErrUsageLimitExceeded, got.
 func TestGetObject_AllCopiesOverLimit(t *testing.T) {
 	t.Parallel()
 	b1 := newMockBackend()
@@ -1949,6 +2065,8 @@ func TestGetObject_AllCopiesOverLimit(t *testing.T) {
 	}
 }
 
+// TestDeleteObject_AlwaysAllowed verifies the delete object always allowed contract.
+// Asserts that DeleteObject should always succeed regardless of limits:.
 func TestDeleteObject_AlwaysAllowed(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -1978,6 +2096,8 @@ func TestDeleteObject_AlwaysAllowed(t *testing.T) {
 // Usage Limit Rejection Metric
 // -------------------------------------------------------------------------
 
+// TestPutObject_UsageLimitRejectionsMetric verifies the put object usage limit rejections metric contract.
+// Asserts that UsageLimitRejectionsTotal[PutObject,write] did not increment: before=, after=.
 func TestPutObject_UsageLimitRejectionsMetric(t *testing.T) {
 	limits := map[string]core.UsageLimits{
 		"b1": {APIRequestLimit: 10},
@@ -2001,6 +2121,8 @@ func TestPutObject_UsageLimitRejectionsMetric(t *testing.T) {
 	}
 }
 
+// TestGetObject_UsageLimitRejectionsMetric verifies the get object usage limit rejections metric contract.
+// Asserts that expected st.ErrUsageLimitExceeded, got.
 func TestGetObject_UsageLimitRejectionsMetric(t *testing.T) {
 	b1 := newMockBackend()
 	_, _ = b1.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
@@ -2066,6 +2188,7 @@ type slowGetBackend struct {
 	delay time.Duration
 }
 
+// GetObject returns object.
 func (s *slowGetBackend) GetObject(ctx context.Context, key string, rangeHeader string) (*s3be.GetObjectResult, error) {
 	select {
 	case <-time.After(s.delay):
@@ -2075,6 +2198,9 @@ func (s *slowGetBackend) GetObject(ctx context.Context, key string, rangeHeader 
 	}
 }
 
+// HeadObject satisfies backend.ObjectBackend for the manager-test
+// fakes; returns either the configured fixture metadata or the
+// configured error.
 func (s *slowGetBackend) HeadObject(ctx context.Context, key string) (*s3be.HeadObjectResult, error) {
 	select {
 	case <-time.After(s.delay):
@@ -2084,6 +2210,8 @@ func (s *slowGetBackend) HeadObject(ctx context.Context, key string) (*s3be.Head
 	}
 }
 
+// TestGetObject_ParallelBroadcast_FirstSuccessWins verifies the get object parallel broadcast first success wins contract.
+// Asserts that parallel broadcast should succeed:.
 func TestGetObject_ParallelBroadcast_FirstSuccessWins(t *testing.T) {
 	t.Parallel()
 	slow := newMockBackend()
@@ -2122,10 +2250,11 @@ func TestGetObject_ParallelBroadcast_FirstSuccessWins(t *testing.T) {
 	}
 }
 
+// TestGetObject_ParallelBroadcast_AllFail verifies the get object parallel broadcast all fail path by exercising mgr.Close, context.Background, errors.Is.
 func TestGetObject_ParallelBroadcast_AllFail(t *testing.T) {
 	t.Parallel()
-	b1 := newMockBackend() // empty — no object
-	b2 := newMockBackend() // empty — no object
+	b1 := newMockBackend() // empty  -  no object
+	b2 := newMockBackend() // empty  -  no object
 
 	store := &mockStore{getAllLocationsErr: core.ErrDBUnavailable}
 	mgr := newTestManagerParallel(store, []struct {
@@ -2146,6 +2275,8 @@ func TestGetObject_ParallelBroadcast_AllFail(t *testing.T) {
 	}
 }
 
+// TestGetObject_ParallelBroadcast_CacheHitSkipsParallel verifies the get object parallel broadcast cache hit skips parallel contract.
+// Asserts that first GetObject:.
 func TestGetObject_ParallelBroadcast_CacheHitSkipsParallel(t *testing.T) {
 	t.Parallel()
 	b1 := newMockBackend()
@@ -2181,6 +2312,8 @@ func TestGetObject_ParallelBroadcast_CacheHitSkipsParallel(t *testing.T) {
 	}
 }
 
+// TestGetObject_SequentialBroadcast_WhenDisabled verifies the get object sequential broadcast when disabled contract.
+// Asserts that sequential broadcast should succeed:.
 func TestGetObject_SequentialBroadcast_WhenDisabled(t *testing.T) {
 	t.Parallel()
 	slow := newMockBackend()
@@ -2233,6 +2366,8 @@ func TestGetObject_SequentialBroadcast_WhenDisabled(t *testing.T) {
 // withReadFailover edge cases
 // -------------------------------------------------------------------------
 
+// TestGetObject_BackendNotFound_FailsOverToNext verifies the get object backend not found fails over to next contract.
+// Asserts that GetObject should failover past missing backend:.
 func TestGetObject_BackendNotFound_FailsOverToNext(t *testing.T) {
 	t.Parallel()
 	b2 := newMockBackend()
@@ -2258,6 +2393,7 @@ func TestGetObject_BackendNotFound_FailsOverToNext(t *testing.T) {
 	}
 }
 
+// TestGetObject_GenericStoreError verifies the get object generic store error path by exercising errors.New, context.Background, errors.Is.
 func TestGetObject_GenericStoreError(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{getAllLocationsErr: errors.New("unexpected db error")}
@@ -2273,6 +2409,8 @@ func TestGetObject_GenericStoreError(t *testing.T) {
 	}
 }
 
+// TestGetObject_DBUnavailable_CacheHitFails_FallsThrough verifies the get object dbunavailable cache hit fails falls through contract.
+// Asserts that should fall through to broadcast after cache hit failure:.
 func TestGetObject_DBUnavailable_CacheHitFails_FallsThrough(t *testing.T) {
 	t.Parallel()
 	b1 := newMockBackend()
@@ -2301,6 +2439,8 @@ func TestGetObject_DBUnavailable_CacheHitFails_FallsThrough(t *testing.T) {
 // DeleteObject edge cases
 // -------------------------------------------------------------------------
 
+// TestDeleteObject_BackendNotFound_ContinuesOtherCopies verifies the delete object backend not found continues other copies contract.
+// Asserts that DeleteObject should succeed even with missing backend:.
 func TestDeleteObject_BackendNotFound_ContinuesOtherCopies(t *testing.T) {
 	t.Parallel()
 	b1 := newMockBackend()
@@ -2328,6 +2468,7 @@ func TestDeleteObject_BackendNotFound_ContinuesOtherCopies(t *testing.T) {
 // CopyObject edge cases
 // -------------------------------------------------------------------------
 
+// TestCopyObject_AllSourceHeadsFail verifies the copy object all source heads fail path by exercising errors.New, context.Background.
 func TestCopyObject_AllSourceHeadsFail(t *testing.T) {
 	t.Parallel()
 	b1 := newMockBackend()
@@ -2345,6 +2486,7 @@ func TestCopyObject_AllSourceHeadsFail(t *testing.T) {
 	}
 }
 
+// TestCopyObject_DestWriteFails verifies the copy object dest write fails path by exercising src.PutObject, context.Background, bytes.NewReader.
 func TestCopyObject_DestWriteFails(t *testing.T) {
 	t.Parallel()
 	src := newMockBackend()
@@ -2374,6 +2516,8 @@ func TestCopyObject_DestWriteFails(t *testing.T) {
 	}
 }
 
+// TestCopyObject_ExcludesDrainingBackend verifies the copy object excludes draining backend contract.
+// Asserts that expected st.ErrInsufficientStorage when all backends are draining, got.
 func TestCopyObject_ExcludesDrainingBackend(t *testing.T) {
 	t.Parallel()
 	src := newMockBackend()
@@ -2400,7 +2544,7 @@ func TestCopyObject_ExcludesDrainingBackend(t *testing.T) {
 	mgr.DrainManager.SeedActiveForTest("src-be")
 	mgr.DrainManager.SeedActiveForTest("dst-be")
 
-	// CopyObject should fail — all backends are draining
+	// CopyObject should fail  -  all backends are draining
 	_, err := mgr.ObjectManager.CopyObject(context.Background(), "src", "dst")
 	if !errors.Is(err, core.ErrInsufficientStorage) {
 		t.Fatalf("expected st.ErrInsufficientStorage when all backends are draining, got %v", err)
@@ -2412,6 +2556,7 @@ func TestCopyObject_ExcludesDrainingBackend(t *testing.T) {
 	}
 }
 
+// TestCopyObject_SourceReadFails verifies the copy object source read fails path by exercising src.PutObject, context.Background, bytes.NewReader.
 func TestCopyObject_SourceReadFails(t *testing.T) {
 	t.Parallel()
 	src := newMockBackend()
@@ -2440,6 +2585,7 @@ func TestCopyObject_SourceReadFails(t *testing.T) {
 	}
 }
 
+// TestCopyObject_AllSourceGetObjectsFail verifies the copy object all source get objects fail path by exercising src.PutObject, context.Background, bytes.NewReader.
 func TestCopyObject_AllSourceGetObjectsFail(t *testing.T) {
 	t.Parallel()
 	src := newMockBackend()
@@ -2472,6 +2618,8 @@ func TestCopyObject_AllSourceGetObjectsFail(t *testing.T) {
 // ListObjects edge cases
 // -------------------------------------------------------------------------
 
+// TestListObjects_GenericError verifies the list objects generic error contract.
+// Asserts that generic error should not be st.S3Error, got v.
 func TestListObjects_GenericError(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{listObjectsErr: errors.New("unexpected query error")}
@@ -2488,6 +2636,8 @@ func TestListObjects_GenericError(t *testing.T) {
 	}
 }
 
+// TestHeadObject_ParallelBroadcast verifies the head object parallel broadcast contract.
+// Asserts that HeadObject parallel broadcast should succeed:.
 func TestHeadObject_ParallelBroadcast(t *testing.T) {
 	t.Parallel()
 	slow := newMockBackend()
@@ -2518,6 +2668,8 @@ func TestHeadObject_ParallelBroadcast(t *testing.T) {
 // parsePlaintextRange
 // -------------------------------------------------------------------------
 
+// TestParsePlaintextRange_SuffixLargerThanFile verifies the parse plaintext range suffix larger than file contract.
+// Asserts that start = , want 0 (clamped).
 func TestParsePlaintextRange_SuffixLargerThanFile(t *testing.T) {
 	t.Parallel()
 	// bytes=-1000 on a 100-byte file should clamp start to 0
@@ -2533,6 +2685,8 @@ func TestParsePlaintextRange_SuffixLargerThanFile(t *testing.T) {
 	}
 }
 
+// TestParsePlaintextRange_ClampsEndToSize verifies the parse plaintext range clamps end to size contract.
+// Asserts that start = , want 0.
 func TestParsePlaintextRange_ClampsEndToSize(t *testing.T) {
 	t.Parallel()
 	// Explicit range where end exceeds plaintextSize
@@ -2548,9 +2702,11 @@ func TestParsePlaintextRange_ClampsEndToSize(t *testing.T) {
 	}
 }
 
+// TestParsePlaintextRange_ExactEndNotClamped verifies the parse plaintext range exact end not clamped contract.
+// Asserts that start= end=, want 0,99.
 func TestParsePlaintextRange_ExactEndNotClamped(t *testing.T) {
 	t.Parallel()
-	// End is exactly the last byte — should not be clamped
+	// End is exactly the last byte  -  should not be clamped
 	start, end, ok := parsePlaintextRange("bytes=0-99", 100)
 	if !ok {
 		t.Fatal("expected ok=true")
@@ -2607,5 +2763,31 @@ func TestCopyObject_SourceGetPanics(t *testing.T) {
 	_, err := mgr.ObjectManager.CopyObject(context.Background(), "src", "dst")
 	if err == nil {
 		t.Fatal("expected error from panicking source reader, got nil")
+	}
+}
+
+// -------------------------------------------------------------------------
+// REDIS COUNTER PROBES
+// -------------------------------------------------------------------------
+
+// TestRedisCounterConfigured_LocalBackendReturnsFalse verifies that a
+// manager wired with the default local counter backend reports
+// RedisCounterConfigured = false. The flush service uses this probe to
+// decide whether the advisory lock is required; a false here means no
+// advisory lock is acquired, which is correct for single-instance
+// deployments.
+func TestRedisCounterConfigured_LocalBackendReturnsFalse(t *testing.T) {
+	t.Parallel()
+	backend := newMockBackend()
+	store := &mockStore{}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
+
+	if mgr.RedisCounterConfigured() {
+		t.Errorf("RedisCounterConfigured = true, want false for local counter backend")
+	}
+	// The matching health probe must agree: a local backend cannot be
+	// "active" in the Redis-shared-counter sense.
+	if mgr.RedisCounterActive() {
+		t.Errorf("RedisCounterActive = true, want false for local counter backend")
 	}
 }

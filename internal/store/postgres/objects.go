@@ -2,6 +2,15 @@
 // Object Location Operations
 //
 // Author: Alex Freidah
+//
+// Implements the Postgres engine bindings for object_locations - the
+// canonical (object_key, backend_name) ledger of which backends hold
+// which objects. Wraps the engine-agnostic core orchestration
+// (RecordObject, DeleteObject, MoveObjectLocation, ImportObject) and
+// exposes the read-side queries the manager and dashboard consume.
+// Listing queries use the (object_key, created_at) index for stable
+// pagination; pagination tokens are advanced past emitted CommonPrefix
+// entries so a delimiter scan never re-emits the same prefix.
 // -------------------------------------------------------------------------------
 
 package postgres

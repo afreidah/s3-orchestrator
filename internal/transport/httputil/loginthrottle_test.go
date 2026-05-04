@@ -16,6 +16,8 @@ import (
 	"time"
 )
 
+// TestLoginThrottle_LockoutAfterFailures verifies the login throttle lockout after failures contract.
+// Asserts that should not be locked out after failures.
 func TestLoginThrottle_LockoutAfterFailures(t *testing.T) {
 	t.Parallel()
 	lt := NewLoginThrottle(3, 5*time.Minute)
@@ -35,6 +37,7 @@ func TestLoginThrottle_LockoutAfterFailures(t *testing.T) {
 	}
 }
 
+// TestLoginThrottle_SuccessResetsCounter verifies the login throttle success resets counter path by exercising lt.Close, lt.RecordFailure, lt.RecordSuccess.
 func TestLoginThrottle_SuccessResetsCounter(t *testing.T) {
 	t.Parallel()
 	lt := NewLoginThrottle(3, 5*time.Minute)
@@ -54,6 +57,7 @@ func TestLoginThrottle_SuccessResetsCounter(t *testing.T) {
 	}
 }
 
+// TestLoginThrottle_LockoutExpires verifies the login throttle lockout expires path by exercising lt.Close, lt.RecordFailure, lt.IsLockedOut.
 func TestLoginThrottle_LockoutExpires(t *testing.T) {
 	t.Parallel()
 	lt := NewLoginThrottle(3, 50*time.Millisecond)
@@ -76,6 +80,7 @@ func TestLoginThrottle_LockoutExpires(t *testing.T) {
 	}
 }
 
+// TestLoginThrottle_IPIsolation verifies the login throttle ipisolation path by exercising lt.Close, lt.RecordFailure, lt.IsLockedOut.
 func TestLoginThrottle_IPIsolation(t *testing.T) {
 	t.Parallel()
 	lt := NewLoginThrottle(3, 5*time.Minute)
@@ -96,6 +101,7 @@ func TestLoginThrottle_IPIsolation(t *testing.T) {
 	}
 }
 
+// TestLoginThrottle_IPv6 verifies the login throttle ipv6 path by exercising lt.Close, lt.RecordFailure, lt.IsLockedOut.
 func TestLoginThrottle_IPv6(t *testing.T) {
 	t.Parallel()
 	lt := NewLoginThrottle(3, 5*time.Minute)
@@ -110,6 +116,7 @@ func TestLoginThrottle_IPv6(t *testing.T) {
 	}
 }
 
+// TestLoginThrottle_ConcurrentAccess verifies the login throttle concurrent access path by exercising lt.Close, wg.Go, fmt.Sprintf.
 func TestLoginThrottle_ConcurrentAccess(t *testing.T) {
 	t.Parallel()
 	lt := NewLoginThrottle(100, 5*time.Minute)
@@ -127,6 +134,7 @@ func TestLoginThrottle_ConcurrentAccess(t *testing.T) {
 	wg.Wait()
 }
 
+// FuzzLoginThrottle_RemoteAddr fuzzes the login throttle remote addr path by exercising lt.Close, lt.RecordFailure, lt.IsLockedOut.
 func FuzzLoginThrottle_RemoteAddr(f *testing.F) {
 	f.Add("10.0.0.1:8080")
 	f.Add("192.168.1.1:443")

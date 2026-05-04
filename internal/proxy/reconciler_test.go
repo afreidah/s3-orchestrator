@@ -31,7 +31,7 @@ func TestMakeReconcileDeleter_SweepsCleanupQueue(t *testing.T) {
 		t.Fatalf("deleter returned error: %v", err)
 	}
 
-	// Both store calls should have fired — DeleteObjectLocation tracked
+	// Both store calls should have fired  -  DeleteObjectLocation tracked
 	// via deleteObjectLocationCalls and SweepStaleCleanupQueueRows via
 	// sweepStaleCalls (added when this fix landed).
 	store.mu.Lock()
@@ -79,6 +79,7 @@ func TestMakeReconcileDeleter_DeleteFailurePropagates(t *testing.T) {
 	}
 }
 
+// TestReconciler_ImportsUntrackedObjects verifies the reconciler imports untracked objects path by exercising worker.NewReconciler, reconciler.Run, context.Background.
 func TestReconciler_ImportsUntrackedObjects(t *testing.T) {
 	t.Parallel()
 	// The mock backend's ListObjects returns objects via the S3Backend
@@ -103,6 +104,7 @@ func TestReconciler_ImportsUntrackedObjects(t *testing.T) {
 	// mockBackend doesn't support ListObjects, but the reconciler continues.
 }
 
+// TestReconciler_NoBuckets verifies the reconciler no buckets path by exercising worker.NewReconciler, reconciler.Run, context.Background.
 func TestReconciler_NoBuckets(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{}
@@ -114,6 +116,7 @@ func TestReconciler_NoBuckets(t *testing.T) {
 	// Should return early without panic when no buckets are configured.
 }
 
+// TestReconciler_CancelledContext verifies the reconciler cancelled context path by exercising worker.NewReconciler, context.WithCancel, context.Background.
 func TestReconciler_CancelledContext(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{}
@@ -128,6 +131,7 @@ func TestReconciler_CancelledContext(t *testing.T) {
 	// Should return quickly without panic on cancelled context.
 }
 
+// TestReconciler_RunDoesNotPanicOnBackendError verifies the reconciler run does not panic on backend error path by exercising errors.New, worker.NewReconciler, reconciler.Run.
 func TestReconciler_RunDoesNotPanicOnBackendError(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -140,6 +144,7 @@ func TestReconciler_RunDoesNotPanicOnBackendError(t *testing.T) {
 	reconciler.Run(context.Background())
 }
 
+// TestReconcileBackend_UnknownBackend verifies the reconcile backend unknown backend path by exercising mgr.ReconcileBackend, context.Background.
 func TestReconcileBackend_UnknownBackend(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{}
@@ -151,6 +156,7 @@ func TestReconcileBackend_UnknownBackend(t *testing.T) {
 	}
 }
 
+// TestReconcileBackend_ListingNotSupported verifies the reconcile backend listing not supported path by exercising mgr.ReconcileBackend, context.Background.
 func TestReconcileBackend_ListingNotSupported(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{}
@@ -163,6 +169,8 @@ func TestReconcileBackend_ListingNotSupported(t *testing.T) {
 	}
 }
 
+// TestReconcile_ViaReconciler verifies the reconcile via reconciler contract.
+// Asserts that unexpected error:.
 func TestReconcile_ViaReconciler(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{}
@@ -180,6 +188,8 @@ func TestReconcile_ViaReconciler(t *testing.T) {
 	}
 }
 
+// TestReconcile_SingleBackendViaReconciler verifies the reconcile single backend via reconciler contract.
+// Asserts that unexpected error:.
 func TestReconcile_SingleBackendViaReconciler(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{}

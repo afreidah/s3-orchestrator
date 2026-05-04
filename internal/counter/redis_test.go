@@ -32,17 +32,25 @@ type fakePipeliner struct {
 	execErr    error
 }
 
+// IncrBy satisfies the redis pipeline interface for the fake
+// pipeliner used in this test; records the call for later
+// assertions.
 func (f *fakePipeliner) IncrBy(_ context.Context, key string, val int64) *redis.IntCmd {
 	f.incrByKeys = append(f.incrByKeys, key)
 	f.incrByVals = append(f.incrByVals, val)
 	return redis.NewIntCmd(context.Background())
 }
 
+// Expire satisfies the redis pipeline interface for the fake
+// pipeliner; records the requested TTL so the test can assert it.
 func (f *fakePipeliner) Expire(_ context.Context, key string, _ time.Duration) *redis.BoolCmd {
 	f.expireKeys = append(f.expireKeys, key)
 	return redis.NewBoolCmd(context.Background())
 }
 
+// Exec satisfies the redis pipeline interface for the fake
+// pipeliner; returns the test-configured error and slice of cmder
+// results so error-path assertions are deterministic.
 func (f *fakePipeliner) Exec(_ context.Context) ([]redis.Cmder, error) {
 	return nil, f.execErr
 }

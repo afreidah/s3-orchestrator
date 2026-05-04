@@ -68,6 +68,8 @@ func newTestRedisBackend(t *testing.T, backends []string) (*counter.RedisCounter
 // TESTS
 // -------------------------------------------------------------------------
 
+// TestRedis_AddAndLoad verifies the redis add and load contract.
+// Asserts that b1 api_requests = , want 10.
 func TestRedis_AddAndLoad(t *testing.T) {
 	backends := []string{"b1", "b2"}
 	rb, _ := newTestRedisBackend(t, backends)
@@ -87,6 +89,8 @@ func TestRedis_AddAndLoad(t *testing.T) {
 	}
 }
 
+// TestRedis_AddAllAndLoadAll verifies the redis add all and load all contract.
+// Asserts that api_requests = , want 8.
 func TestRedis_AddAllAndLoadAll(t *testing.T) {
 	backends := []string{"b1"}
 	rb, _ := newTestRedisBackend(t, backends)
@@ -106,6 +110,8 @@ func TestRedis_AddAllAndLoadAll(t *testing.T) {
 	}
 }
 
+// TestRedis_Swap verifies the redis swap contract.
+// Asserts that Swap returned , want 42.
 func TestRedis_Swap(t *testing.T) {
 	backends := []string{"b1"}
 	rb, _ := newTestRedisBackend(t, backends)
@@ -123,6 +129,8 @@ func TestRedis_Swap(t *testing.T) {
 	}
 }
 
+// TestRedis_SharedVisibility verifies the redis shared visibility contract.
+// Asserts that rb1:.
 func TestRedis_SharedVisibility(t *testing.T) {
 	// Two RedisCounterBackend instances sharing the same prefix simulate
 	// two orchestrator instances seeing the same counters.
@@ -165,6 +173,8 @@ func TestRedis_SharedVisibility(t *testing.T) {
 	}
 }
 
+// TestRedis_Backends verifies the redis backends contract.
+// Asserts that Backends() returned , want 3.
 func TestRedis_Backends(t *testing.T) {
 	backends := []string{"alpha", "beta", "gamma"}
 	rb, _ := newTestRedisBackend(t, backends)
@@ -175,6 +185,7 @@ func TestRedis_Backends(t *testing.T) {
 	}
 }
 
+// TestRedis_IsHealthy verifies the redis is healthy path by exercising rb.IsHealthy.
 func TestRedis_IsHealthy(t *testing.T) {
 	backends := []string{"b1"}
 	rb, _ := newTestRedisBackend(t, backends)

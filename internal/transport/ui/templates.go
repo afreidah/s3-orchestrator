@@ -20,8 +20,17 @@ import (
 //go:embed templates/*.html static/*
 var embeddedFS embed.FS
 
+// staticFS is the rooted view of the embedded static/ directory used
+// by the dashboard's static asset handler. Errors from fs.Sub are
+// dropped: the directory is guaranteed to exist by the //go:embed
+// directive above, so a runtime failure here would indicate a build
+// problem the binary cannot recover from.
 var staticFS, _ = fs.Sub(embeddedFS, "static")
 
+// loadTemplates parses every dashboard HTML template into a single
+// template tree with the funcMap registered (formatBytes, pct, etc).
+// Run once at handler construction time so render hot-paths skip the
+// parse step.
 func loadTemplates() *template.Template {
 	funcMap := template.FuncMap{
 		"formatBytes":  formatBytes,

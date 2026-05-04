@@ -82,6 +82,7 @@ cosign verify-blob checksums.txt \
 - [Replication](#replication)
 - [Over-Replication Cleanup](#over-replication-cleanup)
 - [Cleanup Queue](#cleanup-queue)
+- [PUT-before-COMMIT Pending Intents](#put-before-commit-pending-intents)
 - [Lifecycle (Object Expiration)](#lifecycle-object-expiration)
 - [Orphan Reconciliation](#orphan-reconciliation)
 - [Encryption](#encryption)
@@ -92,6 +93,7 @@ cosign verify-blob checksums.txt \
 - [Configuration Hot-Reload](#configuration-hot-reload)
 - [Database](#database)
 - [Telemetry](#telemetry)
+- [Webhook Notifications](#webhook-notifications)
 - [Web UI](#web-ui)
 - [Endpoints](#endpoints)
 - [Background Tasks](#background-tasks)
@@ -317,6 +319,36 @@ SELECT backend_name, object_key, reason, size_bytes, NOW(), 0, last_error
 DELETE FROM cleanup_dlq WHERE id = 42;
 ```
 
+## PUT-before-COMMIT Pending Intents
+
+The write path inserts a `pending_objects` row before sending the upload to
+the backend, then deletes that row in the same transaction that records the
+new `object_locations` row. The pattern guarantees that a DB outage between
+the backend PUT and the metadata commit cannot silently destroy the prior
+copy of an overwritten key.
+
+If the metadata commit succeeds, the intent is gone within the same
+transaction and nothing else needs to happen. If the commit fails, the
+intent survives and a background **pending reaper** picks it up on the
+next tick:
+
+1. The reaper claims the intent by deleting it transactionally (so two
+   concurrent reapers cannot resolve the same intent).
+2. It HEADs the destination backend.
+3. **Backend has the object** — the reaper promotes the intent into
+   `object_locations` in the same transaction, taking the prior copy's
+   place. Displaced copies on other backends are returned for cleanup.
+4. **Backend does not have the object** — the reaper drops the intent;
+   the original write effectively never happened.
+5. **Concurrent successful write** — if `object_locations` already holds a
+   newer row for the same key (created after the intent), the intent is
+   provably stale and dropped without writing metadata.
+
+Configurable via `write_path.pending_pattern` (default: enabled, 1-minute
+reaper tick, 5-minute `min_age` so in-flight PUTs are not interrupted).
+Setting `enabled: false` reverts to the legacy delete-on-record-failure
+path, which trades data-loss safety for one fewer round-trip per PUT.
+
 ## Lifecycle (Object Expiration)
 
 Config-driven lifecycle rules automatically delete objects matching a key prefix after a configurable number of days. Useful for expiring temporary uploads, staging artifacts, or any objects with a known retention period.
@@ -499,20 +531,6 @@ backends:
     egress_byte_limit: 0      # monthly egress byte limit (0 = unlimited)
     ingress_byte_limit: 0     # monthly ingress byte limit (0 = unlimited)
 
-**Provider quick reference** — endpoint format and required flags for common S3-compatible providers:
-
-| Provider | Endpoint | `force_path_style` | Notes |
-|----------|----------|-------------------|-------|
-| AWS S3 | `https://s3.<region>.amazonaws.com` | `false` (default) | |
-| MinIO | `http://<host>:9000` | `true` | |
-| OCI Object Storage | `https://<ns>.compat.objectstorage.<region>.oraclecloud.com` | `true` | |
-| Backblaze B2 | `https://s3.<region>.backblazeb2.com` | `false` | |
-| Cloudflare R2 | `https://<account-id>.r2.cloudflarestorage.com` | `false` | `region: auto` |
-| Wasabi | `https://s3.<region>.wasabisys.com` | `false` | |
-| Google Cloud Storage | `https://storage.googleapis.com` | `false` | Set `disable_checksum: true` and `strip_sdk_headers: true` |
-
-See the [Maximizing Free Tiers](https://s3-orchestrator.munchbox.cc/guides/maximizing-free-tiers/) guide for detailed setup on each provider including where to find credentials.
-
 telemetry:
   metrics:
     enabled: true
@@ -628,6 +646,20 @@ lifecycle:
       expiration_days: 1
 ```
 
+**Provider quick reference** — endpoint format and required flags for common S3-compatible providers:
+
+| Provider | Endpoint | `force_path_style` | Notes |
+|----------|----------|-------------------|-------|
+| AWS S3 | `https://s3.<region>.amazonaws.com` | `false` (default) | |
+| MinIO | `http://<host>:9000` | `true` | |
+| OCI Object Storage | `https://<ns>.compat.objectstorage.<region>.oraclecloud.com` | `true` | |
+| Backblaze B2 | `https://s3.<region>.backblazeb2.com` | `false` | |
+| Cloudflare R2 | `https://<account-id>.r2.cloudflarestorage.com` | `false` | `region: auto` |
+| Wasabi | `https://s3.<region>.wasabisys.com` | `false` | |
+| Google Cloud Storage | `https://storage.googleapis.com` | `false` | Set `disable_checksum: true` and `strip_sdk_headers: true` |
+
+See the [Maximizing Free Tiers](https://s3-orchestrator.munchbox.cc/guides/maximizing-free-tiers/) guide for detailed setup on each provider including where to find credentials.
+
 ## Configuration Hot-Reload
 
 The orchestrator supports hot-reloading a subset of configuration by sending `SIGHUP` to the running process. This lets you update credentials, quotas, rate limits, and other operational settings without restarting the service or dropping client connections.
@@ -697,7 +729,22 @@ Non-reloadable field changes are logged as warnings but do not prevent the reloa
 
 ## Database
 
-The orchestrator connects to PostgreSQL via pgx/v5 connection pools and auto-applies versioned migrations on startup using [goose](https://github.com/pressly/goose). Migration files are embedded in the binary and tracked via a `goose_db_version` table — only unapplied migrations run. The schema currently provisions:
+The orchestrator supports two metadata-store engines:
+
+- **SQLite** (default) — embedded, zero-dependency, single-instance. Schema is
+  applied at startup from a single consolidated `schema.sql`.
+- **PostgreSQL** — required for multi-instance deployments. Connects via
+  pgx/v5 pools and auto-applies versioned migrations on startup using
+  [goose](https://github.com/pressly/goose); migration files are embedded
+  in the binary and tracked via a `goose_db_version` table so only
+  unapplied migrations run.
+
+Engine-agnostic orchestration lives in `internal/store/core/` (transactional
+business logic against a `TxAdapter` interface). Each engine package
+(`internal/store/postgres/`, `internal/store/sqlite/`) is a thin adapter
+that implements the same `TxAdapter`, so the same code drives both engines.
+
+The schema currently provisions:
 
 | Table | Purpose |
 |-------|---------|
@@ -834,6 +881,44 @@ Example audit log entry:
 {"level":"INFO","msg":"audit","audit":true,"event":"s3.PutObject","request_id":"a1b2c3d4e5f6...","operation":"PutObject","method":"PUT","path":"/my-files/photo.jpg","bucket":"my-files","status":200,"duration":"45ms"}
 ```
 
+## Webhook Notifications
+
+Optional outbound webhooks for object mutations and operational events.
+Events are written to a durable `notification_outbox` table inside the
+same transaction as the originating change, then a background drainer
+POSTs them as CloudEvents-formatted JSON to each configured endpoint.
+The outbox pattern means events are never lost on crash and never sent
+twice for the same change.
+
+Two event categories are supported:
+
+- **Data events** — S3-style object mutations (`s3:ObjectCreated:Put`,
+  `s3:ObjectRemoved:Delete`, etc.) carrying the bucket and key.
+- **Operational events** — backend health (`backend.circuit.opened`,
+  `backend.capacity.warning`), integrity (`integrity.corruption_detected`),
+  cleanup (`cleanup.exhausted`), replication and lifecycle completions.
+
+Each endpoint declares which event-type patterns it cares about and an
+optional HMAC-SHA256 signing key:
+
+```yaml
+notifications:
+  endpoints:
+    - url: "https://hooks.example.com/storage"
+      events:
+        - "s3:ObjectCreated:*"
+        - "s3:ObjectRemoved:*"
+      prefix: "uploads/"          # only deliver data events under this prefix
+      secret: "${HOOK_SECRET}"
+      timeout: 5s
+      max_retries: 5
+```
+
+Failed deliveries retry with exponential backoff. After `max_retries`,
+the row is dropped and an audit warning is emitted. See
+[`web/content/guides/event-notifications.md`](web/content/guides/event-notifications.md)
+for the full event catalog and signature-verification recipe.
+
 ## Web UI
 
 A built-in web dashboard provides operational visibility and management without external tooling. When enabled, it renders a server-side HTML page at the configured path (default `/ui/`). All routes require authentication via HMAC-signed session cookies — users log in with an admin key/secret pair configured in the YAML config.
@@ -870,25 +955,55 @@ JSON APIs are available at `{path}/api/dashboard`, `{path}/api/tree`, and `{path
 
 ## Endpoints
 
-| Path | Purpose |
-|------|---------|
-| `/health` | Health check — returns `ok` or `degraded` (always 200) |
-| `/metrics` | Prometheus metrics |
-| `/ui/` | Web dashboard (when enabled) |
-| `/ui/login` | Dashboard login page |
-| `/ui/api/dashboard` | Dashboard data as JSON |
-| `/ui/api/tree` | Lazy-loaded directory listing as JSON |
-| `/ui/api/delete` | Delete an object (POST, JSON body) |
-| `/ui/api/delete-prefix` | Delete all objects under a prefix (POST, JSON body) |
-| `/ui/api/upload` | Upload a file (POST, multipart form) |
-| `/ui/api/download` | Download a file (GET, query param: key) |
-| `/ui/api/rebalance` | Trigger async rebalance, returns 202 (POST) |
-| `/ui/api/rebalance/status` | Poll rebalance status (GET) |
-| `/ui/api/clean-excess` | Trigger async cleanup, returns 202 (POST) |
-| `/ui/api/clean-excess/status` | Poll cleanup status (GET) |
-| `/ui/api/logs` | Buffered log entries as JSON (query params: level, since, component, limit) |
-| `/ui/api/sync` | Import objects from a backend (POST, JSON body) |
-| `/{bucket}/{key}` | S3 API |
+### Public
+
+| Path | Method | Purpose |
+|---|---|---|
+| `/{bucket}/{key}` | * | S3 API (PutObject, GetObject, etc.) |
+| `/health` | GET | Liveness — always 200; body is `ok` or `degraded` (when DB circuit is open) |
+| `/health/ready` | GET | Readiness — 200 once startup is complete; flips to 503 during shutdown drain |
+| `/metrics` | GET | Prometheus metrics (when `telemetry.metrics.enabled`) |
+
+### Admin API (`X-Admin-Token` required)
+
+| Path | Method | Purpose |
+|---|---|---|
+| `/admin/api/status` | GET | Backend health, quota, circuit-breaker state |
+| `/admin/api/object-locations?key=...` | GET | Per-backend ledger for one object key |
+| `/admin/api/cleanup-queue` | GET | Cleanup queue depth and pending sample |
+| `/admin/api/usage-flush` | POST | Force out-of-band flush of usage counters |
+| `/admin/api/replicate` | POST | Trigger one replication cycle |
+| `/admin/api/log-level` | GET / PUT | View or set the running instance's log level |
+| `/admin/api/over-replication` | GET / POST | Show pending excess copies / trigger cleanup |
+| `/admin/api/rotate-encryption-key` | POST | Re-wrap DEKs that still reference an old master key |
+| `/admin/api/encrypt-existing` | POST | Encrypt all unencrypted objects in-place |
+| `/admin/api/decrypt-existing` | POST | Decrypt all encrypted objects in-place |
+| `/admin/api/scrub` | POST | Trigger one integrity-scrub pass |
+| `/admin/api/backfill-checksums` | POST | Compute hashes for objects predating integrity |
+| `/admin/api/reconcile` | POST | Trigger an out-of-band reconcile pass |
+| `/admin/api/backends/{name}/drain` | POST / GET / DELETE | Start / inspect / cancel a backend drain |
+| `/admin/api/backends/{name}` | DELETE | Remove backend metadata (use `?purge=true` + `?confirm=true` to also delete S3 objects) |
+
+### Web UI (`X-Session-Cookie` after login; enabled only when `ui.enabled`)
+
+| Path | Method | Purpose |
+|---|---|---|
+| `/ui/` | GET | Dashboard HTML |
+| `/ui/login` | GET / POST | Login page |
+| `/ui/api/dashboard` | GET | Dashboard data as JSON |
+| `/ui/api/tree` | GET | Lazy-loaded directory listing |
+| `/ui/api/upload` | POST | Multipart-form file upload |
+| `/ui/api/download` | GET | Object download (`?key=...`) |
+| `/ui/api/delete` | POST | Delete one object |
+| `/ui/api/delete-prefix` | POST | Delete every object under a prefix |
+| `/ui/api/rebalance` (+ `/status`) | POST / GET | Trigger / poll rebalance |
+| `/ui/api/clean-excess` (+ `/status`) | POST / GET | Trigger / poll over-replication cleanup |
+| `/ui/api/replicate` (+ `/status`) | POST / GET | Trigger / poll replicate |
+| `/ui/api/scrub` (+ `/status`) | POST / GET | Trigger / poll integrity scrub |
+| `/ui/api/backfill-checksums` (+ `/status`) | POST / GET | Trigger / poll checksum backfill |
+| `/ui/api/encrypt-existing` (+ `/status`) | POST / GET | Trigger / poll encrypt-existing |
+| `/ui/api/sync` | POST | Import objects from a backend's S3 bucket |
+| `/ui/api/logs` | GET | Buffered log entries (`level`, `since`, `component`, `limit`) |
 
 ## Background Tasks
 
@@ -904,6 +1019,9 @@ All locked background tasks apply a random startup jitter of up to half the tick
 | Over-replication cleaner | configurable (default 5m) | Yes | Removes excess copies of objects that exceed the replication factor. Only runs when factor > 1. |
 | Lifecycle | 1h | Yes | Deletes objects matching lifecycle rules whose `created_at` exceeds `expiration_days`. Only runs when rules are configured. |
 | Reconciler | configurable (default 24h) | Yes | Scans each backend for untracked objects and imports them into the metadata database via `SyncBackend`. Only runs when `reconcile.enabled: true`. |
+| Pending reaper | configurable (default 1m) | Yes | Resolves PUT-before-COMMIT intents that survived a failed metadata commit. HEADs the destination backend and either promotes the row into `object_locations` (object present) or drops the intent (object absent). Skips intents younger than `min_age` so in-flight PUTs are not interrupted. |
+| Scrubber | configurable (default 6h) | Yes | Random-samples objects, fetches and re-hashes them, and enqueues a cleanup if the stored `content_hash` does not match. Only runs when `integrity.enabled: true` and `scrubber_interval > 0`. |
+| Notification drainer | 5s | No | Drains `notification_outbox` rows by POSTing CloudEvents JSON to configured webhook endpoints. Optional HMAC signing per endpoint. |
 | CB watchdog | 1m | No | Checks all circuit breakers for stale half-open probes. If a probe has been in flight longer than 2 minutes, resets the circuit to open so a new probe can be dispatched. Prevents circuits from getting stuck half-open when traffic stops. |
 
 Background services (rebalancer, replicator, over-replication cleaner, cleanup queue) share the admission semaphore with HTTP requests, so `max_concurrent_requests` is the total budget for both HTTP and background backend operations.
@@ -943,7 +1061,7 @@ Prints the binary version, Go version, and platform:
 
 ```bash
 s3-orchestrator version
-# s3-orchestrator v0.41.7 go1.26.0 linux/amd64
+# s3-orchestrator vX.Y.Z go1.26.X linux/amd64
 ```
 
 ### init
@@ -1180,137 +1298,134 @@ make release-local
 ## Project Structure
 
 ```
-cmd/s3-orchestrator/
+cmd/s3-orchestrator/         Binary entry: subcommand dispatch + thin shims
   main.go                    Entry point, subcommand dispatch
-  admin.go                   Thin shim that delegates to internal/cli/adminctl
-  init_cmd.go                Thin shim that delegates to internal/cli/initcmd
-  sync.go                    Thin shim that delegates to internal/cli/synccmd
-  validate.go                Validate subcommand (config check)
-  version.go                 Version subcommand (build info)
+  admin.go / init_cmd.go / sync.go    Shim into internal/cli/{adminctl,initcmd,synccmd}
+  validate.go / version.go   Validate-config and version subcommands
+
 internal/
-  cli/
-    serve/                   Daemon lifecycle: server struct, Run, SIGHUP reload, shutdown
-    adminctl/                Admin operational CLI (HTTP wrapper around the admin API)
+  cli/                       CLI-side dispatch and bootstrap
+    serve/                   Daemon lifecycle: build the DI injector, start HTTP, SIGHUP reload, shutdown
+    adminctl/                Admin operational CLI (HTTP client wrapping the admin API)
     initcmd/                 Interactive config-file generator
     synccmd/                 Pre-existing bucket import CLI
-  di/
-    di.go                    Single wiring point for samber/do (providers, container)
-    services.go              Background service definitions used by the lifecycle manager
-  transport/                 HTTP interface layer
-    s3api/
+
+  di/                        Single wiring point for samber/do/v2
+    di.go                    Every Provide<X> for stores, workers, handlers, backends
+    services.go              Lifecycle-managed background services
+
+  transport/                 HTTP interface layer (no business logic)
+    s3api/                   S3-compatible XML/REST API
       server.go              HTTP router, bucket resolution, key prefixing, metrics
-      buckets.go             HeadBucket, GetBucketLocation, ListBuckets stubs
+      buckets.go             HeadBucket, GetBucketLocation, ListBuckets, versioning stubs
       objects.go             PUT, GET, HEAD, DELETE, COPY, DeleteObjects handlers
-      list.go                ListObjectsV1 and ListObjectsV2 handlers (XML response)
+      list.go                ListObjectsV1 / V2 handlers
       multipart.go           Multipart upload handlers
-      helpers.go             Path parsing, S3 XML error responses
-      ratelimit.go           Per-IP token bucket rate limiter
-      admission.go           Request admission control with load shedding
-    admin/handler.go         Admin API handler (status, cleanup queue, log level, etc.)
+      helpers.go             Path parsing, header guards, S3 XML error responses
+      ratelimit.go           Per-IP token bucket
+      admission.go           Concurrency limit + load shedding
+    admin/handler.go         Admin API: status, drain, replicate, scrub, encrypt-existing, etc.
     auth/auth.go             BucketRegistry, SigV4 verification, legacy token auth
-    ui/
-      handler.go             Web UI HTTP handler, session auth + JSON APIs
-      templates.go           Embedded templates + formatting helpers
-      templates/             Dashboard and login HTML templates
+    ui/                      Web dashboard
+      handler.go             HTTP handler + session auth + JSON APIs
+      admin_actions.go       Async-trigger endpoints (rebalance, scrub, encrypt-existing, ...)
+      async.go               Shared async-job result store consumed by /status endpoints
+      templates.go           Embedded template loader + formatting helpers
+      templates/             Dashboard and login HTML
       static/                CSS, JS (directory tree, log viewer)
     httputil/
-      clientip.go            Client IP extraction (XFF) and IsTLSRequest (XFP) for trusted proxies
-      loginthrottle.go       Per-IP brute-force protection with lockout
-      certreloader.go        TLS certificate hot-reload with expiry warning
+      clientip.go            X-Forwarded-For + X-Forwarded-Proto with trusted-proxy CIDRs
+      loginthrottle.go       Per-IP brute-force protection
+      certreloader.go        TLS certificate hot-reload + expiry warning
+
   observe/                   Observability layer
-    audit/audit.go           Request ID generation, context propagation, audit logger
-    telemetry/
-      metrics.go             Package doc only; metric vars live in metrics_*.go
-      metrics_request.go     Request, backend, manager, rate-limit metrics
-      metrics_quota.go       Quota, object, multipart, usage metrics
-      metrics_rebalance.go   Rebalancer metrics
-      metrics_replication.go Replication and over-replication metrics
-      metrics_breaker.go     Circuit breaker state and transition metrics
-      metrics_cleanup.go     Cleanup queue, lifecycle, drain metrics
-      metrics_audit.go       Audit event metrics
-      metrics_encryption.go  Encryption and integrity metrics
-      metrics_cache.go       Object cache and Redis metrics
-      metrics_meta.go        Build info and notification metrics
-      cb_hook.go             Bridges breaker.SetOnStateChange to gauge/counter/event
-      tracing.go             OpenTelemetry tracer setup
-      tracehandler.go        slog handler that injects trace_id/span_id from OTel context
-      logbuffer.go           In-memory ring buffer + slog TeeHandler
-    event/event.go           Notification event type constants and Emit hook
-  util/                      Generic utilities
-    bufpool/bufpool.go       Shared sync.Pool for streaming buffer reuse (io.CopyBuffer)
-    syncutil/                AtomicConfig[T] and TTLCache[K,V]
-    workerpool/              Generic bounded-concurrency Run[T] and Collect[T,R]
-  config/                    YAML config loader split by domain (server, database, encryption, etc.)
+    audit/audit.go           Request-id context plumbing + structured audit logger
+    telemetry/               Per-domain Prometheus metric files (metrics_*.go) + OTel helpers
+    event/event.go           Notification event types + Emit hook
+
+  config/                    YAML loader split by domain (server, database, backends, ...)
+
   breaker/
-    breaker.go               Generic three-state circuit breaker state machine
-    registry.go              Registry of breakers swept by the watchdog (DB + per-backend)
+    breaker.go               Three-state CircuitBreaker state machine
+    registry.go              Watchdog-swept registry of all breakers (DB + per-backend)
+
   backend/
-    s3.go                    ObjectBackend interface, S3Backend (AWS SDK v2)
-    circuitbreaker.go        Per-backend circuit breaker wrapper
-  store/
-    metadata.go              Re-exports core interfaces and types under the store-package name
-    circuitbreaker.go        Database circuit breaker wrapper
-    cb_*.go                  Per-role circuit breaker decorators (Object, Pending, Quota, ...)
-    core/
-      types.go               Engine-agnostic domain types (ObjectLocation, PendingObject, ...)
+    s3.go                    ObjectBackend interface + S3Backend (AWS SDK v2)
+    circuitbreaker.go        Per-backend CircuitBreaker wrapper
+    backendtest/             Failure-injectable wrapper used by tests
+
+  store/                     Metadata store
+    circuitbreaker.go        Database CircuitBreaker wrapper
+    cb_*.go                  Per-role CB decorators (Object, Pending, Cleanup, Quota, ...)
+    core/                    Engine-agnostic orchestration
+      types.go               Domain types (ObjectLocation, PendingObject, CleanupQueueRow, ...)
       errors.go              Sentinel errors and structured S3Error
-      interfaces.go          Narrow per-role store interfaces (ObjectStore, QuotaStore, ...)
-      adapter.go             TxAdapter and per-feature interfaces (the per-engine seam)
-      runner.go              Runner interface and generic WithTxVal[T] helper
-      helpers.go             Engine-agnostic helpers (intentSuperseded, ...)
-      pending.go             PromotePending orchestration
+      interfaces.go          Narrow per-role store interfaces
+      adapter.go             TxAdapter (the per-engine seam) + Reader
+      runner.go              Runner interface + generic WithTxVal[T] helper
       objects.go             RecordObject, DeleteObject, MoveObjectLocation, ImportObject
-      replication.go         RecordReplica, RemoveExcessCopy
-      cleanup.go             SweepStaleCleanupQueueRows
-    postgres/
-      store.go               *postgres.Store, satisfies core.Runner via WithTx
-      adapter.go             pgTxAdapter, satisfies core.TxAdapter against sqlc.Queries
-      helpers.go             Type translation helpers (pendingFromRow, objectInsertParams, ...)
-      types.go               Type aliases re-exporting core types under the postgres-package name
-      migrations/            Versioned goose migration files (embedded in binary)
-      sqlc/
-        schema.sql           Schema for sqlc code generation
-        queries/             Annotated SQL query files
-        *.go                 Generated type-safe query code (do not edit)
-    sqlite/
-      store.go               *sqlite.Store, satisfies core.Runner via WithTx
-      adapter.go             sqliteTxAdapter, satisfies core.TxAdapter over *sql.Tx
-      schema.sql             Consolidated SQLite schema (translates Postgres migrations)
-      migrations.go          Schema bootstrap and version verification
-  counter/
-    counter.go               CounterBackend interface and field constants
-    local.go                 In-memory atomic counter backend (default)
-    redis.go                 Redis shared counter backend with circuit breaker fallback
+      pending.go             PromotePending orchestration
+      cleanup.go             SweepStaleCleanupQueueRows + MoveCleanupToDLQ
+      replication.go         RecordReplica
+      helpers.go             Engine-agnostic helpers (intentSuperseded, applyQuotaDeltas, ...)
+    postgres/                Postgres engine adapter
+      store.go               *Store satisfies core.Runner via WithTx
+      adapter.go             pgTxAdapter satisfies core.TxAdapter against sqlc.Queries
+      objects.go / quota.go / multipart.go / replication.go / cleanup_queue.go / pending.go
+      admin.go / advisory_lock.go / integrity.go / notifications.go / usage.go
+      migrations/            Versioned goose migrations (embedded)
+      sqlc/                  Generated type-safe query code (do not edit)
+    sqlite/                  SQLite engine adapter
+      store.go / adapter.go / objects.go / quota.go / multipart.go / pending.go
+      cleanup.go / replication.go / admin.go / directory.go / migrations.go
+      schema.sql             Consolidated schema (translates Postgres migrations)
+
+  counter/                   Per-backend usage counters
+    counter.go               CounterBackend interface + field constants
+    local.go                 In-memory atomic backend (default)
+    redis.go                 Redis shared backend with CB fallback
     tracker.go               Usage limit enforcement, baseline management, flush
-  proxy/
-    manager.go               Composition root, config accessors
+
+  proxy/                     Manager layer
+    manager.go               BackendManager: composition root, routing, config accessors
+    manager_writepath.go     PUT-before-COMMIT pending-row write path
     objects.go               ObjectManager type, constructor, shared helpers
     objects_read.go          Read failover, broadcast reads, GetObject, HeadObject, ListObjects
     objects_write.go         PutObject, CopyObject, DeleteObject, DeleteObjects
-    multipart.go             Multipart upload lifecycle
-    drain.go                 Backend drain and remove operations
+    multipart.go             Multipart lifecycle
     reconcile.go             Bounded-memory sorted-merge reconciliation engine
-    core.go                  Shared infrastructure (timeout, admission, routing)
+    core.go                  Shared infrastructure (timeout, admission, routing helpers)
     lifecycle.go             Lifecycle expiration rule processing
-    dashboard.go             DashboardData type + thin wrappers
-    cache.go                 Key→backend cache with TTL + background eviction
-    metrics.go               Prometheus metric recording + gauge refresh
-    aggregator.go            Dashboard data aggregation + lazy directory listing
-  worker/
-    ops.go                   Role interfaces (StoreAccess, BackendAccess, AdmissionControl, DataMover)
+    integrity.go             Integrity-aware GET wrapper (read-time hash verification)
+    encryption_helpers.go    On-write encrypt + on-read decrypt adapters
+    cache.go                 LocationCache (key -> backend) with TTL + background eviction
+    stores.go                Stores struct bundling the narrow per-role interfaces
+    drain/                   Backend-drain coordinator
+    dashboard/               DashboardData aggregation + lazy directory listing
+    metrics/                 Manager-level Collector (per-op record + periodic gauge refresh)
+    proxytest/               Test-only helper: AttachWorkers, StoresFromMock
+
+  worker/                    Background services
+    ops_runtime.go           Runtime-side ops interfaces (admission, timeout, usage, backend access)
+    ops_store.go             Per-worker store-role interfaces
     rebalancer.go            Object rebalancing across backends
     replicator.go            Cross-backend object replication
-    overreplication.go       Over-replication detection and excess copy cleanup
-    cleanup.go               Cleanup queue retry worker
-    scrubber.go              Background integrity verification
-    reconciler.go            Orphan discovery and import
-  notify/
-    notifier.go              Webhook notification delivery (outbox pattern)
-  encryption/                Envelope encryption (AES-256-GCM, key providers)
-  cache/                     Object data LRU cache with TTL
-  lifecycle/                 Background service manager
-  testutil/
-    mock_store.go            Shared mock satisfying every narrow store role for tests
+    overreplication.go       Over-replication detection + excess-copy cleanup
+    cleanup.go               Cleanup queue retry worker (graduates to DLQ on exhaustion)
+    pending.go               PendingReaper (PUT-before-COMMIT intent resolver)
+    scrubber.go              Integrity scrubber + content-hash backfill
+    reconciler.go            Orphan reconciler driver (consumes proxy/reconcile engine)
+
+  notify/notifier.go         Webhook notification drainer (notification_outbox pattern)
+  encryption/                Envelope encryption (AES-256-GCM, key providers, Vault Transit)
+  cache/                     Object-data LRU cache with TTL
+  lifecycle/                 Generic supervisor for long-lived services
+  internalkey/               Internal key prefix helpers shared by transport + store
+  testutil/                  Shared test fakes (MockStore, builders)
+
+  integration/               End-to-end tests against MinIO + Postgres testcontainers
+                             (gated by `//go:build integration`)
+
 grafana/
   s3-orchestrator.json       Grafana dashboard (all Prometheus metrics)
 sqlc.yaml                    sqlc configuration

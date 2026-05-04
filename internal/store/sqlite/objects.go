@@ -25,7 +25,14 @@ import (
 // likeEscaper escapes SQL LIKE wildcards in prefix strings.
 var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 
+// errInvalidTimestamp is the wrap format string used everywhere a
+// stored RFC 3339 created_at fails time.Parse. Centralised so the
+// surfaced error stays consistent across listing helpers.
 const errInvalidTimestamp = "invalid created_at timestamp %q: %w"
+
+// -------------------------------------------------------------------------
+// READ QUERIES
+// -------------------------------------------------------------------------
 
 // GetObjectBackendsForKeys returns a map from each supplied object_key to
 // the backends that hold a copy. Empty input yields an empty map; keys
@@ -98,6 +105,10 @@ func (s *Store) GetAllObjectLocations(ctx context.Context, key string) ([]core.O
 	return locs, nil
 }
 
+// -------------------------------------------------------------------------
+// WRITE OPERATIONS
+// -------------------------------------------------------------------------
+
 // RecordObject delegates to core.RecordObject which composes the
 // engine-agnostic transactional sequence against the SQLite TxAdapter.
 func (s *Store) RecordObject(ctx context.Context, key, backend string, size int64, enc *core.EncryptionMeta) ([]core.DeletedCopy, error) {
@@ -121,6 +132,10 @@ func (s *Store) DeleteObject(ctx context.Context, key string) ([]core.DeletedCop
 func (s *Store) DeleteObjectsBatch(ctx context.Context, keys []string) (map[string][]core.DeletedCopy, error) {
 	return core.DeleteObjectsBatch(ctx, s, keys)
 }
+
+// -------------------------------------------------------------------------
+// LISTING
+// -------------------------------------------------------------------------
 
 // ListObjects returns objects matching the given prefix, sorted by key.
 // Supports pagination via startAfter and maxKeys. Returns one extra row to
@@ -259,6 +274,10 @@ func scanSlimObjectLocations(rows *sql.Rows) ([]core.ObjectLocation, error) {
 	return locs, nil
 }
 
+// -------------------------------------------------------------------------
+// LOCATION MUTATIONS
+// -------------------------------------------------------------------------
+
 // MoveObjectLocation delegates to core.MoveObjectLocation.
 func (s *Store) MoveObjectLocation(ctx context.Context, key, fromBackend, toBackend string) (int64, error) {
 	return core.MoveObjectLocation(ctx, s, key, fromBackend, toBackend)
@@ -311,6 +330,10 @@ func (s *Store) DeleteBackendData(ctx context.Context, backendName string) error
 		return nil
 	})
 }
+
+// -------------------------------------------------------------------------
+// INTEGRITY
+// -------------------------------------------------------------------------
 
 // GetRandomHashedObjects returns random object locations that have a stored
 // content hash. Used by the scrubber to verify data integrity. Uses
@@ -379,6 +402,10 @@ func (s *Store) UpdateContentHash(ctx context.Context, key, backendName, hash st
 		WHERE object_key = ? AND backend_name = ?`, hash, key, backendName)
 	return err
 }
+
+// -------------------------------------------------------------------------
+// ROW SCANNERS
+// -------------------------------------------------------------------------
 
 // scanObjectLocation scans a full object location row including all encryption
 // and integrity columns.

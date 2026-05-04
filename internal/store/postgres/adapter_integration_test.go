@@ -35,6 +35,7 @@ import (
 // SHARED CONTAINER FIXTURE
 // -------------------------------------------------------------------------
 
+// pgFixtureOnce and related package-level variables used by this package.
 var (
 	pgFixtureOnce sync.Once
 	pgFixture     *Store

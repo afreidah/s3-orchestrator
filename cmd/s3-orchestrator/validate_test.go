@@ -17,6 +17,8 @@ import (
 	"testing"
 )
 
+// TestValidateConfig_ValidFile verifies the validate config valid file contract.
+// Asserts that expected no error, got:.
 func TestValidateConfig_ValidFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
@@ -66,6 +68,7 @@ backends:
 	}
 }
 
+// TestValidateConfig_MissingFile verifies the validate config missing file behaviour described by the test name.
 func TestValidateConfig_MissingFile(t *testing.T) {
 	var buf bytes.Buffer
 	err := validateConfig("/nonexistent/config.yaml", &buf)
@@ -74,6 +77,7 @@ func TestValidateConfig_MissingFile(t *testing.T) {
 	}
 }
 
+// TestValidateConfig_InvalidConfig verifies the validate config invalid config path by exercising filepath.Join, os.WriteFile.
 func TestValidateConfig_InvalidConfig(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")

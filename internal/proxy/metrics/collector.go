@@ -24,8 +24,12 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // Deps is the narrow store surface Collector needs to refresh Prometheus
-// gauges. Defined here — at the consumer — rather than in the store
+// gauges. Defined here  -  at the consumer  -  rather than in the store
 // package: adding a new metric is a Collector concern, not a store-package
 // concern.
 type Deps interface {
@@ -56,6 +60,10 @@ func New(store Deps, usage *counter.UsageTracker, backendNames []string, replica
 	}
 }
 
+// -------------------------------------------------------------------------
+// PER-OPERATION RECORDING
+// -------------------------------------------------------------------------
+
 // RecordOperation updates Prometheus request count and duration metrics
 // for a single manager operation.
 func (mc *Collector) RecordOperation(operation, backend string, start time.Time, err error) {
@@ -67,6 +75,10 @@ func (mc *Collector) RecordOperation(operation, backend string, start time.Time,
 	telemetry.ManagerRequestsTotal.WithLabelValues(operation, backend, status).Inc()
 	telemetry.ManagerDuration.WithLabelValues(operation, backend).Observe(time.Since(start).Seconds())
 }
+
+// -------------------------------------------------------------------------
+// PERIODIC REFRESH
+// -------------------------------------------------------------------------
 
 // UpdateQuotaMetrics fetches quota stats, object counts, active multipart
 // upload counts, and monthly usage, then updates the corresponding

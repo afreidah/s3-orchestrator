@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------
-// Database Circuit Breaker — helpers
+// Database Circuit Breaker  -  helpers
 //
 // Author: Alex Freidah
 //

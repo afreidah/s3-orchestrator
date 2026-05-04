@@ -10,6 +10,8 @@ package internalkey
 
 import "testing"
 
+// TestMakeAndSplit_RoundTrip verifies the make and split round trip contract.
+// Asserts that Make(, ) -> -> Split = (, ).
 func TestMakeAndSplit_RoundTrip(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -31,6 +33,8 @@ func TestMakeAndSplit_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestSplit_NoSeparator verifies the split no separator contract.
+// Asserts that Split(\"orphan\") = (, ), want (\"orphan\", \"\").
 func TestSplit_NoSeparator(t *testing.T) {
 	t.Parallel()
 	bucket, userKey := Split("orphan")
@@ -39,6 +43,8 @@ func TestSplit_NoSeparator(t *testing.T) {
 	}
 }
 
+// TestPrefix verifies the prefix contract.
+// Asserts that Prefix(\"alpha\") = , want \"alpha/\.
 func TestPrefix(t *testing.T) {
 	t.Parallel()
 	if got := Prefix("alpha"); got != "alpha/" {

@@ -5,8 +5,8 @@
 //
 // Standalone helpers for encrypting request bodies and decrypting response
 // bodies. Used by ObjectManager (PutObject, GetObject) and MultipartManager
-// (UploadPart, CompleteMultipartUpload) to avoid duplicating the encrypt →
-// build-metadata → record-telemetry pattern.
+// (UploadPart, CompleteMultipartUpload) to avoid duplicating the encrypt ->
+// build-metadata -> record-telemetry pattern.
 // -------------------------------------------------------------------------------
 
 package proxy
@@ -25,7 +25,7 @@ import (
 
 // putEncryptState carries the cached DEK across PutObject failover attempts
 // so retries reuse the wrapped DEK instead of paying another KeyProvider
-// round-trip. The zero value means "no DEK cached yet — wrap on first call".
+// round-trip. The zero value means "no DEK cached yet  -  wrap on first call".
 type putEncryptState struct {
 	dek, wrappedDEK []byte
 	keyID           string

@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------
-// Pass-through — AdvisoryLocker
+// Pass-through  -  AdvisoryLocker
 //
 // Author: Alex Freidah
 //

@@ -22,6 +22,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// TestListObjectsV2_Success verifies the list objects v2 success contract.
+// Asserts that status = , want 200.
 func TestListObjectsV2_Success(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
@@ -61,6 +63,8 @@ func TestListObjectsV2_Success(t *testing.T) {
 	}
 }
 
+// TestListObjectsV2_WithDelimiter verifies the list objects v2 with delimiter contract.
+// Asserts that status = , want 200.
 func TestListObjectsV2_WithDelimiter(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
@@ -95,6 +99,8 @@ func TestListObjectsV2_WithDelimiter(t *testing.T) {
 	}
 }
 
+// TestListObjectsV2_Pagination verifies the list objects v2 pagination contract.
+// Asserts that status = , want 200.
 func TestListObjectsV2_Pagination(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
@@ -141,6 +147,8 @@ func TestListObjectsV2_Pagination(t *testing.T) {
 	}
 }
 
+// TestListObjectsV2_Empty verifies the list objects v2 empty contract.
+// Asserts that status = , want 200.
 func TestListObjectsV2_Empty(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
@@ -179,6 +187,8 @@ func TestListObjectsV2_Empty(t *testing.T) {
 // ListObjectsV1
 // -------------------------------------------------------------------------
 
+// TestListObjectsV1_Success verifies the list objects v1 success contract.
+// Asserts that status = , want 200.
 func TestListObjectsV1_Success(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
@@ -220,6 +230,8 @@ func TestListObjectsV1_Success(t *testing.T) {
 	}
 }
 
+// TestListObjectsV1_WithMarker verifies the list objects v1 with marker contract.
+// Asserts that status = , want 200.
 func TestListObjectsV1_WithMarker(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
@@ -249,6 +261,8 @@ func TestListObjectsV1_WithMarker(t *testing.T) {
 	}
 }
 
+// TestListObjectsV1_StoreError verifies the list objects v1 store error contract.
+// Asserts that status = , want 500.
 func TestListObjectsV1_StoreError(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
@@ -266,6 +280,8 @@ func TestListObjectsV1_StoreError(t *testing.T) {
 	}
 }
 
+// TestListObjectsV1_Pagination verifies the list objects v1 pagination contract.
+// Asserts that status = , want 200.
 func TestListObjectsV1_Pagination(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
@@ -309,6 +325,8 @@ func TestListObjectsV1_Pagination(t *testing.T) {
 	}
 }
 
+// TestListObjectsV1_NoAuth verifies the list objects v1 no auth contract.
+// Asserts that expected 403, got.
 func TestListObjectsV1_NoAuth(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t)

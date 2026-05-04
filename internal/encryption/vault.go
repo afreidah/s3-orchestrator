@@ -25,6 +25,10 @@ import (
 	vault "github.com/hashicorp/vault/api"
 )
 
+// -------------------------------------------------------------------------
+// PROVIDER
+// -------------------------------------------------------------------------
+
 // VaultKeyProvider wraps and unwraps DEKs via the Vault Transit encrypt and
 // decrypt endpoints. A background goroutine renews the token before expiry
 // (static token mode) or re-reads it from a file (Nomad workload identity
@@ -97,6 +101,10 @@ func (p *VaultKeyProvider) KeyID() string { return p.keyID }
 // Close stops the background token renewal goroutine.
 func (p *VaultKeyProvider) Close() { p.cancel() }
 
+// -------------------------------------------------------------------------
+// DEK WRAP / UNWRAP
+// -------------------------------------------------------------------------
+
 // WrapDEK sends the plaintext DEK to Vault Transit for encryption and returns
 // the Vault ciphertext blob as the wrapped DEK.
 func (p *VaultKeyProvider) WrapDEK(ctx context.Context, dek []byte) ([]byte, string, error) {
@@ -149,6 +157,10 @@ func (p *VaultKeyProvider) UnwrapDEK(ctx context.Context, wrappedDEK []byte, _ s
 	}
 	return dek, nil
 }
+
+// -------------------------------------------------------------------------
+// TOKEN LIFECYCLE
+// -------------------------------------------------------------------------
 
 // tokenRenewalLoop runs in a background goroutine and keeps the Vault token
 // alive. For token_file configs it re-reads the file; for static tokens it

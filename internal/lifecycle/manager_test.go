@@ -23,10 +23,14 @@ import (
 // TEST HELPERS
 // -------------------------------------------------------------------------
 
+// counterService records the number of times Run was invoked so the
+// supervisor's restart loop can be asserted across panic and clean-
+// exit paths.
 type counterService struct {
 	count atomic.Int64
 }
 
+// Run runs .
 func (s *counterService) Run(ctx context.Context) error {
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
@@ -40,10 +44,14 @@ func (s *counterService) Run(ctx context.Context) error {
 	}
 }
 
+// panicOnceService panics on its first Run and runs normally
+// thereafter so tests can assert the supervisor recovers and
+// restarts a panicking service rather than crashing the manager.
 type panicOnceService struct {
 	calls atomic.Int64
 }
 
+// Run runs .
 func (s *panicOnceService) Run(ctx context.Context) error {
 	n := s.calls.Add(1)
 	if n == 1 {
@@ -53,10 +61,14 @@ func (s *panicOnceService) Run(ctx context.Context) error {
 	return nil
 }
 
+// errorOnceService returns an error on its first Run and runs
+// normally thereafter so tests can assert the supervisor backs off
+// and restarts on a returned error (separate path from a panic).
 type errorOnceService struct {
 	calls atomic.Int64
 }
 
+// Run runs .
 func (s *errorOnceService) Run(ctx context.Context) error {
 	n := s.calls.Add(1)
 	if n == 1 {
@@ -66,30 +78,44 @@ func (s *errorOnceService) Run(ctx context.Context) error {
 	return nil
 }
 
+// stopErrorService is a Stoppable whose Stop call returns an
+// error. Lets tests assert the manager logs the error without
+// blocking the rest of the shutdown sequence.
 type stopErrorService struct {
 	ran chan struct{}
 }
 
+// Run runs .
 func (s *stopErrorService) Run(ctx context.Context) error {
 	close(s.ran)
 	<-ctx.Done()
 	return nil
 }
 
+// Stop satisfies Stoppable. The behaviour depends on the fixture:
+// stopErrorService returns an error, stoppableService records the
+// call, and the inline test version is a no-op.
 func (s *stopErrorService) Stop(_ context.Context) error {
 	return context.DeadlineExceeded
 }
 
+// stoppableService is a Stoppable whose Stop call records the
+// invocation so tests can assert the manager called Stop on
+// shutdown.
 type stoppableService struct {
 	stopped chan string
 	name    string
 }
 
+// Run runs .
 func (s *stoppableService) Run(ctx context.Context) error {
 	<-ctx.Done()
 	return nil
 }
 
+// Stop satisfies Stoppable. The behaviour depends on the fixture:
+// stopErrorService returns an error, stoppableService records the
+// call, and the inline test version is a no-op.
 func (s *stoppableService) Stop(_ context.Context) error {
 	s.stopped <- s.name
 	return nil
@@ -99,6 +125,7 @@ func (s *stoppableService) Stop(_ context.Context) error {
 // TESTS
 // -------------------------------------------------------------------------
 
+// TestManager_RunAndStop verifies the manager run and stop path by exercising mgr.Register, context.WithCancel, context.Background.
 func TestManager_RunAndStop(t *testing.T) {
 	mgr := NewManager()
 	svc := &counterService{}
@@ -127,6 +154,7 @@ func TestManager_RunAndStop(t *testing.T) {
 	}
 }
 
+// TestManager_PanicRecovery verifies the manager panic recovery path by exercising mgr.SetBackoff, mgr.Register, context.WithCancel.
 func TestManager_PanicRecovery(t *testing.T) {
 	t.Parallel()
 	mgr := NewManager()
@@ -141,7 +169,7 @@ func TestManager_PanicRecovery(t *testing.T) {
 		close(done)
 	}()
 
-	// Wait for panic → restart → second call (backoff is 1ms on first retry)
+	// Wait for panic -> restart -> second call (backoff is 1ms on first retry)
 	testx.Eventually(t, 2*time.Second, func() bool { return svc.calls.Load() >= 2 },
 		"service did not restart after panic")
 	cancel()
@@ -153,6 +181,8 @@ func TestManager_PanicRecovery(t *testing.T) {
 	}
 }
 
+// TestManager_StopCallsStoppable verifies the manager stop calls stoppable contract.
+// Asserts that Expected stop for svc-a, got.
 func TestManager_StopCallsStoppable(t *testing.T) {
 	mgr := NewManager()
 	stopped := make(chan string, 1)
@@ -185,6 +215,8 @@ func TestManager_StopCallsStoppable(t *testing.T) {
 	}
 }
 
+// TestManager_StopReverseOrder verifies the manager stop reverse order contract.
+// Asserts that Expected stop order , got.
 func TestManager_StopReverseOrder(t *testing.T) {
 	mgr := NewManager()
 	var mu sync.Mutex
@@ -234,6 +266,7 @@ func TestManager_StopReverseOrder(t *testing.T) {
 	}
 }
 
+// TestManager_ErrorRestart verifies the manager error restart path by exercising mgr.SetBackoff, mgr.Register, context.WithCancel.
 func TestManager_ErrorRestart(t *testing.T) {
 	t.Parallel()
 	mgr := NewManager()
@@ -248,7 +281,7 @@ func TestManager_ErrorRestart(t *testing.T) {
 		close(done)
 	}()
 
-	// Wait for error → restart delay → second call (backoff is 1ms on first retry)
+	// Wait for error -> restart delay -> second call (backoff is 1ms on first retry)
 	testx.Eventually(t, 2*time.Second, func() bool { return svc.calls.Load() >= 2 },
 		"service did not restart after error")
 	cancel()
@@ -260,6 +293,7 @@ func TestManager_ErrorRestart(t *testing.T) {
 	}
 }
 
+// TestManager_StopErrorDoesNotPanic verifies the manager stop error does not panic path by exercising mgr.Register, context.WithCancel, context.Background.
 func TestManager_StopErrorDoesNotPanic(t *testing.T) {
 	t.Parallel()
 	mgr := NewManager()
@@ -286,17 +320,20 @@ type alwaysPanicService struct {
 	calls atomic.Int64
 }
 
+// Run runs .
 func (s *alwaysPanicService) Run(_ context.Context) error {
 	s.calls.Add(1)
 	panic("always panic")
 }
 
+// TestManager_BackoffLimitsRestartRate verifies the manager backoff limits restart rate contract.
+// Asserts that Expected <=5 restarts with exponential backoff, got.
 func TestManager_BackoffLimitsRestartRate(t *testing.T) {
 	t.Parallel()
 	mgr := NewManager()
 	// Scaled-down backoff so the test runs in tens of milliseconds instead
 	// of seconds while exercising the same exponential schedule as prod
-	// (initial, 2×initial, 4×initial, ...).
+	// (initial, 2xinitial, 4xinitial, ...).
 	mgr.SetBackoff(5*time.Millisecond, 150*time.Millisecond, 1*time.Hour)
 	svc := &alwaysPanicService{}
 	mgr.Register("always-panic", svc)
@@ -310,7 +347,7 @@ func TestManager_BackoffLimitsRestartRate(t *testing.T) {
 
 	// With exponential backoff (5ms, 10ms, 20ms, ...) the first 25ms of the
 	// window covers roughly 5+10=15ms of backoff plus a couple of instant
-	// panic cycles — at most a handful of restarts, never the hundreds a
+	// panic cycles  -  at most a handful of restarts, never the hundreds a
 	// flat 5ms delay would allow.
 	time.Sleep(25 * time.Millisecond)
 	cancel()
@@ -330,6 +367,7 @@ func TestManager_BackoffLimitsRestartRate(t *testing.T) {
 	}
 }
 
+// TestManager_NoServicesRunsCleanly verifies the manager no services runs cleanly path by exercising context.WithCancel, context.Background, mgr.Run.
 func TestManager_NoServicesRunsCleanly(t *testing.T) {
 	t.Parallel()
 	mgr := NewManager()
@@ -360,11 +398,15 @@ type slowStopService struct {
 	name    string
 }
 
+// Run runs .
 func (s *slowStopService) Run(ctx context.Context) error {
 	<-ctx.Done()
 	return nil
 }
 
+// Stop satisfies Stoppable. The behaviour depends on the fixture:
+// stopErrorService returns an error, stoppableService records the
+// call, and the inline test version is a no-op.
 func (s *slowStopService) Stop(ctx context.Context) error {
 	<-ctx.Done()
 	s.stopped <- s.name
@@ -413,7 +455,7 @@ func TestManager_StopPerServiceTimeout(t *testing.T) {
 	}
 
 	// Should be ~100ms (slow burns its share, fast stops instantly). Give
-	// 3× headroom for slow CI.
+	// 3x headroom for slow CI.
 	if elapsed > 3*totalBudget {
 		t.Errorf("Stop took %v, expected ~%v (per-service budgets)", elapsed, totalBudget/2)
 	}

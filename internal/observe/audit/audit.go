@@ -23,7 +23,7 @@ import (
 
 // onEvent holds an optional callback invoked for each audit event with the
 // event name. Set via SetOnEvent at startup to integrate audit logging with
-// metrics (e.g. Prometheus counters). When nil, audit logging still works —
+// metrics (e.g. Prometheus counters). When nil, audit logging still works  - 
 // events are emitted via slog but no counter is incremented.
 var onEvent atomic.Pointer[func(event string)]
 
@@ -41,8 +41,12 @@ func SetOnEvent(fn func(event string)) {
 // CONTEXT KEYS
 // -------------------------------------------------------------------------
 
+// contextKey is an unexported integer type used to namespace audit-
+// package values stored in context.Context. Using an unexported type
+// guarantees no other package can collide with these keys.
 type contextKey int
 
+// requestIDKey and related constants used by this package.
 const (
 	requestIDKey contextKey = iota
 )

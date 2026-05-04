@@ -1,3 +1,15 @@
+# -------------------------------------------------------------------------------
+# Helm Chart - s3-orchestrator
+#
+# Author: Alex Freidah
+#
+# Top-level Helm chart manifest. Pinned to chart API v2 (Helm 3+) and tracks
+# the binary's release version through appVersion. The chart packages every
+# orchestrator deployment object the templates/ directory contains:
+# Deployment, Service, ConfigMap, Secret, Ingress, NetworkPolicy, and
+# ServiceAccount.
+# -------------------------------------------------------------------------------
+
 apiVersion: v2
 name: s3-orchestrator
 description: Unified S3-compatible storage across multiple backends

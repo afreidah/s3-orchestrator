@@ -1,3 +1,13 @@
+# -------------------------------------------------------------------------------
+# Helm Template - Service
+#
+# Author: Alex Freidah
+#
+# ClusterIP Service that routes S3 traffic to the orchestrator pods.
+# Service type, port, and target port come from .Values so operators
+# can switch to LoadBalancer or NodePort without templating.
+# -------------------------------------------------------------------------------
+
 apiVersion: v1
 kind: Service
 metadata:

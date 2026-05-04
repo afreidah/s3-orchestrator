@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------
-// CB Decorator — ObjectStore
+// CB Decorator  -  ObjectStore
 //
 // Author: Alex Freidah
 //

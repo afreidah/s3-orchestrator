@@ -56,7 +56,8 @@ func TestFailableBackend_PassthroughWhenHealthy(t *testing.T) {
 	}
 }
 
-// TestFailableBackend_SetFailing_AllMethodsFail verifies the global toggle.
+// TestFailableBackend_SetFailing_AllMethodsFail verifies the failable backend set failing all methods fail contract.
+// Asserts that PutObject err = , want.
 func TestFailableBackend_SetFailing_AllMethodsFail(t *testing.T) {
 	t.Parallel()
 	fb := New(newPassThroughBackend(t))
@@ -107,7 +108,8 @@ func TestFailableBackend_SetErr_PerMethodOverride(t *testing.T) {
 	}
 }
 
-// TestFailableBackend_Clear verifies that clearing failures restores passthrough.
+// TestFailableBackend_Clear verifies the failable backend clear contract.
+// Asserts that GetObject after clear:.
 func TestFailableBackend_Clear(t *testing.T) {
 	t.Parallel()
 	fb := New(newPassThroughBackend(t))

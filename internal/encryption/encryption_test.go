@@ -30,6 +30,10 @@ func testKeyProvider(t *testing.T) *ConfigKeyProvider {
 	return p
 }
 
+// testEncryptor builds an Encryptor with a deterministic master key
+// and a 64-byte chunk size suitable for unit tests. The chunk size
+// is small enough that round-trip tests exercise multiple chunks
+// even with short plaintext.
 func testEncryptor(t *testing.T, chunkSize int) *Encryptor {
 	t.Helper()
 	enc, err := NewEncryptor(testKeyProvider(t), chunkSize)
@@ -43,6 +47,8 @@ func testEncryptor(t *testing.T, chunkSize int) *Encryptor {
 // ENCRYPT + DECRYPT ROUND-TRIP
 // -------------------------------------------------------------------------
 
+// TestEncryptDecrypt_Empty verifies the encrypt decrypt empty contract.
+// Asserts that Encrypt:.
 func TestEncryptDecrypt_Empty(t *testing.T) {
 	t.Parallel()
 	enc := testEncryptor(t, 64)
@@ -78,6 +84,8 @@ func TestEncryptDecrypt_Empty(t *testing.T) {
 	}
 }
 
+// TestEncryptDecrypt_OneByte verifies the encrypt decrypt one byte contract.
+// Asserts that Encrypt:.
 func TestEncryptDecrypt_OneByte(t *testing.T) {
 	t.Parallel()
 	enc := testEncryptor(t, 64)
@@ -109,6 +117,8 @@ func TestEncryptDecrypt_OneByte(t *testing.T) {
 	}
 }
 
+// TestEncryptDecrypt_ExactlyOneChunk verifies the encrypt decrypt exactly one chunk contract.
+// Asserts that Encrypt:.
 func TestEncryptDecrypt_ExactlyOneChunk(t *testing.T) {
 	t.Parallel()
 	const chunkSize = 128
@@ -143,6 +153,8 @@ func TestEncryptDecrypt_ExactlyOneChunk(t *testing.T) {
 	}
 }
 
+// TestEncryptDecrypt_MultiChunk verifies the encrypt decrypt multi chunk contract.
+// Asserts that Encrypt:.
 func TestEncryptDecrypt_MultiChunk(t *testing.T) {
 	t.Parallel()
 	const chunkSize = 64
@@ -182,6 +194,8 @@ func TestEncryptDecrypt_MultiChunk(t *testing.T) {
 	}
 }
 
+// TestEncryptDecrypt_LargePayload verifies the encrypt decrypt large payload contract.
+// Asserts that Encrypt:.
 func TestEncryptDecrypt_LargePayload(t *testing.T) {
 	t.Parallel()
 	const chunkSize = 256
@@ -221,6 +235,8 @@ func TestEncryptDecrypt_LargePayload(t *testing.T) {
 // RANGE DECRYPTION
 // -------------------------------------------------------------------------
 
+// TestDecryptRange_FirstChunk verifies the decrypt range first chunk contract.
+// Asserts that Encrypt:.
 func TestDecryptRange_FirstChunk(t *testing.T) {
 	t.Parallel()
 	const chunkSize = 64
@@ -271,6 +287,8 @@ func TestDecryptRange_FirstChunk(t *testing.T) {
 	}
 }
 
+// TestDecryptRange_CrossChunkBoundary verifies the decrypt range cross chunk boundary contract.
+// Asserts that Encrypt:.
 func TestDecryptRange_CrossChunkBoundary(t *testing.T) {
 	t.Parallel()
 	const chunkSize = 64
@@ -292,7 +310,7 @@ func TestDecryptRange_CrossChunkBoundary(t *testing.T) {
 		t.Fatalf("ReadAll: %v", err)
 	}
 
-	// Request bytes 60-70 (crosses chunk 0→1 boundary at byte 64)
+	// Request bytes 60-70 (crosses chunk 0->1 boundary at byte 64)
 	rng, err := CiphertextRange(60, 70, chunkSize)
 	if err != nil {
 		t.Fatalf("CiphertextRange: %v", err)
@@ -327,6 +345,8 @@ func TestDecryptRange_CrossChunkBoundary(t *testing.T) {
 // CIPHERTEXT SIZE
 // -------------------------------------------------------------------------
 
+// TestCiphertextSize_Zero verifies the ciphertext size zero contract.
+// Asserts that CiphertextSize(0) = , want.
 func TestCiphertextSize_Zero(t *testing.T) {
 	t.Parallel()
 	enc := testEncryptor(t, 64)
@@ -336,11 +356,13 @@ func TestCiphertextSize_Zero(t *testing.T) {
 	}
 }
 
+// TestCiphertextSize_OneChunk verifies the ciphertext size one chunk contract.
+// Asserts that CiphertextSize(1) = , want.
 func TestCiphertextSize_OneChunk(t *testing.T) {
 	t.Parallel()
 	const chunkSize = 64
 	enc := testEncryptor(t, chunkSize)
-	// 1 byte → 1 chunk
+	// 1 byte -> 1 chunk
 	got := enc.CiphertextSize(1)
 	want := int64(HeaderSize + ChunkOverhead + 1)
 	if got != want {
@@ -348,6 +370,8 @@ func TestCiphertextSize_OneChunk(t *testing.T) {
 	}
 }
 
+// TestCiphertextSize_ExactChunk verifies the ciphertext size exact chunk contract.
+// Asserts that CiphertextSize() = , want.
 func TestCiphertextSize_ExactChunk(t *testing.T) {
 	t.Parallel()
 	const chunkSize = 64
@@ -359,6 +383,8 @@ func TestCiphertextSize_ExactChunk(t *testing.T) {
 	}
 }
 
+// TestCiphertextSize_MultiChunk verifies the ciphertext size multi chunk contract.
+// Asserts that CiphertextSize() = , want.
 func TestCiphertextSize_MultiChunk(t *testing.T) {
 	t.Parallel()
 	const chunkSize = 64
@@ -372,6 +398,8 @@ func TestCiphertextSize_MultiChunk(t *testing.T) {
 	}
 }
 
+// TestCiphertextSize_MatchesActualOutput verifies the ciphertext size matches actual output contract.
+// Asserts that Encrypt():.
 func TestCiphertextSize_MatchesActualOutput(t *testing.T) {
 	t.Parallel()
 	const chunkSize = 64
@@ -404,6 +432,8 @@ func TestCiphertextSize_MatchesActualOutput(t *testing.T) {
 // PACK / UNPACK KEY DATA
 // -------------------------------------------------------------------------
 
+// TestPackUnpackKeyData_RoundTrip verifies the pack unpack key data round trip contract.
+// Asserts that UnpackKeyData:.
 func TestPackUnpackKeyData_RoundTrip(t *testing.T) {
 	t.Parallel()
 	baseNonce := make([]byte, NonceSize)
@@ -427,6 +457,7 @@ func TestPackUnpackKeyData_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestUnpackKeyData_TooShort verifies the unpack key data too short behaviour described by the test name.
 func TestUnpackKeyData_TooShort(t *testing.T) {
 	t.Parallel()
 	_, _, err := UnpackKeyData(make([]byte, NonceSize))
@@ -439,6 +470,8 @@ func TestUnpackKeyData_TooShort(t *testing.T) {
 // HEADER PARSING
 // -------------------------------------------------------------------------
 
+// TestParseHeader_Valid verifies the parse header valid contract.
+// Asserts that Encrypt:.
 func TestParseHeader_Valid(t *testing.T) {
 	t.Parallel()
 	enc := testEncryptor(t, 256)
@@ -470,6 +503,7 @@ func TestParseHeader_Valid(t *testing.T) {
 	}
 }
 
+// TestParseHeader_InvalidMagic verifies the parse header invalid magic path by exercising bytes.NewReader.
 func TestParseHeader_InvalidMagic(t *testing.T) {
 	t.Parallel()
 	hdr := make([]byte, HeaderSize)
@@ -480,6 +514,7 @@ func TestParseHeader_InvalidMagic(t *testing.T) {
 	}
 }
 
+// TestParseHeader_UnsupportedVersion verifies the parse header unsupported version path by exercising bytes.NewReader.
 func TestParseHeader_UnsupportedVersion(t *testing.T) {
 	t.Parallel()
 	hdr := make([]byte, HeaderSize)
@@ -491,6 +526,7 @@ func TestParseHeader_UnsupportedVersion(t *testing.T) {
 	}
 }
 
+// TestParseHeader_TooShort verifies the parse header too short path by exercising bytes.NewReader.
 func TestParseHeader_TooShort(t *testing.T) {
 	t.Parallel()
 	_, _, err := ParseHeader(bytes.NewReader(make([]byte, 10)))
@@ -503,6 +539,8 @@ func TestParseHeader_TooShort(t *testing.T) {
 // ACCESSOR METHODS
 // -------------------------------------------------------------------------
 
+// TestEncryptor_ChunkSize verifies the encryptor chunk size contract.
+// Asserts that ChunkSize = , want 4096.
 func TestEncryptor_ChunkSize(t *testing.T) {
 	t.Parallel()
 	enc := testEncryptor(t, 4096)
@@ -511,6 +549,8 @@ func TestEncryptor_ChunkSize(t *testing.T) {
 	}
 }
 
+// TestNewEncryptor_InvalidChunkSize verifies the new encryptor invalid chunk size contract.
+// Asserts that NewEncryptor(chunkSize=) should return error.
 func TestNewEncryptor_InvalidChunkSize(t *testing.T) {
 	t.Parallel()
 	for _, cs := range []int{0, -1, -100} {
@@ -521,6 +561,7 @@ func TestNewEncryptor_InvalidChunkSize(t *testing.T) {
 	}
 }
 
+// TestEncryptor_Provider verifies the encryptor provider path by exercising enc.Provider.
 func TestEncryptor_Provider(t *testing.T) {
 	t.Parallel()
 	p := testKeyProvider(t)
@@ -537,6 +578,8 @@ func TestEncryptor_Provider(t *testing.T) {
 // DECRYPT ERROR PATHS
 // -------------------------------------------------------------------------
 
+// TestDecrypt_BadWrappedDEK verifies the decrypt bad wrapped dek contract.
+// Asserts that Encrypt:.
 func TestDecrypt_BadWrappedDEK(t *testing.T) {
 	t.Parallel()
 	enc := testEncryptor(t, 64)
@@ -557,6 +600,8 @@ func TestDecrypt_BadWrappedDEK(t *testing.T) {
 	}
 }
 
+// TestDecrypt_CorruptedCiphertext verifies the decrypt corrupted ciphertext contract.
+// Asserts that Encrypt:.
 func TestDecrypt_CorruptedCiphertext(t *testing.T) {
 	t.Parallel()
 	enc := testEncryptor(t, 64)
@@ -585,6 +630,7 @@ func TestDecrypt_CorruptedCiphertext(t *testing.T) {
 	}
 }
 
+// TestDecryptRange_BadWrappedDEK verifies the decrypt range bad wrapped dek path by exercising context.Background, enc.DecryptRange, bytes.NewReader.
 func TestDecryptRange_BadWrappedDEK(t *testing.T) {
 	t.Parallel()
 	enc := testEncryptor(t, 64)
@@ -601,6 +647,8 @@ func TestDecryptRange_BadWrappedDEK(t *testing.T) {
 // SMALL-READ BUFFER SIZES (exercises buffering paths)
 // -------------------------------------------------------------------------
 
+// TestEncryptDecrypt_SmallReads verifies the encrypt decrypt small reads contract.
+// Asserts that Encrypt:.
 func TestEncryptDecrypt_SmallReads(t *testing.T) {
 	t.Parallel()
 	enc := testEncryptor(t, 64)
@@ -659,6 +707,8 @@ func TestEncryptDecrypt_SmallReads(t *testing.T) {
 // ENCRYPT WITH DEK (FAILOVER REUSE)
 // -------------------------------------------------------------------------
 
+// TestEncryptWithDEK_RoundTrip verifies the encrypt with dek round trip contract.
+// Asserts that Encrypt:.
 func TestEncryptWithDEK_RoundTrip(t *testing.T) {
 	t.Parallel()
 	enc := testEncryptor(t, 64)
@@ -668,7 +718,7 @@ func TestEncryptWithDEK_RoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// First encrypt — normal path (wraps DEK via provider)
+	// First encrypt  -  normal path (wraps DEK via provider)
 	first, err := enc.Encrypt(ctx, bytes.NewReader(original), int64(len(original)))
 	if err != nil {
 		t.Fatalf("Encrypt: %v", err)
@@ -681,7 +731,7 @@ func TestEncryptWithDEK_RoundTrip(t *testing.T) {
 		t.Fatal("RawDEK should be set after Encrypt")
 	}
 
-	// Second encrypt — reuse DEK (simulates failover retry)
+	// Second encrypt  -  reuse DEK (simulates failover retry)
 	second, err := enc.EncryptWithDEK(bytes.NewReader(original), int64(len(original)), first.RawDEK(), first.WrappedDEK, first.KeyID)
 	if err != nil {
 		t.Fatalf("EncryptWithDEK: %v", err)
@@ -713,6 +763,7 @@ func TestEncryptWithDEK_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestEncryptWithDEK_DifferentNonce verifies the encrypt with dek different nonce path by exercising context.Background, enc.Encrypt, bytes.NewReader.
 func TestEncryptWithDEK_DifferentNonce(t *testing.T) {
 	t.Parallel()
 	enc := testEncryptor(t, 64)

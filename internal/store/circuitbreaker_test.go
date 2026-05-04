@@ -31,7 +31,7 @@ import (
 // testCBBundle exercises the shared *breaker.CircuitBreaker through every
 // per-role CB wrapper. Tests call any method they need; all wrappers share
 // the same breaker, so failures on one method transition the same circuit
-// state seen by another. Production code never composes roles — this
+// state seen by another. Production code never composes roles  -  this
 // aggregation exists only to keep the circuit-breaker state-machine tests
 // compact.
 type testCBBundle struct {
@@ -50,7 +50,7 @@ type testCBBundle struct {
 	*breaker.CircuitBreaker
 }
 
-// GetBackendWithSpace forwards to the embedded QuotaStore — given by name
+// GetBackendWithSpace forwards to the embedded QuotaStore  -  given by name
 // to avoid ambiguous method promotion with DashboardStore.GetQuotaStats.
 func (t *testCBBundle) GetBackendWithSpace(ctx context.Context, size int64, backendOrder []string) (string, error) {
 	return t.quota.GetBackendWithSpace(ctx, size, backendOrder)
@@ -61,6 +61,7 @@ func (t *testCBBundle) GetLeastUtilizedBackend(ctx context.Context, size int64, 
 	return t.quota.GetLeastUtilizedBackend(ctx, size, eligible)
 }
 
+// newTestCB constructs a new test cb.
 func newTestCB(mock *mockStore, threshold int, timeout time.Duration) *testCBBundle {
 	_ = config.CircuitBreakerConfig{}
 	cb := breaker.NewCircuitBreaker("database", threshold, timeout, isDBError, core.ErrDBUnavailable)
@@ -81,6 +82,8 @@ func newTestCB(mock *mockStore, threshold int, timeout time.Duration) *testCBBun
 	}
 }
 
+// TestCircuitBreaker_ClosedPassesThrough verifies the circuit breaker closed passes through contract.
+// Asserts that unexpected error:.
 func TestCircuitBreaker_ClosedPassesThrough(t *testing.T) {
 	t.Parallel()
 	mock := &mockStore{
@@ -100,6 +103,8 @@ func TestCircuitBreaker_ClosedPassesThrough(t *testing.T) {
 	}
 }
 
+// TestCircuitBreaker_OpensAfterThreshold verifies the circuit breaker opens after threshold contract.
+// Asserts that call : expected dbErr, got.
 func TestCircuitBreaker_OpensAfterThreshold(t *testing.T) {
 	t.Parallel()
 	dbErr := errors.New("connection refused")
@@ -116,7 +121,7 @@ func TestCircuitBreaker_OpensAfterThreshold(t *testing.T) {
 		}
 	}
 
-	// 3rd call trips the threshold — circuit opens, returns ErrDBUnavailable
+	// 3rd call trips the threshold  -  circuit opens, returns ErrDBUnavailable
 	_, err := cb.GetAllObjectLocations(ctx, "key")
 	if !errors.Is(err, core.ErrDBUnavailable) {
 		t.Fatalf("call 2: expected ErrDBUnavailable, got %v", err)
@@ -135,6 +140,8 @@ func TestCircuitBreaker_OpensAfterThreshold(t *testing.T) {
 	}
 }
 
+// TestCircuitBreaker_HalfOpenAfterTimeout verifies the circuit breaker half open after timeout contract.
+// Asserts that expected ErrDBUnavailable, got.
 func TestCircuitBreaker_HalfOpenAfterTimeout(t *testing.T) {
 	t.Parallel()
 	dbErr := errors.New("connection refused")
@@ -175,6 +182,8 @@ func TestCircuitBreaker_HalfOpenAfterTimeout(t *testing.T) {
 	}
 }
 
+// TestCircuitBreaker_HalfOpenFailureReopens verifies the circuit breaker half open failure reopens contract.
+// Asserts that expected ErrDBUnavailable on failed probe, got.
 func TestCircuitBreaker_HalfOpenFailureReopens(t *testing.T) {
 	t.Parallel()
 	dbErr := errors.New("connection refused")
@@ -189,7 +198,7 @@ func TestCircuitBreaker_HalfOpenFailureReopens(t *testing.T) {
 	// Wait for timeout
 	testx.Eventually(t, 500*time.Millisecond, cb.ProbeEligible, "circuit breaker never became probe-eligible")
 
-	// Probe should fail — circuit reopens, returns ErrDBUnavailable
+	// Probe should fail  -  circuit reopens, returns ErrDBUnavailable
 	_, err := cb.GetAllObjectLocations(ctx, "key")
 	if !errors.Is(err, core.ErrDBUnavailable) {
 		t.Fatalf("expected ErrDBUnavailable on failed probe, got %v", err)
@@ -202,6 +211,8 @@ func TestCircuitBreaker_HalfOpenFailureReopens(t *testing.T) {
 	}
 }
 
+// TestCircuitBreaker_AppErrorsDontTrip verifies the circuit breaker app errors dont trip contract.
+// Asserts that expected ErrObjectNotFound, got.
 func TestCircuitBreaker_AppErrorsDontTrip(t *testing.T) {
 	t.Parallel()
 	mock := &mockStore{getAllLocationsErr: core.ErrObjectNotFound}
@@ -226,6 +237,7 @@ func TestCircuitBreaker_AppErrorsDontTrip(t *testing.T) {
 	}
 }
 
+// TestCircuitBreaker_IsHealthy verifies the circuit breaker is healthy path by exercising errors.New, cb.IsHealthy, cb.GetAllObjectLocations.
 func TestCircuitBreaker_IsHealthy(t *testing.T) {
 	t.Parallel()
 	mock := &mockStore{getAllLocationsErr: errors.New("down")}
@@ -242,6 +254,7 @@ func TestCircuitBreaker_IsHealthy(t *testing.T) {
 	}
 }
 
+// TestCircuitBreaker_SuccessResetsFailures verifies the circuit breaker success resets failures path by exercising context.Background, errors.New, cb.GetAllObjectLocations.
 func TestCircuitBreaker_SuccessResetsFailures(t *testing.T) {
 	t.Parallel()
 	mock := &mockStore{
@@ -281,6 +294,8 @@ func TestCircuitBreaker_SuccessResetsFailures(t *testing.T) {
 // breaker.State.String
 // -------------------------------------------------------------------------
 
+// TestCircuitState_String verifies the circuit state string contract.
+// Asserts that breaker.State().String() = , want.
 func TestCircuitState_String(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -304,6 +319,7 @@ func TestCircuitState_String(t *testing.T) {
 // isDBError
 // -------------------------------------------------------------------------
 
+// TestIsDBError_NilIsNotDBError verifies the is dberror nil is not dberror behaviour described by the test name.
 func TestIsDBError_NilIsNotDBError(t *testing.T) {
 	t.Parallel()
 	if isDBError(nil) {
@@ -311,6 +327,7 @@ func TestIsDBError_NilIsNotDBError(t *testing.T) {
 	}
 }
 
+// TestIsDBError_S3ErrorIsNotDBError verifies the is dberror s3 error is not dberror behaviour described by the test name.
 func TestIsDBError_S3ErrorIsNotDBError(t *testing.T) {
 	t.Parallel()
 	err := &core.S3Error{StatusCode: 404, Code: "NoSuchKey", Message: "not found"}
@@ -319,6 +336,7 @@ func TestIsDBError_S3ErrorIsNotDBError(t *testing.T) {
 	}
 }
 
+// TestIsDBError_ErrNoSpaceIsNotDBError verifies the is dberror err no space is not dberror behaviour described by the test name.
 func TestIsDBError_ErrNoSpaceIsNotDBError(t *testing.T) {
 	t.Parallel()
 	if isDBError(core.ErrNoSpaceAvailable) {
@@ -326,6 +344,7 @@ func TestIsDBError_ErrNoSpaceIsNotDBError(t *testing.T) {
 	}
 }
 
+// TestIsDBError_GenericErrorIsDBError verifies the is dberror generic error is dberror path by exercising errors.New.
 func TestIsDBError_GenericErrorIsDBError(t *testing.T) {
 	t.Parallel()
 	if !isDBError(errors.New("connection refused")) {
@@ -333,6 +352,7 @@ func TestIsDBError_GenericErrorIsDBError(t *testing.T) {
 	}
 }
 
+// TestIsDBError_WrappedS3Error verifies the is dberror wrapped s3 error path by exercising fmt.Errorf.
 func TestIsDBError_WrappedS3Error(t *testing.T) {
 	t.Parallel()
 	inner := &core.S3Error{StatusCode: 507, Code: "InsufficientStorage", Message: "full"}
@@ -378,13 +398,15 @@ func TestCBObjectStore_ListObjectsByBackendKeyAsc_OpenCircuitReturnsSentinel(t *
 		t.Fatal("expected DB error on first call")
 	}
 
-	// Second call: circuit open → sentinel.
+	// Second call: circuit open -> sentinel.
 	_, err := cb.ListObjectsByBackendKeyAsc(context.Background(), "be1", "", 100)
 	if !errors.Is(err, core.ErrDBUnavailable) {
 		t.Errorf("err = %v, want ErrDBUnavailable", err)
 	}
 }
 
+// TestCircuitBreaker_PostCheck_NonDBErrorPassesThrough verifies the circuit breaker post check non dberror passes through contract.
+// Asserts that expected ErrObjectNotFound passthrough, got.
 func TestCircuitBreaker_PostCheck_NonDBErrorPassesThrough(t *testing.T) {
 	t.Parallel()
 	mock := &mockStore{getAllLocationsErr: core.ErrObjectNotFound}
@@ -402,6 +424,8 @@ func TestCircuitBreaker_PostCheck_NonDBErrorPassesThrough(t *testing.T) {
 	}
 }
 
+// TestCircuitBreaker_PostCheck_DBErrorBelowThresholdPassesRawError verifies the circuit breaker post check dberror below threshold passes raw error contract.
+// Asserts that expected raw DB error below threshold, got.
 func TestCircuitBreaker_PostCheck_DBErrorBelowThresholdPassesRawError(t *testing.T) {
 	t.Parallel()
 	dbErr := errors.New("connection refused")
@@ -422,6 +446,8 @@ func TestCircuitBreaker_PostCheck_DBErrorBelowThresholdPassesRawError(t *testing
 // cbCallNoResult
 // -------------------------------------------------------------------------
 
+// TestCircuitBreaker_RecordObject_Success verifies the circuit breaker record object success contract.
+// Asserts that RecordObject:.
 func TestCircuitBreaker_RecordObject_Success(t *testing.T) {
 	t.Parallel()
 	mock := &mockStore{}
@@ -433,6 +459,8 @@ func TestCircuitBreaker_RecordObject_Success(t *testing.T) {
 	}
 }
 
+// TestCircuitBreaker_RecordObject_CircuitOpen verifies the circuit breaker record object circuit open contract.
+// Asserts that expected ErrDBUnavailable, got.
 func TestCircuitBreaker_RecordObject_CircuitOpen(t *testing.T) {
 	t.Parallel()
 	dbErr := errors.New("connection refused")
@@ -453,6 +481,8 @@ func TestCircuitBreaker_RecordObject_CircuitOpen(t *testing.T) {
 // CreateMultipartUpload
 // -------------------------------------------------------------------------
 
+// TestCircuitBreaker_CreateMultipartUpload_Success verifies the circuit breaker create multipart upload success contract.
+// Asserts that CreateMultipartUpload:.
 func TestCircuitBreaker_CreateMultipartUpload_Success(t *testing.T) {
 	t.Parallel()
 	mock := &mockStore{}
@@ -464,6 +494,8 @@ func TestCircuitBreaker_CreateMultipartUpload_Success(t *testing.T) {
 	}
 }
 
+// TestCircuitBreaker_CreateMultipartUpload_CircuitOpen verifies the circuit breaker create multipart upload circuit open contract.
+// Asserts that expected ErrDBUnavailable, got.
 func TestCircuitBreaker_CreateMultipartUpload_CircuitOpen(t *testing.T) {
 	t.Parallel()
 	dbErr := errors.New("connection refused")
@@ -483,6 +515,8 @@ func TestCircuitBreaker_CreateMultipartUpload_CircuitOpen(t *testing.T) {
 // ListMultipartUploads
 // -------------------------------------------------------------------------
 
+// TestCircuitBreaker_ListMultipartUploads_Success verifies the circuit breaker list multipart uploads success contract.
+// Asserts that ListMultipartUploads:.
 func TestCircuitBreaker_ListMultipartUploads_Success(t *testing.T) {
 	t.Parallel()
 	mock := &mockStore{}
@@ -497,6 +531,8 @@ func TestCircuitBreaker_ListMultipartUploads_Success(t *testing.T) {
 	}
 }
 
+// TestCircuitBreaker_ListMultipartUploads_CircuitOpen verifies the circuit breaker list multipart uploads circuit open contract.
+// Asserts that expected ErrDBUnavailable, got.
 func TestCircuitBreaker_ListMultipartUploads_CircuitOpen(t *testing.T) {
 	t.Parallel()
 	dbErr := errors.New("connection refused")
@@ -516,6 +552,8 @@ func TestCircuitBreaker_ListMultipartUploads_CircuitOpen(t *testing.T) {
 // WithAdvisoryLock (bypasses circuit breaker)
 // -------------------------------------------------------------------------
 
+// TestCircuitBreaker_WithAdvisoryLock_BypassesCircuit verifies the circuit breaker with advisory lock bypasses circuit contract.
+// Asserts that WithAdvisoryLock:.
 func TestCircuitBreaker_WithAdvisoryLock_BypassesCircuit(t *testing.T) {
 	t.Parallel()
 	dbErr := errors.New("connection refused")
@@ -556,6 +594,8 @@ func captureLogs(f func()) string {
 	return buf.String()
 }
 
+// TestCircuitBreaker_TransitionLogs_ClosedToOpen verifies the circuit breaker transition logs closed to open contract.
+// Asserts that closed->open log missing \nlog output:.
 func TestCircuitBreaker_TransitionLogs_ClosedToOpen(t *testing.T) {
 	dbErr := errors.New("connection refused")
 	mock := &mockStore{getAllLocationsErr: dbErr}
@@ -582,6 +622,8 @@ func TestCircuitBreaker_TransitionLogs_ClosedToOpen(t *testing.T) {
 	}
 }
 
+// TestCircuitBreaker_TransitionLogs_OpenToHalfOpen verifies the circuit breaker transition logs open to half open contract.
+// Asserts that open->half-open log missing \nlog output:.
 func TestCircuitBreaker_TransitionLogs_OpenToHalfOpen(t *testing.T) {
 	dbErr := errors.New("connection refused")
 	mock := &mockStore{getAllLocationsErr: dbErr}
@@ -611,6 +653,8 @@ func TestCircuitBreaker_TransitionLogs_OpenToHalfOpen(t *testing.T) {
 // Not t.Parallel(): captureLogs mutates slog.SetDefault (process-global),
 // which races with other parallel tests emitting slog calls. The three
 // sibling TransitionLogs_* tests are all serial for the same reason.
+// TestCircuitBreaker_TransitionLogs_HalfOpenToClosed verifies circuit breaker_transition logs_half open to closed.
+// TestCircuitBreaker_TransitionLogs_HalfOpenToClosed verifies circuit breaker_transition logs_half open to closed.
 func TestCircuitBreaker_TransitionLogs_HalfOpenToClosed(t *testing.T) {
 	dbErr := errors.New("connection refused")
 	mock := &mockStore{getAllLocationsErr: dbErr}
@@ -643,6 +687,8 @@ func TestCircuitBreaker_TransitionLogs_HalfOpenToClosed(t *testing.T) {
 	}
 }
 
+// TestCircuitBreaker_TransitionLogs_HalfOpenToOpen verifies the circuit breaker transition logs half open to open contract.
+// Asserts that half-open->open log missing \nlog output:.
 func TestCircuitBreaker_TransitionLogs_HalfOpenToOpen(t *testing.T) {
 	dbErr := errors.New("connection refused")
 	mock := &mockStore{getAllLocationsErr: dbErr}
@@ -668,6 +714,8 @@ func TestCircuitBreaker_TransitionLogs_HalfOpenToOpen(t *testing.T) {
 	}
 }
 
+// TestCircuitBreaker_DegradedDurationIsPositive verifies the circuit breaker degraded duration is positive contract.
+// Asserts that state = , want open after threshold breach.
 func TestCircuitBreaker_DegradedDurationIsPositive(t *testing.T) {
 	t.Parallel()
 	dbErr := errors.New("connection refused")
@@ -679,7 +727,7 @@ func TestCircuitBreaker_DegradedDurationIsPositive(t *testing.T) {
 	_, _ = cb.GetAllObjectLocations(ctx, "key") // trip circuit
 
 	// Verify the trip happened. State must be open synchronously with the
-	// failed call returning — that is what guarantees openedAt was set
+	// failed call returning  -  that is what guarantees openedAt was set
 	// inside transition()'s critical section. Asserting OpenDuration != 0
 	// here would be flaky: time.Since on a monotonic clock that resolves
 	// both reads to the same nanosecond returns 0.
@@ -712,10 +760,12 @@ func TestCircuitBreaker_DegradedDurationIsPositive(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
-// Forwarding method coverage — exercises untested CBCall/CBCallNoResult
+// Forwarding method coverage  -  exercises untested CBCall/CBCallNoResult
 // wrappers to ensure each method delegates correctly through the circuit.
 // -------------------------------------------------------------------------
 
+// TestCircuitBreaker_ForwardingMethods_Closed verifies the circuit breaker forwarding methods closed contract.
+// Asserts that DeleteObject:.
 func TestCircuitBreaker_ForwardingMethods_Closed(t *testing.T) {
 	t.Parallel()
 	mock := &mockStore{
@@ -835,6 +885,8 @@ func TestCircuitBreaker_ForwardingMethods_Closed(t *testing.T) {
 	}
 }
 
+// TestCircuitBreaker_ForwardingMethods_Open verifies the circuit breaker forwarding methods open contract.
+// Asserts that GetQuotaStats: got , want ErrDBUnavailable.
 func TestCircuitBreaker_ForwardingMethods_Open(t *testing.T) {
 	t.Parallel()
 	dbErr := errors.New("connection refused")
@@ -863,6 +915,8 @@ func TestCircuitBreaker_ForwardingMethods_Open(t *testing.T) {
 	}
 }
 
+// TestCircuitBreaker_BackendObjectStats_PreCheckBlocks verifies the circuit breaker backend object stats pre check blocks contract.
+// Asserts that BackendObjectStats: got , want ErrDBUnavailable.
 func TestCircuitBreaker_BackendObjectStats_PreCheckBlocks(t *testing.T) {
 	t.Parallel()
 	dbErr := errors.New("connection refused")
@@ -882,6 +936,8 @@ func TestCircuitBreaker_BackendObjectStats_PreCheckBlocks(t *testing.T) {
 	}
 }
 
+// TestCircuitBreaker_BackendObjectStats_Success verifies the circuit breaker backend object stats success contract.
+// Asserts that BackendObjectStats:.
 func TestCircuitBreaker_BackendObjectStats_Success(t *testing.T) {
 	t.Parallel()
 	mock := &mockStore{}
@@ -896,6 +952,8 @@ func TestCircuitBreaker_BackendObjectStats_Success(t *testing.T) {
 	}
 }
 
+// TestCircuitBreaker_ConcurrentProbeSerializedByAtomicFlag verifies the circuit breaker concurrent probe serialized by atomic flag contract.
+// Asserts that mock received calls during burst, want exactly 1 probe.
 func TestCircuitBreaker_ConcurrentProbeSerializedByAtomicFlag(t *testing.T) {
 	t.Parallel()
 	dbErr := errors.New("connection refused")
@@ -915,7 +973,7 @@ func TestCircuitBreaker_ConcurrentProbeSerializedByAtomicFlag(t *testing.T) {
 	callsBefore := mock.callCount
 	mock.mu.Unlock()
 
-	// Fire many concurrent requests — exactly one should reach the mock (the probe)
+	// Fire many concurrent requests  -  exactly one should reach the mock (the probe)
 	const goroutines = 50
 	var wg sync.WaitGroup
 
@@ -940,7 +998,7 @@ func TestCircuitBreaker_ConcurrentProbeSerializedByAtomicFlag(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
-// Forwarder coverage — each narrow CB wrapper's thin pass-through methods.
+// Forwarder coverage  -  each narrow CB wrapper's thin pass-through methods.
 //
 // These tests don't exercise state-machine edges (the big tests above do);
 // they prove each forwarder returns the inner store's error/value so the
@@ -948,6 +1006,8 @@ func TestCircuitBreaker_ConcurrentProbeSerializedByAtomicFlag(t *testing.T) {
 // interface contract.
 // -------------------------------------------------------------------------
 
+// TestCBForwarders_CleanupStore verifies the cbforwarders cleanup store contract.
+// Asserts that IncrementOrphanBytes:.
 func TestCBForwarders_CleanupStore(t *testing.T) {
 	t.Parallel()
 	cb := newTestCB(&mockStore{}, 3, time.Minute)
@@ -960,6 +1020,8 @@ func TestCBForwarders_CleanupStore(t *testing.T) {
 	}
 }
 
+// TestCBForwarders_IntegrityStore verifies the cbforwarders integrity store contract.
+// Asserts that GetRandomHashedObjects:.
 func TestCBForwarders_IntegrityStore(t *testing.T) {
 	t.Parallel()
 	cb := newTestCB(&mockStore{}, 3, time.Minute)
@@ -975,6 +1037,8 @@ func TestCBForwarders_IntegrityStore(t *testing.T) {
 	}
 }
 
+// TestCBForwarders_MultipartStore verifies the cbforwarders multipart store contract.
+// Asserts that CountActiveMultipartUploads:.
 func TestCBForwarders_MultipartStore(t *testing.T) {
 	t.Parallel()
 	cb := newTestCB(&mockStore{}, 3, time.Minute)
@@ -987,13 +1051,15 @@ func TestCBForwarders_MultipartStore(t *testing.T) {
 	}
 }
 
+// TestCBForwarders_QuotaStore verifies the cbforwarders quota store contract.
+// Asserts that GetQuotaStats:.
 func TestCBForwarders_QuotaStore(t *testing.T) {
 	t.Parallel()
 	mock := &mockStore{getQuotaStatsResp: map[string]core.QuotaStat{"b1": {BytesUsed: 10}}}
 	cb := newTestCB(mock, 3, time.Minute)
 
 	// Exercise QuotaStore.GetQuotaStats directly. cb.GetQuotaStats would
-	// resolve to the embedded DashboardStore's forwarder — the one on
+	// resolve to the embedded DashboardStore's forwarder  -  the one on
 	// cbQuotaStore needs its own hit to count toward coverage.
 	stats, err := cb.quota.GetQuotaStats(context.Background())
 	if err != nil {
@@ -1004,6 +1070,8 @@ func TestCBForwarders_QuotaStore(t *testing.T) {
 	}
 }
 
+// TestCBForwarders_ReplicationStore verifies the cbforwarders replication store contract.
+// Asserts that GetUnderReplicatedObjectsExcluding:.
 func TestCBForwarders_ReplicationStore(t *testing.T) {
 	t.Parallel()
 	cb := newTestCB(&mockStore{}, 3, time.Minute)
@@ -1026,6 +1094,7 @@ func TestCBForwarders_ReplicationStore(t *testing.T) {
 // Database breaker factory + error filter wrappers
 // -------------------------------------------------------------------------
 
+// TestNewDatabaseBreaker_ReturnsHealthy verifies the new database breaker returns healthy path by exercising cb.IsHealthy.
 func TestNewDatabaseBreaker_ReturnsHealthy(t *testing.T) {
 	t.Parallel()
 	cb := NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3, OpenTimeout: time.Second})
@@ -1037,6 +1106,7 @@ func TestNewDatabaseBreaker_ReturnsHealthy(t *testing.T) {
 	}
 }
 
+// TestIsDBError_WrappedErrNoSpace verifies the is dberror wrapped err no space path by exercising fmt.Errorf.
 func TestIsDBError_WrappedErrNoSpace(t *testing.T) {
 	t.Parallel()
 	wrapped := fmt.Errorf("outer: %w", core.ErrNoSpaceAvailable)

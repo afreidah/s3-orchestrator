@@ -1,3 +1,15 @@
+// -------------------------------------------------------------------------------
+// Notifications Config Validation Tests
+//
+// Author: Alex Freidah
+//
+// Asserts the validation rules for the optional notifications block: every
+// endpoint requires a URL and at least one event filter, and validators
+// surface every per-endpoint problem in a single pass instead of returning
+// the first error. The aggregated error path matters because operators
+// commonly misconfigure several endpoints at once and need them all flagged.
+// -------------------------------------------------------------------------------
+
 package config
 
 import (
@@ -5,6 +17,8 @@ import (
 	"testing"
 )
 
+// TestNotificationConfig_ValidMinimal verifies the notification config valid minimal contract.
+// Asserts that unexpected errors:.
 func TestNotificationConfig_ValidMinimal(t *testing.T) {
 	t.Parallel()
 	cfg := NotificationConfig{
@@ -18,6 +32,8 @@ func TestNotificationConfig_ValidMinimal(t *testing.T) {
 	}
 }
 
+// TestNotificationConfig_EmptyEndpoints verifies the notification config empty endpoints contract.
+// Asserts that empty endpoints should be valid (disabled), got:.
 func TestNotificationConfig_EmptyEndpoints(t *testing.T) {
 	t.Parallel()
 	cfg := NotificationConfig{}
@@ -27,6 +43,8 @@ func TestNotificationConfig_EmptyEndpoints(t *testing.T) {
 	}
 }
 
+// TestNotificationConfig_MissingURL verifies the notification config missing url contract.
+// Asserts that expected url error, got:.
 func TestNotificationConfig_MissingURL(t *testing.T) {
 	t.Parallel()
 	cfg := NotificationConfig{
@@ -40,6 +58,8 @@ func TestNotificationConfig_MissingURL(t *testing.T) {
 	}
 }
 
+// TestNotificationConfig_MissingEvents verifies the notification config missing events contract.
+// Asserts that expected events error, got:.
 func TestNotificationConfig_MissingEvents(t *testing.T) {
 	t.Parallel()
 	cfg := NotificationConfig{
@@ -53,6 +73,8 @@ func TestNotificationConfig_MissingEvents(t *testing.T) {
 	}
 }
 
+// TestNotificationConfig_MultipleErrors verifies the notification config multiple errors contract.
+// Asserts that expected 2 errors, got :.
 func TestNotificationConfig_MultipleErrors(t *testing.T) {
 	t.Parallel()
 	cfg := NotificationConfig{
@@ -66,6 +88,8 @@ func TestNotificationConfig_MultipleErrors(t *testing.T) {
 	}
 }
 
+// TestNotificationConfig_DefaultTimeout verifies the notification config default timeout contract.
+// Asserts that default timeout = , want 5s.
 func TestNotificationConfig_DefaultTimeout(t *testing.T) {
 	t.Parallel()
 	cfg := NotificationConfig{
@@ -79,6 +103,8 @@ func TestNotificationConfig_DefaultTimeout(t *testing.T) {
 	}
 }
 
+// TestNotificationConfig_DefaultMaxRetries verifies the notification config default max retries contract.
+// Asserts that default max_retries = , want 3.
 func TestNotificationConfig_DefaultMaxRetries(t *testing.T) {
 	t.Parallel()
 	cfg := NotificationConfig{

@@ -28,6 +28,9 @@ const bufSize = 32 * 1024
 // io.PipeWriters. 64 KB batches pipe writes to reduce syscall frequency.
 const writerBufSize = 64 * 1024
 
+// pool holds 32 KB scratch buffers reused by Copy via io.CopyBuffer.
+// The buffer size is chosen to match io.Copy's default so behaviour
+// stays identical while eliminating the per-call allocation.
 var pool = sync.Pool{
 	New: func() any {
 		b := make([]byte, bufSize)
@@ -35,6 +38,9 @@ var pool = sync.Pool{
 	},
 }
 
+// writerPool holds 64 KB bufio.Writers used to wrap io.PipeWriters in
+// the multipart-assembly and CopyObject pipes. Batching pipe writes at
+// 64 KB cuts syscall frequency in half versus the 32 KB Reader path.
 var writerPool = sync.Pool{
 	New: func() any {
 		return bufio.NewWriterSize(nil, writerBufSize)

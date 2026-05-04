@@ -49,8 +49,8 @@ func setupCacheEnv(t *testing.T) *cacheTestEnv {
 	ctx := context.Background()
 
 	mc, err := objcache.NewMemoryCache(objcache.MemoryConfig{
-		MaxSize:       1024 * 1024, // 1MB — enough for multiple test objects
-		MaxObjectSize: 1024,        // 1KB — objects above this are not cached
+		MaxSize:       1024 * 1024, // 1MB  -  enough for multiple test objects
+		MaxObjectSize: 1024,        // 1KB  -  objects above this are not cached
 		TTL:           5 * time.Minute,
 	})
 	if err != nil {
@@ -129,7 +129,7 @@ func TestCache_HitOnSecondRead(t *testing.T) {
 		t.Fatalf("PutObject: %v", err)
 	}
 
-	// First GET — cache miss, populates cache
+	// First GET  -  cache miss, populates cache
 	resp1, err := env.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(virtualBucket),
 		Key:    aws.String(key),
@@ -149,7 +149,7 @@ func TestCache_HitOnSecondRead(t *testing.T) {
 		t.Errorf("cache entries after first GET = %d, want 1", stats.Entries)
 	}
 
-	// Second GET — should be served from cache with identical data
+	// Second GET  -  should be served from cache with identical data
 	resp2, err := env.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(virtualBucket),
 		Key:    aws.String(key),
@@ -173,7 +173,7 @@ func TestCache_InvalidateOnPut(t *testing.T) {
 
 	key := uniqueKey(t, "cache-invalidate-put")
 	v1 := []byte("version one")
-	v2 := []byte("version two — different content")
+	v2 := []byte("version two  -  different content")
 
 	// PUT v1
 	_, err := env.client.PutObject(ctx, &s3.PutObjectInput{
@@ -197,7 +197,7 @@ func TestCache_InvalidateOnPut(t *testing.T) {
 	io.ReadAll(resp.Body)
 	resp.Body.Close()
 
-	// PUT v2 — should invalidate cache
+	// PUT v2  -  should invalidate cache
 	_, err = env.client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:        aws.String(virtualBucket),
 		Key:           aws.String(key),
@@ -258,7 +258,7 @@ func TestCache_InvalidateOnDelete(t *testing.T) {
 		t.Fatal("expected 1 cache entry before delete")
 	}
 
-	// DELETE — should invalidate cache
+	// DELETE  -  should invalidate cache
 	_, err = env.client.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(virtualBucket),
 		Key:    aws.String(key),
@@ -302,7 +302,7 @@ func TestCache_OversizedObjectNotCached(t *testing.T) {
 		t.Fatalf("PutObject: %v", err)
 	}
 
-	// GET — should work but not populate cache
+	// GET  -  should work but not populate cache
 	resp, err := env.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(virtualBucket),
 		Key:    aws.String(key),
@@ -363,7 +363,7 @@ func TestCache_MultipleObjects(t *testing.T) {
 		t.Errorf("cache entries = %d, want 5", env.cache.Stats().Entries)
 	}
 
-	// Re-read all — should all be cache hits with correct data
+	// Re-read all  -  should all be cache hits with correct data
 	for key, expected := range objects {
 		resp, err := env.client.GetObject(ctx, &s3.GetObjectInput{
 			Bucket: aws.String(virtualBucket),

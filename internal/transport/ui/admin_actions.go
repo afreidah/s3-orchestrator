@@ -133,6 +133,9 @@ func (h *Handler) handleAPIReplicate(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleAPIReplicateStatus returns the latest progress payload for the
+// replicate admin action so the dashboard can poll without re-issuing
+// the trigger. The keyed result is "copies_created".
 func (h *Handler) handleAPIReplicateStatus(w http.ResponseWriter, _ *http.Request) {
 	h.writeAdminActionStatus(w, "replicate", "copies_created")
 }
@@ -156,6 +159,9 @@ func (h *Handler) handleAPIScrub(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleAPIScrubStatus returns the latest progress payload for the
+// scrub admin action so the dashboard can poll without re-triggering.
+// The keyed result is "checked".
 func (h *Handler) handleAPIScrubStatus(w http.ResponseWriter, _ *http.Request) {
 	h.writeAdminActionStatus(w, "scrub", "checked")
 }
@@ -180,6 +186,9 @@ func (h *Handler) handleAPIBackfillChecksums(w http.ResponseWriter, r *http.Requ
 	})
 }
 
+// handleAPIBackfillChecksumsStatus returns the latest progress payload
+// for the backfill-checksums admin action. The keyed result is
+// "processed" (rows touched in the most recent pass).
 func (h *Handler) handleAPIBackfillChecksumsStatus(w http.ResponseWriter, _ *http.Request) {
 	h.writeAdminActionStatus(w, "backfill-checksums", "processed")
 }
@@ -204,6 +213,9 @@ func (h *Handler) handleAPIEncryptExisting(w http.ResponseWriter, r *http.Reques
 	})
 }
 
+// handleAPIEncryptExistingStatus returns the latest progress payload
+// for the encrypt-existing admin action. The keyed result is
+// "encrypted" (objects successfully transitioned to ciphertext).
 func (h *Handler) handleAPIEncryptExistingStatus(w http.ResponseWriter, _ *http.Request) {
 	h.writeAdminActionStatus(w, "encrypt-existing", "encrypted")
 }

@@ -21,6 +21,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// UPLOAD LIFECYCLE
+// -------------------------------------------------------------------------
+
 // CreateMultipartUpload records a new multipart upload in the database.
 func (s *Store) CreateMultipartUpload(ctx context.Context, uploadID, key, backend, contentType string, metadata map[string]string) error {
 	var metaJSON []byte
@@ -61,6 +65,10 @@ func (s *Store) GetMultipartUpload(ctx context.Context, uploadID string) (*core.
 	}
 	return &mu, nil
 }
+
+// -------------------------------------------------------------------------
+// PARTS
+// -------------------------------------------------------------------------
 
 // RecordPart records a completed part for a multipart upload. Re-uploading the
 // same part number updates the existing row (ON CONFLICT DO UPDATE).
@@ -143,6 +151,10 @@ func (s *Store) GetParts(ctx context.Context, uploadID string) ([]core.Multipart
 	return parts, rows.Err()
 }
 
+// -------------------------------------------------------------------------
+// DELETION AND LISTING
+// -------------------------------------------------------------------------
+
 // DeleteMultipartUpload removes a multipart upload and its parts. Parts are
 // deleted first to satisfy foreign key constraints, then the upload row.
 func (s *Store) DeleteMultipartUpload(ctx context.Context, uploadID string) error {
@@ -196,6 +208,10 @@ func (s *Store) ListMultipartUploads(ctx context.Context, prefix string, maxUplo
 	}
 	return uploads, rows.Err()
 }
+
+// -------------------------------------------------------------------------
+// COUNTS AND HOUSEKEEPING
+// -------------------------------------------------------------------------
 
 // CountActiveMultipartUploads returns the number of in-progress multipart
 // uploads whose key starts with the given bucket prefix.
@@ -275,6 +291,10 @@ func (s *Store) GetActiveMultipartCounts(ctx context.Context) (map[string]int64,
 }
 
 // rowScanner is the common subset of *sql.Row and *sql.Rows used by
+// -------------------------------------------------------------------------
+// ROW SCANNERS
+// -------------------------------------------------------------------------
+
 // scanMultipartUploadRow so single-row and multi-row callers share one
 // column-mapping body.
 type rowScanner interface {

@@ -29,6 +29,8 @@ import (
 // enqueueCleanup orphan bytes lifecycle
 // -------------------------------------------------------------------------
 
+// TestEnqueueCleanup_IncrementsOrphanBytes verifies the enqueue cleanup increments orphan bytes contract.
+// Asserts that expected 1 IncrementOrphanBytes call, got.
 func TestEnqueueCleanup_IncrementsOrphanBytes(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{}
@@ -47,6 +49,8 @@ func TestEnqueueCleanup_IncrementsOrphanBytes(t *testing.T) {
 	}
 }
 
+// TestEnqueueCleanup_ZeroSize_SkipsOrphanIncrement verifies the enqueue cleanup zero size skips orphan increment contract.
+// Asserts that expected 0 IncrementOrphanBytes calls for zero-size, got.
 func TestEnqueueCleanup_ZeroSize_SkipsOrphanIncrement(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{}
@@ -61,6 +65,8 @@ func TestEnqueueCleanup_ZeroSize_SkipsOrphanIncrement(t *testing.T) {
 	}
 }
 
+// TestEnqueueCleanup_EnqueueFails_SkipsOrphanIncrement verifies the enqueue cleanup enqueue fails skips orphan increment contract.
+// Asserts that expected 0 IncrementOrphanBytes calls when enqueue fails, got.
 func TestEnqueueCleanup_EnqueueFails_SkipsOrphanIncrement(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{enqueueCleanupErr: errors.New("db down")}
@@ -80,6 +86,8 @@ func TestEnqueueCleanup_EnqueueFails_SkipsOrphanIncrement(t *testing.T) {
 // Cleanup worker orphan bytes decrement
 // -------------------------------------------------------------------------
 
+// TestCleanupWorker_SuccessfulDelete_DecrementsOrphanBytes verifies the cleanup worker successful delete decrements orphan bytes contract.
+// Asserts that expected processed=1 failed=0, got /.
 func TestCleanupWorker_SuccessfulDelete_DecrementsOrphanBytes(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -108,6 +116,8 @@ func TestCleanupWorker_SuccessfulDelete_DecrementsOrphanBytes(t *testing.T) {
 	}
 }
 
+// TestCleanupWorker_SuccessfulDelete_ZeroSize_SkipsDecrement verifies the cleanup worker successful delete zero size skips decrement contract.
+// Asserts that expected processed=1, got.
 func TestCleanupWorker_SuccessfulDelete_ZeroSize_SkipsDecrement(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -132,6 +142,8 @@ func TestCleanupWorker_SuccessfulDelete_ZeroSize_SkipsDecrement(t *testing.T) {
 	}
 }
 
+// TestCleanupWorker_Exhausted_MovesToDLQ_PreservesOrphanBytes verifies the cleanup worker exhausted moves to dlq preserves orphan bytes contract.
+// Asserts that expected failed=1, got.
 func TestCleanupWorker_Exhausted_MovesToDLQ_PreservesOrphanBytes(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -176,6 +188,8 @@ func TestCleanupWorker_Exhausted_MovesToDLQ_PreservesOrphanBytes(t *testing.T) {
 	}
 }
 
+// TestCleanupWorker_RetryNotExhausted_NoOrphanBytesChange verifies the cleanup worker retry not exhausted no orphan bytes change contract.
+// Asserts that expected failed=1, got.
 func TestCleanupWorker_RetryNotExhausted_NoOrphanBytesChange(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -195,7 +209,7 @@ func TestCleanupWorker_RetryNotExhausted_NoOrphanBytesChange(t *testing.T) {
 
 	store.mu.Lock()
 	defer store.mu.Unlock()
-	// On retry, orphan bytes should not change — they were incremented at enqueue time
+	// On retry, orphan bytes should not change  -  they were incremented at enqueue time
 	if len(store.incrementOrphanBytesCalls) != 0 {
 		t.Errorf("expected 0 IncrementOrphanBytes calls on retry, got %d", len(store.incrementOrphanBytesCalls))
 	}
@@ -208,6 +222,8 @@ func TestCleanupWorker_RetryNotExhausted_NoOrphanBytesChange(t *testing.T) {
 // Displaced copies on overwrite
 // -------------------------------------------------------------------------
 
+// TestPutObject_Overwrite_EnqueuesDisplacedCopiesWithSize verifies the put object overwrite enqueues displaced copies with size contract.
+// Asserts that PutObject:.
 func TestPutObject_Overwrite_EnqueuesDisplacedCopiesWithSize(t *testing.T) {
 	t.Parallel()
 	b1 := newMockBackend()
@@ -252,6 +268,8 @@ func TestPutObject_Overwrite_EnqueuesDisplacedCopiesWithSize(t *testing.T) {
 // DeleteObject enqueues with size
 // -------------------------------------------------------------------------
 
+// TestDeleteObject_BackendFails_EnqueuesWithSize verifies the delete object backend fails enqueues with size contract.
+// Asserts that DeleteObject should succeed even if backend delete fails:.
 func TestDeleteObject_BackendFails_EnqueuesWithSize(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -284,6 +302,8 @@ func TestDeleteObject_BackendFails_EnqueuesWithSize(t *testing.T) {
 // Replicator findReplicaTarget respects orphan bytes
 // -------------------------------------------------------------------------
 
+// TestFindReplicaTarget_RespectsOrphanBytes verifies the find replica target respects orphan bytes contract.
+// Asserts that expected no target (orphan bytes eat available space), got.
 func TestFindReplicaTarget_RespectsOrphanBytes(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{}
@@ -304,7 +324,7 @@ func TestFindReplicaTarget_RespectsOrphanBytes(t *testing.T) {
 		"b2": {BytesUsed: 800, BytesLimit: 1000, OrphanBytes: 150},
 	}
 
-	// b1 already has a copy; b2 has only 50 bytes free after orphans — should reject 100-byte object
+	// b1 already has a copy; b2 has only 50 bytes free after orphans  -  should reject 100-byte object
 	exclusion := map[string]bool{"b1": true}
 	target := mgr.Replicator.FindReplicaTarget(context.Background(), stats, "key1", 100, exclusion)
 	if target != "" {
@@ -312,6 +332,8 @@ func TestFindReplicaTarget_RespectsOrphanBytes(t *testing.T) {
 	}
 }
 
+// TestFindReplicaTarget_OrphanBytesStillFits verifies the find replica target orphan bytes still fits contract.
+// Asserts that expected b2 (50 bytes fits in 100 free), got.
 func TestFindReplicaTarget_OrphanBytesStillFits(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{getBackendFromEligible: true}
@@ -340,16 +362,18 @@ func TestFindReplicaTarget_OrphanBytesStillFits(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
-// Full lifecycle: enqueue → cleanup success → orphan bytes restored
+// Full lifecycle: enqueue -> cleanup success -> orphan bytes restored
 // -------------------------------------------------------------------------
 
+// TestOrphanBytes_FullLifecycle verifies the orphan bytes full lifecycle contract.
+// Asserts that step 1: expected 1 IncrementOrphanBytes, got.
 func TestOrphanBytes_FullLifecycle(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
 	store := &mockStore{}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	// Step 1: Delete fails, gets enqueued — orphan bytes increment
+	// Step 1: Delete fails, gets enqueued  -  orphan bytes increment
 	backend.delErr = errors.New("timeout")
 	mgr.deleteOrEnqueue(context.Background(), backend, "b1", "file.txt", "delete_failed", 1024)
 
@@ -362,7 +386,7 @@ func TestOrphanBytes_FullLifecycle(t *testing.T) {
 	}
 	store.mu.Unlock()
 
-	// Step 2: Backend recovers, cleanup worker succeeds — orphan bytes decrement
+	// Step 2: Backend recovers, cleanup worker succeeds  -  orphan bytes decrement
 	backend.mu.Lock()
 	backend.delErr = nil
 	backend.mu.Unlock()
@@ -393,6 +417,8 @@ func TestOrphanBytes_FullLifecycle(t *testing.T) {
 // Replicator cleanup orphan passes size to enqueue
 // -------------------------------------------------------------------------
 
+// TestCleanupOrphan_PassesSizeToEnqueue verifies the cleanup orphan passes size to enqueue contract.
+// Asserts that expected 1 enqueue call, got.
 func TestCleanupOrphan_PassesSizeToEnqueue(t *testing.T) {
 	t.Parallel()
 	b1 := newMockBackend()
@@ -419,6 +445,8 @@ func TestCleanupOrphan_PassesSizeToEnqueue(t *testing.T) {
 // MetricsCollector: available bytes accounts for orphan bytes
 // -------------------------------------------------------------------------
 
+// TestMetricsCollector_OrphanBytesSubtractedFromAvailable verifies the metrics collector orphan bytes subtracted from available contract.
+// Asserts that UpdateQuotaMetrics:.
 func TestMetricsCollector_OrphanBytesSubtractedFromAvailable(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -443,6 +471,8 @@ func TestMetricsCollector_OrphanBytesSubtractedFromAvailable(t *testing.T) {
 // recordObjectOrCleanup: displaced copy on unknown backend
 // -------------------------------------------------------------------------
 
+// TestRecordObjectOrCleanup_DisplacedCopyBackendNotFound verifies the record object or cleanup displaced copy backend not found contract.
+// Asserts that PutObject:.
 func TestRecordObjectOrCleanup_DisplacedCopyBackendNotFound(t *testing.T) {
 	t.Parallel()
 	b1 := newMockBackend()
@@ -458,7 +488,7 @@ func TestRecordObjectOrCleanup_DisplacedCopyBackendNotFound(t *testing.T) {
 		t.Fatalf("PutObject: %v", err)
 	}
 
-	// No enqueue since the backend "gone" doesn't exist — just a warn log
+	// No enqueue since the backend "gone" doesn't exist  -  just a warn log
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	if len(store.enqueueCleanupCalls) != 0 {
@@ -470,6 +500,8 @@ func TestRecordObjectOrCleanup_DisplacedCopyBackendNotFound(t *testing.T) {
 // recordObjectOrCleanup: displaced copy delete succeeds (no enqueue)
 // -------------------------------------------------------------------------
 
+// TestRecordObjectOrCleanup_DisplacedCopyDeleteSucceeds verifies the record object or cleanup displaced copy delete succeeds contract.
+// Asserts that PutObject:.
 func TestRecordObjectOrCleanup_DisplacedCopyDeleteSucceeds(t *testing.T) {
 	t.Parallel()
 	b1 := newMockBackend()
@@ -503,6 +535,8 @@ func TestRecordObjectOrCleanup_DisplacedCopyDeleteSucceeds(t *testing.T) {
 // enqueueCleanup: IncrementOrphanBytes fails (best-effort)
 // -------------------------------------------------------------------------
 
+// TestEnqueueCleanup_IncrementOrphanBytesFails verifies the enqueue cleanup increment orphan bytes fails contract.
+// Asserts that expected 1 enqueue call, got.
 func TestEnqueueCleanup_IncrementOrphanBytesFails(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -510,7 +544,7 @@ func TestEnqueueCleanup_IncrementOrphanBytesFails(t *testing.T) {
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	// Should not panic — increment failure is best-effort
+	// Should not panic  -  increment failure is best-effort
 	mgr.enqueueCleanup(context.Background(), "b1", "key", "reason", 1024)
 
 	store.mu.Lock()
@@ -529,6 +563,8 @@ func TestEnqueueCleanup_IncrementOrphanBytesFails(t *testing.T) {
 // Cleanup worker: DecrementOrphanBytes fails (best-effort, still completes)
 // -------------------------------------------------------------------------
 
+// TestCleanupWorker_DecrementOrphanBytesFails verifies the cleanup worker decrement orphan bytes fails contract.
+// Asserts that expected processed=1 failed=0, got /.
 func TestCleanupWorker_DecrementOrphanBytesFails(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -560,7 +596,7 @@ func TestCleanupWorker_DecrementOrphanBytesFails(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
-// Cleanup worker: exhausted item — MoveCleanupToDLQ fails (best-effort)
+// Cleanup worker: exhausted item  -  MoveCleanupToDLQ fails (best-effort)
 // -------------------------------------------------------------------------
 
 // TestCleanupWorker_Exhausted_DLQMoveFails asserts that a DB failure on
@@ -598,6 +634,8 @@ func TestCleanupWorker_Exhausted_DLQMoveFails(t *testing.T) {
 // Replicate end-to-end with orphan bytes affecting target selection
 // -------------------------------------------------------------------------
 
+// TestReplicate_OrphanBytesBlockTarget verifies the replicate orphan bytes block target contract.
+// Asserts that Replicate:.
 func TestReplicate_OrphanBytesBlockTarget(t *testing.T) {
 	t.Parallel()
 	b1 := newMockBackend()
@@ -610,7 +648,7 @@ func TestReplicate_OrphanBytesBlockTarget(t *testing.T) {
 		},
 		getQuotaStatsResp: map[string]core.QuotaStat{
 			"b1": {BytesUsed: 100, BytesLimit: 1000},
-			// b2 has 990 used + 8 orphan = 998 effective, only 2 bytes free — can't fit 4
+			// b2 has 990 used + 8 orphan = 998 effective, only 2 bytes free  -  can't fit 4
 			"b2": {BytesUsed: 990, BytesLimit: 1000, OrphanBytes: 8},
 		},
 		recordReplicaInserted: true,
@@ -638,6 +676,6 @@ func TestReplicate_OrphanBytesBlockTarget(t *testing.T) {
 		t.Errorf("expected 0 created (orphan bytes block target), got %d", created)
 	}
 	if b2.hasObject("key1") {
-		t.Error("b2 should not have received replica — orphan bytes make it too full")
+		t.Error("b2 should not have received replica  -  orphan bytes make it too full")
 	}
 }

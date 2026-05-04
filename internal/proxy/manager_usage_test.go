@@ -43,6 +43,7 @@ func newUsageManager(backendNames []string, store *mockStore) *BackendManager {
 	}))
 }
 
+// newUsageManagerWithLimits constructs a new usage manager with limits.
 func newUsageManagerWithLimits(backendNames []string, store *mockStore, limits map[string]core.UsageLimits) *BackendManager {
 	backends := make(map[string]backend.ObjectBackend, len(backendNames))
 	for _, name := range backendNames {
@@ -61,6 +62,8 @@ func newUsageManagerWithLimits(backendNames []string, store *mockStore, limits m
 
 // --- recordUsage tests ---
 
+// TestRecordUsage_IncrementsCounters verifies the record usage increments counters contract.
+// Asserts that apiRequests = , want 3.
 func TestRecordUsage_IncrementsCounters(t *testing.T) {
 	t.Parallel()
 	mgr := newUsageManager([]string{"b1"}, &mockStore{})
@@ -79,6 +82,8 @@ func TestRecordUsage_IncrementsCounters(t *testing.T) {
 	}
 }
 
+// TestRecordUsage_Accumulates verifies the record usage accumulates contract.
+// Asserts that apiRequests = , want 3.
 func TestRecordUsage_Accumulates(t *testing.T) {
 	t.Parallel()
 	mgr := newUsageManager([]string{"b1"}, &mockStore{})
@@ -98,6 +103,8 @@ func TestRecordUsage_Accumulates(t *testing.T) {
 	}
 }
 
+// TestRecordUsage_UnknownBackendNoOp verifies the record usage unknown backend no op contract.
+// Asserts that apiRequests = , want 0.
 func TestRecordUsage_UnknownBackendNoOp(t *testing.T) {
 	t.Parallel()
 	mgr := newUsageManager([]string{"b1"}, &mockStore{})
@@ -110,6 +117,8 @@ func TestRecordUsage_UnknownBackendNoOp(t *testing.T) {
 	}
 }
 
+// TestRecordUsage_ZeroValuesSkipped verifies the record usage zero values skipped contract.
+// Asserts that apiRequests = , want 0.
 func TestRecordUsage_ZeroValuesSkipped(t *testing.T) {
 	t.Parallel()
 	mgr := newUsageManager([]string{"b1"}, &mockStore{})
@@ -121,6 +130,8 @@ func TestRecordUsage_ZeroValuesSkipped(t *testing.T) {
 	}
 }
 
+// TestRecordUsage_MultipleBackends verifies the record usage multiple backends contract.
+// Asserts that b1 apiRequests = , want 1.
 func TestRecordUsage_MultipleBackends(t *testing.T) {
 	t.Parallel()
 	mgr := newUsageManager([]string{"b1", "b2"}, &mockStore{})
@@ -138,6 +149,8 @@ func TestRecordUsage_MultipleBackends(t *testing.T) {
 
 // --- RecordUsage public method ---
 
+// TestRecordUsage_PublicMethod verifies the record usage public method contract.
+// Asserts that apiRequests = , want 5.
 func TestRecordUsage_PublicMethod(t *testing.T) {
 	t.Parallel()
 	mgr := newUsageManager([]string{"b1"}, &mockStore{})
@@ -158,6 +171,8 @@ func TestRecordUsage_PublicMethod(t *testing.T) {
 
 // --- FlushUsage tests ---
 
+// TestFlushUsage_WritesToStore verifies the flush usage writes to store contract.
+// Asserts that FlushUsage() error =.
 func TestFlushUsage_WritesToStore(t *testing.T) {
 	t.Parallel()
 	ms := &mockStore{}
@@ -193,6 +208,8 @@ func TestFlushUsage_WritesToStore(t *testing.T) {
 	}
 }
 
+// TestFlushUsage_SkipsZeroDeltas verifies the flush usage skips zero deltas contract.
+// Asserts that FlushUsage() error =.
 func TestFlushUsage_SkipsZeroDeltas(t *testing.T) {
 	t.Parallel()
 	ms := &mockStore{}
@@ -215,6 +232,8 @@ func TestFlushUsage_SkipsZeroDeltas(t *testing.T) {
 	}
 }
 
+// TestFlushUsage_RestoresCountersOnError verifies the flush usage restores counters on error contract.
+// Asserts that apiRequests after failed flush = , want 10 (restored).
 func TestFlushUsage_RestoresCountersOnError(t *testing.T) {
 	t.Parallel()
 	ms := &mockStore{
@@ -242,6 +261,8 @@ func TestFlushUsage_RestoresCountersOnError(t *testing.T) {
 	}
 }
 
+// TestFlushUsage_NoDataNoCall verifies the flush usage no data no call contract.
+// Asserts that FlushUsage() error =.
 func TestFlushUsage_NoDataNoCall(t *testing.T) {
 	t.Parallel()
 	ms := &mockStore{}
@@ -258,6 +279,8 @@ func TestFlushUsage_NoDataNoCall(t *testing.T) {
 	}
 }
 
+// TestFlushUsage_SkipsDrainedBackend verifies the flush usage skips drained backend contract.
+// Asserts that FlushUsage() error =.
 func TestFlushUsage_SkipsDrainedBackend(t *testing.T) {
 	t.Parallel()
 	ms := &mockStore{}
@@ -291,6 +314,7 @@ func TestFlushUsage_SkipsDrainedBackend(t *testing.T) {
 
 // --- withinUsageLimits tests ---
 
+// TestWithinUsageLimits_NoLimits verifies the within usage limits no limits behaviour described by the test name.
 func TestWithinUsageLimits_NoLimits(t *testing.T) {
 	t.Parallel()
 	mgr := newUsageManager([]string{"b1"}, &mockStore{})
@@ -300,6 +324,7 @@ func TestWithinUsageLimits_NoLimits(t *testing.T) {
 	}
 }
 
+// TestWithinUsageLimits_ApiExceeded verifies the within usage limits api exceeded behaviour described by the test name.
 func TestWithinUsageLimits_ApiExceeded(t *testing.T) {
 	t.Parallel()
 	limits := map[string]core.UsageLimits{
@@ -315,6 +340,7 @@ func TestWithinUsageLimits_ApiExceeded(t *testing.T) {
 	}
 }
 
+// TestWithinUsageLimits_EgressExceeded verifies the within usage limits egress exceeded behaviour described by the test name.
 func TestWithinUsageLimits_EgressExceeded(t *testing.T) {
 	t.Parallel()
 	limits := map[string]core.UsageLimits{
@@ -331,6 +357,7 @@ func TestWithinUsageLimits_EgressExceeded(t *testing.T) {
 	}
 }
 
+// TestWithinUsageLimits_UnlimitedDimension verifies the within usage limits unlimited dimension behaviour described by the test name.
 func TestWithinUsageLimits_UnlimitedDimension(t *testing.T) {
 	t.Parallel()
 	limits := map[string]core.UsageLimits{
@@ -344,6 +371,8 @@ func TestWithinUsageLimits_UnlimitedDimension(t *testing.T) {
 	}
 }
 
+// TestBackendsWithinLimits_FiltersCorrectly verifies the backends within limits filters correctly contract.
+// Asserts that eligible = , want [b2].
 func TestBackendsWithinLimits_FiltersCorrectly(t *testing.T) {
 	t.Parallel()
 	limits := map[string]core.UsageLimits{
@@ -366,6 +395,8 @@ func TestBackendsWithinLimits_FiltersCorrectly(t *testing.T) {
 
 // --- currentPeriod tests ---
 
+// TestCurrentPeriod_Format verifies the current period format contract.
+// Asserts that counter.CurrentPeriod() = , want YYYY-MM format.
 func TestCurrentPeriod_Format(t *testing.T) {
 	t.Parallel()
 	period := counter.CurrentPeriod()

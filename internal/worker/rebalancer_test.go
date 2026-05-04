@@ -1,3 +1,17 @@
+// -------------------------------------------------------------------------------
+// Rebalancer Tests
+//
+// Author: Alex Freidah
+//
+// Covers the rebalancer's threshold gate (only acts when utilization
+// skew exceeds the configured fraction), config round-trip, the planner
+// that batches per-source backend queries, and the move-and-cleanup
+// orchestration against a mock store and mock backends. The threshold
+// edge cases (single backend, empty stats) pin the early-exit
+// invariants that keep the worker from no-op-spinning on degenerate
+// inputs.
+// -------------------------------------------------------------------------------
+
 package worker
 
 import (
@@ -12,6 +26,8 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
+// TestRebalancer_SetConfig_RoundTrip verifies the rebalancer set config round trip contract.
+// Asserts that Config().Strategy = , want spread.
 func TestRebalancer_SetConfig_RoundTrip(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -26,6 +42,7 @@ func TestRebalancer_SetConfig_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestExceedsThreshold_BelowThreshold verifies the exceeds threshold below threshold behaviour described by the test name.
 func TestExceedsThreshold_BelowThreshold(t *testing.T) {
 	t.Parallel()
 	stats := map[string]core.QuotaStat{
@@ -37,6 +54,7 @@ func TestExceedsThreshold_BelowThreshold(t *testing.T) {
 	}
 }
 
+// TestExceedsThreshold_AboveThreshold verifies the exceeds threshold above threshold behaviour described by the test name.
 func TestExceedsThreshold_AboveThreshold(t *testing.T) {
 	t.Parallel()
 	stats := map[string]core.QuotaStat{
@@ -48,6 +66,7 @@ func TestExceedsThreshold_AboveThreshold(t *testing.T) {
 	}
 }
 
+// TestExceedsThreshold_SingleBackend verifies the exceeds threshold single backend behaviour described by the test name.
 func TestExceedsThreshold_SingleBackend(t *testing.T) {
 	t.Parallel()
 	stats := map[string]core.QuotaStat{
@@ -58,6 +77,7 @@ func TestExceedsThreshold_SingleBackend(t *testing.T) {
 	}
 }
 
+// TestExceedsThreshold_EmptyStats verifies the exceeds threshold empty stats behaviour described by the test name.
 func TestExceedsThreshold_EmptyStats(t *testing.T) {
 	t.Parallel()
 	if ExceedsThreshold(nil, []string{"b1", "b2"}, 0.1) {
@@ -65,6 +85,8 @@ func TestExceedsThreshold_EmptyStats(t *testing.T) {
 	}
 }
 
+// TestPlanSpreadEven_BalancedSkipped verifies the plan spread even balanced skipped contract.
+// Asserts that unexpected error:.
 func TestPlanSpreadEven_BalancedSkipped(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -88,6 +110,8 @@ func TestPlanSpreadEven_BalancedSkipped(t *testing.T) {
 	}
 }
 
+// TestPlanSpreadEven_ImbalancedPlansMoves verifies the plan spread even imbalanced plans moves contract.
+// Asserts that unexpected error:.
 func TestPlanSpreadEven_ImbalancedPlansMoves(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -101,7 +125,7 @@ func TestPlanSpreadEven_ImbalancedPlansMoves(t *testing.T) {
 	ops.EXPECT().BackendOrder().Return([]string{"b1", "b2"}).AnyTimes()
 
 	r := NewRebalancer(ops, ms)
-	// b1 at 80%, b2 at 20% → target ~50%, b1 has excess
+	// b1 at 80%, b2 at 20% -> target ~50%, b1 has excess
 	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 800, BytesLimit: 1000},
 		"b2": {BytesUsed: 200, BytesLimit: 1000},
@@ -115,7 +139,7 @@ func TestPlanSpreadEven_ImbalancedPlansMoves(t *testing.T) {
 	}
 	for _, mv := range plan {
 		if mv.FromBackend != "b1" || mv.ToBackend != "b2" {
-			t.Errorf("move should be b1→b2, got %s→%s", mv.FromBackend, mv.ToBackend)
+			t.Errorf("move should be b1->b2, got %s->%s", mv.FromBackend, mv.ToBackend)
 		}
 	}
 }
@@ -212,6 +236,7 @@ func TestPlanPackTight_BatchesBackendLookup(t *testing.T) {
 	}
 }
 
+// TestExecuteOneMove_Success verifies the execute one move success path by exercising gomock.NewController, backendtest.NewMockObjectBackend, ops.EXPECT.
 func TestExecuteOneMove_Success(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -235,6 +260,7 @@ func TestExecuteOneMove_Success(t *testing.T) {
 	}
 }
 
+// TestExecuteOneMove_StreamCopyFails verifies the execute one move stream copy fails path by exercising gomock.NewController, backendtest.NewMockObjectBackend, ops.EXPECT.
 func TestExecuteOneMove_StreamCopyFails(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -256,6 +282,7 @@ func TestExecuteOneMove_StreamCopyFails(t *testing.T) {
 	}
 }
 
+// TestExecuteOneMove_MoveLocationFails verifies the execute one move move location fails path by exercising gomock.NewController, backendtest.NewMockObjectBackend, ops.EXPECT.
 func TestExecuteOneMove_MoveLocationFails(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -279,6 +306,7 @@ func TestExecuteOneMove_MoveLocationFails(t *testing.T) {
 	}
 }
 
+// TestExecuteOneMove_SourceBackendNotFound verifies the execute one move source backend not found path by exercising gomock.NewController, ops.EXPECT, r.ExecuteOneMove.
 func TestExecuteOneMove_SourceBackendNotFound(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -296,6 +324,7 @@ func TestExecuteOneMove_SourceBackendNotFound(t *testing.T) {
 	}
 }
 
+// TestRebalance_UnknownStrategy verifies the rebalance unknown strategy path by exercising gomock.NewController, ops.EXPECT, r.Rebalance.
 func TestRebalance_UnknownStrategy(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)

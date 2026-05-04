@@ -2,6 +2,13 @@
 // Usage Flush Configuration
 //
 // Author: Alex Freidah
+//
+// Defines UsageFlushConfig - tuning for the periodic flush that drains
+// in-memory or Redis usage deltas into backend_usage. Carries the base
+// interval, the adaptive interval used when any backend is near a
+// monthly limit, and the watchdog timeout that resets a stalled
+// half-open advisory lock so the flusher cannot get pinned by a hung
+// instance.
 // -------------------------------------------------------------------------------
 
 package config
@@ -21,6 +28,7 @@ type UsageFlushConfig struct {
 	FastInterval      time.Duration `yaml:"fast_interval"`      // Interval when near limits (default: 5s)
 }
 
+// setDefaultsAndValidate sets defaults and validate.
 func (u *UsageFlushConfig) setDefaultsAndValidate() []error {
 	var errs []error
 

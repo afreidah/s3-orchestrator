@@ -19,6 +19,8 @@ import (
 	"time"
 )
 
+// TestConfigValidation_MinimalValid verifies the config validation minimal valid contract.
+// Asserts that valid config should pass validation:.
 func TestConfigValidation_MinimalValid(t *testing.T) {
 	t.Parallel()
 	cfg := Config{
@@ -60,6 +62,7 @@ func TestConfigValidation_MinimalValid(t *testing.T) {
 	}
 }
 
+// TestConfigValidation_MissingRequired verifies the config validation missing required path by exercising cfg.SetDefaultsAndValidate.
 func TestConfigValidation_MissingRequired(t *testing.T) {
 	t.Parallel()
 	cfg := Config{}
@@ -69,6 +72,7 @@ func TestConfigValidation_MissingRequired(t *testing.T) {
 	}
 }
 
+// TestConfigValidation_DuplicateBackendNames verifies the config validation duplicate backend names path by exercising cfg.SetDefaultsAndValidate.
 func TestConfigValidation_DuplicateBackendNames(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -83,6 +87,7 @@ func TestConfigValidation_DuplicateBackendNames(t *testing.T) {
 	}
 }
 
+// TestConfigValidation_NegativeQuota verifies the config validation negative quota path by exercising cfg.SetDefaultsAndValidate.
 func TestConfigValidation_NegativeQuota(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -94,6 +99,7 @@ func TestConfigValidation_NegativeQuota(t *testing.T) {
 	}
 }
 
+// TestConfigValidation_NegativeMaxConcurrentRequests verifies the config validation negative max concurrent requests path by exercising cfg.SetDefaultsAndValidate.
 func TestConfigValidation_NegativeMaxConcurrentRequests(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -105,6 +111,7 @@ func TestConfigValidation_NegativeMaxConcurrentRequests(t *testing.T) {
 	}
 }
 
+// TestConfigValidation_NegativeMaxConcurrentReads verifies the config validation negative max concurrent reads path by exercising cfg.SetDefaultsAndValidate.
 func TestConfigValidation_NegativeMaxConcurrentReads(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -116,6 +123,7 @@ func TestConfigValidation_NegativeMaxConcurrentReads(t *testing.T) {
 	}
 }
 
+// TestConfigValidation_NegativeMaxConcurrentWrites verifies the config validation negative max concurrent writes path by exercising cfg.SetDefaultsAndValidate.
 func TestConfigValidation_NegativeMaxConcurrentWrites(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -127,6 +135,7 @@ func TestConfigValidation_NegativeMaxConcurrentWrites(t *testing.T) {
 	}
 }
 
+// TestConfigValidation_InvalidLoadShedThreshold verifies the config validation invalid load shed threshold path by exercising cfg.SetDefaultsAndValidate.
 func TestConfigValidation_InvalidLoadShedThreshold(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -138,6 +147,7 @@ func TestConfigValidation_InvalidLoadShedThreshold(t *testing.T) {
 	}
 }
 
+// TestConfigValidation_NegativeLoadShedThreshold verifies the config validation negative load shed threshold path by exercising cfg.SetDefaultsAndValidate.
 func TestConfigValidation_NegativeLoadShedThreshold(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -149,6 +159,8 @@ func TestConfigValidation_NegativeLoadShedThreshold(t *testing.T) {
 	}
 }
 
+// TestConfigValidation_ValidLoadShedThreshold verifies the config validation valid load shed threshold contract.
+// Asserts that valid load_shed_threshold 0.8 should pass:.
 func TestConfigValidation_ValidLoadShedThreshold(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -159,6 +171,7 @@ func TestConfigValidation_ValidLoadShedThreshold(t *testing.T) {
 	}
 }
 
+// TestConfigValidation_NegativeAdmissionWait verifies the config validation negative admission wait path by exercising cfg.SetDefaultsAndValidate.
 func TestConfigValidation_NegativeAdmissionWait(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -170,6 +183,8 @@ func TestConfigValidation_NegativeAdmissionWait(t *testing.T) {
 	}
 }
 
+// TestConfigValidation_ZeroMaxConcurrentRequestsDefaultsTo1000 verifies the config validation zero max concurrent requests defaults to1000 contract.
+// Asserts that zero max_concurrent_requests should pass validation:.
 func TestConfigValidation_ZeroMaxConcurrentRequestsDefaultsTo1000(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -183,6 +198,8 @@ func TestConfigValidation_ZeroMaxConcurrentRequestsDefaultsTo1000(t *testing.T) 
 	}
 }
 
+// TestConfigValidation_SplitPoolsSkipGlobalDefault verifies the config validation split pools skip global default contract.
+// Asserts that split pools should pass validation:.
 func TestConfigValidation_SplitPoolsSkipGlobalDefault(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -197,6 +214,8 @@ func TestConfigValidation_SplitPoolsSkipGlobalDefault(t *testing.T) {
 	}
 }
 
+// TestConfigValidation_ZeroQuotaMeansUnlimited verifies the config validation zero quota means unlimited contract.
+// Asserts that zero quota (unlimited) should pass validation:.
 func TestConfigValidation_ZeroQuotaMeansUnlimited(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -207,6 +226,8 @@ func TestConfigValidation_ZeroQuotaMeansUnlimited(t *testing.T) {
 	}
 }
 
+// TestConfigValidation_OmittedQuotaMeansUnlimited verifies the config validation omitted quota means unlimited contract.
+// Asserts that omitted quota (unlimited) should pass validation:.
 func TestConfigValidation_OmittedQuotaMeansUnlimited(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -217,6 +238,8 @@ func TestConfigValidation_OmittedQuotaMeansUnlimited(t *testing.T) {
 	}
 }
 
+// TestConnectionString verifies the connection string contract.
+// Asserts that ConnectionString() = , want.
 func TestConnectionString(t *testing.T) {
 	t.Parallel()
 	db := DatabaseConfig{
@@ -235,6 +258,8 @@ func TestConnectionString(t *testing.T) {
 	}
 }
 
+// TestConnectionString_SpecialChars verifies the connection string special chars contract.
+// Asserts that ConnectionString() = , want.
 func TestConnectionString_SpecialChars(t *testing.T) {
 	t.Parallel()
 	db := DatabaseConfig{ //nolint:gosec // G101: test config values
@@ -254,6 +279,8 @@ func TestConnectionString_SpecialChars(t *testing.T) {
 	}
 }
 
+// TestRebalanceConfig_Defaults verifies the rebalance config defaults contract.
+// Asserts that valid rebalance config should pass:.
 func TestRebalanceConfig_Defaults(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -280,6 +307,7 @@ func TestRebalanceConfig_Defaults(t *testing.T) {
 	}
 }
 
+// TestRebalanceConfig_InvalidStrategy verifies the rebalance config invalid strategy path by exercising cfg.SetDefaultsAndValidate.
 func TestRebalanceConfig_InvalidStrategy(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -296,6 +324,8 @@ func TestRebalanceConfig_InvalidStrategy(t *testing.T) {
 	}
 }
 
+// TestRebalanceConfig_DisabledSkipsValidation verifies the rebalance config disabled skips validation contract.
+// Asserts that disabled rebalance should skip validation:.
 func TestRebalanceConfig_DisabledSkipsValidation(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -309,6 +339,7 @@ func TestRebalanceConfig_DisabledSkipsValidation(t *testing.T) {
 	}
 }
 
+// TestRebalanceConfig_InvalidThreshold verifies the rebalance config invalid threshold path by exercising cfg.SetDefaultsAndValidate.
 func TestRebalanceConfig_InvalidThreshold(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -325,6 +356,8 @@ func TestRebalanceConfig_InvalidThreshold(t *testing.T) {
 	}
 }
 
+// TestReplicationConfig_DefaultsWhenDisabled verifies the replication config defaults when disabled contract.
+// Asserts that disabled replication should pass:.
 func TestReplicationConfig_DefaultsWhenDisabled(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -339,6 +372,8 @@ func TestReplicationConfig_DefaultsWhenDisabled(t *testing.T) {
 	}
 }
 
+// TestReplicationConfig_DefaultsWhenEnabled verifies the replication config defaults when enabled contract.
+// Asserts that valid replication config should pass:.
 func TestReplicationConfig_DefaultsWhenEnabled(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfigTwoBackends()
@@ -356,6 +391,7 @@ func TestReplicationConfig_DefaultsWhenEnabled(t *testing.T) {
 	}
 }
 
+// TestReplicationConfig_FactorExceedsBackends verifies the replication config factor exceeds backends path by exercising cfg.SetDefaultsAndValidate.
 func TestReplicationConfig_FactorExceedsBackends(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig() // 1 backend
@@ -366,6 +402,7 @@ func TestReplicationConfig_FactorExceedsBackends(t *testing.T) {
 	}
 }
 
+// TestReplicationConfig_FactorNegative verifies the replication config factor negative path by exercising cfg.SetDefaultsAndValidate.
 func TestReplicationConfig_FactorNegative(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -376,6 +413,8 @@ func TestReplicationConfig_FactorNegative(t *testing.T) {
 	}
 }
 
+// TestReplicationConfig_DisabledSkipsValidation verifies the replication config disabled skips validation contract.
+// Asserts that factor=1 should skip interval validation:.
 func TestReplicationConfig_DisabledSkipsValidation(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -386,6 +425,8 @@ func TestReplicationConfig_DisabledSkipsValidation(t *testing.T) {
 	}
 }
 
+// TestCircuitBreakerDefaults verifies the circuit breaker defaults contract.
+// Asserts that valid config should pass:.
 func TestCircuitBreakerDefaults(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -408,6 +449,8 @@ func TestCircuitBreakerDefaults(t *testing.T) {
 	}
 }
 
+// TestCircuitBreakerConfig_ParallelBroadcastSet verifies the circuit breaker config parallel broadcast set contract.
+// Asserts that parallel_broadcast=true should pass:.
 func TestCircuitBreakerConfig_ParallelBroadcastSet(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -421,6 +464,8 @@ func TestCircuitBreakerConfig_ParallelBroadcastSet(t *testing.T) {
 	}
 }
 
+// TestServerTimeoutDefaults verifies the server timeout defaults contract.
+// Asserts that valid config should pass:.
 func TestServerTimeoutDefaults(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -443,6 +488,8 @@ func TestServerTimeoutDefaults(t *testing.T) {
 	}
 }
 
+// TestServerTimeoutCustomValues verifies the server timeout custom values contract.
+// Asserts that custom timeouts should pass:.
 func TestServerTimeoutCustomValues(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -469,6 +516,8 @@ func TestServerTimeoutCustomValues(t *testing.T) {
 	}
 }
 
+// TestServerTimeoutCrossValidation verifies the server timeout cross validation contract.
+// Asserts that error = , want substring.
 func TestServerTimeoutCrossValidation(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -531,6 +580,8 @@ func TestServerTimeoutCrossValidation(t *testing.T) {
 	}
 }
 
+// TestNonReloadableFieldsChanged_ServerTimeouts verifies the non reloadable fields changed server timeouts contract.
+// Asserts that expected server timeouts in changed list, got.
 func TestNonReloadableFieldsChanged_ServerTimeouts(t *testing.T) {
 	t.Parallel()
 	a := validBaseConfig()
@@ -554,6 +605,8 @@ func TestNonReloadableFieldsChanged_ServerTimeouts(t *testing.T) {
 	}
 }
 
+// TestShutdownDelayDefault verifies the shutdown delay default contract.
+// Asserts that valid config should pass:.
 func TestShutdownDelayDefault(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -567,6 +620,8 @@ func TestShutdownDelayDefault(t *testing.T) {
 	}
 }
 
+// TestShutdownDelayCustomValue verifies the shutdown delay custom value contract.
+// Asserts that custom shutdown_delay should pass:.
 func TestShutdownDelayCustomValue(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -581,6 +636,8 @@ func TestShutdownDelayCustomValue(t *testing.T) {
 	}
 }
 
+// TestNonReloadableFieldsChanged_ShutdownDelay verifies the non reloadable fields changed shutdown delay contract.
+// Asserts that expected server.shutdown_delay in changed list, got.
 func TestNonReloadableFieldsChanged_ShutdownDelay(t *testing.T) {
 	t.Parallel()
 	a := validBaseConfig()
@@ -604,6 +661,8 @@ func TestNonReloadableFieldsChanged_ShutdownDelay(t *testing.T) {
 	}
 }
 
+// TestNonReloadableFieldsChanged_CircuitBreaker verifies the non reloadable fields changed circuit breaker contract.
+// Asserts that expected circuit_breaker in changed fields, got.
 func TestNonReloadableFieldsChanged_CircuitBreaker(t *testing.T) {
 	t.Parallel()
 	a := validBaseConfig()
@@ -624,6 +683,7 @@ func TestNonReloadableFieldsChanged_CircuitBreaker(t *testing.T) {
 	}
 }
 
+// TestConfigValidation_MixedQuotaAndUnlimited verifies the config validation mixed quota and unlimited path by exercising cfg.SetDefaultsAndValidate.
 func TestConfigValidation_MixedQuotaAndUnlimited(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -639,6 +699,7 @@ func TestConfigValidation_MixedQuotaAndUnlimited(t *testing.T) {
 	}
 }
 
+// TestConfigValidation_MultipleUnlimitedWithoutReplication verifies the config validation multiple unlimited without replication path by exercising cfg.SetDefaultsAndValidate.
 func TestConfigValidation_MultipleUnlimitedWithoutReplication(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -653,6 +714,8 @@ func TestConfigValidation_MultipleUnlimitedWithoutReplication(t *testing.T) {
 	}
 }
 
+// TestConfigValidation_MultipleUnlimitedWithReplication verifies the config validation multiple unlimited with replication contract.
+// Asserts that multiple unlimited backends with replication should pass:.
 func TestConfigValidation_MultipleUnlimitedWithReplication(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -667,6 +730,8 @@ func TestConfigValidation_MultipleUnlimitedWithReplication(t *testing.T) {
 	}
 }
 
+// TestConfigValidation_QuotaBackendsWithReplication verifies the config validation quota backends with replication contract.
+// Asserts that quota'd backends with replication should pass:.
 func TestConfigValidation_QuotaBackendsWithReplication(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -681,6 +746,8 @@ func TestConfigValidation_QuotaBackendsWithReplication(t *testing.T) {
 	}
 }
 
+// TestConfigValidation_MultiBackendNoReplicationWarns verifies the config validation multi backend no replication warns contract.
+// Asserts that multi-backend with factor=1 should pass validation (warn only):.
 func TestConfigValidation_MultiBackendNoReplicationWarns(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -690,12 +757,13 @@ func TestConfigValidation_MultiBackendNoReplicationWarns(t *testing.T) {
 	}
 	cfg.Replication = ReplicationConfig{Factor: 1}
 
-	// Should pass validation (warning, not error) — replication.factor=1 is valid
+	// Should pass validation (warning, not error)  -  replication.factor=1 is valid
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
 		t.Errorf("multi-backend with factor=1 should pass validation (warn only): %v", err)
 	}
 }
 
+// TestConfigValidation_NegativeAPIRequestLimit verifies the config validation negative apirequest limit path by exercising cfg.SetDefaultsAndValidate.
 func TestConfigValidation_NegativeAPIRequestLimit(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -707,6 +775,7 @@ func TestConfigValidation_NegativeAPIRequestLimit(t *testing.T) {
 	}
 }
 
+// TestConfigValidation_NegativeEgressByteLimit verifies the config validation negative egress byte limit path by exercising cfg.SetDefaultsAndValidate.
 func TestConfigValidation_NegativeEgressByteLimit(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -718,6 +787,7 @@ func TestConfigValidation_NegativeEgressByteLimit(t *testing.T) {
 	}
 }
 
+// TestConfigValidation_NegativeIngressByteLimit verifies the config validation negative ingress byte limit path by exercising cfg.SetDefaultsAndValidate.
 func TestConfigValidation_NegativeIngressByteLimit(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -729,10 +799,12 @@ func TestConfigValidation_NegativeIngressByteLimit(t *testing.T) {
 	}
 }
 
+// TestConfigValidation_ZeroUsageLimitsMeansUnlimited verifies the config validation zero usage limits means unlimited contract.
+// Asserts that zero usage limits (unlimited) should pass validation:.
 func TestConfigValidation_ZeroUsageLimitsMeansUnlimited(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
-	// All zero — should pass (unlimited)
+	// All zero  -  should pass (unlimited)
 	cfg.Backends[0].APIRequestLimit = 0
 	cfg.Backends[0].EgressByteLimit = 0
 	cfg.Backends[0].IngressByteLimit = 0
@@ -746,6 +818,8 @@ func TestConfigValidation_ZeroUsageLimitsMeansUnlimited(t *testing.T) {
 // BUCKET VALIDATION TESTS
 // -------------------------------------------------------------------------
 
+// TestConfigValidation_NoBuckets verifies the config validation no buckets contract.
+// Asserts that error should mention missing buckets, got:.
 func TestConfigValidation_NoBuckets(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -760,6 +834,8 @@ func TestConfigValidation_NoBuckets(t *testing.T) {
 	}
 }
 
+// TestConfigValidation_DuplicateBucketNames verifies the config validation duplicate bucket names contract.
+// Asserts that error should mention duplicate bucket, got:.
 func TestConfigValidation_DuplicateBucketNames(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -777,6 +853,8 @@ func TestConfigValidation_DuplicateBucketNames(t *testing.T) {
 	}
 }
 
+// TestConfigValidation_DuplicateAccessKeysAcrossBuckets verifies the config validation duplicate access keys across buckets contract.
+// Asserts that error should mention duplicate access key, got:.
 func TestConfigValidation_DuplicateAccessKeysAcrossBuckets(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -794,6 +872,8 @@ func TestConfigValidation_DuplicateAccessKeysAcrossBuckets(t *testing.T) {
 	}
 }
 
+// TestConfigValidation_BucketMissingCredentials verifies the config validation bucket missing credentials contract.
+// Asserts that error should mention missing credentials, got:.
 func TestConfigValidation_BucketMissingCredentials(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -810,6 +890,8 @@ func TestConfigValidation_BucketMissingCredentials(t *testing.T) {
 	}
 }
 
+// TestConfigValidation_CredentialWithNoAuthMethod verifies the config validation credential with no auth method contract.
+// Asserts that error should mention missing auth, got:.
 func TestConfigValidation_CredentialWithNoAuthMethod(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -826,6 +908,8 @@ func TestConfigValidation_CredentialWithNoAuthMethod(t *testing.T) {
 	}
 }
 
+// TestConfigValidation_BucketNameWithSlash verifies the config validation bucket name with slash contract.
+// Asserts that error should mention slash in name, got:.
 func TestConfigValidation_BucketNameWithSlash(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -842,6 +926,8 @@ func TestConfigValidation_BucketNameWithSlash(t *testing.T) {
 	}
 }
 
+// TestConfigValidation_MultipleCredentialsOnSameBucket verifies the config validation multiple credentials on same bucket contract.
+// Asserts that multiple credentials on same bucket should pass:.
 func TestConfigValidation_MultipleCredentialsOnSameBucket(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -857,6 +943,8 @@ func TestConfigValidation_MultipleCredentialsOnSameBucket(t *testing.T) {
 	}
 }
 
+// TestConfigValidation_TokenCredential verifies the config validation token credential contract.
+// Asserts that token-only credential should pass:.
 func TestConfigValidation_TokenCredential(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -871,6 +959,8 @@ func TestConfigValidation_TokenCredential(t *testing.T) {
 	}
 }
 
+// TestConfigValidation_BucketMissingName verifies the config validation bucket missing name contract.
+// Asserts that error should mention missing name, got:.
 func TestConfigValidation_BucketMissingName(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -887,6 +977,7 @@ func TestConfigValidation_BucketMissingName(t *testing.T) {
 	}
 }
 
+// TestConfigValidation_NegativeMaxMultipartUploads verifies the config validation negative max multipart uploads path by exercising cfg.SetDefaultsAndValidate.
 func TestConfigValidation_NegativeMaxMultipartUploads(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -898,6 +989,8 @@ func TestConfigValidation_NegativeMaxMultipartUploads(t *testing.T) {
 	}
 }
 
+// TestConfigValidation_ZeroMaxMultipartUploads verifies the config validation zero max multipart uploads contract.
+// Asserts that zero max_multipart_uploads (unlimited) should pass:.
 func TestConfigValidation_ZeroMaxMultipartUploads(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -908,6 +1001,8 @@ func TestConfigValidation_ZeroMaxMultipartUploads(t *testing.T) {
 	}
 }
 
+// TestConfigValidation_PositiveMaxMultipartUploads verifies the config validation positive max multipart uploads contract.
+// Asserts that positive max_multipart_uploads should pass:.
 func TestConfigValidation_PositiveMaxMultipartUploads(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -922,6 +1017,8 @@ func TestConfigValidation_PositiveMaxMultipartUploads(t *testing.T) {
 // NON-RELOADABLE FIELDS CHANGED TESTS
 // -------------------------------------------------------------------------
 
+// TestNonReloadableFieldsChanged_IdenticalConfigs verifies the non reloadable fields changed identical configs contract.
+// Asserts that identical configs should return empty slice, got.
 func TestNonReloadableFieldsChanged_IdenticalConfigs(t *testing.T) {
 	t.Parallel()
 	a := validBaseConfig()
@@ -935,6 +1032,8 @@ func TestNonReloadableFieldsChanged_IdenticalConfigs(t *testing.T) {
 	}
 }
 
+// TestNonReloadableFieldsChanged_ListenAddr verifies the non reloadable fields changed listen addr contract.
+// Asserts that expected [server.listen_addr], got.
 func TestNonReloadableFieldsChanged_ListenAddr(t *testing.T) {
 	t.Parallel()
 	a := validBaseConfig()
@@ -949,6 +1048,8 @@ func TestNonReloadableFieldsChanged_ListenAddr(t *testing.T) {
 	}
 }
 
+// TestNonReloadableFieldsChanged_MaxConcurrentRequests verifies the non reloadable fields changed max concurrent requests contract.
+// Asserts that expected [server.max_concurrent_requests], got.
 func TestNonReloadableFieldsChanged_MaxConcurrentRequests(t *testing.T) {
 	t.Parallel()
 	a := validBaseConfig()
@@ -963,6 +1064,8 @@ func TestNonReloadableFieldsChanged_MaxConcurrentRequests(t *testing.T) {
 	}
 }
 
+// TestNonReloadableFieldsChanged_MaxConcurrentReads verifies the non reloadable fields changed max concurrent reads contract.
+// Asserts that expected [server.max_concurrent_reads], got.
 func TestNonReloadableFieldsChanged_MaxConcurrentReads(t *testing.T) {
 	t.Parallel()
 	a := validBaseConfig()
@@ -978,6 +1081,8 @@ func TestNonReloadableFieldsChanged_MaxConcurrentReads(t *testing.T) {
 	}
 }
 
+// TestNonReloadableFieldsChanged_MaxConcurrentWrites verifies the non reloadable fields changed max concurrent writes contract.
+// Asserts that expected [server.max_concurrent_writes], got.
 func TestNonReloadableFieldsChanged_MaxConcurrentWrites(t *testing.T) {
 	t.Parallel()
 	a := validBaseConfig()
@@ -993,6 +1098,8 @@ func TestNonReloadableFieldsChanged_MaxConcurrentWrites(t *testing.T) {
 	}
 }
 
+// TestNonReloadableFieldsChanged_LoadShedThreshold verifies the non reloadable fields changed load shed threshold contract.
+// Asserts that expected [server.load_shed_threshold], got.
 func TestNonReloadableFieldsChanged_LoadShedThreshold(t *testing.T) {
 	t.Parallel()
 	a := validBaseConfig()
@@ -1007,6 +1114,8 @@ func TestNonReloadableFieldsChanged_LoadShedThreshold(t *testing.T) {
 	}
 }
 
+// TestNonReloadableFieldsChanged_AdmissionWait verifies the non reloadable fields changed admission wait contract.
+// Asserts that expected [server.admission_wait], got.
 func TestNonReloadableFieldsChanged_AdmissionWait(t *testing.T) {
 	t.Parallel()
 	a := validBaseConfig()
@@ -1021,6 +1130,8 @@ func TestNonReloadableFieldsChanged_AdmissionWait(t *testing.T) {
 	}
 }
 
+// TestNonReloadableFieldsChanged_Database verifies the non reloadable fields changed database contract.
+// Asserts that expected 'database' in changed list, got.
 func TestNonReloadableFieldsChanged_Database(t *testing.T) {
 	t.Parallel()
 	a := validBaseConfig()
@@ -1041,6 +1152,8 @@ func TestNonReloadableFieldsChanged_Database(t *testing.T) {
 	}
 }
 
+// TestNonReloadableFieldsChanged_BackendStructuralFields verifies the non reloadable fields changed backend structural fields contract.
+// Asserts that expected backend structural fields change, got.
 func TestNonReloadableFieldsChanged_BackendStructuralFields(t *testing.T) {
 	t.Parallel()
 	a := validBaseConfig()
@@ -1061,6 +1174,8 @@ func TestNonReloadableFieldsChanged_BackendStructuralFields(t *testing.T) {
 	}
 }
 
+// TestNonReloadableFieldsChanged_BackendCredentials verifies the non reloadable fields changed backend credentials contract.
+// Asserts that expected backend structural fields change for credentials, got.
 func TestNonReloadableFieldsChanged_BackendCredentials(t *testing.T) {
 	t.Parallel()
 	a := validBaseConfig()
@@ -1081,6 +1196,8 @@ func TestNonReloadableFieldsChanged_BackendCredentials(t *testing.T) {
 	}
 }
 
+// TestNonReloadableFieldsChanged_BackendCountChanged verifies the non reloadable fields changed backend count changed contract.
+// Asserts that expected 'backends (count changed)', got.
 func TestNonReloadableFieldsChanged_BackendCountChanged(t *testing.T) {
 	t.Parallel()
 	a := validBaseConfig()
@@ -1100,6 +1217,8 @@ func TestNonReloadableFieldsChanged_BackendCountChanged(t *testing.T) {
 	}
 }
 
+// TestNonReloadableFieldsChanged_ReloadableOnlyChanges verifies the non reloadable fields changed reloadable only changes contract.
+// Asserts that reloadable-only changes should return empty slice, got.
 func TestNonReloadableFieldsChanged_ReloadableOnlyChanges(t *testing.T) {
 	t.Parallel()
 	a := validBaseConfig()
@@ -1107,7 +1226,7 @@ func TestNonReloadableFieldsChanged_ReloadableOnlyChanges(t *testing.T) {
 	_ = a.SetDefaultsAndValidate()
 	_ = b.SetDefaultsAndValidate()
 
-	// These are reloadable fields — should NOT appear in the result
+	// These are reloadable fields  -  should NOT appear in the result
 	b.Backends[0].QuotaBytes = 9999
 	b.Backends[0].APIRequestLimit = 5000
 	b.Backends[0].EgressByteLimit = 1000
@@ -1125,6 +1244,8 @@ func TestNonReloadableFieldsChanged_ReloadableOnlyChanges(t *testing.T) {
 	}
 }
 
+// TestNonReloadableFieldsChanged_UnsignedPayloadChanged verifies the non reloadable fields changed unsigned payload changed contract.
+// Asserts that expected backend structural fields change for unsigned_payload, got.
 func TestNonReloadableFieldsChanged_UnsignedPayloadChanged(t *testing.T) {
 	t.Parallel()
 	a := validBaseConfig()
@@ -1146,11 +1267,13 @@ func TestNonReloadableFieldsChanged_UnsignedPayloadChanged(t *testing.T) {
 	}
 }
 
+// TestNonReloadableFieldsChanged_UnsignedPayloadBothNil verifies the non reloadable fields changed unsigned payload both nil contract.
+// Asserts that both nil unsigned_payload should be identical, got.
 func TestNonReloadableFieldsChanged_UnsignedPayloadBothNil(t *testing.T) {
 	t.Parallel()
 	a := validBaseConfig()
 	b := validBaseConfig()
-	// Both nil — should be treated as identical (both default to true)
+	// Both nil  -  should be treated as identical (both default to true)
 	_ = a.SetDefaultsAndValidate()
 	_ = b.SetDefaultsAndValidate()
 
@@ -1160,6 +1283,8 @@ func TestNonReloadableFieldsChanged_UnsignedPayloadBothNil(t *testing.T) {
 	}
 }
 
+// TestNonReloadableFieldsChanged_UnsignedPayloadExplicitTrue verifies the non reloadable fields changed unsigned payload explicit true contract.
+// Asserts that explicit true should match nil default, got.
 func TestNonReloadableFieldsChanged_UnsignedPayloadExplicitTrue(t *testing.T) {
 	t.Parallel()
 	a := validBaseConfig()
@@ -1176,6 +1301,8 @@ func TestNonReloadableFieldsChanged_UnsignedPayloadExplicitTrue(t *testing.T) {
 	}
 }
 
+// TestNonReloadableFieldsChanged_DisableChecksumChanged verifies the non reloadable fields changed disable checksum changed contract.
+// Asserts that expected backend structural fields change for disable_checksum, got.
 func TestNonReloadableFieldsChanged_DisableChecksumChanged(t *testing.T) {
 	t.Parallel()
 	a := validBaseConfig()
@@ -1196,6 +1323,8 @@ func TestNonReloadableFieldsChanged_DisableChecksumChanged(t *testing.T) {
 	}
 }
 
+// TestNonReloadableFieldsChanged_DisableChecksumBothTrue verifies the non reloadable fields changed disable checksum both true contract.
+// Asserts that both disable_checksum=true should be identical, got.
 func TestNonReloadableFieldsChanged_DisableChecksumBothTrue(t *testing.T) {
 	t.Parallel()
 	a := validBaseConfig()
@@ -1211,6 +1340,8 @@ func TestNonReloadableFieldsChanged_DisableChecksumBothTrue(t *testing.T) {
 	}
 }
 
+// TestNonReloadableFieldsChanged_DisableChecksumBothFalse verifies the non reloadable fields changed disable checksum both false contract.
+// Asserts that both disable_checksum=false (default) should be identical, got.
 func TestNonReloadableFieldsChanged_DisableChecksumBothFalse(t *testing.T) {
 	t.Parallel()
 	a := validBaseConfig()
@@ -1224,6 +1355,8 @@ func TestNonReloadableFieldsChanged_DisableChecksumBothFalse(t *testing.T) {
 	}
 }
 
+// TestNonReloadableFieldsChanged_StripSDKHeadersChanged verifies the non reloadable fields changed strip sdkheaders changed contract.
+// Asserts that expected backend structural fields change for strip_sdk_headers, got.
 func TestNonReloadableFieldsChanged_StripSDKHeadersChanged(t *testing.T) {
 	t.Parallel()
 	a := validBaseConfig()
@@ -1244,6 +1377,8 @@ func TestNonReloadableFieldsChanged_StripSDKHeadersChanged(t *testing.T) {
 	}
 }
 
+// TestNonReloadableFieldsChanged_StripSDKHeadersBothTrue verifies the non reloadable fields changed strip sdkheaders both true contract.
+// Asserts that both strip_sdk_headers=true should be identical, got.
 func TestNonReloadableFieldsChanged_StripSDKHeadersBothTrue(t *testing.T) {
 	t.Parallel()
 	a := validBaseConfig()
@@ -1259,6 +1394,8 @@ func TestNonReloadableFieldsChanged_StripSDKHeadersBothTrue(t *testing.T) {
 	}
 }
 
+// TestNonReloadableFieldsChanged_StripSDKHeadersBothFalse verifies the non reloadable fields changed strip sdkheaders both false contract.
+// Asserts that both strip_sdk_headers=false (default) should be identical, got.
 func TestNonReloadableFieldsChanged_StripSDKHeadersBothFalse(t *testing.T) {
 	t.Parallel()
 	a := validBaseConfig()
@@ -1272,6 +1409,8 @@ func TestNonReloadableFieldsChanged_StripSDKHeadersBothFalse(t *testing.T) {
 	}
 }
 
+// TestBoolDefault verifies the bool default contract.
+// Asserts that boolDefault(nil, true) = , want true.
 func TestBoolDefault(t *testing.T) {
 	t.Parallel()
 	tr := true
@@ -1291,6 +1430,8 @@ func TestBoolDefault(t *testing.T) {
 	}
 }
 
+// TestConfigValidation_TLS_CertWithoutKey verifies the config validation tls cert without key contract.
+// Asserts that expected cert+key pair error, got.
 func TestConfigValidation_TLS_CertWithoutKey(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -1301,6 +1442,8 @@ func TestConfigValidation_TLS_CertWithoutKey(t *testing.T) {
 	}
 }
 
+// TestConfigValidation_TLS_KeyWithoutCert verifies the config validation tls key without cert contract.
+// Asserts that expected cert+key pair error, got.
 func TestConfigValidation_TLS_KeyWithoutCert(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -1311,6 +1454,8 @@ func TestConfigValidation_TLS_KeyWithoutCert(t *testing.T) {
 	}
 }
 
+// TestConfigValidation_TLS_ValidPair verifies the config validation tls valid pair contract.
+// Asserts that valid TLS config should pass:.
 func TestConfigValidation_TLS_ValidPair(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -1324,6 +1469,8 @@ func TestConfigValidation_TLS_ValidPair(t *testing.T) {
 	}
 }
 
+// TestConfigValidation_TLS_InvalidMinVersion verifies the config validation tls invalid min version contract.
+// Asserts that expected min_version error, got.
 func TestConfigValidation_TLS_InvalidMinVersion(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -1336,6 +1483,8 @@ func TestConfigValidation_TLS_InvalidMinVersion(t *testing.T) {
 	}
 }
 
+// TestConfigValidation_TLS_MinVersion13 verifies the config validation tls min version13 contract.
+// Asserts that TLS 1.3 should be valid:.
 func TestConfigValidation_TLS_MinVersion13(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -1347,6 +1496,8 @@ func TestConfigValidation_TLS_MinVersion13(t *testing.T) {
 	}
 }
 
+// TestConfigValidation_TLS_NoTLSIsValid verifies the config validation tls no tlsis valid contract.
+// Asserts that no TLS config should pass:.
 func TestConfigValidation_TLS_NoTLSIsValid(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -1355,6 +1506,8 @@ func TestConfigValidation_TLS_NoTLSIsValid(t *testing.T) {
 	}
 }
 
+// TestNonReloadableFieldsChanged_TLS verifies the non reloadable fields changed tls contract.
+// Asserts that expected server.tls in changed fields, got.
 func TestNonReloadableFieldsChanged_TLS(t *testing.T) {
 	t.Parallel()
 	a := validBaseConfig()
@@ -1377,6 +1530,8 @@ func TestNonReloadableFieldsChanged_TLS(t *testing.T) {
 	}
 }
 
+// TestNonReloadableFieldsChanged_MultipleChanges verifies the non reloadable fields changed multiple changes contract.
+// Asserts that expected at least 3 changed fields, got.
 func TestNonReloadableFieldsChanged_MultipleChanges(t *testing.T) {
 	t.Parallel()
 	a := validBaseConfig()
@@ -1398,6 +1553,8 @@ func TestNonReloadableFieldsChanged_MultipleChanges(t *testing.T) {
 // USAGE FLUSH CONFIG TESTS
 // -------------------------------------------------------------------------
 
+// TestUsageFlushConfig_Defaults verifies the usage flush config defaults contract.
+// Asserts that valid config should pass:.
 func TestUsageFlushConfig_Defaults(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -1419,6 +1576,8 @@ func TestUsageFlushConfig_Defaults(t *testing.T) {
 	}
 }
 
+// TestUsageFlushConfig_CustomValues verifies the usage flush config custom values contract.
+// Asserts that valid custom usage flush config should pass:.
 func TestUsageFlushConfig_CustomValues(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -1441,6 +1600,8 @@ func TestUsageFlushConfig_CustomValues(t *testing.T) {
 	}
 }
 
+// TestUsageFlushConfig_FastIntervalExceedsInterval verifies the usage flush config fast interval exceeds interval contract.
+// Asserts that error should mention fast_interval, got:.
 func TestUsageFlushConfig_FastIntervalExceedsInterval(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -1459,6 +1620,8 @@ func TestUsageFlushConfig_FastIntervalExceedsInterval(t *testing.T) {
 	}
 }
 
+// TestUsageFlushConfig_InvalidThreshold verifies the usage flush config invalid threshold contract.
+// Asserts that error should mention adaptive_threshold, got:.
 func TestUsageFlushConfig_InvalidThreshold(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -1481,15 +1644,19 @@ func TestUsageFlushConfig_InvalidThreshold(t *testing.T) {
 // LIFECYCLE CONFIG TESTS
 // -------------------------------------------------------------------------
 
+// TestLifecycleConfig_EmptyRulesValid verifies the lifecycle config empty rules valid contract.
+// Asserts that empty lifecycle rules should pass:.
 func TestLifecycleConfig_EmptyRulesValid(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
-	// No lifecycle rules — should be valid (disabled)
+	// No lifecycle rules  -  should be valid (disabled)
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
 		t.Errorf("empty lifecycle rules should pass: %v", err)
 	}
 }
 
+// TestLifecycleConfig_ValidRules verifies the lifecycle config valid rules contract.
+// Asserts that valid lifecycle rules should pass:.
 func TestLifecycleConfig_ValidRules(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -1505,6 +1672,8 @@ func TestLifecycleConfig_ValidRules(t *testing.T) {
 	}
 }
 
+// TestLifecycleConfig_MissingPrefix verifies the lifecycle config missing prefix contract.
+// Asserts that error should wrap ErrLifecyclePrefixRequired, got:.
 func TestLifecycleConfig_MissingPrefix(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -1523,6 +1692,8 @@ func TestLifecycleConfig_MissingPrefix(t *testing.T) {
 	}
 }
 
+// TestLifecycleConfig_ZeroExpirationDays verifies the lifecycle config zero expiration days contract.
+// Asserts that error should mention expiration_days, got:.
 func TestLifecycleConfig_ZeroExpirationDays(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -1541,6 +1712,7 @@ func TestLifecycleConfig_ZeroExpirationDays(t *testing.T) {
 	}
 }
 
+// TestLifecycleConfig_NegativeExpirationDays verifies the lifecycle config negative expiration days path by exercising cfg.SetDefaultsAndValidate.
 func TestLifecycleConfig_NegativeExpirationDays(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -1556,6 +1728,8 @@ func TestLifecycleConfig_NegativeExpirationDays(t *testing.T) {
 	}
 }
 
+// TestLifecycleConfig_DuplicatePrefix verifies the lifecycle config duplicate prefix contract.
+// Asserts that error should mention duplicate prefix, got:.
 func TestLifecycleConfig_DuplicatePrefix(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -1579,6 +1753,8 @@ func TestLifecycleConfig_DuplicatePrefix(t *testing.T) {
 // RATE LIMIT CONFIG TESTS
 // -------------------------------------------------------------------------
 
+// TestRateLimitConfig_Defaults verifies the rate limit config defaults contract.
+// Asserts that valid rate limit config should pass:.
 func TestRateLimitConfig_Defaults(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -1596,6 +1772,8 @@ func TestRateLimitConfig_Defaults(t *testing.T) {
 	}
 }
 
+// TestRateLimitConfig_DisabledSkipsValidation verifies the rate limit config disabled skips validation contract.
+// Asserts that disabled rate limit should skip validation:.
 func TestRateLimitConfig_DisabledSkipsValidation(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -1610,6 +1788,8 @@ func TestRateLimitConfig_DisabledSkipsValidation(t *testing.T) {
 // ROUTING STRATEGY TESTS
 // -------------------------------------------------------------------------
 
+// TestRoutingStrategy_DefaultsPack verifies the routing strategy defaults pack contract.
+// Asserts that valid config should pass:.
 func TestRoutingStrategy_DefaultsPack(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -1623,6 +1803,8 @@ func TestRoutingStrategy_DefaultsPack(t *testing.T) {
 	}
 }
 
+// TestRoutingStrategy_InvalidValue verifies the routing strategy invalid value contract.
+// Asserts that error should mention routing_strategy, got:.
 func TestRoutingStrategy_InvalidValue(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -1641,6 +1823,8 @@ func TestRoutingStrategy_InvalidValue(t *testing.T) {
 // TRACING CONFIG TESTS
 // -------------------------------------------------------------------------
 
+// TestTracingConfig_EnabledWithoutEndpoint verifies the tracing config enabled without endpoint contract.
+// Asserts that error should mention tracing endpoint, got:.
 func TestTracingConfig_EnabledWithoutEndpoint(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -1657,6 +1841,8 @@ func TestTracingConfig_EnabledWithoutEndpoint(t *testing.T) {
 	}
 }
 
+// TestTracingConfig_EnabledWithEndpoint verifies the tracing config enabled with endpoint contract.
+// Asserts that tracing with endpoint should pass:.
 func TestTracingConfig_EnabledWithEndpoint(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -1674,6 +1860,8 @@ func TestTracingConfig_EnabledWithEndpoint(t *testing.T) {
 	}
 }
 
+// TestTracingConfig_DisabledSkipsEndpointValidation verifies the tracing config disabled skips endpoint validation contract.
+// Asserts that disabled tracing should skip endpoint validation:.
 func TestTracingConfig_DisabledSkipsEndpointValidation(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -1686,6 +1874,8 @@ func TestTracingConfig_DisabledSkipsEndpointValidation(t *testing.T) {
 	}
 }
 
+// TestMetricsConfig_DefaultPath verifies the metrics config default path contract.
+// Asserts that valid config should pass:.
 func TestMetricsConfig_DefaultPath(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -1699,6 +1889,8 @@ func TestMetricsConfig_DefaultPath(t *testing.T) {
 	}
 }
 
+// TestMetricsConfig_ListenOptional verifies the metrics config listen optional contract.
+// Asserts that valid config should pass:.
 func TestMetricsConfig_ListenOptional(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -1714,6 +1906,8 @@ func TestMetricsConfig_ListenOptional(t *testing.T) {
 	}
 }
 
+// TestMetricsConfig_ListenSet verifies the metrics config listen set contract.
+// Asserts that valid config with metrics listen should pass:.
 func TestMetricsConfig_ListenSet(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -1733,6 +1927,8 @@ func TestMetricsConfig_ListenSet(t *testing.T) {
 // LOADCONFIG TESTS
 // -------------------------------------------------------------------------
 
+// TestLoadConfig_ValidFile verifies the load config valid file contract.
+// Asserts that LoadConfig:.
 func TestLoadConfig_ValidFile(t *testing.T) {
 	t.Parallel()
 	yaml := `
@@ -1769,6 +1965,8 @@ backends:
 	}
 }
 
+// TestLoadConfig_DisableChecksum verifies the load config disable checksum contract.
+// Asserts that LoadConfig:.
 func TestLoadConfig_DisableChecksum(t *testing.T) {
 	t.Parallel()
 	yaml := `
@@ -1803,6 +2001,8 @@ backends:
 	}
 }
 
+// TestLoadConfig_DisableChecksumDefaultFalse verifies the load config disable checksum default false contract.
+// Asserts that LoadConfig:.
 func TestLoadConfig_DisableChecksumDefaultFalse(t *testing.T) {
 	t.Parallel()
 	yaml := `
@@ -1836,6 +2036,8 @@ backends:
 	}
 }
 
+// TestLoadConfig_StripSDKHeaders verifies the load config strip sdkheaders contract.
+// Asserts that LoadConfig:.
 func TestLoadConfig_StripSDKHeaders(t *testing.T) {
 	t.Parallel()
 	yaml := `
@@ -1870,6 +2072,8 @@ backends:
 	}
 }
 
+// TestLoadConfig_StripSDKHeadersDefaultFalse verifies the load config strip sdkheaders default false contract.
+// Asserts that LoadConfig:.
 func TestLoadConfig_StripSDKHeadersDefaultFalse(t *testing.T) {
 	t.Parallel()
 	yaml := `
@@ -1903,6 +2107,8 @@ backends:
 	}
 }
 
+// TestLoadConfig_NonexistentFile verifies the load config nonexistent file contract.
+// Asserts that error should mention reading file, got:.
 func TestLoadConfig_NonexistentFile(t *testing.T) {
 	t.Parallel()
 	_, err := LoadConfig("/tmp/nonexistent-config-file-abc123.yaml")
@@ -1914,6 +2120,8 @@ func TestLoadConfig_NonexistentFile(t *testing.T) {
 	}
 }
 
+// TestLoadConfig_InvalidYAML verifies the load config invalid yaml contract.
+// Asserts that error should mention parsing, got:.
 func TestLoadConfig_InvalidYAML(t *testing.T) {
 	t.Parallel()
 	path := writeTempConfig(t, "{{invalid yaml")
@@ -1927,6 +2135,8 @@ func TestLoadConfig_InvalidYAML(t *testing.T) {
 	}
 }
 
+// TestLoadConfig_ValidationFailure verifies the load config validation failure contract.
+// Asserts that error should mention invalid config, got:.
 func TestLoadConfig_ValidationFailure(t *testing.T) {
 	t.Parallel()
 	// Valid YAML but fails validation (missing required fields)
@@ -1941,6 +2151,8 @@ func TestLoadConfig_ValidationFailure(t *testing.T) {
 	}
 }
 
+// TestLoadConfig_EnvVarExpansion verifies the load config env var expansion contract.
+// Asserts that LoadConfig:.
 func TestLoadConfig_EnvVarExpansion(t *testing.T) {
 	t.Setenv("TEST_S3O_HOST", "envhost.example.com")
 	t.Setenv("TEST_S3O_PASS", "envpass123")
@@ -1984,6 +2196,8 @@ backends:
 // UI CONFIG TESTS
 // -------------------------------------------------------------------------
 
+// TestUIConfig_EnabledMissingCredentials verifies the uiconfig enabled missing credentials contract.
+// Asserts that error = , want mention of admin_key and admin_secret.
 func TestUIConfig_EnabledMissingCredentials(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -1998,6 +2212,8 @@ func TestUIConfig_EnabledMissingCredentials(t *testing.T) {
 	}
 }
 
+// TestUIConfig_EnabledMissingSessionSecret verifies the uiconfig enabled missing session secret contract.
+// Asserts that error = , want mention of session_secret.
 func TestUIConfig_EnabledMissingSessionSecret(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -2012,6 +2228,8 @@ func TestUIConfig_EnabledMissingSessionSecret(t *testing.T) {
 	}
 }
 
+// TestUIConfig_EnabledWithCredentials verifies the uiconfig enabled with credentials contract.
+// Asserts that valid UI config should pass:.
 func TestUIConfig_EnabledWithCredentials(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -2025,6 +2243,8 @@ func TestUIConfig_EnabledWithCredentials(t *testing.T) {
 	}
 }
 
+// TestUIConfig_DisabledSkipsValidation verifies the uiconfig disabled skips validation contract.
+// Asserts that disabled UI should skip credential validation:.
 func TestUIConfig_DisabledSkipsValidation(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -2035,6 +2255,8 @@ func TestUIConfig_DisabledSkipsValidation(t *testing.T) {
 	}
 }
 
+// TestUIConfig_SessionSecret verifies the uiconfig session secret contract.
+// Asserts that UI config with session_secret should pass:.
 func TestUIConfig_SessionSecret(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -2053,6 +2275,8 @@ func TestUIConfig_SessionSecret(t *testing.T) {
 	}
 }
 
+// TestLogLevel_DefaultsToInfo verifies the log level defaults to info contract.
+// Asserts that log_level default = , want.
 func TestLogLevel_DefaultsToInfo(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -2064,6 +2288,8 @@ func TestLogLevel_DefaultsToInfo(t *testing.T) {
 	}
 }
 
+// TestLogLevel_CustomValue verifies the log level custom value contract.
+// Asserts that log_level should be valid:.
 func TestLogLevel_CustomValue(t *testing.T) {
 	t.Parallel()
 	for _, level := range []string{"debug", "info", "warn", "error"} {
@@ -2075,6 +2301,8 @@ func TestLogLevel_CustomValue(t *testing.T) {
 	}
 }
 
+// TestLogLevel_InvalidValue verifies the log level invalid value contract.
+// Asserts that error should mention log_level:.
 func TestLogLevel_InvalidValue(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -2092,6 +2320,8 @@ func TestLogLevel_InvalidValue(t *testing.T) {
 // BackendCircuitBreakerConfig
 // -------------------------------------------------------------------------
 
+// TestBackendCircuitBreakerDefaults verifies the backend circuit breaker defaults contract.
+// Asserts that unexpected error:.
 func TestBackendCircuitBreakerDefaults(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -2108,10 +2338,12 @@ func TestBackendCircuitBreakerDefaults(t *testing.T) {
 	}
 }
 
+// TestBackendCircuitBreakerDefaults_Disabled verifies the backend circuit breaker defaults disabled contract.
+// Asserts that unexpected error:.
 func TestBackendCircuitBreakerDefaults_Disabled(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
-	// Disabled (default) — defaults should NOT be applied
+	// Disabled (default)  -  defaults should NOT be applied
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2120,6 +2352,8 @@ func TestBackendCircuitBreakerDefaults_Disabled(t *testing.T) {
 	}
 }
 
+// TestBackendCircuitBreakerDefaults_CustomValues verifies the backend circuit breaker defaults custom values contract.
+// Asserts that unexpected error:.
 func TestBackendCircuitBreakerDefaults_CustomValues(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -2140,6 +2374,8 @@ func TestBackendCircuitBreakerDefaults_CustomValues(t *testing.T) {
 	}
 }
 
+// TestNonReloadableFieldsChanged_BackendCircuitBreaker verifies the non reloadable fields changed backend circuit breaker contract.
+// Asserts that expected backend_circuit_breaker in changed list, got.
 func TestNonReloadableFieldsChanged_BackendCircuitBreaker(t *testing.T) {
 	t.Parallel()
 	a := validBaseConfig()
@@ -2168,6 +2404,8 @@ func TestNonReloadableFieldsChanged_BackendCircuitBreaker(t *testing.T) {
 // REDIS VALIDATION
 // -------------------------------------------------------------------------
 
+// TestRedisConfig_MissingAddress verifies the redis config missing address contract.
+// Asserts that missing redis address should fail, got:.
 func TestRedisConfig_MissingAddress(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -2179,6 +2417,8 @@ func TestRedisConfig_MissingAddress(t *testing.T) {
 	}
 }
 
+// TestRedisConfig_Defaults verifies the redis config defaults contract.
+// Asserts that valid redis config should pass:.
 func TestRedisConfig_Defaults(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -2198,6 +2438,8 @@ func TestRedisConfig_Defaults(t *testing.T) {
 	}
 }
 
+// TestRedisConfig_CustomValues verifies the redis config custom values contract.
+// Asserts that custom redis config should pass:.
 func TestRedisConfig_CustomValues(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -2219,6 +2461,8 @@ func TestRedisConfig_CustomValues(t *testing.T) {
 	}
 }
 
+// TestNonReloadableFieldsChanged_RedisAdded verifies the non reloadable fields changed redis added contract.
+// Asserts that expected redis in changed list, got.
 func TestNonReloadableFieldsChanged_RedisAdded(t *testing.T) {
 	t.Parallel()
 	a := validBaseConfig()
@@ -2239,6 +2483,8 @@ func TestNonReloadableFieldsChanged_RedisAdded(t *testing.T) {
 	}
 }
 
+// TestNonReloadableFieldsChanged_RedisRemoved verifies the non reloadable fields changed redis removed contract.
+// Asserts that expected redis in changed list, got.
 func TestNonReloadableFieldsChanged_RedisRemoved(t *testing.T) {
 	t.Parallel()
 	a := validBaseConfig()
@@ -2259,6 +2505,8 @@ func TestNonReloadableFieldsChanged_RedisRemoved(t *testing.T) {
 	}
 }
 
+// TestNonReloadableFieldsChanged_RedisModified verifies the non reloadable fields changed redis modified contract.
+// Asserts that expected redis in changed list, got.
 func TestNonReloadableFieldsChanged_RedisModified(t *testing.T) {
 	t.Parallel()
 	a := validBaseConfig()
@@ -2280,6 +2528,8 @@ func TestNonReloadableFieldsChanged_RedisModified(t *testing.T) {
 	}
 }
 
+// TestNonReloadableFieldsChanged_RedisBothNil verifies the non reloadable fields changed redis both nil contract.
+// Asserts that both nil redis should not appear in changed list.
 func TestNonReloadableFieldsChanged_RedisBothNil(t *testing.T) {
 	t.Parallel()
 	a := validBaseConfig()
@@ -2295,6 +2545,8 @@ func TestNonReloadableFieldsChanged_RedisBothNil(t *testing.T) {
 	}
 }
 
+// TestNonReloadableFieldsChanged_RedisIdentical verifies the non reloadable fields changed redis identical contract.
+// Asserts that identical redis configs should not appear in changed list.
 func TestNonReloadableFieldsChanged_RedisIdentical(t *testing.T) {
 	t.Parallel()
 	a := validBaseConfig()
@@ -2316,6 +2568,8 @@ func TestNonReloadableFieldsChanged_RedisIdentical(t *testing.T) {
 // ENCRYPTION VALIDATION
 // -------------------------------------------------------------------------
 
+// TestEncryptionConfig_ValidMasterKey verifies the encryption config valid master key contract.
+// Asserts that valid encryption config should pass:.
 func TestEncryptionConfig_ValidMasterKey(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -2332,6 +2586,8 @@ func TestEncryptionConfig_ValidMasterKey(t *testing.T) {
 	}
 }
 
+// TestEncryptionConfig_CustomChunkSize verifies the encryption config custom chunk size contract.
+// Asserts that 16KB chunk size should pass:.
 func TestEncryptionConfig_CustomChunkSize(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -2346,6 +2602,8 @@ func TestEncryptionConfig_CustomChunkSize(t *testing.T) {
 	}
 }
 
+// TestEncryptionConfig_ChunkSizeTooSmall verifies the encryption config chunk size too small contract.
+// Asserts that chunk size below 4096 should fail, got:.
 func TestEncryptionConfig_ChunkSizeTooSmall(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -2361,6 +2619,8 @@ func TestEncryptionConfig_ChunkSizeTooSmall(t *testing.T) {
 	}
 }
 
+// TestEncryptionConfig_ChunkSizeTooLarge verifies the encryption config chunk size too large contract.
+// Asserts that chunk size above 1MB should fail, got:.
 func TestEncryptionConfig_ChunkSizeTooLarge(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -2376,6 +2636,8 @@ func TestEncryptionConfig_ChunkSizeTooLarge(t *testing.T) {
 	}
 }
 
+// TestEncryptionConfig_ChunkSizeNotPowerOf2 verifies the encryption config chunk size not power of2 contract.
+// Asserts that non-power-of-2 chunk size should fail, got:.
 func TestEncryptionConfig_ChunkSizeNotPowerOf2(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -2391,6 +2653,8 @@ func TestEncryptionConfig_ChunkSizeNotPowerOf2(t *testing.T) {
 	}
 }
 
+// TestEncryptionConfig_NoKeySource verifies the encryption config no key source contract.
+// Asserts that missing key source should fail, got:.
 func TestEncryptionConfig_NoKeySource(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -2402,6 +2666,8 @@ func TestEncryptionConfig_NoKeySource(t *testing.T) {
 	}
 }
 
+// TestEncryptionConfig_MultipleKeySources verifies the encryption config multiple key sources contract.
+// Asserts that multiple key sources should fail, got:.
 func TestEncryptionConfig_MultipleKeySources(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -2417,6 +2683,8 @@ func TestEncryptionConfig_MultipleKeySources(t *testing.T) {
 	}
 }
 
+// TestEncryptionConfig_InvalidBase64MasterKey verifies the encryption config invalid base64 master key contract.
+// Asserts that invalid base64 should fail, got:.
 func TestEncryptionConfig_InvalidBase64MasterKey(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -2431,6 +2699,8 @@ func TestEncryptionConfig_InvalidBase64MasterKey(t *testing.T) {
 	}
 }
 
+// TestEncryptionConfig_WrongKeyLength verifies the encryption config wrong key length contract.
+// Asserts that wrong key length should fail, got:.
 func TestEncryptionConfig_WrongKeyLength(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -2445,6 +2715,8 @@ func TestEncryptionConfig_WrongKeyLength(t *testing.T) {
 	}
 }
 
+// TestEncryptionConfig_InvalidPreviousKey verifies the encryption config invalid previous key contract.
+// Asserts that invalid previous key should fail, got:.
 func TestEncryptionConfig_InvalidPreviousKey(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -2460,6 +2732,8 @@ func TestEncryptionConfig_InvalidPreviousKey(t *testing.T) {
 	}
 }
 
+// TestEncryptionConfig_PreviousKeyWrongLength verifies the encryption config previous key wrong length contract.
+// Asserts that previous key wrong length should fail, got:.
 func TestEncryptionConfig_PreviousKeyWrongLength(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -2475,6 +2749,8 @@ func TestEncryptionConfig_PreviousKeyWrongLength(t *testing.T) {
 	}
 }
 
+// TestEncryptionConfig_VaultMissingFields verifies the encryption config vault missing fields contract.
+// Asserts that error should mention , got:.
 func TestEncryptionConfig_VaultMissingFields(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -2495,6 +2771,8 @@ func TestEncryptionConfig_VaultMissingFields(t *testing.T) {
 	}
 }
 
+// TestEncryptionConfig_VaultBothTokenAndTokenFile verifies the encryption config vault both token and token file contract.
+// Asserts that unexpected error:.
 func TestEncryptionConfig_VaultBothTokenAndTokenFile(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -2517,6 +2795,8 @@ func TestEncryptionConfig_VaultBothTokenAndTokenFile(t *testing.T) {
 	}
 }
 
+// TestEncryptionConfig_VaultRenewIntervalDefault verifies the encryption config vault renew interval default contract.
+// Asserts that unexpected error:.
 func TestEncryptionConfig_VaultRenewIntervalDefault(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -2537,6 +2817,8 @@ func TestEncryptionConfig_VaultRenewIntervalDefault(t *testing.T) {
 	}
 }
 
+// TestEncryptionConfig_VaultDefaultMountPath verifies the encryption config vault default mount path contract.
+// Asserts that valid vault config should pass:.
 func TestEncryptionConfig_VaultDefaultMountPath(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -2557,6 +2839,8 @@ func TestEncryptionConfig_VaultDefaultMountPath(t *testing.T) {
 	}
 }
 
+// TestEncryptionConfig_DisabledSkipsValidation verifies the encryption config disabled skips validation contract.
+// Asserts that disabled encryption should skip validation:.
 func TestEncryptionConfig_DisabledSkipsValidation(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -2570,6 +2854,8 @@ func TestEncryptionConfig_DisabledSkipsValidation(t *testing.T) {
 	}
 }
 
+// TestParseLogLevel verifies the parse log level contract.
+// Asserts that ParseLogLevel() = , want.
 func TestParseLogLevel(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -2638,11 +2924,13 @@ func validBaseConfigTwoBackends() Config {
 }
 
 // -------------------------------------------------------------------------
-// Sub-validator direct tests — cover negative-value guards that are
+// Sub-validator direct tests  -  cover negative-value guards that are
 // reachable via explicit YAML (e.g. interval: -5m) but not via the
 // validBaseConfig() helper which always uses valid values.
 // -------------------------------------------------------------------------
 
+// TestBackendValidation_MissingFields verifies the backend validation missing fields contract.
+// Asserts that expected error mentioning.
 func TestBackendValidation_MissingFields(t *testing.T) {
 	t.Parallel()
 	errs := validateBackends([]BackendConfig{{}})
@@ -2660,6 +2948,7 @@ func TestBackendValidation_MissingFields(t *testing.T) {
 	}
 }
 
+// TestBackendValidation_NegativeMaxObjectSize verifies the backend validation negative max object size path by exercising strings.Contains, e.Error.
 func TestBackendValidation_NegativeMaxObjectSize(t *testing.T) {
 	t.Parallel()
 	errs := validateBackends([]BackendConfig{{
@@ -2678,6 +2967,8 @@ func TestBackendValidation_NegativeMaxObjectSize(t *testing.T) {
 	}
 }
 
+// TestRebalanceValidation_NegativeValues verifies the rebalance validation negative values contract.
+// Asserts that expected multiple errors, got :.
 func TestRebalanceValidation_NegativeValues(t *testing.T) {
 	t.Parallel()
 	cfg := RebalanceConfig{Enabled: true, Strategy: "pack", Interval: -1, BatchSize: -1, Threshold: 2.0, Concurrency: -1}
@@ -2687,6 +2978,8 @@ func TestRebalanceValidation_NegativeValues(t *testing.T) {
 	}
 }
 
+// TestReplicationValidation_NegativeValues verifies the replication validation negative values contract.
+// Asserts that expected error mentioning.
 func TestReplicationValidation_NegativeValues(t *testing.T) {
 	t.Parallel()
 	cfg := ReplicationConfig{Factor: 3, WorkerInterval: -1, BatchSize: -1}
@@ -2705,6 +2998,8 @@ func TestReplicationValidation_NegativeValues(t *testing.T) {
 	}
 }
 
+// TestRateLimitValidation_NegativeValues verifies the rate limit validation negative values contract.
+// Asserts that expected error mentioning.
 func TestRateLimitValidation_NegativeValues(t *testing.T) {
 	t.Parallel()
 	cfg := RateLimitConfig{Enabled: true, RequestsPerSec: -1, Burst: -1, TrustedProxies: []string{"invalid"}}
@@ -2723,6 +3018,8 @@ func TestRateLimitValidation_NegativeValues(t *testing.T) {
 	}
 }
 
+// TestUsageFlushValidation_NegativeValues verifies the usage flush validation negative values contract.
+// Asserts that expected multiple errors, got :.
 func TestUsageFlushValidation_NegativeValues(t *testing.T) {
 	t.Parallel()
 	cfg := UsageFlushConfig{Interval: -1, AdaptiveThreshold: 2.0, FastInterval: -1}
@@ -2732,6 +3029,8 @@ func TestUsageFlushValidation_NegativeValues(t *testing.T) {
 	}
 }
 
+// TestReconcileDefaultInterval verifies the reconcile default interval contract.
+// Asserts that unexpected error:.
 func TestReconcileDefaultInterval(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -2748,6 +3047,8 @@ func TestReconcileDefaultInterval(t *testing.T) {
 // CACHE CONFIG
 // -------------------------------------------------------------------------
 
+// TestCacheConfig_Defaults verifies the cache config defaults contract.
+// Asserts that unexpected error:.
 func TestCacheConfig_Defaults(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -2766,6 +3067,8 @@ func TestCacheConfig_Defaults(t *testing.T) {
 	}
 }
 
+// TestCacheConfig_CustomValues verifies the cache config custom values contract.
+// Asserts that unexpected error:.
 func TestCacheConfig_CustomValues(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -2786,6 +3089,8 @@ func TestCacheConfig_CustomValues(t *testing.T) {
 	}
 }
 
+// TestCacheConfig_Disabled verifies the cache config disabled contract.
+// Asserts that unexpected error:.
 func TestCacheConfig_Disabled(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -2799,6 +3104,7 @@ func TestCacheConfig_Disabled(t *testing.T) {
 	}
 }
 
+// TestCacheConfig_MaxObjectExceedsMaxSize verifies the cache config max object exceeds max size path by exercising cfg.SetDefaultsAndValidate.
 func TestCacheConfig_MaxObjectExceedsMaxSize(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -2812,6 +3118,8 @@ func TestCacheConfig_MaxObjectExceedsMaxSize(t *testing.T) {
 	}
 }
 
+// TestParseByteSize verifies the parse byte size contract.
+// Asserts that parseByteSize():.
 func TestParseByteSize(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -2871,7 +3179,7 @@ func TestParseByteSize_Overflow(t *testing.T) {
 	}
 }
 
-// TestParseByteSize_Negative verifies that negative values are rejected.
+// TestParseByteSize_Negative verifies the parse byte size negative behaviour described by the test name.
 func TestParseByteSize_Negative(t *testing.T) {
 	t.Parallel()
 	_, err := parseByteSize("-1GB")
@@ -2880,6 +3188,8 @@ func TestParseByteSize_Negative(t *testing.T) {
 	}
 }
 
+// TestLifecycleConfig_EmptyPrefixRejected verifies the lifecycle config empty prefix rejected contract.
+// Asserts that error = , want mention of empty prefix.
 func TestLifecycleConfig_EmptyPrefixRejected(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -2898,6 +3208,7 @@ func TestLifecycleConfig_EmptyPrefixRejected(t *testing.T) {
 	}
 }
 
+// TestLifecycleConfig_NegativeExpirationRejected verifies the lifecycle config negative expiration rejected path by exercising cfg.SetDefaultsAndValidate.
 func TestLifecycleConfig_NegativeExpirationRejected(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -2913,6 +3224,8 @@ func TestLifecycleConfig_NegativeExpirationRejected(t *testing.T) {
 	}
 }
 
+// TestLifecycleConfig_ValidRulePasses verifies the lifecycle config valid rule passes contract.
+// Asserts that valid lifecycle config should pass:.
 func TestLifecycleConfig_ValidRulePasses(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -2930,6 +3243,8 @@ func TestLifecycleConfig_ValidRulePasses(t *testing.T) {
 	}
 }
 
+// TestDatabaseConfig_MinConnsExceedsMaxConns verifies the database config min conns exceeds max conns contract.
+// Asserts that error should mention min_conns:.
 func TestDatabaseConfig_MinConnsExceedsMaxConns(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -2945,6 +3260,8 @@ func TestDatabaseConfig_MinConnsExceedsMaxConns(t *testing.T) {
 	}
 }
 
+// TestRedisConfig_NegativeFailureThreshold verifies the redis config negative failure threshold contract.
+// Asserts that negative failure_threshold should produce error, got:.
 func TestRedisConfig_NegativeFailureThreshold(t *testing.T) {
 	t.Parallel()
 	r := &RedisConfig{
@@ -2963,6 +3280,8 @@ func TestRedisConfig_NegativeFailureThreshold(t *testing.T) {
 	}
 }
 
+// TestRedisConfig_NegativeOpenTimeout verifies the redis config negative open timeout contract.
+// Asserts that negative open_timeout should produce error, got:.
 func TestRedisConfig_NegativeOpenTimeout(t *testing.T) {
 	t.Parallel()
 	r := &RedisConfig{
@@ -2981,6 +3300,8 @@ func TestRedisConfig_NegativeOpenTimeout(t *testing.T) {
 	}
 }
 
+// TestRateLimitConfig_CIDRValidatedWhenDisabled verifies the rate limit config cidrvalidated when disabled contract.
+// Asserts that invalid CIDR should be caught even when disabled, got:.
 func TestRateLimitConfig_CIDRValidatedWhenDisabled(t *testing.T) {
 	t.Parallel()
 	r := &RateLimitConfig{

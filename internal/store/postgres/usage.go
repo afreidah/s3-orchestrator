@@ -2,6 +2,13 @@
 // Usage Tracking Operations
 //
 // Author: Alex Freidah
+//
+// Implements the Postgres engine bindings for backend_usage - the
+// monthly per-backend (api_requests, egress_bytes, ingress_bytes)
+// counters used by the usage flusher and the dashboard. FlushUsageDeltas
+// uses INSERT ON CONFLICT DO UPDATE with a column-level ADD so multiple
+// flushers can converge on the same row without losing deltas. Each row
+// is keyed by (backend_name, period) where period is YYYY-MM.
 // -------------------------------------------------------------------------------
 
 package postgres

@@ -2,6 +2,12 @@
 // Telemetry Configuration
 //
 // Author: Alex Freidah
+//
+// Defines TelemetryConfig: the OpenTelemetry exporter endpoint, sample
+// rate, service name and version, plus the optional Prometheus exporter
+// listen address. Carried into telemetry.Init at startup so the metrics
+// surface and tracing pipeline are wired before any background worker
+// runs. Empty fields disable that exporter rather than failing startup.
 // -------------------------------------------------------------------------------
 
 package config
@@ -27,6 +33,7 @@ type TracingConfig struct {
 	Insecure   bool    `yaml:"insecure"` // Use insecure connection (no TLS)
 }
 
+// setDefaultsAndValidate sets defaults and validate.
 func (t *TelemetryConfig) setDefaultsAndValidate() []error {
 	var errs []error
 

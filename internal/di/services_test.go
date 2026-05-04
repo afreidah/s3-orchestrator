@@ -7,7 +7,7 @@
 // internal/di. They verify that each factory returns a lifecycle.Service
 // value (never nil), that the lockedTickerService's shouldRun / onError
 // hooks fire as configured, and that the watchdog safely iterates an empty
-// backend fleet. Nothing here exercises the *timing* behavior of Run —
+// backend fleet. Nothing here exercises the *timing* behavior of Run  - 
 // lifecycle_test.go and the worker-specific suites cover that already.
 // -------------------------------------------------------------------------------
 
@@ -29,10 +29,11 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
-// fakeLocker skips advisory locking — useful for constructor-only tests
+// fakeLocker skips advisory locking  -  useful for constructor-only tests
 // where we never want Run to actually fire.
 type fakeLocker struct{}
 
+// WithAdvisoryLock runs the supplied function with advisory lock.
 func (fakeLocker) WithAdvisoryLock(_ context.Context, _ int64, _ func(ctx context.Context) error) (bool, error) {
 	return false, nil
 }
@@ -41,6 +42,7 @@ func (fakeLocker) WithAdvisoryLock(_ context.Context, _ int64, _ func(ctx contex
 // callback, so tests can verify the "work ran" branch of runOnce.
 type acquiringLocker struct{}
 
+// WithAdvisoryLock runs the supplied function with advisory lock.
 func (acquiringLocker) WithAdvisoryLock(ctx context.Context, _ int64, fn func(ctx context.Context) error) (bool, error) {
 	return true, fn(ctx)
 }
@@ -168,6 +170,7 @@ func TestLockedTickerService_RunOnceSkipsOnLockBusy(t *testing.T) {
 // drive the runOnce error branch.
 type errLocker struct{ err error }
 
+// WithAdvisoryLock runs the supplied function with advisory lock.
 func (e errLocker) WithAdvisoryLock(_ context.Context, _ int64, _ func(ctx context.Context) error) (bool, error) {
 	return false, e.err
 }
@@ -408,8 +411,10 @@ func TestUsageFlushService_RunTicksOnce(t *testing.T) {
 
 // TestUsageFlushService_FlushTickWithRedisPath covers the Redis-configured
 // branch of flushTick by forcing RedisCounterConfigured to return true via
-// a UsageFlushConfig with AdaptiveEnabled set — exercises the advisory
+// a UsageFlushConfig with AdaptiveEnabled set  -  exercises the advisory
 // lock sidechannel.
+// TestUsageFlushService_FlushTickWithAdaptiveSwitch verifies usage flush service_flush tick with adaptive switch.
+// TestUsageFlushService_FlushTickWithAdaptiveSwitch verifies usage flush service_flush tick with adaptive switch.
 func TestUsageFlushService_FlushTickWithAdaptiveSwitch(t *testing.T) {
 	t.Parallel()
 	f := newServicesFixture(t); mgr := f.mgr
@@ -440,9 +445,11 @@ func TestCircuitBreakerWatchdog_CheckAllResetsBackendBreaker(t *testing.T) {
 // to error so doFlush's second guarded log path runs. The mock returns nil
 // for ListObjectsByBackend etc., but UpdateQuotaMetrics ultimately calls
 // MetricsCollector.UpdateQuotaMetrics, which needs DashboardStore methods
-// — those are stubbed by MockStore. So the happy path is fully covered;
+//  -  those are stubbed by MockStore. So the happy path is fully covered;
 // this test re-runs doFlush with a cancelled ctx which short-circuits
 // FlushUsage and exercises the post-error continuation.
+// TestUsageFlushService_DoFlushOnCancelledCtx verifies usage flush service_do flush on cancelled ctx.
+// TestUsageFlushService_DoFlushOnCancelledCtx verifies usage flush service_do flush on cancelled ctx.
 func TestUsageFlushService_DoFlushOnCancelledCtx(t *testing.T) {
 	t.Parallel()
 	f := newServicesFixture(t); mgr := f.mgr

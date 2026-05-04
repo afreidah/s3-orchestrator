@@ -2,6 +2,12 @@
 // Integrity Configuration
 //
 // Author: Alex Freidah
+//
+// Defines IntegrityConfig: enables SHA-256 content hashing on writes,
+// optional verification on reads, and the periodic scrubber that random-
+// samples stored objects to catch silent corruption. Carries the
+// scrubber interval and batch size and validates them so a typo cannot
+// silently disable the worker by setting the interval to zero.
 // -------------------------------------------------------------------------------
 
 package config
@@ -37,7 +43,7 @@ func (ic *IntegrityConfig) ShouldVerifyOnReplicate() bool {
 // setDefaultsAndValidate is a no-op when integrity is disabled.
 // When enabled, VerifyOnReplicate defaults to true unless explicitly
 // set to false in the YAML (Go's zero-value for bool is false, so we
-// use a pointer internally during parsing — but since the config is
+// use a pointer internally during parsing  -  but since the config is
 // simple YAML, we just default it here and document the behavior).
 func (ic *IntegrityConfig) setDefaultsAndValidate() []error {
 	if !ic.Enabled {

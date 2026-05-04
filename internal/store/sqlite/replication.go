@@ -54,7 +54,7 @@ func (s *Store) GetUnderReplicatedObjectsExcluding(ctx context.Context, factor, 
 	}
 
 	// Expand the excluded list inside SQLite via the JSON1 extension's
-	// json_each so the query body stays a fixed literal — no Go-side
+	// json_each so the query body stays a fixed literal  -  no Go-side
 	// string concatenation building the IN clause.
 	excludedJSON, err := json.Marshal(excludedBackends)
 	if err != nil {

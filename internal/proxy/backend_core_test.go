@@ -23,6 +23,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// TestExcludeUnhealthy_FiltersOpenCircuitBreaker verifies the exclude unhealthy filters open circuit breaker contract.
+// Asserts that expected 1 eligible backend, got.
 func TestExcludeUnhealthy_FiltersOpenCircuitBreaker(t *testing.T) {
 	t.Parallel()
 	healthy := backend.NewCircuitBreakerBackend(newMockBackend(), "healthy", 3, 15*time.Second)
@@ -50,6 +52,8 @@ func TestExcludeUnhealthy_FiltersOpenCircuitBreaker(t *testing.T) {
 	}
 }
 
+// TestExcludeUnhealthy_AllHealthy verifies the exclude unhealthy all healthy contract.
+// Asserts that expected 2 eligible backends, got.
 func TestExcludeUnhealthy_AllHealthy(t *testing.T) {
 	t.Parallel()
 	b1 := backend.NewCircuitBreakerBackend(newMockBackend(), "b1", 3, 15*time.Second)
@@ -68,6 +72,8 @@ func TestExcludeUnhealthy_AllHealthy(t *testing.T) {
 	}
 }
 
+// TestExcludeUnhealthy_AllUnhealthy_TimeoutNotElapsed verifies the exclude unhealthy all unhealthy timeout not elapsed contract.
+// Asserts that expected 0 eligible backends before timeout, got.
 func TestExcludeUnhealthy_AllUnhealthy_TimeoutNotElapsed(t *testing.T) {
 	t.Parallel()
 	failingMock1 := newMockBackend()
@@ -96,6 +102,8 @@ func TestExcludeUnhealthy_AllUnhealthy_TimeoutNotElapsed(t *testing.T) {
 	}
 }
 
+// TestExcludeUnhealthy_AllUnhealthy_ProbeEligible verifies the exclude unhealthy all unhealthy probe eligible contract.
+// Asserts that expected 2 probe-eligible backends after timeout, got.
 func TestExcludeUnhealthy_AllUnhealthy_ProbeEligible(t *testing.T) {
 	t.Parallel()
 	failingMock1 := newMockBackend()
@@ -131,6 +139,8 @@ func TestExcludeUnhealthy_AllUnhealthy_ProbeEligible(t *testing.T) {
 	}
 }
 
+// TestExcludeUnhealthy_HalfOpenAllowedForProbe verifies the exclude unhealthy half open allowed for probe contract.
+// Asserts that expected open state, got.
 func TestExcludeUnhealthy_HalfOpenAllowedForProbe(t *testing.T) {
 	t.Parallel()
 	failingMock := newMockBackend()
@@ -169,6 +179,8 @@ func TestExcludeUnhealthy_HalfOpenAllowedForProbe(t *testing.T) {
 	}
 }
 
+// TestExcludeUnhealthy_NonCBBackendsAlwaysEligible verifies the exclude unhealthy non cbbackends always eligible contract.
+// Asserts that expected 1 eligible backend, got.
 func TestExcludeUnhealthy_NonCBBackendsAlwaysEligible(t *testing.T) {
 	t.Parallel()
 	core := &backendCore{
@@ -183,6 +195,8 @@ func TestExcludeUnhealthy_NonCBBackendsAlwaysEligible(t *testing.T) {
 	}
 }
 
+// TestExcludeUnhealthy_UnknownBackendSkipped verifies the exclude unhealthy unknown backend skipped contract.
+// Asserts that expected 0 eligible backends, got.
 func TestExcludeUnhealthy_UnknownBackendSkipped(t *testing.T) {
 	t.Parallel()
 	core := &backendCore{
@@ -196,9 +210,11 @@ func TestExcludeUnhealthy_UnknownBackendSkipped(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
-// withTimeout — deadline cascading
+// withTimeout  -  deadline cascading
 // -------------------------------------------------------------------------
 
+// TestWithTimeout_NoParentDeadline verifies the with timeout no parent deadline contract.
+// Asserts that expected ~5s deadline, got.
 func TestWithTimeout_NoParentDeadline(t *testing.T) {
 	t.Parallel()
 	core := &backendCore{backendTimeout: 5 * time.Second}
@@ -215,6 +231,8 @@ func TestWithTimeout_NoParentDeadline(t *testing.T) {
 	}
 }
 
+// TestWithTimeout_ParentTighter verifies the with timeout parent tighter contract.
+// Asserts that expected parent's ~1s deadline to be preserved, got.
 func TestWithTimeout_ParentTighter(t *testing.T) {
 	t.Parallel()
 	// Parent has a 1s deadline; backend timeout is 30s.
@@ -236,6 +254,8 @@ func TestWithTimeout_ParentTighter(t *testing.T) {
 	}
 }
 
+// TestWithTimeout_BackendTighter verifies the with timeout backend tighter contract.
+// Asserts that expected backend's ~1s timeout to be applied, got.
 func TestWithTimeout_BackendTighter(t *testing.T) {
 	t.Parallel()
 	// Parent has a 30s deadline; backend timeout is 1s.
@@ -257,6 +277,7 @@ func TestWithTimeout_BackendTighter(t *testing.T) {
 	}
 }
 
+// TestWithTimeout_ZeroTimeout verifies the with timeout zero timeout path by exercising context.Background, ctx.Deadline.
 func TestWithTimeout_ZeroTimeout(t *testing.T) {
 	t.Parallel()
 	core := &backendCore{backendTimeout: 0}
@@ -272,6 +293,7 @@ func TestWithTimeout_ZeroTimeout(t *testing.T) {
 // acquireAdmission / releaseAdmission
 // -------------------------------------------------------------------------
 
+// TestAcquireAdmission_NilSem verifies the acquire admission nil sem path by exercising context.Background.
 func TestAcquireAdmission_NilSem(t *testing.T) {
 	t.Parallel()
 	core := &backendCore{}
@@ -281,6 +303,7 @@ func TestAcquireAdmission_NilSem(t *testing.T) {
 	core.releaseAdmission() // should not panic
 }
 
+// TestAcquireAdmission_Bounded verifies the acquire admission bounded path by exercising context.Background, context.WithCancel.
 func TestAcquireAdmission_Bounded(t *testing.T) {
 	t.Parallel()
 	sem := make(chan struct{}, 1)
@@ -306,6 +329,8 @@ func TestAcquireAdmission_Bounded(t *testing.T) {
 	core.releaseAdmission()
 }
 
+// TestEligibleForWrite_CombinesAllFilters verifies the eligible for write combines all filters contract.
+// Asserts that eligibleForWrite = , want [healthy].
 func TestEligibleForWrite_CombinesAllFilters(t *testing.T) {
 	t.Parallel()
 	// healthy: passes all checks
@@ -352,6 +377,8 @@ func TestEligibleForWrite_CombinesAllFilters(t *testing.T) {
 	}
 }
 
+// TestEligibleForWrite_MaxObjectSize verifies the eligible for write max object size contract.
+// Asserts that 10MB object: eligible = , want all 3 backends.
 func TestEligibleForWrite_MaxObjectSize(t *testing.T) {
 	t.Parallel()
 
@@ -371,13 +398,13 @@ func TestEligibleForWrite_MaxObjectSize(t *testing.T) {
 		maxObjectSizes: map[string]int64{"small": 50 * 1024 * 1024}, // 50 MB
 	}
 
-	// Object under the limit — all backends eligible
+	// Object under the limit  -  all backends eligible
 	eligible := core.eligibleForWrite(1, 0, 10*1024*1024)
 	if len(eligible) != 3 {
 		t.Errorf("10MB object: eligible = %v, want all 3 backends", eligible)
 	}
 
-	// Object over small's limit — small excluded
+	// Object over small's limit  -  small excluded
 	eligible = core.eligibleForWrite(1, 0, 100*1024*1024)
 	if len(eligible) != 2 {
 		t.Errorf("100MB object: eligible = %v, want [large, unlimited]", eligible)

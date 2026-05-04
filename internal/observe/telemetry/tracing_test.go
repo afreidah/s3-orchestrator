@@ -21,6 +21,8 @@ import (
 // InitTracer
 // -------------------------------------------------------------------------
 
+// TestInitTracer_Disabled verifies the init tracer disabled contract.
+// Asserts that InitTracer(disabled):.
 func TestInitTracer_Disabled(t *testing.T) {
 	t.Parallel()
 	cfg := config.TracingConfig{
@@ -45,6 +47,7 @@ func TestInitTracer_Disabled(t *testing.T) {
 // Tracer
 // -------------------------------------------------------------------------
 
+// TestTracer_ReturnsNonNil verifies the tracer returns non nil behaviour described by the test name.
 func TestTracer_ReturnsNonNil(t *testing.T) {
 	t.Parallel()
 	tracer := Tracer()
@@ -57,6 +60,7 @@ func TestTracer_ReturnsNonNil(t *testing.T) {
 // StartSpan
 // -------------------------------------------------------------------------
 
+// TestStartSpan_ReturnsContextAndSpan verifies the start span returns context and span path by exercising context.Background, span.End.
 func TestStartSpan_ReturnsContextAndSpan(t *testing.T) {
 	t.Parallel()
 	ctx, span := StartSpan(context.Background(), "test-span")
@@ -69,6 +73,7 @@ func TestStartSpan_ReturnsContextAndSpan(t *testing.T) {
 	span.End()
 }
 
+// TestStartSpan_WithAttributes verifies the start span with attributes path by exercising context.Background, AttrObjectKey.String, AttrBackendName.String.
 func TestStartSpan_WithAttributes(t *testing.T) {
 	t.Parallel()
 	ctx, span := StartSpan(context.Background(), "test-span",
@@ -88,6 +93,8 @@ func TestStartSpan_WithAttributes(t *testing.T) {
 // RequestAttributes
 // -------------------------------------------------------------------------
 
+// TestRequestAttributes_ReturnsCorrectCount verifies the request attributes returns correct count contract.
+// Asserts that expected 5 attributes, got.
 func TestRequestAttributes_ReturnsCorrectCount(t *testing.T) {
 	t.Parallel()
 	attrs := RequestAttributes("GET", "/bucket/key", "mybucket", "mykey", "192.168.1.1")
@@ -100,6 +107,8 @@ func TestRequestAttributes_ReturnsCorrectCount(t *testing.T) {
 // BackendAttributes
 // -------------------------------------------------------------------------
 
+// TestBackendAttributes_ReturnsCorrectCount verifies the backend attributes returns correct count contract.
+// Asserts that expected 5 attributes, got.
 func TestBackendAttributes_ReturnsCorrectCount(t *testing.T) {
 	t.Parallel()
 	attrs := BackendAttributes("PutObject", "b1", "https://s3.example.com", "bucket", "key")

@@ -1,3 +1,15 @@
+// -------------------------------------------------------------------------------
+// OverReplicationCleaner Tests
+//
+// Author: Alex Freidah
+//
+// Verifies the over-replication scoring and selection logic: the cleaner
+// removes excess copies preferentially from draining backends and
+// circuit-broken backends, and degrades gracefully when the backend
+// health table contains an unknown name. Also covers config round-trip
+// and the pending-count surface used by the dashboard gauge.
+// -------------------------------------------------------------------------------
+
 package worker
 
 import (
@@ -13,6 +25,8 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
+// TestOverReplicationCleaner_SetConfig_RoundTrip verifies the over replication cleaner set config round trip contract.
+// Asserts that Config().Factor = , want 2.
 func TestOverReplicationCleaner_SetConfig_RoundTrip(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -27,6 +41,8 @@ func TestOverReplicationCleaner_SetConfig_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestCountPending verifies the count pending contract.
+// Asserts that unexpected error:.
 func TestCountPending(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -43,6 +59,8 @@ func TestCountPending(t *testing.T) {
 	}
 }
 
+// TestScoreCopy_DrainingBackend verifies the score copy draining backend contract.
+// Asserts that draining backend should score 0, got.
 func TestScoreCopy_DrainingBackend(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -58,6 +76,8 @@ func TestScoreCopy_DrainingBackend(t *testing.T) {
 	}
 }
 
+// TestScoreCopy_HealthyBackend verifies the score copy healthy backend contract.
+// Asserts that healthy backend at 20 should score ~2.8, got.
 func TestScoreCopy_HealthyBackend(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -80,6 +100,8 @@ func TestScoreCopy_HealthyBackend(t *testing.T) {
 	}
 }
 
+// TestScoreCopy_UnknownBackend verifies the score copy unknown backend contract.
+// Asserts that unknown backend should score 0, got.
 func TestScoreCopy_UnknownBackend(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -96,6 +118,8 @@ func TestScoreCopy_UnknownBackend(t *testing.T) {
 	}
 }
 
+// TestCleanObject_RemovesLowestScored verifies the clean object removes lowest scored contract.
+// Asserts that removed = , want 1.
 func TestCleanObject_RemovesLowestScored(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -108,7 +132,7 @@ func TestCleanObject_RemovesLowestScored(t *testing.T) {
 	ops.EXPECT().IsDraining(gomock.Any()).Return(false).AnyTimes()
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": be1, "b2": be2}).AnyTimes()
 	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
-	// b1 is more utilized (lower score → removed first)
+	// b1 is more utilized (lower score -> removed first)
 	ops.EXPECT().GetBackend("b1").Return(be1, nil)
 	ops.EXPECT().DeleteOrEnqueue(gomock.Any(), be1, "b1", "key1", "over_replication", int64(100))
 
@@ -118,8 +142,8 @@ func TestCleanObject_RemovesLowestScored(t *testing.T) {
 		{ObjectKey: "key1", BackendName: "b2", SizeBytes: 100},
 	}
 	stats := map[string]core.QuotaStat{
-		"b1": {BytesUsed: 900, BytesLimit: 1000}, // 90% → lower score
-		"b2": {BytesUsed: 100, BytesLimit: 1000}, // 10% → higher score
+		"b1": {BytesUsed: 900, BytesLimit: 1000}, // 90% -> lower score
+		"b2": {BytesUsed: 100, BytesLimit: 1000}, // 10% -> higher score
 	}
 
 	removed := c.cleanObject(context.Background(), "key1", copies, 1, stats)
@@ -131,6 +155,8 @@ func TestCleanObject_RemovesLowestScored(t *testing.T) {
 	}
 }
 
+// TestClean_FactorOne_Noop verifies the clean factor one noop contract.
+// Asserts that unexpected error:.
 func TestClean_FactorOne_Noop(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -145,6 +171,8 @@ func TestClean_FactorOne_Noop(t *testing.T) {
 	}
 }
 
+// TestClean_NothingOverReplicated verifies the clean nothing over replicated contract.
+// Asserts that unexpected error:.
 func TestClean_NothingOverReplicated(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)

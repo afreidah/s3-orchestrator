@@ -23,6 +23,8 @@ import (
 // LOG BUFFER TESTS
 // -------------------------------------------------------------------------
 
+// TestLogBuffer_AddAndRetrieve verifies the log buffer add and retrieve contract.
+// Asserts that got entries, want 2.
 func TestLogBuffer_AddAndRetrieve(t *testing.T) {
 	t.Parallel()
 	buf := NewLogBuffer()
@@ -42,6 +44,8 @@ func TestLogBuffer_AddAndRetrieve(t *testing.T) {
 	}
 }
 
+// TestLogBuffer_Wraps verifies the log buffer wraps contract.
+// Asserts that got entries, want.
 func TestLogBuffer_Wraps(t *testing.T) {
 	t.Parallel()
 	buf := NewLogBuffer()
@@ -73,6 +77,8 @@ func TestLogBuffer_Wraps(t *testing.T) {
 	}
 }
 
+// TestLogBuffer_Empty verifies the log buffer empty contract.
+// Asserts that got entries from empty buffer, want nil.
 func TestLogBuffer_Empty(t *testing.T) {
 	t.Parallel()
 	buf := NewLogBuffer()
@@ -83,6 +89,8 @@ func TestLogBuffer_Empty(t *testing.T) {
 	}
 }
 
+// TestLogBuffer_FilterByLevel verifies the log buffer filter by level contract.
+// Asserts that got entries, want 2.
 func TestLogBuffer_FilterByLevel(t *testing.T) {
 	t.Parallel()
 	buf := NewLogBuffer()
@@ -104,6 +112,8 @@ func TestLogBuffer_FilterByLevel(t *testing.T) {
 	}
 }
 
+// TestLogBuffer_FilterBySince verifies the log buffer filter by since contract.
+// Asserts that got entries, want 1.
 func TestLogBuffer_FilterBySince(t *testing.T) {
 	t.Parallel()
 	buf := NewLogBuffer()
@@ -123,6 +133,8 @@ func TestLogBuffer_FilterBySince(t *testing.T) {
 	}
 }
 
+// TestLogBuffer_Before verifies the log buffer before contract.
+// Asserts that got entries, want 1.
 func TestLogBuffer_Before(t *testing.T) {
 	t.Parallel()
 	buf := NewLogBuffer()
@@ -163,6 +175,8 @@ func TestLogBuffer_Before(t *testing.T) {
 	}
 }
 
+// TestLogBuffer_FilterByComponent verifies the log buffer filter by component contract.
+// Asserts that got entries, want 1.
 func TestLogBuffer_FilterByComponent(t *testing.T) {
 	t.Parallel()
 	buf := NewLogBuffer()
@@ -180,6 +194,8 @@ func TestLogBuffer_FilterByComponent(t *testing.T) {
 	}
 }
 
+// TestLogBuffer_Limit verifies the log buffer limit contract.
+// Asserts that got entries, want 10.
 func TestLogBuffer_Limit(t *testing.T) {
 	t.Parallel()
 	buf := NewLogBuffer()
@@ -205,6 +221,7 @@ func TestLogBuffer_Limit(t *testing.T) {
 	}
 }
 
+// TestLogBuffer_ConcurrentAccess verifies the log buffer concurrent access path by exercising wg.Go, buf.Add, time.Now.
 func TestLogBuffer_ConcurrentAccess(t *testing.T) {
 	t.Parallel()
 	buf := NewLogBuffer()
@@ -240,6 +257,8 @@ func TestLogBuffer_ConcurrentAccess(t *testing.T) {
 // TEE HANDLER TESTS
 // -------------------------------------------------------------------------
 
+// TestTeeHandler_WritesToBoth verifies the tee handler writes to both contract.
+// Asserts that buffer has entries, want 1.
 func TestTeeHandler_WritesToBoth(t *testing.T) {
 	t.Parallel()
 	var stdout bytes.Buffer
@@ -270,6 +289,8 @@ func TestTeeHandler_WritesToBoth(t *testing.T) {
 	}
 }
 
+// TestTeeHandler_WithAttrs verifies the tee handler with attrs contract.
+// Asserts that buffer has entries, want 1.
 func TestTeeHandler_WithAttrs(t *testing.T) {
 	t.Parallel()
 	var stdout bytes.Buffer
@@ -288,6 +309,8 @@ func TestTeeHandler_WithAttrs(t *testing.T) {
 	}
 }
 
+// TestTeeHandler_WithGroup verifies the tee handler with group contract.
+// Asserts that buffer has entries, want 1.
 func TestTeeHandler_WithGroup(t *testing.T) {
 	t.Parallel()
 	var stdout bytes.Buffer
@@ -306,6 +329,7 @@ func TestTeeHandler_WithGroup(t *testing.T) {
 	}
 }
 
+// TestTeeHandler_Enabled verifies the tee handler enabled path by exercising slog.NewJSONHandler, handler.Enabled, context.Background.
 func TestTeeHandler_Enabled(t *testing.T) {
 	t.Parallel()
 	var stdout bytes.Buffer
@@ -322,6 +346,7 @@ func TestTeeHandler_Enabled(t *testing.T) {
 	}
 }
 
+// TestTeeHandler_WithGroupEmpty verifies the tee handler with group empty path by exercising slog.NewJSONHandler, handler.WithGroup.
 func TestTeeHandler_WithGroupEmpty(t *testing.T) {
 	t.Parallel()
 	var stdout bytes.Buffer
@@ -337,6 +362,8 @@ func TestTeeHandler_WithGroupEmpty(t *testing.T) {
 	}
 }
 
+// TestLevelToSlog_UnknownLevel verifies the level to slog unknown level contract.
+// Asserts that levelToSlog(\"UNKNOWN\") = , want DEBUG.
 func TestLevelToSlog_UnknownLevel(t *testing.T) {
 	t.Parallel()
 	// Unknown level strings should map to DEBUG.
@@ -348,6 +375,8 @@ func TestLevelToSlog_UnknownLevel(t *testing.T) {
 	}
 }
 
+// TestTeeHandler_FilterByComponent verifies the tee handler filter by component contract.
+// Asserts that got entries, want 1.
 func TestTeeHandler_FilterByComponent(t *testing.T) {
 	t.Parallel()
 	var stdout bytes.Buffer

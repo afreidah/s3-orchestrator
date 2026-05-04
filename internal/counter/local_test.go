@@ -11,6 +11,8 @@ package counter
 
 import "testing"
 
+// TestLocalCounterBackend_Add_And_Load verifies the local counter backend add and load contract.
+// Asserts that apiRequests = , want 5.
 func TestLocalCounterBackend_Add_And_Load(t *testing.T) {
 	t.Parallel()
 	cb := NewLocalCounterBackend([]string{"b1"})
@@ -30,6 +32,8 @@ func TestLocalCounterBackend_Add_And_Load(t *testing.T) {
 	}
 }
 
+// TestLocalCounterBackend_Add_Accumulates verifies the local counter backend add accumulates contract.
+// Asserts that apiRequests = , want 10.
 func TestLocalCounterBackend_Add_Accumulates(t *testing.T) {
 	t.Parallel()
 	cb := NewLocalCounterBackend([]string{"b1"})
@@ -42,6 +46,8 @@ func TestLocalCounterBackend_Add_Accumulates(t *testing.T) {
 	}
 }
 
+// TestLocalCounterBackend_Swap_ReturnsAndResets verifies the local counter backend swap returns and resets contract.
+// Asserts that Swap returned , want 42.
 func TestLocalCounterBackend_Swap_ReturnsAndResets(t *testing.T) {
 	t.Parallel()
 	cb := NewLocalCounterBackend([]string{"b1"})
@@ -57,6 +63,8 @@ func TestLocalCounterBackend_Swap_ReturnsAndResets(t *testing.T) {
 	}
 }
 
+// TestLocalCounterBackend_AddAll verifies the local counter backend add all contract.
+// Asserts that apiRequests = , want 3.
 func TestLocalCounterBackend_AddAll(t *testing.T) {
 	t.Parallel()
 	cb := NewLocalCounterBackend([]string{"b1"})
@@ -75,6 +83,8 @@ func TestLocalCounterBackend_AddAll(t *testing.T) {
 	}
 }
 
+// TestLocalCounterBackend_AddAll_SkipsZero verifies the local counter backend add all skips zero contract.
+// Asserts that expected all zeros, got v.
 func TestLocalCounterBackend_AddAll_SkipsZero(t *testing.T) {
 	t.Parallel()
 	cb := NewLocalCounterBackend([]string{"b1"})
@@ -87,6 +97,8 @@ func TestLocalCounterBackend_AddAll_SkipsZero(t *testing.T) {
 	}
 }
 
+// TestLocalCounterBackend_LoadAll_UnknownBackend verifies the local counter backend load all unknown backend contract.
+// Asserts that expected zero result for unknown backend, got v.
 func TestLocalCounterBackend_LoadAll_UnknownBackend(t *testing.T) {
 	t.Parallel()
 	cb := NewLocalCounterBackend([]string{"b1"})
@@ -97,6 +109,8 @@ func TestLocalCounterBackend_LoadAll_UnknownBackend(t *testing.T) {
 	}
 }
 
+// TestLocalCounterBackend_UnknownBackend_NoOp verifies the local counter backend unknown backend no op contract.
+// Asserts that Load on unknown = , want 0.
 func TestLocalCounterBackend_UnknownBackend_NoOp(t *testing.T) {
 	t.Parallel()
 	cb := NewLocalCounterBackend([]string{"b1"})
@@ -113,6 +127,8 @@ func TestLocalCounterBackend_UnknownBackend_NoOp(t *testing.T) {
 	}
 }
 
+// TestLocalCounterBackend_UnknownField verifies the local counter backend unknown field contract.
+// Asserts that Load on bogus field = , want 0.
 func TestLocalCounterBackend_UnknownField(t *testing.T) {
 	t.Parallel()
 	cb := NewLocalCounterBackend([]string{"b1"})
@@ -126,6 +142,8 @@ func TestLocalCounterBackend_UnknownField(t *testing.T) {
 	}
 }
 
+// TestLocalCounterBackend_SwapAll_ReturnsAndResets verifies the local counter backend swap all returns and resets contract.
+// Asserts that SwapAll apiRequests = , want 10.
 func TestLocalCounterBackend_SwapAll_ReturnsAndResets(t *testing.T) {
 	t.Parallel()
 	cb := NewLocalCounterBackend([]string{"b1"})
@@ -150,6 +168,8 @@ func TestLocalCounterBackend_SwapAll_ReturnsAndResets(t *testing.T) {
 	}
 }
 
+// TestLocalCounterBackend_SwapAll_UnknownBackend verifies the local counter backend swap all unknown backend contract.
+// Asserts that SwapAll on unknown should return zeros, got v.
 func TestLocalCounterBackend_SwapAll_UnknownBackend(t *testing.T) {
 	t.Parallel()
 	cb := NewLocalCounterBackend([]string{"b1"})
@@ -160,6 +180,8 @@ func TestLocalCounterBackend_SwapAll_UnknownBackend(t *testing.T) {
 	}
 }
 
+// TestLocalCounterBackend_MultipleBackends verifies the local counter backend multiple backends contract.
+// Asserts that b1 apiRequests = , want 10.
 func TestLocalCounterBackend_MultipleBackends(t *testing.T) {
 	t.Parallel()
 	cb := NewLocalCounterBackend([]string{"b1", "b2"})
@@ -175,6 +197,8 @@ func TestLocalCounterBackend_MultipleBackends(t *testing.T) {
 	}
 }
 
+// TestLocalCounterBackend_Backends verifies the local counter backend backends contract.
+// Asserts that Backends() returned names, want 2.
 func TestLocalCounterBackend_Backends(t *testing.T) {
 	t.Parallel()
 	cb := NewLocalCounterBackend([]string{"alpha", "beta"})
@@ -193,6 +217,8 @@ func TestLocalCounterBackend_Backends(t *testing.T) {
 	}
 }
 
+// TestLocalCounterBackend_NilInit verifies the local counter backend nil init contract.
+// Asserts that Load after nil init = , want 0.
 func TestLocalCounterBackend_NilInit(t *testing.T) {
 	t.Parallel()
 	cb := NewLocalCounterBackend(nil)
@@ -239,7 +265,7 @@ func TestSwapAllBackends_ReturnsAllDeltas(t *testing.T) {
 
 // TestSwapAllBackends_ConcurrentAdds verifies that Add calls concurrent with
 // SwapAllBackends do not lose deltas. The delta is either captured in the
-// swap result or remains in the new counters — never dropped.
+// swap result or remains in the new counters  -  never dropped.
 func TestSwapAllBackends_ConcurrentAdds(t *testing.T) {
 	t.Parallel()
 	cb := NewLocalCounterBackend([]string{"b1"})

@@ -61,6 +61,8 @@ func TestDampening_TTLCacheEvicts(t *testing.T) {
 	}
 }
 
+// TestGenerateEventID_Unique verifies the generate event id unique contract.
+// Asserts that duplicate event ID:.
 func TestGenerateEventID_Unique(t *testing.T) {
 	seen := make(map[string]bool)
 	for range 100 {
@@ -75,6 +77,7 @@ func TestGenerateEventID_Unique(t *testing.T) {
 	}
 }
 
+// TestHMACSigning verifies the hmacsigning behaviour described by the test name.
 func TestHMACSigning(t *testing.T) {
 	payload := []byte(`{"type":"test"}`)
 	secret := "test-secret"
@@ -95,12 +98,18 @@ func TestHMACSigning(t *testing.T) {
 	}
 }
 
+// computeTestHMAC computes the HMAC-SHA256 the test expects the
+// notifier to attach to the payload. Used to assert the signing
+// matches the configured webhook secret without re-implementing
+// the real notifier's signer.
 func computeTestHMAC(payload []byte, secret string) string {
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write(payload)
 	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
 }
 
+// TestFindEndpoint_Found verifies the find endpoint found contract.
+// Asserts that findEndpoint should return matching endpoint, got.
 func TestFindEndpoint_Found(t *testing.T) {
 	n := &Notifier{
 		endpoints: []config.NotificationEndpoint{
@@ -114,6 +123,7 @@ func TestFindEndpoint_Found(t *testing.T) {
 	}
 }
 
+// TestFindEndpoint_NotFound verifies the find endpoint not found behaviour described by the test name.
 func TestFindEndpoint_NotFound(t *testing.T) {
 	n := &Notifier{
 		endpoints: []config.NotificationEndpoint{
@@ -126,6 +136,8 @@ func TestFindEndpoint_NotFound(t *testing.T) {
 	}
 }
 
+// TestEmit_InsertsNotificationForMatchingEndpoint verifies the emit inserts notification for matching endpoint contract.
+// Asserts that expected 1 insert, got.
 func TestEmit_InsertsNotificationForMatchingEndpoint(t *testing.T) {
 	ms := &mockOutboxStore{}
 	n := &Notifier{
@@ -142,6 +154,8 @@ func TestEmit_InsertsNotificationForMatchingEndpoint(t *testing.T) {
 	}
 }
 
+// TestEmit_SkipsNonMatchingEndpoint verifies the emit skips non matching endpoint contract.
+// Asserts that expected 0 inserts for non-matching event, got.
 func TestEmit_SkipsNonMatchingEndpoint(t *testing.T) {
 	ms := &mockOutboxStore{}
 	n := &Notifier{
@@ -180,6 +194,8 @@ func TestEmit_DampensRepeatedCapacityWarnings(t *testing.T) {
 	}
 }
 
+// TestDeliver_Success verifies the deliver success contract.
+// Asserts that unexpected error:.
 func TestDeliver_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -196,6 +212,7 @@ func TestDeliver_Success(t *testing.T) {
 	}
 }
 
+// TestDeliver_ServerError verifies the deliver server error path by exercising httptest.NewServer, http.HandlerFunc, w.WriteHeader.
 func TestDeliver_ServerError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -212,6 +229,8 @@ func TestDeliver_ServerError(t *testing.T) {
 	}
 }
 
+// TestDeliver_HMACSignature verifies the deliver hmacsignature contract.
+// Asserts that signature = , want.
 func TestDeliver_HMACSignature(t *testing.T) {
 	var gotSig string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -233,6 +252,7 @@ func TestDeliver_HMACSignature(t *testing.T) {
 	}
 }
 
+// TestNewNotifier_SetsEmitHook verifies the new notifier sets emit hook behaviour described by the test name.
 func TestNewNotifier_SetsEmitHook(t *testing.T) {
 	// Reset the global hook before test
 	event.Emit = nil
@@ -259,30 +279,40 @@ type mockOutboxStore struct {
 	retriedIDs   []int64
 }
 
+// InsertNotification inserts notification.
 func (m *mockOutboxStore) InsertNotification(_ context.Context, _, payload, _ string) error {
 	m.insertCount++
 	m.lastPayload = payload
 	return nil
 }
 
+// GetPendingNotifications returns pending notifications.
 func (m *mockOutboxStore) GetPendingNotifications(_ context.Context, _ int) ([]core.NotificationRow, error) {
 	return m.pending, nil
 }
 
+// CompleteNotification records the completion call so the test can
+// assert which notification ids the notifier marked successful.
 func (m *mockOutboxStore) CompleteNotification(_ context.Context, id int64) error {
 	m.completedIDs = append(m.completedIDs, id)
 	return nil
 }
 
+// RetryNotification records the retry call (id, backoff, last_error)
+// so the test can assert the notifier scheduled retries with the
+// right backoff curve.
 func (m *mockOutboxStore) RetryNotification(_ context.Context, id int64, _ time.Duration, _ string) error {
 	m.retriedIDs = append(m.retriedIDs, id)
 	return nil
 }
 
+// WithAdvisoryLock runs the supplied function with advisory lock.
 func (m *mockOutboxStore) WithAdvisoryLock(_ context.Context, _ int64, fn func(context.Context) error) (bool, error) {
 	return true, fn(context.Background())
 }
 
+// TestEmit_PrefixFiltering verifies the emit prefix filtering contract.
+// Asserts that expected 1 insert for matching prefix, got.
 func TestEmit_PrefixFiltering(t *testing.T) {
 	ms := &mockOutboxStore{}
 	n := &Notifier{
@@ -305,6 +335,7 @@ func TestEmit_PrefixFiltering(t *testing.T) {
 	}
 }
 
+// TestEmit_FillsCloudEventsDefaults verifies the emit fills cloud events defaults behaviour described by the test name.
 func TestEmit_FillsCloudEventsDefaults(t *testing.T) {
 	ms := &mockOutboxStore{}
 	n := &Notifier{
@@ -334,6 +365,8 @@ func TestEmit_FillsCloudEventsDefaults(t *testing.T) {
 	}
 }
 
+// TestEmit_MultipleEndpoints verifies the emit multiple endpoints contract.
+// Asserts that expected 2 inserts (a + b), got.
 func TestEmit_MultipleEndpoints(t *testing.T) {
 	ms := &mockOutboxStore{}
 	n := &Notifier{
@@ -352,6 +385,8 @@ func TestEmit_MultipleEndpoints(t *testing.T) {
 	}
 }
 
+// TestDrainOnce_DeliversAndCompletes verifies the drain once delivers and completes contract.
+// Asserts that expected ID 1 completed, got.
 func TestDrainOnce_DeliversAndCompletes(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -378,6 +413,8 @@ func TestDrainOnce_DeliversAndCompletes(t *testing.T) {
 	}
 }
 
+// TestDrainOnce_RetriesOnFailure verifies the drain once retries on failure contract.
+// Asserts that expected ID 1 retried, got.
 func TestDrainOnce_RetriesOnFailure(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -404,6 +441,8 @@ func TestDrainOnce_RetriesOnFailure(t *testing.T) {
 	}
 }
 
+// TestDrainOnce_ExhaustsAfterMaxRetries verifies the drain once exhausts after max retries contract.
+// Asserts that expected exhausted notification to be completed, got completed= retried=.
 func TestDrainOnce_ExhaustsAfterMaxRetries(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -431,6 +470,8 @@ func TestDrainOnce_ExhaustsAfterMaxRetries(t *testing.T) {
 	}
 }
 
+// TestDrainOnce_UnknownEndpointCompleted verifies the drain once unknown endpoint completed contract.
+// Asserts that notification to unknown endpoint should be completed (dropped), got.
 func TestDrainOnce_UnknownEndpointCompleted(t *testing.T) {
 	ms := &mockOutboxStore{
 		pending: []core.NotificationRow{
@@ -450,10 +491,14 @@ func TestDrainOnce_UnknownEndpointCompleted(t *testing.T) {
 	}
 }
 
+// contains is a small substring helper used by the tests below to
+// assert log lines without depending on slog's exact formatting.
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && strings.Contains(s, substr)
 }
 
+// TestHasPrefix verifies the has prefix contract.
+// Asserts that hasPrefix(, ) = , want.
 func TestHasPrefix(t *testing.T) {
 	tests := []struct {
 		key, prefix string
@@ -485,22 +530,30 @@ type failingOutboxStore struct {
 	retryErr    error
 }
 
+// InsertNotification inserts notification.
 func (m *failingOutboxStore) InsertNotification(_ context.Context, _, _, _ string) error {
 	return nil
 }
 
+// GetPendingNotifications returns pending notifications.
 func (m *failingOutboxStore) GetPendingNotifications(_ context.Context, _ int) ([]core.NotificationRow, error) {
 	return m.pending, nil
 }
 
+// CompleteNotification records the completion call so the test can
+// assert which notification ids the notifier marked successful.
 func (m *failingOutboxStore) CompleteNotification(_ context.Context, _ int64) error {
 	return m.completeErr
 }
 
+// RetryNotification records the retry call (id, backoff, last_error)
+// so the test can assert the notifier scheduled retries with the
+// right backoff curve.
 func (m *failingOutboxStore) RetryNotification(_ context.Context, _ int64, _ time.Duration, _ string) error {
 	return m.retryErr
 }
 
+// WithAdvisoryLock runs the supplied function with advisory lock.
 func (m *failingOutboxStore) WithAdvisoryLock(_ context.Context, _ int64, fn func(context.Context) error) (bool, error) {
 	return true, fn(context.Background())
 }
@@ -565,7 +618,7 @@ func TestDrainOnce_CompleteFailure_DoesNotPanic(t *testing.T) {
 // TestDrainOnce_RetryFailure_DoesNotPanic drives drainOnce through the
 // "delivery failed AND Retry failed" path.
 func TestDrainOnce_RetryFailure_DoesNotPanic(t *testing.T) {
-	// Server always returns 500 so delivery fails → worker calls Retry →
+	// Server always returns 500 so delivery fails -> worker calls Retry ->
 	// Retry also fails (injected).
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)

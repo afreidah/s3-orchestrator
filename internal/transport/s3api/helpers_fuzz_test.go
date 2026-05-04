@@ -14,6 +14,8 @@ import (
 	"testing"
 )
 
+// FuzzParsePath fuzzes the parse path contract.
+// Asserts that parsePath() returned ok=true with empty bucket.
 func FuzzParsePath(f *testing.F) {
 	f.Add("/bucket/key")
 	f.Add("/bucket")
@@ -48,6 +50,8 @@ func FuzzParsePath(f *testing.F) {
 	})
 }
 
+// FuzzValidMetadataToken fuzzes the valid metadata token contract.
+// Asserts that accepted char in.
 func FuzzValidMetadataToken(f *testing.F) {
 	f.Add("normal-key")
 	f.Add("value\r\nInjected: header")
