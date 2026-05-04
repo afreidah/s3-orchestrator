@@ -275,7 +275,7 @@
 
   function buildKey(displayName) {
     let bucket = uploadBucketSelect.value;
-    let path = uploadPathInput.value.replaceAll(/^\/+|\/+$/g, '');
+    let path = uploadPathInput.value.replace(/^\/+/, '').replace(/\/+$/, '');
     if (path) {
       return bucket + '/' + path + '/' + displayName;
     }
