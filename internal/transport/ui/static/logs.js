@@ -49,6 +49,7 @@
       let d = new Date(iso);
       return d.toLocaleTimeString(undefined, { hour12: false });
     } catch (e) {
+      console.warn('formatTime fallback for', iso, e);
       return iso;
     }
   }
@@ -57,7 +58,7 @@
     if (!attrs) return '';
     let parts = [];
     for (let key in attrs) {
-      if (Object.prototype.hasOwnProperty.call(attrs, key)) {
+      if (Object.hasOwn(attrs, key)) {
         parts.push(key + '=' + String(attrs[key]));
       }
     }
@@ -122,6 +123,25 @@
     container.style.minHeight = '';
   }
 
+  // attrsMatch returns true when any key or stringified value of the
+  // attrs map contains the search term (case-insensitive).
+  function attrsMatch(attrs, term) {
+    for (let key in attrs) {
+      if (!Object.hasOwn(attrs, key)) continue;
+      if (String(attrs[key]).toLowerCase().includes(term)) return true;
+      if (key.toLowerCase().includes(term)) return true;
+    }
+    return false;
+  }
+
+  // entryMatches returns true when the search term hits any of the
+  // visible fields on a log entry: message, level, or any attr key/value.
+  function entryMatches(e, term) {
+    if (e.message.toLowerCase().includes(term)) return true;
+    if (e.level.toLowerCase().includes(term)) return true;
+    return !!e.attrs && attrsMatch(e.attrs, term);
+  }
+
   function applySearch() {
     let scrollY = window.scrollY;
     let term = (searchInput.value || '').toLowerCase();
@@ -130,19 +150,7 @@
       window.scrollTo(0, scrollY);
       return;
     }
-    let filtered = allEntries.filter(function (e) {
-      if (e.message.toLowerCase().indexOf(term) !== -1) return true;
-      if (e.level.toLowerCase().indexOf(term) !== -1) return true;
-      if (e.attrs) {
-        for (let key in e.attrs) {
-          if (Object.prototype.hasOwnProperty.call(e.attrs, key)) {
-            if (String(e.attrs[key]).toLowerCase().indexOf(term) !== -1) return true;
-            if (key.toLowerCase().indexOf(term) !== -1) return true;
-          }
-        }
-      }
-      return false;
-    });
+    let filtered = allEntries.filter(function (e) { return entryMatches(e, term); });
     renderEntries(filtered);
     window.scrollTo(0, scrollY);
   }
@@ -225,8 +233,9 @@
   function setAutoRefresh(enabled) {
     if (enabled) {
       if (!autoInterval) autoInterval = setInterval(fetchLogs, 3000);
-    } else {
-      if (autoInterval) { clearInterval(autoInterval); autoInterval = null; }
+    } else if (autoInterval) {
+      clearInterval(autoInterval);
+      autoInterval = null;
     }
   }
 
