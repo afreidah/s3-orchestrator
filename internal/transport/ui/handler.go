@@ -352,9 +352,15 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request, accessKe
 	sig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 
 	value := base64.RawURLEncoding.EncodeToString([]byte(payload)) + "." + sig
+	// Secure must remain dynamic: forcing true unconditionally makes
+	// browsers silently drop the cookie when the request arrived over
+	// plain HTTP (untrusted reverse proxy, local dev), which would
+	// break login. forceSecure lets operators opt in when the
+	// deployment guarantees TLS; otherwise IsTLSRequest infers it
+	// from a trusted X-Forwarded-Proto.
 	secure := h.forceSecure || httputil.IsTLSRequest(r, h.trustedProxies)
 
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ // NOSONAR S2092 - Secure derived from TLS detection above
 		Name:     sessionCookieName,
 		Value:    value,
 		Path:     h.prefix + "/",
@@ -370,7 +376,7 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request, accessKe
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ // NOSONAR S2092 - Secure derived from TLS detection above
 		Name:     csrfCookieName,
 		Value:    csrfToken,
 		Path:     h.prefix + "/",
@@ -511,8 +517,12 @@ func (h *Handler) renderLoginError(w http.ResponseWriter, r *http.Request, statu
 
 // handleLogout clears the session and CSRF cookies and redirects to login.
 func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
+	// Secure must remain dynamic; see createSession for the rationale.
+	// The clear-cookie write must use the same Secure value the original
+	// SetCookie used, otherwise the browser will not match the cookie
+	// against the deletion request and will leave the original in place.
 	secure := h.forceSecure || httputil.IsTLSRequest(r, h.trustedProxies)
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ // NOSONAR S2092 - Secure derived from TLS detection above
 		Name:     sessionCookieName,
 		Value:    "",
 		Path:     h.prefix + "/",
@@ -521,7 +531,7 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   -1,
 		Secure:   secure,
 	})
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ // NOSONAR S2092 - Secure derived from TLS detection above
 		Name:   csrfCookieName,
 		Value:  "",
 		Path:   h.prefix + "/",
