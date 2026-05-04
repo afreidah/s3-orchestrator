@@ -108,9 +108,9 @@ func FuzzBuildCanonicalRequest(f *testing.F) {
 	})
 }
 
-// FuzzBuildPresignedCanonicalRequest exercises the presigned canonical request
-// builder with adversarial query strings, ensuring X-Amz-Signature is always
-// excluded and the function never panics.
+// FuzzBuildPresignedCanonicalRequest exercises the presigned canonical
+// request builder with adversarial query strings, ensuring
+// X-Amz-Signature is always excluded and the function never panics.
 func FuzzBuildPresignedCanonicalRequest(f *testing.F) {
 	f.Add("GET", "/bucket/key", "X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=abc123&other=value", "host")
 	f.Add("PUT", "/bucket/obj", "X-Amz-Signature=&X-Amz-Date=20260326T000000Z", "host")
@@ -127,30 +127,43 @@ func FuzzBuildPresignedCanonicalRequest(f *testing.F) {
 		r.URL.RawQuery = rawQuery
 		r.Host = "localhost"
 
-		var headers []string
-		for h := range strings.SplitSeq(signedHeadersStr, ";") {
-			if h != "" {
-				headers = append(headers, h)
-			}
-		}
+		headers := parseSignedHeaderList(signedHeadersStr)
 		if len(headers) == 0 {
 			return
 		}
-
 		result := buildPresignedCanonicalRequest(r, headers)
-
-		// The X-Amz-Signature query parameter must be excluded from the
-		// canonical query string. Parse the query line (third line of the
-		// canonical request) and check for the exact key, not a substring.
-		lines := strings.Split(result, "\n")
-		if len(lines) >= 3 {
-			queryLine := lines[2]
-			for _, pair := range strings.Split(queryLine, "&") {
-				key, _, _ := strings.Cut(pair, "=")
-				if key == "X-Amz-Signature" {
-					t.Errorf("canonical query string contains X-Amz-Signature key: %q", queryLine)
-				}
-			}
-		}
+		assertNoSignatureInCanonicalQuery(t, result)
 	})
+}
+
+// parseSignedHeaderList splits a semicolon-separated SignedHeaders fuzz
+// input into its constituent header names, dropping empty entries.
+func parseSignedHeaderList(s string) []string {
+	var headers []string
+	for h := range strings.SplitSeq(s, ";") {
+		if h == "" {
+			continue
+		}
+		headers = append(headers, h)
+	}
+	return headers
+}
+
+// assertNoSignatureInCanonicalQuery fails the test when the canonical
+// request's query line (third line) contains an X-Amz-Signature
+// parameter. The canonical query line precedes the headers block, so we
+// only need to inspect line index 2.
+func assertNoSignatureInCanonicalQuery(t *testing.T, canonicalRequest string) {
+	t.Helper()
+	lines := strings.Split(canonicalRequest, "\n")
+	if len(lines) < 3 {
+		return
+	}
+	queryLine := lines[2]
+	for _, pair := range strings.Split(queryLine, "&") {
+		key, _, _ := strings.Cut(pair, "=")
+		if key == "X-Amz-Signature" {
+			t.Errorf("canonical query string contains X-Amz-Signature key: %q", queryLine)
+		}
+	}
 }

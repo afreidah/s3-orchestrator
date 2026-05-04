@@ -30,8 +30,11 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/util/bufpool"
 
+	"bufio"
+
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // -------------------------------------------------------------------------
@@ -45,14 +48,12 @@ func (o *ObjectManager) PutObject(ctx context.Context, key string, body io.Reade
 	const operation = "PutObject"
 	start := time.Now()
 
-	// --- Start tracing span ---
 	ctx, span := telemetry.StartSpan(ctx, managerSpanPrefix+operation,
 		telemetry.AttrObjectKey.String(key),
 		telemetry.AttrObjectSize.Int64(size),
 	)
 	defer span.End()
 
-	// --- Filter backends within usage limits, exclude draining and unhealthy ---
 	eligible := o.eligibleForWrite(1, 0, size)
 	if len(eligible) == 0 {
 		telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation, "write").Inc()
@@ -60,184 +61,247 @@ func (o *ObjectManager) PutObject(ctx context.Context, key string, body io.Reade
 		return "", core.ErrInsufficientStorage
 	}
 
-	// --- Buffer body for retry ---
-	// io.Reader is single-use; buffer the plaintext so we can replay on failover.
+	bodyBytes, contentHash, err := o.bufferPutBody(span, body)
+	if err != nil {
+		return "", err
+	}
+
+	// DEK caching: encryptForPut wraps a fresh DEK on first call and
+	// reuses it on retries with a new base nonce, sparing the KeyProvider
+	// during failover storms.
+	var dekState putEncryptState
+	var failedBackends []string
+	var lastErr error
+
+	for len(eligible) > 0 {
+		res := o.attemptPutOnBackend(ctx, span, &putAttemptRequest{
+			operation:   operation,
+			key:         key,
+			bodyBytes:   bodyBytes,
+			size:        size,
+			contentType: contentType,
+			metadata:    metadata,
+			contentHash: contentHash,
+			dekState:    &dekState,
+			eligible:    eligible,
+		})
+		if res.fatalErr != nil {
+			return "", res.fatalErr
+		}
+		if res.putErr == nil {
+			o.finalizePutSuccess(ctx, span, &putSuccessRequest{
+				operation:      operation,
+				key:            key,
+				backendName:    res.backend,
+				size:           size,
+				start:          start,
+				failedBackends: failedBackends,
+			})
+			return res.etag, nil
+		}
+		lastErr = res.putErr
+		failedBackends = append(failedBackends, res.backend)
+		eligible = withoutBackend(eligible, res.backend)
+		slog.WarnContext(ctx, "PutObject: backend write failed, trying next",
+			"key", key, "failed_backend", res.backend, "error", res.putErr,
+			"remaining_backends", len(eligible))
+	}
+
+	span.SetStatus(codes.Error, lastErr.Error())
+	span.RecordError(lastErr)
+	return "", lastErr
+}
+
+// putAttemptResult conveys the outcome of one backend PUT attempt back to
+// the failover loop. A non-nil fatalErr terminates the call. A non-nil
+// putErr signals a backend-side failure that should drop the chosen
+// backend and retry on the remainder.
+type putAttemptResult struct {
+	backend  string
+	etag     string
+	fatalErr error
+	putErr   error
+}
+
+// bufferPutBody copies body into memory so failover retries can replay
+// the same plaintext, and computes the content hash when integrity
+// verification is enabled.
+func (o *ObjectManager) bufferPutBody(span trace.Span, body io.Reader) ([]byte, string, error) {
 	var buf bytes.Buffer
 	if _, err := bufpool.Copy(&buf, body); err != nil {
 		span.SetStatus(codes.Error, err.Error())
-		return "", fmt.Errorf("buffer request body: %w", err)
+		return nil, "", fmt.Errorf("buffer request body: %w", err)
 	}
 	bodyBytes := buf.Bytes()
-
-	// --- Compute content hash if integrity is enabled ---
 	var contentHash string
 	if icfg := o.integrityCfg(); icfg != nil && icfg.Enabled {
 		contentHash = HashBody(bodyBytes)
 	}
+	return bodyBytes, contentHash, nil
+}
 
-	// --- Try eligible backends with failover ---
-	// DEK caching: encryptForPut wraps a fresh DEK on first call and reuses
-	// it on retries with a new base nonce, sparing the KeyProvider during
-	// failover storms.
-	var dekState putEncryptState
+// putAttemptRequest bundles the per-attempt arguments to
+// attemptPutOnBackend so the helper signature stays under the
+// parameter-count limit.
+type putAttemptRequest struct {
+	operation   string
+	key         string
+	bodyBytes   []byte
+	size        int64
+	contentType string
+	metadata    map[string]string
+	contentHash string
+	dekState    *putEncryptState
+	eligible    []string
+}
 
-	var failedBackends []string
-	var lastErr error
-	for len(eligible) > 0 {
-		backendName, err := o.parent.selectBackendForWrite(ctx, size, eligible)
-		if err != nil {
-			return "", o.classifyWriteError(span, operation, err)
-		}
+// attemptPutOnBackend performs one backend PUT attempt: select a
+// destination, prepare the payload (encrypt/hash), insert a pending
+// intent, upload, then promote the intent on success.
+func (o *ObjectManager) attemptPutOnBackend(ctx context.Context, span trace.Span, req *putAttemptRequest) putAttemptResult {
+	backendName, err := o.parent.selectBackendForWrite(ctx, req.size, req.eligible)
+	if err != nil {
+		return putAttemptResult{fatalErr: o.classifyWriteError(span, req.operation, err)}
+	}
+	span.SetAttributes(telemetry.AttrBackendName.String(backendName))
 
-		span.SetAttributes(telemetry.AttrBackendName.String(backendName))
-
-		be, err := o.getBackend(backendName)
-		if err != nil {
-			span.SetStatus(codes.Error, err.Error())
-			return "", err
-		}
-
-		// --- Encrypt if enabled, layer integrity hash either way ---
-		uploadBody := io.Reader(bytes.NewReader(bodyBytes))
-		uploadSize := size
-		var enc *core.EncryptionMeta
-		if o.encryptor != nil {
-			uploadBody, uploadSize, enc, err = encryptForPut(ctx, o.encryptor, bodyBytes, size, &dekState)
-			if err != nil {
-				span.SetStatus(codes.Error, err.Error())
-				return "", err
-			}
-			enc.ContentHash = contentHash
-		} else if contentHash != "" {
-			enc = &core.EncryptionMeta{ContentHash: contentHash}
-		}
-
-		// --- Insert pending intent before backend PUT ---
-		// The intent acts as a recovery breadcrumb: if the metadata commit
-		// fails after the bytes land on the backend, the pending reaper
-		// promotes the intent into object_locations on a later tick rather
-		// than the old failure path silently deleting the just-written
-		// (and possibly only) copy.
-		intentID, err := o.parent.insertPendingIntent(ctx, key, backendName, uploadSize, enc)
-		if err != nil {
-			span.SetStatus(codes.Error, err.Error())
-			return "", err
-		}
-
-		// --- Upload to backend ---
-		bctx, bcancel := o.withTimeout(ctx)
-		etag, err := be.PutObject(bctx, key, uploadBody, uploadSize, contentType, metadata)
-		bcancel()
-		if err != nil {
-			o.usage.Record(backendName, 1, 0, 0) // API call was made even on failure
-			lastErr = err
-			failedBackends = append(failedBackends, backendName)
-
-			// Leave the pending row for the reaper to resolve. A backend
-			// PUT error does not reliably mean the bytes are absent (the
-			// response could have been lost mid-flight), so the reaper
-			// HEADs the backend on its next tick and either promotes or
-			// drops the intent based on what is actually there.
-
-			// Remove failed backend from eligible list and retry
-			remaining := make([]string, 0, len(eligible)-1)
-			for _, name := range eligible {
-				if name != backendName {
-					remaining = append(remaining, name)
-				}
-			}
-			eligible = remaining
-
-			slog.WarnContext(ctx, "PutObject: backend write failed, trying next",
-				"key", key, "failed_backend", backendName, "error", err,
-				"remaining_backends", len(eligible))
-			continue
-		}
-
-		// --- Record object location, update quota, clear pending intent (atomic) ---
-		if err := o.parent.recordObjectAndPromoteIntent(ctx, span, key, backendName, uploadSize, enc, intentID); err != nil {
-			return "", err
-		}
-
-		// --- Invalidate location cache ---
-		o.cache.Delete(key)
-
-		// --- Record metrics ---
-		o.recordOperation(operation, backendName, start, nil)
-		o.usage.Record(backendName, 1, 0, size)
-
-		if len(failedBackends) > 0 {
-			for _, fb := range failedBackends {
-				telemetry.WriteFailoverTotal.WithLabelValues(operation, fb, backendName).Inc()
-			}
-			span.SetAttributes(telemetry.AttrWriteFailover.Bool(true))
-			span.SetAttributes(telemetry.AttrFailoverAttempts.Int(len(failedBackends)))
-		}
-
-		audit.Log(ctx, "storage.PutObject",
-			slog.String("key", key),
-			slog.String("backend", backendName),
-			slog.Int64("size", size),
-		)
-		if event.Emit != nil {
-			bucket, userKey := internalkey.Split(key)
-			event.Emit(event.Event{
-				Type:    event.ObjectCreatedPut,
-				Subject: userKey,
-				Data: map[string]any{
-					"bucket":     bucket,
-					"key":        userKey,
-					"backend":    backendName,
-					"size":       size,
-					"request_id": audit.RequestID(ctx),
-				},
-			})
-		}
-		o.invalidateCache(key)
-
-		span.SetStatus(codes.Ok, "")
-		return etag, nil
+	be, err := o.getBackend(backendName)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return putAttemptResult{backend: backendName, fatalErr: err}
 	}
 
-	// All eligible backends exhausted
-	span.SetStatus(codes.Error, lastErr.Error())
-	span.RecordError(lastErr)
-	return "", lastErr
+	uploadBody, uploadSize, enc, err := o.buildPutPayload(ctx, req.bodyBytes, req.size, req.contentHash, req.dekState)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return putAttemptResult{backend: backendName, fatalErr: err}
+	}
+
+	// Insert the pending intent before the backend PUT so a metadata
+	// commit failure after the bytes land has a recovery breadcrumb: the
+	// pending reaper promotes the intent on a later tick instead of the
+	// old failure path silently deleting the just-written copy.
+	intentID, err := o.parent.insertPendingIntent(ctx, req.key, backendName, uploadSize, enc)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return putAttemptResult{backend: backendName, fatalErr: err}
+	}
+
+	bctx, bcancel := o.withTimeout(ctx)
+	etag, err := be.PutObject(bctx, req.key, uploadBody, uploadSize, req.contentType, req.metadata)
+	bcancel()
+	if err != nil {
+		o.usage.Record(backendName, 1, 0, 0)
+		// Leave the pending row for the reaper. A backend PUT error does
+		// not reliably mean the bytes are absent: the response could have
+		// been lost mid-flight, so the reaper HEADs the backend on its
+		// next tick and either promotes or drops the intent.
+		return putAttemptResult{backend: backendName, putErr: err}
+	}
+
+	if err := o.parent.recordObjectAndPromoteIntent(ctx, span, req.key, backendName, uploadSize, enc, intentID); err != nil {
+		return putAttemptResult{backend: backendName, fatalErr: err}
+	}
+	o.cache.Delete(req.key)
+	return putAttemptResult{backend: backendName, etag: etag}
+}
+
+// buildPutPayload prepares the upload body and EncryptionMeta for a
+// single attempt. Encryption layering, when enabled, runs through
+// encryptForPut so the wrapped DEK is reused across failover retries.
+func (o *ObjectManager) buildPutPayload(
+	ctx context.Context,
+	bodyBytes []byte,
+	size int64,
+	contentHash string,
+	dekState *putEncryptState,
+) (io.Reader, int64, *core.EncryptionMeta, error) {
+	if o.encryptor != nil {
+		uploadBody, uploadSize, enc, err := encryptForPut(ctx, o.encryptor, bodyBytes, size, dekState)
+		if err != nil {
+			return nil, 0, nil, err
+		}
+		enc.ContentHash = contentHash
+		return uploadBody, uploadSize, enc, nil
+	}
+	var enc *core.EncryptionMeta
+	if contentHash != "" {
+		enc = &core.EncryptionMeta{ContentHash: contentHash}
+	}
+	return bytes.NewReader(bodyBytes), size, enc, nil
+}
+
+// putSuccessRequest bundles the metadata that finalizePutSuccess emits
+// so the helper signature stays under the parameter-count limit.
+type putSuccessRequest struct {
+	operation      string
+	key            string
+	backendName    string
+	size           int64
+	start          time.Time
+	failedBackends []string
+}
+
+// finalizePutSuccess emits success metrics, audit log, and an event
+// notification for a successful PutObject. Records failover spans when
+// retries occurred.
+func (o *ObjectManager) finalizePutSuccess(ctx context.Context, span trace.Span, req *putSuccessRequest) {
+	o.recordOperation(req.operation, req.backendName, req.start, nil)
+	o.usage.Record(req.backendName, 1, 0, req.size)
+	if len(req.failedBackends) > 0 {
+		for _, fb := range req.failedBackends {
+			telemetry.WriteFailoverTotal.WithLabelValues(req.operation, fb, req.backendName).Inc()
+		}
+		span.SetAttributes(telemetry.AttrWriteFailover.Bool(true))
+		span.SetAttributes(telemetry.AttrFailoverAttempts.Int(len(req.failedBackends)))
+	}
+	audit.Log(ctx, "storage.PutObject",
+		slog.String("key", req.key),
+		slog.String("backend", req.backendName),
+		slog.Int64("size", req.size),
+	)
+	if event.Emit != nil {
+		bucket, userKey := internalkey.Split(req.key)
+		event.Emit(event.Event{
+			Type:    event.ObjectCreatedPut,
+			Subject: userKey,
+			Data: map[string]any{
+				"bucket":     bucket,
+				"key":        userKey,
+				"backend":    req.backendName,
+				"size":       req.size,
+				"request_id": audit.RequestID(ctx),
+			},
+		})
+	}
+	o.invalidateCache(req.key)
+	span.SetStatus(codes.Ok, "")
+}
+
+// withoutBackend returns eligible with name removed in original order.
+func withoutBackend(eligible []string, name string) []string {
+	remaining := make([]string, 0, len(eligible)-1)
+	for _, n := range eligible {
+		if n != name {
+			remaining = append(remaining, n)
+		}
+	}
+	return remaining
 }
 
 // -------------------------------------------------------------------------
 // COPY
 // -------------------------------------------------------------------------
 
-// CopyObject copies an object from sourceKey to destKey. Streams the source
-// through a pipe to avoid buffering the entire object. Supports cross-backend
-// copies and read failover from replicas.
-func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey string) (string, error) {
-	const operation = "CopyObject"
-	start := time.Now()
-
-	ctx, span := telemetry.StartSpan(ctx, managerSpanPrefix+operation,
-		attribute.String("s3o.source_key", sourceKey),
-		attribute.String("s3o.dest_key", destKey),
-	)
-	defer span.End()
-
-	// --- Find all source locations (for failover) ---
-	locations, err := o.parent.stores.Object.GetAllObjectLocations(ctx, sourceKey)
-	if err != nil {
-		if errors.Is(err, core.ErrObjectNotFound) {
-			span.SetStatus(codes.Error, "source object not found")
-			return "", err
-		}
-		return "", o.classifyWriteError(span, operation, err)
-	}
-
-	// --- Get source metadata (try each copy, skip over-limit backends) ---
-	var size int64
-	var contentType string
-	var metadata map[string]string
-	var srcFound bool
-	var srcEnc *core.EncryptionMeta
+// headSourceForCopy walks the source's known locations until one HEAD
+// succeeds (skipping over-limit and unknown backends), and returns its
+// metadata plus optional encryption descriptor. ok=false signals that no
+// copy could be reached.
+func (o *ObjectManager) headSourceForCopy(
+	ctx context.Context,
+	sourceKey string,
+	locations []core.ObjectLocation,
+) (int64, string, map[string]string, *core.EncryptionMeta, bool) {
 	for i := range locations {
 		if !o.usage.WithinLimits(locations[i].BackendName, 1, 0, 0) {
 			continue
@@ -252,10 +316,7 @@ func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey strin
 		if err != nil {
 			continue
 		}
-		size = headResult.Size
-		contentType = headResult.ContentType
-		metadata = headResult.Metadata
-		srcFound = true
+		var srcEnc *core.EncryptionMeta
 		if locations[i].Encrypted {
 			srcEnc = &core.EncryptionMeta{
 				Encrypted:     true,
@@ -265,32 +326,23 @@ func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey strin
 				ContentHash:   locations[i].ContentHash,
 			}
 		}
-		break
+		return headResult.Size, headResult.ContentType, headResult.Metadata, srcEnc, true
 	}
-	if !srcFound {
-		err := fmt.Errorf("failed to head source object from any copy")
-		span.SetStatus(codes.Error, err.Error())
-		return "", err
-	}
+	return 0, "", nil, nil, false
+}
 
-	span.SetAttributes(telemetry.AttrObjectSize.Int64(size))
-
-	// --- Find destination backend with available quota ---
-	destBackendName, err := o.parent.selectWriteTarget(ctx, span, operation, size)
-	if err != nil {
-		return "", err
-	}
-
-	destBackend, err := o.getBackend(destBackendName)
-	if err != nil {
-		span.SetStatus(codes.Error, err.Error())
-		return "", err
-	}
-
-	// --- Stream source to destination via pipe (with failover) ---
+// startCopySourceReader spawns a goroutine that streams the source object
+// (with read failover across replicas) into a pipe. The returned reader
+// feeds the destination PutObject; the channel surfaces the backend that
+// actually served the bytes (closed if every copy failed).
+func (o *ObjectManager) startCopySourceReader(
+	ctx context.Context,
+	sourceKey string,
+	size int64,
+	locations []core.ObjectLocation,
+) (*io.PipeReader, <-chan string) {
 	pr, pw := io.Pipe()
 	srcBackendCh := make(chan string, 1)
-
 	go func() {
 		bw := bufpool.GetWriter(pw)
 		defer func() {
@@ -301,36 +353,98 @@ func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey strin
 			_ = pw.Close()
 		}()
 		for li := range locations {
-			if !o.usage.WithinLimits(locations[li].BackendName, 1, size, 0) {
-				continue
-			}
-			srcBackend, ok := o.backends[locations[li].BackendName]
-			if !ok {
-				continue
-			}
-			bctx, bcancel := o.withTimeout(ctx)
-			result, err := srcBackend.GetObject(bctx, sourceKey, "")
-			if err != nil {
-				bcancel()
-				continue
-			}
-			srcBackendCh <- locations[li].BackendName
-			_, copyErr := bufpool.Copy(bw, result.Body)
-			_ = result.Body.Close()
-			bcancel()
-			if copyErr != nil {
-				pw.CloseWithError(fmt.Errorf("failed to stream source: %w", copyErr))
+			if o.tryStreamCopySource(ctx, sourceKey, size, locations[li].BackendName, bw, pw, srcBackendCh) {
 				return
 			}
-			if flushErr := bw.Flush(); flushErr != nil {
-				pw.CloseWithError(fmt.Errorf("failed to flush source stream: %w", flushErr))
-				return
-			}
-			return
 		}
 		close(srcBackendCh)
 		pw.CloseWithError(fmt.Errorf("failed to read source from any copy"))
 	}()
+	return pr, srcBackendCh
+}
+
+// tryStreamCopySource attempts to stream sourceKey from one source
+// backend into bw. Returns true when streaming completed (success or
+// stream error reported via pw); the caller should stop iterating
+// further locations. Returns false to signal "skip this backend".
+func (o *ObjectManager) tryStreamCopySource(
+	ctx context.Context,
+	sourceKey string,
+	size int64,
+	backendName string,
+	bw *bufio.Writer,
+	pw *io.PipeWriter,
+	srcBackendCh chan<- string,
+) bool {
+	if !o.usage.WithinLimits(backendName, 1, size, 0) {
+		return false
+	}
+	srcBackend, ok := o.backends[backendName]
+	if !ok {
+		return false
+	}
+	bctx, bcancel := o.withTimeout(ctx)
+	result, err := srcBackend.GetObject(bctx, sourceKey, "")
+	if err != nil {
+		bcancel()
+		return false
+	}
+	srcBackendCh <- backendName
+	_, copyErr := bufpool.Copy(bw, result.Body)
+	_ = result.Body.Close()
+	bcancel()
+	if copyErr != nil {
+		pw.CloseWithError(fmt.Errorf("failed to stream source: %w", copyErr))
+		return true
+	}
+	if flushErr := bw.Flush(); flushErr != nil {
+		pw.CloseWithError(fmt.Errorf("failed to flush source stream: %w", flushErr))
+		return true
+	}
+	return true
+}
+
+// CopyObject copies an object from sourceKey to destKey. Streams the
+// source through a pipe to avoid buffering the entire object. Supports
+// cross-backend copies and read failover from replicas.
+func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey string) (string, error) {
+	const operation = "CopyObject"
+	start := time.Now()
+
+	ctx, span := telemetry.StartSpan(ctx, managerSpanPrefix+operation,
+		attribute.String("s3o.source_key", sourceKey),
+		attribute.String("s3o.dest_key", destKey),
+	)
+	defer span.End()
+
+	locations, err := o.parent.stores.Object.GetAllObjectLocations(ctx, sourceKey)
+	if err != nil {
+		if errors.Is(err, core.ErrObjectNotFound) {
+			span.SetStatus(codes.Error, "source object not found")
+			return "", err
+		}
+		return "", o.classifyWriteError(span, operation, err)
+	}
+
+	size, contentType, metadata, srcEnc, ok := o.headSourceForCopy(ctx, sourceKey, locations)
+	if !ok {
+		err := fmt.Errorf("failed to head source object from any copy")
+		span.SetStatus(codes.Error, err.Error())
+		return "", err
+	}
+	span.SetAttributes(telemetry.AttrObjectSize.Int64(size))
+
+	destBackendName, err := o.parent.selectWriteTarget(ctx, span, operation, size)
+	if err != nil {
+		return "", err
+	}
+	destBackend, err := o.getBackend(destBackendName)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return "", err
+	}
+
+	pr, srcBackendCh := o.startCopySourceReader(ctx, sourceKey, size, locations)
 
 	// Streamed from pipe; deadline governed by the caller's context.
 	etag, err := destBackend.PutObject(ctx, destKey, pr, size, contentType, metadata)
@@ -466,14 +580,23 @@ func (o *ObjectManager) DeleteObject(ctx context.Context, key string) error {
 
 // DeleteObjectResult holds the outcome of a single key within a batch delete.
 type DeleteObjectResult struct {
-	Key string
-	Err error
+	Key string `json:"key,omitempty"`
+	Err error  `json:"err,omitempty"`
+}
+
+// batchDeleteItem is one (key, backend) pair fanned out to the worker
+// pool during DeleteObjects.
+type batchDeleteItem struct {
+	key       string
+	backend   s3be.ObjectBackend
+	beName    string
+	sizeBytes int64
 }
 
 // DeleteObjects deletes multiple objects in a single request. Metadata
-// removal happens in a single transaction via DeleteObjectsBatch;
-// backend S3 deletes run concurrently with bounded parallelism to
-// avoid overwhelming backends.
+// removal happens in a single transaction via DeleteObjectsBatch; backend
+// S3 deletes run concurrently with bounded parallelism to avoid
+// overwhelming backends.
 func (o *ObjectManager) DeleteObjects(ctx context.Context, keys []string) []DeleteObjectResult {
 	const operation = "DeleteObjects"
 	start := time.Now()
@@ -488,13 +611,10 @@ func (o *ObjectManager) DeleteObjects(ctx context.Context, keys []string) []Dele
 		results[i].Key = key
 	}
 
-	// Single-transaction metadata removal: returns the displaced
-	// copies map keyed by object_key. Keys with no copies on disk are
-	// absent from the map (treated as success per S3 spec).
 	copiesByKey, err := o.parent.stores.Object.DeleteObjectsBatch(ctx, keys)
 	if err != nil {
-		// Whole-tx failure: every key surfaces the error. The cache
-		// and backend cleanup paths are skipped; nothing was changed.
+		// Whole-tx failure: every key surfaces the error. The cache and
+		// backend cleanup paths are skipped; nothing was changed.
 		classified := o.classifyWriteError(span, operation, err)
 		for i := range results {
 			results[i].Err = classified
@@ -502,54 +622,19 @@ func (o *ObjectManager) DeleteObjects(ctx context.Context, keys []string) []Dele
 		return results
 	}
 
-	// Cache invalidation per key whose row(s) actually went away. A
-	// key absent from copiesByKey was already gone (not-found is
-	// silent success), so its cache entries are also stale and worth
-	// flushing.
+	// A key absent from copiesByKey was already gone (not-found is silent
+	// success), so its cache entries are also stale and worth flushing.
 	for _, key := range keys {
 		o.cache.Delete(key)
 		o.invalidateCache(key)
 	}
 
-	// Flatten displaced copies into a single work slice for the pool.
-	type batchDeleteItem struct {
-		key       string
-		backend   s3be.ObjectBackend
-		beName    string
-		sizeBytes int64
-	}
-	var deleteItems []batchDeleteItem
-	for key, copies := range copiesByKey {
-		for _, cp := range copies {
-			backend, ok := o.backends[cp.BackendName]
-			if !ok {
-				slog.WarnContext(ctx, "backend not found for batch delete",
-					"backend", cp.BackendName, "key", key)
-				continue
-			}
-			deleteItems = append(deleteItems, batchDeleteItem{
-				key: key, backend: backend, beName: cp.BackendName, sizeBytes: cp.SizeBytes,
-			})
-			o.usage.Record(cp.BackendName, 1, 0, 0)
-		}
-	}
-
-	// Delete from backends concurrently, capped at 10 in-flight calls.
-	// deleteOrEnqueue handles per-failure logging + cleanup-queue insert.
+	deleteItems := o.flattenBatchDeletes(ctx, copiesByKey)
 	workerpool.Run(ctx, 10, deleteItems, func(ctx context.Context, item batchDeleteItem) {
 		o.parent.deleteOrEnqueue(ctx, item.backend, item.beName, item.key, "batch_delete_failed", item.sizeBytes)
 	})
 
-	// Tally outcomes for metrics and audit
-	var successCount, errorCount int
-	for _, r := range results {
-		if r.Err != nil {
-			errorCount++
-		} else {
-			successCount++
-		}
-	}
-
+	successCount, errorCount := tallyDeleteResults(results)
 	o.recordOperation(operation, "", start, nil)
 
 	audit.Log(ctx, "storage.DeleteObjects",
@@ -576,4 +661,40 @@ func (o *ObjectManager) DeleteObjects(ctx context.Context, keys []string) []Dele
 	span.SetStatus(codes.Ok, "")
 
 	return results
+}
+
+// flattenBatchDeletes produces the worker-pool input slice from the
+// DeleteObjectsBatch result. Skips copies whose backend is unknown
+// (logged) and records a usage tick per emitted copy.
+func (o *ObjectManager) flattenBatchDeletes(ctx context.Context, copiesByKey map[string][]core.DeletedCopy) []batchDeleteItem {
+	var items []batchDeleteItem
+	for key, copies := range copiesByKey {
+		for _, cp := range copies {
+			backend, ok := o.backends[cp.BackendName]
+			if !ok {
+				slog.WarnContext(ctx, "backend not found for batch delete",
+					"backend", cp.BackendName, "key", key)
+				continue
+			}
+			items = append(items, batchDeleteItem{
+				key: key, backend: backend, beName: cp.BackendName, sizeBytes: cp.SizeBytes,
+			})
+			o.usage.Record(cp.BackendName, 1, 0, 0)
+		}
+	}
+	return items
+}
+
+// tallyDeleteResults counts how many entries in results carry an error
+// versus succeeded. Returned for metrics and audit logging.
+func tallyDeleteResults(results []DeleteObjectResult) (int, int) {
+	var successCount, errorCount int
+	for _, r := range results {
+		if r.Err != nil {
+			errorCount++
+		} else {
+			successCount++
+		}
+	}
+	return successCount, errorCount
 }

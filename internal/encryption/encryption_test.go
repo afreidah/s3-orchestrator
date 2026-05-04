@@ -647,8 +647,9 @@ func TestDecryptRange_BadWrappedDEK(t *testing.T) {
 // SMALL-READ BUFFER SIZES (exercises buffering paths)
 // -------------------------------------------------------------------------
 
-// TestEncryptDecrypt_SmallReads verifies the encrypt decrypt small reads contract.
-// Asserts that Encrypt:.
+// TestEncryptDecrypt_SmallReads exercises the buffer-drain paths in
+// Encrypt and Decrypt by consuming both readers one byte at a time. The
+// resulting plaintext must match the original input.
 func TestEncryptDecrypt_SmallReads(t *testing.T) {
 	t.Parallel()
 	enc := testEncryptor(t, 64)
@@ -661,45 +662,37 @@ func TestEncryptDecrypt_SmallReads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Encrypt: %v", err)
 	}
+	ct := readAllOneByteAtATime(t, result.Body)
 
-	// Read ciphertext one byte at a time to exercise buffer drain paths
-	var ct []byte
-	buf := make([]byte, 1)
-	for {
-		n, err := result.Body.Read(buf)
-		if n > 0 {
-			ct = append(ct, buf[:n]...)
-		}
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			t.Fatalf("Read: %v", err)
-		}
-	}
-
-	// Decrypt with small reads too
 	reader, err := enc.Decrypt(ctx, bytes.NewReader(ct), result.WrappedDEK, result.KeyID)
 	if err != nil {
 		t.Fatalf("Decrypt: %v", err)
 	}
+	plain := readAllOneByteAtATime(t, reader)
 
-	var plain []byte
+	if !bytes.Equal(plain, original) {
+		t.Error("small-read round-trip mismatch")
+	}
+}
+
+// readAllOneByteAtATime drains r into a byte slice using single-byte
+// Reads. Used to deliberately exercise the encryptor's buffering paths
+// when the consumer never reads a full chunk in one call.
+func readAllOneByteAtATime(t *testing.T, r io.Reader) []byte {
+	t.Helper()
+	var out []byte
+	buf := make([]byte, 1)
 	for {
-		n, err := reader.Read(buf)
+		n, err := r.Read(buf)
 		if n > 0 {
-			plain = append(plain, buf[:n]...)
+			out = append(out, buf[:n]...)
 		}
 		if err == io.EOF {
-			break
+			return out
 		}
 		if err != nil {
 			t.Fatalf("Read: %v", err)
 		}
-	}
-
-	if !bytes.Equal(plain, original) {
-		t.Error("small-read round-trip mismatch")
 	}
 }
 
