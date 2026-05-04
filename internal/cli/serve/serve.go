@@ -10,6 +10,10 @@
 // genuinely persists across phases (atomic config, lifecycle handles).
 // -------------------------------------------------------------------------------
 
+// Package serve implements the `s3-orchestrator serve` subcommand. It
+// loads configuration, builds the dependency-injection container,
+// starts the HTTP listeners, and supervises every background service
+// for the lifetime of the process.
 package serve
 
 import (
