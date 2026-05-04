@@ -75,19 +75,11 @@ type minioInstance struct {
 	bucket    string
 }
 
-// TestMain is an integration-test fixture helper; see file header for
-// the surrounding lifecycle the helpers participate in.
-func TestMain(m *testing.M) {
-	// Silence the proxy's request logger so test output is clean.
-	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
-
-	ctx := context.Background()
-
-	// ---------------------------------------------------------------
-	// Start containers
-	// ---------------------------------------------------------------
-
-	pgContainer, err := tcpostgres.Run(ctx,
+// mustStartPostgres launches the Postgres testcontainer used by every
+// integration test. Bails the process on any failure because there is
+// no useful test run without a database.
+func mustStartPostgres(ctx context.Context) *tcpostgres.PostgresContainer {
+	c, err := tcpostgres.Run(ctx,
 		"postgres:16-alpine",
 		tcpostgres.WithDatabase("s3proxy_test"),
 		tcpostgres.WithUsername("s3proxy"),
@@ -100,8 +92,14 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "failed to start postgres: %v\n", err)
 		os.Exit(1)
 	}
+	return c
+}
 
-	minioSpecs := []struct {
+// mustStartMinios launches the three MinIO testcontainers the suite
+// uses to model a multi-backend fleet, sets MINIO{N}_ENDPOINT env vars
+// for downstream config, and bails the process on any failure.
+func mustStartMinios(ctx context.Context) []minioInstance {
+	specs := []struct {
 		name   string
 		envKey string
 		bucket string
@@ -110,9 +108,8 @@ func TestMain(m *testing.M) {
 		{"minio-2", "MINIO2_ENDPOINT", "backend2"},
 		{"minio-3", "MINIO3_ENDPOINT", "backend3"},
 	}
-
-	minios := make([]minioInstance, len(minioSpecs))
-	for i, spec := range minioSpecs {
+	minios := make([]minioInstance, len(specs))
+	for i, spec := range specs {
 		ctr, err := tcminio.Run(ctx, "minio/minio:latest")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "failed to start %s: %v\n", spec.name, err)
@@ -128,29 +125,34 @@ func TestMain(m *testing.M) {
 			endpoint:  "http://" + endpoint,
 			bucket:    spec.bucket,
 		}
-		// Set env vars so envOrDefault() calls elsewhere pick up the right endpoints.
 		os.Setenv(spec.envKey, minios[i].endpoint)
 	}
+	return minios
+}
 
-	redisContainer, err := tcredis.Run(ctx, "redis:7-alpine")
+// mustStartRedis launches the Redis testcontainer and exports
+// REDIS_ADDR for downstream config consumption.
+func mustStartRedis(ctx context.Context) *tcredis.RedisContainer {
+	c, err := tcredis.Run(ctx, "redis:7-alpine")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to start redis: %v\n", err)
 		os.Exit(1)
 	}
-	redisConnStr, err := redisContainer.ConnectionString(ctx)
+	connStr, err := c.ConnectionString(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to get redis endpoint: %v\n", err)
 		os.Exit(1)
 	}
-	// redis module returns "redis://host:port/0"  -  extract host:port for REDIS_ADDR
-	redisAddr := strings.TrimPrefix(redisConnStr, "redis://")
-	redisAddr = strings.TrimSuffix(redisAddr, "/0")
-	os.Setenv("REDIS_ADDR", redisAddr)
+	addr := strings.TrimPrefix(connStr, "redis://")
+	addr = strings.TrimSuffix(addr, "/0")
+	os.Setenv("REDIS_ADDR", addr)
+	return c
+}
 
-	// ---------------------------------------------------------------
-	// Create buckets on each MinIO
-	// ---------------------------------------------------------------
-
+// mustCreateBuckets pre-creates each backend's bucket on the MinIO
+// container that hosts it; the proxy assumes the bucket already exists
+// when it routes a write.
+func mustCreateBuckets(ctx context.Context, minios []minioInstance) {
 	for _, mi := range minios {
 		mc := s3.New(s3.Options{
 			BaseEndpoint: aws.String(mi.endpoint),
@@ -158,29 +160,45 @@ func TestMain(m *testing.M) {
 			Credentials:  credentials.NewStaticCredentialsProvider("minioadmin", "minioadmin", ""),
 			UsePathStyle: true,
 		})
-		_, err := mc.CreateBucket(ctx, &s3.CreateBucketInput{
+		if _, err := mc.CreateBucket(ctx, &s3.CreateBucketInput{
 			Bucket: aws.String(mi.bucket),
-		})
-		if err != nil {
+		}); err != nil {
 			fmt.Fprintf(os.Stderr, "failed to create bucket %s: %v\n", mi.bucket, err)
 			os.Exit(1)
 		}
 	}
+}
 
-	// ---------------------------------------------------------------
-	// Parse Postgres connection details
-	// ---------------------------------------------------------------
-
-	pgHost, err := pgContainer.Host(ctx)
+// mustPostgresHostPort resolves the Postgres container's externally
+// reachable host and port. Bails the process on either lookup failing.
+func mustPostgresHostPort(ctx context.Context, c *tcpostgres.PostgresContainer) (string, int) {
+	host, err := c.Host(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to get postgres host: %v\n", err)
 		os.Exit(1)
 	}
-	pgPort, err := pgContainer.MappedPort(ctx, "5432/tcp")
+	port, err := c.MappedPort(ctx, "5432/tcp")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to get postgres port: %v\n", err)
 		os.Exit(1)
 	}
+	return host, int(port.Num())
+}
+
+// TestMain is an integration-test fixture helper; see file header for
+// the surrounding lifecycle the helpers participate in.
+func TestMain(m *testing.M) {
+	// Silence the proxy's request logger so test output is clean.
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	ctx := context.Background()
+
+	pgContainer := mustStartPostgres(ctx)
+	minios := mustStartMinios(ctx)
+	redisContainer := mustStartRedis(ctx)
+	mustCreateBuckets(ctx, minios)
+
+	pgHost, pgPort := mustPostgresHostPort(ctx, pgContainer)
 
 	// ---------------------------------------------------------------
 	// Build config and wire up components
@@ -203,7 +221,7 @@ func TestMain(m *testing.M) {
 		},
 		Database: config.DatabaseConfig{
 			Host:     pgHost,
-			Port:     int(pgPort.Num()),
+			Port:     pgPort,
 			Database: "s3proxy_test",
 			User:     "s3proxy",
 			Password: "s3proxy",
