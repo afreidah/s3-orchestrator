@@ -88,7 +88,7 @@ func (s *Server) handlePut(ctx context.Context, w http.ResponseWriter, r *http.R
 		return status, err
 	}
 
-	contentType := r.Header.Get("Content-Type")
+	contentType := r.Header.Get(headerContentType)
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
@@ -150,7 +150,7 @@ func (s *Server) handleGet(ctx context.Context, w http.ResponseWriter, r *http.R
 		telemetry.AttrContentType.String(result.ContentType),
 	)
 
-	w.Header().Set("Content-Type", result.ContentType)
+	w.Header().Set(headerContentType, result.ContentType)
 	if result.Size > 0 {
 		w.Header().Set("Content-Length", strconv.FormatInt(result.Size, 10))
 	}
@@ -202,7 +202,7 @@ func (s *Server) handleHead(ctx context.Context, w http.ResponseWriter, r *http.
 		telemetry.AttrContentType.String(result.ContentType),
 	)
 
-	w.Header().Set("Content-Type", result.ContentType)
+	w.Header().Set(headerContentType, result.ContentType)
 	w.Header().Set("Content-Length", strconv.FormatInt(result.Size, 10))
 	if result.ETag != "" {
 		w.Header().Set("ETag", result.ETag)
@@ -269,7 +269,7 @@ func (s *Server) handleCopyObject(ctx context.Context, w http.ResponseWriter, r 
 	}
 
 	result := copyObjectResult{
-		Xmlns:        "http://s3.amazonaws.com/doc/2006-03-01/",
+		Xmlns:        s3XMLNS,
 		ETag:         etag,
 		LastModified: time.Now().UTC().Format(time.RFC3339),
 	}
@@ -311,7 +311,7 @@ func (s *Server) handleDeleteObjects(ctx context.Context, w http.ResponseWriter,
 
 	// Build XML response with per-key outcomes
 	resp := deleteObjectsResult{
-		Xmlns: "http://s3.amazonaws.com/doc/2006-03-01/",
+		Xmlns: s3XMLNS,
 	}
 	for i, res := range results {
 		userKey := req.Objects[i].Key

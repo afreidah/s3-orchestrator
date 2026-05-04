@@ -32,6 +32,14 @@ var xmlBufPool = sync.Pool{
 // maxUserMetadataBytes is the S3-specified limit for total user metadata size.
 const maxUserMetadataBytes = 2048
 
+// s3XMLNS is the AWS S3 schema namespace echoed in every XML response
+// envelope so v2 SDK clients can deserialize the result.
+const s3XMLNS = "http://s3.amazonaws.com/doc/2006-03-01/"
+
+// headerContentType is the canonical HTTP header name; using a single
+// constant avoids string-literal duplication across handlers.
+const headerContentType = "Content-Type"
+
 // -------------------------------------------------------------------------
 // REQUEST GUARDS
 // -------------------------------------------------------------------------

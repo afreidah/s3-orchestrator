@@ -84,7 +84,7 @@ type partInfo struct {
 // key is the user-facing key (for XML response), internalKey is the prefixed
 // key used for storage.
 func (s *Server) handleCreateMultipartUpload(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket, key, internalKey string) (int, error) {
-	contentType := r.Header.Get("Content-Type")
+	contentType := r.Header.Get(headerContentType)
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
@@ -115,7 +115,7 @@ func (s *Server) handleCreateMultipartUpload(ctx context.Context, w http.Respons
 	}
 
 	result := initiateMultipartUploadResult{
-		Xmlns:    "http://s3.amazonaws.com/doc/2006-03-01/",
+		Xmlns:    s3XMLNS,
 		Bucket:   bucket,
 		Key:      key,
 		UploadId: uploadID,
@@ -179,7 +179,7 @@ func (s *Server) handleCompleteMultipartUpload(ctx context.Context, w http.Respo
 	}
 
 	result := completeMultipartUploadResult{
-		Xmlns:  "http://s3.amazonaws.com/doc/2006-03-01/",
+		Xmlns:  s3XMLNS,
 		Bucket: bucket,
 		Key:    key,
 		ETag:   etag,
@@ -268,7 +268,7 @@ func (s *Server) handleListMultipartUploads(ctx context.Context, w http.Response
 	}
 
 	result := xmlListMultipartUploadsResult{
-		Xmlns:       "http://s3.amazonaws.com/doc/2006-03-01/",
+		Xmlns:       s3XMLNS,
 		Bucket:      bucket,
 		MaxUploads:  maxUploads,
 		IsTruncated: truncated,
@@ -300,7 +300,7 @@ func (s *Server) handleListParts(ctx context.Context, w http.ResponseWriter, r *
 	}
 
 	result := listPartsResult{
-		Xmlns:    "http://s3.amazonaws.com/doc/2006-03-01/",
+		Xmlns:    s3XMLNS,
 		Bucket:   bucket,
 		Key:      key,
 		UploadId: uploadID,
