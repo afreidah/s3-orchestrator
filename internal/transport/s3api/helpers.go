@@ -167,7 +167,7 @@ func writeS3Error(w http.ResponseWriter, code int, errCode, message string) {
   <Code>%s</Code>
   <Message>%s</Message>
 </Error>`, xmlEscape(errCode), xmlEscape(message))
-	w.Header().Set("Content-Type", "application/xml")
+	w.Header().Set(headerContentType, "application/xml")
 	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
 	w.WriteHeader(code)
 	_, _ = io.WriteString(w, body) //nolint:gosec // G705: output is XML-escaped via xmlEscape before writing
@@ -213,7 +213,7 @@ func writeXML(w http.ResponseWriter, status int, v any) error {
 	if err := xml.NewEncoder(buf).Encode(v); err != nil {
 		return err
 	}
-	w.Header().Set("Content-Type", "application/xml")
+	w.Header().Set(headerContentType, "application/xml")
 	w.WriteHeader(status)
 	_, err := w.Write(buf.Bytes())
 	return err
