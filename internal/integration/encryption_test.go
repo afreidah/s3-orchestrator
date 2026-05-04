@@ -216,20 +216,41 @@ func queryEncryptionState(t *testing.T, objectKey string) (encrypted bool, sizeB
 // TESTS
 // -------------------------------------------------------------------------
 
-// TestEncryptDecryptExisting_RoundTrip verifies the encrypt decrypt existing round trip contract.
-// Asserts that PutObject[]:.
+// TestEncryptDecryptExisting_RoundTrip exercises the
+// encrypt-existing/decrypt-existing admin endpoints by writing plaintext
+// through a non-encrypted proxy, encrypting in place, asserting the
+// encrypted state survives a round-trip GET via the encrypted proxy,
+// and finally decrypting back to plaintext.
 func TestEncryptDecryptExisting_RoundTrip(t *testing.T) {
 	env := setupEncryptionEnv(t)
 	ctx := context.Background()
 
-	// Put some plaintext objects through a non-encrypted proxy (use the global one)
-	keys := make([]string, 3)
-	bodies := make([][]byte, 3)
+	keys, bodies := seedPlaintextObjects(t, ctx, 3)
+	assertEncryptionState(t, keys, bodies, false)
+
+	encResult := env.callAdmin(t, "/admin/api/encrypt-existing")
+	assertAdminCount(t, encResult, "encrypted", 3)
+	assertEncryptionState(t, keys, bodies, true)
+	assertProxyServesPlaintext(t, ctx, env.proxyClient, keys, bodies, "after encrypt")
+
+	decResult := env.callAdmin(t, "/admin/api/decrypt-existing")
+	assertAdminCount(t, decResult, "decrypted", 3)
+	assertEncryptionState(t, keys, bodies, false)
+	assertProxyServesPlaintext(t, ctx, newS3Client(t), keys, bodies, "after decrypt")
+}
+
+// seedPlaintextObjects PUTs count distinct plaintext objects through
+// the default non-encrypted proxy and returns their keys and the
+// expected body bytes for later assertions.
+func seedPlaintextObjects(t *testing.T, ctx context.Context, count int) ([]string, [][]byte) {
+	t.Helper()
+	keys := make([]string, count)
+	bodies := make([][]byte, count)
+	client := newS3Client(t)
 	for i := range keys {
 		keys[i] = uniqueKey(t, "enc")
 		bodies[i] = bytes.Repeat([]byte{byte('A' + i)}, 100+i*50)
-
-		_, err := newS3Client(t).PutObject(ctx, &s3.PutObjectInput{
+		_, err := client.PutObject(ctx, &s3.PutObjectInput{
 			Bucket:        aws.String(virtualBucket),
 			Key:           aws.String(keys[i]),
 			Body:          bytes.NewReader(bodies[i]),
@@ -239,109 +260,96 @@ func TestEncryptDecryptExisting_RoundTrip(t *testing.T) {
 			t.Fatalf("PutObject[%d]: %v", i, err)
 		}
 	}
+	return keys, bodies
+}
 
-	// Verify objects are unencrypted in DB
+// assertEncryptionState walks each key's metadata row and asserts that
+// the persisted encrypted flag matches wantEncrypted, plus that
+// size_bytes and plaintext_size are consistent with that state.
+func assertEncryptionState(t *testing.T, keys []string, bodies [][]byte, wantEncrypted bool) {
+	t.Helper()
 	for i, key := range keys {
 		enc, sizeBytes, ptSize := queryEncryptionState(t, internalKey(key))
-		if enc {
-			t.Errorf("object[%d] should be unencrypted before encrypt-existing", i)
-		}
-		if sizeBytes != int64(len(bodies[i])) {
-			t.Errorf("object[%d] size_bytes = %d, want %d", i, sizeBytes, len(bodies[i]))
-		}
-		if ptSize != nil {
-			t.Errorf("object[%d] plaintext_size should be nil, got %d", i, *ptSize)
+		assertEncryptedFlag(t, i, enc, wantEncrypted)
+		if wantEncrypted {
+			assertEncryptedSizes(t, i, sizeBytes, ptSize, int64(len(bodies[i])))
+		} else {
+			assertPlaintextSizes(t, i, sizeBytes, ptSize, int64(len(bodies[i])))
 		}
 	}
+}
 
-	// ---------------------------------------------------------------
-	// ENCRYPT EXISTING
-	// ---------------------------------------------------------------
-	result := env.callAdmin(t, "/admin/api/encrypt-existing")
+// assertEncryptedFlag fails the test when the persisted encrypted flag
+// for object index i does not match the expected value.
+func assertEncryptedFlag(t *testing.T, i int, got, want bool) {
+	t.Helper()
+	if got == want {
+		return
+	}
+	if want {
+		t.Errorf("object[%d] should be encrypted", i)
+	} else {
+		t.Errorf("object[%d] should be unencrypted", i)
+	}
+}
+
+// assertEncryptedSizes checks that an encrypted row stores ciphertext
+// larger than plaintext and records the original plaintext_size.
+func assertEncryptedSizes(t *testing.T, i int, sizeBytes int64, ptSize *int64, plaintext int64) {
+	t.Helper()
+	if sizeBytes <= plaintext {
+		t.Errorf("object[%d] encrypted size_bytes = %d, should be > plaintext %d", i, sizeBytes, plaintext)
+	}
+	if ptSize == nil || *ptSize != plaintext {
+		t.Errorf("object[%d] plaintext_size should be %d", i, plaintext)
+	}
+}
+
+// assertPlaintextSizes checks that an unencrypted row records the raw
+// byte count and leaves plaintext_size nil.
+func assertPlaintextSizes(t *testing.T, i int, sizeBytes int64, ptSize *int64, plaintext int64) {
+	t.Helper()
+	if sizeBytes != plaintext {
+		t.Errorf("object[%d] size_bytes = %d, want %d", i, sizeBytes, plaintext)
+	}
+	if ptSize != nil {
+		t.Errorf("object[%d] plaintext_size should be nil, got %d", i, *ptSize)
+	}
+}
+
+// assertAdminCount asserts the admin response reports the expected
+// status string and the integer count under field.
+func assertAdminCount(t *testing.T, result map[string]any, field string, want int) {
+	t.Helper()
 	if status, _ := result["status"].(string); status != "complete" {
-		t.Fatalf("encrypt-existing status = %q, want complete", status)
+		t.Fatalf("admin status = %q, want complete", status)
 	}
-	encrypted := int(result["encrypted"].(float64))
-	if encrypted != 3 {
-		t.Errorf("encrypt-existing encrypted = %d, want 3", encrypted)
+	got := int(result[field].(float64))
+	if got != want {
+		t.Errorf("admin %s = %d, want %d", field, got, want)
 	}
+}
 
-	// Verify objects are encrypted in DB
+// assertProxyServesPlaintext fetches every key through the supplied
+// client and asserts each response body matches bodies[i] verbatim,
+// catching encryption / decryption regressions on the read path.
+func assertProxyServesPlaintext(t *testing.T, ctx context.Context, client *s3.Client, keys []string, bodies [][]byte, phase string) {
+	t.Helper()
 	for i, key := range keys {
-		enc, sizeBytes, ptSize := queryEncryptionState(t, internalKey(key))
-		if !enc {
-			t.Errorf("object[%d] should be encrypted after encrypt-existing", i)
-		}
-		// Ciphertext is larger than plaintext
-		if sizeBytes <= int64(len(bodies[i])) {
-			t.Errorf("object[%d] encrypted size_bytes = %d, should be > plaintext %d", i, sizeBytes, len(bodies[i]))
-		}
-		if ptSize == nil || *ptSize != int64(len(bodies[i])) {
-			t.Errorf("object[%d] plaintext_size should be %d", i, len(bodies[i]))
-		}
-	}
-
-	// Verify objects are still readable through the encrypted proxy (transparent decrypt)
-	for i, key := range keys {
-		resp, err := env.proxyClient.GetObject(ctx, &s3.GetObjectInput{
+		resp, err := client.GetObject(ctx, &s3.GetObjectInput{
 			Bucket: aws.String(virtualBucket),
 			Key:    aws.String(key),
 		})
 		if err != nil {
-			t.Fatalf("GetObject[%d] after encrypt: %v", i, err)
+			t.Fatalf("GetObject[%d] %s: %v", i, phase, err)
 		}
 		got, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if err != nil {
-			t.Fatalf("ReadAll[%d]: %v", i, err)
+			t.Fatalf("ReadAll[%d] %s: %v", i, phase, err)
 		}
 		if !bytes.Equal(got, bodies[i]) {
-			t.Errorf("object[%d] body mismatch after encrypt: got %d bytes, want %d", i, len(got), len(bodies[i]))
-		}
-	}
-
-	// ---------------------------------------------------------------
-	// DECRYPT EXISTING
-	// ---------------------------------------------------------------
-	result = env.callAdmin(t, "/admin/api/decrypt-existing")
-	if status, _ := result["status"].(string); status != "complete" {
-		t.Fatalf("decrypt-existing status = %q, want complete", status)
-	}
-	decrypted := int(result["decrypted"].(float64))
-	if decrypted != 3 {
-		t.Errorf("decrypt-existing decrypted = %d, want 3", decrypted)
-	}
-
-	// Verify objects are unencrypted again in DB
-	for i, key := range keys {
-		enc, sizeBytes, ptSize := queryEncryptionState(t, internalKey(key))
-		if enc {
-			t.Errorf("object[%d] should be unencrypted after decrypt-existing", i)
-		}
-		if sizeBytes != int64(len(bodies[i])) {
-			t.Errorf("object[%d] size_bytes = %d after decrypt, want %d", i, sizeBytes, len(bodies[i]))
-		}
-		if ptSize != nil {
-			t.Errorf("object[%d] plaintext_size should be nil after decrypt, got %d", i, *ptSize)
-		}
-	}
-
-	// Verify objects are readable through the non-encrypted proxy
-	for i, key := range keys {
-		resp, err := newS3Client(t).GetObject(ctx, &s3.GetObjectInput{
-			Bucket: aws.String(virtualBucket),
-			Key:    aws.String(key),
-		})
-		if err != nil {
-			t.Fatalf("GetObject[%d] after decrypt: %v", i, err)
-		}
-		got, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			t.Fatalf("ReadAll[%d]: %v", i, err)
-		}
-		if !bytes.Equal(got, bodies[i]) {
-			t.Errorf("object[%d] body mismatch after decrypt: got %d bytes, want %d", i, len(got), len(bodies[i]))
+			t.Errorf("object[%d] body mismatch %s: got %d bytes, want %d", i, phase, len(got), len(bodies[i]))
 		}
 	}
 }

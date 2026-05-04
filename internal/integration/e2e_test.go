@@ -32,8 +32,10 @@ import (
 // E2E LIFECYCLE TESTS
 // -------------------------------------------------------------------------
 
-// TestE2E_FullLifecycle verifies the e2 e full lifecycle contract.
-// Asserts that PutObject:.
+// TestE2E_FullLifecycle drives one object through PUT, HEAD, GET, LIST,
+// DELETE, then asserts the post-delete GET returns NoSuchKey. Each
+// phase delegates assertion detail to a phase helper so the cognitive
+// complexity stays low.
 func TestE2E_FullLifecycle(t *testing.T) {
 	resetState(t)
 	client := newS3Client(t)
@@ -42,86 +44,115 @@ func TestE2E_FullLifecycle(t *testing.T) {
 	key := uniqueKey(t, "e2e")
 	body := []byte("end-to-end test payload")
 
-	// PUT
-	putResp, err := client.PutObject(ctx, &s3.PutObjectInput{
+	e2ePut(t, ctx, client, key, body, "text/plain")
+	e2eHead(t, ctx, client, key, len(body), "text/plain")
+	e2eGetEqual(t, ctx, client, key, body)
+	e2eListSingle(t, ctx, client, key, len(body))
+	e2eDelete(t, ctx, client, key)
+	e2eAssertNotFound(t, ctx, client, key)
+}
+
+// e2ePut PUTs body under key and asserts the response carries an ETag.
+func e2ePut(t *testing.T, ctx context.Context, client *s3.Client, key string, body []byte, contentType string) {
+	t.Helper()
+	resp, err := client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:        aws.String(virtualBucket),
 		Key:           aws.String(key),
 		Body:          bytes.NewReader(body),
 		ContentLength: aws.Int64(int64(len(body))),
-		ContentType:   aws.String("text/plain"),
+		ContentType:   aws.String(contentType),
 	})
 	if err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
-	if putResp.ETag == nil || *putResp.ETag == "" {
+	if resp.ETag == nil || *resp.ETag == "" {
 		t.Error("PutObject should return an ETag")
 	}
+}
 
-	// HEAD
-	headResp, err := client.HeadObject(ctx, &s3.HeadObjectInput{
+// e2eHead asserts HeadObject reports the expected size and content type.
+func e2eHead(t *testing.T, ctx context.Context, client *s3.Client, key string, wantSize int, wantCT string) {
+	t.Helper()
+	resp, err := client.HeadObject(ctx, &s3.HeadObjectInput{
 		Bucket: aws.String(virtualBucket),
 		Key:    aws.String(key),
 	})
 	if err != nil {
 		t.Fatalf("HeadObject: %v", err)
 	}
-	if headResp.ContentLength == nil || *headResp.ContentLength != int64(len(body)) {
-		t.Errorf("HeadObject ContentLength = %v, want %d", headResp.ContentLength, len(body))
+	if resp.ContentLength == nil || *resp.ContentLength != int64(wantSize) {
+		t.Errorf("HeadObject ContentLength = %v, want %d", resp.ContentLength, wantSize)
 	}
-	if headResp.ContentType == nil || *headResp.ContentType != "text/plain" {
-		t.Errorf("HeadObject ContentType = %v, want text/plain", headResp.ContentType)
+	if resp.ContentType == nil || *resp.ContentType != wantCT {
+		t.Errorf("HeadObject ContentType = %v, want %s", resp.ContentType, wantCT)
 	}
+}
 
-	// GET
-	getResp, err := client.GetObject(ctx, &s3.GetObjectInput{
+// e2eGetEqual asserts GetObject returns the expected body bytes and a
+// matching Content-Length header.
+func e2eGetEqual(t *testing.T, ctx context.Context, client *s3.Client, key string, want []byte) {
+	t.Helper()
+	resp, err := client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(virtualBucket),
 		Key:    aws.String(key),
 	})
 	if err != nil {
 		t.Fatalf("GetObject: %v", err)
 	}
-	defer getResp.Body.Close()
-
-	got, err := io.ReadAll(getResp.Body)
+	defer resp.Body.Close()
+	got, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("ReadAll: %v", err)
 	}
-	if !bytes.Equal(got, body) {
-		t.Errorf("GetObject body = %q, want %q", got, body)
+	if !bytes.Equal(got, want) {
+		t.Errorf("GetObject body = %q, want %q", got, want)
 	}
-	if getResp.ContentLength == nil || *getResp.ContentLength != int64(len(body)) {
-		t.Errorf("GetObject ContentLength = %v, want %d", getResp.ContentLength, len(body))
+	if resp.ContentLength == nil || *resp.ContentLength != int64(len(want)) {
+		t.Errorf("GetObject ContentLength = %v, want %d", resp.ContentLength, len(want))
 	}
+}
 
-	// LIST
-	listResp, err := client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+// e2eListSingle asserts a ListObjectsV2 prefix scan returns exactly the
+// supplied key with the expected size.
+func e2eListSingle(t *testing.T, ctx context.Context, client *s3.Client, key string, wantSize int) {
+	t.Helper()
+	resp, err := client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
 		Bucket: aws.String(virtualBucket),
 		Prefix: aws.String(key),
 	})
 	if err != nil {
 		t.Fatalf("ListObjectsV2: %v", err)
 	}
-	if len(listResp.Contents) != 1 {
-		t.Fatalf("ListObjectsV2 returned %d objects, want 1", len(listResp.Contents))
+	if len(resp.Contents) != 1 {
+		t.Fatalf("ListObjectsV2 returned %d objects, want 1", len(resp.Contents))
 	}
-	if listResp.Contents[0].Key == nil || *listResp.Contents[0].Key != key {
-		t.Errorf("ListObjectsV2 key = %v, want %q", listResp.Contents[0].Key, key)
+	entry := resp.Contents[0]
+	if entry.Key == nil || *entry.Key != key {
+		t.Errorf("ListObjectsV2 key = %v, want %q", entry.Key, key)
 	}
-	if listResp.Contents[0].Size == nil || *listResp.Contents[0].Size != int64(len(body)) {
-		t.Errorf("ListObjectsV2 size = %v, want %d", listResp.Contents[0].Size, len(body))
+	if entry.Size == nil || *entry.Size != int64(wantSize) {
+		t.Errorf("ListObjectsV2 size = %v, want %d", entry.Size, wantSize)
 	}
+}
 
-	// DELETE
-	_, err = client.DeleteObject(ctx, &s3.DeleteObjectInput{
+// e2eDelete removes the object under key and fails the test if the
+// underlying delete call errors.
+func e2eDelete(t *testing.T, ctx context.Context, client *s3.Client, key string) {
+	t.Helper()
+	_, err := client.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(virtualBucket),
 		Key:    aws.String(key),
 	})
 	if err != nil {
 		t.Fatalf("DeleteObject: %v", err)
 	}
+}
 
-	// Verify deletion  -  GET should return NoSuchKey.
-	_, err = client.GetObject(ctx, &s3.GetObjectInput{
+// e2eAssertNotFound issues a GetObject for key and expects a NoSuchKey
+// error, confirming the prior delete actually removed metadata.
+func e2eAssertNotFound(t *testing.T, ctx context.Context, client *s3.Client, key string) {
+	t.Helper()
+	_, err := client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(virtualBucket),
 		Key:    aws.String(key),
 	})
