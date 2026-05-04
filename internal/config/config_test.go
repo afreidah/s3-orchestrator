@@ -516,18 +516,23 @@ func TestServerTimeoutCustomValues(t *testing.T) {
 	}
 }
 
-// TestServerTimeoutCrossValidation verifies the server timeout cross validation contract.
-// Asserts that error = , want substring.
+// serverTimeoutCase parameterises one cross-validation case for the
+// server.* timeout sanity checks.
+type serverTimeoutCase struct {
+	name              string
+	readHeaderTimeout time.Duration
+	readTimeout       time.Duration
+	backendTimeout    time.Duration
+	writeTimeout      time.Duration
+	wantErr           string
+}
+
+// TestServerTimeoutCrossValidation drives each cross-validation rule for
+// server.* timeouts through SetDefaultsAndValidate and asserts that
+// invalid combinations surface the expected error.
 func TestServerTimeoutCrossValidation(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name              string
-		readHeaderTimeout time.Duration
-		readTimeout       time.Duration
-		backendTimeout    time.Duration
-		writeTimeout      time.Duration
-		wantErr           string
-	}{
+	tests := []serverTimeoutCase{
 		{
 			name:              "read_header_timeout exceeds read_timeout",
 			readHeaderTimeout: 10 * time.Minute,
@@ -548,35 +553,52 @@ func TestServerTimeoutCrossValidation(t *testing.T) {
 			writeTimeout:      5 * time.Minute,
 		},
 	}
-
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := validBaseConfig()
-			if tt.readHeaderTimeout != 0 {
-				cfg.Server.ReadHeaderTimeout = tt.readHeaderTimeout
-			}
-			if tt.readTimeout != 0 {
-				cfg.Server.ReadTimeout = tt.readTimeout
-			}
-			if tt.backendTimeout != 0 {
-				cfg.Server.BackendTimeout = tt.backendTimeout
-			}
-			if tt.writeTimeout != 0 {
-				cfg.Server.WriteTimeout = tt.writeTimeout
-			}
+		t.Run(tt.name, func(t *testing.T) { runServerTimeoutCase(t, tt) })
+	}
+}
 
-			err := cfg.SetDefaultsAndValidate()
-			if tt.wantErr != "" {
-				if err == nil {
-					t.Fatal("expected error, got nil")
-				}
-				if !strings.Contains(err.Error(), tt.wantErr) {
-					t.Errorf("error = %q, want substring %q", err.Error(), tt.wantErr)
-				}
-			} else if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-		})
+// runServerTimeoutCase applies one serverTimeoutCase to a base config
+// and asserts SetDefaultsAndValidate returns the expected outcome.
+func runServerTimeoutCase(t *testing.T, tt serverTimeoutCase) {
+	cfg := validBaseConfig()
+	applyServerTimeoutOverrides(&cfg, tt)
+	err := cfg.SetDefaultsAndValidate()
+	assertServerTimeoutResult(t, err, tt.wantErr)
+}
+
+// applyServerTimeoutOverrides applies the non-zero fields of tt to the
+// cfg.Server timeouts so each case starts from a known-good baseline.
+func applyServerTimeoutOverrides(cfg *Config, tt serverTimeoutCase) {
+	if tt.readHeaderTimeout != 0 {
+		cfg.Server.ReadHeaderTimeout = tt.readHeaderTimeout
+	}
+	if tt.readTimeout != 0 {
+		cfg.Server.ReadTimeout = tt.readTimeout
+	}
+	if tt.backendTimeout != 0 {
+		cfg.Server.BackendTimeout = tt.backendTimeout
+	}
+	if tt.writeTimeout != 0 {
+		cfg.Server.WriteTimeout = tt.writeTimeout
+	}
+}
+
+// assertServerTimeoutResult fails the test when the validation outcome
+// does not match the case's wantErr (substring match for failures).
+func assertServerTimeoutResult(t *testing.T, err error, wantErr string) {
+	t.Helper()
+	if wantErr == "" {
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		return
+	}
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), wantErr) {
+		t.Errorf("error = %q, want substring %q", err.Error(), wantErr)
 	}
 }
 

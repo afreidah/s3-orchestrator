@@ -31,6 +31,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/util/bufpool"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // MultipartManager handles the multipart upload lifecycle.
@@ -178,9 +179,9 @@ func (mp *MultipartManager) UploadPart(ctx context.Context, uploadID string, par
 	return etag, nil
 }
 
-// CompleteMultipartUpload reassembles parts into the final object. Downloads
-// each part, concatenates them into a single upload, then cleans up temp keys
-// and records the final object location with quota tracking.
+// CompleteMultipartUpload reassembles parts into the final object.
+// Downloads each part, concatenates them into a single upload, cleans up
+// temp keys, and records the final object location with quota tracking.
 func (mp *MultipartManager) CompleteMultipartUpload(ctx context.Context, uploadID string, partNumbers []int) (string, error) {
 	const operation = "CompleteMultipartUpload"
 	start := time.Now()
@@ -194,117 +195,50 @@ func (mp *MultipartManager) CompleteMultipartUpload(ctx context.Context, uploadI
 	if err != nil {
 		return "", mp.classifyWriteError(span, operation, err)
 	}
-
 	be, err := mp.getBackend(mu.BackendName)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return "", err
 	}
 
-	allParts, err := mp.parent.stores.Multipart.GetParts(ctx, uploadID)
+	parts, err := mp.collectRequestedParts(ctx, span, uploadID, partNumbers)
 	if err != nil {
-		span.SetStatus(codes.Error, err.Error())
 		return "", err
 	}
 
-	// Filter to only the parts specified by the client
-	requested := make(map[int]bool, len(partNumbers))
-	for _, pn := range partNumbers {
-		requested[pn] = true
-	}
-	uploaded := make(map[int]bool, len(allParts))
-	for _, p := range allParts {
-		uploaded[p.PartNumber] = true
-	}
-	var missing []int
-	for _, pn := range partNumbers {
-		if !uploaded[pn] {
-			missing = append(missing, pn)
-		}
-	}
-	if len(missing) > 0 {
-		msg := "parts not uploaded: " + formatPartNumbers(missing)
-		err := &core.S3Error{StatusCode: 400, Code: "InvalidPart", Message: msg}
-		span.SetStatus(codes.Error, msg)
-		return "", err
-	}
-	var parts []core.MultipartPart
-	for _, p := range allParts {
-		if requested[p.PartNumber] {
-			parts = append(parts, p)
-		}
-	}
+	totalPlaintextSize, anyEncrypted := sumPlaintextSize(parts)
 
-	// Sort parts by part number for correct assembly order
-	slices.SortFunc(parts, func(a, b core.MultipartPart) int {
-		return a.PartNumber - b.PartNumber
-	})
-
-	// Calculate total plaintext size for the combined upload. When parts are
-	// encrypted, PlaintextSize holds the original size; otherwise SizeBytes.
-	var totalPlaintextSize int64
-	anyEncrypted := false
-	for _, part := range parts {
-		if part.Encrypted {
-			totalPlaintextSize += part.PlaintextSize
-			anyEncrypted = true
-		} else {
-			totalPlaintextSize += part.SizeBytes
-		}
-	}
-
-	// Stream parts sequentially through a pipe. When parts are encrypted,
-	// each part is decrypted inline so the pipe carries plaintext. The main
-	// goroutine then optionally re-encrypts as a single final object.
 	pr, pipeCancel := mp.streamPartsThroughPipe(ctx, be, uploadID, parts)
 	defer pipeCancel()
 
-	// When encryption is enabled, re-encrypt the combined plaintext as a
-	// single object with unified chunk boundaries. Otherwise upload as-is.
-	var enc *core.EncryptionMeta
-	var uploadBody io.Reader = pr
-	uploadSize := totalPlaintextSize
-	if mp.encryptor != nil {
-		var encErr error
-		uploadBody, uploadSize, enc, encErr = encryptBody(ctx, mp.encryptor, pr, totalPlaintextSize)
-		if encErr != nil {
-			span.SetStatus(codes.Error, encErr.Error())
-			return "", fmt.Errorf("encrypt final object: %w", encErr)
-		}
-	} else if anyEncrypted {
-		// Parts were encrypted but encryptor is now nil (disabled). The pipe
-		// carries decrypted plaintext; upload without encryption metadata.
-		uploadSize = totalPlaintextSize
+	uploadBody, uploadSize, enc, err := mp.buildAssembledUpload(ctx, span, pr, totalPlaintextSize, anyEncrypted)
+	if err != nil {
+		return "", err
 	}
 
 	// Streamed from pipe; deadline governed by the caller's context.
 	etag, err := be.PutObject(ctx, mu.ObjectKey, uploadBody, uploadSize, mu.ContentType, mu.Metadata)
 	if err != nil {
-		pipeCancel() // cancel in-flight backend reads in the goroutine
+		pipeCancel()
 		pr.Close()
 		span.SetStatus(codes.Error, err.Error())
 		return "", fmt.Errorf("failed to upload final object: %w", err)
 	}
-	pr.Close() // unblock goroutine if PutObject returned without draining the pipe
+	pr.Close()
 
-	// Record the final object location and update quota
 	if err := mp.parent.recordObjectOrCleanup(ctx, span, be, mu.ObjectKey, mu.BackendName, uploadSize, enc); err != nil {
 		return "", err
 	}
 
-	// Clean up part objects from backend
 	for _, part := range parts {
 		partKey := multipartPartKey(uploadID, part.PartNumber)
 		mp.parent.deleteOrEnqueue(ctx, be, mu.BackendName, partKey, "complete_part_cleanup", part.SizeBytes)
 	}
-
-	// Clean up multipart records from database
 	if err := mp.parent.stores.Multipart.DeleteMultipartUpload(ctx, uploadID); err != nil {
 		span.RecordError(err)
 	}
 
 	mp.recordOperation(operation, mu.BackendName, start, nil)
-	// API calls: N GetObject (read parts) + 1 PutObject (assembled) + N DeleteObject (cleanup)
 	mp.usage.Record(mu.BackendName, int64(2*len(parts)+1), 0, uploadSize)
 
 	audit.Log(ctx, "storage.CompleteMultipartUpload",
@@ -336,6 +270,90 @@ func (mp *MultipartManager) CompleteMultipartUpload(ctx context.Context, uploadI
 
 	span.SetStatus(codes.Ok, "")
 	return etag, nil
+}
+
+// collectRequestedParts loads every part for uploadID, validates that all
+// requested part numbers were uploaded, then returns the requested
+// subset sorted in part-number order ready for assembly.
+func (mp *MultipartManager) collectRequestedParts(ctx context.Context, span trace.Span, uploadID string, partNumbers []int) ([]core.MultipartPart, error) {
+	allParts, err := mp.parent.stores.Multipart.GetParts(ctx, uploadID)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
+	}
+	uploaded := make(map[int]bool, len(allParts))
+	for _, p := range allParts {
+		uploaded[p.PartNumber] = true
+	}
+	var missing []int
+	for _, pn := range partNumbers {
+		if !uploaded[pn] {
+			missing = append(missing, pn)
+		}
+	}
+	if len(missing) > 0 {
+		msg := "parts not uploaded: " + formatPartNumbers(missing)
+		span.SetStatus(codes.Error, msg)
+		return nil, &core.S3Error{StatusCode: 400, Code: "InvalidPart", Message: msg}
+	}
+
+	requested := make(map[int]bool, len(partNumbers))
+	for _, pn := range partNumbers {
+		requested[pn] = true
+	}
+	var parts []core.MultipartPart
+	for _, p := range allParts {
+		if requested[p.PartNumber] {
+			parts = append(parts, p)
+		}
+	}
+	slices.SortFunc(parts, func(a, b core.MultipartPart) int {
+		return a.PartNumber - b.PartNumber
+	})
+	return parts, nil
+}
+
+// sumPlaintextSize returns the total plaintext byte count across parts
+// and whether any part was uploaded encrypted. Encrypted parts contribute
+// PlaintextSize; unencrypted parts contribute SizeBytes.
+func sumPlaintextSize(parts []core.MultipartPart) (int64, bool) {
+	var total int64
+	anyEncrypted := false
+	for _, part := range parts {
+		if part.Encrypted {
+			total += part.PlaintextSize
+			anyEncrypted = true
+		} else {
+			total += part.SizeBytes
+		}
+	}
+	return total, anyEncrypted
+}
+
+// buildAssembledUpload prepares the request body sent to the backend
+// during assembly. When the orchestrator encryptor is configured, the
+// pipe is wrapped in encryptBody so the assembled object lands as a
+// single ciphertext with unified chunk boundaries; otherwise the pipe is
+// uploaded verbatim. anyEncrypted is informational - inline decryption
+// already runs in streamPartsThroughPipe so the pipe always emits
+// plaintext.
+func (mp *MultipartManager) buildAssembledUpload(
+	ctx context.Context,
+	span trace.Span,
+	pr io.Reader,
+	totalPlaintextSize int64,
+	anyEncrypted bool,
+) (io.Reader, int64, *core.EncryptionMeta, error) {
+	_ = anyEncrypted
+	if mp.encryptor == nil {
+		return pr, totalPlaintextSize, nil, nil
+	}
+	uploadBody, uploadSize, enc, encErr := encryptBody(ctx, mp.encryptor, pr, totalPlaintextSize)
+	if encErr != nil {
+		span.SetStatus(codes.Error, encErr.Error())
+		return nil, 0, nil, fmt.Errorf("encrypt final object: %w", encErr)
+	}
+	return uploadBody, uploadSize, enc, nil
 }
 
 // AbortMultipartUpload cleans up an in-progress multipart upload, removing

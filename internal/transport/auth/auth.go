@@ -99,70 +99,68 @@ func (br *BucketRegistry) MaxMultipartUploads(bucket string) int {
 	return br.multipartLimit[bucket]
 }
 
-// AuthenticateAndResolveBucket authenticates the request and returns the
-// authorized bucket name. Returns an error if authentication fails.
+// AuthenticateAndResolveBucket authenticates the request and returns
+// the authorized bucket name. Returns an error if authentication fails.
 func (br *BucketRegistry) AuthenticateAndResolveBucket(r *http.Request) (string, error) {
 	authHeader := r.Header.Get("Authorization")
-
-	// SigV4 takes precedence. To prevent timing side-channels that could
-	// enumerate valid access keys, we always compute the signature  -  using
-	// a dummy secret when the key is unknown  -  so both paths take the same
-	// time.
 	if strings.HasPrefix(authHeader, sigV4Prefix) {
-		// Parse the header once to extract all three fields.
-		parts := authHeader[len(sigV4Prefix):]
-		credential, signedHeaders, signature := parseSigV4FieldsDirect(parts)
-		if credential == "" {
-			return "", errors.New(errAuthFailed)
-		}
-
-		// Extract access key from the credential scope (accessKey/date/region/service/aws4_request).
-		accessKey, _, _ := strings.Cut(credential, "/")
-		if accessKey == "" {
-			return "", errors.New(errAuthFailed)
-		}
-
-		entry, ok := br.byAccessKey[accessKey]
-		secret := "dummy-secret-for-constant-time-auth"
-		if ok {
-			secret = entry.SecretAccessKey
-		}
-
-		if err := verifySigV4Parsed(r,
-			keyMaterial{AccessKeyID: accessKey, SecretAccessKey: secret, Known: ok},
-			credential, signedHeaders, signature); err != nil || !ok {
-			return "", errors.New(errAuthFailed)
-		}
-
-		return entry.BucketName, nil
+		return br.authenticateSigV4(r, authHeader)
 	}
-
-	// Presigned URL auth  -  credentials in query string parameters.
 	if isPresignedRequest(r) {
 		return br.authenticatePresigned(r)
 	}
+	if proxyToken := r.Header.Get("X-Proxy-Token"); proxyToken != "" {
+		return br.authenticateProxyToken(proxyToken)
+	}
+	return "", fmt.Errorf("missing authentication credentials")
+}
 
-	// Legacy token auth  -  iterate all tokens to avoid timing side-channels.
-	// ConstantTimeCompare requires equal-length inputs, so skip mismatched
-	// lengths without leaking which token matched.
-	proxyToken := r.Header.Get("X-Proxy-Token")
-	if proxyToken != "" {
-		var matchedBucket string
-		found := 0
-		for token, bucket := range br.byToken {
-			if len(token) == len(proxyToken) &&
-				subtle.ConstantTimeCompare([]byte(proxyToken), []byte(token)) == 1 {
-				matchedBucket = bucket
-				found = 1
-			}
-		}
-		if found == 1 {
-			return matchedBucket, nil
-		}
-		return "", fmt.Errorf("invalid authentication token")
+// authenticateSigV4 verifies a SigV4 Authorization header against the
+// registry. To prevent timing side-channels that could enumerate valid
+// access keys, the signature is always computed - with a dummy secret
+// when the key is unknown - so both paths take the same time.
+func (br *BucketRegistry) authenticateSigV4(r *http.Request, authHeader string) (string, error) {
+	parts := authHeader[len(sigV4Prefix):]
+	credential, signedHeaders, signature := parseSigV4FieldsDirect(parts)
+	if credential == "" {
+		return "", errors.New(errAuthFailed)
+	}
+	accessKey, _, _ := strings.Cut(credential, "/")
+	if accessKey == "" {
+		return "", errors.New(errAuthFailed)
 	}
 
-	return "", fmt.Errorf("missing authentication credentials")
+	entry, ok := br.byAccessKey[accessKey]
+	secret := "dummy-secret-for-constant-time-auth"
+	if ok {
+		secret = entry.SecretAccessKey
+	}
+	if err := verifySigV4Parsed(r,
+		keyMaterial{AccessKeyID: accessKey, SecretAccessKey: secret, Known: ok},
+		credential, signedHeaders, signature); err != nil || !ok {
+		return "", errors.New(errAuthFailed)
+	}
+	return entry.BucketName, nil
+}
+
+// authenticateProxyToken matches an X-Proxy-Token header against the
+// registry in constant time. Iterates every entry to avoid leaking which
+// token matched; ConstantTimeCompare requires equal-length inputs, so
+// mismatched lengths short-circuit without revealing the match position.
+func (br *BucketRegistry) authenticateProxyToken(proxyToken string) (string, error) {
+	var matchedBucket string
+	found := 0
+	for token, bucket := range br.byToken {
+		if len(token) == len(proxyToken) &&
+			subtle.ConstantTimeCompare([]byte(proxyToken), []byte(token)) == 1 {
+			matchedBucket = bucket
+			found = 1
+		}
+	}
+	if found == 1 {
+		return matchedBucket, nil
+	}
+	return "", fmt.Errorf("invalid authentication token")
 }
 
 

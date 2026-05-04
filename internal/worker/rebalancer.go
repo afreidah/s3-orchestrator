@@ -139,10 +139,8 @@ func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig) 
 // THRESHOLD CHECK
 // -------------------------------------------------------------------------
 
-// exceedsThreshold returns true if the utilization spread across backends
-// exceeds the configured threshold.
-// ExceedsThreshold exceeds threshold.
-// ExceedsThreshold exceeds threshold.
+// ExceedsThreshold reports whether the utilization spread across backends
+// (max ratio minus min ratio) is at least the configured threshold.
 func ExceedsThreshold(stats map[string]core.QuotaStat, order []string, threshold float64) bool {
 	if len(order) < 2 {
 		return false
@@ -178,23 +176,45 @@ func ExceedsThreshold(stats map[string]core.QuotaStat, order []string, threshold
 // PACK TIGHT STRATEGY
 // -------------------------------------------------------------------------
 
-// planPackTight consolidates objects onto the most-utilized backends, pulling
-// from the least-utilized. Sorts by percent full descending and only moves
-// objects from a less-full source to a more-full destination. Skips moves
-// that would not increase the destination's packing ratio.
-// PlanPackTight plan pack tight.
-// PlanPackTight plan pack tight.
+// backendUtil pairs a backend name with its byte capacity. Used during
+// pack-tight planning to drive utilization-ordered traversal.
+type backendUtil struct {
+	Name  string
+	Limit int64
+}
+
+// PlanPackTight consolidates objects onto the most-utilized backends by
+// pulling from the least-utilized. Sorts by percent full descending and
+// only moves an object from a less-full source to a more-full destination.
+// Skips moves that would not increase the destination's packing ratio.
 func (r *Rebalancer) PlanPackTight(ctx context.Context, stats map[string]core.QuotaStat, batchSize int) ([]RebalanceMove, error) {
-	type backendUtil struct {
-		Name  string
-		Limit int64
+	simUsed := make(map[string]int64)
+	backends := sortedBackendsByUtilDesc(r.ops.BackendOrder(), stats, simUsed)
+
+	var plan []RebalanceMove
+	remaining := batchSize
+	objectCache := make(map[string][]core.ObjectLocation)
+
+	for di := 0; di < len(backends) && remaining > 0; di++ {
+		if ctx.Err() != nil {
+			return plan, ctx.Err()
+		}
+		moves, err := r.packMovesIntoDestination(ctx, di, backends, simUsed, objectCache, &remaining)
+		if err != nil {
+			return nil, err
+		}
+		plan = append(plan, moves...)
 	}
 
-	// --- Build sorted backend list (most full first) ---
-	simUsed := make(map[string]int64)
-	var backends []backendUtil
+	return plan, nil
+}
 
-	for _, name := range r.ops.BackendOrder() {
+// sortedBackendsByUtilDesc returns the configured backends with non-zero
+// limits, sorted by utilization ratio descending. Populates simUsed with
+// each backend's current bytes-used reading.
+func sortedBackendsByUtilDesc(order []string, stats map[string]core.QuotaStat, simUsed map[string]int64) []backendUtil {
+	var backends []backendUtil
+	for _, name := range order {
 		stat, ok := stats[name]
 		if !ok || stat.BytesLimit == 0 {
 			continue
@@ -206,92 +226,125 @@ func (r *Rebalancer) PlanPackTight(ctx context.Context, stats map[string]core.Qu
 	slices.SortFunc(backends, func(a, b backendUtil) int {
 		ra := float64(simUsed[a.Name]) / float64(a.Limit)
 		rb := float64(simUsed[b.Name]) / float64(b.Limit)
-		return cmp.Compare(rb, ra) // descending
+		return cmp.Compare(rb, ra)
 	})
+	return backends
+}
+
+// packMovesIntoDestination plans moves into backends[di] from less-full
+// sources, walking sources from least-full upward. Mutates simUsed and the
+// remaining pointer to reflect simulated moves.
+func (r *Rebalancer) packMovesIntoDestination(
+	ctx context.Context,
+	di int,
+	backends []backendUtil,
+	simUsed map[string]int64,
+	objectCache map[string][]core.ObjectLocation,
+	remaining *int,
+) ([]RebalanceMove, error) {
+	dest := backends[di]
+	destFree := dest.Limit - simUsed[dest.Name]
+	if destFree <= 0 {
+		return nil, nil
+	}
 
 	var plan []RebalanceMove
-	remaining := batchSize
-
-	// Cache object lists per source to avoid re-querying when the same
-	// source is visited across multiple destination iterations.
-	objectCache := make(map[string][]core.ObjectLocation)
-
-	// --- Pack into most-full destinations, pulling from least-full sources ---
-	for di := 0; di < len(backends) && remaining > 0; di++ {
-		if ctx.Err() != nil {
-			return plan, ctx.Err()
-		}
-		dest := backends[di]
-		destFree := dest.Limit - simUsed[dest.Name]
-		if destFree <= 0 {
+	for si := len(backends) - 1; si > di && *remaining > 0 && destFree > 0; si-- {
+		src := backends[si]
+		if !srcLessUtilized(src, dest, simUsed) {
 			continue
 		}
 
-		for si := len(backends) - 1; si > di && remaining > 0 && destFree > 0; si-- {
-			src := backends[si]
-
-			// Only pull from backends that are less utilized
-			srcRatio := float64(simUsed[src.Name]) / float64(src.Limit)
-			destRatio := float64(simUsed[dest.Name]) / float64(dest.Limit)
-			if srcRatio >= destRatio {
-				continue
-			}
-
-			objects, ok := objectCache[src.Name]
-			if !ok {
-				var err error
-				objects, err = r.store.ListObjectsByBackend(ctx, src.Name, remaining)
-				if err != nil {
-					return nil, fmt.Errorf("failed to list objects on %s: %w", src.Name, err)
-				}
-				objectCache[src.Name] = objects
-			}
-
-			// Batch-fetch the existing-copies map for every candidate
-			// key in this source's slice. Replaces a per-object
-			// GetAllObjectLocations call inside the inner loop.
-			keys := make([]string, len(objects))
-			for i := range objects {
-				keys[i] = objects[i].ObjectKey
-			}
-			copyMap, _ := r.store.GetObjectBackendsForKeys(ctx, keys)
-
-			for oi := range objects {
-				if remaining <= 0 || destFree <= 0 {
-					break
-				}
-				if objects[oi].SizeBytes > destFree {
-					continue
-				}
-
-				// Re-check ratios after prior simulated moves
-				srcRatio = float64(simUsed[src.Name]) / float64(src.Limit)
-				destRatio = float64(simUsed[dest.Name]) / float64(dest.Limit)
-				if srcRatio >= destRatio {
-					break // Source is now as full or fuller, stop pulling
-				}
-
-				// Skip if destination already has a copy of this object
-				if slices.Contains(copyMap[objects[oi].ObjectKey], dest.Name) {
-					continue
-				}
-
-				plan = append(plan, RebalanceMove{
-					ObjectKey:   objects[oi].ObjectKey,
-					FromBackend: src.Name,
-					ToBackend:   dest.Name,
-					SizeBytes:   objects[oi].SizeBytes,
-				})
-
-				destFree -= objects[oi].SizeBytes
-				simUsed[dest.Name] += objects[oi].SizeBytes
-				simUsed[src.Name] -= objects[oi].SizeBytes
-				remaining--
-			}
+		objects, err := r.cachedSourceObjects(ctx, src.Name, *remaining, objectCache)
+		if err != nil {
+			return nil, err
 		}
-	}
+		copyMap := r.fetchCopyMap(ctx, objects)
 
+		moves := r.packMovesFromSource(src, dest, objects, copyMap, simUsed, &destFree, remaining)
+		plan = append(plan, moves...)
+	}
 	return plan, nil
+}
+
+// packMovesFromSource walks one source's candidate objects and selects
+// moves that fit dest, that dest does not already mirror, and that keep
+// src strictly less utilized than dest after the simulated transfer.
+func (r *Rebalancer) packMovesFromSource(
+	src, dest backendUtil,
+	objects []core.ObjectLocation,
+	copyMap map[string][]string,
+	simUsed map[string]int64,
+	destFree *int64,
+	remaining *int,
+) []RebalanceMove {
+	var moves []RebalanceMove
+	for oi := range objects {
+		if *remaining <= 0 || *destFree <= 0 {
+			break
+		}
+		if objects[oi].SizeBytes > *destFree {
+			continue
+		}
+		if !srcLessUtilized(src, dest, simUsed) {
+			break
+		}
+		if slices.Contains(copyMap[objects[oi].ObjectKey], dest.Name) {
+			continue
+		}
+
+		moves = append(moves, RebalanceMove{
+			ObjectKey:   objects[oi].ObjectKey,
+			FromBackend: src.Name,
+			ToBackend:   dest.Name,
+			SizeBytes:   objects[oi].SizeBytes,
+		})
+		*destFree -= objects[oi].SizeBytes
+		simUsed[dest.Name] += objects[oi].SizeBytes
+		simUsed[src.Name] -= objects[oi].SizeBytes
+		*remaining--
+	}
+	return moves
+}
+
+// srcLessUtilized reports whether src's current ratio is strictly below
+// dest's. Pack-tight only pulls when this is true.
+func srcLessUtilized(src, dest backendUtil, simUsed map[string]int64) bool {
+	srcRatio := float64(simUsed[src.Name]) / float64(src.Limit)
+	destRatio := float64(simUsed[dest.Name]) / float64(dest.Limit)
+	return srcRatio < destRatio
+}
+
+// cachedSourceObjects returns ListObjectsByBackend results for a source,
+// caching the slice across destination iterations to avoid the same source
+// being re-queried by the outer pack loop.
+func (r *Rebalancer) cachedSourceObjects(
+	ctx context.Context,
+	src string,
+	limit int,
+	cache map[string][]core.ObjectLocation,
+) ([]core.ObjectLocation, error) {
+	if objs, ok := cache[src]; ok {
+		return objs, nil
+	}
+	objs, err := r.store.ListObjectsByBackend(ctx, src, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list objects on %s: %w", src, err)
+	}
+	cache[src] = objs
+	return objs, nil
+}
+
+// fetchCopyMap batches GetObjectBackendsForKeys for every candidate key.
+// Replaces a per-object GetAllObjectLocations call that the inner loop
+// would otherwise issue.
+func (r *Rebalancer) fetchCopyMap(ctx context.Context, objects []core.ObjectLocation) map[string][]string {
+	keys := make([]string, len(objects))
+	for i := range objects {
+		keys[i] = objects[i].ObjectKey
+	}
+	copyMap, _ := r.store.GetObjectBackendsForKeys(ctx, keys)
+	return copyMap
 }
 
 // -------------------------------------------------------------------------
@@ -304,54 +357,14 @@ type backendBalance struct {
 	Balance int64 // positive = over-target (source), negative = under-target (dest)
 }
 
-// planSpreadEven equalizes utilization ratios across backends. Moves objects
-// from over-utilized backends to under-utilized ones.
-// PlanSpreadEven plan spread even.
-// PlanSpreadEven plan spread even.
+// PlanSpreadEven equalizes utilization ratios across backends by moving
+// objects from over-utilized backends to under-utilized ones. Returns nil
+// when no backend has a usable byte limit.
 func (r *Rebalancer) PlanSpreadEven(ctx context.Context, stats map[string]core.QuotaStat, batchSize int) ([]RebalanceMove, error) {
-	var totalUsed, totalLimit int64
-	for _, name := range r.ops.BackendOrder() {
-		stat, ok := stats[name]
-		if !ok {
-			continue
-		}
-		totalUsed += stat.BytesUsed
-		totalLimit += stat.BytesLimit
-	}
-
-	if totalLimit == 0 {
+	sources, destinations, simUsed, ok := computeSpreadBalances(r.ops.BackendOrder(), stats)
+	if !ok {
 		return nil, nil
 	}
-
-	targetRatio := float64(totalUsed) / float64(totalLimit)
-
-	// Compute excess/deficit for each backend
-	var sources, destinations []backendBalance
-	simUsed := make(map[string]int64)
-
-	for _, name := range r.ops.BackendOrder() {
-		stat, ok := stats[name]
-		if !ok {
-			continue
-		}
-		simUsed[name] = stat.BytesUsed
-		targetBytes := int64(targetRatio * float64(stat.BytesLimit))
-		excess := stat.BytesUsed - targetBytes
-
-		if excess > 0 {
-			sources = append(sources, backendBalance{Name: name, Balance: excess})
-		} else if excess < 0 {
-			destinations = append(destinations, backendBalance{Name: name, Balance: excess})
-		}
-	}
-
-	// Sort: most over-target sources first, most under-target destinations first
-	slices.SortFunc(sources, func(a, b backendBalance) int {
-		return cmp.Compare(b.Balance, a.Balance) // descending
-	})
-	slices.SortFunc(destinations, func(a, b backendBalance) int {
-		return cmp.Compare(a.Balance, b.Balance) // ascending (most negative first)
-	})
 
 	var plan []RebalanceMove
 	remaining := batchSize
@@ -360,86 +373,146 @@ func (r *Rebalancer) PlanSpreadEven(ctx context.Context, stats map[string]core.Q
 		if remaining <= 0 || ctx.Err() != nil {
 			break
 		}
-
-		src := &sources[si]
-		objects, err := r.store.ListObjectsByBackend(ctx, src.Name, remaining)
+		moves, err := r.spreadMovesFromSource(ctx, &sources[si], destinations, stats, simUsed, &remaining)
 		if err != nil {
-			return nil, fmt.Errorf("failed to list objects on %s: %w", src.Name, err)
+			return nil, err
 		}
-
-		// Batch-fetch the existing-copies map for every candidate key in
-		// this source's slice. Replaces a per-object GetAllObjectLocations
-		// call inside the inner loop.
-		keys := make([]string, len(objects))
-		for i := range objects {
-			keys[i] = objects[i].ObjectKey
-		}
-		copyMap, _ := r.store.GetObjectBackendsForKeys(ctx, keys)
-
-		for oi := range objects {
-			if remaining <= 0 || src.Balance <= 0 {
-				break
-			}
-
-			// Skip if this object is larger than what the source needs to shed  - 
-			// moving it would overshoot and make the source under-target
-			if objects[oi].SizeBytes > src.Balance {
-				continue
-			}
-
-			// Backends that already hold a copy of this key.
-			copySet := make(map[string]bool, len(copyMap[objects[oi].ObjectKey]))
-			for _, b := range copyMap[objects[oi].ObjectKey] {
-				copySet[b] = true
-			}
-
-			// Find best destination that can fit this object without overshooting
-			bestDest := -1
-			for di := range destinations {
-				if copySet[destinations[di].Name] {
-					continue // target already has a copy
-				}
-				deficit := -destinations[di].Balance
-				destStat := stats[destinations[di].Name]
-				destFree := destStat.BytesLimit - simUsed[destinations[di].Name]
-
-				if deficit >= objects[oi].SizeBytes && objects[oi].SizeBytes <= destFree {
-					bestDest = di
-					break
-				}
-			}
-
-			if bestDest < 0 {
-				continue
-			}
-
-			dest := &destinations[bestDest]
-			plan = append(plan, RebalanceMove{
-				ObjectKey:   objects[oi].ObjectKey,
-				FromBackend: src.Name,
-				ToBackend:   dest.Name,
-				SizeBytes:   objects[oi].SizeBytes,
-			})
-
-			src.Balance -= objects[oi].SizeBytes
-			dest.Balance += objects[oi].SizeBytes
-			simUsed[src.Name] -= objects[oi].SizeBytes
-			simUsed[dest.Name] += objects[oi].SizeBytes
-			remaining--
-		}
+		plan = append(plan, moves...)
 	}
 
 	return plan, nil
+}
+
+// computeSpreadBalances computes each backend's excess or deficit relative
+// to the fleet target ratio and partitions backends into sorted source and
+// destination slices. Returns ok=false when totalLimit is zero (no quota
+// data; nothing to plan).
+func computeSpreadBalances(order []string, stats map[string]core.QuotaStat) ([]backendBalance, []backendBalance, map[string]int64, bool) {
+	var totalUsed, totalLimit int64
+	for _, name := range order {
+		stat, ok := stats[name]
+		if !ok {
+			continue
+		}
+		totalUsed += stat.BytesUsed
+		totalLimit += stat.BytesLimit
+	}
+	if totalLimit == 0 {
+		return nil, nil, nil, false
+	}
+
+	targetRatio := float64(totalUsed) / float64(totalLimit)
+	var sources, destinations []backendBalance
+	simUsed := make(map[string]int64)
+
+	for _, name := range order {
+		stat, ok := stats[name]
+		if !ok {
+			continue
+		}
+		simUsed[name] = stat.BytesUsed
+		targetBytes := int64(targetRatio * float64(stat.BytesLimit))
+		excess := stat.BytesUsed - targetBytes
+
+		switch {
+		case excess > 0:
+			sources = append(sources, backendBalance{Name: name, Balance: excess})
+		case excess < 0:
+			destinations = append(destinations, backendBalance{Name: name, Balance: excess})
+		}
+	}
+
+	slices.SortFunc(sources, func(a, b backendBalance) int {
+		return cmp.Compare(b.Balance, a.Balance)
+	})
+	slices.SortFunc(destinations, func(a, b backendBalance) int {
+		return cmp.Compare(a.Balance, b.Balance)
+	})
+	return sources, destinations, simUsed, true
+}
+
+// spreadMovesFromSource selects spread-even moves out of one over-target
+// source. For each candidate object it searches destinations for one that
+// can absorb the size without overshooting target.
+func (r *Rebalancer) spreadMovesFromSource(
+	ctx context.Context,
+	src *backendBalance,
+	destinations []backendBalance,
+	stats map[string]core.QuotaStat,
+	simUsed map[string]int64,
+	remaining *int,
+) ([]RebalanceMove, error) {
+	objects, err := r.store.ListObjectsByBackend(ctx, src.Name, *remaining)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list objects on %s: %w", src.Name, err)
+	}
+	copyMap := r.fetchCopyMap(ctx, objects)
+
+	var moves []RebalanceMove
+	for oi := range objects {
+		if *remaining <= 0 || src.Balance <= 0 {
+			break
+		}
+		if objects[oi].SizeBytes > src.Balance {
+			continue
+		}
+		bestDest := findSpreadDestination(&objects[oi], destinations, copyMap, stats, simUsed)
+		if bestDest < 0 {
+			continue
+		}
+
+		dest := &destinations[bestDest]
+		moves = append(moves, RebalanceMove{
+			ObjectKey:   objects[oi].ObjectKey,
+			FromBackend: src.Name,
+			ToBackend:   dest.Name,
+			SizeBytes:   objects[oi].SizeBytes,
+		})
+		src.Balance -= objects[oi].SizeBytes
+		dest.Balance += objects[oi].SizeBytes
+		simUsed[src.Name] -= objects[oi].SizeBytes
+		simUsed[dest.Name] += objects[oi].SizeBytes
+		*remaining--
+	}
+	return moves, nil
+}
+
+// findSpreadDestination returns the index of the first destination that
+// can absorb obj.SizeBytes without overshooting its target deficit and
+// that does not already hold a copy of the key. Returns -1 when no
+// destination qualifies.
+func findSpreadDestination(
+	obj *core.ObjectLocation,
+	destinations []backendBalance,
+	copyMap map[string][]string,
+	stats map[string]core.QuotaStat,
+	simUsed map[string]int64,
+) int {
+	copySet := make(map[string]bool, len(copyMap[obj.ObjectKey]))
+	for _, b := range copyMap[obj.ObjectKey] {
+		copySet[b] = true
+	}
+	for di := range destinations {
+		if copySet[destinations[di].Name] {
+			continue
+		}
+		deficit := -destinations[di].Balance
+		destStat := stats[destinations[di].Name]
+		destFree := destStat.BytesLimit - simUsed[destinations[di].Name]
+		if deficit >= obj.SizeBytes && obj.SizeBytes <= destFree {
+			return di
+		}
+	}
+	return -1
 }
 
 // -------------------------------------------------------------------------
 // MOVE EXECUTION
 // -------------------------------------------------------------------------
 
-// executeMoves runs the planned object moves with bounded concurrency.
-// Skips individual moves that fail and continues with the rest.
-// ExecuteMoves execute moves.
-// ExecuteMoves execute moves.
+// ExecuteMoves runs the planned object moves with bounded concurrency.
+// Skips individual moves that fail and continues with the rest, returning
+// the count of successful moves.
 func (r *Rebalancer) ExecuteMoves(ctx context.Context, plan []RebalanceMove, strategy string, concurrency int) int {
 	var moved atomic.Int32
 	workerpool.Run(ctx, concurrency, plan, func(ctx context.Context, mv RebalanceMove) {
@@ -456,11 +529,9 @@ func (r *Rebalancer) ExecuteMoves(ctx context.Context, plan []RebalanceMove, str
 	return int(moved.Load())
 }
 
-// executeOneMove performs a single object move: read from source, write to
-// destination, swap the DB location, and delete the source copy. Returns
-// true on success.
-// ExecuteOneMove execute one move.
-// ExecuteOneMove execute one move.
+// ExecuteOneMove performs a single object move: stream the bytes from
+// source to destination, swap the DB location with compare-and-swap, and
+// delete the source copy. Returns true when all steps succeed.
 func (r *Rebalancer) ExecuteOneMove(ctx context.Context, move RebalanceMove, strategy string) bool {
 	srcBackend, ok := r.ops.Backends()[move.FromBackend]
 	if !ok {

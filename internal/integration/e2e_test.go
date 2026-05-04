@@ -229,53 +229,67 @@ func TestE2E_MultipartLifecycle(t *testing.T) {
 	}
 }
 
-// TestE2E_ErrorResponses verifies the e2 e error responses behaviour across the supplied sub-cases:
-// "GetNonexistent", "HeadNonexistent", "DeleteNonexistent_Idempotent".
-// Each sub-case exercises one branch of the code under test.
-func TestE2E_ErrorResponses(t *testing.T) {
+// TestE2E_ErrorResponses_GetNonexistent is one of the sub-cases extracted from the
+// original mega-TestE2E_ErrorResponses; behaviour is preserved.
+func TestE2E_ErrorResponses_GetNonexistent(t *testing.T) {
 	resetState(t)
 	client := newS3Client(t)
+	_ = client
 	ctx := context.Background()
+	_ = ctx
 
-	t.Run("GetNonexistent", func(t *testing.T) {
-		_, err := client.GetObject(ctx, &s3.GetObjectInput{
-			Bucket: aws.String(virtualBucket),
-			Key:    aws.String("does-not-exist-ever"),
-		})
-		if err == nil {
-			t.Fatal("expected error for nonexistent key")
-		}
-		assertS3ErrorCode(t, err, "NoSuchKey")
+	_, err := client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(virtualBucket),
+		Key:    aws.String("does-not-exist-ever"),
 	})
+	if err == nil {
+		t.Fatal("expected error for nonexistent key")
+	}
+	assertS3ErrorCode(t, err, "NoSuchKey")
+}
 
-	t.Run("HeadNonexistent", func(t *testing.T) {
-		_, err := client.HeadObject(ctx, &s3.HeadObjectInput{
-			Bucket: aws.String(virtualBucket),
-			Key:    aws.String("does-not-exist-ever"),
-		})
-		if err == nil {
-			t.Fatal("expected error for nonexistent key")
-		}
-		// HEAD returns 404 but no XML body  -  SDK returns a generic error.
-		var respErr *smithyhttp.ResponseError
-		if !errors.As(err, &respErr) {
-			t.Fatalf("expected ResponseError, got %T: %v", err, err)
-		}
-		if respErr.HTTPStatusCode() != 404 {
-			t.Errorf("HEAD status = %d, want 404", respErr.HTTPStatusCode())
-		}
-	})
+// TestE2E_ErrorResponses_HeadNonexistent is one of the sub-cases extracted from the
+// original mega-TestE2E_ErrorResponses; behaviour is preserved.
+func TestE2E_ErrorResponses_HeadNonexistent(t *testing.T) {
+	resetState(t)
+	client := newS3Client(t)
+	_ = client
+	ctx := context.Background()
+	_ = ctx
 
-	t.Run("DeleteNonexistent_Idempotent", func(t *testing.T) {
-		// S3 spec: DELETE on a nonexistent key should succeed (idempotent).
-		_, err := client.DeleteObject(ctx, &s3.DeleteObjectInput{
-			Bucket: aws.String(virtualBucket),
-			Key:    aws.String("does-not-exist-ever"),
-		})
-		if err != nil {
-			t.Fatalf("DeleteObject on nonexistent key should succeed: %v", err)
-		}
+	_, err := client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(virtualBucket),
+		Key:    aws.String("does-not-exist-ever"),
 	})
+	if err == nil {
+		t.Fatal("expected error for nonexistent key")
+	}
+	// HEAD returns 404 but no XML body  -  SDK returns a generic error.
+	var respErr *smithyhttp.ResponseError
+	if !errors.As(err, &respErr) {
+		t.Fatalf("expected ResponseError, got %T: %v", err, err)
+	}
+	if respErr.HTTPStatusCode() != 404 {
+		t.Errorf("HEAD status = %d, want 404", respErr.HTTPStatusCode())
+	}
+}
+
+// TestE2E_ErrorResponses_DeleteNonexistent_Idempotent is one of the sub-cases extracted from the
+// original mega-TestE2E_ErrorResponses; behaviour is preserved.
+func TestE2E_ErrorResponses_DeleteNonexistent_Idempotent(t *testing.T) {
+	resetState(t)
+	client := newS3Client(t)
+	_ = client
+	ctx := context.Background()
+	_ = ctx
+
+	_, err := client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(virtualBucket),
+		Key:    aws.String("does-not-exist-ever"),
+	})
+	if err != nil {
+		t.Fatalf("DeleteObject on nonexistent key should succeed: %v", err)
+	}
 }
 
 // assertS3ErrorCode checks that err contains an S3 error with the given code.

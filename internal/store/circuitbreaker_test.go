@@ -764,8 +764,10 @@ func TestCircuitBreaker_DegradedDurationIsPositive(t *testing.T) {
 // wrappers to ensure each method delegates correctly through the circuit.
 // -------------------------------------------------------------------------
 
-// TestCircuitBreaker_ForwardingMethods_Closed verifies the circuit breaker forwarding methods closed contract.
-// Asserts that DeleteObject:.
+// TestCircuitBreaker_ForwardingMethods_Closed exercises every CBCall and
+// CBCallNoResult wrapper through a closed circuit and asserts each one
+// delegates to the underlying store without surfacing an error. Split
+// into per-method-family helpers so cognitive complexity stays low.
 func TestCircuitBreaker_ForwardingMethods_Closed(t *testing.T) {
 	t.Parallel()
 	mock := &mockStore{
@@ -782,8 +784,17 @@ func TestCircuitBreaker_ForwardingMethods_Closed(t *testing.T) {
 	cb := newTestCB(mock, 3, time.Minute)
 	ctx := context.Background()
 
-	// --- CBCall wrappers ---
+	checkCBCallObjectMethods(t, cb, ctx)
+	checkCBCallQuotaMethods(t, cb, ctx)
+	checkCBCallMultipartReadMethods(t, cb, ctx)
+	checkCBCallReplicaMethods(t, cb, ctx)
+	checkCBCallCleanupReadMethods(t, cb, ctx)
+	checkCBCallNoResultMethods(t, cb, ctx)
+}
 
+// checkCBCallObjectMethods covers the object/listing CBCall wrappers.
+func checkCBCallObjectMethods(t *testing.T, cb *testCBBundle, ctx context.Context) {
+	t.Helper()
 	if _, err := cb.DeleteObject(ctx, "key"); err != nil {
 		t.Errorf("DeleteObject: %v", err)
 	}
@@ -793,20 +804,29 @@ func TestCircuitBreaker_ForwardingMethods_Closed(t *testing.T) {
 	if _, err := cb.ListDirectoryChildren(ctx, "p/", "", 100); err != nil {
 		t.Errorf("ListDirectoryChildren: %v", err)
 	}
+	if _, err := cb.ListExpiredObjects(ctx, "", time.Now(), 100); err != nil {
+		t.Errorf("ListExpiredObjects: %v", err)
+	}
+	if _, err := cb.ListObjectsByBackend(ctx, "b1", 100); err != nil {
+		t.Errorf("ListObjectsByBackend: %v", err)
+	}
+	if _, err := cb.MoveObjectLocation(ctx, "k", "b1", "b2"); err != nil {
+		t.Errorf("MoveObjectLocation: %v", err)
+	}
+	if _, err := cb.ImportObject(ctx, "k", "b1", 100); err != nil {
+		t.Errorf("ImportObject: %v", err)
+	}
+}
+
+// checkCBCallQuotaMethods covers the backend-selection and stat CBCall
+// wrappers.
+func checkCBCallQuotaMethods(t *testing.T, cb *testCBBundle, ctx context.Context) {
+	t.Helper()
 	if _, err := cb.GetBackendWithSpace(ctx, 100, []string{"b1"}); err != nil {
 		t.Errorf("GetBackendWithSpace: %v", err)
 	}
 	if _, err := cb.GetLeastUtilizedBackend(ctx, 100, []string{"b1"}); err != nil {
 		t.Errorf("GetLeastUtilizedBackend: %v", err)
-	}
-	if _, err := cb.GetMultipartUpload(ctx, "u1"); err != nil {
-		t.Errorf("GetMultipartUpload: %v", err)
-	}
-	if _, err := cb.GetParts(ctx, "u1"); err != nil {
-		t.Errorf("GetParts: %v", err)
-	}
-	if _, err := cb.ListExpiredObjects(ctx, "", time.Now(), 100); err != nil {
-		t.Errorf("ListExpiredObjects: %v", err)
 	}
 	if _, err := cb.GetQuotaStats(ctx); err != nil {
 		t.Errorf("GetQuotaStats: %v", err)
@@ -817,27 +837,44 @@ func TestCircuitBreaker_ForwardingMethods_Closed(t *testing.T) {
 	if _, err := cb.GetActiveMultipartCounts(ctx); err != nil {
 		t.Errorf("GetActiveMultipartCounts: %v", err)
 	}
+	if _, err := cb.GetUsageForPeriod(ctx, "2024-01"); err != nil {
+		t.Errorf("GetUsageForPeriod: %v", err)
+	}
+}
+
+// checkCBCallMultipartReadMethods covers the multipart-read CBCall
+// wrappers.
+func checkCBCallMultipartReadMethods(t *testing.T, cb *testCBBundle, ctx context.Context) {
+	t.Helper()
+	if _, err := cb.GetMultipartUpload(ctx, "u1"); err != nil {
+		t.Errorf("GetMultipartUpload: %v", err)
+	}
+	if _, err := cb.GetParts(ctx, "u1"); err != nil {
+		t.Errorf("GetParts: %v", err)
+	}
 	if _, err := cb.GetStaleMultipartUploads(ctx, time.Hour); err != nil {
 		t.Errorf("GetStaleMultipartUploads: %v", err)
 	}
 	if _, err := cb.ListMultipartUploads(ctx, "", 100); err != nil {
 		t.Errorf("ListMultipartUploads: %v", err)
 	}
-	if _, err := cb.ListObjectsByBackend(ctx, "b1", 100); err != nil {
-		t.Errorf("ListObjectsByBackend: %v", err)
-	}
-	if _, err := cb.MoveObjectLocation(ctx, "k", "b1", "b2"); err != nil {
-		t.Errorf("MoveObjectLocation: %v", err)
-	}
+}
+
+// checkCBCallReplicaMethods covers the replication CBCall wrappers.
+func checkCBCallReplicaMethods(t *testing.T, cb *testCBBundle, ctx context.Context) {
+	t.Helper()
 	if _, err := cb.GetUnderReplicatedObjects(ctx, 2, 100); err != nil {
 		t.Errorf("GetUnderReplicatedObjects: %v", err)
 	}
 	if _, _, err := cb.RecordReplica(ctx, "k", "b2", "b1"); err != nil {
 		t.Errorf("RecordReplica: %v", err)
 	}
-	if _, err := cb.GetUsageForPeriod(ctx, "2024-01"); err != nil {
-		t.Errorf("GetUsageForPeriod: %v", err)
-	}
+}
+
+// checkCBCallCleanupReadMethods covers the cleanup-queue read CBCall
+// wrappers.
+func checkCBCallCleanupReadMethods(t *testing.T, cb *testCBBundle, ctx context.Context) {
+	t.Helper()
 	if _, err := cb.GetPendingCleanups(ctx, 10); err != nil {
 		t.Errorf("GetPendingCleanups: %v", err)
 	}
@@ -850,12 +887,12 @@ func TestCircuitBreaker_ForwardingMethods_Closed(t *testing.T) {
 	if _, err := cb.MoveCleanupToDLQ(ctx, 1, "test"); err != nil {
 		t.Errorf("MoveCleanupToDLQ: %v", err)
 	}
-	if _, err := cb.ImportObject(ctx, "k", "b1", 100); err != nil {
-		t.Errorf("ImportObject: %v", err)
-	}
+}
 
-	// --- CBCallNoResult wrappers ---
-
+// checkCBCallNoResultMethods covers the void-returning wrappers that go
+// through CBCallNoResult.
+func checkCBCallNoResultMethods(t *testing.T, cb *testCBBundle, ctx context.Context) {
+	t.Helper()
 	if err := cb.DeleteMultipartUpload(ctx, "u1"); err != nil {
 		t.Errorf("DeleteMultipartUpload: %v", err)
 	}

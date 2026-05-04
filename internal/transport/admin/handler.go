@@ -530,9 +530,10 @@ func (h *Handler) validRemoveToken(token, expectedName string) bool {
 // ENCRYPTION KEY ROTATION
 // -------------------------------------------------------------------------
 
-// handleRotateEncryptionKey re-wraps all encrypted objects' DEKs with the
-// current primary key. Objects are processed in batches to avoid holding long
-// transactions. The old key must remain in previous_keys for unwrapping.
+// handleRotateEncryptionKey re-wraps all encrypted objects' DEKs with
+// the current primary key. Objects are processed in batches to avoid
+// holding long transactions. The old key must remain in previous_keys
+// for unwrapping.
 func (h *Handler) handleRotateEncryptionKey(w http.ResponseWriter, r *http.Request) {
 	if h.encryptor == nil || h.encAdmin == nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": errEncryptionNotEnabled})
@@ -562,48 +563,10 @@ func (h *Handler) handleRotateEncryptionKey(w http.ResponseWriter, r *http.Reque
 		if len(locs) == 0 {
 			break
 		}
-
-		for _, loc := range locs {
-			total++
-			// Unpack old nonce + wrapped DEK
-			baseNonce, wrappedDEK, unpackErr := encryption.UnpackKeyData(loc.EncryptionKey)
-			if unpackErr != nil {
-				slog.WarnContext(ctx, "Key rotation: unpack failed", "key", loc.ObjectKey, "error", unpackErr)
-				telemetry.KeyRotationObjectsTotal.WithLabelValues("error").Inc()
-				failed++
-				continue
-			}
-
-			// Unwrap with old key, re-wrap with new key
-			dek, unwrapErr := h.encryptor.Provider().UnwrapDEK(ctx, wrappedDEK, loc.KeyID)
-			if unwrapErr != nil {
-				slog.WarnContext(ctx, "Key rotation: unwrap failed", "key", loc.ObjectKey, "error", unwrapErr)
-				telemetry.KeyRotationObjectsTotal.WithLabelValues("error").Inc()
-				failed++
-				continue
-			}
-
-			newWrapped, newKeyID, wrapErr := h.encryptor.Provider().WrapDEK(ctx, dek)
-			if wrapErr != nil {
-				slog.WarnContext(ctx, "Key rotation: wrap failed", "key", loc.ObjectKey, "error", wrapErr)
-				telemetry.KeyRotationObjectsTotal.WithLabelValues("error").Inc()
-				failed++
-				continue
-			}
-
-			newKeyData := encryption.PackKeyData(baseNonce, newWrapped)
-			if err := h.encAdmin.UpdateEncryptionKey(ctx, loc.ObjectKey, loc.BackendName, newKeyData, newKeyID); err != nil {
-				slog.WarnContext(ctx, "Key rotation: update failed", "key", loc.ObjectKey, "error", err)
-				telemetry.KeyRotationObjectsTotal.WithLabelValues("error").Inc()
-				failed++
-				continue
-			}
-
-			telemetry.KeyRotationObjectsTotal.WithLabelValues("success").Inc()
-			rotated++
-		}
-
-		// If we got fewer than batchSize, we've reached the end
+		batchRotated, batchFailed := h.rotateBatch(ctx, locs)
+		rotated += batchRotated
+		failed += batchFailed
+		total += len(locs)
 		if len(locs) < batchSize {
 			break
 		}
@@ -616,6 +579,55 @@ func (h *Handler) handleRotateEncryptionKey(w http.ResponseWriter, r *http.Reque
 		"failed":  failed,
 		"total":   total,
 	})
+}
+
+// rotateBatch re-wraps the DEKs for one paginated batch of encrypted
+// locations, returning the per-batch success and failure counts.
+func (h *Handler) rotateBatch(ctx context.Context, locs []core.EncryptedLocation) (rotated, failed int) {
+	for _, loc := range locs {
+		if h.rotateOneLocation(ctx, loc) {
+			rotated++
+		} else {
+			failed++
+		}
+	}
+	return rotated, failed
+}
+
+// rotateOneLocation re-wraps the DEK for a single encrypted location.
+// Returns true on success; logs and increments error telemetry on
+// failure (every failure mode is non-fatal so the batch can continue).
+func (h *Handler) rotateOneLocation(ctx context.Context, loc core.EncryptedLocation) bool {
+	baseNonce, wrappedDEK, unpackErr := encryption.UnpackKeyData(loc.EncryptionKey)
+	if unpackErr != nil {
+		slog.WarnContext(ctx, "Key rotation: unpack failed", "key", loc.ObjectKey, "error", unpackErr)
+		telemetry.KeyRotationObjectsTotal.WithLabelValues("error").Inc()
+		return false
+	}
+
+	dek, unwrapErr := h.encryptor.Provider().UnwrapDEK(ctx, wrappedDEK, loc.KeyID)
+	if unwrapErr != nil {
+		slog.WarnContext(ctx, "Key rotation: unwrap failed", "key", loc.ObjectKey, "error", unwrapErr)
+		telemetry.KeyRotationObjectsTotal.WithLabelValues("error").Inc()
+		return false
+	}
+
+	newWrapped, newKeyID, wrapErr := h.encryptor.Provider().WrapDEK(ctx, dek)
+	if wrapErr != nil {
+		slog.WarnContext(ctx, "Key rotation: wrap failed", "key", loc.ObjectKey, "error", wrapErr)
+		telemetry.KeyRotationObjectsTotal.WithLabelValues("error").Inc()
+		return false
+	}
+
+	newKeyData := encryption.PackKeyData(baseNonce, newWrapped)
+	if err := h.encAdmin.UpdateEncryptionKey(ctx, loc.ObjectKey, loc.BackendName, newKeyData, newKeyID); err != nil {
+		slog.WarnContext(ctx, "Key rotation: update failed", "key", loc.ObjectKey, "error", err)
+		telemetry.KeyRotationObjectsTotal.WithLabelValues("error").Inc()
+		return false
+	}
+
+	telemetry.KeyRotationObjectsTotal.WithLabelValues("success").Inc()
+	return true
 }
 
 // -------------------------------------------------------------------------

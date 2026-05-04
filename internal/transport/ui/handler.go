@@ -32,6 +32,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -435,61 +436,54 @@ type loginPage struct {
 	Error   string
 }
 
-// handleLogin serves the login page (GET) and processes login attempts (POST).
+// handleLogin serves the login page (GET) and processes login attempts
+// (POST).
 func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
-
-	if r.Method == http.MethodGet {
-		if h.validSession(r) {
-			http.Redirect(w, r, h.prefix+"/", http.StatusSeeOther)
-			return
-		}
-		w.Header().Set(headerContentType, contentTypeHTML)
-		if err := h.templates.ExecuteTemplate(w, "login.html", loginPage{Version: telemetry.Version}); err != nil {
-			slog.ErrorContext(r.Context(), errLoginRenderFailed, "error", err)
-		}
-		return
-	}
-
-	if r.Method != http.MethodPost {
+	switch r.Method {
+	case http.MethodGet:
+		h.serveLoginPage(w, r)
+	case http.MethodPost:
+		h.processLoginAttempt(w, r)
+	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// serveLoginPage renders the GET /login page; redirects to the dashboard
+// when the request already carries a valid session.
+func (h *Handler) serveLoginPage(w http.ResponseWriter, r *http.Request) {
+	if h.validSession(r) {
+		http.Redirect(w, r, h.prefix+"/", http.StatusSeeOther)
 		return
 	}
+	w.Header().Set(headerContentType, contentTypeHTML)
+	if err := h.templates.ExecuteTemplate(w, "login.html", loginPage{Version: telemetry.Version}); err != nil {
+		slog.ErrorContext(r.Context(), errLoginRenderFailed, "error", err)
+	}
+}
 
+// processLoginAttempt validates the POSTed credentials, applies the
+// login-attempt throttle, and either creates a session or re-renders the
+// login form with the appropriate error.
+func (h *Handler) processLoginAttempt(w http.ResponseWriter, r *http.Request) {
 	clientIP := h.clientIP(r)
-
 	if h.loginThrottle != nil && h.loginThrottle.IsLockedOut(clientIP) {
 		slog.WarnContext(r.Context(), "UI: login attempt while locked out", "remote_addr", clientIP)
-		w.Header().Set(headerContentType, contentTypeHTML)
-		w.WriteHeader(http.StatusTooManyRequests)
-		if err := h.templates.ExecuteTemplate(w, "login.html", loginPage{
-			Version: telemetry.Version,
-			Error:   "Too many attempts. Try again later.",
-		}); err != nil {
-			slog.ErrorContext(r.Context(), errLoginRenderFailed, "error", err)
-		}
+		h.renderLoginError(w, r, http.StatusTooManyRequests, "Too many attempts. Try again later.")
 		return
 	}
 
 	key := r.FormValue("access_key")
 	secret := r.FormValue("secret_key")
-
 	keyMatch := subtle.ConstantTimeCompare([]byte(key), []byte(h.adminKey)) == 1
 	secretMatch := checkSecret(h.adminSecret, secret)
-
 	if !keyMatch || !secretMatch {
 		if h.loginThrottle != nil {
 			h.loginThrottle.RecordFailure(clientIP)
 		}
 		slog.WarnContext(r.Context(), "UI: failed login attempt", "remote_addr", clientIP)
-		w.Header().Set(headerContentType, contentTypeHTML)
-		w.WriteHeader(http.StatusUnauthorized)
-		if err := h.templates.ExecuteTemplate(w, "login.html", loginPage{
-			Version: telemetry.Version,
-			Error:   "Invalid credentials.",
-		}); err != nil {
-			slog.ErrorContext(r.Context(), errLoginRenderFailed, "error", err)
-		}
+		h.renderLoginError(w, r, http.StatusUnauthorized, "Invalid credentials.")
 		return
 	}
 
@@ -499,6 +493,19 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	slog.InfoContext(r.Context(), "UI: admin login", "remote_addr", clientIP)
 	h.createSession(w, r, key)
 	http.Redirect(w, r, h.prefix+"/", http.StatusSeeOther)
+}
+
+// renderLoginError writes the login form with status and an inline error
+// message. Used by both the throttle-lockout and bad-credential paths.
+func (h *Handler) renderLoginError(w http.ResponseWriter, r *http.Request, status int, errMsg string) {
+	w.Header().Set(headerContentType, contentTypeHTML)
+	w.WriteHeader(status)
+	if err := h.templates.ExecuteTemplate(w, "login.html", loginPage{
+		Version: telemetry.Version,
+		Error:   errMsg,
+	}); err != nil {
+		slog.ErrorContext(r.Context(), errLoginRenderFailed, "error", err)
+	}
 }
 
 // handleLogout clears the session and CSRF cookies and redirects to login.
@@ -1111,52 +1118,12 @@ type logsResponse struct {
 
 // handleAPILogs returns buffered log entries as JSON. Supports query
 // parameters for filtering: level (minimum severity), since (RFC3339
-// timestamp), before (RFC3339 timestamp for pagination), component,
-// and limit.
+// timestamp), before (RFC3339 timestamp for pagination), component, and
+// limit.
 func (h *Handler) handleAPILogs(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
 
-	opts := telemetry.LogQueryOpts{}
-
-	if lvl := r.URL.Query().Get("level"); lvl != "" {
-		switch strings.ToUpper(lvl) {
-		case "DEBUG":
-			opts.MinLevel = slog.LevelDebug
-		case "INFO":
-			opts.MinLevel = slog.LevelInfo
-		case "WARN":
-			opts.MinLevel = slog.LevelWarn
-		case "ERROR":
-			opts.MinLevel = slog.LevelError
-		}
-	}
-
-	if since := r.URL.Query().Get("since"); since != "" {
-		if t, err := time.Parse(time.RFC3339, since); err == nil {
-			opts.Since = t
-		}
-	}
-
-	if before := r.URL.Query().Get("before"); before != "" {
-		if t, err := time.Parse(time.RFC3339, before); err == nil {
-			opts.Before = t
-		}
-	}
-
-	requestedLimit := 0
-	if limit := r.URL.Query().Get("limit"); limit != "" {
-		if n, err := strconv.Atoi(limit); err == nil && n > 0 {
-			requestedLimit = n
-		}
-	}
-
-	// Over-fetch by 1 to detect whether more entries exist.
-	if requestedLimit > 0 {
-		opts.Limit = requestedLimit + 1
-	}
-
-	opts.Component = r.URL.Query().Get("component")
-
+	opts, requestedLimit := buildLogQueryOpts(r.URL.Query())
 	entries := h.logBuffer.Entries(&opts)
 	if entries == nil {
 		entries = []telemetry.LogEntry{}
@@ -1172,4 +1139,66 @@ func (h *Handler) handleAPILogs(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		slog.ErrorContext(r.Context(), "UI: failed to encode logs JSON", "error", err)
 	}
+}
+
+// buildLogQueryOpts parses log-API query parameters into LogQueryOpts.
+// Returns the parsed options and the client's requested limit (0 when
+// unset). The Limit on opts is the client limit plus one so the handler
+// can detect whether more entries exist.
+func buildLogQueryOpts(q url.Values) (telemetry.LogQueryOpts, int) {
+	opts := telemetry.LogQueryOpts{}
+	opts.MinLevel = parseLogLevel(q.Get("level"))
+	opts.Since = parseLogTimestamp(q.Get("since"))
+	opts.Before = parseLogTimestamp(q.Get("before"))
+	opts.Component = q.Get("component")
+
+	requestedLimit := parseLogLimit(q.Get("limit"))
+	if requestedLimit > 0 {
+		opts.Limit = requestedLimit + 1
+	}
+	return opts, requestedLimit
+}
+
+// parseLogLevel maps the string name of a slog level to its numeric
+// value. Unrecognized inputs return slog's zero value (Info), matching
+// the previous behaviour of leaving MinLevel unset.
+func parseLogLevel(lvl string) slog.Level {
+	switch strings.ToUpper(lvl) {
+	case "DEBUG":
+		return slog.LevelDebug
+	case "INFO":
+		return slog.LevelInfo
+	case "WARN":
+		return slog.LevelWarn
+	case "ERROR":
+		return slog.LevelError
+	}
+	return 0
+}
+
+// parseLogTimestamp parses an RFC3339 timestamp into a time.Time. Empty
+// or unparseable input returns the zero value, which the log buffer
+// treats as "no bound".
+func parseLogTimestamp(s string) time.Time {
+	if s == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
+// parseLogLimit parses the requested page size. Non-positive or
+// unparseable values disable client-side limiting (return 0).
+func parseLogLimit(s string) int {
+	if s == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return n
 }

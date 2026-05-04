@@ -35,8 +35,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
-	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 )
@@ -45,176 +45,184 @@ import (
 // TLS
 // -------------------------------------------------------------------------
 
-// TestTLS verifies the tls behaviour across the supplied sub-cases:
-// "CRUDOverTLS", "mTLSAcceptsValidClient", "mTLSRejectsNoClientCert", "CertReloaderIntegration".
-// Each sub-case exercises one branch of the code under test.
-func TestTLS(t *testing.T) {
+// TestTLS_CRUDOverTLS is one of the sub-cases extracted from the
+// original mega-TestTLS; behaviour is preserved.
+func TestTLS_CRUDOverTLS(t *testing.T) {
 	ctx := context.Background()
+	_ = ctx
 
-	t.Run("CRUDOverTLS", func(t *testing.T) {
-		certs := generateTLSCerts(t)
-		addr := startTLSProxy(t, certs.ServerCertFile, certs.ServerKeyFile, "")
-		client := newTLSS3Client(t, addr, certs.CACertPEM)
+	certs := generateTLSCerts(t)
+	addr := startTLSProxy(t, certs.ServerCertFile, certs.ServerKeyFile, "")
+	client := newTLSS3Client(t, addr, certs.CACertPEM)
 
-		key := uniqueKey(t, "tls-crud")
-		body := []byte("hello-tls")
+	key := uniqueKey(t, "tls-crud")
+	body := []byte("hello-tls")
 
-		_, err := client.PutObject(ctx, &s3.PutObjectInput{
-			Bucket:        aws.String(virtualBucket),
-			Key:           aws.String(key),
-			Body:          bytes.NewReader(body),
-			ContentLength: aws.Int64(int64(len(body))),
-		})
-		if err != nil {
-			t.Fatalf("PutObject over TLS: %v", err)
-		}
-
-		resp, err := client.GetObject(ctx, &s3.GetObjectInput{
-			Bucket: aws.String(virtualBucket),
-			Key:    aws.String(key),
-		})
-		if err != nil {
-			t.Fatalf("GetObject over TLS: %v", err)
-		}
-		defer resp.Body.Close()
-
-		got, err := io.ReadAll(resp.Body)
-		if err != nil {
-			t.Fatalf("ReadAll: %v", err)
-		}
-		if !bytes.Equal(got, body) {
-			t.Fatalf("body mismatch: got %q, want %q", got, body)
-		}
+	_, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(key),
+		Body:          bytes.NewReader(body),
+		ContentLength: aws.Int64(int64(len(body))),
 	})
+	if err != nil {
+		t.Fatalf("PutObject over TLS: %v", err)
+	}
 
-	t.Run("mTLSAcceptsValidClient", func(t *testing.T) {
-		certs := generateTLSCerts(t)
-		addr := startTLSProxy(t, certs.ServerCertFile, certs.ServerKeyFile, certs.CACertFile)
-		client := newMTLSS3Client(t, addr, certs.CACertPEM, certs.ClientCertFile, certs.ClientKeyFile)
-
-		key := uniqueKey(t, "mtls")
-		body := []byte("mtls-ok")
-
-		_, err := client.PutObject(ctx, &s3.PutObjectInput{
-			Bucket:        aws.String(virtualBucket),
-			Key:           aws.String(key),
-			Body:          bytes.NewReader(body),
-			ContentLength: aws.Int64(int64(len(body))),
-		})
-		if err != nil {
-			t.Fatalf("PutObject with valid client cert: %v", err)
-		}
-
-		resp, err := client.GetObject(ctx, &s3.GetObjectInput{
-			Bucket: aws.String(virtualBucket),
-			Key:    aws.String(key),
-		})
-		if err != nil {
-			t.Fatalf("GetObject with valid client cert: %v", err)
-		}
-		defer resp.Body.Close()
-
-		got, err := io.ReadAll(resp.Body)
-		if err != nil {
-			t.Fatalf("ReadAll: %v", err)
-		}
-		if !bytes.Equal(got, body) {
-			t.Fatalf("body mismatch: got %q, want %q", got, body)
-		}
+	resp, err := client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(virtualBucket),
+		Key:    aws.String(key),
 	})
+	if err != nil {
+		t.Fatalf("GetObject over TLS: %v", err)
+	}
+	defer resp.Body.Close()
 
-	t.Run("mTLSRejectsNoClientCert", func(t *testing.T) {
-		certs := generateTLSCerts(t)
-		addr := startTLSProxy(t, certs.ServerCertFile, certs.ServerKeyFile, certs.CACertFile)
+	got, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if !bytes.Equal(got, body) {
+		t.Fatalf("body mismatch: got %q, want %q", got, body)
+	}
+}
 
-		// Client trusts server CA but does NOT present a client cert
-		client := newTLSS3Client(t, addr, certs.CACertPEM)
+// TestTLS_mTLSAcceptsValidClient is one of the sub-cases extracted from the
+// original mega-TestTLS; behaviour is preserved.
+func TestTLS_mTLSAcceptsValidClient(t *testing.T) {
+	ctx := context.Background()
+	_ = ctx
 
-		_, err := client.PutObject(ctx, &s3.PutObjectInput{
-			Bucket:        aws.String(virtualBucket),
-			Key:           aws.String(uniqueKey(t, "mtls-reject")),
-			Body:          bytes.NewReader([]byte("x")),
-			ContentLength: aws.Int64(1),
-		})
-		if err == nil {
-			t.Fatal("expected TLS handshake failure without client cert, got nil")
-		}
+	certs := generateTLSCerts(t)
+	addr := startTLSProxy(t, certs.ServerCertFile, certs.ServerKeyFile, certs.CACertFile)
+	client := newMTLSS3Client(t, addr, certs.CACertPEM, certs.ClientCertFile, certs.ClientKeyFile)
+
+	key := uniqueKey(t, "mtls")
+	body := []byte("mtls-ok")
+
+	_, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(key),
+		Body:          bytes.NewReader(body),
+		ContentLength: aws.Int64(int64(len(body))),
 	})
+	if err != nil {
+		t.Fatalf("PutObject with valid client cert: %v", err)
+	}
 
-	t.Run("CertReloaderIntegration", func(t *testing.T) {
-		certs := generateTLSCerts(t)
-
-		// Start proxy using CertReloader (same code path as production main.go)
-		reloader, err := httputil.NewCertReloader(certs.ServerCertFile, certs.ServerKeyFile)
-		if err != nil {
-			t.Fatalf("NewCertReloader: %v", err)
-		}
-
-		srv := &s3api.Server{
-			Manager: testManager,
-		}
-		srv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{{
-			Name: virtualBucket,
-			Credentials: []config.CredentialConfig{{
-				AccessKeyID:    "test",
-				SecretAccessKey: "test",
-			}},
-		}}))
-
-		tlsCfg := &tls.Config{
-			GetCertificate: reloader.GetCertificate,
-			MinVersion:     tls.VersionTLS12,
-		}
-
-		listener, err := tls.Listen("tcp", "127.0.0.1:0", tlsCfg)
-		if err != nil {
-			t.Fatalf("TLS listen: %v", err)
-		}
-
-		httpServer := &http.Server{
-			Handler:      srv,
-			ReadTimeout:  5 * time.Minute,
-			WriteTimeout: 5 * time.Minute,
-		}
-		go httpServer.Serve(listener)
-		t.Cleanup(func() { httpServer.Shutdown(context.Background()) })
-
-		addr := listener.Addr().String()
-		client := newTLSS3Client(t, addr, certs.CACertPEM)
-
-		// Verify initial cert works
-		key := uniqueKey(t, "tls-reload")
-		_, err = client.PutObject(ctx, &s3.PutObjectInput{
-			Bucket:        aws.String(virtualBucket),
-			Key:           aws.String(key),
-			Body:          bytes.NewReader([]byte("before-reload")),
-			ContentLength: aws.Int64(13),
-		})
-		if err != nil {
-			t.Fatalf("PutObject before reload: %v", err)
-		}
-
-		// Regenerate server cert from same CA, write to same files
-		rewriteServerCert(t, certs)
-
-		if err := reloader.Reload(); err != nil {
-			t.Fatalf("Reload: %v", err)
-		}
-
-		// Force a new TCP connection so the reloaded cert is used
-		client = newTLSS3Client(t, addr, certs.CACertPEM)
-
-		key2 := uniqueKey(t, "tls-reload-after")
-		_, err = client.PutObject(ctx, &s3.PutObjectInput{
-			Bucket:        aws.String(virtualBucket),
-			Key:           aws.String(key2),
-			Body:          bytes.NewReader([]byte("after-reload")),
-			ContentLength: aws.Int64(12),
-		})
-		if err != nil {
-			t.Fatalf("PutObject after reload: %v", err)
-		}
+	resp, err := client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(virtualBucket),
+		Key:    aws.String(key),
 	})
+	if err != nil {
+		t.Fatalf("GetObject with valid client cert: %v", err)
+	}
+	defer resp.Body.Close()
+
+	got, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if !bytes.Equal(got, body) {
+		t.Fatalf("body mismatch: got %q, want %q", got, body)
+	}
+}
+
+// TestTLS_mTLSRejectsNoClientCert is one of the sub-cases extracted from the
+// original mega-TestTLS; behaviour is preserved.
+func TestTLS_mTLSRejectsNoClientCert(t *testing.T) {
+	ctx := context.Background()
+	_ = ctx
+
+	certs := generateTLSCerts(t)
+	addr := startTLSProxy(t, certs.ServerCertFile, certs.ServerKeyFile, certs.CACertFile)
+
+	client := newTLSS3Client(t, addr, certs.CACertPEM)
+
+	_, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(uniqueKey(t, "mtls-reject")),
+		Body:          bytes.NewReader([]byte("x")),
+		ContentLength: aws.Int64(1),
+	})
+	if err == nil {
+		t.Fatal("expected TLS handshake failure without client cert, got nil")
+	}
+}
+
+// TestTLS_CertReloaderIntegration is one of the sub-cases extracted from the
+// original mega-TestTLS; behaviour is preserved.
+func TestTLS_CertReloaderIntegration(t *testing.T) {
+	ctx := context.Background()
+	_ = ctx
+
+	certs := generateTLSCerts(t)
+
+	reloader, err := httputil.NewCertReloader(certs.ServerCertFile, certs.ServerKeyFile)
+	if err != nil {
+		t.Fatalf("NewCertReloader: %v", err)
+	}
+
+	srv := &s3api.Server{
+		Manager: testManager,
+	}
+	srv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{{
+		Name: virtualBucket,
+		Credentials: []config.CredentialConfig{{
+			AccessKeyID:     "test",
+			SecretAccessKey: "test",
+		}},
+	}}))
+
+	tlsCfg := &tls.Config{
+		GetCertificate: reloader.GetCertificate,
+		MinVersion:     tls.VersionTLS12,
+	}
+
+	listener, err := tls.Listen("tcp", "127.0.0.1:0", tlsCfg)
+	if err != nil {
+		t.Fatalf("TLS listen: %v", err)
+	}
+
+	httpServer := &http.Server{
+		Handler:      srv,
+		ReadTimeout:  5 * time.Minute,
+		WriteTimeout: 5 * time.Minute,
+	}
+	go httpServer.Serve(listener)
+	t.Cleanup(func() { httpServer.Shutdown(context.Background()) })
+
+	addr := listener.Addr().String()
+	client := newTLSS3Client(t, addr, certs.CACertPEM)
+
+	key := uniqueKey(t, "tls-reload")
+	_, err = client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(key),
+		Body:          bytes.NewReader([]byte("before-reload")),
+		ContentLength: aws.Int64(13),
+	})
+	if err != nil {
+		t.Fatalf("PutObject before reload: %v", err)
+	}
+
+	rewriteServerCert(t, certs)
+
+	if err := reloader.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+
+	client = newTLSS3Client(t, addr, certs.CACertPEM)
+
+	key2 := uniqueKey(t, "tls-reload-after")
+	_, err = client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(key2),
+		Body:          bytes.NewReader([]byte("after-reload")),
+		ContentLength: aws.Int64(12),
+	})
+	if err != nil {
+		t.Fatalf("PutObject after reload: %v", err)
+	}
 }
 
 // -------------------------------------------------------------------------
@@ -379,7 +387,7 @@ func startTLSProxy(t *testing.T, certFile, keyFile, clientCAFile string) string 
 	srv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{{
 		Name: virtualBucket,
 		Credentials: []config.CredentialConfig{{
-			AccessKeyID:    "test",
+			AccessKeyID:     "test",
 			SecretAccessKey: "test",
 		}},
 	}}))

@@ -15,6 +15,7 @@
 package s3api
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -78,7 +79,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	method := r.Method
 
-	// --- Generate or adopt request ID ---
 	requestID := r.Header.Get("X-Request-Id")
 	if !isValidRequestID(requestID) {
 		requestID = audit.NewID()
@@ -86,89 +86,32 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := audit.WithRequestID(r.Context(), requestID)
 	w.Header().Set("X-Amz-Request-Id", requestID)
 
-	// --- Track inflight requests ---
 	telemetry.InflightRequests.WithLabelValues(method).Inc()
 	defer telemetry.InflightRequests.WithLabelValues(method).Dec()
 
-	// --- Auth: resolve which bucket these credentials authorize ---
 	authorizedBucket, err := s.GetBucketAuth().AuthenticateAndResolveBucket(r)
 	if err != nil {
-		s.recordRequest(method, http.StatusForbidden, start, 0, 0)
-		slog.WarnContext(ctx, "S3 auth failure", "method", method, "path", r.URL.Path, "remote", r.RemoteAddr, "error", err)
-		audit.Log(ctx, "s3.AuthFailure",
-			slog.String("method", method),
-			slog.String("path", r.URL.Path),
-			slog.String("remote", r.RemoteAddr),
-			slog.String("error", err.Error()),
-			slog.Int("status", http.StatusForbidden),
-			slog.Duration("duration", time.Since(start)),
-		)
-		writeS3Error(w, http.StatusForbidden, "AccessDenied", "Access denied")
+		s.rejectAuth(ctx, w, r, method, start, err)
 		return
 	}
 
-	// --- ListBuckets: GET / ---
 	if r.URL.Path == "/" && method == http.MethodGet {
-		ctx, span := telemetry.StartServerSpan(ctx, "HTTP GET",
-			append(telemetry.RequestAttributes(method, "/", "", "", r.RemoteAddr),
-				telemetry.AttrRequestID.String(requestID))...,
-		)
-		defer span.End()
-
-		status, err := s.handleListBuckets(w, authorizedBucket)
-		s.recordRequest(method, status, start, 0, 0)
-		if err != nil {
-			span.SetStatus(codes.Error, err.Error())
-			span.RecordError(err)
-		}
-		span.SetAttributes(attribute.Int("http.status_code", status))
-		audit.Log(ctx, "s3.ListBuckets",
-			slog.String("operation", "ListBuckets"),
-			slog.String("method", method),
-			slog.String("path", r.URL.Path),
-			slog.String("remote", r.RemoteAddr),
-			slog.Int("status", status),
-			slog.Duration("duration", time.Since(start)),
-		)
+		s.serveListBuckets(ctx, w, r, method, requestID, start, authorizedBucket)
 		return
 	}
 
-	// --- Parse path ---
 	bucket, key, ok := parsePath(r.URL.Path)
 	if !ok {
-		s.recordRequest(method, http.StatusBadRequest, start, 0, 0)
-		audit.Log(ctx, "s3.InvalidPath",
-			slog.String("method", method),
-			slog.String("path", r.URL.Path),
-			slog.String("remote", r.RemoteAddr),
-			slog.Int("status", http.StatusBadRequest),
-			slog.Duration("duration", time.Since(start)),
-		)
-		writeS3Error(w, http.StatusBadRequest, "InvalidRequest", "Invalid path format")
+		s.rejectInvalidPath(ctx, w, r, method, start)
 		return
 	}
-
-	// --- Verify path bucket matches authorized bucket ---
 	if bucket != authorizedBucket {
-		s.recordRequest(method, http.StatusForbidden, start, 0, 0)
-		slog.WarnContext(ctx, "S3 bucket mismatch", "method", method, "path", r.URL.Path, "remote", r.RemoteAddr, "authorized", authorizedBucket, "requested", bucket)
-		audit.Log(ctx, "s3.BucketMismatch",
-			slog.String("method", method),
-			slog.String("path", r.URL.Path),
-			slog.String("remote", r.RemoteAddr),
-			slog.String("authorized_bucket", authorizedBucket),
-			slog.String("requested_bucket", bucket),
-			slog.Int("status", http.StatusForbidden),
-			slog.Duration("duration", time.Since(start)),
-		)
-		writeS3Error(w, http.StatusForbidden, "AccessDenied", "Access denied")
+		s.rejectBucketMismatch(ctx, w, r, method, start, authorizedBucket, bucket)
 		return
 	}
 
-	// --- Prefix key for internal storage isolation ---
 	internalKey := internalkey.Make(bucket, key)
 
-	// --- Start tracing span ---
 	spanName := httpSpanName[method]
 	if spanName == "" {
 		spanName = "HTTP " + method
@@ -179,12 +122,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	)
 	defer span.End()
 
-	// --- Route by method and track operation name ---
-	var status int
-	var requestSize, responseSize int64
-	var operation string
-
-	// rejectMethod handles the common 405 response for unsupported methods.
 	rejectMethod := func(msg string) {
 		s.recordRequest(method, http.StatusMethodNotAllowed, start, 0, 0)
 		audit.Log(ctx, "s3.MethodNotAllowed",
@@ -199,100 +136,27 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		span.SetStatus(codes.Error, msg)
 	}
 
-	// --- Bucket-level operations (no key) ---
+	var status int
+	var requestSize, responseSize int64
+	var operation string
+	var supported bool
+
 	if key == "" {
-		query := r.URL.Query()
-		_, hasDelete := query["delete"]
-		_, hasLocation := query["location"]
-		_, hasUploads := query["uploads"]
-		_, hasVersioning := query["versioning"]
-
-		switch {
-		case method == http.MethodHead:
-			operation = "HeadBucket"
-			status, err = s.handleHeadBucket(w)
-		case method == http.MethodGet && hasVersioning:
-			operation = "GetBucketVersioning"
-			status, err = s.handleGetBucketVersioning(w)
-		case method == http.MethodGet && hasUploads:
-			operation = "ListMultipartUploads"
-			status, err = s.handleListMultipartUploads(ctx, w, r, bucket)
-		case method == http.MethodGet && hasLocation:
-			operation = "GetBucketLocation"
-			status, err = s.handleGetBucketLocation(w)
-		case method == http.MethodGet && query.Get("list-type") == "2":
-			operation = "ListObjectsV2"
-			status, err = s.handleListObjectsV2(ctx, w, r, bucket)
-		case method == http.MethodGet:
-			operation = "ListObjectsV1"
-			status, err = s.handleListObjectsV1(ctx, w, r, bucket)
-		case method == http.MethodPost && hasDelete:
-			operation = "DeleteObjects"
-			status, err = s.handleDeleteObjects(ctx, w, r, bucket)
-		default:
-			rejectMethod("Method not supported for bucket")
-			return
-		}
+		operation, status, err, supported = s.routeBucketRequest(ctx, w, r, method, bucket)
 	} else {
-		// --- Multipart upload routing ---
-		query := r.URL.Query()
-		_, hasUploads := query["uploads"]
-		uploadID := query.Get("uploadId")
-
-		switch {
-		case hasUploads && method == http.MethodPost:
-			operation = "CreateMultipartUpload"
-			status, err = s.handleCreateMultipartUpload(ctx, w, r, bucket, key, internalKey)
-		case uploadID != "":
-			switch method {
-			case http.MethodPut:
-				operation = "UploadPart"
-				requestSize = r.ContentLength
-				status, err = s.handleUploadPart(ctx, w, r, internalKey)
-			case http.MethodPost:
-				operation = "CompleteMultipartUpload"
-				status, err = s.handleCompleteMultipartUpload(ctx, w, r, bucket, key)
-			case http.MethodDelete:
-				operation = "AbortMultipartUpload"
-				status, err = s.handleAbortMultipartUpload(ctx, w, uploadID)
-			case http.MethodGet:
-				operation = "ListParts"
-				status, err = s.handleListParts(ctx, w, r, bucket, key, internalKey)
-			default:
-				rejectMethod("Method not supported")
-				return
-			}
-		default:
-			switch method {
-			case http.MethodPut:
-				if copySource := r.Header.Get("X-Amz-Copy-Source"); copySource != "" {
-					operation = "CopyObject"
-					status, err = s.handleCopyObject(ctx, w, r, bucket, internalKey, copySource)
-				} else {
-					operation = "PutObject"
-					requestSize = r.ContentLength
-					status, err = s.handlePut(ctx, w, r, internalKey)
-				}
-			case http.MethodGet:
-				operation = "GetObject"
-				status, responseSize, err = s.handleGet(ctx, w, r, internalKey)
-			case http.MethodHead:
-				operation = "HeadObject"
-				status, err = s.handleHead(ctx, w, r, internalKey)
-			case http.MethodDelete:
-				operation = "DeleteObject"
-				status, err = s.handleDelete(ctx, w, r, internalKey)
-			default:
-				rejectMethod("Method not supported")
-				return
-			}
+		operation, status, requestSize, responseSize, err, supported = s.routeObjectRequest(ctx, w, r, method, bucket, key, internalKey)
+	}
+	if !supported {
+		if key == "" {
+			rejectMethod("Method not supported for bucket")
+		} else {
+			rejectMethod("Method not supported")
 		}
+		return
 	}
 
-	// --- Record metrics ---
 	s.recordRequest(method, status, start, requestSize, responseSize)
 
-	// --- Update span status ---
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)
@@ -300,30 +164,244 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	span.SetAttributes(attribute.Int("http.status_code", status))
 
-	// --- Audit log ---
-	elapsed := time.Since(start)
-	attrs := []slog.Attr{
-		slog.String("operation", operation),
+	s.auditRequest(ctx, r, &auditEntry{
+		method:       method,
+		bucket:       bucket,
+		key:          key,
+		operation:    operation,
+		status:       status,
+		requestSize:  requestSize,
+		responseSize: responseSize,
+		elapsed:      time.Since(start),
+		err:          err,
+	})
+}
+
+// rejectAuth writes a 403 AccessDenied response after authentication
+// failure and emits the matching audit log.
+func (s *Server) rejectAuth(ctx context.Context, w http.ResponseWriter, r *http.Request, method string, start time.Time, err error) {
+	s.recordRequest(method, http.StatusForbidden, start, 0, 0)
+	slog.WarnContext(ctx, "S3 auth failure", "method", method, "path", r.URL.Path, "remote", r.RemoteAddr, "error", err)
+	audit.Log(ctx, "s3.AuthFailure",
 		slog.String("method", method),
 		slog.String("path", r.URL.Path),
 		slog.String("remote", r.RemoteAddr),
-		slog.String("bucket", bucket),
-		slog.Int("status", status),
-		slog.Duration("duration", elapsed),
-	}
-	if key != "" {
-		attrs = append(attrs, slog.String("key", key))
-	}
-	if requestSize > 0 {
-		attrs = append(attrs, slog.Int64("request_size", requestSize))
-	}
-	if responseSize > 0 {
-		attrs = append(attrs, slog.Int64("response_size", responseSize))
-	}
+		slog.String("error", err.Error()),
+		slog.Int("status", http.StatusForbidden),
+		slog.Duration("duration", time.Since(start)),
+	)
+	writeS3Error(w, http.StatusForbidden, "AccessDenied", "Access denied")
+}
+
+// serveListBuckets handles the special-case GET / route that serves the
+// authorized bucket as a single-entry ListBuckets response.
+func (s *Server) serveListBuckets(ctx context.Context, w http.ResponseWriter, r *http.Request, method, requestID string, start time.Time, authorizedBucket string) {
+	ctx, span := telemetry.StartServerSpan(ctx, "HTTP GET",
+		append(telemetry.RequestAttributes(method, "/", "", "", r.RemoteAddr),
+			telemetry.AttrRequestID.String(requestID))...,
+	)
+	defer span.End()
+
+	status, err := s.handleListBuckets(w, authorizedBucket)
+	s.recordRequest(method, status, start, 0, 0)
 	if err != nil {
-		attrs = append(attrs, slog.String("error", err.Error()))
+		span.SetStatus(codes.Error, err.Error())
+		span.RecordError(err)
 	}
-	audit.Log(ctx, "s3."+operation, attrs...)
+	span.SetAttributes(attribute.Int("http.status_code", status))
+	audit.Log(ctx, "s3.ListBuckets",
+		slog.String("operation", "ListBuckets"),
+		slog.String("method", method),
+		slog.String("path", r.URL.Path),
+		slog.String("remote", r.RemoteAddr),
+		slog.Int("status", status),
+		slog.Duration("duration", time.Since(start)),
+	)
+}
+
+// rejectInvalidPath writes a 400 InvalidRequest for a path that does not
+// parse as bucket[/key].
+func (s *Server) rejectInvalidPath(ctx context.Context, w http.ResponseWriter, r *http.Request, method string, start time.Time) {
+	s.recordRequest(method, http.StatusBadRequest, start, 0, 0)
+	audit.Log(ctx, "s3.InvalidPath",
+		slog.String("method", method),
+		slog.String("path", r.URL.Path),
+		slog.String("remote", r.RemoteAddr),
+		slog.Int("status", http.StatusBadRequest),
+		slog.Duration("duration", time.Since(start)),
+	)
+	writeS3Error(w, http.StatusBadRequest, "InvalidRequest", "Invalid path format")
+}
+
+// rejectBucketMismatch writes a 403 AccessDenied when the path bucket
+// does not match the bucket the credentials authorize.
+func (s *Server) rejectBucketMismatch(ctx context.Context, w http.ResponseWriter, r *http.Request, method string, start time.Time, authorizedBucket, bucket string) {
+	s.recordRequest(method, http.StatusForbidden, start, 0, 0)
+	slog.WarnContext(ctx, "S3 bucket mismatch", "method", method, "path", r.URL.Path, "remote", r.RemoteAddr, "authorized", authorizedBucket, "requested", bucket)
+	audit.Log(ctx, "s3.BucketMismatch",
+		slog.String("method", method),
+		slog.String("path", r.URL.Path),
+		slog.String("remote", r.RemoteAddr),
+		slog.String("authorized_bucket", authorizedBucket),
+		slog.String("requested_bucket", bucket),
+		slog.Int("status", http.StatusForbidden),
+		slog.Duration("duration", time.Since(start)),
+	)
+	writeS3Error(w, http.StatusForbidden, "AccessDenied", "Access denied")
+}
+
+// routeBucketRequest dispatches bucket-level operations (no object key)
+// to their handlers. supported=false means none of the supported method/
+// query combinations matched; the caller emits a 405.
+func (s *Server) routeBucketRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, method, bucket string) (string, int, error, bool) {
+	query := r.URL.Query()
+	_, hasDelete := query["delete"]
+	_, hasLocation := query["location"]
+	_, hasUploads := query["uploads"]
+	_, hasVersioning := query["versioning"]
+
+	switch {
+	case method == http.MethodHead:
+		s, e := s.handleHeadBucket(w)
+		return "HeadBucket", s, e, true
+	case method == http.MethodGet && hasVersioning:
+		st, e := s.handleGetBucketVersioning(w)
+		return "GetBucketVersioning", st, e, true
+	case method == http.MethodGet && hasUploads:
+		st, e := s.handleListMultipartUploads(ctx, w, r, bucket)
+		return "ListMultipartUploads", st, e, true
+	case method == http.MethodGet && hasLocation:
+		st, e := s.handleGetBucketLocation(w)
+		return "GetBucketLocation", st, e, true
+	case method == http.MethodGet && query.Get("list-type") == "2":
+		st, e := s.handleListObjectsV2(ctx, w, r, bucket)
+		return "ListObjectsV2", st, e, true
+	case method == http.MethodGet:
+		st, e := s.handleListObjectsV1(ctx, w, r, bucket)
+		return "ListObjectsV1", st, e, true
+	case method == http.MethodPost && hasDelete:
+		st, e := s.handleDeleteObjects(ctx, w, r, bucket)
+		return "DeleteObjects", st, e, true
+	}
+	return "", 0, nil, false
+}
+
+// objectRouteKey carries the path-derived identifiers a per-object
+// dispatcher needs. Bundling them keeps the dispatcher signatures under
+// the parameter-count limit.
+type objectRouteKey struct {
+	method      string
+	bucket      string
+	key         string
+	internalKey string
+	uploadID    string
+}
+
+// routeObjectRequest dispatches object-level operations to their
+// handlers, splitting on multipart-upload state. supported=false means
+// the method/query combination is not supported and the caller emits 405.
+func (s *Server) routeObjectRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, method, bucket, key, internalKey string) (string, int, int64, int64, error, bool) {
+	query := r.URL.Query()
+	_, hasUploads := query["uploads"]
+	uploadID := query.Get("uploadId")
+	rk := &objectRouteKey{method: method, bucket: bucket, key: key, internalKey: internalKey, uploadID: uploadID}
+
+	switch {
+	case hasUploads && method == http.MethodPost:
+		st, e := s.handleCreateMultipartUpload(ctx, w, r, bucket, key, internalKey)
+		return "CreateMultipartUpload", st, 0, 0, e, true
+	case uploadID != "":
+		return s.routeMultipartRequest(ctx, w, r, rk)
+	default:
+		return s.routePlainObjectRequest(ctx, w, r, method, bucket, internalKey)
+	}
+}
+
+// routeMultipartRequest dispatches per-uploadID multipart operations.
+func (s *Server) routeMultipartRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, rk *objectRouteKey) (string, int, int64, int64, error, bool) {
+	switch rk.method {
+	case http.MethodPut:
+		st, e := s.handleUploadPart(ctx, w, r, rk.internalKey)
+		return "UploadPart", st, r.ContentLength, 0, e, true
+	case http.MethodPost:
+		st, e := s.handleCompleteMultipartUpload(ctx, w, r, rk.bucket, rk.key)
+		return "CompleteMultipartUpload", st, 0, 0, e, true
+	case http.MethodDelete:
+		st, e := s.handleAbortMultipartUpload(ctx, w, rk.uploadID)
+		return "AbortMultipartUpload", st, 0, 0, e, true
+	case http.MethodGet:
+		st, e := s.handleListParts(ctx, w, r, rk.bucket, rk.key, rk.internalKey)
+		return "ListParts", st, 0, 0, e, true
+	}
+	return "", 0, 0, 0, nil, false
+}
+
+// routePlainObjectRequest dispatches non-multipart object operations.
+// PUT splits between PutObject and CopyObject based on the
+// X-Amz-Copy-Source header.
+func (s *Server) routePlainObjectRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, method, bucket, internalKey string) (string, int, int64, int64, error, bool) {
+	switch method {
+	case http.MethodPut:
+		if copySource := r.Header.Get("X-Amz-Copy-Source"); copySource != "" {
+			st, e := s.handleCopyObject(ctx, w, r, bucket, internalKey, copySource)
+			return "CopyObject", st, 0, 0, e, true
+		}
+		st, e := s.handlePut(ctx, w, r, internalKey)
+		return "PutObject", st, r.ContentLength, 0, e, true
+	case http.MethodGet:
+		st, sz, e := s.handleGet(ctx, w, r, internalKey)
+		return "GetObject", st, 0, sz, e, true
+	case http.MethodHead:
+		st, e := s.handleHead(ctx, w, r, internalKey)
+		return "HeadObject", st, 0, 0, e, true
+	case http.MethodDelete:
+		st, e := s.handleDelete(ctx, w, r, internalKey)
+		return "DeleteObject", st, 0, 0, e, true
+	}
+	return "", 0, 0, 0, nil, false
+}
+
+// auditEntry carries the data emitted to the audit log for a completed
+// S3 request. Bundling these keeps auditRequest under the parameter
+// count limit.
+type auditEntry struct {
+	method       string
+	bucket       string
+	key          string
+	operation    string
+	status       int
+	requestSize  int64
+	responseSize int64
+	elapsed      time.Duration
+	err          error
+}
+
+// auditRequest emits the per-request audit log entry. Path, method,
+// bucket, status, and duration are always present; key, sizes, and
+// error are appended only when they carry information.
+func (s *Server) auditRequest(ctx context.Context, r *http.Request, e *auditEntry) {
+	attrs := []slog.Attr{
+		slog.String("operation", e.operation),
+		slog.String("method", e.method),
+		slog.String("path", r.URL.Path),
+		slog.String("remote", r.RemoteAddr),
+		slog.String("bucket", e.bucket),
+		slog.Int("status", e.status),
+		slog.Duration("duration", e.elapsed),
+	}
+	if e.key != "" {
+		attrs = append(attrs, slog.String("key", e.key))
+	}
+	if e.requestSize > 0 {
+		attrs = append(attrs, slog.Int64("request_size", e.requestSize))
+	}
+	if e.responseSize > 0 {
+		attrs = append(attrs, slog.Int64("response_size", e.responseSize))
+	}
+	if e.err != nil {
+		attrs = append(attrs, slog.String("error", e.err.Error()))
+	}
+	audit.Log(ctx, "s3."+e.operation, attrs...)
 }
 
 // -------------------------------------------------------------------------
