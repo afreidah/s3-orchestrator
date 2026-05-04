@@ -1,3 +1,15 @@
+// -------------------------------------------------------------------------------
+// UsageTracker Benchmarks
+//
+// Author: Alex Freidah
+//
+// Measures the hot-path cost of UsageTracker.WithinLimits and Record. These
+// are called on every S3 request before the body is touched, so any
+// regression in their per-call cost translates directly to higher latency
+// at the proxy. The parallel variant exercises lock contention under load,
+// pinning the contention behavior of the per-backend counter shards.
+// -------------------------------------------------------------------------------
+
 package counter
 
 import (

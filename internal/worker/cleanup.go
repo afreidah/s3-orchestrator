@@ -34,6 +34,10 @@ func NewCleanupWorker(deps CleanupOps, store CleanupWorkerStore, concurrency int
 	return &CleanupWorker{deps: deps, store: store, concurrency: concurrency}
 }
 
+// maxCleanupAttempts is the retry ceiling. The 1-minute starting
+// backoff doubled 10 times yields ~17 hours of total retry runway,
+// which is enough to bridge the longest realistic backend outages.
+// Beyond that the row graduates to cleanup_dlq for operator action.
 const maxCleanupAttempts = 10
 
 // CleanupBackoff returns the backoff duration for the given attempt number.

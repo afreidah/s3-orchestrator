@@ -106,7 +106,7 @@ func (c *MemoryCache) Get(key string) (*Entry, bool) {
 
 // Put reads all data from r and stores it in the cache. Returns an error if
 // the data cannot be read. Objects exceeding max_object_size are silently
-// rejected (not an error — admission control).
+// rejected (not an error  -  admission control).
 func (c *MemoryCache) Put(key string, r io.Reader, meta EntryMeta) error {
 	data, err := io.ReadAll(r)
 	if err != nil {

@@ -141,6 +141,8 @@ func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig) 
 
 // exceedsThreshold returns true if the utilization spread across backends
 // exceeds the configured threshold.
+// ExceedsThreshold exceeds threshold.
+// ExceedsThreshold exceeds threshold.
 func ExceedsThreshold(stats map[string]core.QuotaStat, order []string, threshold float64) bool {
 	if len(order) < 2 {
 		return false
@@ -180,6 +182,8 @@ func ExceedsThreshold(stats map[string]core.QuotaStat, order []string, threshold
 // from the least-utilized. Sorts by percent full descending and only moves
 // objects from a less-full source to a more-full destination. Skips moves
 // that would not increase the destination's packing ratio.
+// PlanPackTight plan pack tight.
+// PlanPackTight plan pack tight.
 func (r *Rebalancer) PlanPackTight(ctx context.Context, stats map[string]core.QuotaStat, batchSize int) ([]RebalanceMove, error) {
 	type backendUtil struct {
 		Name  string
@@ -302,6 +306,8 @@ type backendBalance struct {
 
 // planSpreadEven equalizes utilization ratios across backends. Moves objects
 // from over-utilized backends to under-utilized ones.
+// PlanSpreadEven plan spread even.
+// PlanSpreadEven plan spread even.
 func (r *Rebalancer) PlanSpreadEven(ctx context.Context, stats map[string]core.QuotaStat, batchSize int) ([]RebalanceMove, error) {
 	var totalUsed, totalLimit int64
 	for _, name := range r.ops.BackendOrder() {
@@ -375,7 +381,7 @@ func (r *Rebalancer) PlanSpreadEven(ctx context.Context, stats map[string]core.Q
 				break
 			}
 
-			// Skip if this object is larger than what the source needs to shed —
+			// Skip if this object is larger than what the source needs to shed  - 
 			// moving it would overshoot and make the source under-target
 			if objects[oi].SizeBytes > src.Balance {
 				continue
@@ -432,6 +438,8 @@ func (r *Rebalancer) PlanSpreadEven(ctx context.Context, stats map[string]core.Q
 
 // executeMoves runs the planned object moves with bounded concurrency.
 // Skips individual moves that fail and continues with the rest.
+// ExecuteMoves execute moves.
+// ExecuteMoves execute moves.
 func (r *Rebalancer) ExecuteMoves(ctx context.Context, plan []RebalanceMove, strategy string, concurrency int) int {
 	var moved atomic.Int32
 	workerpool.Run(ctx, concurrency, plan, func(ctx context.Context, mv RebalanceMove) {
@@ -451,6 +459,8 @@ func (r *Rebalancer) ExecuteMoves(ctx context.Context, plan []RebalanceMove, str
 // executeOneMove performs a single object move: read from source, write to
 // destination, swap the DB location, and delete the source copy. Returns
 // true on success.
+// ExecuteOneMove execute one move.
+// ExecuteOneMove execute one move.
 func (r *Rebalancer) ExecuteOneMove(ctx context.Context, move RebalanceMove, strategy string) bool {
 	srcBackend, ok := r.ops.Backends()[move.FromBackend]
 	if !ok {

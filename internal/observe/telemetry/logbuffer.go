@@ -133,7 +133,7 @@ func (b *LogBuffer) snapshotEntries() []LogEntry {
 }
 
 // filterEntries applies the query filters (time range, min level,
-// component) to the snapshot. Pure function — no locking.
+// component) to the snapshot. Pure function  -  no locking.
 func filterEntries(snapshot []LogEntry, opts *LogQueryOpts) []LogEntry {
 	result := make([]LogEntry, 0, len(snapshot))
 	for _, e := range snapshot {

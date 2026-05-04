@@ -1,3 +1,14 @@
+-- -----------------------------------------------------------------------------
+-- Multipart Upload Queries
+--
+-- Author: Alex Freidah
+--
+-- sqlc-input definitions for multipart_uploads and multipart_parts. Covers
+-- the upload lifecycle (create, lookup, delete), per-part record/list, the
+-- prefix-scoped listing the S3 ListMultipartUploads handler needs, and the
+-- stale-upload sweep used by the multipart cleanup background worker.
+-- -----------------------------------------------------------------------------
+
 -- name: CreateMultipartUpload :exec
 INSERT INTO multipart_uploads (upload_id, object_key, backend_name, content_type, metadata, created_at)
 VALUES ($1, $2, $3, $4, $5, NOW());

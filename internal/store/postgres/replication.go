@@ -2,6 +2,14 @@
 // Replication Operations
 //
 // Author: Alex Freidah
+//
+// Implements the Postgres engine bindings for the replication-related
+// queries: under-replicated and over-replicated scans, the conditional
+// replica insert that returns the source row's size_bytes (so callers
+// can keep object_locations and backend_quotas in sync without a
+// second read), and the over-replication excess-copy removal. The
+// "excluding" variant of the under-replicated scan lets the worker
+// skip backends that are draining or circuit-broken.
 // -------------------------------------------------------------------------------
 
 package postgres

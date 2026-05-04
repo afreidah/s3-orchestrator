@@ -17,6 +17,8 @@ import (
 	"testing"
 )
 
+// TestParsePath verifies the parse path contract.
+// Asserts that parsePath() ok = , want.
 func TestParsePath(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -91,6 +93,8 @@ func TestParsePath(t *testing.T) {
 	}
 }
 
+// TestIsValidRequestID verifies the is valid request id contract.
+// Asserts that isValidRequestID() = , want.
 func TestIsValidRequestID(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -125,6 +129,8 @@ func TestIsValidRequestID(t *testing.T) {
 	}
 }
 
+// TestXmlEscape verifies the xml escape contract.
+// Asserts that xmlEscape() = , want.
 func TestXmlEscape(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -151,6 +157,8 @@ func TestXmlEscape(t *testing.T) {
 // extractUserMetadata
 // -------------------------------------------------------------------------
 
+// TestExtractUserMetadata_Basic verifies the extract user metadata basic contract.
+// Asserts that got keys, want 2.
 func TestExtractUserMetadata_Basic(t *testing.T) {
 	t.Parallel()
 	h := http.Header{}
@@ -170,6 +178,8 @@ func TestExtractUserMetadata_Basic(t *testing.T) {
 	}
 }
 
+// TestExtractUserMetadata_Empty verifies the extract user metadata empty contract.
+// Asserts that expected nil, got.
 func TestExtractUserMetadata_Empty(t *testing.T) {
 	t.Parallel()
 	h := http.Header{}
@@ -181,6 +191,8 @@ func TestExtractUserMetadata_Empty(t *testing.T) {
 	}
 }
 
+// TestExtractUserMetadata_BarePrefix verifies the extract user metadata bare prefix contract.
+// Asserts that expected nil for bare x-amz-meta- prefix, got.
 func TestExtractUserMetadata_BarePrefix(t *testing.T) {
 	t.Parallel()
 	h := http.Header{}
@@ -192,6 +204,8 @@ func TestExtractUserMetadata_BarePrefix(t *testing.T) {
 	}
 }
 
+// TestExtractUserMetadata_CaseInsensitive verifies the extract user metadata case insensitive contract.
+// Asserts that upper = , want val.
 func TestExtractUserMetadata_CaseInsensitive(t *testing.T) {
 	t.Parallel()
 	h := http.Header{}
@@ -207,6 +221,8 @@ func TestExtractUserMetadata_CaseInsensitive(t *testing.T) {
 // validateUserMetadata
 // -------------------------------------------------------------------------
 
+// TestValidateUserMetadata_WithinLimit verifies the validate user metadata within limit contract.
+// Asserts that unexpected error:.
 func TestValidateUserMetadata_WithinLimit(t *testing.T) {
 	t.Parallel()
 	meta := map[string]string{"key": "value"}
@@ -215,6 +231,7 @@ func TestValidateUserMetadata_WithinLimit(t *testing.T) {
 	}
 }
 
+// TestValidateUserMetadata_ExceedsLimit verifies the validate user metadata exceeds limit path by exercising strings.Repeat.
 func TestValidateUserMetadata_ExceedsLimit(t *testing.T) {
 	t.Parallel()
 	meta := map[string]string{"k": strings.Repeat("x", maxUserMetadataBytes+1)}
@@ -224,6 +241,8 @@ func TestValidateUserMetadata_ExceedsLimit(t *testing.T) {
 	}
 }
 
+// TestValidateUserMetadata_ExactLimit verifies the validate user metadata exact limit contract.
+// Asserts that unexpected error at exact limit:.
 func TestValidateUserMetadata_ExactLimit(t *testing.T) {
 	t.Parallel()
 	meta := map[string]string{"k": strings.Repeat("x", maxUserMetadataBytes-1)}
@@ -232,6 +251,7 @@ func TestValidateUserMetadata_ExactLimit(t *testing.T) {
 	}
 }
 
+// TestValidateUserMetadata_RejectsCRLFInKey verifies the validate user metadata rejects crlfin key behaviour described by the test name.
 func TestValidateUserMetadata_RejectsCRLFInKey(t *testing.T) {
 	t.Parallel()
 	meta := map[string]string{"bad\r\nkey": "value"}
@@ -240,6 +260,7 @@ func TestValidateUserMetadata_RejectsCRLFInKey(t *testing.T) {
 	}
 }
 
+// TestValidateUserMetadata_RejectsCRLFInValue verifies the validate user metadata rejects crlfin value behaviour described by the test name.
 func TestValidateUserMetadata_RejectsCRLFInValue(t *testing.T) {
 	t.Parallel()
 	meta := map[string]string{"key": "bad\nvalue"}
@@ -248,6 +269,7 @@ func TestValidateUserMetadata_RejectsCRLFInValue(t *testing.T) {
 	}
 }
 
+// TestValidateUserMetadata_RejectsNullByte verifies the validate user metadata rejects null byte behaviour described by the test name.
 func TestValidateUserMetadata_RejectsNullByte(t *testing.T) {
 	t.Parallel()
 	meta := map[string]string{"key": "val\x00ue"}
@@ -256,6 +278,8 @@ func TestValidateUserMetadata_RejectsNullByte(t *testing.T) {
 	}
 }
 
+// TestValidMetadataToken verifies the valid metadata token contract.
+// Asserts that validMetadataToken() = , want.
 func TestValidMetadataToken(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -268,7 +292,7 @@ func TestValidMetadataToken(t *testing.T) {
 		{"has\rreturn", false},
 		{"has\x00null", false},
 		{"has\ttab", false},
-		{"über", false}, // non-ASCII
+		{"\u00fcber", false}, // non-ASCII test input (U+00FC, u-with-diaeresis)
 		{"", true},
 	}
 	for _, tc := range tests {
@@ -282,6 +306,8 @@ func TestValidMetadataToken(t *testing.T) {
 // writeS3Error
 // -------------------------------------------------------------------------
 
+// TestWriteS3Error_SetsContentLength verifies the write s3 error sets content length contract.
+// Asserts that status = , want.
 func TestWriteS3Error_SetsContentLength(t *testing.T) {
 	t.Parallel()
 	w := httptest.NewRecorder()
@@ -305,6 +331,7 @@ func TestWriteS3Error_SetsContentLength(t *testing.T) {
 	}
 }
 
+// TestWriteS3Error_EscapesXML verifies the write s3 error escapes xml path by exercising httptest.NewRecorder, strings.Contains.
 func TestWriteS3Error_EscapesXML(t *testing.T) {
 	t.Parallel()
 	w := httptest.NewRecorder()

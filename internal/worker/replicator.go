@@ -129,7 +129,7 @@ func (r *Replicator) replicate(ctx context.Context, cfg config.ReplicationConfig
 	}
 
 	// Fetch quota stats once per cycle to avoid a DB round-trip per object.
-	// This makes target selection approximately correct — concurrent PUTs
+	// This makes target selection approximately correct  -  concurrent PUTs
 	// may update quotas between the fetch and each task. Over-quota writes
 	// are caught by the backend layer (RecordReplica returns an error) so
 	// the worst case is a wasted copy that gets cleaned up.
@@ -300,6 +300,8 @@ func (r *Replicator) FindReplicaTarget(ctx context.Context, quotaStats map[strin
 // source backend name that was successfully read from and the size_bytes
 // recorded on that source's ObjectLocation row (the size of the bytes that
 // were actually transferred).
+// CopyToReplica copy to replica.
+// CopyToReplica copy to replica.
 func (r *Replicator) CopyToReplica(ctx context.Context, key string, copies []core.ObjectLocation, target string) (string, int64, error) {
 	targetBackend, err := r.ops.GetBackend(target)
 	if err != nil {
@@ -353,7 +355,7 @@ func (r *Replicator) tryCopyFrom(ctx context.Context, key, target string, target
 	if err == nil {
 		return loc.BackendName, loc.SizeBytes, true, nil
 	}
-	// Write failures won't improve with a different source — fail immediately.
+	// Write failures won't improve with a different source  -  fail immediately.
 	if strings.HasPrefix(err.Error(), "write:") {
 		return "", 0, true, fmt.Errorf("failed to write to target %s: %w", target, err)
 	}
@@ -380,6 +382,8 @@ func (r *Replicator) pruneStaleSource(ctx context.Context, key, backendName stri
 
 // cleanupOrphan deletes an object from a backend when the DB record was not
 // created (e.g. source was deleted during replication).
+// CleanupOrphan cleanup orphan.
+// CleanupOrphan cleanup orphan.
 func (r *Replicator) CleanupOrphan(ctx context.Context, backendName, key string, sizeBytes int64) {
 	be, ok := r.ops.Backends()[backendName]
 	if !ok {
@@ -392,6 +396,8 @@ func (r *Replicator) CleanupOrphan(ctx context.Context, backendName, key string,
 // unhealthyBackends returns backend names whose circuit breakers have been
 // open longer than the given threshold. Returns nil when all backends are
 // healthy or circuit breakers are not enabled.
+// UnhealthyBackends unhealthy backends.
+// UnhealthyBackends unhealthy backends.
 func (r *Replicator) UnhealthyBackends(threshold time.Duration) []string {
 	var names []string
 	for name, be := range r.ops.Backends() {
@@ -411,6 +417,8 @@ func (r *Replicator) UnhealthyBackends(threshold time.Duration) []string {
 
 // isBackendHealthy returns true if the backend has a closed circuit breaker
 // or has no circuit breaker wrapper.
+// IsBackendHealthy reports whether backend healthy.
+// IsBackendHealthy reports whether backend healthy.
 func (r *Replicator) IsBackendHealthy(name string) bool {
 	be, ok := r.ops.Backends()[name]
 	if !ok {

@@ -46,6 +46,9 @@ import (
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 )
 
+// TestCRUD verifies the crud behaviour across the supplied sub-cases:
+// "PutGetRoundTrip", "PutHeadMetadata", "PutDeleteGet404", "GetNonexistent".
+// Each sub-case exercises one branch of the code under test.
 func TestCRUD(t *testing.T) {
 	client := newS3Client(t)
 	ctx := context.Background()
@@ -167,6 +170,9 @@ func TestCRUD(t *testing.T) {
 // QUOTA ROUTING
 // -------------------------------------------------------------------------
 
+// TestQuotaRouting verifies the quota routing behaviour across the supplied sub-cases:
+// "SmallObjectLandsOnFirstBackend", "OverflowToSecondBackend", "AllBackendsFull507", "DeleteFreesQuotaThenPutSucceeds".
+// Each sub-case exercises one branch of the code under test.
 func TestQuotaRouting(t *testing.T) {
 	client := newS3Client(t)
 	ctx := context.Background()
@@ -330,6 +336,9 @@ func TestQuotaRouting(t *testing.T) {
 // RANGE REQUESTS
 // -------------------------------------------------------------------------
 
+// TestRangeRequests verifies the range requests behaviour across the supplied sub-cases:
+// "PartialGet206", "FullGetHasAcceptRanges", "HeadHasAcceptRanges".
+// Each sub-case exercises one branch of the code under test.
 func TestRangeRequests(t *testing.T) {
 	client := newS3Client(t)
 	ctx := context.Background()
@@ -419,6 +428,8 @@ func TestRangeRequests(t *testing.T) {
 // MULTIPART UPLOAD
 // -------------------------------------------------------------------------
 
+// TestMultipartUpload verifies the multipart upload contract.
+// Asserts that CreateMultipartUpload:.
 func TestMultipartUpload(t *testing.T) {
 	client := newS3Client(t)
 	ctx := context.Background()
@@ -499,6 +510,9 @@ func TestMultipartUpload(t *testing.T) {
 // LIST AND COPY
 // -------------------------------------------------------------------------
 
+// TestListAndCopy verifies the list and copy behaviour across the supplied sub-cases:
+// "ListObjectsV2", "CopyObject".
+// Each sub-case exercises one branch of the code under test.
 func TestListAndCopy(t *testing.T) {
 	client := newS3Client(t)
 	ctx := context.Background()
@@ -844,6 +858,9 @@ func mustEnqueueWithSize(t *testing.T, ctx context.Context, backend, key, reason
 // SPREAD WRITE ROUTING
 // -------------------------------------------------------------------------
 
+// TestSpreadWriteRouting verifies the spread write routing behaviour across the supplied sub-cases:
+// "DistributesAcrossBackends", "PreferLeastUtilizedAfterImbalance", "ContrastWithPackBehavior".
+// Each sub-case exercises one branch of the code under test.
 func TestSpreadWriteRouting(t *testing.T) {
 	ctx := context.Background()
 
@@ -905,13 +922,13 @@ func TestSpreadWriteRouting(t *testing.T) {
 		//
 		// minio-1: quota 1024, minio-2: quota 2048
 		//
-		// obj-0: both at 0% → picks first in order (minio-1)
+		// obj-0: both at 0% -> picks first in order (minio-1)
 		//   minio-1=200/1024 (19.5%), minio-2=0/2048 (0%)
-		// obj-1: minio-2 least utilized → picks minio-2
+		// obj-1: minio-2 least utilized -> picks minio-2
 		//   minio-1=200/1024 (19.5%), minio-2=200/2048 (9.8%)
-		// obj-2: minio-2 still least utilized → picks minio-2
+		// obj-2: minio-2 still least utilized -> picks minio-2
 		//   minio-1=200/1024 (19.5%), minio-2=400/2048 (19.5%)
-		// obj-3: equal utilization → could go either way
+		// obj-3: equal utilization -> could go either way
 		keys := make([]string, 4)
 		for i := range keys {
 			keys[i] = uniqueKey(t, "spread-route")
@@ -969,7 +986,7 @@ func TestSpreadWriteRouting(t *testing.T) {
 		}
 		// minio-1: 512/1024 = 50%, minio-2: 0/2048 = 0%
 
-		// Put 3 objects via spread proxy — all should land on minio-2 (least utilized).
+		// Put 3 objects via spread proxy  -  all should land on minio-2 (least utilized).
 		keys := make([]string, 3)
 		for i := range keys {
 			keys[i] = uniqueKey(t, "spread-imbal")
@@ -984,7 +1001,7 @@ func TestSpreadWriteRouting(t *testing.T) {
 			}
 		}
 
-		// All 3 should be on minio-2 since its utilization (0%→4.9%) stays
+		// All 3 should be on minio-2 since its utilization (0%->4.9%) stays
 		// well below minio-1 (50%) the entire time.
 		for i, key := range keys {
 			backend := queryObjectBackend(t, key)
@@ -1062,6 +1079,8 @@ func TestSpreadWriteRouting(t *testing.T) {
 // REBALANCER
 // -------------------------------------------------------------------------
 
+// TestRebalancePackTight verifies the rebalance pack tight contract.
+// Asserts that PutObject fill:.
 func TestRebalancePackTight(t *testing.T) {
 	client := newS3Client(t)
 	ctx := context.Background()
@@ -1163,7 +1182,7 @@ func TestRebalancePackTight(t *testing.T) {
 		}
 	}
 
-	// minio-1 is 97.6% (1000/1024), minio-2 is 0% — nothing to consolidate
+	// minio-1 is 97.6% (1000/1024), minio-2 is 0%  -  nothing to consolidate
 	moved, err = testManager.Rebalancer.Rebalance(ctx, packCfg)
 	if err != nil {
 		t.Fatalf("Rebalance noop: %v", err)
@@ -1174,6 +1193,9 @@ func TestRebalancePackTight(t *testing.T) {
 	}
 }
 
+// TestRebalancePackTinyToFuller verifies the rebalance pack tiny to fuller behaviour across the supplied sub-cases:
+// "DestHasRoom", "DestIsFull".
+// Each sub-case exercises one branch of the code under test.
 func TestRebalancePackTinyToFuller(t *testing.T) {
 	client := newS3Client(t)
 	ctx := context.Background()
@@ -1320,7 +1342,7 @@ func TestRebalancePackTinyToFuller(t *testing.T) {
 		t.Logf("after: moved %d, minio-1=%d minio-2=%d",
 			moved, queryQuotaUsed(t, "minio-1"), queryQuotaUsed(t, "minio-2"))
 
-		// Nothing should move — minio-2 is full, can't pack into it
+		// Nothing should move  -  minio-2 is full, can't pack into it
 		if moved != 0 {
 			t.Errorf("moved = %d, want 0 (destination full)", moved)
 		}
@@ -1330,6 +1352,8 @@ func TestRebalancePackTinyToFuller(t *testing.T) {
 	})
 }
 
+// TestRebalanceSpreadEven verifies the rebalance spread even contract.
+// Asserts that PutObject :.
 func TestRebalanceSpreadEven(t *testing.T) {
 	client := newS3Client(t)
 	ctx := context.Background()
@@ -1413,6 +1437,8 @@ func TestRebalanceSpreadEven(t *testing.T) {
 	}
 }
 
+// TestRebalanceSpreadAlreadyBalanced verifies the rebalance spread already balanced contract.
+// Asserts that PutObject:.
 func TestRebalanceSpreadAlreadyBalanced(t *testing.T) {
 	client := newS3Client(t)
 	ctx := context.Background()
@@ -1421,7 +1447,7 @@ func TestRebalanceSpreadAlreadyBalanced(t *testing.T) {
 	// Put proportional data: minio-1 gets ~33% full, minio-2 gets ~33% full.
 	// minio-1 limit=1024, target=333. minio-2 limit=2048, target=667.
 	// Put 300 on minio-1 (29.3%), then fill minio-1 and overflow 600 to minio-2 (29.3%).
-	// Both near target → spread should do nothing.
+	// Both near target -> spread should do nothing.
 
 	// 300 bytes on minio-1
 	_, err := client.PutObject(ctx, &s3.PutObjectInput{
@@ -1487,6 +1513,8 @@ func TestRebalanceSpreadAlreadyBalanced(t *testing.T) {
 	}
 }
 
+// TestRebalanceSpreadOversizedObject verifies the rebalance spread oversized object contract.
+// Asserts that PutObject big:.
 func TestRebalanceSpreadOversizedObject(t *testing.T) {
 	client := newS3Client(t)
 	ctx := context.Background()
@@ -1546,6 +1574,8 @@ func TestRebalanceSpreadOversizedObject(t *testing.T) {
 	}
 }
 
+// TestRebalanceSpreadStableAcrossCycles verifies the rebalance spread stable across cycles contract.
+// Asserts that PutObject :.
 func TestRebalanceSpreadStableAcrossCycles(t *testing.T) {
 	client := newS3Client(t)
 	ctx := context.Background()
@@ -1580,7 +1610,7 @@ func TestRebalanceSpreadStableAcrossCycles(t *testing.T) {
 	m2After1 := queryQuotaUsed(t, "minio-2")
 	t.Logf("cycle 1: moved %d, minio-1=%d minio-2=%d", moved1, m1After1, m2After1)
 
-	// Cycle 2 — should be a no-op, nothing bounces
+	// Cycle 2  -  should be a no-op, nothing bounces
 	moved2, err := testManager.Rebalancer.Rebalance(ctx, spreadCfg)
 	if err != nil {
 		t.Fatalf("Cycle 2: %v", err)
@@ -1598,6 +1628,8 @@ func TestRebalanceSpreadStableAcrossCycles(t *testing.T) {
 	}
 }
 
+// TestRebalanceSpreadBatchLimited verifies the rebalance spread batch limited contract.
+// Asserts that PutObject :.
 func TestRebalanceSpreadBatchLimited(t *testing.T) {
 	client := newS3Client(t)
 	ctx := context.Background()
@@ -1672,6 +1704,8 @@ func TestRebalanceSpreadBatchLimited(t *testing.T) {
 	}
 }
 
+// TestRebalanceThresholdSkip verifies the rebalance threshold skip contract.
+// Asserts that PutObject 1:.
 func TestRebalanceThresholdSkip(t *testing.T) {
 	client := newS3Client(t)
 	ctx := context.Background()
@@ -1734,6 +1768,8 @@ func TestRebalanceThresholdSkip(t *testing.T) {
 // REPLICATION
 // -------------------------------------------------------------------------
 
+// TestReplicationBasic verifies the replication basic contract.
+// Asserts that PutObject:.
 func TestReplicationBasic(t *testing.T) {
 	client := newS3Client(t)
 	ctx := context.Background()
@@ -1796,6 +1832,8 @@ func TestReplicationBasic(t *testing.T) {
 	}
 }
 
+// TestReplicationOverwrite verifies the replication overwrite contract.
+// Asserts that PutObject v1:.
 func TestReplicationOverwrite(t *testing.T) {
 	client := newS3Client(t)
 	ctx := context.Background()
@@ -1872,6 +1910,8 @@ func TestReplicationOverwrite(t *testing.T) {
 	}
 }
 
+// TestReplicationDelete verifies the replication delete contract.
+// Asserts that PutObject:.
 func TestReplicationDelete(t *testing.T) {
 	client := newS3Client(t)
 	ctx := context.Background()
@@ -1933,6 +1973,8 @@ func TestReplicationDelete(t *testing.T) {
 	}
 }
 
+// TestReplicationReadFailover verifies the replication read failover contract.
+// Asserts that PutObject:.
 func TestReplicationReadFailover(t *testing.T) {
 	ctx := context.Background()
 	resetState(t)
@@ -1988,6 +2030,8 @@ func TestReplicationReadFailover(t *testing.T) {
 	}
 }
 
+// TestReplicationAlreadyReplicated verifies the replication already replicated contract.
+// Asserts that PutObject:.
 func TestReplicationAlreadyReplicated(t *testing.T) {
 	client := newS3Client(t)
 	ctx := context.Background()
@@ -2019,7 +2063,7 @@ func TestReplicationAlreadyReplicated(t *testing.T) {
 		t.Errorf("first replicate created = %d, want 1", created1)
 	}
 
-	// Second replication — should be a no-op
+	// Second replication  -  should be a no-op
 	created2, err := testManager.Replicator.Replicate(ctx, replCfg)
 	if err != nil {
 		t.Fatalf("Replicate 2: %v", err)
@@ -2029,6 +2073,8 @@ func TestReplicationAlreadyReplicated(t *testing.T) {
 	}
 }
 
+// TestReplicationNoSpace verifies the replication no space contract.
+// Asserts that fill minio-1:.
 func TestReplicationNoSpace(t *testing.T) {
 	client := newS3Client(t)
 	ctx := context.Background()
@@ -2056,7 +2102,7 @@ func TestReplicationNoSpace(t *testing.T) {
 	}
 
 	// Each object has 1 copy, factor=2 means they need replicas,
-	// but the other backend is full — graceful degradation
+	// but the other backend is full  -  graceful degradation
 	replCfg := config.ReplicationConfig{
 		Factor:         2,
 		WorkerInterval: time.Minute,
@@ -2071,6 +2117,8 @@ func TestReplicationNoSpace(t *testing.T) {
 	}
 }
 
+// TestRebalancerWithReplicas verifies the rebalancer with replicas contract.
+// Asserts that PutObject:.
 func TestRebalancerWithReplicas(t *testing.T) {
 	client := newS3Client(t)
 	ctx := context.Background()
@@ -2103,7 +2151,7 @@ func TestRebalancerWithReplicas(t *testing.T) {
 		t.Fatalf("expected 2 copies, got %v", backends)
 	}
 
-	// Run rebalancer — it should not place 2 copies on the same backend
+	// Run rebalancer  -  it should not place 2 copies on the same backend
 	rebalCfg := config.RebalanceConfig{
 		Enabled:   true,
 		Strategy:  "spread",
@@ -2123,7 +2171,7 @@ func TestRebalancerWithReplicas(t *testing.T) {
 	seen := make(map[string]bool)
 	for _, b := range backendsAfter {
 		if seen[b] {
-			t.Errorf("duplicate backend %q — rebalancer placed 2 copies on same backend", b)
+			t.Errorf("duplicate backend %q  -  rebalancer placed 2 copies on same backend", b)
 		}
 		seen[b] = true
 	}
@@ -2144,6 +2192,8 @@ func TestRebalancerWithReplicas(t *testing.T) {
 // OVER-REPLICATION CLEANUP
 // -------------------------------------------------------------------------
 
+// TestOverReplicationBasic verifies the over replication basic contract.
+// Asserts that PutObject:.
 func TestOverReplicationBasic(t *testing.T) {
 	client := newS3Client(t)
 	ctx := context.Background()
@@ -2154,7 +2204,7 @@ func TestOverReplicationBasic(t *testing.T) {
 	key := uniqueKey(t, "overrepl-basic")
 	body := bytes.Repeat([]byte("O"), 100)
 
-	// PUT object → 1 copy
+	// PUT object -> 1 copy
 	_, err := client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:        aws.String(virtualBucket),
 		Key:           aws.String(key),
@@ -2165,7 +2215,7 @@ func TestOverReplicationBasic(t *testing.T) {
 		t.Fatalf("PutObject: %v", err)
 	}
 
-	// Replicate to factor=3 → 3 copies across 3 backends
+	// Replicate to factor=3 -> 3 copies across 3 backends
 	replCfg := config.ReplicationConfig{
 		Factor:         3,
 		WorkerInterval: time.Minute,
@@ -2192,7 +2242,7 @@ func TestOverReplicationBasic(t *testing.T) {
 		t.Errorf("expected 0 removed when at factor, got %d", removed)
 	}
 
-	// Now lower the factor to 2 → object is over-replicated
+	// Now lower the factor to 2 -> object is over-replicated
 	removed, err = mgr.OverReplicationCleaner.Clean(ctx, config.ReplicationConfig{
 		Factor:      2,
 		BatchSize:   50,
@@ -2225,6 +2275,8 @@ func TestOverReplicationBasic(t *testing.T) {
 	}
 }
 
+// TestOverReplicationMultipleObjects verifies the over replication multiple objects contract.
+// Asserts that PutObject :.
 func TestOverReplicationMultipleObjects(t *testing.T) {
 	client := newS3Client(t)
 	ctx := context.Background()
@@ -2262,7 +2314,7 @@ func TestOverReplicationMultipleObjects(t *testing.T) {
 		}
 	}
 
-	// Clean with factor=2 → each object loses 1 copy
+	// Clean with factor=2 -> each object loses 1 copy
 	removed, err := mgr.OverReplicationCleaner.Clean(ctx, config.ReplicationConfig{
 		Factor:      2,
 		BatchSize:   50,
@@ -2282,6 +2334,8 @@ func TestOverReplicationMultipleObjects(t *testing.T) {
 	}
 }
 
+// TestOverReplicationDrainingBackendRemovedFirst verifies the over replication draining backend removed first contract.
+// Asserts that PutObject:.
 func TestOverReplicationDrainingBackendRemovedFirst(t *testing.T) {
 	client := newS3Client(t)
 	ctx := context.Background()
@@ -2302,7 +2356,7 @@ func TestOverReplicationDrainingBackendRemovedFirst(t *testing.T) {
 		t.Fatalf("PutObject: %v", err)
 	}
 
-	// Replicate to factor=3 → copies on all 3 backends
+	// Replicate to factor=3 -> copies on all 3 backends
 	replCfg := config.ReplicationConfig{
 		Factor:         3,
 		WorkerInterval: time.Minute,
@@ -2326,7 +2380,7 @@ func TestOverReplicationDrainingBackendRemovedFirst(t *testing.T) {
 	}
 	defer mgr.DrainManager.CancelDrain(drainTarget)
 
-	// Clean with factor=2 → should remove 1 copy, preferring the draining backend (score 0)
+	// Clean with factor=2 -> should remove 1 copy, preferring the draining backend (score 0)
 	removed, err := mgr.OverReplicationCleaner.Clean(ctx, config.ReplicationConfig{
 		Factor:      2,
 		BatchSize:   50,
@@ -2365,6 +2419,8 @@ func TestOverReplicationDrainingBackendRemovedFirst(t *testing.T) {
 	}
 }
 
+// TestOverReplicationQuotaFreed verifies the over replication quota freed contract.
+// Asserts that PutObject:.
 func TestOverReplicationQuotaFreed(t *testing.T) {
 	client := newS3Client(t)
 	ctx := context.Background()
@@ -2407,7 +2463,7 @@ func TestOverReplicationQuotaFreed(t *testing.T) {
 		quotaBefore[b] = queryQuotaUsed(t, b)
 	}
 
-	// Clean with factor=2 → remove 1 excess copy
+	// Clean with factor=2 -> remove 1 excess copy
 	removed, err := mgr.OverReplicationCleaner.Clean(ctx, config.ReplicationConfig{
 		Factor:      2,
 		BatchSize:   50,
@@ -2446,6 +2502,8 @@ func TestOverReplicationQuotaFreed(t *testing.T) {
 	}
 }
 
+// TestOverReplicationCountPending verifies the over replication count pending contract.
+// Asserts that PutObject:.
 func TestOverReplicationCountPending(t *testing.T) {
 	client := newS3Client(t)
 	ctx := context.Background()
@@ -2485,7 +2543,7 @@ func TestOverReplicationCountPending(t *testing.T) {
 		t.Fatalf("Replicate: %v", err)
 	}
 
-	// 3 copies with factor=3 → not over-replicated
+	// 3 copies with factor=3 -> not over-replicated
 	count, err = mgr.OverReplicationCleaner.CountPending(ctx, 3)
 	if err != nil {
 		t.Fatalf("CountPending factor=3: %v", err)
@@ -2494,7 +2552,7 @@ func TestOverReplicationCountPending(t *testing.T) {
 		t.Errorf("expected 0 pending at factor, got %d", count)
 	}
 
-	// 3 copies with factor=2 → over-replicated
+	// 3 copies with factor=2 -> over-replicated
 	count, err = mgr.OverReplicationCleaner.CountPending(ctx, 2)
 	if err != nil {
 		t.Fatalf("CountPending factor=2: %v", err)
@@ -2526,6 +2584,9 @@ func TestOverReplicationCountPending(t *testing.T) {
 // IMPORT (Sync)
 // -------------------------------------------------------------------------
 
+// TestImportPreExistingObjects verifies the import pre existing objects behaviour across the supplied sub-cases:
+// "ImportAndAccessViaProxy", "ImportIdempotent", "ImportDoesNotOverwriteProxyObject".
+// Each sub-case exercises one branch of the code under test.
 func TestImportPreExistingObjects(t *testing.T) {
 	ctx := context.Background()
 
@@ -2637,7 +2698,7 @@ func TestImportPreExistingObjects(t *testing.T) {
 			t.Error("first ImportObject = false, want true")
 		}
 
-		// Second import of the same key/backend — should be a no-op
+		// Second import of the same key/backend  -  should be a no-op
 		imported, err = store.ImportObject(ctx, internalKey(key), "minio-1", 200)
 		if err != nil {
 			t.Fatalf("ImportObject second: %v", err)
@@ -2676,7 +2737,7 @@ func TestImportPreExistingObjects(t *testing.T) {
 
 		backend := queryObjectBackend(t, key)
 
-		// Try to import the same key (with bucket prefix) — should skip
+		// Try to import the same key (with bucket prefix)  -  should skip
 		store := testStore
 		imported, err := store.ImportObject(ctx, internalKey(key), backend, 150)
 		if err != nil {
@@ -2693,6 +2754,8 @@ func TestImportPreExistingObjects(t *testing.T) {
 	})
 }
 
+// TestListObjectsFromBackend verifies the list objects from backend contract.
+// Asserts that direct PutObject():.
 func TestListObjectsFromBackend(t *testing.T) {
 	ctx := context.Background()
 	resetState(t)
@@ -2820,6 +2883,9 @@ func assertHTTPStatus(t *testing.T, err error, wantStatus int) {
 // STORE-LEVEL TESTS
 // -------------------------------------------------------------------------
 
+// TestStore verifies the store behaviour across the supplied sub-cases:
+// "RecordObject_OverwriteUpdatesQuota", "DeleteObject_NotFound", "MoveObjectLocation_RaceSafe", "ListObjects_PaginationAndEscaping", "GetBackendWithSpace_RespectsOrder", "GetLeastUtilizedBackend_PicksLeastFull", and 3 more.
+// Each sub-case exercises one branch of the code under test.
 func TestStore(t *testing.T) {
 	ctx := context.Background()
 
@@ -2888,7 +2954,7 @@ func TestStore(t *testing.T) {
 			t.Fatalf("RecordObject: %v", err)
 		}
 
-		// Move from minio-1 → minio-2.
+		// Move from minio-1 -> minio-2.
 		size, err := testStore.MoveObjectLocation(ctx, key, "minio-1", "minio-2")
 		if err != nil {
 			t.Fatalf("MoveObjectLocation: %v", err)
@@ -2905,7 +2971,7 @@ func TestStore(t *testing.T) {
 			t.Errorf("minio-2 after move = %d, want 100", used)
 		}
 
-		// Move again from minio-1 (source gone) → should return 0, nil.
+		// Move again from minio-1 (source gone) -> should return 0, nil.
 		size, err = testStore.MoveObjectLocation(ctx, key, "minio-1", "minio-2")
 		if err != nil {
 			t.Fatalf("second MoveObjectLocation: %v", err)
@@ -2939,7 +3005,7 @@ func TestStore(t *testing.T) {
 			}
 		}
 
-		// Query with exact prefix — all 3 should match.
+		// Query with exact prefix  -  all 3 should match.
 		result, err := testStore.ListObjects(ctx, prefix, "", 1000)
 		if err != nil {
 			t.Fatalf("ListObjects: %v", err)
@@ -2995,7 +3061,7 @@ func TestStore(t *testing.T) {
 			t.Errorf("got %q, want %q (first in order)", name, "minio-1")
 		}
 
-		// Reverse order — minio-2 should be returned first.
+		// Reverse order  -  minio-2 should be returned first.
 		name, err = testStore.GetBackendWithSpace(ctx, 10, []string{"minio-2", "minio-1"})
 		if err != nil {
 			t.Fatalf("GetBackendWithSpace reversed: %v", err)
@@ -3020,7 +3086,7 @@ func TestStore(t *testing.T) {
 	t.Run("GetLeastUtilizedBackend_PicksLeastFull", func(t *testing.T) {
 		resetState(t)
 
-		// Both empty — either could be returned, but with equal utilization
+		// Both empty  -  either could be returned, but with equal utilization
 		// the ORDER BY should be deterministic. Just verify no error.
 		name, err := testStore.GetLeastUtilizedBackend(ctx, 10, []string{"minio-1", "minio-2"})
 		if err != nil {
@@ -3031,7 +3097,7 @@ func TestStore(t *testing.T) {
 		}
 
 		// Add 500 bytes to minio-1 (quota 1024). minio-2 (quota 2048) stays empty.
-		// minio-1 utilization: 500/1024 ≈ 49%, minio-2: 0/2048 = 0%.
+		// minio-1 utilization: 500/1024 ~= 49%, minio-2: 0/2048 = 0%.
 		// Least utilized should be minio-2.
 		if _, err := testStore.RecordObject(ctx, uniqueKey(t, "fill"), "minio-1", 500, nil); err != nil {
 			t.Fatalf("RecordObject fill: %v", err)
@@ -3053,7 +3119,7 @@ func TestStore(t *testing.T) {
 			t.Fatalf("RecordObject: %v", err)
 		}
 
-		// Request 1 byte — minio-1 has 0 available, should return minio-2.
+		// Request 1 byte  -  minio-1 has 0 available, should return minio-2.
 		name, err := testStore.GetLeastUtilizedBackend(ctx, 1, []string{"minio-1", "minio-2"})
 		if err != nil {
 			t.Fatalf("GetLeastUtilizedBackend: %v", err)
@@ -3122,6 +3188,9 @@ func TestStore(t *testing.T) {
 // SYNC PIPELINE
 // -------------------------------------------------------------------------
 
+// TestSyncPipeline verifies the sync pipeline behaviour across the supplied sub-cases:
+// "ImportAndVerify", "IdempotentRerun".
+// Each sub-case exercises one branch of the code under test.
 func TestSyncPipeline(t *testing.T) {
 	ctx := context.Background()
 
@@ -3148,7 +3217,7 @@ func TestSyncPipeline(t *testing.T) {
 		}
 
 		// Create an S3Backend and run the same pipeline as runSync:
-		// backend.ListObjects → store.ImportObject
+		// backend.ListObjects -> store.ImportObject
 		backend := newTestS3Backend(t, "minio-1")
 		var imported, skipped int
 
@@ -3265,6 +3334,9 @@ func TestSyncPipeline(t *testing.T) {
 // AUTH (SigV4)
 // -------------------------------------------------------------------------
 
+// TestAuthSigV4 verifies the auth sig v4 behaviour across the supplied sub-cases:
+// "ValidCredentials", "WrongCredentials403", "UnsignedRequest403", "SpecialCharKeysSigV4", "AccessDeniedDoesNotLeakBucketName".
+// Each sub-case exercises one branch of the code under test.
 func TestAuthSigV4(t *testing.T) {
 	ctx := context.Background()
 
@@ -3436,6 +3508,9 @@ func TestAuthSigV4(t *testing.T) {
 // CIRCUIT BREAKER DEGRADED MODE
 // -------------------------------------------------------------------------
 
+// TestCircuitBreakerDegradedMode verifies the circuit breaker degraded mode behaviour across the supplied sub-cases:
+// "ReadsDuringOutage", "WritesRejectedDuringOutage".
+// Each sub-case exercises one branch of the code under test.
 func TestCircuitBreakerDegradedMode(t *testing.T) {
 	t.Run("ReadsDuringOutage", func(t *testing.T) {
 		resetState(t)
@@ -3576,6 +3651,9 @@ func TestCircuitBreakerDegradedMode(t *testing.T) {
 // BUCKET OPERATIONS
 // -------------------------------------------------------------------------
 
+// TestBucketOperations verifies the bucket operations behaviour across the supplied sub-cases:
+// "HeadBucket", "GetBucketLocation", "ListBuckets".
+// Each sub-case exercises one branch of the code under test.
 func TestBucketOperations(t *testing.T) {
 	client := newS3Client(t)
 	ctx := context.Background()
@@ -3626,6 +3704,9 @@ func TestBucketOperations(t *testing.T) {
 // LIST OBJECTS V1
 // -------------------------------------------------------------------------
 
+// TestListObjectsV1 verifies the list objects v1 behaviour across the supplied sub-cases:
+// "BasicList", "WithMarker".
+// Each sub-case exercises one branch of the code under test.
 func TestListObjectsV1(t *testing.T) {
 	client := newS3Client(t)
 	ctx := context.Background()
@@ -3685,6 +3766,8 @@ func TestListObjectsV1(t *testing.T) {
 // DELETE OBJECTS (BATCH)
 // -------------------------------------------------------------------------
 
+// TestDeleteObjects verifies the delete objects contract.
+// Asserts that PutObject():.
 func TestDeleteObjects(t *testing.T) {
 	client := newS3Client(t)
 	ctx := context.Background()
@@ -3741,6 +3824,8 @@ func TestDeleteObjects(t *testing.T) {
 // LIST MULTIPART UPLOADS
 // -------------------------------------------------------------------------
 
+// TestListMultipartUploads verifies the list multipart uploads contract.
+// Asserts that CreateMultipartUpload:.
 func TestListMultipartUploads(t *testing.T) {
 	client := newS3Client(t)
 	ctx := context.Background()
@@ -3791,6 +3876,8 @@ func TestListMultipartUploads(t *testing.T) {
 // ABORT MULTIPART UPLOAD
 // -------------------------------------------------------------------------
 
+// TestAbortMultipartUpload verifies the abort multipart upload contract.
+// Asserts that CreateMultipartUpload:.
 func TestAbortMultipartUpload(t *testing.T) {
 	client := newS3Client(t)
 	ctx := context.Background()
@@ -3845,6 +3932,8 @@ func TestAbortMultipartUpload(t *testing.T) {
 // LIST PARTS
 // -------------------------------------------------------------------------
 
+// TestListParts verifies the list parts contract.
+// Asserts that CreateMultipartUpload:.
 func TestListParts(t *testing.T) {
 	client := newS3Client(t)
 	ctx := context.Background()
@@ -3908,12 +3997,14 @@ func TestListParts(t *testing.T) {
 // DRAIN & REMOVE
 // -------------------------------------------------------------------------
 
+// TestDrainBackend verifies the drain backend contract.
+// Asserts that PutObject[]:.
 func TestDrainBackend(t *testing.T) {
 	resetState(t)
 	client := newS3Client(t)
 	ctx := context.Background()
 
-	// Upload several small objects — pack routing puts them on minio-1 first (quota 1024).
+	// Upload several small objects  -  pack routing puts them on minio-1 first (quota 1024).
 	keys := make([]string, 5)
 	for i := range keys {
 		keys[i] = uniqueKey(t, "drain")
@@ -3997,6 +4088,8 @@ func TestDrainBackend(t *testing.T) {
 	}
 }
 
+// TestDrainBackend_WriteExclusion verifies the drain backend write exclusion contract.
+// Asserts that PutObject seed:.
 func TestDrainBackend_WriteExclusion(t *testing.T) {
 	resetState(t)
 	client := newS3Client(t)
@@ -4054,6 +4147,8 @@ func TestDrainBackend_WriteExclusion(t *testing.T) {
 	}
 }
 
+// TestRemoveBackend verifies the remove backend contract.
+// Asserts that RecordObject:.
 func TestRemoveBackend(t *testing.T) {
 	resetState(t)
 	ctx := context.Background()

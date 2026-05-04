@@ -26,6 +26,8 @@ import (
 // scoreCopy
 // -------------------------------------------------------------------------
 
+// TestScoreCopy_HealthyBackend verifies the score copy healthy backend contract.
+// Asserts that expected score ~2.5, got.
 func TestScoreCopy_HealthyBackend(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -47,6 +49,8 @@ func TestScoreCopy_HealthyBackend(t *testing.T) {
 	}
 }
 
+// TestScoreCopy_UnknownBackend verifies the score copy unknown backend contract.
+// Asserts that expected score 0 for unknown backend, got.
 func TestScoreCopy_UnknownBackend(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{}
@@ -60,6 +64,8 @@ func TestScoreCopy_UnknownBackend(t *testing.T) {
 	}
 }
 
+// TestScoreCopy_DrainingBackend verifies the score copy draining backend contract.
+// Asserts that expected score 0 for draining backend, got.
 func TestScoreCopy_DrainingBackend(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{}
@@ -74,6 +80,8 @@ func TestScoreCopy_DrainingBackend(t *testing.T) {
 	}
 }
 
+// TestScoreCopy_CircuitBrokenBackend verifies the score copy circuit broken backend contract.
+// Asserts that expected score 1 for circuit-broken backend, got.
 func TestScoreCopy_CircuitBrokenBackend(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{}
@@ -103,6 +111,8 @@ func TestScoreCopy_CircuitBrokenBackend(t *testing.T) {
 	}
 }
 
+// TestScoreCopy_NoQuotaData verifies the score copy no quota data contract.
+// Asserts that expected score 2.5, got.
 func TestScoreCopy_NoQuotaData(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{}
@@ -121,6 +131,8 @@ func TestScoreCopy_NoQuotaData(t *testing.T) {
 // Clean (top-level)
 // -------------------------------------------------------------------------
 
+// TestClean_FactorDisabled verifies the clean factor disabled contract.
+// Asserts that Clean:.
 func TestClean_FactorDisabled(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{}
@@ -138,6 +150,8 @@ func TestClean_FactorDisabled(t *testing.T) {
 	}
 }
 
+// TestClean_NoOverReplicatedObjects verifies the clean no over replicated objects contract.
+// Asserts that Clean:.
 func TestClean_NoOverReplicatedObjects(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{getOverReplicatedResp: nil}
@@ -155,6 +169,7 @@ func TestClean_NoOverReplicatedObjects(t *testing.T) {
 	}
 }
 
+// TestClean_QueryError verifies the clean query error path by exercising errors.New, context.Background.
 func TestClean_QueryError(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{getOverReplicatedErr: errors.New("db down")}
@@ -169,6 +184,8 @@ func TestClean_QueryError(t *testing.T) {
 	}
 }
 
+// TestClean_QuotaStatsError_StillCleansUp verifies the clean quota stats error still cleans up contract.
+// Asserts that Clean:.
 func TestClean_QuotaStatsError_StillCleansUp(t *testing.T) {
 	t.Parallel()
 	// GetQuotaStats fails, but Clean should still proceed (scores without utilization).
@@ -199,6 +216,8 @@ func TestClean_QuotaStatsError_StillCleansUp(t *testing.T) {
 	}
 }
 
+// TestClean_RemovesExcessCopies verifies the clean removes excess copies contract.
+// Asserts that Clean:.
 func TestClean_RemovesExcessCopies(t *testing.T) {
 	t.Parallel()
 	// Object "key1" has 3 copies but factor=2, so 1 should be removed.
@@ -241,6 +260,8 @@ func TestClean_RemovesExcessCopies(t *testing.T) {
 	}
 }
 
+// TestClean_RemoveExcessCopyError verifies the clean remove excess copy error contract.
+// Asserts that Clean should not return error for per-object failures:.
 func TestClean_RemoveExcessCopyError(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -270,6 +291,8 @@ func TestClean_RemoveExcessCopyError(t *testing.T) {
 	}
 }
 
+// TestClean_MultipleObjects verifies the clean multiple objects contract.
+// Asserts that Clean:.
 func TestClean_MultipleObjects(t *testing.T) {
 	t.Parallel()
 	// Two objects, each with 3 copies, factor=2 -> remove 1 each = 2 total.
@@ -302,9 +325,11 @@ func TestClean_MultipleObjects(t *testing.T) {
 	}
 }
 
+// TestClean_BackendNotFoundDuringCleanup verifies the clean backend not found during cleanup contract.
+// Asserts that Clean:.
 func TestClean_BackendNotFoundDuringCleanup(t *testing.T) {
 	t.Parallel()
-	// Object has copies on b1 and "gone" — "gone" is not in the manager's
+	// Object has copies on b1 and "gone"  -  "gone" is not in the manager's
 	// backend map, so cleanObject should skip it and not panic.
 	store := &mockStore{
 		getOverReplicatedResp: []core.ObjectLocation{
@@ -338,6 +363,8 @@ func TestClean_BackendNotFoundDuringCleanup(t *testing.T) {
 // SetConfig / Config
 // -------------------------------------------------------------------------
 
+// TestSetConfig_Config verifies the set config config contract.
+// Asserts that unexpected config: v.
 func TestSetConfig_Config(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{}
@@ -364,6 +391,8 @@ func TestSetConfig_Config(t *testing.T) {
 // CountPending
 // -------------------------------------------------------------------------
 
+// TestCountPending_Success verifies the count pending success contract.
+// Asserts that CountPending:.
 func TestCountPending_Success(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{countOverReplicatedResp: 42}
@@ -378,6 +407,7 @@ func TestCountPending_Success(t *testing.T) {
 	}
 }
 
+// TestCountPending_Error verifies the count pending error path by exercising errors.New, context.Background.
 func TestCountPending_Error(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{countOverReplicatedErr: errors.New("db error")}
@@ -389,6 +419,8 @@ func TestCountPending_Error(t *testing.T) {
 	}
 }
 
+// TestClean_AdmissionBlocked verifies the clean admission blocked contract.
+// Asserts that Clean:.
 func TestClean_AdmissionBlocked(t *testing.T) {
 	t.Parallel()
 	sem := make(chan struct{}, 1)

@@ -26,7 +26,7 @@ func FuzzParseHeader(f *testing.F) {
 	binary.BigEndian.PutUint32(valid[5:9], 65536)
 	f.Add(valid)
 
-	// All zeros — bad magic
+	// All zeros  -  bad magic
 	f.Add(make([]byte, HeaderSize))
 	// Too short
 	f.Add([]byte("short"))
@@ -36,7 +36,7 @@ func FuzzParseHeader(f *testing.F) {
 	copy(wrong[0:4], headerMagic[:])
 	wrong[4] = 0xFF
 	f.Add(wrong)
-	// Max uint32 chunk size — would cause huge allocation downstream
+	// Max uint32 chunk size  -  would cause huge allocation downstream
 	huge := make([]byte, HeaderSize)
 	copy(huge[0:4], headerMagic[:])
 	huge[4] = 0x01
@@ -91,7 +91,7 @@ func FuzzUnpackKeyData(f *testing.F) {
 	valid := make([]byte, 44)
 	f.Add(valid)
 	f.Add([]byte{})
-	f.Add(make([]byte, NonceSize))   // exactly nonce size — too short
+	f.Add(make([]byte, NonceSize))   // exactly nonce size  -  too short
 	f.Add(make([]byte, NonceSize+1)) // minimum valid
 
 	f.Fuzz(func(t *testing.T, data []byte) {

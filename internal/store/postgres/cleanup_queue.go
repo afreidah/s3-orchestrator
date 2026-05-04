@@ -22,6 +22,10 @@ import (
 	db "github.com/afreidah/s3-orchestrator/internal/store/postgres/sqlc"
 )
 
+// -------------------------------------------------------------------------
+// QUEUE LIFECYCLE
+// -------------------------------------------------------------------------
+
 // EnqueueCleanup adds a failed cleanup operation to the retry queue.
 func (s *Store) EnqueueCleanup(ctx context.Context, backendName, objectKey, reason string, sizeBytes int64) error {
 	err := s.queries.EnqueueCleanup(ctx, db.EnqueueCleanupParams{
@@ -88,6 +92,10 @@ func (s *Store) CleanupQueueDepth(ctx context.Context) (int64, error) {
 	return count, nil
 }
 
+// -------------------------------------------------------------------------
+// DEAD-LETTER OPS
+// -------------------------------------------------------------------------
+
 // CleanupDLQDepth returns the number of rows currently in cleanup_dlq.
 // Surfaces the count of unrecoverable orphans so the dashboard and the
 // cleanup_dlq_depth gauge can flag operator-visible work.
@@ -106,6 +114,10 @@ func (s *Store) CleanupDLQDepth(ctx context.Context) (int64, error) {
 func (s *Store) MoveCleanupToDLQ(ctx context.Context, id int64, lastError string) (bool, error) {
 	return core.MoveCleanupToDLQ(ctx, s, id, lastError)
 }
+
+// -------------------------------------------------------------------------
+// ORPHAN BYTES AND SWEEPS
+// -------------------------------------------------------------------------
 
 // IncrementOrphanBytes adds bytes to the orphan_bytes counter for a backend.
 // Called when a physical delete fails and is enqueued for retry.
@@ -141,6 +153,10 @@ func (s *Store) DecrementOrphanBytes(ctx context.Context, backendName string, am
 func (s *Store) SweepStaleCleanupQueueRows(ctx context.Context, key, backend string) (int64, error) {
 	return core.SweepStaleCleanupQueueRows(ctx, s, key, backend)
 }
+
+// -------------------------------------------------------------------------
+// HELPERS
+// -------------------------------------------------------------------------
 
 // durationToInterval converts a Go time.Duration to a pgtype.Interval.
 func durationToInterval(d time.Duration) pgtype.Interval {

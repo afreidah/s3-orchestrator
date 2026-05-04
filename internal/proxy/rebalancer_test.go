@@ -45,6 +45,7 @@ type delayedGetBackend struct {
 	delay   time.Duration
 }
 
+// newDelayedGetBackend constructs a new delayed get backend.
 func newDelayedGetBackend(delay time.Duration) *delayedGetBackend {
 	return &delayedGetBackend{
 		objects: make(map[string]mockObject),
@@ -52,8 +53,14 @@ func newDelayedGetBackend(delay time.Duration) *delayedGetBackend {
 	}
 }
 
+// Compile-time check that delayedGetBackend satisfies the
+// ObjectBackend interface so the tests below can pass it through the
+// rebalancer's ObjectBackend-typed plumbing.
 var _ s3be.ObjectBackend = (*delayedGetBackend)(nil)
 
+// PutObject satisfies backend.ObjectBackend for the rebalancer
+// fakes; records each move and lets the test assert the source/
+// destination flow.
 func (m *delayedGetBackend) PutObject(_ context.Context, key string, body io.Reader, _ int64, contentType string, metadata map[string]string) (string, error) {
 	m.mu.Lock()
 	err := m.putErr
@@ -72,6 +79,7 @@ func (m *delayedGetBackend) PutObject(_ context.Context, key string, body io.Rea
 	return etag, nil
 }
 
+// GetObject returns object.
 func (m *delayedGetBackend) GetObject(_ context.Context, key string, _ string) (*s3be.GetObjectResult, error) {
 	time.Sleep(m.delay)
 	m.mu.Lock()
@@ -94,6 +102,9 @@ func (m *delayedGetBackend) GetObject(_ context.Context, key string, _ string) (
 	}, nil
 }
 
+// HeadObject satisfies backend.ObjectBackend for the rebalancer
+// fakes; returns the test-configured size so the planner sees the
+// same value as the metadata store.
 func (m *delayedGetBackend) HeadObject(_ context.Context, key string) (*s3be.HeadObjectResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -112,6 +123,7 @@ func (m *delayedGetBackend) HeadObject(_ context.Context, key string) (*s3be.Hea
 	}, nil
 }
 
+// DeleteObject deletes object.
 func (m *delayedGetBackend) DeleteObject(_ context.Context, key string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -122,12 +134,16 @@ func (m *delayedGetBackend) DeleteObject(_ context.Context, key string) error {
 	return nil
 }
 
+// seedObject pre-populates the fake backend's in-memory store with one
+// object. Used by tests that exercise rebalancer flows where the
+// "before" state needs specific objects on specific backends.
 func (m *delayedGetBackend) seedObject(key string, data []byte) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.objects[key] = mockObject{data: data, contentType: "application/octet-stream"}
 }
 
+// hasObject reports whether object.
 func (m *delayedGetBackend) hasObject(key string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -139,6 +155,8 @@ func (m *delayedGetBackend) hasObject(key string) bool {
 // TESTS
 // -------------------------------------------------------------------------
 
+// TestExecuteMoves_Concurrent verifies the execute moves concurrent contract.
+// Asserts that moved = , want 5.
 func TestExecuteMoves_Concurrent(t *testing.T) {
 	t.Parallel()
 	src := newDelayedGetBackend(50 * time.Millisecond)
@@ -194,6 +212,8 @@ func TestExecuteMoves_Concurrent(t *testing.T) {
 	}
 }
 
+// TestExecuteMoves_PartialFailure verifies the execute moves partial failure contract.
+// Asserts that moved = , want 2 (one should fail).
 func TestExecuteMoves_PartialFailure(t *testing.T) {
 	t.Parallel()
 	src := newDelayedGetBackend(0)
@@ -229,6 +249,8 @@ func TestExecuteMoves_PartialFailure(t *testing.T) {
 	}
 }
 
+// TestExecuteMoves_SequentialFallback verifies the execute moves sequential fallback contract.
+// Asserts that moved = , want 2.
 func TestExecuteMoves_SequentialFallback(t *testing.T) {
 	t.Parallel()
 	src := newDelayedGetBackend(0)
@@ -270,6 +292,7 @@ func TestExecuteMoves_SequentialFallback(t *testing.T) {
 // worker.ExceedsThreshold
 // -------------------------------------------------------------------------
 
+// TestExceedsThreshold_BelowThreshold verifies the exceeds threshold below threshold path by exercising worker.ExceedsThreshold.
 func TestExceedsThreshold_BelowThreshold(t *testing.T) {
 	t.Parallel()
 	stats := map[string]core.QuotaStat{
@@ -282,6 +305,7 @@ func TestExceedsThreshold_BelowThreshold(t *testing.T) {
 	}
 }
 
+// TestExceedsThreshold_AtThreshold verifies the exceeds threshold at threshold path by exercising worker.ExceedsThreshold.
 func TestExceedsThreshold_AtThreshold(t *testing.T) {
 	t.Parallel()
 	stats := map[string]core.QuotaStat{
@@ -294,6 +318,7 @@ func TestExceedsThreshold_AtThreshold(t *testing.T) {
 	}
 }
 
+// TestExceedsThreshold_SingleBackend verifies the exceeds threshold single backend path by exercising worker.ExceedsThreshold.
 func TestExceedsThreshold_SingleBackend(t *testing.T) {
 	t.Parallel()
 	stats := map[string]core.QuotaStat{
@@ -304,6 +329,7 @@ func TestExceedsThreshold_SingleBackend(t *testing.T) {
 	}
 }
 
+// TestExceedsThreshold_ZeroLimitSkipped verifies the exceeds threshold zero limit skipped path by exercising worker.ExceedsThreshold.
 func TestExceedsThreshold_ZeroLimitSkipped(t *testing.T) {
 	t.Parallel()
 	stats := map[string]core.QuotaStat{
@@ -315,6 +341,7 @@ func TestExceedsThreshold_ZeroLimitSkipped(t *testing.T) {
 	}
 }
 
+// TestExceedsThreshold_MissingStatsSkipped verifies the exceeds threshold missing stats skipped path by exercising worker.ExceedsThreshold.
 func TestExceedsThreshold_MissingStatsSkipped(t *testing.T) {
 	t.Parallel()
 	stats := map[string]core.QuotaStat{
@@ -329,6 +356,7 @@ func TestExceedsThreshold_MissingStatsSkipped(t *testing.T) {
 // Rebalance (top-level)
 // -------------------------------------------------------------------------
 
+// TestRebalance_QuotaStatsError verifies the rebalance quota stats error path by exercising fmt.Errorf, context.Background.
 func TestRebalance_QuotaStatsError(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{getQuotaStatsErr: fmt.Errorf("db down")}
@@ -344,6 +372,8 @@ func TestRebalance_QuotaStatsError(t *testing.T) {
 	}
 }
 
+// TestRebalance_BelowThreshold_Skips verifies the rebalance below threshold skips contract.
+// Asserts that unexpected error:.
 func TestRebalance_BelowThreshold_Skips(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -370,6 +400,8 @@ func TestRebalance_BelowThreshold_Skips(t *testing.T) {
 	}
 }
 
+// TestRebalance_EmptyPlan_Skips verifies the rebalance empty plan skips contract.
+// Asserts that unexpected error:.
 func TestRebalance_EmptyPlan_Skips(t *testing.T) {
 	// Utilization exceeds threshold (90% vs 10%) but ListObjectsByBackend
 	// returns no moveable objects, so the plan is empty.
@@ -403,6 +435,7 @@ func TestRebalance_EmptyPlan_Skips(t *testing.T) {
 	}
 }
 
+// TestRebalance_UnknownStrategy verifies the rebalance unknown strategy path by exercising context.Background.
 func TestRebalance_UnknownStrategy(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -430,6 +463,7 @@ func TestRebalance_UnknownStrategy(t *testing.T) {
 // planPackTight
 // -------------------------------------------------------------------------
 
+// newRebalanceManager constructs a new rebalance manager.
 func newRebalanceManager(store *mockStore, names []string) *BackendManager {
 	backends := make(map[string]s3be.ObjectBackend, len(names))
 	for _, name := range names {
@@ -447,6 +481,8 @@ func newRebalanceManager(store *mockStore, names []string) *BackendManager {
 	}))
 }
 
+// TestPlanPackTight_MovesFromLeastToMostFull verifies the plan pack tight moves from least to most full contract.
+// Asserts that planPackTight:.
 func TestPlanPackTight_MovesFromLeastToMostFull(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -473,6 +509,8 @@ func TestPlanPackTight_MovesFromLeastToMostFull(t *testing.T) {
 	}
 }
 
+// TestPlanPackTight_RespectsBatchSize verifies the plan pack tight respects batch size contract.
+// Asserts that planPackTight:.
 func TestPlanPackTight_RespectsBatchSize(t *testing.T) {
 	t.Parallel()
 	objects := make([]core.ObjectLocation, 10)
@@ -500,6 +538,8 @@ func TestPlanPackTight_RespectsBatchSize(t *testing.T) {
 	}
 }
 
+// TestPlanPackTight_SkipsLargeObjects verifies the plan pack tight skips large objects contract.
+// Asserts that planPackTight:.
 func TestPlanPackTight_SkipsLargeObjects(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -523,6 +563,8 @@ func TestPlanPackTight_SkipsLargeObjects(t *testing.T) {
 	}
 }
 
+// TestPlanPackTight_ZeroLimitBackendsSkipped verifies the plan pack tight zero limit backends skipped contract.
+// Asserts that planPackTight:.
 func TestPlanPackTight_ZeroLimitBackendsSkipped(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{}
@@ -546,6 +588,8 @@ func TestPlanPackTight_ZeroLimitBackendsSkipped(t *testing.T) {
 // planSpreadEven
 // -------------------------------------------------------------------------
 
+// TestPlanSpreadEven_EqualizesUtilization verifies the plan spread even equalizes utilization contract.
+// Asserts that planSpreadEven:.
 func TestPlanSpreadEven_EqualizesUtilization(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -578,6 +622,8 @@ func TestPlanSpreadEven_EqualizesUtilization(t *testing.T) {
 	}
 }
 
+// TestPlanSpreadEven_SkipsWhenTargetHasCopy verifies the plan spread even skips when target has copy contract.
+// Asserts that planSpreadEven:.
 func TestPlanSpreadEven_SkipsWhenTargetHasCopy(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -605,6 +651,8 @@ func TestPlanSpreadEven_SkipsWhenTargetHasCopy(t *testing.T) {
 	}
 }
 
+// TestPlanPackTight_SkipsWhenTargetHasCopy verifies the plan pack tight skips when target has copy contract.
+// Asserts that planPackTight:.
 func TestPlanPackTight_SkipsWhenTargetHasCopy(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -632,6 +680,8 @@ func TestPlanPackTight_SkipsWhenTargetHasCopy(t *testing.T) {
 	}
 }
 
+// TestPlanSpreadEven_ZeroTotalLimit verifies the plan spread even zero total limit contract.
+// Asserts that planSpreadEven:.
 func TestPlanSpreadEven_ZeroTotalLimit(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{}
@@ -648,6 +698,8 @@ func TestPlanSpreadEven_ZeroTotalLimit(t *testing.T) {
 	}
 }
 
+// TestPlanSpreadEven_AlreadyBalanced verifies the plan spread even already balanced contract.
+// Asserts that planSpreadEven:.
 func TestPlanSpreadEven_AlreadyBalanced(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{}
@@ -667,6 +719,7 @@ func TestPlanSpreadEven_AlreadyBalanced(t *testing.T) {
 	}
 }
 
+// TestPlanSpreadEven_ListObjectsByBackendError verifies the plan spread even list objects by backend error path by exercising errors.New, context.Background.
 func TestPlanSpreadEven_ListObjectsByBackendError(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -685,6 +738,7 @@ func TestPlanSpreadEven_ListObjectsByBackendError(t *testing.T) {
 	}
 }
 
+// TestPlanPackTight_ListObjectsByBackendError verifies the plan pack tight list objects by backend error path by exercising errors.New, context.Background.
 func TestPlanPackTight_ListObjectsByBackendError(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -707,6 +761,7 @@ func TestPlanPackTight_ListObjectsByBackendError(t *testing.T) {
 // executeOneMove error paths
 // -------------------------------------------------------------------------
 
+// TestExecuteOneMove_SourceBackendNotFound verifies the execute one move source backend not found path by exercising context.Background.
 func TestExecuteOneMove_SourceBackendNotFound(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{}
@@ -725,6 +780,7 @@ func TestExecuteOneMove_SourceBackendNotFound(t *testing.T) {
 	}
 }
 
+// TestExecuteOneMove_DestBackendNotFound verifies the execute one move dest backend not found path by exercising src.PutObject, context.Background, bytes.NewReader.
 func TestExecuteOneMove_DestBackendNotFound(t *testing.T) {
 	t.Parallel()
 	src := newMockBackend()
@@ -757,6 +813,7 @@ func TestExecuteOneMove_DestBackendNotFound(t *testing.T) {
 	}
 }
 
+// TestExecuteOneMove_SourceGetFails verifies the execute one move source get fails path by exercising errors.New, context.Background.
 func TestExecuteOneMove_SourceGetFails(t *testing.T) {
 	t.Parallel()
 	src := newMockBackend()
@@ -790,6 +847,7 @@ func TestExecuteOneMove_SourceGetFails(t *testing.T) {
 	}
 }
 
+// TestExecuteOneMove_DestPutFails verifies the execute one move dest put fails path by exercising src.PutObject, context.Background, bytes.NewReader.
 func TestExecuteOneMove_DestPutFails(t *testing.T) {
 	t.Parallel()
 	src := newMockBackend()
@@ -824,6 +882,7 @@ func TestExecuteOneMove_DestPutFails(t *testing.T) {
 	}
 }
 
+// TestExecuteOneMove_MoveLocationError_CleansUpOrphan verifies the execute one move move location error cleans up orphan path by exercising src.PutObject, context.Background, bytes.NewReader.
 func TestExecuteOneMove_MoveLocationError_CleansUpOrphan(t *testing.T) {
 	t.Parallel()
 	src := newMockBackend()
@@ -862,6 +921,8 @@ func TestExecuteOneMove_MoveLocationError_CleansUpOrphan(t *testing.T) {
 	}
 }
 
+// TestExecuteOneMove_MoveLocationError_CleanupFails_EnqueuesCleanup verifies the execute one move move location error cleanup fails enqueues cleanup contract.
+// Asserts that expected 1 enqueue call, got.
 func TestExecuteOneMove_MoveLocationError_CleanupFails_EnqueuesCleanup(t *testing.T) {
 	t.Parallel()
 	src := newMockBackend()
@@ -905,6 +966,7 @@ func TestExecuteOneMove_MoveLocationError_CleanupFails_EnqueuesCleanup(t *testin
 	}
 }
 
+// TestExecuteOneMove_MovedSizeZero_CleansUpOrphan verifies the execute one move moved size zero cleans up orphan path by exercising src.PutObject, context.Background, bytes.NewReader.
 func TestExecuteOneMove_MovedSizeZero_CleansUpOrphan(t *testing.T) {
 	t.Parallel()
 	src := newMockBackend()
@@ -943,6 +1005,8 @@ func TestExecuteOneMove_MovedSizeZero_CleansUpOrphan(t *testing.T) {
 	}
 }
 
+// TestExecuteOneMove_SourceDeleteFails_EnqueuesCleanup verifies the execute one move source delete fails enqueues cleanup contract.
+// Asserts that expected 1 enqueue call, got.
 func TestExecuteOneMove_SourceDeleteFails_EnqueuesCleanup(t *testing.T) {
 	t.Parallel()
 	src := newMockBackend()
@@ -986,6 +1050,8 @@ func TestExecuteOneMove_SourceDeleteFails_EnqueuesCleanup(t *testing.T) {
 	}
 }
 
+// TestPlanSpreadEven_RespectsBatchSize verifies the plan spread even respects batch size contract.
+// Asserts that planSpreadEven:.
 func TestPlanSpreadEven_RespectsBatchSize(t *testing.T) {
 	t.Parallel()
 	objects := make([]core.ObjectLocation, 20)
@@ -1013,6 +1079,8 @@ func TestPlanSpreadEven_RespectsBatchSize(t *testing.T) {
 	}
 }
 
+// TestExecuteMoves_AdmissionBlocked verifies the execute moves admission blocked contract.
+// Asserts that expected 0 moves when admission blocked, got.
 func TestExecuteMoves_AdmissionBlocked(t *testing.T) {
 	t.Parallel()
 	// Fill the admission semaphore and cancel the context so the

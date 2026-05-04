@@ -1,3 +1,14 @@
+# -------------------------------------------------------------------------------
+# Prometheus - Local Demo Configuration
+#
+# Author: Alex Freidah
+#
+# Scrape config for the docker-compose / kubernetes local demo. Points at the
+# orchestrator's /metrics endpoint and at the container exporters surfaced by
+# the demo stack. Production deployments wire scrape via service discovery
+# instead of the static targets used here.
+# -------------------------------------------------------------------------------
+
 global:
   scrape_interval: 10s
 

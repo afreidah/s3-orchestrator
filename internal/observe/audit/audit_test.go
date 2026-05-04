@@ -57,7 +57,8 @@ func TestContextRoundTrip(t *testing.T) {
 	}
 }
 
-// TestLog_StructuredOutput verifies that audit log entries contain the expected structured fields.
+// TestLog_StructuredOutput verifies the log structured output contract.
+// Asserts that failed to parse log output: \nraw:.
 func TestLog_StructuredOutput(t *testing.T) {
 	var buf bytes.Buffer
 	handler := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})
@@ -156,7 +157,8 @@ func TestSetOnEvent_Replaces(t *testing.T) {
 	}
 }
 
-// TestLog_WithoutRequestID verifies that audit entries omit request_id when none is set.
+// TestLog_WithoutRequestID verifies the log without request id contract.
+// Asserts that failed to parse log output:.
 func TestLog_WithoutRequestID(t *testing.T) {
 	var buf bytes.Buffer
 	handler := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})

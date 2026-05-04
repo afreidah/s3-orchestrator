@@ -10,6 +10,8 @@ package event
 
 import "testing"
 
+// TestMatchesFilter verifies the matches filter contract.
+// Asserts that MatchesFilter(, ) = , want.
 func TestMatchesFilter(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

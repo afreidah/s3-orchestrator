@@ -1,7 +1,13 @@
 // -------------------------------------------------------------------------------
-// CB Decorator — QuotaStore
+// CB Decorator  -  QuotaStore
 //
 // Author: Alex Freidah
+//
+// Wraps a core.QuotaStore (per-backend bytes_used + bytes_limit + the
+// least-utilized / has-space lookups) so every call routes through the
+// database CircuitBreaker. Returns ErrDBUnavailable instantly when the
+// breaker is open so the write path can fail fast and trigger the
+// degraded broadcast read path on the read side.
 // -------------------------------------------------------------------------------
 
 package store

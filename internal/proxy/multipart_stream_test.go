@@ -44,6 +44,8 @@ func preloadPart(be *mockBackend, uploadID string, partNum int, body []byte) str
 // streamOnePart
 // -------------------------------------------------------------------------
 
+// TestStreamOnePart_PlaintextCopiesBytes verifies the stream one part plaintext copies bytes contract.
+// Asserts that streamOnePart:.
 func TestStreamOnePart_PlaintextCopiesBytes(t *testing.T) {
 	t.Parallel()
 	mp := newTestMultipartManager(nil)
@@ -61,6 +63,8 @@ func TestStreamOnePart_PlaintextCopiesBytes(t *testing.T) {
 	}
 }
 
+// TestStreamOnePart_GetObjectErrorWrapsPartNumber verifies the stream one part get object error wraps part number contract.
+// Asserts that error missing part number:.
 func TestStreamOnePart_GetObjectErrorWrapsPartNumber(t *testing.T) {
 	t.Parallel()
 	mp := newTestMultipartManager(nil)
@@ -81,6 +85,8 @@ func TestStreamOnePart_GetObjectErrorWrapsPartNumber(t *testing.T) {
 	}
 }
 
+// TestStreamOnePart_BodyReadErrorWrapsPartNumber verifies the stream one part body read error wraps part number contract.
+// Asserts that error missing part number / phase:.
 func TestStreamOnePart_BodyReadErrorWrapsPartNumber(t *testing.T) {
 	t.Parallel()
 	mp := newTestMultipartManager(nil)
@@ -100,6 +106,8 @@ func TestStreamOnePart_BodyReadErrorWrapsPartNumber(t *testing.T) {
 	}
 }
 
+// TestStreamOnePart_EncryptedPartDecrypts verifies the stream one part encrypted part decrypts contract.
+// Asserts that Encrypt:.
 func TestStreamOnePart_EncryptedPartDecrypts(t *testing.T) {
 	t.Parallel()
 	enc := newTestEncryptor(t)
@@ -136,6 +144,8 @@ func TestStreamOnePart_EncryptedPartDecrypts(t *testing.T) {
 	}
 }
 
+// TestStreamOnePart_EncryptedPartWithoutEncryptorPassesCiphertext verifies the stream one part encrypted part without encryptor passes ciphertext contract.
+// Asserts that streamOnePart:.
 func TestStreamOnePart_EncryptedPartWithoutEncryptorPassesCiphertext(t *testing.T) {
 	t.Parallel()
 	// Existing behavior: when part.Encrypted is true but mp.encryptor is nil
@@ -157,6 +167,8 @@ func TestStreamOnePart_EncryptedPartWithoutEncryptorPassesCiphertext(t *testing.
 	}
 }
 
+// TestStreamOnePart_BadEncryptionKeyWrapsPartNumber verifies the stream one part bad encryption key wraps part number contract.
+// Asserts that error missing phase / part number:.
 func TestStreamOnePart_BadEncryptionKeyWrapsPartNumber(t *testing.T) {
 	t.Parallel()
 	enc := newTestEncryptor(t)
@@ -165,7 +177,7 @@ func TestStreamOnePart_BadEncryptionKeyWrapsPartNumber(t *testing.T) {
 	const uploadID = "upload-badkey"
 	preloadPart(be, uploadID, 4, []byte("anything"))
 
-	// EncryptionKey too short → UnpackKeyData fails.
+	// EncryptionKey too short -> UnpackKeyData fails.
 	part := &core.MultipartPart{PartNumber: 4, Encrypted: true, EncryptionKey: []byte("tiny")}
 
 	var buf bytes.Buffer
@@ -178,6 +190,8 @@ func TestStreamOnePart_BadEncryptionKeyWrapsPartNumber(t *testing.T) {
 	}
 }
 
+// TestStreamOnePart_DecryptErrorWrapsPartNumber verifies the stream one part decrypt error wraps part number contract.
+// Asserts that Encrypt:.
 func TestStreamOnePart_DecryptErrorWrapsPartNumber(t *testing.T) {
 	t.Parallel()
 	enc := newTestEncryptor(t)
@@ -215,6 +229,8 @@ func TestStreamOnePart_DecryptErrorWrapsPartNumber(t *testing.T) {
 // streamPartsThroughPipe
 // -------------------------------------------------------------------------
 
+// TestStreamPartsThroughPipe_ConcatenatesInOrder verifies the stream parts through pipe concatenates in order contract.
+// Asserts that read pipe:.
 func TestStreamPartsThroughPipe_ConcatenatesInOrder(t *testing.T) {
 	t.Parallel()
 	mp := newTestMultipartManager(nil)
@@ -242,13 +258,15 @@ func TestStreamPartsThroughPipe_ConcatenatesInOrder(t *testing.T) {
 	}
 }
 
+// TestStreamPartsThroughPipe_PropagatesPartFailure verifies the stream parts through pipe propagates part failure contract.
+// Asserts that error missing phase / part number:.
 func TestStreamPartsThroughPipe_PropagatesPartFailure(t *testing.T) {
 	t.Parallel()
 	mp := newTestMultipartManager(nil)
 	be := newMockBackend()
 	const uploadID = "upload-partfail"
 	preloadPart(be, uploadID, 1, []byte("ok-1"))
-	// Part 2 deliberately not preloaded — backend returns NotFound.
+	// Part 2 deliberately not preloaded  -  backend returns NotFound.
 	preloadPart(be, uploadID, 3, []byte("ok-3"))
 
 	parts := []core.MultipartPart{
@@ -269,6 +287,8 @@ func TestStreamPartsThroughPipe_PropagatesPartFailure(t *testing.T) {
 	}
 }
 
+// TestStreamPartsThroughPipe_MixedEncryptedAndPlain verifies the stream parts through pipe mixed encrypted and plain contract.
+// Asserts that Encrypt:.
 func TestStreamPartsThroughPipe_MixedEncryptedAndPlain(t *testing.T) {
 	t.Parallel()
 	enc := newTestEncryptor(t)

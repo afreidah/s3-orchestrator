@@ -44,6 +44,8 @@ import (
 // testMasterKey is a 256-bit AES key used for integration test encryption.
 var testMasterKey = base64.StdEncoding.EncodeToString(bytes.Repeat([]byte("K"), 32))
 
+// adminToken is the admin auth token used by encryption-flow
+// integration tests against the real test instance.
 const adminToken = "test-admin-token"
 
 // encryptionTestEnv holds the components needed for encryption integration tests.
@@ -214,6 +216,8 @@ func queryEncryptionState(t *testing.T, objectKey string) (encrypted bool, sizeB
 // TESTS
 // -------------------------------------------------------------------------
 
+// TestEncryptDecryptExisting_RoundTrip verifies the encrypt decrypt existing round trip contract.
+// Asserts that PutObject[]:.
 func TestEncryptDecryptExisting_RoundTrip(t *testing.T) {
 	env := setupEncryptionEnv(t)
 	ctx := context.Background()
@@ -342,22 +346,26 @@ func TestEncryptDecryptExisting_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestEncryptDecryptExisting_Empty verifies the encrypt decrypt existing empty contract.
+// Asserts that encrypt-existing on empty DB: encrypted = , want 0.
 func TestEncryptDecryptExisting_Empty(t *testing.T) {
 	env := setupEncryptionEnv(t)
 
-	// Encrypt with no objects — should succeed with 0 encrypted
+	// Encrypt with no objects  -  should succeed with 0 encrypted
 	result := env.callAdmin(t, "/admin/api/encrypt-existing")
 	if encrypted := int(result["encrypted"].(float64)); encrypted != 0 {
 		t.Errorf("encrypt-existing on empty DB: encrypted = %d, want 0", encrypted)
 	}
 
-	// Decrypt with no encrypted objects — should succeed with 0 decrypted
+	// Decrypt with no encrypted objects  -  should succeed with 0 decrypted
 	result = env.callAdmin(t, "/admin/api/decrypt-existing")
 	if decrypted := int(result["decrypted"].(float64)); decrypted != 0 {
 		t.Errorf("decrypt-existing on empty DB: decrypted = %d, want 0", decrypted)
 	}
 }
 
+// TestEncryptDecryptExisting_IdempotentEncrypt verifies the encrypt decrypt existing idempotent encrypt contract.
+// Asserts that PutObject:.
 func TestEncryptDecryptExisting_IdempotentEncrypt(t *testing.T) {
 	env := setupEncryptionEnv(t)
 	ctx := context.Background()
@@ -378,7 +386,7 @@ func TestEncryptDecryptExisting_IdempotentEncrypt(t *testing.T) {
 	// Encrypt once
 	env.callAdmin(t, "/admin/api/encrypt-existing")
 
-	// Encrypt again — already-encrypted objects should not be re-encrypted
+	// Encrypt again  -  already-encrypted objects should not be re-encrypted
 	result := env.callAdmin(t, "/admin/api/encrypt-existing")
 	if encrypted := int(result["encrypted"].(float64)); encrypted != 0 {
 		t.Errorf("second encrypt-existing should process 0 objects, got %d", encrypted)
@@ -399,6 +407,8 @@ func TestEncryptDecryptExisting_IdempotentEncrypt(t *testing.T) {
 	}
 }
 
+// TestDecryptExisting_IdempotentDecrypt verifies the decrypt existing idempotent decrypt contract.
+// Asserts that PutObject:.
 func TestDecryptExisting_IdempotentDecrypt(t *testing.T) {
 	env := setupEncryptionEnv(t)
 	ctx := context.Background()
@@ -418,7 +428,7 @@ func TestDecryptExisting_IdempotentDecrypt(t *testing.T) {
 	env.callAdmin(t, "/admin/api/encrypt-existing")
 	env.callAdmin(t, "/admin/api/decrypt-existing")
 
-	// Decrypt again — already-decrypted objects should not be re-processed
+	// Decrypt again  -  already-decrypted objects should not be re-processed
 	result := env.callAdmin(t, "/admin/api/decrypt-existing")
 	if decrypted := int(result["decrypted"].(float64)); decrypted != 0 {
 		t.Errorf("second decrypt-existing should process 0 objects, got %d", decrypted)
@@ -716,7 +726,7 @@ func TestEncryptExisting_BackendNotFound(t *testing.T) {
 }
 
 // TestEncryptDecryptExisting_DirectBackendVerification verifies that the actual
-// bytes on the backend change during encrypt/decrypt — not just the DB metadata.
+// bytes on the backend change during encrypt/decrypt  -  not just the DB metadata.
 func TestEncryptDecryptExisting_DirectBackendVerification(t *testing.T) {
 	env := setupEncryptionEnv(t)
 	ctx := context.Background()
@@ -737,7 +747,7 @@ func TestEncryptDecryptExisting_DirectBackendVerification(t *testing.T) {
 	backendName := queryObjectBackend(t, key)
 	backend := allBackends[backendName]
 
-	// Read raw bytes from backend — should be plaintext
+	// Read raw bytes from backend  -  should be plaintext
 	rawResult, err := backend.GetObject(ctx, internalKey(key), "")
 	if err != nil {
 		t.Fatalf("direct GetObject (pre-encrypt): %v", err)
@@ -751,7 +761,7 @@ func TestEncryptDecryptExisting_DirectBackendVerification(t *testing.T) {
 	// Encrypt
 	env.callAdmin(t, "/admin/api/encrypt-existing")
 
-	// Read raw bytes from backend — should be ciphertext (different from plaintext)
+	// Read raw bytes from backend  -  should be ciphertext (different from plaintext)
 	encResult, err := backend.GetObject(ctx, internalKey(key), "")
 	if err != nil {
 		t.Fatalf("direct GetObject (post-encrypt): %v", err)
@@ -768,7 +778,7 @@ func TestEncryptDecryptExisting_DirectBackendVerification(t *testing.T) {
 	// Decrypt
 	env.callAdmin(t, "/admin/api/decrypt-existing")
 
-	// Read raw bytes from backend — should be plaintext again
+	// Read raw bytes from backend  -  should be plaintext again
 	decResult, err := backend.GetObject(ctx, internalKey(key), "")
 	if err != nil {
 		t.Fatalf("direct GetObject (post-decrypt): %v", err)

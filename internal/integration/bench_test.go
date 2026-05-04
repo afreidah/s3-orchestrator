@@ -1,3 +1,15 @@
+// -------------------------------------------------------------------------------
+// Integration Benchmarks
+//
+// Author: Alex Freidah
+//
+// End-to-end performance benchmarks against real MinIO and PostgreSQL
+// containers, gated behind the `integration` build tag. Covers PUT
+// throughput, ListObjects pagination cost, and a full rebalance cycle so
+// regressions in the request path or background workers surface before
+// they reach production.
+// -------------------------------------------------------------------------------
+
 //go:build integration
 
 package integration
@@ -15,6 +27,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
+// newBenchS3Client constructs a new bench s3 client.
 func newBenchS3Client() *s3.Client {
 	return s3.New(s3.Options{
 		BaseEndpoint: aws.String("http://" + proxyAddr),
@@ -24,6 +37,7 @@ func newBenchS3Client() *s3.Client {
 	})
 }
 
+// BenchmarkPutObject measures the put object path by exercising context.Background, bytes.Repeat, fmt.Sprintf.
 func BenchmarkPutObject(b *testing.B) {
 	sizes := []struct {
 		name string
@@ -60,6 +74,7 @@ func BenchmarkPutObject(b *testing.B) {
 	}
 }
 
+// BenchmarkListObjects measures the list objects path by exercising context.Background, fmt.Sprintf, client.PutObject.
 func BenchmarkListObjects(b *testing.B) {
 	client := newBenchS3Client()
 	ctx := context.Background()
@@ -94,6 +109,7 @@ func BenchmarkListObjects(b *testing.B) {
 	}
 }
 
+// BenchmarkRebalance measures the rebalance path by exercising context.Background, fmt.Sprintf, client.PutObject.
 func BenchmarkRebalance(b *testing.B) {
 	client := newBenchS3Client()
 	ctx := context.Background()

@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------
-// Metrics — Replication, Over-Replication
+// Metrics  -  Replication, Over-Replication
 //
 // Author: Alex Freidah
 //
@@ -14,6 +14,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
+// ReplicationPending and related package-level variables used by this package.
 var (
 	// --- Replication metrics ---
 

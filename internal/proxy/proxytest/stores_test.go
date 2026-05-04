@@ -40,7 +40,7 @@ func newManager(t *testing.T, mock *testutil.MockStore) *proxy.BackendManager {
 }
 
 // TestStoresFromMock verifies every field of the returned Stores points
-// at the supplied mock — this is the mock-fanout invariant the cross-
+// at the supplied mock  -  this is the mock-fanout invariant the cross-
 // package tests depend on.
 func TestStoresFromMock(t *testing.T) {
 	t.Parallel()

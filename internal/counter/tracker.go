@@ -64,7 +64,7 @@ func (u *UsageTracker) Record(backendName string, apiCalls, egress, ingress int6
 // Enforcement is approximate: baseline and counter are read in separate
 // steps without a global lock, so concurrent requests may all pass the
 // check and collectively exceed the limit by a small margin. This is
-// intentional — exact enforcement would require a mutex on every request.
+// intentional  -  exact enforcement would require a mutex on every request.
 // The overshoot is bounded by one flush interval worth of concurrent
 // traffic, and the s3o_usage_limit_rejections_total metric tracks when
 // limits are actively enforced.
@@ -212,6 +212,8 @@ func backendNearLimit(base core.UsageStat, cur LoadAllResult, lim core.UsageLimi
 // -------------------------------------------------------------------------
 
 // currentPeriod returns the current month as "YYYY-MM" for usage aggregation.
+// CurrentPeriod current period.
+// CurrentPeriod current period.
 func CurrentPeriod() string {
 	return time.Now().UTC().Format("2006-01")
 }

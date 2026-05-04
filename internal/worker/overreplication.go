@@ -179,6 +179,8 @@ type scoredCopy struct {
 // Among healthy backends, the most utilized backend gets the lowest score,
 // making its copy the first candidate for removal -- freeing space where it
 // is scarcest.
+// ScoreCopy score copy.
+// ScoreCopy score copy.
 func (c *OverReplicationCleaner) ScoreCopy(loc *core.ObjectLocation, stats map[string]core.QuotaStat) float64 {
 	if c.ops.IsDraining(loc.BackendName) {
 		return 0

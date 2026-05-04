@@ -33,9 +33,12 @@ import (
 )
 
 // -------------------------------------------------------------------------
-// ORPHAN BYTES — CAPACITY BLOCKING
+// ORPHAN BYTES  -  CAPACITY BLOCKING
 // -------------------------------------------------------------------------
 
+// TestOrphanBytes verifies the orphan bytes behaviour across the supplied sub-cases:
+// "OrphanBytesBlockWrite", "OrphanBytesBlockAllBackends507", "EnqueueIncrementsOrphanBytes", "CleanupSuccessDecrementsOrphanBytes", "MoveCleanupToDLQ_GraduatesQueueRow", "MoveCleanupToDLQ_MissingRowIsNoOp", and 4 more.
+// Each sub-case exercises one branch of the code under test.
 func TestOrphanBytes(t *testing.T) {
 	client := newS3Client(t)
 	ctx := context.Background()
@@ -126,7 +129,7 @@ func TestOrphanBytes(t *testing.T) {
 	})
 
 	// -------------------------------------------------------------------------
-	// ORPHAN BYTES — CLEANUP QUEUE LIFECYCLE
+	// ORPHAN BYTES  -  CLEANUP QUEUE LIFECYCLE
 	// -------------------------------------------------------------------------
 
 	t.Run("EnqueueIncrementsOrphanBytes", func(t *testing.T) {
@@ -196,7 +199,7 @@ func TestOrphanBytes(t *testing.T) {
 			t.Fatalf("orphan_bytes before cleanup = %d, want 100", orphanBefore)
 		}
 
-		// Run the cleanup worker — it should successfully delete the object
+		// Run the cleanup worker  -  it should successfully delete the object
 		// and decrement orphan_bytes.
 		processed, failed := testManager.CleanupWorker.ProcessCleanupQueue(ctx)
 		if processed != 1 {
@@ -342,7 +345,7 @@ func TestOrphanBytes(t *testing.T) {
 			t.Errorf("processed = %d, want 1", processed)
 		}
 
-		// Orphan bytes should remain at 200 — zero-size items don't decrement.
+		// Orphan bytes should remain at 200  -  zero-size items don't decrement.
 		orphan := queryOrphanBytes(t, backend)
 		if orphan != 200 {
 			t.Errorf("orphan_bytes = %d, want 200 (unchanged)", orphan)
@@ -350,7 +353,7 @@ func TestOrphanBytes(t *testing.T) {
 	})
 
 	// -------------------------------------------------------------------------
-	// ORPHAN BYTES — QUOTA STATS REPORTING
+	// ORPHAN BYTES  -  QUOTA STATS REPORTING
 	// -------------------------------------------------------------------------
 
 	t.Run("QuotaStatsIncludeOrphanBytes", func(t *testing.T) {
@@ -382,13 +385,13 @@ func TestOrphanBytes(t *testing.T) {
 	})
 
 	// -------------------------------------------------------------------------
-	// ORPHAN BYTES — REPLICATION TARGET SELECTION
+	// ORPHAN BYTES  -  REPLICATION TARGET SELECTION
 	// -------------------------------------------------------------------------
 
 	t.Run("ReplicationRespectsOrphanBytes", func(t *testing.T) {
 		resetState(t)
 
-		// Upload a small object — lands on minio-1 (pack routing).
+		// Upload a small object  -  lands on minio-1 (pack routing).
 		key := uniqueKey(t, "repl-orphan")
 		_, err := client.PutObject(ctx, &s3.PutObjectInput{
 			Bucket:        aws.String(virtualBucket),
@@ -442,13 +445,13 @@ func TestOrphanBytes(t *testing.T) {
 	})
 
 	// -------------------------------------------------------------------------
-	// ORPHAN BYTES — OVERWRITE DISPLACED COPIES
+	// ORPHAN BYTES  -  OVERWRITE DISPLACED COPIES
 	// -------------------------------------------------------------------------
 
 	t.Run("OverwriteDisplacedCopiesCleanedUp", func(t *testing.T) {
 		resetState(t)
 
-		// Upload an object — lands on minio-1.
+		// Upload an object  -  lands on minio-1.
 		key := uniqueKey(t, "overwrite-displaced")
 		body := bytes.Repeat([]byte("V"), 100)
 		_, err := client.PutObject(ctx, &s3.PutObjectInput{
@@ -482,7 +485,7 @@ func TestOrphanBytes(t *testing.T) {
 		backends := queryObjectBackends(t, key)
 		t.Logf("before overwrite: copies on %v", backends)
 
-		// Overwrite the object — the new version lands on one backend,
+		// Overwrite the object  -  the new version lands on one backend,
 		// the stale copy on the other backend becomes a displaced copy.
 		newBody := bytes.Repeat([]byte("W"), 150)
 		_, err = client.PutObject(ctx, &s3.PutObjectInput{
@@ -530,9 +533,11 @@ func TestOrphanBytes(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
-// ORPHAN BYTES — SPREAD ROUTING (separate manager with "spread" strategy)
+// ORPHAN BYTES  -  SPREAD ROUTING (separate manager with "spread" strategy)
 // -------------------------------------------------------------------------
 
+// TestOrphanBytesSpreadRouting verifies the orphan bytes spread routing contract.
+// Asserts that listen:.
 func TestOrphanBytesSpreadRouting(t *testing.T) {
 	ctx := context.Background()
 
@@ -589,7 +594,7 @@ func TestOrphanBytesSpreadRouting(t *testing.T) {
 		resetState(t)
 
 		// Use the pack-routed global client to fill minio-1 deterministically.
-		// minio-1: 1024 limit. Put 500 bytes → ratio = (500+0)/1024 = 0.488.
+		// minio-1: 1024 limit. Put 500 bytes -> ratio = (500+0)/1024 = 0.488.
 		packClient := newS3Client(t)
 		fill1Key := uniqueKey(t, "spread-orphan")
 		_, err := packClient.PutObject(ctx, &s3.PutObjectInput{

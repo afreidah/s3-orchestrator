@@ -21,6 +21,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// ROUTING ELIGIBILITY
+// -------------------------------------------------------------------------
+
 // GetBackendWithSpace finds a backend with enough quota for the given size.
 // Returns the backend name or ErrNoSpaceAvailable if none have enough space.
 func (s *Store) GetBackendWithSpace(ctx context.Context, size int64, backendOrder []string) (string, error) {
@@ -98,6 +102,10 @@ func (s *Store) GetLeastUtilizedBackend(ctx context.Context, size int64, eligibl
 	return backendName, nil
 }
 
+// -------------------------------------------------------------------------
+// QUOTA ADMIN AND STATS
+// -------------------------------------------------------------------------
+
 // SyncQuotaLimits ensures the backend_quotas table has entries for all configured
 // backends with their quota limits. Creates new entries or updates existing limits.
 func (s *Store) SyncQuotaLimits(ctx context.Context, backends []config.BackendConfig) error {
@@ -173,6 +181,10 @@ func (s *Store) GetObjectCounts(ctx context.Context) (map[string]int64, error) {
 	return counts, nil
 }
 
+// -------------------------------------------------------------------------
+// ORPHAN BYTES
+// -------------------------------------------------------------------------
+
 // IncrementOrphanBytes adds bytes to the orphan_bytes counter for a backend.
 // Called when a physical delete fails and is enqueued for retry.
 func (s *Store) IncrementOrphanBytes(ctx context.Context, backendName string, amount int64) error {
@@ -202,6 +214,10 @@ func (s *Store) DecrementOrphanBytes(ctx context.Context, backendName string, am
 	}
 	return nil
 }
+
+// -------------------------------------------------------------------------
+// USAGE DELTAS
+// -------------------------------------------------------------------------
 
 // FlushUsageDeltas atomically adds accumulated usage deltas to the persistent
 // usage row. Creates the row if it doesn't exist for this (backend, period).

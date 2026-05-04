@@ -26,6 +26,7 @@ import (
 // RecordOperation
 // -------------------------------------------------------------------------
 
+// TestRecordOperation_Success verifies the record operation success path by exercising counter.NewUsageTracker, counter.NewLocalCounterBackend, metrics.New.
 func TestRecordOperation_Success(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{}
@@ -36,6 +37,7 @@ func TestRecordOperation_Success(t *testing.T) {
 	mc.RecordOperation("PutObject", "b1", time.Now(), nil)
 }
 
+// TestRecordOperation_Error verifies the record operation error path by exercising counter.NewUsageTracker, counter.NewLocalCounterBackend, metrics.New.
 func TestRecordOperation_Error(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{}
@@ -50,6 +52,8 @@ func TestRecordOperation_Error(t *testing.T) {
 // UpdateQuotaMetrics
 // -------------------------------------------------------------------------
 
+// TestUpdateQuotaMetrics_Success verifies the update quota metrics success contract.
+// Asserts that UpdateQuotaMetrics:.
 func TestUpdateQuotaMetrics_Success(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -76,13 +80,15 @@ func TestUpdateQuotaMetrics_Success(t *testing.T) {
 	}
 }
 
+// TestUpdateQuotaMetrics_CapacityWarning verifies the update quota metrics capacity warning contract.
+// Asserts that UpdateQuotaMetrics:.
 func TestUpdateQuotaMetrics_CapacityWarning(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
 		getQuotaStatsResp: map[string]core.QuotaStat{
-			"b1": {BytesUsed: 900, BytesLimit: 1000},                  // 90% — should warn
-			"b2": {BytesUsed: 500, BytesLimit: 1000},                  // 50% — no warning
-			"b3": {BytesUsed: 800, BytesLimit: 1000, OrphanBytes: 50}, // 85% with orphans — should warn
+			"b1": {BytesUsed: 900, BytesLimit: 1000},                  // 90%  -  should warn
+			"b2": {BytesUsed: 500, BytesLimit: 1000},                  // 50%  -  no warning
+			"b3": {BytesUsed: 800, BytesLimit: 1000, OrphanBytes: 50}, // 85% with orphans  -  should warn
 		},
 		getObjectCountsResp:    map[string]int64{},
 		getActiveMultipartResp: map[string]int64{},
@@ -91,7 +97,7 @@ func TestUpdateQuotaMetrics_CapacityWarning(t *testing.T) {
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1", "b2", "b3"}), nil)
 	mc := metrics.New(store, usage, []string{"b1", "b2", "b3"}, func() int { return 0 })
 
-	// The warning is logged via slog — this test exercises the code path.
+	// The warning is logged via slog  -  this test exercises the code path.
 	// Verification is that the metrics are set correctly and no panic occurs.
 	err := mc.UpdateQuotaMetrics(context.Background())
 	if err != nil {
@@ -99,6 +105,7 @@ func TestUpdateQuotaMetrics_CapacityWarning(t *testing.T) {
 	}
 }
 
+// TestUpdateQuotaMetrics_QuotaStatsError verifies the update quota metrics quota stats error path by exercising errors.New, counter.NewUsageTracker, counter.NewLocalCounterBackend.
 func TestUpdateQuotaMetrics_QuotaStatsError(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -113,6 +120,8 @@ func TestUpdateQuotaMetrics_QuotaStatsError(t *testing.T) {
 	}
 }
 
+// TestUpdateQuotaMetrics_ObjectCountsError verifies the update quota metrics object counts error contract.
+// Asserts that expected nil error (object counts error is non-fatal):.
 func TestUpdateQuotaMetrics_ObjectCountsError(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -123,13 +132,15 @@ func TestUpdateQuotaMetrics_ObjectCountsError(t *testing.T) {
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1"}), nil)
 	mc := metrics.New(store, usage, []string{"b1"}, func() int { return 0 })
 
-	// Should not return error — object counts error is logged only
+	// Should not return error  -  object counts error is logged only
 	err := mc.UpdateQuotaMetrics(context.Background())
 	if err != nil {
 		t.Fatalf("expected nil error (object counts error is non-fatal): %v", err)
 	}
 }
 
+// TestUpdateQuotaMetrics_MultipartCountsError verifies the update quota metrics multipart counts error contract.
+// Asserts that expected nil error (multipart counts error is non-fatal):.
 func TestUpdateQuotaMetrics_MultipartCountsError(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -147,6 +158,8 @@ func TestUpdateQuotaMetrics_MultipartCountsError(t *testing.T) {
 	}
 }
 
+// TestUpdateQuotaMetrics_UsageForPeriodError verifies the update quota metrics usage for period error contract.
+// Asserts that expected nil error (usage error is non-fatal):.
 func TestUpdateQuotaMetrics_UsageForPeriodError(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -168,6 +181,8 @@ func TestUpdateQuotaMetrics_UsageForPeriodError(t *testing.T) {
 // Replication pending gauge
 // -------------------------------------------------------------------------
 
+// TestUpdateQuotaMetrics_ReplicationPending verifies the update quota metrics replication pending contract.
+// Asserts that UpdateQuotaMetrics:.
 func TestUpdateQuotaMetrics_ReplicationPending(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -188,6 +203,8 @@ func TestUpdateQuotaMetrics_ReplicationPending(t *testing.T) {
 	}
 }
 
+// TestUpdateQuotaMetrics_ReplicationPendingSkippedWhenDisabled verifies the update quota metrics replication pending skipped when disabled contract.
+// Asserts that UpdateQuotaMetrics:.
 func TestUpdateQuotaMetrics_ReplicationPendingSkippedWhenDisabled(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -205,6 +222,8 @@ func TestUpdateQuotaMetrics_ReplicationPendingSkippedWhenDisabled(t *testing.T) 
 	}
 }
 
+// TestUpdateQuotaMetrics_ReplicationPendingQueryError verifies the update quota metrics replication pending query error contract.
+// Asserts that expected nil error (under-replicated query error is non-fatal):.
 func TestUpdateQuotaMetrics_ReplicationPendingQueryError(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -217,13 +236,15 @@ func TestUpdateQuotaMetrics_ReplicationPendingQueryError(t *testing.T) {
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1"}), nil)
 	mc := metrics.New(store, usage, []string{"b1"}, func() int { return 2 })
 
-	// Should not return error — under-replicated query error is non-fatal
+	// Should not return error  -  under-replicated query error is non-fatal
 	err := mc.UpdateQuotaMetrics(context.Background())
 	if err != nil {
 		t.Fatalf("expected nil error (under-replicated query error is non-fatal): %v", err)
 	}
 }
 
+// TestUpdateQuotaMetrics_ReplicationFactorFromManager verifies the update quota metrics replication factor from manager contract.
+// Asserts that UpdateQuotaMetrics (no repl config):.
 func TestUpdateQuotaMetrics_ReplicationFactorFromManager(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -247,13 +268,13 @@ func TestUpdateQuotaMetrics_ReplicationFactorFromManager(t *testing.T) {
 	})
 	wireWorkersForTest(mgr)
 
-	// Without replication config — closure returns 0, skips query
+	// Without replication config  -  closure returns 0, skips query
 	err := mgr.metricsCollector.UpdateQuotaMetrics(context.Background())
 	if err != nil {
 		t.Fatalf("UpdateQuotaMetrics (no repl config): %v", err)
 	}
 
-	// With replication config — closure returns factor, queries DB
+	// With replication config  -  closure returns factor, queries DB
 	mgr.Replicator.SetConfig(&config.ReplicationConfig{Factor: 2, BatchSize: 50})
 	err = mgr.metricsCollector.UpdateQuotaMetrics(context.Background())
 	if err != nil {

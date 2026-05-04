@@ -12,6 +12,8 @@ package s3api
 
 import "testing"
 
+// FuzzIsValidRequestID fuzzes the is valid request id contract.
+// Asserts that isValidRequestID() = true but length is out of range.
 func FuzzIsValidRequestID(f *testing.F) {
 	f.Add("abcdef1234567890")
 	f.Add("")

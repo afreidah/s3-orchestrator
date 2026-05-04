@@ -8,8 +8,13 @@
 - [Comment Types and Spacing](#comment-types-and-spacing)
 - [File Headers](#file-headers)
 - [Go Conventions](#go-conventions)
+- [Project Structure and Layers](#project-structure-and-layers)
+- [Dependency Injection](#dependency-injection)
+- [Adding a New Component](#adding-a-new-component)
 - [Error Handling](#error-handling)
 - [Logging and Audit](#logging-and-audit)
+- [Tracing](#tracing)
+- [Metrics](#metrics)
 - [Testing](#testing)
 - [Code Style](#code-style)
 - [Versioning](#versioning)
@@ -248,6 +253,262 @@ const (
 
 ---
 
+## Project Structure and Layers
+
+The codebase splits along strict layers. New code goes in the layer whose
+responsibility matches; an outer layer must not import a more outer layer, and
+inner layers must never import the transport packages.
+
+```
+cmd/s3-orchestrator/         # Binary entry point: flag parsing + os.Exit wrapper
+internal/
+  cli/                       # Subcommand dispatch (admin, init, sync, serve, validate)
+    serve/                   # Server bootstrap: builds DI injector, starts HTTP listener
+    adminctl/                # `s3-orchestrator admin ...` subcommands (HTTP client to admin API)
+    initcmd/                 # `s3-orchestrator init` interactive config writer
+    synccmd/                 # `s3-orchestrator sync` bucket reconcile entry point
+  config/                    # YAML + env config: types, defaults, validators
+  transport/                 # HTTP layer (no business logic)
+    s3api/                   # S3-compatible XML/REST handlers
+    admin/                   # Admin API handlers
+    ui/                      # Dashboard handlers + templates
+    auth/                    # SigV4 verification + bucket auth
+    httputil/                # Cross-cutting HTTP helpers (trusted proxies, login throttle, cert reload)
+  proxy/                     # Manager layer: routes requests, owns workers, glues store + backend
+    manager/                 # BackendManager + role-narrow sub-managers
+    metrics/                 # Manager-level metric collector
+    drain/                   # Backend drain coordinator
+    dashboard/               # Dashboard read aggregator
+  worker/                    # Background services: replicator, rebalancer, cleanup, scrubber, reaper
+  store/                     # Metadata persistence
+    core/                    # Engine-agnostic orchestration (TxAdapter, Runner, business rules)
+    postgres/                # Postgres engine adapter (sqlc-generated under sqlc/)
+    sqlite/                  # SQLite engine adapter
+    cb_*.go                  # CircuitBreaker decorators per narrow store role
+  backend/                   # S3-compatible client interface + per-provider adapters
+  encryption/                # Envelope encryption: chunked AES-GCM, key providers (config/file/Vault)
+  observe/
+    audit/                   # Request-id context plumbing + structured audit log helper
+    telemetry/               # Prometheus metrics + OTel span helpers
+    event/                   # Notification event types (CloudEvents)
+  notify/                    # Webhook delivery worker (consumes notification_outbox)
+  counter/                   # Per-backend usage counters (local + Redis backends)
+  cache/                     # In-memory read-side cache
+  breaker/                   # Generic three-state CircuitBreaker (used for DB and backends)
+  lifecycle/                 # Service supervisor: restart-on-panic, graceful Stop
+  di/                        # samber/do/v2 wiring point (NewInjector + every Provide func)
+  util/
+    bufpool/                 # Pooled byte buffers for streaming I/O
+    syncutil/                # AtomicConfig, TTLCache primitives
+    workerpool/              # Bounded-concurrency worker pool
+  integration/               # End-to-end integration tests against MinIO + Postgres testcontainers
+```
+
+### Layer Responsibilities
+
+| Layer | Imports | Responsibility |
+|---|---|---|
+| `cmd/`, `cli/` | Everything | Wire flags, build the DI injector, invoke top-level services |
+| `transport/` | `proxy`, `auth`, `observe` | Decode HTTP, authenticate, dispatch to manager, encode S3-XML response |
+| `proxy/` | `worker`, `store`, `backend`, `observe`, `counter` | Routing strategy, broadcast reads, location cache, worker hosts |
+| `worker/` | `store`, `backend`, `observe` | Background services driven by the lifecycle manager |
+| `store/` | nothing app-specific | Metadata persistence; engine-agnostic orchestration in `core/`, engines under `postgres/` and `sqlite/` |
+| `backend/` | nothing app-specific | Per-provider S3 client wrappers behind one `ObjectBackend` interface |
+| `observe/` | nothing app-specific | Logging, tracing, metrics, audit |
+| `di/` | All public surfaces | Single wiring point that registers every provider |
+
+Inner layers must not import outer layers (no `store` importing `transport`).
+The compiler does not enforce this, so reviewers must - it is the rule that
+keeps the code testable and the dependency graph acyclic.
+
+### Layered Read of a Single PUT
+
+```
+client -> transport/s3api  (parse, auth)
+       -> proxy/manager    (routing, quota check, location cache)
+       -> backend          (S3 PUT)
+       -> store/core       (RecordObject in a tx)
+       -> response back through the layers
+```
+
+The arrow direction is strict: `store/core` never calls back into `proxy`.
+
+---
+
+## Dependency Injection
+
+DI uses [samber/do/v2](https://github.com/samber/do/v2) and is centralised
+in `internal/di/di.go`. Every external dependency, store role, worker, and
+top-level handler has a `Provide<Name>` function registered there. Callers
+resolve dependencies via `do.Invoke[Foo](inj)` at the moment they are
+needed; nothing is constructed until it is asked for.
+
+### Two Foundational Rules
+
+1. **Lazy providers**: a provider returns the dependency it builds; it
+   never has side effects beyond construction. The injector calls it on
+   the first `do.Invoke` and memoises the result for subsequent calls.
+2. **Narrow interfaces**: every consumer asks for the smallest interface
+   it needs. The single `concreteStore` interface inside `di.go` is an
+   implementation detail used to compose narrow role interfaces; nothing
+   outside the DI package depends on it.
+
+### Provider Pattern
+
+Every provider follows the same shape:
+
+```go
+// ProvideObjectStore returns the CB-protected ObjectStore role used by
+// the manager and worker layers for read-side and write-side access to
+// object_locations.
+func ProvideObjectStore(i do.Injector) (core.ObjectStore, error) {
+    inner, err := provideConcreteStore(i)
+    if err != nil {
+        return nil, err
+    }
+    cb, err := do.Invoke[*breaker.CircuitBreaker](i)
+    if err != nil {
+        return nil, err
+    }
+    return store.NewCBObjectStore(inner, cb), nil
+}
+```
+
+Providers take a `do.Injector`, resolve their own dependencies through it,
+and return either the value or an error. They never panic, never log, and
+never spawn goroutines.
+
+### Wiring Point
+
+`internal/di/di.go` is the single wiring point. It is the **only** file
+that imports the concrete engine packages (`store/postgres`, `store/sqlite`,
+each backend driver, etc.). New providers go here, grouped by concern with
+`73-char` section dividers (NARROW STORE ROLES, BACKGROUND WORKERS, etc.).
+
+### Consuming a Service
+
+The transport layer and CLI commands resolve services from the injector:
+
+```go
+func (h *Handler) handleAdminReplicate(w http.ResponseWriter, r *http.Request) {
+    repl, err := do.Invoke[*worker.Replicator](h.inj)
+    if err != nil {
+        writeError(w, http.StatusInternalServerError, err)
+        return
+    }
+    n, err := repl.Replicate(r.Context(), repl.Config())
+    // ...
+}
+```
+
+The handler holds `do.Injector`, not the resolved service - that keeps
+the handler decoupled from concrete provider behaviour and lets tests
+substitute fakes by registering a different provider.
+
+### Adding a New Provider
+
+1. Add a `Provide<Name>` function in the appropriate section of
+   `internal/di/di.go`.
+2. Inside the function, call `do.Invoke[Dep](i)` for each dependency.
+3. Construct the new component and return `(value, nil)`.
+4. If the new component is consumed somewhere, the consumer should call
+   `do.Invoke[Name](inj)` rather than holding the value as a field.
+
+### Anti-Patterns
+
+- Constructing a real dependency in a constructor that already has a
+  provider. Always go through `do.Invoke`.
+- Smuggling logging or metrics through the constructor argument list.
+  Use the `observe` package's package-level helpers (slog, span helpers,
+  metrics vars) directly.
+- Storing the injector as a field on a non-handler struct. Workers,
+  managers, and stores receive their dependencies as constructor args
+  resolved in the provider; only handlers (HTTP/CLI entry points) carry
+  the injector itself.
+
+---
+
+## Adding a New Component
+
+Each component type has a fixed checklist; following it keeps the code
+shape uniform across contributors.
+
+### Adding a New Backend
+
+1. Implement the `backend.ObjectBackend` interface in
+   `internal/backend/<name>.go`. Constructor is `New<Name>(cfg config.BackendConfig)`.
+2. Add the new backend type to the config validator in
+   `internal/config/backends.go`.
+3. Wire it into the backend factory in `internal/di/di.go` so existing
+   `ProvideBackends` returns the new type when configured.
+4. Add a unit test in `internal/backend/<name>_test.go`. Integration
+   coverage comes from the existing MinIO testcontainer suite for any
+   S3-compatible provider.
+5. Update `README.md` and `docs/admin-guide.md` config sections.
+
+### Adding a New Store Role
+
+The narrow-role layering means new operations slot into one of the
+existing role interfaces in `internal/store/core/interfaces.go`, or - if
+they truly belong to a new bounded concern - into a new role.
+
+1. Add the SQL in `internal/store/postgres/sqlc/queries/<role>.sql` and
+   the matching method in `internal/store/sqlite/<role>.go`.
+2. Run `make generate` to regenerate the sqlc-typed wrappers.
+3. Surface the operation on the role interface in
+   `internal/store/core/interfaces.go`. If business logic spans multiple
+   tables or transactions, add the orchestration to
+   `internal/store/core/<topic>.go` against `TxAdapter` so both engines
+   share one implementation.
+4. Add the CB-decorator method in `internal/store/cb_<role>.go`.
+5. Update `MockStore` in `internal/testutil/mock_store.go` and any
+   handwritten test mocks (`internal/proxy/mock_store_test.go` etc.).
+6. Add a `Provide<Role>` provider in `internal/di/di.go` if it is a new
+   role; otherwise the existing provider already covers it.
+7. Schema changes go in a new `internal/store/postgres/migrations/000NN_*.sql`
+   AND `internal/store/sqlite/schema.sql`. Bump
+   `postgres.ExpectedSchemaVersion`.
+
+### Adding a New Worker
+
+1. Implement the worker in `internal/worker/<name>.go`. Define a narrow
+   ops interface (e.g. `<Name>Ops`) and a narrow store interface
+   (e.g. `<Name>WorkerStore`); the worker takes both as constructor args.
+2. The worker exposes `Run(ctx) error` (long-lived) or `Process<X>(ctx)`
+   (called per tick) - lifetime determines which.
+3. Register a `Provide<Name>` provider in `internal/di/di.go`.
+4. Register the worker with the lifecycle manager in `registerWorkerServices`
+   inside `di.go`. Long-lived workers go through `lifecycle.Manager`;
+   periodic workers wrap a ticker and an advisory lock.
+5. Add metrics in a per-worker file under
+   `internal/observe/telemetry/metrics_<worker>.go` if needed.
+
+### Adding a New HTTP Handler
+
+1. Define the handler in the appropriate `internal/transport/` sub-
+   package. Handler signatures are `func (h *Handler) handle<X>(w http.ResponseWriter, r *http.Request)`.
+2. The handler resolves its dependencies through the injector held on
+   `*Handler`; it never constructs services itself.
+3. Authentication middleware is applied at the `Server` level - do not
+   reimplement auth inside individual handlers.
+4. Audit-log every state-changing request via `audit.Log(ctx, "<event>", ...)`.
+5. Update `docs/api-reference.md` for any new admin or UI endpoint.
+
+### Adding a New Metric
+
+1. Add the metric variable in the appropriate
+   `internal/observe/telemetry/metrics_<domain>.go` file using
+   `promauto.NewXxx`. Group by domain (cleanup, replication, breaker,
+   etc.) - do not create a global metrics file.
+2. Use the `s3o_<domain>_<noun>_<unit>` naming convention. Counters
+   end in `_total`. Histograms end in `_seconds` or `_bytes`. Gauges
+   take no suffix.
+3. Add the metric to the dashboard JSON if it is operator-facing
+   (`grafana/s3-orchestrator.json`).
+4. Document the metric in `README.md` and `docs/admin-guide.md`.
+
+---
+
 ## Error Handling
 
 ### S3 Errors
@@ -330,6 +591,161 @@ Request IDs flow through context via `audit.WithRequestID` / `audit.RequestID`:
 | `slog.Info` | Startup, shutdown, config reload, audit entries |
 | `slog.Warn` | Recoverable failures (failover to replica, orphan cleanup, non-critical background errors) |
 | `slog.Error` | Unrecoverable failures (startup errors, DB connection loss, background task crashes) |
+
+---
+
+## Tracing
+
+OpenTelemetry tracing is wired in `internal/observe/telemetry`. Every
+S3 request, manager call, backend call, and significant background tick
+produces a span; spans inherit the request id from `audit.RequestID(ctx)`
+so log lines and traces cross-link.
+
+### Starting a Span
+
+Use `telemetry.StartSpan` rather than the OTel API directly. The helper
+guarantees the `s3o.request_id` attribute is set when the context carries
+one and that the span is registered on the global tracer:
+
+```go
+ctx, span := telemetry.StartSpan(ctx, "Manager PutObject",
+    telemetry.AttrOperation.String("PutObject"),
+    telemetry.AttrBackend.String(backendName),
+)
+defer span.End()
+```
+
+Always defer `span.End()` on the line after the `StartSpan` call so an
+early return cannot leave the span open.
+
+### Span Naming
+
+Span names are stable strings (no per-request data) so traces aggregate
+cleanly:
+
+| Layer | Prefix | Example |
+|---|---|---|
+| Manager | `Manager <Op>` | `Manager PutObject`, `Manager GetObject` |
+| Backend | `Backend <Op>` | `Backend PutObject`, `Backend GetObject` |
+| Background worker | `<Worker>.<Op>` | `Replicator.Replicate`, `CleanupWorker.ProcessCleanupQueue` |
+| Store engine | `<Engine> <Op>` | `Postgres RecordObject`, `SQLite ListObjects` |
+
+The `Manager `/`Backend ` prefixes are constants (`managerSpanPrefix`,
+`spanPrefix`) so the layer attribution stays consistent if the prefix
+ever changes.
+
+### Attributes
+
+Standard attribute keys live in `internal/observe/telemetry/attrs.go` so
+every span uses the same string. Add new keys there rather than inlining
+strings at call sites.
+
+```go
+span.SetAttributes(
+    telemetry.AttrBackend.String(backendName),
+    telemetry.AttrObjectSize.Int64(size),
+)
+```
+
+High-cardinality values (object keys, request IDs as attributes) are
+allowed only on leaf spans. Do not put object keys on long-running
+worker spans because that explodes trace storage cardinality.
+
+### Recording Errors
+
+Span errors are recorded via the OTel `RecordError` + `SetStatus` pair
+so trace UIs flag the span as failing. Do not log the error inside the
+span block - the audit/slog log line already carries the error and
+trace correlation links the two.
+
+```go
+if err != nil {
+    span.RecordError(err)
+    span.SetStatus(codes.Error, err.Error())
+    return err
+}
+```
+
+### Trace-to-Log Correlation
+
+Every `slog.InfoContext`, `WarnContext`, `ErrorContext` call inside an
+active span automatically attaches `trace_id` and `span_id` fields via
+`telemetry.TraceHandler`. This is why context-aware slog must be used
+(see Logging and Audit). Never use `slog.Info` (no context) when an
+active span exists - that produces a log line with no trace correlation.
+
+---
+
+## Metrics
+
+Prometheus metrics live in `internal/observe/telemetry/metrics_*.go`,
+one file per domain. The `promauto` constructors register the metric
+with the default registry on package init; nothing else needs to be
+called to make a metric visible at `/metrics`.
+
+### Naming
+
+| Type | Format | Example |
+|---|---|---|
+| Counter | `s3o_<domain>_<noun>_total{labels}` | `s3o_cleanup_queue_enqueued_total{reason}` |
+| Gauge | `s3o_<domain>_<noun>{labels}` | `s3o_cleanup_dlq_depth` |
+| Histogram | `s3o_<domain>_<noun>_seconds` or `_bytes` | `s3o_request_duration_seconds` |
+
+The `s3o_` prefix is mandatory so a multi-service Prometheus instance
+can pick out orchestrator metrics with one label match. The unit suffix
+goes at the end (`_seconds`, `_bytes`, `_total`) to match Prometheus
+conventions.
+
+### File Layout
+
+Group metrics by domain in `internal/observe/telemetry/metrics_<domain>.go`.
+Existing domains: `audit`, `breaker`, `cache`, `cleanup`, `encryption`,
+`meta`, `quota`, `rebalance`, `replication`, `request`. Add a new file
+when a new feature has its own logical domain - do not append to a
+random existing file just to avoid creating one.
+
+Each metric variable carries a 2-3 line godoc explaining what it
+measures and which dashboard panel reads it.
+
+### Label Cardinality
+
+Labels multiply storage cost. Hard rules:
+
+- **Allowed labels**: `backend`, `operation`, `status`, `reason`,
+  enumerated states. These come from a small fixed set per dimension.
+- **Forbidden labels**: `key`, `request_id`, `user`, IP, anything
+  user-supplied or identity-bearing. These create unbounded label
+  cardinality and will eventually crash Prometheus.
+- Buckets for histograms must be explicit (`prometheus.LinearBuckets`
+  or `ExponentialBuckets`); never default. Pick buckets that span the
+  expected p50 to p99.9 range with at most 10-15 buckets total.
+
+### Updating a Metric
+
+Counters use `Inc` or `Add`. Gauges use `Set`. Histograms use `Observe`.
+Always pass label values in the order they appear in the metric
+declaration; Prometheus does not protect against argument-order swaps.
+
+```go
+telemetry.CleanupQueueEnqueuedTotal.WithLabelValues(reason).Inc()
+telemetry.CleanupDLQDepth.Set(float64(depth))
+telemetry.RequestDurationSeconds.WithLabelValues(operation, status).Observe(elapsed.Seconds())
+```
+
+### Tying Metrics, Tracing, and Audit Together
+
+Every state-changing operation should produce all three signals at the
+relevant scope:
+
+| Signal | Where |
+|---|---|
+| Metric | At the layer where the count makes sense (manager for per-request counters, worker for per-tick counters) |
+| Span | One per layer call (`Manager <Op>`, `Backend <Op>`, store engine) |
+| Audit log | At the *outer* layer responsible for the operation, with the request id from `audit.RequestID(ctx)` |
+
+Skipping one degrades observability: missing metric means dashboards
+cannot alert; missing span means a slow request cannot be traced;
+missing audit log means a customer dispute cannot be reconstructed.
 
 ---
 

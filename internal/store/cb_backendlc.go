@@ -1,7 +1,14 @@
 // -------------------------------------------------------------------------------
-// CB Decorator — BackendLifecycleStore
+// CB Decorator  -  BackendLifecycleStore
 //
 // Author: Alex Freidah
+//
+// Wraps a core.BackendLifecycleStore (DeleteBackendData, etc.) so every
+// call routes through the database CircuitBreaker. When the breaker is
+// open, calls return ErrDBUnavailable instantly; when closed, they
+// delegate to the inner store. Decorator pattern lets the rest of the
+// codebase consume the same narrow interface and stay unaware of the
+// breaker.
 // -------------------------------------------------------------------------------
 
 package store

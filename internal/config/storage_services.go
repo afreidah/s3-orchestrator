@@ -1,7 +1,16 @@
 // -------------------------------------------------------------------------------
-// Storage Service Configuration — Rebalance, Replication, Cleanup, Lifecycle, Reconcile
+// Storage Service Configuration  -  Rebalance, Replication, Cleanup, Lifecycle, Reconcile
 //
 // Author: Alex Freidah
+//
+// Defines the per-background-service config blocks: RebalanceConfig
+// (enable + threshold + interval), ReplicationConfig (factor and
+// concurrency), CleanupQueueConfig (concurrency), LifecycleRules
+// (prefix + expiration_days array), ReconcileConfig (interval), and
+// the PendingReaperConfig that controls the PUT-before-COMMIT intent
+// reaper. All blocks are hot-reloadable via SIGHUP; validators ensure
+// every interval is positive and every factor stays within sane
+// bounds so a misconfigured reload cannot disable a worker.
 // -------------------------------------------------------------------------------
 
 package config
@@ -10,6 +19,10 @@ import (
 	"fmt"
 	"time"
 )
+
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
 
 // RebalanceConfig holds settings for the periodic backend rebalancer.
 // Disabled by default to avoid unexpected API calls and egress charges.
@@ -54,7 +67,7 @@ type WritePathConfig struct {
 type PendingPatternConfig struct {
 	Enabled    *bool         `yaml:"enabled"`     // Default: true. Set to false to disable.
 	ReaperTick time.Duration `yaml:"reaper_tick"` // How often the reaper resolves abandoned intents (default: 1m)
-	MinAge     time.Duration `yaml:"min_age"`     // Don't reap intents younger than this — guards in-flight PUTs (default: 5m)
+	MinAge     time.Duration `yaml:"min_age"`     // Don't reap intents younger than this  -  guards in-flight PUTs (default: 5m)
 	BatchSize  int           `yaml:"batch_size"`  // Max intents resolved per tick (default: 50)
 }
 
@@ -87,6 +100,11 @@ type LifecycleRule struct {
 	ExpirationDays int    `yaml:"expiration_days"`
 }
 
+// -------------------------------------------------------------------------
+// VALIDATION
+// -------------------------------------------------------------------------
+
+// setDefaultsAndValidate sets defaults and validate.
 func (c *LifecycleConfig) setDefaultsAndValidate() []error {
 	if len(c.Rules) == 0 {
 		return nil
@@ -107,6 +125,7 @@ func (c *LifecycleConfig) setDefaultsAndValidate() []error {
 	return errs
 }
 
+// setDefaultsAndValidate sets defaults and validate.
 func (r *RebalanceConfig) setDefaultsAndValidate() []error {
 	if !r.Enabled {
 		return nil
@@ -149,6 +168,7 @@ func (r *RebalanceConfig) setDefaultsAndValidate() []error {
 	return errs
 }
 
+// setDefaultsAndValidate sets defaults and validate.
 func (r *ReplicationConfig) setDefaultsAndValidate(backendCount int) []error {
 	var errs []error
 	if r.Factor == 0 {
@@ -200,6 +220,10 @@ func (r *ReplicationConfig) validateReplicationLimits(backendCount int) []error 
 	return errs
 }
 
+// validateLifecycleRules enforces that every configured rule has a
+// non-empty prefix and a positive expiration_days. Returns the set of
+// problems so a misconfigured rule cannot silently disable lifecycle
+// expiration.
 func validateLifecycleRules(rules []LifecycleRule) []error {
 	var errs []error
 

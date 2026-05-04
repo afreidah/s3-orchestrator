@@ -67,8 +67,8 @@ func mustCreateUpload(t *testing.T, s *Store, uploadID, key, backend string) {
 }
 
 // mustRecordReplica records a replica, failing the test on error. The
-// size parameter is unused after #652 — the SQL now reads size from the
-// source row inside the conditional INSERT — but the helper signature
+// size parameter is unused after #652  -  the SQL now reads size from the
+// source row inside the conditional INSERT  -  but the helper signature
 // keeps it so call sites continue to document expected size at a glance.
 func mustRecordReplica(t *testing.T, s *Store, key, target, source string, _ int64) {
 	t.Helper()
@@ -97,7 +97,8 @@ func mustInsertNotification(t *testing.T, s *Store, eventType, payload, url stri
 // OBJECT OPERATIONS
 // -------------------------------------------------------------------------
 
-// TestRecordObject_And_GetAllLocations verifies basic object recording and retrieval.
+// TestRecordObject_And_GetAllLocations verifies the record object and get all locations contract.
+// Asserts that RecordObject:.
 func TestRecordObject_And_GetAllLocations(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -144,7 +145,8 @@ func TestRecordObject_Overwrite_DisplacesCopy(t *testing.T) {
 	}
 }
 
-// TestDeleteObject verifies that deleting an object removes it and returns the deleted copies.
+// TestDeleteObject verifies the delete object contract.
+// Asserts that DeleteObject:.
 func TestDeleteObject(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -232,7 +234,8 @@ func TestListObjects_Pagination(t *testing.T) {
 	}
 }
 
-// TestListObjectsByBackend verifies filtering objects by backend name.
+// TestListObjectsByBackend verifies the list objects by backend contract.
+// Asserts that ListObjectsByBackend:.
 func TestListObjectsByBackend(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -278,7 +281,7 @@ func TestListObjectsByBackendKeyAsc_FirstPage(t *testing.T) {
 }
 
 // TestListObjectsByBackendKeyAsc_HonoursCursor verifies the > $afterKey
-// filter — successive pages skip rows already returned.
+// filter  -  successive pages skip rows already returned.
 func TestListObjectsByBackendKeyAsc_HonoursCursor(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -288,7 +291,7 @@ func TestListObjectsByBackendKeyAsc_HonoursCursor(t *testing.T) {
 		mustRecordObject(t, s, k, "backend-a", 1)
 	}
 
-	// First page: cursor "" → ["vb/a", "vb/b"]
+	// First page: cursor "" -> ["vb/a", "vb/b"]
 	page1, err := s.ListObjectsByBackendKeyAsc(ctx, "backend-a", "", 2)
 	if err != nil {
 		t.Fatalf("page1: %v", err)
@@ -297,7 +300,7 @@ func TestListObjectsByBackendKeyAsc_HonoursCursor(t *testing.T) {
 		t.Fatalf("page1 unexpected: %+v", page1)
 	}
 
-	// Second page: cursor "vb/b" → ["vb/c", "vb/d"]
+	// Second page: cursor "vb/b" -> ["vb/c", "vb/d"]
 	page2, err := s.ListObjectsByBackendKeyAsc(ctx, "backend-a", page1[1].ObjectKey, 2)
 	if err != nil {
 		t.Fatalf("page2: %v", err)
@@ -306,7 +309,7 @@ func TestListObjectsByBackendKeyAsc_HonoursCursor(t *testing.T) {
 		t.Fatalf("page2 unexpected: %+v", page2)
 	}
 
-	// Third page: cursor "vb/d" → empty
+	// Third page: cursor "vb/d" -> empty
 	page3, err := s.ListObjectsByBackendKeyAsc(ctx, "backend-a", page2[1].ObjectKey, 2)
 	if err != nil {
 		t.Fatalf("page3: %v", err)
@@ -359,7 +362,8 @@ func TestImportObject(t *testing.T) {
 	}
 }
 
-// TestMoveObjectLocation verifies atomic move of an object between backends.
+// TestMoveObjectLocation verifies the move object location contract.
+// Asserts that MoveObjectLocation:.
 func TestMoveObjectLocation(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -382,7 +386,7 @@ func TestMoveObjectLocation(t *testing.T) {
 }
 
 // TestMoveObjectLocation_TargetAlreadyHasCopy verifies the short-circuit
-// when the destination already holds a copy — MoveObjectLocation returns
+// when the destination already holds a copy  -  MoveObjectLocation returns
 // (0, nil) without touching the source.
 func TestMoveObjectLocation_TargetAlreadyHasCopy(t *testing.T) {
 	t.Parallel()
@@ -402,7 +406,7 @@ func TestMoveObjectLocation_TargetAlreadyHasCopy(t *testing.T) {
 }
 
 // TestMoveObjectLocation_SourceGone verifies the benign no-op when the
-// source row has already been removed — MoveObjectLocation returns
+// source row has already been removed  -  MoveObjectLocation returns
 // (0, nil) rather than an error.
 func TestMoveObjectLocation_SourceGone(t *testing.T) {
 	t.Parallel()
@@ -420,7 +424,7 @@ func TestMoveObjectLocation_SourceGone(t *testing.T) {
 
 // TestRecordObject_Overwrite_SameBackend covers the branch in
 // clearDisplacedCopies where the prior copy lives on the new target
-// backend — no DeletedCopy should be returned because the PutObject will
+// backend  -  no DeletedCopy should be returned because the PutObject will
 // overwrite in place.
 func TestRecordObject_Overwrite_SameBackend(t *testing.T) {
 	t.Parallel()
@@ -439,7 +443,7 @@ func TestRecordObject_Overwrite_SameBackend(t *testing.T) {
 }
 
 // TestMoveObjectLocation_QuotaExceeded covers the ErrNoSpaceAvailable
-// branch in moveObjectRows — the destination quota update touches zero
+// branch in moveObjectRows  -  the destination quota update touches zero
 // rows when the move would exceed bytes_limit.
 func TestMoveObjectLocation_QuotaExceeded(t *testing.T) {
 	t.Parallel()
@@ -452,7 +456,7 @@ func TestMoveObjectLocation_QuotaExceeded(t *testing.T) {
 
 	if err := s.SyncQuotaLimits(ctx, []config.BackendConfig{
 		{Name: "big", QuotaBytes: 10_000},
-		{Name: "small", QuotaBytes: 100}, // tiny — cannot hold 500-byte object
+		{Name: "small", QuotaBytes: 100}, // tiny  -  cannot hold 500-byte object
 	}); err != nil {
 		t.Fatalf("SyncQuotaLimits: %v", err)
 	}
@@ -466,7 +470,7 @@ func TestMoveObjectLocation_QuotaExceeded(t *testing.T) {
 }
 
 // TestRecordObject_QuotaExceeded covers the ErrNoSpaceAvailable branch
-// in incrementSQLiteQuota — the guarded UPDATE touches zero rows when
+// in incrementSQLiteQuota  -  the guarded UPDATE touches zero rows when
 // the quota ceiling would be exceeded.
 func TestRecordObject_QuotaExceeded(t *testing.T) {
 	t.Parallel()
@@ -534,7 +538,8 @@ func TestBackendObjectStats(t *testing.T) {
 // ENCRYPTION METADATA
 // -------------------------------------------------------------------------
 
-// TestRecordObject_WithEncryption verifies storing and retrieving encryption metadata.
+// TestRecordObject_WithEncryption verifies the record object with encryption contract.
+// Asserts that RecordObject with encryption:.
 func TestRecordObject_WithEncryption(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -568,7 +573,8 @@ func TestRecordObject_WithEncryption(t *testing.T) {
 // QUOTA OPERATIONS
 // -------------------------------------------------------------------------
 
-// TestGetBackendWithSpace verifies pack routing selects a backend with available quota.
+// TestGetBackendWithSpace verifies the get backend with space contract.
+// Asserts that GetBackendWithSpace:.
 func TestGetBackendWithSpace(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -583,7 +589,8 @@ func TestGetBackendWithSpace(t *testing.T) {
 	}
 }
 
-// TestGetLeastUtilizedBackend verifies spread routing selects the least utilized backend.
+// TestGetLeastUtilizedBackend verifies the get least utilized backend contract.
+// Asserts that GetLeastUtilizedBackend:.
 func TestGetLeastUtilizedBackend(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -649,7 +656,8 @@ func TestGetQuotaStats(t *testing.T) {
 	}
 }
 
-// TestOrphanBytes verifies orphan byte tracking and adjustment.
+// TestOrphanBytes verifies the orphan bytes contract.
+// Asserts that IncrementOrphanBytes:.
 func TestOrphanBytes(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -783,7 +791,8 @@ func TestListMultipartUploads(t *testing.T) {
 	}
 }
 
-// TestCountActiveMultipartUploads verifies counting active uploads by bucket prefix.
+// TestCountActiveMultipartUploads verifies the count active multipart uploads contract.
+// Asserts that CountActiveMultipartUploads:.
 func TestCountActiveMultipartUploads(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -869,7 +878,8 @@ func TestReplication_UnderAndOver(t *testing.T) {
 	}
 }
 
-// TestRecordReplica_Duplicate verifies that recording a duplicate replica is idempotent.
+// TestRecordReplica_Duplicate verifies the record replica duplicate contract.
+// Asserts that RecordReplica duplicate:.
 func TestRecordReplica_Duplicate(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -891,7 +901,8 @@ func TestRecordReplica_Duplicate(t *testing.T) {
 	}
 }
 
-// TestRemoveExcessCopy verifies removal of an excess replica and quota adjustment.
+// TestRemoveExcessCopy verifies the remove excess copy contract.
+// Asserts that RemoveExcessCopy:.
 func TestRemoveExcessCopy(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -951,7 +962,8 @@ func TestCleanupQueue_Lifecycle(t *testing.T) {
 	}
 }
 
-// TestCleanupQueue_Retry verifies exponential backoff retry for failed cleanup items.
+// TestCleanupQueue_Retry verifies the cleanup queue retry contract.
+// Asserts that RetryCleanupItem:.
 func TestCleanupQueue_Retry(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -1077,7 +1089,8 @@ func TestSweepStaleCleanupQueueRows_OnlyOtherBackend(t *testing.T) {
 // INTEGRITY
 // -------------------------------------------------------------------------
 
-// TestIntegrity_HashOperations verifies content hash storage and retrieval for integrity checks.
+// TestIntegrity_HashOperations verifies the integrity hash operations contract.
+// Asserts that GetObjectsWithoutHash:.
 func TestIntegrity_HashOperations(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -1120,7 +1133,8 @@ func TestIntegrity_HashOperations(t *testing.T) {
 // DIRECTORY LISTING
 // -------------------------------------------------------------------------
 
-// TestListDirectoryChildren verifies virtual directory listing with common prefixes.
+// TestListDirectoryChildren verifies the list directory children contract.
+// Asserts that ListDirectoryChildren:.
 func TestListDirectoryChildren(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -1256,7 +1270,8 @@ func TestListDirectoryChildren_DirRollupPhysicalBytes(t *testing.T) {
 // LIFECYCLE (EXPIRATION)
 // -------------------------------------------------------------------------
 
-// TestListExpiredObjects verifies listing objects older than a cutoff time.
+// TestListExpiredObjects verifies the list expired objects contract.
+// Asserts that ListExpiredObjects:.
 func TestListExpiredObjects(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -1265,7 +1280,7 @@ func TestListExpiredObjects(t *testing.T) {
 	mustRecordObject(t, s, "bucket/old", "backend-a", 100)
 	mustRecordObject(t, s, "bucket/new", "backend-a", 200)
 
-	// Everything is "new" (just created) — none should be expired
+	// Everything is "new" (just created)  -  none should be expired
 	cutoff := time.Now().Add(-time.Hour)
 	expired, err := s.ListExpiredObjects(ctx, "bucket/", cutoff, 10)
 	if err != nil {
@@ -1275,7 +1290,7 @@ func TestListExpiredObjects(t *testing.T) {
 		t.Errorf("expected 0 expired, got %d", len(expired))
 	}
 
-	// Use a future cutoff — everything should be expired
+	// Use a future cutoff  -  everything should be expired
 	expired, _ = s.ListExpiredObjects(ctx, "bucket/", time.Now().Add(time.Hour), 10)
 	if len(expired) != 2 {
 		t.Errorf("expected 2 expired with future cutoff, got %d", len(expired))
@@ -1375,7 +1390,8 @@ func TestNotificationOutbox_Lifecycle(t *testing.T) {
 	}
 }
 
-// TestNotificationOutbox_Retry verifies retry semantics for failed notification deliveries.
+// TestNotificationOutbox_Retry verifies the notification outbox retry contract.
+// Asserts that RetryNotification:.
 func TestNotificationOutbox_Retry(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -1399,7 +1415,8 @@ func TestNotificationOutbox_Retry(t *testing.T) {
 // ADVISORY LOCK
 // -------------------------------------------------------------------------
 
-// TestWithAdvisoryLock verifies basic advisory lock acquisition and callback execution.
+// TestWithAdvisoryLock verifies the with advisory lock contract.
+// Asserts that WithAdvisoryLock:.
 func TestWithAdvisoryLock(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -1475,7 +1492,8 @@ func TestWithAdvisoryLock_DeadlinePropagated(t *testing.T) {
 // BACKEND LIFECYCLE
 // -------------------------------------------------------------------------
 
-// TestDeleteBackendData verifies that all objects for a backend are removed.
+// TestDeleteBackendData verifies the delete backend data contract.
+// Asserts that DeleteBackendData:.
 func TestDeleteBackendData(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -1498,7 +1516,8 @@ func TestDeleteBackendData(t *testing.T) {
 // SCHEMA VERSION
 // -------------------------------------------------------------------------
 
-// TestVerifySchemaVersion verifies that a matching schema version passes validation.
+// TestVerifySchemaVersion verifies the verify schema version contract.
+// Asserts that VerifySchemaVersion:.
 func TestVerifySchemaVersion(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -1742,11 +1761,84 @@ func TestVerifySchemaVersion_NewerThanExpected(t *testing.T) {
 	}
 }
 
+// TestVerifySchemaVersion_OlderThanExpected verifies that a database whose
+// schema version is older than this binary expects surfaces the
+// "older than expected" diagnostic so partial-migration failures cannot
+// be silently ignored at startup.
+func TestVerifySchemaVersion_OlderThanExpected(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	// expectedSchemaVersion is 2, so 1 is older.
+	if _, err := s.db.ExecContext(ctx, `UPDATE schema_version SET version = 1`); err != nil {
+		t.Fatalf("downgrade schema version: %v", err)
+	}
+
+	err := s.VerifySchemaVersion(ctx)
+	if err == nil {
+		t.Fatal("expected error for schema older than expected, got nil")
+	}
+	if !strings.Contains(err.Error(), "older than expected") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+// TestVerifySchemaVersion_TableMissing verifies that VerifySchemaVersion
+// returns the "schema_version table does not exist" diagnostic when the
+// database has not been migrated. Distinguishing "uninitialised" from
+// "older than expected" lets startup logs point operators at the right
+// remediation step.
+func TestVerifySchemaVersion_TableMissing(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	if _, err := s.db.ExecContext(ctx, `DROP TABLE schema_version`); err != nil {
+		t.Fatalf("drop schema_version: %v", err)
+	}
+
+	err := s.VerifySchemaVersion(ctx)
+	if err == nil {
+		t.Fatal("expected error when schema_version table is missing, got nil")
+	}
+	if !strings.Contains(err.Error(), "schema_version table does not exist") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+// TestRunMigrations_VersionMismatchReturnsError verifies the schema-
+// mismatch branch in RunMigrations: an existing schema_version row whose
+// value differs from expectedSchemaVersion must surface the "manual
+// migration required" diagnostic rather than silently re-applying the
+// schema on top of stale state.
+func TestRunMigrations_VersionMismatchReturnsError(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	// newTestStore already ran RunMigrations, so schema_version is at the
+	// current expected value. Bump it so the next RunMigrations call hits
+	// the mismatch branch.
+	if _, err := s.db.ExecContext(ctx, `UPDATE schema_version SET version = version + 100`); err != nil {
+		t.Fatalf("bump schema version: %v", err)
+	}
+
+	err := s.RunMigrations(ctx)
+	if err == nil {
+		t.Fatal("expected mismatch error from RunMigrations, got nil")
+	}
+	if !strings.Contains(err.Error(), "does not match expected") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
 // -------------------------------------------------------------------------
 // ADDITIONAL COVERAGE
 // -------------------------------------------------------------------------
 
-// TestDeleteObjectLocation verifies removal of a single object replica by backend.
+// TestDeleteObjectLocation verifies the delete object location contract.
+// Asserts that DeleteObjectLocation:.
 func TestDeleteObjectLocation(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -1787,7 +1879,8 @@ func TestGetObjectCounts(t *testing.T) {
 	}
 }
 
-// TestGetStaleMultipartUploads verifies detection of uploads older than a threshold.
+// TestGetStaleMultipartUploads verifies the get stale multipart uploads contract.
+// Asserts that GetStaleMultipartUploads:.
 func TestGetStaleMultipartUploads(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -1814,7 +1907,8 @@ func TestGetStaleMultipartUploads(t *testing.T) {
 	}
 }
 
-// TestGetMultipartUploadsByBackend verifies listing uploads filtered by backend.
+// TestGetMultipartUploadsByBackend verifies the get multipart uploads by backend contract.
+// Asserts that GetMultipartUploadsByBackend:.
 func TestGetMultipartUploadsByBackend(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -1858,7 +1952,8 @@ func TestGetUnderReplicatedObjectsExcluding(t *testing.T) {
 	}
 }
 
-// TestCountOverReplicatedObjects verifies counting objects with more copies than the replication factor.
+// TestCountOverReplicatedObjects verifies the count over replicated objects contract.
+// Asserts that CountOverReplicatedObjects:.
 func TestCountOverReplicatedObjects(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -1987,7 +2082,8 @@ func TestDeleteObjectsBatch_RemovesRowsAndDecrementsQuotas(t *testing.T) {
 	}
 }
 
-// TestListAllEncryptedLocations verifies paginated listing of encrypted object locations.
+// TestListAllEncryptedLocations verifies the list all encrypted locations contract.
+// Asserts that RecordObject:.
 func TestListAllEncryptedLocations(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

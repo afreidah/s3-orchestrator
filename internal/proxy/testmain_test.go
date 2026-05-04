@@ -15,6 +15,7 @@ import (
 	"go.uber.org/goleak"
 )
 
+// TestMain verifies the main path by exercising slog.SetDefault, slog.New, goleak.VerifyTestMain.
 func TestMain(m *testing.M) {
 	slog.SetDefault(slog.New(slog.DiscardHandler))
 	goleak.VerifyTestMain(m,

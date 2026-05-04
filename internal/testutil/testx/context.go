@@ -25,7 +25,7 @@ const DefaultTestTimeout = 30 * time.Second
 // Context returns a context.Context with the default test timeout applied.
 // The cancel is registered via t.Cleanup so callers don't need to defer it.
 // Use this instead of context.Background() in tests that make RPCs, DB
-// queries, or channel operations — a stuck call then fails the test cleanly.
+// queries, or channel operations  -  a stuck call then fails the test cleanly.
 func Context(t *testing.T) context.Context {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), DefaultTestTimeout)

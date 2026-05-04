@@ -2,6 +2,14 @@
 // Notification Outbox Operations
 //
 // Author: Alex Freidah
+//
+// Implements the Postgres engine bindings for the notification_outbox
+// table that backs durable webhook delivery: synchronous inserts at
+// every event site, fetch-pending with backoff-aware scheduling,
+// complete on successful delivery, and retry with exponential backoff
+// on failure. The outbox pattern lets the API path return success the
+// instant the row is committed, with the actual HTTP delivery handled
+// asynchronously by a background drainer.
 // -------------------------------------------------------------------------------
 
 package postgres

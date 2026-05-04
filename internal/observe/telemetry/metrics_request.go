@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------
-// Metrics — Request, Backend, Manager, Rate Limit
+// Metrics  -  Request, Backend, Manager, Rate Limit
 //
 // Author: Alex Freidah
 //
@@ -14,6 +14,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
+// RequestsTotal and related package-level variables used by this package.
 var (
 	// --- Request metrics ---
 

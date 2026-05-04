@@ -1,6 +1,7 @@
--- +goose Up
 -- -----------------------------------------------------------------------------
 -- Cleanup Queue Dead-Letter
+--
+-- Author: Alex Freidah
 --
 -- Holds cleanup_queue rows that exhausted their retry budget without ever
 -- succeeding at the physical backend delete. The bytes referenced by these
@@ -10,6 +11,7 @@
 -- retry or write off each entry deliberately.
 -- -----------------------------------------------------------------------------
 
+-- +goose Up
 CREATE TABLE IF NOT EXISTS cleanup_dlq (
     id                BIGSERIAL PRIMARY KEY,
     original_id       BIGINT NOT NULL,

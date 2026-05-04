@@ -141,10 +141,10 @@ func (s *Store) VerifySchemaVersion(ctx context.Context) error {
 	}
 
 	if version < ExpectedSchemaVersion {
-		return fmt.Errorf("database schema version %d is older than expected %d — migrations may have partially failed", version, ExpectedSchemaVersion)
+		return fmt.Errorf("database schema version %d is older than expected %d  -  migrations may have partially failed", version, ExpectedSchemaVersion)
 	}
 	if version > ExpectedSchemaVersion {
-		return fmt.Errorf("database schema version %d is newer than expected %d — binary is outdated", version, ExpectedSchemaVersion)
+		return fmt.Errorf("database schema version %d is newer than expected %d  -  binary is outdated", version, ExpectedSchemaVersion)
 	}
 	return nil
 }

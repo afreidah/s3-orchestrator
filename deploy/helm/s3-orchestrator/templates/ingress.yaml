@@ -1,3 +1,14 @@
+# -------------------------------------------------------------------------------
+# Helm Template - Ingress (optional)
+#
+# Author: Alex Freidah
+#
+# Optional Ingress fronting the Service. Gated by .Values.ingress.enabled so
+# operators using a different LB (cloud LB, ServiceMesh gateway) can leave
+# this off. Annotations and TLS hosts come from .Values; the rules are
+# generated from .Values.ingress.hosts.
+# -------------------------------------------------------------------------------
+
 {{- if .Values.ingress.enabled }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress

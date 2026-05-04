@@ -35,6 +35,7 @@ import (
 // Used for all methods — this is a load tester, not a security tool.
 const unsignedPayload = "UNSIGNED-PAYLOAD"
 
+// main is the program entry point.
 func main() {
 	var (
 		endpoint  = flag.String("endpoint", "http://localhost:9000", "S3 orchestrator endpoint")

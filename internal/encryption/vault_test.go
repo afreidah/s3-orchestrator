@@ -79,6 +79,7 @@ func newFakeVault(t *testing.T) *httptest.Server {
 	return ts
 }
 
+// newTestVaultProvider constructs a new test vault provider.
 func newTestVaultProvider(t *testing.T, ts *httptest.Server) *VaultKeyProvider {
 	t.Helper()
 	p, err := NewVaultKeyProvider(&config.VaultTransitConfig{
@@ -94,6 +95,8 @@ func newTestVaultProvider(t *testing.T, ts *httptest.Server) *VaultKeyProvider {
 	return p
 }
 
+// TestVaultKeyProvider_WrapUnwrapRoundTrip verifies the vault key provider wrap unwrap round trip contract.
+// Asserts that WrapDEK:.
 func TestVaultKeyProvider_WrapUnwrapRoundTrip(t *testing.T) {
 	t.Parallel()
 	ts := newFakeVault(t)
@@ -117,6 +120,8 @@ func TestVaultKeyProvider_WrapUnwrapRoundTrip(t *testing.T) {
 	}
 }
 
+// TestVaultKeyProvider_WrapDEK_ErrorResponse verifies the vault key provider wrap dek error response contract.
+// Asserts that NewVaultKeyProvider:.
 func TestVaultKeyProvider_WrapDEK_ErrorResponse(t *testing.T) {
 	t.Parallel()
 	mux := http.NewServeMux()
@@ -143,6 +148,8 @@ func TestVaultKeyProvider_WrapDEK_ErrorResponse(t *testing.T) {
 	}
 }
 
+// TestVaultKeyProvider_UnwrapDEK_ErrorResponse verifies the vault key provider unwrap dek error response contract.
+// Asserts that NewVaultKeyProvider:.
 func TestVaultKeyProvider_UnwrapDEK_ErrorResponse(t *testing.T) {
 	t.Parallel()
 	mux := http.NewServeMux()
@@ -169,6 +176,8 @@ func TestVaultKeyProvider_UnwrapDEK_ErrorResponse(t *testing.T) {
 	}
 }
 
+// TestVaultKeyProvider_RenewToken verifies the vault key provider renew token contract.
+// Asserts that NewVaultKeyProvider:.
 func TestVaultKeyProvider_RenewToken(t *testing.T) {
 	t.Parallel()
 	var renewCalls atomic.Int32
@@ -206,6 +215,8 @@ func TestVaultKeyProvider_RenewToken(t *testing.T) {
 	}
 }
 
+// TestVaultKeyProvider_TokenFile verifies the vault key provider token file contract.
+// Asserts that NewVaultKeyProvider:.
 func TestVaultKeyProvider_TokenFile(t *testing.T) {
 	t.Parallel()
 	ts := newFakeVault(t)
@@ -249,6 +260,7 @@ func TestVaultKeyProvider_TokenFile(t *testing.T) {
 	}
 }
 
+// TestVaultKeyProvider_TokenFileEmpty verifies the vault key provider token file empty path by exercising filepath.Join, os.WriteFile.
 func TestVaultKeyProvider_TokenFileEmpty(t *testing.T) {
 	t.Parallel()
 	tokenFile := filepath.Join(t.TempDir(), "empty-token")
@@ -267,6 +279,7 @@ func TestVaultKeyProvider_TokenFileEmpty(t *testing.T) {
 	}
 }
 
+// TestVaultKeyProvider_TokenFileMissing verifies the vault key provider token file missing behaviour described by the test name.
 func TestVaultKeyProvider_TokenFileMissing(t *testing.T) {
 	t.Parallel()
 	_, err := NewVaultKeyProvider(&config.VaultTransitConfig{
@@ -280,6 +293,8 @@ func TestVaultKeyProvider_TokenFileMissing(t *testing.T) {
 	}
 }
 
+// TestVaultKeyProvider_TokenFileInsecurePermissions verifies the vault key provider token file insecure permissions contract.
+// Asserts that unexpected error:.
 func TestVaultKeyProvider_TokenFileInsecurePermissions(t *testing.T) {
 	t.Parallel()
 	tokenFile := filepath.Join(t.TempDir(), "world-readable-token")
@@ -301,6 +316,8 @@ func TestVaultKeyProvider_TokenFileInsecurePermissions(t *testing.T) {
 	p.Close()
 }
 
+// TestVaultKeyProvider_TokenFileGroupReadable verifies the vault key provider token file group readable contract.
+// Asserts that unexpected error:.
 func TestVaultKeyProvider_TokenFileGroupReadable(t *testing.T) {
 	t.Parallel()
 	tokenFile := filepath.Join(t.TempDir(), "group-readable-token")
@@ -320,6 +337,7 @@ func TestVaultKeyProvider_TokenFileGroupReadable(t *testing.T) {
 	p.Close()
 }
 
+// TestVaultKeyProvider_Close verifies the vault key provider close path by exercising p.Close.
 func TestVaultKeyProvider_Close(t *testing.T) {
 	t.Parallel()
 	ts := newFakeVault(t)
@@ -330,6 +348,8 @@ func TestVaultKeyProvider_Close(t *testing.T) {
 	p.Close()
 }
 
+// TestVaultKeyProvider_DefaultRenewInterval verifies the vault key provider default renew interval contract.
+// Asserts that NewVaultKeyProvider:.
 func TestVaultKeyProvider_DefaultRenewInterval(t *testing.T) {
 	t.Parallel()
 	ts := newFakeVault(t)
@@ -338,7 +358,7 @@ func TestVaultKeyProvider_DefaultRenewInterval(t *testing.T) {
 		Token:     "test-token",
 		KeyName:   "test-key",
 		MountPath: "transit",
-		// RenewInterval not set — should default to 5m
+		// RenewInterval not set  -  should default to 5m
 	})
 	if err != nil {
 		t.Fatalf("NewVaultKeyProvider: %v", err)

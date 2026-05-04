@@ -31,6 +31,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // RateLimiter provides per-IP token-bucket rate limiting.
 type RateLimiter struct {
 	mu              sync.Mutex
@@ -44,10 +48,19 @@ type RateLimiter struct {
 	closeOnce       sync.Once
 }
 
+// visitorLimiter is the per-IP token bucket plus the lastSeen
+// timestamp used by the eviction sweep. lastSeen is updated on every
+// allow check so an IP that goes idle gets reaped after
+// cleanupMaxAge, freeing the map entry without surprising an active
+// caller.
 type visitorLimiter struct {
 	limiter  *rate.Limiter
 	lastSeen time.Time
 }
+
+// -------------------------------------------------------------------------
+// CONSTRUCTOR AND CONFIG
+// -------------------------------------------------------------------------
 
 // NewRateLimiter creates a rate limiter with the given configuration.
 func NewRateLimiter(cfg config.RateLimitConfig) *RateLimiter {
@@ -103,6 +116,10 @@ func (rl *RateLimiter) UpdateLimits(requestsPerSec float64, burst int) {
 	rl.limiters = make(map[string]*visitorLimiter)
 }
 
+// -------------------------------------------------------------------------
+// ALLOW / CLEANUP
+// -------------------------------------------------------------------------
+
 // Allow checks whether a request from the given IP is allowed.
 func (rl *RateLimiter) Allow(ip string) bool {
 	rl.mu.Lock()
@@ -130,6 +147,10 @@ func (rl *RateLimiter) cleanup(maxAge time.Duration) {
 		}
 	}
 }
+
+// -------------------------------------------------------------------------
+// MIDDLEWARE AND IP EXTRACTION
+// -------------------------------------------------------------------------
 
 // Middleware wraps an http.Handler with per-IP rate limiting.
 func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {

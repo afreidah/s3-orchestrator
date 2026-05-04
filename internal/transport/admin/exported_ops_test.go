@@ -8,7 +8,7 @@
 // Each operation has a documented "do nothing when not configured"
 // behaviour that the UI relies on to render a status banner instead of an
 // error. The shared newTestHandlerWithManager fixture leaves replication
-// factor at 1, the encryptor nil, and integrity disabled — exactly the
+// factor at 1, the encryptor nil, and integrity disabled  -  exactly the
 // conditions every skipped path checks.
 // -------------------------------------------------------------------------------
 
@@ -39,6 +39,7 @@ type fakeBackend struct {
 	puts    atomic.Int64
 }
 
+// GetObject returns object.
 func (f *fakeBackend) GetObject(_ context.Context, _, _ string) (*backend.GetObjectResult, error) {
 	body := io.NopCloser(bytes.NewReader(f.payload))
 	return &backend.GetObjectResult{
@@ -48,6 +49,10 @@ func (f *fakeBackend) GetObject(_ context.Context, _, _ string) (*backend.GetObj
 	}, nil
 }
 
+// PutObject satisfies backend.ObjectBackend by draining the supplied
+// body (so the upload-side reader hits EOF) and recording the put
+// count for tests that assert how many uploads the bulk-rewrite loop
+// performed.
 func (f *fakeBackend) PutObject(_ context.Context, _ string, body io.Reader, _ int64, _ string, _ map[string]string) (string, error) {
 	if _, err := io.Copy(io.Discard, body); err != nil {
 		return "", err
@@ -56,10 +61,14 @@ func (f *fakeBackend) PutObject(_ context.Context, _ string, body io.Reader, _ i
 	return "etag", nil
 }
 
+// HeadObject satisfies backend.ObjectBackend by returning the fake
+// payload's length. The HEAD path is exercised by the bulk-rewrite
+// loop's pre-flight existence check before the real GET runs.
 func (f *fakeBackend) HeadObject(_ context.Context, _ string) (*backend.HeadObjectResult, error) {
 	return &backend.HeadObjectResult{Size: int64(len(f.payload))}, nil
 }
 
+// DeleteObject deletes object.
 func (f *fakeBackend) DeleteObject(_ context.Context, _ string) error { return nil }
 
 // rowEncAdmin returns a single UnencryptedLocation on the first call to
@@ -72,6 +81,7 @@ type rowEncAdmin struct {
 	marked atomic.Bool
 }
 
+// ListUnencryptedLocations lists unencrypted locations.
 func (r *rowEncAdmin) ListUnencryptedLocations(_ context.Context, _, _ int) ([]core.UnencryptedLocation, error) {
 	if r.served.Swap(true) {
 		return nil, nil
@@ -79,6 +89,9 @@ func (r *rowEncAdmin) ListUnencryptedLocations(_ context.Context, _, _ int) ([]c
 	return []core.UnencryptedLocation{r.row}, nil
 }
 
+// MarkObjectEncrypted records that the bulk-rewrite loop reached the
+// post-encrypt DB-update step so tests can assert the loop completed
+// the encrypt + upload + mark-row sequence end-to-end.
 func (r *rowEncAdmin) MarkObjectEncrypted(_ context.Context, _, _ string, _ []byte, _ string, _, _ int64) error {
 	r.marked.Store(true)
 	return nil
@@ -90,21 +103,32 @@ func (r *rowEncAdmin) MarkObjectEncrypted(_ context.Context, _, _ string, _ []by
 // fixture data.
 type emptyEncAdmin struct{}
 
+// ListEncryptedLocations lists encrypted locations.
 func (emptyEncAdmin) ListEncryptedLocations(_ context.Context, _ string, _, _ int) ([]core.EncryptedLocation, error) {
 	return nil, nil
 }
+// UpdateEncryptionKey updates encryption key.
 func (emptyEncAdmin) UpdateEncryptionKey(_ context.Context, _, _ string, _ []byte, _ string) error {
 	return nil
 }
+// ListUnencryptedLocations lists unencrypted locations.
 func (emptyEncAdmin) ListUnencryptedLocations(_ context.Context, _, _ int) ([]core.UnencryptedLocation, error) {
 	return nil, nil
 }
+// MarkObjectEncrypted is a no-op stub on emptyEncAdmin so the type
+// satisfies the EncryptionAdmin interface. Tests that exercise the
+// success path use rowEncAdmin instead.
 func (emptyEncAdmin) MarkObjectEncrypted(_ context.Context, _, _ string, _ []byte, _ string, _, _ int64) error {
 	return nil
 }
+// ListAllEncryptedLocations lists all encrypted locations.
 func (emptyEncAdmin) ListAllEncryptedLocations(_ context.Context, _, _ int) ([]core.DecryptableLocation, error) {
 	return nil, nil
 }
+// MarkObjectDecrypted is a no-op stub on emptyEncAdmin so the type
+// satisfies the EncryptionAdmin interface for the decrypt-existing
+// path. Tests that exercise the success path supply a different
+// fixture.
 func (emptyEncAdmin) MarkObjectDecrypted(_ context.Context, _, _ string, _ int64) error {
 	return nil
 }

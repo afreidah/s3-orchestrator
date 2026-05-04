@@ -21,6 +21,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 )
 
+// managerSpanPrefix is prepended to every OpenTelemetry span name the
+// ObjectManager creates so traces clearly distinguish the manager
+// layer ("Manager GetObject") from the backend layer ("Backend
+// GetObject") in the same end-to-end trace.
 const managerSpanPrefix = "Manager "
 
 // ObjectManager handles object-level CRUD operations with read failover,
@@ -59,7 +63,7 @@ func (o *ObjectManager) invalidateCache(key string) {
 
 // wrapReader returns an io.ReadCloser that reads from r but closes c.
 // Used to replace io.NopCloser when the decrypt reader wraps a backend
-// response body — Close must still reach the original body so the
+// response body  -  Close must still reach the original body so the
 // underlying HTTP connection is released.
 func wrapReader(r io.Reader, c io.Closer) io.ReadCloser {
 	return struct {

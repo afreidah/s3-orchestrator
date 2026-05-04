@@ -1,3 +1,15 @@
+-- -----------------------------------------------------------------------------
+-- Replication Queries
+--
+-- Author: Alex Freidah
+--
+-- sqlc-input definitions backing the replicator and over-replication
+-- cleaner: under-replicated and over-replicated scans, the conditional
+-- replica insert that returns the source row's size_bytes, and the
+-- excess-copy removal. The "excluding" variant of the under-replicated
+-- scan lets workers skip backends that are draining or circuit-broken.
+-- -----------------------------------------------------------------------------
+
 -- name: GetUnderReplicatedObjects :many
 WITH under_replicated AS (
     SELECT object_key

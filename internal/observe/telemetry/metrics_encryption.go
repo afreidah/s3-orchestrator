@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------
-// Metrics — Encryption, Integrity Verification
+// Metrics  -  Encryption, Integrity Verification
 //
 // Author: Alex Freidah
 //
@@ -14,6 +14,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
+// EncryptionOpsTotal and related package-level variables used by this package.
 var (
 	// --- Encryption metrics ---
 

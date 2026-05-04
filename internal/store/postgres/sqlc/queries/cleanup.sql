@@ -1,3 +1,15 @@
+-- -----------------------------------------------------------------------------
+-- Cleanup Queue Queries
+--
+-- Author: Alex Freidah
+--
+-- sqlc-input definitions for cleanup_queue and cleanup_dlq operations.
+-- Covers the enqueue + retry-state lifecycle, the move-to-DLQ flow that
+-- graduates exhausted rows, and the engine-side helpers core/ uses for the
+-- atomic stale-row sweep that keeps orphan_bytes in lockstep with row
+-- delete.
+-- -----------------------------------------------------------------------------
+
 -- name: EnqueueCleanup :exec
 INSERT INTO cleanup_queue (backend_name, object_key, reason, size_bytes)
 VALUES ($1, $2, $3, $4);

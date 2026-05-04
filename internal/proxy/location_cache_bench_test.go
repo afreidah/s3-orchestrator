@@ -1,3 +1,16 @@
+// -------------------------------------------------------------------------------
+// LocationCache Benchmarks
+//
+// Author: Alex Freidah
+//
+// Measures the LocationCache hot path: cache hits, cache misses, and the
+// concurrent read-heavy and write-heavy mixes the read failover path
+// generates under load. Hits are sub-microsecond and dominate steady
+// state; the parallel variants pin the lock-contention profile so any
+// regression in the cache's sync primitive shows up as a measurable
+// throughput drop.
+// -------------------------------------------------------------------------------
+
 package proxy
 
 import (
@@ -6,6 +19,7 @@ import (
 	"time"
 )
 
+// BenchmarkLocationCache_Get_Hit measures the location cache get hit path by exercising c.Close, c.Set, c.Get.
 func BenchmarkLocationCache_Get_Hit(b *testing.B) {
 	c := NewLocationCache(time.Minute)
 	defer c.Close()
@@ -16,6 +30,7 @@ func BenchmarkLocationCache_Get_Hit(b *testing.B) {
 	}
 }
 
+// BenchmarkLocationCache_Get_Miss measures the location cache get miss path by exercising c.Close, c.Get.
 func BenchmarkLocationCache_Get_Miss(b *testing.B) {
 	c := NewLocationCache(time.Minute)
 	defer c.Close()
@@ -25,6 +40,7 @@ func BenchmarkLocationCache_Get_Miss(b *testing.B) {
 	}
 }
 
+// BenchmarkLocationCache_Set measures the location cache set path by exercising c.Close, c.Set.
 func BenchmarkLocationCache_Set(b *testing.B) {
 	c := NewLocationCache(time.Minute)
 	defer c.Close()
@@ -34,6 +50,7 @@ func BenchmarkLocationCache_Set(b *testing.B) {
 	}
 }
 
+// BenchmarkLocationCache_Concurrent_ReadHeavy measures the location cache concurrent read heavy path by exercising c.Close, fmt.Sprintf, c.Set.
 func BenchmarkLocationCache_Concurrent_ReadHeavy(b *testing.B) {
 	c := NewLocationCache(time.Minute)
 	defer c.Close()
@@ -61,6 +78,7 @@ func BenchmarkLocationCache_Concurrent_ReadHeavy(b *testing.B) {
 	})
 }
 
+// BenchmarkLocationCache_Concurrent_WriteHeavy measures the location cache concurrent write heavy path by exercising c.Close, fmt.Sprintf, pb.Next.
 func BenchmarkLocationCache_Concurrent_WriteHeavy(b *testing.B) {
 	c := NewLocationCache(time.Minute)
 	defer c.Close()
@@ -89,6 +107,7 @@ func BenchmarkLocationCache_Concurrent_WriteHeavy(b *testing.B) {
 // BenchmarkTTLCache_Eviction is in internal/syncutil/ttlcache_test.go where
 // white-box access to cache internals is available.
 
+// BenchmarkLocationCache_Contention_GetSetDelete measures the location cache contention get set delete path by exercising c.Close, fmt.Sprintf, c.Set.
 func BenchmarkLocationCache_Contention_GetSetDelete(b *testing.B) {
 	c := NewLocationCache(time.Minute)
 	defer c.Close()

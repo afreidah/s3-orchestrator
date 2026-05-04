@@ -30,6 +30,7 @@ import (
 // RoutingStrategy determines how write operations select a target backend.
 type RoutingStrategy string
 
+// RoutingPack and related constants used by this package.
 const (
 	// RoutingPack fills backends in order, returning the first with space.
 	RoutingPack RoutingStrategy = "pack"
@@ -185,7 +186,7 @@ func (c *Config) validateQuotaReplicationCombo() []error {
 		errs = append(errs, ErrUnlimitedNeedsReplication)
 	}
 	if c.Replication.Factor <= 1 {
-		slog.Warn("replication.factor <= 1 with multiple backends provides no redundancy — losing a backend will cause permanent data loss for objects stored exclusively on it", //nolint:sloglint // config validation has no request context
+		slog.Warn("replication.factor <= 1 with multiple backends provides no redundancy  -  losing a backend will cause permanent data loss for objects stored exclusively on it", //nolint:sloglint // config validation has no request context
 			"backends", len(c.Backends), "replication_factor", c.Replication.Factor)
 	}
 	return errs
@@ -276,7 +277,7 @@ func topLevelFieldsChanged(old, new *Config) []string {
 	return changed
 }
 
-// redisFieldsChanged handles the *RedisConfig pointer-nullable case —
+// redisFieldsChanged handles the *RedisConfig pointer-nullable case  - 
 // either presence change or struct inequality counts as a diff.
 func redisFieldsChanged(old, new *RedisConfig) []string {
 	oldHas := old != nil

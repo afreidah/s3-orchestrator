@@ -102,7 +102,7 @@ func TestConcurrentPutAndDelete_SameKey(t *testing.T) {
 	}
 
 	// Final state is unspecified, but HEAD must return either a valid
-	// object description or a clean NoSuchKey — not a 500 or hang.
+	// object description or a clean NoSuchKey  -  not a 500 or hang.
 	_, err = client.HeadObject(ctx, &s3.HeadObjectInput{
 		Bucket: aws.String(virtualBucket),
 		Key:    aws.String(key),
@@ -210,8 +210,8 @@ func TestPresignedDELETE(t *testing.T) {
 		t.Errorf("HeadObject after presigned DELETE: expected 404, got %v", err)
 	}
 }
-// runConcurrentPutDelete fires two goroutines — one repeatedly PUTting the
-// same key and one repeatedly DELETEing it — and returns a closed error
+// runConcurrentPutDelete fires two goroutines  -  one repeatedly PUTting the
+// same key and one repeatedly DELETEing it  -  and returns a closed error
 // channel containing any protocol-level errors either goroutine saw.
 func runConcurrentPutDelete(ctx context.Context, client *s3.Client, key string, body []byte, rounds int) chan error {
 	errCh := make(chan error, 2*rounds)

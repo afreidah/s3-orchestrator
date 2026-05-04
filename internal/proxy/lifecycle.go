@@ -54,7 +54,7 @@ func lifecycleBatchSize(cfg *config.LifecycleConfig) int {
 
 // applyLifecycleRule runs a single rule to completion (or until the store
 // stops returning new expired objects, or a full batch produces zero
-// successful deletions — the infinite-loop guard).
+// successful deletions  -  the infinite-loop guard).
 func (m *BackendManager) applyLifecycleRule(ctx context.Context, rule config.LifecycleRule, batchSize int) (deleted, failed int) {
 	cutoff := time.Now().Add(-time.Duration(rule.ExpirationDays) * 24 * time.Hour)
 	for {

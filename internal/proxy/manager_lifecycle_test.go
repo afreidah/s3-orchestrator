@@ -21,6 +21,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// TestProcessLifecycleRules_DeletesExpiredObjects verifies the process lifecycle rules deletes expired objects contract.
+// Asserts that expected 1 deleted, got.
 func TestProcessLifecycleRules_DeletesExpiredObjects(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -52,6 +54,8 @@ func TestProcessLifecycleRules_DeletesExpiredObjects(t *testing.T) {
 	}
 }
 
+// TestProcessLifecycleRules_NoExpiredObjects verifies the process lifecycle rules no expired objects contract.
+// Asserts that expected 0 deleted, got.
 func TestProcessLifecycleRules_NoExpiredObjects(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -75,6 +79,8 @@ func TestProcessLifecycleRules_NoExpiredObjects(t *testing.T) {
 	}
 }
 
+// TestProcessLifecycleRules_MultipleRules verifies the process lifecycle rules multiple rules contract.
+// Asserts that expected 2 deleted, got.
 func TestProcessLifecycleRules_MultipleRules(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -85,7 +91,7 @@ func TestProcessLifecycleRules_MultipleRules(t *testing.T) {
 		deleteObjectResp: []core.DeletedCopy{{BackendName: "b1", SizeBytes: 1}},
 	}
 	// Each rule's batch is under lifecycleBatchSize, so the loop breaks without
-	// a second call per rule — no nil terminators needed.
+	// a second call per rule  -  no nil terminators needed.
 	store.listExpiredObjectsPages = [][]core.ObjectLocation{
 		{{ObjectKey: "tmp/a", BackendName: "b1", SizeBytes: 1, CreatedAt: time.Now().Add(-48 * time.Hour)}},
 		{{ObjectKey: "uploads/staging/b", BackendName: "b1", SizeBytes: 1, CreatedAt: time.Now().Add(-3 * time.Hour)}},
@@ -106,6 +112,8 @@ func TestProcessLifecycleRules_MultipleRules(t *testing.T) {
 	}
 }
 
+// TestProcessLifecycleRules_BatchPagination verifies the process lifecycle rules batch pagination contract.
+// Asserts that expected deleted, got.
 func TestProcessLifecycleRules_BatchPagination(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -141,6 +149,8 @@ func TestProcessLifecycleRules_BatchPagination(t *testing.T) {
 	}
 }
 
+// TestProcessLifecycleRules_DeleteFailureContinues verifies the process lifecycle rules delete failure continues contract.
+// Asserts that expected 0 deleted, got.
 func TestProcessLifecycleRules_DeleteFailureContinues(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -171,6 +181,8 @@ func TestProcessLifecycleRules_DeleteFailureContinues(t *testing.T) {
 	}
 }
 
+// TestProcessLifecycleRules_ListExpiredObjectsError verifies the process lifecycle rules list expired objects error contract.
+// Asserts that expected 0 deleted, got.
 func TestProcessLifecycleRules_ListExpiredObjectsError(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{
@@ -191,6 +203,8 @@ func TestProcessLifecycleRules_ListExpiredObjectsError(t *testing.T) {
 	}
 }
 
+// TestProcessLifecycleRules_ZeroProgressTerminates verifies the process lifecycle rules zero progress terminates contract.
+// Asserts that expected 0 deleted, got.
 func TestProcessLifecycleRules_ZeroProgressTerminates(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
@@ -212,7 +226,7 @@ func TestProcessLifecycleRules_ZeroProgressTerminates(t *testing.T) {
 		}
 	}
 
-	// Return the full batch on every call — the guard must break the loop.
+	// Return the full batch on every call  -  the guard must break the loop.
 	store.listExpiredObjectsPages = [][]core.ObjectLocation{
 		batch,
 		batch, // second page would be fetched if the guard didn't stop
@@ -233,6 +247,8 @@ func TestProcessLifecycleRules_ZeroProgressTerminates(t *testing.T) {
 	}
 }
 
+// TestProcessLifecycleRules_EmptyRulesNoOp verifies the process lifecycle rules empty rules no op contract.
+// Asserts that expected no-op, got deleted= failed=.
 func TestProcessLifecycleRules_EmptyRulesNoOp(t *testing.T) {
 	t.Parallel()
 	store := &mockStore{}

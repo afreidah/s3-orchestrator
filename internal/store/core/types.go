@@ -80,6 +80,7 @@ type PendingObject struct {
 // PendingPromoteResult describes how PromotePending resolved an intent.
 type PendingPromoteResult int
 
+// PendingPromoteCommitted and related constants used by this package.
 const (
 	// PendingPromoteCommitted means the pending row was promoted into
 	// object_locations and removed in the same transaction.

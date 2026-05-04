@@ -17,6 +17,8 @@ import (
 	"testing"
 )
 
+// TestListBuckets verifies the list buckets contract.
+// Asserts that expected 200, got.
 func TestListBuckets(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t)
@@ -48,6 +50,8 @@ func TestListBuckets(t *testing.T) {
 	}
 }
 
+// TestListBucketsNoAuth verifies the list buckets no auth contract.
+// Asserts that expected 403, got.
 func TestListBucketsNoAuth(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t)
@@ -64,6 +68,8 @@ func TestListBucketsNoAuth(t *testing.T) {
 	}
 }
 
+// TestHeadBucket verifies the head bucket contract.
+// Asserts that expected 200, got.
 func TestHeadBucket(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t)
@@ -81,6 +87,8 @@ func TestHeadBucket(t *testing.T) {
 	}
 }
 
+// TestHeadBucketWrongBucket verifies the head bucket wrong bucket contract.
+// Asserts that expected 403, got.
 func TestHeadBucketWrongBucket(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t)
@@ -93,6 +101,8 @@ func TestHeadBucketWrongBucket(t *testing.T) {
 	}
 }
 
+// TestGetBucketLocation verifies the get bucket location contract.
+// Asserts that expected 200, got.
 func TestGetBucketLocation(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t)
@@ -112,6 +122,8 @@ func TestGetBucketLocation(t *testing.T) {
 	}
 }
 
+// TestGetBucketLocationNoAuth verifies the get bucket location no auth contract.
+// Asserts that expected 403, got.
 func TestGetBucketLocationNoAuth(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t)
@@ -128,6 +140,8 @@ func TestGetBucketLocationNoAuth(t *testing.T) {
 	}
 }
 
+// TestGetBucketVersioning verifies the get bucket versioning contract.
+// Asserts that expected 200, got.
 func TestGetBucketVersioning(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t)

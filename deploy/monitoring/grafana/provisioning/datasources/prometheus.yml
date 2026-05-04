@@ -1,3 +1,14 @@
+# -------------------------------------------------------------------------------
+# Grafana Datasource Provisioning - Prometheus / Loki / Tempo
+#
+# Author: Alex Freidah
+#
+# Read at Grafana startup to declare the datasources backing the demo
+# dashboards. Service discovery names ("prometheus", "loki", "tempo") match
+# the docker-compose / kubernetes service names so the demo stack works
+# without per-environment overrides.
+# -------------------------------------------------------------------------------
+
 apiVersion: 1
 
 datasources:

@@ -18,7 +18,7 @@ import (
 // IsTLSRequest reports whether the original client connection was over TLS.
 // True when r.TLS is set (TLS terminated at this server) or when the direct
 // peer is a trusted proxy that forwarded X-Forwarded-Proto: https. Returns
-// false when no trusted-proxy chain is configured and r.TLS is nil — callers
+// false when no trusted-proxy chain is configured and r.TLS is nil  -  callers
 // can opt in to forced-Secure cookies via a separate config flag.
 func IsTLSRequest(r *http.Request, trustedProxies []*net.IPNet) bool {
 	if r.TLS != nil {
@@ -99,7 +99,7 @@ func rightmostUntrusted(xff string, trusted []*net.IPNet) string {
 			return ip
 		}
 	}
-	// All trusted — return leftmost
+	// All trusted  -  return leftmost
 	if first := strings.TrimSpace(parts[0]); first != "" {
 		return first
 	}

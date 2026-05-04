@@ -15,6 +15,7 @@ import "testing"
 // TRY START AND STATUS
 // -------------------------------------------------------------------------
 
+// TestAsyncOpTracker_TryStart verifies the async op tracker try start path by exercising tr.TryStart, tr.Status.
 func TestAsyncOpTracker_TryStart(t *testing.T) {
 	t.Parallel()
 	var tr asyncOpTracker
@@ -29,6 +30,7 @@ func TestAsyncOpTracker_TryStart(t *testing.T) {
 	}
 }
 
+// TestAsyncOpTracker_TryStartDuplicate verifies the async op tracker try start duplicate path by exercising tr.TryStart.
 func TestAsyncOpTracker_TryStartDuplicate(t *testing.T) {
 	t.Parallel()
 	var tr asyncOpTracker
@@ -39,6 +41,7 @@ func TestAsyncOpTracker_TryStartDuplicate(t *testing.T) {
 	}
 }
 
+// TestAsyncOpTracker_IndependentOps verifies the async op tracker independent ops path by exercising tr.TryStart.
 func TestAsyncOpTracker_IndependentOps(t *testing.T) {
 	t.Parallel()
 	var tr asyncOpTracker
@@ -53,6 +56,8 @@ func TestAsyncOpTracker_IndependentOps(t *testing.T) {
 // COMPLETE AND RESULT
 // -------------------------------------------------------------------------
 
+// TestAsyncOpTracker_Complete verifies the async op tracker complete contract.
+// Asserts that result = v, want OK=true Count=42.
 func TestAsyncOpTracker_Complete(t *testing.T) {
 	t.Parallel()
 	var tr asyncOpTracker
@@ -72,6 +77,8 @@ func TestAsyncOpTracker_Complete(t *testing.T) {
 	}
 }
 
+// TestAsyncOpTracker_CompleteError verifies the async op tracker complete error contract.
+// Asserts that expected error result, got v.
 func TestAsyncOpTracker_CompleteError(t *testing.T) {
 	t.Parallel()
 	var tr asyncOpTracker
@@ -85,6 +92,7 @@ func TestAsyncOpTracker_CompleteError(t *testing.T) {
 	}
 }
 
+// TestAsyncOpTracker_RestartAfterComplete verifies the async op tracker restart after complete path by exercising tr.TryStart, tr.Complete.
 func TestAsyncOpTracker_RestartAfterComplete(t *testing.T) {
 	t.Parallel()
 	var tr asyncOpTracker
@@ -101,6 +109,7 @@ func TestAsyncOpTracker_RestartAfterComplete(t *testing.T) {
 // IDLE STATUS
 // -------------------------------------------------------------------------
 
+// TestAsyncOpTracker_StatusIdle verifies the async op tracker status idle path by exercising tr.Status.
 func TestAsyncOpTracker_StatusIdle(t *testing.T) {
 	t.Parallel()
 	var tr asyncOpTracker

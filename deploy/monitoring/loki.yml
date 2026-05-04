@@ -1,3 +1,14 @@
+# -------------------------------------------------------------------------------
+# Loki - Local Demo Configuration
+#
+# Author: Alex Freidah
+#
+# Single-binary Loki setup for the docker-compose / kubernetes local demo.
+# Auth is disabled and storage uses the local filesystem so the demo runs
+# without an object store. Production deployments use the upstream
+# distributed reference architecture instead.
+# -------------------------------------------------------------------------------
+
 auth_enabled: false
 
 server:

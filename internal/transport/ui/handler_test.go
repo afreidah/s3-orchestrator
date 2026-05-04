@@ -37,12 +37,14 @@ import (
 	// newTestHandler builds a Handler wired to mock data for testing.
 )
 
+// testAdminKey and related constants used by this package.
 const (
 	testAdminKey      = "test-admin"
 	testAdminSecret   = "test-secret-key"
 	testSessionSecret = "test-session-secret"
 )
 
+// newTestHandler constructs a new test handler.
 func newTestHandler(t *testing.T) (*Handler, *http.ServeMux) {
 	t.Helper()
 	h, mux, _ := newTestHandlerWithMock(t)
@@ -108,6 +110,8 @@ func newTestHandlerWithMock(t *testing.T) (*Handler, *http.ServeMux, *testutil.M
 
 // getSessionCookie performs a login and returns the session cookie.
 // loginCookies performs a login and returns the session and CSRF cookies.
+// loginCookies login cookies.
+// loginCookies login cookies.
 func loginCookies(t *testing.T, h *Handler, mux *http.ServeMux) (session *http.Cookie, csrf *http.Cookie) {
 	t.Helper()
 
@@ -162,6 +166,8 @@ func authedRequest(t *testing.T, h *Handler, mux *http.ServeMux, method, path st
 // CSRF TESTS
 // -------------------------------------------------------------------------
 
+// TestCSRF_PostWithoutToken_Rejected verifies the csrf post without token rejected contract.
+// Asserts that status = , want.
 func TestCSRF_PostWithoutToken_Rejected(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -178,6 +184,8 @@ func TestCSRF_PostWithoutToken_Rejected(t *testing.T) {
 	}
 }
 
+// TestCSRF_PostWithCookieButNoHeader_Rejected verifies the csrf post with cookie but no header rejected contract.
+// Asserts that status = , want.
 func TestCSRF_PostWithCookieButNoHeader_Rejected(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -195,6 +203,8 @@ func TestCSRF_PostWithCookieButNoHeader_Rejected(t *testing.T) {
 	}
 }
 
+// TestCSRF_PostWithWrongToken_Rejected verifies the csrf post with wrong token rejected contract.
+// Asserts that status = , want.
 func TestCSRF_PostWithWrongToken_Rejected(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -212,6 +222,8 @@ func TestCSRF_PostWithWrongToken_Rejected(t *testing.T) {
 	}
 }
 
+// TestCSRF_GetWithoutToken_Allowed verifies the csrf get without token allowed contract.
+// Asserts that status = , want (GET should not require CSRF).
 func TestCSRF_GetWithoutToken_Allowed(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -232,6 +244,8 @@ func TestCSRF_GetWithoutToken_Allowed(t *testing.T) {
 // HELPER TESTS
 // -------------------------------------------------------------------------
 
+// TestWriteJSONError verifies the write jsonerror contract.
+// Asserts that status = , want.
 func TestWriteJSONError(t *testing.T) {
 	t.Parallel()
 	w := httptest.NewRecorder()
@@ -252,6 +266,8 @@ func TestWriteJSONError(t *testing.T) {
 // AUTH TESTS
 // -------------------------------------------------------------------------
 
+// TestDashboard_RequiresAuth verifies the dashboard requires auth contract.
+// Asserts that status = , want 303 redirect.
 func TestDashboard_RequiresAuth(t *testing.T) {
 	t.Parallel()
 	_, mux := newTestHandler(t)
@@ -270,6 +286,8 @@ func TestDashboard_RequiresAuth(t *testing.T) {
 	}
 }
 
+// TestAPIDashboard_RequiresAuth verifies the apidashboard requires auth contract.
+// Asserts that status = , want 401.
 func TestAPIDashboard_RequiresAuth(t *testing.T) {
 	t.Parallel()
 	_, mux := newTestHandler(t)
@@ -283,6 +301,8 @@ func TestAPIDashboard_RequiresAuth(t *testing.T) {
 	}
 }
 
+// TestLogin_ValidCredentials verifies the login valid credentials contract.
+// Asserts that status = , want 303.
 func TestLogin_ValidCredentials(t *testing.T) {
 	t.Parallel()
 	_, mux := newTestHandler(t)
@@ -321,6 +341,8 @@ func TestLogin_ValidCredentials(t *testing.T) {
 	}
 }
 
+// TestLogin_InvalidCredentials verifies the login invalid credentials contract.
+// Asserts that status = , want 401.
 func TestLogin_InvalidCredentials(t *testing.T) {
 	t.Parallel()
 	_, mux := newTestHandler(t)
@@ -345,6 +367,8 @@ func TestLogin_InvalidCredentials(t *testing.T) {
 	}
 }
 
+// TestLogin_GET_ShowsForm verifies the login get shows form contract.
+// Asserts that status = , want 200.
 func TestLogin_GET_ShowsForm(t *testing.T) {
 	t.Parallel()
 	_, mux := newTestHandler(t)
@@ -364,6 +388,8 @@ func TestLogin_GET_ShowsForm(t *testing.T) {
 	}
 }
 
+// TestLogin_GET_RedirectsWhenAuthenticated verifies the login get redirects when authenticated contract.
+// Asserts that status = , want 303.
 func TestLogin_GET_RedirectsWhenAuthenticated(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -383,6 +409,8 @@ func TestLogin_GET_RedirectsWhenAuthenticated(t *testing.T) {
 	}
 }
 
+// TestLogout_ClearsCookie verifies the logout clears cookie contract.
+// Asserts that status = , want 303.
 func TestLogout_ClearsCookie(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -405,6 +433,7 @@ func TestLogout_ClearsCookie(t *testing.T) {
 	t.Error("logout should clear session cookie")
 }
 
+// TestCheckSecret_Plaintext verifies the check secret plaintext behaviour described by the test name.
 func TestCheckSecret_Plaintext(t *testing.T) {
 	t.Parallel()
 	if !checkSecret("mysecret", "mysecret") {
@@ -415,6 +444,7 @@ func TestCheckSecret_Plaintext(t *testing.T) {
 	}
 }
 
+// TestCheckSecret_Bcrypt verifies the check secret bcrypt path by exercising bcrypt.GenerateFromPassword.
 func TestCheckSecret_Bcrypt(t *testing.T) {
 	t.Parallel()
 	hash, err := bcrypt.GenerateFromPassword([]byte("bcrypt-pass"), bcrypt.MinCost)
@@ -430,6 +460,8 @@ func TestCheckSecret_Bcrypt(t *testing.T) {
 	}
 }
 
+// TestLogin_BcryptSecret verifies the login bcrypt secret contract.
+// Asserts that bcrypt login: status = , want 303.
 func TestLogin_BcryptSecret(t *testing.T) {
 	t.Parallel()
 	hash, err := bcrypt.GenerateFromPassword([]byte(testAdminSecret), bcrypt.MinCost)
@@ -483,6 +515,7 @@ func TestLogin_BcryptSecret(t *testing.T) {
 	}
 }
 
+// TestDeriveSessionKey_Deterministic verifies the derive session key deterministic path by exercising bytes.Equal.
 func TestDeriveSessionKey_Deterministic(t *testing.T) {
 	t.Parallel()
 	ui := config.UIConfig{SessionSecret: "shared-secret"}
@@ -494,6 +527,7 @@ func TestDeriveSessionKey_Deterministic(t *testing.T) {
 	}
 }
 
+// TestDeriveSessionKey_DifferentSecretsDifferentKeys verifies the derive session key different secrets different keys path by exercising bytes.Equal.
 func TestDeriveSessionKey_DifferentSecretsDifferentKeys(t *testing.T) {
 	t.Parallel()
 	ui1 := config.UIConfig{SessionSecret: "secret-one"}
@@ -507,6 +541,8 @@ func TestDeriveSessionKey_DifferentSecretsDifferentKeys(t *testing.T) {
 	}
 }
 
+// TestCrossInstanceSession verifies the cross instance session contract.
+// Asserts that cross-instance session: status = , want 200.
 func TestCrossInstanceSession(t *testing.T) {
 	t.Parallel()
 	// Two handlers with the same config should accept each other's sessions.
@@ -558,6 +594,8 @@ func TestCrossInstanceSession(t *testing.T) {
 	}
 }
 
+// TestStaticAssets_NoAuthRequired verifies the static assets no auth required contract.
+// Asserts that status = , want 200 (no auth required for static assets).
 func TestStaticAssets_NoAuthRequired(t *testing.T) {
 	t.Parallel()
 	_, mux := newTestHandler(t)
@@ -576,6 +614,8 @@ func TestStaticAssets_NoAuthRequired(t *testing.T) {
 // DASHBOARD TESTS (AUTHENTICATED)
 // -------------------------------------------------------------------------
 
+// TestDashboard_Returns200HTML verifies the dashboard returns200 html contract.
+// Asserts that status = , want 200.
 func TestDashboard_Returns200HTML(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -607,6 +647,8 @@ func TestDashboard_Returns200HTML(t *testing.T) {
 	}
 }
 
+// TestAPIDashboard_ReturnsJSON verifies the apidashboard returns json contract.
+// Asserts that status = , want 200.
 func TestAPIDashboard_ReturnsJSON(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -633,6 +675,8 @@ func TestAPIDashboard_ReturnsJSON(t *testing.T) {
 	}
 }
 
+// TestTreeAPI_ReturnsJSON verifies the tree api returns json contract.
+// Asserts that status = , want 200.
 func TestTreeAPI_ReturnsJSON(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -659,6 +703,8 @@ func TestTreeAPI_ReturnsJSON(t *testing.T) {
 	}
 }
 
+// TestSecurityHeaders_PresentOnAllEndpoints verifies the security headers present on all endpoints contract.
+// Asserts that = , want.
 func TestSecurityHeaders_PresentOnAllEndpoints(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -701,6 +747,7 @@ func TestSecurityHeaders_PresentOnAllEndpoints(t *testing.T) {
 	}
 }
 
+// TestUpdateConfig_ReflectsInDashboard verifies the update config reflects in dashboard path by exercising h.UpdateConfig, httptest.NewRecorder, mux.ServeHTTP.
 func TestUpdateConfig_ReflectsInDashboard(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -735,6 +782,8 @@ func TestUpdateConfig_ReflectsInDashboard(t *testing.T) {
 // DELETE / UPLOAD AUTH GATING
 // -------------------------------------------------------------------------
 
+// TestAPIDelete_RequiresAuth verifies the apidelete requires auth contract.
+// Asserts that status = , want 401.
 func TestAPIDelete_RequiresAuth(t *testing.T) {
 	t.Parallel()
 	_, mux := newTestHandler(t)
@@ -749,6 +798,8 @@ func TestAPIDelete_RequiresAuth(t *testing.T) {
 	}
 }
 
+// TestAPIUpload_RequiresAuth verifies the apiupload requires auth contract.
+// Asserts that status = , want 401.
 func TestAPIUpload_RequiresAuth(t *testing.T) {
 	t.Parallel()
 	_, mux := newTestHandler(t)
@@ -766,6 +817,8 @@ func TestAPIUpload_RequiresAuth(t *testing.T) {
 // DELETE API TESTS
 // -------------------------------------------------------------------------
 
+// TestAPIDelete_WrongMethod verifies the apidelete wrong method contract.
+// Asserts that status = , want 405.
 func TestAPIDelete_WrongMethod(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -779,6 +832,8 @@ func TestAPIDelete_WrongMethod(t *testing.T) {
 	}
 }
 
+// TestAPIDelete_BadJSON verifies the apidelete bad json contract.
+// Asserts that status = , want 400.
 func TestAPIDelete_BadJSON(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -793,6 +848,8 @@ func TestAPIDelete_BadJSON(t *testing.T) {
 	}
 }
 
+// TestAPIDelete_EmptyKey verifies the apidelete empty key contract.
+// Asserts that status = , want 400.
 func TestAPIDelete_EmptyKey(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -807,6 +864,8 @@ func TestAPIDelete_EmptyKey(t *testing.T) {
 	}
 }
 
+// TestAPIDelete_Success verifies the apidelete success contract.
+// Asserts that status = , want 200; body =.
 func TestAPIDelete_Success(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -832,6 +891,8 @@ func TestAPIDelete_Success(t *testing.T) {
 	}
 }
 
+// TestAPIDelete_ManagerError verifies the apidelete manager error contract.
+// Asserts that status = , want 500.
 func TestAPIDelete_ManagerError(t *testing.T) {
 	t.Parallel()
 	h, mux, mock := newTestHandlerWithMock(t)
@@ -852,6 +913,8 @@ func TestAPIDelete_ManagerError(t *testing.T) {
 // DELETE PREFIX API TESTS
 // -------------------------------------------------------------------------
 
+// TestAPIDeletePrefix_RequiresAuth verifies the apidelete prefix requires auth contract.
+// Asserts that status = , want 401.
 func TestAPIDeletePrefix_RequiresAuth(t *testing.T) {
 	t.Parallel()
 	_, mux := newTestHandler(t)
@@ -867,6 +930,8 @@ func TestAPIDeletePrefix_RequiresAuth(t *testing.T) {
 	}
 }
 
+// TestAPIDeletePrefix_WrongMethod verifies the apidelete prefix wrong method contract.
+// Asserts that status = , want 405.
 func TestAPIDeletePrefix_WrongMethod(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -880,6 +945,8 @@ func TestAPIDeletePrefix_WrongMethod(t *testing.T) {
 	}
 }
 
+// TestAPIDeletePrefix_BadJSON verifies the apidelete prefix bad json contract.
+// Asserts that status = , want 400.
 func TestAPIDeletePrefix_BadJSON(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -894,6 +961,8 @@ func TestAPIDeletePrefix_BadJSON(t *testing.T) {
 	}
 }
 
+// TestAPIDeletePrefix_EmptyPrefix verifies the apidelete prefix empty prefix contract.
+// Asserts that status = , want 400.
 func TestAPIDeletePrefix_EmptyPrefix(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -909,6 +978,8 @@ func TestAPIDeletePrefix_EmptyPrefix(t *testing.T) {
 	}
 }
 
+// TestAPIDeletePrefix_Success verifies the apidelete prefix success contract.
+// Asserts that status = , want 200; body =.
 func TestAPIDeletePrefix_Success(t *testing.T) {
 	t.Parallel()
 	h, mux, mock := newTestHandlerWithMock(t)
@@ -944,6 +1015,8 @@ func TestAPIDeletePrefix_Success(t *testing.T) {
 	}
 }
 
+// TestAPIDeletePrefix_EmptyResult verifies the apidelete prefix empty result contract.
+// Asserts that status = , want 200; body =.
 func TestAPIDeletePrefix_EmptyResult(t *testing.T) {
 	t.Parallel()
 	h, mux, mock := newTestHandlerWithMock(t)
@@ -976,6 +1049,8 @@ func TestAPIDeletePrefix_EmptyResult(t *testing.T) {
 	}
 }
 
+// TestAPIDeletePrefix_ListObjectsError verifies the apidelete prefix list objects error contract.
+// Asserts that status = , want 500.
 func TestAPIDeletePrefix_ListObjectsError(t *testing.T) {
 	t.Parallel()
 	h, mux, mock := newTestHandlerWithMock(t)
@@ -992,6 +1067,8 @@ func TestAPIDeletePrefix_ListObjectsError(t *testing.T) {
 	}
 }
 
+// TestAPIDeletePrefix_DeleteError verifies the apidelete prefix delete error contract.
+// Asserts that status = , want 500.
 func TestAPIDeletePrefix_DeleteError(t *testing.T) {
 	t.Parallel()
 	h, mux, mock := newTestHandlerWithMock(t)
@@ -1053,6 +1130,8 @@ func multipartForm(t *testing.T, key, filename string, fileContent []byte) (*byt
 	return &buf, w.FormDataContentType()
 }
 
+// TestAPIUpload_WrongMethod verifies the apiupload wrong method contract.
+// Asserts that status = , want 405.
 func TestAPIUpload_WrongMethod(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -1066,6 +1145,8 @@ func TestAPIUpload_WrongMethod(t *testing.T) {
 	}
 }
 
+// TestAPIUpload_MissingKey verifies the apiupload missing key contract.
+// Asserts that status = , want 400.
 func TestAPIUpload_MissingKey(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -1081,6 +1162,8 @@ func TestAPIUpload_MissingKey(t *testing.T) {
 	}
 }
 
+// TestAPIUpload_InvalidBucket verifies the apiupload invalid bucket contract.
+// Asserts that status = , want 400.
 func TestAPIUpload_InvalidBucket(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -1100,6 +1183,8 @@ func TestAPIUpload_InvalidBucket(t *testing.T) {
 	}
 }
 
+// TestAPIUpload_MissingFile verifies the apiupload missing file contract.
+// Asserts that status = , want 400.
 func TestAPIUpload_MissingFile(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -1116,6 +1201,8 @@ func TestAPIUpload_MissingFile(t *testing.T) {
 	}
 }
 
+// TestAPIUpload_PutObjectError verifies the apiupload put object error contract.
+// Asserts that status = , want 500.
 func TestAPIUpload_PutObjectError(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -1136,6 +1223,8 @@ func TestAPIUpload_PutObjectError(t *testing.T) {
 // REBALANCE API TESTS
 // -------------------------------------------------------------------------
 
+// TestAPIRebalance_RequiresAuth verifies the apirebalance requires auth contract.
+// Asserts that status = , want 401.
 func TestAPIRebalance_RequiresAuth(t *testing.T) {
 	t.Parallel()
 	_, mux := newTestHandler(t)
@@ -1149,6 +1238,8 @@ func TestAPIRebalance_RequiresAuth(t *testing.T) {
 	}
 }
 
+// TestAPIRebalance_WrongMethod verifies the apirebalance wrong method contract.
+// Asserts that status = , want 405.
 func TestAPIRebalance_WrongMethod(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -1162,6 +1253,8 @@ func TestAPIRebalance_WrongMethod(t *testing.T) {
 	}
 }
 
+// TestAPIRebalance_Success verifies the apirebalance success contract.
+// Asserts that status = , want 202; body =.
 func TestAPIRebalance_Success(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -1185,6 +1278,8 @@ func TestAPIRebalance_Success(t *testing.T) {
 	}
 }
 
+// TestAPIRebalance_AlreadyRunning verifies the apirebalance already running contract.
+// Asserts that second trigger: status = , want 409.
 func TestAPIRebalance_AlreadyRunning(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -1203,6 +1298,8 @@ func TestAPIRebalance_AlreadyRunning(t *testing.T) {
 	}
 }
 
+// TestAPIRebalance_StatusPolling verifies the apirebalance status polling contract.
+// Asserts that expected status=idle, got.
 func TestAPIRebalance_StatusPolling(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -1219,6 +1316,8 @@ func TestAPIRebalance_StatusPolling(t *testing.T) {
 	}
 }
 
+// TestAPIRebalance_ManagerError verifies the apirebalance manager error contract.
+// Asserts that status = , want 202.
 func TestAPIRebalance_ManagerError(t *testing.T) {
 	t.Parallel()
 	h, mux, mock := newTestHandlerWithMock(t)
@@ -1228,7 +1327,7 @@ func TestAPIRebalance_ManagerError(t *testing.T) {
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
-	// Async trigger still returns 202 — errors surface via status endpoint
+	// Async trigger still returns 202  -  errors surface via status endpoint
 	if w.Result().StatusCode != http.StatusAccepted {
 		t.Fatalf("status = %d, want 202", w.Result().StatusCode)
 	}
@@ -1252,6 +1351,8 @@ func TestAPIRebalance_ManagerError(t *testing.T) {
 // SYNC API TESTS
 // -------------------------------------------------------------------------
 
+// TestAPISync_RequiresAuth verifies the apisync requires auth contract.
+// Asserts that status = , want 401.
 func TestAPISync_RequiresAuth(t *testing.T) {
 	t.Parallel()
 	_, mux := newTestHandler(t)
@@ -1267,6 +1368,8 @@ func TestAPISync_RequiresAuth(t *testing.T) {
 	}
 }
 
+// TestAPISync_WrongMethod verifies the apisync wrong method contract.
+// Asserts that status = , want 405.
 func TestAPISync_WrongMethod(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -1280,6 +1383,8 @@ func TestAPISync_WrongMethod(t *testing.T) {
 	}
 }
 
+// TestAPISync_BadJSON verifies the apisync bad json contract.
+// Asserts that status = , want 400.
 func TestAPISync_BadJSON(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -1294,6 +1399,8 @@ func TestAPISync_BadJSON(t *testing.T) {
 	}
 }
 
+// TestAPISync_EmptyFields verifies the apisync empty fields contract.
+// Asserts that status = , want 400.
 func TestAPISync_EmptyFields(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -1309,6 +1416,8 @@ func TestAPISync_EmptyFields(t *testing.T) {
 	}
 }
 
+// TestAPISync_UnknownBackend verifies the apisync unknown backend contract.
+// Asserts that status = , want 400.
 func TestAPISync_UnknownBackend(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -1329,6 +1438,8 @@ func TestAPISync_UnknownBackend(t *testing.T) {
 	}
 }
 
+// TestAPISync_UnknownBucket verifies the apisync unknown bucket contract.
+// Asserts that status = , want 400.
 func TestAPISync_UnknownBucket(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -1349,6 +1460,8 @@ func TestAPISync_UnknownBucket(t *testing.T) {
 	}
 }
 
+// TestAPISync_ManagerError verifies the apisync manager error contract.
+// Asserts that status = , want 500.
 func TestAPISync_ManagerError(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -1369,6 +1482,8 @@ func TestAPISync_ManagerError(t *testing.T) {
 // ERROR PATH TESTS
 // -------------------------------------------------------------------------
 
+// TestLogin_UnsupportedMethod verifies the login unsupported method contract.
+// Asserts that status = , want 405.
 func TestLogin_UnsupportedMethod(t *testing.T) {
 	t.Parallel()
 	_, mux := newTestHandler(t)
@@ -1382,6 +1497,8 @@ func TestLogin_UnsupportedMethod(t *testing.T) {
 	}
 }
 
+// TestDashboard_DataError verifies the dashboard data error contract.
+// Asserts that status = , want 500.
 func TestDashboard_DataError(t *testing.T) {
 	t.Parallel()
 	h, mux, mock := newTestHandlerWithMock(t)
@@ -1396,6 +1513,8 @@ func TestDashboard_DataError(t *testing.T) {
 	}
 }
 
+// TestAPIDashboard_DataError verifies the apidashboard data error contract.
+// Asserts that status = , want 500.
 func TestAPIDashboard_DataError(t *testing.T) {
 	t.Parallel()
 	h, mux, mock := newTestHandlerWithMock(t)
@@ -1410,6 +1529,8 @@ func TestAPIDashboard_DataError(t *testing.T) {
 	}
 }
 
+// TestTreeAPI_WithMaxKeys verifies the tree api with max keys contract.
+// Asserts that status = , want 200.
 func TestTreeAPI_WithMaxKeys(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -1423,6 +1544,8 @@ func TestTreeAPI_WithMaxKeys(t *testing.T) {
 	}
 }
 
+// TestTreeAPI_InvalidBucketPrefix verifies the tree api invalid bucket prefix contract.
+// Asserts that status = , want 400.
 func TestTreeAPI_InvalidBucketPrefix(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -1436,6 +1559,8 @@ func TestTreeAPI_InvalidBucketPrefix(t *testing.T) {
 	}
 }
 
+// TestTreeAPI_DataError verifies the tree api data error contract.
+// Asserts that status = , want 500.
 func TestTreeAPI_DataError(t *testing.T) {
 	t.Parallel()
 	h, mux, mock := newTestHandlerWithMock(t)
@@ -1454,6 +1579,8 @@ func TestTreeAPI_DataError(t *testing.T) {
 // LOGS API TESTS
 // -------------------------------------------------------------------------
 
+// TestAPILogs_RequiresAuth verifies the apilogs requires auth contract.
+// Asserts that status = , want 401.
 func TestAPILogs_RequiresAuth(t *testing.T) {
 	t.Parallel()
 	_, mux := newTestHandler(t)
@@ -1467,6 +1594,8 @@ func TestAPILogs_RequiresAuth(t *testing.T) {
 	}
 }
 
+// TestAPILogs_ReturnsJSON verifies the apilogs returns json contract.
+// Asserts that status = , want 200.
 func TestAPILogs_ReturnsJSON(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -1490,6 +1619,8 @@ func TestAPILogs_ReturnsJSON(t *testing.T) {
 	}
 }
 
+// TestAPILogs_LevelFilter verifies the apilogs level filter contract.
+// Asserts that status = , want 200.
 func TestAPILogs_LevelFilter(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -1519,6 +1650,8 @@ func TestAPILogs_LevelFilter(t *testing.T) {
 	}
 }
 
+// TestAPILogs_AllLevelFilters verifies the apilogs all level filters contract.
+// Asserts that status = , want 200.
 func TestAPILogs_AllLevelFilters(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -1557,6 +1690,8 @@ func TestAPILogs_AllLevelFilters(t *testing.T) {
 	}
 }
 
+// TestAPILogs_SinceFilter verifies the apilogs since filter contract.
+// Asserts that status = , want 200.
 func TestAPILogs_SinceFilter(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -1586,6 +1721,8 @@ func TestAPILogs_SinceFilter(t *testing.T) {
 	}
 }
 
+// TestAPILogs_LimitFilter verifies the apilogs limit filter contract.
+// Asserts that status = , want 200.
 func TestAPILogs_LimitFilter(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -1610,6 +1747,8 @@ func TestAPILogs_LimitFilter(t *testing.T) {
 	}
 }
 
+// TestAPILogs_ComponentFilter verifies the apilogs component filter contract.
+// Asserts that status = , want 200.
 func TestAPILogs_ComponentFilter(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -1636,6 +1775,8 @@ func TestAPILogs_ComponentFilter(t *testing.T) {
 	}
 }
 
+// TestAPILogs_BeforeFilter verifies the apilogs before filter contract.
+// Asserts that status = , want 200.
 func TestAPILogs_BeforeFilter(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -1665,6 +1806,8 @@ func TestAPILogs_BeforeFilter(t *testing.T) {
 	}
 }
 
+// TestAPILogs_HasMore verifies the apilogs has more contract.
+// Asserts that status = , want 200.
 func TestAPILogs_HasMore(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -1678,7 +1821,7 @@ func TestAPILogs_HasMore(t *testing.T) {
 		})
 	}
 
-	// Request limit=5 with 10 entries available — should get hasMore=true.
+	// Request limit=5 with 10 entries available  -  should get hasMore=true.
 	req := authedRequest(t, h, mux, http.MethodGet, "/ui/api/logs?limit=5", nil)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -1697,7 +1840,7 @@ func TestAPILogs_HasMore(t *testing.T) {
 		t.Error("hasMore = false, want true")
 	}
 
-	// Request limit=20 with 10 entries — should get hasMore=false.
+	// Request limit=20 with 10 entries  -  should get hasMore=false.
 	req2 := authedRequest(t, h, mux, http.MethodGet, "/ui/api/logs?limit=20", nil)
 	w2 := httptest.NewRecorder()
 	mux.ServeHTTP(w2, req2)
@@ -1718,6 +1861,8 @@ func TestAPILogs_HasMore(t *testing.T) {
 // BRUTE-FORCE PROTECTION
 // -------------------------------------------------------------------------
 
+// TestLogin_BruteForceProtection verifies the login brute force protection contract.
+// Asserts that status = , want.
 func TestLogin_BruteForceProtection(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -1752,6 +1897,8 @@ func TestLogin_BruteForceProtection(t *testing.T) {
 // access key take approximately the same time as attempts with a valid key
 // but wrong secret. Both should be dominated by checkSecret (bcrypt when
 // configured). A large disparity would indicate a timing side-channel.
+// BenchmarkLogin_InvalidKey benchmarks login_invalid key.
+// BenchmarkLogin_InvalidKey benchmarks login_invalid key.
 func BenchmarkLogin_InvalidKey(b *testing.B) {
 	h, mux := benchLoginHandler(b)
 	_ = h
@@ -1768,6 +1915,7 @@ func BenchmarkLogin_InvalidKey(b *testing.B) {
 	}
 }
 
+// BenchmarkLogin_ValidKeyWrongSecret measures the login valid key wrong secret path by exercising form.Encode, httptest.NewRequest, strings.NewReader.
 func BenchmarkLogin_ValidKeyWrongSecret(b *testing.B) {
 	h, mux := benchLoginHandler(b)
 	_ = h
@@ -1836,6 +1984,8 @@ func benchLoginHandler(b *testing.B) (*Handler, *http.ServeMux) {
 // DOWNLOAD API TESTS
 // -------------------------------------------------------------------------
 
+// TestDownload_MethodNotAllowed verifies the download method not allowed contract.
+// Asserts that status = , want.
 func TestDownload_MethodNotAllowed(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -1851,6 +2001,8 @@ func TestDownload_MethodNotAllowed(t *testing.T) {
 	}
 }
 
+// TestDownload_MissingKey verifies the download missing key contract.
+// Asserts that status = , want.
 func TestDownload_MissingKey(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -1863,6 +2015,8 @@ func TestDownload_MissingKey(t *testing.T) {
 	}
 }
 
+// TestDownload_InvalidBucketPrefix verifies the download invalid bucket prefix contract.
+// Asserts that status = , want.
 func TestDownload_InvalidBucketPrefix(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -1875,6 +2029,8 @@ func TestDownload_InvalidBucketPrefix(t *testing.T) {
 	}
 }
 
+// TestDownload_NotFound verifies the download not found contract.
+// Asserts that status = , want.
 func TestDownload_NotFound(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -1888,6 +2044,8 @@ func TestDownload_NotFound(t *testing.T) {
 	}
 }
 
+// TestDownload_StoreError verifies the download store error contract.
+// Asserts that status = , want.
 func TestDownload_StoreError(t *testing.T) {
 	t.Parallel()
 	h, mux, mock := newTestHandlerWithMock(t)
@@ -1906,6 +2064,8 @@ func TestDownload_StoreError(t *testing.T) {
 // CLEAN EXCESS API TESTS
 // -------------------------------------------------------------------------
 
+// TestCleanExcess_MethodNotAllowed verifies the clean excess method not allowed contract.
+// Asserts that status = , want.
 func TestCleanExcess_MethodNotAllowed(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -1925,6 +2085,8 @@ func TestCleanExcess_MethodNotAllowed(t *testing.T) {
 // UPLOAD API ERROR PATHS
 // -------------------------------------------------------------------------
 
+// TestUpload_InvalidMultipartForm verifies the upload invalid multipart form contract.
+// Asserts that status = , want.
 func TestUpload_InvalidMultipartForm(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -1946,6 +2108,8 @@ func TestUpload_InvalidMultipartForm(t *testing.T) {
 // BRUTE FORCE TESTS
 // -------------------------------------------------------------------------
 
+// TestLogin_BruteForceReset verifies the login brute force reset contract.
+// Asserts that login status = , want.
 func TestLogin_BruteForceReset(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)

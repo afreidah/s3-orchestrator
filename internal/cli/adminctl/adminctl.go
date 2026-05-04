@@ -23,6 +23,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
+// adminBackendsPath and related constants used by this package.
 const (
 	adminBackendsPath = "/admin/api/backends/"
 	adminTokenHeader  = "X-Admin-Token"
@@ -132,10 +133,16 @@ var handlers = map[string]handler{
 	"reconcile":          cmdReconcile,
 }
 
+// cmdStatus implements `s3-orchestrator admin status`. Issues a GET to
+// /admin/api/status and prints the JSON status payload (per-backend
+// health, quota usage, circuit-breaker states) to stdout.
 func cmdStatus(_ []string, baseAddr, token string, stdout, stderr io.Writer) int {
 	return doGet(baseAddr+"/admin/api/status", token, stdout, stderr)
 }
 
+// cmdObjectLocations implements `s3-orchestrator admin object-locations
+// -key=<key>`. Looks up the per-backend ledger for one key so an
+// operator can see exactly which backends hold a copy and at what size.
 func cmdObjectLocations(args []string, baseAddr, token string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("object-locations", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -150,18 +157,34 @@ func cmdObjectLocations(args []string, baseAddr, token string, stdout, stderr io
 	return doGet(baseAddr+"/admin/api/object-locations?key="+*key, token, stdout, stderr)
 }
 
+// cmdCleanupQueue implements `s3-orchestrator admin cleanup-queue`.
+// Returns the current pending-cleanup depth and a sample of pending
+// items so an operator can spot stuck retries before they exhaust to
+// the DLQ.
 func cmdCleanupQueue(_ []string, baseAddr, token string, stdout, stderr io.Writer) int {
 	return doGet(baseAddr+"/admin/api/cleanup-queue", token, stdout, stderr)
 }
 
+// cmdUsageFlush implements `s3-orchestrator admin usage-flush`. Triggers
+// an out-of-band flush of the in-memory or Redis usage counters to
+// backend_usage so dashboards reflect the latest deltas without waiting
+// for the next periodic tick.
 func cmdUsageFlush(_ []string, baseAddr, token string, stdout, stderr io.Writer) int {
 	return doPost(baseAddr+"/admin/api/usage-flush", "", token, stdout, stderr)
 }
 
+// cmdReplicate implements `s3-orchestrator admin replicate`. Triggers
+// the replicator background worker on demand instead of waiting for the
+// next scheduled tick. Useful right after a drain when the operator
+// wants to converge replicas immediately.
 func cmdReplicate(_ []string, baseAddr, token string, stdout, stderr io.Writer) int {
 	return doPost(baseAddr+"/admin/api/replicate", "", token, stdout, stderr)
 }
 
+// cmdOverReplication implements `s3-orchestrator admin over-replication
+// [-execute] [-batch-size=N]`. Without -execute it shows the current
+// pending-excess count; with -execute it runs the over-replication
+// cleaner once with an optional batch-size override.
 func cmdOverReplication(args []string, baseAddr, token string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("over-replication", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -180,6 +203,10 @@ func cmdOverReplication(args []string, baseAddr, token string, stdout, stderr io
 	return doGet(baseAddr+"/admin/api/over-replication", token, stdout, stderr)
 }
 
+// cmdLogLevel implements `s3-orchestrator admin log-level [-set=LEVEL]`.
+// Without -set it returns the current effective level; with -set it
+// reconfigures the running instance's slog level (debug/info/warn/error)
+// without a restart.
 func cmdLogLevel(args []string, baseAddr, token string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("log-level", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -204,6 +231,10 @@ func requireBackendName(args []string, stderr io.Writer) bool {
 	return false
 }
 
+// cmdDrain implements `s3-orchestrator admin drain <backend>`. Starts
+// a drain on the named backend: new writes are routed away while the
+// drain worker migrates existing copies to other backends. Operator
+// must follow up with drain-status until completion.
 func cmdDrain(args []string, baseAddr, token string, stdout, stderr io.Writer) int {
 	if requireBackendName(args, stderr) {
 		return 1
@@ -211,6 +242,9 @@ func cmdDrain(args []string, baseAddr, token string, stdout, stderr io.Writer) i
 	return doPost(baseAddr+adminBackendsPath+args[0]+drainSubpath, "", token, stdout, stderr)
 }
 
+// cmdDrainStatus implements `s3-orchestrator admin drain-status
+// <backend>`. Returns the in-flight drain progress (objects moved,
+// bytes moved, errors) for the named backend.
 func cmdDrainStatus(args []string, baseAddr, token string, stdout, stderr io.Writer) int {
 	if requireBackendName(args, stderr) {
 		return 1
@@ -218,6 +252,9 @@ func cmdDrainStatus(args []string, baseAddr, token string, stdout, stderr io.Wri
 	return doGet(baseAddr+adminBackendsPath+args[0]+drainSubpath, token, stdout, stderr)
 }
 
+// cmdDrainCancel implements `s3-orchestrator admin drain-cancel
+// <backend>`. Aborts an in-flight drain on the named backend; objects
+// already migrated stay migrated, the rest stop where they are.
 func cmdDrainCancel(args []string, baseAddr, token string, stdout, stderr io.Writer) int {
 	if requireBackendName(args, stderr) {
 		return 1
@@ -225,6 +262,10 @@ func cmdDrainCancel(args []string, baseAddr, token string, stdout, stderr io.Wri
 	return doDelete(baseAddr+adminBackendsPath+args[0]+drainSubpath, token, stdout, stderr)
 }
 
+// cmdScrub implements `s3-orchestrator admin scrub [-batch-size=N]`.
+// Triggers one scrubber pass that random-samples objects and verifies
+// their content_hash. -batch-size overrides the configured default for
+// this single invocation.
 func cmdScrub(args []string, baseAddr, token string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("scrub", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -239,6 +280,10 @@ func cmdScrub(args []string, baseAddr, token string, stdout, stderr io.Writer) i
 	return doPost(url, "", token, stdout, stderr)
 }
 
+// cmdBackfillChecksums implements `s3-orchestrator admin backfill-
+// checksums [-batch-size=N]`. Computes and stores content_hash for
+// objects predating the integrity feature. Default batch size is 100
+// per cycle to limit the per-call backend egress and DB write load.
 func cmdBackfillChecksums(args []string, baseAddr, token string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("backfill-checksums", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -253,6 +298,10 @@ func cmdBackfillChecksums(args []string, baseAddr, token string, stdout, stderr 
 	return doPost(url, "", token, stdout, stderr)
 }
 
+// cmdReconcile implements `s3-orchestrator admin reconcile
+// [-backend=NAME]`. Triggers an out-of-band reconcile pass that imports
+// untracked objects and removes stale rows. Without -backend, reconciles
+// every backend.
 func cmdReconcile(args []string, baseAddr, token string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("reconcile", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -267,6 +316,11 @@ func cmdReconcile(args []string, baseAddr, token string, stdout, stderr io.Write
 	return doPost(url, "", token, stdout, stderr)
 }
 
+// cmdRemoveBackend implements `s3-orchestrator admin remove-backend
+// <name> [-purge] [-confirm]`. Without -purge, only removes the metadata
+// rows. With -purge but without -confirm, prints what would be deleted
+// from the backend's S3 storage. With both, executes the destructive
+// purge. The two-step flow guards against accidental data loss.
 func cmdRemoveBackend(args []string, baseAddr, token string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("remove-backend", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -305,7 +359,7 @@ func doRemovePreview(baseAddr, name, token string, stdout, stderr io.Writer) int
 	objectCount, _ := result["object_count"].(float64)
 	totalBytes, _ := result["total_bytes"].(float64)
 
-	//nolint:gosec // G705: stdout print of admin-CLI response, not an HTML/HTTP write — no XSS surface
+	//nolint:gosec // G705: stdout print of admin-CLI response, not an HTML/HTTP write  -  no XSS surface
 	fmt.Fprintf(stdout, "Backend %q contains %.0f objects (%.0f bytes).\n", name, objectCount, totalBytes)
 	fmt.Fprintf(stdout, "This will permanently delete all objects from the backend's S3 storage and remove all database records.\n")
 	fmt.Fprintf(stdout, "Re-run with --confirm to proceed.\n")
@@ -361,22 +415,38 @@ func fetchJSONResponse(method, url, token string, stderr io.Writer) (map[string]
 // HTTP HELPERS
 // -------------------------------------------------------------------------
 
+// doGet performs a GET against the admin API at url, prints the
+// response body to stdout, and returns the process exit code (0 on
+// success, non-zero on transport or HTTP error).
 func doGet(url, token string, stdout, stderr io.Writer) int {
 	return doRequest(http.MethodGet, url, "", token, stdout, stderr)
 }
 
+// doPost performs a POST against the admin API at url with the supplied
+// body. Used for the trigger-style endpoints (replicate, scrub, drain,
+// usage-flush) that have no useful response payload beyond status.
 func doPost(url, body, token string, stdout, stderr io.Writer) int {
 	return doRequest(http.MethodPost, url, body, token, stdout, stderr)
 }
 
+// doPut performs a PUT against the admin API at url with the supplied
+// JSON body. Used for the configuration-update endpoints (notably
+// log-level) where a full replacement is expected, not a delta.
 func doPut(url, body, token string, stdout, stderr io.Writer) int {
 	return doRequest(http.MethodPut, url, body, token, stdout, stderr)
 }
 
+// doDelete performs a DELETE against the admin API at url. Used for
+// drain-cancel and remove-backend; the latter is a destructive
+// operation gated by a separate -confirm flag at the caller level.
 func doDelete(url, token string, stdout, stderr io.Writer) int {
 	return doRequest(http.MethodDelete, url, "", token, stdout, stderr)
 }
 
+// doRequest is the shared HTTP transport for every admin verb. Sets the
+// X-Admin-Token header for auth, the Content-Type header when a body is
+// present, and a 30s client timeout so a hung server cannot stall the
+// CLI indefinitely. Returns the process exit code.
 func doRequest(method, url, body, token string, stdout, stderr io.Writer) int {
 	var bodyReader io.Reader
 	if body != "" {

@@ -1,7 +1,13 @@
 // -------------------------------------------------------------------------------
-// CB Decorator — IntegrityStore
+// CB Decorator  -  IntegrityStore
 //
 // Author: Alex Freidah
+//
+// Wraps a core.IntegrityStore (random-sample selection, hash storage,
+// missing-hash listing) so every call routes through the database
+// CircuitBreaker. Keeps the scrubber from spinning on an unreachable
+// database by surfacing ErrDBUnavailable instantly when the breaker is
+// open.
 // -------------------------------------------------------------------------------
 
 package store

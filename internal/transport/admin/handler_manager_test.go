@@ -32,7 +32,7 @@ import (
 // newTestHandlerWithManager returns a Handler backed by a real BackendManager
 // wrapping testutil.MockStore. Suitable for exercising handlers that reach
 // into manager or cb-store methods. Encryptor, rawStore, and reconciler are
-// nil — handlers that require them should assert the documented nil-handling
+// nil  -  handlers that require them should assert the documented nil-handling
 // behaviour rather than the happy path.
 func newTestHandlerWithManager(t *testing.T) *Handler {
 	t.Helper()
@@ -357,7 +357,7 @@ func TestHandleRemoveBackend_PurgePhase1(t *testing.T) {
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, doAuth(http.MethodDelete, "/admin/api/backends/b1?purge=true", ""))
 
-	// MockStore is permissive — it may return 200 with a confirm_token, or
+	// MockStore is permissive  -  it may return 200 with a confirm_token, or
 	// 400 if the backend doesn't exist in its view. Either is a contract-
 	// compliant response; a 5xx is not.
 	if w.Code >= 500 {
@@ -384,6 +384,8 @@ func TestHandleRotateEncryptionKey_NoEncryptor(t *testing.T) {
 // TestHandleReconcile_UsesContext is a smoke test that the handler threads
 // the request context correctly (reconciler is nil, so we get 503, but the
 // path should not panic regardless of context state).
+// TestHandleReconcile_CancelledContext verifies handle reconcile_cancelled context.
+// TestHandleReconcile_CancelledContext verifies handle reconcile_cancelled context.
 func TestHandleReconcile_CancelledContext(t *testing.T) {
 	t.Parallel()
 	h := newTestHandlerWithManager(t)
