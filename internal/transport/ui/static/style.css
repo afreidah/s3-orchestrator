@@ -76,7 +76,7 @@ body {
 .login-card button:hover { background: #7dd3fc; }
 
 .login-error {
-  background: rgba(239, 68, 68, 0.15);
+  background: #451a1a;
   color: #fca5a5;
   padding: 0.5rem 0.75rem;
   border-radius: 0.35rem;
@@ -370,8 +370,8 @@ td.key {
 
 .tree-file:hover .tree-action { opacity: 1; }
 .tree-dir > summary:hover .tree-action { opacity: 1; }
-.tree-download:hover { color: #60a5fa; background: rgba(59, 130, 246, 0.1); }
-.tree-delete:hover { color: #f87171; background: rgba(239, 68, 68, 0.1); }
+.tree-download:hover { color: #60a5fa; background: #1e3a5f; }
+.tree-delete:hover { color: #f87171; background: #4a1d1d; }
 
 /* --- Dialog centering (all dialogs) --- */
 dialog {
