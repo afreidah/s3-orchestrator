@@ -4,7 +4,7 @@
 // Author: Alex Freidah
 //
 // Smoke-level constructor tests for every background service exposed under
-// internal/di. They verify that each factory returns a lifecycle.Service
+// internal/di. They verify that each factory returns a lifecycle.Runner
 // value (never nil), that the lockedTickerService's shouldRun / onError
 // hooks fire as configured, and that the watchdog safely iterates an empty
 // backend fleet. Nothing here exercises the *timing* behavior of Run  - 
@@ -118,7 +118,7 @@ func newServicesFixture(t *testing.T) *servicesFixture {
 }
 
 // TestServiceConstructors_AllReturnNonNil asserts each factory produces a
-// usable lifecycle.Service. Any missing assignment inside the constructor
+// usable lifecycle.Runner. Any missing assignment inside the constructor
 // body surfaces as a nil return.
 func TestServiceConstructors_AllReturnNonNil(t *testing.T) {
 	t.Parallel()
@@ -307,7 +307,7 @@ func TestUsageFlushService_DoFlushOnMockManager(t *testing.T) {
 	svc.flushTick(context.Background()) // exercises the non-Redis branch
 }
 
-// asTicker unwraps a lifecycle.Service returned by one of the New*Service
+// asTicker unwraps a lifecycle.Runner returned by one of the New*Service
 // factories so its shouldRun / work / startup closures can be poked
 // directly. Fails the test when the returned value isn't the ticker type
 // the tests rely on.

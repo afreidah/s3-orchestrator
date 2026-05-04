@@ -4,8 +4,8 @@
 // Author: Alex Freidah
 //
 // Manages background service goroutines with panic recovery, automatic restart,
-// and ordered shutdown. Services implement the Service interface (blocking Run
-// method); optional Stoppable interface adds explicit cleanup on shutdown.
+// and ordered shutdown. Services implement the Runner interface (blocking Run
+// method); optional Stopper interface adds explicit cleanup on shutdown.
 // -------------------------------------------------------------------------------
 
 // Package lifecycle provides a service manager for registering and running
@@ -25,24 +25,24 @@ import (
 // TYPES
 // -------------------------------------------------------------------------
 
-// Service represents a long-running background task. Run blocks until ctx is
+// Runner represents a long-running background task. Run blocks until ctx is
 // cancelled or a fatal error occurs.
-type Service interface {
+type Runner interface {
 	Run(ctx context.Context) error
 }
 
-// Stoppable is an optional interface for services that need explicit cleanup
+// Stopper is an optional interface for services that need explicit cleanup
 // beyond context cancellation.
-type Stoppable interface {
+type Stopper interface {
 	Stop(ctx context.Context) error
 }
 
-// entry pairs a registered Service with the human-readable name used
+// entry pairs a registered Runner with the human-readable name used
 // in supervisor logs and metric labels. The Manager walks []entry to
 // start, supervise, and stop each service.
 type entry struct {
-	name    string
-	service Service
+	name   string
+	runner Runner
 }
 
 // Default supervisor backoff: a service that exits or panics is restarted
@@ -90,8 +90,8 @@ func (m *Manager) SetBackoff(initial, maximum, reset time.Duration) {
 
 // Register adds a named service. Services start in registration order and stop
 // in reverse order.
-func (m *Manager) Register(name string, svc Service) {
-	m.services = append(m.services, entry{name: name, service: svc})
+func (m *Manager) Register(name string, r Runner) {
+	m.services = append(m.services, entry{name: name, runner: r})
 }
 
 // Run starts all registered services and blocks until ctx is cancelled. Each
@@ -110,14 +110,14 @@ func (m *Manager) Run(ctx context.Context) {
 	wg.Wait()
 }
 
-// Stop calls Stop on services that implement Stoppable, in reverse
+// Stop calls Stop on services that implement Stopper, in reverse
 // registration order. The timeout is divided equally among stoppable
 // services so a slow service cannot starve the rest of their shutdown
 // budget.
 func (m *Manager) Stop(timeout time.Duration) {
 	var stoppable int
 	for _, e := range m.services {
-		if _, ok := e.service.(Stoppable); ok {
+		if _, ok := e.runner.(Stopper); ok {
 			stoppable++
 		}
 	}
@@ -127,7 +127,7 @@ func (m *Manager) Stop(timeout time.Duration) {
 	perService := timeout / time.Duration(stoppable)
 
 	for i := len(m.services) - 1; i >= 0; i-- {
-		s, ok := m.services[i].service.(Stoppable)
+		s, ok := m.services[i].runner.(Stopper)
 		if !ok {
 			continue
 		}
@@ -168,7 +168,7 @@ func (m *Manager) supervise(ctx context.Context, e entry) {
 				}
 			}()
 
-			if err := e.service.Run(ctx); err != nil && ctx.Err() == nil {
+			if err := e.runner.Run(ctx); err != nil && ctx.Err() == nil {
 				slog.ErrorContext(ctx, "service exited unexpectedly, restarting",
 					"service", e.name,
 					"error", err,

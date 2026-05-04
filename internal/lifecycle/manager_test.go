@@ -78,7 +78,7 @@ func (s *errorOnceService) Run(ctx context.Context) error {
 	return nil
 }
 
-// stopErrorService is a Stoppable whose Stop call returns an
+// stopErrorService is a Stopper whose Stop call returns an
 // error. Lets tests assert the manager logs the error without
 // blocking the rest of the shutdown sequence.
 type stopErrorService struct {
@@ -92,14 +92,14 @@ func (s *stopErrorService) Run(ctx context.Context) error {
 	return nil
 }
 
-// Stop satisfies Stoppable. The behaviour depends on the fixture:
+// Stop satisfies Stopper. The behaviour depends on the fixture:
 // stopErrorService returns an error, stoppableService records the
 // call, and the inline test version is a no-op.
 func (s *stopErrorService) Stop(_ context.Context) error {
 	return context.DeadlineExceeded
 }
 
-// stoppableService is a Stoppable whose Stop call records the
+// stoppableService is a Stopper whose Stop call records the
 // invocation so tests can assert the manager called Stop on
 // shutdown.
 type stoppableService struct {
@@ -113,7 +113,7 @@ func (s *stoppableService) Run(ctx context.Context) error {
 	return nil
 }
 
-// Stop satisfies Stoppable. The behaviour depends on the fixture:
+// Stop satisfies Stopper. The behaviour depends on the fixture:
 // stopErrorService returns an error, stoppableService records the
 // call, and the inline test version is a no-op.
 func (s *stoppableService) Stop(_ context.Context) error {
@@ -404,7 +404,7 @@ func (s *slowStopService) Run(ctx context.Context) error {
 	return nil
 }
 
-// Stop satisfies Stoppable. The behaviour depends on the fixture:
+// Stop satisfies Stopper. The behaviour depends on the fixture:
 // stopErrorService returns an error, stoppableService records the
 // call, and the inline test version is a no-op.
 func (s *slowStopService) Stop(ctx context.Context) error {
