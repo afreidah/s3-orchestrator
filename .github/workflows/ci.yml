@@ -105,9 +105,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Verify sqlc generated code
-        run: |
-          go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0
-          sqlc diff
+        run: go tool sqlc diff
 
       - name: Lint
         uses: golangci/golangci-lint-action@v9
@@ -147,11 +145,8 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
-
       - name: Run govulncheck
-        run: govulncheck ./...
+        run: go tool govulncheck ./...
 
   integration:
     runs-on: ubuntu-latest
