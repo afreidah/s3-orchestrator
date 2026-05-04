@@ -11,6 +11,10 @@
 // TxAdapter seam.
 // -------------------------------------------------------------------------------
 
+// Package core holds the engine-agnostic orchestration that both
+// store engines share: the TxAdapter seam, the Runner abstraction,
+// narrow store role interfaces, and operations that span multiple
+// statements within a single transaction.
 package core
 
 import (
