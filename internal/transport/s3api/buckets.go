@@ -79,7 +79,7 @@ type xmlVersioningConfiguration struct {
 // credential has access to. Satisfies GET / (ListBuckets).
 func (s *Server) handleListBuckets(w http.ResponseWriter, bucket string) (int, error) {
 	result := xmlListBucketsResult{
-		Xmlns: "http://s3.amazonaws.com/doc/2006-03-01/",
+		Xmlns: s3XMLNS,
 		Owner: xmlOwner{
 			ID:          "s3-orchestrator",
 			DisplayName: "s3-orchestrator",
@@ -103,7 +103,7 @@ func (s *Server) handleListBuckets(w http.ResponseWriter, bucket string) (int, e
 // handleHeadBucket returns 200 with an empty body to confirm the bucket
 // exists. The bucket is guaranteed to exist because auth already resolved it.
 func (s *Server) handleHeadBucket(w http.ResponseWriter) (int, error) {
-	w.Header().Set("Content-Type", "application/xml")
+	w.Header().Set(headerContentType, "application/xml")
 	w.Header().Set("X-Amz-Bucket-Region", "us-east-1")
 	w.WriteHeader(http.StatusOK)
 	return http.StatusOK, nil
@@ -113,7 +113,7 @@ func (s *Server) handleHeadBucket(w http.ResponseWriter) (int, error) {
 // Satisfies GET /{bucket}?location.
 func (s *Server) handleGetBucketLocation(w http.ResponseWriter) (int, error) {
 	result := xmlLocationConstraint{
-		Xmlns: "http://s3.amazonaws.com/doc/2006-03-01/",
+		Xmlns: s3XMLNS,
 	}
 
 	if err := writeXML(w, http.StatusOK, result); err != nil {
@@ -127,7 +127,7 @@ func (s *Server) handleGetBucketLocation(w http.ResponseWriter) (int, error) {
 // this endpoint on connect and error out without a response.
 func (s *Server) handleGetBucketVersioning(w http.ResponseWriter) (int, error) {
 	result := xmlVersioningConfiguration{
-		Xmlns: "http://s3.amazonaws.com/doc/2006-03-01/",
+		Xmlns: s3XMLNS,
 	}
 
 	if err := writeXML(w, http.StatusOK, result); err != nil {

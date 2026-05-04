@@ -73,7 +73,7 @@ func TestAtomicConfig_ConcurrentAccess(t *testing.T) {
 	}
 	wg.Wait()
 
-	if got := ac.Load(); got == nil {
+	if ac.Load() == nil {
 		t.Error("Load after concurrent writes should not be nil")
 	}
 }
