@@ -176,7 +176,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: [test, integration]
-    if: always() && needs.test.result == 'success'
+    # Run whenever the upstream test job did not fail. Skipped is fine
+    # (no Go changed, so no coverage produced); the scan still inspects
+    # CSS, JS, YAML, and any non-Go files in the diff.
+    if: always() && needs.test.result != 'failure' && needs.test.result != 'cancelled'
     steps:
       - uses: actions/checkout@v6
         with:
@@ -186,6 +189,7 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: unit-coverage
+        continue-on-error: true
 
       - name: Download integration coverage
         uses: actions/download-artifact@v8
