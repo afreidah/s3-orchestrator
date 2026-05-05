@@ -400,6 +400,90 @@ func TestCompleteMultipartUpload_InvalidPart(t *testing.T) {
 // CompleteMultipartUpload error paths
 // -------------------------------------------------------------------------
 
+// TestCompleteMultipartUpload_LockContended verifies that a Complete
+// call returns 409 OperationAborted when the per-uploadID advisory
+// lock is already held by another in-flight call. No backend or DB
+// activity beyond the lock check should occur.
+func TestCompleteMultipartUpload_LockContended(t *testing.T) {
+	t.Parallel()
+	store := &mockStore{
+		advisoryLockBlocked: true,
+		// Populate so we can confirm the locked branch is the only
+		// reason the call fails: if the lock weren't checked first,
+		// the test would pass through and try to assemble.
+		getMultipartResp: &core.MultipartUpload{UploadID: "upload-1", ObjectKey: "k", BackendName: "b1"},
+		getPartsResp:     []core.MultipartPart{{PartNumber: 1, ETag: "e1", SizeBytes: 3}},
+	}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+
+	_, err := mgr.MultipartManager.CompleteMultipartUpload(context.Background(), "upload-1", []int{1})
+	if err == nil {
+		t.Fatal("expected OperationAborted error from contended lock")
+	}
+	var s3err *core.S3Error
+	if !errors.As(err, &s3err) {
+		t.Fatalf("expected *core.S3Error, got %T: %v", err, err)
+	}
+	if s3err.StatusCode != 409 || s3err.Code != "OperationAborted" {
+		t.Errorf("expected 409 OperationAborted, got %d %s", s3err.StatusCode, s3err.Code)
+	}
+	// No RecordObject call expected: the locked branch never reached assembly.
+	if len(store.recordObjectCalls) != 0 {
+		t.Errorf("expected 0 RecordObject calls, got %d", len(store.recordObjectCalls))
+	}
+}
+
+// TestCompleteMultipartUpload_AssemblyFails_CleansUpParts verifies
+// that when the assembled PutObject fails, the deferred cleanup still
+// fires: each part object is deleted from the backend and the
+// multipart_uploads metadata row is removed. This prevents the orphan
+// the issue #650 surfaced where the failure path was leaking parts
+// until the periodic stale-multipart sweeper could catch them.
+func TestCompleteMultipartUpload_AssemblyFails_CleansUpParts(t *testing.T) {
+	t.Parallel()
+	backend := newMockBackend()
+	ctx := context.Background()
+	_, _ = backend.PutObject(ctx, "__multipart/upload-1/1", bytes.NewReader([]byte("AAA")), 3, "application/octet-stream", nil)
+	_, _ = backend.PutObject(ctx, "__multipart/upload-1/2", bytes.NewReader([]byte("BBB")), 3, "application/octet-stream", nil)
+
+	store := &mockStore{
+		getMultipartResp: &core.MultipartUpload{
+			UploadID:    "upload-1",
+			ObjectKey:   "multi/key",
+			BackendName: "b1",
+			ContentType: "application/zip",
+		},
+		getPartsResp: []core.MultipartPart{
+			{PartNumber: 1, ETag: "e1", SizeBytes: 3},
+			{PartNumber: 2, ETag: "e2", SizeBytes: 3},
+		},
+	}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
+
+	// Inject the assembly failure. Parts are already pre-staged so they
+	// stream out via GetObject; the only PutObject in the test path is
+	// the assembly write that we want to fail.
+	backend.putErr = errors.New("backend write failed")
+
+	_, err := mgr.MultipartManager.CompleteMultipartUpload(ctx, "upload-1", []int{1, 2})
+	if err == nil {
+		t.Fatal("expected CompleteMultipartUpload to fail")
+	}
+
+	if backend.hasObject("__multipart/upload-1/1") {
+		t.Error("part 1 should have been deleted by the deferred cleanup")
+	}
+	if backend.hasObject("__multipart/upload-1/2") {
+		t.Error("part 2 should have been deleted by the deferred cleanup")
+	}
+	if !store.deleteMultipartCalled {
+		t.Error("expected DeleteMultipartUpload to be called by the deferred cleanup")
+	}
+	if backend.hasObject("multi/key") {
+		t.Error("assembled key should not exist when the assembly PUT failed")
+	}
+}
+
 // TestCompleteMultipartUpload_GetPartsError verifies the complete multipart upload get parts error path by exercising errors.New, context.Background.
 func TestCompleteMultipartUpload_GetPartsError(t *testing.T) {
 	t.Parallel()

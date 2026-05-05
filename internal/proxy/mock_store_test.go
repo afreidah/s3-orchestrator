@@ -52,6 +52,10 @@ type mockStore struct {
 	listObjectsPages []core.ListObjectsResult // for paginated tests
 	listObjectsErr   error
 
+	// advisoryLockBlocked simulates a concurrent caller already holding
+	// the advisory lock so WithAdvisoryLock returns (false, nil).
+	advisoryLockBlocked bool
+
 	// Multipart
 	createMultipartErr    error
 	getMultipartResp      *core.MultipartUpload
@@ -59,6 +63,7 @@ type mockStore struct {
 	getPartsResp          []core.MultipartPart
 	getPartsErr           error
 	deleteMultipartErr    error
+	deleteMultipartCalled bool
 	recordPartErr         error
 	getStaleMultipartResp []core.MultipartUpload
 	getStaleMultipartErr  error
@@ -388,6 +393,7 @@ func (m *mockStore) GetParts(_ context.Context, _ string) ([]core.MultipartPart,
 func (m *mockStore) DeleteMultipartUpload(_ context.Context, _ string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.deleteMultipartCalled = true
 	return m.deleteMultipartErr
 }
 
@@ -657,6 +663,9 @@ func (m *mockStore) ListExpiredObjects(_ context.Context, _ string, _ time.Time,
 }
 
 func (m *mockStore) WithAdvisoryLock(_ context.Context, _ int64, fn func(ctx context.Context) error) (bool, error) {
+	if m.advisoryLockBlocked {
+		return false, nil
+	}
 	return true, fn(context.Background())
 }
 
