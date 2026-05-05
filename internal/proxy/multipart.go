@@ -13,6 +13,7 @@ package proxy
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"log/slog"
 	"slices"
@@ -179,9 +180,31 @@ func (mp *MultipartManager) UploadPart(ctx context.Context, uploadID string, par
 	return etag, nil
 }
 
+// uploadIDLockNamespace is OR'd into every multipart-upload advisory
+// lock ID so per-uploadID locks live above 2^62 and cannot collide
+// with the small reserved service lock IDs in core/locks.go.
+const uploadIDLockNamespace int64 = 1 << 62
+
+// uploadIDLockID derives a stable advisory-lock ID from a multipart
+// upload ID. FNV-64a is fast and uniform; the namespace bit keeps the
+// per-key range disjoint from the service lock IDs (1001-1011 today).
+func uploadIDLockID(uploadID string) int64 {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(uploadID))
+	return uploadIDLockNamespace | int64(h.Sum64()&((1<<62)-1))
+}
+
 // CompleteMultipartUpload reassembles parts into the final object.
 // Downloads each part, concatenates them into a single upload, cleans up
 // temp keys, and records the final object location with quota tracking.
+//
+// The body runs under a session-scoped advisory lock keyed by uploadID
+// so two concurrent Complete calls for the same upload cannot both
+// stream parts and PUT the assembled object on top of each other (which
+// would leave the backend bytes and the metadata row pointing at
+// different writers). When the lock is contended the second caller
+// fails fast with a 409 OperationAborted so the client can decide
+// whether to retry or abort.
 func (mp *MultipartManager) CompleteMultipartUpload(ctx context.Context, uploadID string, partNumbers []int) (string, error) {
 	const operation = "CompleteMultipartUpload"
 	start := time.Now()
@@ -191,6 +214,41 @@ func (mp *MultipartManager) CompleteMultipartUpload(ctx context.Context, uploadI
 	)
 	defer span.End()
 
+	var etag string
+	acquired, err := mp.parent.stores.Lock.WithAdvisoryLock(ctx, uploadIDLockID(uploadID), func(ctx context.Context) error {
+		var inner error
+		etag, inner = mp.completeMultipartUploadLocked(ctx, span, operation, uploadID, partNumbers, start)
+		return inner
+	})
+	if err != nil {
+		return "", err
+	}
+	if !acquired {
+		span.SetStatus(codes.Error, "another CompleteMultipartUpload in flight")
+		return "", &core.S3Error{
+			StatusCode: 409,
+			Code:       "OperationAborted",
+			Message:    "Another CompleteMultipartUpload is already in progress for this upload",
+		}
+	}
+	return etag, nil
+}
+
+// completeMultipartUploadLocked runs the actual assembly under the
+// advisory lock acquired by CompleteMultipartUpload. Cleanup of part
+// objects and the multipart_uploads metadata row happens via a
+// deferred closure once parts have been resolved, so a failed assembly
+// PUT or recordObject still drops the part objects through
+// deleteOrEnqueue (and accounts for them in cleanup_queue / orphan
+// bytes) instead of leaving them visible only to the periodic
+// stale-multipart sweeper.
+func (mp *MultipartManager) completeMultipartUploadLocked(
+	ctx context.Context,
+	span trace.Span,
+	operation, uploadID string,
+	partNumbers []int,
+	start time.Time,
+) (string, error) {
 	mu, err := mp.parent.stores.Multipart.GetMultipartUpload(ctx, uploadID)
 	if err != nil {
 		return "", mp.classifyWriteError(span, operation, err)
@@ -205,6 +263,8 @@ func (mp *MultipartManager) CompleteMultipartUpload(ctx context.Context, uploadI
 	if err != nil {
 		return "", err
 	}
+
+	defer mp.cleanupCompletedUpload(ctx, span, be, mu, uploadID, parts)
 
 	totalPlaintextSize, anyEncrypted := sumPlaintextSize(parts)
 
@@ -228,14 +288,6 @@ func (mp *MultipartManager) CompleteMultipartUpload(ctx context.Context, uploadI
 
 	if err := mp.parent.recordObjectOrCleanup(ctx, span, be, mu.ObjectKey, mu.BackendName, uploadSize, enc); err != nil {
 		return "", err
-	}
-
-	for _, part := range parts {
-		partKey := multipartPartKey(uploadID, part.PartNumber)
-		mp.parent.deleteOrEnqueue(ctx, be, mu.BackendName, partKey, "complete_part_cleanup", part.SizeBytes)
-	}
-	if err := mp.parent.stores.Multipart.DeleteMultipartUpload(ctx, uploadID); err != nil {
-		span.RecordError(err)
 	}
 
 	mp.recordOperation(operation, mu.BackendName, start, nil)
@@ -270,6 +322,24 @@ func (mp *MultipartManager) CompleteMultipartUpload(ctx context.Context, uploadI
 
 	span.SetStatus(codes.Ok, "")
 	return etag, nil
+}
+
+// cleanupCompletedUpload removes part objects and the multipart_uploads
+// metadata row for an upload whose Complete attempt has finished
+// (success or failure). Runs from a defer so a failed assembly PUT or
+// recordObject still drops the part objects via deleteOrEnqueue,
+// keeping the cleanup queue and orphan-bytes accounting accurate
+// instead of relying on the periodic stale-multipart sweeper. Best
+// effort: each step logs and continues so a single transient error
+// cannot strand the rest of the cleanup.
+func (mp *MultipartManager) cleanupCompletedUpload(ctx context.Context, span trace.Span, be s3be.ObjectBackend, mu *core.MultipartUpload, uploadID string, parts []core.MultipartPart) {
+	for _, part := range parts {
+		partKey := multipartPartKey(uploadID, part.PartNumber)
+		mp.parent.deleteOrEnqueue(ctx, be, mu.BackendName, partKey, "complete_part_cleanup", part.SizeBytes)
+	}
+	if err := mp.parent.stores.Multipart.DeleteMultipartUpload(ctx, uploadID); err != nil {
+		span.RecordError(err)
+	}
 }
 
 // collectRequestedParts loads every part for uploadID, validates that all
