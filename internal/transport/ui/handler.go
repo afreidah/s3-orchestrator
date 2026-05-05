@@ -976,6 +976,14 @@ func (h *Handler) handleAPIRebalanceStatus(w http.ResponseWriter, r *http.Reques
 	setSecurityHeaders(w)
 	w.Header().Set(headerContentType, contentTypeJSON)
 	result, running := h.asyncOps.Status("rebalance")
+	writeAsyncOpStatus(w, result, running, "moved")
+}
+
+// writeAsyncOpStatus encodes the JSON response for any async-op status
+// endpoint. countKey is the field name used to surface the operation's
+// scalar result (for example "moved" for rebalance, "removed" for the
+// over-replication cleaner) inside the done payload.
+func writeAsyncOpStatus(w http.ResponseWriter, result *asyncResult, running bool, countKey string) {
 	if running {
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "running"})
 		return
@@ -986,9 +994,9 @@ func (h *Handler) handleAPIRebalanceStatus(w http.ResponseWriter, r *http.Reques
 	}
 	if result.Error != "" {
 		_ = json.NewEncoder(w).Encode(map[string]any{"status": "error", "error": result.Error})
-	} else {
-		_ = json.NewEncoder(w).Encode(map[string]any{"status": "done", "ok": true, "moved": result.Count})
+		return
 	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"status": "done", "ok": true, countKey: result.Count})
 }
 
 // handleAPICleanExcess triggers an on-demand over-replication cleanup in the
@@ -1047,19 +1055,7 @@ func (h *Handler) handleAPICleanExcessStatus(w http.ResponseWriter, r *http.Requ
 	setSecurityHeaders(w)
 	w.Header().Set(headerContentType, contentTypeJSON)
 	result, running := h.asyncOps.Status(opCleanExcess)
-	if running {
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "running"})
-		return
-	}
-	if result == nil {
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "idle"})
-		return
-	}
-	if result.Error != "" {
-		_ = json.NewEncoder(w).Encode(map[string]any{"status": "error", "error": result.Error})
-	} else {
-		_ = json.NewEncoder(w).Encode(map[string]any{"status": "done", "ok": true, "removed": result.Count})
-	}
+	writeAsyncOpStatus(w, result, running, "removed")
 }
 
 // handleAPISync triggers a backend sync to import pre-existing objects.
