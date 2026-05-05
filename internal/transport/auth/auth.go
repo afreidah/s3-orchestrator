@@ -402,7 +402,21 @@ func buildPresignedCanonicalRequest(r *http.Request, signedHeaders []string) str
 	buildCanonicalQueryString(&b, qv)
 	b.WriteByte('\n')
 
-	// Canonical headers
+	writeCanonicalHeadersAndSigned(&b, r, signedHeaders)
+
+	// Payload hash  -  always UNSIGNED-PAYLOAD for presigned URLs
+	b.WriteString("UNSIGNED-PAYLOAD")
+
+	return b.String()
+}
+
+// writeCanonicalHeadersAndSigned emits the four lines of the SigV4
+// canonical request that fall between the canonical query string and
+// the payload hash: each `name:value` header pair, a blank line, the
+// semicolon-joined SignedHeaders list, and the closing newline.
+// signedHeaders is lowercased in place so callers see the same form
+// the SigV4 string-to-sign expects.
+func writeCanonicalHeadersAndSigned(b *strings.Builder, r *http.Request, signedHeaders []string) {
 	for i, h := range signedHeaders {
 		h = strings.ToLower(stripWhitespace(h))
 		signedHeaders[i] = h
@@ -418,7 +432,6 @@ func buildPresignedCanonicalRequest(r *http.Request, signedHeaders []string) str
 	}
 	b.WriteByte('\n')
 
-	// Signed headers
 	for i, h := range signedHeaders {
 		if i > 0 {
 			b.WriteByte(';')
@@ -426,11 +439,6 @@ func buildPresignedCanonicalRequest(r *http.Request, signedHeaders []string) str
 		b.WriteString(h)
 	}
 	b.WriteByte('\n')
-
-	// Payload hash  -  always UNSIGNED-PAYLOAD for presigned URLs
-	b.WriteString("UNSIGNED-PAYLOAD")
-
-	return b.String()
 }
 
 // -------------------------------------------------------------------------
@@ -494,32 +502,7 @@ func buildCanonicalRequest(r *http.Request, signedHeaders []string) string {
 	buildCanonicalQueryString(&b, r.URL.Query())
 	b.WriteByte('\n')
 
-	// Canonical headers  -  per SigV4 spec, header names are lowercased with
-	// all whitespace stripped (HTTP header names must not contain whitespace),
-	// and header values have sequential whitespace collapsed to a single space.
-	for i, h := range signedHeaders {
-		h = strings.ToLower(stripWhitespace(h))
-		signedHeaders[i] = h
-		val := strings.TrimSpace(r.Header.Get(h))
-		if h == "host" && val == "" {
-			val = r.Host
-		}
-		val = collapseWhitespace(val)
-		b.WriteString(h)
-		b.WriteByte(':')
-		b.WriteString(val)
-		b.WriteByte('\n')
-	}
-	b.WriteByte('\n')
-
-	// Signed headers
-	for i, h := range signedHeaders {
-		if i > 0 {
-			b.WriteByte(';')
-		}
-		b.WriteString(h)
-	}
-	b.WriteByte('\n')
+	writeCanonicalHeadersAndSigned(&b, r, signedHeaders)
 
 	// Payload hash
 	payloadHash := r.Header.Get("X-Amz-Content-Sha256")
