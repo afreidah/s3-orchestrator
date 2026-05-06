@@ -25,6 +25,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
@@ -37,6 +38,7 @@ import (
 
 // Rebalancer moves objects between backends to optimize space distribution.
 type Rebalancer struct {
+	log *slog.Logger
 	ops   Ops
 	store RebalancerStore
 	cfg   syncutil.AtomicConfig[config.RebalanceConfig]
@@ -44,7 +46,7 @@ type Rebalancer struct {
 
 // NewRebalancer creates a Rebalancer with fleet operations and a narrow store.
 func NewRebalancer(ops Ops, store RebalancerStore) *Rebalancer {
-	return &Rebalancer{ops: ops, store: store}
+	return &Rebalancer{ops: ops, store: store, log: slog.Default().With(logfmt.Component("rebalancer"))}
 }
 
 // SetConfig atomically stores the rebalance configuration.
@@ -92,7 +94,7 @@ func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig) 
 			}
 
 			if !ExceedsThreshold(stats, r.ops.BackendOrder(), cfg.Threshold) {
-				slog.InfoContext(ctx, "rebalance skipping, within threshold",
+				r.log.InfoContext(ctx, "rebalance skipping, within threshold",
 					"threshold", cfg.Threshold, "strategy", cfg.Strategy)
 				telemetry.RebalanceSkipped.WithLabelValues("threshold").Inc()
 				return 0, nil
@@ -115,7 +117,7 @@ func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig) 
 			telemetry.RebalancePending.Set(float64(len(plan)))
 
 			if len(plan) == 0 {
-				slog.InfoContext(ctx, "rebalance skipping, empty plan", "strategy", cfg.Strategy)
+				r.log.InfoContext(ctx, "rebalance skipping, empty plan", "strategy", cfg.Strategy)
 				telemetry.RebalanceSkipped.WithLabelValues("empty_plan").Inc()
 				return 0, nil
 			}
@@ -535,19 +537,19 @@ func (r *Rebalancer) ExecuteMoves(ctx context.Context, plan []RebalanceMove, str
 func (r *Rebalancer) ExecuteOneMove(ctx context.Context, move RebalanceMove, strategy string) bool {
 	srcBackend, ok := r.ops.Backends()[move.FromBackend]
 	if !ok {
-		slog.ErrorContext(ctx, "Rebalance: source backend not found", "backend", move.FromBackend)
+		r.log.ErrorContext(ctx, "source backend not found", "backend", move.FromBackend)
 		return false
 	}
 
 	destBackend, ok := r.ops.Backends()[move.ToBackend]
 	if !ok {
-		slog.ErrorContext(ctx, "Rebalance: destination backend not found", "backend", move.ToBackend)
+		r.log.ErrorContext(ctx, "destination backend not found", "backend", move.ToBackend)
 		return false
 	}
 
 	// --- Stream source to destination ---
 	if err := r.ops.StreamCopy(ctx, srcBackend, destBackend, move.ObjectKey); err != nil {
-		slog.WarnContext(ctx, "Rebalance: stream copy failed",
+		r.log.WarnContext(ctx, "stream copy failed",
 			"key", move.ObjectKey, "from", move.FromBackend, "to", move.ToBackend, "error", err)
 		telemetry.RebalanceObjectsMoved.WithLabelValues(strategy, "error").Inc()
 		return false
@@ -556,7 +558,7 @@ func (r *Rebalancer) ExecuteOneMove(ctx context.Context, move RebalanceMove, str
 	// --- Atomic DB update (compare-and-swap) ---
 	movedSize, err := r.store.MoveObjectLocation(ctx, move.ObjectKey, move.FromBackend, move.ToBackend)
 	if err != nil {
-		slog.ErrorContext(ctx, "Rebalance: failed to update object location",
+		r.log.ErrorContext(ctx, "failed to update object location",
 			"key", move.ObjectKey, "error", err)
 		// Clean up orphan on destination
 		r.ops.DeleteOrEnqueue(ctx, destBackend, move.ToBackend, move.ObjectKey, "rebalance_orphan", move.SizeBytes)
@@ -567,7 +569,7 @@ func (r *Rebalancer) ExecuteOneMove(ctx context.Context, move RebalanceMove, str
 
 	if movedSize == 0 {
 		// Object was deleted or already moved by another process
-		slog.InfoContext(ctx, "Rebalance: object already moved or deleted, cleaning up",
+		r.log.InfoContext(ctx, "object already moved or deleted, cleaning up",
 			"key", move.ObjectKey)
 		r.ops.DeleteOrEnqueue(ctx, destBackend, move.ToBackend, move.ObjectKey, "rebalance_stale_orphan", move.SizeBytes)
 		r.ops.Usage().Record(move.ToBackend, 1, 0, 0)

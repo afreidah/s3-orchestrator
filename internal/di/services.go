@@ -315,7 +315,7 @@ func NewLifecycleService(manager *proxy.BackendManager, locker core.AdvisoryLock
 			}
 		},
 		onError: func(err error) {
-			slog.Error("Lifecycle expiration failed", "error", err) //nolint:sloglint // callback has no context
+			slog.ErrorContext(context.Background(), "Lifecycle expiration failed", "error", err)
 			telemetry.LifecycleRunsTotal.WithLabelValues("error").Inc()
 		},
 	}

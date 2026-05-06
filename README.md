@@ -856,6 +856,20 @@ Spans are emitted for every HTTP request, manager operation, and backend S3 call
 
 **Trace-to-log correlation** — every JSON log line emitted within an active span automatically includes `trace_id` and `span_id` fields. Log aggregators (Loki, etc.) can use these fields to link logs to their corresponding traces in Tempo or any OpenTelemetry-compatible tracing backend. Only log calls that receive a `context.Context` with an active span include trace context; application-level logs without a span context are unaffected.
 
+### Structured Operational Logs
+
+All non-audit log lines are JSON via `log/slog`. Every long-lived
+component is identified by a `component` attribute (`pending_reaper`,
+`drain`, `replicator`, `notifier`, `admin`, etc.) so log aggregators
+can filter by service without parsing message strings. Errors render
+as printable strings (never the JSON-handler `{}` placeholder).
+Request IDs from inbound S3 requests propagate into worker logs
+fanned out from those requests, so a single `request_id` filter
+covers the full call graph.
+
+The conventions, attribute glossary, and CI lint rules live in
+[`docs/contributing/logging.md`](docs/contributing/logging.md).
+
 ### Audit Logging
 
 Structured audit log entries are emitted as JSON via `slog` for every S3 API request and significant internal operation. Each entry includes an `"audit": true` marker for easy filtering in log pipelines.

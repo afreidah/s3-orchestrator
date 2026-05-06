@@ -25,6 +25,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/testutil"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
+	"log/slog"
 )
 
 // newAdminHandlerForTest builds an *admin.Handler against a mock store
@@ -79,7 +80,7 @@ func newSkippedAdminHandler(t *testing.T) *admin.Handler {
 // across the four operations; covering one is enough.
 func TestHandleAPIReplicate_HappyPathReturnsCount(t *testing.T) {
 	t.Parallel()
-	h := &Handler{adminHandler: newAdminHandlerForTest(t, func(mgr *proxy.BackendManager) {
+	h := &Handler{log: slog.Default(), adminHandler: newAdminHandlerForTest(t, func(mgr *proxy.BackendManager) {
 		mgr.Replicator.SetConfig(&config.ReplicationConfig{Factor: 2, BatchSize: 10})
 	})}
 
@@ -139,7 +140,7 @@ func TestAdminActionWrappers_RouteIntoAdmin(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.opName, func(t *testing.T) {
 			t.Parallel()
-			h := &Handler{adminHandler: newSkippedAdminHandler(t)}
+			h := &Handler{log: slog.Default(), adminHandler: newSkippedAdminHandler(t)}
 
 			triggerReq := httptest.NewRequest(http.MethodPost, tc.triggerPath, nil)
 			triggerW := httptest.NewRecorder()

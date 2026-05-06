@@ -19,6 +19,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 )
 
 // TestRequireToken_Missing verifies the require token missing contract.
@@ -250,6 +252,7 @@ func newTestHandler() *Handler {
 	var lv slog.LevelVar
 	lv.Set(slog.LevelInfo)
 	return &Handler{
+		log:      slog.Default().With(logfmt.Component("admin")),
 		token:    "test-token",
 		logLevel: &lv,
 	}

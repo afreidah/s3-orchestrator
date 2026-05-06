@@ -25,6 +25,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"context"
 )
 
 // -------------------------------------------------------------------------
@@ -205,7 +206,7 @@ func (cb *CircuitBreaker) PreCheck() error {
 		if started := cb.probeStarted.Load(); started > 0 {
 			elapsed := time.Since(time.Unix(0, started))
 			if elapsed >= probeTimeout {
-				slog.Warn("Circuit breaker: stale probe detected, resetting to open", //nolint:sloglint // PreCheck has no request context
+				slog.WarnContext(context.Background(), "Circuit breaker: stale probe detected, resetting to open",
 					"name", cb.name, "probe_age", elapsed.Round(time.Second))
 				cb.probeInFlight.Store(false)
 				cb.probeStarted.Store(0)
@@ -287,7 +288,7 @@ func (cb *CircuitBreaker) ResetStaleProbe() bool {
 		return false
 	}
 
-	slog.Warn("Circuit breaker: stale probe reset by watchdog", //nolint:sloglint // watchdog has no request context
+	slog.WarnContext(context.Background(), "Circuit breaker: stale probe reset by watchdog",
 		"name", cb.name, "probe_age", elapsed.Round(time.Second))
 	cb.probeInFlight.Store(false)
 	cb.probeStarted.Store(0)
@@ -298,7 +299,6 @@ func (cb *CircuitBreaker) ResetStaleProbe() bool {
 // transition changes the circuit state, emits structured logs, and notifies
 // the OnStateChange callback. Caller must hold cb.mu.
 //
-//nolint:sloglint // State machine has no request context; transitions are system-level events.
 func (cb *CircuitBreaker) transition(to State) {
 	from := cb.state
 	cb.state = to
@@ -312,7 +312,7 @@ func (cb *CircuitBreaker) transition(to State) {
 	case to == StateOpen && from == StateClosed:
 		cb.openedAt = time.Now()
 		cb.probeJitter = rand.N(cb.openTimeout / 4) //nolint:gosec // G404: jitter does not require crypto-strength randomness
-		slog.Warn("Circuit breaker opened: failure threshold reached",
+		slog.WarnContext(context.Background(), "Circuit breaker opened: failure threshold reached",
 			"name", cb.name,
 			"from", from.String(),
 			"to", to.String(),
@@ -321,21 +321,21 @@ func (cb *CircuitBreaker) transition(to State) {
 
 	case to == StateOpen && from == StateHalfOpen:
 		cb.probeJitter = rand.N(cb.openTimeout / 4) //nolint:gosec // G404: jitter does not require crypto-strength randomness
-		slog.Warn("Circuit breaker reopened: probe failed",
+		slog.WarnContext(context.Background(), "Circuit breaker reopened: probe failed",
 			"name", cb.name,
 			"from", from.String(),
 			"to", to.String(),
 			"failures", cb.failures)
 
 	case to == StateHalfOpen:
-		slog.Info("Circuit breaker half-open: probing",
+		slog.InfoContext(context.Background(), "Circuit breaker half-open: probing",
 			"name", cb.name,
 			"from", from.String(),
 			"to", to.String(),
 			"open_duration", openFor.Round(time.Millisecond).String())
 
 	case to == StateClosed:
-		slog.Info("Circuit breaker closed: recovered",
+		slog.InfoContext(context.Background(), "Circuit breaker closed: recovered",
 			"name", cb.name,
 			"from", from.String(),
 			"to", to.String(),

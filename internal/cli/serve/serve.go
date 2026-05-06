@@ -40,6 +40,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/di"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -166,7 +167,13 @@ func (s *server) initLogging() error {
 	s.logLevel.Set(config.ParseLogLevel(s.cfg.Server.LogLevel))
 	s.logBuffer = telemetry.NewLogBuffer()
 	jsonHandler := slog.NewJSONHandler(s.stdout, &slog.HandlerOptions{Level: &s.logLevel})
-	traceHandler := telemetry.NewTraceHandler(jsonHandler)
+	// logfmt.ErrAttrHandler stringifies any error-typed attribute before
+	// the JSON handler renders the record. Without it, encoding/json would
+	// emit "{}" for error structs without JSON tags, which JS log viewers
+	// render as "[object Object]". With this wrapper, call sites can pass
+	// raw errors via "error", err and operators still see the message.
+	errHandler := logfmt.NewErrAttrHandler(jsonHandler)
+	traceHandler := telemetry.NewTraceHandler(errHandler)
 	slog.SetDefault(slog.New(telemetry.NewTeeHandler(traceHandler, s.logBuffer)))
 
 	ctx := context.Background()
@@ -526,7 +533,7 @@ func (s *server) runMultipartDEKBackfill(ctx context.Context) {
 		migrated, runErr := mb.RunOnce(lockCtx)
 		if runErr != nil {
 			slog.WarnContext(lockCtx, "multipart_dek_backfill: startup pass failed, continuing boot",
-				"migrated", migrated, "error", runErr)
+				slog.Int("migrated", migrated), "error", runErr)
 		}
 		return nil
 	})
