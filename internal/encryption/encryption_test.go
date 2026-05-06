@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"io"
 	"testing"
@@ -782,5 +783,59 @@ func TestEncryptWithDEK_DifferentNonce(t *testing.T) {
 
 	if bytes.Equal(first.BaseNonce, second.BaseNonce) {
 		t.Error("BaseNonce should differ between calls (random per encrypt)")
+	}
+}
+
+// failingKeyProvider always returns an error from WrapDEK so tests
+// can drive the wrap-error branch in GenerateAndWrapDEK.
+type failingKeyProvider struct{}
+
+func (failingKeyProvider) WrapDEK(_ context.Context, _ []byte) ([]byte, string, error) {
+	return nil, "", errors.New("simulated wrap failure")
+}
+func (failingKeyProvider) UnwrapDEK(_ context.Context, _ []byte, _ string) ([]byte, error) {
+	return nil, errors.New("simulated unwrap failure")
+}
+func (failingKeyProvider) KeyID() string { return "fail-0" }
+
+// TestGenerateAndWrapDEK_WrapError covers the branch in
+// GenerateAndWrapDEK where the KeyProvider rejects the wrap call.
+func TestGenerateAndWrapDEK_WrapError(t *testing.T) {
+	t.Parallel()
+	enc, err := NewEncryptor(failingKeyProvider{}, 64*1024)
+	if err != nil {
+		t.Fatalf("NewEncryptor: %v", err)
+	}
+	if _, _, _, err := enc.GenerateAndWrapDEK(context.Background()); err == nil {
+		t.Fatal("expected wrap error, got nil")
+	}
+}
+
+// TestGenerateAndWrapDEK_HappyPath covers the helper that
+// CreateMultipartUpload uses to wrap a single shared DEK at the
+// start of a multipart upload. Verifies the unwrapped DEK round-
+// trips back to the same 32-byte material the helper produced.
+func TestGenerateAndWrapDEK_HappyPath(t *testing.T) {
+	t.Parallel()
+	enc := testEncryptor(t, 64*1024)
+	dek, wrapped, keyID, err := enc.GenerateAndWrapDEK(context.Background())
+	if err != nil {
+		t.Fatalf("GenerateAndWrapDEK: %v", err)
+	}
+	if len(dek) != 32 {
+		t.Errorf("dek length = %d, want 32", len(dek))
+	}
+	if len(wrapped) == 0 {
+		t.Error("wrapped DEK is empty")
+	}
+	if keyID == "" {
+		t.Error("keyID is empty")
+	}
+	unwrapped, err := enc.Provider().UnwrapDEK(context.Background(), wrapped, keyID)
+	if err != nil {
+		t.Fatalf("UnwrapDEK: %v", err)
+	}
+	if !bytes.Equal(unwrapped, dek) {
+		t.Error("UnwrapDEK did not return the original DEK")
 	}
 }

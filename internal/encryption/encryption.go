@@ -120,6 +120,24 @@ func (e *Encryptor) EncryptWithDEK(body io.Reader, plaintextSize int64, dek, wra
 	return e.assembleEncryptResult(body, plaintextSize, dek, wrappedDEK, keyID)
 }
 
+// GenerateAndWrapDEK produces a fresh 256-bit DEK and wraps it via the
+// KeyProvider, returning the unwrapped DEK along with the wrapped form
+// and key ID. Used by callers that need a wrapped DEK ahead of any
+// actual encryption work - notably CreateMultipartUpload, which
+// persists the wrapped DEK on the upload row so every subsequent
+// UploadPart can reuse it without making its own WrapDEK round-trip.
+func (e *Encryptor) GenerateAndWrapDEK(ctx context.Context) (dek, wrappedDEK []byte, keyID string, err error) {
+	dek = make([]byte, 32)
+	if _, err = rand.Read(dek); err != nil {
+		return nil, nil, "", fmt.Errorf("generate DEK: %w", err)
+	}
+	wrappedDEK, keyID, err = e.provider.WrapDEK(ctx, dek)
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("wrap DEK: %w", err)
+	}
+	return dek, wrappedDEK, keyID, nil
+}
+
 // assembleEncryptResult builds the streaming ciphertext reader and the
 // EncryptResult shared by Encrypt and EncryptWithDEK. The two callers
 // differ only in how they obtain (dek, wrappedDEK, keyID); everything

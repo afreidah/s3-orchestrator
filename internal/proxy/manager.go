@@ -64,6 +64,13 @@ type BackendManagerConfig struct {
 	MaxObjectSizes    map[string]int64       // per-backend max object size in bytes (0 = unlimited)
 	AdmissionSem      chan struct{}          // shared concurrency semaphore for HTTP + background ops (nil = unlimited)
 
+	// MultipartDEKCacheTTL pegs the lifetime of cached unwrapped DEKs
+	// the MultipartManager uses to avoid re-unwrapping the upload-level
+	// DEK on every UploadPart. Zero falls back to a 1h default which
+	// is shorter than the typical multipart_stale_timeout but long
+	// enough to absorb a reasonable upload's part stream.
+	MultipartDEKCacheTTL time.Duration
+
 	// ReplicationFactor is invoked by the metrics collector when refreshing
 	// the under-replicated-objects gauge. Returns 0 when replication is
 	// disabled. Lazy-evaluated so it can resolve the live replicator's
@@ -135,7 +142,11 @@ func NewBackendManager(cfg *BackendManagerConfig) *BackendManager {
 		admissionSem:    cfg.AdmissionSem,
 	}
 
-	multipartManager := NewMultipartManager(core, cfg.Encryptor, cfg.ObjectCache)
+	dekCacheTTL := cfg.MultipartDEKCacheTTL
+	if dekCacheTTL == 0 {
+		dekCacheTTL = time.Hour
+	}
+	multipartManager := NewMultipartManager(core, cfg.Encryptor, cfg.ObjectCache, dekCacheTTL)
 	cache := NewLocationCache(cfg.CacheTTL)
 	// ObjectManager gets a closure for the integrity config so it can read
 	// the hot-reloadable value without a circular dependency.
@@ -180,9 +191,14 @@ func (m *BackendManager) AdmissionSem() chan struct{} {
 	return m.admissionSem
 }
 
-// Close stops the background cache eviction goroutine. Safe to call multiple times.
+// Close stops every background cache eviction goroutine the manager
+// owns: the object location cache and the multipart per-upload DEK
+// cache. Safe to call multiple times.
 func (m *BackendManager) Close() {
 	m.ObjectManager.cache.Close()
+	if m.MultipartManager != nil && m.MultipartManager.dekCache != nil {
+		m.MultipartManager.dekCache.Close()
+	}
 }
 
 // RecordUsage increments the in-memory usage counters for a backend.

@@ -47,7 +47,7 @@ type QuotaStore interface {
 
 // MultipartStore defines multipart upload lifecycle operations.
 type MultipartStore interface {
-	CreateMultipartUpload(ctx context.Context, uploadID, key, backend, contentType string, metadata map[string]string) error
+	CreateMultipartUpload(ctx context.Context, params *CreateMultipartUploadParams) error
 	GetMultipartUpload(ctx context.Context, uploadID string) (*MultipartUpload, error)
 	RecordPart(ctx context.Context, uploadID string, partNumber int, etag string, size int64, enc *EncryptionMeta) error
 	GetParts(ctx context.Context, uploadID string) ([]MultipartPart, error)
@@ -56,6 +56,42 @@ type MultipartStore interface {
 	CountActiveMultipartUploads(ctx context.Context, bucketPrefix string) (int64, error)
 	GetStaleMultipartUploads(ctx context.Context, olderThan time.Duration) ([]MultipartUpload, error)
 	GetMultipartUploadsByBackend(ctx context.Context, backendName string) ([]MultipartUpload, error)
+
+	// ListLegacyMultipartUploads returns uploads whose encryption_key
+	// column is NULL - rows created before migration 00010 that the
+	// multipart_dek_backfill worker still has to migrate to the
+	// shared-DEK format. limit caps the page size so the backfill can
+	// chunk through a backlog without blowing past statement memory.
+	ListLegacyMultipartUploads(ctx context.Context, limit int) ([]MultipartUpload, error)
+
+	// UpdateUploadEncryption persists the upload-level wrapped DEK and
+	// key ID once the backfill worker has re-encrypted every part of
+	// an upload. Returns ErrObjectNotFound when the row no longer
+	// exists (e.g., the upload was aborted while the backfill was in
+	// flight) so the caller treats the row as already-resolved.
+	UpdateUploadEncryption(ctx context.Context, uploadID string, encryptionKey []byte, keyID string) error
+
+	// UpdatePartEncryption replaces a part row's encryption metadata
+	// and recorded ciphertext size after the backfill rewrites the
+	// part on the backend under the new upload-level DEK. Used only
+	// by the backfill path; the regular UploadPart write goes through
+	// RecordPart.
+	UpdatePartEncryption(ctx context.Context, uploadID string, partNumber int, sizeBytes int64, enc *EncryptionMeta) error
+}
+
+// CreateMultipartUploadParams bundles the fields a CreateMultipartUpload
+// row needs at insert time. Pulled into a struct because the optional
+// upload-level encryption fields would otherwise push the call signature
+// past gocritic's parameter-count limit and force every call site to
+// pass empty values for non-encrypted uploads.
+type CreateMultipartUploadParams struct {
+	UploadID      string
+	ObjectKey     string
+	BackendName   string
+	ContentType   string
+	Metadata      map[string]string
+	EncryptionKey []byte // empty for unencrypted uploads
+	KeyID         string // empty for unencrypted uploads
 }
 
 // ReplicationStore defines replication management operations.

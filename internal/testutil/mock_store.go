@@ -57,15 +57,19 @@ type MockStore struct {
 	ListObjectsByBackendKeyAscFn func(afterKey string, limit int) ([]core.ObjectLocation, error)
 
 	// Multipart
-	CreateMultipartErr       error
-	GetMultipartResp         *core.MultipartUpload
-	GetMultipartErr          error
-	GetPartsResp             []core.MultipartPart
-	GetPartsErr              error
-	DeleteMultipartErr       error
-	RecordPartErr            error
-	ListMultipartUploadsResp []core.MultipartUpload
-	ListMultipartUploadsErr  error
+	CreateMultipartErr        error
+	GetMultipartResp          *core.MultipartUpload
+	GetMultipartErr           error
+	GetPartsResp              []core.MultipartPart
+	GetPartsErr               error
+	DeleteMultipartErr        error
+	RecordPartErr             error
+	ListMultipartUploadsResp  []core.MultipartUpload
+	ListMultipartUploadsErr   error
+	LegacyMultipartResp       []core.MultipartUpload
+	LegacyMultipartErr        error
+	UpdateUploadEncryptionErr error
+	UpdatePartEncryptionErr   error
 
 	// Dashboard / background
 	GetQuotaStatsResp      map[string]core.QuotaStat
@@ -241,10 +245,31 @@ func (m *MockStore) ListObjects(_ context.Context, _, startAfter string, _ int) 
 }
 
 // CreateMultipartUpload returns the pre-configured error.
-func (m *MockStore) CreateMultipartUpload(_ context.Context, _, _, _, _ string, _ map[string]string) error {
+func (m *MockStore) CreateMultipartUpload(_ context.Context, _ *core.CreateMultipartUploadParams) error {
 	m.Mu.Lock()
 	defer m.Mu.Unlock()
 	return m.CreateMultipartErr
+}
+
+// ListLegacyMultipartUploads returns the pre-configured slice + error.
+func (m *MockStore) ListLegacyMultipartUploads(_ context.Context, _ int) ([]core.MultipartUpload, error) {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+	return m.LegacyMultipartResp, m.LegacyMultipartErr
+}
+
+// UpdateUploadEncryption returns the pre-configured error.
+func (m *MockStore) UpdateUploadEncryption(_ context.Context, _ string, _ []byte, _ string) error {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+	return m.UpdateUploadEncryptionErr
+}
+
+// UpdatePartEncryption returns the pre-configured error.
+func (m *MockStore) UpdatePartEncryption(_ context.Context, _ string, _ int, _ int64, _ *core.EncryptionMeta) error {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+	return m.UpdatePartEncryptionErr
 }
 
 // GetMultipartUpload returns the pre-configured upload or error.

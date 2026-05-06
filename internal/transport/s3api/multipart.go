@@ -274,7 +274,8 @@ func (s *Server) handleListMultipartUploads(ctx context.Context, w http.Response
 		IsTruncated: truncated,
 	}
 
-	for _, u := range uploads {
+	for i := range uploads {
+		u := &uploads[i]
 		result.Upload = append(result.Upload, xmlUpload{
 			Key:       strings.TrimPrefix(u.ObjectKey, bucketPrefix),
 			UploadId:  u.UploadID,

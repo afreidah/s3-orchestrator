@@ -25,16 +25,18 @@ func (q *Queries) CountActiveMultipartUploadsByPrefix(ctx context.Context, prefi
 
 const createMultipartUpload = `-- name: CreateMultipartUpload :exec
 
-INSERT INTO multipart_uploads (upload_id, object_key, backend_name, content_type, metadata, created_at)
-VALUES ($1, $2, $3, $4, $5, NOW())
+INSERT INTO multipart_uploads (upload_id, object_key, backend_name, content_type, metadata, encryption_key, key_id, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
 `
 
 type CreateMultipartUploadParams struct {
-	UploadID    string
-	ObjectKey   string
-	BackendName string
-	ContentType *string
-	Metadata    []byte
+	UploadID      string
+	ObjectKey     string
+	BackendName   string
+	ContentType   *string
+	Metadata      []byte
+	EncryptionKey []byte
+	KeyID         *string
 }
 
 // -----------------------------------------------------------------------------
@@ -44,8 +46,11 @@ type CreateMultipartUploadParams struct {
 //
 // sqlc-input definitions for multipart_uploads and multipart_parts. Covers
 // the upload lifecycle (create, lookup, delete), per-part record/list, the
-// prefix-scoped listing the S3 ListMultipartUploads handler needs, and the
-// stale-upload sweep used by the multipart cleanup background worker.
+// prefix-scoped listing the S3 ListMultipartUploads handler needs, the
+// stale-upload sweep used by the multipart cleanup background worker, and the
+// backfill helpers (ListLegacy*, UpdateUploadEncryption, UpdatePartEncryption)
+// the multipart_dek_backfill worker calls when promoting legacy rows to the
+// shared-DEK format introduced in migration 00010.
 // -----------------------------------------------------------------------------
 func (q *Queries) CreateMultipartUpload(ctx context.Context, arg CreateMultipartUploadParams) error {
 	_, err := q.db.Exec(ctx, createMultipartUpload,
@@ -54,6 +59,8 @@ func (q *Queries) CreateMultipartUpload(ctx context.Context, arg CreateMultipart
 		arg.BackendName,
 		arg.ContentType,
 		arg.Metadata,
+		arg.EncryptionKey,
+		arg.KeyID,
 	)
 	return err
 }
@@ -78,18 +85,20 @@ func (q *Queries) DeleteMultipartUploadsByBackend(ctx context.Context, backendNa
 }
 
 const getMultipartUpload = `-- name: GetMultipartUpload :one
-SELECT upload_id, object_key, backend_name, content_type, metadata, created_at
+SELECT upload_id, object_key, backend_name, content_type, metadata, encryption_key, key_id, created_at
 FROM multipart_uploads
 WHERE upload_id = $1
 `
 
 type GetMultipartUploadRow struct {
-	UploadID    string
-	ObjectKey   string
-	BackendName string
-	ContentType *string
-	Metadata    []byte
-	CreatedAt   pgtype.Timestamptz
+	UploadID      string
+	ObjectKey     string
+	BackendName   string
+	ContentType   *string
+	Metadata      []byte
+	EncryptionKey []byte
+	KeyID         *string
+	CreatedAt     pgtype.Timestamptz
 }
 
 func (q *Queries) GetMultipartUpload(ctx context.Context, uploadID string) (GetMultipartUploadRow, error) {
@@ -101,24 +110,28 @@ func (q *Queries) GetMultipartUpload(ctx context.Context, uploadID string) (GetM
 		&i.BackendName,
 		&i.ContentType,
 		&i.Metadata,
+		&i.EncryptionKey,
+		&i.KeyID,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
 const getMultipartUploadsByBackend = `-- name: GetMultipartUploadsByBackend :many
-SELECT upload_id, object_key, backend_name, content_type, metadata, created_at
+SELECT upload_id, object_key, backend_name, content_type, metadata, encryption_key, key_id, created_at
 FROM multipart_uploads
 WHERE backend_name = $1
 `
 
 type GetMultipartUploadsByBackendRow struct {
-	UploadID    string
-	ObjectKey   string
-	BackendName string
-	ContentType *string
-	Metadata    []byte
-	CreatedAt   pgtype.Timestamptz
+	UploadID      string
+	ObjectKey     string
+	BackendName   string
+	ContentType   *string
+	Metadata      []byte
+	EncryptionKey []byte
+	KeyID         *string
+	CreatedAt     pgtype.Timestamptz
 }
 
 func (q *Queries) GetMultipartUploadsByBackend(ctx context.Context, backendName string) ([]GetMultipartUploadsByBackendRow, error) {
@@ -136,6 +149,8 @@ func (q *Queries) GetMultipartUploadsByBackend(ctx context.Context, backendName 
 			&i.BackendName,
 			&i.ContentType,
 			&i.Metadata,
+			&i.EncryptionKey,
+			&i.KeyID,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -196,18 +211,20 @@ func (q *Queries) GetParts(ctx context.Context, uploadID string) ([]GetPartsRow,
 }
 
 const getStaleMultipartUploads = `-- name: GetStaleMultipartUploads :many
-SELECT upload_id, object_key, backend_name, content_type, metadata, created_at
+SELECT upload_id, object_key, backend_name, content_type, metadata, encryption_key, key_id, created_at
 FROM multipart_uploads
 WHERE created_at < $1
 `
 
 type GetStaleMultipartUploadsRow struct {
-	UploadID    string
-	ObjectKey   string
-	BackendName string
-	ContentType *string
-	Metadata    []byte
-	CreatedAt   pgtype.Timestamptz
+	UploadID      string
+	ObjectKey     string
+	BackendName   string
+	ContentType   *string
+	Metadata      []byte
+	EncryptionKey []byte
+	KeyID         *string
+	CreatedAt     pgtype.Timestamptz
 }
 
 func (q *Queries) GetStaleMultipartUploads(ctx context.Context, createdAt pgtype.Timestamptz) ([]GetStaleMultipartUploadsRow, error) {
@@ -225,6 +242,56 @@ func (q *Queries) GetStaleMultipartUploads(ctx context.Context, createdAt pgtype
 			&i.BackendName,
 			&i.ContentType,
 			&i.Metadata,
+			&i.EncryptionKey,
+			&i.KeyID,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLegacyMultipartUploads = `-- name: ListLegacyMultipartUploads :many
+SELECT upload_id, object_key, backend_name, content_type, metadata, encryption_key, key_id, created_at
+FROM multipart_uploads
+WHERE encryption_key IS NULL
+ORDER BY created_at
+LIMIT $1
+`
+
+type ListLegacyMultipartUploadsRow struct {
+	UploadID      string
+	ObjectKey     string
+	BackendName   string
+	ContentType   *string
+	Metadata      []byte
+	EncryptionKey []byte
+	KeyID         *string
+	CreatedAt     pgtype.Timestamptz
+}
+
+func (q *Queries) ListLegacyMultipartUploads(ctx context.Context, limit int32) ([]ListLegacyMultipartUploadsRow, error) {
+	rows, err := q.db.Query(ctx, listLegacyMultipartUploads, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListLegacyMultipartUploadsRow{}
+	for rows.Next() {
+		var i ListLegacyMultipartUploadsRow
+		if err := rows.Scan(
+			&i.UploadID,
+			&i.ObjectKey,
+			&i.BackendName,
+			&i.ContentType,
+			&i.Metadata,
+			&i.EncryptionKey,
+			&i.KeyID,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -280,6 +347,52 @@ func (q *Queries) ListMultipartUploadsByPrefix(ctx context.Context, arg ListMult
 		return nil, err
 	}
 	return items, nil
+}
+
+const updatePartEncryption = `-- name: UpdatePartEncryption :exec
+UPDATE multipart_parts
+SET size_bytes = $3, encrypted = $4, encryption_key = $5, key_id = $6, plaintext_size = $7
+WHERE upload_id = $1 AND part_number = $2
+`
+
+type UpdatePartEncryptionParams struct {
+	UploadID      string
+	PartNumber    int32
+	SizeBytes     int64
+	Encrypted     bool
+	EncryptionKey []byte
+	KeyID         *string
+	PlaintextSize *int64
+}
+
+func (q *Queries) UpdatePartEncryption(ctx context.Context, arg UpdatePartEncryptionParams) error {
+	_, err := q.db.Exec(ctx, updatePartEncryption,
+		arg.UploadID,
+		arg.PartNumber,
+		arg.SizeBytes,
+		arg.Encrypted,
+		arg.EncryptionKey,
+		arg.KeyID,
+		arg.PlaintextSize,
+	)
+	return err
+}
+
+const updateUploadEncryption = `-- name: UpdateUploadEncryption :exec
+UPDATE multipart_uploads
+SET encryption_key = $2, key_id = $3
+WHERE upload_id = $1
+`
+
+type UpdateUploadEncryptionParams struct {
+	UploadID      string
+	EncryptionKey []byte
+	KeyID         *string
+}
+
+func (q *Queries) UpdateUploadEncryption(ctx context.Context, arg UpdateUploadEncryptionParams) error {
+	_, err := q.db.Exec(ctx, updateUploadEncryption, arg.UploadID, arg.EncryptionKey, arg.KeyID)
+	return err
 }
 
 const upsertPart = `-- name: UpsertPart :exec

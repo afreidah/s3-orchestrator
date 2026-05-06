@@ -31,23 +31,70 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/util/bufpool"
+	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
 
 // MultipartManager handles the multipart upload lifecycle.
+//
+// dekCache holds the unwrapped per-upload DEK keyed by uploadID so an
+// instance that handles many UploadPart calls for the same upload pays
+// for the KeyProvider unwrap round-trip once. The cache lifetime is
+// pegged to the multipart stale-upload sweep interval so an abandoned
+// upload's DEK does not linger in memory beyond its server-side
+// existence. Concurrent UploadPart calls on the same uploadID with a
+// cold cache will each issue their own Unwrap; the design accepts that
+// minor cold-start cost in exchange for not pulling in singleflight.
 type MultipartManager struct {
 	*backendCore
 	parent      *BackendManager // set post-construction; routes write-path helpers to the parent's store fields
 	encryptor   *encryption.Encryptor
 	objectCache objcache.ObjectCache
+	dekCache    *syncutil.TTLCache[string, []byte]
 }
 
 // NewMultipartManager creates a MultipartManager sharing the given core
 // infrastructure and optional encryptor. The caller wires the parent
 // BackendManager pointer after construction.
-func NewMultipartManager(core *backendCore, encryptor *encryption.Encryptor, objectCache objcache.ObjectCache) *MultipartManager {
-	return &MultipartManager{backendCore: core, encryptor: encryptor, objectCache: objectCache}
+func NewMultipartManager(core *backendCore, encryptor *encryption.Encryptor, objectCache objcache.ObjectCache, dekCacheTTL time.Duration) *MultipartManager {
+	return &MultipartManager{
+		backendCore: core,
+		encryptor:   encryptor,
+		objectCache: objectCache,
+		dekCache:    syncutil.NewTTLCache[string, []byte](dekCacheTTL),
+	}
+}
+
+// unwrapUploadDEK returns the unwrapped DEK for a multipart upload,
+// caching the result for the lifetime of the upload so subsequent
+// UploadParts on this instance do not re-issue the KeyProvider round-
+// trip. Returns the unwrapped DEK and the wrapped form (for write-path
+// metadata that needs the wrapped value).
+func (mp *MultipartManager) unwrapUploadDEK(ctx context.Context, mu *core.MultipartUpload) (dek, wrappedDEK []byte, baseNonce []byte, err error) {
+	if !mu.Encrypted || len(mu.EncryptionKey) == 0 {
+		return nil, nil, nil, fmt.Errorf("upload %s carries no encryption metadata", mu.UploadID)
+	}
+	baseNonce, wrappedDEK, err = encryption.UnpackKeyData(mu.EncryptionKey)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("unpack upload encryption metadata: %w", err)
+	}
+	if cached, ok := mp.dekCache.Get(mu.UploadID); ok {
+		return cached, wrappedDEK, baseNonce, nil
+	}
+	unwrapped, err := mp.encryptor.Provider().UnwrapDEK(ctx, wrappedDEK, mu.KeyID)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("unwrap upload DEK: %w", err)
+	}
+	mp.dekCache.Set(mu.UploadID, unwrapped)
+	return unwrapped, wrappedDEK, baseNonce, nil
+}
+
+// forgetUploadDEK drops a cached unwrapped DEK so the upload's DEK
+// stops occupying memory once the upload has reached a terminal state
+// (Complete/Abort/expiry).
+func (mp *MultipartManager) forgetUploadDEK(uploadID string) {
+	mp.dekCache.Delete(uploadID)
 }
 
 // multipartPartKey returns the temporary object key for a multipart part.
@@ -60,7 +107,12 @@ func multipartPartKey(uploadID string, partNumber int) string {
 // -------------------------------------------------------------------------
 
 // CreateMultipartUpload initiates a multipart upload by selecting a backend
-// with available quota and recording the upload in the database.
+// with available quota and recording the upload in the database. When
+// proxy-side encryption is configured, a single DEK is wrapped once
+// here and persisted on the multipart_uploads row so every subsequent
+// UploadPart can reuse it without paying its own KeyProvider
+// round-trip (this is the shared-DEK invariant CompleteMultipartUpload
+// also depends on).
 func (mp *MultipartManager) CreateMultipartUpload(ctx context.Context, key, contentType string, metadata map[string]string) (string, string, error) {
 	const operation = "CreateMultipartUpload"
 	start := time.Now()
@@ -77,7 +129,38 @@ func (mp *MultipartManager) CreateMultipartUpload(ctx context.Context, key, cont
 	}
 
 	uploadID := GenerateUploadID()
-	if err := mp.parent.stores.Multipart.CreateMultipartUpload(ctx, uploadID, key, backendName, contentType, metadata); err != nil {
+
+	// Generate the upload-level DEK now so every UploadPart and the
+	// assembled object's CompleteMultipartUpload share one wrapped DEK.
+	// The packed format mirrors object_locations.encryption_key:
+	// PackKeyData(baseNonce, wrappedDEK). For the upload row the base
+	// nonce is intentionally zero - the upload row never directly
+	// produces ciphertext; per-part baseNonces live on each
+	// multipart_parts row and the assembled object stores its own
+	// baseNonce in object_locations.encryption_key.
+	var (
+		encryptionKey []byte
+		keyID         string
+	)
+	if mp.encryptor != nil {
+		_, wrappedDEK, kid, kerr := mp.encryptor.GenerateAndWrapDEK(ctx)
+		if kerr != nil {
+			span.SetStatus(codes.Error, kerr.Error())
+			return "", "", fmt.Errorf("wrap upload DEK: %w", kerr)
+		}
+		encryptionKey = encryption.PackKeyData(make([]byte, encryption.NonceSize), wrappedDEK)
+		keyID = kid
+	}
+
+	if err := mp.parent.stores.Multipart.CreateMultipartUpload(ctx, &core.CreateMultipartUploadParams{
+		UploadID:      uploadID,
+		ObjectKey:     key,
+		BackendName:   backendName,
+		ContentType:   contentType,
+		Metadata:      metadata,
+		EncryptionKey: encryptionKey,
+		KeyID:         keyID,
+	}); err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return "", "", err
 	}
@@ -130,16 +213,36 @@ func (mp *MultipartManager) UploadPart(ctx context.Context, uploadID string, par
 		return "", core.ErrInsufficientStorage
 	}
 
-	// Encrypt if enabled
+	// Encrypt if enabled. The upload-level DEK lives on the
+	// multipart_uploads row and is shared by every part; we unwrap it
+	// once per instance via the dekCache and reuse it here so this
+	// path costs zero KeyProvider round-trips after the first part.
+	// EncryptWithDEK generates a fresh per-part baseNonce internally
+	// so the AES-GCM (key, nonce) uniqueness invariant holds across
+	// every part of the upload.
 	var enc *core.EncryptionMeta
 	uploadBody := body
 	uploadSize := size
-	if mp.encryptor != nil {
-		var encErr error
-		uploadBody, uploadSize, enc, encErr = encryptBody(ctx, mp.encryptor, body, size)
-		if encErr != nil {
-			span.SetStatus(codes.Error, encErr.Error())
-			return "", fmt.Errorf("encrypt part: %w", encErr)
+	if mp.encryptor != nil && mu.Encrypted {
+		dek, wrappedDEK, _, derr := mp.unwrapUploadDEK(ctx, mu)
+		if derr != nil {
+			span.SetStatus(codes.Error, derr.Error())
+			return "", derr
+		}
+		result, err := mp.encryptor.EncryptWithDEK(body, size, dek, wrappedDEK, mu.KeyID)
+		if err != nil {
+			telemetry.EncryptionErrorsTotal.WithLabelValues("encrypt", "encrypt_failed").Inc()
+			span.SetStatus(codes.Error, err.Error())
+			return "", fmt.Errorf("encrypt part: %w", err)
+		}
+		telemetry.EncryptionOpsTotal.WithLabelValues("encrypt").Inc()
+		uploadBody = result.Body
+		uploadSize = result.CiphertextSize
+		enc = &core.EncryptionMeta{
+			Encrypted:     true,
+			EncryptionKey: encryption.PackKeyData(result.BaseNonce, result.WrappedDEK),
+			KeyID:         result.KeyID,
+			PlaintextSize: size,
 		}
 	}
 
@@ -271,7 +374,7 @@ func (mp *MultipartManager) completeMultipartUploadLocked(
 	pr, pipeCancel := mp.streamPartsThroughPipe(ctx, be, uploadID, parts)
 	defer pipeCancel()
 
-	uploadBody, uploadSize, enc, err := mp.buildAssembledUpload(ctx, span, pr, totalPlaintextSize, anyEncrypted)
+	uploadBody, uploadSize, enc, err := mp.buildAssembledUpload(ctx, span, mu, pr, totalPlaintextSize, anyEncrypted)
 	if err != nil {
 		return "", err
 	}
@@ -329,9 +432,11 @@ func (mp *MultipartManager) completeMultipartUploadLocked(
 // (success or failure). Runs from a defer so a failed assembly PUT or
 // recordObject still drops the part objects via deleteOrEnqueue,
 // keeping the cleanup queue and orphan-bytes accounting accurate
-// instead of relying on the periodic stale-multipart sweeper. Best
-// effort: each step logs and continues so a single transient error
-// cannot strand the rest of the cleanup.
+// instead of relying on the periodic stale-multipart sweeper. Also
+// evicts the upload's unwrapped DEK from the per-instance cache so
+// abandoned-upload memory does not linger. Best effort: each step
+// logs and continues so a single transient error cannot strand the
+// rest of the cleanup.
 func (mp *MultipartManager) cleanupCompletedUpload(ctx context.Context, span trace.Span, be s3be.ObjectBackend, mu *core.MultipartUpload, uploadID string, parts []core.MultipartPart) {
 	for _, part := range parts {
 		partKey := multipartPartKey(uploadID, part.PartNumber)
@@ -340,6 +445,7 @@ func (mp *MultipartManager) cleanupCompletedUpload(ctx context.Context, span tra
 	if err := mp.parent.stores.Multipart.DeleteMultipartUpload(ctx, uploadID); err != nil {
 		span.RecordError(err)
 	}
+	mp.forgetUploadDEK(uploadID)
 }
 
 // collectRequestedParts loads every part for uploadID, validates that all
@@ -402,28 +508,44 @@ func sumPlaintextSize(parts []core.MultipartPart) (int64, bool) {
 
 // buildAssembledUpload prepares the request body sent to the backend
 // during assembly. When the orchestrator encryptor is configured, the
-// pipe is wrapped in encryptBody so the assembled object lands as a
-// single ciphertext with unified chunk boundaries; otherwise the pipe is
-// uploaded verbatim. anyEncrypted is informational - inline decryption
+// pipe is wrapped in EncryptWithDEK using the upload-level DEK so the
+// assembled object lands as a single ciphertext that shares its DEK
+// with every part. anyEncrypted is informational - inline decryption
 // already runs in streamPartsThroughPipe so the pipe always emits
-// plaintext.
+// plaintext. mu is required when the encryptor is configured because
+// the assembled object must reuse mu.EncryptionKey / mu.KeyID rather
+// than wrapping a fresh DEK for the final write.
 func (mp *MultipartManager) buildAssembledUpload(
 	ctx context.Context,
 	span trace.Span,
+	mu *core.MultipartUpload,
 	pr io.Reader,
 	totalPlaintextSize int64,
 	anyEncrypted bool,
 ) (io.Reader, int64, *core.EncryptionMeta, error) {
+	_ = ctx
 	_ = anyEncrypted
 	if mp.encryptor == nil {
 		return pr, totalPlaintextSize, nil, nil
 	}
-	uploadBody, uploadSize, enc, encErr := encryptBody(ctx, mp.encryptor, pr, totalPlaintextSize)
-	if encErr != nil {
-		span.SetStatus(codes.Error, encErr.Error())
-		return nil, 0, nil, fmt.Errorf("encrypt final object: %w", encErr)
+	dek, wrappedDEK, _, derr := mp.unwrapUploadDEK(ctx, mu)
+	if derr != nil {
+		span.SetStatus(codes.Error, derr.Error())
+		return nil, 0, nil, derr
 	}
-	return uploadBody, uploadSize, enc, nil
+	result, err := mp.encryptor.EncryptWithDEK(pr, totalPlaintextSize, dek, wrappedDEK, mu.KeyID)
+	if err != nil {
+		telemetry.EncryptionErrorsTotal.WithLabelValues("encrypt", "encrypt_failed").Inc()
+		span.SetStatus(codes.Error, err.Error())
+		return nil, 0, nil, fmt.Errorf("encrypt final object: %w", err)
+	}
+	telemetry.EncryptionOpsTotal.WithLabelValues("encrypt").Inc()
+	return result.Body, result.CiphertextSize, &core.EncryptionMeta{
+		Encrypted:     true,
+		EncryptionKey: encryption.PackKeyData(result.BaseNonce, result.WrappedDEK),
+		KeyID:         result.KeyID,
+		PlaintextSize: totalPlaintextSize,
+	}, nil
 }
 
 // AbortMultipartUpload cleans up an in-progress multipart upload, removing
@@ -467,6 +589,10 @@ func (mp *MultipartManager) AbortMultipartUpload(ctx context.Context, uploadID s
 		return err
 	}
 
+	// Evict the upload's unwrapped DEK so the cache does not hold
+	// onto an aborted upload's key material.
+	mp.forgetUploadDEK(uploadID)
+
 	mp.recordOperation(operation, mu.BackendName, start, nil)
 	mp.usage.Record(mu.BackendName, int64(len(parts)+1), 0, 0) // N deletes + 1 abort
 
@@ -502,7 +628,8 @@ func (mp *MultipartManager) CleanupStaleMultipartUploads(ctx context.Context, ol
 	}
 
 	cleaned := 0
-	for _, mu := range uploads {
+	for i := range uploads {
+		mu := &uploads[i]
 		slog.InfoContext(ctx, "cleaning up stale multipart upload", "upload_id", mu.UploadID, "key", mu.ObjectKey)
 		if err := mp.AbortMultipartUpload(ctx, mu.UploadID); err != nil {
 			slog.ErrorContext(ctx, "failed to clean up upload", "upload_id", mu.UploadID, "error", err)
@@ -528,7 +655,8 @@ func (mp *MultipartManager) AbortMultipartUploadsOnBackend(ctx context.Context, 
 		return
 	}
 
-	for _, mu := range uploads {
+	for i := range uploads {
+		mu := &uploads[i]
 		slog.InfoContext(ctx, "Drain: aborting multipart upload", "upload_id", mu.UploadID, "key", mu.ObjectKey)
 		if err := mp.AbortMultipartUpload(ctx, mu.UploadID); err != nil {
 			slog.ErrorContext(ctx, "Drain: failed to abort multipart upload",

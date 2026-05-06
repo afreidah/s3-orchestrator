@@ -21,6 +21,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"math/big"
 	"net"
@@ -30,7 +31,34 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/samber/do/v2"
+
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
+
+// fakeServeLocker drives the lock-error and not-acquired branches of
+// runMultipartDEKBackfill without bringing up a real Postgres backend.
+type fakeServeLocker struct {
+	acquired bool
+	err      error
+}
+
+// WithAdvisoryLock implements core.AdvisoryLocker.
+func (f fakeServeLocker) WithAdvisoryLock(ctx context.Context, _ int64, fn func(ctx context.Context) error) (bool, error) {
+	if f.err != nil {
+		return false, f.err
+	}
+	if !f.acquired {
+		return false, nil
+	}
+	if err := fn(ctx); err != nil {
+		return true, err
+	}
+	return true, nil
+}
+
+var _ core.AdvisoryLocker = (*fakeServeLocker)(nil)
 
 // -------------------------------------------------------------------------
 // TEST HELPERS
@@ -871,3 +899,83 @@ func (w *testResponseWriter) Write(b []byte) (int, error) { return w.body.Write(
 // http.ResponseWriter interface so handlers under test can write
 // through it without a real net/http server.
 var _ http.ResponseWriter = (*testResponseWriter)(nil)
+
+// validTestConfigWithEncryptionYAML enables encryption so the
+// MultipartBackfill provider registers and runMultipartDEKBackfill
+// has a non-nil worker to drive.
+const validTestConfigWithEncryptionYAML = validTestConfigYAML + `
+encryption:
+  enabled: true
+  master_key: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+`
+
+// TestRunMultipartDEKBackfill_NoWorker covers the early-return path
+// when encryption is disabled and the worker is not registered with
+// DI. Must be a clean no-op.
+func TestRunMultipartDEKBackfill_NoWorker(t *testing.T) {
+	path := writeTestConfig(t, validTestConfigYAML)
+	s := &server{configPath: path, mode: "all", stdout: &bytes.Buffer{}}
+	if err := s.loadConfig(); err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if err := s.initLogging(); err != nil {
+		t.Fatalf("initLogging: %v", err)
+	}
+	s.initDI()
+	t.Cleanup(func() { _ = s.shutdownTracer(context.Background()) })
+	s.runMultipartDEKBackfill(context.Background())
+}
+
+// TestRunMultipartDEKBackfill_HappyPath covers the full lock+run
+// path when encryption is enabled. With an empty SQLite store the
+// worker has no legacy rows and exits cleanly.
+func TestRunMultipartDEKBackfill_HappyPath(t *testing.T) {
+	path := writeTestConfig(t, validTestConfigWithEncryptionYAML)
+	s := &server{configPath: path, mode: "all", stdout: &bytes.Buffer{}}
+	if err := s.loadConfig(); err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if err := s.initLogging(); err != nil {
+		t.Fatalf("initLogging: %v", err)
+	}
+	s.initDI()
+	t.Cleanup(func() { _ = s.shutdownTracer(context.Background()) })
+	s.runMultipartDEKBackfill(context.Background())
+}
+
+// TestRunMultipartDEKBackfill_LockError covers the branch where the
+// AdvisoryLocker.WithAdvisoryLock call itself fails (e.g., DB
+// outage). The function logs and returns without panicking; the
+// test asserts that contract via a successful exit.
+func TestRunMultipartDEKBackfill_LockError(t *testing.T) {
+	path := writeTestConfig(t, validTestConfigWithEncryptionYAML)
+	s := &server{configPath: path, mode: "all", stdout: &bytes.Buffer{}}
+	if err := s.loadConfig(); err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if err := s.initLogging(); err != nil {
+		t.Fatalf("initLogging: %v", err)
+	}
+	s.initDI()
+	t.Cleanup(func() { _ = s.shutdownTracer(context.Background()) })
+	do.OverrideValue[core.AdvisoryLocker](s.inj, fakeServeLocker{err: errors.New("lock acquire failed")})
+	s.runMultipartDEKBackfill(context.Background())
+}
+
+// TestRunMultipartDEKBackfill_LockNotAcquired covers the branch
+// where another instance holds the service-level advisory lock and
+// this instance backs off without running the worker.
+func TestRunMultipartDEKBackfill_LockNotAcquired(t *testing.T) {
+	path := writeTestConfig(t, validTestConfigWithEncryptionYAML)
+	s := &server{configPath: path, mode: "all", stdout: &bytes.Buffer{}}
+	if err := s.loadConfig(); err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if err := s.initLogging(); err != nil {
+		t.Fatalf("initLogging: %v", err)
+	}
+	s.initDI()
+	t.Cleanup(func() { _ = s.shutdownTracer(context.Background()) })
+	do.OverrideValue[core.AdvisoryLocker](s.inj, fakeServeLocker{acquired: false})
+	s.runMultipartDEKBackfill(context.Background())
+}
