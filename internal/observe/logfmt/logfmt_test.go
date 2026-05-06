@@ -131,8 +131,7 @@ func TestRequestIDFromCtx_AbsentReturnsEmpty(t *testing.T) {
 // is preserved (no extra With layer for nothing).
 func TestLoggerFromCtx_NoRequestIDReturnsBase(t *testing.T) {
 	t.Parallel()
-	base := slog.Default()
-	if got := logfmt.LoggerFromCtx(context.Background(), base); got != base {
+	if logfmt.LoggerFromCtx(context.Background(), slog.Default()) != slog.Default() {
 		t.Error("LoggerFromCtx(no id) returned a new logger; expected the base")
 	}
 }
