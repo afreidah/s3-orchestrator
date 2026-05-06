@@ -114,6 +114,7 @@ func Run(ctx context.Context, configPath, mode string, stdout io.Writer) error {
 	}
 	s.startBackgroundServices()
 	s.startSIGHUPHandler()
+	s.runMultipartDEKBackfill(ctx)
 
 	s.ready.Store(true)
 	s.logStartup()
@@ -499,6 +500,43 @@ func (s *server) startBackgroundServices() {
 		sm.Run(bgCtx)
 		close(s.bgDone)
 	}()
+}
+
+// runMultipartDEKBackfill drains any legacy multipart_uploads rows
+// before the listener accepts traffic. Legacy rows are uploads whose
+// metadata predates the shared-DEK runtime path; CompleteMultipartUpload
+// would fail on them. The migration acquires a process-wide advisory
+// lock so a multi-instance fleet only runs one drainer at a time, and
+// it is best-effort: a failure logs and proceeds rather than blocking
+// boot indefinitely. The admin endpoint POST /admin/api/multipart-dek-
+// backfill lets operators rerun later if the startup pass left rows
+// behind.
+func (s *server) runMultipartDEKBackfill(ctx context.Context) {
+	mb, err := do.Invoke[*worker.MultipartBackfill](s.inj)
+	if err != nil || mb == nil {
+		return
+	}
+	locker, err := do.Invoke[core.AdvisoryLocker](s.inj)
+	if err != nil {
+		slog.WarnContext(ctx, "multipart_dek_backfill: skipping startup pass, no advisory locker", "error", err)
+		return
+	}
+
+	acquired, lockErr := locker.WithAdvisoryLock(ctx, core.LockMultipartDEKBackfill, func(lockCtx context.Context) error {
+		migrated, runErr := mb.RunOnce(lockCtx)
+		if runErr != nil {
+			slog.WarnContext(lockCtx, "multipart_dek_backfill: startup pass failed, continuing boot",
+				"migrated", migrated, "error", runErr)
+		}
+		return nil
+	})
+	if lockErr != nil {
+		slog.WarnContext(ctx, "multipart_dek_backfill: lock acquisition failed", "error", lockErr)
+		return
+	}
+	if !acquired {
+		slog.InfoContext(ctx, "multipart_dek_backfill: skipped, another instance holds the lock")
+	}
 }
 
 // -------------------------------------------------------------------------

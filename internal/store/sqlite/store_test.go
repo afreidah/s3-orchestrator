@@ -61,7 +61,11 @@ func mustRecordObject(t *testing.T, s *Store, key, backend string, size int64) {
 // mustCreateUpload creates a multipart upload, failing the test on error.
 func mustCreateUpload(t *testing.T, s *Store, uploadID, key, backend string) {
 	t.Helper()
-	if err := s.CreateMultipartUpload(context.Background(), uploadID, key, backend, "", nil); err != nil {
+	if err := s.CreateMultipartUpload(context.Background(), &core.CreateMultipartUploadParams{
+		UploadID:    uploadID,
+		ObjectKey:   key,
+		BackendName: backend,
+	}); err != nil {
 		t.Fatalf("CreateMultipartUpload(%s): %v", uploadID, err)
 	}
 }
@@ -725,7 +729,13 @@ func TestMultipartUpload_Lifecycle(t *testing.T) {
 	ctx := context.Background()
 
 	meta := map[string]string{"Content-Type": "image/png"}
-	err := s.CreateMultipartUpload(ctx, "upload-1", "bucket/photo.png", "backend-a", "image/png", meta)
+	err := s.CreateMultipartUpload(ctx, &core.CreateMultipartUploadParams{
+		UploadID:    "upload-1",
+		ObjectKey:   "bucket/photo.png",
+		BackendName: "backend-a",
+		ContentType: "image/png",
+		Metadata:    meta,
+	})
 	if err != nil {
 		t.Fatalf("CreateMultipartUpload: %v", err)
 	}

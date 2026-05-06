@@ -63,12 +63,14 @@ type MultipartPart struct {
 }
 
 type MultipartUpload struct {
-	UploadID    string
-	ObjectKey   string
-	BackendName string
-	ContentType *string
-	CreatedAt   pgtype.Timestamptz
-	Metadata    []byte
+	UploadID      string
+	ObjectKey     string
+	BackendName   string
+	ContentType   *string
+	CreatedAt     pgtype.Timestamptz
+	Metadata      []byte
+	EncryptionKey []byte
+	KeyID         *string
 }
 
 type NotificationOutbox struct {

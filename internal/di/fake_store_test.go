@@ -102,7 +102,22 @@ func (fakeConcreteStore) GetQuotaStats(context.Context) (map[string]core.QuotaSt
 
 // CreateMultipartUpload is a stub on fakeConcreteStore; returns the zero value to
 // satisfy the concreteStore interface contract.
-func (fakeConcreteStore) CreateMultipartUpload(context.Context, string, string, string, string, map[string]string) error {
+func (fakeConcreteStore) CreateMultipartUpload(context.Context, *core.CreateMultipartUploadParams) error {
+	return nil
+}
+
+// ListLegacyMultipartUploads is a stub on fakeConcreteStore.
+func (fakeConcreteStore) ListLegacyMultipartUploads(context.Context, int) ([]core.MultipartUpload, error) {
+	return nil, nil
+}
+
+// UpdateUploadEncryption is a stub on fakeConcreteStore.
+func (fakeConcreteStore) UpdateUploadEncryption(context.Context, string, []byte, string) error {
+	return nil
+}
+
+// UpdatePartEncryption is a stub on fakeConcreteStore.
+func (fakeConcreteStore) UpdatePartEncryption(context.Context, string, int, int64, *core.EncryptionMeta) error {
 	return nil
 }
 // GetMultipartUpload is a stub on fakeConcreteStore; returns the zero value to

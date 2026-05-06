@@ -278,6 +278,24 @@ func TestHandleReconcile_NilReconciler(t *testing.T) {
 	}
 }
 
+// TestHandleMultipartDEKBackfill_NotConfigured covers the 503 path taken
+// when proxy-side encryption is disabled. The backfill worker is only
+// registered with DI when encryption is on, so a request against an
+// unencrypted deployment must surface a clean 503.
+func TestHandleMultipartDEKBackfill_NotConfigured(t *testing.T) {
+	t.Parallel()
+	h := newTestHandlerWithManager(t)
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, doAuth(http.MethodPost, "/admin/api/multipart-dek-backfill", ""))
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503; body=%s", w.Code, w.Body.String())
+	}
+}
+
 // TestHandleStartDrain_UnknownBackend drains a backend that doesn't exist;
 // DrainManager should return an error and handleStartDrain translates to 400.
 func TestHandleStartDrain_UnknownBackend(t *testing.T) {

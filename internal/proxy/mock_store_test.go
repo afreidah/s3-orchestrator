@@ -57,16 +57,20 @@ type mockStore struct {
 	advisoryLockBlocked bool
 
 	// Multipart
-	createMultipartErr    error
-	getMultipartResp      *core.MultipartUpload
-	getMultipartErr       error
-	getPartsResp          []core.MultipartPart
-	getPartsErr           error
-	deleteMultipartErr    error
-	deleteMultipartCalled bool
-	recordPartErr         error
-	getStaleMultipartResp []core.MultipartUpload
-	getStaleMultipartErr  error
+	createMultipartErr        error
+	getMultipartResp          *core.MultipartUpload
+	getMultipartErr           error
+	getPartsResp              []core.MultipartPart
+	getPartsErr               error
+	deleteMultipartErr        error
+	deleteMultipartCalled     bool
+	recordPartErr             error
+	getStaleMultipartResp     []core.MultipartUpload
+	getStaleMultipartErr      error
+	legacyMultipartResp       []core.MultipartUpload
+	legacyMultipartErr        error
+	updateUploadEncryptionErr error
+	updatePartEncryptionErr   error
 
 	// Dashboard / background
 	getQuotaStatsResp      map[string]core.QuotaStat
@@ -360,10 +364,28 @@ func (m *mockStore) ListObjects(_ context.Context, _, startAfter string, _ int) 
 	return m.listObjectsResp, nil
 }
 
-func (m *mockStore) CreateMultipartUpload(_ context.Context, _, _, _, _ string, _ map[string]string) error {
+func (m *mockStore) CreateMultipartUpload(_ context.Context, _ *core.CreateMultipartUploadParams) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.createMultipartErr
+}
+
+func (m *mockStore) ListLegacyMultipartUploads(_ context.Context, _ int) ([]core.MultipartUpload, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.legacyMultipartResp, m.legacyMultipartErr
+}
+
+func (m *mockStore) UpdateUploadEncryption(_ context.Context, _ string, _ []byte, _ string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.updateUploadEncryptionErr
+}
+
+func (m *mockStore) UpdatePartEncryption(_ context.Context, _ string, _ int, _ int64, _ *core.EncryptionMeta) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.updatePartEncryptionErr
 }
 
 func (m *mockStore) GetMultipartUpload(_ context.Context, _ string) (*core.MultipartUpload, error) {

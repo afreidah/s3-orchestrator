@@ -245,7 +245,13 @@ func seedMultipartUpload(t *testing.T, s *Store, contentType string, metadata ma
 	ctx := context.Background()
 	uploadID = uniqueKey(t, "upload")
 	key = uniqueKey(t, "k")
-	if err := s.CreateMultipartUpload(ctx, uploadID, key, "backend-a", contentType, metadata); err != nil {
+	if err := s.CreateMultipartUpload(ctx, &core.CreateMultipartUploadParams{
+		UploadID:    uploadID,
+		ObjectKey:   key,
+		BackendName: "backend-a",
+		ContentType: contentType,
+		Metadata:    metadata,
+	}); err != nil {
 		t.Fatalf("CreateMultipartUpload: %v", err)
 	}
 	t.Cleanup(func() { _ = s.DeleteMultipartUpload(context.Background(), uploadID) })
@@ -364,7 +370,11 @@ func TestStoreInt_RecordPart_PreservesEncryptionFields(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	uploadID := uniqueKey(t, "upload")
-	if err := s.CreateMultipartUpload(ctx, uploadID, uniqueKey(t, "k"), "backend-a", "", nil); err != nil {
+	if err := s.CreateMultipartUpload(ctx, &core.CreateMultipartUploadParams{
+		UploadID:    uploadID,
+		ObjectKey:   uniqueKey(t, "k"),
+		BackendName: "backend-a",
+	}); err != nil {
 		t.Fatalf("CreateMultipartUpload: %v", err)
 	}
 	defer func() { _ = s.DeleteMultipartUpload(ctx, uploadID) }()

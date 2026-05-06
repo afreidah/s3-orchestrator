@@ -488,7 +488,13 @@ func TestCircuitBreaker_CreateMultipartUpload_Success(t *testing.T) {
 	mock := &mockStore{}
 	cb := newTestCB(mock, 3, time.Minute)
 
-	err := cb.CreateMultipartUpload(context.Background(), "upload-1", "key", "b1", "application/octet-stream", map[string]string{"project": "acme"})
+	err := cb.CreateMultipartUpload(context.Background(), &core.CreateMultipartUploadParams{
+		UploadID:    "upload-1",
+		ObjectKey:   "key",
+		BackendName: "b1",
+		ContentType: "application/octet-stream",
+		Metadata:    map[string]string{"project": "acme"},
+	})
 	if err != nil {
 		t.Fatalf("CreateMultipartUpload: %v", err)
 	}
@@ -505,7 +511,12 @@ func TestCircuitBreaker_CreateMultipartUpload_CircuitOpen(t *testing.T) {
 	// Trip the circuit
 	_, _ = cb.GetAllObjectLocations(context.Background(), "key")
 
-	err := cb.CreateMultipartUpload(context.Background(), "upload-1", "key", "b1", "application/octet-stream", nil)
+	err := cb.CreateMultipartUpload(context.Background(), &core.CreateMultipartUploadParams{
+		UploadID:    "upload-1",
+		ObjectKey:   "key",
+		BackendName: "b1",
+		ContentType: "application/octet-stream",
+	})
 	if !errors.Is(err, core.ErrDBUnavailable) {
 		t.Fatalf("expected ErrDBUnavailable, got %v", err)
 	}

@@ -126,6 +126,7 @@ func NewInjector(cfg *config.Config, mode string, logLevel *slog.LevelVar, logBu
 	if cfg.Encryption.Enabled {
 		do.Provide(inj, ProvideEncryptor)
 		do.Provide(inj, ProvideEncryptionProvider)
+		do.Provide(inj, ProvideMultipartBackfill)
 	}
 	if cfg.Redis != nil {
 		do.Provide(inj, ProvideRedisCounterBackend)
@@ -633,6 +634,41 @@ func ProvideScrubber(i do.Injector) (*worker.Scrubber, error) {
 	sc := worker.NewScrubber(mgr, integrity, enc)
 	mgr.Scrubber = sc
 	return sc, nil
+}
+
+// multipartBackfillStoreAdapter composes the two narrow per-role
+// interfaces the backfill worker needs into a single value satisfying
+// worker.MultipartBackfillStore. The MultipartStore field is the CB-
+// protected view; the AdvisoryLocker hits Postgres directly because
+// multi-instance coordination is the locker's whole point.
+type multipartBackfillStoreAdapter struct {
+	core.MultipartStore
+	core.AdvisoryLocker
+}
+
+// ProvideMultipartBackfill constructs the legacy-multipart-DEK migration
+// worker. Registered only when encryption is enabled because legacy
+// rows can only exist when the proxy was previously running with
+// encryption configured.
+func ProvideMultipartBackfill(i do.Injector) (*worker.MultipartBackfill, error) {
+	mgr, err := do.Invoke[*proxy.BackendManager](i)
+	if err != nil {
+		return nil, err
+	}
+	mp, err := do.Invoke[core.MultipartStore](i)
+	if err != nil {
+		return nil, err
+	}
+	locker, err := do.Invoke[core.AdvisoryLocker](i)
+	if err != nil {
+		return nil, err
+	}
+	enc, err := do.Invoke[*encryption.Encryptor](i)
+	if err != nil {
+		return nil, err
+	}
+	store := &multipartBackfillStoreAdapter{MultipartStore: mp, AdvisoryLocker: locker}
+	return worker.NewMultipartBackfill(store, enc, mgr.GetBackend, worker.MultipartBackfillConfig{}), nil
 }
 
 // ProvideDrainManager constructs the drain manager. Depends on
@@ -1332,26 +1368,34 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 		reconciler = r
 	}
 
+	// MultipartBackfill is optional: only registered when encryption is
+	// enabled (legacy rows can only exist under that mode).
+	var mpBackfill *worker.MultipartBackfill
+	if mb, err := do.Invoke[*worker.MultipartBackfill](i); err == nil {
+		mpBackfill = mb
+	}
+
 	adminToken := cfg.UI.AdminToken
 	if adminToken == "" {
 		adminToken = cfg.UI.AdminKey
 	}
 
 	return admin.New(&admin.Deps{
-		BackendOps: manager,
-		Replicator: deps.replicator,
-		OverRep:    deps.overRep,
-		Drain:      deps.drain,
-		Scrubber:   deps.scrubber,
-		Lifecycle:  deps.lifecycle,
-		DBCB:       cb,
-		Encryption: encAdmin,
-		Objects:    deps.objects,
-		Cleanup:    deps.cleanup,
-		Encryptor:  enc,
-		Reconciler: reconciler,
-		Token:      adminToken,
-		LogLevel:   logLevel,
+		BackendOps:        manager,
+		Replicator:        deps.replicator,
+		OverRep:           deps.overRep,
+		Drain:             deps.drain,
+		Scrubber:          deps.scrubber,
+		Lifecycle:         deps.lifecycle,
+		DBCB:              cb,
+		Encryption:        encAdmin,
+		Objects:           deps.objects,
+		Cleanup:           deps.cleanup,
+		Encryptor:         enc,
+		Reconciler:        reconciler,
+		MultipartBackfill: mpBackfill,
+		Token:             adminToken,
+		LogLevel:          logLevel,
 	}), nil
 }
 

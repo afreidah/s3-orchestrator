@@ -32,9 +32,9 @@ func NewCBMultipartStore(inner core.MultipartStore, cb *breaker.CircuitBreaker) 
 }
 
 // CreateMultipartUpload forwards to the inner store under the breaker.
-func (c *cbMultipartStore) CreateMultipartUpload(ctx context.Context, uploadID, key, backend, contentType string, metadata map[string]string) error {
+func (c *cbMultipartStore) CreateMultipartUpload(ctx context.Context, params *core.CreateMultipartUploadParams) error {
 	return breaker.CBCallNoResult(c.cb, func() error {
-		return c.inner.CreateMultipartUpload(ctx, uploadID, key, backend, contentType, metadata)
+		return c.inner.CreateMultipartUpload(ctx, params)
 	})
 }
 
@@ -76,4 +76,23 @@ func (c *cbMultipartStore) GetStaleMultipartUploads(ctx context.Context, olderTh
 // GetMultipartUploadsByBackend forwards to the inner store under the breaker.
 func (c *cbMultipartStore) GetMultipartUploadsByBackend(ctx context.Context, backendName string) ([]core.MultipartUpload, error) {
 	return breaker.CBCall(c.cb, func() ([]core.MultipartUpload, error) { return c.inner.GetMultipartUploadsByBackend(ctx, backendName) })
+}
+
+// ListLegacyMultipartUploads forwards to the inner store under the breaker.
+func (c *cbMultipartStore) ListLegacyMultipartUploads(ctx context.Context, limit int) ([]core.MultipartUpload, error) {
+	return breaker.CBCall(c.cb, func() ([]core.MultipartUpload, error) { return c.inner.ListLegacyMultipartUploads(ctx, limit) })
+}
+
+// UpdateUploadEncryption forwards to the inner store under the breaker.
+func (c *cbMultipartStore) UpdateUploadEncryption(ctx context.Context, uploadID string, encryptionKey []byte, keyID string) error {
+	return breaker.CBCallNoResult(c.cb, func() error {
+		return c.inner.UpdateUploadEncryption(ctx, uploadID, encryptionKey, keyID)
+	})
+}
+
+// UpdatePartEncryption forwards to the inner store under the breaker.
+func (c *cbMultipartStore) UpdatePartEncryption(ctx context.Context, uploadID string, partNumber int, sizeBytes int64, enc *core.EncryptionMeta) error {
+	return breaker.CBCallNoResult(c.cb, func() error {
+		return c.inner.UpdatePartEncryption(ctx, uploadID, partNumber, sizeBytes, enc)
+	})
 }

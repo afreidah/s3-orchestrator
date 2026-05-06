@@ -137,13 +137,25 @@ type UsageStat struct {
 // -------------------------------------------------------------------------
 
 // MultipartUpload describes an active multipart upload's metadata.
+//
+// EncryptionKey, KeyID, and Encrypted carry the upload-level wrapped
+// DEK shared across every part of an encrypted multipart upload.
+// Encrypted is true when EncryptionKey is non-empty. EncryptionKey
+// uses the same packed format as MultipartPart.EncryptionKey and
+// ObjectLocation.EncryptionKey: encryption.PackKeyData(baseNonce,
+// wrappedDEK). Rows created before migration 00010 may have these
+// empty; the multipart_dek_backfill worker rebuilds those parts under
+// a freshly-generated upload-level DEK and populates the fields.
 type MultipartUpload struct {
-	UploadID    string
-	ObjectKey   string
-	BackendName string
-	ContentType string
-	Metadata    map[string]string
-	CreatedAt   time.Time
+	UploadID      string
+	ObjectKey     string
+	BackendName   string
+	ContentType   string
+	Metadata      map[string]string
+	Encrypted     bool
+	EncryptionKey []byte
+	KeyID         string
+	CreatedAt     time.Time
 }
 
 // MultipartPart describes a single uploaded part of an active upload.

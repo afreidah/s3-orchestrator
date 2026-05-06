@@ -56,12 +56,14 @@ CREATE INDEX IF NOT EXISTS idx_object_locations_key_created
 
 -- Track in-progress multipart uploads.
 CREATE TABLE IF NOT EXISTS multipart_uploads (
-    upload_id    TEXT PRIMARY KEY,
-    object_key   TEXT NOT NULL,
-    backend_name TEXT NOT NULL REFERENCES backend_quotas(backend_name),
-    content_type TEXT,
-    metadata     TEXT,
-    created_at   TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    upload_id      TEXT PRIMARY KEY,
+    object_key     TEXT NOT NULL,
+    backend_name   TEXT NOT NULL REFERENCES backend_quotas(backend_name),
+    content_type   TEXT,
+    metadata       TEXT,
+    encryption_key BLOB,
+    key_id         TEXT,
+    created_at     TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_multipart_uploads_created
