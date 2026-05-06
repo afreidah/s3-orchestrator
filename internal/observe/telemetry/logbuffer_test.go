@@ -289,6 +289,43 @@ func TestTeeHandler_WritesToBoth(t *testing.T) {
 	}
 }
 
+// teeBufErr is the kind of error that pre-fix code path stored in the
+// ring buffer as a struct, which json.Marshal then rendered as "{}" and
+// the UI displayed as "[object Object]". Has no exported fields and no
+// MarshalJSON, exactly matching the production failure mode.
+type teeBufErr struct{ msg string }
+
+// Error returns the wrapped message.
+func (e *teeBufErr) Error() string { return e.msg }
+
+// TestTeeHandler_StringifiesErrorAttr pins the contract that error-typed
+// attrs land in the ring buffer as their Error() string rather than as
+// the raw error struct, so the UI's /ui/api/logs endpoint emits a
+// printable string instead of the empty-object that renders as
+// "[object Object]" downstream.
+func TestTeeHandler_StringifiesErrorAttr(t *testing.T) {
+	t.Parallel()
+	var stdout bytes.Buffer
+	jsonHandler := slog.NewJSONHandler(&stdout, &slog.HandlerOptions{Level: slog.LevelDebug})
+	buf := NewLogBuffer()
+
+	logger := slog.New(NewTeeHandler(jsonHandler, buf))
+	logger.WarnContext(context.Background(), "HEAD probe failed",
+		"backend", "e2", "error", &teeBufErr{msg: "vault token expired"})
+
+	entries := buf.Entries(&LogQueryOpts{})
+	if len(entries) != 1 {
+		t.Fatalf("buffer has %d entries, want 1", len(entries))
+	}
+	got, ok := entries[0].Attrs["error"].(string)
+	if !ok {
+		t.Fatalf("error attr type = %T, want string", entries[0].Attrs["error"])
+	}
+	if got != "vault token expired" {
+		t.Errorf("error attr = %q, want %q", got, "vault token expired")
+	}
+}
+
 // TestTeeHandler_WithAttrs verifies the tee handler with attrs contract.
 // Asserts that buffer has entries, want 1.
 func TestTeeHandler_WithAttrs(t *testing.T) {
