@@ -28,7 +28,6 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
-	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 )
 
 // keyTTL is applied to Redis counter keys on creation. Set to 35 days so
@@ -348,7 +347,7 @@ func (r *RedisCounterBackend) tryRecover() {
 		for name, d := range allDeltas {
 			r.local.AddAll(name, d.APIRequests, d.EgressBytes, d.IngressBytes)
 		}
-		slog.WarnContext(context.Background(), "Redis recovery pipeline failed, will retry", logfmt.Err(err))
+		slog.WarnContext(context.Background(), "Redis recovery pipeline failed, will retry", "error", err)
 		return
 	}
 
@@ -391,7 +390,7 @@ func (r *RedisCounterBackend) notePostCheck(op string, opErr error) {
 	if cbErr := r.cb.PostCheck(opErr); cbErr != nil {
 		telemetry.CircuitBreakerInternalErrorsTotal.WithLabelValues("redis", op).Inc()
 		slog.WarnContext(context.Background(), "Redis circuit breaker PostCheck reported error",
-			"operation", op, logfmt.Err(cbErr))
+			"operation", op, "error", cbErr)
 	}
 }
 

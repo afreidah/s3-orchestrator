@@ -47,7 +47,6 @@ import (
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
-	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/workerpool"
@@ -155,7 +154,7 @@ func (b *MultipartBackfill) Run(ctx context.Context) (migrated int, err error) {
 			mu := &legacy[idx]
 			if rebuildErr := b.rebuildOne(ctx, mu); rebuildErr != nil {
 				slog.WarnContext(ctx, "multipart_dek_backfill: skipping upload",
-					"upload_id", mu.UploadID, logfmt.Err(rebuildErr))
+					"upload_id", mu.UploadID, "error", rebuildErr)
 				telemetry.MultipartDEKBackfillTotal.WithLabelValues("error").Inc()
 				return
 			}
@@ -377,7 +376,7 @@ func (b *MultipartBackfill) RunPeriodic(ctx context.Context, interval time.Durat
 		case <-ticker.C:
 			if _, err := b.Run(ctx); err != nil {
 				slog.WarnContext(ctx, "multipart_dek_backfill: periodic run failed",
-					logfmt.Err(err))
+					"error", err)
 			}
 		}
 	}

@@ -550,7 +550,7 @@ func (r *Rebalancer) ExecuteOneMove(ctx context.Context, move RebalanceMove, str
 	// --- Stream source to destination ---
 	if err := r.ops.StreamCopy(ctx, srcBackend, destBackend, move.ObjectKey); err != nil {
 		r.log.WarnContext(ctx, "stream copy failed",
-			"key", move.ObjectKey, "from", move.FromBackend, "to", move.ToBackend, logfmt.Err(err))
+			"key", move.ObjectKey, "from", move.FromBackend, "to", move.ToBackend, "error", err)
 		telemetry.RebalanceObjectsMoved.WithLabelValues(strategy, "error").Inc()
 		return false
 	}
@@ -559,7 +559,7 @@ func (r *Rebalancer) ExecuteOneMove(ctx context.Context, move RebalanceMove, str
 	movedSize, err := r.store.MoveObjectLocation(ctx, move.ObjectKey, move.FromBackend, move.ToBackend)
 	if err != nil {
 		r.log.ErrorContext(ctx, "failed to update object location",
-			"key", move.ObjectKey, logfmt.Err(err))
+			"key", move.ObjectKey, "error", err)
 		// Clean up orphan on destination
 		r.ops.DeleteOrEnqueue(ctx, destBackend, move.ToBackend, move.ObjectKey, "rebalance_orphan", move.SizeBytes)
 		r.ops.Usage().Record(move.ToBackend, 1, 0, 0)

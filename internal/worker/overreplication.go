@@ -110,7 +110,7 @@ func (c *OverReplicationCleaner) clean(ctx context.Context, cfg config.Replicati
 	quotaStats, qErr := c.store.GetQuotaStats(ctx)
 	if qErr != nil {
 		c.log.WarnContext(ctx, "failed to get quota stats, scoring without utilization",
-			logfmt.Err(qErr))
+			"error", qErr)
 	}
 
 	// --- Group locations by object key ---
@@ -232,7 +232,7 @@ func (c *OverReplicationCleaner) cleanObject(ctx context.Context, key string, co
 		// cleanup queue handles the orphan.
 		if err := c.store.RemoveExcessCopy(ctx, key, victim.BackendName, victim.SizeBytes); err != nil {
 			c.log.WarnContext(ctx, "failed to remove metadata",
-				"key", key, "backend", victim.BackendName, logfmt.Err(err))
+				"key", key, "backend", victim.BackendName, "error", err)
 			telemetry.OverReplicationErrorsTotal.Inc()
 			continue
 		}

@@ -16,8 +16,6 @@ import (
 	"encoding/json"
 	"maps"
 	"net/http"
-
-	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
 )
 
@@ -59,7 +57,7 @@ func (h *Handler) startAdminAction(w http.ResponseWriter, r *http.Request, op ad
 		count, extra, skipped, err := op.run(ctx)
 		switch {
 		case err != nil:
-			h.log.ErrorContext(ctx, op.name+" failed", logfmt.Err(err))
+			h.log.ErrorContext(ctx, op.name+" failed", "error", err)
 			h.asyncOps.Complete(op.name, &asyncResult{Error: op.name + " failed"})
 		case skipped != "":
 			h.log.InfoContext(ctx, op.name+" skipped", "reason", skipped)

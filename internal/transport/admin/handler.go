@@ -170,7 +170,7 @@ func (h *Handler) requireToken(next http.HandlerFunc) http.HandlerFunc {
 func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 	data, err := h.backendOps.GetDashboardData(r.Context())
 	if err != nil {
-		h.log.ErrorContext(r.Context(), "failed to fetch status", logfmt.Err(err))
+		h.log.ErrorContext(r.Context(), "failed to fetch status", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch status"})
 		return
 	}
@@ -220,7 +220,7 @@ func (h *Handler) handleObjectLocations(w http.ResponseWriter, r *http.Request) 
 
 	locations, err := h.objects.GetAllObjectLocations(r.Context(), key)
 	if err != nil {
-		h.log.ErrorContext(r.Context(), "failed to fetch object locations", slog.String("key", key), logfmt.Err(err))
+		h.log.ErrorContext(r.Context(), "failed to fetch object locations", slog.String("key", key), "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch locations"})
 		return
 	}
@@ -232,14 +232,14 @@ func (h *Handler) handleObjectLocations(w http.ResponseWriter, r *http.Request) 
 func (h *Handler) handleCleanupQueue(w http.ResponseWriter, r *http.Request) {
 	depth, err := h.cleanup.CleanupQueueDepth(r.Context())
 	if err != nil {
-		h.log.ErrorContext(r.Context(), "failed to fetch cleanup queue depth", logfmt.Err(err))
+		h.log.ErrorContext(r.Context(), "failed to fetch cleanup queue depth", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch cleanup queue"})
 		return
 	}
 
 	items, err := h.cleanup.GetPendingCleanups(r.Context(), 50)
 	if err != nil {
-		h.log.ErrorContext(r.Context(), "failed to fetch pending cleanups", logfmt.Err(err))
+		h.log.ErrorContext(r.Context(), "failed to fetch pending cleanups", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch cleanup queue"})
 		return
 	}
@@ -250,7 +250,7 @@ func (h *Handler) handleCleanupQueue(w http.ResponseWriter, r *http.Request) {
 // handleUsageFlush forces a flush of usage counters to the database.
 func (h *Handler) handleUsageFlush(w http.ResponseWriter, r *http.Request) {
 	if err := h.backendOps.FlushUsage(r.Context()); err != nil {
-		h.log.ErrorContext(r.Context(), "usage flush failed", logfmt.Err(err))
+		h.log.ErrorContext(r.Context(), "usage flush failed", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "flush failed"})
 		return
 	}
@@ -281,7 +281,7 @@ func (h *Handler) Replicate(ctx context.Context) (ReplicateResult, error) {
 	}
 
 	if mErr := h.backendOps.UpdateQuotaMetrics(ctx); mErr != nil {
-		h.log.WarnContext(ctx, "failed to update quota metrics after replicate", logfmt.Err(mErr))
+		h.log.WarnContext(ctx, "failed to update quota metrics after replicate", "error", mErr)
 	}
 
 	return ReplicateResult{Status: "ok", CopiesCreated: created}, nil
@@ -291,7 +291,7 @@ func (h *Handler) Replicate(ctx context.Context) (ReplicateResult, error) {
 func (h *Handler) handleReplicate(w http.ResponseWriter, r *http.Request) {
 	res, err := h.Replicate(r.Context())
 	if err != nil {
-		h.log.ErrorContext(r.Context(), "replication failed", logfmt.Err(err))
+		h.log.ErrorContext(r.Context(), "replication failed", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "replication failed"})
 		return
 	}
@@ -322,7 +322,7 @@ func (h *Handler) handleOverReplicationStatus(w http.ResponseWriter, r *http.Req
 
 	count, err := h.overRep.CountPending(r.Context(), rcfg.Factor)
 	if err != nil {
-		h.log.ErrorContext(r.Context(), "failed to count over-replicated objects", logfmt.Err(err))
+		h.log.ErrorContext(r.Context(), "failed to count over-replicated objects", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to count over-replicated objects"})
 		return
 	}
@@ -359,13 +359,13 @@ func (h *Handler) handleOverReplicationClean(w http.ResponseWriter, r *http.Requ
 
 	removed, err := h.overRep.Clean(r.Context(), cfg)
 	if err != nil {
-		h.log.ErrorContext(r.Context(), "over-replication cleanup failed", logfmt.Err(err))
+		h.log.ErrorContext(r.Context(), "over-replication cleanup failed", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "over-replication cleanup failed"})
 		return
 	}
 
 	if err := h.backendOps.UpdateQuotaMetrics(r.Context()); err != nil {
-		h.log.WarnContext(r.Context(), "failed to update quota metrics after admin over-replication cleanup", logfmt.Err(err))
+		h.log.WarnContext(r.Context(), "failed to update quota metrics after admin over-replication cleanup", "error", err)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "copies_removed": removed})
@@ -400,7 +400,7 @@ func (h *Handler) handleLogLevel(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleStartDrain(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if err := h.drain.StartDrain(r.Context(), name); err != nil {
-		h.log.ErrorContext(r.Context(), "drain start failed", slog.String("backend", name), logfmt.Err(err))
+		h.log.ErrorContext(r.Context(), "drain start failed", slog.String("backend", name), "error", err)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": errDrainOperationFailed})
 		return
 	}
@@ -412,7 +412,7 @@ func (h *Handler) handleDrainProgress(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	progress, err := h.drain.GetDrainProgress(r.Context(), name)
 	if err != nil {
-		h.log.ErrorContext(r.Context(), "drain progress failed", slog.String("backend", name), logfmt.Err(err))
+		h.log.ErrorContext(r.Context(), "drain progress failed", slog.String("backend", name), "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": errDrainOperationFailed})
 		return
 	}
@@ -423,7 +423,7 @@ func (h *Handler) handleDrainProgress(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleCancelDrain(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if err := h.drain.CancelDrain(name); err != nil {
-		h.log.ErrorContext(r.Context(), "drain cancel failed", slog.String("backend", name), logfmt.Err(err))
+		h.log.ErrorContext(r.Context(), "drain cancel failed", slog.String("backend", name), "error", err)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": errDrainOperationFailed})
 		return
 	}
@@ -449,7 +449,7 @@ func (h *Handler) handleRemoveBackend(w http.ResponseWriter, r *http.Request) {
 	// Non-purge removal: drop DB records immediately (reversible via sync)
 	if !purge {
 		if err := h.drain.RemoveBackend(r.Context(), name, false); err != nil {
-			h.log.ErrorContext(r.Context(), "remove backend failed", slog.String("backend", name), logfmt.Err(err))
+			h.log.ErrorContext(r.Context(), "remove backend failed", slog.String("backend", name), "error", err)
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "remove failed"})
 			return
 		}
@@ -464,7 +464,7 @@ func (h *Handler) handleRemoveBackend(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := h.drain.RemoveBackend(r.Context(), name, true); err != nil {
-			h.log.ErrorContext(r.Context(), "purge backend failed", slog.String("backend", name), logfmt.Err(err))
+			h.log.ErrorContext(r.Context(), "purge backend failed", slog.String("backend", name), "error", err)
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "purge failed"})
 			return
 		}
@@ -563,7 +563,7 @@ func (h *Handler) handleRotateEncryptionKey(w http.ResponseWriter, r *http.Reque
 	for offset := 0; ; offset += batchSize {
 		locs, err := h.encAdmin.ListEncryptedLocations(ctx, req.OldKeyID, batchSize, offset)
 		if err != nil {
-			h.log.ErrorContext(ctx, "key rotation list failed", logfmt.Err(err))
+			h.log.ErrorContext(ctx, "key rotation list failed", "error", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list encrypted objects"})
 			return
 		}
@@ -607,28 +607,28 @@ func (h *Handler) rotateBatch(ctx context.Context, locs []core.EncryptedLocation
 func (h *Handler) rotateOneLocation(ctx context.Context, loc core.EncryptedLocation) bool {
 	baseNonce, wrappedDEK, unpackErr := encryption.UnpackKeyData(loc.EncryptionKey)
 	if unpackErr != nil {
-		h.log.WarnContext(ctx, "unpack failed", slog.String("key", loc.ObjectKey), logfmt.Err(unpackErr))
+		h.log.WarnContext(ctx, "unpack failed", slog.String("key", loc.ObjectKey), "error", unpackErr)
 		telemetry.KeyRotationObjectsTotal.WithLabelValues("error").Inc()
 		return false
 	}
 
 	dek, unwrapErr := h.encryptor.Provider().UnwrapDEK(ctx, wrappedDEK, loc.KeyID)
 	if unwrapErr != nil {
-		h.log.WarnContext(ctx, "unwrap failed", "key", loc.ObjectKey, logfmt.Err(unwrapErr))
+		h.log.WarnContext(ctx, "unwrap failed", "key", loc.ObjectKey, "error", unwrapErr)
 		telemetry.KeyRotationObjectsTotal.WithLabelValues("error").Inc()
 		return false
 	}
 
 	newWrapped, newKeyID, wrapErr := h.encryptor.Provider().WrapDEK(ctx, dek)
 	if wrapErr != nil {
-		h.log.WarnContext(ctx, "wrap failed", "key", loc.ObjectKey, logfmt.Err(wrapErr))
+		h.log.WarnContext(ctx, "wrap failed", "key", loc.ObjectKey, "error", wrapErr)
 		telemetry.KeyRotationObjectsTotal.WithLabelValues("error").Inc()
 		return false
 	}
 
 	newKeyData := encryption.PackKeyData(baseNonce, newWrapped)
 	if err := h.encAdmin.UpdateEncryptionKey(ctx, loc.ObjectKey, loc.BackendName, newKeyData, newKeyID); err != nil {
-		h.log.WarnContext(ctx, "update failed", "key", loc.ObjectKey, logfmt.Err(err))
+		h.log.WarnContext(ctx, "update failed", "key", loc.ObjectKey, "error", err)
 		telemetry.KeyRotationObjectsTotal.WithLabelValues("error").Inc()
 		return false
 	}
@@ -829,7 +829,7 @@ func runBulkRewriteCounts[L bulkRewriteRow](h *Handler, ctx context.Context, op 
 	for offset := 0; ; offset += batchSize {
 		rows, err := op.listFn(ctx, batchSize, offset)
 		if err != nil {
-			h.log.ErrorContext(ctx, "Admin: "+op.opName+" list failed", logfmt.Err(err))
+			h.log.ErrorContext(ctx, "Admin: "+op.opName+" list failed", "error", err)
 			return BulkRewriteResult{Status: "skipped", Reason: op.listErrMsg, Success: success, Failed: failed, Total: total}
 		}
 		if len(rows) == 0 {
@@ -863,7 +863,7 @@ func processBulkLocation[L bulkRewriteRow](h *Handler, ctx context.Context, op b
 
 	be, err := h.backendOps.GetBackend(backendName)
 	if err != nil {
-		h.log.WarnContext(ctx, op.logTag+": backend not found", "key", key, "backend", backendName, logfmt.Err(err))
+		h.log.WarnContext(ctx, op.logTag+": backend not found", "key", key, "backend", backendName, "error", err)
 		op.counter.WithLabelValues("error").Inc()
 		return false
 	}
@@ -871,7 +871,7 @@ func processBulkLocation[L bulkRewriteRow](h *Handler, ctx context.Context, op b
 	src, err := be.GetObject(ctx, key, "")
 	if err != nil {
 		h.backendOps.RecordUsage(backendName, 1, 0, 0)
-		h.log.WarnContext(ctx, op.logTag+": download failed", "key", key, "backend", backendName, logfmt.Err(err))
+		h.log.WarnContext(ctx, op.logTag+": download failed", "key", key, "backend", backendName, "error", err)
 		op.counter.WithLabelValues("error").Inc()
 		return false
 	}
@@ -880,7 +880,7 @@ func processBulkLocation[L bulkRewriteRow](h *Handler, ctx context.Context, op b
 	body, putSize, dbUpdate, err := op.rewrite(ctx, src, loc)
 	if err != nil {
 		src.Body.Close()
-		h.log.WarnContext(ctx, op.logTag+": transform failed", "key", key, logfmt.Err(err))
+		h.log.WarnContext(ctx, op.logTag+": transform failed", "key", key, "error", err)
 		op.counter.WithLabelValues("error").Inc()
 		return false
 	}
@@ -889,14 +889,14 @@ func processBulkLocation[L bulkRewriteRow](h *Handler, ctx context.Context, op b
 	src.Body.Close()
 	if err != nil {
 		h.backendOps.RecordUsage(backendName, 1, 0, 0)
-		h.log.WarnContext(ctx, op.logTag+": re-upload failed", "key", key, "backend", backendName, logfmt.Err(err))
+		h.log.WarnContext(ctx, op.logTag+": re-upload failed", "key", key, "backend", backendName, "error", err)
 		op.counter.WithLabelValues("error").Inc()
 		return false
 	}
 	h.backendOps.RecordUsage(backendName, 1, 0, putSize)
 
 	if err := dbUpdate(); err != nil {
-		h.log.WarnContext(ctx, op.logTag+": DB update failed", "key", key, logfmt.Err(err))
+		h.log.WarnContext(ctx, op.logTag+": DB update failed", "key", key, "error", err)
 		op.counter.WithLabelValues("error").Inc()
 		return false
 	}
@@ -1020,7 +1020,7 @@ func (h *Handler) handleMultipartDEKBackfill(w http.ResponseWriter, r *http.Requ
 	migrated, err := h.multipartBackfill.RunOnce(r.Context())
 	if err != nil {
 		h.log.ErrorContext(r.Context(), "multipart DEK backfill failed",
-			"migrated", migrated, logfmt.Err(err))
+			"migrated", migrated, "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]any{
 			"error":    err.Error(),
 			"migrated": migrated,
@@ -1048,7 +1048,7 @@ func (h *Handler) handleReconcile(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.reconciler.Reconcile(r.Context(), backendName)
 	if err != nil {
-		h.log.ErrorContext(r.Context(), "reconcile failed", logfmt.Err(err))
+		h.log.ErrorContext(r.Context(), "reconcile failed", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
@@ -1074,6 +1074,6 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(v); err != nil {
-		slog.Error("failed to encode JSON response", logfmt.Err(err)) //nolint:sloglint,gosec // standalone helper, no request context; err is internal encoder failure, not user-controlled
+		slog.Error("failed to encode JSON response", "error", err) //nolint:sloglint,gosec // standalone helper, no request context; err is internal encoder failure, not user-controlled
 	}
 }

@@ -77,7 +77,7 @@ func (s *Scrubber) Scrub(ctx context.Context, batchSize int) (checked, failed in
 
 	locs, err := s.store.GetRandomHashedObjects(ctx, batchSize)
 	if err != nil {
-		s.log.ErrorContext(ctx, "failed to fetch objects", logfmt.Err(err))
+		s.log.ErrorContext(ctx, "failed to fetch objects", "error", err)
 		return 0, 0
 	}
 
@@ -88,7 +88,7 @@ func (s *Scrubber) Scrub(ctx context.Context, batchSize int) (checked, failed in
 		match, verifyErr := s.verifyObject(ctx, &locs[i])
 		if verifyErr != nil {
 			s.log.WarnContext(ctx, "failed to verify object",
-				"key", locs[i].ObjectKey, "backend", locs[i].BackendName, logfmt.Err(verifyErr))
+				"key", locs[i].ObjectKey, "backend", locs[i].BackendName, "error", verifyErr)
 			continue
 		}
 		checked++
@@ -144,7 +144,7 @@ func (s *Scrubber) Backfill(ctx context.Context, batchSize, offset int) (process
 
 	locs, err := s.store.GetObjectsWithoutHash(ctx, batchSize, offset)
 	if err != nil {
-		s.log.ErrorContext(ctx, "failed to fetch objects", logfmt.Err(err))
+		s.log.ErrorContext(ctx, "failed to fetch objects", "error", err)
 		return 0, 0
 	}
 
@@ -163,13 +163,13 @@ func (s *Scrubber) Backfill(ctx context.Context, batchSize, offset int) (process
 		hash, hashErr := s.readAndHash(ctx, loc)
 		if hashErr != nil {
 			s.log.WarnContext(ctx, "failed to hash object",
-				"key", loc.ObjectKey, "backend", loc.BackendName, logfmt.Err(hashErr))
+				"key", loc.ObjectKey, "backend", loc.BackendName, "error", hashErr)
 			continue
 		}
 
 		if err := s.store.UpdateContentHash(ctx, loc.ObjectKey, loc.BackendName, hash); err != nil {
 			s.log.WarnContext(ctx, "failed to store hash",
-				"key", loc.ObjectKey, "backend", loc.BackendName, logfmt.Err(err))
+				"key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
 			continue
 		}
 

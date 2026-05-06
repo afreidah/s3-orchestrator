@@ -65,7 +65,7 @@ func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) (processed, fai
 
 	items, err := w.store.GetPendingCleanups(ctx, 50)
 	if err != nil {
-		w.log.ErrorContext(ctx, "failed to fetch pending cleanups", logfmt.Err(err))
+		w.log.ErrorContext(ctx, "failed to fetch pending cleanups", "error", err)
 		return 0, 0
 	}
 
@@ -121,7 +121,7 @@ func (w *CleanupWorker) completeUnknownBackendItem(ctx context.Context, item cor
 	w.log.WarnContext(ctx, "backend not found, removing item",
 		"backend", item.BackendName, "key", item.ObjectKey)
 	if err := w.store.CompleteCleanupItem(ctx, item.ID); err != nil {
-		w.log.ErrorContext(ctx, "failed to complete cleanup item", slog.Int64("cleanup_id", item.ID), logfmt.Err(err))
+		w.log.ErrorContext(ctx, "failed to complete cleanup item", slog.Int64("cleanup_id", item.ID), "error", err)
 	}
 	telemetry.CleanupQueueProcessedTotal.WithLabelValues("success").Inc()
 	processedCount.Add(1)
@@ -132,14 +132,14 @@ func (w *CleanupWorker) completeUnknownBackendItem(ctx context.Context, item cor
 // success counter.
 func (w *CleanupWorker) completeCleanupSuccess(ctx context.Context, item core.CleanupItem, processedCount *atomic.Int32) {
 	if err := w.store.CompleteCleanupItem(ctx, item.ID); err != nil {
-		w.log.ErrorContext(ctx, "failed to complete cleanup item", slog.Int64("cleanup_id", item.ID), logfmt.Err(err))
+		w.log.ErrorContext(ctx, "failed to complete cleanup item", slog.Int64("cleanup_id", item.ID), "error", err)
 	}
 	if item.SizeBytes > 0 {
 		if err := w.store.DecrementOrphanBytes(ctx, item.BackendName, item.SizeBytes); err != nil {
 			w.log.ErrorContext(ctx, "failed to decrement orphan bytes",
 				slog.String("backend", item.BackendName),
 				slog.Int64("size_bytes", item.SizeBytes),
-				logfmt.Err(err))
+				"error", err)
 		}
 	}
 	telemetry.CleanupQueueProcessedTotal.WithLabelValues("success").Inc()
@@ -167,11 +167,11 @@ func (w *CleanupWorker) exhaustCleanupToDLQ(
 		slog.String("backend", item.BackendName),
 		slog.Int("attempts", int(newAttempts)),
 		slog.Int64("size_bytes", item.SizeBytes),
-		logfmt.Err(delErr))
+		"error", delErr)
 	moved, mvErr := w.store.MoveCleanupToDLQ(ctx, item.ID, delErr.Error())
 	if mvErr != nil {
 		w.log.ErrorContext(ctx, "failed to move cleanup item to DLQ",
-			slog.Int64("cleanup_id", item.ID), logfmt.Err(mvErr))
+			slog.Int64("cleanup_id", item.ID), "error", mvErr)
 		telemetry.CleanupQueueProcessedTotal.WithLabelValues("exhausted").Inc()
 		failedCount.Add(1)
 		return
@@ -211,7 +211,7 @@ func (w *CleanupWorker) scheduleCleanupRetry(ctx context.Context, item core.Clea
 	telemetry.CleanupQueueProcessedTotal.WithLabelValues("retry").Inc()
 	backoff := CleanupBackoff(item.Attempts)
 	if err := w.store.RetryCleanupItem(ctx, item.ID, backoff, delErr.Error()); err != nil {
-		w.log.ErrorContext(ctx, "failed to update cleanup retry", "id", item.ID, logfmt.Err(err))
+		w.log.ErrorContext(ctx, "failed to update cleanup retry", "id", item.ID, "error", err)
 	}
 	failedCount.Add(1)
 }

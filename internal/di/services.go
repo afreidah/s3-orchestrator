@@ -22,7 +22,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
-	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -101,7 +100,7 @@ func (s *lockedTickerService) runOnce(ctx context.Context, fn func(ctx context.C
 		if s.onError != nil {
 			s.onError(err)
 		} else {
-			slog.ErrorContext(ctx, s.name+" failed", logfmt.Err(err))
+			slog.ErrorContext(ctx, s.name+" failed", "error", err)
 		}
 	}
 	if !acquired {
@@ -173,7 +172,7 @@ func (s *usageFlushService) flushTick(ctx context.Context) {
 				return nil
 			})
 		if err != nil && !errors.Is(err, core.ErrDBUnavailable) {
-			slog.ErrorContext(ctx, "usage flush failed", logfmt.Err(err))
+			slog.ErrorContext(ctx, "usage flush failed", "error", err)
 		}
 		if !acquired {
 			slog.DebugContext(ctx, "usage flush skipped, another instance holds the lock")
@@ -186,10 +185,10 @@ func (s *usageFlushService) flushTick(ctx context.Context) {
 // doFlush performs the actual flush and quota metric update.
 func (s *usageFlushService) doFlush(ctx context.Context) {
 	if err := s.manager.FlushUsage(ctx); err != nil && !errors.Is(err, core.ErrDBUnavailable) {
-		slog.ErrorContext(ctx, "failed to flush usage counters", logfmt.Err(err))
+		slog.ErrorContext(ctx, "failed to flush usage counters", "error", err)
 	}
 	if err := s.manager.UpdateQuotaMetrics(ctx); err != nil && !errors.Is(err, core.ErrDBUnavailable) {
-		slog.ErrorContext(ctx, "failed to update quota metrics", logfmt.Err(err))
+		slog.ErrorContext(ctx, "failed to update quota metrics", "error", err)
 	}
 }
 
@@ -277,11 +276,11 @@ func NewRebalancerService(manager *proxy.BackendManager, rebalancer *worker.Reba
 			}
 			moved, err := rebalancer.Rebalance(ctx, *rcfg)
 			if err != nil && !errors.Is(err, core.ErrDBUnavailable) {
-				slog.ErrorContext(ctx, "rebalance failed", logfmt.Err(err))
+				slog.ErrorContext(ctx, "rebalance failed", "error", err)
 			} else if moved > 0 {
 				slog.InfoContext(ctx, "rebalance completed", "objects_moved", moved)
 				if err := manager.UpdateQuotaMetrics(ctx); err != nil {
-					slog.WarnContext(ctx, "failed to update quota metrics after rebalance", logfmt.Err(err))
+					slog.WarnContext(ctx, "failed to update quota metrics after rebalance", "error", err)
 				}
 			}
 		},
@@ -316,7 +315,7 @@ func NewLifecycleService(manager *proxy.BackendManager, locker core.AdvisoryLock
 			}
 		},
 		onError: func(err error) {
-			slog.ErrorContext(context.Background(), "Lifecycle expiration failed", logfmt.Err(err))
+			slog.ErrorContext(context.Background(), "Lifecycle expiration failed", "error", err)
 			telemetry.LifecycleRunsTotal.WithLabelValues("error").Inc()
 		},
 	}
@@ -344,11 +343,11 @@ func NewOverReplicationService(manager *proxy.BackendManager, overRep *worker.Ov
 			}
 			removed, err := overRep.Clean(ctx, *rcfg)
 			if err != nil && !errors.Is(err, core.ErrDBUnavailable) {
-				slog.ErrorContext(ctx, "over-replication cleanup failed", logfmt.Err(err))
+				slog.ErrorContext(ctx, "over-replication cleanup failed", "error", err)
 			} else if removed > 0 {
 				slog.InfoContext(ctx, "over-replication cleanup completed", "copies_removed", removed)
 				if err := manager.UpdateQuotaMetrics(ctx); err != nil {
-					slog.WarnContext(ctx, "failed to update quota metrics after over-replication cleanup", logfmt.Err(err))
+					slog.WarnContext(ctx, "failed to update quota metrics after over-replication cleanup", "error", err)
 				}
 			}
 		},
@@ -364,11 +363,11 @@ func NewReplicatorService(manager *proxy.BackendManager, replicator *worker.Repl
 		}
 		created, err := replicator.Replicate(ctx, *rcfg)
 		if err != nil && !errors.Is(err, core.ErrDBUnavailable) {
-			slog.ErrorContext(ctx, "replication failed", logfmt.Err(err))
+			slog.ErrorContext(ctx, "replication failed", "error", err)
 		} else if created > 0 {
 			slog.InfoContext(ctx, "replication completed", "copies_created", created)
 			if err := manager.UpdateQuotaMetrics(ctx); err != nil {
-				slog.WarnContext(ctx, "failed to update quota metrics after replication", logfmt.Err(err))
+				slog.WarnContext(ctx, "failed to update quota metrics after replication", "error", err)
 			}
 		}
 	}

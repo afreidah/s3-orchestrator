@@ -153,7 +153,7 @@ func (r *Replicator) replicate(ctx context.Context, cfg config.ReplicationConfig
 		defer r.ops.ReleaseAdmission()
 		n, replicateErr := r.ReplicateObject(ctx, quotaStats, task.key, task.copies, task.needed)
 		if replicateErr != nil {
-			r.log.WarnContext(ctx, "object failed", "key", task.key, logfmt.Err(replicateErr))
+			r.log.WarnContext(ctx, "object failed", "key", task.key, "error", replicateErr)
 		}
 		created.Add(int32(n)) //nolint:gosec // G115: n is copies created per object, always small
 	})
@@ -220,7 +220,7 @@ func (r *Replicator) ReplicateObject(ctx context.Context, quotaStats map[string]
 		source, transferredSize, err := r.CopyToReplica(ctx, key, existingCopies, target)
 		if err != nil {
 			r.log.WarnContext(ctx, "failed to copy object data",
-				"key", key, "target", target, logfmt.Err(err))
+				"key", key, "target", target, "error", err)
 			telemetry.ReplicationErrorsTotal.Inc()
 			exclusion[target] = true
 			continue
@@ -229,7 +229,7 @@ func (r *Replicator) ReplicateObject(ctx context.Context, quotaStats map[string]
 		recordedSize, inserted, err := r.store.RecordReplica(ctx, key, target, source)
 		if err != nil {
 			r.log.ErrorContext(ctx, "failed to record replica",
-				"key", key, "target", target, logfmt.Err(err))
+				"key", key, "target", target, "error", err)
 			r.CleanupOrphan(ctx, target, key, transferredSize)
 			telemetry.ReplicationErrorsTotal.Inc()
 			exclusion[target] = true
@@ -291,7 +291,7 @@ func (r *Replicator) FindReplicaTarget(ctx context.Context, quotaStats map[strin
 	name, err := r.ops.SelectReplicaTarget(ctx, size, exclusion)
 	if err != nil {
 		r.log.WarnContext(ctx, "target selection failed",
-			"key", key, logfmt.Err(err))
+			"key", key, "error", err)
 		return ""
 	}
 	return name
@@ -362,7 +362,7 @@ func (r *Replicator) tryCopyFrom(ctx context.Context, key, target string, target
 		return "", 0, true, fmt.Errorf("failed to write to target %s: %w", target, err)
 	}
 	r.log.WarnContext(ctx, "source read failed, trying next copy",
-		"key", key, "source", loc.BackendName, logfmt.Err(err))
+		"key", key, "source", loc.BackendName, "error", err)
 	if isNotFound(err) {
 		r.pruneStaleSource(ctx, key, loc.BackendName)
 	}
@@ -375,7 +375,7 @@ func (r *Replicator) tryCopyFrom(ctx context.Context, key, target string, target
 func (r *Replicator) pruneStaleSource(ctx context.Context, key, backendName string) {
 	if delErr := r.store.DeleteObjectLocation(ctx, key, backendName); delErr != nil {
 		r.log.WarnContext(ctx, "failed to remove stale metadata",
-			"key", key, "backend", backendName, logfmt.Err(delErr))
+			"key", key, "backend", backendName, "error", delErr)
 		return
 	}
 	r.log.InfoContext(ctx, "removed stale metadata entry",

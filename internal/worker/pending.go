@@ -87,7 +87,7 @@ func (r *PendingReaper) ProcessPendingQueue(ctx context.Context) (resolved, fail
 	cutoff := time.Now().Add(-r.minAge)
 	intents, err := r.store.GetStalePending(ctx, cutoff, r.batchSize)
 	if err != nil {
-		r.log.ErrorContext(ctx, "fetch stale pending intents", logfmt.Err(err), logfmt.Outcome(logfmt.OutcomeError))
+		r.log.ErrorContext(ctx, "fetch stale pending intents", "error", err, logfmt.Outcome(logfmt.OutcomeError))
 		return 0, 0
 	}
 
@@ -164,7 +164,7 @@ func (r *PendingReaper) probeBackend(ctx context.Context, be backend.ObjectBacke
 		return probeNotFound
 	default:
 		r.log.WarnContext(ctx, "HEAD probe failed, leaving intent for next tick",
-			"backend", p.BackendName, "key", p.ObjectKey, "intent_id", p.IntentID, logfmt.Err(err))
+			"backend", p.BackendName, "key", p.ObjectKey, "intent_id", p.IntentID, "error", err)
 		return probeError
 	}
 }
@@ -179,7 +179,7 @@ func (r *PendingReaper) dropIntent(ctx context.Context, p *core.PendingObject, r
 	}
 	if err := r.store.DeletePending(ctx, p.IntentID); err != nil {
 		r.log.ErrorContext(ctx, "delete pending intent",
-			"intent_id", p.IntentID, logfmt.Err(err), logfmt.Outcome(logfmt.OutcomeError))
+			"intent_id", p.IntentID, "error", err, logfmt.Outcome(logfmt.OutcomeError))
 		failedCount.Add(1)
 		return
 	}
@@ -202,7 +202,7 @@ func (r *PendingReaper) handlePromotion(ctx context.Context, p *core.PendingObje
 	result, displaced, err := r.store.PromotePending(ctx, p)
 	if err != nil {
 		r.log.ErrorContext(ctx, "promote pending intent",
-			"intent_id", p.IntentID, logfmt.Err(err), logfmt.Outcome(logfmt.OutcomeError))
+			"intent_id", p.IntentID, "error", err, logfmt.Outcome(logfmt.OutcomeError))
 		failedCount.Add(1)
 		return
 	}

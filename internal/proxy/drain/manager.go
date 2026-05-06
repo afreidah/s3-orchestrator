@@ -293,7 +293,7 @@ func (d *Manager) migrateBackendObjects(ctx context.Context, name string, state 
 
 		objects, err := d.objects.ListObjectsByBackend(ctx, name, 100)
 		if err != nil {
-			d.log.ErrorContext(ctx, "failed to list objects", slog.String("backend", name), logfmt.Err(err))
+			d.log.ErrorContext(ctx, "failed to list objects", slog.String("backend", name), "error", err)
 			return err
 		}
 		if len(objects) == 0 {
@@ -336,7 +336,7 @@ func (d *Manager) finalizeDrain(ctx context.Context, name string, state *drainSt
 	}
 
 	if err := d.backendLifecycle.DeleteBackendData(ctx, name); err != nil {
-		d.log.ErrorContext(ctx, "failed to clean up backend data", slog.String("backend", name), logfmt.Err(err))
+		d.log.ErrorContext(ctx, "failed to clean up backend data", slog.String("backend", name), "error", err)
 		state.setErr(err)
 	}
 
@@ -356,7 +356,7 @@ func (d *Manager) DrainOneObject(ctx context.Context, srcBackend backend.ObjectB
 	locations, err := d.objects.GetAllObjectLocations(ctx, obj.ObjectKey)
 	if err != nil {
 		d.log.WarnContext(ctx, "failed to look up object locations",
-			slog.String("key", obj.ObjectKey), logfmt.Err(err))
+			slog.String("key", obj.ObjectKey), "error", err)
 		return false
 	}
 	if other := findOtherBackend(locations, srcName); other != "" {
@@ -382,7 +382,7 @@ func findOtherBackend(locations []core.ObjectLocation, srcName string) string {
 func (d *Manager) removeReplicaSource(ctx context.Context, srcBackend backend.ObjectBackend, srcName string, obj *core.ObjectLocation, replicaBackend string) bool {
 	if err := d.objects.DeleteObjectLocation(ctx, obj.ObjectKey, srcName); err != nil {
 		d.log.WarnContext(ctx, "failed to delete source location",
-			slog.String("key", obj.ObjectKey), slog.String("backend", srcName), logfmt.Err(err))
+			slog.String("key", obj.ObjectKey), slog.String("backend", srcName), "error", err)
 		return false
 	}
 	d.infra.DeleteOrEnqueue(ctx, srcBackend, srcName, obj.ObjectKey, "drain_source_delete", obj.SizeBytes)
@@ -411,14 +411,14 @@ func (d *Manager) copyAndRemoveSource(ctx context.Context, srcBackend backend.Ob
 			slog.String("key", obj.ObjectKey),
 			slog.String("src_backend", srcName),
 			slog.String("dst_backend", destName),
-			logfmt.Err(err))
+			"error", err)
 		return false
 	}
 
 	movedSize, err := d.objects.MoveObjectLocation(ctx, obj.ObjectKey, srcName, destName)
 	if err != nil {
 		d.log.ErrorContext(ctx, "failed to update object location",
-			slog.String("key", obj.ObjectKey), logfmt.Err(err))
+			slog.String("key", obj.ObjectKey), "error", err)
 		d.infra.DeleteOrEnqueue(ctx, destBackend, destName, obj.ObjectKey, "drain_orphan", obj.SizeBytes)
 		d.infra.Usage().Record(destName, 1, 0, 0)
 		return false
@@ -457,7 +457,7 @@ func (d *Manager) pickDrainDestination(ctx context.Context, srcName string, obj 
 	destName, err := d.quota.GetLeastUtilizedBackend(ctx, obj.SizeBytes, filtered)
 	if err != nil {
 		d.log.WarnContext(ctx, "no destination backend available",
-			slog.String("key", obj.ObjectKey), slog.Int64("size_bytes", obj.SizeBytes), logfmt.Err(err))
+			slog.String("key", obj.ObjectKey), slog.Int64("size_bytes", obj.SizeBytes), "error", err)
 		return "", nil, false
 	}
 	destBackend, err := d.infra.GetBackend(destName)
@@ -511,7 +511,7 @@ func (d *Manager) PurgeBackendObjects(ctx context.Context, be backend.ObjectBack
 		objects, err := d.objects.ListObjectsByBackend(ctx, name, 100)
 		if err != nil {
 			d.log.ErrorContext(ctx, "failed to list objects for purge",
-				slog.String("backend", name), logfmt.Err(err))
+				slog.String("backend", name), "error", err)
 			return
 		}
 		if len(objects) == 0 {
@@ -521,13 +521,13 @@ func (d *Manager) PurgeBackendObjects(ctx context.Context, be backend.ObjectBack
 		for i := range objects {
 			if err := d.infra.DeleteWithTimeout(ctx, be, objects[i].ObjectKey); err != nil {
 				d.log.WarnContext(ctx, "failed to delete object from backend during purge",
-					slog.String("backend", name), slog.String("key", objects[i].ObjectKey), logfmt.Err(err))
+					slog.String("backend", name), slog.String("key", objects[i].ObjectKey), "error", err)
 			}
 			d.infra.Usage().Record(name, 1, 0, 0)
 
 			if err := d.objects.DeleteObjectLocation(ctx, objects[i].ObjectKey, name); err != nil {
 				d.log.WarnContext(ctx, "failed to delete DB record during purge",
-					slog.String("backend", name), slog.String("key", objects[i].ObjectKey), logfmt.Err(err))
+					slog.String("backend", name), slog.String("key", objects[i].ObjectKey), "error", err)
 			}
 		}
 	}

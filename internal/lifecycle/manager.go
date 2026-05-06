@@ -19,8 +19,6 @@ import (
 	"runtime/debug"
 	"sync"
 	"time"
-
-	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 )
 
 // -------------------------------------------------------------------------
@@ -137,7 +135,7 @@ func (m *Manager) Stop(timeout time.Duration) {
 		if err := s.Stop(ctx); err != nil {
 			slog.ErrorContext(ctx, "service stop error",
 				"service", m.services[i].name,
-				logfmt.Err(err),
+				"error", err,
 			)
 		}
 		cancel()
@@ -173,7 +171,7 @@ func (m *Manager) supervise(ctx context.Context, e entry) {
 			if err := e.runner.Run(ctx); err != nil && ctx.Err() == nil {
 				slog.ErrorContext(ctx, "service exited unexpectedly, restarting",
 					"service", e.name,
-					logfmt.Err(err),
+					"error", err,
 				)
 			}
 		}()

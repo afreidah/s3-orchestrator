@@ -32,7 +32,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
-	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/util/bufpool"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
@@ -261,7 +260,7 @@ func (mp *MultipartManager) UploadPart(ctx context.Context, uploadID string, par
 
 	if err := mp.parent.stores.Multipart.RecordPart(ctx, uploadID, partNumber, etag, uploadSize, enc); err != nil {
 		slog.ErrorContext(ctx, "recordPart failed, cleaning up part object",
-			"upload_id", uploadID, "part", partNumber, logfmt.Err(err))
+			"upload_id", uploadID, "part", partNumber, "error", err)
 		// Account for both API calls the failure path made: the PUT that
 		// succeeded against the backend (the success-path Record at the
 		// bottom of this function only runs when we return nil) and the
@@ -271,7 +270,7 @@ func (mp *MultipartManager) UploadPart(ctx context.Context, uploadID string, par
 		mp.usage.Record(mu.BackendName, 1, 0, 0) // cleanup DELETE
 		if delErr != nil {
 			slog.ErrorContext(ctx, "failed to clean up orphaned part object",
-				"key", partKey, logfmt.Err(delErr))
+				"key", partKey, "error", delErr)
 			mp.parent.enqueueCleanup(ctx, mu.BackendName, partKey, "orphan_part_record_failed", uploadSize)
 		}
 		span.SetStatus(codes.Error, err.Error())
@@ -625,7 +624,7 @@ func (mp *MultipartManager) GetParts(ctx context.Context, uploadID string) ([]co
 func (mp *MultipartManager) CleanupStaleMultipartUploads(ctx context.Context, olderThan time.Duration) {
 	uploads, err := mp.parent.stores.Multipart.GetStaleMultipartUploads(ctx, olderThan)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to get stale multipart uploads", logfmt.Err(err))
+		slog.ErrorContext(ctx, "failed to get stale multipart uploads", "error", err)
 		return
 	}
 
@@ -634,7 +633,7 @@ func (mp *MultipartManager) CleanupStaleMultipartUploads(ctx context.Context, ol
 		mu := &uploads[i]
 		slog.InfoContext(ctx, "cleaning up stale multipart upload", "upload_id", mu.UploadID, "key", mu.ObjectKey)
 		if err := mp.AbortMultipartUpload(ctx, mu.UploadID); err != nil {
-			slog.ErrorContext(ctx, "failed to clean up upload", "upload_id", mu.UploadID, logfmt.Err(err))
+			slog.ErrorContext(ctx, "failed to clean up upload", "upload_id", mu.UploadID, "error", err)
 		} else {
 			cleaned++
 		}
@@ -653,7 +652,7 @@ func (mp *MultipartManager) CleanupStaleMultipartUploads(ctx context.Context, ol
 func (mp *MultipartManager) AbortMultipartUploadsOnBackend(ctx context.Context, backendName string) {
 	uploads, err := mp.parent.stores.Multipart.GetMultipartUploadsByBackend(ctx, backendName)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to list multipart uploads", "backend", backendName, logfmt.Err(err))
+		slog.ErrorContext(ctx, "failed to list multipart uploads", "backend", backendName, "error", err)
 		return
 	}
 
@@ -662,7 +661,7 @@ func (mp *MultipartManager) AbortMultipartUploadsOnBackend(ctx context.Context, 
 		slog.InfoContext(ctx, "aborting multipart upload", "upload_id", mu.UploadID, "key", mu.ObjectKey)
 		if err := mp.AbortMultipartUpload(ctx, mu.UploadID); err != nil {
 			slog.ErrorContext(ctx, "failed to abort multipart upload",
-				"upload_id", mu.UploadID, logfmt.Err(err))
+				"upload_id", mu.UploadID, "error", err)
 		}
 	}
 }

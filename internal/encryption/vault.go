@@ -24,7 +24,6 @@ import (
 	vault "github.com/hashicorp/vault/api"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 )
 
 // -------------------------------------------------------------------------
@@ -179,11 +178,11 @@ func (p *VaultKeyProvider) tokenRenewalLoop(ctx context.Context) {
 			if p.tokenFile != "" {
 				if err := p.reloadTokenFile(ctx); err != nil {
 					slog.ErrorContext(ctx, "failed to reload Vault token file",
-						slog.String("path", p.tokenFile), logfmt.Err(err))
+						slog.String("path", p.tokenFile), "error", err)
 				}
 			} else {
 				if err := p.renewToken(ctx); err != nil {
-					slog.ErrorContext(ctx, "failed to renew Vault token", logfmt.Err(err))
+					slog.ErrorContext(ctx, "failed to renew Vault token", "error", err)
 				}
 			}
 		}

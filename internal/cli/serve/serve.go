@@ -167,7 +167,13 @@ func (s *server) initLogging() error {
 	s.logLevel.Set(config.ParseLogLevel(s.cfg.Server.LogLevel))
 	s.logBuffer = telemetry.NewLogBuffer()
 	jsonHandler := slog.NewJSONHandler(s.stdout, &slog.HandlerOptions{Level: &s.logLevel})
-	traceHandler := telemetry.NewTraceHandler(jsonHandler)
+	// logfmt.ErrAttrHandler stringifies any error-typed attribute before
+	// the JSON handler renders the record. Without it, encoding/json would
+	// emit "{}" for error structs without JSON tags, which JS log viewers
+	// render as "[object Object]". With this wrapper, call sites can pass
+	// raw errors via "error", err and operators still see the message.
+	errHandler := logfmt.NewErrAttrHandler(jsonHandler)
+	traceHandler := telemetry.NewTraceHandler(errHandler)
 	slog.SetDefault(slog.New(telemetry.NewTeeHandler(traceHandler, s.logBuffer)))
 
 	ctx := context.Background()
@@ -232,7 +238,7 @@ func (s *server) resolveServices() error {
 
 	ctx := context.Background()
 	if err := manager.UpdateQuotaMetrics(ctx); err != nil {
-		slog.WarnContext(ctx, "failed to update initial quota metrics", logfmt.Err(err))
+		slog.WarnContext(ctx, "failed to update initial quota metrics", "error", err)
 	}
 	return nil
 }
@@ -364,7 +370,7 @@ func (s *server) configureMetrics(mux *http.ServeMux, ctx context.Context) {
 			slog.InfoContext(ctx, "metrics endpoint enabled on separate listener",
 				"listen", cfg.Telemetry.Metrics.Listen, "path", cfg.Telemetry.Metrics.Path)
 			if err := s.metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				slog.ErrorContext(ctx, "metrics listener failed", logfmt.Err(err))
+				slog.ErrorContext(ctx, "metrics listener failed", "error", err)
 			}
 		}()
 	} else {
@@ -519,7 +525,7 @@ func (s *server) runMultipartDEKBackfill(ctx context.Context) {
 	}
 	locker, err := do.Invoke[core.AdvisoryLocker](s.inj)
 	if err != nil {
-		slog.WarnContext(ctx, "multipart_dek_backfill: skipping startup pass, no advisory locker", logfmt.Err(err))
+		slog.WarnContext(ctx, "multipart_dek_backfill: skipping startup pass, no advisory locker", "error", err)
 		return
 	}
 
@@ -527,12 +533,12 @@ func (s *server) runMultipartDEKBackfill(ctx context.Context) {
 		migrated, runErr := mb.RunOnce(lockCtx)
 		if runErr != nil {
 			slog.WarnContext(lockCtx, "multipart_dek_backfill: startup pass failed, continuing boot",
-				slog.Int("migrated", migrated), logfmt.Err(runErr))
+				slog.Int("migrated", migrated), "error", runErr)
 		}
 		return nil
 	})
 	if lockErr != nil {
-		slog.WarnContext(ctx, "multipart_dek_backfill: lock acquisition failed", logfmt.Err(lockErr))
+		slog.WarnContext(ctx, "multipart_dek_backfill: lock acquisition failed", "error", lockErr)
 		return
 	}
 	if !acquired {
@@ -571,7 +577,7 @@ func (s *server) reloadConfig() {
 
 	newCfg, err := config.LoadConfig(s.configPath)
 	if err != nil {
-		slog.ErrorContext(ctx, "config reload aborted, keeping current config", logfmt.Err(err))
+		slog.ErrorContext(ctx, "config reload aborted, keeping current config", "error", err)
 		return
 	}
 
@@ -593,7 +599,7 @@ func (s *server) reloadConfig() {
 func (s *server) applyReload(ctx context.Context, newCfg *config.Config) {
 	if s.certReloader != nil {
 		if err := s.certReloader.Reload(); err != nil {
-			slog.ErrorContext(ctx, "failed to reload TLS certificate", logfmt.Err(err))
+			slog.ErrorContext(ctx, "failed to reload TLS certificate", "error", err)
 		}
 	}
 
@@ -608,7 +614,7 @@ func (s *server) applyReload(ctx context.Context, newCfg *config.Config) {
 	defer reloadCancel()
 
 	if err := s.adminStore().SyncQuotaLimits(reloadCtx, newCfg.Backends); err != nil {
-		slog.ErrorContext(reloadCtx, "failed to sync quota limits on reload", logfmt.Err(err))
+		slog.ErrorContext(reloadCtx, "failed to sync quota limits on reload", "error", err)
 	}
 
 	manager := s.backendManager()
@@ -626,14 +632,14 @@ func (s *server) applyReload(ctx context.Context, newCfg *config.Config) {
 	s.logLevel.Set(config.ParseLogLevel(newCfg.Server.LogLevel))
 
 	if err := s.applyWorkerConfigs(&newCfg.Rebalance, &newCfg.Replication, &newCfg.Integrity); err != nil {
-		slog.WarnContext(reloadCtx, "failed to apply worker configs", logfmt.Err(err))
+		slog.WarnContext(reloadCtx, "failed to apply worker configs", "error", err)
 	}
 	manager.SetUsageFlushConfig(&newCfg.UsageFlush)
 	manager.SetLifecycleConfig(&newCfg.Lifecycle)
 	manager.SetIntegrityConfig(&newCfg.Integrity)
 
 	if err := manager.UpdateQuotaMetrics(reloadCtx); err != nil {
-		slog.WarnContext(reloadCtx, "failed to update quota metrics after reload", logfmt.Err(err))
+		slog.WarnContext(reloadCtx, "failed to update quota metrics after reload", "error", err)
 	}
 
 	if h := invokeOptional[*ui.Handler](s.inj); h != nil {
@@ -691,14 +697,14 @@ func (s *server) shutdown() {
 	manager.Close()
 
 	if err := manager.FlushUsage(shutdownCtx); err != nil {
-		slog.WarnContext(shutdownCtx, "final usage flush failed", logfmt.Err(err))
+		slog.WarnContext(shutdownCtx, "final usage flush failed", "error", err)
 	}
 
 	s.closeRedisBackend(shutdownCtx)
 	s.adminStore().Close()
 
 	if err := s.shutdownTracer(shutdownCtx); err != nil {
-		slog.ErrorContext(ctx, "tracer shutdown error", logfmt.Err(err))
+		slog.ErrorContext(ctx, "tracer shutdown error", "error", err)
 	}
 }
 
@@ -706,11 +712,11 @@ func (s *server) shutdown() {
 // metrics listener, logging any errors without aborting shutdown.
 func (s *server) shutdownHTTPServers(ctx context.Context) {
 	if err := s.httpServer.Shutdown(ctx); err != nil {
-		slog.ErrorContext(ctx, "HTTP server shutdown error", logfmt.Err(err))
+		slog.ErrorContext(ctx, "HTTP server shutdown error", "error", err)
 	}
 	if s.metricsServer != nil {
 		if err := s.metricsServer.Shutdown(ctx); err != nil {
-			slog.ErrorContext(ctx, "metrics server shutdown error", logfmt.Err(err))
+			slog.ErrorContext(ctx, "metrics server shutdown error", "error", err)
 		}
 	}
 }
@@ -734,7 +740,7 @@ func (s *server) closeRedisBackend(ctx context.Context) {
 		return
 	}
 	if err := redisBackend.Close(); err != nil {
-		slog.WarnContext(ctx, "failed to close Redis client", logfmt.Err(err))
+		slog.WarnContext(ctx, "failed to close Redis client", "error", err)
 	}
 }
 

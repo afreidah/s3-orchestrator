@@ -17,8 +17,6 @@ import (
 	"log/slog"
 	"sync"
 	"time"
-
-	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"context"
 )
 
@@ -89,7 +87,7 @@ func checkCertExpiry(cert *tls.Certificate, certFile string) {
 			parsed, err := x509.ParseCertificate(cert.Certificate[0])
 			if err != nil {
 				slog.WarnContext(context.Background(), "Failed to parse TLS leaf certificate for expiry check",
-					"cert_file", certFile, logfmt.Err(err))
+					"cert_file", certFile, "error", err)
 				return
 			}
 			cert.Leaf = parsed

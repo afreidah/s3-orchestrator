@@ -469,7 +469,7 @@ func (h *Handler) serveLoginPage(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set(headerContentType, contentTypeHTML)
 	if err := h.templates.ExecuteTemplate(w, "login.html", loginPage{Version: telemetry.Version}); err != nil {
-		h.log.ErrorContext(r.Context(), errLoginRenderFailed, logfmt.Err(err))
+		h.log.ErrorContext(r.Context(), errLoginRenderFailed, "error", err)
 	}
 }
 
@@ -514,7 +514,7 @@ func (h *Handler) renderLoginError(w http.ResponseWriter, r *http.Request, statu
 		Version: telemetry.Version,
 		Error:   errMsg,
 	}); err != nil {
-		h.log.ErrorContext(r.Context(), errLoginRenderFailed, logfmt.Err(err))
+		h.log.ErrorContext(r.Context(), errLoginRenderFailed, "error", err)
 	}
 }
 
@@ -578,7 +578,7 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 	data, err := h.backendOps.GetDashboardData(r.Context())
 	if err != nil {
-		h.log.ErrorContext(r.Context(), "failed to get dashboard data", logfmt.Err(err))
+		h.log.ErrorContext(r.Context(), "failed to get dashboard data", "error", err)
 		http.Error(w, "Failed to load dashboard data", http.StatusInternalServerError)
 		return
 	}
@@ -640,7 +640,7 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 	var buf bytes.Buffer
 	if err := h.templates.ExecuteTemplate(&buf, "dashboard.html", page); err != nil {
-		h.log.ErrorContext(r.Context(), "failed to render dashboard", logfmt.Err(err))
+		h.log.ErrorContext(r.Context(), "failed to render dashboard", "error", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -658,14 +658,14 @@ func (h *Handler) handleAPIDashboard(w http.ResponseWriter, r *http.Request) {
 
 	data, err := h.backendOps.GetDashboardData(r.Context())
 	if err != nil {
-		h.log.ErrorContext(r.Context(), "failed to get dashboard data", logfmt.Err(err))
+		h.log.ErrorContext(r.Context(), "failed to get dashboard data", "error", err)
 		writeJSONError(w, http.StatusInternalServerError, "failed to load data")
 		return
 	}
 
 	w.Header().Set(headerContentType, contentTypeJSON)
 	if err := json.NewEncoder(w).Encode(data); err != nil {
-		h.log.ErrorContext(r.Context(), "failed to encode dashboard JSON", logfmt.Err(err))
+		h.log.ErrorContext(r.Context(), "failed to encode dashboard JSON", "error", err)
 	}
 }
 
@@ -689,14 +689,14 @@ func (h *Handler) handleTreeAPI(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.backendOps.GetDirectoryChildren(r.Context(), prefix, startAfter, maxKeys)
 	if err != nil {
-		h.log.ErrorContext(r.Context(), "failed to list directory children", "prefix", prefix, logfmt.Err(err))
+		h.log.ErrorContext(r.Context(), "failed to list directory children", "prefix", prefix, "error", err)
 		writeJSONError(w, http.StatusInternalServerError, "failed to list children")
 		return
 	}
 
 	w.Header().Set(headerContentType, contentTypeJSON)
 	if err := json.NewEncoder(w).Encode(result); err != nil {
-		h.log.ErrorContext(r.Context(), "failed to encode tree JSON", logfmt.Err(err))
+		h.log.ErrorContext(r.Context(), "failed to encode tree JSON", "error", err)
 	}
 }
 
@@ -729,7 +729,7 @@ func (h *Handler) handleAPIDelete(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	if err := h.objects.DeleteObject(r.Context(), req.Key); err != nil {
-		h.log.ErrorContext(r.Context(), "failed to delete object", "key", req.Key, logfmt.Err(err))
+		h.log.ErrorContext(r.Context(), "failed to delete object", "key", req.Key, "error", err)
 		w.Header().Set(headerContentType, contentTypeJSON)
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "delete failed"})
@@ -775,7 +775,7 @@ func (h *Handler) handleAPIDeletePrefix(w http.ResponseWriter, r *http.Request) 
 	for {
 		result, err := h.objects.ListObjects(r.Context(), req.Prefix, "", startAfter, 1000)
 		if err != nil {
-			h.log.ErrorContext(r.Context(), "failed to list objects for prefix delete", "prefix", req.Prefix, logfmt.Err(err))
+			h.log.ErrorContext(r.Context(), "failed to list objects for prefix delete", "prefix", req.Prefix, "error", err)
 			w.Header().Set(headerContentType, contentTypeJSON)
 			w.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to list objects"})
@@ -868,7 +868,7 @@ func (h *Handler) handleAPIUpload(w http.ResponseWriter, r *http.Request) {
 
 	etag, err := h.objects.PutObject(r.Context(), key, file, header.Size, contentType, nil)
 	if err != nil {
-		h.log.ErrorContext(r.Context(), "failed to upload object", "key", key, logfmt.Err(err))
+		h.log.ErrorContext(r.Context(), "failed to upload object", "key", key, "error", err)
 		w.Header().Set(headerContentType, contentTypeJSON)
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "upload failed"})
@@ -906,7 +906,7 @@ func (h *Handler) handleAPIDownload(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusNotFound, "not found")
 			return
 		}
-		h.log.ErrorContext(r.Context(), "failed to download object", "key", key, logfmt.Err(err))
+		h.log.ErrorContext(r.Context(), "failed to download object", "key", key, "error", err)
 		writeJSONError(w, http.StatusInternalServerError, "download failed")
 		return
 	}
@@ -962,7 +962,7 @@ func (h *Handler) handleAPIRebalance(w http.ResponseWriter, r *http.Request) {
 		ctx := context.Background()
 		moved, err := h.rebalancer.Rebalance(ctx, runCfg)
 		if err != nil {
-			h.log.ErrorContext(ctx, "rebalance failed", logfmt.Err(err))
+			h.log.ErrorContext(ctx, "rebalance failed", "error", err)
 			h.asyncOps.Complete("rebalance", &asyncResult{Error: "rebalance failed"})
 			return
 		}
@@ -1042,7 +1042,7 @@ func (h *Handler) handleAPICleanExcess(w http.ResponseWriter, r *http.Request) {
 		ctx := context.Background()
 		removed, err := h.overRep.Clean(ctx, cfg)
 		if err != nil {
-			h.log.ErrorContext(ctx, "over-replication cleanup failed", logfmt.Err(err))
+			h.log.ErrorContext(ctx, "over-replication cleanup failed", "error", err)
 			h.asyncOps.Complete(opCleanExcess, &asyncResult{Error: "cleanup failed"})
 			return
 		}
@@ -1105,7 +1105,7 @@ func (h *Handler) handleAPISync(w http.ResponseWriter, r *http.Request) {
 
 	imported, skipped, err := h.backendOps.SyncBackend(r.Context(), req.Backend, req.Bucket, bucketNames)
 	if err != nil {
-		h.log.ErrorContext(r.Context(), "sync failed", "backend", req.Backend, "bucket", req.Bucket, logfmt.Err(err))
+		h.log.ErrorContext(r.Context(), "sync failed", "backend", req.Backend, "bucket", req.Bucket, "error", err)
 		w.Header().Set(headerContentType, contentTypeJSON)
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "sync failed"})
@@ -1149,7 +1149,7 @@ func (h *Handler) handleAPILogs(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set(headerContentType, contentTypeJSON)
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		h.log.ErrorContext(r.Context(), "failed to encode logs JSON", logfmt.Err(err))
+		h.log.ErrorContext(r.Context(), "failed to encode logs JSON", "error", err)
 	}
 }
 

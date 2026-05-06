@@ -138,3 +138,139 @@ func TestLoggerFromCtx_NoRequestIDReturnsBase(t *testing.T) {
 		t.Error("LoggerFromCtx(no id) returned a new logger; expected the base")
 	}
 }
+
+// TestErrAttrHandler_StringifiesRawError pins the bug-fix contract: a
+// raw error passed via slog's key-value form lands as a string in the
+// JSON output rather than the empty-object the default handler would
+// produce. This is the production fix the codemod previously achieved
+// per call site; the handler now does it uniformly.
+func TestErrAttrHandler_StringifiesRawError(t *testing.T) {
+	t.Parallel()
+
+	mkErr := func(s string) error { return &opaqueErrType{msg: s} }
+
+	var buf bytes.Buffer
+	inner := slog.NewJSONHandler(&buf, nil)
+	logger := slog.New(logfmt.NewErrAttrHandler(inner))
+
+	logger.LogAttrs(context.Background(), slog.LevelInfo, "probe",
+		slog.Any("error", mkErr("vault token expired")),
+	)
+
+	var entry map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got, _ := entry["error"].(string); got != "vault token expired" {
+		t.Errorf("error = %v, want vault token expired", entry["error"])
+	}
+}
+
+// opaqueErrType is the kind of error that pre-handler code path would
+// have rendered as {} via encoding/json.
+type opaqueErrType struct{ msg string }
+
+func (e *opaqueErrType) Error() string { return e.msg }
+
+// TestErrAttrHandler_PreservesNonErrorAttrs verifies that non-error
+// values pass through unchanged.
+func TestErrAttrHandler_PreservesNonErrorAttrs(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	inner := slog.NewJSONHandler(&buf, nil)
+	logger := slog.New(logfmt.NewErrAttrHandler(inner))
+
+	logger.LogAttrs(context.Background(), slog.LevelInfo, "probe",
+		slog.String("backend", "e2"),
+		slog.Int("status", 503),
+	)
+
+	if !strings.Contains(buf.String(), `"backend":"e2"`) {
+		t.Errorf("missing backend attr: %s", buf.String())
+	}
+	if !strings.Contains(buf.String(), `"status":503`) {
+		t.Errorf("missing status attr: %s", buf.String())
+	}
+}
+
+// TestErrAttrHandler_RecursesIntoGroups verifies group attributes are
+// walked so an error nested under a group still renders as a string.
+func TestErrAttrHandler_RecursesIntoGroups(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	inner := slog.NewJSONHandler(&buf, nil)
+	logger := slog.New(logfmt.NewErrAttrHandler(inner))
+
+	logger.LogAttrs(context.Background(), slog.LevelInfo, "probe",
+		slog.Group("ctx",
+			slog.Any("error", &opaqueErrType{msg: "nested boom"}),
+		),
+	)
+
+	if !strings.Contains(buf.String(), `"error":"nested boom"`) {
+		t.Errorf("group recursion failed: %s", buf.String())
+	}
+}
+
+// TestErrAttrHandler_WithAttrsForwards verifies that errors passed via
+// logger.With(...) are stringified the same way as record-time attrs.
+func TestErrAttrHandler_WithAttrsForwards(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	inner := slog.NewJSONHandler(&buf, nil)
+	logger := slog.New(logfmt.NewErrAttrHandler(inner))
+	scoped := logger.With("error", &opaqueErrType{msg: "scoped boom"})
+	scoped.LogAttrs(context.Background(), slog.LevelInfo, "probe")
+
+	if !strings.Contains(buf.String(), `"error":"scoped boom"`) {
+		t.Errorf("With(...) attr not stringified: %s", buf.String())
+	}
+}
+
+// TestErrAttrHandler_EnabledForwards confirms the Enabled delegation.
+func TestErrAttrHandler_EnabledForwards(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	inner := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})
+	h := logfmt.NewErrAttrHandler(inner)
+	if h.Enabled(context.Background(), slog.LevelDebug) {
+		t.Error("Debug should be disabled when inner level is Warn")
+	}
+	if !h.Enabled(context.Background(), slog.LevelError) {
+		t.Error("Error should be enabled when inner level is Warn")
+	}
+}
+
+// TestErrAttrHandler_WithGroupForwards confirms group-name pass-through.
+func TestErrAttrHandler_WithGroupForwards(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	inner := slog.NewJSONHandler(&buf, nil)
+	h := logfmt.NewErrAttrHandler(inner)
+	scoped := slog.New(h.WithGroup("ctx"))
+	scoped.LogAttrs(context.Background(), slog.LevelInfo, "probe", slog.String("k", "v"))
+	if !strings.Contains(buf.String(), `"ctx":{"k":"v"}`) {
+		t.Errorf("group not applied: %s", buf.String())
+	}
+}
+
+// TestRequestIDFromCtx_UnwiredFuncReturnsEmpty pins the contract for the
+// pre-init path: if no audit accessor has been registered, the helper
+// returns an empty Attr rather than panicking. Audit's package init
+// wires the accessor for the rest of the suite, so this test
+// temporarily clears it and restores it via SetRequestIDFunc.
+//
+// Not parallel: mutates a package-global that other tests read.
+func TestRequestIDFromCtx_UnwiredFuncReturnsEmpty(t *testing.T) {
+	// Capture the current accessor by invoking it with a probe context.
+	// The real accessor lives behind SetRequestIDFunc and we have no
+	// getter, so the safest restore is to re-register audit.RequestID.
+	t.Cleanup(func() { logfmt.SetRequestIDFunc(audit.RequestID) })
+	logfmt.SetRequestIDFunc(nil)
+	if got := logfmt.RequestIDFromCtx(context.Background()); !got.Equal(slog.Attr{}) {
+		t.Errorf("RequestIDFromCtx with unwired func = %+v, want empty", got)
+	}
+}

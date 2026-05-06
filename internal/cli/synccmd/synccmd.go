@@ -23,7 +23,6 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
 	sqlitestore "github.com/afreidah/s3-orchestrator/internal/store/sqlite"
@@ -61,12 +60,12 @@ func Run(args []string, stderr io.Writer) int { // codecov:ignore -- CLI entry p
 
 	s3b, err := backend.NewS3Backend(backendCfg)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to initialize backend", slog.String("backend", backendCfg.Name), logfmt.Err(err))
+		slog.ErrorContext(ctx, "failed to initialize backend", slog.String("backend", backendCfg.Name), "error", err)
 		return 1
 	}
 
 	if err := runImport(ctx, s3b, metaDB, backendCfg, opts); err != nil {
-		slog.ErrorContext(ctx, "sync failed", logfmt.Err(err))
+		slog.ErrorContext(ctx, "sync failed", "error", err)
 		return 1
 	}
 	return 0
@@ -102,7 +101,7 @@ func parseFlags(args []string, stderr io.Writer) (*Options, bool) {
 func loadConfig(path, backendName string) (*config.Config, *config.BackendConfig, int) {
 	cfg, err := config.LoadConfig(path)
 	if err != nil {
-		slog.ErrorContext(context.Background(), "Failed to load config", logfmt.Err(err))
+		slog.ErrorContext(context.Background(), "Failed to load config", "error", err)
 		return nil, nil, 1
 	}
 	for i := range cfg.Backends {
@@ -143,15 +142,15 @@ func initStore(ctx context.Context, cfg *config.Config) (core.ObjectStore, core.
 		err = fmt.Errorf("unsupported database driver: %q", cfg.Database.Driver)
 	}
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to connect to database", logfmt.Err(err))
+		slog.ErrorContext(ctx, "failed to connect to database", "error", err)
 		return nil, nil, 1
 	}
 	if err := adminDB.RunMigrations(ctx); err != nil {
-		slog.ErrorContext(ctx, "failed to run migrations", logfmt.Err(err))
+		slog.ErrorContext(ctx, "failed to run migrations", "error", err)
 		return nil, nil, 1
 	}
 	if err := adminDB.SyncQuotaLimits(ctx, cfg.Backends); err != nil {
-		slog.ErrorContext(ctx, "failed to sync quota limits", logfmt.Err(err))
+		slog.ErrorContext(ctx, "failed to sync quota limits", "error", err)
 		return nil, nil, 1
 	}
 	return objects, adminDB, 0
