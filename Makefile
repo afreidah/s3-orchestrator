@@ -95,6 +95,52 @@ lint: ## Run Go linter
 govulncheck: ## Scan Go dependencies for known vulnerabilities
 	go tool govulncheck ./...
 
+# -------------------------------------------------------------------------
+# COVERAGE (used by SonarCloud and local sonar-scan target)
+# -------------------------------------------------------------------------
+
+# Flags mirror .github/workflows/ci.yml so the local profile matches what
+# the CI sonarqube job consumes. -coverpkg=./... measures cross-package
+# coverage; -covermode=atomic is required for race-enabled runs.
+COVER_FLAGS := -race -coverprofile=coverage.out -covermode=atomic -coverpkg=./...
+INTEGRATION_COVER_FLAGS := -race -v -tags integration -count=1 \
+	-coverprofile=integration-coverage.out -covermode=atomic -coverpkg=./...
+
+coverage: ## Generate coverage.out from unit tests (mirrors CI test job)
+	go test $(COVER_FLAGS) ./...
+
+integration-coverage: ## Generate integration-coverage.out (requires Docker for testcontainers)
+	go test $(INTEGRATION_COVER_FLAGS) ./internal/integration/ ./internal/store/postgres/
+
+# -------------------------------------------------------------------------
+# SONARCLOUD
+# -------------------------------------------------------------------------
+
+# SONAR_TOKEN must be set in the environment. Generate one at
+# https://sonarcloud.io/account/security and export it from your shell rc.
+# The scanner reads sonar-project.properties for project key, organisation,
+# and coverage report paths.
+sonar-scan: ## Run SonarCloud analysis on the current branch (requires SONAR_TOKEN, coverage.out, integration-coverage.out)
+	@test -n "$$SONAR_TOKEN" || { echo "Error: SONAR_TOKEN is not set. Generate one at https://sonarcloud.io/account/security."; exit 1; }
+	@test -f coverage.out || { echo "Error: coverage.out missing. Run 'make coverage' first (or 'make sonar-pr' to do everything)."; exit 1; }
+	@test -f integration-coverage.out || { echo "Error: integration-coverage.out missing. Run 'make integration-coverage' first (or 'make sonar-pr')."; exit 1; }
+	@branch="$$(git branch --show-current)"; \
+	if [ -z "$$branch" ]; then echo "Error: detached HEAD; check out a branch first."; exit 1; fi; \
+	echo "Scanning branch: $$branch"; \
+	docker run --rm \
+		-e SONAR_TOKEN \
+		-e SONAR_HOST_URL=https://sonarcloud.io \
+		-v "$$PWD:/usr/src" \
+		sonarsource/sonar-scanner-cli:latest \
+		-Dsonar.branch.name="$$branch"
+
+sonar-pr: ## End-to-end pre-PR check: lint + unit coverage + integration coverage + SonarCloud scan
+	@test -n "$$SONAR_TOKEN" || { echo "Error: SONAR_TOKEN is not set. Generate one at https://sonarcloud.io/account/security."; exit 1; }
+	$(MAKE) lint
+	$(MAKE) coverage
+	$(MAKE) integration-coverage
+	$(MAKE) sonar-scan
+
 preflight: ## Run the full release preflight locally (mirrors CI release workflow)
 	go tool sqlc diff
 	$(MAKE) lint
@@ -465,9 +511,10 @@ clean: ## Remove build artifacts, demo environments, containers, and volumes
 	# --- Build artifacts ---
 	go clean
 	rm -f s3-orchestrator loadtest/s3-loadtest
+	rm -f coverage.out integration-coverage.out
 	rm -rf dist/ *.deb packaging/changelog.gz
 	docker rmi $(FULL_TAG) 2>/dev/null || true
 	docker rmi s3-orchestrator:local 2>/dev/null || true
 
-.PHONY: help builder build docker push generate test vet lint govulncheck bench bench-compare run docs migration integration-test dev-deps dev-clean tools prep-changelog deb deb-lint deb-all publish-deb changelog release release-local loadtest-build loadtest-put loadtest-get loadtest-mixed loadtest-burst loadtest-burst-read loadtest-k6 kubernetes-demo nomad-demo web-tools web-godoc web-serve web-build web-docker web-push clean
+.PHONY: help builder build docker push generate test vet lint govulncheck coverage integration-coverage sonar-scan sonar-pr bench bench-compare run docs migration integration-test dev-deps dev-clean tools prep-changelog deb deb-lint deb-all publish-deb changelog release release-local loadtest-build loadtest-put loadtest-get loadtest-mixed loadtest-burst loadtest-burst-read loadtest-k6 kubernetes-demo nomad-demo web-tools web-godoc web-serve web-build web-docker web-push clean
 .DEFAULT_GOAL := help
