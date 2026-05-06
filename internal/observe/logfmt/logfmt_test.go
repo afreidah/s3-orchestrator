@@ -63,8 +63,7 @@ func TestErr_RendersStringNotEmptyObject(t *testing.T) {
 // blank "error" field on the success path.
 func TestErr_NilReturnsEmptyAttr(t *testing.T) {
 	t.Parallel()
-	got := logfmt.Err(nil)
-	if !got.Equal(slog.Attr{}) {
+	if got := logfmt.Err(nil); !got.Equal(slog.Attr{}) {
 		t.Errorf("Err(nil) = %+v, want empty Attr", got)
 	}
 }
@@ -122,8 +121,7 @@ func TestRequestIDFromCtx_PullsFromAudit(t *testing.T) {
 // path returns an empty Attr so callers can chain unconditionally.
 func TestRequestIDFromCtx_AbsentReturnsEmpty(t *testing.T) {
 	t.Parallel()
-	got := logfmt.RequestIDFromCtx(context.Background())
-	if !got.Equal(slog.Attr{}) {
+	if got := logfmt.RequestIDFromCtx(context.Background()); !got.Equal(slog.Attr{}) {
 		t.Errorf("RequestIDFromCtx(no id) = %+v, want empty", got)
 	}
 }
