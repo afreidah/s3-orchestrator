@@ -5,16 +5,19 @@
 --
 -- sqlc-input definitions for multipart_uploads and multipart_parts. Covers
 -- the upload lifecycle (create, lookup, delete), per-part record/list, the
--- prefix-scoped listing the S3 ListMultipartUploads handler needs, and the
--- stale-upload sweep used by the multipart cleanup background worker.
+-- prefix-scoped listing the S3 ListMultipartUploads handler needs, the
+-- stale-upload sweep used by the multipart cleanup background worker, and the
+-- backfill helpers (ListLegacy*, UpdateUploadEncryption, UpdatePartEncryption)
+-- the multipart_dek_backfill worker calls when promoting legacy rows to the
+-- shared-DEK format introduced in migration 00010.
 -- -----------------------------------------------------------------------------
 
 -- name: CreateMultipartUpload :exec
-INSERT INTO multipart_uploads (upload_id, object_key, backend_name, content_type, metadata, created_at)
-VALUES ($1, $2, $3, $4, $5, NOW());
+INSERT INTO multipart_uploads (upload_id, object_key, backend_name, content_type, metadata, encryption_key, key_id, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, NOW());
 
 -- name: GetMultipartUpload :one
-SELECT upload_id, object_key, backend_name, content_type, metadata, created_at
+SELECT upload_id, object_key, backend_name, content_type, metadata, encryption_key, key_id, created_at
 FROM multipart_uploads
 WHERE upload_id = $1;
 
@@ -35,12 +38,12 @@ DELETE FROM multipart_uploads
 WHERE upload_id = $1;
 
 -- name: GetStaleMultipartUploads :many
-SELECT upload_id, object_key, backend_name, content_type, metadata, created_at
+SELECT upload_id, object_key, backend_name, content_type, metadata, encryption_key, key_id, created_at
 FROM multipart_uploads
 WHERE created_at < $1;
 
 -- name: GetMultipartUploadsByBackend :many
-SELECT upload_id, object_key, backend_name, content_type, metadata, created_at
+SELECT upload_id, object_key, backend_name, content_type, metadata, encryption_key, key_id, created_at
 FROM multipart_uploads
 WHERE backend_name = $1;
 
@@ -57,3 +60,20 @@ FROM multipart_uploads
 WHERE object_key LIKE @prefix || '%' ESCAPE '\'
 ORDER BY object_key, created_at
 LIMIT @max_uploads;
+
+-- name: ListLegacyMultipartUploads :many
+SELECT upload_id, object_key, backend_name, content_type, metadata, encryption_key, key_id, created_at
+FROM multipart_uploads
+WHERE encryption_key IS NULL
+ORDER BY created_at
+LIMIT $1;
+
+-- name: UpdateUploadEncryption :exec
+UPDATE multipart_uploads
+SET encryption_key = $2, key_id = $3
+WHERE upload_id = $1;
+
+-- name: UpdatePartEncryption :exec
+UPDATE multipart_parts
+SET size_bytes = $3, encrypted = $4, encryption_key = $5, key_id = $6, plaintext_size = $7
+WHERE upload_id = $1 AND part_number = $2;

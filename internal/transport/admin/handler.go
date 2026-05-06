@@ -58,20 +58,21 @@ var _ BackendOps = (*proxy.BackendManager)(nil)
 
 // Handler serves the admin API endpoints.
 type Handler struct {
-	backendOps BackendOps
-	replicator *worker.Replicator
-	overRep    *worker.OverReplicationCleaner
-	drain      *drain.Manager
-	scrubber   *worker.Scrubber
-	lifecycle  core.BackendLifecycleStore
-	reconciler *worker.Reconciler
-	dbCB       *breaker.CircuitBreaker
-	objects    core.ObjectStore
-	cleanup    core.CleanupStore
-	encAdmin   core.EncryptionAdmin
-	encryptor  *encryption.Encryptor
-	token      string
-	logLevel   *slog.LevelVar
+	backendOps      BackendOps
+	replicator      *worker.Replicator
+	overRep         *worker.OverReplicationCleaner
+	drain           *drain.Manager
+	scrubber        *worker.Scrubber
+	lifecycle       core.BackendLifecycleStore
+	reconciler      *worker.Reconciler
+	multipartBackfill *worker.MultipartBackfill
+	dbCB            *breaker.CircuitBreaker
+	objects         core.ObjectStore
+	cleanup         core.CleanupStore
+	encAdmin        core.EncryptionAdmin
+	encryptor       *encryption.Encryptor
+	token           string
+	logLevel        *slog.LevelVar
 }
 
 // Deps groups the narrow role interfaces and infrastructure the admin
@@ -79,39 +80,41 @@ type Handler struct {
 // actually uses, so the constructor (and the backing DI provider) never
 // hand the handler a god-shaped *proxy.BackendManager.
 type Deps struct {
-	BackendOps BackendOps
-	Replicator *worker.Replicator
-	OverRep    *worker.OverReplicationCleaner
-	Drain      *drain.Manager
-	Scrubber   *worker.Scrubber
-	Lifecycle  core.BackendLifecycleStore
-	DBCB       *breaker.CircuitBreaker
-	Encryption core.EncryptionAdmin
-	Objects    core.ObjectStore
-	Cleanup    core.CleanupStore
-	Encryptor  *encryption.Encryptor
-	Reconciler *worker.Reconciler
-	Token      string
-	LogLevel   *slog.LevelVar
+	BackendOps        BackendOps
+	Replicator        *worker.Replicator
+	OverRep           *worker.OverReplicationCleaner
+	Drain             *drain.Manager
+	Scrubber          *worker.Scrubber
+	Lifecycle         core.BackendLifecycleStore
+	DBCB              *breaker.CircuitBreaker
+	Encryption        core.EncryptionAdmin
+	Objects           core.ObjectStore
+	Cleanup           core.CleanupStore
+	Encryptor         *encryption.Encryptor
+	Reconciler        *worker.Reconciler
+	MultipartBackfill *worker.MultipartBackfill
+	Token             string
+	LogLevel          *slog.LevelVar
 }
 
 // New creates a new admin API handler from its narrow dependency bag.
 func New(d *Deps) *Handler {
 	return &Handler{
-		backendOps: d.BackendOps,
-		replicator: d.Replicator,
-		overRep:    d.OverRep,
-		drain:      d.Drain,
-		scrubber:   d.Scrubber,
-		lifecycle:  d.Lifecycle,
-		reconciler: d.Reconciler,
-		dbCB:       d.DBCB,
-		objects:    d.Objects,
-		cleanup:    d.Cleanup,
-		encAdmin:   d.Encryption,
-		encryptor:  d.Encryptor,
-		token:      d.Token,
-		logLevel:   d.LogLevel,
+		backendOps:        d.BackendOps,
+		replicator:        d.Replicator,
+		overRep:           d.OverRep,
+		drain:             d.Drain,
+		scrubber:          d.Scrubber,
+		lifecycle:         d.Lifecycle,
+		reconciler:        d.Reconciler,
+		multipartBackfill: d.MultipartBackfill,
+		dbCB:              d.DBCB,
+		objects:           d.Objects,
+		cleanup:           d.Cleanup,
+		encAdmin:          d.Encryption,
+		encryptor:         d.Encryptor,
+		token:             d.Token,
+		logLevel:          d.LogLevel,
 	}
 }
 
@@ -136,6 +139,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /admin/api/scrub", h.requireToken(h.handleScrub))
 	mux.HandleFunc("POST /admin/api/backfill-checksums", h.requireToken(h.handleBackfillChecksums))
 	mux.HandleFunc("POST /admin/api/reconcile", h.requireToken(h.handleReconcile))
+	mux.HandleFunc("POST /admin/api/multipart-dek-backfill", h.requireToken(h.handleMultipartDEKBackfill))
 }
 
 // -------------------------------------------------------------------------
@@ -995,6 +999,35 @@ func (h *Handler) handleBackfillChecksums(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "processed": res.Processed})
+}
+
+// handleMultipartDEKBackfill triggers an on-demand pass of the legacy
+// multipart-upload DEK backfill worker. The startup hook in cli/serve
+// already runs one pass before the listener accepts traffic; this
+// endpoint exists for operators who need to rerun after fixing a
+// transient failure (backend outage, exhausted page budget, etc.).
+// Response: {"status":"ok","migrated":N} on success, 503 when the
+// worker is not configured (encryption disabled).
+func (h *Handler) handleMultipartDEKBackfill(w http.ResponseWriter, r *http.Request) {
+	if h.multipartBackfill == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "encryption is not enabled"})
+		return
+	}
+	slog.InfoContext(r.Context(), "Admin: multipart DEK backfill triggered")
+	migrated, err := h.multipartBackfill.RunOnce(r.Context())
+	if err != nil {
+		slog.ErrorContext(r.Context(), "Admin: multipart DEK backfill failed",
+			"migrated", migrated, "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"error":    err.Error(),
+			"migrated": migrated,
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":   "ok",
+		"migrated": migrated,
+	})
 }
 
 // handleReconcile triggers an on-demand reconciliation. Lists objects on

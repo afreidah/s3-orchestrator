@@ -37,26 +37,51 @@ const errUnmarshalMetadata = "failed to unmarshal metadata: %w"
 // -------------------------------------------------------------------------
 
 // CreateMultipartUpload records a new multipart upload in the database.
-func (s *Store) CreateMultipartUpload(ctx context.Context, uploadID, key, backend, contentType string, metadata map[string]string) error {
+// Encryption fields on params are persisted so every UploadPart against
+// the row can reuse the same wrapped DEK; they are zero-length when
+// proxy-side encryption is disabled.
+func (s *Store) CreateMultipartUpload(ctx context.Context, params *core.CreateMultipartUploadParams) error {
 	var metaJSON []byte
-	if len(metadata) > 0 {
+	if len(params.Metadata) > 0 {
 		var err error
-		metaJSON, err = json.Marshal(metadata)
+		metaJSON, err = json.Marshal(params.Metadata)
 		if err != nil {
 			return fmt.Errorf("failed to marshal metadata: %w", err)
 		}
 	}
+	keyIDPtr := strOrNil(params.KeyID)
+	contentTypePtr := strOrNil(params.ContentType)
 	err := s.queries.CreateMultipartUpload(ctx, db.CreateMultipartUploadParams{
-		UploadID:    uploadID,
-		ObjectKey:   key,
-		BackendName: backend,
-		ContentType: &contentType,
-		Metadata:    metaJSON,
+		UploadID:      params.UploadID,
+		ObjectKey:     params.ObjectKey,
+		BackendName:   params.BackendName,
+		ContentType:   contentTypePtr,
+		Metadata:      metaJSON,
+		EncryptionKey: nilIfEmptyBytes(params.EncryptionKey),
+		KeyID:         keyIDPtr,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create multipart upload: %w", err)
 	}
 	return nil
+}
+
+// strOrNil returns &s when s is non-empty so the column lands as NULL
+// for empty-string callers and as a real value otherwise.
+func strOrNil(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// nilIfEmptyBytes returns nil when b is zero-length so the column lands
+// as NULL rather than an empty BYTEA.
+func nilIfEmptyBytes(b []byte) []byte {
+	if len(b) == 0 {
+		return nil
+	}
+	return b
 }
 
 // GetMultipartUpload retrieves metadata for a multipart upload.
@@ -68,31 +93,61 @@ func (s *Store) GetMultipartUpload(ctx context.Context, uploadID string) (*core.
 	if err != nil {
 		return nil, fmt.Errorf("failed to get multipart upload: %w", err)
 	}
-	mu, err := toMultipartUpload(row.UploadID, row.ObjectKey, row.BackendName, row.ContentType, row.Metadata, row.CreatedAt.Time)
+	mu, err := toMultipartUpload(&multipartRow{
+		UploadID:      row.UploadID,
+		ObjectKey:     row.ObjectKey,
+		BackendName:   row.BackendName,
+		ContentType:   row.ContentType,
+		Metadata:      row.Metadata,
+		EncryptionKey: row.EncryptionKey,
+		KeyID:         row.KeyID,
+		CreatedAt:     row.CreatedAt.Time,
+	})
 	if err != nil {
 		return nil, err
 	}
 	return &mu, nil
 }
 
-// toMultipartUpload assembles a MultipartUpload from the column set every
-// sqlc multipart row exposes. Centralizes the pointer-deref of ContentType
-// and the JSON unmarshal of Metadata so the slice-returning callers above
-// and below this don't carry parallel loop bodies.
-func toMultipartUpload(uploadID, objectKey, backendName string, contentType *string, metadata []byte, createdAt time.Time) (core.MultipartUpload, error) {
+// multipartRow mirrors the column set every multipart_uploads sqlc row
+// exposes. Used to feed toMultipartUpload from each query without
+// duplicating the field-by-field copy at every call site.
+type multipartRow struct {
+	UploadID      string
+	ObjectKey     string
+	BackendName   string
+	ContentType   *string
+	Metadata      []byte
+	EncryptionKey []byte
+	KeyID         *string
+	CreatedAt     time.Time
+}
+
+// toMultipartUpload assembles a MultipartUpload from a multipartRow.
+// Centralizes the pointer-deref of ContentType/KeyID and the JSON
+// unmarshal of Metadata so the slice-returning callers do not carry
+// parallel loop bodies.
+func toMultipartUpload(r *multipartRow) (core.MultipartUpload, error) {
 	ct := ""
-	if contentType != nil {
-		ct = *contentType
+	if r.ContentType != nil {
+		ct = *r.ContentType
+	}
+	kid := ""
+	if r.KeyID != nil {
+		kid = *r.KeyID
 	}
 	mu := core.MultipartUpload{
-		UploadID:    uploadID,
-		ObjectKey:   objectKey,
-		BackendName: backendName,
-		ContentType: ct,
-		CreatedAt:   createdAt,
+		UploadID:      r.UploadID,
+		ObjectKey:     r.ObjectKey,
+		BackendName:   r.BackendName,
+		ContentType:   ct,
+		EncryptionKey: r.EncryptionKey,
+		KeyID:         kid,
+		Encrypted:     len(r.EncryptionKey) > 0,
+		CreatedAt:     r.CreatedAt,
 	}
-	if len(metadata) > 0 {
-		if err := json.Unmarshal(metadata, &mu.Metadata); err != nil {
+	if len(r.Metadata) > 0 {
+		if err := json.Unmarshal(r.Metadata, &mu.Metadata); err != nil {
 			return core.MultipartUpload{}, fmt.Errorf(errUnmarshalMetadata, err)
 		}
 	}
@@ -168,6 +223,22 @@ func (s *Store) DeleteMultipartUpload(ctx context.Context, uploadID string) erro
 	return nil
 }
 
+// collectMultipartUploads is the shared row→core.MultipartUpload
+// pipeline used by every slice-returning multipart query. Each
+// caller passes a per-row converter; the loop wiring + error
+// handling lives here so the per-query bodies stay one-liners.
+func collectMultipartUploads[T any](rows []T, conv func(*T) *multipartRow) ([]core.MultipartUpload, error) {
+	uploads := make([]core.MultipartUpload, len(rows))
+	for i := range rows {
+		mu, err := toMultipartUpload(conv(&rows[i]))
+		if err != nil {
+			return nil, err
+		}
+		uploads[i] = mu
+	}
+	return uploads, nil
+}
+
 // GetStaleMultipartUploads returns uploads older than the given duration.
 func (s *Store) GetStaleMultipartUploads(ctx context.Context, olderThan time.Duration) ([]core.MultipartUpload, error) {
 	cutoff := time.Now().Add(-olderThan)
@@ -175,15 +246,13 @@ func (s *Store) GetStaleMultipartUploads(ctx context.Context, olderThan time.Dur
 	if err != nil {
 		return nil, fmt.Errorf("failed to get stale uploads: %w", err)
 	}
-	uploads := make([]core.MultipartUpload, len(rows))
-	for i, row := range rows {
-		mu, err := toMultipartUpload(row.UploadID, row.ObjectKey, row.BackendName, row.ContentType, row.Metadata, row.CreatedAt.Time)
-		if err != nil {
-			return nil, err
+	return collectMultipartUploads(rows, func(r *db.GetStaleMultipartUploadsRow) *multipartRow {
+		return &multipartRow{
+			UploadID: r.UploadID, ObjectKey: r.ObjectKey, BackendName: r.BackendName,
+			ContentType: r.ContentType, Metadata: r.Metadata,
+			EncryptionKey: r.EncryptionKey, KeyID: r.KeyID, CreatedAt: r.CreatedAt.Time,
 		}
-		uploads[i] = mu
-	}
-	return uploads, nil
+	})
 }
 
 // GetMultipartUploadsByBackend returns all in-progress multipart uploads on
@@ -194,15 +263,68 @@ func (s *Store) GetMultipartUploadsByBackend(ctx context.Context, backendName st
 	if err != nil {
 		return nil, fmt.Errorf("failed to get multipart uploads by backend: %w", err)
 	}
-	uploads := make([]core.MultipartUpload, len(rows))
-	for i, row := range rows {
-		mu, err := toMultipartUpload(row.UploadID, row.ObjectKey, row.BackendName, row.ContentType, row.Metadata, row.CreatedAt.Time)
-		if err != nil {
-			return nil, err
+	return collectMultipartUploads(rows, func(r *db.GetMultipartUploadsByBackendRow) *multipartRow {
+		return &multipartRow{
+			UploadID: r.UploadID, ObjectKey: r.ObjectKey, BackendName: r.BackendName,
+			ContentType: r.ContentType, Metadata: r.Metadata,
+			EncryptionKey: r.EncryptionKey, KeyID: r.KeyID, CreatedAt: r.CreatedAt.Time,
 		}
-		uploads[i] = mu
+	})
+}
+
+// ListLegacyMultipartUploads returns multipart_uploads rows whose
+// encryption_key column is NULL - rows created before migration 00010
+// that the multipart_dek_backfill worker still has to migrate.
+func (s *Store) ListLegacyMultipartUploads(ctx context.Context, limit int) ([]core.MultipartUpload, error) {
+	rows, err := s.queries.ListLegacyMultipartUploads(ctx, int32(limit)) //nolint:gosec // G115: caller-controlled small int
+	if err != nil {
+		return nil, fmt.Errorf("failed to list legacy multipart uploads: %w", err)
 	}
-	return uploads, nil
+	return collectMultipartUploads(rows, func(r *db.ListLegacyMultipartUploadsRow) *multipartRow {
+		return &multipartRow{
+			UploadID: r.UploadID, ObjectKey: r.ObjectKey, BackendName: r.BackendName,
+			ContentType: r.ContentType, Metadata: r.Metadata,
+			EncryptionKey: r.EncryptionKey, KeyID: r.KeyID, CreatedAt: r.CreatedAt.Time,
+		}
+	})
+}
+
+// UpdateUploadEncryption persists the upload-level wrapped DEK and key
+// ID once the backfill worker has re-encrypted every part of an upload.
+func (s *Store) UpdateUploadEncryption(ctx context.Context, uploadID string, encryptionKey []byte, keyID string) error {
+	keyIDPtr := strOrNil(keyID)
+	if err := s.queries.UpdateUploadEncryption(ctx, db.UpdateUploadEncryptionParams{
+		UploadID:      uploadID,
+		EncryptionKey: nilIfEmptyBytes(encryptionKey),
+		KeyID:         keyIDPtr,
+	}); err != nil {
+		return fmt.Errorf("failed to update upload encryption: %w", err)
+	}
+	return nil
+}
+
+// UpdatePartEncryption replaces a part row's encryption metadata after
+// the backfill rewrites the part's ciphertext under the upload-level
+// DEK. Only used by the backfill path.
+func (s *Store) UpdatePartEncryption(ctx context.Context, uploadID string, partNumber int, sizeBytes int64, enc *core.EncryptionMeta) error {
+	if partNumber < 1 || partNumber > 10000 {
+		return fmt.Errorf("invalid part number %d: must be between 1 and 10000", partNumber)
+	}
+	params := db.UpdatePartEncryptionParams{
+		UploadID:   uploadID,
+		PartNumber: int32(partNumber),
+		SizeBytes:  sizeBytes,
+	}
+	if enc != nil && enc.Encrypted {
+		params.Encrypted = true
+		params.EncryptionKey = enc.EncryptionKey
+		params.KeyID = strOrNil(enc.KeyID)
+		params.PlaintextSize = &enc.PlaintextSize
+	}
+	if err := s.queries.UpdatePartEncryption(ctx, params); err != nil {
+		return fmt.Errorf("failed to update part encryption: %w", err)
+	}
+	return nil
 }
 
 // CountActiveMultipartUploads returns the number of in-progress multipart

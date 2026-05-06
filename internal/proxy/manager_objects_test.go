@@ -1639,8 +1639,10 @@ func TestListObjects_PageBoundaryMidCommonPrefix(t *testing.T) {
 // TestListObjects_MaxPagesCapMidCommonPrefix exercises the second emission
 // site (maxPages cap reached while still inside an emitted CP). Lowers the
 // cap so the test only needs a handful of mock pages to drive the branch.
+//
+// Not t.Parallel(): mutates the package-global listObjectsMaxPages, which
+// every concurrent ListObjects caller in this package reads.
 func TestListObjects_MaxPagesCapMidCommonPrefix(t *testing.T) {
-	t.Parallel()
 	originalCap := listObjectsMaxPages
 	listObjectsMaxPages = 2
 	defer func() { listObjectsMaxPages = originalCap }()

@@ -14,10 +14,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"testing"
 	"time"
 
+	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -930,6 +934,329 @@ func TestAbortMultipartUploadsOnBackend_AbortFails(t *testing.T) {
 
 	// Should not panic  -  logs error and continues
 	mgr.MultipartManager.AbortMultipartUploadsOnBackend(context.Background(), "b1")
+}
+
+// newEncryptedTestManager wires a manager with a real Encryptor so the
+// shared-DEK code paths (unwrapUploadDEK, encryption-aware UploadPart,
+// buildAssembledUpload) can be exercised in unit tests.
+func newEncryptedTestManager(t *testing.T, store *mockStore, backends map[string]*mockBackend) *BackendManager {
+	t.Helper()
+	provider, err := encryption.NewConfigKeyProvider("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "test-0")
+	if err != nil {
+		t.Fatalf("NewConfigKeyProvider: %v", err)
+	}
+	enc, err := encryption.NewEncryptor(provider, 64*1024)
+	if err != nil {
+		t.Fatalf("NewEncryptor: %v", err)
+	}
+	obs := make(map[string]s3be.ObjectBackend, len(backends))
+	var order []string
+	for name, b := range backends {
+		obs[name] = b
+		order = append(order, name)
+	}
+	return wireWorkersForTest(NewBackendManager(&BackendManagerConfig{
+		Backends:        obs,
+		Stores:          testStoresFromMock(store),
+		Dashboard:       store,
+		Metrics:         store,
+		Order:           order,
+		CacheTTL:        5 * time.Second,
+		BackendTimeout:  30 * time.Second,
+		RoutingStrategy: config.RoutingPack,
+		Encryptor:       enc,
+	}))
+}
+
+// failingKeyProvider mirrors the failing provider in
+// internal/encryption/encryption_test.go but lives in this package
+// so the proxy tests can wire an Encryptor whose WrapDEK call
+// fails. Drives the wrap-error branches in CreateMultipartUpload.
+type failingKeyProvider struct{}
+
+func (failingKeyProvider) WrapDEK(_ context.Context, _ []byte) ([]byte, string, error) {
+	return nil, "", errors.New("simulated wrap failure")
+}
+func (failingKeyProvider) UnwrapDEK(_ context.Context, _ []byte, _ string) ([]byte, error) {
+	return nil, errors.New("simulated unwrap failure")
+}
+func (failingKeyProvider) KeyID() string { return "fail-0" }
+
+// newFailingEncryptionTestManager wires a manager whose Encryptor
+// has a KeyProvider that always fails WrapDEK / UnwrapDEK. Lets the
+// CreateMultipartUpload wrap-error branch run.
+func newFailingEncryptionTestManager(t *testing.T, store *mockStore, backends map[string]*mockBackend) *BackendManager {
+	t.Helper()
+	enc, err := encryption.NewEncryptor(failingKeyProvider{}, 64*1024)
+	if err != nil {
+		t.Fatalf("NewEncryptor: %v", err)
+	}
+	obs := make(map[string]s3be.ObjectBackend, len(backends))
+	var order []string
+	for name, b := range backends {
+		obs[name] = b
+		order = append(order, name)
+	}
+	return wireWorkersForTest(NewBackendManager(&BackendManagerConfig{
+		Backends:        obs,
+		Stores:          testStoresFromMock(store),
+		Dashboard:       store,
+		Metrics:         store,
+		Order:           order,
+		CacheTTL:        5 * time.Second,
+		BackendTimeout:  30 * time.Second,
+		RoutingStrategy: config.RoutingPack,
+		Encryptor:       enc,
+	}))
+}
+
+// TestCreateMultipartUpload_WrapDEKError covers the
+// CreateMultipartUpload branch where GenerateAndWrapDEK fails. The
+// caller must surface the wrap error, not silently fall through.
+func TestCreateMultipartUpload_WrapDEKError(t *testing.T) {
+	t.Parallel()
+	store := &mockStore{getBackendResp: "b1"}
+	mgr := newFailingEncryptionTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
+	_, _, err := mgr.MultipartManager.CreateMultipartUpload(context.Background(), "k", "", nil)
+	if err == nil {
+		t.Fatal("expected error from wrap failure, got nil")
+	}
+}
+
+// TestCreateMultipartUpload_EncryptionWrapsSharedDEK covers the
+// branch in CreateMultipartUpload that wraps a shared upload DEK
+// once and persists it on the upload row. Earlier per-part wrapping
+// was eliminated by #650 item 3.
+func TestCreateMultipartUpload_EncryptionWrapsSharedDEK(t *testing.T) {
+	t.Parallel()
+	backend := newMockBackend()
+	store := &mockStore{getBackendResp: "b1"}
+	mgr := newEncryptedTestManager(t, store, map[string]*mockBackend{"b1": backend})
+
+	_, _, err := mgr.MultipartManager.CreateMultipartUpload(context.Background(), "k", "application/zip", nil)
+	if err != nil {
+		t.Fatalf("CreateMultipartUpload: %v", err)
+	}
+	if len(store.createMultipartCalls) != 1 {
+		t.Fatalf("expected 1 CreateMultipartUpload call, got %d", len(store.createMultipartCalls))
+	}
+	got := store.createMultipartCalls[0]
+	if len(got.EncryptionKey) == 0 {
+		t.Error("upload row missing wrapped EncryptionKey")
+	}
+	if got.KeyID == "" {
+		t.Error("upload row missing KeyID")
+	}
+}
+
+// TestUploadPart_ReusesSharedDEK exercises the encryption branch in
+// UploadPart: the upload row already carries a wrapped DEK, the part
+// is encrypted under it (no fresh WrapDEK call), and the part row
+// receives encryption metadata.
+func TestUploadPart_ReusesSharedDEK(t *testing.T) {
+	t.Parallel()
+	backend := newMockBackend()
+	store := &mockStore{getBackendResp: "b1"}
+	mgr := newEncryptedTestManager(t, store, map[string]*mockBackend{"b1": backend})
+
+	_, _, err := mgr.MultipartManager.CreateMultipartUpload(context.Background(), "k", "", nil)
+	if err != nil {
+		t.Fatalf("CreateMultipartUpload: %v", err)
+	}
+	created := store.createMultipartCalls[0]
+	store.getMultipartResp = &core.MultipartUpload{
+		UploadID:      created.UploadID,
+		ObjectKey:     created.ObjectKey,
+		BackendName:   created.BackendName,
+		Encrypted:     true,
+		EncryptionKey: created.EncryptionKey,
+		KeyID:         created.KeyID,
+	}
+
+	if _, err := mgr.MultipartManager.UploadPart(context.Background(), created.UploadID, 1, bytes.NewReader([]byte("part-1-bytes")), 12); err != nil {
+		t.Fatalf("UploadPart: %v", err)
+	}
+}
+
+// TestCompleteMultipartUpload_Encrypted_RoundTrips covers the
+// shared-DEK assembly path (buildAssembledUpload + decrypt-each-part
+// streaming) end-to-end against an in-memory backend. After
+// CompleteMultipartUpload the assembled object's plaintext should
+// reconstitute the parts.
+func TestCompleteMultipartUpload_Encrypted_RoundTrips(t *testing.T) {
+	t.Parallel()
+	backend := newMockBackend()
+	store := &mockStore{getBackendResp: "b1"}
+	mgr := newEncryptedTestManager(t, store, map[string]*mockBackend{"b1": backend})
+	ctx := context.Background()
+
+	uploadID, _, err := mgr.MultipartManager.CreateMultipartUpload(ctx, "k", "", nil)
+	if err != nil {
+		t.Fatalf("CreateMultipartUpload: %v", err)
+	}
+	created := store.createMultipartCalls[0]
+	mu := &core.MultipartUpload{
+		UploadID:      uploadID,
+		ObjectKey:     created.ObjectKey,
+		BackendName:   created.BackendName,
+		Encrypted:     true,
+		EncryptionKey: created.EncryptionKey,
+		KeyID:         created.KeyID,
+	}
+	store.getMultipartResp = mu
+
+	parts := [][]byte{[]byte("hello-"), []byte("world!")}
+	for i, p := range parts {
+		if _, err := mgr.MultipartManager.UploadPart(ctx, uploadID, i+1, bytes.NewReader(p), int64(len(p))); err != nil {
+			t.Fatalf("UploadPart %d: %v", i+1, err)
+		}
+	}
+	store.getPartsResp = []core.MultipartPart{
+		{PartNumber: 1, ETag: "e1", SizeBytes: int64(backendObjectSize(backend, "__multipart/"+uploadID+"/1")), Encrypted: true, EncryptionKey: store.recordPartCalls[0].Enc.EncryptionKey, KeyID: store.recordPartCalls[0].Enc.KeyID, PlaintextSize: 6},
+		{PartNumber: 2, ETag: "e2", SizeBytes: int64(backendObjectSize(backend, "__multipart/"+uploadID+"/2")), Encrypted: true, EncryptionKey: store.recordPartCalls[1].Enc.EncryptionKey, KeyID: store.recordPartCalls[1].Enc.KeyID, PlaintextSize: 6},
+	}
+	if _, err := mgr.MultipartManager.CompleteMultipartUpload(ctx, uploadID, []int{1, 2}); err != nil {
+		t.Fatalf("CompleteMultipartUpload: %v", err)
+	}
+}
+
+// TestUnwrapUploadDEK_NoEncryptionMetadata covers the
+// unwrapUploadDEK branch where the upload row was not flagged as
+// encrypted (assembly logic should never call this path; the
+// guardrail exists in case a caller drifts).
+func TestUnwrapUploadDEK_NoEncryptionMetadata(t *testing.T) {
+	t.Parallel()
+	mgr := newEncryptedTestManager(t, &mockStore{}, map[string]*mockBackend{"b1": newMockBackend()})
+	mu := &core.MultipartUpload{UploadID: "u1", Encrypted: false}
+	_, _, _, err := mgr.MultipartManager.unwrapUploadDEK(context.Background(), mu)
+	if err == nil {
+		t.Fatal("expected error for unencrypted upload, got nil")
+	}
+}
+
+// TestUnwrapUploadDEK_UnpackError covers the branch where the upload
+// row's EncryptionKey is too short for UnpackKeyData to split.
+func TestUnwrapUploadDEK_UnpackError(t *testing.T) {
+	t.Parallel()
+	mgr := newEncryptedTestManager(t, &mockStore{}, map[string]*mockBackend{"b1": newMockBackend()})
+	mu := &core.MultipartUpload{
+		UploadID:      "u1",
+		Encrypted:     true,
+		EncryptionKey: []byte{0x01, 0x02},
+		KeyID:         "kid",
+	}
+	_, _, _, err := mgr.MultipartManager.unwrapUploadDEK(context.Background(), mu)
+	if err == nil {
+		t.Fatal("expected error from UnpackKeyData, got nil")
+	}
+}
+
+// TestUnwrapUploadDEK_UnwrapFails covers the branch where
+// UnpackKeyData succeeds but the KeyProvider rejects the wrapped DEK
+// during UnwrapDEK.
+func TestUnwrapUploadDEK_UnwrapFails(t *testing.T) {
+	t.Parallel()
+	mgr := newEncryptedTestManager(t, &mockStore{}, map[string]*mockBackend{"b1": newMockBackend()})
+	bogus := encryption.PackKeyData(make([]byte, encryption.NonceSize), []byte("not-a-real-wrapped-dek"))
+	mu := &core.MultipartUpload{
+		UploadID:      "u1",
+		Encrypted:     true,
+		EncryptionKey: bogus,
+		KeyID:         "test-0",
+	}
+	_, _, _, err := mgr.MultipartManager.unwrapUploadDEK(context.Background(), mu)
+	if err == nil {
+		t.Fatal("expected unwrap error, got nil")
+	}
+}
+
+// TestUploadPart_UnwrapDEKError covers the UploadPart branch where
+// the upload row's wrapped DEK cannot be unwrapped (corrupted bytes
+// or revoked key). Caller surfaces the error rather than uploading
+// unencrypted bytes.
+func TestUploadPart_UnwrapDEKError(t *testing.T) {
+	t.Parallel()
+	store := &mockStore{getMultipartResp: &core.MultipartUpload{
+		UploadID:      "u1",
+		ObjectKey:     "k",
+		BackendName:   "b1",
+		Encrypted:     true,
+		EncryptionKey: encryption.PackKeyData(make([]byte, encryption.NonceSize), []byte("not-a-real-wrapped-dek")),
+		KeyID:         "test-0",
+	}}
+	mgr := newEncryptedTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
+	_, err := mgr.MultipartManager.UploadPart(context.Background(), "u1", 1, bytes.NewReader([]byte("data")), 4)
+	if err == nil {
+		t.Fatal("expected unwrap error from UploadPart, got nil")
+	}
+}
+
+// TestCompleteMultipartUpload_UnwrapDEKError covers the
+// buildAssembledUpload branch where the upload row's wrapped DEK
+// cannot be unwrapped during final assembly.
+func TestCompleteMultipartUpload_UnwrapDEKError(t *testing.T) {
+	t.Parallel()
+	store := &mockStore{
+		getMultipartResp: &core.MultipartUpload{
+			UploadID:      "u1",
+			ObjectKey:     "k",
+			BackendName:   "b1",
+			Encrypted:     true,
+			EncryptionKey: encryption.PackKeyData(make([]byte, encryption.NonceSize), []byte("not-a-real-wrapped-dek")),
+			KeyID:         "test-0",
+		},
+		getPartsResp: []core.MultipartPart{{PartNumber: 1, ETag: "e", SizeBytes: 1, Encrypted: false}},
+	}
+	mgr := newEncryptedTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
+	_, err := mgr.MultipartManager.CompleteMultipartUpload(context.Background(), "u1", []int{1})
+	if err == nil {
+		t.Fatal("expected unwrap error from Complete, got nil")
+	}
+}
+
+// TestListMultipartUploads_PassThrough covers the manager
+// pass-through wrapper for the metadata-store query.
+func TestListMultipartUploads_PassThrough(t *testing.T) {
+	t.Parallel()
+	want := []core.MultipartUpload{{UploadID: "u1"}, {UploadID: "u2"}}
+	store := &mockStore{listMultipartResp: want}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	got, err := mgr.MultipartManager.ListMultipartUploads(context.Background(), "p", 10)
+	if err != nil {
+		t.Fatalf("ListMultipartUploads: %v", err)
+	}
+	if len(got) != len(want) {
+		t.Errorf("len = %d, want %d", len(got), len(want))
+	}
+}
+
+// TestGetParts_PassThrough covers the manager pass-through wrapper
+// for the metadata-store query.
+func TestGetParts_PassThrough(t *testing.T) {
+	t.Parallel()
+	want := []core.MultipartPart{{PartNumber: 1, ETag: "e1"}}
+	store := &mockStore{getPartsResp: want}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	got, err := mgr.MultipartManager.GetParts(context.Background(), "u1")
+	if err != nil {
+		t.Fatalf("GetParts: %v", err)
+	}
+	if len(got) != 1 || got[0].PartNumber != 1 {
+		t.Errorf("got = %+v, want %+v", got, want)
+	}
+}
+
+// backendObjectSize returns the size of an object stored in the
+// in-memory mockBackend so the test can populate part rows with
+// realistic ciphertext sizes after upload.
+func backendObjectSize(b *mockBackend, key string) int {
+	r, err := b.GetObject(context.Background(), key, "")
+	if err != nil {
+		return 0
+	}
+	defer r.Body.Close() //nolint:errcheck // best-effort close
+	data, _ := io.ReadAll(r.Body)
+	return len(data)
 }
 
 // TestCompleteMultipartUpload_PartGetPanics verifies that a panic inside the
