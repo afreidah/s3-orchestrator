@@ -223,6 +223,22 @@ func (s *Store) DeleteMultipartUpload(ctx context.Context, uploadID string) erro
 	return nil
 }
 
+// collectMultipartUploads is the shared row→core.MultipartUpload
+// pipeline used by every slice-returning multipart query. Each
+// caller passes a per-row converter; the loop wiring + error
+// handling lives here so the per-query bodies stay one-liners.
+func collectMultipartUploads[T any](rows []T, conv func(*T) *multipartRow) ([]core.MultipartUpload, error) {
+	uploads := make([]core.MultipartUpload, len(rows))
+	for i := range rows {
+		mu, err := toMultipartUpload(conv(&rows[i]))
+		if err != nil {
+			return nil, err
+		}
+		uploads[i] = mu
+	}
+	return uploads, nil
+}
+
 // GetStaleMultipartUploads returns uploads older than the given duration.
 func (s *Store) GetStaleMultipartUploads(ctx context.Context, olderThan time.Duration) ([]core.MultipartUpload, error) {
 	cutoff := time.Now().Add(-olderThan)
@@ -230,25 +246,13 @@ func (s *Store) GetStaleMultipartUploads(ctx context.Context, olderThan time.Dur
 	if err != nil {
 		return nil, fmt.Errorf("failed to get stale uploads: %w", err)
 	}
-	uploads := make([]core.MultipartUpload, len(rows))
-	for i := range rows {
-		row := &rows[i]
-		mu, err := toMultipartUpload(&multipartRow{
-			UploadID:      row.UploadID,
-			ObjectKey:     row.ObjectKey,
-			BackendName:   row.BackendName,
-			ContentType:   row.ContentType,
-			Metadata:      row.Metadata,
-			EncryptionKey: row.EncryptionKey,
-			KeyID:         row.KeyID,
-			CreatedAt:     row.CreatedAt.Time,
-		})
-		if err != nil {
-			return nil, err
+	return collectMultipartUploads(rows, func(r *db.GetStaleMultipartUploadsRow) *multipartRow {
+		return &multipartRow{
+			UploadID: r.UploadID, ObjectKey: r.ObjectKey, BackendName: r.BackendName,
+			ContentType: r.ContentType, Metadata: r.Metadata,
+			EncryptionKey: r.EncryptionKey, KeyID: r.KeyID, CreatedAt: r.CreatedAt.Time,
 		}
-		uploads[i] = mu
-	}
-	return uploads, nil
+	})
 }
 
 // GetMultipartUploadsByBackend returns all in-progress multipart uploads on
@@ -259,25 +263,13 @@ func (s *Store) GetMultipartUploadsByBackend(ctx context.Context, backendName st
 	if err != nil {
 		return nil, fmt.Errorf("failed to get multipart uploads by backend: %w", err)
 	}
-	uploads := make([]core.MultipartUpload, len(rows))
-	for i := range rows {
-		row := &rows[i]
-		mu, err := toMultipartUpload(&multipartRow{
-			UploadID:      row.UploadID,
-			ObjectKey:     row.ObjectKey,
-			BackendName:   row.BackendName,
-			ContentType:   row.ContentType,
-			Metadata:      row.Metadata,
-			EncryptionKey: row.EncryptionKey,
-			KeyID:         row.KeyID,
-			CreatedAt:     row.CreatedAt.Time,
-		})
-		if err != nil {
-			return nil, err
+	return collectMultipartUploads(rows, func(r *db.GetMultipartUploadsByBackendRow) *multipartRow {
+		return &multipartRow{
+			UploadID: r.UploadID, ObjectKey: r.ObjectKey, BackendName: r.BackendName,
+			ContentType: r.ContentType, Metadata: r.Metadata,
+			EncryptionKey: r.EncryptionKey, KeyID: r.KeyID, CreatedAt: r.CreatedAt.Time,
 		}
-		uploads[i] = mu
-	}
-	return uploads, nil
+	})
 }
 
 // ListLegacyMultipartUploads returns multipart_uploads rows whose
@@ -288,25 +280,13 @@ func (s *Store) ListLegacyMultipartUploads(ctx context.Context, limit int) ([]co
 	if err != nil {
 		return nil, fmt.Errorf("failed to list legacy multipart uploads: %w", err)
 	}
-	uploads := make([]core.MultipartUpload, len(rows))
-	for i := range rows {
-		row := &rows[i]
-		mu, err := toMultipartUpload(&multipartRow{
-			UploadID:      row.UploadID,
-			ObjectKey:     row.ObjectKey,
-			BackendName:   row.BackendName,
-			ContentType:   row.ContentType,
-			Metadata:      row.Metadata,
-			EncryptionKey: row.EncryptionKey,
-			KeyID:         row.KeyID,
-			CreatedAt:     row.CreatedAt.Time,
-		})
-		if err != nil {
-			return nil, err
+	return collectMultipartUploads(rows, func(r *db.ListLegacyMultipartUploadsRow) *multipartRow {
+		return &multipartRow{
+			UploadID: r.UploadID, ObjectKey: r.ObjectKey, BackendName: r.BackendName,
+			ContentType: r.ContentType, Metadata: r.Metadata,
+			EncryptionKey: r.EncryptionKey, KeyID: r.KeyID, CreatedAt: r.CreatedAt.Time,
 		}
-		uploads[i] = mu
-	}
-	return uploads, nil
+	})
 }
 
 // UpdateUploadEncryption persists the upload-level wrapped DEK and key

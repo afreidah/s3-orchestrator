@@ -396,6 +396,96 @@ func TestStoreInt_RecordPart_PreservesEncryptionFields(t *testing.T) {
 	}
 }
 
+// TestStoreInt_ListLegacyMultipartUploads verifies the worker-facing
+// query returns rows whose encryption_key is NULL (the legacy format
+// from before migration 00010) and skips rows already stamped under
+// the shared-DEK migration.
+func TestStoreInt_ListLegacyMultipartUploads(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	legacyID, _ := seedMultipartUpload(t, s, "", nil)
+	migratedID := uniqueKey(t, "upload-migrated")
+	if err := s.CreateMultipartUpload(ctx, &core.CreateMultipartUploadParams{
+		UploadID:      migratedID,
+		ObjectKey:     uniqueKey(t, "k-migrated"),
+		BackendName:   "backend-a",
+		EncryptionKey: bytes.Repeat([]byte{1}, 64),
+		KeyID:         "kid",
+	}); err != nil {
+		t.Fatalf("CreateMultipartUpload(migrated): %v", err)
+	}
+	t.Cleanup(func() { _ = s.DeleteMultipartUpload(ctx, migratedID) })
+
+	rows, err := s.ListLegacyMultipartUploads(ctx, 100)
+	if err != nil {
+		t.Fatalf("ListLegacyMultipartUploads: %v", err)
+	}
+	var sawLegacy, sawMigrated bool
+	for _, mu := range rows {
+		if mu.UploadID == legacyID {
+			sawLegacy = true
+		}
+		if mu.UploadID == migratedID {
+			sawMigrated = true
+		}
+	}
+	if !sawLegacy {
+		t.Error("legacy row missing from list")
+	}
+	if sawMigrated {
+		t.Error("already-migrated row included in legacy list")
+	}
+}
+
+// TestStoreInt_UpdateUploadEncryption stamps an upload row with
+// encryption metadata and reads it back to verify the round-trip.
+func TestStoreInt_UpdateUploadEncryption(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	uploadID, _ := seedMultipartUpload(t, s, "", nil)
+	encKey := bytes.Repeat([]byte{0xAB}, 64)
+	if err := s.UpdateUploadEncryption(ctx, uploadID, encKey, "kid-2"); err != nil {
+		t.Fatalf("UpdateUploadEncryption: %v", err)
+	}
+	mu, err := s.GetMultipartUpload(ctx, uploadID)
+	if err != nil {
+		t.Fatalf("GetMultipartUpload: %v", err)
+	}
+	if !mu.Encrypted || mu.KeyID != "kid-2" {
+		t.Errorf("encryption fields not stamped: %+v", mu)
+	}
+	if !bytes.Equal(mu.EncryptionKey, encKey) {
+		t.Errorf("EncryptionKey not stamped: %v", mu.EncryptionKey)
+	}
+}
+
+// TestStoreInt_UpdatePartEncryption stamps part-row encryption
+// metadata and reads it back.
+func TestStoreInt_UpdatePartEncryption(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	uploadID, _ := seedMultipartUpload(t, s, "", nil)
+	if err := s.RecordPart(ctx, uploadID, 1, "etag-1", 1024, nil); err != nil {
+		t.Fatalf("RecordPart: %v", err)
+	}
+	enc := &core.EncryptionMeta{
+		Encrypted:     true,
+		EncryptionKey: bytes.Repeat([]byte{0xCD}, 64),
+		KeyID:         "kid-3",
+		PlaintextSize: 999,
+	}
+	if err := s.UpdatePartEncryption(ctx, uploadID, 1, 1500, enc); err != nil {
+		t.Fatalf("UpdatePartEncryption: %v", err)
+	}
+	parts, err := s.GetParts(ctx, uploadID)
+	if err != nil {
+		t.Fatalf("GetParts: %v", err)
+	}
+	if len(parts) != 1 || !parts[0].Encrypted || parts[0].KeyID != "kid-3" || parts[0].PlaintextSize != 999 || parts[0].SizeBytes != 1500 {
+		t.Errorf("part not updated: %+v", parts)
+	}
+}
+
 // -------------------------------------------------------------------------
 // QUOTA
 // -------------------------------------------------------------------------

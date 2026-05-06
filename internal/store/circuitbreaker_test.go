@@ -1162,3 +1162,38 @@ func TestIsDBError_WrappedErrNoSpace(t *testing.T) {
 		t.Error("wrapped ErrNoSpaceAvailable should not be a DB error")
 	}
 }
+
+// TestCircuitBreaker_ListLegacyMultipartUploads exercises the CB
+// wrapper added in #650 so the breaker-protected forward through
+// the inner store is counted in coverage.
+func TestCircuitBreaker_ListLegacyMultipartUploads(t *testing.T) {
+	t.Parallel()
+	mock := &mockStore{}
+	cb := newTestCB(mock, 3, time.Minute)
+	if _, err := cb.ListLegacyMultipartUploads(context.Background(), 50); err != nil {
+		t.Fatalf("ListLegacyMultipartUploads: %v", err)
+	}
+}
+
+// TestCircuitBreaker_UpdateUploadEncryption exercises the CB
+// wrapper for the upload-row encryption stamp.
+func TestCircuitBreaker_UpdateUploadEncryption(t *testing.T) {
+	t.Parallel()
+	mock := &mockStore{}
+	cb := newTestCB(mock, 3, time.Minute)
+	if err := cb.UpdateUploadEncryption(context.Background(), "u1", []byte("k"), "kid"); err != nil {
+		t.Fatalf("UpdateUploadEncryption: %v", err)
+	}
+}
+
+// TestCircuitBreaker_UpdatePartEncryption exercises the CB
+// wrapper for the part-row encryption stamp.
+func TestCircuitBreaker_UpdatePartEncryption(t *testing.T) {
+	t.Parallel()
+	mock := &mockStore{}
+	cb := newTestCB(mock, 3, time.Minute)
+	enc := &core.EncryptionMeta{Encrypted: true, EncryptionKey: []byte("k"), KeyID: "kid"}
+	if err := cb.UpdatePartEncryption(context.Background(), "u1", 1, 100, enc); err != nil {
+		t.Fatalf("UpdatePartEncryption: %v", err)
+	}
+}

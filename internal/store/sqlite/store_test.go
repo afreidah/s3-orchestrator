@@ -12,6 +12,7 @@
 package sqlite
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"reflect"
@@ -2267,5 +2268,140 @@ func TestStore_CleanupDLQDepth_CountsRows(t *testing.T) {
 	}
 	if depth != 2 {
 		t.Errorf("depth=%d, want 2", depth)
+	}
+}
+
+// TestMultipart_ListLegacy_FiltersStampedRows verifies that the
+// worker-facing query returns rows with NULL encryption_key and
+// skips rows whose encryption_key was stamped by the backfill
+// worker (or by the runtime CreateMultipartUpload path post-#650).
+func TestMultipart_ListLegacy_FiltersStampedRows(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	if err := s.CreateMultipartUpload(ctx, &core.CreateMultipartUploadParams{
+		UploadID:    "legacy-1",
+		ObjectKey:   "bucket/legacy",
+		BackendName: "backend-a",
+	}); err != nil {
+		t.Fatalf("CreateMultipartUpload(legacy): %v", err)
+	}
+	if err := s.CreateMultipartUpload(ctx, &core.CreateMultipartUploadParams{
+		UploadID:      "stamped-1",
+		ObjectKey:     "bucket/stamped",
+		BackendName:   "backend-a",
+		EncryptionKey: []byte("packed-stamped"),
+		KeyID:         "kid-1",
+	}); err != nil {
+		t.Fatalf("CreateMultipartUpload(stamped): %v", err)
+	}
+
+	rows, err := s.ListLegacyMultipartUploads(ctx, 100)
+	if err != nil {
+		t.Fatalf("ListLegacyMultipartUploads: %v", err)
+	}
+	var sawLegacy, sawStamped bool
+	for _, mu := range rows {
+		if mu.UploadID == "legacy-1" {
+			sawLegacy = true
+		}
+		if mu.UploadID == "stamped-1" {
+			sawStamped = true
+		}
+	}
+	if !sawLegacy {
+		t.Error("legacy row missing from list")
+	}
+	if sawStamped {
+		t.Error("stamped row included in legacy list")
+	}
+}
+
+// TestMultipart_UpdateUploadEncryption stamps an upload row with
+// shared-DEK metadata and verifies a subsequent Get reflects the
+// new state.
+func TestMultipart_UpdateUploadEncryption(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	if err := s.CreateMultipartUpload(ctx, &core.CreateMultipartUploadParams{
+		UploadID:    "up-1",
+		ObjectKey:   "bucket/k",
+		BackendName: "backend-a",
+	}); err != nil {
+		t.Fatalf("CreateMultipartUpload: %v", err)
+	}
+	encKey := []byte("packed-key-bytes")
+	if err := s.UpdateUploadEncryption(ctx, "up-1", encKey, "kid-stamped"); err != nil {
+		t.Fatalf("UpdateUploadEncryption: %v", err)
+	}
+	mu, err := s.GetMultipartUpload(ctx, "up-1")
+	if err != nil {
+		t.Fatalf("GetMultipartUpload: %v", err)
+	}
+	if !mu.Encrypted || mu.KeyID != "kid-stamped" {
+		t.Errorf("encryption fields not stamped: %+v", mu)
+	}
+	if !bytes.Equal(mu.EncryptionKey, encKey) {
+		t.Errorf("EncryptionKey mismatch: got %q", mu.EncryptionKey)
+	}
+}
+
+// TestMultipart_UpdatePartEncryption_InvalidPartNumber covers the
+// guardrail that rejects part numbers outside [1, 10000] before any
+// SQL is issued.
+func TestMultipart_UpdatePartEncryption_InvalidPartNumber(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	if err := s.UpdatePartEncryption(context.Background(), "u", 0, 0, nil); err == nil {
+		t.Error("expected error for partNumber=0")
+	}
+	if err := s.UpdatePartEncryption(context.Background(), "u", 10001, 0, nil); err == nil {
+		t.Error("expected error for partNumber>10000")
+	}
+}
+
+// TestMultipart_UpdatePartEncryption stamps part-row encryption
+// metadata and verifies a subsequent GetParts read returns the new
+// values, including the rewritten ciphertext size.
+func TestMultipart_UpdatePartEncryption(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	if err := s.CreateMultipartUpload(ctx, &core.CreateMultipartUploadParams{
+		UploadID:    "up-2",
+		ObjectKey:   "bucket/k",
+		BackendName: "backend-a",
+	}); err != nil {
+		t.Fatalf("CreateMultipartUpload: %v", err)
+	}
+	if err := s.RecordPart(ctx, "up-2", 1, "etag-1", 1000, nil); err != nil {
+		t.Fatalf("RecordPart: %v", err)
+	}
+	enc := &core.EncryptionMeta{
+		Encrypted:     true,
+		EncryptionKey: []byte("part-packed-key"),
+		KeyID:         "part-kid",
+		PlaintextSize: 750,
+	}
+	if err := s.UpdatePartEncryption(ctx, "up-2", 1, 1100, enc); err != nil {
+		t.Fatalf("UpdatePartEncryption: %v", err)
+	}
+	parts, err := s.GetParts(ctx, "up-2")
+	if err != nil {
+		t.Fatalf("GetParts: %v", err)
+	}
+	if len(parts) != 1 {
+		t.Fatalf("len(parts)=%d, want 1", len(parts))
+	}
+	p := parts[0]
+	if !p.Encrypted || p.KeyID != "part-kid" || p.PlaintextSize != 750 || p.SizeBytes != 1100 {
+		t.Errorf("part not updated: %+v", p)
+	}
+	if string(p.EncryptionKey) != "part-packed-key" {
+		t.Errorf("EncryptionKey mismatch: %q", p.EncryptionKey)
 	}
 }

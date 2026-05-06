@@ -58,6 +58,9 @@ type mockStore struct {
 
 	// Multipart
 	createMultipartErr        error
+	createMultipartCalls      []core.CreateMultipartUploadParams
+	listMultipartResp         []core.MultipartUpload
+	listMultipartErr          error
 	getMultipartResp          *core.MultipartUpload
 	getMultipartErr           error
 	getPartsResp              []core.MultipartPart
@@ -65,6 +68,7 @@ type mockStore struct {
 	deleteMultipartErr        error
 	deleteMultipartCalled     bool
 	recordPartErr             error
+	recordPartCalls           []recordPartCall
 	getStaleMultipartResp     []core.MultipartUpload
 	getStaleMultipartErr      error
 	legacyMultipartResp       []core.MultipartUpload
@@ -364,9 +368,22 @@ func (m *mockStore) ListObjects(_ context.Context, _, startAfter string, _ int) 
 	return m.listObjectsResp, nil
 }
 
-func (m *mockStore) CreateMultipartUpload(_ context.Context, _ *core.CreateMultipartUploadParams) error {
+// recordPartCall captures the EncryptionMeta passed to a RecordPart
+// invocation so the encrypted-multipart tests can assert that the
+// shared upload-level DEK was reused for each part.
+type recordPartCall struct {
+	UploadID   string
+	PartNumber int
+	Size       int64
+	Enc        *core.EncryptionMeta
+}
+
+func (m *mockStore) CreateMultipartUpload(_ context.Context, params *core.CreateMultipartUploadParams) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if params != nil {
+		m.createMultipartCalls = append(m.createMultipartCalls, *params)
+	}
 	return m.createMultipartErr
 }
 
@@ -397,9 +414,10 @@ func (m *mockStore) GetMultipartUpload(_ context.Context, _ string) (*core.Multi
 	return m.getMultipartResp, nil
 }
 
-func (m *mockStore) RecordPart(_ context.Context, _ string, _ int, _ string, _ int64, _ *core.EncryptionMeta) error {
+func (m *mockStore) RecordPart(_ context.Context, uploadID string, partNumber int, _ string, size int64, enc *core.EncryptionMeta) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.recordPartCalls = append(m.recordPartCalls, recordPartCall{UploadID: uploadID, PartNumber: partNumber, Size: size, Enc: enc})
 	return m.recordPartErr
 }
 
@@ -485,9 +503,11 @@ func (m *mockStore) CountActiveMultipartUploads(_ context.Context, _ string) (in
 	return 0, nil
 }
 
-// ListMultipartUploads returns nil (stub).
+// ListMultipartUploads returns the configured response.
 func (m *mockStore) ListMultipartUploads(_ context.Context, _ string, _ int) ([]core.MultipartUpload, error) {
-	return nil, nil
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.listMultipartResp, m.listMultipartErr
 }
 
 func (m *mockStore) ListObjectsByBackend(ctx context.Context, _ string, _ int) ([]core.ObjectLocation, error) {
