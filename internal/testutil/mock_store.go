@@ -87,6 +87,12 @@ type MockStore struct {
 	FlushUsageErr   error
 	FlushUsageCalls []FlushUsageCall
 
+	// Cleanup queue
+	PendingCleanupsResp   []core.CleanupItem
+	PendingCleanupsErr    error
+	CleanupQueueDepthResp int64
+	CleanupQueueDepthErr  error
+
 	// --- Call tracking ---
 	RecordObjectCalls        []RecordObjectCall
 	DeleteObjectCalls        []string
@@ -459,9 +465,9 @@ func (m *MockStore) DecrementOrphanBytes(_ context.Context, _ string, _ int64) e
 	return nil
 }
 
-// GetPendingCleanups returns nil (stub).
+// GetPendingCleanups returns the pre-configured slice + error.
 func (m *MockStore) GetPendingCleanups(_ context.Context, _ int) ([]core.CleanupItem, error) {
-	return nil, nil
+	return m.PendingCleanupsResp, m.PendingCleanupsErr
 }
 
 // CompleteCleanupItem returns nil (stub).
@@ -474,9 +480,9 @@ func (m *MockStore) RetryCleanupItem(_ context.Context, _ int64, _ time.Duration
 	return nil
 }
 
-// CleanupQueueDepth returns zero (stub).
+// CleanupQueueDepth returns the pre-configured value + error.
 func (m *MockStore) CleanupQueueDepth(_ context.Context) (int64, error) {
-	return 0, nil
+	return m.CleanupQueueDepthResp, m.CleanupQueueDepthErr
 }
 
 // MoveCleanupToDLQ records nothing and reports the row as moved (stub).

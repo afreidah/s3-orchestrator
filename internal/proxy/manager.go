@@ -388,8 +388,8 @@ func (m *BackendManager) makeReconcileDeleter() deleterFn {
 			return err
 		}
 		if _, err := m.stores.Cleanup.SweepStaleCleanupQueueRows(ctx, key, backendName); err != nil {
-			slog.WarnContext(ctx, "Reconcile: failed to sweep cleanup_queue rows for stale key",
-				"key", key, "backend", backendName, "error", err)
+			slog.WarnContext(ctx, "failed to sweep cleanup_queue rows for stale key",
+				slog.String("key", key), slog.String("backend", backendName), "error", err)
 		}
 		return nil
 	}

@@ -14,10 +14,8 @@ package ui
 import (
 	"context"
 	"encoding/json"
-	"log/slog"
 	"maps"
 	"net/http"
-
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
 )
 
@@ -55,13 +53,14 @@ func (h *Handler) startAdminAction(w http.ResponseWriter, r *http.Request, op ad
 	}
 
 	go func() {
-		count, extra, skipped, err := op.run(context.Background())
+		ctx := context.Background()
+		count, extra, skipped, err := op.run(ctx)
 		switch {
 		case err != nil:
-			slog.Error("UI: "+op.name+" failed", "error", err) //nolint:sloglint // background goroutine, no request context
+			h.log.ErrorContext(ctx, op.name+" failed", "error", err)
 			h.asyncOps.Complete(op.name, &asyncResult{Error: op.name + " failed"})
 		case skipped != "":
-			slog.Info("UI: "+op.name+" skipped", "reason", skipped) //nolint:sloglint // background goroutine, no request context
+			h.log.InfoContext(ctx, op.name+" skipped", "reason", skipped)
 			res := &asyncResult{OK: true, Count: count}
 			if extra != nil {
 				res.Extra = extra
@@ -69,7 +68,7 @@ func (h *Handler) startAdminAction(w http.ResponseWriter, r *http.Request, op ad
 			res.Skipped = skipped
 			h.asyncOps.Complete(op.name, res)
 		default:
-			slog.Info("UI: "+op.name+" completed", "count", count) //nolint:sloglint // background goroutine, no request context
+			h.log.InfoContext(ctx, op.name+" completed", "count", count)
 			res := &asyncResult{OK: true, Count: count}
 			if extra != nil {
 				res.Extra = extra

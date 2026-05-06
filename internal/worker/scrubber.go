@@ -30,6 +30,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
@@ -40,6 +41,7 @@ import (
 // stored content hash. Also supports backfilling hashes for objects that
 // were written before integrity was enabled.
 type Scrubber struct {
+	log *slog.Logger
 	deps      ScrubberOps
 	store     ScrubberStore
 	encryptor *encryption.Encryptor
@@ -48,7 +50,7 @@ type Scrubber struct {
 
 // NewScrubber creates a Scrubber with the given dependencies and optional encryptor.
 func NewScrubber(deps ScrubberOps, store ScrubberStore, encryptor *encryption.Encryptor) *Scrubber {
-	return &Scrubber{deps: deps, store: store, encryptor: encryptor}
+	return &Scrubber{deps: deps, store: store, encryptor: encryptor, log: slog.Default().With(logfmt.Component("scrubber"))}
 }
 
 // SetConfig atomically stores the integrity configuration.
@@ -75,7 +77,7 @@ func (s *Scrubber) Scrub(ctx context.Context, batchSize int) (checked, failed in
 
 	locs, err := s.store.GetRandomHashedObjects(ctx, batchSize)
 	if err != nil {
-		slog.ErrorContext(ctx, "Scrubber: failed to fetch objects", "error", err)
+		s.log.ErrorContext(ctx, "failed to fetch objects", "error", err)
 		return 0, 0
 	}
 
@@ -85,7 +87,7 @@ func (s *Scrubber) Scrub(ctx context.Context, batchSize int) (checked, failed in
 		}
 		match, verifyErr := s.verifyObject(ctx, &locs[i])
 		if verifyErr != nil {
-			slog.WarnContext(ctx, "Scrubber: failed to verify object",
+			s.log.WarnContext(ctx, "failed to verify object",
 				"key", locs[i].ObjectKey, "backend", locs[i].BackendName, "error", verifyErr)
 			continue
 		}
@@ -96,7 +98,7 @@ func (s *Scrubber) Scrub(ctx context.Context, batchSize int) (checked, failed in
 		}
 	}
 
-	slog.InfoContext(ctx, "scrub cycle complete",
+	s.log.InfoContext(ctx, "scrub cycle complete",
 		"checked", checked, "failed", failed, "duration", time.Since(start))
 	return checked, failed
 }
@@ -112,7 +114,7 @@ func (s *Scrubber) verifyObject(ctx context.Context, loc *core.ObjectLocation) (
 
 	if actual != loc.ContentHash {
 		be, _ := s.deps.GetBackend(loc.BackendName)
-		slog.ErrorContext(ctx, "Scrubber: integrity check failed",
+		s.log.ErrorContext(ctx, "integrity check failed",
 			"key", loc.ObjectKey, "backend", loc.BackendName,
 			"expected_hash", loc.ContentHash, "actual_hash", actual)
 		telemetry.IntegrityErrorsTotal.WithLabelValues("scrub").Inc()
@@ -142,7 +144,7 @@ func (s *Scrubber) Backfill(ctx context.Context, batchSize, offset int) (process
 
 	locs, err := s.store.GetObjectsWithoutHash(ctx, batchSize, offset)
 	if err != nil {
-		slog.ErrorContext(ctx, "Backfill: failed to fetch objects", "error", err)
+		s.log.ErrorContext(ctx, "failed to fetch objects", "error", err)
 		return 0, 0
 	}
 
@@ -150,7 +152,7 @@ func (s *Scrubber) Backfill(ctx context.Context, batchSize, offset int) (process
 		return 0, 0
 	}
 
-	slog.InfoContext(ctx, "backfill batch starting",
+	s.log.InfoContext(ctx, "backfill batch starting",
 		"objects", len(locs), "offset", offset)
 
 	for i := range locs {
@@ -160,13 +162,13 @@ func (s *Scrubber) Backfill(ctx context.Context, batchSize, offset int) (process
 		loc := &locs[i]
 		hash, hashErr := s.readAndHash(ctx, loc)
 		if hashErr != nil {
-			slog.WarnContext(ctx, "Backfill: failed to hash object",
+			s.log.WarnContext(ctx, "failed to hash object",
 				"key", loc.ObjectKey, "backend", loc.BackendName, "error", hashErr)
 			continue
 		}
 
 		if err := s.store.UpdateContentHash(ctx, loc.ObjectKey, loc.BackendName, hash); err != nil {
-			slog.WarnContext(ctx, "Backfill: failed to store hash",
+			s.log.WarnContext(ctx, "failed to store hash",
 				"key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
 			continue
 		}
@@ -174,7 +176,7 @@ func (s *Scrubber) Backfill(ctx context.Context, batchSize, offset int) (process
 		processed++
 	}
 
-	slog.InfoContext(ctx, "backfill batch complete",
+	s.log.InfoContext(ctx, "backfill batch complete",
 		"processed", processed, "batch_size", len(locs), "duration", time.Since(start))
 
 	// If we got a full batch, there may be more

@@ -30,6 +30,21 @@ linters:
         - performance
     sloglint:
       context: "all"
+      # `logfmt.Err` returns a slog.Attr that gets mixed into otherwise
+      # key-value call sites; that pattern is intentional per the
+      # logging conventions doc and this check would flag every site.
+      no-mixed-args: false
+      # Snake-case keys match the project's attribute glossary in
+      # docs/contributing/logging.md.
+      key-naming-case: snake
+      # Banned attribute keys: replace with the canonical names above.
+      forbidden-keys:
+        - err
+        - e
+        - source_backend
+        - from_backend
+        - to_backend
+        - remote_addr
   exclusions:
     generated: lax
     presets:

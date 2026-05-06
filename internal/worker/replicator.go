@@ -27,6 +27,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
@@ -39,6 +40,7 @@ import (
 
 // Replicator creates additional copies of under-replicated objects across backends.
 type Replicator struct {
+	log *slog.Logger
 	ops   Ops
 	store ReplicatorStore
 	cfg   syncutil.AtomicConfig[config.ReplicationConfig]
@@ -46,7 +48,7 @@ type Replicator struct {
 
 // NewReplicator creates a Replicator with fleet operations and a narrow store.
 func NewReplicator(ops Ops, store ReplicatorStore) *Replicator {
-	return &Replicator{ops: ops, store: store}
+	return &Replicator{ops: ops, store: store, log: slog.Default().With(logfmt.Component("replicator"))}
 }
 
 // SetConfig atomically stores the replication configuration.
@@ -151,7 +153,7 @@ func (r *Replicator) replicate(ctx context.Context, cfg config.ReplicationConfig
 		defer r.ops.ReleaseAdmission()
 		n, replicateErr := r.ReplicateObject(ctx, quotaStats, task.key, task.copies, task.needed)
 		if replicateErr != nil {
-			slog.WarnContext(ctx, "Replication: object failed", "key", task.key, "error", replicateErr)
+			r.log.WarnContext(ctx, "object failed", "key", task.key, "error", replicateErr)
 		}
 		created.Add(int32(n)) //nolint:gosec // G115: n is copies created per object, always small
 	})
@@ -203,7 +205,7 @@ func (r *Replicator) ReplicateObject(ctx context.Context, quotaStats map[string]
 		remaining := needed - created
 		target := r.FindReplicaTarget(ctx, quotaStats, key, sizeEstimate, exclusion)
 		if target == "" {
-			slog.WarnContext(ctx, "Replication: no target backend with space",
+			r.log.WarnContext(ctx, "no target backend with space",
 				"key", key, "needed", remaining)
 			break
 		}
@@ -217,7 +219,7 @@ func (r *Replicator) ReplicateObject(ctx context.Context, quotaStats map[string]
 		// overwrite landed mid-replication.
 		source, transferredSize, err := r.CopyToReplica(ctx, key, existingCopies, target)
 		if err != nil {
-			slog.WarnContext(ctx, "Replication: failed to copy object data",
+			r.log.WarnContext(ctx, "failed to copy object data",
 				"key", key, "target", target, "error", err)
 			telemetry.ReplicationErrorsTotal.Inc()
 			exclusion[target] = true
@@ -226,7 +228,7 @@ func (r *Replicator) ReplicateObject(ctx context.Context, quotaStats map[string]
 
 		recordedSize, inserted, err := r.store.RecordReplica(ctx, key, target, source)
 		if err != nil {
-			slog.ErrorContext(ctx, "Replication: failed to record replica",
+			r.log.ErrorContext(ctx, "failed to record replica",
 				"key", key, "target", target, "error", err)
 			r.CleanupOrphan(ctx, target, key, transferredSize)
 			telemetry.ReplicationErrorsTotal.Inc()
@@ -236,7 +238,7 @@ func (r *Replicator) ReplicateObject(ctx context.Context, quotaStats map[string]
 
 		if !inserted {
 			// Source copy was deleted/overwritten during replication.
-			slog.InfoContext(ctx, "Replication: source copy gone, cleaning up orphan",
+			r.log.InfoContext(ctx, "source copy gone, cleaning up orphan",
 				"key", key, "target", target)
 			r.CleanupOrphan(ctx, target, key, transferredSize)
 			exclusion[target] = true
@@ -248,7 +250,7 @@ func (r *Replicator) ReplicateObject(ctx context.Context, quotaStats map[string]
 		// recordedSize is authoritative for accounting; the operator
 		// sees the discrepancy in case it indicates a deeper bug.
 		if recordedSize != transferredSize {
-			slog.WarnContext(ctx, "Replication: source size shifted mid-replication",
+			r.log.WarnContext(ctx, "source size shifted mid-replication",
 				"key", key, "source", source, "transferred", transferredSize, "recorded", recordedSize)
 		}
 
@@ -288,7 +290,7 @@ func maxCopySize(copies []core.ObjectLocation) int64 {
 func (r *Replicator) FindReplicaTarget(ctx context.Context, quotaStats map[string]core.QuotaStat, key string, size int64, exclusion map[string]bool) string {
 	name, err := r.ops.SelectReplicaTarget(ctx, size, exclusion)
 	if err != nil {
-		slog.WarnContext(ctx, "Replication: target selection failed",
+		r.log.WarnContext(ctx, "target selection failed",
 			"key", key, "error", err)
 		return ""
 	}
@@ -359,7 +361,7 @@ func (r *Replicator) tryCopyFrom(ctx context.Context, key, target string, target
 	if strings.HasPrefix(err.Error(), "write:") {
 		return "", 0, true, fmt.Errorf("failed to write to target %s: %w", target, err)
 	}
-	slog.WarnContext(ctx, "Replication: source read failed, trying next copy",
+	r.log.WarnContext(ctx, "source read failed, trying next copy",
 		"key", key, "source", loc.BackendName, "error", err)
 	if isNotFound(err) {
 		r.pruneStaleSource(ctx, key, loc.BackendName)
@@ -372,11 +374,11 @@ func (r *Replicator) tryCopyFrom(ctx context.Context, key, target string, target
 // stuck stale row is preferable to aborting the replication pass.
 func (r *Replicator) pruneStaleSource(ctx context.Context, key, backendName string) {
 	if delErr := r.store.DeleteObjectLocation(ctx, key, backendName); delErr != nil {
-		slog.WarnContext(ctx, "Replication: failed to remove stale metadata",
+		r.log.WarnContext(ctx, "failed to remove stale metadata",
 			"key", key, "backend", backendName, "error", delErr)
 		return
 	}
-	slog.InfoContext(ctx, "Replication: removed stale metadata entry",
+	r.log.InfoContext(ctx, "removed stale metadata entry",
 		"key", key, "backend", backendName)
 }
 
@@ -407,7 +409,7 @@ func (r *Replicator) UnhealthyBackends(threshold time.Duration) []string {
 		}
 		if d := cbb.OpenDuration(); d >= threshold {
 			names = append(names, name)
-			slog.Info("Replication: backend unhealthy, excluding from replica count", //nolint:sloglint // unhealthyBackends has no context
+			slog.InfoContext(context.Background(), "backend unhealthy, excluding from replica count",
 				"backend", name,
 				"open_duration", d.Round(time.Second))
 		}

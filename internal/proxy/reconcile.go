@@ -311,7 +311,7 @@ type dbCursorStream struct {
 	exhausted bool
 }
 
-// newDBCursorStream prepares the iterator without issuing any query yet  - 
+// newDBCursorStream prepares the iterator without issuing any query yet  -
 // the first next call pulls the first page.
 func newDBCursorStream(s dbKeyLister, backendName, bucketPrefix string, otherPrefixes []string) *dbCursorStream {
 	return &dbCursorStream{
@@ -392,7 +392,7 @@ func importHandler(backendName string, importer importerFn, result *reconcileRes
 	return func(ctx context.Context, e reconcileEntry) error {
 		imported, err := importer(ctx, e.key, backendName, e.size)
 		if err != nil {
-			slog.WarnContext(ctx, "Reconcile: import failed", "key", e.key, "backend", backendName, "error", err)
+			slog.WarnContext(ctx, "import failed", "key", e.key, "backend", backendName, "error", err)
 			return nil
 		}
 		if imported {
@@ -407,10 +407,10 @@ func importHandler(backendName string, importer importerFn, result *reconcileRes
 func deleteHandler(backendName string, deleter deleterFn, result *reconcileResult) func(context.Context, string) error {
 	return func(ctx context.Context, key string) error {
 		if err := deleter(ctx, key, backendName); err != nil {
-			slog.WarnContext(ctx, "Reconcile: failed to remove stale entry", "key", key, "backend", backendName, "error", err)
+			slog.WarnContext(ctx, "failed to remove stale entry", "key", key, "backend", backendName, "error", err)
 			return nil
 		}
-		slog.InfoContext(ctx, "Reconcile: removed stale entry", "key", key, "backend", backendName)
+		slog.InfoContext(ctx, "removed stale entry", "key", key, "backend", backendName)
 		result.removed++
 		return nil
 	}

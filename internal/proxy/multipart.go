@@ -26,14 +26,15 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/internalkey"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/util/bufpool"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
-	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/trace"
 )
 
 // MultipartManager handles the multipart upload lifecycle.
@@ -651,15 +652,15 @@ func (mp *MultipartManager) CleanupStaleMultipartUploads(ctx context.Context, ol
 func (mp *MultipartManager) AbortMultipartUploadsOnBackend(ctx context.Context, backendName string) {
 	uploads, err := mp.parent.stores.Multipart.GetMultipartUploadsByBackend(ctx, backendName)
 	if err != nil {
-		slog.ErrorContext(ctx, "Drain: failed to list multipart uploads", "backend", backendName, "error", err)
+		slog.ErrorContext(ctx, "failed to list multipart uploads", "backend", backendName, "error", err)
 		return
 	}
 
 	for i := range uploads {
 		mu := &uploads[i]
-		slog.InfoContext(ctx, "Drain: aborting multipart upload", "upload_id", mu.UploadID, "key", mu.ObjectKey)
+		slog.InfoContext(ctx, "aborting multipart upload", "upload_id", mu.UploadID, "key", mu.ObjectKey)
 		if err := mp.AbortMultipartUpload(ctx, mu.UploadID); err != nil {
-			slog.ErrorContext(ctx, "Drain: failed to abort multipart upload",
+			slog.ErrorContext(ctx, "failed to abort multipart upload",
 				"upload_id", mu.UploadID, "error", err)
 		}
 	}

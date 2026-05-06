@@ -418,9 +418,13 @@ substitute fakes by registering a different provider.
 
 - Constructing a real dependency in a constructor that already has a
   provider. Always go through `do.Invoke`.
-- Smuggling logging or metrics through the constructor argument list.
-  Use the `observe` package's package-level helpers (slog, span helpers,
-  metrics vars) directly.
+- Passing a `*slog.Logger` through the constructor argument list.
+  Long-lived components hold a private `log *slog.Logger` field set
+  inside the constructor body via
+  `slog.Default().With(logfmt.Component("name"))`. Metrics use the
+  `observe/telemetry` package-level vars directly. Free helper
+  functions call `slog.XContext(ctx, ...)` directly. See
+  [`docs/contributing/logging.md`](contributing/logging.md).
 - Storing the injector as a field on a non-handler struct. Workers,
   managers, and stores receive their dependencies as constructor args
   resolved in the provider; only handlers (HTTP/CLI entry points) carry
@@ -540,24 +544,75 @@ Background workers (rebalancer, replicator, cleanup) log errors and continue rat
 
 ## Logging and Audit
 
-### Structured Logging
+All logs are structured `log/slog` JSON with the JSON handler set in
+`internal/cli/serve/serve.go` `initLogging`. The full operational
+logging conventions (helper package, attribute glossary, banned keys,
+component scoping, outcome rollups) live in
+[`docs/contributing/logging.md`](contributing/logging.md). This
+section is the short summary; the contributing doc is the source of
+truth.
 
-All logging uses `log/slog` with JSON output to stdout. The logger is initialized in `main.go`:
+### Structured operational logs
+
+Every long-lived component holds a `*slog.Logger` field initialised
+once in its constructor with the canonical `component` attribute:
 
 ```go
-slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-    Level: slog.LevelInfo,
-})))
+type PendingReaper struct {
+    deps  CleanupOps
+    store PendingReaperStore
+    log   *slog.Logger
+    // ...
+}
+
+func NewPendingReaper(deps CleanupOps, store PendingReaperStore) *PendingReaper {
+    return &PendingReaper{
+        deps:  deps,
+        store: store,
+        log:   slog.Default().With(logfmt.Component("pending_reaper")),
+    }
+}
+
+r.log.WarnContext(ctx, "HEAD probe failed, leaving intent for next tick",
+    "backend", p.BackendName,
+    "key", p.ObjectKey,
+    "intent_id", p.IntentID,
+    logfmt.Err(err),
+)
 ```
+
+Three rules every call site must follow:
+
+1. **Always render errors through `logfmt.Err`.** Passing `"error", err`
+   directly serialises the error struct as `{}` in the JSON handler,
+   which JS log viewers render as `[object Object]`, hiding the actual
+   failure mode from operators.
+2. **Component is an attribute, not a message prefix.** Messages are
+   plain English ("HEAD probe failed"), not "Pending reaper: HEAD
+   probe failed". The `component` attr added by the scoped logger
+   makes every line filterable in Loki/Grafana without text matching.
+3. **Use the canonical attribute glossary** in
+   `docs/contributing/logging.md`. The CI lint rejects banned keys
+   (`err`, `from_backend`, `remote_addr`, etc.).
+
+`golangci-lint` enforces `context: all` on every `slog` call, snake-case
+keys, and the banned-key list. See `.golangci.yml` for the active
+sloglint configuration.
 
 ### Audit Logging
 
-The `internal/observe/audit` package provides structured audit entries for security-relevant operations. Audit entries are distinguished by the `"audit": true` field.
+The `internal/observe/audit` package emits a separate stream of
+structured entries marked `"audit": true` for security-relevant
+operations. Audit logs are not subject to the operational-log
+conventions above and continue to use `slog.LogAttrs` directly.
 
-**S3 API requests** produce two correlated audit entries sharing the same `request_id`:
+**S3 API requests** produce two correlated audit entries sharing the
+same `request_id`:
 
-- HTTP layer (`s3.PutObject`, `s3.GetObject`, etc.) - method, path, bucket, status, duration
-- Storage layer (`storage.PutObject`, `storage.GetObject`, etc.) - key, backend, size
+- HTTP layer (`s3.PutObject`, `s3.GetObject`, etc.) — method, path,
+  bucket, status, duration.
+- Storage layer (`storage.PutObject`, `storage.GetObject`, etc.) —
+  key, backend, size.
 
 **Internal operations** generate their own correlation IDs:
 
@@ -570,27 +625,41 @@ audit.Log(ctx, "rebalance.start",
 ```
 
 **Rules:**
-- Use `audit.Log` for operations that change state or serve data (not for debug/health checks)
-- Always pass context so the request ID propagates
-- Event names use dotted notation: `"s3.PutObject"`, `"storage.DeleteObject"`, `"rebalance.move"`
-- Include enough attributes to reconstruct the operation without reading other log lines
+- Use `audit.Log` for operations that change state or serve data (not
+  for debug/health checks).
+- Always pass context so the request ID propagates.
+- Event names use dotted notation: `"s3.PutObject"`,
+  `"storage.DeleteObject"`, `"rebalance.move"`.
+- Include enough attributes to reconstruct the operation without
+  reading other log lines.
 
 ### Request ID Propagation
 
-Request IDs flow through context via `audit.WithRequestID` / `audit.RequestID`:
+Request IDs flow through context via `audit.WithRequestID` /
+`audit.RequestID`. The `logfmt` package's init wires `audit.RequestID`
+as the accessor `logfmt.RequestIDFromCtx` reads, so worker logs can
+surface the inbound request ID without importing the audit package
+directly.
 
-- S3 API requests: extracted from `X-Request-Id` header or generated, set on context before auth
-- Internal operations: generated at the start of each background task tick or batch run
-- The ID is also set as a `s3o.request_id` attribute on OpenTelemetry spans
-- `trace_id` and `span_id` are automatically injected into JSON log output by `telemetry.TraceHandler` for any log call with an active span in context — use `slog.InfoContext(ctx, ...)` rather than `slog.Info(...)` to ensure trace correlation
+- S3 API requests: extracted from `X-Request-Id` header or generated,
+  set on context before auth.
+- Internal operations: generated at the start of each background task
+  tick or batch run.
+- The ID is also set as a `s3o.request_id` attribute on OpenTelemetry
+  spans.
+- `trace_id` and `span_id` are automatically injected into JSON log
+  output by `telemetry.TraceHandler` for any log call with an active
+  span in context — use `*Context` slog variants
+  (`InfoContext`/`WarnContext`/`ErrorContext`).
 
 ### Log Levels
 
 | Level | Use |
 |-------|-----|
-| `slog.Info` | Startup, shutdown, config reload, audit entries |
-| `slog.Warn` | Recoverable failures (failover to replica, orphan cleanup, non-critical background errors) |
-| `slog.Error` | Unrecoverable failures (startup errors, DB connection loss, background task crashes) |
+| `slog.LevelDebug` | Verbose state; off by default. |
+| `slog.LevelInfo`  | Lifecycle (startup/shutdown), terminal success of a notable operation, audit entries. |
+| `slog.LevelWarn`  | Recoverable failure — caller proceeds, operator should know (failover, degraded mode, retry-able errors). |
+| `slog.LevelError` | Unrecoverable failure of an operation — request fails, background tick aborts, integrity violation. |
 
 ---
 

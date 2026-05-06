@@ -60,7 +60,7 @@ func Run(args []string, stderr io.Writer) int { // codecov:ignore -- CLI entry p
 
 	s3b, err := backend.NewS3Backend(backendCfg)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to initialize backend", "backend", backendCfg.Name, "error", err)
+		slog.ErrorContext(ctx, "failed to initialize backend", slog.String("backend", backendCfg.Name), "error", err)
 		return 1
 	}
 
@@ -101,7 +101,7 @@ func parseFlags(args []string, stderr io.Writer) (*Options, bool) {
 func loadConfig(path, backendName string) (*config.Config, *config.BackendConfig, int) {
 	cfg, err := config.LoadConfig(path)
 	if err != nil {
-		slog.Error("Failed to load config", "error", err) //nolint:sloglint // no context before DB init
+		slog.ErrorContext(context.Background(), "Failed to load config", "error", err)
 		return nil, nil, 1
 	}
 	for i := range cfg.Backends {
@@ -109,7 +109,7 @@ func loadConfig(path, backendName string) (*config.Config, *config.BackendConfig
 			return cfg, &cfg.Backends[i], 0
 		}
 	}
-	slog.Error("Backend not found in config", "backend", backendName) //nolint:sloglint // no context before DB init
+	slog.ErrorContext(context.Background(), "Backend not found in config", "backend", backendName)
 	return nil, nil, 1
 }
 

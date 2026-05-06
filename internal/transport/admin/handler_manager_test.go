@@ -24,7 +24,9 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -60,6 +62,7 @@ func newTestHandlerWithManager(t *testing.T) *Handler {
 	var lv slog.LevelVar
 	lv.Set(slog.LevelInfo)
 	return &Handler{
+		log:        slog.Default().With(logfmt.Component("admin")),
 		backendOps: mgr,
 		replicator: mgr.Replicator,
 		overRep:    mgr.OverReplicationCleaner,
@@ -133,7 +136,7 @@ func TestHandleObjectLocations_Happy(t *testing.T) {
 	}
 	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3})
 	var lv slog.LevelVar
-	h := &Handler{dbCB: cb, objects: mock, cleanup: mock, token: "test-token", logLevel: &lv}
+	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), dbCB: cb, objects: mock, cleanup: mock, token: "test-token", logLevel: &lv}
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -476,6 +479,94 @@ func TestHandleRotateEncryptionKey_NoEncryptor(t *testing.T) {
 	}
 }
 
+// TestHandleCleanupQueue_DepthError covers the error branch where
+// CleanupQueueDepth fails. The handler logs and surfaces a 500;
+// asserting the status code is enough to drive the log + return.
+func TestHandleCleanupQueue_DepthError(t *testing.T) {
+	t.Parallel()
+	h := newTestHandlerWithManager(t)
+	// Swap the cleanup store for one whose depth call fails. The
+	// handler reads h.cleanup directly, so assigning a fresh mock
+	// is sufficient.
+	h.cleanup = &testutil.MockStore{CleanupQueueDepthErr: errors.New("db down")}
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, doAuth(http.MethodGet, "/admin/api/cleanup-queue", ""))
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body=%s", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleCleanupQueue_PendingError covers the second error branch
+// where GetPendingCleanups fails after CleanupQueueDepth succeeds.
+func TestHandleCleanupQueue_PendingError(t *testing.T) {
+	t.Parallel()
+	h := newTestHandlerWithManager(t)
+	h.cleanup = &testutil.MockStore{
+		CleanupQueueDepthResp: 5,
+		PendingCleanupsErr:    errors.New("query failed"),
+	}
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, doAuth(http.MethodGet, "/admin/api/cleanup-queue", ""))
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body=%s", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleUsageFlush_Error covers the FlushUsage error branch in
+// handleUsageFlush. The fixture's BackendManager wraps a MockStore
+// whose FlushUsageDeltas call honours FlushUsageErr.
+func TestHandleUsageFlush_Error(t *testing.T) {
+	t.Parallel()
+	h := newTestHandlerWithManager(t)
+	// h.backendOps is a *proxy.BackendManager backed by a MockStore.
+	// We cannot easily inject an error through it, so swap the
+	// BackendOps interface with a stub that fails FlushUsage.
+	h.backendOps = &flushUsageFailingOps{inner: h.backendOps}
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, doAuth(http.MethodPost, "/admin/api/usage-flush", ""))
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body=%s", w.Code, w.Body.String())
+	}
+}
+
+// flushUsageFailingOps wraps an inner BackendOps but always errors
+// on FlushUsage, letting the test cover handleUsageFlush's error
+// branch without modifying the underlying mock store.
+type flushUsageFailingOps struct {
+	inner BackendOps
+}
+
+func (f *flushUsageFailingOps) GetDashboardData(ctx context.Context) (*dashboard.Data, error) {
+	return f.inner.GetDashboardData(ctx)
+}
+func (f *flushUsageFailingOps) FlushUsage(_ context.Context) error {
+	return errors.New("flush failed")
+}
+func (f *flushUsageFailingOps) UpdateQuotaMetrics(ctx context.Context) error {
+	return f.inner.UpdateQuotaMetrics(ctx)
+}
+func (f *flushUsageFailingOps) RecordUsage(name string, req, in, out int64) {
+	f.inner.RecordUsage(name, req, in, out)
+}
+func (f *flushUsageFailingOps) GetBackend(name string) (backend.ObjectBackend, error) {
+	return f.inner.GetBackend(name)
+}
+func (f *flushUsageFailingOps) IntegrityConfig() *config.IntegrityConfig {
+	return f.inner.IntegrityConfig()
+}
+
 // TestHandleReconcile_UsesContext is a smoke test that the handler threads
 // the request context correctly (reconciler is nil, so we get 503, but the
 // path should not panic regardless of context state).
@@ -497,5 +588,110 @@ func TestHandleReconcile_CancelledContext(t *testing.T) {
 
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503; body=%s", w.Code, w.Body.String())
+	}
+}
+
+// allFailingOps wraps the real BackendOps but errors on every method
+// that has an error return. Lets a single test exercise every
+// admin handler's "downstream call failed" branch without writing
+// per-handler error fixtures.
+type allFailingOps struct{}
+
+func (allFailingOps) GetDashboardData(_ context.Context) (*dashboard.Data, error) {
+	return nil, errors.New("dashboard down")
+}
+func (allFailingOps) FlushUsage(_ context.Context) error {
+	return errors.New("flush down")
+}
+func (allFailingOps) UpdateQuotaMetrics(_ context.Context) error {
+	return errors.New("quota down")
+}
+func (allFailingOps) RecordUsage(_ string, _, _, _ int64) {}
+func (allFailingOps) GetBackend(_ string) (backend.ObjectBackend, error) {
+	return nil, errors.New("backend not found")
+}
+func (allFailingOps) IntegrityConfig() *config.IntegrityConfig {
+	return nil
+}
+
+// TestHandleStatus_DashboardError covers the error branch where the
+// backend ops dashboard call fails.
+func TestHandleStatus_DashboardError(t *testing.T) {
+	t.Parallel()
+	h := newTestHandlerWithManager(t)
+	h.backendOps = allFailingOps{}
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, doAuth(http.MethodGet, "/admin/api/status", ""))
+
+	if w.Code < 500 {
+		t.Fatalf("status = %d, want 5xx; body=%s", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleObjectLocations_StoreError covers the error branch where
+// the object store fails to fetch object locations.
+func TestHandleObjectLocations_StoreError(t *testing.T) {
+	t.Parallel()
+	mock := &testutil.MockStore{GetAllLocationsErr: errors.New("query failed")}
+	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3})
+	var lv slog.LevelVar
+	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), dbCB: cb, objects: mock, cleanup: mock, token: "test-token", logLevel: &lv}
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, doAuth(http.MethodGet, "/admin/api/object-locations?key=foo", ""))
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body=%s", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleLogLevel_Get covers the GET branch of handleLogLevel.
+func TestHandleLogLevel_Get(t *testing.T) {
+	t.Parallel()
+	h := newTestHandlerWithManager(t)
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, doAuth(http.MethodGet, "/admin/api/log-level", ""))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleLogLevel_PutValid covers the happy-path PUT branch.
+func TestHandleLogLevel_PutValid(t *testing.T) {
+	t.Parallel()
+	h := newTestHandlerWithManager(t)
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, doAuth(http.MethodPut, "/admin/api/log-level", `{"level":"debug"}`))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleLogLevel_PutInvalidBody covers the JSON-decode error
+// branch in handleLogLevel.
+func TestHandleLogLevel_PutInvalidBody(t *testing.T) {
+	t.Parallel()
+	h := newTestHandlerWithManager(t)
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, doAuth(http.MethodPut, "/admin/api/log-level", `not json`))
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", w.Code, w.Body.String())
 	}
 }
