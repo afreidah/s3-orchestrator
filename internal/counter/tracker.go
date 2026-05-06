@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -244,7 +245,7 @@ func (u *UsageTracker) FlushUsage(ctx context.Context, store core.UsageFlusher, 
 			u.backend.Add(name, FieldAPIRequests, apiReqs)
 			u.backend.Add(name, FieldEgressBytes, egress)
 			u.backend.Add(name, FieldIngressBytes, ingress)
-			slog.ErrorContext(ctx, "failed to flush usage deltas", "backend", name, "error", err)
+			slog.ErrorContext(ctx, "failed to flush usage deltas", slog.String("backend", name), logfmt.Err(err))
 			lastErr = err
 		}
 	}

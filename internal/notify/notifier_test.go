@@ -16,6 +16,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -112,6 +113,7 @@ func computeTestHMAC(payload []byte, secret string) string {
 // Asserts that findEndpoint should return matching endpoint, got.
 func TestFindEndpoint_Found(t *testing.T) {
 	n := &Notifier{
+		log: slog.Default(),
 		endpoints: []config.NotificationEndpoint{
 			{URL: "https://a.example.com/hook"},
 			{URL: "https://b.example.com/hook"},
@@ -126,6 +128,7 @@ func TestFindEndpoint_Found(t *testing.T) {
 // TestFindEndpoint_NotFound verifies the find endpoint not found behaviour described by the test name.
 func TestFindEndpoint_NotFound(t *testing.T) {
 	n := &Notifier{
+		log: slog.Default(),
 		endpoints: []config.NotificationEndpoint{
 			{URL: "https://a.example.com/hook"},
 		},
@@ -141,6 +144,7 @@ func TestFindEndpoint_NotFound(t *testing.T) {
 func TestEmit_InsertsNotificationForMatchingEndpoint(t *testing.T) {
 	ms := &mockOutboxStore{}
 	n := &Notifier{
+		log: slog.Default(),
 		endpoints: []config.NotificationEndpoint{
 			{URL: "https://hook.example.com", Events: []string{"s3:ObjectCreated:Put"}},
 		},
@@ -159,6 +163,7 @@ func TestEmit_InsertsNotificationForMatchingEndpoint(t *testing.T) {
 func TestEmit_SkipsNonMatchingEndpoint(t *testing.T) {
 	ms := &mockOutboxStore{}
 	n := &Notifier{
+		log: slog.Default(),
 		endpoints: []config.NotificationEndpoint{
 			{URL: "https://hook.example.com", Events: []string{"s3:ObjectCreated:Put"}},
 		},
@@ -179,6 +184,7 @@ func TestEmit_DampensRepeatedCapacityWarnings(t *testing.T) {
 	dampener := syncutil.NewTTLCache[string, struct{}](dampenTTL)
 	defer dampener.Close()
 	n := &Notifier{
+		log: slog.Default(),
 		endpoints: []config.NotificationEndpoint{
 			{URL: "https://hook.example.com", Events: []string{"*"}},
 		},
@@ -202,7 +208,7 @@ func TestDeliver_Success(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	n := &Notifier{client: &http.Client{Timeout: 5 * time.Second}}
+	n := &Notifier{log: slog.Default(), client: &http.Client{Timeout: 5 * time.Second}}
 	ep := &config.NotificationEndpoint{URL: srv.URL}
 	row := core.NotificationRow{Payload: []byte(`{"type":"test"}`)}
 
@@ -219,7 +225,7 @@ func TestDeliver_ServerError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	n := &Notifier{client: &http.Client{Timeout: 5 * time.Second}}
+	n := &Notifier{log: slog.Default(), client: &http.Client{Timeout: 5 * time.Second}}
 	ep := &config.NotificationEndpoint{URL: srv.URL}
 	row := core.NotificationRow{Payload: []byte(`{"type":"test"}`)}
 
@@ -239,7 +245,7 @@ func TestDeliver_HMACSignature(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	n := &Notifier{client: &http.Client{Timeout: 5 * time.Second}}
+	n := &Notifier{log: slog.Default(), client: &http.Client{Timeout: 5 * time.Second}}
 	ep := &config.NotificationEndpoint{URL: srv.URL, Secret: "test-secret"}
 	payload := []byte(`{"type":"test"}`)
 	row := core.NotificationRow{Payload: payload}
@@ -316,6 +322,7 @@ func (m *mockOutboxStore) WithAdvisoryLock(_ context.Context, _ int64, fn func(c
 func TestEmit_PrefixFiltering(t *testing.T) {
 	ms := &mockOutboxStore{}
 	n := &Notifier{
+		log: slog.Default(),
 		endpoints: []config.NotificationEndpoint{
 			{URL: "https://hook.example.com", Events: []string{"s3:ObjectCreated:*"}, Prefix: "uploads/"},
 		},
@@ -339,6 +346,7 @@ func TestEmit_PrefixFiltering(t *testing.T) {
 func TestEmit_FillsCloudEventsDefaults(t *testing.T) {
 	ms := &mockOutboxStore{}
 	n := &Notifier{
+		log: slog.Default(),
 		endpoints: []config.NotificationEndpoint{
 			{URL: "https://hook.example.com", Events: []string{"*"}},
 		},
@@ -370,6 +378,7 @@ func TestEmit_FillsCloudEventsDefaults(t *testing.T) {
 func TestEmit_MultipleEndpoints(t *testing.T) {
 	ms := &mockOutboxStore{}
 	n := &Notifier{
+		log: slog.Default(),
 		endpoints: []config.NotificationEndpoint{
 			{URL: "https://a.example.com", Events: []string{"s3:ObjectCreated:*"}},
 			{URL: "https://b.example.com", Events: []string{"*"}},
@@ -399,6 +408,7 @@ func TestDrainOnce_DeliversAndCompletes(t *testing.T) {
 		},
 	}
 	n := &Notifier{
+		log: slog.Default(),
 		endpoints: []config.NotificationEndpoint{
 			{URL: srv.URL, Events: []string{"*"}, Timeout: 5 * time.Second, MaxRetries: 3},
 		},
@@ -427,6 +437,7 @@ func TestDrainOnce_RetriesOnFailure(t *testing.T) {
 		},
 	}
 	n := &Notifier{
+		log: slog.Default(),
 		endpoints: []config.NotificationEndpoint{
 			{URL: srv.URL, Events: []string{"*"}, Timeout: 5 * time.Second, MaxRetries: 3},
 		},
@@ -455,6 +466,7 @@ func TestDrainOnce_ExhaustsAfterMaxRetries(t *testing.T) {
 		},
 	}
 	n := &Notifier{
+		log: slog.Default(),
 		endpoints: []config.NotificationEndpoint{
 			{URL: srv.URL, Events: []string{"*"}, Timeout: 5 * time.Second, MaxRetries: 3},
 		},
@@ -479,6 +491,7 @@ func TestDrainOnce_UnknownEndpointCompleted(t *testing.T) {
 		},
 	}
 	n := &Notifier{
+		log: slog.Default(),
 		endpoints: []config.NotificationEndpoint{},
 		store:     ms,
 		client:    &http.Client{Timeout: 5 * time.Second},
@@ -561,7 +574,7 @@ func (m *failingOutboxStore) WithAdvisoryLock(_ context.Context, _ int64, fn fun
 // TestCompleteOrLog_LogsStoreError covers the error branch that was
 // previously a silent `_ = n.store.CompleteNotification(...)`.
 func TestCompleteOrLog_LogsStoreError(t *testing.T) {
-	n := &Notifier{store: &failingOutboxStore{completeErr: fmt.Errorf("boom")}}
+	n := &Notifier{log: slog.Default(), store: &failingOutboxStore{completeErr: fmt.Errorf("boom")}}
 
 	defer func() {
 		if r := recover(); r != nil {
@@ -573,7 +586,7 @@ func TestCompleteOrLog_LogsStoreError(t *testing.T) {
 
 // TestRetryOrLog_LogsStoreError covers the retry error branch.
 func TestRetryOrLog_LogsStoreError(t *testing.T) {
-	n := &Notifier{store: &failingOutboxStore{retryErr: fmt.Errorf("kaboom")}}
+	n := &Notifier{log: slog.Default(), store: &failingOutboxStore{retryErr: fmt.Errorf("kaboom")}}
 
 	defer func() {
 		if r := recover(); r != nil {
@@ -600,6 +613,7 @@ func TestDrainOnce_CompleteFailure_DoesNotPanic(t *testing.T) {
 		},
 	}
 	n := &Notifier{
+		log: slog.Default(),
 		endpoints: []config.NotificationEndpoint{
 			{URL: srv.URL, Events: []string{"*"}, MaxRetries: 3, Timeout: time.Second},
 		},
@@ -632,6 +646,7 @@ func TestDrainOnce_RetryFailure_DoesNotPanic(t *testing.T) {
 		},
 	}
 	n := &Notifier{
+		log: slog.Default(),
 		endpoints: []config.NotificationEndpoint{
 			{URL: srv.URL, Events: []string{"*"}, MaxRetries: 5, Timeout: time.Second},
 		},

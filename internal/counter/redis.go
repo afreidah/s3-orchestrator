@@ -26,7 +26,9 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 
 	"github.com/redis/go-redis/v9"
+
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 )
 
 // keyTTL is applied to Redis counter keys on creation. Set to 35 days so
@@ -51,9 +53,10 @@ const pingTimeout = 5 * time.Second
 // REDIS CLIENT INTERFACE
 // -------------------------------------------------------------------------
 
-//go:generate mockgen -destination=mock_redis_test.go -package=counter github.com/afreidah/s3-orchestrator/internal/counter RedisClient
 // RedisClient abstracts the Redis operations used by RedisCounterBackend.
 // The production implementation is *redis.Client; tests provide a mock.
+//
+//go:generate mockgen -destination=mock_redis_test.go -package=counter github.com/afreidah/s3-orchestrator/internal/counter RedisClient
 type RedisClient interface {
 	IncrBy(ctx context.Context, key string, value int64) *redis.IntCmd
 	Get(ctx context.Context, key string) *redis.StringCmd
@@ -117,7 +120,7 @@ func NewRedisCounterBackend(client RedisClient, cfg *config.RedisConfig, backend
 
 	go r.healthProbe()
 
-	slog.Info("Redis counter backend initialized", //nolint:sloglint // constructor has no request context
+	slog.InfoContext(context.Background(), "Redis counter backend initialized",
 		"address", cfg.Address,
 		"prefix", cfg.KeyPrefix,
 	)
@@ -302,7 +305,6 @@ func (r *RedisCounterBackend) healthProbe() {
 // and syncs local deltas in a single pipeline, then closes the circuit
 // breaker.
 //
-//nolint:sloglint // health probe has no request context
 func (r *RedisCounterBackend) tryRecover() {
 	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
 	defer cancel()
@@ -346,7 +348,7 @@ func (r *RedisCounterBackend) tryRecover() {
 		for name, d := range allDeltas {
 			r.local.AddAll(name, d.APIRequests, d.EgressBytes, d.IngressBytes)
 		}
-		slog.Warn("Redis recovery pipeline failed, will retry", "error", err)
+		slog.WarnContext(context.Background(), "Redis recovery pipeline failed, will retry", logfmt.Err(err))
 		return
 	}
 
@@ -354,7 +356,7 @@ func (r *RedisCounterBackend) tryRecover() {
 	r.setFallback(false)
 	r.notePostCheck("recovery", nil)
 
-	slog.Info("Redis counter backend recovered, local deltas synced")
+	slog.InfoContext(context.Background(), "Redis counter backend recovered, local deltas synced")
 }
 
 // -------------------------------------------------------------------------
@@ -385,24 +387,22 @@ func (r *RedisCounterBackend) setFallback(v bool) {
 // over a bare `_ = r.cb.PostCheck(...)`: it makes state-transition bugs
 // observable via s3o_circuit_breaker_internal_errors_total.
 //
-//nolint:sloglint // Counter interface has no request context.
 func (r *RedisCounterBackend) notePostCheck(op string, opErr error) {
 	if cbErr := r.cb.PostCheck(opErr); cbErr != nil {
 		telemetry.CircuitBreakerInternalErrorsTotal.WithLabelValues("redis", op).Inc()
-		slog.Warn("Redis circuit breaker PostCheck reported error",
-			"operation", op, "error", cbErr)
+		slog.WarnContext(context.Background(), "Redis circuit breaker PostCheck reported error",
+			"operation", op, logfmt.Err(cbErr))
 	}
 }
 
 // recordFailure feeds the error to the circuit breaker. If the breaker
 // opens, transitions to fallback mode.
 //
-//nolint:sloglint // Counter interface has no request context; fallback is a system-level event.
 func (r *RedisCounterBackend) recordFailure(err error) {
 	r.notePostCheck("failure", err)
 	if !r.cb.IsHealthy() && !r.inFallback() {
 		r.setFallback(true)
-		slog.Warn("Redis counter backend entering fallback to local counters")
+		slog.WarnContext(context.Background(), "Redis counter backend entering fallback to local counters")
 	}
 }
 
@@ -449,7 +449,6 @@ func isAllNil(err error) bool {
 func (r *RedisCounterBackend) IsHealthy() bool {
 	return r.cb.IsHealthy()
 }
-
 
 // Close stops the health probe goroutine and closes the Redis client.
 // Safe to call multiple times.

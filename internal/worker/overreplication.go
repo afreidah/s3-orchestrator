@@ -27,6 +27,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
@@ -41,6 +42,7 @@ import (
 // configured replication factor. Embeds *backendCore for access to shared
 // infrastructure.
 type OverReplicationCleaner struct {
+	log *slog.Logger
 	ops   Ops
 	store OverReplicationStore
 	cfg   syncutil.AtomicConfig[config.ReplicationConfig]
@@ -48,7 +50,7 @@ type OverReplicationCleaner struct {
 
 // NewOverReplicationCleaner creates a cleaner that shares the given core.
 func NewOverReplicationCleaner(ops Ops, store OverReplicationStore) *OverReplicationCleaner {
-	return &OverReplicationCleaner{ops: ops, store: store}
+	return &OverReplicationCleaner{ops: ops, store: store, log: slog.Default().With(logfmt.Component("over_replication"))}
 }
 
 // SetConfig atomically stores the replication configuration.
@@ -107,8 +109,8 @@ func (c *OverReplicationCleaner) clean(ctx context.Context, cfg config.Replicati
 	// Pre-fetch quota stats for copy scoring (utilization ratio).
 	quotaStats, qErr := c.store.GetQuotaStats(ctx)
 	if qErr != nil {
-		slog.WarnContext(ctx, "Over-replication: failed to get quota stats, scoring without utilization",
-			"error", qErr)
+		c.log.WarnContext(ctx, "failed to get quota stats, scoring without utilization",
+			logfmt.Err(qErr))
 	}
 
 	// --- Group locations by object key ---
@@ -229,15 +231,15 @@ func (c *OverReplicationCleaner) cleanObject(ctx context.Context, key string, co
 		// copy. If the DB remove succeeds but the backend delete fails, the
 		// cleanup queue handles the orphan.
 		if err := c.store.RemoveExcessCopy(ctx, key, victim.BackendName, victim.SizeBytes); err != nil {
-			slog.WarnContext(ctx, "Over-replication: failed to remove metadata",
-				"key", key, "backend", victim.BackendName, "error", err)
+			c.log.WarnContext(ctx, "failed to remove metadata",
+				"key", key, "backend", victim.BackendName, logfmt.Err(err))
 			telemetry.OverReplicationErrorsTotal.Inc()
 			continue
 		}
 
 		be, err := c.ops.GetBackend(victim.BackendName)
 		if err != nil {
-			slog.WarnContext(ctx, "Over-replication: backend not found",
+			c.log.WarnContext(ctx, "backend not found",
 				"key", key, "backend", victim.BackendName)
 			telemetry.OverReplicationErrorsTotal.Inc()
 			continue

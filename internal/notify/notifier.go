@@ -32,6 +32,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
@@ -96,6 +97,7 @@ const defaultEndpointTimeout = 5 * time.Second
 // Notifier delivers webhook notifications from a durable outbox queue.
 // Implements lifecycle.Runner via the Run method.
 type Notifier struct {
+	log *slog.Logger
 	endpoints []config.NotificationEndpoint
 	store     OutboxStore
 	client    *http.Client
@@ -107,6 +109,7 @@ type Notifier struct {
 // the same mechanism.
 func NewNotifier(cfg *config.NotificationConfig, store OutboxStore) *Notifier {
 	n := &Notifier{
+		log:       slog.Default().With(logfmt.Component("notifier")),
 		endpoints: cfg.Endpoints,
 		store:     store,
 		client: &http.Client{
@@ -131,7 +134,7 @@ func (n *Notifier) emit(ev event.Event) { //nolint:gocritic // Event is passed b
 	}
 	payload, err := json.Marshal(ev)
 	if err != nil {
-		slog.Error("Failed to marshal notification event", "type", ev.Type, "error", err) //nolint:sloglint // emit has no request context
+		slog.ErrorContext(context.Background(), "Failed to marshal notification event", "type", ev.Type, logfmt.Err(err))
 		return
 	}
 	n.fanOutToEndpoints(&ev, payload)
@@ -188,8 +191,8 @@ func (n *Notifier) fanOutToEndpoints(ev *event.Event, payload []byte) {
 			continue
 		}
 		if err := n.store.InsertNotification(ctx, ev.Type, string(payload), ep.URL); err != nil {
-			slog.ErrorContext(ctx, "failed to enqueue notification",
-				"type", ev.Type, "endpoint", ep.URL, "error", err)
+			n.log.ErrorContext(ctx, "failed to enqueue notification",
+				slog.String("type", ev.Type), slog.String("endpoint", ep.URL), logfmt.Err(err))
 			telemetry.NotificationDroppedTotal.Inc()
 		}
 	}
@@ -229,10 +232,10 @@ func (n *Notifier) drainOnce(ctx context.Context) {
 		return nil
 	})
 	if err != nil {
-		slog.ErrorContext(ctx, "notification drain failed", "error", err)
+		n.log.ErrorContext(ctx, "notification drain failed", logfmt.Err(err))
 	}
 	if !acquired {
-		slog.DebugContext(ctx, "notification drain skipped, another instance holds the lock")
+		n.log.DebugContext(ctx, "notification drain skipped, another instance holds the lock")
 	}
 }
 
@@ -329,8 +332,11 @@ func (n *Notifier) handleDeliveryFailure(ctx context.Context, row core.Notificat
 		maxRetries = defaultMaxRetries
 	}
 	if int(row.Attempts)+1 >= maxRetries {
-		slog.ErrorContext(ctx, "notification delivery exhausted",
-			"endpoint", ep.URL, "event", row.EventType, "attempts", row.Attempts+1, "error", err)
+		n.log.ErrorContext(ctx, "notification delivery exhausted",
+			slog.String("endpoint", ep.URL),
+			slog.String("event", row.EventType),
+			slog.Int("attempts", int(row.Attempts+1)),
+			logfmt.Err(err))
 		n.completeOrLog(ctx, row.ID, "exhausted")
 		return
 	}
@@ -344,8 +350,8 @@ func (n *Notifier) handleDeliveryFailure(ctx context.Context, row core.Notificat
 func (n *Notifier) completeOrLog(ctx context.Context, id int64, reason string) {
 	if err := n.store.CompleteNotification(ctx, id); err != nil {
 		telemetry.NotificationStoreErrorsTotal.WithLabelValues("complete").Inc()
-		slog.WarnContext(ctx, "Notifier: CompleteNotification failed",
-			"id", id, "reason", reason, "error", err)
+		n.log.WarnContext(ctx, "completeNotification failed",
+			slog.Int64("notification_id", id), slog.String("reason", reason), logfmt.Err(err))
 	}
 }
 
@@ -354,7 +360,7 @@ func (n *Notifier) completeOrLog(ctx context.Context, id int64, reason string) {
 func (n *Notifier) retryOrLog(ctx context.Context, id int64, backoff time.Duration, reason string) {
 	if err := n.store.RetryNotification(ctx, id, backoff, reason); err != nil {
 		telemetry.NotificationStoreErrorsTotal.WithLabelValues("retry").Inc()
-		slog.WarnContext(ctx, "Notifier: RetryNotification failed",
-			"id", id, "backoff", backoff, "error", err)
+		n.log.WarnContext(ctx, "retryNotification failed",
+			slog.Int64("notification_id", id), slog.Duration("backoff", backoff), logfmt.Err(err))
 	}
 }

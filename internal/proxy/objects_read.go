@@ -34,6 +34,8 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 )
 
 // -------------------------------------------------------------------------
@@ -142,7 +144,7 @@ func (o *ObjectManager) tryEachLocation(ctx context.Context, operation, key stri
 			}
 			if i < len(locations)-1 {
 				slog.WarnContext(ctx, operation+": copy failed, trying next",
-					"key", key, "failed_backend", name, "error", err)
+					"key", key, "failed_backend", name, logfmt.Err(err))
 			}
 			continue
 		}

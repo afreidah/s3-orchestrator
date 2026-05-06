@@ -18,12 +18,14 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"log/slog"
 	"sync/atomic"
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -296,6 +298,7 @@ func TestEncryptExisting_HappyPathOneRow(t *testing.T) {
 	}}
 
 	h := &Handler{
+		log:        slog.Default().With(logfmt.Component("admin")),
 		backendOps: mgr,
 		replicator: mgr.Replicator,
 		overRep:    mgr.OverReplicationCleaner,

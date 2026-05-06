@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 )
 
@@ -40,6 +41,7 @@ type BackendSyncer interface {
 // Reconciler scans backends for untracked objects and imports them into the
 // metadata database.
 type Reconciler struct {
+	log *slog.Logger
 	syncer      BackendSyncer
 	bucketNames []string
 }
@@ -48,6 +50,7 @@ type Reconciler struct {
 // import untracked objects.
 func NewReconciler(syncer BackendSyncer, bucketNames []string) *Reconciler {
 	return &Reconciler{
+		log: slog.Default().With(logfmt.Component("reconciler")),
 		syncer:      syncer,
 		bucketNames: bucketNames,
 	}
@@ -63,7 +66,7 @@ func (r *Reconciler) Run(ctx context.Context) {
 	defer span.End()
 
 	if len(r.bucketNames) == 0 {
-		slog.ErrorContext(ctx, "Reconcile: no buckets configured, skipping")
+		r.log.ErrorContext(ctx, "no buckets configured, skipping")
 		return
 	}
 
@@ -74,8 +77,8 @@ func (r *Reconciler) Run(ctx context.Context) {
 
 		imported, skipped, err := r.syncer.SyncBackend(ctx, backendName, bucket, r.bucketNames)
 		if err != nil {
-			slog.ErrorContext(ctx, "Reconcile: backend scan failed",
-				"backend", backendName, "error", err)
+			r.log.ErrorContext(ctx, "backend scan failed",
+				"backend", backendName, logfmt.Err(err))
 			continue
 		}
 		totalImported += imported
@@ -85,12 +88,12 @@ func (r *Reconciler) Run(ctx context.Context) {
 	duration := time.Since(start)
 
 	if totalImported > 0 {
-		slog.InfoContext(ctx, "reconcile complete",
+		r.log.InfoContext(ctx, "reconcile complete",
 			"imported", totalImported, "skipped", totalSkipped,
 			"duration", duration.Round(time.Millisecond))
 
 		if err := r.syncer.UpdateQuotaMetrics(ctx); err != nil {
-			slog.WarnContext(ctx, "failed to update quota metrics after reconcile", "error", err)
+			r.log.WarnContext(ctx, "failed to update quota metrics after reconcile", logfmt.Err(err))
 		}
 	}
 
@@ -122,7 +125,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, backendName string) (*Reconc
 	for _, name := range backends {
 		result, err := r.syncer.ReconcileBackend(ctx, name, r.bucketNames[0], r.bucketNames)
 		if err != nil {
-			slog.ErrorContext(ctx, "Reconcile: backend failed", "backend", name, "error", err)
+			r.log.ErrorContext(ctx, "backend failed", "backend", name, logfmt.Err(err))
 			continue
 		}
 		total.Imported += result.Imported
@@ -132,7 +135,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, backendName string) (*Reconc
 
 	if total.Imported > 0 || total.Removed > 0 {
 		if err := r.syncer.UpdateQuotaMetrics(ctx); err != nil {
-			slog.WarnContext(ctx, "failed to update quota metrics after reconcile", "error", err)
+			r.log.WarnContext(ctx, "failed to update quota metrics after reconcile", logfmt.Err(err))
 		}
 	}
 

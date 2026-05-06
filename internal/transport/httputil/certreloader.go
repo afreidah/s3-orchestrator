@@ -17,6 +17,9 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
+	"context"
 )
 
 // -------------------------------------------------------------------------
@@ -73,7 +76,7 @@ func (cr *CertReloader) Reload() error {
 
 	checkCertExpiry(&cert, cr.certFile)
 
-	slog.Info("TLS certificate reloaded", "cert_file", cr.certFile) //nolint:sloglint // Reload() has no context
+	slog.InfoContext(context.Background(), "TLS certificate reloaded", "cert_file", cr.certFile)
 	return nil
 }
 
@@ -85,8 +88,8 @@ func checkCertExpiry(cert *tls.Certificate, certFile string) {
 		if len(cert.Certificate) > 0 {
 			parsed, err := x509.ParseCertificate(cert.Certificate[0])
 			if err != nil {
-				slog.Warn("Failed to parse TLS leaf certificate for expiry check", //nolint:sloglint // no context available
-					"cert_file", certFile, "error", err)
+				slog.WarnContext(context.Background(), "Failed to parse TLS leaf certificate for expiry check",
+					"cert_file", certFile, logfmt.Err(err))
 				return
 			}
 			cert.Leaf = parsed
@@ -95,7 +98,7 @@ func checkCertExpiry(cert *tls.Certificate, certFile string) {
 	if cert.Leaf != nil {
 		remaining := time.Until(cert.Leaf.NotAfter)
 		if remaining < certExpiryWarningThreshold {
-			slog.Warn("TLS certificate expires soon", //nolint:sloglint // no context available
+			slog.WarnContext(context.Background(), "TLS certificate expires soon",
 				"cert_file", certFile,
 				"expires_at", cert.Leaf.NotAfter,
 				"remaining", remaining.Truncate(time.Minute))

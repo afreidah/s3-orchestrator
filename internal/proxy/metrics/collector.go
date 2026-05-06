@@ -20,6 +20,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
@@ -148,7 +149,7 @@ func (mc *Collector) maybeEmitCapacityWarning(ctx context.Context, name string, 
 func (mc *Collector) updateObjectCountGauges(ctx context.Context, stats map[string]core.QuotaStat) {
 	objCounts, err := mc.store.GetObjectCounts(ctx)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to get object counts", "error", err)
+		slog.ErrorContext(ctx, "failed to get object counts", logfmt.Err(err))
 		return
 	}
 	for name := range stats {
@@ -164,7 +165,7 @@ func (mc *Collector) updateObjectCountGauges(ctx context.Context, stats map[stri
 func (mc *Collector) updateMultipartCountGauges(ctx context.Context, stats map[string]core.QuotaStat) {
 	mpCounts, err := mc.store.GetActiveMultipartCounts(ctx)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to get multipart upload counts", "error", err)
+		slog.ErrorContext(ctx, "failed to get multipart upload counts", logfmt.Err(err))
 		return
 	}
 	for name := range stats {
@@ -180,7 +181,7 @@ func (mc *Collector) updateMultipartCountGauges(ctx context.Context, stats map[s
 func (mc *Collector) updateUsageGauges(ctx context.Context, stats map[string]core.QuotaStat) {
 	usage, err := mc.store.GetUsageForPeriod(ctx, counter.CurrentPeriod())
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to get usage stats", "error", err)
+		slog.ErrorContext(ctx, "failed to get usage stats", logfmt.Err(err))
 		return
 	}
 	for name := range stats {
@@ -215,7 +216,7 @@ func (mc *Collector) updateReplicationPending(ctx context.Context) {
 	}
 	locations, err := mc.store.GetUnderReplicatedObjects(ctx, factor, 10000)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to get under-replicated objects", "error", err)
+		slog.ErrorContext(ctx, "failed to get under-replicated objects", logfmt.Err(err))
 		return
 	}
 	telemetry.ReplicationPending.Set(float64(len(core.GroupByKey(locations))))

@@ -20,6 +20,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/workerpool"
@@ -40,6 +41,7 @@ type PendingReaperStore interface {
 type PendingReaper struct {
 	deps        CleanupOps
 	store       PendingReaperStore
+	log         *slog.Logger
 	concurrency int
 	minAge      time.Duration
 	batchSize   int
@@ -61,6 +63,7 @@ func NewPendingReaper(deps CleanupOps, store PendingReaperStore, concurrency int
 	return &PendingReaper{
 		deps:        deps,
 		store:       store,
+		log:         slog.Default().With(logfmt.Component("pending_reaper")),
 		concurrency: concurrency,
 		minAge:      minAge,
 		batchSize:   batchSize,
@@ -84,7 +87,7 @@ func (r *PendingReaper) ProcessPendingQueue(ctx context.Context) (resolved, fail
 	cutoff := time.Now().Add(-r.minAge)
 	intents, err := r.store.GetStalePending(ctx, cutoff, r.batchSize)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to fetch stale pending intents", "error", err)
+		r.log.ErrorContext(ctx, "fetch stale pending intents", logfmt.Err(err), logfmt.Outcome(logfmt.OutcomeError))
 		return 0, 0
 	}
 
@@ -160,8 +163,8 @@ func (r *PendingReaper) probeBackend(ctx context.Context, be backend.ObjectBacke
 	case isNotFound(err):
 		return probeNotFound
 	default:
-		slog.WarnContext(ctx, "Pending reaper: HEAD failed, leaving intent",
-			"backend", p.BackendName, "key", p.ObjectKey, "error", err)
+		r.log.WarnContext(ctx, "HEAD probe failed, leaving intent for next tick",
+			"backend", p.BackendName, "key", p.ObjectKey, "intent_id", p.IntentID, logfmt.Err(err))
 		return probeError
 	}
 }
@@ -171,11 +174,12 @@ func (r *PendingReaper) probeBackend(ctx context.Context, be backend.ObjectBacke
 // attribute so operators can distinguish the two paths in audit logs.
 func (r *PendingReaper) dropIntent(ctx context.Context, p *core.PendingObject, reason string, resolvedCount, failedCount *atomic.Int32) {
 	if reason == "backend_removed" {
-		slog.WarnContext(ctx, "Pending reaper: backend not registered, dropping intent",
+		r.log.WarnContext(ctx, "backend not registered, dropping intent",
 			"backend", p.BackendName, "key", p.ObjectKey, "intent_id", p.IntentID)
 	}
 	if err := r.store.DeletePending(ctx, p.IntentID); err != nil {
-		slog.ErrorContext(ctx, "failed to delete pending intent", "intent_id", p.IntentID, "error", err)
+		r.log.ErrorContext(ctx, "delete pending intent",
+			"intent_id", p.IntentID, logfmt.Err(err), logfmt.Outcome(logfmt.OutcomeError))
 		failedCount.Add(1)
 		return
 	}
@@ -197,7 +201,8 @@ func (r *PendingReaper) dropIntent(ctx context.Context, p *core.PendingObject, r
 func (r *PendingReaper) handlePromotion(ctx context.Context, p *core.PendingObject, resolvedCount, failedCount *atomic.Int32) {
 	result, displaced, err := r.store.PromotePending(ctx, p)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to promote pending intent", "intent_id", p.IntentID, "error", err)
+		r.log.ErrorContext(ctx, "promote pending intent",
+			"intent_id", p.IntentID, logfmt.Err(err), logfmt.Outcome(logfmt.OutcomeError))
 		failedCount.Add(1)
 		return
 	}
@@ -229,7 +234,7 @@ func (r *PendingReaper) onPromoteCommitted(ctx context.Context, p *core.PendingO
 	for _, dc := range displaced {
 		dcBackend, err := r.deps.GetBackend(dc.BackendName)
 		if err != nil {
-			slog.WarnContext(ctx, "displaced copy backend not registered",
+			r.log.WarnContext(ctx, "displaced copy backend not registered",
 				"backend", dc.BackendName, "key", p.ObjectKey)
 			continue
 		}
@@ -254,7 +259,7 @@ func (r *PendingReaper) onPromoteSuperseded(ctx context.Context, p *core.Pending
 // resolver does not produce this result; if it ever fires it's a bug
 // worth surfacing rather than silently leaving the row pinned.
 func (r *PendingReaper) onPromoteAmbiguous(ctx context.Context, p *core.PendingObject, failedCount *atomic.Int32) {
-	slog.WarnContext(ctx, "Pending reaper: promotion ambiguous, leaving for operator",
+	r.log.WarnContext(ctx, "promotion ambiguous, leaving for operator",
 		"intent_id", p.IntentID, "key", p.ObjectKey, "backend", p.BackendName)
 	telemetry.PendingIntentsResolvedTotal.WithLabelValues("ambiguous").Inc()
 	failedCount.Add(1)

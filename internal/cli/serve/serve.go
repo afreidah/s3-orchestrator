@@ -40,6 +40,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/di"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -231,7 +232,7 @@ func (s *server) resolveServices() error {
 
 	ctx := context.Background()
 	if err := manager.UpdateQuotaMetrics(ctx); err != nil {
-		slog.WarnContext(ctx, "failed to update initial quota metrics", "error", err)
+		slog.WarnContext(ctx, "failed to update initial quota metrics", logfmt.Err(err))
 	}
 	return nil
 }
@@ -363,7 +364,7 @@ func (s *server) configureMetrics(mux *http.ServeMux, ctx context.Context) {
 			slog.InfoContext(ctx, "metrics endpoint enabled on separate listener",
 				"listen", cfg.Telemetry.Metrics.Listen, "path", cfg.Telemetry.Metrics.Path)
 			if err := s.metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				slog.ErrorContext(ctx, "metrics listener failed", "error", err)
+				slog.ErrorContext(ctx, "metrics listener failed", logfmt.Err(err))
 			}
 		}()
 	} else {
@@ -518,7 +519,7 @@ func (s *server) runMultipartDEKBackfill(ctx context.Context) {
 	}
 	locker, err := do.Invoke[core.AdvisoryLocker](s.inj)
 	if err != nil {
-		slog.WarnContext(ctx, "multipart_dek_backfill: skipping startup pass, no advisory locker", "error", err)
+		slog.WarnContext(ctx, "multipart_dek_backfill: skipping startup pass, no advisory locker", logfmt.Err(err))
 		return
 	}
 
@@ -526,12 +527,12 @@ func (s *server) runMultipartDEKBackfill(ctx context.Context) {
 		migrated, runErr := mb.RunOnce(lockCtx)
 		if runErr != nil {
 			slog.WarnContext(lockCtx, "multipart_dek_backfill: startup pass failed, continuing boot",
-				"migrated", migrated, "error", runErr)
+				slog.Int("migrated", migrated), logfmt.Err(runErr))
 		}
 		return nil
 	})
 	if lockErr != nil {
-		slog.WarnContext(ctx, "multipart_dek_backfill: lock acquisition failed", "error", lockErr)
+		slog.WarnContext(ctx, "multipart_dek_backfill: lock acquisition failed", logfmt.Err(lockErr))
 		return
 	}
 	if !acquired {
@@ -570,7 +571,7 @@ func (s *server) reloadConfig() {
 
 	newCfg, err := config.LoadConfig(s.configPath)
 	if err != nil {
-		slog.ErrorContext(ctx, "config reload aborted, keeping current config", "error", err)
+		slog.ErrorContext(ctx, "config reload aborted, keeping current config", logfmt.Err(err))
 		return
 	}
 
@@ -592,7 +593,7 @@ func (s *server) reloadConfig() {
 func (s *server) applyReload(ctx context.Context, newCfg *config.Config) {
 	if s.certReloader != nil {
 		if err := s.certReloader.Reload(); err != nil {
-			slog.ErrorContext(ctx, "failed to reload TLS certificate", "error", err)
+			slog.ErrorContext(ctx, "failed to reload TLS certificate", logfmt.Err(err))
 		}
 	}
 
@@ -607,7 +608,7 @@ func (s *server) applyReload(ctx context.Context, newCfg *config.Config) {
 	defer reloadCancel()
 
 	if err := s.adminStore().SyncQuotaLimits(reloadCtx, newCfg.Backends); err != nil {
-		slog.ErrorContext(reloadCtx, "failed to sync quota limits on reload", "error", err)
+		slog.ErrorContext(reloadCtx, "failed to sync quota limits on reload", logfmt.Err(err))
 	}
 
 	manager := s.backendManager()
@@ -625,14 +626,14 @@ func (s *server) applyReload(ctx context.Context, newCfg *config.Config) {
 	s.logLevel.Set(config.ParseLogLevel(newCfg.Server.LogLevel))
 
 	if err := s.applyWorkerConfigs(&newCfg.Rebalance, &newCfg.Replication, &newCfg.Integrity); err != nil {
-		slog.WarnContext(reloadCtx, "failed to apply worker configs", "error", err)
+		slog.WarnContext(reloadCtx, "failed to apply worker configs", logfmt.Err(err))
 	}
 	manager.SetUsageFlushConfig(&newCfg.UsageFlush)
 	manager.SetLifecycleConfig(&newCfg.Lifecycle)
 	manager.SetIntegrityConfig(&newCfg.Integrity)
 
 	if err := manager.UpdateQuotaMetrics(reloadCtx); err != nil {
-		slog.WarnContext(reloadCtx, "failed to update quota metrics after reload", "error", err)
+		slog.WarnContext(reloadCtx, "failed to update quota metrics after reload", logfmt.Err(err))
 	}
 
 	if h := invokeOptional[*ui.Handler](s.inj); h != nil {
@@ -690,14 +691,14 @@ func (s *server) shutdown() {
 	manager.Close()
 
 	if err := manager.FlushUsage(shutdownCtx); err != nil {
-		slog.WarnContext(shutdownCtx, "final usage flush failed", "error", err)
+		slog.WarnContext(shutdownCtx, "final usage flush failed", logfmt.Err(err))
 	}
 
 	s.closeRedisBackend(shutdownCtx)
 	s.adminStore().Close()
 
 	if err := s.shutdownTracer(shutdownCtx); err != nil {
-		slog.ErrorContext(ctx, "tracer shutdown error", "error", err)
+		slog.ErrorContext(ctx, "tracer shutdown error", logfmt.Err(err))
 	}
 }
 
@@ -705,11 +706,11 @@ func (s *server) shutdown() {
 // metrics listener, logging any errors without aborting shutdown.
 func (s *server) shutdownHTTPServers(ctx context.Context) {
 	if err := s.httpServer.Shutdown(ctx); err != nil {
-		slog.ErrorContext(ctx, "HTTP server shutdown error", "error", err)
+		slog.ErrorContext(ctx, "HTTP server shutdown error", logfmt.Err(err))
 	}
 	if s.metricsServer != nil {
 		if err := s.metricsServer.Shutdown(ctx); err != nil {
-			slog.ErrorContext(ctx, "metrics server shutdown error", "error", err)
+			slog.ErrorContext(ctx, "metrics server shutdown error", logfmt.Err(err))
 		}
 	}
 }
@@ -733,7 +734,7 @@ func (s *server) closeRedisBackend(ctx context.Context) {
 		return
 	}
 	if err := redisBackend.Close(); err != nil {
-		slog.WarnContext(ctx, "failed to close Redis client", "error", err)
+		slog.WarnContext(ctx, "failed to close Redis client", logfmt.Err(err))
 	}
 }
 

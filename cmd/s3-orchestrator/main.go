@@ -23,6 +23,7 @@ import (
 	"syscall"
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/serve"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 )
 
 // main is the program entry point.
@@ -94,7 +95,7 @@ func runServe() { // codecov:ignore -- flag parsing + os.Exit wrapper
 	defer stop()
 
 	if err := serve.Run(ctx, *configPath, *mode, os.Stdout); err != nil {
-		slog.ErrorContext(ctx, "server error", "error", err)
+		slog.ErrorContext(ctx, "server error", logfmt.Err(err))
 		os.Exit(1)
 	}
 }

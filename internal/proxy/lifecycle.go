@@ -19,6 +19,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
@@ -60,8 +61,8 @@ func (m *BackendManager) applyLifecycleRule(ctx context.Context, rule config.Lif
 	for {
 		objects, err := m.stores.Lifecycle.ListExpiredObjects(ctx, rule.Prefix, cutoff, batchSize)
 		if err != nil {
-			slog.ErrorContext(ctx, "Lifecycle: failed to list expired objects",
-				"prefix", rule.Prefix, "error", err)
+			slog.ErrorContext(ctx, "failed to list expired objects",
+				slog.String("prefix", rule.Prefix), logfmt.Err(err))
 			failed++
 			return deleted, failed
 		}
@@ -73,7 +74,7 @@ func (m *BackendManager) applyLifecycleRule(ctx context.Context, rule config.Lif
 		failed += batchFailed
 
 		if batchDeleted == 0 {
-			slog.WarnContext(ctx, "Lifecycle: batch yielded zero deletions, stopping rule",
+			slog.WarnContext(ctx, "batch yielded zero deletions, stopping rule",
 				"prefix", rule.Prefix, "batch_failed", len(objects))
 			return deleted, failed
 		}
@@ -88,8 +89,8 @@ func (m *BackendManager) applyLifecycleRule(ctx context.Context, rule config.Lif
 func (m *BackendManager) deleteLifecycleBatch(ctx context.Context, rule config.LifecycleRule, objects []core.ObjectLocation) (deleted, failed int) {
 	for i := range objects {
 		if err := m.ObjectManager.DeleteObject(ctx, objects[i].ObjectKey); err != nil {
-			slog.WarnContext(ctx, "Lifecycle: failed to delete expired object",
-				"key", objects[i].ObjectKey, "error", err)
+			slog.WarnContext(ctx, "failed to delete expired object",
+				slog.String("key", objects[i].ObjectKey), logfmt.Err(err))
 			telemetry.LifecycleFailedTotal.Inc()
 			failed++
 			continue

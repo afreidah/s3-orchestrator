@@ -23,13 +23,15 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/internalkey"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
-	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
-	"github.com/afreidah/s3-orchestrator/internal/proxy"
-	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/proxy"
+	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
+	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 )
 
 // -------------------------------------------------------------------------
@@ -127,7 +129,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		audit.Log(ctx, "s3.MethodNotAllowed",
 			slog.String("method", method),
 			slog.String("path", r.URL.Path),
-			slog.String("remote", r.RemoteAddr),
+			slog.String("client_addr", r.RemoteAddr),
 			slog.String("bucket", bucket),
 			slog.Int("status", http.StatusMethodNotAllowed),
 			slog.Duration("duration", time.Since(start)),
@@ -160,7 +162,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)
-		slog.WarnContext(ctx, "S3 request failed", "operation", operation, "key", key, "status", status, "remote", r.RemoteAddr, "error", err)
+		slog.LogAttrs(ctx, slog.LevelWarn, "S3 request failed",
+			slog.String("operation", operation),
+			slog.String("key", key),
+			slog.Int("status", status),
+			slog.String("client_addr", r.RemoteAddr),
+			logfmt.Err(err))
 	}
 	span.SetAttributes(attribute.Int("http.status_code", status))
 
@@ -181,12 +188,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // failure and emits the matching audit log.
 func (s *Server) rejectAuth(ctx context.Context, w http.ResponseWriter, r *http.Request, method string, start time.Time, err error) {
 	s.recordRequest(method, http.StatusForbidden, start, 0, 0)
-	slog.WarnContext(ctx, "S3 auth failure", "method", method, "path", r.URL.Path, "remote", r.RemoteAddr, "error", err)
+	slog.LogAttrs(ctx, slog.LevelWarn, "S3 auth failure",
+		slog.String("method", method),
+		slog.String("path", r.URL.Path),
+		slog.String("client_addr", r.RemoteAddr),
+		logfmt.Err(err))
 	audit.Log(ctx, "s3.AuthFailure",
 		slog.String("method", method),
 		slog.String("path", r.URL.Path),
-		slog.String("remote", r.RemoteAddr),
-		slog.String("error", err.Error()),
+		slog.String("client_addr", r.RemoteAddr),
+		logfmt.Err(err),
 		slog.Int("status", http.StatusForbidden),
 		slog.Duration("duration", time.Since(start)),
 	)
@@ -213,7 +224,7 @@ func (s *Server) serveListBuckets(ctx context.Context, w http.ResponseWriter, r 
 		slog.String("operation", "ListBuckets"),
 		slog.String("method", method),
 		slog.String("path", r.URL.Path),
-		slog.String("remote", r.RemoteAddr),
+		slog.String("client_addr", r.RemoteAddr),
 		slog.Int("status", status),
 		slog.Duration("duration", time.Since(start)),
 	)
@@ -226,7 +237,7 @@ func (s *Server) rejectInvalidPath(ctx context.Context, w http.ResponseWriter, r
 	audit.Log(ctx, "s3.InvalidPath",
 		slog.String("method", method),
 		slog.String("path", r.URL.Path),
-		slog.String("remote", r.RemoteAddr),
+		slog.String("client_addr", r.RemoteAddr),
 		slog.Int("status", http.StatusBadRequest),
 		slog.Duration("duration", time.Since(start)),
 	)
@@ -237,11 +248,11 @@ func (s *Server) rejectInvalidPath(ctx context.Context, w http.ResponseWriter, r
 // does not match the bucket the credentials authorize.
 func (s *Server) rejectBucketMismatch(ctx context.Context, w http.ResponseWriter, r *http.Request, method string, start time.Time, authorizedBucket, bucket string) {
 	s.recordRequest(method, http.StatusForbidden, start, 0, 0)
-	slog.WarnContext(ctx, "S3 bucket mismatch", "method", method, "path", r.URL.Path, "remote", r.RemoteAddr, "authorized", authorizedBucket, "requested", bucket)
+	slog.WarnContext(ctx, "S3 bucket mismatch", "method", method, "path", r.URL.Path, "client_addr", r.RemoteAddr, "authorized", authorizedBucket, "requested", bucket)
 	audit.Log(ctx, "s3.BucketMismatch",
 		slog.String("method", method),
 		slog.String("path", r.URL.Path),
-		slog.String("remote", r.RemoteAddr),
+		slog.String("client_addr", r.RemoteAddr),
 		slog.String("authorized_bucket", authorizedBucket),
 		slog.String("requested_bucket", bucket),
 		slog.Int("status", http.StatusForbidden),
@@ -384,7 +395,7 @@ func (s *Server) auditRequest(ctx context.Context, r *http.Request, e *auditEntr
 		slog.String("operation", e.operation),
 		slog.String("method", e.method),
 		slog.String("path", r.URL.Path),
-		slog.String("remote", r.RemoteAddr),
+		slog.String("client_addr", r.RemoteAddr),
 		slog.String("bucket", e.bucket),
 		slog.Int("status", e.status),
 		slog.Duration("duration", e.elapsed),

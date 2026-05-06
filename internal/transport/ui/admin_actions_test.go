@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
+	"log/slog"
 )
 
 // noopOp returns an adminActionOp whose run closure does nothing useful;
@@ -47,7 +48,7 @@ func stubAdminHandler() *admin.Handler { return &admin.Handler{} }
 // rejected before the op is started.
 func TestStartAdminAction_MethodNotAllowed(t *testing.T) {
 	t.Parallel()
-	h := &Handler{adminHandler: stubAdminHandler()}
+	h := &Handler{log: slog.Default(), adminHandler: stubAdminHandler()}
 	req := httptest.NewRequest(http.MethodGet, "/api/replicate", nil)
 	w := httptest.NewRecorder()
 
@@ -62,7 +63,7 @@ func TestStartAdminAction_MethodNotAllowed(t *testing.T) {
 // the UI handler was built without an admin handler dependency.
 func TestStartAdminAction_NotConfigured(t *testing.T) {
 	t.Parallel()
-	h := &Handler{} // adminHandler intentionally nil
+	h := &Handler{log: slog.Default(), } // adminHandler intentionally nil
 	req := httptest.NewRequest(http.MethodPost, "/api/replicate", nil)
 	w := httptest.NewRecorder()
 
@@ -78,7 +79,7 @@ func TestStartAdminAction_NotConfigured(t *testing.T) {
 // the first run.
 func TestStartAdminAction_AlreadyRunning(t *testing.T) {
 	t.Parallel()
-	h := &Handler{adminHandler: stubAdminHandler()}
+	h := &Handler{log: slog.Default(), adminHandler: stubAdminHandler()}
 	if !h.asyncOps.TryStart("replicate") {
 		t.Fatal("test pre-condition: TryStart should claim the slot")
 	}
@@ -97,7 +98,7 @@ func TestStartAdminAction_AlreadyRunning(t *testing.T) {
 // op-specific Extra fields end up on the asyncResult for the poller.
 func TestStartAdminAction_AcceptedStoresExtra(t *testing.T) {
 	t.Parallel()
-	h := &Handler{adminHandler: stubAdminHandler()}
+	h := &Handler{log: slog.Default(), adminHandler: stubAdminHandler()}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/encrypt-existing", nil)
 	w := httptest.NewRecorder()
@@ -131,7 +132,7 @@ func TestStartAdminAction_AcceptedStoresExtra(t *testing.T) {
 // status endpoint can render it.
 func TestStartAdminAction_SkippedReason(t *testing.T) {
 	t.Parallel()
-	h := &Handler{adminHandler: stubAdminHandler()}
+	h := &Handler{log: slog.Default(), adminHandler: stubAdminHandler()}
 	req := httptest.NewRequest(http.MethodPost, "/api/scrub", nil)
 	w := httptest.NewRecorder()
 
@@ -153,7 +154,7 @@ func TestStartAdminAction_SkippedReason(t *testing.T) {
 // the run closure is captured on the asyncResult.
 func TestStartAdminAction_ErrorPropagates(t *testing.T) {
 	t.Parallel()
-	h := &Handler{adminHandler: stubAdminHandler()}
+	h := &Handler{log: slog.Default(), adminHandler: stubAdminHandler()}
 	req := httptest.NewRequest(http.MethodPost, "/api/replicate", nil)
 	w := httptest.NewRecorder()
 
@@ -179,7 +180,7 @@ func TestStartAdminAction_ErrorPropagates(t *testing.T) {
 // as idle to the poller.
 func TestWriteAdminActionStatus_Idle(t *testing.T) {
 	t.Parallel()
-	h := &Handler{}
+	h := &Handler{log: slog.Default(), }
 	w := httptest.NewRecorder()
 	h.writeAdminActionStatus(w, "never-started", "k")
 
@@ -193,7 +194,7 @@ func TestWriteAdminActionStatus_Idle(t *testing.T) {
 // as running.
 func TestWriteAdminActionStatus_Running(t *testing.T) {
 	t.Parallel()
-	h := &Handler{}
+	h := &Handler{log: slog.Default(), }
 	if !h.asyncOps.TryStart("running-op") {
 		t.Fatal("test pre-condition: TryStart")
 	}
@@ -211,7 +212,7 @@ func TestWriteAdminActionStatus_Running(t *testing.T) {
 // status JSON payload alongside the resultKey.
 func TestWriteAdminActionStatus_Done_PropagatesExtra(t *testing.T) {
 	t.Parallel()
-	h := &Handler{}
+	h := &Handler{log: slog.Default(), }
 	if !h.asyncOps.TryStart("done-op") {
 		t.Fatal("test pre-condition: TryStart")
 	}
@@ -246,7 +247,7 @@ func TestWriteAdminActionStatus_Done_PropagatesExtra(t *testing.T) {
 // as status=skipped with the supplied reason instead of done.
 func TestWriteAdminActionStatus_Skipped(t *testing.T) {
 	t.Parallel()
-	h := &Handler{}
+	h := &Handler{log: slog.Default(), }
 	if !h.asyncOps.TryStart("skip-op") {
 		t.Fatal("test pre-condition: TryStart")
 	}
@@ -268,7 +269,7 @@ func TestWriteAdminActionStatus_Skipped(t *testing.T) {
 // status=error with the supplied error message.
 func TestWriteAdminActionStatus_Error(t *testing.T) {
 	t.Parallel()
-	h := &Handler{}
+	h := &Handler{log: slog.Default(), }
 	if !h.asyncOps.TryStart("err-op") {
 		t.Fatal("test pre-condition: TryStart")
 	}
@@ -353,7 +354,7 @@ func TestAdminActionWrappers_NotConfigured(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			h := &Handler{} // adminHandler nil
+			h := &Handler{log: slog.Default(), } // adminHandler nil
 
 			// Trigger: 503 because admin handler is not configured.
 			triggerReq := httptest.NewRequest(http.MethodPost, tc.triggerPath, nil)
@@ -395,7 +396,7 @@ func TestAdminActionWrappers_MethodNotAllowed(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			h := &Handler{adminHandler: stubAdminHandler()}
+			h := &Handler{log: slog.Default(), adminHandler: stubAdminHandler()}
 			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
 			w := httptest.NewRecorder()
 			tc.trigger(h, w, req)

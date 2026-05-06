@@ -18,13 +18,15 @@ import (
 	"fmt"
 	"log/slog"
 
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
-	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/trace"
 )
 
 // -------------------------------------------------------------------------
@@ -105,7 +107,7 @@ func (m *BackendManager) recordObjectOrCleanup(ctx context.Context, span trace.S
 	displaced, err := m.stores.Object.RecordObject(ctx, key, backendName, size, enc)
 	if err != nil {
 		slog.ErrorContext(ctx, "recordObject failed, cleaning up orphan",
-			"key", key, "backend", backendName, "error", err)
+			"key", key, "backend", backendName, logfmt.Err(err))
 		// Account for both API calls the failure path made: the PUT that
 		// succeeded against the backend (the caller's success-path Record
 		// runs only after we return nil) and the cleanup DELETE about to run.
@@ -114,7 +116,7 @@ func (m *BackendManager) recordObjectOrCleanup(ctx context.Context, span trace.S
 		m.usage.Record(backendName, 1, 0, 0) // cleanup DELETE
 		if delErr != nil {
 			slog.ErrorContext(ctx, "failed to clean up orphaned object",
-				"key", key, "backend", backendName, "error", delErr)
+				"key", key, "backend", backendName, logfmt.Err(delErr))
 			m.enqueueCleanup(ctx, backendName, key, "orphan_record_failed", size)
 		}
 		span.SetStatus(codes.Error, err.Error())
@@ -187,7 +189,7 @@ func (m *BackendManager) recordObjectAndPromoteIntent(ctx context.Context, span 
 	}
 	if err != nil {
 		slog.ErrorContext(ctx, "recordObjectAndClearPending failed; intent left for reaper",
-			"key", key, "backend", backendName, "intent_id", intentID, "error", err)
+			"key", key, "backend", backendName, "intent_id", intentID, logfmt.Err(err))
 		// The successful PUT against the backend still consumed an API
 		// call. The success-path usage record runs only when this returns
 		// nil, so account for it here.
@@ -232,7 +234,7 @@ func (m *BackendManager) cleanupDisplacedCopies(ctx context.Context, key, newBac
 func (m *BackendManager) deleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, backendName, key, reason string, sizeBytes int64) {
 	if err := m.deleteWithTimeout(ctx, be, key); err != nil {
 		slog.WarnContext(ctx, "failed to delete object, enqueuing cleanup",
-			"backend", backendName, "key", key, "reason", reason, "error", err)
+			"backend", backendName, "key", key, "reason", reason, logfmt.Err(err))
 		m.enqueueCleanup(ctx, backendName, key, reason, sizeBytes)
 	}
 }
@@ -251,13 +253,13 @@ func (m *BackendManager) DeleteOrEnqueue(ctx context.Context, be backend.ObjectB
 func (m *BackendManager) enqueueCleanup(ctx context.Context, backendName, objectKey, reason string, sizeBytes int64) {
 	if err := m.stores.Cleanup.EnqueueCleanup(ctx, backendName, objectKey, reason, sizeBytes); err != nil {
 		slog.ErrorContext(ctx, "failed to enqueue cleanup (best-effort)",
-			"backend", backendName, "key", objectKey, "reason", reason, "error", err)
+			"backend", backendName, "key", objectKey, "reason", reason, logfmt.Err(err))
 		return
 	}
 	if sizeBytes > 0 {
 		if err := m.stores.Cleanup.IncrementOrphanBytes(ctx, backendName, sizeBytes); err != nil {
 			slog.ErrorContext(ctx, "failed to increment orphan bytes (best-effort)",
-				"backend", backendName, "key", objectKey, "size", sizeBytes, "error", err)
+				"backend", backendName, "key", objectKey, "size", sizeBytes, logfmt.Err(err))
 		}
 	}
 	telemetry.CleanupQueueEnqueuedTotal.WithLabelValues(reason).Inc()
