@@ -21,8 +21,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 )
 
 // logBufferCapacity is the maximum number of log entries retained.
@@ -219,18 +217,11 @@ func (h *TeeHandler) Handle(ctx context.Context, r slog.Record) error { //nolint
 	attrs := make(map[string]any)
 	prefix := groupPrefix(h.groups)
 
-	// Apply logfmt.TransformAttr so error-typed values land as strings
-	// in the buffer; otherwise json.Marshal would render them as "{}"
-	// for error structs without JSON tags, which the UI shows as
-	// "[object Object]". Mirrors the rule applied by ErrAttrHandler on
-	// the stdout/JSON branch.
 	for _, a := range h.attrs {
-		t := logfmt.TransformAttr(a)
-		attrs[prefix+t.Key] = t.Value.Any()
+		attrs[prefix+a.Key] = a.Value.Any()
 	}
 	r.Attrs(func(a slog.Attr) bool {
-		t := logfmt.TransformAttr(a)
-		attrs[prefix+t.Key] = t.Value.Any()
+		attrs[prefix+a.Key] = a.Value.Any()
 		return true
 	})
 

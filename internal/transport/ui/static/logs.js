@@ -80,11 +80,8 @@
 
     for (let i = entries.length - 1; i >= 0; i--) {
       let e = entries[i];
-      let wrap = document.createElement('div');
-      wrap.className = 'log-entry-wrap ' + levelClass(e.level);
-
       let row = document.createElement('div');
-      row.className = 'log-entry';
+      row.className = 'log-entry ' + levelClass(e.level);
 
       let timeSpan = document.createElement('span');
       timeSpan.className = 'log-time';
@@ -109,18 +106,7 @@
         row.appendChild(attrSpan);
       }
 
-      wrap.appendChild(row);
-
-      let detail = document.createElement('pre');
-      detail.className = 'log-entry-detail';
-      detail.textContent = JSON.stringify(e, null, 2);
-      wrap.appendChild(detail);
-
-      wrap.addEventListener('click', function () {
-        wrap.classList.toggle('expanded');
-      });
-
-      container.appendChild(wrap);
+      container.appendChild(row);
     }
 
     if (hasMore) {
