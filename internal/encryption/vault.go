@@ -113,7 +113,7 @@ func (p *VaultKeyProvider) WrapDEK(ctx context.Context, dek []byte) ([]byte, str
 	defer p.mu.RUnlock()
 
 	path := fmt.Sprintf("%s/encrypt/%s", p.mountPath, p.keyName)
-	secret, err := p.client.Logical().WriteWithContext(ctx, path, map[string]interface{}{
+	secret, err := p.client.Logical().WriteWithContext(ctx, path, map[string]any{
 		"plaintext": base64.StdEncoding.EncodeToString(dek),
 	})
 	if err != nil {
@@ -137,7 +137,7 @@ func (p *VaultKeyProvider) UnwrapDEK(ctx context.Context, wrappedDEK []byte, _ s
 	defer p.mu.RUnlock()
 
 	path := fmt.Sprintf("%s/decrypt/%s", p.mountPath, p.keyName)
-	secret, err := p.client.Logical().WriteWithContext(ctx, path, map[string]interface{}{
+	secret, err := p.client.Logical().WriteWithContext(ctx, path, map[string]any{
 		"ciphertext": string(wrappedDEK),
 	})
 	if err != nil {
@@ -226,19 +226,8 @@ func (p *VaultKeyProvider) reloadTokenFile(ctx context.Context) error {
 	return nil
 }
 
-// readTokenFile reads and trims a token from a file path. Logs a warning
-// if the file is group- or world-readable (permissions wider than 0600).
-// Nomad's Vault integration writes tokens with 0644, which is safe inside
-// an isolated alloc directory but would be a concern on a shared host.
+// readTokenFile reads and trims a token from a file path.
 func readTokenFile(path string) (string, error) {
-	info, err := os.Stat(path)
-	if err != nil {
-		return "", fmt.Errorf("stat token file %s: %w", path, err)
-	}
-	if perm := info.Mode().Perm(); perm&0o077 != 0 {
-		slog.WarnContext(context.Background(), "Vault token file has broad permissions",
-			"path", path, "permissions", fmt.Sprintf("%04o", perm))
-	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", fmt.Errorf("read token file %s: %w", path, err)

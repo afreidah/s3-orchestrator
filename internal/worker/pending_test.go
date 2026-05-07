@@ -323,6 +323,43 @@ func TestProcessPendingQueue_EmptyBatchIsNoOp(t *testing.T) {
 	}
 }
 
+// TestProcessPendingQueue_SkipsBackendWithOpenBreaker verifies that intents
+// targeting a backend whose circuit breaker is open (and not yet probe-
+// eligible) are short-circuited at tick start: no AcquireAdmission, no
+// HEAD probe, just a single skip log line per backend and the intents
+// counted as failed so they remain queued for the next tick.
+func TestProcessPendingQueue_SkipsBackendWithOpenBreaker(t *testing.T) {
+	t.Parallel()
+	r, ops, _, ms := setupReaper(t)
+
+	ctrl := gomock.NewController(t)
+	rawBE := backendtest.NewMockObjectBackend(ctrl)
+	cb := backend.NewCircuitBreakerBackend(rawBE, "broken", 1, time.Hour)
+
+	// Trip the breaker: one HEAD failure with threshold=1 opens it. With a
+	// 1h openTimeout no time has elapsed, so ProbeEligible is false.
+	rawBE.EXPECT().HeadObject(gomock.Any(), gomock.Any()).Return(nil, errors.New("backend down"))
+	if _, err := cb.HeadObject(context.Background(), "trip"); err == nil {
+		t.Fatal("expected HeadObject to fail and trip the breaker")
+	}
+
+	ms.stalePending = []core.PendingObject{
+		pendingFixture("i1", "bucket/k1", "broken"),
+		pendingFixture("i2", "bucket/k2", "broken"),
+	}
+	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true).Times(2)
+	ops.EXPECT().ReleaseAdmission().Times(2)
+	ops.EXPECT().GetBackend("broken").Return(cb, nil).Times(2)
+
+	resolved, failed := r.ProcessPendingQueue(context.Background())
+	if resolved != 0 {
+		t.Errorf("resolved = %d, want 0", resolved)
+	}
+	if failed != 2 {
+		t.Errorf("failed = %d, want 2 (both intents should be left for next tick)", failed)
+	}
+}
+
 // -------------------------------------------------------------------------
 // probeBackend  -  three-outcome backend HEAD classifier
 // -------------------------------------------------------------------------
