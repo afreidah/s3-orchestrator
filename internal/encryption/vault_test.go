@@ -293,17 +293,17 @@ func TestVaultKeyProvider_TokenFileMissing(t *testing.T) {
 	}
 }
 
-// TestVaultKeyProvider_TokenFileInsecurePermissions verifies the vault key provider token file insecure permissions contract.
-// Asserts that unexpected error:.
+// TestVaultKeyProvider_TokenFileInsecurePermissions verifies that broad
+// (0644) token file permissions do not block initialization. Nomad's Vault
+// integration writes tokens at 0644 inside an isolated alloc directory,
+// which is the canonical deployment target.
 func TestVaultKeyProvider_TokenFileInsecurePermissions(t *testing.T) {
 	t.Parallel()
 	tokenFile := filepath.Join(t.TempDir(), "world-readable-token")
-	if err := os.WriteFile(tokenFile, []byte("secret-token"), 0o644); err != nil { //nolint:gosec // G306: intentionally world-readable to test permission warning
+	if err := os.WriteFile(tokenFile, []byte("secret-token"), 0o644); err != nil { //nolint:gosec // G306: intentionally world-readable to verify permissive perms are accepted
 		t.Fatal(err)
 	}
 
-	// Broad permissions log a warning but no longer prevent initialization.
-	// This accommodates Nomad's Vault integration which writes tokens at 0644.
 	p, err := NewVaultKeyProvider(&config.VaultTransitConfig{
 		Address:   "https://vault.example.com",
 		TokenFile: tokenFile,
@@ -321,7 +321,7 @@ func TestVaultKeyProvider_TokenFileInsecurePermissions(t *testing.T) {
 func TestVaultKeyProvider_TokenFileGroupReadable(t *testing.T) {
 	t.Parallel()
 	tokenFile := filepath.Join(t.TempDir(), "group-readable-token")
-	if err := os.WriteFile(tokenFile, []byte("secret-token"), 0o640); err != nil { //nolint:gosec // G306: intentionally group-readable to test permission warning
+	if err := os.WriteFile(tokenFile, []byte("secret-token"), 0o640); err != nil { //nolint:gosec // G306: intentionally group-readable to verify permissive perms are accepted
 		t.Fatal(err)
 	}
 
