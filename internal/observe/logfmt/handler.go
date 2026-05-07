@@ -48,7 +48,7 @@ func (h *ErrAttrHandler) Enabled(ctx context.Context, lvl slog.Level) bool {
 func (h *ErrAttrHandler) Handle(ctx context.Context, r slog.Record) error {
 	transformed := slog.NewRecord(r.Time, r.Level, r.Message, r.PC)
 	r.Attrs(func(a slog.Attr) bool {
-		transformed.AddAttrs(transformAttr(a))
+		transformed.AddAttrs(TransformAttr(a))
 		return true
 	})
 	return h.inner.Handle(ctx, transformed)
@@ -59,7 +59,7 @@ func (h *ErrAttrHandler) Handle(ctx context.Context, r slog.Record) error {
 func (h *ErrAttrHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	out := make([]slog.Attr, len(attrs))
 	for i, a := range attrs {
-		out[i] = transformAttr(a)
+		out[i] = TransformAttr(a)
 	}
 	return &ErrAttrHandler{inner: h.inner.WithAttrs(out)}
 }
@@ -69,11 +69,13 @@ func (h *ErrAttrHandler) WithGroup(name string) slog.Handler {
 	return &ErrAttrHandler{inner: h.inner.WithGroup(name)}
 }
 
-// transformAttr returns a if its value is not an error, otherwise returns
+// TransformAttr returns a if its value is not an error, otherwise returns
 // a new slog.Attr with the same key and value `a.Value.Any().(error).Error()`.
 // Group values are recursed into so nested groups carrying errors also
-// render as strings.
-func transformAttr(a slog.Attr) slog.Attr {
+// render as strings. Exported so non-handler call sites (e.g. the
+// in-memory log buffer) can apply the same rule outside the slog.Handler
+// chain.
+func TransformAttr(a slog.Attr) slog.Attr {
 	switch a.Value.Kind() {
 	case slog.KindAny:
 		if err, ok := a.Value.Any().(error); ok {
@@ -86,7 +88,7 @@ func transformAttr(a slog.Attr) slog.Attr {
 		group := a.Value.Group()
 		out := make([]slog.Attr, len(group))
 		for i, child := range group {
-			out[i] = transformAttr(child)
+			out[i] = TransformAttr(child)
 		}
 		return slog.Attr{Key: a.Key, Value: slog.GroupValue(out...)}
 	}
