@@ -173,6 +173,15 @@ func (s *Server) handleCompleteMultipartUpload(ctx context.Context, w http.Respo
 		return status, err
 	}
 
+	// --- Conditional write: If-None-Match: * fails when the key exists ---
+	// CompleteMultipartUpload is the moment a multipart upload becomes a
+	// resolvable key, so the precondition is evaluated here, not at
+	// CreateMultipartUpload (parts can be uploaded against a key that is
+	// only later observed to already exist).
+	if status, err, done := s.checkIfNoneMatchStar(ctx, w, r, key); done {
+		return status, err
+	}
+
 	etag, err := s.Manager.MultipartManager.CompleteMultipartUpload(ctx, uploadID, partNumbers)
 	if err != nil {
 		return writeStorageError(w, err, "Failed to complete multipart upload"), err

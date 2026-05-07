@@ -281,6 +281,90 @@ func (neverEndingReader) Read(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// TestPut_IfNoneMatchStarRejectsExistingKey verifies that PutObject with
+// `If-None-Match: *` returns 412 PreconditionFailed when the key already
+// has an object_locations row, before any backend bytes are written.
+func TestPut_IfNoneMatchStarRejectsExistingKey(t *testing.T) {
+	t.Parallel()
+	ts, mockStore, backend := newTestServer(t)
+	mockStore.GetAllLocationsResp = []core.ObjectLocation{
+		{ObjectKey: "mybucket/testkey", BackendName: "test-backend", SizeBytes: 100},
+	}
+
+	data := []byte("hello")
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/testkey", bytes.NewReader(data))
+	req.Header.Set("X-Proxy-Token", "test-token")
+	req.Header.Set("If-None-Match", "*")
+	req.ContentLength = int64(len(data))
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusPreconditionFailed {
+		t.Fatalf("status = %d, want 412", resp.StatusCode)
+	}
+	if _, ok := backend.objects["mybucket/testkey"]; ok {
+		t.Error("backend should not have stored bytes when precondition fails")
+	}
+}
+
+// TestPut_IfNoneMatchStarAllowsNewKey verifies that PutObject with
+// `If-None-Match: *` succeeds when no location row exists for the key.
+func TestPut_IfNoneMatchStarAllowsNewKey(t *testing.T) {
+	t.Parallel()
+	ts, _, backend := newTestServer(t)
+
+	data := []byte("hello")
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/newkey", bytes.NewReader(data))
+	req.Header.Set("X-Proxy-Token", "test-token")
+	req.Header.Set("If-None-Match", "*")
+	req.ContentLength = int64(len(data))
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if _, ok := backend.objects["mybucket/newkey"]; !ok {
+		t.Error("object not stored on backend")
+	}
+}
+
+// TestPut_IfNoneMatchSpecificETagIgnored verifies that an `If-None-Match`
+// header carrying a specific etag (not `*`) is ignored on PUT. AWS S3
+// only honors the `*` form for write preconditions; specific-etag forms
+// are accepted and the upload proceeds normally.
+func TestPut_IfNoneMatchSpecificETagIgnored(t *testing.T) {
+	t.Parallel()
+	ts, mockStore, backend := newTestServer(t)
+	mockStore.GetAllLocationsResp = []core.ObjectLocation{
+		{ObjectKey: "mybucket/testkey", BackendName: "test-backend", SizeBytes: 100},
+	}
+
+	data := []byte("hello")
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/testkey", bytes.NewReader(data))
+	req.Header.Set("X-Proxy-Token", "test-token")
+	req.Header.Set("If-None-Match", `"some-etag"`)
+	req.ContentLength = int64(len(data))
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (specific etag form ignored on PUT)", resp.StatusCode)
+	}
+	if _, ok := backend.objects["mybucket/testkey"]; !ok {
+		t.Error("object not stored on backend")
+	}
+}
+
 // TestPut_QuotaExhausted verifies the put quota exhausted contract.
 // Asserts that status = , want 507.
 func TestPut_QuotaExhausted(t *testing.T) {

@@ -522,6 +522,70 @@ func TestConditionalGet_IfNoneMatch(t *testing.T) {
 	}
 }
 
+// TestConditionalPut_IfNoneMatchStar verifies the write-side `If-None-Match: *`
+// precondition: PUT to a new key succeeds, a second PUT to the same key with
+// the header set fails 412, and a PUT without the header still overwrites.
+// Closes the conditional-write half of issue #383.
+func TestConditionalPut_IfNoneMatchStar(t *testing.T) {
+	resetState(t)
+	client := newS3Client(t)
+	ctx := context.Background()
+	key := uniqueKey(t, "if-none-match-star")
+	body := []byte("v1")
+
+	// PUT a new key with If-None-Match: * succeeds.
+	_, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(key),
+		Body:          bytes.NewReader(body),
+		ContentLength: aws.Int64(int64(len(body))),
+		IfNoneMatch:   aws.String("*"),
+	})
+	if err != nil {
+		t.Fatalf("PutObject (new key, If-None-Match: *): %v", err)
+	}
+
+	// PUT the same key with If-None-Match: * fails 412 PreconditionFailed.
+	_, err = client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(key),
+		Body:          bytes.NewReader([]byte("v2")),
+		ContentLength: aws.Int64(2),
+		IfNoneMatch:   aws.String("*"),
+	})
+	if err == nil {
+		t.Fatal("expected 412 PreconditionFailed for existing key with If-None-Match: *")
+	}
+	if !strings.Contains(err.Error(), "412") && !strings.Contains(err.Error(), "PreconditionFailed") {
+		t.Errorf("expected 412 PreconditionFailed error, got: %v", err)
+	}
+
+	// GET should still return v1 (the failed PUT did not transmit bytes).
+	resp, err := client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(virtualBucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		t.Fatalf("GetObject after failed conditional: %v", err)
+	}
+	defer resp.Body.Close()
+	got, _ := io.ReadAll(resp.Body)
+	if !bytes.Equal(got, body) {
+		t.Errorf("body after failed conditional = %q, want %q", got, body)
+	}
+
+	// PUT without the header succeeds (normal overwrite).
+	_, err = client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(key),
+		Body:          bytes.NewReader([]byte("v3")),
+		ContentLength: aws.Int64(2),
+	})
+	if err != nil {
+		t.Fatalf("unconditional PutObject (overwrite): %v", err)
+	}
+}
+
 // TestConditionalGet_IfMatch_Mismatch verifies that GET with a non-matching
 // If-Match ETag returns 412 Precondition Failed.
 func TestConditionalGet_IfMatch_Mismatch(t *testing.T) {

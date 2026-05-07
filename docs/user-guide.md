@@ -324,6 +324,41 @@ _, err := client.DeleteObject(context.Background(), &s3.DeleteObjectInput{
 })
 ```
 
+## Conditional Writes
+
+The orchestrator honors the `If-None-Match: *` header on `PutObject` and `CompleteMultipartUpload` to give clients opt-in conflict detection. When the header is set and an object already exists at the target key, the request fails with `412 Precondition Failed` and the upload bytes are not stored.
+
+The check is best-effort: a small race window exists between the existence check and the metadata commit, so two simultaneous writers each sending `If-None-Match: *` can both succeed in rare cases. This matches AWS S3's documented behavior — the precondition is a strong signal but not a hard guarantee under contention.
+
+Only the `*` form is honored on writes. A specific etag value in `If-None-Match` is ignored on PUT and the upload proceeds as a normal overwrite.
+
+**AWS CLI:**
+
+```bash
+aws s3api put-object --bucket app1-files --key new.txt --body new.txt \
+    --if-none-match '*'
+```
+
+**Python (boto3):**
+
+```python
+s3.put_object(
+    Bucket="app1-files",
+    Key="new.txt",
+    Body=b"contents",
+    IfNoneMatch="*",
+)
+```
+
+**curl:**
+
+```bash
+curl -X PUT -H 'If-None-Match: *' --data-binary @new.txt \
+    http://s3-orchestrator.service.consul:9000/app1-files/new.txt
+```
+
+A `412 Precondition Failed` response can be retried with a different key or by intentionally omitting the header to overwrite.
+
 ## Presigned URLs
 
 Presigned URLs let you generate a time-limited URL that grants temporary access to an object without requiring the requester to have credentials. Any AWS SDK presign client works (Go, Python boto3, Java, JavaScript, etc.).
@@ -396,7 +431,7 @@ The orchestrator implements a practical subset of the S3 API. A few things to be
 - **Same-bucket copies only** — `CopyObject` requires source and destination to be in the same bucket.
 - **No bucket management** — Buckets are configured server-side. `CreateBucket`, `DeleteBucket`, and `ListBuckets` are not supported.
 - **No ACLs or policies** — Access control is handled entirely through the credential-to-bucket mapping in the server config.
-- **No object versioning** — Each key holds exactly one object. Uploading to an existing key overwrites it.
+- **No object versioning** — Each key holds exactly one object. Uploading to an existing key overwrites it. Concurrent PUTs to the same key are last-writer-wins, matching native S3 semantics. The orchestrator's per-key advisory lock keeps location metadata consistent across replicas, and bytes from the losing writer are enqueued for backend cleanup. Clients that need conflict detection should send `If-None-Match: *` (see [Conditional Writes](#conditional-writes)).
 - **Max object size** — Configurable server-side (default: 5 GB). For larger objects, use multipart upload (most clients do this automatically).
 - **Multipart upload timeout** — Incomplete multipart uploads are automatically cleaned up after 24 hours.
 - **Range reads** — `GET` requests with a `Range` header are supported and return `206 Partial Content`.
