@@ -124,35 +124,31 @@ func (r *PendingReaper) ProcessPendingQueue(ctx context.Context) (resolved, fail
 // caller can emit one INFO log per backend instead of a probe-failed WARN
 // per intent.
 func (r *PendingReaper) resolveOneIntent(ctx context.Context, p *core.PendingObject, resolvedCount, failedCount *atomic.Int32, skipped *sync.Map) {
-	if !r.deps.AcquireAdmission(ctx) {
-		telemetry.WorkerAdmissionRejectionsTotal.WithLabelValues("pending_reaper").Inc()
-		return
-	}
-	defer r.deps.ReleaseAdmission()
+	WithAdmission(ctx, r.deps, WorkerNamePendingReaper, func() {
+		be, err := r.deps.GetBackend(p.BackendName)
+		if err != nil {
+			r.dropIntent(ctx, p, "backend_removed", resolvedCount, failedCount)
+			return
+		}
 
-	be, err := r.deps.GetBackend(p.BackendName)
-	if err != nil {
-		r.dropIntent(ctx, p, "backend_removed", resolvedCount, failedCount)
-		return
-	}
+		if cb, ok := be.(*backend.CircuitBreakerBackend); ok &&
+			cb.State() == breaker.StateOpen && !cb.ProbeEligible() {
+			cnt, _ := skipped.LoadOrStore(p.BackendName, &atomic.Int32{})
+			cnt.(*atomic.Int32).Add(1)
+			failedCount.Add(1)
+			return
+		}
 
-	if cb, ok := be.(*backend.CircuitBreakerBackend); ok &&
-		cb.State() == breaker.StateOpen && !cb.ProbeEligible() {
-		cnt, _ := skipped.LoadOrStore(p.BackendName, &atomic.Int32{})
-		cnt.(*atomic.Int32).Add(1)
-		failedCount.Add(1)
-		return
-	}
-
-	switch r.probeBackend(ctx, be, p) {
-	case probeFound:
-		r.handlePromotion(ctx, p, resolvedCount, failedCount)
-	case probeNotFound:
-		r.dropIntent(ctx, p, "head_404", resolvedCount, failedCount)
-	case probeError:
-		// Transient backend or network error; leave for the next tick.
-		failedCount.Add(1)
-	}
+		switch r.probeBackend(ctx, be, p) {
+		case probeFound:
+			r.handlePromotion(ctx, p, resolvedCount, failedCount)
+		case probeNotFound:
+			r.dropIntent(ctx, p, "head_404", resolvedCount, failedCount)
+		case probeError:
+			// Transient backend or network error; leave for the next tick.
+			failedCount.Add(1)
+		}
+	})
 }
 
 // -------------------------------------------------------------------------

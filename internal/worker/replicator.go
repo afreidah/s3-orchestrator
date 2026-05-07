@@ -146,16 +146,13 @@ func (r *Replicator) replicate(ctx context.Context, cfg config.ReplicationConfig
 	var created atomic.Int32
 	workerpool.Run(ctx, cfg.Concurrency, tasks, func(ctx context.Context, task replicaTask) {
 		defer telemetry.ReplicationPending.Dec()
-		if !r.ops.AcquireAdmission(ctx) {
-			telemetry.WorkerAdmissionRejectionsTotal.WithLabelValues("replicator").Inc()
-			return
-		}
-		defer r.ops.ReleaseAdmission()
-		n, replicateErr := r.ReplicateObject(ctx, quotaStats, task.key, task.copies, task.needed)
-		if replicateErr != nil {
-			r.log.WarnContext(ctx, "object failed", "key", task.key, "error", replicateErr)
-		}
-		created.Add(int32(n)) //nolint:gosec // G115: n is copies created per object, always small
+		WithAdmission(ctx, r.ops, WorkerNameReplicator, func() {
+			n, replicateErr := r.ReplicateObject(ctx, quotaStats, task.key, task.copies, task.needed)
+			if replicateErr != nil {
+				r.log.WarnContext(ctx, "object failed", "key", task.key, "error", replicateErr)
+			}
+			created.Add(int32(n)) //nolint:gosec // G115: n is copies created per object, always small
+		})
 	})
 
 	copiesCreated := int(created.Load())

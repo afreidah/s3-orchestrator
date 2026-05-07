@@ -47,18 +47,20 @@ func (s *Store) GetPendingCleanups(ctx context.Context, limit int) ([]core.Clean
 		return nil, fmt.Errorf("failed to get pending cleanups: %w", err)
 	}
 
-	items := make([]core.CleanupItem, len(rows))
-	for i, row := range rows {
-		items[i] = core.CleanupItem{
-			ID:          row.ID,
-			BackendName: row.BackendName,
-			ObjectKey:   row.ObjectKey,
-			Reason:      row.Reason,
-			Attempts:    row.Attempts,
-			SizeBytes:   row.SizeBytes,
-		}
+	return mapSlice(rows, cleanupItemFromRow), nil
+}
+
+// cleanupItemFromRow converts a sqlc GetPendingCleanups row to the
+// core.CleanupItem shape consumed by the cleanup worker.
+func cleanupItemFromRow(r *db.GetPendingCleanupsRow) core.CleanupItem {
+	return core.CleanupItem{
+		ID:          r.ID,
+		BackendName: r.BackendName,
+		ObjectKey:   r.ObjectKey,
+		Reason:      r.Reason,
+		Attempts:    r.Attempts,
+		SizeBytes:   r.SizeBytes,
 	}
-	return items, nil
 }
 
 // CompleteCleanupItem removes a successfully processed item from the queue.

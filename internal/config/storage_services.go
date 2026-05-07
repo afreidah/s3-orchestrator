@@ -133,21 +133,11 @@ func (r *RebalanceConfig) setDefaultsAndValidate() []error {
 
 	var errs []error
 
-	if r.Strategy == "" {
-		r.Strategy = "pack"
-	}
-	if r.Interval == 0 {
-		r.Interval = 6 * time.Hour
-	}
-	if r.BatchSize == 0 {
-		r.BatchSize = 100
-	}
-	if r.Threshold == 0 {
-		r.Threshold = 0.1
-	}
-	if r.Concurrency == 0 {
-		r.Concurrency = 5
-	}
+	r.Strategy = defaulted(r.Strategy, "pack")
+	r.Interval = defaulted(r.Interval, 6*time.Hour)
+	r.BatchSize = defaulted(r.BatchSize, 100)
+	r.Threshold = defaulted(r.Threshold, 0.1)
+	r.Concurrency = defaulted(r.Concurrency, 5)
 
 	if r.Strategy != "pack" && r.Strategy != "spread" {
 		errs = append(errs, ErrInvalidRebalanceStrategy)

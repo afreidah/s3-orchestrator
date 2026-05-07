@@ -59,11 +59,7 @@ func (s *Store) GetStalePending(ctx context.Context, olderThan time.Time, limit 
 	if err != nil {
 		return nil, fmt.Errorf("get stale pending objects: %w", err)
 	}
-	out := make([]core.PendingObject, len(rows))
-	for i := range rows {
-		out[i] = pendingFromRow(&rows[i])
-	}
-	return out, nil
+	return mapSlice(rows, pendingFromRow), nil
 }
 
 // PendingDepth returns the total number of pending intents. Used by the

@@ -519,14 +519,11 @@ func (r *Rebalancer) ExecuteMoves(ctx context.Context, plan []RebalanceMove, str
 	var moved atomic.Int32
 	workerpool.Run(ctx, concurrency, plan, func(ctx context.Context, mv RebalanceMove) {
 		defer telemetry.RebalancePending.Dec()
-		if !r.ops.AcquireAdmission(ctx) {
-			telemetry.WorkerAdmissionRejectionsTotal.WithLabelValues("rebalancer").Inc()
-			return
-		}
-		defer r.ops.ReleaseAdmission()
-		if r.ExecuteOneMove(ctx, mv, strategy) {
-			moved.Add(1)
-		}
+		WithAdmission(ctx, r.ops, WorkerNameRebalancer, func() {
+			if r.ExecuteOneMove(ctx, mv, strategy) {
+				moved.Add(1)
+			}
+		})
 	})
 	return int(moved.Load())
 }

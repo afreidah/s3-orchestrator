@@ -88,7 +88,7 @@ func (s *Store) GetQuotaStats(ctx context.Context) (map[string]core.QuotaStat, e
 		return nil, fmt.Errorf("failed to query quota stats: %w", err)
 	}
 
-	stats := make(map[string]core.QuotaStat)
+	stats := make(map[string]core.QuotaStat, len(rows))
 	for _, row := range rows {
 		stats[row.BackendName] = core.QuotaStat{
 			BackendName: row.BackendName,
@@ -109,7 +109,7 @@ func (s *Store) GetObjectCounts(ctx context.Context) (map[string]int64, error) {
 		return nil, fmt.Errorf("failed to query object counts: %w", err)
 	}
 
-	counts := make(map[string]int64)
+	counts := make(map[string]int64, len(rows))
 	for _, row := range rows {
 		counts[row.BackendName] = row.ObjectCount
 	}
@@ -124,7 +124,7 @@ func (s *Store) GetActiveMultipartCounts(ctx context.Context) (map[string]int64,
 		return nil, fmt.Errorf("failed to query multipart counts: %w", err)
 	}
 
-	counts := make(map[string]int64)
+	counts := make(map[string]int64, len(rows))
 	for _, row := range rows {
 		counts[row.BackendName] = row.UploadCount
 	}
