@@ -52,6 +52,23 @@ var listObjectsMaxPages = 100
 
 // resolveLocationsByBackend looks up every copy of key and returns a
 // backend-name -> location map for O(1) lookups inside the failover
+// ObjectExists reports whether at least one location row exists for key.
+// Used by the conditional-write path (If-None-Match: *) to fail-fast
+// before the body upload. Best-effort: a concurrent racing PUT can land
+// between this read and the eventual RecordObject commit, matching AWS
+// S3's documented best-effort precondition semantic. ErrObjectNotFound
+// is the canonical "no row" signal and is normalised to (false, nil).
+func (o *ObjectManager) ObjectExists(ctx context.Context, key string) (bool, error) {
+	locs, err := o.parent.stores.Object.GetAllObjectLocations(ctx, key)
+	if errors.Is(err, core.ErrObjectNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("check object existence: %w", err)
+	}
+	return len(locs) > 0, nil
+}
+
 // closure. Returns nil when encryption is disabled (the map is never
 // consulted) or when the DB lookup failed. Callers that care about the
 // DB-down case inspect o.encryptor alongside the returned map  -  when

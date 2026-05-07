@@ -29,6 +29,11 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+// errIfNoneMatchExists is returned by handlePut when the request carries
+// `If-None-Match: *` and a location row already exists for the target key.
+// Used so the audit log captures a typed reason for the 412 response.
+var errIfNoneMatchExists = errors.New("If-None-Match: * precondition failed: object exists")
+
 // -------------------------------------------------------------------------
 // XML TYPES
 // -------------------------------------------------------------------------
@@ -99,6 +104,15 @@ func (s *Server) handlePut(ctx context.Context, w http.ResponseWriter, r *http.R
 			writeS3Error(w, http.StatusBadRequest, "MetadataTooLarge", err.Error())
 			return http.StatusBadRequest, err
 		}
+	}
+
+	// --- Conditional write: If-None-Match: * fails when the key exists ---
+	// Best-effort precondition check before the body upload so a doomed
+	// request does not transmit. Matches AWS S3's documented behavior:
+	// the check is not a hard guarantee under contention, but eliminates
+	// the common case of a client trying to avoid clobbering a known key.
+	if status, err, done := s.checkIfNoneMatchStar(ctx, w, r, key); done {
+		return status, err
 	}
 
 	// --- Early rejection before body transmission (Expect: 100-Continue) ---
@@ -347,6 +361,28 @@ func deleteObjectErrorFor(err error) (code, message string) {
 // -------------------------------------------------------------------------
 // CONDITIONAL REQUEST HELPERS
 // -------------------------------------------------------------------------
+
+// checkIfNoneMatchStar evaluates a write-side `If-None-Match: *`
+// precondition before a body upload starts. Returns (status, err, true)
+// when the response has already been written and the caller must
+// return immediately, or (0, nil, false) when the request should
+// proceed normally. AWS S3 only honors the `*` form for write
+// preconditions; specific-etag values are not interpreted on write.
+func (s *Server) checkIfNoneMatchStar(ctx context.Context, w http.ResponseWriter, r *http.Request, key string) (int, error, bool) {
+	if r.Header.Get("If-None-Match") != "*" {
+		return 0, nil, false
+	}
+	exists, err := s.Manager.ObjectManager.ObjectExists(ctx, key)
+	if err != nil {
+		return writeStorageError(w, err, "Failed to evaluate conditional write"), err, true
+	}
+	if exists {
+		writeS3Error(w, http.StatusPreconditionFailed, "PreconditionFailed",
+			"At least one of the pre-conditions you specified did not hold")
+		return http.StatusPreconditionFailed, errIfNoneMatchExists, true
+	}
+	return 0, nil, false
+}
 
 // checkConditionals evaluates conditional request headers per RFC 7232.
 // Returns the HTTP status to send and whether the caller should
