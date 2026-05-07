@@ -40,17 +40,19 @@ func (s *Store) GetPendingNotifications(ctx context.Context, limit int) ([]core.
 	if err != nil {
 		return nil, err
 	}
-	out := make([]core.NotificationRow, len(rows))
-	for i, r := range rows {
-		out[i] = core.NotificationRow{
-			ID:          r.ID,
-			EventType:   r.EventType,
-			Payload:     r.Payload,
-			EndpointURL: r.EndpointUrl,
-			Attempts:    r.Attempts,
-		}
+	return mapSlice(rows, notificationFromRow), nil
+}
+
+// notificationFromRow converts a sqlc GetPendingNotifications row to the
+// core.NotificationRow shape consumed by the notify worker.
+func notificationFromRow(r *db.GetPendingNotificationsRow) core.NotificationRow {
+	return core.NotificationRow{
+		ID:          r.ID,
+		EventType:   r.EventType,
+		Payload:     r.Payload,
+		EndpointURL: r.EndpointUrl,
+		Attempts:    r.Attempts,
 	}
-	return out, nil
 }
 
 // CompleteNotification removes a delivered notification from the outbox.

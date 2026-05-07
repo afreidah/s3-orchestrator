@@ -32,34 +32,50 @@ func int64Ptr(n int64) *int64 {
 	return &n
 }
 
-// derefStr safely dereferences a nullable string pointer.
-func derefStr(p *string) string {
+// derefOr returns *p when p is non-nil, otherwise zero. Replaces the
+// `if p != nil { return *p } return zero` boilerplate at every nullable
+// column read site so the caller is a single expression.
+func derefOr[T any](p *T, zero T) T {
 	if p == nil {
-		return ""
+		return zero
 	}
 	return *p
 }
 
+// derefStr safely dereferences a nullable string pointer.
+func derefStr(p *string) string { return derefOr(p, "") }
+
 // derefInt64 safely dereferences a nullable int64 pointer.
-func derefInt64(p *int64) int64 {
-	if p == nil {
-		return 0
+func derefInt64(p *int64) int64 { return derefOr(p, 0) }
+
+// mapSlice applies fn to every element of in and returns the resulting
+// slice. fn receives a pointer to each element so large sqlc row structs
+// are not copied per call. The output slice is always pre-sized to
+// len(in) so the loop body never reallocates. Replaces the
+// `out := make([]T, len(rows)); for i,r := range rows { out[i] = toT(r) }`
+// pattern at every sqlc-row-to-core conversion site.
+func mapSlice[I, O any](in []I, fn func(*I) O) []O {
+	out := make([]O, len(in))
+	for i := range in {
+		out[i] = fn(&in[i])
 	}
-	return *p
+	return out
 }
 
 // existingCopiesFromRows maps sqlc GetExistingCopiesForUpdate rows onto
 // core.ExistingCopy values.
 func existingCopiesFromRows(rows []db.GetExistingCopiesForUpdateRow) []core.ExistingCopy {
-	out := make([]core.ExistingCopy, len(rows))
-	for i := range rows {
-		out[i] = core.ExistingCopy{
-			BackendName: rows[i].BackendName,
-			SizeBytes:   rows[i].SizeBytes,
-			CreatedAt:   rows[i].CreatedAt.Time,
-		}
+	return mapSlice(rows, existingCopyFromRow)
+}
+
+// existingCopyFromRow is the per-row converter used by
+// existingCopiesFromRows.
+func existingCopyFromRow(r *db.GetExistingCopiesForUpdateRow) core.ExistingCopy {
+	return core.ExistingCopy{
+		BackendName: r.BackendName,
+		SizeBytes:   r.SizeBytes,
+		CreatedAt:   r.CreatedAt.Time,
 	}
-	return out
 }
 
 // objectInsertParams maps a core.ObjectLocation onto the sqlc insert

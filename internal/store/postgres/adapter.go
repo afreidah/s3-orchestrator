@@ -196,15 +196,17 @@ func (a *pgTxAdapter) GetCopiesForKeysForUpdate(ctx context.Context, keys []stri
 	if err != nil {
 		return nil, fmt.Errorf("get copies for keys: %w", err)
 	}
-	out := make([]core.KeyedExistingCopy, len(rows))
-	for i, r := range rows {
-		out[i] = core.KeyedExistingCopy{
-			ObjectKey:   r.ObjectKey,
-			BackendName: r.BackendName,
-			SizeBytes:   r.SizeBytes,
-		}
+	return mapSlice(rows, keyedExistingCopyFromRow), nil
+}
+
+// keyedExistingCopyFromRow converts a sqlc GetCopiesForKeysForUpdate row
+// to core.KeyedExistingCopy.
+func keyedExistingCopyFromRow(r *db.GetCopiesForKeysForUpdateRow) core.KeyedExistingCopy {
+	return core.KeyedExistingCopy{
+		ObjectKey:   r.ObjectKey,
+		BackendName: r.BackendName,
+		SizeBytes:   r.SizeBytes,
 	}
-	return out, nil
 }
 
 // DeleteObjectsByKeys bulk-deletes object_locations rows for every

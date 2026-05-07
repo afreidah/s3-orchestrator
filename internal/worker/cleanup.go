@@ -72,12 +72,9 @@ func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) (processed, fai
 	var processedCount, failedCount atomic.Int32
 
 	workerpool.Run(ctx, w.concurrency, items, func(ctx context.Context, item core.CleanupItem) {
-		if !w.deps.AcquireAdmission(ctx) {
-			telemetry.WorkerAdmissionRejectionsTotal.WithLabelValues("cleanup").Inc()
-			return
-		}
-		defer w.deps.ReleaseAdmission()
-		w.processCleanupItem(ctx, item, &processedCount, &failedCount)
+		WithAdmission(ctx, w.deps, WorkerNameCleanup, func() {
+			w.processCleanupItem(ctx, item, &processedCount, &failedCount)
+		})
 	})
 
 	w.recordCleanupDepths(ctx)

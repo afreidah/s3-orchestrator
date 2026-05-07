@@ -49,8 +49,8 @@ func (s *Store) CreateMultipartUpload(ctx context.Context, params *core.CreateMu
 			return fmt.Errorf("failed to marshal metadata: %w", err)
 		}
 	}
-	keyIDPtr := strOrNil(params.KeyID)
-	contentTypePtr := strOrNil(params.ContentType)
+	keyIDPtr := strPtr(params.KeyID)
+	contentTypePtr := strPtr(params.ContentType)
 	err := s.queries.CreateMultipartUpload(ctx, db.CreateMultipartUploadParams{
 		UploadID:      params.UploadID,
 		ObjectKey:     params.ObjectKey,
@@ -64,15 +64,6 @@ func (s *Store) CreateMultipartUpload(ctx context.Context, params *core.CreateMu
 		return fmt.Errorf("failed to create multipart upload: %w", err)
 	}
 	return nil
-}
-
-// strOrNil returns &s when s is non-empty so the column lands as NULL
-// for empty-string callers and as a real value otherwise.
-func strOrNil(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
 }
 
 // nilIfEmptyBytes returns nil when b is zero-length so the column lands
@@ -189,25 +180,23 @@ func (s *Store) GetParts(ctx context.Context, uploadID string) ([]core.Multipart
 		return nil, fmt.Errorf("failed to get parts: %w", err)
 	}
 
-	parts := make([]core.MultipartPart, len(rows))
-	for i, row := range rows {
-		p := core.MultipartPart{
-			PartNumber:    int(row.PartNumber),
-			ETag:          row.Etag,
-			SizeBytes:     row.SizeBytes,
-			CreatedAt:     row.CreatedAt.Time,
-			Encrypted:     row.Encrypted,
-			EncryptionKey: row.EncryptionKey,
-		}
-		if row.KeyID != nil {
-			p.KeyID = *row.KeyID
-		}
-		if row.PlaintextSize != nil {
-			p.PlaintextSize = *row.PlaintextSize
-		}
-		parts[i] = p
+	return mapSlice(rows, multipartPartFromRow), nil
+}
+
+// multipartPartFromRow converts a sqlc GetParts row into the canonical
+// core.MultipartPart shape, safely dereferencing nullable KeyID and
+// PlaintextSize.
+func multipartPartFromRow(r *db.GetPartsRow) core.MultipartPart {
+	return core.MultipartPart{
+		PartNumber:    int(r.PartNumber),
+		ETag:          r.Etag,
+		SizeBytes:     r.SizeBytes,
+		CreatedAt:     r.CreatedAt.Time,
+		Encrypted:     r.Encrypted,
+		EncryptionKey: r.EncryptionKey,
+		KeyID:         derefStr(r.KeyID),
+		PlaintextSize: derefInt64(r.PlaintextSize),
 	}
-	return parts, nil
 }
 
 // -------------------------------------------------------------------------
@@ -292,7 +281,7 @@ func (s *Store) ListLegacyMultipartUploads(ctx context.Context, limit int) ([]co
 // UpdateUploadEncryption persists the upload-level wrapped DEK and key
 // ID once the backfill worker has re-encrypted every part of an upload.
 func (s *Store) UpdateUploadEncryption(ctx context.Context, uploadID string, encryptionKey []byte, keyID string) error {
-	keyIDPtr := strOrNil(keyID)
+	keyIDPtr := strPtr(keyID)
 	if err := s.queries.UpdateUploadEncryption(ctx, db.UpdateUploadEncryptionParams{
 		UploadID:      uploadID,
 		EncryptionKey: nilIfEmptyBytes(encryptionKey),
@@ -318,7 +307,7 @@ func (s *Store) UpdatePartEncryption(ctx context.Context, uploadID string, partN
 	if enc != nil && enc.Encrypted {
 		params.Encrypted = true
 		params.EncryptionKey = enc.EncryptionKey
-		params.KeyID = strOrNil(enc.KeyID)
+		params.KeyID = strPtr(enc.KeyID)
 		params.PlaintextSize = &enc.PlaintextSize
 	}
 	if err := s.queries.UpdatePartEncryption(ctx, params); err != nil {
@@ -351,18 +340,17 @@ func (s *Store) ListMultipartUploads(ctx context.Context, prefix string, maxUplo
 		return nil, fmt.Errorf("failed to list multipart uploads: %w", err)
 	}
 
-	uploads := make([]core.MultipartUpload, len(rows))
-	for i, row := range rows {
-		ct := ""
-		if row.ContentType != nil {
-			ct = *row.ContentType
-		}
-		uploads[i] = core.MultipartUpload{
-			UploadID:    row.UploadID,
-			ObjectKey:   row.ObjectKey,
-			ContentType: ct,
-			CreatedAt:   row.CreatedAt.Time,
-		}
+	return mapSlice(rows, listedMultipartUploadFromRow), nil
+}
+
+// listedMultipartUploadFromRow converts a sqlc ListMultipartUploadsByPrefix
+// row to the slimmer core.MultipartUpload shape returned to the listing
+// caller (encryption metadata is omitted by design).
+func listedMultipartUploadFromRow(r *db.ListMultipartUploadsByPrefixRow) core.MultipartUpload {
+	return core.MultipartUpload{
+		UploadID:    r.UploadID,
+		ObjectKey:   r.ObjectKey,
+		ContentType: derefStr(r.ContentType),
+		CreatedAt:   r.CreatedAt.Time,
 	}
-	return uploads, nil
 }

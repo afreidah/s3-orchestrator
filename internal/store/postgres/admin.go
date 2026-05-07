@@ -88,18 +88,18 @@ func (s *Store) ListEncryptedLocations(ctx context.Context, keyID string, limit,
 	if err != nil {
 		return nil, fmt.Errorf("list encrypted locations: %w", err)
 	}
-	result := make([]core.EncryptedLocation, len(rows))
-	for i, r := range rows {
-		result[i] = core.EncryptedLocation{
-			ObjectKey:     r.ObjectKey,
-			BackendName:   r.BackendName,
-			EncryptionKey: r.EncryptionKey,
-		}
-		if r.KeyID != nil {
-			result[i].KeyID = *r.KeyID
-		}
+	return mapSlice(rows, encryptedLocationFromRow), nil
+}
+
+// encryptedLocationFromRow converts a sqlc ListEncryptedLocations row
+// to core.EncryptedLocation, safely dereferencing the nullable KeyID.
+func encryptedLocationFromRow(r *db.ListEncryptedLocationsRow) core.EncryptedLocation {
+	return core.EncryptedLocation{
+		ObjectKey:     r.ObjectKey,
+		BackendName:   r.BackendName,
+		EncryptionKey: r.EncryptionKey,
+		KeyID:         derefStr(r.KeyID),
 	}
-	return result, nil
 }
 
 // UpdateEncryptionKey re-wraps a single object's encryption key. Used during
@@ -123,15 +123,17 @@ func (s *Store) ListUnencryptedLocations(ctx context.Context, limit, offset int)
 	if err != nil {
 		return nil, fmt.Errorf("list unencrypted locations: %w", err)
 	}
-	result := make([]core.UnencryptedLocation, len(rows))
-	for i, r := range rows {
-		result[i] = core.UnencryptedLocation{
-			ObjectKey:   r.ObjectKey,
-			BackendName: r.BackendName,
-			SizeBytes:   r.SizeBytes,
-		}
+	return mapSlice(rows, unencryptedLocationFromRow), nil
+}
+
+// unencryptedLocationFromRow converts a sqlc ListUnencryptedLocations
+// row to core.UnencryptedLocation.
+func unencryptedLocationFromRow(r *db.ListUnencryptedLocationsRow) core.UnencryptedLocation {
+	return core.UnencryptedLocation{
+		ObjectKey:   r.ObjectKey,
+		BackendName: r.BackendName,
+		SizeBytes:   r.SizeBytes,
 	}
-	return result, nil
 }
 
 // MarkObjectEncrypted updates a single object location to record that it has
@@ -158,22 +160,21 @@ func (s *Store) ListAllEncryptedLocations(ctx context.Context, limit, offset int
 	if err != nil {
 		return nil, fmt.Errorf("list all encrypted locations: %w", err)
 	}
-	result := make([]core.DecryptableLocation, len(rows))
-	for i, r := range rows {
-		result[i] = core.DecryptableLocation{
-			ObjectKey:     r.ObjectKey,
-			BackendName:   r.BackendName,
-			SizeBytes:     r.SizeBytes,
-			EncryptionKey: r.EncryptionKey,
-		}
-		if r.KeyID != nil {
-			result[i].KeyID = *r.KeyID
-		}
-		if r.PlaintextSize != nil {
-			result[i].PlaintextSize = *r.PlaintextSize
-		}
+	return mapSlice(rows, decryptableLocationFromRow), nil
+}
+
+// decryptableLocationFromRow converts a sqlc ListAllEncryptedLocations
+// row to core.DecryptableLocation, safely dereferencing nullable
+// KeyID and PlaintextSize.
+func decryptableLocationFromRow(r *db.ListAllEncryptedLocationsRow) core.DecryptableLocation {
+	return core.DecryptableLocation{
+		ObjectKey:     r.ObjectKey,
+		BackendName:   r.BackendName,
+		SizeBytes:     r.SizeBytes,
+		EncryptionKey: r.EncryptionKey,
+		KeyID:         derefStr(r.KeyID),
+		PlaintextSize: derefInt64(r.PlaintextSize),
 	}
-	return result, nil
 }
 
 // MarkObjectDecrypted updates a single object location to record that it has

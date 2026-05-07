@@ -66,18 +66,10 @@ func (r *RateLimitConfig) setDefaultsAndValidate() []error {
 		return errs
 	}
 
-	if r.RequestsPerSec == 0 {
-		r.RequestsPerSec = 100
-	}
-	if r.Burst == 0 {
-		r.Burst = 200
-	}
-	if r.CleanupInterval == 0 {
-		r.CleanupInterval = 1 * time.Minute
-	}
-	if r.CleanupMaxAge == 0 {
-		r.CleanupMaxAge = 5 * time.Minute
-	}
+	r.RequestsPerSec = defaulted(r.RequestsPerSec, 100)
+	r.Burst = defaulted(r.Burst, 200)
+	r.CleanupInterval = defaulted(r.CleanupInterval, 1*time.Minute)
+	r.CleanupMaxAge = defaulted(r.CleanupMaxAge, 5*time.Minute)
 
 	if r.RequestsPerSec <= 0 {
 		errs = append(errs, ErrRateLimitRPSNotPositive)
@@ -91,15 +83,9 @@ func (r *RateLimitConfig) setDefaultsAndValidate() []error {
 
 // setDefaults sets defaults.
 func (cb *CircuitBreakerConfig) setDefaults() {
-	if cb.FailureThreshold == 0 {
-		cb.FailureThreshold = 3
-	}
-	if cb.OpenTimeout == 0 {
-		cb.OpenTimeout = 15 * time.Second
-	}
-	if cb.CacheTTL == 0 {
-		cb.CacheTTL = 60 * time.Second
-	}
+	cb.FailureThreshold = defaulted(cb.FailureThreshold, 3)
+	cb.OpenTimeout = defaulted(cb.OpenTimeout, 15*time.Second)
+	cb.CacheTTL = defaulted(cb.CacheTTL, 60*time.Second)
 }
 
 // setDefaults sets defaults.
@@ -107,10 +93,6 @@ func (bcb *BackendCircuitBreakerConfig) setDefaults() {
 	if !bcb.Enabled {
 		return
 	}
-	if bcb.FailureThreshold == 0 {
-		bcb.FailureThreshold = 5
-	}
-	if bcb.OpenTimeout == 0 {
-		bcb.OpenTimeout = 5 * time.Minute
-	}
+	bcb.FailureThreshold = defaulted(bcb.FailureThreshold, 5)
+	bcb.OpenTimeout = defaulted(bcb.OpenTimeout, 5*time.Minute)
 }
