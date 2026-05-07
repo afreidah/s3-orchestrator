@@ -15,10 +15,12 @@ package worker
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
@@ -91,9 +93,19 @@ func (r *PendingReaper) ProcessPendingQueue(ctx context.Context) (resolved, fail
 		return 0, 0
 	}
 
+	// skipped accumulates the per-backend count of intents short-circuited
+	// because their destination backend's circuit breaker is currently open.
+	// One INFO log line is emitted per skipped backend at the end of the
+	// tick instead of per-intent WARN spam from the probe path.
 	var resolvedCount, failedCount atomic.Int32
+	var skipped sync.Map
 	workerpool.Run(ctx, r.concurrency, intents, func(ctx context.Context, p core.PendingObject) {
-		r.resolveOneIntent(ctx, &p, &resolvedCount, &failedCount)
+		r.resolveOneIntent(ctx, &p, &resolvedCount, &failedCount, &skipped)
+	})
+	skipped.Range(func(k, v any) bool {
+		r.log.InfoContext(ctx, "backend circuit open, skipping pending intents",
+			"backend", k.(string), "intents_skipped", v.(*atomic.Int32).Load())
+		return true
 	})
 
 	if depth, err := r.store.PendingDepth(ctx); err == nil {
@@ -105,7 +117,13 @@ func (r *PendingReaper) ProcessPendingQueue(ctx context.Context) (resolved, fail
 // resolveOneIntent applies the reaper's resolution decision to a single
 // pending row: admission gating, backend lookup, HEAD probe, and
 // promotion or drop depending on what the backend and store report.
-func (r *PendingReaper) resolveOneIntent(ctx context.Context, p *core.PendingObject, resolvedCount, failedCount *atomic.Int32) {
+//
+// When the destination backend's circuit breaker is open and not yet
+// probe-eligible the intent is short-circuited: it is counted as failed
+// (so it stays queued for the next tick) and tallied in skipped so the
+// caller can emit one INFO log per backend instead of a probe-failed WARN
+// per intent.
+func (r *PendingReaper) resolveOneIntent(ctx context.Context, p *core.PendingObject, resolvedCount, failedCount *atomic.Int32, skipped *sync.Map) {
 	if !r.deps.AcquireAdmission(ctx) {
 		telemetry.WorkerAdmissionRejectionsTotal.WithLabelValues("pending_reaper").Inc()
 		return
@@ -115,6 +133,14 @@ func (r *PendingReaper) resolveOneIntent(ctx context.Context, p *core.PendingObj
 	be, err := r.deps.GetBackend(p.BackendName)
 	if err != nil {
 		r.dropIntent(ctx, p, "backend_removed", resolvedCount, failedCount)
+		return
+	}
+
+	if cb, ok := be.(*backend.CircuitBreakerBackend); ok &&
+		cb.State() == breaker.StateOpen && !cb.ProbeEligible() {
+		cnt, _ := skipped.LoadOrStore(p.BackendName, &atomic.Int32{})
+		cnt.(*atomic.Int32).Add(1)
+		failedCount.Add(1)
 		return
 	}
 
