@@ -58,10 +58,11 @@ type Store struct {
 
 // NewStore creates a new PostgreSQL store connection using pgxpool.
 func NewStore(ctx context.Context, dbCfg *config.DatabaseConfig) (*Store, error) {
+	host := fmt.Sprintf("%s:%d", dbCfg.Host, dbCfg.Port)
 	connStr := dbCfg.ConnectionString()
 	cfg, err := pgxpool.ParseConfig(connStr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse connection string: %w", err)
+		return nil, fmt.Errorf("parse db connection string (host=%s db=%s): %w", host, dbCfg.Database, err)
 	}
 
 	cfg.MaxConns = dbCfg.MaxConns
@@ -71,12 +72,14 @@ func NewStore(ctx context.Context, dbCfg *config.DatabaseConfig) (*Store, error)
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create connection pool: %w", err)
+		return nil, fmt.Errorf("create db connection pool (host=%s db=%s): %w", host, dbCfg.Database, err)
 	}
 
 	if err := pool.Ping(ctx); err != nil {
 		pool.Close()
-		return nil, fmt.Errorf("failed to connect to database: %w", err)
+		return nil, fmt.Errorf(
+			"connect to database (host=%s db=%s): %w; verify the host is reachable, the port matches the server, the database exists, and the credentials are valid",
+			host, dbCfg.Database, err)
 	}
 
 	return &Store{

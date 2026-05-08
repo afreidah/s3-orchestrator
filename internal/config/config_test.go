@@ -2155,6 +2155,9 @@ func TestLoadConfig_InvalidYAML(t *testing.T) {
 	if !strings.Contains(err.Error(), "parse config") {
 		t.Errorf("error should mention parsing, got: %v", err)
 	}
+	if !strings.Contains(err.Error(), path) {
+		t.Errorf("error should include the config file path %q, got: %v", path, err)
+	}
 }
 
 // TestLoadConfig_ValidationFailure verifies the load config validation failure contract.
@@ -2170,6 +2173,26 @@ func TestLoadConfig_ValidationFailure(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "invalid config") {
 		t.Errorf("error should mention invalid config, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), path) {
+		t.Errorf("error should include the config file path %q, got: %v", path, err)
+	}
+}
+
+// TestLoadConfig_MissingFile verifies that a non-existent config path
+// surfaces both the loader sentinel and the path in the error message.
+func TestLoadConfig_MissingFile(t *testing.T) {
+	t.Parallel()
+	path := "/nonexistent/path/config.yaml"
+	_, err := LoadConfig(path)
+	if err == nil {
+		t.Fatal("expected error for missing file")
+	}
+	if !errors.Is(err, ErrReadConfigFile) {
+		t.Errorf("expected ErrReadConfigFile in chain, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), path) {
+		t.Errorf("error should include the config file path %q, got: %v", path, err)
 	}
 }
 

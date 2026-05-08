@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // TestParsePath verifies the parse path contract.
@@ -251,12 +253,75 @@ func TestValidateUserMetadata_ExactLimit(t *testing.T) {
 	}
 }
 
+// TestFormatCapacityHint_EmptyStatsReturnsEmpty verifies that the
+// capacity-hint formatter returns "" when no stats are present so the
+// caller falls back to its terse default error message.
+func TestFormatCapacityHint_EmptyStatsReturnsEmpty(t *testing.T) {
+	t.Parallel()
+	if got := formatCapacityHint(nil); got != "" {
+		t.Errorf("formatCapacityHint(nil) = %q, want empty", got)
+	}
+	if got := formatCapacityHint(map[string]core.QuotaStat{}); got != "" {
+		t.Errorf("formatCapacityHint(empty) = %q, want empty", got)
+	}
+}
+
+// TestFormatCapacityHint_RendersSortedSummary verifies the formatter
+// produces a deterministic comma-separated "name=used/limit" summary.
+// Output is sorted by backend name so the message is stable across runs.
+func TestFormatCapacityHint_RendersSortedSummary(t *testing.T) {
+	t.Parallel()
+	stats := map[string]core.QuotaStat{
+		"oci": {BackendName: "oci", BytesUsed: 1_181_116_006, BytesLimit: 10_737_418_240},
+		"r2":  {BackendName: "r2", BytesUsed: 1_395_864_371, BytesLimit: 10_737_418_240},
+		"e2":  {BackendName: "e2", BytesUsed: 0, BytesLimit: 10_737_418_240},
+	}
+	got := formatCapacityHint(stats)
+	want := "e2=0 B/10.0 GiB, oci=1.1 GiB/10.0 GiB, r2=1.3 GiB/10.0 GiB"
+	if got != want {
+		t.Errorf("formatCapacityHint = %q\nwant %q", got, want)
+	}
+}
+
+// TestHumanBytes_FormatsCommonScales pins the byte formatter on the
+// 0/B/KiB/MiB/GiB transitions so the InsufficientStorage error body
+// renders consistently.
+func TestHumanBytes_FormatsCommonScales(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		in   int64
+		want string
+	}{
+		{0, "0 B"},
+		{1023, "1023 B"},
+		{1024, "1.0 KiB"},
+		{1_572_864, "1.5 MiB"},
+		{10 * 1024 * 1024 * 1024, "10.0 GiB"},
+		{-1, "0 B"},
+	}
+	for _, tc := range cases {
+		if got := humanBytes(tc.in); got != tc.want {
+			t.Errorf("humanBytes(%d) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
 // TestValidateUserMetadata_RejectsCRLFInKey verifies the validate user metadata rejects crlfin key behaviour described by the test name.
+// Also asserts the error message names the offending key, the bad byte
+// in hex, and the position so operators can fix the request without
+// inspecting raw bytes.
 func TestValidateUserMetadata_RejectsCRLFInKey(t *testing.T) {
 	t.Parallel()
 	meta := map[string]string{"bad\r\nkey": "value"}
-	if err := validateUserMetadata(meta); err == nil {
+	err := validateUserMetadata(meta)
+	if err == nil {
 		t.Fatal("expected error for key containing CRLF")
+	}
+	msg := err.Error()
+	for _, want := range []string{`"bad`, "0x0d", "position 3"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error %q missing substring %q", msg, want)
+		}
 	}
 }
 

@@ -172,6 +172,41 @@ func TestCanAcceptWrite_NoCapacity(t *testing.T) {
 	}
 }
 
+// TestBackendCapacityStats_PassesThroughStoreSnapshot verifies that
+// BackendCapacityStats forwards the QuotaStore snapshot to the caller
+// for use in the InsufficientStorage error body.
+func TestBackendCapacityStats_PassesThroughStoreSnapshot(t *testing.T) {
+	t.Parallel()
+	store := &mockStore{
+		getQuotaStatsResp: map[string]core.QuotaStat{
+			"b1": {BackendName: "b1", BytesUsed: 100, BytesLimit: 1000},
+		},
+	}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+
+	got := mgr.ObjectManager.BackendCapacityStats(context.Background())
+	if len(got) != 1 {
+		t.Fatalf("got %d entries, want 1", len(got))
+	}
+	if got["b1"].BytesUsed != 100 || got["b1"].BytesLimit != 1000 {
+		t.Errorf("snapshot mismatch: %+v", got["b1"])
+	}
+}
+
+// TestBackendCapacityStats_DBFailureReturnsNil verifies that a
+// QuotaStore lookup error degrades to nil so the caller falls back
+// to its terse default error message instead of failing the
+// response.
+func TestBackendCapacityStats_DBFailureReturnsNil(t *testing.T) {
+	t.Parallel()
+	store := &mockStore{getQuotaStatsErr: core.ErrDBUnavailable}
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+
+	if got := mgr.ObjectManager.BackendCapacityStats(context.Background()); got != nil {
+		t.Errorf("BackendCapacityStats on DB failure = %+v, want nil", got)
+	}
+}
+
 // TestPutObject_QuotaExhausted verifies the put object quota exhausted contract.
 // Asserts that expected st.ErrInsufficientStorage, got.
 func TestPutObject_QuotaExhausted(t *testing.T) {

@@ -122,7 +122,11 @@ func (s *Server) handlePut(ctx context.Context, w http.ResponseWriter, r *http.R
 	// avoids transmitting the entire upload body for a doomed request.
 	if !s.Manager.ObjectManager.CanAcceptWrite(r.ContentLength) {
 		telemetry.EarlyRejectionsTotal.Inc()
-		writeS3Error(w, http.StatusInsufficientStorage, "InsufficientStorage", "No backend has capacity for this upload")
+		msg := fmt.Sprintf("No backend can accept a %d byte upload", r.ContentLength)
+		if hint := formatCapacityHint(s.Manager.ObjectManager.BackendCapacityStats(ctx)); hint != "" {
+			msg += "; backend usage: " + hint
+		}
+		writeS3Error(w, http.StatusInsufficientStorage, "InsufficientStorage", msg)
 		return http.StatusInsufficientStorage, fmt.Errorf("no backend capacity for %d bytes", r.ContentLength)
 	}
 
