@@ -1017,7 +1017,14 @@ Both endpoints include an `instance` field with the hostname for identifying whi
 
 A comprehensive Grafana dashboard is included at `grafana/s3-orchestrator.json`. Import it via Grafana's UI (Dashboards → Import → Upload JSON file) or provision it from disk. It expects a Prometheus datasource with UID `prometheus`.
 
-The dashboard covers all emitted metrics across nine rows: overview stats, storage quotas, monthly usage, request performance, backend operations, health/reliability (circuit breaker, degraded mode, cleanup queue, rate limits), background workers (replication, rebalancer, lifecycle, audit), over-replication cleanup (pending count, excess copies removed, errors, duration), and encryption (operations, errors, encrypt-existing, key rotation). The background workers, over-replication cleanup, and encryption rows are collapsed by default.
+The dashboard covers all emitted metrics, organised by domain into rows:
+overview, quota & storage, request performance, backend operations,
+manager operations, circuit breaker & degraded mode, replication, usage
+tracking, rate limiting & rejections, rebalancer, drain & lifecycle,
+cleanup queue & audit, encryption, object data cache, integrity
+verification, Redis, over-replication cleanup, pending PUT intents,
+and authentication (streaming SigV4). Rows for less frequently inspected
+domains are collapsed by default.
 
 ### Key Prometheus metrics
 
@@ -1045,6 +1052,8 @@ If `telemetry.metrics.enabled` is `true`, metrics are exposed at `/metrics`. Key
 | `s3o_cleanup_dlq_depth` | Alert when > 0 — at least one unrecoverable orphan needs operator action |
 | `s3o_cleanup_dlq_enqueued_total{backend="..."}` | Rate of graduations per backend; one backend dominating means its delete path is broken |
 | `s3o_audit_events_total{event="..."}` | Audit log volume by event type — useful for detecting unusual activity |
+| `s3o_auth_streaming_requests_total{variant}` | Rate of streaming-payload SigV4 PUTs by variant — track which client SDKs are sending streaming uploads |
+| `s3o_auth_streaming_rejections_total{reason}` | Alert on any non-zero rate — every increment is a chunk-validation failure (tampered body, malformed framing, length mismatch, or signature mismatch) |
 | `s3o_encryption_errors_total` | Any non-zero rate indicates encryption/decryption failures |
 | `s3o_encrypt_existing_objects_total{status="error"}` | Failures during bulk encryption of existing data |
 | `s3o_decrypt_existing_objects_total{status="error"}` | Failures during bulk decryption of existing data |

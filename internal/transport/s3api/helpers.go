@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -245,9 +246,16 @@ func xmlEscape(s string) string {
 }
 
 // writeStorageError checks if err is an *storage.S3Error and writes the
-// appropriate S3 XML error response. Falls back to 502 InternalError for
-// untyped errors. Returns the HTTP status code used.
+// appropriate S3 XML error response. Streaming-validation failures take
+// precedence so a tampered chunk surfaces as 403 SignatureDoesNotMatch
+// rather than the generic InternalError fallback. Returns the HTTP
+// status code used.
 func writeStorageError(w http.ResponseWriter, err error, fallbackMsg string) int {
+	if status, code, msg, reason, ok := streamingErrorResponse(err); ok {
+		telemetry.AuthStreamingRejectionsTotal.WithLabelValues(reason).Inc()
+		writeS3Error(w, status, code, msg)
+		return status
+	}
 	var s3err *core.S3Error
 	if errors.As(err, &s3err) {
 		writeS3Error(w, s3err.StatusCode, s3err.Code, s3err.Message)
