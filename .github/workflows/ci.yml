@@ -179,7 +179,7 @@ jobs:
     # Run whenever the upstream test job did not fail. Skipped is fine
     # (no Go changed, so no coverage produced); the scan still inspects
     # CSS, JS, YAML, and any non-Go files in the diff.
-    if: always() && needs.test.result != 'failure' && needs.test.result != 'cancelled'
+    if: always() && github.actor != 'dependabot[bot]' && needs.test.result != 'failure' && needs.test.result != 'cancelled'
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:

@@ -90,10 +90,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	telemetry.InflightRequests.WithLabelValues(method).Inc()
 	defer telemetry.InflightRequests.WithLabelValues(method).Dec()
 
-	authorizedBucket, err := s.GetBucketAuth().AuthenticateAndResolveBucket(r)
+	authorizedBucket, streamMat, err := s.GetBucketAuth().AuthenticateAndResolveBucket(r)
 	if err != nil {
 		s.rejectAuth(ctx, w, r, method, start, err)
 		return
+	}
+	if streamMat != nil {
+		applyStreamingBody(r, streamMat)
 	}
 
 	if r.URL.Path == "/" && method == http.MethodGet {
