@@ -33,14 +33,6 @@ func prefixedDetail(prefix string, sentinel error, detail string) error {
 	return fmt.Errorf("%s: %w: %s", prefix, sentinel, detail)
 }
 
-// wrapped composes two errors into a single chain. Used by the loader when
-// both the loader sentinel (ErrReadConfigFile / ErrParseConfig /
-// ErrInvalidConfig) and the underlying cause should be reachable via
-// errors.Is.
-func wrapped(sentinel, cause error) error {
-	return fmt.Errorf("%w: %w", sentinel, cause)
-}
-
 // Loader-level wrapping errors (LoadConfig).
 var (
 	ErrReadConfigFile = errors.New("read config file")
