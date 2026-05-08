@@ -386,6 +386,120 @@ func TestPut_QuotaExhausted(t *testing.T) {
 	}
 }
 
+// TestPut_NoBackendCapacity_BodyIncludesCapacityHint verifies the 507
+// InsufficientStorage response body includes the per-backend
+// used/limit summary when CanAcceptWrite returns false and
+// GetQuotaStats returns data. Operators see which backends are at
+// capacity without checking other surfaces.
+//
+// Forces the "no eligible backend" path by configuring per-backend
+// MaxObjectSizes=1 so any non-trivial upload exceeds the cap and
+// eligibleForWrite returns no backends.
+func TestPut_NoBackendCapacity_BodyIncludesCapacityHint(t *testing.T) {
+	t.Parallel()
+	mockStore := &testutil.MockStore{
+		GetBackendResp: "b1",
+		GetQuotaStatsResp: map[string]core.QuotaStat{
+			"alpha": {BackendName: "alpha", BytesUsed: 1024, BytesLimit: 4096},
+			"beta":  {BackendName: "beta", BytesUsed: 2048, BytesLimit: 4096},
+		},
+	}
+	ts := newCapacityHintTestServer(t, mockStore)
+
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/testkey", strings.NewReader("data"))
+	req.Header.Set("X-Proxy-Token", "test-token")
+	req.ContentLength = 4
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusInsufficientStorage {
+		t.Fatalf("status = %d, want 507", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	bodyStr := string(body)
+	wants := []string{
+		"No backend can accept a 4 byte upload",
+		"backend usage:",
+		"alpha=1.0 KiB/4.0 KiB",
+		"beta=2.0 KiB/4.0 KiB",
+	}
+	for _, want := range wants {
+		if !strings.Contains(bodyStr, want) {
+			t.Errorf("body missing %q\nbody: %s", want, bodyStr)
+		}
+	}
+}
+
+// TestPut_NoBackendCapacity_QuotaStatsErrFallsBack verifies that a
+// GetQuotaStats DB failure does not corrupt the 507 response: the
+// body keeps the terse default message without the optional
+// capacity-hint suffix.
+func TestPut_NoBackendCapacity_QuotaStatsErrFallsBack(t *testing.T) {
+	t.Parallel()
+	mockStore := &testutil.MockStore{
+		GetBackendResp:   "b1",
+		GetQuotaStatsErr: core.ErrDBUnavailable,
+	}
+	ts := newCapacityHintTestServer(t, mockStore)
+
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/testkey", strings.NewReader("data"))
+	req.Header.Set("X-Proxy-Token", "test-token")
+	req.ContentLength = 4
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusInsufficientStorage {
+		t.Fatalf("status = %d, want 507", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if strings.Contains(string(body), "backend usage:") {
+		t.Errorf("body should not include capacity hint when stats lookup failed: %s", body)
+	}
+	if !strings.Contains(string(body), "No backend can accept a 4 byte upload") {
+		t.Errorf("body should include the terse default 507 message: %s", body)
+	}
+}
+
+// newCapacityHintTestServer builds a Server whose single backend has
+// MaxObjectSizes=1, so any upload of more than one byte fails the
+// eligibleForWrite check and exercises the capacity-hint code path
+// in handlePut.
+func newCapacityHintTestServer(t *testing.T, mockStore *testutil.MockStore) *httptest.Server {
+	t.Helper()
+	backend := newServerMockBackend()
+	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
+		Backends:        map[string]s3be.ObjectBackend{"b1": backend},
+		Stores:          proxytest.StoresFromMock(mockStore),
+		Dashboard:       mockStore,
+		Metrics:         mockStore,
+		Order:           []string{"b1"},
+		MaxObjectSizes:  map[string]int64{"b1": 1},
+		RoutingStrategy: config.RoutingPack,
+	})
+	proxytest.AttachWorkers(mgr, mockStore)
+	t.Cleanup(mgr.Close)
+
+	srv := &Server{
+		Manager:       mgr,
+		MaxObjectSize: 10 * 1024 * 1024,
+	}
+	srv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{
+		{Name: "mybucket", Credentials: []config.CredentialConfig{{Token: "test-token"}}},
+	}))
+	ts := httptest.NewServer(srv)
+	t.Cleanup(ts.Close)
+	return ts
+}
+
 // TestPut_DBUnavailable verifies the put dbunavailable contract.
 // Asserts that status = , want 503.
 func TestPut_DBUnavailable(t *testing.T) {

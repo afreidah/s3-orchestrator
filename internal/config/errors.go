@@ -33,6 +33,14 @@ func prefixedDetail(prefix string, sentinel error, detail string) error {
 	return fmt.Errorf("%s: %w: %s", prefix, sentinel, detail)
 }
 
+// wrappedPath composes a loader sentinel with the offending file path
+// and the underlying cause. Used by LoadConfig so every loader error
+// surfaces the same shape: "<sentinel> "<path>": <cause>". Both the
+// sentinel and the cause stay reachable via errors.Is.
+func wrappedPath(sentinel error, path string, cause error) error {
+	return fmt.Errorf("%w %q: %w", sentinel, path, cause)
+}
+
 // Loader-level wrapping errors (LoadConfig).
 var (
 	ErrReadConfigFile = errors.New("read config file")

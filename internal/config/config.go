@@ -79,18 +79,18 @@ type Config struct {
 func LoadConfig(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("%w %q: %w", ErrReadConfigFile, path, err)
+		return nil, wrappedPath(ErrReadConfigFile, path, err)
 	}
 
 	expanded := os.Expand(string(data), os.Getenv)
 
 	var cfg Config
 	if err := yaml.Unmarshal([]byte(expanded), &cfg); err != nil {
-		return nil, fmt.Errorf("%w %q: %w", ErrParseConfig, path, err)
+		return nil, wrappedPath(ErrParseConfig, path, err)
 	}
 
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
-		return nil, fmt.Errorf("%w %q: %w", ErrInvalidConfig, path, err)
+		return nil, wrappedPath(ErrInvalidConfig, path, err)
 	}
 
 	return &cfg, nil

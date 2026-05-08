@@ -113,6 +113,32 @@ func validMetadataToken(s string) bool {
 	return pos < 0
 }
 
+// validateUserMetadata checks that metadata keys and values contain only
+// safe characters (no CR/LF/control bytes) and that total size does not
+// exceed the S3-specified 2 KB limit. Validation errors include the
+// offending key, byte value, and position so operators can fix the
+// offending request without inspecting raw bytes.
+func validateUserMetadata(meta map[string]string) error {
+	var total int
+	for k, v := range meta {
+		if pos, b := findInvalidMetadataByte(k); pos >= 0 {
+			return fmt.Errorf("metadata key %q: invalid byte 0x%02x at position %d (only printable ASCII 0x20-0x7E allowed)", k, b, pos)
+		}
+		if pos, b := findInvalidMetadataByte(v); pos >= 0 {
+			return fmt.Errorf("metadata key %q value: invalid byte 0x%02x at position %d (only printable ASCII 0x20-0x7E allowed)", k, b, pos)
+		}
+		total += len(k) + len(v)
+	}
+	if total > maxUserMetadataBytes {
+		return fmt.Errorf("metadata size %d bytes exceeds limit %d (sum of all key+value lengths)", total, maxUserMetadataBytes)
+	}
+	return nil
+}
+
+// -------------------------------------------------------------------------
+// CAPACITY HINT FORMATTING
+// -------------------------------------------------------------------------
+
 // humanBytes formats a byte count as a base-1024 string with one
 // decimal of precision (e.g. 1.5 GiB). Mirrors the formatBytes helper
 // used by the dashboard template; kept locally here to avoid pulling
@@ -147,28 +173,6 @@ func formatCapacityHint(stats map[string]core.QuotaStat) string {
 	}
 	sort.Strings(parts)
 	return strings.Join(parts, ", ")
-}
-
-// validateUserMetadata checks that metadata keys and values contain only
-// safe characters (no CR/LF/control bytes) and that total size does not
-// exceed the S3-specified 2 KB limit. Validation errors include the
-// offending key, byte value, and position so operators can fix the
-// offending request without inspecting raw bytes.
-func validateUserMetadata(meta map[string]string) error {
-	var total int
-	for k, v := range meta {
-		if pos, b := findInvalidMetadataByte(k); pos >= 0 {
-			return fmt.Errorf("metadata key %q: invalid byte 0x%02x at position %d (only printable ASCII 0x20-0x7E allowed)", k, b, pos)
-		}
-		if pos, b := findInvalidMetadataByte(v); pos >= 0 {
-			return fmt.Errorf("metadata key %q value: invalid byte 0x%02x at position %d (only printable ASCII 0x20-0x7E allowed)", k, b, pos)
-		}
-		total += len(k) + len(v)
-	}
-	if total > maxUserMetadataBytes {
-		return fmt.Errorf("metadata size %d bytes exceeds limit %d (sum of all key+value lengths)", total, maxUserMetadataBytes)
-	}
-	return nil
 }
 
 // -------------------------------------------------------------------------
