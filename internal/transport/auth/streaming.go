@@ -504,22 +504,33 @@ func (r *chunkReader) parseTrailerLines() ([]trailerKV, string, error) {
 		if line == "" {
 			return headers, trailerSig, nil
 		}
-		name, value, ok := splitTrailerLine(line)
+		var ok bool
+		headers, trailerSig, ok = appendTrailerLine(line, headers, trailerSig)
 		if !ok {
 			return nil, "", ErrTrailerMalformed
 		}
-		if name == trailerSignatureHeader {
-			if trailerSig != "" {
-				return nil, "", ErrTrailerMalformed
-			}
-			trailerSig = value
-			continue
-		}
-		if len(headers) >= maxTrailerHeaders {
-			return nil, "", ErrTrailerMalformed
-		}
-		headers = append(headers, trailerKV{name, value})
 	}
+}
+
+// appendTrailerLine parses one trailer-header line and folds it into
+// the running headers slice or, when the line carries the trailer
+// signature, into trailerSig. Returns ok=false on malformed input, a
+// duplicate trailer signature, or trailer-header overflow.
+func appendTrailerLine(line string, headers []trailerKV, trailerSig string) ([]trailerKV, string, bool) {
+	name, value, ok := splitTrailerLine(line)
+	if !ok {
+		return headers, trailerSig, false
+	}
+	if name == trailerSignatureHeader {
+		if trailerSig != "" {
+			return headers, trailerSig, false
+		}
+		return headers, value, true
+	}
+	if len(headers) >= maxTrailerHeaders {
+		return headers, trailerSig, false
+	}
+	return append(headers, trailerKV{name, value}), trailerSig, true
 }
 
 // splitTrailerLine extracts a lowercased name and a trimmed value from
