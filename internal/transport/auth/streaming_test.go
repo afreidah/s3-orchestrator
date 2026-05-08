@@ -14,6 +14,7 @@
 package auth
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -21,6 +22,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -346,6 +349,269 @@ func TestChunkReader_MalformedFraming(t *testing.T) {
 				t.Fatal("expected error, got nil")
 			}
 		})
+	}
+}
+
+// TestStreamingVariant_Label asserts the stable Prometheus label values
+// for each variant.
+func TestStreamingVariant_Label(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		v    StreamingVariant
+		want string
+	}{
+		{StreamingNone, "none"},
+		{StreamingSigned, "signed"},
+		{StreamingSignedTrailer, "signed_trailer"},
+		{StreamingUnsignedTrailer, "unsigned_trailer"},
+	}
+	for _, tc := range cases {
+		if got := tc.v.Label(); got != tc.want {
+			t.Errorf("Label(%d) = %q, want %q", tc.v, got, tc.want)
+		}
+	}
+}
+
+// TestDetectStreamingVariant covers each accepted sentinel and confirms
+// non-streaming inputs map to StreamingNone.
+func TestDetectStreamingVariant(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		in   string
+		want StreamingVariant
+	}{
+		{"", StreamingNone},
+		{"UNSIGNED-PAYLOAD", StreamingNone},
+		{"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", StreamingNone},
+		{"STREAMING-AWS4-HMAC-SHA256-PAYLOAD", StreamingSigned},
+		{"STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER", StreamingSignedTrailer},
+		{"STREAMING-UNSIGNED-PAYLOAD-TRAILER", StreamingUnsignedTrailer},
+	}
+	for _, tc := range cases {
+		if got := DetectStreamingVariant(tc.in); got != tc.want {
+			t.Errorf("DetectStreamingVariant(%q) = %d, want %d", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestHasAwsChunkedEncoding asserts case-insensitive matching, list
+// handling, and whitespace tolerance.
+func TestHasAwsChunkedEncoding(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"", false},
+		{"gzip", false},
+		{"aws-chunked", true},
+		{"AWS-CHUNKED", true},
+		{"aws-chunked, gzip", true},
+		{"gzip, aws-chunked", true},
+		{"  aws-chunked  ", true},
+	}
+	for _, tc := range cases {
+		if got := hasAwsChunkedEncoding(tc.in); got != tc.want {
+			t.Errorf("hasAwsChunkedEncoding(%q) = %v, want %v", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestParseTrailerNames asserts trimming, lowercasing, sorting, and
+// dropping of empty entries.
+func TestParseTrailerNames(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		in   string
+		want []string
+	}{
+		{"", nil},
+		{",", []string{}},
+		{"x-amz-checksum-crc32", []string{"x-amz-checksum-crc32"}},
+		{"x-amz-checksum-crc32, x-amz-checksum-sha256", []string{"x-amz-checksum-crc32", "x-amz-checksum-sha256"}},
+		{"X-AMZ-CHECKSUM-SHA256, x-amz-checksum-crc32", []string{"x-amz-checksum-crc32", "x-amz-checksum-sha256"}},
+		{"   x-amz-checksum-crc32  ", []string{"x-amz-checksum-crc32"}},
+	}
+	for _, tc := range cases {
+		got := parseTrailerNames(tc.in)
+		if !slices.Equal(got, tc.want) {
+			t.Errorf("parseTrailerNames(%q) = %v, want %v", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestStreamingMaterialFromRequest covers the happy and error paths of
+// the streaming-required-headers validator.
+func TestStreamingMaterialFromRequest(t *testing.T) {
+	t.Parallel()
+	const seedSig = "deadbeef"
+	signingKey := []byte("k")                              //nolint:gosec // not a credential; deterministic test input
+	credScope := "20260507/us-east-1/s3/aws4_request"      //nolint:gosec // canonical SigV4 scope literal, not a credential
+	amzDate := "20260507T000000Z"
+
+	build := func(headers map[string]string) *http.Request {
+		r, _ := http.NewRequestWithContext(t.Context(), http.MethodPut, "/", nil)
+		for k, v := range headers {
+			r.Header.Set(k, v)
+		}
+		return r
+	}
+
+	cases := []struct {
+		name    string
+		headers map[string]string
+		wantNil bool
+		wantErr bool
+		assert  func(*StreamingMaterial) error
+	}{
+		{
+			name:    "non_streaming",
+			headers: map[string]string{"X-Amz-Content-Sha256": "UNSIGNED-PAYLOAD"},
+			wantNil: true,
+		},
+		{
+			name: "signed_happy_path",
+			headers: map[string]string{
+				"X-Amz-Content-Sha256":         "STREAMING-AWS4-HMAC-SHA256-PAYLOAD",
+				"Content-Encoding":             "aws-chunked",
+				"X-Amz-Decoded-Content-Length": "100",
+			},
+			assert: func(m *StreamingMaterial) error {
+				if m.Variant != StreamingSigned {
+					return fmt.Errorf("variant=%d", m.Variant)
+				}
+				if m.DecodedLen != 100 {
+					return fmt.Errorf("decodedLen=%d", m.DecodedLen)
+				}
+				return nil
+			},
+		},
+		{
+			name: "missing_content_encoding",
+			headers: map[string]string{
+				"X-Amz-Content-Sha256":         "STREAMING-AWS4-HMAC-SHA256-PAYLOAD",
+				"X-Amz-Decoded-Content-Length": "100",
+			},
+			wantErr: true,
+		},
+		{
+			name: "missing_decoded_length",
+			headers: map[string]string{
+				"X-Amz-Content-Sha256": "STREAMING-AWS4-HMAC-SHA256-PAYLOAD",
+				"Content-Encoding":     "aws-chunked",
+			},
+			wantErr: true,
+		},
+		{
+			name: "malformed_decoded_length",
+			headers: map[string]string{
+				"X-Amz-Content-Sha256":         "STREAMING-AWS4-HMAC-SHA256-PAYLOAD",
+				"Content-Encoding":             "aws-chunked",
+				"X-Amz-Decoded-Content-Length": "abc",
+			},
+			wantErr: true,
+		},
+		{
+			name: "negative_decoded_length",
+			headers: map[string]string{
+				"X-Amz-Content-Sha256":         "STREAMING-AWS4-HMAC-SHA256-PAYLOAD",
+				"Content-Encoding":             "aws-chunked",
+				"X-Amz-Decoded-Content-Length": "-1",
+			},
+			wantErr: true,
+		},
+		{
+			name: "trailer_variant_missing_x_amz_trailer",
+			headers: map[string]string{
+				"X-Amz-Content-Sha256":         "STREAMING-UNSIGNED-PAYLOAD-TRAILER",
+				"Content-Encoding":             "aws-chunked",
+				"X-Amz-Decoded-Content-Length": "10",
+			},
+			wantErr: true,
+		},
+		{
+			name: "trailer_variant_happy",
+			headers: map[string]string{
+				"X-Amz-Content-Sha256":         "STREAMING-UNSIGNED-PAYLOAD-TRAILER",
+				"Content-Encoding":             "aws-chunked",
+				"X-Amz-Decoded-Content-Length": "10",
+				"X-Amz-Trailer":                "x-amz-checksum-crc32",
+			},
+			assert: func(m *StreamingMaterial) error {
+				if m.Variant != StreamingUnsignedTrailer {
+					return fmt.Errorf("variant=%d", m.Variant)
+				}
+				if !slices.Equal(m.TrailerNames, []string{"x-amz-checksum-crc32"}) {
+					return fmt.Errorf("trailerNames=%v", m.TrailerNames)
+				}
+				return nil
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			req := build(tc.headers)
+			mat, err := streamingMaterialFromRequest(req, seedSig, signingKey, credScope, amzDate)
+			if tc.wantErr {
+				if err == nil {
+					t.Errorf("expected error, got nil (mat=%+v)", mat)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tc.wantNil {
+				if mat != nil {
+					t.Errorf("expected nil material, got %+v", mat)
+				}
+				return
+			}
+			if mat == nil {
+				t.Fatal("expected material, got nil")
+			}
+			if tc.assert != nil {
+				if err := tc.assert(mat); err != nil {
+					t.Errorf("assert: %v", err)
+				}
+			}
+		})
+	}
+}
+
+// TestReadBoundedLine_OverCap asserts the DoS guard fires when a header
+// line exceeds maxHeaderLineBytes.
+func TestReadBoundedLine_OverCap(t *testing.T) {
+	t.Parallel()
+	big := bytes.Repeat([]byte{'a'}, maxHeaderLineBytes+10)
+	big = append(big, []byte("\r\n")...)
+	br := bufio.NewReader(bytes.NewReader(big))
+	if _, err := readBoundedLine(br, maxHeaderLineBytes); err == nil {
+		t.Error("expected over-cap error, got nil")
+	}
+}
+
+// TestIsHex covers accepted and rejected character classes.
+func TestIsHex(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"", false},
+		{"abc", true},
+		{"ABC", true},
+		{"0123456789abcdefABCDEF", true},
+		{"xyz", false},
+		{"abc-", false},
+		{"-abc", false},
+		{" abc", false},
+	}
+	for _, tc := range cases {
+		if got := isHex(tc.in); got != tc.want {
+			t.Errorf("isHex(%q) = %v, want %v", tc.in, got, tc.want)
+		}
 	}
 }
 
