@@ -12,6 +12,7 @@
 package proxy
 
 import (
+	"context"
 	"io"
 	"sync"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // managerSpanPrefix is prepended to every OpenTelemetry span name the
@@ -105,5 +107,18 @@ func (c *cancellingReadCloser) Close() error {
 // is transmitted (Expect: 100-Continue support).
 func (o *ObjectManager) CanAcceptWrite(size int64) bool {
 	return len(o.eligibleForWrite(1, 0, size)) > 0
+}
+
+// BackendCapacityStats returns the current per-backend used/limit byte
+// snapshot. Used by the InsufficientStorage error path so the response
+// body can name the backends that are at capacity instead of returning
+// a generic message. Returns nil on a DB lookup failure so the caller
+// can fall back to its terse default.
+func (o *ObjectManager) BackendCapacityStats(ctx context.Context) map[string]core.QuotaStat {
+	stats, err := o.parent.stores.Quota.GetQuotaStats(ctx)
+	if err != nil {
+		return nil
+	}
+	return stats
 }
 

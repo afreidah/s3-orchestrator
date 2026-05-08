@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -89,34 +90,89 @@ func extractUserMetadata(h http.Header) map[string]string {
 	return meta
 }
 
+// findInvalidMetadataByte returns the first byte position outside the
+// printable ASCII range and the offending byte. pos is -1 when s is
+// fully valid. Used to build descriptive metadata validation errors
+// that point operators directly at the bad byte instead of forcing
+// them to scan the whole key or value.
+func findInvalidMetadataByte(s string) (pos int, b byte) {
+	for i := range len(s) {
+		if s[i] < 0x20 || s[i] > 0x7E {
+			return i, s[i]
+		}
+	}
+	return -1, 0
+}
+
 // validMetadataToken reports whether s contains only printable ASCII
 // characters suitable for use in an HTTP header field (no CR, LF, or
 // other control characters). This prevents HTTP header injection via
 // user-supplied metadata keys and values.
 func validMetadataToken(s string) bool {
-	for _, c := range s {
-		if c < 0x20 || c > 0x7E {
-			return false
-		}
-	}
-	return true
+	pos, _ := findInvalidMetadataByte(s)
+	return pos < 0
 }
 
 // validateUserMetadata checks that metadata keys and values contain only
 // safe characters (no CR/LF/control bytes) and that total size does not
-// exceed the S3-specified 2 KB limit.
+// exceed the S3-specified 2 KB limit. Validation errors include the
+// offending key, byte value, and position so operators can fix the
+// offending request without inspecting raw bytes.
 func validateUserMetadata(meta map[string]string) error {
 	var total int
 	for k, v := range meta {
-		if !validMetadataToken(k) || !validMetadataToken(v) {
-			return fmt.Errorf("metadata contains invalid characters")
+		if pos, b := findInvalidMetadataByte(k); pos >= 0 {
+			return fmt.Errorf("metadata key %q: invalid byte 0x%02x at position %d (only printable ASCII 0x20-0x7E allowed)", k, b, pos)
+		}
+		if pos, b := findInvalidMetadataByte(v); pos >= 0 {
+			return fmt.Errorf("metadata key %q value: invalid byte 0x%02x at position %d (only printable ASCII 0x20-0x7E allowed)", k, b, pos)
 		}
 		total += len(k) + len(v)
 	}
 	if total > maxUserMetadataBytes {
-		return fmt.Errorf("metadata size %d exceeds limit %d", total, maxUserMetadataBytes)
+		return fmt.Errorf("metadata size %d bytes exceeds limit %d (sum of all key+value lengths)", total, maxUserMetadataBytes)
 	}
 	return nil
+}
+
+// -------------------------------------------------------------------------
+// CAPACITY HINT FORMATTING
+// -------------------------------------------------------------------------
+
+// humanBytes formats a byte count as a base-1024 string with one
+// decimal of precision (e.g. 1.5 GiB). Mirrors the formatBytes helper
+// used by the dashboard template; kept locally here to avoid pulling
+// the ui package into the s3api dependency graph for one tiny helper.
+func humanBytes(b int64) string {
+	if b < 0 {
+		return "0 B"
+	}
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
+// formatCapacityHint renders a quota-stats snapshot as a comma-separated
+// "name=used/limit" summary suitable for inclusion in the
+// InsufficientStorage error body. Returns the empty string when stats
+// is empty so the caller falls back to its terse default.
+func formatCapacityHint(stats map[string]core.QuotaStat) string {
+	if len(stats) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(stats))
+	for name, s := range stats {
+		parts = append(parts, fmt.Sprintf("%s=%s/%s", name, humanBytes(s.BytesUsed), humanBytes(s.BytesLimit)))
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, ", ")
 }
 
 // -------------------------------------------------------------------------
