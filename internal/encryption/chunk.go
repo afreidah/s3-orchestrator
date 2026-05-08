@@ -25,6 +25,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 )
@@ -126,19 +127,23 @@ func (r *encryptReader) Read(p []byte) (int, error) {
 		return 0, io.EOF
 	}
 
-	// Read one plaintext chunk into the reusable buffer
+	// Read one plaintext chunk into the reusable buffer. io.ReadFull
+	// returns (0, io.EOF) for a clean end of stream, (n>0, io.ErrUnexpectedEOF)
+	// for a partial final chunk, and (0, err) for any real error from the
+	// source. The bug class this code defends against is silently squashing
+	// the third case to io.EOF, which would let a transient backend failure
+	// land in storage as a truncated-but-valid object.
 	n, err := io.ReadFull(r.src, r.plainBuf)
-	if n == 0 && err != nil {
+	switch {
+	case n == 0 && errors.Is(err, io.EOF):
 		r.srcDone = true
 		return 0, io.EOF
-	}
-	plain := r.plainBuf[:n]
-
-	if err == io.ErrUnexpectedEOF || err == io.EOF {
+	case errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF):
 		r.srcDone = true
-	} else if err != nil {
+	case err != nil:
 		return 0, fmt.Errorf("read plaintext: %w", err)
 	}
+	plain := r.plainBuf[:n]
 
 	// Derive per-chunk nonce into the reusable buffer
 	deriveNonce(r.nonceBuf, r.baseNonce, r.chunkIdx)
@@ -211,19 +216,20 @@ func (r *decryptReader) Read(p []byte) (int, error) {
 		return 0, io.EOF
 	}
 
-	// Read one ciphertext chunk into the reusable buffer
+	// Read one ciphertext chunk into the reusable buffer. See the
+	// matching comment in encryptReader.Read for the failure modes
+	// distinguished here.
 	n, err := io.ReadFull(r.src, r.chunkBuf)
-	if n == 0 && err != nil {
+	switch {
+	case n == 0 && errors.Is(err, io.EOF):
 		r.srcDone = true
 		return 0, io.EOF
-	}
-	chunk := r.chunkBuf[:n]
-
-	if err == io.ErrUnexpectedEOF || err == io.EOF {
+	case errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF):
 		r.srcDone = true
-	} else if err != nil {
+	case err != nil:
 		return 0, fmt.Errorf("read ciphertext: %w", err)
 	}
+	chunk := r.chunkBuf[:n]
 
 	if len(chunk) < NonceSize+TagSize {
 		return 0, fmt.Errorf("chunk too short: %d bytes", len(chunk))
