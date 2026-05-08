@@ -33,6 +33,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
 // -------------------------------------------------------------------------
@@ -179,32 +180,50 @@ func scanBucket(
 				return scanned, hits, nil
 			}
 			scanned++
-			if obj.Key == nil || (obj.Size != nil && *obj.Size == 0) {
-				continue
+			if probeAndReport(ctx, t, client, bucket, &obj, probeBytes) {
+				hits++
 			}
-			head, herr := fetchHead(ctx, client, bucket, *obj.Key, probeBytes)
-			if herr != nil {
-				t.Logf("warn: head %s/%s: %v", bucket, *obj.Key, herr)
-				continue
-			}
-			variant := Detect(head)
-			if variant == VariantNone {
-				continue
-			}
-			hits++
-			snippet := head
-			if len(snippet) > 64 {
-				snippet = snippet[:64]
-			}
-			size := int64(0)
-			if obj.Size != nil {
-				size = *obj.Size
-			}
-			t.Errorf("corrupt: bucket=%s key=%s size=%d variant=%s head=%s",
-				bucket, *obj.Key, size, variant, hex.EncodeToString(snippet))
 		}
 	}
 	return scanned, hits, nil
+}
+
+// probeAndReport fetches and inspects one object's head bytes. Returns
+// true when chunk framing was detected and reported via t.Errorf;
+// returns false when the object is empty/keyless, the head fetch
+// failed, or the bytes look like ordinary content.
+func probeAndReport(
+	ctx context.Context,
+	t *testing.T,
+	client *s3.Client,
+	bucket string,
+	obj *s3types.Object,
+	probeBytes int,
+) bool {
+	t.Helper()
+	if obj.Key == nil || (obj.Size != nil && *obj.Size == 0) {
+		return false
+	}
+	head, err := fetchHead(ctx, client, bucket, *obj.Key, probeBytes)
+	if err != nil {
+		t.Logf("warn: head %s/%s: %v", bucket, *obj.Key, err)
+		return false
+	}
+	variant := Detect(head)
+	if variant == VariantNone {
+		return false
+	}
+	snippet := head
+	if len(snippet) > 64 {
+		snippet = snippet[:64]
+	}
+	size := int64(0)
+	if obj.Size != nil {
+		size = *obj.Size
+	}
+	t.Errorf("corrupt: bucket=%s key=%s size=%d variant=%s head=%s",
+		bucket, *obj.Key, size, variant, hex.EncodeToString(snippet))
+	return true
 }
 
 // fetchHead retrieves the first n bytes of an object via Range GET.

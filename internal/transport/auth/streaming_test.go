@@ -553,30 +553,45 @@ func TestStreamingMaterialFromRequest(t *testing.T) {
 			t.Parallel()
 			req := build(tc.headers)
 			mat, err := streamingMaterialFromRequest(req, seedSig, signingKey, credScope, amzDate)
-			if tc.wantErr {
-				if err == nil {
-					t.Errorf("expected error, got nil (mat=%+v)", mat)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if tc.wantNil {
-				if mat != nil {
-					t.Errorf("expected nil material, got %+v", mat)
-				}
-				return
-			}
-			if mat == nil {
-				t.Fatal("expected material, got nil")
-			}
-			if tc.assert != nil {
-				if err := tc.assert(mat); err != nil {
-					t.Errorf("assert: %v", err)
-				}
-			}
+			checkMaterialResult(t, tc.wantErr, tc.wantNil, tc.assert, mat, err)
 		})
+	}
+}
+
+// checkMaterialResult evaluates one streamingMaterialFromRequest case
+// against its expectations. Extracted from the test loop body to keep
+// per-case control flow shallow.
+func checkMaterialResult(
+	t *testing.T,
+	wantErr, wantNil bool,
+	assert func(*StreamingMaterial) error,
+	mat *StreamingMaterial,
+	err error,
+) {
+	t.Helper()
+	if wantErr {
+		if err == nil {
+			t.Errorf("expected error, got nil (mat=%+v)", mat)
+		}
+		return
+	}
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if wantNil {
+		if mat != nil {
+			t.Errorf("expected nil material, got %+v", mat)
+		}
+		return
+	}
+	if mat == nil {
+		t.Fatal("expected material, got nil")
+	}
+	if assert == nil {
+		return
+	}
+	if err := assert(mat); err != nil {
+		t.Errorf("assert: %v", err)
 	}
 }
 

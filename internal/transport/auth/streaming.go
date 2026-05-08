@@ -463,64 +463,97 @@ func (r *chunkReader) finalize(finalChunkSig string) error {
 	return nil
 }
 
+// trailerKV holds one parsed trailer header line.
+type trailerKV struct{ name, value string }
+
 // readTrailerBlock reads the trailer headers up to the closing empty
 // line, returning the canonicalized trailer headers (sorted, lowercased,
 // trimmed values, joined as "name:value\n") and the trailer signature.
 // Header lines for x-amz-trailer-signature do not appear in the canonical
 // form because they carry the signature output, not an input.
 func (r *chunkReader) readTrailerBlock() (string, string, error) {
-	type kv struct{ name, value string }
-	headers := make([]kv, 0, len(r.trailerNames))
+	headers, trailerSig, err := r.parseTrailerLines()
+	if err != nil {
+		return "", "", err
+	}
+	if trailerSig == "" {
+		return "", "", ErrTrailerMalformed
+	}
+	if !declaredTrailersPresent(r.trailerNames, headers) {
+		return "", "", ErrTrailerMalformed
+	}
+	return canonicalizeTrailers(headers), trailerSig, nil
+}
+
+// parseTrailerLines reads CRLF-terminated header lines until the
+// closing empty line, splitting parsed headers from the trailer
+// signature value.
+func (r *chunkReader) parseTrailerLines() ([]trailerKV, string, error) {
+	headers := make([]trailerKV, 0, len(r.trailerNames))
 	var trailerSig string
 	var consumed int
-
 	for {
 		line, err := readBoundedLine(r.src, maxHeaderLineBytes)
 		if err != nil {
-			return "", "", ErrTrailerMalformed
+			return nil, "", ErrTrailerMalformed
 		}
 		consumed += len(line) + 2 // +2 for CRLF
 		if consumed > maxTrailerBlockBytes {
-			return "", "", ErrTrailerMalformed
+			return nil, "", ErrTrailerMalformed
 		}
 		if line == "" {
-			break
+			return headers, trailerSig, nil
 		}
-		name, value, ok := strings.Cut(line, ":")
+		name, value, ok := splitTrailerLine(line)
 		if !ok {
-			return "", "", ErrTrailerMalformed
+			return nil, "", ErrTrailerMalformed
 		}
-		name = strings.ToLower(strings.TrimSpace(name))
-		value = strings.TrimSpace(value)
 		if name == trailerSignatureHeader {
 			if trailerSig != "" {
-				return "", "", ErrTrailerMalformed
+				return nil, "", ErrTrailerMalformed
 			}
 			trailerSig = value
 			continue
 		}
 		if len(headers) >= maxTrailerHeaders {
-			return "", "", ErrTrailerMalformed
+			return nil, "", ErrTrailerMalformed
 		}
-		headers = append(headers, kv{name, value})
+		headers = append(headers, trailerKV{name, value})
 	}
+}
 
-	if trailerSig == "" {
-		return "", "", ErrTrailerMalformed
+// splitTrailerLine extracts a lowercased name and a trimmed value from
+// a single trailer-header line. Returns ok=false when the line carries
+// no colon.
+func splitTrailerLine(line string) (name, value string, ok bool) {
+	rawName, rawValue, ok := strings.Cut(line, ":")
+	if !ok {
+		return "", "", false
 	}
-	for _, declared := range r.trailerNames {
+	return strings.ToLower(strings.TrimSpace(rawName)), strings.TrimSpace(rawValue), true
+}
+
+// declaredTrailersPresent reports whether every trailer name announced
+// by the request's x-amz-trailer header arrived in the trailer block.
+func declaredTrailersPresent(declared []string, headers []trailerKV) bool {
+	for _, name := range declared {
 		found := false
 		for _, h := range headers {
-			if h.name == declared {
+			if h.name == name {
 				found = true
 				break
 			}
 		}
 		if !found {
-			return "", "", ErrTrailerMalformed
+			return false
 		}
 	}
+	return true
+}
 
+// canonicalizeTrailers sorts headers by name and renders them as
+// "name:value\n" lines, the form used in the trailer string-to-sign.
+func canonicalizeTrailers(headers []trailerKV) string {
 	sort.Slice(headers, func(i, j int) bool { return headers[i].name < headers[j].name })
 	var canonical strings.Builder
 	for _, h := range headers {
@@ -529,7 +562,7 @@ func (r *chunkReader) readTrailerBlock() (string, string, error) {
 		canonical.WriteString(h.value)
 		canonical.WriteByte('\n')
 	}
-	return canonical.String(), trailerSig, nil
+	return canonical.String()
 }
 
 // computeTrailerSig builds the trailer string-to-sign and returns the
