@@ -21,12 +21,18 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/iotest"
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 )
 
 // countingKeyProvider wraps a real KeyProvider and counts WrapDEK calls so
@@ -523,4 +529,55 @@ func TestDecryptResponse_BadKeyData(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for bad key data")
 	}
+}
+
+// TestStreamMetricReader_IncrementsOnNonEOFError asserts the wrapper
+// fires the encryption errors counter when the underlying reader
+// returns a non-EOF error mid-stream.
+func TestStreamMetricReader_IncrementsOnNonEOFError(t *testing.T) {
+	const op = "encrypt"
+	before := testutilPromCounter(t, telemetry.EncryptionErrorsTotal.WithLabelValues(op, "stream_failed"))
+
+	failing := iotest.ErrReader(errors.New("synthetic transport failure"))
+	wrapped := withStreamMetric(failing, op)
+
+	buf := make([]byte, 16)
+	if _, err := wrapped.Read(buf); err == nil {
+		t.Fatal("expected error from wrapped reader")
+	}
+
+	after := testutilPromCounter(t, telemetry.EncryptionErrorsTotal.WithLabelValues(op, "stream_failed"))
+	if after-before != 1 {
+		t.Errorf("counter delta = %v, want 1", after-before)
+	}
+}
+
+// TestStreamMetricReader_NoIncrementOnEOF asserts the wrapper does NOT
+// fire the counter on a clean EOF, the natural end of a healthy stream.
+func TestStreamMetricReader_NoIncrementOnEOF(t *testing.T) {
+	const op = "decrypt"
+	before := testutilPromCounter(t, telemetry.EncryptionErrorsTotal.WithLabelValues(op, "stream_failed"))
+
+	wrapped := withStreamMetric(strings.NewReader("hello"), op)
+	if _, err := io.ReadAll(wrapped); err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+
+	after := testutilPromCounter(t, telemetry.EncryptionErrorsTotal.WithLabelValues(op, "stream_failed"))
+	if after-before != 0 {
+		t.Errorf("counter delta = %v, want 0 on clean EOF", after-before)
+	}
+}
+
+// testutilPromCounter reads the current value of a Prometheus counter.
+func testutilPromCounter(t *testing.T, c prometheus.Counter) float64 {
+	t.Helper()
+	var m dto.Metric
+	if err := c.Write(&m); err != nil {
+		t.Fatalf("read counter: %v", err)
+	}
+	if m.Counter == nil {
+		return 0
+	}
+	return m.Counter.GetValue()
 }

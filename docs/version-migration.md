@@ -60,7 +60,31 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ### v0.46.x (current)
 
-**Streaming SigV4 chunk validation**
+**Encryption stream readers no longer silently truncate on transport errors (v0.46.4)**
+
+Both `encryptReader.Read` and `decryptReader.Read` previously translated any
+non-nil error from `io.ReadFull` into a clean `io.EOF` when the source
+returned zero bytes. The branch fired indistinguishably for real
+end-of-stream and for transient transport failures (network reset, context
+cancellation, backend timeout). Consumers -- the replicator, the scrubber,
+and the GET proxy path -- saw a clean truncated stream and treated it as
+the whole object.
+
+The readers now distinguish `errors.Is(err, io.EOF)` from arbitrary errors
+and propagate non-EOF failures wrapped with operation context. Streaming
+errors that surface mid-Read also increment
+`s3o_encryption_errors_total{op,error_type="stream_failed"}` so operators
+have an alertable signal.
+
+**Operator action items after upgrade:**
+
+- Add an alert on `rate(s3o_encryption_errors_total{error_type="stream_failed"}[5m])`
+  once the new label starts emitting.
+- Run a scrub pass on encrypted objects to surface any pre-existing
+  truncated replicas; the read-time integrity check (`verify_on_read`)
+  will flag them.
+
+**Streaming SigV4 chunk validation (v0.46.3)**
 
 The SigV4 verifier previously accepted the streaming-payload sentinels
 (`STREAMING-AWS4-HMAC-SHA256-PAYLOAD`, `STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER`,

@@ -1054,7 +1054,7 @@ If `telemetry.metrics.enabled` is `true`, metrics are exposed at `/metrics`. Key
 | `s3o_audit_events_total{event="..."}` | Audit log volume by event type — useful for detecting unusual activity |
 | `s3o_auth_streaming_requests_total{variant}` | Rate of streaming-payload SigV4 PUTs by variant — track which client SDKs are sending streaming uploads |
 | `s3o_auth_streaming_rejections_total{reason}` | Alert on any non-zero rate — every increment is a chunk-validation failure (tampered body, malformed framing, length mismatch, or signature mismatch) |
-| `s3o_encryption_errors_total` | Any non-zero rate indicates encryption/decryption failures |
+| `s3o_encryption_errors_total{op,error_type}` | Any non-zero rate indicates encryption/decryption failures. `error_type="stream_failed"` specifically flags transport errors that surfaced mid-stream (after the encryptor/decryptor was constructed). |
 | `s3o_encrypt_existing_objects_total{status="error"}` | Failures during bulk encryption of existing data |
 | `s3o_decrypt_existing_objects_total{status="error"}` | Failures during bulk decryption of existing data |
 | `s3o_key_rotation_objects_total{status="error"}` | Failures during key rotation |
