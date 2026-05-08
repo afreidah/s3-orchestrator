@@ -58,7 +58,70 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.44.x (current)
+### v0.46.x (current)
+
+**Streaming SigV4 chunk validation**
+
+The SigV4 verifier previously accepted the streaming-payload sentinels
+(`STREAMING-AWS4-HMAC-SHA256-PAYLOAD`, `STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER`,
+`STREAMING-UNSIGNED-PAYLOAD-TRAILER`) as the canonical-request payload
+hash without validating the per-chunk signatures or stripping the
+`aws-chunked` framing. A request whose seed signature was valid could
+ship arbitrary body bytes; the framing landed in the stored object. The
+orchestrator now wraps the request body in a chunk-validating reader
+that verifies each chunk-signature in the chain (or the trailer
+signature for the unsigned-trailer variant), enforces
+`x-amz-decoded-content-length`, and rejects malformed framing before
+any byte reaches storage.
+
+**Behavioural changes:**
+
+- Streaming-payload PUTs now have their bodies validated on the wire.
+  Conforming clients (`aws-cli`, `aws-sdk-go-v2`, `boto3`, `minio-go`,
+  etc.) work without any client-side change.
+- A request signed with a streaming sentinel but carrying mismatched or
+  bogus chunk signatures is rejected with `403 SignatureDoesNotMatch`.
+- A request whose body is shorter or longer than
+  `x-amz-decoded-content-length` is rejected with `400 IncompleteBody`.
+- Malformed chunk framing (bare LF, missing CRLF, malformed hex size,
+  missing `chunk-signature=` extension on a signed variant, missing
+  `x-amz-trailer-signature` on a trailer variant) returns
+  `400 InvalidRequest`.
+
+**New metrics:**
+
+- `s3o_auth_streaming_requests_total{variant}` -- count of streaming
+  requests received, labelled `signed`, `signed_trailer`, or
+  `unsigned_trailer`.
+- `s3o_auth_streaming_rejections_total{reason}` -- count of streaming
+  requests rejected mid-stream, labelled by reason
+  (`chunk_signature_mismatch`, `trailer_signature_mismatch`,
+  `chunk_malformed`, `chunk_too_large`, `decoded_length_mismatch`,
+  `trailer_malformed`).
+
+**Operator action items after upgrade:**
+
+- Run the new diagnostic test against your cluster to detect any
+  pre-existing on-disk corruption from clients that streamed before
+  this release. The test is gated by `//go:build diag` and reads from
+  the orchestrator's S3 API:
+
+  ```bash
+  DIAG_S3_ENDPOINT=https://s3.example.com \
+  DIAG_S3_ACCESS_KEY=... DIAG_S3_SECRET_KEY=... \
+  go test -tags=diag -run TestScanChunkedFraming -v -timeout=30m \
+      ./internal/integration/chunkframing/...
+  ```
+
+  The test prints one `t.Errorf` line per object whose stored body
+  begins with `aws-chunked` framing and exits non-zero if any are
+  found.
+
+- Set up an alert on any non-zero rate of
+  `s3o_auth_streaming_rejections_total` -- every increment is either a
+  legitimate client misconfiguration or a tampered request.
+
+### v0.44.x
 
 **Cleanup queue dead-letter for unrecoverable orphans**
 

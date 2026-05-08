@@ -141,7 +141,7 @@ High-level architecture of the S3 Orchestrator showing the request path, storage
     AUTH: {
       title: 'SigV4 / Presigned / Token Authentication',
       badge: 'middleware', badgeText: 'authentication',
-      body: '<p>Verifies AWS Signature Version 4 from either the <code>Authorization</code> header or presigned URL query parameters. Reconstructs canonical request, derives signing key via HMAC-SHA256 chain, compares with <code>crypto/subtle.ConstantTimeCompare</code>.</p><p>Signing keys cached in <code>sync.Map</code>. Presigned URLs validated via <code>X-Amz-Expires</code> (max 7 days). Also supports legacy <code>X-Proxy-Token</code> header.</p><p><code>BucketRegistry</code> maps access keys to virtual buckets for multi-tenant credential isolation.</p>'
+      body: '<p>Verifies AWS Signature Version 4 from either the <code>Authorization</code> header or presigned URL query parameters. Reconstructs canonical request, derives signing key via HMAC-SHA256 chain, compares with <code>crypto/subtle.ConstantTimeCompare</code>.</p><p>The signing key is derived per request rather than cached so timing remains constant for known and unknown access keys alike. Presigned URLs validated via <code>X-Amz-Expires</code> (max 7 days). Also supports legacy <code>X-Proxy-Token</code> header.</p><p>Streaming-payload PUTs are validated end-to-end: the seed signature authenticates the request envelope, and a chunk-validating reader verifies each chained per-chunk signature (or the trailer signature for the unsigned-trailer variant) before any byte reaches storage.</p><p><code>BucketRegistry</code> maps access keys to virtual buckets for multi-tenant credential isolation.</p>'
     },
     ROUTE: {
       title: 'Request Router',

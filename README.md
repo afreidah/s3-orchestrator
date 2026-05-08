@@ -167,7 +167,7 @@ Each virtual bucket has one or more credential sets. On every request, the orche
 
 Three auth methods are supported, checked in order:
 
-1. **AWS SigV4** (recommended) - Standard AWS Signature Version 4 via the `Authorization` header. Compatible with `aws cli`, SDKs, and any S3 client. Signature verification is constant-time: unknown access keys still compute a full HMAC to prevent timing side-channel enumeration.
+1. **AWS SigV4** (recommended) - Standard AWS Signature Version 4 via the `Authorization` header. Compatible with `aws cli`, SDKs, and any S3 client. Signature verification is constant-time: unknown access keys still compute a full HMAC to prevent timing side-channel enumeration. Streaming-payload uploads (`STREAMING-AWS4-HMAC-SHA256-PAYLOAD`, `STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER`, `STREAMING-UNSIGNED-PAYLOAD-TRAILER`) are accepted and the chunk chain is fully validated end-to-end.
 2. **Presigned URLs** - SigV4 query-parameter authentication (`X-Amz-Algorithm`, `X-Amz-Credential`, etc.) for time-limited, shareable URLs. Works with any AWS SDK presign client. Maximum expiry: 7 days. Uses the same bucket credentials as normal requests — no additional configuration required.
 3. **Legacy token** - Simple `X-Proxy-Token` header for backward compatibility.
 
@@ -1336,10 +1336,13 @@ internal/
       list.go                ListObjectsV1 / V2 handlers
       multipart.go           Multipart upload handlers
       helpers.go             Path parsing, header guards, S3 XML error responses
+      streaming.go           Streaming-payload body swap + S3 error mapping
       ratelimit.go           Per-IP token bucket
       admission.go           Concurrency limit + load shedding
     admin/handler.go         Admin API: status, drain, replicate, scrub, encrypt-existing, etc.
-    auth/auth.go             BucketRegistry, SigV4 verification, legacy token auth
+    auth/
+      auth.go                BucketRegistry, SigV4 verification, legacy token auth
+      streaming.go           Streaming-payload chunk reader (variant detection, chain validator)
     ui/                      Web dashboard
       handler.go             HTTP handler + session auth + JSON APIs
       admin_actions.go       Async-trigger endpoints (rebalance, scrub, encrypt-existing, ...)
@@ -1439,6 +1442,8 @@ internal/
 
   integration/               End-to-end tests against MinIO + Postgres testcontainers
                              (gated by `//go:build integration`)
+    chunkframing/            Streaming-SigV4 detection helpers + live-cluster diag
+                             scan (the diag scan is gated by `//go:build diag`)
 
 grafana/
   s3-orchestrator.json       Grafana dashboard (all Prometheus metrics)

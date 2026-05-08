@@ -320,6 +320,55 @@ The login throttle (brute-force protection on the dashboard login) also uses the
 
 All admin and UI JSON endpoints enforce a 1 MB request body limit via `http.MaxBytesReader`. This prevents memory exhaustion from oversized payloads. File uploads use the configured `max_object_size` limit instead. These limits are built-in and not user-configurable.
 
+## Streaming SigV4 Payloads
+
+The orchestrator accepts the three AWS streaming-payload modes clients
+use when `Content-Encoding: aws-chunked` is set:
+
+| `X-Amz-Content-Sha256` value                  | Variant                  | Chunks signed | Trailer signed |
+|-----------------------------------------------|--------------------------|---------------|----------------|
+| `STREAMING-AWS4-HMAC-SHA256-PAYLOAD`          | signed                   | yes           | n/a            |
+| `STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER`  | signed + trailer         | yes           | yes            |
+| `STREAMING-UNSIGNED-PAYLOAD-TRAILER`          | unsigned chunks + trailer| no            | yes            |
+
+The seed signature in the `Authorization` header authenticates the
+request envelope; the body is authenticated separately by the chained
+per-chunk signatures (or by the trailer signature for the unsigned-
+trailer variant). The orchestrator verifies the chain in-stream and
+strips the chunk framing before any byte reaches storage.
+
+Failure modes and their responses:
+
+- **Chunk-signature or trailer-signature mismatch** -- `403 SignatureDoesNotMatch`.
+- **Malformed framing** (bare LF, missing CRLF, malformed hex chunk size,
+  missing `chunk-signature=` extension on a signed variant, missing
+  `x-amz-trailer-signature` on a trailer variant) -- `400 InvalidRequest`.
+- **Body length disagrees with `x-amz-decoded-content-length`** --
+  `400 IncompleteBody`.
+
+Wire-level limits:
+
+- Maximum declared chunk size: 16 MiB.
+- Maximum chunk-header line length: 1 KiB.
+- Maximum trailer block: 8 KiB across at most 16 trailer headers.
+- One chunk is buffered in memory at a time; the streaming property of
+  the original PUT is preserved.
+
+Two metrics report streaming traffic and rejection reasons:
+
+- `s3o_auth_streaming_requests_total{variant}` -- streaming requests
+  received, labelled by variant (`signed`, `signed_trailer`,
+  `unsigned_trailer`).
+- `s3o_auth_streaming_rejections_total{reason}` -- requests rejected
+  mid-stream, labelled by `chunk_signature_mismatch`,
+  `trailer_signature_mismatch`, `chunk_malformed`, `chunk_too_large`,
+  `decoded_length_mismatch`, or `trailer_malformed`.
+
+Operators behind a TLS-terminating proxy do not need to configure
+anything for streaming SigV4 to work; the orchestrator detects the
+mode from the request headers and validates the chain using the same
+signing key derived from the seed signature.
+
 ## Web UI Authentication
 
 ### Admin Token Separation

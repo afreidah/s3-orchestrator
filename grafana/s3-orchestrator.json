@@ -3704,6 +3704,106 @@
           }
         }
       }
+    },
+    {
+      "type": "row",
+      "id": 83,
+      "title": "Authentication",
+      "gridPos": {
+        "x": 0,
+        "y": 183,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "id": 84,
+      "title": "Streaming Payload Requests",
+      "description": "Rate of streaming-SigV4 PUTs received, by AWS streaming variant.",
+      "gridPos": {
+        "x": 0,
+        "y": 184,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (variant) (rate(s3o_auth_streaming_requests_total[5m]))",
+          "legendFormat": "{{variant}}"
+        }
+      ],
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 85,
+      "title": "Streaming Payload Rejections",
+      "description": "Rate of streaming-SigV4 PUTs rejected mid-stream, by reason. Any non-zero rate is either a misconfigured client or a tampered request.",
+      "gridPos": {
+        "x": 12,
+        "y": 184,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (reason) (rate(s3o_auth_streaming_rejections_total[5m]))",
+          "legendFormat": "{{reason}}"
+        }
+      ],
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        }
+      }
     }
   ]
 }
