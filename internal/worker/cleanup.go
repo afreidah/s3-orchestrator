@@ -25,15 +25,27 @@ import (
 
 // CleanupWorker processes the retry queue for failed object deletions.
 type CleanupWorker struct {
-	log *slog.Logger
-	deps        CleanupOps
-	store       CleanupWorkerStore
-	concurrency int
+	log              *slog.Logger
+	deps             CleanupOps
+	store            CleanupWorkerStore
+	concurrency      int
+	instanceID       string
+	claimGracePeriod time.Duration
 }
 
 // NewCleanupWorker creates a CleanupWorker with explicit dependencies.
-func NewCleanupWorker(deps CleanupOps, store CleanupWorkerStore, concurrency int) *CleanupWorker {
-	return &CleanupWorker{deps: deps, store: store, concurrency: concurrency, log: slog.Default().With(logfmt.Component("cleanup_worker"))}
+// instanceID is stamped into cleanup_queue.claimed_by for observability;
+// claimGracePeriod is the threshold past which an outstanding claim becomes
+// reclaimable by another worker tick (typically 5m).
+func NewCleanupWorker(deps CleanupOps, store CleanupWorkerStore, concurrency int, instanceID string, claimGracePeriod time.Duration) *CleanupWorker {
+	return &CleanupWorker{
+		deps:             deps,
+		store:            store,
+		concurrency:      concurrency,
+		instanceID:       instanceID,
+		claimGracePeriod: claimGracePeriod,
+		log:              slog.Default().With(logfmt.Component("cleanup_worker")),
+	}
 }
 
 // maxCleanupAttempts is the retry ceiling. The 1-minute starting
@@ -63,17 +75,36 @@ func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) (processed, fai
 	)
 	defer span.End()
 
-	items, err := w.store.GetPendingCleanups(ctx, 50)
+	graceCutoff := time.Now().Add(-w.claimGracePeriod)
+	items, err := w.store.ClaimPendingCleanups(ctx, 50, w.instanceID, graceCutoff)
 	if err != nil {
-		w.log.ErrorContext(ctx, "failed to fetch pending cleanups", "error", err)
+		w.log.ErrorContext(ctx, "failed to claim pending cleanups", "error", err)
 		return 0, 0
+	}
+
+	for _, item := range items {
+		if !item.Reclaimed {
+			continue
+		}
+		telemetry.CleanupQueueStaleClaimsRecoveredTotal.WithLabelValues(item.BackendName).Inc()
+		w.log.WarnContext(ctx, "reclaimed stale cleanup_queue claim",
+			slog.Int64("cleanup_id", item.ID),
+			slog.String("backend", item.BackendName),
+			slog.String("key", item.ObjectKey),
+		)
+		audit.Log(ctx, "cleanup_queue.claim_recovered",
+			slog.Int64("cleanup_id", item.ID),
+			slog.String("backend", item.BackendName),
+			slog.String("key", item.ObjectKey),
+			slog.String("reclaimed_by", w.instanceID),
+		)
 	}
 
 	var processedCount, failedCount atomic.Int32
 
 	workerpool.Run(ctx, w.concurrency, items, func(ctx context.Context, item core.CleanupItem) {
 		WithAdmission(ctx, w.deps, WorkerNameCleanup, func() {
-			w.processCleanupItem(ctx, item, &processedCount, &failedCount)
+			w.processCleanupItem(ctx, &item, &processedCount, &failedCount)
 		})
 	})
 
@@ -86,7 +117,7 @@ func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) (processed, fai
 // the DLQ depending on the outcome.
 func (w *CleanupWorker) processCleanupItem(
 	ctx context.Context,
-	item core.CleanupItem,
+	item *core.CleanupItem,
 	processedCount, failedCount *atomic.Int32,
 ) {
 	be, err := w.deps.GetBackend(item.BackendName)
@@ -114,7 +145,7 @@ func (w *CleanupWorker) processCleanupItem(
 // completeUnknownBackendItem retires a cleanup row whose backend is no
 // longer registered. Treated as success because the configured fleet
 // cannot have an orphan on a backend it does not know about.
-func (w *CleanupWorker) completeUnknownBackendItem(ctx context.Context, item core.CleanupItem, processedCount *atomic.Int32) {
+func (w *CleanupWorker) completeUnknownBackendItem(ctx context.Context, item *core.CleanupItem, processedCount *atomic.Int32) {
 	w.log.WarnContext(ctx, "backend not found, removing item",
 		"backend", item.BackendName, "key", item.ObjectKey)
 	if err := w.store.CompleteCleanupItem(ctx, item.ID); err != nil {
@@ -125,19 +156,11 @@ func (w *CleanupWorker) completeUnknownBackendItem(ctx context.Context, item cor
 }
 
 // completeCleanupSuccess records a successful backend delete: complete
-// the row, decrement orphan-bytes accounting, audit, and bump the
-// success counter.
-func (w *CleanupWorker) completeCleanupSuccess(ctx context.Context, item core.CleanupItem, processedCount *atomic.Int32) {
+// the row (which atomically decrements orphan_bytes for the backing
+// backend in a single CTE), audit, and bump the success counter.
+func (w *CleanupWorker) completeCleanupSuccess(ctx context.Context, item *core.CleanupItem, processedCount *atomic.Int32) {
 	if err := w.store.CompleteCleanupItem(ctx, item.ID); err != nil {
 		w.log.ErrorContext(ctx, "failed to complete cleanup item", slog.Int64("cleanup_id", item.ID), "error", err)
-	}
-	if item.SizeBytes > 0 {
-		if err := w.store.DecrementOrphanBytes(ctx, item.BackendName, item.SizeBytes); err != nil {
-			w.log.ErrorContext(ctx, "failed to decrement orphan bytes",
-				slog.String("backend", item.BackendName),
-				slog.Int64("size_bytes", item.SizeBytes),
-				"error", err)
-		}
 	}
 	telemetry.CleanupQueueProcessedTotal.WithLabelValues("success").Inc()
 	processedCount.Add(1)
@@ -154,7 +177,7 @@ func (w *CleanupWorker) completeCleanupSuccess(ctx context.Context, item core.Cl
 // event so operators can investigate stuck rows.
 func (w *CleanupWorker) exhaustCleanupToDLQ(
 	ctx context.Context,
-	item core.CleanupItem,
+	item *core.CleanupItem,
 	newAttempts int32,
 	delErr error,
 	failedCount *atomic.Int32,
@@ -204,7 +227,7 @@ func (w *CleanupWorker) exhaustCleanupToDLQ(
 
 // scheduleCleanupRetry stamps the next retry deadline on a still-eligible
 // cleanup row using exponential backoff.
-func (w *CleanupWorker) scheduleCleanupRetry(ctx context.Context, item core.CleanupItem, delErr error, failedCount *atomic.Int32) {
+func (w *CleanupWorker) scheduleCleanupRetry(ctx context.Context, item *core.CleanupItem, delErr error, failedCount *atomic.Int32) {
 	telemetry.CleanupQueueProcessedTotal.WithLabelValues("retry").Inc()
 	backoff := CleanupBackoff(item.Attempts)
 	if err := w.store.RetryCleanupItem(ctx, item.ID, backoff, delErr.Error()); err != nil {

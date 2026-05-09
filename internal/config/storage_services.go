@@ -48,9 +48,18 @@ type ReplicationConfig struct {
 
 // CleanupQueueConfig holds settings for the background orphan cleanup worker
 // and multipart upload housekeeping.
+//
+// ClaimGracePeriod controls how long a per-row claim stamp held by an
+// instance remains exclusive before another instance is allowed to reclaim
+// the row. A short value lets a crashed worker's rows recover quickly at
+// the cost of a higher chance of duplicate processing if a real worker is
+// merely slow; a long value is the inverse trade-off. The 5-minute default
+// covers the realistic worst case for a single backend DELETE plus its
+// retry budget within one tick. Hot-reloadable.
 type CleanupQueueConfig struct {
-	Concurrency            int           `yaml:"concurrency"`              // Parallel cleanup deletions (default: 10)
-	MultipartStaleTimeout  time.Duration `yaml:"multipart_stale_timeout"`  // Abandon multipart uploads older than this (default: 24h)
+	Concurrency           int           `yaml:"concurrency"`             // Parallel cleanup deletions (default: 10)
+	MultipartStaleTimeout time.Duration `yaml:"multipart_stale_timeout"` // Abandon multipart uploads older than this (default: 24h)
+	ClaimGracePeriod      time.Duration `yaml:"claim_grace_period"`      // Reclaim stale per-row claims older than this (default: 5m)
 }
 
 // WritePathConfig gates write-path correctness features. The pending-row

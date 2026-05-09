@@ -43,6 +43,13 @@ func (c *cbCleanupStore) GetPendingCleanups(ctx context.Context, limit int) ([]c
 	return breaker.CBCall(c.cb, func() ([]core.CleanupItem, error) { return c.inner.GetPendingCleanups(ctx, limit) })
 }
 
+// ClaimPendingCleanups forwards to the inner store under the breaker.
+func (c *cbCleanupStore) ClaimPendingCleanups(ctx context.Context, limit int, instanceID string, graceCutoff time.Time) ([]core.CleanupItem, error) {
+	return breaker.CBCall(c.cb, func() ([]core.CleanupItem, error) {
+		return c.inner.ClaimPendingCleanups(ctx, limit, instanceID, graceCutoff)
+	})
+}
+
 // CompleteCleanupItem forwards to the inner store under the breaker.
 func (c *cbCleanupStore) CompleteCleanupItem(ctx context.Context, id int64) error {
 	return breaker.CBCallNoResult(c.cb, func() error { return c.inner.CompleteCleanupItem(ctx, id) })

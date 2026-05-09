@@ -12,6 +12,8 @@
 package proxy
 
 import (
+	"time"
+
 	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
@@ -63,7 +65,7 @@ func wireWorkersForTest(m *BackendManager) *BackendManager {
 		ReplicationStore: m.stores.Replication,
 		QuotaStore:       m.stores.Quota,
 	})
-	m.CleanupWorker = worker.NewCleanupWorker(m, m.stores.Cleanup, 10)
+	m.CleanupWorker = worker.NewCleanupWorker(m, m.stores.Cleanup, 10, "test-instance", 5*time.Minute)
 	if m.stores.Pending != nil {
 		m.PendingReaper = worker.NewPendingReaper(m, m.stores.Pending, 0, 0, 0)
 	}

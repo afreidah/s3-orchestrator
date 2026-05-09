@@ -97,7 +97,7 @@ func newServicesFixture(t *testing.T) *servicesFixture {
 	or.SetConfig(&config.ReplicationConfig{Factor: 1})
 	mgr.OverReplicationCleaner = or
 
-	cw := worker.NewCleanupWorker(mgr, mock, 10)
+	cw := worker.NewCleanupWorker(mgr, mock, 10, "test-instance", 5*time.Minute)
 	mgr.CleanupWorker = cw
 
 	sc := worker.NewScrubber(mgr, mock, nil)
