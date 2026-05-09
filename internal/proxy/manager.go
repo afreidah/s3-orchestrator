@@ -221,15 +221,6 @@ func (m *BackendManager) FlushUsage(ctx context.Context) error {
 	return m.usage.FlushUsage(ctx, m.stores.Usage, skip)
 }
 
-// RedisCounterActive returns true when the counter backend is a Redis
-// backend that is currently healthy (not in fallback). Used by the flush
-// service to decide whether to acquire an advisory lock (only one instance
-// should flush Redis->PG via GETSET).
-func (m *BackendManager) RedisCounterActive() bool {
-	rb, ok := m.usage.Backend().(*counter.RedisCounterBackend)
-	return ok && rb.IsHealthy()
-}
-
 // RedisCounterConfigured returns true when the counter backend is a Redis
 // backend, regardless of health status. Used by the flush service to decide
 // whether an advisory lock is needed  -  the lock must be held even during
