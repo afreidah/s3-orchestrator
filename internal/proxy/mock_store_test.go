@@ -654,11 +654,38 @@ func (m *mockStore) GetPendingCleanups(_ context.Context, _ int) ([]core.Cleanup
 	return m.pendingCleanups, nil
 }
 
+func (m *mockStore) ClaimPendingCleanups(_ context.Context, _ int, _ string, _ time.Time) ([]core.CleanupItem, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.getPendingErr != nil {
+		return nil, m.getPendingErr
+	}
+	return m.pendingCleanups, nil
+}
+
+// CompleteCleanupItem mirrors the production atomic CTE: deletes the row
+// and decrements the backing backend's orphan_bytes by the row's size in a
+// single observable call. The decrement is recorded against
+// decrementOrphanBytesCalls so existing fixtures that assert the orphan-
+// byte accounting through the cleanup path keep working unchanged.
 func (m *mockStore) CompleteCleanupItem(_ context.Context, id int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.completeCleanupCalls = append(m.completeCleanupCalls, id)
-	return m.completeCleanupErr
+	if m.completeCleanupErr != nil {
+		return m.completeCleanupErr
+	}
+	for _, item := range m.pendingCleanups {
+		if item.ID != id {
+			continue
+		}
+		if item.SizeBytes > 0 {
+			m.decrementOrphanBytesCalls = append(m.decrementOrphanBytesCalls,
+				orphanBytesCall{backendName: item.BackendName, sizeBytes: item.SizeBytes})
+		}
+		break
+	}
+	return nil
 }
 
 func (m *mockStore) RetryCleanupItem(_ context.Context, id int64, backoff time.Duration, lastError string) error {

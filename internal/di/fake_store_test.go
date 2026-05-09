@@ -198,6 +198,11 @@ func (fakeConcreteStore) EnqueueCleanup(context.Context, string, string, string,
 func (fakeConcreteStore) GetPendingCleanups(context.Context, int) ([]core.CleanupItem, error) {
 	return nil, nil
 }
+// ClaimPendingCleanups is a stub on fakeConcreteStore; returns the zero value to
+// satisfy the concreteStore interface contract.
+func (fakeConcreteStore) ClaimPendingCleanups(context.Context, int, string, time.Time) ([]core.CleanupItem, error) {
+	return nil, nil
+}
 // CompleteCleanupItem is a stub on fakeConcreteStore; returns the zero value to
 // satisfy the concreteStore interface contract.
 func (fakeConcreteStore) CompleteCleanupItem(context.Context, int64) error { return nil }

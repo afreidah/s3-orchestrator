@@ -84,6 +84,13 @@ func (m *mockMetadataStore) GetPendingCleanups(_ context.Context, _ int) ([]core
 	return m.pendingCleanups, nil
 }
 
+// ClaimPendingCleanups is a stub on mockMetadataStore; mirrors
+// GetPendingCleanups so existing fixtures exercise the worker's claim path
+// without per-test plumbing.
+func (m *mockMetadataStore) ClaimPendingCleanups(_ context.Context, _ int, _ string, _ time.Time) ([]core.CleanupItem, error) {
+	return m.pendingCleanups, nil
+}
+
 // CompleteCleanupItem is a stub on mockMetadataStore; returns either the test-set
 // fixture field or the zero value.
 func (m *mockMetadataStore) CompleteCleanupItem(_ context.Context, id int64) error {

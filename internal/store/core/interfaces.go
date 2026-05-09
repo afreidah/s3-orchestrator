@@ -107,8 +107,31 @@ type ReplicationStore interface {
 // CleanupStore defines cleanup queue and orphan byte tracking operations.
 type CleanupStore interface {
 	EnqueueCleanup(ctx context.Context, backendName, objectKey, reason string, sizeBytes int64) error
+
+	// GetPendingCleanups returns a read-only snapshot of pending rows for
+	// admin / dashboard display. It does not stamp claim columns; the
+	// cleanup worker uses ClaimPendingCleanups instead.
 	GetPendingCleanups(ctx context.Context, limit int) ([]CleanupItem, error)
+
+	// ClaimPendingCleanups atomically reserves a batch of cleanup rows
+	// for the calling instance. Postgres uses FOR UPDATE SKIP LOCKED so
+	// concurrent claim transactions across instances return disjoint row
+	// sets; SQLite serialises writes intrinsically. A row is eligible
+	// when claimed_at IS NULL or older than graceCutoff (a stale claim
+	// from a worker that died mid-process). Returned rows have Reclaimed
+	// set true when their previous claim was reclaimed by this call.
+	ClaimPendingCleanups(ctx context.Context, limit int, instanceID string, graceCutoff time.Time) ([]CleanupItem, error)
+
+	// CompleteCleanupItem atomically deletes a successfully-processed row
+	// and decrements the backing backend's orphan_bytes by the row's
+	// size_bytes. Idempotent against re-claim retries: if the row was
+	// already deleted by a previous worker, orphan_bytes is not
+	// double-decremented.
 	CompleteCleanupItem(ctx context.Context, id int64) error
+
+	// RetryCleanupItem advances next_retry, records the error, and
+	// clears the claim so the row is immediately re-eligible for the
+	// next worker tick.
 	RetryCleanupItem(ctx context.Context, id int64, backoff time.Duration, lastError string) error
 	CleanupQueueDepth(ctx context.Context) (int64, error)
 	IncrementOrphanBytes(ctx context.Context, backendName string, amount int64) error

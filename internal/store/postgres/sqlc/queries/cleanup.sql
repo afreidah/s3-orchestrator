@@ -15,20 +15,83 @@ INSERT INTO cleanup_queue (backend_name, object_key, reason, size_bytes)
 VALUES ($1, $2, $3, $4);
 
 -- name: GetPendingCleanups :many
-SELECT id, backend_name, object_key, reason, attempts, size_bytes
+-- Read-only listing for the admin endpoint and operator visibility. The
+-- worker uses ClaimPendingCleanups instead, which also stamps the row.
+-- claimed_at and claimed_by are projected so the admin view can render
+-- which rows are currently held by a worker.
+SELECT id, backend_name, object_key, reason, attempts, size_bytes,
+       claimed_at, claimed_by
 FROM cleanup_queue
 WHERE next_retry <= NOW() AND attempts < 10
 ORDER BY created_at ASC
 LIMIT $1;
 
+-- name: ClaimPendingCleanups :many
+-- Atomically claims the next batch of cleanup rows for the calling
+-- instance. The inner SELECT uses FOR UPDATE SKIP LOCKED so two
+-- concurrent claim transactions across instances return disjoint row
+-- sets. A row is eligible if it has never been claimed (claimed_at IS
+-- NULL) or its claim has aged past the grace cutoff (claimed_at <
+-- @grace_cutoff). The reclaimed projection lets the worker increment
+-- s3o_cleanup_queue_stale_claims_recovered_total per recovered row.
+WITH candidate AS (
+    SELECT cq.id, (cq.claimed_at IS NOT NULL)::boolean AS reclaimed
+    FROM cleanup_queue cq
+    WHERE cq.next_retry <= NOW()
+      AND cq.attempts < 10
+      AND (cq.claimed_at IS NULL OR cq.claimed_at < @grace_cutoff::timestamptz)
+    ORDER BY cq.created_at ASC
+    LIMIT $1
+    FOR UPDATE SKIP LOCKED
+),
+claimed AS (
+    UPDATE cleanup_queue cq
+    SET claimed_at = NOW(),
+        claimed_by = @claimed_by::text
+    FROM candidate c
+    WHERE cq.id = c.id
+    RETURNING cq.id, cq.backend_name, cq.object_key, cq.reason, cq.attempts, cq.size_bytes
+)
+SELECT cl.id, cl.backend_name, cl.object_key, cl.reason, cl.attempts, cl.size_bytes,
+       c.reclaimed
+FROM claimed cl
+JOIN candidate c ON cl.id = c.id
+ORDER BY cl.id;
+
 -- name: DeleteCleanupItem :exec
+-- Used inside the move-to-DLQ transaction; orphan_bytes is intentionally
+-- left untouched because the underlying backend object is still on disk.
+-- The cleanup worker's success path uses CompleteCleanupItem instead,
+-- which atomically deletes the row and decrements orphan_bytes.
 DELETE FROM cleanup_queue WHERE id = $1;
 
+-- name: CompleteCleanupItem :exec
+-- Atomically removes a successfully-processed cleanup_queue row and
+-- decrements the backing backend's orphan_bytes by the row's size.
+-- Idempotent against re-claim retries: if the row was already deleted
+-- by a previous worker, the CTE is empty and orphan_bytes is not
+-- double-decremented. GREATEST(0, ...) clamps the counter so a stale
+-- size_bytes value cannot drive orphan_bytes negative.
+WITH deleted AS (
+    DELETE FROM cleanup_queue WHERE id = $1
+    RETURNING backend_name, size_bytes
+)
+UPDATE backend_quotas bq
+SET orphan_bytes = GREATEST(0, orphan_bytes - d.size_bytes)
+FROM deleted d
+WHERE bq.backend_name = d.backend_name;
+
 -- name: UpdateCleanupRetry :exec
+-- Schedules a retry by advancing next_retry, recording the error, and
+-- clearing the claim so the row is immediately re-eligible for the next
+-- worker tick (the previous claim is what gated this retry from running
+-- twice within the grace window).
 UPDATE cleanup_queue
 SET attempts = attempts + 1,
     next_retry = NOW() + @backoff::interval,
-    last_error = @last_error
+    last_error = @last_error,
+    claimed_at = NULL,
+    claimed_by = NULL
 WHERE id = @id;
 
 -- name: CountPendingCleanups :one

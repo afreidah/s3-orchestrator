@@ -148,6 +148,9 @@ func (c *Config) applyDefaultsOnlyTypes() {
 	if c.CleanupQueue.Concurrency <= 0 {
 		c.CleanupQueue.Concurrency = 10
 	}
+	if c.CleanupQueue.ClaimGracePeriod <= 0 {
+		c.CleanupQueue.ClaimGracePeriod = 5 * time.Minute
+	}
 	if c.Reconcile.Enabled && c.Reconcile.Interval <= 0 {
 		c.Reconcile.Interval = 24 * time.Hour
 	}

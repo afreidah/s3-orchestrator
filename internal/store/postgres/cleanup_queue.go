@@ -40,7 +40,9 @@ func (s *Store) EnqueueCleanup(ctx context.Context, backendName, objectKey, reas
 	return nil
 }
 
-// GetPendingCleanups returns cleanup items ready for retry.
+// GetPendingCleanups returns a read-only snapshot of pending cleanup rows.
+// Used by the admin endpoint to render the queue. The cleanup worker uses
+// ClaimPendingCleanups instead, which atomically stamps claim columns.
 func (s *Store) GetPendingCleanups(ctx context.Context, limit int) ([]core.CleanupItem, error) {
 	rows, err := s.queries.GetPendingCleanups(ctx, int32(limit)) //nolint:gosec // G115: limit is a small caller-controlled batch size
 	if err != nil {
@@ -51,7 +53,7 @@ func (s *Store) GetPendingCleanups(ctx context.Context, limit int) ([]core.Clean
 }
 
 // cleanupItemFromRow converts a sqlc GetPendingCleanups row to the
-// core.CleanupItem shape consumed by the cleanup worker.
+// core.CleanupItem shape consumed by the admin endpoint.
 func cleanupItemFromRow(r *db.GetPendingCleanupsRow) core.CleanupItem {
 	return core.CleanupItem{
 		ID:          r.ID,
@@ -60,19 +62,57 @@ func cleanupItemFromRow(r *db.GetPendingCleanupsRow) core.CleanupItem {
 		Reason:      r.Reason,
 		Attempts:    r.Attempts,
 		SizeBytes:   r.SizeBytes,
+		ClaimedAt:   timestamptzPtr(r.ClaimedAt),
+		ClaimedBy:   r.ClaimedBy,
 	}
 }
 
-// CompleteCleanupItem removes a successfully processed item from the queue.
-func (s *Store) CompleteCleanupItem(ctx context.Context, id int64) error {
-	err := s.queries.DeleteCleanupItem(ctx, id)
+// claimedItemFromRow converts a sqlc ClaimPendingCleanups row to the
+// core.CleanupItem shape, carrying the reclaimed flag the worker uses to
+// drive the stale-claim recovery metric.
+func claimedItemFromRow(r *db.ClaimPendingCleanupsRow) core.CleanupItem {
+	return core.CleanupItem{
+		ID:          r.ID,
+		BackendName: r.BackendName,
+		ObjectKey:   r.ObjectKey,
+		Reason:      r.Reason,
+		Attempts:    r.Attempts,
+		SizeBytes:   r.SizeBytes,
+		Reclaimed:   r.Reclaimed,
+	}
+}
+
+// ClaimPendingCleanups atomically reserves a batch of cleanup rows for the
+// calling instance using FOR UPDATE SKIP LOCKED. See the SQL definition for
+// the eligibility rules; this method is the only path the cleanup worker
+// should use to fetch pending rows.
+func (s *Store) ClaimPendingCleanups(ctx context.Context, limit int, instanceID string, graceCutoff time.Time) ([]core.CleanupItem, error) {
+	rows, err := s.queries.ClaimPendingCleanups(ctx, db.ClaimPendingCleanupsParams{
+		Limit:       int32(limit), //nolint:gosec // G115: limit is a small caller-controlled batch size
+		GraceCutoff: pgtype.Timestamptz{Time: graceCutoff, Valid: true},
+		ClaimedBy:   instanceID,
+	})
 	if err != nil {
+		return nil, fmt.Errorf("failed to claim pending cleanups: %w", err)
+	}
+	return mapSlice(rows, claimedItemFromRow), nil
+}
+
+// CompleteCleanupItem atomically deletes a successfully-processed row and
+// decrements the backing backend's orphan_bytes by the row's size. The
+// underlying SQL is a single CTE so a worker crash between the delete and
+// the decrement cannot leave the counter inconsistent; idempotent against
+// re-claim retries because the CTE is empty when the row is already gone.
+func (s *Store) CompleteCleanupItem(ctx context.Context, id int64) error {
+	if err := s.queries.CompleteCleanupItem(ctx, id); err != nil {
 		return fmt.Errorf("failed to complete cleanup item: %w", err)
 	}
 	return nil
 }
 
-// RetryCleanupItem increments the attempt counter and schedules the next retry.
+// RetryCleanupItem increments the attempt counter, schedules the next retry,
+// and clears the claim so the row is immediately re-eligible for the next
+// worker tick.
 func (s *Store) RetryCleanupItem(ctx context.Context, id int64, backoff time.Duration, lastError string) error {
 	err := s.queries.UpdateCleanupRetry(ctx, db.UpdateCleanupRetryParams{
 		Backoff:   durationToInterval(backoff),
@@ -83,6 +123,16 @@ func (s *Store) RetryCleanupItem(ctx context.Context, id int64, backoff time.Dur
 		return fmt.Errorf("failed to update cleanup retry: %w", err)
 	}
 	return nil
+}
+
+// timestamptzPtr returns a *time.Time for a sqlc-emitted pgtype.Timestamptz,
+// or nil when the column was NULL.
+func timestamptzPtr(ts pgtype.Timestamptz) *time.Time {
+	if !ts.Valid {
+		return nil
+	}
+	t := ts.Time
+	return &t
 }
 
 // CleanupQueueDepth returns the number of items still pending in the queue.

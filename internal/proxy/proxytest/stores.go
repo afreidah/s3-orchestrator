@@ -13,6 +13,8 @@
 package proxytest
 
 import (
+	"time"
+
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -84,7 +86,7 @@ func AttachWorkersWithStores(mgr *proxy.BackendManager, s *proxy.Stores) {
 		core.QuotaStore
 	}{ReplicationStore: s.Replication, QuotaStore: s.Quota})
 
-	mgr.CleanupWorker = worker.NewCleanupWorker(mgr, s.Cleanup, 10)
+	mgr.CleanupWorker = worker.NewCleanupWorker(mgr, s.Cleanup, 10, "test-instance", 5*time.Minute)
 	if s.Pending != nil {
 		mgr.PendingReaper = worker.NewPendingReaper(mgr, s.Pending, 0, 0, 0)
 	}

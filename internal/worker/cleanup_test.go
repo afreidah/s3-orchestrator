@@ -19,7 +19,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	dto "github.com/prometheus/client_model/go"
 	"go.uber.org/mock/gomock"
 )
 
@@ -39,7 +41,7 @@ func TestProcessCleanupQueue_DeleteSuccess(t *testing.T) {
 	ops.EXPECT().DeleteWithTimeout(gomock.Any(), gomock.Any(), "orphan.txt").Return(nil)
 	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
 
-	w := NewCleanupWorker(ops, ms, 1)
+	w := NewCleanupWorker(ops, ms, 1, "test-instance", 5*time.Minute)
 	processed, failed := w.ProcessCleanupQueue(context.Background())
 
 	if processed != 1 {
@@ -66,7 +68,7 @@ func TestProcessCleanupQueue_DeleteFails_Retries(t *testing.T) {
 	ops.EXPECT().DeleteWithTimeout(gomock.Any(), gomock.Any(), "stuck.txt").Return(errors.New("timeout"))
 	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
 
-	w := NewCleanupWorker(ops, ms, 1)
+	w := NewCleanupWorker(ops, ms, 1, "test-instance", 5*time.Minute)
 	_, failed := w.ProcessCleanupQueue(context.Background())
 
 	if failed != 1 {
@@ -86,7 +88,7 @@ func TestProcessCleanupQueue_AdmissionBlocked(t *testing.T) {
 
 	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(false)
 
-	w := NewCleanupWorker(ops, ms, 1)
+	w := NewCleanupWorker(ops, ms, 1, "test-instance", 5*time.Minute)
 	processed, failed := w.ProcessCleanupQueue(context.Background())
 
 	if processed != 0 || failed != 0 {
@@ -109,7 +111,7 @@ func TestProcessCleanupQueue_BackendNotFound(t *testing.T) {
 	ops.EXPECT().GetBackend("gone").Return(nil, errors.New("not found"))
 	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
 
-	w := NewCleanupWorker(ops, ms, 1)
+	w := NewCleanupWorker(ops, ms, 1, "test-instance", 5*time.Minute)
 	processed, _ := w.ProcessCleanupQueue(context.Background())
 
 	if processed != 1 {
@@ -160,7 +162,7 @@ func TestProcessCleanupQueue_Exhausted_MovesToDLQ(t *testing.T) {
 	ops.EXPECT().DeleteWithTimeout(gomock.Any(), gomock.Any(), "doomed.txt").Return(errors.New("permanent failure"))
 	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
 
-	w := NewCleanupWorker(ops, ms, 1)
+	w := NewCleanupWorker(ops, ms, 1, "test-instance", 5*time.Minute)
 	_, failed := w.ProcessCleanupQueue(context.Background())
 
 	if failed != 1 {
@@ -199,7 +201,7 @@ func TestProcessCleanupQueue_Exhausted_DLQMoveFails(t *testing.T) {
 	ops.EXPECT().DeleteWithTimeout(gomock.Any(), gomock.Any(), "doomed2.txt").Return(errors.New("upstream timeout"))
 	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
 
-	w := NewCleanupWorker(ops, ms, 1)
+	w := NewCleanupWorker(ops, ms, 1, "test-instance", 5*time.Minute)
 	_, failed := w.ProcessCleanupQueue(context.Background())
 
 	if failed != 1 {
@@ -208,4 +210,49 @@ func TestProcessCleanupQueue_Exhausted_DLQMoveFails(t *testing.T) {
 	if len(ms.dlqMoves) != 1 {
 		t.Errorf("expected MoveCleanupToDLQ to be attempted once, got %d", len(ms.dlqMoves))
 	}
+}
+
+// TestProcessCleanupQueue_ReclaimedRow_IncrementsMetric asserts that when
+// ClaimPendingCleanups returns a row with Reclaimed=true (a stale claim
+// from a worker that died mid-process), the worker increments the
+// stale-claim-recovered counter exactly once for that row's backend.
+func TestProcessCleanupQueue_ReclaimedRow_IncrementsMetric(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	ops := NewMockCleanupOps(ctrl)
+
+	const backend = "metric-backend"
+	st := core.CleanupItem{ID: 99, BackendName: backend, ObjectKey: "k", Reclaimed: true}
+	ms := &mockMetadataStore{pendingCleanups: []core.CleanupItem{st}}
+
+	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
+	ops.EXPECT().ReleaseAdmission()
+	ops.EXPECT().GetBackend(backend).Return(nil, nil)
+	ops.EXPECT().DeleteWithTimeout(gomock.Any(), gomock.Any(), "k").Return(nil)
+	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
+
+	before := readCounterValue(t, telemetry.CleanupQueueStaleClaimsRecoveredTotal.WithLabelValues(backend))
+	w := NewCleanupWorker(ops, ms, 1, "test-instance", 5*time.Minute)
+	w.ProcessCleanupQueue(context.Background())
+	after := readCounterValue(t, telemetry.CleanupQueueStaleClaimsRecoveredTotal.WithLabelValues(backend))
+
+	if after-before != 1 {
+		t.Errorf("stale-claim-recovered metric delta = %v, want 1", after-before)
+	}
+}
+
+// readCounterValue extracts the float counter value from a Prometheus
+// metric so the test can compare before/after deltas without relying on
+// the registry's text-format dump.
+func readCounterValue(t *testing.T, c interface {
+	Write(*dto.Metric) error
+}) float64 {
+	t.Helper()
+	var m dto.Metric
+	if err := c.Write(&m); err != nil {
+		t.Fatalf("metric write: %v", err)
+	}
+	if m.Counter == nil {
+		return 0
+	}
+	return m.Counter.GetValue()
 }

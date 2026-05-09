@@ -60,6 +60,49 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ### v0.46.x (current)
 
+**Cleanup queue per-row claim pattern eliminates double-processing (v0.46.5)**
+
+`cleanup_queue` rows could be picked up by two worker goroutines (across
+instances or across reconnects within an instance) because the original
+`SELECT ... LIMIT N` had no row-level reservation. A connection death that
+released the cleanup queue advisory lock mid-tick let a second instance
+refetch rows the first instance was still processing; the duplicate run
+double-decremented `orphan_bytes`, double-billed the backend `DELETE`,
+and made backend routing trust an under-counted orphan total.
+
+The fix adds two columns to `cleanup_queue` (`claimed_at TIMESTAMPTZ`,
+`claimed_by TEXT`) and replaces the worker's `GetPendingCleanups` call
+with `ClaimPendingCleanups`, which uses `UPDATE ... WHERE id IN (SELECT
+... FOR UPDATE SKIP LOCKED)` so two concurrent claim transactions return
+disjoint row sets. `CompleteCleanupItem` is now a single CTE that deletes
+the row and decrements `orphan_bytes` atomically, so a worker crash
+between the two operations cannot leave the counter inconsistent. A claim
+older than the configured grace period is reclaimable so a worker that
+died mid-process does not leave the row stuck.
+
+**Database migration:** `00011_cleanup_queue_claim` runs automatically on
+startup. The migration uses `+goose NO TRANSACTION` plus
+`CREATE INDEX CONCURRENTLY` so applying it against a populated table does
+not require a write outage. `ExpectedSchemaVersion` is bumped 10 → 11.
+
+**New configuration field:**
+
+```yaml
+cleanup_queue:
+  claim_grace_period: 5m   # reclaim stale per-row claims older than this
+```
+
+The default is 5 minutes; existing configs continue to work without the
+field. Hot-reloadable.
+
+**Operator action items after upgrade:**
+
+- Add an alert on `rate(s3o_cleanup_queue_stale_claims_recovered_total[5m]) > 0`
+  -- a non-zero rate means a worker died mid-process or the grace period
+  is shorter than realistic worst-case row processing time.
+- Watch `cleanup_queue.claim_recovered` audit events for the same signal
+  with per-row context (cleanup_id, backend, key, reclaimed_by).
+
 **Encryption stream readers no longer silently truncate on transport errors (v0.46.4)**
 
 Both `encryptReader.Read` and `decryptReader.Read` previously translated any

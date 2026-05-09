@@ -589,6 +589,15 @@ func (m *mockStore) GetPendingCleanups(_ context.Context, _ int) ([]core.Cleanup
 	return m.pendingCleanups, nil
 }
 
+func (m *mockStore) ClaimPendingCleanups(_ context.Context, _ int, _ string, _ time.Time) ([]core.CleanupItem, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.getPendingErr != nil {
+		return nil, m.getPendingErr
+	}
+	return m.pendingCleanups, nil
+}
+
 func (m *mockStore) CompleteCleanupItem(_ context.Context, id int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
