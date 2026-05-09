@@ -270,7 +270,7 @@ func TestEncryptExisting_HappyPathEmptyStore(t *testing.T) {
 // ciphertext, and the dbUpdate closure marks the object encrypted.
 func TestEncryptExisting_HappyPathOneRow(t *testing.T) {
 	t.Parallel()
-	mock := &testutil.MockStore{}
+	mock := testutil.NewMockStore(t)
 	fake := &fakeBackend{payload: []byte("hello world")}
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"backend-a": fake},

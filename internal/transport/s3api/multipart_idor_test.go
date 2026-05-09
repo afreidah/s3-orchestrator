@@ -46,10 +46,9 @@ func twoBucketServer(t *testing.T, mu *core.MultipartUpload) (*httptest.Server, 
 	t.Helper()
 
 	backend := newServerMockBackend()
-	mockStore := &testutil.MockStore{
-		GetBackendResp:   "b1",
-		GetMultipartResp: mu,
-	}
+	mockStore := testutil.NewMockStore(t)
+	mockStore.GetBackendResp = "b1"
+	mockStore.GetMultipartResp = mu
 
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        map[string]s3be.ObjectBackend{"b1": backend},

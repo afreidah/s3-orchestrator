@@ -34,7 +34,7 @@ import (
 // the handler is returned.
 func newAdminHandlerForTest(t *testing.T, opts ...func(*proxy.BackendManager)) *admin.Handler {
 	t.Helper()
-	mock := &testutil.MockStore{}
+	mock := testutil.NewMockStore(t)
 	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3})
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{},

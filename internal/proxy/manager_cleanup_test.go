@@ -39,8 +39,7 @@ type cleanupCalls struct {
 	complete   []int64
 	retry      []retryRecord
 	dlq        []dlqRecord
-	pending    []core.PendingObject
-	deleteCmds []string
+	pending []core.PendingObject
 }
 
 type retryRecord struct {
