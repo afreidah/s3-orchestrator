@@ -1,13 +1,3 @@
-// -------------------------------------------------------------------------------
-// Shared Test Utilities - Mock Store and Helpers
-//
-// Author: Alex Freidah
-//
-// Provides a configurable MetadataStore mock shared across packages for unit
-// testing. Supports pre-set responses, injectable errors, and call tracking
-// fields for assertion in tests outside the storage package.
-// -------------------------------------------------------------------------------
-
 // Package testutil provides shared mock implementations and test helpers used
 // across multiple packages.
 package testutil
@@ -17,13 +7,23 @@ import (
 	"sync"
 	"time"
 
+	"go.uber.org/mock/gomock"
+
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
-// MockStore is a configurable MetadataStore mock for unit testing.
-// Each method returns its pre-configured response/error. Call tracking fields
-// allow assertions on what the caller invoked.
+// MockStore is a thin field-configurable shim over the canonical
+// storetest.MockMetadataStore. The embedded mock supplies Permissive
+// .AnyTimes() defaults for every interface method; MockStore overrides
+// only the handful of methods whose return values or call counts the
+// transport / DI handler tests need to drive imperatively. Keeping the
+// public field surface lets the dozens of existing test fixtures remain
+// untouched while consolidating the underlying mock implementation
+// behind a single mockgen-generated source of truth.
 type MockStore struct {
+	*storetest.MockMetadataStore
+
 	Mu sync.Mutex
 
 	// --- Configurable responses ---
@@ -48,7 +48,7 @@ type MockStore struct {
 	DeleteObjectsBatchCalls [][]string
 
 	ListObjectsResp  *core.ListObjectsResult
-	ListObjectsPages []core.ListObjectsResult // for paginated tests
+	ListObjectsPages []core.ListObjectsResult
 	ListObjectsErr   error
 
 	// ListObjectsByBackendKeyAscFn is invoked by tests that drive the
@@ -116,24 +116,21 @@ type FlushUsageCall struct {
 	IngressBytes int64
 }
 
-// Compile-time checks  -  MockStore must satisfy every narrow role interface
-// so handler tests can hand it wherever a role is requested.
-var (
-	_ core.ObjectStore           = (*MockStore)(nil)
-	_ core.QuotaStore            = (*MockStore)(nil)
-	_ core.MultipartStore        = (*MockStore)(nil)
-	_ core.ReplicationStore      = (*MockStore)(nil)
-	_ core.CleanupStore          = (*MockStore)(nil)
-	_ core.IntegrityStore        = (*MockStore)(nil)
-	_ core.ExpiredObjectsLister  = (*MockStore)(nil)
-	_ core.BackendLifecycleStore = (*MockStore)(nil)
-	_ core.DashboardStore        = (*MockStore)(nil)
-	_ core.UsageFlusher          = (*MockStore)(nil)
-	_ core.AdvisoryLocker        = (*MockStore)(nil)
-)
+// NewMockStore builds a MockStore with Permissive .AnyTimes() defaults
+// registered on the embedded storetest.MockMetadataStore. Tests that
+// need imperative control over specific methods set the corresponding
+// public fields after construction; the overridden methods below shadow
+// the embedded permissive defaults.
+func NewMockStore(t gomock.TestReporter) *MockStore {
+	inner := storetest.NewMockMetadataStore(gomock.NewController(t))
+	storetest.Permissive(inner)
+	return &MockStore{MockMetadataStore: inner}
+}
 
-// GetAllObjectLocations returns the pre-configured locations or ErrObjectNotFound.
-func (m *MockStore) GetAllObjectLocations(_ context.Context, key string) ([]core.ObjectLocation, error) {
+// GetAllObjectLocations returns the pre-configured locations or
+// ErrObjectNotFound. The not-found default is load-bearing - several
+// handler tests rely on it as the implicit "missing key" path.
+func (m *MockStore) GetAllObjectLocations(_ context.Context, _ string) ([]core.ObjectLocation, error) {
 	m.Mu.Lock()
 	defer m.Mu.Unlock()
 	m.CallCount++
@@ -147,8 +144,7 @@ func (m *MockStore) GetAllObjectLocations(_ context.Context, key string) ([]core
 }
 
 // GetObjectBackendsForKeys returns an empty map by default; tests that
-// need a specific response set m.GetObjectBackendsForKeysResp and the
-// mock returns it verbatim (a copy of the supplied keys is not made).
+// need a specific response set GetObjectBackendsForKeysResp.
 func (m *MockStore) GetObjectBackendsForKeys(_ context.Context, _ []string) (map[string][]string, error) {
 	m.Mu.Lock()
 	defer m.Mu.Unlock()
@@ -163,7 +159,7 @@ func (m *MockStore) GetObjectBackendsForKeys(_ context.Context, _ []string) (map
 }
 
 // GetBackendWithSpace returns the pre-configured backend name or error.
-func (m *MockStore) GetBackendWithSpace(_ context.Context, size int64, _ []string) (string, error) {
+func (m *MockStore) GetBackendWithSpace(_ context.Context, _ int64, _ []string) (string, error) {
 	m.Mu.Lock()
 	defer m.Mu.Unlock()
 	m.GetBackendWithSpaceCalls++
@@ -174,7 +170,7 @@ func (m *MockStore) GetBackendWithSpace(_ context.Context, size int64, _ []strin
 }
 
 // GetLeastUtilizedBackend returns the pre-configured backend name or error.
-func (m *MockStore) GetLeastUtilizedBackend(_ context.Context, size int64, _ []string) (string, error) {
+func (m *MockStore) GetLeastUtilizedBackend(_ context.Context, _ int64, _ []string) (string, error) {
 	m.Mu.Lock()
 	defer m.Mu.Unlock()
 	m.GetLeastUtilizedCalls++
@@ -192,9 +188,7 @@ func (m *MockStore) RecordObject(_ context.Context, key, backend string, size in
 	return nil, m.RecordObjectErr
 }
 
-// RecordObjectAndClearPending records the call alongside RecordObjectCalls so
-// existing call-count assertions stay green. Returns the same pre-configured
-// error as RecordObject.
+// RecordObjectAndClearPending shares RecordObjectCalls with RecordObject.
 func (m *MockStore) RecordObjectAndClearPending(_ context.Context, key, backend string, size int64, _ *core.EncryptionMeta, _ string) ([]core.DeletedCopy, error) {
 	m.Mu.Lock()
 	defer m.Mu.Unlock()
@@ -216,9 +210,7 @@ func (m *MockStore) DeleteObject(_ context.Context, key string) ([]core.DeletedC
 	return m.DeleteObjectResp, nil
 }
 
-// DeleteObjectsBatch records the keys, then returns the pre-configured
-// response or error. Default returns an empty map (every key
-// treated as not-found).
+// DeleteObjectsBatch records keys and returns the pre-configured response or error.
 func (m *MockStore) DeleteObjectsBatch(_ context.Context, keys []string) (map[string][]core.DeletedCopy, error) {
 	m.Mu.Lock()
 	defer m.Mu.Unlock()
@@ -236,7 +228,7 @@ func (m *MockStore) DeleteObjectsBatch(_ context.Context, keys []string) (map[st
 }
 
 // ListObjects returns the next pre-configured page or the static response.
-func (m *MockStore) ListObjects(_ context.Context, _, startAfter string, _ int) (*core.ListObjectsResult, error) {
+func (m *MockStore) ListObjects(_ context.Context, _, _ string, _ int) (*core.ListObjectsResult, error) {
 	m.Mu.Lock()
 	defer m.Mu.Unlock()
 	if m.ListObjectsErr != nil {
@@ -356,16 +348,6 @@ func (m *MockStore) GetActiveMultipartCounts(_ context.Context) (map[string]int6
 	return map[string]int64{}, nil
 }
 
-// GetStaleMultipartUploads returns nil (stub).
-func (m *MockStore) GetStaleMultipartUploads(_ context.Context, _ time.Duration) ([]core.MultipartUpload, error) {
-	return nil, nil
-}
-
-// GetMultipartUploadsByBackend returns nil (stub).
-func (m *MockStore) GetMultipartUploadsByBackend(_ context.Context, _ string) ([]core.MultipartUpload, error) {
-	return nil, nil
-}
-
 // ListMultipartUploads returns the pre-configured uploads or error.
 func (m *MockStore) ListMultipartUploads(_ context.Context, _ string, _ int) ([]core.MultipartUpload, error) {
 	m.Mu.Lock()
@@ -376,44 +358,13 @@ func (m *MockStore) ListMultipartUploads(_ context.Context, _ string, _ int) ([]
 	return m.ListMultipartUploadsResp, nil
 }
 
-// CountActiveMultipartUploads returns zero (stub).
-func (m *MockStore) CountActiveMultipartUploads(_ context.Context, _ string) (int64, error) {
-	return 0, nil
-}
-
-// ListObjectsByBackend returns nil (stub).
-func (m *MockStore) ListObjectsByBackend(_ context.Context, _ string, _ int) ([]core.ObjectLocation, error) {
-	return nil, nil
-}
-
 // ListObjectsByBackendKeyAsc returns nil by default. Tests that exercise
-// reconciliation paths can set ListObjectsByBackendKeyAscPages on the mock
-// to drive the sorted-merge with deterministic responses.
-func (m *MockStore) ListObjectsByBackendKeyAsc(_ context.Context, _ /*backend*/ string, afterKey string, limit int) ([]core.ObjectLocation, error) {
+// reconciliation paths set ListObjectsByBackendKeyAscFn.
+func (m *MockStore) ListObjectsByBackendKeyAsc(_ context.Context, _ string, afterKey string, limit int) ([]core.ObjectLocation, error) {
 	if m.ListObjectsByBackendKeyAscFn != nil {
 		return m.ListObjectsByBackendKeyAscFn(afterKey, limit)
 	}
 	return nil, nil
-}
-
-// MoveObjectLocation returns zero (stub).
-func (m *MockStore) MoveObjectLocation(_ context.Context, _, _, _ string) (int64, error) {
-	return 0, nil
-}
-
-// GetUnderReplicatedObjects returns nil (stub).
-func (m *MockStore) GetUnderReplicatedObjects(_ context.Context, _, _ int) ([]core.ObjectLocation, error) {
-	return nil, nil
-}
-
-// GetUnderReplicatedObjectsExcluding returns nil (stub).
-func (m *MockStore) GetUnderReplicatedObjectsExcluding(_ context.Context, _, _ int, _ []string) ([]core.ObjectLocation, error) {
-	return nil, nil
-}
-
-// RecordReplica returns (0, false, nil) (stub).
-func (m *MockStore) RecordReplica(_ context.Context, _, _, _ string) (int64, bool, error) {
-	return 0, false, nil
 }
 
 // FlushUsageDeltas records the call arguments and returns the pre-configured error.
@@ -441,50 +392,15 @@ func (m *MockStore) GetUsageForPeriod(_ context.Context, _ string) (map[string]c
 	return map[string]core.UsageStat{}, nil
 }
 
-// -------------------------------------------------------------------------
-// CLEANUP QUEUE STUBS
-// -------------------------------------------------------------------------
-
-// EnqueueCleanup returns nil (stub).
-func (m *MockStore) EnqueueCleanup(_ context.Context, _, _, _ string, _ int64) error {
-	return nil
-}
-
-// IncrementOrphanBytes returns nil (stub).
-func (m *MockStore) IncrementOrphanBytes(_ context.Context, _ string, _ int64) error {
-	return nil
-}
-
-// DecrementOrphanBytes returns nil (stub).
-// SweepStaleCleanupQueueRows is a stub returning (0, nil).
-func (m *MockStore) SweepStaleCleanupQueueRows(_ context.Context, _, _ string) (int64, error) {
-	return 0, nil
-}
-
-func (m *MockStore) DecrementOrphanBytes(_ context.Context, _ string, _ int64) error {
-	return nil
-}
-
 // GetPendingCleanups returns the pre-configured slice + error.
 func (m *MockStore) GetPendingCleanups(_ context.Context, _ int) ([]core.CleanupItem, error) {
 	return m.PendingCleanupsResp, m.PendingCleanupsErr
 }
 
 // ClaimPendingCleanups stubs the worker-claim path by returning the same
-// pre-configured slice as GetPendingCleanups so existing fixtures keep
-// working without surfacing claim semantics into every test.
+// pre-configured slice as GetPendingCleanups.
 func (m *MockStore) ClaimPendingCleanups(_ context.Context, _ int, _ string, _ time.Time) ([]core.CleanupItem, error) {
 	return m.PendingCleanupsResp, m.PendingCleanupsErr
-}
-
-// CompleteCleanupItem returns nil (stub).
-func (m *MockStore) CompleteCleanupItem(_ context.Context, _ int64) error {
-	return nil
-}
-
-// RetryCleanupItem returns nil (stub).
-func (m *MockStore) RetryCleanupItem(_ context.Context, _ int64, _ time.Duration, _ string) error {
-	return nil
 }
 
 // CleanupQueueDepth returns the pre-configured value + error.
@@ -492,104 +408,7 @@ func (m *MockStore) CleanupQueueDepth(_ context.Context) (int64, error) {
 	return m.CleanupQueueDepthResp, m.CleanupQueueDepthErr
 }
 
-// MoveCleanupToDLQ records nothing and reports the row as moved (stub).
-func (m *MockStore) MoveCleanupToDLQ(_ context.Context, _ int64, _ string) (bool, error) {
-	return true, nil
-}
-
-// CleanupDLQDepth returns zero (stub).
-func (m *MockStore) CleanupDLQDepth(_ context.Context) (int64, error) {
-	return 0, nil
-}
-
-// ListExpiredObjects returns nil (stub).
-func (m *MockStore) ListExpiredObjects(_ context.Context, _ string, _ time.Time, _ int) ([]core.ObjectLocation, error) {
-	return nil, nil
-}
-
-// WithAdvisoryLock executes the function directly without acquiring a lock.
+// WithAdvisoryLock executes fn directly without acquiring a real lock.
 func (m *MockStore) WithAdvisoryLock(_ context.Context, _ int64, fn func(ctx context.Context) error) (bool, error) {
 	return true, fn(context.Background())
-}
-
-// ImportObject returns true (stub).
-func (m *MockStore) ImportObject(_ context.Context, _, _ string, _ int64) (bool, error) {
-	return true, nil
-}
-
-func (m *MockStore) BackendObjectStats(_ context.Context, _ string) (int64, int64, error) {
-	return 0, 0, nil
-}
-
-func (m *MockStore) DeleteBackendData(_ context.Context, _ string) error {
-	return nil
-}
-
-// DeleteObjectLocation removes a single object location (stub).
-func (m *MockStore) DeleteObjectLocation(_ context.Context, _, _ string) error {
-	return nil
-}
-
-// GetOverReplicatedObjects returns nil (stub).
-func (m *MockStore) GetOverReplicatedObjects(_ context.Context, _, _ int) ([]core.ObjectLocation, error) {
-	return nil, nil
-}
-
-// CountOverReplicatedObjects returns zero (stub).
-func (m *MockStore) CountOverReplicatedObjects(_ context.Context, _ int) (int64, error) {
-	return 0, nil
-}
-
-// RemoveExcessCopy returns nil (stub).
-func (m *MockStore) RemoveExcessCopy(_ context.Context, _, _ string, _ int64) error {
-	return nil
-}
-
-// GetRandomHashedObjects returns nil (stub).
-func (m *MockStore) GetRandomHashedObjects(_ context.Context, _ int) ([]core.ObjectLocation, error) {
-	return nil, nil
-}
-
-// GetObjectsWithoutHash returns nil (stub).
-func (m *MockStore) GetObjectsWithoutHash(_ context.Context, _, _ int) ([]core.ObjectLocation, error) {
-	return nil, nil
-}
-
-// UpdateContentHash returns nil (stub).
-func (m *MockStore) UpdateContentHash(_ context.Context, _, _, _ string) error {
-	return nil
-}
-
-// -------------------------------------------------------------------------
-// PENDING OBJECTS - PutObject Intent Tracking
-// -------------------------------------------------------------------------
-
-// InsertPending returns nil (stub).
-func (m *MockStore) InsertPending(_ context.Context, _ *core.PendingObject) error {
-	return nil
-}
-
-// DeletePending returns nil (stub).
-func (m *MockStore) DeletePending(_ context.Context, _ string) error {
-	return nil
-}
-
-// GetStalePending returns an empty slice (stub).
-func (m *MockStore) GetStalePending(_ context.Context, _ time.Time, _ int) ([]core.PendingObject, error) {
-	return nil, nil
-}
-
-// PromotePending returns the AlreadyResolved sentinel (stub: nothing to do).
-func (m *MockStore) PromotePending(_ context.Context, _ *core.PendingObject) (core.PendingPromoteResult, []core.DeletedCopy, error) {
-	return core.PendingPromoteAlreadyResolved, nil, nil
-}
-
-// PendingDepth returns 0 (stub).
-func (m *MockStore) PendingDepth(_ context.Context) (int64, error) {
-	return 0, nil
-}
-
-// DeletePendingByBackend returns nil (stub).
-func (m *MockStore) DeletePendingByBackend(_ context.Context, _ string) error {
-	return nil
 }

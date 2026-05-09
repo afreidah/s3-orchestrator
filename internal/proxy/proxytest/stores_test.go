@@ -44,7 +44,7 @@ func newManager(t *testing.T, mock *testutil.MockStore) *proxy.BackendManager {
 // package tests depend on.
 func TestStoresFromMock(t *testing.T) {
 	t.Parallel()
-	mock := &testutil.MockStore{}
+	mock := testutil.NewMockStore(t)
 	s := proxytest.StoresFromMock(mock)
 	if s.Object == nil || s.Quota == nil || s.Multipart == nil ||
 		s.Replication == nil || s.Cleanup == nil || s.Pending == nil ||
@@ -59,7 +59,7 @@ func TestStoresFromMock(t *testing.T) {
 // asserts each public field is populated.
 func TestAttachWorkers(t *testing.T) {
 	t.Parallel()
-	mock := &testutil.MockStore{}
+	mock := testutil.NewMockStore(t)
 	mgr := newManager(t, mock)
 
 	proxytest.AttachWorkers(mgr, mock)
@@ -92,7 +92,7 @@ func TestAttachWorkers(t *testing.T) {
 // single mock value.
 func TestAttachWorkersWithStores(t *testing.T) {
 	t.Parallel()
-	mock := &testutil.MockStore{}
+	mock := testutil.NewMockStore(t)
 	mgr := newManager(t, mock)
 
 	stores := proxytest.StoresFromMock(mock)
@@ -111,7 +111,7 @@ func TestAttachWorkersWithStores(t *testing.T) {
 // behavior).
 func TestAttachWorkersWithStores_NilPendingSkipsReaper(t *testing.T) {
 	t.Parallel()
-	mock := &testutil.MockStore{}
+	mock := testutil.NewMockStore(t)
 	mgr := newManager(t, mock)
 
 	stores := proxytest.StoresFromMock(mock)

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/samber/do/v2"
+	"go.uber.org/mock/gomock"
 
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -31,6 +32,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
@@ -263,7 +265,7 @@ func TestNarrowRoleProviders_HappyPath(t *testing.T) {
 	// Seed the concrete store directly  -  we can't open a real Postgres
 	// or SQLite store in a unit test, so fake the shape the narrow
 	// providers resolve.
-	do.ProvideValue[concreteStore](inj, fakeConcreteStore{})
+	do.ProvideValue[concreteStore](inj, storetest.NewMockMetadataStore(gomock.NewController(t)))
 	do.Provide(inj, ProvideDatabaseBreaker)
 
 	cases := []struct {
@@ -301,7 +303,7 @@ func TestResolveProxyStores_HappyPath(t *testing.T) {
 	t.Parallel()
 	inj := do.New()
 	do.ProvideValue(inj, &config.Config{CircuitBreaker: config.CircuitBreakerConfig{FailureThreshold: 3, OpenTimeout: time.Second}})
-	do.ProvideValue[concreteStore](inj, fakeConcreteStore{})
+	do.ProvideValue[concreteStore](inj, storetest.NewMockMetadataStore(gomock.NewController(t)))
 	do.Provide(inj, ProvideDatabaseBreaker)
 	do.Provide(inj, ProvideObjectStore)
 	do.Provide(inj, ProvideQuotaStore)
@@ -331,7 +333,7 @@ func TestProvideMetricsDeps_HappyPath(t *testing.T) {
 	t.Parallel()
 	inj := do.New()
 	do.ProvideValue(inj, &config.Config{CircuitBreaker: config.CircuitBreakerConfig{FailureThreshold: 3, OpenTimeout: time.Second}})
-	do.ProvideValue[concreteStore](inj, fakeConcreteStore{})
+	do.ProvideValue[concreteStore](inj, storetest.NewMockMetadataStore(gomock.NewController(t)))
 	do.Provide(inj, ProvideDatabaseBreaker)
 	do.Provide(inj, ProvideDashboardStore)
 	do.Provide(inj, ProvideReplicationStore)

@@ -15,22 +15,58 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
+
+	"go.uber.org/mock/gomock"
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
-// -------------------------------------------------------------------------
-// worker.CleanupBackoff
-// -------------------------------------------------------------------------
+// cleanupCalls records the calls a test wants to assert against. Each
+// migrated test wires the relevant DoAndReturn closures to populate the
+// slices on this struct, then reads them after exercising the system
+// under test.
+type cleanupCalls struct {
+	mu         sync.Mutex
+	enqueue    []core.CleanupItem
+	complete   []int64
+	retry      []retryRecord
+	dlq        []dlqRecord
+	pending []core.PendingObject
+}
 
-// TestCleanupBackoff verifies the cleanup backoff contract.
-// Asserts that worker.CleanupBackoff() = , want.
+type retryRecord struct {
+	id        int64
+	backoff   time.Duration
+	lastError string
+}
+
+type dlqRecord struct {
+	id        int64
+	lastError string
+}
+
+// stubEnqueue captures EnqueueCleanup calls into c.enqueue and returns
+// the supplied error so tests can drive both happy and DB-outage paths.
+func stubEnqueue(c *cleanupCalls, err error) func(context.Context, string, string, string, int64) error {
+	return func(_ context.Context, backend, key, reason string, size int64) error {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.enqueue = append(c.enqueue, core.CleanupItem{
+			BackendName: backend, ObjectKey: key, Reason: reason, SizeBytes: size,
+		})
+		return err
+	}
+}
+
+// TestCleanupBackoff verifies the exponential backoff schedule.
 func TestCleanupBackoff(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -48,8 +84,8 @@ func TestCleanupBackoff(t *testing.T) {
 		{8, 256 * time.Minute},
 		{9, 512 * time.Minute},
 		{10, 1024 * time.Minute},
-		{11, 24 * time.Hour}, // capped at 24h
-		{15, 24 * time.Hour}, // still capped
+		{11, 24 * time.Hour},
+		{15, 24 * time.Hour},
 	}
 	for _, tt := range tests {
 		got := worker.CleanupBackoff(tt.attempts)
@@ -59,199 +95,244 @@ func TestCleanupBackoff(t *testing.T) {
 	}
 }
 
-// -------------------------------------------------------------------------
-// enqueueCleanup
-// -------------------------------------------------------------------------
-
-// TestEnqueueCleanup_Success verifies the enqueue cleanup success contract.
-// Asserts that expected 1 enqueue call, got.
+// TestEnqueueCleanup_Success captures a single enqueue call.
 func TestEnqueueCleanup_Success(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{}
+	calls := &cleanupCalls{}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubEnqueue(calls, nil)).
+		AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	mgr.enqueueCleanup(context.Background(), "b1", "orphan.txt", "orphan_put", 1024)
 
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	if len(store.enqueueCleanupCalls) != 1 {
-		t.Fatalf("expected 1 enqueue call, got %d", len(store.enqueueCleanupCalls))
+	if len(calls.enqueue) != 1 {
+		t.Fatalf("expected 1 enqueue call, got %d", len(calls.enqueue))
 	}
-	c := store.enqueueCleanupCalls[0]
-	if c.backendName != "b1" || c.objectKey != "orphan.txt" || c.reason != "orphan_put" {
+	c := calls.enqueue[0]
+	if c.BackendName != "b1" || c.ObjectKey != "orphan.txt" || c.Reason != "orphan_put" {
 		t.Errorf("unexpected call: %+v", c)
 	}
 }
 
-// TestEnqueueCleanup_DBError_LogsOnly verifies the enqueue cleanup dberror logs only contract.
-// Asserts that expected 1 enqueue call, got.
+// TestEnqueueCleanup_DBError_LogsOnly asserts the call is recorded even
+// when the store returns an error.
 func TestEnqueueCleanup_DBError_LogsOnly(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{enqueueCleanupErr: errors.New("db down")}
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	calls := &cleanupCalls{}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubEnqueue(calls, errors.New("db down"))).
+		AnyTimes()
+	storetest.Permissive(store)
 
-	// Should not panic
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 	mgr.enqueueCleanup(context.Background(), "b1", "orphan.txt", "orphan_put", 1024)
 
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	if len(store.enqueueCleanupCalls) != 1 {
-		t.Fatalf("expected 1 enqueue call, got %d", len(store.enqueueCleanupCalls))
+	if len(calls.enqueue) != 1 {
+		t.Fatalf("expected 1 enqueue call, got %d", len(calls.enqueue))
 	}
 }
 
-// -------------------------------------------------------------------------
-// ProcessCleanupQueue
-// -------------------------------------------------------------------------
+// stubProcessQueue wires the per-test DoAndReturn closures the cleanup
+// worker needs: a pending fetch, plus complete / retry / DLQ capture.
+func stubProcessQueue(t *testing.T, store *storetest.MockMetadataStore, calls *cleanupCalls, items []core.CleanupItem) {
+	t.Helper()
+	delivered := false
+	store.EXPECT().ClaimPendingCleanups(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ int, _ string, _ time.Time) ([]core.CleanupItem, error) {
+			if delivered {
+				return nil, nil
+			}
+			delivered = true
+			return items, nil
+		}).
+		AnyTimes()
+	store.EXPECT().GetPendingCleanups(gomock.Any(), gomock.Any()).
+		Return(items, nil).
+		AnyTimes()
+	store.EXPECT().CompleteCleanupItem(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, id int64) error {
+			calls.mu.Lock()
+			defer calls.mu.Unlock()
+			calls.complete = append(calls.complete, id)
+			return nil
+		}).
+		AnyTimes()
+	store.EXPECT().RetryCleanupItem(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, id int64, backoff time.Duration, lastError string) error {
+			calls.mu.Lock()
+			defer calls.mu.Unlock()
+			calls.retry = append(calls.retry, retryRecord{id: id, backoff: backoff, lastError: lastError})
+			return nil
+		}).
+		AnyTimes()
+	store.EXPECT().MoveCleanupToDLQ(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, id int64, lastError string) (bool, error) {
+			calls.mu.Lock()
+			defer calls.mu.Unlock()
+			calls.dlq = append(calls.dlq, dlqRecord{id: id, lastError: lastError})
+			return true, nil
+		}).
+		AnyTimes()
+}
 
-// TestProcessCleanupQueue_DeleteSuccess verifies the process cleanup queue delete success contract.
-// Asserts that expected processed=1, got.
+// TestProcessCleanupQueue_DeleteSuccess pins the success path.
 func TestProcessCleanupQueue_DeleteSuccess(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
-	// Pre-populate orphan on the backend
 	_, _ = backend.PutObject(context.Background(), "orphan.txt", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
-	store := &mockStore{
-		pendingCleanups: []core.CleanupItem{
-			{ID: 1, BackendName: "b1", ObjectKey: "orphan.txt", Reason: "orphan_put", Attempts: 0},
-		},
-	}
+	calls := &cleanupCalls{}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	stubProcessQueue(t, store, calls, []core.CleanupItem{
+		{ID: 1, BackendName: "b1", ObjectKey: "orphan.txt", Reason: "orphan_put", Attempts: 0},
+	})
+	storetest.Permissive(store)
+
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
 	processed, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
-
 	if processed != 1 {
 		t.Errorf("expected processed=1, got %d", processed)
 	}
 	if failed != 0 {
 		t.Errorf("expected failed=0, got %d", failed)
 	}
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	if len(store.completeCleanupCalls) != 1 || store.completeCleanupCalls[0] != 1 {
-		t.Errorf("expected CompleteCleanupItem(1), got %v", store.completeCleanupCalls)
+	if len(calls.complete) != 1 || calls.complete[0] != 1 {
+		t.Errorf("expected CompleteCleanupItem(1), got %v", calls.complete)
 	}
 	if backend.hasObject("orphan.txt") {
 		t.Error("expected orphan to be deleted from backend")
 	}
-
-	// Verify usage tracking: 1 API call for the delete
 	if got := mgr.usage.Backend().Load("b1", counter.FieldAPIRequests); got != 1 {
 		t.Errorf("apiRequests = %d, want 1 (cleanup delete)", got)
 	}
 }
 
-// TestProcessCleanupQueue_DeleteFails_SchedulesRetry verifies the process cleanup queue delete fails schedules retry contract.
-// Asserts that expected processed=0, got.
+// TestProcessCleanupQueue_DeleteFails_SchedulesRetry pins the retry-on-
+// transient-failure path.
 func TestProcessCleanupQueue_DeleteFails_SchedulesRetry(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
 	backend.delErr = errors.New("backend timeout")
 
-	store := &mockStore{
-		pendingCleanups: []core.CleanupItem{
-			{ID: 2, BackendName: "b1", ObjectKey: "stuck.txt", Reason: "delete_failed", Attempts: 3},
-		},
-	}
+	calls := &cleanupCalls{}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	stubProcessQueue(t, store, calls, []core.CleanupItem{
+		{ID: 2, BackendName: "b1", ObjectKey: "stuck.txt", Reason: "delete_failed", Attempts: 3},
+	})
+	storetest.Permissive(store)
+
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
 	processed, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
-
 	if processed != 0 {
 		t.Errorf("expected processed=0, got %d", processed)
 	}
 	if failed != 1 {
 		t.Errorf("expected failed=1, got %d", failed)
 	}
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	if len(store.retryCleanupCalls) != 1 {
-		t.Fatalf("expected 1 retry call, got %d", len(store.retryCleanupCalls))
+	if len(calls.retry) != 1 {
+		t.Fatalf("expected 1 retry call, got %d", len(calls.retry))
 	}
-	rc := store.retryCleanupCalls[0]
+	rc := calls.retry[0]
 	if rc.id != 2 {
 		t.Errorf("expected retry for id=2, got %d", rc.id)
 	}
-	expectedBackoff := worker.CleanupBackoff(3) // 8 minutes
-	if rc.backoff != expectedBackoff {
-		t.Errorf("expected backoff=%v, got %v", expectedBackoff, rc.backoff)
+	if rc.backoff != worker.CleanupBackoff(3) {
+		t.Errorf("expected backoff=%v, got %v", worker.CleanupBackoff(3), rc.backoff)
 	}
 	if rc.lastError != "backend timeout" {
 		t.Errorf("expected lastError='backend timeout', got %q", rc.lastError)
 	}
 }
 
-// TestProcessCleanupQueue_BackendNotFound_RemovesItem verifies the process cleanup queue backend not found removes item contract.
-// Asserts that expected processed=1, got.
+// TestProcessCleanupQueue_BackendNotFound_RemovesItem asserts a
+// gone-backend item completes immediately.
 func TestProcessCleanupQueue_BackendNotFound_RemovesItem(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{
-		pendingCleanups: []core.CleanupItem{
-			{ID: 3, BackendName: "gone-backend", ObjectKey: "orphan.txt", Reason: "orphan_put", Attempts: 0},
-		},
-	}
+	calls := &cleanupCalls{}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	stubProcessQueue(t, store, calls, []core.CleanupItem{
+		{ID: 3, BackendName: "gone-backend", ObjectKey: "orphan.txt", Reason: "orphan_put", Attempts: 0},
+	})
+	storetest.Permissive(store)
+
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	processed, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
-
 	if processed != 1 {
 		t.Errorf("expected processed=1, got %d", processed)
 	}
 	if failed != 0 {
 		t.Errorf("expected failed=0, got %d", failed)
 	}
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	if len(store.completeCleanupCalls) != 1 || store.completeCleanupCalls[0] != 3 {
-		t.Errorf("expected CompleteCleanupItem(3), got %v", store.completeCleanupCalls)
+	if len(calls.complete) != 1 || calls.complete[0] != 3 {
+		t.Errorf("expected CompleteCleanupItem(3), got %v", calls.complete)
 	}
 }
 
-// TestProcessCleanupQueue_EmptyQueue verifies the process cleanup queue empty queue contract.
-// Asserts that expected 0/0, got /.
+// TestProcessCleanupQueue_EmptyQueue covers the empty-queue early return.
 func TestProcessCleanupQueue_EmptyQueue(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{}
+	store := newPermissiveMock(t)
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	processed, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
-
 	if processed != 0 || failed != 0 {
 		t.Errorf("expected 0/0, got %d/%d", processed, failed)
 	}
 }
 
-// TestProcessCleanupQueue_FetchError verifies the process cleanup queue fetch error contract.
-// Asserts that expected 0/0 on fetch error, got /.
+// TestProcessCleanupQueue_FetchError surfaces a queue-fetch failure.
 func TestProcessCleanupQueue_FetchError(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{getPendingErr: errors.New("db error")}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().ClaimPendingCleanups(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil, errors.New("db error")).
+		AnyTimes()
+	store.EXPECT().GetPendingCleanups(gomock.Any(), gomock.Any()).
+		Return(nil, errors.New("db error")).
+		AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	processed, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
-
 	if processed != 0 || failed != 0 {
 		t.Errorf("expected 0/0 on fetch error, got %d/%d", processed, failed)
 	}
 }
 
-// TestProcessCleanupQueue_MaxAttemptsReached_MovesToDLQ verifies the process cleanup queue max attempts reached moves to dlq contract.
-// Asserts that expected processed=0, got.
+// TestProcessCleanupQueue_MaxAttemptsReached_MovesToDLQ asserts an
+// exhausted item moves to cleanup_dlq instead of going on the retry
+// path.
 func TestProcessCleanupQueue_MaxAttemptsReached_MovesToDLQ(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
 	backend.delErr = errors.New("backend timeout")
 
-	store := &mockStore{
-		pendingCleanups: []core.CleanupItem{
-			{ID: 5, BackendName: "b1", ObjectKey: "stuck.txt", Reason: "delete_failed", Attempts: 9},
-		},
-	}
+	calls := &cleanupCalls{}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	stubProcessQueue(t, store, calls, []core.CleanupItem{
+		{ID: 5, BackendName: "b1", ObjectKey: "stuck.txt", Reason: "delete_failed", Attempts: 9},
+	})
+	storetest.Permissive(store)
+
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
 	processed, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
-
 	if processed != 0 {
 		t.Errorf("expected processed=0, got %d", processed)
 	}
@@ -259,44 +340,49 @@ func TestProcessCleanupQueue_MaxAttemptsReached_MovesToDLQ(t *testing.T) {
 		t.Errorf("expected failed=1, got %d", failed)
 	}
 
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	// Exhausted items graduate to cleanup_dlq via MoveCleanupToDLQ;
-	// orphan_bytes stays untouched so quota math reflects the real
-	// state of the backend (the object is still on disk).
-	if len(store.movedToDLQ) != 1 {
-		t.Fatalf("expected 1 MoveCleanupToDLQ call, got %d", len(store.movedToDLQ))
+	if len(calls.dlq) != 1 {
+		t.Fatalf("expected 1 MoveCleanupToDLQ call, got %d", len(calls.dlq))
 	}
-	if store.movedToDLQ[0].id != 5 {
-		t.Errorf("expected MoveCleanupToDLQ(5), got id=%d", store.movedToDLQ[0].id)
+	if calls.dlq[0].id != 5 {
+		t.Errorf("expected MoveCleanupToDLQ(5), got id=%d", calls.dlq[0].id)
 	}
-	if store.movedToDLQ[0].lastError != "backend timeout" {
-		t.Errorf("expected lastError=%q, got %q", "backend timeout", store.movedToDLQ[0].lastError)
+	if calls.dlq[0].lastError != "backend timeout" {
+		t.Errorf("expected lastError=%q, got %q", "backend timeout", calls.dlq[0].lastError)
 	}
-	if len(store.retryCleanupCalls) != 0 {
-		t.Errorf("expected 0 RetryCleanupItem calls (exhausted now moves), got %d", len(store.retryCleanupCalls))
+	if len(calls.retry) != 0 {
+		t.Errorf("expected 0 RetryCleanupItem calls (exhausted now moves), got %d", len(calls.retry))
 	}
-	if len(store.completeCleanupCalls) != 0 {
-		t.Errorf("expected 0 CompleteCleanupItem calls, got %v", store.completeCleanupCalls)
+	if len(calls.complete) != 0 {
+		t.Errorf("expected 0 CompleteCleanupItem calls, got %v", calls.complete)
 	}
 }
 
-// TestProcessCleanupQueue_CompleteItemError verifies the process cleanup queue complete item error contract.
-// Asserts that expected processed=1 (delete succeeded), got.
+// TestProcessCleanupQueue_CompleteItemError pins that a CompleteCleanupItem
+// failure is logged-only.
 func TestProcessCleanupQueue_CompleteItemError(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
 	_, _ = backend.PutObject(context.Background(), "orphan.txt", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
-	store := &mockStore{
-		pendingCleanups: []core.CleanupItem{
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().ClaimPendingCleanups(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return([]core.CleanupItem{
 			{ID: 6, BackendName: "b1", ObjectKey: "orphan.txt", Reason: "orphan_put", Attempts: 0},
-		},
-		completeCleanupErr: errors.New("db error"),
-	}
+		}, nil).
+		AnyTimes()
+	store.EXPECT().GetPendingCleanups(gomock.Any(), gomock.Any()).
+		Return([]core.CleanupItem{
+			{ID: 6, BackendName: "b1", ObjectKey: "orphan.txt", Reason: "orphan_put", Attempts: 0},
+		}, nil).
+		AnyTimes()
+	store.EXPECT().CompleteCleanupItem(gomock.Any(), gomock.Any()).
+		Return(errors.New("db error")).
+		AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	// Should not panic despite CompleteCleanupItem error
 	processed, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
 	if processed != 1 {
 		t.Errorf("expected processed=1 (delete succeeded), got %d", processed)
@@ -306,22 +392,32 @@ func TestProcessCleanupQueue_CompleteItemError(t *testing.T) {
 	}
 }
 
-// TestProcessCleanupQueue_RetryItemError verifies the process cleanup queue retry item error contract.
-// Asserts that expected processed=0, got.
+// TestProcessCleanupQueue_RetryItemError pins that a RetryCleanupItem
+// failure is logged-only.
 func TestProcessCleanupQueue_RetryItemError(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
 	backend.delErr = errors.New("backend down")
 
-	store := &mockStore{
-		pendingCleanups: []core.CleanupItem{
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().ClaimPendingCleanups(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return([]core.CleanupItem{
 			{ID: 7, BackendName: "b1", ObjectKey: "stuck.txt", Reason: "delete_failed", Attempts: 1},
-		},
-		retryCleanupErr: errors.New("db error on retry"),
-	}
+		}, nil).
+		AnyTimes()
+	store.EXPECT().GetPendingCleanups(gomock.Any(), gomock.Any()).
+		Return([]core.CleanupItem{
+			{ID: 7, BackendName: "b1", ObjectKey: "stuck.txt", Reason: "delete_failed", Attempts: 1},
+		}, nil).
+		AnyTimes()
+	store.EXPECT().RetryCleanupItem(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(errors.New("db error on retry")).
+		AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	// Should not panic despite RetryCleanupItem error
 	processed, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
 	if processed != 0 {
 		t.Errorf("expected processed=0, got %d", processed)
@@ -331,35 +427,48 @@ func TestProcessCleanupQueue_RetryItemError(t *testing.T) {
 	}
 }
 
-// TestProcessCleanupQueue_QueueDepthError verifies the process cleanup queue queue depth error contract.
-// Asserts that expected 0/0, got /.
+// TestProcessCleanupQueue_QueueDepthError ignores a CleanupQueueDepth
+// failure.
 func TestProcessCleanupQueue_QueueDepthError(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{
-		cleanupQueueDepthErr: errors.New("db error"),
-	}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().CleanupQueueDepth(gomock.Any()).
+		Return(int64(0), errors.New("db error")).
+		AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	// Should not panic  -  depth error is silently ignored
 	processed, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
 	if processed != 0 || failed != 0 {
 		t.Errorf("expected 0/0, got %d/%d", processed, failed)
 	}
 }
 
-// TestProcessCleanupQueue_BackendNotFound_CompleteItemError verifies the process cleanup queue backend not found complete item error contract.
-// Asserts that expected processed=1, got.
+// TestProcessCleanupQueue_BackendNotFound_CompleteItemError logs the
+// completion error without surfacing it.
 func TestProcessCleanupQueue_BackendNotFound_CompleteItemError(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{
-		pendingCleanups: []core.CleanupItem{
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().ClaimPendingCleanups(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return([]core.CleanupItem{
 			{ID: 8, BackendName: "gone-backend", ObjectKey: "orphan.txt", Reason: "orphan_put", Attempts: 0},
-		},
-		completeCleanupErr: errors.New("db error"),
-	}
+		}, nil).
+		AnyTimes()
+	store.EXPECT().GetPendingCleanups(gomock.Any(), gomock.Any()).
+		Return([]core.CleanupItem{
+			{ID: 8, BackendName: "gone-backend", ObjectKey: "orphan.txt", Reason: "orphan_put", Attempts: 0},
+		}, nil).
+		AnyTimes()
+	store.EXPECT().CompleteCleanupItem(gomock.Any(), gomock.Any()).
+		Return(errors.New("db error")).
+		AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	// Should not panic  -  completion error is logged only
 	processed, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
 	if processed != 1 {
 		t.Errorf("expected processed=1, got %d", processed)
@@ -369,14 +478,13 @@ func TestProcessCleanupQueue_BackendNotFound_CompleteItemError(t *testing.T) {
 	}
 }
 
-// TestProcessCleanupQueue_Concurrent verifies the process cleanup queue concurrent contract.
-// Asserts that processed = , want 10.
+// TestProcessCleanupQueue_Concurrent confirms the worker fans out items
+// across its concurrency budget.
 func TestProcessCleanupQueue_Concurrent(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
 	backend.delDelay = 50 * time.Millisecond
 
-	// Create 10 cleanup items, each with a pre-populated object
 	var items []core.CleanupItem
 	for i := range 10 {
 		key := fmt.Sprintf("orphan-%d", i)
@@ -386,7 +494,12 @@ func TestProcessCleanupQueue_Concurrent(t *testing.T) {
 		})
 	}
 
-	store := &mockStore{pendingCleanups: items}
+	calls := &cleanupCalls{}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	stubProcessQueue(t, store, calls, items)
+	storetest.Permissive(store)
+
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
 	start := time.Now()
@@ -399,64 +512,66 @@ func TestProcessCleanupQueue_Concurrent(t *testing.T) {
 	if failed != 0 {
 		t.Errorf("failed = %d, want 0", failed)
 	}
-
-	// 10 items at 50ms each with concurrency 10 should take ~50ms (1 batch),
-	// not 500ms (sequential). Allow generous margin for CI.
 	if elapsed > 200*time.Millisecond {
 		t.Errorf("elapsed = %v, expected < 200ms with concurrency 10", elapsed)
 	}
 }
 
-// -------------------------------------------------------------------------
-// Enqueue wiring at failure sites
-// -------------------------------------------------------------------------
-
-// TestDeleteObject_BackendDeleteFails_EnqueuesCleanup verifies the delete object backend delete fails enqueues cleanup contract.
-// Asserts that DeleteObject should succeed even if backend delete fails:.
+// TestDeleteObject_BackendDeleteFails_EnqueuesCleanup pins that a
+// backend-delete failure during DeleteObject enqueues a cleanup row but
+// returns nil to the caller.
 func TestDeleteObject_BackendDeleteFails_EnqueuesCleanup(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
-	store := &mockStore{
-		deleteObjectResp: []core.DeletedCopy{{BackendName: "b1", SizeBytes: 100}},
-	}
+
+	calls := &cleanupCalls{}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).
+		Return([]core.DeletedCopy{{BackendName: "b1", SizeBytes: 100}}, nil).
+		AnyTimes()
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubEnqueue(calls, nil)).
+		AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	// Set delete error after the store has returned the copies
 	backend.mu.Lock()
 	backend.delErr = errors.New("backend timeout")
 	backend.mu.Unlock()
 
-	err := mgr.ObjectManager.DeleteObject(context.Background(), "mykey")
-	if err != nil {
+	if err := mgr.ObjectManager.DeleteObject(context.Background(), "mykey"); err != nil {
 		t.Fatalf("DeleteObject should succeed even if backend delete fails: %v", err)
 	}
 
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	if len(store.enqueueCleanupCalls) != 1 {
-		t.Fatalf("expected 1 enqueue call, got %d", len(store.enqueueCleanupCalls))
+	if len(calls.enqueue) != 1 {
+		t.Fatalf("expected 1 enqueue call, got %d", len(calls.enqueue))
 	}
-	c := store.enqueueCleanupCalls[0]
-	if c.backendName != "b1" || c.objectKey != "mykey" || c.reason != "delete_failed" {
+	c := calls.enqueue[0]
+	if c.BackendName != "b1" || c.ObjectKey != "mykey" || c.Reason != "delete_failed" {
 		t.Errorf("unexpected enqueue call: %+v", c)
 	}
 }
 
-// TestProcessCleanupQueue_AdmissionBlocked verifies the process cleanup queue admission blocked contract.
-// Asserts that expected processed=0 when admission blocked, got.
+// TestProcessCleanupQueue_AdmissionBlocked confirms that a saturated
+// admission semaphore stops the worker from issuing deletes.
 func TestProcessCleanupQueue_AdmissionBlocked(t *testing.T) {
 	t.Parallel()
 	sem := make(chan struct{}, 1)
-	sem <- struct{}{} // fill
+	sem <- struct{}{} // saturate
 
 	backend := newMockBackend()
 	backend.objects["orphan.txt"] = mockObject{data: []byte("data")}
 
-	store := &mockStore{
-		pendingCleanups: []core.CleanupItem{
-			{ID: 1, BackendName: "b1", ObjectKey: "orphan.txt", Reason: "orphan_put", Attempts: 0},
-		},
-	}
+	calls := &cleanupCalls{}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	stubProcessQueue(t, store, calls, []core.CleanupItem{
+		{ID: 1, BackendName: "b1", ObjectKey: "orphan.txt", Reason: "orphan_put", Attempts: 0},
+	})
+	storetest.Permissive(store)
+
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]s3be.ObjectBackend{"b1": backend},
 		Stores:          testStoresFromMock(store),
@@ -480,40 +595,53 @@ func TestProcessCleanupQueue_AdmissionBlocked(t *testing.T) {
 	if failed != 0 {
 		t.Errorf("expected failed=0 when admission blocked (item skipped), got %d", failed)
 	}
-
-	// Object should NOT have been deleted
 	if !backend.hasObject("orphan.txt") {
 		t.Error("object should not be deleted when admission is blocked")
 	}
 }
 
-// TestPutObject_RecordFails_DoesNotEnqueueOrphanCleanup verifies that the
-// pending-row pattern bypasses the cleanup queue: the recovery breadcrumb
-// is the pending intent itself, not a queued orphan delete, so a record
-// failure produces zero cleanup_queue entries.
+// TestPutObject_RecordFails_DoesNotEnqueueOrphanCleanup pins the
+// pending-row pattern: a record failure produces no cleanup_queue
+// rows, only a pending intent.
 func TestPutObject_RecordFails_DoesNotEnqueueOrphanCleanup(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
-	store := &mockStore{
-		getBackendResp:  "b1",
-		recordObjectErr: errors.New("db error"),
-	}
+
+	calls := &cleanupCalls{}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return("b1", nil).
+		AnyTimes()
+	store.EXPECT().RecordObject(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil, errors.New("db error")).
+		AnyTimes()
+	store.EXPECT().RecordObjectAndClearPending(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil, errors.New("db error")).
+		AnyTimes()
+	store.EXPECT().InsertPending(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, p *core.PendingObject) error {
+			calls.mu.Lock()
+			defer calls.mu.Unlock()
+			calls.pending = append(calls.pending, *p)
+			return nil
+		}).
+		AnyTimes()
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubEnqueue(calls, nil)).
+		AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	_, err := mgr.ObjectManager.PutObject(context.Background(), "mykey", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
-	if err == nil {
+	if _, err := mgr.ObjectManager.PutObject(context.Background(), "mykey", bytes.NewReader([]byte("data")), 4, "text/plain", nil); err == nil {
 		t.Fatal("expected error from PutObject")
 	}
 
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	// Under the pending-row pattern the cleanup queue is no longer used as
-	// a fallback for record failures: the pending intent itself is the
-	// recovery breadcrumb, and the reaper resolves it on a later tick.
-	if len(store.enqueueCleanupCalls) != 0 {
-		t.Fatalf("expected 0 enqueue calls (pending pattern handles recovery), got %d", len(store.enqueueCleanupCalls))
+	if len(calls.enqueue) != 0 {
+		t.Fatalf("expected 0 enqueue calls (pending pattern handles recovery), got %d", len(calls.enqueue))
 	}
-	if len(store.insertPendingCalls) != 1 {
-		t.Fatalf("expected 1 InsertPending call, got %d", len(store.insertPendingCalls))
+	if len(calls.pending) != 1 {
+		t.Fatalf("expected 1 InsertPending call, got %d", len(calls.pending))
 	}
 }

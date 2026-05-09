@@ -41,7 +41,7 @@ import (
 // behaviour rather than the happy path.
 func newTestHandlerWithManager(t *testing.T) *Handler {
 	t.Helper()
-	mock := &testutil.MockStore{}
+	mock := testutil.NewMockStore(t)
 	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{
 		FailureThreshold: 3,
 	})
@@ -131,9 +131,8 @@ func TestHandleCleanupQueue_ReturnsDepth(t *testing.T) {
 // is pre-seeded so GetAllObjectLocations returns a non-empty slice.
 func TestHandleObjectLocations_Happy(t *testing.T) {
 	t.Parallel()
-	mock := &testutil.MockStore{
-		GetAllLocationsResp: []core.ObjectLocation{{ObjectKey: "foo", BackendName: "b1"}},
-	}
+	mock := testutil.NewMockStore(t)
+	mock.GetAllLocationsResp = []core.ObjectLocation{{ObjectKey: "foo", BackendName: "b1"}}
 	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3})
 	var lv slog.LevelVar
 	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), dbCB: cb, objects: mock, cleanup: mock, token: "test-token", logLevel: &lv}
@@ -331,7 +330,7 @@ func newBackfillHandlerFixture(t *testing.T, mock *testutil.MockStore) *Handler 
 // handler must return 200 with {"status":"ok","migrated":0}.
 func TestHandleMultipartDEKBackfill_OK(t *testing.T) {
 	t.Parallel()
-	h := newBackfillHandlerFixture(t, &testutil.MockStore{})
+	h := newBackfillHandlerFixture(t, testutil.NewMockStore(t))
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -356,7 +355,8 @@ func TestHandleMultipartDEKBackfill_OK(t *testing.T) {
 // count from before the failure.
 func TestHandleMultipartDEKBackfill_RunFails(t *testing.T) {
 	t.Parallel()
-	mock := &testutil.MockStore{LegacyMultipartErr: errors.New("legacy list query failed")}
+	mock := testutil.NewMockStore(t)
+	mock.LegacyMultipartErr = errors.New("legacy list query failed")
 	h := newBackfillHandlerFixture(t, mock)
 	mux := http.NewServeMux()
 	h.Register(mux)
@@ -488,7 +488,9 @@ func TestHandleCleanupQueue_DepthError(t *testing.T) {
 	// Swap the cleanup store for one whose depth call fails. The
 	// handler reads h.cleanup directly, so assigning a fresh mock
 	// is sufficient.
-	h.cleanup = &testutil.MockStore{CleanupQueueDepthErr: errors.New("db down")}
+	cleanupMock := testutil.NewMockStore(t)
+	cleanupMock.CleanupQueueDepthErr = errors.New("db down")
+	h.cleanup = cleanupMock
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -505,10 +507,10 @@ func TestHandleCleanupQueue_DepthError(t *testing.T) {
 func TestHandleCleanupQueue_PendingError(t *testing.T) {
 	t.Parallel()
 	h := newTestHandlerWithManager(t)
-	h.cleanup = &testutil.MockStore{
-		CleanupQueueDepthResp: 5,
-		PendingCleanupsErr:    errors.New("query failed"),
-	}
+	cleanupMock := testutil.NewMockStore(t)
+	cleanupMock.CleanupQueueDepthResp = 5
+	cleanupMock.PendingCleanupsErr = errors.New("query failed")
+	h.cleanup = cleanupMock
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -635,7 +637,8 @@ func TestHandleStatus_DashboardError(t *testing.T) {
 // the object store fails to fetch object locations.
 func TestHandleObjectLocations_StoreError(t *testing.T) {
 	t.Parallel()
-	mock := &testutil.MockStore{GetAllLocationsErr: errors.New("query failed")}
+	mock := testutil.NewMockStore(t)
+	mock.GetAllLocationsErr = errors.New("query failed")
 	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3})
 	var lv slog.LevelVar
 	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), dbCB: cb, objects: mock, cleanup: mock, token: "test-token", logLevel: &lv}

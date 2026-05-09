@@ -14,21 +14,57 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"sync"
 	"testing"
 	"time"
+
+	"go.uber.org/mock/gomock"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
-// --- Test helpers ---
+// flushDeltaCall records one FlushUsageDeltas invocation for assertion.
+type flushDeltaCall struct {
+	backendName  string
+	period       string
+	apiRequests  int64
+	egressBytes  int64
+	ingressBytes int64
+}
+
+// flushTracker captures every FlushUsageDeltas call into a slice and
+// returns the configured error from the underlying store stub. Used by
+// flush-path tests that want to assert what the system pushed to the
+// metadata store.
+type flushTracker struct {
+	mu    sync.Mutex
+	calls []flushDeltaCall
+	err   error
+}
+
+// stubFlushUsage returns a DoAndReturn that records each call into ft.
+func stubFlushUsage(ft *flushTracker) func(context.Context, string, string, int64, int64, int64) error {
+	return func(_ context.Context, backendName, period string, apiRequests, egressBytes, ingressBytes int64) error {
+		ft.mu.Lock()
+		defer ft.mu.Unlock()
+		ft.calls = append(ft.calls, flushDeltaCall{
+			backendName:  backendName,
+			period:       period,
+			apiRequests:  apiRequests,
+			egressBytes:  egressBytes,
+			ingressBytes: ingressBytes,
+		})
+		return ft.err
+	}
+}
 
 // newUsageManager creates a BackendManager with the given backend names and a
-// configurable mock store. The mock's flushUsageErr field controls whether
-// FlushUsageDeltas returns an error.
-func newUsageManager(backendNames []string, store *mockStore) *BackendManager {
+// configurable mock store.
+func newUsageManager(backendNames []string, store managerRoles) *BackendManager {
 	backends := make(map[string]backend.ObjectBackend, len(backendNames))
 	for _, name := range backendNames {
 		backends[name] = newMockBackend()
@@ -44,7 +80,7 @@ func newUsageManager(backendNames []string, store *mockStore) *BackendManager {
 }
 
 // newUsageManagerWithLimits constructs a new usage manager with limits.
-func newUsageManagerWithLimits(backendNames []string, store *mockStore, limits map[string]core.UsageLimits) *BackendManager {
+func newUsageManagerWithLimits(backendNames []string, store managerRoles, limits map[string]core.UsageLimits) *BackendManager {
 	backends := make(map[string]backend.ObjectBackend, len(backendNames))
 	for _, name := range backendNames {
 		backends[name] = newMockBackend()
@@ -60,13 +96,28 @@ func newUsageManagerWithLimits(backendNames []string, store *mockStore, limits m
 	}))
 }
 
+// usageStoreWithFlush returns a permissive MockMetadataStore plus a
+// flushTracker the test can read after exercising the manager. The
+// FlushUsageDeltas expectation lives on the tracker so the err field is
+// thread-safely shared.
+func usageStoreWithFlush(t *testing.T) (*storetest.MockMetadataStore, *flushTracker) {
+	t.Helper()
+	ft := &flushTracker{}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().FlushUsageDeltas(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubFlushUsage(ft)).AnyTimes()
+	storetest.Permissive(store)
+	return store, ft
+}
+
 // --- recordUsage tests ---
 
-// TestRecordUsage_IncrementsCounters verifies the record usage increments counters contract.
-// Asserts that apiRequests = , want 3.
+// TestRecordUsage_IncrementsCounters verifies the record usage increments
+// counters contract.
 func TestRecordUsage_IncrementsCounters(t *testing.T) {
 	t.Parallel()
-	mgr := newUsageManager([]string{"b1"}, &mockStore{})
+	mgr := newUsageManager([]string{"b1"}, newPermissiveMock(t))
 
 	mgr.usage.Record("b1", 3, 1024, 2048)
 
@@ -82,11 +133,10 @@ func TestRecordUsage_IncrementsCounters(t *testing.T) {
 	}
 }
 
-// TestRecordUsage_Accumulates verifies the record usage accumulates contract.
-// Asserts that apiRequests = , want 3.
+// TestRecordUsage_Accumulates verifies multiple Record calls accumulate.
 func TestRecordUsage_Accumulates(t *testing.T) {
 	t.Parallel()
-	mgr := newUsageManager([]string{"b1"}, &mockStore{})
+	mgr := newUsageManager([]string{"b1"}, newPermissiveMock(t))
 
 	mgr.usage.Record("b1", 1, 100, 200)
 	mgr.usage.Record("b1", 2, 300, 400)
@@ -103,13 +153,11 @@ func TestRecordUsage_Accumulates(t *testing.T) {
 	}
 }
 
-// TestRecordUsage_UnknownBackendNoOp verifies the record usage unknown backend no op contract.
-// Asserts that apiRequests = , want 0.
+// TestRecordUsage_UnknownBackendNoOp verifies the unknown-backend no-op.
 func TestRecordUsage_UnknownBackendNoOp(t *testing.T) {
 	t.Parallel()
-	mgr := newUsageManager([]string{"b1"}, &mockStore{})
+	mgr := newUsageManager([]string{"b1"}, newPermissiveMock(t))
 
-	// Should not panic for unknown backend
 	mgr.usage.Record("unknown", 1, 1, 1)
 
 	if got := mgr.usage.Backend().Load("b1", counter.FieldAPIRequests); got != 0 {
@@ -117,11 +165,11 @@ func TestRecordUsage_UnknownBackendNoOp(t *testing.T) {
 	}
 }
 
-// TestRecordUsage_ZeroValuesSkipped verifies the record usage zero values skipped contract.
-// Asserts that apiRequests = , want 0.
+// TestRecordUsage_ZeroValuesSkipped verifies a zero-value record is a
+// no-op.
 func TestRecordUsage_ZeroValuesSkipped(t *testing.T) {
 	t.Parallel()
-	mgr := newUsageManager([]string{"b1"}, &mockStore{})
+	mgr := newUsageManager([]string{"b1"}, newPermissiveMock(t))
 
 	mgr.usage.Record("b1", 0, 0, 0)
 
@@ -130,11 +178,11 @@ func TestRecordUsage_ZeroValuesSkipped(t *testing.T) {
 	}
 }
 
-// TestRecordUsage_MultipleBackends verifies the record usage multiple backends contract.
-// Asserts that b1 apiRequests = , want 1.
+// TestRecordUsage_MultipleBackends verifies records to distinct backends
+// don't collide.
 func TestRecordUsage_MultipleBackends(t *testing.T) {
 	t.Parallel()
-	mgr := newUsageManager([]string{"b1", "b2"}, &mockStore{})
+	mgr := newUsageManager([]string{"b1", "b2"}, newPermissiveMock(t))
 
 	mgr.usage.Record("b1", 1, 100, 0)
 	mgr.usage.Record("b2", 2, 0, 200)
@@ -147,13 +195,11 @@ func TestRecordUsage_MultipleBackends(t *testing.T) {
 	}
 }
 
-// --- RecordUsage public method ---
-
-// TestRecordUsage_PublicMethod verifies the record usage public method contract.
-// Asserts that apiRequests = , want 5.
+// TestRecordUsage_PublicMethod verifies the public RecordUsage forwards
+// to the tracker.
 func TestRecordUsage_PublicMethod(t *testing.T) {
 	t.Parallel()
-	mgr := newUsageManager([]string{"b1"}, &mockStore{})
+	mgr := newUsageManager([]string{"b1"}, newPermissiveMock(t))
 
 	mgr.RecordUsage("b1", 5, 1024, 2048)
 
@@ -171,12 +217,12 @@ func TestRecordUsage_PublicMethod(t *testing.T) {
 
 // --- FlushUsage tests ---
 
-// TestFlushUsage_WritesToStore verifies the flush usage writes to store contract.
-// Asserts that FlushUsage() error =.
+// TestFlushUsage_WritesToStore confirms the manager writes the buffered
+// usage to the store and resets counters.
 func TestFlushUsage_WritesToStore(t *testing.T) {
 	t.Parallel()
-	ms := &mockStore{}
-	mgr := newUsageManager([]string{"b1"}, ms)
+	store, ft := usageStoreWithFlush(t)
+	mgr := newUsageManager([]string{"b1"}, store)
 
 	mgr.usage.Record("b1", 5, 1024, 2048)
 
@@ -184,71 +230,60 @@ func TestFlushUsage_WritesToStore(t *testing.T) {
 		t.Fatalf("FlushUsage() error = %v", err)
 	}
 
-	// Counters should be reset
 	c := mgr.usage.Backend().LoadAll("b1")
-	if c.APIRequests != 0 {
-		t.Errorf("apiRequests after flush = %d, want 0", c.APIRequests)
-	}
-	if c.EgressBytes != 0 {
-		t.Errorf("egressBytes after flush = %d, want 0", c.EgressBytes)
-	}
-	if c.IngressBytes != 0 {
-		t.Errorf("ingressBytes after flush = %d, want 0", c.IngressBytes)
+	if c.APIRequests != 0 || c.EgressBytes != 0 || c.IngressBytes != 0 {
+		t.Errorf("counters not reset after flush: %+v", c)
 	}
 
-	// Mock should have received the call
-	ms.mu.Lock()
-	defer ms.mu.Unlock()
-	if len(ms.flushUsageCalls) != 1 {
-		t.Fatalf("flushUsageCalls = %d, want 1", len(ms.flushUsageCalls))
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
+	if len(ft.calls) != 1 {
+		t.Fatalf("flushDeltaCalls = %d, want 1", len(ft.calls))
 	}
-	call := ms.flushUsageCalls[0]
+	call := ft.calls[0]
 	if call.backendName != "b1" || call.apiRequests != 5 || call.egressBytes != 1024 || call.ingressBytes != 2048 {
 		t.Errorf("flush call = %+v, want b1/5/1024/2048", call)
 	}
 }
 
-// TestFlushUsage_SkipsZeroDeltas verifies the flush usage skips zero deltas contract.
-// Asserts that FlushUsage() error =.
+// TestFlushUsage_SkipsZeroDeltas confirms backends with no recorded
+// deltas are skipped.
 func TestFlushUsage_SkipsZeroDeltas(t *testing.T) {
 	t.Parallel()
-	ms := &mockStore{}
-	mgr := newUsageManager([]string{"b1", "b2"}, ms)
+	store, ft := usageStoreWithFlush(t)
+	mgr := newUsageManager([]string{"b1", "b2"}, store)
 
-	// Only increment b1
 	mgr.usage.Record("b1", 1, 0, 0)
 
 	if err := mgr.FlushUsage(context.Background()); err != nil {
 		t.Fatalf("FlushUsage() error = %v", err)
 	}
 
-	ms.mu.Lock()
-	defer ms.mu.Unlock()
-	if len(ms.flushUsageCalls) != 1 {
-		t.Fatalf("flushUsageCalls = %d, want 1 (b2 should be skipped)", len(ms.flushUsageCalls))
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
+	if len(ft.calls) != 1 {
+		t.Fatalf("flushDeltaCalls = %d, want 1 (b2 should be skipped)", len(ft.calls))
 	}
-	if ms.flushUsageCalls[0].backendName != "b1" {
-		t.Errorf("flushed backend = %s, want b1", ms.flushUsageCalls[0].backendName)
+	if ft.calls[0].backendName != "b1" {
+		t.Errorf("flushed backend = %s, want b1", ft.calls[0].backendName)
 	}
 }
 
-// TestFlushUsage_RestoresCountersOnError verifies the flush usage restores counters on error contract.
-// Asserts that apiRequests after failed flush = , want 10 (restored).
+// TestFlushUsage_RestoresCountersOnError pins the rollback path: a
+// FlushUsageDeltas failure must put the in-memory counters back where
+// they were so a later flush can retry.
 func TestFlushUsage_RestoresCountersOnError(t *testing.T) {
 	t.Parallel()
-	ms := &mockStore{
-		flushUsageErr: fmt.Errorf("db down"),
-	}
-	mgr := newUsageManager([]string{"b1"}, ms)
+	store, ft := usageStoreWithFlush(t)
+	ft.err = fmt.Errorf("db down")
+	mgr := newUsageManager([]string{"b1"}, store)
 
 	mgr.usage.Record("b1", 10, 500, 300)
 
-	err := mgr.FlushUsage(context.Background())
-	if err == nil {
+	if err := mgr.FlushUsage(context.Background()); err == nil {
 		t.Fatal("FlushUsage() should return error")
 	}
 
-	// Counters should be restored
 	c := mgr.usage.Backend().LoadAll("b1")
 	if c.APIRequests != 10 {
 		t.Errorf("apiRequests after failed flush = %d, want 10 (restored)", c.APIRequests)
@@ -261,52 +296,49 @@ func TestFlushUsage_RestoresCountersOnError(t *testing.T) {
 	}
 }
 
-// TestFlushUsage_NoDataNoCall verifies the flush usage no data no call contract.
-// Asserts that FlushUsage() error =.
+// TestFlushUsage_NoDataNoCall confirms an idle flush issues no store
+// calls.
 func TestFlushUsage_NoDataNoCall(t *testing.T) {
 	t.Parallel()
-	ms := &mockStore{}
-	mgr := newUsageManager([]string{"b1"}, ms)
+	store, ft := usageStoreWithFlush(t)
+	mgr := newUsageManager([]string{"b1"}, store)
 
 	if err := mgr.FlushUsage(context.Background()); err != nil {
 		t.Fatalf("FlushUsage() error = %v", err)
 	}
 
-	ms.mu.Lock()
-	defer ms.mu.Unlock()
-	if len(ms.flushUsageCalls) != 0 {
-		t.Errorf("flushUsageCalls = %d, want 0", len(ms.flushUsageCalls))
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
+	if len(ft.calls) != 0 {
+		t.Errorf("flushDeltaCalls = %d, want 0", len(ft.calls))
 	}
 }
 
-// TestFlushUsage_SkipsDrainedBackend verifies the flush usage skips drained backend contract.
-// Asserts that FlushUsage() error =.
+// TestFlushUsage_SkipsDrainedBackend confirms backends marked
+// drain-completed are skipped during flush.
 func TestFlushUsage_SkipsDrainedBackend(t *testing.T) {
 	t.Parallel()
-	ms := &mockStore{}
-	mgr := newUsageManager([]string{"b1", "b2"}, ms)
+	store, ft := usageStoreWithFlush(t)
+	mgr := newUsageManager([]string{"b1", "b2"}, store)
 
 	mgr.usage.Record("b1", 5, 100, 200)
 	mgr.usage.Record("b2", 3, 50, 75)
 
-	// Simulate b2 having completed a drain.
 	mgr.DrainManager.SeedCompletedForTest("b2")
 
 	if err := mgr.FlushUsage(context.Background()); err != nil {
 		t.Fatalf("FlushUsage() error = %v", err)
 	}
 
-	// b1 should have been flushed
-	ms.mu.Lock()
-	defer ms.mu.Unlock()
-	if len(ms.flushUsageCalls) != 1 {
-		t.Fatalf("flushUsageCalls = %d, want 1 (b2 should be skipped)", len(ms.flushUsageCalls))
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
+	if len(ft.calls) != 1 {
+		t.Fatalf("flushDeltaCalls = %d, want 1 (b2 should be skipped)", len(ft.calls))
 	}
-	if ms.flushUsageCalls[0].backendName != "b1" {
-		t.Errorf("flushed backend = %s, want b1", ms.flushUsageCalls[0].backendName)
+	if ft.calls[0].backendName != "b1" {
+		t.Errorf("flushed backend = %s, want b1", ft.calls[0].backendName)
 	}
 
-	// b2 counters should have been discarded (reset to 0), not restored
 	if got := mgr.usage.Backend().Load("b2", counter.FieldAPIRequests); got != 0 {
 		t.Errorf("b2 apiRequests = %d, want 0 (discarded)", got)
 	}
@@ -314,25 +346,24 @@ func TestFlushUsage_SkipsDrainedBackend(t *testing.T) {
 
 // --- withinUsageLimits tests ---
 
-// TestWithinUsageLimits_NoLimits verifies the within usage limits no limits behaviour described by the test name.
+// TestWithinUsageLimits_NoLimits confirms the no-limits short-circuit.
 func TestWithinUsageLimits_NoLimits(t *testing.T) {
 	t.Parallel()
-	mgr := newUsageManager([]string{"b1"}, &mockStore{})
+	mgr := newUsageManager([]string{"b1"}, newPermissiveMock(t))
 
 	if !mgr.usage.WithinLimits("b1", 1000, 1000, 1000) {
 		t.Error("no limits configured, should always return true")
 	}
 }
 
-// TestWithinUsageLimits_ApiExceeded verifies the within usage limits api exceeded behaviour described by the test name.
+// TestWithinUsageLimits_ApiExceeded confirms the API-limit branch.
 func TestWithinUsageLimits_ApiExceeded(t *testing.T) {
 	t.Parallel()
 	limits := map[string]core.UsageLimits{
 		"b1": {APIRequestLimit: 100},
 	}
-	mgr := newUsageManagerWithLimits([]string{"b1"}, &mockStore{}, limits)
+	mgr := newUsageManagerWithLimits([]string{"b1"}, newPermissiveMock(t), limits)
 
-	// Set baseline to exactly the limit
 	mgr.usage.SetBaseline("b1", core.UsageStat{APIRequests: 100})
 
 	if mgr.usage.WithinLimits("b1", 1, 0, 0) {
@@ -340,15 +371,14 @@ func TestWithinUsageLimits_ApiExceeded(t *testing.T) {
 	}
 }
 
-// TestWithinUsageLimits_EgressExceeded verifies the within usage limits egress exceeded behaviour described by the test name.
+// TestWithinUsageLimits_EgressExceeded confirms the egress-limit branch.
 func TestWithinUsageLimits_EgressExceeded(t *testing.T) {
 	t.Parallel()
 	limits := map[string]core.UsageLimits{
 		"b1": {EgressByteLimit: 1000},
 	}
-	mgr := newUsageManagerWithLimits([]string{"b1"}, &mockStore{}, limits)
+	mgr := newUsageManagerWithLimits([]string{"b1"}, newPermissiveMock(t), limits)
 
-	// Baseline: 500, unflushed: add 400, proposed: 200 -- 1100 > 1000
 	mgr.usage.SetBaseline("b1", core.UsageStat{EgressBytes: 500})
 	mgr.usage.Backend().Add("b1", counter.FieldEgressBytes, 400)
 
@@ -357,31 +387,30 @@ func TestWithinUsageLimits_EgressExceeded(t *testing.T) {
 	}
 }
 
-// TestWithinUsageLimits_UnlimitedDimension verifies the within usage limits unlimited dimension behaviour described by the test name.
+// TestWithinUsageLimits_UnlimitedDimension confirms a zero-valued limit
+// is treated as unlimited.
 func TestWithinUsageLimits_UnlimitedDimension(t *testing.T) {
 	t.Parallel()
 	limits := map[string]core.UsageLimits{
 		"b1": {APIRequestLimit: 100, EgressByteLimit: 0, IngressByteLimit: 0},
 	}
-	mgr := newUsageManagerWithLimits([]string{"b1"}, &mockStore{}, limits)
+	mgr := newUsageManagerWithLimits([]string{"b1"}, newPermissiveMock(t), limits)
 
-	// API within limit, egress/ingress unlimited (0)
 	if !mgr.usage.WithinLimits("b1", 1, 999999, 999999) {
 		t.Error("zero limit means unlimited, should not be checked")
 	}
 }
 
-// TestBackendsWithinLimits_FiltersCorrectly verifies the backends within limits filters correctly contract.
-// Asserts that eligible = , want [b2].
+// TestBackendsWithinLimits_FiltersCorrectly pins the per-backend filter
+// behaviour.
 func TestBackendsWithinLimits_FiltersCorrectly(t *testing.T) {
 	t.Parallel()
 	limits := map[string]core.UsageLimits{
 		"b1": {APIRequestLimit: 10},
 		"b2": {APIRequestLimit: 100},
 	}
-	mgr := newUsageManagerWithLimits([]string{"b1", "b2"}, &mockStore{}, limits)
+	mgr := newUsageManagerWithLimits([]string{"b1", "b2"}, newPermissiveMock(t), limits)
 
-	// Push b1 over limit
 	mgr.usage.SetBaseline("b1", core.UsageStat{APIRequests: 10})
 
 	eligible := mgr.usage.BackendsWithinLimits(mgr.order, 1, 0, 0)
@@ -395,8 +424,7 @@ func TestBackendsWithinLimits_FiltersCorrectly(t *testing.T) {
 
 // --- currentPeriod tests ---
 
-// TestCurrentPeriod_Format verifies the current period format contract.
-// Asserts that counter.CurrentPeriod() = , want YYYY-MM format.
+// TestCurrentPeriod_Format pins the YYYY-MM format.
 func TestCurrentPeriod_Format(t *testing.T) {
 	t.Parallel()
 	period := counter.CurrentPeriod()
@@ -409,7 +437,6 @@ func TestCurrentPeriod_Format(t *testing.T) {
 		t.Errorf("counter.CurrentPeriod() = %q, want YYYY-MM format", period)
 	}
 
-	// Should match the current month
 	expected := time.Now().UTC().Format("2006-01")
 	if period != expected {
 		t.Errorf("counter.CurrentPeriod() = %q, want %q", period, expected)

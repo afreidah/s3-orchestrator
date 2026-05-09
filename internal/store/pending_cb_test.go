@@ -24,9 +24,8 @@ import (
 // short-circuits to ErrDBUnavailable once the breaker has tripped.
 func TestCBForwarders_GetObjectBackendsForKeys(t *testing.T) {
 	t.Parallel()
-	mock := &mockStore{
-		getBackendsForKeysResp: map[string][]string{"k1": {"b1", "b2"}},
-	}
+	mock := newMockStore(t)
+	mock.getBackendsForKeysResp = map[string][]string{"k1": {"b1", "b2"}}
 	cb := newTestCB(mock, 3, time.Minute)
 	got, err := cb.GetObjectBackendsForKeys(context.Background(), []string{"k1"})
 	if err != nil {
@@ -39,7 +38,8 @@ func TestCBForwarders_GetObjectBackendsForKeys(t *testing.T) {
 	// Trip the breaker through a different ObjectStore method, then
 	// verify GetObjectBackendsForKeys short-circuits.
 	dbErr := errors.New("connection refused")
-	tripMock := &mockStore{getAllLocationsErr: dbErr}
+	tripMock := newMockStore(t)
+	tripMock.getAllLocationsErr = dbErr
 	tripCB := newTestCB(tripMock, 1, time.Minute)
 	_, _ = tripCB.GetAllObjectLocations(context.Background(), "k")
 	if _, err := tripCB.GetObjectBackendsForKeys(context.Background(), []string{"k1"}); !errors.Is(err, core.ErrDBUnavailable) {
@@ -52,12 +52,11 @@ func TestCBForwarders_GetObjectBackendsForKeys(t *testing.T) {
 // returns the inner store's result unchanged when the breaker is closed.
 func TestCBForwarders_PendingStore(t *testing.T) {
 	t.Parallel()
-	mock := &mockStore{
-		pendingDepthResp:        7,
-		getStalePendingResp:     []core.PendingObject{{IntentID: "x"}},
-		promotePendingResult:    core.PendingPromoteCommitted,
-		promotePendingDisplaced: []core.DeletedCopy{{BackendName: "old", SizeBytes: 5}},
-	}
+	mock := newMockStore(t)
+	mock.pendingDepthResp = 7
+	mock.getStalePendingResp = []core.PendingObject{{IntentID: "x"}}
+	mock.promotePendingResult = core.PendingPromoteCommitted
+	mock.promotePendingDisplaced = []core.DeletedCopy{{BackendName: "old", SizeBytes: 5}}
 	cb := newTestCB(mock, 3, time.Minute)
 	ctx := context.Background()
 
@@ -104,7 +103,8 @@ func TestCBForwarders_PendingStore_OpenCircuitReturnsSentinel(t *testing.T) {
 	dbErr := errors.New("connection refused")
 	// Trip the breaker via getAllLocations, then verify pending methods
 	// short-circuit with ErrDBUnavailable instead of hitting the inner mock.
-	mock := &mockStore{getAllLocationsErr: dbErr}
+	mock := newMockStore(t)
+	mock.getAllLocationsErr = dbErr
 	cb := newTestCB(mock, 1, time.Minute)
 	ctx := context.Background()
 

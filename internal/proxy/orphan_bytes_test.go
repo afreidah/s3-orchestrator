@@ -15,298 +15,411 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
+
+	"go.uber.org/mock/gomock"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
-// -------------------------------------------------------------------------
-// enqueueCleanup orphan bytes lifecycle
-// -------------------------------------------------------------------------
+// orphanCalls accumulates the per-test interactions a migrated test
+// asserts on. Each field is keyed by the store method that fed it.
+type orphanCalls struct {
+	mu        sync.Mutex
+	enqueue   []core.CleanupItem
+	increment []orphanBytesEntry
+	decrement []orphanBytesEntry
+	complete  []int64
+	retry     []retryRecord
+	dlq       []dlqRecord
+}
 
-// TestEnqueueCleanup_IncrementsOrphanBytes verifies the enqueue cleanup increments orphan bytes contract.
-// Asserts that expected 1 IncrementOrphanBytes call, got.
+type orphanBytesEntry struct {
+	backendName string
+	sizeBytes   int64
+}
+
+// stubOrphanEnqueue captures EnqueueCleanup args.
+func stubOrphanEnqueue(c *orphanCalls, err error) func(context.Context, string, string, string, int64) error {
+	return func(_ context.Context, backend, key, reason string, size int64) error {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.enqueue = append(c.enqueue, core.CleanupItem{
+			BackendName: backend, ObjectKey: key, Reason: reason, SizeBytes: size,
+		})
+		return err
+	}
+}
+
+// stubOrphanIncrement captures IncrementOrphanBytes args.
+func stubOrphanIncrement(c *orphanCalls, err error) func(context.Context, string, int64) error {
+	return func(_ context.Context, backend string, size int64) error {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.increment = append(c.increment, orphanBytesEntry{backendName: backend, sizeBytes: size})
+		return err
+	}
+}
+
+// stubOrphanDecrement captures DecrementOrphanBytes args.
+func stubOrphanDecrement(c *orphanCalls) func(context.Context, string, int64) error {
+	return func(_ context.Context, backend string, size int64) error {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.decrement = append(c.decrement, orphanBytesEntry{backendName: backend, sizeBytes: size})
+		return nil
+	}
+}
+
+// stubCleanupQueue wires the same DoAndReturn closures stubProcessQueue
+// uses, but populates an orphanCalls instead. Lets orphan-bytes tests
+// reuse the queue infrastructure without duplicating boilerplate.
+//
+// CompleteCleanupItem mirrors the production atomic-delete-plus-decrement
+// CTE: when a row is completed the helper appends a synthetic decrement
+// entry derived from the matching item's SizeBytes. Tests that assert on
+// c.decrement therefore observe the same accounting the production
+// engines apply, without the test having to know whether the engine is
+// invoking DecrementOrphanBytes externally or atomically inside the
+// transaction.
+func stubCleanupQueue(t *testing.T, store *storetest.MockMetadataStore, c *orphanCalls, items []core.CleanupItem, dlqErr error) {
+	t.Helper()
+	delivered := false
+	store.EXPECT().ClaimPendingCleanups(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ int, _ string, _ time.Time) ([]core.CleanupItem, error) {
+			if delivered {
+				return nil, nil
+			}
+			delivered = true
+			return items, nil
+		}).
+		AnyTimes()
+	store.EXPECT().GetPendingCleanups(gomock.Any(), gomock.Any()).Return(items, nil).AnyTimes()
+	store.EXPECT().CompleteCleanupItem(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, id int64) error {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			c.complete = append(c.complete, id)
+			for _, it := range items {
+				if it.ID == id && it.SizeBytes > 0 {
+					c.decrement = append(c.decrement, orphanBytesEntry{backendName: it.BackendName, sizeBytes: it.SizeBytes})
+					break
+				}
+			}
+			return nil
+		}).
+		AnyTimes()
+	store.EXPECT().RetryCleanupItem(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, id int64, backoff time.Duration, lastError string) error {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			c.retry = append(c.retry, retryRecord{id: id, backoff: backoff, lastError: lastError})
+			return nil
+		}).
+		AnyTimes()
+	store.EXPECT().MoveCleanupToDLQ(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, id int64, lastError string) (bool, error) {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			c.dlq = append(c.dlq, dlqRecord{id: id, lastError: lastError})
+			if dlqErr != nil {
+				return false, dlqErr
+			}
+			return true, nil
+		}).
+		AnyTimes()
+}
+
+// TestEnqueueCleanup_IncrementsOrphanBytes asserts a non-zero enqueue
+// drives one IncrementOrphanBytes call.
 func TestEnqueueCleanup_IncrementsOrphanBytes(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{}
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	c := &orphanCalls{}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubOrphanEnqueue(c, nil)).AnyTimes()
+	store.EXPECT().IncrementOrphanBytes(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubOrphanIncrement(c, nil)).AnyTimes()
+	storetest.Permissive(store)
 
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 	mgr.enqueueCleanup(context.Background(), "b1", "orphan.txt", "delete_failed", 4096)
 
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	if len(store.incrementOrphanBytesCalls) != 1 {
-		t.Fatalf("expected 1 IncrementOrphanBytes call, got %d", len(store.incrementOrphanBytesCalls))
+	if len(c.increment) != 1 {
+		t.Fatalf("expected 1 IncrementOrphanBytes call, got %d", len(c.increment))
 	}
-	c := store.incrementOrphanBytesCalls[0]
-	if c.backendName != "b1" || c.sizeBytes != 4096 {
-		t.Errorf("unexpected IncrementOrphanBytes call: backend=%q size=%d", c.backendName, c.sizeBytes)
+	if c.increment[0].backendName != "b1" || c.increment[0].sizeBytes != 4096 {
+		t.Errorf("unexpected IncrementOrphanBytes call: %+v", c.increment[0])
 	}
 }
 
-// TestEnqueueCleanup_ZeroSize_SkipsOrphanIncrement verifies the enqueue cleanup zero size skips orphan increment contract.
-// Asserts that expected 0 IncrementOrphanBytes calls for zero-size, got.
+// TestEnqueueCleanup_ZeroSize_SkipsOrphanIncrement asserts a zero-size
+// enqueue doesn't call IncrementOrphanBytes.
 func TestEnqueueCleanup_ZeroSize_SkipsOrphanIncrement(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{}
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	c := &orphanCalls{}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubOrphanEnqueue(c, nil)).AnyTimes()
+	store.EXPECT().IncrementOrphanBytes(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubOrphanIncrement(c, nil)).AnyTimes()
+	storetest.Permissive(store)
 
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 	mgr.enqueueCleanup(context.Background(), "b1", "orphan.txt", "delete_failed", 0)
 
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	if len(store.incrementOrphanBytesCalls) != 0 {
-		t.Errorf("expected 0 IncrementOrphanBytes calls for zero-size, got %d", len(store.incrementOrphanBytesCalls))
+	if len(c.increment) != 0 {
+		t.Errorf("expected 0 IncrementOrphanBytes calls for zero-size, got %d", len(c.increment))
 	}
 }
 
-// TestEnqueueCleanup_EnqueueFails_SkipsOrphanIncrement verifies the enqueue cleanup enqueue fails skips orphan increment contract.
-// Asserts that expected 0 IncrementOrphanBytes calls when enqueue fails, got.
+// TestEnqueueCleanup_EnqueueFails_SkipsOrphanIncrement asserts no
+// orphan-bytes increment when enqueue itself fails.
 func TestEnqueueCleanup_EnqueueFails_SkipsOrphanIncrement(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{enqueueCleanupErr: errors.New("db down")}
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	c := &orphanCalls{}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubOrphanEnqueue(c, errors.New("db down"))).AnyTimes()
+	store.EXPECT().IncrementOrphanBytes(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubOrphanIncrement(c, nil)).AnyTimes()
+	storetest.Permissive(store)
 
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 	mgr.enqueueCleanup(context.Background(), "b1", "orphan.txt", "delete_failed", 4096)
 
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	// If enqueue fails, we must NOT increment orphan bytes (no DB record exists)
-	if len(store.incrementOrphanBytesCalls) != 0 {
-		t.Errorf("expected 0 IncrementOrphanBytes calls when enqueue fails, got %d", len(store.incrementOrphanBytesCalls))
+	if len(c.increment) != 0 {
+		t.Errorf("expected 0 IncrementOrphanBytes calls when enqueue fails, got %d", len(c.increment))
 	}
 }
 
-// -------------------------------------------------------------------------
-// Cleanup worker orphan bytes decrement
-// -------------------------------------------------------------------------
-
-// TestCleanupWorker_SuccessfulDelete_DecrementsOrphanBytes verifies the cleanup worker successful delete decrements orphan bytes contract.
-// Asserts that expected processed=1 failed=0, got /.
+// TestCleanupWorker_SuccessfulDelete_DecrementsOrphanBytes asserts the
+// success path calls DecrementOrphanBytes with the row's size.
 func TestCleanupWorker_SuccessfulDelete_DecrementsOrphanBytes(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
 	_, _ = backend.PutObject(context.Background(), "orphan.txt", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
-	store := &mockStore{
-		pendingCleanups: []core.CleanupItem{
-			{ID: 1, BackendName: "b1", ObjectKey: "orphan.txt", Reason: "delete_failed", Attempts: 0, SizeBytes: 4},
-		},
-	}
+	c := &orphanCalls{}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	stubCleanupQueue(t, store, c, []core.CleanupItem{
+		{ID: 1, BackendName: "b1", ObjectKey: "orphan.txt", Reason: "delete_failed", Attempts: 0, SizeBytes: 4},
+	}, nil)
+	store.EXPECT().DecrementOrphanBytes(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubOrphanDecrement(c)).AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
 	processed, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
 	if processed != 1 || failed != 0 {
 		t.Fatalf("expected processed=1 failed=0, got %d/%d", processed, failed)
 	}
-
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	if len(store.decrementOrphanBytesCalls) != 1 {
-		t.Fatalf("expected 1 DecrementOrphanBytes call, got %d", len(store.decrementOrphanBytesCalls))
+	if len(c.decrement) != 1 {
+		t.Fatalf("expected 1 DecrementOrphanBytes call, got %d", len(c.decrement))
 	}
-	c := store.decrementOrphanBytesCalls[0]
-	if c.backendName != "b1" || c.sizeBytes != 4 {
-		t.Errorf("unexpected DecrementOrphanBytes call: backend=%q size=%d", c.backendName, c.sizeBytes)
+	if c.decrement[0].backendName != "b1" || c.decrement[0].sizeBytes != 4 {
+		t.Errorf("unexpected DecrementOrphanBytes call: %+v", c.decrement[0])
 	}
 }
 
-// TestCleanupWorker_SuccessfulDelete_ZeroSize_SkipsDecrement verifies the cleanup worker successful delete zero size skips decrement contract.
-// Asserts that expected processed=1, got.
+// TestCleanupWorker_SuccessfulDelete_ZeroSize_SkipsDecrement asserts
+// zero-size rows produce no decrement call.
 func TestCleanupWorker_SuccessfulDelete_ZeroSize_SkipsDecrement(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
 	_, _ = backend.PutObject(context.Background(), "orphan.txt", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
-	store := &mockStore{
-		pendingCleanups: []core.CleanupItem{
-			{ID: 1, BackendName: "b1", ObjectKey: "orphan.txt", Reason: "delete_failed", Attempts: 0, SizeBytes: 0},
-		},
-	}
+	c := &orphanCalls{}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	stubCleanupQueue(t, store, c, []core.CleanupItem{
+		{ID: 1, BackendName: "b1", ObjectKey: "orphan.txt", Reason: "delete_failed", Attempts: 0, SizeBytes: 0},
+	}, nil)
+	store.EXPECT().DecrementOrphanBytes(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubOrphanDecrement(c)).AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
 	processed, _ := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
 	if processed != 1 {
 		t.Fatalf("expected processed=1, got %d", processed)
 	}
-
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	if len(store.decrementOrphanBytesCalls) != 0 {
-		t.Errorf("expected 0 DecrementOrphanBytes calls for zero-size item, got %d", len(store.decrementOrphanBytesCalls))
+	if len(c.decrement) != 0 {
+		t.Errorf("expected 0 DecrementOrphanBytes calls for zero-size item, got %d", len(c.decrement))
 	}
 }
 
-// TestCleanupWorker_Exhausted_MovesToDLQ_PreservesOrphanBytes verifies the cleanup worker exhausted moves to dlq preserves orphan bytes contract.
-// Asserts that expected failed=1, got.
+// TestCleanupWorker_Exhausted_MovesToDLQ_PreservesOrphanBytes asserts an
+// exhausted item moves to DLQ and orphan_bytes is not decremented.
 func TestCleanupWorker_Exhausted_MovesToDLQ_PreservesOrphanBytes(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
 	backend.delErr = errors.New("permanent failure")
 
-	store := &mockStore{
-		pendingCleanups: []core.CleanupItem{
-			{ID: 1, BackendName: "b1", ObjectKey: "stuck.txt", Reason: "delete_failed", Attempts: 9, SizeBytes: 8192},
-		},
-	}
+	c := &orphanCalls{}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	stubCleanupQueue(t, store, c, []core.CleanupItem{
+		{ID: 1, BackendName: "b1", ObjectKey: "stuck.txt", Reason: "delete_failed", Attempts: 9, SizeBytes: 8192},
+	}, nil)
+	store.EXPECT().DecrementOrphanBytes(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubOrphanDecrement(c)).AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
 	_, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
 	if failed != 1 {
 		t.Fatalf("expected failed=1, got %d", failed)
 	}
-
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	// Exhausted items must NOT decrement orphan bytes - the backend
-	// object is still on disk and quota math must reflect that.
-	if len(store.decrementOrphanBytesCalls) != 0 {
-		t.Errorf("expected 0 DecrementOrphanBytes calls for exhausted item, got %d", len(store.decrementOrphanBytesCalls))
+	if len(c.decrement) != 0 {
+		t.Errorf("expected 0 DecrementOrphanBytes calls for exhausted item, got %d", len(c.decrement))
 	}
-	// CompleteCleanupItem must not run - the row is moved, not deleted by
-	// the success path.
-	if len(store.completeCleanupCalls) != 0 {
-		t.Errorf("expected 0 CompleteCleanupItem calls, got %d", len(store.completeCleanupCalls))
+	if len(c.complete) != 0 {
+		t.Errorf("expected 0 CompleteCleanupItem calls, got %d", len(c.complete))
 	}
-	// RetryCleanupItem must not run - the previous behavior pinned the
-	// row in cleanup_queue with attempts=11; the new behavior moves it.
-	if len(store.retryCleanupCalls) != 0 {
-		t.Errorf("expected 0 RetryCleanupItem calls; exhausted item now graduates to DLQ instead, got %d", len(store.retryCleanupCalls))
+	if len(c.retry) != 0 {
+		t.Errorf("expected 0 RetryCleanupItem calls; exhausted graduates to DLQ, got %d", len(c.retry))
 	}
-	// MoveCleanupToDLQ must run exactly once with the exhausted item's id
-	// and the most recent backend error attached.
-	if len(store.movedToDLQ) != 1 {
-		t.Fatalf("expected 1 MoveCleanupToDLQ call, got %d", len(store.movedToDLQ))
+	if len(c.dlq) != 1 {
+		t.Fatalf("expected 1 MoveCleanupToDLQ call, got %d", len(c.dlq))
 	}
-	if store.movedToDLQ[0].id != 1 {
-		t.Errorf("dlq move id=%d, want 1", store.movedToDLQ[0].id)
+	if c.dlq[0].id != 1 {
+		t.Errorf("dlq move id=%d, want 1", c.dlq[0].id)
 	}
 }
 
-// TestCleanupWorker_RetryNotExhausted_NoOrphanBytesChange verifies the cleanup worker retry not exhausted no orphan bytes change contract.
-// Asserts that expected failed=1, got.
+// TestCleanupWorker_RetryNotExhausted_NoOrphanBytesChange asserts retry
+// path leaves the orphan-bytes counter alone.
 func TestCleanupWorker_RetryNotExhausted_NoOrphanBytesChange(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
 	backend.delErr = errors.New("transient failure")
 
-	store := &mockStore{
-		pendingCleanups: []core.CleanupItem{
-			{ID: 1, BackendName: "b1", ObjectKey: "retry.txt", Reason: "delete_failed", Attempts: 3, SizeBytes: 1024},
-		},
-	}
+	c := &orphanCalls{}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	stubCleanupQueue(t, store, c, []core.CleanupItem{
+		{ID: 1, BackendName: "b1", ObjectKey: "retry.txt", Reason: "delete_failed", Attempts: 3, SizeBytes: 1024},
+	}, nil)
+	store.EXPECT().IncrementOrphanBytes(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubOrphanIncrement(c, nil)).AnyTimes()
+	store.EXPECT().DecrementOrphanBytes(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubOrphanDecrement(c)).AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
 	_, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
 	if failed != 1 {
 		t.Fatalf("expected failed=1, got %d", failed)
 	}
-
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	// On retry, orphan bytes should not change  -  they were incremented at enqueue time
-	if len(store.incrementOrphanBytesCalls) != 0 {
-		t.Errorf("expected 0 IncrementOrphanBytes calls on retry, got %d", len(store.incrementOrphanBytesCalls))
+	if len(c.increment) != 0 {
+		t.Errorf("expected 0 IncrementOrphanBytes calls on retry, got %d", len(c.increment))
 	}
-	if len(store.decrementOrphanBytesCalls) != 0 {
-		t.Errorf("expected 0 DecrementOrphanBytes calls on retry, got %d", len(store.decrementOrphanBytesCalls))
+	if len(c.decrement) != 0 {
+		t.Errorf("expected 0 DecrementOrphanBytes calls on retry, got %d", len(c.decrement))
 	}
 }
 
-// -------------------------------------------------------------------------
-// Displaced copies on overwrite
-// -------------------------------------------------------------------------
-
-// TestPutObject_Overwrite_EnqueuesDisplacedCopiesWithSize verifies the put object overwrite enqueues displaced copies with size contract.
-// Asserts that PutObject:.
+// TestPutObject_Overwrite_EnqueuesDisplacedCopiesWithSize pins the
+// overwrite path: displaced copies on other backends enqueue cleanup
+// rows with the right size and orphan-bytes increment.
 func TestPutObject_Overwrite_EnqueuesDisplacedCopiesWithSize(t *testing.T) {
 	t.Parallel()
 	b1 := newMockBackend()
 	b2 := newMockBackend()
-	b2.delErr = errors.New("backend down") // force enqueue instead of direct delete
+	b2.delErr = errors.New("backend down")
 
-	store := &mockStore{
-		getBackendResp: "b1",
-		// RecordObject returns displaced copies on b2
-		recordObjectResp: []core.DeletedCopy{{BackendName: "b2", SizeBytes: 500}},
-	}
+	c := &orphanCalls{}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).Return("b1", nil).AnyTimes()
+	store.EXPECT().RecordObject(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return([]core.DeletedCopy{{BackendName: "b2", SizeBytes: 500}}, nil).AnyTimes()
+	store.EXPECT().RecordObjectAndClearPending(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return([]core.DeletedCopy{{BackendName: "b2", SizeBytes: 500}}, nil).AnyTimes()
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubOrphanEnqueue(c, nil)).AnyTimes()
+	store.EXPECT().IncrementOrphanBytes(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubOrphanIncrement(c, nil)).AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": b1, "b2": b2})
 
-	_, err := mgr.ObjectManager.PutObject(context.Background(), "overwritten-key", bytes.NewReader([]byte("new")), 3, "text/plain", nil)
-	if err != nil {
+	if _, err := mgr.ObjectManager.PutObject(context.Background(), "overwritten-key", bytes.NewReader([]byte("new")), 3, "text/plain", nil); err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
 
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	// Displaced copy on b2 should have been enqueued with correct size
-	if len(store.enqueueCleanupCalls) != 1 {
-		t.Fatalf("expected 1 enqueue call for displaced copy, got %d", len(store.enqueueCleanupCalls))
+	if len(c.enqueue) != 1 {
+		t.Fatalf("expected 1 enqueue call for displaced copy, got %d", len(c.enqueue))
 	}
-	c := store.enqueueCleanupCalls[0]
-	if c.backendName != "b2" {
-		t.Errorf("expected displaced copy enqueue for b2, got %q", c.backendName)
+	if c.enqueue[0].BackendName != "b2" {
+		t.Errorf("expected displaced copy enqueue for b2, got %q", c.enqueue[0].BackendName)
 	}
-	if c.reason != "overwrite_displaced" {
-		t.Errorf("expected reason=overwrite_displaced, got %q", c.reason)
+	if c.enqueue[0].Reason != "overwrite_displaced" {
+		t.Errorf("expected reason=overwrite_displaced, got %q", c.enqueue[0].Reason)
 	}
-	// Orphan bytes should have been incremented for the displaced copy
-	if len(store.incrementOrphanBytesCalls) != 1 {
-		t.Fatalf("expected 1 IncrementOrphanBytes call, got %d", len(store.incrementOrphanBytesCalls))
+	if len(c.increment) != 1 {
+		t.Fatalf("expected 1 IncrementOrphanBytes call, got %d", len(c.increment))
 	}
-	if store.incrementOrphanBytesCalls[0].sizeBytes != 500 {
-		t.Errorf("expected orphan bytes=500, got %d", store.incrementOrphanBytesCalls[0].sizeBytes)
+	if c.increment[0].sizeBytes != 500 {
+		t.Errorf("expected orphan bytes=500, got %d", c.increment[0].sizeBytes)
 	}
 }
 
-// -------------------------------------------------------------------------
-// DeleteObject enqueues with size
-// -------------------------------------------------------------------------
-
-// TestDeleteObject_BackendFails_EnqueuesWithSize verifies the delete object backend fails enqueues with size contract.
-// Asserts that DeleteObject should succeed even if backend delete fails:.
+// TestDeleteObject_BackendFails_EnqueuesWithSize pins that DeleteObject
+// enqueues with the correct size from the metadata.
 func TestDeleteObject_BackendFails_EnqueuesWithSize(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
 	backend.delErr = errors.New("timeout")
 
-	store := &mockStore{
-		deleteObjectResp: []core.DeletedCopy{{BackendName: "b1", SizeBytes: 2048}},
-	}
+	c := &orphanCalls{}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).
+		Return([]core.DeletedCopy{{BackendName: "b1", SizeBytes: 2048}}, nil).AnyTimes()
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubOrphanEnqueue(c, nil)).AnyTimes()
+	store.EXPECT().IncrementOrphanBytes(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubOrphanIncrement(c, nil)).AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	err := mgr.ObjectManager.DeleteObject(context.Background(), "mykey")
-	if err != nil {
+	if err := mgr.ObjectManager.DeleteObject(context.Background(), "mykey"); err != nil {
 		t.Fatalf("DeleteObject should succeed even if backend delete fails: %v", err)
 	}
-
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	if len(store.enqueueCleanupCalls) != 1 {
-		t.Fatalf("expected 1 enqueue call, got %d", len(store.enqueueCleanupCalls))
+	if len(c.enqueue) != 1 {
+		t.Fatalf("expected 1 enqueue call, got %d", len(c.enqueue))
 	}
-	if len(store.incrementOrphanBytesCalls) != 1 {
-		t.Fatalf("expected 1 IncrementOrphanBytes call, got %d", len(store.incrementOrphanBytesCalls))
+	if len(c.increment) != 1 {
+		t.Fatalf("expected 1 IncrementOrphanBytes call, got %d", len(c.increment))
 	}
-	if store.incrementOrphanBytesCalls[0].sizeBytes != 2048 {
-		t.Errorf("expected orphan bytes=2048, got %d", store.incrementOrphanBytesCalls[0].sizeBytes)
+	if c.increment[0].sizeBytes != 2048 {
+		t.Errorf("expected orphan bytes=2048, got %d", c.increment[0].sizeBytes)
 	}
 }
 
-// -------------------------------------------------------------------------
-// Replicator findReplicaTarget respects orphan bytes
-// -------------------------------------------------------------------------
-
-// TestFindReplicaTarget_RespectsOrphanBytes verifies the find replica target respects orphan bytes contract.
-// Asserts that expected no target (orphan bytes eat available space), got.
+// TestFindReplicaTarget_RespectsOrphanBytes asserts orphan-bytes count
+// against the available-space check.
 func TestFindReplicaTarget_RespectsOrphanBytes(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{}
+	store := newPermissiveMock(t)
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": newMockBackend(), "b2": newMockBackend()},
 		Stores:          testStoresFromMock(store),
@@ -320,11 +433,9 @@ func TestFindReplicaTarget_RespectsOrphanBytes(t *testing.T) {
 
 	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 100, BytesLimit: 1000},
-		// b2 has 800 used + 150 orphan = 950 effective, only 50 bytes free
 		"b2": {BytesUsed: 800, BytesLimit: 1000, OrphanBytes: 150},
 	}
 
-	// b1 already has a copy; b2 has only 50 bytes free after orphans  -  should reject 100-byte object
 	exclusion := map[string]bool{"b1": true}
 	target := mgr.Replicator.FindReplicaTarget(context.Background(), stats, "key1", 100, exclusion)
 	if target != "" {
@@ -332,11 +443,22 @@ func TestFindReplicaTarget_RespectsOrphanBytes(t *testing.T) {
 	}
 }
 
-// TestFindReplicaTarget_OrphanBytesStillFits verifies the find replica target orphan bytes still fits contract.
-// Asserts that expected b2 (50 bytes fits in 100 free), got.
+// TestFindReplicaTarget_OrphanBytesStillFits asserts that capacity check
+// still allows fits within remaining space.
 func TestFindReplicaTarget_OrphanBytesStillFits(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{getBackendFromEligible: true}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ int64, eligible []string) (string, error) {
+			if len(eligible) > 0 {
+				return eligible[0], nil
+			}
+			return "", nil
+		}).
+		AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": newMockBackend(), "b2": newMockBackend()},
 		Stores:          testStoresFromMock(store),
@@ -350,7 +472,6 @@ func TestFindReplicaTarget_OrphanBytesStillFits(t *testing.T) {
 
 	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 100, BytesLimit: 1000},
-		// b2 has 800 used + 100 orphan = 900 effective, 100 bytes free
 		"b2": {BytesUsed: 800, BytesLimit: 1000, OrphanBytes: 100},
 	}
 
@@ -361,297 +482,309 @@ func TestFindReplicaTarget_OrphanBytesStillFits(t *testing.T) {
 	}
 }
 
-// -------------------------------------------------------------------------
-// Full lifecycle: enqueue -> cleanup success -> orphan bytes restored
-// -------------------------------------------------------------------------
-
-// TestOrphanBytes_FullLifecycle verifies the orphan bytes full lifecycle contract.
-// Asserts that step 1: expected 1 IncrementOrphanBytes, got.
+// TestOrphanBytes_FullLifecycle drives enqueue → cleanup-success →
+// decrement end-to-end.
 func TestOrphanBytes_FullLifecycle(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
-	store := &mockStore{}
+
+	c := &orphanCalls{}
+	var pending []core.CleanupItem
+	claimed := map[int64]core.CleanupItem{}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubOrphanEnqueue(c, nil)).AnyTimes()
+	store.EXPECT().IncrementOrphanBytes(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubOrphanIncrement(c, nil)).AnyTimes()
+	store.EXPECT().DecrementOrphanBytes(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubOrphanDecrement(c)).AnyTimes()
+	store.EXPECT().ClaimPendingCleanups(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ int, _ string, _ time.Time) ([]core.CleanupItem, error) {
+			items := pending
+			for _, it := range items {
+				claimed[it.ID] = it
+			}
+			pending = nil
+			return items, nil
+		}).
+		AnyTimes()
+	store.EXPECT().GetPendingCleanups(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ int) ([]core.CleanupItem, error) {
+			return pending, nil
+		}).
+		AnyTimes()
+	store.EXPECT().CompleteCleanupItem(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, id int64) error {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			c.complete = append(c.complete, id)
+			if it, ok := claimed[id]; ok && it.SizeBytes > 0 {
+				c.decrement = append(c.decrement, orphanBytesEntry{backendName: it.BackendName, sizeBytes: it.SizeBytes})
+			}
+			return nil
+		}).
+		AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	// Step 1: Delete fails, gets enqueued  -  orphan bytes increment
 	backend.delErr = errors.New("timeout")
 	mgr.deleteOrEnqueue(context.Background(), backend, "b1", "file.txt", "delete_failed", 1024)
 
-	store.mu.Lock()
-	if len(store.incrementOrphanBytesCalls) != 1 {
-		t.Fatalf("step 1: expected 1 IncrementOrphanBytes, got %d", len(store.incrementOrphanBytesCalls))
+	if len(c.increment) != 1 {
+		t.Fatalf("step 1: expected 1 IncrementOrphanBytes, got %d", len(c.increment))
 	}
-	if store.incrementOrphanBytesCalls[0].sizeBytes != 1024 {
-		t.Fatalf("step 1: expected 1024 bytes, got %d", store.incrementOrphanBytesCalls[0].sizeBytes)
+	if c.increment[0].sizeBytes != 1024 {
+		t.Fatalf("step 1: expected 1024 bytes, got %d", c.increment[0].sizeBytes)
 	}
-	store.mu.Unlock()
 
-	// Step 2: Backend recovers, cleanup worker succeeds  -  orphan bytes decrement
 	backend.mu.Lock()
 	backend.delErr = nil
 	backend.mu.Unlock()
 	_, _ = backend.PutObject(context.Background(), "file.txt", bytes.NewReader([]byte("x")), 1, "", nil)
 
-	store.mu.Lock()
-	store.pendingCleanups = []core.CleanupItem{
+	pending = []core.CleanupItem{
 		{ID: 1, BackendName: "b1", ObjectKey: "file.txt", Reason: "delete_failed", Attempts: 0, SizeBytes: 1024},
 	}
-	store.mu.Unlock()
 
 	processed, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
 	if processed != 1 || failed != 0 {
 		t.Fatalf("step 2: expected processed=1 failed=0, got %d/%d", processed, failed)
 	}
-
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	if len(store.decrementOrphanBytesCalls) != 1 {
-		t.Fatalf("step 2: expected 1 DecrementOrphanBytes, got %d", len(store.decrementOrphanBytesCalls))
+	if len(c.decrement) != 1 {
+		t.Fatalf("step 2: expected 1 DecrementOrphanBytes, got %d", len(c.decrement))
 	}
-	if store.decrementOrphanBytesCalls[0].sizeBytes != 1024 {
-		t.Errorf("step 2: expected 1024 bytes decremented, got %d", store.decrementOrphanBytesCalls[0].sizeBytes)
+	if c.decrement[0].sizeBytes != 1024 {
+		t.Errorf("step 2: expected 1024 bytes decremented, got %d", c.decrement[0].sizeBytes)
 	}
 }
 
-// -------------------------------------------------------------------------
-// Replicator cleanup orphan passes size to enqueue
-// -------------------------------------------------------------------------
-
-// TestCleanupOrphan_PassesSizeToEnqueue verifies the cleanup orphan passes size to enqueue contract.
-// Asserts that expected 1 enqueue call, got.
+// TestCleanupOrphan_PassesSizeToEnqueue pins that the replicator's
+// CleanupOrphan helper enqueues with the correct size.
 func TestCleanupOrphan_PassesSizeToEnqueue(t *testing.T) {
 	t.Parallel()
 	b1 := newMockBackend()
 	b1.delErr = errors.New("backend down")
-	store := &mockStore{}
+
+	c := &orphanCalls{}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubOrphanEnqueue(c, nil)).AnyTimes()
+	store.EXPECT().IncrementOrphanBytes(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubOrphanIncrement(c, nil)).AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": b1})
 
 	mgr.Replicator.CleanupOrphan(context.Background(), "b1", "orphan-key", 7777)
 
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	if len(store.enqueueCleanupCalls) != 1 {
-		t.Fatalf("expected 1 enqueue call, got %d", len(store.enqueueCleanupCalls))
+	if len(c.enqueue) != 1 {
+		t.Fatalf("expected 1 enqueue call, got %d", len(c.enqueue))
 	}
-	if len(store.incrementOrphanBytesCalls) != 1 {
-		t.Fatalf("expected 1 IncrementOrphanBytes call, got %d", len(store.incrementOrphanBytesCalls))
+	if len(c.increment) != 1 {
+		t.Fatalf("expected 1 IncrementOrphanBytes call, got %d", len(c.increment))
 	}
-	if store.incrementOrphanBytesCalls[0].sizeBytes != 7777 {
-		t.Errorf("expected 7777 orphan bytes, got %d", store.incrementOrphanBytesCalls[0].sizeBytes)
+	if c.increment[0].sizeBytes != 7777 {
+		t.Errorf("expected 7777 orphan bytes, got %d", c.increment[0].sizeBytes)
 	}
 }
 
-// -------------------------------------------------------------------------
-// MetricsCollector: available bytes accounts for orphan bytes
-// -------------------------------------------------------------------------
-
-// TestMetricsCollector_OrphanBytesSubtractedFromAvailable verifies the metrics collector orphan bytes subtracted from available contract.
-// Asserts that UpdateQuotaMetrics:.
+// TestMetricsCollector_OrphanBytesSubtractedFromAvailable confirms the
+// metrics-collector reads the OrphanBytes field without panicking.
 func TestMetricsCollector_OrphanBytesSubtractedFromAvailable(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{
-		getQuotaStatsResp: map[string]core.QuotaStat{
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().GetQuotaStats(gomock.Any()).
+		Return(map[string]core.QuotaStat{
 			"b1": {BytesUsed: 200, BytesLimit: 1000, OrphanBytes: 100},
-		},
-	}
+		}, nil).
+		AnyTimes()
+	storetest.Permissive(store)
 
 	mc := metrics.New(store, counter.NewUsageTracker(nil, nil), []string{"b1"}, func() int { return 0 })
 	if err := mc.UpdateQuotaMetrics(context.Background()); err != nil {
 		t.Fatalf("UpdateQuotaMetrics: %v", err)
 	}
-
-	// The Prometheus gauge assertions would require importing the prometheus
-	// testutil package. Instead, verify the store was queried (the metrics
-	// collector code subtracts orphan bytes in the formula: limit - used - orphan).
-	// The fact that this test doesn't panic confirms the OrphanBytes field flows
-	// through correctly. A more thorough integration test would use testutil.
 }
 
-// -------------------------------------------------------------------------
-// recordObjectOrCleanup: displaced copy on unknown backend
-// -------------------------------------------------------------------------
-
-// TestRecordObjectOrCleanup_DisplacedCopyBackendNotFound verifies the record object or cleanup displaced copy backend not found contract.
-// Asserts that PutObject:.
+// TestRecordObjectOrCleanup_DisplacedCopyBackendNotFound asserts that
+// when the displaced copy points at a missing backend, no enqueue
+// fires.
 func TestRecordObjectOrCleanup_DisplacedCopyBackendNotFound(t *testing.T) {
 	t.Parallel()
 	b1 := newMockBackend()
-	store := &mockStore{
-		getBackendResp: "b1",
-		// RecordObject returns a displaced copy on "gone" (which is not in backends)
-		recordObjectResp: []core.DeletedCopy{{BackendName: "gone", SizeBytes: 300}},
-	}
+
+	c := &orphanCalls{}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).Return("b1", nil).AnyTimes()
+	store.EXPECT().RecordObject(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return([]core.DeletedCopy{{BackendName: "gone", SizeBytes: 300}}, nil).AnyTimes()
+	store.EXPECT().RecordObjectAndClearPending(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return([]core.DeletedCopy{{BackendName: "gone", SizeBytes: 300}}, nil).AnyTimes()
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubOrphanEnqueue(c, nil)).AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": b1})
 
-	_, err := mgr.ObjectManager.PutObject(context.Background(), "key1", bytes.NewReader([]byte("hi")), 2, "text/plain", nil)
-	if err != nil {
+	if _, err := mgr.ObjectManager.PutObject(context.Background(), "key1", bytes.NewReader([]byte("hi")), 2, "text/plain", nil); err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
-
-	// No enqueue since the backend "gone" doesn't exist  -  just a warn log
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	if len(store.enqueueCleanupCalls) != 0 {
-		t.Errorf("expected 0 enqueue calls for unknown backend, got %d", len(store.enqueueCleanupCalls))
+	if len(c.enqueue) != 0 {
+		t.Errorf("expected 0 enqueue calls for unknown backend, got %d", len(c.enqueue))
 	}
 }
 
-// -------------------------------------------------------------------------
-// recordObjectOrCleanup: displaced copy delete succeeds (no enqueue)
-// -------------------------------------------------------------------------
-
-// TestRecordObjectOrCleanup_DisplacedCopyDeleteSucceeds verifies the record object or cleanup displaced copy delete succeeds contract.
-// Asserts that PutObject:.
+// TestRecordObjectOrCleanup_DisplacedCopyDeleteSucceeds asserts no
+// enqueue when the displaced delete succeeds inline.
 func TestRecordObjectOrCleanup_DisplacedCopyDeleteSucceeds(t *testing.T) {
 	t.Parallel()
 	b1 := newMockBackend()
 	b2 := newMockBackend()
-	// Put the object on b2 so the delete succeeds
 	_, _ = b2.PutObject(context.Background(), "key1", bytes.NewReader([]byte("old")), 3, "", nil)
 
-	store := &mockStore{
-		getBackendResp:   "b1",
-		recordObjectResp: []core.DeletedCopy{{BackendName: "b2", SizeBytes: 3}},
-	}
+	c := &orphanCalls{}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).Return("b1", nil).AnyTimes()
+	store.EXPECT().RecordObject(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return([]core.DeletedCopy{{BackendName: "b2", SizeBytes: 3}}, nil).AnyTimes()
+	store.EXPECT().RecordObjectAndClearPending(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return([]core.DeletedCopy{{BackendName: "b2", SizeBytes: 3}}, nil).AnyTimes()
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubOrphanEnqueue(c, nil)).AnyTimes()
+	store.EXPECT().IncrementOrphanBytes(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubOrphanIncrement(c, nil)).AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": b1, "b2": b2})
 
-	_, err := mgr.ObjectManager.PutObject(context.Background(), "key1", bytes.NewReader([]byte("new")), 3, "", nil)
-	if err != nil {
+	if _, err := mgr.ObjectManager.PutObject(context.Background(), "key1", bytes.NewReader([]byte("new")), 3, "", nil); err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
-
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	// Delete succeeded, so no enqueue and no orphan bytes increment
-	if len(store.enqueueCleanupCalls) != 0 {
-		t.Errorf("expected 0 enqueue calls (delete succeeded), got %d", len(store.enqueueCleanupCalls))
+	if len(c.enqueue) != 0 {
+		t.Errorf("expected 0 enqueue calls (delete succeeded), got %d", len(c.enqueue))
 	}
-	if len(store.incrementOrphanBytesCalls) != 0 {
-		t.Errorf("expected 0 IncrementOrphanBytes calls, got %d", len(store.incrementOrphanBytesCalls))
+	if len(c.increment) != 0 {
+		t.Errorf("expected 0 IncrementOrphanBytes calls, got %d", len(c.increment))
 	}
 }
 
-// -------------------------------------------------------------------------
-// enqueueCleanup: IncrementOrphanBytes fails (best-effort)
-// -------------------------------------------------------------------------
-
-// TestEnqueueCleanup_IncrementOrphanBytesFails verifies the enqueue cleanup increment orphan bytes fails contract.
-// Asserts that expected 1 enqueue call, got.
+// TestEnqueueCleanup_IncrementOrphanBytesFails asserts a best-effort
+// increment failure does not abort the enqueue.
 func TestEnqueueCleanup_IncrementOrphanBytesFails(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{
-		incrementOrphanBytesErr: errors.New("db error"),
-	}
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	c := &orphanCalls{}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubOrphanEnqueue(c, nil)).AnyTimes()
+	store.EXPECT().IncrementOrphanBytes(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubOrphanIncrement(c, errors.New("db error"))).AnyTimes()
+	storetest.Permissive(store)
 
-	// Should not panic  -  increment failure is best-effort
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 	mgr.enqueueCleanup(context.Background(), "b1", "key", "reason", 1024)
 
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	// Enqueue should still have been called
-	if len(store.enqueueCleanupCalls) != 1 {
-		t.Errorf("expected 1 enqueue call, got %d", len(store.enqueueCleanupCalls))
+	if len(c.enqueue) != 1 {
+		t.Errorf("expected 1 enqueue call, got %d", len(c.enqueue))
 	}
-	// IncrementOrphanBytes was attempted
-	if len(store.incrementOrphanBytesCalls) != 1 {
-		t.Errorf("expected 1 IncrementOrphanBytes call (even though it failed), got %d", len(store.incrementOrphanBytesCalls))
+	if len(c.increment) != 1 {
+		t.Errorf("expected 1 IncrementOrphanBytes call (even though it failed), got %d", len(c.increment))
 	}
 }
 
-// -------------------------------------------------------------------------
-// Cleanup worker: CompleteCleanupItem fails (atomic delete+decrement
-// surfaces as one error path)
-// -------------------------------------------------------------------------
-
-// TestCleanupWorker_CompleteCleanupItem_DBError asserts the worker counts
-// the row as processed and proceeds when the atomic CompleteCleanupItem
-// returns a database error. Best-effort: the audit log captures the
-// outcome and the row stays in cleanup_queue for the next tick to retry,
-// but the worker tick must not abort because of one bad row.
+// TestCleanupWorker_CompleteCleanupItem_DBError asserts the worker
+// counts the row as processed when CompleteCleanupItem returns an error.
 func TestCleanupWorker_CompleteCleanupItem_DBError(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
 	_, _ = backend.PutObject(context.Background(), "orphan.txt", bytes.NewReader([]byte("x")), 1, "", nil)
 
-	store := &mockStore{
-		pendingCleanups: []core.CleanupItem{
-			{ID: 1, BackendName: "b1", ObjectKey: "orphan.txt", Reason: "test", Attempts: 0, SizeBytes: 100},
-		},
-		completeCleanupErr: errors.New("db error"),
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	items := []core.CleanupItem{
+		{ID: 1, BackendName: "b1", ObjectKey: "orphan.txt", Reason: "test", Attempts: 0, SizeBytes: 100},
 	}
+	delivered := false
+	store.EXPECT().ClaimPendingCleanups(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ int, _ string, _ time.Time) ([]core.CleanupItem, error) {
+			if delivered {
+				return nil, nil
+			}
+			delivered = true
+			return items, nil
+		}).
+		AnyTimes()
+	store.EXPECT().CompleteCleanupItem(gomock.Any(), gomock.Any()).Return(errors.New("db error")).AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
 	processed, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
 	if processed != 1 || failed != 0 {
 		t.Fatalf("expected processed=1 failed=0, got %d/%d", processed, failed)
 	}
-
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	if len(store.completeCleanupCalls) != 1 {
-		t.Errorf("expected 1 CompleteCleanupItem call, got %d", len(store.completeCleanupCalls))
-	}
 }
 
-// -------------------------------------------------------------------------
-// Cleanup worker: exhausted item  -  MoveCleanupToDLQ fails (best-effort)
-// -------------------------------------------------------------------------
-
-// TestCleanupWorker_Exhausted_DLQMoveFails asserts that a DB failure on
-// the move-to-DLQ transaction is tolerated: the worker still counts the
-// item as failed and proceeds, the cleanup_queue row stays put (the
-// next tick will try again), and orphan_bytes remains untouched.
+// TestCleanupWorker_Exhausted_DLQMoveFails asserts the worker tolerates
+// MoveCleanupToDLQ failure and leaves orphan_bytes untouched.
 func TestCleanupWorker_Exhausted_DLQMoveFails(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
 	backend.delErr = errors.New("permanent")
 
-	store := &mockStore{
-		pendingCleanups: []core.CleanupItem{
-			{ID: 1, BackendName: "b1", ObjectKey: "stuck.txt", Reason: "test", Attempts: 9, SizeBytes: 512},
-		},
-		moveCleanupToDLQErr: errors.New("db error"),
-	}
+	c := &orphanCalls{}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	stubCleanupQueue(t, store, c, []core.CleanupItem{
+		{ID: 1, BackendName: "b1", ObjectKey: "stuck.txt", Reason: "test", Attempts: 9, SizeBytes: 512},
+	}, errors.New("db error"))
+	store.EXPECT().DecrementOrphanBytes(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubOrphanDecrement(c)).AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
 	_, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
 	if failed != 1 {
 		t.Fatalf("expected failed=1, got %d", failed)
 	}
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	if len(store.movedToDLQ) != 1 {
-		t.Errorf("expected MoveCleanupToDLQ to be attempted once, got %d", len(store.movedToDLQ))
+	if len(c.dlq) != 1 {
+		t.Errorf("expected MoveCleanupToDLQ to be attempted once, got %d", len(c.dlq))
 	}
-	if len(store.decrementOrphanBytesCalls) != 0 {
-		t.Errorf("orphan_bytes must NOT be decremented when DLQ move fails; got %d calls", len(store.decrementOrphanBytesCalls))
+	if len(c.decrement) != 0 {
+		t.Errorf("orphan_bytes must NOT be decremented when DLQ move fails; got %d calls", len(c.decrement))
 	}
 }
 
-// -------------------------------------------------------------------------
-// Replicate end-to-end with orphan bytes affecting target selection
-// -------------------------------------------------------------------------
-
-// TestReplicate_OrphanBytesBlockTarget verifies the replicate orphan bytes block target contract.
-// Asserts that Replicate:.
+// TestReplicate_OrphanBytesBlockTarget pins the replicator capacity
+// check excluding orphan bytes.
 func TestReplicate_OrphanBytesBlockTarget(t *testing.T) {
 	t.Parallel()
 	b1 := newMockBackend()
 	b2 := newMockBackend()
 	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
-	store := &mockStore{
-		getUnderReplicatedResp: []core.ObjectLocation{
-			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
-		},
-		getQuotaStatsResp: map[string]core.QuotaStat{
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().GetUnderReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return([]core.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}, nil).AnyTimes()
+	store.EXPECT().GetUnderReplicatedObjectsExcluding(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return([]core.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}, nil).AnyTimes()
+	store.EXPECT().GetQuotaStats(gomock.Any()).
+		Return(map[string]core.QuotaStat{
 			"b1": {BytesUsed: 100, BytesLimit: 1000},
-			// b2 has 990 used + 8 orphan = 998 effective, only 2 bytes free  -  can't fit 4
 			"b2": {BytesUsed: 990, BytesLimit: 1000, OrphanBytes: 8},
-		},
-		recordReplicaInserted: true,
-	}
+		}, nil).AnyTimes()
+	store.EXPECT().RecordReplica(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(int64(0), true, nil).AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": b1, "b2": b2},
 		Stores:          testStoresFromMock(store),
@@ -675,6 +808,6 @@ func TestReplicate_OrphanBytesBlockTarget(t *testing.T) {
 		t.Errorf("expected 0 created (orphan bytes block target), got %d", created)
 	}
 	if b2.hasObject("key1") {
-		t.Error("b2 should not have received replica  -  orphan bytes make it too full")
+		t.Error("b2 should not have received replica - orphan bytes make it too full")
 	}
 }

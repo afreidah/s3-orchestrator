@@ -56,17 +56,16 @@ func newTestHandler(t *testing.T) (*Handler, *http.ServeMux) {
 func newTestHandlerWithMock(t *testing.T) (*Handler, *http.ServeMux, *testutil.MockStore) {
 	t.Helper()
 
-	mockStore := &testutil.MockStore{
-		GetQuotaStatsResp: map[string]core.QuotaStat{
-			"b1": {BackendName: "b1", BytesUsed: 500, BytesLimit: 1000},
-		},
-		GetObjectCountsResp:    map[string]int64{"b1": 42},
-		GetActiveMultipartResp: map[string]int64{"b1": 0},
-		GetUsageForPeriodResp:  map[string]core.UsageStat{"b1": {APIRequests: 100}},
-		ListDirChildrenResp: &core.DirectoryListResult{
-			Entries: []core.DirEntry{
-				{Name: "bucket1/", IsDir: true, FileCount: 10, TotalSize: 4096},
-			},
+	mockStore := testutil.NewMockStore(t)
+	mockStore.GetQuotaStatsResp = map[string]core.QuotaStat{
+		"b1": {BackendName: "b1", BytesUsed: 500, BytesLimit: 1000},
+	}
+	mockStore.GetObjectCountsResp = map[string]int64{"b1": 42}
+	mockStore.GetActiveMultipartResp = map[string]int64{"b1": 0}
+	mockStore.GetUsageForPeriodResp = map[string]core.UsageStat{"b1": {APIRequests: 100}}
+	mockStore.ListDirChildrenResp = &core.DirectoryListResult{
+		Entries: []core.DirEntry{
+			{Name: "bucket1/", IsDir: true, FileCount: 10, TotalSize: 4096},
 		},
 	}
 
@@ -469,13 +468,12 @@ func TestLogin_BcryptSecret(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mockStore := &testutil.MockStore{
-		GetQuotaStatsResp:      map[string]core.QuotaStat{},
-		GetObjectCountsResp:    map[string]int64{},
-		GetActiveMultipartResp: map[string]int64{},
-		GetUsageForPeriodResp:  map[string]core.UsageStat{},
-		ListDirChildrenResp:    &core.DirectoryListResult{},
-	}
+	mockStore := testutil.NewMockStore(t)
+	mockStore.GetQuotaStatsResp = map[string]core.QuotaStat{}
+	mockStore.GetObjectCountsResp = map[string]int64{}
+	mockStore.GetActiveMultipartResp = map[string]int64{}
+	mockStore.GetUsageForPeriodResp = map[string]core.UsageStat{}
+	mockStore.ListDirChildrenResp = &core.DirectoryListResult{}
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:  map[string]backend.ObjectBackend{},
 		Stores:    proxytest.StoresFromMock(mockStore),
@@ -546,13 +544,12 @@ func TestDeriveSessionKey_DifferentSecretsDifferentKeys(t *testing.T) {
 func TestCrossInstanceSession(t *testing.T) {
 	t.Parallel()
 	// Two handlers with the same config should accept each other's sessions.
-	mockStore := &testutil.MockStore{
-		GetQuotaStatsResp:      map[string]core.QuotaStat{},
-		GetObjectCountsResp:    map[string]int64{},
-		GetActiveMultipartResp: map[string]int64{},
-		GetUsageForPeriodResp:  map[string]core.UsageStat{},
-		ListDirChildrenResp:    &core.DirectoryListResult{},
-	}
+	mockStore := testutil.NewMockStore(t)
+	mockStore.GetQuotaStatsResp = map[string]core.QuotaStat{}
+	mockStore.GetObjectCountsResp = map[string]int64{}
+	mockStore.GetActiveMultipartResp = map[string]int64{}
+	mockStore.GetUsageForPeriodResp = map[string]core.UsageStat{}
+	mockStore.ListDirChildrenResp = &core.DirectoryListResult{}
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:  map[string]backend.ObjectBackend{},
 		Stores:    proxytest.StoresFromMock(mockStore),
@@ -1942,13 +1939,12 @@ func benchLoginHandler(b *testing.B) (*Handler, *http.ServeMux) {
 		b.Fatal(err)
 	}
 
-	mockStore := &testutil.MockStore{
-		GetQuotaStatsResp:      map[string]core.QuotaStat{},
-		GetObjectCountsResp:    map[string]int64{},
-		GetActiveMultipartResp: map[string]int64{},
-		GetUsageForPeriodResp:  map[string]core.UsageStat{},
-		ListDirChildrenResp:    &core.DirectoryListResult{},
-	}
+	mockStore := testutil.NewMockStore(b)
+	mockStore.GetQuotaStatsResp = map[string]core.QuotaStat{}
+	mockStore.GetObjectCountsResp = map[string]int64{}
+	mockStore.GetActiveMultipartResp = map[string]int64{}
+	mockStore.GetUsageForPeriodResp = map[string]core.UsageStat{}
+	mockStore.ListDirChildrenResp = &core.DirectoryListResult{}
 
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{},
