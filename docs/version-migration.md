@@ -60,6 +60,33 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ### v0.46.x (current)
 
+**Multipart upload bucket isolation (v0.46.6)**
+
+`UploadPart`, `CompleteMultipartUpload`, `AbortMultipartUpload`, and
+`ListParts` previously accepted a bare `uploadId` from the query string
+without checking that the upload belonged to the bucket on the request
+URL. An authenticated caller for any bucket could manipulate in-flight
+multipart uploads owned by another bucket: write parts into them, abort
+them, or complete them under their own bucket's URL — silent cross-tenant
+data corruption with no detection signal.
+
+The fix adds bucket and key parameters to the manager-layer methods that
+take `uploadID`. Each call fetches the upload's stored `ObjectKey` and
+rejects with `404 NoSuchUpload` when the URL's bucket/key pair does not
+match. Internal background paths (stale-upload cleanup, drain abort)
+operate on resolved upload rows directly and do not need this guard.
+
+**Operator action items after upgrade:**
+
+- No configuration change. The fix is purely additive validation; clients
+  that were already using their own buckets see no behaviour change.
+- Audit logs continue to emit the same `storage.UploadPart`,
+  `storage.CompleteMultipartUpload`, and `storage.AbortMultipartUpload`
+  events. A new 404 NoSuchUpload response from any of these endpoints in
+  production traffic that was previously succeeding indicates a client
+  was relying on the broken cross-bucket behaviour and should be
+  investigated.
+
 **Cleanup queue per-row claim pattern eliminates double-processing (v0.46.5)**
 
 `cleanup_queue` rows could be picked up by two worker goroutines (across
