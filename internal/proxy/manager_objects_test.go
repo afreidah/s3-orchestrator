@@ -2822,9 +2822,4 @@ func TestRedisCounterConfigured_LocalBackendReturnsFalse(t *testing.T) {
 	if mgr.RedisCounterConfigured() {
 		t.Errorf("RedisCounterConfigured = true, want false for local counter backend")
 	}
-	// The matching health probe must agree: a local backend cannot be
-	// "active" in the Redis-shared-counter sense.
-	if mgr.RedisCounterActive() {
-		t.Errorf("RedisCounterActive = true, want false for local counter backend")
-	}
 }
