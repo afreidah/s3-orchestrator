@@ -22,21 +22,33 @@ import (
 	"errors"
 	"testing"
 
+	"go.uber.org/mock/gomock"
+
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
-// TestUploadPart_RecordFailure_CleanupDeleteCarriesDeadline verifies the upload part record failure cleanup delete carries deadline path by exercising errors.New, context.Background, bytes.NewReader.
+// TestUploadPart_RecordFailure_CleanupDeleteCarriesDeadline asserts the
+// upload-part record-failure cleanup delete carries a deadline.
 func TestUploadPart_RecordFailure_CleanupDeleteCarriesDeadline(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
-	store := &mockStore{
-		getMultipartResp: &core.MultipartUpload{
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().GetMultipartUpload(gomock.Any(), "upload-1").
+		Return(&core.MultipartUpload{
 			UploadID:    "upload-1",
 			ObjectKey:   "multi/key",
 			BackendName: "b1",
-		},
-		recordPartErr: errors.New("db error"),
-	}
+		}, nil).
+		AnyTimes()
+	store.EXPECT().RecordPart(gomock.Any(), "upload-1", 1, gomock.Any(), int64(4), gomock.Any()).
+		Return(errors.New("db error")).
+		AnyTimes()
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil).
+		AnyTimes()
+
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
 	_, err := mgr.MultipartManager.UploadPart(context.Background(), "multi", "key", "upload-1", 1, bytes.NewReader([]byte("data")), 4)

@@ -29,8 +29,36 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
+// managerRoles is the structural shape newTestManager needs from a
+// store double: every narrow role plus the small set of methods the
+// BackendManager passes as Dashboard / Metrics. Both the legacy
+// hand-written mockStore and storetest.MockMetadataStore satisfy it,
+// so callers can mix-and-match while the gomock migration is in flight.
+type managerRoles interface {
+	allRoles
+	dashboardData
+	metricsDeps
+}
+
+// dashboardData is the subset of DashboardStore the manager passes as
+// the Dashboard provider. It overlaps with allRoles via DashboardStore
+// but is named separately so the dependency is explicit at the
+// constructor.
+type dashboardData = core.DashboardStore
+
+// metricsDeps names the methods proxy.MetricsDeps requires; declared
+// here as a structural interface so the test mock can satisfy it
+// without importing the production type.
+type metricsDeps interface {
+	GetQuotaStats(ctx context.Context) (map[string]core.QuotaStat, error)
+	GetObjectCounts(ctx context.Context) (map[string]int64, error)
+	GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error)
+	GetUsageForPeriod(ctx context.Context, period string) (map[string]core.UsageStat, error)
+	GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]core.ObjectLocation, error)
+}
+
 // newTestManager creates a BackendManager with mock backends and store for testing.
-func newTestManager(store *mockStore, backends map[string]*mockBackend) *BackendManager {
+func newTestManager(store managerRoles, backends map[string]*mockBackend) *BackendManager {
 	obs := make(map[string]s3be.ObjectBackend, len(backends))
 	var order []string
 	for name, b := range backends {
@@ -329,7 +357,7 @@ func (r *errReader) Read([]byte) (int, error) { return 0, r.err }
 
 // newTestManagerWithOrder creates a BackendManager with an explicit backend order
 // (deterministic, unlike newTestManager which iterates a map).
-func newTestManagerWithOrder(store *mockStore, backends map[string]*mockBackend, order []string) *BackendManager {
+func newTestManagerWithOrder(store managerRoles, backends map[string]*mockBackend, order []string) *BackendManager {
 	obs := make(map[string]s3be.ObjectBackend, len(backends))
 	for name, b := range backends {
 		obs[name] = b
