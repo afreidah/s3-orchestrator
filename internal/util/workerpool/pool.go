@@ -47,33 +47,3 @@ dispatch:
 
 	wg.Wait()
 }
-
-// Collect processes items concurrently and returns one result per item,
-// preserving input order. If ctx is cancelled, remaining undispatched items
-// produce zero-value results.
-func Collect[T any, R any](ctx context.Context, concurrency int, items []T, fn func(context.Context, T) R) []R {
-	if concurrency <= 0 {
-		slog.WarnContext(ctx, "workerpool.Collect: concurrency <= 0, clamping to 1", "requested", concurrency)
-		concurrency = 1
-	}
-	results := make([]R, len(items))
-	sem := make(chan struct{}, concurrency)
-	var wg sync.WaitGroup
-
-dispatch:
-	for i, item := range items {
-		select {
-		case <-ctx.Done():
-			break dispatch
-		case sem <- struct{}{}:
-		}
-		wg.Add(1)
-		go func(idx int, it T) {
-			defer func() { <-sem; wg.Done() }()
-			results[idx] = fn(ctx, it)
-		}(i, item)
-	}
-
-	wg.Wait()
-	return results
-}
