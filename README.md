@@ -154,6 +154,8 @@ cosign verify-blob checksums.txt \
 
 Each request must target a virtual bucket name that matches the credentials used to sign the request. Requests to a bucket the credentials aren't authorized for return `403 AccessDenied`.
 
+Multipart upload IDs are bucket-scoped: every per-uploadId request (`UploadPart`, `CompleteMultipartUpload`, `AbortMultipartUpload`, `ListParts`) is matched against the upload's stored bucket/key prefix and rejected with `404 NoSuchUpload` when the URL implies a different bucket or key. The 404 response is identical to the response for a non-existent upload so a caller cannot probe across buckets by observing differing failure modes.
+
 Every response includes an `X-Amz-Request-Id` header with a unique request ID for tracing. Clients can supply their own ID via `X-Request-Id`; otherwise the orchestrator generates one. The same ID appears in audit logs and OpenTelemetry spans.
 
 ## Authentication & Multi-Bucket

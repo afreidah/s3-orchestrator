@@ -392,6 +392,11 @@ func TestListParts_Success(t *testing.T) {
 	ts, mockStore, _ := newTestServer(t)
 
 	now := time.Now().UTC()
+	mockStore.GetMultipartResp = &core.MultipartUpload{
+		UploadID:    "upload-1",
+		ObjectKey:   "mybucket/testkey",
+		BackendName: "b1",
+	}
 	mockStore.GetPartsResp = []core.MultipartPart{
 		{PartNumber: 1, ETag: `"aaa"`, SizeBytes: 100, CreatedAt: now},
 		{PartNumber: 2, ETag: `"bbb"`, SizeBytes: 200, CreatedAt: now},
@@ -434,6 +439,11 @@ func TestListParts_Success(t *testing.T) {
 func TestListParts_StoreError(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
+	mockStore.GetMultipartResp = &core.MultipartUpload{
+		UploadID:    "upload-1",
+		ObjectKey:   "mybucket/testkey",
+		BackendName: "b1",
+	}
 	mockStore.GetPartsErr = &core.S3Error{
 		StatusCode: 500,
 		Code:       "InternalError",
@@ -453,6 +463,11 @@ func TestListParts_StoreError(t *testing.T) {
 func TestListParts_EmptyParts(t *testing.T) {
 	t.Parallel()
 	ts, mockStore, _ := newTestServer(t)
+	mockStore.GetMultipartResp = &core.MultipartUpload{
+		UploadID:    "upload-1",
+		ObjectKey:   "mybucket/testkey",
+		BackendName: "b1",
+	}
 	mockStore.GetPartsResp = nil // no parts
 
 	resp := doReq(t, http.MethodGet, ts.URL+"/mybucket/testkey?uploadId=upload-1", nil)
