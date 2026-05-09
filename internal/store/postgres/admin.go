@@ -138,15 +138,33 @@ func unencryptedLocationFromRow(r *db.ListUnencryptedLocationsRow) core.Unencryp
 
 // MarkObjectEncrypted updates a single object location to record that it has
 // been encrypted. Sets the encryption flag, wrapped DEK, key ID, plaintext
-// size, and updates size_bytes to the ciphertext size.
+// size, and updates size_bytes to the ciphertext size. The transaction also
+// advances backend_quotas.bytes_used by ciphertextSize - plaintextSize so the
+// per-backend counter stays in step with the on-disk byte count after the
+// bulk encrypt-existing rewrite path. Without the quota update the counter
+// drifts permanently from SUM(object_locations.size_bytes) and write-routing
+// silently overcommits.
 func (s *Store) MarkObjectEncrypted(ctx context.Context, objectKey, backendName string, encryptionKey []byte, keyID string, plaintextSize, ciphertextSize int64) error {
-	return s.queries.MarkObjectEncrypted(ctx, db.MarkObjectEncryptedParams{
-		ObjectKey:     objectKey,
-		BackendName:   backendName,
-		EncryptionKey: encryptionKey,
-		KeyID:         &keyID,
-		PlaintextSize: &plaintextSize,
-		SizeBytes:     ciphertextSize,
+	return s.withTx(ctx, func(qtx *db.Queries) error {
+		if err := qtx.MarkObjectEncrypted(ctx, db.MarkObjectEncryptedParams{
+			ObjectKey:     objectKey,
+			BackendName:   backendName,
+			EncryptionKey: encryptionKey,
+			KeyID:         &keyID,
+			PlaintextSize: &plaintextSize,
+			SizeBytes:     ciphertextSize,
+		}); err != nil {
+			return fmt.Errorf("mark encrypted: %w", err)
+		}
+		if delta := ciphertextSize - plaintextSize; delta != 0 {
+			if err := qtx.AdjustBackendBytesUsed(ctx, db.AdjustBackendBytesUsedParams{
+				Delta:       delta,
+				BackendName: backendName,
+			}); err != nil {
+				return fmt.Errorf("adjust quota for encryption: %w", err)
+			}
+		}
+		return nil
 	})
 }
 
@@ -179,11 +197,36 @@ func decryptableLocationFromRow(r *db.ListAllEncryptedLocationsRow) core.Decrypt
 
 // MarkObjectDecrypted updates a single object location to record that it has
 // been decrypted. Clears the encryption flag, wrapped DEK, key ID, and
-// plaintext size, and updates size_bytes to the plaintext size.
+// plaintext size, and updates size_bytes to the plaintext size. The
+// transaction reads the current ciphertext size before overwriting it so
+// backend_quotas.bytes_used can be advanced by plaintextSize - currentSize
+// (a negative delta because plaintext is smaller than ciphertext). Without
+// this the counter drifts permanently from SUM(object_locations.size_bytes)
+// and write-routing rejects writes that should succeed.
 func (s *Store) MarkObjectDecrypted(ctx context.Context, objectKey, backendName string, plaintextSize int64) error {
-	return s.queries.MarkObjectDecrypted(ctx, db.MarkObjectDecryptedParams{
-		ObjectKey:   objectKey,
-		BackendName: backendName,
-		SizeBytes:   plaintextSize,
+	return s.withTx(ctx, func(qtx *db.Queries) error {
+		currentSize, err := qtx.GetObjectSizeBytes(ctx, db.GetObjectSizeBytesParams{
+			ObjectKey:   objectKey,
+			BackendName: backendName,
+		})
+		if err != nil {
+			return fmt.Errorf("read current size: %w", err)
+		}
+		if err := qtx.MarkObjectDecrypted(ctx, db.MarkObjectDecryptedParams{
+			ObjectKey:   objectKey,
+			BackendName: backendName,
+			SizeBytes:   plaintextSize,
+		}); err != nil {
+			return fmt.Errorf("mark decrypted: %w", err)
+		}
+		if delta := plaintextSize - currentSize; delta != 0 {
+			if err := qtx.AdjustBackendBytesUsed(ctx, db.AdjustBackendBytesUsedParams{
+				Delta:       delta,
+				BackendName: backendName,
+			}); err != nil {
+				return fmt.Errorf("adjust quota for decryption: %w", err)
+			}
+		}
+		return nil
 	})
 }

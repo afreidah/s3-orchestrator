@@ -80,6 +80,27 @@ UPDATE backend_quotas
 SET bytes_used = GREATEST(0, bytes_used - @amount), updated_at = NOW()
 WHERE backend_name = @backend_name;
 
+-- name: AdjustBackendBytesUsed :exec
+-- Applies a signed delta to bytes_used without the bytes_limit guard
+-- IncrementQuota uses, because the on-disk byte count is reality and
+-- the counter must follow it whether or not the limit would otherwise
+-- be exceeded. GREATEST(0, ...) clamps so a delta-arithmetic bug
+-- cannot drive the counter negative. Used by MarkObjectEncrypted and
+-- MarkObjectDecrypted to keep bytes_used in step with size_bytes
+-- after the bulk encrypt-existing / decrypt-existing rewrite path
+-- changes the on-disk size.
+UPDATE backend_quotas
+SET bytes_used = GREATEST(0, bytes_used + @delta), updated_at = NOW()
+WHERE backend_name = @backend_name;
+
+-- name: GetObjectSizeBytes :one
+-- Returns the current size_bytes of an object_locations row. Used
+-- inside MarkObjectDecrypted so the caller can compute the size
+-- delta against the row that is about to be overwritten without
+-- needing the old ciphertext size to flow through the API.
+SELECT size_bytes FROM object_locations
+WHERE object_key = $1 AND backend_name = $2;
+
 -- name: IncrementOrphanBytes :exec
 UPDATE backend_quotas
 SET orphan_bytes = orphan_bytes + @amount, updated_at = NOW()
