@@ -110,11 +110,13 @@ CREATE TABLE IF NOT EXISTS cleanup_queue (
     created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     next_retry   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     attempts     INT NOT NULL DEFAULT 0,
-    last_error   TEXT
+    last_error   TEXT,
+    claimed_at   TEXT,
+    claimed_by   TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_cleanup_queue_next_retry
-    ON cleanup_queue(next_retry) WHERE attempts < 10;
+CREATE INDEX IF NOT EXISTS idx_cleanup_queue_claim
+    ON cleanup_queue(next_retry, created_at) WHERE attempts < 10;
 
 -- Dead-letter for cleanup_queue rows that exhausted their retry budget
 -- without ever succeeding at the physical backend delete. The bytes are

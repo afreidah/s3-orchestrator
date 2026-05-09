@@ -181,6 +181,14 @@ type MultipartPart struct {
 // -------------------------------------------------------------------------
 
 // CleanupItem represents a pending cleanup operation in the retry queue.
+//
+// ClaimedAt and ClaimedBy are populated by ClaimPendingCleanups (the worker
+// path) and surfaced through GetPendingCleanups (the admin display path);
+// both are nil when no worker has ever held the row. Reclaimed is set by
+// ClaimPendingCleanups only and is true when this claim recovered a row
+// whose previous claim aged past the grace cutoff - the cleanup worker uses
+// it to drive the s3o_cleanup_queue_stale_claims_recovered_total metric and
+// the cleanup_queue.claim_recovered audit event.
 type CleanupItem struct {
 	ID          int64
 	BackendName string
@@ -188,6 +196,9 @@ type CleanupItem struct {
 	Reason      string
 	Attempts    int32
 	SizeBytes   int64
+	ClaimedAt   *time.Time
+	ClaimedBy   *string
+	Reclaimed   bool `json:"-"`
 }
 
 // CleanupQueueRow is the full payload of a single cleanup_queue row,

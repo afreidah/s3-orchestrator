@@ -48,6 +48,8 @@ type CleanupQueue struct {
 	Attempts    int32
 	LastError   *string
 	SizeBytes   int64
+	ClaimedAt   pgtype.Timestamptz
+	ClaimedBy   *string
 }
 
 type MultipartPart struct {

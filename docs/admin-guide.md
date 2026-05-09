@@ -380,23 +380,27 @@ Replication is **asynchronous** — writes go to a single backend and the replic
 
 ### Cleanup Queue
 
-The cleanup queue is always active. The only tunable is the number of parallel deletions per worker tick:
+The cleanup queue is always active. Two tunables apply:
 
 ```yaml
 cleanup_queue:
   concurrency: 10                # parallel cleanup deletions per tick (default: 10)
+  claim_grace_period: 5m         # reclaim stale per-row claims older than this (default: 5m)
 ```
 
 When any backend object deletion fails during normal operations (PutObject orphan cleanup, DeleteObject, overwrite displaced copies, multipart part cleanup, rebalancer, replicator), the failed deletion is automatically enqueued for retry.
 
-Each enqueued item tracks the object's `size_bytes`. On enqueue, the backend's `orphan_bytes` counter is incremented so that write routing and replication target selection account for the physically unreleased space. On successful cleanup, `orphan_bytes` is decremented. This prevents quota overcommitment during sustained backend outages.
+Each enqueued item tracks the object's `size_bytes`. On enqueue, the backend's `orphan_bytes` counter is incremented so that write routing and replication target selection account for the physically unreleased space. On successful cleanup the row is removed and `orphan_bytes` is decremented in a single atomic CTE; a worker crash between the two operations cannot leave the counter inconsistent.
 
-The background worker runs every minute and retries with exponential backoff (1 minute to 24 hours). After 10 failed attempts, the row is graduated to the `cleanup_dlq` table via `core.MoveCleanupToDLQ` (single transaction: read the row, insert it into `cleanup_dlq`, delete it from `cleanup_queue`). `orphan_bytes` is intentionally NOT decremented during the move because the backend object is still on disk. The DLQ entry retains the full row payload (key, backend, size, reason, last_error) plus an `original_id` correlation column so an operator can find the original queue entry.
+**Per-row claim pattern.** Every row carries `claimed_at` and `claimed_by` columns. When a worker tick fetches a batch it stamps each row with the current instance's identifier and timestamp, gated by `FOR UPDATE SKIP LOCKED` (Postgres) or SQLite's intrinsic single-writer serialisation. Two instances ticking concurrently always see disjoint row sets, so a connection death or rolling-deploy overlap that would otherwise let two workers process the same row is now structurally impossible. A claim older than `claim_grace_period` (default 5m) is reclaimable so a worker that died mid-process does not leave the row stuck; reclaims emit `s3o_cleanup_queue_stale_claims_recovered_total` and a `cleanup_queue.claim_recovered` audit event.
+
+The background worker runs every minute and retries with exponential backoff (1 minute to 24 hours). Scheduling a retry clears the row's claim so it is immediately re-eligible for the next tick. After 10 failed attempts, the row is graduated to the `cleanup_dlq` table via `core.MoveCleanupToDLQ` (single transaction: read the row, insert it into `cleanup_dlq`, delete it from `cleanup_queue`). `orphan_bytes` is intentionally NOT decremented during the move because the backend object is still on disk. The DLQ entry retains the full row payload (key, backend, size, reason, last_error) plus an `original_id` correlation column so an operator can find the original queue entry.
 
 **Monitoring:**
 
 - `s3o_cleanup_queue_depth` staying elevated — orphaned objects are accumulating in the active queue.
 - `s3o_cleanup_queue_processed_total{status="exhausted"}` — counter increments each time an item exhausts retries.
+- `s3o_cleanup_queue_stale_claims_recovered_total{backend}` — non-zero rate means a worker died mid-process or the grace period is too short for realistic worst-case processing time.
 - `s3o_cleanup_dlq_depth > 0` — the DLQ holds at least one unrecoverable orphan; alerting here gives operators a direct signal instead of a counter delta.
 - `s3o_cleanup_dlq_enqueued_total{backend}` — rate of graduations per backend; a single backend dominating means that backend's delete path is broken.
 - `s3o_quota_orphan_bytes` — elevated values mean backends have significant physically unreleased space (DLQ entries are the long-tail contributors).
@@ -1051,6 +1055,7 @@ If `telemetry.metrics.enabled` is `true`, metrics are exposed at `/metrics`. Key
 | `s3o_cleanup_queue_processed_total{status="exhausted"}` | Items that exceeded max retries — graduated to the DLQ |
 | `s3o_cleanup_dlq_depth` | Alert when > 0 — at least one unrecoverable orphan needs operator action |
 | `s3o_cleanup_dlq_enqueued_total{backend="..."}` | Rate of graduations per backend; one backend dominating means its delete path is broken |
+| `s3o_cleanup_queue_stale_claims_recovered_total{backend="..."}` | Non-zero rate means a worker died mid-process or `cleanup_queue.claim_grace_period` is shorter than realistic worst-case row processing time |
 | `s3o_audit_events_total{event="..."}` | Audit log volume by event type — useful for detecting unusual activity |
 | `s3o_auth_streaming_requests_total{variant}` | Rate of streaming-payload SigV4 PUTs by variant — track which client SDKs are sending streaming uploads |
 | `s3o_auth_streaming_rejections_total{reason}` | Alert on any non-zero rate — every increment is a chunk-validation failure (tampered body, malformed framing, length mismatch, or signature mismatch) |
@@ -1080,6 +1085,7 @@ Key audit events:
 | `replication.start`, `replication.copy`, `replication.complete` | Replicator | Replica creation runs |
 | `storage.MultipartCleanup` | Multipart cleanup | Stale upload cleanup |
 | `cleanup_queue.processed` | Cleanup queue | Orphaned object successfully deleted on retry |
+| `cleanup_queue.claim_recovered` | Cleanup queue | A row whose claim aged past the grace period was reclaimed by a different worker tick (typical after a process crash or rolling-deploy overlap) |
 | `cleanup_queue.exhausted_to_dlq` | Cleanup queue | Row graduated to `cleanup_dlq` after exhausting retries |
 
 Each S3 API request produces two correlated audit entries (HTTP-level and storage-level) sharing the same `request_id`. Internal operations (rebalance, replication) generate their own correlation IDs. The `request_id` also appears as a `s3o.request_id` attribute on OpenTelemetry spans.

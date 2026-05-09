@@ -2557,6 +2557,10 @@
         {
           "expr": "sum by (status) (rate(s3o_cleanup_queue_processed_total[5m]))",
           "legendFormat": "processed {{status}}"
+        },
+        {
+          "expr": "sum by (backend) (rate(s3o_cleanup_queue_stale_claims_recovered_total[5m]))",
+          "legendFormat": "stale claim recovered {{backend}}"
         }
       ],
       "options": {

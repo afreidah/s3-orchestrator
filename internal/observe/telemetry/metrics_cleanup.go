@@ -66,6 +66,19 @@ var (
 		[]string{"backend"},
 	)
 
+	// CleanupQueueStaleClaimsRecoveredTotal counts cleanup_queue rows whose
+	// claim was reclaimed because the previous holder did not finalise the
+	// row within the configured grace period. A non-zero rate is operational
+	// signal that a worker died mid-process or the grace period is too
+	// short for the realistic worst-case processing time.
+	CleanupQueueStaleClaimsRecoveredTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "s3o_cleanup_queue_stale_claims_recovered_total",
+			Help: "cleanup_queue rows whose stale claim was reclaimed by a later worker tick",
+		},
+		[]string{"backend"},
+	)
+
 	// --- Pending objects (write-path PUT-before-COMMIT pattern) ---
 
 	// PendingIntentsEnqueuedTotal counts pending intents inserted by the

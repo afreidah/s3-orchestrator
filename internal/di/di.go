@@ -43,6 +43,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
+	"github.com/afreidah/s3-orchestrator/internal/instanceid"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/notify"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
@@ -100,6 +101,7 @@ func NewInjector(cfg *config.Config, mode string, logLevel *slog.LevelVar, logBu
 	do.Provide(inj, ProvideDashboardStore)
 	do.Provide(inj, ProvideUsageFlusher)
 	do.Provide(inj, ProvideAdvisoryLocker)
+	do.Provide(inj, ProvideInstanceID)
 	do.Provide(inj, ProvideMetricsDeps)
 
 	do.Provide(inj, ProvideBackends)
@@ -447,6 +449,13 @@ func ProvideAdvisoryLocker(i do.Injector) (core.AdvisoryLocker, error) {
 	return store.NewAdvisoryLocker(cs), nil
 }
 
+// ProvideInstanceID resolves a stable per-process identifier used as the
+// claimed_by stamp on cleanup_queue rows. The identifier is generated once
+// at first invoke and reused everywhere the value is needed.
+func ProvideInstanceID(_ do.Injector) (instanceid.ID, error) {
+	return instanceid.New()
+}
+
 // metricsDepsAdapter composes the narrow roles metrics.Collector queries.
 // Struct embedding promotes each method to the top-level type, so the
 // adapter structurally satisfies metrics.Deps without inventing a
@@ -579,7 +588,11 @@ func ProvideCleanupWorker(i do.Injector) (*worker.CleanupWorker, error) {
 	if concurrency <= 0 {
 		concurrency = 10
 	}
-	cw := worker.NewCleanupWorker(mgr, cleanup, concurrency)
+	id, err := do.Invoke[instanceid.ID](i)
+	if err != nil {
+		return nil, err
+	}
+	cw := worker.NewCleanupWorker(mgr, cleanup, concurrency, id.String(), cfg.CleanupQueue.ClaimGracePeriod)
 	mgr.CleanupWorker = cw
 	return cw, nil
 }

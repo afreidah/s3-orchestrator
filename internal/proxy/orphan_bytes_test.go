@@ -560,12 +560,16 @@ func TestEnqueueCleanup_IncrementOrphanBytesFails(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
-// Cleanup worker: DecrementOrphanBytes fails (best-effort, still completes)
+// Cleanup worker: CompleteCleanupItem fails (atomic delete+decrement
+// surfaces as one error path)
 // -------------------------------------------------------------------------
 
-// TestCleanupWorker_DecrementOrphanBytesFails verifies the cleanup worker decrement orphan bytes fails contract.
-// Asserts that expected processed=1 failed=0, got /.
-func TestCleanupWorker_DecrementOrphanBytesFails(t *testing.T) {
+// TestCleanupWorker_CompleteCleanupItem_DBError asserts the worker counts
+// the row as processed and proceeds when the atomic CompleteCleanupItem
+// returns a database error. Best-effort: the audit log captures the
+// outcome and the row stays in cleanup_queue for the next tick to retry,
+// but the worker tick must not abort because of one bad row.
+func TestCleanupWorker_CompleteCleanupItem_DBError(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
 	_, _ = backend.PutObject(context.Background(), "orphan.txt", bytes.NewReader([]byte("x")), 1, "", nil)
@@ -574,7 +578,7 @@ func TestCleanupWorker_DecrementOrphanBytesFails(t *testing.T) {
 		pendingCleanups: []core.CleanupItem{
 			{ID: 1, BackendName: "b1", ObjectKey: "orphan.txt", Reason: "test", Attempts: 0, SizeBytes: 100},
 		},
-		decrementOrphanBytesErr: errors.New("db error"),
+		completeCleanupErr: errors.New("db error"),
 	}
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
@@ -585,13 +589,8 @@ func TestCleanupWorker_DecrementOrphanBytesFails(t *testing.T) {
 
 	store.mu.Lock()
 	defer store.mu.Unlock()
-	// CompleteCleanupItem should still have been called
 	if len(store.completeCleanupCalls) != 1 {
 		t.Errorf("expected 1 CompleteCleanupItem call, got %d", len(store.completeCleanupCalls))
-	}
-	// DecrementOrphanBytes was attempted (even though it failed)
-	if len(store.decrementOrphanBytesCalls) != 1 {
-		t.Errorf("expected 1 DecrementOrphanBytes call, got %d", len(store.decrementOrphanBytesCalls))
 	}
 }
 

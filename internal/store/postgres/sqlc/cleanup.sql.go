@@ -11,6 +11,105 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const claimPendingCleanups = `-- name: ClaimPendingCleanups :many
+WITH candidate AS (
+    SELECT cq.id, (cq.claimed_at IS NOT NULL)::boolean AS reclaimed
+    FROM cleanup_queue cq
+    WHERE cq.next_retry <= NOW()
+      AND cq.attempts < 10
+      AND (cq.claimed_at IS NULL OR cq.claimed_at < $2::timestamptz)
+    ORDER BY cq.created_at ASC
+    LIMIT $1
+    FOR UPDATE SKIP LOCKED
+),
+claimed AS (
+    UPDATE cleanup_queue cq
+    SET claimed_at = NOW(),
+        claimed_by = $3::text
+    FROM candidate c
+    WHERE cq.id = c.id
+    RETURNING cq.id, cq.backend_name, cq.object_key, cq.reason, cq.attempts, cq.size_bytes
+)
+SELECT cl.id, cl.backend_name, cl.object_key, cl.reason, cl.attempts, cl.size_bytes,
+       c.reclaimed
+FROM claimed cl
+JOIN candidate c ON cl.id = c.id
+ORDER BY cl.id
+`
+
+type ClaimPendingCleanupsParams struct {
+	Limit       int32
+	GraceCutoff pgtype.Timestamptz
+	ClaimedBy   string
+}
+
+type ClaimPendingCleanupsRow struct {
+	ID          int64
+	BackendName string
+	ObjectKey   string
+	Reason      string
+	Attempts    int32
+	SizeBytes   int64
+	Reclaimed   bool
+}
+
+// Atomically claims the next batch of cleanup rows for the calling
+// instance. The inner SELECT uses FOR UPDATE SKIP LOCKED so two
+// concurrent claim transactions across instances return disjoint row
+// sets. A row is eligible if it has never been claimed (claimed_at IS
+// NULL) or its claim has aged past the grace cutoff (claimed_at <
+// @grace_cutoff). The reclaimed projection lets the worker increment
+// s3o_cleanup_queue_stale_claims_recovered_total per recovered row.
+func (q *Queries) ClaimPendingCleanups(ctx context.Context, arg ClaimPendingCleanupsParams) ([]ClaimPendingCleanupsRow, error) {
+	rows, err := q.db.Query(ctx, claimPendingCleanups, arg.Limit, arg.GraceCutoff, arg.ClaimedBy)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ClaimPendingCleanupsRow{}
+	for rows.Next() {
+		var i ClaimPendingCleanupsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.BackendName,
+			&i.ObjectKey,
+			&i.Reason,
+			&i.Attempts,
+			&i.SizeBytes,
+			&i.Reclaimed,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const completeCleanupItem = `-- name: CompleteCleanupItem :exec
+WITH deleted AS (
+    DELETE FROM cleanup_queue WHERE id = $1
+    RETURNING backend_name, size_bytes
+)
+UPDATE backend_quotas bq
+SET orphan_bytes = GREATEST(0, orphan_bytes - d.size_bytes)
+FROM deleted d
+WHERE bq.backend_name = d.backend_name
+`
+
+// Atomically removes a successfully-processed cleanup_queue row and
+// decrements the backing backend's orphan_bytes by the row's size.
+// Idempotent against re-claim retries: if the row was already deleted
+// by a previous worker, the CTE is empty and orphan_bytes is not
+// double-decremented. GREATEST(0, ...) clamps the counter so a stale
+// size_bytes value cannot drive orphan_bytes negative.
+func (q *Queries) CompleteCleanupItem(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, completeCleanupItem, id)
+	return err
+}
+
 const countCleanupDLQ = `-- name: CountCleanupDLQ :one
 SELECT COUNT(*) FROM cleanup_dlq
 `
@@ -39,6 +138,10 @@ const deleteCleanupItem = `-- name: DeleteCleanupItem :exec
 DELETE FROM cleanup_queue WHERE id = $1
 `
 
+// Used inside the move-to-DLQ transaction; orphan_bytes is intentionally
+// left untouched because the underlying backend object is still on disk.
+// The cleanup worker's success path uses CompleteCleanupItem instead,
+// which atomically deletes the row and decrements orphan_bytes.
 func (q *Queries) DeleteCleanupItem(ctx context.Context, id int64) error {
 	_, err := q.db.Exec(ctx, deleteCleanupItem, id)
 	return err
@@ -147,7 +250,8 @@ func (q *Queries) GetCleanupQueueRow(ctx context.Context, id int64) (GetCleanupQ
 }
 
 const getPendingCleanups = `-- name: GetPendingCleanups :many
-SELECT id, backend_name, object_key, reason, attempts, size_bytes
+SELECT id, backend_name, object_key, reason, attempts, size_bytes,
+       claimed_at, claimed_by
 FROM cleanup_queue
 WHERE next_retry <= NOW() AND attempts < 10
 ORDER BY created_at ASC
@@ -161,8 +265,14 @@ type GetPendingCleanupsRow struct {
 	Reason      string
 	Attempts    int32
 	SizeBytes   int64
+	ClaimedAt   pgtype.Timestamptz
+	ClaimedBy   *string
 }
 
+// Read-only listing for the admin endpoint and operator visibility. The
+// worker uses ClaimPendingCleanups instead, which also stamps the row.
+// claimed_at and claimed_by are projected so the admin view can render
+// which rows are currently held by a worker.
 func (q *Queries) GetPendingCleanups(ctx context.Context, limit int32) ([]GetPendingCleanupsRow, error) {
 	rows, err := q.db.Query(ctx, getPendingCleanups, limit)
 	if err != nil {
@@ -179,6 +289,8 @@ func (q *Queries) GetPendingCleanups(ctx context.Context, limit int32) ([]GetPen
 			&i.Reason,
 			&i.Attempts,
 			&i.SizeBytes,
+			&i.ClaimedAt,
+			&i.ClaimedBy,
 		); err != nil {
 			return nil, err
 		}
@@ -257,7 +369,9 @@ const updateCleanupRetry = `-- name: UpdateCleanupRetry :exec
 UPDATE cleanup_queue
 SET attempts = attempts + 1,
     next_retry = NOW() + $1::interval,
-    last_error = $2
+    last_error = $2,
+    claimed_at = NULL,
+    claimed_by = NULL
 WHERE id = $3
 `
 
@@ -267,6 +381,10 @@ type UpdateCleanupRetryParams struct {
 	ID        int64
 }
 
+// Schedules a retry by advancing next_retry, recording the error, and
+// clearing the claim so the row is immediately re-eligible for the next
+// worker tick (the previous claim is what gated this retry from running
+// twice within the grace window).
 func (q *Queries) UpdateCleanupRetry(ctx context.Context, arg UpdateCleanupRetryParams) error {
 	_, err := q.db.Exec(ctx, updateCleanupRetry, arg.Backoff, arg.LastError, arg.ID)
 	return err

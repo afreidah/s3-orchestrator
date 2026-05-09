@@ -470,6 +470,13 @@ func (m *MockStore) GetPendingCleanups(_ context.Context, _ int) ([]core.Cleanup
 	return m.PendingCleanupsResp, m.PendingCleanupsErr
 }
 
+// ClaimPendingCleanups stubs the worker-claim path by returning the same
+// pre-configured slice as GetPendingCleanups so existing fixtures keep
+// working without surfacing claim semantics into every test.
+func (m *MockStore) ClaimPendingCleanups(_ context.Context, _ int, _ string, _ time.Time) ([]core.CleanupItem, error) {
+	return m.PendingCleanupsResp, m.PendingCleanupsErr
+}
+
 // CompleteCleanupItem returns nil (stub).
 func (m *MockStore) CompleteCleanupItem(_ context.Context, _ int64) error {
 	return nil
