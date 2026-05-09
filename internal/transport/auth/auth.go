@@ -406,8 +406,9 @@ func buildPresignedCanonicalRequest(r *http.Request, signedHeaders []string) str
 	b.WriteString(r.Method)
 	b.WriteByte('\n')
 
-	// Canonical URI
-	encodePath(&b, r.URL.Path)
+	// Canonical URI - see buildCanonicalRequest comment; same wire-form
+	// rule applies here for presigned URL verification.
+	encodePath(&b, canonicalPath(r))
 	b.WriteByte('\n')
 
 	// Canonical query string (excluding X-Amz-Signature)
@@ -512,8 +513,10 @@ func buildCanonicalRequest(r *http.Request, signedHeaders []string) string {
 	b.WriteString(r.Method)
 	b.WriteByte('\n')
 
-	// Canonical URI
-	encodePath(&b, r.URL.Path)
+	// Canonical URI - the wire-form path (RawPath when set, Path
+	// otherwise) preserves %XX sequences byte-for-byte so the canonical
+	// request matches what AWS SDKs sign for the same URL.
+	encodePath(&b, canonicalPath(r))
 	b.WriteByte('\n')
 
 	// Canonical query string
@@ -561,19 +564,76 @@ func sigV4Encode(s string) string {
 	return strings.ReplaceAll(url.QueryEscape(s), "+", "%20")
 }
 
-// encodePath URI-encodes each path segment per the SigV4 spec directly into
-// the builder. Slashes are preserved as literal separators.
-func encodePath(b *strings.Builder, rawPath string) {
-	if rawPath == "" || rawPath == "/" {
+// canonicalPath returns the wire-form path for SigV4 canonicalisation. Uses
+// r.URL.RawPath when non-empty (the path as it appeared on the wire,
+// preserving encodings like %2F that Go's URL parser would otherwise decode
+// to / in r.URL.Path), and falls back to r.URL.Path when the raw form is
+// absent (legitimately omitted by url.Parse when the encoded form would
+// round-trip identically to the decoded form). This is the standard Go
+// pattern for "the path the client sent us." See net/url docs.
+func canonicalPath(r *http.Request) string {
+	if r.URL.RawPath != "" {
+		return r.URL.RawPath
+	}
+	return r.URL.Path
+}
+
+// encodePath emits the canonical URI for SigV4. The input is already in
+// the wire-encoded form (see canonicalPath), so this function preserves
+// %XX sequences verbatim and only encodes raw bytes that the wire form
+// did not already encode. Slashes stay as literal separators per the
+// SigV4 S3 contract (do-not-double-encode mode used by all AWS SDKs).
+func encodePath(b *strings.Builder, wirePath string) {
+	if wirePath == "" {
 		b.WriteByte('/')
 		return
 	}
-	for i, seg := range strings.Split(rawPath, "/") {
-		if i > 0 {
+	for i := 0; i < len(wirePath); i++ {
+		c := wirePath[i]
+		switch {
+		case c == '/':
 			b.WriteByte('/')
+		case c == '%' && i+2 < len(wirePath) && isHexByte(wirePath[i+1]) && isHexByte(wirePath[i+2]):
+			// Already-encoded triplet  -  pass the % and its two hex
+			// digits through verbatim so the byte-for-byte canonical
+			// URI matches the SDK's signed form.
+			b.WriteByte('%')
+			b.WriteByte(wirePath[i+1])
+			b.WriteByte(wirePath[i+2])
+			i += 2
+		case isUnreservedPathByte(c):
+			b.WriteByte(c)
+		default:
+			b.WriteByte('%')
+			b.WriteByte(hexUpper[c>>4])
+			b.WriteByte(hexUpper[c&0x0F])
 		}
-		b.WriteString(sigV4Encode(seg))
 	}
+}
+
+// hexUpper is the uppercase hex alphabet used for percent-encoding output.
+const hexUpper = "0123456789ABCDEF"
+
+// isHexByte reports whether b is an ASCII hex digit.
+func isHexByte(b byte) bool {
+	return (b >= '0' && b <= '9') || (b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F')
+}
+
+// isUnreservedPathByte reports whether b is in the SigV4 path unreserved
+// set (RFC 3986 unreserved: A-Z a-z 0-9 - . _ ~). Every other byte is
+// percent-encoded when it appears in raw form in the wire path.
+func isUnreservedPathByte(b byte) bool {
+	switch {
+	case b >= 'A' && b <= 'Z':
+		return true
+	case b >= 'a' && b <= 'z':
+		return true
+	case b >= '0' && b <= '9':
+		return true
+	case b == '-' || b == '.' || b == '_' || b == '~':
+		return true
+	}
+	return false
 }
 
 // deriveSigningKey computes the SigV4 signing key from the secret.

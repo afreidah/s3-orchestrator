@@ -108,6 +108,8 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
     '        TIMESTAMPTZ next_retry',
     '        INT attempts',
     '        TEXT last_error',
+    '        TIMESTAMPTZ claimed_at',
+    '        TEXT claimed_by',
     '    }',
     '',
     '    cleanup_dlq {',
@@ -247,11 +249,13 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
         '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>Enqueue time</td></tr>' +
         '<tr><td>next_retry</td><td>TIMESTAMPTZ</td><td>Earliest retry time</td></tr>' +
         '<tr><td>attempts</td><td>INT</td><td>Retry count (max 10)</td></tr>' +
-        '<tr><td>last_error</td><td>TEXT</td><td>Most recent error message</td></tr></table>' +
-        '<p class="ac-idx"><b>Indexes:</b> PK on id &bull; idx_cleanup_queue_next_retry (next_retry) WHERE attempts &lt; 10 (partial index)</p>' +
-        '<p>Used by: enqueueCleanup() at all failure sites (PutObject, DeleteObject, multipart ops, <a href="../background-services/">rebalancer</a>, replicator), <a href="../background-services/">cleanupQueueService</a> background worker (runs every 1 min). On the tenth consecutive failure the row graduates to <code>cleanup_dlq</code> via <code>MoveCleanupToDLQ</code>; orphan_bytes is intentionally untouched there because the bytes are still on disk.</p>' +
-        '<p class="ac-metric">Key queries: EnqueueCleanup, GetPendingCleanups, UpdateCleanupRetry, CountPendingCleanups</p>' +
-        '<p class="ac-metric">Metrics: cleanup_queue_enqueued_total, cleanup_queue_processed_total, cleanup_queue_depth</p>'
+        '<tr><td>last_error</td><td>TEXT</td><td>Most recent error message</td></tr>' +
+        '<tr><td>claimed_at</td><td>TIMESTAMPTZ</td><td>NULL when unclaimed; set by ClaimPendingCleanups, cleared by RetryCleanupItem</td></tr>' +
+        '<tr><td>claimed_by</td><td>TEXT</td><td>Stable instance identifier (hostname-XXXXXXXX) of the worker that holds the claim; observability only</td></tr></table>' +
+        '<p class="ac-idx"><b>Indexes:</b> PK on id &bull; idx_cleanup_queue_claim (next_retry, created_at) WHERE attempts &lt; 10 (partial index, supports the ClaimPendingCleanups order-by-created_at filter without a sort)</p>' +
+        '<p>Used by: enqueueCleanup() at all failure sites (PutObject, DeleteObject, multipart ops, <a href="../background-services/">rebalancer</a>, replicator), <a href="../background-services/">cleanupQueueService</a> background worker (runs every 1 min). The worker uses ClaimPendingCleanups (UPDATE...WHERE id IN (SELECT...FOR UPDATE SKIP LOCKED)) so concurrent ticks across instances return disjoint row sets; rows whose claim is older than <code>cleanup_queue.claim_grace_period</code> (default 5m) are reclaimable. On the tenth consecutive failure the row graduates to <code>cleanup_dlq</code> via <code>MoveCleanupToDLQ</code>; orphan_bytes is intentionally untouched there because the bytes are still on disk.</p>' +
+        '<p class="ac-metric">Key queries: EnqueueCleanup, ClaimPendingCleanups (worker), GetPendingCleanups (admin/dashboard), CompleteCleanupItem (atomic delete + orphan_bytes decrement CTE), UpdateCleanupRetry, CountPendingCleanups, MoveCleanupToDLQ</p>' +
+        '<p class="ac-metric">Metrics: s3o_cleanup_queue_enqueued_total, s3o_cleanup_queue_processed_total, s3o_cleanup_queue_depth, s3o_cleanup_queue_stale_claims_recovered_total{backend} &bull; Audit events: cleanup_queue.processed, cleanup_queue.claim_recovered, cleanup_queue.exhausted_to_dlq</p>'
     },
     cleanup_dlq: {
       title: 'cleanup_dlq',
@@ -397,3 +401,5 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
 | `00007_notification_outbox` | Add `notification_outbox` table for durable webhook event delivery |
 | `00008_pending_objects` | Add `pending_objects` table for the PUT-before-COMMIT write-path pattern |
 | `00009_cleanup_dlq` | Add `cleanup_dlq` table so retry-exhausted cleanup rows surface for operator action |
+| `00010_multipart_upload_encryption` | Add `encryption_key` and `key_id` columns to `multipart_uploads` so every part of an encrypted upload shares one wrapped DEK |
+| `00011_cleanup_queue_claim` | Add `claimed_at` and `claimed_by` to `cleanup_queue`; replace the partial index with `idx_cleanup_queue_claim (next_retry, created_at) WHERE attempts < 10`; supports the `ClaimPendingCleanups` `FOR UPDATE SKIP LOCKED` worker pattern that prevents cross-instance double-processing |

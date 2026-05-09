@@ -223,7 +223,7 @@ var (
 ```
 
 <a name="NonReloadableFieldsChanged"></a>
-## func [NonReloadableFieldsChanged](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L201>)
+## func [NonReloadableFieldsChanged](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L206>)
 
 ```go
 func NonReloadableFieldsChanged(old, new *Config) []string
@@ -232,7 +232,7 @@ func NonReloadableFieldsChanged(old, new *Config) []string
 NonReloadableFieldsChanged compares two configs and returns a list of non\-reloadable field descriptions that differ. Used by the SIGHUP handler to warn about changes that require a restart.
 
 <a name="ParseLogLevel"></a>
-## func [ParseLogLevel](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L331>)
+## func [ParseLogLevel](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L336>)
 
 ```go
 func ParseLogLevel(s string) slog.Level
@@ -241,7 +241,7 @@ func ParseLogLevel(s string) slog.Level
 ParseLogLevel maps a log level string to a slog.Level. Returns slog.LevelInfo for unrecognized values. Callers should validate via SetDefaultsAndValidate before calling this function.
 
 <a name="BackendCircuitBreakerConfig"></a>
-## type [BackendCircuitBreakerConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/ratelimit.go#L39-L43>)
+## type [BackendCircuitBreakerConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/ratelimit.go#L46-L50>)
 
 BackendCircuitBreakerConfig holds settings for per\-backend circuit breakers. When a backend is unreachable or returns errors \(e.g. expired credentials\), the circuit opens and the backend is excluded from request routing until recovery is detected via a probe request.
 
@@ -254,7 +254,7 @@ type BackendCircuitBreakerConfig struct {
 ```
 
 <a name="BackendConfig"></a>
-## type [BackendConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/backends.go#L12-L28>)
+## type [BackendConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/backends.go#L18-L34>)
 
 BackendConfig holds configuration for an S3\-compatible storage backend.
 
@@ -279,7 +279,7 @@ type BackendConfig struct {
 ```
 
 <a name="BucketConfig"></a>
-## type [BucketConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/buckets.go#L25-L29>)
+## type [BucketConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/buckets.go#L32-L36>)
 
 BucketConfig defines a virtual bucket with one or more credential sets. Multiple services can share a bucket by each having their own credentials.
 
@@ -310,7 +310,7 @@ type CacheConfig struct {
 ```
 
 <a name="CircuitBreakerConfig"></a>
-## type [CircuitBreakerConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/ratelimit.go#L28-L33>)
+## type [CircuitBreakerConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/ratelimit.go#L35-L40>)
 
 CircuitBreakerConfig holds settings for the database circuit breaker. When the database becomes unreachable, the proxy enters degraded mode: reads broadcast to all backends, writes return 503.
 
@@ -318,25 +318,28 @@ CircuitBreakerConfig holds settings for the database circuit breaker. When the d
 type CircuitBreakerConfig struct {
     FailureThreshold  int           `yaml:"failure_threshold"`  // Consecutive failures before opening (default: 3)
     OpenTimeout       time.Duration `yaml:"open_timeout"`       // Delay before probing recovery (default: 15s)
-    CacheTTL          time.Duration `yaml:"cache_ttl"`          // TTL for key→backend cache during degraded reads (default: 60s)
+    CacheTTL          time.Duration `yaml:"cache_ttl"`          // TTL for key->backend cache during degraded reads (default: 60s)
     ParallelBroadcast bool          `yaml:"parallel_broadcast"` // Fan-out reads to all backends in parallel during degraded mode (default: false)
 }
 ```
 
 <a name="CleanupQueueConfig"></a>
-## type [CleanupQueueConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/storage_services.go#L38-L41>)
+## type [CleanupQueueConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/storage_services.go#L59-L63>)
 
 CleanupQueueConfig holds settings for the background orphan cleanup worker and multipart upload housekeeping.
+
+ClaimGracePeriod controls how long a per\-row claim stamp held by an instance remains exclusive before another instance is allowed to reclaim the row. A short value lets a crashed worker's rows recover quickly at the cost of a higher chance of duplicate processing if a real worker is merely slow; a long value is the inverse trade\-off. The 5\-minute default covers the realistic worst case for a single backend DELETE plus its retry budget within one tick. Hot\-reloadable.
 
 ```go
 type CleanupQueueConfig struct {
     Concurrency           int           `yaml:"concurrency"`             // Parallel cleanup deletions (default: 10)
     MultipartStaleTimeout time.Duration `yaml:"multipart_stale_timeout"` // Abandon multipart uploads older than this (default: 24h)
+    ClaimGracePeriod      time.Duration `yaml:"claim_grace_period"`      // Reclaim stale per-row claims older than this (default: 5m)
 }
 ```
 
 <a name="Config"></a>
-## type [Config](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L46-L69>)
+## type [Config](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L48-L71>)
 
 Config holds the complete service configuration.
 
@@ -368,7 +371,7 @@ type Config struct {
 ```
 
 <a name="LoadConfig"></a>
-### func [LoadConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L77>)
+### func [LoadConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L79>)
 
 ```go
 func LoadConfig(path string) (*Config, error)
@@ -377,7 +380,7 @@ func LoadConfig(path string) (*Config, error)
 LoadConfig reads and parses the configuration file with environment variable expansion. Returns an error if the file cannot be read, parsed, or validated.
 
 <a name="Config.SetDefaultsAndValidate"></a>
-### func \(\*Config\) [SetDefaultsAndValidate](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L104>)
+### func \(\*Config\) [SetDefaultsAndValidate](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L106>)
 
 ```go
 func (c *Config) SetDefaultsAndValidate() error
@@ -386,7 +389,7 @@ func (c *Config) SetDefaultsAndValidate() error
 SetDefaultsAndValidate applies default values for optional fields and checks that all required configuration values are present. Delegates to per\-type validators and performs cross\-field validation.
 
 <a name="CredentialConfig"></a>
-## type [CredentialConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/buckets.go#L17-L21>)
+## type [CredentialConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/buckets.go#L24-L28>)
 
 CredentialConfig holds a single set of client credentials for accessing a virtual bucket. Supports SigV4 \(access\_key\_id \+ secret\_access\_key\) or legacy token auth.
 
@@ -399,7 +402,7 @@ type CredentialConfig struct {
 ```
 
 <a name="DatabaseConfig"></a>
-## type [DatabaseConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/database.go#L18-L30>)
+## type [DatabaseConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/database.go#L25-L37>)
 
 DatabaseConfig holds metadata store connection settings. The Driver field selects between "sqlite" \(embedded, zero\-dependency default\) and "postgres" \(required for multi\-instance deployments\).
 
@@ -420,7 +423,7 @@ type DatabaseConfig struct {
 ```
 
 <a name="DatabaseConfig.ConnectionString"></a>
-### func \(\*DatabaseConfig\) [ConnectionString](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/database.go#L34>)
+### func \(\*DatabaseConfig\) [ConnectionString](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/database.go#L41>)
 
 ```go
 func (c *DatabaseConfig) ConnectionString() string
@@ -429,14 +432,14 @@ func (c *DatabaseConfig) ConnectionString() string
 ConnectionString returns a PostgreSQL connection URI with properly escaped credentials, safe for passwords containing special characters.
 
 <a name="EncryptionConfig"></a>
-## type [EncryptionConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/encryption.go#L20-L27>)
+## type [EncryptionConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/encryption.go#L31-L38>)
 
 EncryptionConfig holds settings for server\-side envelope encryption. When enabled, objects are encrypted with per\-object DEKs using chunked AES\-256\-GCM before being stored on backends. Exactly one key source \(master\_key, master\_key\_file, or vault\) must be configured.
 
 ```go
 type EncryptionConfig struct {
     Enabled       bool                `yaml:"enabled"`
-    ChunkSize     int                 `yaml:"chunk_size"`      // Plaintext bytes per chunk (default: 65536, range: 4KB–1MB, must be power of 2)
+    ChunkSize     int                 `yaml:"chunk_size"`      // Plaintext bytes per chunk (default: 65536, range: 4KB-1MB, must be power of 2)
     MasterKey     string              `yaml:"master_key"`      // Base64-encoded 256-bit key (inline or via env var)
     MasterKeyFile string              `yaml:"master_key_file"` // Path to file containing raw 32-byte key
     Vault         *VaultTransitConfig `yaml:"vault"`           // Vault Transit key management
@@ -445,7 +448,7 @@ type EncryptionConfig struct {
 ```
 
 <a name="IntegrityConfig"></a>
-## type [IntegrityConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/integrity.go#L17-L23>)
+## type [IntegrityConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/integrity.go#L23-L29>)
 
 IntegrityConfig holds settings for object integrity verification. When enabled, objects are checksummed on write and optionally verified on read and during replication.
 
@@ -460,7 +463,7 @@ type IntegrityConfig struct {
 ```
 
 <a name="IntegrityConfig.ShouldVerifyOnReplicate"></a>
-### func \(\*IntegrityConfig\) [ShouldVerifyOnReplicate](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/integrity.go#L27>)
+### func \(\*IntegrityConfig\) [ShouldVerifyOnReplicate](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/integrity.go#L33>)
 
 ```go
 func (ic *IntegrityConfig) ShouldVerifyOnReplicate() bool
@@ -469,7 +472,7 @@ func (ic *IntegrityConfig) ShouldVerifyOnReplicate() bool
 ShouldVerifyOnReplicate returns whether replication copies should be hash\-verified. Defaults to true when integrity is enabled.
 
 <a name="LifecycleConfig"></a>
-## type [LifecycleConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/storage_services.go#L79-L82>)
+## type [LifecycleConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/storage_services.go#L101-L104>)
 
 LifecycleConfig holds rules for automatic object expiration. Objects matching a rule's prefix that are older than expiration\_days are deleted by a background worker. Empty rules list disables lifecycle processing.
 
@@ -481,7 +484,7 @@ type LifecycleConfig struct {
 ```
 
 <a name="LifecycleRule"></a>
-## type [LifecycleRule](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/storage_services.go#L85-L88>)
+## type [LifecycleRule](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/storage_services.go#L107-L110>)
 
 LifecycleRule defines a single object expiration rule.
 
@@ -493,7 +496,7 @@ type LifecycleRule struct {
 ```
 
 <a name="MetricsConfig"></a>
-## type [MetricsConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/telemetry.go#L16-L20>)
+## type [MetricsConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/telemetry.go#L22-L26>)
 
 MetricsConfig holds Prometheus metrics settings.
 
@@ -533,7 +536,7 @@ type NotificationEndpoint struct {
 ```
 
 <a name="PendingPatternConfig"></a>
-## type [PendingPatternConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/storage_services.go#L54-L59>)
+## type [PendingPatternConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/storage_services.go#L76-L81>)
 
 PendingPatternConfig configures the pending\-row pattern used by the write path to avoid losing the prior copy of an overwritten key when the metadata commit fails.
 
@@ -541,13 +544,13 @@ PendingPatternConfig configures the pending\-row pattern used by the write path 
 type PendingPatternConfig struct {
     Enabled    *bool         `yaml:"enabled"`     // Default: true. Set to false to disable.
     ReaperTick time.Duration `yaml:"reaper_tick"` // How often the reaper resolves abandoned intents (default: 1m)
-    MinAge     time.Duration `yaml:"min_age"`     // Don't reap intents younger than this — guards in-flight PUTs (default: 5m)
+    MinAge     time.Duration `yaml:"min_age"`     // Don't reap intents younger than this  -  guards in-flight PUTs (default: 5m)
     BatchSize  int           `yaml:"batch_size"`  // Max intents resolved per tick (default: 50)
 }
 ```
 
 <a name="PendingPatternConfig.IsEnabled"></a>
-### func \(\*PendingPatternConfig\) [IsEnabled](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/storage_services.go#L64>)
+### func \(\*PendingPatternConfig\) [IsEnabled](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/storage_services.go#L86>)
 
 ```go
 func (p *PendingPatternConfig) IsEnabled() bool
@@ -556,7 +559,7 @@ func (p *PendingPatternConfig) IsEnabled() bool
 IsEnabled returns true unless the operator has explicitly disabled the pending pattern. The pointer\-typed Enabled field lets the YAML loader distinguish "absent" \(default true\) from "explicitly false".
 
 <a name="RateLimitConfig"></a>
-## type [RateLimitConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/ratelimit.go#L16-L23>)
+## type [RateLimitConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/ratelimit.go#L23-L30>)
 
 RateLimitConfig holds per\-IP rate limiting settings. Disabled by default.
 
@@ -572,7 +575,7 @@ type RateLimitConfig struct {
 ```
 
 <a name="RebalanceConfig"></a>
-## type [RebalanceConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/storage_services.go#L16-L23>)
+## type [RebalanceConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/storage_services.go#L29-L36>)
 
 RebalanceConfig holds settings for the periodic backend rebalancer. Disabled by default to avoid unexpected API calls and egress charges.
 
@@ -588,7 +591,7 @@ type RebalanceConfig struct {
 ```
 
 <a name="ReconcileConfig"></a>
-## type [ReconcileConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/storage_services.go#L71-L74>)
+## type [ReconcileConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/storage_services.go#L93-L96>)
 
 ReconcileConfig controls the background orphan reconciler that periodically scans backends and imports untracked objects into the metadata database. Disabled by default.
 
@@ -600,7 +603,7 @@ type ReconcileConfig struct {
 ```
 
 <a name="RedisConfig"></a>
-## type [RedisConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/redis.go#L14-L22>)
+## type [RedisConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/redis.go#L22-L30>)
 
 RedisConfig holds optional Redis connection settings for shared usage counters in multi\-instance deployments. When omitted, counters are stored in local memory \(single\-instance default\).
 
@@ -617,7 +620,7 @@ type RedisConfig struct {
 ```
 
 <a name="ReplicationConfig"></a>
-## type [ReplicationConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/storage_services.go#L28-L34>)
+## type [ReplicationConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/storage_services.go#L41-L47>)
 
 ReplicationConfig holds settings for the background replication worker. When factor is 1, replication is disabled and behavior is identical to the single\-copy default.
 
@@ -632,7 +635,7 @@ type ReplicationConfig struct {
 ```
 
 <a name="RoutingStrategy"></a>
-## type [RoutingStrategy](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L31>)
+## type [RoutingStrategy](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L32>)
 
 RoutingStrategy determines how write operations select a target backend.
 
@@ -640,7 +643,7 @@ RoutingStrategy determines how write operations select a target backend.
 type RoutingStrategy string
 ```
 
-<a name="RoutingPack"></a>
+<a name="RoutingPack"></a>RoutingPack and related constants used by this package.
 
 ```go
 const (
@@ -653,7 +656,7 @@ const (
 ```
 
 <a name="ServerConfig"></a>
-## type [ServerConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/server.go#L15-L31>)
+## type [ServerConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/server.go#L27-L43>)
 
 ServerConfig holds HTTP server settings.
 
@@ -678,7 +681,7 @@ type ServerConfig struct {
 ```
 
 <a name="TLSConfig"></a>
-## type [TLSConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/server.go#L36-L41>)
+## type [TLSConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/server.go#L48-L53>)
 
 TLSConfig holds optional TLS settings for the HTTP server. When CertFile and KeyFile are both set, the server listens with TLS. When both are empty, the server runs plain HTTP for backward compatibility.
 
@@ -692,7 +695,7 @@ type TLSConfig struct {
 ```
 
 <a name="TelemetryConfig"></a>
-## type [TelemetryConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/telemetry.go#L10-L13>)
+## type [TelemetryConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/telemetry.go#L16-L19>)
 
 TelemetryConfig holds observability settings.
 
@@ -704,7 +707,7 @@ type TelemetryConfig struct {
 ```
 
 <a name="TracingConfig"></a>
-## type [TracingConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/telemetry.go#L23-L28>)
+## type [TracingConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/telemetry.go#L29-L34>)
 
 TracingConfig holds OpenTelemetry tracing settings.
 
@@ -718,7 +721,7 @@ type TracingConfig struct {
 ```
 
 <a name="UIConfig"></a>
-## type [UIConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/ui.go#L10-L18>)
+## type [UIConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/ui.go#L17-L25>)
 
 UIConfig holds settings for the built\-in web dashboard. Disabled by default.
 
@@ -729,13 +732,13 @@ type UIConfig struct {
     AdminKey           string `yaml:"admin_key"`            // Access key for dashboard login
     AdminSecret        string `yaml:"admin_secret"`         // Secret key for dashboard login (plaintext or bcrypt hash)
     AdminToken         string `yaml:"admin_token"`          // Separate token for admin API (defaults to admin_key if empty)
-    SessionSecret      string `yaml:"session_secret"`       //nolint:gosec // G117: config struct, not a hardcoded credential — HMAC key for session cookie derivation (independent of admin_secret)
+    SessionSecret      string `yaml:"session_secret"`       //nolint:gosec // G117: config struct, not a hardcoded credential  -  HMAC key for session cookie derivation (independent of admin_secret)
     ForceSecureCookies bool   `yaml:"force_secure_cookies"` // Always set Secure flag on session cookies (use behind TLS-terminating proxy)
 }
 ```
 
 <a name="UsageFlushConfig"></a>
-## type [UsageFlushConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/usage.go#L17-L22>)
+## type [UsageFlushConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/usage.go#L24-L29>)
 
 UsageFlushConfig holds settings for the periodic usage counter flush to the database. When adaptive flushing is enabled, the flush interval shortens automatically when any backend approaches a usage limit.
 
@@ -749,7 +752,7 @@ type UsageFlushConfig struct {
 ```
 
 <a name="VaultTransitConfig"></a>
-## type [VaultTransitConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/encryption.go#L30-L38>)
+## type [VaultTransitConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/encryption.go#L41-L49>)
 
 VaultTransitConfig holds settings for HashiCorp Vault Transit key management.
 
@@ -766,7 +769,7 @@ type VaultTransitConfig struct {
 ```
 
 <a name="WritePathConfig"></a>
-## type [WritePathConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/storage_services.go#L47-L49>)
+## type [WritePathConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/storage_services.go#L69-L71>)
 
 WritePathConfig gates write\-path correctness features. The pending\-row pattern \(PUT\-before\-COMMIT intent tracking\) is on by default; operators can disable it to fall back to the legacy delete\-on\-record\-failure path, which trades data\-loss safety for one fewer round\-trip per PUT.
 
