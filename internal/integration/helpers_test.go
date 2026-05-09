@@ -271,7 +271,10 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	db, err := postgres.NewStore(ctx, &cfg.Database)
+	dbCB := store.NewDatabaseBreaker(cfg.CircuitBreaker)
+	testDatabaseCB = dbCB
+
+	db, err := postgres.NewStore(ctx, &cfg.Database, dbCB)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to create store: %v\n", err)
 		os.Exit(1)
@@ -311,19 +314,17 @@ func TestMain(m *testing.M) {
 	}
 	testBackendOrder = backendOrder[:2]
 
-	// Wire: store -> FailableStore -> per-role CB wrappers -> manager
+	// Wire: postgres store (CB at DBTX level) -> FailableStore -> manager
 	failableStore := newFailableStore(db)
 	testFailableStore = failableStore
 
-	dbCB := store.NewDatabaseBreaker(cfg.CircuitBreaker)
-	testDatabaseCB = dbCB
-	stores := newCBStores(failableStore, dbCB)
+	stores := newStores(failableStore)
 
 	manager := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        testBackends,
 		Stores:          stores,
-		Dashboard:       store.NewCBDashboardStore(failableStore, dbCB),
-		Metrics:         newMetricsAdapter(failableStore, dbCB),
+		Dashboard:       failableStore,
+		Metrics:         newMetricsAdapter(failableStore),
 		Order:           testBackendOrder,
 		CacheTTL:        60 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -543,17 +544,12 @@ func setOrphanBytes(t *testing.T, backendName string, amount int64) {
 // tests that need more than 2 backends (e.g., over-replication with factor=3).
 func newThreeBackendManager(t *testing.T) *proxy.BackendManager {
 	t.Helper()
-	dbCB := store.NewDatabaseBreaker(config.CircuitBreakerConfig{
-		FailureThreshold: 3,
-		OpenTimeout:      500 * time.Millisecond,
-		CacheTTL:         60 * time.Second,
-	})
-	stores := newCBStores(testFailableStore, dbCB)
+	stores := newStores(testFailableStore)
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        allBackends,
 		Stores:          stores,
-		Dashboard:       store.NewCBDashboardStore(testFailableStore, dbCB),
-		Metrics:         newMetricsAdapter(testFailableStore, dbCB),
+		Dashboard:       testFailableStore,
+		Metrics:         newMetricsAdapter(testFailableStore),
 		Order:           allBackendOrder,
 		CacheTTL:        60 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -563,22 +559,23 @@ func newThreeBackendManager(t *testing.T) *proxy.BackendManager {
 	return mgr
 }
 
-// newCBStores wraps a role-bearing value (FailableStore or *postgres.Store)
-// with per-role CB decorators sharing a single *breaker.CircuitBreaker.
-func newCBStores(src roleStore, cb *breaker.CircuitBreaker) proxy.Stores {
+// newStores types a role-bearing value (FailableStore or *postgres.Store)
+// as the proxy.Stores bag. CB protection lives inside the underlying
+// postgres driver, so no per-role wrapping happens here.
+func newStores(src roleStore) proxy.Stores {
 	return proxy.Stores{
-		Object:           store.NewCBObjectStore(src, cb),
-		Quota:            store.NewCBQuotaStore(src, cb),
-		Multipart:        store.NewCBMultipartStore(src, cb),
-		Replication:      store.NewCBReplicationStore(src, cb),
-		Cleanup:          store.NewCBCleanupStore(src, cb),
-		Pending:          store.NewCBPendingStore(src, cb),
-		Integrity:        store.NewCBIntegrityStore(src, cb),
-		Lifecycle:        store.NewCBExpiredObjectsLister(src, cb),
-		BackendLifecycle: store.NewCBBackendLifecycleStore(src, cb),
-		Dashboard:        store.NewCBDashboardStore(src, cb),
-		Usage:            store.NewCBUsageFlusher(src, cb),
-		Lock:             store.NewAdvisoryLocker(src),
+		Object:           src,
+		Quota:            src,
+		Multipart:        src,
+		Replication:      src,
+		Cleanup:          src,
+		Pending:          src,
+		Integrity:        src,
+		Lifecycle:        src,
+		BackendLifecycle: src,
+		Dashboard:        src,
+		Usage:            src,
+		Lock:             src,
 	}
 }
 
@@ -604,11 +601,12 @@ type metricsAdapter struct {
 	core.ReplicationStore
 }
 
-// newMetricsAdapter returns a proxy.MetricsDeps-compatible value.
-func newMetricsAdapter(src roleStore, cb *breaker.CircuitBreaker) *metricsAdapter {
+// newMetricsAdapter returns a proxy.MetricsDeps-compatible value backed
+// by src; CB protection lives in the underlying driver.
+func newMetricsAdapter(src roleStore) *metricsAdapter {
 	return &metricsAdapter{
-		DashboardStore:   store.NewCBDashboardStore(src, cb),
-		ReplicationStore: store.NewCBReplicationStore(src, cb),
+		DashboardStore:   src,
+		ReplicationStore: src,
 	}
 }
 
@@ -627,7 +625,14 @@ func envOrDefault(key, fallback string) string {
 
 // errSimulatedDBFailure is an integration-test fixture helper; see file header for
 // the surrounding lifecycle the helpers participate in.
-var errSimulatedDBFailure = errors.New("simulated database connection failure")
+// errSimulatedDBFailure wraps core.ErrDBUnavailable so the proxy's
+// degraded-mode logic - which keys off ErrDBUnavailable bubbling up
+// from the store - reacts identically to a real breaker-open response.
+// The CB itself lives in the postgres driver and is tripped separately
+// by tripCircuitBreaker; this surface just simulates the
+// "store call returned ErrDBUnavailable" state so role calls fail
+// without exercising the actual driver.
+var errSimulatedDBFailure = fmt.Errorf("simulated database connection failure: %w", core.ErrDBUnavailable)
 
 // FailableStore wraps a concrete metadata store and can be toggled to return
 // connection errors, simulating a database outage for circuit breaker
@@ -954,17 +959,14 @@ func (f *FailableStore) RemoveExcessCopy(ctx context.Context, key, backendName s
 	return f.inner.RemoveExcessCopy(ctx, key, backendName, size)
 }
 
-// tripCircuitBreaker makes enough failing requests to trip the circuit breaker open.
+// tripCircuitBreaker drives the test breaker through enough simulated
+// DB failures to trip it open. With CB now living at the driver's DBTX
+// chokepoint, FailableStore-induced role-level errors no longer reach
+// the breaker; tests that want the breaker open call PostCheck directly.
 func tripCircuitBreaker(t *testing.T) {
 	t.Helper()
-	client := newS3Client(t)
-	ctx := context.Background()
-	// The default failure threshold is 3  -  make enough failing requests
-	for i := 0; i < 5; i++ {
-		client.HeadObject(ctx, &s3.HeadObjectInput{
-			Bucket: aws.String(virtualBucket),
-			Key:    aws.String(fmt.Sprintf("trip-circuit-%d", i)),
-		})
+	for testDatabaseCB.IsHealthy() {
+		_ = testDatabaseCB.PostCheck(errors.New("simulated DB outage"))
 	}
 }
 

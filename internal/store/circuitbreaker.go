@@ -1,25 +1,14 @@
-// -------------------------------------------------------------------------------
-// Database Circuit Breaker  -  helpers
-//
-// Author: Alex Freidah
-//
-// Houses the DB-specific error filter and the factory that constructs the
-// shared *breaker.CircuitBreaker instance used by every per-role CB wrapper
-// (cb_object.go, cb_quota.go, ...). The CB instance itself is a first-class
-// DI-registered value; consumers that need lifecycle controls (IsHealthy,
-// ResetStaleProbe) invoke *breaker.CircuitBreaker directly, not a store
-// wrapper.
-// -------------------------------------------------------------------------------
-
-// Package store hosts the metadata-persistence layer's circuit-breaker
-// decorators. Each per-role wrapper (cb_object.go, cb_quota.go, ...)
-// passes its underlying store call through a shared
-// *breaker.CircuitBreaker so a database outage degrades cleanly
-// instead of cascading into every caller.
+// Database circuit breaker factory plus the error filter used by the
+// driver-level DBTX/DB wrappers. The CB instance is a first-class
+// DI-registered value; consumers that need lifecycle controls
+// (IsHealthy, ResetStaleProbe) invoke *breaker.CircuitBreaker directly.
 package store
 
 import (
+	"database/sql"
 	"errors"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -28,17 +17,23 @@ import (
 )
 
 // NewDatabaseBreaker returns the circuit breaker used to guard metadata
-// store calls. It treats S3Error and ErrNoSpaceAvailable as application-level
-// failures that should not trip the circuit. Wires the telemetry hook so
-// CircuitBreakerState / CircuitBreakerTransitionsTotal are populated.
+// store calls. It treats S3Error, ErrNoSpaceAvailable, and "no rows"
+// sentinels as application-level signals that should not trip the
+// circuit. Wires the telemetry hook so CircuitBreakerState /
+// CircuitBreakerTransitionsTotal are populated.
 func NewDatabaseBreaker(cfg config.CircuitBreakerConfig) *breaker.CircuitBreaker {
 	cb := breaker.NewCircuitBreaker("database", cfg.FailureThreshold, cfg.OpenTimeout, isDBError, core.ErrDBUnavailable)
 	cb.SetOnStateChange(telemetry.NewCircuitBreakerHook("database"))
 	return cb
 }
 
-// isDBError returns true for genuine database failures. Application-level
-// errors (S3Error, ErrNoSpaceAvailable) do not trip the circuit breaker.
+// isDBError returns true for genuine database failures. Application-
+// level signals (S3Error, ErrNoSpaceAvailable) and the "no rows"
+// sentinels (sql.ErrNoRows, pgx.ErrNoRows) do not trip the circuit.
+// The no-rows filter matters now that the breaker lives at the driver
+// chokepoint: queries like INSERT ... ON CONFLICT DO NOTHING RETURNING
+// surface ErrNoRows via Scan whenever the row already existed, and
+// those are normal idempotent successes - not DB faults.
 func isDBError(err error) bool {
 	if err == nil {
 		return false
@@ -47,6 +42,9 @@ func isDBError(err error) bool {
 		return false
 	}
 	if errors.Is(err, core.ErrNoSpaceAvailable) {
+		return false
+	}
+	if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
 		return false
 	}
 	return true

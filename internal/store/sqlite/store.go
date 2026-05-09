@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 
@@ -29,15 +30,24 @@ import (
 )
 
 // Store implements every core role interface plus LifecycleAdmin,
-// EncryptionAdmin, and NotificationOutbox using SQLite.
+// EncryptionAdmin, and NotificationOutbox using SQLite. The db field is
+// typed as the local dbAPI interface so the production wiring can hand
+// the store either a raw *sql.DB or a CB-wrapped one transparently.
+// rawDB is the same handle without the wrapper; transactional code
+// paths begin tx through cbBeginTx so the rollback defer can live at
+// the same call site as the begin.
 type Store struct {
-	db *sql.DB
-	mu sync.Mutex // advisory lock emulation for single-instance
+	db    dbAPI
+	rawDB *sql.DB
+	cb    *breaker.CircuitBreaker
+	mu    sync.Mutex // advisory lock emulation for single-instance
 }
 
 // NewStore opens a SQLite database at the configured path, applies pragmas
-// for WAL mode and foreign key enforcement, and runs migrations.
-func NewStore(ctx context.Context, dbCfg *config.DatabaseConfig) (*Store, error) {
+// for WAL mode and foreign key enforcement, and runs migrations. When cb
+// is non-nil, every statement the store fires goes through PreCheck/
+// PostCheck. Pass nil to skip CB wrapping (test fixtures).
+func NewStore(ctx context.Context, dbCfg *config.DatabaseConfig, cb *breaker.CircuitBreaker) (*Store, error) {
 	db, err := sql.Open("sqlite", dbCfg.Path)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
@@ -65,7 +75,7 @@ func NewStore(ctx context.Context, dbCfg *config.DatabaseConfig) (*Store, error)
 		return nil, fmt.Errorf("ping sqlite: %w", err)
 	}
 
-	s := &Store{db: db}
+	s := &Store{db: wrapDB(db, cb), rawDB: db, cb: cb}
 	if err := s.RunMigrations(ctx); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("run migrations: %w", err)
@@ -79,18 +89,11 @@ func (s *Store) Close() {
 	s.db.Close()
 }
 
-// withTx executes fn inside a transaction. Commits on success, rolls back on error.
+// withTx executes fn inside a transaction. Commits on success, rolls
+// back on error. Tx lifecycle and breaker pre/post-checks live in
+// cbWithTx; this method just hands fn through.
 func (s *Store) withTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	if err := fn(tx); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return cbWithTx(ctx, s.rawDB, s.cb, fn)
 }
 
 // WithTx satisfies core.Runner by opening a transaction, wrapping it in
@@ -98,17 +101,9 @@ func (s *Store) withTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
 // back otherwise. Lets engine-agnostic core helpers orchestrate
 // multi-statement operations against the SQLite engine.
 func (s *Store) WithTx(ctx context.Context, fn func(ctx context.Context, tx core.TxAdapter) error) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	adapter := &sqliteTxAdapter{tx: tx}
-	if err := fn(ctx, adapter); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return cbWithTx(ctx, s.rawDB, s.cb, func(tx *sql.Tx) error {
+		return fn(ctx, &sqliteTxAdapter{tx: tx})
+	})
 }
 
 // Compile-time check that *Store satisfies core.Runner.
