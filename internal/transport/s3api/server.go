@@ -334,13 +334,13 @@ func (s *Server) routeObjectRequest(ctx context.Context, w http.ResponseWriter, 
 func (s *Server) routeMultipartRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, rk *objectRouteKey) (string, int, int64, int64, error, bool) {
 	switch rk.method {
 	case http.MethodPut:
-		st, e := s.handleUploadPart(ctx, w, r, rk.internalKey)
+		st, e := s.handleUploadPart(ctx, w, r, rk.bucket, rk.key)
 		return "UploadPart", st, r.ContentLength, 0, e, true
 	case http.MethodPost:
 		st, e := s.handleCompleteMultipartUpload(ctx, w, r, rk.bucket, rk.key)
 		return "CompleteMultipartUpload", st, 0, 0, e, true
 	case http.MethodDelete:
-		st, e := s.handleAbortMultipartUpload(ctx, w, rk.uploadID)
+		st, e := s.handleAbortMultipartUpload(ctx, w, rk.bucket, rk.key, rk.uploadID)
 		return "AbortMultipartUpload", st, 0, 0, e, true
 	case http.MethodGet:
 		st, e := s.handleListParts(ctx, w, r, rk.bucket, rk.key, rk.internalKey)

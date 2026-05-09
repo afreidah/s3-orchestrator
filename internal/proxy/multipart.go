@@ -181,7 +181,7 @@ func (mp *MultipartManager) CreateMultipartUpload(ctx context.Context, key, cont
 
 // UploadPart uploads a single part to the backend. Parts are stored under a
 // temporary key prefix and reassembled on completion.
-func (mp *MultipartManager) UploadPart(ctx context.Context, uploadID string, partNumber int, body io.Reader, size int64) (string, error) {
+func (mp *MultipartManager) UploadPart(ctx context.Context, bucket, key, uploadID string, partNumber int, body io.Reader, size int64) (string, error) {
 	const operation = "UploadPart"
 	start := time.Now()
 
@@ -201,6 +201,10 @@ func (mp *MultipartManager) UploadPart(ctx context.Context, uploadID string, par
 	if err != nil {
 		return "", mp.classifyWriteError(span, operation, err)
 	}
+	if err := validateMultipartScope(mu, bucket, key); err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return "", err
+	}
 
 	be, err := mp.getBackend(mu.BackendName)
 	if err != nil {
@@ -214,37 +218,10 @@ func (mp *MultipartManager) UploadPart(ctx context.Context, uploadID string, par
 		return "", core.ErrInsufficientStorage
 	}
 
-	// Encrypt if enabled. The upload-level DEK lives on the
-	// multipart_uploads row and is shared by every part; we unwrap it
-	// once per instance via the dekCache and reuse it here so this
-	// path costs zero KeyProvider round-trips after the first part.
-	// EncryptWithDEK generates a fresh per-part baseNonce internally
-	// so the AES-GCM (key, nonce) uniqueness invariant holds across
-	// every part of the upload.
-	var enc *core.EncryptionMeta
-	uploadBody := body
-	uploadSize := size
-	if mp.encryptor != nil && mu.Encrypted {
-		dek, wrappedDEK, _, derr := mp.unwrapUploadDEK(ctx, mu)
-		if derr != nil {
-			span.SetStatus(codes.Error, derr.Error())
-			return "", derr
-		}
-		result, err := mp.encryptor.EncryptWithDEK(body, size, dek, wrappedDEK, mu.KeyID)
-		if err != nil {
-			telemetry.EncryptionErrorsTotal.WithLabelValues("encrypt", "encrypt_failed").Inc()
-			span.SetStatus(codes.Error, err.Error())
-			return "", fmt.Errorf("encrypt part: %w", err)
-		}
-		telemetry.EncryptionOpsTotal.WithLabelValues("encrypt").Inc()
-		uploadBody = result.Body
-		uploadSize = result.CiphertextSize
-		enc = &core.EncryptionMeta{
-			Encrypted:     true,
-			EncryptionKey: encryption.PackKeyData(result.BaseNonce, result.WrappedDEK),
-			KeyID:         result.KeyID,
-			PlaintextSize: size,
-		}
+	uploadBody, uploadSize, enc, err := mp.prepareUploadPartBody(ctx, mu, body, size)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return "", err
 	}
 
 	// Store part under a temp key
@@ -284,6 +261,38 @@ func (mp *MultipartManager) UploadPart(ctx context.Context, uploadID string, par
 	return etag, nil
 }
 
+// prepareUploadPartBody returns the body, size, and encryption metadata
+// the backend PUT should use for one part. When the upload row is flagged
+// as encrypted and the manager has an encryptor configured, the per-part
+// body is wrapped with EncryptWithDEK using the upload-level DEK from the
+// dekCache (zero KeyProvider round-trips after the first unwrap). The
+// AES-GCM (key, nonce) uniqueness invariant holds across every part
+// because EncryptWithDEK generates a fresh per-part base nonce internally.
+// When encryption is disabled or the upload was created unencrypted, the
+// inputs are returned unchanged with a nil EncryptionMeta.
+func (mp *MultipartManager) prepareUploadPartBody(ctx context.Context, mu *core.MultipartUpload, body io.Reader, size int64) (io.Reader, int64, *core.EncryptionMeta, error) {
+	if mp.encryptor == nil || !mu.Encrypted {
+		return body, size, nil, nil
+	}
+	dek, wrappedDEK, _, err := mp.unwrapUploadDEK(ctx, mu)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	result, err := mp.encryptor.EncryptWithDEK(body, size, dek, wrappedDEK, mu.KeyID)
+	if err != nil {
+		telemetry.EncryptionErrorsTotal.WithLabelValues("encrypt", "encrypt_failed").Inc()
+		return nil, 0, nil, fmt.Errorf("encrypt part: %w", err)
+	}
+	telemetry.EncryptionOpsTotal.WithLabelValues("encrypt").Inc()
+	enc := &core.EncryptionMeta{
+		Encrypted:     true,
+		EncryptionKey: encryption.PackKeyData(result.BaseNonce, result.WrappedDEK),
+		KeyID:         result.KeyID,
+		PlaintextSize: size,
+	}
+	return result.Body, result.CiphertextSize, enc, nil
+}
+
 // uploadIDLockNamespace is OR'd into every multipart-upload advisory
 // lock ID so per-uploadID locks live above 2^62 and cannot collide
 // with the small reserved service lock IDs in core/locks.go.
@@ -309,7 +318,7 @@ func uploadIDLockID(uploadID string) int64 {
 // different writers). When the lock is contended the second caller
 // fails fast with a 409 OperationAborted so the client can decide
 // whether to retry or abort.
-func (mp *MultipartManager) CompleteMultipartUpload(ctx context.Context, uploadID string, partNumbers []int) (string, error) {
+func (mp *MultipartManager) CompleteMultipartUpload(ctx context.Context, bucket, key, uploadID string, partNumbers []int) (string, error) {
 	const operation = "CompleteMultipartUpload"
 	start := time.Now()
 
@@ -317,6 +326,15 @@ func (mp *MultipartManager) CompleteMultipartUpload(ctx context.Context, uploadI
 		telemetry.AttrUploadID.String(uploadID),
 	)
 	defer span.End()
+
+	mu, err := mp.parent.stores.Multipart.GetMultipartUpload(ctx, uploadID)
+	if err != nil {
+		return "", mp.classifyWriteError(span, operation, err)
+	}
+	if err := validateMultipartScope(mu, bucket, key); err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return "", err
+	}
 
 	var etag string
 	acquired, err := mp.parent.stores.Lock.WithAdvisoryLock(ctx, uploadIDLockID(uploadID), func(ctx context.Context) error {
@@ -551,19 +569,48 @@ func (mp *MultipartManager) buildAssembledUpload(
 
 // AbortMultipartUpload cleans up an in-progress multipart upload, removing
 // all part objects from the backend and the upload records from the database.
-func (mp *MultipartManager) AbortMultipartUpload(ctx context.Context, uploadID string) error {
-	const operation = "AbortMultipartUpload"
-	start := time.Now()
+// The bucket/key arguments scope the operation to the requesting client's
+// URL, matching them against the stored ObjectKey via validateMultipartScope
+// so a caller for one bucket cannot abort an upload that belongs to another.
+func (mp *MultipartManager) AbortMultipartUpload(ctx context.Context, bucket, key, uploadID string) error {
+	mu, err := mp.fetchScopedUpload(ctx, bucket, key, uploadID, "AbortMultipartUpload")
+	if err != nil {
+		return err
+	}
+	return mp.abortByMultipartRow(ctx, mu)
+}
 
-	ctx, span := telemetry.StartSpan(ctx, managerSpanPrefix+operation,
-		telemetry.AttrUploadID.String(uploadID),
-	)
-	defer span.End()
-
+// fetchScopedUpload looks up the multipart upload and verifies it belongs
+// to the (bucket, key) the request URL implies. Returns the same 404
+// NoSuchUpload error for both missing and out-of-scope rows so callers
+// cannot distinguish the two and probe for upload IDs across buckets.
+func (mp *MultipartManager) fetchScopedUpload(ctx context.Context, bucket, key, uploadID, operation string) (*core.MultipartUpload, error) {
 	mu, err := mp.parent.stores.Multipart.GetMultipartUpload(ctx, uploadID)
 	if err != nil {
-		return mp.classifyWriteError(span, operation, err)
+		_, span := telemetry.StartSpan(ctx, managerSpanPrefix+operation,
+			telemetry.AttrUploadID.String(uploadID),
+		)
+		defer span.End()
+		return nil, mp.classifyWriteError(span, operation, err)
 	}
+	if err := validateMultipartScope(mu, bucket, key); err != nil {
+		return nil, err
+	}
+	return mu, nil
+}
+
+// abortByMultipartRow performs the actual abort given a resolved
+// MultipartUpload row. Internal callers (CleanupStaleMultipartUploads,
+// AbortMultipartUploadsOnBackend) bypass the bucket-scope check because
+// they operate on the entire upload set, not a per-request URL.
+func (mp *MultipartManager) abortByMultipartRow(ctx context.Context, mu *core.MultipartUpload) error {
+	ctx, span := telemetry.StartSpan(ctx, managerSpanPrefix+"AbortMultipartUpload",
+		telemetry.AttrUploadID.String(mu.UploadID),
+	)
+	defer span.End()
+	const operation = "AbortMultipartUpload"
+	start := time.Now()
+	uploadID := mu.UploadID
 
 	be, err := mp.getBackend(mu.BackendName)
 	if err != nil {
@@ -578,20 +625,16 @@ func (mp *MultipartManager) AbortMultipartUpload(ctx context.Context, uploadID s
 		return fmt.Errorf("failed to get parts for abort: %w", err)
 	}
 
-	// Delete part objects from backend
 	for _, part := range parts {
 		partKey := multipartPartKey(uploadID, part.PartNumber)
 		mp.parent.deleteOrEnqueue(ctx, be, mu.BackendName, partKey, "abort_part_cleanup", part.SizeBytes)
 	}
 
-	// Delete multipart records from database
 	if err := mp.parent.stores.Multipart.DeleteMultipartUpload(ctx, uploadID); err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return err
 	}
 
-	// Evict the upload's unwrapped DEK so the cache does not hold
-	// onto an aborted upload's key material.
 	mp.forgetUploadDEK(uploadID)
 
 	mp.recordOperation(operation, mu.BackendName, start, nil)
@@ -614,8 +657,30 @@ func (mp *MultipartManager) ListMultipartUploads(ctx context.Context, prefix str
 	return mp.parent.stores.Multipart.ListMultipartUploads(ctx, prefix, maxUploads)
 }
 
+// validateMultipartScope returns ErrMultipartUploadNotFound when the
+// multipart upload's stored ObjectKey does not match the (bucket, key) the
+// caller's request URL implies. The error code is the same one returned for
+// a genuinely missing upload so a caller cannot probe for upload IDs across
+// bucket boundaries by observing differing failure modes.
+func validateMultipartScope(mu *core.MultipartUpload, bucket, key string) error {
+	if mu == nil {
+		return core.ErrMultipartUploadNotFound
+	}
+	if mu.ObjectKey != internalkey.Make(bucket, key) {
+		return core.ErrMultipartUploadNotFound
+	}
+	return nil
+}
+
 // GetParts returns all parts for a multipart upload.
-func (mp *MultipartManager) GetParts(ctx context.Context, uploadID string) ([]core.MultipartPart, error) {
+func (mp *MultipartManager) GetParts(ctx context.Context, bucket, key, uploadID string) ([]core.MultipartPart, error) {
+	mu, err := mp.parent.stores.Multipart.GetMultipartUpload(ctx, uploadID)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateMultipartScope(mu, bucket, key); err != nil {
+		return nil, err
+	}
 	return mp.parent.stores.Multipart.GetParts(ctx, uploadID)
 }
 
@@ -632,7 +697,7 @@ func (mp *MultipartManager) CleanupStaleMultipartUploads(ctx context.Context, ol
 	for i := range uploads {
 		mu := &uploads[i]
 		slog.InfoContext(ctx, "cleaning up stale multipart upload", "upload_id", mu.UploadID, "key", mu.ObjectKey)
-		if err := mp.AbortMultipartUpload(ctx, mu.UploadID); err != nil {
+		if err := mp.abortByMultipartRow(ctx, mu); err != nil {
 			slog.ErrorContext(ctx, "failed to clean up upload", "upload_id", mu.UploadID, "error", err)
 		} else {
 			cleaned++
@@ -659,7 +724,7 @@ func (mp *MultipartManager) AbortMultipartUploadsOnBackend(ctx context.Context, 
 	for i := range uploads {
 		mu := &uploads[i]
 		slog.InfoContext(ctx, "aborting multipart upload", "upload_id", mu.UploadID, "key", mu.ObjectKey)
-		if err := mp.AbortMultipartUpload(ctx, mu.UploadID); err != nil {
+		if err := mp.abortByMultipartRow(ctx, mu); err != nil {
 			slog.ErrorContext(ctx, "failed to abort multipart upload",
 				"upload_id", mu.UploadID, "error", err)
 		}

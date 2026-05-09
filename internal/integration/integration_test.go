@@ -4263,17 +4263,19 @@ func TestAbortMultipartUpload(t *testing.T) {
 		t.Fatalf("AbortMultipartUpload: %v", err)
 	}
 
-	// Verify the upload is gone by listing parts (should return empty)
-	partsResp, err := client.ListParts(ctx, &s3.ListPartsInput{
+	// Verify the upload is gone: ListParts on an aborted upload must
+	// return NoSuchUpload (matching real S3 semantics), not silently
+	// fall through to an empty parts list.
+	_, err = client.ListParts(ctx, &s3.ListPartsInput{
 		Bucket:   aws.String(virtualBucket),
 		Key:      aws.String(key),
 		UploadId: uploadID,
 	})
-	if err != nil {
-		t.Fatalf("ListParts after abort: %v", err)
+	if err == nil {
+		t.Fatal("ListParts after abort: expected NoSuchUpload error, got nil")
 	}
-	if len(partsResp.Parts) != 0 {
-		t.Errorf("expected 0 parts after abort, got %d", len(partsResp.Parts))
+	if !strings.Contains(err.Error(), "NoSuchUpload") {
+		t.Errorf("ListParts after abort: error = %v, want NoSuchUpload", err)
 	}
 }
 
