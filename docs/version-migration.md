@@ -60,6 +60,33 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ### v0.46.x (current)
 
+**SigV4 verifier honours wire-form path encoding (v0.46.7)**
+
+The SigV4 canonical-request builder previously fed `r.URL.Path` (Go's
+*decoded* URL path) into the path canonicaliser, then re-percent-encoded
+each segment. AWS SDKs sign against the wire form (`EscapedPath()` /
+`RawPath`). For any key whose URL-encoded shape was not byte-identical
+to the decoded form  -  most importantly keys containing `%2F`  -  the
+verifier's canonical request diverged from the client's, the signature
+mismatched, and the request was rejected with 403 even when signed
+correctly.
+
+The fix switches both the header-based and presigned canonical-request
+paths to use the wire form (`RawPath` when set, `Path` as fallback) and
+rewrites the path encoder as a passthrough that preserves `%XX`
+sequences verbatim and only encodes raw bytes the wire form did not
+already encode.
+
+**Operator action items after upgrade:**
+
+- Clients that previously hit 403 SignatureDoesNotMatch on keys
+  containing `%2F`, raw `%`, `+`, or other characters that Go's URL
+  parser normalises will start succeeding. Watch for a one-time uptick
+  in successful PUT/GET/DELETE on keys that the orchestrator was
+  previously rejecting.
+- No configuration change. The fix is purely a verifier correctness
+  improvement.
+
 **Multipart upload bucket isolation (v0.46.6)**
 
 `UploadPart`, `CompleteMultipartUpload`, `AbortMultipartUpload`, and

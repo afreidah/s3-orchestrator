@@ -129,6 +129,22 @@ Monitor encryption health with these Prometheus metrics:
 
 Chunked encryption derives per-chunk nonces by XORing the chunk index into a random base nonce. AES-GCM security requires that the same (key, nonce) pair is never reused. This is guaranteed because each object gets a fresh random DEK and a fresh random base nonce — even re-uploads of identical content produce different ciphertext. See `internal/encryption/chunk.go` for the full safety invariant documentation.
 
+## SigV4 Path Handling
+
+The SigV4 verifier canonicalises the request URI from the wire form
+(`r.URL.RawPath`, with `r.URL.Path` as the fallback when the URL parser
+preserved the wire form verbatim). Object keys whose URL-encoded shape
+differs from their decoded form  -  most importantly keys containing
+`%2F` (a literal `/` as part of the key, not a directory separator)  -
+are addressable through the orchestrator and round-trip cleanly through
+the AWS SDK signers.
+
+The same wire-form canonicalisation closes a path-substitution risk: an
+upstream proxy that normalises `/foo%2Fbar` to `/foo/bar` after the
+client signed the request cannot have the substituted form silently
+accepted, because the verifier's canonical request reflects what the
+proxy actually delivered, not the decoded path.
+
 ## Multipart Upload Bucket Isolation
 
 Multipart upload IDs are not secret capabilities. Every per-uploadId
