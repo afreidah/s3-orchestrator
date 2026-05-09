@@ -43,7 +43,7 @@ func TestGenerateUploadID(t *testing.T) {
 // TestClose_Idempotent verifies the close idempotent path by exercising mgr.Close.
 func TestClose_Idempotent(t *testing.T) {
 	t.Parallel()
-	mgr := newUsageManager([]string{"b1"}, &mockStore{})
+	mgr := newUsageManager([]string{"b1"}, newPermissiveMock(t))
 
 	// Calling Close twice should not panic
 	mgr.Close()
@@ -60,7 +60,7 @@ func TestUpdateUsageLimits_SwapsLimits(t *testing.T) {
 	limits := map[string]core.UsageLimits{
 		"b1": {APIRequestLimit: 100},
 	}
-	mgr := newUsageManagerWithLimits([]string{"b1"}, &mockStore{}, limits)
+	mgr := newUsageManagerWithLimits([]string{"b1"}, newPermissiveMock(t), limits)
 
 	// Initially within limits
 	if !mgr.usage.WithinLimits("b1", 50, 0, 0) {
@@ -90,7 +90,7 @@ func TestUpdateUsageLimits_SwapsLimits(t *testing.T) {
 // Asserts that rebalance config mismatch: v.
 func TestRebalanceConfig_RoundTrip(t *testing.T) {
 	t.Parallel()
-	mgr := newUsageManager([]string{"b1"}, &mockStore{})
+	mgr := newUsageManager([]string{"b1"}, newPermissiveMock(t))
 
 	// Initially nil
 	if mgr.Rebalancer.Config() != nil {
@@ -123,7 +123,7 @@ func TestRebalanceConfig_RoundTrip(t *testing.T) {
 // Asserts that replication config mismatch: v.
 func TestReplicationConfig_RoundTrip(t *testing.T) {
 	t.Parallel()
-	mgr := newUsageManager([]string{"b1"}, &mockStore{})
+	mgr := newUsageManager([]string{"b1"}, newPermissiveMock(t))
 
 	// Initially nil
 	if mgr.Replicator.Config() != nil {
@@ -154,7 +154,7 @@ func TestReplicationConfig_RoundTrip(t *testing.T) {
 // Asserts that interval = , want 5m.
 func TestUsageFlushConfig_RoundTrip(t *testing.T) {
 	t.Parallel()
-	mgr := newUsageManager([]string{"b1"}, &mockStore{})
+	mgr := newUsageManager([]string{"b1"}, newPermissiveMock(t))
 
 	if mgr.UsageFlushConfig() != nil {
 		t.Error("expected nil initial usage flush config")
@@ -182,7 +182,7 @@ func TestUsageFlushConfig_RoundTrip(t *testing.T) {
 // Asserts that lifecycle config mismatch: v.
 func TestLifecycleConfig_RoundTrip(t *testing.T) {
 	t.Parallel()
-	mgr := newUsageManager([]string{"b1"}, &mockStore{})
+	mgr := newUsageManager([]string{"b1"}, newPermissiveMock(t))
 
 	if mgr.LifecycleConfig() != nil {
 		t.Error("expected nil initial lifecycle config")
@@ -214,7 +214,7 @@ func TestNearUsageLimit_BelowThreshold(t *testing.T) {
 	limits := map[string]core.UsageLimits{
 		"b1": {APIRequestLimit: 1000},
 	}
-	mgr := newUsageManagerWithLimits([]string{"b1"}, &mockStore{}, limits)
+	mgr := newUsageManagerWithLimits([]string{"b1"}, newPermissiveMock(t), limits)
 
 	// No usage baseline set  -  should be well below threshold
 	if mgr.NearUsageLimit(0.8) {
@@ -228,7 +228,7 @@ func TestNearUsageLimit_AboveThreshold(t *testing.T) {
 	limits := map[string]core.UsageLimits{
 		"b1": {APIRequestLimit: 100},
 	}
-	mgr := newUsageManagerWithLimits([]string{"b1"}, &mockStore{}, limits)
+	mgr := newUsageManagerWithLimits([]string{"b1"}, newPermissiveMock(t), limits)
 
 	// Set baseline at 90% of limit
 	mgr.usage.SetBaseline("b1", core.UsageStat{APIRequests: 90})
@@ -245,7 +245,7 @@ func TestNearUsageLimit_AboveThreshold(t *testing.T) {
 // TestClearCache_RemovesAllEntries verifies the clear cache removes all entries path by exercising mgr.ClearCache.
 func TestClearCache_RemovesAllEntries(t *testing.T) {
 	t.Parallel()
-	mgr := newUsageManager([]string{"b1"}, &mockStore{})
+	mgr := newUsageManager([]string{"b1"}, newPermissiveMock(t))
 
 	mgr.ObjectManager.cache.Set("key1", "b1")
 	mgr.ObjectManager.cache.Set("key2", "b1")
@@ -270,7 +270,7 @@ func TestUpdateUsageLimits_ConcurrentAccess(t *testing.T) {
 	limits := map[string]core.UsageLimits{
 		"b1": {APIRequestLimit: 1000},
 	}
-	mgr := newUsageManagerWithLimits([]string{"b1"}, &mockStore{}, limits)
+	mgr := newUsageManagerWithLimits([]string{"b1"}, newPermissiveMock(t), limits)
 
 	var wg sync.WaitGroup
 	const goroutines = 50

@@ -13,28 +13,46 @@ package proxy
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
-	"github.com/afreidah/s3-orchestrator/internal/backend"
-	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"go.uber.org/mock/gomock"
 
+	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
-// -------------------------------------------------------------------------
-// scoreCopy
-// -------------------------------------------------------------------------
+// removeExcessRecord captures one RemoveExcessCopy call.
+type removeExcessRecord struct {
+	key, backend string
+	size         int64
+}
 
-// TestScoreCopy_HealthyBackend verifies the score copy healthy backend contract.
-// Asserts that expected score ~2.5, got.
+// removeExcessTracker accumulates RemoveExcessCopy calls and returns the
+// configured error.
+type removeExcessTracker struct {
+	mu    sync.Mutex
+	calls []removeExcessRecord
+	err   error
+}
+
+// stubRemoveExcessCopy returns a DoAndReturn that captures into rt.
+func stubRemoveExcessCopy(rt *removeExcessTracker) func(context.Context, string, string, int64) error {
+	return func(_ context.Context, key, backend string, size int64) error {
+		rt.mu.Lock()
+		defer rt.mu.Unlock()
+		rt.calls = append(rt.calls, removeExcessRecord{key: key, backend: backend, size: size})
+		return rt.err
+	}
+}
+
+// TestScoreCopy_HealthyBackend pins the healthy-backend scoring formula.
 func TestScoreCopy_HealthyBackend(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{
-		getQuotaStatsResp: map[string]core.QuotaStat{
-			"b1": {BytesUsed: 500, BytesLimit: 1000},
-		},
-	}
+	store := newPermissiveMock(t)
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	loc := core.ObjectLocation{BackendName: "b1", SizeBytes: 100}
@@ -43,17 +61,15 @@ func TestScoreCopy_HealthyBackend(t *testing.T) {
 	}
 	score := mgr.OverReplicationCleaner.ScoreCopy(&loc, stats)
 
-	// Healthy, 50% utilized -> score = 2 + (1 - 0.5) = 2.5
 	if score < 2.4 || score > 2.6 {
 		t.Errorf("expected score ~2.5, got %f", score)
 	}
 }
 
-// TestScoreCopy_UnknownBackend verifies the score copy unknown backend contract.
-// Asserts that expected score 0 for unknown backend, got.
+// TestScoreCopy_UnknownBackend asserts unknown backends score 0.
 func TestScoreCopy_UnknownBackend(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{}
+	store := newPermissiveMock(t)
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	loc := core.ObjectLocation{BackendName: "nonexistent", SizeBytes: 100}
@@ -64,11 +80,10 @@ func TestScoreCopy_UnknownBackend(t *testing.T) {
 	}
 }
 
-// TestScoreCopy_DrainingBackend verifies the score copy draining backend contract.
-// Asserts that expected score 0 for draining backend, got.
+// TestScoreCopy_DrainingBackend asserts a draining backend scores 0.
 func TestScoreCopy_DrainingBackend(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{}
+	store := newPermissiveMock(t)
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 	mgr.DrainManager.SeedActiveForTest("b1")
 
@@ -80,15 +95,13 @@ func TestScoreCopy_DrainingBackend(t *testing.T) {
 	}
 }
 
-// TestScoreCopy_CircuitBrokenBackend verifies the score copy circuit broken backend contract.
-// Asserts that expected score 1 for circuit-broken backend, got.
+// TestScoreCopy_CircuitBrokenBackend pins the score for a tripped breaker.
 func TestScoreCopy_CircuitBrokenBackend(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{}
+	store := newPermissiveMock(t)
 	mock := newMockBackend()
 	mock.putErr = errors.New("backend down")
 	cbBackend := backend.NewCircuitBreakerBackend(mock, "b1", 1, time.Minute)
-	// Trip the circuit breaker
 	_, _ = cbBackend.PutObject(context.Background(), "k", nil, 0, "", nil)
 
 	mgr := NewBackendManager(&BackendManagerConfig{
@@ -111,31 +124,24 @@ func TestScoreCopy_CircuitBrokenBackend(t *testing.T) {
 	}
 }
 
-// TestScoreCopy_NoQuotaData verifies the score copy no quota data contract.
-// Asserts that expected score 2.5, got.
+// TestScoreCopy_NoQuotaData asserts the no-data fallback score.
 func TestScoreCopy_NoQuotaData(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{}
+	store := newPermissiveMock(t)
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	loc := core.ObjectLocation{BackendName: "b1", SizeBytes: 100}
 	score := mgr.OverReplicationCleaner.ScoreCopy(&loc, nil)
 
-	// No quota data -> 2.5 (mid-range)
 	if score != 2.5 {
 		t.Errorf("expected score 2.5, got %f", score)
 	}
 }
 
-// -------------------------------------------------------------------------
-// Clean (top-level)
-// -------------------------------------------------------------------------
-
-// TestClean_FactorDisabled verifies the clean factor disabled contract.
-// Asserts that Clean:.
+// TestClean_FactorDisabled asserts factor=1 short-circuits.
 func TestClean_FactorDisabled(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{}
+	store := newPermissiveMock(t)
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	removed, err := mgr.OverReplicationCleaner.Clean(context.Background(), config.ReplicationConfig{
@@ -150,11 +156,11 @@ func TestClean_FactorDisabled(t *testing.T) {
 	}
 }
 
-// TestClean_NoOverReplicatedObjects verifies the clean no over replicated objects contract.
-// Asserts that Clean:.
+// TestClean_NoOverReplicatedObjects asserts an empty over-replicated
+// query produces zero work.
 func TestClean_NoOverReplicatedObjects(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{getOverReplicatedResp: nil}
+	store := newPermissiveMock(t)
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	removed, err := mgr.OverReplicationCleaner.Clean(context.Background(), config.ReplicationConfig{
@@ -169,70 +175,41 @@ func TestClean_NoOverReplicatedObjects(t *testing.T) {
 	}
 }
 
-// TestClean_QueryError verifies the clean query error path by exercising errors.New, context.Background.
+// TestClean_QueryError surfaces the over-replicated query failure.
 func TestClean_QueryError(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{getOverReplicatedErr: errors.New("db down")}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().GetOverReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil, errors.New("db down")).AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	_, err := mgr.OverReplicationCleaner.Clean(context.Background(), config.ReplicationConfig{
+	if _, err := mgr.OverReplicationCleaner.Clean(context.Background(), config.ReplicationConfig{
 		Factor:    2,
 		BatchSize: 10,
-	})
-	if err == nil {
+	}); err == nil {
 		t.Fatal("expected error from Clean")
 	}
 }
 
-// TestClean_QuotaStatsError_StillCleansUp verifies the clean quota stats error still cleans up contract.
-// Asserts that Clean:.
+// TestClean_QuotaStatsError_StillCleansUp asserts a missing quota-stats
+// payload doesn't abort the clean.
 func TestClean_QuotaStatsError_StillCleansUp(t *testing.T) {
 	t.Parallel()
-	// GetQuotaStats fails, but Clean should still proceed (scores without utilization).
-	store := &mockStore{
-		getOverReplicatedResp: []core.ObjectLocation{
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().GetOverReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return([]core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
 			{ObjectKey: "key1", BackendName: "b2", SizeBytes: 100},
 			{ObjectKey: "key1", BackendName: "b3", SizeBytes: 100},
-		},
-		getQuotaStatsErr: errors.New("db timeout"),
-	}
-	b1 := newMockBackend()
-	b2 := newMockBackend()
-	b3 := newMockBackend()
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": b1, "b2": b2, "b3": b3})
+		}, nil).AnyTimes()
+	store.EXPECT().GetQuotaStats(gomock.Any()).
+		Return(nil, errors.New("db timeout")).AnyTimes()
+	storetest.Permissive(store)
 
-	removed, err := mgr.OverReplicationCleaner.Clean(context.Background(), config.ReplicationConfig{
-		Factor:      2,
-		BatchSize:   10,
-		Concurrency: 1,
-	})
-	if err != nil {
-		t.Fatalf("Clean: %v", err)
-	}
-	// Should still remove 1 excess copy even without quota data
-	if removed != 1 {
-		t.Errorf("expected 1 removed, got %d", removed)
-	}
-}
-
-// TestClean_RemovesExcessCopies verifies the clean removes excess copies contract.
-// Asserts that Clean:.
-func TestClean_RemovesExcessCopies(t *testing.T) {
-	t.Parallel()
-	// Object "key1" has 3 copies but factor=2, so 1 should be removed.
-	store := &mockStore{
-		getOverReplicatedResp: []core.ObjectLocation{
-			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
-			{ObjectKey: "key1", BackendName: "b2", SizeBytes: 100},
-			{ObjectKey: "key1", BackendName: "b3", SizeBytes: 100},
-		},
-		getQuotaStatsResp: map[string]core.QuotaStat{
-			"b1": {BytesUsed: 100, BytesLimit: 1000},
-			"b2": {BytesUsed: 500, BytesLimit: 1000},
-			"b3": {BytesUsed: 900, BytesLimit: 1000},
-		},
-	}
 	mgr := newTestManager(store, map[string]*mockBackend{
 		"b1": newMockBackend(),
 		"b2": newMockBackend(),
@@ -250,28 +227,71 @@ func TestClean_RemovesExcessCopies(t *testing.T) {
 	if removed != 1 {
 		t.Errorf("expected 1 removed, got %d", removed)
 	}
-
-	// The most utilized backend (b3 at 90%) should have its copy removed.
-	if len(store.removeExcessCopyCalls) != 1 {
-		t.Fatalf("expected 1 RemoveExcessCopy call, got %d", len(store.removeExcessCopyCalls))
-	}
-	if store.removeExcessCopyCalls[0].backend != "b3" {
-		t.Errorf("expected removal from b3 (most utilized), got %s", store.removeExcessCopyCalls[0].backend)
-	}
 }
 
-// TestClean_RemoveExcessCopyError verifies the clean remove excess copy error contract.
-// Asserts that Clean should not return error for per-object failures:.
-func TestClean_RemoveExcessCopyError(t *testing.T) {
+// TestClean_RemovesExcessCopies pins the most-utilized-loses behaviour.
+func TestClean_RemovesExcessCopies(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{
-		getOverReplicatedResp: []core.ObjectLocation{
+	rt := &removeExcessTracker{}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().GetOverReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return([]core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
 			{ObjectKey: "key1", BackendName: "b2", SizeBytes: 100},
 			{ObjectKey: "key1", BackendName: "b3", SizeBytes: 100},
-		},
-		removeExcessCopyErr: errors.New("db error"),
+		}, nil).AnyTimes()
+	store.EXPECT().GetQuotaStats(gomock.Any()).
+		Return(map[string]core.QuotaStat{
+			"b1": {BytesUsed: 100, BytesLimit: 1000},
+			"b2": {BytesUsed: 500, BytesLimit: 1000},
+			"b3": {BytesUsed: 900, BytesLimit: 1000},
+		}, nil).AnyTimes()
+	store.EXPECT().RemoveExcessCopy(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubRemoveExcessCopy(rt)).AnyTimes()
+	storetest.Permissive(store)
+
+	mgr := newTestManager(store, map[string]*mockBackend{
+		"b1": newMockBackend(),
+		"b2": newMockBackend(),
+		"b3": newMockBackend(),
+	})
+
+	removed, err := mgr.OverReplicationCleaner.Clean(context.Background(), config.ReplicationConfig{
+		Factor:      2,
+		BatchSize:   10,
+		Concurrency: 1,
+	})
+	if err != nil {
+		t.Fatalf("Clean: %v", err)
 	}
+	if removed != 1 {
+		t.Errorf("expected 1 removed, got %d", removed)
+	}
+	if len(rt.calls) != 1 {
+		t.Fatalf("expected 1 RemoveExcessCopy call, got %d", len(rt.calls))
+	}
+	if rt.calls[0].backend != "b3" {
+		t.Errorf("expected removal from b3 (most utilized), got %s", rt.calls[0].backend)
+	}
+}
+
+// TestClean_RemoveExcessCopyError swallows the per-object failure.
+func TestClean_RemoveExcessCopyError(t *testing.T) {
+	t.Parallel()
+	rt := &removeExcessTracker{err: errors.New("db error")}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().GetOverReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return([]core.ObjectLocation{
+			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
+			{ObjectKey: "key1", BackendName: "b2", SizeBytes: 100},
+			{ObjectKey: "key1", BackendName: "b3", SizeBytes: 100},
+		}, nil).AnyTimes()
+	store.EXPECT().RemoveExcessCopy(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubRemoveExcessCopy(rt)).AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newTestManager(store, map[string]*mockBackend{
 		"b1": newMockBackend(),
 		"b2": newMockBackend(),
@@ -291,21 +311,22 @@ func TestClean_RemoveExcessCopyError(t *testing.T) {
 	}
 }
 
-// TestClean_MultipleObjects verifies the clean multiple objects contract.
-// Asserts that Clean:.
+// TestClean_MultipleObjects asserts the per-object removal counts sum.
 func TestClean_MultipleObjects(t *testing.T) {
 	t.Parallel()
-	// Two objects, each with 3 copies, factor=2 -> remove 1 each = 2 total.
-	store := &mockStore{
-		getOverReplicatedResp: []core.ObjectLocation{
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().GetOverReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return([]core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
 			{ObjectKey: "key1", BackendName: "b2", SizeBytes: 100},
 			{ObjectKey: "key1", BackendName: "b3", SizeBytes: 100},
 			{ObjectKey: "key2", BackendName: "b1", SizeBytes: 200},
 			{ObjectKey: "key2", BackendName: "b2", SizeBytes: 200},
 			{ObjectKey: "key2", BackendName: "b3", SizeBytes: 200},
-		},
-	}
+		}, nil).AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newTestManager(store, map[string]*mockBackend{
 		"b1": newMockBackend(),
 		"b2": newMockBackend(),
@@ -325,19 +346,20 @@ func TestClean_MultipleObjects(t *testing.T) {
 	}
 }
 
-// TestClean_BackendNotFoundDuringCleanup verifies the clean backend not found during cleanup contract.
-// Asserts that Clean:.
+// TestClean_BackendNotFoundDuringCleanup asserts a missing backend is
+// skipped without panic.
 func TestClean_BackendNotFoundDuringCleanup(t *testing.T) {
 	t.Parallel()
-	// Object has copies on b1 and "gone"  -  "gone" is not in the manager's
-	// backend map, so cleanObject should skip it and not panic.
-	store := &mockStore{
-		getOverReplicatedResp: []core.ObjectLocation{
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().GetOverReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return([]core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
 			{ObjectKey: "key1", BackendName: "gone", SizeBytes: 100},
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
-		},
-	}
+		}, nil).AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newTestManager(store, map[string]*mockBackend{
 		"b1": newMockBackend(),
 	})
@@ -350,27 +372,17 @@ func TestClean_BackendNotFoundDuringCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Clean: %v", err)
 	}
-	// "gone" backend should be skipped (score 0, selected for removal, but
-	// getBackend fails), so only the other excess copy (if any) is removed.
-	// With 3 copies and factor 2, 1 excess. The "gone" copy scores lowest (0)
-	// and is selected first, but removal fails at getBackend. No copies removed.
 	if removed != 0 {
 		t.Errorf("expected 0 removed (backend not found), got %d", removed)
 	}
 }
 
-// -------------------------------------------------------------------------
-// SetConfig / Config
-// -------------------------------------------------------------------------
-
-// TestSetConfig_Config verifies the set config config contract.
-// Asserts that unexpected config: v.
+// TestSetConfig_Config pins the SetConfig/Config round-trip.
 func TestSetConfig_Config(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{}
+	store := newPermissiveMock(t)
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	// Initially nil
 	if mgr.OverReplicationCleaner.Config() != nil {
 		t.Fatal("expected nil config initially")
 	}
@@ -387,15 +399,15 @@ func TestSetConfig_Config(t *testing.T) {
 	}
 }
 
-// -------------------------------------------------------------------------
-// CountPending
-// -------------------------------------------------------------------------
-
-// TestCountPending_Success verifies the count pending success contract.
-// Asserts that CountPending:.
+// TestCountPending_Success returns the configured count.
 func TestCountPending_Success(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{countOverReplicatedResp: 42}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().CountOverReplicatedObjects(gomock.Any(), gomock.Any()).
+		Return(int64(42), nil).AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	count, err := mgr.OverReplicationCleaner.CountPending(context.Background(), 2)
@@ -407,32 +419,39 @@ func TestCountPending_Success(t *testing.T) {
 	}
 }
 
-// TestCountPending_Error verifies the count pending error path by exercising errors.New, context.Background.
+// TestCountPending_Error surfaces the count-query failure.
 func TestCountPending_Error(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{countOverReplicatedErr: errors.New("db error")}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().CountOverReplicatedObjects(gomock.Any(), gomock.Any()).
+		Return(int64(0), errors.New("db error")).AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	_, err := mgr.OverReplicationCleaner.CountPending(context.Background(), 2)
-	if err == nil {
+	if _, err := mgr.OverReplicationCleaner.CountPending(context.Background(), 2); err == nil {
 		t.Fatal("expected error from CountPending")
 	}
 }
 
-// TestClean_AdmissionBlocked verifies the clean admission blocked contract.
-// Asserts that Clean:.
+// TestClean_AdmissionBlocked asserts a saturated admission semaphore +
+// cancelled ctx halts the worker.
 func TestClean_AdmissionBlocked(t *testing.T) {
 	t.Parallel()
 	sem := make(chan struct{}, 1)
-	sem <- struct{}{} // fill
+	sem <- struct{}{}
 
-	store := &mockStore{
-		getOverReplicatedResp: []core.ObjectLocation{
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().GetOverReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return([]core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
 			{ObjectKey: "key1", BackendName: "b2", SizeBytes: 100},
 			{ObjectKey: "key1", BackendName: "b3", SizeBytes: 100},
-		},
-	}
+		}, nil).AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": newMockBackend(), "b2": newMockBackend(), "b3": newMockBackend()},
 		Stores:          testStoresFromMock(store),

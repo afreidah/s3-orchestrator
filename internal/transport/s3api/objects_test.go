@@ -141,9 +141,8 @@ func newTestServer(t *testing.T) (*httptest.Server, *testutil.MockStore, *server
 	t.Helper()
 
 	backend := newServerMockBackend()
-	mockStore := &testutil.MockStore{
-		GetBackendResp: "b1",
-	}
+	mockStore := testutil.NewMockStore(t)
+	mockStore.GetBackendResp = "b1"
 
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        map[string]s3be.ObjectBackend{"b1": backend},
@@ -397,12 +396,11 @@ func TestPut_QuotaExhausted(t *testing.T) {
 // eligibleForWrite returns no backends.
 func TestPut_NoBackendCapacity_BodyIncludesCapacityHint(t *testing.T) {
 	t.Parallel()
-	mockStore := &testutil.MockStore{
-		GetBackendResp: "b1",
-		GetQuotaStatsResp: map[string]core.QuotaStat{
-			"alpha": {BackendName: "alpha", BytesUsed: 1024, BytesLimit: 4096},
-			"beta":  {BackendName: "beta", BytesUsed: 2048, BytesLimit: 4096},
-		},
+	mockStore := testutil.NewMockStore(t)
+	mockStore.GetBackendResp = "b1"
+	mockStore.GetQuotaStatsResp = map[string]core.QuotaStat{
+		"alpha": {BackendName: "alpha", BytesUsed: 1024, BytesLimit: 4096},
+		"beta":  {BackendName: "beta", BytesUsed: 2048, BytesLimit: 4096},
 	}
 	ts := newCapacityHintTestServer(t, mockStore)
 
@@ -442,10 +440,9 @@ func TestPut_NoBackendCapacity_BodyIncludesCapacityHint(t *testing.T) {
 // capacity-hint suffix.
 func TestPut_NoBackendCapacity_QuotaStatsErrFallsBack(t *testing.T) {
 	t.Parallel()
-	mockStore := &testutil.MockStore{
-		GetBackendResp:   "b1",
-		GetQuotaStatsErr: core.ErrDBUnavailable,
-	}
+	mockStore := testutil.NewMockStore(t)
+	mockStore.GetBackendResp = "b1"
+	mockStore.GetQuotaStatsErr = core.ErrDBUnavailable
 	ts := newCapacityHintTestServer(t, mockStore)
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/testkey", strings.NewReader("data"))

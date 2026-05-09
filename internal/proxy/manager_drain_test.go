@@ -14,20 +14,91 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
-	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
-	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"go.uber.org/mock/gomock"
 
+	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 	"github.com/afreidah/s3-orchestrator/internal/testutil/testx"
 )
 
-// newDrainTestManager constructs a new drain test manager.
-func newDrainTestManager(store *mockStore, backends map[string]*mockBackend) *BackendManager {
+// drainCalls captures store interactions a drain test wants to assert.
+type drainCalls struct {
+	mu              sync.Mutex
+	deletedLocation []deleteLocationRecord
+	enqueue         []core.CleanupItem
+	completed       []int64
+}
+
+type deleteLocationRecord struct {
+	key, backend string
+}
+
+// pagedLister returns a DoAndReturn that hands out paginated
+// ListObjectsByBackend results.
+func pagedLister(pages [][]core.ObjectLocation, gate <-chan struct{}, err error) func(context.Context, string, int) ([]core.ObjectLocation, error) {
+	idx := 0
+	return func(ctx context.Context, _ string, _ int) ([]core.ObjectLocation, error) {
+		if gate != nil {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-gate:
+			}
+		}
+		if err != nil {
+			return nil, err
+		}
+		if idx >= len(pages) {
+			return nil, nil
+		}
+		page := pages[idx]
+		idx++
+		return page, nil
+	}
+}
+
+// stubDeleteObjectLocation captures DeleteObjectLocation calls.
+func stubDeleteObjectLocation(c *drainCalls, err error) func(context.Context, string, string) error {
+	return func(_ context.Context, key, backend string) error {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.deletedLocation = append(c.deletedLocation, deleteLocationRecord{key: key, backend: backend})
+		return err
+	}
+}
+
+// stubDrainEnqueue captures EnqueueCleanup calls.
+func stubDrainEnqueue(c *drainCalls) func(context.Context, string, string, string, int64) error {
+	return func(_ context.Context, backend, key, reason string, size int64) error {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.enqueue = append(c.enqueue, core.CleanupItem{
+			BackendName: backend, ObjectKey: key, Reason: reason, SizeBytes: size,
+		})
+		return nil
+	}
+}
+
+// stubCompleteCleanup captures CompleteCleanupItem calls.
+func stubCompleteCleanup(c *drainCalls) func(context.Context, int64) error {
+	return func(_ context.Context, id int64) error {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.completed = append(c.completed, id)
+		return nil
+	}
+}
+
+// newDrainTestManager constructs a manager wired for drain tests.
+func newDrainTestManager(store managerRoles, backends map[string]*mockBackend) *BackendManager {
 	obs := make(map[string]s3be.ObjectBackend, len(backends))
 	var order []string
 	for name, b := range backends {
@@ -46,108 +117,101 @@ func newDrainTestManager(store *mockStore, backends map[string]*mockBackend) *Ba
 	}))
 }
 
-// TestPurgeBackendObjects_DeletesDBRecords verifies that purge deletes both S3 objects and DB records.
+// TestPurgeBackendObjects_DeletesDBRecords pins the purge contract:
+// every listed row is deleted from S3 and the DB.
 func TestPurgeBackendObjects_DeletesDBRecords(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
-	// Pre-populate backend with objects
 	backend.objects["obj1"] = mockObject{data: []byte("data1")}
 	backend.objects["obj2"] = mockObject{data: []byte("data2")}
 
-	store := &mockStore{
-		// First call returns two objects, second call returns empty (records deleted)
-		listObjectsByBackendPages: [][]core.ObjectLocation{
+	c := &drainCalls{}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(pagedLister([][]core.ObjectLocation{
 			{
 				{ObjectKey: "obj1", BackendName: "b1", SizeBytes: 5},
 				{ObjectKey: "obj2", BackendName: "b1", SizeBytes: 5},
 			},
-			{}, // empty = loop terminates
-		},
-	}
+			{},
+		}, nil, nil)).AnyTimes()
+	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubDeleteObjectLocation(c, nil)).AnyTimes()
+	storetest.Permissive(store)
 
 	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": backend})
 
 	mgr.DrainManager.PurgeBackendObjects(context.Background(), backend, "b1")
 
-	// Verify DB records were deleted for both objects
-	store.mu.Lock()
-	calls := store.deleteObjectLocationCalls
-	store.mu.Unlock()
-
-	if len(calls) != 2 {
-		t.Fatalf("expected 2 DeleteObjectLocation calls, got %d", len(calls))
+	if len(c.deletedLocation) != 2 {
+		t.Fatalf("expected 2 DeleteObjectLocation calls, got %d", len(c.deletedLocation))
 	}
-
 	keys := map[string]bool{}
-	for _, c := range calls {
-		keys[c.key] = true
-		if c.backend != "b1" {
-			t.Errorf("DeleteObjectLocation backend = %q, want b1", c.backend)
+	for _, e := range c.deletedLocation {
+		keys[e.key] = true
+		if e.backend != "b1" {
+			t.Errorf("DeleteObjectLocation backend = %q, want b1", e.backend)
 		}
 	}
 	if !keys["obj1"] || !keys["obj2"] {
 		t.Errorf("expected obj1 and obj2 to be deleted, got %v", keys)
 	}
-
-	// Verify S3 objects were also deleted
 	if backend.hasObject("obj1") {
 		t.Error("obj1 should have been deleted from S3 backend")
 	}
 	if backend.hasObject("obj2") {
 		t.Error("obj2 should have been deleted from S3 backend")
 	}
-
-	// Verify usage tracking: 2 API calls (one delete per object)
 	if got := mgr.usage.Backend().Load("b1", counter.FieldAPIRequests); got != 2 {
 		t.Errorf("apiRequests = %d, want 2 (purge deletes)", got)
 	}
 }
 
-// TestPurgeBackendObjects_ContinuesOnS3DeleteFailure verifies DB cleanup proceeds even if S3 delete fails.
+// TestPurgeBackendObjects_ContinuesOnS3DeleteFailure asserts a missing
+// backend object still produces the DB delete.
 func TestPurgeBackendObjects_ContinuesOnS3DeleteFailure(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
-	// Don't pre-populate  -  S3 deletes will "fail" (object not found)
 
-	store := &mockStore{
-		listObjectsByBackendPages: [][]core.ObjectLocation{
+	c := &drainCalls{}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(pagedLister([][]core.ObjectLocation{
 			{{ObjectKey: "missing", BackendName: "b1", SizeBytes: 5}},
 			{},
-		},
-	}
+		}, nil, nil)).AnyTimes()
+	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubDeleteObjectLocation(c, nil)).AnyTimes()
+	storetest.Permissive(store)
 
 	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": backend})
 
 	mgr.DrainManager.PurgeBackendObjects(context.Background(), backend, "b1")
 
-	// DB record should still be deleted even though S3 delete failed
-	store.mu.Lock()
-	calls := store.deleteObjectLocationCalls
-	store.mu.Unlock()
-
-	if len(calls) != 1 {
-		t.Fatalf("expected 1 DeleteObjectLocation call, got %d", len(calls))
+	if len(c.deletedLocation) != 1 {
+		t.Fatalf("expected 1 DeleteObjectLocation call, got %d", len(c.deletedLocation))
 	}
-	if calls[0].key != "missing" {
-		t.Errorf("DeleteObjectLocation key = %q, want missing", calls[0].key)
+	if c.deletedLocation[0].key != "missing" {
+		t.Errorf("DeleteObjectLocation key = %q, want missing", c.deletedLocation[0].key)
 	}
 }
 
-// TestRemoveBackend_PurgeTerminates verifies that RemoveBackend with purge=true
-// terminates and doesn't loop infinitely. This is a regression test for the bug
-// where purgeBackendObjects never deleted DB records, causing ListObjectsByBackend
-// to return the same rows forever.
+// TestRemoveBackend_PurgeTerminates pins that the purge loop exits.
 func TestRemoveBackend_PurgeTerminates(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
 	backend.objects["k1"] = mockObject{data: []byte("x")}
 
-	store := &mockStore{
-		listObjectsByBackendPages: [][]core.ObjectLocation{
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(pagedLister([][]core.ObjectLocation{
 			{{ObjectKey: "k1", BackendName: "b1", SizeBytes: 1}},
-			{}, // purge loop exits
-		},
-	}
+			{},
+		}, nil, nil)).AnyTimes()
+	storetest.Permissive(store)
 
 	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": backend})
 
@@ -166,43 +230,35 @@ func TestRemoveBackend_PurgeTerminates(t *testing.T) {
 	}
 }
 
-// -------------------------------------------------------------------------
-// drainOneObject  -  object already has replica elsewhere
-// -------------------------------------------------------------------------
-
-// TestDrainOneObject_ReplicaExists_DeletesSourceWithSize verifies that when a replica exists elsewhere, only the source copy is deleted.
+// TestDrainOneObject_ReplicaExists_DeletesSourceWithSize asserts the
+// replica-exists branch deletes only the source.
 func TestDrainOneObject_ReplicaExists_DeletesSourceWithSize(t *testing.T) {
 	t.Parallel()
 	srcBackend := newMockBackend()
 	srcBackend.objects["key1"] = mockObject{data: []byte("data")}
 
-	store := &mockStore{
-		// GetAllObjectLocations returns copies on both b1 (source) and b2 (replica)
-		getAllLocationsResp: []core.ObjectLocation{
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().GetAllObjectLocations(gomock.Any(), gomock.Any()).
+		Return([]core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
 			{ObjectKey: "key1", BackendName: "b2", SizeBytes: 4},
-		},
-	}
+		}, nil).AnyTimes()
+	storetest.Permissive(store)
 
 	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": srcBackend, "b2": newMockBackend()})
 
 	obj := &core.ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
-	ok := mgr.DrainManager.DrainOneObject(context.Background(), srcBackend, "b1", obj)
-	if !ok {
+	if !mgr.DrainManager.DrainOneObject(context.Background(), srcBackend, "b1", obj) {
 		t.Fatal("drainOneObject should succeed when replica exists")
 	}
-
-	// Source object should be deleted from S3
 	if srcBackend.hasObject("key1") {
 		t.Error("source object should have been deleted")
 	}
 }
 
-// -------------------------------------------------------------------------
-// drainOneObject  -  no replica, must copy then delete source
-// -------------------------------------------------------------------------
-
-// TestDrainOneObject_NoCopy_MovesObjectWithSize verifies the drain one object no copy moves object with size path by exercising context.Background.
+// TestDrainOneObject_NoCopy_MovesObjectWithSize asserts the
+// no-replica branch streams the object to a new destination.
 func TestDrainOneObject_NoCopy_MovesObjectWithSize(t *testing.T) {
 	t.Parallel()
 	srcBackend := newMockBackend()
@@ -210,34 +266,33 @@ func TestDrainOneObject_NoCopy_MovesObjectWithSize(t *testing.T) {
 
 	dstBackend := newMockBackend()
 
-	store := &mockStore{
-		// Only on b1 (no replica)
-		getAllLocationsResp: []core.ObjectLocation{
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().GetAllObjectLocations(gomock.Any(), gomock.Any()).
+		Return([]core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
-		},
-		getBackendResp:         "b2",
-		moveObjectLocationSize: 4,
-	}
+		}, nil).AnyTimes()
+	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return("b2", nil).AnyTimes()
+	store.EXPECT().GetLeastUtilizedBackend(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return("b2", nil).AnyTimes()
+	store.EXPECT().MoveObjectLocation(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(int64(4), nil).AnyTimes()
+	storetest.Permissive(store)
 
 	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": srcBackend, "b2": dstBackend})
 
 	obj := &core.ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
-	ok := mgr.DrainManager.DrainOneObject(context.Background(), srcBackend, "b1", obj)
-	if !ok {
+	if !mgr.DrainManager.DrainOneObject(context.Background(), srcBackend, "b1", obj) {
 		t.Fatal("drainOneObject should succeed")
 	}
-
-	// Object should now exist on destination
 	if !dstBackend.hasObject("key1") {
 		t.Error("destination backend should have the object")
 	}
 }
 
-// -------------------------------------------------------------------------
-// drainOneObject  -  MoveObjectLocation fails, orphan enqueued with size
-// -------------------------------------------------------------------------
-
-// TestDrainOneObject_MoveLocationFails_EnqueuesOrphanWithSize verifies orphan cleanup is enqueued when the DB move fails.
+// TestDrainOneObject_MoveLocationFails_EnqueuesOrphanWithSize asserts a
+// failed MoveObjectLocation enqueues a drain_orphan cleanup row.
 func TestDrainOneObject_MoveLocationFails_EnqueuesOrphanWithSize(t *testing.T) {
 	t.Parallel()
 	srcBackend := newMockBackend()
@@ -245,92 +300,108 @@ func TestDrainOneObject_MoveLocationFails_EnqueuesOrphanWithSize(t *testing.T) {
 
 	dstBackend := newMockBackend()
 
-	store := &mockStore{
-		getAllLocationsResp: []core.ObjectLocation{
+	c := &drainCalls{}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().GetAllObjectLocations(gomock.Any(), gomock.Any()).
+		Return([]core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
-		},
-		getBackendResp:        "b2",
-		moveObjectLocationErr: errors.New("serialization failure"),
-	}
+		}, nil).AnyTimes()
+	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return("b2", nil).AnyTimes()
+	store.EXPECT().GetLeastUtilizedBackend(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return("b2", nil).AnyTimes()
+	store.EXPECT().MoveObjectLocation(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(int64(0), errors.New("serialization failure")).AnyTimes()
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubDrainEnqueue(c)).AnyTimes()
+	storetest.Permissive(store)
 
 	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": srcBackend, "b2": dstBackend})
 
-	// Make dstBackend.DeleteObject fail so enqueueCleanup is triggered
 	dstBackend.delErr = errors.New("backend down")
 
 	obj := &core.ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
-	ok := mgr.DrainManager.DrainOneObject(context.Background(), srcBackend, "b1", obj)
-	if ok {
+	if mgr.DrainManager.DrainOneObject(context.Background(), srcBackend, "b1", obj) {
 		t.Fatal("drainOneObject should fail when MoveObjectLocation fails")
 	}
-
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	// The orphan on the destination should have been enqueued with the object size
-	if len(store.enqueueCleanupCalls) != 1 {
-		t.Fatalf("expected 1 enqueue call (drain_orphan), got %d", len(store.enqueueCleanupCalls))
+	if len(c.enqueue) != 1 {
+		t.Fatalf("expected 1 enqueue call (drain_orphan), got %d", len(c.enqueue))
 	}
-	if store.enqueueCleanupCalls[0].reason != "drain_orphan" {
-		t.Errorf("reason = %q, want drain_orphan", store.enqueueCleanupCalls[0].reason)
+	if c.enqueue[0].Reason != "drain_orphan" {
+		t.Errorf("reason = %q, want drain_orphan", c.enqueue[0].Reason)
 	}
 }
 
-// -------------------------------------------------------------------------
-// drainOneObject  -  MoveObjectLocation returns 0 (stale), enqueues orphan
-// -------------------------------------------------------------------------
-
-// TestDrainOneObject_StaleObject_EnqueuesOrphanWithSize verifies orphan cleanup when MoveObjectLocation returns 0 (stale).
+// TestDrainOneObject_StaleObject_EnqueuesOrphanWithSize asserts a 0-row
+// move enqueues a drain_stale_orphan cleanup row.
 func TestDrainOneObject_StaleObject_EnqueuesOrphanWithSize(t *testing.T) {
 	t.Parallel()
 	srcBackend := newMockBackend()
 	srcBackend.objects["key1"] = mockObject{data: []byte("abcd"), contentType: "text/plain"}
 
 	dstBackend := newMockBackend()
-	dstBackend.delErr = errors.New("backend down") // force enqueue
+	dstBackend.delErr = errors.New("backend down")
 
-	store := &mockStore{
-		getAllLocationsResp: []core.ObjectLocation{
+	c := &drainCalls{}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().GetAllObjectLocations(gomock.Any(), gomock.Any()).
+		Return([]core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
-		},
-		getBackendResp:         "b2",
-		moveObjectLocationSize: 0, // 0 means stale/already moved
-	}
+		}, nil).AnyTimes()
+	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return("b2", nil).AnyTimes()
+	store.EXPECT().GetLeastUtilizedBackend(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return("b2", nil).AnyTimes()
+	store.EXPECT().MoveObjectLocation(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(int64(0), nil).AnyTimes()
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubDrainEnqueue(c)).AnyTimes()
+	storetest.Permissive(store)
 
 	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": srcBackend, "b2": dstBackend})
 
 	obj := &core.ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
-	ok := mgr.DrainManager.DrainOneObject(context.Background(), srcBackend, "b1", obj)
-	if ok {
+	if mgr.DrainManager.DrainOneObject(context.Background(), srcBackend, "b1", obj) {
 		t.Fatal("drainOneObject should return false for stale object")
 	}
-
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	if len(store.enqueueCleanupCalls) != 1 {
-		t.Fatalf("expected 1 enqueue call (drain_stale_orphan), got %d", len(store.enqueueCleanupCalls))
+	if len(c.enqueue) != 1 {
+		t.Fatalf("expected 1 enqueue call (drain_stale_orphan), got %d", len(c.enqueue))
 	}
-	if store.enqueueCleanupCalls[0].reason != "drain_stale_orphan" {
-		t.Errorf("reason = %q, want drain_stale_orphan", store.enqueueCleanupCalls[0].reason)
+	if c.enqueue[0].Reason != "drain_stale_orphan" {
+		t.Errorf("reason = %q, want drain_stale_orphan", c.enqueue[0].Reason)
 	}
 }
 
-// TestStartDrain_FlushesCleanupQueueBeforeDeleteBackendData verifies that
-// runDrain processes pending cleanup queue items before calling DeleteBackendData,
-// which would otherwise silently drop them.
+// TestStartDrain_FlushesCleanupQueueBeforeDeleteBackendData pins that
+// drain processes pending cleanup queue items first.
 func TestStartDrain_FlushesCleanupQueueBeforeDeleteBackendData(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
-	// Pre-populate an orphaned object that the cleanup queue should process
 	backend.objects["orphan"] = mockObject{data: []byte("stale")}
 
-	store := &mockStore{
-		// No objects to migrate (drain completes immediately)
-		listObjectsByBackendResp: nil,
-		// Pending cleanup item for the draining backend
-		pendingCleanups: []core.CleanupItem{
-			{ID: 42, BackendName: "b1", ObjectKey: "orphan", Attempts: 0},
-		},
+	c := &drainCalls{}
+	pending := []core.CleanupItem{
+		{ID: 42, BackendName: "b1", ObjectKey: "orphan", Attempts: 0},
 	}
+	delivered := false
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil, nil).AnyTimes()
+	store.EXPECT().ClaimPendingCleanups(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ int, _ string, _ time.Time) ([]core.CleanupItem, error) {
+			if delivered {
+				return nil, nil
+			}
+			delivered = true
+			return pending, nil
+		}).AnyTimes()
+	store.EXPECT().GetPendingCleanups(gomock.Any(), gomock.Any()).Return(pending, nil).AnyTimes()
+	store.EXPECT().CompleteCleanupItem(gomock.Any(), gomock.Any()).
+		DoAndReturn(stubCompleteCleanup(c)).AnyTimes()
+	storetest.Permissive(store)
 
 	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": backend})
 
@@ -338,7 +409,6 @@ func TestStartDrain_FlushesCleanupQueueBeforeDeleteBackendData(t *testing.T) {
 		t.Fatalf("StartDrain: %v", err)
 	}
 
-	// Wait for drain to complete
 	testx.Eventually(t, 3*time.Second, func() bool {
 		p, pErr := mgr.DrainManager.GetDrainProgress(context.Background(), "b1")
 		return pErr == nil && !p.Active
@@ -351,98 +421,80 @@ func TestStartDrain_FlushesCleanupQueueBeforeDeleteBackendData(t *testing.T) {
 		t.Fatalf("drain completed with error: %s", progress.Error)
 	}
 
-	// Verify the cleanup item was processed (completed)
-	store.mu.Lock()
-	completedIDs := store.completeCleanupCalls
-	store.mu.Unlock()
-
-	found := slices.Contains(completedIDs, 42)
-	if !found {
+	if !slices.Contains(c.completed, 42) {
 		t.Error("expected cleanup item 42 to be completed during drain, but it was not")
 	}
-
-	// Verify the orphaned S3 object was deleted
 	if backend.hasObject("orphan") {
 		t.Error("orphaned object should have been deleted from S3 backend")
 	}
 }
 
-// -------------------------------------------------------------------------
-// CancelDrain
-// -------------------------------------------------------------------------
-
-// TestCancelDrain_CompletedDrain_ClearsState verifies that cancelling an already-completed drain clears state.
+// TestCancelDrain_CompletedDrain_ClearsState asserts an idempotent
+// cancel on a completed drain clears state.
 func TestCancelDrain_CompletedDrain_ClearsState(t *testing.T) {
 	t.Parallel()
-	backend := newMockBackend()
-	store := &mockStore{
-		listObjectsByBackendResp: nil, // no objects -> drain completes immediately
-	}
-	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": backend})
+	store := newPermissiveMock(t)
+	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	if err := mgr.DrainManager.StartDrain(context.Background(), "b1"); err != nil {
 		t.Fatalf("StartDrain: %v", err)
 	}
 
-	// Wait for drain to finish
 	testx.Eventually(t, 3*time.Second, func() bool {
 		p, err := mgr.DrainManager.GetDrainProgress(context.Background(), "b1")
 		return err == nil && !p.Active
 	}, "drain did not complete")
 
-	// CancelDrain on a completed drain should clear state (covers line 141)
 	if err := mgr.DrainManager.CancelDrain("b1"); err != nil {
 		t.Fatalf("CancelDrain: %v", err)
 	}
 
-	// A second CancelDrain should fail because the state was cleared
 	if err := mgr.DrainManager.CancelDrain("b1"); err == nil {
 		t.Error("expected error after clearing drained state")
 	}
 }
 
-// TestCancelDrain_ActiveDrain_CancelsAndClears verifies that cancelling an in-progress drain stops it via context.
+// TestCancelDrain_ActiveDrain_CancelsAndClears asserts cancelling an
+// in-progress drain unblocks via context.
 func TestCancelDrain_ActiveDrain_CancelsAndClears(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{
-		// Gate never closes  -  drain blocks in ListObjectsByBackend until
-		// CancelDrain cancels the context.
-		listObjectsByBackendGate: make(chan struct{}),
-	}
+	gate := make(chan struct{})
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(pagedLister(nil, gate, nil)).AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	if err := mgr.DrainManager.StartDrain(context.Background(), "b1"); err != nil {
 		t.Fatalf("StartDrain: %v", err)
 	}
 
-	// Give drain goroutine time to reach the blocking ListObjectsByBackend call
 	time.Sleep(20 * time.Millisecond)
 
-	// Cancel active drain  -  unblocks via ctx.Done() (covers line 150)
 	if err := mgr.DrainManager.CancelDrain("b1"); err != nil {
 		t.Fatalf("CancelDrain: %v", err)
 	}
 }
 
-// -------------------------------------------------------------------------
-// drainState race safety
-// -------------------------------------------------------------------------
-
-// TestGetDrainProgress_ConcurrentAccess verifies that concurrent calls to
-// GetDrainProgress while a drain is running do not trigger a data race on
-// the drainState error field (run with -race).
+// TestGetDrainProgress_ConcurrentAccess hammers GetDrainProgress while
+// drain is active; race detector validates the test.
 func TestGetDrainProgress_ConcurrentAccess(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{
-		listObjectsByBackendGate: make(chan struct{}),
-	}
+	gate := make(chan struct{})
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(pagedLister(nil, gate, nil)).AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	if err := mgr.DrainManager.StartDrain(context.Background(), "b1"); err != nil {
 		t.Fatalf("StartDrain: %v", err)
 	}
 
-	// Hammer GetDrainProgress from multiple goroutines while drain is active.
 	done := make(chan struct{})
 	for range 10 {
 		go func() {
@@ -457,28 +509,26 @@ func TestGetDrainProgress_ConcurrentAccess(t *testing.T) {
 		}()
 	}
 
-	// Let the goroutines run briefly, then cancel the drain.
 	time.Sleep(50 * time.Millisecond)
 	close(done)
 	_ = mgr.DrainManager.CancelDrain("b1")
 }
 
-// TestGetDrainProgress_ReportsError verifies that a drain error (from
-// DeleteBackendData failure) is surfaced through GetDrainProgress via the
-// atomic error pointer.
+// TestGetDrainProgress_ReportsError surfaces a DeleteBackendData error.
 func TestGetDrainProgress_ReportsError(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{
-		deleteBackendDataErr: errors.New("injected DB failure"),
-	}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().DeleteBackendData(gomock.Any(), gomock.Any()).
+		Return(errors.New("injected DB failure")).AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	if err := mgr.DrainManager.StartDrain(context.Background(), "b1"); err != nil {
 		t.Fatalf("StartDrain: %v", err)
 	}
 
-	// Wait for drain to complete  -  DeleteBackendData fails so state.err is set,
-	// but the state remains in the map (no draining.Delete on this error path).
 	var progress *drain.Progress
 	testx.Eventually(t, 3*time.Second, func() bool {
 		p, _ := mgr.DrainManager.GetDrainProgress(context.Background(), "b1")
@@ -496,55 +546,51 @@ func TestGetDrainProgress_ReportsError(t *testing.T) {
 	}
 }
 
-// -------------------------------------------------------------------------
-// runDrain error paths
-// -------------------------------------------------------------------------
-
-// TestRunDrain_ListObjectsByBackendFails verifies the drain terminates cleanly on a ListObjectsByBackend error.
+// TestRunDrain_ListObjectsByBackendFails surfaces a list-objects error
+// path.
 func TestRunDrain_ListObjectsByBackendFails(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{
-		listObjectsByBackendErr: errors.New("db connection lost"),
-	}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil, errors.New("db connection lost")).AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	if err := mgr.DrainManager.StartDrain(context.Background(), "b1"); err != nil {
 		t.Fatalf("StartDrain: %v", err)
 	}
 
-	// Wait for drain to finish  -  on ListObjectsByBackend error, runDrain
-	// deletes from d.draining and returns, so eventually GetDrainProgress
-	// returns Active=false with no error (state was cleaned up).
 	testx.Eventually(t, 3*time.Second, func() bool {
 		p, _ := mgr.DrainManager.GetDrainProgress(context.Background(), "b1")
 		return !p.Active
 	}, "drain remained active after error")
 
-	// The drain state should have been removed (error path deletes from map).
-	// Attempting StartDrain again should succeed (proving old state is gone).
-	// But we need a fresh store since the old one still returns errors.
-	// Simply verify the drain is no longer active.
 	p, _ := mgr.DrainManager.GetDrainProgress(context.Background(), "b1")
 	if p.Active {
 		t.Error("drain should have terminated after ListObjectsByBackend failure")
 	}
 }
 
-// TestRunDrain_DeleteBackendDataFails verifies the run drain delete backend data fails contract.
-// Asserts that StartDrain:.
+// TestRunDrain_DeleteBackendDataFails surfaces a backend-data delete
+// failure.
 func TestRunDrain_DeleteBackendDataFails(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{
-		listObjectsByBackendResp: nil, // no objects -> skip to cleanup
-		deleteBackendDataErr:     errors.New("db write failed"),
-	}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil, nil).AnyTimes()
+	store.EXPECT().DeleteBackendData(gomock.Any(), gomock.Any()).
+		Return(errors.New("db write failed")).AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	if err := mgr.DrainManager.StartDrain(context.Background(), "b1"); err != nil {
 		t.Fatalf("StartDrain: %v", err)
 	}
 
-	// Wait for drain to complete
 	testx.Eventually(t, 3*time.Second, func() bool {
 		p, err := mgr.DrainManager.GetDrainProgress(context.Background(), "b1")
 		return err != nil || !p.Active
@@ -556,88 +602,98 @@ func TestRunDrain_DeleteBackendDataFails(t *testing.T) {
 	}
 }
 
-// -------------------------------------------------------------------------
-// drainOneObject error paths
-// -------------------------------------------------------------------------
-
-// TestDrainOneObject_GetAllLocationsFails verifies drain handles a GetAllObjectLocations failure.
+// TestDrainOneObject_GetAllLocationsFails handles a metadata-side
+// failure in DrainOneObject.
 func TestDrainOneObject_GetAllLocationsFails(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{
-		getAllLocationsErr: errors.New("db error"),
-	}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().GetAllObjectLocations(gomock.Any(), gomock.Any()).
+		Return(nil, errors.New("db error")).AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	obj := &core.ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
-	ok := mgr.DrainManager.DrainOneObject(context.Background(), newMockBackend(), "b1", obj)
-	if ok {
+	if mgr.DrainManager.DrainOneObject(context.Background(), newMockBackend(), "b1", obj) {
 		t.Error("expected failure when GetAllObjectLocations fails")
 	}
 }
 
-// TestDrainOneObject_DeleteSourceLocationFails verifies drain handles a DeleteObjectLocation failure.
+// TestDrainOneObject_DeleteSourceLocationFails handles a delete failure.
 func TestDrainOneObject_DeleteSourceLocationFails(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{
-		getAllLocationsResp: []core.ObjectLocation{
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().GetAllObjectLocations(gomock.Any(), gomock.Any()).
+		Return([]core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
-			{ObjectKey: "key1", BackendName: "b2", SizeBytes: 4}, // replica exists
-		},
-		deleteObjectLocationErr: errors.New("db error"),
-	}
+			{ObjectKey: "key1", BackendName: "b2", SizeBytes: 4},
+		}, nil).AnyTimes()
+	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(errors.New("db error")).AnyTimes()
+	storetest.Permissive(store)
+
 	srcBackend := newMockBackend()
 	srcBackend.objects["key1"] = mockObject{data: []byte("data")}
 
 	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": srcBackend, "b2": newMockBackend()})
 
 	obj := &core.ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
-	ok := mgr.DrainManager.DrainOneObject(context.Background(), srcBackend, "b1", obj)
-	if ok {
+	if mgr.DrainManager.DrainOneObject(context.Background(), srcBackend, "b1", obj) {
 		t.Error("expected failure when DeleteObjectLocation fails")
 	}
 }
 
-// TestDrainOneObject_NoDestinationAvailable verifies the drain one object no destination available path by exercising context.Background.
+// TestDrainOneObject_NoDestinationAvailable handles a missing dest.
 func TestDrainOneObject_NoDestinationAvailable(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{
-		getAllLocationsResp: []core.ObjectLocation{
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().GetAllObjectLocations(gomock.Any(), gomock.Any()).
+		Return([]core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
-		},
-		getBackendErr: core.ErrNoSpaceAvailable,
-	}
-	srcBackend := newMockBackend()
+		}, nil).AnyTimes()
+	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return("", core.ErrNoSpaceAvailable).AnyTimes()
+	store.EXPECT().GetLeastUtilizedBackend(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return("", core.ErrNoSpaceAvailable).AnyTimes()
+	storetest.Permissive(store)
 
+	srcBackend := newMockBackend()
 	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": srcBackend})
 
 	obj := &core.ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
-	ok := mgr.DrainManager.DrainOneObject(context.Background(), srcBackend, "b1", obj)
-	if ok {
+	if mgr.DrainManager.DrainOneObject(context.Background(), srcBackend, "b1", obj) {
 		t.Error("expected failure when no destination available")
 	}
 }
 
-// TestDrainOneObject_DestBackendNotFound verifies the drain one object dest backend not found path by exercising context.Background.
+// TestDrainOneObject_DestBackendNotFound handles an unknown destination.
 func TestDrainOneObject_DestBackendNotFound(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{
-		getAllLocationsResp: []core.ObjectLocation{
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().GetAllObjectLocations(gomock.Any(), gomock.Any()).
+		Return([]core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
-		},
-		getBackendResp: "ghost", // not in backends map
-	}
-	srcBackend := newMockBackend()
+		}, nil).AnyTimes()
+	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return("ghost", nil).AnyTimes()
+	store.EXPECT().GetLeastUtilizedBackend(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return("ghost", nil).AnyTimes()
+	storetest.Permissive(store)
 
+	srcBackend := newMockBackend()
 	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": srcBackend})
 
 	obj := &core.ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
-	ok := mgr.DrainManager.DrainOneObject(context.Background(), srcBackend, "b1", obj)
-	if ok {
+	if mgr.DrainManager.DrainOneObject(context.Background(), srcBackend, "b1", obj) {
 		t.Error("expected failure when destination backend not found")
 	}
 }
 
-// TestDrainOneObject_StreamCopyFails verifies the drain one object stream copy fails path by exercising errors.New, context.Background.
+// TestDrainOneObject_StreamCopyFails handles a backend Get failure.
 func TestDrainOneObject_StreamCopyFails(t *testing.T) {
 	t.Parallel()
 	srcBackend := newMockBackend()
@@ -645,76 +701,90 @@ func TestDrainOneObject_StreamCopyFails(t *testing.T) {
 
 	dstBackend := newMockBackend()
 
-	store := &mockStore{
-		getAllLocationsResp: []core.ObjectLocation{
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().GetAllObjectLocations(gomock.Any(), gomock.Any()).
+		Return([]core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
-		},
-		getBackendResp: "b2",
-	}
+		}, nil).AnyTimes()
+	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return("b2", nil).AnyTimes()
+	store.EXPECT().GetLeastUtilizedBackend(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return("b2", nil).AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": srcBackend, "b2": dstBackend})
 
 	obj := &core.ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
-	ok := mgr.DrainManager.DrainOneObject(context.Background(), srcBackend, "b1", obj)
-	if ok {
+	if mgr.DrainManager.DrainOneObject(context.Background(), srcBackend, "b1", obj) {
 		t.Error("expected failure when streamCopy fails")
 	}
 }
 
-// -------------------------------------------------------------------------
-// purgeBackendObjects error paths
-// -------------------------------------------------------------------------
-
-// TestPurgeBackendObjects_ListObjectsFails verifies the purge backend objects list objects fails path by exercising errors.New, context.Background.
+// TestPurgeBackendObjects_ListObjectsFails returns early on a list
+// failure.
 func TestPurgeBackendObjects_ListObjectsFails(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{
-		listObjectsByBackendErr: errors.New("db error"),
-	}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil, errors.New("db error")).AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	// Should not panic and should return early
 	mgr.DrainManager.PurgeBackendObjects(context.Background(), newMockBackend(), "b1")
 }
 
-// TestPurgeBackendObjects_S3DeleteFails_LogsWarning verifies DB records are deleted even when S3 delete fails.
+// TestPurgeBackendObjects_S3DeleteFails_LogsWarning ensures the DB
+// delete fires even on a backend delete failure.
 func TestPurgeBackendObjects_S3DeleteFails_LogsWarning(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
 	backend.delErr = errors.New("s3 timeout")
 
-	store := &mockStore{
-		listObjectsByBackendPages: [][]core.ObjectLocation{
+	c := &drainCalls{}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(pagedLister([][]core.ObjectLocation{
 			{{ObjectKey: "obj1", BackendName: "b1", SizeBytes: 5}},
 			{},
-		},
-	}
+		}, nil, nil)).AnyTimes()
+	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubDeleteObjectLocation(c, nil)).AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": backend})
 
 	mgr.DrainManager.PurgeBackendObjects(context.Background(), backend, "b1")
 
-	// DB record should still be deleted even though S3 delete failed
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	if len(store.deleteObjectLocationCalls) != 1 {
-		t.Fatalf("expected 1 DeleteObjectLocation call, got %d", len(store.deleteObjectLocationCalls))
+	if len(c.deletedLocation) != 1 {
+		t.Fatalf("expected 1 DeleteObjectLocation call, got %d", len(c.deletedLocation))
 	}
 }
 
-// TestPurgeBackendObjects_DBDeleteFails verifies purge continues despite DB delete failures.
+// TestPurgeBackendObjects_DBDeleteFails tolerates DB failures.
 func TestPurgeBackendObjects_DBDeleteFails(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
 	backend.objects["obj1"] = mockObject{data: []byte("data")}
 
-	store := &mockStore{
-		listObjectsByBackendPages: [][]core.ObjectLocation{
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(pagedLister([][]core.ObjectLocation{
 			{{ObjectKey: "obj1", BackendName: "b1", SizeBytes: 5}},
 			{},
-		},
-		deleteObjectLocationErr: errors.New("db error"),
-	}
+		}, nil, nil)).AnyTimes()
+	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(errors.New("db error")).AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newDrainTestManager(store, map[string]*mockBackend{"b1": backend})
 
-	// Should not panic  -  continues despite DB delete failure
 	mgr.DrainManager.PurgeBackendObjects(context.Background(), backend, "b1")
 }
+
+// _ = s3be ensures the import stays in scope for the type-alias usage.
+var _ = func() s3be.ObjectBackend { return nil }

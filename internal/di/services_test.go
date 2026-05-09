@@ -64,7 +64,7 @@ type servicesFixture struct {
 // runtime, just inline so the test stays free of the do.Injector.
 func newServicesFixture(t *testing.T) *servicesFixture {
 	t.Helper()
-	mock := &testutil.MockStore{}
+	mock := testutil.NewMockStore(t)
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{},
 		Stores:          proxytest.StoresFromMock(mock),
