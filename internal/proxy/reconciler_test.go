@@ -14,16 +14,28 @@ import (
 	"errors"
 	"testing"
 
+	"go.uber.org/mock/gomock"
+
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
-// TestMakeReconcileDeleter_SweepsCleanupQueue verifies the composed
-// deleter the reconciler uses calls DeleteObjectLocation followed by
-// SweepStaleCleanupQueueRows so stale queue rows pointing at a key the
-// backend no longer holds are dropped in lockstep with the metadata row.
+// TestMakeReconcileDeleter_SweepsCleanupQueue asserts the composed
+// deleter calls DeleteObjectLocation followed by SweepStaleCleanupQueueRows.
 func TestMakeReconcileDeleter_SweepsCleanupQueue(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	type sweepCall struct{ key, backend string }
+	var sweeps []sweepCall
+	store.EXPECT().SweepStaleCleanupQueueRows(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, key, backend string) (int64, error) {
+			sweeps = append(sweeps, sweepCall{key: key, backend: backend})
+			return 0, nil
+		}).
+		AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	deleter := mgr.makeReconcileDeleter()
@@ -31,26 +43,25 @@ func TestMakeReconcileDeleter_SweepsCleanupQueue(t *testing.T) {
 		t.Fatalf("deleter returned error: %v", err)
 	}
 
-	// Both store calls should have fired  -  DeleteObjectLocation tracked
-	// via deleteObjectLocationCalls and SweepStaleCleanupQueueRows via
-	// sweepStaleCalls (added when this fix landed).
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	if got := len(store.sweepStaleCalls); got != 1 {
-		t.Fatalf("SweepStaleCleanupQueueRows calls = %d, want 1", got)
+	if len(sweeps) != 1 {
+		t.Fatalf("SweepStaleCleanupQueueRows calls = %d, want 1", len(sweeps))
 	}
-	if store.sweepStaleCalls[0].key != "bucket/k1" || store.sweepStaleCalls[0].backend != "b1" {
-		t.Errorf("sweep called with %+v, want {key:bucket/k1 backend:b1}", store.sweepStaleCalls[0])
+	if sweeps[0].key != "bucket/k1" || sweeps[0].backend != "b1" {
+		t.Errorf("sweep called with %+v, want {key:bucket/k1 backend:b1}", sweeps[0])
 	}
 }
 
-// TestMakeReconcileDeleter_SweepFailureNotPropagated verifies a sweep
-// error is logged and swallowed so the reconcile pass keeps going. The
-// metadata delete already succeeded; one orphan queue row left for the
-// next pass is preferable to aborting reconcile mid-pass.
+// TestMakeReconcileDeleter_SweepFailureNotPropagated asserts a sweep
+// error is logged and swallowed.
 func TestMakeReconcileDeleter_SweepFailureNotPropagated(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{sweepStaleErr: errors.New("db blip")}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().SweepStaleCleanupQueueRows(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(int64(0), errors.New("db blip")).
+		AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	deleter := mgr.makeReconcileDeleter()
@@ -59,39 +70,40 @@ func TestMakeReconcileDeleter_SweepFailureNotPropagated(t *testing.T) {
 	}
 }
 
-// TestMakeReconcileDeleter_DeleteFailurePropagates verifies that if the
-// metadata delete itself fails, the error propagates and the sweep is
-// not attempted (the row may still be live elsewhere).
+// TestMakeReconcileDeleter_DeleteFailurePropagates asserts a delete
+// failure stops before the sweep is attempted.
 func TestMakeReconcileDeleter_DeleteFailurePropagates(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{deleteObjectLocationErr: errors.New("db blip")}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(errors.New("db blip")).
+		AnyTimes()
+	var sweeps int
+	store.EXPECT().SweepStaleCleanupQueueRows(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _, _ string) (int64, error) {
+			sweeps++
+			return 0, nil
+		}).
+		AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	deleter := mgr.makeReconcileDeleter()
 	if err := deleter(context.Background(), "bucket/k1", "b1"); err == nil {
 		t.Fatal("expected delete failure to propagate")
 	}
-
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	if got := len(store.sweepStaleCalls); got != 0 {
-		t.Errorf("sweep should be skipped when delete fails, got %d calls", got)
+	if sweeps != 0 {
+		t.Errorf("sweep should be skipped when delete fails, got %d calls", sweeps)
 	}
 }
 
-// TestReconciler_ImportsUntrackedObjects verifies the reconciler imports untracked objects path by exercising worker.NewReconciler, reconciler.Run, context.Background.
+// TestReconciler_ImportsUntrackedObjects exercises the reconciler entry
+// point against a mock backend that doesn't support listing.
 func TestReconciler_ImportsUntrackedObjects(t *testing.T) {
 	t.Parallel()
-	// The mock backend's ListObjects returns objects via the S3Backend
-	// interface. Since we can't easily mock ListObjects on a mockBackend
-	// (it doesn't implement the S3Backend.ListObjects method), we test
-	// through the manager's SyncBackend path indirectly by verifying
-	// the reconciler calls SyncBackend for each backend.
-
-	// For unit testing the reconciler logic, we verify it doesn't panic
-	// and handles the "backend does not support listing" error gracefully
-	// (mockBackend is not an *S3Backend).
-	store := &mockStore{}
+	store := newPermissiveMock(t)
 	mgr := newTestManager(store, map[string]*mockBackend{
 		"b1": newMockBackend(),
 		"b2": newMockBackend(),
@@ -99,27 +111,23 @@ func TestReconciler_ImportsUntrackedObjects(t *testing.T) {
 
 	reconciler := worker.NewReconciler(mgr, []string{"unified"})
 	reconciler.Run(context.Background())
-
-	// Should complete without panic. SyncBackend will log errors because
-	// mockBackend doesn't support ListObjects, but the reconciler continues.
 }
 
-// TestReconciler_NoBuckets verifies the reconciler no buckets path by exercising worker.NewReconciler, reconciler.Run, context.Background.
+// TestReconciler_NoBuckets verifies the no-buckets early return.
 func TestReconciler_NoBuckets(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{}
+	store := newPermissiveMock(t)
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	reconciler := worker.NewReconciler(mgr, []string{})
 	reconciler.Run(context.Background())
-
-	// Should return early without panic when no buckets are configured.
 }
 
-// TestReconciler_CancelledContext verifies the reconciler cancelled context path by exercising worker.NewReconciler, context.WithCancel, context.Background.
+// TestReconciler_CancelledContext verifies an already-cancelled ctx
+// returns quickly.
 func TestReconciler_CancelledContext(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{}
+	store := newPermissiveMock(t)
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	reconciler := worker.NewReconciler(mgr, []string{"unified"})
@@ -127,53 +135,54 @@ func TestReconciler_CancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	reconciler.Run(ctx)
-
-	// Should return quickly without panic on cancelled context.
 }
 
-// TestReconciler_RunDoesNotPanicOnBackendError verifies the reconciler run does not panic on backend error path by exercising errors.New, worker.NewReconciler, reconciler.Run.
+// TestReconciler_RunDoesNotPanicOnBackendError exercises the
+// import-error path.
 func TestReconciler_RunDoesNotPanicOnBackendError(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{
-		// ImportObject returns an error
-		importObjectErr: errors.New("db error"),
-	}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().ImportObject(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(false, errors.New("db error")).
+		AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	reconciler := worker.NewReconciler(mgr, []string{"unified"})
 	reconciler.Run(context.Background())
 }
 
-// TestReconcileBackend_UnknownBackend verifies the reconcile backend unknown backend path by exercising mgr.ReconcileBackend, context.Background.
+// TestReconcileBackend_UnknownBackend verifies the unknown-backend
+// error path.
 func TestReconcileBackend_UnknownBackend(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{}
+	store := newPermissiveMock(t)
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	_, err := mgr.ReconcileBackend(context.Background(), "nonexistent", "unified", []string{"unified"})
-	if err == nil {
+	if _, err := mgr.ReconcileBackend(context.Background(), "nonexistent", "unified", []string{"unified"}); err == nil {
 		t.Fatal("expected error for unknown backend")
 	}
 }
 
-// TestReconcileBackend_ListingNotSupported verifies the reconcile backend listing not supported path by exercising mgr.ReconcileBackend, context.Background.
+// TestReconcileBackend_ListingNotSupported verifies the listing-not-
+// supported error path.
 func TestReconcileBackend_ListingNotSupported(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{}
+	store := newPermissiveMock(t)
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	// mockBackend isn't an *S3Backend so ListObjects will fail
-	_, err := mgr.ReconcileBackend(context.Background(), "b1", "unified", []string{"unified"})
-	if err == nil {
+	if _, err := mgr.ReconcileBackend(context.Background(), "b1", "unified", []string{"unified"}); err == nil {
 		t.Fatal("expected error for backend that doesn't support listing")
 	}
 }
 
-// TestReconcile_ViaReconciler verifies the reconcile via reconciler contract.
-// Asserts that unexpected error:.
+// TestReconcile_ViaReconciler exercises the reconciler-level entry
+// against a backend that fails listing.
 func TestReconcile_ViaReconciler(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{}
+	store := newPermissiveMock(t)
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	reconciler := worker.NewReconciler(mgr, []string{"unified"})
@@ -181,18 +190,16 @@ func TestReconcile_ViaReconciler(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// All backends fail listing (mockBackend), so nothing imported/removed
-	// but it shouldn't panic
 	if result.BackendsScanned != 0 {
 		t.Errorf("backends_scanned = %d, want 0 (all failed)", result.BackendsScanned)
 	}
 }
 
-// TestReconcile_SingleBackendViaReconciler verifies the reconcile single backend via reconciler contract.
-// Asserts that unexpected error:.
+// TestReconcile_SingleBackendViaReconciler exercises the single-backend
+// path.
 func TestReconcile_SingleBackendViaReconciler(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{}
+	store := newPermissiveMock(t)
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	reconciler := worker.NewReconciler(mgr, []string{"unified"})

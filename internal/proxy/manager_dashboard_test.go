@@ -15,28 +15,42 @@ import (
 	"testing"
 	"time"
 
+	"go.uber.org/mock/gomock"
+
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
-// TestGetDashboardData_Success verifies the get dashboard data success contract.
-// Asserts that GetDashboardData:.
+// TestGetDashboardData_Success drives the happy path: every dashboard
+// store query returns a non-empty result and the aggregator stitches
+// them into a populated Data struct.
 func TestGetDashboardData_Success(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{
-		getQuotaStatsResp: map[string]core.QuotaStat{
-			"b1": {BackendName: "b1", BytesUsed: 500, BytesLimit: 1000},
-		},
-		getObjectCountsResp:    map[string]int64{"b1": 42},
-		getActiveMultipartResp: map[string]int64{"b1": 3},
-		getUsageForPeriodResp:  map[string]core.UsageStat{"b1": {APIRequests: 100}},
-		listDirChildrenResp: &core.DirectoryListResult{
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().GetQuotaStats(gomock.Any()).
+		Return(map[string]core.QuotaStat{"b1": {BackendName: "b1", BytesUsed: 500, BytesLimit: 1000}}, nil).
+		AnyTimes()
+	store.EXPECT().GetObjectCounts(gomock.Any()).
+		Return(map[string]int64{"b1": 42}, nil).
+		AnyTimes()
+	store.EXPECT().GetActiveMultipartCounts(gomock.Any()).
+		Return(map[string]int64{"b1": 3}, nil).
+		AnyTimes()
+	store.EXPECT().GetUsageForPeriod(gomock.Any(), gomock.Any()).
+		Return(map[string]core.UsageStat{"b1": {APIRequests: 100}}, nil).
+		AnyTimes()
+	store.EXPECT().ListDirectoryChildren(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(&core.DirectoryListResult{
 			Entries: []core.DirEntry{
 				{Name: "bucket1/", IsDir: true, FileCount: 10, TotalSize: 4096},
 			},
-		},
-	}
+		}, nil).
+		AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 	defer mgr.Close()
 
@@ -65,108 +79,157 @@ func TestGetDashboardData_Success(t *testing.T) {
 	}
 }
 
-// TestGetDashboardData_QuotaStatsError verifies the get dashboard data quota stats error path by exercising errors.New, mgr.Close, mgr.GetDashboardData.
+// TestGetDashboardData_QuotaStatsError surfaces a quota-store failure as
+// an error from the aggregator.
 func TestGetDashboardData_QuotaStatsError(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{
-		getQuotaStatsErr: errors.New("db error"),
-	}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().GetQuotaStats(gomock.Any()).
+		Return(nil, errors.New("db error")).
+		AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 	defer mgr.Close()
 
-	_, err := mgr.GetDashboardData(context.Background())
-	if err == nil {
+	if _, err := mgr.GetDashboardData(context.Background()); err == nil {
 		t.Fatal("expected error from GetDashboardData")
 	}
 }
 
-// TestGetDashboardData_ObjectCountsError verifies the get dashboard data object counts error path by exercising errors.New, mgr.Close, mgr.GetDashboardData.
+// TestGetDashboardData_ObjectCountsError surfaces an object-counts
+// failure.
 func TestGetDashboardData_ObjectCountsError(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{
-		getQuotaStatsResp:  map[string]core.QuotaStat{"b1": {}},
-		getObjectCountsErr: errors.New("db error"),
-	}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().GetQuotaStats(gomock.Any()).
+		Return(map[string]core.QuotaStat{"b1": {}}, nil).
+		AnyTimes()
+	store.EXPECT().GetObjectCounts(gomock.Any()).
+		Return(nil, errors.New("db error")).
+		AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 	defer mgr.Close()
 
-	_, err := mgr.GetDashboardData(context.Background())
-	if err == nil {
+	if _, err := mgr.GetDashboardData(context.Background()); err == nil {
 		t.Fatal("expected error from GetDashboardData")
 	}
 }
 
-// TestGetDashboardData_MultipartCountsError verifies the get dashboard data multipart counts error path by exercising errors.New, mgr.Close, mgr.GetDashboardData.
+// TestGetDashboardData_MultipartCountsError surfaces an
+// active-multipart-counts failure.
 func TestGetDashboardData_MultipartCountsError(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{
-		getQuotaStatsResp:     map[string]core.QuotaStat{"b1": {}},
-		getObjectCountsResp:   map[string]int64{"b1": 0},
-		getActiveMultipartErr: errors.New("db error"),
-	}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().GetQuotaStats(gomock.Any()).
+		Return(map[string]core.QuotaStat{"b1": {}}, nil).
+		AnyTimes()
+	store.EXPECT().GetObjectCounts(gomock.Any()).
+		Return(map[string]int64{"b1": 0}, nil).
+		AnyTimes()
+	store.EXPECT().GetActiveMultipartCounts(gomock.Any()).
+		Return(nil, errors.New("db error")).
+		AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 	defer mgr.Close()
 
-	_, err := mgr.GetDashboardData(context.Background())
-	if err == nil {
+	if _, err := mgr.GetDashboardData(context.Background()); err == nil {
 		t.Fatal("expected error from GetDashboardData")
 	}
 }
 
-// TestGetDashboardData_UsageForPeriodError verifies the get dashboard data usage for period error path by exercising errors.New, mgr.Close, mgr.GetDashboardData.
+// TestGetDashboardData_UsageForPeriodError surfaces a usage-stats failure.
 func TestGetDashboardData_UsageForPeriodError(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{
-		getQuotaStatsResp:      map[string]core.QuotaStat{"b1": {}},
-		getObjectCountsResp:    map[string]int64{"b1": 0},
-		getActiveMultipartResp: map[string]int64{"b1": 0},
-		getUsageForPeriodErr:   errors.New("db error"),
-	}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().GetQuotaStats(gomock.Any()).
+		Return(map[string]core.QuotaStat{"b1": {}}, nil).
+		AnyTimes()
+	store.EXPECT().GetObjectCounts(gomock.Any()).
+		Return(map[string]int64{"b1": 0}, nil).
+		AnyTimes()
+	store.EXPECT().GetActiveMultipartCounts(gomock.Any()).
+		Return(map[string]int64{"b1": 0}, nil).
+		AnyTimes()
+	store.EXPECT().GetUsageForPeriod(gomock.Any(), gomock.Any()).
+		Return(nil, errors.New("db error")).
+		AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 	defer mgr.Close()
 
-	_, err := mgr.GetDashboardData(context.Background())
-	if err == nil {
+	if _, err := mgr.GetDashboardData(context.Background()); err == nil {
 		t.Fatal("expected error from GetDashboardData")
 	}
 }
 
-// TestGetDashboardData_ListDirChildrenError verifies the get dashboard data list dir children error path by exercising errors.New, mgr.Close, mgr.GetDashboardData.
+// TestGetDashboardData_ListDirChildrenError surfaces a directory-listing
+// failure.
 func TestGetDashboardData_ListDirChildrenError(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{
-		getQuotaStatsResp:      map[string]core.QuotaStat{"b1": {}},
-		getObjectCountsResp:    map[string]int64{"b1": 0},
-		getActiveMultipartResp: map[string]int64{"b1": 0},
-		getUsageForPeriodResp:  map[string]core.UsageStat{},
-		listDirChildrenErr:     errors.New("db error"),
-	}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().GetQuotaStats(gomock.Any()).
+		Return(map[string]core.QuotaStat{"b1": {}}, nil).
+		AnyTimes()
+	store.EXPECT().GetObjectCounts(gomock.Any()).
+		Return(map[string]int64{"b1": 0}, nil).
+		AnyTimes()
+	store.EXPECT().GetActiveMultipartCounts(gomock.Any()).
+		Return(map[string]int64{"b1": 0}, nil).
+		AnyTimes()
+	store.EXPECT().GetUsageForPeriod(gomock.Any(), gomock.Any()).
+		Return(map[string]core.UsageStat{}, nil).
+		AnyTimes()
+	store.EXPECT().ListDirectoryChildren(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil, errors.New("db error")).
+		AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 	defer mgr.Close()
 
-	_, err := mgr.GetDashboardData(context.Background())
-	if err == nil {
+	if _, err := mgr.GetDashboardData(context.Background()); err == nil {
 		t.Fatal("expected error from GetDashboardData")
 	}
 }
 
-// TestGetDashboardData_UnhealthyBackends verifies the get dashboard data unhealthy backends contract.
-// Asserts that GetDashboardData:.
+// TestGetDashboardData_UnhealthyBackends asserts that an open-circuit
+// backend appears in UnhealthyBackends.
 func TestGetDashboardData_UnhealthyBackends(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{
-		getQuotaStatsResp:      map[string]core.QuotaStat{"b1": {}},
-		getObjectCountsResp:    map[string]int64{"b1": 0},
-		getActiveMultipartResp: map[string]int64{"b1": 0},
-		getUsageForPeriodResp:  map[string]core.UsageStat{},
-		listDirChildrenResp:    &core.DirectoryListResult{},
-	}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().GetQuotaStats(gomock.Any()).
+		Return(map[string]core.QuotaStat{"b1": {}}, nil).
+		AnyTimes()
+	store.EXPECT().GetObjectCounts(gomock.Any()).
+		Return(map[string]int64{"b1": 0}, nil).
+		AnyTimes()
+	store.EXPECT().GetActiveMultipartCounts(gomock.Any()).
+		Return(map[string]int64{"b1": 0}, nil).
+		AnyTimes()
+	store.EXPECT().GetUsageForPeriod(gomock.Any(), gomock.Any()).
+		Return(map[string]core.UsageStat{}, nil).
+		AnyTimes()
+	store.EXPECT().ListDirectoryChildren(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(&core.DirectoryListResult{}, nil).
+		AnyTimes()
+	storetest.Permissive(store)
 
-	// Create a manager with a CircuitBreakerBackend in open state
 	mock := newMockBackend()
 	mock.putErr = errors.New("down")
 	cbBackend := backend.NewCircuitBreakerBackend(mock, "b1", 1, time.Minute)
-	// Trip the circuit
+	// Trip the circuit.
 	_, _ = cbBackend.PutObject(context.Background(), "k", nil, 0, "", nil)
 
 	mgr := NewBackendManager(&BackendManagerConfig{
@@ -189,21 +252,30 @@ func TestGetDashboardData_UnhealthyBackends(t *testing.T) {
 	}
 }
 
-// TestGetDashboardData_HealthyBackendsNotMarked verifies the get dashboard data healthy backends not marked contract.
-// Asserts that GetDashboardData:.
+// TestGetDashboardData_HealthyBackendsNotMarked asserts a healthy backend
+// is absent from the UnhealthyBackends map.
 func TestGetDashboardData_HealthyBackendsNotMarked(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{
-		getQuotaStatsResp:      map[string]core.QuotaStat{"b1": {}},
-		getObjectCountsResp:    map[string]int64{"b1": 0},
-		getActiveMultipartResp: map[string]int64{"b1": 0},
-		getUsageForPeriodResp:  map[string]core.UsageStat{},
-		listDirChildrenResp:    &core.DirectoryListResult{},
-	}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().GetQuotaStats(gomock.Any()).
+		Return(map[string]core.QuotaStat{"b1": {}}, nil).
+		AnyTimes()
+	store.EXPECT().GetObjectCounts(gomock.Any()).
+		Return(map[string]int64{"b1": 0}, nil).
+		AnyTimes()
+	store.EXPECT().GetActiveMultipartCounts(gomock.Any()).
+		Return(map[string]int64{"b1": 0}, nil).
+		AnyTimes()
+	store.EXPECT().GetUsageForPeriod(gomock.Any(), gomock.Any()).
+		Return(map[string]core.UsageStat{}, nil).
+		AnyTimes()
+	store.EXPECT().ListDirectoryChildren(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(&core.DirectoryListResult{}, nil).
+		AnyTimes()
+	storetest.Permissive(store)
 
-	// Healthy CB backend  -  circuit is closed
 	cbBackend := backend.NewCircuitBreakerBackend(newMockBackend(), "b1", 5, time.Minute)
-
 	mgr := NewBackendManager(&BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": cbBackend},
 		Stores:          testStoresFromMock(store),
@@ -224,13 +296,17 @@ func TestGetDashboardData_HealthyBackendsNotMarked(t *testing.T) {
 	}
 }
 
-// TestGetDirectoryChildren_CapsMaxKeys verifies the get directory children caps max keys contract.
-// Asserts that GetDirectoryChildren:.
+// TestGetDirectoryChildren_CapsMaxKeys exercises the maxKeys clamping
+// applied before the store query.
 func TestGetDirectoryChildren_CapsMaxKeys(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{
-		listDirChildrenResp: &core.DirectoryListResult{},
-	}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().ListDirectoryChildren(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(&core.DirectoryListResult{}, nil).
+		AnyTimes()
+	storetest.Permissive(store)
+
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 	defer mgr.Close()
 

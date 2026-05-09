@@ -939,7 +939,7 @@ func TestAbortMultipartUploadsOnBackend_AbortFails(t *testing.T) {
 // newEncryptedTestManager wires a manager with a real Encryptor so the
 // shared-DEK code paths (unwrapUploadDEK, encryption-aware UploadPart,
 // buildAssembledUpload) can be exercised in unit tests.
-func newEncryptedTestManager(t *testing.T, store *mockStore, backends map[string]*mockBackend) *BackendManager {
+func newEncryptedTestManager(t *testing.T, store managerRoles, backends map[string]*mockBackend) *BackendManager {
 	t.Helper()
 	provider, err := encryption.NewConfigKeyProvider("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "test-0")
 	if err != nil {

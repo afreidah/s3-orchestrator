@@ -19,10 +19,13 @@ import (
 	"testing"
 	"time"
 
+	"go.uber.org/mock/gomock"
+
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
@@ -55,6 +58,17 @@ type metricsDeps interface {
 	GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error)
 	GetUsageForPeriod(ctx context.Context, period string) (map[string]core.UsageStat, error)
 	GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]core.ObjectLocation, error)
+}
+
+// newPermissiveMock returns a gomock-driven MockMetadataStore wired to
+// the supplied test's controller with storetest.Permissive defaults so
+// callers that do not need any specific stub behaviour can drop it
+// straight into newTestManager.
+func newPermissiveMock(t *testing.T) *storetest.MockMetadataStore {
+	t.Helper()
+	m := storetest.NewMockMetadataStore(gomock.NewController(t))
+	storetest.Permissive(m)
+	return m
 }
 
 // newTestManager creates a BackendManager with mock backends and store for testing.
@@ -189,7 +203,7 @@ func TestCanAcceptWrite_NoCapacity(t *testing.T) {
 	limits := map[string]core.UsageLimits{
 		"b1": {APIRequestLimit: 1},
 	}
-	store := &mockStore{}
+	store := newPermissiveMock(t)
 	mgr := newTestManagerWithLimits(store, map[string]*mockBackend{"b1": newMockBackend()}, limits)
 
 	// Push b1 over its API request limit
@@ -1171,7 +1185,7 @@ func TestDeleteObjects_NotFoundIsSuccess(t *testing.T) {
 	t.Parallel()
 	// Empty map (default) means every key was not found; single-tx
 	// returned no displaced copies. S3 spec: not-found is success.
-	store := &mockStore{}
+	store := newPermissiveMock(t)
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	results := mgr.ObjectManager.DeleteObjects(context.Background(), []string{"gone1", "gone2"})
@@ -1226,7 +1240,7 @@ func TestDeleteObjects_BackendFailureEnqueuesCleanup(t *testing.T) {
 // Asserts that expected 0 results, got.
 func TestDeleteObjects_EmptyKeys(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{}
+	store := newPermissiveMock(t)
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	results := mgr.ObjectManager.DeleteObjects(context.Background(), []string{})
@@ -2016,7 +2030,7 @@ func TestDeleteObject_InvalidatesCache(t *testing.T) {
 // -------------------------------------------------------------------------
 
 // newTestManagerWithLimits constructs a new test manager with limits.
-func newTestManagerWithLimits(store *mockStore, backends map[string]*mockBackend, limits map[string]core.UsageLimits) *BackendManager {
+func newTestManagerWithLimits(store managerRoles, backends map[string]*mockBackend, limits map[string]core.UsageLimits) *BackendManager {
 	obs := make(map[string]s3be.ObjectBackend, len(backends))
 	var order []string
 	for name, b := range backends {
@@ -2844,7 +2858,7 @@ func TestCopyObject_SourceGetPanics(t *testing.T) {
 func TestRedisCounterConfigured_LocalBackendReturnsFalse(t *testing.T) {
 	t.Parallel()
 	backend := newMockBackend()
-	store := &mockStore{}
+	store := newPermissiveMock(t)
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
 	if mgr.RedisCounterConfigured() {

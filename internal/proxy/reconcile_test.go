@@ -25,8 +25,11 @@ import (
 	"errors"
 	"testing"
 
+	"go.uber.org/mock/gomock"
+
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
 // -------------------------------------------------------------------------
@@ -698,9 +701,10 @@ func (l *listingMockBackend) ListObjects(_ context.Context, _ string, fn func([]
 // import a and c (S3-only) and delete x (DB-only).
 func TestReconcileBackend_HappyPathImportsAndDeletes(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{
-		listObjectsByBackendKeyAscFn: func(afterKey string, _ int) ([]core.ObjectLocation, error) {
-			// One-shot: return both rows on the first call, empty after.
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().ListObjectsByBackendKeyAsc(gomock.Any(), "b1", gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _, afterKey string, _ int) ([]core.ObjectLocation, error) {
 			if afterKey == "" {
 				return []core.ObjectLocation{
 					{ObjectKey: "vb/b", BackendName: "b1"},
@@ -708,8 +712,20 @@ func TestReconcileBackend_HappyPathImportsAndDeletes(t *testing.T) {
 				}, nil
 			}
 			return nil, nil
-		},
-	}
+		}).
+		AnyTimes()
+	store.EXPECT().ImportObject(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(true, nil).
+		AnyTimes()
+	var deletedKeys []string
+	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, key, _ string) error {
+			deletedKeys = append(deletedKeys, key)
+			return nil
+		}).
+		AnyTimes()
+	storetest.Permissive(store)
+
 	listing := &listingMockBackend{
 		mockBackend: newMockBackend(),
 		pages: [][]backend.ListedObject{
@@ -733,9 +749,8 @@ func TestReconcileBackend_HappyPathImportsAndDeletes(t *testing.T) {
 	if res.Removed != 1 {
 		t.Errorf("Removed = %d, want 1 (x)", res.Removed)
 	}
-	// Verify the delete reached the store with the right key.
-	if len(store.deleteObjectLocationCalls) != 1 || store.deleteObjectLocationCalls[0].key != "vb/x" {
-		t.Errorf("delete calls = %+v, want one call for vb/x", store.deleteObjectLocationCalls)
+	if len(deletedKeys) != 1 || deletedKeys[0] != "vb/x" {
+		t.Errorf("delete calls = %v, want one call for vb/x", deletedKeys)
 	}
 }
 
@@ -743,8 +758,10 @@ func TestReconcileBackend_HappyPathImportsAndDeletes(t *testing.T) {
 // every S3 key matches a DB row, so no imports or deletes fire.
 func TestReconcileBackend_NoMutationsWhenInSync(t *testing.T) {
 	t.Parallel()
-	store := &mockStore{
-		listObjectsByBackendKeyAscFn: func(afterKey string, _ int) ([]core.ObjectLocation, error) {
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().ListObjectsByBackendKeyAsc(gomock.Any(), "b1", gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _, afterKey string, _ int) ([]core.ObjectLocation, error) {
 			if afterKey == "" {
 				return []core.ObjectLocation{
 					{ObjectKey: "vb/a"},
@@ -752,8 +769,10 @@ func TestReconcileBackend_NoMutationsWhenInSync(t *testing.T) {
 				}, nil
 			}
 			return nil, nil
-		},
-	}
+		}).
+		AnyTimes()
+	storetest.Permissive(store)
+
 	listing := &listingMockBackend{
 		mockBackend: newMockBackend(),
 		pages: [][]backend.ListedObject{
@@ -782,7 +801,10 @@ func TestReconcileBackend_PropagatesS3ListingError(t *testing.T) {
 		pages:       [][]backend.ListedObject{{{Key: "vb/a", SizeBytes: 1}}},
 		err:         want,
 	}
-	mgr := newTestManager(&mockStore{}, map[string]*mockBackend{"b1": listing.mockBackend})
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	storetest.Permissive(store)
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": listing.mockBackend})
 	mgr.backends["b1"] = listing
 
 	_, err := mgr.ReconcileBackend(context.Background(), "b1", "vb", []string{"vb"})
