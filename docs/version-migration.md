@@ -60,6 +60,47 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ### v0.46.x (current)
 
+**Postgres encrypt/decrypt admin keeps bytes_used consistent (v0.46.9)**
+
+The Postgres `MarkObjectEncrypted` and `MarkObjectDecrypted` paths
+updated `object_locations.size_bytes` but skipped the matching
+`backend_quotas.bytes_used` adjustment. The bulk `encrypt-existing` and
+`decrypt-existing` admin endpoints rewrite every object at a different
+on-disk size (encryption adds per-chunk overhead, decryption removes
+it), so after a bulk run on a Postgres deployment `bytes_used` drifted
+permanently from `SUM(object_locations.size_bytes)`. The drift was
+silent: write-routing trusted an under-counted `bytes_used` and the
+backend silently overcommitted. The SQLite engine was correct.
+
+The fix wraps both methods in a transaction that updates
+`object_locations` and applies the size delta to
+`backend_quotas.bytes_used` via a new `AdjustBackendBytesUsed` SQL.
+`MarkObjectDecrypted` reads the current row inside the same
+transaction so the delta is computed against the ciphertext size
+about to be overwritten.
+
+**Operator action items after upgrade:**
+
+- If a Postgres deployment previously ran `encrypt-existing` or
+  `decrypt-existing` and `backend_quotas.bytes_used` no longer matches
+  `SUM(object_locations.size_bytes)`, run a one-time reconciliation:
+
+  ```sql
+  UPDATE backend_quotas bq
+  SET bytes_used = COALESCE((
+      SELECT SUM(size_bytes) FROM object_locations
+      WHERE backend_name = bq.backend_name
+  ), 0),
+  updated_at = NOW();
+  ```
+
+  Run during a maintenance window: write-routing reads `bytes_used`
+  and a stale value can briefly under-report or over-report capacity
+  while this UPDATE is in flight.
+
+- After the upgrade, future `encrypt-existing` / `decrypt-existing`
+  runs do not need any manual reconciliation.
+
 **Redis counter circuit breaker recovers cleanly without process restart (v0.46.8)**
 
 The Redis counter recovery probe (`tryRecover`) used `cb.PostCheck(nil)`
