@@ -351,9 +351,15 @@ func (r *RedisCounterBackend) tryRecover() {
 		return
 	}
 
-	// Clear fallback state and close circuit breaker
+	// Clear fallback state and close circuit breaker. cb.Recover()
+	// is used here instead of PostCheck(nil) because the redis hot
+	// path bypasses PreCheck (it branches on inFallback() directly),
+	// so the breaker never reaches HalfOpen on its own; PostCheck(nil)
+	// would leave an Open breaker stuck and IsHealthy() permanently
+	// false. Recover() also zeroes the failure counter so a single
+	// transient error post-recovery does not immediately re-trip.
 	r.setFallback(false)
-	r.notePostCheck("recovery", nil)
+	r.cb.Recover()
 
 	slog.InfoContext(context.Background(), "Redis counter backend recovered, local deltas synced")
 }
