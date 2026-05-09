@@ -609,3 +609,109 @@ func TestResetStaleProbe_StaleProbe(t *testing.T) {
 		t.Error("probeInFlight should be false after reset")
 	}
 }
+
+// -------------------------------------------------------------------------
+// Recover (out-of-band recovery probe)
+// -------------------------------------------------------------------------
+
+// TestCB_RecoverFromOpen pins the post-fix contract that an out-of-band
+// recovery probe (Redis ping, manual operator action) can transition the
+// breaker straight from Open back to Closed without going through
+// PreCheck. Without Recover() the only path Open->Closed is via
+// PreCheck()->HalfOpen->PostCheck(nil)->Closed, which the Redis counter
+// recovery path bypasses, so PostCheck(nil) on an Open breaker leaves
+// the state at Open and IsHealthy() returns false forever.
+func TestCB_RecoverFromOpen(t *testing.T) {
+	t.Parallel()
+	cb := newTestBreaker(3, time.Hour)
+
+	for range 3 {
+		_ = cb.PostCheck(errTest)
+	}
+	if cb.IsHealthy() {
+		t.Fatal("setup: breaker should be open after threshold failures")
+	}
+	if cb.State() != StateOpen {
+		t.Fatalf("setup: state = %s, want open", cb.State())
+	}
+
+	cb.Recover()
+
+	if !cb.IsHealthy() {
+		t.Errorf("breaker still unhealthy after Recover()")
+	}
+	if cb.State() != StateClosed {
+		t.Errorf("state = %s, want closed", cb.State())
+	}
+}
+
+// TestCB_RecoverFromHalfOpen pins idempotent semantics from HalfOpen.
+// Recover should also clear probeInFlight/probeStarted so a subsequent
+// PreCheck does not see a stale in-flight probe.
+func TestCB_RecoverFromHalfOpen(t *testing.T) {
+	t.Parallel()
+	cb := newTestBreaker(1, 10*time.Millisecond)
+	_ = cb.PostCheck(errTest) // trip
+	time.Sleep(15 * time.Millisecond)
+	_ = cb.PreCheck() // -> half-open, probeInFlight set
+
+	if cb.State() != StateHalfOpen {
+		t.Fatalf("setup: state = %s, want half-open", cb.State())
+	}
+
+	cb.Recover()
+
+	if cb.State() != StateClosed {
+		t.Errorf("state = %s, want closed", cb.State())
+	}
+	if cb.probeInFlight.Load() {
+		t.Error("probeInFlight should be cleared after Recover()")
+	}
+	if cb.probeStarted.Load() != 0 {
+		t.Error("probeStarted should be zero after Recover()")
+	}
+}
+
+// TestCB_RecoverFromClosed asserts Recover() is a safe no-op on an
+// already-closed breaker (idempotent).
+func TestCB_RecoverFromClosed(t *testing.T) {
+	t.Parallel()
+	cb := newTestBreaker(3, time.Hour)
+	if !cb.IsHealthy() {
+		t.Fatal("setup: should start closed")
+	}
+
+	cb.Recover()
+
+	if !cb.IsHealthy() {
+		t.Errorf("breaker became unhealthy after Recover() on a closed breaker")
+	}
+	if cb.State() != StateClosed {
+		t.Errorf("state = %s, want closed", cb.State())
+	}
+}
+
+// TestCB_RecoverResetsFailureCounter pins the contract that Recover()
+// zeroes the failure counter so the breaker tolerates the configured
+// threshold of new failures before tripping again. Without this, the
+// next failure post-recovery would immediately re-open the breaker
+// since Recover-without-reset would leave failures = threshold.
+func TestCB_RecoverResetsFailureCounter(t *testing.T) {
+	t.Parallel()
+	cb := newTestBreaker(3, time.Hour)
+	for range 3 {
+		_ = cb.PostCheck(errTest)
+	}
+	if cb.IsHealthy() {
+		t.Fatal("setup: breaker should be open")
+	}
+
+	cb.Recover()
+
+	// One failure post-recovery must NOT immediately re-open the
+	// breaker; the failure counter must have been zeroed.
+	_ = cb.PostCheck(errTest)
+	if !cb.IsHealthy() {
+		t.Errorf("a single failure post-recovery re-opened the breaker; failure counter not reset")
+	}
+}

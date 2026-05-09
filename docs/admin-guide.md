@@ -529,6 +529,8 @@ redis:
 
 When Redis is active, the usage flush service acquires a PostgreSQL advisory lock so only one instance performs the destructive `GETSET` + flush-to-PG operation. When Redis is in fallback (or not configured), each instance flushes independently without a lock.
 
+A background health probe runs every 5 seconds while the breaker is open: it PINGs Redis and, on success, syncs the accumulated local-counter deltas back via an additive INCRBY pipeline (no DEL — keys from before the outage expire via TTL) and recloses the breaker. The breaker recovery is clean: the failure counter is zeroed so the system tolerates the configured `failure_threshold` of new transient errors before tripping again. No process restart is required after a Redis outage.
+
 Redis is not reloadable — changing Redis settings requires a restart.
 
 ### lifecycle

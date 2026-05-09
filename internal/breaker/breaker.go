@@ -234,6 +234,26 @@ func (cb *CircuitBreaker) PostCheck(err error) error {
 	return err
 }
 
+// Recover transitions the breaker back to Closed cleanly, regardless of
+// the current state. The intended caller is an out-of-band liveness
+// probe that has independently confirmed the dependency is reachable
+// (e.g., the Redis counter recovery probe in internal/counter/redis.go).
+// PostCheck(nil) is the wrong tool for this case: it models a single
+// in-flight call's success and only handles HalfOpen->Closed, leaving
+// an Open breaker stuck. Recover clears probe state and zeroes the
+// failure counter so the breaker tolerates the configured threshold of
+// new failures before re-opening.
+func (cb *CircuitBreaker) Recover() {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	cb.probeInFlight.Store(false)
+	cb.probeStarted.Store(0)
+	cb.failures = 0
+	if cb.state != StateClosed {
+		cb.transition(StateClosed)
+	}
+}
+
 // onSuccess resets failures and transitions half-open -> closed.
 func (cb *CircuitBreaker) onSuccess() {
 	cb.mu.Lock()
