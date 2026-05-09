@@ -1286,6 +1286,8 @@ To remove encryption from all objects and restore plaintext on backends, use the
 
 Failed objects are logged individually and can be retried by calling `decrypt-existing` again — it only processes objects with encryption metadata.
 
+Both `encrypt-existing` and `decrypt-existing` keep `backend_quotas.bytes_used` consistent with the on-disk byte count: each object is rewritten at a different size (encryption inflates by per-chunk overhead, decryption removes it), and the per-backend counter advances by the size delta inside the same transaction as the metadata update. No manual reconciliation against `SUM(object_locations.size_bytes)` is needed after a run.
+
 ### Rotating encryption keys
 
 Key rotation re-wraps DEKs with a new master key without re-encrypting object data. This is a metadata-only operation and is fast regardless of object sizes.
