@@ -60,6 +60,34 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ### v0.46.x (current)
 
+**Redis counter circuit breaker recovers cleanly without process restart (v0.46.8)**
+
+The Redis counter recovery probe (`tryRecover`) used `cb.PostCheck(nil)`
+to close the circuit breaker after a successful liveness probe. That
+helper only handles the `HalfOpen -> Closed` transition; from `Open` it
+just zeroed the failure counter and left the state at `Open`. The
+breaker was therefore stuck `Open` after the first recovery, with two
+consequences: `cb.IsHealthy()` returned false until process restart,
+and the very next transient Redis error tripped the system back to
+local-counter fallback (the breaker's "tolerate N failures" semantic
+was silently disabled).
+
+The fix adds an explicit `(cb *CircuitBreaker) Recover()` method that
+clears probe state, zeroes the failure counter, and transitions the
+breaker straight to `Closed`. `tryRecover` calls it instead of
+`PostCheck(nil)`. After a Redis outage the breaker now recovers
+cleanly: `IsHealthy()` returns true, the failure counter starts fresh,
+and a subsequent transient error is tolerated up to the configured
+`failure_threshold` before the breaker re-opens.
+
+**Operator action items after upgrade:**
+
+- No configuration change. The fix is purely a state-machine
+  correctness improvement on the existing recovery probe.
+- If a deployment was carrying a permanently-stuck breaker after a
+  prior Redis blip, the upgrade clears the condition on first
+  successful health probe (no manual restart needed).
+
 **SigV4 verifier honours wire-form path encoding (v0.46.7)**
 
 The SigV4 canonical-request builder previously fed `r.URL.Path` (Go's

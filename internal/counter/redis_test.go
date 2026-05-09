@@ -213,7 +213,95 @@ func TestTryRecover_NoDEL(t *testing.T) {
 func newTestCB() *breaker.CircuitBreaker {
 	cb := breaker.NewCircuitBreaker("test-redis", 1, time.Millisecond,
 		func(error) bool { return true }, errors.New("redis unavailable"))
-	// Trip the circuit so tryRecover's PostCheck(nil) can close it.
+	// Trip the circuit so tryRecover's recovery transition can close it.
 	_ = cb.PostCheck(errors.New("trigger"))
 	return cb
+}
+
+// TestTryRecover_ClosesCircuitBreaker pins the contract that tryRecover
+// transitions the breaker out of Open back to a healthy Closed state.
+// The redis counter hot-path methods bypass PreCheck (they branch on
+// inFallback()), so the breaker never reaches HalfOpen on its own. If
+// tryRecover does not actively close the breaker, IsHealthy() stays
+// false forever and recordFailure flips the system back to fallback on
+// the very next transient error.
+func TestTryRecover_ClosesCircuitBreaker(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mock := NewMockRedisClient(ctrl)
+	pipe := &fakePipeliner{}
+
+	mock.EXPECT().Ping(gomock.Any()).Return(redis.NewStatusResult("PONG", nil))
+	mock.EXPECT().Pipeline().Return(pipe)
+
+	r := &RedisCounterBackend{
+		client:    mock,
+		prefix:    "test",
+		local:     NewLocalCounterBackend([]string{"b1"}),
+		backends:  []string{"b1"},
+		fallback:  true,
+		cb:        newTestCB(),
+		stopProbe: make(chan struct{}),
+		probeDone: make(chan struct{}),
+	}
+
+	if r.cb.IsHealthy() {
+		t.Fatal("setup: breaker should be open before tryRecover")
+	}
+
+	r.tryRecover()
+
+	if !r.cb.IsHealthy() {
+		t.Errorf("breaker still unhealthy after tryRecover; recovery probe must close it cleanly, not via PostCheck(nil)")
+	}
+	if r.inFallback() {
+		t.Error("fallback flag should be cleared after recovery")
+	}
+}
+
+// TestTryRecover_TolerantOfTransientErrorAfterRecovery pins the contract
+// that the failure counter is reset by recovery so the breaker tolerates
+// new transient errors up to its threshold. Without a clean recovery
+// transition the failure counter would still equal the threshold; the
+// next error would re-trip the breaker immediately.
+func TestTryRecover_TolerantOfTransientErrorAfterRecovery(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mock := NewMockRedisClient(ctrl)
+	pipe := &fakePipeliner{}
+
+	mock.EXPECT().Ping(gomock.Any()).Return(redis.NewStatusResult("PONG", nil))
+	mock.EXPECT().Pipeline().Return(pipe)
+
+	// Use a threshold of 3 so the test can prove the failure counter
+	// was reset (one post-recovery error must not trip a 3-strike
+	// breaker).
+	cb := breaker.NewCircuitBreaker("test-redis", 3, time.Millisecond,
+		func(error) bool { return true }, errors.New("redis unavailable"))
+	for range 3 {
+		_ = cb.PostCheck(errors.New("outage"))
+	}
+
+	r := &RedisCounterBackend{
+		client:    mock,
+		prefix:    "test",
+		local:     NewLocalCounterBackend([]string{"b1"}),
+		backends:  []string{"b1"},
+		fallback:  true,
+		cb:        cb,
+		stopProbe: make(chan struct{}),
+		probeDone: make(chan struct{}),
+	}
+
+	r.tryRecover()
+
+	if !r.cb.IsHealthy() {
+		t.Fatal("setup: tryRecover should have closed the breaker")
+	}
+
+	// One transient error must NOT immediately re-open the breaker;
+	// the failure counter must have been zeroed by recovery so the
+	// breaker tolerates the configured threshold (3) of new failures.
+	_ = r.cb.PostCheck(errors.New("transient"))
+	if !r.cb.IsHealthy() {
+		t.Errorf("a single failure post-recovery re-opened the breaker; failure counter not reset by recovery")
+	}
 }
