@@ -348,35 +348,40 @@ needed; nothing is constructed until it is asked for.
 1. **Lazy providers**: a provider returns the dependency it builds; it
    never has side effects beyond construction. The injector calls it on
    the first `do.Invoke` and memoises the result for subsequent calls.
-2. **Narrow interfaces**: every consumer asks for the smallest interface
-   it needs. The single `concreteStore` interface inside `di.go` is an
-   implementation detail used to compose narrow role interfaces; nothing
-   outside the DI package depends on it.
+2. **Wide composite store, consumer-defined narrow interfaces at the
+   boundary**: consumers receive the wide `core.MetadataStore` (a
+   composite that embeds every per-role interface) and either typehint-
+   narrow it at the field declaration or declare a local interface
+   listing only the methods they call. Producer-side narrow roles
+   (`ObjectStore`, `QuotaStore`, etc.) exist as embedding building
+   blocks for `MetadataStore`; consumer code does not import them
+   directly.
 
 ### Provider Pattern
 
 Every provider follows the same shape:
 
 ```go
-// ProvideObjectStore returns the CB-protected ObjectStore role used by
-// the manager and worker layers for read-side and write-side access to
-// object_locations.
-func ProvideObjectStore(i do.Injector) (core.ObjectStore, error) {
-    inner, err := provideConcreteStore(i)
+// ProvideRebalancer constructs the rebalancer worker.
+func ProvideRebalancer(i do.Injector) (*worker.Rebalancer, error) {
+    mgr, err := do.Invoke[*proxy.BackendManager](i)
     if err != nil {
         return nil, err
     }
-    cb, err := do.Invoke[*breaker.CircuitBreaker](i)
+    stores, err := do.Invoke[core.MetadataStore](i)
     if err != nil {
         return nil, err
     }
-    return store.NewCBObjectStore(inner, cb), nil
+    rb := worker.NewRebalancer(mgr, stores)
+    mgr.Rebalancer = rb
+    return rb, nil
 }
 ```
 
 Providers take a `do.Injector`, resolve their own dependencies through it,
 and return either the value or an error. They never panic, never log, and
-never spawn goroutines.
+never spawn goroutines. CB protection lives inside each driver's DBTX/DB
+chokepoint, so providers do not wrap stores with per-role decorators.
 
 ### Wiring Point
 
@@ -413,6 +418,25 @@ substitute fakes by registering a different provider.
 3. Construct the new component and return `(value, nil)`.
 4. If the new component is consumed somewhere, the consumer should call
    `do.Invoke[Name](inj)` rather than holding the value as a field.
+
+### Optional Providers
+
+Some providers register only when a feature is enabled (encryption,
+Redis counters, UI, notifications) or only in specific run modes
+(reconciler is worker/all-only). Consumers that may run in either mode
+use the `invokeOptional[T]` helper, which returns the zero value of `T`
+when the service is not registered:
+
+```go
+return admin.New(&admin.Deps{
+    // ... required deps from resolveAdminHandlerRequiredDeps
+    Reconciler:        invokeOptional[*worker.Reconciler](i),
+    MultipartBackfill: invokeOptional[*worker.MultipartBackfill](i),
+})
+```
+
+Required providers should still bail with the `do.Invoke` error so a
+genuinely missing dependency surfaces at boot, not at first use.
 
 ### Anti-Patterns
 
