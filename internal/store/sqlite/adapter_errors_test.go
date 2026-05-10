@@ -27,7 +27,7 @@ import (
 // adapter method.
 func closedAdapter(t *testing.T, s *Store) *sqliteTxAdapter {
 	t.Helper()
-	tx, err := s.db.BeginTx(context.Background(), nil)
+	tx, err := s.rawDB.BeginTx(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("BeginTx: %v", err)
 	}

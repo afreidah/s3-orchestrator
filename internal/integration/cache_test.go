@@ -29,7 +29,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
-	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 )
@@ -57,18 +56,12 @@ func setupCacheEnv(t *testing.T) *cacheTestEnv {
 		t.Fatalf("NewMemoryCache: %v", err)
 	}
 
-	dbCB := store.NewDatabaseBreaker(config.CircuitBreakerConfig{
-		FailureThreshold: 3,
-		OpenTimeout:      500 * time.Millisecond,
-		CacheTTL:         60 * time.Second,
-	})
-
-	stores := newCBStores(testStore, dbCB)
+	stores := newStores(testStore)
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        testBackends,
 		Stores:          stores,
-		Dashboard:       store.NewCBDashboardStore(testStore, dbCB),
-		Metrics:         newMetricsAdapter(testStore, dbCB),
+		Dashboard:       testStore,
+		Metrics:         newMetricsAdapter(testStore),
 		Order:           testBackendOrder,
 		CacheTTL:        60 * time.Second,
 		BackendTimeout:  30 * time.Second,

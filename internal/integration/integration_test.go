@@ -35,7 +35,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
-	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
@@ -950,19 +949,12 @@ func mustEnqueueWithSize(t *testing.T, ctx context.Context, backend, key, reason
 func TestSpreadWriteRouting_DistributesAcrossBackends(t *testing.T) {
 	ctx := context.Background()
 	_ = ctx
-	spreadCB := store.NewDatabaseBreaker(config.CircuitBreakerConfig{
-		FailureThreshold: 3,
-		OpenTimeout:      500 * time.Millisecond,
-		CacheTTL:         60 * time.Second,
-	})
-	_ = spreadCB
-	stores := newCBStores(testStore, spreadCB)
-	_ = stores
+	stores := newStores(testStore)
 	spreadManager := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        testBackends,
 		Stores:          stores,
-		Dashboard:       store.NewCBDashboardStore(testStore, spreadCB),
-		Metrics:         newMetricsAdapter(testStore, spreadCB),
+		Dashboard:       testStore,
+		Metrics:         newMetricsAdapter(testStore),
 		Order:           testBackendOrder,
 		CacheTTL:        60 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -1050,19 +1042,12 @@ func TestSpreadWriteRouting_DistributesAcrossBackends(t *testing.T) {
 func TestSpreadWriteRouting_PreferLeastUtilizedAfterImbalance(t *testing.T) {
 	ctx := context.Background()
 	_ = ctx
-	spreadCB := store.NewDatabaseBreaker(config.CircuitBreakerConfig{
-		FailureThreshold: 3,
-		OpenTimeout:      500 * time.Millisecond,
-		CacheTTL:         60 * time.Second,
-	})
-	_ = spreadCB
-	stores := newCBStores(testStore, spreadCB)
-	_ = stores
+	stores := newStores(testStore)
 	spreadManager := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        testBackends,
 		Stores:          stores,
-		Dashboard:       store.NewCBDashboardStore(testStore, spreadCB),
-		Metrics:         newMetricsAdapter(testStore, spreadCB),
+		Dashboard:       testStore,
+		Metrics:         newMetricsAdapter(testStore),
 		Order:           testBackendOrder,
 		CacheTTL:        60 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -1135,19 +1120,12 @@ func TestSpreadWriteRouting_PreferLeastUtilizedAfterImbalance(t *testing.T) {
 func TestSpreadWriteRouting_ContrastWithPackBehavior(t *testing.T) {
 	ctx := context.Background()
 	_ = ctx
-	spreadCB := store.NewDatabaseBreaker(config.CircuitBreakerConfig{
-		FailureThreshold: 3,
-		OpenTimeout:      500 * time.Millisecond,
-		CacheTTL:         60 * time.Second,
-	})
-	_ = spreadCB
-	stores := newCBStores(testStore, spreadCB)
-	_ = stores
+	stores := newStores(testStore)
 	spreadManager := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        testBackends,
 		Stores:          stores,
-		Dashboard:       store.NewCBDashboardStore(testStore, spreadCB),
-		Metrics:         newMetricsAdapter(testStore, spreadCB),
+		Dashboard:       testStore,
+		Metrics:         newMetricsAdapter(testStore),
 		Order:           testBackendOrder,
 		CacheTTL:        60 * time.Second,
 		BackendTimeout:  30 * time.Second,

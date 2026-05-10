@@ -82,12 +82,29 @@ func (s *Store) ClaimPendingCleanups(ctx context.Context, limit int, instanceID 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	cutoff := graceCutoff.UTC().Format(time.RFC3339Nano)
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	var items []core.CleanupItem
+	err := cbWithTx(ctx, s.rawDB, s.cb, func(tx *sql.Tx) error {
+		selected, err := selectClaimableRows(ctx, tx, now, cutoff, limit)
+		if err != nil || len(selected) == 0 {
+			items = selected
+			return err
+		}
+		if err := stampClaims(ctx, tx, selected, instanceID); err != nil {
+			return err
+		}
+		items = selected
+		return nil
+	})
 	if err != nil {
-		return nil, fmt.Errorf("begin claim tx: %w", err)
+		return nil, err
 	}
-	defer func() { _ = tx.Rollback() }()
+	return items, nil
+}
 
+// selectClaimableRows fetches the next batch of cleanup_queue rows that
+// satisfy ClaimPendingCleanups' eligibility predicates. Extracted so the
+// outer ClaimPendingCleanups stays under the cognitive-complexity bar.
+func selectClaimableRows(ctx context.Context, tx *sql.Tx, now, cutoff string, limit int) ([]core.CleanupItem, error) {
 	rows, err := tx.QueryContext(ctx,
 		`SELECT id, backend_name, object_key, reason, attempts, size_bytes,
 		        (claimed_at IS NOT NULL) AS reclaimed
@@ -102,23 +119,26 @@ func (s *Store) ClaimPendingCleanups(ctx context.Context, limit int, instanceID 
 	if err != nil {
 		return nil, fmt.Errorf("select cleanup candidates: %w", err)
 	}
+	defer rows.Close()
+
 	var items []core.CleanupItem
 	for rows.Next() {
 		var item core.CleanupItem
 		if err := rows.Scan(&item.ID, &item.BackendName, &item.ObjectKey, &item.Reason, &item.Attempts, &item.SizeBytes, &item.Reclaimed); err != nil {
-			rows.Close()
 			return nil, fmt.Errorf("scan cleanup candidate: %w", err)
 		}
 		items = append(items, item)
 	}
-	rows.Close()
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate cleanup candidates: %w", err)
 	}
-	if len(items) == 0 {
-		return nil, nil
-	}
+	return items, nil
+}
 
+// stampClaims marks each row in items as claimed by instanceID. The
+// caller wraps both the SELECT and these UPDATEs in one transaction so
+// the claim is atomic against concurrent workers.
+func stampClaims(ctx context.Context, tx *sql.Tx, items []core.CleanupItem, instanceID string) error {
 	stamp := time.Now().UTC().Format(time.RFC3339Nano)
 	for i := range items {
 		if _, err := tx.ExecContext(ctx,
@@ -127,13 +147,10 @@ func (s *Store) ClaimPendingCleanups(ctx context.Context, limit int, instanceID 
 			 WHERE id = ?`,
 			stamp, instanceID, items[i].ID,
 		); err != nil {
-			return nil, fmt.Errorf("stamp cleanup claim: %w", err)
+			return fmt.Errorf("stamp cleanup claim: %w", err)
 		}
 	}
-	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("commit claim tx: %w", err)
-	}
-	return items, nil
+	return nil
 }
 
 // CompleteCleanupItem atomically deletes a successfully-processed row and
@@ -142,40 +159,33 @@ func (s *Store) ClaimPendingCleanups(ctx context.Context, limit int, instanceID 
 // cannot leave the counter inconsistent. Idempotent against re-claim retries:
 // if the row was already deleted the update affects zero rows.
 func (s *Store) CompleteCleanupItem(ctx context.Context, id int64) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin complete tx: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	var backend string
-	var size int64
-	row := tx.QueryRowContext(ctx,
-		`DELETE FROM cleanup_queue
-		 WHERE id = ?
-		 RETURNING backend_name, size_bytes`,
-		id,
-	)
-	if err := row.Scan(&backend, &size); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return tx.Commit()
+	return cbWithTx(ctx, s.rawDB, s.cb, func(tx *sql.Tx) error {
+		var backend string
+		var size int64
+		row := tx.QueryRowContext(ctx,
+			`DELETE FROM cleanup_queue
+			 WHERE id = ?
+			 RETURNING backend_name, size_bytes`,
+			id,
+		)
+		if err := row.Scan(&backend, &size); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
+			return fmt.Errorf("delete cleanup row: %w", err)
 		}
-		return fmt.Errorf("delete cleanup row: %w", err)
-	}
-	if size > 0 {
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE backend_quotas
-			 SET orphan_bytes = MAX(0, orphan_bytes - ?)
-			 WHERE backend_name = ?`,
-			size, backend,
-		); err != nil {
-			return fmt.Errorf("decrement orphan bytes: %w", err)
+		if size > 0 {
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE backend_quotas
+				 SET orphan_bytes = MAX(0, orphan_bytes - ?)
+				 WHERE backend_name = ?`,
+				size, backend,
+			); err != nil {
+				return fmt.Errorf("decrement orphan bytes: %w", err)
+			}
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit complete tx: %w", err)
-	}
-	return nil
+		return nil
+	})
 }
 
 // RetryCleanupItem increments the attempt counter, schedules the next retry,

@@ -46,7 +46,7 @@ func TestNewStore_PingFailureSurfacesHostAndRemediation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	_, err := NewStore(ctx, cfg)
+	_, err := NewStore(ctx, cfg, nil)
 	if err == nil {
 		t.Fatal("expected connect error against unroutable host")
 	}

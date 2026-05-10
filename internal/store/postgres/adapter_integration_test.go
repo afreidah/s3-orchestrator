@@ -86,7 +86,7 @@ func adapterPgStore(t *testing.T) *Store {
 			SSLMode:  "disable",
 			MaxConns: 4,
 			MinConns: 1,
-		})
+		}, nil)
 		if err != nil {
 			pgFixtureErr = fmt.Errorf("NewStore: %w", err)
 			return

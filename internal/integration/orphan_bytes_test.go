@@ -27,7 +27,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
-	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 )
@@ -546,19 +545,12 @@ func TestOrphanBytes_OverwriteDisplacedCopiesCleanedUp(t *testing.T) {
 func TestOrphanBytesSpreadRouting_SpreadRoutingRespectsOrphanBytes(t *testing.T) {
 	ctx := context.Background()
 	_ = ctx
-	spreadCB := store.NewDatabaseBreaker(config.CircuitBreakerConfig{
-		FailureThreshold: 3,
-		OpenTimeout:      500 * time.Millisecond,
-		CacheTTL:         60 * time.Second,
-	})
-	_ = spreadCB
-	stores := newCBStores(testStore, spreadCB)
-	_ = stores
+	stores := newStores(testStore)
 	spreadManager := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        testBackends,
 		Stores:          stores,
-		Dashboard:       store.NewCBDashboardStore(testStore, spreadCB),
-		Metrics:         newMetricsAdapter(testStore, spreadCB),
+		Dashboard:       testStore,
+		Metrics:         newMetricsAdapter(testStore),
 		Order:           testBackendOrder,
 		CacheTTL:        60 * time.Second,
 		BackendTimeout:  30 * time.Second,

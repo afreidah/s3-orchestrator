@@ -34,7 +34,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
-	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
@@ -77,18 +76,12 @@ func setupEncryptionEnv(t *testing.T) *encryptionTestEnv {
 	}
 
 	// Build a manager with encryption enabled using the same backends/store
-	dbCB := store.NewDatabaseBreaker(config.CircuitBreakerConfig{
-		FailureThreshold: 3,
-		OpenTimeout:      500 * time.Millisecond,
-		CacheTTL:         60 * time.Second,
-	})
-
-	stores := newCBStores(testStore, dbCB)
+	stores := newStores(testStore)
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        testBackends,
 		Stores:          stores,
-		Dashboard:       store.NewCBDashboardStore(testStore, dbCB),
-		Metrics:         newMetricsAdapter(testStore, dbCB),
+		Dashboard:       testStore,
+		Metrics:         newMetricsAdapter(testStore),
 		Order:           testBackendOrder,
 		CacheTTL:        60 * time.Second,
 		BackendTimeout:  30 * time.Second,
@@ -119,8 +112,6 @@ func setupEncryptionEnv(t *testing.T) *encryptionTestEnv {
 	// Start admin server
 	var lv slog.LevelVar
 	lv.Set(slog.LevelInfo)
-	adminObjects := store.NewCBObjectStore(testStore, dbCB)
-	adminCleanup := store.NewCBCleanupStore(testStore, dbCB)
 	adminHandler := admin.New(&admin.Deps{
 		BackendOps: mgr,
 		Replicator: mgr.Replicator,
@@ -128,10 +119,10 @@ func setupEncryptionEnv(t *testing.T) *encryptionTestEnv {
 		Drain:      mgr.DrainManager,
 		Scrubber:   mgr.Scrubber,
 		Lifecycle:  testStore,
-		DBCB:       dbCB,
+		DBCB:       testDatabaseCB,
 		Encryption: testStore,
-		Objects:    adminObjects,
-		Cleanup:    adminCleanup,
+		Objects:    testStore,
+		Cleanup:    testStore,
 		Encryptor:  enc,
 		Token:      adminToken,
 		LogLevel:   &lv,
