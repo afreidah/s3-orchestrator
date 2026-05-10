@@ -102,17 +102,7 @@ func (m *BackendManager) recordObjectOrCleanup(ctx context.Context, span trace.S
 	if err != nil {
 		slog.ErrorContext(ctx, "recordObject failed, cleaning up orphan",
 			"key", key, "backend", backendName, "error", err)
-		// Account for both API calls the failure path made: the PUT that
-		// succeeded against the backend (the caller's success-path Record
-		// runs only after we return nil) and the cleanup DELETE about to run.
-		m.usage.Record(backendName, 1, 0, 0) // PUT
-		delErr := m.deleteWithTimeout(ctx, be, key)
-		m.usage.Record(backendName, 1, 0, 0) // cleanup DELETE
-		if delErr != nil {
-			slog.ErrorContext(ctx, "failed to clean up orphaned object",
-				"key", key, "backend", backendName, "error", delErr)
-			m.enqueueCleanup(ctx, backendName, key, "orphan_record_failed", size)
-		}
+		m.recoverFromRecordFailure(ctx, be, backendName, key, "orphan_record_failed", size)
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)
 		return fmt.Errorf("failed to record object: %w", err)
@@ -120,6 +110,24 @@ func (m *BackendManager) recordObjectOrCleanup(ctx context.Context, span trace.S
 
 	m.cleanupDisplacedCopies(ctx, key, backendName, displaced)
 	return nil
+}
+
+// recoverFromRecordFailure runs the post-record-failure cleanup sequence
+// shared by recordObjectOrCleanup and the multipart UploadPart record path.
+// Accounts for both API calls the failure path made (the original PUT and
+// the cleanup DELETE) regardless of whether the cleanup succeeds. On
+// cleanup failure the orphan is enqueued for the cleanup-queue worker
+// with the supplied reason. Callers are responsible for the failure log
+// message and span status before/after this call.
+func (m *BackendManager) recoverFromRecordFailure(ctx context.Context, be backend.ObjectBackend, backendName, key, cleanupReason string, size int64) {
+	m.usage.Record(backendName, 1, 0, 0) // PUT that succeeded
+	delErr := m.deleteWithTimeout(ctx, be, key)
+	m.usage.Record(backendName, 1, 0, 0) // cleanup DELETE
+	if delErr != nil {
+		slog.ErrorContext(ctx, "failed to clean up orphaned object",
+			"key", key, "backend", backendName, "error", delErr)
+		m.enqueueCleanup(ctx, backendName, key, cleanupReason, size)
+	}
 }
 
 // insertPendingIntent records an in-flight PUT intent before the backend

@@ -234,18 +234,7 @@ func (mp *MultipartManager) UploadPart(ctx context.Context, bucket, key, uploadI
 	if err := mp.parent.stores.RecordPart(ctx, uploadID, partNumber, etag, uploadSize, enc); err != nil {
 		slog.ErrorContext(ctx, "recordPart failed, cleaning up part object",
 			"upload_id", uploadID, "part", partNumber, "error", err)
-		// Account for both API calls the failure path made: the PUT that
-		// succeeded against the backend (the success-path Record at the
-		// bottom of this function only runs when we return nil) and the
-		// cleanup DELETE about to run.
-		mp.usage.Record(mu.BackendName, 1, 0, 0) // PUT
-		delErr := mp.deleteWithTimeout(ctx, be, partKey)
-		mp.usage.Record(mu.BackendName, 1, 0, 0) // cleanup DELETE
-		if delErr != nil {
-			slog.ErrorContext(ctx, "failed to clean up orphaned part object",
-				"key", partKey, "error", delErr)
-			mp.parent.enqueueCleanup(ctx, mu.BackendName, partKey, "orphan_part_record_failed", uploadSize)
-		}
+		mp.parent.recoverFromRecordFailure(ctx, be, mu.BackendName, partKey, "orphan_part_record_failed", uploadSize)
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)
 		return "", fmt.Errorf("failed to record part: %w", err)
