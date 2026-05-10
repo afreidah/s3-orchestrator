@@ -79,7 +79,7 @@ func BenchmarkStreamCopy(b *testing.B) {
 			b.SetBytes(int64(tc.size))
 			b.ResetTimer()
 			for b.Loop() {
-				_ = core.streamCopy(context.Background(), src, dst, "bench-key")
+				_ = core.StreamCopy(context.Background(), src, dst, "bench-key")
 			}
 		})
 	}

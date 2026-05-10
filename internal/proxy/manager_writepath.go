@@ -121,7 +121,7 @@ func (m *BackendManager) recordObjectOrCleanup(ctx context.Context, span trace.S
 // message and span status before/after this call.
 func (m *BackendManager) recoverFromRecordFailure(ctx context.Context, be backend.ObjectBackend, backendName, key, cleanupReason string, size int64) {
 	m.usage.Record(backendName, 1, 0, 0) // PUT that succeeded
-	delErr := m.deleteWithTimeout(ctx, be, key)
+	delErr := m.DeleteWithTimeout(ctx, be, key)
 	m.usage.Record(backendName, 1, 0, 0) // cleanup DELETE
 	if delErr != nil {
 		slog.ErrorContext(ctx, "failed to clean up orphaned object",
@@ -234,7 +234,7 @@ func (m *BackendManager) cleanupDisplacedCopies(ctx context.Context, key, newBac
 // manager: rebalancer, replicator, multipart cleanup, and delete paths.
 // sizeBytes is tracked as orphan bytes when the delete is enqueued.
 func (m *BackendManager) deleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, backendName, key, reason string, sizeBytes int64) {
-	if err := m.deleteWithTimeout(ctx, be, key); err != nil {
+	if err := m.DeleteWithTimeout(ctx, be, key); err != nil {
 		slog.WarnContext(ctx, "failed to delete object, enqueuing cleanup",
 			"backend", backendName, "key", key, "reason", reason, "error", err)
 		m.enqueueCleanup(ctx, backendName, key, reason, sizeBytes)

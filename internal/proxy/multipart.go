@@ -202,7 +202,7 @@ func (mp *MultipartManager) UploadPart(ctx context.Context, bucket, key, uploadI
 		return "", err
 	}
 
-	be, err := mp.getBackend(mu.BackendName)
+	be, err := mp.GetBackend(mu.BackendName)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return "", err
@@ -222,7 +222,7 @@ func (mp *MultipartManager) UploadPart(ctx context.Context, bucket, key, uploadI
 
 	// Store part under a temp key
 	partKey := multipartPartKey(uploadID, partNumber)
-	bctx, bcancel := mp.withTimeout(ctx)
+	bctx, bcancel := mp.WithTimeout(ctx)
 	defer bcancel()
 	etag, err := be.PutObject(bctx, partKey, uploadBody, uploadSize, "application/octet-stream", nil)
 	if err != nil {
@@ -357,7 +357,7 @@ func (mp *MultipartManager) completeMultipartUploadLocked(
 	if err != nil {
 		return "", mp.classifyWriteError(span, operation, err)
 	}
-	be, err := mp.getBackend(mu.BackendName)
+	be, err := mp.GetBackend(mu.BackendName)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return "", err
@@ -594,7 +594,7 @@ func (mp *MultipartManager) abortByMultipartRow(ctx context.Context, mu *core.Mu
 	start := time.Now()
 	uploadID := mu.UploadID
 
-	be, err := mp.getBackend(mu.BackendName)
+	be, err := mp.GetBackend(mu.BackendName)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return err
@@ -768,7 +768,7 @@ func (mp *MultipartManager) streamOnePart(
 	part *core.MultipartPart,
 ) error {
 	partKey := multipartPartKey(uploadID, part.PartNumber)
-	bctx, bcancel := mp.withTimeout(ctx)
+	bctx, bcancel := mp.WithTimeout(ctx)
 	defer bcancel()
 
 	result, err := be.GetObject(bctx, partKey, "")

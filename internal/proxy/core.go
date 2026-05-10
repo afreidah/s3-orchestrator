@@ -56,10 +56,10 @@ type backendCore struct {
 // ADMISSION
 // -------------------------------------------------------------------------
 
-// acquireAdmission blocks until a slot is available in the shared admission
+// AcquireAdmission blocks until a slot is available in the shared admission
 // semaphore, or returns false if ctx is cancelled. Returns true immediately
 // when no semaphore is configured.
-func (c *backendCore) acquireAdmission(ctx context.Context) bool {
+func (c *backendCore) AcquireAdmission(ctx context.Context) bool {
 	if c.admissionSem == nil {
 		return true
 	}
@@ -71,9 +71,9 @@ func (c *backendCore) acquireAdmission(ctx context.Context) bool {
 	}
 }
 
-// releaseAdmission returns a slot to the admission semaphore. No-op when
+// ReleaseAdmission returns a slot to the admission semaphore. No-op when
 // no semaphore is configured.
-func (c *backendCore) releaseAdmission() {
+func (c *backendCore) ReleaseAdmission() {
 	if c.admissionSem == nil {
 		return
 	}
@@ -84,11 +84,11 @@ func (c *backendCore) releaseAdmission() {
 // TIMEOUT
 // -------------------------------------------------------------------------
 
-// withTimeout returns a context with the configured backend timeout applied.
+// WithTimeout returns a context with the configured backend timeout applied.
 // If the parent context already has a tighter deadline, the parent deadline
 // is preserved to avoid masking upstream timeouts (e.g. HTTP WriteTimeout).
 // If no timeout is configured, the original context is returned unchanged.
-func (c *backendCore) withTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+func (c *backendCore) WithTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
 	if c.backendTimeout <= 0 {
 		// No timeout configured  -  return a no-op cancel so the caller can
 		// defer cancel() unconditionally without a nil check.
@@ -109,13 +109,7 @@ func (c *backendCore) withTimeout(ctx context.Context) (context.Context, context
 // -------------------------------------------------------------------------
 
 // GetBackend returns the named backend, or an error if it doesn't exist.
-// Exported for use by the admin handler (encrypt-existing endpoint).
 func (c *backendCore) GetBackend(name string) (backend.ObjectBackend, error) {
-	return c.getBackend(name)
-}
-
-// getBackend returns the named backend, or an error if it doesn't exist.
-func (c *backendCore) getBackend(name string) (backend.ObjectBackend, error) {
 	b, ok := c.backends[name]
 	if !ok {
 		return nil, fmt.Errorf("backend %s not found", name)
@@ -137,8 +131,8 @@ func (c *backendCore) IsDraining(name string) bool {
 	return c.drainMgr.IsDraining(name)
 }
 
-// excludeDraining filters out backends that are currently draining.
-func (c *backendCore) excludeDraining(eligible []string) []string {
+// ExcludeDraining filters out backends that are currently draining.
+func (c *backendCore) ExcludeDraining(eligible []string) []string {
 	filtered := make([]string, 0, len(eligible))
 	for _, name := range eligible {
 		if !c.IsDraining(name) {
@@ -221,17 +215,17 @@ func (c *backendCore) classifyWriteError(span trace.Span, operation string, err 
 
 // deleteWithTimeout deletes an object from a backend using the configured
 // backend timeout. Returns the backend error directly.
-func (c *backendCore) deleteWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) error {
-	dctx, dcancel := c.withTimeout(ctx)
+func (c *backendCore) DeleteWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) error {
+	dctx, dcancel := c.WithTimeout(ctx)
 	defer dcancel()
 	return be.DeleteObject(dctx, key)
 }
 
-// streamCopy reads an object from src and writes it to dst using the configured
+// StreamCopy reads an object from src and writes it to dst using the configured
 // backend timeout for each operation. Returns an error tagged with "read:" or
 // "write:" to indicate which leg failed.
-func (c *backendCore) streamCopy(ctx context.Context, src, dst backend.ObjectBackend, key string) error {
-	rctx, rcancel := c.withTimeout(ctx)
+func (c *backendCore) StreamCopy(ctx context.Context, src, dst backend.ObjectBackend, key string) error {
+	rctx, rcancel := c.WithTimeout(ctx)
 	defer rcancel()
 	result, err := src.GetObject(rctx, key, "")
 	if err != nil {
@@ -239,7 +233,7 @@ func (c *backendCore) streamCopy(ctx context.Context, src, dst backend.ObjectBac
 	}
 	defer func() { _ = result.Body.Close() }()
 
-	wctx, wcancel := c.withTimeout(ctx)
+	wctx, wcancel := c.WithTimeout(ctx)
 	defer wcancel()
 	_, err = dst.PutObject(wctx, key, result.Body, result.Size, result.ContentType, result.Metadata)
 	if err != nil {
@@ -266,17 +260,6 @@ func (c *backendCore) UpdateQuotaMetrics(ctx context.Context) error {
 // worker.Ops IMPLEMENTATION
 // -------------------------------------------------------------------------
 
-// AcquireAdmission blocks until a slot is available in the shared admission semaphore.
-func (c *backendCore) AcquireAdmission(ctx context.Context) bool { return c.acquireAdmission(ctx) }
-
-// ReleaseAdmission returns a slot to the admission semaphore.
-func (c *backendCore) ReleaseAdmission() { c.releaseAdmission() }
-
-// WithTimeout returns a context with the configured backend timeout applied.
-func (c *backendCore) WithTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
-	return c.withTimeout(ctx)
-}
-
 // Backends returns the backend map.
 func (c *backendCore) Backends() map[string]backend.ObjectBackend { return c.backends }
 
@@ -285,16 +268,3 @@ func (c *backendCore) BackendOrder() []string { return c.order }
 
 // Usage returns the usage tracker.
 func (c *backendCore) Usage() *counter.UsageTracker { return c.usage }
-
-// StreamCopy pipes a GetObject->PutObject between two backends.
-func (c *backendCore) StreamCopy(ctx context.Context, src, dst backend.ObjectBackend, key string) error {
-	return c.streamCopy(ctx, src, dst, key)
-}
-
-// DeleteWithTimeout deletes an object from a backend with the configured timeout.
-func (c *backendCore) DeleteWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) error {
-	return c.deleteWithTimeout(ctx, be, key)
-}
-
-// ExcludeDraining filters out backends that are being drained.
-func (c *backendCore) ExcludeDraining(eligible []string) []string { return c.excludeDraining(eligible) }

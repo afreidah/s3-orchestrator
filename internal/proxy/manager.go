@@ -435,7 +435,7 @@ func (m *BackendManager) ReconcileBackend(ctx context.Context, backendName, buck
 // ListObjects API the reconciler drives. The interface return makes the
 // dependency narrow so tests can substitute a fake.
 func (m *BackendManager) resolveS3Backend(name string) (objectLister, error) {
-	be, err := m.getBackend(name)
+	be, err := m.GetBackend(name)
 	if err != nil {
 		return nil, err
 	}

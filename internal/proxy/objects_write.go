@@ -165,7 +165,7 @@ func (o *ObjectManager) attemptPutOnBackend(ctx context.Context, span trace.Span
 	}
 	span.SetAttributes(telemetry.AttrBackendName.String(backendName))
 
-	be, err := o.getBackend(backendName)
+	be, err := o.GetBackend(backendName)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return putAttemptResult{backend: backendName, fatalErr: err}
@@ -187,7 +187,7 @@ func (o *ObjectManager) attemptPutOnBackend(ctx context.Context, span trace.Span
 		return putAttemptResult{backend: backendName, fatalErr: err}
 	}
 
-	bctx, bcancel := o.withTimeout(ctx)
+	bctx, bcancel := o.WithTimeout(ctx)
 	etag, err := be.PutObject(bctx, req.key, uploadBody, uploadSize, req.contentType, req.metadata)
 	bcancel()
 	if err != nil {
@@ -310,7 +310,7 @@ func (o *ObjectManager) headSourceForCopy(
 		if !ok {
 			continue
 		}
-		bctx, bcancel := o.withTimeout(ctx)
+		bctx, bcancel := o.WithTimeout(ctx)
 		headResult, err := be.HeadObject(bctx, sourceKey)
 		bcancel()
 		if err != nil {
@@ -383,7 +383,7 @@ func (o *ObjectManager) tryStreamCopySource(
 	if !ok {
 		return false
 	}
-	bctx, bcancel := o.withTimeout(ctx)
+	bctx, bcancel := o.WithTimeout(ctx)
 	result, err := srcBackend.GetObject(bctx, sourceKey, "")
 	if err != nil {
 		bcancel()
@@ -438,7 +438,7 @@ func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey strin
 	if err != nil {
 		return "", err
 	}
-	destBackend, err := o.getBackend(destBackendName)
+	destBackend, err := o.GetBackend(destBackendName)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return "", err
