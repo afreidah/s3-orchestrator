@@ -737,6 +737,7 @@ func (o *ObjectManager) ListObjects(ctx context.Context, prefix, delimiter, star
 		if page == maxPages-1 && storeResult.IsTruncated && !result.IsTruncated {
 			result.IsTruncated = true
 			result.NextContinuationToken = advancePastEmittedCommonPrefix(prefix, delimiter, cursor, seen)
+			telemetry.ListPagesCappedTotal.Inc()
 		}
 	}
 
