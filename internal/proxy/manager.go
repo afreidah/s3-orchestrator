@@ -17,8 +17,6 @@ package proxy
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -280,13 +278,6 @@ func (m *BackendManager) NearUsageLimit(threshold float64) bool {
 // -------------------------------------------------------------------------
 // HELPERS
 // -------------------------------------------------------------------------
-
-// GenerateUploadID creates a random hex string for multipart upload IDs.
-func GenerateUploadID() string {
-	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
-}
 
 // SyncBackend scans a backend's S3 bucket and imports pre-existing
 // objects into the proxy database. Objects already tracked for the

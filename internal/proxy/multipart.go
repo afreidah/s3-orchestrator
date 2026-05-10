@@ -129,7 +129,7 @@ func (mp *MultipartManager) CreateMultipartUpload(ctx context.Context, key, cont
 		return "", "", err
 	}
 
-	uploadID := GenerateUploadID()
+	uploadID := audit.NewID()
 
 	// Generate the upload-level DEK now so every UploadPart and the
 	// assembled object's CompleteMultipartUpload share one wrapped DEK.
@@ -388,12 +388,12 @@ func (mp *MultipartManager) completeMultipartUploadLocked(
 
 	defer mp.cleanupCompletedUpload(ctx, span, be, mu, uploadID, parts)
 
-	totalPlaintextSize, anyEncrypted := sumPlaintextSize(parts)
+	totalPlaintextSize := sumPlaintextSize(parts)
 
 	pr, pipeCancel := mp.streamPartsThroughPipe(ctx, be, uploadID, parts)
 	defer pipeCancel()
 
-	uploadBody, uploadSize, enc, err := mp.buildAssembledUpload(ctx, span, mu, pr, totalPlaintextSize, anyEncrypted)
+	uploadBody, uploadSize, enc, err := mp.buildAssembledUpload(ctx, span, mu, pr, totalPlaintextSize)
 	if err != nil {
 		return "", err
 	}
@@ -508,42 +508,37 @@ func (mp *MultipartManager) collectRequestedParts(ctx context.Context, span trac
 	return parts, nil
 }
 
-// sumPlaintextSize returns the total plaintext byte count across parts
-// and whether any part was uploaded encrypted. Encrypted parts contribute
-// PlaintextSize; unencrypted parts contribute SizeBytes.
-func sumPlaintextSize(parts []core.MultipartPart) (int64, bool) {
+// sumPlaintextSize returns the total plaintext byte count across parts.
+// Encrypted parts contribute PlaintextSize; unencrypted parts contribute
+// SizeBytes.
+func sumPlaintextSize(parts []core.MultipartPart) int64 {
 	var total int64
-	anyEncrypted := false
 	for _, part := range parts {
 		if part.Encrypted {
 			total += part.PlaintextSize
-			anyEncrypted = true
 		} else {
 			total += part.SizeBytes
 		}
 	}
-	return total, anyEncrypted
+	return total
 }
 
 // buildAssembledUpload prepares the request body sent to the backend
 // during assembly. When the orchestrator encryptor is configured, the
 // pipe is wrapped in EncryptWithDEK using the upload-level DEK so the
 // assembled object lands as a single ciphertext that shares its DEK
-// with every part. anyEncrypted is informational - inline decryption
-// already runs in streamPartsThroughPipe so the pipe always emits
-// plaintext. mu is required when the encryptor is configured because
-// the assembled object must reuse mu.EncryptionKey / mu.KeyID rather
-// than wrapping a fresh DEK for the final write.
+// with every part. Inline decryption already runs in
+// streamPartsThroughPipe so the pipe always emits plaintext. mu is
+// required when the encryptor is configured because the assembled
+// object must reuse mu.EncryptionKey / mu.KeyID rather than wrapping a
+// fresh DEK for the final write.
 func (mp *MultipartManager) buildAssembledUpload(
 	ctx context.Context,
 	span trace.Span,
 	mu *core.MultipartUpload,
 	pr io.Reader,
 	totalPlaintextSize int64,
-	anyEncrypted bool,
 ) (io.Reader, int64, *core.EncryptionMeta, error) {
-	_ = ctx
-	_ = anyEncrypted
 	if mp.encryptor == nil {
 		return pr, totalPlaintextSize, nil, nil
 	}
