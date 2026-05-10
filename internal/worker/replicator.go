@@ -21,11 +21,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"go.opentelemetry.io/otel/attribute"
-
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
@@ -40,7 +37,7 @@ import (
 
 // Replicator creates additional copies of under-replicated objects across backends.
 type Replicator struct {
-	log *slog.Logger
+	log   *slog.Logger
 	ops   Ops
 	store ReplicatorStore
 	cfg   syncutil.AtomicConfig[config.ReplicationConfig]
@@ -68,14 +65,9 @@ func (r *Replicator) Config() *config.ReplicationConfig {
 // Replicate finds under-replicated objects and creates additional copies to
 // reach the target replication factor. Returns the number of copies created.
 func (r *Replicator) Replicate(ctx context.Context, cfg config.ReplicationConfig) (int, error) {
-	ctx = audit.WithRequestID(ctx, audit.NewID())
-	return observe.Run(ctx,
-		observe.Internal("Replicate",
-			[]attribute.KeyValue{telemetry.AttrOperation.String("replicate")},
-			nil),
-		func(ctx context.Context) (int, error) {
-			return r.replicate(ctx, cfg)
-		})
+	return runOpsCycle(ctx, "Replicate", "replicate", func(ctx context.Context) (int, error) {
+		return r.replicate(ctx, cfg)
+	})
 }
 
 // replicate is the body of Replicate after observe.Run sets up the span.
