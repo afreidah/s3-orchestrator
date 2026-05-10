@@ -129,7 +129,7 @@ job "s3-orchestrator" {
           replication:
             factor: 2
             worker_interval: "10s"
-            batch_size: 400
+            batch_size: 500
 
           rebalance:
             enabled: true
@@ -156,8 +156,8 @@ job "s3-orchestrator" {
           # are cached after the first full GET and invalidated on write.
           cache:
             enabled: true
-            max_size: "500MB"               # total cache capacity (default: 256MB)
-            max_object_size: "50MB"      # skip caching objects larger than this (default: 10MB)
+            max_size: "300MB"               # total cache capacity (default: 256MB)
+            max_object_size: "20MB"      # skip caching objects larger than this (default: 10MB)
             ttl: "5m"                     # cached entry lifetime (default: 5m)
 
           circuit_breaker:
@@ -180,8 +180,8 @@ job "s3-orchestrator" {
 
           rate_limit:
             enabled: true
-            requests_per_sec: 1500
-            burst: 2000
+            requests_per_sec: 2500
+            burst: 4000
 
           ui:
             enabled: true
@@ -194,7 +194,7 @@ job "s3-orchestrator" {
       }
 
       resources {
-        cpu    = 4000
+        cpu    = 1000
         memory = 1024
       }
     }
