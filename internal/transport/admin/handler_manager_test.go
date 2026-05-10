@@ -69,7 +69,7 @@ func newTestHandlerWithManager(t *testing.T) *Handler {
 		drain:      mgr.DrainManager,
 		scrubber:   mgr.Scrubber,
 		lifecycle:  mock,
-		dbCB:       cb,
+		dbHealthy: cb.IsHealthy,
 		objects:    mock,
 		cleanup:    mock,
 		token:      "test-token",
@@ -135,7 +135,7 @@ func TestHandleObjectLocations_Happy(t *testing.T) {
 	mock.GetAllLocationsResp = []core.ObjectLocation{{ObjectKey: "foo", BackendName: "b1"}}
 	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3})
 	var lv slog.LevelVar
-	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), dbCB: cb, objects: mock, cleanup: mock, token: "test-token", logLevel: &lv}
+	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), dbHealthy: cb.IsHealthy, objects: mock, cleanup: mock, token: "test-token", logLevel: &lv}
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -641,7 +641,7 @@ func TestHandleObjectLocations_StoreError(t *testing.T) {
 	mock.GetAllLocationsErr = errors.New("query failed")
 	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3})
 	var lv slog.LevelVar
-	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), dbCB: cb, objects: mock, cleanup: mock, token: "test-token", logLevel: &lv}
+	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), dbHealthy: cb.IsHealthy, objects: mock, cleanup: mock, token: "test-token", logLevel: &lv}
 	mux := http.NewServeMux()
 	h.Register(mux)
 

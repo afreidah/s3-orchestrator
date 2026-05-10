@@ -30,7 +30,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
-	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
@@ -39,7 +38,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
-	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
 // BackendOps is the narrow surface of *proxy.BackendManager that the admin
@@ -59,16 +57,16 @@ var _ BackendOps = (*proxy.BackendManager)(nil)
 
 // Handler serves the admin API endpoints.
 type Handler struct {
-	log *slog.Logger
+	log               *slog.Logger
 	backendOps        BackendOps
-	replicator        *worker.Replicator
-	overRep           *worker.OverReplicationCleaner
+	replicator        ReplicatorOps
+	overRep           OverReplicationOps
 	drain             *drain.Manager
-	scrubber          *worker.Scrubber
+	scrubber          ScrubberOps
 	lifecycle         core.BackendLifecycleStore
-	reconciler        *worker.Reconciler
-	multipartBackfill *worker.MultipartBackfill
-	dbCB              *breaker.CircuitBreaker
+	reconciler        ReconcilerOps
+	multipartBackfill MultipartBackfillOps
+	dbHealthy         func() bool
 	objects           core.ObjectStore
 	cleanup           core.CleanupStore
 	encAdmin          core.EncryptionAdmin
@@ -83,18 +81,18 @@ type Handler struct {
 // hand the handler a god-shaped *proxy.BackendManager.
 type Deps struct {
 	BackendOps        BackendOps
-	Replicator        *worker.Replicator
-	OverRep           *worker.OverReplicationCleaner
+	Replicator        ReplicatorOps
+	OverRep           OverReplicationOps
 	Drain             *drain.Manager
-	Scrubber          *worker.Scrubber
+	Scrubber          ScrubberOps
 	Lifecycle         core.BackendLifecycleStore
-	DBCB              *breaker.CircuitBreaker
+	DBHealthy         func() bool // typically *breaker.CircuitBreaker.IsHealthy
 	Encryption        core.EncryptionAdmin
 	Objects           core.ObjectStore
 	Cleanup           core.CleanupStore
 	Encryptor         *encryption.Encryptor
-	Reconciler        *worker.Reconciler
-	MultipartBackfill *worker.MultipartBackfill
+	Reconciler        ReconcilerOps
+	MultipartBackfill MultipartBackfillOps
 	Token             string
 	LogLevel          *slog.LevelVar
 }
@@ -111,7 +109,7 @@ func New(d *Deps) *Handler {
 		lifecycle:         d.Lifecycle,
 		reconciler:        d.Reconciler,
 		multipartBackfill: d.MultipartBackfill,
-		dbCB:              d.DBCB,
+		dbHealthy:         d.DBHealthy,
 		objects:           d.Objects,
 		cleanup:           d.Cleanup,
 		encAdmin:          d.Encryption,
@@ -203,7 +201,7 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"db_healthy":   h.dbCB.IsHealthy(),
+		"db_healthy":   h.dbHealthy(),
 		"backends":     backends,
 		"usage_period": data.UsagePeriod,
 	})
