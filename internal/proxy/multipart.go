@@ -197,12 +197,8 @@ func (mp *MultipartManager) UploadPart(ctx context.Context, bucket, key, uploadI
 		return "", err
 	}
 
-	mu, err := mp.parent.stores.GetMultipartUpload(ctx, uploadID)
+	mu, err := mp.fetchScopedUpload(ctx, span, bucket, key, uploadID, operation)
 	if err != nil {
-		return "", mp.classifyWriteError(span, operation, err)
-	}
-	if err := validateMultipartScope(mu, bucket, key); err != nil {
-		span.SetStatus(codes.Error, err.Error())
 		return "", err
 	}
 
@@ -327,14 +323,11 @@ func (mp *MultipartManager) CompleteMultipartUpload(ctx context.Context, bucket,
 	)
 	defer span.End()
 
-	mu, err := mp.parent.stores.GetMultipartUpload(ctx, uploadID)
+	mu, err := mp.fetchScopedUpload(ctx, span, bucket, key, uploadID, operation)
 	if err != nil {
-		return "", mp.classifyWriteError(span, operation, err)
-	}
-	if err := validateMultipartScope(mu, bucket, key); err != nil {
-		span.SetStatus(codes.Error, err.Error())
 		return "", err
 	}
+	_ = mu // CompleteMultipartUpload's locked path re-fetches under the advisory lock.
 
 	var etag string
 	acquired, err := mp.parent.stores.WithAdvisoryLock(ctx, uploadIDLockID(uploadID), func(ctx context.Context) error {
@@ -568,7 +561,12 @@ func (mp *MultipartManager) buildAssembledUpload(
 // URL, matching them against the stored ObjectKey via validateMultipartScope
 // so a caller for one bucket cannot abort an upload that belongs to another.
 func (mp *MultipartManager) AbortMultipartUpload(ctx context.Context, bucket, key, uploadID string) error {
-	mu, err := mp.fetchScopedUpload(ctx, bucket, key, uploadID, "AbortMultipartUpload")
+	const operation = "AbortMultipartUpload"
+	ctx, span := telemetry.StartSpan(ctx, managerSpanPrefix+operation,
+		telemetry.AttrUploadID.String(uploadID),
+	)
+	defer span.End()
+	mu, err := mp.fetchScopedUpload(ctx, span, bucket, key, uploadID, operation)
 	if err != nil {
 		return err
 	}
@@ -579,16 +577,16 @@ func (mp *MultipartManager) AbortMultipartUpload(ctx context.Context, bucket, ke
 // to the (bucket, key) the request URL implies. Returns the same 404
 // NoSuchUpload error for both missing and out-of-scope rows so callers
 // cannot distinguish the two and probe for upload IDs across buckets.
-func (mp *MultipartManager) fetchScopedUpload(ctx context.Context, bucket, key, uploadID, operation string) (*core.MultipartUpload, error) {
+// span must be the operation's pre-existing span (created at the entry
+// point). Errors are recorded against it so the operation span shows
+// the failure rather than a detached child span.
+func (mp *MultipartManager) fetchScopedUpload(ctx context.Context, span trace.Span, bucket, key, uploadID, operation string) (*core.MultipartUpload, error) {
 	mu, err := mp.parent.stores.GetMultipartUpload(ctx, uploadID)
 	if err != nil {
-		_, span := telemetry.StartSpan(ctx, managerSpanPrefix+operation,
-			telemetry.AttrUploadID.String(uploadID),
-		)
-		defer span.End()
 		return nil, mp.classifyWriteError(span, operation, err)
 	}
 	if err := validateMultipartScope(mu, bucket, key); err != nil {
+		span.SetStatus(codes.Error, err.Error())
 		return nil, err
 	}
 	return mu, nil
@@ -669,11 +667,12 @@ func validateMultipartScope(mu *core.MultipartUpload, bucket, key string) error 
 
 // GetParts returns all parts for a multipart upload.
 func (mp *MultipartManager) GetParts(ctx context.Context, bucket, key, uploadID string) ([]core.MultipartPart, error) {
-	mu, err := mp.parent.stores.GetMultipartUpload(ctx, uploadID)
-	if err != nil {
-		return nil, err
-	}
-	if err := validateMultipartScope(mu, bucket, key); err != nil {
+	const operation = "GetParts"
+	ctx, span := telemetry.StartSpan(ctx, managerSpanPrefix+operation,
+		telemetry.AttrUploadID.String(uploadID),
+	)
+	defer span.End()
+	if _, err := mp.fetchScopedUpload(ctx, span, bucket, key, uploadID, operation); err != nil {
 		return nil, err
 	}
 	return mp.parent.stores.GetParts(ctx, uploadID)
