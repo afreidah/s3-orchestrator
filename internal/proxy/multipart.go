@@ -395,7 +395,9 @@ func (mp *MultipartManager) completeMultipartUploadLocked(
 	}
 
 	mp.recordOperation(operation, mu.BackendName, start, nil)
-	mp.usage.Record(mu.BackendName, int64(2*len(parts)+1), 0, uploadSize)
+	// N part GETs + 1 assembled PUT. The N cleanup DELETEs of the part
+	// temp keys go through DeleteOrEnqueue, which records them itself.
+	mp.usage.Record(mu.BackendName, int64(len(parts)+1), 0, uploadSize)
 
 	audit.Log(ctx, "storage.CompleteMultipartUpload",
 		slog.String("key", mu.ObjectKey),
@@ -441,7 +443,7 @@ func (mp *MultipartManager) completeMultipartUploadLocked(
 func (mp *MultipartManager) cleanupCompletedUpload(ctx context.Context, span trace.Span, be s3be.ObjectBackend, mu *core.MultipartUpload, uploadID string, parts []core.MultipartPart) {
 	for _, part := range parts {
 		partKey := multipartPartKey(uploadID, part.PartNumber)
-		mp.parent.deleteOrEnqueue(ctx, be, mu.BackendName, partKey, "complete_part_cleanup", part.SizeBytes)
+		mp.parent.DeleteOrEnqueue(ctx, be, mu.BackendName, partKey, "complete_part_cleanup", part.SizeBytes)
 	}
 	if err := mp.parent.stores.DeleteMultipartUpload(ctx, uploadID); err != nil {
 		span.RecordError(err)
@@ -609,7 +611,7 @@ func (mp *MultipartManager) abortByMultipartRow(ctx context.Context, mu *core.Mu
 
 	for _, part := range parts {
 		partKey := multipartPartKey(uploadID, part.PartNumber)
-		mp.parent.deleteOrEnqueue(ctx, be, mu.BackendName, partKey, "abort_part_cleanup", part.SizeBytes)
+		mp.parent.DeleteOrEnqueue(ctx, be, mu.BackendName, partKey, "abort_part_cleanup", part.SizeBytes)
 	}
 
 	if err := mp.parent.stores.DeleteMultipartUpload(ctx, uploadID); err != nil {
@@ -620,7 +622,9 @@ func (mp *MultipartManager) abortByMultipartRow(ctx context.Context, mu *core.Mu
 	mp.forgetUploadDEK(uploadID)
 
 	mp.recordOperation(operation, mu.BackendName, start, nil)
-	mp.usage.Record(mu.BackendName, int64(len(parts)+1), 0, 0) // N deletes + 1 abort
+	// 1 abort. The N part DELETEs go through DeleteOrEnqueue, which
+	// records them itself.
+	mp.usage.Record(mu.BackendName, 1, 0, 0)
 
 	audit.Log(ctx, "storage.AbortMultipartUpload",
 		slog.String("upload_id", uploadID),

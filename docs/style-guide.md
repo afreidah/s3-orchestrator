@@ -211,11 +211,11 @@ Avoid shadowing package imports with local variable names. When a function recei
 
 ```go
 // Good
-be, err := mp.getBackend(mu.BackendName)
+be, err := mp.GetBackend(mu.BackendName)
 etag, err := be.PutObject(ctx, key, body, size, contentType, nil)
 
 // Bad — shadows the backend package import
-backend, err := mp.getBackend(mu.BackendName)
+backend, err := mp.GetBackend(mu.BackendName)
 ```
 
 ### Typed Constants
@@ -236,7 +236,7 @@ const (
 - **`syncutil.AtomicConfig[T]`** for hot-reloadable config (wraps `atomic.Pointer[T]` with `Store`/`Load`)
 - **`syncutil.TTLCache[K,V]`** for generic TTL-based caches with background eviction
 - **Atomic counters** for usage tracking, flushed periodically to the database
-- **Context-scoped timeouts** via helper methods (`m.withTimeout(ctx)`) for backend calls
+- **Context-scoped timeouts** via helper methods (`m.WithTimeout(ctx)`) for backend calls
 - **Graceful shutdown** via `context.WithCancel` + signal handling
 
 ---
