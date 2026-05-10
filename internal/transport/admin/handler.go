@@ -155,7 +155,7 @@ func (h *Handler) requireToken(next http.HandlerFunc) http.HandlerFunc {
 		token := r.Header.Get("X-Admin-Token")
 		if subtle.ConstantTimeCompare([]byte(token), []byte(h.token)) != 1 {
 			h.log.WarnContext(r.Context(), "unauthorized request", "path", r.URL.Path, "client_addr", r.RemoteAddr)
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+			errorJSON(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 		next(w, r)
@@ -170,8 +170,7 @@ func (h *Handler) requireToken(next http.HandlerFunc) http.HandlerFunc {
 func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 	data, err := h.backendOps.GetDashboardData(r.Context())
 	if err != nil {
-		h.log.ErrorContext(r.Context(), "failed to fetch status", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch status"})
+		h.internalError(r.Context(), w, "failed to fetch status", err)
 		return
 	}
 
@@ -214,14 +213,13 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleObjectLocations(w http.ResponseWriter, r *http.Request) {
 	key := r.URL.Query().Get("key")
 	if key == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "key parameter is required"})
+		errorJSON(w, http.StatusBadRequest, "key parameter is required")
 		return
 	}
 
 	locations, err := h.objects.GetAllObjectLocations(r.Context(), key)
 	if err != nil {
-		h.log.ErrorContext(r.Context(), "failed to fetch object locations", slog.String("key", key), "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch locations"})
+		h.internalError(r.Context(), w, "failed to fetch locations", err, slog.String("key", key))
 		return
 	}
 
@@ -232,15 +230,13 @@ func (h *Handler) handleObjectLocations(w http.ResponseWriter, r *http.Request) 
 func (h *Handler) handleCleanupQueue(w http.ResponseWriter, r *http.Request) {
 	depth, err := h.cleanup.CleanupQueueDepth(r.Context())
 	if err != nil {
-		h.log.ErrorContext(r.Context(), "failed to fetch cleanup queue depth", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch cleanup queue"})
+		h.internalError(r.Context(), w, "failed to fetch cleanup queue", err)
 		return
 	}
 
 	items, err := h.cleanup.GetPendingCleanups(r.Context(), 50)
 	if err != nil {
-		h.log.ErrorContext(r.Context(), "failed to fetch pending cleanups", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch cleanup queue"})
+		h.internalError(r.Context(), w, "failed to fetch cleanup queue", err)
 		return
 	}
 
@@ -250,8 +246,7 @@ func (h *Handler) handleCleanupQueue(w http.ResponseWriter, r *http.Request) {
 // handleUsageFlush forces a flush of usage counters to the database.
 func (h *Handler) handleUsageFlush(w http.ResponseWriter, r *http.Request) {
 	if err := h.backendOps.FlushUsage(r.Context()); err != nil {
-		h.log.ErrorContext(r.Context(), "usage flush failed", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "flush failed"})
+		h.internalError(r.Context(), w, "flush failed", err)
 		return
 	}
 
@@ -291,8 +286,7 @@ func (h *Handler) Replicate(ctx context.Context) (ReplicateResult, error) {
 func (h *Handler) handleReplicate(w http.ResponseWriter, r *http.Request) {
 	res, err := h.Replicate(r.Context())
 	if err != nil {
-		h.log.ErrorContext(r.Context(), "replication failed", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "replication failed"})
+		h.internalError(r.Context(), w, "replication failed", err)
 		return
 	}
 
@@ -322,8 +316,7 @@ func (h *Handler) handleOverReplicationStatus(w http.ResponseWriter, r *http.Req
 
 	count, err := h.overRep.CountPending(r.Context(), rcfg.Factor)
 	if err != nil {
-		h.log.ErrorContext(r.Context(), "failed to count over-replicated objects", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to count over-replicated objects"})
+		h.internalError(r.Context(), w, "failed to count over-replicated objects", err)
 		return
 	}
 
@@ -359,8 +352,7 @@ func (h *Handler) handleOverReplicationClean(w http.ResponseWriter, r *http.Requ
 
 	removed, err := h.overRep.Clean(r.Context(), cfg)
 	if err != nil {
-		h.log.ErrorContext(r.Context(), "over-replication cleanup failed", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "over-replication cleanup failed"})
+		h.internalError(r.Context(), w, "over-replication cleanup failed", err)
 		return
 	}
 
@@ -383,7 +375,7 @@ func (h *Handler) handleLogLevel(w http.ResponseWriter, r *http.Request) {
 		Level string `json:"level"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+		errorJSON(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
 	parsed := config.ParseLogLevel(req.Level)
@@ -401,7 +393,7 @@ func (h *Handler) handleStartDrain(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if err := h.drain.StartDrain(r.Context(), name); err != nil {
 		h.log.ErrorContext(r.Context(), "drain start failed", slog.String("backend", name), "error", err)
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": errDrainOperationFailed})
+		errorJSON(w, http.StatusBadRequest, errDrainOperationFailed)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "drain started", "backend": name})
@@ -413,7 +405,7 @@ func (h *Handler) handleDrainProgress(w http.ResponseWriter, r *http.Request) {
 	progress, err := h.drain.GetDrainProgress(r.Context(), name)
 	if err != nil {
 		h.log.ErrorContext(r.Context(), "drain progress failed", slog.String("backend", name), "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": errDrainOperationFailed})
+		errorJSON(w, http.StatusInternalServerError, errDrainOperationFailed)
 		return
 	}
 	writeJSON(w, http.StatusOK, progress)
@@ -424,7 +416,7 @@ func (h *Handler) handleCancelDrain(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if err := h.drain.CancelDrain(name); err != nil {
 		h.log.ErrorContext(r.Context(), "drain cancel failed", slog.String("backend", name), "error", err)
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": errDrainOperationFailed})
+		errorJSON(w, http.StatusBadRequest, errDrainOperationFailed)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "drain cancelled", "backend": name})
@@ -450,7 +442,7 @@ func (h *Handler) handleRemoveBackend(w http.ResponseWriter, r *http.Request) {
 	if !purge {
 		if err := h.drain.RemoveBackend(r.Context(), name, false); err != nil {
 			h.log.ErrorContext(r.Context(), "remove backend failed", slog.String("backend", name), "error", err)
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "remove failed"})
+			errorJSON(w, http.StatusBadRequest, "remove failed")
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "backend removed", "backend": name})
@@ -460,12 +452,12 @@ func (h *Handler) handleRemoveBackend(w http.ResponseWriter, r *http.Request) {
 	// Purge phase 2: validate token and execute
 	if confirmToken != "" {
 		if !h.validRemoveToken(confirmToken, name) {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "invalid or expired confirmation token"})
+			errorJSON(w, http.StatusForbidden, "invalid or expired confirmation token")
 			return
 		}
 		if err := h.drain.RemoveBackend(r.Context(), name, true); err != nil {
 			h.log.ErrorContext(r.Context(), "purge backend failed", slog.String("backend", name), "error", err)
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "purge failed"})
+			errorJSON(w, http.StatusBadRequest, "purge failed")
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "backend purged", "backend": name})
@@ -475,7 +467,7 @@ func (h *Handler) handleRemoveBackend(w http.ResponseWriter, r *http.Request) {
 	// Purge phase 1: preview what will be destroyed, return confirmation token
 	objectCount, totalBytes, err := h.lifecycle.BackendObjectStats(r.Context(), name)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "backend not found or stats unavailable"})
+		errorJSON(w, http.StatusBadRequest, "backend not found or stats unavailable")
 		return
 	}
 
@@ -543,7 +535,7 @@ func (h *Handler) validRemoveToken(token, expectedName string) bool {
 // for unwrapping.
 func (h *Handler) handleRotateEncryptionKey(w http.ResponseWriter, r *http.Request) {
 	if h.encryptor == nil || h.encAdmin == nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": errEncryptionNotEnabled})
+		errorJSON(w, http.StatusBadRequest, errEncryptionNotEnabled)
 		return
 	}
 
@@ -552,7 +544,7 @@ func (h *Handler) handleRotateEncryptionKey(w http.ResponseWriter, r *http.Reque
 		OldKeyID string `json:"old_key_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.OldKeyID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "old_key_id is required"})
+		errorJSON(w, http.StatusBadRequest, "old_key_id is required")
 		return
 	}
 
@@ -564,7 +556,7 @@ func (h *Handler) handleRotateEncryptionKey(w http.ResponseWriter, r *http.Reque
 		locs, err := h.encAdmin.ListEncryptedLocations(ctx, req.OldKeyID, batchSize, offset)
 		if err != nil {
 			h.log.ErrorContext(ctx, "key rotation list failed", "error", err)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list encrypted objects"})
+			errorJSON(w, http.StatusInternalServerError, "failed to list encrypted objects")
 			return
 		}
 		if len(locs) == 0 {
@@ -754,7 +746,7 @@ func (h *Handler) EncryptExisting(ctx context.Context) BulkRewriteResult {
 func (h *Handler) handleEncryptExisting(w http.ResponseWriter, r *http.Request) {
 	res := h.EncryptExisting(r.Context())
 	if res.Status == "skipped" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": res.Reason})
+		errorJSON(w, http.StatusBadRequest, res.Reason)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -803,7 +795,7 @@ func (h *Handler) handleDecryptExisting(w http.ResponseWriter, r *http.Request) 
 		},
 	})
 	if res.Status == "skipped" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": res.Reason})
+		errorJSON(w, http.StatusBadRequest, res.Reason)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -1013,7 +1005,7 @@ func (h *Handler) handleBackfillChecksums(w http.ResponseWriter, r *http.Request
 // worker is not configured (encryption disabled).
 func (h *Handler) handleMultipartDEKBackfill(w http.ResponseWriter, r *http.Request) {
 	if h.multipartBackfill == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "encryption is not enabled"})
+		errorJSON(w, http.StatusServiceUnavailable, "encryption is not enabled")
 		return
 	}
 	h.log.InfoContext(r.Context(), "multipart DEK backfill triggered")
@@ -1040,7 +1032,7 @@ func (h *Handler) handleReconcile(w http.ResponseWriter, r *http.Request) {
 	backendName := r.URL.Query().Get("backend")
 
 	if h.reconciler == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "reconciler not configured"})
+		errorJSON(w, http.StatusServiceUnavailable, "reconciler not configured")
 		return
 	}
 
@@ -1049,7 +1041,7 @@ func (h *Handler) handleReconcile(w http.ResponseWriter, r *http.Request) {
 	result, err := h.reconciler.Reconcile(r.Context(), backendName)
 	if err != nil {
 		h.log.ErrorContext(r.Context(), "reconcile failed", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		errorJSON(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -1076,4 +1068,22 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		slog.Error("failed to encode JSON response", "error", err) //nolint:sloglint,gosec // standalone helper, no request context; err is internal encoder failure, not user-controlled
 	}
+}
+
+// errorJSON writes a JSON error envelope ({"error": msg}) with the given
+// status code. Use directly for client-side errors (4xx, 503) where the
+// underlying cause is not interesting to log.
+func errorJSON(w http.ResponseWriter, status int, msg string) {
+	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+// internalError logs the underlying error against the operator-facing
+// message and writes a 500 JSON response. Use for unexpected server-side
+// failures where the original err is recorded but never returned to the
+// caller. Extra attrs are appended to the log call so the caller can
+// attach correlating fields (object key, backend name, etc.).
+func (h *Handler) internalError(ctx context.Context, w http.ResponseWriter, msg string, err error, attrs ...any) {
+	args := append([]any{"error", err}, attrs...)
+	h.log.ErrorContext(ctx, msg, args...)
+	errorJSON(w, http.StatusInternalServerError, msg)
 }
