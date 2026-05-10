@@ -30,6 +30,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 
+	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	db "github.com/afreidah/s3-orchestrator/internal/store/postgres/sqlc"
@@ -49,6 +50,7 @@ var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 type Store struct {
 	pool    *pgxpool.Pool
 	queries *db.Queries
+	cb      *breaker.CircuitBreaker
 	connStr string
 }
 
@@ -57,7 +59,10 @@ type Store struct {
 // -------------------------------------------------------------------------
 
 // NewStore creates a new PostgreSQL store connection using pgxpool.
-func NewStore(ctx context.Context, dbCfg *config.DatabaseConfig) (*Store, error) {
+// When cb is non-nil, every sqlc query (pool-bound or tx-bound) flows
+// through it via wrapDBTX. Pass nil to skip CB wrapping (test fixtures,
+// migration runners).
+func NewStore(ctx context.Context, dbCfg *config.DatabaseConfig, cb *breaker.CircuitBreaker) (*Store, error) {
 	host := fmt.Sprintf("%s:%d", dbCfg.Host, dbCfg.Port)
 	connStr := dbCfg.ConnectionString()
 	cfg, err := pgxpool.ParseConfig(connStr)
@@ -84,7 +89,8 @@ func NewStore(ctx context.Context, dbCfg *config.DatabaseConfig) (*Store, error)
 
 	return &Store{
 		pool:    pool,
-		queries: db.New(pool),
+		queries: db.New(wrapDBTX(pool, cb)),
+		cb:      cb,
 		connStr: connStr,
 	}, nil
 }
@@ -157,7 +163,8 @@ func (s *Store) VerifySchemaVersion(ctx context.Context) error {
 // -------------------------------------------------------------------------
 
 // withTx executes fn within a transaction, committing on success or rolling
-// back on error.
+// back on error. The tx-bound Queries handle threads through wrapDBTX so
+// the breaker observes statement failures inside the transaction.
 func (s *Store) withTx(ctx context.Context, fn func(*db.Queries) error) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -165,7 +172,7 @@ func (s *Store) withTx(ctx context.Context, fn func(*db.Queries) error) error {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	if err := fn(s.queries.WithTx(tx)); err != nil {
+	if err := fn(db.New(wrapDBTX(tx, s.cb))); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -182,7 +189,7 @@ func (s *Store) WithTx(ctx context.Context, fn func(ctx context.Context, tx core
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	adapter := &pgTxAdapter{q: s.queries.WithTx(tx)}
+	adapter := &pgTxAdapter{q: db.New(wrapDBTX(tx, s.cb))}
 	if err := fn(ctx, adapter); err != nil {
 		return err
 	}

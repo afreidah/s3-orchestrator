@@ -35,7 +35,7 @@ func newTestStore(t *testing.T) *Store {
 	s, err := NewStore(ctx, &config.DatabaseConfig{
 		Driver: "sqlite",
 		Path:   ":memory:",
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
@@ -453,7 +453,7 @@ func TestRecordObject_Overwrite_SameBackend(t *testing.T) {
 func TestMoveObjectLocation_QuotaExceeded(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	s, err := NewStore(ctx, &config.DatabaseConfig{Driver: "sqlite", Path: ":memory:"})
+	s, err := NewStore(ctx, &config.DatabaseConfig{Driver: "sqlite", Path: ":memory:"}, nil)
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
@@ -480,7 +480,7 @@ func TestMoveObjectLocation_QuotaExceeded(t *testing.T) {
 func TestRecordObject_QuotaExceeded(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	s, err := NewStore(ctx, &config.DatabaseConfig{Driver: "sqlite", Path: ":memory:"})
+	s, err := NewStore(ctx, &config.DatabaseConfig{Driver: "sqlite", Path: ":memory:"}, nil)
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}

@@ -31,7 +31,7 @@ import (
 func withAdapter(t *testing.T, s *Store, fn func(*sqliteTxAdapter)) {
 	t.Helper()
 	ctx := context.Background()
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.rawDB.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginTx: %v", err)
 	}

@@ -170,7 +170,7 @@ func TestProvideRateLimiter(t *testing.T) {
 // driver-dispatch switch.
 func TestOpenStore_InvalidDriver(t *testing.T) {
 	t.Parallel()
-	_, err := openStore(context.Background(), &config.DatabaseConfig{Driver: "bogus"})
+	_, err := openStore(context.Background(), &config.DatabaseConfig{Driver: "bogus"}, nil)
 	if err == nil {
 		t.Fatal("expected error for unsupported driver, got nil")
 	}
@@ -184,7 +184,7 @@ func TestOpenStore_SQLiteInMemory(t *testing.T) {
 	cs, err := openStore(context.Background(), &config.DatabaseConfig{
 		Driver: "sqlite",
 		Path:   ":memory:",
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("openStore: %v", err)
 	}
@@ -222,6 +222,7 @@ func TestProvideConcreteStore_SQLiteInMemory(t *testing.T) {
 		Database: config.DatabaseConfig{Driver: "sqlite", Path: ":memory:"},
 		Backends: []config.BackendConfig{{Name: "b1", QuotaBytes: 1024}},
 	})
+	do.ProvideValue[*breaker.CircuitBreaker](inj, nil)
 	cs, err := provideConcreteStore(inj)
 	if err != nil {
 		t.Fatalf("provideConcreteStore: %v", err)
@@ -248,7 +249,7 @@ func TestOpenStore_PostgresInvalidConfig(t *testing.T) {
 		User:     "nope",
 		Password: "nope",
 		SSLMode:  "disable",
-	})
+	}, nil)
 	if err == nil {
 		t.Fatal("expected error connecting to unreachable postgres, got nil")
 	}

@@ -125,14 +125,14 @@ func initStore(ctx context.Context, cfg *config.Config) (core.ObjectStore, core.
 	)
 	switch cfg.Database.Driver {
 	case "postgres":
-		s, openErr := postgres.NewStore(ctx, &cfg.Database)
+		s, openErr := postgres.NewStore(ctx, &cfg.Database, nil)
 		if openErr != nil {
 			err = openErr
 		} else {
 			objects, adminDB = s, s
 		}
 	case "sqlite":
-		s, openErr := sqlitestore.NewStore(ctx, &cfg.Database)
+		s, openErr := sqlitestore.NewStore(ctx, &cfg.Database, nil)
 		if openErr != nil {
 			err = openErr
 		} else {

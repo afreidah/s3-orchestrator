@@ -201,9 +201,13 @@ func provideConcreteStore(i do.Injector) (concreteStore, error) {
 	if err != nil {
 		return nil, err
 	}
+	cb, err := do.Invoke[*breaker.CircuitBreaker](i)
+	if err != nil {
+		return nil, err
+	}
 	ctx := context.Background()
 
-	cs, err := openStore(ctx, &cfg.Database)
+	cs, err := openStore(ctx, &cfg.Database, cb)
 	if err != nil {
 		return nil, err
 	}
@@ -265,13 +269,17 @@ func ProvideDatabaseBreaker(i do.Injector) (*breaker.CircuitBreaker, error) {
 	return store.NewDatabaseBreaker(cfg.CircuitBreaker), nil
 }
 
-// openStore dispatches store construction to the configured driver.
-func openStore(ctx context.Context, dbCfg *config.DatabaseConfig) (concreteStore, error) {
+// openStore dispatches store construction to the configured driver. The
+// shared *breaker.CircuitBreaker is threaded through so every SQL
+// statement (pool-bound or tx-bound) gets PreCheck/PostCheck protection
+// at the driver chokepoint - replacing the previous per-role decorator
+// wrapping done in this package.
+func openStore(ctx context.Context, dbCfg *config.DatabaseConfig, cb *breaker.CircuitBreaker) (concreteStore, error) {
 	switch dbCfg.Driver {
 	case "postgres":
-		return postgres.NewStore(ctx, dbCfg)
+		return postgres.NewStore(ctx, dbCfg, cb)
 	case "sqlite":
-		return sqlitestore.NewStore(ctx, dbCfg)
+		return sqlitestore.NewStore(ctx, dbCfg, cb)
 	default:
 		return nil, fmt.Errorf("unsupported database driver: %q", dbCfg.Driver)
 	}
@@ -280,81 +288,42 @@ func openStore(ctx context.Context, dbCfg *config.DatabaseConfig) (concreteStore
 // -------------------------------------------------------------------------
 // NARROW PER-ROLE STORE PROVIDERS
 //
-// Each returns the concrete driver wrapped by the appropriate CB decorator,
-// typed only as the narrow role interface. Consumers do.Invoke the role
-// they need.
+// CB protection lives inside each driver's DBTX/db wrapper, so each
+// provider just types the shared concrete store as the narrow role its
+// consumer needs. Advisory locks bypass the breaker because they emulate
+// per-process leader election rather than running SQL through the pool.
 // -------------------------------------------------------------------------
 
-// ProvideObjectStore registers a CB-protected ObjectStore view.
+// ProvideObjectStore types the concrete store as ObjectStore.
 func ProvideObjectStore(i do.Injector) (core.ObjectStore, error) {
-	cs, err := do.Invoke[concreteStore](i)
-	if err != nil {
-		return nil, err
-	}
-	cb, err := do.Invoke[*breaker.CircuitBreaker](i)
-	if err != nil {
-		return nil, err
-	}
-	return store.NewCBObjectStore(cs, cb), nil
+	return do.Invoke[concreteStore](i)
 }
 
-// ProvideQuotaStore registers a CB-protected QuotaStore view.
+// ProvideQuotaStore types the concrete store as QuotaStore.
 func ProvideQuotaStore(i do.Injector) (core.QuotaStore, error) {
-	cs, err := do.Invoke[concreteStore](i)
-	if err != nil {
-		return nil, err
-	}
-	cb, err := do.Invoke[*breaker.CircuitBreaker](i)
-	if err != nil {
-		return nil, err
-	}
-	return store.NewCBQuotaStore(cs, cb), nil
+	return do.Invoke[concreteStore](i)
 }
 
-// ProvideMultipartStore registers a CB-protected MultipartStore view.
+// ProvideMultipartStore types the concrete store as MultipartStore.
 func ProvideMultipartStore(i do.Injector) (core.MultipartStore, error) {
-	cs, err := do.Invoke[concreteStore](i)
-	if err != nil {
-		return nil, err
-	}
-	cb, err := do.Invoke[*breaker.CircuitBreaker](i)
-	if err != nil {
-		return nil, err
-	}
-	return store.NewCBMultipartStore(cs, cb), nil
+	return do.Invoke[concreteStore](i)
 }
 
-// ProvideReplicationStore registers a CB-protected ReplicationStore view.
+// ProvideReplicationStore types the concrete store as ReplicationStore.
 func ProvideReplicationStore(i do.Injector) (core.ReplicationStore, error) {
-	cs, err := do.Invoke[concreteStore](i)
-	if err != nil {
-		return nil, err
-	}
-	cb, err := do.Invoke[*breaker.CircuitBreaker](i)
-	if err != nil {
-		return nil, err
-	}
-	return store.NewCBReplicationStore(cs, cb), nil
+	return do.Invoke[concreteStore](i)
 }
 
-// ProvideCleanupStore registers a CB-protected CleanupStore view.
+// ProvideCleanupStore types the concrete store as CleanupStore.
 func ProvideCleanupStore(i do.Injector) (core.CleanupStore, error) {
-	cs, err := do.Invoke[concreteStore](i)
-	if err != nil {
-		return nil, err
-	}
-	cb, err := do.Invoke[*breaker.CircuitBreaker](i)
-	if err != nil {
-		return nil, err
-	}
-	return store.NewCBCleanupStore(cs, cb), nil
+	return do.Invoke[concreteStore](i)
 }
 
-// ProvidePendingStore registers a CB-protected PendingStore view used by the
-// write path's PUT-before-COMMIT pending-row pattern. Returns nil when the
-// operator disables the pattern via write_path.pending_pattern.enabled=false;
-// the write path's nil check falls back to the legacy cleanup-on-failure
-// behaviour in that case.
+// ProvidePendingStore types the concrete store as PendingStore for the
+// write path's PUT-before-COMMIT pending-row pattern. Returns nil when
+// the operator disables the pattern via write_path.pending_pattern
+// .enabled=false; the write path's nil check falls back to the legacy
+// cleanup-on-failure behaviour in that case.
 func ProvidePendingStore(i do.Injector) (core.PendingStore, error) {
 	cfg, err := do.Invoke[*config.Config](i)
 	if err != nil {
@@ -363,90 +332,39 @@ func ProvidePendingStore(i do.Injector) (core.PendingStore, error) {
 	if !cfg.WritePath.PendingPattern.IsEnabled() {
 		return nil, nil //nolint:nilnil // intentional: nil signals feature off, caller branches on it
 	}
-	cs, err := do.Invoke[concreteStore](i)
-	if err != nil {
-		return nil, err
-	}
-	cb, err := do.Invoke[*breaker.CircuitBreaker](i)
-	if err != nil {
-		return nil, err
-	}
-	return store.NewCBPendingStore(cs, cb), nil
+	return do.Invoke[concreteStore](i)
 }
 
-// ProvideIntegrityStore registers a CB-protected IntegrityStore view.
+// ProvideIntegrityStore types the concrete store as IntegrityStore.
 func ProvideIntegrityStore(i do.Injector) (core.IntegrityStore, error) {
-	cs, err := do.Invoke[concreteStore](i)
-	if err != nil {
-		return nil, err
-	}
-	cb, err := do.Invoke[*breaker.CircuitBreaker](i)
-	if err != nil {
-		return nil, err
-	}
-	return store.NewCBIntegrityStore(cs, cb), nil
+	return do.Invoke[concreteStore](i)
 }
 
-// ProvideExpiredObjectsLister registers a CB-protected ExpiredObjectsLister view.
+// ProvideExpiredObjectsLister types the concrete store as ExpiredObjectsLister.
 func ProvideExpiredObjectsLister(i do.Injector) (core.ExpiredObjectsLister, error) {
-	cs, err := do.Invoke[concreteStore](i)
-	if err != nil {
-		return nil, err
-	}
-	cb, err := do.Invoke[*breaker.CircuitBreaker](i)
-	if err != nil {
-		return nil, err
-	}
-	return store.NewCBExpiredObjectsLister(cs, cb), nil
+	return do.Invoke[concreteStore](i)
 }
 
-// ProvideBackendLifecycleStore registers a CB-protected BackendLifecycleStore view.
+// ProvideBackendLifecycleStore types the concrete store as BackendLifecycleStore.
 func ProvideBackendLifecycleStore(i do.Injector) (core.BackendLifecycleStore, error) {
-	cs, err := do.Invoke[concreteStore](i)
-	if err != nil {
-		return nil, err
-	}
-	cb, err := do.Invoke[*breaker.CircuitBreaker](i)
-	if err != nil {
-		return nil, err
-	}
-	return store.NewCBBackendLifecycleStore(cs, cb), nil
+	return do.Invoke[concreteStore](i)
 }
 
-// ProvideDashboardStore registers a CB-protected DashboardStore view.
+// ProvideDashboardStore types the concrete store as DashboardStore.
 func ProvideDashboardStore(i do.Injector) (core.DashboardStore, error) {
-	cs, err := do.Invoke[concreteStore](i)
-	if err != nil {
-		return nil, err
-	}
-	cb, err := do.Invoke[*breaker.CircuitBreaker](i)
-	if err != nil {
-		return nil, err
-	}
-	return store.NewCBDashboardStore(cs, cb), nil
+	return do.Invoke[concreteStore](i)
 }
 
-// ProvideUsageFlusher registers a CB-protected UsageFlusher view.
+// ProvideUsageFlusher types the concrete store as UsageFlusher.
 func ProvideUsageFlusher(i do.Injector) (core.UsageFlusher, error) {
-	cs, err := do.Invoke[concreteStore](i)
-	if err != nil {
-		return nil, err
-	}
-	cb, err := do.Invoke[*breaker.CircuitBreaker](i)
-	if err != nil {
-		return nil, err
-	}
-	return store.NewCBUsageFlusher(cs, cb), nil
+	return do.Invoke[concreteStore](i)
 }
 
-// ProvideAdvisoryLocker registers a pass-through AdvisoryLocker  -  advisory
-// locks bypass the breaker (see internal/store/cb_lock.go).
+// ProvideAdvisoryLocker types the concrete store as AdvisoryLocker.
+// Advisory locks bypass the breaker by going through pool.Acquire()
+// directly (postgres) or the process-local mutex (sqlite).
 func ProvideAdvisoryLocker(i do.Injector) (core.AdvisoryLocker, error) {
-	cs, err := do.Invoke[concreteStore](i)
-	if err != nil {
-		return nil, err
-	}
-	return store.NewAdvisoryLocker(cs), nil
+	return do.Invoke[concreteStore](i)
 }
 
 // ProvideInstanceID resolves a stable per-process identifier used as the
