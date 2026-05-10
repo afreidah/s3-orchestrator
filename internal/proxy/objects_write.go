@@ -540,7 +540,7 @@ func (o *ObjectManager) DeleteObject(ctx context.Context, key string) error {
 				"backend", cp.BackendName, "key", key)
 			return
 		}
-		o.parent.deleteOrEnqueue(ctx, backend, cp.BackendName, key, "delete_failed", cp.SizeBytes)
+		o.parent.DeleteOrEnqueue(ctx, backend, cp.BackendName, key, "delete_failed", cp.SizeBytes)
 	})
 
 	// --- Record metrics (use first copy's backend for primary) ---
@@ -631,7 +631,7 @@ func (o *ObjectManager) DeleteObjects(ctx context.Context, keys []string) []Dele
 
 	deleteItems := o.flattenBatchDeletes(ctx, copiesByKey)
 	workerpool.Run(ctx, 10, deleteItems, func(ctx context.Context, item batchDeleteItem) {
-		o.parent.deleteOrEnqueue(ctx, item.backend, item.beName, item.key, "batch_delete_failed", item.sizeBytes)
+		o.parent.DeleteOrEnqueue(ctx, item.backend, item.beName, item.key, "batch_delete_failed", item.sizeBytes)
 	})
 
 	successCount, errorCount := tallyDeleteResults(results)

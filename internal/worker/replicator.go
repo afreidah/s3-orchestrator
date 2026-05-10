@@ -370,14 +370,15 @@ func (r *Replicator) pruneStaleSource(ctx context.Context, key, backendName stri
 }
 
 // CleanupOrphan deletes an object from a backend when the DB record was not
-// created (e.g. source was deleted during replication).
+// created (e.g. source was deleted during replication). Looks up the
+// backend by name and dispatches to DeleteOrEnqueue, which handles its
+// own API accounting and orphan-byte tracking.
 func (r *Replicator) CleanupOrphan(ctx context.Context, backendName, key string, sizeBytes int64) {
 	be, ok := r.ops.Backends()[backendName]
 	if !ok {
 		return
 	}
 	r.ops.DeleteOrEnqueue(ctx, be, backendName, key, "replication_orphan", sizeBytes)
-	r.ops.Usage().Record(backendName, 1, 0, 0)
 }
 
 // UnhealthyBackends returns backend names whose circuit breakers have been

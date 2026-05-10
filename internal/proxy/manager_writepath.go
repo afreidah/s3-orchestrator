@@ -216,7 +216,7 @@ func (m *BackendManager) cleanupDisplacedCopies(ctx context.Context, key, newBac
 				"backend", dc.BackendName, "key", key)
 			continue
 		}
-		m.deleteOrEnqueue(ctx, dcBackend, dc.BackendName, key, "overwrite_displaced", dc.SizeBytes)
+		m.DeleteOrEnqueue(ctx, dcBackend, dc.BackendName, key, "overwrite_displaced", dc.SizeBytes)
 	}
 
 	if len(displaced) > 0 {
@@ -228,23 +228,22 @@ func (m *BackendManager) cleanupDisplacedCopies(ctx context.Context, key, newBac
 	}
 }
 
-// deleteOrEnqueue attempts to delete an object from a backend. On failure
+// DeleteOrEnqueue attempts to delete an object from a backend. On failure
 // it logs a warning and enqueues the key for background retry. The
 // standard "best-effort orphan cleanup" primitive used throughout the
 // manager: rebalancer, replicator, multipart cleanup, and delete paths.
 // sizeBytes is tracked as orphan bytes when the delete is enqueued.
-func (m *BackendManager) deleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, backendName, key, reason string, sizeBytes int64) {
-	if err := m.DeleteWithTimeout(ctx, be, key); err != nil {
+// Always accounts for the cleanup DELETE as one API call against the
+// backend's usage counter, regardless of success or failure (the HTTP
+// call to the backend was made either way).
+func (m *BackendManager) DeleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, backendName, key, reason string, sizeBytes int64) {
+	err := m.DeleteWithTimeout(ctx, be, key)
+	m.usage.Record(backendName, 1, 0, 0)
+	if err != nil {
 		slog.WarnContext(ctx, "failed to delete object, enqueuing cleanup",
 			"backend", backendName, "key", key, "reason", reason, "error", err)
 		m.enqueueCleanup(ctx, backendName, key, reason, sizeBytes)
 	}
-}
-
-// DeleteOrEnqueue is the exported wrapper around deleteOrEnqueue for the
-// worker.Ops and drain.Core seams.
-func (m *BackendManager) DeleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, backendName, key, reason string, sizeBytes int64) {
-	m.deleteOrEnqueue(ctx, be, backendName, key, reason, sizeBytes)
 }
 
 // enqueueCleanup adds a failed cleanup operation to the retry queue and

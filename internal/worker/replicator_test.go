@@ -201,7 +201,6 @@ func TestCleanupOrphan_DelegatesToDeleteOrEnqueue(t *testing.T) {
 
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": be})
 	ops.EXPECT().DeleteOrEnqueue(gomock.Any(), be, "b1", "key1", "replication_orphan", int64(100))
-	ops.EXPECT().Usage().Return(newTestUsageTracker())
 
 	r := NewReplicator(ops, ms)
 	r.CleanupOrphan(context.Background(), "b1", "key1", 100)

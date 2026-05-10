@@ -50,8 +50,6 @@ var errUsageLimitSkip = errors.New("backend skipped: usage limits exceeded")
 // tests can lower it without generating hundreds of mock pages.
 var listObjectsMaxPages = 100
 
-// resolveLocationsByBackend looks up every copy of key and returns a
-// backend-name -> location map for O(1) lookups inside the failover
 // ObjectExists reports whether at least one location row exists for key.
 // Used by the conditional-write path (If-None-Match: *) to fail-fast
 // before the body upload. Best-effort: a concurrent racing PUT can land
@@ -69,32 +67,22 @@ func (o *ObjectManager) ObjectExists(ctx context.Context, key string) (bool, err
 	return len(locs) > 0, nil
 }
 
-// closure. Returns nil when encryption is disabled (the map is never
-// consulted) or when the DB lookup failed. Callers that care about the
-// DB-down case inspect o.encryptor alongside the returned map  -  when
-// o.encryptor != nil and the map is nil, the database failed.
-func (o *ObjectManager) resolveLocationsByBackend(ctx context.Context, key string) map[string]*core.ObjectLocation {
-	if o.encryptor == nil {
-		return nil
-	}
-	locations, err := o.parent.stores.GetAllObjectLocations(ctx, key)
-	if err != nil {
-		return nil
-	}
-	m := make(map[string]*core.ObjectLocation, len(locations))
-	for i := range locations {
-		m[locations[i].BackendName] = &locations[i]
-	}
-	return m
-}
-
-// readBackendFn is the per-backend probe callback. The callback owns its own
-// timeout context and is responsible for releasing it on the error path. On
-// success it returns a cleanup func the orchestrator invokes once the winner
-// is declared; that cleanup either releases the timeout immediately
-// (HeadObject  -  no streaming body) or is a no-op because the callback has
-// already attached the cancel to the result body's Close (GetObject).
-type readBackendFn func(ctx context.Context, backendName string, backend s3be.ObjectBackend) (int64, func(), error)
+// readBackendFn is the per-backend probe callback. loc carries the
+// matching ObjectLocation row so callbacks that need encryption
+// metadata can read it directly without a side-channel map lookup.
+// loc is nil in degraded-mode broadcasts where the DB is unreachable;
+// callbacks must handle that case (an unencrypted object reads fine
+// without a row, an encrypted object cannot be decrypted without it).
+// beName is always populated (loc.BackendName during failover, or the
+// degraded-mode caller's chosen name) so callbacks have a single
+// source for span / usage attribution.
+// The callback owns its own timeout context and is responsible for
+// releasing it on the error path. On success it returns a cleanup func
+// the orchestrator invokes once the winner is declared; that cleanup
+// either releases the timeout immediately (HeadObject  -  no streaming
+// body) or is a no-op because the callback has already attached the
+// cancel to the result body's Close (GetObject).
+type readBackendFn func(ctx context.Context, beName string, loc *core.ObjectLocation, backend s3be.ObjectBackend) (int64, func(), error)
 
 // noopCleanup is the cleanup returned by readBackendFn implementations
 // when there is nothing for the orchestrator to release: error paths
@@ -151,7 +139,7 @@ func (o *ObjectManager) tryEachLocation(ctx context.Context, operation, key stri
 			continue
 		}
 
-		size, cleanup, err := tryBackend(ctx, name, backend)
+		size, cleanup, err := tryBackend(ctx, name, &locations[i], backend)
 		if err != nil {
 			lastErr = err
 			if errors.Is(err, errUsageLimitSkip) {
@@ -201,7 +189,8 @@ func (o *ObjectManager) broadcastRead(ctx context.Context, operation, key string
 	// --- Check location cache first ---
 	if cachedBackend, ok := o.cache.Get(key); ok {
 		if backend, exists := o.backends[cachedBackend]; exists {
-			size, cleanup, err := tryBackend(ctx, cachedBackend, backend)
+			// Degraded mode: no DB row available, callback must handle nil loc.
+			size, cleanup, err := tryBackend(ctx, cachedBackend, nil, backend)
 			if err == nil {
 				cleanup()
 				o.recordOperation(operation, cachedBackend, start, nil)
@@ -256,7 +245,8 @@ func (o *ObjectManager) tryBackendsSequentially(
 		if !ok {
 			continue
 		}
-		size, cleanup, err := tryBackend(ctx, name, backend)
+		// Degraded mode: no DB row available, callback must handle nil loc.
+		size, cleanup, err := tryBackend(ctx, name, nil, backend)
 		if err != nil {
 			lastErr = err
 			continue
@@ -341,7 +331,8 @@ func (o *ObjectManager) runBackendProbe(
 	tryBackend readBackendFn,
 	ch chan<- broadcastResult,
 ) {
-	size, cleanup, err := tryBackend(ctx, name, backend)
+	// Degraded mode: no DB row available, callback must handle nil loc.
+	size, cleanup, err := tryBackend(ctx, name, nil, backend)
 	if err != nil {
 		ch <- broadcastResult{name: name, err: err}
 		return
@@ -408,17 +399,16 @@ func (o *ObjectManager) GetObject(ctx context.Context, key string, rangeHeader s
 
 	var result *s3be.GetObjectResult
 	var once sync.Once
-	locByBackend := o.resolveLocationsByBackend(ctx, key)
 
-	backendName, err := o.withReadFailover(ctx, "GetObject", key, func(ctx context.Context, beName string, backend s3be.ObjectBackend) (int64, func(), error) {
+	backendName, err := o.withReadFailover(ctx, "GetObject", key, func(ctx context.Context, beName string, loc *core.ObjectLocation, backend s3be.ObjectBackend) (int64, func(), error) {
 		req := &getAttemptRequest{
-			key:          key,
-			rangeHeader:  rangeHeader,
-			beName:       beName,
-			backend:      backend,
-			locByBackend: locByBackend,
-			once:         &once,
-			result:       &result,
+			key:         key,
+			rangeHeader: rangeHeader,
+			beName:      beName,
+			backend:     backend,
+			loc:         loc,
+			once:        &once,
+			result:      &result,
 		}
 		return o.getObjectAttempt(ctx, req)
 	})
@@ -467,13 +457,13 @@ func (o *ObjectManager) tryGetObjectCache(ctx context.Context, key, rangeHeader 
 // getAttemptRequest bundles the per-attempt arguments to getObjectAttempt
 // so the callback signature stays under the parameter-count limit.
 type getAttemptRequest struct {
-	key          string
-	rangeHeader  string
-	beName       string
-	backend      s3be.ObjectBackend
-	locByBackend map[string]*core.ObjectLocation
-	once         *sync.Once
-	result       **s3be.GetObjectResult
+	key         string
+	rangeHeader string
+	beName      string
+	backend     s3be.ObjectBackend
+	loc         *core.ObjectLocation // nil in degraded-mode broadcasts
+	once        *sync.Once
+	result      **s3be.GetObjectResult
 }
 
 // getObjectAttempt is the per-backend callback invoked by withReadFailover
@@ -487,12 +477,14 @@ func (o *ObjectManager) getObjectAttempt(ctx context.Context, req *getAttemptReq
 		bcancel()
 		return 0, noopCleanup, fmt.Errorf("backend %s: %w", req.beName, errUsageLimitSkip)
 	}
-	if o.encryptor != nil && req.locByBackend == nil {
+	// Encrypted reads need the location row to unwrap the DEK; without it
+	// (degraded broadcast with the DB unreachable) we cannot decrypt.
+	if o.encryptor != nil && req.loc == nil {
 		bcancel()
 		return 0, noopCleanup, core.ErrServiceUnavailable
 	}
 
-	loc := req.locByBackend[req.beName]
+	loc := req.loc
 	actualRange, rng, ptStart, ptEnd := o.resolveBackendRange(req.rangeHeader, loc)
 
 	r, err := req.backend.GetObject(bctx, req.key, actualRange)
@@ -572,7 +564,7 @@ func (o *ObjectManager) maybeWrapIntegrityReader(
 			"key", key, "backend", beName,
 			"expected_hash", expected, "actual_hash", actual)
 		telemetry.IntegrityErrorsTotal.WithLabelValues("read").Inc()
-		o.parent.deleteOrEnqueue(ctx, backend, beName, key, "integrity_failed", r.Size)
+		o.parent.DeleteOrEnqueue(ctx, backend, beName, key, "integrity_failed", r.Size)
 	})
 	r.Body = vr
 }
@@ -606,10 +598,7 @@ func (o *ObjectManager) HeadObject(ctx context.Context, key string) (*s3be.HeadO
 	var result *s3be.HeadObjectResult
 	var once sync.Once // protects result write when parallel broadcast is enabled
 
-	// Resolve locations upfront so encryption metadata is available.
-	locByBackend := o.resolveLocationsByBackend(ctx, key)
-
-	backendName, err := o.withReadFailover(ctx, "HeadObject", key, func(ctx context.Context, beName string, backend s3be.ObjectBackend) (int64, func(), error) {
+	backendName, err := o.withReadFailover(ctx, "HeadObject", key, func(ctx context.Context, beName string, loc *core.ObjectLocation, backend s3be.ObjectBackend) (int64, func(), error) {
 		bctx, bcancel := o.WithTimeout(ctx)
 		if !o.usage.WithinLimits(beName, 1, 0, 0) {
 			bcancel()
@@ -623,7 +612,7 @@ func (o *ObjectManager) HeadObject(ctx context.Context, key string) (*s3be.HeadO
 		}
 
 		// Return plaintext size for encrypted objects
-		if loc := locByBackend[beName]; loc != nil && loc.Encrypted {
+		if loc != nil && loc.Encrypted {
 			r.Size = loc.PlaintextSize
 		}
 
