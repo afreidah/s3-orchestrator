@@ -97,10 +97,11 @@ sboms:
 signs:
   - cmd: cosign
     artifacts: checksum
+    signature: "${artifact}.bundle"
     args:
       - "sign-blob"
       - "--yes"
-      - "--bundle=${signature}.bundle"
+      - "--bundle=${signature}"
       - "${artifact}"
 
 checksum:

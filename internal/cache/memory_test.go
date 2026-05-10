@@ -34,16 +34,24 @@ func newTestCache(t *testing.T, maxSize, maxObjSize int64, ttl time.Duration) *M
 	return c
 }
 
+// admitAndPut is a test helper for the common admit-then-store sequence.
+// Fails the test if Admit returns false; callers expecting rejection
+// should call Admit directly and not use this helper.
+func admitAndPut(t *testing.T, c *MemoryCache, key string, data []byte, meta EntryMeta) {
+	t.Helper()
+	if !c.Admit(int64(len(data))) {
+		t.Fatalf("Admit(%d) = false, expected true for key %q", len(data), key)
+	}
+	c.PutBytes(key, data, meta)
+}
+
 // TestMemoryCache_PutGet verifies the memory cache put get contract.
-// Asserts that Put:.
 func TestMemoryCache_PutGet(t *testing.T) {
 	t.Parallel()
 	c := newTestCache(t, 1024, 512, time.Minute)
 
 	data := []byte("hello world")
-	if err := c.Put("key1", bytes.NewReader(data), EntryMeta{ContentType: "text/plain", ETag: "abc"}); err != nil {
-		t.Fatalf("Put: %v", err)
-	}
+	admitAndPut(t, c, "key1", data, EntryMeta{ContentType: "text/plain", ETag: "abc"})
 
 	entry, ok := c.Get("key1")
 	if !ok {
@@ -77,9 +85,7 @@ func TestMemoryCache_TTLExpiry(t *testing.T) {
 	t.Parallel()
 	c := newTestCache(t, 1024, 512, 10*time.Millisecond)
 
-	if err := c.Put("key1", bytes.NewReader([]byte("data")), EntryMeta{}); err != nil {
-		t.Fatalf("Put: %v", err)
-	}
+	admitAndPut(t, c, "key1", []byte("data"), EntryMeta{})
 
 	// Should be present immediately
 	if _, ok := c.Get("key1"); !ok {
@@ -100,25 +106,27 @@ func TestMemoryCache_TTLExpiry(t *testing.T) {
 	}
 }
 
-// TestMemoryCache_MaxObjectSize verifies the memory cache max object size contract.
-// Asserts that Put:.
-func TestMemoryCache_MaxObjectSize(t *testing.T) {
+// TestMemoryCache_AdmitRejectsOversized verifies that Admit returns false
+// for objects larger than max_object_size, so callers never bother
+// buffering or calling PutBytes for them.
+func TestMemoryCache_AdmitRejectsOversized(t *testing.T) {
 	t.Parallel()
 	c := newTestCache(t, 1024, 100, time.Minute)
 
-	// Object larger than max_object_size should be silently rejected
-	big := bytes.Repeat([]byte("X"), 200)
-	if err := c.Put("big", bytes.NewReader(big), EntryMeta{}); err != nil {
-		t.Fatalf("Put: %v", err)
+	if c.Admit(200) {
+		t.Fatal("Admit(200) = true, expected false (max_object_size = 100)")
 	}
-
-	if _, ok := c.Get("big"); ok {
-		t.Fatal("expected miss for oversized object")
+	if c.Admit(101) {
+		t.Fatal("Admit(101) = true, expected false")
 	}
-
-	// Stats should be empty
-	if stats := c.Stats(); stats.Entries != 0 {
-		t.Errorf("entries = %d, want 0", stats.Entries)
+	if !c.Admit(100) {
+		t.Fatal("Admit(100) = false, expected true (boundary)")
+	}
+	if !c.Admit(1) {
+		t.Fatal("Admit(1) = false, expected true")
+	}
+	if c.Admit(0) {
+		t.Fatal("Admit(0) = true, expected false (zero-size never admitted)")
 	}
 }
 
@@ -129,12 +137,8 @@ func TestMemoryCache_LRUEviction(t *testing.T) {
 	// Cache can hold ~200 bytes. Each entry is ~100 bytes of data.
 	c := newTestCache(t, 250, 250, time.Minute)
 
-	if err := c.Put("first", bytes.NewReader(bytes.Repeat([]byte("A"), 100)), EntryMeta{}); err != nil {
-		t.Fatalf("Put first: %v", err)
-	}
-	if err := c.Put("second", bytes.NewReader(bytes.Repeat([]byte("B"), 100)), EntryMeta{}); err != nil {
-		t.Fatalf("Put second: %v", err)
-	}
+	admitAndPut(t, c, "first", bytes.Repeat([]byte("A"), 100), EntryMeta{})
+	admitAndPut(t, c, "second", bytes.Repeat([]byte("B"), 100), EntryMeta{})
 
 	// Both should be present
 	if _, ok := c.Get("first"); !ok {
@@ -149,9 +153,7 @@ func TestMemoryCache_LRUEviction(t *testing.T) {
 	// Let's access first again to make second the LRU)
 	c.Get("first") // promote first
 
-	if err := c.Put("third", bytes.NewReader(bytes.Repeat([]byte("C"), 100)), EntryMeta{}); err != nil {
-		t.Fatalf("Put third: %v", err)
-	}
+	admitAndPut(t, c, "third", bytes.Repeat([]byte("C"), 100), EntryMeta{})
 
 	// second should be evicted (LRU)
 	if _, ok := c.Get("second"); ok {
@@ -173,9 +175,7 @@ func TestMemoryCache_Invalidate(t *testing.T) {
 	t.Parallel()
 	c := newTestCache(t, 1024, 512, time.Minute)
 
-	if err := c.Put("key1", bytes.NewReader([]byte("data")), EntryMeta{}); err != nil {
-		t.Fatalf("Put: %v", err)
-	}
+	admitAndPut(t, c, "key1", []byte("data"), EntryMeta{})
 
 	c.Invalidate("key1")
 
@@ -193,12 +193,8 @@ func TestMemoryCache_OverwriteExisting(t *testing.T) {
 	t.Parallel()
 	c := newTestCache(t, 1024, 512, time.Minute)
 
-	if err := c.Put("key1", bytes.NewReader([]byte("v1")), EntryMeta{ETag: "e1"}); err != nil {
-		t.Fatalf("Put v1: %v", err)
-	}
-	if err := c.Put("key1", bytes.NewReader([]byte("v2")), EntryMeta{ETag: "e2"}); err != nil {
-		t.Fatalf("Put v2: %v", err)
-	}
+	admitAndPut(t, c, "key1", []byte("v1"), EntryMeta{ETag: "e1"})
+	admitAndPut(t, c, "key1", []byte("v2"), EntryMeta{ETag: "e2"})
 
 	entry, ok := c.Get("key1")
 	if !ok {
@@ -229,9 +225,7 @@ func TestMemoryCache_Stats(t *testing.T) {
 	}
 
 	data := []byte("some data here")
-	if err := c.Put("key1", bytes.NewReader(data), EntryMeta{}); err != nil {
-		t.Fatalf("Put: %v", err)
-	}
+	admitAndPut(t, c, "key1", data, EntryMeta{})
 
 	stats = c.Stats()
 	if stats.Entries != 1 {
@@ -255,7 +249,9 @@ func TestMemoryCache_ConcurrentAccess(t *testing.T) {
 			defer wg.Done()
 			key := string(rune('A' + i%26))
 			data := bytes.Repeat([]byte{byte(i)}, 50) //nolint:gosec // G115: test loop index, always < 256
-			_ = c.Put(key, bytes.NewReader(data), EntryMeta{})
+			if c.Admit(int64(len(data))) {
+				c.PutBytes(key, data, EntryMeta{})
+			}
 			c.Get(key)
 			c.Invalidate(key)
 		}(i)

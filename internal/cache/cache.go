@@ -12,23 +12,31 @@
 // repeated reads from local storage.
 package cache
 
-import "io"
-
 // -------------------------------------------------------------------------
 // INTERFACE
 // -------------------------------------------------------------------------
 
 // ObjectCache caches object data to avoid repeated backend fetches.
 // Implementations must be safe for concurrent use by multiple goroutines.
+//
+// The interface separates admission decision from buffering so callers
+// can refuse to read oversized payloads into memory in the first place:
+// check Admit(size), and only buffer + PutBytes when admitted.
 type ObjectCache interface {
 	// Get returns the cached entry for the given key, or false if not cached.
-	// The returned reader must be closed by the caller.
 	Get(key string) (*Entry, bool)
 
-	// Put stores an object in the cache. The data is read fully from r.
-	// If the object exceeds the max object size or the cache is at capacity,
-	// the entry may be rejected or older entries evicted.
-	Put(key string, r io.Reader, meta EntryMeta) error
+	// Admit reports whether an entry of the given size would be accepted by
+	// the cache (i.e., size <= max_object_size). O(1). Callers consult this
+	// before buffering data; oversized streams stay unread on the wire.
+	Admit(size int64) bool
+
+	// PutBytes stores pre-buffered data for key. Callers must have called
+	// Admit first to confirm size fits. Implementations may evict LRU
+	// entries to make room. Best-effort: if the cache cannot store the
+	// entry (e.g. capacity exhausted by larger entries), the call is a
+	// silent no-op.
+	PutBytes(key string, data []byte, meta EntryMeta)
 
 	// Invalidate removes a single key from the cache.
 	Invalidate(key string)

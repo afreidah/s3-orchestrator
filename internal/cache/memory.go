@@ -14,7 +14,6 @@ package cache
 import (
 	"container/list"
 	"fmt"
-	"io"
 	"sync"
 	"time"
 
@@ -104,15 +103,23 @@ func (c *MemoryCache) Get(key string) (*Entry, bool) {
 	return me.entry, true
 }
 
-// Put reads all data from r and stores it in the cache. Returns an error if
-// the data cannot be read. Objects exceeding max_object_size are silently
-// rejected (not an error  -  admission control).
-func (c *MemoryCache) Put(key string, r io.Reader, meta EntryMeta) error {
-	data, err := io.ReadAll(r)
-	if err != nil {
-		return fmt.Errorf("cache read: %w", err)
-	}
+// Admit reports whether an entry whose data is approximately size bytes
+// would be accepted by the cache. Compares against max_object_size only;
+// total-cache capacity is handled by LRU eviction at PutBytes time. The
+// "approximately" caveat exists because an Entry's stored size also
+// includes ContentType + ETag + Metadata key/value bytes, which the
+// caller does not know until PutBytes runs - in practice these are tens
+// of bytes versus the body size and never matter for admission.
+func (c *MemoryCache) Admit(size int64) bool {
+	return size > 0 && size <= c.maxObjectSize
+}
 
+// PutBytes stores pre-buffered data in the cache. Callers must have
+// called Admit first to confirm the size fits the per-entry limit; this
+// method does not re-check that condition on the body bytes. Falls back
+// to a silent no-op if even after evicting every existing entry the new
+// entry cannot fit (e.g. metadata pushed it over MaxSize).
+func (c *MemoryCache) PutBytes(key string, data []byte, meta EntryMeta) {
 	entry := &Entry{
 		Data:        data,
 		ContentType: meta.ContentType,
@@ -120,11 +127,6 @@ func (c *MemoryCache) Put(key string, r io.Reader, meta EntryMeta) error {
 		Metadata:    meta.Metadata,
 	}
 	entrySize := entry.Size()
-
-	// Admission control: reject objects that are too large to cache.
-	if entrySize > c.maxObjectSize {
-		return nil
-	}
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -139,10 +141,10 @@ func (c *MemoryCache) Put(key string, r io.Reader, meta EntryMeta) error {
 		c.evictLocked()
 	}
 
-	// If the entry still doesn't fit (larger than total capacity after
-	// evicting everything), skip caching.
+	// If the entry still doesn't fit (e.g. metadata bytes pushed it over
+	// MaxSize even after evicting everything), skip caching.
 	if c.sizeBytes+entrySize > c.maxSize {
-		return nil
+		return
 	}
 
 	me := &memoryEntry{
@@ -155,7 +157,6 @@ func (c *MemoryCache) Put(key string, r io.Reader, meta EntryMeta) error {
 	c.items[key] = elem
 	c.sizeBytes += entrySize
 	c.updateGauges()
-	return nil
 }
 
 // Invalidate removes a single key from the cache.
