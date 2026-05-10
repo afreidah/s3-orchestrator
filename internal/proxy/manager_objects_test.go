@@ -1718,7 +1718,7 @@ func TestListObjects_PageBoundaryMidCommonPrefix(t *testing.T) {
 }
 
 // TestListObjects_MaxPagesCapMidCommonPrefix exercises the maxPages
-// cap branch.
+// cap branch and asserts the cap-hit counter increments.
 func TestListObjects_MaxPagesCapMidCommonPrefix(t *testing.T) {
 	originalCap := listObjectsMaxPages
 	listObjectsMaxPages = 2
@@ -1742,6 +1742,7 @@ func TestListObjects_MaxPagesCapMidCommonPrefix(t *testing.T) {
 	})
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
+	before := testutil.ToFloat64(telemetry.ListPagesCappedTotal)
 	result, err := mgr.ObjectManager.ListObjects(context.Background(), "users/", "/", "", 1000)
 	if err != nil {
 		t.Fatalf("ListObjects: %v", err)
@@ -1754,6 +1755,36 @@ func TestListObjects_MaxPagesCapMidCommonPrefix(t *testing.T) {
 	}
 	if result.NextContinuationToken != "users/00010" {
 		t.Errorf("NextContinuationToken = %q, want %q (advanced past users/0001/ group)", result.NextContinuationToken, "users/00010")
+	}
+	if got := testutil.ToFloat64(telemetry.ListPagesCappedTotal) - before; got != 1 {
+		t.Errorf("ListPagesCappedTotal delta = %v, want 1", got)
+	}
+}
+
+// TestListObjects_NoCapHit_NoCounterIncrement verifies the cap-hit
+// counter only fires when the cap actually triggers; a normal exit
+// (store exhausted before maxPages) must not increment it.
+func TestListObjects_NoCapHit_NoCounterIncrement(t *testing.T) {
+	originalCap := listObjectsMaxPages
+	listObjectsMaxPages = 5
+	defer func() { listObjectsMaxPages = originalCap }()
+
+	store := listObjectsPaged(t, []core.ListObjectsResult{
+		{
+			Objects: []core.ObjectLocation{
+				{ObjectKey: "a/1", BackendName: "b1"},
+			},
+			IsTruncated: false,
+		},
+	})
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+
+	before := testutil.ToFloat64(telemetry.ListPagesCappedTotal)
+	if _, err := mgr.ObjectManager.ListObjects(context.Background(), "", "/", "", 1000); err != nil {
+		t.Fatalf("ListObjects: %v", err)
+	}
+	if got := testutil.ToFloat64(telemetry.ListPagesCappedTotal) - before; got != 0 {
+		t.Errorf("ListPagesCappedTotal delta = %v, want 0 (cap not hit)", got)
 	}
 }
 

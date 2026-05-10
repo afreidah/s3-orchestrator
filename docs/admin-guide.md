@@ -1053,6 +1053,7 @@ If `telemetry.metrics.enabled` is `true`, metrics are exposed at `/metrics`. Key
 | `s3o_admission_rejections_total` | Requests rejected at the hard admission limit |
 | `s3o_load_shed_total` | Requests probabilistically shed before the hard admission limit |
 | `s3o_early_rejections_total` | Uploads rejected before body transmission (no backend capacity) |
+| `s3o_list_pages_capped_total` | Non-zero rate means real workloads are hitting the ListObjects page cap; profile before tuning |
 | `s3o_cleanup_queue_depth` | Alert when consistently > 0 — orphaned objects are failing cleanup |
 | `s3o_cleanup_queue_processed_total{status="exhausted"}` | Items that exceeded max retries — graduated to the DLQ |
 | `s3o_cleanup_dlq_depth` | Alert when > 0 — at least one unrecoverable orphan needs operator action |
