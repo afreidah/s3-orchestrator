@@ -53,7 +53,6 @@ func TestProviders_MissingConfigReturnsCleanError(t *testing.T) {
 		name string
 		call func(do.Injector) error
 	}{
-		{"ConcreteStore", func(i do.Injector) error { _, err := provideConcreteStore(i); return err }},
 		{"LifecycleAdmin", func(i do.Injector) error { _, err := ProvideLifecycleAdmin(i); return err }},
 		{"EncryptionAdmin", func(i do.Injector) error { _, err := ProvideEncryptionAdmin(i); return err }},
 		{"NotificationOutbox", func(i do.Injector) error { _, err := ProvideNotificationOutbox(i); return err }},
@@ -75,6 +74,7 @@ func TestProviders_MissingConfigReturnsCleanError(t *testing.T) {
 		{"Scrubber", func(i do.Injector) error { _, err := ProvideScrubber(i); return err }},
 		{"DrainManager", func(i do.Injector) error { _, err := ProvideDrainManager(i); return err }},
 		{"MultipartBackfill", func(i do.Injector) error { _, err := ProvideMultipartBackfill(i); return err }},
+		{"Reconciler", func(i do.Injector) error { _, err := ProvideReconciler(i); return err }},
 		{"BucketAuth", func(i do.Injector) error { _, err := ProvideBucketAuth(i); return err }},
 		{"S3Server", func(i do.Injector) error { _, err := ProvideS3Server(i); return err }},
 		{"RateLimiter", func(i do.Injector) error { _, err := ProvideRateLimiter(i); return err }},
@@ -201,11 +201,10 @@ func TestWireAuditMetrics(t *testing.T) {
 	audit.Log(context.Background(), "test.coverage")
 }
 
-// TestProvideConcreteStore_SQLiteInMemory drives provideConcreteStore's
+// TestProvideMetadataStore_SQLiteInMemory drives ProvideMetadataStore's
 // happy path against an in-memory sqlite, covering migrations + schema
-// verification + quota sync without needing Postgres. Resolves the
-// remaining uncovered statements in provideConcreteStore.
-func TestProvideConcreteStore_SQLiteInMemory(t *testing.T) {
+// verification + quota sync without needing Postgres.
+func TestProvideMetadataStore_SQLiteInMemory(t *testing.T) {
 	t.Parallel()
 	inj := do.New()
 	do.ProvideValue(inj, &config.Config{
@@ -213,12 +212,12 @@ func TestProvideConcreteStore_SQLiteInMemory(t *testing.T) {
 		Backends: []config.BackendConfig{{Name: "b1", QuotaBytes: 1024}},
 	})
 	do.ProvideValue[*breaker.CircuitBreaker](inj, nil)
-	cs, err := provideConcreteStore(inj)
+	cs, err := ProvideMetadataStore(inj)
 	if err != nil {
-		t.Fatalf("provideConcreteStore: %v", err)
+		t.Fatalf("ProvideMetadataStore: %v", err)
 	}
 	if cs == nil {
-		t.Fatal("expected non-nil concreteStore")
+		t.Fatal("expected non-nil MetadataStore")
 	}
 	cs.Close()
 }
@@ -245,34 +244,12 @@ func TestOpenStore_PostgresInvalidConfig(t *testing.T) {
 	}
 }
 
-// TestProvideMetadataStore_HappyPath seeds the concrete store and asserts
-// the single store provider returns a non-nil value typed as the wide
-// metadata-store contract every consumer depends on.
-func TestProvideMetadataStore_HappyPath(t *testing.T) {
-	t.Parallel()
-	inj := do.New()
-	do.ProvideValue(inj, &config.Config{CircuitBreaker: config.CircuitBreakerConfig{FailureThreshold: 3, OpenTimeout: time.Second}})
-	do.ProvideValue[concreteStore](inj, storetest.NewMockMetadataStore(gomock.NewController(t)))
-	do.Provide(inj, ProvideDatabaseBreaker)
-
-	v, err := ProvideMetadataStore(inj)
-	if err != nil {
-		t.Fatalf("ProvideMetadataStore: %v", err)
-	}
-	if v == nil {
-		t.Fatal("ProvideMetadataStore returned nil")
-	}
-}
-
-// TestProvideMetricsDeps_HappyPath covers the adapter-build path that
-// composes DashboardStore + ReplicationStore into proxy.MetricsDeps.
+// TestProvideMetricsDeps_HappyPath verifies the metrics.Deps provider
+// resolves to the wide MetadataStore registered in the injector.
 func TestProvideMetricsDeps_HappyPath(t *testing.T) {
 	t.Parallel()
 	inj := do.New()
-	do.ProvideValue(inj, &config.Config{CircuitBreaker: config.CircuitBreakerConfig{FailureThreshold: 3, OpenTimeout: time.Second}})
-	do.ProvideValue[concreteStore](inj, storetest.NewMockMetadataStore(gomock.NewController(t)))
-	do.Provide(inj, ProvideDatabaseBreaker)
-	do.Provide(inj, ProvideMetadataStore)
+	do.ProvideValue[core.MetadataStore](inj, storetest.NewMockMetadataStore(gomock.NewController(t)))
 
 	deps, err := ProvideMetricsDeps(inj)
 	if err != nil {
@@ -724,5 +701,196 @@ func TestNewInjector_NotifierResolvesWhenEndpointsConfigured(t *testing.T) {
 
 	if _, err := do.Invoke[*notify.Notifier](inj); err != nil {
 		t.Fatalf("Notifier: %v", err)
+	}
+}
+
+// TestInvokeOptional_ReturnsZeroWhenAbsent pins the contract that the
+// optional-provider helper swallows ErrServiceNotFound and returns the
+// zero value, so callers can use it for features that may not register.
+func TestInvokeOptional_ReturnsZeroWhenAbsent(t *testing.T) {
+	t.Parallel()
+	v := invokeOptional[*worker.Reconciler](do.New())
+	if v != nil {
+		t.Fatalf("expected nil for absent provider, got %v", v)
+	}
+}
+
+// TestInvokeOptional_ReturnsValueWhenRegistered covers the present-provider
+// branch: the helper returns the registered value unchanged.
+func TestInvokeOptional_ReturnsValueWhenRegistered(t *testing.T) {
+	t.Parallel()
+	inj := do.New()
+	rec := &worker.Reconciler{}
+	do.ProvideValue(inj, rec)
+	if got := invokeOptional[*worker.Reconciler](inj); got != rec {
+		t.Fatalf("expected registered value, got %v", got)
+	}
+}
+
+// TestProvideReconciler_HappyPath drives the reconciler factory end-to-end.
+func TestProvideReconciler_HappyPath(t *testing.T) {
+	t.Parallel()
+	cfg := happyPathConfig(t.TempDir())
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("config validation: %v", err)
+	}
+	inj := NewInjector(cfg, "all", new(slog.LevelVar), telemetry.NewLogBuffer())
+	t.Cleanup(func() { _ = inj.Shutdown() })
+	rec, err := do.Invoke[*worker.Reconciler](inj)
+	if err != nil {
+		t.Fatalf("Reconciler: %v", err)
+	}
+	if rec == nil {
+		t.Fatal("Reconciler resolved to nil")
+	}
+}
+
+// TestNewInjector_ReconcilerNotRegisteredInAPIMode pins the mode-conditional
+// registration: api-mode binaries do not need the worker-side reconciler.
+func TestNewInjector_ReconcilerNotRegisteredInAPIMode(t *testing.T) {
+	t.Parallel()
+	cfg := happyPathConfig(t.TempDir())
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("config validation: %v", err)
+	}
+	inj := NewInjector(cfg, "api", new(slog.LevelVar), telemetry.NewLogBuffer())
+	t.Cleanup(func() { _ = inj.Shutdown() })
+	if _, err := do.Invoke[*worker.Reconciler](inj); !errors.Is(err, do.ErrServiceNotFound) {
+		t.Fatalf("expected ErrServiceNotFound in api mode, got %v", err)
+	}
+}
+
+// TestResolveAdminHandlerRequiredDeps_PartialDeps walks the dependency
+// list so every intermediate missing-dep return path in the helper is
+// exercised, not just the bare-injector first-invoke branch.
+func TestResolveAdminHandlerRequiredDeps_PartialDeps(t *testing.T) {
+	t.Parallel()
+	cfg := happyPathConfig(t.TempDir())
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("config validation: %v", err)
+	}
+	full := NewInjector(cfg, "all", new(slog.LevelVar), telemetry.NewLogBuffer())
+	t.Cleanup(func() { _ = full.Shutdown() })
+
+	mgr, err := do.Invoke[*proxy.BackendManager](full)
+	if err != nil {
+		t.Fatalf("BackendManager: %v", err)
+	}
+	cb, err := do.Invoke[*breaker.CircuitBreaker](full)
+	if err != nil {
+		t.Fatalf("DatabaseBreaker: %v", err)
+	}
+	stores, err := do.Invoke[core.MetadataStore](full)
+	if err != nil {
+		t.Fatalf("MetadataStore: %v", err)
+	}
+	repl, err := do.Invoke[*worker.Replicator](full)
+	if err != nil {
+		t.Fatalf("Replicator: %v", err)
+	}
+	overRep, err := do.Invoke[*worker.OverReplicationCleaner](full)
+	if err != nil {
+		t.Fatalf("OverReplicationCleaner: %v", err)
+	}
+	scrubber, err := do.Invoke[*worker.Scrubber](full)
+	if err != nil {
+		t.Fatalf("Scrubber: %v", err)
+	}
+
+	// Each step seeds one more dep than the previous; the helper should
+	// fail on the first unseeded dep at each stage.
+	steps := []struct {
+		name string
+		seed func(do.Injector)
+	}{
+		{"only-cfg", func(i do.Injector) {
+			do.ProvideValue(i, cfg)
+		}},
+		{"+manager", func(i do.Injector) {
+			do.ProvideValue(i, cfg)
+			do.ProvideValue(i, mgr)
+		}},
+		{"+cb", func(i do.Injector) {
+			do.ProvideValue(i, cfg)
+			do.ProvideValue(i, mgr)
+			do.ProvideValue(i, cb)
+		}},
+		{"+encAdmin", func(i do.Injector) {
+			do.ProvideValue(i, cfg)
+			do.ProvideValue(i, mgr)
+			do.ProvideValue(i, cb)
+			do.ProvideValue[core.EncryptionAdmin](i, stores)
+		}},
+		{"+logLevel", func(i do.Injector) {
+			do.ProvideValue(i, cfg)
+			do.ProvideValue(i, mgr)
+			do.ProvideValue(i, cb)
+			do.ProvideValue[core.EncryptionAdmin](i, stores)
+			do.ProvideValue(i, new(slog.LevelVar))
+		}},
+		{"+stores", func(i do.Injector) {
+			do.ProvideValue(i, cfg)
+			do.ProvideValue(i, mgr)
+			do.ProvideValue(i, cb)
+			do.ProvideValue[core.EncryptionAdmin](i, stores)
+			do.ProvideValue(i, new(slog.LevelVar))
+			do.ProvideValue[core.MetadataStore](i, stores)
+		}},
+		{"+replicator", func(i do.Injector) {
+			do.ProvideValue(i, cfg)
+			do.ProvideValue(i, mgr)
+			do.ProvideValue(i, cb)
+			do.ProvideValue[core.EncryptionAdmin](i, stores)
+			do.ProvideValue(i, new(slog.LevelVar))
+			do.ProvideValue[core.MetadataStore](i, stores)
+			do.ProvideValue(i, repl)
+		}},
+		{"+overRep", func(i do.Injector) {
+			do.ProvideValue(i, cfg)
+			do.ProvideValue(i, mgr)
+			do.ProvideValue(i, cb)
+			do.ProvideValue[core.EncryptionAdmin](i, stores)
+			do.ProvideValue(i, new(slog.LevelVar))
+			do.ProvideValue[core.MetadataStore](i, stores)
+			do.ProvideValue(i, repl)
+			do.ProvideValue(i, overRep)
+		}},
+		{"+scrubber", func(i do.Injector) {
+			do.ProvideValue(i, cfg)
+			do.ProvideValue(i, mgr)
+			do.ProvideValue(i, cb)
+			do.ProvideValue[core.EncryptionAdmin](i, stores)
+			do.ProvideValue(i, new(slog.LevelVar))
+			do.ProvideValue[core.MetadataStore](i, stores)
+			do.ProvideValue(i, repl)
+			do.ProvideValue(i, overRep)
+			do.ProvideValue(i, scrubber)
+		}},
+	}
+	for _, step := range steps {
+		t.Run(step.name, func(t *testing.T) {
+			t.Parallel()
+			inj := do.New()
+			step.seed(inj)
+			if _, err := resolveAdminHandlerRequiredDeps(inj); err == nil {
+				t.Fatal("expected error from partial deps")
+			}
+		})
+	}
+}
+
+// TestProvideReconciler_PartialDeps walks the resolve sequence so each
+// missing-dep return path is exercised.
+func TestProvideReconciler_PartialDeps(t *testing.T) {
+	t.Parallel()
+	// Bare injector: config missing.
+	if _, err := ProvideReconciler(do.New()); err == nil {
+		t.Error("expected error with no deps")
+	}
+	// Add only config: BackendManager missing.
+	step1 := do.New()
+	do.ProvideValue(step1, &config.Config{Buckets: []config.BucketConfig{{Name: "b1"}}})
+	if _, err := ProvideReconciler(step1); err == nil {
+		t.Error("expected error after seeding only config")
 	}
 }

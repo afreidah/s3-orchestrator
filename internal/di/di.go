@@ -81,7 +81,6 @@ func NewInjector(cfg *config.Config, mode string, logLevel *slog.LevelVar, logBu
 	do.ProvideValue(inj, logBuffer)
 
 	// --- Required infrastructure ---
-	do.Provide(inj, provideConcreteStore)
 	do.Provide(inj, ProvideMetadataStore)
 	do.Provide(inj, ProvideLifecycleAdmin)
 	do.Provide(inj, ProvideEncryptionAdmin)
@@ -109,6 +108,11 @@ func NewInjector(cfg *config.Config, mode string, logLevel *slog.LevelVar, logBu
 	do.Provide(inj, ProvideBucketAuth)
 	do.Provide(inj, ProvideS3Server)
 	do.Provide(inj, ProvideLifecycleManager)
+
+	// --- Worker-mode services (registered only in worker/all modes) ---
+	if mode == "worker" || mode == "all" {
+		do.Provide(inj, ProvideReconciler)
+	}
 
 	// --- Optional features (registered only when enabled) ---
 	if cfg.Encryption.Enabled {
@@ -143,46 +147,11 @@ func NewInjector(cfg *config.Config, mode string, logLevel *slog.LevelVar, logBu
 // STORE PROVIDERS
 // -------------------------------------------------------------------------
 
-// concreteStore collects every role interface satisfied by the driver-
-// level store without introducing a user-facing composed type. Declared
-// unexported and scoped to this package  -  callers outside di never see it.
-// Both PostgreSQL *postgres.Store and SQLite *sqlite.Store satisfy this.
-type concreteStore interface {
-	core.ObjectStore
-	core.QuotaStore
-	core.MultipartStore
-	core.ReplicationStore
-	core.CleanupStore
-	core.PendingStore
-	core.IntegrityStore
-	core.ExpiredObjectsLister
-	core.BackendLifecycleStore
-	core.DashboardStore
-	core.UsageFlusher
-	core.AdvisoryLocker
-	core.LifecycleAdmin
-	core.EncryptionAdmin
-	core.NotificationOutbox
-	metricsDeps
-}
-
-// metricsDeps names the five methods proxy.MetricsDeps requires. Declared
-// here (not exported) because it only exists so concreteStore satisfies the
-// proxy-owned MetricsDeps contract structurally.
-type metricsDeps interface {
-	GetQuotaStats(ctx context.Context) (map[string]core.QuotaStat, error)
-	GetObjectCounts(ctx context.Context) (map[string]int64, error)
-	GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error)
-	GetUsageForPeriod(ctx context.Context, period string) (map[string]core.UsageStat, error)
-	GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]core.ObjectLocation, error)
-}
-
-// provideConcreteStore creates the concrete driver store for the configured
-// driver, runs migrations, and syncs quota limits. Returned as an
-// unexported composite; no call site outside this package references it
-// directly. Narrow per-role providers extract the role they need from this
-// single concrete value.
-func provideConcreteStore(i do.Injector) (concreteStore, error) {
+// ProvideMetadataStore opens the configured driver, runs migrations,
+// syncs quota limits, and returns the wide core.MetadataStore every
+// consumer depends on. CB protection lives inside each driver's DBTX/DB
+// chokepoint, so this provider does no wrapping of its own.
+func ProvideMetadataStore(i do.Injector) (core.MetadataStore, error) {
 	cfg, err := do.Invoke[*config.Config](i)
 	if err != nil {
 		return nil, err
@@ -208,45 +177,29 @@ func provideConcreteStore(i do.Injector) (concreteStore, error) {
 	if err := cs.SyncQuotaLimits(ctx, cfg.Backends); err != nil {
 		return nil, err
 	}
-
 	return cs, nil
 }
 
-// extractAdminRole resolves the concreteStore from the injector and
-// narrows it to the requested admin-role interface T. Each ProvideX admin
-// extractor below is a one-line wrapper around this helper - inlining the
-// three-line resolve+narrow body in each one would produce identical
-// implementations and trigger duplicate-code lints.
-func extractAdminRole[T any](i do.Injector) (T, error) {
-	cs, err := do.Invoke[concreteStore](i)
-	if err != nil {
-		var zero T
-		return zero, err
-	}
-	return any(cs).(T), nil
-}
-
-// ProvideLifecycleAdmin exposes the LifecycleAdmin role from the concrete
-// store. Used at boot/shutdown for migrations, schema checks, and Close.
+// ProvideLifecycleAdmin aliases the wide MetadataStore as its LifecycleAdmin
+// role for boot/shutdown migrations, schema checks, and Close.
 func ProvideLifecycleAdmin(i do.Injector) (core.LifecycleAdmin, error) {
-	return extractAdminRole[core.LifecycleAdmin](i)
+	return do.Invoke[core.MetadataStore](i)
 }
 
-// ProvideEncryptionAdmin exposes the EncryptionAdmin role from the
-// concrete store. Used by the admin HTTP handler for key rotation and
-// encrypt/decrypt batch operations.
+// ProvideEncryptionAdmin aliases the wide MetadataStore as its EncryptionAdmin
+// role for the admin HTTP handler's key rotation and encrypt/decrypt batch ops.
 func ProvideEncryptionAdmin(i do.Injector) (core.EncryptionAdmin, error) {
-	return extractAdminRole[core.EncryptionAdmin](i)
+	return do.Invoke[core.MetadataStore](i)
 }
 
-// ProvideNotificationOutbox exposes the NotificationOutbox role from the
-// concrete store. Used by the notifier worker for durable webhook delivery.
+// ProvideNotificationOutbox aliases the wide MetadataStore as its
+// NotificationOutbox role for the notifier worker.
 func ProvideNotificationOutbox(i do.Injector) (core.NotificationOutbox, error) {
-	return extractAdminRole[core.NotificationOutbox](i)
+	return do.Invoke[core.MetadataStore](i)
 }
 
-// ProvideDatabaseBreaker constructs the shared *breaker.CircuitBreaker that
-// every per-role CB wrapper forwards calls through.
+// ProvideDatabaseBreaker constructs the shared *breaker.CircuitBreaker every
+// driver-level SQL statement forwards calls through.
 func ProvideDatabaseBreaker(i do.Injector) (*breaker.CircuitBreaker, error) {
 	cfg, err := do.Invoke[*config.Config](i)
 	if err != nil {
@@ -258,9 +211,8 @@ func ProvideDatabaseBreaker(i do.Injector) (*breaker.CircuitBreaker, error) {
 // openStore dispatches store construction to the configured driver. The
 // shared *breaker.CircuitBreaker is threaded through so every SQL
 // statement (pool-bound or tx-bound) gets PreCheck/PostCheck protection
-// at the driver chokepoint - replacing the previous per-role decorator
-// wrapping done in this package.
-func openStore(ctx context.Context, dbCfg *config.DatabaseConfig, cb *breaker.CircuitBreaker) (concreteStore, error) {
+// at the driver chokepoint.
+func openStore(ctx context.Context, dbCfg *config.DatabaseConfig, cb *breaker.CircuitBreaker) (core.MetadataStore, error) {
 	switch dbCfg.Driver {
 	case "postgres":
 		return postgres.NewStore(ctx, dbCfg, cb)
@@ -271,14 +223,6 @@ func openStore(ctx context.Context, dbCfg *config.DatabaseConfig, cb *breaker.Ci
 	}
 }
 
-// ProvideMetadataStore types the concrete store as the wide
-// core.MetadataStore contract every consumer depends on. CB protection
-// lives inside each driver's DBTX/DB chokepoint, so this provider does
-// no wrapping of its own; the value flows straight through.
-func ProvideMetadataStore(i do.Injector) (core.MetadataStore, error) {
-	return do.Invoke[concreteStore](i)
-}
-
 // ProvideInstanceID resolves a stable per-process identifier used as the
 // claimed_by stamp on cleanup_queue rows. The identifier is generated once
 // at first invoke and reused everywhere the value is needed.
@@ -286,11 +230,8 @@ func ProvideInstanceID(_ do.Injector) (instanceid.ID, error) {
 	return instanceid.New()
 }
 
-// ProvideMetricsDeps invokes the wide metadata-store contract typed as
-// the metrics.Deps subset metrics.Collector uses to refresh Prometheus
-// gauges. core.MetadataStore satisfies the dependency directly because
-// it embeds DashboardStore and ReplicationStore, the two roles
-// metrics.Deps requires.
+// ProvideMetricsDeps aliases the wide MetadataStore as the metrics.Deps
+// subset metrics.Collector uses to refresh Prometheus gauges.
 func ProvideMetricsDeps(i do.Injector) (metrics.Deps, error) {
 	return do.Invoke[core.MetadataStore](i)
 }
@@ -300,30 +241,10 @@ func ProvideMetricsDeps(i do.Injector) (metrics.Deps, error) {
 //
 // Each worker is its own DI service. Providers invoke *proxy.BackendManager
 // (which satisfies worker.Ops / CleanupOps / ScrubberOps via promoted
-// backendCore methods plus its own write-path helpers) and the per-worker
-// store role. The worker.Rebalancer/Replicator/OverReplicationCleaner take
-// compound store contracts; the providers build the embed-shaped adapter
-// inline rather than declaring a named struct in the production package.
+// backendCore methods plus its own write-path helpers) and the wide
+// core.MetadataStore, which already satisfies every per-worker store
+// contract via implicit interface satisfaction.
 // -------------------------------------------------------------------------
-
-// rebalancerStoreAdapter satisfies worker.RebalancerStore.
-type rebalancerStoreAdapter struct {
-	core.ObjectStore
-	core.QuotaStore
-}
-
-// replicatorStoreAdapter satisfies worker.ReplicatorStore.
-type replicatorStoreAdapter struct {
-	core.ObjectStore
-	core.ReplicationStore
-	core.QuotaStore
-}
-
-// overReplicationStoreAdapter satisfies worker.OverReplicationStore.
-type overReplicationStoreAdapter struct {
-	core.ReplicationStore
-	core.QuotaStore
-}
 
 // ProvideRebalancer constructs the rebalancer worker.
 func ProvideRebalancer(i do.Injector) (*worker.Rebalancer, error) {
@@ -331,15 +252,11 @@ func ProvideRebalancer(i do.Injector) (*worker.Rebalancer, error) {
 	if err != nil {
 		return nil, err
 	}
-	obj, err := do.Invoke[core.MetadataStore](i)
+	stores, err := do.Invoke[core.MetadataStore](i)
 	if err != nil {
 		return nil, err
 	}
-	q, err := do.Invoke[core.MetadataStore](i)
-	if err != nil {
-		return nil, err
-	}
-	rb := worker.NewRebalancer(mgr, &rebalancerStoreAdapter{ObjectStore: obj, QuotaStore: q})
+	rb := worker.NewRebalancer(mgr, stores)
 	mgr.Rebalancer = rb
 	return rb, nil
 }
@@ -350,19 +267,11 @@ func ProvideReplicator(i do.Injector) (*worker.Replicator, error) {
 	if err != nil {
 		return nil, err
 	}
-	obj, err := do.Invoke[core.MetadataStore](i)
+	stores, err := do.Invoke[core.MetadataStore](i)
 	if err != nil {
 		return nil, err
 	}
-	repl, err := do.Invoke[core.MetadataStore](i)
-	if err != nil {
-		return nil, err
-	}
-	q, err := do.Invoke[core.MetadataStore](i)
-	if err != nil {
-		return nil, err
-	}
-	rp := worker.NewReplicator(mgr, &replicatorStoreAdapter{ObjectStore: obj, ReplicationStore: repl, QuotaStore: q})
+	rp := worker.NewReplicator(mgr, stores)
 	mgr.Replicator = rp
 	return rp, nil
 }
@@ -373,15 +282,11 @@ func ProvideOverReplicationCleaner(i do.Injector) (*worker.OverReplicationCleane
 	if err != nil {
 		return nil, err
 	}
-	repl, err := do.Invoke[core.MetadataStore](i)
+	stores, err := do.Invoke[core.MetadataStore](i)
 	if err != nil {
 		return nil, err
 	}
-	q, err := do.Invoke[core.MetadataStore](i)
-	if err != nil {
-		return nil, err
-	}
-	or := worker.NewOverReplicationCleaner(mgr, &overReplicationStoreAdapter{ReplicationStore: repl, QuotaStore: q})
+	or := worker.NewOverReplicationCleaner(mgr, stores)
 	mgr.OverReplicationCleaner = or
 	return or, nil
 }
@@ -465,30 +370,36 @@ func ProvideScrubber(i do.Injector) (*worker.Scrubber, error) {
 	return sc, nil
 }
 
-// multipartBackfillStoreAdapter composes the two narrow per-role
-// interfaces the backfill worker needs into a single value satisfying
-// worker.MultipartBackfillStore. The MultipartStore field is the CB-
-// protected view; the AdvisoryLocker hits Postgres directly because
-// multi-instance coordination is the locker's whole point.
-type multipartBackfillStoreAdapter struct {
-	core.MultipartStore
-	core.AdvisoryLocker
+// ProvideReconciler constructs the bucket reconciler worker. Registered
+// only in worker/all modes because reconciliation is a worker-side
+// background task. Returns the reconciler so the lifecycle manager can
+// register a service for it; the reconciler is also resolvable directly
+// for the admin handler's inspection endpoints.
+func ProvideReconciler(i do.Injector) (*worker.Reconciler, error) {
+	cfg, err := do.Invoke[*config.Config](i)
+	if err != nil {
+		return nil, err
+	}
+	mgr, err := do.Invoke[*proxy.BackendManager](i)
+	if err != nil {
+		return nil, err
+	}
+	bktNames := make([]string, len(cfg.Buckets))
+	for idx, b := range cfg.Buckets {
+		bktNames[idx] = b.Name
+	}
+	return worker.NewReconciler(mgr, bktNames), nil
 }
 
 // ProvideMultipartBackfill constructs the legacy-multipart-DEK migration
-// worker. Registered only when encryption is enabled because legacy
-// rows can only exist when the proxy was previously running with
-// encryption configured.
+// worker. Registered only when encryption is enabled because legacy rows
+// can only exist when the proxy was previously running with encryption.
 func ProvideMultipartBackfill(i do.Injector) (*worker.MultipartBackfill, error) {
 	mgr, err := do.Invoke[*proxy.BackendManager](i)
 	if err != nil {
 		return nil, err
 	}
-	mp, err := do.Invoke[core.MetadataStore](i)
-	if err != nil {
-		return nil, err
-	}
-	locker, err := do.Invoke[core.MetadataStore](i)
+	stores, err := do.Invoke[core.MetadataStore](i)
 	if err != nil {
 		return nil, err
 	}
@@ -496,14 +407,13 @@ func ProvideMultipartBackfill(i do.Injector) (*worker.MultipartBackfill, error) 
 	if err != nil {
 		return nil, err
 	}
-	store := &multipartBackfillStoreAdapter{MultipartStore: mp, AdvisoryLocker: locker}
-	return worker.NewMultipartBackfill(store, enc, mgr.GetBackend, worker.MultipartBackfillConfig{}), nil
+	return worker.NewMultipartBackfill(stores, enc, mgr.GetBackend, worker.MultipartBackfillConfig{}), nil
 }
 
 // ProvideDrainManager constructs the drain manager. Depends on
 // BackendManager (drain.Core seam), the cleanup worker (for the
-// cleanup-queue flush before backend deletion), and the per-worker store
-// roles drain pulls directly.
+// cleanup-queue flush before backend deletion), and the wide
+// MetadataStore for the object/quota/lifecycle role surfaces.
 func ProvideDrainManager(i do.Injector) (*drain.Manager, error) {
 	mgr, err := do.Invoke[*proxy.BackendManager](i)
 	if err != nil {
@@ -513,23 +423,15 @@ func ProvideDrainManager(i do.Injector) (*drain.Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	obj, err := do.Invoke[core.MetadataStore](i)
-	if err != nil {
-		return nil, err
-	}
-	q, err := do.Invoke[core.MetadataStore](i)
-	if err != nil {
-		return nil, err
-	}
-	blc, err := do.Invoke[core.MetadataStore](i)
+	stores, err := do.Invoke[core.MetadataStore](i)
 	if err != nil {
 		return nil, err
 	}
 	dm := drain.New(
 		mgr,
-		obj,
-		q,
-		blc,
+		stores,
+		stores,
+		stores,
 		mgr.MultipartManager.AbortMultipartUploadsOnBackend,
 		cleanup.ProcessCleanupQueue,
 	)
@@ -918,13 +820,11 @@ func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 	}
 	registerWorkerServices(sm, manager, ws, locker, cfg)
 
-	bktNames := make([]string, len(cfg.Buckets))
-	for idx, b := range cfg.Buckets {
-		bktNames[idx] = b.Name
-	}
-	reconciler := worker.NewReconciler(manager, bktNames)
-	do.ProvideValue(i, reconciler)
 	if cfg.Reconcile.Enabled {
+		reconciler, err := do.Invoke[*worker.Reconciler](i)
+		if err != nil {
+			return nil, err
+		}
 		sm.Register("reconcile", NewReconcileService(reconciler, locker, cfg.Reconcile.Interval))
 	}
 	if notifier, err := do.Invoke[*notify.Notifier](i); err == nil {
@@ -1033,48 +933,6 @@ func ProvideUIHandler(i do.Injector) (*ui.Handler, error) {
 	}), nil
 }
 
-// adminHandlerDeps groups the worker handles + narrow store roles
-// ProvideAdminHandler resolves so the provider body stays compact.
-type adminHandlerDeps struct {
-	replicator *worker.Replicator
-	overRep    *worker.OverReplicationCleaner
-	scrubber   *worker.Scrubber
-	drain      *drain.Manager
-	objects    core.ObjectStore
-	cleanup    core.CleanupStore
-	lifecycle  core.BackendLifecycleStore
-}
-
-// resolveAdminHandlerDeps invokes the worker + store dependencies the
-// admin handler needs. Each invocation may fail (e.g. provider missing),
-// so the helper bails on the first error.
-func resolveAdminHandlerDeps(i do.Injector) (adminHandlerDeps, error) {
-	var d adminHandlerDeps
-	var err error
-	if d.replicator, err = do.Invoke[*worker.Replicator](i); err != nil {
-		return d, err
-	}
-	if d.overRep, err = do.Invoke[*worker.OverReplicationCleaner](i); err != nil {
-		return d, err
-	}
-	if d.scrubber, err = do.Invoke[*worker.Scrubber](i); err != nil {
-		return d, err
-	}
-	if d.drain, err = do.Invoke[*drain.Manager](i); err != nil {
-		return d, err
-	}
-	if d.objects, err = do.Invoke[core.MetadataStore](i); err != nil {
-		return d, err
-	}
-	if d.cleanup, err = do.Invoke[core.MetadataStore](i); err != nil {
-		return d, err
-	}
-	if d.lifecycle, err = do.Invoke[core.MetadataStore](i); err != nil {
-		return d, err
-	}
-	return d, nil
-}
-
 // resolveOptionalEncryptor returns the live *encryption.Encryptor when
 // encryption is enabled, or nil otherwise. A configured-but-failing
 // encryptor surfaces as an error so the admin handler doesn't quietly
@@ -1090,72 +948,99 @@ func resolveOptionalEncryptor(i do.Injector, enabled bool) (*encryption.Encrypto
 	return e, nil
 }
 
+// invokeOptional resolves a provider that may not be registered, returning
+// the zero value of T when the service is absent. Used for admin handler
+// dependencies that only register under specific modes/features.
+func invokeOptional[T any](i do.Injector) T {
+	v, _ := do.Invoke[T](i)
+	return v
+}
+
+// adminHandlerRequiredDeps bundles the required dependencies of
+// ProvideAdminHandler so the provider body stays under the cognitive-
+// complexity ceiling. Optional dependencies are resolved separately via
+// invokeOptional.
+type adminHandlerRequiredDeps struct {
+	cfg        *config.Config
+	manager    *proxy.BackendManager
+	cb         *breaker.CircuitBreaker
+	encAdmin   core.EncryptionAdmin
+	logLevel   *slog.LevelVar
+	enc        *encryption.Encryptor
+	stores     core.MetadataStore
+	replicator *worker.Replicator
+	overRep    *worker.OverReplicationCleaner
+	scrubber   *worker.Scrubber
+	drain      *drain.Manager
+}
+
+// resolveAdminHandlerRequiredDeps invokes every required dependency the
+// admin handler needs and bails on the first error.
+func resolveAdminHandlerRequiredDeps(i do.Injector) (adminHandlerRequiredDeps, error) {
+	var d adminHandlerRequiredDeps
+	var err error
+	if d.cfg, err = do.Invoke[*config.Config](i); err != nil {
+		return d, err
+	}
+	if d.manager, err = do.Invoke[*proxy.BackendManager](i); err != nil {
+		return d, err
+	}
+	if d.cb, err = do.Invoke[*breaker.CircuitBreaker](i); err != nil {
+		return d, err
+	}
+	if d.encAdmin, err = do.Invoke[core.EncryptionAdmin](i); err != nil {
+		return d, err
+	}
+	if d.logLevel, err = do.Invoke[*slog.LevelVar](i); err != nil {
+		return d, err
+	}
+	if d.enc, err = resolveOptionalEncryptor(i, d.cfg.Encryption.Enabled); err != nil {
+		return d, err
+	}
+	if d.stores, err = do.Invoke[core.MetadataStore](i); err != nil {
+		return d, err
+	}
+	if d.replicator, err = do.Invoke[*worker.Replicator](i); err != nil {
+		return d, err
+	}
+	if d.overRep, err = do.Invoke[*worker.OverReplicationCleaner](i); err != nil {
+		return d, err
+	}
+	if d.scrubber, err = do.Invoke[*worker.Scrubber](i); err != nil {
+		return d, err
+	}
+	if d.drain, err = do.Invoke[*drain.Manager](i); err != nil {
+		return d, err
+	}
+	return d, nil
+}
+
 // ProvideAdminHandler creates the admin API handler.
 func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
-	cfg, err := do.Invoke[*config.Config](i)
+	d, err := resolveAdminHandlerRequiredDeps(i)
 	if err != nil {
 		return nil, err
 	}
-	manager, err := do.Invoke[*proxy.BackendManager](i)
-	if err != nil {
-		return nil, err
-	}
-	cb, err := do.Invoke[*breaker.CircuitBreaker](i)
-	if err != nil {
-		return nil, err
-	}
-	encAdmin, err := do.Invoke[core.EncryptionAdmin](i)
-	if err != nil {
-		return nil, err
-	}
-	logLevel, err := do.Invoke[*slog.LevelVar](i)
-	if err != nil {
-		return nil, err
-	}
-	enc, err := resolveOptionalEncryptor(i, cfg.Encryption.Enabled)
-	if err != nil {
-		return nil, err
-	}
-
-	deps, err := resolveAdminHandlerDeps(i)
-	if err != nil {
-		return nil, err
-	}
-
-	// Reconciler is optional: only registered in worker/all modes.
-	var reconciler *worker.Reconciler
-	if r, err := do.Invoke[*worker.Reconciler](i); err == nil {
-		reconciler = r
-	}
-
-	// MultipartBackfill is optional: only registered when encryption is
-	// enabled (legacy rows can only exist under that mode).
-	var mpBackfill *worker.MultipartBackfill
-	if mb, err := do.Invoke[*worker.MultipartBackfill](i); err == nil {
-		mpBackfill = mb
-	}
-
-	adminToken := cfg.UI.AdminToken
+	adminToken := d.cfg.UI.AdminToken
 	if adminToken == "" {
-		adminToken = cfg.UI.AdminKey
+		adminToken = d.cfg.UI.AdminKey
 	}
-
 	return admin.New(&admin.Deps{
-		BackendOps:        manager,
-		Replicator:        deps.replicator,
-		OverRep:           deps.overRep,
-		Drain:             deps.drain,
-		Scrubber:          deps.scrubber,
-		Lifecycle:         deps.lifecycle,
-		DBCB:              cb,
-		Encryption:        encAdmin,
-		Objects:           deps.objects,
-		Cleanup:           deps.cleanup,
-		Encryptor:         enc,
-		Reconciler:        reconciler,
-		MultipartBackfill: mpBackfill,
+		BackendOps:        d.manager,
+		Replicator:        d.replicator,
+		OverRep:           d.overRep,
+		Drain:             d.drain,
+		Scrubber:          d.scrubber,
+		Lifecycle:         d.stores,
+		DBCB:              d.cb,
+		Encryption:        d.encAdmin,
+		Objects:           d.stores,
+		Cleanup:           d.stores,
+		Encryptor:         d.enc,
+		Reconciler:        invokeOptional[*worker.Reconciler](i),
+		MultipartBackfill: invokeOptional[*worker.MultipartBackfill](i),
 		Token:             adminToken,
-		LogLevel:          logLevel,
+		LogLevel:          d.logLevel,
 	}), nil
 }
 
@@ -1165,11 +1050,11 @@ func ProvideNotifier(i do.Injector) (*notify.Notifier, error) {
 	if err != nil {
 		return nil, err
 	}
-	cs, err := do.Invoke[concreteStore](i)
+	stores, err := do.Invoke[core.MetadataStore](i)
 	if err != nil {
 		return nil, err
 	}
-	return notify.NewNotifier(&cfg.Notifications, cs), nil
+	return notify.NewNotifier(&cfg.Notifications, stores), nil
 }
 
 // -------------------------------------------------------------------------
