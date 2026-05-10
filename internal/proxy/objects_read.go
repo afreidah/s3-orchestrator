@@ -481,7 +481,7 @@ type getAttemptRequest struct {
 // translates encrypted ranges, decrypts and verifies the body, and records
 // the winning result via once.
 func (o *ObjectManager) getObjectAttempt(ctx context.Context, req *getAttemptRequest) (int64, func(), error) {
-	bctx, bcancel := o.withTimeout(ctx)
+	bctx, bcancel := o.WithTimeout(ctx)
 
 	if !o.usage.WithinLimits(req.beName, 1, 0, 0) {
 		bcancel()
@@ -610,7 +610,7 @@ func (o *ObjectManager) HeadObject(ctx context.Context, key string) (*s3be.HeadO
 	locByBackend := o.resolveLocationsByBackend(ctx, key)
 
 	backendName, err := o.withReadFailover(ctx, "HeadObject", key, func(ctx context.Context, beName string, backend s3be.ObjectBackend) (int64, func(), error) {
-		bctx, bcancel := o.withTimeout(ctx)
+		bctx, bcancel := o.WithTimeout(ctx)
 		if !o.usage.WithinLimits(beName, 1, 0, 0) {
 			bcancel()
 			return 0, noopCleanup, fmt.Errorf("backend %s: %w", beName, errUsageLimitSkip)

@@ -58,7 +58,7 @@ func newAdminHandlerForTest(t *testing.T, opts ...func(*proxy.BackendManager)) *
 		Drain:      mgr.DrainManager,
 		Scrubber:   mgr.Scrubber,
 		Lifecycle:  mock,
-		DBCB:       cb,
+		DBHealthy:  cb.IsHealthy,
 		Objects:    mock,
 		Cleanup:    mock,
 		Token:      "test-token",

@@ -218,7 +218,7 @@ func TestExcludeUnhealthy_UnknownBackendSkipped(t *testing.T) {
 func TestWithTimeout_NoParentDeadline(t *testing.T) {
 	t.Parallel()
 	core := &backendCore{backendTimeout: 5 * time.Second}
-	ctx, cancel := core.withTimeout(context.Background())
+	ctx, cancel := core.WithTimeout(context.Background())
 	defer cancel()
 
 	deadline, ok := ctx.Deadline()
@@ -241,7 +241,7 @@ func TestWithTimeout_ParentTighter(t *testing.T) {
 	defer parentCancel()
 
 	core := &backendCore{backendTimeout: 30 * time.Second}
-	ctx, cancel := core.withTimeout(parent)
+	ctx, cancel := core.WithTimeout(parent)
 	defer cancel()
 
 	deadline, ok := ctx.Deadline()
@@ -264,7 +264,7 @@ func TestWithTimeout_BackendTighter(t *testing.T) {
 	defer parentCancel()
 
 	core := &backendCore{backendTimeout: 1 * time.Second}
-	ctx, cancel := core.withTimeout(parent)
+	ctx, cancel := core.WithTimeout(parent)
 	defer cancel()
 
 	deadline, ok := ctx.Deadline()
@@ -281,7 +281,7 @@ func TestWithTimeout_BackendTighter(t *testing.T) {
 func TestWithTimeout_ZeroTimeout(t *testing.T) {
 	t.Parallel()
 	core := &backendCore{backendTimeout: 0}
-	ctx, cancel := core.withTimeout(context.Background())
+	ctx, cancel := core.WithTimeout(context.Background())
 	defer cancel()
 
 	if _, ok := ctx.Deadline(); ok {
@@ -297,10 +297,10 @@ func TestWithTimeout_ZeroTimeout(t *testing.T) {
 func TestAcquireAdmission_NilSem(t *testing.T) {
 	t.Parallel()
 	core := &backendCore{}
-	if !core.acquireAdmission(context.Background()) {
+	if !core.AcquireAdmission(context.Background()) {
 		t.Error("nil semaphore should always succeed")
 	}
-	core.releaseAdmission() // should not panic
+	core.ReleaseAdmission() // should not panic
 }
 
 // TestAcquireAdmission_Bounded verifies the acquire admission bounded path by exercising context.Background, context.WithCancel.
@@ -310,23 +310,23 @@ func TestAcquireAdmission_Bounded(t *testing.T) {
 	core := &backendCore{admissionSem: sem}
 
 	// First acquire succeeds
-	if !core.acquireAdmission(context.Background()) {
+	if !core.AcquireAdmission(context.Background()) {
 		t.Fatal("first acquire should succeed")
 	}
 
 	// Second acquire should block; use a cancelled context to prove it
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if core.acquireAdmission(ctx) {
+	if core.AcquireAdmission(ctx) {
 		t.Error("acquire on full semaphore with cancelled context should return false")
 	}
 
 	// Release and re-acquire
-	core.releaseAdmission()
-	if !core.acquireAdmission(context.Background()) {
+	core.ReleaseAdmission()
+	if !core.AcquireAdmission(context.Background()) {
 		t.Error("acquire after release should succeed")
 	}
-	core.releaseAdmission()
+	core.ReleaseAdmission()
 }
 
 // TestEligibleForWrite_CombinesAllFilters verifies the eligible for write combines all filters contract.

@@ -21,11 +21,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"go.opentelemetry.io/otel/attribute"
-
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
@@ -42,7 +39,7 @@ import (
 // configured replication factor. Embeds *backendCore for access to shared
 // infrastructure.
 type OverReplicationCleaner struct {
-	log *slog.Logger
+	log   *slog.Logger
 	ops   Ops
 	store OverReplicationStore
 	cfg   syncutil.AtomicConfig[config.ReplicationConfig]
@@ -70,14 +67,9 @@ func (c *OverReplicationCleaner) Config() *config.ReplicationConfig {
 // Clean finds over-replicated objects and removes excess copies to reach the
 // target replication factor. Returns the number of copies removed.
 func (c *OverReplicationCleaner) Clean(ctx context.Context, cfg config.ReplicationConfig) (int, error) {
-	ctx = audit.WithRequestID(ctx, audit.NewID())
-	return observe.Run(ctx,
-		observe.Internal("OverReplicationClean",
-			[]attribute.KeyValue{telemetry.AttrOperation.String("over_replication_clean")},
-			nil),
-		func(ctx context.Context) (int, error) {
-			return c.clean(ctx, cfg)
-		})
+	return runOpsCycle(ctx, "OverReplicationClean", "over_replication_clean", func(ctx context.Context) (int, error) {
+		return c.clean(ctx, cfg)
+	})
 }
 
 // clean is the body of Clean after observe.Run sets up the span.

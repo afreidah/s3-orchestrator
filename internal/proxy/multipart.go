@@ -129,7 +129,7 @@ func (mp *MultipartManager) CreateMultipartUpload(ctx context.Context, key, cont
 		return "", "", err
 	}
 
-	uploadID := GenerateUploadID()
+	uploadID := audit.NewID()
 
 	// Generate the upload-level DEK now so every UploadPart and the
 	// assembled object's CompleteMultipartUpload share one wrapped DEK.
@@ -197,16 +197,12 @@ func (mp *MultipartManager) UploadPart(ctx context.Context, bucket, key, uploadI
 		return "", err
 	}
 
-	mu, err := mp.parent.stores.GetMultipartUpload(ctx, uploadID)
+	mu, err := mp.fetchScopedUpload(ctx, span, bucket, key, uploadID, operation)
 	if err != nil {
-		return "", mp.classifyWriteError(span, operation, err)
-	}
-	if err := validateMultipartScope(mu, bucket, key); err != nil {
-		span.SetStatus(codes.Error, err.Error())
 		return "", err
 	}
 
-	be, err := mp.getBackend(mu.BackendName)
+	be, err := mp.GetBackend(mu.BackendName)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return "", err
@@ -226,7 +222,7 @@ func (mp *MultipartManager) UploadPart(ctx context.Context, bucket, key, uploadI
 
 	// Store part under a temp key
 	partKey := multipartPartKey(uploadID, partNumber)
-	bctx, bcancel := mp.withTimeout(ctx)
+	bctx, bcancel := mp.WithTimeout(ctx)
 	defer bcancel()
 	etag, err := be.PutObject(bctx, partKey, uploadBody, uploadSize, "application/octet-stream", nil)
 	if err != nil {
@@ -238,18 +234,7 @@ func (mp *MultipartManager) UploadPart(ctx context.Context, bucket, key, uploadI
 	if err := mp.parent.stores.RecordPart(ctx, uploadID, partNumber, etag, uploadSize, enc); err != nil {
 		slog.ErrorContext(ctx, "recordPart failed, cleaning up part object",
 			"upload_id", uploadID, "part", partNumber, "error", err)
-		// Account for both API calls the failure path made: the PUT that
-		// succeeded against the backend (the success-path Record at the
-		// bottom of this function only runs when we return nil) and the
-		// cleanup DELETE about to run.
-		mp.usage.Record(mu.BackendName, 1, 0, 0) // PUT
-		delErr := mp.deleteWithTimeout(ctx, be, partKey)
-		mp.usage.Record(mu.BackendName, 1, 0, 0) // cleanup DELETE
-		if delErr != nil {
-			slog.ErrorContext(ctx, "failed to clean up orphaned part object",
-				"key", partKey, "error", delErr)
-			mp.parent.enqueueCleanup(ctx, mu.BackendName, partKey, "orphan_part_record_failed", uploadSize)
-		}
+		mp.parent.recoverFromRecordFailure(ctx, be, mu.BackendName, partKey, "orphan_part_record_failed", uploadSize)
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)
 		return "", fmt.Errorf("failed to record part: %w", err)
@@ -327,14 +312,11 @@ func (mp *MultipartManager) CompleteMultipartUpload(ctx context.Context, bucket,
 	)
 	defer span.End()
 
-	mu, err := mp.parent.stores.GetMultipartUpload(ctx, uploadID)
+	mu, err := mp.fetchScopedUpload(ctx, span, bucket, key, uploadID, operation)
 	if err != nil {
-		return "", mp.classifyWriteError(span, operation, err)
-	}
-	if err := validateMultipartScope(mu, bucket, key); err != nil {
-		span.SetStatus(codes.Error, err.Error())
 		return "", err
 	}
+	_ = mu // CompleteMultipartUpload's locked path re-fetches under the advisory lock.
 
 	var etag string
 	acquired, err := mp.parent.stores.WithAdvisoryLock(ctx, uploadIDLockID(uploadID), func(ctx context.Context) error {
@@ -375,7 +357,7 @@ func (mp *MultipartManager) completeMultipartUploadLocked(
 	if err != nil {
 		return "", mp.classifyWriteError(span, operation, err)
 	}
-	be, err := mp.getBackend(mu.BackendName)
+	be, err := mp.GetBackend(mu.BackendName)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return "", err
@@ -388,12 +370,12 @@ func (mp *MultipartManager) completeMultipartUploadLocked(
 
 	defer mp.cleanupCompletedUpload(ctx, span, be, mu, uploadID, parts)
 
-	totalPlaintextSize, anyEncrypted := sumPlaintextSize(parts)
+	totalPlaintextSize := sumPlaintextSize(parts)
 
 	pr, pipeCancel := mp.streamPartsThroughPipe(ctx, be, uploadID, parts)
 	defer pipeCancel()
 
-	uploadBody, uploadSize, enc, err := mp.buildAssembledUpload(ctx, span, mu, pr, totalPlaintextSize, anyEncrypted)
+	uploadBody, uploadSize, enc, err := mp.buildAssembledUpload(ctx, span, mu, pr, totalPlaintextSize)
 	if err != nil {
 		return "", err
 	}
@@ -508,42 +490,37 @@ func (mp *MultipartManager) collectRequestedParts(ctx context.Context, span trac
 	return parts, nil
 }
 
-// sumPlaintextSize returns the total plaintext byte count across parts
-// and whether any part was uploaded encrypted. Encrypted parts contribute
-// PlaintextSize; unencrypted parts contribute SizeBytes.
-func sumPlaintextSize(parts []core.MultipartPart) (int64, bool) {
+// sumPlaintextSize returns the total plaintext byte count across parts.
+// Encrypted parts contribute PlaintextSize; unencrypted parts contribute
+// SizeBytes.
+func sumPlaintextSize(parts []core.MultipartPart) int64 {
 	var total int64
-	anyEncrypted := false
 	for _, part := range parts {
 		if part.Encrypted {
 			total += part.PlaintextSize
-			anyEncrypted = true
 		} else {
 			total += part.SizeBytes
 		}
 	}
-	return total, anyEncrypted
+	return total
 }
 
 // buildAssembledUpload prepares the request body sent to the backend
 // during assembly. When the orchestrator encryptor is configured, the
 // pipe is wrapped in EncryptWithDEK using the upload-level DEK so the
 // assembled object lands as a single ciphertext that shares its DEK
-// with every part. anyEncrypted is informational - inline decryption
-// already runs in streamPartsThroughPipe so the pipe always emits
-// plaintext. mu is required when the encryptor is configured because
-// the assembled object must reuse mu.EncryptionKey / mu.KeyID rather
-// than wrapping a fresh DEK for the final write.
+// with every part. Inline decryption already runs in
+// streamPartsThroughPipe so the pipe always emits plaintext. mu is
+// required when the encryptor is configured because the assembled
+// object must reuse mu.EncryptionKey / mu.KeyID rather than wrapping a
+// fresh DEK for the final write.
 func (mp *MultipartManager) buildAssembledUpload(
 	ctx context.Context,
 	span trace.Span,
 	mu *core.MultipartUpload,
 	pr io.Reader,
 	totalPlaintextSize int64,
-	anyEncrypted bool,
 ) (io.Reader, int64, *core.EncryptionMeta, error) {
-	_ = ctx
-	_ = anyEncrypted
 	if mp.encryptor == nil {
 		return pr, totalPlaintextSize, nil, nil
 	}
@@ -573,7 +550,12 @@ func (mp *MultipartManager) buildAssembledUpload(
 // URL, matching them against the stored ObjectKey via validateMultipartScope
 // so a caller for one bucket cannot abort an upload that belongs to another.
 func (mp *MultipartManager) AbortMultipartUpload(ctx context.Context, bucket, key, uploadID string) error {
-	mu, err := mp.fetchScopedUpload(ctx, bucket, key, uploadID, "AbortMultipartUpload")
+	const operation = "AbortMultipartUpload"
+	ctx, span := telemetry.StartSpan(ctx, managerSpanPrefix+operation,
+		telemetry.AttrUploadID.String(uploadID),
+	)
+	defer span.End()
+	mu, err := mp.fetchScopedUpload(ctx, span, bucket, key, uploadID, operation)
 	if err != nil {
 		return err
 	}
@@ -584,16 +566,16 @@ func (mp *MultipartManager) AbortMultipartUpload(ctx context.Context, bucket, ke
 // to the (bucket, key) the request URL implies. Returns the same 404
 // NoSuchUpload error for both missing and out-of-scope rows so callers
 // cannot distinguish the two and probe for upload IDs across buckets.
-func (mp *MultipartManager) fetchScopedUpload(ctx context.Context, bucket, key, uploadID, operation string) (*core.MultipartUpload, error) {
+// span must be the operation's pre-existing span (created at the entry
+// point). Errors are recorded against it so the operation span shows
+// the failure rather than a detached child span.
+func (mp *MultipartManager) fetchScopedUpload(ctx context.Context, span trace.Span, bucket, key, uploadID, operation string) (*core.MultipartUpload, error) {
 	mu, err := mp.parent.stores.GetMultipartUpload(ctx, uploadID)
 	if err != nil {
-		_, span := telemetry.StartSpan(ctx, managerSpanPrefix+operation,
-			telemetry.AttrUploadID.String(uploadID),
-		)
-		defer span.End()
 		return nil, mp.classifyWriteError(span, operation, err)
 	}
 	if err := validateMultipartScope(mu, bucket, key); err != nil {
+		span.SetStatus(codes.Error, err.Error())
 		return nil, err
 	}
 	return mu, nil
@@ -612,7 +594,7 @@ func (mp *MultipartManager) abortByMultipartRow(ctx context.Context, mu *core.Mu
 	start := time.Now()
 	uploadID := mu.UploadID
 
-	be, err := mp.getBackend(mu.BackendName)
+	be, err := mp.GetBackend(mu.BackendName)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return err
@@ -674,11 +656,12 @@ func validateMultipartScope(mu *core.MultipartUpload, bucket, key string) error 
 
 // GetParts returns all parts for a multipart upload.
 func (mp *MultipartManager) GetParts(ctx context.Context, bucket, key, uploadID string) ([]core.MultipartPart, error) {
-	mu, err := mp.parent.stores.GetMultipartUpload(ctx, uploadID)
-	if err != nil {
-		return nil, err
-	}
-	if err := validateMultipartScope(mu, bucket, key); err != nil {
+	const operation = "GetParts"
+	ctx, span := telemetry.StartSpan(ctx, managerSpanPrefix+operation,
+		telemetry.AttrUploadID.String(uploadID),
+	)
+	defer span.End()
+	if _, err := mp.fetchScopedUpload(ctx, span, bucket, key, uploadID, operation); err != nil {
 		return nil, err
 	}
 	return mp.parent.stores.GetParts(ctx, uploadID)
@@ -785,7 +768,7 @@ func (mp *MultipartManager) streamOnePart(
 	part *core.MultipartPart,
 ) error {
 	partKey := multipartPartKey(uploadID, part.PartNumber)
-	bctx, bcancel := mp.withTimeout(ctx)
+	bctx, bcancel := mp.WithTimeout(ctx)
 	defer bcancel()
 
 	result, err := be.GetObject(bctx, partKey, "")

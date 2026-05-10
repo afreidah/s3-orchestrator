@@ -1032,7 +1032,7 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 		Drain:             d.drain,
 		Scrubber:          d.scrubber,
 		Lifecycle:         d.stores,
-		DBCB:              d.cb,
+		DBHealthy:         d.cb.IsHealthy,
 		Encryption:        d.encAdmin,
 		Objects:           d.stores,
 		Cleanup:           d.stores,

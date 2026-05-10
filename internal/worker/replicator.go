@@ -21,11 +21,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"go.opentelemetry.io/otel/attribute"
-
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
@@ -40,7 +37,7 @@ import (
 
 // Replicator creates additional copies of under-replicated objects across backends.
 type Replicator struct {
-	log *slog.Logger
+	log   *slog.Logger
 	ops   Ops
 	store ReplicatorStore
 	cfg   syncutil.AtomicConfig[config.ReplicationConfig]
@@ -68,14 +65,9 @@ func (r *Replicator) Config() *config.ReplicationConfig {
 // Replicate finds under-replicated objects and creates additional copies to
 // reach the target replication factor. Returns the number of copies created.
 func (r *Replicator) Replicate(ctx context.Context, cfg config.ReplicationConfig) (int, error) {
-	ctx = audit.WithRequestID(ctx, audit.NewID())
-	return observe.Run(ctx,
-		observe.Internal("Replicate",
-			[]attribute.KeyValue{telemetry.AttrOperation.String("replicate")},
-			nil),
-		func(ctx context.Context) (int, error) {
-			return r.replicate(ctx, cfg)
-		})
+	return runOpsCycle(ctx, "Replicate", "replicate", func(ctx context.Context) (int, error) {
+		return r.replicate(ctx, cfg)
+	})
 }
 
 // replicate is the body of Replicate after observe.Run sets up the span.
@@ -299,8 +291,6 @@ func (r *Replicator) FindReplicaTarget(ctx context.Context, quotaStats map[strin
 // source backend name that was successfully read from and the size_bytes
 // recorded on that source's ObjectLocation row (the size of the bytes that
 // were actually transferred).
-// CopyToReplica copy to replica.
-// CopyToReplica copy to replica.
 func (r *Replicator) CopyToReplica(ctx context.Context, key string, copies []core.ObjectLocation, target string) (string, int64, error) {
 	targetBackend, err := r.ops.GetBackend(target)
 	if err != nil {
@@ -379,10 +369,8 @@ func (r *Replicator) pruneStaleSource(ctx context.Context, key, backendName stri
 		"key", key, "backend", backendName)
 }
 
-// cleanupOrphan deletes an object from a backend when the DB record was not
+// CleanupOrphan deletes an object from a backend when the DB record was not
 // created (e.g. source was deleted during replication).
-// CleanupOrphan cleanup orphan.
-// CleanupOrphan cleanup orphan.
 func (r *Replicator) CleanupOrphan(ctx context.Context, backendName, key string, sizeBytes int64) {
 	be, ok := r.ops.Backends()[backendName]
 	if !ok {
@@ -392,11 +380,9 @@ func (r *Replicator) CleanupOrphan(ctx context.Context, backendName, key string,
 	r.ops.Usage().Record(backendName, 1, 0, 0)
 }
 
-// unhealthyBackends returns backend names whose circuit breakers have been
+// UnhealthyBackends returns backend names whose circuit breakers have been
 // open longer than the given threshold. Returns nil when all backends are
 // healthy or circuit breakers are not enabled.
-// UnhealthyBackends unhealthy backends.
-// UnhealthyBackends unhealthy backends.
 func (r *Replicator) UnhealthyBackends(threshold time.Duration) []string {
 	var names []string
 	for name, be := range r.ops.Backends() {
@@ -414,10 +400,8 @@ func (r *Replicator) UnhealthyBackends(threshold time.Duration) []string {
 	return names
 }
 
-// isBackendHealthy returns true if the backend has a closed circuit breaker
+// IsBackendHealthy returns true if the backend has a closed circuit breaker
 // or has no circuit breaker wrapper.
-// IsBackendHealthy reports whether backend healthy.
-// IsBackendHealthy reports whether backend healthy.
 func (r *Replicator) IsBackendHealthy(name string) bool {
 	be, ok := r.ops.Backends()[name]
 	if !ok {

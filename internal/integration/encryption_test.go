@@ -119,7 +119,7 @@ func setupEncryptionEnv(t *testing.T) *encryptionTestEnv {
 		Drain:      mgr.DrainManager,
 		Scrubber:   mgr.Scrubber,
 		Lifecycle:  testStore,
-		DBCB:       testDatabaseCB,
+		DBHealthy:  testDatabaseCB.IsHealthy,
 		Encryption: testStore,
 		Objects:    testStore,
 		Cleanup:    testStore,
