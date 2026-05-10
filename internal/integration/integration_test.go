@@ -961,7 +961,7 @@ func TestSpreadWriteRouting_DistributesAcrossBackends(t *testing.T) {
 		RoutingStrategy: config.RoutingSpread,
 	})
 	_ = spreadManager
-	proxytest.AttachWorkersWithStores(spreadManager, &stores)
+	proxytest.AttachWorkers(spreadManager, stores)
 	spreadSrv := &s3api.Server{
 		Manager: spreadManager,
 	}
@@ -1054,7 +1054,7 @@ func TestSpreadWriteRouting_PreferLeastUtilizedAfterImbalance(t *testing.T) {
 		RoutingStrategy: config.RoutingSpread,
 	})
 	_ = spreadManager
-	proxytest.AttachWorkersWithStores(spreadManager, &stores)
+	proxytest.AttachWorkers(spreadManager, stores)
 	spreadSrv := &s3api.Server{
 		Manager: spreadManager,
 	}
@@ -1132,7 +1132,7 @@ func TestSpreadWriteRouting_ContrastWithPackBehavior(t *testing.T) {
 		RoutingStrategy: config.RoutingSpread,
 	})
 	_ = spreadManager
-	proxytest.AttachWorkersWithStores(spreadManager, &stores)
+	proxytest.AttachWorkers(spreadManager, stores)
 	spreadSrv := &s3api.Server{
 		Manager: spreadManager,
 	}

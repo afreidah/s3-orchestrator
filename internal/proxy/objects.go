@@ -115,7 +115,7 @@ func (o *ObjectManager) CanAcceptWrite(size int64) bool {
 // a generic message. Returns nil on a DB lookup failure so the caller
 // can fall back to its terse default.
 func (o *ObjectManager) BackendCapacityStats(ctx context.Context) map[string]core.QuotaStat {
-	stats, err := o.parent.stores.Quota.GetQuotaStats(ctx)
+	stats, err := o.parent.stores.GetQuotaStats(ctx)
 	if err != nil {
 		return nil
 	}

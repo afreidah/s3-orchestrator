@@ -47,7 +47,7 @@ func newTestHandlerWithManager(t *testing.T) *Handler {
 	})
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{},
-		Stores:          proxytest.StoresFromMock(mock),
+		Stores:          mock,
 		Dashboard:       mock,
 		Metrics:         mock,
 		Order:           []string{},

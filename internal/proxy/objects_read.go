@@ -59,7 +59,7 @@ var listObjectsMaxPages = 100
 // S3's documented best-effort precondition semantic. ErrObjectNotFound
 // is the canonical "no row" signal and is normalised to (false, nil).
 func (o *ObjectManager) ObjectExists(ctx context.Context, key string) (bool, error) {
-	locs, err := o.parent.stores.Object.GetAllObjectLocations(ctx, key)
+	locs, err := o.parent.stores.GetAllObjectLocations(ctx, key)
 	if errors.Is(err, core.ErrObjectNotFound) {
 		return false, nil
 	}
@@ -77,7 +77,7 @@ func (o *ObjectManager) resolveLocationsByBackend(ctx context.Context, key strin
 	if o.encryptor == nil {
 		return nil
 	}
-	locations, err := o.parent.stores.Object.GetAllObjectLocations(ctx, key)
+	locations, err := o.parent.stores.GetAllObjectLocations(ctx, key)
 	if err != nil {
 		return nil
 	}
@@ -116,7 +116,7 @@ func (o *ObjectManager) withReadFailover(ctx context.Context, operation, key str
 	)
 	defer span.End()
 
-	locations, err := o.parent.stores.Object.GetAllObjectLocations(ctx, key)
+	locations, err := o.parent.stores.GetAllObjectLocations(ctx, key)
 	if err != nil {
 		if errors.Is(err, core.ErrObjectNotFound) {
 			span.SetStatus(codes.Error, "object not found")
@@ -717,7 +717,7 @@ func (o *ObjectManager) ListObjects(ctx context.Context, prefix, delimiter, star
 
 	maxPages := listObjectsMaxPages
 	for page := 0; page < maxPages && result.KeyCount < maxKeys; page++ {
-		storeResult, err := o.parent.stores.Object.ListObjects(ctx, prefix, cursor, maxKeys)
+		storeResult, err := o.parent.stores.ListObjects(ctx, prefix, cursor, maxKeys)
 		if err != nil {
 			return nil, listObjectsError(span, err)
 		}

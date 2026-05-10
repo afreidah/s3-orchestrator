@@ -476,7 +476,7 @@ func TestRebalance_UnknownStrategy(t *testing.T) {
 
 // newRebalanceManager wires a manager with the mock store and named
 // backends.
-func newRebalanceManager(store managerRoles, names []string) *BackendManager {
+func newRebalanceManager(store core.MetadataStore, names []string) *BackendManager {
 	backends := make(map[string]s3be.ObjectBackend, len(names))
 	for _, name := range names {
 		backends[name] = newMockBackend()

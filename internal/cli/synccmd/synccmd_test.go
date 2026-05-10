@@ -20,12 +20,11 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // freshStore opens a fresh in-memory sqlite store for each test so
-// importPage can exercise the real ObjectStore surface end-to-end.
-func freshStore(t *testing.T) (core.ObjectStore, core.LifecycleAdmin) {
+// importPage can exercise the real importer surface end-to-end.
+func freshStore(t *testing.T) (importer, adminStore) {
 	t.Helper()
 	path := writeYAML(t, validYAML)
 	cfg, _, code := loadConfig(path, "b1")
@@ -40,12 +39,10 @@ func freshStore(t *testing.T) (core.ObjectStore, core.LifecycleAdmin) {
 	return objects, adminDB
 }
 
-// errorObjectStore is a tiny embedding wrapper that makes ImportObject
-// return a specific error while delegating every other ObjectStore method
-// to the real sqlite store. Used to drive the error-propagation branch in
-// importPage without faking the full surface.
+// errorObjectStore makes ImportObject return a specific error so
+// importPage's error-propagation branch can be driven without faking
+// any other store methods.
 type errorObjectStore struct {
-	core.ObjectStore
 	err error
 }
 
@@ -249,8 +246,8 @@ func TestImportPage_RealImportSkipsExisting(t *testing.T) {
 // TestImportPage_PropagatesError covers the wrap-and-return branch when the
 // underlying store fails.
 func TestImportPage_PropagatesError(t *testing.T) {
-	objects, _ := freshStore(t)
-	wrapped := errorObjectStore{ObjectStore: objects, err: os.ErrPermission}
+	_, _ = freshStore(t)
+	wrapped := errorObjectStore{err: os.ErrPermission}
 	_, _, _, err := importPage(
 		context.Background(), wrapped,
 		[]backend.ListedObject{{Key: "x", SizeBytes: 1}},

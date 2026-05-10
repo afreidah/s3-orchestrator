@@ -18,6 +18,32 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
+// MetadataStore is the union of every method the metadata-persistence
+// layer exposes. Both *postgres.Store and *sqlite.Store satisfy it, and
+// every consumer (proxy / transport / cli / worker) takes it as the one
+// dependency declaration. The narrow per-role interfaces below are kept
+// only as embedding sources for this composite; consumer code does not
+// reference them directly. CB protection lives in each driver's DBTX
+// chokepoint, so this single typed surface carries the breaker semantics
+// transparently.
+type MetadataStore interface {
+	ObjectStore
+	QuotaStore
+	MultipartStore
+	ReplicationStore
+	CleanupStore
+	PendingStore
+	IntegrityStore
+	ExpiredObjectsLister
+	BackendLifecycleStore
+	UsageFlusher
+	AdvisoryLocker
+	DashboardStore
+	LifecycleAdmin
+	EncryptionAdmin
+	NotificationOutbox
+}
+
 // -------------------------------------------------------------------------
 // REQUEST-TIME ROLE INTERFACES
 // -------------------------------------------------------------------------

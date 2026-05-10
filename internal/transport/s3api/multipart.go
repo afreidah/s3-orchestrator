@@ -99,7 +99,7 @@ func (s *Server) handleCreateMultipartUpload(ctx context.Context, w http.Respons
 
 	// Check per-bucket multipart upload limit
 	if limit := s.GetBucketAuth().MaxMultipartUploads(bucket); limit > 0 {
-		count, err := s.Manager.Multipart().CountActiveMultipartUploads(ctx, internalkey.Prefix(bucket))
+		count, err := s.Manager.Stores().CountActiveMultipartUploads(ctx, internalkey.Prefix(bucket))
 		if err != nil {
 			return writeStorageError(w, err, "Failed to check multipart upload count"), err
 		}

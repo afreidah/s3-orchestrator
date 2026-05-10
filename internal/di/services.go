@@ -28,6 +28,14 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
+// advisoryLocker is the consumer-defined slice of the metadata store
+// the locked-ticker services need: a single TryAdvisoryLock call per
+// tick. Declared here so this package owns its dependency contract
+// instead of importing a producer-side type from internal/store/core.
+type advisoryLocker interface {
+	WithAdvisoryLock(ctx context.Context, lockID int64, fn func(ctx context.Context) error) (bool, error)
+}
+
 // Default intervals and thresholds for the background services below. Used
 // when the corresponding config section is absent or leaves the field zero.
 const (
@@ -48,7 +56,7 @@ const (
 // lock. It handles audit context creation, lock acquisition, skip/error
 // logging, and context cancellation.
 type lockedTickerService struct {
-	locker   core.AdvisoryLocker
+	locker   advisoryLocker
 	interval time.Duration
 	lockID   int64
 	name     string
@@ -116,11 +124,11 @@ func (s *lockedTickerService) runOnce(ctx context.Context, fn func(ctx context.C
 // database, acquiring an advisory lock only when Redis counters are active.
 type usageFlushService struct {
 	manager *proxy.BackendManager
-	locker  core.AdvisoryLocker
+	locker  advisoryLocker
 }
 
 // NewUsageFlushService constructs the usage flush background service.
-func NewUsageFlushService(manager *proxy.BackendManager, locker core.AdvisoryLocker) lifecycle.Runner {
+func NewUsageFlushService(manager *proxy.BackendManager, locker advisoryLocker) lifecycle.Runner {
 	return &usageFlushService{manager: manager, locker: locker}
 }
 
@@ -197,7 +205,7 @@ func (s *usageFlushService) doFlush(ctx context.Context) {
 // -------------------------------------------------------------------------
 
 // NewMultipartCleanupService constructs the multipart-cleanup background service.
-func NewMultipartCleanupService(manager *proxy.BackendManager, locker core.AdvisoryLocker, staleTimeout time.Duration) lifecycle.Runner {
+func NewMultipartCleanupService(manager *proxy.BackendManager, locker advisoryLocker, staleTimeout time.Duration) lifecycle.Runner {
 	if staleTimeout <= 0 {
 		staleTimeout = defaultMultipartStaleTimeout
 	}
@@ -213,7 +221,7 @@ func NewMultipartCleanupService(manager *proxy.BackendManager, locker core.Advis
 }
 
 // NewCleanupQueueService constructs the cleanup-queue background service.
-func NewCleanupQueueService(cleanup *worker.CleanupWorker, locker core.AdvisoryLocker) lifecycle.Runner {
+func NewCleanupQueueService(cleanup *worker.CleanupWorker, locker advisoryLocker) lifecycle.Runner {
 	return &lockedTickerService{
 		locker:   locker,
 		interval: defaultCleanupQueueTick,
@@ -233,7 +241,7 @@ func NewCleanupQueueService(cleanup *worker.CleanupWorker, locker core.AdvisoryL
 // destination backend and either promoting the intent into object_locations
 // (bytes present) or dropping it (bytes absent). Returns nil when no
 // pending reaper is configured.
-func NewPendingReaperService(reaper *worker.PendingReaper, locker core.AdvisoryLocker, tick time.Duration) lifecycle.Runner {
+func NewPendingReaperService(reaper *worker.PendingReaper, locker advisoryLocker, tick time.Duration) lifecycle.Runner {
 	if reaper == nil {
 		return nil
 	}
@@ -255,7 +263,7 @@ func NewPendingReaperService(reaper *worker.PendingReaper, locker core.AdvisoryL
 }
 
 // NewRebalancerService constructs the rebalancer background service.
-func NewRebalancerService(manager *proxy.BackendManager, rebalancer *worker.Rebalancer, locker core.AdvisoryLocker) lifecycle.Runner {
+func NewRebalancerService(manager *proxy.BackendManager, rebalancer *worker.Rebalancer, locker advisoryLocker) lifecycle.Runner {
 	interval := defaultRebalanceInterval
 	if rcfg := rebalancer.Config(); rcfg != nil && rcfg.Interval > 0 {
 		interval = rcfg.Interval
@@ -288,7 +296,7 @@ func NewRebalancerService(manager *proxy.BackendManager, rebalancer *worker.Reba
 }
 
 // NewLifecycleService constructs the lifecycle-expiration background service.
-func NewLifecycleService(manager *proxy.BackendManager, locker core.AdvisoryLocker) lifecycle.Runner {
+func NewLifecycleService(manager *proxy.BackendManager, locker advisoryLocker) lifecycle.Runner {
 	return &lockedTickerService{
 		locker:   locker,
 		interval: defaultLifecycleTick,
@@ -322,7 +330,7 @@ func NewLifecycleService(manager *proxy.BackendManager, locker core.AdvisoryLock
 }
 
 // NewOverReplicationService constructs the over-replication cleanup service.
-func NewOverReplicationService(manager *proxy.BackendManager, overRep *worker.OverReplicationCleaner, locker core.AdvisoryLocker) lifecycle.Runner {
+func NewOverReplicationService(manager *proxy.BackendManager, overRep *worker.OverReplicationCleaner, locker advisoryLocker) lifecycle.Runner {
 	interval := defaultOverReplicationTick
 	if rcfg := overRep.Config(); rcfg != nil && rcfg.WorkerInterval > 0 {
 		interval = rcfg.WorkerInterval
@@ -355,7 +363,7 @@ func NewOverReplicationService(manager *proxy.BackendManager, overRep *worker.Ov
 }
 
 // NewReplicatorService constructs the replication background service.
-func NewReplicatorService(manager *proxy.BackendManager, replicator *worker.Replicator, locker core.AdvisoryLocker) lifecycle.Runner {
+func NewReplicatorService(manager *proxy.BackendManager, replicator *worker.Replicator, locker advisoryLocker) lifecycle.Runner {
 	replicateWork := func(ctx context.Context) {
 		rcfg := replicator.Config()
 		if rcfg == nil {
@@ -391,7 +399,7 @@ func NewReplicatorService(manager *proxy.BackendManager, replicator *worker.Repl
 }
 
 // NewReconcileService constructs the reconcile background service.
-func NewReconcileService(reconciler *worker.Reconciler, locker core.AdvisoryLocker, interval time.Duration) lifecycle.Runner {
+func NewReconcileService(reconciler *worker.Reconciler, locker advisoryLocker, interval time.Duration) lifecycle.Runner {
 	return &lockedTickerService{
 		locker:   locker,
 		interval: interval,
@@ -447,7 +455,7 @@ func (w *circuitBreakerWatchdog) checkAll() {
 // -------------------------------------------------------------------------
 
 // NewScrubberService constructs the integrity scrubber background service.
-func NewScrubberService(scrubber *worker.Scrubber, locker core.AdvisoryLocker) lifecycle.Runner {
+func NewScrubberService(scrubber *worker.Scrubber, locker advisoryLocker) lifecycle.Runner {
 	interval := defaultScrubberInterval
 	if icfg := scrubber.Config(); icfg != nil && icfg.ScrubberInterval > 0 {
 		interval = icfg.ScrubberInterval

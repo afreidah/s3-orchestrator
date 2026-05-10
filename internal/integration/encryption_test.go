@@ -88,7 +88,7 @@ func setupEncryptionEnv(t *testing.T) *encryptionTestEnv {
 		RoutingStrategy: config.RoutingPack,
 		Encryptor:       enc,
 	})
-	proxytest.AttachWorkersWithStores(mgr, &stores)
+	proxytest.AttachWorkers(mgr, stores)
 
 	// Start proxy server
 	srv := &s3api.Server{Manager: mgr}

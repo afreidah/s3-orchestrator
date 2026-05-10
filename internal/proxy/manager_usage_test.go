@@ -64,7 +64,7 @@ func stubFlushUsage(ft *flushTracker) func(context.Context, string, string, int6
 
 // newUsageManager creates a BackendManager with the given backend names and a
 // configurable mock store.
-func newUsageManager(backendNames []string, store managerRoles) *BackendManager {
+func newUsageManager(backendNames []string, store core.MetadataStore) *BackendManager {
 	backends := make(map[string]backend.ObjectBackend, len(backendNames))
 	for _, name := range backendNames {
 		backends[name] = newMockBackend()
@@ -80,7 +80,7 @@ func newUsageManager(backendNames []string, store managerRoles) *BackendManager 
 }
 
 // newUsageManagerWithLimits constructs a new usage manager with limits.
-func newUsageManagerWithLimits(backendNames []string, store managerRoles, limits map[string]core.UsageLimits) *BackendManager {
+func newUsageManagerWithLimits(backendNames []string, store core.MetadataStore, limits map[string]core.UsageLimits) *BackendManager {
 	backends := make(map[string]backend.ObjectBackend, len(backendNames))
 	for _, name := range backendNames {
 		backends[name] = newMockBackend()

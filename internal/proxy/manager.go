@@ -44,14 +44,18 @@ import (
 // -------------------------------------------------------------------------
 
 // BackendManagerConfig holds the parameters for creating a BackendManager.
-// Stores carries the narrow per-role store interfaces instead of one "god"
-// store; Metrics and Dashboard carry the narrow views used by
-// MetricsCollector and DashboardAggregator respectively.
+// Stores carries the metadata-store contract. Metrics carries the narrow
+// proxy.metrics.Deps used by MetricsCollector.
 type BackendManagerConfig struct {
 	Backends          map[string]backend.ObjectBackend
-	Stores            Stores
+	Stores            core.MetadataStore
 	Metrics           metrics.Deps
-	Dashboard         core.DashboardStore
+	Dashboard         core.MetadataStore
+	// PendingEnabled toggles the PUT-before-COMMIT pending-row pattern
+	// (write_path.pending_pattern.enabled). When false the manager skips
+	// pending-intent inserts and pending-promotion paths and falls back
+	// to the legacy cleanup-on-failure flow.
+	PendingEnabled bool
 	Order             []string
 	CacheTTL          time.Duration
 	BackendTimeout    time.Duration
@@ -86,7 +90,8 @@ type BackendManagerConfig struct {
 // infra primitives stay on *backendCore.
 type BackendManager struct {
 	*backendCore
-	stores           Stores                // per-role store views
+	stores           core.MetadataStore    // metadata-store dependency
+	pendingEnabled   bool                  // mirrors cfg.PendingEnabled for write-path branches
 	MultipartManager *MultipartManager     // multipart upload lifecycle
 	ObjectManager    *ObjectManager        // CRUD, read failover, broadcast reads
 	dashboard        *dashboard.Aggregator // web UI data aggregation
@@ -161,6 +166,7 @@ func NewBackendManager(cfg *BackendManagerConfig) *BackendManager {
 	m = &BackendManager{
 		backendCore:      core,
 		stores:           cfg.Stores,
+		pendingEnabled:   cfg.PendingEnabled,
 		MultipartManager: multipartManager,
 		ObjectManager:    objectManager,
 		dashboard:        dashboard.New(cfg.Dashboard, usage, cfg.Order),
@@ -218,7 +224,7 @@ func (m *BackendManager) UpdateUsageLimits(limits map[string]core.UsageLimits) {
 // (including backend_usage) have been removed.
 func (m *BackendManager) FlushUsage(ctx context.Context) error {
 	skip := m.DrainManager.CompletedBackends()
-	return m.usage.FlushUsage(ctx, m.stores.Usage, skip)
+	return m.usage.FlushUsage(ctx, m.stores, skip)
 }
 
 // RedisCounterConfigured returns true when the counter backend is a Redis
@@ -336,7 +342,7 @@ func (m *BackendManager) importSyncPage(
 		if !ok {
 			continue
 		}
-		inserted, importErr := m.stores.Object.ImportObject(ctx, key, backendName, obj.SizeBytes)
+		inserted, importErr := m.stores.ImportObject(ctx, key, backendName, obj.SizeBytes)
 		if importErr != nil {
 			return imported, skipped, fmt.Errorf("failed to import %s: %w", obj.Key, importErr)
 		}
@@ -375,10 +381,10 @@ func normalizeSyncKey(rawKey, bucketPrefix string, otherPrefixes []string) (stri
 // log but do not propagate.
 func (m *BackendManager) makeReconcileDeleter() deleterFn {
 	return func(ctx context.Context, key, backendName string) error {
-		if err := m.stores.Object.DeleteObjectLocation(ctx, key, backendName); err != nil {
+		if err := m.stores.DeleteObjectLocation(ctx, key, backendName); err != nil {
 			return err
 		}
-		if _, err := m.stores.Cleanup.SweepStaleCleanupQueueRows(ctx, key, backendName); err != nil {
+		if _, err := m.stores.SweepStaleCleanupQueueRows(ctx, key, backendName); err != nil {
 			slog.WarnContext(ctx, "failed to sweep cleanup_queue rows for stale key",
 				slog.String("key", key), slog.String("backend", backendName), "error", err)
 		}
@@ -408,13 +414,13 @@ func (m *BackendManager) ReconcileBackend(ctx context.Context, backendName, buck
 	s3 := newS3KeyStream(ctx, s3b, bucketPrefix, otherPrefixes, &apiPages)
 	defer s3.stop()
 
-	dbIter := newDBCursorStream(m.stores.Object, backendName, bucketPrefix, otherPrefixes)
+	dbIter := newDBCursorStream(m.stores, backendName, bucketPrefix, otherPrefixes)
 	defer dbIter.stop()
 
 	res := &reconcileResult{}
 	mergeErr := reconcileSorted(
 		ctx, s3, dbIter,
-		importHandler(backendName, m.stores.Object.ImportObject, res),
+		importHandler(backendName, m.stores.ImportObject, res),
 		deleteHandler(backendName, m.makeReconcileDeleter(), res),
 	)
 

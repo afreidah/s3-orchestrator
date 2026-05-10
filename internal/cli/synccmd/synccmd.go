@@ -23,7 +23,6 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
 	sqlitestore "github.com/afreidah/s3-orchestrator/internal/store/sqlite"
 )
@@ -113,14 +112,28 @@ func loadConfig(path, backendName string) (*config.Config, *config.BackendConfig
 	return nil, nil, 1
 }
 
+// importer is the slice of the metadata store the sync command writes
+// to: a single ImportObject per backend row. Declared locally so the
+// command owns its own dependency contract.
+type importer interface {
+	ImportObject(ctx context.Context, key, backend string, size int64) (bool, error)
+}
+
+// adminStore is the boot-time slice of the store sync needs to apply
+// migrations, reconcile quota limits, and release pool resources at
+// shutdown.
+type adminStore interface {
+	RunMigrations(ctx context.Context) error
+	SyncQuotaLimits(ctx context.Context, backends []config.BackendConfig) error
+	Close()
+}
+
 // initStore opens the metadata store, applies migrations, and syncs quota
-// limits. Returns non-zero exit on any failure. sync only writes new object
-// rows, so it asks for the narrow ObjectStore plus the LifecycleAdmin handle
-// required by RunMigrations / SyncQuotaLimits.
-func initStore(ctx context.Context, cfg *config.Config) (core.ObjectStore, core.LifecycleAdmin, int) {
+// limits. Returns non-zero exit on any failure.
+func initStore(ctx context.Context, cfg *config.Config) (importer, adminStore, int) {
 	var (
-		objects core.ObjectStore
-		adminDB core.LifecycleAdmin
+		objects importer
+		adminDB adminStore
 		err     error
 	)
 	switch cfg.Database.Driver {
@@ -158,7 +171,7 @@ func initStore(ctx context.Context, cfg *config.Config) (core.ObjectStore, core.
 
 // runImport walks the backend, importing each page into the metadata store.
 // Accumulates and logs totals per page.
-func runImport(ctx context.Context, s3b *backend.S3Backend, metaDB core.ObjectStore, backendCfg *config.BackendConfig, opts *Options) error {
+func runImport(ctx context.Context, s3b *backend.S3Backend, metaDB importer, backendCfg *config.BackendConfig, opts *Options) error {
 	mode := "sync"
 	if opts.DryRun {
 		mode = "dry-run"
@@ -206,7 +219,7 @@ func runImport(ctx context.Context, s3b *backend.S3Backend, metaDB core.ObjectSt
 
 // importPage imports one page of backend objects into the metadata store
 // (or logs them under dry-run), returning per-page counters.
-func importPage(ctx context.Context, metaDB core.ObjectStore, objects []backend.ListedObject, backendName string, opts *Options) (imported, skipped int, bytes int64, err error) {
+func importPage(ctx context.Context, metaDB importer, objects []backend.ListedObject, backendName string, opts *Options) (imported, skipped int, bytes int64, err error) {
 	for _, obj := range objects {
 		prefixedKey := opts.BucketName + "/" + obj.Key
 		if opts.DryRun {

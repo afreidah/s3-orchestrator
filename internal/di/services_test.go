@@ -67,7 +67,7 @@ func newServicesFixture(t *testing.T) *servicesFixture {
 	mock := testutil.NewMockStore(t)
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{},
-		Stores:          proxytest.StoresFromMock(mock),
+		Stores:          mock,
 		Dashboard:       mock,
 		Metrics:         mock,
 		Order:           []string{},

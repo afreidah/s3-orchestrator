@@ -323,6 +323,7 @@ func TestMain(m *testing.M) {
 	manager := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        testBackends,
 		Stores:          stores,
+		PendingEnabled:  true,
 		Dashboard:       failableStore,
 		Metrics:         newMetricsAdapter(failableStore),
 		Order:           testBackendOrder,
@@ -330,7 +331,7 @@ func TestMain(m *testing.M) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	proxytest.AttachWorkersWithStores(manager, &stores)
+	proxytest.AttachWorkers(manager, stores)
 	testManager = manager
 
 	srv := &s3api.Server{
@@ -555,29 +556,14 @@ func newThreeBackendManager(t *testing.T) *proxy.BackendManager {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	proxytest.AttachWorkersWithStores(mgr, &stores)
+	proxytest.AttachWorkers(mgr, stores)
 	return mgr
 }
 
-// newStores types a role-bearing value (FailableStore or *postgres.Store)
-// as the proxy.Stores bag. CB protection lives inside the underlying
-// postgres driver, so no per-role wrapping happens here.
-func newStores(src roleStore) proxy.Stores {
-	return proxy.Stores{
-		Object:           src,
-		Quota:            src,
-		Multipart:        src,
-		Replication:      src,
-		Cleanup:          src,
-		Pending:          src,
-		Integrity:        src,
-		Lifecycle:        src,
-		BackendLifecycle: src,
-		Dashboard:        src,
-		Usage:            src,
-		Lock:             src,
-	}
-}
+// newStores returns src typed as the wide metadata-store contract every
+// proxy consumer depends on. Identity at the type level - kept so the
+// call sites read uniformly with the production DI wiring.
+func newStores(src core.MetadataStore) core.MetadataStore { return src }
 
 // roleStore names the role union tests need on a single source value.
 type roleStore interface {
@@ -623,16 +609,21 @@ func envOrDefault(key, fallback string) string {
 // FailableStore  -  injectable failure wrapper for circuit breaker tests
 // -------------------------------------------------------------------------
 
-// errSimulatedDBFailure is an integration-test fixture helper; see file header for
+// errSimulatedDBOutage is an integration-test fixture helper; see file header for
 // the surrounding lifecycle the helpers participate in.
-// errSimulatedDBFailure wraps core.ErrDBUnavailable so the proxy's
+// errSimulatedDBOutage wraps core.ErrDBUnavailable so the proxy's
 // degraded-mode logic - which keys off ErrDBUnavailable bubbling up
 // from the store - reacts identically to a real breaker-open response.
-// The CB itself lives in the postgres driver and is tripped separately
-// by tripCircuitBreaker; this surface just simulates the
-// "store call returned ErrDBUnavailable" state so role calls fail
-// without exercising the actual driver.
-var errSimulatedDBFailure = fmt.Errorf("simulated database connection failure: %w", core.ErrDBUnavailable)
+// FailableStore.SetFailing(true) returns this error from every role
+// method so callers see the same shape as a tripped CB without having
+// to actually trip the breaker.
+var errSimulatedDBOutage = fmt.Errorf("simulated database outage: %w", core.ErrDBUnavailable)
+
+// errSimulatedCommitFailure is the one-shot mid-PUT commit failure
+// FailableStore.SetFailCommitOnce arms. Distinct from errSimulatedDBOutage
+// because the test wants the PUT to fail immediately, not be treated as
+// a degraded-mode signal that triggers fallback paths.
+var errSimulatedCommitFailure = errors.New("simulated commit failure")
 
 // FailableStore wraps a concrete metadata store and can be toggled to return
 // connection errors, simulating a database outage for circuit breaker
@@ -641,42 +632,17 @@ var errSimulatedDBFailure = fmt.Errorf("simulated database connection failure: %
 // to is an integration-test fixture helper; see file header for
 // the surrounding lifecycle the helpers participate in.
 type FailableStore struct {
-	core.ObjectStore
-	core.QuotaStore
-	core.MultipartStore
-	core.ReplicationStore
-	core.CleanupStore
-	core.PendingStore
-	core.IntegrityStore
-	core.ExpiredObjectsLister
-	core.BackendLifecycleStore
-	core.DashboardStore
-	core.UsageFlusher
-	core.AdvisoryLocker
-	inner          *postgres.Store
-	mu             sync.Mutex
-	failing        bool
-	failCommitOnce bool // when true, RecordObjectAndClearPending fails once, then auto-clears
+	core.MetadataStore // embedded inner satisfies every method by default
+	inner              *postgres.Store
+	mu                 sync.Mutex
+	failing            bool
+	failCommitOnce     bool // when true, RecordObjectAndClearPending fails once, then auto-clears
 }
 
 // newFailableStore returns a FailableStore whose role views all resolve to
 // the same concrete *postgres.Store.
 func newFailableStore(db *postgres.Store) *FailableStore {
-	return &FailableStore{
-		ObjectStore:           db,
-		QuotaStore:            db,
-		MultipartStore:        db,
-		ReplicationStore:      db,
-		CleanupStore:          db,
-		PendingStore:          db,
-		IntegrityStore:        db,
-		ExpiredObjectsLister:  db,
-		BackendLifecycleStore: db,
-		DashboardStore:        db,
-		UsageFlusher:          db,
-		AdvisoryLocker:        db,
-		inner:                 db,
-	}
+	return &FailableStore{MetadataStore: db, inner: db}
 }
 
 // SetFailing is an integration-test fixture helper; see file header for
@@ -699,7 +665,7 @@ func (f *FailableStore) isFailing() bool {
 // the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error) {
 	if f.isFailing() {
-		return nil, errSimulatedDBFailure
+		return nil, errSimulatedDBOutage
 	}
 	return f.inner.GetAllObjectLocations(ctx, key)
 }
@@ -708,7 +674,7 @@ func (f *FailableStore) GetAllObjectLocations(ctx context.Context, key string) (
 // the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) RecordObject(ctx context.Context, key, backend string, size int64, enc *core.EncryptionMeta) ([]core.DeletedCopy, error) {
 	if f.isFailing() {
-		return nil, errSimulatedDBFailure
+		return nil, errSimulatedDBOutage
 	}
 	return f.inner.RecordObject(ctx, key, backend, size, enc)
 }
@@ -736,12 +702,18 @@ func (f *FailableStore) consumeFailCommitOnce() bool {
 	return false
 }
 
-// RecordObjectAndClearPending honours both the global failing flag and the
-// one-shot fail-commit flag, so tests can simulate either a sustained DB
-// outage or a single mid-PUT blip without affecting other store calls.
+// RecordObjectAndClearPending honours both the global failing flag and
+// the one-shot fail-commit flag. Sustained outages surface as
+// errSimulatedDBOutage (wraps ErrDBUnavailable, triggers degraded-mode
+// fallbacks); the one-shot blip surfaces as errSimulatedCommitFailure
+// (plain) so the caller fails the PUT instead of treating the error as
+// a degraded-mode signal.
 func (f *FailableStore) RecordObjectAndClearPending(ctx context.Context, key, backend string, size int64, enc *core.EncryptionMeta, intentID string) ([]core.DeletedCopy, error) {
-	if f.isFailing() || f.consumeFailCommitOnce() {
-		return nil, errSimulatedDBFailure
+	if f.isFailing() {
+		return nil, errSimulatedDBOutage
+	}
+	if f.consumeFailCommitOnce() {
+		return nil, errSimulatedCommitFailure
 	}
 	return f.inner.RecordObjectAndClearPending(ctx, key, backend, size, enc, intentID)
 }
@@ -750,7 +722,7 @@ func (f *FailableStore) RecordObjectAndClearPending(ctx context.Context, key, ba
 // the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) DeleteObject(ctx context.Context, key string) ([]core.DeletedCopy, error) {
 	if f.isFailing() {
-		return nil, errSimulatedDBFailure
+		return nil, errSimulatedDBOutage
 	}
 	return f.inner.DeleteObject(ctx, key)
 }
@@ -759,7 +731,7 @@ func (f *FailableStore) DeleteObject(ctx context.Context, key string) ([]core.De
 // the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) ListObjects(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.ListObjectsResult, error) {
 	if f.isFailing() {
-		return nil, errSimulatedDBFailure
+		return nil, errSimulatedDBOutage
 	}
 	return f.inner.ListObjects(ctx, prefix, startAfter, maxKeys)
 }
@@ -768,7 +740,7 @@ func (f *FailableStore) ListObjects(ctx context.Context, prefix, startAfter stri
 // the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) GetBackendWithSpace(ctx context.Context, size int64, backendOrder []string) (string, error) {
 	if f.isFailing() {
-		return "", errSimulatedDBFailure
+		return "", errSimulatedDBOutage
 	}
 	return f.inner.GetBackendWithSpace(ctx, size, backendOrder)
 }
@@ -777,7 +749,7 @@ func (f *FailableStore) GetBackendWithSpace(ctx context.Context, size int64, bac
 // the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) GetLeastUtilizedBackend(ctx context.Context, size int64, eligible []string) (string, error) {
 	if f.isFailing() {
-		return "", errSimulatedDBFailure
+		return "", errSimulatedDBOutage
 	}
 	return f.inner.GetLeastUtilizedBackend(ctx, size, eligible)
 }
@@ -786,7 +758,7 @@ func (f *FailableStore) GetLeastUtilizedBackend(ctx context.Context, size int64,
 // the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) CreateMultipartUpload(ctx context.Context, params *core.CreateMultipartUploadParams) error {
 	if f.isFailing() {
-		return errSimulatedDBFailure
+		return errSimulatedDBOutage
 	}
 	return f.inner.CreateMultipartUpload(ctx, params)
 }
@@ -794,7 +766,7 @@ func (f *FailableStore) CreateMultipartUpload(ctx context.Context, params *core.
 // ListLegacyMultipartUploads forwards through to the inner store.
 func (f *FailableStore) ListLegacyMultipartUploads(ctx context.Context, limit int) ([]core.MultipartUpload, error) {
 	if f.isFailing() {
-		return nil, errSimulatedDBFailure
+		return nil, errSimulatedDBOutage
 	}
 	return f.inner.ListLegacyMultipartUploads(ctx, limit)
 }
@@ -802,7 +774,7 @@ func (f *FailableStore) ListLegacyMultipartUploads(ctx context.Context, limit in
 // UpdateUploadEncryption forwards through to the inner store.
 func (f *FailableStore) UpdateUploadEncryption(ctx context.Context, uploadID string, encryptionKey []byte, keyID string) error {
 	if f.isFailing() {
-		return errSimulatedDBFailure
+		return errSimulatedDBOutage
 	}
 	return f.inner.UpdateUploadEncryption(ctx, uploadID, encryptionKey, keyID)
 }
@@ -810,7 +782,7 @@ func (f *FailableStore) UpdateUploadEncryption(ctx context.Context, uploadID str
 // UpdatePartEncryption forwards through to the inner store.
 func (f *FailableStore) UpdatePartEncryption(ctx context.Context, uploadID string, partNumber int, sizeBytes int64, enc *core.EncryptionMeta) error {
 	if f.isFailing() {
-		return errSimulatedDBFailure
+		return errSimulatedDBOutage
 	}
 	return f.inner.UpdatePartEncryption(ctx, uploadID, partNumber, sizeBytes, enc)
 }
@@ -819,7 +791,7 @@ func (f *FailableStore) UpdatePartEncryption(ctx context.Context, uploadID strin
 // the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) GetMultipartUpload(ctx context.Context, uploadID string) (*core.MultipartUpload, error) {
 	if f.isFailing() {
-		return nil, errSimulatedDBFailure
+		return nil, errSimulatedDBOutage
 	}
 	return f.inner.GetMultipartUpload(ctx, uploadID)
 }
@@ -828,7 +800,7 @@ func (f *FailableStore) GetMultipartUpload(ctx context.Context, uploadID string)
 // the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) RecordPart(ctx context.Context, uploadID string, partNumber int, etag string, size int64, enc *core.EncryptionMeta) error {
 	if f.isFailing() {
-		return errSimulatedDBFailure
+		return errSimulatedDBOutage
 	}
 	return f.inner.RecordPart(ctx, uploadID, partNumber, etag, size, enc)
 }
@@ -837,7 +809,7 @@ func (f *FailableStore) RecordPart(ctx context.Context, uploadID string, partNum
 // the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) GetParts(ctx context.Context, uploadID string) ([]core.MultipartPart, error) {
 	if f.isFailing() {
-		return nil, errSimulatedDBFailure
+		return nil, errSimulatedDBOutage
 	}
 	return f.inner.GetParts(ctx, uploadID)
 }
@@ -846,7 +818,7 @@ func (f *FailableStore) GetParts(ctx context.Context, uploadID string) ([]core.M
 // the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) DeleteMultipartUpload(ctx context.Context, uploadID string) error {
 	if f.isFailing() {
-		return errSimulatedDBFailure
+		return errSimulatedDBOutage
 	}
 	return f.inner.DeleteMultipartUpload(ctx, uploadID)
 }
@@ -855,7 +827,7 @@ func (f *FailableStore) DeleteMultipartUpload(ctx context.Context, uploadID stri
 // the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) GetQuotaStats(ctx context.Context) (map[string]core.QuotaStat, error) {
 	if f.isFailing() {
-		return nil, errSimulatedDBFailure
+		return nil, errSimulatedDBOutage
 	}
 	return f.inner.GetQuotaStats(ctx)
 }
@@ -864,7 +836,7 @@ func (f *FailableStore) GetQuotaStats(ctx context.Context) (map[string]core.Quot
 // the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) GetObjectCounts(ctx context.Context) (map[string]int64, error) {
 	if f.isFailing() {
-		return nil, errSimulatedDBFailure
+		return nil, errSimulatedDBOutage
 	}
 	return f.inner.GetObjectCounts(ctx)
 }
@@ -873,7 +845,7 @@ func (f *FailableStore) GetObjectCounts(ctx context.Context) (map[string]int64, 
 // the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error) {
 	if f.isFailing() {
-		return nil, errSimulatedDBFailure
+		return nil, errSimulatedDBOutage
 	}
 	return f.inner.GetActiveMultipartCounts(ctx)
 }
@@ -882,7 +854,7 @@ func (f *FailableStore) GetActiveMultipartCounts(ctx context.Context) (map[strin
 // the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) GetStaleMultipartUploads(ctx context.Context, olderThan time.Duration) ([]core.MultipartUpload, error) {
 	if f.isFailing() {
-		return nil, errSimulatedDBFailure
+		return nil, errSimulatedDBOutage
 	}
 	return f.inner.GetStaleMultipartUploads(ctx, olderThan)
 }
@@ -891,7 +863,7 @@ func (f *FailableStore) GetStaleMultipartUploads(ctx context.Context, olderThan 
 // the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.DirectoryListResult, error) {
 	if f.isFailing() {
-		return nil, errSimulatedDBFailure
+		return nil, errSimulatedDBOutage
 	}
 	return f.inner.ListDirectoryChildren(ctx, prefix, startAfter, maxKeys)
 }
@@ -900,7 +872,7 @@ func (f *FailableStore) ListDirectoryChildren(ctx context.Context, prefix, start
 // the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) ListObjectsByBackend(ctx context.Context, backendName string, limit int) ([]core.ObjectLocation, error) {
 	if f.isFailing() {
-		return nil, errSimulatedDBFailure
+		return nil, errSimulatedDBOutage
 	}
 	return f.inner.ListObjectsByBackend(ctx, backendName, limit)
 }
@@ -909,7 +881,7 @@ func (f *FailableStore) ListObjectsByBackend(ctx context.Context, backendName st
 // the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) MoveObjectLocation(ctx context.Context, key, fromBackend, toBackend string) (int64, error) {
 	if f.isFailing() {
-		return 0, errSimulatedDBFailure
+		return 0, errSimulatedDBOutage
 	}
 	return f.inner.MoveObjectLocation(ctx, key, fromBackend, toBackend)
 }
@@ -918,7 +890,7 @@ func (f *FailableStore) MoveObjectLocation(ctx context.Context, key, fromBackend
 // the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]core.ObjectLocation, error) {
 	if f.isFailing() {
-		return nil, errSimulatedDBFailure
+		return nil, errSimulatedDBOutage
 	}
 	return f.inner.GetUnderReplicatedObjects(ctx, factor, limit)
 }
@@ -927,7 +899,7 @@ func (f *FailableStore) GetUnderReplicatedObjects(ctx context.Context, factor, l
 // the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) RecordReplica(ctx context.Context, key, targetBackend, sourceBackend string) (int64, bool, error) {
 	if f.isFailing() {
-		return 0, false, errSimulatedDBFailure
+		return 0, false, errSimulatedDBOutage
 	}
 	return f.inner.RecordReplica(ctx, key, targetBackend, sourceBackend)
 }
@@ -936,7 +908,7 @@ func (f *FailableStore) RecordReplica(ctx context.Context, key, targetBackend, s
 // the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) GetOverReplicatedObjects(ctx context.Context, factor, limit int) ([]core.ObjectLocation, error) {
 	if f.isFailing() {
-		return nil, errSimulatedDBFailure
+		return nil, errSimulatedDBOutage
 	}
 	return f.inner.GetOverReplicatedObjects(ctx, factor, limit)
 }
@@ -945,7 +917,7 @@ func (f *FailableStore) GetOverReplicatedObjects(ctx context.Context, factor, li
 // the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) CountOverReplicatedObjects(ctx context.Context, factor int) (int64, error) {
 	if f.isFailing() {
-		return 0, errSimulatedDBFailure
+		return 0, errSimulatedDBOutage
 	}
 	return f.inner.CountOverReplicatedObjects(ctx, factor)
 }
@@ -954,7 +926,7 @@ func (f *FailableStore) CountOverReplicatedObjects(ctx context.Context, factor i
 // the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) RemoveExcessCopy(ctx context.Context, key, backendName string, size int64) error {
 	if f.isFailing() {
-		return errSimulatedDBFailure
+		return errSimulatedDBOutage
 	}
 	return f.inner.RemoveExcessCopy(ctx, key, backendName, size)
 }

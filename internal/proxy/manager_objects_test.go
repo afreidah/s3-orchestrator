@@ -34,31 +34,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
-// managerRoles is the structural shape newTestManager needs from a
-// store double: every narrow role plus the small set of methods the
-// BackendManager passes as Dashboard / Metrics. *storetest.MockMetadataStore
-// satisfies it.
-type managerRoles interface {
-	allRoles
-	dashboardData
-	metricsDeps
-}
-
-// dashboardData is the subset of DashboardStore the manager passes as
-// the Dashboard provider.
-type dashboardData = core.DashboardStore
-
-// metricsDeps names the methods proxy.MetricsDeps requires; declared
-// here as a structural interface so the test mock can satisfy it
-// without importing the production type.
-type metricsDeps interface {
-	GetQuotaStats(ctx context.Context) (map[string]core.QuotaStat, error)
-	GetObjectCounts(ctx context.Context) (map[string]int64, error)
-	GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error)
-	GetUsageForPeriod(ctx context.Context, period string) (map[string]core.UsageStat, error)
-	GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]core.ObjectLocation, error)
-}
-
 // newPermissiveMock returns a gomock-driven MockMetadataStore wired to
 // the supplied test's controller with storetest.Permissive defaults so
 // callers that do not need any specific stub behaviour can drop it
@@ -71,7 +46,7 @@ func newPermissiveMock(t *testing.T) *storetest.MockMetadataStore {
 }
 
 // newTestManager creates a BackendManager with mock backends and store for testing.
-func newTestManager(store managerRoles, backends map[string]*mockBackend) *BackendManager {
+func newTestManager(store core.MetadataStore, backends map[string]*mockBackend) *BackendManager {
 	obs := make(map[string]s3be.ObjectBackend, len(backends))
 	var order []string
 	for name, b := range backends {
@@ -81,6 +56,7 @@ func newTestManager(store managerRoles, backends map[string]*mockBackend) *Backe
 	return wireWorkersForTest(NewBackendManager(&BackendManagerConfig{
 		Backends:        obs,
 		Stores:          testStoresFromMock(store),
+		PendingEnabled:  true,
 		Dashboard:       store,
 		Metrics:         store,
 		Order:           order,
@@ -531,7 +507,7 @@ func TestPutObject_RecordFailure_LegacyPath(t *testing.T) {
 	storetest.Permissive(store)
 
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
-	mgr.stores.Pending = nil
+	mgr.pendingEnabled = false
 
 	if _, err := mgr.ObjectManager.PutObject(context.Background(), "legacy-key", bytes.NewReader([]byte("data")), 4, "", nil); err == nil {
 		t.Fatal("expected error from RecordObject failure")
@@ -551,7 +527,7 @@ type errReader struct{ err error }
 func (r *errReader) Read([]byte) (int, error) { return 0, r.err }
 
 // newTestManagerWithOrder creates a BackendManager with explicit order.
-func newTestManagerWithOrder(store managerRoles, backends map[string]*mockBackend, order []string) *BackendManager {
+func newTestManagerWithOrder(store core.MetadataStore, backends map[string]*mockBackend, order []string) *BackendManager {
 	obs := make(map[string]s3be.ObjectBackend, len(backends))
 	for name, b := range backends {
 		obs[name] = b
@@ -559,6 +535,7 @@ func newTestManagerWithOrder(store managerRoles, backends map[string]*mockBacken
 	return wireWorkersForTest(NewBackendManager(&BackendManagerConfig{
 		Backends:        obs,
 		Stores:          testStoresFromMock(store),
+		PendingEnabled:  true,
 		Dashboard:       store,
 		Metrics:         store,
 		Order:           order,
@@ -1995,7 +1972,7 @@ func TestDeleteObject_InvalidatesCache(t *testing.T) {
 }
 
 // newTestManagerWithLimits constructs a new test manager with limits.
-func newTestManagerWithLimits(store managerRoles, backends map[string]*mockBackend, limits map[string]core.UsageLimits) *BackendManager {
+func newTestManagerWithLimits(store core.MetadataStore, backends map[string]*mockBackend, limits map[string]core.UsageLimits) *BackendManager {
 	obs := make(map[string]s3be.ObjectBackend, len(backends))
 	var order []string
 	for name, b := range backends {
@@ -2005,6 +1982,7 @@ func newTestManagerWithLimits(store managerRoles, backends map[string]*mockBacke
 	return wireWorkersForTest(NewBackendManager(&BackendManagerConfig{
 		Backends:        obs,
 		Stores:          testStoresFromMock(store),
+		PendingEnabled:  true,
 		Dashboard:       store,
 		Metrics:         store,
 		Order:           order,
@@ -2175,7 +2153,7 @@ func TestGetObject_UsageLimitRejectionsMetric(t *testing.T) {
 
 // newTestManagerParallel creates a BackendManager with parallel
 // broadcast enabled and explicit ordering.
-func newTestManagerParallel(store managerRoles, orderedBackends []struct {
+func newTestManagerParallel(store core.MetadataStore, orderedBackends []struct {
 	name    string
 	backend s3be.ObjectBackend
 }) *BackendManager {
