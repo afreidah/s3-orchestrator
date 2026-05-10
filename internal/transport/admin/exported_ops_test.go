@@ -404,7 +404,7 @@ func TestNew_FromDeps(t *testing.T) {
 		Drain:      src.drain,
 		Scrubber:   src.scrubber,
 		Lifecycle:  src.lifecycle,
-		DBCB:       src.dbCB,
+		DBHealthy:  src.dbHealthy,
 		Objects:    src.objects,
 		Cleanup:    src.cleanup,
 		Token:      src.token,

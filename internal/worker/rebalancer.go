@@ -20,10 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"go.opentelemetry.io/otel/attribute"
-
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
@@ -38,7 +35,7 @@ import (
 
 // Rebalancer moves objects between backends to optimize space distribution.
 type Rebalancer struct {
-	log *slog.Logger
+	log   *slog.Logger
 	ops   Ops
 	store RebalancerStore
 	cfg   syncutil.AtomicConfig[config.RebalanceConfig]
@@ -74,67 +71,62 @@ type RebalanceMove struct {
 // Rebalance moves objects between backends to optimize space distribution.
 // Returns the number of objects successfully moved.
 func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig) (int, error) {
-	ctx = audit.WithRequestID(ctx, audit.NewID())
-	return observe.Run(ctx,
-		observe.Internal("Rebalance",
-			[]attribute.KeyValue{telemetry.AttrOperation.String("rebalance")},
-			nil),
-		func(ctx context.Context) (int, error) {
-			start := time.Now()
-			audit.Log(ctx, "rebalance.start",
-				slog.String("strategy", cfg.Strategy),
-				slog.Int("batch_size", cfg.BatchSize),
-				slog.Float64("threshold", cfg.Threshold),
-			)
+	return runOpsCycle(ctx, "Rebalance", "rebalance", func(ctx context.Context) (int, error) {
+		start := time.Now()
+		audit.Log(ctx, "rebalance.start",
+			slog.String("strategy", cfg.Strategy),
+			slog.Int("batch_size", cfg.BatchSize),
+			slog.Float64("threshold", cfg.Threshold),
+		)
 
-			stats, err := r.store.GetQuotaStats(ctx)
-			if err != nil {
-				telemetry.RebalanceRunsTotal.WithLabelValues(cfg.Strategy, "error").Inc()
-				return 0, fmt.Errorf("failed to get quota stats: %w", err)
-			}
+		stats, err := r.store.GetQuotaStats(ctx)
+		if err != nil {
+			telemetry.RebalanceRunsTotal.WithLabelValues(cfg.Strategy, "error").Inc()
+			return 0, fmt.Errorf("failed to get quota stats: %w", err)
+		}
 
-			if !ExceedsThreshold(stats, r.ops.BackendOrder(), cfg.Threshold) {
-				r.log.InfoContext(ctx, "rebalance skipping, within threshold",
-					"threshold", cfg.Threshold, "strategy", cfg.Strategy)
-				telemetry.RebalanceSkipped.WithLabelValues("threshold").Inc()
-				return 0, nil
-			}
+		if !ExceedsThreshold(stats, r.ops.BackendOrder(), cfg.Threshold) {
+			r.log.InfoContext(ctx, "rebalance skipping, within threshold",
+				"threshold", cfg.Threshold, "strategy", cfg.Strategy)
+			telemetry.RebalanceSkipped.WithLabelValues("threshold").Inc()
+			return 0, nil
+		}
 
-			var plan []RebalanceMove
-			switch cfg.Strategy {
-			case "pack":
-				plan, err = r.PlanPackTight(ctx, stats, cfg.BatchSize)
-			case "spread":
-				plan, err = r.PlanSpreadEven(ctx, stats, cfg.BatchSize)
-			default:
-				return 0, fmt.Errorf("unknown rebalance strategy: %s", cfg.Strategy)
-			}
-			if err != nil {
-				telemetry.RebalanceRunsTotal.WithLabelValues(cfg.Strategy, "error").Inc()
-				return 0, fmt.Errorf("failed to plan rebalance: %w", err)
-			}
+		var plan []RebalanceMove
+		switch cfg.Strategy {
+		case "pack":
+			plan, err = r.PlanPackTight(ctx, stats, cfg.BatchSize)
+		case "spread":
+			plan, err = r.PlanSpreadEven(ctx, stats, cfg.BatchSize)
+		default:
+			return 0, fmt.Errorf("unknown rebalance strategy: %s", cfg.Strategy)
+		}
+		if err != nil {
+			telemetry.RebalanceRunsTotal.WithLabelValues(cfg.Strategy, "error").Inc()
+			return 0, fmt.Errorf("failed to plan rebalance: %w", err)
+		}
 
-			telemetry.RebalancePending.Set(float64(len(plan)))
+		telemetry.RebalancePending.Set(float64(len(plan)))
 
-			if len(plan) == 0 {
-				r.log.InfoContext(ctx, "rebalance skipping, empty plan", "strategy", cfg.Strategy)
-				telemetry.RebalanceSkipped.WithLabelValues("empty_plan").Inc()
-				return 0, nil
-			}
+		if len(plan) == 0 {
+			r.log.InfoContext(ctx, "rebalance skipping, empty plan", "strategy", cfg.Strategy)
+			telemetry.RebalanceSkipped.WithLabelValues("empty_plan").Inc()
+			return 0, nil
+		}
 
-			moved := r.ExecuteMoves(ctx, plan, cfg.Strategy, cfg.Concurrency)
+		moved := r.ExecuteMoves(ctx, plan, cfg.Strategy, cfg.Concurrency)
 
-			telemetry.RebalanceRunsTotal.WithLabelValues(cfg.Strategy, "success").Inc()
-			telemetry.RebalanceDuration.WithLabelValues(cfg.Strategy).Observe(time.Since(start).Seconds())
+		telemetry.RebalanceRunsTotal.WithLabelValues(cfg.Strategy, "success").Inc()
+		telemetry.RebalanceDuration.WithLabelValues(cfg.Strategy).Observe(time.Since(start).Seconds())
 
-			audit.Log(ctx, "rebalance.complete",
-				slog.String("strategy", cfg.Strategy),
-				slog.Int("objects_moved", moved),
-				slog.Int("planned", len(plan)),
-				slog.Duration("duration", time.Since(start)),
-			)
-			return moved, nil
-		})
+		audit.Log(ctx, "rebalance.complete",
+			slog.String("strategy", cfg.Strategy),
+			slog.Int("objects_moved", moved),
+			slog.Int("planned", len(plan)),
+			slog.Duration("duration", time.Since(start)),
+		)
+		return moved, nil
+	})
 }
 
 // -------------------------------------------------------------------------

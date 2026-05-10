@@ -17,8 +17,6 @@ package proxy
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -281,13 +279,6 @@ func (m *BackendManager) NearUsageLimit(threshold float64) bool {
 // HELPERS
 // -------------------------------------------------------------------------
 
-// GenerateUploadID creates a random hex string for multipart upload IDs.
-func GenerateUploadID() string {
-	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
-}
-
 // SyncBackend scans a backend's S3 bucket and imports pre-existing
 // objects into the proxy database. Objects already tracked for the
 // backend are skipped. knownBuckets is the full list of configured
@@ -444,7 +435,7 @@ func (m *BackendManager) ReconcileBackend(ctx context.Context, backendName, buck
 // ListObjects API the reconciler drives. The interface return makes the
 // dependency narrow so tests can substitute a fake.
 func (m *BackendManager) resolveS3Backend(name string) (objectLister, error) {
-	be, err := m.getBackend(name)
+	be, err := m.GetBackend(name)
 	if err != nil {
 		return nil, err
 	}

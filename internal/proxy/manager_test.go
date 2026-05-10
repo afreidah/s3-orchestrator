@@ -18,24 +18,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
-// TestGenerateUploadID verifies the generate upload id contract.
-// Asserts that GenerateUploadID() length = , want 32.
-func TestGenerateUploadID(t *testing.T) {
-	t.Parallel()
-	id := GenerateUploadID()
-
-	// Should be 32 hex chars (16 bytes)
-	if len(id) != 32 {
-		t.Errorf("GenerateUploadID() length = %d, want 32", len(id))
-	}
-
-	// Should be unique
-	id2 := GenerateUploadID()
-	if id == id2 {
-		t.Error("GenerateUploadID() should produce unique IDs")
-	}
-}
-
 // -------------------------------------------------------------------------
 // Close (idempotent)
 // -------------------------------------------------------------------------
