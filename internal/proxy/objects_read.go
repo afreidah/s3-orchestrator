@@ -572,7 +572,7 @@ func (o *ObjectManager) maybeWrapIntegrityReader(
 			"key", key, "backend", beName,
 			"expected_hash", expected, "actual_hash", actual)
 		telemetry.IntegrityErrorsTotal.WithLabelValues("read").Inc()
-		o.parent.deleteOrEnqueue(ctx, backend, beName, key, "integrity_failed", r.Size)
+		o.parent.DeleteOrEnqueue(ctx, backend, beName, key, "integrity_failed", r.Size)
 	})
 	r.Body = vr
 }

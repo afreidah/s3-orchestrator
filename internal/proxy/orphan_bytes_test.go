@@ -530,7 +530,7 @@ func TestOrphanBytes_FullLifecycle(t *testing.T) {
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
 
 	backend.delErr = errors.New("timeout")
-	mgr.deleteOrEnqueue(context.Background(), backend, "b1", "file.txt", "delete_failed", 1024)
+	mgr.DeleteOrEnqueue(context.Background(), backend, "b1", "file.txt", "delete_failed", 1024)
 
 	if len(c.increment) != 1 {
 		t.Fatalf("step 1: expected 1 IncrementOrphanBytes, got %d", len(c.increment))
