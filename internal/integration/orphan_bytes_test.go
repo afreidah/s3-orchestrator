@@ -557,7 +557,7 @@ func TestOrphanBytesSpreadRouting_SpreadRoutingRespectsOrphanBytes(t *testing.T)
 		RoutingStrategy: config.RoutingSpread,
 	})
 	_ = spreadManager
-	proxytest.AttachWorkersWithStores(spreadManager, &stores)
+	proxytest.AttachWorkers(spreadManager, stores)
 	spreadSrv := &s3api.Server{
 		Manager: spreadManager,
 	}

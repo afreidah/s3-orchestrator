@@ -417,7 +417,7 @@ func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey strin
 	)
 	defer span.End()
 
-	locations, err := o.parent.stores.Object.GetAllObjectLocations(ctx, sourceKey)
+	locations, err := o.parent.stores.GetAllObjectLocations(ctx, sourceKey)
 	if err != nil {
 		if errors.Is(err, core.ErrObjectNotFound) {
 			span.SetStatus(codes.Error, "source object not found")
@@ -517,7 +517,7 @@ func (o *ObjectManager) DeleteObject(ctx context.Context, key string) error {
 	defer span.End()
 
 	// --- Delete all copies from store ---
-	copies, err := o.parent.stores.Object.DeleteObject(ctx, key)
+	copies, err := o.parent.stores.DeleteObject(ctx, key)
 	if err != nil {
 		if errors.Is(err, core.ErrObjectNotFound) {
 			// Object not in our tracking - treat as success (idempotent delete)
@@ -611,7 +611,7 @@ func (o *ObjectManager) DeleteObjects(ctx context.Context, keys []string) []Dele
 		results[i].Key = key
 	}
 
-	copiesByKey, err := o.parent.stores.Object.DeleteObjectsBatch(ctx, keys)
+	copiesByKey, err := o.parent.stores.DeleteObjectsBatch(ctx, keys)
 	if err != nil {
 		// Whole-tx failure: every key surfaces the error. The cache and
 		// backend cleanup paths are skipped; nothing was changed.

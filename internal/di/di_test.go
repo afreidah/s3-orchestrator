@@ -58,17 +58,7 @@ func TestProviders_MissingConfigReturnsCleanError(t *testing.T) {
 		{"EncryptionAdmin", func(i do.Injector) error { _, err := ProvideEncryptionAdmin(i); return err }},
 		{"NotificationOutbox", func(i do.Injector) error { _, err := ProvideNotificationOutbox(i); return err }},
 		{"DatabaseBreaker", func(i do.Injector) error { _, err := ProvideDatabaseBreaker(i); return err }},
-		{"ObjectStore", func(i do.Injector) error { _, err := ProvideObjectStore(i); return err }},
-		{"QuotaStore", func(i do.Injector) error { _, err := ProvideQuotaStore(i); return err }},
-		{"MultipartStore", func(i do.Injector) error { _, err := ProvideMultipartStore(i); return err }},
-		{"ReplicationStore", func(i do.Injector) error { _, err := ProvideReplicationStore(i); return err }},
-		{"CleanupStore", func(i do.Injector) error { _, err := ProvideCleanupStore(i); return err }},
-		{"IntegrityStore", func(i do.Injector) error { _, err := ProvideIntegrityStore(i); return err }},
-		{"ExpiredObjectsLister", func(i do.Injector) error { _, err := ProvideExpiredObjectsLister(i); return err }},
-		{"BackendLifecycleStore", func(i do.Injector) error { _, err := ProvideBackendLifecycleStore(i); return err }},
-		{"DashboardStore", func(i do.Injector) error { _, err := ProvideDashboardStore(i); return err }},
-		{"UsageFlusher", func(i do.Injector) error { _, err := ProvideUsageFlusher(i); return err }},
-		{"AdvisoryLocker", func(i do.Injector) error { _, err := ProvideAdvisoryLocker(i); return err }},
+		{"MetadataStore", func(i do.Injector) error { _, err := ProvideMetadataStore(i); return err }},
 		{"MetricsDeps", func(i do.Injector) error { _, err := ProvideMetricsDeps(i); return err }},
 		{"Backends", func(i do.Injector) error { _, err := ProvideBackends(i); return err }},
 		{"Encryptor", func(i do.Injector) error { _, err := ProvideEncryptor(i); return err }},
@@ -255,76 +245,22 @@ func TestOpenStore_PostgresInvalidConfig(t *testing.T) {
 	}
 }
 
-// TestNarrowRoleProviders_HappyPath wires a fake concrete store plus a
-// shared breaker and invokes each per-role provider, asserting a non-nil
-// CB-wrapped role interface comes out. This is the missing coverage for
-// the successful branches of ProvideObjectStore, ProvideQuotaStore, etc.
-func TestNarrowRoleProviders_HappyPath(t *testing.T) {
-	t.Parallel()
-	inj := do.New()
-	do.ProvideValue(inj, &config.Config{CircuitBreaker: config.CircuitBreakerConfig{FailureThreshold: 3, OpenTimeout: time.Second}})
-	// Seed the concrete store directly  -  we can't open a real Postgres
-	// or SQLite store in a unit test, so fake the shape the narrow
-	// providers resolve.
-	do.ProvideValue[concreteStore](inj, storetest.NewMockMetadataStore(gomock.NewController(t)))
-	do.Provide(inj, ProvideDatabaseBreaker)
-
-	cases := []struct {
-		name string
-		call func() (any, error)
-	}{
-		{"ObjectStore", func() (any, error) { return ProvideObjectStore(inj) }},
-		{"QuotaStore", func() (any, error) { return ProvideQuotaStore(inj) }},
-		{"MultipartStore", func() (any, error) { return ProvideMultipartStore(inj) }},
-		{"ReplicationStore", func() (any, error) { return ProvideReplicationStore(inj) }},
-		{"CleanupStore", func() (any, error) { return ProvideCleanupStore(inj) }},
-		{"PendingStore", func() (any, error) { return ProvidePendingStore(inj) }},
-		{"IntegrityStore", func() (any, error) { return ProvideIntegrityStore(inj) }},
-		{"ExpiredObjectsLister", func() (any, error) { return ProvideExpiredObjectsLister(inj) }},
-		{"BackendLifecycleStore", func() (any, error) { return ProvideBackendLifecycleStore(inj) }},
-		{"DashboardStore", func() (any, error) { return ProvideDashboardStore(inj) }},
-		{"UsageFlusher", func() (any, error) { return ProvideUsageFlusher(inj) }},
-		{"AdvisoryLocker", func() (any, error) { return ProvideAdvisoryLocker(inj) }},
-	}
-	for _, tc := range cases {
-		v, err := tc.call()
-		if err != nil {
-			t.Errorf("%s: unexpected error %v", tc.name, err)
-		}
-		if v == nil {
-			t.Errorf("%s: provider returned nil value", tc.name)
-		}
-	}
-}
-
-// TestResolveProxyStores_HappyPath drives the full Stores bag assembly
-// with a seeded injector  -  covers resolveProxyStores's 11 sequential
-// do.Invoke calls.
-func TestResolveProxyStores_HappyPath(t *testing.T) {
+// TestProvideMetadataStore_HappyPath seeds the concrete store and asserts
+// the single store provider returns a non-nil value typed as the wide
+// metadata-store contract every consumer depends on.
+func TestProvideMetadataStore_HappyPath(t *testing.T) {
 	t.Parallel()
 	inj := do.New()
 	do.ProvideValue(inj, &config.Config{CircuitBreaker: config.CircuitBreakerConfig{FailureThreshold: 3, OpenTimeout: time.Second}})
 	do.ProvideValue[concreteStore](inj, storetest.NewMockMetadataStore(gomock.NewController(t)))
 	do.Provide(inj, ProvideDatabaseBreaker)
-	do.Provide(inj, ProvideObjectStore)
-	do.Provide(inj, ProvideQuotaStore)
-	do.Provide(inj, ProvideMultipartStore)
-	do.Provide(inj, ProvideReplicationStore)
-	do.Provide(inj, ProvideCleanupStore)
-	do.Provide(inj, ProvidePendingStore)
-	do.Provide(inj, ProvideIntegrityStore)
-	do.Provide(inj, ProvideExpiredObjectsLister)
-	do.Provide(inj, ProvideBackendLifecycleStore)
-	do.Provide(inj, ProvideDashboardStore)
-	do.Provide(inj, ProvideUsageFlusher)
-	do.Provide(inj, ProvideAdvisoryLocker)
 
-	stores, err := resolveProxyStores(inj)
+	v, err := ProvideMetadataStore(inj)
 	if err != nil {
-		t.Fatalf("resolveProxyStores: %v", err)
+		t.Fatalf("ProvideMetadataStore: %v", err)
 	}
-	if stores.Object == nil || stores.Cleanup == nil || stores.Lock == nil {
-		t.Errorf("resolveProxyStores returned incomplete Stores: %+v", stores)
+	if v == nil {
+		t.Fatal("ProvideMetadataStore returned nil")
 	}
 }
 
@@ -336,8 +272,7 @@ func TestProvideMetricsDeps_HappyPath(t *testing.T) {
 	do.ProvideValue(inj, &config.Config{CircuitBreaker: config.CircuitBreakerConfig{FailureThreshold: 3, OpenTimeout: time.Second}})
 	do.ProvideValue[concreteStore](inj, storetest.NewMockMetadataStore(gomock.NewController(t)))
 	do.Provide(inj, ProvideDatabaseBreaker)
-	do.Provide(inj, ProvideDashboardStore)
-	do.Provide(inj, ProvideReplicationStore)
+	do.Provide(inj, ProvideMetadataStore)
 
 	deps, err := ProvideMetricsDeps(inj)
 	if err != nil {
@@ -459,9 +394,7 @@ func TestNewInjector_DefaultsRegisterRequiredOnly(t *testing.T) {
 	joined := strings.Join(listServiceNames(inj), ",")
 
 	for _, want := range []string{
-		"internal/store/core.ObjectStore",
-		"internal/store/core.QuotaStore",
-		"internal/store/core.CleanupStore",
+		"internal/store/core.MetadataStore",
 		"internal/store/core.LifecycleAdmin",
 		"internal/store/core.EncryptionAdmin",
 		"internal/store/core.NotificationOutbox",
@@ -726,13 +659,9 @@ func TestProvideMultipartBackfill_ProgressiveErrors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BackendManager: %v", err)
 	}
-	mp, err := do.Invoke[core.MultipartStore](full)
+	store, err := do.Invoke[core.MetadataStore](full)
 	if err != nil {
-		t.Fatalf("MultipartStore: %v", err)
-	}
-	locker, err := do.Invoke[core.AdvisoryLocker](full)
-	if err != nil {
-		t.Fatalf("AdvisoryLocker: %v", err)
+		t.Fatalf("MetadataStore: %v", err)
 	}
 
 	// Bare injector: BackendManager missing → first invoke errors.
@@ -740,28 +669,19 @@ func TestProvideMultipartBackfill_ProgressiveErrors(t *testing.T) {
 		t.Error("expected error with no deps registered")
 	}
 
-	// Add only mgr: MultipartStore missing → second invoke errors.
+	// Add only mgr: MetadataStore missing → second invoke errors.
 	step1 := do.New()
 	do.ProvideValue(step1, mgr)
 	if _, err := ProvideMultipartBackfill(step1); err == nil {
 		t.Error("expected error after seeding only mgr")
 	}
 
-	// Add mp: AdvisoryLocker missing → third invoke errors.
+	// Add store: Encryptor missing → third invoke errors.
 	step2 := do.New()
 	do.ProvideValue(step2, mgr)
-	do.ProvideValue(step2, mp)
+	do.ProvideValue[core.MetadataStore](step2, store)
 	if _, err := ProvideMultipartBackfill(step2); err == nil {
-		t.Error("expected error after seeding mgr+mp")
-	}
-
-	// Add locker: Encryptor missing → fourth invoke errors.
-	step3 := do.New()
-	do.ProvideValue(step3, mgr)
-	do.ProvideValue(step3, mp)
-	do.ProvideValue(step3, locker)
-	if _, err := ProvideMultipartBackfill(step3); err == nil {
-		t.Error("expected error after seeding mgr+mp+locker")
+		t.Error("expected error after seeding mgr+store")
 	}
 }
 

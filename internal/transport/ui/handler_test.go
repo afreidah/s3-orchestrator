@@ -71,7 +71,7 @@ func newTestHandlerWithMock(t *testing.T) (*Handler, *http.ServeMux, *testutil.M
 
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{},
-		Stores:          proxytest.StoresFromMock(mockStore),
+		Stores:          mockStore,
 		Dashboard:       mockStore,
 		Metrics:         mockStore,
 		Order:           []string{"b1"},
@@ -476,7 +476,7 @@ func TestLogin_BcryptSecret(t *testing.T) {
 	mockStore.ListDirChildrenResp = &core.DirectoryListResult{}
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:  map[string]backend.ObjectBackend{},
-		Stores:    proxytest.StoresFromMock(mockStore),
+		Stores:    mockStore,
 		Dashboard: mockStore,
 		Metrics:   mockStore,
 		Order:     []string{},
@@ -552,7 +552,7 @@ func TestCrossInstanceSession(t *testing.T) {
 	mockStore.ListDirChildrenResp = &core.DirectoryListResult{}
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:  map[string]backend.ObjectBackend{},
-		Stores:    proxytest.StoresFromMock(mockStore),
+		Stores:    mockStore,
 		Dashboard: mockStore,
 		Metrics:   mockStore,
 		Order:     []string{},
@@ -1948,7 +1948,7 @@ func benchLoginHandler(b *testing.B) (*Handler, *http.ServeMux) {
 
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{},
-		Stores:          proxytest.StoresFromMock(mockStore),
+		Stores:          mockStore,
 		Dashboard:       mockStore,
 		Metrics:         mockStore,
 		Order:           []string{},

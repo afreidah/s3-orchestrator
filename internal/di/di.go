@@ -82,25 +82,11 @@ func NewInjector(cfg *config.Config, mode string, logLevel *slog.LevelVar, logBu
 
 	// --- Required infrastructure ---
 	do.Provide(inj, provideConcreteStore)
+	do.Provide(inj, ProvideMetadataStore)
 	do.Provide(inj, ProvideLifecycleAdmin)
 	do.Provide(inj, ProvideEncryptionAdmin)
 	do.Provide(inj, ProvideNotificationOutbox)
 	do.Provide(inj, ProvideDatabaseBreaker)
-
-	// Narrow per-role store providers  -  each wraps provideConcreteStore's
-	// value with its per-role CB decorator.
-	do.Provide(inj, ProvideObjectStore)
-	do.Provide(inj, ProvideQuotaStore)
-	do.Provide(inj, ProvideMultipartStore)
-	do.Provide(inj, ProvideReplicationStore)
-	do.Provide(inj, ProvideCleanupStore)
-	do.Provide(inj, ProvidePendingStore)
-	do.Provide(inj, ProvideIntegrityStore)
-	do.Provide(inj, ProvideExpiredObjectsLister)
-	do.Provide(inj, ProvideBackendLifecycleStore)
-	do.Provide(inj, ProvideDashboardStore)
-	do.Provide(inj, ProvideUsageFlusher)
-	do.Provide(inj, ProvideAdvisoryLocker)
 	do.Provide(inj, ProvideInstanceID)
 	do.Provide(inj, ProvideMetricsDeps)
 
@@ -285,85 +271,11 @@ func openStore(ctx context.Context, dbCfg *config.DatabaseConfig, cb *breaker.Ci
 	}
 }
 
-// -------------------------------------------------------------------------
-// NARROW PER-ROLE STORE PROVIDERS
-//
-// CB protection lives inside each driver's DBTX/db wrapper, so each
-// provider just types the shared concrete store as the narrow role its
-// consumer needs. Advisory locks bypass the breaker because they emulate
-// per-process leader election rather than running SQL through the pool.
-// -------------------------------------------------------------------------
-
-// ProvideObjectStore types the concrete store as ObjectStore.
-func ProvideObjectStore(i do.Injector) (core.ObjectStore, error) {
-	return do.Invoke[concreteStore](i)
-}
-
-// ProvideQuotaStore types the concrete store as QuotaStore.
-func ProvideQuotaStore(i do.Injector) (core.QuotaStore, error) {
-	return do.Invoke[concreteStore](i)
-}
-
-// ProvideMultipartStore types the concrete store as MultipartStore.
-func ProvideMultipartStore(i do.Injector) (core.MultipartStore, error) {
-	return do.Invoke[concreteStore](i)
-}
-
-// ProvideReplicationStore types the concrete store as ReplicationStore.
-func ProvideReplicationStore(i do.Injector) (core.ReplicationStore, error) {
-	return do.Invoke[concreteStore](i)
-}
-
-// ProvideCleanupStore types the concrete store as CleanupStore.
-func ProvideCleanupStore(i do.Injector) (core.CleanupStore, error) {
-	return do.Invoke[concreteStore](i)
-}
-
-// ProvidePendingStore types the concrete store as PendingStore for the
-// write path's PUT-before-COMMIT pending-row pattern. Returns nil when
-// the operator disables the pattern via write_path.pending_pattern
-// .enabled=false; the write path's nil check falls back to the legacy
-// cleanup-on-failure behaviour in that case.
-func ProvidePendingStore(i do.Injector) (core.PendingStore, error) {
-	cfg, err := do.Invoke[*config.Config](i)
-	if err != nil {
-		return nil, err
-	}
-	if !cfg.WritePath.PendingPattern.IsEnabled() {
-		return nil, nil //nolint:nilnil // intentional: nil signals feature off, caller branches on it
-	}
-	return do.Invoke[concreteStore](i)
-}
-
-// ProvideIntegrityStore types the concrete store as IntegrityStore.
-func ProvideIntegrityStore(i do.Injector) (core.IntegrityStore, error) {
-	return do.Invoke[concreteStore](i)
-}
-
-// ProvideExpiredObjectsLister types the concrete store as ExpiredObjectsLister.
-func ProvideExpiredObjectsLister(i do.Injector) (core.ExpiredObjectsLister, error) {
-	return do.Invoke[concreteStore](i)
-}
-
-// ProvideBackendLifecycleStore types the concrete store as BackendLifecycleStore.
-func ProvideBackendLifecycleStore(i do.Injector) (core.BackendLifecycleStore, error) {
-	return do.Invoke[concreteStore](i)
-}
-
-// ProvideDashboardStore types the concrete store as DashboardStore.
-func ProvideDashboardStore(i do.Injector) (core.DashboardStore, error) {
-	return do.Invoke[concreteStore](i)
-}
-
-// ProvideUsageFlusher types the concrete store as UsageFlusher.
-func ProvideUsageFlusher(i do.Injector) (core.UsageFlusher, error) {
-	return do.Invoke[concreteStore](i)
-}
-
-// ProvideAdvisoryLocker types the concrete store as AdvisoryLocker.
-// Advisory locks bypass the breaker by going through pool.Acquire()
-// directly (postgres) or the process-local mutex (sqlite).
-func ProvideAdvisoryLocker(i do.Injector) (core.AdvisoryLocker, error) {
+// ProvideMetadataStore types the concrete store as the wide
+// core.MetadataStore contract every consumer depends on. CB protection
+// lives inside each driver's DBTX/DB chokepoint, so this provider does
+// no wrapping of its own; the value flows straight through.
+func ProvideMetadataStore(i do.Injector) (core.MetadataStore, error) {
 	return do.Invoke[concreteStore](i)
 }
 
@@ -374,27 +286,13 @@ func ProvideInstanceID(_ do.Injector) (instanceid.ID, error) {
 	return instanceid.New()
 }
 
-// metricsDepsAdapter composes the narrow roles metrics.Collector queries.
-// Struct embedding promotes each method to the top-level type, so the
-// adapter structurally satisfies metrics.Deps without inventing a
-// composed interface.
-type metricsDepsAdapter struct {
-	core.DashboardStore   // GetQuotaStats, GetObjectCounts, GetActiveMultipartCounts, GetUsageForPeriod
-	core.ReplicationStore // GetUnderReplicatedObjects (among others)
-}
-
-// ProvideMetricsDeps builds the adapter metrics.Collector uses to refresh
-// Prometheus gauges.
+// ProvideMetricsDeps invokes the wide metadata-store contract typed as
+// the metrics.Deps subset metrics.Collector uses to refresh Prometheus
+// gauges. core.MetadataStore satisfies the dependency directly because
+// it embeds DashboardStore and ReplicationStore, the two roles
+// metrics.Deps requires.
 func ProvideMetricsDeps(i do.Injector) (metrics.Deps, error) {
-	dash, err := do.Invoke[core.DashboardStore](i)
-	if err != nil {
-		return nil, err
-	}
-	repl, err := do.Invoke[core.ReplicationStore](i)
-	if err != nil {
-		return nil, err
-	}
-	return &metricsDepsAdapter{DashboardStore: dash, ReplicationStore: repl}, nil
+	return do.Invoke[core.MetadataStore](i)
 }
 
 // -------------------------------------------------------------------------
@@ -433,11 +331,11 @@ func ProvideRebalancer(i do.Injector) (*worker.Rebalancer, error) {
 	if err != nil {
 		return nil, err
 	}
-	obj, err := do.Invoke[core.ObjectStore](i)
+	obj, err := do.Invoke[core.MetadataStore](i)
 	if err != nil {
 		return nil, err
 	}
-	q, err := do.Invoke[core.QuotaStore](i)
+	q, err := do.Invoke[core.MetadataStore](i)
 	if err != nil {
 		return nil, err
 	}
@@ -452,15 +350,15 @@ func ProvideReplicator(i do.Injector) (*worker.Replicator, error) {
 	if err != nil {
 		return nil, err
 	}
-	obj, err := do.Invoke[core.ObjectStore](i)
+	obj, err := do.Invoke[core.MetadataStore](i)
 	if err != nil {
 		return nil, err
 	}
-	repl, err := do.Invoke[core.ReplicationStore](i)
+	repl, err := do.Invoke[core.MetadataStore](i)
 	if err != nil {
 		return nil, err
 	}
-	q, err := do.Invoke[core.QuotaStore](i)
+	q, err := do.Invoke[core.MetadataStore](i)
 	if err != nil {
 		return nil, err
 	}
@@ -475,11 +373,11 @@ func ProvideOverReplicationCleaner(i do.Injector) (*worker.OverReplicationCleane
 	if err != nil {
 		return nil, err
 	}
-	repl, err := do.Invoke[core.ReplicationStore](i)
+	repl, err := do.Invoke[core.MetadataStore](i)
 	if err != nil {
 		return nil, err
 	}
-	q, err := do.Invoke[core.QuotaStore](i)
+	q, err := do.Invoke[core.MetadataStore](i)
 	if err != nil {
 		return nil, err
 	}
@@ -498,7 +396,7 @@ func ProvideCleanupWorker(i do.Injector) (*worker.CleanupWorker, error) {
 	if err != nil {
 		return nil, err
 	}
-	cleanup, err := do.Invoke[core.CleanupStore](i)
+	cleanup, err := do.Invoke[core.MetadataStore](i)
 	if err != nil {
 		return nil, err
 	}
@@ -530,7 +428,7 @@ func ProvidePendingReaper(i do.Injector) (*worker.PendingReaper, error) {
 	if err != nil {
 		return nil, err
 	}
-	pending, err := do.Invoke[core.PendingStore](i)
+	pending, err := do.Invoke[core.MetadataStore](i)
 	if err != nil {
 		return nil, err
 	}
@@ -552,7 +450,7 @@ func ProvideScrubber(i do.Injector) (*worker.Scrubber, error) {
 	if err != nil {
 		return nil, err
 	}
-	integrity, err := do.Invoke[core.IntegrityStore](i)
+	integrity, err := do.Invoke[core.MetadataStore](i)
 	if err != nil {
 		return nil, err
 	}
@@ -586,11 +484,11 @@ func ProvideMultipartBackfill(i do.Injector) (*worker.MultipartBackfill, error) 
 	if err != nil {
 		return nil, err
 	}
-	mp, err := do.Invoke[core.MultipartStore](i)
+	mp, err := do.Invoke[core.MetadataStore](i)
 	if err != nil {
 		return nil, err
 	}
-	locker, err := do.Invoke[core.AdvisoryLocker](i)
+	locker, err := do.Invoke[core.MetadataStore](i)
 	if err != nil {
 		return nil, err
 	}
@@ -615,15 +513,15 @@ func ProvideDrainManager(i do.Injector) (*drain.Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	obj, err := do.Invoke[core.ObjectStore](i)
+	obj, err := do.Invoke[core.MetadataStore](i)
 	if err != nil {
 		return nil, err
 	}
-	q, err := do.Invoke[core.QuotaStore](i)
+	q, err := do.Invoke[core.MetadataStore](i)
 	if err != nil {
 		return nil, err
 	}
-	blc, err := do.Invoke[core.BackendLifecycleStore](i)
+	blc, err := do.Invoke[core.MetadataStore](i)
 	if err != nil {
 		return nil, err
 	}
@@ -831,11 +729,7 @@ func ProvideBackendManager(i do.Injector) (*proxy.BackendManager, error) {
 	if err != nil {
 		return nil, err
 	}
-	stores, err := resolveProxyStores(i)
-	if err != nil {
-		return nil, err
-	}
-	dash, err := do.Invoke[core.DashboardStore](i)
+	stores, err := do.Invoke[core.MetadataStore](i)
 	if err != nil {
 		return nil, err
 	}
@@ -851,8 +745,9 @@ func ProvideBackendManager(i do.Injector) (*proxy.BackendManager, error) {
 	return proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:          br.Backends,
 		Stores:            stores,
+		PendingEnabled:    cfg.WritePath.PendingPattern.IsEnabled(),
 		Metrics:           metricsDeps,
-		Dashboard:         dash,
+		Dashboard:         stores,
 		Order:             br.Order,
 		CacheTTL:          cfg.CircuitBreaker.CacheTTL,
 		BackendTimeout:    cfg.Server.BackendTimeout,
@@ -923,72 +818,6 @@ func replicationFactorFromInjector(i do.Injector) func() int {
 	}
 }
 
-// resolveProxyStores assembles the proxy.Stores bag by invoking each narrow
-// role provider. Defined here so ProvideBackendManager stays readable.
-func resolveProxyStores(i do.Injector) (proxy.Stores, error) {
-	obj, err := do.Invoke[core.ObjectStore](i)
-	if err != nil {
-		return proxy.Stores{}, err
-	}
-	q, err := do.Invoke[core.QuotaStore](i)
-	if err != nil {
-		return proxy.Stores{}, err
-	}
-	mp, err := do.Invoke[core.MultipartStore](i)
-	if err != nil {
-		return proxy.Stores{}, err
-	}
-	rep, err := do.Invoke[core.ReplicationStore](i)
-	if err != nil {
-		return proxy.Stores{}, err
-	}
-	cu, err := do.Invoke[core.CleanupStore](i)
-	if err != nil {
-		return proxy.Stores{}, err
-	}
-	pen, err := do.Invoke[core.PendingStore](i)
-	if err != nil {
-		return proxy.Stores{}, err
-	}
-	ig, err := do.Invoke[core.IntegrityStore](i)
-	if err != nil {
-		return proxy.Stores{}, err
-	}
-	lc, err := do.Invoke[core.ExpiredObjectsLister](i)
-	if err != nil {
-		return proxy.Stores{}, err
-	}
-	blc, err := do.Invoke[core.BackendLifecycleStore](i)
-	if err != nil {
-		return proxy.Stores{}, err
-	}
-	dash, err := do.Invoke[core.DashboardStore](i)
-	if err != nil {
-		return proxy.Stores{}, err
-	}
-	uf, err := do.Invoke[core.UsageFlusher](i)
-	if err != nil {
-		return proxy.Stores{}, err
-	}
-	lock, err := do.Invoke[core.AdvisoryLocker](i)
-	if err != nil {
-		return proxy.Stores{}, err
-	}
-	return proxy.Stores{
-		Object:           obj,
-		Quota:            q,
-		Multipart:        mp,
-		Replication:      rep,
-		Cleanup:          cu,
-		Pending:          pen,
-		Integrity:        ig,
-		Lifecycle:        lc,
-		BackendLifecycle: blc,
-		Dashboard:        dash,
-		Usage:            uf,
-		Lock:             lock,
-	}, nil
-}
 
 // -------------------------------------------------------------------------
 // BACKGROUND SERVICE PROVIDERS
@@ -1066,7 +895,7 @@ func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	locker, err := do.Invoke[core.AdvisoryLocker](i)
+	locker, err := do.Invoke[core.MetadataStore](i)
 	if err != nil {
 		return nil, err
 	}
@@ -1234,13 +1063,13 @@ func resolveAdminHandlerDeps(i do.Injector) (adminHandlerDeps, error) {
 	if d.drain, err = do.Invoke[*drain.Manager](i); err != nil {
 		return d, err
 	}
-	if d.objects, err = do.Invoke[core.ObjectStore](i); err != nil {
+	if d.objects, err = do.Invoke[core.MetadataStore](i); err != nil {
 		return d, err
 	}
-	if d.cleanup, err = do.Invoke[core.CleanupStore](i); err != nil {
+	if d.cleanup, err = do.Invoke[core.MetadataStore](i); err != nil {
 		return d, err
 	}
-	if d.lifecycle, err = do.Invoke[core.BackendLifecycleStore](i); err != nil {
+	if d.lifecycle, err = do.Invoke[core.MetadataStore](i); err != nil {
 		return d, err
 	}
 	return d, nil

@@ -38,7 +38,7 @@ func newAdminHandlerForTest(t *testing.T, opts ...func(*proxy.BackendManager)) *
 	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3})
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{},
-		Stores:          proxytest.StoresFromMock(mock),
+		Stores:          mock,
 		Dashboard:       mock,
 		Metrics:         mock,
 		Order:           []string{},

@@ -217,11 +217,19 @@ func CurrentPeriod() string {
 	return time.Now().UTC().Format("2006-01")
 }
 
+// usageFlusher is the consumer-defined slice of the metadata store
+// FlushUsage actually calls. Declared here so the counter package owns
+// its own dependency contract instead of importing a producer-side
+// type from internal/store/core.
+type usageFlusher interface {
+	FlushUsageDeltas(ctx context.Context, backendName, period string, apiRequests, egressBytes, ingressBytes int64) error
+}
+
 // FlushUsage reads and resets the counter backend, then writes the accumulated
 // deltas to the database. Called periodically (every 30s). On DB error, deltas
 // are added back to avoid data loss. Backends in the skip set have their
 // counters discarded (used for drained backends whose DB records are gone).
-func (u *UsageTracker) FlushUsage(ctx context.Context, store core.UsageFlusher, skip map[string]bool) error {
+func (u *UsageTracker) FlushUsage(ctx context.Context, store usageFlusher, skip map[string]bool) error {
 	period := CurrentPeriod()
 	var lastErr error
 

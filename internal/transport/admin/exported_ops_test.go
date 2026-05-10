@@ -274,7 +274,7 @@ func TestEncryptExisting_HappyPathOneRow(t *testing.T) {
 	fake := &fakeBackend{payload: []byte("hello world")}
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"backend-a": fake},
-		Stores:          proxytest.StoresFromMock(mock),
+		Stores:          mock,
 		Dashboard:       mock,
 		Metrics:         mock,
 		Order:           []string{"backend-a"},

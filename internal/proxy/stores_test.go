@@ -1,14 +1,5 @@
-// -------------------------------------------------------------------------------
-// In-Package Test Helpers
-//
-// Author: Alex Freidah
-//
-// Mirror of testStoresFromMock for tests inside the proxy package.
-// proxy's own tests can't import proxy/proxytest without an import cycle,
-// so this file declares a local copy guarded by the _test.go build tag.
-// External callers must use testStoresFromMock instead.
-// -------------------------------------------------------------------------------
-
+// In-package test helpers for the proxy package. Lives in a _test.go
+// file so it is excluded from production builds.
 package proxy
 
 import (
@@ -19,28 +10,20 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
-// rebalancerStoreT/replicatorStoreT/overReplicationStoreT mirror the
-// adapter types the DI package builds for production (#676 B). Declared
-// in this _test.go file so proxy's own fixtures can wire workers without
-// importing di. Not intended for production use.
+// rebalancerStoreT, replicatorStoreT, overReplicationStoreT mirror the
+// adapter types worker constructors require. Declared here so proxy's
+// own fixtures can wire workers without importing di.
 type rebalancerStoreT struct {
 	core.ObjectStore
 	core.QuotaStore
 }
 
-// replicatorStoreT bundles the narrow store roles the Replicator needs
-// (object reads, replication ops, quota writes) into a single test
-// fixture so wireWorkersForTest can hand the worker exactly the slice
-// of methods it depends on without a god-interface.
 type replicatorStoreT struct {
 	core.ObjectStore
 	core.ReplicationStore
 	core.QuotaStore
 }
 
-// overReplicationStoreT bundles the narrow store roles the
-// OverReplicationCleaner needs (replication scans + quota writes)
-// into a single test fixture, mirroring the production composition.
 type overReplicationStoreT struct {
 	core.ReplicationStore
 	core.QuotaStore
@@ -48,72 +31,37 @@ type overReplicationStoreT struct {
 
 // wireWorkersForTest constructs all workers and attaches them to the
 // manager, returning the same pointer for fluent chaining at the
-// "return NewBackendManager(...)" sites in test fixtures. Mirrors the
-// per-worker DI providers, just inline. Tests that reach mgr.Rebalancer
-// / mgr.Replicator / etc. need the wiring this helper installs.
+// "return NewBackendManager(...)" sites in test fixtures.
 func wireWorkersForTest(m *BackendManager) *BackendManager {
 	m.Rebalancer = worker.NewRebalancer(m, &rebalancerStoreT{
-		ObjectStore: m.stores.Object,
-		QuotaStore:  m.stores.Quota,
+		ObjectStore: m.stores,
+		QuotaStore:  m.stores,
 	})
 	m.Replicator = worker.NewReplicator(m, &replicatorStoreT{
-		ObjectStore:      m.stores.Object,
-		ReplicationStore: m.stores.Replication,
-		QuotaStore:       m.stores.Quota,
+		ObjectStore:      m.stores,
+		ReplicationStore: m.stores,
+		QuotaStore:       m.stores,
 	})
 	m.OverReplicationCleaner = worker.NewOverReplicationCleaner(m, &overReplicationStoreT{
-		ReplicationStore: m.stores.Replication,
-		QuotaStore:       m.stores.Quota,
+		ReplicationStore: m.stores,
+		QuotaStore:       m.stores,
 	})
-	m.CleanupWorker = worker.NewCleanupWorker(m, m.stores.Cleanup, 10, "test-instance", 5*time.Minute)
-	if m.stores.Pending != nil {
-		m.PendingReaper = worker.NewPendingReaper(m, m.stores.Pending, 0, 0, 0)
-	}
-	m.Scrubber = worker.NewScrubber(m, m.stores.Integrity, nil)
+	m.CleanupWorker = worker.NewCleanupWorker(m, m.stores, 10, "test-instance", 5*time.Minute)
+	m.PendingReaper = worker.NewPendingReaper(m, m.stores, 0, 0, 0)
+	m.Scrubber = worker.NewScrubber(m, m.stores, nil)
 	m.WireDrain(drain.New(
 		m,
-		m.stores.Object,
-		m.stores.Quota,
-		m.stores.BackendLifecycle,
+		m.stores,
+		m.stores,
+		m.stores,
 		m.MultipartManager.AbortMultipartUploadsOnBackend,
 		m.CleanupWorker.ProcessCleanupQueue,
 	))
 	return m
 }
 
-// allRoles is the structural shape testStoresFromMock requires of its
-// argument  -  any value that satisfies every narrow role interface.
-type allRoles interface {
-	core.ObjectStore
-	core.QuotaStore
-	core.MultipartStore
-	core.ReplicationStore
-	core.CleanupStore
-	core.PendingStore
-	core.IntegrityStore
-	core.ExpiredObjectsLister
-	core.BackendLifecycleStore
-	core.DashboardStore
-	core.UsageFlusher
-	core.AdvisoryLocker
-}
-
-// testStoresFromMock returns a Stores bag where every field points at the
-// same mock value. Used by tests inside the proxy package; tests in other
-// packages use testStoresFromMock instead.
-func testStoresFromMock(m allRoles) Stores {
-	return Stores{
-		Object:           m,
-		Quota:            m,
-		Multipart:        m,
-		Replication:      m,
-		Cleanup:          m,
-		Pending:          m,
-		Integrity:        m,
-		Lifecycle:        m,
-		BackendLifecycle: m,
-		Dashboard:        m,
-		Usage:            m,
-		Lock:             m,
-	}
-}
+// testStoresFromMock returns m typed as the wide metadata-store contract
+// every consumer depends on. A no-op identity since proxy.Stores has been
+// folded into core.MetadataStore; kept so existing call sites read the
+// same way as the production DI wiring.
+func testStoresFromMock(m core.MetadataStore) core.MetadataStore { return m }
