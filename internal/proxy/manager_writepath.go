@@ -32,15 +32,10 @@ import (
 // STORE-ROLE ACCESSORS
 // -------------------------------------------------------------------------
 
-// Multipart returns the multipart-upload store role. Exposed for transport
-// handlers that need direct upload bookkeeping (e.g. s3api count).
-func (m *BackendManager) Multipart() core.MultipartStore { return m.stores.Multipart }
-
-// BackendLifecycle returns the backend-level admin store role. Exposed
-// for admin handlers that report per-backend stats or drop backend data.
-func (m *BackendManager) BackendLifecycle() core.BackendLifecycleStore {
-	return m.stores.BackendLifecycle
-}
+// Stores returns the wrapped metadata-store contract. Exposed for
+// transport handlers that need direct store access (multipart bookkeeping
+// in s3api, per-backend stats / data drop in admin).
+func (m *BackendManager) Stores() core.MetadataStore { return m.stores }
 
 // -------------------------------------------------------------------------
 // ROUTING
@@ -72,9 +67,9 @@ func (m *BackendManager) SelectReplicaTarget(ctx context.Context, size int64, ex
 // "spread" returns the least-utilized backend.
 func (m *BackendManager) selectBackendForWrite(ctx context.Context, size int64, eligible []string) (string, error) {
 	if m.routingStrategy == config.RoutingSpread {
-		return m.stores.Quota.GetLeastUtilizedBackend(ctx, size, eligible)
+		return m.stores.GetLeastUtilizedBackend(ctx, size, eligible)
 	}
-	return m.stores.Quota.GetBackendWithSpace(ctx, size, eligible)
+	return m.stores.GetBackendWithSpace(ctx, size, eligible)
 }
 
 // selectWriteTarget picks a backend for a write operation, combining
@@ -103,7 +98,7 @@ func (m *BackendManager) selectWriteTarget(ctx context.Context, span trace.Span,
 // object from the backend. On success, enqueues cleanup for any displaced copies
 // on other backends (from overwrites). Updates the tracing span on error.
 func (m *BackendManager) recordObjectOrCleanup(ctx context.Context, span trace.Span, be backend.ObjectBackend, key, backendName string, size int64, enc *core.EncryptionMeta) error {
-	displaced, err := m.stores.Object.RecordObject(ctx, key, backendName, size, enc)
+	displaced, err := m.stores.RecordObject(ctx, key, backendName, size, enc)
 	if err != nil {
 		slog.ErrorContext(ctx, "recordObject failed, cleaning up orphan",
 			"key", key, "backend", backendName, "error", err)
@@ -135,7 +130,7 @@ func (m *BackendManager) recordObjectOrCleanup(ctx context.Context, span trace.S
 // the intent would reintroduce the data-loss window the pattern exists to
 // close.
 func (m *BackendManager) insertPendingIntent(ctx context.Context, key, backendName string, size int64, enc *core.EncryptionMeta) (string, error) {
-	if m.stores.Pending == nil {
+	if !m.pendingEnabled {
 		return "", nil
 	}
 	intentID := audit.NewID()
@@ -152,7 +147,7 @@ func (m *BackendManager) insertPendingIntent(ctx context.Context, key, backendNa
 		p.PlaintextSize = enc.PlaintextSize
 		p.ContentHash = enc.ContentHash
 	}
-	if err := m.stores.Pending.InsertPending(ctx, &p); err != nil {
+	if err := m.stores.InsertPending(ctx, &p); err != nil {
 		return "", fmt.Errorf("insert pending intent: %w", err)
 	}
 	telemetry.PendingIntentsEnqueuedTotal.Inc()
@@ -182,7 +177,7 @@ func (m *BackendManager) recordObjectAndPromoteIntent(ctx context.Context, span 
 		return m.recordObjectOrCleanup(ctx, span, be, key, backendName, size, enc)
 	}
 
-	displaced, err := m.stores.Object.RecordObjectAndClearPending(ctx, key, backendName, size, enc, intentID)
+	displaced, err := m.stores.RecordObjectAndClearPending(ctx, key, backendName, size, enc, intentID)
 	if err == nil {
 		telemetry.PendingIntentsResolvedTotal.WithLabelValues("committed").Inc()
 	}
@@ -250,13 +245,13 @@ func (m *BackendManager) DeleteOrEnqueue(ctx context.Context, be backend.ObjectB
 // (e.g. DB down), logs the error and moves on since the circuit breaker
 // is already handling DB outages.
 func (m *BackendManager) enqueueCleanup(ctx context.Context, backendName, objectKey, reason string, sizeBytes int64) {
-	if err := m.stores.Cleanup.EnqueueCleanup(ctx, backendName, objectKey, reason, sizeBytes); err != nil {
+	if err := m.stores.EnqueueCleanup(ctx, backendName, objectKey, reason, sizeBytes); err != nil {
 		slog.ErrorContext(ctx, "failed to enqueue cleanup (best-effort)",
 			"backend", backendName, "key", objectKey, "reason", reason, "error", err)
 		return
 	}
 	if sizeBytes > 0 {
-		if err := m.stores.Cleanup.IncrementOrphanBytes(ctx, backendName, sizeBytes); err != nil {
+		if err := m.stores.IncrementOrphanBytes(ctx, backendName, sizeBytes); err != nil {
 			slog.ErrorContext(ctx, "failed to increment orphan bytes (best-effort)",
 				"backend", backendName, "key", objectKey, "size", sizeBytes, "error", err)
 		}

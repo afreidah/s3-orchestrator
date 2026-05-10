@@ -523,7 +523,7 @@ func (s *server) runMultipartDEKBackfill(ctx context.Context) {
 	if err != nil || mb == nil {
 		return
 	}
-	locker, err := do.Invoke[core.AdvisoryLocker](s.inj)
+	locker, err := do.Invoke[core.MetadataStore](s.inj)
 	if err != nil {
 		slog.WarnContext(ctx, "multipart_dek_backfill: skipping startup pass, no advisory locker", "error", err)
 		return

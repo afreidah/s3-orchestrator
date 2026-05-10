@@ -98,7 +98,7 @@ func stubCompleteCleanup(c *drainCalls) func(context.Context, int64) error {
 }
 
 // newDrainTestManager constructs a manager wired for drain tests.
-func newDrainTestManager(store managerRoles, backends map[string]*mockBackend) *BackendManager {
+func newDrainTestManager(store core.MetadataStore, backends map[string]*mockBackend) *BackendManager {
 	obs := make(map[string]s3be.ObjectBackend, len(backends))
 	var order []string
 	for name, b := range backends {

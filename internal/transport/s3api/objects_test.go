@@ -146,7 +146,7 @@ func newTestServer(t *testing.T) (*httptest.Server, *testutil.MockStore, *server
 
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        map[string]s3be.ObjectBackend{"b1": backend},
-		Stores:          proxytest.StoresFromMock(mockStore),
+		Stores:          mockStore,
 		Dashboard:       mockStore,
 		Metrics:         mockStore,
 		Order:           []string{"b1"},
@@ -475,7 +475,7 @@ func newCapacityHintTestServer(t *testing.T, mockStore *testutil.MockStore) *htt
 	backend := newServerMockBackend()
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        map[string]s3be.ObjectBackend{"b1": backend},
-		Stores:          proxytest.StoresFromMock(mockStore),
+		Stores:          mockStore,
 		Dashboard:       mockStore,
 		Metrics:         mockStore,
 		Order:           []string{"b1"},
