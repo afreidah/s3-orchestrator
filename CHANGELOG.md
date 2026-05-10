@@ -3,6 +3,124 @@
 All notable changes to this project are documented in this file.
 
 
+## [0.46.20] - 2026-05-10
+
+### Fixed
+- fix(proxy,release): cache streaming admission + cosign bundle filename (#761)
+
+## [0.46.19] - 2026-05-10
+
+### Added
+- add package-level doc comments to every Go package (#697)
+- add FailableBackend, sentinel config errors, and edge-case integration scenarios (#591)
+
+### Fixed
+- fix(release): switch cosign signing to --bundle (#756) (#757)
+- fix(postgres): keep backend_quotas.bytes_used in step with encrypt/decrypt rewrites (#742) (#743)
+- fix(breaker): clean Open->Closed recovery via new Recover() method (#739) (#741)
+- fix(auth): SigV4 verifier honours wire-form path encoding (#737) (#738)
+- fix(s3api): scope multipart endpoints to URL bucket to close cross-bucket IDOR (#735) (#736)
+- fix(cleanup): per-row claim pattern eliminates double-processing race (#733) (#734)
+- fix(ui/logs): stringify error attrs in ring buffer + click-to-expand rows (#720)
+- fix(proxy/multipart): per-uploadID advisory lock + cleanup on failure (#715)
+- fix(store): apply backend_quotas deltas in stable order to prevent deadlock (#687) (#688)
+- fix(replicator): consistent size between row and quota; pass actual source size (#652) (#686)
+- fix(proxy): single-tx batch DeleteObjects (#677)
+- fix(rebalancer): batch backend lookup per source instead of per object (#675)
+- fix(proxy): advance ListObjects continuation token past emitted CommonPrefix (#672)
+- fix(proxy): release per-call timeout on broadcast-read winner (#671)
+- fix(test): TestCircuitBreaker_DegradedDurationIsPositive flake (#670)
+- fix(test): TestCircuitBreaker_DegradedDurationIsPositive flake
+- fix(store/sqlite): clear S2077 hotspots via json_each IN expansion (#644)
+- fix(proxy): paginate ReconcileBackend with bounded-memory sorted-merge (closes #614) (#642)
+- fix(ui): use String.replaceAll() to trim slashes in upload path (#638)
+- fix(ui): make cookie Secure flag follow trusted-proxy X-Forwarded-Proto (#635)
+- fix(docs): use <br> for Mermaid line breaks in diagrams (#625)
+- fix(test): serialize TransitionLogs_HalfOpenToClosed to prevent captureLogs race (#603)
+
+### Hardened
+- security: validate streaming SigV4 chunk signatures end-to-end (#730)
+
+### Refactored
+- refactor(proxy): cleanup-DELETE accounting + read-path location plumbing (#758) (#759)
+- refactor(di): drop redundant adapters, bag structs, side-effect registration (#753)
+- refactor(store): collapse narrow store-role interfaces (#747) (#751)
+- refactor(store): move CB into driver-level DBTX wrapper, delete decorator layer (#750)
+- refactor(test): consolidate three handwritten mockStore implementations onto mockgen (#749)
+- refactor(observability): standardize structured logging conventions (#718)
+- refactor(lifecycle): rename Service/Stoppable to Runner/Stopper (#710)
+- refactor(integration): drop S3776 cognitive complexity in test fixtures (#699)
+- refactor(proxy): lift workers out of BackendManager (#676 B) (#685)
+- refactor(proxy): slim backendCore (#676 C) (#684)
+- refactor(proxy): extract metrics, drain, dashboard subpackages (676D partial) (#682)
+- refactor(store): drop alias layer + split AdminStore into narrow roles (#681)
+- refactor(store): drop postgres re-exports (676A) (#680)
+- refactor(store): extract engine-agnostic core, thin per-engine adapters (#674)
+- refactor(breaker, telemetry): decouple breaker from observability; split metrics (#640)
+- refactor(store): collapse 11-case toObjectLocation switch via accessors (#639)
+- refactor(transport): handlers depend on narrow Deps, not *BackendManager (closes #613) (#636)
+- refactor(s3api): extract enforceContentLength helper (closes #632) (#633)
+- refactor(cmd): thin cmd/ via internal/cli + breaker.Registry; atomic SIGHUP (#630)
+- refactor(observe): collapse span+metrics+status boilerplate (#621)
+- refactor(store): retire MetadataStore union, narrow roles everywhere (#617)
+- decompose MetadataStore into narrow per-worker store interfaces (#566) (#579)
+
+### Improved
+- replace do.MustInvoke with explicit error handling in DI resolution (#564) (#589)
+- update CHANGELOG.md for v0.40.1 (#563)
+
+### Dependencies
+- chore(deps): bump the actions group with 2 updates (#726)
+- chore(deps): bump github.com/aws/aws-sdk-go-v2/service/s3 (#727)
+- chore(deps): bump github.com/redis/go-redis/v9 (#668)
+- chore(deps): bump the aws-sdk group with 3 updates (#667)
+- chore(deps): bump SonarSource/sonarqube-scan-action in the actions group (#666)
+- chore(deps): bump the minor-and-patch group across 1 directory with 3 updates (#624)
+- chore(deps): bump the aws-sdk group with 3 updates (#619)
+- chore(deps): bump the actions group with 4 updates (#618)
+- chore(deps): bump github.com/jackc/pgx/v5 from 5.9.1 to 5.9.2 (#596)
+- chore(deps): bump the minor-and-patch group across 1 directory with 2 updates (#576)
+- chore(deps): bump go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc (#573)
+- chore(deps): bump github.com/aws/aws-sdk-go-v2/service/s3 (#572)
+
+### Other
+- FIX: new benchmark and tweaks to nomad resources to use less cpu since performance improved greatly on cpu
+- cross-cutting cleanup (#754) (#755)
+- delete verified-dead helpers and methods (#748)
+- bug: encryption stream readers no longer translate IO errors to EOF (#732)
+- docs(errors): include path/host/byte-position in error messages (#728)
+- tactical helpers across postgres, config, worker (#725)
+- tactical helpers across postgres, config, worker (#724)
+- If-None-Match: * conditional writes; document last-writer-wins (#723)
+- reaper: skip backends with open circuit; drop vault token perms warning (#722)
+- share upload-level DEK + legacy backfill worker (#716)
+- extract two duplicated blocks flagged by SonarCloud (#712)
+- run SonarQube on non-Go PRs and replace remaining rgba bgs (#706)
+- style(ui): raise UI text contrast to WCAG AA (#705)
+- docs(ui): suppress go:S2092 false positives on Secure cookie flag (#703)
+- pin sqlc and govulncheck via go.mod tool directive (#701)
+- drop S3776 cognitive complexity violations across the repo (#692)
+- graduate exhausted retries to cleanup_dlq for operator visibility (#689)
+- added new benchmark
+- tidy proxy test helpers and split worker ops contracts (#676 E+G+H) (#683)
+- SigV4 timing equalization + reconciler stale-row sweep (#673)
+- Revert "fix(test): TestCircuitBreaker_DegradedDurationIsPositive flake"
+- PUT-before-COMMIT pending-row pattern with timestamp-aware reaper (#665)
+- write-path cleanup timeouts, accounting symmetry, batch error (#656)
+- clarity and code-reduction sweep from architecture review (#648)
+- replication-aware dashboard, multi-backend file rows, admin actions (#646)
+- test(di): cover audit callback, sqlite concrete store, postgres branch, watchdog backend loop (#629)
+- dedupe row-mapping, encrypt-result assembly, sigv4, admin CLI (#623)
+- latest benchmark
+- log+observe silent errors in counter/notify; normalize log casing (#595)
+- perf(test): make lifecycle backoff injectable; expand admin/ui handler coverage (#594)
+- parallelize top-level tests in ui, store, breaker (#592)
+- centralize magic timeouts and quiet test flakiness (#569, refs #522) (#590)
+- address SonarQube findings #582-586 (#588)
+- extract string constants and encryption helpers, add SonarQube (#580, #581) (#587)
+- rebalancer skips moves where target already has a copy (#577) (#578)
+- split store.go (1625 lines) into domain-focused files (#565) (#575)
+
 ## [0.40.1] - 2026-04-16
 
 ### Added
