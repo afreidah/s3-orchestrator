@@ -569,25 +569,38 @@ func (o *ObjectManager) maybeWrapIntegrityReader(
 	r.Body = vr
 }
 
-// populateObjectCache reads the response body into memory, stores it in
-// the object cache, and replaces result.Body with a bytes.Reader so the
-// caller can stream the same content. Skipped for range requests and when
-// the cache is disabled.
+// populateObjectCache wraps result.Body in a tee that copies bytes into
+// a pre-sized buffer as the response streams to the client. On clean
+// read completion (EOF at exactly result.Size bytes) the buffer is
+// handed to the cache. The cache is left untouched on early disconnect,
+// mid-stream errors, or any short-/over-read versus the announced size.
+//
+// Skipped (no buffering, body unchanged) when:
+//   - the cache is disabled
+//   - the request carries a Range header (partial responses are not
+//     stored as full-object cache entries)
+//   - the backend did not return a positive Content-Length (size <= 0)
+//   - the announced size exceeds the cache's per-entry admission limit
+//
+// In every skip case the backend body streams straight through to the
+// client with zero proxy-side buffering, so a 5 GB GET with a 100 MB
+// max_object_size never allocates more than the read buffer worth of
+// heap.
 func (o *ObjectManager) populateObjectCache(key, rangeHeader string, result *s3be.GetObjectResult) error {
-	if o.objectCache == nil || rangeHeader != "" {
+	if o.objectCache == nil || rangeHeader != "" || result.Size <= 0 {
 		return nil
 	}
-	data, readErr := io.ReadAll(result.Body)
-	result.Body.Close()
-	if readErr != nil {
-		return fmt.Errorf("read object for caching: %w", readErr)
+	if !o.objectCache.Admit(result.Size) {
+		return nil
 	}
-	_ = o.objectCache.Put(key, bytes.NewReader(data), objcache.EntryMeta{
+	meta := objcache.EntryMeta{
 		ContentType: result.ContentType,
 		ETag:        result.ETag,
 		Metadata:    result.Metadata,
+	}
+	result.Body = newCacheTeeBody(result.Body, result.Size, func(data []byte) {
+		o.objectCache.PutBytes(key, data, meta)
 	})
-	result.Body = io.NopCloser(bytes.NewReader(data))
 	return nil
 }
 

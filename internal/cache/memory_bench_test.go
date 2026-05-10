@@ -10,7 +10,6 @@
 package cache
 
 import (
-	"bytes"
 	"fmt"
 	"testing"
 	"time"
@@ -24,7 +23,7 @@ func BenchmarkMemoryCache_Get_Hit(b *testing.B) {
 		MaxObjectSize: 1 << 20,
 		TTL:           5 * time.Minute,
 	})
-	_ = c.Put("hit-key", bytes.NewReader(make([]byte, 1024)), EntryMeta{ContentType: "application/octet-stream"})
+	c.PutBytes("hit-key", make([]byte, 1024), EntryMeta{ContentType: "application/octet-stream"})
 
 	for b.Loop() {
 		entry, ok := c.Get("hit-key")
@@ -60,7 +59,7 @@ func BenchmarkMemoryCache_Put(b *testing.B) {
 	data := make([]byte, 4096)
 
 	for b.Loop() {
-		_ = c.Put("put-key", bytes.NewReader(data), EntryMeta{})
+		c.PutBytes("put-key", data, EntryMeta{})
 	}
 }
 
@@ -76,12 +75,12 @@ func BenchmarkMemoryCache_Put_Eviction(b *testing.B) {
 	})
 	data := make([]byte, objSize)
 	for i := range 10 {
-		_ = c.Put(fmt.Sprintf("seed-%d", i), bytes.NewReader(data), EntryMeta{})
+		c.PutBytes(fmt.Sprintf("seed-%d", i), data, EntryMeta{})
 	}
 
 	b.ResetTimer()
 	for b.Loop() {
-		_ = c.Put("evict-key", bytes.NewReader(data), EntryMeta{})
+		c.PutBytes("evict-key", data, EntryMeta{})
 	}
 }
 
@@ -99,7 +98,7 @@ func BenchmarkMemoryCache_Concurrent_ReadWrite(b *testing.B) {
 	data := make([]byte, 1024)
 	for i := range n {
 		keys[i] = fmt.Sprintf("key-%d", i)
-		_ = c.Put(keys[i], bytes.NewReader(data), EntryMeta{})
+		c.PutBytes(keys[i], data, EntryMeta{})
 	}
 
 	b.ResetTimer()
@@ -108,7 +107,7 @@ func BenchmarkMemoryCache_Concurrent_ReadWrite(b *testing.B) {
 		for pb.Next() {
 			key := keys[i%n]
 			if i%10 == 0 {
-				_ = c.Put(key, bytes.NewReader(data), EntryMeta{})
+				c.PutBytes(key, data, EntryMeta{})
 			} else {
 				c.Get(key)
 			}

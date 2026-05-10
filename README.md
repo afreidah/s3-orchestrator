@@ -59,10 +59,9 @@ cosign verify ghcr.io/afreidah/s3-orchestrator:<version> \
   --certificate-identity-regexp='github\.com/afreidah/s3-orchestrator' \
   --certificate-oidc-issuer='https://token.actions.githubusercontent.com'
 
-# Verify release checksums
+# Verify release checksums (modern sigstore bundle format)
 cosign verify-blob checksums.txt \
-  --signature checksums.txt.sig \
-  --certificate checksums.txt.pem \
+  --bundle checksums.txt.bundle \
   --certificate-identity-regexp='github\.com/afreidah/s3-orchestrator' \
   --certificate-oidc-issuer='https://token.actions.githubusercontent.com'
 ```
@@ -418,7 +417,7 @@ Optional in-memory LRU cache that stores full GET responses to reduce backend AP
 
 **Key behaviors:**
 - **Full GET responses only** — range requests bypass the cache on miss but are served from cache on hit
-- **Admission control** — objects larger than `max_object_size` are never cached, preventing a single large object from evicting many smaller ones
+- **Streaming admission** — objects larger than `max_object_size` are never read into proxy memory; the admission decision is made up-front from the backend's `Content-Length`, and the body streams straight through to the client with no proxy-side buffering. Eligible objects tee into a fixed-size buffer as they stream out, and only land in the cache after a clean end-of-response read. Partial reads, client disconnects, and backend `Content-Length` mismatches all leave the cache untouched.
 - **Automatic invalidation** — cache entries are evicted on PutObject, DeleteObject, CopyObject, DeleteObjects, and CompleteMultipartUpload
 - **TTL-based expiry** — entries expire after the configured TTL regardless of access, bounding staleness in multi-instance deployments where writes may happen on another instance
 - **Per-instance** — each orchestrator instance maintains its own cache; caches are not shared across instances
