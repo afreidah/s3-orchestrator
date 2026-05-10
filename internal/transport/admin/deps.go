@@ -43,14 +43,14 @@ type ScrubberOps interface {
 	Backfill(ctx context.Context, batchSize, offset int) (processed, nextOffset int)
 }
 
-// ReconcilerOps is the slice of *worker.Reconciler the admin handler uses
+// Reconciler is the slice of *worker.Reconciler the admin handler uses
 // for the on-demand reconciliation endpoint.
-type ReconcilerOps interface {
+type Reconciler interface {
 	Reconcile(ctx context.Context, backendName string) (*worker.ReconcileResult, error)
 }
 
-// MultipartBackfillOps is the slice of *worker.MultipartBackfill the admin
+// MultipartBackfiller is the slice of *worker.MultipartBackfill the admin
 // handler uses for the on-demand legacy-DEK migration endpoint.
-type MultipartBackfillOps interface {
+type MultipartBackfiller interface {
 	RunOnce(ctx context.Context) (int, error)
 }

@@ -192,22 +192,10 @@ Order: stdlib, internal packages, external packages.
 Group related fields with inline comments explaining non-obvious fields:
 
 ```go
-// Stores carries the narrow per-role store interfaces the manager depends on.
-// Each consumer asks only for the slice it actually uses; no caller sees a
-// composed "god interface".
-type Stores struct {
-    Object       store.ObjectStore
-    Quota        store.QuotaStore
-    Multipart    store.MultipartStore
-    Replication  store.ReplicationStore
-    Cleanup      store.CleanupStore
-    Integrity    store.IntegrityStore
-    Lifecycle    store.ExpiredObjectsLister
-    UsageFlusher store.UsageFlusher
-}
-
 type BackendManager struct {
-    *backendCore                                     // embeds the narrow Stores fields
+    *backendCore                                     // embeds backend fleet, admission, drain, metrics
+    stores          core.MetadataStore               // wide composite metadata-store contract
+    pendingEnabled  bool                             // mirrors cfg.PendingEnabled for write-path branches
     routingStrategy config.RoutingStrategy           // RoutingPack or RoutingSpread
     rebalanceCfg    syncutil.AtomicConfig[config.RebalanceConfig]
     replicationCfg  syncutil.AtomicConfig[config.ReplicationConfig]
@@ -282,9 +270,8 @@ internal/
   worker/                    # Background services: replicator, rebalancer, cleanup, scrubber, reaper
   store/                     # Metadata persistence
     core/                    # Engine-agnostic orchestration (TxAdapter, Runner, business rules)
-    postgres/                # Postgres engine adapter (sqlc-generated under sqlc/)
-    sqlite/                  # SQLite engine adapter
-    cb_*.go                  # CircuitBreaker decorators per narrow store role
+    postgres/                # Postgres engine adapter (sqlc-generated under sqlc/); CB protection lives in the DBTX wrapper
+    sqlite/                  # SQLite engine adapter; CB protection lives in the DB wrapper
   backend/                   # S3-compatible client interface + per-provider adapters
   encryption/                # Envelope encryption: chunked AES-GCM, key providers (config/file/Vault)
   observe/

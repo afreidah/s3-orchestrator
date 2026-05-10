@@ -64,8 +64,8 @@ type Handler struct {
 	drain             *drain.Manager
 	scrubber          ScrubberOps
 	lifecycle         core.BackendLifecycleStore
-	reconciler        ReconcilerOps
-	multipartBackfill MultipartBackfillOps
+	reconciler        Reconciler
+	multipartBackfill MultipartBackfiller
 	dbHealthy         func() bool
 	objects           core.ObjectStore
 	cleanup           core.CleanupStore
@@ -91,8 +91,8 @@ type Deps struct {
 	Objects           core.ObjectStore
 	Cleanup           core.CleanupStore
 	Encryptor         *encryption.Encryptor
-	Reconciler        ReconcilerOps
-	MultipartBackfill MultipartBackfillOps
+	Reconciler        Reconciler
+	MultipartBackfill MultipartBackfiller
 	Token             string
 	LogLevel          *slog.LevelVar
 }
