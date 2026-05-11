@@ -507,7 +507,7 @@ func TestPutObject_RecordFailure_LegacyPath(t *testing.T) {
 	storetest.Permissive(store)
 
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
-	mgr.pendingEnabled = false
+	mgr.coord.pendingEnabled = false
 
 	if _, err := mgr.ObjectManager.PutObject(context.Background(), "legacy-key", bytes.NewReader([]byte("data")), 4, "", nil); err == nil {
 		t.Fatal("expected error from RecordObject failure")
