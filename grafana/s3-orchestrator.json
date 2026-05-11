@@ -726,7 +726,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (status_code) (rate(s3o_requests_total[5m]))",
+          "expr": "sum by (status_code) (rate(s3o_requests_total[30s]))",
           "legendFormat": "{{status_code}}"
         }
       ],

@@ -747,21 +747,6 @@ func (mr *MockMetadataStoreMockRecorder) ListExpiredObjects(ctx, prefix, cutoff,
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListExpiredObjects", reflect.TypeOf((*MockMetadataStore)(nil).ListExpiredObjects), ctx, prefix, cutoff, limit)
 }
 
-// ListLegacyMultipartUploads mocks base method.
-func (m *MockMetadataStore) ListLegacyMultipartUploads(ctx context.Context, limit int) ([]core.MultipartUpload, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListLegacyMultipartUploads", ctx, limit)
-	ret0, _ := ret[0].([]core.MultipartUpload)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// ListLegacyMultipartUploads indicates an expected call of ListLegacyMultipartUploads.
-func (mr *MockMetadataStoreMockRecorder) ListLegacyMultipartUploads(ctx, limit any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListLegacyMultipartUploads", reflect.TypeOf((*MockMetadataStore)(nil).ListLegacyMultipartUploads), ctx, limit)
-}
-
 // ListMultipartUploads mocks base method.
 func (m *MockMetadataStore) ListMultipartUploads(ctx context.Context, prefix string, maxUploads int) ([]core.MultipartUpload, error) {
 	m.ctrl.T.Helper()
@@ -1097,34 +1082,6 @@ func (m *MockMetadataStore) UpdateEncryptionKey(ctx context.Context, objectKey, 
 func (mr *MockMetadataStoreMockRecorder) UpdateEncryptionKey(ctx, objectKey, backendName, newEncryptionKey, newKeyID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateEncryptionKey", reflect.TypeOf((*MockMetadataStore)(nil).UpdateEncryptionKey), ctx, objectKey, backendName, newEncryptionKey, newKeyID)
-}
-
-// UpdatePartEncryption mocks base method.
-func (m *MockMetadataStore) UpdatePartEncryption(ctx context.Context, uploadID string, partNumber int, sizeBytes int64, enc *core.EncryptionMeta) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdatePartEncryption", ctx, uploadID, partNumber, sizeBytes, enc)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// UpdatePartEncryption indicates an expected call of UpdatePartEncryption.
-func (mr *MockMetadataStoreMockRecorder) UpdatePartEncryption(ctx, uploadID, partNumber, sizeBytes, enc any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdatePartEncryption", reflect.TypeOf((*MockMetadataStore)(nil).UpdatePartEncryption), ctx, uploadID, partNumber, sizeBytes, enc)
-}
-
-// UpdateUploadEncryption mocks base method.
-func (m *MockMetadataStore) UpdateUploadEncryption(ctx context.Context, uploadID string, encryptionKey []byte, keyID string) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateUploadEncryption", ctx, uploadID, encryptionKey, keyID)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// UpdateUploadEncryption indicates an expected call of UpdateUploadEncryption.
-func (mr *MockMetadataStoreMockRecorder) UpdateUploadEncryption(ctx, uploadID, encryptionKey, keyID any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateUploadEncryption", reflect.TypeOf((*MockMetadataStore)(nil).UpdateUploadEncryption), ctx, uploadID, encryptionKey, keyID)
 }
 
 // VerifySchemaVersion mocks base method.

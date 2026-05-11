@@ -23,7 +23,6 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
@@ -31,7 +30,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/testutil"
-	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
 // newTestHandlerWithManager returns a Handler backed by a real BackendManager
@@ -280,99 +278,6 @@ func TestHandleReconcile_NilReconciler(t *testing.T) {
 
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503; body=%s", w.Code, w.Body.String())
-	}
-}
-
-// TestHandleMultipartDEKBackfill_NotConfigured covers the 503 path taken
-// when proxy-side encryption is disabled. The backfill worker is only
-// registered with DI when encryption is on, so a request against an
-// unencrypted deployment must surface a clean 503.
-func TestHandleMultipartDEKBackfill_NotConfigured(t *testing.T) {
-	t.Parallel()
-	h := newTestHandlerWithManager(t)
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodPost, "/admin/api/multipart-dek-backfill", ""))
-
-	if w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want 503; body=%s", w.Code, w.Body.String())
-	}
-}
-
-// newBackfillHandlerFixture wires a Handler with a real worker.MultipartBackfill
-// backed by the supplied MockStore. The store stays caller-controlled so each
-// test can flip a single error knob to drive a specific branch.
-func newBackfillHandlerFixture(t *testing.T, mock *testutil.MockStore) *Handler {
-	t.Helper()
-	h := newTestHandlerWithManager(t)
-	enc, err := encryption.NewConfigKeyProvider("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "test-0")
-	if err != nil {
-		t.Fatalf("NewConfigKeyProvider: %v", err)
-	}
-	encryptor, err := encryption.NewEncryptor(enc, 64*1024)
-	if err != nil {
-		t.Fatalf("NewEncryptor: %v", err)
-	}
-	store := struct {
-		core.MultipartStore
-		core.AdvisoryLocker
-	}{MultipartStore: mock, AdvisoryLocker: mock}
-	h.multipartBackfill = worker.NewMultipartBackfill(store, encryptor, func(string) (backend.ObjectBackend, error) {
-		return nil, errors.New("no backend needed")
-	}, worker.MultipartBackfillConfig{})
-	return h
-}
-
-// TestHandleMultipartDEKBackfill_OK covers the success path. A worker
-// wired against an empty MockStore reports zero migrations and the
-// handler must return 200 with {"status":"ok","migrated":0}.
-func TestHandleMultipartDEKBackfill_OK(t *testing.T) {
-	t.Parallel()
-	h := newBackfillHandlerFixture(t, testutil.NewMockStore(t))
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodPost, "/admin/api/multipart-dek-backfill", ""))
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
-	}
-	var resp map[string]any
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if resp["status"] != "ok" {
-		t.Errorf("status = %v, want ok", resp["status"])
-	}
-}
-
-// TestHandleMultipartDEKBackfill_RunFails covers the 500 path: the
-// worker's RunOnce surfaces an error (here, the legacy-list query
-// fails). The handler must propagate it as a 500 with the migrated
-// count from before the failure.
-func TestHandleMultipartDEKBackfill_RunFails(t *testing.T) {
-	t.Parallel()
-	mock := testutil.NewMockStore(t)
-	mock.LegacyMultipartErr = errors.New("legacy list query failed")
-	h := newBackfillHandlerFixture(t, mock)
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodPost, "/admin/api/multipart-dek-backfill", ""))
-
-	if w.Code != http.StatusInternalServerError {
-		t.Fatalf("status = %d, want 500; body=%s", w.Code, w.Body.String())
-	}
-	var resp map[string]any
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if resp["error"] == nil {
-		t.Errorf("response missing error field: %v", resp)
 	}
 }
 

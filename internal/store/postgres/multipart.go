@@ -261,61 +261,6 @@ func (s *Store) GetMultipartUploadsByBackend(ctx context.Context, backendName st
 	})
 }
 
-// ListLegacyMultipartUploads returns multipart_uploads rows whose
-// encryption_key column is NULL - rows created before migration 00010
-// that the multipart_dek_backfill worker still has to migrate.
-func (s *Store) ListLegacyMultipartUploads(ctx context.Context, limit int) ([]core.MultipartUpload, error) {
-	rows, err := s.queries.ListLegacyMultipartUploads(ctx, int32(limit)) //nolint:gosec // G115: caller-controlled small int
-	if err != nil {
-		return nil, fmt.Errorf("failed to list legacy multipart uploads: %w", err)
-	}
-	return collectMultipartUploads(rows, func(r *db.ListLegacyMultipartUploadsRow) *multipartRow {
-		return &multipartRow{
-			UploadID: r.UploadID, ObjectKey: r.ObjectKey, BackendName: r.BackendName,
-			ContentType: r.ContentType, Metadata: r.Metadata,
-			EncryptionKey: r.EncryptionKey, KeyID: r.KeyID, CreatedAt: r.CreatedAt.Time,
-		}
-	})
-}
-
-// UpdateUploadEncryption persists the upload-level wrapped DEK and key
-// ID once the backfill worker has re-encrypted every part of an upload.
-func (s *Store) UpdateUploadEncryption(ctx context.Context, uploadID string, encryptionKey []byte, keyID string) error {
-	keyIDPtr := strPtr(keyID)
-	if err := s.queries.UpdateUploadEncryption(ctx, db.UpdateUploadEncryptionParams{
-		UploadID:      uploadID,
-		EncryptionKey: nilIfEmptyBytes(encryptionKey),
-		KeyID:         keyIDPtr,
-	}); err != nil {
-		return fmt.Errorf("failed to update upload encryption: %w", err)
-	}
-	return nil
-}
-
-// UpdatePartEncryption replaces a part row's encryption metadata after
-// the backfill rewrites the part's ciphertext under the upload-level
-// DEK. Only used by the backfill path.
-func (s *Store) UpdatePartEncryption(ctx context.Context, uploadID string, partNumber int, sizeBytes int64, enc *core.EncryptionMeta) error {
-	if partNumber < 1 || partNumber > 10000 {
-		return fmt.Errorf("invalid part number %d: must be between 1 and 10000", partNumber)
-	}
-	params := db.UpdatePartEncryptionParams{
-		UploadID:   uploadID,
-		PartNumber: int32(partNumber),
-		SizeBytes:  sizeBytes,
-	}
-	if enc != nil && enc.Encrypted {
-		params.Encrypted = true
-		params.EncryptionKey = enc.EncryptionKey
-		params.KeyID = strPtr(enc.KeyID)
-		params.PlaintextSize = &enc.PlaintextSize
-	}
-	if err := s.queries.UpdatePartEncryption(ctx, params); err != nil {
-		return fmt.Errorf("failed to update part encryption: %w", err)
-	}
-	return nil
-}
-
 // CountActiveMultipartUploads returns the number of in-progress multipart
 // uploads whose key starts with the given bucket prefix.
 func (s *Store) CountActiveMultipartUploads(ctx context.Context, bucketPrefix string) (int64, error) {

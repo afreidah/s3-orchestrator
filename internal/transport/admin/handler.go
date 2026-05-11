@@ -66,7 +66,6 @@ type Handler struct {
 	scrubber          ScrubberOps
 	lifecycle         core.BackendLifecycleStore
 	reconciler        Reconciler
-	multipartBackfill MultipartBackfiller
 	dbHealthy         func() bool
 	objects           core.ObjectStore
 	cleanup           core.CleanupStore
@@ -95,7 +94,6 @@ type Deps struct {
 	Encryptor         *encryption.Encryptor
 	ObjectCache       cache.ObjectCache // nil when object data caching is disabled
 	Reconciler        Reconciler
-	MultipartBackfill MultipartBackfiller
 	Token             string
 	LogLevel          *slog.LevelVar
 }
@@ -111,7 +109,6 @@ func New(d *Deps) *Handler {
 		scrubber:          d.Scrubber,
 		lifecycle:         d.Lifecycle,
 		reconciler:        d.Reconciler,
-		multipartBackfill: d.MultipartBackfill,
 		dbHealthy:         d.DBHealthy,
 		objects:           d.Objects,
 		cleanup:           d.Cleanup,
@@ -144,7 +141,6 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /admin/api/scrub", h.requireToken(h.handleScrub))
 	mux.HandleFunc("POST /admin/api/backfill-checksums", h.requireToken(h.handleBackfillChecksums))
 	mux.HandleFunc("POST /admin/api/reconcile", h.requireToken(h.handleReconcile))
-	mux.HandleFunc("POST /admin/api/multipart-dek-backfill", h.requireToken(h.handleMultipartDEKBackfill))
 	mux.HandleFunc("POST /admin/api/cache/flush", h.requireToken(h.handleCacheFlush))
 	mux.HandleFunc("GET /admin/api/cache", h.requireToken(h.handleCacheStats))
 	mux.HandleFunc("DELETE /admin/api/cache/keys/{key...}", h.requireToken(h.handleCacheInvalidateKey))
@@ -1104,35 +1100,6 @@ func (h *Handler) handleBackfillChecksums(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "processed": res.Processed})
-}
-
-// handleMultipartDEKBackfill triggers an on-demand pass of the legacy
-// multipart-upload DEK backfill worker. The startup hook in cli/serve
-// already runs one pass before the listener accepts traffic; this
-// endpoint exists for operators who need to rerun after fixing a
-// transient failure (backend outage, exhausted page budget, etc.).
-// Response: {"status":"ok","migrated":N} on success, 503 when the
-// worker is not configured (encryption disabled).
-func (h *Handler) handleMultipartDEKBackfill(w http.ResponseWriter, r *http.Request) {
-	if h.multipartBackfill == nil {
-		errorJSON(w, http.StatusServiceUnavailable, "encryption is not enabled")
-		return
-	}
-	h.log.InfoContext(r.Context(), "multipart DEK backfill triggered")
-	migrated, err := h.multipartBackfill.RunOnce(r.Context())
-	if err != nil {
-		h.log.ErrorContext(r.Context(), "multipart DEK backfill failed",
-			"migrated", migrated, "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]any{
-			"error":    err.Error(),
-			"migrated": migrated,
-		})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"status":   "ok",
-		"migrated": migrated,
-	})
 }
 
 // handleReconcile triggers an on-demand reconciliation. Lists objects on
