@@ -372,10 +372,24 @@ chokepoint, so providers do not wrap stores with per-role decorators.
 
 ### Wiring Point
 
-`internal/di/di.go` is the single wiring point. It is the **only** file
-that imports the concrete engine packages (`store/postgres`, `store/sqlite`,
-each backend driver, etc.). New providers go here, grouped by concern with
-`73-char` section dividers (NARROW STORE ROLES, BACKGROUND WORKERS, etc.).
+The `internal/di` package is the single wiring point. It is the **only**
+package that imports the concrete engine packages (`store/postgres`,
+`store/sqlite`, each backend driver, etc.). Providers are split across
+focused files by concern:
+
+- `injector.go` - `NewInjector` and the top-level registration order
+- `store.go`    - database, role aliases, instance ID, metrics deps
+- `backend.go`  - S3 backends, breaker registry, backend manager, and the
+                  optional providers feeding it (encryption, Redis counters,
+                  object cache)
+- `workers.go`  - background worker providers
+- `lifecycle.go` - lifecycle manager and per-mode service registration
+- `transport.go` - S3, admin, UI, notifier, rate limiter, login throttle
+- `optional.go`  - `invokeOptional[T]` and `resolveOptional*` helpers
+- `services.go`  - lifecycle Runner wrappers (locked-ticker background jobs)
+
+New providers go in the file matching their concern, with `73-char`
+section dividers when a single file hosts multiple groups.
 
 ### Consuming a Service
 
