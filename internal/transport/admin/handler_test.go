@@ -19,7 +19,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/cache"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 )
 
@@ -244,6 +246,294 @@ func TestReplicate_MethodNotAllowed(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
+// CACHE-FLUSH TESTS
+// -------------------------------------------------------------------------
+
+// TestCacheFlush_Disabled verifies that POST /admin/api/cache/flush returns
+// 503 when the orchestrator is configured without an object data cache,
+// so callers can distinguish "no cache" from "cache empty after flush."
+func TestCacheFlush_Disabled(t *testing.T) {
+	t.Parallel()
+	h := newTestHandler() // objectCache is nil
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/cache/flush", nil)
+	req.Header.Set("X-Admin-Token", "test-token")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusServiceUnavailable)
+	}
+	var resp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp["status"] != "disabled" {
+		t.Errorf("status field = %q, want %q", resp["status"], "disabled")
+	}
+}
+
+// TestCacheFlush_Empty verifies a flush against an empty cache returns
+// 200 with entries_cleared=0, distinguishing the disabled case (503).
+func TestCacheFlush_Empty(t *testing.T) {
+	t.Parallel()
+	h := newTestHandlerWithCache(t)
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/cache/flush", nil)
+	req.Header.Set("X-Admin-Token", "test-token")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp["status"] != "flushed" {
+		t.Errorf("status = %v, want flushed", resp["status"])
+	}
+	if got := resp["entries_cleared"]; got != float64(0) {
+		t.Errorf("entries_cleared = %v, want 0", got)
+	}
+}
+
+// TestCacheFlush_Cleared verifies the entry count returned by the flush
+// matches the number of entries that were in the cache at flush time.
+func TestCacheFlush_Cleared(t *testing.T) {
+	t.Parallel()
+	h := newTestHandlerWithCache(t)
+	mc := h.objectCache.(*cache.MemoryCache)
+	for _, k := range []string{"a", "b", "c"} {
+		mc.PutBytes(k, []byte(k+"-data"), cache.EntryMeta{})
+	}
+
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/cache/flush", nil)
+	req.Header.Set("X-Admin-Token", "test-token")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if got := resp["entries_cleared"]; got != float64(3) {
+		t.Errorf("entries_cleared = %v, want 3", got)
+	}
+	if mc.Stats().Entries != 0 {
+		t.Errorf("cache still has entries after flush: %d", mc.Stats().Entries)
+	}
+}
+
+// TestCacheStats_Disabled verifies stats endpoint returns 503 when the
+// cache is not configured, distinguishing it from "stats valid but zero."
+func TestCacheStats_Disabled(t *testing.T) {
+	t.Parallel()
+	h := newTestHandler()
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/cache", nil)
+	req.Header.Set("X-Admin-Token", "test-token")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusServiceUnavailable)
+	}
+}
+
+// TestCacheStats_Populated verifies the stats endpoint reports the
+// running cache's actual entry count and size.
+func TestCacheStats_Populated(t *testing.T) {
+	t.Parallel()
+	h := newTestHandlerWithCache(t)
+	mc := h.objectCache.(*cache.MemoryCache)
+	mc.PutBytes("key-a", []byte("hello"), cache.EntryMeta{ContentType: "text/plain"})
+	mc.PutBytes("key-b", []byte("world"), cache.EntryMeta{ContentType: "text/plain"})
+
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/cache", nil)
+	req.Header.Set("X-Admin-Token", "test-token")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if got := resp["entries"]; got != float64(2) {
+		t.Errorf("entries = %v, want 2", got)
+	}
+	if got := resp["size_bytes"]; got.(float64) <= 0 {
+		t.Errorf("size_bytes = %v, want > 0", got)
+	}
+	if got := resp["max_bytes"]; got != float64(1024*1024) {
+		t.Errorf("max_bytes = %v, want %d", got, 1024*1024)
+	}
+}
+
+// TestCacheInvalidateKey_RemovesEntry verifies a key invalidation makes
+// the targeted entry miss while leaving siblings intact.
+func TestCacheInvalidateKey_RemovesEntry(t *testing.T) {
+	t.Parallel()
+	h := newTestHandlerWithCache(t)
+	mc := h.objectCache.(*cache.MemoryCache)
+	mc.PutBytes("a/1", []byte("aaa"), cache.EntryMeta{})
+	mc.PutBytes("a/2", []byte("bbb"), cache.EntryMeta{})
+
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodDelete, "/admin/api/cache/keys/a/1", nil)
+	req.Header.Set("X-Admin-Token", "test-token")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp["key"] != "a/1" {
+		t.Errorf("key = %v, want a/1", resp["key"])
+	}
+
+	if _, ok := mc.Get("a/1"); ok {
+		t.Error("expected miss for invalidated key")
+	}
+	if _, ok := mc.Get("a/2"); !ok {
+		t.Error("sibling key dropped unexpectedly")
+	}
+}
+
+// TestCacheInvalidateKey_UnknownKey verifies invalidation of a non-
+// existent key returns 200 (Invalidate is a no-op for unknown keys).
+func TestCacheInvalidateKey_UnknownKey(t *testing.T) {
+	t.Parallel()
+	h := newTestHandlerWithCache(t)
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodDelete, "/admin/api/cache/keys/nonexistent", nil)
+	req.Header.Set("X-Admin-Token", "test-token")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", w.Code)
+	}
+}
+
+// TestCacheInvalidatePrefix_DropsMatching verifies the prefix endpoint
+// drops every matching key, leaves outsiders intact, and reports the
+// drop count.
+func TestCacheInvalidatePrefix_DropsMatching(t *testing.T) {
+	t.Parallel()
+	h := newTestHandlerWithCache(t)
+	mc := h.objectCache.(*cache.MemoryCache)
+	for _, k := range []string{"users/1/a", "users/1/b", "users/2/c", "logs/1/x"} {
+		mc.PutBytes(k, []byte("data"), cache.EntryMeta{})
+	}
+
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodDelete, "/admin/api/cache/prefix?prefix=users/1/", nil)
+	req.Header.Set("X-Admin-Token", "test-token")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if got := resp["entries_dropped"]; got != float64(2) {
+		t.Errorf("entries_dropped = %v, want 2", got)
+	}
+	if _, ok := mc.Get("users/2/c"); !ok {
+		t.Error("expected hit for users/2/c (outside invalidated prefix)")
+	}
+}
+
+// TestCacheInvalidatePrefix_EmptyRejected verifies an empty prefix is
+// rejected with 400 so operators don't accidentally drop the cache via
+// a missing query param; full flush is its own dedicated endpoint.
+func TestCacheInvalidatePrefix_EmptyRejected(t *testing.T) {
+	t.Parallel()
+	h := newTestHandlerWithCache(t)
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodDelete, "/admin/api/cache/prefix", nil)
+	req.Header.Set("X-Admin-Token", "test-token")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", w.Code)
+	}
+}
+
+// TestCacheInvalidateKey_Disabled verifies the per-key invalidate
+// endpoint reports 503 when the cache is not configured, so callers
+// can distinguish a no-op invalidation from a missing cache.
+func TestCacheInvalidateKey_Disabled(t *testing.T) {
+	t.Parallel()
+	h := newTestHandler() // objectCache is nil
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodDelete, "/admin/api/cache/keys/foo", nil)
+	req.Header.Set("X-Admin-Token", "test-token")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503", w.Code)
+	}
+}
+
+// TestCacheInvalidatePrefix_Disabled verifies the prefix invalidate
+// endpoint reports 503 when the cache is not configured.
+func TestCacheInvalidatePrefix_Disabled(t *testing.T) {
+	t.Parallel()
+	h := newTestHandler() // objectCache is nil
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodDelete, "/admin/api/cache/prefix?prefix=foo/", nil)
+	req.Header.Set("X-Admin-Token", "test-token")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503", w.Code)
+	}
+}
+
+// -------------------------------------------------------------------------
 // HELPERS
 // -------------------------------------------------------------------------
 
@@ -256,6 +546,24 @@ func newTestHandler() *Handler {
 		token:    "test-token",
 		logLevel: &lv,
 	}
+}
+
+// newTestHandlerWithCache constructs a test handler with a real
+// MemoryCache attached so cache-flush tests exercise the full path
+// without a hand-rolled fake.
+func newTestHandlerWithCache(t *testing.T) *Handler {
+	t.Helper()
+	mc, err := cache.NewMemoryCache(cache.MemoryConfig{
+		MaxSize:       1024 * 1024,
+		MaxObjectSize: 1024,
+		TTL:           time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("NewMemoryCache: %v", err)
+	}
+	h := newTestHandler()
+	h.objectCache = mc
+	return h
 }
 
 // -------------------------------------------------------------------------

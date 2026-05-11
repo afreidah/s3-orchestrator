@@ -14,6 +14,7 @@ package cache
 import (
 	"container/list"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -167,6 +168,41 @@ func (c *MemoryCache) Invalidate(key string) {
 	if elem, ok := c.items[key]; ok {
 		c.removeLocked(elem)
 	}
+}
+
+// InvalidatePrefix removes every entry whose key starts with prefix and
+// returns the number of entries dropped. Walks the items map (O(n)) so
+// callers should expect cost proportional to cache size, not match
+// count. Holds c.mu for the duration to keep map iteration safe.
+func (c *MemoryCache) InvalidatePrefix(prefix string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	matches := make([]*list.Element, 0)
+	for k, elem := range c.items {
+		if strings.HasPrefix(k, prefix) {
+			matches = append(matches, elem)
+		}
+	}
+	for _, elem := range matches {
+		c.removeLocked(elem)
+	}
+	return len(matches)
+}
+
+// Clear removes every entry and zeroes the LRU. Updates gauges so the
+// cache_size_bytes / cache_entries dashboards reflect the flush
+// immediately, without waiting for the next Get/Put.
+func (c *MemoryCache) Clear() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	n := len(c.items)
+	c.items = make(map[string]*list.Element)
+	c.order.Init()
+	c.sizeBytes = 0
+	c.updateGauges()
+	return n
 }
 
 // Stats returns current cache utilization.

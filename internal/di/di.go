@@ -1037,6 +1037,7 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 		Objects:           d.stores,
 		Cleanup:           d.stores,
 		Encryptor:         d.enc,
+		ObjectCache:       resolveOptionalCache(i),
 		Reconciler:        invokeOptional[*worker.Reconciler](i),
 		MultipartBackfill: invokeOptional[*worker.MultipartBackfill](i),
 		Token:             adminToken,

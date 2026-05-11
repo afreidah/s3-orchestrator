@@ -58,6 +58,28 @@ var (
 		},
 	)
 
+	// CacheFlushTotal counts admin cache-flush invocations. Useful for
+	// auditing how often operators or perf runs reset cache state, and
+	// for distinguishing organic eviction from explicit flushes when
+	// reading cache_size_bytes / cache_entries dropouts on dashboards.
+	CacheFlushTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "s3o_cache_flush_total",
+			Help: "Admin-triggered object data cache flushes",
+		},
+	)
+
+	// CacheAdminInvalidationsTotal counts admin-triggered single-key
+	// invalidations. Distinct from organic invalidations driven by
+	// writes/deletes/replication so dashboards can separate operator
+	// actions from background cache churn.
+	CacheAdminInvalidationsTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "s3o_cache_admin_invalidations_total",
+			Help: "Admin-triggered single-key cache invalidations",
+		},
+	)
+
 	// --- Redis metrics ---
 
 	// RedisOperationsTotal counts Redis counter backend operations.

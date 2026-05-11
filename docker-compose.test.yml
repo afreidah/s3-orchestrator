@@ -62,6 +62,10 @@ services:
 
   postgres:
     image: postgres:16-alpine
+    command:
+      - postgres
+      - -c
+      - max_connections=300
     ports:
       - "15432:5432"
     environment:

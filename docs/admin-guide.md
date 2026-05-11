@@ -829,6 +829,19 @@ s3-orchestrator admin cleanup-queue
 # Force flush usage counters to the database
 s3-orchestrator admin usage-flush
 
+# Drop every entry from the in-memory object data cache
+# (returns 503 when caching is disabled in config)
+s3-orchestrator admin cache-flush
+
+# Inspect cache size and entry count
+s3-orchestrator admin cache-stats
+
+# Drop a single key from the cache
+s3-orchestrator admin cache-invalidate -key bucket/path/object.txt
+
+# Drop every cached key under a prefix
+s3-orchestrator admin cache-invalidate-prefix -prefix bucket/path/
+
 # Trigger one replication cycle (creates missing replicas)
 s3-orchestrator admin replicate
 

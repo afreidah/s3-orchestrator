@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -64,6 +65,10 @@ Commands:
   scrub               Trigger an on-demand integrity scrub cycle (use -batch-size to override)
   backfill-checksums  Compute and store content hashes for all unhashed objects (use -batch-size to control pace)
   reconcile           Reconcile DB against backend (use -backend to scope to one backend)
+  cache-flush         Drop every entry from the in-memory object data cache
+  cache-stats         Show object data cache entries, size, and capacity
+  cache-invalidate    Drop a single key from the in-memory object data cache (requires -key)
+  cache-invalidate-prefix  Drop every cached key under a prefix (requires -prefix)
 
 Flags:
 `)
@@ -135,6 +140,10 @@ var handlers = map[string]handler{
 	"backfill-checksums": cmdBackfillChecksums,
 	"remove-backend":     cmdRemoveBackend,
 	"reconcile":          cmdReconcile,
+	"cache-flush":        cmdCacheFlush,
+	"cache-stats":        cmdCacheStats,
+	"cache-invalidate":         cmdCacheInvalidate,
+	"cache-invalidate-prefix":  cmdCacheInvalidatePrefix,
 }
 
 // cmdStatus implements `s3-orchestrator admin status`. Issues a GET to
@@ -175,6 +184,57 @@ func cmdCleanupQueue(_ []string, baseAddr, token string, stdout, stderr io.Write
 // for the next periodic tick.
 func cmdUsageFlush(_ []string, baseAddr, token string, stdout, stderr io.Writer) int {
 	return doPost(baseAddr+"/admin/api/usage-flush", "", token, stdout, stderr)
+}
+
+// cmdCacheFlush implements `s3-orchestrator admin cache-flush`. Drops
+// every entry from the in-memory object data cache; returns 503 from
+// the server when caching is disabled. Used to reset cache state
+// between cache-cold and cache-warm performance runs.
+func cmdCacheFlush(_ []string, baseAddr, token string, stdout, stderr io.Writer) int {
+	return doPost(baseAddr+"/admin/api/cache/flush", "", token, stdout, stderr)
+}
+
+// cmdCacheStats implements `s3-orchestrator admin cache-stats`. Reports
+// the current object data cache entry count, size, and capacity for
+// operators without direct Prometheus access.
+func cmdCacheStats(_ []string, baseAddr, token string, stdout, stderr io.Writer) int {
+	return doGet(baseAddr+"/admin/api/cache", token, stdout, stderr)
+}
+
+// cmdCacheInvalidate implements `s3-orchestrator admin cache-invalidate
+// -key=<key>`. Drops a single key from the in-memory cache. Returns 200
+// even for unknown keys, matching the cache's no-op invalidate contract.
+func cmdCacheInvalidate(args []string, baseAddr, token string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("cache-invalidate", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	key := fs.String("key", "", "Cache key to invalidate (required)")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if *key == "" {
+		fmt.Fprintln(stderr, "error: -key is required")
+		return 1
+	}
+	return doDelete(baseAddr+"/admin/api/cache/keys/"+*key, token, stdout, stderr)
+}
+
+// cmdCacheInvalidatePrefix implements `s3-orchestrator admin
+// cache-invalidate-prefix -prefix=<prefix>`. Drops every cached key
+// under the prefix. Empty prefix is rejected by the server with 400
+// to prevent accidental full-cache wipes via missing parameters;
+// use cache-flush for the deliberate full-flush case.
+func cmdCacheInvalidatePrefix(args []string, baseAddr, token string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("cache-invalidate-prefix", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	prefix := fs.String("prefix", "", "Cache key prefix to invalidate (required)")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if *prefix == "" {
+		fmt.Fprintln(stderr, "error: -prefix is required")
+		return 1
+	}
+	return doDelete(baseAddr+"/admin/api/cache/prefix?prefix="+url.QueryEscape(*prefix), token, stdout, stderr)
 }
 
 // cmdReplicate implements `s3-orchestrator admin replicate`. Triggers

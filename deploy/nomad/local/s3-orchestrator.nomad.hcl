@@ -63,8 +63,8 @@ job "s3-orchestrator" {
       }
 
       env {
-        GOMEMLIMIT  = "1843MiB"
-        GOMAXPROCS  = "2"
+        GOMEMLIMIT  = "2048MiB"
+        GOMAXPROCS  = "4"
       }
 
       template {
@@ -73,9 +73,9 @@ job "s3-orchestrator" {
           server:
             listen_addr: "0.0.0.0:9000"
             backend_timeout: "30s"
-            max_concurrent_reads: 200
-            max_concurrent_writes: 200
-            load_shed_threshold: 0.8
+            max_concurrent_reads: 1000
+            max_concurrent_writes: 1000
+            load_shed_threshold: 0.9
             admission_wait: "100ms"
 
           database:
@@ -86,6 +86,7 @@ job "s3-orchestrator" {
             user: "s3proxy"
             password: "s3proxy"
             ssl_mode: "disable"
+            max_conns: 200
 
           buckets:
             - name: "photos"
@@ -195,7 +196,7 @@ job "s3-orchestrator" {
 
       resources {
         cpu    = 1000
-        memory = 1024
+        memory = 2048
       }
     }
   }
