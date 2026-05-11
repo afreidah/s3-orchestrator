@@ -207,6 +207,9 @@ func (s *server) resolveServices() error {
 	if err != nil {
 		return fmt.Errorf("initialize backend manager: %w", err)
 	}
+	if err := di.WireManager(s.inj); err != nil {
+		return fmt.Errorf("wire backend manager: %w", err)
+	}
 	if _, err := do.Invoke[*s3api.Server](s.inj); err != nil {
 		return fmt.Errorf("initialize S3 server: %w", err)
 	}
