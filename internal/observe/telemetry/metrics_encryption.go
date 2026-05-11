@@ -92,14 +92,4 @@ var (
 		},
 		[]string{"status"},
 	)
-
-	// MultipartDEKBackfillTotal counts legacy multipart uploads processed by the
-	// upload-DEK backfill worker. Status labels: success, error.
-	MultipartDEKBackfillTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "s3o_multipart_dek_backfill_total",
-			Help: "Total legacy multipart uploads rebuilt to use a shared upload DEK",
-		},
-		[]string{"status"},
-	)
 )

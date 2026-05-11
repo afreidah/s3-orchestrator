@@ -71,7 +71,6 @@ func Permissive(m *MockMetadataStore) {
 	r.ListDirectoryChildren(a, a, a, a).Return(nil, nil).AnyTimes()
 	r.ListEncryptedLocations(a, a, a, a).Return(nil, nil).AnyTimes()
 	r.ListExpiredObjects(a, a, a, a).Return(nil, nil).AnyTimes()
-	r.ListLegacyMultipartUploads(a, a).Return(nil, nil).AnyTimes()
 	r.ListMultipartUploads(a, a, a).Return(nil, nil).AnyTimes()
 	r.ListObjects(a, a, a, a).Return(nil, nil).AnyTimes()
 	r.ListObjectsByBackend(a, a, a).Return(nil, nil).AnyTimes()
@@ -95,8 +94,6 @@ func Permissive(m *MockMetadataStore) {
 	r.SyncQuotaLimits(a, a).Return(nil).AnyTimes()
 	r.UpdateContentHash(a, a, a, a).Return(nil).AnyTimes()
 	r.UpdateEncryptionKey(a, a, a, a, a).Return(nil).AnyTimes()
-	r.UpdatePartEncryption(a, a, a, a, a).Return(nil).AnyTimes()
-	r.UpdateUploadEncryption(a, a, a, a).Return(nil).AnyTimes()
 	r.VerifySchemaVersion(a).Return(nil).AnyTimes()
 	r.WithAdvisoryLock(a, a, a).DoAndReturn(
 		func(ctx context.Context, _ int64, fn func(context.Context) error) (bool, error) {

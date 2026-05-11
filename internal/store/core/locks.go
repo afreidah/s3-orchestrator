@@ -30,7 +30,6 @@ package core
 //   - LockReconcile        (1009) backend-vs-database consistency check
 //   - LockScrubber         (1010) background integrity verification
 //   - LockPendingReaper    (1011) abandoned PUT-intent resolution
-//   - LockMultipartDEKBackfill (1012) legacy multipart-upload DEK migration
 const (
 	// LockRebalancer is held by the periodic rebalancer.
 	LockRebalancer int64 = 1001
@@ -54,9 +53,4 @@ const (
 	LockScrubber int64 = 1010
 	// LockPendingReaper is held by the pending-intent reaper.
 	LockPendingReaper int64 = 1011
-	// LockMultipartDEKBackfill is held by the periodic legacy
-	// multipart-upload DEK migration worker. Per-uploadID locks acquired
-	// inside the worker live in a separate high-bit namespace so they
-	// never collide with this service-level ID.
-	LockMultipartDEKBackfill int64 = 1012
 )

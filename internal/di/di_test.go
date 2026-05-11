@@ -73,7 +73,6 @@ func TestProviders_MissingConfigReturnsCleanError(t *testing.T) {
 		{"PendingReaper", func(i do.Injector) error { _, err := ProvidePendingReaper(i); return err }},
 		{"Scrubber", func(i do.Injector) error { _, err := ProvideScrubber(i); return err }},
 		{"DrainManager", func(i do.Injector) error { _, err := ProvideDrainManager(i); return err }},
-		{"MultipartBackfill", func(i do.Injector) error { _, err := ProvideMultipartBackfill(i); return err }},
 		{"Reconciler", func(i do.Injector) error { _, err := ProvideReconciler(i); return err }},
 		{"BucketAuth", func(i do.Injector) error { _, err := ProvideBucketAuth(i); return err }},
 		{"S3Server", func(i do.Injector) error { _, err := ProvideS3Server(i); return err }},
@@ -562,125 +561,6 @@ func TestNewInjector_WorkerModeResolvesLifecycle(t *testing.T) {
 	// PendingReaper is optional: nil when the pending pattern is off.
 	if _, err := do.Invoke[*worker.PendingReaper](inj); err != nil {
 		t.Errorf("PendingReaper: %v", err)
-	}
-}
-
-// TestProvideAdminHandler_WithMultipartBackfill covers the
-// ProvideAdminHandler success branch where MultipartBackfill is
-// registered (encryption enabled) and the handler captures it.
-func TestProvideAdminHandler_WithMultipartBackfill(t *testing.T) {
-	t.Parallel()
-	cfg := happyPathConfig(t.TempDir())
-	cfg.Encryption = config.EncryptionConfig{
-		Enabled:   true,
-		MasterKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-	}
-	if err := cfg.SetDefaultsAndValidate(); err != nil {
-		t.Fatalf("config validation: %v", err)
-	}
-	inj := NewInjector(cfg, "all", new(slog.LevelVar), telemetry.NewLogBuffer())
-	t.Cleanup(func() { _ = inj.Shutdown() })
-	h, err := do.Invoke[*admin.Handler](inj)
-	if err != nil {
-		t.Fatalf("AdminHandler: %v", err)
-	}
-	if h == nil {
-		t.Fatal("AdminHandler resolved to nil")
-	}
-}
-
-// TestNewInjector_WithEncryptionResolvesMultipartBackfill covers the
-// MultipartBackfill provider's happy path. The provider is only
-// registered when encryption is on, so this drives both the
-// conditional registration in NewInjector and the provider body.
-func TestNewInjector_WithEncryptionResolvesMultipartBackfill(t *testing.T) {
-	t.Parallel()
-	cfg := happyPathConfig(t.TempDir())
-	cfg.Encryption = config.EncryptionConfig{
-		Enabled:   true,
-		MasterKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-	}
-	if err := cfg.SetDefaultsAndValidate(); err != nil {
-		t.Fatalf("config validation: %v", err)
-	}
-	inj := NewInjector(cfg, "all", new(slog.LevelVar), telemetry.NewLogBuffer())
-	t.Cleanup(func() { _ = inj.Shutdown() })
-
-	mb, err := do.Invoke[*worker.MultipartBackfill](inj)
-	if err != nil {
-		t.Fatalf("MultipartBackfill: %v", err)
-	}
-	if mb == nil {
-		t.Fatal("MultipartBackfill resolved to nil")
-	}
-}
-
-// TestProvideMultipartBackfill_ProgressiveErrors drives every
-// do.Invoke failure branch in ProvideMultipartBackfill by seeding
-// the injector with the upstream dependencies one at a time and
-// asserting the next-missing dependency surfaces ErrServiceNotFound.
-func TestProvideMultipartBackfill_ProgressiveErrors(t *testing.T) {
-	t.Parallel()
-	cfg := happyPathConfig(t.TempDir())
-	cfg.Encryption = config.EncryptionConfig{
-		Enabled:   true,
-		MasterKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-	}
-	if err := cfg.SetDefaultsAndValidate(); err != nil {
-		t.Fatalf("config validation: %v", err)
-	}
-	full := NewInjector(cfg, "all", new(slog.LevelVar), telemetry.NewLogBuffer())
-	t.Cleanup(func() { _ = full.Shutdown() })
-
-	mgr, err := do.Invoke[*proxy.BackendManager](full)
-	if err != nil {
-		t.Fatalf("BackendManager: %v", err)
-	}
-	store, err := do.Invoke[core.MetadataStore](full)
-	if err != nil {
-		t.Fatalf("MetadataStore: %v", err)
-	}
-
-	// Bare injector: BackendManager missing → first invoke errors.
-	if _, err := ProvideMultipartBackfill(do.New()); err == nil {
-		t.Error("expected error with no deps registered")
-	}
-
-	// Add only mgr: MetadataStore missing → second invoke errors.
-	step1 := do.New()
-	do.ProvideValue(step1, mgr)
-	if _, err := ProvideMultipartBackfill(step1); err == nil {
-		t.Error("expected error after seeding only mgr")
-	}
-
-	// Add store: Encryptor missing → third invoke errors.
-	step2 := do.New()
-	do.ProvideValue(step2, mgr)
-	do.ProvideValue[core.MetadataStore](step2, store)
-	if _, err := ProvideMultipartBackfill(step2); err == nil {
-		t.Error("expected error after seeding mgr+store")
-	}
-}
-
-// TestProvideAdminHandler_NoMultipartBackfill covers the optional
-// MultipartBackfill resolution path inside ProvideAdminHandler when
-// encryption is disabled and the worker is absent. The handler must
-// still construct, and the failed invoke leaves mpBackfill nil so
-// the runtime branch in handleMultipartDEKBackfill returns 503.
-func TestProvideAdminHandler_NoMultipartBackfill(t *testing.T) {
-	t.Parallel()
-	cfg := happyPathConfig(t.TempDir())
-	if err := cfg.SetDefaultsAndValidate(); err != nil {
-		t.Fatalf("config validation: %v", err)
-	}
-	inj := NewInjector(cfg, "all", new(slog.LevelVar), telemetry.NewLogBuffer())
-	t.Cleanup(func() { _ = inj.Shutdown() })
-	h, err := do.Invoke[*admin.Handler](inj)
-	if err != nil {
-		t.Fatalf("AdminHandler: %v", err)
-	}
-	if h == nil {
-		t.Fatal("AdminHandler resolved to nil")
 	}
 }
 
