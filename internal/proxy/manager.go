@@ -89,7 +89,7 @@ type BackendManagerConfig struct {
 type BackendManager struct {
 	*backendCore
 	stores           core.MetadataStore    // metadata-store dependency
-	pendingEnabled   bool                  // mirrors cfg.PendingEnabled for write-path branches
+	coord            *writeCoordinator     // shared write-path helpers (also held by ObjectManager and MultipartManager)
 	MultipartManager *MultipartManager     // multipart upload lifecycle
 	ObjectManager    *ObjectManager        // CRUD, read failover, broadcast reads
 	dashboard        *dashboard.Aggregator // web UI data aggregation
@@ -110,7 +110,7 @@ type BackendManager struct {
 
 	usageFlushCfg syncutil.AtomicConfig[config.UsageFlushConfig]
 	lifecycleCfg  syncutil.AtomicConfig[config.LifecycleConfig]
-	integrityCfg  syncutil.AtomicConfig[config.IntegrityConfig]
+	integrityCfg  *syncutil.AtomicConfig[config.IntegrityConfig] // shared with ObjectManager
 }
 
 // WireDrain installs the drain.Manager: stores it on BackendManager so
@@ -149,28 +149,32 @@ func NewBackendManager(cfg *BackendManagerConfig) *BackendManager {
 	if dekCacheTTL == 0 {
 		dekCacheTTL = time.Hour
 	}
-	multipartManager := NewMultipartManager(core, cfg.Encryptor, cfg.ObjectCache, dekCacheTTL)
+
+	coord := newWriteCoordinator(core, cfg.Stores, cfg.PendingEnabled)
+	multipartManager := NewMultipartManager(core, coord, cfg.Stores, cfg.Encryptor, cfg.ObjectCache, dekCacheTTL)
+
+	integrityCfg := &syncutil.AtomicConfig[config.IntegrityConfig]{}
 	cache := NewLocationCache(cfg.CacheTTL)
-	// ObjectManager gets a closure for the integrity config so it can read
-	// the hot-reloadable value without a circular dependency.
-	var m *BackendManager
-	objectManager := NewObjectManager(core, cfg.Encryptor, cache, cfg.ObjectCache, cfg.ParallelBroadcast, func() *config.IntegrityConfig {
-		if m == nil {
-			return nil
-		}
-		return m.IntegrityConfig()
+	objectManager := NewObjectManager(&ObjectManagerDeps{
+		Core:              core,
+		Coord:             coord,
+		Stores:            cfg.Stores,
+		Encryptor:         cfg.Encryptor,
+		LocationCache:     cache,
+		ObjectCache:       cfg.ObjectCache,
+		ParallelBroadcast: cfg.ParallelBroadcast,
+		IntegrityCfg:      integrityCfg,
 	})
 
-	m = &BackendManager{
+	m := &BackendManager{
 		backendCore:      core,
 		stores:           cfg.Stores,
-		pendingEnabled:   cfg.PendingEnabled,
+		coord:            coord,
 		MultipartManager: multipartManager,
 		ObjectManager:    objectManager,
 		dashboard:        dashboard.New(cfg.Dashboard, usage, cfg.Order),
+		integrityCfg:     integrityCfg,
 	}
-	multipartManager.parent = m
-	objectManager.parent = m
 
 	core.metricsCollector = metrics.New(cfg.Metrics, usage, backendNames, cfg.ReplicationFactor)
 

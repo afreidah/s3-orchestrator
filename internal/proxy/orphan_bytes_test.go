@@ -151,7 +151,7 @@ func TestEnqueueCleanup_IncrementsOrphanBytes(t *testing.T) {
 	storetest.Permissive(store)
 
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
-	mgr.enqueueCleanup(context.Background(), "b1", "orphan.txt", "delete_failed", 4096)
+	mgr.coord.enqueueCleanup(context.Background(), "b1", "orphan.txt", "delete_failed", 4096)
 
 	if len(c.increment) != 1 {
 		t.Fatalf("expected 1 IncrementOrphanBytes call, got %d", len(c.increment))
@@ -175,7 +175,7 @@ func TestEnqueueCleanup_ZeroSize_SkipsOrphanIncrement(t *testing.T) {
 	storetest.Permissive(store)
 
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
-	mgr.enqueueCleanup(context.Background(), "b1", "orphan.txt", "delete_failed", 0)
+	mgr.coord.enqueueCleanup(context.Background(), "b1", "orphan.txt", "delete_failed", 0)
 
 	if len(c.increment) != 0 {
 		t.Errorf("expected 0 IncrementOrphanBytes calls for zero-size, got %d", len(c.increment))
@@ -196,7 +196,7 @@ func TestEnqueueCleanup_EnqueueFails_SkipsOrphanIncrement(t *testing.T) {
 	storetest.Permissive(store)
 
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
-	mgr.enqueueCleanup(context.Background(), "b1", "orphan.txt", "delete_failed", 4096)
+	mgr.coord.enqueueCleanup(context.Background(), "b1", "orphan.txt", "delete_failed", 4096)
 
 	if len(c.increment) != 0 {
 		t.Errorf("expected 0 IncrementOrphanBytes calls when enqueue fails, got %d", len(c.increment))
@@ -688,7 +688,7 @@ func TestEnqueueCleanup_IncrementOrphanBytesFails(t *testing.T) {
 	storetest.Permissive(store)
 
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
-	mgr.enqueueCleanup(context.Background(), "b1", "key", "reason", 1024)
+	mgr.coord.enqueueCleanup(context.Background(), "b1", "key", "reason", 1024)
 
 	if len(c.enqueue) != 1 {
 		t.Errorf("expected 1 enqueue call, got %d", len(c.enqueue))

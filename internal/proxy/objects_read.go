@@ -57,7 +57,7 @@ var listObjectsMaxPages = 100
 // S3's documented best-effort precondition semantic. ErrObjectNotFound
 // is the canonical "no row" signal and is normalised to (false, nil).
 func (o *ObjectManager) ObjectExists(ctx context.Context, key string) (bool, error) {
-	locs, err := o.parent.stores.GetAllObjectLocations(ctx, key)
+	locs, err := o.stores.GetAllObjectLocations(ctx, key)
 	if errors.Is(err, core.ErrObjectNotFound) {
 		return false, nil
 	}
@@ -104,7 +104,7 @@ func (o *ObjectManager) withReadFailover(ctx context.Context, operation, key str
 	)
 	defer span.End()
 
-	locations, err := o.parent.stores.GetAllObjectLocations(ctx, key)
+	locations, err := o.stores.GetAllObjectLocations(ctx, key)
 	if err != nil {
 		if errors.Is(err, core.ErrObjectNotFound) {
 			span.SetStatus(codes.Error, "object not found")
@@ -547,7 +547,7 @@ func (o *ObjectManager) maybeWrapIntegrityReader(
 	key, beName string,
 	backend s3be.ObjectBackend,
 ) {
-	icfg := o.integrityCfg()
+	icfg := o.integrityCfg.Load()
 	if icfg == nil || !icfg.Enabled || !icfg.VerifyOnRead {
 		return
 	}
@@ -564,7 +564,7 @@ func (o *ObjectManager) maybeWrapIntegrityReader(
 			"key", key, "backend", beName,
 			"expected_hash", expected, "actual_hash", actual)
 		telemetry.IntegrityErrorsTotal.WithLabelValues("read").Inc()
-		o.parent.DeleteOrEnqueue(ctx, backend, beName, key, "integrity_failed", r.Size)
+		o.coord.DeleteOrEnqueue(ctx, backend, beName, key, "integrity_failed", r.Size)
 	})
 	r.Body = vr
 }
@@ -719,7 +719,7 @@ func (o *ObjectManager) ListObjects(ctx context.Context, prefix, delimiter, star
 
 	maxPages := listObjectsMaxPages
 	for page := 0; page < maxPages && result.KeyCount < maxKeys; page++ {
-		storeResult, err := o.parent.stores.ListObjects(ctx, prefix, cursor, maxKeys)
+		storeResult, err := o.stores.ListObjects(ctx, prefix, cursor, maxKeys)
 		if err != nil {
 			return nil, listObjectsError(span, err)
 		}

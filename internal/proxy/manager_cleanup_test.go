@@ -108,7 +108,7 @@ func TestEnqueueCleanup_Success(t *testing.T) {
 
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	mgr.enqueueCleanup(context.Background(), "b1", "orphan.txt", "orphan_put", 1024)
+	mgr.coord.enqueueCleanup(context.Background(), "b1", "orphan.txt", "orphan_put", 1024)
 
 	if len(calls.enqueue) != 1 {
 		t.Fatalf("expected 1 enqueue call, got %d", len(calls.enqueue))
@@ -132,7 +132,7 @@ func TestEnqueueCleanup_DBError_LogsOnly(t *testing.T) {
 	storetest.Permissive(store)
 
 	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
-	mgr.enqueueCleanup(context.Background(), "b1", "orphan.txt", "orphan_put", 1024)
+	mgr.coord.enqueueCleanup(context.Background(), "b1", "orphan.txt", "orphan_put", 1024)
 
 	if len(calls.enqueue) != 1 {
 		t.Fatalf("expected 1 enqueue call, got %d", len(calls.enqueue))
