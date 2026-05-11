@@ -118,7 +118,6 @@ func NewInjector(cfg *config.Config, mode string, logLevel *slog.LevelVar, logBu
 	if cfg.Encryption.Enabled {
 		do.Provide(inj, ProvideEncryptor)
 		do.Provide(inj, ProvideEncryptionProvider)
-		do.Provide(inj, ProvideMultipartBackfill)
 	}
 	if cfg.Redis != nil {
 		do.Provide(inj, ProvideRedisCounterBackend)
@@ -389,25 +388,6 @@ func ProvideReconciler(i do.Injector) (*worker.Reconciler, error) {
 		bktNames[idx] = b.Name
 	}
 	return worker.NewReconciler(mgr, bktNames), nil
-}
-
-// ProvideMultipartBackfill constructs the legacy-multipart-DEK migration
-// worker. Registered only when encryption is enabled because legacy rows
-// can only exist when the proxy was previously running with encryption.
-func ProvideMultipartBackfill(i do.Injector) (*worker.MultipartBackfill, error) {
-	mgr, err := do.Invoke[*proxy.BackendManager](i)
-	if err != nil {
-		return nil, err
-	}
-	stores, err := do.Invoke[core.MetadataStore](i)
-	if err != nil {
-		return nil, err
-	}
-	enc, err := do.Invoke[*encryption.Encryptor](i)
-	if err != nil {
-		return nil, err
-	}
-	return worker.NewMultipartBackfill(stores, enc, mgr.GetBackend, worker.MultipartBackfillConfig{}), nil
 }
 
 // ProvideDrainManager constructs the drain manager. Depends on
@@ -1039,7 +1019,6 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 		Encryptor:         d.enc,
 		ObjectCache:       resolveOptionalCache(i),
 		Reconciler:        invokeOptional[*worker.Reconciler](i),
-		MultipartBackfill: invokeOptional[*worker.MultipartBackfill](i),
 		Token:             adminToken,
 		LogLevel:          d.logLevel,
 	}), nil

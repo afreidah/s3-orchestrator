@@ -143,9 +143,7 @@ type UsageStat struct {
 // Encrypted is true when EncryptionKey is non-empty. EncryptionKey
 // uses the same packed format as MultipartPart.EncryptionKey and
 // ObjectLocation.EncryptionKey: encryption.PackKeyData(baseNonce,
-// wrappedDEK). Rows created before migration 00010 may have these
-// empty; the multipart_dek_backfill worker rebuilds those parts under
-// a freshly-generated upload-level DEK and populates the fields.
+// wrappedDEK).
 type MultipartUpload struct {
 	UploadID      string
 	ObjectKey     string

@@ -417,8 +417,7 @@ when the service is not registered:
 ```go
 return admin.New(&admin.Deps{
     // ... required deps from resolveAdminHandlerRequiredDeps
-    Reconciler:        invokeOptional[*worker.Reconciler](i),
-    MultipartBackfill: invokeOptional[*worker.MultipartBackfill](i),
+    Reconciler: invokeOptional[*worker.Reconciler](i),
 })
 ```
 

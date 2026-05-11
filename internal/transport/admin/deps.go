@@ -7,8 +7,8 @@
 // defined interface. The handler depends on these interfaces instead of the
 // concrete *worker.X types, so the admin transport package does not import
 // internal/worker. *worker.Replicator, *worker.OverReplicationCleaner,
-// *worker.Scrubber, *worker.Reconciler, and *worker.MultipartBackfill each
-// satisfy the matching interface via implicit interface satisfaction.
+// *worker.Scrubber, and *worker.Reconciler each satisfy the matching
+// interface via implicit interface satisfaction.
 // -------------------------------------------------------------------------------
 
 package admin
@@ -47,10 +47,4 @@ type ScrubberOps interface {
 // for the on-demand reconciliation endpoint.
 type Reconciler interface {
 	Reconcile(ctx context.Context, backendName string) (*worker.ReconcileResult, error)
-}
-
-// MultipartBackfiller is the slice of *worker.MultipartBackfill the admin
-// handler uses for the on-demand legacy-DEK migration endpoint.
-type MultipartBackfiller interface {
-	RunOnce(ctx context.Context) (int, error)
 }

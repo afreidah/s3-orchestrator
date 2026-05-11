@@ -763,30 +763,6 @@ func (f *FailableStore) CreateMultipartUpload(ctx context.Context, params *core.
 	return f.inner.CreateMultipartUpload(ctx, params)
 }
 
-// ListLegacyMultipartUploads forwards through to the inner store.
-func (f *FailableStore) ListLegacyMultipartUploads(ctx context.Context, limit int) ([]core.MultipartUpload, error) {
-	if f.isFailing() {
-		return nil, errSimulatedDBOutage
-	}
-	return f.inner.ListLegacyMultipartUploads(ctx, limit)
-}
-
-// UpdateUploadEncryption forwards through to the inner store.
-func (f *FailableStore) UpdateUploadEncryption(ctx context.Context, uploadID string, encryptionKey []byte, keyID string) error {
-	if f.isFailing() {
-		return errSimulatedDBOutage
-	}
-	return f.inner.UpdateUploadEncryption(ctx, uploadID, encryptionKey, keyID)
-}
-
-// UpdatePartEncryption forwards through to the inner store.
-func (f *FailableStore) UpdatePartEncryption(ctx context.Context, uploadID string, partNumber int, sizeBytes int64, enc *core.EncryptionMeta) error {
-	if f.isFailing() {
-		return errSimulatedDBOutage
-	}
-	return f.inner.UpdatePartEncryption(ctx, uploadID, partNumber, sizeBytes, enc)
-}
-
 // GetMultipartUpload is an integration-test fixture helper; see file header for
 // the surrounding lifecycle the helpers participate in.
 func (f *FailableStore) GetMultipartUpload(ctx context.Context, uploadID string) (*core.MultipartUpload, error) {
