@@ -36,9 +36,7 @@ func ProvideRebalancer(i do.Injector) (*worker.Rebalancer, error) {
 	if err != nil {
 		return nil, err
 	}
-	rb := worker.NewRebalancer(mgr, stores)
-	mgr.Rebalancer = rb
-	return rb, nil
+	return worker.NewRebalancer(mgr, stores), nil
 }
 
 // ProvideReplicator constructs the replication worker.
@@ -51,9 +49,7 @@ func ProvideReplicator(i do.Injector) (*worker.Replicator, error) {
 	if err != nil {
 		return nil, err
 	}
-	rp := worker.NewReplicator(mgr, stores)
-	mgr.Replicator = rp
-	return rp, nil
+	return worker.NewReplicator(mgr, stores), nil
 }
 
 // ProvideOverReplicationCleaner constructs the over-replication cleanup worker.
@@ -66,9 +62,7 @@ func ProvideOverReplicationCleaner(i do.Injector) (*worker.OverReplicationCleane
 	if err != nil {
 		return nil, err
 	}
-	or := worker.NewOverReplicationCleaner(mgr, stores)
-	mgr.OverReplicationCleaner = or
-	return or, nil
+	return worker.NewOverReplicationCleaner(mgr, stores), nil
 }
 
 // ProvideCleanupWorker constructs the cleanup-queue worker.
@@ -93,9 +87,7 @@ func ProvideCleanupWorker(i do.Injector) (*worker.CleanupWorker, error) {
 	if err != nil {
 		return nil, err
 	}
-	cw := worker.NewCleanupWorker(mgr, cleanup, concurrency, id.String(), cfg.CleanupQueue.ClaimGracePeriod)
-	mgr.CleanupWorker = cw
-	return cw, nil
+	return worker.NewCleanupWorker(mgr, cleanup, concurrency, id.String(), cfg.CleanupQueue.ClaimGracePeriod), nil
 }
 
 // ProvidePendingReaper constructs the pending-reaper worker. Returns nil
@@ -120,9 +112,7 @@ func ProvidePendingReaper(i do.Injector) (*worker.PendingReaper, error) {
 	if pending == nil {
 		return nil, nil //nolint:nilnil // store provider returned nil, feature off
 	}
-	pr := worker.NewPendingReaper(mgr, pending, 0, cfg.WritePath.PendingPattern.MinAge, cfg.WritePath.PendingPattern.BatchSize)
-	mgr.PendingReaper = pr
-	return pr, nil
+	return worker.NewPendingReaper(mgr, pending, 0, cfg.WritePath.PendingPattern.MinAge, cfg.WritePath.PendingPattern.BatchSize), nil
 }
 
 // ProvideScrubber constructs the integrity-verification worker.
@@ -145,9 +135,7 @@ func ProvideScrubber(i do.Injector) (*worker.Scrubber, error) {
 			enc = e
 		}
 	}
-	sc := worker.NewScrubber(mgr, integrity, enc)
-	mgr.Scrubber = sc
-	return sc, nil
+	return worker.NewScrubber(mgr, integrity, enc), nil
 }
 
 // ProvideReconciler constructs the bucket reconciler worker. Registered
@@ -174,7 +162,9 @@ func ProvideReconciler(i do.Injector) (*worker.Reconciler, error) {
 // ProvideDrainManager constructs the drain manager. Depends on
 // BackendManager (drain.Core seam), the cleanup worker (for the
 // cleanup-queue flush before backend deletion), and the wide
-// MetadataStore for the object/quota/lifecycle role surfaces.
+// MetadataStore for the object/quota/lifecycle role surfaces. The
+// returned manager is wired onto BackendManager by di.WireManager so
+// the provider itself stays free of mutation side effects.
 func ProvideDrainManager(i do.Injector) (*drain.Manager, error) {
 	mgr, err := do.Invoke[*proxy.BackendManager](i)
 	if err != nil {
@@ -188,14 +178,12 @@ func ProvideDrainManager(i do.Injector) (*drain.Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	dm := drain.New(
+	return drain.New(
 		mgr,
 		stores,
 		stores,
 		stores,
 		mgr.MultipartManager.AbortMultipartUploadsOnBackend,
 		cleanup.ProcessCleanupQueue,
-	)
-	mgr.WireDrain(dm)
-	return dm, nil
+	), nil
 }

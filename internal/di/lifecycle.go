@@ -19,7 +19,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/notify"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
@@ -38,8 +37,11 @@ type lifecycleWorkerSet struct {
 }
 
 // resolveLifecycleWorkers invokes every worker the lifecycle manager
-// registers a service for. drain.Manager is invoked too (not registered)
-// so its DI side-effect  -  wiring itself into BackendManager  -  runs.
+// registers a service for. drain.Manager is no longer invoked here
+// because di.WireManager owns that resolution; the wiring step runs
+// before resolveLifecycleWorkers as part of cli/serve's startup so
+// the drain manager is already installed on BackendManager by the
+// time the lifecycle manager assembles its service list.
 func resolveLifecycleWorkers(i do.Injector) (lifecycleWorkerSet, error) {
 	var ws lifecycleWorkerSet
 	var err error
@@ -56,9 +58,6 @@ func resolveLifecycleWorkers(i do.Injector) (lifecycleWorkerSet, error) {
 		return ws, err
 	}
 	if ws.scrubber, err = do.Invoke[*worker.Scrubber](i); err != nil {
-		return ws, err
-	}
-	if _, err = do.Invoke[*drain.Manager](i); err != nil {
 		return ws, err
 	}
 	// PendingReaper provider returns (nil, nil) when the feature is off.
