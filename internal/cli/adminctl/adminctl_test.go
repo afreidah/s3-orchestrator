@@ -572,3 +572,129 @@ func TestCommand_TransportError(t *testing.T) {
 		t.Errorf("stderr = %q, want to contain an error", stderr.String())
 	}
 }
+
+// TestCommand_CacheFlush_SendsPost verifies the cache-flush subcommand
+// POSTs to /admin/api/cache/flush with the admin token.
+func TestCommand_CacheFlush_SendsPost(t *testing.T) {
+	var gotMethod, gotPath, gotToken string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		gotToken = r.Header.Get("X-Admin-Token")
+		_ = json.NewEncoder(w).Encode(map[string]any{"entries_cleared": 0})
+	}))
+	defer srv.Close()
+
+	var stdout, stderr bytes.Buffer
+	code := Command("cache-flush", nil, srv.URL, "tok", &stdout, &stderr)
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0; stderr=%s", code, stderr.String())
+	}
+	if gotMethod != http.MethodPost || gotPath != "/admin/api/cache/flush" {
+		t.Errorf("got %s %s, want POST /admin/api/cache/flush", gotMethod, gotPath)
+	}
+	if gotToken != "tok" {
+		t.Errorf("token = %q, want tok", gotToken)
+	}
+}
+
+// TestCommand_CacheStats_SendsGet verifies the cache-stats subcommand
+// GETs the cache stats endpoint and prints the response.
+func TestCommand_CacheStats_SendsGet(t *testing.T) {
+	var gotMethod, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		_ = json.NewEncoder(w).Encode(map[string]any{"entries": 5, "bytes": 1024})
+	}))
+	defer srv.Close()
+
+	var stdout, stderr bytes.Buffer
+	code := Command("cache-stats", nil, srv.URL, "tok", &stdout, &stderr)
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0; stderr=%s", code, stderr.String())
+	}
+	if gotMethod != http.MethodGet || gotPath != "/admin/api/cache" {
+		t.Errorf("got %s %s, want GET /admin/api/cache", gotMethod, gotPath)
+	}
+	if !strings.Contains(stdout.String(), "entries") {
+		t.Errorf("stdout missing response body: %s", stdout.String())
+	}
+}
+
+// TestCommand_CacheInvalidate_SendsDelete verifies the cache-invalidate
+// subcommand DELETEs /admin/api/cache/keys/<key> using the supplied
+// -key flag.
+func TestCommand_CacheInvalidate_SendsDelete(t *testing.T) {
+	var gotMethod, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "invalidated"})
+	}))
+	defer srv.Close()
+
+	var stdout, stderr bytes.Buffer
+	code := Command("cache-invalidate", []string{"-key=photos/foo.jpg"}, srv.URL, "tok", &stdout, &stderr)
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0; stderr=%s", code, stderr.String())
+	}
+	if gotMethod != http.MethodDelete {
+		t.Errorf("method = %q, want DELETE", gotMethod)
+	}
+	if gotPath != "/admin/api/cache/keys/photos/foo.jpg" {
+		t.Errorf("path = %q, want /admin/api/cache/keys/photos/foo.jpg", gotPath)
+	}
+}
+
+// TestCommand_CacheInvalidate_MissingKey verifies that omitting -key
+// exits non-zero and reports the missing flag to stderr.
+func TestCommand_CacheInvalidate_MissingKey(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := Command("cache-invalidate", nil, "http://unused.invalid", "tok", &stdout, &stderr)
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "-key is required") {
+		t.Errorf("stderr = %q, want to mention -key is required", stderr.String())
+	}
+}
+
+// TestCommand_CacheInvalidatePrefix_SendsDelete verifies the
+// cache-invalidate-prefix subcommand DELETEs the prefix endpoint with
+// the -prefix flag URL-escaped into the query string.
+func TestCommand_CacheInvalidatePrefix_SendsDelete(t *testing.T) {
+	var gotMethod, gotPath, gotPrefix string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		gotPrefix = r.URL.Query().Get("prefix")
+		_ = json.NewEncoder(w).Encode(map[string]any{"entries_dropped": 3})
+	}))
+	defer srv.Close()
+
+	var stdout, stderr bytes.Buffer
+	code := Command("cache-invalidate-prefix", []string{"-prefix=users/1/"}, srv.URL, "tok", &stdout, &stderr)
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0; stderr=%s", code, stderr.String())
+	}
+	if gotMethod != http.MethodDelete || gotPath != "/admin/api/cache/prefix" {
+		t.Errorf("got %s %s, want DELETE /admin/api/cache/prefix", gotMethod, gotPath)
+	}
+	if gotPrefix != "users/1/" {
+		t.Errorf("prefix = %q, want users/1/", gotPrefix)
+	}
+}
+
+// TestCommand_CacheInvalidatePrefix_MissingPrefix verifies that omitting
+// -prefix exits non-zero and reports the missing flag to stderr.
+func TestCommand_CacheInvalidatePrefix_MissingPrefix(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := Command("cache-invalidate-prefix", nil, "http://unused.invalid", "tok", &stdout, &stderr)
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "-prefix is required") {
+		t.Errorf("stderr = %q, want to mention -prefix is required", stderr.String())
+	}
+}

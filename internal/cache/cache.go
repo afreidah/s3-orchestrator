@@ -41,6 +41,18 @@ type ObjectCache interface {
 	// Invalidate removes a single key from the cache.
 	Invalidate(key string)
 
+	// InvalidatePrefix removes every entry whose key starts with the given
+	// prefix and returns the count of entries that were dropped. Empty
+	// prefix matches every entry (equivalent to Clear) - callers that
+	// want a clean flush should use Clear directly so the metric counter
+	// reflects the operator's intent.
+	InvalidatePrefix(prefix string) int
+
+	// Clear removes every entry. Returns the number of entries that were
+	// dropped. Used by the admin cache-flush endpoint to support cache-cold
+	// performance characterisation.
+	Clear() int
+
 	// Stats returns current cache utilization statistics.
 	Stats() Stats
 }

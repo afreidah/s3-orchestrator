@@ -848,6 +848,8 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when enabled.
 | `s3o_cache_evictions_total` | Counter | — | Object data cache evictions (LRU or TTL) |
 | `s3o_cache_size_bytes` | Gauge | — | Current memory used by cached objects |
 | `s3o_cache_entries` | Gauge | — | Current number of cached objects |
+| `s3o_cache_flush_total` | Counter | — | Admin-triggered object data cache flushes |
+| `s3o_cache_admin_invalidations_total` | Counter | — | Admin-triggered single-key cache invalidations |
 | `s3o_integrity_checks_total` | Counter | operation | Integrity hash verifications performed (read, scrub) |
 | `s3o_integrity_errors_total` | Counter | operation | Hash mismatches detected (corrupted copies enqueued for cleanup) |
 
@@ -991,6 +993,10 @@ JSON APIs are available at `{path}/api/dashboard`, `{path}/api/tree`, and `{path
 | `/admin/api/object-locations?key=...` | GET | Per-backend ledger for one object key |
 | `/admin/api/cleanup-queue` | GET | Cleanup queue depth and pending sample |
 | `/admin/api/usage-flush` | POST | Force out-of-band flush of usage counters |
+| `/admin/api/cache` | GET | Current cache entry count, size, and capacity (returns 503 when caching is disabled) |
+| `/admin/api/cache/flush` | POST | Drop every entry from the in-memory object data cache (returns 503 when caching is disabled) |
+| `/admin/api/cache/keys/{key}` | DELETE | Drop a single key from the cache (200 even for unknown keys) |
+| `/admin/api/cache/prefix?prefix=...` | DELETE | Drop every cached key under a prefix (400 when prefix is empty - use `/admin/api/cache/flush` instead) |
 | `/admin/api/replicate` | POST | Trigger one replication cycle |
 | `/admin/api/log-level` | GET / PUT | View or set the running instance's log level |
 | `/admin/api/over-replication` | GET / POST | Show pending excess copies / trigger cleanup |
