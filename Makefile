@@ -372,34 +372,52 @@ release-local: prep-changelog ## Dry-run GoReleaser locally (no publish)
 # LOAD TESTING
 # -------------------------------------------------------------------------
 
-LOADTEST_RATE     ?= 100
-LOADTEST_DURATION ?= 30s
-LOADTEST_SIZE     ?= 1024
-LOADTEST_SEED     ?= 100
-LOADTEST_WORKERS  ?= 10
-LOADTEST_ENDPOINT ?= http://localhost:9000
-LOADTEST_BUCKET   ?= photos
+LOADTEST_RATE        ?= 100
+LOADTEST_DURATION    ?= 30s
+LOADTEST_SIZE        ?= 1024
+LOADTEST_SIZES       ?=
+LOADTEST_SEED        ?= 100
+LOADTEST_WORKERS     ?= 10
+LOADTEST_ENDPOINT    ?= http://localhost:9000
+LOADTEST_BUCKET      ?= photos
+LOADTEST_OUTPUT_JSON ?=
+
+# Sweep mode flag: -sizes wins when LOADTEST_SIZES is non-empty so a single
+# `LOADTEST_SIZES=...` invocation switches into the per-size matrix run.
+LOADTEST_SIZE_FLAG    = $(if $(LOADTEST_SIZES),-sizes $(LOADTEST_SIZES),-size $(LOADTEST_SIZE))
+LOADTEST_OUTPUT_FLAG  = $(if $(LOADTEST_OUTPUT_JSON),-output-json $(LOADTEST_OUTPUT_JSON),)
 
 loadtest-build: ## Build the vegeta load test binary
 	cd loadtest && go build -buildvcs=false -o s3-loadtest .
 
-loadtest-put: loadtest-build ## Run PUT-only load test (use LOADTEST_RATE, LOADTEST_DURATION, LOADTEST_SIZE)
+loadtest-put: loadtest-build ## Run PUT-only load test (use LOADTEST_RATE, LOADTEST_DURATION, LOADTEST_SIZE or LOADTEST_SIZES)
 	./loadtest/s3-loadtest \
 		-endpoint $(LOADTEST_ENDPOINT) -bucket $(LOADTEST_BUCKET) \
 		-op put -rate $(LOADTEST_RATE) -duration $(LOADTEST_DURATION) \
-		-size $(LOADTEST_SIZE) -workers $(LOADTEST_WORKERS)
+		$(LOADTEST_SIZE_FLAG) -workers $(LOADTEST_WORKERS) $(LOADTEST_OUTPUT_FLAG)
 
 loadtest-get: loadtest-build ## Run GET-only load test (use LOADTEST_SEED for pre-seeded object count)
 	./loadtest/s3-loadtest \
 		-endpoint $(LOADTEST_ENDPOINT) -bucket $(LOADTEST_BUCKET) \
 		-op get -rate $(LOADTEST_RATE) -duration $(LOADTEST_DURATION) \
-		-size $(LOADTEST_SIZE) -seed $(LOADTEST_SEED) -workers $(LOADTEST_WORKERS)
+		$(LOADTEST_SIZE_FLAG) -seed $(LOADTEST_SEED) -workers $(LOADTEST_WORKERS) $(LOADTEST_OUTPUT_FLAG)
 
 loadtest-mixed: loadtest-build ## Run mixed PUT/GET load test
 	./loadtest/s3-loadtest \
 		-endpoint $(LOADTEST_ENDPOINT) -bucket $(LOADTEST_BUCKET) \
 		-op mixed -rate $(LOADTEST_RATE) -duration $(LOADTEST_DURATION) \
-		-size $(LOADTEST_SIZE) -seed $(LOADTEST_SEED) -workers $(LOADTEST_WORKERS)
+		$(LOADTEST_SIZE_FLAG) -seed $(LOADTEST_SEED) -workers $(LOADTEST_WORKERS) $(LOADTEST_OUTPUT_FLAG)
+
+LOADTEST_LIST_PREFIX   ?= loadtest/
+LOADTEST_LIST_MAX_KEYS ?= 1000
+
+loadtest-listobjects: loadtest-build ## Run ListObjectsV2 load test against a pre-seeded prefix (use LOADTEST_SEED for object count)
+	./loadtest/s3-loadtest \
+		-endpoint $(LOADTEST_ENDPOINT) -bucket $(LOADTEST_BUCKET) \
+		-op listobjects -rate $(LOADTEST_RATE) -duration $(LOADTEST_DURATION) \
+		$(LOADTEST_SIZE_FLAG) -seed $(LOADTEST_SEED) -workers $(LOADTEST_WORKERS) \
+		-list-prefix $(LOADTEST_LIST_PREFIX) -list-max-keys $(LOADTEST_LIST_MAX_KEYS) \
+		$(LOADTEST_OUTPUT_FLAG)
 
 loadtest-cache: loadtest-build ## Run cache stress test (seeds more data than cache capacity to exercise eviction)
 	./loadtest/s3-loadtest \
@@ -416,6 +434,23 @@ loadtest-burst-read: ## Run k6 read burst test (requires k6, use PEAK_VUS, SEED_
 	@command -v k6 >/dev/null 2>&1 || { echo "Error: k6 is not installed. Install it from https://grafana.com/docs/k6/latest/set-up/install-k6/"; exit 1; }
 	k6 run loadtest/k6/burst-read.js \
 		--env S3_ENDPOINT=$(LOADTEST_ENDPOINT) --env S3_BUCKET=$(LOADTEST_BUCKET)
+
+PERF_PROFILE ?= smoke
+
+perf: loadtest-build ## Run the full perf-envelope suite (PROFILE=smoke|baseline|saturation)
+	@./loadtest/run-suite.sh $(PERF_PROFILE)
+
+LOADTEST_MPU_CONCURRENCY ?= 10
+LOADTEST_MPU_PART_COUNT  ?= 5
+LOADTEST_MPU_PART_SIZE   ?= 5242880
+
+loadtest-multipart: ## Run k6 concurrent multipart upload test (requires k6, use LOADTEST_MPU_*)
+	@command -v k6 >/dev/null 2>&1 || { echo "Error: k6 is not installed. Install it from https://grafana.com/docs/k6/latest/set-up/install-k6/"; exit 1; }
+	k6 run loadtest/k6/multipart.js \
+		--env S3_ENDPOINT=$(LOADTEST_ENDPOINT) --env S3_BUCKET=$(LOADTEST_BUCKET) \
+		--env CONCURRENCY=$(LOADTEST_MPU_CONCURRENCY) \
+		--env PART_COUNT=$(LOADTEST_MPU_PART_COUNT) \
+		--env PART_SIZE=$(LOADTEST_MPU_PART_SIZE)
 
 loadtest-k6: ## Run k6 mixed CRUD workflow test (requires k6)
 	@command -v k6 >/dev/null 2>&1 || { echo "Error: k6 is not installed. Install it from https://grafana.com/docs/k6/latest/set-up/install-k6/"; exit 1; }
@@ -516,5 +551,5 @@ clean: ## Remove build artifacts, demo environments, containers, and volumes
 	docker rmi $(FULL_TAG) 2>/dev/null || true
 	docker rmi s3-orchestrator:local 2>/dev/null || true
 
-.PHONY: help builder build docker push generate test vet lint govulncheck coverage integration-coverage sonar-scan sonar-pr bench bench-compare run docs migration integration-test dev-deps dev-clean tools prep-changelog deb deb-lint deb-all publish-deb changelog release release-local loadtest-build loadtest-put loadtest-get loadtest-mixed loadtest-burst loadtest-burst-read loadtest-k6 kubernetes-demo nomad-demo web-tools web-godoc web-serve web-build web-docker web-push clean
+.PHONY: help builder build docker push generate test vet lint govulncheck coverage integration-coverage sonar-scan sonar-pr bench bench-compare run docs migration integration-test dev-deps dev-clean tools prep-changelog deb deb-lint deb-all publish-deb changelog release release-local loadtest-build loadtest-put loadtest-get loadtest-mixed loadtest-listobjects loadtest-multipart loadtest-burst loadtest-burst-read loadtest-k6 perf kubernetes-demo nomad-demo web-tools web-godoc web-serve web-build web-docker web-push clean
 .DEFAULT_GOAL := help

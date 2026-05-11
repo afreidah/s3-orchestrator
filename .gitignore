@@ -10,6 +10,7 @@ dist/
 packaging/changelog.gz
 loadtest/s3-loadtest
 loadtest/loadtest
+perf-results/
 *.db
 *.db-shm
 *.db-wal

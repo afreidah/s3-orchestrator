@@ -288,6 +288,79 @@ func TestNewMemoryCache_Validation(t *testing.T) {
 	}
 }
 
+// TestMemoryCache_InvalidatePrefix verifies prefix-matching invalidation
+// drops every key under the prefix, leaves siblings intact, and returns
+// the dropped-count.
+func TestMemoryCache_InvalidatePrefix(t *testing.T) {
+	t.Parallel()
+	c := newTestCache(t, 1024, 512, time.Minute)
+
+	for _, k := range []string{"a/1", "a/2", "a/sub/3", "b/1", "c/1"} {
+		admitAndPut(t, c, k, []byte("data-"+k), EntryMeta{})
+	}
+
+	if got := c.InvalidatePrefix("a/"); got != 3 {
+		t.Errorf("InvalidatePrefix(a/) = %d, want 3", got)
+	}
+
+	for _, k := range []string{"a/1", "a/2", "a/sub/3"} {
+		if _, ok := c.Get(k); ok {
+			t.Errorf("expected miss for %q after prefix invalidation", k)
+		}
+	}
+	for _, k := range []string{"b/1", "c/1"} {
+		if _, ok := c.Get(k); !ok {
+			t.Errorf("expected hit for %q (outside invalidated prefix)", k)
+		}
+	}
+
+	if got := c.InvalidatePrefix("nonexistent/"); got != 0 {
+		t.Errorf("InvalidatePrefix(nonexistent/) = %d, want 0", got)
+	}
+}
+
+// TestMemoryCache_Clear verifies that Clear empties every entry, returns
+// the prior count, and resets the size accounting so subsequent Stats
+// reflect an empty cache.
+func TestMemoryCache_Clear(t *testing.T) {
+	t.Parallel()
+	c := newTestCache(t, 1024, 512, time.Minute)
+
+	admitAndPut(t, c, "a", []byte("aaaa"), EntryMeta{})
+	admitAndPut(t, c, "b", []byte("bbbb"), EntryMeta{})
+	admitAndPut(t, c, "c", []byte("cccc"), EntryMeta{})
+
+	if got := c.Clear(); got != 3 {
+		t.Errorf("Clear() = %d, want 3", got)
+	}
+
+	if _, ok := c.Get("a"); ok {
+		t.Error("expected miss for 'a' after Clear")
+	}
+	if _, ok := c.Get("b"); ok {
+		t.Error("expected miss for 'b' after Clear")
+	}
+
+	stats := c.Stats()
+	if stats.Entries != 0 {
+		t.Errorf("entries = %d after Clear, want 0", stats.Entries)
+	}
+	if stats.SizeBytes != 0 {
+		t.Errorf("size_bytes = %d after Clear, want 0", stats.SizeBytes)
+	}
+
+	// Clearing an empty cache returns 0 and does not panic.
+	if got := c.Clear(); got != 0 {
+		t.Errorf("Clear() on empty cache = %d, want 0", got)
+	}
+
+	// Cache stays usable after Clear.
+	admitAndPut(t, c, "d", []byte("dddd"), EntryMeta{})
+	if _, ok := c.Get("d"); !ok {
+		t.Error("expected hit for 'd' after Clear + Put")
+	}
+}
+
 // TestMemoryCache_EntrySize verifies the memory cache entry size contract.
 // Asserts that entry.Size() = , want 26.
 func TestMemoryCache_EntrySize(t *testing.T) {

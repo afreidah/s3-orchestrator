@@ -12,6 +12,7 @@ make nomad-demo   # or make kubernetes-demo
 make loadtest-put                                          # 100 PUT/s, 30s, 1KB
 make loadtest-get LOADTEST_SEED=1000                       # 100 GET/s, 1000 pre-seeded objects
 make loadtest-mixed LOADTEST_RATE=300 LOADTEST_DURATION=2m # 300 req/s mixed PUT/GET
+make loadtest-listobjects LOADTEST_SEED=10000              # 100 ListObjectsV2/s against 10k pre-seeded keys
 make loadtest-burst                                        # k6 burst to 100 VUs
 make loadtest-k6                                           # k6 mixed CRUD workflow
 ```
@@ -21,12 +22,89 @@ All vegeta targets accept these variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LOADTEST_RATE` | `100` | Requests per second |
-| `LOADTEST_DURATION` | `30s` | Test duration |
-| `LOADTEST_SIZE` | `1024` | Object size in bytes |
-| `LOADTEST_SEED` | `100` | Objects to pre-upload for GET/mixed |
+| `LOADTEST_DURATION` | `30s` | Test duration (per size in sweep mode) |
+| `LOADTEST_SIZE` | `1024` | Object size in bytes (single-run mode) |
+| `LOADTEST_SIZES` | (unset) | Comma-separated sizes for sweep mode (e.g. `1024,1048576,104857600`); overrides `LOADTEST_SIZE` |
+| `LOADTEST_SEED` | `100` | Objects to pre-upload for GET/mixed (per size in sweep mode) |
 | `LOADTEST_WORKERS` | `10` | Concurrent workers |
 | `LOADTEST_ENDPOINT` | `http://localhost:9000` | S3 endpoint |
 | `LOADTEST_BUCKET` | `photos` | Target bucket |
+| `LOADTEST_OUTPUT_JSON` | (unset) | Path to write structured per-size results matrix |
+| `LOADTEST_LIST_PREFIX` | `loadtest/` | Prefix for the listobjects scenario |
+| `LOADTEST_LIST_MAX_KEYS` | `1000` | `max-keys` query parameter for the listobjects scenario |
+| `LOADTEST_MPU_CONCURRENCY` | `10` | Concurrent VUs for the multipart scenario |
+| `LOADTEST_MPU_PART_COUNT` | `5` | Parts per multipart upload |
+| `LOADTEST_MPU_PART_SIZE` | `5242880` | Per-part size in bytes (5 MiB minimum) |
+
+### List performance
+
+`loadtest-listobjects` benchmarks `ListObjectsV2` latency against a
+pre-seeded namespace. Vary `LOADTEST_SEED` across runs (e.g. 10k, 100k,
+1M) to characterise how list latency scales with object count:
+
+```bash
+make loadtest-listobjects LOADTEST_SEED=10000   LOADTEST_OUTPUT_JSON=/tmp/list-10k.json
+make loadtest-listobjects LOADTEST_SEED=100000  LOADTEST_OUTPUT_JSON=/tmp/list-100k.json
+make loadtest-listobjects LOADTEST_SEED=1000000 LOADTEST_OUTPUT_JSON=/tmp/list-1m.json
+```
+
+### Saturation-find ramp
+
+`-ramp-to` / `-ramp-step` drive the scenario at increasing rates
+until the error rate exceeds `-ramp-error-threshold`. Output includes
+every step plus a `saturation_rps` field marking the rate at which
+saturation was first observed:
+
+```bash
+./loadtest/s3-loadtest \
+  -op mixed -rate 100 -ramp-to 2000 -ramp-step 200 \
+  -ramp-error-threshold 0.05 \
+  -duration 30s -seed 500 \
+  -output-json saturation.json
+```
+
+`-ramp-to` and `-sizes` are mutually exclusive (one swept dimension
+per invocation).
+
+### Cache-cold testing
+
+`-cache-flush-before` POSTs to `/admin/api/cache/flush` before each
+scenario step so cache-cold runs are not contaminated by previous
+steps' warm hits. Requires an admin token (`-admin-token` flag or
+`S3O_ADMIN_TOKEN` env var). 503 from the flush endpoint is treated
+as success - it just means the orchestrator has caching disabled,
+not that the call failed.
+
+### Concurrent multipart
+
+`loadtest-multipart` runs a k6 script that drives `CONCURRENCY`
+parallel multipart uploads, each with `PART_COUNT` parts of
+`PART_SIZE` bytes. Custom metrics report per-stage success rate and
+latency:
+
+```bash
+make loadtest-multipart LOADTEST_MPU_CONCURRENCY=50 \
+  LOADTEST_MPU_PART_COUNT=5 LOADTEST_MPU_PART_SIZE=5242880
+```
+
+The k6 SigV4 helper in `multipart.js` canonicalises query parameters
+correctly (unlike the simpler `mixed.js` helper), so multipart's
+`?uploads`, `?partNumber=N&uploadId=X`, and `?uploadId=X` URLs sign
+without 403s.
+
+### Sweep mode
+
+Setting `LOADTEST_SIZES` runs the same scenario at each size in order
+and emits a Markdown table summarising P50/P95/P99 latency, throughput
+(req/s and MB/s), and error rate per size:
+
+```bash
+make loadtest-put LOADTEST_SIZES=1024,1048576,104857600 LOADTEST_OUTPUT_JSON=results.json
+```
+
+The JSON file captures the same matrix plus the host hardware
+fingerprint (OS, arch, CPU count, Go version) and the static scenario
+inputs, so a result file remains interpretable when read months later.
 
 ## Tools
 
@@ -47,7 +125,7 @@ go build -o s3-loadtest .
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-op` | `put` | `put`, `get`, or `mixed` (50/50 PUT/GET) |
+| `-op` | `put` | `put`, `get`, `mixed` (50/50 PUT/GET), or `listobjects` |
 | `-rate` | `100` | Requests per second |
 | `-duration` | `30s` | Test duration |
 | `-size` | `1024` | Object size in bytes |
@@ -58,6 +136,15 @@ go build -o s3-loadtest .
 | `-secret-key` | `photossecret` | AWS secret access key |
 | `-bucket` | `photos` | Target bucket |
 | `-region` | `us-east-1` | AWS region for SigV4 |
+| `-sizes` | (unset) | Comma-separated object sizes for sweep mode; overrides `-size` |
+| `-output-json` | (unset) | Path to write structured per-size results matrix |
+| `-list-prefix` | `loadtest/` | Prefix for the listobjects scenario |
+| `-list-max-keys` | `1000` | `max-keys` query parameter for the listobjects scenario |
+| `-ramp-to` | `0` | Saturation-find: ramp from `-rate` up to this rate; stops when error rate exceeds `-ramp-error-threshold` (0 disables ramp) |
+| `-ramp-step` | `100` | Rate increment per ramp step |
+| `-ramp-error-threshold` | `0.05` | Error rate threshold (0..1) for ramp termination |
+| `-cache-flush-before` | `false` | POST `/admin/api/cache/flush` before each scenario step (requires `-admin-token`) |
+| `-admin-token` | (unset) | Admin token for cache-flush calls (or `S3O_ADMIN_TOKEN` env var) |
 
 ### k6 — Scenario-based workflow simulation
 
