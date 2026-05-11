@@ -18,9 +18,9 @@ import (
 
 	objcache "github.com/afreidah/s3-orchestrator/internal/cache"
 	"github.com/afreidah/s3-orchestrator/internal/config"
-
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
 // managerSpanPrefix is prepended to every OpenTelemetry span name the
@@ -33,26 +33,41 @@ const managerSpanPrefix = "Manager "
 // broadcast reads during degraded mode, and location caching.
 type ObjectManager struct {
 	*backendCore
-	parent            *BackendManager // set post-construction; routes write-path helpers to the parent's store fields
+	coord             *writeCoordinator    // write-path helpers shared with BackendManager and MultipartManager
+	stores            core.MetadataStore   // direct store access for read paths and quota inspection
 	encryptor         *encryption.Encryptor
 	cache             *LocationCache
 	objectCache       objcache.ObjectCache // nil when object data caching is disabled
 	parallelBroadcast bool
-	integrityCfg      func() *config.IntegrityConfig
+	integrityCfg      *syncutil.AtomicConfig[config.IntegrityConfig]
+}
+
+// ObjectManagerDeps bundles the dependencies NewObjectManager needs so
+// the call signature stays under the parameter-count ceiling.
+type ObjectManagerDeps struct {
+	Core              *backendCore
+	Coord             *writeCoordinator
+	Stores            core.MetadataStore
+	Encryptor         *encryption.Encryptor
+	LocationCache     *LocationCache
+	ObjectCache       objcache.ObjectCache
+	ParallelBroadcast bool
+	IntegrityCfg      *syncutil.AtomicConfig[config.IntegrityConfig]
 }
 
 // NewObjectManager creates an ObjectManager sharing the given core
-// infrastructure. The caller wires the parent BackendManager pointer
-// after construction (chicken-and-egg: BackendManager builds this
-// manager and points the parent ref back to itself).
-func NewObjectManager(core *backendCore, encryptor *encryption.Encryptor, cache *LocationCache, objectCache objcache.ObjectCache, parallelBroadcast bool, integrityCfg func() *config.IntegrityConfig) *ObjectManager {
+// infrastructure and write coordinator. All dependencies must be
+// non-nil; nothing is patched in post-construction.
+func NewObjectManager(d *ObjectManagerDeps) *ObjectManager {
 	return &ObjectManager{
-		backendCore:       core,
-		encryptor:         encryptor,
-		cache:             cache,
-		objectCache:       objectCache,
-		parallelBroadcast: parallelBroadcast,
-		integrityCfg:      integrityCfg,
+		backendCore:       d.Core,
+		coord:             d.Coord,
+		stores:            d.Stores,
+		encryptor:         d.Encryptor,
+		cache:             d.LocationCache,
+		objectCache:       d.ObjectCache,
+		parallelBroadcast: d.ParallelBroadcast,
+		integrityCfg:      d.IntegrityCfg,
 	}
 }
 
@@ -115,7 +130,7 @@ func (o *ObjectManager) CanAcceptWrite(size int64) bool {
 // a generic message. Returns nil on a DB lookup failure so the caller
 // can fall back to its terse default.
 func (o *ObjectManager) BackendCapacityStats(ctx context.Context) map[string]core.QuotaStat {
-	stats, err := o.parent.stores.GetQuotaStats(ctx)
+	stats, err := o.stores.GetQuotaStats(ctx)
 	if err != nil {
 		return nil
 	}
