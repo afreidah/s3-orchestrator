@@ -61,16 +61,25 @@ func (c *cbDB) QueryContext(ctx context.Context, query string, args ...any) (*sq
 	return rows, c.cb.PostCheck(err)
 }
 
-// QueryRowContext runs the query under the breaker. *sql.Row is a
-// concrete struct with no constructor for an error-only row, so PreCheck
-// failure cannot be injected at row-return time; PostCheck observes the
-// error at Scan time via the row's stored err field. Under an open
-// breaker the inner call still runs, but sqlite is in-process so the
-// extra hit is negligible.
+// QueryRowContext is intentionally NOT breaker-routed and diverges from
+// the Postgres wrapper. *sql.Row is a concrete struct with no Scanner
+// injection point, so this wrapper cannot return an error-only row on
+// PreCheck failure (the Postgres wrapper uses errRow because pgx.Row is
+// an interface) and cannot intercept Scan to feed Scan-time errors
+// through PostCheck. Behaviour:
+//
+//   - Open breaker: the inner QueryRowContext still runs. There is no
+//     short-circuit. SQLite is in-process so the extra hit is small,
+//     but callers cannot rely on QueryRow short-circuiting like Exec
+//     and Query do.
+//   - Scan-time DB error: the error returned by row.Scan() is NOT
+//     fed to PostCheck. The breaker will not count it as a failure.
+//
+// Fixing both would require changing dbAPI.QueryRowContext to return a
+// Scanner interface instead of *sql.Row, which ripples across every
+// SQLite store call site. Left as a deliberate gap, pinned by
+// TestCBDB_QueryRowContext_* tests in cb_test.go.
 func (c *cbDB) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
-	if err := c.cb.PreCheck(); err != nil {
-		_ = err
-	}
 	return c.inner.QueryRowContext(ctx, query, args...)
 }
 
@@ -78,10 +87,13 @@ func (c *cbDB) QueryRowContext(ctx context.Context, query string, args ...any) *
 // commits on a nil return, and rolls back otherwise. Owning the tx
 // lifecycle inside the wrapper keeps Begin and Rollback at the same
 // call site (no factory pattern that hands a tx to a caller who must
-// remember to defer rollback) and routes BeginTx failures through the
-// breaker - the load-bearing "database is unreachable" trip case.
+// remember to defer rollback) and routes BeginTx AND Commit failures
+// through the breaker - the load-bearing "database is unreachable"
+// trip cases. Commit-failure routing matters for I/O failures, full
+// disks, and lock contention that only surface at commit time.
 // Statements inside fn are not individually breaker-wrapped because
-// *sql.Tx is a concrete type with no interface seam.
+// *sql.Tx is a concrete type with no interface seam; fn-returned
+// errors flow through verbatim.
 func cbWithTx(ctx context.Context, inner *sql.DB, cb *breaker.CircuitBreaker, fn func(*sql.Tx) error) error {
 	if cb != nil {
 		if err := cb.PreCheck(); err != nil {
@@ -99,7 +111,11 @@ func cbWithTx(ctx context.Context, inner *sql.DB, cb *breaker.CircuitBreaker, fn
 	if err := fn(tx); err != nil {
 		return err
 	}
-	return tx.Commit()
+	err = tx.Commit()
+	if cb != nil {
+		return cb.PostCheck(err)
+	}
+	return err
 }
 
 // PingContext routes through the breaker so explicit health probes feed
