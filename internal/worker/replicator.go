@@ -387,7 +387,7 @@ func (r *Replicator) UnhealthyBackends(threshold time.Duration) []string {
 		}
 		if d := cbb.OpenDuration(); d >= threshold {
 			names = append(names, name)
-			slog.InfoContext(context.Background(), "backend unhealthy, excluding from replica count",
+			r.log.InfoContext(context.Background(), "backend unhealthy, excluding from replica count",
 				"backend", name,
 				"open_duration", d.Round(time.Second))
 		}

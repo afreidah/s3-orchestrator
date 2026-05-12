@@ -13,6 +13,7 @@ package counter
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
+	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
 // fakePipeliner collects pipeline commands without executing them against
@@ -53,6 +55,81 @@ func (f *fakePipeliner) Expire(_ context.Context, key string, _ time.Duration) *
 // results so error-path assertions are deterministic.
 func (f *fakePipeliner) Exec(_ context.Context) ([]redis.Cmder, error) {
 	return nil, f.execErr
+}
+
+// TestRedisCounterBackend_LoggerFallback pins the nil-safe behaviour
+// of logger(): tests construct *RedisCounterBackend directly without
+// setting log, and the helper must return slog.Default() so the Redis
+// code path never dereferences a nil logger.
+func TestRedisCounterBackend_LoggerFallback(t *testing.T) {
+	if (&RedisCounterBackend{}).logger() == nil {
+		t.Fatal("logger() returned nil for zero-value RedisCounterBackend")
+	}
+}
+
+// TestRedisCounterBackend_LoggerReturnsCustomLog covers the non-nil
+// branch of logger(): when the backend was constructed by
+// NewRedisCounterBackend the log field is populated and the helper
+// returns it unchanged.
+func TestRedisCounterBackend_LoggerReturnsCustomLog(t *testing.T) {
+	custom := slog.Default().With("scope", "test")
+	r := &RedisCounterBackend{log: custom}
+	if r.logger() != custom {
+		t.Fatal("logger() did not return the assigned log field")
+	}
+}
+
+// TestNewRedisCounterBackend_HappyPath drives the production
+// constructor so the log-field assignment, the "initialized" info log,
+// and the background probe spawn each run under coverage. The mock
+// Redis client makes Ping succeed; the probe goroutine exits on Close.
+func TestNewRedisCounterBackend_HappyPath(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mock := NewMockRedisClient(ctrl)
+	mock.EXPECT().Ping(gomock.Any()).Return(redis.NewStatusResult("PONG", nil))
+	mock.EXPECT().Close().Return(nil)
+
+	cfg := &config.RedisConfig{
+		Address:          "127.0.0.1:6379",
+		KeyPrefix:        "test",
+		FailureThreshold: 3,
+		OpenTimeout:      time.Second,
+	}
+	r, err := NewRedisCounterBackend(mock, cfg, []string{"b1"})
+	if err != nil {
+		t.Fatalf("NewRedisCounterBackend: %v", err)
+	}
+	if r == nil {
+		t.Fatal("NewRedisCounterBackend returned nil")
+	}
+	if r.log == nil {
+		t.Fatal("log field left nil")
+	}
+	if err := r.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
+// TestRecordFailure_LogsFallbackAndPostCheckError drives both warning
+// branches that the previous fallback contract left untested: when the
+// circuit breaker opens, PostCheck returns the sentinel (covering the
+// "Redis circuit breaker PostCheck reported error" log), and recordFailure
+// transitions to fallback (covering the "entering fallback to local
+// counters" log).
+func TestRecordFailure_LogsFallbackAndPostCheckError(t *testing.T) {
+	sentinel := errors.New("redis unavailable")
+	cb := breaker.NewCircuitBreaker("redis", 1, time.Second,
+		func(error) bool { return true }, sentinel)
+
+	r := &RedisCounterBackend{
+		cb:    cb,
+		local: NewLocalCounterBackend([]string{"b1"}),
+		log:   slog.Default(),
+	}
+	r.recordFailure(errors.New("boom"))
+	if !r.inFallback() {
+		t.Fatal("expected fallback after breaker opened")
+	}
 }
 
 // TestTryRecover_SyncsLocalDeltasToRedis verifies that tryRecover swaps all

@@ -296,6 +296,31 @@ func TestProvideEncryptor_InvalidKey(t *testing.T) {
 	}
 }
 
+// TestProvideEncryptor_HappyPath covers the success branch where a valid
+// static master key produces an encryptor. The startup log line that
+// reports chunk size and key ID also fires, which is what new-code
+// coverage tracks for this PR.
+func TestProvideEncryptor_HappyPath(t *testing.T) {
+	t.Parallel()
+	inj := do.New()
+	// 32-byte base64 key (all zeros is valid for the format check).
+	key := "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+	do.ProvideValue(inj, &config.Config{
+		Encryption: config.EncryptionConfig{
+			Enabled:   true,
+			ChunkSize: 65536,
+			MasterKey: key,
+		},
+	})
+	enc, err := ProvideEncryptor(inj)
+	if err != nil {
+		t.Fatalf("ProvideEncryptor: %v", err)
+	}
+	if enc == nil {
+		t.Fatal("ProvideEncryptor returned nil encryptor")
+	}
+}
+
 // TestProvideEncryptionProvider_InvalidKey mirrors the Encryptor error path
 // for admin key rotation's separate KeyProvider registration.
 func TestProvideEncryptionProvider_InvalidKey(t *testing.T) {
@@ -307,6 +332,32 @@ func TestProvideEncryptionProvider_InvalidKey(t *testing.T) {
 	_, err := ProvideEncryptionProvider(inj)
 	if err == nil {
 		t.Fatal("expected error from ProvideEncryptionProvider with no key source, got nil")
+	}
+}
+
+// TestProvideObjectCache_HappyPath drives ProvideObjectCache through
+// the success branch with a valid cache configuration; the startup
+// "object data cache enabled" log fires here, which is the new-code
+// coverage target for this PR.
+func TestProvideObjectCache_HappyPath(t *testing.T) {
+	t.Parallel()
+	inj := do.New()
+	do.ProvideValue(inj, &config.Config{
+		Cache: config.CacheConfig{
+			Enabled:            true,
+			MaxSize:            "16MB",
+			MaxSizeBytes:       16 << 20,
+			MaxObjectSize:      "1MB",
+			MaxObjectSizeBytes: 1 << 20,
+			TTL:                time.Minute,
+		},
+	})
+	cache, err := ProvideObjectCache(inj)
+	if err != nil {
+		t.Fatalf("ProvideObjectCache: %v", err)
+	}
+	if cache == nil {
+		t.Fatal("ProvideObjectCache returned nil cache")
 	}
 }
 

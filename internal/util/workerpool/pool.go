@@ -18,6 +18,8 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 )
 
 // Run processes items concurrently with bounded parallelism. The fn callback
@@ -25,7 +27,10 @@ import (
 // are skipped. In-flight items run to completion.
 func Run[T any](ctx context.Context, concurrency int, items []T, fn func(context.Context, T)) {
 	if concurrency <= 0 {
-		slog.WarnContext(ctx, "workerpool.Run: concurrency <= 0, clamping to 1", "requested", concurrency)
+		slog.WarnContext(ctx, "concurrency <= 0, clamping to 1",
+			logfmt.Component("workerpool"),
+			"requested", concurrency,
+		)
 		concurrency = 1
 	}
 	sem := make(chan struct{}, concurrency)

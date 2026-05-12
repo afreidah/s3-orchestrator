@@ -147,7 +147,7 @@ func (o *ObjectManager) tryEachLocation(ctx context.Context, operation, key stri
 				limitSkips++
 			}
 			if i < len(locations)-1 {
-				slog.WarnContext(ctx, operation+": copy failed, trying next",
+				o.Log().WarnContext(ctx, operation+": copy failed, trying next",
 					"key", key, "failed_backend", name, "error", err)
 			}
 			continue
@@ -559,7 +559,7 @@ func (o *ObjectManager) maybeWrapIntegrityReader(
 	}
 	vr := NewVerifyingReader(r.Body)
 	vr.SetVerification(expectedHash, func(expected, actual string) {
-		slog.ErrorContext(ctx, "integrity check failed on read",
+		o.Log().ErrorContext(ctx, "integrity check failed on read",
 			"key", key, "backend", beName,
 			"expected_hash", expected, "actual_hash", actual)
 		telemetry.IntegrityErrorsTotal.WithLabelValues("read").Inc()

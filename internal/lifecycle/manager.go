@@ -19,6 +19,8 @@ import (
 	"runtime/debug"
 	"sync"
 	"time"
+
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 )
 
 // -------------------------------------------------------------------------
@@ -58,6 +60,7 @@ const (
 // Manager registers and supervises background services.
 type Manager struct {
 	services []entry
+	log      *slog.Logger
 
 	initialBackoff time.Duration
 	maxBackoff     time.Duration
@@ -72,6 +75,7 @@ type Manager struct {
 // defaults.
 func NewManager() *Manager {
 	return &Manager{
+		log:            slog.Default().With(logfmt.Component("lifecycle_manager")),
 		initialBackoff: defaultInitialBackoff,
 		maxBackoff:     defaultMaxBackoff,
 		backoffReset:   defaultBackoffReset,
@@ -133,7 +137,7 @@ func (m *Manager) Stop(timeout time.Duration) {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), perService)
 		if err := s.Stop(ctx); err != nil {
-			slog.ErrorContext(ctx, "service stop error",
+			m.log.ErrorContext(ctx, "service stop error",
 				"service", m.services[i].name,
 				"error", err,
 			)
@@ -160,7 +164,7 @@ func (m *Manager) supervise(ctx context.Context, e entry) {
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
-					slog.ErrorContext(ctx, "service panicked, restarting",
+					m.log.ErrorContext(ctx, "service panicked, restarting",
 						"service", e.name,
 						"panic", fmt.Sprint(r),
 						"stack", string(debug.Stack()),
@@ -169,7 +173,7 @@ func (m *Manager) supervise(ctx context.Context, e entry) {
 			}()
 
 			if err := e.runner.Run(ctx); err != nil && ctx.Err() == nil {
-				slog.ErrorContext(ctx, "service exited unexpectedly, restarting",
+				m.log.ErrorContext(ctx, "service exited unexpectedly, restarting",
 					"service", e.name,
 					"error", err,
 				)
@@ -185,7 +189,7 @@ func (m *Manager) supervise(ctx context.Context, e entry) {
 			backoff = m.initialBackoff
 		}
 
-		slog.WarnContext(ctx, "restarting service after backoff",
+		m.log.WarnContext(ctx, "restarting service after backoff",
 			"service", e.name,
 			"backoff", backoff,
 		)

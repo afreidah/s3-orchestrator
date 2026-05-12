@@ -16,6 +16,8 @@ import (
 	_ "embed" // required for //go:embed directive on migrationFS
 	"fmt"
 	"log/slog"
+
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 )
 
 //go:embed schema.sql
@@ -37,7 +39,10 @@ func (s *Store) RunMigrations(ctx context.Context) error {
 
 	if exists {
 		if version == expectedSchemaVersion {
-			slog.InfoContext(ctx, "SQLite schema up to date", "version", version)
+			slog.InfoContext(ctx, "SQLite schema up to date",
+				logfmt.Component("sqlite_store"),
+				"version", version,
+			)
 			return nil
 		}
 		return fmt.Errorf(
@@ -51,7 +56,10 @@ func (s *Store) RunMigrations(ctx context.Context) error {
 		return fmt.Errorf("apply sqlite schema: %w", err)
 	}
 
-	slog.InfoContext(ctx, "SQLite schema applied", "version", expectedSchemaVersion)
+	slog.InfoContext(ctx, "SQLite schema applied",
+		logfmt.Component("sqlite_store"),
+		"version", expectedSchemaVersion,
+	)
 	return nil
 }
 

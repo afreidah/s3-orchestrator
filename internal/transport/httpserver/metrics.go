@@ -20,6 +20,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 )
 
 // configureMetrics either registers /metrics on mux or returns a separate
@@ -42,6 +43,9 @@ func configureMetrics(mux *http.ServeMux, cfg *config.MetricsConfig) *http.Serve
 	}
 
 	mux.Handle(cfg.Path, promhttp.Handler())
-	slog.InfoContext(context.Background(), "metrics endpoint enabled", "path", cfg.Path)
+	slog.InfoContext(context.Background(), "metrics endpoint enabled",
+		logfmt.Component("httpserver"),
+		"path", cfg.Path,
+	)
 	return nil
 }

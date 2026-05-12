@@ -388,11 +388,11 @@ func (d *dbCursorStream) belongs(key string) bool {
 // importHandler returns the onImport callback used by the merge. Failures
 // are logged but do not abort the reconcile pass  -  a single import
 // failure should not stop the diff for thousands of other keys.
-func importHandler(backendName string, importer importerFn, result *reconcileResult) func(context.Context, reconcileEntry) error {
+func importHandler(log *slog.Logger, backendName string, importer importerFn, result *reconcileResult) func(context.Context, reconcileEntry) error {
 	return func(ctx context.Context, e reconcileEntry) error {
 		imported, err := importer(ctx, e.key, backendName, e.size)
 		if err != nil {
-			slog.WarnContext(ctx, "import failed", "key", e.key, "backend", backendName, "error", err)
+			log.WarnContext(ctx, "import failed", "key", e.key, "backend", backendName, "error", err)
 			return nil
 		}
 		if imported {
@@ -404,13 +404,13 @@ func importHandler(backendName string, importer importerFn, result *reconcileRes
 
 // deleteHandler returns the onDelete callback used by the merge. Failures
 // are logged but do not abort the pass.
-func deleteHandler(backendName string, deleter deleterFn, result *reconcileResult) func(context.Context, string) error {
+func deleteHandler(log *slog.Logger, backendName string, deleter deleterFn, result *reconcileResult) func(context.Context, string) error {
 	return func(ctx context.Context, key string) error {
 		if err := deleter(ctx, key, backendName); err != nil {
-			slog.WarnContext(ctx, "failed to remove stale entry", "key", key, "backend", backendName, "error", err)
+			log.WarnContext(ctx, "stale entry removal failed", "key", key, "backend", backendName, "error", err)
 			return nil
 		}
-		slog.InfoContext(ctx, "removed stale entry", "key", key, "backend", backendName)
+		log.InfoContext(ctx, "stale entry removed", "key", key, "backend", backendName)
 		result.removed++
 		return nil
 	}

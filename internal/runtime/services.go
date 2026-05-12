@@ -23,6 +23,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/di"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
@@ -76,7 +77,10 @@ func resolveRequiredServices(inj do.Injector, cfg *config.Config) (*proxy.Backen
 
 	ctx := context.Background()
 	if err := manager.UpdateQuotaMetrics(ctx); err != nil {
-		slog.WarnContext(ctx, "failed to update initial quota metrics", "error", err)
+		slog.WarnContext(ctx, "initial quota metrics refresh failed",
+			logfmt.Component("runtime"),
+			"error", err,
+		)
 	}
 	return manager, nil
 }

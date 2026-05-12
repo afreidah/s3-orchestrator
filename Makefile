@@ -292,10 +292,10 @@ deb-lint: deb ## Run lintian on the .deb packages
 # APTLY PUBLISHING
 # -------------------------------------------------------------------------
 
-APTLY_URL             ?= $(or $(APTLY_ENDPOINT),https://apt.example.com)
-APTLY_REPO            ?= $(or $(APTLY_REPOSITORY),example)
+APTLY_URL             ?= $(or $(APTLY_ENDPOINT),https://apt.munchbox.cc)
+APTLY_REPO            ?= $(or $(APTLY_REPOSITORY),munchbox)
 APTLY_USER            ?= admin
-APTLY_PUBLISH_PREFIX  ?= $(or $(APTLY_PREFIX),s3:example:)
+APTLY_PUBLISH_PREFIX  ?= $(or $(APTLY_PREFIX),s3:munchbox:)
 APTLY_DISTRIBUTION    ?= stable
 APTLY_ARCHITECTURES   ?= amd64,arm64
 DEB_DIR               ?= dist

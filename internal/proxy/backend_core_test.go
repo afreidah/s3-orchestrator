@@ -23,6 +23,19 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// TestBackendCore_LogFallback covers the nil-safe behaviour of Log():
+// when backendCore was constructed without a log field (older tests do
+// this freely), the helper returns slog.Default() so callers never
+// dereference a nil logger. The branch is short but the contract
+// matters for every proxy-package method that calls c.Log().
+func TestBackendCore_LogFallback(t *testing.T) {
+	t.Parallel()
+	c := &backendCore{}
+	if c.Log() == nil {
+		t.Fatal("Log() returned nil for zero-value backendCore")
+	}
+}
+
 // TestExcludeUnhealthy_FiltersOpenCircuitBreaker verifies the exclude unhealthy filters open circuit breaker contract.
 // Asserts that expected 1 eligible backend, got.
 func TestExcludeUnhealthy_FiltersOpenCircuitBreaker(t *testing.T) {

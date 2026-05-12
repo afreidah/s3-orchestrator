@@ -11,13 +11,15 @@
 package httputil
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
 	"log/slog"
 	"sync"
 	"time"
-	"context"
+
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 )
 
 // -------------------------------------------------------------------------
@@ -32,6 +34,7 @@ type CertReloader struct {
 	keyFile  string
 	mu       sync.RWMutex
 	cert     *tls.Certificate
+	log      *slog.Logger
 }
 
 // NewCertReloader loads the initial certificate from disk and returns a
@@ -45,6 +48,7 @@ func NewCertReloader(certFile, keyFile string) (*CertReloader, error) {
 		certFile: certFile,
 		keyFile:  keyFile,
 		cert:     &cert,
+		log:      slog.Default().With(logfmt.Component("cert_reloader")),
 	}, nil
 }
 
@@ -72,21 +76,21 @@ func (cr *CertReloader) Reload() error {
 	cr.cert = &cert
 	cr.mu.Unlock()
 
-	checkCertExpiry(&cert, cr.certFile)
+	checkCertExpiry(cr.log, &cert, cr.certFile)
 
-	slog.InfoContext(context.Background(), "TLS certificate reloaded", "cert_file", cr.certFile)
+	cr.log.InfoContext(context.Background(), "TLS certificate reloaded", "cert_file", cr.certFile)
 	return nil
 }
 
 // checkCertExpiry parses the leaf certificate and logs a warning if it expires
 // within certExpiryWarningThreshold.
-func checkCertExpiry(cert *tls.Certificate, certFile string) {
+func checkCertExpiry(log *slog.Logger, cert *tls.Certificate, certFile string) {
 	if cert.Leaf == nil {
 		// tls.LoadX509KeyPair does not populate Leaf; parse it ourselves.
 		if len(cert.Certificate) > 0 {
 			parsed, err := x509.ParseCertificate(cert.Certificate[0])
 			if err != nil {
-				slog.WarnContext(context.Background(), "Failed to parse TLS leaf certificate for expiry check",
+				log.WarnContext(context.Background(), "leaf certificate parse failed",
 					"cert_file", certFile, "error", err)
 				return
 			}
@@ -96,7 +100,7 @@ func checkCertExpiry(cert *tls.Certificate, certFile string) {
 	if cert.Leaf != nil {
 		remaining := time.Until(cert.Leaf.NotAfter)
 		if remaining < certExpiryWarningThreshold {
-			slog.WarnContext(context.Background(), "TLS certificate expires soon",
+			log.WarnContext(context.Background(), "TLS certificate expires soon",
 				"cert_file", certFile,
 				"expires_at", cert.Leaf.NotAfter,
 				"remaining", remaining.Truncate(time.Minute))

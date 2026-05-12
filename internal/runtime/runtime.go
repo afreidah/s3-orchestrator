@@ -33,6 +33,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/di"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/reload"
@@ -61,6 +62,7 @@ type Runtime struct {
 
 	logLevel slog.LevelVar
 	obs      *Observability
+	log      *slog.Logger
 
 	inj      do.Injector
 	manager  *proxy.BackendManager
@@ -88,6 +90,10 @@ func New(opts Options, cfg *config.Config) (*Runtime, error) {
 		return nil, fmt.Errorf("init logging: %w", err)
 	}
 	r.obs = obs
+	// Scoped logger built after observability so it inherits the
+	// production handler chain (ErrAttrHandler wrapping the JSON
+	// handler) rather than the bare default.
+	r.log = slog.Default().With(logfmt.Component("runtime"))
 
 	r.inj = di.NewInjector(cfg, opts.Mode, &r.logLevel, obs.LogBuffer)
 
@@ -170,7 +176,7 @@ func (r *Runtime) Run(ctx context.Context) error {
 	default:
 	}
 
-	slog.InfoContext(ctx, "server stopped")
+	r.log.InfoContext(ctx, "server stopped")
 	return nil
 }
 
@@ -202,7 +208,7 @@ func (r *Runtime) startBackgroundServices() {
 // resources held by the steps that follow.
 func (r *Runtime) shutdown() {
 	ctx := context.Background()
-	slog.InfoContext(ctx, "shutting down")
+	r.log.InfoContext(ctx, "shutting down")
 
 	// Deferred so DI-managed resources (providers implementing
 	// do.Shutdownable) are always released, even if an earlier step
@@ -214,7 +220,7 @@ func (r *Runtime) shutdown() {
 	}()
 
 	if delay := r.cfgPtr.Load().Server.ShutdownDelay; delay > 0 {
-		slog.InfoContext(ctx, "waiting for load balancer deregistration", "delay", delay)
+		r.log.InfoContext(ctx, "waiting for load balancer deregistration", "delay", delay)
 		time.Sleep(delay)
 	}
 
@@ -241,17 +247,17 @@ func (r *Runtime) shutdown() {
 	r.manager.Close()
 
 	if err := r.manager.FlushUsage(shutdownCtx); err != nil {
-		slog.WarnContext(shutdownCtx, "final usage flush failed", "error", err)
+		r.log.WarnContext(shutdownCtx, "final usage flush failed", "error", err)
 	}
 
-	closeRedisBackend(shutdownCtx, r.inj)
+	closeRedisBackend(shutdownCtx, r.inj, r.log)
 
 	if adminStore, _ := do.Invoke[core.LifecycleAdmin](r.inj); adminStore != nil {
 		adminStore.Close()
 	}
 
 	if err := r.obs.ShutdownTracer(shutdownCtx); err != nil {
-		slog.ErrorContext(ctx, "tracer shutdown error", "error", err)
+		r.log.ErrorContext(ctx, "tracer shutdown error", "error", err)
 	}
 }
 
@@ -271,13 +277,13 @@ func closeEncryptionProvider(inj do.Injector) {
 // closeRedisBackend closes the Redis counter backend if one was
 // registered. Logged at warn because a failure to close Redis on
 // shutdown is operationally annoying but not fatal.
-func closeRedisBackend(ctx context.Context, inj do.Injector) {
+func closeRedisBackend(ctx context.Context, inj do.Injector, log *slog.Logger) {
 	redisBackend, err := do.Invoke[*counter.RedisCounterBackend](inj)
 	if err != nil {
 		return
 	}
 	if err := redisBackend.Close(); err != nil {
-		slog.WarnContext(ctx, "failed to close Redis client", "error", err)
+		log.WarnContext(ctx, "redis client close failed", "error", err)
 	}
 }
 
@@ -287,7 +293,7 @@ func (r *Runtime) logStartup() {
 	for i, b := range r.cfg.Buckets {
 		bucketNames[i] = b.Name
 	}
-	slog.InfoContext(context.Background(), "S3 Orchestrator starting",
+	r.log.InfoContext(context.Background(), "S3 Orchestrator starting",
 		"version", telemetry.Version,
 		"mode", r.opts.Mode,
 		"listen_addr", r.cfg.Server.ListenAddr,

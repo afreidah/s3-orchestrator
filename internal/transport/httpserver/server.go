@@ -29,6 +29,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
@@ -59,6 +60,7 @@ type Server struct {
 	main         *http.Server
 	metrics      *http.Server
 	certReloader *httputil.CertReloader
+	log          *slog.Logger
 }
 
 // New constructs the HTTP server with all routes mounted and TLS
@@ -110,6 +112,7 @@ func New(deps Deps) (*Server, error) {
 		main:         main,
 		metrics:      metricsSrv,
 		certReloader: reloader,
+		log:          slog.Default().With(logfmt.Component("httpserver")),
 	}, nil
 }
 
@@ -127,10 +130,10 @@ func (s *Server) CertReloader() *httputil.CertReloader {
 func (s *Server) Run(ctx context.Context) error {
 	if s.metrics != nil {
 		go func() {
-			slog.InfoContext(ctx, "metrics endpoint enabled on separate listener",
+			s.log.InfoContext(ctx, "metrics endpoint enabled on separate listener",
 				"listen", s.metrics.Addr)
 			if err := s.metrics.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				slog.ErrorContext(ctx, "metrics listener failed", "error", err)
+				s.log.ErrorContext(ctx, "metrics listener failed", "error", err)
 			}
 		}()
 	}
@@ -153,11 +156,11 @@ func (s *Server) Run(ctx context.Context) error {
 // ordering.
 func (s *Server) Shutdown(ctx context.Context) {
 	if err := s.main.Shutdown(ctx); err != nil {
-		slog.ErrorContext(ctx, "HTTP server shutdown error", "error", err)
+		s.log.ErrorContext(ctx, "HTTP server shutdown error", "error", err)
 	}
 	if s.metrics != nil {
 		if err := s.metrics.Shutdown(ctx); err != nil {
-			slog.ErrorContext(ctx, "metrics server shutdown error", "error", err)
+			s.log.ErrorContext(ctx, "metrics server shutdown error", "error", err)
 		}
 	}
 }

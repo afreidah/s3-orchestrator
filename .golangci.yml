@@ -30,9 +30,10 @@ linters:
         - performance
     sloglint:
       context: "all"
-      # `logfmt.Err` returns a slog.Attr that gets mixed into otherwise
-      # key-value call sites; that pattern is intentional per the
-      # logging conventions doc and this check would flag every site.
+      # `logfmt.Err` returns a slog.Attr that callers may mix with
+      # key-value pairs; the handler-enforced contract documented in
+      # docs/contributing/logging.md treats both forms as canonical, so
+      # the lint allows mixed args by design.
       no-mixed-args: false
       # Snake-case keys match the project's attribute glossary in
       # docs/contributing/logging.md.

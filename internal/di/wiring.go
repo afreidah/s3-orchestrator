@@ -27,6 +27,7 @@ import (
 
 	"github.com/samber/do/v2"
 
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
@@ -68,6 +69,7 @@ func WireManager(inj do.Injector) error {
 	if prRes.Failed() {
 		slog.WarnContext(context.Background(),
 			"pending reaper resolution failed; manager will run without it",
+			logfmt.Component("di"),
 			"error", prRes.Err)
 	}
 	mgr.PendingReaper = prRes.Value

@@ -19,13 +19,15 @@
 package breaker
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"math/rand/v2"
 	"sync"
 	"sync/atomic"
 	"time"
-	"context"
+
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 )
 
 // -------------------------------------------------------------------------
@@ -96,6 +98,7 @@ type CircuitBreaker struct {
 	probeInFlight atomic.Bool
 	probeStarted  atomic.Int64     // UnixNano timestamp of the probe dispatch; zero when no probe is active
 	name          string           // for logging and metrics labels
+	log           *slog.Logger     // scoped to logfmt.Component("circuit_breaker") with breaker_name attr
 	isError       func(error) bool // returns true if the error should trip the breaker
 	sentinel      error            // error returned when circuit is open
 	onStateChange func(StateChangeInfo)
@@ -116,8 +119,12 @@ func NewCircuitBreaker(name string, threshold int, timeout time.Duration, isErro
 		failThreshold: threshold,
 		openTimeout:   timeout,
 		name:          name,
-		isError:       isError,
-		sentinel:      sentinel,
+		log: slog.Default().With(
+			logfmt.Component("circuit_breaker"),
+			"breaker_name", name,
+		),
+		isError:  isError,
+		sentinel: sentinel,
 	}
 }
 
@@ -206,7 +213,7 @@ func (cb *CircuitBreaker) PreCheck() error {
 		if started := cb.probeStarted.Load(); started > 0 {
 			elapsed := time.Since(time.Unix(0, started))
 			if elapsed >= probeTimeout {
-				slog.WarnContext(context.Background(), "Circuit breaker: stale probe detected, resetting to open",
+				cb.log.WarnContext(context.Background(), "stale probe detected, resetting to open",
 					"name", cb.name, "probe_age", elapsed.Round(time.Second))
 				cb.probeInFlight.Store(false)
 				cb.probeStarted.Store(0)
@@ -308,7 +315,7 @@ func (cb *CircuitBreaker) ResetStaleProbe() bool {
 		return false
 	}
 
-	slog.WarnContext(context.Background(), "Circuit breaker: stale probe reset by watchdog",
+	cb.log.WarnContext(context.Background(), "stale probe reset by watchdog",
 		"name", cb.name, "probe_age", elapsed.Round(time.Second))
 	cb.probeInFlight.Store(false)
 	cb.probeStarted.Store(0)
@@ -332,7 +339,7 @@ func (cb *CircuitBreaker) transition(to State) {
 	case to == StateOpen && from == StateClosed:
 		cb.openedAt = time.Now()
 		cb.probeJitter = rand.N(cb.openTimeout / 4) //nolint:gosec // G404: jitter does not require crypto-strength randomness
-		slog.WarnContext(context.Background(), "Circuit breaker opened: failure threshold reached",
+		cb.log.WarnContext(context.Background(), "opened: failure threshold reached",
 			"name", cb.name,
 			"from", from.String(),
 			"to", to.String(),
@@ -341,21 +348,21 @@ func (cb *CircuitBreaker) transition(to State) {
 
 	case to == StateOpen && from == StateHalfOpen:
 		cb.probeJitter = rand.N(cb.openTimeout / 4) //nolint:gosec // G404: jitter does not require crypto-strength randomness
-		slog.WarnContext(context.Background(), "Circuit breaker reopened: probe failed",
+		cb.log.WarnContext(context.Background(), "reopened: probe failed",
 			"name", cb.name,
 			"from", from.String(),
 			"to", to.String(),
 			"failures", cb.failures)
 
 	case to == StateHalfOpen:
-		slog.InfoContext(context.Background(), "Circuit breaker half-open: probing",
+		cb.log.InfoContext(context.Background(), "half-open: probing",
 			"name", cb.name,
 			"from", from.String(),
 			"to", to.String(),
 			"open_duration", openFor.Round(time.Millisecond).String())
 
 	case to == StateClosed:
-		slog.InfoContext(context.Background(), "Circuit breaker closed: recovered",
+		cb.log.InfoContext(context.Background(), "closed: recovered",
 			"name", cb.name,
 			"from", from.String(),
 			"to", to.String(),

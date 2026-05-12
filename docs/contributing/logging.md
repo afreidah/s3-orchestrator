@@ -21,7 +21,7 @@ call site uses:
 
 | Helper | Returns | Purpose |
 |---|---|---|
-| `logfmt.Err(err)` | `slog.Attr` | Renders `err.Error()` under the `error` key. Returns an empty attr (dropped by slog) when `err` is nil so callers chain unconditionally. |
+| `logfmt.Err(err)` | `slog.Attr` | Nil-safe `error`-key helper. Returns an empty attr (dropped by slog) when `err` is nil; otherwise equivalent to `slog.String("error", err.Error())`. Optional at call sites that always have a non-nil error — see the error-attribute section below. |
 | `logfmt.Outcome(value)` | `slog.Attr` | `outcome` attr; pass one of `OutcomeOK`, `OutcomeError`, `OutcomeSkipped`, `OutcomeTimeout`, `OutcomeNotFound`. |
 | `logfmt.Component(name)` | `slog.Attr` | `component` attr used at logger construction. |
 | `logfmt.RequestIDFromCtx(ctx)` | `slog.Attr` | Pulls the audit request ID from context (empty attr if none). |
@@ -66,23 +66,47 @@ directly with an explicit `logfmt.Component(...)` attr.
 
 ---
 
-## Why `logfmt.Err`?
+## Error attributes
 
-slog's JSON handler serialises a complex error type with `encoding/json`,
-which produces `{}` for any error whose underlying struct lacks JSON
-tags. JS log viewers (Nomad UI, some Loki frontends) render that as
-`[object Object]` and the operator cannot grep:
+Error values are rendered safely by the runtime, not by call-site
+discipline. The slog pipeline is wrapped with `logfmt.ErrAttrHandler`,
+which replaces any attribute whose value implements `error` with its
+`Error()` string before the inner handler serialises the record. The
+wrapper covers raw `"error", err` pairs, `slog.Any("error", err)`, and
+group-nested errors. The runtime composes the handler in
+`internal/observe/telemetry`, so every production log line goes through
+it.
 
-```text
-WARN Pending reaper: HEAD failed, leaving intent
-  backend=e2 key=unified/backups/... error=[object Object]
+All three forms below are acceptable; pick the one that reads most
+naturally for the call site:
+
+```go
+log.ErrorContext(ctx, "replication failed", "error", err)
+log.ErrorContext(ctx, "replication failed", slog.Any("error", err))
+log.ErrorContext(ctx, "replication failed", logfmt.Err(err))
 ```
 
-`logfmt.Err(err)` always produces `slog.String("error", err.Error())`,
-which renders the same way in every handler and downstream tool.
+`logfmt.Err` is the right choice when `err` may be nil and you want the
+attribute dropped, or when composing attribute slices with mixed types.
+For the common "non-nil error from a checked branch" case the bare
+`"error", err` form is the most idiomatic and reads as plain slog.
 
-**Always pass errors through `logfmt.Err`.** Direct `"error", err`
-returns `[object Object]` in production.
+### What is still rejected
+
+The CI lint rejects these patterns regardless of handler behaviour, so
+a future handler swap cannot silently break log structure:
+
+| Pattern | Why |
+|---|---|
+| `"err", err`, `"e", err` | Non-canonical key — operators grep on `error=`. |
+| `"error", err.Error()` | Strips type before the handler sees it, defeating the central rendering rule and the handler-contract tests. |
+| `"error", fmt.Sprintf("%v", err)` | Same problem; loses error identity for downstream tooling. |
+| `"error_message", err` | Non-canonical key. |
+
+The handler contract has tests in
+`internal/observe/logfmt/handler_test.go` that pin the rendering
+behaviour end-to-end, so a regression in the runtime composition fails
+the suite rather than silently shipping `[object Object]` to operators.
 
 ---
 
@@ -114,7 +138,7 @@ list are allowed but should be added here when they recur.
 | `duration_ms` | int64 | Elapsed time in ms (use `slog.Int64`). |
 | `attempts` | int | Retry count. |
 | `outcome` | string | Terminal-log status; see helpers above. |
-| `error` | string | `err.Error()` only — never the raw error value. |
+| `error` | string | Rendered from any `error` value by the runtime handler; call sites may pass the raw error directly. |
 
 ### Banned keys
 
@@ -122,7 +146,7 @@ The CI lint rejects these. Use the canonical name on the right.
 
 | Banned | Use instead |
 |---|---|
-| `err`, `e` | `error` (via `logfmt.Err`) |
+| `err`, `e` | `error` |
 | `from_backend`, `source_backend` | `src_backend` |
 | `to_backend` | `dst_backend` |
 | `remote_addr`, `remote` | `client_addr` |

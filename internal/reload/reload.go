@@ -31,6 +31,7 @@ import (
 	"github.com/samber/do/v2"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
@@ -67,6 +68,7 @@ type Deps struct {
 type Coordinator struct {
 	deps  Deps
 	hooks []Hook
+	log   *slog.Logger
 
 	generation atomic.Int64
 	lastResult atomic.Pointer[ReloadResult]
@@ -87,7 +89,11 @@ func New(deps *Deps) *Coordinator {
 	if hooks == nil {
 		hooks = defaultHooks(deps.Injector, deps.CertReloader, deps.LogLevel)
 	}
-	return &Coordinator{deps: *deps, hooks: hooks}
+	return &Coordinator{
+		deps:  *deps,
+		hooks: hooks,
+		log:   slog.Default().With(logfmt.Component("reload")),
+	}
 }
 
 // Watch installs a SIGHUP handler and spawns the reload goroutine. The
@@ -142,7 +148,7 @@ func (c *Coordinator) Reload() *ReloadResult {
 	ctx := context.Background()
 	currentGen := c.generation.Load()
 
-	slog.InfoContext(ctx, "SIGHUP received, reloading configuration",
+	c.log.InfoContext(ctx, "SIGHUP received, reloading configuration",
 		"path", c.deps.ConfigPath, "current_generation", currentGen)
 
 	newCfg, err := config.LoadConfig(c.deps.ConfigPath)
@@ -214,29 +220,29 @@ func (c *Coordinator) finalize(ctx context.Context, r *ReloadResult) *ReloadResu
 	c.lastResult.Store(r)
 
 	for _, field := range r.RequiresRestart {
-		slog.WarnContext(ctx, "config field changed but requires restart to take effect",
+		c.log.WarnContext(ctx, "config field changed but requires restart to take effect",
 			"field", field, "generation", r.Generation)
 	}
 
 	switch r.Status {
 	case ReloadFullSuccess:
-		slog.InfoContext(ctx, "configuration reload complete",
+		c.log.InfoContext(ctx, "configuration reload complete",
 			"generation", r.Generation,
 			"duration", r.EndedAt.Sub(r.StartedAt),
 		)
 	case ReloadPartialApplied:
-		slog.WarnContext(ctx, "configuration reload partially applied",
+		c.log.WarnContext(ctx, "configuration reload partially applied",
 			"generation", r.Generation,
 			"failed_hooks", failedHookNames(r),
 			"duration", r.EndedAt.Sub(r.StartedAt),
 		)
 	case ReloadValidationFailed:
-		slog.ErrorContext(ctx, "configuration reload validation failed, keeping current config",
+		c.log.ErrorContext(ctx, "configuration reload validation failed, keeping current config",
 			"generation", r.Generation,
 			"failed_hook", firstFailedHookName(r),
 		)
 	case ReloadLoadFailed:
-		slog.ErrorContext(ctx, "config reload aborted, keeping current config",
+		c.log.ErrorContext(ctx, "config reload aborted, keeping current config",
 			"generation", r.Generation,
 			"error", r.LoadError,
 		)

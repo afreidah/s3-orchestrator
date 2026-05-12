@@ -24,6 +24,7 @@ import (
 	vault "github.com/hashicorp/vault/api"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 )
 
 // -------------------------------------------------------------------------
@@ -43,6 +44,7 @@ type VaultKeyProvider struct {
 	renewInterval time.Duration
 	mu            sync.RWMutex
 	cancel        context.CancelFunc
+	log           *slog.Logger
 }
 
 // NewVaultKeyProvider creates a provider backed by Vault Transit. A background
@@ -90,6 +92,7 @@ func NewVaultKeyProvider(cfg *config.VaultTransitConfig) (*VaultKeyProvider, err
 		tokenFile:     cfg.TokenFile,
 		renewInterval: renewInterval,
 		cancel:        cancel,
+		log:           slog.Default().With(logfmt.Component("vault_kms")),
 	}
 
 	go p.tokenRenewalLoop(ctx)
@@ -177,12 +180,12 @@ func (p *VaultKeyProvider) tokenRenewalLoop(ctx context.Context) {
 		case <-ticker.C:
 			if p.tokenFile != "" {
 				if err := p.reloadTokenFile(ctx); err != nil {
-					slog.ErrorContext(ctx, "failed to reload Vault token file",
+					p.log.ErrorContext(ctx, "failed to reload Vault token file",
 						slog.String("path", p.tokenFile), "error", err)
 				}
 			} else {
 				if err := p.renewToken(ctx); err != nil {
-					slog.ErrorContext(ctx, "failed to renew Vault token", "error", err)
+					p.log.ErrorContext(ctx, "failed to renew Vault token", "error", err)
 				}
 			}
 		}
@@ -207,7 +210,7 @@ func (p *VaultKeyProvider) renewToken(ctx context.Context) error {
 	if secret == nil || secret.Auth == nil {
 		return fmt.Errorf("empty response from token renewal")
 	}
-	slog.InfoContext(ctx, "Vault token renewed", "ttl", secret.Auth.LeaseDuration)
+	p.log.InfoContext(ctx, "Vault token renewed", "ttl", secret.Auth.LeaseDuration)
 	return nil
 }
 
@@ -222,7 +225,7 @@ func (p *VaultKeyProvider) reloadTokenFile(ctx context.Context) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.client.SetToken(token)
-	slog.DebugContext(ctx, "Vault token reloaded from file", "path", p.tokenFile)
+	p.log.DebugContext(ctx, "Vault token reloaded from file", "path", p.tokenFile)
 	return nil
 }
 

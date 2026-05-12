@@ -29,6 +29,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/internalkey"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
@@ -143,6 +144,7 @@ func NewBackendManager(cfg *BackendManagerConfig) *BackendManager {
 		routingStrategy: cfg.RoutingStrategy,
 		maxObjectSizes:  cfg.MaxObjectSizes,
 		admissionSem:    cfg.AdmissionSem,
+		log:             slog.Default().With(logfmt.Component("backend_manager")),
 	}
 
 	dekCacheTTL := cfg.MultipartDEKCacheTTL
@@ -295,7 +297,7 @@ func (m *BackendManager) SyncBackend(ctx context.Context, backendName, bucket st
 		return 0, 0, err
 	}
 
-	slog.InfoContext(ctx, "starting backend sync", "backend", backendName, "bucket", bucket)
+	m.Log().InfoContext(ctx, "starting backend sync", "backend", backendName, "bucket", bucket)
 
 	bucketPrefix := internalkey.Prefix(bucket)
 	otherPrefixes := siblingPrefixes(knownBuckets, bucket)
@@ -318,7 +320,7 @@ func (m *BackendManager) SyncBackend(ctx context.Context, backendName, bucket st
 		return imported, skipped, err
 	}
 
-	slog.InfoContext(ctx, "backend sync complete", "backend", backendName, "bucket", bucket,
+	m.Log().InfoContext(ctx, "backend sync complete", "backend", backendName, "bucket", bucket,
 		"imported", imported, "skipped", skipped)
 	return imported, skipped, nil
 }
@@ -380,7 +382,7 @@ func (m *BackendManager) makeReconcileDeleter() deleterFn {
 			return err
 		}
 		if _, err := m.stores.SweepStaleCleanupQueueRows(ctx, key, backendName); err != nil {
-			slog.WarnContext(ctx, "failed to sweep cleanup_queue rows for stale key",
+			m.Log().WarnContext(ctx, "failed to sweep cleanup_queue rows for stale key",
 				slog.String("key", key), slog.String("backend", backendName), "error", err)
 		}
 		return nil
@@ -415,8 +417,8 @@ func (m *BackendManager) ReconcileBackend(ctx context.Context, backendName, buck
 	res := &reconcileResult{}
 	mergeErr := reconcileSorted(
 		ctx, s3, dbIter,
-		importHandler(backendName, m.stores.ImportObject, res),
-		deleteHandler(backendName, m.makeReconcileDeleter(), res),
+		importHandler(m.Log(), backendName, m.stores.ImportObject, res),
+		deleteHandler(m.Log(), backendName, m.makeReconcileDeleter(), res),
 	)
 
 	if pages := atomic.LoadInt64(&apiPages); pages > 0 {
