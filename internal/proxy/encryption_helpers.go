@@ -22,6 +22,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/ioutilx"
 )
 
 // streamMetricReader counts non-EOF errors surfaced by the wrapped
@@ -137,7 +138,7 @@ func decryptResponse(ctx context.Context, enc *encryption.Encryptor, r *s3be.Get
 			return fmt.Errorf("decrypt range: %w", decErr)
 		}
 		telemetry.EncryptionOpsTotal.WithLabelValues("decrypt_range").Inc()
-		r.Body = wrapReader(withStreamMetric(plainReader, "decrypt_range"), r.Body)
+		r.Body = ioutilx.ReadCloser(withStreamMetric(plainReader, "decrypt_range"), r.Body)
 		r.Size = plainLen
 		r.ContentRange = fmt.Sprintf("bytes %d-%d/%d", ptStart, ptEnd, loc.PlaintextSize)
 	} else {
@@ -147,7 +148,7 @@ func decryptResponse(ctx context.Context, enc *encryption.Encryptor, r *s3be.Get
 			return fmt.Errorf("decrypt: %w", decErr)
 		}
 		telemetry.EncryptionOpsTotal.WithLabelValues("decrypt").Inc()
-		r.Body = wrapReader(withStreamMetric(decrypted, "decrypt"), r.Body)
+		r.Body = ioutilx.ReadCloser(withStreamMetric(decrypted, "decrypt"), r.Body)
 		r.Size = loc.PlaintextSize
 	}
 	return nil
