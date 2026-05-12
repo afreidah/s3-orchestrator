@@ -144,12 +144,8 @@ func (s *Store) GetParts(ctx context.Context, uploadID string) ([]core.Multipart
 		if err := rows.Scan(&p.PartNumber, &p.ETag, &p.SizeBytes, &p.Encrypted, &p.EncryptionKey, &keyID, &ptSize, &createdAt); err != nil {
 			return nil, fmt.Errorf("failed to scan part: %w", err)
 		}
-		if keyID.Valid {
-			p.KeyID = keyID.String
-		}
-		if ptSize.Valid {
-			p.PlaintextSize = ptSize.Int64
-		}
+		p.KeyID = nullStringValue(keyID)
+		p.PlaintextSize = nullInt64Value(ptSize)
 		p.CreatedAt, err = parseTime(createdAt)
 		if err != nil {
 			return nil, fmt.Errorf("invalid part created_at timestamp %q: %w", createdAt, err)
@@ -205,9 +201,7 @@ func (s *Store) ListMultipartUploads(ctx context.Context, prefix string, maxUplo
 		if err := rows.Scan(&mu.UploadID, &mu.ObjectKey, &contentType, &createdAt); err != nil {
 			return nil, fmt.Errorf("failed to scan multipart upload: %w", err)
 		}
-		if contentType.Valid {
-			mu.ContentType = contentType.String
-		}
+		mu.ContentType = nullStringValue(contentType)
 		mu.CreatedAt, err = parseTime(createdAt)
 		if err != nil {
 			return nil, fmt.Errorf(errInvalidTimestamp, createdAt, err)
@@ -325,9 +319,7 @@ func scanMultipartUploadRow(s rowScanner) (core.MultipartUpload, error) {
 	if err := s.Scan(&mu.UploadID, &mu.ObjectKey, &mu.BackendName, &contentType, &metaJSON, &encryptionKey, &keyID, &createdAt); err != nil {
 		return core.MultipartUpload{}, err
 	}
-	if contentType.Valid {
-		mu.ContentType = contentType.String
-	}
+	mu.ContentType = nullStringValue(contentType)
 	if metaJSON.Valid && metaJSON.String != "" {
 		if err := json.Unmarshal([]byte(metaJSON.String), &mu.Metadata); err != nil {
 			return core.MultipartUpload{}, fmt.Errorf("failed to unmarshal metadata: %w", err)
@@ -337,9 +329,7 @@ func scanMultipartUploadRow(s rowScanner) (core.MultipartUpload, error) {
 		mu.EncryptionKey = encryptionKey
 		mu.Encrypted = true
 	}
-	if keyID.Valid {
-		mu.KeyID = keyID.String
-	}
+	mu.KeyID = nullStringValue(keyID)
 	var parseErr error
 	mu.CreatedAt, parseErr = parseTime(createdAt)
 	if parseErr != nil {

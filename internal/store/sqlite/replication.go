@@ -156,15 +156,9 @@ func scanObjectLocations(rows *sql.Rows) ([]core.ObjectLocation, error) {
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan object location: %w", err)
 		}
-		if keyID.Valid {
-			loc.KeyID = keyID.String
-		}
-		if ptSize.Valid {
-			loc.PlaintextSize = ptSize.Int64
-		}
-		if contentHash.Valid {
-			loc.ContentHash = contentHash.String
-		}
+		loc.KeyID = nullStringValue(keyID)
+		loc.PlaintextSize = nullInt64Value(ptSize)
+		loc.ContentHash = nullStringValue(contentHash)
 		var parseErr error
 		loc.CreatedAt, parseErr = parseTime(createdAt)
 		if parseErr != nil {

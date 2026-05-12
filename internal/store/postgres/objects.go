@@ -60,9 +60,7 @@ func insertParamsFromEnc(key, backend string, size int64, enc *core.EncryptionMe
 		params.KeyID = &enc.KeyID
 		params.PlaintextSize = &enc.PlaintextSize
 	}
-	if enc.ContentHash != "" {
-		params.ContentHash = &enc.ContentHash
-	}
+	params.ContentHash = strPtr(enc.ContentHash)
 	return params
 }
 

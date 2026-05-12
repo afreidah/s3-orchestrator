@@ -119,21 +119,13 @@ type multipartRow struct {
 // unmarshal of Metadata so the slice-returning callers do not carry
 // parallel loop bodies.
 func toMultipartUpload(r *multipartRow) (core.MultipartUpload, error) {
-	ct := ""
-	if r.ContentType != nil {
-		ct = *r.ContentType
-	}
-	kid := ""
-	if r.KeyID != nil {
-		kid = *r.KeyID
-	}
 	mu := core.MultipartUpload{
 		UploadID:      r.UploadID,
 		ObjectKey:     r.ObjectKey,
 		BackendName:   r.BackendName,
-		ContentType:   ct,
+		ContentType:   derefStr(r.ContentType),
 		EncryptionKey: r.EncryptionKey,
-		KeyID:         kid,
+		KeyID:         derefStr(r.KeyID),
 		Encrypted:     len(r.EncryptionKey) > 0,
 		CreatedAt:     r.CreatedAt,
 	}
