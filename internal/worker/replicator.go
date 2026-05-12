@@ -104,22 +104,7 @@ func (r *Replicator) replicate(ctx context.Context, cfg config.ReplicationConfig
 		return 0, nil
 	}
 
-	// --- Group locations by object key ---
-	grouped := core.GroupByKey(locations)
-
-	// Flatten map into a slice for the worker pool
-	type replicaTask struct {
-		key    string
-		copies []core.ObjectLocation
-		needed int
-	}
-	var tasks []replicaTask
-	for key, copies := range grouped {
-		needed := cfg.Factor - len(copies)
-		if needed > 0 {
-			tasks = append(tasks, replicaTask{key: key, copies: copies, needed: needed})
-		}
-	}
+	tasks := planUnderReplicated(locations, cfg.Factor)
 
 	// Target selection runs through SelectReplicaTarget on every object;
 	// the backend manager filters on in-memory usage limits and queries the
@@ -131,11 +116,9 @@ func (r *Replicator) replicate(ctx context.Context, cfg config.ReplicationConfig
 	workerpool.Run(ctx, cfg.Concurrency, tasks, func(ctx context.Context, task replicaTask) {
 		defer telemetry.ReplicationPending.Dec()
 		WithAdmission(ctx, r.ops, WorkerNameReplicator, func() {
-			n, replicateErr := r.ReplicateObject(ctx, task.key, task.copies, task.needed)
-			if replicateErr != nil {
-				r.log.WarnContext(ctx, "object failed", "key", task.key, "error", replicateErr)
-			}
-			created.Add(int32(n)) //nolint:gosec // G115: n is copies created per object, always small
+			outcome := r.ReplicateObject(ctx, task.key, task.copies, task.needed)
+			r.reportObjectOutcome(ctx, &outcome)
+			created.Add(int32(outcome.Created)) //nolint:gosec // G115: Created is small per object
 		})
 	})
 
@@ -149,7 +132,7 @@ func (r *Replicator) replicate(ctx context.Context, cfg config.ReplicationConfig
 
 	audit.Log(ctx, "replication.complete",
 		slog.Int("copies_created", copiesCreated),
-		slog.Int("objects_checked", len(grouped)),
+		slog.Int("objects_checked", len(tasks)),
 		slog.Duration("duration", time.Since(start)),
 	)
 
@@ -157,12 +140,72 @@ func (r *Replicator) replicate(ctx context.Context, cfg config.ReplicationConfig
 }
 
 // -------------------------------------------------------------------------
+// PLANNER
+// -------------------------------------------------------------------------
+
+// replicaTask is the unit of work the replicator's fan-out processes:
+// one object key that needs `needed` additional copies, with the
+// existing copies the executor will read from.
+type replicaTask struct {
+	key    string
+	copies []core.ObjectLocation
+	needed int
+}
+
+// planUnderReplicated turns a flat slice of object_locations rows (one
+// row per backend per key) into per-key replication tasks targeting
+// `factor` total copies. Keys that already meet or exceed the factor
+// are filtered out; the returned slice ordering is map-iteration order
+// and not guaranteed to be stable across runs. Pure function so the
+// placement/policy decisions are testable independently of backend
+// copy execution.
+func planUnderReplicated(locations []core.ObjectLocation, factor int) []replicaTask {
+	grouped := core.GroupByKey(locations)
+	tasks := make([]replicaTask, 0, len(grouped))
+	for key, copies := range grouped {
+		needed := factor - len(copies)
+		if needed > 0 {
+			tasks = append(tasks, replicaTask{key: key, copies: copies, needed: needed})
+		}
+	}
+	return tasks
+}
+
+// -------------------------------------------------------------------------
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// ReplicateObject creates up to `needed` additional copies of a single object.
-// Returns the number of copies successfully created.
-func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCopies []core.ObjectLocation, needed int) (int, error) {
+// ReplicationOutcome captures the per-object result of one
+// ReplicateObject invocation. Counts are populated regardless of
+// success so the reporter and unit tests can reason about retry
+// behaviour without parsing log lines. NoTarget reflects whether the
+// loop exited because target selection ran out, not whether any
+// individual attempt failed.
+type ReplicationOutcome struct {
+	Key          string // object key
+	Created      int    // copies successfully recorded
+	CopyErrors   int    // source -> target stream copies that errored
+	RecordErrors int    // RecordReplica failures (after the copy succeeded)
+	Superseded   int    // RecordReplica returned inserted=false (source row gone)
+	NoTarget     bool   // selection failed before `needed` was reached
+}
+
+// Failed reports the total number of failed copy attempts for this
+// object, irrespective of failure stage.
+func (o ReplicationOutcome) Failed() int {
+	return o.CopyErrors + o.RecordErrors + o.Superseded
+}
+
+// ReplicateObject creates up to `needed` additional copies of a single
+// object. Returns a ReplicationOutcome the caller can use to drive
+// metrics, audit, and log reporting without re-parsing logs.
+//
+// Per-attempt diagnostic logs are preserved so incident responders can
+// still trace each failed retry; the outcome is a *structured summary*
+// on top of those, not a replacement.
+func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCopies []core.ObjectLocation, needed int) ReplicationOutcome {
+	out := ReplicationOutcome{Key: key}
+
 	// Build exclusion set of backends that already hold a copy
 	exclusion := make(map[string]bool, len(existingCopies))
 	for i := range existingCopies {
@@ -179,14 +222,14 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 	// Retry with different targets on failure without consuming a needed
 	// slot. Cap total attempts to avoid unbounded retries when every
 	// remaining backend rejects the object.
-	created := 0
 	maxAttempts := needed + len(r.ops.Backends())
-	for attempt := 0; created < needed && attempt < maxAttempts; attempt++ {
-		remaining := needed - created
+	for attempt := 0; out.Created < needed && attempt < maxAttempts; attempt++ {
+		remaining := needed - out.Created
 		target := r.FindReplicaTarget(ctx, key, sizeEstimate, exclusion)
 		if target == "" {
 			r.log.WarnContext(ctx, "no target backend with space",
 				"key", key, "needed", remaining)
+			out.NoTarget = true
 			break
 		}
 
@@ -203,6 +246,7 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 				"key", key, "target", target, "error", err)
 			telemetry.ReplicationErrorsTotal.Inc()
 			exclusion[target] = true
+			out.CopyErrors++
 			continue
 		}
 
@@ -213,6 +257,7 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 			r.CleanupOrphan(ctx, target, key, transferredSize)
 			telemetry.ReplicationErrorsTotal.Inc()
 			exclusion[target] = true
+			out.RecordErrors++
 			continue
 		}
 
@@ -222,6 +267,7 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 				"key", key, "target", target)
 			r.CleanupOrphan(ctx, target, key, transferredSize)
 			exclusion[target] = true
+			out.Superseded++
 			continue
 		}
 
@@ -245,10 +291,31 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 		)
 
 		exclusion[target] = true
-		created++
+		out.Created++
 	}
 
-	return created, nil
+	return out
+}
+
+// reportObjectOutcome drives the summary log line emitted by the
+// run-loop closure once ReplicateObject returns. Per-attempt
+// diagnostic logs are emitted inside ReplicateObject; this helper adds
+// the aggregate "this object did not reach factor" signal so dashboards
+// and operators see one structured entry per partial outcome rather
+// than having to count per-attempt warnings. No-failure outcomes emit
+// nothing  -  the bulk-summary log lives in replicate() above.
+func (r *Replicator) reportObjectOutcome(ctx context.Context, o *ReplicationOutcome) {
+	if o.Failed() == 0 && !o.NoTarget {
+		return
+	}
+	r.log.WarnContext(ctx, "object did not reach replication factor",
+		"key", o.Key,
+		"created", o.Created,
+		"copy_errors", o.CopyErrors,
+		"record_errors", o.RecordErrors,
+		"superseded", o.Superseded,
+		"no_target", o.NoTarget,
+	)
 }
 
 // maxCopySize returns the largest SizeBytes across copies, used as a

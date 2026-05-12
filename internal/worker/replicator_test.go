@@ -30,6 +30,145 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
+// -------------------------------------------------------------------------
+// planUnderReplicated (planner)
+// -------------------------------------------------------------------------
+
+// TestPlanUnderReplicated_TablePinsPlacementDecisions exercises the
+// placement-policy half of replication without any backend I/O. The
+// planner takes a flat object_locations slice + the configured
+// replication factor and decides which keys still need work and how
+// many extra copies they need. Tasks for keys that already meet or
+// exceed the factor must be filtered out; the per-task `needed` count
+// must equal `factor - len(existing copies)`.
+func TestPlanUnderReplicated_TablePinsPlacementDecisions(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name      string
+		locations []core.ObjectLocation
+		factor    int
+		wantTasks map[string]int // key -> needed
+	}{
+		{
+			name:      "empty input yields no tasks",
+			locations: nil,
+			factor:    3,
+			wantTasks: map[string]int{},
+		},
+		{
+			name: "single-copy key with factor 2 needs one more copy",
+			locations: []core.ObjectLocation{
+				{ObjectKey: "k1", BackendName: "b1", SizeBytes: 100},
+			},
+			factor:    2,
+			wantTasks: map[string]int{"k1": 1},
+		},
+		{
+			name: "key already at factor produces no task",
+			locations: []core.ObjectLocation{
+				{ObjectKey: "k1", BackendName: "b1", SizeBytes: 100},
+				{ObjectKey: "k1", BackendName: "b2", SizeBytes: 100},
+				{ObjectKey: "k1", BackendName: "b3", SizeBytes: 100},
+			},
+			factor:    3,
+			wantTasks: map[string]int{},
+		},
+		{
+			name: "key above factor is also filtered",
+			locations: []core.ObjectLocation{
+				{ObjectKey: "k1", BackendName: "b1"},
+				{ObjectKey: "k1", BackendName: "b2"},
+				{ObjectKey: "k1", BackendName: "b3"},
+			},
+			factor:    2,
+			wantTasks: map[string]int{},
+		},
+		{
+			name: "mixed under and at-factor keys",
+			locations: []core.ObjectLocation{
+				{ObjectKey: "needs2", BackendName: "b1"},
+				{ObjectKey: "needs1", BackendName: "b1"},
+				{ObjectKey: "needs1", BackendName: "b2"},
+				{ObjectKey: "satisfied", BackendName: "b1"},
+				{ObjectKey: "satisfied", BackendName: "b2"},
+				{ObjectKey: "satisfied", BackendName: "b3"},
+			},
+			factor:    3,
+			wantTasks: map[string]int{"needs2": 2, "needs1": 1},
+		},
+		{
+			name: "factor 1 yields no tasks even for single-copy keys",
+			locations: []core.ObjectLocation{
+				{ObjectKey: "k1", BackendName: "b1"},
+			},
+			factor:    1,
+			wantTasks: map[string]int{},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tasks := planUnderReplicated(tc.locations, tc.factor)
+			if len(tasks) != len(tc.wantTasks) {
+				t.Fatalf("tasks = %d, want %d (%+v)", len(tasks), len(tc.wantTasks), tasks)
+			}
+			for _, task := range tasks {
+				want, ok := tc.wantTasks[task.key]
+				if !ok {
+					t.Errorf("unexpected task for key %q", task.key)
+					continue
+				}
+				if task.needed != want {
+					t.Errorf("task %q needed = %d, want %d", task.key, task.needed, want)
+				}
+			}
+		})
+	}
+}
+
+// TestPlanUnderReplicated_PreservesCopyMembership confirms that the
+// per-key copy slice handed to the executor includes every backend the
+// flat locations slice listed for that key. The executor relies on this
+// to populate the exclusion map without re-querying the store.
+func TestPlanUnderReplicated_PreservesCopyMembership(t *testing.T) {
+	t.Parallel()
+	locations := []core.ObjectLocation{
+		{ObjectKey: "k1", BackendName: "b1", SizeBytes: 100},
+		{ObjectKey: "k1", BackendName: "b2", SizeBytes: 100},
+	}
+	tasks := planUnderReplicated(locations, 3)
+	if len(tasks) != 1 {
+		t.Fatalf("tasks = %d, want 1", len(tasks))
+	}
+	got := make(map[string]bool)
+	for _, c := range tasks[0].copies {
+		got[c.BackendName] = true
+	}
+	if !got["b1"] || !got["b2"] {
+		t.Errorf("copies missing a backend: %+v", got)
+	}
+}
+
+// -------------------------------------------------------------------------
+// ReplicationOutcome / reportObjectOutcome
+// -------------------------------------------------------------------------
+
+// TestReplicationOutcome_FailedCountsAllFailureKinds pins the contract
+// that Failed() aggregates every "this attempt did not produce a
+// recorded copy" reason. NoTarget is *not* a failed-attempt counter so
+// it sits outside the sum.
+func TestReplicationOutcome_FailedCountsAllFailureKinds(t *testing.T) {
+	t.Parallel()
+	o := ReplicationOutcome{CopyErrors: 2, RecordErrors: 1, Superseded: 3}
+	if got := o.Failed(); got != 6 {
+		t.Errorf("Failed() = %d, want 6", got)
+	}
+	o = ReplicationOutcome{Created: 5}
+	if got := o.Failed(); got != 0 {
+		t.Errorf("Failed() = %d on clean outcome, want 0", got)
+	}
+}
+
 // TestReplicator_SetConfig_RoundTrip verifies the replicator set config round trip contract.
 // Asserts that Config().Factor = , want 3.
 func TestReplicator_SetConfig_RoundTrip(t *testing.T) {
@@ -342,12 +481,12 @@ func TestReplicateObject_Success(t *testing.T) {
 	r := NewReplicator(ops, ms)
 	copies := []core.ObjectLocation{{BackendName: "b1", SizeBytes: 50}}
 
-	created, err := r.ReplicateObject(context.Background(), "key1", copies, 1)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	outcome := r.ReplicateObject(context.Background(), "key1", copies, 1)
+	if outcome.Created != 1 {
+		t.Errorf("created = %d, want 1", outcome.Created)
 	}
-	if created != 1 {
-		t.Errorf("created = %d, want 1", created)
+	if outcome.Failed() != 0 {
+		t.Errorf("Failed() = %d, want 0", outcome.Failed())
 	}
 	if ms.replicaRecorded != 1 {
 		t.Errorf("replicaRecorded = %d, want 1", ms.replicaRecorded)
@@ -407,12 +546,15 @@ func TestReplicateObject_WriteFailureExcludesTarget(t *testing.T) {
 
 	// Request 2 replicas: first attempt hits "fail" and should fall through
 	// to "ok" on the second iteration with "fail" excluded.
-	created, err := r.ReplicateObject(context.Background(), "key1", copies, 2)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	outcome := r.ReplicateObject(context.Background(), "key1", copies, 2)
+	if outcome.Created != 1 {
+		t.Errorf("created = %d, want 1", outcome.Created)
 	}
-	if created != 1 {
-		t.Errorf("created = %d, want 1", created)
+	if outcome.CopyErrors != 1 {
+		t.Errorf("CopyErrors = %d, want 1", outcome.CopyErrors)
+	}
+	if !outcome.NoTarget {
+		t.Errorf("NoTarget = false, want true (selection ran out)")
 	}
 }
 
@@ -452,12 +594,12 @@ func TestReplicateObject_RecordReplicaErrorExcludesTarget(t *testing.T) {
 
 	r := NewReplicator(ops, ms)
 	copies := []core.ObjectLocation{{BackendName: "src", SizeBytes: 50}}
-	created, err := r.ReplicateObject(context.Background(), "key1", copies, 1)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	outcome := r.ReplicateObject(context.Background(), "key1", copies, 1)
+	if outcome.Created != 0 {
+		t.Errorf("created = %d, want 0", outcome.Created)
 	}
-	if created != 0 {
-		t.Errorf("created = %d, want 0", created)
+	if outcome.RecordErrors != 1 {
+		t.Errorf("RecordErrors = %d, want 1", outcome.RecordErrors)
 	}
 }
 
@@ -498,12 +640,12 @@ func TestReplicateObject_NotInsertedExcludesTarget(t *testing.T) {
 
 	r := NewReplicator(ops, ms)
 	copies := []core.ObjectLocation{{BackendName: "src", SizeBytes: 50}}
-	created, err := r.ReplicateObject(context.Background(), "key1", copies, 1)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	outcome := r.ReplicateObject(context.Background(), "key1", copies, 1)
+	if outcome.Created != 0 {
+		t.Errorf("created = %d, want 0", outcome.Created)
 	}
-	if created != 0 {
-		t.Errorf("created = %d, want 0", created)
+	if outcome.Superseded != 1 {
+		t.Errorf("Superseded = %d, want 1", outcome.Superseded)
 	}
 }
 
