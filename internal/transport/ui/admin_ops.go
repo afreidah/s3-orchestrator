@@ -18,6 +18,8 @@ package ui
 import (
 	"context"
 	"net/http"
+
+	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
 // handleAPIRebalance triggers an on-demand rebalance in the background.
@@ -25,13 +27,12 @@ import (
 func (h *Handler) handleAPIRebalance(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
 
-	if r.Method != http.MethodPost {
-		writeJSONError(w, http.StatusMethodNotAllowed, errMethodNotAllowed)
+	if !httputil.RequireMethod(w, r, http.MethodPost) {
 		return
 	}
 
 	if !h.asyncOps.TryStart("rebalance") {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "rebalance already running"})
+		httputil.WriteJSON(w, http.StatusConflict, map[string]string{"error": "rebalance already running"})
 		return
 	}
 
@@ -65,7 +66,7 @@ func (h *Handler) handleAPIRebalance(w http.ResponseWriter, r *http.Request) {
 		h.asyncOps.Complete("rebalance", &asyncResult{OK: true, Count: moved})
 	}()
 
-	writeJSON(w, http.StatusAccepted, map[string]string{"status": "started"})
+	httputil.WriteJSON(w, http.StatusAccepted, map[string]string{"status": "started"})
 }
 
 // handleAPIRebalanceStatus returns the status of a running or completed rebalance.
@@ -86,13 +87,13 @@ func (h *Handler) handleAPIRebalanceStatus(w http.ResponseWriter, _ *http.Reques
 func writeAsyncOpStatus(w http.ResponseWriter, result *asyncResult, running bool, countKey string) {
 	switch {
 	case running:
-		writeJSON(w, http.StatusOK, map[string]string{"status": "running"})
+		httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "running"})
 	case result == nil:
-		writeJSON(w, http.StatusOK, map[string]string{"status": "idle"})
+		httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "idle"})
 	case result.Error != "":
-		writeJSON(w, http.StatusOK, map[string]any{"status": "error", "error": result.Error})
+		httputil.WriteJSON(w, http.StatusOK, map[string]any{"status": "error", "error": result.Error})
 	default:
-		writeJSON(w, http.StatusOK, map[string]any{"status": "done", "ok": true, countKey: result.Count})
+		httputil.WriteJSON(w, http.StatusOK, map[string]any{"status": "done", "ok": true, countKey: result.Count})
 	}
 }
 
@@ -101,8 +102,7 @@ func writeAsyncOpStatus(w http.ResponseWriter, result *asyncResult, running bool
 func (h *Handler) handleAPICleanExcess(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
 
-	if r.Method != http.MethodPost {
-		writeJSONError(w, http.StatusMethodNotAllowed, errMethodNotAllowed)
+	if !httputil.RequireMethod(w, r, http.MethodPost) {
 		return
 	}
 
@@ -111,12 +111,12 @@ func (h *Handler) handleAPICleanExcess(w http.ResponseWriter, r *http.Request) {
 		rcfg = &h.cfg.Load().Replication
 	}
 	if rcfg.Factor <= 1 {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "removed": 0, "reason": "replication factor <= 1"})
+		httputil.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "removed": 0, "reason": "replication factor <= 1"})
 		return
 	}
 
 	if !h.asyncOps.TryStart(opCleanExcess) {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "cleanup already running"})
+		httputil.WriteJSON(w, http.StatusConflict, map[string]string{"error": "cleanup already running"})
 		return
 	}
 
@@ -140,7 +140,7 @@ func (h *Handler) handleAPICleanExcess(w http.ResponseWriter, r *http.Request) {
 		h.asyncOps.Complete(opCleanExcess, &asyncResult{OK: true, Count: removed})
 	}()
 
-	writeJSON(w, http.StatusAccepted, map[string]string{"status": "started"})
+	httputil.WriteJSON(w, http.StatusAccepted, map[string]string{"status": "started"})
 }
 
 // handleAPICleanExcessStatus returns the status of a running or completed cleanup.
@@ -155,8 +155,7 @@ func (h *Handler) handleAPICleanExcessStatus(w http.ResponseWriter, _ *http.Requ
 func (h *Handler) handleAPISync(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
 
-	if r.Method != http.MethodPost {
-		writeJSONError(w, http.StatusMethodNotAllowed, errMethodNotAllowed)
+	if !httputil.RequireMethod(w, r, http.MethodPost) {
 		return
 	}
 
@@ -164,21 +163,21 @@ func (h *Handler) handleAPISync(w http.ResponseWriter, r *http.Request) {
 		Backend string `json:"backend"`
 		Bucket  string `json:"bucket"`
 	}
-	if !decodeJSON(w, r, &req) {
+	if !httputil.DecodeJSONBody(w, r, &req, 1<<20) {
 		return
 	}
 	if req.Backend == "" || req.Bucket == "" {
-		writeJSONError(w, http.StatusBadRequest, "backend and bucket are required")
+		httputil.WriteJSONError(w, http.StatusBadRequest, "backend and bucket are required")
 		return
 	}
 
 	if !h.validBackend(req.Backend) {
-		writeJSONError(w, http.StatusBadRequest, "invalid backend or bucket")
+		httputil.WriteJSONError(w, http.StatusBadRequest, "invalid backend or bucket")
 		return
 	}
 
 	if !h.validBucketPrefix(req.Bucket + "/") {
-		writeJSONError(w, http.StatusBadRequest, "invalid backend or bucket")
+		httputil.WriteJSONError(w, http.StatusBadRequest, "invalid backend or bucket")
 		return
 	}
 
@@ -191,11 +190,11 @@ func (h *Handler) handleAPISync(w http.ResponseWriter, r *http.Request) {
 	imported, skipped, err := h.backendOps.SyncBackend(r.Context(), req.Backend, req.Bucket, bucketNames)
 	if err != nil {
 		h.log.ErrorContext(r.Context(), "sync failed", "backend", req.Backend, "bucket", req.Bucket, "error", err)
-		writeJSONError(w, http.StatusInternalServerError, "sync failed")
+		httputil.WriteJSONError(w, http.StatusInternalServerError, "sync failed")
 		return
 	}
 
 	h.log.InfoContext(r.Context(), "manual sync completed", "backend", req.Backend, "bucket", req.Bucket,
 		"imported", imported, "skipped", skipped)
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "imported": imported, "skipped": skipped})
+	httputil.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "imported": imported, "skipped": skipped})
 }

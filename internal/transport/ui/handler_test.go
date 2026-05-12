@@ -243,24 +243,6 @@ func TestCSRF_GetWithoutToken_Allowed(t *testing.T) {
 // HELPER TESTS
 // -------------------------------------------------------------------------
 
-// TestWriteJSONError verifies the write jsonerror contract.
-// Asserts that status = , want.
-func TestWriteJSONError(t *testing.T) {
-	t.Parallel()
-	w := httptest.NewRecorder()
-	writeJSONError(w, http.StatusBadRequest, "something broke")
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
-	}
-	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
-		t.Errorf("Content-Type = %q, want application/json", ct)
-	}
-	if body := strings.TrimRight(w.Body.String(), "\n"); body != `{"error":"something broke"}` {
-		t.Errorf("body = %q, want %q", body, `{"error":"something broke"}`)
-	}
-}
-
 // -------------------------------------------------------------------------
 // AUTH TESTS
 // -------------------------------------------------------------------------

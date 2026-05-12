@@ -16,7 +16,9 @@ import (
 	"encoding/json"
 	"maps"
 	"net/http"
+
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
+	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
 // -------------------------------------------------------------------------
@@ -37,12 +39,11 @@ type adminActionOp struct {
 // goroutine and returns 202 Accepted.
 func (h *Handler) startAdminAction(w http.ResponseWriter, r *http.Request, op adminActionOp) {
 	setSecurityHeaders(w)
-	if r.Method != http.MethodPost {
-		writeJSONError(w, http.StatusMethodNotAllowed, errMethodNotAllowed)
+	if !httputil.RequireMethod(w, r, http.MethodPost) {
 		return
 	}
 	if h.adminHandler == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "admin actions not configured")
+		httputil.WriteJSONError(w, http.StatusServiceUnavailable, "admin actions not configured")
 		return
 	}
 	if !h.asyncOps.TryStart(op.name) {

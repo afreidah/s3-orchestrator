@@ -19,6 +19,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
 // dashboardPage holds all data passed to the dashboard template.
@@ -128,9 +129,9 @@ func (h *Handler) handleAPIDashboard(w http.ResponseWriter, r *http.Request) {
 	data, err := h.backendOps.GetDashboardData(r.Context())
 	if err != nil {
 		h.log.ErrorContext(r.Context(), "failed to get dashboard data", "error", err)
-		writeJSONError(w, http.StatusInternalServerError, "failed to load data")
+		httputil.WriteJSONError(w, http.StatusInternalServerError, "failed to load data")
 		return
 	}
 
-	writeJSON(w, http.StatusOK, data)
+	httputil.WriteJSON(w, http.StatusOK, data)
 }

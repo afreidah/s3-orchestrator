@@ -23,6 +23,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/util/bufpool"
 )
 
@@ -33,7 +34,7 @@ func (h *Handler) handleTreeAPI(w http.ResponseWriter, r *http.Request) {
 
 	prefix := r.URL.Query().Get("prefix")
 	if prefix != "" && !h.validBucketPrefix(prefix) {
-		writeJSONError(w, http.StatusBadRequest, "prefix must start with a configured bucket name")
+		httputil.WriteJSONError(w, http.StatusBadRequest, "prefix must start with a configured bucket name")
 		return
 	}
 	startAfter := r.URL.Query().Get("startAfter")
@@ -47,30 +48,29 @@ func (h *Handler) handleTreeAPI(w http.ResponseWriter, r *http.Request) {
 	result, err := h.backendOps.GetDirectoryChildren(r.Context(), prefix, startAfter, maxKeys)
 	if err != nil {
 		h.log.ErrorContext(r.Context(), "failed to list directory children", "prefix", prefix, "error", err)
-		writeJSONError(w, http.StatusInternalServerError, "failed to list children")
+		httputil.WriteJSONError(w, http.StatusInternalServerError, "failed to list children")
 		return
 	}
 
-	writeJSON(w, http.StatusOK, result)
+	httputil.WriteJSON(w, http.StatusOK, result)
 }
 
 // handleAPIDelete deletes a single object by key.
 func (h *Handler) handleAPIDelete(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
 
-	if r.Method != http.MethodPost {
-		writeJSONError(w, http.StatusMethodNotAllowed, errMethodNotAllowed)
+	if !httputil.RequireMethod(w, r, http.MethodPost) {
 		return
 	}
 
 	var req struct {
 		Key string `json:"key"`
 	}
-	if !decodeJSON(w, r, &req) {
+	if !httputil.DecodeJSONBody(w, r, &req, 1<<20) {
 		return
 	}
 	if req.Key == "" {
-		writeJSONError(w, http.StatusBadRequest, errKeyRequired)
+		httputil.WriteJSONError(w, http.StatusBadRequest, errKeyRequired)
 		return
 	}
 
@@ -81,31 +81,30 @@ func (h *Handler) handleAPIDelete(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.objects.DeleteObject(r.Context(), req.Key); err != nil {
 		h.log.ErrorContext(r.Context(), "failed to delete object", "key", req.Key, "error", err)
-		writeJSONError(w, http.StatusInternalServerError, "delete failed")
+		httputil.WriteJSONError(w, http.StatusInternalServerError, "delete failed")
 		return
 	}
 
 	h.log.InfoContext(r.Context(), "deleted object", "key", req.Key)
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	httputil.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // handleAPIDeletePrefix deletes all objects under a given key prefix.
 func (h *Handler) handleAPIDeletePrefix(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
 
-	if r.Method != http.MethodPost {
-		writeJSONError(w, http.StatusMethodNotAllowed, errMethodNotAllowed)
+	if !httputil.RequireMethod(w, r, http.MethodPost) {
 		return
 	}
 
 	var req struct {
 		Prefix string `json:"prefix"`
 	}
-	if !decodeJSON(w, r, &req) {
+	if !httputil.DecodeJSONBody(w, r, &req, 1<<20) {
 		return
 	}
 	if req.Prefix == "" {
-		writeJSONError(w, http.StatusBadRequest, "prefix is required")
+		httputil.WriteJSONError(w, http.StatusBadRequest, "prefix is required")
 		return
 	}
 
@@ -121,7 +120,7 @@ func (h *Handler) handleAPIDeletePrefix(w http.ResponseWriter, r *http.Request) 
 		result, err := h.objects.ListObjects(r.Context(), req.Prefix, "", startAfter, 1000)
 		if err != nil {
 			h.log.ErrorContext(r.Context(), "failed to list objects for prefix delete", "prefix", req.Prefix, "error", err)
-			writeJSONError(w, http.StatusInternalServerError, "failed to list objects")
+			httputil.WriteJSONError(w, http.StatusInternalServerError, "failed to list objects")
 			return
 		}
 		for i := range result.Objects {
@@ -134,7 +133,7 @@ func (h *Handler) handleAPIDeletePrefix(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if len(keys) == 0 {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "deleted": 0})
+		httputil.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "deleted": 0})
 		return
 	}
 
@@ -150,21 +149,20 @@ func (h *Handler) handleAPIDeletePrefix(w http.ResponseWriter, r *http.Request) 
 	h.log.InfoContext(r.Context(), "prefix delete completed", "prefix", req.Prefix, "deleted", deleted, "errors", errCount)
 
 	if errCount > 0 {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{
+		httputil.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 			"error":   fmt.Sprintf("%d of %d deletes failed", errCount, len(keys)),
 			"deleted": deleted,
 		})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "deleted": deleted})
+	httputil.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "deleted": deleted})
 }
 
 // handleAPIUpload uploads a file via multipart form data.
 func (h *Handler) handleAPIUpload(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
 
-	if r.Method != http.MethodPost {
-		writeJSONError(w, http.StatusMethodNotAllowed, errMethodNotAllowed)
+	if !httputil.RequireMethod(w, r, http.MethodPost) {
 		return
 	}
 
@@ -172,24 +170,24 @@ func (h *Handler) handleAPIUpload(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
 
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "failed to parse form")
+		httputil.WriteJSONError(w, http.StatusBadRequest, "failed to parse form")
 		return
 	}
 
 	key := r.FormValue("key")
 	if key == "" {
-		writeJSONError(w, http.StatusBadRequest, errKeyRequired)
+		httputil.WriteJSONError(w, http.StatusBadRequest, errKeyRequired)
 		return
 	}
 
 	if !h.validBucketPrefix(key) {
-		writeJSONError(w, http.StatusBadRequest, "key must start with a configured bucket name")
+		httputil.WriteJSONError(w, http.StatusBadRequest, "key must start with a configured bucket name")
 		return
 	}
 
 	file, header, err := r.FormFile("file")
 	if err != nil {
-		writeJSONError(w, http.StatusBadRequest, "file is required")
+		httputil.WriteJSONError(w, http.StatusBadRequest, "file is required")
 		return
 	}
 	defer file.Close()
@@ -209,42 +207,41 @@ func (h *Handler) handleAPIUpload(w http.ResponseWriter, r *http.Request) {
 	etag, err := h.objects.PutObject(r.Context(), key, file, header.Size, contentType, nil)
 	if err != nil {
 		h.log.ErrorContext(r.Context(), "failed to upload object", "key", key, "error", err)
-		writeJSONError(w, http.StatusInternalServerError, "upload failed")
+		httputil.WriteJSONError(w, http.StatusInternalServerError, "upload failed")
 		return
 	}
 
 	h.log.InfoContext(r.Context(), "uploaded object", "key", key, "size", header.Size)
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "etag": etag})
+	httputil.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "etag": etag})
 }
 
 // handleAPIDownload streams an object to the browser as a file download.
 func (h *Handler) handleAPIDownload(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
 
-	if r.Method != http.MethodGet {
-		writeJSONError(w, http.StatusMethodNotAllowed, errMethodNotAllowed)
+	if !httputil.RequireMethod(w, r, http.MethodGet) {
 		return
 	}
 
 	key := r.URL.Query().Get("key")
 	if key == "" {
-		writeJSONError(w, http.StatusBadRequest, errKeyRequired)
+		httputil.WriteJSONError(w, http.StatusBadRequest, errKeyRequired)
 		return
 	}
 
 	if !h.validBucketPrefix(key) {
-		writeJSONError(w, http.StatusBadRequest, "key must start with a configured bucket name")
+		httputil.WriteJSONError(w, http.StatusBadRequest, "key must start with a configured bucket name")
 		return
 	}
 
 	result, err := h.objects.GetObject(r.Context(), key, "")
 	if err != nil {
 		if errors.Is(err, core.ErrObjectNotFound) {
-			writeJSONError(w, http.StatusNotFound, "not found")
+			httputil.WriteJSONError(w, http.StatusNotFound, "not found")
 			return
 		}
 		h.log.ErrorContext(r.Context(), "failed to download object", "key", key, "error", err)
-		writeJSONError(w, http.StatusInternalServerError, "download failed")
+		httputil.WriteJSONError(w, http.StatusInternalServerError, "download failed")
 		return
 	}
 	defer result.Body.Close()
