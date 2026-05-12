@@ -173,6 +173,54 @@ func TestLogLevel_MethodNotAllowed(t *testing.T) {
 	}
 }
 
+// TestReloadStatus_NoReloadYet returns a placeholder when the
+// reload provider has not been wired (no SIGHUP has happened yet).
+func TestReloadStatus_NoReloadYet(t *testing.T) {
+	t.Parallel()
+	h := newTestHandler()
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/reload-status", nil)
+	req.Header.Set("X-Admin-Token", "test-token")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "no_reload_yet") {
+		t.Errorf("body = %q, want no_reload_yet placeholder", w.Body.String())
+	}
+}
+
+// TestReloadStatus_ReturnsProvidedResult exercises the SetReloadStatus
+// Provider hook the runtime calls after building the reload coordinator.
+func TestReloadStatus_ReturnsProvidedResult(t *testing.T) {
+	t.Parallel()
+	h := newTestHandler()
+	h.SetReloadStatusProvider(func() any {
+		return map[string]any{"generation": 7, "status": "full_success"}
+	})
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/reload-status", nil)
+	req.Header.Set("X-Admin-Token", "test-token")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), `"generation":7`) {
+		t.Errorf("body = %q, want generation field", w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "full_success") {
+		t.Errorf("body = %q, want status field", w.Body.String())
+	}
+}
+
 // TestStatus_MethodNotAllowed verifies the status method not allowed contract.
 // Asserts that status = , want.
 func TestStatus_MethodNotAllowed(t *testing.T) {

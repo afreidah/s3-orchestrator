@@ -74,6 +74,11 @@ type Handler struct {
 	objectCache       cache.ObjectCache
 	token             string
 	logLevel          *slog.LevelVar
+	// reloadStatus is the per-process snapshot of the last reload
+	// result. Set post-construction by the runtime so the admin handler
+	// does not import the reload package (which would cycle via UI).
+	// Returns nil before any reload has happened.
+	reloadStatus func() any
 }
 
 // Deps groups the narrow role interfaces and infrastructure the admin
@@ -120,9 +125,19 @@ func New(d *Deps) *Handler {
 	}
 }
 
+// SetReloadStatusProvider wires the callback that returns the most recent
+// reload result. Called by the runtime after the reload coordinator is
+// built. Routing through a setter rather than constructor injection
+// avoids the import cycle that would result from admin importing the
+// reload package directly.
+func (h *Handler) SetReloadStatusProvider(fn func() any) {
+	h.reloadStatus = fn
+}
+
 // Register mounts the admin API routes on the given mux.
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /admin/api/status", h.requireToken(h.handleStatus))
+	mux.HandleFunc("GET /admin/api/reload-status", h.requireToken(h.handleReloadStatus))
 	mux.HandleFunc("GET /admin/api/object-locations", h.requireToken(h.handleObjectLocations))
 	mux.HandleFunc("GET /admin/api/cleanup-queue", h.requireToken(h.handleCleanupQueue))
 	mux.HandleFunc("POST /admin/api/usage-flush", h.requireToken(h.handleUsageFlush))
@@ -167,6 +182,23 @@ func (h *Handler) requireToken(next http.HandlerFunc) http.HandlerFunc {
 // -------------------------------------------------------------------------
 // HANDLERS
 // -------------------------------------------------------------------------
+
+// handleReloadStatus returns the most recent reload result captured by
+// the reload coordinator. Returns a "no_reload_yet" placeholder when
+// SIGHUP has not fired since startup or when the runtime has not
+// wired the provider.
+func (h *Handler) handleReloadStatus(w http.ResponseWriter, _ *http.Request) {
+	if h.reloadStatus == nil {
+		httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "no_reload_yet"})
+		return
+	}
+	result := h.reloadStatus()
+	if result == nil {
+		httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "no_reload_yet"})
+		return
+	}
+	httputil.WriteJSON(w, http.StatusOK, result)
+}
 
 // handleStatus returns backend health and circuit breaker state.
 func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
