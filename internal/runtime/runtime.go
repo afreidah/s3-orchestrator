@@ -37,6 +37,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/reload"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httpserver"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
@@ -109,13 +110,20 @@ func New(opts Options, cfg *config.Config) (*Runtime, error) {
 	}
 	r.http = httpSrv
 
-	r.reload = reload.New(reload.Deps{
+	r.reload = reload.New(&reload.Deps{
 		ConfigPath:   opts.ConfigPath,
 		Injector:     r.inj,
 		CfgPtr:       &r.cfgPtr,
 		LogLevel:     &r.logLevel,
 		CertReloader: httpSrv.CertReloader(),
 	})
+
+	// Wire the reload-status provider into the admin handler after
+	// the coordinator exists. Routing through a post-construction
+	// setter avoids the admin -> reload -> ui -> admin import cycle.
+	if adminHandler, _ := do.Invoke[*admin.Handler](r.inj); adminHandler != nil {
+		adminHandler.SetReloadStatusProvider(func() any { return r.reload.LastResult() })
+	}
 
 	lifecyc, err := do.Invoke[*lifecycle.Manager](r.inj)
 	if err != nil {
