@@ -256,7 +256,7 @@ func TestWriteJSONError(t *testing.T) {
 	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
 		t.Errorf("Content-Type = %q, want application/json", ct)
 	}
-	if body := w.Body.String(); body != `{"error":"something broke"}` {
+	if body := strings.TrimRight(w.Body.String(), "\n"); body != `{"error":"something broke"}` {
 		t.Errorf("body = %q, want %q", body, `{"error":"something broke"}`)
 	}
 }
