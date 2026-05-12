@@ -200,6 +200,12 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 	if adminToken == "" {
 		adminToken = d.cfg.UI.AdminKey
 	}
+	recRes := Optional[*worker.Reconciler](i)
+	if recRes.Failed() {
+		slog.WarnContext(context.Background(),
+			"reconciler resolution failed; admin reconcile endpoint will be inert",
+			"error", recRes.Err)
+	}
 	return admin.New(&admin.Deps{
 		BackendOps:  d.manager,
 		Replicator:  d.replicator,
@@ -213,7 +219,7 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 		Cleanup:     d.stores,
 		Encryptor:   d.enc,
 		ObjectCache: resolveOptionalCache(i),
-		Reconciler:  invokeOptional[*worker.Reconciler](i),
+		Reconciler:  recRes.Value,
 		Token:       adminToken,
 		LogLevel:    d.logLevel,
 	}), nil

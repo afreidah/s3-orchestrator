@@ -1,13 +1,15 @@
 // -------------------------------------------------------------------------------
-// DI - Optional Dependency Resolution Helpers
+// DI - Optional Dependency Resolution
 //
 // Author: Alex Freidah
 //
-// Small helpers used by the provider files to resolve dependencies that are
-// only present when a feature flag is enabled. The generic invokeOptional
-// returns the zero value when the service is not registered; the typed
-// resolveOptional* helpers add per-feature semantics (nil-on-absence vs.
-// error-on-failure for the encryptor).
+// Production-grade resolution helpers for optional services. Distinguishes
+// "feature intentionally disabled" (no provider registered) from "feature
+// configured but failed to initialize" (provider registered, construction
+// or dependency wiring returned an error) so operators can tell a quiet
+// disabled feature from a broken one. Optional[T] is the typed surface;
+// IsRegistered[T] is a cheap presence check that does not invoke the
+// constructor.
 // -------------------------------------------------------------------------------
 
 package di
@@ -22,12 +24,82 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 )
 
-// invokeOptional resolves a provider that may not be registered, returning
-// the zero value of T when the service is absent. Used for admin handler
-// dependencies that only register under specific modes/features.
-func invokeOptional[T any](i do.Injector) T {
-	v, _ := do.Invoke[T](i)
-	return v
+// Resolution classifies the outcome of an optional dependency lookup.
+type Resolution string
+
+// Resolution values. Disabled means no provider was registered for T;
+// Applied means a provider resolved cleanly; Failed means a provider
+// was registered but construction or dependency wiring returned an
+// error. The three outcomes are deliberately distinct so a missing
+// optional feature does not look like a broken one in startup logs.
+const (
+	ResolutionDisabled Resolution = "disabled"
+	ResolutionApplied  Resolution = "applied"
+	ResolutionFailed   Resolution = "failed"
+)
+
+// OptionalResult carries the outcome of an Optional[T] lookup. Callers
+// pick the field they care about: Value for the resolved instance,
+// Resolution for the operational classification, Err for the failure
+// detail when Resolution is Failed.
+type OptionalResult[T any] struct {
+	Value      T
+	Resolution Resolution
+	Err        error
+}
+
+// Disabled reports whether the underlying provider was not registered.
+func (r OptionalResult[T]) Disabled() bool { return r.Resolution == ResolutionDisabled }
+
+// Applied reports whether the provider resolved cleanly.
+func (r OptionalResult[T]) Applied() bool { return r.Resolution == ResolutionApplied }
+
+// Failed reports whether the provider was registered but failed to
+// construct (or one of its transitive dependencies failed).
+func (r OptionalResult[T]) Failed() bool { return r.Resolution == ResolutionFailed }
+
+// Optional resolves T as an optional dependency. Inspects the injector's
+// registered service list first so a missing provider is distinguished
+// from a constructor failure: a Disabled result means the feature was
+// never wired in this run mode, while a Failed result means a provider
+// was wired but its constructor (or a transitive dependency it tried
+// to resolve) returned an error.
+func Optional[T any](inj do.Injector) OptionalResult[T] {
+	if inj == nil {
+		return OptionalResult[T]{Resolution: ResolutionDisabled}
+	}
+	if !IsRegistered[T](inj) {
+		return OptionalResult[T]{Resolution: ResolutionDisabled}
+	}
+	v, err := do.Invoke[T](inj)
+	if err != nil {
+		return OptionalResult[T]{Resolution: ResolutionFailed, Err: err}
+	}
+	return OptionalResult[T]{Value: v, Resolution: ResolutionApplied}
+}
+
+// IsRegistered reports whether T has a provider registered in the
+// injector or any ancestor scope. Cheap; does not invoke the constructor.
+func IsRegistered[T any](inj do.Injector) bool {
+	if inj == nil {
+		return false
+	}
+	name := do.NameOf[T]()
+	for _, svc := range inj.ListProvidedServices() {
+		if svc.Service == name {
+			return true
+		}
+	}
+	return false
+}
+
+// invokeOptional preserves the legacy "swallow error, return zero" shape
+// for call sites where the caller has already decided not to differentiate
+// Disabled from Failed. New code should prefer Optional[T] and inspect
+// Failed so a broken-but-configured feature does not look the same as a
+// feature intentionally turned off.
+func invokeOptional[T any](inj do.Injector) T {
+	return Optional[T](inj).Value
 }
 
 // resolveOptionalCounterBackend returns the configured Redis counter
@@ -43,8 +115,8 @@ func resolveOptionalCounterBackend(i do.Injector) counter.CounterBackend {
 }
 
 // resolveOptionalCache returns the object data cache, or nil when
-// caching is disabled / not registered. NewBackendManager treats nil as
-// "object data caching is off" (read path bypasses the cache layer).
+// caching is disabled / not registered. NewBackendManager treats nil
+// as "object data caching is off" (read path bypasses the cache layer).
 func resolveOptionalCache(i do.Injector) objcache.ObjectCache {
 	c, err := do.Invoke[objcache.ObjectCache](i)
 	if err != nil {
@@ -55,7 +127,7 @@ func resolveOptionalCache(i do.Injector) objcache.ObjectCache {
 
 // resolveOptionalEncryptor returns the live *encryption.Encryptor when
 // encryption is enabled, or nil otherwise. A configured-but-failing
-// encryptor surfaces as an error so the admin handler doesn't quietly
+// encryptor surfaces as an error so the admin handler does not quietly
 // run without encryption support.
 func resolveOptionalEncryptor(i do.Injector, enabled bool) (*encryption.Encryptor, error) {
 	if !enabled {

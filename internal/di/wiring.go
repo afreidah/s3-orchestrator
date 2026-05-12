@@ -11,15 +11,19 @@
 // explicit and obvious from a single read.
 //
 // Called once from cli/serve after NewInjector. Optional features that
-// are not registered in the current run mode resolve to the zero value
-// via invokeOptional; the assignments to BackendManager remain nil for
-// those features, which production code already treats as "feature off".
+// are not registered in the current run mode resolve to a Disabled
+// OptionalResult and assign nil onto BackendManager, which production
+// code already treats as "feature off"; a Failed resolution is logged
+// so a broken provider is distinguishable from an intentionally absent
+// one.
 // -------------------------------------------------------------------------------
 
 package di
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/samber/do/v2"
 
@@ -56,10 +60,17 @@ func WireManager(inj do.Injector) error {
 		return fmt.Errorf("resolve Scrubber: %w", err)
 	}
 
-	// PendingReaper provider returns (nil, nil) when the pending pattern
-	// is disabled. invokeOptional swallows ErrServiceNotFound the same
-	// way other optional consumers do.
-	mgr.PendingReaper = invokeOptional[*worker.PendingReaper](inj)
+	// PendingReaper is optional: a Disabled outcome means the pending
+	// pattern is turned off in this run mode; a Failed outcome means the
+	// provider exists but construction errored, which is logged so a
+	// broken-but-configured reaper does not silently fall back to nil.
+	prRes := Optional[*worker.PendingReaper](inj)
+	if prRes.Failed() {
+		slog.WarnContext(context.Background(),
+			"pending reaper resolution failed; manager will run without it",
+			"error", prRes.Err)
+	}
+	mgr.PendingReaper = prRes.Value
 
 	dm, err := do.Invoke[*drain.Manager](inj)
 	if err != nil {
