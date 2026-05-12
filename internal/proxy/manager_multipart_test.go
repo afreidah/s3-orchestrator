@@ -719,6 +719,42 @@ func TestCleanupStaleMultipartUploads_NoStaleUploads(t *testing.T) {
 	mgr.MultipartManager.CleanupStaleMultipartUploads(context.Background(), time.Hour)
 }
 
+// TestCleanupStaleMultipartUploads_AbortFailureLogged returns a stale
+// upload pointing at a backend that is not registered with the manager,
+// so abortByMultipartRow's GetBackend call fails. The CleanupStaleMultipartUploads
+// log path that reports the individual cleanup failure runs here.
+func TestCleanupStaleMultipartUploads_AbortFailureLogged(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().GetStaleMultipartUploads(gomock.Any(), gomock.Any()).
+		Return([]core.MultipartUpload{
+			{UploadID: "abandoned-1", ObjectKey: "k", BackendName: "missing"},
+		}, nil).AnyTimes()
+	storetest.Permissive(store)
+
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	mgr.MultipartManager.CleanupStaleMultipartUploads(context.Background(), time.Hour)
+}
+
+// TestAbortMultipartUploadsOnBackend_AbortFailureLogged drives the
+// per-backend abort path where the upload's recorded backend is unknown,
+// so abortByMultipartRow returns an error and the "failed to abort
+// multipart upload" log fires.
+func TestAbortMultipartUploadsOnBackend_AbortFailureLogged(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().GetMultipartUploadsByBackend(gomock.Any(), gomock.Any()).
+		Return([]core.MultipartUpload{
+			{UploadID: "abandoned-2", ObjectKey: "k", BackendName: "missing"},
+		}, nil).AnyTimes()
+	storetest.Permissive(store)
+
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	mgr.MultipartManager.AbortMultipartUploadsOnBackend(context.Background(), "missing")
+}
+
 // TestCleanupStaleMultipartUploads_QueryError handles a stale-list
 // query failure.
 func TestCleanupStaleMultipartUploads_QueryError(t *testing.T) {

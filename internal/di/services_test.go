@@ -16,10 +16,12 @@ package di
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"testing"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
@@ -117,6 +119,89 @@ func newServicesFixture(t *testing.T) *servicesFixture {
 	}
 }
 
+// TestCleanupQueueService_ProcessedLogFires pre-populates the mock
+// store with a cleanup item whose backend is not registered with the
+// fixture manager. ProcessCleanupQueue treats the unknown-backend row
+// as a successful retirement, so the work closure's "queue processed"
+// info log fires when processed > 0.
+func TestCleanupQueueService_ProcessedLogFires(t *testing.T) {
+	t.Parallel()
+	mock := testutil.NewMockStore(t)
+	mock.PendingCleanupsResp = []core.CleanupItem{
+		{ID: 1, BackendName: "missing-backend", ObjectKey: "k", Attempts: 0},
+	}
+	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
+		Backends:        map[string]backend.ObjectBackend{},
+		Stores:          mock,
+		Dashboard:       mock,
+		Metrics:         mock,
+		Order:           []string{},
+		RoutingStrategy: config.RoutingPack,
+	})
+	proxytest.AttachWorkers(mgr, mock)
+	cw := worker.NewCleanupWorker(mgr, mock, 1, "test", 5*time.Minute)
+	mgr.CleanupWorker = cw
+	t.Cleanup(mgr.Close)
+
+	svc := NewCleanupQueueService(cw, acquiringLocker{}).(*lockedTickerService)
+	svc.runOnce(context.Background(), svc.work)
+}
+
+// TestServiceWorkClosures_RunOnceCovers drives each background service's
+// work closure exactly once via runOnce + acquiringLocker. The fixture
+// workers operate against an empty mock store so the inner "n > 0" log
+// branches stay uncovered intentionally  -  the goal here is to exercise
+// the closure body, config-nil guards, and worker dispatch, not to
+// assert specific results. Adding a worker pre-condition that returns
+// non-zero counts would require a richer mock store than this suite
+// needs.
+func TestServiceWorkClosures_RunOnceCovers(t *testing.T) {
+	t.Parallel()
+	f := newServicesFixture(t)
+	locker := acquiringLocker{}
+
+	services := []lifecycle.Runner{
+		NewMultipartCleanupService(f.mgr, locker, 0),
+		NewCleanupQueueService(f.cleanupWorker, locker),
+		NewRebalancerService(f.mgr, f.rebalancer, locker),
+		NewLifecycleService(f.mgr, locker),
+		NewOverReplicationService(f.mgr, f.overRep, locker),
+		NewReplicatorService(f.mgr, f.replicator, locker),
+		NewReconcileService(worker.NewReconciler(f.mgr, nil), locker, time.Hour),
+		NewScrubberService(f.scrubber, locker),
+	}
+	for _, svc := range services {
+		ts, ok := svc.(*lockedTickerService)
+		if !ok {
+			t.Fatalf("service %T is not *lockedTickerService", svc)
+		}
+		// runOnce wraps the work closure in audit context + advisory
+		// lock acquisition, so this single call covers the locked path
+		// even when the closure itself returns early via a nil-config
+		// guard.
+		ts.runOnce(context.Background(), ts.work)
+	}
+}
+
+// TestUsageFlushService_DoFlushCoversBothCalls exercises the doFlush
+// helper directly against the fixture manager, covering both the
+// FlushUsage call and the UpdateQuotaMetrics call. The fixture manager
+// has no backends so both calls return nil, but the closure body and
+// the error-attr guards execute. The Redis branch in flushTick is
+// driven through the same path because RedisCounterConfigured returns
+// false for the LocalCounterBackend the fixture uses.
+func TestUsageFlushService_DoFlushCoversBothCalls(t *testing.T) {
+	t.Parallel()
+	f := newServicesFixture(t)
+	svc := &usageFlushService{
+		manager: f.mgr,
+		locker:  fakeLocker{},
+		log:     slog.Default(),
+	}
+	svc.doFlush(context.Background())  // must not panic
+	svc.flushTick(context.Background()) // hits the no-Redis branch
+}
+
 // TestServiceConstructors_AllReturnNonNil asserts each factory produces a
 // usable lifecycle.Runner. Any missing assignment inside the constructor
 // body surfaces as a nil return.
@@ -158,6 +243,7 @@ func TestLockedTickerService_RunOnceSkipsOnLockBusy(t *testing.T) {
 		interval: time.Second,
 		lockID:   core.LockRebalancer,
 		name:     "test",
+		log:      slog.Default(),
 		work:     func(context.Context) { workCalled = true },
 	}
 	svc.runOnce(context.Background(), svc.work)
@@ -186,6 +272,7 @@ func TestLockedTickerService_RunOnceInvokesOnError(t *testing.T) {
 		interval: time.Second,
 		lockID:   core.LockLifecycle,
 		name:     "test",
+		log:      slog.Default(),
 		work:     func(context.Context) {},
 		onError:  func(err error) { caught = err },
 	}
@@ -193,6 +280,24 @@ func TestLockedTickerService_RunOnceInvokesOnError(t *testing.T) {
 	if caught == nil {
 		t.Fatal("onError was not invoked")
 	}
+}
+
+// TestLockedTickerService_RunOnceLogsErrorWhenNoOnError covers the
+// fallback log path: when WithAdvisoryLock returns a non-DBUnavailable
+// error and the service has no onError handler installed, runOnce falls
+// back to s.log.ErrorContext rather than dropping the error silently.
+func TestLockedTickerService_RunOnceLogsErrorWhenNoOnError(t *testing.T) {
+	t.Parallel()
+	svc := &lockedTickerService{
+		locker:   errLocker{err: errors.New("advisory lock broke")},
+		interval: time.Second,
+		lockID:   core.LockLifecycle,
+		name:     "test",
+		log:      slog.Default(),
+		work:     func(context.Context) {},
+		// onError intentionally nil to drive the fallback branch.
+	}
+	svc.runOnce(context.Background(), svc.work) // must not panic
 }
 
 // TestLockedTickerService_RunOnceSwallowsErrDBUnavailable verifies the
@@ -206,6 +311,7 @@ func TestLockedTickerService_RunOnceSwallowsErrDBUnavailable(t *testing.T) {
 		interval: time.Second,
 		lockID:   core.LockLifecycle,
 		name:     "test",
+		log:      slog.Default(),
 		work:     func(context.Context) {},
 		onError:  func(error) { onErrCalled = true },
 	}
@@ -247,6 +353,7 @@ func TestLockedTickerService_RunExitsOnCancel(t *testing.T) {
 		interval: time.Hour, // long interval so Run blocks in the tick select
 		lockID:   core.LockRebalancer,
 		name:     "test",
+		log:      slog.Default(),
 		work:     func(context.Context) {},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -267,6 +374,7 @@ func TestLockedTickerService_RunStartupFires(t *testing.T) {
 		interval: time.Hour,
 		lockID:   core.LockReplicator,
 		name:     "test",
+		log:      slog.Default(),
 		work:     func(context.Context) {},
 		startup:  func(context.Context) { startupCalled = true },
 	}
@@ -377,6 +485,7 @@ func TestLockedTickerService_RunTicksOnce(t *testing.T) {
 		interval: 2 * time.Millisecond,
 		lockID:   core.LockRebalancer,
 		name:     "test",
+		log:      slog.Default(),
 		shouldRun: func() bool {
 			select {
 			case <-done:

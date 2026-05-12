@@ -103,7 +103,7 @@ func (o *ObjectManager) PutObject(ctx context.Context, key string, body io.Reade
 		lastErr = res.putErr
 		failedBackends = append(failedBackends, res.backend)
 		eligible = withoutBackend(eligible, res.backend)
-		slog.WarnContext(ctx, "PutObject: backend write failed, trying next",
+		o.Log().WarnContext(ctx, "PutObject: backend write failed, trying next",
 			"key", key, "failed_backend", res.backend, "error", res.putErr,
 			"remaining_backends", len(eligible))
 	}
@@ -535,7 +535,7 @@ func (o *ObjectManager) DeleteObject(ctx context.Context, key string) error {
 	workerpool.Run(ctx, len(copies), copies, func(ctx context.Context, cp core.DeletedCopy) {
 		backend, ok := o.backends[cp.BackendName]
 		if !ok {
-			slog.WarnContext(ctx, "backend not found for delete",
+			o.Log().WarnContext(ctx, "backend not found for delete",
 				"backend", cp.BackendName, "key", key)
 			return
 		}
@@ -671,7 +671,7 @@ func (o *ObjectManager) flattenBatchDeletes(ctx context.Context, copiesByKey map
 		for _, cp := range copies {
 			backend, ok := o.backends[cp.BackendName]
 			if !ok {
-				slog.WarnContext(ctx, "backend not found for batch delete",
+				o.Log().WarnContext(ctx, "backend not found for batch delete",
 					"backend", cp.BackendName, "key", key)
 				continue
 			}

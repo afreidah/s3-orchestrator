@@ -22,12 +22,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 
 	"github.com/redis/go-redis/v9"
-
-	"github.com/afreidah/s3-orchestrator/internal/breaker"
 )
 
 // keyTTL is applied to Redis counter keys on creation. Set to 35 days so
@@ -80,6 +80,10 @@ type RedisCounterBackend struct {
 	local    *LocalCounterBackend
 	cb       *breaker.CircuitBreaker
 	backends []string
+	// log is the component-scoped logger; populated by NewRedisCounterBackend.
+	// Tests construct this type directly and may leave log nil, so callers
+	// route through (r *RedisCounterBackend).logger() to get a safe default.
+	log *slog.Logger
 
 	// fallback tracks whether the backend is currently using local counters.
 	fallbackMu sync.RWMutex
@@ -88,6 +92,16 @@ type RedisCounterBackend struct {
 	stopProbe chan struct{}
 	probeDone chan struct{}
 	closeOnce sync.Once
+}
+
+// logger returns the component-scoped logger, falling back to
+// slog.Default() when the backend was constructed by a test that did
+// not set the log field.
+func (r *RedisCounterBackend) logger() *slog.Logger {
+	if r.log == nil {
+		return slog.Default()
+	}
+	return r.log
 }
 
 // NewRedisCounterBackend creates a shared counter backend backed by Redis.
@@ -113,13 +127,14 @@ func NewRedisCounterBackend(client RedisClient, cfg *config.RedisConfig, backend
 		local:     NewLocalCounterBackend(backendNames),
 		cb:        cb,
 		backends:  backendNames,
+		log:       slog.Default().With(logfmt.Component("redis_counters")),
 		stopProbe: make(chan struct{}),
 		probeDone: make(chan struct{}),
 	}
 
 	go r.healthProbe()
 
-	slog.InfoContext(context.Background(), "Redis counter backend initialized",
+	r.logger().InfoContext(context.Background(), "initialized",
 		"address", cfg.Address,
 		"prefix", cfg.KeyPrefix,
 	)
@@ -347,7 +362,7 @@ func (r *RedisCounterBackend) tryRecover() {
 		for name, d := range allDeltas {
 			r.local.AddAll(name, d.APIRequests, d.EgressBytes, d.IngressBytes)
 		}
-		slog.WarnContext(context.Background(), "Redis recovery pipeline failed, will retry", "error", err)
+		r.logger().WarnContext(context.Background(), "Redis recovery pipeline failed, will retry", "error", err)
 		return
 	}
 
@@ -361,7 +376,7 @@ func (r *RedisCounterBackend) tryRecover() {
 	r.setFallback(false)
 	r.cb.Recover()
 
-	slog.InfoContext(context.Background(), "Redis counter backend recovered, local deltas synced")
+	r.logger().InfoContext(context.Background(), "Redis counter backend recovered, local deltas synced")
 }
 
 // -------------------------------------------------------------------------
@@ -395,7 +410,7 @@ func (r *RedisCounterBackend) setFallback(v bool) {
 func (r *RedisCounterBackend) notePostCheck(op string, opErr error) {
 	if cbErr := r.cb.PostCheck(opErr); cbErr != nil {
 		telemetry.CircuitBreakerInternalErrorsTotal.WithLabelValues("redis", op).Inc()
-		slog.WarnContext(context.Background(), "Redis circuit breaker PostCheck reported error",
+		r.logger().WarnContext(context.Background(), "Redis circuit breaker PostCheck reported error",
 			"operation", op, "error", cbErr)
 	}
 }
@@ -407,7 +422,7 @@ func (r *RedisCounterBackend) recordFailure(err error) {
 	r.notePostCheck("failure", err)
 	if !r.cb.IsHealthy() && !r.inFallback() {
 		r.setFallback(true)
-		slog.WarnContext(context.Background(), "Redis counter backend entering fallback to local counters")
+		r.logger().WarnContext(context.Background(), "Redis counter backend entering fallback to local counters")
 	}
 }
 

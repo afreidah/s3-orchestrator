@@ -20,6 +20,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
@@ -47,6 +48,7 @@ type Collector struct {
 	usage             *counter.UsageTracker
 	backendNames      []string
 	replicationFactor func() int // returns 0 when replication is disabled
+	log               *slog.Logger
 }
 
 // New creates a Collector with references to the store and usage tracker
@@ -57,6 +59,7 @@ func New(store Deps, usage *counter.UsageTracker, backendNames []string, replica
 		usage:             usage,
 		backendNames:      backendNames,
 		replicationFactor: replicationFactor,
+		log:               slog.Default().With(logfmt.Component("metrics_collector")),
 	}
 }
 
@@ -122,7 +125,7 @@ func (mc *Collector) maybeEmitCapacityWarning(ctx context.Context, name string, 
 	if utilization < 0.8 {
 		return
 	}
-	slog.WarnContext(ctx, "backend approaching capacity",
+	mc.log.WarnContext(ctx, "backend approaching capacity",
 		"backend", name,
 		"utilization_pct", int(utilization*100),
 		"bytes_available", available,
@@ -148,7 +151,7 @@ func (mc *Collector) maybeEmitCapacityWarning(ctx context.Context, name string, 
 func (mc *Collector) updateObjectCountGauges(ctx context.Context, stats map[string]core.QuotaStat) {
 	objCounts, err := mc.store.GetObjectCounts(ctx)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to get object counts", "error", err)
+		mc.log.ErrorContext(ctx, "failed to get object counts", "error", err)
 		return
 	}
 	for name := range stats {
@@ -164,7 +167,7 @@ func (mc *Collector) updateObjectCountGauges(ctx context.Context, stats map[stri
 func (mc *Collector) updateMultipartCountGauges(ctx context.Context, stats map[string]core.QuotaStat) {
 	mpCounts, err := mc.store.GetActiveMultipartCounts(ctx)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to get multipart upload counts", "error", err)
+		mc.log.ErrorContext(ctx, "failed to get multipart upload counts", "error", err)
 		return
 	}
 	for name := range stats {
@@ -180,7 +183,7 @@ func (mc *Collector) updateMultipartCountGauges(ctx context.Context, stats map[s
 func (mc *Collector) updateUsageGauges(ctx context.Context, stats map[string]core.QuotaStat) {
 	usage, err := mc.store.GetUsageForPeriod(ctx, counter.CurrentPeriod())
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to get usage stats", "error", err)
+		mc.log.ErrorContext(ctx, "failed to get usage stats", "error", err)
 		return
 	}
 	for name := range stats {
@@ -215,7 +218,7 @@ func (mc *Collector) updateReplicationPending(ctx context.Context) {
 	}
 	locations, err := mc.store.GetUnderReplicatedObjects(ctx, factor, 10000)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to get under-replicated objects", "error", err)
+		mc.log.ErrorContext(ctx, "failed to get under-replicated objects", "error", err)
 		return
 	}
 	telemetry.ReplicationPending.Set(float64(len(core.GroupByKey(locations))))

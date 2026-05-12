@@ -22,6 +22,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/instanceid"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -54,7 +55,10 @@ func ProvideMetadataStore(i do.Injector) (core.MetadataStore, error) {
 	if err := cs.VerifySchemaVersion(ctx); err != nil {
 		return nil, err
 	}
-	slog.InfoContext(ctx, "database migrations applied", "driver", cfg.Database.Driver)
+	slog.InfoContext(ctx, "database migrations applied",
+		logfmt.Component("di"),
+		"driver", cfg.Database.Driver,
+	)
 
 	if err := cs.SyncQuotaLimits(ctx, cfg.Backends); err != nil {
 		return nil, err

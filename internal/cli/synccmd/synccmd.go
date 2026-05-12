@@ -23,9 +23,17 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
 	sqlitestore "github.com/afreidah/s3-orchestrator/internal/store/sqlite"
 )
+
+// synccmdLogger returns the scoped logger for the synccmd CLI; built
+// lazily so init-time slog state is captured rather than a stale
+// snapshot.
+func synccmdLogger() *slog.Logger {
+	return slog.Default().With(logfmt.Component("synccmd"))
+}
 
 // Options holds the parsed CLI flags for `s3-orchestrator sync`.
 type Options struct {
@@ -59,12 +67,12 @@ func Run(args []string, stderr io.Writer) int { // codecov:ignore -- CLI entry p
 
 	s3b, err := backend.NewS3Backend(backendCfg)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to initialize backend", slog.String("backend", backendCfg.Name), "error", err)
+		synccmdLogger().ErrorContext(ctx, "failed to initialize backend", slog.String("backend", backendCfg.Name), "error", err)
 		return 1
 	}
 
 	if err := runImport(ctx, s3b, metaDB, backendCfg, opts); err != nil {
-		slog.ErrorContext(ctx, "sync failed", "error", err)
+		synccmdLogger().ErrorContext(ctx, "sync failed", "error", err)
 		return 1
 	}
 	return 0
@@ -100,7 +108,7 @@ func parseFlags(args []string, stderr io.Writer) (*Options, bool) {
 func loadConfig(path, backendName string) (*config.Config, *config.BackendConfig, int) {
 	cfg, err := config.LoadConfig(path)
 	if err != nil {
-		slog.ErrorContext(context.Background(), "Failed to load config", "error", err)
+		synccmdLogger().ErrorContext(context.Background(), "Failed to load config", "error", err)
 		return nil, nil, 1
 	}
 	for i := range cfg.Backends {
@@ -108,7 +116,7 @@ func loadConfig(path, backendName string) (*config.Config, *config.BackendConfig
 			return cfg, &cfg.Backends[i], 0
 		}
 	}
-	slog.ErrorContext(context.Background(), "Backend not found in config", "backend", backendName)
+	synccmdLogger().ErrorContext(context.Background(), "Backend not found in config", "backend", backendName)
 	return nil, nil, 1
 }
 
@@ -155,15 +163,15 @@ func initStore(ctx context.Context, cfg *config.Config) (importer, adminStore, i
 		err = fmt.Errorf("unsupported database driver: %q", cfg.Database.Driver)
 	}
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to connect to database", "error", err)
+		synccmdLogger().ErrorContext(ctx, "failed to connect to database", "error", err)
 		return nil, nil, 1
 	}
 	if err := adminDB.RunMigrations(ctx); err != nil {
-		slog.ErrorContext(ctx, "failed to run migrations", "error", err)
+		synccmdLogger().ErrorContext(ctx, "failed to run migrations", "error", err)
 		return nil, nil, 1
 	}
 	if err := adminDB.SyncQuotaLimits(ctx, cfg.Backends); err != nil {
-		slog.ErrorContext(ctx, "failed to sync quota limits", "error", err)
+		synccmdLogger().ErrorContext(ctx, "failed to sync quota limits", "error", err)
 		return nil, nil, 1
 	}
 	return objects, adminDB, 0
@@ -176,7 +184,7 @@ func runImport(ctx context.Context, s3b *backend.S3Backend, metaDB importer, bac
 	if opts.DryRun {
 		mode = "dry-run"
 	}
-	slog.InfoContext(ctx, "starting sync",
+	synccmdLogger().InfoContext(ctx, "starting sync",
 		"backend", backendCfg.Name,
 		"virtual_bucket", opts.BucketName,
 		"backend_bucket", backendCfg.Bucket,
@@ -197,7 +205,7 @@ func runImport(ctx context.Context, s3b *backend.S3Backend, metaDB importer, bac
 		totalImported += imported
 		totalSkipped += skipped
 		totalBytes += bytes
-		slog.InfoContext(ctx, "synced page",
+		synccmdLogger().InfoContext(ctx, "synced page",
 			"page", pageNum, "imported", imported, "skipped", skipped,
 			"total_imported", totalImported, "total_skipped", totalSkipped,
 		)
@@ -207,7 +215,7 @@ func runImport(ctx context.Context, s3b *backend.S3Backend, metaDB importer, bac
 		return err
 	}
 
-	slog.InfoContext(ctx, "sync complete",
+	synccmdLogger().InfoContext(ctx, "sync complete",
 		"backend", backendCfg.Name,
 		"imported", totalImported,
 		"skipped", totalSkipped,
@@ -223,7 +231,7 @@ func importPage(ctx context.Context, metaDB importer, objects []backend.ListedOb
 	for _, obj := range objects {
 		prefixedKey := opts.BucketName + "/" + obj.Key
 		if opts.DryRun {
-			slog.InfoContext(ctx, "would import", "key", prefixedKey, "size", obj.SizeBytes)
+			synccmdLogger().InfoContext(ctx, "would import", "key", prefixedKey, "size", obj.SizeBytes)
 			imported++
 			bytes += obj.SizeBytes
 			continue

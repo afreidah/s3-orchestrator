@@ -16,6 +16,8 @@ import (
 	"maps"
 	"sync"
 	"time"
+
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -251,7 +253,11 @@ func (u *UsageTracker) FlushUsage(ctx context.Context, store usageFlusher, skip 
 			u.backend.Add(name, FieldAPIRequests, apiReqs)
 			u.backend.Add(name, FieldEgressBytes, egress)
 			u.backend.Add(name, FieldIngressBytes, ingress)
-			slog.ErrorContext(ctx, "failed to flush usage deltas", slog.String("backend", name), "error", err)
+			slog.ErrorContext(ctx, "usage delta flush failed",
+				logfmt.Component("usage_tracker"),
+				slog.String("backend", name),
+				"error", err,
+			)
 			lastErr = err
 		}
 	}

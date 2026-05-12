@@ -27,6 +27,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -90,6 +91,7 @@ func ProvideBackends(i do.Injector) (*BackendsResult, error) {
 			maxSizes[bcfg.Name] = bcfg.MaxObjectSize
 		}
 		slog.InfoContext(context.Background(), "backend initialized",
+			logfmt.Component("di"),
 			"backend", bcfg.Name,
 			"endpoint", bcfg.Endpoint,
 			"bucket", bcfg.Bucket,
@@ -144,6 +146,7 @@ func ProvideEncryptor(i do.Injector) (*encryption.Encryptor, error) {
 		return nil, err
 	}
 	slog.InfoContext(context.Background(), "server-side encryption enabled",
+		logfmt.Component("di"),
 		"chunk_size", cfg.Encryption.ChunkSize,
 		"key_id", provider.KeyID(),
 	)
@@ -184,7 +187,10 @@ func ProvideRedisCounterBackend(i do.Injector) (*counter.RedisCounterBackend, er
 	if err != nil {
 		return nil, err
 	}
-	slog.InfoContext(context.Background(), "Redis shared counters enabled", "address", cfg.Redis.Address)
+	slog.InfoContext(context.Background(), "Redis shared counters enabled",
+		logfmt.Component("di"),
+		"address", cfg.Redis.Address,
+	)
 	return rb, nil
 }
 
@@ -203,6 +209,7 @@ func ProvideObjectCache(i do.Injector) (objcache.ObjectCache, error) {
 		return nil, err
 	}
 	slog.InfoContext(context.Background(), "object data cache enabled",
+		logfmt.Component("di"),
 		"max_size", cfg.Cache.MaxSize,
 		"max_object_size", cfg.Cache.MaxObjectSize,
 		"ttl", cfg.Cache.TTL,

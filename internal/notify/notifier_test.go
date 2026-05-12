@@ -158,6 +158,30 @@ func TestEmit_InsertsNotificationForMatchingEndpoint(t *testing.T) {
 	}
 }
 
+// TestEmit_MarshalFailureLogsAndSkips drives the marshal-failure
+// branch: an event whose Data map carries an unsupported value (a
+// channel) causes json.Marshal to error, which the notifier logs and
+// then returns from without enqueueing anything.
+func TestEmit_MarshalFailureLogsAndSkips(t *testing.T) {
+	ms := &mockOutboxStore{}
+	n := &Notifier{
+		log: slog.Default(),
+		endpoints: []config.NotificationEndpoint{
+			{URL: "https://hook.example.com", Events: []string{"s3:ObjectCreated:Put"}},
+		},
+		store: ms,
+	}
+	// chan values are not JSON-marshalable so json.Marshal returns an error.
+	n.emit(event.Event{
+		Type:    event.ObjectCreatedPut,
+		Subject: "k",
+		Data:    map[string]any{"chan": make(chan int)},
+	})
+	if ms.insertCount != 0 {
+		t.Errorf("expected 0 inserts after marshal failure, got %d", ms.insertCount)
+	}
+}
+
 // TestEmit_SkipsNonMatchingEndpoint verifies the emit skips non matching endpoint contract.
 // Asserts that expected 0 inserts for non-matching event, got.
 func TestEmit_SkipsNonMatchingEndpoint(t *testing.T) {

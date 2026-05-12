@@ -13,9 +13,11 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"log/slog"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -137,6 +139,19 @@ func TestCertReloader_ReloadWarnsOnExpiringSoon(t *testing.T) {
 	if err := cr.Reload(); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
+}
+
+// TestCheckCertExpiry_BadLeafBytes drives the leaf-parse-failed branch:
+// when cert.Leaf is nil and cert.Certificate[0] is not a valid DER
+// payload, x509.ParseCertificate errors and the helper logs the failure
+// rather than panicking.
+func TestCheckCertExpiry_BadLeafBytes(t *testing.T) {
+	t.Parallel()
+	cert := &tls.Certificate{
+		Certificate: [][]byte{[]byte("not a valid DER cert")},
+	}
+	// Should not panic; log goes to slog.Default().
+	checkCertExpiry(slog.Default(), cert, "fixture")
 }
 
 // TestCheckCertExpiry_LongLived verifies the check cert expiry long lived contract.

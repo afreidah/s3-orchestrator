@@ -127,6 +127,66 @@ func TestNew_ErrorsOnNilConfig(t *testing.T) {
 	}
 }
 
+// TestRunFullLifecycle_WithShutdownDelay drives the load-balancer drain
+// branch of the shutdown sequence by setting Server.ShutdownDelay; the
+// log line that announces the wait period only fires when the delay is
+// positive.
+func TestRunFullLifecycle_WithShutdownDelay(t *testing.T) {
+	port := freePort(t)
+	yaml := fmt.Sprintf(`
+server:
+  listen_addr: "127.0.0.1:%d"
+  shutdown_delay: 10ms
+database:
+  driver: sqlite
+  path: ":memory:"
+buckets:
+  - name: test
+    credentials:
+      - access_key_id: ak
+        secret_access_key: sk
+backends:
+  - name: b1
+    endpoint: http://localhost:19000
+    region: us-east-1
+    bucket: bucket1
+    access_key_id: ak
+    secret_access_key: sk
+`, port)
+	cfg := loadCfg(t, yaml)
+
+	rt, err := New(Options{
+		ConfigPath: writeYAML(t, yaml),
+		Mode:       "all",
+		Stdout:     io.Discard,
+	}, cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- rt.Run(ctx) }()
+
+	addr := fmt.Sprintf("http://127.0.0.1:%d", port)
+	for range 50 {
+		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, addr+"/health/ready", nil)
+		resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				break
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case <-errCh:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not exit within 10 seconds")
+	}
+}
+
 // TestRunFullLifecycle starts the daemon, waits for readiness, hits
 // /health, then cancels and asserts a clean shutdown. This is the
 // regression guard for runtime ordering after the decomposition.

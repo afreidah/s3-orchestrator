@@ -11,6 +11,7 @@ package s3api
 
 import (
 	"io"
+	"log/slog"
 	"context"
 	"net/http"
 	"strings"
@@ -20,6 +21,41 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 )
+
+// TestServer_LoggerFallback pins the nil-safe behaviour of logger():
+// tests construct *Server directly without setting log, and the helper
+// must return slog.Default() so the s3api layer never dereferences a
+// nil logger.
+func TestServer_LoggerFallback(t *testing.T) {
+	t.Parallel()
+	if (&Server{}).logger() == nil {
+		t.Fatal("logger() returned nil for zero-value Server")
+	}
+}
+
+// TestServer_LoggerReturnsCustomLog covers the non-nil branch of
+// logger(): a server constructed with a populated log field hands that
+// exact logger back to callers rather than falling through to
+// slog.Default().
+func TestServer_LoggerReturnsCustomLog(t *testing.T) {
+	t.Parallel()
+	custom := slog.Default().With("scope", "test")
+	srv := &Server{log: custom}
+	if srv.logger() != custom {
+		t.Fatal("logger() did not return the assigned log field")
+	}
+}
+
+// TestNewServer_AssignsScopedLogger drives the production constructor
+// so the log-field assignment and the component-scoping call execute
+// under coverage.
+func TestNewServer_AssignsScopedLogger(t *testing.T) {
+	t.Parallel()
+	srv := NewServer(nil, 1024)
+	if srv.log == nil {
+		t.Fatal("NewServer left log field nil")
+	}
+}
 
 // TestSetGetBucketAuth_RoundTrip verifies the set get bucket auth round trip path by exercising auth.NewBucketRegistry, srv.SetBucketAuth, srv.GetBucketAuth.
 func TestSetGetBucketAuth_RoundTrip(t *testing.T) {

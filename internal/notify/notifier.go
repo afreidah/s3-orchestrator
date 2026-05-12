@@ -134,7 +134,7 @@ func (n *Notifier) emit(ev event.Event) { //nolint:gocritic // Event is passed b
 	}
 	payload, err := json.Marshal(ev)
 	if err != nil {
-		slog.ErrorContext(context.Background(), "Failed to marshal notification event", "type", ev.Type, "error", err)
+		n.log.ErrorContext(context.Background(), "notification event marshal failed", "type", ev.Type, "error", err)
 		return
 	}
 	n.fanOutToEndpoints(&ev, payload)

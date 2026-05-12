@@ -14,6 +14,7 @@
 package config
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -21,7 +22,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
-	"context"
+
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 )
 
 // -------------------------------------------------------------------------
@@ -190,8 +192,12 @@ func (c *Config) validateQuotaReplicationCombo() []error {
 		errs = append(errs, ErrUnlimitedNeedsReplication)
 	}
 	if c.Replication.Factor <= 1 {
-		slog.WarnContext(context.Background(), "replication.factor <= 1 with multiple backends provides no redundancy  -  losing a backend will cause permanent data loss for objects stored exclusively on it",
-			"backends", len(c.Backends), "replication_factor", c.Replication.Factor)
+		slog.WarnContext(context.Background(),
+			"replication.factor <= 1 with multiple backends - losing a backend will cause permanent data loss for objects stored exclusively on it",
+			logfmt.Component("config"),
+			"backends", len(c.Backends),
+			"replication_factor", c.Replication.Factor,
+		)
 	}
 	return errs
 }

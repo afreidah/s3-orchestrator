@@ -15,6 +15,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
@@ -50,6 +51,17 @@ type backendCore struct {
 	drainMgr         drainChecker                     // owned by drain.Manager; wired post-construction
 	metricsCollector *metrics.Collector               // Prometheus metric recording and gauge refresh
 	admissionSem     chan struct{}                    // shared concurrency semaphore (nil = unlimited)
+	log              *slog.Logger                     // scoped to logfmt.Component("backend_manager") (or test default)
+}
+
+// Log returns the component-scoped logger used by proxy-package helpers
+// that operate on this core; falls back to slog.Default() when the core
+// was constructed in a test that did not populate the field.
+func (c *backendCore) Log() *slog.Logger {
+	if c.log == nil {
+		return slog.Default()
+	}
+	return c.log
 }
 
 // -------------------------------------------------------------------------

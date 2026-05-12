@@ -215,6 +215,63 @@ func TestVaultKeyProvider_RenewToken(t *testing.T) {
 	}
 }
 
+// TestVaultKeyProvider_RenewTokenLogsErrorOnFailure points the renewal
+// loop at a server that always 500s on /v1/auth/token/renew-self so the
+// renewToken call inside the tick errors and the "failed to renew Vault
+// token" log fires.
+func TestVaultKeyProvider_RenewTokenLogsErrorOnFailure(t *testing.T) {
+	t.Parallel()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/auth/token/renew-self", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+
+	p, err := NewVaultKeyProvider(&config.VaultTransitConfig{
+		Address:       ts.URL,
+		Token:         "initial-token",
+		KeyName:       "test-key",
+		MountPath:     "transit",
+		RenewInterval: 30 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewVaultKeyProvider: %v", err)
+	}
+	t.Cleanup(p.Close)
+	time.Sleep(100 * time.Millisecond) // wait for at least one failing tick
+}
+
+// TestVaultKeyProvider_TokenFileReloadLogsError points the reload loop
+// at a token file that gets deleted between ticks, causing readTokenFile
+// to return an os.IsNotExist error and the renewal loop to log
+// "failed to reload Vault token file".
+func TestVaultKeyProvider_TokenFileReloadLogsError(t *testing.T) {
+	t.Parallel()
+	ts := newFakeVault(t)
+
+	tokenFile := filepath.Join(t.TempDir(), "vault-token")
+	if err := os.WriteFile(tokenFile, []byte("tok\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p, err := NewVaultKeyProvider(&config.VaultTransitConfig{
+		Address:       ts.URL,
+		TokenFile:     tokenFile,
+		KeyName:       "test-key",
+		MountPath:     "transit",
+		RenewInterval: 30 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewVaultKeyProvider: %v", err)
+	}
+	t.Cleanup(p.Close)
+	// Remove the token file so the next reload tick errors.
+	if err := os.Remove(tokenFile); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+}
+
 // TestVaultKeyProvider_TokenFile verifies the vault key provider token file contract.
 // Asserts that NewVaultKeyProvider:.
 func TestVaultKeyProvider_TokenFile(t *testing.T) {
