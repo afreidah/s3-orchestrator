@@ -31,6 +31,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/internalkey"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
+	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/bufpool"
@@ -72,7 +73,7 @@ func (mp *MultipartManager) CompleteMultipartUpload(ctx context.Context, bucket,
 		return "", err
 	}
 	if !acquired {
-		span.SetStatus(codes.Error, "another CompleteMultipartUpload in flight")
+		observe.MarkSpanError(span, "another CompleteMultipartUpload in flight")
 		return "", &core.S3Error{
 			StatusCode: 409,
 			Code:       "OperationAborted",
@@ -103,7 +104,7 @@ func (mp *MultipartManager) completeMultipartUploadLocked(
 	}
 	be, err := mp.GetBackend(mu.BackendName)
 	if err != nil {
-		span.SetStatus(codes.Error, err.Error())
+		observe.RecordSpanError(span, err)
 		return "", err
 	}
 
@@ -129,7 +130,7 @@ func (mp *MultipartManager) completeMultipartUploadLocked(
 	if err != nil {
 		pipeCancel()
 		pr.Close()
-		span.SetStatus(codes.Error, err.Error())
+		observe.RecordSpanError(span, err)
 		return "", fmt.Errorf("failed to upload final object: %w", err)
 	}
 	pr.Close()
@@ -166,9 +167,7 @@ func (mp *MultipartManager) completeMultipartUploadLocked(
 			},
 		})
 	}
-	if mp.objectCache != nil {
-		mp.objectCache.Invalidate(mu.ObjectKey)
-	}
+	mp.invalidateCache(mu.ObjectKey)
 
 	span.SetStatus(codes.Ok, "")
 	return etag, nil
@@ -231,7 +230,7 @@ func (mp *MultipartManager) buildAssembledUpload(
 	}
 	out, ciphertextSize, enc, err := mp.encryptWithUploadDEK(ctx, mu, pr, totalPlaintextSize)
 	if err != nil {
-		span.SetStatus(codes.Error, err.Error())
+		observe.RecordSpanError(span, err)
 		return nil, 0, nil, fmt.Errorf("encrypt final object: %w", err)
 	}
 	return out, ciphertextSize, enc, nil

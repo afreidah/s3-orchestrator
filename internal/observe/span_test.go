@@ -16,6 +16,11 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 // TestRun_HappyPath confirms the closure result and a nil error flow back to
@@ -128,6 +133,71 @@ func TestRunErr_PropagatesError(t *testing.T) {
 		return want
 	}); !errors.Is(err, want) {
 		t.Fatalf("got %v, want %v", err, want)
+	}
+}
+
+// newSpanRecorder installs an in-memory span recorder as the global
+// tracer provider and returns it. Tests use the recorded spans to assert
+// status code, status description, and event count after invoking the
+// helpers.
+func newSpanRecorder(t *testing.T) *tracetest.SpanRecorder {
+	t.Helper()
+	sr := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
+	prev := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	t.Cleanup(func() { otel.SetTracerProvider(prev) })
+	return sr
+}
+
+// TestRecordSpanError sets Error status with the err message and records
+// the error as a span event.
+func TestRecordSpanError(t *testing.T) {
+	sr := newSpanRecorder(t)
+	_, span := otel.Tracer("test").Start(context.Background(), "op")
+	want := errors.New("backend offline")
+
+	RecordSpanError(span, want)
+	span.End()
+
+	ended := sr.Ended()
+	if len(ended) != 1 {
+		t.Fatalf("got %d spans, want 1", len(ended))
+	}
+	st := ended[0].Status()
+	if st.Code != codes.Error {
+		t.Errorf("status = %v, want Error", st.Code)
+	}
+	if st.Description != want.Error() {
+		t.Errorf("description = %q, want %q", st.Description, want.Error())
+	}
+	if got := len(ended[0].Events()); got != 1 {
+		t.Errorf("event count = %d, want 1 (RecordError)", got)
+	}
+}
+
+// TestMarkSpanError sets Error status with a literal message and
+// records no error event.
+func TestMarkSpanError(t *testing.T) {
+	sr := newSpanRecorder(t)
+	_, span := otel.Tracer("test").Start(context.Background(), "op")
+
+	MarkSpanError(span, "object not found")
+	span.End()
+
+	ended := sr.Ended()
+	if len(ended) != 1 {
+		t.Fatalf("got %d spans, want 1", len(ended))
+	}
+	st := ended[0].Status()
+	if st.Code != codes.Error {
+		t.Errorf("status = %v, want Error", st.Code)
+	}
+	if st.Description != "object not found" {
+		t.Errorf("description = %q, want %q", st.Description, "object not found")
+	}
+	if got := len(ended[0].Events()); got != 0 {
+		t.Errorf("event count = %d, want 0 (no RecordError)", got)
 	}
 }
 
