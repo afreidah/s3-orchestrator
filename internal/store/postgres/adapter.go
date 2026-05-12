@@ -286,12 +286,10 @@ func (a *pgTxAdapter) GetCleanupQueueRow(ctx context.Context, id int64) (core.Cl
 		Reason:      row.Reason,
 		SizeBytes:   row.SizeBytes,
 		Attempts:    row.Attempts,
+		LastError:   derefStr(row.LastError),
 	}
 	if row.CreatedAt.Valid {
 		out.CreatedAt = row.CreatedAt.Time
-	}
-	if row.LastError != nil {
-		out.LastError = *row.LastError
 	}
 	return out, nil
 }
@@ -300,11 +298,7 @@ func (a *pgTxAdapter) GetCleanupQueueRow(ctx context.Context, id int64) (core.Cl
 // reconciled here because the underlying object is still on the backend;
 // orphan_bytes accounting stays intentionally untouched on the move.
 func (a *pgTxAdapter) InsertCleanupDLQ(ctx context.Context, row *core.CleanupQueueRow) error {
-	var lastErr *string
-	if row.LastError != "" {
-		s := row.LastError
-		lastErr = &s
-	}
+	lastErr := strPtr(row.LastError)
 	firstEnqueuedAt := pgtype.Timestamptz{Valid: false}
 	if !row.CreatedAt.IsZero() {
 		firstEnqueuedAt = pgtype.Timestamptz{Time: row.CreatedAt, Valid: true}

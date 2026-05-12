@@ -274,15 +274,9 @@ func (a *sqliteTxAdapter) LockObjectOnBackend(ctx context.Context, objectKey, ba
 		SizeBytes:     size,
 		Encrypted:     encrypted != 0,
 		EncryptionKey: encryptionKey,
-	}
-	if keyID.Valid {
-		loc.KeyID = keyID.String
-	}
-	if plaintextSize.Valid {
-		loc.PlaintextSize = plaintextSize.Int64
-	}
-	if contentHash.Valid {
-		loc.ContentHash = contentHash.String
+		KeyID:         nullStringValue(keyID),
+		PlaintextSize: nullInt64Value(plaintextSize),
+		ContentHash:   nullStringValue(contentHash),
 	}
 	return loc, true, nil
 }
@@ -407,9 +401,7 @@ func (a *sqliteTxAdapter) GetCleanupQueueRow(ctx context.Context, id int64) (cor
 	if t, perr := time.Parse(time.RFC3339Nano, createdAt); perr == nil {
 		row.CreatedAt = t
 	}
-	if lastErr.Valid {
-		row.LastError = lastErr.String
-	}
+	row.LastError = nullStringValue(lastErr)
 	return row, nil
 }
 

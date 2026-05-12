@@ -97,30 +97,23 @@ func (s *Store) PromotePending(ctx context.Context, p *core.PendingObject) (core
 // Pointer-typed columns stay nil when their string/int64 source is empty
 // so the database stores SQL NULL rather than the zero value.
 func pendingInsertParams(p *core.PendingObject) db.InsertPendingObjectParams {
-	params := db.InsertPendingObjectParams{
+	return db.InsertPendingObjectParams{
 		IntentID:      p.IntentID,
 		ObjectKey:     p.ObjectKey,
 		BackendName:   p.BackendName,
 		SizeBytes:     p.SizeBytes,
 		Encrypted:     p.Encrypted,
 		EncryptionKey: p.EncryptionKey,
+		KeyID:         strPtr(p.KeyID),
+		PlaintextSize: int64Ptr(p.PlaintextSize),
+		ContentHash:   strPtr(p.ContentHash),
 	}
-	if p.KeyID != "" {
-		params.KeyID = &p.KeyID
-	}
-	if p.PlaintextSize != 0 {
-		params.PlaintextSize = &p.PlaintextSize
-	}
-	if p.ContentHash != "" {
-		params.ContentHash = &p.ContentHash
-	}
-	return params
 }
 
 // pendingFromRow maps a sqlc PendingObject row onto the package type,
 // dereferencing nullable columns to their zero value when SQL NULL.
 func pendingFromRow(row *db.PendingObject) core.PendingObject {
-	p := core.PendingObject{
+	return core.PendingObject{
 		IntentID:      row.IntentID,
 		ObjectKey:     row.ObjectKey,
 		BackendName:   row.BackendName,
@@ -128,15 +121,8 @@ func pendingFromRow(row *db.PendingObject) core.PendingObject {
 		Encrypted:     row.Encrypted,
 		EncryptionKey: row.EncryptionKey,
 		CreatedAt:     row.CreatedAt.Time,
+		KeyID:         derefStr(row.KeyID),
+		PlaintextSize: derefInt64(row.PlaintextSize),
+		ContentHash:   derefStr(row.ContentHash),
 	}
-	if row.KeyID != nil {
-		p.KeyID = *row.KeyID
-	}
-	if row.PlaintextSize != nil {
-		p.PlaintextSize = *row.PlaintextSize
-	}
-	if row.ContentHash != nil {
-		p.ContentHash = *row.ContentHash
-	}
-	return p
 }
