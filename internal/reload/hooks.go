@@ -15,11 +15,13 @@ package reload
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"github.com/samber/do/v2"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/di"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
@@ -28,6 +30,14 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/ui"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
+
+// resolutionError renders an Optional[T] Failed outcome into the error
+// shape reload hooks surface to the coordinator. The label is the human
+// name of the subsystem so the resulting message reads naturally in
+// admin status output.
+func resolutionError(label string, err error) error {
+	return fmt.Errorf("%s resolution failed: %w", label, err)
+}
 
 // defaultHooks returns the standard set of reload hooks the runtime
 // wires in. Order matches the historical applyReload sequence so
@@ -81,11 +91,14 @@ type bucketAuthHook struct {
 func (*bucketAuthHook) Name() string                                  { return "bucket_credentials" }
 func (*bucketAuthHook) Check(_, _ *config.Config) error               { return nil }
 func (h *bucketAuthHook) Apply(_ context.Context, _, newCfg *config.Config) (HookStatus, error) {
-	srv := optional[*s3api.Server](h.inj)
-	if srv == nil {
+	res := di.Optional[*s3api.Server](h.inj)
+	if res.Failed() {
+		return HookFailed, resolutionError("S3 server", res.Err)
+	}
+	if res.Value == nil {
 		return HookSkipped, nil
 	}
-	srv.SetBucketAuth(auth.NewBucketRegistry(newCfg.Buckets))
+	res.Value.SetBucketAuth(auth.NewBucketRegistry(newCfg.Buckets))
 	return HookApplied, nil
 }
 
@@ -106,11 +119,14 @@ func (h *rateLimitHook) Apply(_ context.Context, _, newCfg *config.Config) (Hook
 	if !newCfg.RateLimit.Enabled {
 		return HookSkipped, nil
 	}
-	rl := optional[*s3api.RateLimiter](h.inj)
-	if rl == nil {
+	res := di.Optional[*s3api.RateLimiter](h.inj)
+	if res.Failed() {
+		return HookFailed, resolutionError("rate limiter", res.Err)
+	}
+	if res.Value == nil {
 		return HookSkipped, nil
 	}
-	rl.UpdateLimits(newCfg.RateLimit.RequestsPerSec, newCfg.RateLimit.Burst)
+	res.Value.UpdateLimits(newCfg.RateLimit.RequestsPerSec, newCfg.RateLimit.Burst)
 	return HookApplied, nil
 }
 
@@ -126,11 +142,14 @@ type quotaSyncHook struct {
 func (*quotaSyncHook) Name() string                                  { return "quota_sync" }
 func (*quotaSyncHook) Check(_, _ *config.Config) error               { return nil }
 func (h *quotaSyncHook) Apply(ctx context.Context, _, newCfg *config.Config) (HookStatus, error) {
-	admin := optional[core.LifecycleAdmin](h.inj)
-	if admin == nil {
+	res := di.Optional[core.LifecycleAdmin](h.inj)
+	if res.Failed() {
+		return HookFailed, resolutionError("lifecycle admin", res.Err)
+	}
+	if res.Value == nil {
 		return HookSkipped, nil
 	}
-	if err := admin.SyncQuotaLimits(ctx, newCfg.Backends); err != nil {
+	if err := res.Value.SyncQuotaLimits(ctx, newCfg.Backends); err != nil {
 		return HookFailed, err
 	}
 	return HookApplied, nil
@@ -149,8 +168,11 @@ type usageLimitsHook struct {
 func (*usageLimitsHook) Name() string                                  { return "usage_limits" }
 func (*usageLimitsHook) Check(_, _ *config.Config) error               { return nil }
 func (h *usageLimitsHook) Apply(_ context.Context, _, newCfg *config.Config) (HookStatus, error) {
-	manager := optional[*proxy.BackendManager](h.inj)
-	if manager == nil {
+	res := di.Optional[*proxy.BackendManager](h.inj)
+	if res.Failed() {
+		return HookFailed, resolutionError("backend manager", res.Err)
+	}
+	if res.Value == nil {
 		return HookSkipped, nil
 	}
 	limits := make(map[string]core.UsageLimits, len(newCfg.Backends))
@@ -162,7 +184,7 @@ func (h *usageLimitsHook) Apply(_ context.Context, _, newCfg *config.Config) (Ho
 			IngressByteLimit: bcfg.IngressByteLimit,
 		}
 	}
-	manager.UpdateUsageLimits(limits)
+	res.Value.UpdateUsageLimits(limits)
 	return HookApplied, nil
 }
 
@@ -200,21 +222,37 @@ type workerConfigsHook struct {
 func (*workerConfigsHook) Name() string                                  { return "worker_configs" }
 func (*workerConfigsHook) Check(_, _ *config.Config) error               { return nil }
 func (h *workerConfigsHook) Apply(_ context.Context, _, newCfg *config.Config) (HookStatus, error) {
+	rbRes := di.Optional[*worker.Rebalancer](h.inj)
+	if rbRes.Failed() {
+		return HookFailed, resolutionError("rebalancer", rbRes.Err)
+	}
+	rpRes := di.Optional[*worker.Replicator](h.inj)
+	if rpRes.Failed() {
+		return HookFailed, resolutionError("replicator", rpRes.Err)
+	}
+	orRes := di.Optional[*worker.OverReplicationCleaner](h.inj)
+	if orRes.Failed() {
+		return HookFailed, resolutionError("over-replication cleaner", orRes.Err)
+	}
+	scRes := di.Optional[*worker.Scrubber](h.inj)
+	if scRes.Failed() {
+		return HookFailed, resolutionError("scrubber", scRes.Err)
+	}
 	applied := 0
-	if rb := optional[*worker.Rebalancer](h.inj); rb != nil {
-		rb.SetConfig(&newCfg.Rebalance)
+	if rbRes.Value != nil {
+		rbRes.Value.SetConfig(&newCfg.Rebalance)
 		applied++
 	}
-	if rp := optional[*worker.Replicator](h.inj); rp != nil {
-		rp.SetConfig(&newCfg.Replication)
+	if rpRes.Value != nil {
+		rpRes.Value.SetConfig(&newCfg.Replication)
 		applied++
 	}
-	if or := optional[*worker.OverReplicationCleaner](h.inj); or != nil {
-		or.SetConfig(&newCfg.Replication)
+	if orRes.Value != nil {
+		orRes.Value.SetConfig(&newCfg.Replication)
 		applied++
 	}
-	if sc := optional[*worker.Scrubber](h.inj); sc != nil {
-		sc.SetConfig(&newCfg.Integrity)
+	if scRes.Value != nil {
+		scRes.Value.SetConfig(&newCfg.Integrity)
 		applied++
 	}
 	if applied == 0 {
@@ -239,14 +277,17 @@ type managerConfigHook struct {
 func (*managerConfigHook) Name() string                                  { return "manager_config" }
 func (*managerConfigHook) Check(_, _ *config.Config) error               { return nil }
 func (h *managerConfigHook) Apply(ctx context.Context, _, newCfg *config.Config) (HookStatus, error) {
-	manager := optional[*proxy.BackendManager](h.inj)
-	if manager == nil {
+	res := di.Optional[*proxy.BackendManager](h.inj)
+	if res.Failed() {
+		return HookFailed, resolutionError("backend manager", res.Err)
+	}
+	if res.Value == nil {
 		return HookSkipped, nil
 	}
-	manager.SetUsageFlushConfig(&newCfg.UsageFlush)
-	manager.SetLifecycleConfig(&newCfg.Lifecycle)
-	manager.SetIntegrityConfig(&newCfg.Integrity)
-	if err := manager.UpdateQuotaMetrics(ctx); err != nil {
+	res.Value.SetUsageFlushConfig(&newCfg.UsageFlush)
+	res.Value.SetLifecycleConfig(&newCfg.Lifecycle)
+	res.Value.SetIntegrityConfig(&newCfg.Integrity)
+	if err := res.Value.UpdateQuotaMetrics(ctx); err != nil {
 		return HookFailed, err
 	}
 	return HookApplied, nil
@@ -264,10 +305,13 @@ type uiHandlerHook struct {
 func (*uiHandlerHook) Name() string                                  { return "ui_handler" }
 func (*uiHandlerHook) Check(_, _ *config.Config) error               { return nil }
 func (h *uiHandlerHook) Apply(_ context.Context, _, newCfg *config.Config) (HookStatus, error) {
-	handler := optional[*ui.Handler](h.inj)
-	if handler == nil {
+	res := di.Optional[*ui.Handler](h.inj)
+	if res.Failed() {
+		return HookFailed, resolutionError("UI handler", res.Err)
+	}
+	if res.Value == nil {
 		return HookSkipped, nil
 	}
-	handler.UpdateConfig(newCfg)
+	res.Value.UpdateConfig(newCfg)
 	return HookApplied, nil
 }

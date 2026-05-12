@@ -774,3 +774,35 @@ func TestProvideReconciler_PartialDeps(t *testing.T) {
 		t.Error("expected error after seeding only config")
 	}
 }
+
+// TestProvideAdminHandler_ReconcilerFailedLogsAndContinues drives the
+// Failed branch added by the Optional[T] migration: overriding the
+// Reconciler provider with one that errors must not abort admin handler
+// construction; the handler is wired with a nil reconciler and the
+// failure is logged at startup.
+func TestProvideAdminHandler_ReconcilerFailedLogsAndContinues(t *testing.T) {
+	t.Parallel()
+	cfg := happyPathConfig(t.TempDir())
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("config validation: %v", err)
+	}
+	inj := NewInjector(cfg, "all", new(slog.LevelVar), telemetry.NewLogBuffer())
+	t.Cleanup(func() { _ = inj.Shutdown() })
+
+	if err := WireManager(inj); err != nil {
+		t.Fatalf("WireManager: %v", err)
+	}
+
+	boom := errors.New("reconciler construction failed")
+	do.Override(inj, func(do.Injector) (*worker.Reconciler, error) {
+		return nil, boom
+	})
+
+	h, err := ProvideAdminHandler(inj)
+	if err != nil {
+		t.Fatalf("ProvideAdminHandler: %v (expected to swallow Failed optional)", err)
+	}
+	if h == nil {
+		t.Fatal("ProvideAdminHandler returned nil")
+	}
+}
