@@ -31,6 +31,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/util/ioutilx"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -508,7 +509,7 @@ func (o *ObjectManager) getObjectAttempt(ctx context.Context, req *getAttemptReq
 
 	o.maybeWrapIntegrityReader(ctx, r, loc, req.key, req.beName, req.backend)
 
-	r.Body = bodyWithCancel(r.Body, bcancel)
+	r.Body = ioutilx.WithCancel(r.Body, bcancel)
 	req.once.Do(func() { *req.result = r })
 	if *req.result != r {
 		_ = r.Body.Close()
