@@ -3,18 +3,19 @@
 //
 // Author: Alex Freidah
 //
-// Watches for SIGHUP, reloads the configuration file, and fans the new config
-// out to every hot-reloadable subsystem. Reload is best-effort per subsystem:
-// the cert reloader, bucket auth registry, rate limiter, quota sync, usage
-// limits, log level, worker configs, manager config sections, and UI handler
-// each apply independently. Non-reloadable field changes are logged with a
-// warning so operators know a restart is required.
+// Watches for SIGHUP, loads the replacement configuration, runs a Check
+// pass across every Hook (any error aborts before mutation), then runs
+// the Apply pass collecting per-hook outcomes. A monotonic generation
+// counter advances on every successful Apply pass (full or partial) so
+// operators can correlate reload events with the version each component
+// is running. The most recent ReloadResult is held atomically and
+// exposed via LastResult() for admin status surfaces.
 // -------------------------------------------------------------------------------
 
-// Package reload owns SIGHUP-driven configuration reload. It is the single
-// place that knows which config fields are hot-reloadable, in what order
-// hooks fire, and which failures degrade the daemon vs which are logged
-// and ignored.
+// Package reload owns SIGHUP-driven configuration reload. The
+// coordinator runs a two-phase Check / Apply pass over a sequence of
+// hooks, swaps the atomic config on success, and reports full /
+// partial / validation / load outcomes via ReloadResult.
 package reload
 
 import (
@@ -23,43 +24,52 @@ import (
 	"os"
 	"os/signal"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/samber/do/v2"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/proxy"
-	"github.com/afreidah/s3-orchestrator/internal/store/core"
-	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
-	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
-	"github.com/afreidah/s3-orchestrator/internal/transport/ui"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
-	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
+
+// applyTimeout caps the Apply phase so a hook that hangs on an outbound
+// call (quota sync, quota metrics refresh) cannot stall the SIGHUP
+// goroutine. The Check phase is in-memory and not timeboxed.
+const applyTimeout = 10 * time.Second
 
 // Deps groups everything the coordinator mutates or reads on reload.
 type Deps struct {
 	// ConfigPath is the on-disk YAML the SIGHUP handler reloads.
 	ConfigPath string
-	// Injector is consulted for optional subsystems (rate limiter, UI
-	// handler) that may not be registered in every mode.
+	// Injector is consulted by hooks for optional subsystems (rate
+	// limiter, UI handler) that may not be registered in every mode.
 	Injector do.Injector
 	// CfgPtr is the atomic config the rest of the process reads. The
-	// coordinator atomically swaps in the new config after all hooks fire.
+	// coordinator swaps in the new config after a successful Apply pass.
 	CfgPtr *syncutil.AtomicConfig[config.Config]
-	// LogLevel is updated when Server.LogLevel changes.
+	// LogLevel is updated by the log_level hook when Server.LogLevel
+	// changes.
 	LogLevel *slog.LevelVar
 	// CertReloader rotates the TLS certificate; nil when TLS is off.
 	CertReloader *httputil.CertReloader
+	// Hooks overrides the default hook set. Production callers leave
+	// it nil; tests use this to inject fakes.
+	Hooks []Hook
 }
 
-// Coordinator owns the SIGHUP goroutine and the apply sequence. Construct
-// it with New, then call Watch to start the signal listener. Shutdown
-// stops the goroutine.
+// Coordinator owns the SIGHUP goroutine, the hook sequence, and the
+// last-result snapshot. Construct it with New, then call Watch to start
+// the signal listener. Shutdown stops the goroutine. LastResult is
+// concurrent-safe.
 type Coordinator struct {
-	deps Deps
+	deps  Deps
+	hooks []Hook
+
+	generation atomic.Int64
+	lastResult atomic.Pointer[ReloadResult]
 
 	hupChan chan os.Signal
 	hupDone chan struct{}
@@ -68,10 +78,16 @@ type Coordinator struct {
 	stopped bool
 }
 
-// New returns a Coordinator with the given deps. Watch must be called to
-// start observing SIGHUP.
-func New(deps Deps) *Coordinator {
-	return &Coordinator{deps: deps}
+// New returns a Coordinator with the given deps. Watch must be called
+// to start observing SIGHUP. Deps is passed by pointer because it
+// embeds a slog.LevelVar pointer and the runtime needs to mutate the
+// underlying state through it.
+func New(deps *Deps) *Coordinator {
+	hooks := deps.Hooks
+	if hooks == nil {
+		hooks = defaultHooks(deps.Injector, deps.CertReloader, deps.LogLevel)
+	}
+	return &Coordinator{deps: *deps, hooks: hooks}
 }
 
 // Watch installs a SIGHUP handler and spawns the reload goroutine. The
@@ -89,8 +105,8 @@ func (c *Coordinator) Watch() {
 	}()
 }
 
-// Shutdown stops the SIGHUP goroutine and waits for it to exit. Safe to
-// call multiple times.
+// Shutdown stops the SIGHUP goroutine and waits for it to exit. Safe
+// to call multiple times.
 func (c *Coordinator) Shutdown() {
 	c.mu.Lock()
 	if c.stopped {
@@ -105,167 +121,163 @@ func (c *Coordinator) Shutdown() {
 	<-c.hupDone
 }
 
-// Reload performs one full reload pass. Exposed so tests can trigger a
-// reload without sending a real signal. Load failures abort the reload
-// before any atomic state has been touched.
-func (c *Coordinator) Reload() {
+// LastResult returns the most recent reload result, or nil if no
+// reload has been attempted yet.
+func (c *Coordinator) LastResult() *ReloadResult {
+	return c.lastResult.Load()
+}
+
+// Generation returns the monotonic generation counter. Starts at 0;
+// advances on every successful Apply pass (full or partial).
+func (c *Coordinator) Generation() int64 {
+	return c.generation.Load()
+}
+
+// Reload performs one full reload pass. Exposed so tests and admin
+// surfaces can trigger a reload without sending a real signal.
+// Returns the result of the pass; the same value is stored on the
+// coordinator and reachable via LastResult.
+func (c *Coordinator) Reload() *ReloadResult {
+	started := time.Now()
 	ctx := context.Background()
-	slog.InfoContext(ctx, "SIGHUP received, reloading configuration", "path", c.deps.ConfigPath)
+	currentGen := c.generation.Load()
+
+	slog.InfoContext(ctx, "SIGHUP received, reloading configuration",
+		"path", c.deps.ConfigPath, "current_generation", currentGen)
 
 	newCfg, err := config.LoadConfig(c.deps.ConfigPath)
 	if err != nil {
-		slog.ErrorContext(ctx, "config reload aborted, keeping current config", "error", err)
-		return
+		return c.finalize(ctx, &ReloadResult{
+			Generation: currentGen,
+			Status:     ReloadLoadFailed,
+			LoadError:  err.Error(),
+			StartedAt:  started,
+		})
+	}
+
+	result := &ReloadResult{
+		Generation:      currentGen,
+		StartedAt:       started,
+		RequiresRestart: config.NonReloadableFieldsChanged(c.deps.CfgPtr.Load(), newCfg),
 	}
 
 	currentCfg := c.deps.CfgPtr.Load()
-	for _, w := range config.NonReloadableFieldsChanged(currentCfg, newCfg) {
-		slog.WarnContext(ctx, "config field changed but requires restart to take effect", "field", w)
-	}
 
-	c.apply(ctx, newCfg)
-	c.deps.CfgPtr.Store(newCfg)
-	slog.InfoContext(ctx, "configuration reload complete")
-}
-
-// apply runs every reload hook. Each hook is best-effort: failures log
-// at error or warn level but do not abort subsequent hooks. The order
-// matches the historical serve.applyReload sequence so behaviour is
-// preserved.
-func (c *Coordinator) apply(ctx context.Context, newCfg *config.Config) {
-	c.applyCertReload(ctx)
-	c.applyBucketAuth(ctx, newCfg)
-	c.applyRateLimit(newCfg)
-
-	reloadCtx, reloadCancel := context.WithTimeout(ctx, 10*time.Second)
-	defer reloadCancel()
-
-	c.applyQuotaSync(reloadCtx, newCfg)
-
-	manager := optional[*proxy.BackendManager](c.deps.Injector)
-	c.applyUsageLimits(manager, newCfg)
-	c.applyLogLevel(newCfg)
-	c.applyWorkerConfigs(newCfg)
-	c.applyManagerConfig(reloadCtx, manager, newCfg)
-	c.applyUIHandler(newCfg)
-}
-
-// applyCertReload rotates the TLS certificate if a reloader is wired.
-func (c *Coordinator) applyCertReload(ctx context.Context) {
-	if c.deps.CertReloader == nil {
-		return
-	}
-	if err := c.deps.CertReloader.Reload(); err != nil {
-		slog.ErrorContext(ctx, "failed to reload TLS certificate", "error", err)
-	}
-}
-
-// applyBucketAuth swaps the bucket credentials registry on the S3 server.
-func (c *Coordinator) applyBucketAuth(ctx context.Context, newCfg *config.Config) {
-	srv := optional[*s3api.Server](c.deps.Injector)
-	if srv == nil {
-		return
-	}
-	srv.SetBucketAuth(auth.NewBucketRegistry(newCfg.Buckets))
-	slog.InfoContext(ctx, "reloaded bucket credentials", "buckets", len(newCfg.Buckets))
-}
-
-// applyRateLimit pushes the new rate-limit knobs onto the limiter when
-// the feature is currently enabled. A disabled limiter is intentionally
-// left untouched - flipping enabled across reload requires a restart.
-func (c *Coordinator) applyRateLimit(newCfg *config.Config) {
-	if !newCfg.RateLimit.Enabled {
-		return
-	}
-	rl := optional[*s3api.RateLimiter](c.deps.Injector)
-	if rl == nil {
-		return
-	}
-	rl.UpdateLimits(newCfg.RateLimit.RequestsPerSec, newCfg.RateLimit.Burst)
-}
-
-// applyQuotaSync re-runs SyncQuotaLimits against the new backend list.
-func (c *Coordinator) applyQuotaSync(ctx context.Context, newCfg *config.Config) {
-	admin := optional[core.LifecycleAdmin](c.deps.Injector)
-	if admin == nil {
-		return
-	}
-	if err := admin.SyncQuotaLimits(ctx, newCfg.Backends); err != nil {
-		slog.ErrorContext(ctx, "failed to sync quota limits on reload", "error", err)
-	}
-}
-
-// applyUsageLimits rebuilds the in-memory per-backend usage limit map
-// from the new config and pushes it onto the manager.
-func (c *Coordinator) applyUsageLimits(manager *proxy.BackendManager, newCfg *config.Config) {
-	if manager == nil {
-		return
-	}
-	limits := make(map[string]core.UsageLimits, len(newCfg.Backends))
-	for i := range newCfg.Backends {
-		bcfg := &newCfg.Backends[i]
-		limits[bcfg.Name] = core.UsageLimits{
-			APIRequestLimit:  bcfg.APIRequestLimit,
-			EgressByteLimit:  bcfg.EgressByteLimit,
-			IngressByteLimit: bcfg.IngressByteLimit,
+	// --- Check pass: any error aborts before any Apply runs ---
+	for _, h := range c.hooks {
+		if err := h.Check(currentCfg, newCfg); err != nil {
+			result.Status = ReloadValidationFailed
+			result.Outcomes = append(result.Outcomes, HookOutcome{
+				Name:   h.Name(),
+				Status: HookFailed,
+				Error:  err.Error(),
+			})
+			return c.finalize(ctx, result)
 		}
 	}
-	manager.UpdateUsageLimits(limits)
+
+	// --- Apply pass: best-effort, collect outcomes ---
+	applyCtx, cancel := context.WithTimeout(ctx, applyTimeout)
+	defer cancel()
+
+	failed := 0
+	for _, h := range c.hooks {
+		status, err := h.Apply(applyCtx, currentCfg, newCfg)
+		outcome := HookOutcome{Name: h.Name(), Status: status}
+		if err != nil {
+			outcome.Status = HookFailed
+			outcome.Error = err.Error()
+			failed++
+		}
+		result.Outcomes = append(result.Outcomes, outcome)
+	}
+
+	// Mutate the live atomic config and advance the generation only
+	// once Apply has run end-to-end. Generation advances even on
+	// PartialApplied so operators can tell that state moved.
+	c.deps.CfgPtr.Store(newCfg)
+	newGen := c.generation.Add(1)
+	result.Generation = newGen
+
+	if failed > 0 {
+		result.Status = ReloadPartialApplied
+	} else {
+		result.Status = ReloadFullSuccess
+	}
+	return c.finalize(ctx, result)
 }
 
-// applyLogLevel updates the slog level pointer the runtime threaded in.
-func (c *Coordinator) applyLogLevel(newCfg *config.Config) {
-	if c.deps.LogLevel == nil {
-		return
+// finalize stamps EndedAt, logs the outcome at the appropriate level,
+// stores the result, and returns it.
+func (c *Coordinator) finalize(ctx context.Context, r *ReloadResult) *ReloadResult {
+	r.EndedAt = time.Now()
+	c.lastResult.Store(r)
+
+	for _, field := range r.RequiresRestart {
+		slog.WarnContext(ctx, "config field changed but requires restart to take effect",
+			"field", field, "generation", r.Generation)
 	}
-	c.deps.LogLevel.Set(config.ParseLogLevel(newCfg.Server.LogLevel))
+
+	switch r.Status {
+	case ReloadFullSuccess:
+		slog.InfoContext(ctx, "configuration reload complete",
+			"generation", r.Generation,
+			"duration", r.EndedAt.Sub(r.StartedAt),
+		)
+	case ReloadPartialApplied:
+		slog.WarnContext(ctx, "configuration reload partially applied",
+			"generation", r.Generation,
+			"failed_hooks", failedHookNames(r),
+			"duration", r.EndedAt.Sub(r.StartedAt),
+		)
+	case ReloadValidationFailed:
+		slog.ErrorContext(ctx, "configuration reload validation failed, keeping current config",
+			"generation", r.Generation,
+			"failed_hook", firstFailedHookName(r),
+		)
+	case ReloadLoadFailed:
+		slog.ErrorContext(ctx, "config reload aborted, keeping current config",
+			"generation", r.Generation,
+			"error", r.LoadError,
+		)
+	}
+	return r
 }
 
-// applyManagerConfig updates the per-section AtomicConfig fields on
-// the manager and refreshes the Prometheus quota gauges.
-func (c *Coordinator) applyManagerConfig(ctx context.Context, manager *proxy.BackendManager, newCfg *config.Config) {
-	if manager == nil {
-		return
+// failedHookNames returns the names of hooks whose outcome is Failed.
+func failedHookNames(r *ReloadResult) []string {
+	var names []string
+	for _, o := range r.Outcomes {
+		if o.Status == HookFailed {
+			names = append(names, o.Name)
+		}
 	}
-	manager.SetUsageFlushConfig(&newCfg.UsageFlush)
-	manager.SetLifecycleConfig(&newCfg.Lifecycle)
-	manager.SetIntegrityConfig(&newCfg.Integrity)
-	if err := manager.UpdateQuotaMetrics(ctx); err != nil {
-		slog.WarnContext(ctx, "failed to update quota metrics after reload", "error", err)
-	}
+	return names
 }
 
-// applyUIHandler swaps the UI handler's config pointer when the UI is
-// registered. UI-disabled deployments silently skip.
-func (c *Coordinator) applyUIHandler(newCfg *config.Config) {
-	h := optional[*ui.Handler](c.deps.Injector)
-	if h == nil {
-		return
+// firstFailedHookName returns the name of the first failed hook in the
+// outcomes slice. Used in the validation-failure log line where there
+// is exactly one failure.
+func firstFailedHookName(r *ReloadResult) string {
+	for _, o := range r.Outcomes {
+		if o.Status == HookFailed {
+			return o.Name
+		}
 	}
-	h.UpdateConfig(newCfg)
+	return ""
 }
 
-// applyWorkerConfigs pushes new Rebalance/Replication/Integrity configs onto
-// each worker. Workers that did not get constructed (e.g. api-only mode)
-// silently skip.
-func (c *Coordinator) applyWorkerConfigs(newCfg *config.Config) {
-	if rb := optional[*worker.Rebalancer](c.deps.Injector); rb != nil {
-		rb.SetConfig(&newCfg.Rebalance)
-	}
-	if rp := optional[*worker.Replicator](c.deps.Injector); rp != nil {
-		rp.SetConfig(&newCfg.Replication)
-	}
-	if or := optional[*worker.OverReplicationCleaner](c.deps.Injector); or != nil {
-		or.SetConfig(&newCfg.Replication)
-	}
-	if sc := optional[*worker.Scrubber](c.deps.Injector); sc != nil {
-		sc.SetConfig(&newCfg.Integrity)
-	}
-}
-
-// optional resolves a DI type, returning the zero value if not registered.
-// Identical contract to the serve-package invokeOptional helper.
+// optional resolves a DI type, returning the zero value if not
+// registered. Hooks use this so an absent optional subsystem yields a
+// Skipped outcome instead of a Failed one. A genuine construction
+// error returns the zero value here too; the hook reports Skipped
+// because Apply cannot proceed. This matches the historical
+// invokeOptional contract.
 func optional[T any](inj do.Injector) T {
+	if inj == nil {
+		var zero T
+		return zero
+	}
 	v, _ := do.Invoke[T](inj)
 	return v
 }
