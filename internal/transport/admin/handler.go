@@ -18,7 +18,6 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -39,6 +38,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
 // BackendOps is the narrow surface of *proxy.BackendManager that the admin
@@ -157,7 +157,7 @@ func (h *Handler) requireToken(next http.HandlerFunc) http.HandlerFunc {
 		token := r.Header.Get("X-Admin-Token")
 		if subtle.ConstantTimeCompare([]byte(token), []byte(h.token)) != 1 {
 			h.log.WarnContext(r.Context(), "unauthorized request", "path", r.URL.Path, "client_addr", r.RemoteAddr)
-			errorJSON(w, http.StatusUnauthorized, "unauthorized")
+			httputil.WriteJSONError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 		next(w, r)
@@ -204,7 +204,7 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 		backends = append(backends, bs)
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	httputil.WriteJSON(w, http.StatusOK, map[string]any{
 		"db_healthy":   h.dbHealthy(),
 		"backends":     backends,
 		"usage_period": data.UsagePeriod,
@@ -215,7 +215,7 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleObjectLocations(w http.ResponseWriter, r *http.Request) {
 	key := r.URL.Query().Get("key")
 	if key == "" {
-		errorJSON(w, http.StatusBadRequest, "key parameter is required")
+		httputil.WriteJSONError(w, http.StatusBadRequest, "key parameter is required")
 		return
 	}
 
@@ -225,7 +225,7 @@ func (h *Handler) handleObjectLocations(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"key": key, "locations": locations})
+	httputil.WriteJSON(w, http.StatusOK, map[string]any{"key": key, "locations": locations})
 }
 
 // handleCleanupQueue returns cleanup queue depth and pending items.
@@ -242,7 +242,7 @@ func (h *Handler) handleCleanupQueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"depth": depth, "items": items})
+	httputil.WriteJSON(w, http.StatusOK, map[string]any{"depth": depth, "items": items})
 }
 
 // handleUsageFlush forces a flush of usage counters to the database.
@@ -252,7 +252,7 @@ func (h *Handler) handleUsageFlush(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"status": "flushed"})
+	httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "flushed"})
 }
 
 // cacheDisabledReason is the body reason emitted when an admin cache
@@ -264,7 +264,7 @@ const cacheDisabledReason = "object data cache is not enabled"
 // /admin/api/cache/* handler when h.objectCache is nil. Centralised so
 // the shape ("status: disabled", reason) cannot drift between routes.
 func (h *Handler) writeCacheDisabled(w http.ResponseWriter) {
-	writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+	httputil.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{
 		"status": "disabled",
 		"reason": cacheDisabledReason,
 	})
@@ -284,7 +284,7 @@ func (h *Handler) handleCacheFlush(w http.ResponseWriter, r *http.Request) {
 	cleared := h.objectCache.Clear()
 	telemetry.CacheFlushTotal.Inc()
 	h.log.InfoContext(r.Context(), "admin cache flush", "entries_cleared", cleared)
-	writeJSON(w, http.StatusOK, map[string]any{
+	httputil.WriteJSON(w, http.StatusOK, map[string]any{
 		"status":          "flushed",
 		"entries_cleared": cleared,
 	})
@@ -299,7 +299,7 @@ func (h *Handler) handleCacheStats(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	stats := h.objectCache.Stats()
-	writeJSON(w, http.StatusOK, map[string]any{
+	httputil.WriteJSON(w, http.StatusOK, map[string]any{
 		"entries":    stats.Entries,
 		"size_bytes": stats.SizeBytes,
 		"max_bytes":  stats.MaxBytes,
@@ -317,7 +317,7 @@ func (h *Handler) handleCacheInvalidateKey(w http.ResponseWriter, r *http.Reques
 	}
 	key := r.PathValue("key")
 	if key == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{
+		httputil.WriteJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "key is required",
 		})
 		return
@@ -325,7 +325,7 @@ func (h *Handler) handleCacheInvalidateKey(w http.ResponseWriter, r *http.Reques
 	h.objectCache.Invalidate(key)
 	telemetry.CacheAdminInvalidationsTotal.Inc()
 	h.log.InfoContext(r.Context(), "admin cache invalidate", "key", key)
-	writeJSON(w, http.StatusOK, map[string]any{
+	httputil.WriteJSON(w, http.StatusOK, map[string]any{
 		"status": "invalidated",
 		"key":    key,
 	})
@@ -343,7 +343,7 @@ func (h *Handler) handleCacheInvalidatePrefix(w http.ResponseWriter, r *http.Req
 	}
 	prefix := r.URL.Query().Get("prefix")
 	if prefix == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{
+		httputil.WriteJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "prefix query parameter is required (use POST /admin/api/cache/flush to drop every entry)",
 		})
 		return
@@ -352,7 +352,7 @@ func (h *Handler) handleCacheInvalidatePrefix(w http.ResponseWriter, r *http.Req
 	telemetry.CacheAdminInvalidationsTotal.Add(float64(dropped))
 	h.log.InfoContext(r.Context(), "admin cache invalidate prefix",
 		"prefix", prefix, "entries_dropped", dropped)
-	writeJSON(w, http.StatusOK, map[string]any{
+	httputil.WriteJSON(w, http.StatusOK, map[string]any{
 		"status":          "invalidated",
 		"prefix":          prefix,
 		"entries_dropped": dropped,
@@ -397,7 +397,7 @@ func (h *Handler) handleReplicate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if res.Status == "skipped" {
-		writeJSON(w, http.StatusOK, map[string]any{
+		httputil.WriteJSON(w, http.StatusOK, map[string]any{
 			"status":         "skipped",
 			"copies_created": 0,
 			"reason":         res.Reason,
@@ -405,14 +405,14 @@ func (h *Handler) handleReplicate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "copies_created": res.CopiesCreated})
+	httputil.WriteJSON(w, http.StatusOK, map[string]any{"status": "ok", "copies_created": res.CopiesCreated})
 }
 
 // handleOverReplicationStatus returns the count of over-replicated objects.
 func (h *Handler) handleOverReplicationStatus(w http.ResponseWriter, r *http.Request) {
 	rcfg := h.overRep.Config()
 	if rcfg == nil || rcfg.Factor <= 1 {
-		writeJSON(w, http.StatusOK, map[string]any{
+		httputil.WriteJSON(w, http.StatusOK, map[string]any{
 			"factor":  0,
 			"pending": 0,
 			"status":  "replication not configured",
@@ -427,7 +427,7 @@ func (h *Handler) handleOverReplicationStatus(w http.ResponseWriter, r *http.Req
 	}
 
 	telemetry.OverReplicationPending.Set(float64(count))
-	writeJSON(w, http.StatusOK, map[string]any{
+	httputil.WriteJSON(w, http.StatusOK, map[string]any{
 		"factor":  rcfg.Factor,
 		"pending": count,
 	})
@@ -437,7 +437,7 @@ func (h *Handler) handleOverReplicationStatus(w http.ResponseWriter, r *http.Req
 func (h *Handler) handleOverReplicationClean(w http.ResponseWriter, r *http.Request) {
 	rcfg := h.overRep.Config()
 	if rcfg == nil || rcfg.Factor <= 1 {
-		writeJSON(w, http.StatusOK, map[string]any{
+		httputil.WriteJSON(w, http.StatusOK, map[string]any{
 			"status":         "skipped",
 			"copies_removed": 0,
 			"reason":         "replication not configured or factor <= 1",
@@ -466,28 +466,26 @@ func (h *Handler) handleOverReplicationClean(w http.ResponseWriter, r *http.Requ
 		h.log.WarnContext(r.Context(), "failed to update quota metrics after admin over-replication cleanup", "error", err)
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "copies_removed": removed})
+	httputil.WriteJSON(w, http.StatusOK, map[string]any{"status": "ok", "copies_removed": removed})
 }
 
 // handleLogLevel gets or sets the runtime log level.
 func (h *Handler) handleLogLevel(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
-		writeJSON(w, http.StatusOK, map[string]string{"level": strings.ToLower(h.logLevel.Level().String())})
+		httputil.WriteJSON(w, http.StatusOK, map[string]string{"level": strings.ToLower(h.logLevel.Level().String())})
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
 		Level string `json:"level"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		errorJSON(w, http.StatusBadRequest, "invalid JSON body")
+	if !httputil.DecodeJSONBody(w, r, &req, 1<<20) {
 		return
 	}
 	parsed := config.ParseLogLevel(req.Level)
 	h.logLevel.Set(parsed)
 	h.log.InfoContext(r.Context(), "log level changed via admin API", "level", req.Level)
-	writeJSON(w, http.StatusOK, map[string]string{"level": strings.ToLower(parsed.String())})
+	httputil.WriteJSON(w, http.StatusOK, map[string]string{"level": strings.ToLower(parsed.String())})
 }
 
 // -------------------------------------------------------------------------
@@ -499,10 +497,10 @@ func (h *Handler) handleStartDrain(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if err := h.drain.StartDrain(r.Context(), name); err != nil {
 		h.log.ErrorContext(r.Context(), "drain start failed", slog.String("backend", name), "error", err)
-		errorJSON(w, http.StatusBadRequest, errDrainOperationFailed)
+		httputil.WriteJSONError(w, http.StatusBadRequest, errDrainOperationFailed)
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]string{"status": "drain started", "backend": name})
+	httputil.WriteJSON(w, http.StatusAccepted, map[string]string{"status": "drain started", "backend": name})
 }
 
 // handleDrainProgress returns the current state of a drain operation.
@@ -511,10 +509,10 @@ func (h *Handler) handleDrainProgress(w http.ResponseWriter, r *http.Request) {
 	progress, err := h.drain.GetDrainProgress(r.Context(), name)
 	if err != nil {
 		h.log.ErrorContext(r.Context(), "drain progress failed", slog.String("backend", name), "error", err)
-		errorJSON(w, http.StatusInternalServerError, errDrainOperationFailed)
+		httputil.WriteJSONError(w, http.StatusInternalServerError, errDrainOperationFailed)
 		return
 	}
-	writeJSON(w, http.StatusOK, progress)
+	httputil.WriteJSON(w, http.StatusOK, progress)
 }
 
 // handleCancelDrain cancels an active drain operation.
@@ -522,10 +520,10 @@ func (h *Handler) handleCancelDrain(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if err := h.drain.CancelDrain(name); err != nil {
 		h.log.ErrorContext(r.Context(), "drain cancel failed", slog.String("backend", name), "error", err)
-		errorJSON(w, http.StatusBadRequest, errDrainOperationFailed)
+		httputil.WriteJSONError(w, http.StatusBadRequest, errDrainOperationFailed)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "drain cancelled", "backend": name})
+	httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "drain cancelled", "backend": name})
 }
 
 // removeConfirmTTL is how long a purge confirmation token is valid.
@@ -548,37 +546,37 @@ func (h *Handler) handleRemoveBackend(w http.ResponseWriter, r *http.Request) {
 	if !purge {
 		if err := h.drain.RemoveBackend(r.Context(), name, false); err != nil {
 			h.log.ErrorContext(r.Context(), "remove backend failed", slog.String("backend", name), "error", err)
-			errorJSON(w, http.StatusBadRequest, "remove failed")
+			httputil.WriteJSONError(w, http.StatusBadRequest, "remove failed")
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]string{"status": "backend removed", "backend": name})
+		httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "backend removed", "backend": name})
 		return
 	}
 
 	// Purge phase 2: validate token and execute
 	if confirmToken != "" {
 		if !h.validRemoveToken(confirmToken, name) {
-			errorJSON(w, http.StatusForbidden, "invalid or expired confirmation token")
+			httputil.WriteJSONError(w, http.StatusForbidden, "invalid or expired confirmation token")
 			return
 		}
 		if err := h.drain.RemoveBackend(r.Context(), name, true); err != nil {
 			h.log.ErrorContext(r.Context(), "purge backend failed", slog.String("backend", name), "error", err)
-			errorJSON(w, http.StatusBadRequest, "purge failed")
+			httputil.WriteJSONError(w, http.StatusBadRequest, "purge failed")
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]string{"status": "backend purged", "backend": name})
+		httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "backend purged", "backend": name})
 		return
 	}
 
 	// Purge phase 1: preview what will be destroyed, return confirmation token
 	objectCount, totalBytes, err := h.lifecycle.BackendObjectStats(r.Context(), name)
 	if err != nil {
-		errorJSON(w, http.StatusBadRequest, "backend not found or stats unavailable")
+		httputil.WriteJSONError(w, http.StatusBadRequest, "backend not found or stats unavailable")
 		return
 	}
 
 	token := h.generateRemoveToken(name)
-	writeJSON(w, http.StatusOK, map[string]any{
+	httputil.WriteJSON(w, http.StatusOK, map[string]any{
 		"status":        "confirmation required",
 		"backend":       name,
 		"object_count":  objectCount,
@@ -641,16 +639,18 @@ func (h *Handler) validRemoveToken(token, expectedName string) bool {
 // for unwrapping.
 func (h *Handler) handleRotateEncryptionKey(w http.ResponseWriter, r *http.Request) {
 	if h.encryptor == nil || h.encAdmin == nil {
-		errorJSON(w, http.StatusBadRequest, errEncryptionNotEnabled)
+		httputil.WriteJSONError(w, http.StatusBadRequest, errEncryptionNotEnabled)
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
 		OldKeyID string `json:"old_key_id"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.OldKeyID == "" {
-		errorJSON(w, http.StatusBadRequest, "old_key_id is required")
+	if !httputil.DecodeJSONBody(w, r, &req, 1<<20) {
+		return
+	}
+	if req.OldKeyID == "" {
+		httputil.WriteJSONError(w, http.StatusBadRequest, "old_key_id is required")
 		return
 	}
 
@@ -662,7 +662,7 @@ func (h *Handler) handleRotateEncryptionKey(w http.ResponseWriter, r *http.Reque
 		locs, err := h.encAdmin.ListEncryptedLocations(ctx, req.OldKeyID, batchSize, offset)
 		if err != nil {
 			h.log.ErrorContext(ctx, "key rotation list failed", "error", err)
-			errorJSON(w, http.StatusInternalServerError, "failed to list encrypted objects")
+			httputil.WriteJSONError(w, http.StatusInternalServerError, "failed to list encrypted objects")
 			return
 		}
 		if len(locs) == 0 {
@@ -678,7 +678,7 @@ func (h *Handler) handleRotateEncryptionKey(w http.ResponseWriter, r *http.Reque
 	}
 
 	h.log.InfoContext(ctx, "key rotation complete", "rotated", rotated, "failed", failed, "total", total)
-	writeJSON(w, http.StatusOK, map[string]any{
+	httputil.WriteJSON(w, http.StatusOK, map[string]any{
 		"status":  "complete",
 		"rotated": rotated,
 		"failed":  failed,
@@ -852,10 +852,10 @@ func (h *Handler) EncryptExisting(ctx context.Context) BulkRewriteResult {
 func (h *Handler) handleEncryptExisting(w http.ResponseWriter, r *http.Request) {
 	res := h.EncryptExisting(r.Context())
 	if res.Status == "skipped" {
-		errorJSON(w, http.StatusBadRequest, res.Reason)
+		httputil.WriteJSONError(w, http.StatusBadRequest, res.Reason)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	httputil.WriteJSON(w, http.StatusOK, map[string]any{
 		"status":    "complete",
 		"encrypted": res.Success,
 		"failed":    res.Failed,
@@ -901,10 +901,10 @@ func (h *Handler) handleDecryptExisting(w http.ResponseWriter, r *http.Request) 
 		},
 	})
 	if res.Status == "skipped" {
-		errorJSON(w, http.StatusBadRequest, res.Reason)
+		httputil.WriteJSONError(w, http.StatusBadRequest, res.Reason)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	httputil.WriteJSON(w, http.StatusOK, map[string]any{
 		"status":    "complete",
 		"decrypted": res.Success,
 		"failed":    res.Failed,
@@ -1042,10 +1042,10 @@ func (h *Handler) handleScrub(w http.ResponseWriter, r *http.Request) {
 
 	res := h.Scrub(r.Context(), batchSize)
 	if res.Status == "skipped" {
-		writeJSON(w, http.StatusOK, map[string]any{"status": "skipped", "reason": res.Reason})
+		httputil.WriteJSON(w, http.StatusOK, map[string]any{"status": "skipped", "reason": res.Reason})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	httputil.WriteJSON(w, http.StatusOK, map[string]any{
 		"status":  "ok",
 		"checked": res.Checked,
 		"failed":  res.Failed,
@@ -1096,10 +1096,10 @@ func (h *Handler) handleBackfillChecksums(w http.ResponseWriter, r *http.Request
 
 	res := h.BackfillChecksums(r.Context(), batchSize)
 	if res.Status == "skipped" {
-		writeJSON(w, http.StatusOK, map[string]any{"status": "skipped", "reason": res.Reason})
+		httputil.WriteJSON(w, http.StatusOK, map[string]any{"status": "skipped", "reason": res.Reason})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "processed": res.Processed})
+	httputil.WriteJSON(w, http.StatusOK, map[string]any{"status": "ok", "processed": res.Processed})
 }
 
 // handleReconcile triggers an on-demand reconciliation. Lists objects on
@@ -1109,7 +1109,7 @@ func (h *Handler) handleReconcile(w http.ResponseWriter, r *http.Request) {
 	backendName := r.URL.Query().Get("backend")
 
 	if h.reconciler == nil {
-		errorJSON(w, http.StatusServiceUnavailable, "reconciler not configured")
+		httputil.WriteJSONError(w, http.StatusServiceUnavailable, "reconciler not configured")
 		return
 	}
 
@@ -1118,7 +1118,7 @@ func (h *Handler) handleReconcile(w http.ResponseWriter, r *http.Request) {
 	result, err := h.reconciler.Reconcile(r.Context(), backendName)
 	if err != nil {
 		h.log.ErrorContext(r.Context(), "reconcile failed", "error", err)
-		errorJSON(w, http.StatusInternalServerError, err.Error())
+		httputil.WriteJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -1126,7 +1126,7 @@ func (h *Handler) handleReconcile(w http.ResponseWriter, r *http.Request) {
 		"imported", result.Imported, "removed", result.Removed,
 		"backends_scanned", result.BackendsScanned)
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	httputil.WriteJSON(w, http.StatusOK, map[string]any{
 		"status":           "ok",
 		"imported":         result.Imported,
 		"removed":          result.Removed,
@@ -1138,22 +1138,6 @@ func (h *Handler) handleReconcile(w http.ResponseWriter, r *http.Request) {
 // HELPERS
 // -------------------------------------------------------------------------
 
-// writeJSON writes a JSON response with the given status code.
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	if err := json.NewEncoder(w).Encode(v); err != nil {
-		slog.Error("failed to encode JSON response", "error", err) //nolint:sloglint,gosec // standalone helper, no request context; err is internal encoder failure, not user-controlled
-	}
-}
-
-// errorJSON writes a JSON error envelope ({"error": msg}) with the given
-// status code. Use directly for client-side errors (4xx, 503) where the
-// underlying cause is not interesting to log.
-func errorJSON(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]string{"error": msg})
-}
-
 // internalError logs the underlying error against the operator-facing
 // message and writes a 500 JSON response. Use for unexpected server-side
 // failures where the original err is recorded but never returned to the
@@ -1162,5 +1146,5 @@ func errorJSON(w http.ResponseWriter, status int, msg string) {
 func (h *Handler) internalError(ctx context.Context, w http.ResponseWriter, msg string, err error, attrs ...any) {
 	args := append([]any{"error", err}, attrs...)
 	h.log.ErrorContext(ctx, msg, args...)
-	errorJSON(w, http.StatusInternalServerError, msg)
+	httputil.WriteJSONError(w, http.StatusInternalServerError, msg)
 }

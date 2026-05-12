@@ -55,15 +55,13 @@ const (
 	csrfHeaderName    = "X-CSRF-Token"
 	sessionTTL        = 24 * time.Hour
 
-	contentTypeJSON       = "application/json"
-	contentTypeHTML       = "text/html; charset=utf-8"
-	headerContentType     = "Content-Type"
-	loginPath             = "/login"
-	errMethodNotAllowed   = "method not allowed"
-	errInvalidRequestBody = "invalid request body"
-	errKeyRequired        = "key is required"
-	errLoginRenderFailed  = "failed to render login page"
-	opCleanExcess         = "clean-excess"
+	contentTypeJSON      = "application/json"
+	contentTypeHTML      = "text/html; charset=utf-8"
+	headerContentType    = "Content-Type"
+	loginPath            = "/login"
+	errKeyRequired       = "key is required"
+	errLoginRenderFailed = "failed to render login page"
+	opCleanExcess        = "clean-excess"
 )
 
 // BackendOps is the narrow surface of *proxy.BackendManager that the UI
