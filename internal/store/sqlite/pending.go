@@ -94,15 +94,9 @@ func (s *Store) GetStalePending(ctx context.Context, olderThan time.Time, limit 
 		}
 		p.Encrypted = encrypted != 0
 		p.EncryptionKey = encKey
-		if keyID.Valid {
-			p.KeyID = keyID.String
-		}
-		if plaintextSize.Valid {
-			p.PlaintextSize = plaintextSize.Int64
-		}
-		if contentHash.Valid {
-			p.ContentHash = contentHash.String
-		}
+		p.KeyID = nullStringValue(keyID)
+		p.PlaintextSize = nullInt64Value(plaintextSize)
+		p.ContentHash = nullStringValue(contentHash)
 		if t, err := time.Parse(time.RFC3339Nano, createdAt); err == nil {
 			p.CreatedAt = t
 		}
@@ -158,23 +152,3 @@ func (s *Store) PromotePending(ctx context.Context, p *core.PendingObject) (core
 	return core.PromotePending(ctx, s, p)
 }
 
-// -------------------------------------------------------------------------
-// NULL HELPERS
-// -------------------------------------------------------------------------
-
-// nullableString returns sql.NullString{Valid:false} when s is empty so the
-// pending row stores SQL NULL rather than the zero value.
-func nullableString(s string) sql.NullString {
-	if s == "" {
-		return sql.NullString{}
-	}
-	return sql.NullString{String: s, Valid: true}
-}
-
-// nullableInt64 returns sql.NullInt64{Valid:false} when n is zero.
-func nullableInt64(n int64) sql.NullInt64 {
-	if n == 0 {
-		return sql.NullInt64{}
-	}
-	return sql.NullInt64{Int64: n, Valid: true}
-}
