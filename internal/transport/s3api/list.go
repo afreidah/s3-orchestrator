@@ -24,11 +24,21 @@ import (
 )
 
 // xmlContent represents a single object in an S3 ListBucketResult response.
+// ETag and StorageClass are required by the S3 REST API spec; aws-sdk-go-v2
+// models ETag as *string and dereferences it without nil-checks, so omitting
+// the element crashes clients like aptly mid-list.
 type xmlContent struct {
 	Key          string `xml:"Key"`
 	Size         int64  `xml:"Size"`
 	LastModified string `xml:"LastModified"`
+	ETag         string `xml:"ETag"`
+	StorageClass string `xml:"StorageClass"`
 }
+
+// listStorageClass is the storage class reported for every object in a
+// ListObjects response. S3 requires a value per Contents entry and
+// STANDARD is the universal default.
+const listStorageClass = "STANDARD"
 
 // xmlCommonPrefix represents a common prefix (directory) entry in a
 // ListBucketResult response.
@@ -73,10 +83,16 @@ type xmlListResultV2 struct {
 func buildListContents(objects []core.ObjectLocation, prefixes []string, prefixLen int) ([]xmlContent, []xmlCommonPrefix) {
 	contents := make([]xmlContent, 0, len(objects))
 	for i := range objects {
+		etag := `""`
+		if objects[i].ContentHash != "" {
+			etag = `"` + objects[i].ContentHash + `"`
+		}
 		contents = append(contents, xmlContent{
 			Key:          objects[i].ObjectKey[prefixLen:],
 			Size:         objects[i].SizeBytes,
 			LastModified: objects[i].CreatedAt.UTC().Format(time.RFC3339),
+			ETag:         etag,
+			StorageClass: listStorageClass,
 		})
 	}
 	commonPrefixes := make([]xmlCommonPrefix, 0, len(prefixes))
