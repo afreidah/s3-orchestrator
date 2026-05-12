@@ -104,16 +104,16 @@ func (mp *MultipartManager) abortByMultipartRow(ctx context.Context, mu *core.Mu
 func (mp *MultipartManager) CleanupStaleMultipartUploads(ctx context.Context, olderThan time.Duration) {
 	uploads, err := mp.stores.GetStaleMultipartUploads(ctx, olderThan)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to get stale multipart uploads", "error", err)
+		mp.Log().ErrorContext(ctx, "failed to get stale multipart uploads", "error", err)
 		return
 	}
 
 	cleaned := 0
 	for i := range uploads {
 		mu := &uploads[i]
-		slog.InfoContext(ctx, "cleaning up stale multipart upload", "upload_id", mu.UploadID, "key", mu.ObjectKey)
+		mp.Log().InfoContext(ctx, "cleaning up stale multipart upload", "upload_id", mu.UploadID, "key", mu.ObjectKey)
 		if err := mp.abortByMultipartRow(ctx, mu); err != nil {
-			slog.ErrorContext(ctx, "failed to clean up upload", "upload_id", mu.UploadID, "error", err)
+			mp.Log().ErrorContext(ctx, "failed to clean up upload", "upload_id", mu.UploadID, "error", err)
 		} else {
 			cleaned++
 		}
@@ -132,15 +132,15 @@ func (mp *MultipartManager) CleanupStaleMultipartUploads(ctx context.Context, ol
 func (mp *MultipartManager) AbortMultipartUploadsOnBackend(ctx context.Context, backendName string) {
 	uploads, err := mp.stores.GetMultipartUploadsByBackend(ctx, backendName)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to list multipart uploads", "backend", backendName, "error", err)
+		mp.Log().ErrorContext(ctx, "failed to list multipart uploads", "backend", backendName, "error", err)
 		return
 	}
 
 	for i := range uploads {
 		mu := &uploads[i]
-		slog.InfoContext(ctx, "aborting multipart upload", "upload_id", mu.UploadID, "key", mu.ObjectKey)
+		mp.Log().InfoContext(ctx, "aborting multipart upload", "upload_id", mu.UploadID, "key", mu.ObjectKey)
 		if err := mp.abortByMultipartRow(ctx, mu); err != nil {
-			slog.ErrorContext(ctx, "failed to abort multipart upload",
+			mp.Log().ErrorContext(ctx, "failed to abort multipart upload",
 				"upload_id", mu.UploadID, "error", err)
 		}
 	}

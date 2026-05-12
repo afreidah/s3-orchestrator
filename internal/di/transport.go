@@ -24,6 +24,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/notify"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
@@ -72,6 +73,7 @@ func ProvideRateLimiter(i do.Injector) (*s3api.RateLimiter, error) {
 	}
 	rl := s3api.NewRateLimiter(cfg.RateLimit)
 	slog.InfoContext(context.Background(), "rate limiting enabled",
+		logfmt.Component("di"),
 		"requests_per_sec", cfg.RateLimit.RequestsPerSec,
 		"burst", cfg.RateLimit.Burst,
 	)
@@ -204,6 +206,7 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 	if recRes.Failed() {
 		slog.WarnContext(context.Background(),
 			"reconciler resolution failed; admin reconcile endpoint will be inert",
+			logfmt.Component("di"),
 			"error", recRes.Err)
 	}
 	return admin.New(&admin.Deps{

@@ -22,6 +22,7 @@ package proxy
 
 import (
 	"context"
+	"log/slog"
 	"errors"
 	"testing"
 
@@ -617,7 +618,7 @@ func TestImportHandler_CountsCreatedNotSkipped(t *testing.T) {
 	importer := func(_ context.Context, _, _ string, _ int64) (bool, error) {
 		return false, nil // already exists; should NOT be counted
 	}
-	h := importHandler("b1", importer, res)
+	h := importHandler(slog.Default(), "b1", importer, res)
 	if err := h(context.Background(), e("vb/foo", 1)); err != nil {
 		t.Fatalf("handler: %v", err)
 	}
@@ -634,7 +635,7 @@ func TestImportHandler_SwallowsErrorButContinues(t *testing.T) {
 	importer := func(_ context.Context, _, _ string, _ int64) (bool, error) {
 		return false, errors.New("transient")
 	}
-	h := importHandler("b1", importer, res)
+	h := importHandler(slog.Default(), "b1", importer, res)
 	if err := h(context.Background(), e("vb/foo", 1)); err != nil {
 		t.Fatalf("handler should swallow error, got %v", err)
 	}
@@ -655,7 +656,7 @@ func TestDeleteHandler_CountsAndContinues(t *testing.T) {
 		}
 		return nil
 	}
-	h := deleteHandler("b1", deleter, res)
+	h := deleteHandler(slog.Default(), "b1", deleter, res)
 
 	// First call: error swallowed, counter not bumped.
 	_ = h(context.Background(), "vb/x")

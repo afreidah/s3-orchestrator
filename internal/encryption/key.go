@@ -22,6 +22,7 @@ import (
 	"os"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 )
 
@@ -177,8 +178,10 @@ func (p *MultiKeyProvider) UnwrapDEK(ctx context.Context, wrappedDEK []byte, key
 		return prev.UnwrapDEK(ctx, wrappedDEK, keyID)
 	}
 	telemetry.EncryptionUnknownKeyIDTotal.Inc()
-	slog.ErrorContext(ctx, "unknown encryption keyID  -  object cannot be decrypted",
-		"unknown_key_id", keyID, "primary_key_id", p.primary.KeyID())
+	slog.ErrorContext(ctx, "unknown encryption keyID - object cannot be decrypted",
+		logfmt.Component("encryption"),
+		"unknown_key_id", keyID,
+		"primary_key_id", p.primary.KeyID())
 	return nil, fmt.Errorf("unknown encryption key ID %q: ensure previous_keys includes all rotation keys", keyID)
 }
 

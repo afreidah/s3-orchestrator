@@ -51,8 +51,20 @@ var httpSpanName = map[string]string{
 type Server struct {
 	Manager       *proxy.BackendManager
 	bucketAuth    syncutil.AtomicConfig[auth.BucketRegistry]
-	MaxObjectSize int64     // Max upload body size in bytes
-	startedAt     time.Time // Stable timestamp for ListBuckets CreationDate
+	MaxObjectSize int64        // Max upload body size in bytes
+	startedAt     time.Time    // Stable timestamp for ListBuckets CreationDate
+	log           *slog.Logger // scoped to logfmt.Component("s3_server")
+}
+
+// logger returns the component-scoped logger, falling back to
+// slog.Default() when the server was constructed by a test that did
+// not set the log field. The handler chain still applies (ErrAttrHandler
+// + Component scoping comes from the runtime default).
+func (s *Server) logger() *slog.Logger {
+	if s.log == nil {
+		return slog.Default()
+	}
+	return s.log
 }
 
 // NewServer creates a Server with a stable start timestamp.
@@ -61,6 +73,7 @@ func NewServer(manager *proxy.BackendManager, maxObjectSize int64) *Server {
 		Manager:       manager,
 		MaxObjectSize: maxObjectSize,
 		startedAt:     time.Now(),
+		log:           slog.Default().With(logfmt.Component("s3_server")),
 	}
 }
 
@@ -248,7 +261,13 @@ func (s *Server) rejectInvalidPath(ctx context.Context, w http.ResponseWriter, r
 // does not match the bucket the credentials authorize.
 func (s *Server) rejectBucketMismatch(ctx context.Context, w http.ResponseWriter, r *http.Request, method string, start time.Time, authorizedBucket, bucket string) {
 	s.recordRequest(method, http.StatusForbidden, start, 0, 0)
-	slog.WarnContext(ctx, "S3 bucket mismatch", "method", method, "path", r.URL.Path, "client_addr", r.RemoteAddr, "authorized", authorizedBucket, "requested", bucket)
+	s.logger().WarnContext(ctx, "bucket mismatch",
+		"method", method,
+		"path", r.URL.Path,
+		"client_addr", r.RemoteAddr,
+		"authorized", authorizedBucket,
+		"requested", bucket,
+	)
 	audit.Log(ctx, "s3.BucketMismatch",
 		slog.String("method", method),
 		slog.String("path", r.URL.Path),

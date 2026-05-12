@@ -21,6 +21,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/di"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
@@ -44,13 +45,17 @@ func registerAdminHandler(mux *http.ServeMux, inj do.Injector, cfg *config.Confi
 	if rlRes.Failed() {
 		slog.WarnContext(context.Background(),
 			"rate limiter resolution failed; admin API will run without rate limiting",
+			logfmt.Component("httpserver"),
 			"error", rlRes.Err)
 	}
 	if rl := rlRes.Value; rl != nil {
 		adminHTTP = rl.Middleware(adminHTTP)
 	}
 	mux.Handle("/admin/", adminHTTP)
-	slog.InfoContext(context.Background(), "admin API enabled", "path", "/admin/api/")
+	slog.InfoContext(context.Background(), "admin API enabled",
+		logfmt.Component("httpserver"),
+		"path", "/admin/api/",
+	)
 	return nil
 }
 
@@ -64,7 +69,10 @@ func registerUIHandler(mux *http.ServeMux, inj do.Injector, cfg *config.Config) 
 		return fmt.Errorf("initialize UI handler: %w", err)
 	}
 	h.Register(mux, cfg.UI.Path)
-	slog.InfoContext(context.Background(), "web UI enabled", "path", cfg.UI.Path)
+	slog.InfoContext(context.Background(), "web UI enabled",
+		logfmt.Component("httpserver"),
+		"path", cfg.UI.Path,
+	)
 	return nil
 }
 
@@ -88,6 +96,7 @@ func registerS3Handler(mux *http.ServeMux, inj do.Injector, cfg *config.Config) 
 	if rlRes.Failed() {
 		slog.WarnContext(context.Background(),
 			"rate limiter resolution failed; S3 surface will run without rate limiting",
+			logfmt.Component("httpserver"),
 			"error", rlRes.Err)
 	}
 	if rl := rlRes.Value; rl != nil {

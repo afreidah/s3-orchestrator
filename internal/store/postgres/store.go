@@ -32,6 +32,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	db "github.com/afreidah/s3-orchestrator/internal/store/postgres/sqlc"
 )
@@ -126,6 +127,7 @@ func (s *Store) RunMigrations(ctx context.Context) error {
 	}
 	for _, r := range results {
 		slog.InfoContext(ctx, "migration applied",
+			logfmt.Component("postgres_store"),
 			"version", r.Source.Version,
 			"duration", r.Duration)
 	}

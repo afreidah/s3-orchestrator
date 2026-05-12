@@ -390,6 +390,77 @@ func TestConfigureMetrics_SeparateListener(t *testing.T) {
 	}
 }
 
+// TestServer_ShutdownLogsErrors drives the Shutdown method's
+// error-logging branches: both main and metrics http.Server.Shutdown
+// calls receive a deadline-exceeded context while a slow handler holds
+// the listener busy, so Shutdown reports the context error which the
+// Server logs without aborting the rest of the teardown.
+func TestServer_ShutdownLogsErrors(t *testing.T) {
+	t.Parallel()
+	listenAndHold := func(t *testing.T) *http.Server {
+		t.Helper()
+		lc := &net.ListenConfig{}
+		ln, err := lc.Listen(context.Background(), "tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("listen: %v", err)
+		}
+		srv := &http.Server{
+			ReadHeaderTimeout: time.Second,
+			Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				time.Sleep(2 * time.Second)
+				w.WriteHeader(http.StatusOK)
+			}),
+		}
+		go func() { _ = srv.Serve(ln) }()
+		// kick off a slow request so a connection is open
+		go func() {
+			req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://"+ln.Addr().String(), nil)
+			resp, err := http.DefaultClient.Do(req) //nolint:gosec // G104: test server URL
+			if err == nil && resp != nil {
+				_ = resp.Body.Close()
+			}
+		}()
+		time.Sleep(20 * time.Millisecond) // let the request reach the handler
+		return srv
+	}
+
+	s := &Server{
+		main:    listenAndHold(t),
+		metrics: listenAndHold(t),
+		log:     slog.Default(),
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	s.Shutdown(ctx)
+}
+
+// TestServer_RunWithSeparateMetrics drives the metrics-listener
+// goroutine in Run by configuring an invalid metrics address: the
+// "metrics endpoint enabled on separate listener" log fires from the
+// goroutine startup, ListenAndServe immediately returns the bind
+// failure, and the "metrics listener failed" error log fires as well.
+// The main listener is also configured to fail-fast so Run returns and
+// the test does not block.
+func TestServer_RunWithSeparateMetrics(t *testing.T) {
+	t.Parallel()
+	s := &Server{
+		main:    &http.Server{Addr: "127.0.0.1:0", ReadHeaderTimeout: time.Second},
+		metrics: &http.Server{Addr: "0.0.0.0:99999", ReadHeaderTimeout: time.Second}, // invalid port forces ListenAndServe error
+		log:     slog.Default(),
+	}
+	// Run on a goroutine; the main listener will block. Cancel via
+	// Shutdown after a short delay so Run exits.
+	done := make(chan error, 1)
+	go func() { done <- s.Run(context.Background()) }()
+	time.Sleep(50 * time.Millisecond) // let metrics goroutine fail
+	_ = s.main.Shutdown(context.Background())
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return within 2 seconds")
+	}
+}
+
 // -------------------------------------------------------------------------
 // FULL ASSEMBLY (New + routes)
 // -------------------------------------------------------------------------

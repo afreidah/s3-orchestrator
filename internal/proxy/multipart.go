@@ -201,7 +201,7 @@ func (mp *MultipartManager) UploadPart(ctx context.Context, bucket, key, uploadI
 	}
 
 	if err := mp.stores.RecordPart(ctx, uploadID, partNumber, etag, uploadSize, enc); err != nil {
-		slog.ErrorContext(ctx, "recordPart failed, cleaning up part object",
+		mp.Log().ErrorContext(ctx, "recordPart failed, cleaning up part object",
 			"upload_id", uploadID, "part", partNumber, "error", err)
 		mp.coord.recoverFromRecordFailure(ctx, be, mu.BackendName, partKey, "orphan_part_record_failed", uploadSize)
 		observe.RecordSpanError(span, err)

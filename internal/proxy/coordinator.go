@@ -98,7 +98,7 @@ func (w *writeCoordinator) selectWriteTarget(ctx context.Context, span trace.Spa
 func (w *writeCoordinator) recordObjectOrCleanup(ctx context.Context, span trace.Span, be backend.ObjectBackend, key, backendName string, size int64, enc *core.EncryptionMeta) error {
 	displaced, err := w.stores.RecordObject(ctx, key, backendName, size, enc)
 	if err != nil {
-		slog.ErrorContext(ctx, "recordObject failed, cleaning up orphan",
+		w.Log().ErrorContext(ctx, "recordObject failed, cleaning up orphan",
 			"key", key, "backend", backendName, "error", err)
 		w.recoverFromRecordFailure(ctx, be, backendName, key, "orphan_record_failed", size)
 		observe.RecordSpanError(span, err)
@@ -121,7 +121,7 @@ func (w *writeCoordinator) recoverFromRecordFailure(ctx context.Context, be back
 	delErr := w.DeleteWithTimeout(ctx, be, key)
 	w.usage.Record(backendName, 1, 0, 0) // cleanup DELETE
 	if delErr != nil {
-		slog.ErrorContext(ctx, "failed to clean up orphaned object",
+		w.Log().ErrorContext(ctx, "failed to clean up orphaned object",
 			"key", key, "backend", backendName, "error", delErr)
 		w.enqueueCleanup(ctx, backendName, key, cleanupReason, size)
 	}
@@ -187,7 +187,7 @@ func (w *writeCoordinator) recordObjectAndPromoteIntent(ctx context.Context, spa
 		telemetry.PendingIntentsResolvedTotal.WithLabelValues("committed").Inc()
 	}
 	if err != nil {
-		slog.ErrorContext(ctx, "recordObjectAndClearPending failed; intent left for reaper",
+		w.Log().ErrorContext(ctx, "recordObjectAndClearPending failed; intent left for reaper",
 			"key", key, "backend", backendName, "intent_id", intentID, "error", err)
 		// The successful PUT against the backend still consumed an API
 		// call. The success-path usage record runs only when this returns
@@ -208,7 +208,7 @@ func (w *writeCoordinator) cleanupDisplacedCopies(ctx context.Context, key, newB
 	for _, dc := range displaced {
 		dcBackend, ok := w.backends[dc.BackendName]
 		if !ok {
-			slog.WarnContext(ctx, "displaced copy backend not found",
+			w.Log().WarnContext(ctx, "displaced copy backend not found",
 				"backend", dc.BackendName, "key", key)
 			continue
 		}
@@ -236,7 +236,7 @@ func (w *writeCoordinator) DeleteOrEnqueue(ctx context.Context, be backend.Objec
 	err := w.DeleteWithTimeout(ctx, be, key)
 	w.usage.Record(backendName, 1, 0, 0)
 	if err != nil {
-		slog.WarnContext(ctx, "failed to delete object, enqueuing cleanup",
+		w.Log().WarnContext(ctx, "failed to delete object, enqueuing cleanup",
 			"backend", backendName, "key", key, "reason", reason, "error", err)
 		w.enqueueCleanup(ctx, backendName, key, reason, sizeBytes)
 	}
@@ -249,13 +249,13 @@ func (w *writeCoordinator) DeleteOrEnqueue(ctx context.Context, be backend.Objec
 // is already handling DB outages.
 func (w *writeCoordinator) enqueueCleanup(ctx context.Context, backendName, objectKey, reason string, sizeBytes int64) {
 	if err := w.stores.EnqueueCleanup(ctx, backendName, objectKey, reason, sizeBytes); err != nil {
-		slog.ErrorContext(ctx, "failed to enqueue cleanup (best-effort)",
+		w.Log().ErrorContext(ctx, "failed to enqueue cleanup (best-effort)",
 			"backend", backendName, "key", objectKey, "reason", reason, "error", err)
 		return
 	}
 	if sizeBytes > 0 {
 		if err := w.stores.IncrementOrphanBytes(ctx, backendName, sizeBytes); err != nil {
-			slog.ErrorContext(ctx, "failed to increment orphan bytes (best-effort)",
+			w.Log().ErrorContext(ctx, "failed to increment orphan bytes (best-effort)",
 				"backend", backendName, "key", objectKey, "size", sizeBytes, "error", err)
 		}
 	}

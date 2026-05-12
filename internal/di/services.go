@@ -22,6 +22,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -52,19 +53,46 @@ const (
 	defaultScrubberInterval       = 6 * time.Hour
 )
 
+// Shared log messages for the periodic "Rebalance / Replication /
+// Over-replication cleanup" services. The three work closures emit the
+// same terminal events (pass failed, pass completed, quota metrics
+// refresh failed after pass); the component attr on each scoped logger
+// disambiguates which service produced the line.
+const (
+	msgPassFailed                = "pass failed"
+	msgPassCompleted             = "pass completed"
+	msgQuotaMetricsRefreshFailed = "quota metrics refresh failed after pass"
+)
+
 // lockedTickerService runs a function on a fixed interval under an advisory
 // lock. It handles audit context creation, lock acquisition, skip/error
-// logging, and context cancellation.
+// logging, and context cancellation. The component identity lives on the
+// scoped logger (Component attr) rather than in message text, so logs from
+// every service share the same shape and operators filter by attribute.
 type lockedTickerService struct {
 	locker   advisoryLocker
 	interval time.Duration
 	lockID   int64
-	name     string
+	// name is the canonical snake_case component slug; it both names
+	// the service in tests and seeds the scoped logger's component attr.
+	name string
+	// log is scoped to logfmt.Component(name) so every log line from
+	// this service carries the component identity as an attr rather
+	// than embedded in the message text.
+	log *slog.Logger
 
 	shouldRun func() bool
 	startup   func(ctx context.Context)
 	work      func(ctx context.Context)
 	onError   func(err error)
+}
+
+// componentLogger returns the scoped logger every service uses,
+// derived from the snake_case slug so the component attr is the single
+// source of truth for log filtering. Callers also hold the slug as the
+// service's name field.
+func componentLogger(slug string) *slog.Logger {
+	return slog.Default().With(logfmt.Component(slug))
 }
 
 // Run implements lifecycle.Runner with a jittered first tick to prevent
@@ -108,11 +136,11 @@ func (s *lockedTickerService) runOnce(ctx context.Context, fn func(ctx context.C
 		if s.onError != nil {
 			s.onError(err)
 		} else {
-			slog.ErrorContext(ctx, s.name+" failed", "error", err)
+			s.log.ErrorContext(ctx, "tick failed", "error", err)
 		}
 	}
 	if !acquired {
-		slog.DebugContext(ctx, s.name+" skipped, another instance holds the lock")
+		s.log.DebugContext(ctx, "tick skipped, another instance holds the lock")
 	}
 }
 
@@ -125,11 +153,16 @@ func (s *lockedTickerService) runOnce(ctx context.Context, fn func(ctx context.C
 type usageFlushService struct {
 	manager *proxy.BackendManager
 	locker  advisoryLocker
+	log     *slog.Logger
 }
 
 // NewUsageFlushService constructs the usage flush background service.
 func NewUsageFlushService(manager *proxy.BackendManager, locker advisoryLocker) lifecycle.Runner {
-	return &usageFlushService{manager: manager, locker: locker}
+	return &usageFlushService{
+		manager: manager,
+		locker:  locker,
+		log:     componentLogger("usage_flush"),
+	}
 }
 
 // Run periodically flushes in-memory usage counters and adapts the tick
@@ -160,7 +193,7 @@ func (s *usageFlushService) Run(ctx context.Context) error {
 				if targetInterval != currentInterval {
 					ticker.Reset(targetInterval)
 					currentInterval = targetInterval
-					slog.InfoContext(ctx, "usage flush interval adjusted", "interval", targetInterval)
+					s.log.InfoContext(ctx, "interval adjusted", "interval", targetInterval)
 				}
 			}
 		case <-ctx.Done():
@@ -180,10 +213,10 @@ func (s *usageFlushService) flushTick(ctx context.Context) {
 				return nil
 			})
 		if err != nil && !errors.Is(err, core.ErrDBUnavailable) {
-			slog.ErrorContext(ctx, "usage flush failed", "error", err)
+			s.log.ErrorContext(ctx, "tick failed", "error", err)
 		}
 		if !acquired {
-			slog.DebugContext(ctx, "usage flush skipped, another instance holds the lock")
+			s.log.DebugContext(ctx, "tick skipped, another instance holds the lock")
 		}
 		return
 	}
@@ -193,10 +226,10 @@ func (s *usageFlushService) flushTick(ctx context.Context) {
 // doFlush performs the actual flush and quota metric update.
 func (s *usageFlushService) doFlush(ctx context.Context) {
 	if err := s.manager.FlushUsage(ctx); err != nil && !errors.Is(err, core.ErrDBUnavailable) {
-		slog.ErrorContext(ctx, "failed to flush usage counters", "error", err)
+		s.log.ErrorContext(ctx, "counter flush failed", "error", err)
 	}
 	if err := s.manager.UpdateQuotaMetrics(ctx); err != nil && !errors.Is(err, core.ErrDBUnavailable) {
-		slog.ErrorContext(ctx, "failed to update quota metrics", "error", err)
+		s.log.ErrorContext(ctx, "quota metrics refresh failed", "error", err)
 	}
 }
 
@@ -209,11 +242,13 @@ func NewMultipartCleanupService(manager *proxy.BackendManager, locker advisoryLo
 	if staleTimeout <= 0 {
 		staleTimeout = defaultMultipartStaleTimeout
 	}
+	const slug = "multipart_cleanup"
 	return &lockedTickerService{
 		locker:   locker,
 		interval: defaultMultipartCleanupTick,
 		lockID:   core.LockMultipartCleanup,
-		name:     "Multipart cleanup",
+		name:     slug,
+		log:      componentLogger(slug),
 		work: func(ctx context.Context) {
 			manager.MultipartManager.CleanupStaleMultipartUploads(ctx, staleTimeout)
 		},
@@ -222,15 +257,18 @@ func NewMultipartCleanupService(manager *proxy.BackendManager, locker advisoryLo
 
 // NewCleanupQueueService constructs the cleanup-queue background service.
 func NewCleanupQueueService(cleanup *worker.CleanupWorker, locker advisoryLocker) lifecycle.Runner {
+	const slug = "cleanup_queue"
+	log := componentLogger(slug)
 	return &lockedTickerService{
 		locker:   locker,
 		interval: defaultCleanupQueueTick,
 		lockID:   core.LockCleanupQueue,
-		name:     "Cleanup queue",
+		name:     slug,
+		log:      log,
 		work: func(ctx context.Context) {
 			processed, failed := cleanup.ProcessCleanupQueue(ctx)
 			if processed > 0 || failed > 0 {
-				slog.InfoContext(ctx, "cleanup queue processed", "processed", processed, "failed", failed)
+				log.InfoContext(ctx, "queue processed", "processed", processed, "failed", failed)
 			}
 		},
 	}
@@ -248,15 +286,18 @@ func NewPendingReaperService(reaper *worker.PendingReaper, locker advisoryLocker
 	if tick <= 0 {
 		tick = defaultPendingReaperTick
 	}
+	const slug = "pending_reaper"
+	log := componentLogger(slug)
 	return &lockedTickerService{
 		locker:   locker,
 		interval: tick,
 		lockID:   core.LockPendingReaper,
-		name:     "Pending reaper",
+		name:     slug,
+		log:      log,
 		work: func(ctx context.Context) {
 			resolved, failed := reaper.ProcessPendingQueue(ctx)
 			if resolved > 0 || failed > 0 {
-				slog.InfoContext(ctx, "pending reaper processed", "resolved", resolved, "failed", failed)
+				log.InfoContext(ctx, "pending queue processed", "resolved", resolved, "failed", failed)
 			}
 		},
 	}
@@ -268,11 +309,14 @@ func NewRebalancerService(manager *proxy.BackendManager, rebalancer *worker.Reba
 	if rcfg := rebalancer.Config(); rcfg != nil && rcfg.Interval > 0 {
 		interval = rcfg.Interval
 	}
+	const slug = "rebalance"
+	log := componentLogger(slug)
 	return &lockedTickerService{
 		locker:   locker,
 		interval: interval,
 		lockID:   core.LockRebalancer,
-		name:     "Rebalance",
+		name:     slug,
+		log:      log,
 		shouldRun: func() bool {
 			rcfg := rebalancer.Config()
 			return rcfg != nil && rcfg.Enabled
@@ -284,11 +328,11 @@ func NewRebalancerService(manager *proxy.BackendManager, rebalancer *worker.Reba
 			}
 			moved, err := rebalancer.Rebalance(ctx, *rcfg)
 			if err != nil && !errors.Is(err, core.ErrDBUnavailable) {
-				slog.ErrorContext(ctx, "rebalance failed", "error", err)
+				log.ErrorContext(ctx, msgPassFailed, "error", err)
 			} else if moved > 0 {
-				slog.InfoContext(ctx, "rebalance completed", "objects_moved", moved)
+				log.InfoContext(ctx, msgPassCompleted, "objects_moved", moved)
 				if err := manager.UpdateQuotaMetrics(ctx); err != nil {
-					slog.WarnContext(ctx, "failed to update quota metrics after rebalance", "error", err)
+					log.WarnContext(ctx, msgQuotaMetricsRefreshFailed, "error", err)
 				}
 			}
 		},
@@ -297,11 +341,14 @@ func NewRebalancerService(manager *proxy.BackendManager, rebalancer *worker.Reba
 
 // NewLifecycleService constructs the lifecycle-expiration background service.
 func NewLifecycleService(manager *proxy.BackendManager, locker advisoryLocker) lifecycle.Runner {
+	const slug = "lifecycle"
+	log := componentLogger(slug)
 	return &lockedTickerService{
 		locker:   locker,
 		interval: defaultLifecycleTick,
 		lockID:   core.LockLifecycle,
-		name:     "Lifecycle",
+		name:     slug,
+		log:      log,
 		shouldRun: func() bool {
 			cfg := manager.LifecycleConfig()
 			return cfg != nil && len(cfg.Rules) > 0
@@ -313,7 +360,7 @@ func NewLifecycleService(manager *proxy.BackendManager, locker advisoryLocker) l
 			}
 			deleted, failed := manager.ProcessLifecycleRules(ctx, cfg.Rules)
 			if deleted > 0 || failed > 0 {
-				slog.InfoContext(ctx, "lifecycle expiration completed",
+				log.InfoContext(ctx, "expiration completed",
 					"deleted", deleted, "failed", failed)
 			}
 			if failed > 0 {
@@ -323,7 +370,7 @@ func NewLifecycleService(manager *proxy.BackendManager, locker advisoryLocker) l
 			}
 		},
 		onError: func(err error) {
-			slog.ErrorContext(context.Background(), "Lifecycle expiration failed", "error", err)
+			log.ErrorContext(context.Background(), "expiration failed", "error", err)
 			telemetry.LifecycleRunsTotal.WithLabelValues("error").Inc()
 		},
 	}
@@ -335,11 +382,14 @@ func NewOverReplicationService(manager *proxy.BackendManager, overRep *worker.Ov
 	if rcfg := overRep.Config(); rcfg != nil && rcfg.WorkerInterval > 0 {
 		interval = rcfg.WorkerInterval
 	}
+	const slug = "over_replication_cleanup"
+	log := componentLogger(slug)
 	return &lockedTickerService{
 		locker:   locker,
 		interval: interval,
 		lockID:   core.LockOverReplication,
-		name:     "Over-replication cleanup",
+		name:     slug,
+		log:      log,
 		shouldRun: func() bool {
 			rcfg := overRep.Config()
 			return rcfg != nil && rcfg.Factor > 1
@@ -351,11 +401,11 @@ func NewOverReplicationService(manager *proxy.BackendManager, overRep *worker.Ov
 			}
 			removed, err := overRep.Clean(ctx, *rcfg)
 			if err != nil && !errors.Is(err, core.ErrDBUnavailable) {
-				slog.ErrorContext(ctx, "over-replication cleanup failed", "error", err)
+				log.ErrorContext(ctx, msgPassFailed, "error", err)
 			} else if removed > 0 {
-				slog.InfoContext(ctx, "over-replication cleanup completed", "copies_removed", removed)
+				log.InfoContext(ctx, msgPassCompleted, "copies_removed", removed)
 				if err := manager.UpdateQuotaMetrics(ctx); err != nil {
-					slog.WarnContext(ctx, "failed to update quota metrics after over-replication cleanup", "error", err)
+					log.WarnContext(ctx, msgQuotaMetricsRefreshFailed, "error", err)
 				}
 			}
 		},
@@ -364,6 +414,8 @@ func NewOverReplicationService(manager *proxy.BackendManager, overRep *worker.Ov
 
 // NewReplicatorService constructs the replication background service.
 func NewReplicatorService(manager *proxy.BackendManager, replicator *worker.Replicator, locker advisoryLocker) lifecycle.Runner {
+	const slug = "replication"
+	log := componentLogger(slug)
 	replicateWork := func(ctx context.Context) {
 		rcfg := replicator.Config()
 		if rcfg == nil {
@@ -371,11 +423,11 @@ func NewReplicatorService(manager *proxy.BackendManager, replicator *worker.Repl
 		}
 		created, err := replicator.Replicate(ctx, *rcfg)
 		if err != nil && !errors.Is(err, core.ErrDBUnavailable) {
-			slog.ErrorContext(ctx, "replication failed", "error", err)
+			log.ErrorContext(ctx, msgPassFailed, "error", err)
 		} else if created > 0 {
-			slog.InfoContext(ctx, "replication completed", "copies_created", created)
+			log.InfoContext(ctx, msgPassCompleted, "copies_created", created)
 			if err := manager.UpdateQuotaMetrics(ctx); err != nil {
-				slog.WarnContext(ctx, "failed to update quota metrics after replication", "error", err)
+				log.WarnContext(ctx, msgQuotaMetricsRefreshFailed, "error", err)
 			}
 		}
 	}
@@ -388,7 +440,8 @@ func NewReplicatorService(manager *proxy.BackendManager, replicator *worker.Repl
 		locker:   locker,
 		interval: interval,
 		lockID:   core.LockReplicator,
-		name:     "Replication",
+		name:     slug,
+		log:      log,
 		shouldRun: func() bool {
 			rcfg := replicator.Config()
 			return rcfg != nil && rcfg.Factor > 1
@@ -400,11 +453,13 @@ func NewReplicatorService(manager *proxy.BackendManager, replicator *worker.Repl
 
 // NewReconcileService constructs the reconcile background service.
 func NewReconcileService(reconciler *worker.Reconciler, locker advisoryLocker, interval time.Duration) lifecycle.Runner {
+	const slug = "reconcile"
 	return &lockedTickerService{
 		locker:   locker,
 		interval: interval,
 		lockID:   core.LockReconcile,
-		name:     "Reconcile",
+		name:     slug,
+		log:      componentLogger(slug),
 		work: func(ctx context.Context) {
 			reconciler.Run(ctx)
 		},
@@ -460,11 +515,14 @@ func NewScrubberService(scrubber *worker.Scrubber, locker advisoryLocker) lifecy
 	if icfg := scrubber.Config(); icfg != nil && icfg.ScrubberInterval > 0 {
 		interval = icfg.ScrubberInterval
 	}
+	const slug = "scrubber"
+	log := componentLogger(slug)
 	return &lockedTickerService{
 		locker:   locker,
 		interval: interval,
 		lockID:   core.LockScrubber,
-		name:     "Scrubber",
+		name:     slug,
+		log:      log,
 		shouldRun: func() bool {
 			icfg := scrubber.Config()
 			return icfg != nil && icfg.Enabled && icfg.ScrubberInterval > 0
@@ -476,7 +534,7 @@ func NewScrubberService(scrubber *worker.Scrubber, locker advisoryLocker) lifecy
 			}
 			checked, failed := scrubber.Scrub(ctx, icfg.ScrubberBatchSize)
 			if checked > 0 || failed > 0 {
-				slog.InfoContext(ctx, "scrubber completed", "checked", checked, "failed", failed)
+				log.InfoContext(ctx, "scrub completed", "checked", checked, "failed", failed)
 			}
 		},
 	}
