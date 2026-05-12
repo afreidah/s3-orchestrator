@@ -267,17 +267,3 @@ func firstFailedHookName(r *ReloadResult) string {
 	return ""
 }
 
-// optional resolves a DI type, returning the zero value if not
-// registered. Hooks use this so an absent optional subsystem yields a
-// Skipped outcome instead of a Failed one. A genuine construction
-// error returns the zero value here too; the hook reports Skipped
-// because Apply cannot proceed. This matches the historical
-// invokeOptional contract.
-func optional[T any](inj do.Injector) T {
-	if inj == nil {
-		var zero T
-		return zero
-	}
-	v, _ := do.Invoke[T](inj)
-	return v
-}

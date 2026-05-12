@@ -20,6 +20,7 @@ import (
 	"github.com/samber/do/v2"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/di"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
@@ -39,7 +40,13 @@ func registerAdminHandler(mux *http.ServeMux, inj do.Injector, cfg *config.Confi
 	adminMux := http.NewServeMux()
 	adminHandler.Register(adminMux)
 	var adminHTTP http.Handler = adminMux
-	if rl := invokeOptional[*s3api.RateLimiter](inj); rl != nil {
+	rlRes := di.Optional[*s3api.RateLimiter](inj)
+	if rlRes.Failed() {
+		slog.WarnContext(context.Background(),
+			"rate limiter resolution failed; admin API will run without rate limiting",
+			"error", rlRes.Err)
+	}
+	if rl := rlRes.Value; rl != nil {
 		adminHTTP = rl.Middleware(adminHTTP)
 	}
 	mux.Handle("/admin/", adminHTTP)
@@ -77,7 +84,13 @@ func registerS3Handler(mux *http.ServeMux, inj do.Injector, cfg *config.Config) 
 	}
 
 	var s3Handler http.Handler = s3Server
-	if rl := invokeOptional[*s3api.RateLimiter](inj); rl != nil {
+	rlRes := di.Optional[*s3api.RateLimiter](inj)
+	if rlRes.Failed() {
+		slog.WarnContext(context.Background(),
+			"rate limiter resolution failed; S3 surface will run without rate limiting",
+			"error", rlRes.Err)
+	}
+	if rl := rlRes.Value; rl != nil {
 		s3Handler = rl.Middleware(s3Handler)
 	}
 
@@ -103,9 +116,3 @@ func registerS3Handler(mux *http.ServeMux, inj do.Injector, cfg *config.Config) 
 	return nil
 }
 
-// invokeOptional wraps do.Invoke to return the zero value when the
-// provider is not registered (the DI signal for "feature disabled").
-func invokeOptional[T any](inj do.Injector) T {
-	v, _ := do.Invoke[T](inj)
-	return v
-}

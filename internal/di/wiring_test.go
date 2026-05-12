@@ -12,6 +12,7 @@
 package di
 
 import (
+	"errors"
 	"log/slog"
 	"strings"
 	"testing"
@@ -191,4 +192,35 @@ func TestWireManager_ProgressiveErrors(t *testing.T) {
 	}
 	// Sanity: drain.Manager package import stays live so go vet is happy.
 	_ = (*drain.Manager)(nil)
+}
+
+// TestWireManager_PendingReaperFailedLogsAndContinues drives the Failed
+// branch the Optional[T] migration added: an override registers a
+// PendingReaper provider that errors, and WireManager must still
+// succeed (assigning nil onto the manager) so a broken optional
+// dependency does not abort startup.
+func TestWireManager_PendingReaperFailedLogsAndContinues(t *testing.T) {
+	t.Parallel()
+	cfg := happyPathConfig(t.TempDir())
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("config validation: %v", err)
+	}
+	inj := NewInjector(cfg, "all", new(slog.LevelVar), telemetry.NewLogBuffer())
+	t.Cleanup(func() { _ = inj.Shutdown() })
+
+	boom := errors.New("pending reaper construction failed")
+	do.Override(inj, func(do.Injector) (*worker.PendingReaper, error) {
+		return nil, boom
+	})
+
+	if err := WireManager(inj); err != nil {
+		t.Fatalf("WireManager: %v (expected to swallow Failed optional)", err)
+	}
+	mgr, err := do.Invoke[*proxy.BackendManager](inj)
+	if err != nil {
+		t.Fatalf("resolve BackendManager: %v", err)
+	}
+	if mgr.PendingReaper != nil {
+		t.Errorf("PendingReaper = %v, want nil on Failed resolution", mgr.PendingReaper)
+	}
 }
