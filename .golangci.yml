@@ -13,6 +13,7 @@ linters:
   enable:
     - bodyclose
     - copyloopvar
+    - depguard
     - errcheck
     - gocritic
     - gosec
@@ -46,6 +47,29 @@ linters:
         - from_backend
         - to_backend
         - remote_addr
+    depguard:
+      rules:
+        store-boundary:
+          # Mechanically enforce the architectural rule that the
+          # concrete metadata-store implementations are only imported by
+          # the DI providers, the sync CLI, and the store package
+          # itself. Worker / handler / proxy code must depend on
+          # core.MetadataStore (or its narrow role interfaces) resolved
+          # through DI, so a refactor that swaps the implementation
+          # does not cascade across the codebase.
+          list-mode: lax
+          files:
+            - $all
+            - "!**/internal/store/**"
+            - "!**/internal/di/**"
+            - "!**/internal/cli/**"
+            - "!**/cmd/**"
+            - "!**_test.go"
+          deny:
+            - pkg: github.com/afreidah/s3-orchestrator/internal/store/sqlite
+              desc: depend on core.MetadataStore via DI; concrete stores are only constructed in internal/di and internal/cli
+            - pkg: github.com/afreidah/s3-orchestrator/internal/store/postgres
+              desc: depend on core.MetadataStore via DI; concrete stores are only constructed in internal/di and internal/cli
   exclusions:
     generated: lax
     presets:
