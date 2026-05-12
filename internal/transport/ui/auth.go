@@ -52,7 +52,7 @@ func (h *Handler) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 		if !h.validSession(r) {
 			if strings.HasPrefix(r.URL.Path, h.prefix+"/api/") {
 				h.log.WarnContext(r.Context(), "unauthorized API request", "path", r.URL.Path, "client_addr", r.RemoteAddr)
-				writeJSONError(w, http.StatusUnauthorized, "unauthorized")
+				httputil.WriteJSONError(w, http.StatusUnauthorized, "unauthorized")
 				return
 			}
 			http.Redirect(w, r, h.prefix+loginPath, http.StatusSeeOther)
@@ -63,7 +63,7 @@ func (h *Handler) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 		if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, h.prefix+"/api/") {
 			if !h.validCSRFToken(r) {
 				h.log.WarnContext(r.Context(), "cSRF token mismatch", "path", r.URL.Path, "client_addr", r.RemoteAddr)
-				writeJSONError(w, http.StatusForbidden, "CSRF token missing or invalid")
+				httputil.WriteJSONError(w, http.StatusForbidden, "CSRF token missing or invalid")
 				return
 			}
 		}

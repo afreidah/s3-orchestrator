@@ -23,6 +23,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
@@ -381,6 +382,66 @@ func TestHandleRotateEncryptionKey_NoEncryptor(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body=%s", w.Code, w.Body.String())
+	}
+}
+
+// newRotateEncryptionKeyHandler returns a handler wired with a real
+// encryptor and an empty EncryptionAdmin, ready to exercise the
+// request-body validation paths of /admin/api/rotate-encryption-key.
+func newRotateEncryptionKeyHandler(t *testing.T) *Handler {
+	t.Helper()
+	h := newTestHandlerWithManager(t)
+	provider, err := encryption.NewConfigKeyProvider(
+		"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "test-key")
+	if err != nil {
+		t.Fatalf("NewConfigKeyProvider: %v", err)
+	}
+	enc, err := encryption.NewEncryptor(provider, 64*1024)
+	if err != nil {
+		t.Fatalf("NewEncryptor: %v", err)
+	}
+	h.encryptor = enc
+	h.encAdmin = emptyEncAdmin{}
+	return h
+}
+
+// TestHandleRotateEncryptionKey_BodyValidation covers the request-body
+// validation paths past the nil-encryptor guard: malformed JSON should be
+// rejected by DecodeJSONBody, and an empty old_key_id should be rejected
+// by the explicit field check.
+func TestHandleRotateEncryptionKey_BodyValidation(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		body    string
+		wantMsg string
+	}{
+		{"invalid json", `{not json`, "invalid request body"},
+		{"empty old_key_id", `{"old_key_id":""}`, "old_key_id is required"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := newRotateEncryptionKeyHandler(t)
+			mux := http.NewServeMux()
+			h.Register(mux)
+
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, doAuth(http.MethodPost, "/admin/api/rotate-encryption-key", tc.body))
+
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body=%s", w.Code, w.Body.String())
+			}
+			var resp map[string]string
+			if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+			if resp["error"] != tc.wantMsg {
+				t.Errorf("error = %q, want %q", resp["error"], tc.wantMsg)
+			}
+		})
 	}
 }
 

@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
 // logsResponse wraps log entries with pagination metadata.
@@ -49,7 +50,7 @@ func (h *Handler) handleAPILogs(w http.ResponseWriter, r *http.Request) {
 		resp.HasMore = true
 	}
 
-	writeJSON(w, http.StatusOK, resp)
+	httputil.WriteJSON(w, http.StatusOK, resp)
 }
 
 // buildLogQueryOpts parses log-API query parameters into LogQueryOpts.
