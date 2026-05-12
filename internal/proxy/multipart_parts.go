@@ -18,9 +18,9 @@ import (
 	"strconv"
 	"strings"
 
-	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/internalkey"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
@@ -43,7 +43,7 @@ func (mp *MultipartManager) fetchScopedUpload(ctx context.Context, span trace.Sp
 		return nil, mp.classifyWriteError(span, operation, err)
 	}
 	if err := validateMultipartScope(mu, bucket, key); err != nil {
-		span.SetStatus(codes.Error, err.Error())
+		observe.RecordSpanError(span, err)
 		return nil, err
 	}
 	return mu, nil
@@ -70,7 +70,7 @@ func validateMultipartScope(mu *core.MultipartUpload, bucket, key string) error 
 func (mp *MultipartManager) collectRequestedParts(ctx context.Context, span trace.Span, uploadID string, partNumbers []int) ([]core.MultipartPart, error) {
 	allParts, err := mp.stores.GetParts(ctx, uploadID)
 	if err != nil {
-		span.SetStatus(codes.Error, err.Error())
+		observe.RecordSpanError(span, err)
 		return nil, err
 	}
 	uploaded := make(map[int]bool, len(allParts))
@@ -85,7 +85,7 @@ func (mp *MultipartManager) collectRequestedParts(ctx context.Context, span trac
 	}
 	if len(missing) > 0 {
 		msg := "parts not uploaded: " + formatPartNumbers(missing)
-		span.SetStatus(codes.Error, msg)
+		observe.MarkSpanError(span, msg)
 		return nil, &core.S3Error{StatusCode: 400, Code: "InvalidPart", Message: msg}
 	}
 

@@ -27,6 +27,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
+	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/util/bufpool"
 
@@ -57,7 +58,7 @@ func (o *ObjectManager) PutObject(ctx context.Context, key string, body io.Reade
 	eligible := o.eligibleForWrite(1, 0, size)
 	if len(eligible) == 0 {
 		telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation, "write").Inc()
-		span.SetStatus(codes.Error, "usage limits exceeded on all backends")
+		observe.MarkSpanError(span, "usage limits exceeded on all backends")
 		return "", core.ErrInsufficientStorage
 	}
 
@@ -107,8 +108,7 @@ func (o *ObjectManager) PutObject(ctx context.Context, key string, body io.Reade
 			"remaining_backends", len(eligible))
 	}
 
-	span.SetStatus(codes.Error, lastErr.Error())
-	span.RecordError(lastErr)
+	observe.RecordSpanError(span, lastErr)
 	return "", lastErr
 }
 
@@ -129,7 +129,7 @@ type putAttemptResult struct {
 func (o *ObjectManager) bufferPutBody(span trace.Span, body io.Reader) ([]byte, string, error) {
 	var buf bytes.Buffer
 	if _, err := bufpool.Copy(&buf, body); err != nil {
-		span.SetStatus(codes.Error, err.Error())
+		observe.RecordSpanError(span, err)
 		return nil, "", fmt.Errorf("buffer request body: %w", err)
 	}
 	bodyBytes := buf.Bytes()
@@ -167,13 +167,13 @@ func (o *ObjectManager) attemptPutOnBackend(ctx context.Context, span trace.Span
 
 	be, err := o.GetBackend(backendName)
 	if err != nil {
-		span.SetStatus(codes.Error, err.Error())
+		observe.RecordSpanError(span, err)
 		return putAttemptResult{backend: backendName, fatalErr: err}
 	}
 
 	uploadBody, uploadSize, enc, err := o.buildPutPayload(ctx, req.bodyBytes, req.size, req.contentHash, req.dekState)
 	if err != nil {
-		span.SetStatus(codes.Error, err.Error())
+		observe.RecordSpanError(span, err)
 		return putAttemptResult{backend: backendName, fatalErr: err}
 	}
 
@@ -183,7 +183,7 @@ func (o *ObjectManager) attemptPutOnBackend(ctx context.Context, span trace.Span
 	// old failure path silently deleting the just-written copy.
 	intentID, err := o.coord.insertPendingIntent(ctx, req.key, backendName, uploadSize, enc)
 	if err != nil {
-		span.SetStatus(codes.Error, err.Error())
+		observe.RecordSpanError(span, err)
 		return putAttemptResult{backend: backendName, fatalErr: err}
 	}
 
@@ -420,7 +420,7 @@ func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey strin
 	locations, err := o.stores.GetAllObjectLocations(ctx, sourceKey)
 	if err != nil {
 		if errors.Is(err, core.ErrObjectNotFound) {
-			span.SetStatus(codes.Error, "source object not found")
+			observe.MarkSpanError(span, "source object not found")
 			return "", err
 		}
 		return "", o.classifyWriteError(span, operation, err)
@@ -429,7 +429,7 @@ func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey strin
 	size, contentType, metadata, srcEnc, ok := o.headSourceForCopy(ctx, sourceKey, locations)
 	if !ok {
 		err := fmt.Errorf("failed to head source object from any copy")
-		span.SetStatus(codes.Error, err.Error())
+		observe.RecordSpanError(span, err)
 		return "", err
 	}
 	span.SetAttributes(telemetry.AttrObjectSize.Int64(size))
@@ -440,7 +440,7 @@ func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey strin
 	}
 	destBackend, err := o.GetBackend(destBackendName)
 	if err != nil {
-		span.SetStatus(codes.Error, err.Error())
+		observe.RecordSpanError(span, err)
 		return "", err
 	}
 
@@ -450,8 +450,7 @@ func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey strin
 	etag, err := destBackend.PutObject(ctx, destKey, pr, size, contentType, metadata)
 	pr.Close() // unblock goroutine if PutObject returned without draining the pipe
 	if err != nil {
-		span.SetStatus(codes.Error, err.Error())
-		span.RecordError(err)
+		observe.RecordSpanError(span, err)
 		return "", fmt.Errorf("failed to write destination: %w", err)
 	}
 

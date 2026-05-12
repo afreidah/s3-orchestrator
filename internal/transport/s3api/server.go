@@ -24,13 +24,13 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/internalkey"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
+	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
 )
 
 // -------------------------------------------------------------------------
@@ -137,7 +137,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			slog.Duration("duration", time.Since(start)),
 		)
 		writeS3Error(w, http.StatusMethodNotAllowed, "MethodNotAllowed", msg)
-		span.SetStatus(codes.Error, msg)
+		observe.MarkSpanError(span, msg)
 	}
 
 	var status int
@@ -162,8 +162,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.recordRequest(method, status, start, requestSize, responseSize)
 
 	if err != nil {
-		span.SetStatus(codes.Error, err.Error())
-		span.RecordError(err)
+		observe.RecordSpanError(span, err)
 		slog.LogAttrs(ctx, slog.LevelWarn, "S3 request failed",
 			slog.String("operation", operation),
 			slog.String("key", key),
@@ -218,8 +217,7 @@ func (s *Server) serveListBuckets(ctx context.Context, w http.ResponseWriter, r 
 	status, err := s.handleListBuckets(w, authorizedBucket)
 	s.recordRequest(method, status, start, 0, 0)
 	if err != nil {
-		span.SetStatus(codes.Error, err.Error())
-		span.RecordError(err)
+		observe.RecordSpanError(span, err)
 	}
 	span.SetAttributes(attribute.Int("http.status_code", status))
 	audit.Log(ctx, "s3.ListBuckets",

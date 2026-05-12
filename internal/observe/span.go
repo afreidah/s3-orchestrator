@@ -105,3 +105,19 @@ func RunErr(ctx context.Context, op Op, fn func(context.Context) error) error {
 	})
 	return err
 }
+
+// RecordSpanError marks the span as failed with err and records the error
+// as a span event. Use this at every error return path in hand-rolled
+// span scopes so the trace consistently carries both the status and the
+// error event.
+func RecordSpanError(span trace.Span, err error) {
+	span.SetStatus(codes.Error, err.Error())
+	span.RecordError(err)
+}
+
+// MarkSpanError marks the span as failed with a literal message. Use
+// when the failure has no err value to record - for example, a sentinel
+// branch that returns early before any error is constructed.
+func MarkSpanError(span trace.Span, msg string) {
+	span.SetStatus(codes.Error, msg)
+}

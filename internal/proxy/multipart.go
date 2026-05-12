@@ -26,6 +26,7 @@ import (
 	objcache "github.com/afreidah/s3-orchestrator/internal/cache"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
@@ -61,6 +62,13 @@ func NewMultipartManager(core *backendCore, coord *writeCoordinator, stores core
 		encryptor:   encryptor,
 		objectCache: objectCache,
 		dekCache:    syncutil.NewTTLCache[string, []byte](dekCacheTTL),
+	}
+}
+
+// invalidateCache removes a key from the object data cache if caching is enabled.
+func (mp *MultipartManager) invalidateCache(key string) {
+	if mp.objectCache != nil {
+		mp.objectCache.Invalidate(key)
 	}
 }
 
@@ -107,7 +115,7 @@ func (mp *MultipartManager) CreateMultipartUpload(ctx context.Context, key, cont
 	if mp.encryptor != nil {
 		_, wrappedDEK, kid, kerr := mp.encryptor.GenerateAndWrapDEK(ctx)
 		if kerr != nil {
-			span.SetStatus(codes.Error, kerr.Error())
+			observe.RecordSpanError(span, kerr)
 			return "", "", fmt.Errorf("wrap upload DEK: %w", kerr)
 		}
 		encryptionKey = encryption.PackKeyData(make([]byte, encryption.NonceSize), wrappedDEK)
@@ -123,7 +131,7 @@ func (mp *MultipartManager) CreateMultipartUpload(ctx context.Context, key, cont
 		EncryptionKey: encryptionKey,
 		KeyID:         keyID,
 	}); err != nil {
-		span.SetStatus(codes.Error, err.Error())
+		observe.RecordSpanError(span, err)
 		return "", "", err
 	}
 
@@ -154,7 +162,7 @@ func (mp *MultipartManager) UploadPart(ctx context.Context, bucket, key, uploadI
 
 	if partNumber < 1 || partNumber > 10000 {
 		err := &core.S3Error{StatusCode: 400, Code: "InvalidArgument", Message: "Part number must be between 1 and 10000"}
-		span.SetStatus(codes.Error, err.Message)
+		observe.MarkSpanError(span, err.Message)
 		return "", err
 	}
 
@@ -165,19 +173,19 @@ func (mp *MultipartManager) UploadPart(ctx context.Context, bucket, key, uploadI
 
 	be, err := mp.GetBackend(mu.BackendName)
 	if err != nil {
-		span.SetStatus(codes.Error, err.Error())
+		observe.RecordSpanError(span, err)
 		return "", err
 	}
 
 	// Check usage limits before uploading
 	if !mp.usage.WithinLimits(mu.BackendName, 1, 0, size) {
-		span.SetStatus(codes.Error, "usage limits exceeded")
+		observe.MarkSpanError(span, "usage limits exceeded")
 		return "", core.ErrInsufficientStorage
 	}
 
 	uploadBody, uploadSize, enc, err := mp.prepareUploadPartBody(ctx, mu, body, size)
 	if err != nil {
-		span.SetStatus(codes.Error, err.Error())
+		observe.RecordSpanError(span, err)
 		return "", err
 	}
 
@@ -188,7 +196,7 @@ func (mp *MultipartManager) UploadPart(ctx context.Context, bucket, key, uploadI
 	etag, err := be.PutObject(bctx, partKey, uploadBody, uploadSize, "application/octet-stream", nil)
 	if err != nil {
 		mp.usage.Record(mu.BackendName, 1, 0, 0) // API call was made even on failure
-		span.SetStatus(codes.Error, err.Error())
+		observe.RecordSpanError(span, err)
 		return "", fmt.Errorf("failed to upload part: %w", err)
 	}
 
@@ -196,8 +204,7 @@ func (mp *MultipartManager) UploadPart(ctx context.Context, bucket, key, uploadI
 		slog.ErrorContext(ctx, "recordPart failed, cleaning up part object",
 			"upload_id", uploadID, "part", partNumber, "error", err)
 		mp.coord.recoverFromRecordFailure(ctx, be, mu.BackendName, partKey, "orphan_part_record_failed", uploadSize)
-		span.SetStatus(codes.Error, err.Error())
-		span.RecordError(err)
+		observe.RecordSpanError(span, err)
 		return "", fmt.Errorf("failed to record part: %w", err)
 	}
 

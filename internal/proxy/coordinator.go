@@ -18,12 +18,12 @@ import (
 	"fmt"
 	"log/slog"
 
-	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
@@ -77,7 +77,7 @@ func (w *writeCoordinator) selectWriteTarget(ctx context.Context, span trace.Spa
 	eligible := w.eligibleForWrite(1, 0, size)
 	if len(eligible) == 0 {
 		telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation, "write").Inc()
-		span.SetStatus(codes.Error, "usage limits exceeded on all backends")
+		observe.MarkSpanError(span, "usage limits exceeded on all backends")
 		return "", core.ErrInsufficientStorage
 	}
 	name, err := w.selectBackendForWrite(ctx, size, eligible)
@@ -101,8 +101,7 @@ func (w *writeCoordinator) recordObjectOrCleanup(ctx context.Context, span trace
 		slog.ErrorContext(ctx, "recordObject failed, cleaning up orphan",
 			"key", key, "backend", backendName, "error", err)
 		w.recoverFromRecordFailure(ctx, be, backendName, key, "orphan_record_failed", size)
-		span.SetStatus(codes.Error, err.Error())
-		span.RecordError(err)
+		observe.RecordSpanError(span, err)
 		return fmt.Errorf("failed to record object: %w", err)
 	}
 
@@ -194,8 +193,7 @@ func (w *writeCoordinator) recordObjectAndPromoteIntent(ctx context.Context, spa
 		// call. The success-path usage record runs only when this returns
 		// nil, so account for it here.
 		w.usage.Record(backendName, 1, 0, 0)
-		span.SetStatus(codes.Error, err.Error())
-		span.RecordError(err)
+		observe.RecordSpanError(span, err)
 		return fmt.Errorf("failed to record object: %w", err)
 	}
 

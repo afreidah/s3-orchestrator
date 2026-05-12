@@ -23,6 +23,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
@@ -60,14 +61,13 @@ func (mp *MultipartManager) abortByMultipartRow(ctx context.Context, mu *core.Mu
 
 	be, err := mp.GetBackend(mu.BackendName)
 	if err != nil {
-		span.SetStatus(codes.Error, err.Error())
+		observe.RecordSpanError(span, err)
 		return err
 	}
 
 	parts, err := mp.stores.GetParts(ctx, uploadID)
 	if err != nil {
-		span.SetStatus(codes.Error, err.Error())
-		span.RecordError(err)
+		observe.RecordSpanError(span, err)
 		return fmt.Errorf("failed to get parts for abort: %w", err)
 	}
 
@@ -77,7 +77,7 @@ func (mp *MultipartManager) abortByMultipartRow(ctx context.Context, mu *core.Mu
 	}
 
 	if err := mp.stores.DeleteMultipartUpload(ctx, uploadID); err != nil {
-		span.SetStatus(codes.Error, err.Error())
+		observe.RecordSpanError(span, err)
 		return err
 	}
 
