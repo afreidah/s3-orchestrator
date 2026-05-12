@@ -98,6 +98,17 @@ func (m *Manager) Register(name string, r Runner) {
 	m.services = append(m.services, entry{name: name, runner: r})
 }
 
+// Names returns the registered service names in registration order.
+// Intended for tests that assert which services are wired in a given
+// run mode; the supervisor loop itself does not consume this.
+func (m *Manager) Names() []string {
+	names := make([]string, len(m.services))
+	for i, e := range m.services {
+		names[i] = e.name
+	}
+	return names
+}
+
 // Run starts all registered services and blocks until ctx is cancelled. Each
 // service runs in its own goroutine with panic recovery and automatic restart.
 func (m *Manager) Run(ctx context.Context) {
