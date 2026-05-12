@@ -58,12 +58,8 @@ func TestFindReplicaTarget_SelectsBackendWithSpace(t *testing.T) {
 	ops.EXPECT().SelectReplicaTarget(gomock.Any(), int64(50), exclusion).Return("b2", nil)
 
 	r := NewReplicator(ops, ms)
-	stats := map[string]core.QuotaStat{
-		"b1": {BytesUsed: 900, BytesLimit: 1000},
-		"b2": {BytesUsed: 100, BytesLimit: 1000},
-	}
 
-	target := r.FindReplicaTarget(context.Background(), stats, "key1", 50, exclusion)
+	target := r.FindReplicaTarget(context.Background(), "key1", 50, exclusion)
 	if target != "b2" {
 		t.Errorf("FindReplicaTarget = %q, want b2", target)
 	}
@@ -80,11 +76,8 @@ func TestFindReplicaTarget_NoSpace(t *testing.T) {
 	ops.EXPECT().SelectReplicaTarget(gomock.Any(), int64(50), gomock.Any()).Return("", nil)
 
 	r := NewReplicator(ops, ms)
-	stats := map[string]core.QuotaStat{
-		"b1": {BytesUsed: 990, BytesLimit: 1000},
-	}
 
-	target := r.FindReplicaTarget(context.Background(), stats, "key1", 50, nil)
+	target := r.FindReplicaTarget(context.Background(), "key1", 50, nil)
 	if target != "" {
 		t.Errorf("FindReplicaTarget = %q, want empty (no space)", target)
 	}
@@ -103,7 +96,7 @@ func TestFindReplicaTarget_SelectionError(t *testing.T) {
 
 	r := NewReplicator(ops, ms)
 
-	target := r.FindReplicaTarget(context.Background(), nil, "key1", 50, nil)
+	target := r.FindReplicaTarget(context.Background(), "key1", 50, nil)
 	if target != "" {
 		t.Errorf("FindReplicaTarget = %q, want empty (error)", target)
 	}
@@ -266,12 +259,8 @@ func TestReplicateObject_Success(t *testing.T) {
 
 	r := NewReplicator(ops, ms)
 	copies := []core.ObjectLocation{{BackendName: "b1", SizeBytes: 50}}
-	stats := map[string]core.QuotaStat{
-		"b1": {BytesUsed: 100, BytesLimit: 1000},
-		"b2": {BytesUsed: 100, BytesLimit: 1000},
-	}
 
-	created, err := r.ReplicateObject(context.Background(), stats, "key1", copies, 1)
+	created, err := r.ReplicateObject(context.Background(), "key1", copies, 1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -333,15 +322,10 @@ func TestReplicateObject_WriteFailureExcludesTarget(t *testing.T) {
 
 	r := NewReplicator(ops, ms)
 	copies := []core.ObjectLocation{{BackendName: "src", SizeBytes: 50}}
-	stats := map[string]core.QuotaStat{
-		"src":  {BytesUsed: 100, BytesLimit: 1000},
-		"fail": {BytesUsed: 100, BytesLimit: 1000},
-		"ok":   {BytesUsed: 100, BytesLimit: 1000},
-	}
 
 	// Request 2 replicas: first attempt hits "fail" and should fall through
 	// to "ok" on the second iteration with "fail" excluded.
-	created, err := r.ReplicateObject(context.Background(), stats, "key1", copies, 2)
+	created, err := r.ReplicateObject(context.Background(), "key1", copies, 2)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -386,9 +370,7 @@ func TestReplicateObject_RecordReplicaErrorExcludesTarget(t *testing.T) {
 
 	r := NewReplicator(ops, ms)
 	copies := []core.ObjectLocation{{BackendName: "src", SizeBytes: 50}}
-	stats := map[string]core.QuotaStat{}
-
-	created, err := r.ReplicateObject(context.Background(), stats, "key1", copies, 1)
+	created, err := r.ReplicateObject(context.Background(), "key1", copies, 1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -434,9 +416,7 @@ func TestReplicateObject_NotInsertedExcludesTarget(t *testing.T) {
 
 	r := NewReplicator(ops, ms)
 	copies := []core.ObjectLocation{{BackendName: "src", SizeBytes: 50}}
-	stats := map[string]core.QuotaStat{}
-
-	created, err := r.ReplicateObject(context.Background(), stats, "key1", copies, 1)
+	created, err := r.ReplicateObject(context.Background(), "key1", copies, 1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
