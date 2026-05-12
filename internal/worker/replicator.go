@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -326,7 +325,10 @@ func cmpHealthFirst(aOK, bOK bool) int {
 // target. Returns terminal=true with (sourceName, sourceSize, nil) on
 // success or with ("", 0, err) when the failure mode means no other
 // source could help (a write-side error). Returns terminal=false to
-// signal the caller should move on to the next source.
+// signal the caller should move on to the next source. Failure
+// classification is structural: a *backend.CopyError with
+// CopyPhaseWrite is terminal, anything else (CopyPhaseRead or an
+// untyped error) retries the next source.
 func (r *Replicator) tryCopyFrom(ctx context.Context, key, target string, targetBackend backend.ObjectBackend, loc *core.ObjectLocation) (string, int64, bool, error) {
 	srcBackend, ok := r.ops.Backends()[loc.BackendName]
 	if !ok {
@@ -336,8 +338,8 @@ func (r *Replicator) tryCopyFrom(ctx context.Context, key, target string, target
 	if err == nil {
 		return loc.BackendName, loc.SizeBytes, true, nil
 	}
-	// Write failures won't improve with a different source  -  fail immediately.
-	if strings.HasPrefix(err.Error(), "write:") {
+	// Write failures won't improve with a different source - fail immediately.
+	if backend.IsCopyPhase(err, backend.CopyPhaseWrite) {
 		return "", 0, true, fmt.Errorf("failed to write to target %s: %w", target, err)
 	}
 	r.log.WarnContext(ctx, "source read failed, trying next copy",

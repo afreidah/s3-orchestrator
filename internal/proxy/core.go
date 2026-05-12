@@ -221,14 +221,15 @@ func (c *backendCore) DeleteWithTimeout(ctx context.Context, be backend.ObjectBa
 }
 
 // StreamCopy reads an object from src and writes it to dst using the configured
-// backend timeout for each operation. Returns an error tagged with "read:" or
-// "write:" to indicate which leg failed.
+// backend timeout for each operation. Returns a *backend.CopyError tagged
+// with CopyPhaseRead or CopyPhaseWrite so consumers can classify failures
+// via errors.As instead of inspecting error strings.
 func (c *backendCore) StreamCopy(ctx context.Context, src, dst backend.ObjectBackend, key string) error {
 	rctx, rcancel := c.WithTimeout(ctx)
 	defer rcancel()
 	result, err := src.GetObject(rctx, key, "")
 	if err != nil {
-		return fmt.Errorf("read: %w", err)
+		return &backend.CopyError{Phase: backend.CopyPhaseRead, Err: err}
 	}
 	defer func() { _ = result.Body.Close() }()
 
@@ -236,7 +237,7 @@ func (c *backendCore) StreamCopy(ctx context.Context, src, dst backend.ObjectBac
 	defer wcancel()
 	_, err = dst.PutObject(wctx, key, result.Body, result.Size, result.ContentType, result.Metadata)
 	if err != nil {
-		return fmt.Errorf("write: %w", err)
+		return &backend.CopyError{Phase: backend.CopyPhaseWrite, Err: err}
 	}
 	return nil
 }
