@@ -325,6 +325,87 @@ func TestListObjectsV1_Pagination(t *testing.T) {
 	}
 }
 
+// listContentForAssertion mirrors the subset of <Contents> fields the
+// ETag/StorageClass contract test inspects. Lifted out of the test body
+// so the subtest helper can refer to a package-level type.
+type listContentForAssertion struct {
+	Key          string `xml:"Key"`
+	ETag         string `xml:"ETag"`
+	StorageClass string `xml:"StorageClass"`
+}
+
+// fetchListResult issues a list request against the given path and
+// decodes the response. Extracted so the contract test body stays a
+// flat assertion sequence.
+func fetchListResult(t *testing.T, url string) []listContentForAssertion {
+	t.Helper()
+	resp := doReq(t, http.MethodGet, url, nil)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	var result struct {
+		XMLName  xml.Name                  `xml:"ListBucketResult"`
+		Contents []listContentForAssertion `xml:"Contents"`
+	}
+	if err := xml.Unmarshal(body, &result); err != nil {
+		t.Fatalf("parse xml: %v", err)
+	}
+	return result.Contents
+}
+
+// assertETagAndStorageClass pins the two contract invariants per
+// rendered Contents entry. Hoisted so the subtest body collapses to one
+// fetch + one assertion call.
+func assertETagAndStorageClass(t *testing.T, contents []listContentForAssertion) {
+	t.Helper()
+	if len(contents) != 2 {
+		t.Fatalf("Contents len = %d, want 2", len(contents))
+	}
+	byKey := map[string]listContentForAssertion{}
+	for _, c := range contents {
+		byKey[c.Key] = c
+	}
+	if got := byKey["file1.txt"].ETag; got != `"d41d8cd98f00b204e9800998ecf8427e"` {
+		t.Errorf("file1 ETag = %q, want quoted hash", got)
+	}
+	if got := byKey["file2.txt"].ETag; got != `""` {
+		t.Errorf("file2 ETag = %q, want quoted empty string", got)
+	}
+	for _, c := range contents {
+		if c.StorageClass != "STANDARD" {
+			t.Errorf("%s StorageClass = %q, want STANDARD", c.Key, c.StorageClass)
+		}
+	}
+}
+
+// TestListObjects_IncludesETagAndStorageClass pins the S3-spec contract
+// that every Contents entry carries ETag and StorageClass. aws-sdk-go-v2
+// models ETag as *string and dereferences without a nil-check, so a
+// missing element crashes clients like aptly mid-list with SIGSEGV.
+// Covers both list versions, the populated-ContentHash branch (yields a
+// quoted hash), and the empty-ContentHash branch (yields a quoted empty
+// string  -  still a valid string, no nil deref).
+func TestListObjects_IncludesETagAndStorageClass(t *testing.T) {
+	t.Parallel()
+	ts, mockStore, _ := newTestServer(t)
+	now := time.Now()
+
+	mockStore.ListObjectsResp = &core.ListObjectsResult{
+		Objects: []core.ObjectLocation{
+			{ObjectKey: "mybucket/file1.txt", BackendName: "b1", SizeBytes: 100, CreatedAt: now, ContentHash: "d41d8cd98f00b204e9800998ecf8427e"},
+			{ObjectKey: "mybucket/file2.txt", BackendName: "b1", SizeBytes: 200, CreatedAt: now},
+		},
+	}
+
+	for _, path := range []string{"/mybucket/?list-type=2", "/mybucket/"} {
+		t.Run(path, func(t *testing.T) {
+			assertETagAndStorageClass(t, fetchListResult(t, ts.URL+path))
+		})
+	}
+}
+
 // TestListObjectsV1_NoAuth verifies the list objects v1 no auth contract.
 // Asserts that expected 403, got.
 func TestListObjectsV1_NoAuth(t *testing.T) {

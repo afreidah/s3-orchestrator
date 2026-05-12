@@ -223,7 +223,7 @@ var (
 ```
 
 <a name="NonReloadableFieldsChanged"></a>
-## func [NonReloadableFieldsChanged](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L206>)
+## func [NonReloadableFieldsChanged](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L212>)
 
 ```go
 func NonReloadableFieldsChanged(old, new *Config) []string
@@ -232,7 +232,7 @@ func NonReloadableFieldsChanged(old, new *Config) []string
 NonReloadableFieldsChanged compares two configs and returns a list of non\-reloadable field descriptions that differ. Used by the SIGHUP handler to warn about changes that require a restart.
 
 <a name="ParseLogLevel"></a>
-## func [ParseLogLevel](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L336>)
+## func [ParseLogLevel](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L342>)
 
 ```go
 func ParseLogLevel(s string) slog.Level
@@ -339,7 +339,7 @@ type CleanupQueueConfig struct {
 ```
 
 <a name="Config"></a>
-## type [Config](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L48-L71>)
+## type [Config](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L50-L73>)
 
 Config holds the complete service configuration.
 
@@ -371,7 +371,7 @@ type Config struct {
 ```
 
 <a name="LoadConfig"></a>
-### func [LoadConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L79>)
+### func [LoadConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L81>)
 
 ```go
 func LoadConfig(path string) (*Config, error)
@@ -380,7 +380,7 @@ func LoadConfig(path string) (*Config, error)
 LoadConfig reads and parses the configuration file with environment variable expansion. Returns an error if the file cannot be read, parsed, or validated.
 
 <a name="Config.SetDefaultsAndValidate"></a>
-### func \(\*Config\) [SetDefaultsAndValidate](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L106>)
+### func \(\*Config\) [SetDefaultsAndValidate](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L108>)
 
 ```go
 func (c *Config) SetDefaultsAndValidate() error
@@ -635,7 +635,7 @@ type ReplicationConfig struct {
 ```
 
 <a name="RoutingStrategy"></a>
-## type [RoutingStrategy](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L32>)
+## type [RoutingStrategy](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L34>)
 
 RoutingStrategy determines how write operations select a target backend.
 
