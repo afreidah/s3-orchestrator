@@ -29,6 +29,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -107,14 +108,13 @@ func (o *ObjectManager) withReadFailover(ctx context.Context, operation, key str
 	locations, err := o.stores.GetAllObjectLocations(ctx, key)
 	if err != nil {
 		if errors.Is(err, core.ErrObjectNotFound) {
-			span.SetStatus(codes.Error, "object not found")
+			observe.MarkSpanError(span, "object not found")
 			return "", err
 		}
 		if errors.Is(err, core.ErrDBUnavailable) {
 			return o.broadcastRead(ctx, operation, key, start, span, tryBackend)
 		}
-		span.SetStatus(codes.Error, err.Error())
-		span.RecordError(err)
+		observe.RecordSpanError(span, err)
 		return "", fmt.Errorf("failed to find object location: %w", err)
 	}
 
@@ -171,11 +171,10 @@ func (o *ObjectManager) tryEachLocation(ctx context.Context, operation, key stri
 func failoverFailureResult(span trace.Span, operation string, locations []core.ObjectLocation, lastErr error, limitSkips int) error {
 	if limitSkips > 0 && limitSkips == len(locations) {
 		telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation, "read").Inc()
-		span.SetStatus(codes.Error, "all copies over usage limit")
+		observe.MarkSpanError(span, "all copies over usage limit")
 		return core.ErrUsageLimitExceeded
 	}
-	span.SetStatus(codes.Error, lastErr.Error())
-	span.RecordError(lastErr)
+	observe.RecordSpanError(span, lastErr)
 	return lastErr
 }
 
@@ -376,11 +375,10 @@ func (o *ObjectManager) recordBroadcastWinner(
 // distinguish "backend unreachable" (502) from "object not found" (404).
 func broadcastAllFailed(span trace.Span, lastErr error) (string, error) {
 	if lastErr != nil {
-		span.SetStatus(codes.Error, lastErr.Error())
-		span.RecordError(lastErr)
+		observe.RecordSpanError(span, lastErr)
 		return "", fmt.Errorf("all backends failed during degraded read: %w", lastErr)
 	}
-	span.SetStatus(codes.Error, "no backends available")
+	observe.MarkSpanError(span, "no backends available")
 	return "", core.ErrObjectNotFound
 }
 
@@ -764,11 +762,10 @@ func (o *ObjectManager) ListObjects(ctx context.Context, prefix, delimiter, star
 // else is wrapped with context.
 func listObjectsError(span trace.Span, err error) error {
 	if errors.Is(err, core.ErrDBUnavailable) {
-		span.SetStatus(codes.Error, "database unavailable")
+		observe.MarkSpanError(span, "database unavailable")
 		return &core.S3Error{StatusCode: 503, Code: "ServiceUnavailable", Message: "listing unavailable during database outage"}
 	}
-	span.SetStatus(codes.Error, err.Error())
-	span.RecordError(err)
+	observe.RecordSpanError(span, err)
 	return fmt.Errorf("failed to list objects: %w", err)
 }
 

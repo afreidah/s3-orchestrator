@@ -21,11 +21,11 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 
-	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -200,16 +200,15 @@ func (c *backendCore) eligibleForWrite(apiCalls, egress, ingress int64) []string
 // errors. Returns the translated error.
 func (c *backendCore) classifyWriteError(span trace.Span, operation string, err error) error {
 	if errors.Is(err, core.ErrDBUnavailable) {
-		span.SetStatus(codes.Error, "database unavailable")
+		observe.MarkSpanError(span, "database unavailable")
 		telemetry.DegradedWriteRejectionsTotal.WithLabelValues(operation).Inc()
 		return core.ErrServiceUnavailable
 	}
 	if errors.Is(err, core.ErrNoSpaceAvailable) {
-		span.SetStatus(codes.Error, "insufficient storage")
+		observe.MarkSpanError(span, "insufficient storage")
 		return core.ErrInsufficientStorage
 	}
-	span.SetStatus(codes.Error, err.Error())
-	span.RecordError(err)
+	observe.RecordSpanError(span, err)
 	return err
 }
 
