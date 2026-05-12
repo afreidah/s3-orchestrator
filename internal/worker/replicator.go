@@ -122,24 +122,17 @@ func (r *Replicator) replicate(ctx context.Context, cfg config.ReplicationConfig
 		}
 	}
 
-	// Fetch quota stats once per cycle to avoid a DB round-trip per object.
-	// This makes target selection approximately correct  -  concurrent PUTs
-	// may update quotas between the fetch and each task. Over-quota writes
-	// are caught by the backend layer (RecordReplica returns an error) so
-	// the worst case is a wasted copy that gets cleaned up.
-	quotaStats, err := r.store.GetQuotaStats(ctx)
-	if err != nil {
-		telemetry.ReplicationRunsTotal.WithLabelValues("error").Inc()
-		return 0, fmt.Errorf("failed to get quota stats: %w", err)
-	}
-
-	// --- Replicate under-replicated objects concurrently ---
+	// Target selection runs through SelectReplicaTarget on every object;
+	// the backend manager filters on in-memory usage limits and queries the
+	// store for least-utilized / first-with-space backend per call. Over-
+	// quota races are caught by the backend layer (RecordReplica returns an
+	// error) so the worst case is a wasted copy that gets cleaned up.
 	telemetry.ReplicationPending.Set(float64(len(tasks)))
 	var created atomic.Int32
 	workerpool.Run(ctx, cfg.Concurrency, tasks, func(ctx context.Context, task replicaTask) {
 		defer telemetry.ReplicationPending.Dec()
 		WithAdmission(ctx, r.ops, WorkerNameReplicator, func() {
-			n, replicateErr := r.ReplicateObject(ctx, quotaStats, task.key, task.copies, task.needed)
+			n, replicateErr := r.ReplicateObject(ctx, task.key, task.copies, task.needed)
 			if replicateErr != nil {
 				r.log.WarnContext(ctx, "object failed", "key", task.key, "error", replicateErr)
 			}
@@ -169,9 +162,8 @@ func (r *Replicator) replicate(ctx context.Context, cfg config.ReplicationConfig
 // -------------------------------------------------------------------------
 
 // ReplicateObject creates up to `needed` additional copies of a single object.
-// quotaStats is pre-fetched once per replication cycle to avoid redundant DB queries.
 // Returns the number of copies successfully created.
-func (r *Replicator) ReplicateObject(ctx context.Context, quotaStats map[string]core.QuotaStat, key string, existingCopies []core.ObjectLocation, needed int) (int, error) {
+func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCopies []core.ObjectLocation, needed int) (int, error) {
 	// Build exclusion set of backends that already hold a copy
 	exclusion := make(map[string]bool, len(existingCopies))
 	for i := range existingCopies {
@@ -192,7 +184,7 @@ func (r *Replicator) ReplicateObject(ctx context.Context, quotaStats map[string]
 	maxAttempts := needed + len(r.ops.Backends())
 	for attempt := 0; created < needed && attempt < maxAttempts; attempt++ {
 		remaining := needed - created
-		target := r.FindReplicaTarget(ctx, quotaStats, key, sizeEstimate, exclusion)
+		target := r.FindReplicaTarget(ctx, key, sizeEstimate, exclusion)
 		if target == "" {
 			r.log.WarnContext(ctx, "no target backend with space",
 				"key", key, "needed", remaining)
@@ -276,7 +268,7 @@ func maxCopySize(copies []core.ObjectLocation) int64 {
 // FindReplicaTarget selects a backend for a replication copy using the same
 // routing strategy as normal writes. Returns empty string if no suitable
 // target exists.
-func (r *Replicator) FindReplicaTarget(ctx context.Context, quotaStats map[string]core.QuotaStat, key string, size int64, exclusion map[string]bool) string {
+func (r *Replicator) FindReplicaTarget(ctx context.Context, key string, size int64, exclusion map[string]bool) string {
 	name, err := r.ops.SelectReplicaTarget(ctx, size, exclusion)
 	if err != nil {
 		r.log.WarnContext(ctx, "target selection failed",
