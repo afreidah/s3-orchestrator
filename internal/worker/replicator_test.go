@@ -172,7 +172,7 @@ func TestCopyToReplica_AllSourcesFail(t *testing.T) {
 
 	ops.EXPECT().GetBackend("b2").Return(dstBe, nil)
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": srcBe}).AnyTimes()
-	ops.EXPECT().StreamCopy(gomock.Any(), srcBe, dstBe, "key1").Return(fmt.Errorf("read: timeout"))
+	ops.EXPECT().StreamCopy(gomock.Any(), srcBe, dstBe, "key1").Return(&backend.CopyError{Phase: backend.CopyPhaseRead, Err: errors.New("timeout")})
 
 	r := NewReplicator(ops, ms)
 	copies := []core.ObjectLocation{{BackendName: "b1"}}
@@ -180,6 +180,88 @@ func TestCopyToReplica_AllSourcesFail(t *testing.T) {
 	_, _, err := r.CopyToReplica(context.Background(), "key1", copies, "b2")
 	if err == nil {
 		t.Fatal("expected error when all sources fail")
+	}
+}
+
+// TestCopyToReplica_WriteErrorShortCircuits pins the typed-write-error
+// classification: a *backend.CopyError with CopyPhaseWrite returned by
+// the first source must terminate the per-source loop immediately and
+// surface the write failure, without StreamCopy being invoked against
+// the remaining sources. Untyped errors (or read-phase errors) would
+// fall through to the next source - that contrast is the whole point
+// of the typed-error refactor.
+func TestCopyToReplica_WriteErrorShortCircuits(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	ops := NewMockOps(ctrl)
+	ms := &mockMetadataStore{}
+
+	src1 := backendtest.NewMockObjectBackend(ctrl)
+	src2 := backendtest.NewMockObjectBackend(ctrl)
+	dstBe := backendtest.NewMockObjectBackend(ctrl)
+
+	ops.EXPECT().GetBackend("dst").Return(dstBe, nil)
+	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{
+		"src1": src1,
+		"src2": src2,
+	}).AnyTimes()
+
+	// First source triggers a typed write error. No expectation is set
+	// for src2's StreamCopy, so the test fails (unexpected call) if
+	// the short-circuit logic regresses and we fall through.
+	ops.EXPECT().StreamCopy(gomock.Any(), src1, dstBe, "key1").
+		Return(&backend.CopyError{Phase: backend.CopyPhaseWrite, Err: errors.New("413 EntityTooLarge")})
+
+	r := NewReplicator(ops, ms)
+	copies := []core.ObjectLocation{
+		{BackendName: "src1"},
+		{BackendName: "src2"},
+	}
+	if _, _, err := r.CopyToReplica(context.Background(), "key1", copies, "dst"); err == nil {
+		t.Fatal("expected write-phase error to surface, got nil")
+	}
+}
+
+// TestCopyToReplica_UntypedErrorRetriesNextSource documents that errors
+// without a phase tag are treated as read-side: the loop moves on to the
+// next source rather than short-circuiting. This is the safety-fallback
+// half of the classification contract.
+func TestCopyToReplica_UntypedErrorRetriesNextSource(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	ops := NewMockOps(ctrl)
+	ms := &mockMetadataStore{}
+
+	src1 := backendtest.NewMockObjectBackend(ctrl)
+	src2 := backendtest.NewMockObjectBackend(ctrl)
+	dstBe := backendtest.NewMockObjectBackend(ctrl)
+
+	ops.EXPECT().GetBackend("dst").Return(dstBe, nil)
+	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{
+		"src1": src1,
+		"src2": src2,
+	}).AnyTimes()
+
+	// Untyped error from src1 must NOT terminate; the loop must call
+	// StreamCopy on src2 next. Sentinel success on src2 proves the
+	// fall-through happened.
+	gomock.InOrder(
+		ops.EXPECT().StreamCopy(gomock.Any(), src1, dstBe, "key1").
+			Return(errors.New("plain error string")),
+		ops.EXPECT().StreamCopy(gomock.Any(), src2, dstBe, "key1").Return(nil),
+	)
+
+	r := NewReplicator(ops, ms)
+	copies := []core.ObjectLocation{
+		{BackendName: "src1"},
+		{BackendName: "src2"},
+	}
+	source, _, err := r.CopyToReplica(context.Background(), "key1", copies, "dst")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if source != "src2" {
+		t.Errorf("source = %q, want src2 (fallthrough after untyped error)", source)
 	}
 }
 
@@ -314,7 +396,7 @@ func TestReplicateObject_WriteFailureExcludesTarget(t *testing.T) {
 	// "fail" backend: GetBackend succeeds, StreamCopy returns write error
 	ops.EXPECT().GetBackend("fail").Return(failBe, nil)
 	ops.EXPECT().StreamCopy(gomock.Any(), srcBe, failBe, "key1").
-		Return(fmt.Errorf("write: put object failed: 413 EntityTooLarge"))
+		Return(&backend.CopyError{Phase: backend.CopyPhaseWrite, Err: errors.New("put object failed: 413 EntityTooLarge")})
 
 	// "ok" backend: succeeds
 	ops.EXPECT().GetBackend("ok").Return(okBe, nil)
