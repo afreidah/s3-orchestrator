@@ -431,13 +431,8 @@ func TestFindReplicaTarget_RespectsOrphanBytes(t *testing.T) {
 	})
 	wireWorkersForTest(mgr)
 
-	stats := map[string]core.QuotaStat{
-		"b1": {BytesUsed: 100, BytesLimit: 1000},
-		"b2": {BytesUsed: 800, BytesLimit: 1000, OrphanBytes: 150},
-	}
-
 	exclusion := map[string]bool{"b1": true}
-	target := mgr.Replicator.FindReplicaTarget(context.Background(), stats, "key1", 100, exclusion)
+	target := mgr.Replicator.FindReplicaTarget(context.Background(), "key1", 100, exclusion)
 	if target != "" {
 		t.Errorf("expected no target (orphan bytes eat available space), got %q", target)
 	}
@@ -470,13 +465,8 @@ func TestFindReplicaTarget_OrphanBytesStillFits(t *testing.T) {
 	})
 	wireWorkersForTest(mgr)
 
-	stats := map[string]core.QuotaStat{
-		"b1": {BytesUsed: 100, BytesLimit: 1000},
-		"b2": {BytesUsed: 800, BytesLimit: 1000, OrphanBytes: 100},
-	}
-
 	exclusion := map[string]bool{"b1": true}
-	target := mgr.Replicator.FindReplicaTarget(context.Background(), stats, "key1", 50, exclusion)
+	target := mgr.Replicator.FindReplicaTarget(context.Background(), "key1", 50, exclusion)
 	if target != "b2" {
 		t.Errorf("expected b2 (50 bytes fits in 100 free), got %q", target)
 	}
