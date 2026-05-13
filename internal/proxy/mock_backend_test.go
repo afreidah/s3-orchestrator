@@ -33,6 +33,7 @@ type mockBackend struct {
 	delDelay           time.Duration
 	lastDeleteHadDdl   bool // set on each DeleteObject; true when the ctx carried a deadline
 	lastDeleteDeadline time.Time
+	lastPutBodySeekable bool // true when the last PutObject body satisfied io.Seeker
 }
 
 type mockObject struct {
@@ -49,8 +50,11 @@ func newMockBackend() *mockBackend {
 var _ s3be.ObjectBackend = (*mockBackend)(nil)
 
 func (m *mockBackend) PutObject(_ context.Context, key string, body io.Reader, _ int64, contentType string, metadata map[string]string) (string, error) {
+	_, seekable := body.(io.Seeker)
+
 	m.mu.Lock()
 	err := m.putErr
+	m.lastPutBodySeekable = seekable
 	m.mu.Unlock()
 	if err != nil {
 		return "", err
