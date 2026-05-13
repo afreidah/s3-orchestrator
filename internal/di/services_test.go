@@ -244,7 +244,7 @@ func TestLockedTickerService_RunOnceSkipsOnLockBusy(t *testing.T) {
 		lockID:   core.LockRebalancer,
 		name:     "test",
 		log:      slog.Default(),
-		work:     func(context.Context) { workCalled = true },
+		work:     func(context.Context) error { workCalled = true; return nil },
 	}
 	svc.runOnce(context.Background(), svc.work)
 	if workCalled {
@@ -273,7 +273,7 @@ func TestLockedTickerService_RunOnceInvokesOnError(t *testing.T) {
 		lockID:   core.LockLifecycle,
 		name:     "test",
 		log:      slog.Default(),
-		work:     func(context.Context) {},
+		work:     func(context.Context) error { return nil },
 		onError:  func(err error) { caught = err },
 	}
 	svc.runOnce(context.Background(), svc.work)
@@ -294,7 +294,7 @@ func TestLockedTickerService_RunOnceLogsErrorWhenNoOnError(t *testing.T) {
 		lockID:   core.LockLifecycle,
 		name:     "test",
 		log:      slog.Default(),
-		work:     func(context.Context) {},
+		work:     func(context.Context) error { return nil },
 		// onError intentionally nil to drive the fallback branch.
 	}
 	svc.runOnce(context.Background(), svc.work) // must not panic
@@ -312,7 +312,7 @@ func TestLockedTickerService_RunOnceSwallowsErrDBUnavailable(t *testing.T) {
 		lockID:   core.LockLifecycle,
 		name:     "test",
 		log:      slog.Default(),
-		work:     func(context.Context) {},
+		work:     func(context.Context) error { return nil },
 		onError:  func(error) { onErrCalled = true },
 	}
 	svc.runOnce(context.Background(), svc.work)
@@ -354,7 +354,7 @@ func TestLockedTickerService_RunExitsOnCancel(t *testing.T) {
 		lockID:   core.LockRebalancer,
 		name:     "test",
 		log:      slog.Default(),
-		work:     func(context.Context) {},
+		work:     func(context.Context) error { return nil },
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -375,8 +375,8 @@ func TestLockedTickerService_RunStartupFires(t *testing.T) {
 		lockID:   core.LockReplicator,
 		name:     "test",
 		log:      slog.Default(),
-		work:     func(context.Context) {},
-		startup:  func(context.Context) { startupCalled = true },
+		work:     func(context.Context) error { return nil },
+		startup:  func(context.Context) error { startupCalled = true; return nil },
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -439,39 +439,39 @@ func TestServiceClosures_ExerciseWorkAndShouldRun(t *testing.T) {
 	locker := acquiringLocker{}
 
 	mpc := asTicker(t, NewMultipartCleanupService(mgr, locker, 100*time.Millisecond))
-	mpc.work(ctx)
+	_ = mpc.work(ctx)
 
 	cq := asTicker(t, NewCleanupQueueService(f.cleanupWorker, locker))
-	cq.work(ctx)
+	_ = cq.work(ctx)
 
 	rb := asTicker(t, NewRebalancerService(mgr, f.rebalancer, locker))
 	_ = rb.shouldRun()
-	rb.work(ctx)
+	_ = rb.work(ctx)
 
 	lc := asTicker(t, NewLifecycleService(mgr, locker))
 	_ = lc.shouldRun()
-	lc.work(ctx)
+	_ = lc.work(ctx)
 	if lc.onError != nil {
 		lc.onError(errors.New("simulated failure for coverage"))
 	}
 
 	or := asTicker(t, NewOverReplicationService(mgr, f.overRep, locker))
 	_ = or.shouldRun()
-	or.work(ctx)
+	_ = or.work(ctx)
 
 	rp := asTicker(t, NewReplicatorService(mgr, f.replicator, locker))
 	_ = rp.shouldRun()
-	rp.work(ctx)
+	_ = rp.work(ctx)
 	if rp.startup != nil {
-		rp.startup(ctx)
+		_ = rp.startup(ctx)
 	}
 
 	rc := asTicker(t, NewReconcileService(worker.NewReconciler(mgr, nil), locker, 100*time.Millisecond))
-	rc.work(ctx)
+	_ = rc.work(ctx)
 
 	sc := asTicker(t, NewScrubberService(f.scrubber, locker))
 	_ = sc.shouldRun()
-	sc.work(ctx)
+	_ = sc.work(ctx)
 }
 
 // TestLockedTickerService_RunTicksOnce runs the ticker loop long enough to
@@ -494,7 +494,7 @@ func TestLockedTickerService_RunTicksOnce(t *testing.T) {
 			}
 			return true
 		},
-		work: func(context.Context) {},
+		work: func(context.Context) error { return nil },
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()

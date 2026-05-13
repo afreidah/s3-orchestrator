@@ -831,6 +831,9 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when enabled.
 | `s3o_lifecycle_deleted_total` | Counter | — | Objects deleted by lifecycle expiration |
 | `s3o_lifecycle_failed_total` | Counter | — | Objects that failed lifecycle deletion |
 | `s3o_lifecycle_runs_total` | Counter | status | Lifecycle worker executions |
+| `s3o_worker_ticks_total` | Counter | service, result | Locked-ticker service ticks by service and outcome (success, error, skipped) |
+| `s3o_worker_last_success_timestamp_seconds` | Gauge | service | Unix time of the most recent successful tick per service |
+| `s3o_worker_consecutive_failures` | Gauge | service | Consecutive failed ticks per service since the last success |
 | `s3o_audit_events_total` | Counter | event | Audit log entries emitted |
 | `s3o_drain_active` | Gauge | — | `1` while a backend drain is in progress |
 | `s3o_drain_objects_moved_total` | Counter | — | Objects migrated during drain |

@@ -109,6 +109,47 @@ func (m *Manager) Names() []string {
 	return names
 }
 
+// WorkerHealth snapshots a registered service's last tick outcomes
+// plus its registration name. ConsecutiveFailures resets to 0 on the
+// next success; LastSuccess/LastFailure are zero until the
+// corresponding event happens. Surfaced through Manager.Health() and
+// the admin /api/workers endpoint.
+type WorkerHealth struct {
+	Name                string    `json:"name"`
+	LastSuccess         time.Time `json:"last_success,omitempty"`
+	LastFailure         time.Time `json:"last_failure,omitempty"`
+	LastError           string    `json:"last_error,omitempty"`
+	ConsecutiveFailures int       `json:"consecutive_failures"`
+}
+
+// HealthReporter is the optional interface registered services may
+// implement to expose per-tick health state. Services that satisfy it
+// appear in Manager.Health(); services that do not are silently
+// omitted, so adding the interface is purely additive.
+type HealthReporter interface {
+	Health() WorkerHealth
+}
+
+// Health returns a snapshot of every registered service that
+// implements HealthReporter. Order matches registration order so
+// operators reading the JSON dump see the same service ordering as
+// startup logs.
+func (m *Manager) Health() []WorkerHealth {
+	out := make([]WorkerHealth, 0, len(m.services))
+	for _, e := range m.services {
+		hr, ok := e.runner.(HealthReporter)
+		if !ok {
+			continue
+		}
+		h := hr.Health()
+		if h.Name == "" {
+			h.Name = e.name
+		}
+		out = append(out, h)
+	}
+	return out
+}
+
 // Run starts all registered services and blocks until ctx is cancelled. Each
 // service runs in its own goroutine with panic recovery and automatic restart.
 func (m *Manager) Run(ctx context.Context) {

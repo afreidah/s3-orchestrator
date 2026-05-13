@@ -15,8 +15,10 @@ package di
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"sync"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
@@ -69,6 +71,11 @@ const (
 // logging, and context cancellation. The component identity lives on the
 // scoped logger (Component attr) rather than in message text, so logs from
 // every service share the same shape and operators filter by attribute.
+//
+// Per-service health state (lastSuccess, lastFailure, lastError,
+// consecutiveFailures) is recorded after each tick so operators can
+// query worker liveness through the admin endpoint and alert on
+// staleness through Prometheus.
 type lockedTickerService struct {
 	locker   advisoryLocker
 	interval time.Duration
@@ -82,9 +89,15 @@ type lockedTickerService struct {
 	log *slog.Logger
 
 	shouldRun func() bool
-	startup   func(ctx context.Context)
-	work      func(ctx context.Context)
+	startup   func(ctx context.Context) error
+	work      func(ctx context.Context) error
 	onError   func(err error)
+
+	// health is the latest snapshot of per-service liveness, updated by
+	// runOnce after every tick. Read by Health() under healthMu so the
+	// admin endpoint sees consistent reads without blocking the tick.
+	healthMu sync.Mutex
+	health   lifecycle.WorkerHealth
 }
 
 // componentLogger returns the scoped logger every service uses,
@@ -93,6 +106,31 @@ type lockedTickerService struct {
 // service's name field.
 func componentLogger(slug string) *slog.Logger {
 	return slog.Default().With(logfmt.Component(slug))
+}
+
+// handlePassResult is the shared post-call handling for the three
+// nearly-identical "pass" workers (rebalance, over-replication,
+// replication). Each one returns (count, err) from a worker call and
+// then either: surfaces non-DB errors as tick failures (so health
+// reporting sees them), or  -  when work was done  -  logs a
+// completion message with a work-specific count key and refreshes
+// quota metrics so the dashboard reflects the move. Centralized so
+// the three closures cannot drift, and so coverage of the error and
+// count>0 branches lands in one place.
+func handlePassResult(ctx context.Context, log *slog.Logger, manager *proxy.BackendManager, count int, err error, countKey string) error {
+	if err != nil {
+		if errors.Is(err, core.ErrDBUnavailable) {
+			return nil
+		}
+		return err
+	}
+	if count > 0 {
+		log.InfoContext(ctx, msgPassCompleted, countKey, count)
+		if qerr := manager.UpdateQuotaMetrics(ctx); qerr != nil {
+			log.WarnContext(ctx, msgQuotaMetricsRefreshFailed, "error", qerr)
+		}
+	}
+	return nil
 }
 
 // Run implements lifecycle.Runner with a jittered first tick to prevent
@@ -124,24 +162,78 @@ func (s *lockedTickerService) Run(ctx context.Context) error {
 	}
 }
 
-// runOnce creates an audit context, acquires the advisory lock, and runs fn.
-func (s *lockedTickerService) runOnce(ctx context.Context, fn func(ctx context.Context)) {
+// runOnce creates an audit context, acquires the advisory lock, runs
+// fn, and records the resulting health state. Lock-busy and
+// shouldRun-gated ticks are accounted as "skipped" so health metrics
+// can distinguish them from outright failures.
+func (s *lockedTickerService) runOnce(ctx context.Context, fn func(ctx context.Context) error) {
 	tickCtx := audit.WithRequestID(ctx, audit.NewID())
-	acquired, err := s.locker.WithAdvisoryLock(tickCtx, s.lockID,
+	var workErr error
+	acquired, lockErr := s.locker.WithAdvisoryLock(tickCtx, s.lockID,
 		func(lockCtx context.Context) error {
-			fn(lockCtx)
+			workErr = fn(lockCtx)
 			return nil
 		})
-	if err != nil && !errors.Is(err, core.ErrDBUnavailable) {
+
+	switch {
+	case lockErr != nil && !errors.Is(lockErr, core.ErrDBUnavailable):
 		if s.onError != nil {
-			s.onError(err)
+			s.onError(lockErr)
 		} else {
-			s.log.ErrorContext(ctx, "tick failed", "error", err)
+			s.log.ErrorContext(ctx, "tick failed", "error", lockErr)
 		}
-	}
-	if !acquired {
+		s.recordHealth(false, fmt.Errorf("advisory lock: %w", lockErr))
+	case !acquired:
 		s.log.DebugContext(ctx, "tick skipped, another instance holds the lock")
+		telemetry.WorkerTicksTotal.WithLabelValues(s.name, "skipped").Inc()
+	case workErr != nil:
+		s.log.ErrorContext(ctx, msgPassFailed, "error", workErr)
+		s.recordHealth(false, workErr)
+	default:
+		s.recordHealth(true, nil)
 	}
+}
+
+// recordHealth updates the per-service health state plus the worker
+// metrics. Centralized so the tick path has one place to maintain the
+// invariants (consecutiveFailures resets on success, last_success
+// timestamp only moves forward on success).
+func (s *lockedTickerService) recordHealth(success bool, err error) {
+	now := time.Now()
+	s.healthMu.Lock()
+	if success {
+		s.health.LastSuccess = now
+		s.health.LastError = ""
+		s.health.ConsecutiveFailures = 0
+	} else {
+		s.health.LastFailure = now
+		if err != nil {
+			s.health.LastError = err.Error()
+		}
+		s.health.ConsecutiveFailures++
+	}
+	failures := s.health.ConsecutiveFailures
+	s.healthMu.Unlock()
+
+	if success {
+		telemetry.WorkerTicksTotal.WithLabelValues(s.name, "success").Inc()
+		telemetry.WorkerLastSuccessTimestampSeconds.WithLabelValues(s.name).Set(float64(now.Unix()))
+		telemetry.WorkerConsecutiveFailures.WithLabelValues(s.name).Set(0)
+	} else {
+		telemetry.WorkerTicksTotal.WithLabelValues(s.name, "error").Inc()
+		telemetry.WorkerConsecutiveFailures.WithLabelValues(s.name).Set(float64(failures))
+	}
+}
+
+// Health implements lifecycle.HealthReporter. Returns a snapshot of
+// the service's last tick outcomes plus its registered name so the
+// admin endpoint can render a per-service status table.
+func (s *lockedTickerService) Health() lifecycle.WorkerHealth {
+	s.healthMu.Lock()
+	defer s.healthMu.Unlock()
+	h := s.health
+	h.Name = s.name
+	return h
 }
 
 // -------------------------------------------------------------------------
@@ -249,8 +341,9 @@ func NewMultipartCleanupService(manager *proxy.BackendManager, locker advisoryLo
 		lockID:   core.LockMultipartCleanup,
 		name:     slug,
 		log:      componentLogger(slug),
-		work: func(ctx context.Context) {
+		work: func(ctx context.Context) error {
 			manager.MultipartManager.CleanupStaleMultipartUploads(ctx, staleTimeout)
+			return nil
 		},
 	}
 }
@@ -265,11 +358,12 @@ func NewCleanupQueueService(cleanup *worker.CleanupWorker, locker advisoryLocker
 		lockID:   core.LockCleanupQueue,
 		name:     slug,
 		log:      log,
-		work: func(ctx context.Context) {
+		work: func(ctx context.Context) error {
 			processed, failed := cleanup.ProcessCleanupQueue(ctx)
 			if processed > 0 || failed > 0 {
 				log.InfoContext(ctx, "queue processed", "processed", processed, "failed", failed)
 			}
+			return nil
 		},
 	}
 }
@@ -294,11 +388,12 @@ func NewPendingReaperService(reaper *worker.PendingReaper, locker advisoryLocker
 		lockID:   core.LockPendingReaper,
 		name:     slug,
 		log:      log,
-		work: func(ctx context.Context) {
+		work: func(ctx context.Context) error {
 			resolved, failed := reaper.ProcessPendingQueue(ctx)
 			if resolved > 0 || failed > 0 {
 				log.InfoContext(ctx, "pending queue processed", "resolved", resolved, "failed", failed)
 			}
+			return nil
 		},
 	}
 }
@@ -321,20 +416,13 @@ func NewRebalancerService(manager *proxy.BackendManager, rebalancer *worker.Reba
 			rcfg := rebalancer.Config()
 			return rcfg != nil && rcfg.Enabled
 		},
-		work: func(ctx context.Context) {
+		work: func(ctx context.Context) error {
 			rcfg := rebalancer.Config()
 			if rcfg == nil {
-				return
+				return nil
 			}
 			moved, err := rebalancer.Rebalance(ctx, *rcfg)
-			if err != nil && !errors.Is(err, core.ErrDBUnavailable) {
-				log.ErrorContext(ctx, msgPassFailed, "error", err)
-			} else if moved > 0 {
-				log.InfoContext(ctx, msgPassCompleted, "objects_moved", moved)
-				if err := manager.UpdateQuotaMetrics(ctx); err != nil {
-					log.WarnContext(ctx, msgQuotaMetricsRefreshFailed, "error", err)
-				}
-			}
+			return handlePassResult(ctx, log, manager, moved, err, "objects_moved")
 		},
 	}
 }
@@ -353,10 +441,10 @@ func NewLifecycleService(manager *proxy.BackendManager, locker advisoryLocker) l
 			cfg := manager.LifecycleConfig()
 			return cfg != nil && len(cfg.Rules) > 0
 		},
-		work: func(ctx context.Context) {
+		work: func(ctx context.Context) error {
 			cfg := manager.LifecycleConfig()
 			if cfg == nil {
-				return
+				return nil
 			}
 			deleted, failed := manager.ProcessLifecycleRules(ctx, cfg.Rules)
 			if deleted > 0 || failed > 0 {
@@ -368,6 +456,7 @@ func NewLifecycleService(manager *proxy.BackendManager, locker advisoryLocker) l
 			} else {
 				telemetry.LifecycleRunsTotal.WithLabelValues("success").Inc()
 			}
+			return nil
 		},
 		onError: func(err error) {
 			log.ErrorContext(context.Background(), "expiration failed", "error", err)
@@ -394,20 +483,13 @@ func NewOverReplicationService(manager *proxy.BackendManager, overRep *worker.Ov
 			rcfg := overRep.Config()
 			return rcfg != nil && rcfg.Factor > 1
 		},
-		work: func(ctx context.Context) {
+		work: func(ctx context.Context) error {
 			rcfg := overRep.Config()
 			if rcfg == nil {
-				return
+				return nil
 			}
 			removed, err := overRep.Clean(ctx, *rcfg)
-			if err != nil && !errors.Is(err, core.ErrDBUnavailable) {
-				log.ErrorContext(ctx, msgPassFailed, "error", err)
-			} else if removed > 0 {
-				log.InfoContext(ctx, msgPassCompleted, "copies_removed", removed)
-				if err := manager.UpdateQuotaMetrics(ctx); err != nil {
-					log.WarnContext(ctx, msgQuotaMetricsRefreshFailed, "error", err)
-				}
-			}
+			return handlePassResult(ctx, log, manager, removed, err, "copies_removed")
 		},
 	}
 }
@@ -416,20 +498,13 @@ func NewOverReplicationService(manager *proxy.BackendManager, overRep *worker.Ov
 func NewReplicatorService(manager *proxy.BackendManager, replicator *worker.Replicator, locker advisoryLocker) lifecycle.Runner {
 	const slug = "replication"
 	log := componentLogger(slug)
-	replicateWork := func(ctx context.Context) {
+	replicateWork := func(ctx context.Context) error {
 		rcfg := replicator.Config()
 		if rcfg == nil {
-			return
+			return nil
 		}
 		created, err := replicator.Replicate(ctx, *rcfg)
-		if err != nil && !errors.Is(err, core.ErrDBUnavailable) {
-			log.ErrorContext(ctx, msgPassFailed, "error", err)
-		} else if created > 0 {
-			log.InfoContext(ctx, msgPassCompleted, "copies_created", created)
-			if err := manager.UpdateQuotaMetrics(ctx); err != nil {
-				log.WarnContext(ctx, msgQuotaMetricsRefreshFailed, "error", err)
-			}
-		}
+		return handlePassResult(ctx, log, manager, created, err, "copies_created")
 	}
 
 	interval := defaultReplicatorTick
@@ -460,8 +535,9 @@ func NewReconcileService(reconciler *worker.Reconciler, locker advisoryLocker, i
 		lockID:   core.LockReconcile,
 		name:     slug,
 		log:      componentLogger(slug),
-		work: func(ctx context.Context) {
+		work: func(ctx context.Context) error {
 			reconciler.Run(ctx)
+			return nil
 		},
 	}
 }
@@ -527,15 +603,16 @@ func NewScrubberService(scrubber *worker.Scrubber, locker advisoryLocker) lifecy
 			icfg := scrubber.Config()
 			return icfg != nil && icfg.Enabled && icfg.ScrubberInterval > 0
 		},
-		work: func(ctx context.Context) {
+		work: func(ctx context.Context) error {
 			icfg := scrubber.Config()
 			if icfg == nil {
-				return
+				return nil
 			}
 			checked, failed := scrubber.Scrub(ctx, icfg.ScrubberBatchSize)
 			if checked > 0 || failed > 0 {
 				log.InfoContext(ctx, "scrub completed", "checked", checked, "failed", failed)
 			}
+			return nil
 		},
 	}
 }

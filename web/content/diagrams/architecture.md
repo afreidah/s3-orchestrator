@@ -166,7 +166,7 @@ High-level architecture of the S3 Orchestrator showing the request path, storage
     ADMIN: {
       title: 'Admin API',
       badge: 'handler', badgeText: 'handler',
-      body: '<p>Operational control endpoints at <code>/admin/api/*</code>. Protected by <code>X-Admin-Token</code> header.</p><p><b>Triggers:</b> flush-usage, rebalance, replicate, cleanup-queue, encrypt-existing.<br><b>Monitoring:</b> health, config, dashboard stats, object listing.<br><b>Drain:</b> start/check/cancel backend decommissioning (moves all objects to other backends).</p>'
+      body: '<p>Operational control endpoints at <code>/admin/api/*</code>. Protected by <code>X-Admin-Token</code> header.</p><p><b>Triggers:</b> flush-usage, rebalance, replicate, cleanup-queue, encrypt-existing.<br><b>Monitoring:</b> health, config, dashboard stats, object listing, worker health (<code>/admin/api/workers</code>).<br><b>Drain:</b> start/check/cancel backend decommissioning (moves all objects to other backends).</p>'
     },
     WEBUI: {
       title: 'Web Dashboard',
