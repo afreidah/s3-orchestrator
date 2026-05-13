@@ -70,8 +70,31 @@ jobs:
         id: fuzz
         run: go test -fuzz=${{ matrix.target }} -fuzztime=2m -timeout=3m ${{ matrix.package }}
 
-      - name: Upload crashing inputs
+      # A real crash always writes an input file under testdata/fuzz/<target>/.
+      # The fuzz coordinator can also exit non-zero with "context deadline
+      # exceeded" when an in-flight worker has not returned by the time
+      # -fuzztime expires; that is not a bug, just a deadline race on shutdown.
+      # Gate the issue-creation step on an actual corpus file so the workflow
+      # stops filing false-positive bugs.
+      - name: Check for crashing input
         if: failure()
+        id: corpus
+        run: |
+          files=$(find . -path '*/testdata/fuzz/${{ matrix.target }}/*' -type f 2>/dev/null)
+          if [ -n "$files" ]; then
+            {
+              echo "has_crash=true"
+              echo "corpus<<CORPUS_EOF"
+              printf '%s\n' "$files" | head -5
+              echo "CORPUS_EOF"
+            } >> "$GITHUB_OUTPUT"
+          else
+            echo "has_crash=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Fuzz target exited non-zero with no crashing input — likely fuzz-coordinator deadline race on shutdown, not a real bug."
+          fi
+
+      - name: Upload crashing inputs
+        if: failure() && steps.corpus.outputs.has_crash == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: fuzz-corpus-${{ matrix.target }}
@@ -79,19 +102,17 @@ jobs:
           retention-days: 90
 
       - name: Open issue on failure
-        if: failure()
+        if: failure() && steps.corpus.outputs.has_crash == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Collect the crashing input filename if it exists
-          CORPUS_FILES=$(find . -path '*/testdata/fuzz/${{ matrix.target }}/*' -type f 2>/dev/null | head -5)
           BODY="## Fuzz failure: \`${{ matrix.target }}\`
 
           **Package:** \`${{ matrix.package }}\`
           **Run:** [View logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
 
           ### Crashing inputs
-          ${CORPUS_FILES:-No corpus files found — check the run logs for the failing input.}
+          ${{ steps.corpus.outputs.corpus }}
 
           ### Next steps
           1. Download the \`fuzz-corpus-${{ matrix.target }}\` artifact from the run
