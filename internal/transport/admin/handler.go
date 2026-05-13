@@ -67,6 +67,7 @@ type Handler struct {
 	lifecycle         core.BackendLifecycleStore
 	reconciler        Reconciler
 	dbHealthy         func() bool
+	workerHealth      func() []WorkerHealth // nil when lifecycle manager is not wired
 	objects           core.ObjectStore
 	cleanup           core.CleanupStore
 	encAdmin          core.EncryptionAdmin
@@ -93,6 +94,7 @@ type Deps struct {
 	Scrubber          ScrubberOps
 	Lifecycle         core.BackendLifecycleStore
 	DBHealthy         func() bool // typically *breaker.CircuitBreaker.IsHealthy
+	WorkerHealth      func() []WorkerHealth // typically lifecycle.Manager.Health adapted
 	Encryption        core.EncryptionAdmin
 	Objects           core.ObjectStore
 	Cleanup           core.CleanupStore
@@ -115,6 +117,7 @@ func New(d *Deps) *Handler {
 		lifecycle:         d.Lifecycle,
 		reconciler:        d.Reconciler,
 		dbHealthy:         d.DBHealthy,
+		workerHealth:      d.WorkerHealth,
 		objects:           d.Objects,
 		cleanup:           d.Cleanup,
 		encAdmin:          d.Encryption,
@@ -160,6 +163,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /admin/api/cache", h.requireToken(h.handleCacheStats))
 	mux.HandleFunc("DELETE /admin/api/cache/keys/{key...}", h.requireToken(h.handleCacheInvalidateKey))
 	mux.HandleFunc("DELETE /admin/api/cache/prefix", h.requireToken(h.handleCacheInvalidatePrefix))
+	mux.HandleFunc("GET /admin/api/workers", h.requireToken(h.handleWorkers))
 }
 
 // -------------------------------------------------------------------------
@@ -1179,4 +1183,37 @@ func (h *Handler) internalError(ctx context.Context, w http.ResponseWriter, msg 
 	args := append([]any{"error", err}, attrs...)
 	h.log.ErrorContext(ctx, msg, args...)
 	httputil.WriteJSONError(w, http.StatusInternalServerError, msg)
+}
+
+// -------------------------------------------------------------------------
+// WORKER HEALTH
+// -------------------------------------------------------------------------
+
+// WorkerHealth is the JSON shape returned by /admin/api/workers. Mirrors
+// lifecycle.WorkerHealth but lives here so the admin transport package
+// owns its own response contract and does not import the lifecycle
+// package directly. Field tags must stay in lockstep with the source
+// type or the wire format silently diverges.
+type WorkerHealth struct {
+	Name                string    `json:"name"`
+	LastSuccess         time.Time `json:"last_success,omitempty"`
+	LastFailure         time.Time `json:"last_failure,omitempty"`
+	LastError           string    `json:"last_error,omitempty"`
+	ConsecutiveFailures int       `json:"consecutive_failures"`
+}
+
+// handleWorkers returns a snapshot of every registered background
+// service's last-tick health. The supervisor records a tick outcome
+// after every fire, so operators can identify stalled or repeatedly
+// failing workers without scraping logs. Returns 503 when the
+// lifecycle manager was not wired (proxy-only deployments that disable
+// the worker pool).
+func (h *Handler) handleWorkers(w http.ResponseWriter, _ *http.Request) {
+	if h.workerHealth == nil {
+		httputil.WriteJSONError(w, http.StatusServiceUnavailable, "worker health not available")
+		return
+	}
+	httputil.WriteJSON(w, http.StatusOK, map[string]any{
+		"workers": h.workerHealth(),
+	})
 }

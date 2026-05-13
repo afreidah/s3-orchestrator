@@ -58,7 +58,38 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.46.x (current)
+### v0.47.x (current)
+
+**Background worker health surfaced through admin API and Prometheus (v0.47.0)**
+
+Every locked-ticker background service (replicator, cleanup queue,
+rebalancer, lifecycle, pending reaper, over-replication cleaner,
+scrubber, reconciler, multipart cleanup) now records per-tick
+success/failure state. Operators can identify stalled or repeatedly
+failing workers without scraping logs.
+
+New surfaces:
+
+- `GET /admin/api/workers` returns a JSON snapshot of every registered
+  service's last success, last failure, last error, and consecutive
+  failure count. Returns 503 in proxy-only deployments.
+- Prometheus metrics: `s3o_worker_ticks_total{service,result}`,
+  `s3o_worker_last_success_timestamp_seconds{service}`,
+  `s3o_worker_consecutive_failures{service}`. The first labels every
+  tick outcome (`success` / `error` / `skipped`); the second feeds
+  staleness alerts; the third surfaces "running but failing".
+
+**Operator action items after upgrade:**
+
+- No configuration change. The endpoint and metrics are emitted
+  automatically by every locked-ticker service.
+- Consider adding Prometheus alerts on
+  `time() - s3o_worker_last_success_timestamp_seconds{service="..."}`
+  per critical worker. The existing supervisor still restarts crashed
+  services; these alerts catch the harder case of "running but every
+  tick fails".
+
+### v0.46.x
 
 **Postgres encrypt/decrypt admin keeps bytes_used consistent (v0.46.9)**
 
