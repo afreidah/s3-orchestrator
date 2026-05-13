@@ -1032,6 +1032,41 @@ curl http://localhost:9000/health/ready
 
 Both endpoints include an `instance` field with the hostname for identifying which instance responded in multi-instance deployments.
 
+### Background worker health
+
+`/health` only reflects database breaker state. Background services
+(replicator, cleanup queue, lifecycle, pending reaper, ...) are
+supervised by the lifecycle manager and recover on their own, but a
+service that is *running* yet *failing every tick* looks identical to
+a healthy one in `/health`.
+
+`GET /admin/api/workers` returns a JSON snapshot of every registered
+background service's last-tick health, including `last_success`,
+`last_failure`, `last_error`, and `consecutive_failures`. Use it
+during incidents to distinguish:
+
+```bash
+curl -H "X-Admin-Token: $TOKEN" http://localhost:9000/admin/api/workers
+```
+
+```json
+{
+  "workers": [
+    {"name": "cleanup_queue", "last_success": "2026-05-12T18:42:01Z", "consecutive_failures": 0},
+    {"name": "replicator", "last_failure": "2026-05-12T18:45:14Z", "last_error": "connection refused", "consecutive_failures": 3}
+  ]
+}
+```
+
+Workers in proxy-only deployments return `503` from this endpoint
+because no worker pool is registered.
+
+The same data flows into Prometheus as
+`s3o_worker_last_success_timestamp_seconds`,
+`s3o_worker_consecutive_failures`, and `s3o_worker_ticks_total{result}`
+so alerting can run without scraping the admin endpoint. Suggested
+alert shapes are in the metrics table below.
+
 ### Grafana dashboard
 
 A comprehensive Grafana dashboard is included at `grafana/s3-orchestrator.json`. Import it via Grafana's UI (Dashboards → Import → Upload JSON file) or provision it from disk. It expects a Prometheus datasource with UID `prometheus`.
@@ -1073,6 +1108,9 @@ If `telemetry.metrics.enabled` is `true`, metrics are exposed at `/metrics`. Key
 | `s3o_cleanup_dlq_enqueued_total{backend="..."}` | Rate of graduations per backend; one backend dominating means its delete path is broken |
 | `s3o_cleanup_queue_stale_claims_recovered_total{backend="..."}` | Non-zero rate means a worker died mid-process or `cleanup_queue.claim_grace_period` is shorter than realistic worst-case row processing time |
 | `s3o_audit_events_total{event="..."}` | Audit log volume by event type — useful for detecting unusual activity |
+| `time() - s3o_worker_last_success_timestamp_seconds{service="..."}` | Alert when greater than the worker's expected tick interval times a margin (e.g. `> 4 * interval`) — the service has not completed a successful tick in that window |
+| `s3o_worker_consecutive_failures{service="..."}` | Alert when consistently > 0 — the service is running but every tick fails; logs and `/admin/api/workers` carry the underlying error |
+| `rate(s3o_worker_ticks_total{result="error"}[15m])` | Persistent error rate; alongside `consecutive_failures` distinguishes flapping from sustained failure |
 | `s3o_auth_streaming_requests_total{variant}` | Rate of streaming-payload SigV4 PUTs by variant — track which client SDKs are sending streaming uploads |
 | `s3o_auth_streaming_rejections_total{reason}` | Alert on any non-zero rate — every increment is a chunk-validation failure (tampered body, malformed framing, length mismatch, or signature mismatch) |
 | `s3o_encryption_errors_total{op,error_type}` | Any non-zero rate indicates encryption/decryption failures. `error_type="stream_failed"` specifically flags transport errors that surfaced mid-stream (after the encryptor/decryptor was constructed). |

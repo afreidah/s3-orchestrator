@@ -23,6 +23,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
+	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/notify"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
@@ -192,6 +193,25 @@ func resolveAdminHandlerRequiredDeps(i do.Injector) (adminHandlerRequiredDeps, e
 	return d, nil
 }
 
+// toAdminWorkerHealth copies a lifecycle.WorkerHealth slice into the
+// admin transport's matching type. The two shapes are intentionally
+// kept separate (admin owns its wire contract; lifecycle owns its
+// internal type) so this conversion is the single place where field
+// drift would surface.
+func toAdminWorkerHealth(snaps []lifecycle.WorkerHealth) []admin.WorkerHealth {
+	out := make([]admin.WorkerHealth, len(snaps))
+	for i, s := range snaps {
+		out[i] = admin.WorkerHealth{
+			Name:                s.Name,
+			LastSuccess:         s.LastSuccess,
+			LastFailure:         s.LastFailure,
+			LastError:           s.LastError,
+			ConsecutiveFailures: s.ConsecutiveFailures,
+		}
+	}
+	return out
+}
+
 // ProvideAdminHandler creates the admin API handler.
 func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 	d, err := resolveAdminHandlerRequiredDeps(i)
@@ -209,22 +229,31 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 			logfmt.Component("di"),
 			"error", recRes.Err)
 	}
+	// lifecycle.Manager is invoked lazily so a proxy-only deployment
+	// that has no worker pool still resolves the admin handler. The
+	// closure surfaces a nil snapshot to the admin transport, which
+	// then returns 503 to /admin/api/workers.
+	var workerHealth func() []admin.WorkerHealth
+	if lm, err := do.Invoke[*lifecycle.Manager](i); err == nil {
+		workerHealth = func() []admin.WorkerHealth { return toAdminWorkerHealth(lm.Health()) }
+	}
 	return admin.New(&admin.Deps{
-		BackendOps:  d.manager,
-		Replicator:  d.replicator,
-		OverRep:     d.overRep,
-		Drain:       d.drain,
-		Scrubber:    d.scrubber,
-		Lifecycle:   d.stores,
-		DBHealthy:   d.cb.IsHealthy,
-		Encryption:  d.encAdmin,
-		Objects:     d.stores,
-		Cleanup:     d.stores,
-		Encryptor:   d.enc,
-		ObjectCache: resolveOptionalCache(i),
-		Reconciler:  recRes.Value,
-		Token:       adminToken,
-		LogLevel:    d.logLevel,
+		BackendOps:   d.manager,
+		Replicator:   d.replicator,
+		OverRep:      d.overRep,
+		Drain:        d.drain,
+		Scrubber:     d.scrubber,
+		Lifecycle:    d.stores,
+		DBHealthy:    d.cb.IsHealthy,
+		WorkerHealth: workerHealth,
+		Encryption:   d.encAdmin,
+		Objects:      d.stores,
+		Cleanup:      d.stores,
+		Encryptor:    d.enc,
+		ObjectCache:  resolveOptionalCache(i),
+		Reconciler:   recRes.Value,
+		Token:        adminToken,
+		LogLevel:     d.logLevel,
 	}), nil
 }
 

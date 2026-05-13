@@ -306,6 +306,53 @@ Returns backend health, quota usage, object counts, and monthly usage stats.
 }
 ```
 
+### GET /admin/api/workers
+
+Returns a snapshot of every registered background service's last-tick
+health. Use this during incidents to distinguish "worker is running
+but every tick fails" from "worker has not run". Returns `503` when
+the deployment runs in proxy-only mode and no worker pool is wired.
+
+**Response:**
+
+```json
+{
+  "workers": [
+    {
+      "name": "cleanup_queue",
+      "last_success": "2026-05-12T18:42:01Z",
+      "consecutive_failures": 0
+    },
+    {
+      "name": "replicator",
+      "last_success": "2026-05-12T18:30:14Z",
+      "last_failure": "2026-05-12T18:45:14Z",
+      "last_error": "connection refused",
+      "consecutive_failures": 3
+    }
+  ]
+}
+```
+
+Fields:
+
+- `name` — registration name, matches the snake_case slug on the scoped
+  logger (e.g. `cleanup_queue`, `replicator`, `over_replication_cleanup`).
+- `last_success` — RFC 3339 timestamp of the most recent successful
+  tick. Omitted before the first success.
+- `last_failure` — most recent failed tick. Omitted before the first
+  failure. Stays set after recovery so operators can see how long ago
+  the service was last failing.
+- `last_error` — error string from the most recent failure. Cleared on
+  the next success.
+- `consecutive_failures` — count of back-to-back failed ticks since
+  the last success. Resets to 0 on success.
+
+The same data is exposed via Prometheus as
+`s3o_worker_last_success_timestamp_seconds`,
+`s3o_worker_consecutive_failures`, and `s3o_worker_ticks_total` so
+alerting can run without scraping this endpoint.
+
 ### GET /admin/api/object-locations
 
 Returns all copies of an object across backends.
