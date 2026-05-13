@@ -31,8 +31,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/util/bufpool"
 
-	"bufio"
-
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -331,81 +329,14 @@ func (o *ObjectManager) headSourceForCopy(
 	return 0, "", nil, nil, false
 }
 
-// startCopySourceReader spawns a goroutine that streams the source object
-// (with read failover across replicas) into a pipe. The returned reader
-// feeds the destination PutObject; the channel surfaces the backend that
-// actually served the bytes (closed if every copy failed).
-func (o *ObjectManager) startCopySourceReader(
-	ctx context.Context,
-	sourceKey string,
-	size int64,
-	locations []core.ObjectLocation,
-) (*io.PipeReader, <-chan string) {
-	pr, pw := io.Pipe()
-	srcBackendCh := make(chan string, 1)
-	go func() {
-		bw := bufpool.GetWriter(pw)
-		defer func() {
-			if r := recover(); r != nil {
-				pw.CloseWithError(fmt.Errorf("copy source reader panic: %v", r))
-			}
-			bufpool.PutWriter(bw)
-			_ = pw.Close()
-		}()
-		for li := range locations {
-			if o.tryStreamCopySource(ctx, sourceKey, size, locations[li].BackendName, bw, pw, srcBackendCh) {
-				return
-			}
-		}
-		close(srcBackendCh)
-		pw.CloseWithError(fmt.Errorf("failed to read source from any copy"))
-	}()
-	return pr, srcBackendCh
-}
-
-// tryStreamCopySource attempts to stream sourceKey from one source
-// backend into bw. Returns true when streaming completed (success or
-// stream error reported via pw); the caller should stop iterating
-// further locations. Returns false to signal "skip this backend".
-func (o *ObjectManager) tryStreamCopySource(
-	ctx context.Context,
-	sourceKey string,
-	size int64,
-	backendName string,
-	bw *bufio.Writer,
-	pw *io.PipeWriter,
-	srcBackendCh chan<- string,
-) bool {
-	if !o.usage.WithinLimits(backendName, 1, size, 0) {
-		return false
-	}
-	srcBackend, ok := o.backends[backendName]
-	if !ok {
-		return false
-	}
-	bctx, bcancel := o.WithTimeout(ctx)
-	result, err := srcBackend.GetObject(bctx, sourceKey, "")
-	if err != nil {
-		bcancel()
-		return false
-	}
-	srcBackendCh <- backendName
-	_, copyErr := bufpool.Copy(bw, result.Body)
-	_ = result.Body.Close()
-	bcancel()
-	if copyErr != nil {
-		pw.CloseWithError(fmt.Errorf("failed to stream source: %w", copyErr))
-		return true
-	}
-	if flushErr := bw.Flush(); flushErr != nil {
-		pw.CloseWithError(fmt.Errorf("failed to flush source stream: %w", flushErr))
-		return true
-	}
-	return true
-}
-
-// CopyObject copies an object from sourceKey to destKey. Streams the
-// source through a pipe to avoid buffering the entire object. Supports
+// CopyObject copies an object from sourceKey to destKey. Materializes
+// the source body into a seekable buffer  -  in-memory for small
+// objects, a self-unlinking tempfile above copyMaterializeMemThreshold
+// -  before handing it to the destination PutObject. A non-seekable
+// body would force the AWS SDK onto its streaming-unsigned-payload
+// signing path, which uses chunked transfer encoding and drops
+// Content-Length; S3 implementations that require Content-Length
+// (notably OCI) then reject the upload with HTTP 411. Supports
 // cross-backend copies and read failover from replicas.
 func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey string) (string, error) {
 	const operation = "CopyObject"
@@ -444,11 +375,16 @@ func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey strin
 		return "", err
 	}
 
-	pr, srcBackendCh := o.startCopySourceReader(ctx, sourceKey, size, locations)
+	src, err := o.materializeCopySource(ctx, sourceKey, size, locations)
+	if err != nil {
+		observe.RecordSpanError(span, err)
+		return "", err
+	}
+	defer src.cleanup()
 
-	// Streamed from pipe; deadline governed by the caller's context.
-	etag, err := destBackend.PutObject(ctx, destKey, pr, size, contentType, metadata)
-	pr.Close() // unblock goroutine if PutObject returned without draining the pipe
+	// Seekable body keeps the SDK on UNSIGNED-PAYLOAD signing so
+	// Content-Length survives to the backend.
+	etag, err := destBackend.PutObject(ctx, destKey, src.body, size, contentType, metadata)
 	if err != nil {
 		observe.RecordSpanError(span, err)
 		return "", fmt.Errorf("failed to write destination: %w", err)
@@ -465,12 +401,9 @@ func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey strin
 	o.cache.Delete(destKey)
 
 	o.recordOperation(operation, destBackendName, start, nil)
-	var srcName string
-	if sn, ok := <-srcBackendCh; ok {
-		srcName = sn
-		o.usage.Record(srcName, 1, size, 0) // source: Get + egress
-	}
-	o.usage.Record(destBackendName, 1, 0, size) // dest: Put + ingress
+	srcName := src.sourceBackend
+	o.usage.Record(srcName, 1, size, 0)          // source: Get + egress
+	o.usage.Record(destBackendName, 1, 0, size)  // dest: Put + ingress
 
 	audit.Log(ctx, "storage.CopyObject",
 		slog.String("source_key", sourceKey),

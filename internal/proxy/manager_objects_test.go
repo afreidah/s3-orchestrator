@@ -1415,6 +1415,13 @@ func TestCopyObject_Success(t *testing.T) {
 	if !backend.hasObject("dst") {
 		t.Error("destination object not found")
 	}
+	// Regression pin for #815: the body handed to the destination
+	// PutObject must satisfy io.Seeker so the AWS SDK stays on the
+	// non-streaming UNSIGNED-PAYLOAD path and preserves Content-Length.
+	// A pipe-based body broke OCI with HTTP 411 MissingContentLength.
+	if !backend.lastPutBodySeekable {
+		t.Error("PutObject body was not seekable; would break OCI with HTTP 411")
+	}
 }
 
 // TestCopyObject_SourceNotFound surfaces a not-found source.
