@@ -1,0 +1,69 @@
+# -------------------------------------------------------------------------------
+# Nightly Benchmark Trend Tracking - GitHub Actions
+#
+# Author: Alex Freidah
+#
+# Runs every benchmark target nightly on main and feeds the output to
+# benchmark-action/github-action-benchmark, which commits the history to a
+# gh-pages branch and renders a per-benchmark trend chart. workflow_dispatch
+# lets a maintainer run the same flow on demand against any branch.
+#
+# Alert threshold is intentionally permissive (200%): GitHub-hosted runners
+# share CPU with neighbors and report ±10-20% variance on memory-bandwidth-
+# bound benchmarks, so tighter thresholds turn into a false-positive factory.
+# This workflow is informational, not PR-gating; absolute regression catching
+# would require a self-hosted runner with pinned CPU.
+# -------------------------------------------------------------------------------
+
+name: Benchmarks
+
+on:
+  schedule:
+    - cron: '0 3 * * *'  # 3:00 AM UTC, after the fuzz workflow at 2:00
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch or commit to benchmark'
+        required: false
+        default: 'main'
+
+permissions:
+  contents: write          # benchmark-action commits trend data to gh-pages
+  deployments: write       # github-pages publishing
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: ${{ inputs.ref || 'main' }}
+
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version-file: go.mod
+
+      # No -count multiplier: github-action-benchmark stores one measurement
+      # per benchmark per commit and smooths noise via the trend chart over
+      # many commits. Repeated counts on the same runner do not buy real
+      # statistical isolation when the runner itself is the variance source.
+      - name: Run benchmarks
+        run: |
+          go test -bench=. -benchmem -run='^$' -timeout=30m ./... \
+            | tee bench_output.txt
+
+      - name: Store benchmark result
+        uses: benchmark-action/github-action-benchmark@52576c92bccf6ac60c8223ec7eb2565637cae9ba # v1.22.1
+        with:
+          name: Go benchmarks
+          tool: 'go'
+          output-file-path: bench_output.txt
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: true
+          gh-pages-branch: gh-pages
+          benchmark-data-dir-path: dev/bench
+          alert-threshold: '200%'
+          fail-on-alert: false
+          comment-on-alert: false
