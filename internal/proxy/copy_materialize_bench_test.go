@@ -28,6 +28,29 @@ import (
 	"testing"
 )
 
+// runMaterializeCycle is the per-iteration body of
+// BenchmarkCopyMaterializeSink. Hoisted to a helper so the benchmark
+// body stays a flat (size -> sub-bench) dispatch and the
+// construct/write/seek/drain/cleanup sequence reads as one named unit.
+func runMaterializeCycle(b *testing.B, payload []byte, size int64) {
+	b.Helper()
+	sink, cleanup, err := newCopyMaterializeSink(size)
+	if err != nil {
+		b.Fatalf("newCopyMaterializeSink: %v", err)
+	}
+	defer cleanup()
+	if _, err := io.Copy(sink.writer(), bytes.NewReader(payload)); err != nil {
+		b.Fatalf("write: %v", err)
+	}
+	body, err := sink.seekableBody()
+	if err != nil {
+		b.Fatalf("seekableBody: %v", err)
+	}
+	if _, err := io.Copy(io.Discard, body); err != nil {
+		b.Fatalf("drain: %v", err)
+	}
+}
+
 // BenchmarkCopyMaterializeSink measures one full materialize cycle at
 // payload sizes that straddle the memory-vs-tempfile threshold.
 // Sub-threshold sizes exercise the bytes.Buffer branch; super-
@@ -50,24 +73,7 @@ func BenchmarkCopyMaterializeSink(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for b.Loop() {
-				sink, cleanup, err := newCopyMaterializeSink(int64(tc.size))
-				if err != nil {
-					b.Fatalf("newCopyMaterializeSink: %v", err)
-				}
-				if _, err := io.Copy(sink.writer(), bytes.NewReader(payload)); err != nil {
-					cleanup()
-					b.Fatalf("write: %v", err)
-				}
-				body, err := sink.seekableBody()
-				if err != nil {
-					cleanup()
-					b.Fatalf("seekableBody: %v", err)
-				}
-				if _, err := io.Copy(io.Discard, body); err != nil {
-					cleanup()
-					b.Fatalf("drain: %v", err)
-				}
-				cleanup()
+				runMaterializeCycle(b, payload, int64(tc.size))
 			}
 		})
 	}
