@@ -16,21 +16,21 @@ import "fmt"
 
 // BackendConfig holds configuration for an S3-compatible storage backend.
 type BackendConfig struct {
-	Name            string `yaml:"name"`              // Identifier for metrics/tracing
-	Endpoint        string `yaml:"endpoint"`          // S3-compatible endpoint URL
-	Region          string `yaml:"region"`            // AWS region or equivalent
-	Bucket          string `yaml:"bucket"`            // Target bucket name
-	AccessKeyID     string `yaml:"access_key_id"`     // AWS access key ID
-	SecretAccessKey string `yaml:"secret_access_key"` // AWS secret access key
-	ForcePathStyle   bool  `yaml:"force_path_style"`   // Use path-style URLs
-	UnsignedPayload  *bool `yaml:"unsigned_payload"`   // Skip SigV4 payload hash to stream uploads without buffering (default: true)
-	DisableChecksum  bool  `yaml:"disable_checksum"`   // Disable SDK default checksums for GCS and other providers that reject them (default: false)
-	StripSDKHeaders  bool  `yaml:"strip_sdk_headers"`  // Remove SDK v2 headers (amz-sdk-*, accept-encoding, x-id) before signing for GCS compatibility (default: false)
-	QuotaBytes       int64 `yaml:"quota_bytes"`        // Maximum bytes allowed on this backend (0 = unlimited)
-	MaxObjectSize    int64 `yaml:"max_object_size"`    // Maximum size of a single object in bytes (0 = unlimited)
-	APIRequestLimit  int64 `yaml:"api_request_limit"`  // Monthly API request limit (0 = unlimited)
-	EgressByteLimit  int64 `yaml:"egress_byte_limit"`  // Monthly egress byte limit (0 = unlimited)
-	IngressByteLimit int64 `yaml:"ingress_byte_limit"` // Monthly ingress byte limit (0 = unlimited)
+	Name             string `yaml:"name"`               // Identifier for metrics/tracing
+	Endpoint         string `yaml:"endpoint"`           // S3-compatible endpoint URL
+	Region           string `yaml:"region"`             // AWS region or equivalent
+	Bucket           string `yaml:"bucket"`             // Target bucket name
+	AccessKeyID      string `yaml:"access_key_id"`      // AWS access key ID
+	SecretAccessKey  string `yaml:"secret_access_key"`  // AWS secret access key
+	ForcePathStyle   bool   `yaml:"force_path_style"`   // Use path-style URLs
+	UnsignedPayload  *bool  `yaml:"unsigned_payload"`   // Skip SigV4 payload hash to stream uploads without buffering (default: true)
+	DisableChecksum  bool   `yaml:"disable_checksum"`   // Disable SDK default checksums for GCS and other providers that reject them (default: false)
+	StripSDKHeaders  bool   `yaml:"strip_sdk_headers"`  // Remove SDK v2 headers (amz-sdk-*, accept-encoding, x-id) before signing for GCS compatibility (default: false)
+	QuotaBytes       int64  `yaml:"quota_bytes"`        // Maximum bytes allowed on this backend (0 = unlimited)
+	MaxObjectSize    int64  `yaml:"max_object_size"`    // Maximum size of a single object in bytes (0 = unlimited)
+	APIRequestLimit  int64  `yaml:"api_request_limit"`  // Monthly API request limit (0 = unlimited)
+	EgressByteLimit  int64  `yaml:"egress_byte_limit"`  // Monthly egress byte limit (0 = unlimited)
+	IngressByteLimit int64  `yaml:"ingress_byte_limit"` // Monthly ingress byte limit (0 = unlimited)
 }
 
 // validateBackends checks every BackendConfig in the configured list,
@@ -82,11 +82,8 @@ func requiredBackendStringErrs(prefix string, b *BackendConfig) []error {
 	if b.Bucket == "" {
 		errs = append(errs, prefixed(prefix, ErrBackendBucketReqd))
 	}
-	if b.AccessKeyID == "" {
-		errs = append(errs, prefixed(prefix, ErrAccessKeyIDReqd))
-	}
-	if b.SecretAccessKey == "" {
-		errs = append(errs, prefixed(prefix, ErrSecretAccessKeyReqd))
+	if (b.AccessKeyID == "" && b.SecretAccessKey != "") || (b.SecretAccessKey == "" && b.AccessKeyID != "") {
+		errs = append(errs, prefixed(prefix, ErrAccessKeySecretKeySet))
 	}
 	return errs
 }

@@ -4,7 +4,7 @@
 // Author: Alex Freidah
 //
 // Config validators previously returned errors as joined strings, forcing
-// tests to match on substrings. That made error messages de-facto APIs  - 
+// tests to match on substrings. That made error messages de-facto APIs  -
 // a harmless reword would silently break test assertions.
 //
 // Each validator now wraps a sentinel defined below using fmt.Errorf("%w:
@@ -62,17 +62,16 @@ var (
 
 // Backend validation errors.
 var (
-	ErrNoBackends          = errors.New("at least one backend is required")
-	ErrDuplicateBackend    = errors.New("duplicate backend name")
-	ErrEndpointRequired    = errors.New("endpoint is required")
-	ErrBackendBucketReqd   = errors.New("bucket is required")
-	ErrAccessKeyIDReqd     = errors.New("access_key_id is required")
-	ErrSecretAccessKeyReqd = errors.New("secret_access_key is required")
-	ErrNegativeQuota       = errors.New("quota_bytes must not be negative")
-	ErrNegativeMaxObject   = errors.New("max_object_size must not be negative")
-	ErrNegativeAPILimit    = errors.New("api_request_limit must not be negative")
-	ErrNegativeEgress      = errors.New("egress_byte_limit must not be negative")
-	ErrNegativeIngress     = errors.New("ingress_byte_limit must not be negative")
+	ErrNoBackends            = errors.New("at least one backend is required")
+	ErrDuplicateBackend      = errors.New("duplicate backend name")
+	ErrEndpointRequired      = errors.New("endpoint is required")
+	ErrBackendBucketReqd     = errors.New("bucket is required")
+	ErrAccessKeySecretKeySet = errors.New("access_key_id and secret_access_key must either be both set, or both unset")
+	ErrNegativeQuota         = errors.New("quota_bytes must not be negative")
+	ErrNegativeMaxObject     = errors.New("max_object_size must not be negative")
+	ErrNegativeAPILimit      = errors.New("api_request_limit must not be negative")
+	ErrNegativeEgress        = errors.New("egress_byte_limit must not be negative")
+	ErrNegativeIngress       = errors.New("ingress_byte_limit must not be negative")
 )
 
 // Server and TLS errors.
@@ -90,25 +89,25 @@ var (
 
 // Rate limit errors.
 var (
-	ErrInvalidCIDR                 = errors.New("invalid CIDR in trusted_proxies")
-	ErrRateLimitRPSNotPositive     = errors.New("rate_limit.requests_per_sec must be positive")
-	ErrRateLimitBurstNotPositive   = errors.New("rate_limit.burst must be positive")
+	ErrInvalidCIDR               = errors.New("invalid CIDR in trusted_proxies")
+	ErrRateLimitRPSNotPositive   = errors.New("rate_limit.requests_per_sec must be positive")
+	ErrRateLimitBurstNotPositive = errors.New("rate_limit.burst must be positive")
 )
 
 // Encryption errors.
 var (
-	ErrInvalidChunkSize         = errors.New("encryption.chunk_size must be between 4096 (4KB) and 1048576 (1MB)")
-	ErrChunkSizeNotPowerOf2     = errors.New("encryption.chunk_size must be a power of 2")
-	ErrKeySourceRequired        = errors.New("encryption: exactly one of master_key, master_key_file, or vault is required")
-	ErrMultipleKeySources       = errors.New("encryption: only one of master_key, master_key_file, or vault may be set")
-	ErrInvalidBase64Key         = errors.New("invalid base64 key material")
-	ErrInvalidKeyLength         = errors.New("key must be 256 bits (32 bytes)")
-	ErrInvalidKeyFile           = errors.New("invalid master_key_file")
-	ErrPreviousKeyInvalid       = errors.New("previous_keys entry invalid")
-	ErrVaultAddressRequired     = errors.New("encryption.vault.address is required")
-	ErrVaultTokenRequired       = errors.New("encryption.vault: one of token or token_file is required")
-	ErrVaultTokenAmbiguous      = errors.New("encryption.vault: only one of token or token_file may be set")
-	ErrVaultKeyNameRequired     = errors.New("encryption.vault.key_name is required")
+	ErrInvalidChunkSize     = errors.New("encryption.chunk_size must be between 4096 (4KB) and 1048576 (1MB)")
+	ErrChunkSizeNotPowerOf2 = errors.New("encryption.chunk_size must be a power of 2")
+	ErrKeySourceRequired    = errors.New("encryption: exactly one of master_key, master_key_file, or vault is required")
+	ErrMultipleKeySources   = errors.New("encryption: only one of master_key, master_key_file, or vault may be set")
+	ErrInvalidBase64Key     = errors.New("invalid base64 key material")
+	ErrInvalidKeyLength     = errors.New("key must be 256 bits (32 bytes)")
+	ErrInvalidKeyFile       = errors.New("invalid master_key_file")
+	ErrPreviousKeyInvalid   = errors.New("previous_keys entry invalid")
+	ErrVaultAddressRequired = errors.New("encryption.vault.address is required")
+	ErrVaultTokenRequired   = errors.New("encryption.vault: one of token or token_file is required")
+	ErrVaultTokenAmbiguous  = errors.New("encryption.vault: only one of token or token_file may be set")
+	ErrVaultKeyNameRequired = errors.New("encryption.vault.key_name is required")
 )
 
 // Redis / counter errors.
@@ -133,24 +132,24 @@ var (
 
 // Rebalance / replication errors.
 var (
-	ErrInvalidRebalanceStrategy  = errors.New("rebalance.strategy must be 'pack' or 'spread'")
-	ErrRebalanceIntervalNotPos   = errors.New("rebalance.interval must be positive")
-	ErrRebalanceBatchNotPos      = errors.New("rebalance.batch_size must be positive")
-	ErrRebalanceThresholdRange   = errors.New("rebalance.threshold must be between 0 and 1")
+	ErrInvalidRebalanceStrategy   = errors.New("rebalance.strategy must be 'pack' or 'spread'")
+	ErrRebalanceIntervalNotPos    = errors.New("rebalance.interval must be positive")
+	ErrRebalanceBatchNotPos       = errors.New("rebalance.batch_size must be positive")
+	ErrRebalanceThresholdRange    = errors.New("rebalance.threshold must be between 0 and 1")
 	ErrRebalanceConcurrencyNotPos = errors.New("rebalance.concurrency must be positive")
-	ErrReplicationFactorMin      = errors.New("replication.factor must be at least 1")
-	ErrReplicationFactorTooLarge = errors.New("replication.factor exceeds number of backends")
-	ErrReplicationIntervalNotPos = errors.New("replication.worker_interval must be positive")
-	ErrReplicationBatchNotPos    = errors.New("replication.batch_size must be positive")
-	ErrInvalidRoutingStrategy    = errors.New("routing_strategy must be 'pack' or 'spread'")
-	ErrQuotaMixNotAllowed        = errors.New("cannot mix unlimited (quota_bytes: 0) and quota-limited backends")
-	ErrUnlimitedNeedsReplication = errors.New("multiple backends with unlimited quota require replication.factor >= 2")
+	ErrReplicationFactorMin       = errors.New("replication.factor must be at least 1")
+	ErrReplicationFactorTooLarge  = errors.New("replication.factor exceeds number of backends")
+	ErrReplicationIntervalNotPos  = errors.New("replication.worker_interval must be positive")
+	ErrReplicationBatchNotPos     = errors.New("replication.batch_size must be positive")
+	ErrInvalidRoutingStrategy     = errors.New("routing_strategy must be 'pack' or 'spread'")
+	ErrQuotaMixNotAllowed         = errors.New("cannot mix unlimited (quota_bytes: 0) and quota-limited backends")
+	ErrUnlimitedNeedsReplication  = errors.New("multiple backends with unlimited quota require replication.factor >= 2")
 )
 
 // Usage flush / adaptive errors.
 var (
-	ErrUsageFlushFastInterval    = errors.New("usage_flush.fast_interval must be less than interval")
-	ErrUsageFlushThresholdRange  = errors.New("usage_flush.adaptive_threshold must be between 0 and 1")
+	ErrUsageFlushFastInterval   = errors.New("usage_flush.fast_interval must be less than interval")
+	ErrUsageFlushThresholdRange = errors.New("usage_flush.adaptive_threshold must be between 0 and 1")
 )
 
 // Cache / storage misc.
