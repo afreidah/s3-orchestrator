@@ -825,6 +825,7 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when enabled.
 | `s3o_cleanup_queue_depth` | Gauge | — | Current pending items in the cleanup queue |
 | `s3o_cleanup_dlq_depth` | Gauge | — | Unrecoverable orphans waiting in the cleanup dead-letter table |
 | `s3o_cleanup_dlq_enqueued_total` | Counter | backend | Cleanup rows graduated to the dead-letter after exhausting retries |
+| `s3o_cleanup_enqueue_failures_total` | Counter | backend, reason, stage | Cleanup-queue enqueue attempts that failed after a successful backend write (untracked-orphan risk) |
 | `s3o_rate_limit_rejections_total` | Counter | — | Requests rejected by per-IP rate limiting |
 | `s3o_admission_rejections_total` | Counter | — | Requests rejected by server-level admission control |
 | `s3o_list_pages_capped_total` | Counter | — | ListObjects calls that exited at the per-request page cap with more pages remaining |

@@ -233,6 +233,24 @@ var (
         []string{"reason"},
     )
 
+    // CleanupEnqueueFailuresTotal counts cleanup-queue enqueue attempts
+    // that failed after a backend write already succeeded. The orphan
+    // object exists on the backend but the system lost the chance to
+    // track it for retry. stage="enqueue" means the cleanup_queue row
+    // itself did not persist (worst case  -  cleanup-queue worker will
+    // never see this orphan); stage="orphan_bytes" means the row
+    // persisted but the orphan_bytes counter did not increment (quota
+    // accounting drifts but cleanup still runs). Operators alert on any
+    // non-zero rate of stage="enqueue" and run the reconciler
+    // (POST /admin/api/reconcile) once DB connectivity returns.
+    CleanupEnqueueFailuresTotal = promauto.NewCounterVec(
+        prometheus.CounterOpts{
+            Name: "s3o_cleanup_enqueue_failures_total",
+            Help: "Cleanup-queue enqueue attempts that failed after a successful backend write",
+        },
+        []string{"backend", "reason", "stage"},
+    )
+
     // CleanupQueueProcessedTotal counts items processed from the cleanup queue.
     CleanupQueueProcessedTotal = promauto.NewCounterVec(
         prometheus.CounterOpts{

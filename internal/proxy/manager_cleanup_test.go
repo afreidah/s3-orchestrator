@@ -21,9 +21,13 @@ import (
 
 	"go.uber.org/mock/gomock"
 
+	promtest "github.com/prometheus/client_golang/prometheus/testutil"
+
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
@@ -136,6 +140,95 @@ func TestEnqueueCleanup_DBError_LogsOnly(t *testing.T) {
 
 	if len(calls.enqueue) != 1 {
 		t.Fatalf("expected 1 enqueue call, got %d", len(calls.enqueue))
+	}
+}
+
+// TestEnqueueCleanup_EnqueueFailure_RecordsMetricAndAudit pins the
+// visibility contract for #805. When the cleanup_queue row itself
+// fails to persist (DB outage after a successful backend write), the
+// system must:
+//
+//   - increment s3o_cleanup_enqueue_failures_total{stage="enqueue"}
+//     so operators can alert on untracked orphan risk
+//   - emit a storage.OrphanEnqueueFailed audit event so operators
+//     can pivot from the metric to the exact backend/key/size
+//
+// Without these signals, the orphan would be silent (logged-only).
+func TestEnqueueCleanup_EnqueueFailure_RecordsMetricAndAudit(t *testing.T) {
+	calls := &cleanupCalls{}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubEnqueue(calls, errors.New("db down"))).
+		AnyTimes()
+	storetest.Permissive(store)
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+
+	var capturedEvents []string
+	audit.SetOnEvent(func(event string) {
+		capturedEvents = append(capturedEvents, event)
+	})
+	t.Cleanup(func() { audit.SetOnEvent(nil) })
+
+	before := promtest.ToFloat64(telemetry.CleanupEnqueueFailuresTotal.WithLabelValues("b1", "orphan_put", "enqueue"))
+	mgr.coord.enqueueCleanup(context.Background(), "b1", "orphan.txt", "orphan_put", 1024)
+	after := promtest.ToFloat64(telemetry.CleanupEnqueueFailuresTotal.WithLabelValues("b1", "orphan_put", "enqueue"))
+
+	if after-before != 1 {
+		t.Errorf("enqueue-failure counter delta = %v, want 1", after-before)
+	}
+	found := false
+	for _, e := range capturedEvents {
+		if e == "storage.OrphanEnqueueFailed" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected storage.OrphanEnqueueFailed audit event, got %v", capturedEvents)
+	}
+}
+
+// TestEnqueueCleanup_OrphanBytesFailure_RecordsMetricAndAudit covers
+// the secondary failure path: the cleanup_queue row persisted but the
+// orphan_bytes counter increment failed. Less severe than an enqueue
+// failure (the cleanup worker will still retry the delete) but quota
+// accounting drifts until reconciliation. The metric labels stage
+// "orphan_bytes" so dashboards can distinguish the two failure
+// shapes.
+func TestEnqueueCleanup_OrphanBytesFailure_RecordsMetricAndAudit(t *testing.T) {
+	calls := &cleanupCalls{}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubEnqueue(calls, nil)).AnyTimes()
+	store.EXPECT().IncrementOrphanBytes(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(errors.New("db down")).AnyTimes()
+	storetest.Permissive(store)
+	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+
+	var capturedEvents []string
+	audit.SetOnEvent(func(event string) {
+		capturedEvents = append(capturedEvents, event)
+	})
+	t.Cleanup(func() { audit.SetOnEvent(nil) })
+
+	before := promtest.ToFloat64(telemetry.CleanupEnqueueFailuresTotal.WithLabelValues("b1", "orphan_put", "orphan_bytes"))
+	mgr.coord.enqueueCleanup(context.Background(), "b1", "orphan.txt", "orphan_put", 1024)
+	after := promtest.ToFloat64(telemetry.CleanupEnqueueFailuresTotal.WithLabelValues("b1", "orphan_put", "orphan_bytes"))
+
+	if after-before != 1 {
+		t.Errorf("orphan-bytes-failure counter delta = %v, want 1", after-before)
+	}
+	found := false
+	for _, e := range capturedEvents {
+		if e == "storage.OrphanEnqueueFailed" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected storage.OrphanEnqueueFailed audit event, got %v", capturedEvents)
 	}
 }
 

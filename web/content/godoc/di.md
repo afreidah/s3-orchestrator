@@ -77,7 +77,7 @@ func IsRegistered[T any](inj do.Injector) bool
 IsRegistered reports whether T has a provider registered in the injector or any ancestor scope. Cheap; does not invoke the constructor.
 
 <a name="NewCircuitBreakerWatchdog"></a>
-## func [NewCircuitBreakerWatchdog](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/services.go#L570>)
+## func [NewCircuitBreakerWatchdog](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/services.go#L559>)
 
 ```go
 func NewCircuitBreakerWatchdog(registry *breaker.Registry) lifecycle.Runner
@@ -86,7 +86,7 @@ func NewCircuitBreakerWatchdog(registry *breaker.Registry) lifecycle.Runner
 NewCircuitBreakerWatchdog constructs the watchdog background service.
 
 <a name="NewCleanupQueueService"></a>
-## func [NewCleanupQueueService](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/services.go#L327>)
+## func [NewCleanupQueueService](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/services.go#L352>)
 
 ```go
 func NewCleanupQueueService(cleanup *worker.CleanupWorker, locker advisoryLocker) lifecycle.Runner
@@ -104,7 +104,7 @@ func NewInjector(cfg *config.Config, mode string, logLevel *slog.LevelVar, logBu
 NewInjector creates and configures the DI container. Required providers are always registered. Optional providers register only when their config section is enabled \- do.Invoke returns an error for disabled services, which callers use to detect absence.
 
 <a name="NewLifecycleService"></a>
-## func [NewLifecycleService](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/services.go#L418>)
+## func [NewLifecycleService](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/services.go#L431>)
 
 ```go
 func NewLifecycleService(manager *proxy.BackendManager, locker advisoryLocker) lifecycle.Runner
@@ -113,7 +113,7 @@ func NewLifecycleService(manager *proxy.BackendManager, locker advisoryLocker) l
 NewLifecycleService constructs the lifecycle\-expiration background service.
 
 <a name="NewMultipartCleanupService"></a>
-## func [NewMultipartCleanupService](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/services.go#L308>)
+## func [NewMultipartCleanupService](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/services.go#L333>)
 
 ```go
 func NewMultipartCleanupService(manager *proxy.BackendManager, locker advisoryLocker, staleTimeout time.Duration) lifecycle.Runner
@@ -122,7 +122,7 @@ func NewMultipartCleanupService(manager *proxy.BackendManager, locker advisoryLo
 NewMultipartCleanupService constructs the multipart\-cleanup background service.
 
 <a name="NewOverReplicationService"></a>
-## func [NewOverReplicationService](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/services.go#L456>)
+## func [NewOverReplicationService](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/services.go#L469>)
 
 ```go
 func NewOverReplicationService(manager *proxy.BackendManager, overRep *worker.OverReplicationCleaner, locker advisoryLocker) lifecycle.Runner
@@ -131,7 +131,7 @@ func NewOverReplicationService(manager *proxy.BackendManager, overRep *worker.Ov
 NewOverReplicationService constructs the over\-replication cleanup service.
 
 <a name="NewPendingReaperService"></a>
-## func [NewPendingReaperService](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/services.go#L351>)
+## func [NewPendingReaperService](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/services.go#L376>)
 
 ```go
 func NewPendingReaperService(reaper *worker.PendingReaper, locker advisoryLocker, tick time.Duration) lifecycle.Runner
@@ -140,7 +140,7 @@ func NewPendingReaperService(reaper *worker.PendingReaper, locker advisoryLocker
 NewPendingReaperService constructs the pending\-objects reaper background service. The reaper resolves abandoned PUT intents by HEADing the destination backend and either promoting the intent into object\_locations \(bytes present\) or dropping it \(bytes absent\). Returns nil when no pending reaper is configured.
 
 <a name="NewRebalancerService"></a>
-## func [NewRebalancerService](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/services.go#L377>)
+## func [NewRebalancerService](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/services.go#L402>)
 
 ```go
 func NewRebalancerService(manager *proxy.BackendManager, rebalancer *worker.Rebalancer, locker advisoryLocker) lifecycle.Runner
@@ -149,7 +149,7 @@ func NewRebalancerService(manager *proxy.BackendManager, rebalancer *worker.Reba
 NewRebalancerService constructs the rebalancer background service.
 
 <a name="NewReconcileService"></a>
-## func [NewReconcileService](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/services.go#L541>)
+## func [NewReconcileService](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/services.go#L530>)
 
 ```go
 func NewReconcileService(reconciler *worker.Reconciler, locker advisoryLocker, interval time.Duration) lifecycle.Runner
@@ -158,7 +158,7 @@ func NewReconcileService(reconciler *worker.Reconciler, locker advisoryLocker, i
 NewReconcileService constructs the reconcile background service.
 
 <a name="NewReplicatorService"></a>
-## func [NewReplicatorService](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/services.go#L497>)
+## func [NewReplicatorService](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/services.go#L498>)
 
 ```go
 func NewReplicatorService(manager *proxy.BackendManager, replicator *worker.Replicator, locker advisoryLocker) lifecycle.Runner
@@ -167,7 +167,7 @@ func NewReplicatorService(manager *proxy.BackendManager, replicator *worker.Repl
 NewReplicatorService constructs the replication background service.
 
 <a name="NewScrubberService"></a>
-## func [NewScrubberService](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/services.go#L600>)
+## func [NewScrubberService](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/services.go#L589>)
 
 ```go
 func NewScrubberService(scrubber *worker.Scrubber, locker advisoryLocker) lifecycle.Runner
@@ -176,7 +176,7 @@ func NewScrubberService(scrubber *worker.Scrubber, locker advisoryLocker) lifecy
 NewScrubberService constructs the integrity scrubber background service.
 
 <a name="NewUsageFlushService"></a>
-## func [NewUsageFlushService](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/services.go#L227>)
+## func [NewUsageFlushService](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/services.go#L252>)
 
 ```go
 func NewUsageFlushService(manager *proxy.BackendManager, locker advisoryLocker) lifecycle.Runner
@@ -185,7 +185,7 @@ func NewUsageFlushService(manager *proxy.BackendManager, locker advisoryLocker) 
 NewUsageFlushService constructs the usage flush background service.
 
 <a name="ProvideAdminHandler"></a>
-## func [ProvideAdminHandler](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/transport.go#L197>)
+## func [ProvideAdminHandler](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/transport.go#L216>)
 
 ```go
 func ProvideAdminHandler(i do.Injector) (*admin.Handler, error)
@@ -338,7 +338,7 @@ func ProvideNotificationOutbox(i do.Injector) (core.NotificationOutbox, error)
 ProvideNotificationOutbox aliases the wide MetadataStore as its NotificationOutbox role for the notifier worker.
 
 <a name="ProvideNotifier"></a>
-## func [ProvideNotifier](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/transport.go#L255>)
+## func [ProvideNotifier](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/transport.go#L261>)
 
 ```go
 func ProvideNotifier(i do.Injector) (*notify.Notifier, error)
