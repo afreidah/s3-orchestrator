@@ -247,17 +247,43 @@ func (w *writeCoordinator) DeleteOrEnqueue(ctx context.Context, be backend.Objec
 // unreleased space. Best-effort: if the enqueue or orphan update fails
 // (e.g. DB down), logs the error and moves on since the circuit breaker
 // is already handling DB outages.
+//
+// Failures here mean a backend object exists with no entry in the
+// cleanup queue (stage="enqueue") or no matching orphan_bytes increment
+// (stage="orphan_bytes"). Both failure modes increment
+// s3o_cleanup_enqueue_failures_total and emit a
+// storage.OrphanEnqueueFailed audit event so operators can pivot from
+// "metric incremented" to the exact backend/key/size, then run
+// POST /admin/api/reconcile to recover untracked orphans once DB
+// connectivity is restored. See docs/admin-guide.md for the runbook.
 func (w *writeCoordinator) enqueueCleanup(ctx context.Context, backendName, objectKey, reason string, sizeBytes int64) {
 	if err := w.stores.EnqueueCleanup(ctx, backendName, objectKey, reason, sizeBytes); err != nil {
-		w.Log().ErrorContext(ctx, "failed to enqueue cleanup (best-effort)",
-			"backend", backendName, "key", objectKey, "reason", reason, "error", err)
+		w.recordEnqueueFailure(ctx, backendName, objectKey, reason, sizeBytes, "enqueue", err)
 		return
 	}
 	if sizeBytes > 0 {
 		if err := w.stores.IncrementOrphanBytes(ctx, backendName, sizeBytes); err != nil {
-			w.Log().ErrorContext(ctx, "failed to increment orphan bytes (best-effort)",
-				"backend", backendName, "key", objectKey, "size", sizeBytes, "error", err)
+			w.recordEnqueueFailure(ctx, backendName, objectKey, reason, sizeBytes, "orphan_bytes", err)
 		}
 	}
 	telemetry.CleanupQueueEnqueuedTotal.WithLabelValues(reason).Inc()
+}
+
+// recordEnqueueFailure increments the failure counter, emits an audit
+// event carrying enough attributes to identify the specific orphan,
+// and logs an error. Hoisted so the two failure stages (enqueue vs
+// orphan_bytes) share one observability path  -  a future spool
+// integration plugs in here.
+func (w *writeCoordinator) recordEnqueueFailure(ctx context.Context, backendName, objectKey, reason string, sizeBytes int64, stage string, err error) {
+	telemetry.CleanupEnqueueFailuresTotal.WithLabelValues(backendName, reason, stage).Inc()
+	audit.Log(ctx, "storage.OrphanEnqueueFailed",
+		slog.String("backend", backendName),
+		slog.String("key", objectKey),
+		slog.String("reason", reason),
+		slog.String("stage", stage),
+		slog.Int64("size", sizeBytes),
+		slog.String("error", err.Error()),
+	)
+	w.Log().ErrorContext(ctx, "orphan cleanup enqueue failed (best-effort)",
+		"backend", backendName, "key", objectKey, "reason", reason, "stage", stage, "error", err)
 }

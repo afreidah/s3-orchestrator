@@ -403,7 +403,16 @@ The background worker runs every minute and retries with exponential backoff (1 
 - `s3o_cleanup_queue_stale_claims_recovered_total{backend}` — non-zero rate means a worker died mid-process or the grace period is too short for realistic worst-case processing time.
 - `s3o_cleanup_dlq_depth > 0` — the DLQ holds at least one unrecoverable orphan; alerting here gives operators a direct signal instead of a counter delta.
 - `s3o_cleanup_dlq_enqueued_total{backend}` — rate of graduations per backend; a single backend dominating means that backend's delete path is broken.
+- `s3o_cleanup_enqueue_failures_total{backend,reason,stage}` — orphan-leak blind spot signal. The cleanup-queue itself is durable, but its *enqueue* path is best-effort: when a backend write succeeds and the DB is then unreachable, the orphan cannot be recorded in `cleanup_queue` and the only signal is this counter plus the matching `storage.OrphanEnqueueFailed` audit event. `stage="enqueue"` is the worst case (the cleanup-queue worker will never see this orphan); `stage="orphan_bytes"` means the row landed but the quota counter drifts. See the runbook below.
 - `s3o_quota_orphan_bytes` — elevated values mean backends have significant physically unreleased space (DLQ entries are the long-tail contributors).
+
+**Untracked-orphan recovery (cleanup enqueue failed during DB outage).** A non-zero rate of `s3o_cleanup_enqueue_failures_total{stage="enqueue"}` means at least one orphan exists on a backend with no `cleanup_queue` row. The cleanup-queue worker will not retry it; the storage will leak until reconciled. Recovery workflow:
+
+1. Query the audit log for `event="storage.OrphanEnqueueFailed"` to enumerate the specific backend/key/size of each affected orphan during the outage window.
+2. Once DB connectivity is restored, run `POST /admin/api/reconcile[?backend=name]`. The reconciler walks each backend's actual key list against `object_locations` using a bounded-memory sorted-merge and emits S3-only keys to the cleanup path (with a fresh `cleanup_queue` row this time). This is the same diff machinery that runs on the nightly reconcile interval.
+3. If the audit log indicates more than a handful of failures, target the reconciler at the affected backends specifically rather than waiting for the next scheduled scan.
+
+`stage="orphan_bytes"` failures do not need step 2 — the `cleanup_queue` row landed and the worker will eventually delete the object. The quota counter drift is reset when `backend_quotas.orphan_bytes` is reconciled against `cleanup_queue` (a periodic safety pass; not yet automated).
 
 **Manual cleanup:** Inspect DLQ entries and resolve them deliberately. The bytes are still on the backend, so the workflow is *delete the object out-of-band, then write off the row + adjust orphan_bytes by the row's size*:
 
@@ -1107,6 +1116,7 @@ If `telemetry.metrics.enabled` is `true`, metrics are exposed at `/metrics`. Key
 | `s3o_cleanup_dlq_depth` | Alert when > 0 — at least one unrecoverable orphan needs operator action |
 | `s3o_cleanup_dlq_enqueued_total{backend="..."}` | Rate of graduations per backend; one backend dominating means its delete path is broken |
 | `s3o_cleanup_queue_stale_claims_recovered_total{backend="..."}` | Non-zero rate means a worker died mid-process or `cleanup_queue.claim_grace_period` is shorter than realistic worst-case row processing time |
+| `s3o_cleanup_enqueue_failures_total{backend,reason,stage}` | Alert on any non-zero rate of `stage="enqueue"` — backend object exists with no `cleanup_queue` row (orphan-leak risk). Pivot via the matching `storage.OrphanEnqueueFailed` audit event for backend/key/size, then run `POST /admin/api/reconcile` after DB recovery |
 | `s3o_audit_events_total{event="..."}` | Audit log volume by event type — useful for detecting unusual activity |
 | `time() - s3o_worker_last_success_timestamp_seconds{service="..."}` | Alert when greater than the worker's expected tick interval times a margin (e.g. `> 4 * interval`) — the service has not completed a successful tick in that window |
 | `s3o_worker_consecutive_failures{service="..."}` | Alert when consistently > 0 — the service is running but every tick fails; logs and `/admin/api/workers` carry the underlying error |
