@@ -66,6 +66,12 @@ make dev-deps    # start dev environment containers
 make dev-clean   # stop and remove dev containers
 ```
 
+### Benchmark trend page
+
+The `.github/workflows/benchmarks.yml` workflow runs every benchmark target nightly and publishes per-benchmark history to a GitHub Pages site under `dev/bench/`. Use the trend chart to spot slow drift after a refactor; do not treat single-commit deltas as authoritative, since the shared CI runner introduces 10-20% noise on memory-bandwidth-bound benchmarks. The workflow alert threshold is 200% so only large regressions surface.
+
+The page lives at the project's GitHub Pages URL once `gh-pages` is enabled in the repo settings. Manually trigger a run for a specific branch via the workflow's `workflow_dispatch` entry point.
+
 ## Code Style
 
 Follow the conventions in [`docs/style-guide.md`](docs/style-guide.md). Key points:
