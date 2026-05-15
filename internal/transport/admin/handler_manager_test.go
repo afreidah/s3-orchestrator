@@ -44,7 +44,7 @@ func newTestHandlerWithManager(t *testing.T) *Handler {
 	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{
 		FailureThreshold: 3,
 	})
-	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
+	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{},
 		Stores:          mock,
 		Dashboard:       mock,
@@ -52,21 +52,21 @@ func newTestHandlerWithManager(t *testing.T) *Handler {
 		Order:           []string{},
 		RoutingStrategy: config.RoutingPack,
 	})
-	proxytest.AttachWorkers(mgr, mock)
+	workers := proxytest.BuildWorkers(mgr, mock)
 	// Empty reloadable configs so Replicator.Config()/Scrubber.Config() return
 	// sentinel states the handlers can interpret.
-	mgr.Replicator.SetConfig(&config.ReplicationConfig{Factor: 1})
-	mgr.OverReplicationCleaner.SetConfig(&config.ReplicationConfig{Factor: 1})
+	workers.Replicator.SetConfig(&config.ReplicationConfig{Factor: 1})
+	workers.OverReplicationCleaner.SetConfig(&config.ReplicationConfig{Factor: 1})
 
 	var lv slog.LevelVar
 	lv.Set(slog.LevelInfo)
 	return &Handler{
 		log:        slog.Default().With(logfmt.Component("admin")),
 		backendOps: mgr,
-		replicator: mgr.Replicator,
-		overRep:    mgr.OverReplicationCleaner,
+		replicator: workers.Replicator,
+		overRep:    workers.OverReplicationCleaner,
 		drain:      mgr.DrainManager,
-		scrubber:   mgr.Scrubber,
+		scrubber:   workers.Scrubber,
 		lifecycle:  mock,
 		dbHealthy: cb.IsHealthy,
 		objects:    mock,

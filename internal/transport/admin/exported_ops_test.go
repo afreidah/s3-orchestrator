@@ -30,6 +30,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/testutil"
+	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
 // fakeBackend is a minimal in-memory ObjectBackend used by the bulk-rewrite
@@ -272,7 +273,7 @@ func TestEncryptExisting_HappyPathOneRow(t *testing.T) {
 	t.Parallel()
 	mock := testutil.NewMockStore(t)
 	fake := &fakeBackend{payload: []byte("hello world")}
-	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
+	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"backend-a": fake},
 		Stores:          mock,
 		Dashboard:       mock,
@@ -280,7 +281,7 @@ func TestEncryptExisting_HappyPathOneRow(t *testing.T) {
 		Order:           []string{"backend-a"},
 		RoutingStrategy: config.RoutingPack,
 	})
-	proxytest.AttachWorkers(mgr, mock)
+	workers := proxytest.BuildWorkers(mgr, mock)
 
 	provider, err := encryption.NewConfigKeyProvider("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "test-key")
 	if err != nil {
@@ -300,10 +301,10 @@ func TestEncryptExisting_HappyPathOneRow(t *testing.T) {
 	h := &Handler{
 		log:        slog.Default().With(logfmt.Component("admin")),
 		backendOps: mgr,
-		replicator: mgr.Replicator,
-		overRep:    mgr.OverReplicationCleaner,
+		replicator: workers.Replicator,
+		overRep:    workers.OverReplicationCleaner,
 		drain:      mgr.DrainManager,
-		scrubber:   mgr.Scrubber,
+		scrubber:   workers.Scrubber,
 		objects:    mock,
 		cleanup:    mock,
 		encAdmin:   encAdmin,
@@ -337,8 +338,7 @@ func TestReplicate_HappyPathEmptyStore(t *testing.T) {
 	t.Parallel()
 	h := newTestHandlerWithManager(t)
 	// Bump replication factor so the skipped guard passes.
-	mgr := h.backendOps.(*proxy.BackendManager)
-	mgr.Replicator.SetConfig(&config.ReplicationConfig{Factor: 2, BatchSize: 10})
+	h.replicator.(*worker.Replicator).SetConfig(&config.ReplicationConfig{Factor: 2, BatchSize: 10})
 
 	res, err := h.Replicate(context.Background())
 	if err != nil {

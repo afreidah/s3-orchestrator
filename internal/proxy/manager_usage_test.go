@@ -64,28 +64,33 @@ func stubFlushUsage(ft *flushTracker) func(context.Context, string, string, int6
 
 // newUsageManager creates a BackendManager with the given backend names and a
 // configurable mock store.
-func newUsageManager(backendNames []string, store core.MetadataStore) *BackendManager {
+func newUsageManager(t *testing.T, backendNames []string, store core.MetadataStore) *BackendManager {
+	t.Helper()
 	backends := make(map[string]backend.ObjectBackend, len(backendNames))
 	for _, name := range backendNames {
 		backends[name] = newMockBackend()
 	}
-	return wireWorkersForTest(NewBackendManager(&BackendManagerConfig{
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Backends:        backends,
 		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
 		Metrics:         store,
 		Order:           backendNames,
 		RoutingStrategy: config.RoutingPack,
-	}))
+	})
+	workers := wireWorkersForTest(mgr)
+	_ = workers
+	return mgr
 }
 
 // newUsageManagerWithLimits constructs a new usage manager with limits.
-func newUsageManagerWithLimits(backendNames []string, store core.MetadataStore, limits map[string]core.UsageLimits) *BackendManager {
+func newUsageManagerWithLimits(t *testing.T, backendNames []string, store core.MetadataStore, limits map[string]core.UsageLimits) *BackendManager {
+	t.Helper()
 	backends := make(map[string]backend.ObjectBackend, len(backendNames))
 	for _, name := range backendNames {
 		backends[name] = newMockBackend()
 	}
-	return wireWorkersForTest(NewBackendManager(&BackendManagerConfig{
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Backends:        backends,
 		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
@@ -93,7 +98,10 @@ func newUsageManagerWithLimits(backendNames []string, store core.MetadataStore, 
 		Order:           backendNames,
 		UsageLimits:     limits,
 		RoutingStrategy: config.RoutingPack,
-	}))
+	})
+	workers := wireWorkersForTest(mgr)
+	_ = workers
+	return mgr
 }
 
 // usageStoreWithFlush returns a permissive MockMetadataStore plus a
@@ -117,7 +125,7 @@ func usageStoreWithFlush(t *testing.T) (*storetest.MockMetadataStore, *flushTrac
 // counters contract.
 func TestRecordUsage_IncrementsCounters(t *testing.T) {
 	t.Parallel()
-	mgr := newUsageManager([]string{"b1"}, newPermissiveMock(t))
+	mgr := newUsageManager(t, []string{"b1"}, newPermissiveMock(t))
 
 	mgr.usage.Record("b1", 3, 1024, 2048)
 
@@ -136,7 +144,7 @@ func TestRecordUsage_IncrementsCounters(t *testing.T) {
 // TestRecordUsage_Accumulates verifies multiple Record calls accumulate.
 func TestRecordUsage_Accumulates(t *testing.T) {
 	t.Parallel()
-	mgr := newUsageManager([]string{"b1"}, newPermissiveMock(t))
+	mgr := newUsageManager(t, []string{"b1"}, newPermissiveMock(t))
 
 	mgr.usage.Record("b1", 1, 100, 200)
 	mgr.usage.Record("b1", 2, 300, 400)
@@ -156,7 +164,7 @@ func TestRecordUsage_Accumulates(t *testing.T) {
 // TestRecordUsage_UnknownBackendNoOp verifies the unknown-backend no-op.
 func TestRecordUsage_UnknownBackendNoOp(t *testing.T) {
 	t.Parallel()
-	mgr := newUsageManager([]string{"b1"}, newPermissiveMock(t))
+	mgr := newUsageManager(t, []string{"b1"}, newPermissiveMock(t))
 
 	mgr.usage.Record("unknown", 1, 1, 1)
 
@@ -169,7 +177,7 @@ func TestRecordUsage_UnknownBackendNoOp(t *testing.T) {
 // no-op.
 func TestRecordUsage_ZeroValuesSkipped(t *testing.T) {
 	t.Parallel()
-	mgr := newUsageManager([]string{"b1"}, newPermissiveMock(t))
+	mgr := newUsageManager(t, []string{"b1"}, newPermissiveMock(t))
 
 	mgr.usage.Record("b1", 0, 0, 0)
 
@@ -182,7 +190,7 @@ func TestRecordUsage_ZeroValuesSkipped(t *testing.T) {
 // don't collide.
 func TestRecordUsage_MultipleBackends(t *testing.T) {
 	t.Parallel()
-	mgr := newUsageManager([]string{"b1", "b2"}, newPermissiveMock(t))
+	mgr := newUsageManager(t, []string{"b1", "b2"}, newPermissiveMock(t))
 
 	mgr.usage.Record("b1", 1, 100, 0)
 	mgr.usage.Record("b2", 2, 0, 200)
@@ -199,7 +207,7 @@ func TestRecordUsage_MultipleBackends(t *testing.T) {
 // to the tracker.
 func TestRecordUsage_PublicMethod(t *testing.T) {
 	t.Parallel()
-	mgr := newUsageManager([]string{"b1"}, newPermissiveMock(t))
+	mgr := newUsageManager(t, []string{"b1"}, newPermissiveMock(t))
 
 	mgr.RecordUsage("b1", 5, 1024, 2048)
 
@@ -222,7 +230,7 @@ func TestRecordUsage_PublicMethod(t *testing.T) {
 func TestFlushUsage_WritesToStore(t *testing.T) {
 	t.Parallel()
 	store, ft := usageStoreWithFlush(t)
-	mgr := newUsageManager([]string{"b1"}, store)
+	mgr := newUsageManager(t, []string{"b1"}, store)
 
 	mgr.usage.Record("b1", 5, 1024, 2048)
 
@@ -251,7 +259,7 @@ func TestFlushUsage_WritesToStore(t *testing.T) {
 func TestFlushUsage_SkipsZeroDeltas(t *testing.T) {
 	t.Parallel()
 	store, ft := usageStoreWithFlush(t)
-	mgr := newUsageManager([]string{"b1", "b2"}, store)
+	mgr := newUsageManager(t, []string{"b1", "b2"}, store)
 
 	mgr.usage.Record("b1", 1, 0, 0)
 
@@ -276,7 +284,7 @@ func TestFlushUsage_RestoresCountersOnError(t *testing.T) {
 	t.Parallel()
 	store, ft := usageStoreWithFlush(t)
 	ft.err = fmt.Errorf("db down")
-	mgr := newUsageManager([]string{"b1"}, store)
+	mgr := newUsageManager(t, []string{"b1"}, store)
 
 	mgr.usage.Record("b1", 10, 500, 300)
 
@@ -301,7 +309,7 @@ func TestFlushUsage_RestoresCountersOnError(t *testing.T) {
 func TestFlushUsage_NoDataNoCall(t *testing.T) {
 	t.Parallel()
 	store, ft := usageStoreWithFlush(t)
-	mgr := newUsageManager([]string{"b1"}, store)
+	mgr := newUsageManager(t, []string{"b1"}, store)
 
 	if err := mgr.FlushUsage(context.Background()); err != nil {
 		t.Fatalf("FlushUsage() error = %v", err)
@@ -319,7 +327,7 @@ func TestFlushUsage_NoDataNoCall(t *testing.T) {
 func TestFlushUsage_SkipsDrainedBackend(t *testing.T) {
 	t.Parallel()
 	store, ft := usageStoreWithFlush(t)
-	mgr := newUsageManager([]string{"b1", "b2"}, store)
+	mgr := newUsageManager(t, []string{"b1", "b2"}, store)
 
 	mgr.usage.Record("b1", 5, 100, 200)
 	mgr.usage.Record("b2", 3, 50, 75)
@@ -349,7 +357,7 @@ func TestFlushUsage_SkipsDrainedBackend(t *testing.T) {
 // TestWithinUsageLimits_NoLimits confirms the no-limits short-circuit.
 func TestWithinUsageLimits_NoLimits(t *testing.T) {
 	t.Parallel()
-	mgr := newUsageManager([]string{"b1"}, newPermissiveMock(t))
+	mgr := newUsageManager(t, []string{"b1"}, newPermissiveMock(t))
 
 	if !mgr.usage.WithinLimits("b1", 1000, 1000, 1000) {
 		t.Error("no limits configured, should always return true")
@@ -362,7 +370,7 @@ func TestWithinUsageLimits_ApiExceeded(t *testing.T) {
 	limits := map[string]core.UsageLimits{
 		"b1": {APIRequestLimit: 100},
 	}
-	mgr := newUsageManagerWithLimits([]string{"b1"}, newPermissiveMock(t), limits)
+	mgr := newUsageManagerWithLimits(t, []string{"b1"}, newPermissiveMock(t), limits)
 
 	mgr.usage.SetBaseline("b1", core.UsageStat{APIRequests: 100})
 
@@ -377,7 +385,7 @@ func TestWithinUsageLimits_EgressExceeded(t *testing.T) {
 	limits := map[string]core.UsageLimits{
 		"b1": {EgressByteLimit: 1000},
 	}
-	mgr := newUsageManagerWithLimits([]string{"b1"}, newPermissiveMock(t), limits)
+	mgr := newUsageManagerWithLimits(t, []string{"b1"}, newPermissiveMock(t), limits)
 
 	mgr.usage.SetBaseline("b1", core.UsageStat{EgressBytes: 500})
 	mgr.usage.Backend().Add("b1", counter.FieldEgressBytes, 400)
@@ -394,7 +402,7 @@ func TestWithinUsageLimits_UnlimitedDimension(t *testing.T) {
 	limits := map[string]core.UsageLimits{
 		"b1": {APIRequestLimit: 100, EgressByteLimit: 0, IngressByteLimit: 0},
 	}
-	mgr := newUsageManagerWithLimits([]string{"b1"}, newPermissiveMock(t), limits)
+	mgr := newUsageManagerWithLimits(t, []string{"b1"}, newPermissiveMock(t), limits)
 
 	if !mgr.usage.WithinLimits("b1", 1, 999999, 999999) {
 		t.Error("zero limit means unlimited, should not be checked")
@@ -409,7 +417,7 @@ func TestBackendsWithinLimits_FiltersCorrectly(t *testing.T) {
 		"b1": {APIRequestLimit: 10},
 		"b2": {APIRequestLimit: 100},
 	}
-	mgr := newUsageManagerWithLimits([]string{"b1", "b2"}, newPermissiveMock(t), limits)
+	mgr := newUsageManagerWithLimits(t, []string{"b1", "b2"}, newPermissiveMock(t), limits)
 
 	mgr.usage.SetBaseline("b1", core.UsageStat{APIRequests: 10})
 

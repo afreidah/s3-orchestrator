@@ -103,9 +103,9 @@ func TestGroupByKey_Empty(t *testing.T) {
 func TestReplicate_NoUnderReplicatedObjects(t *testing.T) {
 	t.Parallel()
 	store := newPermissiveMock(t)
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	created, err := mgr.Replicator.Replicate(context.Background(), config.ReplicationConfig{
+	created, err := workers.Replicator.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:    2,
 		BatchSize: 10,
 	})
@@ -126,9 +126,9 @@ func TestReplicate_QueryError(t *testing.T) {
 		Return(nil, errors.New("db down")).AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	if _, err := mgr.Replicator.Replicate(context.Background(), config.ReplicationConfig{
+	if _, err := workers.Replicator.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:    2,
 		BatchSize: 10,
 	}); err == nil {
@@ -177,7 +177,7 @@ func TestReplicate_Success(t *testing.T) {
 		rt)
 	storetest.Permissive(store)
 
-	mgr := NewBackendManager(&BackendManagerConfig{
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": b1, "b2": b2},
 		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
@@ -187,9 +187,10 @@ func TestReplicate_Success(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr)
+	_ = workers
 
-	created, err := mgr.Replicator.Replicate(context.Background(), config.ReplicationConfig{
+	created, err := workers.Replicator.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:    2,
 		BatchSize: 10,
 	})
@@ -219,7 +220,7 @@ func TestFindReplicaTarget_ExcludesExistingCopies(t *testing.T) {
 		}).AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := NewBackendManager(&BackendManagerConfig{
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": newMockBackend(), "b2": newMockBackend(), "b3": newMockBackend()},
 		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
@@ -228,10 +229,11 @@ func TestFindReplicaTarget_ExcludesExistingCopies(t *testing.T) {
 		CacheTTL:        5 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr)
+	_ = workers
 
 	exclusion := map[string]bool{"b1": true, "b2": true}
-	target := mgr.Replicator.FindReplicaTarget(context.Background(), "key1", 50, exclusion)
+	target := workers.Replicator.FindReplicaTarget(context.Background(), "key1", 50, exclusion)
 	if target != "b3" {
 		t.Errorf("expected b3, got %q", target)
 	}
@@ -242,7 +244,7 @@ func TestFindReplicaTarget_ExcludesExistingCopies(t *testing.T) {
 func TestFindReplicaTarget_SkipsFullBackends(t *testing.T) {
 	t.Parallel()
 	store := newPermissiveMock(t)
-	mgr := NewBackendManager(&BackendManagerConfig{
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": newMockBackend(), "b2": newMockBackend()},
 		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
@@ -251,10 +253,11 @@ func TestFindReplicaTarget_SkipsFullBackends(t *testing.T) {
 		CacheTTL:        5 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr)
+	_ = workers
 
 	exclusion := map[string]bool{"b1": true}
-	if target := mgr.Replicator.FindReplicaTarget(context.Background(), "key1", 50, exclusion); target != "" {
+	if target := workers.Replicator.FindReplicaTarget(context.Background(), "key1", 50, exclusion); target != "" {
 		t.Errorf("expected empty (no space), got %q", target)
 	}
 }
@@ -271,7 +274,7 @@ func TestSelectReplicaTarget_NoSpaceAvailable(t *testing.T) {
 		Return("", core.ErrNoSpaceAvailable).AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := NewBackendManager(&BackendManagerConfig{
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": newMockBackend(), "b2": newMockBackend()},
 		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
@@ -280,10 +283,11 @@ func TestSelectReplicaTarget_NoSpaceAvailable(t *testing.T) {
 		CacheTTL:        5 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr)
+	_ = workers
 
 	exclusion := map[string]bool{"b1": true}
-	if target := mgr.Replicator.FindReplicaTarget(context.Background(), "key1", 50, exclusion); target != "" {
+	if target := workers.Replicator.FindReplicaTarget(context.Background(), "key1", 50, exclusion); target != "" {
 		t.Errorf("expected empty (no space available), got %q", target)
 	}
 }
@@ -292,8 +296,8 @@ func TestSelectReplicaTarget_NoSpaceAvailable(t *testing.T) {
 func TestFindReplicaTarget_EmptyStats(t *testing.T) {
 	t.Parallel()
 	store := newPermissiveMock(t)
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
-	if target := mgr.Replicator.FindReplicaTarget(context.Background(), "key1", 50, map[string]bool{}); target != "" {
+	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": newMockBackend()})
+	if target := workers.Replicator.FindReplicaTarget(context.Background(), "key1", 50, map[string]bool{}); target != "" {
 		t.Errorf("expected empty with no quota stats, got %q", target)
 	}
 }
@@ -306,7 +310,7 @@ func TestCopyToReplica_Success(t *testing.T) {
 	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
 	store := newPermissiveMock(t)
-	mgr := NewBackendManager(&BackendManagerConfig{
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": b1, "b2": b2},
 		Stores:          testStoresFromMock(store),
 		Order:           []string{"b1", "b2"},
@@ -314,10 +318,11 @@ func TestCopyToReplica_Success(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr)
+	_ = workers
 
 	copies := []core.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}
-	source, _, err := mgr.Replicator.CopyToReplica(context.Background(), "key1", copies, "b2")
+	source, _, err := workers.Replicator.CopyToReplica(context.Background(), "key1", copies, "b2")
 	if err != nil {
 		t.Fatalf("copyToReplica: %v", err)
 	}
@@ -340,7 +345,7 @@ func TestCopyToReplica_FailoverToSecondCopy(t *testing.T) {
 	b3 := newMockBackend()
 
 	store := newPermissiveMock(t)
-	mgr := NewBackendManager(&BackendManagerConfig{
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": b1, "b2": b2, "b3": b3},
 		Stores:          testStoresFromMock(store),
 		Order:           []string{"b1", "b2", "b3"},
@@ -348,13 +353,14 @@ func TestCopyToReplica_FailoverToSecondCopy(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr)
+	_ = workers
 
 	copies := []core.ObjectLocation{
 		{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
 		{ObjectKey: "key1", BackendName: "b2", SizeBytes: 4},
 	}
-	source, _, err := mgr.Replicator.CopyToReplica(context.Background(), "key1", copies, "b3")
+	source, _, err := workers.Replicator.CopyToReplica(context.Background(), "key1", copies, "b3")
 	if err != nil {
 		t.Fatalf("copyToReplica should failover: %v", err)
 	}
@@ -375,7 +381,7 @@ func TestCopyToReplica_AllSourcesFail(t *testing.T) {
 	b2 := newMockBackend()
 
 	store := newPermissiveMock(t)
-	mgr := NewBackendManager(&BackendManagerConfig{
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": b1, "b2": b2},
 		Stores:          testStoresFromMock(store),
 		Order:           []string{"b1", "b2"},
@@ -383,10 +389,11 @@ func TestCopyToReplica_AllSourcesFail(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr)
+	_ = workers
 
 	copies := []core.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}
-	if _, _, err := mgr.Replicator.CopyToReplica(context.Background(), "key1", copies, "b2"); err == nil {
+	if _, _, err := workers.Replicator.CopyToReplica(context.Background(), "key1", copies, "b2"); err == nil {
 		t.Fatal("expected error when all source copies fail")
 	}
 }
@@ -397,9 +404,9 @@ func TestCleanupOrphan_Success(t *testing.T) {
 	b1 := newMockBackend()
 	_, _ = b1.PutObject(context.Background(), "orphan", bytes.NewReader([]byte("x")), 1, "", nil)
 
-	mgr := newTestManager(newPermissiveMock(t), map[string]*mockBackend{"b1": b1})
+	_, workers := newTestManagerWithWorkers(t, newPermissiveMock(t), map[string]*mockBackend{"b1": b1})
 
-	mgr.Replicator.CleanupOrphan(context.Background(), "b1", "orphan", 1)
+	workers.Replicator.CleanupOrphan(context.Background(), "b1", "orphan", 1)
 	if b1.hasObject("orphan") {
 		t.Error("expected orphan to be deleted")
 	}
@@ -409,8 +416,8 @@ func TestCleanupOrphan_Success(t *testing.T) {
 // backend.
 func TestCleanupOrphan_BackendNotFound(t *testing.T) {
 	t.Parallel()
-	mgr := newTestManager(newPermissiveMock(t), map[string]*mockBackend{"b1": newMockBackend()})
-	mgr.Replicator.CleanupOrphan(context.Background(), "unknown", "orphan", 1)
+	_, workers := newTestManagerWithWorkers(t, newPermissiveMock(t), map[string]*mockBackend{"b1": newMockBackend()})
+	workers.Replicator.CleanupOrphan(context.Background(), "unknown", "orphan", 1)
 }
 
 // TestCleanupOrphan_DeleteFailure_EnqueuesCleanup asserts a backend
@@ -427,8 +434,8 @@ func TestCleanupOrphan_DeleteFailure_EnqueuesCleanup(t *testing.T) {
 		DoAndReturn(stubReplicatorEnqueue(et)).AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": b1})
-	mgr.Replicator.CleanupOrphan(context.Background(), "b1", "orphan", 1)
+	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": b1})
+	workers.Replicator.CleanupOrphan(context.Background(), "b1", "orphan", 1)
 
 	if len(et.calls) != 1 {
 		t.Fatalf("expected 1 enqueue call, got %d", len(et.calls))
@@ -454,7 +461,7 @@ func TestReplicate_RecordReplicaFails_CleansUpOrphan(t *testing.T) {
 		rt)
 	storetest.Permissive(store)
 
-	mgr := NewBackendManager(&BackendManagerConfig{
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": b1, "b2": b2},
 		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
@@ -464,9 +471,10 @@ func TestReplicate_RecordReplicaFails_CleansUpOrphan(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr)
+	_ = workers
 
-	created, err := mgr.Replicator.Replicate(context.Background(), config.ReplicationConfig{
+	created, err := workers.Replicator.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:    2,
 		BatchSize: 10,
 	})
@@ -488,10 +496,10 @@ func TestCopyToReplica_TargetBackendNotFound(t *testing.T) {
 	b1 := newMockBackend()
 	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
-	mgr := newTestManager(newPermissiveMock(t), map[string]*mockBackend{"b1": b1})
+	_, workers := newTestManagerWithWorkers(t, newPermissiveMock(t), map[string]*mockBackend{"b1": b1})
 
 	copies := []core.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}
-	if _, _, err := mgr.Replicator.CopyToReplica(context.Background(), "key1", copies, "nonexistent"); err == nil {
+	if _, _, err := workers.Replicator.CopyToReplica(context.Background(), "key1", copies, "nonexistent"); err == nil {
 		t.Fatal("expected error when target backend not found")
 	}
 }
@@ -506,7 +514,7 @@ func TestCopyToReplica_TargetWriteFails(t *testing.T) {
 	b2.putErr = errors.New("write failed")
 
 	store := newPermissiveMock(t)
-	mgr := NewBackendManager(&BackendManagerConfig{
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": b1, "b2": b2},
 		Stores:          testStoresFromMock(store),
 		Order:           []string{"b1", "b2"},
@@ -514,10 +522,11 @@ func TestCopyToReplica_TargetWriteFails(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr)
+	_ = workers
 
 	copies := []core.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}
-	if _, _, err := mgr.Replicator.CopyToReplica(context.Background(), "key1", copies, "b2"); err == nil {
+	if _, _, err := workers.Replicator.CopyToReplica(context.Background(), "key1", copies, "b2"); err == nil {
 		t.Fatal("expected error when target PutObject fails")
 	}
 }
@@ -537,7 +546,7 @@ func TestReplicateObject_NoTargetAvailable(t *testing.T) {
 		rt)
 	storetest.Permissive(store)
 
-	mgr := NewBackendManager(&BackendManagerConfig{
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": b1},
 		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
@@ -547,9 +556,10 @@ func TestReplicateObject_NoTargetAvailable(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr)
+	_ = workers
 
-	created, err := mgr.Replicator.Replicate(context.Background(), config.ReplicationConfig{
+	created, err := workers.Replicator.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:    2,
 		BatchSize: 10,
 	})
@@ -577,7 +587,7 @@ func TestReplicate_SourceGoneDuringReplication(t *testing.T) {
 		rt)
 	storetest.Permissive(store)
 
-	mgr := NewBackendManager(&BackendManagerConfig{
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": b1, "b2": b2},
 		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
@@ -587,9 +597,10 @@ func TestReplicate_SourceGoneDuringReplication(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr)
+	_ = workers
 
-	created, err := mgr.Replicator.Replicate(context.Background(), config.ReplicationConfig{
+	created, err := workers.Replicator.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:    2,
 		BatchSize: 10,
 	})
@@ -630,7 +641,7 @@ func TestReplicate_HealthAware_SkipsUnhealthyTarget(t *testing.T) {
 		rt)
 	storetest.Permissive(store)
 
-	mgr := NewBackendManager(&BackendManagerConfig{
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": b1, "b2": cbb2, "b3": b3},
 		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
@@ -640,9 +651,10 @@ func TestReplicate_HealthAware_SkipsUnhealthyTarget(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr)
+	_ = workers
 
-	created, err := mgr.Replicator.Replicate(context.Background(), config.ReplicationConfig{
+	created, err := workers.Replicator.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:             2,
 		BatchSize:          10,
 		UnhealthyThreshold: 0,
@@ -683,7 +695,7 @@ func TestReplicate_HealthAware_PrefersHealthySource(t *testing.T) {
 		rt)
 	storetest.Permissive(store)
 
-	mgr := NewBackendManager(&BackendManagerConfig{
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": cbb1, "b2": b2, "b3": b3},
 		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
@@ -693,9 +705,10 @@ func TestReplicate_HealthAware_PrefersHealthySource(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr)
+	_ = workers
 
-	created, err := mgr.Replicator.Replicate(context.Background(), config.ReplicationConfig{
+	created, err := workers.Replicator.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:             3,
 		BatchSize:          10,
 		UnhealthyThreshold: 0,
@@ -737,7 +750,7 @@ func TestReplicate_UsesRecordedSize_NotFirstCopy(t *testing.T) {
 		rt)
 	storetest.Permissive(store)
 
-	mgr := NewBackendManager(&BackendManagerConfig{
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": cbb1, "b2": b2, "b3": b3},
 		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
@@ -747,9 +760,10 @@ func TestReplicate_UsesRecordedSize_NotFirstCopy(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr)
+	_ = workers
 
-	created, err := mgr.Replicator.Replicate(context.Background(), config.ReplicationConfig{
+	created, err := workers.Replicator.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:             3,
 		BatchSize:          10,
 		UnhealthyThreshold: 0,
@@ -777,7 +791,7 @@ func TestReplicate_HealthAware_BelowThreshold(t *testing.T) {
 	cbb2 := newTrippedCBBackend(b2, "b2")
 
 	store := newPermissiveMock(t)
-	mgr := NewBackendManager(&BackendManagerConfig{
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": b1, "b2": cbb2},
 		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
@@ -787,9 +801,10 @@ func TestReplicate_HealthAware_BelowThreshold(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr)
+	_ = workers
 
-	created, err := mgr.Replicator.Replicate(context.Background(), config.ReplicationConfig{
+	created, err := workers.Replicator.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:             2,
 		BatchSize:          10,
 		UnhealthyThreshold: time.Hour,
@@ -806,11 +821,11 @@ func TestReplicate_HealthAware_BelowThreshold(t *testing.T) {
 // a circuit breaker.
 func TestUnhealthyBackends_NoCB(t *testing.T) {
 	t.Parallel()
-	mgr := newTestManager(newPermissiveMock(t), map[string]*mockBackend{
+	_, workers := newTestManagerWithWorkers(t, newPermissiveMock(t), map[string]*mockBackend{
 		"b1": newMockBackend(),
 		"b2": newMockBackend(),
 	})
-	if names := mgr.Replicator.UnhealthyBackends(0); len(names) != 0 {
+	if names := workers.Replicator.UnhealthyBackends(0); len(names) != 0 {
 		t.Errorf("expected empty, got %v", names)
 	}
 }
@@ -819,8 +834,8 @@ func TestUnhealthyBackends_NoCB(t *testing.T) {
 // as healthy.
 func TestIsBackendHealthy_NoCB(t *testing.T) {
 	t.Parallel()
-	mgr := newTestManager(newPermissiveMock(t), map[string]*mockBackend{"b1": newMockBackend()})
-	if !mgr.Replicator.IsBackendHealthy("b1") {
+	_, workers := newTestManagerWithWorkers(t, newPermissiveMock(t), map[string]*mockBackend{"b1": newMockBackend()})
+	if !workers.Replicator.IsBackendHealthy("b1") {
 		t.Error("backend without CB wrapper should be healthy")
 	}
 }
@@ -829,8 +844,8 @@ func TestIsBackendHealthy_NoCB(t *testing.T) {
 // healthy.
 func TestIsBackendHealthy_UnknownBackend(t *testing.T) {
 	t.Parallel()
-	mgr := newTestManager(newPermissiveMock(t), map[string]*mockBackend{"b1": newMockBackend()})
-	if mgr.Replicator.IsBackendHealthy("nonexistent") {
+	_, workers := newTestManagerWithWorkers(t, newPermissiveMock(t), map[string]*mockBackend{"b1": newMockBackend()})
+	if workers.Replicator.IsBackendHealthy("nonexistent") {
 		t.Error("unknown backend should not be healthy")
 	}
 }
@@ -841,15 +856,16 @@ func TestIsBackendHealthy_CBHealthy(t *testing.T) {
 	t.Parallel()
 	cbb := backend.NewCircuitBreakerBackend(newMockBackend(), "b1", 3, time.Minute)
 	store := newPermissiveMock(t)
-	mgr := NewBackendManager(&BackendManagerConfig{
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": cbb},
 		Stores:          testStoresFromMock(store),
 		Order:           []string{"b1"},
 		CacheTTL:        5 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	wireWorkersForTest(mgr)
-	if !mgr.Replicator.IsBackendHealthy("b1") {
+	workers := wireWorkersForTest(mgr)
+	_ = workers
+	if !workers.Replicator.IsBackendHealthy("b1") {
 		t.Error("healthy CB backend should report healthy")
 	}
 }
@@ -860,15 +876,16 @@ func TestIsBackendHealthy_CBUnhealthy(t *testing.T) {
 	t.Parallel()
 	cbb := newTrippedCBBackend(newMockBackend(), "b1")
 	store := newPermissiveMock(t)
-	mgr := NewBackendManager(&BackendManagerConfig{
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": cbb},
 		Stores:          testStoresFromMock(store),
 		Order:           []string{"b1"},
 		CacheTTL:        5 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	wireWorkersForTest(mgr)
-	if mgr.Replicator.IsBackendHealthy("b1") {
+	workers := wireWorkersForTest(mgr)
+	_ = workers
+	if workers.Replicator.IsBackendHealthy("b1") {
 		t.Error("tripped CB backend should report unhealthy")
 	}
 }

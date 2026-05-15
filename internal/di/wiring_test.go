@@ -47,29 +47,24 @@ func TestWireManager_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve BackendManager: %v", err)
 	}
-	if mgr.Rebalancer == nil {
-		t.Error("Rebalancer not wired")
-	}
-	if mgr.Replicator == nil {
-		t.Error("Replicator not wired")
-	}
-	if mgr.OverReplicationCleaner == nil {
-		t.Error("OverReplicationCleaner not wired")
-	}
-	if mgr.CleanupWorker == nil {
-		t.Error("CleanupWorker not wired")
-	}
-	if mgr.Scrubber == nil {
-		t.Error("Scrubber not wired")
-	}
 	if mgr.DrainManager == nil {
 		t.Error("DrainManager not installed by WireDrain")
 	}
-	// PendingReaper is wired through invokeOptional; the value may be
-	// non-nil (defaults enable the pending pattern) or nil (feature off).
-	// Either is acceptable - what matters is WireManager did not panic
-	// and did not fail when the optional resolution returned the zero
-	// value path.
+	if _, err := do.Invoke[*worker.Rebalancer](inj); err != nil {
+		t.Errorf("resolve Rebalancer: %v", err)
+	}
+	if _, err := do.Invoke[*worker.Replicator](inj); err != nil {
+		t.Errorf("resolve Replicator: %v", err)
+	}
+	if _, err := do.Invoke[*worker.OverReplicationCleaner](inj); err != nil {
+		t.Errorf("resolve OverReplicationCleaner: %v", err)
+	}
+	if _, err := do.Invoke[*worker.CleanupWorker](inj); err != nil {
+		t.Errorf("resolve CleanupWorker: %v", err)
+	}
+	if _, err := do.Invoke[*worker.Scrubber](inj); err != nil {
+		t.Errorf("resolve Scrubber: %v", err)
+	}
 }
 
 // TestWireManager_NoBackendManager covers the first invoke's error
@@ -215,12 +210,5 @@ func TestWireManager_PendingReaperFailedLogsAndContinues(t *testing.T) {
 
 	if err := WireManager(inj); err != nil {
 		t.Fatalf("WireManager: %v (expected to swallow Failed optional)", err)
-	}
-	mgr, err := do.Invoke[*proxy.BackendManager](inj)
-	if err != nil {
-		t.Fatalf("resolve BackendManager: %v", err)
-	}
-	if mgr.PendingReaper != nil {
-		t.Errorf("PendingReaper = %v, want nil on Failed resolution", mgr.PendingReaper)
 	}
 }

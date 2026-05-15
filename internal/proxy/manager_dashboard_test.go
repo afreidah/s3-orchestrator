@@ -51,7 +51,7 @@ func TestGetDashboardData_Success(t *testing.T) {
 		AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 	defer mgr.Close()
 
 	data, err := mgr.GetDashboardData(context.Background())
@@ -90,7 +90,7 @@ func TestGetDashboardData_QuotaStatsError(t *testing.T) {
 		AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 	defer mgr.Close()
 
 	if _, err := mgr.GetDashboardData(context.Background()); err == nil {
@@ -112,7 +112,7 @@ func TestGetDashboardData_ObjectCountsError(t *testing.T) {
 		AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 	defer mgr.Close()
 
 	if _, err := mgr.GetDashboardData(context.Background()); err == nil {
@@ -137,7 +137,7 @@ func TestGetDashboardData_MultipartCountsError(t *testing.T) {
 		AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 	defer mgr.Close()
 
 	if _, err := mgr.GetDashboardData(context.Background()); err == nil {
@@ -164,7 +164,7 @@ func TestGetDashboardData_UsageForPeriodError(t *testing.T) {
 		AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 	defer mgr.Close()
 
 	if _, err := mgr.GetDashboardData(context.Background()); err == nil {
@@ -195,7 +195,7 @@ func TestGetDashboardData_ListDirChildrenError(t *testing.T) {
 		AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 	defer mgr.Close()
 
 	if _, err := mgr.GetDashboardData(context.Background()); err == nil {
@@ -232,7 +232,7 @@ func TestGetDashboardData_UnhealthyBackends(t *testing.T) {
 	// Trip the circuit.
 	_, _ = cbBackend.PutObject(context.Background(), "k", nil, 0, "", nil)
 
-	mgr := NewBackendManager(&BackendManagerConfig{
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": cbBackend},
 		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
@@ -240,7 +240,8 @@ func TestGetDashboardData_UnhealthyBackends(t *testing.T) {
 		Order:           []string{"b1"},
 		RoutingStrategy: config.RoutingPack,
 	})
-	wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr)
+	_ = workers
 	defer mgr.Close()
 
 	data, err := mgr.GetDashboardData(context.Background())
@@ -276,7 +277,7 @@ func TestGetDashboardData_HealthyBackendsNotMarked(t *testing.T) {
 	storetest.Permissive(store)
 
 	cbBackend := backend.NewCircuitBreakerBackend(newMockBackend(), "b1", 5, time.Minute)
-	mgr := NewBackendManager(&BackendManagerConfig{
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": cbBackend},
 		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
@@ -284,7 +285,8 @@ func TestGetDashboardData_HealthyBackendsNotMarked(t *testing.T) {
 		Order:           []string{"b1"},
 		RoutingStrategy: config.RoutingPack,
 	})
-	wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr)
+	_ = workers
 	defer mgr.Close()
 
 	data, err := mgr.GetDashboardData(context.Background())
@@ -307,7 +309,7 @@ func TestGetDirectoryChildren_CapsMaxKeys(t *testing.T) {
 		AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 	defer mgr.Close()
 
 	tests := []struct {
