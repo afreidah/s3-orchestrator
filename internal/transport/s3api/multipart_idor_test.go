@@ -50,7 +50,7 @@ func twoBucketServer(t *testing.T, mu *core.MultipartUpload) (*httptest.Server, 
 	mockStore.GetBackendResp = "b1"
 	mockStore.GetMultipartResp = mu
 
-	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
+	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
 		Backends:        map[string]s3be.ObjectBackend{"b1": backend},
 		Stores:          mockStore,
 		Dashboard:       mockStore,
@@ -58,7 +58,7 @@ func twoBucketServer(t *testing.T, mu *core.MultipartUpload) (*httptest.Server, 
 		Order:           []string{"b1"},
 		RoutingStrategy: config.RoutingPack,
 	})
-	proxytest.AttachWorkers(mgr, mockStore)
+	_ = proxytest.BuildWorkers(mgr, mockStore)
 	t.Cleanup(mgr.Close)
 
 	srv := &Server{

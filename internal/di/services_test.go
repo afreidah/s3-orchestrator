@@ -67,7 +67,7 @@ type servicesFixture struct {
 func newServicesFixture(t *testing.T) *servicesFixture {
 	t.Helper()
 	mock := testutil.NewMockStore(t)
-	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
+	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{},
 		Stores:          mock,
 		Dashboard:       mock,
@@ -75,14 +75,17 @@ func newServicesFixture(t *testing.T) *servicesFixture {
 		Order:           []string{},
 		RoutingStrategy: config.RoutingPack,
 	})
-	proxytest.AttachWorkers(mgr, mock)
+	// BuildWorkers wires drain.Manager onto the manager (required for
+	// FlushUsage's CompletedBackends call); the worker handles it
+	// returns are discarded here because this fixture builds custom
+	// workers with test-specific configs below.
+	_ = proxytest.BuildWorkers(mgr, mock)
 
 	rb := worker.NewRebalancer(mgr, struct {
 		core.ObjectStore
 		core.QuotaStore
 	}{ObjectStore: mock, QuotaStore: mock})
 	rb.SetConfig(&config.RebalanceConfig{})
-	mgr.Rebalancer = rb
 
 	rp := worker.NewReplicator(mgr, struct {
 		core.ObjectStore
@@ -90,21 +93,17 @@ func newServicesFixture(t *testing.T) *servicesFixture {
 		core.QuotaStore
 	}{ObjectStore: mock, ReplicationStore: mock, QuotaStore: mock})
 	rp.SetConfig(&config.ReplicationConfig{Factor: 1})
-	mgr.Replicator = rp
 
 	or := worker.NewOverReplicationCleaner(mgr, struct {
 		core.ReplicationStore
 		core.QuotaStore
 	}{ReplicationStore: mock, QuotaStore: mock})
 	or.SetConfig(&config.ReplicationConfig{Factor: 1})
-	mgr.OverReplicationCleaner = or
 
 	cw := worker.NewCleanupWorker(mgr, mock, 10, "test-instance", 5*time.Minute)
-	mgr.CleanupWorker = cw
 
 	sc := worker.NewScrubber(mgr, mock, nil)
 	sc.SetConfig(&config.IntegrityConfig{})
-	mgr.Scrubber = sc
 
 	mgr.SetLifecycleConfig(&config.LifecycleConfig{})
 	mgr.SetIntegrityConfig(&config.IntegrityConfig{})
@@ -130,7 +129,7 @@ func TestCleanupQueueService_ProcessedLogFires(t *testing.T) {
 	mock.PendingCleanupsResp = []core.CleanupItem{
 		{ID: 1, BackendName: "missing-backend", ObjectKey: "k", Attempts: 0},
 	}
-	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
+	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{},
 		Stores:          mock,
 		Dashboard:       mock,
@@ -138,9 +137,8 @@ func TestCleanupQueueService_ProcessedLogFires(t *testing.T) {
 		Order:           []string{},
 		RoutingStrategy: config.RoutingPack,
 	})
-	proxytest.AttachWorkers(mgr, mock)
+	_ = proxytest.BuildWorkers(mgr, mock)
 	cw := worker.NewCleanupWorker(mgr, mock, 1, "test", 5*time.Minute)
-	mgr.CleanupWorker = cw
 	t.Cleanup(mgr.Close)
 
 	svc := NewCleanupQueueService(cw, acquiringLocker{}).(*lockedTickerService)

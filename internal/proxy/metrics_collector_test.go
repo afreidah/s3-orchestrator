@@ -276,7 +276,7 @@ func TestUpdateQuotaMetrics_ReplicationFactorFromManager(t *testing.T) {
 		AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := NewBackendManager(&BackendManagerConfig{
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": newMockBackend()},
 		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
@@ -286,13 +286,13 @@ func TestUpdateQuotaMetrics_ReplicationFactorFromManager(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr)
 
 	if err := mgr.metricsCollector.UpdateQuotaMetrics(context.Background()); err != nil {
 		t.Fatalf("UpdateQuotaMetrics (no repl config): %v", err)
 	}
 
-	mgr.Replicator.SetConfig(&config.ReplicationConfig{Factor: 2, BatchSize: 50})
+	workers.Replicator.SetConfig(&config.ReplicationConfig{Factor: 2, BatchSize: 50})
 	if err := mgr.metricsCollector.UpdateQuotaMetrics(context.Background()); err != nil {
 		t.Fatalf("UpdateQuotaMetrics (with repl config): %v", err)
 	}

@@ -59,6 +59,7 @@ var (
 	proxyAddr         string
 	testDB            *sql.DB
 	testManager       *proxy.BackendManager
+	testWorkers       *proxytest.Workers
 	testStore         *postgres.Store
 	testFailableStore *FailableStore
 	testDatabaseCB    *breaker.CircuitBreaker
@@ -320,7 +321,7 @@ func TestMain(m *testing.M) {
 
 	stores := newStores(failableStore)
 
-	manager := proxy.NewBackendManager(&proxy.BackendManagerConfig{
+	manager, err := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        testBackends,
 		Stores:          stores,
 		PendingEnabled:  true,
@@ -331,8 +332,13 @@ func TestMain(m *testing.M) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	proxytest.AttachWorkers(manager, stores)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to create backend manager: %v\n", err)
+		os.Exit(1)
+	}
+	workers := proxytest.BuildWorkers(manager, stores)
 	testManager = manager
+	testWorkers = workers
 
 	srv := &s3api.Server{
 		Manager: manager,
@@ -543,10 +549,13 @@ func setOrphanBytes(t *testing.T, backendName string, amount int64) {
 
 // newThreeBackendManager creates a BackendManager with all 3 backends for
 // tests that need more than 2 backends (e.g., over-replication with factor=3).
-func newThreeBackendManager(t *testing.T) *proxy.BackendManager {
+// Returns the manager and its fully-wired worker bundle so callers that need
+// a specific worker (Replicator/OverReplicationCleaner/...) can reach it
+// directly, since these are no longer fields on BackendManager.
+func newThreeBackendManager(t *testing.T) (*proxy.BackendManager, *proxytest.Workers) {
 	t.Helper()
 	stores := newStores(testFailableStore)
-	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
+	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
 		Backends:        allBackends,
 		Stores:          stores,
 		Dashboard:       testFailableStore,
@@ -556,8 +565,8 @@ func newThreeBackendManager(t *testing.T) *proxy.BackendManager {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	proxytest.AttachWorkers(mgr, stores)
-	return mgr
+	workers := proxytest.BuildWorkers(mgr, stores)
+	return mgr, workers
 }
 
 // newStores returns src typed as the wide metadata-store contract every
