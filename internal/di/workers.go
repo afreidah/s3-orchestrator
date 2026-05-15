@@ -7,14 +7,17 @@
 // central *proxy.BackendManager (which satisfies worker.Ops / CleanupOps /
 // ScrubberOps via promoted backendCore methods plus its own write-path
 // helpers) and the wide core.MetadataStore, which already satisfies every
-// per-worker store contract via implicit interface satisfaction. Newly
-// constructed workers are wired onto BackendManager so backendCore's
-// eligibility filters and write paths can reach them.
+// per-worker store contract via implicit interface satisfaction. The
+// resolveWorkerCore / resolveWorkerCoreWithCfg helpers centralize that
+// dependency pattern so each provider stays a single short call plus the
+// worker-specific constructor arguments.
 // -------------------------------------------------------------------------------
 
 package di
 
 import (
+	"fmt"
+
 	"github.com/samber/do/v2"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -26,68 +29,101 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
-// ProvideRebalancer constructs the rebalancer worker.
-func ProvideRebalancer(i do.Injector) (*worker.Rebalancer, error) {
+// workerCore bundles the two dependencies every background worker needs:
+// the BackendManager seam (worker.Ops / CleanupOps / ScrubberOps) and the
+// wide MetadataStore that satisfies each worker's narrow per-role store
+// contract via implicit interface satisfaction.
+type workerCore struct {
+	Mgr    *proxy.BackendManager
+	Stores core.MetadataStore
+}
+
+// workerCoreWithCfg extends workerCore with *config.Config for workers
+// whose constructors also need reloadable config knobs (batch sizes,
+// concurrency, feature toggles).
+type workerCoreWithCfg struct {
+	workerCore
+	Cfg *config.Config
+}
+
+// resolveWorkerCore resolves the BackendManager + MetadataStore pair every
+// worker provider depends on. Errors are wrapped with the dependency name
+// so a missing provider points at the right registration site.
+func resolveWorkerCore(i do.Injector) (workerCore, error) {
+	var c workerCore
 	mgr, err := do.Invoke[*proxy.BackendManager](i)
 	if err != nil {
-		return nil, err
+		return c, fmt.Errorf("resolve BackendManager: %w", err)
 	}
 	stores, err := do.Invoke[core.MetadataStore](i)
 	if err != nil {
+		return c, fmt.Errorf("resolve MetadataStore: %w", err)
+	}
+	c.Mgr = mgr
+	c.Stores = stores
+	return c, nil
+}
+
+// resolveWorkerCoreWithCfg pulls *config.Config first, then the worker
+// core, mirroring the historic resolution order. Resolving config first
+// lets feature-gated providers short-circuit before touching the manager.
+func resolveWorkerCoreWithCfg(i do.Injector) (workerCoreWithCfg, error) {
+	var c workerCoreWithCfg
+	cfg, err := do.Invoke[*config.Config](i)
+	if err != nil {
+		return c, fmt.Errorf("resolve Config: %w", err)
+	}
+	core, err := resolveWorkerCore(i)
+	if err != nil {
+		return c, err
+	}
+	c.workerCore = core
+	c.Cfg = cfg
+	return c, nil
+}
+
+// ProvideRebalancer constructs the rebalancer worker.
+func ProvideRebalancer(i do.Injector) (*worker.Rebalancer, error) {
+	c, err := resolveWorkerCore(i)
+	if err != nil {
 		return nil, err
 	}
-	return worker.NewRebalancer(mgr, stores), nil
+	return worker.NewRebalancer(c.Mgr, c.Stores), nil
 }
 
 // ProvideReplicator constructs the replication worker.
 func ProvideReplicator(i do.Injector) (*worker.Replicator, error) {
-	mgr, err := do.Invoke[*proxy.BackendManager](i)
+	c, err := resolveWorkerCore(i)
 	if err != nil {
 		return nil, err
 	}
-	stores, err := do.Invoke[core.MetadataStore](i)
-	if err != nil {
-		return nil, err
-	}
-	return worker.NewReplicator(mgr, stores), nil
+	return worker.NewReplicator(c.Mgr, c.Stores), nil
 }
 
 // ProvideOverReplicationCleaner constructs the over-replication cleanup worker.
 func ProvideOverReplicationCleaner(i do.Injector) (*worker.OverReplicationCleaner, error) {
-	mgr, err := do.Invoke[*proxy.BackendManager](i)
+	c, err := resolveWorkerCore(i)
 	if err != nil {
 		return nil, err
 	}
-	stores, err := do.Invoke[core.MetadataStore](i)
-	if err != nil {
-		return nil, err
-	}
-	return worker.NewOverReplicationCleaner(mgr, stores), nil
+	return worker.NewOverReplicationCleaner(c.Mgr, c.Stores), nil
 }
 
 // ProvideCleanupWorker constructs the cleanup-queue worker.
 func ProvideCleanupWorker(i do.Injector) (*worker.CleanupWorker, error) {
-	cfg, err := do.Invoke[*config.Config](i)
+	c, err := resolveWorkerCoreWithCfg(i)
 	if err != nil {
 		return nil, err
 	}
-	mgr, err := do.Invoke[*proxy.BackendManager](i)
-	if err != nil {
-		return nil, err
-	}
-	cleanup, err := do.Invoke[core.MetadataStore](i)
-	if err != nil {
-		return nil, err
-	}
-	concurrency := cfg.CleanupQueue.Concurrency
+	concurrency := c.Cfg.CleanupQueue.Concurrency
 	if concurrency <= 0 {
 		concurrency = 10
 	}
 	id, err := do.Invoke[instanceid.ID](i)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("resolve InstanceID: %w", err)
 	}
-	return worker.NewCleanupWorker(mgr, cleanup, concurrency, id.String(), cfg.CleanupQueue.ClaimGracePeriod), nil
+	return worker.NewCleanupWorker(c.Mgr, c.Stores, concurrency, id.String(), c.Cfg.CleanupQueue.ClaimGracePeriod), nil
 }
 
 // ProvidePendingReaper constructs the pending-reaper worker. Returns nil
@@ -96,46 +132,34 @@ func ProvideCleanupWorker(i do.Injector) (*worker.CleanupWorker, error) {
 func ProvidePendingReaper(i do.Injector) (*worker.PendingReaper, error) {
 	cfg, err := do.Invoke[*config.Config](i)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("resolve Config: %w", err)
 	}
 	if !cfg.WritePath.PendingPattern.IsEnabled() {
 		return nil, nil //nolint:nilnil // intentional: nil signals feature off
 	}
-	mgr, err := do.Invoke[*proxy.BackendManager](i)
+	c, err := resolveWorkerCore(i)
 	if err != nil {
 		return nil, err
 	}
-	pending, err := do.Invoke[core.MetadataStore](i)
-	if err != nil {
-		return nil, err
-	}
-	if pending == nil {
+	if c.Stores == nil {
 		return nil, nil //nolint:nilnil // store provider returned nil, feature off
 	}
-	return worker.NewPendingReaper(mgr, pending, 0, cfg.WritePath.PendingPattern.MinAge, cfg.WritePath.PendingPattern.BatchSize), nil
+	return worker.NewPendingReaper(c.Mgr, c.Stores, 0, cfg.WritePath.PendingPattern.MinAge, cfg.WritePath.PendingPattern.BatchSize), nil
 }
 
 // ProvideScrubber constructs the integrity-verification worker.
 func ProvideScrubber(i do.Injector) (*worker.Scrubber, error) {
-	cfg, err := do.Invoke[*config.Config](i)
-	if err != nil {
-		return nil, err
-	}
-	mgr, err := do.Invoke[*proxy.BackendManager](i)
-	if err != nil {
-		return nil, err
-	}
-	integrity, err := do.Invoke[core.MetadataStore](i)
+	c, err := resolveWorkerCoreWithCfg(i)
 	if err != nil {
 		return nil, err
 	}
 	var enc *encryption.Encryptor
-	if cfg.Encryption.Enabled {
+	if c.Cfg.Encryption.Enabled {
 		if e, err := do.Invoke[*encryption.Encryptor](i); err == nil {
 			enc = e
 		}
 	}
-	return worker.NewScrubber(mgr, integrity, enc), nil
+	return worker.NewScrubber(c.Mgr, c.Stores, enc), nil
 }
 
 // ProvideReconciler constructs the bucket reconciler worker. Registered
@@ -144,19 +168,15 @@ func ProvideScrubber(i do.Injector) (*worker.Scrubber, error) {
 // register a service for it; the reconciler is also resolvable directly
 // for the admin handler's inspection endpoints.
 func ProvideReconciler(i do.Injector) (*worker.Reconciler, error) {
-	cfg, err := do.Invoke[*config.Config](i)
+	c, err := resolveWorkerCoreWithCfg(i)
 	if err != nil {
 		return nil, err
 	}
-	mgr, err := do.Invoke[*proxy.BackendManager](i)
-	if err != nil {
-		return nil, err
-	}
-	bktNames := make([]string, len(cfg.Buckets))
-	for idx, b := range cfg.Buckets {
+	bktNames := make([]string, len(c.Cfg.Buckets))
+	for idx, b := range c.Cfg.Buckets {
 		bktNames[idx] = b.Name
 	}
-	return worker.NewReconciler(mgr, bktNames), nil
+	return worker.NewReconciler(c.Mgr, bktNames), nil
 }
 
 // ProvideDrainManager constructs the drain manager. Depends on
@@ -166,24 +186,20 @@ func ProvideReconciler(i do.Injector) (*worker.Reconciler, error) {
 // returned manager is wired onto BackendManager by di.WireManager so
 // the provider itself stays free of mutation side effects.
 func ProvideDrainManager(i do.Injector) (*drain.Manager, error) {
-	mgr, err := do.Invoke[*proxy.BackendManager](i)
+	c, err := resolveWorkerCore(i)
 	if err != nil {
 		return nil, err
 	}
 	cleanup, err := do.Invoke[*worker.CleanupWorker](i)
 	if err != nil {
-		return nil, err
-	}
-	stores, err := do.Invoke[core.MetadataStore](i)
-	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("resolve CleanupWorker: %w", err)
 	}
 	return drain.New(
-		mgr,
-		stores,
-		stores,
-		stores,
-		mgr.MultipartManager.AbortMultipartUploadsOnBackend,
+		c.Mgr,
+		c.Stores,
+		c.Stores,
+		c.Stores,
+		c.Mgr.MultipartManager.AbortMultipartUploadsOnBackend,
 		cleanup.ProcessCleanupQueue,
 	), nil
 }
