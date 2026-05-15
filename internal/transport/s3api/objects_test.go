@@ -144,7 +144,7 @@ func newTestServer(t *testing.T) (*httptest.Server, *testutil.MockStore, *server
 	mockStore := testutil.NewMockStore(t)
 	mockStore.GetBackendResp = "b1"
 
-	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
+	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
 		Backends:        map[string]s3be.ObjectBackend{"b1": backend},
 		Stores:          mockStore,
 		Dashboard:       mockStore,
@@ -152,7 +152,7 @@ func newTestServer(t *testing.T) (*httptest.Server, *testutil.MockStore, *server
 		Order:           []string{"b1"},
 		RoutingStrategy: config.RoutingPack,
 	})
-	proxytest.AttachWorkers(mgr, mockStore)
+	_ = proxytest.BuildWorkers(mgr, mockStore)
 	t.Cleanup(mgr.Close)
 
 	srv := &Server{
@@ -473,7 +473,7 @@ func TestPut_NoBackendCapacity_QuotaStatsErrFallsBack(t *testing.T) {
 func newCapacityHintTestServer(t *testing.T, mockStore *testutil.MockStore) *httptest.Server {
 	t.Helper()
 	backend := newServerMockBackend()
-	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
+	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
 		Backends:        map[string]s3be.ObjectBackend{"b1": backend},
 		Stores:          mockStore,
 		Dashboard:       mockStore,
@@ -482,7 +482,7 @@ func newCapacityHintTestServer(t *testing.T, mockStore *testutil.MockStore) *htt
 		MaxObjectSizes:  map[string]int64{"b1": 1},
 		RoutingStrategy: config.RoutingPack,
 	})
-	proxytest.AttachWorkers(mgr, mockStore)
+	_ = proxytest.BuildWorkers(mgr, mockStore)
 	t.Cleanup(mgr.Close)
 
 	srv := &Server{

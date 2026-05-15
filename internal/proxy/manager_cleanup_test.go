@@ -110,7 +110,7 @@ func TestEnqueueCleanup_Success(t *testing.T) {
 		AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	mgr.coord.enqueueCleanup(context.Background(), "b1", "orphan.txt", "orphan_put", 1024)
 
@@ -135,7 +135,7 @@ func TestEnqueueCleanup_DBError_LogsOnly(t *testing.T) {
 		AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 	mgr.coord.enqueueCleanup(context.Background(), "b1", "orphan.txt", "orphan_put", 1024)
 
 	if len(calls.enqueue) != 1 {
@@ -162,7 +162,7 @@ func TestEnqueueCleanup_EnqueueFailure_RecordsMetricAndAudit(t *testing.T) {
 		DoAndReturn(stubEnqueue(calls, errors.New("db down"))).
 		AnyTimes()
 	storetest.Permissive(store)
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	var capturedEvents []string
 	audit.SetOnEvent(func(event string) {
@@ -205,7 +205,7 @@ func TestEnqueueCleanup_OrphanBytesFailure_RecordsMetricAndAudit(t *testing.T) {
 	store.EXPECT().IncrementOrphanBytes(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(errors.New("db down")).AnyTimes()
 	storetest.Permissive(store)
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	var capturedEvents []string
 	audit.SetOnEvent(func(event string) {
@@ -289,9 +289,9 @@ func TestProcessCleanupQueue_DeleteSuccess(t *testing.T) {
 	})
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
+	mgr, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": backend})
 
-	processed, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
+	processed, failed := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
 	if processed != 1 {
 		t.Errorf("expected processed=1, got %d", processed)
 	}
@@ -324,9 +324,9 @@ func TestProcessCleanupQueue_DeleteFails_SchedulesRetry(t *testing.T) {
 	})
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
+	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": backend})
 
-	processed, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
+	processed, failed := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
 	if processed != 0 {
 		t.Errorf("expected processed=0, got %d", processed)
 	}
@@ -360,9 +360,9 @@ func TestProcessCleanupQueue_BackendNotFound_RemovesItem(t *testing.T) {
 	})
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	processed, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
+	processed, failed := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
 	if processed != 1 {
 		t.Errorf("expected processed=1, got %d", processed)
 	}
@@ -378,9 +378,9 @@ func TestProcessCleanupQueue_BackendNotFound_RemovesItem(t *testing.T) {
 func TestProcessCleanupQueue_EmptyQueue(t *testing.T) {
 	t.Parallel()
 	store := newPermissiveMock(t)
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	processed, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
+	processed, failed := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
 	if processed != 0 || failed != 0 {
 		t.Errorf("expected 0/0, got %d/%d", processed, failed)
 	}
@@ -399,9 +399,9 @@ func TestProcessCleanupQueue_FetchError(t *testing.T) {
 		AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	processed, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
+	processed, failed := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
 	if processed != 0 || failed != 0 {
 		t.Errorf("expected 0/0 on fetch error, got %d/%d", processed, failed)
 	}
@@ -423,9 +423,9 @@ func TestProcessCleanupQueue_MaxAttemptsReached_MovesToDLQ(t *testing.T) {
 	})
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
+	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": backend})
 
-	processed, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
+	processed, failed := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
 	if processed != 0 {
 		t.Errorf("expected processed=0, got %d", processed)
 	}
@@ -474,9 +474,9 @@ func TestProcessCleanupQueue_CompleteItemError(t *testing.T) {
 		AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
+	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": backend})
 
-	processed, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
+	processed, failed := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
 	if processed != 1 {
 		t.Errorf("expected processed=1 (delete succeeded), got %d", processed)
 	}
@@ -509,9 +509,9 @@ func TestProcessCleanupQueue_RetryItemError(t *testing.T) {
 		AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
+	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": backend})
 
-	processed, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
+	processed, failed := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
 	if processed != 0 {
 		t.Errorf("expected processed=0, got %d", processed)
 	}
@@ -531,9 +531,9 @@ func TestProcessCleanupQueue_QueueDepthError(t *testing.T) {
 		AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	processed, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
+	processed, failed := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
 	if processed != 0 || failed != 0 {
 		t.Errorf("expected 0/0, got %d/%d", processed, failed)
 	}
@@ -560,9 +560,9 @@ func TestProcessCleanupQueue_BackendNotFound_CompleteItemError(t *testing.T) {
 		AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	processed, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
+	processed, failed := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
 	if processed != 1 {
 		t.Errorf("expected processed=1, got %d", processed)
 	}
@@ -593,10 +593,10 @@ func TestProcessCleanupQueue_Concurrent(t *testing.T) {
 	stubProcessQueue(t, store, calls, items)
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
+	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": backend})
 
 	start := time.Now()
-	processed, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
+	processed, failed := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
 	elapsed := time.Since(start)
 
 	if processed != 10 {
@@ -628,7 +628,7 @@ func TestDeleteObject_BackendDeleteFails_EnqueuesCleanup(t *testing.T) {
 		AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": backend})
 
 	backend.mu.Lock()
 	backend.delErr = errors.New("backend timeout")
@@ -665,7 +665,7 @@ func TestProcessCleanupQueue_AdmissionBlocked(t *testing.T) {
 	})
 	storetest.Permissive(store)
 
-	mgr := NewBackendManager(&BackendManagerConfig{
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Backends:        map[string]s3be.ObjectBackend{"b1": backend},
 		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
@@ -676,12 +676,12 @@ func TestProcessCleanupQueue_AdmissionBlocked(t *testing.T) {
 		RoutingStrategy: config.RoutingPack,
 		AdmissionSem:    sem,
 	})
-	wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	processed, failed := mgr.CleanupWorker.ProcessCleanupQueue(ctx)
+	processed, failed := workers.CleanupWorker.ProcessCleanupQueue(ctx)
 	if processed != 0 {
 		t.Errorf("expected processed=0 when admission blocked, got %d", processed)
 	}
@@ -725,7 +725,7 @@ func TestPutObject_RecordFails_DoesNotEnqueueOrphanCleanup(t *testing.T) {
 		AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": backend})
 
 	if _, err := mgr.ObjectManager.PutObject(context.Background(), "mykey", bytes.NewReader([]byte("data")), 4, "text/plain", nil); err == nil {
 		t.Fatal("expected error from PutObject")

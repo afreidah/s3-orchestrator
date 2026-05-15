@@ -263,7 +263,7 @@ func ProvideBackendManager(i do.Injector) (*proxy.BackendManager, error) {
 		MaxObjectSizes:    br.MaxObjectSizes,
 		AdmissionSem:      admissionSemFor(&cfg.Server),
 		ReplicationFactor: replicationFactorFromInjector(i),
-	}), nil
+	})
 }
 
 // admissionSemFor returns the shared admission semaphore sized per the

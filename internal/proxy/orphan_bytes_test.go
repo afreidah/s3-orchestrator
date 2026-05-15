@@ -150,7 +150,7 @@ func TestEnqueueCleanup_IncrementsOrphanBytes(t *testing.T) {
 		DoAndReturn(stubOrphanIncrement(c, nil)).AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 	mgr.coord.enqueueCleanup(context.Background(), "b1", "orphan.txt", "delete_failed", 4096)
 
 	if len(c.increment) != 1 {
@@ -174,7 +174,7 @@ func TestEnqueueCleanup_ZeroSize_SkipsOrphanIncrement(t *testing.T) {
 		DoAndReturn(stubOrphanIncrement(c, nil)).AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 	mgr.coord.enqueueCleanup(context.Background(), "b1", "orphan.txt", "delete_failed", 0)
 
 	if len(c.increment) != 0 {
@@ -195,7 +195,7 @@ func TestEnqueueCleanup_EnqueueFails_SkipsOrphanIncrement(t *testing.T) {
 		DoAndReturn(stubOrphanIncrement(c, nil)).AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 	mgr.coord.enqueueCleanup(context.Background(), "b1", "orphan.txt", "delete_failed", 4096)
 
 	if len(c.increment) != 0 {
@@ -220,9 +220,9 @@ func TestCleanupWorker_SuccessfulDelete_DecrementsOrphanBytes(t *testing.T) {
 		DoAndReturn(stubOrphanDecrement(c)).AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
+	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": backend})
 
-	processed, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
+	processed, failed := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
 	if processed != 1 || failed != 0 {
 		t.Fatalf("expected processed=1 failed=0, got %d/%d", processed, failed)
 	}
@@ -251,9 +251,9 @@ func TestCleanupWorker_SuccessfulDelete_ZeroSize_SkipsDecrement(t *testing.T) {
 		DoAndReturn(stubOrphanDecrement(c)).AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
+	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": backend})
 
-	processed, _ := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
+	processed, _ := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
 	if processed != 1 {
 		t.Fatalf("expected processed=1, got %d", processed)
 	}
@@ -279,9 +279,9 @@ func TestCleanupWorker_Exhausted_MovesToDLQ_PreservesOrphanBytes(t *testing.T) {
 		DoAndReturn(stubOrphanDecrement(c)).AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
+	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": backend})
 
-	_, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
+	_, failed := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
 	if failed != 1 {
 		t.Fatalf("expected failed=1, got %d", failed)
 	}
@@ -321,9 +321,9 @@ func TestCleanupWorker_RetryNotExhausted_NoOrphanBytesChange(t *testing.T) {
 		DoAndReturn(stubOrphanDecrement(c)).AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
+	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": backend})
 
-	_, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
+	_, failed := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
 	if failed != 1 {
 		t.Fatalf("expected failed=1, got %d", failed)
 	}
@@ -358,7 +358,7 @@ func TestPutObject_Overwrite_EnqueuesDisplacedCopiesWithSize(t *testing.T) {
 		DoAndReturn(stubOrphanIncrement(c, nil)).AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": b1, "b2": b2})
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": b1, "b2": b2})
 
 	if _, err := mgr.ObjectManager.PutObject(context.Background(), "overwritten-key", bytes.NewReader([]byte("new")), 3, "text/plain", nil); err != nil {
 		t.Fatalf("PutObject: %v", err)
@@ -399,7 +399,7 @@ func TestDeleteObject_BackendFails_EnqueuesWithSize(t *testing.T) {
 		DoAndReturn(stubOrphanIncrement(c, nil)).AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": backend})
 
 	if err := mgr.ObjectManager.DeleteObject(context.Background(), "mykey"); err != nil {
 		t.Fatalf("DeleteObject should succeed even if backend delete fails: %v", err)
@@ -420,7 +420,7 @@ func TestDeleteObject_BackendFails_EnqueuesWithSize(t *testing.T) {
 func TestFindReplicaTarget_RespectsOrphanBytes(t *testing.T) {
 	t.Parallel()
 	store := newPermissiveMock(t)
-	mgr := NewBackendManager(&BackendManagerConfig{
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": newMockBackend(), "b2": newMockBackend()},
 		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
@@ -429,10 +429,11 @@ func TestFindReplicaTarget_RespectsOrphanBytes(t *testing.T) {
 		CacheTTL:        5 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr)
+	_ = workers
 
 	exclusion := map[string]bool{"b1": true}
-	target := mgr.Replicator.FindReplicaTarget(context.Background(), "key1", 100, exclusion)
+	target := workers.Replicator.FindReplicaTarget(context.Background(), "key1", 100, exclusion)
 	if target != "" {
 		t.Errorf("expected no target (orphan bytes eat available space), got %q", target)
 	}
@@ -454,7 +455,7 @@ func TestFindReplicaTarget_OrphanBytesStillFits(t *testing.T) {
 		AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := NewBackendManager(&BackendManagerConfig{
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": newMockBackend(), "b2": newMockBackend()},
 		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
@@ -463,10 +464,11 @@ func TestFindReplicaTarget_OrphanBytesStillFits(t *testing.T) {
 		CacheTTL:        5 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr)
+	_ = workers
 
 	exclusion := map[string]bool{"b1": true}
-	target := mgr.Replicator.FindReplicaTarget(context.Background(), "key1", 50, exclusion)
+	target := workers.Replicator.FindReplicaTarget(context.Background(), "key1", 50, exclusion)
 	if target != "b2" {
 		t.Errorf("expected b2 (50 bytes fits in 100 free), got %q", target)
 	}
@@ -517,7 +519,7 @@ func TestOrphanBytes_FullLifecycle(t *testing.T) {
 		AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
+	mgr, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": backend})
 
 	backend.delErr = errors.New("timeout")
 	mgr.DeleteOrEnqueue(context.Background(), backend, "b1", "file.txt", "delete_failed", 1024)
@@ -538,7 +540,7 @@ func TestOrphanBytes_FullLifecycle(t *testing.T) {
 		{ID: 1, BackendName: "b1", ObjectKey: "file.txt", Reason: "delete_failed", Attempts: 0, SizeBytes: 1024},
 	}
 
-	processed, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
+	processed, failed := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
 	if processed != 1 || failed != 0 {
 		t.Fatalf("step 2: expected processed=1 failed=0, got %d/%d", processed, failed)
 	}
@@ -566,9 +568,9 @@ func TestCleanupOrphan_PassesSizeToEnqueue(t *testing.T) {
 		DoAndReturn(stubOrphanIncrement(c, nil)).AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": b1})
+	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": b1})
 
-	mgr.Replicator.CleanupOrphan(context.Background(), "b1", "orphan-key", 7777)
+	workers.Replicator.CleanupOrphan(context.Background(), "b1", "orphan-key", 7777)
 
 	if len(c.enqueue) != 1 {
 		t.Fatalf("expected 1 enqueue call, got %d", len(c.enqueue))
@@ -619,7 +621,7 @@ func TestRecordObjectOrCleanup_DisplacedCopyBackendNotFound(t *testing.T) {
 		DoAndReturn(stubOrphanEnqueue(c, nil)).AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": b1})
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": b1})
 
 	if _, err := mgr.ObjectManager.PutObject(context.Background(), "key1", bytes.NewReader([]byte("hi")), 2, "text/plain", nil); err != nil {
 		t.Fatalf("PutObject: %v", err)
@@ -651,7 +653,7 @@ func TestRecordObjectOrCleanup_DisplacedCopyDeleteSucceeds(t *testing.T) {
 		DoAndReturn(stubOrphanIncrement(c, nil)).AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": b1, "b2": b2})
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": b1, "b2": b2})
 
 	if _, err := mgr.ObjectManager.PutObject(context.Background(), "key1", bytes.NewReader([]byte("new")), 3, "", nil); err != nil {
 		t.Fatalf("PutObject: %v", err)
@@ -677,7 +679,7 @@ func TestEnqueueCleanup_IncrementOrphanBytesFails(t *testing.T) {
 		DoAndReturn(stubOrphanIncrement(c, errors.New("db error"))).AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 	mgr.coord.enqueueCleanup(context.Background(), "b1", "key", "reason", 1024)
 
 	if len(c.enqueue) != 1 {
@@ -713,9 +715,9 @@ func TestCleanupWorker_CompleteCleanupItem_DBError(t *testing.T) {
 	store.EXPECT().CompleteCleanupItem(gomock.Any(), gomock.Any()).Return(errors.New("db error")).AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
+	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": backend})
 
-	processed, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
+	processed, failed := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
 	if processed != 1 || failed != 0 {
 		t.Fatalf("expected processed=1 failed=0, got %d/%d", processed, failed)
 	}
@@ -738,9 +740,9 @@ func TestCleanupWorker_Exhausted_DLQMoveFails(t *testing.T) {
 		DoAndReturn(stubOrphanDecrement(c)).AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
+	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": backend})
 
-	_, failed := mgr.CleanupWorker.ProcessCleanupQueue(context.Background())
+	_, failed := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
 	if failed != 1 {
 		t.Fatalf("expected failed=1, got %d", failed)
 	}
@@ -775,7 +777,7 @@ func TestReplicate_OrphanBytesBlockTarget(t *testing.T) {
 		Return(int64(0), true, nil).AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := NewBackendManager(&BackendManagerConfig{
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{"b1": b1, "b2": b2},
 		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
@@ -785,9 +787,10 @@ func TestReplicate_OrphanBytesBlockTarget(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr)
+	_ = workers
 
-	created, err := mgr.Replicator.Replicate(context.Background(), config.ReplicationConfig{
+	created, err := workers.Replicator.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:    2,
 		BatchSize: 10,
 	})

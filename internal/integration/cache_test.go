@@ -57,7 +57,7 @@ func setupCacheEnv(t *testing.T) *cacheTestEnv {
 	}
 
 	stores := newStores(testStore)
-	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
+	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
 		Backends:        testBackends,
 		Stores:          stores,
 		Dashboard:       testStore,
@@ -68,7 +68,7 @@ func setupCacheEnv(t *testing.T) *cacheTestEnv {
 		RoutingStrategy: config.RoutingPack,
 		ObjectCache:     mc,
 	})
-	proxytest.AttachWorkers(mgr, stores)
+	_ = proxytest.BuildWorkers(mgr, stores)
 
 	srv := &s3api.Server{Manager: mgr}
 	srv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{

@@ -77,7 +77,7 @@ func setupEncryptionEnv(t *testing.T) *encryptionTestEnv {
 
 	// Build a manager with encryption enabled using the same backends/store
 	stores := newStores(testStore)
-	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
+	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
 		Backends:        testBackends,
 		Stores:          stores,
 		Dashboard:       testStore,
@@ -88,7 +88,7 @@ func setupEncryptionEnv(t *testing.T) *encryptionTestEnv {
 		RoutingStrategy: config.RoutingPack,
 		Encryptor:       enc,
 	})
-	proxytest.AttachWorkers(mgr, stores)
+	workers := proxytest.BuildWorkers(mgr, stores)
 
 	// Start proxy server
 	srv := &s3api.Server{Manager: mgr}
@@ -114,10 +114,10 @@ func setupEncryptionEnv(t *testing.T) *encryptionTestEnv {
 	lv.Set(slog.LevelInfo)
 	adminHandler := admin.New(&admin.Deps{
 		BackendOps: mgr,
-		Replicator: mgr.Replicator,
-		OverRep:    mgr.OverReplicationCleaner,
+		Replicator: workers.Replicator,
+		OverRep:    workers.OverReplicationCleaner,
 		Drain:      mgr.DrainManager,
-		Scrubber:   mgr.Scrubber,
+		Scrubber:   workers.Scrubber,
 		Lifecycle:  testStore,
 		DBHealthy:  testDatabaseCB.IsHealthy,
 		Encryption: testStore,

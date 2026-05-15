@@ -36,7 +36,7 @@ func TestMakeReconcileDeleter_SweepsCleanupQueue(t *testing.T) {
 		AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	deleter := mgr.makeReconcileDeleter()
 	if err := deleter(context.Background(), "bucket/k1", "b1"); err != nil {
@@ -62,7 +62,7 @@ func TestMakeReconcileDeleter_SweepFailureNotPropagated(t *testing.T) {
 		AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	deleter := mgr.makeReconcileDeleter()
 	if err := deleter(context.Background(), "bucket/k1", "b1"); err != nil {
@@ -88,7 +88,7 @@ func TestMakeReconcileDeleter_DeleteFailurePropagates(t *testing.T) {
 		AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	deleter := mgr.makeReconcileDeleter()
 	if err := deleter(context.Background(), "bucket/k1", "b1"); err == nil {
@@ -104,7 +104,7 @@ func TestMakeReconcileDeleter_DeleteFailurePropagates(t *testing.T) {
 func TestReconciler_ImportsUntrackedObjects(t *testing.T) {
 	t.Parallel()
 	store := newPermissiveMock(t)
-	mgr := newTestManager(store, map[string]*mockBackend{
+	mgr := newTestManager(t, store, map[string]*mockBackend{
 		"b1": newMockBackend(),
 		"b2": newMockBackend(),
 	})
@@ -117,7 +117,7 @@ func TestReconciler_ImportsUntrackedObjects(t *testing.T) {
 func TestReconciler_NoBuckets(t *testing.T) {
 	t.Parallel()
 	store := newPermissiveMock(t)
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	reconciler := worker.NewReconciler(mgr, []string{})
 	reconciler.Run(context.Background())
@@ -128,7 +128,7 @@ func TestReconciler_NoBuckets(t *testing.T) {
 func TestReconciler_CancelledContext(t *testing.T) {
 	t.Parallel()
 	store := newPermissiveMock(t)
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	reconciler := worker.NewReconciler(mgr, []string{"unified"})
 
@@ -148,7 +148,7 @@ func TestReconciler_RunDoesNotPanicOnBackendError(t *testing.T) {
 		AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	reconciler := worker.NewReconciler(mgr, []string{"unified"})
 	reconciler.Run(context.Background())
@@ -159,7 +159,7 @@ func TestReconciler_RunDoesNotPanicOnBackendError(t *testing.T) {
 func TestReconcileBackend_UnknownBackend(t *testing.T) {
 	t.Parallel()
 	store := newPermissiveMock(t)
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	if _, err := mgr.ReconcileBackend(context.Background(), "nonexistent", "unified", []string{"unified"}); err == nil {
 		t.Fatal("expected error for unknown backend")
@@ -171,7 +171,7 @@ func TestReconcileBackend_UnknownBackend(t *testing.T) {
 func TestReconcileBackend_ListingNotSupported(t *testing.T) {
 	t.Parallel()
 	store := newPermissiveMock(t)
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	if _, err := mgr.ReconcileBackend(context.Background(), "b1", "unified", []string{"unified"}); err == nil {
 		t.Fatal("expected error for backend that doesn't support listing")
@@ -183,7 +183,7 @@ func TestReconcileBackend_ListingNotSupported(t *testing.T) {
 func TestReconcile_ViaReconciler(t *testing.T) {
 	t.Parallel()
 	store := newPermissiveMock(t)
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	reconciler := worker.NewReconciler(mgr, []string{"unified"})
 	result, err := reconciler.Reconcile(context.Background(), "")
@@ -200,7 +200,7 @@ func TestReconcile_ViaReconciler(t *testing.T) {
 func TestReconcile_SingleBackendViaReconciler(t *testing.T) {
 	t.Parallel()
 	store := newPermissiveMock(t)
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	reconciler := worker.NewReconciler(mgr, []string{"unified"})
 	result, err := reconciler.Reconcile(context.Background(), "b1")

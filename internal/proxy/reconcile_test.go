@@ -733,7 +733,7 @@ func TestReconcileBackend_HappyPathImportsAndDeletes(t *testing.T) {
 			{{Key: "vb/a", SizeBytes: 1}, {Key: "vb/b", SizeBytes: 2}, {Key: "vb/c", SizeBytes: 3}},
 		},
 	}
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": listing.mockBackend})
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": listing.mockBackend})
 	// Replace the registered backend with our listing-capable variant.
 	mgr.backends["b1"] = listing
 
@@ -780,7 +780,7 @@ func TestReconcileBackend_NoMutationsWhenInSync(t *testing.T) {
 			{{Key: "vb/a", SizeBytes: 1}, {Key: "vb/b", SizeBytes: 2}},
 		},
 	}
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": listing.mockBackend})
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": listing.mockBackend})
 	mgr.backends["b1"] = listing
 
 	res, err := mgr.ReconcileBackend(context.Background(), "b1", "vb", []string{"vb"})
@@ -805,7 +805,7 @@ func TestReconcileBackend_PropagatesS3ListingError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
 	storetest.Permissive(store)
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": listing.mockBackend})
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": listing.mockBackend})
 	mgr.backends["b1"] = listing
 
 	_, err := mgr.ReconcileBackend(context.Background(), "b1", "vb", []string{"vb"})

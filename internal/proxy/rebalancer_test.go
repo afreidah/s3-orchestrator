@@ -195,7 +195,7 @@ func TestExecuteMoves_Concurrent(t *testing.T) {
 
 	store := rebalanceStoreWithMoveSize(t, 4)
 	obs := map[string]s3be.ObjectBackend{"src": src, "dest": dest}
-	mgr := NewBackendManager(&BackendManagerConfig{
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Backends:        obs,
 		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
@@ -205,7 +205,8 @@ func TestExecuteMoves_Concurrent(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr)
+	_ = workers
 
 	var plan []worker.RebalanceMove
 	for i := range 5 {
@@ -218,7 +219,7 @@ func TestExecuteMoves_Concurrent(t *testing.T) {
 	}
 
 	start := time.Now()
-	moved := mgr.Rebalancer.ExecuteMoves(context.Background(), plan, "spread", 3)
+	moved := workers.Rebalancer.ExecuteMoves(context.Background(), plan, "spread", 3)
 	elapsed := time.Since(start)
 
 	if moved != 5 {
@@ -244,7 +245,7 @@ func TestExecuteMoves_PartialFailure(t *testing.T) {
 
 	store := rebalanceStoreWithMoveSize(t, 4)
 	obs := map[string]s3be.ObjectBackend{"src": src, "dest": dest}
-	mgr := NewBackendManager(&BackendManagerConfig{
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Backends:        obs,
 		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
@@ -254,7 +255,8 @@ func TestExecuteMoves_PartialFailure(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr)
+	_ = workers
 
 	plan := []worker.RebalanceMove{
 		{ObjectKey: "ok1", FromBackend: "src", ToBackend: "dest", SizeBytes: 4},
@@ -262,7 +264,7 @@ func TestExecuteMoves_PartialFailure(t *testing.T) {
 		{ObjectKey: "ok2", FromBackend: "src", ToBackend: "dest", SizeBytes: 4},
 	}
 
-	moved := mgr.Rebalancer.ExecuteMoves(context.Background(), plan, "spread", 3)
+	moved := workers.Rebalancer.ExecuteMoves(context.Background(), plan, "spread", 3)
 	if moved != 2 {
 		t.Errorf("moved = %d, want 2 (one should fail)", moved)
 	}
@@ -278,7 +280,7 @@ func TestExecuteMoves_SequentialFallback(t *testing.T) {
 
 	store := rebalanceStoreWithMoveSize(t, 5)
 	obs := map[string]s3be.ObjectBackend{"src": src, "dest": dest}
-	mgr := NewBackendManager(&BackendManagerConfig{
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Backends:        obs,
 		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
@@ -288,13 +290,14 @@ func TestExecuteMoves_SequentialFallback(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr)
+	_ = workers
 
 	plan := []worker.RebalanceMove{
 		{ObjectKey: "a", FromBackend: "src", ToBackend: "dest", SizeBytes: 5},
 		{ObjectKey: "b", FromBackend: "src", ToBackend: "dest", SizeBytes: 5},
 	}
-	moved := mgr.Rebalancer.ExecuteMoves(context.Background(), plan, "pack", 1)
+	moved := workers.Rebalancer.ExecuteMoves(context.Background(), plan, "pack", 1)
 	if moved != 2 {
 		t.Errorf("moved = %d, want 2", moved)
 	}
@@ -373,8 +376,8 @@ func TestRebalance_QuotaStatsError(t *testing.T) {
 		Return(nil, fmt.Errorf("db down")).AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
-	if _, err := mgr.Rebalancer.Rebalance(context.Background(), config.RebalanceConfig{
+	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": newMockBackend()})
+	if _, err := workers.Rebalancer.Rebalance(context.Background(), config.RebalanceConfig{
 		Strategy:  "spread",
 		BatchSize: 10,
 		Threshold: 0.10,
@@ -396,12 +399,12 @@ func TestRebalance_BelowThreshold_Skips(t *testing.T) {
 		}, nil).AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{
+	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{
 		"b1": newMockBackend(),
 		"b2": newMockBackend(),
 	})
 
-	moved, err := mgr.Rebalancer.Rebalance(context.Background(), config.RebalanceConfig{
+	moved, err := workers.Rebalancer.Rebalance(context.Background(), config.RebalanceConfig{
 		Strategy:  "spread",
 		BatchSize: 10,
 		Threshold: 0.20,
@@ -428,12 +431,12 @@ func TestRebalance_EmptyPlan_Skips(t *testing.T) {
 		Return(nil, nil).AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{
+	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{
 		"b1": newMockBackend(),
 		"b2": newMockBackend(),
 	})
 
-	moved, err := mgr.Rebalancer.Rebalance(context.Background(), config.RebalanceConfig{
+	moved, err := workers.Rebalancer.Rebalance(context.Background(), config.RebalanceConfig{
 		Strategy:  "pack",
 		BatchSize: 10,
 		Threshold: 0.10,
@@ -461,11 +464,11 @@ func TestRebalance_UnknownStrategy(t *testing.T) {
 		}, nil).AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{
+	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{
 		"b1": newMockBackend(),
 		"b2": newMockBackend(),
 	})
-	if _, err := mgr.Rebalancer.Rebalance(context.Background(), config.RebalanceConfig{
+	if _, err := workers.Rebalancer.Rebalance(context.Background(), config.RebalanceConfig{
 		Strategy:  "invalid",
 		BatchSize: 10,
 		Threshold: 0.10,
@@ -476,12 +479,13 @@ func TestRebalance_UnknownStrategy(t *testing.T) {
 
 // newRebalanceManager wires a manager with the mock store and named
 // backends.
-func newRebalanceManager(store core.MetadataStore, names []string) *BackendManager {
+func newRebalanceManager(t *testing.T, store core.MetadataStore, names []string) (*BackendManager, *testWorkers) {
+	t.Helper()
 	backends := make(map[string]s3be.ObjectBackend, len(names))
 	for _, name := range names {
 		backends[name] = newMockBackend()
 	}
-	return wireWorkersForTest(NewBackendManager(&BackendManagerConfig{
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Backends:        backends,
 		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
@@ -490,7 +494,8 @@ func newRebalanceManager(store core.MetadataStore, names []string) *BackendManag
 		CacheTTL:        5 * time.Second,
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
-	}))
+	})
+	return mgr, wireWorkersForTest(mgr)
 }
 
 // rebalanceStoreWithList returns a store that lists the supplied
@@ -521,14 +526,14 @@ func TestPlanPackTight_MovesFromLeastToMostFull(t *testing.T) {
 	store := rebalanceStoreWithList(t, []core.ObjectLocation{
 		{ObjectKey: "small.txt", BackendName: "b2", SizeBytes: 100},
 	}, nil, nil)
-	mgr := newRebalanceManager(store, []string{"b1", "b2"})
+	_, workers := newRebalanceManager(t, store, []string{"b1", "b2"})
 
 	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 800, BytesLimit: 1000},
 		"b2": {BytesUsed: 200, BytesLimit: 1000},
 	}
 
-	plan, err := mgr.Rebalancer.PlanPackTight(context.Background(), stats, 10)
+	plan, err := workers.Rebalancer.PlanPackTight(context.Background(), stats, 10)
 	if err != nil {
 		t.Fatalf("planPackTight: %v", err)
 	}
@@ -552,13 +557,13 @@ func TestPlanPackTight_RespectsBatchSize(t *testing.T) {
 		}
 	}
 	store := rebalanceStoreWithList(t, objects, nil, nil)
-	mgr := newRebalanceManager(store, []string{"b1", "b2"})
+	_, workers := newRebalanceManager(t, store, []string{"b1", "b2"})
 
 	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 100, BytesLimit: 1000},
 		"b2": {BytesUsed: 900, BytesLimit: 1000},
 	}
-	plan, err := mgr.Rebalancer.PlanPackTight(context.Background(), stats, 3)
+	plan, err := workers.Rebalancer.PlanPackTight(context.Background(), stats, 3)
 	if err != nil {
 		t.Fatalf("planPackTight: %v", err)
 	}
@@ -574,13 +579,13 @@ func TestPlanPackTight_SkipsLargeObjects(t *testing.T) {
 	store := rebalanceStoreWithList(t, []core.ObjectLocation{
 		{ObjectKey: "huge.bin", BackendName: "b2", SizeBytes: 500},
 	}, nil, nil)
-	mgr := newRebalanceManager(store, []string{"b1", "b2"})
+	_, workers := newRebalanceManager(t, store, []string{"b1", "b2"})
 
 	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 900, BytesLimit: 1000},
 		"b2": {BytesUsed: 200, BytesLimit: 1000},
 	}
-	plan, err := mgr.Rebalancer.PlanPackTight(context.Background(), stats, 10)
+	plan, err := workers.Rebalancer.PlanPackTight(context.Background(), stats, 10)
 	if err != nil {
 		t.Fatalf("planPackTight: %v", err)
 	}
@@ -594,13 +599,13 @@ func TestPlanPackTight_SkipsLargeObjects(t *testing.T) {
 func TestPlanPackTight_ZeroLimitBackendsSkipped(t *testing.T) {
 	t.Parallel()
 	store := newPermissiveMock(t)
-	mgr := newRebalanceManager(store, []string{"b1", "b2"})
+	_, workers := newRebalanceManager(t, store, []string{"b1", "b2"})
 
 	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 0, BytesLimit: 0},
 		"b2": {BytesUsed: 500, BytesLimit: 1000},
 	}
-	plan, err := mgr.Rebalancer.PlanPackTight(context.Background(), stats, 10)
+	plan, err := workers.Rebalancer.PlanPackTight(context.Background(), stats, 10)
 	if err != nil {
 		t.Fatalf("planPackTight: %v", err)
 	}
@@ -616,13 +621,13 @@ func TestPlanSpreadEven_EqualizesUtilization(t *testing.T) {
 		{ObjectKey: "obj1", BackendName: "b1", SizeBytes: 100},
 		{ObjectKey: "obj2", BackendName: "b1", SizeBytes: 100},
 	}, nil, nil)
-	mgr := newRebalanceManager(store, []string{"b1", "b2"})
+	_, workers := newRebalanceManager(t, store, []string{"b1", "b2"})
 
 	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 800, BytesLimit: 1000},
 		"b2": {BytesUsed: 200, BytesLimit: 1000},
 	}
-	plan, err := mgr.Rebalancer.PlanSpreadEven(context.Background(), stats, 10)
+	plan, err := workers.Rebalancer.PlanSpreadEven(context.Background(), stats, 10)
 	if err != nil {
 		t.Fatalf("planSpreadEven: %v", err)
 	}
@@ -643,13 +648,13 @@ func TestPlanSpreadEven_SkipsWhenTargetHasCopy(t *testing.T) {
 	store := rebalanceStoreWithList(t, []core.ObjectLocation{
 		{ObjectKey: "obj1", BackendName: "b1", SizeBytes: 100},
 	}, nil, map[string][]string{"obj1": {"b1", "b2"}})
-	mgr := newRebalanceManager(store, []string{"b1", "b2"})
+	_, workers := newRebalanceManager(t, store, []string{"b1", "b2"})
 
 	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 800, BytesLimit: 1000},
 		"b2": {BytesUsed: 200, BytesLimit: 1000},
 	}
-	plan, err := mgr.Rebalancer.PlanSpreadEven(context.Background(), stats, 10)
+	plan, err := workers.Rebalancer.PlanSpreadEven(context.Background(), stats, 10)
 	if err != nil {
 		t.Fatalf("planSpreadEven: %v", err)
 	}
@@ -665,13 +670,13 @@ func TestPlanPackTight_SkipsWhenTargetHasCopy(t *testing.T) {
 	store := rebalanceStoreWithList(t, []core.ObjectLocation{
 		{ObjectKey: "obj1", BackendName: "b2", SizeBytes: 100},
 	}, nil, map[string][]string{"obj1": {"b1", "b2"}})
-	mgr := newRebalanceManager(store, []string{"b1", "b2"})
+	_, workers := newRebalanceManager(t, store, []string{"b1", "b2"})
 
 	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 900, BytesLimit: 1000},
 		"b2": {BytesUsed: 100, BytesLimit: 1000},
 	}
-	plan, err := mgr.Rebalancer.PlanPackTight(context.Background(), stats, 10)
+	plan, err := workers.Rebalancer.PlanPackTight(context.Background(), stats, 10)
 	if err != nil {
 		t.Fatalf("planPackTight: %v", err)
 	}
@@ -684,9 +689,9 @@ func TestPlanPackTight_SkipsWhenTargetHasCopy(t *testing.T) {
 func TestPlanSpreadEven_ZeroTotalLimit(t *testing.T) {
 	t.Parallel()
 	store := newPermissiveMock(t)
-	mgr := newRebalanceManager(store, []string{"b1"})
+	_, workers := newRebalanceManager(t, store, []string{"b1"})
 
-	plan, err := mgr.Rebalancer.PlanSpreadEven(context.Background(), map[string]core.QuotaStat{}, 10)
+	plan, err := workers.Rebalancer.PlanSpreadEven(context.Background(), map[string]core.QuotaStat{}, 10)
 	if err != nil {
 		t.Fatalf("planSpreadEven: %v", err)
 	}
@@ -699,13 +704,13 @@ func TestPlanSpreadEven_ZeroTotalLimit(t *testing.T) {
 func TestPlanSpreadEven_AlreadyBalanced(t *testing.T) {
 	t.Parallel()
 	store := newPermissiveMock(t)
-	mgr := newRebalanceManager(store, []string{"b1", "b2"})
+	_, workers := newRebalanceManager(t, store, []string{"b1", "b2"})
 
 	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 500, BytesLimit: 1000},
 		"b2": {BytesUsed: 500, BytesLimit: 1000},
 	}
-	plan, err := mgr.Rebalancer.PlanSpreadEven(context.Background(), stats, 10)
+	plan, err := workers.Rebalancer.PlanSpreadEven(context.Background(), stats, 10)
 	if err != nil {
 		t.Fatalf("planSpreadEven: %v", err)
 	}
@@ -718,13 +723,13 @@ func TestPlanSpreadEven_AlreadyBalanced(t *testing.T) {
 func TestPlanSpreadEven_ListObjectsByBackendError(t *testing.T) {
 	t.Parallel()
 	store := rebalanceStoreWithList(t, nil, errors.New("db error"), nil)
-	mgr := newRebalanceManager(store, []string{"b1", "b2"})
+	_, workers := newRebalanceManager(t, store, []string{"b1", "b2"})
 
 	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 800, BytesLimit: 1000},
 		"b2": {BytesUsed: 200, BytesLimit: 1000},
 	}
-	if _, err := mgr.Rebalancer.PlanSpreadEven(context.Background(), stats, 10); err == nil {
+	if _, err := workers.Rebalancer.PlanSpreadEven(context.Background(), stats, 10); err == nil {
 		t.Fatal("expected error from ListObjectsByBackend failure")
 	}
 }
@@ -734,13 +739,13 @@ func TestPlanSpreadEven_ListObjectsByBackendError(t *testing.T) {
 func TestPlanPackTight_ListObjectsByBackendError(t *testing.T) {
 	t.Parallel()
 	store := rebalanceStoreWithList(t, nil, errors.New("db error"), nil)
-	mgr := newRebalanceManager(store, []string{"b1", "b2"})
+	_, workers := newRebalanceManager(t, store, []string{"b1", "b2"})
 
 	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 800, BytesLimit: 1000},
 		"b2": {BytesUsed: 200, BytesLimit: 1000},
 	}
-	if _, err := mgr.Rebalancer.PlanPackTight(context.Background(), stats, 10); err == nil {
+	if _, err := workers.Rebalancer.PlanPackTight(context.Background(), stats, 10); err == nil {
 		t.Fatal("expected error from ListObjectsByBackend failure")
 	}
 }
@@ -749,7 +754,7 @@ func TestPlanPackTight_ListObjectsByBackendError(t *testing.T) {
 func TestExecuteOneMove_SourceBackendNotFound(t *testing.T) {
 	t.Parallel()
 	store := newPermissiveMock(t)
-	mgr := newRebalanceManager(store, []string{"b1"})
+	_, workers := newRebalanceManager(t, store, []string{"b1"})
 
 	move := worker.RebalanceMove{
 		ObjectKey:   "key",
@@ -757,7 +762,7 @@ func TestExecuteOneMove_SourceBackendNotFound(t *testing.T) {
 		ToBackend:   "b1",
 		SizeBytes:   100,
 	}
-	if mgr.Rebalancer.ExecuteOneMove(context.Background(), move, "spread") {
+	if workers.Rebalancer.ExecuteOneMove(context.Background(), move, "spread") {
 		t.Error("expected false when source backend not found")
 	}
 }
@@ -769,7 +774,7 @@ func TestExecuteOneMove_DestBackendNotFound(t *testing.T) {
 	_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
 	store := newPermissiveMock(t)
-	mgr := NewBackendManager(&BackendManagerConfig{
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Backends:        map[string]s3be.ObjectBackend{"src": src},
 		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
@@ -779,7 +784,8 @@ func TestExecuteOneMove_DestBackendNotFound(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr)
+	_ = workers
 
 	move := worker.RebalanceMove{
 		ObjectKey:   "key",
@@ -787,7 +793,7 @@ func TestExecuteOneMove_DestBackendNotFound(t *testing.T) {
 		ToBackend:   "nonexistent",
 		SizeBytes:   4,
 	}
-	if mgr.Rebalancer.ExecuteOneMove(context.Background(), move, "spread") {
+	if workers.Rebalancer.ExecuteOneMove(context.Background(), move, "spread") {
 		t.Error("expected false when dest backend not found")
 	}
 }
@@ -800,7 +806,7 @@ func TestExecuteOneMove_SourceGetFails(t *testing.T) {
 	dest := newMockBackend()
 
 	store := newPermissiveMock(t)
-	mgr := NewBackendManager(&BackendManagerConfig{
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Backends:        map[string]s3be.ObjectBackend{"src": src, "dest": dest},
 		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
@@ -810,7 +816,8 @@ func TestExecuteOneMove_SourceGetFails(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr)
+	_ = workers
 
 	move := worker.RebalanceMove{
 		ObjectKey:   "key",
@@ -818,7 +825,7 @@ func TestExecuteOneMove_SourceGetFails(t *testing.T) {
 		ToBackend:   "dest",
 		SizeBytes:   4,
 	}
-	if mgr.Rebalancer.ExecuteOneMove(context.Background(), move, "spread") {
+	if workers.Rebalancer.ExecuteOneMove(context.Background(), move, "spread") {
 		t.Error("expected false when source get fails")
 	}
 }
@@ -832,7 +839,7 @@ func TestExecuteOneMove_DestPutFails(t *testing.T) {
 	dest.putErr = errors.New("write error")
 
 	store := newPermissiveMock(t)
-	mgr := NewBackendManager(&BackendManagerConfig{
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Backends:        map[string]s3be.ObjectBackend{"src": src, "dest": dest},
 		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
@@ -842,7 +849,8 @@ func TestExecuteOneMove_DestPutFails(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr)
+	_ = workers
 
 	move := worker.RebalanceMove{
 		ObjectKey:   "key",
@@ -850,7 +858,7 @@ func TestExecuteOneMove_DestPutFails(t *testing.T) {
 		ToBackend:   "dest",
 		SizeBytes:   4,
 	}
-	if mgr.Rebalancer.ExecuteOneMove(context.Background(), move, "spread") {
+	if workers.Rebalancer.ExecuteOneMove(context.Background(), move, "spread") {
 		t.Error("expected false when dest put fails")
 	}
 }
@@ -869,7 +877,7 @@ func TestExecuteOneMove_MoveLocationError_CleansUpOrphan(t *testing.T) {
 		DoAndReturn(stubMoveErr(errors.New("db error"))).AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := NewBackendManager(&BackendManagerConfig{
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Backends:        map[string]s3be.ObjectBackend{"src": src, "dest": dest},
 		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
@@ -879,7 +887,8 @@ func TestExecuteOneMove_MoveLocationError_CleansUpOrphan(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr)
+	_ = workers
 
 	move := worker.RebalanceMove{
 		ObjectKey:   "key",
@@ -887,7 +896,7 @@ func TestExecuteOneMove_MoveLocationError_CleansUpOrphan(t *testing.T) {
 		ToBackend:   "dest",
 		SizeBytes:   4,
 	}
-	if mgr.Rebalancer.ExecuteOneMove(context.Background(), move, "spread") {
+	if workers.Rebalancer.ExecuteOneMove(context.Background(), move, "spread") {
 		t.Error("expected false when MoveObjectLocation fails")
 	}
 	if dest.hasObject("key") {
@@ -913,7 +922,7 @@ func TestExecuteOneMove_MoveLocationError_CleanupFails_EnqueuesCleanup(t *testin
 		DoAndReturn(stubRebalEnqueue(re)).AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := NewBackendManager(&BackendManagerConfig{
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Backends:        map[string]s3be.ObjectBackend{"src": src, "dest": dest},
 		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
@@ -923,7 +932,8 @@ func TestExecuteOneMove_MoveLocationError_CleanupFails_EnqueuesCleanup(t *testin
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr)
+	_ = workers
 
 	move := worker.RebalanceMove{
 		ObjectKey:   "key",
@@ -931,7 +941,7 @@ func TestExecuteOneMove_MoveLocationError_CleanupFails_EnqueuesCleanup(t *testin
 		ToBackend:   "dest",
 		SizeBytes:   4,
 	}
-	if mgr.Rebalancer.ExecuteOneMove(context.Background(), move, "spread") {
+	if workers.Rebalancer.ExecuteOneMove(context.Background(), move, "spread") {
 		t.Error("expected false")
 	}
 	if len(re.calls) != 1 {
@@ -951,7 +961,7 @@ func TestExecuteOneMove_MovedSizeZero_CleansUpOrphan(t *testing.T) {
 	dest := newMockBackend()
 
 	store := rebalanceStoreWithMoveSize(t, 0)
-	mgr := NewBackendManager(&BackendManagerConfig{
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Backends:        map[string]s3be.ObjectBackend{"src": src, "dest": dest},
 		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
@@ -961,7 +971,8 @@ func TestExecuteOneMove_MovedSizeZero_CleansUpOrphan(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr)
+	_ = workers
 
 	move := worker.RebalanceMove{
 		ObjectKey:   "key",
@@ -969,7 +980,7 @@ func TestExecuteOneMove_MovedSizeZero_CleansUpOrphan(t *testing.T) {
 		ToBackend:   "dest",
 		SizeBytes:   4,
 	}
-	if mgr.Rebalancer.ExecuteOneMove(context.Background(), move, "spread") {
+	if workers.Rebalancer.ExecuteOneMove(context.Background(), move, "spread") {
 		t.Error("expected false when movedSize is 0")
 	}
 	if dest.hasObject("key") {
@@ -995,7 +1006,7 @@ func TestExecuteOneMove_SourceDeleteFails_EnqueuesCleanup(t *testing.T) {
 		DoAndReturn(stubRebalEnqueue(re)).AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := NewBackendManager(&BackendManagerConfig{
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Backends:        map[string]s3be.ObjectBackend{"src": src, "dest": dest},
 		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
@@ -1005,7 +1016,8 @@ func TestExecuteOneMove_SourceDeleteFails_EnqueuesCleanup(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr)
+	_ = workers
 
 	move := worker.RebalanceMove{
 		ObjectKey:   "key",
@@ -1013,7 +1025,7 @@ func TestExecuteOneMove_SourceDeleteFails_EnqueuesCleanup(t *testing.T) {
 		ToBackend:   "dest",
 		SizeBytes:   4,
 	}
-	if !mgr.Rebalancer.ExecuteOneMove(context.Background(), move, "spread") {
+	if !workers.Rebalancer.ExecuteOneMove(context.Background(), move, "spread") {
 		t.Error("expected true (move succeeded, source delete failure is non-fatal)")
 	}
 	if len(re.calls) != 1 {
@@ -1037,13 +1049,13 @@ func TestPlanSpreadEven_RespectsBatchSize(t *testing.T) {
 		}
 	}
 	store := rebalanceStoreWithList(t, objects, nil, nil)
-	mgr := newRebalanceManager(store, []string{"b1", "b2"})
+	_, workers := newRebalanceManager(t, store, []string{"b1", "b2"})
 
 	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 900, BytesLimit: 1000},
 		"b2": {BytesUsed: 100, BytesLimit: 1000},
 	}
-	plan, err := mgr.Rebalancer.PlanSpreadEven(context.Background(), stats, 5)
+	plan, err := workers.Rebalancer.PlanSpreadEven(context.Background(), stats, 5)
 	if err != nil {
 		t.Fatalf("planSpreadEven: %v", err)
 	}
@@ -1064,7 +1076,7 @@ func TestExecuteMoves_AdmissionBlocked(t *testing.T) {
 	dst := newMockBackend()
 
 	store := newPermissiveMock(t)
-	mgr := NewBackendManager(&BackendManagerConfig{
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Backends:        map[string]s3be.ObjectBackend{"b1": src, "b2": dst},
 		Stores:          testStoresFromMock(store),
 		Dashboard:       store,
@@ -1075,12 +1087,13 @@ func TestExecuteMoves_AdmissionBlocked(t *testing.T) {
 		RoutingStrategy: config.RoutingPack,
 		AdmissionSem:    sem,
 	})
-	wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr)
+	_ = workers
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	moved := mgr.Rebalancer.ExecuteMoves(ctx, []worker.RebalanceMove{
+	moved := workers.Rebalancer.ExecuteMoves(ctx, []worker.RebalanceMove{
 		{ObjectKey: "key1", FromBackend: "b1", ToBackend: "b2", SizeBytes: 4},
 	}, "pack", 1)
 	if moved != 0 {

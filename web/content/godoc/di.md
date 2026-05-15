@@ -455,13 +455,13 @@ func WireAuditMetrics()
 WireAuditMetrics connects the audit event counter to Prometheus. Called from the main binary during startup, outside the injector.
 
 <a name="WireManager"></a>
-## func [WireManager](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/wiring.go#L42>)
+## func [WireManager](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/wiring.go#L41>)
 
 ```go
 func WireManager(inj do.Injector) error
 ```
 
-WireManager resolves the BackendManager, every background worker, and the drain manager, then assigns the worker handles onto BackendManager and installs drain.Manager via WireDrain. Returns the first error from resolving a required dependency; optional features resolve to nil without erroring, matching the rest of the injector's optional\-feature behavior.
+WireManager resolves the BackendManager plus every required worker \(as a smoke check that construction succeeded\) and installs the drain manager onto the BackendManager. Returns the first error from resolving a required dependency; the optional PendingReaper Failed resolution is logged so a broken provider stays distinguishable from an intentionally absent one.
 
 <a name="BackendsResult"></a>
 ## type [BackendsResult](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L43-L53>)

@@ -71,7 +71,7 @@ func TestProcessLifecycleRules_DeletesExpiredObjects(t *testing.T) {
 		AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": backend})
 
 	deleted, failed := mgr.ProcessLifecycleRules(context.Background(), []config.LifecycleRule{
 		{Prefix: "tmp/", ExpirationDays: 1},
@@ -98,7 +98,7 @@ func TestProcessLifecycleRules_NoExpiredObjects(t *testing.T) {
 		AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	deleted, failed := mgr.ProcessLifecycleRules(context.Background(), []config.LifecycleRule{
 		{Prefix: "tmp/", ExpirationDays: 7},
@@ -135,7 +135,7 @@ func TestProcessLifecycleRules_MultipleRules(t *testing.T) {
 		AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": backend})
 
 	deleted, failed := mgr.ProcessLifecycleRules(context.Background(), []config.LifecycleRule{
 		{Prefix: "tmp/", ExpirationDays: 1},
@@ -171,7 +171,7 @@ func TestProcessLifecycleRules_BatchPagination(t *testing.T) {
 		AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": backend})
 	deleted, failed := mgr.ProcessLifecycleRules(context.Background(), []config.LifecycleRule{
 		{Prefix: "tmp/", ExpirationDays: 1},
 	})
@@ -204,7 +204,7 @@ func TestProcessLifecycleRules_DeleteFailureContinues(t *testing.T) {
 		AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": backend})
 	deleted, failed := mgr.ProcessLifecycleRules(context.Background(), []config.LifecycleRule{
 		{Prefix: "tmp/", ExpirationDays: 1},
 	})
@@ -230,7 +230,7 @@ func TestProcessLifecycleRules_ListExpiredObjectsError(t *testing.T) {
 		AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 	deleted, failed := mgr.ProcessLifecycleRules(context.Background(), []config.LifecycleRule{
 		{Prefix: "tmp/", ExpirationDays: 7},
 	})
@@ -268,7 +268,7 @@ func TestProcessLifecycleRules_ZeroProgressTerminates(t *testing.T) {
 		AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": backend})
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": backend})
 	deleted, failed := mgr.ProcessLifecycleRules(context.Background(), []config.LifecycleRule{
 		{Prefix: "tmp/", ExpirationDays: 1},
 	})
@@ -287,7 +287,7 @@ func TestProcessLifecycleRules_EmptyRulesNoOp(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
 	storetest.Permissive(store)
-	mgr := newTestManager(store, map[string]*mockBackend{"b1": newMockBackend()})
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	deleted, failed := mgr.ProcessLifecycleRules(context.Background(), nil)
 	if deleted != 0 || failed != 0 {

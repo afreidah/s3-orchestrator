@@ -83,10 +83,23 @@ type BackendManagerConfig struct {
 
 // BackendManager manages multiple storage backends with quota tracking.
 // Embeds *backendCore for non-store infrastructure (backends, usage,
-// admission, draining, metrics) and holds the per-role store views,
-// workers, and hot-reloadable configuration. Store-touching write-path
-// helpers are methods on *BackendManager (manager_writepath.go); pure
-// infra primitives stay on *backendCore.
+// admission, draining, metrics) and holds the per-role store views and
+// hot-reloadable configuration. Store-touching write-path helpers are
+// methods on *BackendManager (manager_writepath.go); pure infra
+// primitives stay on *backendCore.
+//
+// Workers (rebalancer, replicator, scrubber, ...) are resolved through
+// DI at the call site rather than carried on the manager. The dashboard
+// aggregator, hot-reload paths, and tests that previously read
+// mgr.Replicator etc. now invoke do.Invoke directly.
+//
+// DrainManager is the one dependency wired post-construction via
+// WireDrain. The cycle (drain.Manager needs *BackendManager and
+// mgr.MultipartManager) makes constructor injection impractical without
+// redesigning drain.Core. Code paths that depend on DrainManager
+// (FlushUsage, ClearDrainState) nil-guard the field so a manager
+// constructed without WireDrain (every test path that does not need
+// drain behavior) remains usable.
 type BackendManager struct {
 	*backendCore
 	stores           core.MetadataStore    // metadata-store dependency
@@ -95,19 +108,13 @@ type BackendManager struct {
 	ObjectManager    *ObjectManager        // CRUD, read failover, broadcast reads
 	dashboard        *dashboard.Aggregator // web UI data aggregation
 
-	// The following worker handles are wired post-construction by the
-	// per-worker DI providers (#676 B). Production code resolves workers
-	// through DI; these fields exist as convenience handles for the
-	// dashboard, tests, and config-reload paths that already hold a
-	// *BackendManager. Treat them as nil-able when accessing outside of
-	// fully-DI-wired contexts.
-	Rebalancer             *worker.Rebalancer
-	Replicator             *worker.Replicator
-	OverReplicationCleaner *worker.OverReplicationCleaner
-	CleanupWorker          *worker.CleanupWorker
-	PendingReaper          *worker.PendingReaper
-	Scrubber               *worker.Scrubber
-	DrainManager           *drain.Manager
+	// DrainManager is the single post-construction wiring point. Set by
+	// WireDrain after both *BackendManager and *drain.Manager have been
+	// constructed (the dependency cycle prevents constructor injection).
+	// Nil-able by design; FlushUsage and ClearDrainState guard the
+	// access so tests that do not exercise drain behavior need not call
+	// WireDrain.
+	DrainManager *drain.Manager
 
 	usageFlushCfg syncutil.AtomicConfig[config.UsageFlushConfig]
 	lifecycleCfg  syncutil.AtomicConfig[config.LifecycleConfig]
@@ -117,14 +124,67 @@ type BackendManager struct {
 // WireDrain installs the drain.Manager: stores it on BackendManager so
 // dashboard rendering and drain-aware tests can reach it, and points
 // backendCore.drainMgr at it so eligibility filters see drain state.
-// Called by the drain DI provider after both values exist.
+// Called by the drain DI provider after both values exist. The
+// dependency cycle between drain.Manager and BackendManager prevents
+// passing the drain manager through the constructor.
 func (m *BackendManager) WireDrain(d *drain.Manager) {
 	m.DrainManager = d
 	m.drainMgr = d
 }
 
-// NewBackendManager creates a new backend manager with the given configuration.
-func NewBackendManager(cfg *BackendManagerConfig) *BackendManager {
+// validateConfig checks every input the constructor dereferences and
+// returns the first violation wrapped with the matching sentinel so
+// callers can errors.Is against the typed value. The scope here is
+// narrow on purpose: operator-facing config shape (backend ordering,
+// minimum backend count, named-backend uniqueness) is validated by
+// internal/config.SetDefaultsAndValidate; this function only catches
+// the "NewBackendManager would NPE on first use" cases that the config
+// validator does not cover (because tests can construct configs that
+// bypass it). Negative-duration checks live here rather than in the
+// config validator because the relevant fields are also settable from
+// test code that does not go through the config path.
+// validateConfigErrFmt wraps a required-input sentinel.
+// validateConfigDurationErrFmt wraps a negative-duration sentinel with the
+// offending value rendered for the operator.
+const (
+	validateConfigErrFmt         = "BackendManager: %w"
+	validateConfigDurationErrFmt = "BackendManager: %w (%s)"
+)
+
+func validateConfig(cfg *BackendManagerConfig) error {
+	if cfg == nil {
+		return fmt.Errorf(validateConfigErrFmt, ErrConfigNil)
+	}
+	if cfg.Stores == nil {
+		return fmt.Errorf(validateConfigErrFmt, ErrStoresRequired)
+	}
+	if cfg.Dashboard == nil {
+		return fmt.Errorf(validateConfigErrFmt, ErrDashboardRequired)
+	}
+	if cfg.Metrics == nil {
+		return fmt.Errorf(validateConfigErrFmt, ErrMetricsRequired)
+	}
+	if cfg.BackendTimeout < 0 {
+		return fmt.Errorf(validateConfigDurationErrFmt, ErrNegativeBackendTimeout, cfg.BackendTimeout)
+	}
+	if cfg.CacheTTL < 0 {
+		return fmt.Errorf(validateConfigDurationErrFmt, ErrNegativeCacheTTL, cfg.CacheTTL)
+	}
+	if cfg.MultipartDEKCacheTTL < 0 {
+		return fmt.Errorf(validateConfigDurationErrFmt, ErrNegativeMultipartDEKCacheTTL, cfg.MultipartDEKCacheTTL)
+	}
+	return nil
+}
+
+// NewBackendManager validates cfg and constructs a BackendManager.
+// Returns a typed sentinel error (errors.Is-matchable) for every
+// required input or runtime invariant violation so DI startup fails
+// fast rather than NPE'ing at first request.
+func NewBackendManager(cfg *BackendManagerConfig) (*BackendManager, error) {
+	if err := validateConfig(cfg); err != nil {
+		return nil, err
+	}
+
 	backendNames := make([]string, 0, len(cfg.Backends))
 	for name := range cfg.Backends {
 		backendNames = append(backendNames, name)
@@ -180,7 +240,7 @@ func NewBackendManager(cfg *BackendManagerConfig) *BackendManager {
 
 	core.metricsCollector = metrics.New(cfg.Metrics, usage, backendNames, cfg.ReplicationFactor)
 
-	return m
+	return m, nil
 }
 
 // ClearCache removes all entries from the location cache.
@@ -189,8 +249,12 @@ func (m *BackendManager) ClearCache() {
 }
 
 // ClearDrainState removes all entries from the draining map. Used by tests
-// to reset state between runs.
+// to reset state between runs. No-op when DrainManager has not been
+// wired (tests that do not need drain behavior skip WireDrain).
 func (m *BackendManager) ClearDrainState() {
+	if m.DrainManager == nil {
+		return
+	}
 	m.DrainManager.ClearState()
 }
 
@@ -224,10 +288,15 @@ func (m *BackendManager) UpdateUsageLimits(limits map[string]core.UsageLimits) {
 }
 
 // FlushUsage flushes accumulated in-memory usage counters to the database.
-// Backends that have completed draining are skipped because their DB records
-// (including backend_usage) have been removed.
+// Backends that have completed draining are skipped because their DB
+// records (including backend_usage) have been removed. When DrainManager
+// has not been wired (tests that do not exercise drain behavior) the
+// skip set is empty and every backend's counters flush.
 func (m *BackendManager) FlushUsage(ctx context.Context) error {
-	skip := m.DrainManager.CompletedBackends()
+	var skip map[string]bool
+	if m.DrainManager != nil {
+		skip = m.DrainManager.CompletedBackends()
+	}
 	return m.usage.FlushUsage(ctx, m.stores, skip)
 }
 

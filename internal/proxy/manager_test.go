@@ -10,6 +10,7 @@
 package proxy
 
 import (
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -25,7 +26,7 @@ import (
 // TestClose_Idempotent verifies the close idempotent path by exercising mgr.Close.
 func TestClose_Idempotent(t *testing.T) {
 	t.Parallel()
-	mgr := newUsageManager([]string{"b1"}, newPermissiveMock(t))
+	mgr := newUsageManager(t, []string{"b1"}, newPermissiveMock(t))
 
 	// Calling Close twice should not panic
 	mgr.Close()
@@ -42,7 +43,7 @@ func TestUpdateUsageLimits_SwapsLimits(t *testing.T) {
 	limits := map[string]core.UsageLimits{
 		"b1": {APIRequestLimit: 100},
 	}
-	mgr := newUsageManagerWithLimits([]string{"b1"}, newPermissiveMock(t), limits)
+	mgr := newUsageManagerWithLimits(t, []string{"b1"}, newPermissiveMock(t), limits)
 
 	// Initially within limits
 	if !mgr.usage.WithinLimits("b1", 50, 0, 0) {
@@ -72,10 +73,11 @@ func TestUpdateUsageLimits_SwapsLimits(t *testing.T) {
 // Asserts that rebalance config mismatch: v.
 func TestRebalanceConfig_RoundTrip(t *testing.T) {
 	t.Parallel()
-	mgr := newUsageManager([]string{"b1"}, newPermissiveMock(t))
+	mgr := newUsageManager(t, []string{"b1"}, newPermissiveMock(t))
+	workers := wireWorkersForTest(mgr)
 
 	// Initially nil
-	if mgr.Rebalancer.Config() != nil {
+	if workers.Rebalancer.Config() != nil {
 		t.Error("expected nil initial rebalance config")
 	}
 
@@ -86,9 +88,9 @@ func TestRebalanceConfig_RoundTrip(t *testing.T) {
 		BatchSize: 50,
 		Threshold: 0.2,
 	}
-	mgr.Rebalancer.SetConfig(cfg)
+	workers.Rebalancer.SetConfig(cfg)
 
-	got := mgr.Rebalancer.Config()
+	got := workers.Rebalancer.Config()
 	if got == nil {
 		t.Fatal("expected non-nil rebalance config")
 	}
@@ -105,10 +107,11 @@ func TestRebalanceConfig_RoundTrip(t *testing.T) {
 // Asserts that replication config mismatch: v.
 func TestReplicationConfig_RoundTrip(t *testing.T) {
 	t.Parallel()
-	mgr := newUsageManager([]string{"b1"}, newPermissiveMock(t))
+	mgr := newUsageManager(t, []string{"b1"}, newPermissiveMock(t))
+	workers := wireWorkersForTest(mgr)
 
 	// Initially nil
-	if mgr.Replicator.Config() != nil {
+	if workers.Replicator.Config() != nil {
 		t.Error("expected nil initial replication config")
 	}
 
@@ -117,9 +120,9 @@ func TestReplicationConfig_RoundTrip(t *testing.T) {
 		WorkerInterval: 10 * time.Minute,
 		BatchSize:      25,
 	}
-	mgr.Replicator.SetConfig(cfg)
+	workers.Replicator.SetConfig(cfg)
 
-	got := mgr.Replicator.Config()
+	got := workers.Replicator.Config()
 	if got == nil {
 		t.Fatal("expected non-nil replication config")
 	}
@@ -136,7 +139,7 @@ func TestReplicationConfig_RoundTrip(t *testing.T) {
 // Asserts that interval = , want 5m.
 func TestUsageFlushConfig_RoundTrip(t *testing.T) {
 	t.Parallel()
-	mgr := newUsageManager([]string{"b1"}, newPermissiveMock(t))
+	mgr := newUsageManager(t, []string{"b1"}, newPermissiveMock(t))
 
 	if mgr.UsageFlushConfig() != nil {
 		t.Error("expected nil initial usage flush config")
@@ -164,7 +167,7 @@ func TestUsageFlushConfig_RoundTrip(t *testing.T) {
 // Asserts that lifecycle config mismatch: v.
 func TestLifecycleConfig_RoundTrip(t *testing.T) {
 	t.Parallel()
-	mgr := newUsageManager([]string{"b1"}, newPermissiveMock(t))
+	mgr := newUsageManager(t, []string{"b1"}, newPermissiveMock(t))
 
 	if mgr.LifecycleConfig() != nil {
 		t.Error("expected nil initial lifecycle config")
@@ -196,7 +199,7 @@ func TestNearUsageLimit_BelowThreshold(t *testing.T) {
 	limits := map[string]core.UsageLimits{
 		"b1": {APIRequestLimit: 1000},
 	}
-	mgr := newUsageManagerWithLimits([]string{"b1"}, newPermissiveMock(t), limits)
+	mgr := newUsageManagerWithLimits(t, []string{"b1"}, newPermissiveMock(t), limits)
 
 	// No usage baseline set  -  should be well below threshold
 	if mgr.NearUsageLimit(0.8) {
@@ -210,7 +213,7 @@ func TestNearUsageLimit_AboveThreshold(t *testing.T) {
 	limits := map[string]core.UsageLimits{
 		"b1": {APIRequestLimit: 100},
 	}
-	mgr := newUsageManagerWithLimits([]string{"b1"}, newPermissiveMock(t), limits)
+	mgr := newUsageManagerWithLimits(t, []string{"b1"}, newPermissiveMock(t), limits)
 
 	// Set baseline at 90% of limit
 	mgr.usage.SetBaseline("b1", core.UsageStat{APIRequests: 90})
@@ -227,7 +230,7 @@ func TestNearUsageLimit_AboveThreshold(t *testing.T) {
 // TestClearCache_RemovesAllEntries verifies the clear cache removes all entries path by exercising mgr.ClearCache.
 func TestClearCache_RemovesAllEntries(t *testing.T) {
 	t.Parallel()
-	mgr := newUsageManager([]string{"b1"}, newPermissiveMock(t))
+	mgr := newUsageManager(t, []string{"b1"}, newPermissiveMock(t))
 
 	mgr.ObjectManager.cache.Set("key1", "b1")
 	mgr.ObjectManager.cache.Set("key2", "b1")
@@ -252,7 +255,7 @@ func TestUpdateUsageLimits_ConcurrentAccess(t *testing.T) {
 	limits := map[string]core.UsageLimits{
 		"b1": {APIRequestLimit: 1000},
 	}
-	mgr := newUsageManagerWithLimits([]string{"b1"}, newPermissiveMock(t), limits)
+	mgr := newUsageManagerWithLimits(t, []string{"b1"}, newPermissiveMock(t), limits)
 
 	var wg sync.WaitGroup
 	const goroutines = 50
@@ -283,4 +286,81 @@ func TestUpdateUsageLimits_ConcurrentAccess(t *testing.T) {
 
 	wg.Wait()
 	// Test passes if no race detector violations
+}
+
+// -------------------------------------------------------------------------
+// NewBackendManager constructor validation
+// -------------------------------------------------------------------------
+
+// TestNewBackendManager_NilConfig pins the nil-pointer guard so callers can
+// errors.Is against ErrConfigNil without depending on the wrapped message.
+func TestNewBackendManager_NilConfig(t *testing.T) {
+	t.Parallel()
+	_, err := NewBackendManager(nil)
+	if !errors.Is(err, ErrConfigNil) {
+		t.Errorf("err = %v, want ErrConfigNil", err)
+	}
+}
+
+// TestNewBackendManager_ValidationSentinels pins every constructor
+// validation branch: each required field and each negative-duration check
+// must surface a typed sentinel so DI startup can distinguish them.
+func TestNewBackendManager_ValidationSentinels(t *testing.T) {
+	t.Parallel()
+	mock := newPermissiveMock(t)
+
+	cases := []struct {
+		name string
+		cfg  *BackendManagerConfig
+		want error
+	}{
+		{"no stores", &BackendManagerConfig{}, ErrStoresRequired},
+		{"no dashboard", &BackendManagerConfig{Stores: mock}, ErrDashboardRequired},
+		{"no metrics", &BackendManagerConfig{Stores: mock, Dashboard: mock}, ErrMetricsRequired},
+		{"negative backend timeout", &BackendManagerConfig{Stores: mock, Dashboard: mock, Metrics: mock, BackendTimeout: -1}, ErrNegativeBackendTimeout},
+		{"negative cache ttl", &BackendManagerConfig{Stores: mock, Dashboard: mock, Metrics: mock, CacheTTL: -1}, ErrNegativeCacheTTL},
+		{"negative multipart dek cache ttl", &BackendManagerConfig{Stores: mock, Dashboard: mock, Metrics: mock, MultipartDEKCacheTTL: -1}, ErrNegativeMultipartDEKCacheTTL},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := NewBackendManager(tc.cfg)
+			if !errors.Is(err, tc.want) {
+				t.Errorf("err = %v, want errors.Is %v", err, tc.want)
+			}
+		})
+	}
+}
+
+// -------------------------------------------------------------------------
+// ClearDrainState (nil-guard + wired path)
+// -------------------------------------------------------------------------
+
+// TestClearDrainState_NoDrainManager pins the nil-guard: a manager
+// constructed without WireDrain must not panic on ClearDrainState.
+func TestClearDrainState_NoDrainManager(t *testing.T) {
+	t.Parallel()
+	mock := newPermissiveMock(t)
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
+		Stores:          mock,
+		Dashboard:       mock,
+		Metrics:         mock,
+		RoutingStrategy: config.RoutingPack,
+	})
+	defer mgr.Close()
+	if mgr.DrainManager != nil {
+		t.Fatal("expected DrainManager nil prior to WireDrain")
+	}
+	mgr.ClearDrainState()
+}
+
+// TestClearDrainState_ClearsWiredDrain pins the through-call path: when a
+// drain manager has been wired, ClearDrainState reaches into it without
+// panicking.
+func TestClearDrainState_ClearsWiredDrain(t *testing.T) {
+	t.Parallel()
+	mgr := newUsageManager(t, []string{"b1"}, newPermissiveMock(t))
+	workers := wireWorkersForTest(mgr)
+	_ = workers
+	mgr.ClearDrainState()
 }

@@ -950,7 +950,7 @@ func TestSpreadWriteRouting_DistributesAcrossBackends(t *testing.T) {
 	ctx := context.Background()
 	_ = ctx
 	stores := newStores(testStore)
-	spreadManager := proxy.NewBackendManager(&proxy.BackendManagerConfig{
+	spreadManager := proxytest.NewManager(t, &proxy.BackendManagerConfig{
 		Backends:        testBackends,
 		Stores:          stores,
 		Dashboard:       testStore,
@@ -961,7 +961,7 @@ func TestSpreadWriteRouting_DistributesAcrossBackends(t *testing.T) {
 		RoutingStrategy: config.RoutingSpread,
 	})
 	_ = spreadManager
-	proxytest.AttachWorkers(spreadManager, stores)
+	_ = proxytest.BuildWorkers(spreadManager, stores)
 	spreadSrv := &s3api.Server{
 		Manager: spreadManager,
 	}
@@ -1043,7 +1043,7 @@ func TestSpreadWriteRouting_PreferLeastUtilizedAfterImbalance(t *testing.T) {
 	ctx := context.Background()
 	_ = ctx
 	stores := newStores(testStore)
-	spreadManager := proxy.NewBackendManager(&proxy.BackendManagerConfig{
+	spreadManager := proxytest.NewManager(t, &proxy.BackendManagerConfig{
 		Backends:        testBackends,
 		Stores:          stores,
 		Dashboard:       testStore,
@@ -1054,7 +1054,7 @@ func TestSpreadWriteRouting_PreferLeastUtilizedAfterImbalance(t *testing.T) {
 		RoutingStrategy: config.RoutingSpread,
 	})
 	_ = spreadManager
-	proxytest.AttachWorkers(spreadManager, stores)
+	_ = proxytest.BuildWorkers(spreadManager, stores)
 	spreadSrv := &s3api.Server{
 		Manager: spreadManager,
 	}
@@ -1121,7 +1121,7 @@ func TestSpreadWriteRouting_ContrastWithPackBehavior(t *testing.T) {
 	ctx := context.Background()
 	_ = ctx
 	stores := newStores(testStore)
-	spreadManager := proxy.NewBackendManager(&proxy.BackendManagerConfig{
+	spreadManager := proxytest.NewManager(t, &proxy.BackendManagerConfig{
 		Backends:        testBackends,
 		Stores:          stores,
 		Dashboard:       testStore,
@@ -1132,7 +1132,7 @@ func TestSpreadWriteRouting_ContrastWithPackBehavior(t *testing.T) {
 		RoutingStrategy: config.RoutingSpread,
 	})
 	_ = spreadManager
-	proxytest.AttachWorkers(spreadManager, stores)
+	_ = proxytest.BuildWorkers(spreadManager, stores)
 	spreadSrv := &s3api.Server{
 		Manager: spreadManager,
 	}
@@ -1289,7 +1289,7 @@ func TestRebalancePackTight(t *testing.T) {
 		Threshold: 0,
 	}
 
-	moved, err := testManager.Rebalancer.Rebalance(ctx, packCfg)
+	moved, err := testWorkers.Rebalancer.Rebalance(ctx, packCfg)
 	if err != nil {
 		t.Fatalf("Rebalance: %v", err)
 	}
@@ -1329,7 +1329,7 @@ func TestRebalancePackTight(t *testing.T) {
 	}
 
 	// minio-1 is 97.6% (1000/1024), minio-2 is 0%  -  nothing to consolidate
-	moved, err = testManager.Rebalancer.Rebalance(ctx, packCfg)
+	moved, err = testWorkers.Rebalancer.Rebalance(ctx, packCfg)
 	if err != nil {
 		t.Fatalf("Rebalance noop: %v", err)
 	}
@@ -1398,7 +1398,7 @@ func TestRebalancePackTinyToFuller_DestHasRoom(t *testing.T) {
 	t.Logf("before: minio-1=%d (%.1f%%) minio-2=%d (%.1f%%)",
 		m1Before, float64(m1Before)/1024*100, m2Before, float64(m2Before)/2048*100)
 
-	moved, err := testManager.Rebalancer.Rebalance(ctx, packCfg)
+	moved, err := testWorkers.Rebalancer.Rebalance(ctx, packCfg)
 	if err != nil {
 		t.Fatalf("Rebalance: %v", err)
 	}
@@ -1484,7 +1484,7 @@ func TestRebalancePackTinyToFuller_DestIsFull(t *testing.T) {
 	t.Logf("before: minio-1=%d minio-2=%d",
 		queryQuotaUsed(t, "minio-1"), queryQuotaUsed(t, "minio-2"))
 
-	moved, err := testManager.Rebalancer.Rebalance(ctx, packCfg)
+	moved, err := testWorkers.Rebalancer.Rebalance(ctx, packCfg)
 	if err != nil {
 		t.Fatalf("Rebalance: %v", err)
 	}
@@ -1538,7 +1538,7 @@ func TestRebalanceSpreadEven(t *testing.T) {
 		Threshold: 0,
 	}
 
-	moved, err := testManager.Rebalancer.Rebalance(ctx, spreadCfg)
+	moved, err := testWorkers.Rebalancer.Rebalance(ctx, spreadCfg)
 	if err != nil {
 		t.Fatalf("Rebalance: %v", err)
 	}
@@ -1651,7 +1651,7 @@ func TestRebalanceSpreadAlreadyBalanced(t *testing.T) {
 		Threshold: 0,
 	}
 
-	moved, err := testManager.Rebalancer.Rebalance(ctx, spreadCfg)
+	moved, err := testWorkers.Rebalancer.Rebalance(ctx, spreadCfg)
 	if err != nil {
 		t.Fatalf("Rebalance: %v", err)
 	}
@@ -1700,7 +1700,7 @@ func TestRebalanceSpreadOversizedObject(t *testing.T) {
 		Threshold: 0,
 	}
 
-	moved, err := testManager.Rebalancer.Rebalance(ctx, spreadCfg)
+	moved, err := testWorkers.Rebalancer.Rebalance(ctx, spreadCfg)
 	if err != nil {
 		t.Fatalf("Rebalance: %v", err)
 	}
@@ -1750,7 +1750,7 @@ func TestRebalanceSpreadStableAcrossCycles(t *testing.T) {
 	}
 
 	// Cycle 1
-	moved1, err := testManager.Rebalancer.Rebalance(ctx, spreadCfg)
+	moved1, err := testWorkers.Rebalancer.Rebalance(ctx, spreadCfg)
 	if err != nil {
 		t.Fatalf("Cycle 1: %v", err)
 	}
@@ -1759,7 +1759,7 @@ func TestRebalanceSpreadStableAcrossCycles(t *testing.T) {
 	t.Logf("cycle 1: moved %d, minio-1=%d minio-2=%d", moved1, m1After1, m2After1)
 
 	// Cycle 2  -  should be a no-op, nothing bounces
-	moved2, err := testManager.Rebalancer.Rebalance(ctx, spreadCfg)
+	moved2, err := testWorkers.Rebalancer.Rebalance(ctx, spreadCfg)
 	if err != nil {
 		t.Fatalf("Cycle 2: %v", err)
 	}
@@ -1808,7 +1808,7 @@ func TestRebalanceSpreadBatchLimited(t *testing.T) {
 	}
 
 	// Cycle 1: moves 2
-	moved1, err := testManager.Rebalancer.Rebalance(ctx, smallBatchCfg)
+	moved1, err := testWorkers.Rebalancer.Rebalance(ctx, smallBatchCfg)
 	if err != nil {
 		t.Fatalf("Cycle 1: %v", err)
 	}
@@ -1821,7 +1821,7 @@ func TestRebalanceSpreadBatchLimited(t *testing.T) {
 	}
 
 	// Cycle 2: moves remaining needed
-	moved2, err := testManager.Rebalancer.Rebalance(ctx, smallBatchCfg)
+	moved2, err := testWorkers.Rebalancer.Rebalance(ctx, smallBatchCfg)
 	if err != nil {
 		t.Fatalf("Cycle 2: %v", err)
 	}
@@ -1835,7 +1835,7 @@ func TestRebalanceSpreadBatchLimited(t *testing.T) {
 	}
 
 	// Cycle 3: should stabilize
-	moved3, err := testManager.Rebalancer.Rebalance(ctx, smallBatchCfg)
+	moved3, err := testWorkers.Rebalancer.Rebalance(ctx, smallBatchCfg)
 	if err != nil {
 		t.Fatalf("Cycle 3: %v", err)
 	}
@@ -1903,7 +1903,7 @@ func TestRebalanceThresholdSkip(t *testing.T) {
 		Threshold: 0.99, // extremely high threshold
 	}
 
-	moved, err := testManager.Rebalancer.Rebalance(ctx, skipCfg)
+	moved, err := testWorkers.Rebalancer.Rebalance(ctx, skipCfg)
 	if err != nil {
 		t.Fatalf("Rebalance: %v", err)
 	}
@@ -1947,7 +1947,7 @@ func TestReplicationBasic(t *testing.T) {
 		WorkerInterval: time.Minute,
 		BatchSize:      50,
 	}
-	created, err := testManager.Replicator.Replicate(ctx, replCfg)
+	created, err := testWorkers.Replicator.Replicate(ctx, replCfg)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
@@ -2008,7 +2008,7 @@ func TestReplicationOverwrite(t *testing.T) {
 		WorkerInterval: time.Minute,
 		BatchSize:      50,
 	}
-	_, err = testManager.Replicator.Replicate(ctx, replCfg)
+	_, err = testWorkers.Replicator.Replicate(ctx, replCfg)
 	if err != nil {
 		t.Fatalf("Replicate v1: %v", err)
 	}
@@ -2033,7 +2033,7 @@ func TestReplicationOverwrite(t *testing.T) {
 	}
 
 	// Replicate again
-	created, err := testManager.Replicator.Replicate(ctx, replCfg)
+	created, err := testWorkers.Replicator.Replicate(ctx, replCfg)
 	if err != nil {
 		t.Fatalf("Replicate v2: %v", err)
 	}
@@ -2084,7 +2084,7 @@ func TestReplicationDelete(t *testing.T) {
 		WorkerInterval: time.Minute,
 		BatchSize:      50,
 	}
-	_, err = testManager.Replicator.Replicate(ctx, replCfg)
+	_, err = testWorkers.Replicator.Replicate(ctx, replCfg)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
@@ -2148,7 +2148,7 @@ func TestReplicationReadFailover(t *testing.T) {
 		WorkerInterval: time.Minute,
 		BatchSize:      50,
 	}
-	_, err = testManager.Replicator.Replicate(ctx, replCfg)
+	_, err = testWorkers.Replicator.Replicate(ctx, replCfg)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
@@ -2203,7 +2203,7 @@ func TestReplicationAlreadyReplicated(t *testing.T) {
 	}
 
 	// First replication
-	created1, err := testManager.Replicator.Replicate(ctx, replCfg)
+	created1, err := testWorkers.Replicator.Replicate(ctx, replCfg)
 	if err != nil {
 		t.Fatalf("Replicate 1: %v", err)
 	}
@@ -2212,7 +2212,7 @@ func TestReplicationAlreadyReplicated(t *testing.T) {
 	}
 
 	// Second replication  -  should be a no-op
-	created2, err := testManager.Replicator.Replicate(ctx, replCfg)
+	created2, err := testWorkers.Replicator.Replicate(ctx, replCfg)
 	if err != nil {
 		t.Fatalf("Replicate 2: %v", err)
 	}
@@ -2256,7 +2256,7 @@ func TestReplicationNoSpace(t *testing.T) {
 		WorkerInterval: time.Minute,
 		BatchSize:      50,
 	}
-	created, err := testManager.Replicator.Replicate(ctx, replCfg)
+	created, err := testWorkers.Replicator.Replicate(ctx, replCfg)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
@@ -2289,7 +2289,7 @@ func TestRebalancerWithReplicas(t *testing.T) {
 		WorkerInterval: time.Minute,
 		BatchSize:      50,
 	}
-	_, err = testManager.Replicator.Replicate(ctx, replCfg)
+	_, err = testWorkers.Replicator.Replicate(ctx, replCfg)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
@@ -2306,7 +2306,7 @@ func TestRebalancerWithReplicas(t *testing.T) {
 		BatchSize: 10,
 		Threshold: 0,
 	}
-	_, err = testManager.Rebalancer.Rebalance(ctx, rebalCfg)
+	_, err = testWorkers.Rebalancer.Rebalance(ctx, rebalCfg)
 	if err != nil {
 		t.Fatalf("Rebalance: %v", err)
 	}
@@ -2347,7 +2347,7 @@ func TestOverReplicationBasic(t *testing.T) {
 	ctx := context.Background()
 	resetState(t)
 
-	mgr := newThreeBackendManager(t)
+	_, workers := newThreeBackendManager(t)
 
 	key := uniqueKey(t, "overrepl-basic")
 	body := bytes.Repeat([]byte("O"), 100)
@@ -2369,7 +2369,7 @@ func TestOverReplicationBasic(t *testing.T) {
 		WorkerInterval: time.Minute,
 		BatchSize:      50,
 	}
-	_, err = mgr.Replicator.Replicate(ctx, replCfg)
+	_, err = workers.Replicator.Replicate(ctx, replCfg)
 	if err != nil {
 		t.Fatalf("Replicate to factor 3: %v", err)
 	}
@@ -2378,7 +2378,7 @@ func TestOverReplicationBasic(t *testing.T) {
 	}
 
 	// Over-replication cleanup with factor=3 should be a no-op
-	removed, err := mgr.OverReplicationCleaner.Clean(ctx, config.ReplicationConfig{
+	removed, err := workers.OverReplicationCleaner.Clean(ctx, config.ReplicationConfig{
 		Factor:      3,
 		BatchSize:   50,
 		Concurrency: 1,
@@ -2391,7 +2391,7 @@ func TestOverReplicationBasic(t *testing.T) {
 	}
 
 	// Now lower the factor to 2 -> object is over-replicated
-	removed, err = mgr.OverReplicationCleaner.Clean(ctx, config.ReplicationConfig{
+	removed, err = workers.OverReplicationCleaner.Clean(ctx, config.ReplicationConfig{
 		Factor:      2,
 		BatchSize:   50,
 		Concurrency: 1,
@@ -2430,7 +2430,7 @@ func TestOverReplicationMultipleObjects(t *testing.T) {
 	ctx := context.Background()
 	resetState(t)
 
-	mgr := newThreeBackendManager(t)
+	_, workers := newThreeBackendManager(t)
 
 	keys := make([]string, 3)
 	for i := range keys {
@@ -2452,7 +2452,7 @@ func TestOverReplicationMultipleObjects(t *testing.T) {
 		WorkerInterval: time.Minute,
 		BatchSize:      50,
 	}
-	_, err := mgr.Replicator.Replicate(ctx, replCfg)
+	_, err := workers.Replicator.Replicate(ctx, replCfg)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
@@ -2463,7 +2463,7 @@ func TestOverReplicationMultipleObjects(t *testing.T) {
 	}
 
 	// Clean with factor=2 -> each object loses 1 copy
-	removed, err := mgr.OverReplicationCleaner.Clean(ctx, config.ReplicationConfig{
+	removed, err := workers.OverReplicationCleaner.Clean(ctx, config.ReplicationConfig{
 		Factor:      2,
 		BatchSize:   50,
 		Concurrency: 2,
@@ -2489,7 +2489,7 @@ func TestOverReplicationDrainingBackendRemovedFirst(t *testing.T) {
 	ctx := context.Background()
 	resetState(t)
 
-	mgr := newThreeBackendManager(t)
+	mgr, workers := newThreeBackendManager(t)
 
 	key := uniqueKey(t, "overrepl-drain")
 	body := bytes.Repeat([]byte("D"), 100)
@@ -2510,7 +2510,7 @@ func TestOverReplicationDrainingBackendRemovedFirst(t *testing.T) {
 		WorkerInterval: time.Minute,
 		BatchSize:      50,
 	}
-	_, err = mgr.Replicator.Replicate(ctx, replCfg)
+	_, err = workers.Replicator.Replicate(ctx, replCfg)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
@@ -2529,7 +2529,7 @@ func TestOverReplicationDrainingBackendRemovedFirst(t *testing.T) {
 	defer mgr.DrainManager.CancelDrain(drainTarget)
 
 	// Clean with factor=2 -> should remove 1 copy, preferring the draining backend (score 0)
-	removed, err := mgr.OverReplicationCleaner.Clean(ctx, config.ReplicationConfig{
+	removed, err := workers.OverReplicationCleaner.Clean(ctx, config.ReplicationConfig{
 		Factor:      2,
 		BatchSize:   50,
 		Concurrency: 1,
@@ -2574,7 +2574,7 @@ func TestOverReplicationQuotaFreed(t *testing.T) {
 	ctx := context.Background()
 	resetState(t)
 
-	mgr := newThreeBackendManager(t)
+	_, workers := newThreeBackendManager(t)
 
 	key := uniqueKey(t, "overrepl-quota")
 	size := int64(100)
@@ -2595,7 +2595,7 @@ func TestOverReplicationQuotaFreed(t *testing.T) {
 		WorkerInterval: time.Minute,
 		BatchSize:      50,
 	}
-	_, err = mgr.Replicator.Replicate(ctx, replCfg)
+	_, err = workers.Replicator.Replicate(ctx, replCfg)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
@@ -2612,7 +2612,7 @@ func TestOverReplicationQuotaFreed(t *testing.T) {
 	}
 
 	// Clean with factor=2 -> remove 1 excess copy
-	removed, err := mgr.OverReplicationCleaner.Clean(ctx, config.ReplicationConfig{
+	removed, err := workers.OverReplicationCleaner.Clean(ctx, config.ReplicationConfig{
 		Factor:      2,
 		BatchSize:   50,
 		Concurrency: 1,
@@ -2657,7 +2657,7 @@ func TestOverReplicationCountPending(t *testing.T) {
 	ctx := context.Background()
 	resetState(t)
 
-	mgr := newThreeBackendManager(t)
+	_, workers := newThreeBackendManager(t)
 
 	key := uniqueKey(t, "overrepl-count")
 
@@ -2672,7 +2672,7 @@ func TestOverReplicationCountPending(t *testing.T) {
 	}
 
 	// No over-replication with factor=3
-	count, err := mgr.OverReplicationCleaner.CountPending(ctx, 3)
+	count, err := workers.OverReplicationCleaner.CountPending(ctx, 3)
 	if err != nil {
 		t.Fatalf("CountPending: %v", err)
 	}
@@ -2686,13 +2686,13 @@ func TestOverReplicationCountPending(t *testing.T) {
 		WorkerInterval: time.Minute,
 		BatchSize:      50,
 	}
-	_, err = mgr.Replicator.Replicate(ctx, replCfg)
+	_, err = workers.Replicator.Replicate(ctx, replCfg)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
 
 	// 3 copies with factor=3 -> not over-replicated
-	count, err = mgr.OverReplicationCleaner.CountPending(ctx, 3)
+	count, err = workers.OverReplicationCleaner.CountPending(ctx, 3)
 	if err != nil {
 		t.Fatalf("CountPending factor=3: %v", err)
 	}
@@ -2701,7 +2701,7 @@ func TestOverReplicationCountPending(t *testing.T) {
 	}
 
 	// 3 copies with factor=2 -> over-replicated
-	count, err = mgr.OverReplicationCleaner.CountPending(ctx, 2)
+	count, err = workers.OverReplicationCleaner.CountPending(ctx, 2)
 	if err != nil {
 		t.Fatalf("CountPending factor=2: %v", err)
 	}
@@ -2710,7 +2710,7 @@ func TestOverReplicationCountPending(t *testing.T) {
 	}
 
 	// Clean it and verify count drops
-	_, err = mgr.OverReplicationCleaner.Clean(ctx, config.ReplicationConfig{
+	_, err = workers.OverReplicationCleaner.Clean(ctx, config.ReplicationConfig{
 		Factor:      2,
 		BatchSize:   50,
 		Concurrency: 1,
@@ -2719,7 +2719,7 @@ func TestOverReplicationCountPending(t *testing.T) {
 		t.Fatalf("Clean: %v", err)
 	}
 
-	count, err = mgr.OverReplicationCleaner.CountPending(ctx, 2)
+	count, err = workers.OverReplicationCleaner.CountPending(ctx, 2)
 	if err != nil {
 		t.Fatalf("CountPending after clean: %v", err)
 	}

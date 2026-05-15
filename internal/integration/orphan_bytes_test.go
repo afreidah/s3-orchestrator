@@ -200,7 +200,7 @@ func TestOrphanBytes_CleanupSuccessDecrementsOrphanBytes(t *testing.T) {
 		t.Fatalf("orphan_bytes before cleanup = %d, want 100", orphanBefore)
 	}
 
-	processed, failed := testManager.CleanupWorker.ProcessCleanupQueue(ctx)
+	processed, failed := testWorkers.CleanupWorker.ProcessCleanupQueue(ctx)
 	if processed != 1 {
 		t.Errorf("processed = %d, want 1", processed)
 	}
@@ -350,7 +350,7 @@ func TestOrphanBytes_CleanupZeroSizeSkipsOrphanDecrement(t *testing.T) {
 
 	setOrphanBytes(t, backend, 200)
 
-	processed, _ := testManager.CleanupWorker.ProcessCleanupQueue(ctx)
+	processed, _ := testWorkers.CleanupWorker.ProcessCleanupQueue(ctx)
 	if processed != 1 {
 		t.Errorf("processed = %d, want 1", processed)
 	}
@@ -440,7 +440,7 @@ func TestOrphanBytes_ReplicationRespectsOrphanBytes(t *testing.T) {
 		Factor:    2,
 		BatchSize: 10,
 	}
-	created, err := testManager.Replicator.Replicate(ctx, replCfg)
+	created, err := testWorkers.Replicator.Replicate(ctx, replCfg)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
@@ -481,7 +481,7 @@ func TestOrphanBytes_OverwriteDisplacedCopiesCleanedUp(t *testing.T) {
 		Factor:    2,
 		BatchSize: 10,
 	}
-	created, err := testManager.Replicator.Replicate(ctx, replCfg)
+	created, err := testWorkers.Replicator.Replicate(ctx, replCfg)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
@@ -546,7 +546,7 @@ func TestOrphanBytesSpreadRouting_SpreadRoutingRespectsOrphanBytes(t *testing.T)
 	ctx := context.Background()
 	_ = ctx
 	stores := newStores(testStore)
-	spreadManager := proxy.NewBackendManager(&proxy.BackendManagerConfig{
+	spreadManager := proxytest.NewManager(t, &proxy.BackendManagerConfig{
 		Backends:        testBackends,
 		Stores:          stores,
 		Dashboard:       testStore,
@@ -557,7 +557,7 @@ func TestOrphanBytesSpreadRouting_SpreadRoutingRespectsOrphanBytes(t *testing.T)
 		RoutingStrategy: config.RoutingSpread,
 	})
 	_ = spreadManager
-	proxytest.AttachWorkers(spreadManager, stores)
+	_ = proxytest.BuildWorkers(spreadManager, stores)
 	spreadSrv := &s3api.Server{
 		Manager: spreadManager,
 	}

@@ -32,11 +32,11 @@ import (
 // and an empty backend set. opts mutates the resulting BackendManager so
 // individual tests can flip the relevant skipped-vs-happy guards before
 // the handler is returned.
-func newAdminHandlerForTest(t *testing.T, opts ...func(*proxy.BackendManager)) *admin.Handler {
+func newAdminHandlerForTest(t *testing.T, opts ...func(*proxy.BackendManager, *proxytest.Workers)) *admin.Handler {
 	t.Helper()
 	mock := testutil.NewMockStore(t)
 	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3})
-	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
+	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{},
 		Stores:          mock,
 		Dashboard:       mock,
@@ -44,19 +44,19 @@ func newAdminHandlerForTest(t *testing.T, opts ...func(*proxy.BackendManager)) *
 		Order:           []string{},
 		RoutingStrategy: config.RoutingPack,
 	})
-	proxytest.AttachWorkers(mgr, mock)
-	mgr.Replicator.SetConfig(&config.ReplicationConfig{Factor: 1})
-	mgr.OverReplicationCleaner.SetConfig(&config.ReplicationConfig{Factor: 1})
+	workers := proxytest.BuildWorkers(mgr, mock)
+	workers.Replicator.SetConfig(&config.ReplicationConfig{Factor: 1})
+	workers.OverReplicationCleaner.SetConfig(&config.ReplicationConfig{Factor: 1})
 	for _, opt := range opts {
-		opt(mgr)
+		opt(mgr, workers)
 	}
 
 	return admin.New(&admin.Deps{
 		BackendOps: mgr,
-		Replicator: mgr.Replicator,
-		OverRep:    mgr.OverReplicationCleaner,
+		Replicator: workers.Replicator,
+		OverRep:    workers.OverReplicationCleaner,
 		Drain:      mgr.DrainManager,
-		Scrubber:   mgr.Scrubber,
+		Scrubber:   workers.Scrubber,
 		Lifecycle:  mock,
 		DBHealthy:  cb.IsHealthy,
 		Objects:    mock,
@@ -80,8 +80,8 @@ func newSkippedAdminHandler(t *testing.T) *admin.Handler {
 // across the four operations; covering one is enough.
 func TestHandleAPIReplicate_HappyPathReturnsCount(t *testing.T) {
 	t.Parallel()
-	h := &Handler{log: slog.Default(), adminHandler: newAdminHandlerForTest(t, func(mgr *proxy.BackendManager) {
-		mgr.Replicator.SetConfig(&config.ReplicationConfig{Factor: 2, BatchSize: 10})
+	h := &Handler{log: slog.Default(), adminHandler: newAdminHandlerForTest(t, func(_ *proxy.BackendManager, workers *proxytest.Workers) {
+		workers.Replicator.SetConfig(&config.ReplicationConfig{Factor: 2, BatchSize: 10})
 	})}
 
 	triggerReq := httptest.NewRequest(http.MethodPost, "/api/replicate", nil)
