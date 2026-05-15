@@ -1,4 +1,4 @@
-// Helper tests for proxytest.AttachWorkers. The helper is test-only API
+// Helper tests for proxytest.BuildWorkers. The helper is test-only API
 // but Sonar's "new code coverage" gate counts it, so we drive it once.
 package proxytest_test
 
@@ -13,11 +13,11 @@ import (
 )
 
 // newManager builds a minimal *proxy.BackendManager fed only by a single
-// MockStore. AttachWorkers needs the manager's MultipartManager to be
+// MockStore. BuildWorkers needs the manager's MultipartManager to be
 // populated (NewBackendManager always builds it).
 func newManager(t *testing.T, mock *testutil.MockStore) *proxy.BackendManager {
 	t.Helper()
-	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
+	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
 		Backends:        map[string]backend.ObjectBackend{},
 		Stores:          mock,
 		Dashboard:       mock,
@@ -29,34 +29,38 @@ func newManager(t *testing.T, mock *testutil.MockStore) *proxy.BackendManager {
 	return mgr
 }
 
-// TestAttachWorkers wires every worker on a freshly-built manager and
-// asserts each public field is populated.
-func TestAttachWorkers(t *testing.T) {
+// TestBuildWorkers wires every worker on a freshly-built manager and
+// asserts each handle on the returned Workers struct is populated, plus
+// that drain.Manager is installed on the manager.
+func TestBuildWorkers(t *testing.T) {
 	t.Parallel()
 	mock := testutil.NewMockStore(t)
 	mgr := newManager(t, mock)
 
-	proxytest.AttachWorkers(mgr, mock)
+	w := proxytest.BuildWorkers(mgr, mock)
 
-	if mgr.Rebalancer == nil {
+	if w.Rebalancer == nil {
 		t.Error("Rebalancer not wired")
 	}
-	if mgr.Replicator == nil {
+	if w.Replicator == nil {
 		t.Error("Replicator not wired")
 	}
-	if mgr.OverReplicationCleaner == nil {
+	if w.OverReplicationCleaner == nil {
 		t.Error("OverReplicationCleaner not wired")
 	}
-	if mgr.CleanupWorker == nil {
+	if w.CleanupWorker == nil {
 		t.Error("CleanupWorker not wired")
 	}
-	if mgr.PendingReaper == nil {
+	if w.PendingReaper == nil {
 		t.Error("PendingReaper not wired")
 	}
-	if mgr.Scrubber == nil {
+	if w.Scrubber == nil {
 		t.Error("Scrubber not wired")
 	}
+	if w.Drain == nil {
+		t.Error("Drain not wired")
+	}
 	if mgr.DrainManager == nil {
-		t.Error("DrainManager not wired")
+		t.Error("DrainManager not installed on manager via WireDrain")
 	}
 }
