@@ -21,7 +21,7 @@ call site uses:
 
 | Helper | Returns | Purpose |
 |---|---|---|
-| `logfmt.Err(err)` | `slog.Attr` | Nil-safe `error`-key helper. Returns an empty attr (dropped by slog) when `err` is nil; otherwise equivalent to `slog.String("error", err.Error())`. Optional at call sites that always have a non-nil error — see the error-attribute section below. |
+| `logfmt.Err(err)` | `slog.Attr` | Nil-safe `error`-key helper. Returns an empty attr (dropped by slog) when `err` is nil; otherwise equivalent to `slog.String("error", err.Error())`. Use in typed-attr calls (`slog.LogAttrs`, `audit.Log`) or where `err` may be nil — see the error-attribute section below. |
 | `logfmt.Outcome(value)` | `slog.Attr` | `outcome` attr; pass one of `OutcomeOK`, `OutcomeError`, `OutcomeSkipped`, `OutcomeTimeout`, `OutcomeNotFound`. |
 | `logfmt.Component(name)` | `slog.Attr` | `component` attr used at logger construction. |
 | `logfmt.RequestIDFromCtx(ctx)` | `slog.Attr` | Pulls the audit request ID from context (empty attr if none). |
@@ -77,19 +77,32 @@ group-nested errors. The runtime composes the handler in
 `internal/observe/telemetry`, so every production log line goes through
 it.
 
-All three forms below are acceptable; pick the one that reads most
-naturally for the call site:
+Pick the form that matches the slog API you are already using:
 
 ```go
+// Key-value API (slog.ErrorContext, slog.WarnContext, etc.) — preferred.
 log.ErrorContext(ctx, "replication failed", "error", err)
-log.ErrorContext(ctx, "replication failed", slog.Any("error", err))
-log.ErrorContext(ctx, "replication failed", logfmt.Err(err))
+
+// Typed-attr API (slog.LogAttrs, audit.Log) — bare pair won't compile
+// against ...slog.Attr, so use logfmt.Err.
+slog.LogAttrs(ctx, slog.LevelWarn, "replication failed",
+    slog.String("backend", name),
+    logfmt.Err(err))
 ```
 
-`logfmt.Err` is the right choice when `err` may be nil and you want the
-attribute dropped, or when composing attribute slices with mixed types.
-For the common "non-nil error from a checked branch" case the bare
-`"error", err` form is the most idiomatic and reads as plain slog.
+Default to the bare `"error", err` form: it is the shortest, reads as
+plain slog, and the runtime's `logfmt.ErrAttrHandler` renders the error
+identically to the helper form. Reach for `logfmt.Err(err)` only when:
+
+- The surrounding call uses the typed-attr API (`slog.LogAttrs`,
+  `audit.Log`, anything taking `...slog.Attr`), where bare pair does not
+  type-check.
+- `err` may legitimately be `nil` and you want the attribute dropped
+  rather than logging `error=<nil>`.
+
+`slog.Any("error", err)` is a third option the handler accepts, but it
+adds noise without a reason to prefer it over the bare pair; do not use
+it for new code.
 
 ### What is still rejected
 
