@@ -17,6 +17,7 @@ package proxy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -46,15 +47,15 @@ import (
 // Stores carries the metadata-store contract. Metrics carries the narrow
 // proxy.metrics.Deps used by MetricsCollector.
 type BackendManagerConfig struct {
-	Backends          map[string]backend.ObjectBackend
-	Stores            core.MetadataStore
-	Metrics           metrics.Deps
-	Dashboard         core.MetadataStore
+	Backends  map[string]backend.ObjectBackend
+	Stores    core.MetadataStore
+	Metrics   metrics.Deps
+	Dashboard core.MetadataStore
 	// PendingEnabled toggles the PUT-before-COMMIT pending-row pattern
 	// (write_path.pending_pattern.enabled). When false the manager skips
 	// pending-intent inserts and pending-promotion paths and falls back
 	// to the legacy cleanup-on-failure flow.
-	PendingEnabled bool
+	PendingEnabled    bool
 	Order             []string
 	CacheTTL          time.Duration
 	BackendTimeout    time.Duration
@@ -539,4 +540,123 @@ func siblingPrefixes(knownBuckets []string, current string) []string {
 		}
 	}
 	return out
+}
+
+// Constructor input validation errors.
+var (
+	// ErrConfigNil signals that NewBackendManager was called with a nil
+	// *BackendManagerConfig pointer.
+	ErrConfigNil = errors.New("config is nil")
+
+	// ErrStoresRequired signals that BackendManagerConfig.Stores is nil.
+	// Stores carries the metadata-store contract and is dereferenced in
+	// every write path, so a nil value would NPE on first use.
+	ErrStoresRequired = errors.New("stores is required")
+
+	// ErrDashboardRequired signals that BackendManagerConfig.Dashboard is
+	// nil. The dashboard aggregator is constructed eagerly inside the
+	// manager, so a nil value here would NPE at boot rather than at first
+	// dashboard request.
+	ErrDashboardRequired = errors.New("dashboard is required")
+
+	// ErrMetricsRequired signals that BackendManagerConfig.Metrics is
+	// nil. The metrics collector is constructed eagerly inside
+	// backendCore, so an unset metrics.Deps would NPE the first time a
+	// metric scrape happens.
+	ErrMetricsRequired = errors.New("metrics is required")
+
+	// ErrNegativeBackendTimeout signals that BackendManagerConfig.BackendTimeout
+	// is negative. Zero is allowed (interpreted as "no per-call deadline")
+	// because production paths derive deadlines from the request context.
+	ErrNegativeBackendTimeout = errors.New("backend_timeout must not be negative")
+
+	// ErrNegativeCacheTTL signals that BackendManagerConfig.CacheTTL is
+	// negative. Zero is allowed (interpreted as "no TTL").
+	ErrNegativeCacheTTL = errors.New("cache_ttl must not be negative")
+
+	// ErrNegativeMultipartDEKCacheTTL signals that
+	// BackendManagerConfig.MultipartDEKCacheTTL is negative. Zero is
+	// allowed (interpreted as "use the 1h default").
+	ErrNegativeMultipartDEKCacheTTL = errors.New("multipart_dek_cache_ttl must not be negative")
+)
+
+// -------------------------------------------------------------------------
+// STORE-ROLE ACCESSORS
+// -------------------------------------------------------------------------
+
+// Stores returns the wrapped metadata-store contract. Exposed for
+// transport handlers that need direct store access (multipart bookkeeping
+// in s3api, per-backend stats / data drop in admin).
+func (m *BackendManager) Stores() core.MetadataStore { return m.stores }
+
+// -------------------------------------------------------------------------
+// ROUTING
+// -------------------------------------------------------------------------
+
+// SelectReplicaTarget picks a target backend for a replication copy using
+// the same routing strategy as normal writes. Excludes backends that
+// already hold a copy of the object.
+func (m *BackendManager) SelectReplicaTarget(ctx context.Context, size int64, exclusion map[string]bool) (string, error) {
+	eligible := m.eligibleForWrite(1, 0, size)
+	filtered := make([]string, 0, len(eligible))
+	for _, name := range eligible {
+		if !exclusion[name] {
+			filtered = append(filtered, name)
+		}
+	}
+	if len(filtered) == 0 {
+		return "", nil
+	}
+	name, err := m.coord.selectBackendForWrite(ctx, size, filtered)
+	if errors.Is(err, core.ErrNoSpaceAvailable) {
+		return "", nil
+	}
+	return name, err
+}
+
+// -------------------------------------------------------------------------
+// PASS-THROUGHS
+// -------------------------------------------------------------------------
+
+// DeleteOrEnqueue forwards to the write coordinator. Worker and drain
+// interfaces accept *BackendManager and call DeleteOrEnqueue on it; the
+// implementation lives on the coordinator now, but the call site shape
+// stays the same.
+func (m *BackendManager) DeleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, backendName, key, reason string, sizeBytes int64) {
+	m.coord.DeleteOrEnqueue(ctx, be, backendName, key, reason, sizeBytes)
+}
+
+// GetDashboardData delegates to the dashboard.Aggregator and enriches the
+// result with drain status and circuit-breaker health from the
+// BackendManager's in-memory state.
+func (m *BackendManager) GetDashboardData(ctx context.Context) (*dashboard.Data, error) {
+	data, err := m.dashboard.GetData(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	data.DrainingBackends = make(map[string]drain.Progress)
+	for _, name := range m.order {
+		if !m.IsDraining(name) {
+			continue
+		}
+		progress, err := m.DrainManager.GetDrainProgress(ctx, name)
+		if err == nil {
+			data.DrainingBackends[name] = *progress
+		}
+	}
+
+	data.UnhealthyBackends = make(map[string]bool)
+	for name, be := range m.backends {
+		if cb, ok := be.(*backend.CircuitBreakerBackend); ok && !cb.IsHealthy() {
+			data.UnhealthyBackends[name] = true
+		}
+	}
+
+	return data, nil
+}
+
+// GetDirectoryChildren delegates to the dashboard.Aggregator.
+func (m *BackendManager) GetDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.DirectoryListResult, error) {
+	return m.dashboard.GetDirectoryChildren(ctx, prefix, startAfter, maxKeys)
 }

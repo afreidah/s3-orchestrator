@@ -1,9 +1,9 @@
 // -------------------------------------------------------------------------------
-// Object Manager - Read Operations (GET, HEAD, LIST)
+// Object Manager - Type Definition and Shared Helpers
 //
 // Author: Alex Freidah
 //
-// Read failover, broadcast reads, GetObject, HeadObject, ListObjects.
+// ObjectManager struct, constructor, and shared helpers.
 // read failover across replicas, broadcast reads during degraded mode, and
 // usage limit enforcement on reads and writes. DeleteObjects provides batch
 // deletion with concurrent backend I/O.
@@ -14,8 +14,11 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"log/slog"
 	"strconv"
@@ -25,18 +28,97 @@ import (
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	objcache "github.com/afreidah/s3-orchestrator/internal/cache"
-	"github.com/afreidah/s3-orchestrator/internal/store/core"
-
+	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
-	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe"
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/ioutilx"
-
+	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
+
+// managerSpanPrefix is prepended to every OpenTelemetry span name the
+// ObjectManager creates so traces clearly distinguish the manager
+// layer ("Manager GetObject") from the backend layer ("Backend
+// GetObject") in the same end-to-end trace.
+const managerSpanPrefix = "Manager "
+
+// ObjectManager handles object-level CRUD operations with read failover,
+// broadcast reads during degraded mode, and location caching.
+type ObjectManager struct {
+	*backendCore
+	coord             *writeCoordinator  // write-path helpers shared with BackendManager and MultipartManager
+	stores            core.MetadataStore // direct store access for read paths and quota inspection
+	encryptor         *encryption.Encryptor
+	cache             *LocationCache
+	objectCache       objcache.ObjectCache // nil when object data caching is disabled
+	parallelBroadcast bool
+	integrityCfg      *syncutil.AtomicConfig[config.IntegrityConfig]
+}
+
+// ObjectManagerDeps bundles the dependencies NewObjectManager needs so
+// the call signature stays under the parameter-count ceiling.
+type ObjectManagerDeps struct {
+	Core              *backendCore
+	Coord             *writeCoordinator
+	Stores            core.MetadataStore
+	Encryptor         *encryption.Encryptor
+	LocationCache     *LocationCache
+	ObjectCache       objcache.ObjectCache
+	ParallelBroadcast bool
+	IntegrityCfg      *syncutil.AtomicConfig[config.IntegrityConfig]
+}
+
+// NewObjectManager creates an ObjectManager sharing the given core
+// infrastructure and write coordinator. All dependencies must be
+// non-nil; nothing is patched in post-construction.
+func NewObjectManager(d *ObjectManagerDeps) *ObjectManager {
+	return &ObjectManager{
+		backendCore:       d.Core,
+		coord:             d.Coord,
+		stores:            d.Stores,
+		encryptor:         d.Encryptor,
+		cache:             d.LocationCache,
+		objectCache:       d.ObjectCache,
+		parallelBroadcast: d.ParallelBroadcast,
+		integrityCfg:      d.IntegrityCfg,
+	}
+}
+
+// invalidateCache removes a key from the object data cache if caching is enabled.
+func (o *ObjectManager) invalidateCache(key string) {
+	if o.objectCache != nil {
+		o.objectCache.Invalidate(key)
+	}
+}
+
+// -------------------------------------------------------------------------
+// PRE-FLIGHT CHECKS
+// -------------------------------------------------------------------------
+
+// CanAcceptWrite reports whether any backend can accept a write of the given
+// size. Used by the HTTP handler to reject uploads before the request body
+// is transmitted (Expect: 100-Continue support).
+func (o *ObjectManager) CanAcceptWrite(size int64) bool {
+	return len(o.eligibleForWrite(1, 0, size)) > 0
+}
+
+// BackendCapacityStats returns the current per-backend used/limit byte
+// snapshot. Used by the InsufficientStorage error path so the response
+// body can name the backends that are at capacity instead of returning
+// a generic message. Returns nil on a DB lookup failure so the caller
+// can fall back to its terse default.
+func (o *ObjectManager) BackendCapacityStats(ctx context.Context) map[string]core.QuotaStat {
+	stats, err := o.stores.GetQuotaStats(ctx)
+	if err != nil {
+		return nil
+	}
+	return stats
+}
 
 // -------------------------------------------------------------------------
 // READ FAILOVER
@@ -896,4 +978,72 @@ func parsePlaintextRange(rangeHeader string, plaintextSize int64) (start, end in
 	}
 
 	return start, end, true
+}
+
+// HashBody computes the SHA-256 hex digest of a byte slice.
+func HashBody(data []byte) string {
+	h := sha256.Sum256(data)
+	return hex.EncodeToString(h[:])
+}
+
+// VerifyingReader wraps an io.ReadCloser and computes SHA-256 as data is read.
+// After the underlying reader returns EOF, call Verify to check the hash.
+type VerifyingReader struct {
+	inner      io.ReadCloser
+	hasher     hash.Hash
+	expected   string                        // expected hex digest (empty = skip)
+	onMismatch func(expected, actual string) // called on Close if hash doesn't match
+}
+
+// NewVerifyingReader wraps r with a streaming SHA-256 computation.
+func NewVerifyingReader(r io.ReadCloser) *VerifyingReader {
+	return &VerifyingReader{
+		inner:  r,
+		hasher: sha256.New(),
+	}
+}
+
+// Read implements io.Reader. Data passes through to the caller while being
+// hashed incrementally.
+func (vr *VerifyingReader) Read(p []byte) (int, error) {
+	n, err := vr.inner.Read(p)
+	if n > 0 {
+		_, _ = vr.hasher.Write(p[:n])
+	}
+	return n, err
+}
+
+// Close closes the underlying reader. If an OnMismatch callback is set
+// and verification fails, it is called before returning.
+func (vr *VerifyingReader) Close() error {
+	err := vr.inner.Close()
+	if vr.expected != "" && vr.onMismatch != nil {
+		actual := hex.EncodeToString(vr.hasher.Sum(nil))
+		if actual != vr.expected {
+			vr.onMismatch(vr.expected, actual)
+		}
+	}
+	return err
+}
+
+// SetVerification configures the reader to check the hash on Close and
+// call onMismatch if the digest doesn't match. This allows the caller
+// to trigger cleanup of corrupted copies after streaming completes.
+func (vr *VerifyingReader) SetVerification(expected string, onMismatch func(expected, actual string)) {
+	vr.expected = expected
+	vr.onMismatch = onMismatch
+}
+
+// Verify checks the computed hash against the expected hex digest.
+// Returns nil if they match, or an error describing the mismatch.
+// Returns nil if expected is empty (object has no stored hash).
+func (vr *VerifyingReader) Verify(expected string) error {
+	if expected == "" {
+		return nil
+	}
+	actual := hex.EncodeToString(vr.hasher.Sum(nil))
+	if actual != expected {
+		return fmt.Errorf("integrity check failed: expected %s, got %s", expected, actual)
+	}
+	return nil
 }
