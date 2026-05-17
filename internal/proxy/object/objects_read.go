@@ -31,9 +31,9 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe"
-	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	pobserve "github.com/afreidah/s3-orchestrator/internal/proxy/observe"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/readpath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/ioutilx"
@@ -197,11 +197,7 @@ func (o *Manager) GetObject(ctx context.Context, key string, rangeHeader string)
 	}
 	o.core.Acct().Egress(backendName, result.Size)
 
-	audit.Log(ctx, "storage.GetObject",
-		slog.String("key", key),
-		slog.String("backend", backendName),
-		slog.Int64("size", result.Size),
-	)
+	pobserve.GetCompleted(ctx, key, backendName, result.Size)
 
 	if err := o.populateObjectCache(key, rangeHeader, result); err != nil {
 		return nil, err
@@ -220,11 +216,7 @@ func (o *Manager) tryGetObjectCache(ctx context.Context, key, rangeHeader string
 	if !ok {
 		return nil, false
 	}
-	audit.Log(ctx, "storage.GetObject",
-		slog.String("key", key),
-		slog.String("backend", "cache"),
-		slog.Int64("size", int64(len(entry.Data))),
-	)
+	pobserve.GetCompleted(ctx, key, "cache", int64(len(entry.Data)))
 	return &s3be.GetObjectResult{
 		Body:        io.NopCloser(bytes.NewReader(entry.Data)),
 		Size:        int64(len(entry.Data)),
@@ -420,12 +412,7 @@ func (o *Manager) HeadObject(ctx context.Context, key string) (*s3be.HeadObjectR
 	}
 	o.core.Acct().APICall(backendName)
 
-	audit.Log(ctx, "storage.HeadObject",
-		slog.String("key", key),
-		slog.String("backend", backendName),
-		slog.Int64("size", result.Size),
-	)
-
+	pobserve.HeadCompleted(ctx, key, backendName, result.Size)
 	return result, nil
 }
 
@@ -528,12 +515,7 @@ func (o *Manager) ListObjects(ctx context.Context, prefix, delimiter, startAfter
 
 	o.core.Acct().Operation(operation, "", start, nil)
 
-	audit.Log(ctx, "storage.ListObjects",
-		slog.String("prefix", prefix),
-		slog.Int("key_count", result.KeyCount),
-		slog.Bool("truncated", result.IsTruncated),
-	)
-
+	pobserve.ListCompleted(ctx, prefix, result.KeyCount, result.IsTruncated)
 	span.SetStatus(codes.Ok, "")
 	span.SetAttributes(attribute.Int("s3o.key_count", result.KeyCount))
 	return result, nil

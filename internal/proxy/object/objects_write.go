@@ -17,19 +17,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"os"
 	"time"
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
-	"github.com/afreidah/s3-orchestrator/internal/internalkey"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/workerpool"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe"
-	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
-	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	pobserve "github.com/afreidah/s3-orchestrator/internal/proxy/observe"
 	"github.com/afreidah/s3-orchestrator/internal/util/bufpool"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -253,27 +250,8 @@ func (o *Manager) finalizePutSuccess(ctx context.Context, span trace.Span, req *
 		span.SetAttributes(telemetry.AttrWriteFailover.Bool(true))
 		span.SetAttributes(telemetry.AttrFailoverAttempts.Int(len(req.failedBackends)))
 	}
-	audit.Log(ctx, "storage.PutObject",
-		slog.String("key", req.key),
-		slog.String("backend", req.backendName),
-		slog.Int64("size", req.size),
-	)
-	if event.Emit != nil {
-		bucket, userKey := internalkey.Split(req.key)
-		event.Emit(event.Event{
-			Type:    event.ObjectCreatedPut,
-			Subject: userKey,
-			Data: map[string]any{
-				"bucket":     bucket,
-				"key":        userKey,
-				"backend":    req.backendName,
-				"size":       req.size,
-				"request_id": audit.RequestID(ctx),
-			},
-		})
-	}
+	pobserve.PutCompleted(ctx, span, req.key, req.backendName, req.size)
 	o.invalidateCache(req.key)
-	span.SetStatus(codes.Ok, "")
 }
 
 // withoutBackend returns eligible with name removed in original order.
@@ -405,31 +383,8 @@ func (o *Manager) CopyObject(ctx context.Context, sourceKey, destKey string) (st
 	o.core.Acct().Egress(srcName, size)         // source: Get
 	o.core.Acct().Ingress(destBackendName, size) // dest: Put
 
-	audit.Log(ctx, "storage.CopyObject",
-		slog.String("source_key", sourceKey),
-		slog.String("dest_key", destKey),
-		slog.String("source_backend", srcName),
-		slog.String("dest_backend", destBackendName),
-		slog.Int64("size", size),
-	)
-	if event.Emit != nil {
-		bucket, userKey := internalkey.Split(destKey)
-		event.Emit(event.Event{
-			Type:    event.ObjectCreatedCopy,
-			Subject: userKey,
-			Data: map[string]any{
-				"bucket":     bucket,
-				"key":        userKey,
-				"source_key": sourceKey,
-				"backend":    destBackendName,
-				"size":       size,
-				"request_id": audit.RequestID(ctx),
-			},
-		})
-	}
+	pobserve.CopyCompleted(ctx, span, sourceKey, destKey, srcName, destBackendName, size)
 	o.invalidateCache(destKey)
-
-	span.SetStatus(codes.Ok, "")
 	return etag, nil
 }
 
@@ -483,26 +438,8 @@ func (o *Manager) DeleteObject(ctx context.Context, key string) error {
 		o.core.Acct().APICall(c.BackendName)
 	}
 
-	audit.Log(ctx, "storage.DeleteObject",
-		slog.String("key", key),
-		slog.Int("copies_deleted", len(copies)),
-	)
-	if event.Emit != nil {
-		bucket, userKey := internalkey.Split(key)
-		event.Emit(event.Event{
-			Type:    event.ObjectRemovedDelete,
-			Subject: userKey,
-			Data: map[string]any{
-				"bucket":         bucket,
-				"key":            userKey,
-				"copies_deleted": len(copies),
-				"request_id":     audit.RequestID(ctx),
-			},
-		})
-	}
+	pobserve.DeleteCompleted(ctx, span, key, len(copies))
 	o.invalidateCache(key)
-
-	span.SetStatus(codes.Ok, "")
 	return nil
 }
 
@@ -569,29 +506,11 @@ func (o *Manager) DeleteObjects(ctx context.Context, keys []string) []DeleteObje
 	successCount, errorCount := tallyDeleteResults(results)
 	o.core.Acct().Operation(operation, "", start, nil)
 
-	audit.Log(ctx, "storage.DeleteObjects",
-		slog.Int("total_keys", len(keys)),
-		slog.Int("deleted", successCount),
-		slog.Int("errors", errorCount),
-	)
-	if event.Emit != nil {
-		event.Emit(event.Event{
-			Type: event.ObjectRemovedDeleteBatch,
-			Data: map[string]any{
-				"total_keys": len(keys),
-				"deleted":    successCount,
-				"errors":     errorCount,
-				"request_id": audit.RequestID(ctx),
-			},
-		})
-	}
-
 	span.SetAttributes(
 		attribute.Int("s3o.deleted_count", successCount),
 		attribute.Int("s3o.error_count", errorCount),
 	)
-	span.SetStatus(codes.Ok, "")
-
+	pobserve.DeleteBatchCompleted(ctx, span, len(keys), successCount, errorCount)
 	return results
 }
 
