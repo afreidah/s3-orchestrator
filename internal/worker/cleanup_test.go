@@ -39,7 +39,7 @@ func TestProcessCleanupQueue_DeleteSuccess(t *testing.T) {
 	ops.EXPECT().ReleaseAdmission()
 	ops.EXPECT().GetBackend("b1").Return(nil, nil) // backend value doesn't matter for this test
 	ops.EXPECT().DeleteWithTimeout(gomock.Any(), gomock.Any(), "orphan.txt").Return(nil)
-	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
 	w := NewCleanupWorker(ops, ms, 1, "test-instance", 5*time.Minute)
 	processed, failed := w.ProcessCleanupQueue(context.Background())
@@ -66,7 +66,7 @@ func TestProcessCleanupQueue_DeleteFails_Retries(t *testing.T) {
 	ops.EXPECT().ReleaseAdmission()
 	ops.EXPECT().GetBackend("b1").Return(nil, nil)
 	ops.EXPECT().DeleteWithTimeout(gomock.Any(), gomock.Any(), "stuck.txt").Return(errors.New("timeout"))
-	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
 	w := NewCleanupWorker(ops, ms, 1, "test-instance", 5*time.Minute)
 	_, failed := w.ProcessCleanupQueue(context.Background())
@@ -109,7 +109,7 @@ func TestProcessCleanupQueue_BackendNotFound(t *testing.T) {
 	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
 	ops.EXPECT().ReleaseAdmission()
 	ops.EXPECT().GetBackend("gone").Return(nil, errors.New("not found"))
-	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
 	w := NewCleanupWorker(ops, ms, 1, "test-instance", 5*time.Minute)
 	processed, _ := w.ProcessCleanupQueue(context.Background())
@@ -160,7 +160,7 @@ func TestProcessCleanupQueue_Exhausted_MovesToDLQ(t *testing.T) {
 	ops.EXPECT().ReleaseAdmission()
 	ops.EXPECT().GetBackend("b1").Return(nil, nil)
 	ops.EXPECT().DeleteWithTimeout(gomock.Any(), gomock.Any(), "doomed.txt").Return(errors.New("permanent failure"))
-	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
 	w := NewCleanupWorker(ops, ms, 1, "test-instance", 5*time.Minute)
 	_, failed := w.ProcessCleanupQueue(context.Background())
@@ -199,7 +199,7 @@ func TestProcessCleanupQueue_Exhausted_DLQMoveFails(t *testing.T) {
 	ops.EXPECT().ReleaseAdmission()
 	ops.EXPECT().GetBackend("b1").Return(nil, nil)
 	ops.EXPECT().DeleteWithTimeout(gomock.Any(), gomock.Any(), "doomed2.txt").Return(errors.New("upstream timeout"))
-	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
 	w := NewCleanupWorker(ops, ms, 1, "test-instance", 5*time.Minute)
 	_, failed := w.ProcessCleanupQueue(context.Background())
@@ -228,7 +228,7 @@ func TestProcessCleanupQueue_ReclaimedRow_IncrementsMetric(t *testing.T) {
 	ops.EXPECT().ReleaseAdmission()
 	ops.EXPECT().GetBackend(backend).Return(nil, nil)
 	ops.EXPECT().DeleteWithTimeout(gomock.Any(), gomock.Any(), "k").Return(nil)
-	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
 	before := readCounterValue(t, telemetry.CleanupQueueStaleClaimsRecoveredTotal.WithLabelValues(backend))
 	w := NewCleanupWorker(ops, ms, 1, "test-instance", 5*time.Minute)

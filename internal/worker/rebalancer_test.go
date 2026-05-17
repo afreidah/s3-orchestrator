@@ -249,7 +249,7 @@ func TestExecuteOneMove_Success(t *testing.T) {
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": srcBe, "b2": dstBe}).AnyTimes()
 	ops.EXPECT().StreamCopy(gomock.Any(), srcBe, dstBe, "key1").Return(nil)
 	ops.EXPECT().DeleteOrEnqueue(gomock.Any(), srcBe, "b1", "key1", "rebalance_source_delete", int64(100))
-	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
 	r := NewRebalancer(ops, ms)
 	ok := r.ExecuteOneMove(context.Background(), RebalanceMove{
@@ -295,7 +295,7 @@ func TestExecuteOneMove_MoveLocationFails(t *testing.T) {
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": srcBe, "b2": dstBe}).AnyTimes()
 	ops.EXPECT().StreamCopy(gomock.Any(), srcBe, dstBe, "key1").Return(nil)
 	ops.EXPECT().DeleteOrEnqueue(gomock.Any(), dstBe, "b2", "key1", "rebalance_stale_orphan", int64(100))
-	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
 	r := NewRebalancer(ops, ms)
 	ok := r.ExecuteOneMove(context.Background(), RebalanceMove{

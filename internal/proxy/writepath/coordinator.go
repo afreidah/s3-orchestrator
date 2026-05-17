@@ -128,9 +128,9 @@ func (w *Coordinator) RecordObjectOrCleanup(ctx context.Context, span trace.Span
 // with the supplied reason. Callers are responsible for the failure log
 // message and span status before/after this call.
 func (w *Coordinator) RecoverFromRecordFailure(ctx context.Context, be backend.ObjectBackend, backendName, key, cleanupReason string, size int64) {
-	w.core.Usage().Record(backendName, 1, 0, 0) // PUT that succeeded
+	w.core.Acct().APICall(backendName) // PUT that succeeded
 	delErr := w.core.DeleteWithTimeout(ctx, be, key)
-	w.core.Usage().Record(backendName, 1, 0, 0) // cleanup DELETE
+	w.core.Acct().APICall(backendName) // cleanup DELETE
 	if delErr != nil {
 		w.log.ErrorContext(ctx, "failed to clean up orphaned object",
 			"key", key, "backend", backendName, "error", delErr)
@@ -203,7 +203,7 @@ func (w *Coordinator) RecordObjectAndPromoteIntent(ctx context.Context, span tra
 		// The successful PUT against the backend still consumed an API
 		// call. The success-path usage record runs only when this returns
 		// nil, so account for it here.
-		w.core.Usage().Record(backendName, 1, 0, 0)
+		w.core.Acct().APICall(backendName)
 		observe.RecordSpanError(span, err)
 		return fmt.Errorf("failed to record object: %w", err)
 	}
@@ -245,7 +245,7 @@ func (w *Coordinator) cleanupDisplacedCopies(ctx context.Context, key, newBacken
 // call to the backend was made either way).
 func (w *Coordinator) DeleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, backendName, key, reason string, sizeBytes int64) {
 	err := w.core.DeleteWithTimeout(ctx, be, key)
-	w.core.Usage().Record(backendName, 1, 0, 0)
+	w.core.Acct().APICall(backendName)
 	if err != nil {
 		w.log.WarnContext(ctx, "failed to delete object, enqueuing cleanup",
 			"backend", backendName, "key", key, "reason", reason, "error", err)

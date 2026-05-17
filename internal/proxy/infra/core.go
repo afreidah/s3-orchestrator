@@ -30,6 +30,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
@@ -69,12 +70,16 @@ type Core struct {
 	metricsCollector *metrics.Collector
 	admissionSem     chan struct{}
 	log              *slog.Logger
+	recorder         *accounting.Recorder // built once in New; centralizes per-backend usage + operation metric semantics
 }
 
 // New constructs a *Core from cfg. drainMgr is wired post-construction
 // via SetDrainChecker to break the BackendManager ↔ drain.Manager cycle.
+// The accounting Recorder is built here so every consumer of *Core
+// shares one instance that observes the same usage tracker and the
+// (later-wired) metrics collector via the closure over c.RecordOperation.
 func New(cfg *Config) *Core {
-	return &Core{
+	c := &Core{
 		backends:         cfg.Backends,
 		order:            cfg.Order,
 		backendTimeout:   cfg.BackendTimeout,
@@ -85,6 +90,16 @@ func New(cfg *Config) *Core {
 		admissionSem:     cfg.AdmissionSem,
 		log:              cfg.Log,
 	}
+	c.recorder = accounting.New(c.usage, c.RecordOperation)
+	return c
+}
+
+// Acct returns the shared accounting.Recorder. Consumers should call
+// Acct().APICall / Egress / Ingress / Operation instead of reaching
+// through Usage() and RecordOperation directly so the per-backend
+// accounting rules stay centralised.
+func (c *Core) Acct() *accounting.Recorder {
+	return c.recorder
 }
 
 // SetDrainChecker installs the drain manager after Core has been

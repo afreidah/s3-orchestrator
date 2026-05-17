@@ -63,7 +63,7 @@ func TestScrub_MatchingHash(t *testing.T) {
 	}
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
-	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	be.EXPECT().GetObject(gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(strings.NewReader(body)),
 		Size: 11,
@@ -89,7 +89,7 @@ func TestScrub_HashMismatch(t *testing.T) {
 	}
 	ops.EXPECT().GetBackend("b1").Return(be, nil).Times(2)
 	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
-	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	ops.EXPECT().DeleteOrEnqueue(gomock.Any(), be, "b1", "bucket/key1", "integrity_scrub_failed", int64(11))
 	be.EXPECT().GetObject(gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(strings.NewReader("hello world")),
@@ -116,7 +116,7 @@ func TestScrub_BackendError(t *testing.T) {
 	}
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
-	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	be.EXPECT().GetObject(gomock.Any(), "bucket/key1", "").Return(nil, errors.New("backend down"))
 
 	checked, failed := s.Scrub(context.Background(), 10)
@@ -154,7 +154,7 @@ func TestBackfill_ComputesAndStoresHash(t *testing.T) {
 	}
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
-	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	be.EXPECT().GetObject(gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(strings.NewReader(body)),
 		Size: int64(len(body)),
@@ -186,7 +186,7 @@ func TestBackfill_Pagination(t *testing.T) {
 	ms.objectsWithoutHash = locs
 	ops.EXPECT().GetBackend("b1").Return(be, nil).Times(5)
 	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {}).Times(5)
-	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	be.EXPECT().GetObject(gomock.Any(), gomock.Any(), "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(strings.NewReader("abc")),
 		Size: 3,
@@ -214,7 +214,7 @@ func TestBackfill_UnencryptedObject(t *testing.T) {
 	}
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
-	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	be.EXPECT().GetObject(gomock.Any(), "bucket/plain", "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(strings.NewReader(body)),
 		Size: int64(len(body)),
@@ -240,7 +240,7 @@ func TestBackfill_BackendError(t *testing.T) {
 	}
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
-	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	be.EXPECT().GetObject(gomock.Any(), "bucket/key1", "").Return(nil, errors.New("timeout"))
 
 	processed, _ := s.Backfill(context.Background(), 10, 0)
