@@ -33,7 +33,12 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
@@ -83,11 +88,11 @@ type BackendManagerConfig struct {
 }
 
 // BackendManager manages multiple storage backends with quota tracking.
-// Embeds *backendCore for non-store infrastructure (backends, usage,
+// Embeds *infra.Core for non-store infrastructure (backends, usage,
 // admission, draining, metrics) and holds the per-role store views and
 // hot-reloadable configuration. Store-touching write-path helpers are
 // methods on *BackendManager (manager_writepath.go); pure infra
-// primitives stay on *backendCore.
+// primitives stay on *infra.Core.
 //
 // Workers (rebalancer, replicator, scrubber, ...) are resolved through
 // DI at the call site rather than carried on the manager. The dashboard
@@ -102,11 +107,11 @@ type BackendManagerConfig struct {
 // constructed without WireDrain (every test path that does not need
 // drain behavior) remains usable.
 type BackendManager struct {
-	*backendCore
+	*infra.Core
 	stores           core.MetadataStore    // metadata-store dependency
-	coord            *writeCoordinator     // shared write-path helpers (also held by ObjectManager and MultipartManager)
-	MultipartManager *MultipartManager     // multipart upload lifecycle
-	ObjectManager    *ObjectManager        // CRUD, read failover, broadcast reads
+	coord            *writepath.Coordinator     // shared write-path helpers (also held by object.Manager and MultipartManager)
+	MultipartManager *multipart.Manager    // multipart upload lifecycle
+	ObjectManager    *object.Manager        // CRUD, read failover, broadcast reads
 	dashboard        *dashboard.Aggregator // web UI data aggregation
 
 	// DrainManager is the single post-construction wiring point. Set by
@@ -119,7 +124,7 @@ type BackendManager struct {
 
 	usageFlushCfg syncutil.AtomicConfig[config.UsageFlushConfig]
 	lifecycleCfg  syncutil.AtomicConfig[config.LifecycleConfig]
-	integrityCfg  *syncutil.AtomicConfig[config.IntegrityConfig] // shared with ObjectManager
+	integrityCfg  *syncutil.AtomicConfig[config.IntegrityConfig] // shared with object.Manager
 }
 
 // WireDrain installs the drain.Manager: stores it on BackendManager so
@@ -130,7 +135,7 @@ type BackendManager struct {
 // passing the drain manager through the constructor.
 func (m *BackendManager) WireDrain(d *drain.Manager) {
 	m.DrainManager = d
-	m.drainMgr = d
+	m.SetDrainChecker(d)
 }
 
 // validateConfig checks every input the constructor dereferences and
@@ -197,29 +202,29 @@ func NewBackendManager(cfg *BackendManagerConfig) (*BackendManager, error) {
 	}
 	usage := counter.NewUsageTracker(counters, cfg.UsageLimits)
 
-	core := &backendCore{
-		backends:        cfg.Backends,
-		order:           cfg.Order,
-		backendTimeout:  cfg.BackendTimeout,
-		usage:           usage,
-		routingStrategy: cfg.RoutingStrategy,
-		maxObjectSizes:  cfg.MaxObjectSizes,
-		admissionSem:    cfg.AdmissionSem,
-		log:             slog.Default().With(logfmt.Component("backend_manager")),
-	}
+	c := infra.New(&infra.Config{
+		Backends:        cfg.Backends,
+		Order:           cfg.Order,
+		BackendTimeout:  cfg.BackendTimeout,
+		Usage:           usage,
+		RoutingStrategy: cfg.RoutingStrategy,
+		MaxObjectSizes:  cfg.MaxObjectSizes,
+		AdmissionSem:    cfg.AdmissionSem,
+		Log:             slog.Default().With(logfmt.Component("backend_manager")),
+	})
 
 	dekCacheTTL := cfg.MultipartDEKCacheTTL
 	if dekCacheTTL == 0 {
 		dekCacheTTL = time.Hour
 	}
 
-	coord := newWriteCoordinator(core, cfg.Stores, cfg.PendingEnabled)
-	multipartManager := NewMultipartManager(core, coord, cfg.Stores, cfg.Encryptor, cfg.ObjectCache, dekCacheTTL)
+	coord := writepath.New(c, cfg.Stores, cfg.PendingEnabled)
+	multipartManager := multipart.New(c, coord, cfg.Stores, cfg.Encryptor, cfg.ObjectCache, dekCacheTTL)
 
 	integrityCfg := &syncutil.AtomicConfig[config.IntegrityConfig]{}
-	cache := NewLocationCache(cfg.CacheTTL)
-	objectManager := NewObjectManager(&ObjectManagerDeps{
-		Core:              core,
+	cache := object.NewLocationCache(cfg.CacheTTL)
+	objectManager := object.New(&object.Deps{
+		Core:              c,
 		Coord:             coord,
 		Stores:            cfg.Stores,
 		Encryptor:         cfg.Encryptor,
@@ -230,7 +235,7 @@ func NewBackendManager(cfg *BackendManagerConfig) (*BackendManager, error) {
 	})
 
 	m := &BackendManager{
-		backendCore:      core,
+		Core:             c,
 		stores:           cfg.Stores,
 		coord:            coord,
 		MultipartManager: multipartManager,
@@ -239,14 +244,14 @@ func NewBackendManager(cfg *BackendManagerConfig) (*BackendManager, error) {
 		integrityCfg:     integrityCfg,
 	}
 
-	core.metricsCollector = metrics.New(cfg.Metrics, usage, backendNames, cfg.ReplicationFactor)
+	c.SetMetricsCollector(metrics.New(cfg.Metrics, usage, backendNames, cfg.ReplicationFactor))
 
 	return m, nil
 }
 
 // ClearCache removes all entries from the location cache.
 func (m *BackendManager) ClearCache() {
-	m.ObjectManager.cache.Clear()
+	m.ObjectManager.LocationCache().Clear()
 }
 
 // ClearDrainState removes all entries from the draining map. Used by tests
@@ -263,29 +268,29 @@ func (m *BackendManager) ClearDrainState() {
 // configured. The HTTP admission controller should use this channel so that
 // HTTP requests and background services share one concurrency budget.
 func (m *BackendManager) AdmissionSem() chan struct{} {
-	return m.admissionSem
+	return m.Core.AdmissionSem()
 }
 
 // Close stops every background cache eviction goroutine the manager
 // owns: the object location cache and the multipart per-upload DEK
 // cache. Safe to call multiple times.
 func (m *BackendManager) Close() {
-	m.ObjectManager.cache.Close()
-	if m.MultipartManager != nil && m.MultipartManager.dekCache != nil {
-		m.MultipartManager.dekCache.Close()
+	m.ObjectManager.LocationCache().Close()
+	if m.MultipartManager != nil {
+		m.MultipartManager.Close()
 	}
 }
 
 // RecordUsage increments the in-memory usage counters for a backend.
 // Exposed for admin operations that bypass the normal manager request path.
 func (m *BackendManager) RecordUsage(backendName string, apiCalls, egress, ingress int64) {
-	m.usage.Record(backendName, apiCalls, egress, ingress)
+	m.Usage().Record(backendName, apiCalls, egress, ingress)
 }
 
 // UpdateUsageLimits replaces the per-backend usage limits. Safe to call
 // concurrently with request handling.
 func (m *BackendManager) UpdateUsageLimits(limits map[string]core.UsageLimits) {
-	m.usage.UpdateLimits(limits)
+	m.Usage().UpdateLimits(limits)
 }
 
 // FlushUsage flushes accumulated in-memory usage counters to the database.
@@ -298,7 +303,7 @@ func (m *BackendManager) FlushUsage(ctx context.Context) error {
 	if m.DrainManager != nil {
 		skip = m.DrainManager.CompletedBackends()
 	}
-	return m.usage.FlushUsage(ctx, m.stores, skip)
+	return m.Usage().FlushUsage(ctx, m.stores, skip)
 }
 
 // RedisCounterConfigured returns true when the counter backend is a Redis
@@ -306,7 +311,7 @@ func (m *BackendManager) FlushUsage(ctx context.Context) error {
 // whether an advisory lock is needed  -  the lock must be held even during
 // fallback to prevent double-counting when Redis recovers mid-flush.
 func (m *BackendManager) RedisCounterConfigured() bool {
-	_, ok := m.usage.Backend().(*counter.RedisCounterBackend)
+	_, ok := m.Usage().Backend().(*counter.RedisCounterBackend)
 	return ok
 }
 
@@ -348,7 +353,7 @@ func (m *BackendManager) IntegrityConfig() *config.IntegrityConfig {
 
 // NearUsageLimit returns true if any backend is approaching its usage limits.
 func (m *BackendManager) NearUsageLimit(threshold float64) bool {
-	return m.usage.NearLimit(threshold)
+	return m.Usage().NearLimit(threshold)
 }
 
 // -------------------------------------------------------------------------
@@ -370,7 +375,7 @@ func (m *BackendManager) SyncBackend(ctx context.Context, backendName, bucket st
 	m.Log().InfoContext(ctx, "starting backend sync", "backend", backendName, "bucket", bucket)
 
 	bucketPrefix := internalkey.Prefix(bucket)
-	otherPrefixes := siblingPrefixes(knownBuckets, bucket)
+	otherPrefixes := reconcile.SiblingPrefixes(knownBuckets, bucket)
 	var apiPages int64
 
 	err = s3b.ListObjects(ctx, "", func(objects []backend.ListedObject) error {
@@ -384,7 +389,7 @@ func (m *BackendManager) SyncBackend(ctx context.Context, backendName, bucket st
 	// Record ListObjectsV2 API calls against the backend's usage quota:
 	// each page is one API request to the backend provider.
 	if apiPages > 0 {
-		m.usage.Record(backendName, apiPages, 0, 0)
+		m.Usage().Record(backendName, apiPages, 0, 0)
 	}
 	if err != nil {
 		return imported, skipped, err
@@ -446,7 +451,7 @@ func normalizeSyncKey(rawKey, bucketPrefix string, otherPrefixes []string) (stri
 // effort: if the cleanup store call errors, the metadata delete still
 // stands and the next reconcile pass will sweep the orphan rows. We
 // log but do not propagate.
-func (m *BackendManager) makeReconcileDeleter() deleterFn {
+func (m *BackendManager) makeReconcileDeleter() reconcile.DeleterFn {
 	return func(ctx context.Context, key, backendName string) error {
 		if err := m.stores.DeleteObjectLocation(ctx, key, backendName); err != nil {
 			return err
@@ -475,34 +480,34 @@ func (m *BackendManager) ReconcileBackend(ctx context.Context, backendName, buck
 	}
 
 	bucketPrefix := internalkey.Prefix(bucket)
-	otherPrefixes := siblingPrefixes(knownBuckets, bucket)
+	otherPrefixes := reconcile.SiblingPrefixes(knownBuckets, bucket)
 
 	var apiPages int64
-	s3 := newS3KeyStream(ctx, s3b, bucketPrefix, otherPrefixes, &apiPages)
-	defer s3.stop()
+	s3 := reconcile.NewS3KeyStream(ctx, s3b, bucketPrefix, otherPrefixes, &apiPages)
+	defer s3.Stop()
 
-	dbIter := newDBCursorStream(m.stores, backendName, bucketPrefix, otherPrefixes)
-	defer dbIter.stop()
+	dbIter := reconcile.NewDBCursorStream(m.stores, backendName, bucketPrefix, otherPrefixes)
+	defer dbIter.Stop()
 
-	res := &reconcileResult{}
-	mergeErr := reconcileSorted(
+	res := &reconcile.Result{}
+	mergeErr := reconcile.Sorted(
 		ctx, s3, dbIter,
-		importHandler(m.Log(), backendName, m.stores.ImportObject, res),
-		deleteHandler(m.Log(), backendName, m.makeReconcileDeleter(), res),
+		reconcile.ImportHandler(m.Log(), backendName, m.stores.ImportObject, res),
+		reconcile.DeleteHandler(m.Log(), backendName, m.makeReconcileDeleter(), res),
 	)
 
 	if pages := atomic.LoadInt64(&apiPages); pages > 0 {
-		m.usage.Record(backendName, pages, 0, 0)
+		m.Usage().Record(backendName, pages, 0, 0)
 	}
 	if mergeErr != nil {
-		return &worker.ReconcileResult{BackendsScanned: 1, Imported: int(res.imported), Removed: int(res.removed)},
+		return &worker.ReconcileResult{BackendsScanned: 1, Imported: int(res.Imported), Removed: int(res.Removed)},
 			fmt.Errorf("reconcile %s: %w", backendName, mergeErr)
 	}
 
 	return &worker.ReconcileResult{
 		BackendsScanned: 1,
-		Imported:        int(res.imported),
-		Removed:         int(res.removed),
+		Imported:        int(res.Imported),
+		Removed:         int(res.Removed),
 	}, nil
 }
 
@@ -510,7 +515,7 @@ func (m *BackendManager) ReconcileBackend(ctx context.Context, backendName, buck
 // returns the underlying lister, which must support the streaming
 // ListObjects API the reconciler drives. The interface return makes the
 // dependency narrow so tests can substitute a fake.
-func (m *BackendManager) resolveS3Backend(name string) (objectLister, error) {
+func (m *BackendManager) resolveS3Backend(name string) (reconcile.ObjectLister, error) {
 	be, err := m.GetBackend(name)
 	if err != nil {
 		return nil, err
@@ -523,24 +528,13 @@ func (m *BackendManager) resolveS3Backend(name string) (objectLister, error) {
 		}
 		inner = u.Unwrap()
 	}
-	lister, ok := inner.(objectLister)
+	lister, ok := inner.(reconcile.ObjectLister)
 	if !ok {
 		return nil, fmt.Errorf("backend %s does not support listing", name)
 	}
 	return lister, nil
 }
 
-// siblingPrefixes returns the bucket-prefix list (each suffixed with '/')
-// for every known bucket except the one currently being reconciled.
-func siblingPrefixes(knownBuckets []string, current string) []string {
-	out := make([]string, 0, len(knownBuckets))
-	for _, b := range knownBuckets {
-		if b != current {
-			out = append(out, b+"/")
-		}
-	}
-	return out
-}
 
 // Constructor input validation errors.
 var (
@@ -597,7 +591,7 @@ func (m *BackendManager) Stores() core.MetadataStore { return m.stores }
 // the same routing strategy as normal writes. Excludes backends that
 // already hold a copy of the object.
 func (m *BackendManager) SelectReplicaTarget(ctx context.Context, size int64, exclusion map[string]bool) (string, error) {
-	eligible := m.eligibleForWrite(1, 0, size)
+	eligible := m.EligibleForWrite(1, 0, size)
 	filtered := make([]string, 0, len(eligible))
 	for _, name := range eligible {
 		if !exclusion[name] {
@@ -607,7 +601,7 @@ func (m *BackendManager) SelectReplicaTarget(ctx context.Context, size int64, ex
 	if len(filtered) == 0 {
 		return "", nil
 	}
-	name, err := m.coord.selectBackendForWrite(ctx, size, filtered)
+	name, err := m.coord.SelectBackendForWrite(ctx, size, filtered)
 	if errors.Is(err, core.ErrNoSpaceAvailable) {
 		return "", nil
 	}
@@ -636,7 +630,7 @@ func (m *BackendManager) GetDashboardData(ctx context.Context) (*dashboard.Data,
 	}
 
 	data.DrainingBackends = make(map[string]drain.Progress)
-	for _, name := range m.order {
+	for _, name := range m.BackendOrder() {
 		if !m.IsDraining(name) {
 			continue
 		}
@@ -647,7 +641,7 @@ func (m *BackendManager) GetDashboardData(ctx context.Context) (*dashboard.Data,
 	}
 
 	data.UnhealthyBackends = make(map[string]bool)
-	for name, be := range m.backends {
+	for name, be := range m.Backends() {
 		if cb, ok := be.(*backend.CircuitBreakerBackend); ok && !cb.IsHealthy() {
 			data.UnhealthyBackends[name] = true
 		}

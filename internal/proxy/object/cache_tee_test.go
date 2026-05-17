@@ -10,7 +10,7 @@
 // before the size check.
 // -------------------------------------------------------------------------------
 
-package proxy
+package object
 
 import (
 	"bytes"

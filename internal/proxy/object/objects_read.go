@@ -3,13 +3,13 @@
 //
 // Author: Alex Freidah
 //
-// ObjectManager struct, constructor, and shared helpers.
+// Manager struct, constructor, and shared helpers.
 // read failover across replicas, broadcast reads during degraded mode, and
 // usage limit enforcement on reads and writes. DeleteObjects provides batch
 // deletion with concurrent backend I/O.
 // -------------------------------------------------------------------------------
 
-package proxy
+package object
 
 import (
 	"bytes"
@@ -33,6 +33,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/ioutilx"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
@@ -42,16 +44,16 @@ import (
 )
 
 // managerSpanPrefix is prepended to every OpenTelemetry span name the
-// ObjectManager creates so traces clearly distinguish the manager
+// Manager creates so traces clearly distinguish the manager
 // layer ("Manager GetObject") from the backend layer ("Backend
 // GetObject") in the same end-to-end trace.
 const managerSpanPrefix = "Manager "
 
-// ObjectManager handles object-level CRUD operations with read failover,
+// Manager handles object-level CRUD operations with read failover,
 // broadcast reads during degraded mode, and location caching.
-type ObjectManager struct {
-	*backendCore
-	coord             *writeCoordinator  // write-path helpers shared with BackendManager and MultipartManager
+type Manager struct {
+	*infra.Core
+	coord             *writepath.Coordinator  // write-path helpers shared with BackendManager and MultipartManager
 	stores            core.MetadataStore // direct store access for read paths and quota inspection
 	encryptor         *encryption.Encryptor
 	cache             *LocationCache
@@ -60,11 +62,11 @@ type ObjectManager struct {
 	integrityCfg      *syncutil.AtomicConfig[config.IntegrityConfig]
 }
 
-// ObjectManagerDeps bundles the dependencies NewObjectManager needs so
+// Deps bundles the dependencies New needs so
 // the call signature stays under the parameter-count ceiling.
-type ObjectManagerDeps struct {
-	Core              *backendCore
-	Coord             *writeCoordinator
+type Deps struct {
+	Core              *infra.Core
+	Coord             *writepath.Coordinator
 	Stores            core.MetadataStore
 	Encryptor         *encryption.Encryptor
 	LocationCache     *LocationCache
@@ -73,12 +75,12 @@ type ObjectManagerDeps struct {
 	IntegrityCfg      *syncutil.AtomicConfig[config.IntegrityConfig]
 }
 
-// NewObjectManager creates an ObjectManager sharing the given core
+// New creates an Manager sharing the given core
 // infrastructure and write coordinator. All dependencies must be
 // non-nil; nothing is patched in post-construction.
-func NewObjectManager(d *ObjectManagerDeps) *ObjectManager {
-	return &ObjectManager{
-		backendCore:       d.Core,
+func New(d *Deps) *Manager {
+	return &Manager{
+		Core:              d.Core,
 		coord:             d.Coord,
 		stores:            d.Stores,
 		encryptor:         d.Encryptor,
@@ -90,10 +92,17 @@ func NewObjectManager(d *ObjectManagerDeps) *ObjectManager {
 }
 
 // invalidateCache removes a key from the object data cache if caching is enabled.
-func (o *ObjectManager) invalidateCache(key string) {
+func (o *Manager) invalidateCache(key string) {
 	if o.objectCache != nil {
 		o.objectCache.Invalidate(key)
 	}
+}
+
+// LocationCache returns the location cache the manager holds. Exposed for
+// BackendManager and tests so the lifecycle (Close, Clear) can be driven
+// from the root package without reaching into the unexported field.
+func (o *Manager) LocationCache() *LocationCache {
+	return o.cache
 }
 
 // -------------------------------------------------------------------------
@@ -103,8 +112,8 @@ func (o *ObjectManager) invalidateCache(key string) {
 // CanAcceptWrite reports whether any backend can accept a write of the given
 // size. Used by the HTTP handler to reject uploads before the request body
 // is transmitted (Expect: 100-Continue support).
-func (o *ObjectManager) CanAcceptWrite(size int64) bool {
-	return len(o.eligibleForWrite(1, 0, size)) > 0
+func (o *Manager) CanAcceptWrite(size int64) bool {
+	return len(o.EligibleForWrite(1, 0, size)) > 0
 }
 
 // BackendCapacityStats returns the current per-backend used/limit byte
@@ -112,7 +121,7 @@ func (o *ObjectManager) CanAcceptWrite(size int64) bool {
 // body can name the backends that are at capacity instead of returning
 // a generic message. Returns nil on a DB lookup failure so the caller
 // can fall back to its terse default.
-func (o *ObjectManager) BackendCapacityStats(ctx context.Context) map[string]core.QuotaStat {
+func (o *Manager) BackendCapacityStats(ctx context.Context) map[string]core.QuotaStat {
 	stats, err := o.stores.GetQuotaStats(ctx)
 	if err != nil {
 		return nil
@@ -128,11 +137,11 @@ func (o *ObjectManager) BackendCapacityStats(ctx context.Context) map[string]cor
 // because it exceeded its monthly usage limits. Not exposed to callers.
 var errUsageLimitSkip = errors.New("backend skipped: usage limits exceeded")
 
-// listObjectsMaxPages caps DB round trips per ListObjects request so a
+// ListObjectsMaxPages caps DB round trips per ListObjects request so a
 // single client call cannot drag the database through unbounded scans on
 // pathological prefix layouts. Exposed as a var (rather than const) so
 // tests can lower it without generating hundreds of mock pages.
-var listObjectsMaxPages = 100
+var ListObjectsMaxPages = 100
 
 // ObjectExists reports whether at least one location row exists for key.
 // Used by the conditional-write path (If-None-Match: *) to fail-fast
@@ -140,7 +149,7 @@ var listObjectsMaxPages = 100
 // between this read and the eventual RecordObject commit, matching AWS
 // S3's documented best-effort precondition semantic. ErrObjectNotFound
 // is the canonical "no row" signal and is normalised to (false, nil).
-func (o *ObjectManager) ObjectExists(ctx context.Context, key string) (bool, error) {
+func (o *Manager) ObjectExists(ctx context.Context, key string) (bool, error) {
 	locs, err := o.stores.GetAllObjectLocations(ctx, key)
 	if errors.Is(err, core.ErrObjectNotFound) {
 		return false, nil
@@ -180,7 +189,7 @@ func noopCleanup() {
 // order until one succeeds. The tryBackend callback should attempt the operation
 // and return the object size (for span attributes) or an error to try the next copy.
 // Returns the name of the backend that succeeded alongside any error.
-func (o *ObjectManager) withReadFailover(ctx context.Context, operation, key string, tryBackend readBackendFn) (string, error) {
+func (o *Manager) withReadFailover(ctx context.Context, operation, key string, tryBackend readBackendFn) (string, error) {
 	start := time.Now()
 
 	ctx, span := telemetry.StartSpan(ctx, managerSpanPrefix+operation,
@@ -209,14 +218,14 @@ func (o *ObjectManager) withReadFailover(ctx context.Context, operation, key str
 // and a count of usage-limit skips so the failure-path return distinguishes
 // "all backends declined for usage limits" from "all backends genuinely
 // failed."
-func (o *ObjectManager) tryEachLocation(ctx context.Context, operation, key string, start time.Time, span trace.Span, locations []core.ObjectLocation, tryBackend readBackendFn) (string, error) {
+func (o *Manager) tryEachLocation(ctx context.Context, operation, key string, start time.Time, span trace.Span, locations []core.ObjectLocation, tryBackend readBackendFn) (string, error) {
 	var lastErr error
 	var limitSkips int
 	for i := range locations {
 		span.SetAttributes(telemetry.AttrBackendName.String(locations[i].BackendName))
 		name := locations[i].BackendName
 
-		backend, ok := o.backends[name]
+		backend, ok := o.Backends()[name]
 		if !ok {
 			lastErr = fmt.Errorf("backend %s not found", name)
 			continue
@@ -236,7 +245,7 @@ func (o *ObjectManager) tryEachLocation(ctx context.Context, operation, key stri
 		}
 
 		cleanup()
-		o.recordOperation(operation, name, start, nil)
+		o.RecordOperation(operation, name, start, nil)
 		if i > 0 {
 			span.SetAttributes(telemetry.AttrFailover.Bool(true))
 		}
@@ -264,18 +273,18 @@ func failoverFailureResult(span trace.Span, operation string, locations []core.O
 // broadcastRead tries all backends when the DB is unavailable. Checks the
 // location cache first for a known-good backend, then dispatches to either
 // parallel or sequential broadcast based on configuration.
-func (o *ObjectManager) broadcastRead(ctx context.Context, operation, key string, start time.Time, span trace.Span, tryBackend readBackendFn) (string, error) {
+func (o *Manager) broadcastRead(ctx context.Context, operation, key string, start time.Time, span trace.Span, tryBackend readBackendFn) (string, error) {
 	span.SetAttributes(telemetry.AttrDegradedMode.Bool(true))
 	telemetry.DegradedReadsTotal.WithLabelValues(operation).Inc()
 
 	// --- Check location cache first ---
 	if cachedBackend, ok := o.cache.Get(key); ok {
-		if backend, exists := o.backends[cachedBackend]; exists {
+		if backend, exists := o.Backends()[cachedBackend]; exists {
 			// Degraded mode: no DB row available, callback must handle nil loc.
 			size, cleanup, err := tryBackend(ctx, cachedBackend, nil, backend)
 			if err == nil {
 				cleanup()
-				o.recordOperation(operation, cachedBackend, start, nil)
+				o.RecordOperation(operation, cachedBackend, start, nil)
 				span.SetAttributes(telemetry.AttrCacheHit.Bool(true))
 				span.SetAttributes(telemetry.AttrObjectSize.Int64(size))
 				span.SetStatus(codes.Ok, "")
@@ -289,7 +298,7 @@ func (o *ObjectManager) broadcastRead(ctx context.Context, operation, key string
 
 	concurrency := 1
 	if o.parallelBroadcast {
-		concurrency = len(o.order)
+		concurrency = len(o.BackendOrder())
 	}
 	return o.tryAllBackends(ctx, operation, key, start, span, concurrency, tryBackend)
 }
@@ -297,7 +306,7 @@ func (o *ObjectManager) broadcastRead(ctx context.Context, operation, key string
 // tryAllBackends dispatches to the sequential or parallel branch based on
 // concurrency. Both branches return the first backend whose tryBackend call
 // succeeds and cache the winner's name for future degraded reads.
-func (o *ObjectManager) tryAllBackends(
+func (o *Manager) tryAllBackends(
 	ctx context.Context,
 	operation, key string,
 	start time.Time,
@@ -311,10 +320,10 @@ func (o *ObjectManager) tryAllBackends(
 	return o.tryBackendsInParallel(ctx, operation, key, start, span, tryBackend)
 }
 
-// tryBackendsSequentially walks o.order one backend at a time. The first
+// tryBackendsSequentially walks o.BackendOrder() one backend at a time. The first
 // success short-circuits and is recorded as the broadcast winner; otherwise
 // the last error (if any) is wrapped as a degraded-read failure.
-func (o *ObjectManager) tryBackendsSequentially(
+func (o *Manager) tryBackendsSequentially(
 	ctx context.Context,
 	operation, key string,
 	start time.Time,
@@ -322,8 +331,8 @@ func (o *ObjectManager) tryBackendsSequentially(
 	tryBackend readBackendFn,
 ) (string, error) {
 	var lastErr error
-	for _, name := range o.order {
-		backend, ok := o.backends[name]
+	for _, name := range o.BackendOrder() {
+		backend, ok := o.Backends()[name]
 		if !ok {
 			continue
 		}
@@ -350,17 +359,17 @@ type broadcastResult struct {
 	cleanup func()
 }
 
-// tryBackendsInParallel launches one probe per backend in o.order and
+// tryBackendsInParallel launches one probe per backend in o.BackendOrder() and
 // returns the first success, draining the remaining responses in the
 // background so loser cleanups fire promptly.
-func (o *ObjectManager) tryBackendsInParallel(
+func (o *Manager) tryBackendsInParallel(
 	ctx context.Context,
 	operation, key string,
 	start time.Time,
 	span trace.Span,
 	tryBackend readBackendFn,
 ) (string, error) {
-	ch := make(chan broadcastResult, len(o.order))
+	ch := make(chan broadcastResult, len(o.BackendOrder()))
 	launched := o.launchBackendProbes(ctx, ch, tryBackend)
 
 	var lastErr error
@@ -385,14 +394,14 @@ func (o *ObjectManager) tryBackendsInParallel(
 // launchBackendProbes spawns one goroutine per eligible backend, each of
 // which writes its outcome to ch. Returns the number of probes launched
 // so the caller knows how many results to read.
-func (o *ObjectManager) launchBackendProbes(
+func (o *Manager) launchBackendProbes(
 	ctx context.Context,
 	ch chan<- broadcastResult,
 	tryBackend readBackendFn,
 ) int {
 	launched := 0
-	for _, name := range o.order {
-		backend, ok := o.backends[name]
+	for _, name := range o.BackendOrder() {
+		backend, ok := o.Backends()[name]
 		if !ok {
 			continue
 		}
@@ -406,7 +415,7 @@ func (o *ObjectManager) launchBackendProbes(
 // forwards the callback's cleanup so the orchestrator (winner) or the
 // loser-drain (everyone else) can release the timeout context promptly
 // instead of waiting for the deadline to fire on its own.
-func (o *ObjectManager) runBackendProbe(
+func (o *Manager) runBackendProbe(
 	ctx context.Context,
 	name string,
 	backend s3be.ObjectBackend,
@@ -436,7 +445,7 @@ func drainAndCleanupLosers(ch <-chan broadcastResult, remaining int) {
 
 // recordBroadcastWinner caches the winner's name for future degraded reads,
 // emits operation metrics, and sets the success-path span attributes.
-func (o *ObjectManager) recordBroadcastWinner(
+func (o *Manager) recordBroadcastWinner(
 	operation, key, name string,
 	size int64,
 	start time.Time,
@@ -444,7 +453,7 @@ func (o *ObjectManager) recordBroadcastWinner(
 	parallel bool,
 ) {
 	o.cache.Set(key, name)
-	o.recordOperation(operation, name, start, nil)
+	o.RecordOperation(operation, name, start, nil)
 	span.SetAttributes(telemetry.AttrBackendName.String(name))
 	span.SetAttributes(telemetry.AttrObjectSize.Int64(size))
 	if parallel {
@@ -473,7 +482,7 @@ func broadcastAllFailed(span trace.Span, lastErr error) (string, error) {
 // the primary copy first, then falls back to replicas if the primary
 // fails. When the object is encrypted, the response body is transparently
 // decrypted and the reported size reflects the original plaintext size.
-func (o *ObjectManager) GetObject(ctx context.Context, key string, rangeHeader string) (*s3be.GetObjectResult, error) {
+func (o *Manager) GetObject(ctx context.Context, key string, rangeHeader string) (*s3be.GetObjectResult, error) {
 	if cached, ok := o.tryGetObjectCache(ctx, key, rangeHeader); ok {
 		return cached, nil
 	}
@@ -496,7 +505,7 @@ func (o *ObjectManager) GetObject(ctx context.Context, key string, rangeHeader s
 	if err != nil {
 		return nil, err
 	}
-	o.usage.Record(backendName, 1, result.Size, 0)
+	o.Usage().Record(backendName, 1, result.Size, 0)
 
 	audit.Log(ctx, "storage.GetObject",
 		slog.String("key", key),
@@ -513,7 +522,7 @@ func (o *ObjectManager) GetObject(ctx context.Context, key string, rangeHeader s
 // tryGetObjectCache returns a synthesized GetObjectResult when the object
 // data cache holds a non-range hit for this key. ok=false signals that the
 // caller must read from a backend.
-func (o *ObjectManager) tryGetObjectCache(ctx context.Context, key, rangeHeader string) (*s3be.GetObjectResult, bool) {
+func (o *Manager) tryGetObjectCache(ctx context.Context, key, rangeHeader string) (*s3be.GetObjectResult, bool) {
 	if o.objectCache == nil || rangeHeader != "" {
 		return nil, false
 	}
@@ -551,10 +560,10 @@ type getAttemptRequest struct {
 // for GetObject. It owns the per-attempt timeout, applies usage limits,
 // translates encrypted ranges, decrypts and verifies the body, and records
 // the winning result via once.
-func (o *ObjectManager) getObjectAttempt(ctx context.Context, req *getAttemptRequest) (int64, func(), error) {
+func (o *Manager) getObjectAttempt(ctx context.Context, req *getAttemptRequest) (int64, func(), error) {
 	bctx, bcancel := o.WithTimeout(ctx)
 
-	if !o.usage.WithinLimits(req.beName, 1, 0, 0) {
+	if !o.Usage().WithinLimits(req.beName, 1, 0, 0) {
 		bcancel()
 		return 0, noopCleanup, fmt.Errorf("backend %s: %w", req.beName, errUsageLimitSkip)
 	}
@@ -571,13 +580,13 @@ func (o *ObjectManager) getObjectAttempt(ctx context.Context, req *getAttemptReq
 	r, err := req.backend.GetObject(bctx, req.key, actualRange)
 	if err != nil {
 		bcancel()
-		o.usage.Record(req.beName, 1, 0, 0)
+		o.Usage().Record(req.beName, 1, 0, 0)
 		return 0, noopCleanup, err
 	}
-	if !o.usage.WithinLimits(req.beName, 1, r.Size, 0) {
+	if !o.Usage().WithinLimits(req.beName, 1, r.Size, 0) {
 		_ = r.Body.Close()
 		bcancel()
-		o.usage.Record(req.beName, 1, 0, 0)
+		o.Usage().Record(req.beName, 1, 0, 0)
 		return 0, noopCleanup, fmt.Errorf("backend %s egress: %w", req.beName, errUsageLimitSkip)
 	}
 
@@ -602,11 +611,11 @@ func (o *ObjectManager) getObjectAttempt(ctx context.Context, req *getAttemptReq
 // resolveBackendRange translates a plaintext Range header into the actual
 // ciphertext range to request from the backend. Returns the original
 // header verbatim for unencrypted objects.
-func (o *ObjectManager) resolveBackendRange(rangeHeader string, loc *core.ObjectLocation) (string, *encryption.RangeResult, int64, int64) {
+func (o *Manager) resolveBackendRange(rangeHeader string, loc *core.ObjectLocation) (string, *encryption.RangeResult, int64, int64) {
 	if loc == nil || !loc.Encrypted || rangeHeader == "" {
 		return rangeHeader, nil, 0, 0
 	}
-	ptStart, ptEnd, ok := parsePlaintextRange(rangeHeader, loc.PlaintextSize)
+	ptStart, ptEnd, ok := ParsePlaintextRange(rangeHeader, loc.PlaintextSize)
 	if !ok {
 		return rangeHeader, nil, 0, 0
 	}
@@ -621,7 +630,7 @@ func (o *ObjectManager) resolveBackendRange(rangeHeader string, loc *core.Object
 // integrity verification is enabled and an expected content hash is
 // available. A hash mismatch logs, increments telemetry, and enqueues the
 // bad copy for cleanup.
-func (o *ObjectManager) maybeWrapIntegrityReader(
+func (o *Manager) maybeWrapIntegrityReader(
 	ctx context.Context,
 	r *s3be.GetObjectResult,
 	loc *core.ObjectLocation,
@@ -667,7 +676,7 @@ func (o *ObjectManager) maybeWrapIntegrityReader(
 // client with zero proxy-side buffering, so a 5 GB GET with a 100 MB
 // max_object_size never allocates more than the read buffer worth of
 // heap.
-func (o *ObjectManager) populateObjectCache(key, rangeHeader string, result *s3be.GetObjectResult) error {
+func (o *Manager) populateObjectCache(key, rangeHeader string, result *s3be.GetObjectResult) error {
 	if o.objectCache == nil || rangeHeader != "" || result.Size <= 0 {
 		return nil
 	}
@@ -688,20 +697,20 @@ func (o *ObjectManager) populateObjectCache(key, rangeHeader string, result *s3b
 // HeadObject retrieves object metadata. Tries the primary copy first, then
 // falls back to replicas if the primary fails. When the object is encrypted,
 // the reported size reflects the original plaintext size.
-func (o *ObjectManager) HeadObject(ctx context.Context, key string) (*s3be.HeadObjectResult, error) {
+func (o *Manager) HeadObject(ctx context.Context, key string) (*s3be.HeadObjectResult, error) {
 	var result *s3be.HeadObjectResult
 	var once sync.Once // protects result write when parallel broadcast is enabled
 
 	backendName, err := o.withReadFailover(ctx, "HeadObject", key, func(ctx context.Context, beName string, loc *core.ObjectLocation, backend s3be.ObjectBackend) (int64, func(), error) {
 		bctx, bcancel := o.WithTimeout(ctx)
-		if !o.usage.WithinLimits(beName, 1, 0, 0) {
+		if !o.Usage().WithinLimits(beName, 1, 0, 0) {
 			bcancel()
 			return 0, noopCleanup, fmt.Errorf("backend %s: %w", beName, errUsageLimitSkip)
 		}
 		r, err := backend.HeadObject(bctx, key)
 		if err != nil {
 			bcancel()
-			o.usage.Record(beName, 1, 0, 0) // API call was made even on failure
+			o.Usage().Record(beName, 1, 0, 0) // API call was made even on failure
 			return 0, noopCleanup, err
 		}
 
@@ -719,7 +728,7 @@ func (o *ObjectManager) HeadObject(ctx context.Context, key string) (*s3be.HeadO
 	if err != nil {
 		return nil, err
 	}
-	o.usage.Record(backendName, 1, 0, 0)
+	o.Usage().Record(backendName, 1, 0, 0)
 
 	audit.Log(ctx, "storage.HeadObject",
 		slog.String("key", key),
@@ -730,7 +739,7 @@ func (o *ObjectManager) HeadObject(ctx context.Context, key string) (*s3be.HeadO
 	return result, nil
 }
 
-// advancePastEmittedCommonPrefix rewrites a continuation cursor so the
+// AdvancePastEmittedCommonPrefix rewrites a continuation cursor so the
 // next ListObjects call cannot re-emit a CommonPrefix the current call
 // already returned. The seen map is local to a single ListObjects
 // invocation, so without this rewrite a cursor that lands inside an
@@ -745,7 +754,7 @@ func (o *ObjectManager) HeadObject(ctx context.Context, key string) (*s3be.HeadO
 // cursor does not fall inside an emitted CP, or the last byte is 0xff
 // (no representable advance  -  accept potential re-emission rather than
 // corrupt the cursor).
-func advancePastEmittedCommonPrefix(prefix, delimiter, cursor string, seen map[string]bool) string {
+func AdvancePastEmittedCommonPrefix(prefix, delimiter, cursor string, seen map[string]bool) string {
 	if delimiter == "" || cursor == "" {
 		return cursor
 	}
@@ -782,7 +791,7 @@ type ListObjectsV2Result struct {
 // set, many raw objects may collapse into a single CommonPrefix, so the
 // loop fetches store pages until maxKeys post-grouping items are
 // collected or the store is exhausted.
-func (o *ObjectManager) ListObjects(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*ListObjectsV2Result, error) {
+func (o *Manager) ListObjects(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*ListObjectsV2Result, error) {
 	const operation = "ListObjects"
 	start := time.Now()
 
@@ -798,7 +807,7 @@ func (o *ObjectManager) ListObjects(ctx context.Context, prefix, delimiter, star
 	seen := make(map[string]bool)
 	lastStoreTruncated := false
 
-	maxPages := listObjectsMaxPages
+	maxPages := ListObjectsMaxPages
 	for page := 0; page < maxPages && result.KeyCount < maxKeys; page++ {
 		storeResult, err := o.stores.ListObjects(ctx, prefix, cursor, maxKeys)
 		if err != nil {
@@ -817,17 +826,17 @@ func (o *ObjectManager) ListObjects(ctx context.Context, prefix, delimiter, star
 
 		if page == maxPages-1 && storeResult.IsTruncated && !result.IsTruncated {
 			result.IsTruncated = true
-			result.NextContinuationToken = advancePastEmittedCommonPrefix(prefix, delimiter, cursor, seen)
+			result.NextContinuationToken = AdvancePastEmittedCommonPrefix(prefix, delimiter, cursor, seen)
 			telemetry.ListPagesCappedTotal.Inc()
 		}
 	}
 
 	if !result.IsTruncated && lastStoreTruncated && result.KeyCount >= maxKeys {
 		result.IsTruncated = true
-		result.NextContinuationToken = advancePastEmittedCommonPrefix(prefix, delimiter, cursor, seen)
+		result.NextContinuationToken = AdvancePastEmittedCommonPrefix(prefix, delimiter, cursor, seen)
 	}
 
-	o.recordOperation(operation, "", start, nil)
+	o.RecordOperation(operation, "", start, nil)
 
 	audit.Log(ctx, "storage.ListObjects",
 		slog.String("prefix", prefix),
@@ -856,7 +865,7 @@ func listObjectsError(span trace.Span, err error) error {
 // CommonPrefixes when delimiter is set and appending plain objects
 // otherwise. Mutates result and seen, and sets result.IsTruncated when
 // maxKeys is hit mid-page.
-func (o *ObjectManager) consumeListPage(
+func (o *Manager) consumeListPage(
 	objects []core.ObjectLocation,
 	prefix, delimiter string,
 	maxKeys int,
@@ -922,10 +931,10 @@ func tryEmitCommonPrefix(
 // RANGE PARSING
 // -------------------------------------------------------------------------
 
-// parsePlaintextRange extracts the start and end byte offsets from an HTTP
+// ParsePlaintextRange extracts the start and end byte offsets from an HTTP
 // Range header value (e.g., "bytes=0-99"). Suffix ranges and open-ended
 // ranges are resolved against plaintextSize.
-func parsePlaintextRange(rangeHeader string, plaintextSize int64) (start, end int64, ok bool) {
+func ParsePlaintextRange(rangeHeader string, plaintextSize int64) (start, end int64, ok bool) {
 	if !strings.HasPrefix(rangeHeader, "bytes=") {
 		return 0, 0, false
 	}

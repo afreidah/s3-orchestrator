@@ -8,7 +8,7 @@
 // per-part error wrapping, and end-to-end pipe semantics.
 // -------------------------------------------------------------------------------
 
-package proxy
+package multipart
 
 import (
 	"bytes"
@@ -19,16 +19,17 @@ import (
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
-// newTestMultipartManager builds a minimal MultipartManager suitable for
-// exercising stream helpers in isolation. The backendCore is zero-valued so
-// withTimeout is a no-op; pass an encryptor to enable the decrypt branch.
-func newTestMultipartManager(enc *encryption.Encryptor) *MultipartManager {
-	return &MultipartManager{
-		backendCore: &backendCore{},
-		encryptor:   enc,
+// newTestMultipartManager builds a minimal Manager suitable for
+// exercising stream helpers in isolation. The Core is zero-valued so
+// WithTimeout is a no-op; pass an encryptor to enable the decrypt branch.
+func newTestMultipartManager(enc *encryption.Encryptor) *Manager {
+	return &Manager{
+		Core:      infra.New(&infra.Config{}),
+		encryptor: enc,
 	}
 }
 

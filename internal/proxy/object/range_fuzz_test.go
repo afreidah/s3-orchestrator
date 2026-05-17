@@ -3,11 +3,11 @@
 //
 // Author: Alex Freidah
 //
-// Fuzz tests for parsePlaintextRange covering malformed, adversarial, and
+// Fuzz tests for ParsePlaintextRange covering malformed, adversarial, and
 // edge-case Range header values. Validates structural invariants on output.
 // -------------------------------------------------------------------------------
 
-package proxy
+package object
 
 import (
 	"testing"
@@ -34,29 +34,29 @@ func FuzzParsePlaintextRange(f *testing.F) {
 	f.Add("bytes=9999999999999999999-0", int64(100))
 
 	f.Fuzz(func(t *testing.T, rangeHeader string, plaintextSize int64) {
-		// parsePlaintextRange assumes plaintextSize > 0 (callers validate this).
+		// ParsePlaintextRange assumes plaintextSize > 0 (callers validate this).
 		if plaintextSize <= 0 {
 			return
 		}
 
-		start, end, ok := parsePlaintextRange(rangeHeader, plaintextSize)
+		start, end, ok := ParsePlaintextRange(rangeHeader, plaintextSize)
 		if !ok {
 			return
 		}
 
 		// Start must be non-negative.
 		if start < 0 {
-			t.Errorf("parsePlaintextRange(%q, %d): start=%d is negative", rangeHeader, plaintextSize, start)
+			t.Errorf("ParsePlaintextRange(%q, %d): start=%d is negative", rangeHeader, plaintextSize, start)
 		}
 
 		// End must be >= start for a valid range.
 		if end < start {
-			t.Errorf("parsePlaintextRange(%q, %d): end=%d < start=%d", rangeHeader, plaintextSize, end, start)
+			t.Errorf("ParsePlaintextRange(%q, %d): end=%d < start=%d", rangeHeader, plaintextSize, end, start)
 		}
 
 		// End must not exceed the last valid byte offset.
 		if plaintextSize > 0 && end >= plaintextSize {
-			t.Errorf("parsePlaintextRange(%q, %d): end=%d >= plaintextSize", rangeHeader, plaintextSize, end)
+			t.Errorf("ParsePlaintextRange(%q, %d): end=%d >= plaintextSize", rangeHeader, plaintextSize, end)
 		}
 	})
 }

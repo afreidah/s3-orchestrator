@@ -4,12 +4,12 @@
 // Author: Alex Freidah
 //
 // Standalone helpers for encrypting request bodies and decrypting response
-// bodies. Used by ObjectManager (PutObject, GetObject) and MultipartManager
+// bodies. Used by Manager (PutObject, GetObject) and MultipartManager
 // (UploadPart, CompleteMultipartUpload) to avoid duplicating the encrypt ->
 // build-metadata -> record-telemetry pattern.
 // -------------------------------------------------------------------------------
 
-package proxy
+package object
 
 import (
 	"bytes"
