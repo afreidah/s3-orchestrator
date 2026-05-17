@@ -205,6 +205,59 @@ type BackendManager struct {
 }
 ```
 
+### Interface Design: Consumer-Declared Interfaces
+
+This codebase follows the Go-idiomatic "accept interfaces, return structs" pattern: **producer packages export concrete `*Type` values with no producer-side interface**, and **each consumer declares its own narrow interface** listing only the methods it actually calls. The concrete type satisfies every consumer's local interface because Go interfaces are structurally typed.
+
+Applied across `internal/store` (the per-role store interfaces consumed at use sites), `internal/worker` (`Ops`, `CleanupOps`, `ScrubberOps` in `ops_runtime.go`), and the `internal/proxy/*` subpackages (`MultipartCore`/`MultipartCoordinator`, `ObjectCore`/`ObjectCoordinator`, `WritepathCore`).
+
+**Rationale:**
+- A consumer's dependency footprint is documented in its own source file.
+- Adding a method to a producer type never bloats existing consumer mocks.
+- Tests can mock at the granularity of what is used (typically 4–10 methods), not the full producer surface.
+- Aligns with Rob Pike's "accept interfaces, return structs" guideline.
+
+**Trade-offs:**
+- Each consumer declares its own small interface (extra text, but localized).
+- The composition layer (the root `proxy` package, `internal/di`) still holds concrete types — it owns construction and is the seam where interfaces meet implementations.
+
+**Where the interfaces live:**
+
+| Location | Holds |
+|---|---|
+| `internal/proxy/<consumer>/consumer_interfaces.go` | All narrow interfaces this consumer declares against other proxy subpackages and external clients |
+| `internal/worker/ops_runtime.go` | Worker-side `Ops` / `CleanupOps` / `ScrubberOps` interfaces against the proxy infrastructure |
+| `internal/store/core/interfaces.go` | Per-role narrow store interfaces (consumers compose them when they need to declare a minimal store dependency) |
+
+**Naming convention:** `<Consumer><Provider>` — e.g. the multipart subpackage's view of `*infra.Core` is `MultipartCore`; the object subpackage's view of `*writepath.Coordinator` is `ObjectCoordinator`. The prefix names the consumer, the suffix names the producer concept.
+
+**Constructor shape:** consumers take the interfaces, not concrete pointers. Composition-layer code (the root proxy package, DI providers) passes the concrete `*infra.Core`, `*writepath.Coordinator`, `*object.Manager`, etc., and the concrete types satisfy the interfaces implicitly.
+
+```go
+// internal/proxy/multipart/consumer_interfaces.go
+type MultipartCore interface {
+    GetBackend(name string) (backend.ObjectBackend, error)
+    Usage() *counter.UsageTracker
+    WithTimeout(ctx context.Context) (context.Context, context.CancelFunc)
+    // ... only what multipart calls
+}
+
+// internal/proxy/multipart/manager.go
+type Manager struct {
+    core  MultipartCore        // not *infra.Core
+    coord MultipartCoordinator // not *writepath.Coordinator
+    // ...
+}
+
+func New(core MultipartCore, coord MultipartCoordinator, ...) *Manager { ... }
+```
+
+**Mocking:** generated mocks are not produced eagerly. When a test actually needs to mock a consumer-declared interface, add a `//go:generate mockgen -source=consumer_interfaces.go -destination=mock/<file>.go -package=<pkg>mock` directive at the top of the consumer interface file and run `make generate`. Until a mock is needed, the interface declaration alone documents the dependency surface — generating unused mocks is busywork.
+
+**Producer-side interfaces are an anti-pattern.** `*infra.Core`, `*writepath.Coordinator`, `*object.Manager`, `*multipart.Manager` are exported as concrete pointer types with no sibling `Core`/`Coordinator`/`Manager` interface that mirrors their public surface. Producer-side interfaces force every consumer to mock the full producer API, which is exactly what this pattern is built to avoid.
+
+**Logger is not a behavior dependency.** Never include `Log() *slog.Logger` in a consumer-declared interface. The logger is observability infrastructure: it has no return value the consumer depends on, and the per-component scope is a property of the consumer itself, not of the producer. Components build their own `log *slog.Logger` field in the constructor body via `slog.Default().With(logfmt.Component("<slug>"))` (see Logging and Audit), so each subsystem owns its component name and tests do not need to thread a logger through dependency interfaces.
+
 ### Variable Naming
 
 Avoid shadowing package imports with local variable names. When a function receives or creates a `backend.ObjectBackend`, name the variable `be`, not `backend`:

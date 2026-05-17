@@ -26,7 +26,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
-	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
@@ -117,7 +116,7 @@ func componentLogger(slug string) *slog.Logger {
 // quota metrics so the dashboard reflects the move. Centralized so
 // the three closures cannot drift, and so coverage of the error and
 // count>0 branches lands in one place.
-func handlePassResult(ctx context.Context, log *slog.Logger, manager *proxy.BackendManager, count int, err error, countKey string) error {
+func handlePassResult(ctx context.Context, log *slog.Logger, manager quotaMetricsRefresher, count int, err error, countKey string) error {
 	if err != nil {
 		if errors.Is(err, core.ErrDBUnavailable) {
 			return nil
@@ -243,13 +242,13 @@ func (s *lockedTickerService) Health() lifecycle.WorkerHealth {
 // usageFlushService periodically flushes in-memory usage counters to the
 // database, acquiring an advisory lock only when Redis counters are active.
 type usageFlushService struct {
-	manager *proxy.BackendManager
+	manager usageFlushOps
 	locker  advisoryLocker
 	log     *slog.Logger
 }
 
 // NewUsageFlushService constructs the usage flush background service.
-func NewUsageFlushService(manager *proxy.BackendManager, locker advisoryLocker) lifecycle.Runner {
+func NewUsageFlushService(manager usageFlushOps, locker advisoryLocker) lifecycle.Runner {
 	return &usageFlushService{
 		manager: manager,
 		locker:  locker,
@@ -329,8 +328,11 @@ func (s *usageFlushService) doFlush(ctx context.Context) {
 // SERVICE CONSTRUCTORS
 // -------------------------------------------------------------------------
 
-// NewMultipartCleanupService constructs the multipart-cleanup background service.
-func NewMultipartCleanupService(manager *proxy.BackendManager, locker advisoryLocker, staleTimeout time.Duration) lifecycle.Runner {
+// NewMultipartCleanupService constructs the multipart-cleanup background
+// service. The cleaner is typically *multipart.Manager (resolved by the
+// DI provider as mgr.MultipartManager); the narrow interface keeps this
+// constructor decoupled from the rest of *proxy.BackendManager.
+func NewMultipartCleanupService(cleaner staleMultipartCleaner, locker advisoryLocker, staleTimeout time.Duration) lifecycle.Runner {
 	if staleTimeout <= 0 {
 		staleTimeout = defaultMultipartStaleTimeout
 	}
@@ -342,7 +344,7 @@ func NewMultipartCleanupService(manager *proxy.BackendManager, locker advisoryLo
 		name:     slug,
 		log:      componentLogger(slug),
 		work: func(ctx context.Context) error {
-			manager.MultipartManager.CleanupStaleMultipartUploads(ctx, staleTimeout)
+			cleaner.CleanupStaleMultipartUploads(ctx, staleTimeout)
 			return nil
 		},
 	}
@@ -399,7 +401,7 @@ func NewPendingReaperService(reaper *worker.PendingReaper, locker advisoryLocker
 }
 
 // NewRebalancerService constructs the rebalancer background service.
-func NewRebalancerService(manager *proxy.BackendManager, rebalancer *worker.Rebalancer, locker advisoryLocker) lifecycle.Runner {
+func NewRebalancerService(manager quotaMetricsRefresher, rebalancer *worker.Rebalancer, locker advisoryLocker) lifecycle.Runner {
 	interval := defaultRebalanceInterval
 	if rcfg := rebalancer.Config(); rcfg != nil && rcfg.Interval > 0 {
 		interval = rcfg.Interval
@@ -428,7 +430,7 @@ func NewRebalancerService(manager *proxy.BackendManager, rebalancer *worker.Reba
 }
 
 // NewLifecycleService constructs the lifecycle-expiration background service.
-func NewLifecycleService(manager *proxy.BackendManager, locker advisoryLocker) lifecycle.Runner {
+func NewLifecycleService(manager lifecycleOps, locker advisoryLocker) lifecycle.Runner {
 	const slug = "lifecycle"
 	log := componentLogger(slug)
 	return &lockedTickerService{
@@ -466,7 +468,7 @@ func NewLifecycleService(manager *proxy.BackendManager, locker advisoryLocker) l
 }
 
 // NewOverReplicationService constructs the over-replication cleanup service.
-func NewOverReplicationService(manager *proxy.BackendManager, overRep *worker.OverReplicationCleaner, locker advisoryLocker) lifecycle.Runner {
+func NewOverReplicationService(manager quotaMetricsRefresher, overRep *worker.OverReplicationCleaner, locker advisoryLocker) lifecycle.Runner {
 	interval := defaultOverReplicationTick
 	if rcfg := overRep.Config(); rcfg != nil && rcfg.WorkerInterval > 0 {
 		interval = rcfg.WorkerInterval
@@ -495,7 +497,7 @@ func NewOverReplicationService(manager *proxy.BackendManager, overRep *worker.Ov
 }
 
 // NewReplicatorService constructs the replication background service.
-func NewReplicatorService(manager *proxy.BackendManager, replicator *worker.Replicator, locker advisoryLocker) lifecycle.Runner {
+func NewReplicatorService(manager quotaMetricsRefresher, replicator *worker.Replicator, locker advisoryLocker) lifecycle.Runner {
 	const slug = "replication"
 	log := componentLogger(slug)
 	replicateWork := func(ctx context.Context) error {

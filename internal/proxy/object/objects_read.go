@@ -32,9 +32,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/ioutilx"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
@@ -52,21 +51,25 @@ const managerSpanPrefix = "Manager "
 // Manager handles object-level CRUD operations with read failover,
 // broadcast reads during degraded mode, and location caching.
 type Manager struct {
-	*infra.Core
-	coord             *writepath.Coordinator  // write-path helpers shared with BackendManager and MultipartManager
+	core              ObjectCore         // infrastructure subset: backends, usage, timeout, eligibility, error classification, metrics
+	coord             ObjectCoordinator  // write-path helpers shared with BackendManager and MultipartManager
 	stores            core.MetadataStore // direct store access for read paths and quota inspection
 	encryptor         *encryption.Encryptor
 	cache             *LocationCache
 	objectCache       objcache.ObjectCache // nil when object data caching is disabled
 	parallelBroadcast bool
 	integrityCfg      *syncutil.AtomicConfig[config.IntegrityConfig]
+	log               *slog.Logger
 }
 
-// Deps bundles the dependencies New needs so
-// the call signature stays under the parameter-count ceiling.
+// Deps bundles the dependencies New needs so the call signature stays
+// under the parameter-count ceiling. Core and Coord are
+// consumer-declared interfaces; the concrete *infra.Core and
+// *writepath.Coordinator that BackendManager builds satisfy them
+// implicitly.
 type Deps struct {
-	Core              *infra.Core
-	Coord             *writepath.Coordinator
+	Core              ObjectCore
+	Coord             ObjectCoordinator
 	Stores            core.MetadataStore
 	Encryptor         *encryption.Encryptor
 	LocationCache     *LocationCache
@@ -75,12 +78,13 @@ type Deps struct {
 	IntegrityCfg      *syncutil.AtomicConfig[config.IntegrityConfig]
 }
 
-// New creates an Manager sharing the given core
-// infrastructure and write coordinator. All dependencies must be
-// non-nil; nothing is patched in post-construction.
+// New creates a Manager sharing the given core infrastructure and
+// write coordinator. All dependencies must be non-nil; nothing is
+// patched in post-construction. The component-scoped logger is built
+// in the constructor body per the project's logging convention.
 func New(d *Deps) *Manager {
 	return &Manager{
-		Core:              d.Core,
+		core:              d.Core,
 		coord:             d.Coord,
 		stores:            d.Stores,
 		encryptor:         d.Encryptor,
@@ -88,6 +92,7 @@ func New(d *Deps) *Manager {
 		objectCache:       d.ObjectCache,
 		parallelBroadcast: d.ParallelBroadcast,
 		integrityCfg:      d.IntegrityCfg,
+		log:               slog.Default().With(logfmt.Component("object")),
 	}
 }
 
@@ -113,7 +118,7 @@ func (o *Manager) LocationCache() *LocationCache {
 // size. Used by the HTTP handler to reject uploads before the request body
 // is transmitted (Expect: 100-Continue support).
 func (o *Manager) CanAcceptWrite(size int64) bool {
-	return len(o.EligibleForWrite(1, 0, size)) > 0
+	return len(o.core.EligibleForWrite(1, 0, size)) > 0
 }
 
 // BackendCapacityStats returns the current per-backend used/limit byte
@@ -225,7 +230,7 @@ func (o *Manager) tryEachLocation(ctx context.Context, operation, key string, st
 		span.SetAttributes(telemetry.AttrBackendName.String(locations[i].BackendName))
 		name := locations[i].BackendName
 
-		backend, ok := o.Backends()[name]
+		backend, ok := o.core.Backends()[name]
 		if !ok {
 			lastErr = fmt.Errorf("backend %s not found", name)
 			continue
@@ -238,14 +243,14 @@ func (o *Manager) tryEachLocation(ctx context.Context, operation, key string, st
 				limitSkips++
 			}
 			if i < len(locations)-1 {
-				o.Log().WarnContext(ctx, operation+": copy failed, trying next",
+				o.log.WarnContext(ctx, operation+": copy failed, trying next",
 					"key", key, "failed_backend", name, "error", err)
 			}
 			continue
 		}
 
 		cleanup()
-		o.RecordOperation(operation, name, start, nil)
+		o.core.RecordOperation(operation, name, start, nil)
 		if i > 0 {
 			span.SetAttributes(telemetry.AttrFailover.Bool(true))
 		}
@@ -279,12 +284,12 @@ func (o *Manager) broadcastRead(ctx context.Context, operation, key string, star
 
 	// --- Check location cache first ---
 	if cachedBackend, ok := o.cache.Get(key); ok {
-		if backend, exists := o.Backends()[cachedBackend]; exists {
+		if backend, exists := o.core.Backends()[cachedBackend]; exists {
 			// Degraded mode: no DB row available, callback must handle nil loc.
 			size, cleanup, err := tryBackend(ctx, cachedBackend, nil, backend)
 			if err == nil {
 				cleanup()
-				o.RecordOperation(operation, cachedBackend, start, nil)
+				o.core.RecordOperation(operation, cachedBackend, start, nil)
 				span.SetAttributes(telemetry.AttrCacheHit.Bool(true))
 				span.SetAttributes(telemetry.AttrObjectSize.Int64(size))
 				span.SetStatus(codes.Ok, "")
@@ -298,7 +303,7 @@ func (o *Manager) broadcastRead(ctx context.Context, operation, key string, star
 
 	concurrency := 1
 	if o.parallelBroadcast {
-		concurrency = len(o.BackendOrder())
+		concurrency = len(o.core.BackendOrder())
 	}
 	return o.tryAllBackends(ctx, operation, key, start, span, concurrency, tryBackend)
 }
@@ -320,7 +325,7 @@ func (o *Manager) tryAllBackends(
 	return o.tryBackendsInParallel(ctx, operation, key, start, span, tryBackend)
 }
 
-// tryBackendsSequentially walks o.BackendOrder() one backend at a time. The first
+// tryBackendsSequentially walks o.core.BackendOrder() one backend at a time. The first
 // success short-circuits and is recorded as the broadcast winner; otherwise
 // the last error (if any) is wrapped as a degraded-read failure.
 func (o *Manager) tryBackendsSequentially(
@@ -331,8 +336,8 @@ func (o *Manager) tryBackendsSequentially(
 	tryBackend readBackendFn,
 ) (string, error) {
 	var lastErr error
-	for _, name := range o.BackendOrder() {
-		backend, ok := o.Backends()[name]
+	for _, name := range o.core.BackendOrder() {
+		backend, ok := o.core.Backends()[name]
 		if !ok {
 			continue
 		}
@@ -359,7 +364,7 @@ type broadcastResult struct {
 	cleanup func()
 }
 
-// tryBackendsInParallel launches one probe per backend in o.BackendOrder() and
+// tryBackendsInParallel launches one probe per backend in o.core.BackendOrder() and
 // returns the first success, draining the remaining responses in the
 // background so loser cleanups fire promptly.
 func (o *Manager) tryBackendsInParallel(
@@ -369,7 +374,7 @@ func (o *Manager) tryBackendsInParallel(
 	span trace.Span,
 	tryBackend readBackendFn,
 ) (string, error) {
-	ch := make(chan broadcastResult, len(o.BackendOrder()))
+	ch := make(chan broadcastResult, len(o.core.BackendOrder()))
 	launched := o.launchBackendProbes(ctx, ch, tryBackend)
 
 	var lastErr error
@@ -400,8 +405,8 @@ func (o *Manager) launchBackendProbes(
 	tryBackend readBackendFn,
 ) int {
 	launched := 0
-	for _, name := range o.BackendOrder() {
-		backend, ok := o.Backends()[name]
+	for _, name := range o.core.BackendOrder() {
+		backend, ok := o.core.Backends()[name]
 		if !ok {
 			continue
 		}
@@ -453,7 +458,7 @@ func (o *Manager) recordBroadcastWinner(
 	parallel bool,
 ) {
 	o.cache.Set(key, name)
-	o.RecordOperation(operation, name, start, nil)
+	o.core.RecordOperation(operation, name, start, nil)
 	span.SetAttributes(telemetry.AttrBackendName.String(name))
 	span.SetAttributes(telemetry.AttrObjectSize.Int64(size))
 	if parallel {
@@ -505,7 +510,7 @@ func (o *Manager) GetObject(ctx context.Context, key string, rangeHeader string)
 	if err != nil {
 		return nil, err
 	}
-	o.Usage().Record(backendName, 1, result.Size, 0)
+	o.core.Usage().Record(backendName, 1, result.Size, 0)
 
 	audit.Log(ctx, "storage.GetObject",
 		slog.String("key", key),
@@ -561,9 +566,9 @@ type getAttemptRequest struct {
 // translates encrypted ranges, decrypts and verifies the body, and records
 // the winning result via once.
 func (o *Manager) getObjectAttempt(ctx context.Context, req *getAttemptRequest) (int64, func(), error) {
-	bctx, bcancel := o.WithTimeout(ctx)
+	bctx, bcancel := o.core.WithTimeout(ctx)
 
-	if !o.Usage().WithinLimits(req.beName, 1, 0, 0) {
+	if !o.core.Usage().WithinLimits(req.beName, 1, 0, 0) {
 		bcancel()
 		return 0, noopCleanup, fmt.Errorf("backend %s: %w", req.beName, errUsageLimitSkip)
 	}
@@ -580,13 +585,13 @@ func (o *Manager) getObjectAttempt(ctx context.Context, req *getAttemptRequest) 
 	r, err := req.backend.GetObject(bctx, req.key, actualRange)
 	if err != nil {
 		bcancel()
-		o.Usage().Record(req.beName, 1, 0, 0)
+		o.core.Usage().Record(req.beName, 1, 0, 0)
 		return 0, noopCleanup, err
 	}
-	if !o.Usage().WithinLimits(req.beName, 1, r.Size, 0) {
+	if !o.core.Usage().WithinLimits(req.beName, 1, r.Size, 0) {
 		_ = r.Body.Close()
 		bcancel()
-		o.Usage().Record(req.beName, 1, 0, 0)
+		o.core.Usage().Record(req.beName, 1, 0, 0)
 		return 0, noopCleanup, fmt.Errorf("backend %s egress: %w", req.beName, errUsageLimitSkip)
 	}
 
@@ -650,7 +655,7 @@ func (o *Manager) maybeWrapIntegrityReader(
 	}
 	vr := NewVerifyingReader(r.Body)
 	vr.SetVerification(expectedHash, func(expected, actual string) {
-		o.Log().ErrorContext(ctx, "integrity check failed on read",
+		o.log.ErrorContext(ctx, "integrity check failed on read",
 			"key", key, "backend", beName,
 			"expected_hash", expected, "actual_hash", actual)
 		telemetry.IntegrityErrorsTotal.WithLabelValues("read").Inc()
@@ -702,15 +707,15 @@ func (o *Manager) HeadObject(ctx context.Context, key string) (*s3be.HeadObjectR
 	var once sync.Once // protects result write when parallel broadcast is enabled
 
 	backendName, err := o.withReadFailover(ctx, "HeadObject", key, func(ctx context.Context, beName string, loc *core.ObjectLocation, backend s3be.ObjectBackend) (int64, func(), error) {
-		bctx, bcancel := o.WithTimeout(ctx)
-		if !o.Usage().WithinLimits(beName, 1, 0, 0) {
+		bctx, bcancel := o.core.WithTimeout(ctx)
+		if !o.core.Usage().WithinLimits(beName, 1, 0, 0) {
 			bcancel()
 			return 0, noopCleanup, fmt.Errorf("backend %s: %w", beName, errUsageLimitSkip)
 		}
 		r, err := backend.HeadObject(bctx, key)
 		if err != nil {
 			bcancel()
-			o.Usage().Record(beName, 1, 0, 0) // API call was made even on failure
+			o.core.Usage().Record(beName, 1, 0, 0) // API call was made even on failure
 			return 0, noopCleanup, err
 		}
 
@@ -728,7 +733,7 @@ func (o *Manager) HeadObject(ctx context.Context, key string) (*s3be.HeadObjectR
 	if err != nil {
 		return nil, err
 	}
-	o.Usage().Record(backendName, 1, 0, 0)
+	o.core.Usage().Record(backendName, 1, 0, 0)
 
 	audit.Log(ctx, "storage.HeadObject",
 		slog.String("key", key),
@@ -836,7 +841,7 @@ func (o *Manager) ListObjects(ctx context.Context, prefix, delimiter, startAfter
 		result.NextContinuationToken = AdvancePastEmittedCommonPrefix(prefix, delimiter, cursor, seen)
 	}
 
-	o.RecordOperation(operation, "", start, nil)
+	o.core.RecordOperation(operation, "", start, nil)
 
 	audit.Log(ctx, "storage.ListObjects",
 		slog.String("prefix", prefix),

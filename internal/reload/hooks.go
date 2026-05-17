@@ -184,7 +184,8 @@ func (h *usageLimitsHook) Apply(_ context.Context, _, newCfg *config.Config) (Ho
 			IngressByteLimit: bcfg.IngressByteLimit,
 		}
 	}
-	res.Value.UpdateUsageLimits(limits)
+	var applier usageLimitsApplier = res.Value
+	applier.UpdateUsageLimits(limits)
 	return HookApplied, nil
 }
 
@@ -284,10 +285,11 @@ func (h *managerConfigHook) Apply(ctx context.Context, _, newCfg *config.Config)
 	if res.Value == nil {
 		return HookSkipped, nil
 	}
-	res.Value.SetUsageFlushConfig(&newCfg.UsageFlush)
-	res.Value.SetLifecycleConfig(&newCfg.Lifecycle)
-	res.Value.SetIntegrityConfig(&newCfg.Integrity)
-	if err := res.Value.UpdateQuotaMetrics(ctx); err != nil {
+	var applier managerConfigApplier = res.Value
+	applier.SetUsageFlushConfig(&newCfg.UsageFlush)
+	applier.SetLifecycleConfig(&newCfg.Lifecycle)
+	applier.SetIntegrityConfig(&newCfg.Integrity)
+	if err := applier.UpdateQuotaMetrics(ctx); err != nil {
 		return HookFailed, err
 	}
 	return HookApplied, nil
