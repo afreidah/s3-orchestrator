@@ -3,14 +3,8 @@
 //
 // Author: Alex Freidah
 //
-// Narrow interface listing only the subset of *infra.Core behavior that
-// the write Coordinator actually calls. Decouples the writepath
-// subsystem from the wider proxy infrastructure surface so a method
-// added to *infra.Core does not silently expand this consumer's
-// dependency footprint.
-//
-// Mirrors the consumer-declared-interfaces pattern documented in
-// docs/style-guide.md (Interface Design section).
+// Narrow contract the write Coordinator pulls from *infra.Core.
+// Pattern rationale: docs/style-guide.md (Interface Design section).
 // -------------------------------------------------------------------------------
 
 package writepath
@@ -26,9 +20,6 @@ import (
 )
 
 // WritepathCore is the subset of *infra.Core the Coordinator needs.
-// Log is intentionally absent: the logger is observability
-// infrastructure owned by the Coordinator (built via
-// logfmt.Component("writepath") in New), not a behavior dependency.
 type WritepathCore interface {
 	Backends() map[string]backend.ObjectBackend
 	RoutingStrategy() config.RoutingStrategy

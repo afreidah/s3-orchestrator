@@ -3,32 +3,13 @@
 //
 // Author: Alex Freidah
 //
-// Centralizes the audit-log + notification-event + span-status emissions
-// that mark a successful storage operation. Each helper takes only the
-// fields the operation actually exposes (no map[string]any blobs, no
-// generic dispatcher) so the audit signature for "storage.PutObject" lives
-// in exactly one place and cannot drift across the object/, multipart/, and
-// writepath/ subpackages that share these events.
-//
-// What is and is not centralized here:
-//
-//   - audit.Log calls          : centralized; one helper per operation type
-//   - event.Emit calls         : centralized; same per-operation helpers,
-//                                with the bucket/userKey split that was
-//                                previously duplicated at every call site
-//   - span.SetStatus(Ok)       : centralized for the write/multipart sites
-//                                that already set it today
-//   - Acct().PutSuccess /
-//     Operation / APICall etc. : NOT centralized here; already centralized
-//                                in internal/proxy/accounting and varies
-//                                materially per operation
-//   - cache invalidation       : NOT centralized; intentionally inconsistent
-//                                across operations (read/write/list differ)
-//
-// Read helpers (GetCompleted, HeadCompleted, ListCompleted) deliberately do
-// not touch span status: the matching call sites today rely on span.End()
-// instead, and changing that would be a span-semantics change outside this
-// refactor's scope.
+// One helper per storage operation that bundles audit.Log + event.Emit +
+// span.SetStatus so the audit signature for "storage.PutObject" lives in
+// exactly one place and cannot drift across the object/, multipart/, and
+// writepath/ call sites. Accounting and cache invalidation are NOT here:
+// accounting is centralized in internal/proxy/accounting; cache
+// invalidation stays at the call site (intentionally inconsistent across
+// read/write/list).
 // -------------------------------------------------------------------------------
 
 // Package observe centralizes per-operation completion observability  -

@@ -3,24 +3,11 @@
 //
 // Author: Alex Freidah
 //
-// Shared abstraction for code paths that need to materialize an incoming
-// stream into a seekable form so it can be replayed across PutObject
-// failover attempts or signing modes that require Content-Length. Small
-// payloads stay in memory; payloads above materializeMemThreshold spill
-// to a self-unlinking tempfile so heap usage does not scale with object
-// size and large concurrent uploads do not stress the GC.
-//
-// Reused by:
-//   - PutObject buffering (so failover retries can replay the same
-//     plaintext from disk instead of holding the full body on the heap)
-//   - CopyObject source materialization (preserves seekability so the
-//     destination PutObject stays on the UNSIGNED-PAYLOAD signing path
-//     and Content-Length survives to backends that require it, e.g. OCI)
-//
-// The returned Body satisfies io.ReadSeeker; Reader() returns a fresh
-// reader positioned at offset 0 on every call so encryption layers and
-// failover attempts can each consume the body independently without
-// the caller having to manage Seek manually.
+// Materializes an incoming stream into a seekable form (memory below
+// materializeMemThreshold, self-unlinking tempfile above) so PutObject
+// failover and CopyObject source replay can re-read the body without
+// scaling heap with object size. Reader-reset and lifecycle semantics
+// are documented on the relevant methods below.
 // -------------------------------------------------------------------------------
 
 package object
