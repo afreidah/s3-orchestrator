@@ -476,7 +476,7 @@ func TestReplicateObject_Success(t *testing.T) {
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": srcBe, "b2": dstBe}).AnyTimes()
 	ops.EXPECT().GetBackend("b2").Return(dstBe, nil)
 	ops.EXPECT().StreamCopy(gomock.Any(), srcBe, dstBe, "key1").Return(nil)
-	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
 	r := NewReplicator(ops, ms)
 	copies := []core.ObjectLocation{{BackendName: "b1", SizeBytes: 50}}
@@ -506,7 +506,7 @@ func TestReplicateObject_WriteFailureExcludesTarget(t *testing.T) {
 
 	ms := &mockMetadataStore{recordReplicaOK: true}
 
-	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{
 		"src": srcBe, "fail": failBe, "ok": okBe,
 	}).AnyTimes()
@@ -570,7 +570,7 @@ func TestReplicateObject_RecordReplicaErrorExcludesTarget(t *testing.T) {
 
 	ms := &mockMetadataStore{recordReplicaErr: errors.New("db down")}
 
-	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{
 		"src": srcBe, "fail": failBe,
 	}).AnyTimes()
@@ -616,7 +616,7 @@ func TestReplicateObject_NotInsertedExcludesTarget(t *testing.T) {
 	// recordReplicaOK=false simulates source deleted during replication
 	ms := &mockMetadataStore{recordReplicaOK: false}
 
-	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{
 		"src": srcBe, "stale": staleBe,
 	}).AnyTimes()

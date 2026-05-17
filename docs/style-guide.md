@@ -258,6 +258,42 @@ func New(core MultipartCore, coord MultipartCoordinator, ...) *Manager { ... }
 
 **Logger is not a behavior dependency.** Never include `Log() *slog.Logger` in a consumer-declared interface. The logger is observability infrastructure: it has no return value the consumer depends on, and the per-component scope is a property of the consumer itself, not of the producer. Components build their own `log *slog.Logger` field in the constructor body via `slog.Default().With(logfmt.Component("<slug>"))` (see Logging and Audit), so each subsystem owns its component name and tests do not need to thread a logger through dependency interfaces.
 
+**Single-method interface names follow the Go `-er` convention.** A single-method interface is named after its method, with the verb in agent-noun form: `Read` → `Reader`, `Close` → `Closer`, `Stringer` for `String()`. Names ending in `-Ops`, `-Store`, `-ing`, or other shapes that do not describe an actor get flagged by `golangci-lint` / sonar (rule S8196) and should be renamed:
+
+| Method | Good | Bad |
+|---|---|---|
+| `Read(p []byte) (int, error)` | `Reader` | `IOOps` |
+| `Close() error` | `Closer` | `Closeable` |
+| `GetAllObjectLocations(...)` | `ObjectLocationLister` | `LocationStore` |
+| `CleanupStaleMultipartUploads(...)` | `staleMultipartCleaner` | `multipartCleanupOps` |
+| `UpdateUsageLimits(...)` | `usageLimitsApplier` | `usageLimitsHook` |
+| `UpdateQuotaMetrics(...)` | `quotaMetricsRefresher` | `metricsHook` |
+
+For interfaces that exist to *provide* a value (typical "Acct" / "Stores" / "Config" getters), name the interface after the returned type plus `Provider` or `Source` — `RecorderProvider` for `Acct() *Recorder`, `ConfigSource` for `Config() *Config`. The `Provider` / `Source` suffix is also an agent noun and satisfies the rule.
+
+Multi-method interfaces are exempt: `core.MetadataStore`, `worker.Ops`, `ObjectCore`, `MultipartCoordinator` describe a role (or a composite of sub-roles), not a single action, so the `-er` form does not apply.
+
+### Per-Backend Accounting: Use the Recorder
+
+Per-backend usage and per-operation metric accounting flow through one shared helper: `internal/proxy/accounting.Recorder`. Every consumer holds the same `*accounting.Recorder` (resolved via `core.Acct()`) and calls the named methods rather than the underlying `Usage().Record(...)` or `RecordOperation(...)`:
+
+| Intent | Use | Avoid |
+|---|---|---|
+| Backend call attempted, no bytes (success or failure) | `acct.APICall(backend)` | `Usage().Record(b, 1, 0, 0)` |
+| N backend calls (paginated lists, multipart bulks) | `acct.APICalls(backend, n)` | `Usage().Record(b, n, 0, 0)` |
+| Successful GET-like (bytes left the backend) | `acct.Egress(backend, size)` | `Usage().Record(b, 1, size, 0)` |
+| Successful PUT-like (bytes arrived at the backend) | `acct.Ingress(backend, size)` | `Usage().Record(b, 1, 0, size)` |
+| Per-operation Prometheus histogram | `acct.Operation(op, backend, start, err)` | `RecordOperation(op, b, start, err)` |
+| Common combo: Operation + Ingress | `acct.PutSuccess(op, backend, size, start)` | both above, two lines |
+| Common combo: Operation + Egress | `acct.GetSuccess(op, backend, size, start)` | both above, two lines |
+| The call reached the backend and failed | `acct.OperationFailed(op, backend, start, err)` | Operation + APICall, two lines |
+
+The cardinal rule "every backend call costs one API-call charge regardless of outcome" lives in the method bodies, not in repeated inline comments at every call site. The argument-order risk of the bare `Record(b, 1, 0, size)` vs `Record(b, 1, size, 0)` form is eliminated because ingress vs egress is named in the method.
+
+Exceptions — *not* every Usage call goes through Recorder:
+- `BackendManager.RecordUsage(b, apiCalls, egress, ingress)` is the admin escape hatch that takes an arbitrary tuple. It bypasses the per-attempt rule on purpose and uses `Usage().Record` directly.
+- Tests that exercise the tracker's own semantics (`manager_usage_test.go`) call `Usage().Record` directly — they're verifying the tracker, not the accounting rule.
+
 ### Variable Naming
 
 Avoid shadowing package imports with local variable names. When a function receives or creates a `backend.ObjectBackend`, name the variable `be`, not `backend`:

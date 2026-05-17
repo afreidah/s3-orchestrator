@@ -166,7 +166,7 @@ func (f *Failover) tryEachLocation(ctx context.Context, operation, key string, s
 		}
 
 		cleanup()
-		f.core.RecordOperation(operation, name, start, nil)
+		f.core.Acct().Operation(operation, name, start, nil)
 		if i > 0 {
 			span.SetAttributes(telemetry.AttrFailover.Bool(true))
 		}
@@ -209,7 +209,7 @@ func (f *Failover) broadcastRead(ctx context.Context, operation, key string, sta
 			size, cleanup, err := probe(ctx, cachedBackend, nil, be)
 			if err == nil {
 				cleanup()
-				f.core.RecordOperation(operation, cachedBackend, start, nil)
+				f.core.Acct().Operation(operation, cachedBackend, start, nil)
 				span.SetAttributes(telemetry.AttrCacheHit.Bool(true))
 				span.SetAttributes(telemetry.AttrObjectSize.Int64(size))
 				span.SetStatus(codes.Ok, "")
@@ -379,7 +379,7 @@ func (f *Failover) recordBroadcastWinner(
 	parallel bool,
 ) {
 	f.cache.Set(key, name)
-	f.core.RecordOperation(operation, name, start, nil)
+	f.core.Acct().Operation(operation, name, start, nil)
 	span.SetAttributes(telemetry.AttrBackendName.String(name))
 	span.SetAttributes(telemetry.AttrObjectSize.Int64(size))
 	if parallel {

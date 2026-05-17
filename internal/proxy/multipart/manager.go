@@ -159,7 +159,7 @@ func (mp *Manager) CreateMultipartUpload(ctx context.Context, key, contentType s
 	}
 
 	span.SetAttributes(telemetry.AttrBackendName.String(backendName))
-	mp.core.RecordOperation(operation, backendName, start, nil)
+	mp.core.Acct().Operation(operation, backendName, start, nil)
 
 	audit.Log(ctx, "storage.CreateMultipartUpload",
 		slog.String("key", key),
@@ -218,7 +218,7 @@ func (mp *Manager) UploadPart(ctx context.Context, bucket, key, uploadID string,
 	defer bcancel()
 	etag, err := be.PutObject(bctx, partKey, uploadBody, uploadSize, "application/octet-stream", nil)
 	if err != nil {
-		mp.core.Usage().Record(mu.BackendName, 1, 0, 0) // API call was made even on failure
+		mp.core.Acct().APICall(mu.BackendName) // API call was made even on failure
 		observe.RecordSpanError(span, err)
 		return "", fmt.Errorf("failed to upload part: %w", err)
 	}
@@ -231,8 +231,7 @@ func (mp *Manager) UploadPart(ctx context.Context, bucket, key, uploadID string,
 		return "", fmt.Errorf("failed to record part: %w", err)
 	}
 
-	mp.core.RecordOperation(operation, mu.BackendName, start, nil)
-	mp.core.Usage().Record(mu.BackendName, 1, 0, size)
+	mp.core.Acct().PutSuccess(operation, mu.BackendName, size, start)
 	span.SetStatus(codes.Ok, "")
 	return etag, nil
 }
@@ -497,10 +496,10 @@ func (mp *Manager) abortByMultipartRow(ctx context.Context, mu *core.MultipartUp
 
 	mp.forgetUploadDEK(uploadID)
 
-	mp.core.RecordOperation(operation, mu.BackendName, start, nil)
-	// 1 abort. The N part DELETEs go through DeleteOrEnqueue, which
-	// records them itself.
-	mp.core.Usage().Record(mu.BackendName, 1, 0, 0)
+	// 1 abort API call. The N part DELETEs go through DeleteOrEnqueue,
+	// which records them itself.
+	mp.core.Acct().Operation(operation, mu.BackendName, start, nil)
+	mp.core.Acct().APICall(mu.BackendName)
 
 	audit.Log(ctx, "storage.AbortMultipartUpload",
 		slog.String("upload_id", uploadID),
@@ -662,10 +661,12 @@ func (mp *Manager) completeMultipartUploadLocked(
 		return "", err
 	}
 
-	mp.core.RecordOperation(operation, mu.BackendName, start, nil)
-	// N part GETs + 1 assembled PUT. The N cleanup DELETEs of the part
-	// temp keys go through DeleteOrEnqueue, which records them itself.
-	mp.core.Usage().Record(mu.BackendName, int64(len(parts)+1), 0, uploadSize)
+	// N part GETs + 1 assembled PUT (Ingress charges that one). The N
+	// cleanup DELETEs of the part temp keys go through DeleteOrEnqueue,
+	// which records them itself.
+	mp.core.Acct().Operation(operation, mu.BackendName, start, nil)
+	mp.core.Acct().APICalls(mu.BackendName, int64(len(parts)))
+	mp.core.Acct().Ingress(mu.BackendName, uploadSize)
 
 	audit.Log(ctx, "storage.CompleteMultipartUpload",
 		slog.String("key", mu.ObjectKey),
