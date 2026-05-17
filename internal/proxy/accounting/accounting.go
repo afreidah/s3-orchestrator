@@ -13,17 +13,11 @@
 //   - The per-operation metric (RecordOperation) carries the
 //     operation/backend/start/err tuple for the Prometheus histogram.
 //
-// The Recorder exposes these as named methods so call sites read as
-// intent ("APICall", "Ingress", "Egress") rather than as a positional
-// argument list whose meaning depends on which slot the bytes land in.
-// A few combo helpers (PutSuccess, GetSuccess, OperationFailed) bundle
-// the common Operation + bytes pair so the matching pair cannot drift
-// across edits.
-//
-// Recorder is held by every storage subsystem (object.Manager,
-// multipart.Manager, writepath.Coordinator, drain.Manager) and by the
-// background workers via worker.Ops, so the rules and the names live
-// in one place.
+// Methods are named by intent (APICall, Ingress, Egress) and a few
+// combo helpers (PutSuccess, GetSuccess, OperationFailed) bundle the
+// Operation + bytes pair so the matching pair cannot drift. Held by
+// every storage subsystem and worker through the consumer-declared
+// Acct() contract.
 // -------------------------------------------------------------------------------
 
 package accounting

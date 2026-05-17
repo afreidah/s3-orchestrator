@@ -3,16 +3,9 @@
 //
 // Author: Alex Freidah
 //
-// Narrow interfaces listing only the subset of *infra.Core and
-// *writepath.Coordinator behavior that the multipart Manager actually
-// calls. Decouples the multipart subsystem from the wider proxy
-// infrastructure surface so a method added to *infra.Core or
-// *writepath.Coordinator does not silently expand this consumer's
-// dependency footprint, and so future tests can mock at the granularity
-// of what is used.
-//
-// Mirrors the consumer-declared-interfaces pattern documented in
-// docs/style-guide.md (Interface Design section).
+// Narrow contracts the multipart Manager pulls from *infra.Core and
+// *writepath.Coordinator. Pattern rationale: docs/style-guide.md
+// (Interface Design section).
 // -------------------------------------------------------------------------------
 
 package multipart
@@ -28,10 +21,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
-// MultipartCore is the subset of *infra.Core the multipart Manager
-// needs. Log is intentionally absent: the logger is observability
-// infrastructure owned by the Manager (built via
-// logfmt.Component("multipart") in New), not a behavior dependency.
+// MultipartCore is the subset of *infra.Core the multipart Manager needs.
 type MultipartCore interface {
 	GetBackend(name string) (backend.ObjectBackend, error)
 	Usage() *counter.UsageTracker // still needed for WithinLimits pre-flight checks; per-backend Record calls flow through Acct
