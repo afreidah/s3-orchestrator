@@ -6,6 +6,14 @@
 // Tracks in-memory usage counters (API requests, egress, ingress) per backend,
 // enforces configurable monthly usage limits, and periodically flushes deltas to
 // PostgreSQL. Counters are keyed by calendar month for automatic period rollover.
+//
+// The limits map and baseline map are held behind atomic.Pointer snapshots
+// (copy-on-write): read paths do a single atomic load with zero locking and
+// then operate on the immutable map; write paths take a small mutex,
+// allocate a new map with the change, and atomically swap. This removes
+// the RWMutex pair from every WithinLimits call (which fires on every
+// backend operation) and lets BackendsWithinLimits / NearLimit observe a
+// consistent snapshot across the loop instead of re-locking per backend.
 // -------------------------------------------------------------------------------
 
 package counter
@@ -15,35 +23,41 @@ import (
 	"log/slog"
 	"maps"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
-// UsageTracker tracks per-backend usage counters, enforces monthly usage limits,
-// and flushes accumulated deltas to the database. Counter storage is delegated
-// to a CounterBackend, allowing local atomics or shared Redis counters.
+// UsageTracker tracks per-backend usage counters, enforces monthly usage
+// limits, and flushes accumulated deltas to the database. Counter storage
+// is delegated to a CounterBackend (local atomics or shared Redis). The
+// limits and baseline maps live behind atomic.Pointer snapshots so reads
+// require no locking and writes copy-on-write.
 type UsageTracker struct {
-	backend    CounterBackend
-	limits     map[string]core.UsageLimits
-	limitsMu   sync.RWMutex
-	baseline   map[string]core.UsageStat
-	baselineMu sync.RWMutex
+	backend  CounterBackend
+	limits   atomic.Pointer[map[string]core.UsageLimits]
+	baseline atomic.Pointer[map[string]core.UsageStat]
+
+	// writeMu serializes the copy-on-write swaps for limits and baseline
+	// so two concurrent writers cannot lose each other's update. The hot
+	// read path never touches this mutex.
+	writeMu sync.Mutex
 }
 
-// NewUsageTracker creates a usage tracker with the given counter backend and
-// per-backend limits. The counter backend determines whether deltas are stored
-// locally (default) or in a shared store like Redis.
+// NewUsageTracker creates a usage tracker with the given counter backend
+// and per-backend limits. The counter backend determines whether deltas
+// are stored locally (default) or in a shared store like Redis.
 func NewUsageTracker(backend CounterBackend, limits map[string]core.UsageLimits) *UsageTracker {
 	if limits == nil {
 		limits = make(map[string]core.UsageLimits)
 	}
-	return &UsageTracker{
-		backend:  backend,
-		limits:   limits,
-		baseline: make(map[string]core.UsageStat),
-	}
+	u := &UsageTracker{backend: backend}
+	u.limits.Store(&limits)
+	emptyBaseline := make(map[string]core.UsageStat)
+	u.baseline.Store(&emptyBaseline)
+	return u
 }
 
 // Record increments the usage counters for a backend.
@@ -62,17 +76,25 @@ func (u *UsageTracker) Record(backendName string, apiCalls, egress, ingress int6
 //
 // Returns true if no non-zero limit is exceeded.
 //
-// Enforcement is approximate: baseline and counter are read in separate
-// steps without a global lock, so concurrent requests may all pass the
-// check and collectively exceed the limit by a small margin. This is
-// intentional  -  exact enforcement would require a mutex on every request.
-// The overshoot is bounded by one flush interval worth of concurrent
-// traffic, and the s3o_usage_limit_rejections_total metric tracks when
+// Enforcement is approximate: the snapshot pair (limits, baseline) is
+// read separately from the live counter, so concurrent requests may all
+// pass the check and collectively exceed the limit by a small margin.
+// This is intentional - exact enforcement would require a mutex on every
+// request. The overshoot is bounded by one flush interval worth of
+// concurrent traffic, and s3o_usage_limit_rejections_total tracks when
 // limits are actively enforced.
 func (u *UsageTracker) WithinLimits(backendName string, apiCalls, egress, ingress int64) bool {
-	u.limitsMu.RLock()
-	lim, ok := u.limits[backendName]
-	u.limitsMu.RUnlock()
+	limits := *u.limits.Load()
+	baseline := *u.baseline.Load()
+	return withinLimitsSnapshot(u.backend, limits, baseline, backendName, apiCalls, egress, ingress)
+}
+
+// withinLimitsSnapshot is the snapshot-aware core of WithinLimits.
+// BackendsWithinLimits loads the snapshots once and passes them in so
+// every per-backend check sees a consistent view and the atomic Loads
+// do not repeat per iteration.
+func withinLimitsSnapshot(backend CounterBackend, limits map[string]core.UsageLimits, baseline map[string]core.UsageStat, name string, apiCalls, egress, ingress int64) bool {
+	lim, ok := limits[name]
 	if !ok {
 		return true // no limits configured
 	}
@@ -80,36 +102,33 @@ func (u *UsageTracker) WithinLimits(backendName string, apiCalls, egress, ingres
 		return true // all unlimited
 	}
 
-	u.baselineMu.RLock()
-	base := u.baseline[backendName]
-	u.baselineMu.RUnlock()
+	base := baseline[name]
+	cur := backend.LoadAll(name)
 
-	cur := u.backend.LoadAll(backendName)
-
-	if lim.APIRequestLimit > 0 {
-		if base.APIRequests+cur.APIRequests+apiCalls > lim.APIRequestLimit {
-			return false
-		}
+	if lim.APIRequestLimit > 0 && base.APIRequests+cur.APIRequests+apiCalls > lim.APIRequestLimit {
+		return false
 	}
-	if lim.EgressByteLimit > 0 {
-		if base.EgressBytes+cur.EgressBytes+egress > lim.EgressByteLimit {
-			return false
-		}
+	if lim.EgressByteLimit > 0 && base.EgressBytes+cur.EgressBytes+egress > lim.EgressByteLimit {
+		return false
 	}
-	if lim.IngressByteLimit > 0 {
-		if base.IngressBytes+cur.IngressBytes+ingress > lim.IngressByteLimit {
-			return false
-		}
+	if lim.IngressByteLimit > 0 && base.IngressBytes+cur.IngressBytes+ingress > lim.IngressByteLimit {
+		return false
 	}
 	return true
 }
 
-// BackendsWithinLimits returns the subset of the given order whose backends are
-// within their monthly usage limits for the proposed operation dimensions.
+// BackendsWithinLimits returns the subset of the given order whose
+// backends are within their monthly usage limits for the proposed
+// operation dimensions. Loads the limits and baseline snapshots ONCE
+// so every per-backend check sees a consistent view; with the old
+// RWMutex pair each WithinLimits call could see a different snapshot
+// if a writer landed between iterations.
 func (u *UsageTracker) BackendsWithinLimits(order []string, apiCalls, egress, ingress int64) []string {
+	limits := *u.limits.Load()
+	baseline := *u.baseline.Load()
 	eligible := make([]string, 0, len(order))
 	for _, name := range order {
-		if u.WithinLimits(name, apiCalls, egress, ingress) {
+		if withinLimitsSnapshot(u.backend, limits, baseline, name, apiCalls, egress, ingress) {
 			eligible = append(eligible, name)
 		}
 	}
@@ -120,20 +139,25 @@ func (u *UsageTracker) BackendsWithinLimits(order []string, apiCalls, egress, in
 // CONFIGURATION
 // -------------------------------------------------------------------------
 
-// UpdateLimits replaces the per-backend usage limits. Safe to call concurrently
-// with request handling.
+// UpdateLimits replaces the per-backend usage limits via copy-on-write
+// swap. Safe to call concurrently with request handling: in-flight
+// WithinLimits calls keep using whichever snapshot they loaded.
 func (u *UsageTracker) UpdateLimits(limits map[string]core.UsageLimits) {
-	u.limitsMu.Lock()
-	defer u.limitsMu.Unlock()
-	u.limits = limits
+	u.writeMu.Lock()
+	defer u.writeMu.Unlock()
+	cp := make(map[string]core.UsageLimits, len(limits))
+	maps.Copy(cp, limits)
+	u.limits.Store(&cp)
 }
 
-// GetLimits returns a shallow copy of the current per-backend usage limits.
+// GetLimits returns a shallow copy of the current per-backend usage
+// limits. The snapshot itself is immutable, but a defensive copy keeps
+// the API contract from leaking the live snapshot to callers that
+// might mutate it.
 func (u *UsageTracker) GetLimits() map[string]core.UsageLimits {
-	u.limitsMu.RLock()
-	defer u.limitsMu.RUnlock()
-	cp := make(map[string]core.UsageLimits, len(u.limits))
-	maps.Copy(cp, u.limits)
+	src := *u.limits.Load()
+	cp := make(map[string]core.UsageLimits, len(src))
+	maps.Copy(cp, src)
 	return cp
 }
 
@@ -141,36 +165,45 @@ func (u *UsageTracker) GetLimits() map[string]core.UsageLimits {
 // BASELINE MANAGEMENT
 // -------------------------------------------------------------------------
 
-// SetBaseline updates the cached DB usage baseline for a single backend.
+// SetBaseline updates the cached DB usage baseline for a single backend
+// via copy-on-write swap.
 func (u *UsageTracker) SetBaseline(name string, stat core.UsageStat) {
-	u.baselineMu.Lock()
-	defer u.baselineMu.Unlock()
-	u.baseline[name] = stat
+	u.writeMu.Lock()
+	defer u.writeMu.Unlock()
+	src := *u.baseline.Load()
+	cp := make(map[string]core.UsageStat, len(src)+1)
+	maps.Copy(cp, src)
+	cp[name] = stat
+	u.baseline.Store(&cp)
 }
 
-// ResetBaselines zeroes out all baselines for the given backend names.
+// ResetBaselines zeroes out the baseline for the given backend names
+// via copy-on-write swap.
 func (u *UsageTracker) ResetBaselines(names []string) {
-	u.baselineMu.Lock()
-	defer u.baselineMu.Unlock()
+	u.writeMu.Lock()
+	defer u.writeMu.Unlock()
+	src := *u.baseline.Load()
+	cp := make(map[string]core.UsageStat, len(src))
+	maps.Copy(cp, src)
 	for _, name := range names {
-		u.baseline[name] = core.UsageStat{}
+		cp[name] = core.UsageStat{}
 	}
+	u.baseline.Store(&cp)
 }
 
-// NearLimit returns true if any backend's effective usage (baseline + unflushed)
-// exceeds the given threshold ratio for any non-zero limit dimension. Used by
-// adaptive flushing to shorten the flush interval when enforcement accuracy matters.
+// NearLimit returns true if any backend's effective usage (baseline +
+// unflushed) exceeds the given threshold ratio for any non-zero limit
+// dimension. Used by adaptive flushing to shorten the flush interval
+// when enforcement accuracy matters. Loads both snapshots once so the
+// loop sees a consistent view.
 func (u *UsageTracker) NearLimit(threshold float64) bool {
-	u.limitsMu.RLock()
-	defer u.limitsMu.RUnlock()
-	u.baselineMu.RLock()
-	defer u.baselineMu.RUnlock()
-
-	for name, lim := range u.limits {
+	limits := *u.limits.Load()
+	baseline := *u.baseline.Load()
+	for name, lim := range limits {
 		if isUnlimited(lim) {
 			continue
 		}
-		base := u.baseline[name]
+		base := baseline[name]
 		cur := u.backend.LoadAll(name)
 		if backendNearLimit(base, cur, lim, threshold) {
 			return true
@@ -184,26 +217,18 @@ func isUnlimited(lim core.UsageLimits) bool {
 	return lim.APIRequestLimit == 0 && lim.EgressByteLimit == 0 && lim.IngressByteLimit == 0
 }
 
-// backendNearLimit returns true when any configured dimension of the given
-// backend has effective usage (baseline + unflushed) at or above the
-// threshold ratio. Takes the baseline (a store.UsageStat snapshot) and the
-// live CounterBackend readings separately because they come from different
-// types with identical shapes.
+// backendNearLimit returns true when any configured dimension of the
+// given backend has effective usage (baseline + unflushed) at or above
+// the threshold ratio.
 func backendNearLimit(base core.UsageStat, cur LoadAllResult, lim core.UsageLimits, threshold float64) bool {
-	if lim.APIRequestLimit > 0 {
-		if float64(base.APIRequests+cur.APIRequests)/float64(lim.APIRequestLimit) >= threshold {
-			return true
-		}
+	if lim.APIRequestLimit > 0 && float64(base.APIRequests+cur.APIRequests)/float64(lim.APIRequestLimit) >= threshold {
+		return true
 	}
-	if lim.EgressByteLimit > 0 {
-		if float64(base.EgressBytes+cur.EgressBytes)/float64(lim.EgressByteLimit) >= threshold {
-			return true
-		}
+	if lim.EgressByteLimit > 0 && float64(base.EgressBytes+cur.EgressBytes)/float64(lim.EgressByteLimit) >= threshold {
+		return true
 	}
-	if lim.IngressByteLimit > 0 {
-		if float64(base.IngressBytes+cur.IngressBytes)/float64(lim.IngressByteLimit) >= threshold {
-			return true
-		}
+	if lim.IngressByteLimit > 0 && float64(base.IngressBytes+cur.IngressBytes)/float64(lim.IngressByteLimit) >= threshold {
+		return true
 	}
 	return false
 }
@@ -212,9 +237,8 @@ func backendNearLimit(base core.UsageStat, cur LoadAllResult, lim core.UsageLimi
 // FLUSH
 // -------------------------------------------------------------------------
 
-// currentPeriod returns the current month as "YYYY-MM" for usage aggregation.
-// CurrentPeriod current period.
-// CurrentPeriod current period.
+// CurrentPeriod returns the current month as "YYYY-MM" for usage
+// aggregation.
 func CurrentPeriod() string {
 	return time.Now().UTC().Format("2006-01")
 }
@@ -227,10 +251,11 @@ type usageFlusher interface {
 	FlushUsageDeltas(ctx context.Context, backendName, period string, apiRequests, egressBytes, ingressBytes int64) error
 }
 
-// FlushUsage reads and resets the counter backend, then writes the accumulated
-// deltas to the database. Called periodically (every 30s). On DB error, deltas
-// are added back to avoid data loss. Backends in the skip set have their
-// counters discarded (used for drained backends whose DB records are gone).
+// FlushUsage reads and resets the counter backend, then writes the
+// accumulated deltas to the database. Called periodically (every 30s).
+// On DB error, deltas are added back to avoid data loss. Backends in
+// the skip set have their counters discarded (used for drained
+// backends whose DB records are gone).
 func (u *UsageTracker) FlushUsage(ctx context.Context, store usageFlusher, skip map[string]bool) error {
 	period := CurrentPeriod()
 	var lastErr error
