@@ -23,7 +23,6 @@ import (
 	"strings"
 	"time"
 
-	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
@@ -32,9 +31,9 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/internalkey"
 	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
-	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	pobserve "github.com/afreidah/s3-orchestrator/internal/proxy/observe"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/bufpool"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
@@ -161,13 +160,7 @@ func (mp *Manager) CreateMultipartUpload(ctx context.Context, key, contentType s
 	span.SetAttributes(telemetry.AttrBackendName.String(backendName))
 	mp.core.Acct().Operation(operation, backendName, start, nil)
 
-	audit.Log(ctx, "storage.CreateMultipartUpload",
-		slog.String("key", key),
-		slog.String("backend", backendName),
-		slog.String("upload_id", uploadID),
-	)
-
-	span.SetStatus(codes.Ok, "")
+	pobserve.MultipartCreated(ctx, span, key, backendName, uploadID)
 	return uploadID, backendName, nil
 }
 
@@ -232,7 +225,7 @@ func (mp *Manager) UploadPart(ctx context.Context, bucket, key, uploadID string,
 	}
 
 	mp.core.Acct().PutSuccess(operation, mu.BackendName, size, start)
-	span.SetStatus(codes.Ok, "")
+	pobserve.UploadPartCompleted(ctx, span, mu.ObjectKey, mu.BackendName, uploadID, partNumber, size)
 	return etag, nil
 }
 
@@ -501,14 +494,7 @@ func (mp *Manager) abortByMultipartRow(ctx context.Context, mu *core.MultipartUp
 	mp.core.Acct().Operation(operation, mu.BackendName, start, nil)
 	mp.core.Acct().APICall(mu.BackendName)
 
-	audit.Log(ctx, "storage.AbortMultipartUpload",
-		slog.String("upload_id", uploadID),
-		slog.String("key", mu.ObjectKey),
-		slog.String("backend", mu.BackendName),
-		slog.Int("parts_cleaned", len(parts)),
-	)
-
-	span.SetStatus(codes.Ok, "")
+	pobserve.MultipartAborted(ctx, span, uploadID, mu.ObjectKey, mu.BackendName, len(parts))
 	return nil
 }
 
@@ -668,32 +654,8 @@ func (mp *Manager) completeMultipartUploadLocked(
 	mp.core.Acct().APICalls(mu.BackendName, int64(len(parts)))
 	mp.core.Acct().Ingress(mu.BackendName, uploadSize)
 
-	audit.Log(ctx, "storage.CompleteMultipartUpload",
-		slog.String("key", mu.ObjectKey),
-		slog.String("backend", mu.BackendName),
-		slog.String("upload_id", uploadID),
-		slog.Int64("total_size", totalPlaintextSize),
-		slog.Int("parts_count", len(parts)),
-	)
-	if event.Emit != nil {
-		bucket, userKey := internalkey.Split(mu.ObjectKey)
-		event.Emit(event.Event{
-			Type:    event.ObjectCreatedCompleteMultipartUpload,
-			Subject: userKey,
-			Data: map[string]any{
-				"bucket":      bucket,
-				"key":         userKey,
-				"backend":     mu.BackendName,
-				"size":        totalPlaintextSize,
-				"parts_count": len(parts),
-				"upload_id":   uploadID,
-				"request_id":  audit.RequestID(ctx),
-			},
-		})
-	}
+	pobserve.MultipartCompleted(ctx, span, mu.ObjectKey, mu.BackendName, uploadID, totalPlaintextSize, len(parts))
 	mp.invalidateCache(mu.ObjectKey)
-
-	span.SetStatus(codes.Ok, "")
 	return etag, nil
 }
 
