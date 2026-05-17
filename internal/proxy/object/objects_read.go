@@ -34,6 +34,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/readpath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/ioutilx"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
@@ -59,6 +60,7 @@ type Manager struct {
 	objectCache       objcache.ObjectCache // nil when object data caching is disabled
 	parallelBroadcast bool
 	integrityCfg      *syncutil.AtomicConfig[config.IntegrityConfig]
+	failover          *readpath.Failover // per-key read failover + degraded-mode broadcast orchestrator
 	log               *slog.Logger
 }
 
@@ -81,7 +83,10 @@ type Deps struct {
 // New creates a Manager sharing the given core infrastructure and
 // write coordinator. All dependencies must be non-nil; nothing is
 // patched in post-construction. The component-scoped logger is built
-// in the constructor body per the project's logging convention.
+// in the constructor body per the project's logging convention. The
+// read-failover orchestrator is built once and reused for every GET /
+// HEAD; it captures the same Core, Stores, LocationCache, and the
+// parallelBroadcast flag, so per-call read paths stay short.
 func New(d *Deps) *Manager {
 	return &Manager{
 		core:              d.Core,
@@ -92,6 +97,7 @@ func New(d *Deps) *Manager {
 		objectCache:       d.ObjectCache,
 		parallelBroadcast: d.ParallelBroadcast,
 		integrityCfg:      d.IntegrityCfg,
+		failover:          readpath.New(d.Core, d.Stores, d.LocationCache, d.ParallelBroadcast),
 		log:               slog.Default().With(logfmt.Component("object")),
 	}
 }
@@ -134,13 +140,6 @@ func (o *Manager) BackendCapacityStats(ctx context.Context) map[string]core.Quot
 	return stats
 }
 
-// -------------------------------------------------------------------------
-// READ FAILOVER
-// -------------------------------------------------------------------------
-
-// errUsageLimitSkip is an internal sentinel indicating a backend was skipped
-// because it exceeded its monthly usage limits. Not exposed to callers.
-var errUsageLimitSkip = errors.New("backend skipped: usage limits exceeded")
 
 // ListObjectsMaxPages caps DB round trips per ListObjects request so a
 // single client call cannot drag the database through unbounded scans on
@@ -165,320 +164,6 @@ func (o *Manager) ObjectExists(ctx context.Context, key string) (bool, error) {
 	return len(locs) > 0, nil
 }
 
-// readBackendFn is the per-backend probe callback. loc carries the
-// matching ObjectLocation row so callbacks that need encryption
-// metadata can read it directly without a side-channel map lookup.
-// loc is nil in degraded-mode broadcasts where the DB is unreachable;
-// callbacks must handle that case (an unencrypted object reads fine
-// without a row, an encrypted object cannot be decrypted without it).
-// beName is always populated (loc.BackendName during failover, or the
-// degraded-mode caller's chosen name) so callbacks have a single
-// source for span / usage attribution.
-// The callback owns its own timeout context and is responsible for
-// releasing it on the error path. On success it returns a cleanup func
-// the orchestrator invokes once the winner is declared; that cleanup
-// either releases the timeout immediately (HeadObject  -  no streaming
-// body) or is a no-op because the callback has already attached the
-// cancel to the result body's Close (GetObject).
-type readBackendFn func(ctx context.Context, beName string, loc *core.ObjectLocation, backend s3be.ObjectBackend) (int64, func(), error)
-
-// noopCleanup is the cleanup returned by readBackendFn implementations
-// when there is nothing for the orchestrator to release: error paths
-// where the callback already cancelled its own timeout, and the GetObject
-// success path where the cancel is attached to the body's Close.
-func noopCleanup() {
-	// meant to be a noop function
-}
-
-// withReadFailover looks up all copies of an object and tries each backend in
-// order until one succeeds. The tryBackend callback should attempt the operation
-// and return the object size (for span attributes) or an error to try the next copy.
-// Returns the name of the backend that succeeded alongside any error.
-func (o *Manager) withReadFailover(ctx context.Context, operation, key string, tryBackend readBackendFn) (string, error) {
-	start := time.Now()
-
-	ctx, span := telemetry.StartSpan(ctx, managerSpanPrefix+operation,
-		telemetry.AttrObjectKey.String(key),
-	)
-	defer span.End()
-
-	locations, err := o.stores.GetAllObjectLocations(ctx, key)
-	if err != nil {
-		if errors.Is(err, core.ErrObjectNotFound) {
-			observe.MarkSpanError(span, "object not found")
-			return "", err
-		}
-		if errors.Is(err, core.ErrDBUnavailable) {
-			return o.broadcastRead(ctx, operation, key, start, span, tryBackend)
-		}
-		observe.RecordSpanError(span, err)
-		return "", fmt.Errorf("failed to find object location: %w", err)
-	}
-
-	return o.tryEachLocation(ctx, operation, key, start, span, locations, tryBackend)
-}
-
-// tryEachLocation walks the resolved location list and runs the per-backend
-// callback against each, returning on the first success. Records lastErr
-// and a count of usage-limit skips so the failure-path return distinguishes
-// "all backends declined for usage limits" from "all backends genuinely
-// failed."
-func (o *Manager) tryEachLocation(ctx context.Context, operation, key string, start time.Time, span trace.Span, locations []core.ObjectLocation, tryBackend readBackendFn) (string, error) {
-	var lastErr error
-	var limitSkips int
-	for i := range locations {
-		span.SetAttributes(telemetry.AttrBackendName.String(locations[i].BackendName))
-		name := locations[i].BackendName
-
-		backend, ok := o.core.Backends()[name]
-		if !ok {
-			lastErr = fmt.Errorf("backend %s not found", name)
-			continue
-		}
-
-		size, cleanup, err := tryBackend(ctx, name, &locations[i], backend)
-		if err != nil {
-			lastErr = err
-			if errors.Is(err, errUsageLimitSkip) {
-				limitSkips++
-			}
-			if i < len(locations)-1 {
-				o.log.WarnContext(ctx, operation+": copy failed, trying next",
-					"key", key, "failed_backend", name, "error", err)
-			}
-			continue
-		}
-
-		cleanup()
-		o.core.RecordOperation(operation, name, start, nil)
-		if i > 0 {
-			span.SetAttributes(telemetry.AttrFailover.Bool(true))
-		}
-		span.SetAttributes(telemetry.AttrObjectSize.Int64(size))
-		span.SetStatus(codes.Ok, "")
-		return name, nil
-	}
-
-	return "", failoverFailureResult(span, operation, locations, lastErr, limitSkips)
-}
-
-// failoverFailureResult finalises the span and chooses between the
-// usage-limit-exceeded sentinel and the underlying lastErr based on
-// whether every location declined for over-limit reasons.
-func failoverFailureResult(span trace.Span, operation string, locations []core.ObjectLocation, lastErr error, limitSkips int) error {
-	if limitSkips > 0 && limitSkips == len(locations) {
-		telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation, "read").Inc()
-		observe.MarkSpanError(span, "all copies over usage limit")
-		return core.ErrUsageLimitExceeded
-	}
-	observe.RecordSpanError(span, lastErr)
-	return lastErr
-}
-
-// broadcastRead tries all backends when the DB is unavailable. Checks the
-// location cache first for a known-good backend, then dispatches to either
-// parallel or sequential broadcast based on configuration.
-func (o *Manager) broadcastRead(ctx context.Context, operation, key string, start time.Time, span trace.Span, tryBackend readBackendFn) (string, error) {
-	span.SetAttributes(telemetry.AttrDegradedMode.Bool(true))
-	telemetry.DegradedReadsTotal.WithLabelValues(operation).Inc()
-
-	// --- Check location cache first ---
-	if cachedBackend, ok := o.cache.Get(key); ok {
-		if backend, exists := o.core.Backends()[cachedBackend]; exists {
-			// Degraded mode: no DB row available, callback must handle nil loc.
-			size, cleanup, err := tryBackend(ctx, cachedBackend, nil, backend)
-			if err == nil {
-				cleanup()
-				o.core.RecordOperation(operation, cachedBackend, start, nil)
-				span.SetAttributes(telemetry.AttrCacheHit.Bool(true))
-				span.SetAttributes(telemetry.AttrObjectSize.Int64(size))
-				span.SetStatus(codes.Ok, "")
-				telemetry.DegradedCacheHitsTotal.Inc()
-				return cachedBackend, nil
-			}
-			// Cache hit but backend failed  -  fall through to broadcast.
-			// The callback already released its timeout on the error path.
-		}
-	}
-
-	concurrency := 1
-	if o.parallelBroadcast {
-		concurrency = len(o.core.BackendOrder())
-	}
-	return o.tryAllBackends(ctx, operation, key, start, span, concurrency, tryBackend)
-}
-
-// tryAllBackends dispatches to the sequential or parallel branch based on
-// concurrency. Both branches return the first backend whose tryBackend call
-// succeeds and cache the winner's name for future degraded reads.
-func (o *Manager) tryAllBackends(
-	ctx context.Context,
-	operation, key string,
-	start time.Time,
-	span trace.Span,
-	concurrency int,
-	tryBackend readBackendFn,
-) (string, error) {
-	if concurrency <= 1 {
-		return o.tryBackendsSequentially(ctx, operation, key, start, span, tryBackend)
-	}
-	return o.tryBackendsInParallel(ctx, operation, key, start, span, tryBackend)
-}
-
-// tryBackendsSequentially walks o.core.BackendOrder() one backend at a time. The first
-// success short-circuits and is recorded as the broadcast winner; otherwise
-// the last error (if any) is wrapped as a degraded-read failure.
-func (o *Manager) tryBackendsSequentially(
-	ctx context.Context,
-	operation, key string,
-	start time.Time,
-	span trace.Span,
-	tryBackend readBackendFn,
-) (string, error) {
-	var lastErr error
-	for _, name := range o.core.BackendOrder() {
-		backend, ok := o.core.Backends()[name]
-		if !ok {
-			continue
-		}
-		// Degraded mode: no DB row available, callback must handle nil loc.
-		size, cleanup, err := tryBackend(ctx, name, nil, backend)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		cleanup()
-		o.recordBroadcastWinner(operation, key, name, size, start, span, false)
-		return name, nil
-	}
-	return broadcastAllFailed(span, lastErr)
-}
-
-// broadcastResult carries one parallel-probe outcome back to the
-// fan-in loop. cleanup is the success-path cleanup the orchestrator
-// invokes either inline (winner) or via the loser-drain goroutine.
-type broadcastResult struct {
-	name    string
-	size    int64
-	err     error
-	cleanup func()
-}
-
-// tryBackendsInParallel launches one probe per backend in o.core.BackendOrder() and
-// returns the first success, draining the remaining responses in the
-// background so loser cleanups fire promptly.
-func (o *Manager) tryBackendsInParallel(
-	ctx context.Context,
-	operation, key string,
-	start time.Time,
-	span trace.Span,
-	tryBackend readBackendFn,
-) (string, error) {
-	ch := make(chan broadcastResult, len(o.core.BackendOrder()))
-	launched := o.launchBackendProbes(ctx, ch, tryBackend)
-
-	var lastErr error
-	for received := 0; received < launched; received++ { //nolint:intrange // received used in arithmetic below
-		r := <-ch
-		if r.err != nil {
-			lastErr = r.err
-			continue
-		}
-		if r.cleanup != nil {
-			r.cleanup()
-		}
-		if remaining := launched - received - 1; remaining > 0 {
-			go drainAndCleanupLosers(ch, remaining)
-		}
-		o.recordBroadcastWinner(operation, key, r.name, r.size, start, span, true)
-		return r.name, nil
-	}
-	return broadcastAllFailed(span, lastErr)
-}
-
-// launchBackendProbes spawns one goroutine per eligible backend, each of
-// which writes its outcome to ch. Returns the number of probes launched
-// so the caller knows how many results to read.
-func (o *Manager) launchBackendProbes(
-	ctx context.Context,
-	ch chan<- broadcastResult,
-	tryBackend readBackendFn,
-) int {
-	launched := 0
-	for _, name := range o.core.BackendOrder() {
-		backend, ok := o.core.Backends()[name]
-		if !ok {
-			continue
-		}
-		launched++
-		go o.runBackendProbe(ctx, name, backend, tryBackend, ch)
-	}
-	return launched
-}
-
-// runBackendProbe is the per-backend goroutine body. On success it
-// forwards the callback's cleanup so the orchestrator (winner) or the
-// loser-drain (everyone else) can release the timeout context promptly
-// instead of waiting for the deadline to fire on its own.
-func (o *Manager) runBackendProbe(
-	ctx context.Context,
-	name string,
-	backend s3be.ObjectBackend,
-	tryBackend readBackendFn,
-	ch chan<- broadcastResult,
-) {
-	// Degraded mode: no DB row available, callback must handle nil loc.
-	size, cleanup, err := tryBackend(ctx, name, nil, backend)
-	if err != nil {
-		ch <- broadcastResult{name: name, err: err}
-		return
-	}
-	ch <- broadcastResult{name: name, size: size, cleanup: cleanup}
-}
-
-// drainAndCleanupLosers reads the remaining results from ch after a winner
-// has been declared and invokes any cleanup the losers returned. Best-effort:
-// a sender that panicked or closed early is tolerated.
-func drainAndCleanupLosers(ch <-chan broadcastResult, remaining int) {
-	defer func() { recover() }() //nolint:errcheck // best-effort drain
-	for range remaining {
-		if lr := <-ch; lr.cleanup != nil {
-			lr.cleanup()
-		}
-	}
-}
-
-// recordBroadcastWinner caches the winner's name for future degraded reads,
-// emits operation metrics, and sets the success-path span attributes.
-func (o *Manager) recordBroadcastWinner(
-	operation, key, name string,
-	size int64,
-	start time.Time,
-	span trace.Span,
-	parallel bool,
-) {
-	o.cache.Set(key, name)
-	o.core.RecordOperation(operation, name, start, nil)
-	span.SetAttributes(telemetry.AttrBackendName.String(name))
-	span.SetAttributes(telemetry.AttrObjectSize.Int64(size))
-	if parallel {
-		span.SetAttributes(telemetry.AttrParallelBroadcast.Bool(true))
-	}
-	span.SetStatus(codes.Ok, "")
-}
-
-// broadcastAllFailed builds the all-failed return value. When at least one
-// backend returned an error, that error is wrapped so the server can
-// distinguish "backend unreachable" (502) from "object not found" (404).
-func broadcastAllFailed(span trace.Span, lastErr error) (string, error) {
-	if lastErr != nil {
-		observe.RecordSpanError(span, lastErr)
-		return "", fmt.Errorf("all backends failed during degraded read: %w", lastErr)
-	}
-	observe.MarkSpanError(span, "no backends available")
-	return "", core.ErrObjectNotFound
-}
-
 // -------------------------------------------------------------------------
 // READ OPERATIONS
 // -------------------------------------------------------------------------
@@ -495,7 +180,7 @@ func (o *Manager) GetObject(ctx context.Context, key string, rangeHeader string)
 	var result *s3be.GetObjectResult
 	var once sync.Once
 
-	backendName, err := o.withReadFailover(ctx, "GetObject", key, func(ctx context.Context, beName string, loc *core.ObjectLocation, backend s3be.ObjectBackend) (int64, func(), error) {
+	backendName, err := o.failover.Read(ctx, "GetObject", key, func(ctx context.Context, beName string, loc *core.ObjectLocation, backend s3be.ObjectBackend) (int64, func(), error) {
 		req := &getAttemptRequest{
 			key:         key,
 			rangeHeader: rangeHeader,
@@ -570,13 +255,13 @@ func (o *Manager) getObjectAttempt(ctx context.Context, req *getAttemptRequest) 
 
 	if !o.core.Usage().WithinLimits(req.beName, 1, 0, 0) {
 		bcancel()
-		return 0, noopCleanup, fmt.Errorf("backend %s: %w", req.beName, errUsageLimitSkip)
+		return 0, readpath.NoopCleanup, fmt.Errorf("backend %s: %w", req.beName, readpath.ErrUsageLimitSkip)
 	}
 	// Encrypted reads need the location row to unwrap the DEK; without it
 	// (degraded broadcast with the DB unreachable) we cannot decrypt.
 	if o.encryptor != nil && req.loc == nil {
 		bcancel()
-		return 0, noopCleanup, core.ErrServiceUnavailable
+		return 0, readpath.NoopCleanup, core.ErrServiceUnavailable
 	}
 
 	loc := req.loc
@@ -586,20 +271,20 @@ func (o *Manager) getObjectAttempt(ctx context.Context, req *getAttemptRequest) 
 	if err != nil {
 		bcancel()
 		o.core.Usage().Record(req.beName, 1, 0, 0)
-		return 0, noopCleanup, err
+		return 0, readpath.NoopCleanup, err
 	}
 	if !o.core.Usage().WithinLimits(req.beName, 1, r.Size, 0) {
 		_ = r.Body.Close()
 		bcancel()
 		o.core.Usage().Record(req.beName, 1, 0, 0)
-		return 0, noopCleanup, fmt.Errorf("backend %s egress: %w", req.beName, errUsageLimitSkip)
+		return 0, readpath.NoopCleanup, fmt.Errorf("backend %s egress: %w", req.beName, readpath.ErrUsageLimitSkip)
 	}
 
 	if loc != nil && loc.Encrypted && o.encryptor != nil {
 		if err := decryptResponse(ctx, o.encryptor, r, loc, rng, ptStart, ptEnd); err != nil {
 			_ = r.Body.Close()
 			bcancel()
-			return 0, noopCleanup, err
+			return 0, readpath.NoopCleanup, err
 		}
 	}
 
@@ -610,7 +295,7 @@ func (o *Manager) getObjectAttempt(ctx context.Context, req *getAttemptRequest) 
 	if *req.result != r {
 		_ = r.Body.Close()
 	}
-	return r.Size, noopCleanup, nil
+	return r.Size, readpath.NoopCleanup, nil
 }
 
 // resolveBackendRange translates a plaintext Range header into the actual
@@ -706,17 +391,17 @@ func (o *Manager) HeadObject(ctx context.Context, key string) (*s3be.HeadObjectR
 	var result *s3be.HeadObjectResult
 	var once sync.Once // protects result write when parallel broadcast is enabled
 
-	backendName, err := o.withReadFailover(ctx, "HeadObject", key, func(ctx context.Context, beName string, loc *core.ObjectLocation, backend s3be.ObjectBackend) (int64, func(), error) {
+	backendName, err := o.failover.Read(ctx, "HeadObject", key, func(ctx context.Context, beName string, loc *core.ObjectLocation, backend s3be.ObjectBackend) (int64, func(), error) {
 		bctx, bcancel := o.core.WithTimeout(ctx)
 		if !o.core.Usage().WithinLimits(beName, 1, 0, 0) {
 			bcancel()
-			return 0, noopCleanup, fmt.Errorf("backend %s: %w", beName, errUsageLimitSkip)
+			return 0, readpath.NoopCleanup, fmt.Errorf("backend %s: %w", beName, readpath.ErrUsageLimitSkip)
 		}
 		r, err := backend.HeadObject(bctx, key)
 		if err != nil {
 			bcancel()
 			o.core.Usage().Record(beName, 1, 0, 0) // API call was made even on failure
-			return 0, noopCleanup, err
+			return 0, readpath.NoopCleanup, err
 		}
 
 		// Return plaintext size for encrypted objects
