@@ -35,9 +35,9 @@ type usageFlushOps interface {
 	UpdateQuotaMetrics(ctx context.Context) error
 }
 
-// multipartCleanupOps is the subset of *multipart.Manager that
+// staleMultipartCleaner is the subset of *multipart.Manager that
 // NewMultipartCleanupService needs to drive the stale-upload sweep.
-type multipartCleanupOps interface {
+type staleMultipartCleaner interface {
 	CleanupStaleMultipartUploads(ctx context.Context, olderThan time.Duration)
 }
 

@@ -32,6 +32,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/ioutilx"
@@ -50,7 +51,7 @@ const managerSpanPrefix = "Manager "
 // Manager handles object-level CRUD operations with read failover,
 // broadcast reads during degraded mode, and location caching.
 type Manager struct {
-	core              ObjectCore         // infrastructure subset: backends, usage, timeout, eligibility, error classification, metrics, log
+	core              ObjectCore         // infrastructure subset: backends, usage, timeout, eligibility, error classification, metrics
 	coord             ObjectCoordinator  // write-path helpers shared with BackendManager and MultipartManager
 	stores            core.MetadataStore // direct store access for read paths and quota inspection
 	encryptor         *encryption.Encryptor
@@ -58,6 +59,7 @@ type Manager struct {
 	objectCache       objcache.ObjectCache // nil when object data caching is disabled
 	parallelBroadcast bool
 	integrityCfg      *syncutil.AtomicConfig[config.IntegrityConfig]
+	log               *slog.Logger
 }
 
 // Deps bundles the dependencies New needs so the call signature stays
@@ -78,7 +80,8 @@ type Deps struct {
 
 // New creates a Manager sharing the given core infrastructure and
 // write coordinator. All dependencies must be non-nil; nothing is
-// patched in post-construction.
+// patched in post-construction. The component-scoped logger is built
+// in the constructor body per the project's logging convention.
 func New(d *Deps) *Manager {
 	return &Manager{
 		core:              d.Core,
@@ -89,6 +92,7 @@ func New(d *Deps) *Manager {
 		objectCache:       d.ObjectCache,
 		parallelBroadcast: d.ParallelBroadcast,
 		integrityCfg:      d.IntegrityCfg,
+		log:               slog.Default().With(logfmt.Component("object")),
 	}
 }
 
@@ -239,7 +243,7 @@ func (o *Manager) tryEachLocation(ctx context.Context, operation, key string, st
 				limitSkips++
 			}
 			if i < len(locations)-1 {
-				o.core.Log().WarnContext(ctx, operation+": copy failed, trying next",
+				o.log.WarnContext(ctx, operation+": copy failed, trying next",
 					"key", key, "failed_backend", name, "error", err)
 			}
 			continue
@@ -651,7 +655,7 @@ func (o *Manager) maybeWrapIntegrityReader(
 	}
 	vr := NewVerifyingReader(r.Body)
 	vr.SetVerification(expectedHash, func(expected, actual string) {
-		o.core.Log().ErrorContext(ctx, "integrity check failed on read",
+		o.log.ErrorContext(ctx, "integrity check failed on read",
 			"key", key, "backend", beName,
 			"expected_hash", expected, "actual_hash", actual)
 		telemetry.IntegrityErrorsTotal.WithLabelValues("read").Inc()

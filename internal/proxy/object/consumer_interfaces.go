@@ -19,7 +19,6 @@ package object
 
 import (
 	"context"
-	"log/slog"
 	"time"
 
 	"go.opentelemetry.io/otel/trace"
@@ -30,6 +29,9 @@ import (
 )
 
 // ObjectCore is the subset of *infra.Core the object Manager needs.
+// Log is intentionally absent: the logger is observability
+// infrastructure owned by the Manager (built via
+// logfmt.Component("object") in New), not a behavior dependency.
 type ObjectCore interface {
 	Backends() map[string]backend.ObjectBackend
 	BackendOrder() []string
@@ -39,7 +41,6 @@ type ObjectCore interface {
 	EligibleForWrite(apiCalls, egress, ingress int64) []string
 	ClassifyWriteError(span trace.Span, operation string, err error) error
 	RecordOperation(operation, backend string, start time.Time, err error)
-	Log() *slog.Logger
 }
 
 // ObjectCoordinator is the subset of *writepath.Coordinator the object

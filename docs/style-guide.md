@@ -256,6 +256,8 @@ func New(core MultipartCore, coord MultipartCoordinator, ...) *Manager { ... }
 
 **Producer-side interfaces are an anti-pattern.** `*infra.Core`, `*writepath.Coordinator`, `*object.Manager`, `*multipart.Manager` are exported as concrete pointer types with no sibling `Core`/`Coordinator`/`Manager` interface that mirrors their public surface. Producer-side interfaces force every consumer to mock the full producer API, which is exactly what this pattern is built to avoid.
 
+**Logger is not a behavior dependency.** Never include `Log() *slog.Logger` in a consumer-declared interface. The logger is observability infrastructure: it has no return value the consumer depends on, and the per-component scope is a property of the consumer itself, not of the producer. Components build their own `log *slog.Logger` field in the constructor body via `slog.Default().With(logfmt.Component("<slug>"))` (see Logging and Audit), so each subsystem owns its component name and tests do not need to thread a logger through dependency interfaces.
+
 ### Variable Naming
 
 Avoid shadowing package imports with local variable names. When a function receives or creates a `backend.ObjectBackend`, name the variable `be`, not `backend`:

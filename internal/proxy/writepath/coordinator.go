@@ -24,6 +24,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
@@ -39,19 +40,23 @@ import (
 // *BackendManager back-pointer, eliminating the post-construction
 // wiring step.
 type Coordinator struct {
-	core           WritepathCore // infrastructure subset: backends, usage, routing, eligibility, error classification, delete-with-timeout, log
+	core           WritepathCore // infrastructure subset: backends, usage, routing, eligibility, error classification, delete-with-timeout
 	stores         core.MetadataStore
 	pendingEnabled bool
+	log            *slog.Logger
 }
 
 // New constructs a Coordinator. The supplied core must observe the same
 // admission, usage, drain, and backend state as the *infra.Core embedded
-// in BackendManager (in production they are the same instance).
+// in BackendManager (in production they are the same instance). The
+// component-scoped logger is built in the constructor body per the
+// project's logging convention.
 func New(core WritepathCore, stores core.MetadataStore, pendingEnabled bool) *Coordinator {
 	return &Coordinator{
 		core:           core,
 		stores:         stores,
 		pendingEnabled: pendingEnabled,
+		log:            slog.Default().With(logfmt.Component("writepath")),
 	}
 }
 
@@ -104,7 +109,7 @@ func (w *Coordinator) SelectWriteTarget(ctx context.Context, span trace.Span, op
 func (w *Coordinator) RecordObjectOrCleanup(ctx context.Context, span trace.Span, be backend.ObjectBackend, key, backendName string, size int64, enc *core.EncryptionMeta) error {
 	displaced, err := w.stores.RecordObject(ctx, key, backendName, size, enc)
 	if err != nil {
-		w.core.Log().ErrorContext(ctx, "recordObject failed, cleaning up orphan",
+		w.log.ErrorContext(ctx, "recordObject failed, cleaning up orphan",
 			"key", key, "backend", backendName, "error", err)
 		w.RecoverFromRecordFailure(ctx, be, backendName, key, "orphan_record_failed", size)
 		observe.RecordSpanError(span, err)
@@ -127,7 +132,7 @@ func (w *Coordinator) RecoverFromRecordFailure(ctx context.Context, be backend.O
 	delErr := w.core.DeleteWithTimeout(ctx, be, key)
 	w.core.Usage().Record(backendName, 1, 0, 0) // cleanup DELETE
 	if delErr != nil {
-		w.core.Log().ErrorContext(ctx, "failed to clean up orphaned object",
+		w.log.ErrorContext(ctx, "failed to clean up orphaned object",
 			"key", key, "backend", backendName, "error", delErr)
 		w.EnqueueCleanup(ctx, backendName, key, cleanupReason, size)
 	}
@@ -193,7 +198,7 @@ func (w *Coordinator) RecordObjectAndPromoteIntent(ctx context.Context, span tra
 		telemetry.PendingIntentsResolvedTotal.WithLabelValues("committed").Inc()
 	}
 	if err != nil {
-		w.core.Log().ErrorContext(ctx, "recordObjectAndClearPending failed; intent left for reaper",
+		w.log.ErrorContext(ctx, "recordObjectAndClearPending failed; intent left for reaper",
 			"key", key, "backend", backendName, "intent_id", intentID, "error", err)
 		// The successful PUT against the backend still consumed an API
 		// call. The success-path usage record runs only when this returns
@@ -214,7 +219,7 @@ func (w *Coordinator) cleanupDisplacedCopies(ctx context.Context, key, newBacken
 	for _, dc := range displaced {
 		dcBackend, ok := w.core.Backends()[dc.BackendName]
 		if !ok {
-			w.core.Log().WarnContext(ctx, "displaced copy backend not found",
+			w.log.WarnContext(ctx, "displaced copy backend not found",
 				"backend", dc.BackendName, "key", key)
 			continue
 		}
@@ -242,7 +247,7 @@ func (w *Coordinator) DeleteOrEnqueue(ctx context.Context, be backend.ObjectBack
 	err := w.core.DeleteWithTimeout(ctx, be, key)
 	w.core.Usage().Record(backendName, 1, 0, 0)
 	if err != nil {
-		w.core.Log().WarnContext(ctx, "failed to delete object, enqueuing cleanup",
+		w.log.WarnContext(ctx, "failed to delete object, enqueuing cleanup",
 			"backend", backendName, "key", key, "reason", reason, "error", err)
 		w.EnqueueCleanup(ctx, backendName, key, reason, sizeBytes)
 	}
@@ -290,6 +295,6 @@ func (w *Coordinator) recordEnqueueFailure(ctx context.Context, backendName, obj
 		slog.Int64("size", sizeBytes),
 		slog.String("error", err.Error()),
 	)
-	w.core.Log().ErrorContext(ctx, "orphan cleanup enqueue failed (best-effort)",
+	w.log.ErrorContext(ctx, "orphan cleanup enqueue failed (best-effort)",
 		"backend", backendName, "key", objectKey, "reason", reason, "stage", stage, "error", err)
 }

@@ -19,7 +19,6 @@ package multipart
 
 import (
 	"context"
-	"log/slog"
 	"time"
 
 	"go.opentelemetry.io/otel/trace"
@@ -29,14 +28,16 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
-// MultipartCore is the subset of *infra.Core the multipart Manager needs.
+// MultipartCore is the subset of *infra.Core the multipart Manager
+// needs. Log is intentionally absent: the logger is observability
+// infrastructure owned by the Manager (built via
+// logfmt.Component("multipart") in New), not a behavior dependency.
 type MultipartCore interface {
 	GetBackend(name string) (backend.ObjectBackend, error)
 	Usage() *counter.UsageTracker
 	WithTimeout(ctx context.Context) (context.Context, context.CancelFunc)
 	ClassifyWriteError(span trace.Span, operation string, err error) error
 	RecordOperation(operation, backend string, start time.Time, err error)
-	Log() *slog.Logger
 }
 
 // MultipartCoordinator is the subset of *writepath.Coordinator the

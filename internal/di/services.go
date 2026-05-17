@@ -332,7 +332,7 @@ func (s *usageFlushService) doFlush(ctx context.Context) {
 // service. The cleaner is typically *multipart.Manager (resolved by the
 // DI provider as mgr.MultipartManager); the narrow interface keeps this
 // constructor decoupled from the rest of *proxy.BackendManager.
-func NewMultipartCleanupService(cleaner multipartCleanupOps, locker advisoryLocker, staleTimeout time.Duration) lifecycle.Runner {
+func NewMultipartCleanupService(cleaner staleMultipartCleaner, locker advisoryLocker, staleTimeout time.Duration) lifecycle.Runner {
 	if staleTimeout <= 0 {
 		staleTimeout = defaultMultipartStaleTimeout
 	}

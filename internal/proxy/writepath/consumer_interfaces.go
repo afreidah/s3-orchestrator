@@ -17,7 +17,6 @@ package writepath
 
 import (
 	"context"
-	"log/slog"
 
 	"go.opentelemetry.io/otel/trace"
 
@@ -27,6 +26,9 @@ import (
 )
 
 // WritepathCore is the subset of *infra.Core the Coordinator needs.
+// Log is intentionally absent: the logger is observability
+// infrastructure owned by the Coordinator (built via
+// logfmt.Component("writepath") in New), not a behavior dependency.
 type WritepathCore interface {
 	Backends() map[string]backend.ObjectBackend
 	Usage() *counter.UsageTracker
@@ -34,5 +36,4 @@ type WritepathCore interface {
 	EligibleForWrite(apiCalls, egress, ingress int64) []string
 	ClassifyWriteError(span trace.Span, operation string, err error) error
 	DeleteWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) error
-	Log() *slog.Logger
 }
