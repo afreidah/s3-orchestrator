@@ -103,3 +103,55 @@ func TestDrainAndCleanupLosers_ToleratesNilCleanup(t *testing.T) {
 	}
 }
 
+// -------------------------------------------------------------------------
+// cancelLosers
+// -------------------------------------------------------------------------
+
+// TestCancelLosers_LeavesWinnerAliveCancelsRest verifies that the winner's
+// context is preserved (its response body is still being read) while every
+// other per-probe context is cancelled so losing backends stop wasting CPU
+// and API calls.
+func TestCancelLosers_LeavesWinnerAliveCancelsRest(t *testing.T) {
+	t.Parallel()
+	parent := context.Background()
+	ctxA, cancelA := context.WithCancel(parent)
+	ctxB, cancelB := context.WithCancel(parent)
+	ctxC, cancelC := context.WithCancel(parent)
+
+	cancels := map[string]context.CancelFunc{
+		"a": cancelA,
+		"b": cancelB,
+		"c": cancelC,
+	}
+
+	cancelLosers(cancels, "b")
+
+	if ctxA.Err() == nil {
+		t.Errorf("loser a was not cancelled")
+	}
+	if ctxB.Err() != nil {
+		t.Errorf("winner b was cancelled: %v", ctxB.Err())
+	}
+	if ctxC.Err() == nil {
+		t.Errorf("loser c was not cancelled")
+	}
+	// Release the winner so the linter does not flag a leak in the test.
+	cancelB()
+}
+
+// TestCancelLosers_UnknownWinnerCancelsEveryone verifies the defensive
+// behavior when the winner's name does not match any tracked probe (which
+// should not happen in practice). Every cancel still fires so no per-probe
+// context leaks.
+func TestCancelLosers_UnknownWinnerCancelsEveryone(t *testing.T) {
+	t.Parallel()
+	ctxA, cancelA := context.WithCancel(context.Background())
+	ctxB, cancelB := context.WithCancel(context.Background())
+
+	cancelLosers(map[string]context.CancelFunc{"a": cancelA, "b": cancelB}, "no-such-backend")
+
+	if ctxA.Err() == nil || ctxB.Err() == nil {
+		t.Errorf("expected both contexts cancelled, got a=%v b=%v", ctxA.Err(), ctxB.Err())
+	}
+}
+
