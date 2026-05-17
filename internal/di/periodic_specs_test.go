@@ -39,7 +39,7 @@ func allLockedTickerServices(t *testing.T) []*lockedTickerService {
 	locker := fakeLocker{}
 
 	runners := []lifecycle.Runner{
-		NewMultipartCleanupService(f.mgr, locker, 0),
+		NewMultipartCleanupService(f.mgr.MultipartManager, locker, 0),
 		NewCleanupQueueService(f.cleanupWorker, locker),
 		NewRebalancerService(f.mgr, f.rebalancer, locker),
 		NewLifecycleService(f.mgr, locker),
