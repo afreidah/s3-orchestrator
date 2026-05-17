@@ -353,6 +353,31 @@ func (o *Manager) CopyObject(ctx context.Context, sourceKey, destKey string) (st
 		return "", err
 	}
 
+	// Same-backend fast path: when a source replica lives on the chosen
+	// destination backend and that backend supports server-side copy,
+	// skip the materialize+PUT round trip. Falls back to the slow path
+	// on ErrCopyNotSupported or any native-call backend error. A
+	// post-copy failure (e.g., metadata record failure) surfaces to the
+	// caller because the bytes are already on the destination; falling
+	// back would copy them a second time.
+	if sameBackendCopyEligible(locations, destBackendName) {
+		req := &nativeCopyRequest{
+			span:            span,
+			destBackend:     destBackend,
+			sourceKey:       sourceKey,
+			destKey:         destKey,
+			destBackendName: destBackendName,
+			size:            size,
+			contentType:     contentType,
+			metadata:        metadata,
+			srcEnc:          srcEnc,
+			start:           start,
+		}
+		if etag, handled, nerr := o.tryNativeCopy(ctx, req); handled {
+			return etag, nerr
+		}
+	}
+
 	src, err := o.materializeCopySource(ctx, sourceKey, size, locations)
 	if err != nil {
 		observe.RecordSpanError(span, err)
@@ -386,6 +411,82 @@ func (o *Manager) CopyObject(ctx context.Context, sourceKey, destKey string) (st
 	pobserve.CopyCompleted(ctx, span, sourceKey, destKey, srcName, destBackendName, size)
 	o.invalidateCache(destKey)
 	return etag, nil
+}
+
+// sameBackendCopyEligible reports whether the source has at least one
+// replica on destBackendName. The orchestrator only triggers the
+// server-side copy fast path when both keys live on the same backend
+// because no backend can satisfy a CopySource that points at a
+// foreign bucket.
+func sameBackendCopyEligible(locations []core.ObjectLocation, destBackendName string) bool {
+	for i := range locations {
+		if locations[i].BackendName == destBackendName {
+			return true
+		}
+	}
+	return false
+}
+
+// nativeCopyRequest bundles tryNativeCopy's inputs so its signature
+// stays under the parameter-count limit. Mirrors the putSuccessRequest
+// pattern used by finalizePutSuccess in this file.
+type nativeCopyRequest struct {
+	span            trace.Span
+	destBackend     s3be.ObjectBackend
+	sourceKey       string
+	destKey         string
+	destBackendName string
+	size            int64
+	contentType     string
+	metadata        map[string]string
+	srcEnc          *core.EncryptionMeta
+	start           time.Time
+}
+
+// tryNativeCopy attempts a server-side CopyObject on req.destBackend
+// and, on success, records the destination location, updates
+// accounting, and emits the completion observability. Returns:
+//
+//   - (etag, true, nil):  native copy + record both succeeded
+//   - (_, true, err):     native copy succeeded but a post-step failed;
+//                         bytes are already on the destination, so the
+//                         caller MUST NOT fall back (that would copy
+//                         the bytes a second time)
+//   - (_, false, nil):    backend does not support native copy, or the
+//                         native call itself failed transiently; caller
+//                         falls back to the materialized copy path
+//
+// Native copy accounting differs from the materialized path: one API
+// call against the destination backend with no egress and no ingress,
+// because the bytes never traverse the orchestrator's network.
+func (o *Manager) tryNativeCopy(ctx context.Context, req *nativeCopyRequest) (string, bool, error) {
+	const operation = "CopyObject"
+	copier, ok := req.destBackend.(s3be.BackendCopier)
+	if !ok {
+		return "", false, nil
+	}
+	cctx, ccancel := o.core.WithTimeout(ctx)
+	defer ccancel()
+	etag, err := copier.CopyObject(cctx, req.sourceKey, req.destKey, req.contentType, req.metadata)
+	if err != nil {
+		if errors.Is(err, s3be.ErrCopyNotSupported) {
+			return "", false, nil
+		}
+		o.log.WarnContext(ctx, "native copy failed, falling back to materialized copy",
+			"source_key", req.sourceKey, "dest_key", req.destKey, "backend", req.destBackendName, "error", err)
+		return "", false, nil
+	}
+
+	if err := o.coord.RecordObjectOrCleanup(ctx, req.span, req.destBackend, req.destKey, req.destBackendName, req.size, req.srcEnc); err != nil {
+		return "", true, err
+	}
+
+	o.cache.Delete(req.destKey)
+	o.core.Acct().Operation(operation, req.destBackendName, req.start, nil)
+	req.span.SetAttributes(telemetry.AttrNativeCopy.Bool(true))
+	pobserve.CopyCompleted(ctx, req.span, req.sourceKey, req.destKey, req.destBackendName, req.destBackendName, req.size)
+	o.invalidateCache(req.destKey)
+	return etag, true, nil
 }
 
 // -------------------------------------------------------------------------

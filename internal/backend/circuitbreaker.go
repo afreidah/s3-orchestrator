@@ -93,3 +93,19 @@ func (cb *CircuitBreakerBackend) DeleteObject(ctx context.Context, key string) e
 		return cb.real.DeleteObject(ctx, key)
 	})
 }
+
+// CopyObject forwards a server-side copy through the circuit breaker
+// when the wrapped backend implements BackendCopier. When it does not,
+// returns ErrCopyNotSupported so the caller falls back to materialized
+// copy. CopyObject failures count toward the same breaker as other
+// operations so a misbehaving backend's native copy path trips the
+// breaker just like its PutObject/GetObject path.
+func (cb *CircuitBreakerBackend) CopyObject(ctx context.Context, srcKey, dstKey, contentType string, metadata map[string]string) (string, error) {
+	copier, ok := cb.real.(BackendCopier)
+	if !ok {
+		return "", ErrCopyNotSupported
+	}
+	return breaker.CBCall(cb.CircuitBreaker, func() (string, error) {
+		return copier.CopyObject(ctx, srcKey, dstKey, contentType, metadata)
+	})
+}
