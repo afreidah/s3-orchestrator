@@ -288,12 +288,12 @@ func TestUpdateQuotaMetrics_ReplicationFactorFromManager(t *testing.T) {
 	})
 	workers := wireWorkersForTest(mgr)
 
-	if err := mgr.metricsCollector.UpdateQuotaMetrics(context.Background()); err != nil {
+	if err := mgr.MetricsCollector().UpdateQuotaMetrics(context.Background()); err != nil {
 		t.Fatalf("UpdateQuotaMetrics (no repl config): %v", err)
 	}
 
 	workers.Replicator.SetConfig(&config.ReplicationConfig{Factor: 2, BatchSize: 50})
-	if err := mgr.metricsCollector.UpdateQuotaMetrics(context.Background()); err != nil {
+	if err := mgr.MetricsCollector().UpdateQuotaMetrics(context.Background()); err != nil {
 		t.Fatalf("UpdateQuotaMetrics (with repl config): %v", err)
 	}
 }

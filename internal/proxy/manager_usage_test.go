@@ -127,9 +127,9 @@ func TestRecordUsage_IncrementsCounters(t *testing.T) {
 	t.Parallel()
 	mgr := newUsageManager(t, []string{"b1"}, newPermissiveMock(t))
 
-	mgr.usage.Record("b1", 3, 1024, 2048)
+	mgr.Usage().Record("b1", 3, 1024, 2048)
 
-	c := mgr.usage.Backend().LoadAll("b1")
+	c := mgr.Usage().Backend().LoadAll("b1")
 	if c.APIRequests != 3 {
 		t.Errorf("apiRequests = %d, want 3", c.APIRequests)
 	}
@@ -146,10 +146,10 @@ func TestRecordUsage_Accumulates(t *testing.T) {
 	t.Parallel()
 	mgr := newUsageManager(t, []string{"b1"}, newPermissiveMock(t))
 
-	mgr.usage.Record("b1", 1, 100, 200)
-	mgr.usage.Record("b1", 2, 300, 400)
+	mgr.Usage().Record("b1", 1, 100, 200)
+	mgr.Usage().Record("b1", 2, 300, 400)
 
-	c := mgr.usage.Backend().LoadAll("b1")
+	c := mgr.Usage().Backend().LoadAll("b1")
 	if c.APIRequests != 3 {
 		t.Errorf("apiRequests = %d, want 3", c.APIRequests)
 	}
@@ -166,9 +166,9 @@ func TestRecordUsage_UnknownBackendNoOp(t *testing.T) {
 	t.Parallel()
 	mgr := newUsageManager(t, []string{"b1"}, newPermissiveMock(t))
 
-	mgr.usage.Record("unknown", 1, 1, 1)
+	mgr.Usage().Record("unknown", 1, 1, 1)
 
-	if got := mgr.usage.Backend().Load("b1", counter.FieldAPIRequests); got != 0 {
+	if got := mgr.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 0 {
 		t.Errorf("apiRequests = %d, want 0", got)
 	}
 }
@@ -179,9 +179,9 @@ func TestRecordUsage_ZeroValuesSkipped(t *testing.T) {
 	t.Parallel()
 	mgr := newUsageManager(t, []string{"b1"}, newPermissiveMock(t))
 
-	mgr.usage.Record("b1", 0, 0, 0)
+	mgr.Usage().Record("b1", 0, 0, 0)
 
-	if got := mgr.usage.Backend().Load("b1", counter.FieldAPIRequests); got != 0 {
+	if got := mgr.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 0 {
 		t.Errorf("apiRequests = %d, want 0", got)
 	}
 }
@@ -192,13 +192,13 @@ func TestRecordUsage_MultipleBackends(t *testing.T) {
 	t.Parallel()
 	mgr := newUsageManager(t, []string{"b1", "b2"}, newPermissiveMock(t))
 
-	mgr.usage.Record("b1", 1, 100, 0)
-	mgr.usage.Record("b2", 2, 0, 200)
+	mgr.Usage().Record("b1", 1, 100, 0)
+	mgr.Usage().Record("b2", 2, 0, 200)
 
-	if got := mgr.usage.Backend().Load("b1", counter.FieldAPIRequests); got != 1 {
+	if got := mgr.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 1 {
 		t.Errorf("b1 apiRequests = %d, want 1", got)
 	}
-	if got := mgr.usage.Backend().Load("b2", counter.FieldIngressBytes); got != 200 {
+	if got := mgr.Usage().Backend().Load("b2", counter.FieldIngressBytes); got != 200 {
 		t.Errorf("b2 ingressBytes = %d, want 200", got)
 	}
 }
@@ -211,7 +211,7 @@ func TestRecordUsage_PublicMethod(t *testing.T) {
 
 	mgr.RecordUsage("b1", 5, 1024, 2048)
 
-	c := mgr.usage.Backend().LoadAll("b1")
+	c := mgr.Usage().Backend().LoadAll("b1")
 	if c.APIRequests != 5 {
 		t.Errorf("apiRequests = %d, want 5", c.APIRequests)
 	}
@@ -232,13 +232,13 @@ func TestFlushUsage_WritesToStore(t *testing.T) {
 	store, ft := usageStoreWithFlush(t)
 	mgr := newUsageManager(t, []string{"b1"}, store)
 
-	mgr.usage.Record("b1", 5, 1024, 2048)
+	mgr.Usage().Record("b1", 5, 1024, 2048)
 
 	if err := mgr.FlushUsage(context.Background()); err != nil {
 		t.Fatalf("FlushUsage() error = %v", err)
 	}
 
-	c := mgr.usage.Backend().LoadAll("b1")
+	c := mgr.Usage().Backend().LoadAll("b1")
 	if c.APIRequests != 0 || c.EgressBytes != 0 || c.IngressBytes != 0 {
 		t.Errorf("counters not reset after flush: %+v", c)
 	}
@@ -261,7 +261,7 @@ func TestFlushUsage_SkipsZeroDeltas(t *testing.T) {
 	store, ft := usageStoreWithFlush(t)
 	mgr := newUsageManager(t, []string{"b1", "b2"}, store)
 
-	mgr.usage.Record("b1", 1, 0, 0)
+	mgr.Usage().Record("b1", 1, 0, 0)
 
 	if err := mgr.FlushUsage(context.Background()); err != nil {
 		t.Fatalf("FlushUsage() error = %v", err)
@@ -286,13 +286,13 @@ func TestFlushUsage_RestoresCountersOnError(t *testing.T) {
 	ft.err = fmt.Errorf("db down")
 	mgr := newUsageManager(t, []string{"b1"}, store)
 
-	mgr.usage.Record("b1", 10, 500, 300)
+	mgr.Usage().Record("b1", 10, 500, 300)
 
 	if err := mgr.FlushUsage(context.Background()); err == nil {
 		t.Fatal("FlushUsage() should return error")
 	}
 
-	c := mgr.usage.Backend().LoadAll("b1")
+	c := mgr.Usage().Backend().LoadAll("b1")
 	if c.APIRequests != 10 {
 		t.Errorf("apiRequests after failed flush = %d, want 10 (restored)", c.APIRequests)
 	}
@@ -329,8 +329,8 @@ func TestFlushUsage_SkipsDrainedBackend(t *testing.T) {
 	store, ft := usageStoreWithFlush(t)
 	mgr := newUsageManager(t, []string{"b1", "b2"}, store)
 
-	mgr.usage.Record("b1", 5, 100, 200)
-	mgr.usage.Record("b2", 3, 50, 75)
+	mgr.Usage().Record("b1", 5, 100, 200)
+	mgr.Usage().Record("b2", 3, 50, 75)
 
 	mgr.DrainManager.SeedCompletedForTest("b2")
 
@@ -347,7 +347,7 @@ func TestFlushUsage_SkipsDrainedBackend(t *testing.T) {
 		t.Errorf("flushed backend = %s, want b1", ft.calls[0].backendName)
 	}
 
-	if got := mgr.usage.Backend().Load("b2", counter.FieldAPIRequests); got != 0 {
+	if got := mgr.Usage().Backend().Load("b2", counter.FieldAPIRequests); got != 0 {
 		t.Errorf("b2 apiRequests = %d, want 0 (discarded)", got)
 	}
 }
@@ -359,7 +359,7 @@ func TestWithinUsageLimits_NoLimits(t *testing.T) {
 	t.Parallel()
 	mgr := newUsageManager(t, []string{"b1"}, newPermissiveMock(t))
 
-	if !mgr.usage.WithinLimits("b1", 1000, 1000, 1000) {
+	if !mgr.Usage().WithinLimits("b1", 1000, 1000, 1000) {
 		t.Error("no limits configured, should always return true")
 	}
 }
@@ -372,9 +372,9 @@ func TestWithinUsageLimits_ApiExceeded(t *testing.T) {
 	}
 	mgr := newUsageManagerWithLimits(t, []string{"b1"}, newPermissiveMock(t), limits)
 
-	mgr.usage.SetBaseline("b1", core.UsageStat{APIRequests: 100})
+	mgr.Usage().SetBaseline("b1", core.UsageStat{APIRequests: 100})
 
-	if mgr.usage.WithinLimits("b1", 1, 0, 0) {
+	if mgr.Usage().WithinLimits("b1", 1, 0, 0) {
 		t.Error("should exceed API request limit")
 	}
 }
@@ -387,10 +387,10 @@ func TestWithinUsageLimits_EgressExceeded(t *testing.T) {
 	}
 	mgr := newUsageManagerWithLimits(t, []string{"b1"}, newPermissiveMock(t), limits)
 
-	mgr.usage.SetBaseline("b1", core.UsageStat{EgressBytes: 500})
-	mgr.usage.Backend().Add("b1", counter.FieldEgressBytes, 400)
+	mgr.Usage().SetBaseline("b1", core.UsageStat{EgressBytes: 500})
+	mgr.Usage().Backend().Add("b1", counter.FieldEgressBytes, 400)
 
-	if mgr.usage.WithinLimits("b1", 0, 200, 0) {
+	if mgr.Usage().WithinLimits("b1", 0, 200, 0) {
 		t.Error("should exceed egress byte limit")
 	}
 }
@@ -404,7 +404,7 @@ func TestWithinUsageLimits_UnlimitedDimension(t *testing.T) {
 	}
 	mgr := newUsageManagerWithLimits(t, []string{"b1"}, newPermissiveMock(t), limits)
 
-	if !mgr.usage.WithinLimits("b1", 1, 999999, 999999) {
+	if !mgr.Usage().WithinLimits("b1", 1, 999999, 999999) {
 		t.Error("zero limit means unlimited, should not be checked")
 	}
 }
@@ -419,9 +419,9 @@ func TestBackendsWithinLimits_FiltersCorrectly(t *testing.T) {
 	}
 	mgr := newUsageManagerWithLimits(t, []string{"b1", "b2"}, newPermissiveMock(t), limits)
 
-	mgr.usage.SetBaseline("b1", core.UsageStat{APIRequests: 10})
+	mgr.Usage().SetBaseline("b1", core.UsageStat{APIRequests: 10})
 
-	eligible := mgr.usage.BackendsWithinLimits(mgr.order, 1, 0, 0)
+	eligible := mgr.Usage().BackendsWithinLimits(mgr.BackendOrder(), 1, 0, 0)
 	if len(eligible) != 1 {
 		t.Fatalf("eligible = %v, want [b2]", eligible)
 	}

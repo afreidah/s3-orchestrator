@@ -5,20 +5,20 @@
 //
 // Tests for the bounded-memory sorted-merge reconciliation. Three layers:
 //
-//   - reconcileSorted: pure merge engine, exercised with slice-backed
+//   - Sorted: pure merge engine, exercised with slice-backed
 //     iterators. Covers every merge branch (s3-only, db-only, equal,
 //     interleaved, error propagation, empty inputs).
 //   - dbCursorStream: paginated DB iterator. Covers cursor advancement,
 //     end-of-stream, sibling-bucket filter, store-error propagation.
-//   - helper functions: namespaceKey, siblingPrefixes, importHandler,
-//     deleteHandler.
+//   - helper functions: namespaceKey, siblingPrefixes, ImportHandler,
+//     DeleteHandler.
 //
 // The full end-to-end path (real *backend.S3Backend, real PostgreSQL) is
 // covered by the integration suite; these tests run without external
 // services.
 // -------------------------------------------------------------------------------
 
-package proxy
+package reconcile
 
 import (
 	"context"
@@ -26,11 +26,9 @@ import (
 	"errors"
 	"testing"
 
-	"go.uber.org/mock/gomock"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
-	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
 // -------------------------------------------------------------------------
@@ -40,7 +38,7 @@ import (
 // sliceKeySource is a deterministic, slice-backed keySource that the merge
 // engine consumes during unit tests.
 type sliceKeySource struct {
-	entries []reconcileEntry
+	entries []Entry
 	idx     int
 	err     error // returned on the Nth call (zero-indexed)
 	errAt   int
@@ -49,14 +47,14 @@ type sliceKeySource struct {
 
 // next satisfies the keySource interface for tests. Returns entries
 // from the slice in order, optionally raising the configured error at
-// the specified index so error-path branches in reconcileSorted can be
+// the specified index so error-path branches in Sorted can be
 // covered without a real backend or DB.
-func (s *sliceKeySource) next(_ context.Context) (reconcileEntry, bool, error) {
+func (s *sliceKeySource) Next(_ context.Context) (Entry, bool, error) {
 	if s.err != nil && s.idx == s.errAt {
-		return reconcileEntry{}, false, s.err
+		return Entry{}, false, s.err
 	}
 	if s.idx >= len(s.entries) {
-		return reconcileEntry{}, false, nil
+		return Entry{}, false, nil
 	}
 	e := s.entries[s.idx]
 	s.idx++
@@ -64,19 +62,19 @@ func (s *sliceKeySource) next(_ context.Context) (reconcileEntry, bool, error) {
 }
 
 // stop satisfies the keySource interface for tests. Records that stop
-// was called so the test can assert reconcileSorted releases its
+// was called so the test can assert Sorted releases its
 // sources on every exit path (success, error, context cancellation).
-func (s *sliceKeySource) stop() { s.stopped = true }
+func (s *sliceKeySource) Stop() { s.stopped = true }
 
 // e is a tiny constructor for test entry literals.
-func e(key string, size int64) reconcileEntry { return reconcileEntry{key: key, size: size} }
+func e(key string, size int64) Entry { return Entry{key: key, size: size} }
 
-// runMerge invokes reconcileSorted and collects the imports / deletes the
+// runMerge invokes Sorted and collects the imports / deletes the
 // engine emits. Helper because every merge test wants the same shape.
-func runMerge(t *testing.T, s3, dbIter keySource) (imports []reconcileEntry, deletes []string, err error) {
+func runMerge(t *testing.T, s3, dbIter keySource) (imports []Entry, deletes []string, err error) {
 	t.Helper()
-	err = reconcileSorted(context.Background(), s3, dbIter,
-		func(_ context.Context, ent reconcileEntry) error {
+	err = Sorted(context.Background(), s3, dbIter,
+		func(_ context.Context, ent Entry) error {
 			imports = append(imports, ent)
 			return nil
 		},
@@ -89,7 +87,7 @@ func runMerge(t *testing.T, s3, dbIter keySource) (imports []reconcileEntry, del
 }
 
 // -------------------------------------------------------------------------
-// reconcileSorted  -  every merge branch
+// Sorted  -  every merge branch
 // -------------------------------------------------------------------------
 
 // TestReconcileSorted_EmptyBothInputs verifies the trivial case: no
@@ -107,7 +105,7 @@ func TestReconcileSorted_EmptyBothInputs(t *testing.T) {
 // TestReconcileSorted_OnlyS3 covers the "DB exhausted, drain S3 as
 // imports" branch.
 func TestReconcileSorted_OnlyS3(t *testing.T) {
-	s3 := &sliceKeySource{entries: []reconcileEntry{e("a", 1), e("b", 2), e("c", 3)}}
+	s3 := &sliceKeySource{entries: []Entry{e("a", 1), e("b", 2), e("c", 3)}}
 	imp, del, err := runMerge(t, s3, &sliceKeySource{})
 	if err != nil {
 		t.Fatalf("merge: %v", err)
@@ -123,7 +121,7 @@ func TestReconcileSorted_OnlyS3(t *testing.T) {
 // TestReconcileSorted_OnlyDB covers the "S3 exhausted, drain DB as
 // deletes" branch.
 func TestReconcileSorted_OnlyDB(t *testing.T) {
-	dbIter := &sliceKeySource{entries: []reconcileEntry{e("x", 0), e("y", 0)}}
+	dbIter := &sliceKeySource{entries: []Entry{e("x", 0), e("y", 0)}}
 	imp, del, err := runMerge(t, &sliceKeySource{}, dbIter)
 	if err != nil {
 		t.Fatalf("merge: %v", err)
@@ -139,8 +137,8 @@ func TestReconcileSorted_OnlyDB(t *testing.T) {
 // TestReconcileSorted_FullMatch covers the equal-key path: every key on
 // both sides -> no work.
 func TestReconcileSorted_FullMatch(t *testing.T) {
-	s3 := &sliceKeySource{entries: []reconcileEntry{e("a", 1), e("b", 2), e("c", 3)}}
-	dbIter := &sliceKeySource{entries: []reconcileEntry{e("a", 0), e("b", 0), e("c", 0)}}
+	s3 := &sliceKeySource{entries: []Entry{e("a", 1), e("b", 2), e("c", 3)}}
+	dbIter := &sliceKeySource{entries: []Entry{e("a", 0), e("b", 0), e("c", 0)}}
 	imp, del, err := runMerge(t, s3, dbIter)
 	if err != nil {
 		t.Fatalf("merge: %v", err)
@@ -156,10 +154,10 @@ func TestReconcileSorted_Interleaved(t *testing.T) {
 	// S3:   a    c d   f
 	// DB:     b    d e
 	// Want: import {a, c, f}, delete {b, e}
-	s3 := &sliceKeySource{entries: []reconcileEntry{
+	s3 := &sliceKeySource{entries: []Entry{
 		e("a", 1), e("c", 3), e("d", 4), e("f", 6),
 	}}
-	dbIter := &sliceKeySource{entries: []reconcileEntry{
+	dbIter := &sliceKeySource{entries: []Entry{
 		e("b", 0), e("d", 0), e("e", 0),
 	}}
 	imp, del, err := runMerge(t, s3, dbIter)
@@ -179,7 +177,7 @@ func TestReconcileSorted_Interleaved(t *testing.T) {
 // TestReconcileSorted_ImportPreservesSize verifies that the size payload
 // from the S3 stream survives the merge into the import callback.
 func TestReconcileSorted_ImportPreservesSize(t *testing.T) {
-	s3 := &sliceKeySource{entries: []reconcileEntry{e("k", 4096)}}
+	s3 := &sliceKeySource{entries: []Entry{e("k", 4096)}}
 	imp, _, err := runMerge(t, s3, &sliceKeySource{})
 	if err != nil || len(imp) != 1 || imp[0].size != 4096 {
 		t.Errorf("import size lost: %v err=%v", imp, err)
@@ -191,11 +189,11 @@ func TestReconcileSorted_ImportPreservesSize(t *testing.T) {
 func TestReconcileSorted_S3IteratorErrorAborts(t *testing.T) {
 	want := errors.New("s3 boom")
 	s3 := &sliceKeySource{
-		entries: []reconcileEntry{e("a", 1), e("b", 2)},
+		entries: []Entry{e("a", 1), e("b", 2)},
 		err:     want,
 		errAt:   1, // fail on second next() call
 	}
-	dbIter := &sliceKeySource{entries: []reconcileEntry{e("c", 0)}}
+	dbIter := &sliceKeySource{entries: []Entry{e("c", 0)}}
 	_, _, err := runMerge(t, s3, dbIter)
 	if !errors.Is(err, want) {
 		t.Errorf("err = %v, want %v", err, want)
@@ -207,11 +205,11 @@ func TestReconcileSorted_S3IteratorErrorAborts(t *testing.T) {
 func TestReconcileSorted_DBIteratorErrorAborts(t *testing.T) {
 	want := errors.New("db boom")
 	dbIter := &sliceKeySource{
-		entries: []reconcileEntry{e("a", 0), e("b", 0)},
+		entries: []Entry{e("a", 0), e("b", 0)},
 		err:     want,
 		errAt:   1,
 	}
-	_, _, err := runMerge(t, &sliceKeySource{entries: []reconcileEntry{e("z", 1)}}, dbIter)
+	_, _, err := runMerge(t, &sliceKeySource{entries: []Entry{e("z", 1)}}, dbIter)
 	if !errors.Is(err, want) {
 		t.Errorf("err = %v, want %v", err, want)
 	}
@@ -234,7 +232,7 @@ func TestReconcileSorted_S3PrimeErrorAborts(t *testing.T) {
 func TestReconcileSorted_DBPrimeErrorAborts(t *testing.T) {
 	want := errors.New("db prime")
 	dbIter := &sliceKeySource{err: want, errAt: 0}
-	_, _, err := runMerge(t, &sliceKeySource{entries: []reconcileEntry{e("a", 1)}}, dbIter)
+	_, _, err := runMerge(t, &sliceKeySource{entries: []Entry{e("a", 1)}}, dbIter)
 	if !errors.Is(err, want) {
 		t.Errorf("err = %v, want %v", err, want)
 	}
@@ -245,10 +243,10 @@ func TestReconcileSorted_DBPrimeErrorAborts(t *testing.T) {
 // side, but explicitly drives the delete branch).
 func TestReconcileSorted_DeleteHandlerErrorAborts(t *testing.T) {
 	want := errors.New("delete broke")
-	dbIter := &sliceKeySource{entries: []reconcileEntry{e("x", 0), e("y", 0)}}
+	dbIter := &sliceKeySource{entries: []Entry{e("x", 0), e("y", 0)}}
 	called := 0
-	err := reconcileSorted(context.Background(), &sliceKeySource{}, dbIter,
-		func(_ context.Context, _ reconcileEntry) error { return nil },
+	err := Sorted(context.Background(), &sliceKeySource{}, dbIter,
+		func(_ context.Context, _ Entry) error { return nil },
 		func(_ context.Context, _ string) error {
 			called++
 			return want
@@ -269,11 +267,11 @@ func TestReconcileSorted_DeleteHandlerErrorAborts(t *testing.T) {
 func TestReconcileSorted_MatchStepS3AdvanceErrorAborts(t *testing.T) {
 	want := errors.New("s3 advance after match")
 	s3 := &sliceKeySource{
-		entries: []reconcileEntry{e("a", 1)},
+		entries: []Entry{e("a", 1)},
 		err:     want,
 		errAt:   1, // fail when advanceS3 runs after the match
 	}
-	dbIter := &sliceKeySource{entries: []reconcileEntry{e("a", 0), e("b", 0)}}
+	dbIter := &sliceKeySource{entries: []Entry{e("a", 0), e("b", 0)}}
 	_, _, err := runMerge(t, s3, dbIter)
 	if !errors.Is(err, want) {
 		t.Errorf("err = %v, want %v", err, want)
@@ -284,10 +282,10 @@ func TestReconcileSorted_MatchStepS3AdvanceErrorAborts(t *testing.T) {
 // onDelete failure short-circuits the merge.
 func TestReconcileSorted_HandlerErrorAborts(t *testing.T) {
 	want := errors.New("import broke")
-	s3 := &sliceKeySource{entries: []reconcileEntry{e("a", 1), e("b", 2), e("c", 3)}}
+	s3 := &sliceKeySource{entries: []Entry{e("a", 1), e("b", 2), e("c", 3)}}
 	called := 0
-	err := reconcileSorted(context.Background(), s3, &sliceKeySource{},
-		func(_ context.Context, _ reconcileEntry) error {
+	err := Sorted(context.Background(), s3, &sliceKeySource{},
+		func(_ context.Context, _ Entry) error {
 			called++
 			return want
 		},
@@ -305,7 +303,7 @@ func TestReconcileSorted_HandlerErrorAborts(t *testing.T) {
 // dbCursorStream  -  paginated DB iterator
 // -------------------------------------------------------------------------
 
-// fakeLister is a hand-rolled dbKeyLister that returns a slice of
+// fakeLister is a hand-rolled DBKeyLister that returns a slice of
 // pre-batched pages. Each ListObjectsByBackendKeyAsc call pops one and
 // applies the cursor + limit so tests can assert real pagination
 // semantics rather than blindly returning whatever the test wired.
@@ -349,7 +347,7 @@ func TestDBCursorStream_DrainsAcrossPages(t *testing.T) {
 			{{ObjectKey: "vb/c"}, {ObjectKey: "vb/d"}},
 		},
 	}
-	it := newDBCursorStream(lister, "be1", "vb/", nil)
+	it := NewDBCursorStream(lister, "be1", "vb/", nil)
 	got := drainStream(t, it)
 	want := []string{"vb/a", "vb/b", "vb/c", "vb/d"}
 	if !equalStrings(got, want) {
@@ -369,7 +367,7 @@ func TestDBCursorStream_FiltersSiblingBucket(t *testing.T) {
 			},
 		},
 	}
-	it := newDBCursorStream(lister, "be1", "vb/", []string{"other/"})
+	it := NewDBCursorStream(lister, "be1", "vb/", []string{"other/"})
 	got := drainStream(t, it)
 	if !equalStrings(got, []string{"vb/a", "vb/b"}) {
 		t.Errorf("sibling-bucket row not filtered: %v", got)
@@ -388,19 +386,19 @@ func TestDBCursorStream_PropagatesError(t *testing.T) {
 		err:   want,
 		errAt: 1, // fail on the second page fetch
 	}
-	it := newDBCursorStream(lister, "be1", "vb/", nil)
+	it := NewDBCursorStream(lister, "be1", "vb/", nil)
 	ctx := context.Background()
 
 	// Page 1  -  should succeed.
 	for i, want := range []string{"vb/a", "vb/b"} {
-		ent, ok, err := it.next(ctx)
+		ent, ok, err := it.Next(ctx)
 		if err != nil || !ok || ent.key != want {
 			t.Fatalf("page-1[%d]: got (%v,%v,%v), want (%s,true,nil)", i, ent.key, ok, err, want)
 		}
 	}
 
 	// Page 2 fetch  -  fakeLister returns the configured error.
-	_, _, err := it.next(ctx)
+	_, _, err := it.Next(ctx)
 	if !errors.Is(err, want) {
 		t.Errorf("err = %v, want %v", err, want)
 	}
@@ -412,9 +410,9 @@ func TestDBCursorStream_PropagatesError(t *testing.T) {
 func TestDBCursorStream_StopIsNoop(t *testing.T) {
 	t.Parallel()
 	lister := &fakeLister{pages: [][]core.ObjectLocation{{{ObjectKey: "vb/a"}}}}
-	it := newDBCursorStream(lister, "be1", "vb/", nil)
-	it.stop()
-	it.stop() // idempotent
+	it := NewDBCursorStream(lister, "be1", "vb/", nil)
+	it.Stop()
+	it.Stop() // idempotent
 	got := drainStream(t, it)
 	if !equalStrings(got, []string{"vb/a"}) {
 		t.Errorf("stop should not affect iteration, got %v", got)
@@ -429,8 +427,8 @@ func TestDBCursorStream_ContextCancellation(t *testing.T) {
 	}}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	it := newDBCursorStream(lister, "be1", "vb/", nil)
-	_, ok, err := it.next(ctx)
+	it := NewDBCursorStream(lister, "be1", "vb/", nil)
+	_, ok, err := it.Next(ctx)
 	if ok || err == nil {
 		t.Errorf("cancelled ctx should abort: ok=%v err=%v", ok, err)
 	}
@@ -444,7 +442,7 @@ func drainStream(t *testing.T, it keySource) []string {
 	t.Helper()
 	var out []string
 	for {
-		ent, ok, err := it.next(context.Background())
+		ent, ok, err := it.Next(context.Background())
 		if err != nil {
 			t.Fatalf("drain: %v", err)
 		}
@@ -489,7 +487,7 @@ func TestNamespaceKey_LegacyKey(t *testing.T) {
 // TestSiblingPrefixes_DropsCurrent confirms the helper returns every other
 // known bucket as a "/-suffixed prefix.
 func TestSiblingPrefixes_DropsCurrent(t *testing.T) {
-	got := siblingPrefixes([]string{"a", "b", "c"}, "b")
+	got := SiblingPrefixes([]string{"a", "b", "c"}, "b")
 	want := []string{"a/", "c/"}
 	if !equalStrings(got, want) {
 		t.Errorf("got %v, want %v", got, want)
@@ -499,7 +497,7 @@ func TestSiblingPrefixes_DropsCurrent(t *testing.T) {
 // TestSiblingPrefixes_NoMatch confirms a current-bucket value missing from
 // the list does not corrupt the output.
 func TestSiblingPrefixes_NoMatch(t *testing.T) {
-	got := siblingPrefixes([]string{"a", "b"}, "z")
+	got := SiblingPrefixes([]string{"a", "b"}, "z")
 	want := []string{"a/", "b/"}
 	if !equalStrings(got, want) {
 		t.Errorf("got %v, want %v", got, want)
@@ -510,7 +508,7 @@ func TestSiblingPrefixes_NoMatch(t *testing.T) {
 // s3KeyStream  -  goroutine-backed iterator over the S3 page callback
 // -------------------------------------------------------------------------
 
-// fakeLister implements objectLister by feeding the supplied pages into
+// fakeLister implements ObjectLister by feeding the supplied pages into
 // the callback and optionally returning an error after the last page.
 type fakeLister2 struct {
 	pages [][]backend.ListedObject
@@ -536,9 +534,9 @@ func TestS3KeyStream_StreamsAcrossPagesAndNamespaces(t *testing.T) {
 		{{Key: "legacy", SizeBytes: 2}, {Key: "vb/z", SizeBytes: 3}},
 	}
 	var apiPages int64
-	s3 := newS3KeyStream(context.Background(),
+	s3 := NewS3KeyStream(context.Background(),
 		&fakeLister2{pages: pages}, "vb/", []string{"other/"}, &apiPages)
-	defer s3.stop()
+	defer s3.Stop()
 
 	got := drainStream(t, s3)
 	want := []string{"vb/a", "vb/legacy", "vb/z"}
@@ -554,19 +552,19 @@ func TestS3KeyStream_StreamsAcrossPagesAndNamespaces(t *testing.T) {
 // from ListObjects after the page callback drains surfaces from next.
 func TestS3KeyStream_PropagatesListerError(t *testing.T) {
 	want := errors.New("list boom")
-	s3 := newS3KeyStream(context.Background(),
+	s3 := NewS3KeyStream(context.Background(),
 		&fakeLister2{
 			pages: [][]backend.ListedObject{{{Key: "vb/a", SizeBytes: 1}}},
 			err:   want,
 		}, "vb/", nil, nil)
-	defer s3.stop()
+	defer s3.Stop()
 
 	// First entry comes through cleanly.
-	if _, ok, err := s3.next(context.Background()); err != nil || !ok {
+	if _, ok, err := s3.Next(context.Background()); err != nil || !ok {
 		t.Fatalf("first next: ok=%v err=%v", ok, err)
 	}
 	// After channel closes, the deferred err is delivered on the next call.
-	if _, _, err := s3.next(context.Background()); !errors.Is(err, want) {
+	if _, _, err := s3.Next(context.Background()); !errors.Is(err, want) {
 		t.Errorf("err = %v, want %v", err, want)
 	}
 }
@@ -578,15 +576,15 @@ func TestS3KeyStream_StopUnblocksGoroutine(t *testing.T) {
 	pages := [][]backend.ListedObject{
 		{{Key: "vb/a", SizeBytes: 1}, {Key: "vb/b", SizeBytes: 2}},
 	}
-	s3 := newS3KeyStream(context.Background(),
+	s3 := NewS3KeyStream(context.Background(),
 		&fakeLister2{pages: pages}, "vb/", nil, nil)
 
 	// Pull one entry, then stop without draining.
-	if _, ok, err := s3.next(context.Background()); err != nil || !ok {
+	if _, ok, err := s3.Next(context.Background()); err != nil || !ok {
 		t.Fatalf("first next: ok=%v err=%v", ok, err)
 	}
-	s3.stop()
-	s3.stop() // idempotent
+	s3.Stop()
+	s3.Stop() // idempotent
 }
 
 // TestS3KeyStream_ContextCancelTerminates verifies that a context cancel
@@ -597,33 +595,33 @@ func TestS3KeyStream_ContextCancelTerminates(t *testing.T) {
 	// publishes anything and a cancelled ctx.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	s3 := newS3KeyStream(ctx, &fakeLister2{
+	s3 := NewS3KeyStream(ctx, &fakeLister2{
 		pages: [][]backend.ListedObject{{{Key: "vb/a", SizeBytes: 1}}},
 	}, "vb/", nil, nil)
-	defer s3.stop()
+	defer s3.Stop()
 
-	if _, _, err := s3.next(ctx); err == nil {
+	if _, _, err := s3.Next(ctx); err == nil {
 		t.Error("cancelled ctx should produce an error from next")
 	}
 }
 
 // -------------------------------------------------------------------------
-// importHandler / deleteHandler
+// ImportHandler / DeleteHandler
 // -------------------------------------------------------------------------
 
 // TestImportHandler_CountsCreatedNotSkipped verifies the handler only bumps
 // the counter when ImportObject reports the row was created (true).
 func TestImportHandler_CountsCreatedNotSkipped(t *testing.T) {
-	res := &reconcileResult{}
+	res := &Result{}
 	importer := func(_ context.Context, _, _ string, _ int64) (bool, error) {
 		return false, nil // already exists; should NOT be counted
 	}
-	h := importHandler(slog.Default(), "b1", importer, res)
+	h := ImportHandler(slog.Default(), "b1", importer, res)
 	if err := h(context.Background(), e("vb/foo", 1)); err != nil {
 		t.Fatalf("handler: %v", err)
 	}
-	if res.imported != 0 {
-		t.Errorf("imported = %d, want 0 (skipped row)", res.imported)
+	if res.Imported != 0 {
+		t.Errorf("imported = %d, want 0 (skipped row)", res.Imported)
 	}
 }
 
@@ -631,23 +629,23 @@ func TestImportHandler_CountsCreatedNotSkipped(t *testing.T) {
 // is logged but does not abort the merge  -  the merge would otherwise stop
 // on the first transient row failure.
 func TestImportHandler_SwallowsErrorButContinues(t *testing.T) {
-	res := &reconcileResult{}
+	res := &Result{}
 	importer := func(_ context.Context, _, _ string, _ int64) (bool, error) {
 		return false, errors.New("transient")
 	}
-	h := importHandler(slog.Default(), "b1", importer, res)
+	h := ImportHandler(slog.Default(), "b1", importer, res)
 	if err := h(context.Background(), e("vb/foo", 1)); err != nil {
 		t.Fatalf("handler should swallow error, got %v", err)
 	}
-	if res.imported != 0 {
-		t.Errorf("imported = %d, want 0", res.imported)
+	if res.Imported != 0 {
+		t.Errorf("imported = %d, want 0", res.Imported)
 	}
 }
 
 // TestDeleteHandler_CountsAndContinues verifies the delete path bumps the
 // counter on success and swallows transient errors without aborting.
 func TestDeleteHandler_CountsAndContinues(t *testing.T) {
-	res := &reconcileResult{}
+	res := &Result{}
 	var calls int
 	deleter := func(_ context.Context, _, _ string) error {
 		calls++
@@ -656,172 +654,30 @@ func TestDeleteHandler_CountsAndContinues(t *testing.T) {
 		}
 		return nil
 	}
-	h := deleteHandler(slog.Default(), "b1", deleter, res)
+	h := DeleteHandler(slog.Default(), "b1", deleter, res)
 
 	// First call: error swallowed, counter not bumped.
 	_ = h(context.Background(), "vb/x")
-	if res.removed != 0 {
-		t.Errorf("removed = %d after error, want 0", res.removed)
+	if res.Removed != 0 {
+		t.Errorf("removed = %d after error, want 0", res.Removed)
 	}
 
 	// Second call: success, counter bumps.
 	_ = h(context.Background(), "vb/y")
-	if res.removed != 1 {
-		t.Errorf("removed = %d after success, want 1", res.removed)
-	}
-}
-
-// -------------------------------------------------------------------------
-// ReconcileBackend  -  manager-level happy and error paths
-// -------------------------------------------------------------------------
-
-// listingMockBackend satisfies both backend.ObjectBackend (via the embedded
-// mockBackend) and the proxy.objectLister contract used by reconcile.
-// Tests can wire it into newTestManager and then drive ReconcileBackend
-// end-to-end against a deterministic key list.
-type listingMockBackend struct {
-	*mockBackend
-	pages [][]backend.ListedObject
-	err   error
-}
-
-// ListObjects feeds the configured pages into the callback, mirroring the
-// real S3 backend's signature.
-func (l *listingMockBackend) ListObjects(_ context.Context, _ string, fn func([]backend.ListedObject) error) error {
-	for _, p := range l.pages {
-		if err := fn(p); err != nil {
-			return err
-		}
-	}
-	return l.err
-}
-
-// TestReconcileBackend_HappyPathImportsAndDeletes drives a fully wired
-// BackendManager through ReconcileBackend with a backend that lists three
-// keys (a, b, c). The DB cursor returns ("b", "x"), so the merge should
-// import a and c (S3-only) and delete x (DB-only).
-func TestReconcileBackend_HappyPathImportsAndDeletes(t *testing.T) {
-	t.Parallel()
-	ctrl := gomock.NewController(t)
-	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().ListObjectsByBackendKeyAsc(gomock.Any(), "b1", gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _, afterKey string, _ int) ([]core.ObjectLocation, error) {
-			if afterKey == "" {
-				return []core.ObjectLocation{
-					{ObjectKey: "vb/b", BackendName: "b1"},
-					{ObjectKey: "vb/x", BackendName: "b1"},
-				}, nil
-			}
-			return nil, nil
-		}).
-		AnyTimes()
-	store.EXPECT().ImportObject(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(true, nil).
-		AnyTimes()
-	var deletedKeys []string
-	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, key, _ string) error {
-			deletedKeys = append(deletedKeys, key)
-			return nil
-		}).
-		AnyTimes()
-	storetest.Permissive(store)
-
-	listing := &listingMockBackend{
-		mockBackend: newMockBackend(),
-		pages: [][]backend.ListedObject{
-			{{Key: "vb/a", SizeBytes: 1}, {Key: "vb/b", SizeBytes: 2}, {Key: "vb/c", SizeBytes: 3}},
-		},
-	}
-	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": listing.mockBackend})
-	// Replace the registered backend with our listing-capable variant.
-	mgr.backends["b1"] = listing
-
-	res, err := mgr.ReconcileBackend(context.Background(), "b1", "vb", []string{"vb"})
-	if err != nil {
-		t.Fatalf("ReconcileBackend: %v", err)
-	}
-	if res.BackendsScanned != 1 {
-		t.Errorf("BackendsScanned = %d, want 1", res.BackendsScanned)
-	}
-	if res.Imported != 2 {
-		t.Errorf("Imported = %d, want 2 (a, c)", res.Imported)
-	}
 	if res.Removed != 1 {
-		t.Errorf("Removed = %d, want 1 (x)", res.Removed)
-	}
-	if len(deletedKeys) != 1 || deletedKeys[0] != "vb/x" {
-		t.Errorf("delete calls = %v, want one call for vb/x", deletedKeys)
+		t.Errorf("removed = %d after success, want 1", res.Removed)
 	}
 }
 
-// TestReconcileBackend_NoMutationsWhenInSync verifies the no-op case:
-// every S3 key matches a DB row, so no imports or deletes fire.
-func TestReconcileBackend_NoMutationsWhenInSync(t *testing.T) {
-	t.Parallel()
-	ctrl := gomock.NewController(t)
-	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().ListObjectsByBackendKeyAsc(gomock.Any(), "b1", gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _, afterKey string, _ int) ([]core.ObjectLocation, error) {
-			if afterKey == "" {
-				return []core.ObjectLocation{
-					{ObjectKey: "vb/a"},
-					{ObjectKey: "vb/b"},
-				}, nil
-			}
-			return nil, nil
-		}).
-		AnyTimes()
-	storetest.Permissive(store)
-
-	listing := &listingMockBackend{
-		mockBackend: newMockBackend(),
-		pages: [][]backend.ListedObject{
-			{{Key: "vb/a", SizeBytes: 1}, {Key: "vb/b", SizeBytes: 2}},
-		},
-	}
-	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": listing.mockBackend})
-	mgr.backends["b1"] = listing
-
-	res, err := mgr.ReconcileBackend(context.Background(), "b1", "vb", []string{"vb"})
-	if err != nil {
-		t.Fatalf("ReconcileBackend: %v", err)
-	}
-	if res.Imported != 0 || res.Removed != 0 {
-		t.Errorf("res = %+v, want zero imports + deletes", res)
-	}
-}
-
-// TestReconcileBackend_PropagatesS3ListingError surfaces a transport
-// failure from the listing path back to the caller.
-func TestReconcileBackend_PropagatesS3ListingError(t *testing.T) {
-	t.Parallel()
-	want := errors.New("list boom")
-	listing := &listingMockBackend{
-		mockBackend: newMockBackend(),
-		pages:       [][]backend.ListedObject{{{Key: "vb/a", SizeBytes: 1}}},
-		err:         want,
-	}
-	ctrl := gomock.NewController(t)
-	store := storetest.NewMockMetadataStore(ctrl)
-	storetest.Permissive(store)
-	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": listing.mockBackend})
-	mgr.backends["b1"] = listing
-
-	_, err := mgr.ReconcileBackend(context.Background(), "b1", "vb", []string{"vb"})
-	if !errors.Is(err, want) {
-		t.Errorf("err = %v, want %v", err, want)
-	}
-}
 
 // -------------------------------------------------------------------------
 // String-slice equality helpers
 // -------------------------------------------------------------------------
 
-// keysOf projects a []reconcileEntry into its keys slice so the test
+// keysOf projects a []Entry into its keys slice so the test
 // can compare against the expected ordering with equalStrings without
 // exposing the entry struct fields the comparison does not care about.
-func keysOf(es []reconcileEntry) []string {
+func keysOf(es []Entry) []string {
 	out := make([]string, len(es))
 	for i, e := range es {
 		out[i] = e.key

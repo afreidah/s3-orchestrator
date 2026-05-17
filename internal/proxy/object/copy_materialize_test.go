@@ -10,7 +10,7 @@
 // chunked-TE signing path and breaks OCI with HTTP 411.
 // -------------------------------------------------------------------------------
 
-package proxy
+package object
 
 import (
 	"bytes"

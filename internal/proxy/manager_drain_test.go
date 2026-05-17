@@ -167,7 +167,7 @@ func TestPurgeBackendObjects_DeletesDBRecords(t *testing.T) {
 	if backend.hasObject("obj2") {
 		t.Error("obj2 should have been deleted from S3 backend")
 	}
-	if got := mgr.usage.Backend().Load("b1", counter.FieldAPIRequests); got != 2 {
+	if got := mgr.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 2 {
 		t.Errorf("apiRequests = %d, want 2 (purge deletes)", got)
 	}
 }

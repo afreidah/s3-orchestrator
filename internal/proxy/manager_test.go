@@ -46,7 +46,7 @@ func TestUpdateUsageLimits_SwapsLimits(t *testing.T) {
 	mgr := newUsageManagerWithLimits(t, []string{"b1"}, newPermissiveMock(t), limits)
 
 	// Initially within limits
-	if !mgr.usage.WithinLimits("b1", 50, 0, 0) {
+	if !mgr.Usage().WithinLimits("b1", 50, 0, 0) {
 		t.Fatal("should be within initial limits")
 	}
 
@@ -56,11 +56,11 @@ func TestUpdateUsageLimits_SwapsLimits(t *testing.T) {
 	})
 
 	// Now 50 should exceed the new limit
-	if mgr.usage.WithinLimits("b1", 50, 0, 0) {
+	if mgr.Usage().WithinLimits("b1", 50, 0, 0) {
 		t.Error("should exceed updated limit of 10")
 	}
 	// But 5 should still be within limits
-	if !mgr.usage.WithinLimits("b1", 5, 0, 0) {
+	if !mgr.Usage().WithinLimits("b1", 5, 0, 0) {
 		t.Error("should be within updated limit of 10")
 	}
 }
@@ -216,7 +216,7 @@ func TestNearUsageLimit_AboveThreshold(t *testing.T) {
 	mgr := newUsageManagerWithLimits(t, []string{"b1"}, newPermissiveMock(t), limits)
 
 	// Set baseline at 90% of limit
-	mgr.usage.SetBaseline("b1", core.UsageStat{APIRequests: 90})
+	mgr.Usage().SetBaseline("b1", core.UsageStat{APIRequests: 90})
 
 	if !mgr.NearUsageLimit(0.8) {
 		t.Error("should be near limit at 90% usage with 80% threshold")
@@ -232,15 +232,15 @@ func TestClearCache_RemovesAllEntries(t *testing.T) {
 	t.Parallel()
 	mgr := newUsageManager(t, []string{"b1"}, newPermissiveMock(t))
 
-	mgr.ObjectManager.cache.Set("key1", "b1")
-	mgr.ObjectManager.cache.Set("key2", "b1")
+	mgr.ObjectManager.LocationCache().Set("key1", "b1")
+	mgr.ObjectManager.LocationCache().Set("key2", "b1")
 
 	mgr.ClearCache()
 
-	if _, ok := mgr.ObjectManager.cache.Get("key1"); ok {
+	if _, ok := mgr.ObjectManager.LocationCache().Get("key1"); ok {
 		t.Error("expected key1 cache miss after ClearCache")
 	}
-	if _, ok := mgr.ObjectManager.cache.Get("key2"); ok {
+	if _, ok := mgr.ObjectManager.LocationCache().Get("key2"); ok {
 		t.Error("expected key2 cache miss after ClearCache")
 	}
 }
@@ -266,7 +266,7 @@ func TestUpdateUsageLimits_ConcurrentAccess(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for range 100 {
-				_ = mgr.usage.WithinLimits("b1", 1, 0, 0)
+				_ = mgr.Usage().WithinLimits("b1", 1, 0, 0)
 			}
 		}()
 	}

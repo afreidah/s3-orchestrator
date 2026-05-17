@@ -775,10 +775,10 @@ func TestReplicate_UsesRecordedSize_NotFirstCopy(t *testing.T) {
 		t.Fatalf("expected 1 created, got %d", created)
 	}
 
-	if got := mgr.usage.Backend().Load("b2", counter.FieldEgressBytes); got != 200 {
+	if got := mgr.Usage().Backend().Load("b2", counter.FieldEgressBytes); got != 200 {
 		t.Errorf("source egress = %d, want 200 (recorded size, not copies[0].SizeBytes)", got)
 	}
-	if got := mgr.usage.Backend().Load("b3", counter.FieldIngressBytes); got != 200 {
+	if got := mgr.Usage().Backend().Load("b3", counter.FieldIngressBytes); got != 200 {
 		t.Errorf("target ingress = %d, want 200 (recorded size, not copies[0].SizeBytes)", got)
 	}
 }

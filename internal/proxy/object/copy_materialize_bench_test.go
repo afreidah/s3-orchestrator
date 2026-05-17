@@ -19,7 +19,7 @@
 // construction.
 // -------------------------------------------------------------------------------
 
-package proxy
+package object
 
 import (
 	"bytes"

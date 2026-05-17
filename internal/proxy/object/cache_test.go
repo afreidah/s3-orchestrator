@@ -7,7 +7,7 @@
 // concurrent access, and eviction cleanup.
 // -------------------------------------------------------------------------------
 
-package proxy
+package object
 
 import (
 	"fmt"

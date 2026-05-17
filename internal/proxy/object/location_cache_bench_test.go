@@ -11,7 +11,7 @@
 // throughput drop.
 // -------------------------------------------------------------------------------
 
-package proxy
+package object
 
 import (
 	"fmt"
