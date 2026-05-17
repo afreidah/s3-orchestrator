@@ -22,6 +22,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -310,6 +311,48 @@ func (b *S3Backend) DeleteObject(ctx context.Context, key string) error {
 				return fmt.Errorf("delete object failed: %w", err)
 			}
 			return nil
+		})
+}
+
+// CopyObject performs a server-side copy from srcKey to dstKey within
+// the same backend bucket. Used by the proxy's same-backend copy fast
+// path to avoid materializing the object through the orchestrator.
+//
+// When contentType or metadata is provided the SDK sends
+// MetadataDirective=REPLACE so the destination uses the supplied
+// values; otherwise the directive defaults to COPY and S3 preserves
+// the source's content type and user metadata. The CopySource string
+// is URL-encoded because S3 requires escaping for keys containing
+// slashes or other reserved characters.
+func (b *S3Backend) CopyObject(ctx context.Context, srcKey, dstKey, contentType string, metadata map[string]string) (string, error) {
+	const operation = "CopyObject"
+	return observe.Run(ctx,
+		observe.Client(spanPrefix+operation,
+			telemetry.BackendAttributes(operation, b.name, b.endpoint, b.bucket, dstKey),
+			b.recordOperation),
+		func(ctx context.Context) (string, error) {
+			input := &s3.CopyObjectInput{
+				Bucket:     aws.String(b.bucket),
+				Key:        aws.String(dstKey),
+				CopySource: aws.String(url.PathEscape(b.bucket + "/" + srcKey)),
+			}
+			if contentType != "" {
+				input.ContentType = aws.String(contentType)
+				input.MetadataDirective = "REPLACE"
+			}
+			if len(metadata) > 0 {
+				input.Metadata = metadata
+				input.MetadataDirective = "REPLACE"
+			}
+			result, err := b.client.CopyObject(ctx, input)
+			if err != nil {
+				return "", fmt.Errorf("copy object failed: %w", err)
+			}
+			etag := ""
+			if result.CopyObjectResult != nil && result.CopyObjectResult.ETag != nil {
+				etag = *result.CopyObjectResult.ETag
+			}
+			return etag, nil
 		})
 }
 
