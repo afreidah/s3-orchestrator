@@ -3,16 +3,10 @@
 //
 // Author: Alex Freidah
 //
-// Narrow interfaces listing only the subset of *proxy.BackendManager
-// (or its sub-managers) that each lifecycle.Runner service in
-// services.go actually calls. Each service constructor takes the
-// matching interface; the concrete *proxy.BackendManager and
-// *multipart.Manager satisfy them implicitly, so the DI wiring in
-// services.go passes the resolved concrete value through without
-// requiring per-interface providers.
-//
-// Mirrors the consumer-declared-interfaces pattern documented in
-// docs/style-guide.md (Interface Design section).
+// Narrow contracts each lifecycle.Runner service in services.go pulls
+// from *proxy.BackendManager (or its sub-managers). DI wiring still
+// passes the concrete value through without per-interface providers.
+// Pattern rationale: docs/style-guide.md (Interface Design section).
 // -------------------------------------------------------------------------------
 
 package di

@@ -3,12 +3,9 @@
 //
 // Author: Alex Freidah
 //
-// Narrow interfaces the Recorder needs from the underlying usage
-// tracker and metrics collector. Declared here so the accounting
-// package does not import internal/proxy/infra (which would create
-// a cycle) and so tests can mock at this granularity.
-//
-// Mirrors the consumer-declared-interfaces pattern documented in
+// Narrow contracts the Recorder pulls from the underlying usage
+// tracker and metrics collector. Declared here so accounting does not
+// import internal/proxy/infra (cycle break). Pattern rationale:
 // docs/style-guide.md (Interface Design section).
 // -------------------------------------------------------------------------------
 

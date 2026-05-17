@@ -3,16 +3,9 @@
 //
 // Author: Alex Freidah
 //
-// Narrow interfaces listing only the subset of *infra.Core and
-// *writepath.Coordinator behavior that the object Manager actually
-// calls. Decouples the object subsystem from the wider proxy
-// infrastructure surface so a method added to *infra.Core or
-// *writepath.Coordinator does not silently expand this consumer's
-// dependency footprint, and so future tests can mock at the granularity
-// of what is used.
-//
-// Mirrors the consumer-declared-interfaces pattern documented in
-// docs/style-guide.md (Interface Design section).
+// Narrow contracts the object Manager pulls from *infra.Core and
+// *writepath.Coordinator. Pattern rationale: docs/style-guide.md
+// (Interface Design section).
 // -------------------------------------------------------------------------------
 
 package object
@@ -29,16 +22,9 @@ import (
 )
 
 // ObjectCore is the subset of *infra.Core the object Manager needs.
-// Log is intentionally absent: the logger is observability
-// infrastructure owned by the Manager (built via
-// logfmt.Component("object") in New), not a behavior dependency.
-//
-// BackendOrder is on this interface even though no method in the
-// object package calls it directly: the read-failover orchestrator
-// owned by Manager (*readpath.Failover) needs it, and Manager passes
-// its own ObjectCore through to readpath.New. The transitive
-// requirement still lives at this boundary because that is where the
-// type-check has to be satisfied.
+// BackendOrder is here for *readpath.Failover, which Manager constructs
+// from its own ObjectCore; the transitive requirement satisfies its
+// type-check at this boundary.
 type ObjectCore interface {
 	Backends() map[string]backend.ObjectBackend
 	BackendOrder() []string

@@ -3,13 +3,9 @@
 //
 // Author: Alex Freidah
 //
-// Narrow interfaces listing only the subset of *proxy.BackendManager
-// each reload hook in hooks.go actually calls. The DI resolution still
-// returns the concrete *proxy.BackendManager (which satisfies these
-// interfaces implicitly); the local variable typing in each hook
-// documents and restricts what the hook is allowed to call.
-//
-// Mirrors the consumer-declared-interfaces pattern documented in
+// Narrow contracts each reload hook in hooks.go pulls from
+// *proxy.BackendManager. DI still returns the concrete value; the local
+// interface restricts what the hook can call. Pattern rationale:
 // docs/style-guide.md (Interface Design section).
 // -------------------------------------------------------------------------------
 

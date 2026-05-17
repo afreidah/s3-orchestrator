@@ -3,12 +3,8 @@
 //
 // Author: Alex Freidah
 //
-// Narrow interfaces listing only the subset of *infra.Core, the
-// metadata store, and the location cache that the read-failover
-// Failover orchestrator actually calls. Decouples readpath from the
-// wider proxy infrastructure surface.
-//
-// Mirrors the consumer-declared-interfaces pattern documented in
+// Narrow contracts the read-failover Failover pulls from *infra.Core,
+// the metadata store, and the location cache. Pattern rationale:
 // docs/style-guide.md (Interface Design section).
 // -------------------------------------------------------------------------------
 
