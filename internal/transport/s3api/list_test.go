@@ -15,6 +15,7 @@ import (
 	"encoding/xml"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -36,7 +37,7 @@ func TestListObjectsV2_Success(t *testing.T) {
 		},
 	}
 
-	resp := doReq(t, http.MethodGet, ts.URL+"/mybucket/?list-type=2", nil)
+	resp := doReq(t, ts, http.MethodGet, ts.URL+"/mybucket/?list-type=2", nil)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
@@ -79,7 +80,7 @@ func TestListObjectsV2_WithDelimiter(t *testing.T) {
 		},
 	}
 
-	resp := doReq(t, http.MethodGet, ts.URL+"/mybucket/?list-type=2&delimiter=/", nil)
+	resp := doReq(t, ts, http.MethodGet, ts.URL+"/mybucket/?list-type=2&delimiter=/", nil)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
@@ -116,7 +117,7 @@ func TestListObjectsV2_Pagination(t *testing.T) {
 		},
 	}
 
-	resp := doReq(t, http.MethodGet, ts.URL+"/mybucket/?list-type=2&max-keys=2", nil)
+	resp := doReq(t, ts, http.MethodGet, ts.URL+"/mybucket/?list-type=2&max-keys=2", nil)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
@@ -157,7 +158,7 @@ func TestListObjectsV2_Empty(t *testing.T) {
 		Objects: []core.ObjectLocation{},
 	}
 
-	resp := doReq(t, http.MethodGet, ts.URL+"/mybucket/?list-type=2", nil)
+	resp := doReq(t, ts, http.MethodGet, ts.URL+"/mybucket/?list-type=2", nil)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
@@ -202,7 +203,7 @@ func TestListObjectsV1_Success(t *testing.T) {
 	}
 
 	// V1: GET without list-type=2
-	resp := doReq(t, http.MethodGet, ts.URL+"/mybucket/", nil)
+	resp := doReq(t, ts, http.MethodGet, ts.URL+"/mybucket/", nil)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
@@ -243,7 +244,7 @@ func TestListObjectsV1_WithMarker(t *testing.T) {
 		},
 	}
 
-	resp := doReq(t, http.MethodGet, ts.URL+"/mybucket/?marker=b.txt", nil)
+	resp := doReq(t, ts, http.MethodGet, ts.URL+"/mybucket/?marker=b.txt", nil)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
@@ -272,7 +273,7 @@ func TestListObjectsV1_StoreError(t *testing.T) {
 		Message:    "db error",
 	}
 
-	resp := doReq(t, http.MethodGet, ts.URL+"/mybucket/", nil)
+	resp := doReq(t, ts, http.MethodGet, ts.URL+"/mybucket/", nil)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusInternalServerError {
@@ -297,7 +298,7 @@ func TestListObjectsV1_Pagination(t *testing.T) {
 		},
 	}
 
-	resp := doReq(t, http.MethodGet, ts.URL+"/mybucket/?max-keys=2", nil)
+	resp := doReq(t, ts, http.MethodGet, ts.URL+"/mybucket/?max-keys=2", nil)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
@@ -337,9 +338,9 @@ type listContentForAssertion struct {
 // fetchListResult issues a list request against the given path and
 // decodes the response. Extracted so the contract test body stays a
 // flat assertion sequence.
-func fetchListResult(t *testing.T, url string) []listContentForAssertion {
+func fetchListResult(t *testing.T, ts *httptest.Server, url string) []listContentForAssertion {
 	t.Helper()
-	resp := doReq(t, http.MethodGet, url, nil)
+	resp := doReq(t, ts, http.MethodGet, url, nil)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
@@ -401,7 +402,7 @@ func TestListObjects_IncludesETagAndStorageClass(t *testing.T) {
 
 	for _, path := range []string{"/mybucket/?list-type=2", "/mybucket/"} {
 		t.Run(path, func(t *testing.T) {
-			assertETagAndStorageClass(t, fetchListResult(t, ts.URL+path))
+			assertETagAndStorageClass(t, fetchListResult(t, ts, ts.URL+path))
 		})
 	}
 }
@@ -413,7 +414,7 @@ func TestListObjectsV1_NoAuth(t *testing.T) {
 	ts, _, _ := newTestServer(t)
 
 	getReq, _ := http.NewRequestWithContext(context.Background(), "GET", ts.URL+"/mybucket/", nil)
-	resp, err := http.DefaultClient.Do(getReq) //nolint:gosec // G704: test server URL is localhost, not tainted
+	resp, err := ts.Client().Do(getReq) //nolint:gosec // G704: test server URL is localhost, not tainted
 	if err != nil {
 		t.Fatal(err)
 	}

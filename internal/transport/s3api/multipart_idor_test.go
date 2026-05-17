@@ -77,7 +77,7 @@ func twoBucketServer(t *testing.T, mu *core.MultipartUpload) (*httptest.Server, 
 
 // doMultipartReq sends a request with the given bucket-A token and returns
 // the response. Centralised so each test focuses on its specific URL/body.
-func doMultipartReq(t *testing.T, method, url, token string, body io.Reader, contentLength int64) *http.Response {
+func doMultipartReq(t *testing.T, ts *httptest.Server, method, url, token string, body io.Reader, contentLength int64) *http.Response {
 	t.Helper()
 	req, err := http.NewRequestWithContext(context.Background(), method, url, body)
 	if err != nil {
@@ -88,7 +88,7 @@ func doMultipartReq(t *testing.T, method, url, token string, body io.Reader, con
 		req.Header.Set("Content-Type", "application/octet-stream")
 		req.ContentLength = contentLength
 	}
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL is localhost
+	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL is localhost
 	if err != nil {
 		t.Fatalf("Do: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestMultipartIDOR_UploadPart_RejectsCrossBucket(t *testing.T) {
 	ts, _ := twoBucketServer(t, mu)
 
 	body := strings.NewReader("attacker-bytes")
-	resp := doMultipartReq(t,
+	resp := doMultipartReq(t, ts,
 		http.MethodPut,
 		ts.URL+"/bucket-a/anything?uploadId=victim-upload&partNumber=1",
 		"token-a",
@@ -157,7 +157,7 @@ func TestMultipartIDOR_CompleteMultipart_RejectsCrossBucket(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal complete body: %v", err)
 	}
-	resp := doMultipartReq(t,
+	resp := doMultipartReq(t, ts,
 		http.MethodPost,
 		ts.URL+"/bucket-a/anything?uploadId=victim-upload",
 		"token-a",
@@ -191,7 +191,7 @@ func TestMultipartIDOR_ListParts_RejectsCrossBucket(t *testing.T) {
 	}
 	ts, _ := twoBucketServer(t, mu)
 
-	resp := doMultipartReq(t,
+	resp := doMultipartReq(t, ts,
 		http.MethodGet,
 		ts.URL+"/bucket-a/anything?uploadId=victim-upload",
 		"token-a",
@@ -225,7 +225,7 @@ func TestMultipartIDOR_AbortMultipart_RejectsCrossBucket(t *testing.T) {
 	}
 	ts, _ := twoBucketServer(t, mu)
 
-	resp := doMultipartReq(t,
+	resp := doMultipartReq(t, ts,
 		http.MethodDelete,
 		ts.URL+"/bucket-a/anything?uploadId=victim-upload",
 		"token-a",

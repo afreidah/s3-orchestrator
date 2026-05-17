@@ -29,7 +29,7 @@ func TestListBuckets(t *testing.T) {
 	}
 	req.Header.Set("X-Proxy-Token", "test-token")
 
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL is localhost, not tainted
+	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL is localhost, not tainted
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestListBucketsNoAuth(t *testing.T) {
 	ts, _, _ := newTestServer(t)
 
 	getReq, _ := http.NewRequestWithContext(context.Background(), "GET", ts.URL + "/", nil)
-	resp, err := http.DefaultClient.Do(getReq) //nolint:gosec // G704: test server URL is localhost, not tainted
+	resp, err := ts.Client().Do(getReq) //nolint:gosec // G704: test server URL is localhost, not tainted
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestHeadBucket(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t)
 
-	resp := doReq(t, http.MethodHead, ts.URL+"/mybucket", nil)
+	resp := doReq(t, ts, http.MethodHead, ts.URL+"/mybucket", nil)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
@@ -93,7 +93,7 @@ func TestHeadBucketWrongBucket(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t)
 
-	resp := doReq(t, http.MethodHead, ts.URL+"/otherbucket", nil)
+	resp := doReq(t, ts, http.MethodHead, ts.URL+"/otherbucket", nil)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusForbidden {
@@ -107,7 +107,7 @@ func TestGetBucketLocation(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t)
 
-	resp := doReq(t, http.MethodGet, ts.URL+"/mybucket?location", nil)
+	resp := doReq(t, ts, http.MethodGet, ts.URL+"/mybucket?location", nil)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
@@ -129,7 +129,7 @@ func TestGetBucketLocationNoAuth(t *testing.T) {
 	ts, _, _ := newTestServer(t)
 
 	getReq, _ := http.NewRequestWithContext(context.Background(), "GET", ts.URL + "/mybucket?location", nil)
-	resp, err := http.DefaultClient.Do(getReq) //nolint:gosec // G704: test server URL is localhost, not tainted
+	resp, err := ts.Client().Do(getReq) //nolint:gosec // G704: test server URL is localhost, not tainted
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ func TestGetBucketVersioning(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t)
 
-	resp := doReq(t, http.MethodGet, ts.URL+"/mybucket?versioning", nil)
+	resp := doReq(t, ts, http.MethodGet, ts.URL+"/mybucket?versioning", nil)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {

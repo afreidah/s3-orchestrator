@@ -22,6 +22,7 @@ import (
 // TestCommand_Drain_MissingBackend verifies the command drain missing backend contract.
 // Asserts that exit code = , want 1.
 func TestCommand_Drain_MissingBackend(t *testing.T) {
+	t.Parallel()
 	var stdout, stderr bytes.Buffer
 	code := Command("drain", nil, "http://unused", "tok", &stdout, &stderr)
 	if code != 1 {
@@ -35,6 +36,7 @@ func TestCommand_Drain_MissingBackend(t *testing.T) {
 // TestCommand_DrainStatus_MissingBackend verifies the command drain status missing backend contract.
 // Asserts that exit code = , want 1.
 func TestCommand_DrainStatus_MissingBackend(t *testing.T) {
+	t.Parallel()
 	var stdout, stderr bytes.Buffer
 	code := Command("drain-status", nil, "http://unused", "tok", &stdout, &stderr)
 	if code != 1 {
@@ -48,6 +50,7 @@ func TestCommand_DrainStatus_MissingBackend(t *testing.T) {
 // TestCommand_DrainCancel_MissingBackend verifies the command drain cancel missing backend contract.
 // Asserts that exit code = , want 1.
 func TestCommand_DrainCancel_MissingBackend(t *testing.T) {
+	t.Parallel()
 	var stdout, stderr bytes.Buffer
 	code := Command("drain-cancel", nil, "http://unused", "tok", &stdout, &stderr)
 	if code != 1 {
@@ -61,6 +64,7 @@ func TestCommand_DrainCancel_MissingBackend(t *testing.T) {
 // TestCommand_RemoveBackend_MissingBackend verifies the command remove backend missing backend contract.
 // Asserts that exit code = , want 1.
 func TestCommand_RemoveBackend_MissingBackend(t *testing.T) {
+	t.Parallel()
 	var stdout, stderr bytes.Buffer
 	code := Command("remove-backend", nil, "http://unused", "tok", &stdout, &stderr)
 	if code != 1 {
@@ -74,6 +78,7 @@ func TestCommand_RemoveBackend_MissingBackend(t *testing.T) {
 // TestCommand_Unknown verifies the command unknown contract.
 // Asserts that exit code = , want 1.
 func TestCommand_Unknown(t *testing.T) {
+	t.Parallel()
 	var stdout, stderr bytes.Buffer
 	code := Command("nonexistent", nil, "http://unused", "tok", &stdout, &stderr)
 	if code != 1 {
@@ -87,6 +92,7 @@ func TestCommand_Unknown(t *testing.T) {
 // TestCommand_Drain_SendsPost verifies the command drain sends post contract.
 // Asserts that exit code = , want 0.
 func TestCommand_Drain_SendsPost(t *testing.T) {
+	t.Parallel()
 	var gotMethod, gotPath, gotToken string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
@@ -116,6 +122,7 @@ func TestCommand_Drain_SendsPost(t *testing.T) {
 // TestCommand_DrainStatus_SendsGet verifies the command drain status sends get contract.
 // Asserts that exit code = , want 0.
 func TestCommand_DrainStatus_SendsGet(t *testing.T) {
+	t.Parallel()
 	var gotMethod, gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
@@ -140,6 +147,7 @@ func TestCommand_DrainStatus_SendsGet(t *testing.T) {
 // TestCommand_DrainCancel_SendsDelete verifies the command drain cancel sends delete contract.
 // Asserts that exit code = , want 0.
 func TestCommand_DrainCancel_SendsDelete(t *testing.T) {
+	t.Parallel()
 	var gotMethod, gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
@@ -164,6 +172,7 @@ func TestCommand_DrainCancel_SendsDelete(t *testing.T) {
 // TestCommand_RemoveBackend_SendsDelete verifies the command remove backend sends delete contract.
 // Asserts that exit code = , want 0.
 func TestCommand_RemoveBackend_SendsDelete(t *testing.T) {
+	t.Parallel()
 	var gotMethod, gotPath, gotQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
@@ -192,6 +201,7 @@ func TestCommand_RemoveBackend_SendsDelete(t *testing.T) {
 // TestCommand_RemoveBackend_Purge verifies the command remove backend purge contract.
 // Asserts that exit code = , want 0.
 func TestCommand_RemoveBackend_Purge(t *testing.T) {
+	t.Parallel()
 	var gotPath, gotQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
@@ -216,6 +226,7 @@ func TestCommand_RemoveBackend_Purge(t *testing.T) {
 // TestCommand_Reconcile_DefaultPostsAllBackends verifies the command reconcile default posts all backends contract.
 // Asserts that exit code = , want 0.
 func TestCommand_Reconcile_DefaultPostsAllBackends(t *testing.T) {
+	t.Parallel()
 	var gotMethod, gotPath, gotQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
@@ -244,6 +255,7 @@ func TestCommand_Reconcile_DefaultPostsAllBackends(t *testing.T) {
 // TestCommand_Reconcile_ScopesToBackend verifies the command reconcile scopes to backend contract.
 // Asserts that exit code = , want 0.
 func TestCommand_Reconcile_ScopesToBackend(t *testing.T) {
+	t.Parallel()
 	var gotQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotQuery = r.URL.RawQuery
@@ -264,6 +276,7 @@ func TestCommand_Reconcile_ScopesToBackend(t *testing.T) {
 // TestCommand_ServerError verifies the command server error contract.
 // Asserts that exit code = , want 1.
 func TestCommand_ServerError(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "backend not found"})
@@ -353,6 +366,7 @@ func runWrapperCase(t *testing.T, tc *wrapperCase) {
 // one-line wrapper around doGet/doPost so the matrix is covered without
 // duplicating boilerplate per command.
 func TestCommand_SimpleGetAndPostWrappers(t *testing.T) {
+	t.Parallel()
 	for i := range simpleWrapperCases {
 		tc := &simpleWrapperCases[i]
 		t.Run(tc.name, func(t *testing.T) { runWrapperCase(t, tc) })
@@ -362,6 +376,7 @@ func TestCommand_SimpleGetAndPostWrappers(t *testing.T) {
 // TestCommand_ObjectLocations_MissingKey covers the early-exit branch of
 // cmdObjectLocations where the required -key flag is not provided.
 func TestCommand_ObjectLocations_MissingKey(t *testing.T) {
+	t.Parallel()
 	var stdout, stderr bytes.Buffer
 	code := Command("object-locations", nil, "http://unused", "tok", &stdout, &stderr)
 	if code != 1 {
@@ -376,6 +391,7 @@ func TestCommand_ObjectLocations_MissingKey(t *testing.T) {
 // branch of remove-backend (--purge without --confirm) so doRemovePreview's
 // formatted output runs.
 func TestCommand_RemoveBackend_PurgePreviewPrintsCount(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"object_count": 42.0,
@@ -397,6 +413,7 @@ func TestCommand_RemoveBackend_PurgePreviewPrintsCount(t *testing.T) {
 // TestCommand_RemoveBackend_PurgeConfirm covers the two-phase confirm flow:
 // preview returns a confirm_token, the second DELETE includes it.
 func TestCommand_RemoveBackend_PurgeConfirm(t *testing.T) {
+	t.Parallel()
 	var deleteCount int
 	var lastQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -425,6 +442,7 @@ func TestCommand_RemoveBackend_PurgeConfirm(t *testing.T) {
 // TestCommand_RemoveBackend_PurgeMissingToken covers doRemovePurge's error
 // path when the server fails to return a confirmation token.
 func TestCommand_RemoveBackend_PurgeMissingToken(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
 	}))
@@ -480,6 +498,7 @@ func writeAdminConfig(t *testing.T, addr, token string) string {
 
 // TestRun_Help drives the no-args branch which prints usage and exits 0.
 func TestRun_Help(t *testing.T) {
+	t.Parallel()
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{}, &stdout, &stderr)
 	if code != 0 {
@@ -492,6 +511,7 @@ func TestRun_Help(t *testing.T) {
 
 // TestRun_BadConfigPath covers the LoadConfig-error branch.
 func TestRun_BadConfigPath(t *testing.T) {
+	t.Parallel()
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{"-config", "/no/such/file.yaml", "status"}, &stdout, &stderr)
 	if code != 1 {
@@ -502,6 +522,7 @@ func TestRun_BadConfigPath(t *testing.T) {
 // TestRun_MissingAdminToken covers the empty-token branch where the config
 // loads cleanly but no admin_token / admin_key was set.
 func TestRun_MissingAdminToken(t *testing.T) {
+	t.Parallel()
 	path := writeAdminConfig(t, "127.0.0.1:9999", "")
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{"-config", path, "status"}, &stdout, &stderr)
@@ -517,6 +538,7 @@ func TestRun_MissingAdminToken(t *testing.T) {
 // the address is auto-prefixed with http://, the token comes from
 // admin_token, and the dispatch reaches the live test server.
 func TestRun_DispatchesViaConfigAddr(t *testing.T) {
+	t.Parallel()
 	var gotToken string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotToken = r.Header.Get("X-Admin-Token")
@@ -539,6 +561,7 @@ func TestRun_DispatchesViaConfigAddr(t *testing.T) {
 // TestRun_AddrFlagOverridesConfig drives the -addr override branch and the
 // already-prefixed http:// path.
 func TestRun_AddrFlagOverridesConfig(t *testing.T) {
+	t.Parallel()
 	var hit bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hit = true
@@ -560,6 +583,7 @@ func TestRun_AddrFlagOverridesConfig(t *testing.T) {
 // TestCommand_TransportError covers the connection-failure branch of
 // doRequest by pointing at a closed listener.
 func TestCommand_TransportError(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(jsonOK))
 	srv.Close() // immediately close so connections fail
 
@@ -576,6 +600,7 @@ func TestCommand_TransportError(t *testing.T) {
 // TestCommand_CacheFlush_SendsPost verifies the cache-flush subcommand
 // POSTs to /admin/api/cache/flush with the admin token.
 func TestCommand_CacheFlush_SendsPost(t *testing.T) {
+	t.Parallel()
 	var gotMethod, gotPath, gotToken string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
@@ -601,6 +626,7 @@ func TestCommand_CacheFlush_SendsPost(t *testing.T) {
 // TestCommand_CacheStats_SendsGet verifies the cache-stats subcommand
 // GETs the cache stats endpoint and prints the response.
 func TestCommand_CacheStats_SendsGet(t *testing.T) {
+	t.Parallel()
 	var gotMethod, gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
@@ -626,6 +652,7 @@ func TestCommand_CacheStats_SendsGet(t *testing.T) {
 // subcommand DELETEs /admin/api/cache/keys/<key> using the supplied
 // -key flag.
 func TestCommand_CacheInvalidate_SendsDelete(t *testing.T) {
+	t.Parallel()
 	var gotMethod, gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
@@ -650,6 +677,7 @@ func TestCommand_CacheInvalidate_SendsDelete(t *testing.T) {
 // TestCommand_CacheInvalidate_MissingKey verifies that omitting -key
 // exits non-zero and reports the missing flag to stderr.
 func TestCommand_CacheInvalidate_MissingKey(t *testing.T) {
+	t.Parallel()
 	var stdout, stderr bytes.Buffer
 	code := Command("cache-invalidate", nil, "http://unused.invalid", "tok", &stdout, &stderr)
 	if code != 1 {
@@ -664,6 +692,7 @@ func TestCommand_CacheInvalidate_MissingKey(t *testing.T) {
 // cache-invalidate-prefix subcommand DELETEs the prefix endpoint with
 // the -prefix flag URL-escaped into the query string.
 func TestCommand_CacheInvalidatePrefix_SendsDelete(t *testing.T) {
+	t.Parallel()
 	var gotMethod, gotPath, gotPrefix string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
@@ -689,6 +718,7 @@ func TestCommand_CacheInvalidatePrefix_SendsDelete(t *testing.T) {
 // TestCommand_CacheInvalidatePrefix_MissingPrefix verifies that omitting
 // -prefix exits non-zero and reports the missing flag to stderr.
 func TestCommand_CacheInvalidatePrefix_MissingPrefix(t *testing.T) {
+	t.Parallel()
 	var stdout, stderr bytes.Buffer
 	code := Command("cache-invalidate-prefix", nil, "http://unused.invalid", "tok", &stdout, &stderr)
 	if code != 1 {
