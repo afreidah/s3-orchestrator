@@ -54,7 +54,7 @@ func (o *Manager) PutObject(ctx context.Context, key string, body io.Reader, siz
 	)
 	defer span.End()
 
-	eligible := o.EligibleForWrite(1, 0, size)
+	eligible := o.core.EligibleForWrite(1, 0, size)
 	if len(eligible) == 0 {
 		telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation, "write").Inc()
 		observe.MarkSpanError(span, "usage limits exceeded on all backends")
@@ -102,7 +102,7 @@ func (o *Manager) PutObject(ctx context.Context, key string, body io.Reader, siz
 		lastErr = res.putErr
 		failedBackends = append(failedBackends, res.backend)
 		eligible = withoutBackend(eligible, res.backend)
-		o.Log().WarnContext(ctx, "PutObject: backend write failed, trying next",
+		o.log.WarnContext(ctx, "PutObject: backend write failed, trying next",
 			"key", key, "failed_backend", res.backend, "error", res.putErr,
 			"remaining_backends", len(eligible))
 	}
@@ -160,11 +160,11 @@ type putAttemptRequest struct {
 func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, req *putAttemptRequest) putAttemptResult {
 	backendName, err := o.coord.SelectBackendForWrite(ctx, req.size, req.eligible)
 	if err != nil {
-		return putAttemptResult{fatalErr: o.ClassifyWriteError(span, req.operation, err)}
+		return putAttemptResult{fatalErr: o.core.ClassifyWriteError(span, req.operation, err)}
 	}
 	span.SetAttributes(telemetry.AttrBackendName.String(backendName))
 
-	be, err := o.GetBackend(backendName)
+	be, err := o.core.GetBackend(backendName)
 	if err != nil {
 		observe.RecordSpanError(span, err)
 		return putAttemptResult{backend: backendName, fatalErr: err}
@@ -186,11 +186,11 @@ func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, req 
 		return putAttemptResult{backend: backendName, fatalErr: err}
 	}
 
-	bctx, bcancel := o.WithTimeout(ctx)
+	bctx, bcancel := o.core.WithTimeout(ctx)
 	etag, err := be.PutObject(bctx, req.key, uploadBody, uploadSize, req.contentType, req.metadata)
 	bcancel()
 	if err != nil {
-		o.Usage().Record(backendName, 1, 0, 0)
+		o.core.Usage().Record(backendName, 1, 0, 0)
 		// Leave the pending row for the reaper. A backend PUT error does
 		// not reliably mean the bytes are absent: the response could have
 		// been lost mid-flight, so the reaper HEADs the backend on its
@@ -245,8 +245,8 @@ type putSuccessRequest struct {
 // notification for a successful PutObject. Records failover spans when
 // retries occurred.
 func (o *Manager) finalizePutSuccess(ctx context.Context, span trace.Span, req *putSuccessRequest) {
-	o.RecordOperation(req.operation, req.backendName, req.start, nil)
-	o.Usage().Record(req.backendName, 1, 0, req.size)
+	o.core.RecordOperation(req.operation, req.backendName, req.start, nil)
+	o.core.Usage().Record(req.backendName, 1, 0, req.size)
 	if len(req.failedBackends) > 0 {
 		for _, fb := range req.failedBackends {
 			telemetry.WriteFailoverTotal.WithLabelValues(req.operation, fb, req.backendName).Inc()
@@ -302,14 +302,14 @@ func (o *Manager) headSourceForCopy(
 	locations []core.ObjectLocation,
 ) (int64, string, map[string]string, *core.EncryptionMeta, bool) {
 	for i := range locations {
-		if !o.Usage().WithinLimits(locations[i].BackendName, 1, 0, 0) {
+		if !o.core.Usage().WithinLimits(locations[i].BackendName, 1, 0, 0) {
 			continue
 		}
-		be, ok := o.Backends()[locations[i].BackendName]
+		be, ok := o.core.Backends()[locations[i].BackendName]
 		if !ok {
 			continue
 		}
-		bctx, bcancel := o.WithTimeout(ctx)
+		bctx, bcancel := o.core.WithTimeout(ctx)
 		headResult, err := be.HeadObject(bctx, sourceKey)
 		bcancel()
 		if err != nil {
@@ -355,7 +355,7 @@ func (o *Manager) CopyObject(ctx context.Context, sourceKey, destKey string) (st
 			observe.MarkSpanError(span, "source object not found")
 			return "", err
 		}
-		return "", o.ClassifyWriteError(span, operation, err)
+		return "", o.core.ClassifyWriteError(span, operation, err)
 	}
 
 	size, contentType, metadata, srcEnc, ok := o.headSourceForCopy(ctx, sourceKey, locations)
@@ -370,7 +370,7 @@ func (o *Manager) CopyObject(ctx context.Context, sourceKey, destKey string) (st
 	if err != nil {
 		return "", err
 	}
-	destBackend, err := o.GetBackend(destBackendName)
+	destBackend, err := o.core.GetBackend(destBackendName)
 	if err != nil {
 		observe.RecordSpanError(span, err)
 		return "", err
@@ -401,10 +401,10 @@ func (o *Manager) CopyObject(ctx context.Context, sourceKey, destKey string) (st
 	// --- Invalidate location cache ---
 	o.cache.Delete(destKey)
 
-	o.RecordOperation(operation, destBackendName, start, nil)
+	o.core.RecordOperation(operation, destBackendName, start, nil)
 	srcName := src.sourceBackend
-	o.Usage().Record(srcName, 1, size, 0)         // source: Get + egress
-	o.Usage().Record(destBackendName, 1, 0, size) // dest: Put + ingress
+	o.core.Usage().Record(srcName, 1, size, 0)         // source: Get + egress
+	o.core.Usage().Record(destBackendName, 1, 0, size) // dest: Put + ingress
 
 	audit.Log(ctx, "storage.CopyObject",
 		slog.String("source_key", sourceKey),
@@ -457,7 +457,7 @@ func (o *Manager) DeleteObject(ctx context.Context, key string) error {
 			span.SetStatus(codes.Ok, "object not found - treating as success")
 			return nil
 		}
-		return o.ClassifyWriteError(span, operation, err)
+		return o.core.ClassifyWriteError(span, operation, err)
 	}
 
 	span.SetAttributes(attribute.Int("copies.deleted", len(copies)))
@@ -467,9 +467,9 @@ func (o *Manager) DeleteObject(ctx context.Context, key string) error {
 
 	// --- Delete from each backend that held a copy (fan out concurrently) ---
 	workerpool.Run(ctx, len(copies), copies, func(ctx context.Context, cp core.DeletedCopy) {
-		backend, ok := o.Backends()[cp.BackendName]
+		backend, ok := o.core.Backends()[cp.BackendName]
 		if !ok {
-			o.Log().WarnContext(ctx, "backend not found for delete",
+			o.log.WarnContext(ctx, "backend not found for delete",
 				"backend", cp.BackendName, "key", key)
 			return
 		}
@@ -478,10 +478,10 @@ func (o *Manager) DeleteObject(ctx context.Context, key string) error {
 
 	// --- Record metrics (use first copy's backend for primary) ---
 	if len(copies) > 0 {
-		o.RecordOperation(operation, copies[0].BackendName, start, nil)
+		o.core.RecordOperation(operation, copies[0].BackendName, start, nil)
 	}
 	for _, c := range copies {
-		o.Usage().Record(c.BackendName, 1, 0, 0)
+		o.core.Usage().Record(c.BackendName, 1, 0, 0)
 	}
 
 	audit.Log(ctx, "storage.DeleteObject",
@@ -548,7 +548,7 @@ func (o *Manager) DeleteObjects(ctx context.Context, keys []string) []DeleteObje
 	if err != nil {
 		// Whole-tx failure: every key surfaces the error. The cache and
 		// backend cleanup paths are skipped; nothing was changed.
-		classified := o.ClassifyWriteError(span, operation, err)
+		classified := o.core.ClassifyWriteError(span, operation, err)
 		for i := range results {
 			results[i].Err = classified
 		}
@@ -568,7 +568,7 @@ func (o *Manager) DeleteObjects(ctx context.Context, keys []string) []DeleteObje
 	})
 
 	successCount, errorCount := tallyDeleteResults(results)
-	o.RecordOperation(operation, "", start, nil)
+	o.core.RecordOperation(operation, "", start, nil)
 
 	audit.Log(ctx, "storage.DeleteObjects",
 		slog.Int("total_keys", len(keys)),
@@ -603,16 +603,16 @@ func (o *Manager) flattenBatchDeletes(ctx context.Context, copiesByKey map[strin
 	var items []batchDeleteItem
 	for key, copies := range copiesByKey {
 		for _, cp := range copies {
-			backend, ok := o.Backends()[cp.BackendName]
+			backend, ok := o.core.Backends()[cp.BackendName]
 			if !ok {
-				o.Log().WarnContext(ctx, "backend not found for batch delete",
+				o.log.WarnContext(ctx, "backend not found for batch delete",
 					"backend", cp.BackendName, "key", key)
 				continue
 			}
 			items = append(items, batchDeleteItem{
 				key: key, backend: backend, beName: cp.BackendName, sizeBytes: cp.SizeBytes,
 			})
-			o.Usage().Record(cp.BackendName, 1, 0, 0)
+			o.core.Usage().Record(cp.BackendName, 1, 0, 0)
 		}
 	}
 	return items
@@ -688,10 +688,10 @@ func (o *Manager) tryMaterializeFromLocation(
 	size int64,
 	backendName string,
 ) (*materializedSource, bool, error) {
-	if !o.Usage().WithinLimits(backendName, 1, size, 0) {
+	if !o.core.Usage().WithinLimits(backendName, 1, size, 0) {
 		return nil, false, nil
 	}
-	be, ok := o.Backends()[backendName]
+	be, ok := o.core.Backends()[backendName]
 	if !ok {
 		return nil, false, nil
 	}

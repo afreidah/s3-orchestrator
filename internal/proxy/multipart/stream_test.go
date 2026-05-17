@@ -24,11 +24,11 @@ import (
 )
 
 // newTestMultipartManager builds a minimal Manager suitable for
-// exercising stream helpers in isolation. The Core is zero-valued so
+// exercising stream helpers in isolation. The core is zero-valued so
 // WithTimeout is a no-op; pass an encryptor to enable the decrypt branch.
 func newTestMultipartManager(enc *encryption.Encryptor) *Manager {
 	return &Manager{
-		Core:      infra.New(&infra.Config{}),
+		core:      infra.New(&infra.Config{}),
 		encryptor: enc,
 	}
 }

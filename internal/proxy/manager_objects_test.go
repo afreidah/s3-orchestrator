@@ -376,7 +376,7 @@ func TestCanAcceptWrite_NoCapacity(t *testing.T) {
 	}
 	mgr := newTestManagerWithLimits(t, newPermissiveMock(t), map[string]*mockBackend{"b1": newMockBackend()}, limits)
 
-	mgr.ObjectManager.Usage().SetBaseline("b1", core.UsageStat{APIRequests: 1})
+	mgr.Usage().SetBaseline("b1", core.UsageStat{APIRequests: 1})
 
 	if mgr.ObjectManager.CanAcceptWrite(100) {
 		t.Error("CanAcceptWrite should return false when no backend has capacity")
