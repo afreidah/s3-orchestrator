@@ -173,8 +173,14 @@ func newTestServer(t *testing.T) (*httptest.Server, *testutil.MockStore, *server
 	return ts, mockStore, backend
 }
 
-// doReq is a helper to send requests to the test server with auth.
-func doReq(t *testing.T, method, url string, body io.Reader) *http.Response {
+// doReq sends a request to ts with auth using ts.Client(), not
+// http.DefaultClient. Each httptest.Server has its own transport, so
+// a sibling test's ts.Close() (which calls
+// http.DefaultTransport.CloseIdleConnections internally) cannot reap
+// connections the current test is mid-flight on. Regression pin for
+// the parallel-test flake "transport connection broken:
+// CloseIdleConnections called".
+func doReq(t *testing.T, ts *httptest.Server, method, url string, body io.Reader) *http.Response {
 	t.Helper()
 	req, err := http.NewRequestWithContext(context.Background(), method, url, body)
 	if err != nil {
@@ -184,7 +190,7 @@ func doReq(t *testing.T, method, url string, body io.Reader) *http.Response {
 	if body != nil {
 		req.Header.Set("Content-Type", "application/octet-stream")
 	}
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
+	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +212,7 @@ func TestPut_Success(t *testing.T) {
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.Header.Set("Content-Type", "text/plain")
 	req.ContentLength = int64(len(data))
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
+	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +239,7 @@ func TestPut_MissingContentLength(t *testing.T) {
 	req.Header.Set("X-Proxy-Token", "test-token")
 	// Explicitly set ContentLength to -1 to simulate missing Content-Length
 	req.ContentLength = -1
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
+	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +264,7 @@ func TestPut_EntityTooLarge(t *testing.T) {
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/testkey", body)
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.ContentLength = bigSize
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
+	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,7 +301,7 @@ func TestPut_IfNoneMatchStarRejectsExistingKey(t *testing.T) {
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.Header.Set("If-None-Match", "*")
 	req.ContentLength = int64(len(data))
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
+	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -320,7 +326,7 @@ func TestPut_IfNoneMatchStarAllowsNewKey(t *testing.T) {
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.Header.Set("If-None-Match", "*")
 	req.ContentLength = int64(len(data))
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
+	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -350,7 +356,7 @@ func TestPut_IfNoneMatchSpecificETagIgnored(t *testing.T) {
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.Header.Set("If-None-Match", `"some-etag"`)
 	req.ContentLength = int64(len(data))
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
+	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -374,7 +380,7 @@ func TestPut_QuotaExhausted(t *testing.T) {
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/testkey", strings.NewReader("data"))
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.ContentLength = 4
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
+	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -407,7 +413,7 @@ func TestPut_NoBackendCapacity_BodyIncludesCapacityHint(t *testing.T) {
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/testkey", strings.NewReader("data"))
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.ContentLength = 4
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
+	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -448,7 +454,7 @@ func TestPut_NoBackendCapacity_QuotaStatsErrFallsBack(t *testing.T) {
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/testkey", strings.NewReader("data"))
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.ContentLength = 4
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
+	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -507,7 +513,7 @@ func TestPut_DBUnavailable(t *testing.T) {
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/testkey", strings.NewReader("data"))
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.ContentLength = 4
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
+	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -536,7 +542,7 @@ func TestGet_Success(t *testing.T) {
 		{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5},
 	}
 
-	resp := doReq(t, http.MethodGet, ts.URL+"/mybucket/testkey", nil)
+	resp := doReq(t, ts, http.MethodGet, ts.URL+"/mybucket/testkey", nil)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
@@ -558,7 +564,7 @@ func TestGet_NotFound(t *testing.T) {
 	ts, mockStore, _ := newTestServer(t)
 	mockStore.GetAllLocationsErr = core.ErrObjectNotFound
 
-	resp := doReq(t, http.MethodGet, ts.URL+"/mybucket/nonexistent", nil)
+	resp := doReq(t, ts, http.MethodGet, ts.URL+"/mybucket/nonexistent", nil)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusNotFound {
@@ -583,7 +589,7 @@ func TestHead_Success(t *testing.T) {
 		{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5},
 	}
 
-	resp := doReq(t, http.MethodHead, ts.URL+"/mybucket/testkey", nil)
+	resp := doReq(t, ts, http.MethodHead, ts.URL+"/mybucket/testkey", nil)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
@@ -607,7 +613,7 @@ func TestHead_NotFound(t *testing.T) {
 	ts, mockStore, _ := newTestServer(t)
 	mockStore.GetAllLocationsErr = core.ErrObjectNotFound
 
-	resp := doReq(t, http.MethodHead, ts.URL+"/mybucket/nonexistent", nil)
+	resp := doReq(t, ts, http.MethodHead, ts.URL+"/mybucket/nonexistent", nil)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusNotFound {
@@ -633,7 +639,7 @@ func TestGet_LastModifiedHeader(t *testing.T) {
 			CreatedAt: time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)},
 	}
 
-	resp := doReq(t, http.MethodGet, ts.URL+"/mybucket/testkey", nil)
+	resp := doReq(t, ts, http.MethodGet, ts.URL+"/mybucket/testkey", nil)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
@@ -663,7 +669,7 @@ func TestGet_ConditionalIfNoneMatch(t *testing.T) {
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/mybucket/testkey", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.Header.Set("If-None-Match", `"abc"`)
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
+	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -690,7 +696,7 @@ func TestGet_ConditionalIfNoneMatchMismatch(t *testing.T) {
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/mybucket/testkey", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.Header.Set("If-None-Match", `"different"`)
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
+	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -717,7 +723,7 @@ func TestGet_ConditionalIfMatch(t *testing.T) {
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/mybucket/testkey", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.Header.Set("If-Match", `"wrong"`)
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
+	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -744,7 +750,7 @@ func TestHead_ConditionalIfNoneMatch(t *testing.T) {
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodHead, ts.URL+"/mybucket/testkey", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.Header.Set("If-None-Match", `"abc"`)
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
+	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -774,7 +780,7 @@ func TestGet_ConditionalIfModifiedSince(t *testing.T) {
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/mybucket/testkey", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.Header.Set("If-Modified-Since", objTime.Add(time.Hour).UTC().Format(http.TimeFormat))
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
+	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -804,7 +810,7 @@ func TestGet_ConditionalIfModifiedSinceNewer(t *testing.T) {
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/mybucket/testkey", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.Header.Set("If-Modified-Since", objTime.Add(-time.Hour).UTC().Format(http.TimeFormat))
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
+	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -834,7 +840,7 @@ func TestGet_ConditionalIfUnmodifiedSince(t *testing.T) {
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/mybucket/testkey", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.Header.Set("If-Unmodified-Since", objTime.Add(-time.Hour).UTC().Format(http.TimeFormat))
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
+	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -860,7 +866,7 @@ func TestGet_LastModifiedHeaderSet(t *testing.T) {
 		{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5},
 	}
 
-	resp := doReq(t, http.MethodGet, ts.URL+"/mybucket/testkey", nil)
+	resp := doReq(t, ts, http.MethodGet, ts.URL+"/mybucket/testkey", nil)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
@@ -892,7 +898,7 @@ func TestHead_LastModifiedHeaderSet(t *testing.T) {
 		{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5},
 	}
 
-	resp := doReq(t, http.MethodHead, ts.URL+"/mybucket/testkey", nil)
+	resp := doReq(t, ts, http.MethodHead, ts.URL+"/mybucket/testkey", nil)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
@@ -926,7 +932,7 @@ func TestPut_MetadataStored(t *testing.T) {
 	req.Header.Set("X-Amz-Meta-Project", "acme")
 	req.Header.Set("X-Amz-Meta-Env", "prod")
 	req.ContentLength = int64(len(data))
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
+	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -958,7 +964,7 @@ func TestGet_MetadataReturned(t *testing.T) {
 		{ObjectKey: "mybucket/metakey", BackendName: "b1", SizeBytes: 5},
 	}
 
-	resp := doReq(t, http.MethodGet, ts.URL+"/mybucket/metakey", nil)
+	resp := doReq(t, ts, http.MethodGet, ts.URL+"/mybucket/metakey", nil)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
@@ -986,7 +992,7 @@ func TestHead_MetadataReturned(t *testing.T) {
 		{ObjectKey: "mybucket/metakey", BackendName: "b1", SizeBytes: 5},
 	}
 
-	resp := doReq(t, http.MethodHead, ts.URL+"/mybucket/metakey", nil)
+	resp := doReq(t, ts, http.MethodHead, ts.URL+"/mybucket/metakey", nil)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
@@ -1009,7 +1015,7 @@ func TestPut_MetadataTooLarge(t *testing.T) {
 	req.Header.Set("Content-Type", "text/plain")
 	req.Header.Set("X-Amz-Meta-Big", strings.Repeat("x", maxUserMetadataBytes+1))
 	req.ContentLength = int64(len(data))
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
+	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1035,7 +1041,7 @@ func TestDelete_Success(t *testing.T) {
 		{BackendName: "b1", SizeBytes: 2},
 	}
 
-	resp := doReq(t, http.MethodDelete, ts.URL+"/mybucket/testkey", nil)
+	resp := doReq(t, ts, http.MethodDelete, ts.URL+"/mybucket/testkey", nil)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusNoContent {
@@ -1050,7 +1056,7 @@ func TestDelete_IdempotentForMissing(t *testing.T) {
 	ts, mockStore, _ := newTestServer(t)
 	mockStore.DeleteObjectErr = core.ErrObjectNotFound
 
-	resp := doReq(t, http.MethodDelete, ts.URL+"/mybucket/nonexistent", nil)
+	resp := doReq(t, ts, http.MethodDelete, ts.URL+"/mybucket/nonexistent", nil)
 	defer resp.Body.Close()
 
 	// Manager treats missing objects as success (idempotent delete)
@@ -1076,7 +1082,7 @@ func TestDeleteObjects_Success(t *testing.T) {
 	}
 
 	body := strings.NewReader(`<Delete><Object><Key>key1</Key></Object><Object><Key>key2</Key></Object></Delete>`)
-	resp := doReq(t, http.MethodPost, ts.URL+"/mybucket?delete", body)
+	resp := doReq(t, ts, http.MethodPost, ts.URL+"/mybucket?delete", body)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
@@ -1102,7 +1108,7 @@ func TestDeleteObjects_QuietMode(t *testing.T) {
 	}
 
 	body := strings.NewReader(`<Delete><Quiet>true</Quiet><Object><Key>key1</Key></Object></Delete>`)
-	resp := doReq(t, http.MethodPost, ts.URL+"/mybucket?delete", body)
+	resp := doReq(t, ts, http.MethodPost, ts.URL+"/mybucket?delete", body)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
@@ -1121,7 +1127,7 @@ func TestDeleteObjects_MalformedXML(t *testing.T) {
 	ts, _, _ := newTestServer(t)
 
 	body := strings.NewReader(`not xml at all`)
-	resp := doReq(t, http.MethodPost, ts.URL+"/mybucket?delete", body)
+	resp := doReq(t, ts, http.MethodPost, ts.URL+"/mybucket?delete", body)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusBadRequest {
@@ -1142,7 +1148,7 @@ func TestDeleteObjects_TooManyObjects(t *testing.T) {
 	}
 	sb.WriteString("</Delete>")
 
-	resp := doReq(t, http.MethodPost, ts.URL+"/mybucket?delete", strings.NewReader(sb.String()))
+	resp := doReq(t, ts, http.MethodPost, ts.URL+"/mybucket?delete", strings.NewReader(sb.String()))
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusBadRequest {
@@ -1157,7 +1163,7 @@ func TestDeleteObjects_EmptyRequest(t *testing.T) {
 	ts, _, _ := newTestServer(t)
 
 	body := strings.NewReader(`<Delete></Delete>`)
-	resp := doReq(t, http.MethodPost, ts.URL+"/mybucket?delete", body)
+	resp := doReq(t, ts, http.MethodPost, ts.URL+"/mybucket?delete", body)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusBadRequest {
@@ -1176,7 +1182,7 @@ func TestDeleteObjects_WholeBatchFailure(t *testing.T) {
 	mockStore.DeleteObjectsBatchErr = &core.S3Error{StatusCode: 500, Code: "InternalError", Message: "db error"}
 
 	body := strings.NewReader(`<Delete><Object><Key>good</Key></Object><Object><Key>bad</Key></Object></Delete>`)
-	resp := doReq(t, http.MethodPost, ts.URL+"/mybucket?delete", body)
+	resp := doReq(t, ts, http.MethodPost, ts.URL+"/mybucket?delete", body)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
@@ -1206,7 +1212,7 @@ func TestDeleteObjects_TypedErrorSurfaces(t *testing.T) {
 	mockStore.DeleteObjectsBatchErr = &core.S3Error{StatusCode: 503, Code: "ServiceUnavailable", Message: "db down"}
 
 	body := strings.NewReader(`<Delete><Object><Key>k1</Key></Object><Object><Key>k2</Key></Object></Delete>`)
-	resp := doReq(t, http.MethodPost, ts.URL+"/mybucket?delete", body)
+	resp := doReq(t, ts, http.MethodPost, ts.URL+"/mybucket?delete", body)
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)
 	s := string(respBody)
@@ -1223,7 +1229,7 @@ func TestDeleteObjects_TypedErrorSurfaces(t *testing.T) {
 	mockStoreUntyped.DeleteObjectsBatchErr = errors.New("untyped backend error")
 
 	bodyUntyped := strings.NewReader(`<Delete><Object><Key>k1</Key></Object></Delete>`)
-	respUntyped := doReq(t, http.MethodPost, tsUntyped.URL+"/mybucket?delete", bodyUntyped)
+	respUntyped := doReq(t, ts, http.MethodPost, tsUntyped.URL+"/mybucket?delete", bodyUntyped)
 	defer respUntyped.Body.Close()
 	respBodyUntyped, _ := io.ReadAll(respUntyped.Body)
 	su := string(respBodyUntyped)
@@ -1255,7 +1261,7 @@ func TestCopy_Success(t *testing.T) {
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.Header.Set("X-Amz-Copy-Source", "/mybucket/source-key")
 	req.ContentLength = 0
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
+	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1284,7 +1290,7 @@ func TestCopy_SourceNotFound(t *testing.T) {
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.Header.Set("X-Amz-Copy-Source", "/mybucket/no-such-key")
 	req.ContentLength = 0
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
+	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1313,7 +1319,7 @@ func TestCopy_URLEncodedSource(t *testing.T) {
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.Header.Set("X-Amz-Copy-Source", "/mybucket/my%20file.txt")
 	req.ContentLength = 0
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
+	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1340,7 +1346,7 @@ func TestCopy_CrossBucketDenied(t *testing.T) {
 	req.Header.Set("X-Proxy-Token", "test-token")
 	req.Header.Set("X-Amz-Copy-Source", "/otherbucket/source-key")
 	req.ContentLength = 0
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
+	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1363,7 +1369,7 @@ func TestAuth_BadCredentials(t *testing.T) {
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/mybucket/testkey", nil)
 	req.Header.Set("X-Proxy-Token", "wrong-token")
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
+	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1383,7 +1389,7 @@ func TestAuth_BucketMismatch(t *testing.T) {
 	// Token is valid for "mybucket" but request goes to "otherbucket"
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/otherbucket/testkey", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
+	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1401,7 +1407,7 @@ func TestAuth_AccessDeniedDoesNotLeakBucketName(t *testing.T) {
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/otherbucket/testkey", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
+	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1425,7 +1431,7 @@ func TestUnsupportedMethod(t *testing.T) {
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPatch, ts.URL+"/mybucket/testkey", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
+	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1447,7 +1453,7 @@ func TestBucketOnlyGET_RoutesToList(t *testing.T) {
 		},
 	}
 
-	resp := doReq(t, http.MethodGet, ts.URL+"/mybucket/", nil)
+	resp := doReq(t, ts, http.MethodGet, ts.URL+"/mybucket/", nil)
 	defer resp.Body.Close()
 
 	// Should route to ListObjectsV2 and return XML
