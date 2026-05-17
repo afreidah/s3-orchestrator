@@ -19,12 +19,12 @@ package multipart
 
 import (
 	"context"
-	"time"
 
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -34,10 +34,10 @@ import (
 // logfmt.Component("multipart") in New), not a behavior dependency.
 type MultipartCore interface {
 	GetBackend(name string) (backend.ObjectBackend, error)
-	Usage() *counter.UsageTracker
+	Usage() *counter.UsageTracker // still needed for WithinLimits pre-flight checks; per-backend Record calls flow through Acct
 	WithTimeout(ctx context.Context) (context.Context, context.CancelFunc)
 	ClassifyWriteError(span trace.Span, operation string, err error) error
-	RecordOperation(operation, backend string, start time.Time, err error)
+	Acct() *accounting.Recorder
 }
 
 // MultipartCoordinator is the subset of *writepath.Coordinator the

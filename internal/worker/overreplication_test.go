@@ -131,7 +131,7 @@ func TestCleanObject_RemovesLowestScored(t *testing.T) {
 
 	ops.EXPECT().IsDraining(gomock.Any()).Return(false).AnyTimes()
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": be1, "b2": be2}).AnyTimes()
-	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	// b1 is more utilized (lower score -> removed first)
 	ops.EXPECT().GetBackend("b1").Return(be1, nil)
 	ops.EXPECT().DeleteOrEnqueue(gomock.Any(), be1, "b1", "key1", "over_replication", int64(100))

@@ -15,6 +15,7 @@ import (
 
 	backend "github.com/afreidah/s3-orchestrator/internal/backend"
 	counter "github.com/afreidah/s3-orchestrator/internal/counter"
+	accounting "github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -40,6 +41,20 @@ func NewMockOps(ctrl *gomock.Controller) *MockOps {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockOps) EXPECT() *MockOpsMockRecorder {
 	return m.recorder
+}
+
+// Acct mocks base method.
+func (m *MockOps) Acct() *accounting.Recorder {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Acct")
+	ret0, _ := ret[0].(*accounting.Recorder)
+	return ret0
+}
+
+// Acct indicates an expected call of Acct.
+func (mr *MockOpsMockRecorder) Acct() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Acct", reflect.TypeOf((*MockOps)(nil).Acct))
 }
 
 // AcquireAdmission mocks base method.
@@ -247,6 +262,20 @@ func (m *MockCleanupOps) EXPECT() *MockCleanupOpsMockRecorder {
 	return m.recorder
 }
 
+// Acct mocks base method.
+func (m *MockCleanupOps) Acct() *accounting.Recorder {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Acct")
+	ret0, _ := ret[0].(*accounting.Recorder)
+	return ret0
+}
+
+// Acct indicates an expected call of Acct.
+func (mr *MockCleanupOpsMockRecorder) Acct() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Acct", reflect.TypeOf((*MockCleanupOps)(nil).Acct))
+}
+
 // AcquireAdmission mocks base method.
 func (m *MockCleanupOps) AcquireAdmission(ctx context.Context) bool {
 	m.ctrl.T.Helper()
@@ -379,6 +408,20 @@ func NewMockScrubberOps(ctrl *gomock.Controller) *MockScrubberOps {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockScrubberOps) EXPECT() *MockScrubberOpsMockRecorder {
 	return m.recorder
+}
+
+// Acct mocks base method.
+func (m *MockScrubberOps) Acct() *accounting.Recorder {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Acct")
+	ret0, _ := ret[0].(*accounting.Recorder)
+	return ret0
+}
+
+// Acct indicates an expected call of Acct.
+func (mr *MockScrubberOpsMockRecorder) Acct() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Acct", reflect.TypeOf((*MockScrubberOps)(nil).Acct))
 }
 
 // DeleteOrEnqueue mocks base method.

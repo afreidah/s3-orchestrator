@@ -16,18 +16,19 @@ package readpath
 
 import (
 	"context"
-	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // Core is the subset of *infra.Core the Failover orchestrator needs:
-// backend registry + lookup, and operation metric recording.
+// backend registry + lookup, and the accounting Recorder that owns
+// the per-backend usage / per-operation metric semantics.
 type Core interface {
 	Backends() map[string]backend.ObjectBackend
 	BackendOrder() []string
-	RecordOperation(operation, backend string, start time.Time, err error)
+	Acct() *accounting.Recorder
 }
 
 // ObjectLocationLister is the subset of core.MetadataStore the orchestrator

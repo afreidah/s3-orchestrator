@@ -190,7 +190,7 @@ func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, req 
 	etag, err := be.PutObject(bctx, req.key, uploadBody, uploadSize, req.contentType, req.metadata)
 	bcancel()
 	if err != nil {
-		o.core.Usage().Record(backendName, 1, 0, 0)
+		o.core.Acct().APICall(backendName)
 		// Leave the pending row for the reaper. A backend PUT error does
 		// not reliably mean the bytes are absent: the response could have
 		// been lost mid-flight, so the reaper HEADs the backend on its
@@ -245,8 +245,7 @@ type putSuccessRequest struct {
 // notification for a successful PutObject. Records failover spans when
 // retries occurred.
 func (o *Manager) finalizePutSuccess(ctx context.Context, span trace.Span, req *putSuccessRequest) {
-	o.core.RecordOperation(req.operation, req.backendName, req.start, nil)
-	o.core.Usage().Record(req.backendName, 1, 0, req.size)
+	o.core.Acct().PutSuccess(req.operation, req.backendName, req.size, req.start)
 	if len(req.failedBackends) > 0 {
 		for _, fb := range req.failedBackends {
 			telemetry.WriteFailoverTotal.WithLabelValues(req.operation, fb, req.backendName).Inc()
@@ -401,10 +400,10 @@ func (o *Manager) CopyObject(ctx context.Context, sourceKey, destKey string) (st
 	// --- Invalidate location cache ---
 	o.cache.Delete(destKey)
 
-	o.core.RecordOperation(operation, destBackendName, start, nil)
 	srcName := src.sourceBackend
-	o.core.Usage().Record(srcName, 1, size, 0)         // source: Get + egress
-	o.core.Usage().Record(destBackendName, 1, 0, size) // dest: Put + ingress
+	o.core.Acct().Operation(operation, destBackendName, start, nil)
+	o.core.Acct().Egress(srcName, size)         // source: Get
+	o.core.Acct().Ingress(destBackendName, size) // dest: Put
 
 	audit.Log(ctx, "storage.CopyObject",
 		slog.String("source_key", sourceKey),
@@ -478,10 +477,10 @@ func (o *Manager) DeleteObject(ctx context.Context, key string) error {
 
 	// --- Record metrics (use first copy's backend for primary) ---
 	if len(copies) > 0 {
-		o.core.RecordOperation(operation, copies[0].BackendName, start, nil)
+		o.core.Acct().Operation(operation, copies[0].BackendName, start, nil)
 	}
 	for _, c := range copies {
-		o.core.Usage().Record(c.BackendName, 1, 0, 0)
+		o.core.Acct().APICall(c.BackendName)
 	}
 
 	audit.Log(ctx, "storage.DeleteObject",
@@ -568,7 +567,7 @@ func (o *Manager) DeleteObjects(ctx context.Context, keys []string) []DeleteObje
 	})
 
 	successCount, errorCount := tallyDeleteResults(results)
-	o.core.RecordOperation(operation, "", start, nil)
+	o.core.Acct().Operation(operation, "", start, nil)
 
 	audit.Log(ctx, "storage.DeleteObjects",
 		slog.Int("total_keys", len(keys)),
@@ -612,7 +611,7 @@ func (o *Manager) flattenBatchDeletes(ctx context.Context, copiesByKey map[strin
 			items = append(items, batchDeleteItem{
 				key: key, backend: backend, beName: cp.BackendName, sizeBytes: cp.SizeBytes,
 			})
-			o.core.Usage().Record(cp.BackendName, 1, 0, 0)
+			o.core.Acct().APICall(cp.BackendName)
 		}
 	}
 	return items

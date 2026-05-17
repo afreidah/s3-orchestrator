@@ -22,7 +22,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 )
 
 // WritepathCore is the subset of *infra.Core the Coordinator needs.
@@ -31,9 +31,9 @@ import (
 // logfmt.Component("writepath") in New), not a behavior dependency.
 type WritepathCore interface {
 	Backends() map[string]backend.ObjectBackend
-	Usage() *counter.UsageTracker
 	RoutingStrategy() config.RoutingStrategy
 	EligibleForWrite(apiCalls, egress, ingress int64) []string
 	ClassifyWriteError(span trace.Span, operation string, err error) error
 	DeleteWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) error
+	Acct() *accounting.Recorder
 }

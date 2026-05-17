@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -168,6 +169,13 @@ func (m *mockMetadataStore) UpdateContentHash(_ context.Context, _, _, hash stri
 // newTestUsageTracker creates a UsageTracker with no limits for testing.
 func newTestUsageTracker() *counter.UsageTracker {
 	return counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1", "b2"}), nil)
+}
+
+// newTestRecorder builds an accounting.Recorder wired to a fresh
+// no-limits usage tracker and a no-op operation-metric callback. Use
+// from mock setups: ops.EXPECT().Acct().Return(newTestRecorder()).
+func newTestRecorder() *accounting.Recorder {
+	return accounting.New(newTestUsageTracker(), func(string, string, time.Time, error) {})
 }
 
 // GetUnderReplicatedObjects is a stub on mockMetadataStore; returns either the test-set

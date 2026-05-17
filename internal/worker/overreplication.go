@@ -236,7 +236,7 @@ func (c *OverReplicationCleaner) cleanObject(ctx context.Context, key string, co
 
 		c.ops.DeleteOrEnqueue(ctx, be, victim.BackendName, key, "over_replication", victim.SizeBytes)
 
-		c.ops.Usage().Record(victim.BackendName, 1, 0, 0) // Delete API call
+		c.ops.Acct().APICall(victim.BackendName) // Delete API call
 
 		audit.Log(ctx, "over_replication.remove",
 			slog.String("key", key),

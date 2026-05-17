@@ -111,7 +111,7 @@ func TestProcessPendingQueue_HeadNotFoundDropsIntent(t *testing.T) {
 	ops.EXPECT().ReleaseAdmission()
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
-	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	be.EXPECT().HeadObject(gomock.Any(), "bucket/k").Return(nil, &httpError{code: 404, msg: "NoSuchKey"})
 
 	resolved, failed := r.ProcessPendingQueue(context.Background())
@@ -135,7 +135,7 @@ func TestProcessPendingQueue_HeadTransientErrorLeavesIntent(t *testing.T) {
 	ops.EXPECT().ReleaseAdmission()
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
-	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	be.EXPECT().HeadObject(gomock.Any(), "bucket/k").Return(nil, errors.New("connection reset"))
 
 	resolved, failed := r.ProcessPendingQueue(context.Background())
@@ -162,7 +162,7 @@ func TestProcessPendingQueue_HeadOKPromotes(t *testing.T) {
 	ops.EXPECT().ReleaseAdmission()
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
-	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	be.EXPECT().HeadObject(gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
 
 	resolved, failed := r.ProcessPendingQueue(context.Background())
@@ -187,7 +187,7 @@ func TestProcessPendingQueue_PromoteSupersededCounts(t *testing.T) {
 	ops.EXPECT().ReleaseAdmission()
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
-	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	be.EXPECT().HeadObject(gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
 
 	resolved, failed := r.ProcessPendingQueue(context.Background())
@@ -209,7 +209,7 @@ func TestProcessPendingQueue_PromoteAlreadyResolved(t *testing.T) {
 	ops.EXPECT().ReleaseAdmission()
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
-	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	be.EXPECT().HeadObject(gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
 
 	resolved, failed := r.ProcessPendingQueue(context.Background())
@@ -232,7 +232,7 @@ func TestProcessPendingQueue_PromoteAmbiguousLeavesIntent(t *testing.T) {
 	ops.EXPECT().ReleaseAdmission()
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
-	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	be.EXPECT().HeadObject(gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
 
 	resolved, failed := r.ProcessPendingQueue(context.Background())
@@ -257,7 +257,7 @@ func TestProcessPendingQueue_PromoteErrorIsFailed(t *testing.T) {
 	ops.EXPECT().ReleaseAdmission()
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
-	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	be.EXPECT().HeadObject(gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
 
 	resolved, failed := r.ProcessPendingQueue(context.Background())
@@ -299,7 +299,7 @@ func TestProcessPendingQueue_PromoteWithDisplacedEnqueues(t *testing.T) {
 	ops.EXPECT().ReleaseAdmission()
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
-	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	be.EXPECT().HeadObject(gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
 	ops.EXPECT().GetBackend("b2").Return(be2, nil)
 	ops.EXPECT().DeleteOrEnqueue(gomock.Any(), be2, "b2", "bucket/k", "overwrite_displaced", int64(200))
@@ -372,7 +372,7 @@ func TestProbeBackend_Found(t *testing.T) {
 	p := pendingFixture("i1", "bucket/k", "b1")
 
 	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
-	ops.EXPECT().Usage().Return(newTestUsageTracker())
+	ops.EXPECT().Acct().Return(newTestRecorder())
 	be.EXPECT().HeadObject(gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
 
 	if got := r.probeBackend(context.Background(), be, &p); got != probeFound {
@@ -388,7 +388,7 @@ func TestProbeBackend_NotFound(t *testing.T) {
 	p := pendingFixture("i1", "bucket/k", "b1")
 
 	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
-	ops.EXPECT().Usage().Return(newTestUsageTracker())
+	ops.EXPECT().Acct().Return(newTestRecorder())
 	be.EXPECT().HeadObject(gomock.Any(), "bucket/k").Return(nil, &httpError{code: 404, msg: "NoSuchKey"})
 
 	if got := r.probeBackend(context.Background(), be, &p); got != probeNotFound {
@@ -405,7 +405,7 @@ func TestProbeBackend_TransientError(t *testing.T) {
 	p := pendingFixture("i1", "bucket/k", "b1")
 
 	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
-	ops.EXPECT().Usage().Return(newTestUsageTracker())
+	ops.EXPECT().Acct().Return(newTestRecorder())
 	be.EXPECT().HeadObject(gomock.Any(), "bucket/k").Return(nil, errors.New("connection reset"))
 
 	if got := r.probeBackend(context.Background(), be, &p); got != probeError {

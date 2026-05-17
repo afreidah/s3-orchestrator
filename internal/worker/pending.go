@@ -177,7 +177,7 @@ func (r *PendingReaper) probeBackend(ctx context.Context, be backend.ObjectBacke
 	hctx, hcancel := r.deps.WithTimeout(ctx)
 	_, err := be.HeadObject(hctx, p.ObjectKey)
 	hcancel()
-	r.deps.Usage().Record(p.BackendName, 1, 0, 0)
+	r.deps.Acct().APICall(p.BackendName)
 
 	switch {
 	case err == nil:

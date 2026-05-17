@@ -127,7 +127,7 @@ func (w *CleanupWorker) processCleanupItem(
 	}
 
 	delErr := w.deps.DeleteWithTimeout(ctx, be, item.ObjectKey)
-	w.deps.Usage().Record(item.BackendName, 1, 0, 0)
+	w.deps.Acct().APICall(item.BackendName)
 
 	if delErr == nil {
 		w.completeCleanupSuccess(ctx, item, processedCount)

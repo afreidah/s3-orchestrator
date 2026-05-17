@@ -18,6 +18,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 )
 
 // BackendAccess provides backend fleet discovery and drain-awareness.
@@ -49,6 +50,14 @@ type UsageAccessor interface {
 	Usage() *counter.UsageTracker
 }
 
+// RecorderProvider provides the shared per-backend accounting recorder.
+// Prefer this over UsageAccessor for per-attempt API call / byte
+// counters: APICall / Egress / Ingress / Operation document intent at
+// the call site and prevent argument-order bugs.
+type RecorderProvider interface {
+	Acct() *accounting.Recorder
+}
+
 // -------------------------------------------------------------------------
 // COMPOSED DEPENDENCY CONTRACTS
 // -------------------------------------------------------------------------
@@ -60,6 +69,7 @@ type Ops interface {
 	AdmissionControl
 	DataMover
 	UsageAccessor
+	RecorderProvider
 }
 
 // CleanupOps is the dependency contract for CleanupWorker. It omits
@@ -68,6 +78,7 @@ type CleanupOps interface {
 	AdmissionControl
 	DataMover
 	UsageAccessor
+	RecorderProvider
 }
 
 // ScrubberOps is the dependency contract for Scrubber. It omits
@@ -76,4 +87,5 @@ type CleanupOps interface {
 type ScrubberOps interface {
 	DataMover
 	UsageAccessor
+	RecorderProvider
 }

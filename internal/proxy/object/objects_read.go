@@ -195,7 +195,7 @@ func (o *Manager) GetObject(ctx context.Context, key string, rangeHeader string)
 	if err != nil {
 		return nil, err
 	}
-	o.core.Usage().Record(backendName, 1, result.Size, 0)
+	o.core.Acct().Egress(backendName, result.Size)
 
 	audit.Log(ctx, "storage.GetObject",
 		slog.String("key", key),
@@ -270,13 +270,13 @@ func (o *Manager) getObjectAttempt(ctx context.Context, req *getAttemptRequest) 
 	r, err := req.backend.GetObject(bctx, req.key, actualRange)
 	if err != nil {
 		bcancel()
-		o.core.Usage().Record(req.beName, 1, 0, 0)
+		o.core.Acct().APICall(req.beName)
 		return 0, readpath.NoopCleanup, err
 	}
 	if !o.core.Usage().WithinLimits(req.beName, 1, r.Size, 0) {
 		_ = r.Body.Close()
 		bcancel()
-		o.core.Usage().Record(req.beName, 1, 0, 0)
+		o.core.Acct().APICall(req.beName)
 		return 0, readpath.NoopCleanup, fmt.Errorf("backend %s egress: %w", req.beName, readpath.ErrUsageLimitSkip)
 	}
 
@@ -400,7 +400,7 @@ func (o *Manager) HeadObject(ctx context.Context, key string) (*s3be.HeadObjectR
 		r, err := backend.HeadObject(bctx, key)
 		if err != nil {
 			bcancel()
-			o.core.Usage().Record(beName, 1, 0, 0) // API call was made even on failure
+			o.core.Acct().APICall(beName) // API call was made even on failure
 			return 0, readpath.NoopCleanup, err
 		}
 
@@ -418,7 +418,7 @@ func (o *Manager) HeadObject(ctx context.Context, key string) (*s3be.HeadObjectR
 	if err != nil {
 		return nil, err
 	}
-	o.core.Usage().Record(backendName, 1, 0, 0)
+	o.core.Acct().APICall(backendName)
 
 	audit.Log(ctx, "storage.HeadObject",
 		slog.String("key", key),
@@ -526,7 +526,7 @@ func (o *Manager) ListObjects(ctx context.Context, prefix, delimiter, startAfter
 		result.NextContinuationToken = AdvancePastEmittedCommonPrefix(prefix, delimiter, cursor, seen)
 	}
 
-	o.core.RecordOperation(operation, "", start, nil)
+	o.core.Acct().Operation(operation, "", start, nil)
 
 	audit.Log(ctx, "storage.ListObjects",
 		slog.String("prefix", prefix),

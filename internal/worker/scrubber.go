@@ -204,13 +204,12 @@ func (s *Scrubber) readAndHash(ctx context.Context, loc *core.ObjectLocation) (s
 
 	result, err := be.GetObject(bctx, loc.ObjectKey, "")
 	if err != nil {
-		s.deps.Usage().Record(loc.BackendName, 1, 0, 0)
+		s.deps.Acct().APICall(loc.BackendName)
 		return "", fmt.Errorf("get object: %w", err)
 	}
 	defer result.Body.Close()
 
-	// Record API call + egress
-	s.deps.Usage().Record(loc.BackendName, 1, result.Size, 0)
+	s.deps.Acct().Egress(loc.BackendName, result.Size)
 
 	// Decrypt if the object is encrypted  -  hash is computed on plaintext
 	var reader io.Reader = result.Body

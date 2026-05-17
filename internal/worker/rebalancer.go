@@ -551,7 +551,7 @@ func (r *Rebalancer) ExecuteOneMove(ctx context.Context, move RebalanceMove, str
 			"key", move.ObjectKey, "error", err)
 		// Clean up orphan on destination
 		r.ops.DeleteOrEnqueue(ctx, destBackend, move.ToBackend, move.ObjectKey, "rebalance_orphan", move.SizeBytes)
-		r.ops.Usage().Record(move.ToBackend, 1, 0, 0)
+		r.ops.Acct().APICall(move.ToBackend)
 		telemetry.RebalanceObjectsMoved.WithLabelValues(strategy, "error").Inc()
 		return false
 	}
@@ -561,15 +561,18 @@ func (r *Rebalancer) ExecuteOneMove(ctx context.Context, move RebalanceMove, str
 		r.log.InfoContext(ctx, "object already moved or deleted, cleaning up",
 			"key", move.ObjectKey)
 		r.ops.DeleteOrEnqueue(ctx, destBackend, move.ToBackend, move.ObjectKey, "rebalance_stale_orphan", move.SizeBytes)
-		r.ops.Usage().Record(move.ToBackend, 1, 0, 0)
+		r.ops.Acct().APICall(move.ToBackend)
 		return false
 	}
 
 	// --- Delete from source ---
 	r.ops.DeleteOrEnqueue(ctx, srcBackend, move.FromBackend, move.ObjectKey, "rebalance_source_delete", movedSize)
 
-	r.ops.Usage().Record(move.FromBackend, 2, movedSize, 0) // Get + Delete, egress
-	r.ops.Usage().Record(move.ToBackend, 1, 0, movedSize)   // Put, ingress
+	// Source: Get (charged with egress) + Delete; dest: Put (Ingress
+	// charges the API call).
+	r.ops.Acct().Egress(move.FromBackend, movedSize)
+	r.ops.Acct().APICall(move.FromBackend)
+	r.ops.Acct().Ingress(move.ToBackend, movedSize)
 
 	audit.Log(ctx, "rebalance.move",
 		slog.String("key", move.ObjectKey),

@@ -22,7 +22,7 @@ import (
 	"sync/atomic"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
-	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
@@ -36,10 +36,10 @@ type Core interface {
 	Backends() map[string]backend.ObjectBackend
 	GetBackend(name string) (backend.ObjectBackend, error)
 	BackendOrder() []string
-	Usage() *counter.UsageTracker
 	StreamCopy(ctx context.Context, src, dst backend.ObjectBackend, key string) error
 	DeleteWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) error
 	DeleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, backendName, key, reason string, sizeBytes int64)
+	Acct() *accounting.Recorder
 }
 
 // drainState tracks a single in-progress drain operation.
@@ -386,7 +386,7 @@ func (d *Manager) removeReplicaSource(ctx context.Context, srcBackend backend.Ob
 		return false
 	}
 	d.infra.DeleteOrEnqueue(ctx, srcBackend, srcName, obj.ObjectKey, "drain_source_delete", obj.SizeBytes)
-	d.infra.Usage().Record(srcName, 1, 0, 0)
+	d.infra.Acct().APICall(srcName)
 
 	audit.Log(ctx, "storage.DrainRemoveReplica",
 		slog.String("key", obj.ObjectKey),
@@ -420,19 +420,22 @@ func (d *Manager) copyAndRemoveSource(ctx context.Context, srcBackend backend.Ob
 		d.log.ErrorContext(ctx, "failed to update object location",
 			slog.String("key", obj.ObjectKey), "error", err)
 		d.infra.DeleteOrEnqueue(ctx, destBackend, destName, obj.ObjectKey, "drain_orphan", obj.SizeBytes)
-		d.infra.Usage().Record(destName, 1, 0, 0)
+		d.infra.Acct().APICall(destName)
 		return false
 	}
 	if movedSize == 0 {
 		// Object was deleted or already moved.
 		d.infra.DeleteOrEnqueue(ctx, destBackend, destName, obj.ObjectKey, "drain_stale_orphan", obj.SizeBytes)
-		d.infra.Usage().Record(destName, 1, 0, 0)
+		d.infra.Acct().APICall(destName)
 		return false
 	}
 
 	d.infra.DeleteOrEnqueue(ctx, srcBackend, srcName, obj.ObjectKey, "drain_source_delete", movedSize)
-	d.infra.Usage().Record(srcName, 2, movedSize, 0)
-	d.infra.Usage().Record(destName, 1, 0, movedSize)
+	// Source: Get (charged with egress) + Delete; dest: Put (Ingress
+	// charges the API call).
+	d.infra.Acct().Egress(srcName, movedSize)
+	d.infra.Acct().APICall(srcName)
+	d.infra.Acct().Ingress(destName, movedSize)
 
 	audit.Log(ctx, "storage.DrainMove",
 		slog.String("key", obj.ObjectKey),
@@ -523,7 +526,7 @@ func (d *Manager) PurgeBackendObjects(ctx context.Context, be backend.ObjectBack
 				d.log.WarnContext(ctx, "failed to delete object from backend during purge",
 					slog.String("backend", name), slog.String("key", objects[i].ObjectKey), "error", err)
 			}
-			d.infra.Usage().Record(name, 1, 0, 0)
+			d.infra.Acct().APICall(name)
 
 			if err := d.objects.DeleteObjectLocation(ctx, objects[i].ObjectKey, name); err != nil {
 				d.log.WarnContext(ctx, "failed to delete DB record during purge",

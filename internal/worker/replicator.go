@@ -280,8 +280,8 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 				"key", key, "source", source, "transferred", transferredSize, "recorded", recordedSize)
 		}
 
-		r.ops.Usage().Record(source, 1, recordedSize, 0) // source: Get + egress
-		r.ops.Usage().Record(target, 1, 0, recordedSize) // target: Put + ingress
+		r.ops.Acct().Egress(source, recordedSize)
+		r.ops.Acct().Ingress(target, recordedSize)
 
 		audit.Log(ctx, "replication.copy",
 			slog.String("key", key),

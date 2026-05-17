@@ -389,7 +389,7 @@ func (m *BackendManager) SyncBackend(ctx context.Context, backendName, bucket st
 	// Record ListObjectsV2 API calls against the backend's usage quota:
 	// each page is one API request to the backend provider.
 	if apiPages > 0 {
-		m.Usage().Record(backendName, apiPages, 0, 0)
+		m.Acct().APICalls(backendName, apiPages)
 	}
 	if err != nil {
 		return imported, skipped, err
@@ -497,7 +497,7 @@ func (m *BackendManager) ReconcileBackend(ctx context.Context, backendName, buck
 	)
 
 	if pages := atomic.LoadInt64(&apiPages); pages > 0 {
-		m.Usage().Record(backendName, pages, 0, 0)
+		m.Acct().APICalls(backendName, pages)
 	}
 	if mergeErr != nil {
 		return &worker.ReconcileResult{BackendsScanned: 1, Imported: int(res.Imported), Removed: int(res.Removed)},
