@@ -285,8 +285,10 @@ type broadcastResult struct {
 }
 
 // tryBackendsInParallel launches one probe per backend in BackendOrder
-// and returns the first success, draining the remaining responses in
-// the background so loser cleanups fire promptly.
+// and returns the first success, cancelling the losing probes' contexts
+// so their in-flight backend round trips, decryption, and integrity
+// work stop promptly instead of running to completion only to have
+// their results discarded.
 func (f *Failover) tryBackendsInParallel(
 	ctx context.Context,
 	operation, key string,
@@ -295,7 +297,8 @@ func (f *Failover) tryBackendsInParallel(
 	probe Probe,
 ) (string, error) {
 	ch := make(chan broadcastResult, len(f.core.BackendOrder()))
-	launched := f.launchBackendProbes(ctx, ch, probe)
+	cancels := f.launchBackendProbes(ctx, ch, probe)
+	launched := len(cancels)
 
 	var lastErr error
 	for received := 0; received < launched; received++ { //nolint:intrange // received used in arithmetic below
@@ -307,33 +310,59 @@ func (f *Failover) tryBackendsInParallel(
 		if r.cleanup != nil {
 			r.cleanup()
 		}
+		// Winner declared: cancel every other probe so losing backends
+		// stop wasting CPU, network, and API quota on work that will be
+		// discarded. The winner's context is intentionally left alive
+		// the response body is bound to it and the caller is still
+		// reading from it; the per-probe ctx is reaped naturally when
+		// the parent request ctx ends.
+		cancelLosers(cancels, r.name)
 		if remaining := launched - received - 1; remaining > 0 {
 			go drainAndCleanupLosers(ch, remaining)
 		}
 		f.recordBroadcastWinner(operation, key, r.name, r.size, start, span, true)
 		return r.name, nil
 	}
+	// All probes failed: no body to preserve, cancel every per-probe
+	// context so any straggler in a retry/backoff returns immediately.
+	for _, cancel := range cancels {
+		cancel()
+	}
 	return broadcastAllFailed(span, lastErr)
 }
 
 // launchBackendProbes spawns one goroutine per eligible backend, each
-// of which writes its outcome to ch. Returns the number of probes
-// launched so the caller knows how many results to read.
+// with its own cancelable context derived from ctx so the orchestrator
+// can stop losing probes once a winner is declared. Returns the
+// per-backend cancel functions keyed by backend name; len(map) is the
+// number of probes launched.
 func (f *Failover) launchBackendProbes(
 	ctx context.Context,
 	ch chan<- broadcastResult,
 	probe Probe,
-) int {
-	launched := 0
+) map[string]context.CancelFunc {
+	cancels := make(map[string]context.CancelFunc, len(f.core.BackendOrder()))
 	for _, name := range f.core.BackendOrder() {
 		be, ok := f.core.Backends()[name]
 		if !ok {
 			continue
 		}
-		launched++
-		go runBackendProbe(ctx, name, be, probe, ch)
+		probeCtx, cancel := context.WithCancel(ctx)
+		cancels[name] = cancel
+		go runBackendProbe(probeCtx, name, be, probe, ch)
 	}
-	return launched
+	return cancels
+}
+
+// cancelLosers invokes every cancel func except the winner's. The
+// winner's context must stay alive because its response body is bound
+// to it.
+func cancelLosers(cancels map[string]context.CancelFunc, winner string) {
+	for name, cancel := range cancels {
+		if name != winner {
+			cancel()
+		}
+	}
 }
 
 // runBackendProbe is the per-backend goroutine body. On success it
