@@ -1451,6 +1451,107 @@ func TestCopyObject_Success(t *testing.T) {
 	}
 }
 
+// TestCopyObject_SameBackendFastPath_UsesNativeCopy verifies the
+// same-backend fast path: when the destination ends up on the same
+// backend that holds a source replica and the backend implements
+// BackendCopier, the orchestrator calls native CopyObject once and
+// skips the materialize-then-PUT round trip.
+func TestCopyObject_SameBackendFastPath_UsesNativeCopy(t *testing.T) {
+	t.Parallel()
+	backend := newMockBackend()
+	backend.copyEnabled = true
+	_, _ = backend.PutObject(context.Background(), "src", bytes.NewReader([]byte("copy-me")), 7, "text/plain", nil)
+	backend.lastPutBodySeekable = false // reset so we can detect a no-PUT fast path
+
+	store, _ := copyObjectStore(t,
+		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil,
+		"b1", nil)
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": backend})
+
+	etag, err := mgr.ObjectManager.CopyObject(context.Background(), "src", "dst")
+	if err != nil {
+		t.Fatalf("CopyObject: %v", err)
+	}
+	if etag == "" {
+		t.Error("expected non-empty etag")
+	}
+	if !backend.hasObject("dst") {
+		t.Error("destination object not found")
+	}
+	backend.mu.Lock()
+	calls := backend.copyCalls
+	puttedBody := backend.lastPutBodySeekable
+	backend.mu.Unlock()
+	if calls != 1 {
+		t.Errorf("native copyCalls = %d, want 1", calls)
+	}
+	if puttedBody {
+		t.Error("PutObject ran; fast path should have skipped materialize+PUT")
+	}
+}
+
+// TestCopyObject_FastPathFallsBackOnNativeError verifies the fast path
+// gracefully falls back to materialized copy when native CopyObject
+// returns an error. The destination must still end up populated via
+// the slow path.
+func TestCopyObject_FastPathFallsBackOnNativeError(t *testing.T) {
+	t.Parallel()
+	backend := newMockBackend()
+	backend.copyEnabled = true
+	backend.copyErr = errors.New("simulated native copy failure")
+	_, _ = backend.PutObject(context.Background(), "src", bytes.NewReader([]byte("copy-me")), 7, "text/plain", nil)
+	backend.lastPutBodySeekable = false
+
+	store, _ := copyObjectStore(t,
+		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil,
+		"b1", nil)
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": backend})
+
+	if _, err := mgr.ObjectManager.CopyObject(context.Background(), "src", "dst"); err != nil {
+		t.Fatalf("CopyObject (fallback path): %v", err)
+	}
+	if !backend.hasObject("dst") {
+		t.Error("destination object not found after fallback")
+	}
+	backend.mu.Lock()
+	puttedBody := backend.lastPutBodySeekable
+	backend.mu.Unlock()
+	if !puttedBody {
+		t.Error("expected materialized PUT after native-copy fallback")
+	}
+}
+
+// TestCopyObject_FastPathSkippedCrossBackend verifies the fast path is
+// not engaged when the source's only replica lives on a different
+// backend than the chosen destination. The orchestrator must
+// materialize the object via GET-then-PUT.
+func TestCopyObject_FastPathSkippedCrossBackend(t *testing.T) {
+	t.Parallel()
+	src := newMockBackend()
+	src.copyEnabled = true
+	_, _ = src.PutObject(context.Background(), "src", bytes.NewReader([]byte("cross")), 5, "text/plain", nil)
+	dst := newMockBackend()
+	dst.copyEnabled = true // destination supports native copy, but source is elsewhere
+
+	store, _ := copyObjectStore(t,
+		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil,
+		"b2", nil)
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": src, "b2": dst})
+
+	if _, err := mgr.ObjectManager.CopyObject(context.Background(), "src", "dst"); err != nil {
+		t.Fatalf("CopyObject: %v", err)
+	}
+	dst.mu.Lock()
+	calls := dst.copyCalls
+	dst.mu.Unlock()
+	if calls != 0 {
+		t.Errorf("native copyCalls = %d, want 0 (cross-backend must materialize)", calls)
+	}
+	if !dst.hasObject("dst") {
+		t.Error("destination object not found after cross-backend copy")
+	}
+}
+
 // TestCopyObject_SourceNotFound surfaces a not-found source.
 func TestCopyObject_SourceNotFound(t *testing.T) {
 	t.Parallel()

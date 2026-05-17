@@ -34,6 +34,14 @@ type mockBackend struct {
 	lastDeleteHadDdl   bool // set on each DeleteObject; true when the ctx carried a deadline
 	lastDeleteDeadline time.Time
 	lastPutBodySeekable bool // true when the last PutObject body satisfied io.Seeker
+
+	// Native-copy support. mockBackend always has a CopyObject method so
+	// it satisfies s3be.BackendCopier, but it returns ErrCopyNotSupported
+	// by default so existing tests fall through to the materialized copy
+	// path unchanged. Tests opting into the fast path set copyEnabled.
+	copyEnabled bool
+	copyCalls   int
+	copyErr     error
 }
 
 type mockObject struct {
@@ -142,6 +150,28 @@ func (m *mockBackend) DeleteObject(ctx context.Context, key string) error {
 	}
 	delete(m.objects, key)
 	return nil
+}
+
+// CopyObject lets mockBackend stand in for an s3be.BackendCopier. Off by
+// default (returns ErrCopyNotSupported) so the existing CopyObject tests
+// stay on the materialized path. Tests that want the fast path set
+// copyEnabled=true; copyErr lets them simulate native-copy failures.
+func (m *mockBackend) CopyObject(_ context.Context, srcKey, dstKey, _ string, _ map[string]string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.copyEnabled {
+		return "", s3be.ErrCopyNotSupported
+	}
+	m.copyCalls++
+	if m.copyErr != nil {
+		return "", m.copyErr
+	}
+	src, ok := m.objects[srcKey]
+	if !ok {
+		return "", fmt.Errorf("source not found")
+	}
+	m.objects[dstKey] = src
+	return src.etag, nil
 }
 
 // hasObject returns true if the key exists in the mock backend's store.
