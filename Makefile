@@ -506,16 +506,19 @@ web-godoc: ## Generate Go API reference markdown for the website
 			sed -i '/^# '"$$name"'$$/d' web/content/godoc/$$name.md; \
 		done
 
-web-serve: web-godoc ## Serve the project website locally
+web-submodules: ## Ensure Hugo theme submodule is checked out
+	@git submodule update --init --recursive web/themes/hugo-theme-relearn
+
+web-serve: web-submodules web-godoc ## Serve the project website locally
 	cd web && hugo serve
 
-web-build: web-godoc ## Build the project website
+web-build: web-submodules web-godoc ## Build the project website
 	cd web && hugo --minify
 
-web-docker: ## Build website Docker image for local architecture
+web-docker: web-submodules ## Build website Docker image for local architecture
 	docker build --pull -f web/Dockerfile -t $(WEB_IMAGE):$(WEB_TAG) .
 
-web-push: builder ## Build and push multi-arch website image to registry
+web-push: web-submodules builder ## Build and push multi-arch website image to registry
 	docker buildx build \
 	  --pull \
 	  --platform $(PLATFORMS) \
@@ -551,5 +554,5 @@ clean: ## Remove build artifacts, demo environments, containers, and volumes
 	docker rmi $(FULL_TAG) 2>/dev/null || true
 	docker rmi s3-orchestrator:local 2>/dev/null || true
 
-.PHONY: help builder build docker push generate test vet lint govulncheck coverage integration-coverage sonar-scan sonar-pr bench bench-compare run docs migration integration-test dev-deps dev-clean tools prep-changelog deb deb-lint deb-all publish-deb changelog release release-local loadtest-build loadtest-put loadtest-get loadtest-mixed loadtest-listobjects loadtest-multipart loadtest-burst loadtest-burst-read loadtest-k6 perf kubernetes-demo nomad-demo web-tools web-godoc web-serve web-build web-docker web-push clean
+.PHONY: help builder build docker push generate test vet lint govulncheck coverage integration-coverage sonar-scan sonar-pr bench bench-compare run docs migration integration-test dev-deps dev-clean tools prep-changelog deb deb-lint deb-all publish-deb changelog release release-local loadtest-build loadtest-put loadtest-get loadtest-mixed loadtest-listobjects loadtest-multipart loadtest-burst loadtest-burst-read loadtest-k6 perf kubernetes-demo nomad-demo web-tools web-godoc web-submodules web-serve web-build web-docker web-push clean
 .DEFAULT_GOAL := help
