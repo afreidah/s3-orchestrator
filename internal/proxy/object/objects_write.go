@@ -12,12 +12,11 @@
 package object
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
-	"os"
 	"time"
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
@@ -27,7 +26,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	pobserve "github.com/afreidah/s3-orchestrator/internal/proxy/observe"
-	"github.com/afreidah/s3-orchestrator/internal/util/bufpool"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -58,10 +56,11 @@ func (o *Manager) PutObject(ctx context.Context, key string, body io.Reader, siz
 		return "", core.ErrInsufficientStorage
 	}
 
-	bodyBytes, contentHash, err := o.bufferPutBody(span, body)
+	mbody, contentHash, err := o.bufferPutBody(span, body, size)
 	if err != nil {
 		return "", err
 	}
+	defer mbody.Cleanup()
 
 	// DEK caching: encryptForPut wraps a fresh DEK on first call and
 	// reuses it on retries with a new base nonce, sparing the KeyProvider
@@ -74,7 +73,7 @@ func (o *Manager) PutObject(ctx context.Context, key string, body io.Reader, siz
 		res := o.attemptPutOnBackend(ctx, span, &putAttemptRequest{
 			operation:   operation,
 			key:         key,
-			bodyBytes:   bodyBytes,
+			body:        mbody,
 			size:        size,
 			contentType: contentType,
 			metadata:    metadata,
@@ -119,21 +118,28 @@ type putAttemptResult struct {
 	putErr   error
 }
 
-// bufferPutBody copies body into memory so failover retries can replay
-// the same plaintext, and computes the content hash when integrity
-// verification is enabled.
-func (o *Manager) bufferPutBody(span trace.Span, body io.Reader) ([]byte, string, error) {
-	var buf bytes.Buffer
-	if _, err := bufpool.Copy(&buf, body); err != nil {
+// bufferPutBody materializes the request body into a seekable form
+// (memory for small payloads, tempfile above materializeMemThreshold)
+// so failover retries can replay the plaintext without holding the
+// full body on the heap. When integrity verification is enabled, the
+// SHA-256 is computed during the same single buffering pass via
+// io.MultiWriter so the body is not re-scanned after materialization.
+//
+// Returns the materialized body, the content hash (empty when
+// integrity verification is disabled), and a cleanup the caller must
+// invoke once the upload settles (safe to defer in every code path).
+func (o *Manager) bufferPutBody(span trace.Span, body io.Reader, size int64) (*materializedBody, string, error) {
+	var hasher hash.Hash
+	icfg := o.integrityCfg.Load()
+	if icfg != nil && icfg.Enabled {
+		hasher = newSHA256()
+	}
+	mb, err := newMaterializedBody(body, size, hasher)
+	if err != nil {
 		observe.RecordSpanError(span, err)
 		return nil, "", fmt.Errorf("buffer request body: %w", err)
 	}
-	bodyBytes := buf.Bytes()
-	var contentHash string
-	if icfg := o.integrityCfg.Load(); icfg != nil && icfg.Enabled {
-		contentHash = HashBody(bodyBytes)
-	}
-	return bodyBytes, contentHash, nil
+	return mb, sha256Hex(hasher), nil
 }
 
 // putAttemptRequest bundles the per-attempt arguments to
@@ -142,7 +148,7 @@ func (o *Manager) bufferPutBody(span trace.Span, body io.Reader) ([]byte, string
 type putAttemptRequest struct {
 	operation   string
 	key         string
-	bodyBytes   []byte
+	body        *materializedBody
 	size        int64
 	contentType string
 	metadata    map[string]string
@@ -167,7 +173,7 @@ func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, req 
 		return putAttemptResult{backend: backendName, fatalErr: err}
 	}
 
-	uploadBody, uploadSize, enc, err := o.buildPutPayload(ctx, req.bodyBytes, req.size, req.contentHash, req.dekState)
+	uploadBody, uploadSize, enc, err := o.buildPutPayload(ctx, req.body, req.size, req.contentHash, req.dekState)
 	if err != nil {
 		observe.RecordSpanError(span, err)
 		return putAttemptResult{backend: backendName, fatalErr: err}
@@ -203,17 +209,23 @@ func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, req 
 }
 
 // buildPutPayload prepares the upload body and EncryptionMeta for a
-// single attempt. Encryption layering, when enabled, runs through
-// encryptForPut so the wrapped DEK is reused across failover retries.
+// single attempt. The materialized body's Reader() rewinds on every
+// call so encryption and unencrypted paths both replay from offset 0
+// across failover retries. Encryption layering, when enabled, runs
+// through encryptForPut so the wrapped DEK is reused across retries.
 func (o *Manager) buildPutPayload(
 	ctx context.Context,
-	bodyBytes []byte,
+	body *materializedBody,
 	size int64,
 	contentHash string,
 	dekState *putEncryptState,
 ) (io.Reader, int64, *core.EncryptionMeta, error) {
+	plain, err := body.Reader()
+	if err != nil {
+		return nil, 0, nil, err
+	}
 	if o.encryptor != nil {
-		uploadBody, uploadSize, enc, err := encryptForPut(ctx, o.encryptor, bodyBytes, size, dekState)
+		uploadBody, uploadSize, enc, err := encryptForPut(ctx, o.encryptor, plain, size, dekState)
 		if err != nil {
 			return nil, 0, nil, err
 		}
@@ -224,7 +236,7 @@ func (o *Manager) buildPutPayload(
 	if contentHash != "" {
 		enc = &core.EncryptionMeta{ContentHash: contentHash}
 	}
-	return bytes.NewReader(bodyBytes), size, enc, nil
+	return plain, size, enc, nil
 }
 
 // putSuccessRequest bundles the metadata that finalizePutSuccess emits
@@ -309,7 +321,7 @@ func (o *Manager) headSourceForCopy(
 
 // CopyObject copies an object from sourceKey to destKey. Materializes
 // the source body into a seekable buffer  -  in-memory for small
-// objects, a self-unlinking tempfile above copyMaterializeMemThreshold
+// objects, a self-unlinking tempfile above materializeMemThreshold
 // -  before handing it to the destination PutObject. A non-seekable
 // body would force the AWS SDK onto its streaming-unsigned-payload
 // signing path, which uses chunked transfer encoding and drops
@@ -651,13 +663,6 @@ func tallyDeleteResults(results []DeleteObjectResult) (int, int) {
 	return successCount, errorCount
 }
 
-// copyMaterializeMemThreshold is the largest source object size that
-// materializeCopySource keeps in memory. Above this, the helper spills
-// to a tempfile. Mirrors the AWS SDK's own internal heuristic for the
-// PUT signing path; not a config knob because copy-vs-tempfile is an
-// implementation detail, not an operator concern.
-const copyMaterializeMemThreshold = 32 * 1024 * 1024
-
 // materializedSource bundles the seekable reader handed to PutObject
 // with the cleanup the caller must invoke once the upload settles. The
 // returned source backend identifies which replica actually served the
@@ -721,76 +726,19 @@ func (o *Manager) tryMaterializeFromLocation(
 	}
 	defer result.Body.Close()
 
-	sink, cleanup, err := newCopyMaterializeSink(size)
+	mb, err := newMaterializedBody(result.Body, size, nil)
 	if err != nil {
 		return nil, false, err
 	}
-	if _, err := bufpool.Copy(sink.writer(), result.Body); err != nil {
-		cleanup()
-		return nil, false, nil
-	}
-	body, err := sink.seekableBody()
+	body, err := mb.Reader()
 	if err != nil {
-		cleanup()
+		mb.Cleanup()
 		return nil, false, err
 	}
 	return &materializedSource{
 		body:          body,
 		sourceBackend: backendName,
-		cleanup:       cleanup,
+		cleanup:       mb.Cleanup,
 	}, true, nil
 }
 
-// copyMaterializeSink hides whether the materialized body lives in
-// memory or on disk so tryMaterializeFromLocation can write through a
-// uniform interface and only branch on which seekable reader to
-// return.
-type copyMaterializeSink struct {
-	buf  *bytes.Buffer
-	file *os.File
-}
-
-// newCopyMaterializeSink picks the in-memory or tempfile sink based on
-// the known object size. Returns a cleanup that the caller must invoke
-// once the upload settles, including on materialization error.
-func newCopyMaterializeSink(size int64) (*copyMaterializeSink, func(), error) {
-	if size <= copyMaterializeMemThreshold {
-		noopCleanup := func() {
-			// In-memory sink owns no resource; the buffer is
-			// reclaimed by the GC when the materializedSource goes
-			// out of scope. Cleanup is a no-op so the caller can
-			// always defer it without branching on sink type.
-		}
-		return &copyMaterializeSink{buf: &bytes.Buffer{}}, noopCleanup, nil
-	}
-	f, err := os.CreateTemp("", "s3o-copy-*")
-	if err != nil {
-		return nil, nil, fmt.Errorf("create copy tempfile: %w", err)
-	}
-	// Unlink immediately so the file disappears on Close or process
-	// exit; cleanup() only needs to close the fd. Removes the
-	// possibility of leaking a tempfile if the process panics
-	// mid-copy.
-	_ = os.Remove(f.Name()) //nolint:gosec // G703: path comes from os.CreateTemp, not user input
-	return &copyMaterializeSink{file: f}, func() { _ = f.Close() }, nil
-}
-
-// writer returns the io.Writer the source body streams into.
-func (s *copyMaterializeSink) writer() io.Writer {
-	if s.file != nil {
-		return s.file
-	}
-	return s.buf
-}
-
-// seekableBody returns the io.ReadSeeker handed to PutObject. For the
-// tempfile sink this rewinds the file so PutObject reads from offset 0.
-func (s *copyMaterializeSink) seekableBody() (io.ReadSeeker, error) {
-	if s.file != nil {
-		if _, err := s.file.Seek(0, io.SeekStart); err != nil { //nolint:gosec // G703: file path comes from os.CreateTemp("", ...), not user input
-			return nil, fmt.Errorf("rewind copy tempfile: %w", err)
-		}
-		return s.file, nil
-	}
-	return bytes.NewReader(s.buf.Bytes()), nil
-}

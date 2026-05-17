@@ -12,7 +12,6 @@
 package object
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -66,10 +65,14 @@ type putEncryptState struct {
 // hammer the KeyProvider. Returns the ciphertext stream, its size, and the
 // storage-side encryption metadata. The caller layers integrity fields
 // (e.g. ContentHash) onto the returned EncryptionMeta.
+//
+// plaintext must be a reader positioned at offset 0; callers replaying
+// across failover attempts pass a fresh reader (or a rewound seeker) per
+// call so the Encryptor sees the full payload each time.
 func encryptForPut(
 	ctx context.Context,
 	enc *encryption.Encryptor,
-	plaintext []byte,
+	plaintext io.Reader,
 	plaintextSize int64,
 	state *putEncryptState,
 ) (io.Reader, int64, *core.EncryptionMeta, error) {
@@ -78,14 +81,14 @@ func encryptForPut(
 		err    error
 	)
 	if state.dek == nil {
-		result, err = enc.Encrypt(ctx, bytes.NewReader(plaintext), plaintextSize)
+		result, err = enc.Encrypt(ctx, plaintext, plaintextSize)
 		if err == nil {
 			state.dek = result.RawDEK()
 			state.wrappedDEK = result.WrappedDEK
 			state.keyID = result.KeyID
 		}
 	} else {
-		result, err = enc.EncryptWithDEK(bytes.NewReader(plaintext), plaintextSize, state.dek, state.wrappedDEK, state.keyID)
+		result, err = enc.EncryptWithDEK(plaintext, plaintextSize, state.dek, state.wrappedDEK, state.keyID)
 	}
 	if err != nil {
 		telemetry.EncryptionErrorsTotal.WithLabelValues("encrypt", "encrypt_failed").Inc()

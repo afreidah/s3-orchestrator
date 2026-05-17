@@ -374,7 +374,7 @@ func TestEncryptForPut_FirstCallPopulatesStateAndMeta(t *testing.T) {
 	plain := []byte("first call payload")
 	var state putEncryptState
 
-	body, ctSize, meta, err := encryptForPut(context.Background(), enc, plain, int64(len(plain)), &state)
+	body, ctSize, meta, err := encryptForPut(context.Background(), enc, bytes.NewReader(plain), int64(len(plain)), &state)
 	if err != nil {
 		t.Fatalf("encryptForPut: %v", err)
 	}
@@ -411,7 +411,7 @@ func TestEncryptForPut_RetryReusesCachedDEK(t *testing.T) {
 
 	const calls = 3
 	for i := range calls {
-		body, _, _, err := encryptForPut(context.Background(), enc, plain, int64(len(plain)), &state)
+		body, _, _, err := encryptForPut(context.Background(), enc, bytes.NewReader(plain), int64(len(plain)), &state)
 		if err != nil {
 			t.Fatalf("call %d: %v", i, err)
 		}
@@ -432,11 +432,11 @@ func TestEncryptForPut_RetryUsesFreshNonce(t *testing.T) {
 	plain := []byte("nonce uniqueness check")
 	var state putEncryptState
 
-	_, _, meta1, err := encryptForPut(context.Background(), enc, plain, int64(len(plain)), &state)
+	_, _, meta1, err := encryptForPut(context.Background(), enc, bytes.NewReader(plain), int64(len(plain)), &state)
 	if err != nil {
 		t.Fatalf("first call: %v", err)
 	}
-	_, _, meta2, err := encryptForPut(context.Background(), enc, plain, int64(len(plain)), &state)
+	_, _, meta2, err := encryptForPut(context.Background(), enc, bytes.NewReader(plain), int64(len(plain)), &state)
 	if err != nil {
 		t.Fatalf("second call: %v", err)
 	}
@@ -462,7 +462,7 @@ func TestEncryptForPut_RoundTripDecrypts(t *testing.T) {
 	plain := []byte("round-trip payload via encryptForPut")
 	var state putEncryptState
 
-	body, _, meta, err := encryptForPut(context.Background(), enc, plain, int64(len(plain)), &state)
+	body, _, meta, err := encryptForPut(context.Background(), enc, bytes.NewReader(plain), int64(len(plain)), &state)
 	if err != nil {
 		t.Fatalf("encryptForPut: %v", err)
 	}
@@ -497,7 +497,7 @@ func TestEncryptForPut_WrapErrorLeavesStateEmpty(t *testing.T) {
 
 	var state putEncryptState
 	plain := []byte("doomed payload")
-	_, _, _, err := encryptForPut(context.Background(), enc, plain, int64(len(plain)), &state)
+	_, _, _, err := encryptForPut(context.Background(), enc, bytes.NewReader(plain), int64(len(plain)), &state)
 	if err == nil {
 		t.Fatal("expected error from failing KeyProvider")
 	}

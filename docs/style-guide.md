@@ -320,6 +320,45 @@ const (
 )
 ```
 
+### No Empty Cleanup Funcs
+
+Never return `func() {}` to satisfy a `(T, cleanup func(), error)` signature when the "no-cleanup" branch has nothing to do. SonarQube flags empty function literals (rule `go:S1186`) and the empty literal hides whether the branch *meant* to be empty or someone forgot to wire the cleanup.
+
+**Why:** Past SonarQube findings on PRs that returned `func() {}` as the no-op cleanup arm of an in-memory-vs-tempfile sink. The repo has hit the same lint multiple times across different abstractions.
+
+**How to apply:** Attach the cleanup as a method on the returned type so the caller writes `defer x.Cleanup()` once and the method internally branches on which underlying resource (if any) actually needs releasing. The lint never sees an empty literal, and the caller code stays identical across branches.
+
+```go
+// Bad — empty literal trips S1186 on the in-memory branch.
+func newSink(size int64) (*sink, func(), error) {
+    if size <= memoryLimit {
+        return &sink{buf: &bytes.Buffer{}}, func() {}, nil
+    }
+    f, _ := os.CreateTemp("", "x-*")
+    return &sink{file: f}, func() { _ = f.Close() }, nil
+}
+
+// Good — cleanup is a method that no-ops on the branch with no resource.
+func newSink(size int64) (*sink, error) {
+    if size <= memoryLimit {
+        return &sink{buf: &bytes.Buffer{}}, nil
+    }
+    f, err := os.CreateTemp("", "x-*")
+    if err != nil {
+        return nil, err
+    }
+    return &sink{file: f}, nil
+}
+
+func (s *sink) Cleanup() {
+    if s.file != nil {
+        _ = s.file.Close()
+    }
+}
+```
+
+When the cleanup truly must be a callback (e.g., interface contract), wrap it in `sync.OnceFunc` and have it do something meaningful (clear a pointer, decrement a counter) so the body is never literally empty.
+
 ### Concurrency Patterns
 
 - **`syncutil.AtomicConfig[T]`** for hot-reloadable config (wraps `atomic.Pointer[T]` with `Store`/`Load`)
