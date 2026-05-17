@@ -32,6 +32,13 @@ import (
 // Log is intentionally absent: the logger is observability
 // infrastructure owned by the Manager (built via
 // logfmt.Component("object") in New), not a behavior dependency.
+//
+// BackendOrder is on this interface even though no method in the
+// object package calls it directly: the read-failover orchestrator
+// owned by Manager (*readpath.Failover) needs it, and Manager passes
+// its own ObjectCore through to readpath.New. The transitive
+// requirement still lives at this boundary because that is where the
+// type-check has to be satisfied.
 type ObjectCore interface {
 	Backends() map[string]backend.ObjectBackend
 	BackendOrder() []string
