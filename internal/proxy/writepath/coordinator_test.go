@@ -3,14 +3,14 @@
 //
 // Author: Alex Freidah
 //
-// Targeted tests for the branches of writeCoordinator that the existing
+// Targeted tests for the branches of Coordinator that the existing
 // PUT/multipart end-to-end tests do not exercise: encryption metadata
-// copy on insertPendingIntent, InsertPending error propagation, and the
-// "backend not registered" branch of recordObjectAndPromoteIntent when
+// copy on InsertPendingIntent, InsertPending error propagation, and the
+// "backend not registered" branch of RecordObjectAndPromoteIntent when
 // intentID is empty.
 // -------------------------------------------------------------------------------
 
-package proxy
+package writepath
 
 import (
 	"context"
@@ -21,19 +21,20 @@ import (
 	"go.uber.org/mock/gomock"
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
-// newCoordinatorWithStore builds a minimal writeCoordinator backed by the
+// newCoordinatorWithStore builds a minimal Coordinator backed by the
 // supplied store. Avoids the BackendManager constructor so coordinator
 // branches can be exercised in isolation without dragging the full
 // manager assembly into every test.
-func newCoordinatorWithStore(store core.MetadataStore, pendingEnabled bool) *writeCoordinator {
-	core := &backendCore{
-		backends: map[string]s3be.ObjectBackend{},
-	}
-	return newWriteCoordinator(core, store, pendingEnabled)
+func newCoordinatorWithStore(store core.MetadataStore, pendingEnabled bool) *Coordinator {
+	c := infra.New(&infra.Config{
+		Backends: map[string]s3be.ObjectBackend{},
+	})
+	return New(c, store, pendingEnabled)
 }
 
 // TestInsertPendingIntent_CopiesEncryptionMeta drives the enc != nil
@@ -61,9 +62,9 @@ func TestInsertPendingIntent_CopiesEncryptionMeta(t *testing.T) {
 		ContentHash:   "deadbeef",
 	}
 
-	intentID, err := coord.insertPendingIntent(context.Background(), "k", "b1", 4096, enc)
+	intentID, err := coord.InsertPendingIntent(context.Background(), "k", "b1", 4096, enc)
 	if err != nil {
-		t.Fatalf("insertPendingIntent: %v", err)
+		t.Fatalf("InsertPendingIntent: %v", err)
 	}
 	if intentID == "" {
 		t.Fatal("expected non-empty intentID")
@@ -88,7 +89,7 @@ func TestInsertPendingIntent_StoreError(t *testing.T) {
 
 	coord := newCoordinatorWithStore(store, true)
 
-	intentID, err := coord.insertPendingIntent(context.Background(), "k", "b1", 4096, nil)
+	intentID, err := coord.InsertPendingIntent(context.Background(), "k", "b1", 4096, nil)
 	if err == nil {
 		t.Fatal("expected error from InsertPending failure")
 	}
@@ -113,7 +114,7 @@ func TestRecordObjectAndPromoteIntent_UnknownBackend(t *testing.T) {
 	_, sp := tracer.Start(context.Background(), "test")
 	defer sp.End()
 
-	err := coord.recordObjectAndPromoteIntent(context.Background(), sp, "k", "no-such-backend", 1024, nil, "")
+	err := coord.RecordObjectAndPromoteIntent(context.Background(), sp, "k", "no-such-backend", 1024, nil, "")
 	if err == nil {
 		t.Fatal("expected error for unregistered backend")
 	}

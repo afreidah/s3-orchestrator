@@ -26,6 +26,7 @@ import (
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 
@@ -375,7 +376,7 @@ func TestCanAcceptWrite_NoCapacity(t *testing.T) {
 	}
 	mgr := newTestManagerWithLimits(t, newPermissiveMock(t), map[string]*mockBackend{"b1": newMockBackend()}, limits)
 
-	mgr.ObjectManager.usage.SetBaseline("b1", core.UsageStat{APIRequests: 1})
+	mgr.ObjectManager.Usage().SetBaseline("b1", core.UsageStat{APIRequests: 1})
 
 	if mgr.ObjectManager.CanAcceptWrite(100) {
 		t.Error("CanAcceptWrite should return false when no backend has capacity")
@@ -456,10 +457,10 @@ func TestPutObject_BackendFailure_StillRecordsUsage(t *testing.T) {
 	if _, err := mgr.ObjectManager.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil); err == nil {
 		t.Fatal("expected error from backend failure")
 	}
-	if got := mgr.usage.Backend().Load("b1", counter.FieldAPIRequests); got != 1 {
+	if got := mgr.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 1 {
 		t.Errorf("apiRequests = %d, want 1 (failed call still counts)", got)
 	}
-	if got := mgr.usage.Backend().Load("b1", counter.FieldIngressBytes); got != 0 {
+	if got := mgr.Usage().Backend().Load("b1", counter.FieldIngressBytes); got != 0 {
 		t.Errorf("ingressBytes = %d, want 0 (upload failed)", got)
 	}
 }
@@ -501,7 +502,7 @@ func TestPutObject_RecordFailure_LeavesBackendBytesAndPendingIntent(t *testing.T
 	if c.insertPending[0].ObjectKey != "cleanup-key" || c.insertPending[0].BackendName != "b1" {
 		t.Errorf("InsertPending called with %+v", c.insertPending[0])
 	}
-	if got := mgr.usage.Backend().Load("b1", counter.FieldAPIRequests); got != 1 {
+	if got := mgr.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 1 {
 		t.Errorf("apiRequests = %d, want 1 (PUT only)", got)
 	}
 }
@@ -525,7 +526,7 @@ func TestPutObject_RecordFailure_LegacyPath(t *testing.T) {
 	storetest.Permissive(store)
 
 	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": backend})
-	mgr.coord.pendingEnabled = false
+	mgr.coord.SetPendingEnabledForTest(false)
 
 	if _, err := mgr.ObjectManager.PutObject(context.Background(), "legacy-key", bytes.NewReader([]byte("data")), 4, "", nil); err == nil {
 		t.Fatal("expected error from RecordObject failure")
@@ -615,9 +616,9 @@ func TestPutObject_WriteFailover_AllBackendsFail(t *testing.T) {
 	if _, err := mgr.ObjectManager.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil); err == nil {
 		t.Fatal("expected error when all backends fail")
 	}
-	total := mgr.usage.Backend().Load("b1", counter.FieldAPIRequests) +
-		mgr.usage.Backend().Load("b2", counter.FieldAPIRequests) +
-		mgr.usage.Backend().Load("b3", counter.FieldAPIRequests)
+	total := mgr.Usage().Backend().Load("b1", counter.FieldAPIRequests) +
+		mgr.Usage().Backend().Load("b2", counter.FieldAPIRequests) +
+		mgr.Usage().Backend().Load("b3", counter.FieldAPIRequests)
 	if total != 3 {
 		t.Errorf("total API requests = %d, want 3 (one per failed backend)", total)
 	}
@@ -687,16 +688,16 @@ func TestPutObject_WriteFailover_UsageTracking(t *testing.T) {
 		t.Fatalf("PutObject: %v", err)
 	}
 
-	if got := mgr.usage.Backend().Load("b1", counter.FieldAPIRequests); got != 1 {
+	if got := mgr.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 1 {
 		t.Errorf("b1 apiRequests = %d, want 1", got)
 	}
-	if got := mgr.usage.Backend().Load("b1", counter.FieldIngressBytes); got != 0 {
+	if got := mgr.Usage().Backend().Load("b1", counter.FieldIngressBytes); got != 0 {
 		t.Errorf("b1 ingressBytes = %d, want 0", got)
 	}
-	if got := mgr.usage.Backend().Load("b2", counter.FieldAPIRequests); got != 1 {
+	if got := mgr.Usage().Backend().Load("b2", counter.FieldAPIRequests); got != 1 {
 		t.Errorf("b2 apiRequests = %d, want 1", got)
 	}
-	if got := mgr.usage.Backend().Load("b2", counter.FieldIngressBytes); got != 4 {
+	if got := mgr.Usage().Backend().Load("b2", counter.FieldIngressBytes); got != 4 {
 		t.Errorf("b2 ingressBytes = %d, want 4", got)
 	}
 }
@@ -1704,7 +1705,7 @@ func TestAdvancePastEmittedCommonPrefix_TableDriven(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := advancePastEmittedCommonPrefix(tc.prefix, tc.delimiter, tc.cursor, tc.seen)
+			got := object.AdvancePastEmittedCommonPrefix(tc.prefix, tc.delimiter, tc.cursor, tc.seen)
 			if got != tc.want {
 				t.Errorf("got %q, want %q", got, tc.want)
 			}
@@ -1753,9 +1754,9 @@ func TestListObjects_PageBoundaryMidCommonPrefix(t *testing.T) {
 // TestListObjects_MaxPagesCapMidCommonPrefix exercises the maxPages
 // cap branch and asserts the cap-hit counter increments.
 func TestListObjects_MaxPagesCapMidCommonPrefix(t *testing.T) {
-	originalCap := listObjectsMaxPages
-	listObjectsMaxPages = 2
-	defer func() { listObjectsMaxPages = originalCap }()
+	originalCap := object.ListObjectsMaxPages
+	object.ListObjectsMaxPages = 2
+	defer func() { object.ListObjectsMaxPages = originalCap }()
 
 	store := listObjectsPaged(t, []core.ListObjectsResult{
 		{
@@ -1798,9 +1799,9 @@ func TestListObjects_MaxPagesCapMidCommonPrefix(t *testing.T) {
 // counter only fires when the cap actually triggers; a normal exit
 // (store exhausted before maxPages) must not increment it.
 func TestListObjects_NoCapHit_NoCounterIncrement(t *testing.T) {
-	originalCap := listObjectsMaxPages
-	listObjectsMaxPages = 5
-	defer func() { listObjectsMaxPages = originalCap }()
+	originalCap := object.ListObjectsMaxPages
+	object.ListObjectsMaxPages = 5
+	defer func() { object.ListObjectsMaxPages = originalCap }()
 
 	store := listObjectsPaged(t, []core.ListObjectsResult{
 		{
@@ -1949,9 +1950,9 @@ func TestLocationCache_SetAndGet(t *testing.T) {
 	t.Parallel()
 	mgr := newTestBackendManager(t, &BackendManagerConfig{Stores: newPermissiveMock(t), CacheTTL: 5 * time.Second, RoutingStrategy: config.RoutingPack})
 	defer mgr.Close()
-	mgr.ObjectManager.cache.Set("key1", "backend-a")
+	mgr.ObjectManager.LocationCache().Set("key1", "backend-a")
 
-	got, ok := mgr.ObjectManager.cache.Get("key1")
+	got, ok := mgr.ObjectManager.LocationCache().Get("key1")
 	if !ok {
 		t.Fatal("expected cache hit")
 	}
@@ -1965,11 +1966,11 @@ func TestLocationCache_Expiry(t *testing.T) {
 	t.Parallel()
 	mgr := newTestBackendManager(t, &BackendManagerConfig{Stores: newPermissiveMock(t), CacheTTL: 10 * time.Millisecond, RoutingStrategy: config.RoutingPack})
 	defer mgr.Close()
-	mgr.ObjectManager.cache.Set("key1", "backend-a")
+	mgr.ObjectManager.LocationCache().Set("key1", "backend-a")
 
 	time.Sleep(15 * time.Millisecond)
 
-	if _, ok := mgr.ObjectManager.cache.Get("key1"); ok {
+	if _, ok := mgr.ObjectManager.LocationCache().Get("key1"); ok {
 		t.Fatal("expected cache miss after TTL")
 	}
 }
@@ -1979,10 +1980,10 @@ func TestLocationCache_Overwrite(t *testing.T) {
 	t.Parallel()
 	mgr := newTestBackendManager(t, &BackendManagerConfig{Stores: newPermissiveMock(t), CacheTTL: 5 * time.Second, RoutingStrategy: config.RoutingPack})
 	defer mgr.Close()
-	mgr.ObjectManager.cache.Set("key1", "old-backend")
-	mgr.ObjectManager.cache.Set("key1", "new-backend")
+	mgr.ObjectManager.LocationCache().Set("key1", "old-backend")
+	mgr.ObjectManager.LocationCache().Set("key1", "new-backend")
 
-	got, ok := mgr.ObjectManager.cache.Get("key1")
+	got, ok := mgr.ObjectManager.LocationCache().Get("key1")
 	if !ok {
 		t.Fatal("expected cache hit")
 	}
@@ -1999,13 +2000,13 @@ func TestPutObject_InvalidatesCache(t *testing.T) {
 	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": backend})
 	defer mgr.Close()
 
-	mgr.ObjectManager.cache.Set("mykey", "old-backend")
+	mgr.ObjectManager.LocationCache().Set("mykey", "old-backend")
 
 	if _, err := mgr.ObjectManager.PutObject(context.Background(), "mykey", bytes.NewReader([]byte("hello")), 5, "text/plain", nil); err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
 
-	if _, ok := mgr.ObjectManager.cache.Get("mykey"); ok {
+	if _, ok := mgr.ObjectManager.LocationCache().Get("mykey"); ok {
 		t.Error("cache should be invalidated after PutObject")
 	}
 }
@@ -2019,13 +2020,13 @@ func TestDeleteObject_InvalidatesCache(t *testing.T) {
 	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": backend})
 	defer mgr.Close()
 
-	mgr.ObjectManager.cache.Set("del-key", "b1")
+	mgr.ObjectManager.LocationCache().Set("del-key", "b1")
 
 	if err := mgr.ObjectManager.DeleteObject(context.Background(), "del-key"); err != nil {
 		t.Fatalf("DeleteObject: %v", err)
 	}
 
-	if _, ok := mgr.ObjectManager.cache.Get("del-key"); ok {
+	if _, ok := mgr.ObjectManager.LocationCache().Get("del-key"); ok {
 		t.Error("cache should be invalidated after DeleteObject")
 	}
 }
@@ -2069,7 +2070,7 @@ func TestPutObject_UsageLimitOverflow(t *testing.T) {
 	store, _ := putObjectStore(t, "b2")
 	mgr := newTestManagerWithLimits(t, store, map[string]*mockBackend{"b1": b1, "b2": b2}, limits)
 
-	mgr.usage.SetBaseline("b1", core.UsageStat{APIRequests: 10})
+	mgr.Usage().SetBaseline("b1", core.UsageStat{APIRequests: 10})
 
 	etag, err := mgr.ObjectManager.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 	if err != nil {
@@ -2105,7 +2106,7 @@ func TestGetObject_UsageLimitSkipsBackend(t *testing.T) {
 	}, nil)
 	mgr := newTestManagerWithLimits(t, store, map[string]*mockBackend{"b1": b1, "b2": b2}, limits)
 
-	mgr.usage.SetBaseline("b1", core.UsageStat{APIRequests: 10})
+	mgr.Usage().SetBaseline("b1", core.UsageStat{APIRequests: 10})
 
 	result, err := mgr.ObjectManager.GetObject(context.Background(), "key", "")
 	if err != nil {
@@ -2132,7 +2133,7 @@ func TestGetObject_AllCopiesOverLimit(t *testing.T) {
 	}, nil)
 	mgr := newTestManagerWithLimits(t, store, map[string]*mockBackend{"b1": b1}, limits)
 
-	mgr.usage.SetBaseline("b1", core.UsageStat{APIRequests: 10})
+	mgr.Usage().SetBaseline("b1", core.UsageStat{APIRequests: 10})
 
 	if _, err := mgr.ObjectManager.GetObject(context.Background(), "key", ""); !errors.Is(err, core.ErrUsageLimitExceeded) {
 		t.Fatalf("expected st.ErrUsageLimitExceeded, got %v", err)
@@ -2151,7 +2152,7 @@ func TestDeleteObject_AlwaysAllowed(t *testing.T) {
 	store := deleteObjectStore(t, []core.DeletedCopy{{BackendName: "b1", SizeBytes: 2}}, nil)
 	mgr := newTestManagerWithLimits(t, store, map[string]*mockBackend{"b1": backend}, limits)
 
-	mgr.usage.SetBaseline("b1", core.UsageStat{APIRequests: 100, EgressBytes: 100, IngressBytes: 100})
+	mgr.Usage().SetBaseline("b1", core.UsageStat{APIRequests: 100, EgressBytes: 100, IngressBytes: 100})
 
 	if err := mgr.ObjectManager.DeleteObject(context.Background(), "del-key"); err != nil {
 		t.Fatalf("DeleteObject should always succeed regardless of limits: %v", err)
@@ -2171,7 +2172,7 @@ func TestPutObject_UsageLimitRejectionsMetric(t *testing.T) {
 	mgr := newTestManagerWithLimits(t, store, map[string]*mockBackend{"b1": newMockBackend()}, limits)
 	defer mgr.Close()
 
-	mgr.usage.SetBaseline("b1", core.UsageStat{APIRequests: 10})
+	mgr.Usage().SetBaseline("b1", core.UsageStat{APIRequests: 10})
 
 	before := testutil.ToFloat64(telemetry.UsageLimitRejectionsTotal.WithLabelValues("PutObject", "write"))
 
@@ -2200,7 +2201,7 @@ func TestGetObject_UsageLimitRejectionsMetric(t *testing.T) {
 	mgr := newTestManagerWithLimits(t, store, map[string]*mockBackend{"b1": b1}, limits)
 	defer mgr.Close()
 
-	mgr.usage.SetBaseline("b1", core.UsageStat{APIRequests: 10})
+	mgr.Usage().SetBaseline("b1", core.UsageStat{APIRequests: 10})
 
 	before := testutil.ToFloat64(telemetry.UsageLimitRejectionsTotal.WithLabelValues("GetObject", "read"))
 
@@ -2461,7 +2462,7 @@ func TestGetObject_DBUnavailable_CacheHitFails_FallsThrough(t *testing.T) {
 	store := locationsStore(t, nil, core.ErrDBUnavailable)
 	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": b1, "b2": b2})
 
-	mgr.ObjectManager.cache.Set("key", "b1")
+	mgr.ObjectManager.LocationCache().Set("key", "b1")
 
 	result, err := mgr.ObjectManager.GetObject(context.Background(), "key", "")
 	if err != nil {
@@ -2677,7 +2678,7 @@ func TestHeadObject_ParallelBroadcast(t *testing.T) {
 // TestParsePlaintextRange_SuffixLargerThanFile pins the suffix clamp.
 func TestParsePlaintextRange_SuffixLargerThanFile(t *testing.T) {
 	t.Parallel()
-	start, end, ok := parsePlaintextRange("bytes=-1000", 100)
+	start, end, ok := object.ParsePlaintextRange("bytes=-1000", 100)
 	if !ok {
 		t.Fatal("expected ok=true for valid suffix range")
 	}
@@ -2692,7 +2693,7 @@ func TestParsePlaintextRange_SuffixLargerThanFile(t *testing.T) {
 // TestParsePlaintextRange_ClampsEndToSize pins the end clamp.
 func TestParsePlaintextRange_ClampsEndToSize(t *testing.T) {
 	t.Parallel()
-	start, end, ok := parsePlaintextRange("bytes=0-200", 100)
+	start, end, ok := object.ParsePlaintextRange("bytes=0-200", 100)
 	if !ok {
 		t.Fatal("expected ok=true")
 	}
@@ -2707,7 +2708,7 @@ func TestParsePlaintextRange_ClampsEndToSize(t *testing.T) {
 // TestParsePlaintextRange_ExactEndNotClamped pins exact-fit ranges.
 func TestParsePlaintextRange_ExactEndNotClamped(t *testing.T) {
 	t.Parallel()
-	start, end, ok := parsePlaintextRange("bytes=0-99", 100)
+	start, end, ok := object.ParsePlaintextRange("bytes=0-99", 100)
 	if !ok {
 		t.Fatal("expected ok=true")
 	}
@@ -2719,7 +2720,7 @@ func TestParsePlaintextRange_ExactEndNotClamped(t *testing.T) {
 // TestParsePlaintextRange_InvertedRange rejects invalid ranges.
 func TestParsePlaintextRange_InvertedRange(t *testing.T) {
 	t.Parallel()
-	_, _, ok := parsePlaintextRange("bytes=99-0", 100)
+	_, _, ok := object.ParsePlaintextRange("bytes=99-0", 100)
 	if ok {
 		t.Error("expected ok=false for inverted range")
 	}
@@ -2728,7 +2729,7 @@ func TestParsePlaintextRange_InvertedRange(t *testing.T) {
 // TestParsePlaintextRange_StartBeyondFile rejects start-past-file.
 func TestParsePlaintextRange_StartBeyondFile(t *testing.T) {
 	t.Parallel()
-	_, _, ok := parsePlaintextRange("bytes=100-200", 100)
+	_, _, ok := object.ParsePlaintextRange("bytes=100-200", 100)
 	if ok {
 		t.Error("expected ok=false when start >= plaintextSize")
 	}
@@ -2738,7 +2739,7 @@ func TestParsePlaintextRange_StartBeyondFile(t *testing.T) {
 // end of file.
 func TestParsePlaintextRange_OpenEndedBeyondFile(t *testing.T) {
 	t.Parallel()
-	_, _, ok := parsePlaintextRange("bytes=100-", 100)
+	_, _, ok := object.ParsePlaintextRange("bytes=100-", 100)
 	if ok {
 		t.Error("expected ok=false for open-ended range beyond file")
 	}

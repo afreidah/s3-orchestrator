@@ -11,7 +11,7 @@
 // every key into a map" implementation that OOM'd at scale.
 // -------------------------------------------------------------------------------
 
-package proxy
+package reconcile
 
 import (
 	"context"
@@ -25,9 +25,9 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
-// reconcileEntry is the unit consumed by the merge: a key already namespaced
+// Entry is the unit consumed by the merge: a key already namespaced
 // to the current virtual bucket and its size on whichever side produced it.
-type reconcileEntry struct {
+type Entry struct {
 	key  string
 	size int64
 }
@@ -38,27 +38,27 @@ type reconcileEntry struct {
 type keySource interface {
 	// next returns the next entry. ok=false signals end-of-stream; err is
 	// non-nil only on transport / DB failure (callers must abort).
-	next(ctx context.Context) (reconcileEntry, bool, error)
+	Next(ctx context.Context) (Entry, bool, error)
 
 	// stop releases any backing goroutine. Safe to call multiple times.
-	stop()
+	Stop()
 }
 
 // -------------------------------------------------------------------------
 // SORTED-MERGE ENGINE
 // -------------------------------------------------------------------------
 
-// reconcileSorted walks two ascending key streams in lockstep, invoking
+// Sorted walks two ascending key streams in lockstep, invoking
 // onImport for keys present only on s3 and onDelete for keys present only
 // in the DB. Keys present on both sides are no-ops. Memory is bounded by
 // each iterator's internal buffer.
 //
 // The first failing onImport / onDelete bubbles up; iterator errors do
 // the same.
-func reconcileSorted(
+func Sorted(
 	ctx context.Context,
 	s3, dbIter keySource,
-	onImport func(ctx context.Context, e reconcileEntry) error,
+	onImport func(ctx context.Context, e Entry) error,
 	onDelete func(ctx context.Context, key string) error,
 ) error {
 	s := &mergeState{s3: s3, db: dbIter, onImport: onImport, onDelete: onDelete}
@@ -83,11 +83,11 @@ func reconcileSorted(
 // what keeps each method below the cognitive-complexity threshold.
 type mergeState struct {
 	s3, db   keySource
-	s3Cur    reconcileEntry
-	dbCur    reconcileEntry
+	s3Cur    Entry
+	dbCur    Entry
 	s3OK     bool
 	dbOK     bool
-	onImport func(ctx context.Context, e reconcileEntry) error
+	onImport func(ctx context.Context, e Entry) error
 	onDelete func(ctx context.Context, key string) error
 }
 
@@ -138,7 +138,7 @@ func (s *mergeState) matchStep(ctx context.Context) error {
 
 // advanceS3 pulls the next entry from the S3 stream into the cursor pair.
 func (s *mergeState) advanceS3(ctx context.Context) error {
-	cur, ok, err := s.s3.next(ctx)
+	cur, ok, err := s.s3.Next(ctx)
 	if err != nil {
 		return err
 	}
@@ -148,7 +148,7 @@ func (s *mergeState) advanceS3(ctx context.Context) error {
 
 // advanceDB pulls the next entry from the DB stream into the cursor pair.
 func (s *mergeState) advanceDB(ctx context.Context) error {
-	cur, ok, err := s.db.next(ctx)
+	cur, ok, err := s.db.Next(ctx)
 	if err != nil {
 		return err
 	}
@@ -164,39 +164,39 @@ func (s *mergeState) advanceDB(ctx context.Context) error {
 // merge consumer. Memory: O(s3StreamSize * average key length) at most.
 const s3StreamSize = 1000
 
-// objectLister is the narrow surface of *backend.S3Backend that
-// s3KeyStream depends on. Defining it here keeps the iterator decoupled
+// ObjectLister is the narrow surface of *backend.S3Backend that
+// S3KeyStream depends on. Defining it here keeps the iterator decoupled
 // from the concrete S3 client and lets tests substitute a fake.
-type objectLister interface {
+type ObjectLister interface {
 	ListObjects(ctx context.Context, prefix string, fn func([]backend.ListedObject) error) error
 }
 
-// s3KeyStream inverts the page-callback shape of objectLister.ListObjects
+// S3KeyStream inverts the page-callback shape of ObjectLister.ListObjects
 // into a forward iterator. A single goroutine drives the callback,
 // dropping keys that belong to other virtual buckets and namespacing the
 // rest under bucketPrefix. apiPages, when non-nil, is incremented per
 // page so the caller can record API usage.
-type s3KeyStream struct {
-	ch        chan reconcileEntry
+type S3KeyStream struct {
+	ch        chan Entry
 	errCh     chan error
 	pending   error
 	cancel    context.CancelFunc
 	closeOnce bool
 }
 
-// newS3KeyStream starts the goroutine that walks the backend and returns a
+// NewS3KeyStream starts the goroutine that walks the backend and returns a
 // keySource. The caller must invoke stop when done so a partial walk does
 // not leak goroutines.
-func newS3KeyStream(
+func NewS3KeyStream(
 	ctx context.Context,
-	s3b objectLister,
+	s3b ObjectLister,
 	bucketPrefix string,
 	otherPrefixes []string,
 	apiPages *int64,
-) *s3KeyStream {
+) *S3KeyStream {
 	streamCtx, cancel := context.WithCancel(ctx)
-	s := &s3KeyStream{
-		ch:     make(chan reconcileEntry, s3StreamSize),
+	s := &S3KeyStream{
+		ch:     make(chan Entry, s3StreamSize),
 		errCh:  make(chan error, 1),
 		cancel: cancel,
 	}
@@ -214,7 +214,7 @@ func newS3KeyStream(
 					continue
 				}
 				select {
-				case s.ch <- reconcileEntry{key: key, size: obj.SizeBytes}:
+				case s.ch <- Entry{key: key, size: obj.SizeBytes}:
 				case <-streamCtx.Done():
 					return streamCtx.Err()
 				}
@@ -252,9 +252,9 @@ func namespaceKey(rawKey, bucketPrefix string, otherPrefixes []string) (string, 
 // error or a context cancellation. Once an error is observed it is
 // latched into s.pending so subsequent calls see the same error
 // instead of an empty channel.
-func (s *s3KeyStream) next(ctx context.Context) (reconcileEntry, bool, error) {
+func (s *S3KeyStream) Next(ctx context.Context) (Entry, bool, error) {
 	if s.pending != nil {
-		return reconcileEntry{}, false, s.pending
+		return Entry{}, false, s.pending
 	}
 	select {
 	case e, ok := <-s.ch:
@@ -264,19 +264,19 @@ func (s *s3KeyStream) next(ctx context.Context) (reconcileEntry, bool, error) {
 		// Drain a possibly-pending error from the goroutine.
 		if err, has := <-s.errCh; has && err != nil {
 			s.pending = err
-			return reconcileEntry{}, false, err
+			return Entry{}, false, err
 		}
-		return reconcileEntry{}, false, nil
+		return Entry{}, false, nil
 	case <-ctx.Done():
 		s.pending = ctx.Err()
-		return reconcileEntry{}, false, ctx.Err()
+		return Entry{}, false, ctx.Err()
 	}
 }
 
 // stop cancels the producer goroutine if it is still running. Idempotent
 // via closeOnce so multiple stop calls (Reconcile early-exits, deferred
 // cleanup, error paths) do not double-close the cancel func.
-func (s *s3KeyStream) stop() {
+func (s *S3KeyStream) Stop() {
 	if !s.closeOnce {
 		s.closeOnce = true
 		s.cancel()
@@ -291,16 +291,16 @@ func (s *s3KeyStream) stop() {
 // Memory: O(dbCursorPageSize * row size).
 const dbCursorPageSize = 1000
 
-// dbKeyLister is the narrow contract the cursor needs from the store.
-type dbKeyLister interface {
+// DBKeyLister is the narrow contract the cursor needs from the store.
+type DBKeyLister interface {
 	ListObjectsByBackendKeyAsc(ctx context.Context, backendName, afterKey string, limit int) ([]core.ObjectLocation, error)
 }
 
-// dbCursorStream walks store.ListObjectsByBackendKeyAsc one bounded page at
+// DBCursorStream walks store.ListObjectsByBackendKeyAsc one bounded page at
 // a time and filters rows to those belonging to bucketPrefix. Keys for
 // sibling buckets stored on the same backend are skipped.
-type dbCursorStream struct {
-	store         dbKeyLister
+type DBCursorStream struct {
+	store         DBKeyLister
 	backendName   string
 	bucketPrefix  string
 	otherPrefixes []string
@@ -311,10 +311,10 @@ type dbCursorStream struct {
 	exhausted bool
 }
 
-// newDBCursorStream prepares the iterator without issuing any query yet  -
+// NewDBCursorStream prepares the iterator without issuing any query yet  -
 // the first next call pulls the first page.
-func newDBCursorStream(s dbKeyLister, backendName, bucketPrefix string, otherPrefixes []string) *dbCursorStream {
-	return &dbCursorStream{
+func NewDBCursorStream(s DBKeyLister, backendName, bucketPrefix string, otherPrefixes []string) *DBCursorStream {
+	return &DBCursorStream{
 		store:         s,
 		backendName:   backendName,
 		bucketPrefix:  bucketPrefix,
@@ -327,7 +327,7 @@ func newDBCursorStream(s dbKeyLister, backendName, bucketPrefix string, otherPre
 // sibling buckets stored on the same backend are skipped silently.
 // Returns (zero, false, nil) at end-of-stream, never blocks on the DB
 // once exhausted.
-func (d *dbCursorStream) next(ctx context.Context) (reconcileEntry, bool, error) {
+func (d *DBCursorStream) Next(ctx context.Context) (Entry, bool, error) {
 	for {
 		// Drain the in-memory page first.
 		for d.idx < len(d.page) {
@@ -335,22 +335,22 @@ func (d *dbCursorStream) next(ctx context.Context) (reconcileEntry, bool, error)
 			d.idx++
 			d.cursor = row.ObjectKey
 			if d.belongs(row.ObjectKey) {
-				return reconcileEntry{key: row.ObjectKey, size: row.SizeBytes}, true, nil
+				return Entry{key: row.ObjectKey, size: row.SizeBytes}, true, nil
 			}
 		}
 		if d.exhausted {
-			return reconcileEntry{}, false, nil
+			return Entry{}, false, nil
 		}
 		if err := ctx.Err(); err != nil {
-			return reconcileEntry{}, false, err
+			return Entry{}, false, err
 		}
 		rows, err := d.store.ListObjectsByBackendKeyAsc(ctx, d.backendName, d.cursor, dbCursorPageSize)
 		if err != nil {
-			return reconcileEntry{}, false, fmt.Errorf("page DB objects: %w", err)
+			return Entry{}, false, fmt.Errorf("page DB objects: %w", err)
 		}
 		if len(rows) == 0 {
 			d.exhausted = true
-			return reconcileEntry{}, false, nil
+			return Entry{}, false, nil
 		}
 		d.page = rows
 		d.idx = 0
@@ -359,17 +359,17 @@ func (d *dbCursorStream) next(ctx context.Context) (reconcileEntry, bool, error)
 
 // stop is a no-op for the DB cursor  -  the iterator owns no goroutine and
 // holds no other resource that needs explicit teardown. Defined so the
-// type satisfies keySource alongside s3KeyStream, which does need cleanup.
-func (d *dbCursorStream) stop() {
+// type satisfies keySource alongside S3KeyStream, which does need cleanup.
+func (d *DBCursorStream) Stop() {
 	// Intentionally empty: nothing to release. Required to satisfy the
-	// keySource interface uniformly with s3KeyStream, whose stop tears
+	// keySource interface uniformly with S3KeyStream, whose stop tears
 	// down a producer goroutine.
 }
 
 // belongs reports whether a DB-side key falls within the current bucket
 // prefix. Keys owned by sibling buckets are skipped so a single-bucket
 // reconcile does not delete other buckets' rows on the same backend.
-func (d *dbCursorStream) belongs(key string) bool {
+func (d *DBCursorStream) belongs(key string) bool {
 	if !strings.HasPrefix(key, d.bucketPrefix) {
 		return false
 	}
@@ -385,51 +385,65 @@ func (d *dbCursorStream) belongs(key string) bool {
 // RECONCILE HANDLERS
 // -------------------------------------------------------------------------
 
-// importHandler returns the onImport callback used by the merge. Failures
+// ImportHandler returns the onImport callback used by the merge. Failures
 // are logged but do not abort the reconcile pass  -  a single import
 // failure should not stop the diff for thousands of other keys.
-func importHandler(log *slog.Logger, backendName string, importer importerFn, result *reconcileResult) func(context.Context, reconcileEntry) error {
-	return func(ctx context.Context, e reconcileEntry) error {
+func ImportHandler(log *slog.Logger, backendName string, importer ImporterFn, result *Result) func(context.Context, Entry) error {
+	return func(ctx context.Context, e Entry) error {
 		imported, err := importer(ctx, e.key, backendName, e.size)
 		if err != nil {
 			log.WarnContext(ctx, "import failed", "key", e.key, "backend", backendName, "error", err)
 			return nil
 		}
 		if imported {
-			result.imported++
+			result.Imported++
 		}
 		return nil
 	}
 }
 
-// deleteHandler returns the onDelete callback used by the merge. Failures
+// DeleteHandler returns the onDelete callback used by the merge. Failures
 // are logged but do not abort the pass.
-func deleteHandler(log *slog.Logger, backendName string, deleter deleterFn, result *reconcileResult) func(context.Context, string) error {
+func DeleteHandler(log *slog.Logger, backendName string, deleter DeleterFn, result *Result) func(context.Context, string) error {
 	return func(ctx context.Context, key string) error {
 		if err := deleter(ctx, key, backendName); err != nil {
 			log.WarnContext(ctx, "stale entry removal failed", "key", key, "backend", backendName, "error", err)
 			return nil
 		}
 		log.InfoContext(ctx, "stale entry removed", "key", key, "backend", backendName)
-		result.removed++
+		result.Removed++
 		return nil
 	}
 }
 
-// reconcileResult is the in-progress accumulator handed to the import /
+// Result is the in-progress accumulator handed to the import /
 // delete callbacks. Promoted to a struct so tests can assert on it
 // without importing internal/worker.
-type reconcileResult struct {
-	imported int64
-	removed  int64
+type Result struct {
+	Imported int64
+	Removed  int64
 }
 
-// importerFn imports a backend-listed key into the metadata store.
+// ImporterFn imports a backend-listed key into the metadata store.
 // Returns (inserted, error). inserted is false when the row already
 // existed, which the reconciler treats as a benign no-op. Carrier
 // type so tests can substitute a fake importer.
-type importerFn func(ctx context.Context, key, backendName string, size int64) (bool, error)
+type ImporterFn func(ctx context.Context, key, backendName string, size int64) (bool, error)
 
-// deleterFn removes a metadata row whose backend confirmed it does not
+// DeleterFn removes a metadata row whose backend confirmed it does not
 // hold the key. Carrier type so tests can substitute a fake deleter.
-type deleterFn func(ctx context.Context, key, backendName string) error
+type DeleterFn func(ctx context.Context, key, backendName string) error
+
+// SiblingPrefixes returns the bucket-prefix list (each suffixed with '/')
+// for every known bucket except the one currently being reconciled. Used
+// by ReconcileBackend so the merge skips keys that belong to sibling
+// virtual buckets stored on the same backend.
+func SiblingPrefixes(knownBuckets []string, current string) []string {
+	out := make([]string, 0, len(knownBuckets))
+	for _, b := range knownBuckets {
+		if b != current {
+			out = append(out, b+"/")
+		}
+	}
+	return out
+}

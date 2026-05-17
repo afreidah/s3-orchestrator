@@ -41,6 +41,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
@@ -82,7 +83,7 @@ var _ BackendOps = (*proxy.BackendManager)(nil)
 // reported as unavailable.
 type Deps struct {
 	BackendOps    BackendOps
-	Objects       *proxy.ObjectManager
+	Objects       *object.Manager
 	Rebalancer    *worker.Rebalancer
 	OverRep       *worker.OverReplicationCleaner
 	AdminHandler  *admin.Handler
@@ -96,7 +97,7 @@ type Deps struct {
 type Handler struct {
 	log            *slog.Logger
 	backendOps     BackendOps
-	objects        *proxy.ObjectManager
+	objects        *object.Manager
 	rebalancer     *worker.Rebalancer
 	overRep        *worker.OverReplicationCleaner
 	adminHandler   *admin.Handler

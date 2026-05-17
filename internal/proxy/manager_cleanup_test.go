@@ -112,7 +112,7 @@ func TestEnqueueCleanup_Success(t *testing.T) {
 
 	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	mgr.coord.enqueueCleanup(context.Background(), "b1", "orphan.txt", "orphan_put", 1024)
+	mgr.coord.EnqueueCleanup(context.Background(), "b1", "orphan.txt", "orphan_put", 1024)
 
 	if len(calls.enqueue) != 1 {
 		t.Fatalf("expected 1 enqueue call, got %d", len(calls.enqueue))
@@ -136,7 +136,7 @@ func TestEnqueueCleanup_DBError_LogsOnly(t *testing.T) {
 	storetest.Permissive(store)
 
 	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
-	mgr.coord.enqueueCleanup(context.Background(), "b1", "orphan.txt", "orphan_put", 1024)
+	mgr.coord.EnqueueCleanup(context.Background(), "b1", "orphan.txt", "orphan_put", 1024)
 
 	if len(calls.enqueue) != 1 {
 		t.Fatalf("expected 1 enqueue call, got %d", len(calls.enqueue))
@@ -171,7 +171,7 @@ func TestEnqueueCleanup_EnqueueFailure_RecordsMetricAndAudit(t *testing.T) {
 	t.Cleanup(func() { audit.SetOnEvent(nil) })
 
 	before := promtest.ToFloat64(telemetry.CleanupEnqueueFailuresTotal.WithLabelValues("b1", "orphan_put", "enqueue"))
-	mgr.coord.enqueueCleanup(context.Background(), "b1", "orphan.txt", "orphan_put", 1024)
+	mgr.coord.EnqueueCleanup(context.Background(), "b1", "orphan.txt", "orphan_put", 1024)
 	after := promtest.ToFloat64(telemetry.CleanupEnqueueFailuresTotal.WithLabelValues("b1", "orphan_put", "enqueue"))
 
 	if after-before != 1 {
@@ -214,7 +214,7 @@ func TestEnqueueCleanup_OrphanBytesFailure_RecordsMetricAndAudit(t *testing.T) {
 	t.Cleanup(func() { audit.SetOnEvent(nil) })
 
 	before := promtest.ToFloat64(telemetry.CleanupEnqueueFailuresTotal.WithLabelValues("b1", "orphan_put", "orphan_bytes"))
-	mgr.coord.enqueueCleanup(context.Background(), "b1", "orphan.txt", "orphan_put", 1024)
+	mgr.coord.EnqueueCleanup(context.Background(), "b1", "orphan.txt", "orphan_put", 1024)
 	after := promtest.ToFloat64(telemetry.CleanupEnqueueFailuresTotal.WithLabelValues("b1", "orphan_put", "orphan_bytes"))
 
 	if after-before != 1 {
@@ -304,7 +304,7 @@ func TestProcessCleanupQueue_DeleteSuccess(t *testing.T) {
 	if backend.hasObject("orphan.txt") {
 		t.Error("expected orphan to be deleted from backend")
 	}
-	if got := mgr.usage.Backend().Load("b1", counter.FieldAPIRequests); got != 1 {
+	if got := mgr.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 1 {
 		t.Errorf("apiRequests = %d, want 1 (cleanup delete)", got)
 	}
 }

@@ -9,7 +9,7 @@
 // deletion with concurrent backend I/O.
 // -------------------------------------------------------------------------------
 
-package proxy
+package object
 
 import (
 	"bytes"
@@ -44,7 +44,7 @@ import (
 // PutObject uploads an object to the first backend with available quota.
 // If the upload fails, it retries on remaining eligible backends before
 // returning an error to the caller (write failover).
-func (o *ObjectManager) PutObject(ctx context.Context, key string, body io.Reader, size int64, contentType string, metadata map[string]string) (string, error) {
+func (o *Manager) PutObject(ctx context.Context, key string, body io.Reader, size int64, contentType string, metadata map[string]string) (string, error) {
 	const operation = "PutObject"
 	start := time.Now()
 
@@ -54,7 +54,7 @@ func (o *ObjectManager) PutObject(ctx context.Context, key string, body io.Reade
 	)
 	defer span.End()
 
-	eligible := o.eligibleForWrite(1, 0, size)
+	eligible := o.EligibleForWrite(1, 0, size)
 	if len(eligible) == 0 {
 		telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation, "write").Inc()
 		observe.MarkSpanError(span, "usage limits exceeded on all backends")
@@ -125,7 +125,7 @@ type putAttemptResult struct {
 // bufferPutBody copies body into memory so failover retries can replay
 // the same plaintext, and computes the content hash when integrity
 // verification is enabled.
-func (o *ObjectManager) bufferPutBody(span trace.Span, body io.Reader) ([]byte, string, error) {
+func (o *Manager) bufferPutBody(span trace.Span, body io.Reader) ([]byte, string, error) {
 	var buf bytes.Buffer
 	if _, err := bufpool.Copy(&buf, body); err != nil {
 		observe.RecordSpanError(span, err)
@@ -157,10 +157,10 @@ type putAttemptRequest struct {
 // attemptPutOnBackend performs one backend PUT attempt: select a
 // destination, prepare the payload (encrypt/hash), insert a pending
 // intent, upload, then promote the intent on success.
-func (o *ObjectManager) attemptPutOnBackend(ctx context.Context, span trace.Span, req *putAttemptRequest) putAttemptResult {
-	backendName, err := o.coord.selectBackendForWrite(ctx, req.size, req.eligible)
+func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, req *putAttemptRequest) putAttemptResult {
+	backendName, err := o.coord.SelectBackendForWrite(ctx, req.size, req.eligible)
 	if err != nil {
-		return putAttemptResult{fatalErr: o.classifyWriteError(span, req.operation, err)}
+		return putAttemptResult{fatalErr: o.ClassifyWriteError(span, req.operation, err)}
 	}
 	span.SetAttributes(telemetry.AttrBackendName.String(backendName))
 
@@ -180,7 +180,7 @@ func (o *ObjectManager) attemptPutOnBackend(ctx context.Context, span trace.Span
 	// commit failure after the bytes land has a recovery breadcrumb: the
 	// pending reaper promotes the intent on a later tick instead of the
 	// old failure path silently deleting the just-written copy.
-	intentID, err := o.coord.insertPendingIntent(ctx, req.key, backendName, uploadSize, enc)
+	intentID, err := o.coord.InsertPendingIntent(ctx, req.key, backendName, uploadSize, enc)
 	if err != nil {
 		observe.RecordSpanError(span, err)
 		return putAttemptResult{backend: backendName, fatalErr: err}
@@ -190,7 +190,7 @@ func (o *ObjectManager) attemptPutOnBackend(ctx context.Context, span trace.Span
 	etag, err := be.PutObject(bctx, req.key, uploadBody, uploadSize, req.contentType, req.metadata)
 	bcancel()
 	if err != nil {
-		o.usage.Record(backendName, 1, 0, 0)
+		o.Usage().Record(backendName, 1, 0, 0)
 		// Leave the pending row for the reaper. A backend PUT error does
 		// not reliably mean the bytes are absent: the response could have
 		// been lost mid-flight, so the reaper HEADs the backend on its
@@ -198,7 +198,7 @@ func (o *ObjectManager) attemptPutOnBackend(ctx context.Context, span trace.Span
 		return putAttemptResult{backend: backendName, putErr: err}
 	}
 
-	if err := o.coord.recordObjectAndPromoteIntent(ctx, span, req.key, backendName, uploadSize, enc, intentID); err != nil {
+	if err := o.coord.RecordObjectAndPromoteIntent(ctx, span, req.key, backendName, uploadSize, enc, intentID); err != nil {
 		return putAttemptResult{backend: backendName, fatalErr: err}
 	}
 	o.cache.Delete(req.key)
@@ -208,7 +208,7 @@ func (o *ObjectManager) attemptPutOnBackend(ctx context.Context, span trace.Span
 // buildPutPayload prepares the upload body and EncryptionMeta for a
 // single attempt. Encryption layering, when enabled, runs through
 // encryptForPut so the wrapped DEK is reused across failover retries.
-func (o *ObjectManager) buildPutPayload(
+func (o *Manager) buildPutPayload(
 	ctx context.Context,
 	bodyBytes []byte,
 	size int64,
@@ -244,9 +244,9 @@ type putSuccessRequest struct {
 // finalizePutSuccess emits success metrics, audit log, and an event
 // notification for a successful PutObject. Records failover spans when
 // retries occurred.
-func (o *ObjectManager) finalizePutSuccess(ctx context.Context, span trace.Span, req *putSuccessRequest) {
-	o.recordOperation(req.operation, req.backendName, req.start, nil)
-	o.usage.Record(req.backendName, 1, 0, req.size)
+func (o *Manager) finalizePutSuccess(ctx context.Context, span trace.Span, req *putSuccessRequest) {
+	o.RecordOperation(req.operation, req.backendName, req.start, nil)
+	o.Usage().Record(req.backendName, 1, 0, req.size)
 	if len(req.failedBackends) > 0 {
 		for _, fb := range req.failedBackends {
 			telemetry.WriteFailoverTotal.WithLabelValues(req.operation, fb, req.backendName).Inc()
@@ -296,16 +296,16 @@ func withoutBackend(eligible []string, name string) []string {
 // succeeds (skipping over-limit and unknown backends), and returns its
 // metadata plus optional encryption descriptor. ok=false signals that no
 // copy could be reached.
-func (o *ObjectManager) headSourceForCopy(
+func (o *Manager) headSourceForCopy(
 	ctx context.Context,
 	sourceKey string,
 	locations []core.ObjectLocation,
 ) (int64, string, map[string]string, *core.EncryptionMeta, bool) {
 	for i := range locations {
-		if !o.usage.WithinLimits(locations[i].BackendName, 1, 0, 0) {
+		if !o.Usage().WithinLimits(locations[i].BackendName, 1, 0, 0) {
 			continue
 		}
-		be, ok := o.backends[locations[i].BackendName]
+		be, ok := o.Backends()[locations[i].BackendName]
 		if !ok {
 			continue
 		}
@@ -339,7 +339,7 @@ func (o *ObjectManager) headSourceForCopy(
 // Content-Length; S3 implementations that require Content-Length
 // (notably OCI) then reject the upload with HTTP 411. Supports
 // cross-backend copies and read failover from replicas.
-func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey string) (string, error) {
+func (o *Manager) CopyObject(ctx context.Context, sourceKey, destKey string) (string, error) {
 	const operation = "CopyObject"
 	start := time.Now()
 
@@ -355,7 +355,7 @@ func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey strin
 			observe.MarkSpanError(span, "source object not found")
 			return "", err
 		}
-		return "", o.classifyWriteError(span, operation, err)
+		return "", o.ClassifyWriteError(span, operation, err)
 	}
 
 	size, contentType, metadata, srcEnc, ok := o.headSourceForCopy(ctx, sourceKey, locations)
@@ -366,7 +366,7 @@ func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey strin
 	}
 	span.SetAttributes(telemetry.AttrObjectSize.Int64(size))
 
-	destBackendName, err := o.coord.selectWriteTarget(ctx, span, operation, size)
+	destBackendName, err := o.coord.SelectWriteTarget(ctx, span, operation, size)
 	if err != nil {
 		return "", err
 	}
@@ -394,17 +394,17 @@ func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey strin
 	// --- Record destination location and update quota ---
 	// Preserve encryption metadata: ciphertext is copied as-is so the
 	// destination keeps the same wrapped DEK and key ID.
-	if err := o.coord.recordObjectOrCleanup(ctx, span, destBackend, destKey, destBackendName, size, srcEnc); err != nil {
+	if err := o.coord.RecordObjectOrCleanup(ctx, span, destBackend, destKey, destBackendName, size, srcEnc); err != nil {
 		return "", err
 	}
 
 	// --- Invalidate location cache ---
 	o.cache.Delete(destKey)
 
-	o.recordOperation(operation, destBackendName, start, nil)
+	o.RecordOperation(operation, destBackendName, start, nil)
 	srcName := src.sourceBackend
-	o.usage.Record(srcName, 1, size, 0)         // source: Get + egress
-	o.usage.Record(destBackendName, 1, 0, size) // dest: Put + ingress
+	o.Usage().Record(srcName, 1, size, 0)         // source: Get + egress
+	o.Usage().Record(destBackendName, 1, 0, size) // dest: Put + ingress
 
 	audit.Log(ctx, "storage.CopyObject",
 		slog.String("source_key", sourceKey),
@@ -439,7 +439,7 @@ func (o *ObjectManager) CopyObject(ctx context.Context, sourceKey, destKey strin
 // -------------------------------------------------------------------------
 
 // DeleteObject removes an object from the backend where it's stored.
-func (o *ObjectManager) DeleteObject(ctx context.Context, key string) error {
+func (o *Manager) DeleteObject(ctx context.Context, key string) error {
 	const operation = "DeleteObject"
 	start := time.Now()
 
@@ -457,7 +457,7 @@ func (o *ObjectManager) DeleteObject(ctx context.Context, key string) error {
 			span.SetStatus(codes.Ok, "object not found - treating as success")
 			return nil
 		}
-		return o.classifyWriteError(span, operation, err)
+		return o.ClassifyWriteError(span, operation, err)
 	}
 
 	span.SetAttributes(attribute.Int("copies.deleted", len(copies)))
@@ -467,7 +467,7 @@ func (o *ObjectManager) DeleteObject(ctx context.Context, key string) error {
 
 	// --- Delete from each backend that held a copy (fan out concurrently) ---
 	workerpool.Run(ctx, len(copies), copies, func(ctx context.Context, cp core.DeletedCopy) {
-		backend, ok := o.backends[cp.BackendName]
+		backend, ok := o.Backends()[cp.BackendName]
 		if !ok {
 			o.Log().WarnContext(ctx, "backend not found for delete",
 				"backend", cp.BackendName, "key", key)
@@ -478,10 +478,10 @@ func (o *ObjectManager) DeleteObject(ctx context.Context, key string) error {
 
 	// --- Record metrics (use first copy's backend for primary) ---
 	if len(copies) > 0 {
-		o.recordOperation(operation, copies[0].BackendName, start, nil)
+		o.RecordOperation(operation, copies[0].BackendName, start, nil)
 	}
 	for _, c := range copies {
-		o.usage.Record(c.BackendName, 1, 0, 0)
+		o.Usage().Record(c.BackendName, 1, 0, 0)
 	}
 
 	audit.Log(ctx, "storage.DeleteObject",
@@ -530,7 +530,7 @@ type batchDeleteItem struct {
 // removal happens in a single transaction via DeleteObjectsBatch; backend
 // S3 deletes run concurrently with bounded parallelism to avoid
 // overwhelming backends.
-func (o *ObjectManager) DeleteObjects(ctx context.Context, keys []string) []DeleteObjectResult {
+func (o *Manager) DeleteObjects(ctx context.Context, keys []string) []DeleteObjectResult {
 	const operation = "DeleteObjects"
 	start := time.Now()
 
@@ -548,7 +548,7 @@ func (o *ObjectManager) DeleteObjects(ctx context.Context, keys []string) []Dele
 	if err != nil {
 		// Whole-tx failure: every key surfaces the error. The cache and
 		// backend cleanup paths are skipped; nothing was changed.
-		classified := o.classifyWriteError(span, operation, err)
+		classified := o.ClassifyWriteError(span, operation, err)
 		for i := range results {
 			results[i].Err = classified
 		}
@@ -568,7 +568,7 @@ func (o *ObjectManager) DeleteObjects(ctx context.Context, keys []string) []Dele
 	})
 
 	successCount, errorCount := tallyDeleteResults(results)
-	o.recordOperation(operation, "", start, nil)
+	o.RecordOperation(operation, "", start, nil)
 
 	audit.Log(ctx, "storage.DeleteObjects",
 		slog.Int("total_keys", len(keys)),
@@ -599,11 +599,11 @@ func (o *ObjectManager) DeleteObjects(ctx context.Context, keys []string) []Dele
 // flattenBatchDeletes produces the worker-pool input slice from the
 // DeleteObjectsBatch result. Skips copies whose backend is unknown
 // (logged) and records a usage tick per emitted copy.
-func (o *ObjectManager) flattenBatchDeletes(ctx context.Context, copiesByKey map[string][]core.DeletedCopy) []batchDeleteItem {
+func (o *Manager) flattenBatchDeletes(ctx context.Context, copiesByKey map[string][]core.DeletedCopy) []batchDeleteItem {
 	var items []batchDeleteItem
 	for key, copies := range copiesByKey {
 		for _, cp := range copies {
-			backend, ok := o.backends[cp.BackendName]
+			backend, ok := o.Backends()[cp.BackendName]
 			if !ok {
 				o.Log().WarnContext(ctx, "backend not found for batch delete",
 					"backend", cp.BackendName, "key", key)
@@ -612,7 +612,7 @@ func (o *ObjectManager) flattenBatchDeletes(ctx context.Context, copiesByKey map
 			items = append(items, batchDeleteItem{
 				key: key, backend: backend, beName: cp.BackendName, sizeBytes: cp.SizeBytes,
 			})
-			o.usage.Record(cp.BackendName, 1, 0, 0)
+			o.Usage().Record(cp.BackendName, 1, 0, 0)
 		}
 	}
 	return items
@@ -658,7 +658,7 @@ type materializedSource struct {
 // when every replica fails or buffering itself errors. The supplied
 // ctx flows unmodified into the backend GetObject calls; the caller
 // owns timeout and cancellation policy.
-func (o *ObjectManager) materializeCopySource(
+func (o *Manager) materializeCopySource(
 	ctx context.Context,
 	sourceKey string,
 	size int64,
@@ -682,16 +682,16 @@ func (o *ObjectManager) materializeCopySource(
 // caller should move on to the next replica; err is reserved for
 // buffer-side failures (out of memory, tempfile creation) that cannot
 // be retried by switching replicas.
-func (o *ObjectManager) tryMaterializeFromLocation(
+func (o *Manager) tryMaterializeFromLocation(
 	ctx context.Context,
 	sourceKey string,
 	size int64,
 	backendName string,
 ) (*materializedSource, bool, error) {
-	if !o.usage.WithinLimits(backendName, 1, size, 0) {
+	if !o.Usage().WithinLimits(backendName, 1, size, 0) {
 		return nil, false, nil
 	}
-	be, ok := o.backends[backendName]
+	be, ok := o.Backends()[backendName]
 	if !ok {
 		return nil, false, nil
 	}

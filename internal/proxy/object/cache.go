@@ -9,7 +9,7 @@
 // cache expiry storms across entries.
 // -------------------------------------------------------------------------------
 
-package proxy
+package object
 
 import (
 	"errors"

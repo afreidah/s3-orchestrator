@@ -18,6 +18,8 @@ import (
 	"io"
 	"testing"
 	"time"
+
+	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 )
 
 // -------------------------------------------------------------------------
@@ -72,9 +74,9 @@ func BenchmarkStreamCopy(b *testing.B) {
 			data := make([]byte, tc.size)
 			_, _ = src.PutObject(context.Background(), "bench-key", bytes.NewReader(data), int64(tc.size), "application/octet-stream", nil)
 
-			core := &backendCore{
-				backendTimeout: 30 * time.Second,
-			}
+			core := infra.New(&infra.Config{
+				BackendTimeout: 30 * time.Second,
+			})
 
 			b.SetBytes(int64(tc.size))
 			b.ResetTimer()

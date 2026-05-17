@@ -348,7 +348,7 @@ func TestAbortMultipartUpload_Success(t *testing.T) {
 	if backend.hasObject("__multipart/upload-1/1") {
 		t.Error("part temp key should be deleted")
 	}
-	if got := mgr.usage.Backend().Load("b1", counter.FieldAPIRequests); got != 2 {
+	if got := mgr.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 2 {
 		t.Errorf("apiRequests = %d, want 2 (1 part delete + 1 abort)", got)
 	}
 }
@@ -636,7 +636,7 @@ func TestUploadPart_UsageLimitExceeded(t *testing.T) {
 
 	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	mgr.usage.UpdateLimits(map[string]core.UsageLimits{
+	mgr.Usage().UpdateLimits(map[string]core.UsageLimits{
 		"b1": {IngressByteLimit: 1},
 	})
 
@@ -666,7 +666,7 @@ func TestUploadPart_RecordPartFails_CleansUpPartObject(t *testing.T) {
 	if backend.hasObject("__multipart/upload-1/1") {
 		t.Error("orphaned part should be deleted from backend")
 	}
-	if got := mgr.usage.Backend().Load("b1", counter.FieldAPIRequests); got != 2 {
+	if got := mgr.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 2 {
 		t.Errorf("apiRequests = %d, want 2 (PUT + orphan DELETE)", got)
 	}
 }
@@ -821,10 +821,10 @@ func TestCompleteMultipartUpload_UsageRecords2NPlus1APICalls(t *testing.T) {
 	}
 
 	wantAPICalls := int64(2*3 + 1)
-	if got := mgr.usage.Backend().Load("b1", counter.FieldAPIRequests); got != wantAPICalls {
+	if got := mgr.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != wantAPICalls {
 		t.Errorf("apiRequests = %d, want %d (2*N+1 where N=3)", got, wantAPICalls)
 	}
-	if got := mgr.usage.Backend().Load("b1", counter.FieldIngressBytes); got != 9 {
+	if got := mgr.Usage().Backend().Load("b1", counter.FieldIngressBytes); got != 9 {
 		t.Errorf("ingressBytes = %d, want 9", got)
 	}
 }
@@ -848,10 +848,10 @@ func TestUploadPart_BackendFailure_StillRecordsUsage(t *testing.T) {
 	if _, err := mgr.MultipartManager.UploadPart(context.Background(), "multi", "key", "upload-1", 1, bytes.NewReader([]byte("data")), 4); err == nil {
 		t.Fatal("expected error from backend failure")
 	}
-	if got := mgr.usage.Backend().Load("b1", counter.FieldAPIRequests); got != 1 {
+	if got := mgr.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 1 {
 		t.Errorf("apiRequests = %d, want 1 (failed call still counts)", got)
 	}
-	if got := mgr.usage.Backend().Load("b1", counter.FieldIngressBytes); got != 0 {
+	if got := mgr.Usage().Backend().Load("b1", counter.FieldIngressBytes); got != 0 {
 		t.Errorf("ingressBytes = %d, want 0 (upload failed)", got)
 	}
 }
@@ -1209,7 +1209,7 @@ func TestUnwrapUploadDEK_NoEncryptionMetadata(t *testing.T) {
 	t.Parallel()
 	mgr := newEncryptedTestManager(t, newPermissiveMock(t), map[string]*mockBackend{"b1": newMockBackend()})
 	mu := &core.MultipartUpload{UploadID: "u1", Encrypted: false}
-	if _, _, _, err := mgr.MultipartManager.unwrapUploadDEK(context.Background(), mu); err == nil {
+	if _, _, _, err := mgr.MultipartManager.UnwrapUploadDEK(context.Background(), mu); err == nil {
 		t.Fatal("expected error for unencrypted upload, got nil")
 	}
 }
@@ -1223,7 +1223,7 @@ func TestUnwrapUploadDEK_UnpackError(t *testing.T) {
 		EncryptionKey: []byte{0x01, 0x02},
 		KeyID:         "kid",
 	}
-	if _, _, _, err := mgr.MultipartManager.unwrapUploadDEK(context.Background(), mu); err == nil {
+	if _, _, _, err := mgr.MultipartManager.UnwrapUploadDEK(context.Background(), mu); err == nil {
 		t.Fatal("expected error from UnpackKeyData, got nil")
 	}
 }
@@ -1235,7 +1235,7 @@ func TestUnwrapUploadDEK_UnwrapFails(t *testing.T) {
 	mgr := newEncryptedTestManager(t, newPermissiveMock(t), map[string]*mockBackend{"b1": newMockBackend()})
 	bogus := encryption.PackKeyData(make([]byte, encryption.NonceSize), []byte("not-a-real-wrapped-dek"))
 	mu := &core.MultipartUpload{UploadID: "u1", Encrypted: true, EncryptionKey: bogus, KeyID: "test-0"}
-	if _, _, _, err := mgr.MultipartManager.unwrapUploadDEK(context.Background(), mu); err == nil {
+	if _, _, _, err := mgr.MultipartManager.UnwrapUploadDEK(context.Background(), mu); err == nil {
 		t.Fatal("expected unwrap error, got nil")
 	}
 }

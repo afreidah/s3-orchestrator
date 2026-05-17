@@ -9,7 +9,7 @@
 // pin the small extracted helpers directly.
 // -------------------------------------------------------------------------------
 
-package proxy
+package object
 
 import (
 	"context"

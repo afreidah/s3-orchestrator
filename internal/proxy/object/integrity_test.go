@@ -6,7 +6,7 @@
 // Tests for content hashing and streaming verification.
 // -------------------------------------------------------------------------------
 
-package proxy
+package object
 
 import (
 	"io"
