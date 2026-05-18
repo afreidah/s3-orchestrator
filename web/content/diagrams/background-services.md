@@ -51,6 +51,7 @@ Coordination of periodic background workers that maintain storage health, enforc
     '    SCHED --> MPCLEAN[Multipart<br>Cleanup]:::process',
     '    SCHED --> FLUSH[Usage<br>Flusher]:::filter',
     '    SCHED --> CQWORKER[Cleanup Queue<br>Worker]:::cleanup',
+    '    SCHED --> PENDREAP[Pending<br>Reaper]:::process',
     '    SCHED --> RECONCILE[Orphan<br>Reconciler]:::process',
     '    SCHED --> SCRUBBER[Integrity<br>Scrubber]:::process',
     '    SCHED --> CBWATCH[CB<br>Watchdog]:::filter',
@@ -69,6 +70,8 @@ Coordination of periodic background workers that maintain storage health, enforc
     '    REBAL -->|on failure| CQ',
     '    OVERREP -->|on failure| CQ',
     '    CQWORKER -->|fetch items| CQ',
+    '    PENDREAP -->|HEAD probe| S3',
+    '    PENDREAP -->|read + resolve| PG',
     '',
     '    FLUSH -->|persist| PG[(PostgreSQL)]:::storage',
     '',
@@ -132,6 +135,11 @@ Coordination of periodic background workers that maintain storage health, enforc
       title: 'Cleanup Queue Worker',
       badge: 'cleanup', badgeText: 'every 1 min',
       body: '<p><code>CleanupWorker.ProcessCleanupQueue()</code> retries failed object deletions from the <code>cleanup_queue</code> table.</p><p><b>Interval</b>: 1 minute.<br><b>Advisory lock</b>: <code>LockCleanupQueue = 1003</code>.<br><b>Batch size</b>: 50 items per tick.<br><b>Concurrency</b>: configurable (default 10).<br><b>Claim grace period</b>: configurable via <code>cleanup_queue.claim_grace_period</code> (default 5m).</p><p><b>Per-row claim pattern</b>: each tick calls <code>ClaimPendingCleanups</code>, which uses <code>UPDATE ... WHERE id IN (SELECT ... FOR UPDATE SKIP LOCKED)</code> to atomically reserve a batch of rows and stamp them with the calling instance\'s identifier (<code>claimed_at</code>, <code>claimed_by</code>). Two ticks running concurrently across instances always return disjoint row sets, so connection death and rolling-deploy overlap cannot let two workers process the same row. A claim older than the grace period is reclaimable so a worker that died mid-process does not leave the row stuck; reclaims emit <code>s3o_cleanup_queue_stale_claims_recovered_total</code> and a <code>cleanup_queue.claim_recovered</code> audit event.</p><p><b>Backoff</b>: exponential <code>min(1m * 2^attempts, 24h)</code>. Scheduling a retry clears the row\'s claim so it is immediately re-eligible for the next tick.<br><b>Max attempts</b>: 10. On the tenth consecutive failure the row is graduated to <code>cleanup_dlq</code> via <code>core.MoveCleanupToDLQ</code> so it surfaces for operator action; <code>orphan_bytes</code> is intentionally NOT decremented because the backend object is still on disk.</p><p>Items are fed from all failure sites: <code>recordObjectOrCleanup</code>, <code>DeleteObject</code>, <code>UploadPart</code>, <code>CompleteMultipartUpload</code>, <code>AbortMultipartUpload</code>, rebalancer (3 sites), replicator. On success, <code>CompleteCleanupItem</code> deletes the row and decrements <code>orphan_bytes</code> for the backing backend in a single atomic CTE; a worker crash between the two operations cannot leave the counter inconsistent and a re-claim of an already-deleted row is a no-op.</p><p class="ac-metric">Metrics: s3o_cleanup_queue_enqueued_total{reason}, s3o_cleanup_queue_processed_total{status=success|retry|exhausted}, s3o_cleanup_queue_depth, s3o_cleanup_queue_stale_claims_recovered_total{backend}, s3o_cleanup_dlq_enqueued_total{backend}, s3o_cleanup_dlq_depth</p>'
+    },
+    PENDREAP: {
+      title: 'Pending Reaper',
+      badge: 'process', badgeText: 'every 1 min',
+      body: '<p><code>PendingReaper.Reap()</code> resolves unresolved <code>pending_objects</code> rows from the write-path PUT-before-COMMIT pattern. If the orchestrator died between the backend PUT and the metadata commit, this worker is what makes the orphan recoverable.</p><p><b>Interval</b>: configurable via <code>write_path.pending_pattern.reaper_tick</code> (default 1 minute).<br><b>Min age</b>: configurable via <code>write_path.pending_pattern.min_age</code> (default 5 minutes) &mdash; only intents older than this are eligible, so the reaper never races a still-in-flight PUT.<br><b>Batch size</b>: configurable via <code>write_path.pending_pattern.batch_size</code> (default 50).<br><b>Concurrency</b>: 4 (hard-coded in <code>NewPendingReaper</code>).<br><b>Advisory lock</b>: none &mdash; rows are claimed individually with <code>SELECT ... FOR UPDATE SKIP LOCKED</code>.</p><p>For each stale intent: HEAD the backend at the target key. HEAD 200 &rarr; promote (commit the intent as a real <code>object_locations</code> row). HEAD 404 &rarr; drop (the backend never received the bytes, no orphan exists).</p><p class="ac-metric">Metrics: s3o_pending_intents_enqueued_total, s3o_pending_intents_resolved_total{status=committed|promoted|dropped|ambiguous|already_resolved}, s3o_pending_intents_depth</p>'
     },
     SCRUBBER: {
       title: 'Integrity Scrubber',
@@ -259,4 +267,5 @@ Coordination of periodic background workers that maintain storage health, enforc
 | Multipart Cleanup | 1 hr | 1004 | `CleanupStaleMultipartUploads()` |
 | Usage Flusher | 30s (adaptive) | 1007 (Redis only) | `FlushUsage()` |
 | Cleanup Queue Worker | 1 min | 1003 | `ProcessCleanupQueue()` |
+| Pending Reaper | 1 min (configurable) | none (per-row claim) | `PendingReaper.Reap()` |
 

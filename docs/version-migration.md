@@ -28,7 +28,7 @@ Configuration changes are **not** applied automatically. When a new version adds
 
 ```bash
 s3-orchestrator version
-# s3-orchestrator v0.41.7 go1.26.0 linux/amd64
+# s3-orchestrator v0.57.1 go1.26.3 linux/amd64
 ```
 
 ## Compatibility Matrix
@@ -58,7 +58,124 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.47.x (current)
+### v0.57.x (current)
+
+**Cleanup DELETE 404 treated as idempotent success ([#877](https://github.com/afreidah/s3-orchestrator/pull/877), v0.57.1)**
+
+A backend cleanup `DeleteObject` that returns HTTP 404 / `NoSuchKey` is now treated as idempotent success: the `cleanup_queue` row drops immediately instead of retrying nine more times and graduating to `cleanup_dlq`. The motivating incident: 63 phantom rows accumulated in `cleanup_dlq` against one MinIO backend over two days — all `StatusCode: 404`, none of them real un-cleanable orphans (the upstream PUTs had silently failed during a network outage, so the cleanup correctly identified objects to remove and got confused when the backend already agreed they didn't exist). The DLQ noise masked real un-cleanable orphans.
+
+The same 404 → drop logic was also added to `DeleteOrEnqueue` in the write coordinator, so a 404 never seeds the cleanup queue in the first place.
+
+New surfaces:
+
+- `s3o_cleanup_queue_processed_total{status="success_absent"}` — counter label for idempotent drops. Add this to dashboards alongside `success` / `retry` / `exhausted`.
+- `cleanup_queue.already_absent` audit event — emitted when the 404 path fires.
+
+`backend.IsNotFound` was promoted from a private worker helper to an exported function in `internal/backend/`. Existing call sites in `worker/replicator.go`, `worker/pending.go`, and `backend/circuitbreaker.go` were consolidated onto it.
+
+**Operator action items after upgrade:**
+
+- Update any dashboard panels that filter on `s3o_cleanup_queue_processed_total{status=~"success|retry|exhausted"}` to include `success_absent`.
+- No config change.
+
+**Close drain-race + fix `s3o_drain_active` semantics + bound purge loop ([#876](https://github.com/afreidah/s3-orchestrator/pull/876), v0.57.0)**
+
+Three related fixes around backend drain:
+
+1. **Drain race closed.** A drain that began while a backend `PutObject` was in flight could land bytes on the now-draining backend. The write path now re-checks `IsDraining(backend)` after the backend PUT succeeds, before the metadata commit. On a positive re-check the bytes are cleaned up via `RecoverFromRecordFailure` and the attempt fails over to the next eligible backend.
+2. **`s3o_drain_active` is now Inc/Dec instead of Set(1)/Set(0).** Concurrent drains across multiple backends now compose correctly — the gauge reports the count of in-flight drains, not just "is any drain running?".
+3. **`PurgeBackendObjects` bails on zero DB progress.** A pathological list-and-fail loop (e.g., the page-list works but every per-row `DeleteObjectLocation` fails) could spin indefinitely. The worker now exits the page when it finishes a list with zero rows actually deleted, preventing the infinite-list-and-fail spin.
+
+New surfaces:
+
+- `s3o_drain_race_aborted_total` (counter) — increments each time the post-PUT re-check fires.
+
+**Operator action items after upgrade:**
+
+- Dashboards / alerts that read `s3o_drain_active == 1` should switch to `s3o_drain_active > 0` to keep working when multiple drains overlap.
+- Add an alert on any non-zero rate of `s3o_drain_race_aborted_total`. A persistent rate suggests a longer-than-expected gap between `EligibleForWrite` and the backend PUT (e.g., very large objects against a fast-draining backend).
+
+### v0.55.x – v0.56.x
+
+**UsageTracker swapped to atomic.Pointer snapshots ([#874](https://github.com/afreidah/s3-orchestrator/pull/874), v0.56.0)**
+
+The internal `UsageTracker` (the per-backend rolling-window counter feeding `BackendsWithinLimits` and the eligibility filter) replaced its `sync.RWMutex` pair with `atomic.Pointer[T]` snapshots and copy-on-write writes. The hot read path no longer touches a mutex.
+
+No behavior change. Measured improvement on parallel `WithinLimits` benchmarks: 65.93 ns/op → 29.80 ns/op (~2.2× under contention). The change only matters at high request rates where `BackendsWithinLimits` is dispatched per request; below ~500 RPS it is in the noise.
+
+**Operator action items:** none.
+
+### v0.53.x – v0.54.x
+
+**Optimize PutObject buffering + integrity pipeline ([#869](https://github.com/afreidah/s3-orchestrator/pull/869), v0.54.0)**
+
+The `PutObject` body materialization layer (the buffer that lets the write path retry against a different backend on PUT failure) now spills to a tempfile above a configurable in-memory ceiling instead of always materializing to a `bytes.Buffer`. Combined with a heap-profile-friendly pipeline restructuring, container memory under sustained PUT load is significantly lower for workloads dominated by medium / large objects.
+
+**Operator action items after upgrade:**
+
+- Container memory limits sized off pre-v0.54 baselines can be tightened; equivalently, the previous limits absorb more concurrent in-flight PUTs.
+- Tempfiles are written under the orchestrator's `TMPDIR` (defaults to `/tmp`). Operators running with a tmpfs `/tmp` should size it to accommodate `max_concurrent_writes × p99_object_size`, or set `TMPDIR` to a disk-backed location.
+
+**Same-backend server-side copy fast path ([#868](https://github.com/afreidah/s3-orchestrator/pull/868), v0.53.0)**
+
+`CopyObject` requests whose source and destination resolve to the same backend now dispatch through the backend's native `CopyObject` API (S3 `UploadPartCopy` / equivalent) instead of materializing through the orchestrator. This avoids one full GET + one full PUT per copy when the routing target matches the source backend.
+
+New surfaces:
+
+- Span attribute `s3o.native_copy=true` on the `CopyObject` span when the fast path is taken. Useful for trace filtering and for confirming the fast path actually fires in production.
+- Per-backend accounting: the fast path records 1 API call against the backend and no egress/ingress (the bytes never traverse the orchestrator). Dashboards that derived "bytes copied" from `egress + ingress` will see a discontinuity if their workload is copy-heavy on the same backend.
+
+**Operator action items after upgrade:**
+
+- If you compute "data transferred" from `s3o_usage_egress_bytes` + `s3o_usage_ingress_bytes`, native-copy traffic is now invisible to that metric (which is correct — no bytes left the backend). Add a panel querying for spans with `s3o.native_copy=true` if you need a copy-volume signal.
+
+### v0.51.x – v0.52.x
+
+**Per-operation completion observability centralized ([#866](https://github.com/afreidah/s3-orchestrator/pull/866), v0.52.0)**
+
+The audit / metric / span completion logic for `PutObject`, `GetObject`, `DeleteObject`, `HeadObject`, and the multipart operations was consolidated into a single `observe.Complete*` helper per operation. The behavior is unchanged for the existing audit events, but `storage.UploadPart` is now emitted on every successful part upload (previously only `CompleteMultipartUpload` emitted an event). This makes per-part backend distribution visible in audit logs.
+
+**Operator action items after upgrade:**
+
+- Audit log sinks that filter on `event=storage.UploadPart` will start seeing one entry per part. For a multipart of N parts, expect roughly N new entries per upload.
+
+**Cancel losing degraded-read probes ([#867](https://github.com/afreidah/s3-orchestrator/pull/867), v0.52.1)**
+
+When the read path is in degraded mode (one source unhealthy) it fires probe reads against multiple backends and serves the first one back. The losing probes were previously left to run to completion, wasting backend API calls and egress against quotas. They are now cancelled the moment a winner is declared. The visible effect is a drop in `s3o_usage_api_calls{backend=...}` during degraded operation, with no change to correctness or latency.
+
+**Operator action items:** none.
+
+### v0.49.x – v0.50.x
+
+**Consumer-declared interfaces for proxy subpackages ([#847](https://github.com/afreidah/s3-orchestrator/pull/847), v0.49.0)**
+
+The proxy package was split into subpackages (`object`, `multipart`, `readpath`, `writepath`, `accounting`, etc.), each declaring its own narrow consumer interface against `*infra.Core` and the metadata store rather than importing the root `proxy` package. Internally-significant refactor.
+
+Operator-visible: structured-log entries that used `component=backend_manager` now use `component=object`, `component=multipart`, or `component=writepath` depending on the subsystem doing the logging.
+
+**Operator action items after upgrade:**
+
+- Log-search saved queries that filter on `component=backend_manager` should add the new component names (`object`, `multipart`, `writepath`, `readpath`).
+- Grafana log panels keyed on `component` will gain new series; old series will go quiet but not break.
+
+### v0.48.x
+
+Internal refactor only (proxy package decomposed into focused subpackages, [#845](https://github.com/afreidah/s3-orchestrator/pull/845)). No operator-visible behavior change. No action required.
+
+### v0.47.x
+
+**Surface orphan-enqueue failures during DB outages ([#824](https://github.com/afreidah/s3-orchestrator/pull/824), v0.47.5)**
+
+When the write path enqueues a cleanup row after a partial write failure and the enqueue itself fails (e.g., the DB is unreachable), the orphan bytes were previously silent — the backend held data the orchestrator could not see. The failure path now emits a metric and an audit event so operators can pivot to the exact backend / key / size and reconcile manually once DB connectivity returns.
+
+New surfaces:
+
+- `s3o_cleanup_enqueue_failures_total{backend, reason, stage}` counter. `stage="enqueue"` means the cleanup_queue row itself did not persist (worst case — the cleanup worker will never see this orphan). `stage="orphan_bytes"` means the row persisted but the `orphan_bytes` counter did not increment (quota accounting drifts but cleanup still runs).
+- `storage.OrphanEnqueueFailed` audit event carrying backend, key, size, stage, error.
+
+**Operator action items after upgrade:**
+
+- Alert on any non-zero rate of `s3o_cleanup_enqueue_failures_total{stage="enqueue"}` and run `POST /admin/api/reconcile` once DB connectivity returns to recover untracked orphans. See the admin guide cleanup runbook for the full procedure.
 
 **Background worker health surfaced through admin API and Prometheus (v0.47.0)**
 

@@ -97,6 +97,8 @@ High-level architecture of the S3 Orchestrator showing the request path, storage
     '    MPCLEAN[Multipart<br>Cleanup]:::background --> MPMGR',
     '    OVERREP[Over-Replication<br>Cleaner]:::background --> SELECT',
     '    OVERREP --> PG',
+    '    PENDREAP[Pending<br>Reaper]:::background --> PG',
+    '    PENDREAP --> CB1',
     '',
     '    HTTP --> PROM[Prometheus<br>Metrics]:::observability',
     '    HTTP --> TEMPO[OpenTelemetry<br>Tracing]:::observability',
@@ -272,6 +274,11 @@ High-level architecture of the S3 Orchestrator showing the request path, storage
       title: 'Over-Replication Cleaner',
       badge: 'background', badgeText: 'background worker',
       body: '<p>Finds objects with more copies than the configured replication factor and deletes excess replicas. Runs every 6 hours under advisory lock.</p><p>Preserves geographically diverse copies when possible. Frees up quota on backends holding unnecessary duplicates.</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a></p>'
+    },
+    PENDREAP: {
+      title: 'Pending Reaper',
+      badge: 'background', badgeText: 'background worker',
+      body: '<p>Resolves unresolved <code>pending_objects</code> rows from the write-path PUT-before-COMMIT pattern. If the orchestrator died between the backend PUT and the metadata commit, this worker is what makes the orphan recoverable: it HEADs the backend and either promotes the intent (HEAD 200) or drops it (HEAD 404).</p><p>Runs every <code>write_path.pending_pattern.reaper_tick</code> (default 1 min), processing intents older than <code>min_age</code> (default 5 min) in batches of <code>batch_size</code> (default 50) with concurrency 4. Per-row claim via <code>SELECT ... FOR UPDATE SKIP LOCKED</code> &mdash; no advisory lock.</p><p><a href="../background-services/">Background services coordination diagram &rarr;</a> &middot; <a href="../write-path/">Write path diagram &rarr;</a></p>'
     },
     PROM: {
       title: 'Prometheus Metrics',

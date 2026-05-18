@@ -10,7 +10,7 @@ This guide shows how to automatically replicate objects from a local MinIO insta
 
 MinIO is a popular self-hosted S3-compatible object store, but local storage carries risk - hardware failures, power loss, or site disasters can cause data loss. By placing S3 Orchestrator in front of your MinIO instance and adding a single cloud backend with a replication factor of 2, every object you write to MinIO is automatically copied to the cloud in the background.
 
-That is all it takes: one cloud backend and `replication_factor: 2`. The orchestrator's built-in replicator handles the rest. No cron jobs, rsync scripts, or third-party sync tools are needed.
+That is all it takes: one cloud backend and `replication.factor: 2`. The orchestrator's built-in replicator handles the rest. No cron jobs, rsync scripts, or third-party sync tools are needed.
 
 If the local MinIO goes down, reads automatically fail over to the cloud replica.
 
@@ -35,7 +35,7 @@ backends:
     bucket: data
     access_key_id: "${MINIO_ACCESS_KEY}"
     secret_access_key: "${MINIO_SECRET_KEY}"
-    quota: 0  # No quota - local storage is yours
+    quota_bytes: 0  # No quota - local storage is yours
 ```
 
 ## Step 2: Add a Cloud Backend
@@ -50,7 +50,7 @@ backends:
     bucket: data
     access_key_id: "${MINIO_ACCESS_KEY}"
     secret_access_key: "${MINIO_SECRET_KEY}"
-    quota: 0
+    quota_bytes: 0
 
   - name: r2
     endpoint: https://<account-id>.r2.cloudflarestorage.com
@@ -58,7 +58,7 @@ backends:
     bucket: minio-backup
     access_key_id: "${R2_ACCESS_KEY}"
     secret_access_key: "${R2_SECRET_KEY}"
-    quota: 10737418240  # 10 GB
+    quota_bytes: 10737418240  # 10 GB
 ```
 
 ## Step 3: Enable Replication
@@ -66,7 +66,8 @@ backends:
 Set the replication factor to 2. This tells the orchestrator that every object must exist on **two** backends - your local MinIO and the cloud backend.
 
 ```yaml
-replication_factor: 2
+replication:
+  factor: 2
 ```
 
 That is the entire replication setup. The orchestrator writes objects to MinIO on upload, and the background replicator automatically copies each one to R2. No manual sync step, no scheduled jobs.
@@ -156,10 +157,12 @@ Generate a key with `openssl rand -base64 32` and store it securely.
 
 After restarting the orchestrator, all new writes are encrypted automatically. Both the primary copy on MinIO and the replica on the cloud backend are encrypted — backends never see plaintext.
 
-To encrypt objects that were uploaded before encryption was enabled, run:
+To encrypt objects that were uploaded before encryption was enabled, hit the admin API:
 
 ```bash
-s3-orchestrator admin encrypt-existing
+curl -X POST http://orchestrator-host:9000/admin/api/encrypt-existing \
+  -H "Authorization: Bearer ${ADMIN_TOKEN}"
+# {"status":"complete","encrypted":N,"failed":N,"total":N}
 ```
 
 For production deployments, consider using [Vault Transit](../nomad-vault-deployment/) instead of an inline key. See the [Encrypting Existing Data](../encrypting-existing-data/) guide for the full walkthrough and the [Key Rotation](../key-rotation/) guide for rotating master keys.
