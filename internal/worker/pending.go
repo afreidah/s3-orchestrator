@@ -182,7 +182,7 @@ func (r *PendingReaper) probeBackend(ctx context.Context, be backend.ObjectBacke
 	switch {
 	case err == nil:
 		return probeFound
-	case isNotFound(err):
+	case backend.IsNotFound(err):
 		return probeNotFound
 	default:
 		r.log.WarnContext(ctx, "HEAD probe failed, leaving intent for next tick",

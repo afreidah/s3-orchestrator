@@ -21,10 +21,36 @@ import (
 	"go.uber.org/mock/gomock"
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
+	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
+
+// httpError is a writepath-package test helper that satisfies the
+// HTTPStatusCode() interface backend.IsNotFound classifies against.
+type httpError struct {
+	code int
+	msg  string
+}
+
+func (e *httpError) Error() string       { return e.msg }
+func (e *httpError) HTTPStatusCode() int { return e.code }
+
+// newCoordinatorWithBackend builds a Coordinator whose infra.Core knows
+// about a single named backend. Used by DeleteOrEnqueue branch tests so
+// the backend's DeleteObject can be controlled directly through the
+// gomock recorder. A real (in-memory) UsageTracker is supplied so the
+// Acct().APICall path on DeleteOrEnqueue does not nil-deref.
+func newCoordinatorWithBackend(name string, be s3be.ObjectBackend, store core.MetadataStore) *Coordinator {
+	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{name}), nil)
+	c := infra.New(&infra.Config{
+		Backends: map[string]s3be.ObjectBackend{name: be},
+		Usage:    usage,
+	})
+	return New(c, store, true)
+}
 
 // newCoordinatorWithStore builds a minimal Coordinator backed by the
 // supplied store. Avoids the BackendManager constructor so coordinator
@@ -96,6 +122,44 @@ func TestInsertPendingIntent_StoreError(t *testing.T) {
 	if intentID != "" {
 		t.Errorf("expected empty intentID on error, got %q", intentID)
 	}
+}
+
+// TestDeleteOrEnqueue_NotFound_SkipsEnqueue asserts that when the
+// immediate backend DELETE returns 404, no cleanup_queue row is inserted
+// (the backend already agrees the object is gone). Issue #843 - this
+// prevents phantom 404s from seeding the cleanup queue at the source.
+func TestDeleteOrEnqueue_NotFound_SkipsEnqueue(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	be := backendtest.NewMockObjectBackend(ctrl)
+	be.EXPECT().DeleteObject(gomock.Any(), "phantom.txt").
+		Return(&httpError{code: 404, msg: "NoSuchKey"})
+
+	store := storetest.NewMockMetadataStore(ctrl)
+	// The whole point of the fix: EnqueueCleanup must NOT be called.
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+	storetest.Permissive(store)
+
+	coord := newCoordinatorWithBackend("b1", be, store)
+	coord.DeleteOrEnqueue(context.Background(), be, "b1", "phantom.txt", "overwrite_displaced", 128)
+}
+
+// TestDeleteOrEnqueue_GenericError_Enqueues asserts the regression
+// guard for the existing failure path: a non-404 error still enqueues
+// the cleanup so the worker can retry.
+func TestDeleteOrEnqueue_GenericError_Enqueues(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	be := backendtest.NewMockObjectBackend(ctrl)
+	be.EXPECT().DeleteObject(gomock.Any(), "real.txt").Return(errors.New("connection refused"))
+
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().EnqueueCleanup(gomock.Any(), "b1", "real.txt", "overwrite_displaced", int64(256)).
+		Return(nil).Times(1)
+	storetest.Permissive(store)
+
+	coord := newCoordinatorWithBackend("b1", be, store)
+	coord.DeleteOrEnqueue(context.Background(), be, "b1", "real.txt", "overwrite_displaced", 256)
 }
 
 // TestRecordObjectAndPromoteIntent_UnknownBackend covers the legacy
