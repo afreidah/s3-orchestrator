@@ -633,8 +633,14 @@ func (mp *Manager) completeMultipartUploadLocked(
 		return "", err
 	}
 
-	// Streamed from pipe; deadline governed by the caller's context.
-	etag, err := be.PutObject(ctx, mu.ObjectKey, uploadBody, uploadSize, mu.ContentType, mu.Metadata)
+	// Final assembly PUT runs under the configured backend timeout
+	// (#882). The pipe reader is fed by the part-download goroutines,
+	// so the timeout covers the full "stream parts -> assemble -> PUT"
+	// pipeline; a tighter caller deadline (from the inbound HTTP
+	// request) still wins.
+	wctx, wcancel := mp.core.WithTimeout(ctx)
+	defer wcancel()
+	etag, err := be.PutObject(wctx, mu.ObjectKey, uploadBody, uploadSize, mu.ContentType, mu.Metadata)
 	if err != nil {
 		pipeCancel()
 		pr.Close()

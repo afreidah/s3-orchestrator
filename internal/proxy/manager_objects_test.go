@@ -2207,6 +2207,73 @@ func TestListObjects_DBUnavailable(t *testing.T) {
 	}
 }
 
+// TestCopyObject_BackendTimeout_SourceGetSlow pins #882: the
+// materialized-copy slow path runs the source GET under the configured
+// backend timeout. Before the fix the GET used the raw request context
+// and a stalled source could exceed backend_timeout.
+func TestCopyObject_BackendTimeout_SourceGetSlow(t *testing.T) {
+	t.Parallel()
+	be := newMockBackend()
+	_, _ = be.PutObject(context.Background(), "src", bytes.NewReader([]byte("copy-me")), 7, "text/plain", nil)
+	slow := &slowMockBackend{mockBackend: be, delay: 200 * time.Millisecond, delayGets: true}
+
+	store, _ := copyObjectStore(t,
+		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil,
+		"b1", nil)
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
+		Backends:        map[string]s3be.ObjectBackend{"b1": slow},
+		Stores:          testStoresFromMock(store),
+		Dashboard:       store,
+		Metrics:         store,
+		Order:           []string{"b1"},
+		CacheTTL:        5 * time.Second,
+		BackendTimeout:  50 * time.Millisecond,
+		RoutingStrategy: config.RoutingPack,
+	})
+
+	_, err := mgr.ObjectManager.CopyObject(context.Background(), "src", "dst")
+	if err == nil {
+		t.Fatal("expected timeout error, got nil")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected context.DeadlineExceeded, got %v", err)
+	}
+}
+
+// TestCopyObject_BackendTimeout_DestPutSlow pins #882: the materialized
+// copy's destination PUT runs under backend_timeout. Cross-backend
+// setup so the source GET completes fast and only the destination
+// write hits the timeout.
+func TestCopyObject_BackendTimeout_DestPutSlow(t *testing.T) {
+	t.Parallel()
+	srcBE := newMockBackend()
+	_, _ = srcBE.PutObject(context.Background(), "src", bytes.NewReader([]byte("copy-me")), 7, "text/plain", nil)
+	dstBE := newMockBackend()
+	slowDst := &slowMockBackend{mockBackend: dstBE, delay: 200 * time.Millisecond}
+
+	store, _ := copyObjectStore(t,
+		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil,
+		"b2", nil)
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
+		Backends:        map[string]s3be.ObjectBackend{"b1": srcBE, "b2": slowDst},
+		Stores:          testStoresFromMock(store),
+		Dashboard:       store,
+		Metrics:         store,
+		Order:           []string{"b1", "b2"},
+		CacheTTL:        5 * time.Second,
+		BackendTimeout:  50 * time.Millisecond,
+		RoutingStrategy: config.RoutingPack,
+	})
+
+	_, err := mgr.ObjectManager.CopyObject(context.Background(), "src", "dst")
+	if err == nil {
+		t.Fatal("expected timeout error, got nil")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected context.DeadlineExceeded, got %v", err)
+	}
+}
+
 // TestPutObject_BackendTimeout pins the deadline-bound put.
 func TestPutObject_BackendTimeout(t *testing.T) {
 	t.Parallel()
@@ -2236,10 +2303,13 @@ func TestPutObject_BackendTimeout(t *testing.T) {
 	}
 }
 
-// slowMockBackend wraps a mockBackend with a delayed PutObject.
+// slowMockBackend wraps a mockBackend with a delayed PutObject. When
+// delayGets is true GetObject also waits `delay` before forwarding -
+// used by the CopyObject source-GET timeout regression for #882.
 type slowMockBackend struct {
 	*mockBackend
-	delay time.Duration
+	delay     time.Duration
+	delayGets bool
 }
 
 // PutObject sleeps then forwards.
@@ -2249,6 +2319,20 @@ func (s *slowMockBackend) PutObject(ctx context.Context, key string, body io.Rea
 		return s.mockBackend.PutObject(ctx, key, body, size, contentType, metadata)
 	case <-ctx.Done():
 		return "", ctx.Err()
+	}
+}
+
+// GetObject optionally sleeps before forwarding so tests can exercise
+// timeout enforcement on the source-read leg of CopyObject (#882).
+func (s *slowMockBackend) GetObject(ctx context.Context, key, rng string) (*s3be.GetObjectResult, error) {
+	if !s.delayGets {
+		return s.mockBackend.GetObject(ctx, key, rng)
+	}
+	select {
+	case <-time.After(s.delay):
+		return s.mockBackend.GetObject(ctx, key, rng)
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
 }
 
