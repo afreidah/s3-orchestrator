@@ -62,6 +62,38 @@ metrics:
   enabled: true
   path: /metrics
 
+  # Dedicated metrics listener (parity with the Nomad deployment).
+  # When enabled, the orchestrator binds /metrics to a separate port
+  # instead of multiplexing on the main S3 listener. The chart creates
+  # a containerPort, a *-metrics ClusterIP Service, and (when the top-
+  # level networkPolicy is enabled) an ingress rule scoped to the
+  # configured scraper selector.
+  #
+  # Leave disabled for the simplest deployment shape (inline metrics
+  # on the S3 port, no pprof, no extra Service).
+  dedicatedListener:
+    enabled: false
+    port: 9001
+    # podSelector for the NetworkPolicy ingress rule. Defaults to "any
+    # pod in the namespace"; tighten this to your Prometheus operator
+    # pods to keep the metrics surface internal.
+    scraperSelector: {}
+    # Example:
+    # scraperSelector:
+    #   matchLabels:
+    #     app.kubernetes.io/name: prometheus
+
+  # Pprof endpoints (/debug/pprof/*) are mounted on the dedicated
+  # metrics listener when this is true. OFF by default - pprof exposes
+  # runtime internals (stack frames, command-line flags, on-demand CPU
+  # profiles that double as DoS amplifiers). Only opt in temporarily
+  # for active profiling investigations and keep the metrics Service
+  # selector pinned to cluster-internal scrapers.
+  #
+  # Has no effect unless metrics.dedicatedListener.enabled is also true
+  # (inline metrics never get pprof).
+  pprof: false
+
 # Use an existing Secret instead of creating one from .secrets below.
 # The Secret must contain all env vars referenced by ${VAR} in the config.
 existingSecret: ""

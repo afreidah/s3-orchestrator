@@ -27,6 +27,18 @@ resources:
 networkPolicy:
   enabled: false
 
+# Mirror the Nomad demo: expose /metrics and pprof on a dedicated
+# listener so perf runs against the local k3d cluster can capture
+# heap/cpu/alloc profiles via /debug/pprof/*. Production should leave
+# both flags off (chart defaults).
+metrics:
+  enabled: true
+  path: /metrics
+  dedicatedListener:
+    enabled: true
+    port: 9001
+  pprof: true
+
 ingress:
   enabled: false
 
