@@ -70,14 +70,18 @@ Detailed flow of a PutObject request through backend selection, encryption, fail
     '',
     '    ENC{Encryption<br>Enabled?}:::decision',
     '    ENC -->|yes| ENCRYPT[Generate DEK<br>Wrap + Encrypt]:::process',
-    '    ENC -->|no| UPLOAD',
-    '    ENCRYPT --> UPLOAD',
+    '    ENC -->|no| INTENT',
+    '    ENCRYPT --> INTENT',
     '',
+    '    INTENT[InsertPendingIntent<br>pending_objects row]:::storage --> UPLOAD',
     '    UPLOAD[Upload to<br>Backend]:::process --> CB{Circuit<br>Breaker}:::decision',
     '    CB -->|open| FAIL',
     '    CB -->|closed/probe| S3[S3 Backend<br>PutObject]:::storage',
     '    S3 -->|error| FAIL{Upload<br>Failed?}:::decision',
-    '    S3 -->|success| RECORD',
+    '    S3 -->|success| DRAINRACE{IsDraining<br>re-check?}:::decision',
+    '    DRAINRACE -->|drain started| DRAINABORT[Drain Race Abort<br>cleanup + failover]:::cleanup',
+    '    DRAINRACE -->|backend healthy| RECORD',
+    '    DRAINABORT --> RETRY',
     '',
     '    FAIL -->|backends remain| RETRY[Remove Backend<br>from Eligible]:::process',
     '    RETRY --> SELECT',
@@ -223,9 +227,24 @@ Detailed flow of a PutObject request through backend selection, encryption, fail
       body: '<p>All eligible backends have been tried and failed. Returns the last error encountered, which propagates to the HTTP handler as a 502 Bad Gateway.</p><p>The span is marked with error status and the error is recorded for tracing.</p>'
     },
     RECORD: {
-      title: 'Record Object in PostgreSQL',
+      title: 'RecordObjectAndPromoteIntent (atomic commit)',
       badge: 'storage', badgeText: 'DB transaction',
-      body: '<p>Atomic database transaction (<code>RecordObject</code>):</p><p>1. <code>LockObjectKeyForWrite</code> &mdash; advisory lock for concurrent write safety<br>2. <code>GetExistingCopiesForUpdate</code> &mdash; SELECT FOR UPDATE on current copies<br>3. <code>DeleteObjectCopies</code> &mdash; remove all existing copies<br>4. <code>DecrementQuota</code> for each deleted copy<br>5. <code>InsertObjectLocation</code> &mdash; new record with encryption metadata<br>6. <code>IncrementQuota</code> for the new backend</p><p>Returns list of <b>displaced copies</b> on other backends that need cleanup.</p><p>If this transaction fails, the orphaned upload is deleted from the backend (or enqueued to cleanup queue if that also fails).</p>'
+      body: '<p>Atomic database transaction (<code>RecordObjectAndPromoteIntent</code>) that flips the pending intent to a committed object_locations row:</p><p>1. <code>LockObjectKeyForWrite</code> &mdash; advisory lock for concurrent write safety<br>2. <code>GetExistingCopiesForUpdate</code> &mdash; SELECT FOR UPDATE on current copies<br>3. <code>DeleteObjectCopies</code> &mdash; remove all existing copies<br>4. <code>DecrementQuota</code> for each deleted copy<br>5. <code>InsertObjectLocation</code> &mdash; new record with encryption metadata<br>6. <code>IncrementQuota</code> for the new backend<br>7. <code>DeletePendingIntent</code> &mdash; clear the intent row</p><p>Returns list of <b>displaced copies</b> on other backends that need cleanup.</p><p>If this transaction fails, <code>RecoverFromRecordFailure</code> deletes the orphaned backend bytes and the intent stays for the <code>PendingReaper</code> to resolve.</p>'
+    },
+    INTENT: {
+      title: 'InsertPendingIntent',
+      badge: 'storage', badgeText: 'DB transaction',
+      body: '<p><code>InsertPendingIntent</code> writes a row into the <code>pending_objects</code> table <b>before</b> the backend PUT. The row captures everything needed to recover from a crash mid-write: object key, target backend, size, and (if encryption is on) the wrapped DEK / keyID / content hash.</p><p>If the orchestrator dies between the backend PUT and the metadata commit, the <code>PendingReaper</code> worker later finds this intent, HEADs the backend, and either promotes the intent (HEAD 200) or drops it (HEAD 404).</p><p class="ac-metric">Metric: s3o_pending_intents_enqueued_total</p>'
+    },
+    DRAINRACE: {
+      title: 'IsDraining Re-Check (drain race)',
+      badge: 'decision', badgeText: 'drain race guard',
+      body: '<p>Post-PUT guard added by <a href="https://github.com/afreidah/s3-orchestrator/issues/653">#653</a>. The upstream <code>EligibleForWrite</code> filter is racy with <code>StartDrain</code>: a drain can begin <em>while</em> the backend PUT is in flight, landing bytes on a backend that is then drained.</p><p>This re-check fires after the PUT succeeds but before the metadata commit. If <code>IsDraining(backend)</code> is now true, the bytes are cleaned up via <code>RecoverFromRecordFailure</code> and the attempt fails over to the next eligible backend.</p><p class="ac-metric">Metric: s3o_drain_race_aborted_total</p>'
+    },
+    DRAINABORT: {
+      title: 'Drain Race Abort + Failover',
+      badge: 'cleanup', badgeText: 'cleanup + failover',
+      body: '<p>The bytes landed on a backend that started draining mid-write. <code>RecoverFromRecordFailure</code> issues a best-effort DELETE for the orphan bytes (enqueueing a cleanup row if the immediate DELETE also fails), the pending intent is dropped, and the attempt is re-driven against the next eligible backend.</p>'
     },
     DISPLACED: {
       title: 'Displaced Copies?',
@@ -338,6 +357,14 @@ Detailed flow of a PutObject request through backend selection, encryption, fail
   }
 })();
 </script>
+
+## Pending-Intent Pattern
+
+The `InsertPendingIntent` → `RecordObjectAndPromoteIntent` two-phase pattern exists so a crash between the backend PUT and the metadata commit cannot leak orphan bytes. The intent row captures everything the recovery path needs (key, backend, size, encryption metadata) so on restart the `PendingReaper` worker can HEAD the backend and decide *commit* (HEAD 200 → promote the intent) or *cleanup* (HEAD 404 → drop the intent, enqueue cleanup).
+
+The post-PUT `IsDraining` re-check guards a separate race: a drain can begin while the backend PUT is in flight. Without the re-check, the bytes would land on the draining backend and the drain worker would have to move them off again. With it, the orchestrator aborts the attempt and fails over to the next eligible backend, incrementing `s3o_drain_race_aborted_total`.
+
+See [`internal/worker/pending.go`](https://github.com/afreidah/s3-orchestrator/blob/main/internal/worker/pending.go) for the reaper implementation and [`internal/proxy/writepath/coordinator.go`](https://github.com/afreidah/s3-orchestrator/blob/main/internal/proxy/writepath/coordinator.go) for the coordinator-side helpers.
 
 ## Legend
 
