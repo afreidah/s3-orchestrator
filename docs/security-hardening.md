@@ -246,9 +246,12 @@ Provide the environment variables via systemd `EnvironmentFile`, Vault agent inj
     metrics:
       enabled: true
       listen: "127.0.0.1:9091"  # only reachable from localhost / internal network
+      pprof: false              # opt-in; see "Pprof endpoints" below
   ```
 
   When `listen` is set, `/metrics` is not served on the main S3 port. Prometheus scrapes from the internal address instead.
+
+- **Pprof endpoints** (`/debug/pprof/*`) expose deep runtime state — stack frames, command-line flags, on-demand CPU profiles that double as DoS amplifiers (`/debug/pprof/profile?seconds=300`). They are **off by default** and only mounted when both `telemetry.metrics.listen` is set AND `telemetry.metrics.pprof: true`. Inline-metrics deployments (no dedicated listener) never get pprof regardless of the flag. Enable temporarily for profiling investigations only, and keep the metrics listener bound to an internal-only interface.
 
 ### Kubernetes Hardening
 
@@ -256,7 +259,8 @@ The provided Kubernetes manifests include several security measures:
 
 - **seccompProfile: RuntimeDefault** — applies the default seccomp profile to restrict syscalls
 - **automountServiceAccountToken: false** — the orchestrator does not need Kubernetes API access
-- **NetworkPolicy** — restricts ingress to port 9000 only; egress is permissive since backend endpoints are config-driven
+- **NetworkPolicy** — restricts ingress to port 9000 (and the metrics port when `metrics.dedicatedListener.enabled` is set, scoped to the configured `scraperSelector`); egress is permissive since backend endpoints are config-driven
+- **Dedicated metrics Service** — when `metrics.dedicatedListener.enabled: true`, the chart renders a separate `*-metrics` ClusterIP Service that is forced to `ClusterIP` regardless of the public Service type. This prevents the metrics surface (and any opted-in pprof) from accidentally being exposed externally if the public Service is upgraded to LoadBalancer/NodePort.
 - **readOnlyRootFilesystem**, **runAsNonRoot**, **capabilities.drop: ALL** — standard container hardening (see `deploy/helm/s3-orchestrator/templates/deployment.yaml`)
 
 ```
