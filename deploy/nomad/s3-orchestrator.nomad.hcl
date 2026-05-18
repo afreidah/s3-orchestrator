@@ -37,6 +37,12 @@ job "s3-orchestrator" {
       port "http" {
         static = 9000
       }
+      # Dedicated metrics+pprof listener. Pprof endpoints are mounted
+      # here, never on the public S3 port. Bind via the YAML
+      # template below to 127.0.0.1 or a private network interface.
+      port "metrics" {
+        static = 9001
+      }
     }
 
     service {
@@ -74,7 +80,11 @@ job "s3-orchestrator" {
 
       config {
         image = "ghcr.io/afreidah/s3-orchestrator:${var.version}"
-        ports = ["http"]
+        # `metrics` must be listed alongside `http` so Nomad's docker
+        # driver actually publishes the port from the container to the
+        # host. Declaring it only in the network block reserves the
+        # number but does not bind it.
+        ports = ["http", "metrics"]
         # For multi-instance deployments, add -mode to split API and worker roles:
         #   API group:    args = ["-config", "/etc/s3-orchestrator/config.yaml", "-mode", "api"]
         #   Worker group: args = ["-config", "/etc/s3-orchestrator/config.yaml", "-mode", "worker"]
@@ -311,6 +321,22 @@ job "s3-orchestrator" {
             metrics:
               enabled: true
               path: "/metrics"
+              # Dedicated listener for /metrics (and pprof when opted
+              # in below). Mounting pprof on the public S3 listener
+              # would leak runtime internals and offer a DoS amplifier
+              # (/debug/pprof/profile?seconds=300). Bind to an
+              # internal-only interface; the demo uses 0.0.0.0:9001
+              # so the docker-compose Prometheus can scrape via the
+              # bridge gateway. Tighten this to 127.0.0.1:9001 or a
+              # private network address for non-local deployments.
+              listen: "127.0.0.1:9001"
+              # Pprof endpoints are opt-in and OFF by default. The
+              # debug surface (CPU profiles, stack traces, command
+              # line) is sensitive, so production should leave this
+              # commented out and only flip it on temporarily during
+              # an investigation while the listener is bound to a
+              # private interface.
+              # pprof: true
             tracing:
               enabled: true
               endpoint: "tempo.service.consul:4317"

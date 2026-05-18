@@ -1126,7 +1126,26 @@ domains are collapsed by default.
 
 ### Key Prometheus metrics
 
-If `telemetry.metrics.enabled` is `true`, metrics are exposed at `/metrics`. Key metrics to alert on:
+If `telemetry.metrics.enabled` is `true`, metrics are exposed at `/metrics`. Two listener modes:
+
+- **Inline (`telemetry.metrics.listen` empty, the default):** `/metrics` is served on the same listener as the public S3 API. Convenient for single-port deployments and the docker-compose / local-dev workflow. In this mode `/debug/pprof/*` endpoints are **not** registered — mounting pprof on the public S3 listener would leak runtime internals (de-anonymized stack frames via `/debug/pprof/heap`, the command line and flag values via `/debug/pprof/cmdline`) and offer a DoS amplifier (`/debug/pprof/profile?seconds=300` triggers minutes of CPU profiling on demand).
+- **Dedicated listener (`telemetry.metrics.listen` set, e.g. `127.0.0.1:9001`):** `/metrics` and `/debug/pprof/*` are both mounted on the dedicated listener. Bind to `127.0.0.1` or a private network interface so the surface is only reachable from operators inside the trust boundary. The nomad demo uses `0.0.0.0:9001` so the docker-compose Prometheus container can scrape via the bridge gateway; production deployments should tighten this to `127.0.0.1:9001` or a private network address.
+
+Once the dedicated listener is configured, captures look like:
+
+```bash
+# 60-second allocation profile during a load spike
+curl -o /tmp/allocs.pb.gz "http://127.0.0.1:9001/debug/pprof/allocs?seconds=60"
+go tool pprof -top -cum -alloc_space /tmp/allocs.pb.gz
+
+# Instantaneous live-heap snapshot
+curl -o /tmp/heap.pb.gz "http://127.0.0.1:9001/debug/pprof/heap"
+go tool pprof -top -cum -inuse_space /tmp/heap.pb.gz
+```
+
+The standard `net/http/pprof` endpoints are available: `/debug/pprof/`, `/debug/pprof/profile`, `/debug/pprof/heap`, `/debug/pprof/allocs`, `/debug/pprof/goroutine`, `/debug/pprof/block`, `/debug/pprof/mutex`, `/debug/pprof/trace`, `/debug/pprof/cmdline`, `/debug/pprof/symbol`.
+
+Key metrics to alert on:
 
 | Metric | What to watch |
 |--------|---------------|

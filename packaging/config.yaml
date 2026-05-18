@@ -184,6 +184,16 @@ backends:
 #   metrics:
 #     enabled: false
 #     path: /metrics
+#     # listen is optional. When empty (the default), /metrics is
+#     # served inline on the main S3 listener and pprof endpoints are
+#     # NOT registered — mounting /debug/pprof/* on the public S3
+#     # port would leak runtime internals (de-anonymized stack
+#     # frames, command-line flags) and offer a DoS amplifier
+#     # (/debug/pprof/profile?seconds=300). When listen is set, both
+#     # /metrics and /debug/pprof/* are mounted on the dedicated
+#     # listener. Bind to an internal-only interface (127.0.0.1 or a
+#     # private network address) for production deployments.
+#     # listen: "127.0.0.1:9001"
 #   tracing:
 #     enabled: false
 #     endpoint: ${TRACING_ENDPOINT}
