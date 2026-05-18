@@ -13,7 +13,6 @@ package backend
 
 import (
 	"context"
-	"errors"
 	"io"
 	"time"
 
@@ -59,11 +58,7 @@ func isBackendError(err error) bool {
 	if err == nil {
 		return false
 	}
-	var respErr interface{ HTTPStatusCode() int }
-	if errors.As(err, &respErr) && respErr.HTTPStatusCode() == 404 {
-		return false
-	}
-	return true
+	return !IsNotFound(err)
 }
 
 // PutObject uploads an object to the backend with circuit breaker protection.

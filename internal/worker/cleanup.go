@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
@@ -134,12 +135,45 @@ func (w *CleanupWorker) processCleanupItem(
 		return
 	}
 
+	// 404 means the backend already agrees the object is gone, which is
+	// the desired end state. Drop the row so we don't burn 9 retries +
+	// a DLQ slot on a non-event. See issue #843.
+	if backend.IsNotFound(delErr) {
+		w.completeCleanupAlreadyAbsent(ctx, item, processedCount)
+		return
+	}
+
 	newAttempts := item.Attempts + 1
 	if newAttempts >= maxCleanupAttempts {
 		w.exhaustCleanupToDLQ(ctx, item, newAttempts, delErr, failedCount)
 		return
 	}
 	w.scheduleCleanupRetry(ctx, item, delErr, failedCount)
+}
+
+// completeCleanupAlreadyAbsent retires a cleanup row whose backend
+// DELETE returned 404. Mirrors completeCleanupSuccess but emits the
+// status="success_absent" metric label and an audit subject that lets
+// operators distinguish "we deleted it" from "it was already gone" on
+// dashboards. The accounting effect is identical (orphan_bytes is
+// decremented by CompleteCleanupItem).
+func (w *CleanupWorker) completeCleanupAlreadyAbsent(ctx context.Context, item *core.CleanupItem, processedCount *atomic.Int32) {
+	if err := w.store.CompleteCleanupItem(ctx, item.ID); err != nil {
+		w.log.ErrorContext(ctx, "failed to complete cleanup item", slog.Int64("cleanup_id", item.ID), "error", err)
+	}
+	telemetry.CleanupQueueProcessedTotal.WithLabelValues("success_absent").Inc()
+	processedCount.Add(1)
+	w.log.InfoContext(ctx, "cleanup target already absent on backend",
+		slog.String("backend", item.BackendName),
+		slog.String("key", item.ObjectKey),
+		slog.String("reason", item.Reason),
+	)
+	audit.Log(ctx, "cleanup_queue.already_absent",
+		slog.String("key", item.ObjectKey),
+		slog.String("backend", item.BackendName),
+		slog.String("reason", item.Reason),
+		slog.Int("attempt", int(item.Attempts+1)),
+	)
 }
 
 // completeUnknownBackendItem retires a cleanup row whose backend is no

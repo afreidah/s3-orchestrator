@@ -13,7 +13,6 @@ package worker
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -411,7 +410,7 @@ func (r *Replicator) tryCopyFrom(ctx context.Context, key, target string, target
 	}
 	r.log.WarnContext(ctx, "source read failed, trying next copy",
 		"key", key, "source", loc.BackendName, "error", err)
-	if isNotFound(err) {
+	if backend.IsNotFound(err) {
 		r.pruneStaleSource(ctx, key, loc.BackendName)
 	}
 	return "", 0, false, nil
@@ -476,9 +475,3 @@ func (r *Replicator) IsBackendHealthy(name string) bool {
 	return cbb.IsHealthy()
 }
 
-// isNotFound returns true if the error chain contains an HTTP 404 response,
-// indicating the object does not exist on the backend.
-func isNotFound(err error) bool {
-	var respErr interface{ HTTPStatusCode() int }
-	return errors.As(err, &respErr) && respErr.HTTPStatusCode() == 404
-}

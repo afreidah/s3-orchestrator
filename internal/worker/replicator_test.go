@@ -649,61 +649,14 @@ func TestReplicateObject_NotInsertedExcludesTarget(t *testing.T) {
 	}
 }
 
-// -------------------------------------------------------------------------
-// isNotFound
-// -------------------------------------------------------------------------
-
-// httpError is a test helper that satisfies the HTTPStatusCode() interface.
+// httpError is a worker-package test helper that satisfies the smithy
+// HTTPStatusCode() interface used by backend.IsNotFound. Worker tests
+// (replicator, pending) construct typed 404s through this fake instead
+// of pulling in the real AWS SDK error hierarchy.
 type httpError struct {
 	code int
 	msg  string
 }
 
-// Error returns the error message.
 func (e *httpError) Error() string       { return e.msg }
-// HTTPStatusCode satisfies smithy/awserr's status-code accessor so
-// the replicator's isNotFound-style typed-error tests can detect a
-// 404 from this fake without depending on the real AWS SDK error
-// hierarchy.
 func (e *httpError) HTTPStatusCode() int { return e.code }
-
-// TestIsNotFound_404 verifies the is not found 404 behaviour described by the test name.
-func TestIsNotFound_404(t *testing.T) {
-	t.Parallel()
-	if !isNotFound(&httpError{code: 404, msg: "NoSuchKey"}) {
-		t.Error("expected true for 404")
-	}
-}
-
-// TestIsNotFound_500 verifies the is not found 500 behaviour described by the test name.
-func TestIsNotFound_500(t *testing.T) {
-	t.Parallel()
-	if isNotFound(&httpError{code: 500, msg: "InternalServerError"}) {
-		t.Error("expected false for 500")
-	}
-}
-
-// TestIsNotFound_PlainError verifies the is not found plain error path by exercising errors.New.
-func TestIsNotFound_PlainError(t *testing.T) {
-	t.Parallel()
-	if isNotFound(errors.New("connection refused")) {
-		t.Error("expected false for plain error")
-	}
-}
-
-// TestIsNotFound_Wrapped404 verifies the is not found wrapped404 path by exercising fmt.Errorf.
-func TestIsNotFound_Wrapped404(t *testing.T) {
-	t.Parallel()
-	wrapped := fmt.Errorf("read: %w", &httpError{code: 404, msg: "NoSuchKey"})
-	if !isNotFound(wrapped) {
-		t.Error("expected true for wrapped 404")
-	}
-}
-
-// TestIsNotFound_Nil verifies the is not found nil behaviour described by the test name.
-func TestIsNotFound_Nil(t *testing.T) {
-	t.Parallel()
-	if isNotFound(nil) {
-		t.Error("expected false for nil")
-	}
-}

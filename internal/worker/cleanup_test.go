@@ -76,6 +76,49 @@ func TestProcessCleanupQueue_DeleteFails_Retries(t *testing.T) {
 	}
 }
 
+// TestProcessCleanupQueue_DeleteReturns404_IdempotentSuccess asserts that
+// a 404 from the backend DELETE is treated as idempotent success: the row
+// is completed, status="success_absent" is incremented, and no DLQ move
+// happens even when the item is at the retry ceiling. Issue #843.
+func TestProcessCleanupQueue_DeleteReturns404_IdempotentSuccess(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	ops := NewMockCleanupOps(ctrl)
+
+	// Attempts=9 puts us at the retry ceiling. Without the 404 special
+	// case this row would graduate straight to DLQ; with it the row must
+	// instead retire as success_absent.
+	st := core.CleanupItem{ID: 42, BackendName: "b1", ObjectKey: "phantom.txt", Attempts: 9, SizeBytes: 128}
+	ms := &mockMetadataStore{pendingCleanups: []core.CleanupItem{st}}
+
+	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
+	ops.EXPECT().ReleaseAdmission()
+	ops.EXPECT().GetBackend("b1").Return(nil, nil)
+	ops.EXPECT().DeleteWithTimeout(gomock.Any(), gomock.Any(), "phantom.txt").
+		Return(&httpError{code: 404, msg: "NoSuchKey"})
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
+
+	before := readCounterValue(t, telemetry.CleanupQueueProcessedTotal.WithLabelValues("success_absent"))
+
+	w := NewCleanupWorker(ops, ms, 1, "test-instance", 5*time.Minute)
+	processed, failed := w.ProcessCleanupQueue(context.Background())
+
+	if processed != 1 {
+		t.Errorf("expected processed=1 (404 = idempotent success), got %d", processed)
+	}
+	if failed != 0 {
+		t.Errorf("expected failed=0 on 404, got %d", failed)
+	}
+	if len(ms.dlqMoves) != 0 {
+		t.Errorf("404 must not enqueue to DLQ, got %d move(s)", len(ms.dlqMoves))
+	}
+
+	after := readCounterValue(t, telemetry.CleanupQueueProcessedTotal.WithLabelValues("success_absent"))
+	if after-before != 1 {
+		t.Errorf("success_absent metric delta = %v, want 1", after-before)
+	}
+}
+
 // TestProcessCleanupQueue_AdmissionBlocked verifies the process cleanup queue admission blocked contract.
 // Asserts that expected 0/0 when blocked, got /.
 func TestProcessCleanupQueue_AdmissionBlocked(t *testing.T) {
