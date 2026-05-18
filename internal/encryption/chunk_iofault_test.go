@@ -46,7 +46,7 @@ func (f *faultyReader) Read(_ []byte) (int, error) {
 func TestEncryptReader_PropagatesNonEOFError(t *testing.T) {
 	t.Parallel()
 	dek := bytes.Repeat([]byte{0xab}, 32)
-	er, err := newEncryptReader(&faultyReader{}, dek, 64)
+	er, err := newEncryptReader(&faultyReader{}, dek, 64, newChunkBuffers(64), nil)
 	if err != nil {
 		t.Fatalf("newEncryptReader: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestDecryptReader_PropagatesNonEOFError(t *testing.T) {
 	t.Parallel()
 	dek := bytes.Repeat([]byte{0xab}, 32)
 	baseNonce := make([]byte, NonceSize)
-	dr, err := newDecryptReader(&faultyReader{}, dek, baseNonce, 64, 0)
+	dr, err := newDecryptReader(&faultyReader{}, dek, baseNonce, 64, 0, newChunkBuffers(64), nil)
 	if err != nil {
 		t.Fatalf("newDecryptReader: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestDecryptReader_PropagatesNonEOFError(t *testing.T) {
 func TestEncryptReader_CleanEOFStillEnds(t *testing.T) {
 	t.Parallel()
 	dek := bytes.Repeat([]byte{0xab}, 32)
-	er, err := newEncryptReader(strings.NewReader(""), dek, 64)
+	er, err := newEncryptReader(strings.NewReader(""), dek, 64, newChunkBuffers(64), nil)
 	if err != nil {
 		t.Fatalf("newEncryptReader: %v", err)
 	}
