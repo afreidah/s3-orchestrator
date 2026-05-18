@@ -125,6 +125,19 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
     '        TEXT last_error',
     '    }',
     '',
+    '    pending_objects {',
+    '        TEXT intent_id PK',
+    '        TEXT object_key',
+    '        TEXT backend_name FK',
+    '        BIGINT size_bytes',
+    '        BOOLEAN encrypted',
+    '        BYTEA encryption_key',
+    '        TEXT key_id',
+    '        BIGINT plaintext_size',
+    '        TEXT content_hash',
+    '        TIMESTAMPTZ created_at',
+    '    }',
+    '',
     '    notification_outbox {',
     '        BIGSERIAL id PK',
     '        TEXT event_type',
@@ -141,6 +154,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
     '    backend_quotas ||--o{ backend_usage : "monthly usage"',
     '    backend_quotas ||--o{ cleanup_queue : "pending deletes"',
     '    backend_quotas ||--o{ cleanup_dlq : "exhausted orphans"',
+    '    backend_quotas ||--o{ pending_objects : "in-flight intents"',
     '    cleanup_queue ||--o| cleanup_dlq : "graduates on retry exhaustion"',
     '    multipart_uploads ||--o{ multipart_parts : "upload parts"'
   ].join('\n');
@@ -278,6 +292,25 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
         '<p class="ac-metric">Key queries: InsertCleanupDLQ, CountCleanupDLQ</p>' +
         '<p class="ac-metric">Metrics: cleanup_dlq_depth (gauge), cleanup_dlq_enqueued_total{backend} (counter)</p>'
     },
+    pending_objects: {
+      title: 'pending_objects',
+      badge: 'cleanup', badgeText: 'in-flight intents',
+      body: '<p>In-flight PUT intents for the write-path PUT-before-COMMIT pattern. A row is inserted by <code>InsertPendingIntent</code> immediately before the backend PUT and deleted by <code>RecordObjectAndPromoteIntent</code> on a successful metadata commit. If the orchestrator dies between the backend PUT and the commit, the row survives and the <code>PendingReaper</code> worker resolves it on the next tick by HEADing the backend.</p>' +
+        '<table class="ac-cols"><tr><th>Column</th><th>Type</th><th>Notes</th></tr>' +
+        '<tr><td class="pk">intent_id</td><td>TEXT</td><td>PRIMARY KEY (UUID v4 minted by the coordinator)</td></tr>' +
+        '<tr><td>object_key</td><td>TEXT</td><td>S3 key the PUT targets</td></tr>' +
+        '<tr><td class="fk">backend_name</td><td>TEXT</td><td>FK &rarr; backend_quotas; target of the in-flight PUT</td></tr>' +
+        '<tr><td>size_bytes</td><td>BIGINT</td><td>Ciphertext size (or plaintext if encryption disabled)</td></tr>' +
+        '<tr><td>encrypted</td><td>BOOLEAN</td><td>true when an EncryptionMeta is captured below</td></tr>' +
+        '<tr><td>encryption_key</td><td>BYTEA</td><td>Wrapped DEK (baseNonce || wrappedDEK) when encrypted</td></tr>' +
+        '<tr><td>key_id</td><td>TEXT</td><td>Master key identifier for unwrap</td></tr>' +
+        '<tr><td>plaintext_size</td><td>BIGINT</td><td>Logical object size (pre-encryption)</td></tr>' +
+        '<tr><td>content_hash</td><td>TEXT</td><td>SHA-256 of the plaintext (when integrity is enabled)</td></tr>' +
+        '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>Intent creation time; reaper only considers rows older than <code>write_path.pending_pattern.min_age</code> (default 5m)</td></tr></table>' +
+        '<p class="ac-idx"><b>Indexes:</b> PK on intent_id &bull; idx_pending_objects_created_at (created_at) for the reaper\'s age-cursored scan</p>' +
+        '<p>Used by: <code>writepath.Coordinator.InsertPendingIntent</code> (inserts on PUT entry) &bull; <code>RecordObjectAndPromoteIntent</code> (delete on successful commit) &bull; <code>RecoverFromRecordFailure</code> (delete on drain race / commit failure) &bull; <a href="../background-services/">PendingReaper</a> (HEAD-probes the backend and promotes / drops stale intents). The reaper claims rows individually with <code>SELECT ... FOR UPDATE SKIP LOCKED</code>; no advisory lock is required because two reapers ticking concurrently always pick disjoint sets.</p>' +
+        '<p class="ac-metric">Metrics: s3o_pending_intents_enqueued_total, s3o_pending_intents_resolved_total{status=committed|promoted|dropped|ambiguous|already_resolved}, s3o_pending_intents_depth &bull; Audit events: pending_reaper.promoted, pending_reaper.dropped, pending_reaper.superseded</p>'
+    },
     notification_outbox: {
       title: 'notification_outbox',
       badge: 'usage', badgeText: 'notifications',
@@ -342,7 +375,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
       // Mermaid ER diagram entity IDs follow the pattern: entity-TABLE_NAME-N
       // or just the table name directly. Try to extract the table name.
       var tableName = null;
-      var tableNames = ['backend_quotas', 'object_locations', 'multipart_uploads', 'multipart_parts', 'backend_usage', 'cleanup_queue', 'cleanup_dlq', 'notification_outbox'];
+      var tableNames = ['backend_quotas', 'object_locations', 'multipart_uploads', 'multipart_parts', 'backend_usage', 'cleanup_queue', 'cleanup_dlq', 'pending_objects', 'notification_outbox'];
       for (var i = 0; i < tableNames.length; i++) {
         if (gId.indexOf(tableNames[i]) !== -1) {
           tableName = tableNames[i];
@@ -386,6 +419,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
 | **backend_usage** | Monthly API/bandwidth counters per backend | `(backend_name, period)` |
 | **cleanup_queue** | Retry queue for failed orphan deletions | `id` (auto-increment) |
 | **cleanup_dlq** | Dead-letter for cleanup_queue rows that exhausted retries | `id` (auto-increment) |
+| **pending_objects** | In-flight PUT intents (PUT-before-COMMIT write-path crash recovery) | `intent_id` (UUID) |
 | **notification_outbox** | Durable webhook event delivery queue | `id` (auto-increment) |
 
 ### Schema Migrations

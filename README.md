@@ -821,11 +821,15 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when enabled.
 | `s3o_usage_ingress_bytes` | Gauge | backend | Current month ingress bytes |
 | `s3o_usage_limit_rejections_total` | Counter | operation, limit_type | Operations rejected by usage limits |
 | `s3o_cleanup_queue_enqueued_total` | Counter | reason | Items added to the cleanup retry queue |
-| `s3o_cleanup_queue_processed_total` | Counter | status | Items processed from the cleanup queue (success/retry/exhausted) |
+| `s3o_cleanup_queue_processed_total` | Counter | status | Items processed from the cleanup queue (success/success_absent/retry/exhausted) — `success_absent` means the backend DELETE returned 404 and the row was dropped as idempotent success |
 | `s3o_cleanup_queue_depth` | Gauge | — | Current pending items in the cleanup queue |
+| `s3o_cleanup_queue_stale_claims_recovered_total` | Counter | backend | cleanup_queue rows whose stale claim was reclaimed by a later worker tick (worker died mid-process or grace period too short) |
 | `s3o_cleanup_dlq_depth` | Gauge | — | Unrecoverable orphans waiting in the cleanup dead-letter table |
 | `s3o_cleanup_dlq_enqueued_total` | Counter | backend | Cleanup rows graduated to the dead-letter after exhausting retries |
 | `s3o_cleanup_enqueue_failures_total` | Counter | backend, reason, stage | Cleanup-queue enqueue attempts that failed after a successful backend write (untracked-orphan risk) |
+| `s3o_pending_intents_enqueued_total` | Counter | — | In-flight PUT intents inserted before the backend write (PUT-before-COMMIT crash-recovery pattern) |
+| `s3o_pending_intents_resolved_total` | Counter | status | Pending PUT intents resolved by status (committed, promoted, dropped, ambiguous, already_resolved) |
+| `s3o_pending_intents_depth` | Gauge | — | Current number of unresolved pending PUT intents |
 | `s3o_rate_limit_rejections_total` | Counter | — | Requests rejected by per-IP rate limiting |
 | `s3o_admission_rejections_total` | Counter | — | Requests rejected by server-level admission control |
 | `s3o_list_pages_capped_total` | Counter | — | ListObjects calls that exited at the per-request page cap with more pages remaining |
@@ -836,9 +840,10 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when enabled.
 | `s3o_worker_last_success_timestamp_seconds` | Gauge | service | Unix time of the most recent successful tick per service |
 | `s3o_worker_consecutive_failures` | Gauge | service | Consecutive failed ticks per service since the last success |
 | `s3o_audit_events_total` | Counter | event | Audit log entries emitted |
-| `s3o_drain_active` | Gauge | — | `1` while a backend drain is in progress |
+| `s3o_drain_active` | Gauge | — | Count of in-flight backend drain operations (Inc/Dec so concurrent drains compose); 0 means no drains are running |
 | `s3o_drain_objects_moved_total` | Counter | — | Objects migrated during drain |
 | `s3o_drain_bytes_moved_total` | Counter | — | Bytes migrated during drain |
+| `s3o_drain_race_aborted_total` | Counter | — | PutObject attempts aborted after drain started mid-write (bytes are cleaned up and the attempt fails over to another backend) |
 | `s3o_encryption_operations_total` | Counter | op | Encrypt/decrypt operations (encrypt, decrypt, decrypt_range) |
 | `s3o_encryption_errors_total` | Counter | op, error_type | Encryption/decryption failures |
 | `s3o_encryption_unknown_key_id_total` | Counter | — | Decryption attempts with unknown keyID (primary key fallback) |
@@ -994,6 +999,8 @@ JSON APIs are available at `{path}/api/dashboard`, `{path}/api/tree`, and `{path
 | Path | Method | Purpose |
 |---|---|---|
 | `/admin/api/status` | GET | Backend health, quota, circuit-breaker state |
+| `/admin/api/reload-status` | GET | Most recent config reload result + generation |
+| `/admin/api/workers` | GET | Background worker health snapshot (cleanup, replicator, pending reaper, lifecycle, scrubber) |
 | `/admin/api/object-locations?key=...` | GET | Per-backend ledger for one object key |
 | `/admin/api/cleanup-queue` | GET | Cleanup queue depth and pending sample |
 | `/admin/api/usage-flush` | POST | Force out-of-band flush of usage counters |

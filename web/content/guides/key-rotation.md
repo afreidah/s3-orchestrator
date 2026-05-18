@@ -52,13 +52,17 @@ After restarting, new objects use the new key. Existing objects can still be rea
 
 ## Step 4: Re-wrap All DEKs
 
-Run the admin command to re-wrap all DEKs with the new master key:
+Re-wrap all DEKs by hitting the admin API. The orchestrator does not ship a
+CLI subcommand for this — use the HTTP endpoint:
 
 ```bash
-s3-orchestrator admin rotate-encryption-key --old-key-id config-0
+curl -X POST http://orchestrator-host:9000/admin/api/rotate-encryption-key \
+  -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"old_key_id":"config-0"}'
 ```
 
-The `--old-key-id` identifies which key's DEKs to re-wrap:
+The `old_key_id` body field identifies which key's DEKs to re-wrap:
 
 | Key source | ID format |
 |-----------|-----------|

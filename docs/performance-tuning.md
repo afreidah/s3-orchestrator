@@ -29,7 +29,12 @@ max_conns = max_concurrent_requests + (active_workers × 2) + 10
 - **Multi-instance deployment**: divide your PostgreSQL `max_connections` across instances. Each instance's `max_conns` should be `(max_connections - 20) / instance_count` (reserve 20 for superuser and monitoring connections).
 - `min_conns` keeps idle connections warm. Set it to roughly half of `max_conns` to avoid connection setup latency on traffic spikes.
 - `max_conn_lifetime` rotates connections to pick up DNS changes and distribute load across replicas. The 5-minute default works well in most environments.
-- Monitor `pgx_pool_acquired_conns` / `pgx_pool_total_conns` in Prometheus. If acquired consistently equals total, the pool is saturated.
+- The orchestrator does not export pool-level Prometheus metrics for the pgx
+  connection pool. To check for saturation, query PostgreSQL directly
+  (`SELECT count(*) FROM pg_stat_activity WHERE application_name LIKE 's3-orchestrator%'`)
+  or read the per-process `pg_stat_activity` row. Orchestrator-side request
+  saturation is best inferred from `s3o_inflight_requests` and
+  `s3o_admission_rejections_total`.
 
 ## Admission Control
 
@@ -275,10 +280,10 @@ cleanup_queue:
 
 ```yaml
 usage_flush:
-  interval: "30s"          # base flush interval
-  adaptive_enabled: true   # shorten interval near limits
-  adaptive_threshold: 0.8  # 80% of limit triggers fast flush
-  fast_interval: "5s"      # interval when near limits
+  interval: "30s"           # base flush interval
+  adaptive_enabled: false   # default false; set true to shorten interval near limits
+  adaptive_threshold: 0.8   # 80% of limit triggers fast flush (when adaptive_enabled: true)
+  fast_interval: "5s"       # interval when near limits (when adaptive_enabled: true)
 ```
 
 The orchestrator tracks API requests, egress, and ingress in memory and periodically flushes to the database. This is a tradeoff between accuracy and database load:

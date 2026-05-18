@@ -33,9 +33,18 @@ a `*_bench_test.go` file next to the code under test. See existing examples:
 | File | What it covers |
 |------|---------------|
 | `internal/transport/auth/auth_bench_test.go` | SigV4 verification, token auth, canonical request building |
-| `internal/proxy/location_cache_bench_test.go` | Cache get/set/delete, concurrent contention, eviction |
-| `internal/proxy/streaming_bench_test.go` | Raw io.Copy throughput, streamCopy end-to-end with mock backends |
+| `internal/transport/s3api/admission_bench_test.go` | Admission gate, split read/write pools |
+| `internal/transport/s3api/ratelimit_bench_test.go` | Per-credential rate limit checks |
 | `internal/transport/s3api/helpers_bench_test.go` | Path parsing, metadata extraction, XML encoding, error responses |
+| `internal/proxy/object/location_cache_bench_test.go` | Cache get/set/delete, concurrent contention, eviction |
+| `internal/proxy/object/copy_materialize_bench_test.go` | CopyObject materialize sink branches |
+| `internal/proxy/streaming_bench_test.go` | Raw io.Copy throughput, streamCopy end-to-end with mock backends |
+| `internal/counter/tracker_bench_test.go` | UsageTracker `WithinLimits` / `Record` under contention |
+| `internal/breaker/breaker_bench_test.go` | Circuit breaker call dispatch |
+| `internal/cache/memory_bench_test.go` | In-memory LRU |
+| `internal/encryption/nonce_bench_test.go` | Chunk nonce derivation |
+| `internal/observe/audit/audit_bench_test.go` | Audit log dispatch |
+| `internal/util/bufpool/bufpool_bench_test.go` | Pooled buffer get/put |
 
 ### 3. Run benchmarks again
 
@@ -79,7 +88,7 @@ Use judgement based on the operation:
 ## Running a subset
 
 ```bash
-go test -bench=BenchmarkLocationCache -benchmem -count=6 -run='^$' ./internal/proxy/ | tee bench.txt
+go test -bench=BenchmarkLocationCache -benchmem -count=6 -run='^$' ./internal/proxy/object/ | tee bench.txt
 ```
 
 ## Writing new benchmarks

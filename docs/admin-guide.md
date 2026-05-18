@@ -380,13 +380,16 @@ Replication is **asynchronous** — writes go to a single backend and the replic
 
 ### Cleanup Queue
 
-The cleanup queue is always active. Two tunables apply:
+The cleanup queue is always active. Tunables:
 
 ```yaml
 cleanup_queue:
   concurrency: 10                # parallel cleanup deletions per tick (default: 10)
   claim_grace_period: 5m         # reclaim stale per-row claims older than this (default: 5m)
+  multipart_stale_timeout: 24h   # abort multipart uploads older than this (default: 24h)
 ```
+
+`multipart_stale_timeout` is consumed by the hourly `CleanupStaleMultipartUploads` sweep — uploads that have been open longer than this are aborted, their parts deleted from the backend, and the multipart rows removed. The default 24h matches the AWS S3 SDK's default abort behavior; lower it on backends with tight free-tier headroom to recover quota faster.
 
 When any backend object deletion fails during normal operations (PutObject orphan cleanup, DeleteObject, overwrite displaced copies, multipart part cleanup, rebalancer, replicator), the failed deletion is automatically enqueued for retry.
 
@@ -400,6 +403,7 @@ The background worker runs every minute and retries with exponential backoff (1 
 
 - `s3o_cleanup_queue_depth` staying elevated — orphaned objects are accumulating in the active queue.
 - `s3o_cleanup_queue_processed_total{status="exhausted"}` — counter increments each time an item exhausts retries.
+- `s3o_cleanup_queue_processed_total{status="success_absent"}` — counter increments each time a backend DELETE returned 404 and the row was dropped as idempotent success (the backend already agrees the object is gone). A sustained rate here is benign and just means upstream PUTs are silently failing somewhere; spikes are worth correlating with backend health.
 - `s3o_cleanup_queue_stale_claims_recovered_total{backend}` — non-zero rate means a worker died mid-process or the grace period is too short for realistic worst-case processing time.
 - `s3o_cleanup_dlq_depth > 0` — the DLQ holds at least one unrecoverable orphan; alerting here gives operators a direct signal instead of a counter delta.
 - `s3o_cleanup_dlq_enqueued_total{backend}` — rate of graduations per backend; a single backend dominating means that backend's delete path is broken.
@@ -437,6 +441,37 @@ SELECT backend_name, object_key, reason, size_bytes, NOW(), 0, last_error
   FROM cleanup_dlq WHERE id = 42;
 DELETE FROM cleanup_dlq WHERE id = 42;
 ```
+
+### write_path
+
+The write path can run in two modes. **Direct mode** (`enabled: false`) writes to the backend and commits the metadata immediately afterward; a crash between the two leaks bytes onto the backend with no DB record. **Pending-intent mode** (`enabled: true`, the default) inserts a row into `pending_objects` *before* the backend PUT and atomically deletes that row when the metadata commits — so a crash between the PUT and the commit leaves a recoverable intent the background reaper can resolve.
+
+```yaml
+write_path:
+  pending_pattern:
+    enabled: true        # default: true; PUT-before-COMMIT crash-recovery pattern
+    reaper_tick: 1m      # how often PendingReaper sweeps unresolved intents (default: 1m)
+    min_age: 5m          # only intents older than this are eligible (default: 5m) — avoids racing in-flight PUTs
+    batch_size: 50       # rows claimed per tick (default: 50)
+```
+
+**How recovery works.** On every tick the `PendingReaper` worker (`internal/worker/pending.go`) claims a batch of `pending_objects` rows older than `min_age`, HEADs the backend at the recorded key, and resolves each one:
+
+- **HEAD 200** → the backend received the bytes. Promote the intent to a committed `object_locations` row (`pending_reaper.promoted` audit event).
+- **HEAD 404** → the backend never received the bytes. Drop the intent (`pending_reaper.dropped` audit event). No orphan exists.
+- **Non-404 HEAD error** → leave the intent for the next tick. A sustained backend reachability problem here surfaces as `s3o_pending_intents_resolved_total{status="ambiguous"}`.
+- **A later write for the same key already committed** → drop the intent as superseded (`pending_reaper.superseded`).
+
+**Why `min_age` matters.** The reaper must not race the foreground write path; if `min_age` is too short the reaper can interrogate an intent whose backend PUT is still in flight and either prematurely commit it or churn `ambiguous` resolutions. The 5-minute default is generous; lower it only if you have measured the p99 PUT duration and accept the operational tradeoff.
+
+**Monitoring:**
+
+- `s3o_pending_intents_enqueued_total` — should track the PutObject rate closely.
+- `s3o_pending_intents_resolved_total{status}` — `committed` is the happy path (synchronous commit succeeded); `promoted` + `dropped` are reaper resolutions; `ambiguous` is the alert.
+- `s3o_pending_intents_depth` — gauge of unresolved intents. Alert when consistently above `batch_size` — the reaper is not keeping up (raise `batch_size`, lower `reaper_tick`, or add concurrency).
+- Audit events: `pending_reaper.promoted` / `pending_reaper.dropped` / `pending_reaper.superseded`.
+
+**When to disable.** Don't, unless you are running an embedded SQLite single-instance demo and trust the OS to flush. The pattern adds one DB write per PUT (cheap) and saves you from one entire class of write-path crash leak.
 
 ### rate_limit
 
@@ -1027,19 +1062,19 @@ Two health endpoints serve different purposes:
 
 ```bash
 curl http://localhost:9000/health
-# {"status":"ok","instance":"hostname"}
-# or {"status":"degraded","instance":"hostname"} when circuit breaker is open
+# {"status":"ok"}
+# or {"status":"degraded"} when the database circuit breaker is open
 ```
 
 **Readiness** (`/health/ready`) — returns HTTP 200 when the service is ready to handle traffic, HTTP 503 during startup (before migrations and backend initialization complete) and during shutdown drain. Use this for readiness probes (K8s readinessProbe, Nomad `on_update = "require_healthy"`).
 
 ```bash
 curl http://localhost:9000/health/ready
-# {"status":"ready","instance":"hostname"}      — 200
-# {"status":"not ready","instance":"hostname"}  — 503
+# {"status":"ready"}      — 200
+# {"status":"not ready"}  — 503
 ```
 
-Both endpoints include an `instance` field with the hostname for identifying which instance responded in multi-instance deployments.
+The HTTP response body is intentionally minimal — only the `status` field is returned, so log aggregators can grep on a fixed pattern. To identify which instance answered a probe in a multi-instance deployment, query `GET /admin/api/workers` (which includes the instance identifier) or correlate by source IP.
 
 ### Background worker health
 
@@ -1118,6 +1153,11 @@ If `telemetry.metrics.enabled` is `true`, metrics are exposed at `/metrics`. Key
 | `s3o_cleanup_queue_stale_claims_recovered_total{backend="..."}` | Non-zero rate means a worker died mid-process or `cleanup_queue.claim_grace_period` is shorter than realistic worst-case row processing time |
 | `s3o_cleanup_enqueue_failures_total{backend,reason,stage}` | Alert on any non-zero rate of `stage="enqueue"` — backend object exists with no `cleanup_queue` row (orphan-leak risk). Pivot via the matching `storage.OrphanEnqueueFailed` audit event for backend/key/size, then run `POST /admin/api/reconcile` after DB recovery |
 | `s3o_audit_events_total{event="..."}` | Audit log volume by event type — useful for detecting unusual activity |
+| `s3o_pending_intents_enqueued_total` | Rate of PUT intents inserted (write-path PUT-before-COMMIT pattern). Should track the PutObject rate closely; a sustained gap suggests the pending pattern is bypassed |
+| `s3o_pending_intents_resolved_total{status}` | Pending intents resolved by status (`committed` = atomic commit happy path, `promoted` = reaper found backend object and promoted the intent, `dropped` = reaper found HEAD 404 and dropped the intent, `ambiguous` = HEAD failed for non-404 reasons, `already_resolved` = race). A sustained `ambiguous` rate means the reaper cannot reach the backend |
+| `s3o_pending_intents_depth` | Current unresolved intents. Alert when consistently above the `batch_size` of the reaper — the reaper is not keeping up |
+| `s3o_drain_active` | Count of in-flight backend drain operations (Inc/Dec so concurrent drains compose); 0 means no drains are running. Page on `s3o_drain_active > 0 for 6h` (drain stuck) |
+| `s3o_drain_race_aborted_total` | PutObject attempts aborted after drain started mid-write. Any non-zero rate is benign (the orchestrator recovers automatically) but a sustained rate suggests longer-than-expected gaps between `EligibleForWrite` and the backend PUT — typically very large objects against a fast-draining backend |
 | `time() - s3o_worker_last_success_timestamp_seconds{service="..."}` | Alert when greater than the worker's expected tick interval times a margin (e.g. `> 4 * interval`) — the service has not completed a successful tick in that window |
 | `s3o_worker_consecutive_failures{service="..."}` | Alert when consistently > 0 — the service is running but every tick fails; logs and `/admin/api/workers` carry the underlying error |
 | `rate(s3o_worker_ticks_total{result="error"}[15m])` | Persistent error rate; alongside `consecutive_failures` distinguishes flapping from sustained failure |
@@ -1149,14 +1189,289 @@ Key audit events:
 | `replication.start`, `replication.copy`, `replication.complete` | Replicator | Replica creation runs |
 | `storage.MultipartCleanup` | Multipart cleanup | Stale upload cleanup |
 | `cleanup_queue.processed` | Cleanup queue | Orphaned object successfully deleted on retry |
+| `cleanup_queue.already_absent` | Cleanup queue | Backend DELETE returned 404 — the object is already gone. Row dropped as idempotent success instead of retrying nine more times |
 | `cleanup_queue.claim_recovered` | Cleanup queue | A row whose claim aged past the grace period was reclaimed by a different worker tick (typical after a process crash or rolling-deploy overlap) |
 | `cleanup_queue.exhausted_to_dlq` | Cleanup queue | Row graduated to `cleanup_dlq` after exhausting retries |
+| `over_replication.start`, `over_replication.complete`, `over_replication.remove` | Over-replication cleaner | Surplus replica removal cycle; `.remove` carries the per-copy decision |
+| `pending_reaper.promoted` | Pending reaper | The reaper HEADed the backend, found the object, and promoted the pending intent into a committed `object_locations` row |
+| `pending_reaper.dropped` | Pending reaper | The reaper HEADed the backend and got 404. No orphan exists; the intent row is dropped |
+| `pending_reaper.superseded` | Pending reaper | A later write for the same key completed and superseded the pending intent before the reaper resolved it |
+| `storage.OrphanEnqueueFailed` | Coordinator | The cleanup-queue enqueue path itself failed after a successful backend write (DB outage). Carries backend / key / size / stage so an operator can reconcile manually once DB connectivity returns |
+| `storage.UploadPart` | Multipart | A multipart part upload completed successfully |
 
 Each S3 API request produces two correlated audit entries (HTTP-level and storage-level) sharing the same `request_id`. Internal operations (rebalance, replication) generate their own correlation IDs. The `request_id` also appears as a `s3o.request_id` attribute on OpenTelemetry spans.
 
 Clients can supply their own correlation ID via the `X-Request-Id` request header; otherwise the orchestrator generates one. The ID is returned in the `X-Amz-Request-Id` response header.
 
 **Trace-to-log correlation** — JSON log output includes `trace_id` and `span_id` fields on every line emitted within an active OpenTelemetry span. Log aggregators like Grafana Loki can extract these fields to link directly from a log entry to the corresponding trace in Tempo, and vice versa.
+
+## Admin API Reference
+
+All `/admin/api/*` endpoints require the `X-Admin-Token` header. Set the token via the `S3O_ADMIN_TOKEN` environment variable or the `admin.token` config key. All request and response bodies are JSON; request bodies are capped at 1 MiB.
+
+Common error responses are documented under each section; for any unexpected server-side failure the response is `{"error": "<short message>"}` with HTTP 500 and the original error is logged with the request_id.
+
+### Health & status
+
+#### `GET /admin/api/status`
+
+Backend health snapshot: per-backend bytes used, bytes limit, object count, API requests, egress, ingress, plus the database circuit-breaker state.
+
+```bash
+curl -H "X-Admin-Token: $TOKEN" http://localhost:9000/admin/api/status
+```
+
+Response (200):
+
+```json
+{
+  "db_healthy": true,
+  "backends": [
+    {
+      "name": "oci",
+      "bytes_used": 12345678,
+      "bytes_limit": 10737418240,
+      "object_count": 4231,
+      "api_requests": 18234,
+      "egress_bytes": 92340876,
+      "ingress_bytes": 12345678
+    }
+  ],
+  "usage_period": "2026-05"
+}
+```
+
+#### `GET /admin/api/reload-status`
+
+Most recent config-reload result. Returns `{"status": "no_reload_yet"}` on a freshly started instance that has not yet had a SIGHUP. After a reload, returns the structured result (generation, summary of diffs, validation outcome, errors).
+
+```bash
+curl -H "X-Admin-Token: $TOKEN" http://localhost:9000/admin/api/reload-status
+```
+
+#### `GET /admin/api/workers`
+
+JSON snapshot of every registered background service's last-tick state. See [Background worker health](#background-worker-health) above for the response schema and full operator workflow. Returns 503 when the lifecycle manager is not wired (proxy-only deployments).
+
+#### `GET /admin/api/log-level` &middot; `PUT /admin/api/log-level`
+
+Inspect or change the runtime log level without restarting. Accepted levels: `debug`, `info`, `warn`, `error`.
+
+```bash
+curl -H "X-Admin-Token: $TOKEN" http://localhost:9000/admin/api/log-level
+# {"level":"info"}
+
+curl -X PUT -H "X-Admin-Token: $TOKEN" -H "Content-Type: application/json" \
+  -d '{"level":"debug"}' \
+  http://localhost:9000/admin/api/log-level
+# {"level":"debug"}
+```
+
+The change is logged via an `INFO` audit entry. Useful during incidents — flip to `debug` for a minute, capture the failure mode, then flip back.
+
+### Object inspection
+
+#### `GET /admin/api/object-locations?key=<key>`
+
+Returns all backend copies of a single object key, with backend name, size, and encryption metadata. Useful for debugging "where did this object actually land?" and for verifying that the replication factor is satisfied.
+
+```bash
+curl -H "X-Admin-Token: $TOKEN" "http://localhost:9000/admin/api/object-locations?key=reports/2026-05.pdf"
+```
+
+`400` when `key` is missing.
+
+### Cleanup & quota
+
+#### `GET /admin/api/cleanup-queue`
+
+Current cleanup queue depth plus a sample of up to 50 pending rows. The web dashboard's cleanup panel uses this endpoint.
+
+```bash
+curl -H "X-Admin-Token: $TOKEN" http://localhost:9000/admin/api/cleanup-queue
+```
+
+Response includes `depth` (total pending count) and `items` (sample with id, backend, key, reason, attempts, next_retry).
+
+#### `POST /admin/api/usage-flush`
+
+Forces an out-of-band flush of the in-memory usage counters to the database. Use after a manual quota adjustment to make the new value visible immediately instead of waiting up to `usage_flush.interval` seconds. Same effect as the scheduled flush; the operation is idempotent.
+
+```bash
+curl -X POST -H "X-Admin-Token: $TOKEN" http://localhost:9000/admin/api/usage-flush
+# {"status":"flushed"}
+```
+
+### Replication & over-replication
+
+#### `POST /admin/api/replicate`
+
+Triggers a single replication cycle synchronously. Useful after a backend recovery to fast-forward repair without waiting for the next scheduled tick.
+
+```bash
+curl -X POST -H "X-Admin-Token: $TOKEN" http://localhost:9000/admin/api/replicate
+# {"status":"ok","copies_created":42}
+# or {"status":"skipped","copies_created":0,"reason":"replication factor is 1"}
+```
+
+#### `GET /admin/api/over-replication` &middot; `POST /admin/api/over-replication[?batch_size=N]`
+
+The GET form reports how many object keys currently have more copies than the configured `replication.factor` requires. The POST form runs one cleanup pass that removes surplus replicas (preferring drained, circuit-broken, and most-utilised backends — see the `OverReplicationCleaner` section in the [Background Services diagram](../web/content/diagrams/background-services.md)).
+
+```bash
+curl -H "X-Admin-Token: $TOKEN" http://localhost:9000/admin/api/over-replication
+# {"factor":3,"pending":127}
+
+curl -X POST -H "X-Admin-Token: $TOKEN" "http://localhost:9000/admin/api/over-replication?batch_size=500"
+# {"status":"ok","copies_removed":127}
+```
+
+`batch_size` defaults to the configured value; the POST form clamps user input to 10000.
+
+### Drain & backend lifecycle
+
+#### `POST /admin/api/backends/{name}/drain`
+
+Begins draining `{name}`. Subsequent writes filter the backend out of eligibility (drain race re-check in `objects_write.go` covers the in-flight case), and the drain worker starts migrating existing objects to other healthy backends.
+
+```bash
+curl -X POST -H "X-Admin-Token: $TOKEN" http://localhost:9000/admin/api/backends/oci-old/drain
+# {"status":"drain started","backend":"oci-old"} (202)
+```
+
+Returns 400 if the backend is unknown or already draining.
+
+#### `GET /admin/api/backends/{name}/drain`
+
+Returns the drain's current state: total objects/bytes moved, total remaining, started_at, last_progress_at, and any per-batch errors. Poll this during a drain to track progress.
+
+#### `DELETE /admin/api/backends/{name}/drain`
+
+Cancels the active drain. In-flight migrations finish; new migrations stop. The backend's eligibility filter is re-enabled. Useful when a drain was triggered by accident or when the intended target's free space turns out to be insufficient.
+
+#### `DELETE /admin/api/backends/{name}[?purge=true&confirm=<token>]`
+
+**Non-purge** form (default): drops the backend's DB records (object_locations, quota, usage). The backend's actual S3 objects are left in place — reversible by re-adding the backend and running `s3-orchestrator admin sync`. Use this when retiring a backend whose data has already been migrated.
+
+```bash
+curl -X DELETE -H "X-Admin-Token: $TOKEN" http://localhost:9000/admin/api/backends/oci-old
+# {"status":"backend removed","backend":"oci-old"}
+```
+
+**Purge** form (two-phase, irreversible): also deletes every S3 object on the backend.
+
+```bash
+# Phase 1: preview
+curl -X DELETE -H "X-Admin-Token: $TOKEN" "http://localhost:9000/admin/api/backends/oci-old?purge=true"
+# {"status":"confirmation required","backend":"oci-old","object_count":4231,"total_bytes":92340876,"confirm_token":"<token>"}
+
+# Phase 2: confirm using the returned token within 5 minutes
+curl -X DELETE -H "X-Admin-Token: $TOKEN" "http://localhost:9000/admin/api/backends/oci-old?purge=true&confirm=<token>"
+# {"status":"backend purged","backend":"oci-old"}
+```
+
+The confirmation token is HMAC-bound to the backend name and expires after 5 minutes, so the preview cannot be replayed against a different backend or after a typo.
+
+### Encryption operations
+
+#### `POST /admin/api/rotate-encryption-key`
+
+Re-wraps every DEK still wrapped with the named old key using the current primary master key. Required after a key rotation (see [Rotating encryption keys](#rotating-encryption-keys) below).
+
+```bash
+curl -X POST -H "X-Admin-Token: $TOKEN" -H "Content-Type: application/json" \
+  -d '{"old_key_id":"config-0"}' \
+  http://localhost:9000/admin/api/rotate-encryption-key
+# {"status":"complete","rotated":1423,"failed":0,"total":1423}
+```
+
+`old_key_id` formats: inline keys → `config-0` (primary), `config-1`, ...; file-based → `file-0`; Vault Transit → the key name. Returns 400 if encryption is not enabled or the body is malformed.
+
+#### `POST /admin/api/encrypt-existing`
+
+Bulk-encrypts every object that does not yet have encryption metadata. The orchestrator downloads each object, encrypts it, re-uploads the ciphertext, and updates the DB record. Idempotent — re-running only processes objects that are still plaintext.
+
+```bash
+curl -X POST -H "X-Admin-Token: $TOKEN" http://localhost:9000/admin/api/encrypt-existing
+# {"status":"complete","encrypted":1423,"failed":0,"total":1423}
+```
+
+Counts against backend API quotas (one GET + one PUT per object).
+
+#### `POST /admin/api/decrypt-existing`
+
+Inverse of the above: downloads every encrypted object, decrypts it, re-uploads plaintext, and clears the encryption metadata. The orchestrator must still be configured with the key provider (the DEKs need to be unwrapped). Use only when permanently removing encryption from a deployment.
+
+```bash
+curl -X POST -H "X-Admin-Token: $TOKEN" http://localhost:9000/admin/api/decrypt-existing
+# {"status":"complete","decrypted":1423,"failed":0,"total":1423}
+```
+
+### Integrity
+
+#### `POST /admin/api/scrub[?batch_size=N]`
+
+Runs one integrity scrub pass: reads random objects from each backend, computes the SHA-256, and compares to the stored `content_hash`. On mismatch the bad copy is enqueued for cleanup with reason `integrity_scrub_failed`. The scrubber's scheduled runs are independent — this endpoint just triggers an immediate pass.
+
+```bash
+curl -X POST -H "X-Admin-Token: $TOKEN" "http://localhost:9000/admin/api/scrub?batch_size=200"
+# {"status":"ok","checked":200,"failed":0}
+# or {"status":"skipped","reason":"integrity verification not enabled"}
+```
+
+#### `POST /admin/api/backfill-checksums[?batch_size=N]`
+
+Computes and stores `content_hash` for every object that does not have one yet. Use after enabling `integrity.enabled: true` on an existing deployment so the scrubber has hashes to compare against. Paginates internally until done.
+
+```bash
+curl -X POST -H "X-Admin-Token: $TOKEN" "http://localhost:9000/admin/api/backfill-checksums?batch_size=500"
+# {"status":"ok","processed":12345}
+# or {"status":"skipped","reason":"integrity verification is not enabled"}
+```
+
+### Reconciliation
+
+#### `POST /admin/api/reconcile[?backend=<name>]`
+
+On-demand reconciler pass. See [On-demand reconciliation](#on-demand-reconciliation) above for the operator workflow and the bounded-memory sorted-merge details.
+
+### Cache management
+
+The object-data cache is optional (`cache.enabled: true`). All cache endpoints return 503 `{"status":"disabled","reason":"object data cache is not enabled"}` when the cache is not configured, so callers can distinguish "no cache" from "cache empty after flush".
+
+#### `GET /admin/api/cache`
+
+Current utilization: entry count, bytes used, configured max. Mirrors the `s3o_cache_*` gauges so operators without Prometheus access can still inspect cache state.
+
+```bash
+curl -H "X-Admin-Token: $TOKEN" http://localhost:9000/admin/api/cache
+# {"entries":2341,"size_bytes":83886080,"max_bytes":268435456}
+```
+
+#### `POST /admin/api/cache/flush`
+
+Drops every entry from the cache. Used by load-test tooling to characterise cache-cold GET performance. The response carries `entries_cleared` so the caller can confirm the cache was actually populated before the flush.
+
+```bash
+curl -X POST -H "X-Admin-Token: $TOKEN" http://localhost:9000/admin/api/cache/flush
+# {"status":"flushed","entries_cleared":2341}
+```
+
+#### `DELETE /admin/api/cache/keys/{key...}`
+
+Drops a single object from the cache. The `{key...}` wildcard pattern accepts keys with embedded slashes. Always returns 200 — invalidating an unknown key is a no-op, matching the cache's own contract.
+
+```bash
+curl -X DELETE -H "X-Admin-Token: $TOKEN" http://localhost:9000/admin/api/cache/keys/reports/2026-05.pdf
+```
+
+#### `DELETE /admin/api/cache/prefix?prefix=<prefix>`
+
+Drops every cached key under the given prefix. Useful after a bulk update for one tenant or directory. Returns 400 if `prefix` is empty — use `/admin/api/cache/flush` to clear the whole cache.
+
+```bash
+curl -X DELETE -H "X-Admin-Token: $TOKEN" "http://localhost:9000/admin/api/cache/prefix?prefix=reports/"
+```
 
 ## Common Operations
 

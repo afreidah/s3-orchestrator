@@ -30,25 +30,25 @@ backends:
     endpoint: https://objectstorage.us-ashburn-1.oraclecloud.com
     region: us-ashburn-1
     bucket: primary-bucket
-    access_key: "<oci-access-key>"
-    secret_key: "<oci-secret-key>"
-    quota: 10737418240  # 10 GB
+    access_key_id: "<oci-access-key>"
+    secret_access_key: "<oci-secret-key>"
+    quota_bytes: 10737418240  # 10 GB
 
   - name: r2
     endpoint: https://<account-id>.r2.cloudflarestorage.com
     region: auto
     bucket: primary-bucket
-    access_key: "<r2-access-key>"
-    secret_key: "<r2-secret-key>"
-    quota: 10737418240  # 10 GB
+    access_key_id: "<r2-access-key>"
+    secret_access_key: "<r2-secret-key>"
+    quota_bytes: 10737418240  # 10 GB
 
   - name: b2
     endpoint: https://s3.us-west-004.backblazeb2.com
     region: us-west-004
     bucket: primary-bucket
-    access_key: "<b2-access-key>"
-    secret_key: "<b2-secret-key>"
-    quota: 10737418240  # 10 GB
+    access_key_id: "<b2-access-key>"
+    secret_access_key: "<b2-secret-key>"
+    quota_bytes: 10737418240  # 10 GB
 ```
 
 The `spread` strategy distributes writes evenly across backends, keeping storage usage balanced.
@@ -58,7 +58,8 @@ The `spread` strategy distributes writes evenly across backends, keeping storage
 The replication factor controls how many copies of each object exist across your backends. Set it to the number of independent copies you want.
 
 ```yaml
-replication_factor: 2
+replication:
+  factor: 2
 ```
 
 With three backends and a replication factor of 2, each object is written to one backend on upload and then asynchronously copied to one additional backend. A factor of 3 would place a copy on every backend.
@@ -74,8 +75,9 @@ Create a virtual bucket with credentials for your application.
 ```yaml
 buckets:
   - name: myapp
-    access_key: "<client-access-key>"
-    secret_key: "<client-secret-key>"
+    credentials:
+      - access_key_id: "<client-access-key>"
+        secret_access_key: "<client-secret-key>"
 ```
 
 ## Step 4: Connect Your Application
@@ -84,7 +86,7 @@ Point your application at the orchestrator endpoint using the virtual bucket cre
 
 ```bash
 # AWS CLI
-aws configure set default.endpoint_url http://orchestrator-host:8080
+aws configure set default.endpoint_url http://orchestrator-host:9000
 aws s3 cp report.pdf s3://myapp/report.pdf
 
 # rclone
@@ -93,7 +95,7 @@ rclone copy report.pdf s3orchestrator:myapp/
 # Python (boto3)
 import boto3
 s3 = boto3.client('s3',
-    endpoint_url='http://orchestrator-host:8080',
+    endpoint_url='http://orchestrator-host:9000',
     aws_access_key_id='<client-access-key>',
     aws_secret_access_key='<client-secret-key>')
 s3.upload_file('report.pdf', 'myapp', 'report.pdf')

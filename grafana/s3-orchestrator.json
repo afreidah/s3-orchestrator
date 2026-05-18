@@ -1167,7 +1167,7 @@
       "targets": [
         {
           "expr": "sum by (name, from, to) (increase(s3o_circuit_breaker_transitions_total[5m]))",
-          "legendFormat": "{{name}}: {{from}} \u2192 {{to}}"
+          "legendFormat": "{{name}}: {{from}} → {{to}}"
         }
       ],
       "options": {
@@ -3808,6 +3808,463 @@
           }
         }
       }
+    },
+    {
+      "type": "row",
+      "id": 86,
+      "title": "Worker Health",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 193,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 87,
+      "title": "Worker tick rate by service & result",
+      "gridPos": {
+        "x": 0,
+        "y": 194,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (service, result) (rate(s3o_worker_ticks_total[5m]))",
+          "legendFormat": "{{service}} {{result}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 88,
+      "title": "Consecutive failures per worker (gauge)",
+      "gridPos": {
+        "x": 12,
+        "y": 194,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "s3o_worker_consecutive_failures",
+          "legendFormat": "{{service}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 89,
+      "title": "Seconds since last successful tick",
+      "gridPos": {
+        "x": 0,
+        "y": 202,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "time() - s3o_worker_last_success_timestamp_seconds",
+          "legendFormat": "{{service}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 90,
+      "title": "Worker admission rejections",
+      "gridPos": {
+        "x": 12,
+        "y": 202,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (worker) (rate(s3o_worker_admission_rejections_total[5m]))",
+          "legendFormat": "{{worker}}"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "id": 91,
+      "title": "Event Notifications",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 210,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "stat",
+      "id": 92,
+      "title": "Notification queue depth",
+      "gridPos": {
+        "x": 0,
+        "y": 211,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "s3o_notification_queue_depth"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 93,
+      "title": "Notifications sent / failed / dropped",
+      "gridPos": {
+        "x": 6,
+        "y": 211,
+        "w": 18,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(s3o_notification_sent_total[5m]))",
+          "legendFormat": "sent"
+        },
+        {
+          "expr": "sum(rate(s3o_notification_failed_total[5m]))",
+          "legendFormat": "failed"
+        },
+        {
+          "expr": "sum(rate(s3o_notification_dropped_total[5m]))",
+          "legendFormat": "dropped"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 94,
+      "title": "Notification delivery duration (p95)",
+      "gridPos": {
+        "x": 0,
+        "y": 219,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(s3o_notification_duration_seconds_bucket[5m])))",
+          "legendFormat": "p95"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 95,
+      "title": "Notification store errors",
+      "gridPos": {
+        "x": 12,
+        "y": 219,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(s3o_notification_store_errors_total[5m]))",
+          "legendFormat": "store errors"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "id": 96,
+      "title": "Cleanup DLQ & Enqueue Failures",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 227,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "stat",
+      "id": 97,
+      "title": "Cleanup DLQ depth",
+      "gridPos": {
+        "x": 0,
+        "y": 228,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "s3o_cleanup_dlq_depth"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 98,
+      "title": "Rows graduated to DLQ by backend",
+      "gridPos": {
+        "x": 6,
+        "y": 228,
+        "w": 18,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (backend) (rate(s3o_cleanup_dlq_enqueued_total[15m]))",
+          "legendFormat": "{{backend}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 99,
+      "title": "Cleanup enqueue failures (untracked-orphan risk)",
+      "gridPos": {
+        "x": 0,
+        "y": 236,
+        "w": 24,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (backend, stage) (rate(s3o_cleanup_enqueue_failures_total[5m]))",
+          "legendFormat": "{{backend}} {{stage}}"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "id": 100,
+      "title": "Coverage Backfill",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 244,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 101,
+      "title": "Drain race aborts (#653)",
+      "gridPos": {
+        "x": 0,
+        "y": 245,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(s3o_drain_race_aborted_total[5m]))",
+          "legendFormat": "aborted"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 102,
+      "title": "List page cap hits",
+      "gridPos": {
+        "x": 12,
+        "y": 245,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(s3o_list_pages_capped_total[5m]))",
+          "legendFormat": "capped"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 103,
+      "title": "Circuit breaker internal errors",
+      "gridPos": {
+        "x": 0,
+        "y": 253,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (name) (rate(s3o_circuit_breaker_internal_errors_total[5m]))",
+          "legendFormat": "{{name}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 104,
+      "title": "Admission client cancellations",
+      "gridPos": {
+        "x": 12,
+        "y": 253,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(s3o_admission_client_canceled_total[5m]))",
+          "legendFormat": "canceled"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 105,
+      "title": "Decrypt-existing admin op",
+      "gridPos": {
+        "x": 0,
+        "y": 261,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (status) (rate(s3o_decrypt_existing_objects_total[5m]))",
+          "legendFormat": "{{status}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 106,
+      "title": "Cache admin invalidations & flushes",
+      "gridPos": {
+        "x": 12,
+        "y": 261,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(s3o_cache_admin_invalidations_total[5m]))",
+          "legendFormat": "invalidations"
+        },
+        {
+          "expr": "sum(rate(s3o_cache_flush_total[5m]))",
+          "legendFormat": "flushes"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 107,
+      "title": "Over-replication cleaner runs",
+      "gridPos": {
+        "x": 0,
+        "y": 269,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (status) (rate(s3o_over_replication_runs_total[5m]))",
+          "legendFormat": "{{status}}"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "id": 108,
+      "title": "Objects tracked (total)",
+      "gridPos": {
+        "x": 12,
+        "y": 269,
+        "w": 12,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(s3o_objects_count)",
+          "legendFormat": "objects"
+        }
+      ]
     }
   ]
 }

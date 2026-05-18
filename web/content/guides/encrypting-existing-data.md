@@ -8,7 +8,7 @@ This guide walks through enabling server-side encryption on an S3 Orchestrator i
 
 ## Overview
 
-When you enable encryption, only **new** objects are encrypted automatically. Existing objects remain unencrypted until you explicitly encrypt them using the `encrypt-existing` admin command. This is a one-time operation that processes all unencrypted objects in batches.
+When you enable encryption, only **new** objects are encrypted automatically. Existing objects remain unencrypted until you explicitly encrypt them via the `/admin/api/encrypt-existing` endpoint. This is a one-time operation that processes all unencrypted objects in batches.
 
 ## Prerequisites
 
@@ -60,10 +60,12 @@ After restarting, all new objects will be encrypted automatically. Existing obje
 
 ## Step 4: Encrypt Existing Objects
 
-Run the admin command to encrypt all existing unencrypted objects:
+Encrypt all existing unencrypted objects by hitting the admin API. The
+orchestrator does not ship a CLI subcommand for this — use the HTTP endpoint:
 
 ```bash
-s3-orchestrator admin encrypt-existing
+curl -X POST http://orchestrator-host:9000/admin/api/encrypt-existing \
+  -H "Authorization: Bearer ${ADMIN_TOKEN}"
 ```
 
 This processes objects in batches of 100: each object is downloaded from its backend, encrypted, re-uploaded (overwriting the plaintext), and its database record is updated. The response shows progress:
@@ -85,7 +87,7 @@ Monitor the `s3o_encrypt_existing_objects_total` metric:
 | `success` | Objects successfully encrypted |
 | `error` | Objects that failed encryption |
 
-If any objects failed, check the logs for details and run `encrypt-existing` again - it only processes objects without encryption metadata, so it's safe to retry.
+If any objects failed, check the logs for details and re-POST to `/admin/api/encrypt-existing` again - it only processes objects without encryption metadata, so it's safe to retry.
 
 ## Important Notes
 

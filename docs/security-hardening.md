@@ -127,7 +127,7 @@ Monitor encryption health with these Prometheus metrics:
 
 ### Nonce Safety
 
-Chunked encryption derives per-chunk nonces by XORing the chunk index into a random base nonce. AES-GCM security requires that the same (key, nonce) pair is never reused. This is guaranteed because each object gets a fresh random DEK and a fresh random base nonce — even re-uploads of identical content produce different ciphertext. See `internal/encryption/chunk.go` for the full safety invariant documentation.
+Chunked encryption derives per-chunk nonces by XORing the chunk index into a random base nonce. AES-GCM security requires that the same (key, nonce) pair is never reused. This is guaranteed because each object gets a fresh random DEK and a fresh random base nonce — even re-uploads of identical content produce different ciphertext. The `SAFETY INVARIANT` comment block at `internal/encryption/chunk.go:258-280` captures the three-clause reasoning (fresh DEK per object, fresh base nonce per call, sequential chunk indices) and notes when this derivation must be replaced (e.g., if the DEK-per-object invariant is ever relaxed for performance).
 
 ## SigV4 Path Handling
 
