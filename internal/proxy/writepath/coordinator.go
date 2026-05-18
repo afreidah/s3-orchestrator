@@ -246,11 +246,21 @@ func (w *Coordinator) cleanupDisplacedCopies(ctx context.Context, key, newBacken
 func (w *Coordinator) DeleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, backendName, key, reason string, sizeBytes int64) {
 	err := w.core.DeleteWithTimeout(ctx, be, key)
 	w.core.Acct().APICall(backendName)
-	if err != nil {
-		w.log.WarnContext(ctx, "failed to delete object, enqueuing cleanup",
-			"backend", backendName, "key", key, "reason", reason, "error", err)
-		w.EnqueueCleanup(ctx, backendName, key, reason, sizeBytes)
+	if err == nil {
+		return
 	}
+	// A 404 means the backend already agrees the object is gone, which
+	// is the desired end state. Skip enqueueing so we don't seed the
+	// cleanup queue with rows the cleanup worker would also have to
+	// recognise as no-ops. See issue #843.
+	if backend.IsNotFound(err) {
+		w.log.InfoContext(ctx, "delete target already absent on backend, skipping cleanup enqueue",
+			"backend", backendName, "key", key, "reason", reason)
+		return
+	}
+	w.log.WarnContext(ctx, "failed to delete object, enqueuing cleanup",
+		"backend", backendName, "key", key, "reason", reason, "error", err)
+	w.EnqueueCleanup(ctx, backendName, key, reason, sizeBytes)
 }
 
 // EnqueueCleanup adds a failed cleanup operation to the retry queue and
