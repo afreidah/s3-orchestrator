@@ -55,6 +55,13 @@ func NewCleanupWorker(deps CleanupOps, store CleanupWorkerStore, concurrency int
 // Beyond that the row graduates to cleanup_dlq for operator action.
 const maxCleanupAttempts = 10
 
+// logMsgCompleteCleanupFailed is the shared error log message emitted
+// when CompleteCleanupItem fails. Hoisted to a constant so the three
+// completion paths (success, success_absent, unknown_backend) stay in
+// lockstep and the SonarQube duplicate-literal rule (S1192) stays
+// satisfied.
+const logMsgCompleteCleanupFailed = "failed to complete cleanup item"
+
 // CleanupBackoff returns the backoff duration for the given attempt number.
 // Uses exponential backoff: min(1m * 2^attempts, 24h). Short-circuits the
 // shift for attempts >= 11 (where the doubling already exceeds the cap) and
@@ -159,7 +166,7 @@ func (w *CleanupWorker) processCleanupItem(
 // decremented by CompleteCleanupItem).
 func (w *CleanupWorker) completeCleanupAlreadyAbsent(ctx context.Context, item *core.CleanupItem, processedCount *atomic.Int32) {
 	if err := w.store.CompleteCleanupItem(ctx, item.ID); err != nil {
-		w.log.ErrorContext(ctx, "failed to complete cleanup item", slog.Int64("cleanup_id", item.ID), "error", err)
+		w.log.ErrorContext(ctx, logMsgCompleteCleanupFailed, slog.Int64("cleanup_id", item.ID), "error", err)
 	}
 	telemetry.CleanupQueueProcessedTotal.WithLabelValues("success_absent").Inc()
 	processedCount.Add(1)
@@ -183,7 +190,7 @@ func (w *CleanupWorker) completeUnknownBackendItem(ctx context.Context, item *co
 	w.log.WarnContext(ctx, "backend not found, removing item",
 		"backend", item.BackendName, "key", item.ObjectKey)
 	if err := w.store.CompleteCleanupItem(ctx, item.ID); err != nil {
-		w.log.ErrorContext(ctx, "failed to complete cleanup item", slog.Int64("cleanup_id", item.ID), "error", err)
+		w.log.ErrorContext(ctx, logMsgCompleteCleanupFailed, slog.Int64("cleanup_id", item.ID), "error", err)
 	}
 	telemetry.CleanupQueueProcessedTotal.WithLabelValues("success").Inc()
 	processedCount.Add(1)
@@ -194,7 +201,7 @@ func (w *CleanupWorker) completeUnknownBackendItem(ctx context.Context, item *co
 // backend in a single CTE), audit, and bump the success counter.
 func (w *CleanupWorker) completeCleanupSuccess(ctx context.Context, item *core.CleanupItem, processedCount *atomic.Int32) {
 	if err := w.store.CompleteCleanupItem(ctx, item.ID); err != nil {
-		w.log.ErrorContext(ctx, "failed to complete cleanup item", slog.Int64("cleanup_id", item.ID), "error", err)
+		w.log.ErrorContext(ctx, logMsgCompleteCleanupFailed, slog.Int64("cleanup_id", item.ID), "error", err)
 	}
 	telemetry.CleanupQueueProcessedTotal.WithLabelValues("success").Inc()
 	processedCount.Add(1)
