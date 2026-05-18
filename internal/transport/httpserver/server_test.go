@@ -352,7 +352,9 @@ func TestConfigureMetrics_Disabled(t *testing.T) {
 }
 
 // TestConfigureMetrics_Inline mounts /metrics on the supplied mux when
-// no separate Listen address is configured.
+// no separate Listen address is configured. Pprof MUST NOT be mounted
+// on the inline mux - it shares the listener with the public S3 API
+// and would expose runtime internals without authentication.
 func TestConfigureMetrics_Inline(t *testing.T) {
 	t.Parallel()
 	mux := http.NewServeMux()
@@ -369,10 +371,25 @@ func TestConfigureMetrics_Inline(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("/metrics status = %d, want 200", w.Code)
 	}
+
+	// Security regression: pprof handlers must NOT be reachable on the
+	// inline mux. We probe /debug/pprof/ and the most commonly leaked
+	// sub-endpoint (cmdline). When configureMetrics has not mounted
+	// them the mux returns 404; if a future patch wires them up
+	// inline (the issue #886 case), this test fails.
+	for _, path := range []string{"/debug/pprof/", "/debug/pprof/cmdline"} {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		mux.ServeHTTP(w, req)
+		if w.Code != http.StatusNotFound {
+			t.Errorf("inline-metrics mux must not expose %s (status = %d, want 404)", path, w.Code)
+		}
+	}
 }
 
 // TestConfigureMetrics_SeparateListener returns a non-nil server bound
-// to the configured Listen address.
+// to the configured Listen address with both /metrics and pprof
+// handlers mounted.
 func TestConfigureMetrics_SeparateListener(t *testing.T) {
 	t.Parallel()
 	mux := http.NewServeMux()
@@ -387,6 +404,19 @@ func TestConfigureMetrics_SeparateListener(t *testing.T) {
 	}
 	if srv.Addr != listen {
 		t.Errorf("Addr = %q, want %q", srv.Addr, listen)
+	}
+
+	// Pprof MUST be reachable on the dedicated listener's handler.
+	// Operators use the dedicated listener precisely so they can
+	// profile in production without exposing the surface on the
+	// public S3 listener.
+	for _, path := range []string{"/debug/pprof/", "/debug/pprof/cmdline"} {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		srv.Handler.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Errorf("dedicated metrics listener must expose %s (status = %d, want 200)", path, w.Code)
+		}
 	}
 }
 

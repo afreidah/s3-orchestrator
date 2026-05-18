@@ -37,6 +37,12 @@ job "s3-orchestrator" {
       port "http" {
         static = 9000
       }
+      # Dedicated metrics+pprof listener. Pprof endpoints are mounted
+      # here, never on the public S3 port. Bind via the YAML
+      # template below to 127.0.0.1 or a private network interface.
+      port "metrics" {
+        static = 9001
+      }
     }
 
     service {
@@ -311,6 +317,15 @@ job "s3-orchestrator" {
             metrics:
               enabled: true
               path: "/metrics"
+              # Dedicated listener for /metrics + /debug/pprof/*.
+              # Mounting pprof on the public S3 listener would leak
+              # runtime internals and offer a DoS amplifier
+              # (/debug/pprof/profile?seconds=300). Bind to an
+              # internal-only interface; the demo uses 0.0.0.0:9001
+              # so the docker-compose Prometheus can scrape via the
+              # bridge gateway. Tighten this to 127.0.0.1:9001 or a
+              # private network address for non-local deployments.
+              listen: "127.0.0.1:9001"
             tracing:
               enabled: true
               endpoint: "tempo.service.consul:4317"
