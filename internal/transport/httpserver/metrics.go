@@ -15,6 +15,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"net/http/pprof"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -23,10 +24,31 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 )
 
+// mountPprof wires the standard net/http/pprof handlers on the supplied
+// mux. The pprof endpoints expose deep runtime state (de-anonymized
+// stack frames, command-line flags, on-demand CPU profiles that double
+// as DoS amplifiers) so they MUST NOT be mounted on any listener that
+// accepts user traffic. configureMetrics only calls this helper when a
+// dedicated metrics listener is configured (typically bound to an
+// internal-only interface); operators who run inline metrics on the
+// main S3 listener intentionally do not get pprof.
+func mountPprof(mux *http.ServeMux) {
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+}
+
 // configureMetrics either registers /metrics on mux or returns a separate
 // metrics listener for the runtime to start. Returns nil when metrics are
 // disabled. The separate listener is the caller's responsibility to start
 // and shut down; this function only constructs it.
+//
+// Pprof is opt-in (cfg.Pprof) AND requires the dedicated listener form
+// (cfg.Listen set). Inline-metrics deployments never get pprof, and the
+// production default leaves cfg.Pprof false so the debug surface is
+// off unless an operator explicitly enables it.
 func configureMetrics(mux *http.ServeMux, cfg *config.MetricsConfig) *http.Server {
 	if !cfg.Enabled {
 		return nil
@@ -35,6 +57,17 @@ func configureMetrics(mux *http.ServeMux, cfg *config.MetricsConfig) *http.Serve
 	if cfg.Listen != "" {
 		metricsMux := http.NewServeMux()
 		metricsMux.Handle(cfg.Path, promhttp.Handler())
+		pprofMounted := false
+		if cfg.Pprof {
+			mountPprof(metricsMux)
+			pprofMounted = true
+		}
+		slog.InfoContext(context.Background(), "metrics endpoint enabled on dedicated listener",
+			logfmt.Component("httpserver"),
+			"listen", cfg.Listen,
+			"path", cfg.Path,
+			"pprof", pprofMounted,
+		)
 		return &http.Server{
 			Addr:              cfg.Listen,
 			Handler:           metricsMux,
@@ -42,8 +75,13 @@ func configureMetrics(mux *http.ServeMux, cfg *config.MetricsConfig) *http.Serve
 		}
 	}
 
+	if cfg.Pprof {
+		slog.WarnContext(context.Background(), "telemetry.metrics.pprof=true ignored: pprof requires telemetry.metrics.listen (dedicated listener); not mounting on main S3 listener",
+			logfmt.Component("httpserver"),
+		)
+	}
 	mux.Handle(cfg.Path, promhttp.Handler())
-	slog.InfoContext(context.Background(), "metrics endpoint enabled",
+	slog.InfoContext(context.Background(), "metrics endpoint enabled on main listener",
 		logfmt.Component("httpserver"),
 		"path", cfg.Path,
 	)

@@ -20,6 +20,14 @@ job "s3-orchestrator" {
       port "http" {
         static = 9000
       }
+      # Dedicated metrics+pprof listener. Pprof endpoints are mounted
+      # here, not on the S3 listener, so runtime internals stay off
+      # the public port. In production this binds to an internal-only
+      # interface (the demo binds 0.0.0.0 so the docker-compose
+      # Prometheus container can reach it from its bridge network).
+      port "metrics" {
+        static = 9001
+      }
     }
 
     service {
@@ -51,7 +59,11 @@ job "s3-orchestrator" {
 
       config {
         image = "s3-orchestrator:local"
-        ports = ["http"]
+        # `metrics` must be listed alongside `http` so Nomad's docker
+        # driver actually publishes the port from the container to the
+        # host. Declaring it only in the network block reserves the
+        # number but does not bind it.
+        ports = ["http", "metrics"]
 
         volumes = [
           "local/config.yaml:/etc/s3-orchestrator/config.yaml",
@@ -174,6 +186,16 @@ job "s3-orchestrator" {
           telemetry:
             metrics:
               enabled: true
+              # Dedicated listener for /metrics and (when pprof: true)
+              # /debug/pprof/*. Binding metrics to a separate listener
+              # keeps pprof off the public S3 port. 0.0.0.0 here lets
+              # the docker-compose Prometheus container scrape via the
+              # bridge gateway; in production this should be 127.0.0.1
+              # or an internal-only interface.
+              listen: "0.0.0.0:9001"
+              # Local demo opt-in so perf runs can capture profiles.
+              # Production should leave this off (default).
+              pprof: true
             tracing:
               enabled: true
               endpoint: "__HOST_IP__:4317"
