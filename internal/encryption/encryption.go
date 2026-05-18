@@ -21,6 +21,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"io"
+	"sync"
 )
 
 // -------------------------------------------------------------------------
@@ -29,9 +30,16 @@ import (
 
 // Encryptor provides encrypt and decrypt operations using envelope encryption
 // with a pluggable KeyProvider for DEK wrapping.
+//
+// Per-stream byte buffers (plaintext staging, framed ciphertext, nonce,
+// header) come from bufPool. Reusing the same buffer set across streams
+// keeps the encrypt + decrypt hot path allocation-free once the pool is
+// warm; under load the orchestrator was previously dominated by these
+// per-stream allocations (PR #885).
 type Encryptor struct {
 	provider  KeyProvider
 	chunkSize int
+	bufPool   sync.Pool
 }
 
 // EncryptResult holds the output of an encryption operation, including the
@@ -71,14 +79,20 @@ func (r *EncryptResult) RawDEK() []byte { return r.rawDEK }
 // NewEncryptor creates an Encryptor with the given key provider and chunk
 // size. The chunk size must be positive. Config validation enforces stricter
 // bounds (4KB-1MB, power of 2); this guard catches programming errors.
+//
+// The buffer pool is seeded with chunkBuffers sized to chunkSize so every
+// borrowing reader gets a buffer set that fits a worst-case full chunk
+// without growth.
 func NewEncryptor(provider KeyProvider, chunkSize int) (*Encryptor, error) {
 	if chunkSize <= 0 {
 		return nil, fmt.Errorf("encryption chunk size must be positive, got %d", chunkSize)
 	}
-	return &Encryptor{
+	e := &Encryptor{
 		provider:  provider,
 		chunkSize: chunkSize,
-	}, nil
+	}
+	e.bufPool.New = func() any { return newChunkBuffers(chunkSize) }
+	return e, nil
 }
 
 // ChunkSize returns the configured plaintext chunk size.
@@ -141,10 +155,13 @@ func (e *Encryptor) GenerateAndWrapDEK(ctx context.Context) (dek, wrappedDEK []b
 // assembleEncryptResult builds the streaming ciphertext reader and the
 // EncryptResult shared by Encrypt and EncryptWithDEK. The two callers
 // differ only in how they obtain (dek, wrappedDEK, keyID); everything
-// downstream is identical.
+// downstream is identical. Buffers come from the per-Encryptor pool
+// and are returned automatically when the reader reaches io.EOF.
 func (e *Encryptor) assembleEncryptResult(body io.Reader, plaintextSize int64, dek, wrappedDEK []byte, keyID string) (*EncryptResult, error) {
-	encReader, err := newEncryptReader(body, dek, e.chunkSize)
+	bufs, release := e.borrowChunkBuffers()
+	encReader, err := newEncryptReader(body, dek, e.chunkSize, bufs, release)
 	if err != nil {
+		release()
 		return nil, fmt.Errorf("encrypt reader: %w", err)
 	}
 	return &EncryptResult{
@@ -157,13 +174,22 @@ func (e *Encryptor) assembleEncryptResult(body io.Reader, plaintextSize int64, d
 	}, nil
 }
 
+// borrowChunkBuffers fetches a chunkBuffers from the pool and returns
+// the release closure that puts it back. The reader fires release on
+// io.EOF; callers also fire it on a construction error path.
+func (e *Encryptor) borrowChunkBuffers() (*chunkBuffers, func()) {
+	bufs := e.bufPool.Get().(*chunkBuffers)
+	return bufs, func() { e.bufPool.Put(bufs) }
+}
+
 // -------------------------------------------------------------------------
 // DECRYPT
 // -------------------------------------------------------------------------
 
 // Decrypt unwraps the DEK and returns a streaming plaintext reader for the
 // entire encrypted object. The body must start at the beginning of the
-// ciphertext (including the header).
+// ciphertext (including the header). Buffers come from the per-Encryptor
+// pool and are returned automatically when the reader reaches io.EOF.
 func (e *Encryptor) Decrypt(ctx context.Context, body io.Reader, wrappedDEK []byte, keyID string) (io.Reader, error) {
 	dek, err := e.provider.UnwrapDEK(ctx, wrappedDEK, keyID)
 	if err != nil {
@@ -175,7 +201,13 @@ func (e *Encryptor) Decrypt(ctx context.Context, body io.Reader, wrappedDEK []by
 		return nil, fmt.Errorf("parse header: %w", err)
 	}
 
-	return newDecryptReader(body, dek, baseNonce, chunkSize, 0)
+	bufs, release := e.borrowChunkBuffers()
+	dr, err := newDecryptReader(body, dek, baseNonce, chunkSize, 0, bufs, release)
+	if err != nil {
+		release()
+		return nil, err
+	}
+	return dr, nil
 }
 
 // DecryptRange unwraps the DEK and returns a streaming plaintext reader for
@@ -188,8 +220,10 @@ func (e *Encryptor) DecryptRange(ctx context.Context, body io.Reader, wrappedDEK
 		return nil, 0, fmt.Errorf("unwrap DEK: %w", err)
 	}
 
-	dr, err := newDecryptReader(body, dek, baseNonce, e.chunkSize, rng.StartChunk)
+	bufs, release := e.borrowChunkBuffers()
+	dr, err := newDecryptReader(body, dek, baseNonce, e.chunkSize, rng.StartChunk, bufs, release)
 	if err != nil {
+		release()
 		return nil, 0, fmt.Errorf("decrypt reader: %w", err)
 	}
 

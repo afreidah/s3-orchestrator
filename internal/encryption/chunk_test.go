@@ -11,6 +11,7 @@ package encryption
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/binary"
 	"io"
@@ -66,7 +67,7 @@ func TestChunkNonce_DoesNotMutateBase(t *testing.T) {
 func TestRoundTrip_EmptyInput(t *testing.T) {
 	t.Parallel()
 	dek := testDEK()
-	er, err := newEncryptReader(bytes.NewReader(nil), dek, 1024)
+	er, err := newEncryptReader(bytes.NewReader(nil), dek, 1024, newChunkBuffers(1024), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +133,7 @@ func testRoundTrip(t *testing.T, chunkSize, inputSize int) {
 	dek := testDEK()
 
 	// Encrypt
-	er, err := newEncryptReader(bytes.NewReader(plaintext), dek, chunkSize)
+	er, err := newEncryptReader(bytes.NewReader(plaintext), dek, chunkSize, newChunkBuffers(chunkSize), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +153,7 @@ func testRoundTrip(t *testing.T, chunkSize, inputSize int) {
 	}
 
 	// Decrypt
-	dr, err := newDecryptReader(hdrReader, dek, baseNonce, cs, 0)
+	dr, err := newDecryptReader(hdrReader, dek, baseNonce, cs, 0, newChunkBuffers(cs), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +229,7 @@ func TestCiphertextSize(t *testing.T) {
 	chunkSize := 1024
 	inputSize := 2500 // 3 chunks: 1024 + 1024 + 452
 
-	er, err := newEncryptReader(bytes.NewReader(make([]byte, inputSize)), dek, chunkSize)
+	er, err := newEncryptReader(bytes.NewReader(make([]byte, inputSize)), dek, chunkSize, newChunkBuffers(chunkSize), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +254,7 @@ func TestDecryptReader_ChunkTooShort(t *testing.T) {
 	dek := testDEK()
 	// Feed a truncated chunk (just a few bytes, less than NonceSize+TagSize)
 	short := make([]byte, 5)
-	dr, err := newDecryptReader(bytes.NewReader(short), dek, make([]byte, NonceSize), 1024, 0)
+	dr, err := newDecryptReader(bytes.NewReader(short), dek, make([]byte, NonceSize), 1024, 0, newChunkBuffers(1024), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +271,7 @@ func TestDecryptReader_NonceMismatch(t *testing.T) {
 	chunkSize := 64
 
 	// Encrypt a small payload
-	er, err := newEncryptReader(bytes.NewReader(make([]byte, chunkSize)), dek, chunkSize)
+	er, err := newEncryptReader(bytes.NewReader(make([]byte, chunkSize)), dek, chunkSize, newChunkBuffers(chunkSize), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,7 +286,7 @@ func TestDecryptReader_NonceMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dr, err := newDecryptReader(r, dek, baseNonce, cs, 99) // wrong start chunk
+	dr, err := newDecryptReader(r, dek, baseNonce, cs, 99, newChunkBuffers(cs), nil) // wrong start chunk
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -303,7 +304,7 @@ func BenchmarkEncryptReader(b *testing.B) {
 	b.SetBytes(int64(len(data)))
 	b.ResetTimer()
 	for b.Loop() {
-		er, err := newEncryptReader(bytes.NewReader(data), dek, 64*1024)
+		er, err := newEncryptReader(bytes.NewReader(data), dek, 64*1024, newChunkBuffers(64*1024), nil)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -318,7 +319,7 @@ func BenchmarkDecryptReader(b *testing.B) {
 	data := make([]byte, 1<<20) // 1 MiB
 
 	// Pre-encrypt
-	er, err := newEncryptReader(bytes.NewReader(data), dek, chunkSize)
+	er, err := newEncryptReader(bytes.NewReader(data), dek, chunkSize, newChunkBuffers(chunkSize), nil)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -335,11 +336,244 @@ func BenchmarkDecryptReader(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		dr, err := newDecryptReader(r, dek, baseNonce, cs, 0)
+		dr, err := newDecryptReader(r, dek, baseNonce, cs, 0, newChunkBuffers(cs), nil)
 		if err != nil {
 			b.Fatal(err)
 		}
 		_, _ = io.Copy(io.Discard, dr)
+	}
+}
+
+// TestEncryptDecryptReaders_ZeroAllocsOnChunkHotPath pins the per-chunk
+// allocation count for the streaming encrypt + decrypt readers. The
+// constructor allocates a small constant number of buffers (cipher,
+// gcm, baseNonce, header, plainBuf, nonceBuf, chunkOutBuf for encrypt
+// and the equivalent set for decrypt). Once those are paid, gcm.Seal
+// and gcm.Open run into pre-allocated dst buffers and the chunk loop
+// itself must allocate nothing. A regression that re-introduces
+// Seal(nil, ...) / Open(nil, ...) or per-chunk make() would show up
+// as a multi-allocation-per-chunk number on a multi-chunk object.
+//
+// This test is the contract behind #885. The upper bounds below are
+// generous (~2x current real numbers) so the test is not flaky
+// against future constructor changes; the shape asserted is that
+// allocs per whole-object encrypt do not grow with chunk count.
+func TestEncryptDecryptReaders_ZeroAllocsOnChunkHotPath(t *testing.T) {
+	// AllocsPerRun panics under t.Parallel(); intentionally serial.
+	const chunkSize = 64 * 1024
+	const objectSize = 1 << 20 // 1 MiB -> 16 chunks
+	const allocsUpperBound = 15
+
+	dek := testDEK()
+	plaintext := make([]byte, objectSize)
+	scratch := make([]byte, 16*1024)
+
+	// One encrypt to capture the output we feed to the decrypt path.
+	body, cs, baseNonce := encryptAllForBench(t, plaintext, dek, chunkSize)
+
+	encOpen := func() io.Reader {
+		er, err := newEncryptReader(bytes.NewReader(plaintext), dek, chunkSize, newChunkBuffers(chunkSize), nil)
+		if err != nil {
+			t.Fatalf("newEncryptReader: %v", err)
+		}
+		return er
+	}
+	decOpen := func() io.Reader {
+		dr, err := newDecryptReader(bytes.NewReader(body), dek, baseNonce, cs, 0, newChunkBuffers(cs), nil)
+		if err != nil {
+			t.Fatalf("newDecryptReader: %v", err)
+		}
+		return dr
+	}
+
+	assertAllocsBelow(t, "encrypt", encOpen, scratch, allocsUpperBound)
+	assertAllocsBelow(t, "decrypt", decOpen, scratch, allocsUpperBound)
+}
+
+// encryptAllForBench encrypts plaintext once with the given DEK/chunk
+// size and returns the chunk body (after stripping the header) plus
+// the parsed header fields. Helper extracted to keep
+// TestEncryptDecryptReaders_ZeroAllocsOnChunkHotPath simple enough
+// for Sonarqube's cognitive-complexity rule (go:S3776).
+func encryptAllForBench(t *testing.T, plaintext, dek []byte, chunkSize int) (body []byte, cs int, baseNonce []byte) {
+	t.Helper()
+	er, err := newEncryptReader(bytes.NewReader(plaintext), dek, chunkSize, newChunkBuffers(chunkSize), nil)
+	if err != nil {
+		t.Fatalf("newEncryptReader: %v", err)
+	}
+	full, err := io.ReadAll(er)
+	if err != nil {
+		t.Fatalf("read encrypted: %v", err)
+	}
+	cs, baseNonce, err = ParseHeader(bytes.NewReader(full[:HeaderSize]))
+	if err != nil {
+		t.Fatalf("parse header: %v", err)
+	}
+	return full[HeaderSize:], cs, baseNonce
+}
+
+// assertAllocsBelow drives one direction (encrypt or decrypt) through
+// testing.AllocsPerRun and fails the test if allocations per whole-
+// object run exceed the upper bound. Pre-#885 a 16-chunk encrypt
+// allocated ~39 times and a decrypt ~22; the post-fix readers allocate
+// in the single digits, so the bound is set generously to ~2x current.
+func assertAllocsBelow(t *testing.T, label string, openReader func() io.Reader, scratch []byte, upperBound int) {
+	t.Helper()
+	allocs := testing.AllocsPerRun(50, func() {
+		drainReader(t, openReader(), scratch)
+	})
+	if allocs > float64(upperBound) {
+		t.Errorf("%s allocs/op = %.0f, want <= %d (regression: per-chunk allocation reintroduced?)", label, allocs, upperBound)
+	}
+}
+
+// drainReader reads from r into scratch until io.EOF, failing the test
+// on any other error. Extracted from the alloc assertion loop to keep
+// each individual helper under the cognitive-complexity budget.
+func drainReader(t *testing.T, r io.Reader, scratch []byte) {
+	t.Helper()
+	for {
+		_, err := r.Read(scratch)
+		if err == io.EOF {
+			return
+		}
+		if err != nil {
+			t.Fatalf("read: %v", err)
+		}
+	}
+}
+
+// TestEncryptReader_ReleaseFiresExactlyOnce verifies the pool-return
+// contract for the encrypt reader: the release closure must fire on
+// io.EOF and must not fire again on any subsequent Read. A double
+// release would push the same chunkBuffers into the pool twice and
+// hand it to two concurrent streams.
+func TestEncryptReader_ReleaseFiresExactlyOnce(t *testing.T) {
+	t.Parallel()
+	const chunkSize = 64
+	dek := testDEK()
+	plaintext := make([]byte, chunkSize*3+17) // multi-chunk + tail
+	if _, err := rand.Read(plaintext); err != nil {
+		t.Fatalf("rand: %v", err)
+	}
+
+	var releases int
+	er, err := newEncryptReader(bytes.NewReader(plaintext), dek, chunkSize, newChunkBuffers(chunkSize), func() {
+		releases++
+	})
+	if err != nil {
+		t.Fatalf("newEncryptReader: %v", err)
+	}
+
+	if _, err := io.Copy(io.Discard, er); err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+	if releases != 1 {
+		t.Fatalf("release count after drain = %d, want 1", releases)
+	}
+
+	// Extra Read after EOF must be a no-op for the release counter.
+	buf := make([]byte, 16)
+	if _, err := er.Read(buf); err != io.EOF {
+		t.Fatalf("post-EOF Read err = %v, want io.EOF", err)
+	}
+	if releases != 1 {
+		t.Fatalf("release count after post-EOF Read = %d, want 1", releases)
+	}
+}
+
+// TestDecryptReader_ReleaseFiresExactlyOnce is the decrypt-side twin
+// of the above. Same correctness story: pool integrity depends on
+// release firing exactly once per stream.
+func TestDecryptReader_ReleaseFiresExactlyOnce(t *testing.T) {
+	t.Parallel()
+	const chunkSize = 64
+	dek := testDEK()
+	plaintext := make([]byte, chunkSize*3+17)
+	if _, err := rand.Read(plaintext); err != nil {
+		t.Fatalf("rand: %v", err)
+	}
+
+	er, err := newEncryptReader(bytes.NewReader(plaintext), dek, chunkSize, newChunkBuffers(chunkSize), nil)
+	if err != nil {
+		t.Fatalf("newEncryptReader: %v", err)
+	}
+	full, err := io.ReadAll(er)
+	if err != nil {
+		t.Fatalf("read encrypted: %v", err)
+	}
+	cs, baseNonce, err := ParseHeader(bytes.NewReader(full[:HeaderSize]))
+	if err != nil {
+		t.Fatalf("parse header: %v", err)
+	}
+
+	var releases int
+	dr, err := newDecryptReader(bytes.NewReader(full[HeaderSize:]), dek, baseNonce, cs, 0, newChunkBuffers(cs), func() {
+		releases++
+	})
+	if err != nil {
+		t.Fatalf("newDecryptReader: %v", err)
+	}
+
+	if _, err := io.Copy(io.Discard, dr); err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+	if releases != 1 {
+		t.Fatalf("release count after drain = %d, want 1", releases)
+	}
+
+	buf := make([]byte, 16)
+	if _, err := dr.Read(buf); err != io.EOF {
+		t.Fatalf("post-EOF Read err = %v, want io.EOF", err)
+	}
+	if releases != 1 {
+		t.Fatalf("release count after post-EOF Read = %d, want 1", releases)
+	}
+}
+
+// TestEncryptor_PoolReuse_NoCrossStreamLeak verifies that running two
+// distinct encrypt+decrypt round-trips back-to-back through the same
+// Encryptor (which shares one sync.Pool) does not leak plaintext from
+// the first stream into the second via a stale framed/plain buffer.
+// A bug here would only surface when the second plaintext is shorter
+// than the first - the tail of the reused buffer would still hold
+// the first stream's data.
+func TestEncryptor_PoolReuse_NoCrossStreamLeak(t *testing.T) {
+	t.Parallel()
+	const chunkSize = 64
+	enc, err := NewEncryptor(testKeyProvider(t), chunkSize)
+	if err != nil {
+		t.Fatalf("NewEncryptor: %v", err)
+	}
+	ctx := context.Background()
+
+	// First stream: long. Fills framed/plain buffers to near capacity.
+	pt1 := bytes.Repeat([]byte{0xAA}, chunkSize*4+5)
+	// Second stream: short. Reuses the same pooled buffers, so any
+	// stale tail from pt1 would surface as corruption in pt2's decrypt
+	// output (or in its ciphertext if framed wasn't truncated).
+	pt2 := bytes.Repeat([]byte{0x55}, chunkSize/2)
+
+	for i, pt := range [][]byte{pt1, pt2} {
+		r, err := enc.Encrypt(ctx, bytes.NewReader(pt), int64(len(pt)))
+		if err != nil {
+			t.Fatalf("stream %d: Encrypt: %v", i, err)
+		}
+		ct, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("stream %d: read ct: %v", i, err)
+		}
+		dr, err := enc.Decrypt(ctx, bytes.NewReader(ct), r.WrappedDEK, r.KeyID)
+		if err != nil {
+			t.Fatalf("stream %d: Decrypt: %v", i, err)
+		}
+		got, err := io.ReadAll(dr)
+		if err != nil {
+			t.Fatalf("stream %d: read pt: %v", i, err)
+		}
+		if !bytes.Equal(got, pt) {
+			t.Fatalf("stream %d: plaintext mismatch (len got=%d want=%d) - pool leak suspected", i, len(got), len(pt))
+		}
 	}
 }
 
@@ -352,12 +586,12 @@ func BenchmarkRoundTrip(b *testing.B) {
 	b.SetBytes(int64(len(data)))
 	b.ResetTimer()
 	for b.Loop() {
-		er, _ := newEncryptReader(bytes.NewReader(data), dek, chunkSize)
+		er, _ := newEncryptReader(bytes.NewReader(data), dek, chunkSize, newChunkBuffers(chunkSize), nil)
 		ct, _ := io.ReadAll(er)
 
 		r := bytes.NewReader(ct)
 		cs, baseNonce, _ := ParseHeader(r)
-		dr, _ := newDecryptReader(r, dek, baseNonce, cs, 0)
+		dr, _ := newDecryptReader(r, dek, baseNonce, cs, 0, newChunkBuffers(cs), nil)
 		_, _ = io.Copy(io.Discard, dr)
 	}
 }
