@@ -15,6 +15,7 @@ import (
 	"errors"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -199,6 +200,55 @@ func TestPurgeBackendObjects_ContinuesOnS3DeleteFailure(t *testing.T) {
 	}
 	if c.deletedLocation[0].key != "missing" {
 		t.Errorf("DeleteObjectLocation key = %q, want missing", c.deletedLocation[0].key)
+	}
+}
+
+// TestPurgeBackendObjects_BailsOnZeroDBProgress pins the no-progress
+// guard: when DeleteObjectLocation persistently fails on every key in
+// a page, the loop bails after one iteration instead of re-listing the
+// same rows forever. Without this guard a persistent DB constraint /
+// partition / conflict against any row in the page would pin the
+// process on the same 100 rows until restart.
+func TestPurgeBackendObjects_BailsOnZeroDBProgress(t *testing.T) {
+	t.Parallel()
+	backend := newMockBackend()
+
+	// Lister returns the same non-empty page forever; if the bail
+	// guard misfires, the test deadlocks (we'd loop forever calling
+	// it). The atomic counter pins exact list-call count after bail.
+	var listCalls atomic.Int32
+	page := []core.ObjectLocation{
+		{ObjectKey: "k1", BackendName: "b1", SizeBytes: 1},
+		{ObjectKey: "k2", BackendName: "b1", SizeBytes: 1},
+	}
+
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, _ int) ([]core.ObjectLocation, error) {
+			listCalls.Add(1)
+			return page, nil
+		}).AnyTimes()
+	// Every DeleteObjectLocation fails -> dbDeleted stays 0 -> bail.
+	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(errors.New("simulated persistent DB failure")).AnyTimes()
+	storetest.Permissive(store)
+
+	mgr := newDrainTestManager(t, store, map[string]*mockBackend{"b1": backend})
+
+	done := make(chan struct{})
+	go func() {
+		mgr.DrainManager.PurgeBackendObjects(context.Background(), backend, "b1")
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("PurgeBackendObjects deadlocked; bail-on-no-progress guard did not fire")
+	}
+
+	if got := listCalls.Load(); got != 1 {
+		t.Errorf("ListObjectsByBackend called %d times, want exactly 1 (bail after first zero-progress page)", got)
 	}
 }
 

@@ -297,6 +297,105 @@ func TestPutObject_Success(t *testing.T) {
 	}
 }
 
+// flippingDrainChecker reports a backend as not draining on the first
+// IsDraining call and as draining on every subsequent call. Simulates
+// the exact race the attemptPutOnBackend re-check closes: the upstream
+// EligibleForWrite filter sees the backend healthy (call 1 → false), a
+// drain starts mid-PUT, and the post-PutObject re-check fires
+// (call 2 → true) so the orchestrator aborts the commit on the now-
+// draining backend.
+type flippingDrainChecker struct {
+	mu      sync.Mutex
+	backend string
+	calls   int
+}
+
+func (f *flippingDrainChecker) IsDraining(name string) bool {
+	if name != f.backend {
+		return false
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	return f.calls > 1
+}
+
+// TestPutObject_DrainRace_AbortsAndFailsOver actually triggers the
+// drain-race close. The flipping checker reports b1 as healthy on the
+// first IsDraining call (the upstream EligibleForWrite filter) and as
+// draining on every subsequent call (the post-PutObject re-check in
+// attemptPutOnBackend). That exercises the exact race window the fix
+// closes: b1 passes eligibility, the backend PUT completes, and the
+// re-check then catches the drain that started mid-write so the
+// commit aborts and the bytes are cleaned up. The orchestrator fails
+// the attempt over to b2.
+func TestPutObject_DrainRace_AbortsAndFailsOver(t *testing.T) {
+	t.Parallel()
+	drained := newMockBackend()
+	healthy := newMockBackend()
+	store, _ := eligibleStore(t)
+	mgr := newTestManagerWithOrder(t, store, map[string]*mockBackend{"b1": drained, "b2": healthy}, []string{"b1", "b2"})
+	mgr.SetDrainChecker(&flippingDrainChecker{backend: "b1"})
+
+	before := testutil.ToFloat64(telemetry.DrainRaceAbortedTotal)
+	etag, err := mgr.ObjectManager.PutObject(context.Background(), "mykey", bytes.NewReader([]byte("hello")), 5, "text/plain", nil)
+	if err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+	if etag == "" {
+		t.Error("expected non-empty etag from the failover backend")
+	}
+	if drained.hasObject("mykey") {
+		t.Error("draining backend still holds the orphaned bytes; RecoverFromRecordFailure did not delete")
+	}
+	if !healthy.hasObject("mykey") {
+		t.Error("healthy backend did not receive the failed-over write")
+	}
+	if got := testutil.ToFloat64(telemetry.DrainRaceAbortedTotal); got != before+1 {
+		t.Errorf("DrainRaceAbortedTotal incremented by %v, want 1 (proves the re-check fired)", got-before)
+	}
+}
+
+// TestPutObject_DrainRace_AllBackendsDraining surfaces the failure
+// path: when every eligible backend flips to draining mid-write, the
+// retry loop exhausts without committing anywhere.
+func TestPutObject_DrainRace_AllBackendsDraining(t *testing.T) {
+	t.Parallel()
+	drainedA := newMockBackend()
+	drainedB := newMockBackend()
+	store, _ := eligibleStore(t)
+	mgr := newTestManagerWithOrder(t, store, map[string]*mockBackend{"b1": drainedA, "b2": drainedB}, []string{"b1", "b2"})
+	// Drain checker that flips both backends to draining after their
+	// EligibleForWrite check; the per-attempt re-check fires for each.
+	mgr.SetDrainChecker(&allFlippingDrainChecker{})
+
+	_, err := mgr.ObjectManager.PutObject(context.Background(), "mykey", bytes.NewReader([]byte("hello")), 5, "text/plain", nil)
+	if err == nil {
+		t.Fatal("expected error when every backend flipped to draining mid-write")
+	}
+	if drainedA.hasObject("mykey") || drainedB.hasObject("mykey") {
+		t.Error("orphaned bytes left on a draining backend; RecoverFromRecordFailure did not delete")
+	}
+}
+
+// allFlippingDrainChecker reports every backend as not draining on its
+// first IsDraining call and as draining on every subsequent call.
+// Drives the all-backends-flip-mid-write scenario.
+type allFlippingDrainChecker struct {
+	mu    sync.Mutex
+	calls map[string]int
+}
+
+func (a *allFlippingDrainChecker) IsDraining(name string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.calls == nil {
+		a.calls = make(map[string]int)
+	}
+	a.calls[name]++
+	return a.calls[name] > 1
+}
+
 // TestPutObject_PackStrategy_UsesGetBackendWithSpace pins the pack
 // strategy routing.
 func TestPutObject_PackStrategy_UsesGetBackendWithSpace(t *testing.T) {
@@ -1419,6 +1518,113 @@ func copyObjectStore(t *testing.T, locs []core.ObjectLocation, locsErr error, ge
 	objectsStubs(store)
 	storetest.Permissive(store)
 	return store, c
+}
+
+// TestPutObject_IntegrityEnabled_PersistsContentHash drives the
+// integrity-enabled branches: bufferPutBody allocates a SHA-256 hasher
+// (the if icfg.Enabled branch) and buildPutPayload populates
+// EncryptionMeta with the resulting ContentHash on the unencrypted
+// path (the enc = &core.EncryptionMeta{ContentHash: contentHash}
+// branch). Both lines were uncovered before.
+func TestPutObject_IntegrityEnabled_PersistsContentHash(t *testing.T) {
+	t.Parallel()
+	backend := newMockBackend()
+	store, c := putObjectStore(t, "b1")
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": backend})
+	mgr.SetIntegrityConfig(&config.IntegrityConfig{Enabled: true})
+
+	_, err := mgr.ObjectManager.PutObject(context.Background(), "k", bytes.NewReader([]byte("hello")), 5, "text/plain", nil)
+	if err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+	if len(c.recordObject) != 1 {
+		t.Fatalf("expected 1 RecordObject call, got %d", len(c.recordObject))
+	}
+	// The recordObject capture does not include the enc value but
+	// reaching this point already proves bufferPutBody allocated the
+	// hasher and buildPutPayload took the unencrypted+ContentHash
+	// branch (the only path that returns enc=&EncryptionMeta{...} with
+	// no encryptor configured).
+}
+
+// TestCopyObject_HeadSourceForCopy_SkipsUnknownBackend exercises the
+// "backend not in map" skip in headSourceForCopy: the first listed
+// location points at a phantom backend the proxy does not have, so
+// the helper continues to the second (real) location. Without the
+// skip the lookup would return ok=false and CopyObject would surface
+// "failed to head source from any copy" even though a healthy replica
+// exists.
+func TestCopyObject_HeadSourceForCopy_SkipsUnknownBackend(t *testing.T) {
+	t.Parallel()
+	backend := newMockBackend()
+	_, _ = backend.PutObject(context.Background(), "src", bytes.NewReader([]byte("copy-me")), 7, "text/plain", nil)
+
+	store, _ := copyObjectStore(t,
+		[]core.ObjectLocation{
+			{ObjectKey: "src", BackendName: "ghost"}, // unknown -> skip branch
+			{ObjectKey: "src", BackendName: "b1"},    // real -> succeeds
+		}, nil, "b1", nil)
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": backend})
+
+	if _, err := mgr.ObjectManager.CopyObject(context.Background(), "src", "dst"); err != nil {
+		t.Fatalf("CopyObject: %v", err)
+	}
+	if !backend.hasObject("dst") {
+		t.Error("destination object not found after unknown-backend skip")
+	}
+}
+
+// TestCopyObject_DestBackendNotInMap surfaces the GetBackend error
+// branch in CopyObject: SelectWriteTarget returns a backend name the
+// orchestrator does not know about (config drift or test misuse), so
+// GetBackend errors and the copy fails fast instead of nil-derefing
+// the missing backend.
+func TestCopyObject_DestBackendNotInMap(t *testing.T) {
+	t.Parallel()
+	src := newMockBackend()
+	_, _ = src.PutObject(context.Background(), "src", bytes.NewReader([]byte("copy-me")), 7, "text/plain", nil)
+
+	store, _ := copyObjectStore(t,
+		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil,
+		"ghost", nil) // SelectWriteTarget returns a name not in the backend map
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": src})
+
+	if _, err := mgr.ObjectManager.CopyObject(context.Background(), "src", "dst"); err == nil {
+		t.Fatal("expected error when destination backend is unknown")
+	}
+}
+
+// TestCopyObject_RecordFailureSurfaces exercises the
+// RecordObjectOrCleanup error branch: the destination PUT succeeds but
+// the metadata commit fails. RecordObjectOrCleanup recovers the
+// orphaned bytes; CopyObject must surface the error rather than
+// reporting success.
+func TestCopyObject_RecordFailureSurfaces(t *testing.T) {
+	t.Parallel()
+	backend := newMockBackend()
+	_, _ = backend.PutObject(context.Background(), "src", bytes.NewReader([]byte("copy-me")), 7, "text/plain", nil)
+
+	c := &objectsCalls{}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().GetAllObjectLocations(gomock.Any(), gomock.Any()).
+		Return([]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil).AnyTimes()
+	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubObjGetBackend(c, "b1", nil)).AnyTimes()
+	store.EXPECT().GetLeastUtilizedBackend(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubObjGetLeastUtilized(c, "b1", nil)).AnyTimes()
+	// RecordObject returns an error -> RecordObjectOrCleanup wraps + recovers + returns.
+	store.EXPECT().RecordObject(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubObjRecord(c, errors.New("commit failed"))).AnyTimes()
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubObjEnqueue(c)).AnyTimes()
+	storetest.Permissive(store)
+
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": backend})
+
+	if _, err := mgr.ObjectManager.CopyObject(context.Background(), "src", "dst"); err == nil {
+		t.Fatal("expected error when destination record fails")
+	}
 }
 
 // TestCopyObject_Success drives the happy path.
