@@ -362,11 +362,41 @@ func TestEncryptDecryptReaders_ZeroAllocsOnChunkHotPath(t *testing.T) {
 	// AllocsPerRun panics under t.Parallel(); intentionally serial.
 	const chunkSize = 64 * 1024
 	const objectSize = 1 << 20 // 1 MiB -> 16 chunks
+	const allocsUpperBound = 15
 
 	dek := testDEK()
 	plaintext := make([]byte, objectSize)
+	scratch := make([]byte, 16*1024)
 
 	// One encrypt to capture the output we feed to the decrypt path.
+	body, cs, baseNonce := encryptAllForBench(t, plaintext, dek, chunkSize)
+
+	encOpen := func() io.Reader {
+		er, err := newEncryptReader(bytes.NewReader(plaintext), dek, chunkSize, newChunkBuffers(chunkSize), nil)
+		if err != nil {
+			t.Fatalf("newEncryptReader: %v", err)
+		}
+		return er
+	}
+	decOpen := func() io.Reader {
+		dr, err := newDecryptReader(bytes.NewReader(body), dek, baseNonce, cs, 0, newChunkBuffers(cs), nil)
+		if err != nil {
+			t.Fatalf("newDecryptReader: %v", err)
+		}
+		return dr
+	}
+
+	assertAllocsBelow(t, "encrypt", encOpen, scratch, allocsUpperBound)
+	assertAllocsBelow(t, "decrypt", decOpen, scratch, allocsUpperBound)
+}
+
+// encryptAllForBench encrypts plaintext once with the given DEK/chunk
+// size and returns the chunk body (after stripping the header) plus
+// the parsed header fields. Helper extracted to keep
+// TestEncryptDecryptReaders_ZeroAllocsOnChunkHotPath simple enough
+// for Sonarqube's cognitive-complexity rule (go:S3776).
+func encryptAllForBench(t *testing.T, plaintext, dek []byte, chunkSize int) (body []byte, cs int, baseNonce []byte) {
+	t.Helper()
 	er, err := newEncryptReader(bytes.NewReader(plaintext), dek, chunkSize, newChunkBuffers(chunkSize), nil)
 	if err != nil {
 		t.Fatalf("newEncryptReader: %v", err)
@@ -375,58 +405,41 @@ func TestEncryptDecryptReaders_ZeroAllocsOnChunkHotPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read encrypted: %v", err)
 	}
-	hdr := full[:HeaderSize]
-	body := full[HeaderSize:]
-	cs, baseNonce, err := ParseHeader(bytes.NewReader(hdr))
+	cs, baseNonce, err = ParseHeader(bytes.NewReader(full[:HeaderSize]))
 	if err != nil {
 		t.Fatalf("parse header: %v", err)
 	}
+	return full[HeaderSize:], cs, baseNonce
+}
 
-	// Encrypt path: allocs per whole-object encrypt should stay
-	// constant at a small upper bound. Pre-#885 a 16-chunk object
-	// allocated ~39 times (scaled with chunk count); post-fix it
-	// allocates ~8 (all from the constructor).
-	scratch := make([]byte, 16*1024)
-	encAllocs := testing.AllocsPerRun(50, func() {
-		er, err := newEncryptReader(bytes.NewReader(plaintext), dek, chunkSize, newChunkBuffers(chunkSize), nil)
-		if err != nil {
-			t.Fatalf("newEncryptReader: %v", err)
-		}
-		for {
-			_, rerr := er.Read(scratch)
-			if rerr == io.EOF {
-				break
-			}
-			if rerr != nil {
-				t.Fatalf("read: %v", rerr)
-			}
-		}
+// assertAllocsBelow drives one direction (encrypt or decrypt) through
+// testing.AllocsPerRun and fails the test if allocations per whole-
+// object run exceed the upper bound. Pre-#885 a 16-chunk encrypt
+// allocated ~39 times and a decrypt ~22; the post-fix readers allocate
+// in the single digits, so the bound is set generously to ~2x current.
+func assertAllocsBelow(t *testing.T, label string, openReader func() io.Reader, scratch []byte, upperBound int) {
+	t.Helper()
+	allocs := testing.AllocsPerRun(50, func() {
+		drainReader(t, openReader(), scratch)
 	})
-	const encAllocsUpperBound = 15
-	if encAllocs > encAllocsUpperBound {
-		t.Errorf("encrypt allocs/op = %.0f, want <= %d (regression: per-chunk allocation reintroduced in encryptReader.Read?)", encAllocs, encAllocsUpperBound)
+	if allocs > float64(upperBound) {
+		t.Errorf("%s allocs/op = %.0f, want <= %d (regression: per-chunk allocation reintroduced?)", label, allocs, upperBound)
 	}
+}
 
-	// Decrypt path: same assertion. Pre-fix a 16-chunk object
-	// allocated 22 times; post-fix ~7.
-	decAllocs := testing.AllocsPerRun(50, func() {
-		dr, err := newDecryptReader(bytes.NewReader(body), dek, baseNonce, cs, 0, newChunkBuffers(cs), nil)
+// drainReader reads from r into scratch until io.EOF, failing the test
+// on any other error. Extracted from the alloc assertion loop to keep
+// each individual helper under the cognitive-complexity budget.
+func drainReader(t *testing.T, r io.Reader, scratch []byte) {
+	t.Helper()
+	for {
+		_, err := r.Read(scratch)
+		if err == io.EOF {
+			return
+		}
 		if err != nil {
-			t.Fatalf("newDecryptReader: %v", err)
+			t.Fatalf("read: %v", err)
 		}
-		for {
-			_, rerr := dr.Read(scratch)
-			if rerr == io.EOF {
-				break
-			}
-			if rerr != nil {
-				t.Fatalf("read: %v", rerr)
-			}
-		}
-	})
-	const decAllocsUpperBound = 15
-	if decAllocs > decAllocsUpperBound {
-		t.Errorf("decrypt allocs/op = %.0f, want <= %d (regression: per-chunk allocation reintroduced in decryptReader.Read?)", decAllocs, decAllocsUpperBound)
 	}
 }
 
