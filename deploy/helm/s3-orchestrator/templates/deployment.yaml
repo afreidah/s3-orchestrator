@@ -28,7 +28,7 @@ spec:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
         {{- if .Values.metrics.enabled }}
         prometheus.io/scrape: "true"
-        prometheus.io/port: {{ .Values.service.port | quote }}
+        prometheus.io/port: {{ if .Values.metrics.dedicatedListener.enabled }}{{ .Values.metrics.dedicatedListener.port | quote }}{{ else }}{{ .Values.service.port | quote }}{{ end }}
         prometheus.io/path: {{ .Values.metrics.path | quote }}
         {{- end }}
     spec:
@@ -57,6 +57,11 @@ spec:
             - name: http
               containerPort: {{ .Values.service.port }}
               protocol: TCP
+            {{- if .Values.metrics.dedicatedListener.enabled }}
+            - name: metrics
+              containerPort: {{ .Values.metrics.dedicatedListener.port }}
+              protocol: TCP
+            {{- end }}
           env:
             {{- range $key, $value := .Values.env }}
             - name: {{ $key }}

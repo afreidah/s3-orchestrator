@@ -7,8 +7,24 @@
 # tweak per-environment settings (backends, buckets, server listener) via
 # values without rebuilding the image. Mounted into the Deployment at
 # /etc/s3-orchestrator/config.yaml.
+#
+# When .Values.metrics.dedicatedListener.enabled is true, the rendered config
+# overrides config.telemetry.metrics.{listen,pprof} so operators set a single
+# source of truth at the chart level instead of duplicating port numbers
+# between the k8s plumbing (Service/Deployment/NetworkPolicy) and the runtime
+# config.
 # -------------------------------------------------------------------------------
 
+{{- $config := deepCopy .Values.config -}}
+{{- if .Values.metrics.dedicatedListener.enabled -}}
+  {{- $_ := set $config "telemetry" (default (dict) $config.telemetry) -}}
+  {{- $_ = set $config.telemetry "metrics" (default (dict) $config.telemetry.metrics) -}}
+  {{- $port := int .Values.metrics.dedicatedListener.port -}}
+  {{- $_ = set $config.telemetry.metrics "listen" (printf "0.0.0.0:%d" $port) -}}
+  {{- if .Values.metrics.pprof -}}
+    {{- $_ = set $config.telemetry.metrics "pprof" true -}}
+  {{- end -}}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -17,4 +33,4 @@ metadata:
     {{- include "s3-orchestrator.labels" . | nindent 4 }}
 data:
   config.yaml: |
-    {{- toYaml .Values.config | nindent 4 }}
+    {{- toYaml $config | nindent 4 }}

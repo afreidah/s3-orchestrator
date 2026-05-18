@@ -6,6 +6,11 @@
 # Optional NetworkPolicy that pins ingress to the configured podSelectors and
 # egress to the upstream backend CIDRs. Gated by .Values.networkPolicy.enabled
 # so clusters without a CNI that enforces NetworkPolicies can leave it off.
+#
+# When .Values.metrics.dedicatedListener.enabled is true, a second ingress
+# rule allows the configured scraperSelector (defaulting to "any pod in the
+# namespace") to reach the metrics port. Pprof rides on the same port, so
+# tightening scraperSelector matters more when .Values.metrics.pprof is on.
 # -------------------------------------------------------------------------------
 
 {{- if .Values.networkPolicy.enabled }}
@@ -24,6 +29,18 @@ spec:
     - ports:
         - port: {{ .Values.service.port }}
           protocol: TCP
+    {{- if .Values.metrics.dedicatedListener.enabled }}
+    - from:
+        {{- if .Values.metrics.dedicatedListener.scraperSelector }}
+        - podSelector:
+            {{- toYaml .Values.metrics.dedicatedListener.scraperSelector | nindent 12 }}
+        {{- else }}
+        - podSelector: {}
+        {{- end }}
+      ports:
+        - port: {{ .Values.metrics.dedicatedListener.port }}
+          protocol: TCP
+    {{- end }}
   egress:
     - {}
 {{- end }}
