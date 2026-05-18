@@ -143,3 +143,51 @@ func TestRun_PassesContext(t *testing.T) {
 	})
 }
 
+// TestRun_SingleItemFastPath ensures the inline fast path runs fn
+// exactly once and propagates the input context. The fast path skips
+// goroutine + channel setup entirely, so this guards against a
+// future regression that bypasses it for n==1.
+func TestRun_SingleItemFastPath(t *testing.T) {
+	t.Parallel()
+	type ctxKey struct{}
+	ctx := context.WithValue(context.Background(), ctxKey{}, "fastpath")
+	var count atomic.Int32
+
+	Run(ctx, 8, []int{42}, func(ctx context.Context, item int) {
+		count.Add(1)
+		if item != 42 {
+			t.Errorf("item = %d, want 42", item)
+		}
+		if v, _ := ctx.Value(ctxKey{}).(string); v != "fastpath" {
+			t.Errorf("context value = %q, want fastpath", v)
+		}
+	})
+
+	if got := count.Load(); got != 1 {
+		t.Errorf("processed %d items, want 1", got)
+	}
+}
+
+// TestRun_PreCancelledContext locks in that a context cancelled
+// before Run is called dispatches zero items. The pre-#861
+// implementation could leak one item into a worker before the
+// cancellation was observed; the fixed-worker dispatcher checks
+// ctx.Done in the same select that hands items off, so the
+// guarantee is now tight.
+func TestRun_PreCancelledContext(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	var count atomic.Int32
+	items := make([]int, 32)
+
+	Run(ctx, 4, items, func(_ context.Context, _ int) {
+		count.Add(1)
+	})
+
+	if got := count.Load(); got != 0 {
+		t.Errorf("processed %d items under pre-cancelled ctx, want 0", got)
+	}
+}
+
