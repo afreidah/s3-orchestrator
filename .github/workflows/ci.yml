@@ -92,6 +92,35 @@ jobs:
           fi
           echo "Version bumped: $BASE_VERSION → $PR_VERSION"
 
+  # Catches go.mod drift between root and nested modules. The vendored
+  # Hugo theme under web/themes/** is excluded - it is a third-party
+  # project synced from upstream and pins its own minimum Go version.
+  go-version-drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Verify nested go.mod files match root
+        run: |
+          ROOT=$(awk '$1=="go"{print $2; exit}' go.mod)
+          if [ -z "$ROOT" ]; then
+            echo "::error::failed to parse go directive from root go.mod"
+            exit 1
+          fi
+          echo "Root Go version: $ROOT"
+          status=0
+          while IFS= read -r mod; do
+            ver=$(awk '$1=="go"{print $2; exit}' "$mod")
+            if [ "$ver" != "$ROOT" ]; then
+              echo "::error file=$mod::go directive $ver does not match root $ROOT"
+              status=1
+            else
+              echo "ok: $mod -> $ver"
+            fi
+          done < <(find . -name go.mod -not -path './go.mod' -not -path './web/themes/*' -not -path './vendor/*')
+          exit $status
+
   lint:
     needs: [changes]
     if: needs.changes.outputs.go == 'true'
