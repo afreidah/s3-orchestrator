@@ -387,10 +387,12 @@ func TestConfigureMetrics_Inline(t *testing.T) {
 	}
 }
 
-// TestConfigureMetrics_SeparateListener returns a non-nil server bound
-// to the configured Listen address with both /metrics and pprof
-// handlers mounted.
-func TestConfigureMetrics_SeparateListener(t *testing.T) {
+// TestConfigureMetrics_SeparateListener_PprofDisabled returns a
+// non-nil server bound to Listen with /metrics mounted but pprof
+// absent when cfg.Pprof is false. This is the production default and
+// the case Sonarqube go:S4507 cares about: the debug surface stays
+// off unless explicitly opted in.
+func TestConfigureMetrics_SeparateListener_PprofDisabled(t *testing.T) {
 	t.Parallel()
 	mux := http.NewServeMux()
 	listen := fmt.Sprintf("127.0.0.1:%d", freePort(t))
@@ -405,17 +407,72 @@ func TestConfigureMetrics_SeparateListener(t *testing.T) {
 	if srv.Addr != listen {
 		t.Errorf("Addr = %q, want %q", srv.Addr, listen)
 	}
+	// /metrics is reachable.
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	srv.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("/metrics status = %d, want 200", w.Code)
+	}
+	// Pprof MUST NOT be reachable when cfg.Pprof is unset.
+	for _, path := range []string{"/debug/pprof/", "/debug/pprof/cmdline"} {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		srv.Handler.ServeHTTP(w, req)
+		if w.Code != http.StatusNotFound {
+			t.Errorf("dedicated listener must NOT expose %s when Pprof=false (status = %d, want 404)", path, w.Code)
+		}
+	}
+}
 
-	// Pprof MUST be reachable on the dedicated listener's handler.
-	// Operators use the dedicated listener precisely so they can
-	// profile in production without exposing the surface on the
-	// public S3 listener.
+// TestConfigureMetrics_SeparateListener_PprofEnabled verifies that
+// setting cfg.Pprof=true mounts /debug/pprof/* on the dedicated
+// metrics listener. Operators opt in to profile in production
+// without exposing the surface on the public S3 listener.
+func TestConfigureMetrics_SeparateListener_PprofEnabled(t *testing.T) {
+	t.Parallel()
+	mux := http.NewServeMux()
+	listen := fmt.Sprintf("127.0.0.1:%d", freePort(t))
+	srv := configureMetrics(mux, &config.MetricsConfig{
+		Enabled: true,
+		Listen:  listen,
+		Path:    "/metrics",
+		Pprof:   true,
+	})
+	if srv == nil {
+		t.Fatal("expected separate metrics server")
+	}
 	for _, path := range []string{"/debug/pprof/", "/debug/pprof/cmdline"} {
 		w := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		srv.Handler.ServeHTTP(w, req)
 		if w.Code != http.StatusOK {
-			t.Errorf("dedicated metrics listener must expose %s (status = %d, want 200)", path, w.Code)
+			t.Errorf("dedicated metrics listener must expose %s when Pprof=true (status = %d, want 200)", path, w.Code)
+		}
+	}
+}
+
+// TestConfigureMetrics_Inline_PprofIgnored covers the warn path:
+// when cfg.Pprof=true is paired with an empty Listen (inline form),
+// pprof is silently dropped rather than mounted on the public S3
+// listener.
+func TestConfigureMetrics_Inline_PprofIgnored(t *testing.T) {
+	t.Parallel()
+	mux := http.NewServeMux()
+	got := configureMetrics(mux, &config.MetricsConfig{
+		Enabled: true,
+		Path:    "/metrics",
+		Pprof:   true, // intentionally paired with empty Listen
+	})
+	if got != nil {
+		t.Errorf("expected nil server for inline metrics, got %v", got)
+	}
+	for _, path := range []string{"/debug/pprof/", "/debug/pprof/cmdline"} {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		mux.ServeHTTP(w, req)
+		if w.Code != http.StatusNotFound {
+			t.Errorf("inline-metrics mux must not expose %s even when Pprof=true (status = %d, want 404)", path, w.Code)
 		}
 	}
 }

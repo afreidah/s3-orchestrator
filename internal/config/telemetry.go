@@ -19,10 +19,18 @@ type TelemetryConfig struct {
 }
 
 // MetricsConfig holds Prometheus metrics settings.
+//
+// Pprof is opt-in and off by default. The net/http/pprof handlers
+// expose deep runtime state (de-anonymized stack frames, command-line
+// flags, on-demand CPU profiles that double as DoS amplifiers), so
+// production deployments should leave Pprof false. When enabled, it
+// is only mounted on the dedicated metrics listener (Listen must be
+// set) - never on the main S3 listener.
 type MetricsConfig struct {
 	Enabled bool   `yaml:"enabled"`
 	Path    string `yaml:"path"`
 	Listen  string `yaml:"listen"` // Separate listener address (e.g. "127.0.0.1:9091"); if empty, metrics are served on the main listener
+	Pprof   bool   `yaml:"pprof"`  // Mount /debug/pprof/* on the metrics listener. Off by default; requires Listen to be set.
 }
 
 // TracingConfig holds OpenTelemetry tracing settings.

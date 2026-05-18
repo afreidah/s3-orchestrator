@@ -45,11 +45,10 @@ func mountPprof(mux *http.ServeMux) {
 // disabled. The separate listener is the caller's responsibility to start
 // and shut down; this function only constructs it.
 //
-// When the dedicated listener form is used, pprof is also mounted on
-// that listener so operators can profile a running process without
-// reproducing the workload locally. Inline-metrics deployments do not
-// get pprof - registering /debug/pprof/* on the main mux would expose
-// runtime internals on the same listener that serves the S3 API.
+// Pprof is opt-in (cfg.Pprof) AND requires the dedicated listener form
+// (cfg.Listen set). Inline-metrics deployments never get pprof, and the
+// production default leaves cfg.Pprof false so the debug surface is
+// off unless an operator explicitly enables it.
 func configureMetrics(mux *http.ServeMux, cfg *config.MetricsConfig) *http.Server {
 	if !cfg.Enabled {
 		return nil
@@ -58,11 +57,16 @@ func configureMetrics(mux *http.ServeMux, cfg *config.MetricsConfig) *http.Serve
 	if cfg.Listen != "" {
 		metricsMux := http.NewServeMux()
 		metricsMux.Handle(cfg.Path, promhttp.Handler())
-		mountPprof(metricsMux)
-		slog.InfoContext(context.Background(), "metrics + pprof endpoints enabled on dedicated listener",
+		pprofMounted := false
+		if cfg.Pprof {
+			mountPprof(metricsMux)
+			pprofMounted = true
+		}
+		slog.InfoContext(context.Background(), "metrics endpoint enabled on dedicated listener",
 			logfmt.Component("httpserver"),
 			"listen", cfg.Listen,
 			"path", cfg.Path,
+			"pprof", pprofMounted,
 		)
 		return &http.Server{
 			Addr:              cfg.Listen,
@@ -71,8 +75,13 @@ func configureMetrics(mux *http.ServeMux, cfg *config.MetricsConfig) *http.Serve
 		}
 	}
 
+	if cfg.Pprof {
+		slog.WarnContext(context.Background(), "telemetry.metrics.pprof=true ignored: pprof requires telemetry.metrics.listen (dedicated listener); not mounting on main S3 listener",
+			logfmt.Component("httpserver"),
+		)
+	}
 	mux.Handle(cfg.Path, promhttp.Handler())
-	slog.InfoContext(context.Background(), "metrics endpoint enabled on main listener (pprof intentionally not mounted - set telemetry.metrics.listen to enable pprof on a dedicated internal listener)",
+	slog.InfoContext(context.Background(), "metrics endpoint enabled on main listener",
 		logfmt.Component("httpserver"),
 		"path", cfg.Path,
 	)
