@@ -173,12 +173,28 @@ var (
 		},
 	)
 
-	// DrainActive is 1 when a drain operation is in progress, 0 otherwise.
+	// DrainActive is the live count of in-flight drain operations.
+	// Inc'd on StartDrain and Dec'd on completion (success, cancel, or
+	// abort) so concurrent drains across different backends do not
+	// clobber each other's state the way a Set(0)/Set(1) gauge would.
+	// 0 means no drains are running.
 	DrainActive = promauto.NewGauge(
 		prometheus.GaugeOpts{
 			Name: "s3o_drain_active",
-			Help: "Whether a backend drain operation is currently in progress",
+			Help: "Count of in-flight backend drain operations (Inc/Dec so concurrent drains compose)",
 		},
 	)
 
+	// DrainRaceAbortedTotal counts PutObject attempts that landed bytes
+	// on a backend whose drain started mid-write. The orchestrator
+	// detects the race after the backend PUT completes, deletes the
+	// orphaned bytes, and fails the attempt over to the next eligible
+	// backend; this counter pins how often the race fires in production
+	// so the drain timing assumptions can be revisited if it climbs.
+	DrainRaceAbortedTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "s3o_drain_race_aborted_total",
+			Help: "Number of PutObject attempts aborted after drain started mid-write",
+		},
+	)
 )
