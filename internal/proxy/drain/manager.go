@@ -191,7 +191,7 @@ func (d *Manager) StartDrain(ctx context.Context, name string) error {
 		return fmt.Errorf("backend %q is already draining", name)
 	}
 
-	telemetry.DrainActive.Set(1)
+	telemetry.DrainActive.Inc()
 	d.log.InfoContext(ctx, "starting backend drain", "backend", name)
 
 	go d.runDrain(drainCtx, name, state)
@@ -256,7 +256,7 @@ func (d *Manager) CancelDrain(name string) error {
 	state.cancel()
 	<-state.done
 	d.draining.Delete(name)
-	telemetry.DrainActive.Set(0)
+	telemetry.DrainActive.Dec()
 	d.log.InfoContext(context.Background(), "cancelled backend drain", "backend", name)
 	return nil
 }
@@ -320,7 +320,7 @@ func (d *Manager) migrateBackendObjects(ctx context.Context, name string, state 
 func (d *Manager) abortDrainWithError(name string, state *drainState, err error) {
 	state.setErr(err)
 	d.draining.Delete(name)
-	telemetry.DrainActive.Set(0)
+	telemetry.DrainActive.Dec()
 }
 
 // finalizeDrain runs after a successful migration. Flushes pending cleanup
@@ -340,7 +340,7 @@ func (d *Manager) finalizeDrain(ctx context.Context, name string, state *drainSt
 		state.setErr(err)
 	}
 
-	telemetry.DrainActive.Set(0)
+	telemetry.DrainActive.Dec()
 
 	audit.Log(ctx, "storage.DrainComplete",
 		slog.String("backend", name),
@@ -507,8 +507,12 @@ func (d *Manager) RemoveBackend(ctx context.Context, name string, purge bool) er
 	return nil
 }
 
-// PurgeBackendObjects deletes all objects from a backend's S3 storage.
-// Best-effort: logs failures but does not stop.
+// PurgeBackendObjects deletes all objects from a backend's S3 storage
+// and their metadata rows. Best-effort: per-key failures are logged
+// and the loop continues. Bails on a page whose every DeleteObjectLocation
+// fails so a persistent DB error (constraint, partition, conflict)
+// cannot pin the loop on the same 100 rows forever; the same rows
+// would otherwise list-and-fail until the process was restarted.
 func (d *Manager) PurgeBackendObjects(ctx context.Context, be backend.ObjectBackend, name string) {
 	for {
 		objects, err := d.objects.ListObjectsByBackend(ctx, name, 100)
@@ -521,6 +525,7 @@ func (d *Manager) PurgeBackendObjects(ctx context.Context, be backend.ObjectBack
 			return
 		}
 
+		dbDeleted := 0
 		for i := range objects {
 			if err := d.infra.DeleteWithTimeout(ctx, be, objects[i].ObjectKey); err != nil {
 				d.log.WarnContext(ctx, "failed to delete object from backend during purge",
@@ -531,7 +536,15 @@ func (d *Manager) PurgeBackendObjects(ctx context.Context, be backend.ObjectBack
 			if err := d.objects.DeleteObjectLocation(ctx, objects[i].ObjectKey, name); err != nil {
 				d.log.WarnContext(ctx, "failed to delete DB record during purge",
 					slog.String("backend", name), slog.String("key", objects[i].ObjectKey), "error", err)
+				continue
 			}
+			dbDeleted++
+		}
+
+		if dbDeleted == 0 {
+			d.log.ErrorContext(ctx, "purge made no DB progress on page; bailing to avoid an infinite list-and-fail loop",
+				slog.String("backend", name), slog.Int("page_size", len(objects)))
+			return
 		}
 	}
 }

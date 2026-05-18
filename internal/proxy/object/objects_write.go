@@ -201,12 +201,34 @@ func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, req 
 		return putAttemptResult{backend: backendName, putErr: err}
 	}
 
+	// Drain-race close: a drain that started after EligibleForWrite ran
+	// could have flipped this backend to draining while the backend PUT
+	// was in flight. If finalizeDrain's DeleteBackendData runs after the
+	// commit below, the just-promoted row gets wiped and the physical
+	// bytes are orphaned. Re-check before the commit so we land on a
+	// different backend instead; the pending intent stays for the
+	// reaper, which HEADs the backend, sees no object (we just deleted
+	// the bytes), and drops the intent.
+	if o.core.IsDraining(backendName) {
+		o.log.WarnContext(ctx, "drain started mid-write; aborting commit on draining backend",
+			"key", req.key, "backend", backendName)
+		telemetry.DrainRaceAbortedTotal.Inc()
+		o.coord.RecoverFromRecordFailure(ctx, be, backendName, req.key, "drain_race_aborted", uploadSize)
+		return putAttemptResult{backend: backendName, putErr: errDrainRaceAborted}
+	}
+
 	if err := o.coord.RecordObjectAndPromoteIntent(ctx, span, req.key, backendName, uploadSize, enc, intentID); err != nil {
 		return putAttemptResult{backend: backendName, fatalErr: err}
 	}
 	o.cache.Delete(req.key)
 	return putAttemptResult{backend: backendName, etag: etag}
 }
+
+// errDrainRaceAborted is the sentinel putErr the attemptPutOnBackend
+// drain-race close returns so the outer failover loop drops the
+// draining backend from the eligible set and retries elsewhere
+// instead of treating the abort as a generic backend failure.
+var errDrainRaceAborted = errors.New("aborted: drain started mid-write")
 
 // buildPutPayload prepares the upload body and EncryptionMeta for a
 // single attempt. The materialized body's Reader() rewinds on every
