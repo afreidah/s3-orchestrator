@@ -609,9 +609,47 @@ func TestNewInjector_WorkerModeResolvesLifecycle(t *testing.T) {
 	if _, err := do.Invoke[*drain.Manager](inj); err != nil {
 		t.Errorf("DrainManager: %v", err)
 	}
-	// PendingReaper is optional: nil when the pending pattern is off.
+	// PendingReaper is conditionally registered (#830). happyPathConfig
+	// leaves PendingPattern at the default (enabled), so the provider
+	// is registered and resolves cleanly.
+	if !IsRegistered[*worker.PendingReaper](inj) {
+		t.Error("PendingReaper not registered with default config")
+	}
 	if _, err := do.Invoke[*worker.PendingReaper](inj); err != nil {
 		t.Errorf("PendingReaper: %v", err)
+	}
+}
+
+// TestNewInjector_PendingReaperDisabled covers the conditional
+// registration (#830): when the pending pattern is off in config,
+// no PendingReaper provider is registered and Optional reports
+// Disabled (not Failed), so callers can distinguish "feature off"
+// from "feature on but broken."
+func TestNewInjector_PendingReaperDisabled(t *testing.T) {
+	t.Parallel()
+	cfg := happyPathConfig(t.TempDir())
+	disabled := false
+	cfg.WritePath.PendingPattern.Enabled = &disabled
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("config validation: %v", err)
+	}
+	inj := NewInjector(cfg, "all", new(slog.LevelVar), telemetry.NewLogBuffer())
+	t.Cleanup(func() { _ = inj.Shutdown() })
+
+	if IsRegistered[*worker.PendingReaper](inj) {
+		t.Error("PendingReaper should NOT be registered when feature disabled")
+	}
+	res := Optional[*worker.PendingReaper](inj)
+	if !res.Disabled() {
+		t.Errorf("Optional[*worker.PendingReaper].Resolution = %s, want disabled", res.Resolution)
+	}
+	if res.Failed() {
+		t.Errorf("Optional reported Failed for a disabled feature: %v", res.Err)
+	}
+
+	// WireManager must still succeed with the feature off.
+	if err := WireManager(inj); err != nil {
+		t.Errorf("WireManager with PendingReaper disabled: %v", err)
 	}
 }
 
