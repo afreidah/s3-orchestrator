@@ -1350,3 +1350,42 @@ func TestCompleteMultipartUpload_PartGetPanics(t *testing.T) {
 		t.Fatal("expected error from panicking part reader, got nil")
 	}
 }
+
+// TestCompleteMultipartUpload_BackendTimeout pins #882: the final
+// assembly PUT runs under backend_timeout. Pre-fix the PUT used the
+// caller's request context directly, so a stalled backend during
+// assembly could exceed backend_timeout.
+func TestCompleteMultipartUpload_BackendTimeout(t *testing.T) {
+	t.Parallel()
+	be := newMockBackend()
+	ctx := context.Background()
+	_, _ = be.PutObject(ctx, "__multipart/upload-slow/1", bytes.NewReader([]byte("AAA")), 3, "application/octet-stream", nil)
+	_, _ = be.PutObject(ctx, "__multipart/upload-slow/2", bytes.NewReader([]byte("BBB")), 3, "application/octet-stream", nil)
+	slow := &slowMockBackend{mockBackend: be, delay: 200 * time.Millisecond}
+
+	store, _ := completeStoreSetup(t,
+		&core.MultipartUpload{UploadID: "upload-slow", ObjectKey: "multi/slow", BackendName: "b1", ContentType: "application/zip"},
+		[]core.MultipartPart{
+			{PartNumber: 1, ETag: "e1", SizeBytes: 3},
+			{PartNumber: 2, ETag: "e2", SizeBytes: 3},
+		}, nil)
+
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
+		Backends:        map[string]s3be.ObjectBackend{"b1": slow},
+		Stores:          testStoresFromMock(store),
+		Dashboard:       store,
+		Metrics:         store,
+		Order:           []string{"b1"},
+		CacheTTL:        5 * time.Second,
+		BackendTimeout:  50 * time.Millisecond,
+		RoutingStrategy: config.RoutingPack,
+	})
+
+	_, err := mgr.MultipartManager.CompleteMultipartUpload(ctx, "multi", "slow", "upload-slow", []int{1, 2})
+	if err == nil {
+		t.Fatal("expected timeout error, got nil")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected context.DeadlineExceeded, got %v", err)
+	}
+}
