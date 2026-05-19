@@ -398,6 +398,50 @@ func TestCopyToReplica_AllSourcesFail(t *testing.T) {
 	}
 }
 
+// TestCopyToReplica_DoesNotMutateInputSlice pins issue #904: the caller's
+// copies slice must keep the order it was passed in. The previous
+// implementation sorted in place, so an outer loop that reused the same
+// slice across iterations saw the post-sort order on every call after
+// the first. Builds an input where IsBackendHealthy disagrees with the
+// input order (the first entry references a backend missing from the
+// fleet so it scores as unhealthy) and asserts the slice is unchanged
+// after the call.
+func TestCopyToReplica_DoesNotMutateInputSlice(t *testing.T) {
+	t.Parallel()
+	b2 := newMockBackend()
+	_, _ = b2.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
+	b3 := newMockBackend()
+
+	store := newPermissiveMock(t)
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
+		// "gone" is intentionally absent so IsBackendHealthy returns
+		// false for it; sorting would otherwise move b2 ahead of gone.
+		Backends:        map[string]backend.ObjectBackend{"b2": b2, "b3": b3},
+		Stores:          testStoresFromMock(store),
+		Order:           []string{"b2", "b3"},
+		CacheTTL:        5 * time.Second,
+		BackendTimeout:  30 * time.Second,
+		RoutingStrategy: config.RoutingPack,
+	})
+	workers := wireWorkersForTest(mgr)
+	_ = workers
+
+	copies := []core.ObjectLocation{
+		{ObjectKey: "key1", BackendName: "gone", SizeBytes: 4},
+		{ObjectKey: "key1", BackendName: "b2", SizeBytes: 4},
+	}
+	before := []string{copies[0].BackendName, copies[1].BackendName}
+
+	if _, _, err := workers.Replicator.CopyToReplica(context.Background(), "key1", copies, "b3"); err != nil {
+		t.Fatalf("CopyToReplica: %v", err)
+	}
+
+	after := []string{copies[0].BackendName, copies[1].BackendName}
+	if before[0] != after[0] || before[1] != after[1] {
+		t.Errorf("input slice mutated: before=%v after=%v", before, after)
+	}
+}
+
 // TestCleanupOrphan_Success deletes an orphan from the source backend.
 func TestCleanupOrphan_Success(t *testing.T) {
 	t.Parallel()
