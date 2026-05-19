@@ -85,20 +85,28 @@ type Failover struct {
 	stores            ObjectLocationLister
 	cache             LocationCache
 	parallelBroadcast bool
-	log               *slog.Logger
+	// degradedBroadcastParallelism caps the number of backends probed
+	// concurrently during a parallel degraded broadcast. 0 means no
+	// cap (every backend probed at once, the historical behaviour).
+	// See #858.
+	degradedBroadcastParallelism int
+	log                          *slog.Logger
 }
 
 // New constructs a Failover. parallelBroadcast selects between
 // sequential and per-backend-goroutine broadcasts in degraded mode.
-// The component-scoped logger is built in the constructor body per the
-// project's logging convention.
-func New(core Core, stores ObjectLocationLister, cache LocationCache, parallelBroadcast bool) *Failover {
+// degradedBroadcastParallelism caps how many backends a parallel
+// broadcast probes concurrently (0 means no cap, i.e. every backend at
+// once). The component-scoped logger is built in the constructor body
+// per the project's logging convention.
+func New(core Core, stores ObjectLocationLister, cache LocationCache, parallelBroadcast bool, degradedBroadcastParallelism int) *Failover {
 	return &Failover{
-		core:              core,
-		stores:            stores,
-		cache:             cache,
-		parallelBroadcast: parallelBroadcast,
-		log:               slog.Default().With(logfmt.Component("readpath")),
+		core:                         core,
+		stores:                       stores,
+		cache:                        cache,
+		parallelBroadcast:            parallelBroadcast,
+		degradedBroadcastParallelism: degradedBroadcastParallelism,
+		log:                          slog.Default().With(logfmt.Component("readpath")),
 	}
 }
 
@@ -284,11 +292,23 @@ type broadcastResult struct {
 	cleanup func()
 }
 
-// tryBackendsInParallel launches one probe per backend in BackendOrder
-// and returns the first success, cancelling the losing probes' contexts
-// so their in-flight backend round trips, decryption, and integrity
-// work stop promptly instead of running to completion only to have
-// their results discarded.
+// pendingProbe is one eligible backend awaiting (or running) its probe.
+// Held in a flat slice so the rolling-window launcher can pick the next
+// pending entry deterministically as slots free up.
+type pendingProbe struct {
+	name string
+	be   backend.ObjectBackend
+}
+
+// tryBackendsInParallel launches probes for eligible backends in
+// BackendOrder, capped to degradedBroadcastParallelism, and returns the
+// first success, cancelling the losing probes' contexts so their
+// in-flight backend round trips, decryption, and integrity work stop
+// promptly instead of running to completion only to have their results
+// discarded. With no cap the first call launches every backend at once
+// (historical behaviour). With a positive cap, the first cap probes
+// launch immediately and each failure replenishes the next pending
+// backend so at most cap goroutines are ever in flight (#858).
 func (f *Failover) tryBackendsInParallel(
 	ctx context.Context,
 	operation, key string,
@@ -296,28 +316,58 @@ func (f *Failover) tryBackendsInParallel(
 	span trace.Span,
 	probe Probe,
 ) (string, error) {
-	ch := make(chan broadcastResult, len(f.core.BackendOrder()))
-	cancels := f.launchBackendProbes(ctx, ch, probe)
-	launched := len(cancels)
+	pending := f.eligibleBackends()
+	if len(pending) == 0 {
+		return broadcastAllFailed(span, nil)
+	}
+
+	initial := broadcastSlotCount(f.degradedBroadcastParallelism, len(pending))
+	ch := make(chan broadcastResult, len(pending))
+	cancels := make(map[string]context.CancelFunc, initial)
+
+	// launched tracks how many probes have been started so far. The
+	// receive loop calls launchNext after each failure to refill a
+	// free slot; on success the remaining pending entries are never
+	// launched because the winner cancels the in-flight set.
+	launched := 0
+	launchNext := func() bool {
+		if launched >= len(pending) {
+			return false
+		}
+		p := pending[launched]
+		launched++
+		probeCtx, cancel := context.WithCancel(ctx)
+		cancels[p.name] = cancel
+		go runBackendProbe(probeCtx, p.name, p.be, probe, ch)
+		return true
+	}
+	for range initial {
+		launchNext()
+	}
 
 	var lastErr error
-	for received := 0; received < launched; received++ { //nolint:intrange // received used in arithmetic below
+	received := 0
+	for received < launched {
 		r := <-ch
+		received++
 		if r.err != nil {
 			lastErr = r.err
+			launchNext() // backfill the slot; harmless when no pending probes remain
 			continue
 		}
 		if r.cleanup != nil {
 			r.cleanup()
 		}
-		// Winner declared: cancel every other probe so losing backends
-		// stop wasting CPU, network, and API quota on work that will be
-		// discarded. The winner's context is intentionally left alive
-		// the response body is bound to it and the caller is still
-		// reading from it; the per-probe ctx is reaped naturally when
-		// the parent request ctx ends.
+		// Winner declared: cancel every in-flight probe so losing
+		// backends stop wasting CPU, network, and API quota on work
+		// that will be discarded. Backends that were pending but never
+		// launched do not need cancellation - no goroutine exists yet.
+		// The winner's context is intentionally left alive: the
+		// response body is bound to it and the caller is still reading
+		// from it; the per-probe ctx is reaped naturally when the
+		// parent request ctx ends.
 		cancelLosers(cancels, r.name)
-		if remaining := launched - received - 1; remaining > 0 {
+		if remaining := launched - received; remaining > 0 {
 			go drainAndCleanupLosers(ch, remaining)
 		}
 		f.recordBroadcastWinner(operation, key, r.name, r.size, start, span, true)
@@ -331,27 +381,31 @@ func (f *Failover) tryBackendsInParallel(
 	return broadcastAllFailed(span, lastErr)
 }
 
-// launchBackendProbes spawns one goroutine per eligible backend, each
-// with its own cancelable context derived from ctx so the orchestrator
-// can stop losing probes once a winner is declared. Returns the
-// per-backend cancel functions keyed by backend name; len(map) is the
-// number of probes launched.
-func (f *Failover) launchBackendProbes(
-	ctx context.Context,
-	ch chan<- broadcastResult,
-	probe Probe,
-) map[string]context.CancelFunc {
-	cancels := make(map[string]context.CancelFunc, len(f.core.BackendOrder()))
-	for _, name := range f.core.BackendOrder() {
-		be, ok := f.core.Backends()[name]
-		if !ok {
-			continue
+// eligibleBackends returns the pending probes in BackendOrder, skipping
+// any name absent from the backend map. The slice is the rolling-window
+// launcher's source of truth: launched indexes into it; on success the
+// remaining tail is simply never started.
+func (f *Failover) eligibleBackends() []pendingProbe {
+	order := f.core.BackendOrder()
+	backends := f.core.Backends()
+	pending := make([]pendingProbe, 0, len(order))
+	for _, name := range order {
+		if be, ok := backends[name]; ok {
+			pending = append(pending, pendingProbe{name: name, be: be})
 		}
-		probeCtx, cancel := context.WithCancel(ctx)
-		cancels[name] = cancel
-		go runBackendProbe(probeCtx, name, be, probe, ch)
 	}
-	return cancels
+	return pending
+}
+
+// broadcastSlotCount returns the initial in-flight slot count for the
+// rolling window: the configured cap clamped to the eligible-backend
+// count, with limit <= 0 meaning "no cap" (fan out to every backend at
+// once, preserving the historical behaviour).
+func broadcastSlotCount(limit, eligible int) int {
+	if limit <= 0 || limit > eligible {
+		return eligible
+	}
+	return limit
 }
 
 // cancelLosers invokes every cancel func except the winner's. The

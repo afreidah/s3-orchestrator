@@ -66,11 +66,15 @@ type BackendManagerConfig struct {
 	BackendTimeout    time.Duration
 	UsageLimits       map[string]core.UsageLimits
 	RoutingStrategy   config.RoutingStrategy
-	ParallelBroadcast bool                   // fan-out reads in parallel during degraded mode
-	Encryptor         *encryption.Encryptor  // nil when encryption is disabled
-	CounterBackend    counter.CounterBackend // nil uses LocalCounterBackend
-	ObjectCache       objcache.ObjectCache   // nil when object data caching is disabled
-	MaxObjectSizes    map[string]int64       // per-backend max object size in bytes (0 = unlimited)
+	ParallelBroadcast bool // fan-out reads in parallel during degraded mode
+	// DegradedBroadcastParallelism caps concurrent probes during a
+	// parallel degraded-mode broadcast. 0 = no cap (every backend
+	// probed at once, the historical behaviour). See #858.
+	DegradedBroadcastParallelism int
+	Encryptor                    *encryption.Encryptor  // nil when encryption is disabled
+	CounterBackend               counter.CounterBackend // nil uses LocalCounterBackend
+	ObjectCache                  objcache.ObjectCache   // nil when object data caching is disabled
+	MaxObjectSizes               map[string]int64       // per-backend max object size in bytes (0 = unlimited)
 	// AdmissionSem is the shared concurrency semaphore for write-class
 	// traffic. In split mode (MaxConcurrentReads + MaxConcurrentWrites)
 	// it is sized to MaxConcurrentWrites and is shared between HTTP
@@ -117,11 +121,11 @@ type BackendManagerConfig struct {
 // drain behavior) remains usable.
 type BackendManager struct {
 	*infra.Core
-	stores           core.MetadataStore    // metadata-store dependency
-	coord            *writepath.Coordinator     // shared write-path helpers (also held by object.Manager and MultipartManager)
-	MultipartManager *multipart.Manager    // multipart upload lifecycle
+	stores           core.MetadataStore     // metadata-store dependency
+	coord            *writepath.Coordinator // shared write-path helpers (also held by object.Manager and MultipartManager)
+	MultipartManager *multipart.Manager     // multipart upload lifecycle
 	ObjectManager    *object.Manager        // CRUD, read failover, broadcast reads
-	dashboard        *dashboard.Aggregator // web UI data aggregation
+	dashboard        *dashboard.Aggregator  // web UI data aggregation
 
 	// DrainManager is the single post-construction wiring point. Set by
 	// WireDrain after both *BackendManager and *drain.Manager have been
@@ -233,14 +237,15 @@ func NewBackendManager(cfg *BackendManagerConfig) (*BackendManager, error) {
 	integrityCfg := &syncutil.AtomicConfig[config.IntegrityConfig]{}
 	cache := object.NewLocationCache(cfg.CacheTTL)
 	objectManager := object.New(&object.Deps{
-		Core:              c,
-		Coord:             coord,
-		Stores:            cfg.Stores,
-		Encryptor:         cfg.Encryptor,
-		LocationCache:     cache,
-		ObjectCache:       cfg.ObjectCache,
-		ParallelBroadcast: cfg.ParallelBroadcast,
-		IntegrityCfg:      integrityCfg,
+		Core:                         c,
+		Coord:                        coord,
+		Stores:                       cfg.Stores,
+		Encryptor:                    cfg.Encryptor,
+		LocationCache:                cache,
+		ObjectCache:                  cfg.ObjectCache,
+		ParallelBroadcast:            cfg.ParallelBroadcast,
+		DegradedBroadcastParallelism: cfg.DegradedBroadcastParallelism,
+		IntegrityCfg:                 integrityCfg,
 	})
 
 	m := &BackendManager{
@@ -543,7 +548,6 @@ func (m *BackendManager) resolveS3Backend(name string) (reconcile.ObjectLister, 
 	}
 	return lister, nil
 }
-
 
 // Constructor input validation errors.
 var (

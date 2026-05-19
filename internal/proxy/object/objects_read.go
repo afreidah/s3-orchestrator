@@ -77,7 +77,10 @@ type Deps struct {
 	LocationCache     *LocationCache
 	ObjectCache       objcache.ObjectCache
 	ParallelBroadcast bool
-	IntegrityCfg      *syncutil.AtomicConfig[config.IntegrityConfig]
+	// DegradedBroadcastParallelism caps concurrent probes during
+	// parallel degraded-mode broadcasts. 0 = uncapped. See #858.
+	DegradedBroadcastParallelism int
+	IntegrityCfg                 *syncutil.AtomicConfig[config.IntegrityConfig]
 }
 
 // New creates a Manager sharing the given core infrastructure and
@@ -97,7 +100,7 @@ func New(d *Deps) *Manager {
 		objectCache:       d.ObjectCache,
 		parallelBroadcast: d.ParallelBroadcast,
 		integrityCfg:      d.IntegrityCfg,
-		failover:          readpath.New(d.Core, d.Stores, d.LocationCache, d.ParallelBroadcast),
+		failover:          readpath.New(d.Core, d.Stores, d.LocationCache, d.ParallelBroadcast, d.DegradedBroadcastParallelism),
 		log:               slog.Default().With(logfmt.Component("object")),
 	}
 }
@@ -139,7 +142,6 @@ func (o *Manager) BackendCapacityStats(ctx context.Context) map[string]core.Quot
 	}
 	return stats
 }
-
 
 // ListObjectsMaxPages caps DB round trips per ListObjects request so a
 // single client call cannot drag the database through unbounded scans on

@@ -550,6 +550,7 @@ circuit_breaker:
   open_timeout: "15s"      # delay before probing recovery (default: 15s)
   cache_ttl: "60s"         # key→backend cache TTL during degraded reads (default: 60s)
   parallel_broadcast: false # fan-out reads to all backends in parallel during degraded mode (default: false)
+  degraded_broadcast_parallelism: 0 # cap concurrent probes during parallel broadcast; 0 means no cap (default: 0)
 
 # backend_circuit_breaker:   # per-backend circuit breakers (disabled by default)
 #   enabled: false
