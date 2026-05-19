@@ -230,6 +230,15 @@ func writeS3Error(w http.ResponseWriter, code int, errCode, message string) {
 	_, _ = io.WriteString(w, body) //nolint:gosec // G705: output is XML-escaped via xmlEscape before writing
 }
 
+// WriteS3Error is the exported form of writeS3Error so other transport
+// packages (notably the panic-recovery middleware in httputil) can emit
+// a route-appropriate S3-XML 500 without re-implementing the envelope.
+// Matches the httputil.ErrorWriter signature exactly so it slots in as
+// a direct argument.
+func WriteS3Error(w http.ResponseWriter, code int, errCode, message string) {
+	writeS3Error(w, code, errCode, message)
+}
+
 // xmlReplacer escapes special XML characters. Allocated once at package level
 // to avoid per-call allocation.
 var xmlReplacer = strings.NewReplacer(
