@@ -71,7 +71,16 @@ type BackendManagerConfig struct {
 	CounterBackend    counter.CounterBackend // nil uses LocalCounterBackend
 	ObjectCache       objcache.ObjectCache   // nil when object data caching is disabled
 	MaxObjectSizes    map[string]int64       // per-backend max object size in bytes (0 = unlimited)
-	AdmissionSem      chan struct{}          // shared concurrency semaphore for HTTP + background ops (nil = unlimited)
+	// AdmissionSem is the shared concurrency semaphore for write-class
+	// traffic. In split mode (MaxConcurrentReads + MaxConcurrentWrites)
+	// it is sized to MaxConcurrentWrites and is shared between HTTP
+	// writes and all background workers; reads run on a separate sem
+	// created in transport/httpserver/routes.go. In merged mode
+	// (MaxConcurrentRequests only) it is the global pool for every HTTP
+	// request and every background worker. nil disables admission entirely
+	// (no cap installed). See admissionSemFor in internal/di/backend.go
+	// for the sizing rules and #835 for the documentation rationale.
+	AdmissionSem chan struct{}
 
 	// MultipartDEKCacheTTL pegs the lifetime of cached unwrapped DEKs
 	// the MultipartManager uses to avoid re-unwrapping the upload-level
