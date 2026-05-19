@@ -431,21 +431,48 @@ func (o *Manager) CopyObject(ctx context.Context, sourceKey, destKey string) (st
 		return "", fmt.Errorf("failed to write destination: %w", err)
 	}
 
-	// --- Record destination location and update quota ---
-	// Preserve encryption metadata: ciphertext is copied as-is so the
-	// destination keeps the same wrapped DEK and key ID.
-	if err := o.coord.RecordObjectOrCleanup(ctx, span, destBackend, destKey, destBackendName, size, srcEnc); err != nil {
+	return o.finalizeMaterializedCopy(ctx, span, &materializedCopyRequest{
+		destBackend:     destBackend,
+		sourceKey:       sourceKey,
+		destKey:         destKey,
+		srcBackendName:  src.sourceBackend,
+		destBackendName: destBackendName,
+		size:            size,
+		srcEnc:          srcEnc,
+		start:           start,
+		etag:            etag,
+	})
+}
+
+// materializedCopyRequest bundles finalizeMaterializedCopy's inputs.
+// Parallels nativeCopyRequest used by finalizeNativeCopy.
+type materializedCopyRequest struct {
+	destBackend     s3be.ObjectBackend
+	sourceKey       string
+	destKey         string
+	srcBackendName  string
+	destBackendName string
+	size            int64
+	srcEnc          *core.EncryptionMeta
+	start           time.Time
+	etag            string
+}
+
+// finalizeMaterializedCopy runs the post-PUT-success steps for the
+// stream-through copy path. Differs from finalizeNativeCopy by adding
+// the egress/ingress tick because the bytes physically traversed the
+// orchestrator.
+func (o *Manager) finalizeMaterializedCopy(ctx context.Context, span trace.Span, req *materializedCopyRequest) (string, error) {
+	const operation = "CopyObject"
+	if err := o.coord.RecordObjectOrCleanup(ctx, span, req.destBackend, req.destKey, req.destBackendName, req.size, req.srcEnc); err != nil {
 		return "", err
 	}
-
-	srcName := src.sourceBackend
-	o.core.Acct().Operation(operation, destBackendName, start, nil)
-	o.core.Acct().Egress(srcName, size)         // source: Get
-	o.core.Acct().Ingress(destBackendName, size) // dest: Put
-
-	pobserve.CopyCompleted(ctx, span, sourceKey, destKey, srcName, destBackendName, size)
-	o.invalidateObjectCaches(destKey)
-	return etag, nil
+	o.core.Acct().Operation(operation, req.destBackendName, req.start, nil)
+	o.core.Acct().Egress(req.srcBackendName, req.size)
+	o.core.Acct().Ingress(req.destBackendName, req.size)
+	pobserve.CopyCompleted(ctx, span, req.sourceKey, req.destKey, req.srcBackendName, req.destBackendName, req.size)
+	o.invalidateObjectCaches(req.destKey)
+	return req.etag, nil
 }
 
 // sameBackendCopyEligible reports whether the source has at least one
@@ -627,16 +654,22 @@ func (o *Manager) DeleteObject(ctx context.Context, key string) error {
 		o.coord.DeleteOrEnqueue(ctx, backend, cp.BackendName, key, "delete_failed", cp.SizeBytes)
 	})
 
-	// --- Record metrics (use first copy's backend for primary) ---
-	// Per-backend DELETE API-call accounting is owned by
-	// DeleteOrEnqueue; recording it here too would double-count.
+	o.finalizeDelete(ctx, span, key, copies, start)
+	return nil
+}
+
+// finalizeDelete runs the post-fanout success steps for single-key
+// DeleteObject: operation-completion accounting (pinned to the first
+// copy's backend for label stability), completion observability, and
+// cache invalidation. Per-backend DELETE API-call accounting is owned
+// by DeleteOrEnqueue (#881) so this helper does NOT call APICall.
+func (o *Manager) finalizeDelete(ctx context.Context, span trace.Span, key string, copies []core.DeletedCopy, start time.Time) {
+	const operation = "DeleteObject"
 	if len(copies) > 0 {
 		o.core.Acct().Operation(operation, copies[0].BackendName, start, nil)
 	}
-
 	pobserve.DeleteCompleted(ctx, span, key, len(copies))
 	o.invalidateObjectCaches(key)
-	return nil
 }
 
 // -------------------------------------------------------------------------
@@ -704,15 +737,24 @@ func (o *Manager) DeleteObjects(ctx context.Context, keys []string) []DeleteObje
 		o.coord.DeleteOrEnqueue(ctx, item.backend, item.beName, item.key, "batch_delete_failed", item.sizeBytes)
 	})
 
+	o.finalizeBatchDelete(ctx, span, len(keys), results, start)
+	return results
+}
+
+// finalizeBatchDelete runs the post-fanout success steps for
+// DeleteObjects: operation-completion accounting (empty backend label
+// because the batch spans many), per-key tally span attributes, and
+// completion observability. Per-key API-call accounting is owned by
+// DeleteOrEnqueue inside the fanout (#881).
+func (o *Manager) finalizeBatchDelete(ctx context.Context, span trace.Span, batchSize int, results []DeleteObjectResult, start time.Time) {
+	const operation = "DeleteObjects"
 	successCount, errorCount := tallyDeleteResults(results)
 	o.core.Acct().Operation(operation, "", start, nil)
-
 	span.SetAttributes(
 		attribute.Int("s3o.deleted_count", successCount),
 		attribute.Int("s3o.error_count", errorCount),
 	)
-	pobserve.DeleteBatchCompleted(ctx, span, len(keys), successCount, errorCount)
-	return results
+	pobserve.DeleteBatchCompleted(ctx, span, batchSize, successCount, errorCount)
 }
 
 // flattenBatchDeletes produces the worker-pool input slice from the
