@@ -105,8 +105,12 @@ func New(d *Deps) *Manager {
 	}
 }
 
-// invalidateCache removes a key from the object data cache if caching is enabled.
-func (o *Manager) invalidateCache(key string) {
+// invalidateObjectCaches drops both the location cache entry (key ->
+// backend placement) and the object data cache entry. Every successful
+// mutation must clear both; pairing them here keeps a future caller
+// from silently invalidating one and leaving the other stale.
+func (o *Manager) invalidateObjectCaches(key string) {
+	o.cache.Delete(key)
 	if o.objectCache != nil {
 		o.objectCache.Invalidate(key)
 	}
