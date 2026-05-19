@@ -220,7 +220,6 @@ func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, req 
 	if err := o.coord.RecordObjectAndPromoteIntent(ctx, span, req.key, backendName, uploadSize, enc, intentID); err != nil {
 		return putAttemptResult{backend: backendName, fatalErr: err}
 	}
-	o.cache.Delete(req.key)
 	return putAttemptResult{backend: backendName, etag: etag}
 }
 
@@ -285,7 +284,7 @@ func (o *Manager) finalizePutSuccess(ctx context.Context, span trace.Span, req *
 		span.SetAttributes(telemetry.AttrFailoverAttempts.Int(len(req.failedBackends)))
 	}
 	pobserve.PutCompleted(ctx, span, req.key, req.backendName, req.size)
-	o.invalidateCache(req.key)
+	o.invalidateObjectCaches(req.key)
 }
 
 // withoutBackend returns eligible with name removed in original order.
@@ -439,16 +438,13 @@ func (o *Manager) CopyObject(ctx context.Context, sourceKey, destKey string) (st
 		return "", err
 	}
 
-	// --- Invalidate location cache ---
-	o.cache.Delete(destKey)
-
 	srcName := src.sourceBackend
 	o.core.Acct().Operation(operation, destBackendName, start, nil)
 	o.core.Acct().Egress(srcName, size)         // source: Get
 	o.core.Acct().Ingress(destBackendName, size) // dest: Put
 
 	pobserve.CopyCompleted(ctx, span, sourceKey, destKey, srcName, destBackendName, size)
-	o.invalidateCache(destKey)
+	o.invalidateObjectCaches(destKey)
 	return etag, nil
 }
 
@@ -545,11 +541,10 @@ func (o *Manager) finalizeNativeCopy(ctx context.Context, req *nativeCopyRequest
 	if err := o.coord.RecordObjectOrCleanup(ctx, req.span, req.destBackend, req.destKey, req.destBackendName, req.size, req.srcEnc); err != nil {
 		return "", true, err
 	}
-	o.cache.Delete(req.destKey)
 	o.core.Acct().Operation(operation, req.destBackendName, req.start, nil)
 	req.span.SetAttributes(telemetry.AttrNativeCopy.Bool(true))
 	pobserve.CopyCompleted(ctx, req.span, req.sourceKey, req.destKey, req.destBackendName, req.destBackendName, req.size)
-	o.invalidateCache(req.destKey)
+	o.invalidateObjectCaches(req.destKey)
 	return etag, true, nil
 }
 
@@ -614,7 +609,11 @@ func (o *Manager) DeleteObject(ctx context.Context, key string) error {
 
 	span.SetAttributes(attribute.Int("copies.deleted", len(copies)))
 
-	// --- Invalidate location cache ---
+	// Drop the location cache entry up front so concurrent readers
+	// during the backend fanout (which can take seconds) do not get
+	// pointed at a backend that is in the middle of being deleted from.
+	// The final invalidateObjectCaches below is a redundant no-op for
+	// this key but keeps every mutation path ending with one helper.
 	o.cache.Delete(key)
 
 	// --- Delete from each backend that held a copy (fan out concurrently) ---
@@ -636,7 +635,7 @@ func (o *Manager) DeleteObject(ctx context.Context, key string) error {
 	}
 
 	pobserve.DeleteCompleted(ctx, span, key, len(copies))
-	o.invalidateCache(key)
+	o.invalidateObjectCaches(key)
 	return nil
 }
 
@@ -691,8 +690,7 @@ func (o *Manager) DeleteObjects(ctx context.Context, keys []string) []DeleteObje
 	// A key absent from copiesByKey was already gone (not-found is silent
 	// success), so its cache entries are also stale and worth flushing.
 	for _, key := range keys {
-		o.cache.Delete(key)
-		o.invalidateCache(key)
+		o.invalidateObjectCaches(key)
 	}
 
 	deleteItems := o.flattenBatchDeletes(ctx, copiesByKey)
