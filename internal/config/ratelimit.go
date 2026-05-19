@@ -22,11 +22,11 @@ import (
 // RateLimitConfig holds per-IP rate limiting settings. Disabled by default.
 type RateLimitConfig struct {
 	Enabled         bool          `yaml:"enabled"`
-	RequestsPerSec  float64       `yaml:"requests_per_sec"`  // Token refill rate (default: 100)
-	Burst           int           `yaml:"burst"`              // Max burst size (default: 200)
-	TrustedProxies  []string      `yaml:"trusted_proxies"`    // CIDRs whose X-Forwarded-For is trusted (e.g. ["10.0.0.0/8", "172.16.0.0/12"])
-	CleanupInterval time.Duration `yaml:"cleanup_interval"`   // How often stale entries are evicted (default: 1m)
-	CleanupMaxAge   time.Duration `yaml:"cleanup_max_age"`    // Entries older than this are evicted (default: 5m)
+	RequestsPerSec  float64       `yaml:"requests_per_sec"` // Token refill rate (default: 100)
+	Burst           int           `yaml:"burst"`            // Max burst size (default: 200)
+	TrustedProxies  []string      `yaml:"trusted_proxies"`  // CIDRs whose X-Forwarded-For is trusted (e.g. ["10.0.0.0/8", "172.16.0.0/12"])
+	CleanupInterval time.Duration `yaml:"cleanup_interval"` // How often stale entries are evicted (default: 1m)
+	CleanupMaxAge   time.Duration `yaml:"cleanup_max_age"`  // Entries older than this are evicted (default: 5m)
 }
 
 // CircuitBreakerConfig holds settings for the database circuit breaker. When
@@ -37,6 +37,14 @@ type CircuitBreakerConfig struct {
 	OpenTimeout       time.Duration `yaml:"open_timeout"`       // Delay before probing recovery (default: 15s)
 	CacheTTL          time.Duration `yaml:"cache_ttl"`          // TTL for key->backend cache during degraded reads (default: 60s)
 	ParallelBroadcast bool          `yaml:"parallel_broadcast"` // Fan-out reads to all backends in parallel during degraded mode (default: false)
+	// DegradedBroadcastParallelism caps the number of backends probed
+	// concurrently during a parallel degraded-mode broadcast. 0 means no
+	// cap (every configured backend is probed at once, the historical
+	// behaviour). With a positive value, probes run as a rolling window:
+	// the first N are launched immediately, and each failure replenishes
+	// the next pending backend so at most N goroutines are in flight at
+	// any time. Only meaningful when ParallelBroadcast is true. See #858.
+	DegradedBroadcastParallelism int `yaml:"degraded_broadcast_parallelism"`
 }
 
 // BackendCircuitBreakerConfig holds settings for per-backend circuit breakers.
@@ -86,6 +94,14 @@ func (cb *CircuitBreakerConfig) setDefaults() {
 	cb.FailureThreshold = defaulted(cb.FailureThreshold, 3)
 	cb.OpenTimeout = defaulted(cb.OpenTimeout, 15*time.Second)
 	cb.CacheTTL = defaulted(cb.CacheTTL, 60*time.Second)
+	// DegradedBroadcastParallelism intentionally has no positive
+	// default: zero preserves the historical "fan out to every backend"
+	// behaviour; operators opt into the rolling-window cap by setting a
+	// positive value. A negative value is normalised to zero so a typo
+	// cannot accidentally disable the broadcast entirely.
+	if cb.DegradedBroadcastParallelism < 0 {
+		cb.DegradedBroadcastParallelism = 0
+	}
 }
 
 // setDefaults sets defaults.

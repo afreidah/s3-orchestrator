@@ -317,11 +317,14 @@ circuit_breaker:
   open_timeout: "15s"            # delay before probing recovery (default: 15s)
   cache_ttl: "60s"               # key→backend cache TTL during degraded reads (default: 60s)
   parallel_broadcast: false      # fan-out reads to all backends in parallel (default: false)
+  degraded_broadcast_parallelism: 0 # cap concurrent probes during parallel broadcast; 0 = no cap (default: 0)
 ```
 
 When the database is unreachable, the orchestrator enters degraded mode: reads broadcast to all backends (with caching), writes return `503`. The circuit automatically recovers when the database comes back.
 
 By default, degraded reads try each backend sequentially. When `parallel_broadcast` is enabled, all backends are tried concurrently and the first success wins — reducing worst-case read latency from `N * backend_timeout` to roughly the fastest backend's response time. Enable this if read latency during outages is critical, but note that each parallel broadcast sends API requests to all backends simultaneously, which counts against monthly usage limits.
+
+For fleets with many configured backends, set `degraded_broadcast_parallelism` to cap how many backends are probed at once. With a positive value, probes run as a rolling window: the first N launch immediately and each failure replenishes the slot with the next pending backend, so at most N goroutines (and at most N concurrent backend API calls / TLS handshakes) are in flight at any time. The default of `0` preserves the historical "fan out to every backend at once" behaviour.
 
 The other defaults are sensible for most deployments. Increase `cache_ttl` if you have many read-heavy clients and want fewer backend round-trips during outages.
 

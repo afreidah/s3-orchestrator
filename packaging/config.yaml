@@ -167,9 +167,11 @@ backends:
 
 # --- Circuit breaker for database failures ---
 # circuit_breaker:
-#   failure_threshold: 3         # Consecutive failures before opening
-#   open_timeout: 15s            # Delay before probing recovery
-#   cache_ttl: 60s               # TTL for degraded-mode read cache
+#   failure_threshold: 3              # Consecutive failures before opening
+#   open_timeout: 15s                 # Delay before probing recovery
+#   cache_ttl: 60s                    # TTL for degraded-mode read cache
+#   parallel_broadcast: false         # Fan-out reads to all backends in parallel during degraded mode
+#   degraded_broadcast_parallelism: 0 # Cap concurrent probes when parallel_broadcast is true; 0 = no cap
 
 # --- Per-backend circuit breakers (disabled by default) ---
 # Detects individual backend failures (expired credentials, provider outage)

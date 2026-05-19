@@ -2971,6 +2971,138 @@ func TestGetObject_SequentialBroadcast_WhenDisabled(t *testing.T) {
 	}
 }
 
+// concurrencyTrackingBackend wraps a mockBackend and tracks the high
+// watermark of concurrent GetObject calls so a test can assert that the
+// degraded broadcast respects its parallelism cap. Used by
+// TestGetObject_DegradedBroadcastCap_RespectsLimit.
+type concurrencyTrackingBackend struct {
+	*mockBackend
+	delay time.Duration
+	// inFlight + maxInFlight are shared across every wrapper backed by
+	// the same tracker so the watermark reflects total cross-backend
+	// concurrency rather than per-backend reentrancy.
+	inFlight    *atomic.Int32
+	maxInFlight *atomic.Int32
+}
+
+// GetObject increments the shared in-flight counter, naps for delay (so
+// the test has a window to observe overlap), then forwards to the
+// underlying mock.
+func (c *concurrencyTrackingBackend) GetObject(ctx context.Context, key string, rangeHeader string) (*s3be.GetObjectResult, error) {
+	now := c.inFlight.Add(1)
+	defer c.inFlight.Add(-1)
+	for {
+		peak := c.maxInFlight.Load()
+		if now <= peak || c.maxInFlight.CompareAndSwap(peak, now) {
+			break
+		}
+	}
+	select {
+	case <-time.After(c.delay):
+		return c.mockBackend.GetObject(ctx, key, rangeHeader)
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// TestGetObject_DegradedBroadcastCap_RespectsLimit pins issue #858: when
+// a positive DegradedBroadcastParallelism cap is set, the parallel
+// degraded broadcast probes at most that many backends concurrently
+// even if more eligible backends are configured. The slow-probe backend
+// pool guarantees that without the cap every backend would be probed at
+// once, so a max-in-flight watermark of 2 is only possible if the
+// rolling-window launcher is honouring the limit.
+func TestGetObject_DegradedBroadcastCap_RespectsLimit(t *testing.T) {
+	t.Parallel()
+
+	const probeDelay = 80 * time.Millisecond
+	var inFlight, maxInFlight atomic.Int32
+	names := []string{"b1", "b2", "b3", "b4", "b5"}
+	obs := make(map[string]s3be.ObjectBackend, len(names))
+	for _, n := range names {
+		mb := newMockBackend()
+		_, _ = mb.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
+		obs[n] = &concurrencyTrackingBackend{
+			mockBackend: mb,
+			delay:       probeDelay,
+			inFlight:    &inFlight,
+			maxInFlight: &maxInFlight,
+		}
+	}
+
+	store := locationsStore(t, nil, core.ErrDBUnavailable)
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
+		Backends:                     obs,
+		Stores:                       testStoresFromMock(store),
+		Dashboard:                    store,
+		Metrics:                      store,
+		Order:                        names,
+		CacheTTL:                     5 * time.Second,
+		BackendTimeout:               30 * time.Second,
+		RoutingStrategy:              "pack",
+		ParallelBroadcast:            true,
+		DegradedBroadcastParallelism: 2,
+	})
+	workers := wireWorkersForTest(mgr)
+	_ = workers
+	defer mgr.Close()
+
+	result, err := mgr.ObjectManager.GetObject(context.Background(), "key", "")
+	if err != nil {
+		t.Fatalf("GetObject: %v", err)
+	}
+	defer func() { _ = result.Body.Close() }()
+	_, _ = io.ReadAll(result.Body)
+
+	if peak := maxInFlight.Load(); peak > 2 {
+		t.Errorf("maxInFlight = %d, want <= 2 (cap should bound concurrent probes)", peak)
+	}
+}
+
+// TestGetObject_DegradedBroadcastCap_ReplenishesAfterFailure exercises
+// the rolling-window backfill: with cap=1 and the first two backends
+// returning errors, the third backend must still be probed and win.
+// Pins that launchNext fires inside the failure branch of the receive
+// loop.
+func TestGetObject_DegradedBroadcastCap_ReplenishesAfterFailure(t *testing.T) {
+	t.Parallel()
+
+	b1 := newMockBackend()
+	b1.getErr = errors.New("b1 down")
+	b2 := newMockBackend()
+	b2.getErr = errors.New("b2 down")
+	b3 := newMockBackend()
+	_, _ = b3.PutObject(context.Background(), "key", bytes.NewReader([]byte("ok")), 2, "text/plain", nil)
+
+	obs := map[string]s3be.ObjectBackend{"b1": b1, "b2": b2, "b3": b3}
+	store := locationsStore(t, nil, core.ErrDBUnavailable)
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
+		Backends:                     obs,
+		Stores:                       testStoresFromMock(store),
+		Dashboard:                    store,
+		Metrics:                      store,
+		Order:                        []string{"b1", "b2", "b3"},
+		CacheTTL:                     5 * time.Second,
+		BackendTimeout:               30 * time.Second,
+		RoutingStrategy:              "pack",
+		ParallelBroadcast:            true,
+		DegradedBroadcastParallelism: 1,
+	})
+	workers := wireWorkersForTest(mgr)
+	_ = workers
+	defer mgr.Close()
+
+	result, err := mgr.ObjectManager.GetObject(context.Background(), "key", "")
+	if err != nil {
+		t.Fatalf("GetObject: %v", err)
+	}
+	defer func() { _ = result.Body.Close() }()
+	got, _ := io.ReadAll(result.Body)
+	if string(got) != "ok" {
+		t.Errorf("body = %q, want %q (b3 should win after b1+b2 fail)", got, "ok")
+	}
+}
+
 // TestGetObject_BackendNotFound_FailsOverToNext pins the missing-backend
 // failover.
 func TestGetObject_BackendNotFound_FailsOverToNext(t *testing.T) {
