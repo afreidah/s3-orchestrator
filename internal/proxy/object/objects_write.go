@@ -629,11 +629,10 @@ func (o *Manager) DeleteObject(ctx context.Context, key string) error {
 	})
 
 	// --- Record metrics (use first copy's backend for primary) ---
+	// Per-backend DELETE API-call accounting is owned by
+	// DeleteOrEnqueue; recording it here too would double-count.
 	if len(copies) > 0 {
 		o.core.Acct().Operation(operation, copies[0].BackendName, start, nil)
-	}
-	for _, c := range copies {
-		o.core.Acct().APICall(c.BackendName)
 	}
 
 	pobserve.DeleteCompleted(ctx, span, key, len(copies))
@@ -714,7 +713,9 @@ func (o *Manager) DeleteObjects(ctx context.Context, keys []string) []DeleteObje
 
 // flattenBatchDeletes produces the worker-pool input slice from the
 // DeleteObjectsBatch result. Skips copies whose backend is unknown
-// (logged) and records a usage tick per emitted copy.
+// (logged). Per-backend DELETE API-call accounting happens inside
+// DeleteOrEnqueue when the item is consumed, so no tick is recorded
+// here.
 func (o *Manager) flattenBatchDeletes(ctx context.Context, copiesByKey map[string][]core.DeletedCopy) []batchDeleteItem {
 	var items []batchDeleteItem
 	for key, copies := range copiesByKey {
@@ -728,7 +729,6 @@ func (o *Manager) flattenBatchDeletes(ctx context.Context, copiesByKey map[strin
 			items = append(items, batchDeleteItem{
 				key: key, backend: backend, beName: cp.BackendName, sizeBytes: cp.SizeBytes,
 			})
-			o.core.Acct().APICall(cp.BackendName)
 		}
 	}
 	return items

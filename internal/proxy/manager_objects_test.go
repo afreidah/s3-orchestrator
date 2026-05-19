@@ -1502,6 +1502,69 @@ func TestDeleteObjects_BackendNotInMap(t *testing.T) {
 	}
 }
 
+// TestDeleteObject_RecordsOneAPICallPerCopy pins the single-DELETE-per-
+// physical-DELETE rule for ObjectManager.DeleteObject. DeleteOrEnqueue
+// owns the API-call tick, so an N-copy delete must record exactly N
+// APICalls across the involved backends (not 2*N as it did before the
+// duplicate-accounting fix). See issue #881.
+func TestDeleteObject_RecordsOneAPICallPerCopy(t *testing.T) {
+	t.Parallel()
+	be1 := newMockBackend()
+	be2 := newMockBackend()
+	for _, b := range []*mockBackend{be1, be2} {
+		_, _ = b.PutObject(context.Background(), "k", bytes.NewReader([]byte("rm")), 2, "", nil)
+	}
+
+	store := deleteObjectStore(t, []core.DeletedCopy{
+		{BackendName: "b1", SizeBytes: 2},
+		{BackendName: "b2", SizeBytes: 2},
+	}, nil)
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": be1, "b2": be2})
+
+	if err := mgr.ObjectManager.DeleteObject(context.Background(), "k"); err != nil {
+		t.Fatalf("DeleteObject: %v", err)
+	}
+
+	if got := mgr.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 1 {
+		t.Errorf("b1 apiRequests = %d, want 1", got)
+	}
+	if got := mgr.Usage().Backend().Load("b2", counter.FieldAPIRequests); got != 1 {
+		t.Errorf("b2 apiRequests = %d, want 1", got)
+	}
+}
+
+// TestDeleteObjects_RecordsOneAPICallPerCopy pins the same rule for the
+// batch path: N keys with one copy each must record N APICalls total
+// (not 2*N). See issue #881.
+func TestDeleteObjects_RecordsOneAPICallPerCopy(t *testing.T) {
+	t.Parallel()
+	backend := newMockBackend()
+	for _, k := range []string{"a", "b", "c"} {
+		_, _ = backend.PutObject(context.Background(), k, bytes.NewReader([]byte("x")), 1, "", nil)
+	}
+
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	objectsStubs(store)
+	store.EXPECT().DeleteObjectsBatch(gomock.Any(), gomock.Any()).
+		DoAndReturn(stubBatchDelete(func(keys []string) (map[string][]core.DeletedCopy, error) {
+			out := make(map[string][]core.DeletedCopy, len(keys))
+			for _, k := range keys {
+				out[k] = []core.DeletedCopy{{BackendName: "b1", SizeBytes: 1}}
+			}
+			return out, nil
+		})).AnyTimes()
+	storetest.Permissive(store)
+
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": backend})
+
+	mgr.ObjectManager.DeleteObjects(context.Background(), []string{"a", "b", "c"})
+
+	if got := mgr.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 3 {
+		t.Errorf("b1 apiRequests = %d, want 3 (one per key, not 2*N)", got)
+	}
+}
+
 // copyObjectStore wires a CopyObject success path: locations + a chosen
 // destination backend.
 func copyObjectStore(t *testing.T, locs []core.ObjectLocation, locsErr error, getBackend string, getBackendErr error) (*storetest.MockMetadataStore, *objectsCalls) {
