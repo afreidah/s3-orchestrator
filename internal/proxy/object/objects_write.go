@@ -643,6 +643,12 @@ func (o *Manager) DeleteObject(ctx context.Context, key string) error {
 // BATCH DELETE
 // -------------------------------------------------------------------------
 
+// defaultBatchDeleteConcurrency caps how many per-key backend DELETE
+// fanouts run at once inside DeleteObjects. Picked to absorb a typical
+// S3 batch of 1000 keys without saturating any single backend's
+// connection pool or burning API quota in a burst.
+const defaultBatchDeleteConcurrency = 10
+
 // DeleteObjectResult holds the outcome of a single key within a batch delete.
 type DeleteObjectResult struct {
 	Key string `json:"key,omitempty"`
@@ -694,7 +700,7 @@ func (o *Manager) DeleteObjects(ctx context.Context, keys []string) []DeleteObje
 	}
 
 	deleteItems := o.flattenBatchDeletes(ctx, copiesByKey)
-	workerpool.Run(ctx, 10, deleteItems, func(ctx context.Context, item batchDeleteItem) {
+	workerpool.Run(ctx, defaultBatchDeleteConcurrency, deleteItems, func(ctx context.Context, item batchDeleteItem) {
 		o.coord.DeleteOrEnqueue(ctx, item.backend, item.beName, item.key, "batch_delete_failed", item.sizeBytes)
 	})
 
