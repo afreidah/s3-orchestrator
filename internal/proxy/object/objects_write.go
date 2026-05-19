@@ -486,20 +486,29 @@ type nativeCopyRequest struct {
 // and, on success, records the destination location, updates
 // accounting, and emits the completion observability. Returns:
 //
-//   - (etag, true, nil):  native copy + record both succeeded
+//   - (etag, true, nil):  native copy + record both succeeded (the
+//                         success may have been confirmed via the
+//                         HEAD-probe recovery path; either way the
+//                         caller treats this as a successful copy)
 //   - (_, true, err):     native copy succeeded but a post-step failed;
 //                         bytes are already on the destination, so the
 //                         caller MUST NOT fall back (that would copy
 //                         the bytes a second time)
 //   - (_, false, nil):    backend does not support native copy, or the
-//                         native call itself failed transiently; caller
-//                         falls back to the materialized copy path
+//                         native call failed AND a HEAD probe confirmed
+//                         the destination is not in the expected state;
+//                         caller falls back to the materialized copy path
 //
 // Native copy accounting differs from the materialized path: one API
 // call against the destination backend with no egress and no ingress,
 // because the bytes never traverse the orchestrator's network.
+//
+// On a non-capability native-copy error, the destination is HEAD-probed
+// before the function decides whether to surface the error or fall back.
+// This guards against the ambiguous case where the backend completed the
+// copy server-side but the response was lost (timeout, dropped connection)
+// - falling back blindly would duplicate the work. See issue #884.
 func (o *Manager) tryNativeCopy(ctx context.Context, req *nativeCopyRequest) (string, bool, error) {
-	const operation = "CopyObject"
 	copier, ok := req.destBackend.(s3be.BackendCopier)
 	if !ok {
 		return "", false, nil
@@ -507,25 +516,74 @@ func (o *Manager) tryNativeCopy(ctx context.Context, req *nativeCopyRequest) (st
 	cctx, ccancel := o.core.WithTimeout(ctx)
 	defer ccancel()
 	etag, err := copier.CopyObject(cctx, req.sourceKey, req.destKey, req.contentType, req.metadata)
-	if err != nil {
-		if errors.Is(err, s3be.ErrCopyNotSupported) {
-			return "", false, nil
-		}
-		o.log.WarnContext(ctx, "native copy failed, falling back to materialized copy",
-			"source_key", req.sourceKey, "dest_key", req.destKey, "backend", req.destBackendName, "error", err)
+	if err == nil {
+		return o.finalizeNativeCopy(ctx, req, etag)
+	}
+	if errors.Is(err, s3be.ErrCopyNotSupported) {
 		return "", false, nil
 	}
+	// Ambiguous failure: probe the destination via HEAD. If the
+	// destination exists with the expected size, the copy completed
+	// server-side; treat it as success and run the same post-success
+	// path. Otherwise fall back to materialized copy.
+	if recoveredETag, ok := o.probeDestAfterAmbiguousCopy(ctx, req, err); ok {
+		return o.finalizeNativeCopy(ctx, req, recoveredETag)
+	}
+	o.log.WarnContext(ctx, "native copy failed, falling back to materialized copy",
+		"source_key", req.sourceKey, "dest_key", req.destKey, "backend", req.destBackendName, "error", err)
+	return "", false, nil
+}
 
+// finalizeNativeCopy runs the post-native-copy success steps shared by
+// the happy path and the HEAD-probe recovery path: record the
+// destination location, refresh accounting, mark the span as a native
+// copy, emit completion observability, and invalidate caches. Returns
+// (_, true, err) on RecordObjectOrCleanup failure - the bytes are
+// already on the destination so the caller MUST NOT fall back.
+func (o *Manager) finalizeNativeCopy(ctx context.Context, req *nativeCopyRequest, etag string) (string, bool, error) {
+	const operation = "CopyObject"
 	if err := o.coord.RecordObjectOrCleanup(ctx, req.span, req.destBackend, req.destKey, req.destBackendName, req.size, req.srcEnc); err != nil {
 		return "", true, err
 	}
-
 	o.cache.Delete(req.destKey)
 	o.core.Acct().Operation(operation, req.destBackendName, req.start, nil)
 	req.span.SetAttributes(telemetry.AttrNativeCopy.Bool(true))
 	pobserve.CopyCompleted(ctx, req.span, req.sourceKey, req.destKey, req.destBackendName, req.destBackendName, req.size)
 	o.invalidateCache(req.destKey)
 	return etag, true, nil
+}
+
+// probeDestAfterAmbiguousCopy HEADs the destination after a non-
+// capability native-copy error to disambiguate "copy succeeded server-
+// side but the response was lost" from "copy actually failed." Returns
+// (etag, true) when the destination exists and the size matches the
+// expected source size; returns ("", false) otherwise so the caller
+// falls back to materialized copy. A 404 on the HEAD is treated as a
+// clean fallback signal; any other HEAD error is also a fallback but
+// is logged as a warn so operators see the probe failure mode. See
+// issue #884.
+func (o *Manager) probeDestAfterAmbiguousCopy(ctx context.Context, req *nativeCopyRequest, origErr error) (string, bool) {
+	hctx, hcancel := o.core.WithTimeout(ctx)
+	defer hcancel()
+	head, headErr := req.destBackend.HeadObject(hctx, req.destKey)
+	if headErr != nil {
+		if !s3be.IsNotFound(headErr) {
+			o.log.WarnContext(ctx, "ambiguous native-copy HEAD probe failed",
+				"source_key", req.sourceKey, "dest_key", req.destKey, "backend", req.destBackendName,
+				"copy_error", origErr, "probe_error", headErr)
+		}
+		return "", false
+	}
+	if head.Size != req.size {
+		o.log.WarnContext(ctx, "ambiguous native-copy destination size mismatch, falling back to materialized copy",
+			"source_key", req.sourceKey, "dest_key", req.destKey, "backend", req.destBackendName,
+			"expected_size", req.size, "observed_size", head.Size, "copy_error", origErr)
+		return "", false
+	}
+	o.log.InfoContext(ctx, "ambiguous native-copy resolved via HEAD probe, destination already populated",
+		"source_key", req.sourceKey, "dest_key", req.destKey, "backend", req.destBackendName,
+		"size", head.Size, "copy_error", origErr)
+	return head.ETag, true
 }
 
 // -------------------------------------------------------------------------

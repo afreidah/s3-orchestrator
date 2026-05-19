@@ -1727,6 +1727,111 @@ func TestCopyObject_FastPathFallsBackOnNativeError(t *testing.T) {
 	}
 }
 
+// TestCopyObject_AmbiguousNativeFailure_HeadConfirmsTreatsAsSuccess
+// pins the #884 contract: when native CopyObject returns a non-
+// capability error but a HEAD probe shows the destination already
+// exists with the expected size, the orchestrator treats the copy as
+// successful without falling back to materialized copy. This guards
+// the "backend copied server-side, response was lost" race against
+// duplicate work.
+func TestCopyObject_AmbiguousNativeFailure_HeadConfirmsTreatsAsSuccess(t *testing.T) {
+	t.Parallel()
+	backend := newMockBackend()
+	backend.copyEnabled = true
+	backend.copyErr = errors.New("simulated response timeout")
+	_, _ = backend.PutObject(context.Background(), "src", bytes.NewReader([]byte("copy-me")), 7, "text/plain", nil)
+	// Simulate the ambiguous case: the backend already populated the
+	// destination server-side before the response was lost.
+	_, _ = backend.PutObject(context.Background(), "dst", bytes.NewReader([]byte("copy-me")), 7, "text/plain", nil)
+	// Reset the seekable flag so a materialized PUT would flip it true.
+	backend.lastPutBodySeekable = false
+
+	store, _ := copyObjectStore(t,
+		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil,
+		"b1", nil)
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": backend})
+
+	etag, err := mgr.ObjectManager.CopyObject(context.Background(), "src", "dst")
+	if err != nil {
+		t.Fatalf("CopyObject: %v", err)
+	}
+	if etag == "" {
+		t.Error("expected non-empty etag from HEAD-probe recovery")
+	}
+	backend.mu.Lock()
+	puttedBody := backend.lastPutBodySeekable
+	backend.mu.Unlock()
+	if puttedBody {
+		t.Error("materialized PUT ran; HEAD probe should have suppressed the fallback")
+	}
+}
+
+// TestCopyObject_AmbiguousNativeFailure_HeadMissingFallsBack pins the
+// other side of the #884 contract: when native CopyObject errors and
+// the HEAD probe shows the destination is absent, the orchestrator
+// falls back to materialized copy. The destination must still end up
+// populated.
+func TestCopyObject_AmbiguousNativeFailure_HeadMissingFallsBack(t *testing.T) {
+	t.Parallel()
+	backend := newMockBackend()
+	backend.copyEnabled = true
+	backend.copyErr = errors.New("simulated network error")
+	_, _ = backend.PutObject(context.Background(), "src", bytes.NewReader([]byte("copy-me")), 7, "text/plain", nil)
+	// No dst pre-populated: the probe sees 404 and falls back.
+	backend.lastPutBodySeekable = false
+
+	store, _ := copyObjectStore(t,
+		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil,
+		"b1", nil)
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": backend})
+
+	if _, err := mgr.ObjectManager.CopyObject(context.Background(), "src", "dst"); err != nil {
+		t.Fatalf("CopyObject: %v", err)
+	}
+	if !backend.hasObject("dst") {
+		t.Error("destination object not found after materialized fallback")
+	}
+	backend.mu.Lock()
+	puttedBody := backend.lastPutBodySeekable
+	backend.mu.Unlock()
+	if !puttedBody {
+		t.Error("expected materialized PUT after probe returned 404")
+	}
+}
+
+// TestCopyObject_AmbiguousNativeFailure_SizeMismatchFallsBack pins the
+// safety guard: when the HEAD probe shows the destination exists but
+// at a different size than the source, the orchestrator falls back to
+// materialized copy (which overwrites with the correct content).
+// Without the size check, an unrelated object on the destination key
+// could be misclassified as a successful copy.
+func TestCopyObject_AmbiguousNativeFailure_SizeMismatchFallsBack(t *testing.T) {
+	t.Parallel()
+	backend := newMockBackend()
+	backend.copyEnabled = true
+	backend.copyErr = errors.New("simulated ambiguous failure")
+	_, _ = backend.PutObject(context.Background(), "src", bytes.NewReader([]byte("copy-me")), 7, "text/plain", nil)
+	// Pre-populate dst with a different size to simulate "something
+	// else is already at this key."
+	_, _ = backend.PutObject(context.Background(), "dst", bytes.NewReader([]byte("different-content")), 17, "text/plain", nil)
+	backend.lastPutBodySeekable = false
+
+	store, _ := copyObjectStore(t,
+		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil,
+		"b1", nil)
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": backend})
+
+	if _, err := mgr.ObjectManager.CopyObject(context.Background(), "src", "dst"); err != nil {
+		t.Fatalf("CopyObject: %v", err)
+	}
+	backend.mu.Lock()
+	puttedBody := backend.lastPutBodySeekable
+	backend.mu.Unlock()
+	if !puttedBody {
+		t.Error("expected materialized PUT after size-mismatch probe")
+	}
+}
+
 // TestCopyObject_FastPathSkippedCrossBackend verifies the fast path is
 // not engaged when the source's only replica lives on a different
 // backend than the chosen destination. The orchestrator must

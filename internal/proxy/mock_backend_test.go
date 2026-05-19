@@ -120,7 +120,10 @@ func (m *mockBackend) HeadObject(_ context.Context, key string) (*s3be.HeadObjec
 	}
 	obj, ok := m.objects[key]
 	if !ok {
-		return nil, fmt.Errorf("object %q not found", key)
+		// Return a typed 404 so callers reaching for s3be.IsNotFound
+		// (notably probeDestAfterAmbiguousCopy in object/objects_write.go)
+		// see the same shape they would from a real S3 backend.
+		return nil, &mockHTTPError{code: 404, msg: fmt.Sprintf("object %q not found", key)}
 	}
 	return &s3be.HeadObjectResult{
 		Size:        int64(len(obj.data)),
@@ -129,6 +132,20 @@ func (m *mockBackend) HeadObject(_ context.Context, key string) (*s3be.HeadObjec
 		Metadata:    obj.metadata,
 	}, nil
 }
+
+// mockHTTPError is a status-code-bearing error so s3be.IsNotFound
+// classifies the mock's "object not found" return the same way it
+// classifies a real S3 backend's 404.
+type mockHTTPError struct {
+	code int
+	msg  string
+}
+
+// Error implements error.
+func (e *mockHTTPError) Error() string { return e.msg }
+
+// HTTPStatusCode satisfies the s3be.IsNotFound interface check.
+func (e *mockHTTPError) HTTPStatusCode() int { return e.code }
 
 func (m *mockBackend) DeleteObject(ctx context.Context, key string) error {
 	m.mu.Lock()
