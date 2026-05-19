@@ -155,6 +155,41 @@ func TestCleanObject_RemovesLowestScored(t *testing.T) {
 	}
 }
 
+// TestCleanObject_DoesNotDoubleCountAPICalls pins issue #881: cleanObject
+// must let DeleteOrEnqueue own the backend DELETE API-call accounting
+// and not record its own. Setting ops.EXPECT().Acct().Times(0) makes the
+// previous duplicate Acct().APICall(victim.BackendName) line fail loudly
+// if it is ever reintroduced.
+func TestCleanObject_DoesNotDoubleCountAPICalls(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	ops := NewMockOps(ctrl)
+	ms := &mockMetadataStore{}
+
+	be1 := backendtest.NewMockObjectBackend(ctrl)
+	be2 := backendtest.NewMockObjectBackend(ctrl)
+
+	ops.EXPECT().IsDraining(gomock.Any()).Return(false).AnyTimes()
+	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": be1, "b2": be2}).AnyTimes()
+	ops.EXPECT().Acct().Times(0)
+	ops.EXPECT().GetBackend("b1").Return(be1, nil)
+	ops.EXPECT().DeleteOrEnqueue(gomock.Any(), be1, "b1", "key1", "over_replication", int64(100))
+
+	c := NewOverReplicationCleaner(ops, ms)
+	copies := []core.ObjectLocation{
+		{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
+		{ObjectKey: "key1", BackendName: "b2", SizeBytes: 100},
+	}
+	stats := map[string]core.QuotaStat{
+		"b1": {BytesUsed: 900, BytesLimit: 1000},
+		"b2": {BytesUsed: 100, BytesLimit: 1000},
+	}
+
+	if removed := c.cleanObject(context.Background(), "key1", copies, 1, stats); removed != 1 {
+		t.Errorf("removed = %d, want 1", removed)
+	}
+}
+
 // TestClean_FactorOne_Noop verifies the clean factor one noop contract.
 // Asserts that unexpected error:.
 func TestClean_FactorOne_Noop(t *testing.T) {

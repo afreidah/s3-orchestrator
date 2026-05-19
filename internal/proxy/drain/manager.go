@@ -386,7 +386,6 @@ func (d *Manager) removeReplicaSource(ctx context.Context, srcBackend backend.Ob
 		return false
 	}
 	d.infra.DeleteOrEnqueue(ctx, srcBackend, srcName, obj.ObjectKey, "drain_source_delete", obj.SizeBytes)
-	d.infra.Acct().APICall(srcName)
 
 	audit.Log(ctx, "storage.DrainRemoveReplica",
 		slog.String("key", obj.ObjectKey),
@@ -420,21 +419,19 @@ func (d *Manager) copyAndRemoveSource(ctx context.Context, srcBackend backend.Ob
 		d.log.ErrorContext(ctx, "failed to update object location",
 			slog.String("key", obj.ObjectKey), "error", err)
 		d.infra.DeleteOrEnqueue(ctx, destBackend, destName, obj.ObjectKey, "drain_orphan", obj.SizeBytes)
-		d.infra.Acct().APICall(destName)
 		return false
 	}
 	if movedSize == 0 {
 		// Object was deleted or already moved.
 		d.infra.DeleteOrEnqueue(ctx, destBackend, destName, obj.ObjectKey, "drain_stale_orphan", obj.SizeBytes)
-		d.infra.Acct().APICall(destName)
 		return false
 	}
 
 	d.infra.DeleteOrEnqueue(ctx, srcBackend, srcName, obj.ObjectKey, "drain_source_delete", movedSize)
-	// Source: Get (charged with egress) + Delete; dest: Put (Ingress
-	// charges the API call).
+	// Source DELETE API call is recorded inside DeleteOrEnqueue; here
+	// we only add the Get egress on the source and the Put ingress on
+	// the destination (Ingress/Egress include their own API-call tick).
 	d.infra.Acct().Egress(srcName, movedSize)
-	d.infra.Acct().APICall(srcName)
 	d.infra.Acct().Ingress(destName, movedSize)
 
 	audit.Log(ctx, "storage.DrainMove",
