@@ -1158,6 +1158,7 @@ Key metrics to alert on:
 | `s3o_over_replication_pending` | Objects with more copies than the replication factor — should return to 0 after cleanup runs |
 | `s3o_over_replication_errors_total` | Cleanup errors — indicates backends or metadata issues preventing excess copy removal |
 | `s3o_requests_total{status_code="5xx"}` | Alert on elevated 5xx rates |
+| `s3o_http_panic_recovered_total{route}` | Any non-zero rate is an alert: a handler panicked and the recovery middleware returned a 500. Pivot via the matching `http.PanicRecovered` audit entry for the captured stack and request id |
 | `s3o_degraded_write_rejections_total` | Writes being rejected due to degraded mode |
 | `s3o_usage_limit_rejections_total` | Operations rejected by usage limits |
 | `s3o_rate_limit_rejections_total` | Requests rejected by per-IP rate limiting |
@@ -1217,8 +1218,21 @@ Key audit events:
 | `pending_reaper.superseded` | Pending reaper | A later write for the same key completed and superseded the pending intent before the reaper resolved it |
 | `storage.OrphanEnqueueFailed` | Coordinator | The cleanup-queue enqueue path itself failed after a successful backend write (DB outage). Carries backend / key / size / stage so an operator can reconcile manually once DB connectivity returns |
 | `storage.UploadPart` | Multipart | A multipart part upload completed successfully |
+| `http.PanicRecovered` | HTTP panic-recovery middleware | A handler panicked and the recovery layer returned a 500 to the client. Carries `route`, `method`, `path`, and the panic value. The matching error-level slog entry carries the captured stack trace |
 
 Each S3 API request produces two correlated audit entries (HTTP-level and storage-level) sharing the same `request_id`. Internal operations (rebalance, replication) generate their own correlation IDs. The `request_id` also appears as a `s3o.request_id` attribute on OpenTelemetry spans.
+
+### HTTP panic recovery
+
+A panic inside an HTTP handler is caught by the panic-recovery middleware applied to the S3 and admin route groups. The recovery contract:
+
+- The client gets a structured response, not a connection reset. S3 routes receive an XML `<Error><Code>InternalError</Code><Message>...Request ID: ...</Message></Error>` body with HTTP 500; admin routes receive the same shape as a JSON `{"error": "...Request ID: ..."}`.
+- The Prometheus counter `s3o_http_panic_recovered_total{route}` increments. A non-zero value is an immediate alert candidate.
+- A `slog.ErrorContext` line is written at level `ERROR` with `component=httputil`, the route, the method and path, the panic value, the captured Go stack, and a `trace_id` / `span_id` if a span was active when the panic occurred.
+- An `http.PanicRecovered` audit entry is emitted with the same correlation `request_id` as the failing request.
+- If an OpenTelemetry span was active on the request, it is marked as failed via `SetStatus(Error)` + `RecordError` so traces in Tempo highlight the failure.
+
+UI routes are intentionally not wrapped in the first iteration (mounted on the same mux as the S3 catch-all; the bulk of panic risk is on S3 and admin anyway). The recovery message deliberately does not echo the panic value to the client; only the request ID is returned so support tickets can be correlated back to the orchestrator log line.
 
 Clients can supply their own correlation ID via the `X-Request-Id` request header; otherwise the orchestrator generates one. The ID is returned in the `X-Amz-Request-Id` response header.
 
