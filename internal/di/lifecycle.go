@@ -60,7 +60,12 @@ func resolveLifecycleWorkers(i do.Injector) (lifecycleWorkerSet, error) {
 	if ws.scrubber, err = do.Invoke[*worker.Scrubber](i); err != nil {
 		return ws, err
 	}
-	// PendingReaper provider returns (nil, nil) when the feature is off.
+	// PendingReaper is conditionally registered (#830): the provider is
+	// only present when cfg.WritePath.PendingPattern.IsEnabled() is
+	// true. do.Invoke returns an error for both "not registered" (
+	// feature off) and "registered but constructor failed". WireManager
+	// has already logged the Failed case via Optional[*worker.PendingReaper];
+	// here we just take the nil value either way.
 	ws.pendingReaper, _ = do.Invoke[*worker.PendingReaper](i)
 	return ws, nil
 }

@@ -80,7 +80,15 @@ func NewInjector(cfg *config.Config, mode string, logLevel *slog.LevelVar, logBu
 	do.Provide(inj, ProvideReplicator)
 	do.Provide(inj, ProvideOverReplicationCleaner)
 	do.Provide(inj, ProvideCleanupWorker)
-	do.Provide(inj, ProvidePendingReaper)
+	// PendingReaper is only registered when the pending-write pattern
+	// is enabled (#830). Optional[*worker.PendingReaper] then reports
+	// Disabled when the feature is off, Applied when it constructs
+	// cleanly, and Failed when registration happened but construction
+	// errored - three distinct states instead of the previous (nil,nil)
+	// conflation.
+	if cfg.WritePath.PendingPattern.IsEnabled() {
+		do.Provide(inj, ProvidePendingReaper)
+	}
 	do.Provide(inj, ProvideScrubber)
 	do.Provide(inj, ProvideDrainManager)
 
