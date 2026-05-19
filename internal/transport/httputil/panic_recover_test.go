@@ -92,8 +92,8 @@ func counterDelta(t *testing.T, route string, fn func()) float64 {
 // invoked.
 func TestPanicRecover_PassesThroughWhenNoPanic(t *testing.T) {
 	t.Parallel()
-	cap := &captureWriter{}
-	h := PanicRecover("test", cap.fn())(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	cw := &captureWriter{}
+	h := PanicRecover("test", cw.fn())(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.WriteString(w, "ok")
 	}))
@@ -101,7 +101,7 @@ func TestPanicRecover_PassesThroughWhenNoPanic(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 
-	if cap.called {
+	if cw.called {
 		t.Error("error writer invoked for a non-panicking handler")
 	}
 	if rec.Code != http.StatusOK {
@@ -117,8 +117,8 @@ func TestPanicRecover_PassesThroughWhenNoPanic(t *testing.T) {
 // inc + audit event without crashing on the unusual recover() type.
 func TestPanicRecover_StringPanic(t *testing.T) {
 	t.Parallel()
-	cap := &captureWriter{}
-	h := PanicRecover("test_string", cap.fn())(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+	cw := &captureWriter{}
+	h := PanicRecover("test_string", cw.fn())(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 		panic("synthetic failure")
 	}))
 
@@ -130,17 +130,17 @@ func TestPanicRecover_StringPanic(t *testing.T) {
 		}
 	})
 
-	if !cap.called {
+	if !cw.called {
 		t.Fatal("error writer not invoked after panic")
 	}
-	if cap.status != http.StatusInternalServerError {
-		t.Errorf("status = %d, want 500", cap.status)
+	if cw.status != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", cw.status)
 	}
-	if cap.errCode != "InternalError" {
-		t.Errorf("errCode = %q, want InternalError", cap.errCode)
+	if cw.errCode != "InternalError" {
+		t.Errorf("errCode = %q, want InternalError", cw.errCode)
 	}
-	if !strings.Contains(cap.message, "internal error") {
-		t.Errorf("message = %q, missing 'internal error'", cap.message)
+	if !strings.Contains(cw.message, "internal error") {
+		t.Errorf("message = %q, missing 'internal error'", cw.message)
 	}
 	if delta != 1 {
 		t.Errorf("counter delta = %v, want 1", delta)
@@ -152,8 +152,8 @@ func TestPanicRecover_StringPanic(t *testing.T) {
 // error, and the response message stays the same.
 func TestPanicRecover_ErrorPanic(t *testing.T) {
 	t.Parallel()
-	cap := &captureWriter{}
-	h := PanicRecover("test_error", cap.fn())(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+	cw := &captureWriter{}
+	h := PanicRecover("test_error", cw.fn())(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 		panic(errors.New("boom"))
 	}))
 
@@ -168,7 +168,7 @@ func TestPanicRecover_ErrorPanic(t *testing.T) {
 	if delta != 1 {
 		t.Errorf("counter delta = %v, want 1", delta)
 	}
-	if !cap.called {
+	if !cw.called {
 		t.Fatal("error writer not invoked after panic")
 	}
 }
@@ -178,8 +178,8 @@ func TestPanicRecover_ErrorPanic(t *testing.T) {
 // it so support tickets can cite a specific id.
 func TestPanicRecover_RequestIDEchoedInMessage(t *testing.T) {
 	t.Parallel()
-	cap := &captureWriter{}
-	h := PanicRecover("test_reqid", cap.fn())(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+	cw := &captureWriter{}
+	h := PanicRecover("test_reqid", cw.fn())(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 		panic("with id")
 	}))
 
@@ -189,8 +189,8 @@ func TestPanicRecover_RequestIDEchoedInMessage(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
-	if !strings.Contains(cap.message, "req-XYZ") {
-		t.Errorf("message = %q, missing request id", cap.message)
+	if !strings.Contains(cw.message, "req-XYZ") {
+		t.Errorf("message = %q, missing request id", cw.message)
 	}
 }
 
@@ -205,8 +205,8 @@ func TestPanicRecover_ActiveSpanGetsErrorRecorded(t *testing.T) {
 	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
 	tracer := tp.Tracer("test")
 
-	cap := &captureWriter{}
-	h := PanicRecover("test_span", cap.fn())(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+	cw := &captureWriter{}
+	h := PanicRecover("test_span", cw.fn())(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 		panic("with span")
 	}))
 
@@ -216,7 +216,7 @@ func TestPanicRecover_ActiveSpanGetsErrorRecorded(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	span.End()
 
-	if !cap.called {
+	if !cw.called {
 		t.Fatal("error writer not invoked")
 	}
 }
@@ -237,8 +237,8 @@ func TestPanicRecover_AuditCallbackFires(t *testing.T) {
 	})
 	t.Cleanup(func() { audit.SetOnEvent(nil) })
 
-	cap := &captureWriter{}
-	h := PanicRecover("test_audit", cap.fn())(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+	cw := &captureWriter{}
+	h := PanicRecover("test_audit", cw.fn())(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 		panic("with audit")
 	}))
 
