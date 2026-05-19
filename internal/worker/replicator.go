@@ -347,7 +347,9 @@ func (r *Replicator) FindReplicaTarget(ctx context.Context, key string, size int
 // target backend. Tries each existing copy in order for failover. Returns the
 // source backend name that was successfully read from and the size_bytes
 // recorded on that source's ObjectLocation row (the size of the bytes that
-// were actually transferred).
+// were actually transferred). The input slice is cloned before sorting so
+// callers retain their original ordering; see #904 for the aliasing bug
+// the clone prevents.
 func (r *Replicator) CopyToReplica(ctx context.Context, key string, copies []core.ObjectLocation, target string) (string, int64, error) {
 	targetBackend, err := r.ops.GetBackend(target)
 	if err != nil {
@@ -355,15 +357,20 @@ func (r *Replicator) CopyToReplica(ctx context.Context, key string, copies []cor
 	}
 
 	// Prefer healthy sources to avoid circuit breaker latency/failures.
-	slices.SortStableFunc(copies, func(a, b core.ObjectLocation) int {
+	// Sort a clone so the caller's slice keeps the order they passed
+	// in - this method does not advertise in-place mutation and the
+	// outer ReplicateObject loop reuses the same existingCopies slice
+	// across iterations.
+	ordered := slices.Clone(copies)
+	slices.SortStableFunc(ordered, func(a, b core.ObjectLocation) int {
 		return cmpHealthFirst(r.IsBackendHealthy(a.BackendName), r.IsBackendHealthy(b.BackendName))
 	})
 
-	for i := range copies {
+	for i := range ordered {
 		if ctx.Err() != nil {
 			return "", 0, ctx.Err()
 		}
-		sourceName, sourceSize, terminal, err := r.tryCopyFrom(ctx, key, target, targetBackend, &copies[i])
+		sourceName, sourceSize, terminal, err := r.tryCopyFrom(ctx, key, target, targetBackend, &ordered[i])
 		if terminal {
 			return sourceName, sourceSize, err
 		}
