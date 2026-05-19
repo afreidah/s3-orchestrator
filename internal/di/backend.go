@@ -266,10 +266,31 @@ func ProvideBackendManager(i do.Injector) (*proxy.BackendManager, error) {
 	})
 }
 
-// admissionSemFor returns the shared admission semaphore sized per the
-// server config. Reads/writes-split values take precedence over the
-// merged MaxConcurrentRequests, matching the original switch's
-// behaviour. Returns nil when no concurrency cap is configured.
+// admissionSemFor returns the shared admission semaphore that lives on
+// BackendManager. Behaviour by configuration shape (#835 documents the
+// historical intent so future readers do not have to reverse-engineer it
+// from the call sites in transport/httpserver/routes.go):
+//
+//   - Split mode (both MaxConcurrentReads and MaxConcurrentWrites set):
+//     the returned channel is sized to MaxConcurrentWrites and acts as
+//     the "writes-and-workers" pool. The HTTP read pool is created
+//     locally in routes.go as a separate channel sized to
+//     MaxConcurrentReads. Background workers (cleanup, replication,
+//     rebalance, pending reaper, over-replication) all acquire from this
+//     same writes pool via WithAdmission, so reads are isolated from
+//     worker activity while writes share their budget with workers.
+//   - Merged mode (only MaxConcurrentRequests set): single channel sized
+//     to MaxConcurrentRequests acts as the global pool. HTTP reads,
+//     HTTP writes, and background workers all contend for the same
+//     slots. Simpler to operate; less isolation.
+//   - Neither set: returns nil (no admission cap; admission middleware
+//     is also not installed in routes.go).
+//
+// The asymmetry is intentional. Workers do write-like work (DELETE,
+// PUT, COPY) so grouping them with HTTP writes keeps the read budget a
+// clean ceiling on read-side traffic in split mode. Operators sizing
+// MaxConcurrentWrites should account for worker activity as well as
+// HTTP write traffic.
 func admissionSemFor(s *config.ServerConfig) chan struct{} {
 	switch {
 	case s.MaxConcurrentReads > 0 && s.MaxConcurrentWrites > 0:

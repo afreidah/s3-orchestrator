@@ -92,10 +92,29 @@ func registerUIHandler(mux *http.ServeMux, inj do.Injector, cfg *config.Config) 
 }
 
 // registerS3Handler mounts the S3 proxy on / with optional rate limiting
-// and admission control. The split admission form prefers Server.MaxConcurrent
-// Reads/Writes when both are set; the single-channel form falls back to
-// MaxConcurrentRequests. Either form respects LoadShedThreshold and
-// AdmissionWait when set.
+// and admission control.
+//
+// Admission model (see #835 and internal/di/backend.go admissionSemFor):
+//
+//   - Split mode (both MaxConcurrentReads and MaxConcurrentWrites set):
+//     a fresh read semaphore is created here sized to MaxConcurrentReads;
+//     it is local to the HTTP read path and never touched by background
+//     workers. The write half reuses manager.AdmissionSem() which the
+//     DI layer already sized to MaxConcurrentWrites - that channel is
+//     also the budget every background worker (cleanup, replication,
+//     rebalance, pending reaper, over-replication) acquires from via
+//     WithAdmission. So in split mode HTTP reads have their own ceiling
+//     while HTTP writes share their ceiling with worker activity.
+//   - Merged mode (only MaxConcurrentRequests set): manager.AdmissionSem()
+//     is the single global pool sized to MaxConcurrentRequests; HTTP
+//     reads, HTTP writes, and workers all contend for the same slots.
+//   - Neither set: no admission middleware is installed (manager.AdmissionSem()
+//     returns nil and the switch falls through).
+//
+// Operators sizing MaxConcurrentWrites in split mode should plan for
+// background worker activity to consume from the same budget.
+//
+// Either form respects LoadShedThreshold and AdmissionWait when set.
 func registerS3Handler(mux *http.ServeMux, inj do.Injector, cfg *config.Config) error {
 	manager, err := do.Invoke[*proxy.BackendManager](inj)
 	if err != nil {
@@ -121,9 +140,14 @@ func registerS3Handler(mux *http.ServeMux, inj do.Injector, cfg *config.Config) 
 	var ac *s3api.AdmissionController
 	switch {
 	case cfg.Server.MaxConcurrentReads > 0 && cfg.Server.MaxConcurrentWrites > 0:
+		// Split-pool: dedicate a fresh read sem (HTTP-only) and reuse
+		// the manager's sem as the write+workers pool. See the func
+		// doc above for the full model.
 		readSem := make(chan struct{}, cfg.Server.MaxConcurrentReads)
 		ac = s3api.NewSplitAdmissionControllerFromSem(readSem, manager.AdmissionSem())
 	case cfg.Server.MaxConcurrentRequests > 0:
+		// Merged-pool: every request and every worker shares the
+		// manager's sem.
 		ac = s3api.NewAdmissionControllerFromSem(manager.AdmissionSem())
 	}
 	if ac != nil {
