@@ -125,17 +125,30 @@ func (w *Coordinator) RecordObjectOrCleanup(ctx context.Context, span trace.Span
 // path. Accounts for both API calls the failure path made (the original
 // PUT and the cleanup DELETE) regardless of whether the cleanup succeeds.
 // On cleanup failure the orphan is enqueued for the cleanup-queue worker
-// with the supplied reason. Callers are responsible for the failure log
-// message and span status before/after this call.
+// with the supplied reason. A backend 404 is treated as idempotent
+// success and skips the enqueue so the cleanup queue does not collect
+// phantom rows for objects the backend already agrees are gone (#880
+// completes the GH_ISSUE_843 story). Callers are responsible for the
+// failure log message and span status before/after this call.
 func (w *Coordinator) RecoverFromRecordFailure(ctx context.Context, be backend.ObjectBackend, backendName, key, cleanupReason string, size int64) {
 	w.core.Acct().APICall(backendName) // PUT that succeeded
 	delErr := w.core.DeleteWithTimeout(ctx, be, key)
 	w.core.Acct().APICall(backendName) // cleanup DELETE
-	if delErr != nil {
-		w.log.ErrorContext(ctx, "failed to clean up orphaned object",
-			"key", key, "backend", backendName, "error", delErr)
-		w.EnqueueCleanup(ctx, backendName, key, cleanupReason, size)
+	if delErr == nil {
+		return
 	}
+	// A 404 means the backend already agrees the object is gone, which
+	// is the desired end state. Skip enqueueing so we don't seed the
+	// cleanup queue with rows the cleanup worker would also have to
+	// recognise as no-ops (#880).
+	if backend.IsNotFound(delErr) {
+		w.log.InfoContext(ctx, "orphan cleanup target already absent on backend",
+			"key", key, "backend", backendName, "reason", cleanupReason)
+		return
+	}
+	w.log.ErrorContext(ctx, "failed to clean up orphaned object",
+		"key", key, "backend", backendName, "error", delErr)
+	w.EnqueueCleanup(ctx, backendName, key, cleanupReason, size)
 }
 
 // InsertPendingIntent records an in-flight PUT intent before the backend
