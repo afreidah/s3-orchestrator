@@ -162,6 +162,45 @@ func TestDeleteOrEnqueue_GenericError_Enqueues(t *testing.T) {
 	coord.DeleteOrEnqueue(context.Background(), be, "b1", "real.txt", "overwrite_displaced", 256)
 }
 
+// TestRecoverFromRecordFailure_DeleteReturns404_SkipsEnqueue covers
+// #880: the post-record-failure cleanup path must treat a backend 404
+// the same way DeleteOrEnqueue does and skip the enqueue. Otherwise
+// the cleanup queue accumulates phantom rows for objects the backend
+// already agrees are gone.
+func TestRecoverFromRecordFailure_DeleteReturns404_SkipsEnqueue(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	be := backendtest.NewMockObjectBackend(ctrl)
+	be.EXPECT().DeleteObject(gomock.Any(), "phantom.txt").
+		Return(&httpError{code: 404, msg: "NoSuchKey"})
+
+	store := storetest.NewMockMetadataStore(ctrl)
+	// The whole point of the fix: EnqueueCleanup must NOT be called.
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+	storetest.Permissive(store)
+
+	coord := newCoordinatorWithBackend("b1", be, store)
+	coord.RecoverFromRecordFailure(context.Background(), be, "b1", "phantom.txt", "record_failure", 128)
+}
+
+// TestRecoverFromRecordFailure_GenericError_Enqueues pins the
+// retain-the-existing-behavior contract: a non-404 cleanup failure
+// still seeds the cleanup queue so the worker can retry.
+func TestRecoverFromRecordFailure_GenericError_Enqueues(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	be := backendtest.NewMockObjectBackend(ctrl)
+	be.EXPECT().DeleteObject(gomock.Any(), "real.txt").Return(errors.New("connection refused"))
+
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().EnqueueCleanup(gomock.Any(), "b1", "real.txt", "record_failure", int64(256)).
+		Return(nil).Times(1)
+	storetest.Permissive(store)
+
+	coord := newCoordinatorWithBackend("b1", be, store)
+	coord.RecoverFromRecordFailure(context.Background(), be, "b1", "real.txt", "record_failure", 256)
+}
+
 // TestRecordObjectAndPromoteIntent_UnknownBackend covers the legacy
 // fallback path's "backend not registered" branch: with intentID empty
 // and an unknown backend name, the method returns an error before any
