@@ -181,6 +181,16 @@ Use `*Context` variants (`WarnContext`, `ErrorContext`, etc.) so the
 trace handler injects `trace_id`/`span_id` when a span is active. The
 `sloglint` config enforces `context: all`.
 
+**Exception — bootstrap / DI providers.** Startup logs emitted from
+`internal/di/*` (provider construction, one-shot wiring warnings) run
+before any request or worker tick exists, so there is no span to
+correlate to. These call sites use the non-context variants
+(`slog.Info`, `slog.Warn`, ...) rather than passing
+`context.Background()`. A `Background` context is not "the startup
+context" — it carries no trace, no request id, and no cancellation —
+so the *Context call would behave identically but mislead future
+readers into looking for a meaningful ctx that isn't there. See #831.
+
 ---
 
 ## Outcome attribute
