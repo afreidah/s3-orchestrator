@@ -9,7 +9,43 @@
 
 package ui
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/prometheus/client_golang/prometheus"
+)
+
+// newTestCounterVec returns a fresh CounterVec backed by an isolated
+// registry so the counterVecTotal test does not interact with the
+// global telemetry counters. The vec is unregistered - the helper only
+// needs the Collect() surface, which works on any prometheus.Collector.
+func newTestCounterVec() *prometheus.CounterVec {
+	return prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "test_counter_vec_total",
+		Help: "isolated counter for counterVecTotal tests",
+	}, []string{"operation"})
+}
+
+// TestCounterVecTotal exercises the snapshot helper that surfaces
+// integrity check / error totals on the dashboard. Uses an isolated
+// CounterVec so the test does not depend on the live telemetry
+// counters or the order in which test packages register them.
+func TestCounterVecTotal(t *testing.T) {
+	t.Parallel()
+	vec := newTestCounterVec()
+
+	if got := counterVecTotal(vec); got != 0 {
+		t.Errorf("empty vec total = %v, want 0", got)
+	}
+
+	vec.WithLabelValues("read").Inc()
+	vec.WithLabelValues("read").Inc()
+	vec.WithLabelValues("scrub").Inc()
+
+	if got := counterVecTotal(vec); got != 3 {
+		t.Errorf("populated vec total = %v, want 3 (2 read + 1 scrub)", got)
+	}
+}
 
 // TestFormatBytes verifies the format bytes contract.
 // Asserts that formatBytes() = , want.

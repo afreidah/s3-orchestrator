@@ -116,6 +116,22 @@ func (s *Store) GetObjectCounts(ctx context.Context) (map[string]int64, error) {
 	return counts, nil
 }
 
+// GetUnverifiedObjectCounts returns the number of objects per backend whose
+// content_hash column is NULL (objects predating integrity verification
+// or otherwise not yet checksummed). Drives the dashboard's "needs
+// backfill" column. See #405.
+func (s *Store) GetUnverifiedObjectCounts(ctx context.Context) (map[string]int64, error) {
+	rows, err := s.queries.GetUnverifiedObjectCountsByBackend(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query unverified object counts: %w", err)
+	}
+	counts := make(map[string]int64, len(rows))
+	for _, row := range rows {
+		counts[row.BackendName] = row.ObjectCount
+	}
+	return counts, nil
+}
+
 // GetActiveMultipartCounts returns the number of in-progress multipart uploads
 // per backend.
 func (s *Store) GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error) {
