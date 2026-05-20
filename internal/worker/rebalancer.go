@@ -561,9 +561,10 @@ func (r *Rebalancer) ExecuteOneMove(ctx context.Context, move RebalanceMove, str
 	if err != nil {
 		r.log.ErrorContext(ctx, "failed to update object location",
 			"key", move.ObjectKey, "error", err)
-		// Clean up orphan on destination
+		// Clean up orphan on destination. DeleteOrEnqueue owns the
+		// DELETE API-call accounting (#881 / #917); recording it here
+		// would double-count.
 		r.ops.DeleteOrEnqueue(ctx, destBackend, move.ToBackend, move.ObjectKey, "rebalance_orphan", move.SizeBytes)
-		r.ops.Acct().APICall(move.ToBackend)
 		telemetry.RebalanceObjectsMoved.WithLabelValues(strategy, "error").Inc()
 		return false
 	}
@@ -573,17 +574,17 @@ func (r *Rebalancer) ExecuteOneMove(ctx context.Context, move RebalanceMove, str
 		r.log.InfoContext(ctx, "object already moved or deleted, cleaning up",
 			"key", move.ObjectKey)
 		r.ops.DeleteOrEnqueue(ctx, destBackend, move.ToBackend, move.ObjectKey, "rebalance_stale_orphan", move.SizeBytes)
-		r.ops.Acct().APICall(move.ToBackend)
 		return false
 	}
 
 	// --- Delete from source ---
 	r.ops.DeleteOrEnqueue(ctx, srcBackend, move.FromBackend, move.ObjectKey, "rebalance_source_delete", movedSize)
 
-	// Source: Get (charged with egress) + Delete; dest: Put (Ingress
-	// charges the API call).
+	// Source-DELETE API call is recorded inside DeleteOrEnqueue (#881 /
+	// #917); here we only add the Get egress on the source and the Put
+	// ingress on the destination (Ingress/Egress include their own
+	// API-call tick).
 	r.ops.Acct().Egress(move.FromBackend, movedSize)
-	r.ops.Acct().APICall(move.FromBackend)
 	r.ops.Acct().Ingress(move.ToBackend, movedSize)
 
 	audit.Log(ctx, "rebalance.move",
