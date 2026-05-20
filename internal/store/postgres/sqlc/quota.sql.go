@@ -261,6 +261,38 @@ func (q *Queries) GetObjectSizeBytes(ctx context.Context, arg GetObjectSizeBytes
 	return size_bytes, err
 }
 
+const getUnverifiedObjectCountsByBackend = `-- name: GetUnverifiedObjectCountsByBackend :many
+SELECT backend_name, COUNT(*) AS object_count
+FROM object_locations
+WHERE content_hash IS NULL
+GROUP BY backend_name
+`
+
+type GetUnverifiedObjectCountsByBackendRow struct {
+	BackendName string
+	ObjectCount int64
+}
+
+func (q *Queries) GetUnverifiedObjectCountsByBackend(ctx context.Context) ([]GetUnverifiedObjectCountsByBackendRow, error) {
+	rows, err := q.db.Query(ctx, getUnverifiedObjectCountsByBackend)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetUnverifiedObjectCountsByBackendRow{}
+	for rows.Next() {
+		var i GetUnverifiedObjectCountsByBackendRow
+		if err := rows.Scan(&i.BackendName, &i.ObjectCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const incrementOrphanBytes = `-- name: IncrementOrphanBytes :exec
 UPDATE backend_quotas
 SET orphan_bytes = orphan_bytes + $1, updated_at = NOW()

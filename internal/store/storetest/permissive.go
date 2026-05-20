@@ -51,6 +51,7 @@ func Permissive(m *MockMetadataStore) {
 	r.GetMultipartUploadsByBackend(a, a).Return(nil, nil).AnyTimes()
 	r.GetObjectBackendsForKeys(a, a).Return(nil, nil).AnyTimes()
 	r.GetObjectCounts(a).Return(nil, nil).AnyTimes()
+	r.GetUnverifiedObjectCounts(a).Return(nil, nil).AnyTimes()
 	r.GetObjectsWithoutHash(a, a, a).Return(nil, nil).AnyTimes()
 	r.GetOverReplicatedObjects(a, a, a).Return(nil, nil).AnyTimes()
 	r.GetParts(a, a).Return(nil, nil).AnyTimes()

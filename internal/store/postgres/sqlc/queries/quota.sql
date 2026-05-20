@@ -69,6 +69,12 @@ SELECT backend_name, COUNT(*) AS upload_count
 FROM multipart_uploads
 GROUP BY backend_name;
 
+-- name: GetUnverifiedObjectCountsByBackend :many
+SELECT backend_name, COUNT(*) AS object_count
+FROM object_locations
+WHERE content_hash IS NULL
+GROUP BY backend_name;
+
 -- name: IncrementQuota :execrows
 UPDATE backend_quotas
 SET bytes_used = bytes_used + @amount, updated_at = NOW()

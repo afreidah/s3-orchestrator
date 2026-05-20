@@ -15,6 +15,10 @@ package ui
 import (
 	"bytes"
 	"net/http"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
@@ -29,21 +33,54 @@ type dashboardPage struct {
 	Data             *dashboard.Data
 	Buckets          []string
 	Config           configSummary
+	Integrity        integrityStats
 	TotalBytesUsed   int64
 	TotalBytesLimit  int64
 	TotalOrphanBytes int64
 }
 
+// counterVecTotal sums the current value of every label combination on
+// a Prometheus CounterVec. Used by the dashboard to surface integrity
+// check / error totals without scraping /metrics. Returns 0 on any
+// collection error - the dashboard treats "no data" the same as "zero
+// activity," which is the operator-meaningful interpretation.
+func counterVecTotal(v *prometheus.CounterVec) float64 {
+	ch := make(chan prometheus.Metric, 64)
+	v.Collect(ch)
+	close(ch)
+	var total float64
+	for m := range ch {
+		var pb dto.Metric
+		if err := m.Write(&pb); err != nil {
+			continue
+		}
+		if c := pb.GetCounter(); c != nil {
+			total += c.GetValue()
+		}
+	}
+	return total
+}
+
 // configSummary holds non-sensitive configuration for display. The Enabled
 // flags drive which admin-action buttons render in the dashboard.
 type configSummary struct {
-	RoutingStrategy   string
-	ReplicationFactor int
-	RebalanceEnabled  bool
-	RebalanceStrategy string
-	RateLimitEnabled  bool
-	EncryptionEnabled bool
-	IntegrityEnabled  bool
+	RoutingStrategy           string
+	ReplicationFactor         int
+	RebalanceEnabled          bool
+	RebalanceStrategy         string
+	RateLimitEnabled          bool
+	EncryptionEnabled         bool
+	IntegrityEnabled          bool
+	IntegrityVerifyOnRead     bool
+	IntegrityScrubberInterval time.Duration
+}
+
+// integrityStats is the dashboard's snapshot of the s3o_integrity_*
+// Prometheus counters. Numeric totals are summed across label values
+// (operation labels) so the UI shows a single overall count.
+type integrityStats struct {
+	ChecksTotal float64
+	ErrorsTotal float64
 }
 
 // handleDashboard renders the HTML dashboard page.
@@ -102,13 +139,19 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		TotalBytesLimit:  totalLimit,
 		TotalOrphanBytes: totalOrphan,
 		Config: configSummary{
-			RoutingStrategy:   string(cfg.RoutingStrategy),
-			ReplicationFactor: cfg.Replication.Factor,
-			RebalanceEnabled:  cfg.Rebalance.Enabled,
-			RebalanceStrategy: cfg.Rebalance.Strategy,
-			RateLimitEnabled:  cfg.RateLimit.Enabled,
-			EncryptionEnabled: cfg.Encryption.Enabled,
-			IntegrityEnabled:  cfg.Integrity.Enabled,
+			RoutingStrategy:           string(cfg.RoutingStrategy),
+			ReplicationFactor:         cfg.Replication.Factor,
+			RebalanceEnabled:          cfg.Rebalance.Enabled,
+			RebalanceStrategy:         cfg.Rebalance.Strategy,
+			RateLimitEnabled:          cfg.RateLimit.Enabled,
+			EncryptionEnabled:         cfg.Encryption.Enabled,
+			IntegrityEnabled:          cfg.Integrity.Enabled,
+			IntegrityVerifyOnRead:     cfg.Integrity.VerifyOnRead,
+			IntegrityScrubberInterval: cfg.Integrity.ScrubberInterval,
+		},
+		Integrity: integrityStats{
+			ChecksTotal: counterVecTotal(telemetry.IntegrityChecksTotal),
+			ErrorsTotal: counterVecTotal(telemetry.IntegrityErrorsTotal),
 		},
 	}
 

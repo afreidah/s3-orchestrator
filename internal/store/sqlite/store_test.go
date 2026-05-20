@@ -1889,6 +1889,36 @@ func TestGetObjectCounts(t *testing.T) {
 	}
 }
 
+// TestGetUnverifiedObjectCounts pins the per-backend NULL-content_hash
+// aggregation that drives the dashboard's "Unverified" column (#405).
+// Records two objects with hashes and one without, asserts the count
+// per backend matches the NULL population.
+func TestGetUnverifiedObjectCounts(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	// One object on backend-a has no content hash (NULL); one does.
+	mustRecordObject(t, s, "bucket/a", "backend-a", 100)
+	hashed := &core.EncryptionMeta{ContentHash: "deadbeef"}
+	if _, err := s.RecordObject(ctx, "bucket/b", "backend-a", 200, hashed); err != nil {
+		t.Fatalf("RecordObject hashed: %v", err)
+	}
+	// One object on backend-b has no content hash.
+	mustRecordObject(t, s, "bucket/c", "backend-b", 300)
+
+	counts, err := s.GetUnverifiedObjectCounts(ctx)
+	if err != nil {
+		t.Fatalf("GetUnverifiedObjectCounts: %v", err)
+	}
+	if counts["backend-a"] != 1 {
+		t.Errorf("backend-a unverified = %d, want 1", counts["backend-a"])
+	}
+	if counts["backend-b"] != 1 {
+		t.Errorf("backend-b unverified = %d, want 1", counts["backend-b"])
+	}
+}
+
 // TestGetStaleMultipartUploads verifies the get stale multipart uploads contract.
 // Asserts that GetStaleMultipartUploads:.
 func TestGetStaleMultipartUploads(t *testing.T) {

@@ -70,8 +70,10 @@ type MockStore struct {
 	// Dashboard / background
 	GetQuotaStatsResp      map[string]core.QuotaStat
 	GetQuotaStatsErr       error
-	GetObjectCountsResp    map[string]int64
-	GetObjectCountsErr     error
+	GetObjectCountsResp           map[string]int64
+	GetObjectCountsErr            error
+	GetUnverifiedObjectCountsResp map[string]int64
+	GetUnverifiedObjectCountsErr  error
 	GetActiveMultipartResp map[string]int64
 	GetActiveMultipartErr  error
 	GetUsageForPeriodResp  map[string]core.UsageStat
@@ -308,6 +310,17 @@ func (m *MockStore) GetObjectCounts(_ context.Context) (map[string]int64, error)
 	}
 	if m.GetObjectCountsResp != nil {
 		return m.GetObjectCountsResp, nil
+	}
+	return map[string]int64{}, nil
+}
+
+// GetUnverifiedObjectCounts returns the pre-configured unverified counts or error.
+func (m *MockStore) GetUnverifiedObjectCounts(_ context.Context) (map[string]int64, error) {
+	if m.GetUnverifiedObjectCountsErr != nil {
+		return nil, m.GetUnverifiedObjectCountsErr
+	}
+	if m.GetUnverifiedObjectCountsResp != nil {
+		return m.GetUnverifiedObjectCountsResp, nil
 	}
 	return map[string]int64{}, nil
 }

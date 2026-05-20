@@ -57,7 +57,7 @@ body {
 
 .login-card input:focus {
   outline: none;
-  border-color: #93c5fd;
+  border-color: #2a9d73;
 }
 
 .login-card button {
@@ -68,12 +68,12 @@ body {
   cursor: pointer;
   font-size: 0.9rem;
   font-weight: 500;
-  background: #93c5fd;
+  background: #2a9d73;
   color: #0f172a;
   margin-top: 0.25rem;
 }
 
-.login-card button:hover { background: #7dd3fc; }
+.login-card button:hover { background: #34b882; }
 
 .login-error {
   background: #451a1a;
@@ -96,7 +96,8 @@ header {
 
 header h1 { font-size: 1.25rem; font-weight: 600; color: #f8fafc; }
 
-.header-logo { height: 7rem; }
+.header-logo { height: 9rem; }
+.login-logo { display: block; margin: 0 auto 0.75rem; max-width: 12rem; height: auto; }
 
 .admin-action-status {
   margin-left: 0.75rem;
@@ -158,7 +159,7 @@ header h1 { font-size: 1.25rem; font-weight: 600; color: #f8fafc; }
   text-transform: none;
   letter-spacing: normal;
   background: #334155;
-  color: #93c5fd;
+  color: #e2e8f0;
   vertical-align: middle;
   margin-left: 0.5rem;
 }
@@ -215,7 +216,7 @@ td.key {
   word-break: break-all;
   font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
   font-size: 0.8rem;
-  color: #93c5fd;
+  color: #2a9d73;
 }
 
 .empty {
@@ -328,7 +329,7 @@ td.key {
   font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
 }
 
-.tree-dir > summary .tree-name { color: #93c5fd; }
+.tree-dir > summary .tree-name { color: #2a9d73; }
 
 .tree-meta {
   font-size: 0.75rem;
@@ -347,7 +348,7 @@ td.key {
 .tree-load-more {
   padding: 0.3rem 1rem 0.3rem 1.85rem;
   font-size: 0.8rem;
-  color: #93c5fd;
+  color: #2a9d73;
   cursor: pointer;
 }
 
@@ -432,11 +433,11 @@ dialog#confirm-delete::backdrop {
   cursor: pointer;
   font-size: 0.85rem;
   font-weight: 500;
-  background: #93c5fd;
+  background: #2a9d73;
   color: #0f172a;
 }
 
-.btn-upload:hover { background: #7dd3fc; }
+.btn-upload:hover { background: #34b882; }
 
 #upload-status {
   font-size: 0.8rem;
@@ -474,7 +475,7 @@ dialog#upload-dialog input[type="text"] {
 
 dialog#upload-dialog input[type="text"]:focus {
   outline: none;
-  border-color: #93c5fd;
+  border-color: #2a9d73;
 }
 
 .upload-label {
@@ -501,7 +502,7 @@ dialog#upload-dialog select {
 
 dialog#upload-dialog select:focus {
   outline: none;
-  border-color: #93c5fd;
+  border-color: #2a9d73;
 }
 
 .upload-add-btns {
@@ -549,7 +550,7 @@ dialog#upload-dialog select:focus {
 
 .upload-progress {
   font-size: 0.8rem;
-  color: #93c5fd;
+  color: #2a9d73;
   margin-top: 0.5rem;
 }
 
@@ -593,7 +594,7 @@ dialog#sync-dialog select {
 
 dialog#sync-dialog select:focus {
   outline: none;
-  border-color: #93c5fd;
+  border-color: #2a9d73;
 }
 
 /* --- Logs --- */
@@ -605,7 +606,7 @@ dialog#sync-dialog select:focus {
   font-size: 0.7rem;
   font-weight: 500;
   background: #334155;
-  color: #93c5fd;
+  color: #e2e8f0;
   vertical-align: middle;
   margin-left: 0.5rem;
   appearance: auto;
@@ -614,7 +615,7 @@ dialog#sync-dialog select:focus {
 .logs-auto-label {
   font-size: 0.7rem;
   font-weight: 500;
-  color: #93c5fd;
+  color: #2a9d73;
   vertical-align: middle;
   margin-left: 0.5rem;
   cursor: pointer;
@@ -636,7 +637,7 @@ dialog#sync-dialog select:focus {
 
 .logs-search:focus {
   outline: none;
-  border-color: #93c5fd;
+  border-color: #2a9d73;
 }
 
 .logs-container {

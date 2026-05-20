@@ -20,16 +20,18 @@ import (
 
 // mockDashboardStore implements store.DashboardStore for aggregator tests.
 type mockDashboardStore struct {
-	quotaStats         map[string]core.QuotaStat
-	quotaStatsErr      error
-	objectCounts       map[string]int64
-	objectCountsErr    error
-	multipartCounts    map[string]int64
-	multipartCountsErr error
-	usageStats         map[string]core.UsageStat
-	usageStatsErr      error
-	dirChildren        *core.DirectoryListResult
-	dirChildrenErr     error
+	quotaStats          map[string]core.QuotaStat
+	quotaStatsErr       error
+	objectCounts        map[string]int64
+	objectCountsErr     error
+	unverifiedCounts    map[string]int64
+	unverifiedCountsErr error
+	multipartCounts     map[string]int64
+	multipartCountsErr  error
+	usageStats          map[string]core.UsageStat
+	usageStatsErr       error
+	dirChildren         *core.DirectoryListResult
+	dirChildrenErr      error
 }
 
 // GetQuotaStats returns quota stats.
@@ -40,6 +42,11 @@ func (m *mockDashboardStore) GetQuotaStats(_ context.Context) (map[string]core.Q
 // GetObjectCounts returns object counts.
 func (m *mockDashboardStore) GetObjectCounts(_ context.Context) (map[string]int64, error) {
 	return m.objectCounts, m.objectCountsErr
+}
+
+// GetUnverifiedObjectCounts returns unverified counts.
+func (m *mockDashboardStore) GetUnverifiedObjectCounts(_ context.Context) (map[string]int64, error) {
+	return m.unverifiedCounts, m.unverifiedCountsErr
 }
 
 // GetActiveMultipartCounts returns active multipart counts.
@@ -119,6 +126,23 @@ func TestAggregator_ObjectCountsError(t *testing.T) {
 	_, err := da.GetData(context.Background())
 	if err == nil {
 		t.Fatal("expected error when ObjectCounts fails")
+	}
+}
+
+// TestAggregator_UnverifiedCountsError pins the GetData failure when
+// GetUnverifiedObjectCounts errors. Mirrors TestAggregator_ObjectCountsError.
+func TestAggregator_UnverifiedCountsError(t *testing.T) {
+	t.Parallel()
+	ms := &mockDashboardStore{
+		quotaStats:          map[string]core.QuotaStat{},
+		objectCounts:        map[string]int64{},
+		unverifiedCountsErr: errors.New("db down"),
+	}
+	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend(nil), nil)
+	da := New(ms, usage, nil)
+
+	if _, err := da.GetData(context.Background()); err == nil {
+		t.Fatal("expected error when GetUnverifiedObjectCounts fails")
 	}
 }
 

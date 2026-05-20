@@ -92,6 +92,7 @@
           <th style="width:20%"></th>
           <th class="num">Objects</th>
           <th class="num">Multipart</th>
+          {{if .Config.IntegrityEnabled}}<th class="num" title="Objects without a stored SHA-256 content hash. Run Backfill Checksums to populate.">Unverified</th>{{end}}
         </tr>
       </thead>
       <tbody>
@@ -99,6 +100,7 @@
           {{$stat := index $.Data.QuotaStats .}}
           {{$objects := index $.Data.ObjectCounts .}}
           {{$multipart := index $.Data.ActiveMultipartCounts .}}
+          {{$unverified := index $.Data.UnverifiedObjectCounts .}}
           {{$drain := index $.Data.DrainingBackends .}}
           {{$unhealthy := index $.Data.UnhealthyBackends .}}
           <tr{{if $drain.Active}} class="row-draining"{{else if $drain.ObjectsMoved}} class="row-drained"{{else if $unhealthy}} class="row-degraded"{{end}}>
@@ -123,6 +125,7 @@
             </td>
             <td class="num">{{formatNumber $objects}}</td>
             <td class="num">{{formatNumber $multipart}}</td>
+            {{if $.Config.IntegrityEnabled}}<td class="num">{{if ne $unverified 0}}<span class="orphan-value">{{formatNumber $unverified}}</span>{{else}}&mdash;{{end}}</td>{{end}}
           </tr>
         {{end}}
       </tbody>
@@ -251,6 +254,26 @@
           {{end}}
         </div>
       </div>
+      <div class="config-card">
+        <div class="label">Integrity</div>
+        <div class="value">
+          {{if .Config.IntegrityEnabled}}enabled
+            {{if .Config.IntegrityVerifyOnRead}} (verify on read){{end}}
+            {{if .Config.IntegrityScrubberInterval}}<br><span class="meta">scrubber: {{.Config.IntegrityScrubberInterval}}</span>{{end}}
+          {{else}}disabled
+          {{end}}
+        </div>
+      </div>
+      {{if .Config.IntegrityEnabled}}
+      <div class="config-card" title="Total hash comparison operations performed by the scrubber. Objects are sampled randomly with replacement on each run, so this counts operations, not distinct objects.">
+        <div class="label">Integrity Checks</div>
+        <div class="value">{{printf "%.0f" .Integrity.ChecksTotal}}</div>
+      </div>
+      <div class="config-card" title="Hash mismatches detected. errors / checks is a valid corruption rate regardless of object overlap.">
+        <div class="label">Integrity Errors</div>
+        <div class="value{{if gt .Integrity.ErrorsTotal 0.0}} orphan-value{{end}}">{{printf "%.0f" .Integrity.ErrorsTotal}}</div>
+      </div>
+      {{end}}
     </div>
   </section>
 

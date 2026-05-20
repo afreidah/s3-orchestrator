@@ -615,6 +615,21 @@ func (mr *MockMetadataStoreMockRecorder) GetUnderReplicatedObjectsExcluding(ctx,
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUnderReplicatedObjectsExcluding", reflect.TypeOf((*MockMetadataStore)(nil).GetUnderReplicatedObjectsExcluding), ctx, factor, limit, excludedBackends)
 }
 
+// GetUnverifiedObjectCounts mocks base method.
+func (m *MockMetadataStore) GetUnverifiedObjectCounts(ctx context.Context) (map[string]int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetUnverifiedObjectCounts", ctx)
+	ret0, _ := ret[0].(map[string]int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetUnverifiedObjectCounts indicates an expected call of GetUnverifiedObjectCounts.
+func (mr *MockMetadataStoreMockRecorder) GetUnverifiedObjectCounts(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUnverifiedObjectCounts", reflect.TypeOf((*MockMetadataStore)(nil).GetUnverifiedObjectCounts), ctx)
+}
+
 // GetUsageForPeriod mocks base method.
 func (m *MockMetadataStore) GetUsageForPeriod(ctx context.Context, period string) (map[string]core.UsageStat, error) {
 	m.ctrl.T.Helper()
