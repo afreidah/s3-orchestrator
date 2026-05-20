@@ -24,6 +24,7 @@ import (
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
@@ -383,6 +384,40 @@ func TestRebalance_QuotaStatsError(t *testing.T) {
 		Threshold: 0.10,
 	}); err == nil {
 		t.Fatal("expected error from GetQuotaStats failure")
+	}
+}
+
+// TestRebalance_CopyMapFetchFails_Propagates pins issue #921: a
+// GetObjectBackendsForKeys failure during planning must surface as a
+// rebalance error rather than being silently swallowed with an empty
+// copy map, which previously caused unnecessary transfers because the
+// planner could not see that destinations already held copies.
+func TestRebalance_CopyMapFetchFails_Propagates(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().GetQuotaStats(gomock.Any()).
+		Return(map[string]core.QuotaStat{
+			"b1": {BytesUsed: 900, BytesLimit: 1000},
+			"b2": {BytesUsed: 100, BytesLimit: 1000},
+		}, nil).AnyTimes()
+	store.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return([]core.ObjectLocation{{ObjectKey: "k", BackendName: "b1", SizeBytes: 100}}, nil).AnyTimes()
+	store.EXPECT().GetObjectBackendsForKeys(gomock.Any(), gomock.Any()).
+		Return(nil, fmt.Errorf("db down")).AnyTimes()
+	storetest.Permissive(store)
+
+	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{
+		"b1": newMockBackend(),
+		"b2": newMockBackend(),
+	})
+
+	if _, err := workers.Rebalancer.Rebalance(context.Background(), config.RebalanceConfig{
+		Strategy:  "spread",
+		BatchSize: 10,
+		Threshold: 0.10,
+	}); err == nil {
+		t.Fatal("expected error when GetObjectBackendsForKeys fails")
 	}
 }
 
@@ -747,6 +782,54 @@ func TestPlanPackTight_ListObjectsByBackendError(t *testing.T) {
 	}
 	if _, err := workers.Rebalancer.PlanPackTight(context.Background(), stats, 10); err == nil {
 		t.Fatal("expected error from ListObjectsByBackend failure")
+	}
+}
+
+// TestExecuteOneMove_AccountsAPICallExactlyOncePerDelete pins issue
+// #917: DeleteOrEnqueue owns the DELETE API-call accounting, so a
+// successful rebalance move should record source APICalls == 2 (one
+// for the GET via Egress, one for the source DELETE via
+// DeleteOrEnqueue), not 3.
+func TestExecuteOneMove_AccountsAPICallExactlyOncePerDelete(t *testing.T) {
+	t.Parallel()
+	src := newMockBackend()
+	_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
+	dest := newMockBackend()
+
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().MoveObjectLocation(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(int64(4), nil).AnyTimes()
+	storetest.Permissive(store)
+
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
+		Backends:        map[string]s3be.ObjectBackend{"src": src, "dest": dest},
+		Stores:          testStoresFromMock(store),
+		Dashboard:       store,
+		Metrics:         store,
+		Order:           []string{"src", "dest"},
+		CacheTTL:        5 * time.Second,
+		BackendTimeout:  30 * time.Second,
+		RoutingStrategy: config.RoutingPack,
+	})
+	workers := wireWorkersForTest(mgr)
+	_ = workers
+
+	move := worker.RebalanceMove{
+		ObjectKey:   "key",
+		FromBackend: "src",
+		ToBackend:   "dest",
+		SizeBytes:   4,
+	}
+	if !workers.Rebalancer.ExecuteOneMove(context.Background(), move, "spread") {
+		t.Fatal("ExecuteOneMove returned false on the success path")
+	}
+
+	if got := mgr.Usage().Backend().Load("src", counter.FieldAPIRequests); got != 2 {
+		t.Errorf("src apiRequests = %d, want 2 (Egress + DeleteOrEnqueue, no double-count)", got)
+	}
+	if got := mgr.Usage().Backend().Load("dest", counter.FieldAPIRequests); got != 1 {
+		t.Errorf("dest apiRequests = %d, want 1 (Ingress only)", got)
 	}
 }
 

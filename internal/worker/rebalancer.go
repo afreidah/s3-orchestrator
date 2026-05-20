@@ -253,7 +253,10 @@ func (r *Rebalancer) packMovesIntoDestination(
 		if err != nil {
 			return nil, err
 		}
-		copyMap := r.fetchCopyMap(ctx, objects)
+		copyMap, err := r.fetchCopyMap(ctx, objects)
+		if err != nil {
+			return nil, err
+		}
 
 		moves := r.packMovesFromSource(src, dest, objects, copyMap, simUsed, &destFree, remaining)
 		plan = append(plan, moves...)
@@ -329,16 +332,22 @@ func (r *Rebalancer) cachedSourceObjects(
 	return objs, nil
 }
 
-// fetchCopyMap batches GetObjectBackendsForKeys for every candidate key.
-// Replaces a per-object GetAllObjectLocations call that the inner loop
-// would otherwise issue.
-func (r *Rebalancer) fetchCopyMap(ctx context.Context, objects []core.ObjectLocation) map[string][]string {
+// fetchCopyMap batches GetObjectBackendsForKeys for every candidate
+// key. Replaces a per-object GetAllObjectLocations call that the inner
+// loop would otherwise issue. Returns the lookup error so callers fail
+// planning rather than silently continue with empty placement data,
+// which previously caused unnecessary transfers when destinations
+// already held a copy (#921).
+func (r *Rebalancer) fetchCopyMap(ctx context.Context, objects []core.ObjectLocation) (map[string][]string, error) {
 	keys := make([]string, len(objects))
 	for i := range objects {
 		keys[i] = objects[i].ObjectKey
 	}
-	copyMap, _ := r.store.GetObjectBackendsForKeys(ctx, keys)
-	return copyMap
+	copyMap, err := r.store.GetObjectBackendsForKeys(ctx, keys)
+	if err != nil {
+		return nil, fmt.Errorf("fetch copy map for rebalance planning: %w", err)
+	}
+	return copyMap, nil
 }
 
 // -------------------------------------------------------------------------
@@ -440,7 +449,10 @@ func (r *Rebalancer) spreadMovesFromSource(
 	if err != nil {
 		return nil, fmt.Errorf("failed to list objects on %s: %w", src.Name, err)
 	}
-	copyMap := r.fetchCopyMap(ctx, objects)
+	copyMap, err := r.fetchCopyMap(ctx, objects)
+	if err != nil {
+		return nil, err
+	}
 
 	var moves []RebalanceMove
 	for oi := range objects {
@@ -549,9 +561,10 @@ func (r *Rebalancer) ExecuteOneMove(ctx context.Context, move RebalanceMove, str
 	if err != nil {
 		r.log.ErrorContext(ctx, "failed to update object location",
 			"key", move.ObjectKey, "error", err)
-		// Clean up orphan on destination
+		// Clean up orphan on destination. DeleteOrEnqueue owns the
+		// DELETE API-call accounting (#881 / #917); recording it here
+		// would double-count.
 		r.ops.DeleteOrEnqueue(ctx, destBackend, move.ToBackend, move.ObjectKey, "rebalance_orphan", move.SizeBytes)
-		r.ops.Acct().APICall(move.ToBackend)
 		telemetry.RebalanceObjectsMoved.WithLabelValues(strategy, "error").Inc()
 		return false
 	}
@@ -561,17 +574,17 @@ func (r *Rebalancer) ExecuteOneMove(ctx context.Context, move RebalanceMove, str
 		r.log.InfoContext(ctx, "object already moved or deleted, cleaning up",
 			"key", move.ObjectKey)
 		r.ops.DeleteOrEnqueue(ctx, destBackend, move.ToBackend, move.ObjectKey, "rebalance_stale_orphan", move.SizeBytes)
-		r.ops.Acct().APICall(move.ToBackend)
 		return false
 	}
 
 	// --- Delete from source ---
 	r.ops.DeleteOrEnqueue(ctx, srcBackend, move.FromBackend, move.ObjectKey, "rebalance_source_delete", movedSize)
 
-	// Source: Get (charged with egress) + Delete; dest: Put (Ingress
-	// charges the API call).
+	// Source-DELETE API call is recorded inside DeleteOrEnqueue (#881 /
+	// #917); here we only add the Get egress on the source and the Put
+	// ingress on the destination (Ingress/Egress include their own
+	// API-call tick).
 	r.ops.Acct().Egress(move.FromBackend, movedSize)
-	r.ops.Acct().APICall(move.FromBackend)
 	r.ops.Acct().Ingress(move.ToBackend, movedSize)
 
 	audit.Log(ctx, "rebalance.move",
