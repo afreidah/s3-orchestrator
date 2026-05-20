@@ -13,6 +13,8 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"sync"
@@ -52,6 +54,7 @@ type multipartPartCall struct {
 type multipartObjectCall struct {
 	Key, Backend string
 	Size         int64
+	Enc          *core.EncryptionMeta // pinned so tests can assert ContentHash etc.
 }
 
 func stubCreateMultipart(c *multipartCalls, err error) func(context.Context, *core.CreateMultipartUploadParams) error {
@@ -82,10 +85,10 @@ func stubRecordPart(c *multipartCalls, err error) func(context.Context, string, 
 }
 
 func stubRecordObject(c *multipartCalls, err error) func(context.Context, string, string, int64, *core.EncryptionMeta) ([]core.DeletedCopy, error) {
-	return func(_ context.Context, key, backend string, size int64, _ *core.EncryptionMeta) ([]core.DeletedCopy, error) {
+	return func(_ context.Context, key, backend string, size int64, enc *core.EncryptionMeta) ([]core.DeletedCopy, error) {
 		c.mu.Lock()
 		defer c.mu.Unlock()
-		c.recordObject = append(c.recordObject, multipartObjectCall{Key: key, Backend: backend, Size: size})
+		c.recordObject = append(c.recordObject, multipartObjectCall{Key: key, Backend: backend, Size: size, Enc: enc})
 		return nil, err
 	}
 }
@@ -126,10 +129,10 @@ func multipartStubs(t *testing.T, store *storetest.MockMetadataStore) *multipart
 	store.EXPECT().RecordObject(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(stubRecordObject(c, nil)).AnyTimes()
 	store.EXPECT().RecordObjectAndClearPending(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, key, backend string, size int64, _ *core.EncryptionMeta, _ string) ([]core.DeletedCopy, error) {
+		DoAndReturn(func(_ context.Context, key, backend string, size int64, enc *core.EncryptionMeta, _ string) ([]core.DeletedCopy, error) {
 			c.mu.Lock()
 			defer c.mu.Unlock()
-			c.recordObject = append(c.recordObject, multipartObjectCall{Key: key, Backend: backend, Size: size})
+			c.recordObject = append(c.recordObject, multipartObjectCall{Key: key, Backend: backend, Size: size, Enc: enc})
 			return nil, nil
 		}).AnyTimes()
 	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
@@ -310,6 +313,74 @@ func TestCompleteMultipartUpload_Success(t *testing.T) {
 	call := c.recordObject[0]
 	if call.Key != "multi/key" || call.Backend != "b1" || call.Size != 6 {
 		t.Errorf("RecordObject called with %+v", call)
+	}
+}
+
+// TestCompleteMultipartUpload_PopulatesContentHash pins issue #916:
+// when integrity verification is enabled, CompleteMultipartUpload must
+// record the assembled object with a content_hash matching SHA-256 of
+// the assembled plaintext. Before the tee fix the recorded
+// EncryptionMeta had no ContentHash, so multipart-completed objects
+// were invisible to the scrubber.
+func TestCompleteMultipartUpload_PopulatesContentHash(t *testing.T) {
+	t.Parallel()
+	backend := newMockBackend()
+	ctx := context.Background()
+	_, _ = backend.PutObject(ctx, "__multipart/upload-h/1", bytes.NewReader([]byte("AAA")), 3, "application/octet-stream", nil)
+	_, _ = backend.PutObject(ctx, "__multipart/upload-h/2", bytes.NewReader([]byte("BBB")), 3, "application/octet-stream", nil)
+
+	store, c := completeStoreSetup(t,
+		&core.MultipartUpload{UploadID: "upload-h", ObjectKey: "multi/hashed", BackendName: "b1", ContentType: "application/zip"},
+		[]core.MultipartPart{
+			{PartNumber: 1, ETag: "e1", SizeBytes: 3},
+			{PartNumber: 2, ETag: "e2", SizeBytes: 3},
+		}, nil)
+
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": backend})
+	mgr.SetIntegrityConfig(&config.IntegrityConfig{Enabled: true})
+
+	if _, err := mgr.MultipartManager.CompleteMultipartUpload(ctx, "multi", "hashed", "upload-h", []int{1, 2}); err != nil {
+		t.Fatalf("CompleteMultipartUpload: %v", err)
+	}
+	if len(c.recordObject) != 1 {
+		t.Fatalf("expected 1 RecordObject call, got %d", len(c.recordObject))
+	}
+	got := c.recordObject[0]
+	if got.Enc == nil {
+		t.Fatal("expected non-nil EncryptionMeta with ContentHash set")
+	}
+
+	want := sha256.Sum256([]byte("AAABBB"))
+	wantHex := hex.EncodeToString(want[:])
+	if got.Enc.ContentHash != wantHex {
+		t.Errorf("ContentHash = %q, want %q", got.Enc.ContentHash, wantHex)
+	}
+}
+
+// TestCompleteMultipartUpload_IntegrityDisabled_LeavesEncNil pins the
+// inverse: with integrity disabled the recorded EncryptionMeta must
+// stay nil so the no-encryption / no-integrity path keeps its existing
+// (NULL content_hash) shape unchanged.
+func TestCompleteMultipartUpload_IntegrityDisabled_LeavesEncNil(t *testing.T) {
+	t.Parallel()
+	backend := newMockBackend()
+	ctx := context.Background()
+	_, _ = backend.PutObject(ctx, "__multipart/upload-d/1", bytes.NewReader([]byte("AAA")), 3, "application/octet-stream", nil)
+
+	store, c := completeStoreSetup(t,
+		&core.MultipartUpload{UploadID: "upload-d", ObjectKey: "multi/disabled", BackendName: "b1", ContentType: "application/zip"},
+		[]core.MultipartPart{
+			{PartNumber: 1, ETag: "e1", SizeBytes: 3},
+		}, nil)
+
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": backend})
+	// Integrity intentionally left unset.
+
+	if _, err := mgr.MultipartManager.CompleteMultipartUpload(ctx, "multi", "disabled", "upload-d", []int{1}); err != nil {
+		t.Fatalf("CompleteMultipartUpload: %v", err)
+	}
+	if got := c.recordObject[0]; got.Enc != nil {
+		t.Errorf("Enc = %+v, want nil when integrity disabled", got.Enc)
 	}
 }
 
