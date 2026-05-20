@@ -253,7 +253,10 @@ func (r *Rebalancer) packMovesIntoDestination(
 		if err != nil {
 			return nil, err
 		}
-		copyMap := r.fetchCopyMap(ctx, objects)
+		copyMap, err := r.fetchCopyMap(ctx, objects)
+		if err != nil {
+			return nil, err
+		}
 
 		moves := r.packMovesFromSource(src, dest, objects, copyMap, simUsed, &destFree, remaining)
 		plan = append(plan, moves...)
@@ -329,16 +332,22 @@ func (r *Rebalancer) cachedSourceObjects(
 	return objs, nil
 }
 
-// fetchCopyMap batches GetObjectBackendsForKeys for every candidate key.
-// Replaces a per-object GetAllObjectLocations call that the inner loop
-// would otherwise issue.
-func (r *Rebalancer) fetchCopyMap(ctx context.Context, objects []core.ObjectLocation) map[string][]string {
+// fetchCopyMap batches GetObjectBackendsForKeys for every candidate
+// key. Replaces a per-object GetAllObjectLocations call that the inner
+// loop would otherwise issue. Returns the lookup error so callers fail
+// planning rather than silently continue with empty placement data,
+// which previously caused unnecessary transfers when destinations
+// already held a copy (#921).
+func (r *Rebalancer) fetchCopyMap(ctx context.Context, objects []core.ObjectLocation) (map[string][]string, error) {
 	keys := make([]string, len(objects))
 	for i := range objects {
 		keys[i] = objects[i].ObjectKey
 	}
-	copyMap, _ := r.store.GetObjectBackendsForKeys(ctx, keys)
-	return copyMap
+	copyMap, err := r.store.GetObjectBackendsForKeys(ctx, keys)
+	if err != nil {
+		return nil, fmt.Errorf("fetch copy map for rebalance planning: %w", err)
+	}
+	return copyMap, nil
 }
 
 // -------------------------------------------------------------------------
@@ -440,7 +449,10 @@ func (r *Rebalancer) spreadMovesFromSource(
 	if err != nil {
 		return nil, fmt.Errorf("failed to list objects on %s: %w", src.Name, err)
 	}
-	copyMap := r.fetchCopyMap(ctx, objects)
+	copyMap, err := r.fetchCopyMap(ctx, objects)
+	if err != nil {
+		return nil, err
+	}
 
 	var moves []RebalanceMove
 	for oi := range objects {
