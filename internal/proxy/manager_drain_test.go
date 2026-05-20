@@ -19,11 +19,13 @@ import (
 	"testing"
 	"time"
 
+	promtest "github.com/prometheus/client_golang/prometheus/testutil"
 	"go.uber.org/mock/gomock"
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
@@ -505,6 +507,95 @@ func TestCancelDrain_CompletedDrain_ClearsState(t *testing.T) {
 
 	if err := mgr.DrainManager.CancelDrain("b1"); err == nil {
 		t.Error("expected error after clearing drained state")
+	}
+}
+
+// TestDrainActive_NetZero_AfterCompletion pins issue #883: when a drain
+// completes successfully, the s3o_drain_active gauge must return to its
+// pre-drain value. Before the sync.Once fix, calling CancelDrain on a
+// drain that had already finalized double-decremented the gauge and
+// could drive it negative.
+func TestDrainActive_NetZero_AfterCompletion(t *testing.T) {
+	store := newPermissiveMock(t)
+	mgr := newDrainTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
+
+	before := promtest.ToFloat64(telemetry.DrainActive)
+
+	if err := mgr.DrainManager.StartDrain(context.Background(), "b1"); err != nil {
+		t.Fatalf("StartDrain: %v", err)
+	}
+	testx.Eventually(t, 3*time.Second, func() bool {
+		p, err := mgr.DrainManager.GetDrainProgress(context.Background(), "b1")
+		return err == nil && !p.Active
+	}, "drain did not complete")
+
+	// CancelDrain after natural completion would, pre-fix, decrement
+	// a second time. Post-fix sync.Once on drainState makes it a no-op.
+	if err := mgr.DrainManager.CancelDrain("b1"); err != nil {
+		t.Fatalf("CancelDrain: %v", err)
+	}
+
+	if got := promtest.ToFloat64(telemetry.DrainActive); got != before {
+		t.Errorf("DrainActive = %v, want %v (net change must be zero)", got, before)
+	}
+}
+
+// TestDrainActive_NetZero_AfterCancelActive pins the gauge invariant
+// for the cancel-during-active path: the drain goroutine bails via
+// ctx.Err(), abortDrainWithError decrements once, and CancelDrain's
+// post-wake call is a no-op via sync.Once.
+func TestDrainActive_NetZero_AfterCancelActive(t *testing.T) {
+	gate := make(chan struct{})
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(pagedLister(nil, gate, nil)).AnyTimes()
+	storetest.Permissive(store)
+
+	mgr := newDrainTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
+
+	before := promtest.ToFloat64(telemetry.DrainActive)
+
+	if err := mgr.DrainManager.StartDrain(context.Background(), "b1"); err != nil {
+		t.Fatalf("StartDrain: %v", err)
+	}
+	time.Sleep(20 * time.Millisecond) // let drain block on the gated lister
+	if err := mgr.DrainManager.CancelDrain("b1"); err != nil {
+		t.Fatalf("CancelDrain: %v", err)
+	}
+
+	if got := promtest.ToFloat64(telemetry.DrainActive); got != before {
+		t.Errorf("DrainActive = %v, want %v (net change must be zero)", got, before)
+	}
+}
+
+// TestDrainActive_NetZero_AfterDrainError pins the self-abort path:
+// when the drain goroutine errors out (ListObjectsByBackend failure
+// here), abortDrainWithError decrements the gauge exactly once. No
+// CancelDrain follow-up - abortDrainWithError already deletes the
+// state from d.draining so a subsequent CancelDrain returns "not
+// draining" rather than racing.
+func TestDrainActive_NetZero_AfterDrainError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil, errors.New("db connection lost")).AnyTimes()
+	storetest.Permissive(store)
+
+	mgr := newDrainTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
+
+	before := promtest.ToFloat64(telemetry.DrainActive)
+
+	if err := mgr.DrainManager.StartDrain(context.Background(), "b1"); err != nil {
+		t.Fatalf("StartDrain: %v", err)
+	}
+	testx.Eventually(t, 3*time.Second, func() bool {
+		p, _ := mgr.DrainManager.GetDrainProgress(context.Background(), "b1")
+		return !p.Active
+	}, "drain did not abort")
+
+	if got := promtest.ToFloat64(telemetry.DrainActive); got != before {
+		t.Errorf("DrainActive = %v, want %v (net change must be zero)", got, before)
 	}
 }
 
