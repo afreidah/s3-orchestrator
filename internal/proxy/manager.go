@@ -232,9 +232,13 @@ func NewBackendManager(cfg *BackendManagerConfig) (*BackendManager, error) {
 	}
 
 	coord := writepath.New(c, cfg.Stores, cfg.PendingEnabled)
-	multipartManager := multipart.New(c, coord, cfg.Stores, cfg.Encryptor, cfg.ObjectCache, dekCacheTTL)
 
+	// Shared with object.Manager so SIGHUP-driven integrity config
+	// changes flip both write paths atomically. Multipart's nil-safe
+	// hasher gate (#916) reads through this pointer on each Complete.
 	integrityCfg := &syncutil.AtomicConfig[config.IntegrityConfig]{}
+	multipartManager := multipart.New(c, coord, cfg.Stores, cfg.Encryptor, cfg.ObjectCache, dekCacheTTL, integrityCfg)
+
 	cache := object.NewLocationCache(cfg.CacheTTL)
 	objectManager := object.New(&object.Deps{
 		Core:                         c,

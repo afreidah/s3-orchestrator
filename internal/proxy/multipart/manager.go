@@ -14,7 +14,10 @@ package multipart
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"hash"
 	"hash/fnv"
 	"io"
 	"log/slog"
@@ -27,6 +30,7 @@ import (
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	objcache "github.com/afreidah/s3-orchestrator/internal/cache"
+	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/internalkey"
 	"github.com/afreidah/s3-orchestrator/internal/observe"
@@ -55,28 +59,33 @@ const spanPrefix = "Manager "
 // cold cache will each issue their own Unwrap; the design accepts that
 // minor cold-start cost in exchange for not pulling in singleflight.
 type Manager struct {
-	core        MultipartCore        // infrastructure subset: backends, usage, timeout, error classification, metrics
-	coord       MultipartCoordinator // write-path helpers shared with BackendManager and ObjectManager
-	stores      core.MetadataStore   // direct store access for multipart row/part operations and WithAdvisoryLock
-	encryptor   *encryption.Encryptor
-	objectCache objcache.ObjectCache
-	dekCache    *syncutil.TTLCache[string, []byte]
-	log         *slog.Logger
+	core         MultipartCore        // infrastructure subset: backends, usage, timeout, error classification, metrics
+	coord        MultipartCoordinator // write-path helpers shared with BackendManager and ObjectManager
+	stores       core.MetadataStore   // direct store access for multipart row/part operations and WithAdvisoryLock
+	encryptor    *encryption.Encryptor
+	objectCache  objcache.ObjectCache
+	dekCache     *syncutil.TTLCache[string, []byte]
+	integrityCfg *syncutil.AtomicConfig[config.IntegrityConfig] // nil-safe; controls plaintext SHA-256 on Complete (#916)
+	log          *slog.Logger
 }
 
 // New creates a Manager sharing the given core infrastructure and
 // write coordinator. All dependencies must be non-nil; nothing is
-// patched in post-construction. The component-scoped logger is built
-// in the constructor body per the project's logging convention.
-func New(core MultipartCore, coord MultipartCoordinator, stores core.MetadataStore, encryptor *encryption.Encryptor, objectCache objcache.ObjectCache, dekCacheTTL time.Duration) *Manager {
+// patched in post-construction. integrityCfg is nil-safe - when nil or
+// disabled, CompleteMultipartUpload skips the plaintext-hash tee that
+// populates content_hash on the recorded location (#916). The
+// component-scoped logger is built in the constructor body per the
+// project's logging convention.
+func New(core MultipartCore, coord MultipartCoordinator, stores core.MetadataStore, encryptor *encryption.Encryptor, objectCache objcache.ObjectCache, dekCacheTTL time.Duration, integrityCfg *syncutil.AtomicConfig[config.IntegrityConfig]) *Manager {
 	return &Manager{
-		core:        core,
-		coord:       coord,
-		stores:      stores,
-		encryptor:   encryptor,
-		objectCache: objectCache,
-		dekCache:    syncutil.NewTTLCache[string, []byte](dekCacheTTL),
-		log:         slog.Default().With(logfmt.Component("multipart")),
+		core:         core,
+		coord:        coord,
+		stores:       stores,
+		encryptor:    encryptor,
+		objectCache:  objectCache,
+		dekCache:     syncutil.NewTTLCache[string, []byte](dekCacheTTL),
+		integrityCfg: integrityCfg,
+		log:          slog.Default().With(logfmt.Component("multipart")),
 	}
 }
 
@@ -628,7 +637,17 @@ func (mp *Manager) completeMultipartUploadLocked(
 	pr, pipeCancel := mp.streamPartsThroughPipe(ctx, be, uploadID, parts)
 	defer pipeCancel()
 
-	uploadBody, uploadSize, enc, err := mp.buildAssembledUpload(ctx, span, mu, pr, totalPlaintextSize)
+	// Tee the plaintext stream through SHA-256 when integrity is on so
+	// the assembled object lands with a content_hash matching the
+	// regular PutObject path. Without this, the scrubber cannot verify
+	// multipart-completed objects (#916).
+	hasher := mp.newIntegrityHasher()
+	assembleReader := io.Reader(pr)
+	if hasher != nil {
+		assembleReader = io.TeeReader(pr, hasher)
+	}
+
+	uploadBody, uploadSize, enc, err := mp.buildAssembledUpload(ctx, span, mu, assembleReader, totalPlaintextSize)
 	if err != nil {
 		return "", err
 	}
@@ -648,6 +667,8 @@ func (mp *Manager) completeMultipartUploadLocked(
 		return "", fmt.Errorf("failed to upload final object: %w", err)
 	}
 	pr.Close()
+
+	enc = stampContentHash(enc, hasher)
 
 	if err := mp.coord.RecordObjectOrCleanup(ctx, span, be, mu.ObjectKey, mu.BackendName, uploadSize, enc); err != nil {
 		return "", err
@@ -684,6 +705,38 @@ func (mp *Manager) cleanupCompletedUpload(ctx context.Context, span trace.Span, 
 		span.RecordError(err)
 	}
 	mp.forgetUploadDEK(uploadID)
+}
+
+// newIntegrityHasher returns a fresh SHA-256 hasher when integrity
+// verification is enabled, or nil to signal "skip hashing." Mirrors the
+// gate used by the regular PutObject path so the multipart-completed
+// object carries the same content_hash semantics (#916).
+func (mp *Manager) newIntegrityHasher() hash.Hash {
+	if mp.integrityCfg == nil {
+		return nil
+	}
+	icfg := mp.integrityCfg.Load()
+	if icfg == nil || !icfg.Enabled {
+		return nil
+	}
+	return sha256.New()
+}
+
+// stampContentHash finalises the hasher (when one was used) and writes
+// the resulting hex digest onto enc. When integrity is disabled hasher
+// is nil and the original enc is returned unchanged; when enc is nil
+// and a hash was computed, a fresh EncryptionMeta is allocated so the
+// store layer receives the hash.
+func stampContentHash(enc *core.EncryptionMeta, hasher hash.Hash) *core.EncryptionMeta {
+	if hasher == nil {
+		return enc
+	}
+	digest := hex.EncodeToString(hasher.Sum(nil))
+	if enc == nil {
+		return &core.EncryptionMeta{ContentHash: digest}
+	}
+	enc.ContentHash = digest
+	return enc
 }
 
 // sumPlaintextSize returns the total plaintext byte count across parts.
