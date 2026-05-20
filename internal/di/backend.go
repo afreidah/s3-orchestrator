@@ -14,7 +14,6 @@
 package di
 
 import (
-	"context"
 	"crypto/tls"
 	"log/slog"
 
@@ -90,7 +89,8 @@ func ProvideBackends(i do.Injector) (*BackendsResult, error) {
 		if bcfg.MaxObjectSize > 0 {
 			maxSizes[bcfg.Name] = bcfg.MaxObjectSize
 		}
-		slog.InfoContext(context.Background(), "backend initialized",
+		//nolint:sloglint // bootstrap log; no request/span ctx exists yet (#831)
+		slog.Info("backend initialized",
 			logfmt.Component("di"),
 			"backend", bcfg.Name,
 			"endpoint", bcfg.Endpoint,
@@ -145,7 +145,8 @@ func ProvideEncryptor(i do.Injector) (*encryption.Encryptor, error) {
 	if err != nil {
 		return nil, err
 	}
-	slog.InfoContext(context.Background(), "server-side encryption enabled",
+	//nolint:sloglint // bootstrap log; no request/span ctx exists yet (#831)
+	slog.Info("server-side encryption enabled",
 		logfmt.Component("di"),
 		"chunk_size", cfg.Encryption.ChunkSize,
 		"key_id", provider.KeyID(),
@@ -187,7 +188,8 @@ func ProvideRedisCounterBackend(i do.Injector) (*counter.RedisCounterBackend, er
 	if err != nil {
 		return nil, err
 	}
-	slog.InfoContext(context.Background(), "Redis shared counters enabled",
+	//nolint:sloglint // bootstrap log; no request/span ctx exists yet (#831)
+	slog.Info("Redis shared counters enabled",
 		logfmt.Component("di"),
 		"address", cfg.Redis.Address,
 	)
@@ -208,7 +210,8 @@ func ProvideObjectCache(i do.Injector) (objcache.ObjectCache, error) {
 	if err != nil {
 		return nil, err
 	}
-	slog.InfoContext(context.Background(), "object data cache enabled",
+	//nolint:sloglint // bootstrap log; no request/span ctx exists yet (#831)
+	slog.Info("object data cache enabled",
 		logfmt.Component("di"),
 		"max_size", cfg.Cache.MaxSize,
 		"max_object_size", cfg.Cache.MaxObjectSize,
