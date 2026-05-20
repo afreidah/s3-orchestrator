@@ -29,13 +29,18 @@ type Data struct {
 	BackendOrder          []string
 	QuotaStats            map[string]core.QuotaStat
 	ObjectCounts          map[string]int64
-	ActiveMultipartCounts map[string]int64
-	UsageStats            map[string]core.UsageStat
-	UsageLimits           map[string]core.UsageLimits
-	UsagePeriod           string
-	TopLevelEntries       *core.DirectoryListResult
-	DrainingBackends      map[string]drain.Progress
-	UnhealthyBackends     map[string]bool
+	// UnverifiedObjectCounts is per-backend count of objects with a
+	// NULL content_hash (objects that predate integrity verification or
+	// otherwise have not been checksummed). Drives the dashboard's
+	// "needs backfill" column when integrity is enabled. See #405.
+	UnverifiedObjectCounts map[string]int64
+	ActiveMultipartCounts  map[string]int64
+	UsageStats             map[string]core.UsageStat
+	UsageLimits            map[string]core.UsageLimits
+	UsagePeriod            string
+	TopLevelEntries        *core.DirectoryListResult
+	DrainingBackends       map[string]drain.Progress
+	UnhealthyBackends      map[string]bool
 }
 
 // Aggregator queries the metadata store and usage tracker to build
@@ -73,6 +78,11 @@ func (da *Aggregator) GetData(ctx context.Context) (*Data, error) {
 	}
 
 	data.ObjectCounts, err = da.store.GetObjectCounts(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	data.UnverifiedObjectCounts, err = da.store.GetUnverifiedObjectCounts(ctx)
 	if err != nil {
 		return nil, err
 	}

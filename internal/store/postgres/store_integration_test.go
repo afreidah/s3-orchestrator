@@ -464,6 +464,16 @@ func TestStoreInt_GetObjectCounts_GetActiveMultipartCounts(t *testing.T) {
 	}
 }
 
+// TestStoreInt_GetUnverifiedObjectCounts pins the dashboard #405 helper:
+// runs the per-backend NULL-content_hash query against the real
+// Postgres + sqlc-generated query.
+func TestStoreInt_GetUnverifiedObjectCounts(t *testing.T) {
+	s := adapterPgStore(t)
+	if _, err := s.GetUnverifiedObjectCounts(context.Background()); err != nil {
+		t.Errorf("GetUnverifiedObjectCounts: %v", err)
+	}
+}
+
 // -------------------------------------------------------------------------
 // REPLICATION QUERIES
 // -------------------------------------------------------------------------

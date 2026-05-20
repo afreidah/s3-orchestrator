@@ -157,12 +157,28 @@ func (s *Store) GetQuotaStats(ctx context.Context) (map[string]core.QuotaStat, e
 
 // GetObjectCounts returns the number of objects stored on each backend.
 func (s *Store) GetObjectCounts(ctx context.Context) (map[string]int64, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT backend_name, COUNT(*) AS object_count
-		FROM object_locations
-		GROUP BY backend_name`)
+	return s.countObjectsByBackend(ctx, "", "object counts")
+}
+
+// GetUnverifiedObjectCounts returns the number of objects per backend
+// whose content_hash column is NULL (objects predating integrity
+// verification or otherwise not yet checksummed). Drives the dashboard's
+// "needs backfill" column. See #405.
+func (s *Store) GetUnverifiedObjectCounts(ctx context.Context) (map[string]int64, error) {
+	return s.countObjectsByBackend(ctx, "WHERE content_hash IS NULL", "unverified counts")
+}
+
+// countObjectsByBackend runs a per-backend COUNT(*) aggregation on
+// object_locations and returns the map. The whereClause is appended
+// verbatim (callers control the predicate); errLabel feeds the wrapped
+// error string so failures stay attributable to the calling helper.
+// Static SQL only - no caller-supplied strings interpolated beyond the
+// fixed clauses defined in this file.
+func (s *Store) countObjectsByBackend(ctx context.Context, whereClause, errLabel string) (map[string]int64, error) {
+	query := "SELECT backend_name, COUNT(*) FROM object_locations " + whereClause + " GROUP BY backend_name"
+	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query object counts: %w", err)
+		return nil, fmt.Errorf("failed to query %s: %w", errLabel, err)
 	}
 	defer rows.Close()
 
@@ -171,12 +187,12 @@ func (s *Store) GetObjectCounts(ctx context.Context) (map[string]int64, error) {
 		var name string
 		var count int64
 		if err := rows.Scan(&name, &count); err != nil {
-			return nil, fmt.Errorf("failed to scan object count: %w", err)
+			return nil, fmt.Errorf("failed to scan %s: %w", errLabel, err)
 		}
 		counts[name] = count
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate object counts: %w", err)
+		return nil, fmt.Errorf("failed to iterate %s: %w", errLabel, err)
 	}
 	return counts, nil
 }
