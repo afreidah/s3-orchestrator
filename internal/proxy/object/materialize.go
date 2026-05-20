@@ -14,6 +14,7 @@ package object
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -21,6 +22,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/bufpool"
 )
 
@@ -145,4 +147,105 @@ func sha256Hex(h hash.Hash) string {
 // newMaterializedBody's hasher parameter.
 func newSHA256() hash.Hash {
 	return sha256.New()
+}
+
+// -------------------------------------------------------------------------
+// COPY SOURCE MATERIALIZATION
+// -------------------------------------------------------------------------
+
+// materializedSource bundles the seekable reader handed to PutObject
+// with the cleanup the caller must invoke once the upload settles. The
+// returned source backend identifies which replica actually served the
+// bytes so CopyObject can attribute usage correctly.
+type materializedSource struct {
+	body          io.ReadSeeker
+	sourceBackend string
+	cleanup       func()
+}
+
+// materializeCopySource reads the source object from the first
+// reachable replica into a seekable buffer  -  in-memory for small
+// objects, a self-unlinking tempfile for large ones  -  and returns
+// it ready for handoff to PutObject. Failover iterates locations in
+// order; backend-side errors (including the backend timeout firing
+// per #882) are captured and a different replica is tried. When every
+// replica fails the most recent underlying error is returned so
+// callers can see why - the previous generic "failed to read source"
+// string lost the DeadlineExceeded signal entirely. Per-replica GETs
+// run under the backend timeout policy so a stalled source cannot
+// exceed backend_timeout; a tighter caller deadline still wins.
+func (o *Manager) materializeCopySource(
+	ctx context.Context,
+	sourceKey string,
+	size int64,
+	locations []core.ObjectLocation,
+) (*materializedSource, error) {
+	var lastErr error
+	for i := range locations {
+		ms, err := o.tryMaterializeFromLocation(ctx, sourceKey, size, locations[i].BackendName)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if ms != nil {
+			return ms, nil
+		}
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, fmt.Errorf("failed to read source from any copy")
+}
+
+// tryMaterializeFromLocation attempts to download sourceKey from one
+// backend into a fresh seekable buffer. Returns (ms, nil) on success.
+// A (nil, nil) return means the replica was skipped without a hard
+// error (usage limits hit, backend not registered) - the caller moves
+// to the next replica without capturing an error. A (nil, err) return
+// is a real failure: the backend GET errored (including the
+// backend-timeout context firing per #882) or the buffer-side
+// materialization could not proceed. Errors are aggregated by the
+// caller so the last underlying failure surfaces when no replica
+// succeeds.
+func (o *Manager) tryMaterializeFromLocation(
+	ctx context.Context,
+	sourceKey string,
+	size int64,
+	backendName string,
+) (*materializedSource, error) {
+	if !o.core.Usage().WithinLimits(backendName, 1, size, 0) {
+		return nil, nil
+	}
+	be, ok := o.core.Backends()[backendName]
+	if !ok {
+		return nil, nil
+	}
+
+	// Wrap the source GET in the configured backend timeout so a
+	// stalled replica cannot block the materialize step past
+	// backend_timeout (#882). The same context covers the body
+	// drain inside newMaterializedBody because rcancel only fires
+	// on function return.
+	rctx, rcancel := o.core.WithTimeout(ctx)
+	defer rcancel()
+	result, err := be.GetObject(rctx, sourceKey, "")
+	if err != nil {
+		return nil, err
+	}
+	defer result.Body.Close()
+
+	mb, err := newMaterializedBody(result.Body, size, nil)
+	if err != nil {
+		return nil, err
+	}
+	body, err := mb.Reader()
+	if err != nil {
+		mb.Cleanup()
+		return nil, err
+	}
+	return &materializedSource{
+		body:          body,
+		sourceBackend: backendName,
+		cleanup:       mb.Cleanup,
+	}, nil
 }
