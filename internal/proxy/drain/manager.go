@@ -44,10 +44,11 @@ type Core interface {
 
 // drainState tracks a single in-progress drain operation.
 type drainState struct {
-	cancel context.CancelFunc
-	done   chan struct{}
-	errVal atomic.Pointer[error] // set on completion; accessed from multiple goroutines
-	moved  atomic.Int64          // objects successfully moved
+	cancel       context.CancelFunc
+	done         chan struct{}
+	errVal       atomic.Pointer[error] // set on completion; accessed from multiple goroutines
+	moved        atomic.Int64          // objects successfully moved
+	gaugeDecOnce sync.Once             // guards DrainActive.Dec(); see decrementActiveGauge
 }
 
 // setErr stores the completion error atomically.
@@ -59,6 +60,16 @@ func (s *drainState) getErr() error {
 		return *p
 	}
 	return nil
+}
+
+// decrementActiveGauge fires telemetry.DrainActive.Dec() exactly once per
+// drainState across every code path that can finish the drain (success,
+// abort, cancel). Without the sync.Once the cancel-races-completion path
+// double-decremented the gauge - issue #883 - because finalizeDrain (or
+// abortDrainWithError) decremented when the drain goroutine finished and
+// CancelDrain decremented again after waking from <-state.done.
+func (s *drainState) decrementActiveGauge() {
+	s.gaugeDecOnce.Do(func() { telemetry.DrainActive.Dec() })
 }
 
 // Progress holds the current state of a drain operation.
@@ -256,7 +267,7 @@ func (d *Manager) CancelDrain(name string) error {
 	state.cancel()
 	<-state.done
 	d.draining.Delete(name)
-	telemetry.DrainActive.Dec()
+	state.decrementActiveGauge()
 	d.log.InfoContext(context.Background(), "cancelled backend drain", "backend", name)
 	return nil
 }
@@ -320,7 +331,7 @@ func (d *Manager) migrateBackendObjects(ctx context.Context, name string, state 
 func (d *Manager) abortDrainWithError(name string, state *drainState, err error) {
 	state.setErr(err)
 	d.draining.Delete(name)
-	telemetry.DrainActive.Dec()
+	state.decrementActiveGauge()
 }
 
 // finalizeDrain runs after a successful migration. Flushes pending cleanup
@@ -340,7 +351,7 @@ func (d *Manager) finalizeDrain(ctx context.Context, name string, state *drainSt
 		state.setErr(err)
 	}
 
-	telemetry.DrainActive.Dec()
+	state.decrementActiveGauge()
 
 	audit.Log(ctx, "storage.DrainComplete",
 		slog.String("backend", name),
