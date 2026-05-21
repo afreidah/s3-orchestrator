@@ -16,16 +16,18 @@ package drain
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
 	"sync/atomic"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -39,6 +41,7 @@ type Core interface {
 	StreamCopy(ctx context.Context, src, dst backend.ObjectBackend, key string) error
 	DeleteWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) error
 	DeleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, backendName, key, reason string, sizeBytes int64)
+	MoveObject(ctx context.Context, req *writepath.MoveRequest) (int64, error)
 	Acct() *accounting.Recorder
 }
 
@@ -409,41 +412,37 @@ func (d *Manager) removeReplicaSource(ctx context.Context, srcBackend backend.Ob
 // copyAndRemoveSource handles the slow-path drain branch: no replica
 // exists, so the object is streamed to a destination backend, the
 // metadata location is moved atomically, and the source bytes are then
-// deleted.
+// deleted. The shared StreamCopy + MoveObjectLocation + cleanup +
+// accounting logic lives in writepath.Coordinator.MoveObject (#924);
+// this helper picks the destination, calls MoveObject, and emits the
+// drain-specific audit on success.
 func (d *Manager) copyAndRemoveSource(ctx context.Context, srcBackend backend.ObjectBackend, srcName string, obj *core.ObjectLocation) bool {
 	destName, destBackend, ok := d.pickDrainDestination(ctx, srcName, obj)
 	if !ok {
 		return false
 	}
 
-	if err := d.infra.StreamCopy(ctx, srcBackend, destBackend, obj.ObjectKey); err != nil {
-		d.log.WarnContext(ctx, "stream copy failed",
-			slog.String("key", obj.ObjectKey),
-			slog.String("src_backend", srcName),
-			slog.String("dst_backend", destName),
-			"error", err)
-		return false
-	}
-
-	movedSize, err := d.objects.MoveObjectLocation(ctx, obj.ObjectKey, srcName, destName)
+	movedSize, err := d.infra.MoveObject(ctx, &writepath.MoveRequest{
+		Key:                obj.ObjectKey,
+		SizeBytes:          obj.SizeBytes,
+		SrcBackend:         srcBackend,
+		SrcName:            srcName,
+		DestBackend:        destBackend,
+		DestName:           destName,
+		OrphanReason:       "drain_orphan",
+		StaleOrphanReason:  "drain_stale_orphan",
+		SourceDeleteReason: "drain_source_delete",
+	})
 	if err != nil {
-		d.log.ErrorContext(ctx, "failed to update object location",
-			slog.String("key", obj.ObjectKey), "error", err)
-		d.infra.DeleteOrEnqueue(ctx, destBackend, destName, obj.ObjectKey, "drain_orphan", obj.SizeBytes)
+		if !errors.Is(err, writepath.ErrMoveStale) {
+			d.log.WarnContext(ctx, "drain move failed",
+				slog.String("key", obj.ObjectKey),
+				slog.String("src_backend", srcName),
+				slog.String("dst_backend", destName),
+				"error", err)
+		}
 		return false
 	}
-	if movedSize == 0 {
-		// Object was deleted or already moved.
-		d.infra.DeleteOrEnqueue(ctx, destBackend, destName, obj.ObjectKey, "drain_stale_orphan", obj.SizeBytes)
-		return false
-	}
-
-	d.infra.DeleteOrEnqueue(ctx, srcBackend, srcName, obj.ObjectKey, "drain_source_delete", movedSize)
-	// Source DELETE API call is recorded inside DeleteOrEnqueue; here
-	// we only add the Get egress on the source and the Put ingress on
-	// the destination (Ingress/Egress include their own API-call tick).
-	d.infra.Acct().Egress(srcName, movedSize)
-	d.infra.Acct().Ingress(destName, movedSize)
 
 	audit.Log(ctx, "storage.DrainMove",
 		slog.String("key", obj.ObjectKey),

@@ -26,5 +26,6 @@ type WritepathCore interface {
 	EligibleForWrite(apiCalls, egress, ingress int64) []string
 	ClassifyWriteError(span trace.Span, operation string, err error) error
 	DeleteWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) error
+	StreamCopy(ctx context.Context, src, dst backend.ObjectBackend, key string) error
 	Acct() *accounting.Recorder
 }

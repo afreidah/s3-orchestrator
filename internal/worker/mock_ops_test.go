@@ -16,6 +16,7 @@ import (
 	backend "github.com/afreidah/s3-orchestrator/internal/backend"
 	counter "github.com/afreidah/s3-orchestrator/internal/counter"
 	accounting "github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
+	writepath "github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -166,6 +167,21 @@ func (m *MockOps) IsDraining(name string) bool {
 func (mr *MockOpsMockRecorder) IsDraining(name any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsDraining", reflect.TypeOf((*MockOps)(nil).IsDraining), name)
+}
+
+// MoveObject mocks base method.
+func (m *MockOps) MoveObject(ctx context.Context, req *writepath.MoveRequest) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "MoveObject", ctx, req)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// MoveObject indicates an expected call of MoveObject.
+func (mr *MockOpsMockRecorder) MoveObject(ctx, req any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MoveObject", reflect.TypeOf((*MockOps)(nil).MoveObject), ctx, req)
 }
 
 // ReleaseAdmission mocks base method.
@@ -331,6 +347,21 @@ func (mr *MockCleanupOpsMockRecorder) GetBackend(name any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetBackend", reflect.TypeOf((*MockCleanupOps)(nil).GetBackend), name)
 }
 
+// MoveObject mocks base method.
+func (m *MockCleanupOps) MoveObject(ctx context.Context, req *writepath.MoveRequest) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "MoveObject", ctx, req)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// MoveObject indicates an expected call of MoveObject.
+func (mr *MockCleanupOpsMockRecorder) MoveObject(ctx, req any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MoveObject", reflect.TypeOf((*MockCleanupOps)(nil).MoveObject), ctx, req)
+}
+
 // ReleaseAdmission mocks base method.
 func (m *MockCleanupOps) ReleaseAdmission() {
 	m.ctrl.T.Helper()
@@ -463,6 +494,21 @@ func (m *MockScrubberOps) GetBackend(name string) (backend.ObjectBackend, error)
 func (mr *MockScrubberOpsMockRecorder) GetBackend(name any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetBackend", reflect.TypeOf((*MockScrubberOps)(nil).GetBackend), name)
+}
+
+// MoveObject mocks base method.
+func (m *MockScrubberOps) MoveObject(ctx context.Context, req *writepath.MoveRequest) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "MoveObject", ctx, req)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// MoveObject indicates an expected call of MoveObject.
+func (mr *MockScrubberOpsMockRecorder) MoveObject(ctx, req any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MoveObject", reflect.TypeOf((*MockScrubberOps)(nil).MoveObject), ctx, req)
 }
 
 // StreamCopy mocks base method.

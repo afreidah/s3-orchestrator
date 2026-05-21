@@ -637,6 +637,16 @@ func (m *BackendManager) DeleteOrEnqueue(ctx context.Context, be backend.ObjectB
 	m.coord.DeleteOrEnqueue(ctx, be, backendName, key, reason, sizeBytes)
 }
 
+// MoveObject forwards to the write coordinator's shared move primitive
+// (#924). Drain and rebalancer both pass their narrow consumer
+// interface (drain.Core, worker.DataMover) here so the StreamCopy +
+// MoveObjectLocation CAS + orphan-cleanup branches + source-delete
+// accounting all funnel through one implementation - the same way
+// DeleteOrEnqueue does.
+func (m *BackendManager) MoveObject(ctx context.Context, req *writepath.MoveRequest) (int64, error) {
+	return m.coord.MoveObject(ctx, req)
+}
+
 // GetDashboardData delegates to the dashboard.Aggregator and enriches the
 // result with drain status and circuit-breaker health from the
 // BackendManager's in-memory state.
