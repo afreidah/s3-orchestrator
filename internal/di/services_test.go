@@ -21,10 +21,12 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
-	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
+	"github.com/afreidah/s3-orchestrator/internal/lifecycle/tickrunner"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/testutil"
@@ -141,8 +143,8 @@ func TestCleanupQueueService_ProcessedLogFires(t *testing.T) {
 	cw := worker.NewCleanupWorker(mgr, mock, 1, "test", 5*time.Minute)
 	t.Cleanup(mgr.Close)
 
-	svc := NewCleanupQueueService(cw, acquiringLocker{}).(*lockedTickerService)
-	svc.runOnce(context.Background(), svc.work)
+	svc := worker.NewCleanupQueueService(cw, acquiringLocker{}).(*tickrunner.Service)
+	svc.Tick(context.Background())
 }
 
 // TestServiceWorkClosures_RunOnceCovers drives each background service's
@@ -159,25 +161,25 @@ func TestServiceWorkClosures_RunOnceCovers(t *testing.T) {
 	locker := acquiringLocker{}
 
 	services := []lifecycle.Runner{
-		NewMultipartCleanupService(f.mgr.MultipartManager, locker, 0),
-		NewCleanupQueueService(f.cleanupWorker, locker),
-		NewRebalancerService(f.mgr, f.rebalancer, locker),
+		multipart.NewCleanupService(f.mgr.MultipartManager, locker, 0),
+		worker.NewCleanupQueueService(f.cleanupWorker, locker),
+		worker.NewRebalancerService(f.mgr, f.rebalancer, locker),
 		NewLifecycleService(f.mgr, locker),
-		NewOverReplicationService(f.mgr, f.overRep, locker),
-		NewReplicatorService(f.mgr, f.replicator, locker),
-		NewReconcileService(worker.NewReconciler(f.mgr, nil), locker, time.Hour),
-		NewScrubberService(f.scrubber, locker),
+		worker.NewOverReplicationService(f.mgr, f.overRep, locker),
+		worker.NewReplicatorService(f.mgr, f.replicator, locker),
+		worker.NewReconcileService(worker.NewReconciler(f.mgr, nil), locker, time.Hour),
+		worker.NewScrubberService(f.scrubber, locker),
 	}
 	for _, svc := range services {
-		ts, ok := svc.(*lockedTickerService)
+		ts, ok := svc.(*tickrunner.Service)
 		if !ok {
-			t.Fatalf("service %T is not *lockedTickerService", svc)
+			t.Fatalf("service %T is not *tickrunner.Service", svc)
 		}
 		// runOnce wraps the work closure in audit context + advisory
 		// lock acquisition, so this single call covers the locked path
 		// even when the closure itself returns early via a nil-config
 		// guard.
-		ts.runOnce(context.Background(), ts.work)
+		ts.Tick(context.Background())
 	}
 }
 
@@ -213,15 +215,15 @@ func TestServiceConstructors_AllReturnNonNil(t *testing.T) {
 		svc  any
 	}{
 		{"UsageFlush", NewUsageFlushService(f.mgr, locker)},
-		{"MultipartCleanup", NewMultipartCleanupService(f.mgr.MultipartManager, locker, 0)},
-		{"CleanupQueue", NewCleanupQueueService(f.cleanupWorker, locker)},
-		{"Rebalancer", NewRebalancerService(f.mgr, f.rebalancer, locker)},
+		{"MultipartCleanup", multipart.NewCleanupService(f.mgr.MultipartManager, locker, 0)},
+		{"CleanupQueue", worker.NewCleanupQueueService(f.cleanupWorker, locker)},
+		{"Rebalancer", worker.NewRebalancerService(f.mgr, f.rebalancer, locker)},
 		{"Lifecycle", NewLifecycleService(f.mgr, locker)},
-		{"OverReplication", NewOverReplicationService(f.mgr, f.overRep, locker)},
-		{"Replicator", NewReplicatorService(f.mgr, f.replicator, locker)},
-		{"Reconcile", NewReconcileService(worker.NewReconciler(f.mgr, nil), locker, time.Hour)},
-		{"Scrubber", NewScrubberService(f.scrubber, locker)},
-		{"Watchdog", NewCircuitBreakerWatchdog(breaker.NewRegistry(breaker.NewCircuitBreaker("t", 3, time.Second, func(error) bool { return false }, core.ErrDBUnavailable)))},
+		{"OverReplication", worker.NewOverReplicationService(f.mgr, f.overRep, locker)},
+		{"Replicator", worker.NewReplicatorService(f.mgr, f.replicator, locker)},
+		{"Reconcile", worker.NewReconcileService(worker.NewReconciler(f.mgr, nil), locker, time.Hour)},
+		{"Scrubber", worker.NewScrubberService(f.scrubber, locker)},
+		{"Watchdog", breaker.NewWatchdog(breaker.NewRegistry(breaker.NewCircuitBreaker("t", 3, time.Second, func(error) bool { return false }, core.ErrDBUnavailable)))},
 	}
 	for _, tc := range tests {
 		if tc.svc == nil {
@@ -236,15 +238,15 @@ func TestServiceConstructors_AllReturnNonNil(t *testing.T) {
 func TestLockedTickerService_RunOnceSkipsOnLockBusy(t *testing.T) {
 	t.Parallel()
 	var workCalled bool
-	svc := &lockedTickerService{
-		locker:   fakeLocker{},
-		interval: time.Second,
-		lockID:   core.LockRebalancer,
-		name:     "test",
-		log:      slog.Default(),
-		work:     func(context.Context) error { workCalled = true; return nil },
-	}
-	svc.runOnce(context.Background(), svc.work)
+	svc := tickrunner.New(tickrunner.Config{
+		Locker:   fakeLocker{},
+		Interval: time.Second,
+		LockID:   core.LockRebalancer,
+		Name:     "test",
+		Log:      slog.Default(),
+		Work:     func(context.Context) error { workCalled = true; return nil },
+	})
+	svc.Tick(context.Background())
 	if workCalled {
 		t.Error("work ran even though the lock was not acquired")
 	}
@@ -265,16 +267,16 @@ func (e errLocker) WithAdvisoryLock(_ context.Context, _ int64, _ func(ctx conte
 func TestLockedTickerService_RunOnceInvokesOnError(t *testing.T) {
 	t.Parallel()
 	var caught error
-	svc := &lockedTickerService{
-		locker:   errLocker{err: errors.New("advisory lock broke")},
-		interval: time.Second,
-		lockID:   core.LockLifecycle,
-		name:     "test",
-		log:      slog.Default(),
-		work:     func(context.Context) error { return nil },
-		onError:  func(err error) { caught = err },
-	}
-	svc.runOnce(context.Background(), svc.work)
+	svc := tickrunner.New(tickrunner.Config{
+		Locker:   errLocker{err: errors.New("advisory lock broke")},
+		Interval: time.Second,
+		LockID:   core.LockLifecycle,
+		Name:     "test",
+		Log:      slog.Default(),
+		Work:     func(context.Context) error { return nil },
+		OnError:  func(err error) { caught = err },
+	})
+	svc.Tick(context.Background())
 	if caught == nil {
 		t.Fatal("onError was not invoked")
 	}
@@ -286,16 +288,16 @@ func TestLockedTickerService_RunOnceInvokesOnError(t *testing.T) {
 // back to s.log.ErrorContext rather than dropping the error silently.
 func TestLockedTickerService_RunOnceLogsErrorWhenNoOnError(t *testing.T) {
 	t.Parallel()
-	svc := &lockedTickerService{
-		locker:   errLocker{err: errors.New("advisory lock broke")},
-		interval: time.Second,
-		lockID:   core.LockLifecycle,
-		name:     "test",
-		log:      slog.Default(),
-		work:     func(context.Context) error { return nil },
-		// onError intentionally nil to drive the fallback branch.
-	}
-	svc.runOnce(context.Background(), svc.work) // must not panic
+	svc := tickrunner.New(tickrunner.Config{
+		Locker:   errLocker{err: errors.New("advisory lock broke")},
+		Interval: time.Second,
+		LockID:   core.LockLifecycle,
+		Name:     "test",
+		Log:      slog.Default(),
+		Work:     func(context.Context) error { return nil },
+		// OnError intentionally nil to drive the fallback branch.
+	})
+	svc.Tick(context.Background()) // must not panic
 }
 
 // TestLockedTickerService_RunOnceSwallowsErrDBUnavailable verifies the
@@ -304,40 +306,18 @@ func TestLockedTickerService_RunOnceLogsErrorWhenNoOnError(t *testing.T) {
 func TestLockedTickerService_RunOnceSwallowsErrDBUnavailable(t *testing.T) {
 	t.Parallel()
 	var onErrCalled bool
-	svc := &lockedTickerService{
-		locker:   errLocker{err: core.ErrDBUnavailable},
-		interval: time.Second,
-		lockID:   core.LockLifecycle,
-		name:     "test",
-		log:      slog.Default(),
-		work:     func(context.Context) error { return nil },
-		onError:  func(error) { onErrCalled = true },
-	}
-	svc.runOnce(context.Background(), svc.work)
+	svc := tickrunner.New(tickrunner.Config{
+		Locker:   errLocker{err: core.ErrDBUnavailable},
+		Interval: time.Second,
+		LockID:   core.LockLifecycle,
+		Name:     "test",
+		Log:      slog.Default(),
+		Work:     func(context.Context) error { return nil },
+		OnError:  func(error) { onErrCalled = true },
+	})
+	svc.Tick(context.Background())
 	if onErrCalled {
 		t.Error("onError should not fire for ErrDBUnavailable")
-	}
-}
-
-// TestCircuitBreakerWatchdog_CheckAllEmptyRegistry exercises checkAll with an
-// empty registry to guarantee it is a safe no-op when no breakers are wired.
-func TestCircuitBreakerWatchdog_CheckAllEmptyRegistry(t *testing.T) {
-	t.Parallel()
-	w := &circuitBreakerWatchdog{registry: breaker.NewRegistry()}
-	w.checkAll() // must not panic on empty registry
-}
-
-// TestCircuitBreakerWatchdog_RunExitsOnCancel covers the ticker loop's
-// ctx.Done() branch by cancelling the context before the first tick fires.
-func TestCircuitBreakerWatchdog_RunExitsOnCancel(t *testing.T) {
-	t.Parallel()
-	cb := breaker.NewCircuitBreaker("t", 3, time.Second, func(error) bool { return false }, core.ErrDBUnavailable)
-	w := &circuitBreakerWatchdog{registry: breaker.NewRegistry(cb)}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if err := w.Run(ctx); err != nil {
-		t.Errorf("watchdog Run returned error on cancel: %v", err)
 	}
 }
 
@@ -346,14 +326,14 @@ func TestCircuitBreakerWatchdog_RunExitsOnCancel(t *testing.T) {
 // context cancellation unwinds it.
 func TestLockedTickerService_RunExitsOnCancel(t *testing.T) {
 	t.Parallel()
-	svc := &lockedTickerService{
-		locker:   fakeLocker{},
-		interval: time.Hour, // long interval so Run blocks in the tick select
-		lockID:   core.LockRebalancer,
-		name:     "test",
-		log:      slog.Default(),
-		work:     func(context.Context) error { return nil },
-	}
+	svc := tickrunner.New(tickrunner.Config{
+		Locker:   fakeLocker{},
+		Interval: time.Hour, // long interval so Run blocks in the tick select
+		LockID:   core.LockRebalancer,
+		Name:     "test",
+		Log:      slog.Default(),
+		Work:     func(context.Context) error { return nil },
+	})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if err := svc.Run(ctx); err != nil {
@@ -367,15 +347,15 @@ func TestLockedTickerService_RunExitsOnCancel(t *testing.T) {
 func TestLockedTickerService_RunStartupFires(t *testing.T) {
 	t.Parallel()
 	var startupCalled bool
-	svc := &lockedTickerService{
-		locker:   acquiringLocker{},
-		interval: time.Hour,
-		lockID:   core.LockReplicator,
-		name:     "test",
-		log:      slog.Default(),
-		work:     func(context.Context) error { return nil },
-		startup:  func(context.Context) error { startupCalled = true; return nil },
-	}
+	svc := tickrunner.New(tickrunner.Config{
+		Locker:   acquiringLocker{},
+		Interval: time.Hour,
+		LockID:   core.LockReplicator,
+		Name:     "test",
+		Log:      slog.Default(),
+		Work:     func(context.Context) error { return nil },
+		Startup:  func(context.Context) error { startupCalled = true; return nil },
+	})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_ = svc.Run(ctx)
@@ -417,59 +397,37 @@ func TestUsageFlushService_DoFlushOnMockManager(t *testing.T) {
 // factories so its shouldRun / work / startup closures can be poked
 // directly. Fails the test when the returned value isn't the ticker type
 // the tests rely on.
-func asTicker(t *testing.T, svc any) *lockedTickerService {
+func asTicker(t *testing.T, svc any) *tickrunner.Service {
 	t.Helper()
-	lt, ok := svc.(*lockedTickerService)
+	lt, ok := svc.(*tickrunner.Service)
 	if !ok {
-		t.Fatalf("expected *lockedTickerService, got %T", svc)
+		t.Fatalf("expected *tickrunner.Service, got %T", svc)
 	}
 	return lt
 }
 
-// TestServiceClosures_ExerciseWorkAndShouldRun drives every closure
-// captured by the New*Service factories. The closures live in the file
-// that Sonar measures for new-code coverage, so each untouched branch
-// eats into the PR gate.
+// TestServiceClosures_ExerciseWorkAndShouldRun drives a single tick
+// through every New*Service factory's tickrunner. Each Tick runs the
+// configured Work closure under the same lock + health machinery the
+// production loop uses, exercising the closure body for new-code
+// coverage. The shouldRun and onError closures are exercised by the
+// dedicated tickrunner tests (TestLockedTickerService_*); this test
+// just pins that every factory wires a non-nil Work that runs without
+// panicking.
 func TestServiceClosures_ExerciseWorkAndShouldRun(t *testing.T) {
 	t.Parallel()
 	f := newServicesFixture(t); mgr := f.mgr
 	ctx := context.Background()
 	locker := acquiringLocker{}
 
-	mpc := asTicker(t, NewMultipartCleanupService(mgr.MultipartManager, locker, 100*time.Millisecond))
-	_ = mpc.work(ctx)
-
-	cq := asTicker(t, NewCleanupQueueService(f.cleanupWorker, locker))
-	_ = cq.work(ctx)
-
-	rb := asTicker(t, NewRebalancerService(mgr, f.rebalancer, locker))
-	_ = rb.shouldRun()
-	_ = rb.work(ctx)
-
-	lc := asTicker(t, NewLifecycleService(mgr, locker))
-	_ = lc.shouldRun()
-	_ = lc.work(ctx)
-	if lc.onError != nil {
-		lc.onError(errors.New("simulated failure for coverage"))
-	}
-
-	or := asTicker(t, NewOverReplicationService(mgr, f.overRep, locker))
-	_ = or.shouldRun()
-	_ = or.work(ctx)
-
-	rp := asTicker(t, NewReplicatorService(mgr, f.replicator, locker))
-	_ = rp.shouldRun()
-	_ = rp.work(ctx)
-	if rp.startup != nil {
-		_ = rp.startup(ctx)
-	}
-
-	rc := asTicker(t, NewReconcileService(worker.NewReconciler(mgr, nil), locker, 100*time.Millisecond))
-	_ = rc.work(ctx)
-
-	sc := asTicker(t, NewScrubberService(f.scrubber, locker))
-	_ = sc.shouldRun()
-	_ = sc.work(ctx)
+	asTicker(t, multipart.NewCleanupService(mgr.MultipartManager, locker, 100*time.Millisecond)).Tick(ctx)
+	asTicker(t, worker.NewCleanupQueueService(f.cleanupWorker, locker)).Tick(ctx)
+	asTicker(t, worker.NewRebalancerService(mgr, f.rebalancer, locker)).Tick(ctx)
+	asTicker(t, NewLifecycleService(mgr, locker)).Tick(ctx)
+	asTicker(t, worker.NewOverReplicationService(mgr, f.overRep, locker)).Tick(ctx)
+	asTicker(t, worker.NewReplicatorService(mgr, f.replicator, locker)).Tick(ctx)
+	asTicker(t, worker.NewReconcileService(worker.NewReconciler(mgr, nil), locker, 100*time.Millisecond)).Tick(ctx)
+	asTicker(t, worker.NewScrubberService(f.scrubber, locker)).Tick(ctx)
 }
 
 // TestLockedTickerService_RunTicksOnce runs the ticker loop long enough to
@@ -478,13 +436,13 @@ func TestServiceClosures_ExerciseWorkAndShouldRun(t *testing.T) {
 func TestLockedTickerService_RunTicksOnce(t *testing.T) {
 	t.Parallel()
 	done := make(chan struct{})
-	svc := &lockedTickerService{
-		locker:   acquiringLocker{},
-		interval: 2 * time.Millisecond,
-		lockID:   core.LockRebalancer,
-		name:     "test",
-		log:      slog.Default(),
-		shouldRun: func() bool {
+	svc := tickrunner.New(tickrunner.Config{
+		Locker:   acquiringLocker{},
+		Interval: 2 * time.Millisecond,
+		LockID:   core.LockRebalancer,
+		Name:     "test",
+		Log:      slog.Default(),
+		ShouldRun: func() bool {
 			select {
 			case <-done:
 			default:
@@ -492,8 +450,8 @@ func TestLockedTickerService_RunTicksOnce(t *testing.T) {
 			}
 			return true
 		},
-		work: func(context.Context) error { return nil },
-	}
+		Work: func(context.Context) error { return nil },
+	})
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	_ = svc.Run(ctx)
@@ -535,17 +493,6 @@ func TestUsageFlushService_FlushTickWithAdaptiveSwitch(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	_ = svc.Run(ctx)
-}
-
-// TestCircuitBreakerWatchdog_CheckAllResetsBackendBreaker verifies that a
-// per-backend CircuitBreakerBackend registered alongside the database breaker
-// receives a ResetStaleProbe call when the watchdog ticks.
-func TestCircuitBreakerWatchdog_CheckAllResetsBackendBreaker(t *testing.T) {
-	t.Parallel()
-	cbBackend := backend.NewCircuitBreakerBackend(nil, "b1", 3, time.Second)
-	dbCB := breaker.NewCircuitBreaker("t", 3, time.Second, func(error) bool { return false }, core.ErrDBUnavailable)
-	w := &circuitBreakerWatchdog{registry: breaker.NewRegistry(dbCB, cbBackend)}
-	w.checkAll() // must not panic; ResetStaleProbe runs on cbBackend
 }
 
 // TestUsageFlushService_DoFlushHandlesUpdateError forces UpdateQuotaMetrics

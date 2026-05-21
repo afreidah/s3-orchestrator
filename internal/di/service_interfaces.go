@@ -13,7 +13,6 @@ package di
 
 import (
 	"context"
-	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 )
@@ -29,25 +28,10 @@ type usageFlushOps interface {
 	UpdateQuotaMetrics(ctx context.Context) error
 }
 
-// staleMultipartCleaner is the subset of *multipart.Manager that
-// NewMultipartCleanupService needs to drive the stale-upload sweep.
-type staleMultipartCleaner interface {
-	CleanupStaleMultipartUploads(ctx context.Context, olderThan time.Duration)
-}
-
 // lifecycleOps is the subset of *proxy.BackendManager that
 // NewLifecycleService needs to read the lifecycle config and process a
 // tick.
 type lifecycleOps interface {
 	LifecycleConfig() *config.LifecycleConfig
 	ProcessLifecycleRules(ctx context.Context, rules []config.LifecycleRule) (deleted, failed int)
-}
-
-// quotaMetricsRefresher is the single-method subset of
-// *proxy.BackendManager that the rebalance / over-replication /
-// replicator pass-result helpers call to push fresh quota gauges after a
-// successful pass. Shared by handlePassResult so the three constructors
-// agree on the dependency surface.
-type quotaMetricsRefresher interface {
-	UpdateQuotaMetrics(ctx context.Context) error
 }
