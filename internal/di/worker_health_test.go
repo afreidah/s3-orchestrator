@@ -28,21 +28,22 @@ import (
 	"testing"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/lifecycle/tickrunner"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
-// healthSvc returns a minimal lockedTickerService wired with the
-// supplied locker and work closure, so each test below can drive
-// runOnce directly without standing up the lifecycle manager.
-func healthSvc(locker advisoryLocker, name string, work func(context.Context) error) *lockedTickerService {
-	return &lockedTickerService{
-		locker:   locker,
-		interval: time.Second,
-		lockID:   core.LockRebalancer,
-		name:     name,
-		log:      slog.Default(),
-		work:     work,
-	}
+// healthSvc returns a minimal tickrunner.Service wired with the
+// supplied locker and work closure, so each test below can drive a
+// single tick directly without standing up the lifecycle manager.
+func healthSvc(locker tickrunner.AdvisoryLocker, name string, work func(context.Context) error) *tickrunner.Service {
+	return tickrunner.New(tickrunner.Config{
+		Locker:   locker,
+		Interval: time.Second,
+		LockID:   core.LockRebalancer,
+		Name:     name,
+		Log:      slog.Default(),
+		Work:     work,
+	})
 }
 
 // TestLockedTickerService_HealthSuccessAdvancesLastSuccess drives one
@@ -52,7 +53,7 @@ func healthSvc(locker advisoryLocker, name string, work func(context.Context) er
 func TestLockedTickerService_HealthSuccessAdvancesLastSuccess(t *testing.T) {
 	t.Parallel()
 	svc := healthSvc(acquiringLocker{}, "test", func(context.Context) error { return nil })
-	svc.runOnce(context.Background(), svc.work)
+	svc.Tick(context.Background())
 	h := svc.Health()
 	if h.Name != "test" {
 		t.Errorf("Name = %q, want test", h.Name)
@@ -77,8 +78,8 @@ func TestLockedTickerService_HealthFailureAccumulates(t *testing.T) {
 	t.Parallel()
 	boom := errors.New("boom")
 	svc := healthSvc(acquiringLocker{}, "test", func(context.Context) error { return boom })
-	svc.runOnce(context.Background(), svc.work)
-	svc.runOnce(context.Background(), svc.work)
+	svc.Tick(context.Background())
+	svc.Tick(context.Background())
 	h := svc.Health()
 	if h.ConsecutiveFailures != 2 {
 		t.Errorf("ConsecutiveFailures = %d, want 2", h.ConsecutiveFailures)
@@ -106,9 +107,9 @@ func TestLockedTickerService_HealthSuccessResetsFailures(t *testing.T) {
 		return nil
 	}
 	svc := healthSvc(acquiringLocker{}, "test", work)
-	svc.runOnce(context.Background(), svc.work)
+	svc.Tick(context.Background())
 	failTS := svc.Health().LastFailure
-	svc.runOnce(context.Background(), svc.work)
+	svc.Tick(context.Background())
 	h := svc.Health()
 	if h.ConsecutiveFailures != 0 {
 		t.Errorf("ConsecutiveFailures = %d, want 0", h.ConsecutiveFailures)
@@ -132,7 +133,7 @@ func TestLockedTickerService_HealthSuccessResetsFailures(t *testing.T) {
 func TestLockedTickerService_HealthLockErrorCountsAsFailure(t *testing.T) {
 	t.Parallel()
 	svc := healthSvc(errLocker{err: errors.New("lock broke")}, "test", func(context.Context) error { return nil })
-	svc.runOnce(context.Background(), svc.work)
+	svc.Tick(context.Background())
 	h := svc.Health()
 	if h.ConsecutiveFailures != 1 {
 		t.Errorf("ConsecutiveFailures = %d, want 1", h.ConsecutiveFailures)
@@ -149,7 +150,7 @@ func TestLockedTickerService_HealthLockErrorCountsAsFailure(t *testing.T) {
 func TestLockedTickerService_HealthDBUnavailableNotCountedAsFailure(t *testing.T) {
 	t.Parallel()
 	svc := healthSvc(errLocker{err: core.ErrDBUnavailable}, "test", func(context.Context) error { return nil })
-	svc.runOnce(context.Background(), svc.work)
+	svc.Tick(context.Background())
 	h := svc.Health()
 	if h.ConsecutiveFailures != 0 {
 		t.Errorf("ConsecutiveFailures = %d, want 0 (ErrDBUnavailable is squelched)", h.ConsecutiveFailures)

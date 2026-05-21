@@ -19,6 +19,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/notify"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
@@ -74,16 +75,16 @@ func resolveLifecycleWorkers(i do.Injector) (lifecycleWorkerSet, error) {
 // sm. Pulled out of ProvideLifecycleManager so that function stays under
 // the cognitive-complexity ceiling.
 func registerWorkerServices(sm *lifecycle.Manager, mgr *proxy.BackendManager, ws lifecycleWorkerSet, locker core.AdvisoryLocker, cfg *config.Config) {
-	sm.Register("multipart-cleanup", NewMultipartCleanupService(mgr.MultipartManager, locker, cfg.CleanupQueue.MultipartStaleTimeout))
-	sm.Register("cleanup-queue", NewCleanupQueueService(ws.cleanup, locker))
-	if svc := NewPendingReaperService(ws.pendingReaper, locker, cfg.WritePath.PendingPattern.ReaperTick); svc != nil {
+	sm.Register("multipart-cleanup", multipart.NewCleanupService(mgr.MultipartManager, locker, cfg.CleanupQueue.MultipartStaleTimeout))
+	sm.Register("cleanup-queue", worker.NewCleanupQueueService(ws.cleanup, locker))
+	if svc := worker.NewPendingReaperService(ws.pendingReaper, locker, cfg.WritePath.PendingPattern.ReaperTick); svc != nil {
 		sm.Register("pending-reaper", svc)
 	}
-	sm.Register("rebalancer", NewRebalancerService(mgr, ws.rebalancer, locker))
-	sm.Register("replicator", NewReplicatorService(mgr, ws.replicator, locker))
-	sm.Register("over-replication", NewOverReplicationService(mgr, ws.overRep, locker))
+	sm.Register("rebalancer", worker.NewRebalancerService(mgr, ws.rebalancer, locker))
+	sm.Register("replicator", worker.NewReplicatorService(mgr, ws.replicator, locker))
+	sm.Register("over-replication", worker.NewOverReplicationService(mgr, ws.overRep, locker))
 	sm.Register("lifecycle", NewLifecycleService(mgr, locker))
-	sm.Register("scrubber", NewScrubberService(ws.scrubber, locker))
+	sm.Register("scrubber", worker.NewScrubberService(ws.scrubber, locker))
 }
 
 // ProvideLifecycleManager creates and registers all background services.
@@ -111,7 +112,7 @@ func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 
 	sm := lifecycle.NewManager()
 	sm.Register("usage-flush", NewUsageFlushService(manager, locker))
-	sm.Register("cb-watchdog", NewCircuitBreakerWatchdog(registry))
+	sm.Register("cb-watchdog", breaker.NewWatchdog(registry))
 
 	if mode != "worker" && mode != "all" {
 		return sm, nil
@@ -128,7 +129,7 @@ func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 		if err != nil {
 			return nil, err
 		}
-		sm.Register("reconcile", NewReconcileService(reconciler, locker, cfg.Reconcile.Interval))
+		sm.Register("reconcile", worker.NewReconcileService(reconciler, locker, cfg.Reconcile.Interval))
 	}
 	if notifier, err := do.Invoke[*notify.Notifier](i); err == nil {
 		sm.Register("notifications", notifier)
