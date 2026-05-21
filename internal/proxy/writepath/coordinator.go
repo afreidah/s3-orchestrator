@@ -15,6 +15,7 @@ package writepath
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -320,4 +321,93 @@ func (w *Coordinator) recordEnqueueFailure(ctx context.Context, backendName, obj
 	)
 	w.log.ErrorContext(ctx, "orphan cleanup enqueue failed (best-effort)",
 		"backend", backendName, "key", objectKey, "reason", reason, "stage", stage, "error", err)
+}
+
+// -------------------------------------------------------------------------
+// SHARED OBJECT MOVE PRIMITIVE
+// -------------------------------------------------------------------------
+
+// ErrMoveStale signals MoveObject was raced: MoveObjectLocation
+// returned movedSize=0, meaning another process (or the same caller
+// from a prior tick) already moved or deleted the object. The
+// destination has had its now-orphaned bytes enqueued for cleanup via
+// req.StaleOrphanReason. Callers treat this as a no-op rather than a
+// failure - increment a "stale" / "skipped" counter rather than an
+// error counter.
+var ErrMoveStale = errors.New("object already moved or deleted")
+
+// MoveRequest bundles the inputs to a single src -> dest object move.
+// Callers supply distinct cleanup-queue reason strings per failure
+// mode so a future operator triaging the cleanup_queue can tell which
+// subsystem orphaned each row.
+type MoveRequest struct {
+	// Key is the object key being moved.
+	Key string
+	// SizeBytes is the size as known to the caller before the move
+	// runs. Used for the orphan-cleanup paths where MoveObjectLocation
+	// did not return the row's actual size. The success path uses the
+	// authoritative movedSize from MoveObjectLocation instead.
+	SizeBytes int64
+
+	SrcBackend  backend.ObjectBackend
+	SrcName     string
+	DestBackend backend.ObjectBackend
+	DestName    string
+
+	// OrphanReason names the cleanup-queue reason used when
+	// MoveObjectLocation errors after the destination PUT has landed.
+	OrphanReason string
+	// StaleOrphanReason names the cleanup-queue reason used when
+	// MoveObjectLocation returns movedSize=0 (another process won the
+	// race; the destination bytes are now orphaned).
+	StaleOrphanReason string
+	// SourceDeleteReason names the cleanup-queue reason used for the
+	// successful-move source delete.
+	SourceDeleteReason string
+}
+
+// MoveObject performs a single src -> dest object move with cleanup
+// semantics that drain and rebalance share: StreamCopy the source body
+// to dest, atomic MoveObjectLocation CAS, orphan cleanup on dest if
+// the CAS errors, stale-orphan cleanup on dest if the CAS reports a
+// raced row, and on success a source-side DeleteOrEnqueue plus the
+// canonical accounting (Egress on src + Ingress on dest).
+//
+// DeleteOrEnqueue owns the per-backend DELETE API-call tick (#881 /
+// #917) so this method does NOT call Acct().APICall(...) on the
+// destination cleanup or the source delete.
+//
+// Returns:
+//   - (movedSize, nil) on success
+//   - (0, ErrMoveStale) when MoveObjectLocation returned movedSize=0
+//   - (0, err) wrapping the underlying StreamCopy / MoveObjectLocation
+//     failure for every other failure mode
+func (w *Coordinator) MoveObject(ctx context.Context, req *MoveRequest) (int64, error) {
+	if err := w.core.StreamCopy(ctx, req.SrcBackend, req.DestBackend, req.Key); err != nil {
+		return 0, fmt.Errorf("stream copy %s -> %s: %w", req.SrcName, req.DestName, err)
+	}
+
+	movedSize, err := w.stores.MoveObjectLocation(ctx, req.Key, req.SrcName, req.DestName)
+	if err != nil {
+		// Destination has the bytes but the metadata CAS failed;
+		// enqueue the orphan so the cleanup worker collects it.
+		w.DeleteOrEnqueue(ctx, req.DestBackend, req.DestName, req.Key, req.OrphanReason, req.SizeBytes)
+		return 0, fmt.Errorf("move object location %s -> %s: %w", req.SrcName, req.DestName, err)
+	}
+	if movedSize == 0 {
+		// Raced: another process moved or deleted the row. The
+		// destination bytes are orphaned; enqueue them so the cleanup
+		// worker collects them.
+		w.DeleteOrEnqueue(ctx, req.DestBackend, req.DestName, req.Key, req.StaleOrphanReason, req.SizeBytes)
+		return 0, ErrMoveStale
+	}
+
+	// Success path: source delete + canonical accounting. Egress and
+	// Ingress include their own single API-call tick (one for the
+	// source GET, one for the dest PUT); DeleteOrEnqueue includes the
+	// source DELETE tick. No additional Acct().APICall calls.
+	w.DeleteOrEnqueue(ctx, req.SrcBackend, req.SrcName, req.Key, req.SourceDeleteReason, movedSize)
+	w.core.Acct().Egress(req.SrcName, movedSize)
+	w.core.Acct().Ingress(req.DestName, movedSize)
+	return movedSize, nil
 }

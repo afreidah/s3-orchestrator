@@ -19,6 +19,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 )
 
 // BackendAccess provides backend fleet discovery and drain-awareness.
@@ -43,6 +44,7 @@ type DataMover interface {
 	StreamCopy(ctx context.Context, src, dst backend.ObjectBackend, key string) error
 	DeleteWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) error
 	DeleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, backendName, key, reason string, sizeBytes int64)
+	MoveObject(ctx context.Context, req *writepath.MoveRequest) (int64, error)
 }
 
 // UsageAccessor provides usage tracking.
