@@ -22,6 +22,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"go.uber.org/mock/gomock"
 )
@@ -236,7 +237,10 @@ func TestPlanPackTight_BatchesBackendLookup(t *testing.T) {
 	}
 }
 
-// TestExecuteOneMove_Success verifies the execute one move success path by exercising gomock.NewController, backendtest.NewMockObjectBackend, ops.EXPECT.
+// TestExecuteOneMove_Success verifies that the rebalancer dispatches a
+// single MoveObject call to the shared primitive (#924) on the happy
+// path. ExecuteOneMove no longer issues StreamCopy / DeleteOrEnqueue
+// directly - the writepath.Coordinator owns those.
 func TestExecuteOneMove_Success(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -244,12 +248,10 @@ func TestExecuteOneMove_Success(t *testing.T) {
 
 	srcBe := backendtest.NewMockObjectBackend(ctrl)
 	dstBe := backendtest.NewMockObjectBackend(ctrl)
-	ms := &mockMetadataStore{moveSize: 100}
+	ms := &mockMetadataStore{}
 
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": srcBe, "b2": dstBe}).AnyTimes()
-	ops.EXPECT().StreamCopy(gomock.Any(), srcBe, dstBe, "key1").Return(nil)
-	ops.EXPECT().DeleteOrEnqueue(gomock.Any(), srcBe, "b1", "key1", "rebalance_source_delete", int64(100))
-	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
+	ops.EXPECT().MoveObject(gomock.Any(), gomock.Any()).Return(int64(100), nil)
 
 	r := NewRebalancer(ops, ms)
 	ok := r.ExecuteOneMove(context.Background(), RebalanceMove{
@@ -260,8 +262,10 @@ func TestExecuteOneMove_Success(t *testing.T) {
 	}
 }
 
-// TestExecuteOneMove_StreamCopyFails verifies the execute one move stream copy fails path by exercising gomock.NewController, backendtest.NewMockObjectBackend, ops.EXPECT.
-func TestExecuteOneMove_StreamCopyFails(t *testing.T) {
+// TestExecuteOneMove_MoveObjectFails pins the failure-propagation
+// branch: a generic MoveObject error (not ErrMoveStale) bumps the error
+// telemetry counter and returns false.
+func TestExecuteOneMove_MoveObjectFails(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
@@ -271,38 +275,38 @@ func TestExecuteOneMove_StreamCopyFails(t *testing.T) {
 	dstBe := backendtest.NewMockObjectBackend(ctrl)
 
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": srcBe, "b2": dstBe}).AnyTimes()
-	ops.EXPECT().StreamCopy(gomock.Any(), srcBe, dstBe, "key1").Return(errors.New("timeout"))
+	ops.EXPECT().MoveObject(gomock.Any(), gomock.Any()).Return(int64(0), errors.New("stream copy: timeout"))
 
 	r := NewRebalancer(ops, ms)
 	ok := r.ExecuteOneMove(context.Background(), RebalanceMove{
 		ObjectKey: "key1", FromBackend: "b1", ToBackend: "b2", SizeBytes: 100,
 	}, "spread")
 	if ok {
-		t.Error("expected failed move on stream copy error")
+		t.Error("expected failed move on MoveObject error")
 	}
 }
 
-// TestExecuteOneMove_MoveLocationFails verifies the execute one move move location fails path by exercising gomock.NewController, backendtest.NewMockObjectBackend, ops.EXPECT.
-func TestExecuteOneMove_MoveLocationFails(t *testing.T) {
+// TestExecuteOneMove_MoveObjectStale pins the raced-row branch:
+// MoveObject returns ErrMoveStale (movedSize=0) and the helper treats
+// it as a non-error skip (no error-counter increment, no audit log).
+func TestExecuteOneMove_MoveObjectStale(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
+	ms := &mockMetadataStore{}
 
 	srcBe := backendtest.NewMockObjectBackend(ctrl)
 	dstBe := backendtest.NewMockObjectBackend(ctrl)
-	ms := &mockMetadataStore{moveSize: 0} // 0 = object was deleted/moved
 
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": srcBe, "b2": dstBe}).AnyTimes()
-	ops.EXPECT().StreamCopy(gomock.Any(), srcBe, dstBe, "key1").Return(nil)
-	ops.EXPECT().DeleteOrEnqueue(gomock.Any(), dstBe, "b2", "key1", "rebalance_stale_orphan", int64(100))
-	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
+	ops.EXPECT().MoveObject(gomock.Any(), gomock.Any()).Return(int64(0), writepath.ErrMoveStale)
 
 	r := NewRebalancer(ops, ms)
 	ok := r.ExecuteOneMove(context.Background(), RebalanceMove{
 		ObjectKey: "key1", FromBackend: "b1", ToBackend: "b2", SizeBytes: 100,
 	}, "spread")
 	if ok {
-		t.Error("expected failed move when object already gone")
+		t.Error("expected failed move when object already moved/deleted")
 	}
 }
 

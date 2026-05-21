@@ -14,6 +14,7 @@ package worker
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -24,6 +25,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 	"github.com/afreidah/s3-orchestrator/internal/util/workerpool"
@@ -548,44 +550,28 @@ func (r *Rebalancer) ExecuteOneMove(ctx context.Context, move RebalanceMove, str
 		return false
 	}
 
-	// --- Stream source to destination ---
-	if err := r.ops.StreamCopy(ctx, srcBackend, destBackend, move.ObjectKey); err != nil {
-		r.log.WarnContext(ctx, "stream copy failed",
+	movedSize, err := r.ops.MoveObject(ctx, &writepath.MoveRequest{
+		Key:                move.ObjectKey,
+		SizeBytes:          move.SizeBytes,
+		SrcBackend:         srcBackend,
+		SrcName:            move.FromBackend,
+		DestBackend:        destBackend,
+		DestName:           move.ToBackend,
+		OrphanReason:       "rebalance_orphan",
+		StaleOrphanReason:  "rebalance_stale_orphan",
+		SourceDeleteReason: "rebalance_source_delete",
+	})
+	if err != nil {
+		if errors.Is(err, writepath.ErrMoveStale) {
+			r.log.InfoContext(ctx, "object already moved or deleted, cleaned up",
+				"key", move.ObjectKey)
+			return false
+		}
+		r.log.WarnContext(ctx, "rebalance move failed",
 			"key", move.ObjectKey, "from", move.FromBackend, "to", move.ToBackend, "error", err)
 		telemetry.RebalanceObjectsMoved.WithLabelValues(strategy, "error").Inc()
 		return false
 	}
-
-	// --- Atomic DB update (compare-and-swap) ---
-	movedSize, err := r.store.MoveObjectLocation(ctx, move.ObjectKey, move.FromBackend, move.ToBackend)
-	if err != nil {
-		r.log.ErrorContext(ctx, "failed to update object location",
-			"key", move.ObjectKey, "error", err)
-		// Clean up orphan on destination. DeleteOrEnqueue owns the
-		// DELETE API-call accounting (#881 / #917); recording it here
-		// would double-count.
-		r.ops.DeleteOrEnqueue(ctx, destBackend, move.ToBackend, move.ObjectKey, "rebalance_orphan", move.SizeBytes)
-		telemetry.RebalanceObjectsMoved.WithLabelValues(strategy, "error").Inc()
-		return false
-	}
-
-	if movedSize == 0 {
-		// Object was deleted or already moved by another process
-		r.log.InfoContext(ctx, "object already moved or deleted, cleaning up",
-			"key", move.ObjectKey)
-		r.ops.DeleteOrEnqueue(ctx, destBackend, move.ToBackend, move.ObjectKey, "rebalance_stale_orphan", move.SizeBytes)
-		return false
-	}
-
-	// --- Delete from source ---
-	r.ops.DeleteOrEnqueue(ctx, srcBackend, move.FromBackend, move.ObjectKey, "rebalance_source_delete", movedSize)
-
-	// Source-DELETE API call is recorded inside DeleteOrEnqueue (#881 /
-	// #917); here we only add the Get egress on the source and the Put
-	// ingress on the destination (Ingress/Egress include their own
-	// API-call tick).
-	r.ops.Acct().Egress(move.FromBackend, movedSize)
-	r.ops.Acct().Ingress(move.ToBackend, movedSize)
 
 	audit.Log(ctx, "rebalance.move",
 		slog.String("key", move.ObjectKey),
