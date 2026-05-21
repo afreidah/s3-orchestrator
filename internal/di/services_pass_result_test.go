@@ -25,6 +25,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/lifecycle/tickrunner"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -55,7 +56,7 @@ func passResultManager(t *testing.T) *proxy.BackendManager {
 func TestHandlePassResult_NilErrZeroCount(t *testing.T) {
 	t.Parallel()
 	mgr := passResultManager(t)
-	if err := handlePassResult(context.Background(), slog.Default(), mgr, 0, nil, "objects_moved"); err != nil {
+	if err := tickrunner.HandlePassResult(context.Background(), slog.Default(), mgr, 0, nil, "objects_moved"); err != nil {
 		t.Errorf("handlePassResult: %v", err)
 	}
 }
@@ -67,7 +68,7 @@ func TestHandlePassResult_NilErrZeroCount(t *testing.T) {
 func TestHandlePassResult_NilErrPositiveCount(t *testing.T) {
 	t.Parallel()
 	mgr := passResultManager(t)
-	if err := handlePassResult(context.Background(), slog.Default(), mgr, 7, nil, "copies_created"); err != nil {
+	if err := tickrunner.HandlePassResult(context.Background(), slog.Default(), mgr, 7, nil, "copies_created"); err != nil {
 		t.Errorf("handlePassResult: %v", err)
 	}
 }
@@ -79,7 +80,7 @@ func TestHandlePassResult_NilErrPositiveCount(t *testing.T) {
 func TestHandlePassResult_DBUnavailableSquelched(t *testing.T) {
 	t.Parallel()
 	mgr := passResultManager(t)
-	err := handlePassResult(context.Background(), slog.Default(), mgr, 0, core.ErrDBUnavailable, "objects_moved")
+	err := tickrunner.HandlePassResult(context.Background(), slog.Default(), mgr, 0, core.ErrDBUnavailable, "objects_moved")
 	if err != nil {
 		t.Errorf("ErrDBUnavailable should be squelched, got %v", err)
 	}
@@ -93,7 +94,7 @@ func TestHandlePassResult_OtherErrorSurfaces(t *testing.T) {
 	t.Parallel()
 	mgr := passResultManager(t)
 	boom := errors.New("worker exploded")
-	err := handlePassResult(context.Background(), slog.Default(), mgr, 0, boom, "objects_moved")
+	err := tickrunner.HandlePassResult(context.Background(), slog.Default(), mgr, 0, boom, "objects_moved")
 	if !errors.Is(err, boom) {
 		t.Errorf("expected boom propagated, got %v", err)
 	}

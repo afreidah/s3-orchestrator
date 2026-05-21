@@ -26,33 +26,35 @@ import (
 	"github.com/samber/do/v2"
 
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
+	"github.com/afreidah/s3-orchestrator/internal/lifecycle/tickrunner"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
 // allLockedTickerServices builds every locked-ticker background service
 // the lifecycle manager registers in worker/all mode. Used by the
 // lockID-uniqueness and interval-sanity assertions below.
-func allLockedTickerServices(t *testing.T) []*lockedTickerService {
+func allLockedTickerServices(t *testing.T) []*tickrunner.Service {
 	t.Helper()
 	f := newServicesFixture(t)
 	locker := fakeLocker{}
 
 	runners := []lifecycle.Runner{
-		NewMultipartCleanupService(f.mgr.MultipartManager, locker, 0),
-		NewCleanupQueueService(f.cleanupWorker, locker),
-		NewRebalancerService(f.mgr, f.rebalancer, locker),
+		multipart.NewCleanupService(f.mgr.MultipartManager, locker, 0),
+		worker.NewCleanupQueueService(f.cleanupWorker, locker),
+		worker.NewRebalancerService(f.mgr, f.rebalancer, locker),
 		NewLifecycleService(f.mgr, locker),
-		NewOverReplicationService(f.mgr, f.overRep, locker),
-		NewReplicatorService(f.mgr, f.replicator, locker),
-		NewReconcileService(worker.NewReconciler(f.mgr, nil), locker, time.Hour),
-		NewScrubberService(f.scrubber, locker),
+		worker.NewOverReplicationService(f.mgr, f.overRep, locker),
+		worker.NewReplicatorService(f.mgr, f.replicator, locker),
+		worker.NewReconcileService(worker.NewReconciler(f.mgr, nil), locker, time.Hour),
+		worker.NewScrubberService(f.scrubber, locker),
 	}
-	out := make([]*lockedTickerService, 0, len(runners))
+	out := make([]*tickrunner.Service, 0, len(runners))
 	for _, r := range runners {
-		ts, ok := r.(*lockedTickerService)
+		ts, ok := r.(*tickrunner.Service)
 		if !ok {
-			t.Fatalf("runner %T is not *lockedTickerService", r)
+			t.Fatalf("runner %T is not *tickrunner.Service", r)
 		}
 		out = append(out, ts)
 	}
@@ -69,11 +71,11 @@ func TestPeriodicServiceSpecs_LockIDsUnique(t *testing.T) {
 	services := allLockedTickerServices(t)
 	seen := make(map[int64]string, len(services))
 	for _, s := range services {
-		if prev, ok := seen[s.lockID]; ok {
-			t.Errorf("lockID %d shared by %q and %q", s.lockID, prev, s.name)
+		if prev, ok := seen[s.LockID()]; ok {
+			t.Errorf("lockID %d shared by %q and %q", s.LockID(), prev, s.Name())
 			continue
 		}
-		seen[s.lockID] = s.name
+		seen[s.LockID()] = s.Name()
 	}
 }
 
@@ -89,10 +91,10 @@ func TestPeriodicServiceSpecs_IntervalsSane(t *testing.T) {
 	)
 	for _, s := range allLockedTickerServices(t) {
 		switch {
-		case s.interval < minInterval:
-			t.Errorf("%s: interval %s is below %s", s.name, s.interval, minInterval)
-		case s.interval > maxInterval:
-			t.Errorf("%s: interval %s exceeds %s", s.name, s.interval, maxInterval)
+		case s.Interval() < minInterval:
+			t.Errorf("%s: interval %s is below %s", s.Name(), s.Interval(), minInterval)
+		case s.Interval() > maxInterval:
+			t.Errorf("%s: interval %s exceeds %s", s.Name(), s.Interval(), maxInterval)
 		}
 	}
 }
