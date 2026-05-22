@@ -25,6 +25,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/must"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 	"github.com/afreidah/s3-orchestrator/internal/util/workerpool"
 )
@@ -43,6 +44,8 @@ type Replicator struct {
 
 // NewReplicator creates a Replicator with fleet operations and a narrow store.
 func NewReplicator(ops Ops, store ReplicatorStore) *Replicator {
+	must.NotNil("ops", ops)
+	must.NotNil("store", store)
 	return &Replicator{ops: ops, store: store, log: slog.Default().With(logfmt.Component("replicator"))}
 }
 

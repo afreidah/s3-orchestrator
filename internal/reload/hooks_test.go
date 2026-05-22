@@ -34,9 +34,14 @@ import (
 
 	"github.com/samber/do/v2"
 
+	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
+	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/testutil"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 	"github.com/afreidah/s3-orchestrator/internal/transport/ui"
@@ -466,7 +471,7 @@ func TestUIHandlerHook_SkippedWhenDisabled(t *testing.T) {
 func TestUIHandlerHook_AppliedPushesNewConfig(t *testing.T) {
 	inj := do.New()
 	do.Provide(inj, func(do.Injector) (*ui.Handler, error) {
-		return ui.New(&ui.Deps{Cfg: &config.Config{}}), nil
+		return ui.New(newUIDepsForReloadTest(t)), nil
 	})
 	h := &uiHandlerHook{inj: inj}
 	status, err := h.Apply(context.Background(), nil, &config.Config{})
@@ -519,5 +524,45 @@ func TestHookNamesStable(t *testing.T) {
 		if err := h.Check(nil, nil); err != nil {
 			t.Errorf("%s Check returned %v, want nil", want, err)
 		}
+	}
+}
+
+// newUIDepsForReloadTest wires the minimum real deps the ui handler
+// constructor requires. The reload-hook test only exercises UpdateConfig,
+// but the constructor still panics via must.NotNil on missing deps.
+func newUIDepsForReloadTest(t *testing.T) *ui.Deps {
+	t.Helper()
+	mock := testutil.NewMockStore(t)
+	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3})
+	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
+		Backends:        map[string]backend.ObjectBackend{},
+		Stores:          mock,
+		Dashboard:       mock,
+		Metrics:         mock,
+		Order:           []string{},
+		RoutingStrategy: config.RoutingPack,
+	})
+	workers := proxytest.BuildWorkers(mgr, mock)
+	t.Cleanup(mgr.Close)
+	var lv slog.LevelVar
+	adminHandler := admin.New(&admin.Deps{
+		BackendOps: mgr,
+		Replicator: workers.Replicator,
+		OverRep:    workers.OverReplicationCleaner,
+		Drain:      mgr.DrainManager,
+		Scrubber:   workers.Scrubber,
+		Lifecycle:  mock,
+		DBHealthy:  cb.IsHealthy,
+		Encryption: mock,
+		Objects:    mock,
+		Cleanup:    mock,
+		Token:      "test-token",
+		LogLevel:   &lv,
+	})
+	return &ui.Deps{
+		BackendOps:   mgr,
+		Objects:      mgr.ObjectManager,
+		AdminHandler: adminHandler,
+		Cfg:          &config.Config{},
 	}
 }

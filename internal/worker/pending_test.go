@@ -62,7 +62,8 @@ func pendingFixture(intentID, key, backendName string) core.PendingObject {
 // reaper without thinking about every knob.
 func TestNewPendingReaper_AppliesZeroDefaults(t *testing.T) {
 	t.Parallel()
-	r := NewPendingReaper(nil, nil, 0, 0, 0)
+	ctrl := gomock.NewController(t)
+	r := NewPendingReaper(NewMockCleanupOps(ctrl), &mockMetadataStore{}, 0, 0, 0)
 	if r.concurrency != 4 {
 		t.Errorf("concurrency = %d, want 4", r.concurrency)
 	}

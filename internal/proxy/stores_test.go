@@ -91,11 +91,7 @@ func newTestBackendManager(t *testing.T, cfg *BackendManagerConfig) *BackendMana
 			cfg.Metrics = cfg.Stores
 		}
 	}
-	m, err := NewBackendManager(cfg)
-	if err != nil {
-		t.Fatalf("NewBackendManager: %v", err)
-	}
-	return m
+	return NewBackendManager(cfg)
 }
 
 // testStoresFromMock returns m typed as the wide metadata-store contract

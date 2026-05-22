@@ -32,7 +32,7 @@ import (
 // and an empty backend set. opts mutates the resulting BackendManager so
 // individual tests can flip the relevant skipped-vs-happy guards before
 // the handler is returned.
-func newAdminHandlerForTest(t *testing.T, opts ...func(*proxy.BackendManager, *proxytest.Workers)) *admin.Handler {
+func newAdminHandlerForTest(t testing.TB, opts ...func(*proxy.BackendManager, *proxytest.Workers)) *admin.Handler {
 	t.Helper()
 	mock := testutil.NewMockStore(t)
 	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3})
@@ -51,6 +51,7 @@ func newAdminHandlerForTest(t *testing.T, opts ...func(*proxy.BackendManager, *p
 		opt(mgr, workers)
 	}
 
+	lv := new(slog.LevelVar)
 	return admin.New(&admin.Deps{
 		BackendOps: mgr,
 		Replicator: workers.Replicator,
@@ -59,15 +60,17 @@ func newAdminHandlerForTest(t *testing.T, opts ...func(*proxy.BackendManager, *p
 		Scrubber:   workers.Scrubber,
 		Lifecycle:  mock,
 		DBHealthy:  cb.IsHealthy,
+		Encryption: mock,
 		Objects:    mock,
 		Cleanup:    mock,
 		Token:      "test-token",
+		LogLevel:   lv,
 	})
 }
 
 // newSkippedAdminHandler is the most common shape: every op resolves to
 // the skipped branch.
-func newSkippedAdminHandler(t *testing.T) *admin.Handler {
+func newSkippedAdminHandler(t testing.TB) *admin.Handler {
 	t.Helper()
 	return newAdminHandlerForTest(t)
 }

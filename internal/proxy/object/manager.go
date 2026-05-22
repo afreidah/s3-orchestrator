@@ -26,6 +26,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/readpath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/must"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
@@ -77,6 +78,12 @@ type Deps struct {
 // HEAD; it captures the same Core, Stores, LocationCache, and the
 // parallelBroadcast flag, so per-call read paths stay short.
 func New(d *Deps) *Manager {
+	must.NotNil("d", d)
+	must.NotNil("d.Core", d.Core)
+	must.NotNil("d.Coord", d.Coord)
+	must.NotNil("d.Stores", d.Stores)
+	must.NotNil("d.LocationCache", d.LocationCache)
+	must.NotNil("d.IntegrityCfg", d.IntegrityCfg)
 	return &Manager{
 		core:              d.Core,
 		coord:             d.Coord,

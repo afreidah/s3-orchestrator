@@ -27,6 +27,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/must"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 	"github.com/afreidah/s3-orchestrator/internal/util/workerpool"
 )
@@ -47,6 +48,8 @@ type OverReplicationCleaner struct {
 
 // NewOverReplicationCleaner creates a cleaner that shares the given core.
 func NewOverReplicationCleaner(ops Ops, store OverReplicationStore) *OverReplicationCleaner {
+	must.NotNil("ops", ops)
+	must.NotNil("store", store)
 	return &OverReplicationCleaner{ops: ops, store: store, log: slog.Default().With(logfmt.Component("over_replication"))}
 }
 
